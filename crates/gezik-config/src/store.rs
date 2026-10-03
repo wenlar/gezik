@@ -356,12 +356,27 @@ mod tests {
     }
 
     #[test]
-    fn handles_bom() {
+    fn save_pinned_handles_bom() {
         let store = store("pin-bom");
         write(&store, "settings.toml", "\u{feff}# mine\ntheme = \"dark\"\n");
         store.save_pinned(&["/a".to_owned()]).unwrap();
+        // Read raw file to verify no BOM is written
+        let text = std::fs::read_to_string(store.dir().join("settings.toml")).unwrap();
+        assert!(!text.starts_with('\u{feff}'), "BOM should not be written");
+        assert!(text.contains("# mine"), "user comment should be kept");
         let loaded = resolve(&store.read_files(), true);
         assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
         assert_eq!(loaded.settings.pinned, ["/a"]);
+    }
+
+    #[test]
+    fn save_pinned_refuses_non_array_pinned() {
+        let store = store("pin-non-array");
+        write(&store, "settings.toml", "pinned = \"not a list\"\n");
+        let err = store.save_pinned(&["/a".to_owned()]).unwrap_err();
+        assert!(err.message.starts_with("Fix settings.toml first"), "{}", err.message);
+        assert!(err.message.contains("pinned must be a list"), "{}", err.message);
+        // File must not be modified
+        assert_eq!(std::fs::read_to_string(store.dir().join("settings.toml")).unwrap(), "pinned = \"not a list\"\n");
     }
 }
