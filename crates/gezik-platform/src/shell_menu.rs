@@ -5,6 +5,7 @@ use std::cell::RefCell;
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
+use windows::Win32::Graphics::Gdi::{BeginPaint, EndPaint, PAINTSTRUCT};
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoTaskMemFree};
 use windows::Win32::UI::Shell::Common::ITEMIDLIST;
 use windows::Win32::UI::Shell::{
@@ -14,7 +15,7 @@ use windows::Win32::UI::Shell::{
 use windows::Win32::UI::WindowsAndMessaging::{
     CreatePopupMenu, DeleteMenu, DestroyMenu, GetCursorPos, GetMenuItemCount, GetMenuItemID, HMENU, InsertMenuW,
     MF_BYCOMMAND, MF_BYPOSITION, MF_SEPARATOR, MF_STRING, SW_SHOWNORMAL, TPM_RETURNCMD, TPM_RIGHTBUTTON,
-    TrackPopupMenuEx, WM_DRAWITEM, WM_INITMENUPOPUP, WM_MEASUREITEM, WM_MENUCHAR,
+    TrackPopupMenuEx, WM_DRAWITEM, WM_INITMENUPOPUP, WM_MEASUREITEM, WM_MENUCHAR, WM_PAINT,
 };
 use windows::core::{HSTRING, Interface, PCSTR, PCWSTR, PSTR};
 
@@ -105,10 +106,11 @@ unsafe fn track(
         let mut cursor = POINT::default();
         GetCursorPos(&mut cursor)?;
         ACTIVE.with(|active| *active.borrow_mut() = Some(menu.clone()));
-        let _ = SetWindowSubclass(hwnd, Some(forward_menu_messages), SUBCLASS_ID, 0);
+        // Stays installed until the chosen command has run too, so Shell confirmation dialogs
+        // shown by InvokeCommand are covered; the guard removes it on every path.
+        let _subclass = Subclass::install(hwnd);
         let chosen =
             TrackPopupMenuEx(hmenu, (TPM_RETURNCMD | TPM_RIGHTBUTTON).0, cursor.x, cursor.y, hwnd, None).0 as u32;
-        let _ = RemoveWindowSubclass(hwnd, Some(forward_menu_messages), SUBCLASS_ID);
         ACTIVE.with(|active| *active.borrow_mut() = None);
 
         Ok(match chosen {
@@ -127,6 +129,30 @@ unsafe fn track(
                 MenuOutcome::SystemCommandRan
             }
         })
+    }
+}
+
+/// `forward_menu_messages` installed on the window for as long as this lives.
+struct Subclass {
+    hwnd: HWND,
+    installed: bool,
+}
+
+impl Subclass {
+    unsafe fn install(hwnd: HWND) -> Self {
+        let installed = unsafe { SetWindowSubclass(hwnd, Some(forward_menu_messages), SUBCLASS_ID, 0) }.as_bool();
+        if !installed {
+            eprintln!("gezik: SetWindowSubclass failed; submenus and repaint suppression may not work");
+        }
+        Subclass { hwnd, installed }
+    }
+}
+
+impl Drop for Subclass {
+    fn drop(&mut self) {
+        if self.installed {
+            let _ = unsafe { RemoveWindowSubclass(self.hwnd, Some(forward_menu_messages), SUBCLASS_ID) };
+        }
     }
 }
 
@@ -159,7 +185,12 @@ unsafe fn remove_explorer_only_items(hmenu: HMENU, menu: &IContextMenu) {
     }
 }
 
-/// Forwards owner-draw and submenu messages ("Send to", "Open with") while the menu is open.
+/// Forwards owner-draw and submenu messages ("Send to", "Open with") while the menu is open,
+/// and swallows WM_PAINT while the menu or a Shell dialog runs its modal loop.
+///
+/// winit (0.30) cannot run its handler during that modal loop; for each WM_PAINT it sees then,
+/// it calls `RedrawWindow(RDW_INTERNALPAINT)`, which posts another WM_PAINT, so the UI thread
+/// would spin at 100%. Validating the window here keeps the paint away from winit.
 unsafe extern "system" fn forward_menu_messages(
     hwnd: HWND,
     msg: u32,
@@ -168,6 +199,14 @@ unsafe extern "system" fn forward_menu_messages(
     _id: usize,
     _data: usize,
 ) -> LRESULT {
+    if msg == WM_PAINT {
+        let mut paint = PAINTSTRUCT::default();
+        unsafe {
+            BeginPaint(hwnd, &mut paint);
+            let _ = EndPaint(hwnd, &paint);
+        }
+        return LRESULT(0);
+    }
     if matches!(msg, WM_INITMENUPOPUP | WM_DRAWITEM | WM_MEASUREITEM | WM_MENUCHAR) {
         let handled = ACTIVE.with(|active| {
             let active = active.borrow();
