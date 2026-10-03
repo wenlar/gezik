@@ -5,6 +5,7 @@ members = ["crates/gezik-core", "crates/gezik-config", "crates/gezik"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+license = "PolyForm-Noncommercial-1.0.0"
 
 [workspace.dependencies]
 gezik-core = { path = "crates/gezik-core" }

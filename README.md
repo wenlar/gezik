@@ -2,6 +2,8 @@
 
 A fast, lightweight, cross-platform file manager written in Rust with [Slint](https://slint.dev).
 
+Source-available and free for non-commercial use (see [License](#license)).
+
 ## Goals
 
 - Instant startup and low memory use
@@ -11,6 +13,7 @@ A fast, lightweight, cross-platform file manager written in Rust with [Slint](ht
 ## Layout
 
 - `crates/gezik-core`: platform-independent logic (listing, sorting, formatting)
+- `crates/gezik-config`: settings and themes (no UI dependency)
 - `crates/gezik`: the desktop app (Slint UI)
 
 ## Settings and themes
@@ -61,3 +64,18 @@ scripts/perf/stress.ps1    # 100,000-file folder: memory and scrolling CPU
 cargo run --release -p gezik
 cargo test
 ```
+
+## License
+
+Gezik is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE.md).
+You may use, modify and share it for any non-commercial purpose, including personal
+use, research, education and use by non-profit organizations. Commercial use is not
+permitted. When you share Gezik or a modified version, keep the license and the
+`Required Notice` line from `LICENSE.md`.
+
+Copyright Wenlar LLC.
+
+Gezik's user interface is built with Slint, used under the
+[Slint Royalty-free License](https://github.com/slint-ui/slint/blob/master/LICENSES/LicenseRef-Slint-Royalty-free-2.0.md).
+
+<a href="https://slint.dev"><img src="https://raw.githubusercontent.com/slint-ui/slint/master/logo/MadeWithSlint-logo-whitebg.png" alt="Made with Slint" height="60"></a>

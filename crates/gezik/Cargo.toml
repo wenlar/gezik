@@ -3,6 +3,7 @@ name = "gezik"
 description = "A fast, lightweight cross-platform file manager"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 gezik-core.workspace = true
