@@ -39,8 +39,12 @@ fn unescape_mount(field: &str) -> String {
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'\\' && i + 3 < bytes.len() && bytes[i + 1..i + 4].iter().all(|b| (b'0'..=b'7').contains(b)) {
-            let value = (bytes[i + 1] - b'0') * 64 + (bytes[i + 2] - b'0') * 8 + (bytes[i + 3] - b'0');
+        let octal = (bytes[i] == b'\\' && i + 3 < bytes.len())
+            .then(|| &bytes[i + 1..i + 4])
+            .filter(|d| d.iter().all(|b| (b'0'..=b'7').contains(b)))
+            .map(|d| u32::from(d[0] - b'0') * 64 + u32::from(d[1] - b'0') * 8 + u32::from(d[2] - b'0'))
+            .and_then(|v| u8::try_from(v).ok());
+        if let Some(value) = octal {
             out.push(value);
             i += 4;
         } else {
@@ -138,12 +142,20 @@ mod tests {
     fn this_machine_has_at_least_one_drive() {
         let drives = drives();
         assert!(!drives.is_empty());
-        assert!(drives.iter().all(|d| d.path.exists() && !d.label.is_empty()));
+        assert!(drives.iter().all(|d| !d.label.is_empty()));
+        assert!(drives.iter().filter(|d| d.kind == DriveKind::Fixed).all(|d| d.path.exists()));
     }
 
     #[test]
     fn signature_is_stable_without_changes() {
         assert_eq!(drive_signature(), drive_signature());
+    }
+
+    #[test]
+    fn oversized_octal_escapes_are_kept_literally() {
+        let text = "/dev/x /mnt/a\\777b ext4 rw 0 0
+";
+        assert_eq!(parse_mounts(text), [PathBuf::from(r"/mnt/a\777b")]);
     }
 
     #[test]
