@@ -1,6 +1,8 @@
 //! Platform-independent core: directory listing, sorting and formatting.
 //! Nothing in here touches the UI, so it can be tested and reused freely.
 
+pub mod nav;
+
 use std::cmp::Ordering;
 use std::io;
 use std::path::Path;

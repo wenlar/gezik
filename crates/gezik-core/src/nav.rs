@@ -1,0 +1,545 @@
+//! Navigation model: locations, per-tab history and the set of tabs. Pure data — no I/O,
+//! no UI — so every rule is unit-tested here and the app only wires it to Slint.
+
+use std::path::{Component, Path, PathBuf};
+
+/// The most back entries a tab keeps; older ones are dropped.
+pub const MAX_BACK: usize = 100;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Location {
+    Path(PathBuf),
+    /// The virtual "This PC" list of drives.
+    Drives,
+}
+
+impl Location {
+    /// A folder's parent; a filesystem root's parent is `Drives`; `Drives` has none.
+    pub fn parent(&self) -> Option<Location> {
+        match self {
+            Location::Drives => None,
+            Location::Path(path) => Some(match path.parent() {
+                Some(parent) => Location::Path(parent.to_path_buf()),
+                None => Location::Drives,
+            }),
+        }
+    }
+}
+
+/// What the user was looking at: restored when coming back via back/forward or a tab switch.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ViewState {
+    /// Selected entry by name (not index: the folder may have changed meanwhile).
+    pub selected: Option<String>,
+    /// List scroll offset (Slint `viewport-y`, zero or negative).
+    pub scroll: f32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct HistoryEntry {
+    pub location: Location,
+    pub view: ViewState,
+}
+
+/// One tab's back/forward history.
+#[derive(Debug, Clone, PartialEq)]
+pub struct History {
+    back: Vec<HistoryEntry>,
+    current: HistoryEntry,
+    forward: Vec<HistoryEntry>,
+}
+
+impl History {
+    pub fn new(location: Location) -> Self {
+        Self { back: Vec::new(), current: HistoryEntry { location, view: ViewState::default() }, forward: Vec::new() }
+    }
+    pub fn location(&self) -> &Location {
+        &self.current.location
+    }
+    pub fn view(&self) -> &ViewState {
+        &self.current.view
+    }
+    pub fn set_view(&mut self, view: ViewState) {
+        self.current.view = view;
+    }
+    pub fn can_go_back(&self) -> bool {
+        !self.back.is_empty()
+    }
+    pub fn can_go_forward(&self) -> bool {
+        !self.forward.is_empty()
+    }
+    /// Where `back()` would go, without going there (to load it first).
+    pub fn back_target(&self) -> Option<&HistoryEntry> {
+        self.back.last()
+    }
+    pub fn forward_target(&self) -> Option<&HistoryEntry> {
+        self.forward.last()
+    }
+    /// Goes to `location`. Returns `false` (and changes nothing) if already there.
+    pub fn navigate(&mut self, location: Location) -> bool {
+        if location == self.current.location {
+            return false;
+        }
+        let previous = std::mem::replace(&mut self.current, HistoryEntry { location, view: ViewState::default() });
+        self.back.push(previous);
+        if self.back.len() > MAX_BACK {
+            self.back.remove(0);
+        }
+        self.forward.clear();
+        true
+    }
+    pub fn back(&mut self) -> bool {
+        let Some(target) = self.back.pop() else { return false };
+        let previous = std::mem::replace(&mut self.current, target);
+        self.forward.push(previous);
+        true
+    }
+    pub fn forward(&mut self) -> bool {
+        let Some(target) = self.forward.pop() else { return false };
+        let previous = std::mem::replace(&mut self.current, target);
+        self.back.push(previous);
+        true
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Closed {
+    Remaining,
+    /// The last tab was closed: the window should close.
+    LastTab,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Tabs {
+    tabs: Vec<History>,
+    active: usize,
+}
+
+impl Tabs {
+    pub fn new(location: Location) -> Self {
+        Self { tabs: vec![History::new(location)], active: 0 }
+    }
+    pub fn len(&self) -> usize {
+        self.tabs.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        false
+    }
+    pub fn active_index(&self) -> usize {
+        self.active
+    }
+    pub fn active(&self) -> &History {
+        &self.tabs[self.active]
+    }
+    pub fn active_mut(&mut self) -> &mut History {
+        &mut self.tabs[self.active]
+    }
+    pub fn get(&self, index: usize) -> Option<&History> {
+        self.tabs.get(index)
+    }
+    pub fn iter(&self) -> impl Iterator<Item = &History> {
+        self.tabs.iter()
+    }
+    /// Opens a tab right after the active one. Returns its index.
+    pub fn open(&mut self, location: Location, activate: bool) -> usize {
+        let index = self.active + 1;
+        self.tabs.insert(index, History::new(location));
+        if activate {
+            self.active = index;
+        }
+        index
+    }
+    /// Closes tab `index` (out of range: no-op). Closing the active tab activates its right
+    /// neighbour, or the left one if it was last.
+    pub fn close(&mut self, index: usize) -> Closed {
+        if index >= self.tabs.len() {
+            return Closed::Remaining;
+        }
+        if self.tabs.len() == 1 {
+            return Closed::LastTab;
+        }
+        self.tabs.remove(index);
+        if index < self.active || (index == self.active && self.active == self.tabs.len()) {
+            self.active -= 1;
+        }
+        Closed::Remaining
+    }
+    pub fn close_others(&mut self, index: usize) {
+        if index >= self.tabs.len() {
+            return;
+        }
+        let keep = self.tabs.swap_remove(index);
+        self.tabs = vec![keep];
+        self.active = 0;
+    }
+    /// Copies tab `index` (with its history) right after it. Returns the copy's index.
+    pub fn duplicate(&mut self, index: usize) -> usize {
+        let Some(copy) = self.tabs.get(index).cloned() else { return self.active };
+        self.tabs.insert(index + 1, copy);
+        if self.active > index {
+            self.active += 1;
+        }
+        index + 1
+    }
+    /// Returns `true` if the active tab changed.
+    pub fn activate(&mut self, index: usize) -> bool {
+        if index >= self.tabs.len() || index == self.active {
+            return false;
+        }
+        self.active = index;
+        true
+    }
+    pub fn next(&mut self) {
+        self.active = (self.active + 1) % self.tabs.len();
+    }
+    pub fn prev(&mut self) {
+        self.active = (self.active + self.tabs.len() - 1) % self.tabs.len();
+    }
+    /// Moves tab `from` to position `to` (clamped); the active tab stays active.
+    pub fn move_tab(&mut self, from: usize, to: usize) {
+        if from >= self.tabs.len() {
+            return;
+        }
+        let to = to.min(self.tabs.len() - 1);
+        if from == to {
+            return;
+        }
+        let tab = self.tabs.remove(from);
+        self.tabs.insert(to, tab);
+        self.active = if self.active == from {
+            to
+        } else if from < self.active && to >= self.active {
+            self.active - 1
+        } else if from > self.active && to <= self.active {
+            self.active + 1
+        } else {
+            self.active
+        };
+    }
+}
+
+/// One clickable part of the address bar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Crumb {
+    pub label: String,
+    pub location: Location,
+}
+
+/// The address bar parts for `location`: always "This PC" first, then the path from its
+/// root. With more than `max_parts` path parts, the leading ones collapse into one "…"
+/// part that goes to the first hidden folder's parent... (see tests).
+pub fn crumbs(location: &Location, max_parts: usize) -> Vec<Crumb> {
+    let mut out = vec![Crumb { label: "This PC".to_owned(), location: Location::Drives }];
+    let Location::Path(path) = location else { return out };
+
+    let mut parts: Vec<Crumb> = Vec::new();
+    let mut acc = PathBuf::new();
+    for component in path.components() {
+        acc.push(component.as_os_str());
+        match component {
+            Component::Prefix(prefix) => parts.push(Crumb {
+                label: prefix.as_os_str().to_string_lossy().into_owned(),
+                location: Location::Path(acc.clone()),
+            }),
+            Component::RootDir => match parts.last_mut() {
+                // `C:` + `\` is one part: the drive root.
+                Some(drive) => drive.location = Location::Path(acc.clone()),
+                None => parts.push(Crumb { label: "/".to_owned(), location: Location::Path(acc.clone()) }),
+            },
+            Component::Normal(name) => {
+                parts.push(Crumb { label: name.to_string_lossy().into_owned(), location: Location::Path(acc.clone()) })
+            }
+            Component::CurDir | Component::ParentDir => {}
+        }
+    }
+
+    let max_parts = max_parts.max(1);
+    if parts.len() > max_parts {
+        let hidden = parts.len() - max_parts;
+        let ellipsis_target = parts[hidden - 1].location.clone();
+        parts.drain(..hidden);
+        out.push(Crumb { label: "…".to_owned(), location: ellipsis_target });
+    }
+    out.extend(parts);
+    out
+}
+
+/// `location` if it exists, otherwise its nearest existing ancestor, otherwise `Drives`.
+pub fn nearest_existing(location: &Location, exists: impl Fn(&Path) -> bool) -> Location {
+    let mut current = location.clone();
+    loop {
+        match &current {
+            Location::Drives => return Location::Drives,
+            Location::Path(path) if exists(path) => return current,
+            Location::Path(_) => current = current.parent().unwrap_or(Location::Drives),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn p(path: &str) -> Location {
+        Location::Path(PathBuf::from(path))
+    }
+
+    fn view(name: &str, scroll: f32) -> ViewState {
+        ViewState { selected: Some(name.to_owned()), scroll }
+    }
+
+    // ---- Location ----
+
+    #[test]
+    fn parent_of_folder_root_and_drives() {
+        assert_eq!(p("/a/b").parent(), Some(p("/a")));
+        assert_eq!(p("/").parent(), Some(Location::Drives));
+        assert_eq!(Location::Drives.parent(), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn parent_of_windows_drive_root_is_drives() {
+        assert_eq!(p(r"C:\").parent(), Some(Location::Drives));
+        assert_eq!(p(r"C:\Users").parent(), Some(p(r"C:\")));
+    }
+
+    // ---- History ----
+
+    #[test]
+    fn navigate_pushes_back_and_clears_forward() {
+        let mut h = History::new(p("/a"));
+        assert!(h.navigate(p("/b")));
+        assert!(h.navigate(p("/c")));
+        assert!(h.back());
+        assert!(h.can_go_forward());
+        assert!(h.navigate(p("/d")));
+        assert!(!h.can_go_forward());
+        assert_eq!(h.location(), &p("/d"));
+        assert_eq!(h.back_target().unwrap().location, p("/b"));
+    }
+
+    #[test]
+    fn navigating_to_the_current_location_changes_nothing() {
+        let mut h = History::new(p("/a"));
+        h.set_view(view("x", -40.0));
+        assert!(!h.navigate(p("/a")));
+        assert!(!h.can_go_back());
+        assert_eq!(h.view(), &view("x", -40.0));
+    }
+
+    #[test]
+    fn back_and_forward_restore_each_locations_view() {
+        let mut h = History::new(p("/a"));
+        h.set_view(view("in-a", -10.0));
+        h.navigate(p("/b"));
+        assert_eq!(h.view(), &ViewState::default());
+        h.set_view(view("in-b", -20.0));
+
+        assert!(h.back());
+        assert_eq!(h.location(), &p("/a"));
+        assert_eq!(h.view(), &view("in-a", -10.0));
+
+        assert!(h.forward());
+        assert_eq!(h.location(), &p("/b"));
+        assert_eq!(h.view(), &view("in-b", -20.0));
+    }
+
+    #[test]
+    fn back_and_forward_at_the_ends_do_nothing() {
+        let mut h = History::new(p("/a"));
+        assert!(!h.back());
+        assert!(!h.forward());
+        assert!(h.back_target().is_none() && h.forward_target().is_none());
+        assert_eq!(h.location(), &p("/a"));
+    }
+
+    #[test]
+    fn back_stack_is_capped() {
+        let mut h = History::new(p("/0"));
+        for i in 1..=(MAX_BACK + 5) {
+            h.navigate(p(&format!("/{i}")));
+        }
+        let mut steps = 0;
+        while h.back() {
+            steps += 1;
+        }
+        assert_eq!(steps, MAX_BACK);
+        assert_eq!(h.location(), &p("/5"));
+    }
+
+    // ---- Tabs ----
+
+    fn tabs_at(paths: &[&str]) -> Tabs {
+        let mut tabs = Tabs::new(p(paths[0]));
+        for (i, path) in paths.iter().enumerate().skip(1) {
+            tabs.activate(i - 1);
+            tabs.open(p(path), true);
+        }
+        tabs
+    }
+
+    fn locations(tabs: &Tabs) -> Vec<Location> {
+        tabs.iter().map(|h| h.location().clone()).collect()
+    }
+
+    #[test]
+    fn open_inserts_right_after_the_active_tab() {
+        let mut tabs = tabs_at(&["/a", "/b"]);
+        tabs.activate(0);
+        let index = tabs.open(p("/new"), false);
+        assert_eq!(index, 1);
+        assert_eq!(locations(&tabs), [p("/a"), p("/new"), p("/b")]);
+        assert_eq!(tabs.active_index(), 0);
+        tabs.open(p("/x"), true);
+        assert_eq!(tabs.active_index(), 1);
+        assert_eq!(tabs.active().location(), &p("/x"));
+    }
+
+    #[test]
+    fn close_active_activates_right_neighbour_then_left() {
+        let mut tabs = tabs_at(&["/a", "/b", "/c"]);
+        tabs.activate(1);
+        assert_eq!(tabs.close(1), Closed::Remaining);
+        assert_eq!(tabs.active().location(), &p("/c"));
+        assert_eq!(tabs.close(1), Closed::Remaining);
+        assert_eq!(tabs.active().location(), &p("/a"));
+    }
+
+    #[test]
+    fn close_inactive_keeps_the_active_tab() {
+        let mut tabs = tabs_at(&["/a", "/b", "/c"]);
+        tabs.activate(2);
+        tabs.close(0);
+        assert_eq!(tabs.active().location(), &p("/c"));
+        assert_eq!(tabs.active_index(), 1);
+    }
+
+    #[test]
+    fn close_last_tab_reports_it_and_out_of_range_is_ignored() {
+        let mut tabs = Tabs::new(p("/a"));
+        assert_eq!(tabs.close(5), Closed::Remaining);
+        assert_eq!(tabs.len(), 1);
+        assert_eq!(tabs.close(0), Closed::LastTab);
+        assert_eq!(tabs.len(), 1, "the model keeps one tab; the window closes");
+    }
+
+    #[test]
+    fn close_others_keeps_only_that_tab() {
+        let mut tabs = tabs_at(&["/a", "/b", "/c"]);
+        tabs.close_others(1);
+        assert_eq!(locations(&tabs), [p("/b")]);
+        assert_eq!(tabs.active_index(), 0);
+        tabs.close_others(0);
+        assert_eq!(locations(&tabs), [p("/b")]);
+        tabs.close_others(9);
+        assert_eq!(locations(&tabs), [p("/b")]);
+    }
+
+    #[test]
+    fn duplicate_copies_history_next_to_the_tab() {
+        let mut tabs = Tabs::new(p("/a"));
+        tabs.active_mut().navigate(p("/b"));
+        let index = tabs.duplicate(0);
+        assert_eq!(index, 1);
+        assert_eq!(tabs.get(1).unwrap().location(), &p("/b"));
+        assert!(tabs.get(1).unwrap().can_go_back());
+        assert_eq!(tabs.active_index(), 0);
+    }
+
+    #[test]
+    fn activate_next_prev_wrap_around() {
+        let mut tabs = tabs_at(&["/a", "/b", "/c"]);
+        assert!(tabs.activate(0));
+        assert!(!tabs.activate(0));
+        assert!(!tabs.activate(7));
+        tabs.prev();
+        assert_eq!(tabs.active_index(), 2);
+        tabs.next();
+        assert_eq!(tabs.active_index(), 0);
+    }
+
+    #[test]
+    fn move_tab_keeps_the_active_tab_active() {
+        let mut tabs = tabs_at(&["/a", "/b", "/c", "/d"]);
+        tabs.activate(1); // /b
+        tabs.move_tab(1, 3);
+        assert_eq!(locations(&tabs), [p("/a"), p("/c"), p("/d"), p("/b")]);
+        assert_eq!(tabs.active().location(), &p("/b"));
+        tabs.move_tab(0, 2); // /a moves past the active /b? no: /b is at 3
+        assert_eq!(locations(&tabs), [p("/c"), p("/d"), p("/a"), p("/b")]);
+        assert_eq!(tabs.active().location(), &p("/b"));
+        tabs.move_tab(3, 0);
+        assert_eq!(locations(&tabs), [p("/b"), p("/c"), p("/d"), p("/a")]);
+        assert_eq!(tabs.active().location(), &p("/b"));
+    }
+
+    #[test]
+    fn move_tab_shifts_active_index_when_others_cross_it() {
+        let mut tabs = tabs_at(&["/a", "/b", "/c"]);
+        tabs.activate(1); // /b
+        tabs.move_tab(0, 2); // /a jumps over /b
+        assert_eq!(tabs.active().location(), &p("/b"));
+        assert_eq!(tabs.active_index(), 0);
+        tabs.move_tab(2, 0); // /a back in front
+        assert_eq!(tabs.active().location(), &p("/b"));
+        assert_eq!(tabs.active_index(), 1);
+    }
+
+    #[test]
+    fn move_tab_to_same_place_or_out_of_range() {
+        let mut tabs = tabs_at(&["/a", "/b"]);
+        tabs.move_tab(1, 1);
+        tabs.move_tab(5, 0);
+        assert_eq!(locations(&tabs), [p("/a"), p("/b")]);
+        tabs.move_tab(0, 99); // clamped to the end
+        assert_eq!(locations(&tabs), [p("/b"), p("/a")]);
+    }
+
+    // ---- crumbs ----
+
+    fn labels(crumbs: &[Crumb]) -> Vec<&str> {
+        crumbs.iter().map(|c| c.label.as_str()).collect()
+    }
+
+    #[test]
+    fn crumbs_for_drives_and_unix_paths() {
+        assert_eq!(labels(&crumbs(&Location::Drives, 4)), ["This PC"]);
+        let c = crumbs(&p("/home/a/docs"), 4);
+        assert_eq!(labels(&c), ["This PC", "/", "home", "a", "docs"]);
+        assert_eq!(c[0].location, Location::Drives);
+        assert_eq!(c[1].location, p("/"));
+        assert_eq!(c[3].location, p("/home/a"));
+    }
+
+    #[test]
+    fn long_paths_collapse_leading_parts() {
+        let c = crumbs(&p("/a/b/c/d/e/f"), 4);
+        assert_eq!(labels(&c), ["This PC", "…", "c", "d", "e", "f"]);
+        assert_eq!(c[1].location, p("/a/b"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn crumbs_for_windows_paths() {
+        let c = crumbs(&p(r"C:\Users\teoma"), 4);
+        assert_eq!(labels(&c), ["This PC", "C:", "Users", "teoma"]);
+        assert_eq!(c[1].location, p(r"C:\"));
+        assert_eq!(c[2].location, p(r"C:\Users"));
+    }
+
+    // ---- nearest_existing ----
+
+    #[test]
+    fn nearest_existing_ancestor_is_returned() {
+        let exists = |path: &Path| path == Path::new("/a") || path == Path::new("/");
+        assert_eq!(nearest_existing(&p("/a/b/c"), exists), p("/a"));
+        assert_eq!(nearest_existing(&p("/a"), exists), p("/a"));
+    }
+
+    #[test]
+    fn nearest_existing_ancestor_falls_back_to_drives() {
+        assert_eq!(nearest_existing(&p("/gone/x"), |_| false), Location::Drives);
+        assert_eq!(nearest_existing(&Location::Drives, |_| false), Location::Drives);
+    }
+}
