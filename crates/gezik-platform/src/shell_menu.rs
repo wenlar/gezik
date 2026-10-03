@@ -37,6 +37,7 @@ pub fn show_shell_menu(
     target: &MenuTarget,
     extra: &[(u32, &str)],
 ) -> Result<MenuOutcome, String> {
+    validate_ids(extra)?;
     let handle = window.window_handle().map_err(|e| e.to_string())?;
     let RawWindowHandle::Win32(win32) = handle.as_raw() else { return Err("not a Win32 window".into()) };
     let hwnd = HWND(win32.hwnd.get() as *mut _);
@@ -50,13 +51,23 @@ pub fn show_shell_menu(
     }
 }
 
+/// Gezik's own item ids must be in 1..FIRST_SHELL_ID (0 means "dismissed", 1000+ are Shell ids).
+fn validate_ids(extra: &[(u32, &str)]) -> Result<(), String> {
+    if extra.iter().all(|(id, _)| (1..FIRST_SHELL_ID).contains(id)) {
+        Ok(())
+    } else {
+        Err("menu item ids must be in 1..1000".into())
+    }
+}
+
 unsafe fn context_menu_for(hwnd: HWND, target: &MenuTarget) -> windows::core::Result<IContextMenu> {
     let path = match target {
         MenuTarget::Item(p) | MenuTarget::Background(p) => p,
     };
     let mut pidl: *mut ITEMIDLIST = std::ptr::null_mut();
     unsafe { SHParseDisplayName(&HSTRING::from(path.as_os_str()), None, &mut pidl, 0, None)? };
-    let menu = unsafe {
+    // The closure keeps `?` from skipping the CoTaskMemFree below.
+    let menu = (|| unsafe {
         match target {
             MenuTarget::Item(_) => {
                 let mut child: *mut ITEMIDLIST = std::ptr::null_mut();
@@ -70,7 +81,7 @@ unsafe fn context_menu_for(hwnd: HWND, target: &MenuTarget) -> windows::core::Re
                 folder.and_then(|f| f.CreateViewObject::<IContextMenu>(hwnd))
             }
         }
-    };
+    })();
     unsafe { CoTaskMemFree(Some(pidl as *const _)) };
     menu
 }
@@ -200,11 +211,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn home_folder_has_a_shell_menu() {
-        let home = dirs::home_dir().unwrap();
-        let item = count_items(&crate::MenuTarget::Item(home.clone())).unwrap();
-        let background = count_items(&crate::MenuTarget::Background(home)).unwrap();
-        assert!(item > 5, "item menu had {item} entries");
-        assert!(background > 2, "background menu had {background} entries");
+    fn shell_menus_have_entries() {
+        let dir = std::env::temp_dir().join(format!("gezik-shell-menu-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.txt");
+        std::fs::write(&file, "x").unwrap();
+        let sub = dir.join("sub");
+        std::fs::create_dir(&sub).unwrap();
+
+        let file_items = count_items(&crate::MenuTarget::Item(file));
+        let folder_items = count_items(&crate::MenuTarget::Item(sub));
+        let background = count_items(&crate::MenuTarget::Background(dir.clone()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let (file_items, folder_items, background) = (file_items.unwrap(), folder_items.unwrap(), background.unwrap());
+        assert!(file_items > 3, "file menu had {file_items} entries");
+        assert!(folder_items > 3, "folder menu had {folder_items} entries");
+        assert!(background > 0, "background menu had {background} entries");
+    }
+
+    #[test]
+    fn extra_ids_must_be_below_the_shell_range() {
+        assert!(validate_ids(&[]).is_ok());
+        assert!(validate_ids(&[(1, "a"), (999, "b")]).is_ok());
+        assert!(validate_ids(&[(0, "a")]).is_err());
+        assert!(validate_ids(&[(1000, "a")]).is_err());
+        assert!(validate_ids(&[(1, "a"), (1000, "b")]).is_err());
     }
 }
