@@ -135,7 +135,7 @@ struct Inner {
     /// shown yet, so what is on screen says nothing about that tab's selection and scroll.
     cleared: bool,
     places: Places,
-    /// The tab bar's model, updated in place (see [`sync_tabs`]).
+    /// The tab bar's model, updated in place (see [`sync_model`]).
     tab_model: Rc<VecModel<TabItem>>,
     start: Location,
     /// Bumped on every load so that results of an overtaken load are dropped.
@@ -199,7 +199,6 @@ impl Navigator {
         self.0.borrow_mut().start = start;
     }
 
-    #[allow(dead_code)] // Used by the sidebar (Task 9).
     pub fn places(&self) -> Places {
         self.0.borrow().places.clone()
     }
@@ -210,7 +209,6 @@ impl Navigator {
     }
 
     /// Calls `f` whenever the active location is shown (changed, reloaded or tab switched).
-    #[allow(dead_code)] // Used by the sidebar (Task 9).
     pub fn on_changed(&self, f: impl Fn(&Location) + 'static) {
         self.0.borrow_mut().on_changed.push(Rc::new(f));
     }
@@ -573,7 +571,7 @@ impl Navigator {
                 .iter()
                 .enumerate()
                 .map(|(i, h)| TabItem { title: inner.places.title_for(h.location()).into(), active: i == active });
-            sync_tabs(&inner.tab_model, tabs);
+            sync_model(&inner.tab_model, tabs);
             inner.on_changed.clone()
         };
         // Called with no borrow held, so listeners may use the navigator.
@@ -583,17 +581,17 @@ impl Navigator {
     }
 }
 
-/// Makes `model` hold `tabs`, changing only rows that differ. Replacing the model would
-/// rebuild every tab element, including the one whose click or middle-click is still being
-/// handled.
-fn sync_tabs(model: &VecModel<TabItem>, tabs: impl Iterator<Item = TabItem>) {
+/// Makes `model` hold `items`, changing only rows that differ. Replacing the model would
+/// rebuild every element (tab, sidebar row), including the one whose click or middle-click
+/// is still being handled.
+pub fn sync_model<T: Clone + PartialEq + 'static>(model: &VecModel<T>, items: impl Iterator<Item = T>) {
     let mut len = 0;
-    for (i, tab) in tabs.enumerate() {
+    for (i, item) in items.enumerate() {
         len = i + 1;
         if i >= model.row_count() {
-            model.push(tab);
-        } else if model.row_data(i).as_ref() != Some(&tab) {
-            model.set_row_data(i, tab);
+            model.push(item);
+        } else if model.row_data(i).as_ref() != Some(&item) {
+            model.set_row_data(i, item);
         }
     }
     while model.row_count() > len {
@@ -632,13 +630,13 @@ mod tests {
     }
 
     #[test]
-    fn sync_tabs_grows_shrinks_and_updates_in_place() {
+    fn sync_model_grows_shrinks_and_updates_in_place() {
         let model = VecModel::default();
-        sync_tabs(&model, [tab("a", true), tab("b", false)].into_iter());
+        sync_model(&model, [tab("a", true), tab("b", false)].into_iter());
         assert_eq!(titles(&model), [("a".into(), true), ("b".into(), false)]);
-        sync_tabs(&model, [tab("a", false), tab("b", true), tab("c", false)].into_iter());
+        sync_model(&model, [tab("a", false), tab("b", true), tab("c", false)].into_iter());
         assert_eq!(titles(&model), [("a".into(), false), ("b".into(), true), ("c".into(), false)]);
-        sync_tabs(&model, [tab("c", true)].into_iter());
+        sync_model(&model, [tab("c", true)].into_iter());
         assert_eq!(titles(&model), [("c".into(), true)]);
     }
 

@@ -6,8 +6,11 @@ use slint::{ComponentHandle, LogicalSize, PhysicalPosition};
 
 use crate::AppWindow;
 
-/// Applies the saved size and position. Call before the window is shown.
+/// Applies the saved size, position and sidebar width. Call before the window is shown.
 pub fn restore(window: &AppWindow, state: &State) {
+    if let Some(width) = state.sidebar_width {
+        window.set_sidebar_width(width as f32);
+    }
     let Some(saved) = state.window else { return };
     window.window().set_size(LogicalSize::new(saved.width as f32, saved.height as f32));
     if let (Some(x), Some(y)) = (saved.x, saved.y) {
@@ -41,7 +44,7 @@ pub fn ensure_visible(window: &AppWindow) -> bool {
     true
 }
 
-/// The current size (logical pixels) and position (physical pixels).
+/// The current size (logical pixels), position (physical pixels) and sidebar width.
 pub fn capture(window: &AppWindow) -> State {
     let native = window.window();
     let size = native.size().to_logical(native.scale_factor());
@@ -53,6 +56,6 @@ pub fn capture(window: &AppWindow) -> State {
             x: Some(position.x),
             y: Some(position.y),
         }),
-        sidebar_width: None,
+        sidebar_width: Some(window.get_sidebar_width().round().clamp(120.0, 480.0) as u32),
     }
 }

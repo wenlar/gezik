@@ -3,6 +3,7 @@
 
 mod navigation;
 mod places;
+mod sidebar;
 mod start;
 mod theme_bridge;
 mod watcher;
@@ -12,7 +13,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use gezik_config::Warning;
-use gezik_config::settings::Settings;
+use gezik_config::settings::{Settings, SidebarPosition};
 use gezik_config::store::{self, ConfigFiles, ConfigStore, Loaded};
 use gezik_config::theme;
 use start::StartPlan;
@@ -30,20 +31,27 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
         eprintln!("gezik: {warning}");
     }
     window.set_notice(notice_text(&loaded.warnings).into());
+    window.set_sidebar_position(match loaded.settings.sidebar {
+        SidebarPosition::Left => 0,
+        SidebarPosition::Right => 1,
+        SidebarPosition::Hidden => 2,
+    });
+    // Unchanged pins cost nothing (also after the reload that follows our own save).
+    sidebar::with_current(|sidebar| sidebar.set_pinned(loaded.settings.pinned.clone()));
     loaded
 }
 
 /// Like [`apply_config`], and also resolves where the app opens. Start warnings (bad
 /// `start-folder`, missing command-line path) are added to `files` so the notice shows
 /// them (also after later re-resolves, until the files are read again).
-fn apply_config_and_start(window: &AppWindow, files: &mut ConfigFiles, cli: Option<PathBuf>) -> StartPlan {
+fn apply_config_and_start(window: &AppWindow, files: &mut ConfigFiles, cli: Option<PathBuf>) -> (Settings, StartPlan) {
     let loaded = apply_config(window, files);
     let plan = resolve_start(&loaded.settings, cli);
     if !plan.warnings.is_empty() {
         files.warnings.extend(plan.warnings.iter().cloned());
         apply_config(window, files);
     }
-    plan
+    (loaded.settings, plan)
 }
 
 /// [`start::plan_start`] against the real file system.
@@ -99,7 +107,8 @@ fn main() -> Result<(), slint::PlatformError> {
     }
     // Something sensible is on screen even if the selected theme cannot be read.
     theme_bridge::apply(&window, &theme::builtin_dark());
-    let plan = apply_config_and_start(&window, &mut files, std::env::args_os().nth(1).map(PathBuf::from));
+    let (initial_settings, plan) =
+        apply_config_and_start(&window, &mut files, std::env::args_os().nth(1).map(PathBuf::from));
 
     // The latest config files, so a system light/dark switch can re-resolve without I/O.
     let files = Arc::new(Mutex::new(files));
@@ -126,7 +135,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let _ = weak.upgrade_in_event_loop(move |window| {
                 let mut current = files.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                 *current = fresh;
-                let plan = apply_config_and_start(&window, &mut current, None);
+                let (_, plan) = apply_config_and_start(&window, &mut current, None);
                 navigation::with_current(|nav| nav.set_start(plan.start));
             });
         })
@@ -163,6 +172,33 @@ fn main() -> Result<(), slint::PlatformError> {
     nav.install();
     // Captures no navigator (it is not `Send`): the result finds it on the UI thread.
     places::load_in_background(window.as_weak(), move |places| navigation::with_current(|nav| nav.set_places(places)));
+
+    let sidebar = sidebar::Sidebar::new(&window, nav.clone(), config.clone());
+    sidebar.install();
+    sidebar.set_pinned(initial_settings.pinned);
+    window.on_sidebar_clicked({
+        let (nav, sidebar) = (nav.clone(), sidebar.clone());
+        move |section, index| {
+            if let Some(location) = sidebar.location_of(section, index) {
+                nav.go(location);
+            }
+        }
+    });
+    window.on_sidebar_middle_clicked({
+        let (nav, sidebar) = (nav.clone(), sidebar.clone());
+        move |section, index| {
+            if let Some(location) = sidebar.location_of(section, index) {
+                nav.open_tab(location, false);
+            }
+        }
+    });
+    window.on_pinned_move(move |from, to| {
+        if let (Ok(from), Ok(to)) = (usize::try_from(from), usize::try_from(to)) {
+            sidebar.move_pinned(from, to);
+        }
+    });
+    // The sidebar width stays in memory and is saved with the window state on close;
+    // sidebar-menu is wired in Task 10.
 
     window.on_open_row({
         let nav = nav.clone();

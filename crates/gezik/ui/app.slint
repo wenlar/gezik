@@ -3,9 +3,11 @@ import { Theme } from "theme.slint";
 import { ToolButton } from "widgets/button.slint";
 import { Breadcrumb, CrumbItem } from "widgets/breadcrumb.slint";
 import { TabBar, TabItem } from "widgets/tab-bar.slint";
+import { Sidebar, SidebarRow } from "widgets/sidebar.slint";
 
-// Re-exported so Rust can set it with `window.global::<Theme>()` and build crumbs and tabs.
-export { Theme, CrumbItem, TabItem }
+// Re-exported so Rust can set it with `window.global::<Theme>()` and build crumbs, tabs
+// and sidebar rows.
+export { Theme, CrumbItem, TabItem, SidebarRow }
 
 export struct FileRow {
     name: string,
@@ -37,6 +39,14 @@ export component AppWindow inherits Window {
     in-out property <length> list-scroll;
     in-out property <bool> path-editing;
     in-out property <int> selected: -1;
+    in property <[SidebarRow]> sidebar-rows;
+    // Position in `sidebar-rows` of the first pinned item (-1 if none), and how many there are.
+    in property <int> sidebar-pinned-first-row: -1;
+    in property <int> sidebar-pinned-count;
+    // 0 left, 1 right, 2 hidden (`layout.sidebar`).
+    in property <int> sidebar-position;
+    // Dragged with the splitter (120–480px); saved in state.toml on close.
+    in-out property <length> sidebar-width: 200px;
 
     // Follows the OS light/dark mode (Palette is left to the system on purpose; see
     // theme_bridge.rs). Rust re-resolves the theme when it flips.
@@ -60,6 +70,14 @@ export component AppWindow inherits Window {
     callback tab-menu(int, length, length);
     // Middle-click on a row: opens a folder in a background tab.
     callback row-middle-clicked(int);
+    // Sidebar item (section, index): click, middle-click, right-click at a window position.
+    callback sidebar-clicked(int, int);
+    callback sidebar-middle-clicked(int, int);
+    callback sidebar-menu(int, int, length, length);
+    // Moves pinned item `from` to position `to`.
+    callback pinned-move(int, int);
+    // The splitter was released.
+    callback sidebar-resized();
 
     // Switches the address bar to typing, with the whole path selected.
     public function edit-path() {
@@ -112,51 +130,103 @@ export component AppWindow inherits Window {
         }
         Rectangle { height: 1px; background: Theme.border; }
 
-        // ListView only instantiates the rows that are visible, so huge folders stay cheap.
-        ListView {
-            content-y <=> root.list-scroll;
-            for row[i] in root.rows: Rectangle {
-                height: Theme.row-height;
-                background: i == root.selected ? Theme.selection : touch.has-hover ? Theme.hover : transparent;
+        HorizontalLayout {
+            if root.sidebar-position == 0: Sidebar {
+                width: root.sidebar-width;
+                rows: root.sidebar-rows;
+                pinned-first-row: root.sidebar-pinned-first-row;
+                pinned-count: root.sidebar-pinned-count;
+                clicked(s, i) => { root.sidebar-clicked(s, i); }
+                middle-clicked(s, i) => { root.sidebar-middle-clicked(s, i); }
+                menu(s, i, x, y) => { root.sidebar-menu(s, i, x, y); }
+                pinned-move(a, b) => { root.pinned-move(a, b); }
+            }
+            // A 1px line, grabbable over 5px.
+            if root.sidebar-position == 0: Rectangle {
+                width: 5px;
+                accessible-role: none;
+                Rectangle {
+                    x: (parent.width - self.width) / 2;
+                    width: 1px;
+                    background: splitter-left.has-hover || splitter-left.pressed ? Theme.accent : Theme.border;
+                }
+                splitter-left := TouchArea {
+                    mouse-cursor: col-resize;
+                    moved => { root.sidebar-width = clamp(root.sidebar-width + (self.mouse-x - self.pressed-x), 120px, 480px); }
+                    changed pressed => { if !self.pressed { root.sidebar-resized(); } }
+                }
+            }
+            // ListView only instantiates the rows that are visible, so huge folders stay cheap.
+            ListView {
+                content-y <=> root.list-scroll;
+                for row[i] in root.rows: Rectangle {
+                    height: Theme.row-height;
+                    background: i == root.selected ? Theme.selection : touch.has-hover ? Theme.hover : transparent;
 
-                touch := TouchArea {
-                    clicked => { root.selected = i; }
-                    double-clicked => { root.open-row(i); }
-                    pointer-event(event) => {
-                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.middle {
-                            root.row-middle-clicked(i);
+                    touch := TouchArea {
+                        clicked => { root.selected = i; }
+                        double-clicked => { root.open-row(i); }
+                        pointer-event(event) => {
+                            if event.kind == PointerEventKind.up && event.button == PointerEventButton.middle {
+                                root.row-middle-clicked(i);
+                            }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        padding-left: Theme.spacing + 4px;
+                        padding-right: Theme.spacing + 4px;
+                        spacing: Theme.spacing + 2px;
+                        VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: Theme.icon-size * 0.75;
+                                height: self.width;
+                                border-radius: 2px;
+                                background: row.is-dir ? Theme.folder-icon : Theme.file-icon;
+                            }
+                        }
+                        Text {
+                            text: row.name;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                            overflow: elide;
+                            color: i == root.selected ? Theme.selection-foreground : Theme.foreground;
+                        }
+                        Text {
+                            text: row.size;
+                            width: 90px;
+                            horizontal-alignment: right;
+                            vertical-alignment: center;
+                            color: i == root.selected ? Theme.selection-foreground : Theme.foreground-muted;
                         }
                     }
                 }
-
-                HorizontalLayout {
-                    padding-left: Theme.spacing + 4px;
-                    padding-right: Theme.spacing + 4px;
-                    spacing: Theme.spacing + 2px;
-                    VerticalLayout {
-                        alignment: center;
-                        Rectangle {
-                            width: Theme.icon-size * 0.75;
-                            height: self.width;
-                            border-radius: 2px;
-                            background: row.is-dir ? Theme.folder-icon : Theme.file-icon;
-                        }
-                    }
-                    Text {
-                        text: row.name;
-                        vertical-alignment: center;
-                        horizontal-stretch: 1;
-                        overflow: elide;
-                        color: i == root.selected ? Theme.selection-foreground : Theme.foreground;
-                    }
-                    Text {
-                        text: row.size;
-                        width: 90px;
-                        horizontal-alignment: right;
-                        vertical-alignment: center;
-                        color: i == root.selected ? Theme.selection-foreground : Theme.foreground-muted;
-                    }
+            }
+            // A 1px line, grabbable over 5px.
+            if root.sidebar-position == 1: Rectangle {
+                width: 5px;
+                accessible-role: none;
+                Rectangle {
+                    x: (parent.width - self.width) / 2;
+                    width: 1px;
+                    background: splitter-right.has-hover || splitter-right.pressed ? Theme.accent : Theme.border;
                 }
+                splitter-right := TouchArea {
+                    mouse-cursor: col-resize;
+                    moved => { root.sidebar-width = clamp(root.sidebar-width - (self.mouse-x - self.pressed-x), 120px, 480px); }
+                    changed pressed => { if !self.pressed { root.sidebar-resized(); } }
+                }
+            }
+            if root.sidebar-position == 1: Sidebar {
+                width: root.sidebar-width;
+                rows: root.sidebar-rows;
+                pinned-first-row: root.sidebar-pinned-first-row;
+                pinned-count: root.sidebar-pinned-count;
+                clicked(s, i) => { root.sidebar-clicked(s, i); }
+                middle-clicked(s, i) => { root.sidebar-middle-clicked(s, i); }
+                menu(s, i, x, y) => { root.sidebar-menu(s, i, x, y); }
+                pinned-move(a, b) => { root.pinned-move(a, b); }
             }
         }
 
