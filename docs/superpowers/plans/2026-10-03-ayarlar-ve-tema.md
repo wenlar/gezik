@@ -12,7 +12,7 @@
 
 ## Spec'ten sapmalar (plan yazılırken API doğrulamasıyla netleşti)
 
-1. **Slint `Palette` ezilmiyor.** Slint 1.18'de `Palette` renkleri salt okunur (`out`). Sistemin açık/koyu modu da yalnızca `Palette.color-scheme` üzerinden okunabiliyor (`SlintInternal` kullanıcı koduna kapalı). Bu yüzden `Palette.color-scheme` sisteme bırakılıyor. Sonuç: `ListView` kaydırma çubuğu sistemin moduna uyar. Varsayılan `auto` modunda bu, temayla her zaman uyumludur; yalnızca sistemin tersi bir tema zorlanırsa kaydırma çubuğu sistem renginde kalır. Spec'teki "doğrulanacak risk" maddesinin sonucu budur.
+1. **Slint `Palette` ezilmiyor.** Slint 1.18'de `Palette` renkleri salt okunur (`out`). `Palette.color-scheme` ise `in-out` (yalnızca renkler salt okunur), yani atanabilir; ama zorlamak, `theme = "auto"` modunun dayandığı sistem açık/koyu değerini gizlerdi (sistemin modu yalnızca bu özellikten okunabiliyor, `SlintInternal` kullanıcı koduna kapalı). Bu yüzden `Palette.color-scheme` sisteme bırakılıyor. Sonuç: `ListView` kaydırma çubuğu sistemin moduna uyar. Varsayılan `auto` modunda bu, temayla her zaman uyumludur; yalnızca sistemin tersi bir tema zorlanırsa kaydırma çubuğu sistem renginde kalır. Spec'teki "doğrulanacak risk" maddesinin sonucu budur.
 2. **Şablon tema adı `example.toml`.** Spec `ornek-tema.toml` diyordu. Arayüz metinleri İngilizce olduğundan şablon adı ve yorumları da İngilizce.
 3. **Uyarı metinleri İngilizce:** `nord.toml line 12: ...` (spec örneği Türkçeydi).
 4. **`serde` doğrudan bağımlılık değil.** TOML, `toml::Table` olarak okunup değerler elle doğrulanıyor. Bu, spec'in istediği "tek geçersiz değer yok sayılır, gerisi yüklenir" davranışını mümkün kılıyor (serde ile tek hatalı değer bütün dosyayı düşürürdü).

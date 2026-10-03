@@ -1,0 +1,50 @@
+import { Theme } from "../theme.slint";
+
+// A square toolbar button. Replaces the std-widgets Button, whose colors cannot be themed.
+export component ToolButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    callback clicked();
+
+    height: Theme.row-height + 4px;
+    width: self.height;
+    border-radius: Theme.radius;
+    border-width: scope.has-focus ? 2px : 0px;
+    border-color: Theme.accent;
+    forward-focus: scope;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { root.clicked(); }
+    background: touch.has-hover && root.enabled ? Theme.hover : transparent;
+
+    Text {
+        width: parent.width;
+        height: parent.height;
+        text: root.text;
+        color: Theme.foreground;
+        opacity: root.enabled ? 1 : 0.35;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    // Keyboard operation: Tab focuses the button, Enter or Space presses it.
+    scope := FocusScope {
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if (root.enabled && (event.text == Key.Return || event.text == " ")) {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+
+    touch := TouchArea {
+        width: parent.width;
+        height: parent.height;
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => { root.clicked(); }
+    }
+}

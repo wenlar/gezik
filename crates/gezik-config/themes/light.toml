@@ -1,0 +1,24 @@
+name = "Light"
+
+[colors]
+background = "#fafafa"
+surface = "#f3f3f3"
+foreground = "#1b1b1b"
+foreground-muted = "#616161"
+border = "#d6d6d6"
+accent = "#005fb8"
+accent-foreground = "#ffffff"
+selection = "#cce4f7"
+selection-foreground = "#1b1b1b"
+hover = "#0000000d"
+folder-icon = "#d9a520"
+file-icon = "#8a939c"
+danger = "#c42b1c"
+
+[metrics]
+font-family = ""
+font-size = 13
+row-height = 26
+icon-size = 16
+radius = 6
+spacing = 6

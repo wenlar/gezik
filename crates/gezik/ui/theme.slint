@@ -1,0 +1,25 @@
+// Every color and size in the UI comes from here. Rust (theme_bridge.rs) sets these
+// values at startup and whenever the theme or settings change.
+export global Theme {
+    in property <color> background;
+    in property <color> surface;
+    in property <color> foreground;
+    in property <color> foreground-muted;
+    in property <color> border;
+    in property <color> accent;
+    in property <color> accent-foreground;
+    in property <color> selection;
+    in property <color> selection-foreground;
+    in property <color> hover;
+    in property <color> folder-icon;
+    in property <color> file-icon;
+    in property <color> danger;
+
+    // Empty means the system font.
+    in property <string> font-family;
+    in property <length> font-size: 13px;
+    in property <length> row-height: 26px;
+    in property <length> icon-size: 16px;
+    in property <length> radius: 6px;
+    in property <length> spacing: 6px;
+}

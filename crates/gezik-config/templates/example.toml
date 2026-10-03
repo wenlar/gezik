@@ -1,0 +1,30 @@
+# Example theme. Copy this file, rename it (e.g. my-theme.toml) and select it in
+# settings.toml with:  theme = "my-theme"
+# Every value is optional: anything you leave out comes from the base theme.
+# Changes show up as soon as you save.
+
+name = "Example (Nord)"
+base = "dark"            # "dark", "light" or another theme's file name
+
+[colors]                 # "#rrggbb" or "#rrggbbaa" (with transparency)
+background = "#2e3440"   # file list
+surface = "#3b4252"      # toolbar and status bar
+foreground = "#eceff4"   # main text
+foreground-muted = "#9aa3b5"  # sizes and other secondary text
+border = "#434c5e"
+accent = "#88c0d0"       # focus ring
+accent-foreground = "#2e3440"
+selection = "#434c5e"
+selection-foreground = "#eceff4"
+hover = "#4c566a80"
+folder-icon = "#ebcb8b"
+file-icon = "#9aa3ad"
+danger = "#bf616a"       # warnings and destructive actions
+
+[metrics]
+# font-family = "Inter"  # leave out or "" for the system font
+font-size = 13           # 8-32
+row-height = 26          # 16-64
+icon-size = 16           # 12-48
+radius = 6               # 0-16
+spacing = 6              # 0-24

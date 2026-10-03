@@ -1,0 +1,14 @@
+# Gezik settings. This file is portable: copy it to another computer (Windows,
+# macOS or Linux) and it works the same. Changes apply as soon as you save.
+
+# "auto" follows the system light/dark mode. Or name a theme: "light", "dark",
+# or the file name of a theme in the themes folder (themes/nord.toml -> "nord").
+theme = "auto"
+theme-light = "light"
+theme-dark = "dark"
+
+[layout]
+# left | right | hidden
+sidebar = "left"
+# compact | comfortable
+density = "comfortable"
