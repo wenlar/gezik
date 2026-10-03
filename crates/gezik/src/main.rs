@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod context_menu;
+mod keys;
 mod navigation;
 mod places;
 mod sidebar;
@@ -15,8 +16,10 @@ use std::sync::{Arc, Mutex};
 
 use gezik_config::Warning;
 use gezik_config::settings::{Settings, SidebarPosition};
+use gezik_config::shortcuts::{Action, Chord, Key};
 use gezik_config::store::{self, ConfigFiles, ConfigStore, Loaded};
 use gezik_config::theme;
+use slint::Model;
 use start::StartPlan;
 
 slint::include_modules!();
@@ -39,7 +42,105 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
     });
     // Unchanged pins cost nothing (also after the reload that follows our own save).
     sidebar::with_current(|sidebar| sidebar.set_pinned(loaded.settings.pinned.clone()));
+    keys::set_shortcuts(loaded.settings.shortcuts.clone());
     loaded
+}
+
+/// Closes tab `index` once the current event is fully handled (the last tab closes the
+/// window). The tab is remembered by id, so a close that runs after other tab changes, or
+/// a second close of the same tab, never hits another tab.
+fn close_tab_later(nav: &navigation::Navigator, index: usize) {
+    if let Some(id) = nav.tab_id(index) {
+        let nav = nav.clone();
+        slint::Timer::single_shot(std::time::Duration::ZERO, move || nav.close_tab_by_id(id));
+    }
+}
+
+/// Handles a key press before the focused item sees it; returns whether it was used.
+/// Shortcuts work everywhere; with the address bar in typing mode, unmodified keys and
+/// the text editing shortcuts stay with the text box. The list keys (arrows, PgUp/PgDn,
+/// Home/End, Enter, type-ahead) are fixed and only act while the list has the focus.
+/// `chord` is the key as a shortcut (if it can be one); `has_modifier` is Ctrl, Alt or
+/// Meta (not Shift).
+fn handle_key(
+    window: &AppWindow,
+    nav: &navigation::Navigator,
+    type_ahead: &mut keys::TypeAhead,
+    text: &str,
+    chord: Option<Chord>,
+    has_modifier: bool,
+) -> bool {
+    let editing = window.get_path_editing();
+
+    if editing && let Some(chord) = &chord {
+        if chord.key == Key::Escape && !has_modifier {
+            window.invoke_focus_list();
+            window.set_path_editing(false);
+            return true;
+        }
+        let text_edit = (chord.ctrl || chord.meta) && matches!(chord.key, Key::Char('a' | 'c' | 'v' | 'x' | 'z' | 'y'));
+        if !has_modifier || text_edit {
+            return false;
+        }
+    }
+
+    if let Some(action) = chord.as_ref().and_then(keys::action_for) {
+        match action {
+            Action::NewTab => nav.open_tab(nav.start(), true),
+            Action::CloseTab => close_tab_later(nav, nav.with_tabs(|tabs| tabs.active_index())),
+            Action::NextTab => nav.next_tab(),
+            Action::PrevTab => nav.prev_tab(),
+            Action::Back => nav.back(),
+            Action::Forward => nav.forward(),
+            Action::Up => nav.up(),
+            Action::FocusPath => window.invoke_edit_path(),
+            Action::Refresh => nav.reload(),
+        }
+        // The typed text no longer fits once the location or tab changed.
+        if editing && action != Action::FocusPath {
+            window.invoke_focus_list();
+        }
+        return true;
+    }
+    if editing || has_modifier || !window.get_list_focused() {
+        return false;
+    }
+
+    // List navigation (fixed keys).
+    let count = i32::try_from(window.get_rows().row_count()).unwrap_or(i32::MAX);
+    let page = window.get_list_page_rows().max(1);
+    let selected = window.get_selected();
+    let target = match chord.map(|c| c.key) {
+        Some(Key::Down) => Some(selected.saturating_add(1)),
+        Some(Key::Up) => Some(selected.saturating_sub(1)),
+        Some(Key::PageDown) => Some(selected.saturating_add(page)),
+        Some(Key::PageUp) => Some(selected.saturating_sub(page)),
+        Some(Key::Home) => Some(0),
+        Some(Key::End) => Some(count - 1),
+        Some(Key::Enter) => {
+            if selected >= 0 {
+                nav.open_row(selected);
+            }
+            return true;
+        }
+        _ => {
+            let Some(c) = keys::typed_char(text) else { return false };
+            let rows = window.get_rows();
+            let found = type_ahead.type_char(c, std::time::Instant::now(), rows.iter().map(|row| row.name.to_string()));
+            // A typed character that matches nothing is still used up.
+            let Some(i) = found.and_then(|i| i32::try_from(i).ok()) else { return true };
+            Some(i)
+        }
+    };
+    match target {
+        Some(i) if count > 0 => {
+            let i = i.clamp(0, count - 1);
+            window.set_selected(i);
+            window.invoke_ensure_visible(i);
+            true
+        }
+        _ => false,
+    }
 }
 
 /// Like [`apply_config`], and also resolves where the app opens. Start warnings (bad
@@ -261,15 +362,12 @@ fn main() -> Result<(), slint::PlatformError> {
             }
         }
     });
-    // Closed once the click is fully handled (the last tab closes the window). The tab is
-    // remembered by id, so a close that runs after other tab changes, or a second close of
-    // the same tab, never hits another tab.
+    // Closed once the click is fully handled.
     window.on_tab_close({
         let nav = nav.clone();
         move |i| {
-            if let Some(id) = usize::try_from(i).ok().and_then(|i| nav.tab_id(i)) {
-                let nav = nav.clone();
-                slint::Timer::single_shot(std::time::Duration::ZERO, move || nav.close_tab_by_id(id));
+            if let Ok(i) = usize::try_from(i) {
+                close_tab_later(&nav, i);
             }
         }
     });
@@ -285,11 +383,44 @@ fn main() -> Result<(), slint::PlatformError> {
             }
         }
     });
-    window.on_row_middle_clicked(move |i| {
-        if let Some((path, true)) = nav.entry_path(i) {
-            nav.open_tab(gezik_core::nav::Location::Path(path), false);
+    window.on_row_middle_clicked({
+        let nav = nav.clone();
+        move |i| {
+            if let Some((path, true)) = nav.entry_path(i) {
+                nav.open_tab(gezik_core::nav::Location::Path(path), false);
+            }
         }
     });
+
+    window.on_key_event({
+        let (nav, weak) = (nav.clone(), window.as_weak());
+        let mut type_ahead = keys::TypeAhead::new();
+        move |event| {
+            let Some(window) = weak.upgrade() else { return false };
+            let m = event.modifiers;
+            let chord = keys::chord_from_event(&event.text, m.control, m.alt, m.shift, m.meta);
+            handle_key(&window, &nav, &mut type_ahead, &event.text, chord, m.control || m.alt || m.meta)
+        }
+    });
+
+    // Mouse back/forward side buttons, anywhere in the window. Slint passes them on to
+    // the items too, which ignore them.
+    {
+        use slint::winit_030::{EventResult, WinitWindowAccessor, winit};
+        window.window().on_winit_window_event(move |_, event| {
+            if let winit::event::WindowEvent::MouseInput {
+                state: winit::event::ElementState::Pressed, button, ..
+            } = event
+            {
+                match button {
+                    winit::event::MouseButton::Back => nav.back(),
+                    winit::event::MouseButton::Forward => nav.forward(),
+                    _ => {}
+                }
+            }
+            EventResult::Propagate
+        });
+    }
 
     window.run()
 }

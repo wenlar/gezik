@@ -92,6 +92,31 @@ export component AppWindow inherits Window {
     // Right-click on a row / on empty space in the file list, at a window position.
     callback row-menu(int, length, length);
     callback background-menu(length, length);
+    // Every key press, before the focused item sees it. Returns whether it was handled
+    // (shortcuts, list keys; see keys.rs and main.rs).
+    callback key-event(KeyEvent) -> bool;
+
+    // Whether the file list has keyboard focus (and not the address bar or a button).
+    out property <bool> list-focused: keys.has-focus;
+    // How many rows PgUp/PgDn move: one screen, less one row.
+    out property <int> list-page-rows: max(1, floor(list.visible-height / Theme.row-height) - 1);
+
+    init => { keys.focus(); }
+
+    // Gives the keyboard to the file list.
+    public function focus-list() {
+        keys.focus();
+    }
+
+    // Scrolls the list so row `index` is visible.
+    public function ensure-visible(index: int) {
+        if index < 0 { return; }
+        if index * Theme.row-height < -root.list-scroll {
+            root.list-scroll = -index * Theme.row-height;
+        } else if (index + 1) * Theme.row-height > -root.list-scroll + list.visible-height {
+            root.list-scroll = -((index + 1) * Theme.row-height - list.visible-height);
+        }
+    }
 
     // Switches the address bar to typing, with the whole path selected.
     public function edit-path() {
@@ -119,191 +144,210 @@ export component AppWindow inherits Window {
         }
     }
 
-    VerticalLayout {
-        TabBar {
-            tabs: root.tabs;
-            activate(i) => { root.tab-activate(i); }
-            close(i) => { root.tab-close(i); }
-            new-tab => { root.tab-new(); }
-            move-tab(from, to) => { root.tab-move(from, to); }
-            tab-menu(i, x, y) => { root.tab-menu(i, x, y); }
+    // Sees every key press first (capture), so shortcuts work wherever the focus is.
+    // Takes the focus only when asked (`focus-list`), never by itself on a click.
+    keys := FocusScope {
+        focus-on-click: false;
+        capture-key-pressed(event) => {
+            if root.key-event(event) { return accept; }
+            return reject;
         }
-        Rectangle {
-            background: Theme.surface;
-            HorizontalLayout {
-                padding: Theme.spacing;
-                spacing: Theme.spacing;
-                ToolButton {
-                    text: "←";
-                    enabled: root.can-go-back;
-                    clicked => { root.go-back(); }
-                }
-                ToolButton {
-                    text: "→";
-                    enabled: root.can-go-forward;
-                    clicked => { root.go-forward(); }
-                }
-                ToolButton {
-                    text: "↑";
-                    enabled: root.can-go-up;
-                    clicked => { root.go-up(); }
-                }
-                ToolButton {
-                    text: "Refresh";
-                    // A circular arrow.
-                    icon: "M 13.5 8 A 5.5 5.5 0 1 1 11.9 4.1 M 12.2 1.2 L 12.2 4.4 L 9 4.4";
-                    clicked => { root.refresh(); }
-                }
-                address := Breadcrumb {
-                    crumbs: root.crumbs;
-                    path-text: root.current-path;
-                    editing <=> root.path-editing;
-                    crumb-clicked(i) => { root.crumb-clicked(i); }
-                    accepted(path) => { root.navigate(path); }
-                }
-            }
-        }
-        Rectangle { height: 1px; background: Theme.border; }
 
-        HorizontalLayout {
-            if root.sidebar-position == 0: Sidebar {
-                width: root.sidebar-width;
-                rows: root.sidebar-rows;
-                pinned-first-row: root.sidebar-pinned-first-row;
-                pinned-count: root.sidebar-pinned-count;
-                clicked(s, i) => { root.sidebar-clicked(s, i); }
-                middle-clicked(s, i) => { root.sidebar-middle-clicked(s, i); }
-                menu(s, i, x, y) => { root.sidebar-menu(s, i, x, y); }
-                pinned-move(a, b) => { root.pinned-move(a, b); }
-            }
-            // A 1px line, grabbable over 5px.
-            if root.sidebar-position == 0: Rectangle {
-                width: 5px;
-                accessible-role: none;
-                Rectangle {
-                    x: (parent.width - self.width) / 2;
-                    width: 1px;
-                    background: splitter-left.has-hover || splitter-left.pressed ? Theme.accent : Theme.border;
-                }
-                splitter-left := TouchArea {
-                    mouse-cursor: col-resize;
-                    moved => { root.sidebar-width = clamp(root.sidebar-width + (self.mouse-x - self.pressed-x), 120px, 480px); }
-                    changed pressed => { if !self.pressed { root.sidebar-resized(); } }
-                }
+        VerticalLayout {
+            TabBar {
+                tabs: root.tabs;
+                activate(i) => { root.tab-activate(i); }
+                close(i) => { root.tab-close(i); }
+                new-tab => { root.tab-new(); }
+                move-tab(from, to) => { root.tab-move(from, to); }
+                tab-menu(i, x, y) => { root.tab-menu(i, x, y); }
             }
             Rectangle {
-                horizontal-stretch: 1;
-                // Behind the rows: catches clicks on empty space (the list passes
-                // right-clicks through).
-                TouchArea {
-                    clicked => { root.selected = -1; }
-                    pointer-event(event) => {
-                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {
-                            root.selected = -1;
-                            root.background-menu(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
-                        }
+                background: Theme.surface;
+                HorizontalLayout {
+                    padding: Theme.spacing;
+                    spacing: Theme.spacing;
+                    ToolButton {
+                        text: "←";
+                        enabled: root.can-go-back;
+                        clicked => { root.go-back(); }
                     }
-                }
-                // ListView only instantiates the rows that are visible, so huge folders stay cheap.
-                ListView {
-                    content-y <=> root.list-scroll;
-                    for row[i] in root.rows: Rectangle {
-                        height: Theme.row-height;
-                        background: i == root.selected ? Theme.selection : touch.has-hover ? Theme.hover : transparent;
-
-                        touch := TouchArea {
-                            clicked => { root.selected = i; }
-                            double-clicked => { root.open-row(i); }
-                            pointer-event(event) => {
-                                if event.kind == PointerEventKind.up && event.button == PointerEventButton.middle {
-                                    root.row-middle-clicked(i);
-                                }
-                                // The right-clicked row is selected first.
-                                if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {
-                                    root.selected = i;
-                                    root.row-menu(i, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
-                                }
-                            }
-                        }
-
-                        HorizontalLayout {
-                            padding-left: Theme.spacing + 4px;
-                            padding-right: Theme.spacing + 4px;
-                            spacing: Theme.spacing + 2px;
-                            VerticalLayout {
-                                alignment: center;
-                                Rectangle {
-                                    width: Theme.icon-size * 0.75;
-                                    height: self.width;
-                                    border-radius: 2px;
-                                    background: row.is-dir ? Theme.folder-icon : Theme.file-icon;
-                                }
-                            }
-                            Text {
-                                text: row.name;
-                                vertical-alignment: center;
-                                horizontal-stretch: 1;
-                                overflow: elide;
-                                color: i == root.selected ? Theme.selection-foreground : Theme.foreground;
-                            }
-                            Text {
-                                text: row.size;
-                                width: 90px;
-                                horizontal-alignment: right;
-                                vertical-alignment: center;
-                                color: i == root.selected ? Theme.selection-foreground : Theme.foreground-muted;
-                            }
+                    ToolButton {
+                        text: "→";
+                        enabled: root.can-go-forward;
+                        clicked => { root.go-forward(); }
+                    }
+                    ToolButton {
+                        text: "↑";
+                        enabled: root.can-go-up;
+                        clicked => { root.go-up(); }
+                    }
+                    ToolButton {
+                        text: "Refresh";
+                        // A circular arrow.
+                        icon: "M 13.5 8 A 5.5 5.5 0 1 1 11.9 4.1 M 12.2 1.2 L 12.2 4.4 L 9 4.4";
+                        clicked => { root.refresh(); }
+                    }
+                    address := Breadcrumb {
+                        crumbs: root.crumbs;
+                        path-text: root.current-path;
+                        editing <=> root.path-editing;
+                        crumb-clicked(i) => { root.crumb-clicked(i); }
+                        accepted(path) => {
+                            keys.focus();
+                            root.navigate(path);
                         }
                     }
                 }
             }
-            // A 1px line, grabbable over 5px.
-            if root.sidebar-position == 1: Rectangle {
-                width: 5px;
-                accessible-role: none;
-                Rectangle {
-                    x: (parent.width - self.width) / 2;
-                    width: 1px;
-                    background: splitter-right.has-hover || splitter-right.pressed ? Theme.accent : Theme.border;
-                }
-                splitter-right := TouchArea {
-                    mouse-cursor: col-resize;
-                    moved => { root.sidebar-width = clamp(root.sidebar-width - (self.mouse-x - self.pressed-x), 120px, 480px); }
-                    changed pressed => { if !self.pressed { root.sidebar-resized(); } }
-                }
-            }
-            if root.sidebar-position == 1: Sidebar {
-                width: root.sidebar-width;
-                rows: root.sidebar-rows;
-                pinned-first-row: root.sidebar-pinned-first-row;
-                pinned-count: root.sidebar-pinned-count;
-                clicked(s, i) => { root.sidebar-clicked(s, i); }
-                middle-clicked(s, i) => { root.sidebar-middle-clicked(s, i); }
-                menu(s, i, x, y) => { root.sidebar-menu(s, i, x, y); }
-                pinned-move(a, b) => { root.pinned-move(a, b); }
-            }
-        }
+            Rectangle { height: 1px; background: Theme.border; }
 
-        Rectangle { height: 1px; background: Theme.border; }
-        Rectangle {
-            height: Theme.row-height;
-            background: Theme.surface;
             HorizontalLayout {
-                padding-left: Theme.spacing + 4px;
-                padding-right: Theme.spacing + 4px;
-                spacing: Theme.spacing * 2;
-                Text {
-                    text: root.status;
-                    vertical-alignment: center;
-                    color: Theme.foreground-muted;
+                if root.sidebar-position == 0: Sidebar {
+                    width: root.sidebar-width;
+                    rows: root.sidebar-rows;
+                    pinned-first-row: root.sidebar-pinned-first-row;
+                    pinned-count: root.sidebar-pinned-count;
+                    clicked(s, i) => { root.sidebar-clicked(s, i); }
+                    middle-clicked(s, i) => { root.sidebar-middle-clicked(s, i); }
+                    menu(s, i, x, y) => { root.sidebar-menu(s, i, x, y); }
+                    pinned-move(a, b) => { root.pinned-move(a, b); }
                 }
-                Text {
-                    text: root.notice;
+                // A 1px line, grabbable over 5px.
+                if root.sidebar-position == 0: Rectangle {
+                    width: 5px;
+                    accessible-role: none;
+                    Rectangle {
+                        x: (parent.width - self.width) / 2;
+                        width: 1px;
+                        background: splitter-left.has-hover || splitter-left.pressed ? Theme.accent : Theme.border;
+                    }
+                    splitter-left := TouchArea {
+                        mouse-cursor: col-resize;
+                        moved => { root.sidebar-width = clamp(root.sidebar-width + (self.mouse-x - self.pressed-x), 120px, 480px); }
+                        changed pressed => { if !self.pressed { root.sidebar-resized(); } }
+                    }
+                }
+                Rectangle {
                     horizontal-stretch: 1;
-                    horizontal-alignment: right;
-                    vertical-alignment: center;
-                    overflow: elide;
-                    color: Theme.danger;
+                    // Behind the rows: catches clicks on empty space (the list passes
+                    // right-clicks through).
+                    TouchArea {
+                        clicked => {
+                            root.selected = -1;
+                            keys.focus();
+                        }
+                        pointer-event(event) => {
+                            if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {
+                                root.selected = -1;
+                                root.background-menu(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                            }
+                        }
+                    }
+                    // ListView only instantiates the rows that are visible, so huge folders stay cheap.
+                    list := ListView {
+                        content-y <=> root.list-scroll;
+                        for row[i] in root.rows: Rectangle {
+                            height: Theme.row-height;
+                            background: i == root.selected ? Theme.selection : touch.has-hover ? Theme.hover : transparent;
+
+                            touch := TouchArea {
+                                clicked => {
+                                    root.selected = i;
+                                    keys.focus();
+                                }
+                                double-clicked => { root.open-row(i); }
+                                pointer-event(event) => {
+                                    if event.kind == PointerEventKind.up && event.button == PointerEventButton.middle {
+                                        root.row-middle-clicked(i);
+                                    }
+                                    // The right-clicked row is selected first.
+                                    if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {
+                                        root.selected = i;
+                                        root.row-menu(i, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                                    }
+                                }
+                            }
+
+                            HorizontalLayout {
+                                padding-left: Theme.spacing + 4px;
+                                padding-right: Theme.spacing + 4px;
+                                spacing: Theme.spacing + 2px;
+                                VerticalLayout {
+                                    alignment: center;
+                                    Rectangle {
+                                        width: Theme.icon-size * 0.75;
+                                        height: self.width;
+                                        border-radius: 2px;
+                                        background: row.is-dir ? Theme.folder-icon : Theme.file-icon;
+                                    }
+                                }
+                                Text {
+                                    text: row.name;
+                                    vertical-alignment: center;
+                                    horizontal-stretch: 1;
+                                    overflow: elide;
+                                    color: i == root.selected ? Theme.selection-foreground : Theme.foreground;
+                                }
+                                Text {
+                                    text: row.size;
+                                    width: 90px;
+                                    horizontal-alignment: right;
+                                    vertical-alignment: center;
+                                    color: i == root.selected ? Theme.selection-foreground : Theme.foreground-muted;
+                                }
+                            }
+                        }
+                    }
+                }
+                // A 1px line, grabbable over 5px.
+                if root.sidebar-position == 1: Rectangle {
+                    width: 5px;
+                    accessible-role: none;
+                    Rectangle {
+                        x: (parent.width - self.width) / 2;
+                        width: 1px;
+                        background: splitter-right.has-hover || splitter-right.pressed ? Theme.accent : Theme.border;
+                    }
+                    splitter-right := TouchArea {
+                        mouse-cursor: col-resize;
+                        moved => { root.sidebar-width = clamp(root.sidebar-width - (self.mouse-x - self.pressed-x), 120px, 480px); }
+                        changed pressed => { if !self.pressed { root.sidebar-resized(); } }
+                    }
+                }
+                if root.sidebar-position == 1: Sidebar {
+                    width: root.sidebar-width;
+                    rows: root.sidebar-rows;
+                    pinned-first-row: root.sidebar-pinned-first-row;
+                    pinned-count: root.sidebar-pinned-count;
+                    clicked(s, i) => { root.sidebar-clicked(s, i); }
+                    middle-clicked(s, i) => { root.sidebar-middle-clicked(s, i); }
+                    menu(s, i, x, y) => { root.sidebar-menu(s, i, x, y); }
+                    pinned-move(a, b) => { root.pinned-move(a, b); }
+                }
+            }
+
+            Rectangle { height: 1px; background: Theme.border; }
+            Rectangle {
+                height: Theme.row-height;
+                background: Theme.surface;
+                HorizontalLayout {
+                    padding-left: Theme.spacing + 4px;
+                    padding-right: Theme.spacing + 4px;
+                    spacing: Theme.spacing * 2;
+                    Text {
+                        text: root.status;
+                        vertical-alignment: center;
+                        color: Theme.foreground-muted;
+                    }
+                    Text {
+                        text: root.notice;
+                        horizontal-stretch: 1;
+                        horizontal-alignment: right;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        color: Theme.danger;
+                    }
                 }
             }
         }

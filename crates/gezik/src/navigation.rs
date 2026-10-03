@@ -269,7 +269,6 @@ impl Navigator {
         }
     }
 
-    #[allow(dead_code)] // Used by the shortcuts (Task 11).
     pub fn next_tab(&self) {
         if self.0.borrow().tabs.len() > 1 {
             self.with_tabs(Tabs::next);
@@ -277,7 +276,6 @@ impl Navigator {
         }
     }
 
-    #[allow(dead_code)] // Used by the shortcuts (Task 11).
     pub fn prev_tab(&self) {
         if self.0.borrow().tabs.len() > 1 {
             self.with_tabs(Tabs::prev);
