@@ -6,6 +6,7 @@ edition.workspace = true
 
 [dependencies]
 gezik-core.workspace = true
+gezik-config.workspace = true
 # Software renderer only: no GPU or OpenGL driver needed, and it measured far lower
 # memory than FemtoVG (5 MB vs 35 MB idle) at the same scrolling CPU cost.
 slint = { version = "1.18", default-features = false, features = [

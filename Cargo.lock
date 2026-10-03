@@ -1429,6 +1429,7 @@ dependencies = [
 name = "gezik"
 version = "0.1.0"
 dependencies = [
+ "gezik-config",
  "gezik-core",
  "open",
  "slint",

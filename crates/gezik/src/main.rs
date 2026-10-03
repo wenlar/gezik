@@ -1,10 +1,15 @@
 // Hide the console window in release builds on Windows.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod theme_bridge;
+
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use gezik_config::Warning;
+use gezik_config::store::{self, ConfigFiles, ConfigStore};
+use gezik_config::theme;
 use gezik_core::{Entry, format_size, list_dir};
 use slint::{Model, ModelNotify, ModelRc, ModelTracker};
 
@@ -110,8 +115,40 @@ fn home_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/"))
 }
 
+/// Resolves settings + theme from `files` and shows them. No I/O, so it runs on the UI
+/// thread at startup, after config files change and when the system theme flips.
+fn apply_config(window: &AppWindow, files: &ConfigFiles) {
+    let loaded = store::resolve(files, window.get_system_dark());
+    if let Some(theme) = &loaded.theme {
+        theme_bridge::apply(window, theme);
+    }
+    for warning in &loaded.warnings {
+        eprintln!("gezik: {warning}");
+    }
+    window.set_notice(notice_text(&loaded.warnings).into());
+}
+
+/// The first warning, plus how many more there are.
+fn notice_text(warnings: &[Warning]) -> String {
+    match warnings {
+        [] => String::new(),
+        [only] => only.to_string(),
+        [first, rest @ ..] => format!("{first} (+{} more)", rest.len()),
+    }
+}
+
 fn main() -> Result<(), slint::PlatformError> {
     let window = AppWindow::new()?;
+
+    let config = ConfigStore::system();
+    let init_error = config.as_ref().and_then(|store| store.ensure_initialized().err().map(|e| (store, e)));
+    let mut files = config.as_ref().map(ConfigStore::read_files).unwrap_or_default();
+    if let Some((store, err)) = init_error {
+        files.warnings.push(Warning::new(store.dir().display().to_string(), format!("cannot create config folder: {err}")));
+    }
+    // Something sensible is on screen even if the selected theme cannot be read.
+    theme_bridge::apply(&window, &theme::builtin_dark());
+    apply_config(&window, &files);
     let ctx = Ctx {
         window: window.as_weak(),
         nav: Arc::default(),

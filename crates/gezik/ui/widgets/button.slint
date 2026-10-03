@@ -1,0 +1,30 @@
+import { Theme } from "../theme.slint";
+
+// A square toolbar button. Replaces the std-widgets Button, whose colors cannot be themed.
+export component ToolButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    callback clicked();
+
+    height: Theme.row-height + 4px;
+    width: self.height;
+    border-radius: Theme.radius;
+    background: touch.has-hover && root.enabled ? Theme.hover : transparent;
+
+    Text {
+        width: parent.width;
+        height: parent.height;
+        text: root.text;
+        color: Theme.foreground;
+        opacity: root.enabled ? 1 : 0.35;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    touch := TouchArea {
+        width: parent.width;
+        height: parent.height;
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+}

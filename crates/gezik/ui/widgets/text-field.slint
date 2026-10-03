@@ -1,0 +1,27 @@
+import { Theme } from "../theme.slint";
+
+// A single-line text box. Replaces the std-widgets LineEdit, whose colors cannot be themed.
+export component TextField inherits Rectangle {
+    in-out property <string> text;
+    callback accepted(string);
+
+    height: Theme.row-height + 4px;
+    horizontal-stretch: 1;
+    border-radius: Theme.radius;
+    border-width: 1px;
+    border-color: input.has-focus ? Theme.accent : Theme.border;
+    background: Theme.background;
+
+    input := TextInput {
+        x: Theme.spacing + 2px;
+        width: parent.width - 2 * (Theme.spacing + 2px);
+        height: parent.height;
+        vertical-alignment: center;
+        single-line: true;
+        text <=> root.text;
+        color: Theme.foreground;
+        selection-background-color: Theme.selection;
+        selection-foreground-color: Theme.selection-foreground;
+        accepted => { root.accepted(self.text); }
+    }
+}

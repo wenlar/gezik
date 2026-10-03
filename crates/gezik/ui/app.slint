@@ -1,4 +1,10 @@
-import { Button, LineEdit, ListView, Palette } from "std-widgets.slint";
+import { ListView, Palette } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { ToolButton } from "widgets/button.slint";
+import { TextField } from "widgets/text-field.slint";
+
+// Re-exported so Rust can set it with `window.global::<Theme>()`.
+export { Theme }
 
 export struct FileRow {
     name: string,
@@ -10,60 +16,74 @@ export component AppWindow inherits Window {
     title: "Gezik";
     preferred-width: 900px;
     preferred-height: 600px;
-    background: Palette.background;
+    background: Theme.background;
+    default-font-family: Theme.font-family;
+    default-font-size: Theme.font-size;
 
     in property <[FileRow]> rows;
     in-out property <string> current-path;
     in property <string> status;
+    // Settings/theme problems, shown on the right of the status bar.
+    in property <string> notice;
     in property <bool> can-go-back;
     in-out property <int> selected: -1;
+
+    // Follows the OS light/dark mode (Palette is left to the system on purpose; see
+    // theme_bridge.rs). Rust re-resolves the theme when it flips.
+    out property <bool> system-dark: Palette.color-scheme == ColorScheme.dark;
+    changed system-dark => { root.system-scheme-changed(); }
 
     callback open-row(int);
     callback go-back();
     callback go-up();
     callback navigate(string);
+    callback system-scheme-changed();
 
     VerticalLayout {
-        HorizontalLayout {
-            padding: 6px;
-            spacing: 6px;
-            Button {
-                text: "←";
-                enabled: root.can-go-back;
-                clicked => { root.go-back(); }
-            }
-            Button {
-                text: "↑";
-                clicked => { root.go-up(); }
-            }
-            LineEdit {
-                text <=> root.current-path;
-                accepted(path) => { root.navigate(path); }
+        Rectangle {
+            background: Theme.surface;
+            HorizontalLayout {
+                padding: Theme.spacing;
+                spacing: Theme.spacing;
+                ToolButton {
+                    text: "←";
+                    enabled: root.can-go-back;
+                    clicked => { root.go-back(); }
+                }
+                ToolButton {
+                    text: "↑";
+                    clicked => { root.go-up(); }
+                }
+                TextField {
+                    text <=> root.current-path;
+                    accepted(path) => { root.navigate(path); }
+                }
             }
         }
+        Rectangle { height: 1px; background: Theme.border; }
 
         // ListView only instantiates the rows that are visible, so huge folders stay cheap.
         ListView {
             for row[i] in root.rows: Rectangle {
-                height: 26px;
-                background: i == root.selected ? Palette.selection-background : transparent;
+                height: Theme.row-height;
+                background: i == root.selected ? Theme.selection : touch.has-hover ? Theme.hover : transparent;
 
-                TouchArea {
+                touch := TouchArea {
                     clicked => { root.selected = i; }
                     double-clicked => { root.open-row(i); }
                 }
 
                 HorizontalLayout {
-                    padding-left: 10px;
-                    padding-right: 10px;
-                    spacing: 8px;
+                    padding-left: Theme.spacing + 4px;
+                    padding-right: Theme.spacing + 4px;
+                    spacing: Theme.spacing + 2px;
                     VerticalLayout {
                         alignment: center;
                         Rectangle {
-                            width: 12px;
-                            height: 12px;
+                            width: Theme.icon-size * 0.75;
+                            height: self.width;
                             border-radius: 2px;
-                            background: row.is-dir ? #e8b33f : #9aa3ad;
+                            background: row.is-dir ? Theme.folder-icon : Theme.file-icon;
                         }
                     }
                     Text {
@@ -71,27 +91,40 @@ export component AppWindow inherits Window {
                         vertical-alignment: center;
                         horizontal-stretch: 1;
                         overflow: elide;
-                        color: i == root.selected ? Palette.selection-foreground : Palette.foreground;
+                        color: i == root.selected ? Theme.selection-foreground : Theme.foreground;
                     }
                     Text {
                         text: row.size;
                         width: 90px;
                         horizontal-alignment: right;
                         vertical-alignment: center;
-                        color: i == root.selected ? Palette.selection-foreground : Palette.foreground;
-                        opacity: 0.6;
+                        color: i == root.selected ? Theme.selection-foreground : Theme.foreground-muted;
                     }
                 }
             }
         }
 
-        HorizontalLayout {
-            padding-left: 10px;
-            height: 24px;
-            Text {
-                text: root.status;
-                vertical-alignment: center;
-                opacity: 0.7;
+        Rectangle { height: 1px; background: Theme.border; }
+        Rectangle {
+            height: Theme.row-height;
+            background: Theme.surface;
+            HorizontalLayout {
+                padding-left: Theme.spacing + 4px;
+                padding-right: Theme.spacing + 4px;
+                spacing: Theme.spacing * 2;
+                Text {
+                    text: root.status;
+                    vertical-alignment: center;
+                    color: Theme.foreground-muted;
+                }
+                Text {
+                    text: root.notice;
+                    horizontal-stretch: 1;
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    color: Theme.danger;
+                }
             }
         }
     }
