@@ -3,6 +3,7 @@
 
 mod theme_bridge;
 mod watcher;
+mod window_state;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -138,6 +139,17 @@ fn notice_text(warnings: &[Warning]) -> String {
     }
 }
 
+/// The native window only exists once the event loop runs (not yet on the first tick),
+/// so retry shortly until it does, then move it on screen if needed.
+fn keep_on_screen(window: slint::Weak<AppWindow>, attempt: u32) {
+    slint::Timer::single_shot(std::time::Duration::from_millis(10), move || {
+        let Some(strong) = window.upgrade() else { return };
+        if !window_state::ensure_visible(&strong) && attempt < 200 {
+            keep_on_screen(window, attempt + 1);
+        }
+    });
+}
+
 fn main() -> Result<(), slint::PlatformError> {
     let window = AppWindow::new()?;
 
@@ -180,6 +192,22 @@ fn main() -> Result<(), slint::PlatformError> {
         })
         .map_err(|err| eprintln!("gezik: cannot watch {}: {err}", store.dir().display()))
         .ok()
+    });
+    if let Some(store) = &config {
+        window_state::restore(&window, &store.load_state());
+    }
+    keep_on_screen(window.as_weak(), 0);
+    window.window().on_close_requested({
+        let weak = window.as_weak();
+        let store = config.clone();
+        move || {
+            if let (Some(window), Some(store)) = (weak.upgrade(), &store)
+                && let Err(err) = store.save_state(&window_state::capture(&window))
+            {
+                eprintln!("gezik: cannot save window state: {err}");
+            }
+            slint::CloseRequestResponse::HideWindow
+        }
     });
     let ctx = Ctx {
         window: window.as_weak(),
