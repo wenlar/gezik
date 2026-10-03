@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod theme_bridge;
+mod watcher;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -149,6 +150,37 @@ fn main() -> Result<(), slint::PlatformError> {
     // Something sensible is on screen even if the selected theme cannot be read.
     theme_bridge::apply(&window, &theme::builtin_dark());
     apply_config(&window, &files);
+
+    // The latest config files, so a system light/dark switch can re-resolve without I/O.
+    let files = Arc::new(Mutex::new(files));
+
+    window.on_system_scheme_changed({
+        let weak = window.as_weak();
+        let files = files.clone();
+        move || {
+            if let Some(window) = weak.upgrade() {
+                apply_config(&window, &files.lock().unwrap());
+            }
+        }
+    });
+
+    // Reading happens on the watcher thread; resolving and applying on the UI thread.
+    let _watcher = config.as_ref().and_then(|store| {
+        let reader = store.clone();
+        let weak = window.as_weak();
+        let files = files.clone();
+        watcher::watch_config(store, move || {
+            let fresh = reader.read_files();
+            let files = files.clone();
+            let _ = weak.upgrade_in_event_loop(move |window| {
+                let mut current = files.lock().unwrap();
+                *current = fresh;
+                apply_config(&window, &current);
+            });
+        })
+        .map_err(|err| eprintln!("gezik: cannot watch {}: {err}", store.dir().display()))
+        .ok()
+    });
     let ctx = Ctx {
         window: window.as_weak(),
         nav: Arc::default(),
