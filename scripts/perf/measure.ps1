@@ -2,12 +2,13 @@
 # Usage: scripts/perf/measure.ps1 [-Runs 3]
 param([string]$Exe = "$PSScriptRoot\..\..\target\release\gezik.exe", [int]$Runs = 3)
 
+. "$PSScriptRoot\_window.ps1"
 Get-Process gezik -ErrorAction SilentlyContinue | Stop-Process
 $open = @(); $mem = @()
 for ($i = 0; $i -lt $Runs; $i++) {
     $sw = [Diagnostics.Stopwatch]::StartNew()
     $p = Start-Process $Exe -PassThru
-    while ($p.MainWindowHandle -eq 0 -and $sw.ElapsedMilliseconds -lt 10000) { Start-Sleep -Milliseconds 5; $p.Refresh() }
+    if ((Find-GezikWindow $p.Id 10000) -eq [IntPtr]::Zero) { Write-Warning "no window after 10 s" }
     $open += $sw.ElapsedMilliseconds
     Start-Sleep -Seconds 3
     # Task Manager's "Memory" column is the private working set.

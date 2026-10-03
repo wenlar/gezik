@@ -31,10 +31,28 @@ Set the `GEZIK_CONFIG_DIR` environment variable to use another folder.
 - `settings.toml` — your preferences. Portable: copy it to another computer, on any OS.
 - `themes/*.toml` — your themes. `themes/example.toml` is a commented starting point.
 - `state.toml` — window size and position on this machine. Not meant to be copied.
+- `start-folder` — where new tabs open: `"{home}"`, `"drives"` (This PC) or any folder.
+- `pinned` — folders pinned to the sidebar. Gezik updates this list when you pin,
+  unpin or reorder; the rest of the file, including your comments, is kept.
 
 Changes apply as soon as you save; no restart needed. Problems (a typo, an invalid
 color) show up in the status bar with the file and line, and never stop Gezik from
 starting.
+
+### Keyboard shortcuts
+
+| Action | Windows / Linux | macOS |
+|---|---|---|
+| New tab / close tab | Ctrl+T / Ctrl+W | ⌘T / ⌘W |
+| Next / previous tab | Ctrl+Tab / Ctrl+Shift+Tab | same |
+| Back / forward | Alt+← / Alt+→ (or mouse side buttons) | ⌘[ / ⌘] |
+| Parent folder | Alt+↑ | ⌘↑ |
+| Type a path | Ctrl+L | ⌘L |
+| Refresh | F5 | ⌘R |
+
+Change them in `settings.toml` under `[shortcuts]` (`"mod"` is ⌘ on macOS and Ctrl
+elsewhere, `""` disables one). In the file list: arrow keys, PgUp/PgDn, Home/End and Enter;
+type a name's first letters to jump to it.
 
 ### Writing a theme
 
@@ -56,6 +74,7 @@ See `themes/example.toml` for every color and size you can set.
 ```powershell
 scripts/perf/measure.ps1   # startup time and idle memory
 scripts/perf/stress.ps1    # 100,000-file folder: memory and scrolling CPU
+scripts/perf/tabs.ps1      # memory with 1 vs 20 tabs
 ```
 
 ## Build

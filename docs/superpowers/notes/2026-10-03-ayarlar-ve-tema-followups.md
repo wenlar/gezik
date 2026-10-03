@@ -10,7 +10,7 @@ Alt proje 1 tamamlandıktan sonra bilerek ertelenen maddeler. Kaynak: görev inc
 
 ## Alt proje 2 (Gezinme) başlarken
 
-- `KnownDirs::expand` `..` parçalarını kabul ediyor; sabitlenen klasörlerde kullanılmadan önce reddedilmeli.
+- `KnownDirs::expand` `..` parçalarını kabul ediyor; sabitlenen klasörlerde kullanılmadan önce reddedilmeli. **Gezinme'de kapatıldı.**
 - `collapse` Windows'ta büyük/küçük harfe duyarlı; `\\?\` önekli yollar `\` ile kalıyor.
 
 ## Düşük öncelikli
@@ -25,3 +25,17 @@ Alt proje 1 tamamlandıktan sonra bilerek ertelenen maddeler. Kaynak: görev inc
 - `ToolButton`, `TextField` dışındaki bazı ölçüler (90px, 1px, 0.35) temadan gelmiyor.
 - Performans betikleri çalışan tüm `gezik` süreçlerini kapatıyor; `stress.ps1`'de try/finally yok; README betikler için `GEZIK_CONFIG_DIR` önermiyor.
 - Test boşlukları: `notice_text`, `config_dir` ortam değişkeni, izleyici biriktirme mantığı (döngü `Receiver` alan bir fonksiyona çıkarılırsa test edilebilir).
+
+## Gezinme sonrası
+
+- Üçüncü parti Shell menü eklentileri Gezik'in sürecinde çalışır; hatalı bir eklenti Gezik'i çökertebilir. Ayrı süreçte izolasyon değerlendirilecek.
+- macOS "Hizmetler" alt menüsü yok.
+- Adres çubuğu kısaltması parça sayısına göre (genişliğe göre değil).
+- Klasör içeriği canlı izlenmiyor; Shell komutlarından sonra elle yenileniyor.
+- Windows'ta arka plan Shell menüsünde Yeni/Yapıştır/Yenile/Özellikler yok; bunları Explorer'ın görünümü sağlıyor. Gezik'in kendi sürümleri alt proje 4'te gelecek.
+- Sekmeler ve kenar çubuğu ayırıcısı klavye ile odaklanamıyor.
+- Listede odak göstergesi yok.
+- Explorer menüsü açıkken boşta CPU döngüsü olabilir; doğrulanacak.
+- Bazı ölçüler hâlâ px sabiti.
+- Pencere başına yalnızca bir winit pencere-olayı kancası kurulabiliyor.
+- Performans betikleri pencereyi başlığa göre değil süreç kimliğine göre buluyor (başlık artık "<yer> — Gezik"); `tabs.ps1` sekmeleri PostMessage ile açıyor, Gezik değiştirici tuş durumunu klavyeden okuyorsa `-Method SendKeys` gerekir. Gezinme performans ölçümleri (measure/stress/tabs) henüz yapılmadı.

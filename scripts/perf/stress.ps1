@@ -15,7 +15,6 @@ if (-not (Test-Path $Dir) -or (Get-ChildItem $Dir).Count -ne $Files) {
 Add-Type @"
 using System; using System.Runtime.InteropServices;
 public class GezikStress {
-  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string c, string t);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out R r);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
   [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
@@ -31,7 +30,9 @@ function Mem($id) { (Get-CimInstance Win32_PerfFormattedData_PerfProc_Process -F
 $p = Start-Process $Exe -ArgumentList "`"$Dir`"" -PassThru
 Start-Sleep -Seconds 5
 $loaded = Mem $p.Id
-$h = [GezikStress]::FindWindow([NullString]::Value, "Gezik")
+. "$PSScriptRoot\_window.ps1"
+$h = Find-GezikWindow $p.Id 10000
+if ($h -eq [IntPtr]::Zero) { Stop-Process -Id $p.Id; throw "Gezik window not found" }
 [GezikStress]::SetForegroundWindow($h) | Out-Null
 $r = New-Object GezikStress+R; [GezikStress]::GetWindowRect($h, [ref]$r) | Out-Null
 [GezikStress]::SetCursorPos([int](($r.L + $r.Rt) / 2), [int](($r.T + $r.B) / 2)) | Out-Null
