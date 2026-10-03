@@ -201,7 +201,10 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = window.as_weak();
         let store = config.clone();
         move || {
+            // A minimized or maximized window has no meaningful normal rect: keep the old state.
             if let (Some(window), Some(store)) = (weak.upgrade(), &store)
+                && !window.window().is_minimized()
+                && !window.window().is_maximized()
                 && let Err(err) = store.save_state(&window_state::capture(&window))
             {
                 eprintln!("gezik: cannot save window state: {err}");
