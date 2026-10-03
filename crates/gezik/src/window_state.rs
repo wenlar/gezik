@@ -53,5 +53,6 @@ pub fn capture(window: &AppWindow) -> State {
             x: Some(position.x),
             y: Some(position.y),
         }),
+        sidebar_width: None,
     }
 }

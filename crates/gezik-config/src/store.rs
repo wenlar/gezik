@@ -283,7 +283,10 @@ mod tests {
     fn state_round_trips_through_disk() {
         let store = store("state");
         assert_eq!(store.load_state(), State::default());
-        let state = State { window: Some(WindowState { width: 1000, height: 700, x: Some(10), y: Some(20) }) };
+        let state = State {
+            window: Some(WindowState { width: 1000, height: 700, x: Some(10), y: Some(20) }),
+            sidebar_width: None,
+        };
         store.save_state(&state).unwrap();
         assert_eq!(store.load_state(), state);
         let names: Vec<_> = std::fs::read_dir(store.dir()).unwrap().map(|e| e.unwrap().file_name()).collect();

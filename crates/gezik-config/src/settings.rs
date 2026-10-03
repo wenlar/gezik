@@ -1,6 +1,7 @@
 //! `settings.toml` (portable, may be synced) and `state.toml` (this machine only).
 
 use crate::Warning;
+use crate::shortcuts::{Platform, Shortcuts};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ThemeChoice {
@@ -29,6 +30,11 @@ pub struct Settings {
     pub theme_dark: String,
     pub sidebar: SidebarPosition,
     pub density: Density,
+    /// `"drives"`, or a path (with `{home}`-style tokens) to open new tabs in.
+    pub start_folder: String,
+    /// Pinned folders as written (tokenized, `/` separators), in display order.
+    pub pinned: Vec<String>,
+    pub shortcuts: Shortcuts,
 }
 
 impl Default for Settings {
@@ -39,6 +45,9 @@ impl Default for Settings {
             theme_dark: "dark".to_owned(),
             sidebar: SidebarPosition::Left,
             density: Density::Comfortable,
+            start_folder: "{home}".to_owned(),
+            pinned: Vec::new(),
+            shortcuts: Shortcuts::default(),
         }
     }
 }
@@ -75,27 +84,66 @@ impl Settings {
             settings.theme_dark = theme;
         }
 
-        let Some(layout) = table.get("layout").and_then(|v| v.as_table()) else { return settings };
-        let sidebar = text_value(layout, "sidebar", "layout.sidebar");
-        let density = text_value(layout, "density", "layout.density");
-        match sidebar.as_deref() {
-            None => {}
-            Some("left") => settings.sidebar = SidebarPosition::Left,
-            Some("right") => settings.sidebar = SidebarPosition::Right,
-            Some("hidden") => settings.sidebar = SidebarPosition::Hidden,
-            Some(other) => warnings.push(Warning::new(
-                file,
-                format!("layout.sidebar: expected \"left\", \"right\" or \"hidden\", got \"{other}\""),
-            )),
+        let start_folder = text_value(&table, "start-folder", "start-folder");
+
+        if let Some(layout) = table.get("layout").and_then(|v| v.as_table()) {
+            let sidebar = text_value(layout, "sidebar", "layout.sidebar");
+            let density = text_value(layout, "density", "layout.density");
+            match sidebar.as_deref() {
+                None => {}
+                Some("left") => settings.sidebar = SidebarPosition::Left,
+                Some("right") => settings.sidebar = SidebarPosition::Right,
+                Some("hidden") => settings.sidebar = SidebarPosition::Hidden,
+                Some(other) => warnings.push(Warning::new(
+                    file,
+                    format!("layout.sidebar: expected \"left\", \"right\" or \"hidden\", got \"{other}\""),
+                )),
+            }
+            match density.as_deref() {
+                None => {}
+                Some("compact") => settings.density = Density::Compact,
+                Some("comfortable") => settings.density = Density::Comfortable,
+                Some(other) => warnings.push(Warning::new(
+                    file,
+                    format!("layout.density: expected \"compact\" or \"comfortable\", got \"{other}\""),
+                )),
+            }
         }
-        match density.as_deref() {
+
+        // `text_value` borrows `warnings`; it is no longer used from here on.
+        if let Some(start) = start_folder {
+            if crate::paths::has_parent_segment(&start) {
+                warnings.push(Warning::new(file, format!("start-folder: \"{start}\" must not contain \"..\"")));
+            } else {
+                settings.start_folder = start;
+            }
+        }
+        if let Some(value) = table.get("pinned") {
+            match value.as_array() {
+                None => warnings.push(Warning::new(file, format!("pinned: expected a list of folders, got {value}"))),
+                Some(items) => {
+                    for item in items {
+                        let Some(text) = item.as_str() else {
+                            warnings.push(Warning::new(file, format!("pinned: expected text, got {item}")));
+                            continue;
+                        };
+                        if crate::paths::has_parent_segment(text) {
+                            warnings.push(Warning::new(file, format!("pinned: \"{text}\" must not contain \"..\"")));
+                        } else if !settings.pinned.iter().any(|p| p == text) {
+                            settings.pinned.push(text.to_owned());
+                        }
+                    }
+                }
+            }
+        }
+        match table.get("shortcuts") {
             None => {}
-            Some("compact") => settings.density = Density::Compact,
-            Some("comfortable") => settings.density = Density::Comfortable,
-            Some(other) => warnings.push(Warning::new(
-                file,
-                format!("layout.density: expected \"compact\" or \"comfortable\", got \"{other}\""),
-            )),
+            Some(value) => match value.as_table() {
+                Some(shortcuts) => {
+                    settings.shortcuts = Shortcuts::from_table(Some(shortcuts), Platform::current(), file, warnings)
+                }
+                None => warnings.push(Warning::new(file, format!("shortcuts: expected a table, got {value}"))),
+            },
         }
         settings
     }
@@ -122,6 +170,8 @@ pub struct WindowState {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct State {
     pub window: Option<WindowState>,
+    /// Sidebar width in logical pixels (120–480).
+    pub sidebar_width: Option<u32>,
 }
 
 impl State {
@@ -138,7 +188,14 @@ impl State {
                 y: coord("y"),
             })
         });
-        State { window }
+        let sidebar_width = table
+            .get("sidebar")
+            .and_then(|v| v.as_table())
+            .and_then(|s| s.get("width"))
+            .and_then(|v| v.as_integer())
+            .and_then(|w| u32::try_from(w).ok())
+            .filter(|w| (120..=480).contains(w));
+        State { window, sidebar_width }
     }
 
     pub fn to_toml(&self) -> String {
@@ -152,6 +209,11 @@ impl State {
                 window.insert("y".into(), toml::Value::Integer(y.into()));
             }
             root.insert("window".into(), toml::Value::Table(window));
+        }
+        if let Some(width) = self.sidebar_width {
+            let mut sidebar = toml::Table::new();
+            sidebar.insert("width".into(), toml::Value::Integer(width.into()));
+            root.insert("sidebar".into(), toml::Value::Table(sidebar));
         }
         root.to_string()
     }
@@ -189,6 +251,7 @@ mod tests {
                 theme_dark: "ink".to_owned(),
                 sidebar: SidebarPosition::Right,
                 density: Density::Compact,
+                ..Settings::default()
             }
         );
     }
@@ -238,9 +301,13 @@ mod tests {
 
     #[test]
     fn state_round_trips() {
-        let state = State { window: Some(WindowState { width: 1000, height: 700, x: Some(-50), y: Some(30) }) };
+        let state = State {
+            window: Some(WindowState { width: 1000, height: 700, x: Some(-50), y: Some(30) }),
+            sidebar_width: None,
+        };
         assert_eq!(State::parse(&state.to_toml()), state);
-        let no_position = State { window: Some(WindowState { width: 800, height: 600, x: None, y: None }) };
+        let no_position =
+            State { window: Some(WindowState { width: 800, height: 600, x: None, y: None }), sidebar_width: None };
         assert_eq!(State::parse(&no_position.to_toml()), no_position);
     }
 
@@ -250,5 +317,88 @@ mod tests {
         assert_eq!(State::parse("[window]\nwidth = -900\nheight = 600\n"), State::default());
         assert_eq!(State::parse("garbage ["), State::default());
         assert_eq!(State::parse(""), State::default());
+    }
+
+    #[test]
+    fn reads_start_folder_and_pinned() {
+        let (settings, warnings) = parse(
+            "start-folder = \"drives\"
+pinned = [\"{documents}/Projects\", \"D:/Work\"]
+",
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(settings.start_folder, "drives");
+        assert_eq!(settings.pinned, ["{documents}/Projects", "D:/Work"]);
+    }
+
+    #[test]
+    fn pinned_skips_duplicates_and_parent_segments() {
+        let (settings, warnings) = parse(
+            "pinned = [\"/a\", \"/a\", \"{home}/../etc\", 3]
+",
+        );
+        assert_eq!(settings.pinned, ["/a"]);
+        let messages: Vec<_> = warnings.iter().map(|w| w.message.as_str()).collect();
+        assert_eq!(messages.len(), 2, "{messages:?}");
+        assert!(messages.iter().any(|m| m.contains("..")));
+        assert!(messages.iter().any(|m| m.contains("expected text")));
+    }
+
+    #[test]
+    fn pinned_keeps_entries_that_do_not_exist_here() {
+        let (settings, _) = parse(
+            "pinned = [\"Z:/not/on/this/machine\"]
+",
+        );
+        assert_eq!(settings.pinned, ["Z:/not/on/this/machine"]);
+    }
+
+    #[test]
+    fn invalid_start_folder_and_pinned_types_warn() {
+        let (settings, warnings) = parse(
+            "start-folder = \"{home}/../x\"
+pinned = \"nope\"
+",
+        );
+        assert_eq!(settings.start_folder, "{home}");
+        assert!(settings.pinned.is_empty());
+        assert_eq!(warnings.len(), 2, "{warnings:?}");
+    }
+
+    #[test]
+    fn shortcuts_table_is_read() {
+        use crate::shortcuts::{Action, parse_chord};
+        let (settings, warnings) = parse(
+            "[shortcuts]
+refresh = \"ctrl+r\"
+",
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let chord = parse_chord("ctrl+r", Platform::current()).unwrap().unwrap();
+        assert_eq!(settings.shortcuts.action_for(&chord), Some(Action::Refresh));
+    }
+
+    #[test]
+    fn sidebar_width_round_trips_and_is_bounded() {
+        let state = State { window: None, sidebar_width: Some(260) };
+        assert_eq!(State::parse(&state.to_toml()), state);
+        assert_eq!(
+            State::parse(
+                "[sidebar]
+width = 50
+"
+            )
+            .sidebar_width,
+            None
+        );
+        assert_eq!(
+            State::parse(
+                "[sidebar]
+width = 900
+"
+            )
+            .sidebar_width,
+            None
+        );
     }
 }
