@@ -1,10 +1,10 @@
 import { ListView, Palette } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { ToolButton } from "widgets/button.slint";
-import { TextField } from "widgets/text-field.slint";
+import { Breadcrumb, CrumbItem } from "widgets/breadcrumb.slint";
 
-// Re-exported so Rust can set it with `window.global::<Theme>()`.
-export { Theme }
+// Re-exported so Rust can set it with `window.global::<Theme>()` and build crumbs.
+export { Theme, CrumbItem }
 
 export struct FileRow {
     name: string,
@@ -13,7 +13,9 @@ export struct FileRow {
 }
 
 export component AppWindow inherits Window {
-    title: "Gezik";
+    // Set from Rust: "<location> — Gezik".
+    in-out property <string> title-text: "Gezik";
+    title: root.title-text;
     preferred-width: 900px;
     preferred-height: 600px;
     background: Theme.background;
@@ -26,6 +28,12 @@ export component AppWindow inherits Window {
     // Settings/theme problems, shown on the right of the status bar.
     in property <string> notice;
     in property <bool> can-go-back;
+    in property <bool> can-go-forward;
+    in property <bool> can-go-up;
+    in property <[CrumbItem]> crumbs;
+    // The file list's scroll offset (content-y), saved and restored per history entry.
+    in-out property <length> list-scroll;
+    in-out property <bool> path-editing;
     in-out property <int> selected: -1;
 
     // Follows the OS light/dark mode (Palette is left to the system on purpose; see
@@ -35,9 +43,17 @@ export component AppWindow inherits Window {
 
     callback open-row(int);
     callback go-back();
+    callback go-forward();
     callback go-up();
     callback navigate(string);
+    callback refresh();
+    callback crumb-clicked(int);
     callback system-scheme-changed();
+
+    // Switches the address bar to typing, with the whole path selected.
+    public function edit-path() {
+        address.edit();
+    }
 
     VerticalLayout {
         Rectangle {
@@ -51,11 +67,26 @@ export component AppWindow inherits Window {
                     clicked => { root.go-back(); }
                 }
                 ToolButton {
+                    text: "→";
+                    enabled: root.can-go-forward;
+                    clicked => { root.go-forward(); }
+                }
+                ToolButton {
                     text: "↑";
+                    enabled: root.can-go-up;
                     clicked => { root.go-up(); }
                 }
-                TextField {
-                    text <=> root.current-path;
+                ToolButton {
+                    text: "Refresh";
+                    // A circular arrow.
+                    icon: "M 13.5 8 A 5.5 5.5 0 1 1 11.9 4.1 M 12.2 1.2 L 12.2 4.4 L 9 4.4";
+                    clicked => { root.refresh(); }
+                }
+                address := Breadcrumb {
+                    crumbs: root.crumbs;
+                    path-text: root.current-path;
+                    editing <=> root.path-editing;
+                    crumb-clicked(i) => { root.crumb-clicked(i); }
                     accepted(path) => { root.navigate(path); }
                 }
             }
@@ -64,6 +95,7 @@ export component AppWindow inherits Window {
 
         // ListView only instantiates the rows that are visible, so huge folders stay cheap.
         ListView {
+            content-y <=> root.list-scroll;
             for row[i] in root.rows: Rectangle {
                 height: Theme.row-height;
                 background: i == root.selected ? Theme.selection : touch.has-hover ? Theme.hover : transparent;

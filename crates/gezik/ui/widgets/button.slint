@@ -2,7 +2,11 @@ import { Theme } from "../theme.slint";
 
 // A square toolbar button. Replaces the std-widgets Button, whose colors cannot be themed.
 export component ToolButton inherits Rectangle {
+    // The label; also what screen readers say.
     in property <string> text;
+    // SVG path commands in a 16×16 box, drawn instead of the text. For symbols the UI font
+    // may not have (the software renderer has no font fallback).
+    in property <string> icon;
     in property <bool> enabled: true;
     callback clicked();
 
@@ -18,7 +22,18 @@ export component ToolButton inherits Rectangle {
     accessible-action-default => { root.clicked(); }
     background: touch.has-hover && root.enabled ? Theme.hover : transparent;
 
-    Text {
+    if root.icon != "": Path {
+        width: Theme.icon-size;
+        height: Theme.icon-size;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        commands: root.icon;
+        stroke: Theme.foreground;
+        stroke-width: Theme.icon-size / 10;
+        opacity: root.enabled ? 1 : 0.35;
+    }
+
+    if root.icon == "": Text {
         width: parent.width;
         height: parent.height;
         text: root.text;

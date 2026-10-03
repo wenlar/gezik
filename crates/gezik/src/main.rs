@@ -1,125 +1,26 @@
 // Hide the console window in release builds on Windows.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod navigation;
+mod places;
 mod theme_bridge;
 mod watcher;
 mod window_state;
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use gezik_config::Warning;
-use gezik_config::store::{self, ConfigFiles, ConfigStore};
+use gezik_config::settings::Settings;
+use gezik_config::store::{self, ConfigFiles, ConfigStore, Loaded};
 use gezik_config::theme;
-use gezik_core::{Entry, format_size, list_dir};
-use slint::{Model, ModelNotify, ModelRc, ModelTracker};
+use gezik_core::nav::Location;
 
 slint::include_modules!();
 
-/// Exposes the listed entries to the UI without copying them into a second list:
-/// a `FileRow` is built only when the ListView asks for a row that is on screen.
-struct EntryModel {
-    entries: Vec<Entry>,
-    notify: ModelNotify,
-}
-
-impl Model for EntryModel {
-    type Data = FileRow;
-
-    fn row_count(&self) -> usize {
-        self.entries.len()
-    }
-
-    fn row_data(&self, row: usize) -> Option<FileRow> {
-        self.entries.get(row).map(|e| FileRow {
-            name: e.name.as_str().into(),
-            is_dir: e.is_dir,
-            size: if e.is_dir { "".into() } else { format_size(e.size).into() },
-        })
-    }
-
-    fn model_tracker(&self) -> &dyn ModelTracker {
-        &self.notify
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-}
-
-fn entry_at(window: &AppWindow, index: i32) -> Option<Entry> {
-    let rows = window.get_rows();
-    let model = rows.as_any().downcast_ref::<EntryModel>()?;
-    model.entries.get(usize::try_from(index).ok()?).cloned()
-}
-
-#[derive(Default)]
-struct Nav {
-    current: Option<PathBuf>,
-    back: Vec<PathBuf>,
-}
-
-/// Shared between the UI thread and the background loaders.
-#[derive(Clone)]
-struct Ctx {
-    window: slint::Weak<AppWindow>,
-    nav: Arc<Mutex<Nav>>,
-    /// Bumped on every navigation so that results of an outdated load are dropped.
-    generation: Arc<AtomicU64>,
-}
-
-impl Ctx {
-    /// Lists `path` on a background thread and shows it when done. The UI thread never
-    /// waits on the file system. `record` pushes the current folder onto the back stack.
-    fn navigate(&self, path: PathBuf, record: bool) {
-        let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
-        if let Some(window) = self.window.upgrade() {
-            window.set_status("Loading…".into());
-        }
-
-        let ctx = self.clone();
-        std::thread::spawn(move || {
-            let result = list_dir(&path);
-            let window = ctx.window.clone();
-            let _ = window.upgrade_in_event_loop(move |window| {
-                if ctx.generation.load(Ordering::SeqCst) != generation {
-                    return;
-                }
-                match result {
-                    Ok(entries) => ctx.show(&window, path, entries, record),
-                    Err(err) => window.set_status(format!("Cannot open {}: {err}", path.display()).into()),
-                }
-            });
-        });
-    }
-
-    fn show(&self, window: &AppWindow, path: PathBuf, entries: Vec<Entry>, record: bool) {
-        let mut nav = self.nav.lock().unwrap();
-        if record && let Some(previous) = nav.current.take() {
-            nav.back.push(previous);
-        }
-
-        window.set_status(format!("{} items", entries.len()).into());
-        window.set_rows(ModelRc::new(EntryModel { entries, notify: ModelNotify::default() }));
-        window.set_current_path(path.display().to_string().into());
-        window.set_selected(-1);
-        window.set_can_go_back(!nav.back.is_empty());
-
-        nav.current = Some(path);
-    }
-}
-
-fn home_dir() -> PathBuf {
-    std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
-        .map(PathBuf::from)
-        .or_else(|| std::env::current_dir().ok())
-        .unwrap_or_else(|| PathBuf::from("/"))
-}
-
 /// Resolves settings + theme from `files` and shows them. No I/O, so it runs on the UI
 /// thread at startup, after config files change and when the system theme flips.
-fn apply_config(window: &AppWindow, files: &ConfigFiles) {
+fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
     let loaded = store::resolve(files, window.get_system_dark());
     if let Some(theme) = &loaded.theme {
         theme_bridge::apply(window, theme);
@@ -128,6 +29,47 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) {
         eprintln!("gezik: {warning}");
     }
     window.set_notice(notice_text(&loaded.warnings).into());
+    loaded
+}
+
+/// Like [`apply_config`], and also resolves where the first tab opens. An invalid
+/// `start-folder` is added to `files`' warnings so the notice shows it (also after later
+/// re-resolves, until the files are read again).
+fn apply_config_and_start(window: &AppWindow, files: &mut ConfigFiles, cli: Option<PathBuf>) -> Location {
+    let loaded = apply_config(window, files);
+    let (start, warning) = resolve_start(&loaded.settings, cli);
+    if let Some(warning) = warning {
+        files.warnings.push(warning);
+        apply_config(window, files);
+    }
+    start
+}
+
+/// Where the first tab opens: the command-line folder, else `start-folder`, else home.
+fn resolve_start(settings: &Settings, cli: Option<PathBuf>) -> (Location, Option<Warning>) {
+    if let Some(path) = cli {
+        // Absolute, so the address bar parts and "up" work for `gezik .` too.
+        return (Location::Path(std::path::absolute(&path).unwrap_or(path)), None);
+    }
+    let home = dirs_home();
+    let text = settings.start_folder.trim();
+    if text.eq_ignore_ascii_case("drives") {
+        return (Location::Drives, None);
+    }
+    match gezik_config::paths::KnownDirs::system().expand_checked(text) {
+        Some(path) if path.is_dir() => (Location::Path(path), None),
+        _ => (
+            Location::Path(home),
+            Some(Warning::new("settings.toml", format!("start-folder: \"{text}\" is not a folder; using home"))),
+        ),
+    }
+}
+
+fn dirs_home() -> PathBuf {
+    std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+        .map(PathBuf::from)
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_else(|| PathBuf::from("/"))
 }
 
 /// The first warning, plus how many more there are.
@@ -168,7 +110,7 @@ fn main() -> Result<(), slint::PlatformError> {
     }
     // Something sensible is on screen even if the selected theme cannot be read.
     theme_bridge::apply(&window, &theme::builtin_dark());
-    apply_config(&window, &files);
+    let start = apply_config_and_start(&window, &mut files, std::env::args_os().nth(1).map(PathBuf::from));
 
     // The latest config files, so a system light/dark switch can re-resolve without I/O.
     let files = Arc::new(Mutex::new(files));
@@ -195,7 +137,8 @@ fn main() -> Result<(), slint::PlatformError> {
             let _ = weak.upgrade_in_event_loop(move |window| {
                 let mut current = files.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                 *current = fresh;
-                apply_config(&window, &current);
+                let start = apply_config_and_start(&window, &mut current, None);
+                navigation::with_current(|nav| nav.set_start(start));
             });
         })
         .map_err(|err| {
@@ -226,49 +169,37 @@ fn main() -> Result<(), slint::PlatformError> {
             slint::CloseRequestResponse::HideWindow
         }
     });
-    let ctx = Ctx { window: window.as_weak(), nav: Arc::default(), generation: Arc::default() };
+
+    let nav = navigation::Navigator::new(&window, start);
+    nav.install();
+    // Captures no navigator (it is not `Send`): the result finds it on the UI thread.
+    places::load_in_background(window.as_weak(), move |places| navigation::with_current(|nav| nav.set_places(places)));
 
     window.on_open_row({
-        let ctx = ctx.clone();
-        move |index| {
-            let Some(window) = ctx.window.upgrade() else { return };
-            let Some(entry) = entry_at(&window, index) else { return };
-            let Some(dir) = ctx.nav.lock().unwrap().current.clone() else { return };
-            let path = dir.join(&entry.name);
-            if entry.is_dir {
-                ctx.navigate(path, true);
-            } else if let Err(err) = open::that_detached(&path) {
-                window.set_status(format!("Cannot open {}: {err}", entry.name).into());
-            }
-        }
+        let nav = nav.clone();
+        move |i| nav.open_row(i)
     });
-
     window.on_go_back({
-        let ctx = ctx.clone();
-        move || {
-            let previous = ctx.nav.lock().unwrap().back.pop();
-            if let Some(path) = previous {
-                ctx.navigate(path, false);
-            }
-        }
+        let nav = nav.clone();
+        move || nav.back()
     });
-
+    window.on_go_forward({
+        let nav = nav.clone();
+        move || nav.forward()
+    });
     window.on_go_up({
-        let ctx = ctx.clone();
-        move || {
-            let parent = ctx.nav.lock().unwrap().current.as_ref().and_then(|p| p.parent()).map(PathBuf::from);
-            if let Some(path) = parent {
-                ctx.navigate(path, true);
-            }
-        }
+        let nav = nav.clone();
+        move || nav.up()
     });
-
+    window.on_refresh({
+        let nav = nav.clone();
+        move || nav.reload()
+    });
     window.on_navigate({
-        let ctx = ctx.clone();
-        move |text| ctx.navigate(PathBuf::from(text.trim()), true)
+        let nav = nav.clone();
+        move |text| nav.navigate_text(text.into())
     });
+    window.on_crumb_clicked(move |i| nav.crumb_clicked(i));
 
-    let start = std::env::args_os().nth(1).map(PathBuf::from).unwrap_or_else(home_dir);
-    ctx.navigate(start, false);
     window.run()
 }

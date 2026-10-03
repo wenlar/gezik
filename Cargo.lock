@@ -1440,6 +1440,7 @@ version = "0.1.0"
 dependencies = [
  "gezik-config",
  "gezik-core",
+ "gezik-platform",
  "notify",
  "open",
  "slint",
@@ -4065,6 +4066,7 @@ dependencies = [
  "num-traits",
  "once_cell",
  "pin-weak",
+ "raw-window-handle",
  "slint-macros",
  "unicode-segmentation",
  "vtable",

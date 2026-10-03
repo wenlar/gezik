@@ -1,0 +1,86 @@
+import { Theme } from "../theme.slint";
+import { TextField } from "text-field.slint";
+
+export struct CrumbItem {
+    label: string,
+}
+
+// The address bar: clickable path parts; click empty space (or call edit()) to type a path.
+export component Breadcrumb inherits Rectangle {
+    in property <[CrumbItem]> crumbs;
+    in property <string> path-text;
+    in-out property <bool> editing;
+    callback crumb-clicked(int);
+    callback accepted(string);
+
+    height: Theme.row-height + 4px;
+    horizontal-stretch: 1;
+    border-radius: Theme.radius;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: Theme.background;
+    accessible-role: groupbox;
+    accessible-label: "Address";
+
+    public function edit() {
+        root.editing = true;
+        field.text = root.path-text;
+        field.focus-and-select();
+    }
+
+    if !root.editing: Rectangle {
+        // Clicking empty space switches to typing.
+        TouchArea {
+            clicked => { root.edit(); }
+        }
+        HorizontalLayout {
+            padding-left: Theme.spacing;
+            padding-right: Theme.spacing;
+            alignment: start;
+            for crumb[i] in root.crumbs: HorizontalLayout {
+                if i > 0: Text {
+                    text: "›";
+                    color: Theme.foreground-muted;
+                    vertical-alignment: center;
+                    width: self.preferred-width + Theme.spacing;
+                    horizontal-alignment: center;
+                }
+                Rectangle {
+                    border-radius: Theme.radius;
+                    background: part-touch.has-hover ? Theme.hover : transparent;
+                    min-width: 0px;
+                    preferred-width: part-label.preferred-width + Theme.spacing * 2;
+                    accessible-role: button;
+                    accessible-label: crumb.label;
+                    accessible-action-default => { root.crumb-clicked(i); }
+                    part-label := Text {
+                        x: Theme.spacing;
+                        width: parent.width - Theme.spacing * 2;
+                        height: parent.height;
+                        text: crumb.label;
+                        overflow: elide;
+                        vertical-alignment: center;
+                        color: Theme.foreground;
+                    }
+                    part-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.crumb-clicked(i); }
+                    }
+                }
+            }
+        }
+    }
+
+    field := TextField {
+        visible: root.editing;
+        width: root.width;
+        height: root.height;
+        accepted(text) => {
+            root.editing = false;
+            root.accepted(text);
+        }
+        changed has-focus => {
+            if !self.has-focus { root.editing = false; }
+        }
+    }
+}
