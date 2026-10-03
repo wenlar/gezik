@@ -54,12 +54,17 @@ impl ConfigStore {
         self.dir.join("themes")
     }
 
-    /// Creates the folder layout and commented starter files on first run. Existing
-    /// files are never touched.
+    /// Creates the folder layout and commented starter files on the true first run, when
+    /// the config folder does not exist yet. Later runs never recreate files the user
+    /// deleted.
     pub fn ensure_initialized(&self) -> io::Result<()> {
+        let first_run = !self.dir.exists();
         std::fs::create_dir_all(self.themes_dir())?;
-        write_if_missing(&self.settings_path(), SETTINGS_TEMPLATE)?;
-        write_if_missing(&self.themes_dir().join("example.toml"), THEME_TEMPLATE)
+        if first_run {
+            write_if_missing(&self.settings_path(), SETTINGS_TEMPLATE)?;
+            write_if_missing(&self.themes_dir().join("example.toml"), THEME_TEMPLATE)?;
+        }
+        Ok(())
     }
 
     pub fn read_files(&self) -> ConfigFiles {
@@ -176,6 +181,11 @@ mod tests {
         ConfigStore::new(crate::test_dir(name))
     }
 
+    /// A store whose folder does not exist yet (a true first run).
+    fn fresh_store(name: &str) -> ConfigStore {
+        ConfigStore::new(crate::test_dir(name).join("gezik"))
+    }
+
     fn write(store: &ConfigStore, relative: &str, text: &str) {
         let path = store.dir().join(relative);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -184,10 +194,14 @@ mod tests {
 
     #[test]
     fn first_run_creates_starter_files_once() {
-        let store = store("init");
+        let store = fresh_store("init");
         store.ensure_initialized().unwrap();
         assert!(store.dir().join("settings.toml").is_file());
         assert!(store.dir().join("themes/example.toml").is_file());
+
+        std::fs::remove_file(store.dir().join("themes/example.toml")).unwrap();
+        store.ensure_initialized().unwrap();
+        assert!(!store.dir().join("themes/example.toml").exists(), "deleted starter file came back");
 
         write(&store, "settings.toml", "theme = \"light\"\n");
         store.ensure_initialized().unwrap();
@@ -196,7 +210,7 @@ mod tests {
 
     #[test]
     fn starter_files_are_valid() {
-        let store = store("starter");
+        let store = fresh_store("starter");
         store.ensure_initialized().unwrap();
         let files = store.read_files();
         let loaded = resolve(&files, false);
