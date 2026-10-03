@@ -3,6 +3,7 @@
 
 pub mod paths;
 pub mod settings;
+pub mod shortcuts;
 pub mod store;
 pub mod theme;
 
