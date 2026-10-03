@@ -159,6 +159,11 @@ fn main() -> Result<(), slint::PlatformError> {
     if let Some((store, err)) = init_error {
         files.warnings.push(Warning::new(store.dir().display().to_string(), format!("cannot create config folder: {err}")));
     }
+    // Release builds hide stderr, so config problems also go to the status bar.
+    if config.is_none() {
+        eprintln!("gezik: no config folder available; using defaults");
+        files.warnings.push(Warning::new("config", "no config folder available; using default settings"));
+    }
     // Something sensible is on screen even if the selected theme cannot be read.
     theme_bridge::apply(&window, &theme::builtin_dark());
     apply_config(&window, &files);
@@ -171,12 +176,13 @@ fn main() -> Result<(), slint::PlatformError> {
         let files = files.clone();
         move || {
             if let Some(window) = weak.upgrade() {
-                apply_config(&window, &files.lock().unwrap());
+                apply_config(&window, &files.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
             }
         }
     });
 
     // Reading happens on the watcher thread; resolving and applying on the UI thread.
+    let files_for_warning = files.clone();
     let _watcher = config.as_ref().and_then(|store| {
         let reader = store.clone();
         let weak = window.as_weak();
@@ -185,14 +191,20 @@ fn main() -> Result<(), slint::PlatformError> {
             let fresh = reader.read_files();
             let files = files.clone();
             let _ = weak.upgrade_in_event_loop(move |window| {
-                let mut current = files.lock().unwrap();
+                let mut current = files.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                 *current = fresh;
                 apply_config(&window, &current);
             });
         })
-        .map_err(|err| eprintln!("gezik: cannot watch {}: {err}", store.dir().display()))
+        .map_err(|err| {
+            eprintln!("gezik: cannot watch {}: {err}", store.dir().display());
+            let warning = Warning::new("config", format!("cannot watch the config folder for changes: {err}"));
+            let mut current = files_for_warning.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            current.warnings.push(warning);
+        })
         .ok()
     });
+    apply_config(&window, &files.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
     if let Some(store) = &config {
         window_state::restore(&window, &store.load_state());
     }
