@@ -106,6 +106,24 @@ impl ConfigStore {
         write_atomic(&self.state_path(), &state.to_toml())
     }
 
+    /// Writes the pinned folders into `settings.toml`, keeping everything else. Creates the
+    /// file from the template if it does not exist; refuses to touch a broken file.
+    pub fn save_pinned(&self, pinned: &[String]) -> Result<(), Warning> {
+        let text = match read_text(&self.settings_path()) {
+            Ok(text) => text,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => SETTINGS_TEMPLATE.to_owned(),
+            Err(err) => return Err(Warning::new("settings.toml", format!("cannot read: {err}"))),
+        };
+        let edited = crate::settings_edit::with_pinned(&text, pinned).map_err(|err| {
+            let first_line = err.lines().next().unwrap_or_default().to_owned();
+            Warning::new("settings.toml", format!("Fix settings.toml first ({first_line})"))
+        })?;
+        std::fs::create_dir_all(&self.dir)
+            .map_err(|err| Warning::new("settings.toml", format!("cannot write: {err}")))?;
+        write_atomic(&self.settings_path(), &edited)
+            .map_err(|err| Warning::new("settings.toml", format!("cannot write: {err}")))
+    }
+
     /// Whether a change to `path` should reload the config: `settings.toml` or a theme
     /// file, but not `state.toml` or editor temp files.
     pub fn is_config_file(&self, path: &Path) -> bool {
@@ -306,5 +324,44 @@ mod tests {
         assert!(!store.is_config_file(&root.join("themes").join("nord.toml~")));
         assert!(!store.is_config_file(&root.join("themes").join("old").join("nord.toml")));
         assert!(!store.is_config_file(Path::new("/elsewhere/settings.toml")));
+    }
+
+    #[test]
+    fn save_pinned_keeps_user_comments() {
+        let store = store("pin-save");
+        write(&store, "settings.toml", "# mine\ntheme = \"dark\"\n");
+        store.save_pinned(&["/a".to_owned()]).unwrap();
+        let text = std::fs::read_to_string(store.dir().join("settings.toml")).unwrap();
+        assert!(text.contains("# mine"));
+        let loaded = resolve(&store.read_files(), true);
+        assert_eq!(loaded.settings.pinned, ["/a"]);
+    }
+
+    #[test]
+    fn save_pinned_creates_missing_file_from_template() {
+        let store = store("pin-create");
+        store.save_pinned(&["/a".to_owned()]).unwrap();
+        let loaded = resolve(&store.read_files(), true);
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        assert_eq!(loaded.settings.pinned, ["/a"]);
+    }
+
+    #[test]
+    fn save_pinned_refuses_a_broken_file() {
+        let store = store("pin-broken");
+        write(&store, "settings.toml", "theme = \n");
+        let err = store.save_pinned(&["/a".to_owned()]).unwrap_err();
+        assert!(err.message.starts_with("Fix settings.toml first"), "{}", err.message);
+        assert_eq!(std::fs::read_to_string(store.dir().join("settings.toml")).unwrap(), "theme = \n");
+    }
+
+    #[test]
+    fn handles_bom() {
+        let store = store("pin-bom");
+        write(&store, "settings.toml", "\u{feff}# mine\ntheme = \"dark\"\n");
+        store.save_pinned(&["/a".to_owned()]).unwrap();
+        let loaded = resolve(&store.read_files(), true);
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        assert_eq!(loaded.settings.pinned, ["/a"]);
     }
 }

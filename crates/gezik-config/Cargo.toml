@@ -7,4 +7,5 @@ license.workspace = true
 
 [dependencies]
 toml = { version = "1", features = ["preserve_order"] }
+toml_edit = "0.25"
 dirs = "7"
