@@ -21,11 +21,27 @@ pub const SECTION_DRIVES: i32 = 2;
 /// How often the (cheap) drive signature is checked.
 const DRIVE_POLL: Duration = Duration::from_secs(3);
 
+/// Whether two names are equal as the file system sees them: ignoring case (also of
+/// non-ASCII letters like Ç) on Windows, exactly elsewhere.
+fn same_text(a: &str, b: &str) -> bool {
+    a == b || (cfg!(windows) && a.to_lowercase() == b.to_lowercase())
+}
+
+/// Whether `a` and `b` name the same location (see [`same_text`]). Separators and
+/// redundant `/` or `.` parts do not matter.
+pub fn same_path(a: &Path, b: &Path) -> bool {
+    a == b
+        || (cfg!(windows)
+            && a.components().count() == b.components().count()
+            && a.components()
+                .zip(b.components())
+                .all(|(x, y)| same_text(&x.as_os_str().to_string_lossy(), &y.as_os_str().to_string_lossy())))
+}
+
 /// Adds `entry` (tokenized) unless an equal entry is already pinned (ignoring case on
 /// Windows). Returns whether it was added.
 pub fn pin_entry(pinned: &mut Vec<String>, entry: String) -> bool {
-    let same = |a: &str, b: &str| if cfg!(windows) { a.eq_ignore_ascii_case(b) } else { a == b };
-    if pinned.iter().any(|p| same(p, &entry)) {
+    if pinned.iter().any(|p| same_text(p, &entry)) {
         return false;
     }
     pinned.push(entry);
@@ -45,15 +61,80 @@ pub fn move_entry(pinned: &mut [String], from: usize, to: usize) {
     }
 }
 
+/// A pinned entry that exists on this machine.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pin {
+    /// As written in settings.toml.
+    pub entry: String,
+    pub path: PathBuf,
+}
+
+/// The pinned entries that exist, in `pinned` order. `exists` checks the file system, so
+/// this runs off the UI thread.
+pub fn check_pins(dirs: &KnownDirs, pinned: &[String], exists: impl Fn(&Path) -> bool) -> Vec<Pin> {
+    pinned
+        .iter()
+        .filter_map(|entry| {
+            let path = dirs.expand_checked(entry).filter(|p| exists(p))?;
+            Some(Pin { entry: entry.clone(), path })
+        })
+        .collect()
+}
+
+/// The pinned list and what the sidebar shows of it. Checking which pins exist can be
+/// slow (a dead network drive may take many seconds), so it runs in the background;
+/// meanwhile `visible` keeps the entries already known to exist, in the new order.
+#[derive(Debug, Default)]
+struct PinState {
+    /// As written in settings.toml.
+    pinned: Vec<String>,
+    /// What the PINNED section shows; its indexes are the section's row indexes.
+    visible: Vec<Pin>,
+    /// Bumped by every check, so that the result of an overtaken check is dropped.
+    generation: u64,
+}
+
+impl PinState {
+    /// Takes a new pinned list. Returns false if it is unchanged.
+    fn set(&mut self, pinned: Vec<String>) -> bool {
+        if self.pinned == pinned {
+            return false;
+        }
+        let known = std::mem::take(&mut self.visible);
+        self.visible =
+            pinned.iter().filter_map(|entry| known.iter().find(|pin| pin.entry == *entry).cloned()).collect();
+        self.pinned = pinned;
+        true
+    }
+
+    /// Starts a check of the current list; returns its ticket.
+    fn begin_check(&mut self) -> u64 {
+        self.generation += 1;
+        self.generation
+    }
+
+    /// Applies a check's result unless a newer check started since. Returns whether it did.
+    fn finish_check(&mut self, ticket: u64, visible: Vec<Pin>) -> bool {
+        if ticket != self.generation {
+            return false;
+        }
+        self.visible = visible;
+        true
+    }
+
+    /// The index in `pinned` of shown row `index`.
+    fn stored_index(&self, index: usize) -> Option<usize> {
+        let pin = self.visible.get(index)?;
+        self.pinned.iter().position(|entry| *entry == pin.entry)
+    }
+}
+
 struct Inner {
     window: slint::Weak<AppWindow>,
     nav: Navigator,
     store: Option<ConfigStore>,
     dirs: KnownDirs,
-    /// As written in settings.toml.
-    pinned: Vec<String>,
-    /// Pinned entries that exist on this machine: (index into `pinned`, path).
-    visible_pinned: Vec<(usize, PathBuf)>,
+    pins: PinState,
     drive_signature: u64,
     /// The rows' model, updated in place (see [`sync_model`]).
     rows: Rc<VecModel<SidebarRow>>,
@@ -61,7 +142,8 @@ struct Inner {
 }
 
 thread_local! {
-    /// The sidebar of this (UI) thread, so the config watcher can reach it.
+    /// The sidebar of this (UI) thread, so the config watcher and background checks can
+    /// reach it.
     static CURRENT: RefCell<Option<Sidebar>> = const { RefCell::new(None) };
 }
 
@@ -84,8 +166,7 @@ impl Sidebar {
             nav: nav.clone(),
             store,
             dirs: KnownDirs::system(),
-            pinned: Vec::new(),
-            visible_pinned: Vec::new(),
+            pins: PinState::default(),
             drive_signature: gezik_platform::drive_signature(),
             rows,
             poll: slint::Timer::default(),
@@ -103,7 +184,8 @@ impl Sidebar {
         sidebar
     }
 
-    /// Makes this sidebar reachable from the config watcher. Call once, right after `new`.
+    /// Makes this sidebar reachable from the config watcher and background checks. Call
+    /// once, right after `new`, before any pins are set.
     pub fn install(&self) {
         CURRENT.with(|c| *c.borrow_mut() = Some(self.clone()));
     }
@@ -134,21 +216,21 @@ impl Sidebar {
     /// Sets the pinned entries as written in settings.toml. Does nothing if they are
     /// unchanged, so the settings reload that follows our own save costs nothing.
     pub fn set_pinned(&self, pinned: Vec<String>) {
-        if self.0.borrow().pinned == pinned {
-            return;
+        let changed = self.0.borrow_mut().pins.set(pinned);
+        if changed {
+            self.update_rows();
+            self.refresh();
         }
-        self.0.borrow_mut().pinned = pinned;
-        self.refresh();
     }
 
     pub fn pinned(&self) -> Vec<String> {
-        self.0.borrow().pinned.clone()
+        self.0.borrow().pins.pinned.clone()
     }
 
     /// Whether `path` is shown in the PINNED section.
     #[allow(dead_code)] // Used by the context menus (Task 10).
     pub fn is_pinned(&self, path: &Path) -> bool {
-        self.0.borrow().visible_pinned.iter().any(|(_, p)| p == path)
+        self.0.borrow().pins.visible.iter().any(|pin| same_path(&pin.path, path))
     }
 
     #[allow(dead_code)] // Used by the context menus (Task 10).
@@ -160,25 +242,31 @@ impl Sidebar {
         }
     }
 
-    /// Unpins the visible pinned row `index` (index within the PINNED section).
+    /// Unpins the shown pinned row `index` (index within the PINNED section).
     #[allow(dead_code)] // Used by the sidebar menu (Task 10).
     pub fn unpin(&self, index: usize) {
-        let stored = self.0.borrow().visible_pinned.get(index).map(|(stored, _)| *stored);
+        let stored = self.0.borrow().pins.stored_index(index);
         let Some(stored) = stored else { return };
         let mut pinned = self.pinned();
-        if stored < pinned.len() {
-            pinned.remove(stored);
-            self.save(pinned);
+        pinned.remove(stored);
+        self.save(pinned);
+    }
+
+    /// Unpins the shown pinned entry whose folder is `path`.
+    #[allow(dead_code)] // Used by the context menus (Task 10).
+    pub fn unpin_path(&self, path: &Path) {
+        let index = self.0.borrow().pins.visible.iter().position(|pin| same_path(&pin.path, path));
+        if let Some(index) = index {
+            self.unpin(index);
         }
     }
 
-    /// Moves visible pinned row `from` to visible position `to` (clamped).
+    /// Moves shown pinned row `from` to shown position `to` (clamped).
     pub fn move_pinned(&self, from: usize, to: usize) {
         let stored = {
-            let inner = self.0.borrow();
-            let visible = &inner.visible_pinned;
-            let to = to.min(visible.len().saturating_sub(1));
-            visible.get(from).zip(visible.get(to)).map(|((a, _), (b, _))| (*a, *b))
+            let pins = &self.0.borrow().pins;
+            let to = to.min(pins.visible.len().saturating_sub(1));
+            pins.stored_index(from).zip(pins.stored_index(to))
         };
         let Some((from, to)) = stored else { return };
         if from == to {
@@ -215,26 +303,33 @@ impl Sidebar {
         let places = inner.nav.places();
         match section {
             SECTION_FOLDERS => places.known.get(index).map(|f| Location::Path(f.path.clone())),
-            SECTION_PINNED => inner.visible_pinned.get(index).map(|(_, p)| Location::Path(p.clone())),
+            SECTION_PINNED => inner.pins.visible.get(index).map(|pin| Location::Path(pin.path.clone())),
             SECTION_DRIVES => places.drives.get(index).map(|d| Location::Path(d.path.clone())),
             _ => None,
         }
     }
 
-    /// Checks which pinned entries exist on this machine (file system access), then
-    /// rebuilds the rows.
+    /// Checks on a background thread which pinned entries exist on this machine, then
+    /// shows them. Until then the PINNED section keeps what it shows.
     pub fn refresh(&self) {
-        {
-            let mut guard = self.0.borrow_mut();
-            let inner = &mut *guard;
-            inner.visible_pinned = inner
-                .pinned
-                .iter()
-                .enumerate()
-                .filter_map(|(i, text)| inner.dirs.expand_checked(text).filter(|p| p.is_dir()).map(|p| (i, p)))
-                .collect();
+        let (ticket, dirs, pinned, window) = {
+            let mut inner = self.0.borrow_mut();
+            let ticket = inner.pins.begin_check();
+            (ticket, inner.dirs.clone(), inner.pins.pinned.clone(), inner.window.clone())
+        };
+        std::thread::spawn(move || {
+            let visible = check_pins(&dirs, &pinned, Path::is_dir);
+            let _ = window.upgrade_in_event_loop(move |_| {
+                with_current(|sidebar| sidebar.finish_check(ticket, visible));
+            });
+        });
+    }
+
+    fn finish_check(&self, ticket: u64, visible: Vec<Pin>) {
+        let applied = self.0.borrow_mut().pins.finish_check(ticket, visible);
+        if applied {
+            self.update_rows();
         }
-        self.update_rows();
     }
 
     /// Rebuilds the rows: sections, labels and the highlight of the exact current location.
@@ -244,7 +339,7 @@ impl Sidebar {
         let Some(window) = inner.window.upgrade() else { return };
         let places = inner.nav.places();
         let current = inner.nav.active_location();
-        let is_current = |path: &Path| matches!(&current, Location::Path(p) if p == path);
+        let is_current = |path: &Path| matches!(&current, Location::Path(p) if same_path(p, path));
         let index = |i: usize| i32::try_from(i).unwrap_or(i32::MAX);
         let header =
             |label: &str, section| SidebarRow { header: true, label: label.into(), section, index: -1, active: false };
@@ -258,20 +353,21 @@ impl Sidebar {
 
         let mut rows = vec![header("FOLDERS", SECTION_FOLDERS)];
         rows.extend(places.known.iter().enumerate().map(|(i, f)| item(&f.name, SECTION_FOLDERS, i, &f.path)));
+        let visible = &inner.pins.visible;
         let mut pinned_first_row = -1;
-        if !inner.visible_pinned.is_empty() {
+        if !visible.is_empty() {
             rows.push(header("PINNED", SECTION_PINNED));
             pinned_first_row = index(rows.len());
-            rows.extend(inner.visible_pinned.iter().enumerate().map(|(i, (_, path))| {
-                let label = places.title_for(&Location::Path(path.clone()));
-                item(&label, SECTION_PINNED, i, path)
+            rows.extend(visible.iter().enumerate().map(|(i, pin)| {
+                let label = places.title_for(&Location::Path(pin.path.clone()));
+                item(&label, SECTION_PINNED, i, &pin.path)
             }));
         }
         rows.push(header("DRIVES", SECTION_DRIVES));
         rows.extend(places.drives.iter().enumerate().map(|(i, d)| item(&d.label, SECTION_DRIVES, i, &d.path)));
 
         window.set_sidebar_pinned_first_row(pinned_first_row);
-        window.set_sidebar_pinned_count(index(inner.visible_pinned.len()));
+        window.set_sidebar_pinned_count(index(visible.len()));
         sync_model(&inner.rows, rows.into_iter());
     }
 }
@@ -279,6 +375,14 @@ impl Sidebar {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn strings(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    fn pin(entry: &str, path: &str) -> Pin {
+        Pin { entry: entry.to_owned(), path: PathBuf::from(path) }
+    }
 
     #[test]
     fn pin_is_idempotent() {
@@ -293,6 +397,67 @@ mod tests {
     fn pin_ignores_case_on_windows() {
         let mut pinned = vec!["C:/Work".to_owned()];
         assert!(!pin_entry(&mut pinned, "c:/work".to_owned()));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn pin_ignores_non_ascii_case_on_windows() {
+        let mut pinned = vec!["C:/ÇALIŞMA".to_owned()];
+        assert!(!pin_entry(&mut pinned, "c:/çalişma".to_owned()));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn paths_match_ignoring_case_on_windows() {
+        assert!(same_path(Path::new(r"C:\Users\Ali\Masaüstü"), Path::new("c:/users/ali/MASAÜSTÜ")));
+        assert!(!same_path(Path::new(r"C:\Users\Ali"), Path::new(r"C:\Users\Ali\Docs")));
+        assert!(!same_path(Path::new(r"C:\Users\Ali"), Path::new(r"C:\Users\Veli")));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn paths_match_exactly_elsewhere() {
+        assert!(same_path(Path::new("/home/a"), Path::new("/home/a/")));
+        assert!(!same_path(Path::new("/home/a"), Path::new("/home/A")));
+    }
+
+    #[test]
+    fn check_pins_keeps_existing_entries_in_order() {
+        let dirs = KnownDirs::new(vec![("documents", PathBuf::from("/u/docs"))]);
+        let pinned = strings(&["/gone", "{documents}", "/x/../y", "/work"]);
+        let visible = check_pins(&dirs, &pinned, |p| p != Path::new("/gone"));
+        // Entries with `..` are never expanded.
+        assert_eq!(visible, [pin("{documents}", "/u/docs"), pin("/work", "/work")]);
+    }
+
+    #[test]
+    fn a_new_list_keeps_known_pins_until_checked() {
+        let mut pins = PinState::default();
+        assert!(pins.set(strings(&["/a", "/b"])));
+        assert!(pins.visible.is_empty(), "nothing is shown before the first check");
+        let ticket = pins.begin_check();
+        assert!(pins.finish_check(ticket, vec![pin("/a", "/a"), pin("/b", "/b")]));
+        // Reordered with one added: known pins show at once in the new order, the new one
+        // only once checked.
+        assert!(pins.set(strings(&["/c", "/b", "/a"])));
+        assert_eq!(pins.visible, [pin("/b", "/b"), pin("/a", "/a")]);
+        assert_eq!(pins.stored_index(0), Some(1));
+        assert_eq!(pins.stored_index(1), Some(2));
+        assert_eq!(pins.stored_index(2), None);
+        assert!(!pins.set(strings(&["/c", "/b", "/a"])), "an unchanged list is ignored");
+    }
+
+    #[test]
+    fn an_overtaken_check_is_dropped() {
+        let mut pins = PinState::default();
+        pins.set(strings(&["/a"]));
+        let old = pins.begin_check();
+        pins.set(strings(&["/a", "/b"]));
+        let new = pins.begin_check();
+        assert!(!pins.finish_check(old, vec![pin("/a", "/a")]));
+        assert!(pins.visible.is_empty());
+        assert!(pins.finish_check(new, vec![pin("/a", "/a"), pin("/b", "/b")]));
+        assert_eq!(pins.stored_index(1), Some(1));
     }
 
     #[test]
