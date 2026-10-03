@@ -11,6 +11,9 @@ export component TextField inherits Rectangle {
     border-width: 1px;
     border-color: input.has-focus ? Theme.accent : Theme.border;
     background: Theme.background;
+    forward-focus: input;
+    accessible-role: text-input;
+    accessible-value: root.text;
 
     input := TextInput {
         x: Theme.spacing + 2px;
