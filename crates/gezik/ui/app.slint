@@ -2,9 +2,10 @@ import { ListView, Palette } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { ToolButton } from "widgets/button.slint";
 import { Breadcrumb, CrumbItem } from "widgets/breadcrumb.slint";
+import { TabBar, TabItem } from "widgets/tab-bar.slint";
 
-// Re-exported so Rust can set it with `window.global::<Theme>()` and build crumbs.
-export { Theme, CrumbItem }
+// Re-exported so Rust can set it with `window.global::<Theme>()` and build crumbs and tabs.
+export { Theme, CrumbItem, TabItem }
 
 export struct FileRow {
     name: string,
@@ -31,6 +32,7 @@ export component AppWindow inherits Window {
     in property <bool> can-go-forward;
     in property <bool> can-go-up;
     in property <[CrumbItem]> crumbs;
+    in property <[TabItem]> tabs;
     // The file list's scroll offset (content-y), saved and restored per history entry.
     in-out property <length> list-scroll;
     in-out property <bool> path-editing;
@@ -49,6 +51,15 @@ export component AppWindow inherits Window {
     callback refresh();
     callback crumb-clicked(int);
     callback system-scheme-changed();
+    callback tab-activate(int);
+    callback tab-close(int);
+    callback tab-new();
+    // Moves tab `from` to position `to`.
+    callback tab-move(int, int);
+    // Right-click on a tab, at a window position.
+    callback tab-menu(int, length, length);
+    // Middle-click on a row: opens a folder in a background tab.
+    callback row-middle-clicked(int);
 
     // Switches the address bar to typing, with the whole path selected.
     public function edit-path() {
@@ -56,6 +67,14 @@ export component AppWindow inherits Window {
     }
 
     VerticalLayout {
+        TabBar {
+            tabs: root.tabs;
+            activate(i) => { root.tab-activate(i); }
+            close(i) => { root.tab-close(i); }
+            new-tab => { root.tab-new(); }
+            move-tab(from, to) => { root.tab-move(from, to); }
+            tab-menu(i, x, y) => { root.tab-menu(i, x, y); }
+        }
         Rectangle {
             background: Theme.surface;
             HorizontalLayout {
@@ -103,6 +122,11 @@ export component AppWindow inherits Window {
                 touch := TouchArea {
                     clicked => { root.selected = i; }
                     double-clicked => { root.open-row(i); }
+                    pointer-event(event) => {
+                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.middle {
+                            root.row-middle-clicked(i);
+                        }
+                    }
                 }
 
                 HorizontalLayout {

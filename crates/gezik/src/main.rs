@@ -188,7 +188,48 @@ fn main() -> Result<(), slint::PlatformError> {
         let nav = nav.clone();
         move |text| nav.navigate_text(text.into())
     });
-    window.on_crumb_clicked(move |i| nav.crumb_clicked(i));
+    window.on_crumb_clicked({
+        let nav = nav.clone();
+        move |i| nav.crumb_clicked(i)
+    });
+    // Slint passes indexes as `i32`: a negative one does nothing.
+    window.on_tab_activate({
+        let nav = nav.clone();
+        move |i| {
+            if let Ok(i) = usize::try_from(i) {
+                nav.activate_tab(i);
+            }
+        }
+    });
+    // Closed once the click is fully handled: closing changes the tab elements (and the last
+    // tab closes the window) while the closed tab's own pointer handler is still running.
+    window.on_tab_close({
+        let nav = nav.clone();
+        move |i| {
+            if let Ok(i) = usize::try_from(i) {
+                let nav = nav.clone();
+                slint::Timer::single_shot(std::time::Duration::ZERO, move || nav.close_tab(i));
+            }
+        }
+    });
+    window.on_tab_new({
+        let nav = nav.clone();
+        move || nav.open_tab(nav.start(), true)
+    });
+    window.on_tab_move({
+        let nav = nav.clone();
+        move |from, to| {
+            if let (Ok(from), Ok(to)) = (usize::try_from(from), usize::try_from(to)) {
+                nav.move_tab(from, to);
+            }
+        }
+    });
+    window.on_row_middle_clicked(move |i| {
+        if let Some((path, true)) = nav.entry_path(i) {
+            nav.open_tab(gezik_core::nav::Location::Path(path), false);
+        }
+    });
+    // tab-menu is wired in Task 10.
 
     window.run()
 }

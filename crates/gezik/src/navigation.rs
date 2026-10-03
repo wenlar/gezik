@@ -7,13 +7,13 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use gezik_core::nav::{Location, Tabs, ViewState, crumbs, nearest_existing};
+use gezik_core::nav::{Closed, Location, Tabs, ViewState, crumbs, nearest_existing};
 use gezik_core::{Entry, format_size, list_dir};
 use gezik_platform::Drive;
 use slint::{ComponentHandle, Model, ModelNotify, ModelRc, ModelTracker, VecModel};
 
 use crate::places::Places;
-use crate::{AppWindow, CrumbItem, FileRow};
+use crate::{AppWindow, CrumbItem, FileRow, TabItem};
 
 /// Address bar parts shown before older ones collapse into "…".
 const MAX_CRUMBS: usize = 4;
@@ -131,7 +131,12 @@ struct Inner {
     window: slint::Weak<AppWindow>,
     tabs: Tabs,
     listing: Listing,
+    /// The listing was cleared for a tab switch and the active tab's own listing is not
+    /// shown yet, so what is on screen says nothing about that tab's selection and scroll.
+    cleared: bool,
     places: Places,
+    /// The tab bar's model, updated in place (see [`sync_tabs`]).
+    tab_model: Rc<VecModel<TabItem>>,
     start: Location,
     /// Bumped on every load so that results of an overtaken load are dropped.
     generation: Arc<AtomicU64>,
@@ -159,11 +164,15 @@ impl Navigator {
     pub fn new(window: &AppWindow, first: Location, select: Option<String>, start: Location) -> Navigator {
         let mut tabs = Tabs::new(first);
         tabs.active_mut().set_view(ViewState { selected: select, scroll: 0.0 });
+        let tab_model = Rc::new(VecModel::default());
+        window.set_tabs(ModelRc::from(tab_model.clone()));
         Navigator(Rc::new(RefCell::new(Inner {
             window: window.as_weak(),
             tabs,
             listing: Listing::Files(PathBuf::new(), Rc::default()),
+            cleared: false,
             places: Places::default(),
+            tab_model,
             start,
             generation: Arc::default(),
             on_changed: Vec::new(),
@@ -182,7 +191,6 @@ impl Navigator {
     }
 
     /// Where new tabs open (`start-folder`).
-    #[allow(dead_code)] // Used by the tab bar (Task 8).
     pub fn start(&self) -> Location {
         self.0.borrow().start.clone()
     }
@@ -210,18 +218,117 @@ impl Navigator {
     /// Runs `f` on the tab set. Call [`after_tabs_changed`](Self::after_tabs_changed) afterwards
     /// if the active tab may have changed.
     /// Drops any pending load, so it cannot apply to a different active tab.
-    #[allow(dead_code)] // Used by the tab bar (Task 8).
+    /// `f` runs while the navigator is borrowed: it must touch only the tabs.
     pub fn with_tabs<R>(&self, f: impl FnOnce(&mut Tabs) -> R) -> R {
         self.save_view();
-        let mut inner = self.0.borrow_mut();
-        inner.generation.fetch_add(1, Ordering::SeqCst);
-        f(&mut inner.tabs)
+        self.0.borrow_mut().generation.fetch_add(1, Ordering::SeqCst);
+        self.keep_active_tab(f)
     }
 
-    /// Shows the (possibly new) active tab.
-    #[allow(dead_code)] // Used by the tab bar (Task 8).
+    /// Runs `f` on the tab set when `f` keeps the same tab active (possibly at another
+    /// index), so a pending load of that tab still applies. Same borrow rule as `with_tabs`.
+    fn keep_active_tab<R>(&self, f: impl FnOnce(&mut Tabs) -> R) -> R {
+        f(&mut self.0.borrow_mut().tabs)
+    }
+
+    /// Shows the (possibly new) active tab. Until its listing is loaded the file list is
+    /// empty, so no other tab's files appear under its address.
     pub fn after_tabs_changed(&self) {
+        {
+            let mut inner = self.0.borrow_mut();
+            inner.listing = Listing::Files(PathBuf::new(), Rc::default());
+            inner.cleared = true;
+            if let Some(window) = inner.window.upgrade() {
+                window.set_rows(ModelRc::default());
+                window.set_selected(-1);
+                window.set_list_scroll(0.0);
+            }
+        }
+        self.update_chrome();
         self.load(self.active_location(), Mode::Show, None);
+    }
+
+    /// Opens a tab at `location` right after the active one; `activate` switches to it.
+    pub fn open_tab(&self, location: Location, activate: bool) {
+        if activate {
+            self.with_tabs(|tabs| tabs.open(location, true));
+            self.after_tabs_changed();
+        } else {
+            self.keep_active_tab(|tabs| tabs.open(location, false));
+            self.update_chrome();
+        }
+    }
+
+    pub fn activate_tab(&self, index: usize) {
+        // Checked first: `with_tabs` would drop a pending load of the active tab.
+        let changes = {
+            let tabs = &self.0.borrow().tabs;
+            index < tabs.len() && index != tabs.active_index()
+        };
+        if changes {
+            self.with_tabs(|tabs| tabs.activate(index));
+            self.after_tabs_changed();
+        }
+    }
+
+    #[allow(dead_code)] // Used by the shortcuts (Task 11).
+    pub fn next_tab(&self) {
+        if self.0.borrow().tabs.len() > 1 {
+            self.with_tabs(Tabs::next);
+            self.after_tabs_changed();
+        }
+    }
+
+    #[allow(dead_code)] // Used by the shortcuts (Task 11).
+    pub fn prev_tab(&self) {
+        if self.0.borrow().tabs.len() > 1 {
+            self.with_tabs(Tabs::prev);
+            self.after_tabs_changed();
+        }
+    }
+
+    /// Closes tab `index`. Closing the last tab closes the window (state is saved as for
+    /// any close request).
+    pub fn close_tab(&self, index: usize) {
+        if index != self.0.borrow().tabs.active_index() {
+            self.keep_active_tab(|tabs| tabs.close(index));
+            return self.update_chrome();
+        }
+        match self.with_tabs(|tabs| tabs.close(index)) {
+            Closed::LastTab => {
+                let window = self.0.borrow().window.upgrade();
+                if let Some(window) = window
+                    && let Err(err) =
+                        window.window().dispatch_event_with_result(slint::platform::WindowEvent::CloseRequested)
+                {
+                    eprintln!("gezik: cannot close the window: {err}");
+                }
+            }
+            Closed::Remaining => self.after_tabs_changed(),
+        }
+    }
+
+    #[allow(dead_code)] // Used by the tab menu (Task 10).
+    pub fn close_other_tabs(&self, index: usize) {
+        if index == self.0.borrow().tabs.active_index() {
+            self.keep_active_tab(|tabs| tabs.close_others(index));
+            self.update_chrome();
+        } else if index < self.0.borrow().tabs.len() {
+            self.with_tabs(|tabs| tabs.close_others(index));
+            self.after_tabs_changed();
+        }
+    }
+
+    #[allow(dead_code)] // Used by the tab menu (Task 10).
+    pub fn duplicate_tab(&self, index: usize) {
+        self.keep_active_tab(|tabs| tabs.duplicate(index));
+        self.update_chrome();
+    }
+
+    /// Moves tab `from` to position `to`; the active tab stays active.
+    pub fn move_tab(&self, from: usize, to: usize) {
+        self.keep_active_tab(|tabs| tabs.move_tab(from, to));
+        self.update_chrome();
     }
 
     pub fn go(&self, location: Location) {
@@ -303,6 +410,9 @@ impl Navigator {
     /// Stores the active tab's selection and scroll before leaving it.
     fn save_view(&self) {
         let mut inner = self.0.borrow_mut();
+        if inner.cleared {
+            return;
+        }
         let Some(window) = inner.window.upgrade() else { return };
         let selected = usize::try_from(window.get_selected()).ok().and_then(|i| inner.listing.name_at(i));
         let view = ViewState { selected, scroll: window.get_list_scroll() };
@@ -364,6 +474,7 @@ impl Navigator {
                 Mode::Show => {}
             }
             inner.listing = listing;
+            inner.cleared = false;
         }
         self.show_listing(note);
         self.update_chrome();
@@ -372,7 +483,11 @@ impl Navigator {
     /// Shows `message` for a failed load; see [`listing_after_failure`].
     fn show_failed(&self, mode: Mode, location: &Location, message: String) {
         let Some(listing) = listing_after_failure(mode, location) else { return self.status(message) };
-        self.0.borrow_mut().listing = listing;
+        {
+            let mut inner = self.0.borrow_mut();
+            inner.listing = listing;
+            inner.cleared = false;
+        }
         self.show_listing(Some(message));
         self.update_chrome();
     }
@@ -439,12 +554,37 @@ impl Navigator {
                 Location::Drives => "".into(),
             });
             window.set_title_text(format!("{} — Gezik", inner.places.title_for(&location)).into());
+            let active = inner.tabs.active_index();
+            let tabs = inner
+                .tabs
+                .iter()
+                .enumerate()
+                .map(|(i, h)| TabItem { title: inner.places.title_for(h.location()).into(), active: i == active });
+            sync_tabs(&inner.tab_model, tabs);
             inner.on_changed.clone()
         };
         // Called with no borrow held, so listeners may use the navigator.
         for f in &listeners {
             f(&location);
         }
+    }
+}
+
+/// Makes `model` hold `tabs`, changing only rows that differ. Replacing the model would
+/// rebuild every tab element, including the one whose click or middle-click is still being
+/// handled.
+fn sync_tabs(model: &VecModel<TabItem>, tabs: impl Iterator<Item = TabItem>) {
+    let mut len = 0;
+    for (i, tab) in tabs.enumerate() {
+        len = i + 1;
+        if i >= model.row_count() {
+            model.push(tab);
+        } else if model.row_data(i).as_ref() != Some(&tab) {
+            model.set_row_data(i, tab);
+        }
+    }
+    while model.row_count() > len {
+        model.remove(model.row_count() - 1);
     }
 }
 
@@ -468,6 +608,25 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    fn tab(title: &str, active: bool) -> TabItem {
+        TabItem { title: title.into(), active }
+    }
+
+    fn titles(model: &VecModel<TabItem>) -> Vec<(String, bool)> {
+        model.iter().map(|t| (t.title.to_string(), t.active)).collect()
+    }
+
+    #[test]
+    fn sync_tabs_grows_shrinks_and_updates_in_place() {
+        let model = VecModel::default();
+        sync_tabs(&model, [tab("a", true), tab("b", false)].into_iter());
+        assert_eq!(titles(&model), [("a".into(), true), ("b".into(), false)]);
+        sync_tabs(&model, [tab("a", false), tab("b", true), tab("c", false)].into_iter());
+        assert_eq!(titles(&model), [("a".into(), false), ("b".into(), true), ("c".into(), false)]);
+        sync_tabs(&model, [tab("c", true)].into_iter());
+        assert_eq!(titles(&model), [("c".into(), true)]);
     }
 
     #[test]
