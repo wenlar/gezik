@@ -1460,6 +1460,15 @@ name = "gezik-core"
 version = "0.1.0"
 
 [[package]]
+name = "gezik-platform"
+version = "0.1.0"
+dependencies = [
+ "dirs",
+ "raw-window-handle",
+ "windows",
+]
+
+[[package]]
 name = "gif"
 version = "0.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
