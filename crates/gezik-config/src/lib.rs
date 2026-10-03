@@ -3,6 +3,7 @@
 
 pub mod paths;
 pub mod theme;
+pub mod settings;
 
 mod color;
 mod warning;
