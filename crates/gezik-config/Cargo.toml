@@ -1,0 +1,9 @@
+[package]
+name = "gezik-config"
+description = "Settings and theme handling for the Gezik file manager"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+toml = "1"
+dirs = "7"

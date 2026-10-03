@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/gezik-core", "crates/gezik"]
+members = ["crates/gezik-core", "crates/gezik-config", "crates/gezik"]
 
 [workspace.package]
 version = "0.1.0"
@@ -8,6 +8,7 @@ edition = "2024"
 
 [workspace.dependencies]
 gezik-core = { path = "crates/gezik-core" }
+gezik-config = { path = "crates/gezik-config" }
 
 [profile.release]
 opt-level = 3
