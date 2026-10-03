@@ -112,12 +112,28 @@ pub enum Closed {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tabs {
     tabs: Vec<History>,
+    /// A stable id per tab, parallel to `tabs`: identifies a tab across moves and closes.
+    ids: Vec<u64>,
+    next_id: u64,
     active: usize,
 }
 
 impl Tabs {
     pub fn new(location: Location) -> Self {
-        Self { tabs: vec![History::new(location)], active: 0 }
+        Self { tabs: vec![History::new(location)], ids: vec![0], next_id: 1, active: 0 }
+    }
+    fn new_id(&mut self) -> u64 {
+        let id = self.next_id;
+        self.next_id += 1;
+        id
+    }
+    /// The stable id of tab `index`.
+    pub fn id(&self, index: usize) -> Option<u64> {
+        self.ids.get(index).copied()
+    }
+    /// Where the tab with `id` is now; `None` once it is closed.
+    pub fn index_of(&self, id: u64) -> Option<usize> {
+        self.ids.iter().position(|&i| i == id)
     }
     pub fn len(&self) -> usize {
         self.tabs.len()
@@ -144,6 +160,8 @@ impl Tabs {
     pub fn open(&mut self, location: Location, activate: bool) -> usize {
         let index = self.active + 1;
         self.tabs.insert(index, History::new(location));
+        let id = self.new_id();
+        self.ids.insert(index, id);
         if activate {
             self.active = index;
         }
@@ -159,6 +177,7 @@ impl Tabs {
             return Closed::LastTab;
         }
         self.tabs.remove(index);
+        self.ids.remove(index);
         if index < self.active || (index == self.active && self.active == self.tabs.len()) {
             self.active -= 1;
         }
@@ -170,12 +189,15 @@ impl Tabs {
         }
         let keep = self.tabs.swap_remove(index);
         self.tabs = vec![keep];
+        self.ids = vec![self.ids[index]];
         self.active = 0;
     }
     /// Copies tab `index` (with its history) right after it. Returns the copy's index.
     pub fn duplicate(&mut self, index: usize) -> usize {
         let Some(copy) = self.tabs.get(index).cloned() else { return self.active };
         self.tabs.insert(index + 1, copy);
+        let id = self.new_id();
+        self.ids.insert(index + 1, id);
         if self.active > index {
             self.active += 1;
         }
@@ -206,6 +228,8 @@ impl Tabs {
         }
         let tab = self.tabs.remove(from);
         self.tabs.insert(to, tab);
+        let id = self.ids.remove(from);
+        self.ids.insert(to, id);
         self.active = if self.active == from {
             to
         } else if from < self.active && to >= self.active {
@@ -286,6 +310,65 @@ mod tests {
 
     fn view(name: &str, scroll: f32) -> ViewState {
         ViewState { selected: Some(name.to_owned()), scroll }
+    }
+
+    // ---- Tab ids ----
+
+    fn ids(tabs: &Tabs) -> Vec<u64> {
+        (0..tabs.len()).filter_map(|i| tabs.id(i)).collect()
+    }
+
+    #[test]
+    fn tab_ids_are_unique_and_follow_their_tab() {
+        let mut tabs = Tabs::new(p("/a"));
+        tabs.open(p("/b"), false);
+        tabs.open(p("/c"), false);
+        let before = ids(&tabs);
+        let mut sorted = before.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), 3);
+
+        let moved = tabs.id(0).unwrap();
+        tabs.move_tab(0, 2);
+        assert_eq!(tabs.index_of(moved), Some(2));
+        assert_eq!(tabs.get(2).unwrap().location(), &p("/a"));
+
+        let original = tabs.id(1).unwrap();
+        let copy = tabs.duplicate(1);
+        let copy_id = tabs.id(copy).unwrap();
+        assert!(!before.contains(&copy_id), "a duplicate gets a new id");
+        assert_eq!(tabs.index_of(original), Some(1));
+
+        let closed = tabs.id(0).unwrap();
+        tabs.close(0);
+        assert_eq!(tabs.index_of(closed), None);
+        assert_eq!(tabs.index_of(original), Some(0));
+        assert_eq!(tabs.id(tabs.len()), None);
+    }
+
+    #[test]
+    fn closing_the_same_id_twice_closes_one_tab() {
+        let mut tabs = Tabs::new(p("/a"));
+        tabs.open(p("/b"), false);
+        tabs.open(p("/c"), false);
+        let id = tabs.id(1).unwrap();
+        for _ in 0..2 {
+            if let Some(index) = tabs.index_of(id) {
+                tabs.close(index);
+            }
+        }
+        assert_eq!(tabs.len(), 2);
+        assert_eq!(tabs.index_of(id), None);
+    }
+
+    #[test]
+    fn close_others_keeps_the_kept_tabs_id() {
+        let mut tabs = Tabs::new(p("/a"));
+        tabs.open(p("/b"), false);
+        let id = tabs.id(1).unwrap();
+        tabs.close_others(1);
+        assert_eq!(ids(&tabs), [id]);
     }
 
     // ---- Location ----

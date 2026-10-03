@@ -308,6 +308,19 @@ impl Navigator {
         }
     }
 
+    /// The stable id of tab `index`, to act on that tab later even if tabs move or close.
+    pub fn tab_id(&self, index: usize) -> Option<u64> {
+        self.0.borrow().tabs.id(index)
+    }
+
+    /// Closes the tab with `id`, wherever it is now; does nothing if it is already closed.
+    pub fn close_tab_by_id(&self, id: u64) {
+        let index = self.0.borrow().tabs.index_of(id);
+        if let Some(index) = index {
+            self.close_tab(index);
+        }
+    }
+
     #[allow(dead_code)] // Used by the tab menu (Task 10).
     pub fn close_other_tabs(&self, index: usize) {
         if index == self.0.borrow().tabs.active_index() {

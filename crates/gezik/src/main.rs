@@ -201,14 +201,15 @@ fn main() -> Result<(), slint::PlatformError> {
             }
         }
     });
-    // Closed once the click is fully handled: closing changes the tab elements (and the last
-    // tab closes the window) while the closed tab's own pointer handler is still running.
+    // Closed once the click is fully handled (the last tab closes the window). The tab is
+    // remembered by id, so a close that runs after other tab changes, or a second close of
+    // the same tab, never hits another tab.
     window.on_tab_close({
         let nav = nav.clone();
         move |i| {
-            if let Ok(i) = usize::try_from(i) {
+            if let Some(id) = usize::try_from(i).ok().and_then(|i| nav.tab_id(i)) {
                 let nav = nav.clone();
-                slint::Timer::single_shot(std::time::Duration::ZERO, move || nav.close_tab(i));
+                slint::Timer::single_shot(std::time::Duration::ZERO, move || nav.close_tab_by_id(id));
             }
         }
     });
