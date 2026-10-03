@@ -3,6 +3,7 @@
 
 mod navigation;
 mod places;
+mod start;
 mod theme_bridge;
 mod watcher;
 mod window_state;
@@ -14,7 +15,7 @@ use gezik_config::Warning;
 use gezik_config::settings::Settings;
 use gezik_config::store::{self, ConfigFiles, ConfigStore, Loaded};
 use gezik_config::theme;
-use gezik_core::nav::Location;
+use start::StartPlan;
 
 slint::include_modules!();
 
@@ -32,37 +33,25 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
     loaded
 }
 
-/// Like [`apply_config`], and also resolves where the first tab opens. An invalid
-/// `start-folder` is added to `files`' warnings so the notice shows it (also after later
-/// re-resolves, until the files are read again).
-fn apply_config_and_start(window: &AppWindow, files: &mut ConfigFiles, cli: Option<PathBuf>) -> Location {
+/// Like [`apply_config`], and also resolves where the app opens. Start warnings (bad
+/// `start-folder`, missing command-line path) are added to `files` so the notice shows
+/// them (also after later re-resolves, until the files are read again).
+fn apply_config_and_start(window: &AppWindow, files: &mut ConfigFiles, cli: Option<PathBuf>) -> StartPlan {
     let loaded = apply_config(window, files);
-    let (start, warning) = resolve_start(&loaded.settings, cli);
-    if let Some(warning) = warning {
-        files.warnings.push(warning);
+    let plan = resolve_start(&loaded.settings, cli);
+    if !plan.warnings.is_empty() {
+        files.warnings.extend(plan.warnings.iter().cloned());
         apply_config(window, files);
     }
-    start
+    plan
 }
 
-/// Where the first tab opens: the command-line folder, else `start-folder`, else home.
-fn resolve_start(settings: &Settings, cli: Option<PathBuf>) -> (Location, Option<Warning>) {
-    if let Some(path) = cli {
-        // Absolute, so the address bar parts and "up" work for `gezik .` too.
-        return (Location::Path(std::path::absolute(&path).unwrap_or(path)), None);
-    }
-    let home = dirs_home();
-    let text = settings.start_folder.trim();
-    if text.eq_ignore_ascii_case("drives") {
-        return (Location::Drives, None);
-    }
-    match gezik_config::paths::KnownDirs::system().expand_checked(text) {
-        Some(path) if path.is_dir() => (Location::Path(path), None),
-        _ => (
-            Location::Path(home),
-            Some(Warning::new("settings.toml", format!("start-folder: \"{text}\" is not a folder; using home"))),
-        ),
-    }
+/// [`start::plan_start`] against the real file system.
+fn resolve_start(settings: &Settings, cli: Option<PathBuf>) -> StartPlan {
+    // Absolute, so the address bar parts and "up" work for `gezik .` too.
+    let cli = cli.map(|path| std::path::absolute(&path).unwrap_or(path));
+    let dirs = gezik_config::paths::KnownDirs::system();
+    start::plan_start(&settings.start_folder, cli, &dirs_home(), |text| dirs.expand_checked(text), start::path_kind)
 }
 
 fn dirs_home() -> PathBuf {
@@ -110,7 +99,7 @@ fn main() -> Result<(), slint::PlatformError> {
     }
     // Something sensible is on screen even if the selected theme cannot be read.
     theme_bridge::apply(&window, &theme::builtin_dark());
-    let start = apply_config_and_start(&window, &mut files, std::env::args_os().nth(1).map(PathBuf::from));
+    let plan = apply_config_and_start(&window, &mut files, std::env::args_os().nth(1).map(PathBuf::from));
 
     // The latest config files, so a system light/dark switch can re-resolve without I/O.
     let files = Arc::new(Mutex::new(files));
@@ -137,8 +126,8 @@ fn main() -> Result<(), slint::PlatformError> {
             let _ = weak.upgrade_in_event_loop(move |window| {
                 let mut current = files.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                 *current = fresh;
-                let start = apply_config_and_start(&window, &mut current, None);
-                navigation::with_current(|nav| nav.set_start(start));
+                let plan = apply_config_and_start(&window, &mut current, None);
+                navigation::with_current(|nav| nav.set_start(plan.start));
             });
         })
         .map_err(|err| {
@@ -170,7 +159,7 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
-    let nav = navigation::Navigator::new(&window, start);
+    let nav = navigation::Navigator::new(&window, plan.first, plan.select, plan.start);
     nav.install();
     // Captures no navigator (it is not `Send`): the result finds it on the UI thread.
     places::load_in_background(window.as_weak(), move |places| navigation::with_current(|nav| nav.set_places(places)));

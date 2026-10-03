@@ -54,9 +54,41 @@ impl Model for EntryModel {
 }
 
 /// What a background load produces; `Send`, so it can cross back to the UI thread.
+#[derive(Debug)]
 enum LoadResult {
     Files(PathBuf, Vec<Entry>),
     Drives(Vec<Drive>),
+    /// The shown folder no longer exists; `fallback` is its nearest existing ancestor
+    /// (looked up on the loading thread: it may wait on a dead network share).
+    Gone {
+        fallback: Location,
+    },
+    Failed(std::io::Error),
+}
+
+/// Lists `location`. Runs on a background thread.
+fn list(location: &Location, mode: Mode) -> LoadResult {
+    match location {
+        Location::Drives => LoadResult::Drives(gezik_platform::drives()),
+        Location::Path(path) => match list_dir(path) {
+            Ok(entries) => LoadResult::Files(path.clone(), entries),
+            Err(err) if mode == Mode::Show && err.kind() == std::io::ErrorKind::NotFound => {
+                LoadResult::Gone { fallback: nearest_existing(location, |p| p.is_dir()) }
+            }
+            Err(err) => LoadResult::Failed(err),
+        },
+    }
+}
+
+/// The listing to show after a load of `location` failed. A failed `Show` leaves the tab at
+/// a location whose contents are unknown, so nothing listed for another folder (or tab) may
+/// stay on screen: it shows an empty listing for `location`. A failed move (navigate, back,
+/// forward) changes nothing, so the current listing stays.
+fn listing_after_failure(mode: Mode, location: &Location) -> Option<Listing> {
+    (mode == Mode::Show).then(|| match location {
+        Location::Path(path) => Listing::Files(path.clone(), Rc::default()),
+        Location::Drives => Listing::Drives(Vec::new()),
+    })
 }
 
 /// What the active tab currently shows.
@@ -82,7 +114,7 @@ impl Listing {
 }
 
 /// How a successful load updates the history.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
     /// A new location: push it.
     Navigate,
@@ -121,14 +153,15 @@ pub fn with_current(f: impl FnOnce(&Navigator)) {
 #[derive(Clone)]
 pub struct Navigator(Rc<RefCell<Inner>>);
 
-// Parts of this interface are for the tab bar, sidebar and shortcuts (later tasks).
-#[allow(dead_code)]
 impl Navigator {
+    /// The first tab opens at `first` with `select` selected; new tabs open at `start`.
     /// Does not load anything: call [`install`](Self::install) next.
-    pub fn new(window: &AppWindow, start: Location) -> Navigator {
+    pub fn new(window: &AppWindow, first: Location, select: Option<String>, start: Location) -> Navigator {
+        let mut tabs = Tabs::new(first);
+        tabs.active_mut().set_view(ViewState { selected: select, scroll: 0.0 });
         Navigator(Rc::new(RefCell::new(Inner {
             window: window.as_weak(),
-            tabs: Tabs::new(start.clone()),
+            tabs,
             listing: Listing::Files(PathBuf::new(), Rc::default()),
             places: Places::default(),
             start,
@@ -149,6 +182,7 @@ impl Navigator {
     }
 
     /// Where new tabs open (`start-folder`).
+    #[allow(dead_code)] // Used by the tab bar (Task 8).
     pub fn start(&self) -> Location {
         self.0.borrow().start.clone()
     }
@@ -157,6 +191,7 @@ impl Navigator {
         self.0.borrow_mut().start = start;
     }
 
+    #[allow(dead_code)] // Used by the sidebar (Task 9).
     pub fn places(&self) -> Places {
         self.0.borrow().places.clone()
     }
@@ -167,18 +202,24 @@ impl Navigator {
     }
 
     /// Calls `f` whenever the active location is shown (changed, reloaded or tab switched).
+    #[allow(dead_code)] // Used by the sidebar (Task 9).
     pub fn on_changed(&self, f: impl Fn(&Location) + 'static) {
         self.0.borrow_mut().on_changed.push(Rc::new(f));
     }
 
     /// Runs `f` on the tab set. Call [`after_tabs_changed`](Self::after_tabs_changed) afterwards
     /// if the active tab may have changed.
+    /// Drops any pending load, so it cannot apply to a different active tab.
+    #[allow(dead_code)] // Used by the tab bar (Task 8).
     pub fn with_tabs<R>(&self, f: impl FnOnce(&mut Tabs) -> R) -> R {
         self.save_view();
-        f(&mut self.0.borrow_mut().tabs)
+        let mut inner = self.0.borrow_mut();
+        inner.generation.fetch_add(1, Ordering::SeqCst);
+        f(&mut inner.tabs)
     }
 
     /// Shows the (possibly new) active tab.
+    #[allow(dead_code)] // Used by the tab bar (Task 8).
     pub fn after_tabs_changed(&self) {
         self.load(self.active_location(), Mode::Show, None);
     }
@@ -281,10 +322,7 @@ impl Navigator {
             w.set_status("Loading…".into());
         }
         std::thread::spawn(move || {
-            let result = match &location {
-                Location::Drives => Ok(LoadResult::Drives(gezik_platform::drives())),
-                Location::Path(path) => list_dir(path).map(|entries| LoadResult::Files(path.clone(), entries)),
-            };
+            let result = list(&location, mode);
             let _ = window.upgrade_in_event_loop(move |_| {
                 if generation.load(Ordering::SeqCst) != ticket {
                     return;
@@ -294,11 +332,21 @@ impl Navigator {
         });
     }
 
-    fn finish_load(&self, location: Location, mode: Mode, result: std::io::Result<LoadResult>, note: Option<String>) {
+    fn finish_load(&self, location: Location, mode: Mode, result: LoadResult, note: Option<String>) {
+        let shown = match &location {
+            Location::Path(p) => p.display().to_string(),
+            Location::Drives => "This PC".to_owned(),
+        };
         let listing = match result {
-            Ok(LoadResult::Files(path, entries)) => Listing::Files(path, Rc::new(entries)),
-            Ok(LoadResult::Drives(drives)) => Listing::Drives(drives),
-            Err(err) => return self.load_failed(location, mode, err),
+            LoadResult::Files(path, entries) => Listing::Files(path, Rc::new(entries)),
+            LoadResult::Drives(drives) => Listing::Drives(drives),
+            LoadResult::Gone { fallback } => {
+                // The active tab's folder is gone: go to the nearest folder that still exists.
+                self.show_failed(mode, &location, String::new());
+                self.load(fallback, Mode::Navigate, Some(format!("{shown} no longer exists")));
+                return;
+            }
+            LoadResult::Failed(err) => return self.show_failed(mode, &location, format!("Cannot open {shown}: {err}")),
         };
         {
             let mut inner = self.0.borrow_mut();
@@ -321,18 +369,12 @@ impl Navigator {
         self.update_chrome();
     }
 
-    fn load_failed(&self, location: Location, mode: Mode, err: std::io::Error) {
-        let shown = match &location {
-            Location::Path(p) => p.display().to_string(),
-            Location::Drives => "This PC".to_owned(),
-        };
-        if mode == Mode::Show && err.kind() == std::io::ErrorKind::NotFound {
-            // The active tab's folder is gone: go to the nearest folder that still exists.
-            let fallback = nearest_existing(&location, |p| p.is_dir());
-            self.load(fallback, Mode::Navigate, Some(format!("{shown} no longer exists")));
-            return;
-        }
-        self.status(format!("Cannot open {shown}: {err}"));
+    /// Shows `message` for a failed load; see [`listing_after_failure`].
+    fn show_failed(&self, mode: Mode, location: &Location, message: String) {
+        let Some(listing) = listing_after_failure(mode, location) else { return self.status(message) };
+        self.0.borrow_mut().listing = listing;
+        self.show_listing(Some(message));
+        self.update_chrome();
     }
 
     fn show_listing(&self, note: Option<String>) {
@@ -365,7 +407,7 @@ impl Navigator {
         // offset may be pulled back into the old list's bounds, and the first placement snaps
         // it to a row boundary. Set it again once that frame is done, unless another load
         // came first. (A zero timer would run before the frame.) The top needs no second pass.
-        if view.scroll != 0.0 {
+        if view.scroll != 0.0 && count > 0 {
             let (weak, generation, scroll) = (inner.window.clone(), inner.generation.clone(), view.scroll);
             let ticket = generation.load(Ordering::SeqCst);
             slint::Timer::single_shot(SCROLL_RESTORE_DELAY, move || {
@@ -402,6 +444,95 @@ impl Navigator {
         // Called with no borrow held, so listeners may use the navigator.
         for f in &listeners {
             f(&location);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A fresh folder under the system temp folder, removed on drop.
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(name: &str) -> TempDir {
+            let dir = std::env::temp_dir().join(format!("gezik-nav-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).expect("create temp dir");
+            TempDir(dir)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn list_reads_folders() {
+        let tmp = TempDir::new("list");
+        std::fs::write(tmp.0.join("a.txt"), "x").expect("write");
+        match list(&Location::Path(tmp.0.clone()), Mode::Navigate) {
+            LoadResult::Files(path, entries) => {
+                assert_eq!(path, tmp.0);
+                assert_eq!(entries.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), ["a.txt"]);
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_vanished_folder_on_show_falls_back_to_its_nearest_existing_ancestor() {
+        let tmp = TempDir::new("gone");
+        let gone = Location::Path(tmp.0.join("one").join("two"));
+        match list(&gone, Mode::Show) {
+            LoadResult::Gone { fallback } => assert_eq!(fallback, Location::Path(tmp.0.clone())),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_missing_folder_on_navigate_is_an_error() {
+        let tmp = TempDir::new("missing");
+        let missing = Location::Path(tmp.0.join("nope"));
+        for mode in [Mode::Navigate, Mode::Back, Mode::Forward] {
+            match list(&missing, mode) {
+                LoadResult::Failed(err) => assert_eq!(err.kind(), std::io::ErrorKind::NotFound),
+                other => panic!("unexpected {other:?} for {mode:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_file_is_not_listed_as_a_folder() {
+        let tmp = TempDir::new("file");
+        let file = tmp.0.join("f.txt");
+        std::fs::write(&file, "x").expect("write");
+        assert!(matches!(list(&Location::Path(file), Mode::Show), LoadResult::Failed(_)));
+    }
+
+    #[test]
+    fn a_failed_show_empties_the_listing_for_that_location() {
+        let place = Location::Path(PathBuf::from("/x/locked"));
+        match listing_after_failure(Mode::Show, &place) {
+            Some(Listing::Files(path, entries)) => {
+                assert_eq!(path, PathBuf::from("/x/locked"));
+                assert!(entries.is_empty());
+            }
+            _ => panic!("expected an empty listing"),
+        }
+        assert!(
+            matches!(listing_after_failure(Mode::Show, &Location::Drives), Some(Listing::Drives(d)) if d.is_empty())
+        );
+    }
+
+    #[test]
+    fn a_failed_move_keeps_the_current_listing() {
+        let place = Location::Path(PathBuf::from("/x/locked"));
+        for mode in [Mode::Navigate, Mode::Back, Mode::Forward] {
+            assert!(listing_after_failure(mode, &place).is_none(), "{mode:?}");
         }
     }
 }
