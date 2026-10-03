@@ -143,7 +143,7 @@ spacing     = 6                  # 0–24
 - Yerleşik temalar: `light` ve `dark`. Programa gömülüdür (`include_str!`); tema klasörü silinse bile uygulama çalışır.
 - Kullanıcı teması yerleşik bir temayla aynı adı taşıyorsa kullanıcı teması kazanır (yerleşik temayı düzenlemenin yolu budur).
 - `auto` ayrılmış bir addır; `themes/auto.toml` yok sayılır ve uyarı verilir.
-- `base` zinciri izlenir: `nord → dark`. Her değer, zincirde onu tanımlayan ilk temadan gelir. Zincirin sonu her zaman yerleşik bir temadır; `base` belirtilmemişse `dark` kabul edilir.
+- `base` zinciri izlenir: `nord → dark`. Her değer, zincirde onu tanımlayan ilk temadan gelir. Zincirin sonu her zaman yerleşik bir temadır; `base` belirtilmemişse, tema aynı adlı bir yerleşik temayı eziyorsa (ör. kullanıcının `light.toml` dosyası) o yerleşik tema, aksi halde `dark` kabul edilir.
 - Döngü (`a → b → a`) veya bulunamayan `base` → uyarı; zincir o noktada kesilir ve `dark` ile tamamlanır.
 - `theme = "auto"`: sistem açık/koyu moduna göre `theme-light` veya `theme-dark` uygulanır; sistem modu değişince anında geçilir.
 

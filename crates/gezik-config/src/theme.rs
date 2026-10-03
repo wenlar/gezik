@@ -181,7 +181,7 @@ fn builtin(id: &str) -> PartialTheme {
 
 /// Resolves a theme by id (case-insensitive) from the user's theme files
 /// (`id → TOML text`, ids lowercase) and the built-ins, filling every value the theme
-/// leaves out from its `base` chain. A missing or cyclic base falls back to `dark`.
+/// leaves out from its `base` chain. A theme without `base` extends the built-in of the same id if there is one, else `dark`; a missing or cyclic base falls back to `dark`.
 pub fn resolve_theme(
     id: &str,
     user_themes: &HashMap<String, String>,
@@ -201,7 +201,9 @@ pub fn resolve_theme(
         if current_source == Source::Builtin && base.is_none() {
             break;
         }
-        let base = base.unwrap_or_else(|| "dark".to_owned()).to_lowercase();
+        // Without a `base`, a theme extends the built-in it shadows, otherwise `dark`.
+        let default_base = if builtin_source(&current).is_some() { current.as_str() } else { "dark" };
+        let base = base.unwrap_or_else(|| default_base.to_owned()).to_lowercase();
         let Some((source, text)) = lookup(&base, user_themes, &visited) else {
             warnings.push(Warning::new(
                 label(&current, current_source),
@@ -431,6 +433,18 @@ mod tests {
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(theme.colors.accent, hex("#ff00ff"));
         assert_eq!(theme.colors.background, hex("#1c1c1c"));
+    }
+
+    #[test]
+    fn user_light_shadows_and_extends_builtin_light() {
+        let themes = user(&[("light", "[colors]
+accent = \"#ff00ff\"
+")]);
+        let mut warnings = Vec::new();
+        let theme = resolve_theme("light", &themes, &mut warnings).unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(theme.colors.accent, hex("#ff00ff"));
+        assert_eq!(theme.colors.background, hex("#fafafa"));
     }
 
     #[test]
