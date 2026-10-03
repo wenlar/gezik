@@ -1,5 +1,6 @@
 //! Theme files: parsing, validation and (in `resolve_theme`) `base` inheritance.
 
+use std::collections::HashMap;
 use crate::{Color, Warning};
 
 /// Every color a theme can set, as written in `[colors]`.
@@ -28,12 +29,9 @@ pub const METRIC_RANGES: [(&str, f32, f32); 5] = [
     ("spacing", 0.0, 24.0),
 ];
 
-#[allow(dead_code)] // used by resolve_theme (Task 4)
 const DARK: &str = include_str!("../themes/dark.toml");
-#[allow(dead_code)] // used by resolve_theme (Task 4)
 const LIGHT: &str = include_str!("../themes/light.toml");
 
-#[allow(dead_code)] // used by resolve_theme (Task 4)
 pub(crate) fn builtin_source(id: &str) -> Option<&'static str> {
     match id {
         "dark" => Some(DARK),
@@ -61,7 +59,6 @@ pub struct ThemeColors {
 
 impl ThemeColors {
     /// `key` must be one of [`COLOR_KEYS`].
-    #[allow(dead_code)] // used by resolve_theme (Task 4)
     pub(crate) fn set(&mut self, key: &str, color: Color) {
         let slot = match key {
             "background" => &mut self.background,
@@ -96,7 +93,6 @@ pub struct Metrics {
 
 impl Metrics {
     /// `key` must be one of [`METRIC_RANGES`].
-    #[allow(dead_code)] // used by resolve_theme (Task 4)
     pub(crate) fn set(&mut self, key: &str, value: f32) {
         let slot = match key {
             "font-size" => &mut self.font_size,
@@ -108,11 +104,19 @@ impl Metrics {
         };
         *slot = value;
     }
+
+    /// Compact density: rows and spacing at 80%, never below the allowed minimum.
+    pub fn compact(&self) -> Metrics {
+        Metrics {
+            row_height: (self.row_height * 0.8).round().max(16.0),
+            spacing: (self.spacing * 0.8).round(),
+            ..self.clone()
+        }
+    }
 }
 
 /// One theme file as written: only the values it sets.
 #[derive(Debug, Clone, Default)]
-#[allow(dead_code)] // used by resolve_theme (Task 4)
 pub(crate) struct PartialTheme {
     pub display_name: Option<String>,
     pub base: Option<String>,
@@ -121,10 +125,126 @@ pub(crate) struct PartialTheme {
     pub numbers: Vec<(&'static str, f32)>,
 }
 
+/// A theme with every value filled in, ready for the UI.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedTheme {
+    /// Lowercase file name without extension (`nord`), or `dark` / `light`.
+    pub id: String,
+    /// The theme's `name`, or its id when it has none.
+    pub name: String,
+    pub colors: ThemeColors,
+    pub metrics: Metrics,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThemeError {
+    /// No user theme or built-in theme has this id.
+    NotFound,
+    /// The theme file has a syntax error (already reported as a warning).
+    Invalid,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Source {
+    User,
+    Builtin,
+}
+
+/// Finds a theme, preferring the user's file over a built-in with the same id. A theme
+/// already in the chain is skipped, which lets a user `dark` extend the built-in `dark`
+/// and turns real cycles into "not found".
+fn lookup<'a>(
+    id: &str,
+    user_themes: &'a HashMap<String, String>,
+    visited: &[(String, Source)],
+) -> Option<(Source, &'a str)> {
+    let seen = |source| visited.iter().any(|(v, s)| v == id && *s == source);
+    if let Some(text) = user_themes.get(id)
+        && !seen(Source::User)
+    {
+        return Some((Source::User, text));
+    }
+    builtin_source(id).filter(|_| !seen(Source::Builtin)).map(|text| (Source::Builtin, text))
+}
+
+fn label(id: &str, source: Source) -> String {
+    match source {
+        Source::User => format!("{id}.toml"),
+        Source::Builtin => format!("built-in theme \"{id}\""),
+    }
+}
+
+fn builtin(id: &str) -> PartialTheme {
+    let text = builtin_source(id).expect("known built-in theme");
+    parse_theme(id, text, &mut Vec::new()).expect("built-in themes are valid")
+}
+
+/// Resolves a theme by id (case-insensitive) from the user's theme files
+/// (`id → TOML text`, ids lowercase) and the built-ins, filling every value the theme
+/// leaves out from its `base` chain. A missing or cyclic base falls back to `dark`.
+pub fn resolve_theme(
+    id: &str,
+    user_themes: &HashMap<String, String>,
+    warnings: &mut Vec<Warning>,
+) -> Result<ResolvedTheme, ThemeError> {
+    let id = id.to_lowercase();
+    let (source, text) = lookup(&id, user_themes, &[]).ok_or(ThemeError::NotFound)?;
+    let first = parse_theme(&label(&id, source), text, warnings).ok_or(ThemeError::Invalid)?;
+    let name = first.display_name.clone().unwrap_or_else(|| id.clone());
+
+    let mut chain = vec![first];
+    let mut visited = vec![(id.clone(), source)];
+    loop {
+        let (current, current_source) = visited.last().cloned().expect("chain is never empty");
+        let base = chain.last().and_then(|theme| theme.base.clone());
+        // Built-ins define every value, so the chain ends at one without a base.
+        if current_source == Source::Builtin && base.is_none() {
+            break;
+        }
+        let base = base.unwrap_or_else(|| "dark".to_owned()).to_lowercase();
+        let Some((source, text)) = lookup(&base, user_themes, &visited) else {
+            warnings.push(Warning::new(
+                label(&current, current_source),
+                format!("base theme \"{base}\" not found or forms a cycle; using \"dark\" instead"),
+            ));
+            chain.push(builtin("dark"));
+            break;
+        };
+        match parse_theme(&label(&base, source), text, warnings) {
+            Some(theme) => {
+                chain.push(theme);
+                visited.push((base, source));
+            }
+            None => {
+                chain.push(builtin("dark"));
+                break;
+            }
+        }
+    }
+
+    let mut resolved = ResolvedTheme { id, name, colors: ThemeColors::default(), metrics: Metrics::default() };
+    for theme in chain.iter().rev() {
+        for (key, color) in &theme.colors {
+            resolved.colors.set(key, *color);
+        }
+        if let Some(family) = &theme.font_family {
+            resolved.metrics.font_family = family.clone();
+        }
+        for (key, value) in &theme.numbers {
+            resolved.metrics.set(key, *value);
+        }
+    }
+    Ok(resolved)
+}
+
+/// The built-in dark theme: what the UI shows before any config is read.
+pub fn builtin_dark() -> ResolvedTheme {
+    resolve_theme("dark", &HashMap::new(), &mut Vec::new()).expect("built-in dark theme resolves")
+}
+
 /// Parses one theme file. A syntax error returns `None`; a single bad value is skipped
 /// with a warning and the rest of the file still loads. Unknown keys are ignored so
 /// themes written for newer versions keep working.
-#[allow(dead_code)] // used by resolve_theme (Task 4)
 pub(crate) fn parse_theme(file: &str, text: &str, warnings: &mut Vec<Warning>) -> Option<PartialTheme> {
     let table = match text.parse::<toml::Table>() {
         Ok(table) => table,
@@ -182,6 +302,14 @@ mod tests {
         let mut warnings = Vec::new();
         let theme = parse_theme("t.toml", text, &mut warnings);
         (theme, warnings)
+    }
+
+    fn user(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+        pairs.iter().map(|(id, text)| (id.to_string(), text.to_string())).collect()
+    }
+
+    fn hex(text: &str) -> Color {
+        Color::parse(text).unwrap()
     }
 
     #[test]
@@ -252,5 +380,125 @@ mod tests {
         let theme = theme.unwrap();
         assert!(theme.colors.is_empty() && theme.numbers.is_empty() && theme.base.is_none());
         assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn builtin_dark_resolves_completely() {
+        let mut warnings = Vec::new();
+        let theme = resolve_theme("dark", &HashMap::new(), &mut warnings).unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(theme.id, "dark");
+        assert_eq!(theme.name, "Dark");
+        assert_eq!(theme.colors.background, hex("#1c1c1c"));
+        assert_eq!(theme.metrics.row_height, 26.0);
+        assert_eq!(builtin_dark(), theme);
+    }
+
+    #[test]
+    fn partial_theme_inherits_from_its_base() {
+        let themes = user(&[("nord", "base = \"light\"\n[colors]\naccent = \"#88c0d0\"\n")]);
+        let theme = resolve_theme("nord", &themes, &mut Vec::new()).unwrap();
+        assert_eq!(theme.name, "nord");
+        assert_eq!(theme.colors.accent, hex("#88c0d0"));
+        assert_eq!(theme.colors.background, hex("#fafafa"));
+        assert_eq!(theme.metrics.font_size, 13.0);
+    }
+
+    #[test]
+    fn default_base_is_dark() {
+        let themes = user(&[("mine", "[colors]\naccent = \"#ff0000\"\n")]);
+        let theme = resolve_theme("mine", &themes, &mut Vec::new()).unwrap();
+        assert_eq!(theme.colors.background, hex("#1c1c1c"));
+    }
+
+    #[test]
+    fn follows_multi_level_chains() {
+        let themes = user(&[
+            ("a", "base = \"b\"\n[colors]\naccent = \"#aaaaaa\"\n"),
+            ("b", "base = \"light\"\n[colors]\nborder = \"#bbbbbb\"\naccent = \"#000000\"\n"),
+        ]);
+        let theme = resolve_theme("a", &themes, &mut Vec::new()).unwrap();
+        assert_eq!(theme.colors.accent, hex("#aaaaaa"));
+        assert_eq!(theme.colors.border, hex("#bbbbbb"));
+        assert_eq!(theme.colors.background, hex("#fafafa"));
+    }
+
+    #[test]
+    fn user_theme_shadows_a_builtin_and_extends_it() {
+        let themes = user(&[("dark", "[colors]\naccent = \"#ff00ff\"\n")]);
+        let mut warnings = Vec::new();
+        let theme = resolve_theme("dark", &themes, &mut warnings).unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(theme.colors.accent, hex("#ff00ff"));
+        assert_eq!(theme.colors.background, hex("#1c1c1c"));
+    }
+
+    #[test]
+    fn cycle_falls_back_to_dark_with_warning() {
+        let themes = user(&[
+            ("a", "base = \"b\"\nname = \"A\"\n[colors]\naccent = \"#aaaaaa\"\n"),
+            ("b", "base = \"a\"\n"),
+        ]);
+        let mut warnings = Vec::new();
+        let theme = resolve_theme("a", &themes, &mut warnings).unwrap();
+        assert_eq!(theme.name, "A");
+        assert_eq!(theme.colors.accent, hex("#aaaaaa"));
+        assert_eq!(theme.colors.background, hex("#1c1c1c"));
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].file, "b.toml");
+        assert!(warnings[0].message.contains("\"a\""), "{}", warnings[0].message);
+    }
+
+    #[test]
+    fn missing_base_falls_back_to_dark_with_warning() {
+        let themes = user(&[("a", "base = \"gone\"\n")]);
+        let mut warnings = Vec::new();
+        let theme = resolve_theme("a", &themes, &mut warnings).unwrap();
+        assert_eq!(theme.colors.background, hex("#1c1c1c"));
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].message.contains("\"gone\""));
+    }
+
+    #[test]
+    fn broken_base_falls_back_to_dark() {
+        let themes = user(&[("a", "base = \"bad\"\n"), ("bad", "[colors\n")]);
+        let mut warnings = Vec::new();
+        let theme = resolve_theme("a", &themes, &mut warnings).unwrap();
+        assert_eq!(theme.colors.background, hex("#1c1c1c"));
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].file, "bad.toml");
+        assert_eq!(warnings[0].line, Some(1));
+    }
+
+    #[test]
+    fn unknown_theme_is_not_found() {
+        assert_eq!(resolve_theme("nope", &HashMap::new(), &mut Vec::new()), Err(ThemeError::NotFound));
+    }
+
+    #[test]
+    fn broken_theme_is_invalid() {
+        let themes = user(&[("bad", "[colors\n")]);
+        let mut warnings = Vec::new();
+        assert_eq!(resolve_theme("bad", &themes, &mut warnings), Err(ThemeError::Invalid));
+        assert_eq!(warnings.len(), 1);
+    }
+
+    #[test]
+    fn ids_are_case_insensitive() {
+        let themes = user(&[("nord", "[colors]\naccent = \"#88c0d0\"\n")]);
+        let theme = resolve_theme("Nord", &themes, &mut Vec::new()).unwrap();
+        assert_eq!(theme.id, "nord");
+        assert_eq!(theme.colors.accent, hex("#88c0d0"));
+    }
+
+    #[test]
+    fn compact_scales_rows_and_spacing_with_a_floor() {
+        let metrics = builtin_dark().metrics;
+        let compact = metrics.compact();
+        assert_eq!(compact.row_height, 21.0);
+        assert_eq!(compact.spacing, 5.0);
+        assert_eq!(compact.font_size, metrics.font_size);
+        let tiny = Metrics { row_height: 16.0, ..metrics };
+        assert_eq!(tiny.compact().row_height, 16.0);
     }
 }
