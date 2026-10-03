@@ -14,12 +14,7 @@ impl Color {
             return None;
         }
         let byte = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).ok();
-        Some(Color {
-            r: byte(0)?,
-            g: byte(2)?,
-            b: byte(4)?,
-            a: if hex.len() == 8 { byte(6)? } else { 255 },
-        })
+        Some(Color { r: byte(0)?, g: byte(2)?, b: byte(4)?, a: if hex.len() == 8 { byte(6)? } else { 255 } })
     }
 }
 

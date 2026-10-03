@@ -1,7 +1,7 @@
 //! Theme files: parsing, validation and (in `resolve_theme`) `base` inheritance.
 
-use std::collections::HashMap;
 use crate::{Color, Warning};
+use std::collections::HashMap;
 
 /// Every color a theme can set, as written in `[colors]`.
 pub const COLOR_KEYS: [&str; 13] = [
@@ -437,9 +437,12 @@ mod tests {
 
     #[test]
     fn user_light_shadows_and_extends_builtin_light() {
-        let themes = user(&[("light", "[colors]
+        let themes = user(&[(
+            "light",
+            "[colors]
 accent = \"#ff00ff\"
-")]);
+",
+        )]);
         let mut warnings = Vec::new();
         let theme = resolve_theme("light", &themes, &mut warnings).unwrap();
         assert!(warnings.is_empty(), "{warnings:?}");
@@ -449,10 +452,8 @@ accent = \"#ff00ff\"
 
     #[test]
     fn cycle_falls_back_to_dark_with_warning() {
-        let themes = user(&[
-            ("a", "base = \"b\"\nname = \"A\"\n[colors]\naccent = \"#aaaaaa\"\n"),
-            ("b", "base = \"a\"\n"),
-        ]);
+        let themes =
+            user(&[("a", "base = \"b\"\nname = \"A\"\n[colors]\naccent = \"#aaaaaa\"\n"), ("b", "base = \"a\"\n")]);
         let mut warnings = Vec::new();
         let theme = resolve_theme("a", &themes, &mut warnings).unwrap();
         assert_eq!(theme.name, "A");

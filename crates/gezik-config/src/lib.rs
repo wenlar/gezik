@@ -2,9 +2,9 @@
 //! text, outputs are validated values plus warnings to show the user.
 
 pub mod paths;
-pub mod theme;
 pub mod settings;
 pub mod store;
+pub mod theme;
 
 mod color;
 mod warning;

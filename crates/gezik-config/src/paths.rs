@@ -86,9 +86,7 @@ fn slash_path(path: &Path) -> String {
 /// Writes `contents` to a temporary file next to `path`, then renames it into place, so
 /// readers and sync tools never see a half-written file.
 pub fn write_atomic(path: &Path, contents: &str) -> io::Result<()> {
-    let name = path
-        .file_name()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no file name"))?;
+    let name = path.file_name().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no file name"))?;
     let tmp = path.with_file_name(format!(".{}.tmp", name.to_string_lossy()));
     let mut file = std::fs::File::create(&tmp)?;
     file.write_all(contents.as_bytes())?;

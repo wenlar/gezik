@@ -19,23 +19,20 @@ pub fn restore(window: &AppWindow, state: &State) {
 /// that is no longer connected. Needs the native window, so call it from the event loop.
 /// Returns false if the native window does not exist yet (try again later).
 pub fn ensure_visible(window: &AppWindow) -> bool {
-    let Some(target) = window
-        .window()
-        .with_winit_window(|native| {
-            let position = native.outer_position().ok()?;
-            // A point in the title bar must be on some monitor, so the window can be dragged.
-            let (x, y) = (position.x + 100, position.y + 20);
-            let on_screen = native.available_monitors().any(|monitor| {
-                let (origin, size) = (monitor.position(), monitor.size());
-                x >= origin.x && x < origin.x + size.width as i32 && y >= origin.y && y < origin.y + size.height as i32
-            });
-            if on_screen {
-                return None;
-            }
-            let monitor = native.primary_monitor().or_else(|| native.available_monitors().next())?;
-            Some(PhysicalPosition::new(monitor.position().x + 100, monitor.position().y + 100))
-        })
-    else {
+    let Some(target) = window.window().with_winit_window(|native| {
+        let position = native.outer_position().ok()?;
+        // A point in the title bar must be on some monitor, so the window can be dragged.
+        let (x, y) = (position.x + 100, position.y + 20);
+        let on_screen = native.available_monitors().any(|monitor| {
+            let (origin, size) = (monitor.position(), monitor.size());
+            x >= origin.x && x < origin.x + size.width as i32 && y >= origin.y && y < origin.y + size.height as i32
+        });
+        if on_screen {
+            return None;
+        }
+        let monitor = native.primary_monitor().or_else(|| native.available_monitors().next())?;
+        Some(PhysicalPosition::new(monitor.position().x + 100, monitor.position().y + 100))
+    }) else {
         return false;
     };
     if let Some(position) = target {

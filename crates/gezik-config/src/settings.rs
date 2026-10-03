@@ -65,7 +65,8 @@ impl Settings {
         };
 
         if let Some(theme) = text_value(&table, "theme", "theme") {
-            settings.theme = if theme.eq_ignore_ascii_case("auto") { ThemeChoice::Auto } else { ThemeChoice::Named(theme) };
+            settings.theme =
+                if theme.eq_ignore_ascii_case("auto") { ThemeChoice::Auto } else { ThemeChoice::Named(theme) };
         }
         if let Some(theme) = text_value(&table, "theme-light", "theme-light") {
             settings.theme_light = theme;
@@ -220,8 +221,10 @@ mod tests {
 
     #[test]
     fn auto_is_case_insensitive() {
-        let (settings, warnings) = parse("theme = \"Auto\"
-");
+        let (settings, warnings) = parse(
+            "theme = \"Auto\"
+",
+        );
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(settings.theme, ThemeChoice::Auto);
     }

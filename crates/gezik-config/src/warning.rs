@@ -68,4 +68,3 @@ mod tests {
         assert_eq!(Warning::from_toml_error("x.toml", text, &err).line, Some(2));
     }
 }
-

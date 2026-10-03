@@ -157,7 +157,9 @@ fn main() -> Result<(), slint::PlatformError> {
     let init_error = config.as_ref().and_then(|store| store.ensure_initialized().err().map(|e| (store, e)));
     let mut files = config.as_ref().map(ConfigStore::read_files).unwrap_or_default();
     if let Some((store, err)) = init_error {
-        files.warnings.push(Warning::new(store.dir().display().to_string(), format!("cannot create config folder: {err}")));
+        files
+            .warnings
+            .push(Warning::new(store.dir().display().to_string(), format!("cannot create config folder: {err}")));
     }
     // Release builds hide stderr, so config problems also go to the status bar.
     if config.is_none() {
@@ -224,11 +226,7 @@ fn main() -> Result<(), slint::PlatformError> {
             slint::CloseRequestResponse::HideWindow
         }
     });
-    let ctx = Ctx {
-        window: window.as_weak(),
-        nav: Arc::default(),
-        generation: Arc::default(),
-    };
+    let ctx = Ctx { window: window.as_weak(), nav: Arc::default(), generation: Arc::default() };
 
     window.on_open_row({
         let ctx = ctx.clone();

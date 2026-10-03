@@ -110,8 +110,7 @@ impl ConfigStore {
     /// file, but not `state.toml` or editor temp files.
     pub fn is_config_file(&self, path: &Path) -> bool {
         let Ok(relative) = path.strip_prefix(&self.dir) else { return false };
-        let parts: Vec<String> =
-            relative.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
+        let parts: Vec<String> = relative.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
         match parts.as_slice() {
             [name] => name == "settings.toml",
             [dir, name] => dir == "themes" && name.ends_with(".toml") && !name.starts_with('.'),
@@ -147,11 +146,8 @@ fn write_if_missing(path: &Path, contents: &str) -> io::Result<()> {
 
 pub fn resolve(files: &ConfigFiles, system_dark: bool) -> Loaded {
     let mut warnings = files.warnings.clone();
-    let settings = files
-        .settings
-        .as_deref()
-        .map(|text| Settings::parse("settings.toml", text, &mut warnings))
-        .unwrap_or_default();
+    let settings =
+        files.settings.as_deref().map(|text| Settings::parse("settings.toml", text, &mut warnings)).unwrap_or_default();
 
     let id = settings.active_theme(system_dark).to_owned();
     let theme = match resolve_theme(&id, &files.themes, &mut warnings) {
