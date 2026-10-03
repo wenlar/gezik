@@ -1,5 +1,5 @@
 # Shared helper (dot-sourced by the other scripts): finds a process's window by PID,
-# so it keeps working when the title changes ("<place> - Gezik").
+# so it keeps working when the title changes ("<place> — Gezik").
 # Picks the largest visible top-level window owned by the process.
 Add-Type @"
 using System; using System.Collections.Generic; using System.Runtime.InteropServices;
