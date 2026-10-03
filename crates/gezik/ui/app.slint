@@ -1,0 +1,98 @@
+import { Button, LineEdit, ListView, Palette } from "std-widgets.slint";
+
+export struct FileRow {
+    name: string,
+    is-dir: bool,
+    size: string,
+}
+
+export component AppWindow inherits Window {
+    title: "Gezik";
+    preferred-width: 900px;
+    preferred-height: 600px;
+    background: Palette.background;
+
+    in property <[FileRow]> rows;
+    in-out property <string> current-path;
+    in property <string> status;
+    in property <bool> can-go-back;
+    in-out property <int> selected: -1;
+
+    callback open-row(int);
+    callback go-back();
+    callback go-up();
+    callback navigate(string);
+
+    VerticalLayout {
+        HorizontalLayout {
+            padding: 6px;
+            spacing: 6px;
+            Button {
+                text: "←";
+                enabled: root.can-go-back;
+                clicked => { root.go-back(); }
+            }
+            Button {
+                text: "↑";
+                clicked => { root.go-up(); }
+            }
+            LineEdit {
+                text <=> root.current-path;
+                accepted(path) => { root.navigate(path); }
+            }
+        }
+
+        // ListView only instantiates the rows that are visible, so huge folders stay cheap.
+        ListView {
+            for row[i] in root.rows: Rectangle {
+                height: 26px;
+                background: i == root.selected ? Palette.selection-background : transparent;
+
+                TouchArea {
+                    clicked => { root.selected = i; }
+                    double-clicked => { root.open-row(i); }
+                }
+
+                HorizontalLayout {
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    spacing: 8px;
+                    VerticalLayout {
+                        alignment: center;
+                        Rectangle {
+                            width: 12px;
+                            height: 12px;
+                            border-radius: 2px;
+                            background: row.is-dir ? #e8b33f : #9aa3ad;
+                        }
+                    }
+                    Text {
+                        text: row.name;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                        overflow: elide;
+                        color: i == root.selected ? Palette.selection-foreground : Palette.foreground;
+                    }
+                    Text {
+                        text: row.size;
+                        width: 90px;
+                        horizontal-alignment: right;
+                        vertical-alignment: center;
+                        color: i == root.selected ? Palette.selection-foreground : Palette.foreground;
+                        opacity: 0.6;
+                    }
+                }
+            }
+        }
+
+        HorizontalLayout {
+            padding-left: 10px;
+            height: 24px;
+            Text {
+                text: root.status;
+                vertical-alignment: center;
+                opacity: 0.7;
+            }
+        }
+    }
+}

@@ -1,0 +1,22 @@
+[package]
+name = "gezik"
+description = "A fast, lightweight cross-platform file manager"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+gezik-core.workspace = true
+# Software renderer only: no GPU or OpenGL driver needed, and it measured far lower
+# memory than FemtoVG (5 MB vs 35 MB idle) at the same scrolling CPU cost.
+slint = { version = "1.18", default-features = false, features = [
+    "std",
+    "compat-1-2",
+    "backend-winit",
+    "renderer-software",
+    "software-renderer-systemfonts",
+    "accessibility",
+] }
+open = "5.3"
+
+[build-dependencies]
+slint-build = "1.18"

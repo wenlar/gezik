@@ -1,0 +1,7 @@
+[package]
+name = "gezik-core"
+description = "Platform-independent core of the Gezik file manager"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
