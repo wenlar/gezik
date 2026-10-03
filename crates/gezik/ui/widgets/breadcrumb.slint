@@ -12,6 +12,9 @@ export component Breadcrumb inherits Rectangle {
     in-out property <bool> editing;
     callback crumb-clicked(int);
     callback accepted(string);
+    // The text box got the focus back while not typing; the owner should focus something
+    // visible (see `field` below).
+    callback focus-released();
 
     height: Theme.row-height + 4px;
     horizontal-stretch: 1;
@@ -79,8 +82,16 @@ export component Breadcrumb inherits Rectangle {
             root.editing = false;
             root.accepted(text);
         }
+        // Losing the focus ends typing. Switching windows or opening a menu hands the
+        // focus back here afterwards (Slint restores the previous focus item), but the box is
+        // hidden by then and Slint would drop the focus on the next key press, leaving no
+        // item to receive keys. So pass it on instead.
         changed has-focus => {
-            if !self.has-focus { root.editing = false; }
+            if !self.has-focus {
+                root.editing = false;
+            } else if !root.editing {
+                root.focus-released();
+            }
         }
     }
 }

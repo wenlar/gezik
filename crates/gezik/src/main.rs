@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 
 use gezik_config::Warning;
 use gezik_config::settings::{Settings, SidebarPosition};
-use gezik_config::shortcuts::{Action, Chord, Key};
+use gezik_config::shortcuts::{Action, Chord, Key, Platform};
 use gezik_config::store::{self, ConfigFiles, ConfigStore, Loaded};
 use gezik_config::theme;
 use slint::Model;
@@ -78,8 +78,7 @@ fn handle_key(
             window.set_path_editing(false);
             return true;
         }
-        let text_edit = (chord.ctrl || chord.meta) && matches!(chord.key, Key::Char('a' | 'c' | 'v' | 'x' | 'z' | 'y'));
-        if !has_modifier || text_edit {
+        if !has_modifier || keys::is_text_edit(chord, Platform::current()) {
             return false;
         }
     }
@@ -398,7 +397,7 @@ fn main() -> Result<(), slint::PlatformError> {
         move |event| {
             let Some(window) = weak.upgrade() else { return false };
             let m = event.modifiers;
-            let chord = keys::chord_from_event(&event.text, m.control, m.alt, m.shift, m.meta);
+            let chord = keys::chord_from_slint(&event.text, m.control, m.alt, m.shift, m.meta, Platform::current());
             handle_key(&window, &nav, &mut type_ahead, &event.text, chord, m.control || m.alt || m.meta)
         }
     });

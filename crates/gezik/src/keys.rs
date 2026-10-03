@@ -3,7 +3,7 @@
 use std::cell::RefCell;
 use std::time::{Duration, Instant};
 
-use gezik_config::shortcuts::{Action, Chord, Key, Shortcuts};
+use gezik_config::shortcuts::{Action, Chord, Key, Platform, Shortcuts};
 use slint::platform::Key as SlintKey;
 
 thread_local! {
@@ -64,6 +64,34 @@ pub fn chord_from_event(text: &str, ctrl: bool, alt: bool, shift: bool, meta: bo
     // Backtab is Shift+Tab even if the platform did not report shift.
     let shift = shift || c == char::from(SlintKey::Backtab);
     Some(Chord { ctrl, alt, shift, meta, key })
+}
+
+/// Converts a Slint key event into a chord. Slint reports the macOS Command key as
+/// `control` and the physical Control key as `meta`; chords (like `parse_chord`) mean the
+/// physical keys, so on macOS the two are swapped back.
+pub fn chord_from_slint(
+    text: &str,
+    control: bool,
+    alt: bool,
+    shift: bool,
+    meta: bool,
+    platform: Platform,
+) -> Option<Chord> {
+    match platform {
+        Platform::Mac => chord_from_event(text, meta, alt, shift, control),
+        Platform::Other => chord_from_event(text, control, alt, shift, meta),
+    }
+}
+
+/// Whether `chord` is a text editing shortcut (select all, copy, paste, cut, undo, redo
+/// with the platform's primary modifier: Cmd on macOS, Ctrl elsewhere), which belongs to
+/// a focused text box.
+pub fn is_text_edit(chord: &Chord, platform: Platform) -> bool {
+    let primary = match platform {
+        Platform::Mac => chord.meta && !chord.ctrl,
+        Platform::Other => chord.ctrl && !chord.meta,
+    };
+    primary && !chord.alt && matches!(chord.key, Key::Char('a' | 'c' | 'v' | 'x' | 'z' | 'y'))
 }
 
 /// The character an unmodified key press types, for type-ahead: any printable character
@@ -132,6 +160,87 @@ mod tests {
     fn backtab_is_shift_tab() {
         let c = chord_from_event(&text(SlintKey::Backtab), true, false, false, false).unwrap();
         assert_eq!(c, Chord { ctrl: true, alt: false, shift: true, meta: false, key: Key::Tab });
+    }
+
+    /// What the Windows/Linux backend sends for `chord`: Ctrl as `control`, Win as `meta`;
+    /// Shift+Tab arrives as Tab with shift.
+    fn other_event(chord: &Chord) -> (String, bool, bool, bool, bool) {
+        let text = match chord.key {
+            Key::Char(c) => c.to_string(),
+            Key::F(n) => text(match n {
+                5 => SlintKey::F5,
+                other => panic!("no default uses f{other}"),
+            }),
+            Key::Left => text(SlintKey::LeftArrow),
+            Key::Right => text(SlintKey::RightArrow),
+            Key::Up => text(SlintKey::UpArrow),
+            Key::Tab => "\t".to_owned(),
+            other => panic!("no default uses {other:?}"),
+        };
+        (text, chord.ctrl, chord.alt, chord.shift, chord.meta)
+    }
+
+    #[test]
+    fn every_default_is_reachable_on_windows_and_linux() {
+        use gezik_config::shortcuts::parse_chord;
+        let defaults = Shortcuts::defaults(Platform::Other);
+        for action in Action::ALL {
+            let text = match action {
+                Action::NewTab => "ctrl+t",
+                Action::CloseTab => "ctrl+w",
+                Action::NextTab => "ctrl+tab",
+                Action::PrevTab => "ctrl+shift+tab",
+                Action::Back => "alt+left",
+                Action::Forward => "alt+right",
+                Action::Up => "alt+up",
+                Action::FocusPath => "ctrl+l",
+                Action::Refresh => "f5",
+            };
+            let chord = parse_chord(text, Platform::Other).unwrap().unwrap();
+            let (t, control, alt, shift, meta) = other_event(&chord);
+            let got = chord_from_slint(&t, control, alt, shift, meta, Platform::Other).unwrap();
+            assert_eq!(defaults.action_for(&got), Some(action), "{text}");
+        }
+        // Ctrl+Shift+T arrives as "T" with control and shift: not new-tab.
+        let got = chord_from_slint("T", true, false, true, false, Platform::Other).unwrap();
+        assert_eq!(defaults.action_for(&got), None);
+    }
+
+    #[test]
+    fn mac_command_and_control_are_swapped_back() {
+        let defaults = Shortcuts::defaults(Platform::Mac);
+        // Cmd+T: Slint reports Command as `control`.
+        let cmd_t = chord_from_slint("t", true, false, false, false, Platform::Mac).unwrap();
+        assert_eq!(defaults.action_for(&cmd_t), Some(Action::NewTab));
+        // Physical Ctrl+Tab: Slint reports Control as `meta`.
+        let ctrl_tab = chord_from_slint("\t", false, false, false, true, Platform::Mac).unwrap();
+        assert_eq!(defaults.action_for(&ctrl_tab), Some(Action::NextTab));
+        let ctrl_shift_tab = chord_from_slint("\t", false, false, true, true, Platform::Mac).unwrap();
+        assert_eq!(defaults.action_for(&ctrl_shift_tab), Some(Action::PrevTab));
+        let cmd_bracket = chord_from_slint("[", true, false, false, false, Platform::Mac).unwrap();
+        assert_eq!(defaults.action_for(&cmd_bracket), Some(Action::Back));
+        let cmd_r = chord_from_slint("r", true, false, false, false, Platform::Mac).unwrap();
+        assert_eq!(defaults.action_for(&cmd_r), Some(Action::Refresh));
+        // Physical Ctrl+T is not Cmd+T.
+        let ctrl_t = chord_from_slint("t", false, false, false, true, Platform::Mac).unwrap();
+        assert_eq!(defaults.action_for(&ctrl_t), None);
+    }
+
+    #[test]
+    fn text_edit_uses_the_primary_modifier() {
+        let other = |c, m| chord_from_slint(c, m, false, false, false, Platform::Other).unwrap();
+        assert!(is_text_edit(&other("a", true), Platform::Other));
+        assert!(is_text_edit(&other("V", true), Platform::Other));
+        assert!(!is_text_edit(&other("w", true), Platform::Other));
+        assert!(!is_text_edit(&other("a", false), Platform::Other));
+        // Win+C is not copy.
+        let win_c = chord_from_slint("c", false, false, false, true, Platform::Other).unwrap();
+        assert!(!is_text_edit(&win_c, Platform::Other));
+        // On macOS, Cmd (Slint `control`) is the primary modifier; physical Ctrl is not.
+        let cmd_a = chord_from_slint("a", true, false, false, false, Platform::Mac).unwrap();
+        assert!(is_text_edit(&cmd_a, Platform::Mac));
+        let ctrl_a = chord_from_slint("a", false, false, false, true, Platform::Mac).unwrap();
+        assert!(!is_text_edit(&ctrl_a, Platform::Mac));
     }
 
     #[test]

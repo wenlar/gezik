@@ -197,6 +197,9 @@ export component AppWindow inherits Window {
                             keys.focus();
                             root.navigate(path);
                         }
+                        // The hidden text box got the focus back (see Breadcrumb): the
+                        // keyboard belongs to the list again.
+                        focus-released => { keys.focus(); }
                     }
                 }
             }
