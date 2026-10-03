@@ -9,6 +9,13 @@ import { Sidebar, SidebarRow } from "widgets/sidebar.slint";
 // and sidebar rows.
 export { Theme, CrumbItem, TabItem, SidebarRow }
 
+// One item of the Slint context menu (tabs everywhere; also rows and the sidebar on
+// macOS/Linux). `id` is one of the ids in context_menu.rs.
+export struct MenuEntry {
+    id: int,
+    title: string,
+}
+
 export struct FileRow {
     name: string,
     is-dir: bool,
@@ -47,6 +54,8 @@ export component AppWindow inherits Window {
     in property <int> sidebar-position;
     // Dragged with the splitter (120–480px); saved in state.toml on close.
     in-out property <length> sidebar-width: 200px;
+    // What the Slint context menu shows; set from Rust before `show-menu`.
+    in property <[MenuEntry]> menu-entries;
 
     // Follows the OS light/dark mode (Palette is left to the system on purpose; see
     // theme_bridge.rs). Rust re-resolves the theme when it flips.
@@ -78,10 +87,36 @@ export component AppWindow inherits Window {
     callback pinned-move(int, int);
     // The splitter was released.
     callback sidebar-resized();
+    // A Slint context menu item was chosen (its `MenuEntry.id`).
+    callback menu-activated(int);
+    // Right-click on a row / on empty space in the file list, at a window position.
+    callback row-menu(int, length, length);
+    callback background-menu(length, length);
 
     // Switches the address bar to typing, with the whole path selected.
     public function edit-path() {
         address.edit();
+    }
+
+    // Shows `menu-entries` at a window position.
+    public function show-menu(x: length, y: length) {
+        menu-area.show({ x: x, y: y });
+    }
+
+    // Covers the whole window, but only opens when Rust calls `show-menu`: right-clicks
+    // themselves are handled by rows, tabs and the sidebar (`enabled` only blocks input).
+    menu-area := ContextMenuArea {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.height;
+        enabled: false;
+        Menu {
+            for entry in root.menu-entries: MenuItem {
+                title: entry.title;
+                activated => { root.menu-activated(entry.id); }
+            }
+        }
     }
 
     VerticalLayout {
@@ -156,49 +191,68 @@ export component AppWindow inherits Window {
                     changed pressed => { if !self.pressed { root.sidebar-resized(); } }
                 }
             }
-            // ListView only instantiates the rows that are visible, so huge folders stay cheap.
-            ListView {
-                content-y <=> root.list-scroll;
-                for row[i] in root.rows: Rectangle {
-                    height: Theme.row-height;
-                    background: i == root.selected ? Theme.selection : touch.has-hover ? Theme.hover : transparent;
-
-                    touch := TouchArea {
-                        clicked => { root.selected = i; }
-                        double-clicked => { root.open-row(i); }
-                        pointer-event(event) => {
-                            if event.kind == PointerEventKind.up && event.button == PointerEventButton.middle {
-                                root.row-middle-clicked(i);
-                            }
+            Rectangle {
+                horizontal-stretch: 1;
+                // Behind the rows: catches clicks on empty space (the list passes
+                // right-clicks through).
+                TouchArea {
+                    clicked => { root.selected = -1; }
+                    pointer-event(event) => {
+                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {
+                            root.selected = -1;
+                            root.background-menu(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
                         }
                     }
+                }
+                // ListView only instantiates the rows that are visible, so huge folders stay cheap.
+                ListView {
+                    content-y <=> root.list-scroll;
+                    for row[i] in root.rows: Rectangle {
+                        height: Theme.row-height;
+                        background: i == root.selected ? Theme.selection : touch.has-hover ? Theme.hover : transparent;
 
-                    HorizontalLayout {
-                        padding-left: Theme.spacing + 4px;
-                        padding-right: Theme.spacing + 4px;
-                        spacing: Theme.spacing + 2px;
-                        VerticalLayout {
-                            alignment: center;
-                            Rectangle {
-                                width: Theme.icon-size * 0.75;
-                                height: self.width;
-                                border-radius: 2px;
-                                background: row.is-dir ? Theme.folder-icon : Theme.file-icon;
+                        touch := TouchArea {
+                            clicked => { root.selected = i; }
+                            double-clicked => { root.open-row(i); }
+                            pointer-event(event) => {
+                                if event.kind == PointerEventKind.up && event.button == PointerEventButton.middle {
+                                    root.row-middle-clicked(i);
+                                }
+                                // The right-clicked row is selected first.
+                                if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {
+                                    root.selected = i;
+                                    root.row-menu(i, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                                }
                             }
                         }
-                        Text {
-                            text: row.name;
-                            vertical-alignment: center;
-                            horizontal-stretch: 1;
-                            overflow: elide;
-                            color: i == root.selected ? Theme.selection-foreground : Theme.foreground;
-                        }
-                        Text {
-                            text: row.size;
-                            width: 90px;
-                            horizontal-alignment: right;
-                            vertical-alignment: center;
-                            color: i == root.selected ? Theme.selection-foreground : Theme.foreground-muted;
+
+                        HorizontalLayout {
+                            padding-left: Theme.spacing + 4px;
+                            padding-right: Theme.spacing + 4px;
+                            spacing: Theme.spacing + 2px;
+                            VerticalLayout {
+                                alignment: center;
+                                Rectangle {
+                                    width: Theme.icon-size * 0.75;
+                                    height: self.width;
+                                    border-radius: 2px;
+                                    background: row.is-dir ? Theme.folder-icon : Theme.file-icon;
+                                }
+                            }
+                            Text {
+                                text: row.name;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                                overflow: elide;
+                                color: i == root.selected ? Theme.selection-foreground : Theme.foreground;
+                            }
+                            Text {
+                                text: row.size;
+                                width: 90px;
+                                horizontal-alignment: right;
+                                vertical-alignment: center;
+                                color: i == root.selected ? Theme.selection-foreground : Theme.foreground-muted;
+                            }
                         }
                     }
                 }

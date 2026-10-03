@@ -1,6 +1,7 @@
 // Hide the console window in release builds on Windows.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod context_menu;
 mod navigation;
 mod places;
 mod sidebar;
@@ -192,13 +193,36 @@ fn main() -> Result<(), slint::PlatformError> {
             }
         }
     });
-    window.on_pinned_move(move |from, to| {
-        if let (Ok(from), Ok(to)) = (usize::try_from(from), usize::try_from(to)) {
-            sidebar.move_pinned(from, to);
+    window.on_pinned_move({
+        let sidebar = sidebar.clone();
+        move |from, to| {
+            if let (Ok(from), Ok(to)) = (usize::try_from(from), usize::try_from(to)) {
+                sidebar.move_pinned(from, to);
+            }
         }
     });
-    // The sidebar width stays in memory and is saved with the window state on close;
-    // sidebar-menu is wired in Task 10.
+    // The sidebar width stays in memory and is saved with the window state on close.
+
+    let menus = context_menu::Menus::new(&window, nav.clone(), sidebar);
+    window.on_row_menu({
+        let menus = menus.clone();
+        move |i, x, y| menus.row(i, x, y)
+    });
+    // The Windows menu opens at the cursor; there is no Slint menu for empty space.
+    window.on_background_menu({
+        let menus = menus.clone();
+        move |_, _| menus.background()
+    });
+    window.on_sidebar_menu({
+        let menus = menus.clone();
+        move |section, i, x, y| menus.sidebar_entry(section, i, x, y)
+    });
+    // Slint passes indexes as `i32`: a negative one does nothing.
+    window.on_tab_menu(move |i, x, y| {
+        if let Ok(i) = usize::try_from(i) {
+            menus.tab(i, x, y);
+        }
+    });
 
     window.on_open_row({
         let nav = nav.clone();
@@ -266,7 +290,6 @@ fn main() -> Result<(), slint::PlatformError> {
             nav.open_tab(gezik_core::nav::Location::Path(path), false);
         }
     });
-    // tab-menu is wired in Task 10.
 
     window.run()
 }

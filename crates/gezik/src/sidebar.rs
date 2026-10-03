@@ -228,12 +228,10 @@ impl Sidebar {
     }
 
     /// Whether `path` is shown in the PINNED section.
-    #[allow(dead_code)] // Used by the context menus (Task 10).
     pub fn is_pinned(&self, path: &Path) -> bool {
-        self.0.borrow().pins.visible.iter().any(|pin| same_path(&pin.path, path))
+        self.visible_pinned_index(path).is_some()
     }
 
-    #[allow(dead_code)] // Used by the context menus (Task 10).
     pub fn pin(&self, path: PathBuf) {
         let entry = self.0.borrow().dirs.collapse(&path);
         let mut pinned = self.pinned();
@@ -242,8 +240,17 @@ impl Sidebar {
         }
     }
 
+    /// How many rows the PINNED section shows.
+    pub fn visible_pinned_count(&self) -> usize {
+        self.0.borrow().pins.visible.len()
+    }
+
+    /// The PINNED section row that shows `path`, if any.
+    pub fn visible_pinned_index(&self, path: &Path) -> Option<usize> {
+        self.0.borrow().pins.visible.iter().position(|pin| same_path(&pin.path, path))
+    }
+
     /// Unpins the shown pinned row `index` (index within the PINNED section).
-    #[allow(dead_code)] // Used by the sidebar menu (Task 10).
     pub fn unpin(&self, index: usize) {
         let stored = self.0.borrow().pins.stored_index(index);
         let Some(stored) = stored else { return };
@@ -253,10 +260,8 @@ impl Sidebar {
     }
 
     /// Unpins the shown pinned entry whose folder is `path`.
-    #[allow(dead_code)] // Used by the context menus (Task 10).
     pub fn unpin_path(&self, path: &Path) {
-        let index = self.0.borrow().pins.visible.iter().position(|pin| same_path(&pin.path, path));
-        if let Some(index) = index {
+        if let Some(index) = self.visible_pinned_index(path) {
             self.unpin(index);
         }
     }

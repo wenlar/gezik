@@ -311,15 +311,22 @@ impl Navigator {
         self.0.borrow().tabs.id(index)
     }
 
+    /// Where the tab with `id` is now; `None` once it is closed.
+    pub fn tab_index(&self, id: u64) -> Option<usize> {
+        self.0.borrow().tabs.index_of(id)
+    }
+
+    pub fn tab_count(&self) -> usize {
+        self.0.borrow().tabs.len()
+    }
+
     /// Closes the tab with `id`, wherever it is now; does nothing if it is already closed.
     pub fn close_tab_by_id(&self, id: u64) {
-        let index = self.0.borrow().tabs.index_of(id);
-        if let Some(index) = index {
+        if let Some(index) = self.tab_index(id) {
             self.close_tab(index);
         }
     }
 
-    #[allow(dead_code)] // Used by the tab menu (Task 10).
     pub fn close_other_tabs(&self, index: usize) {
         if index == self.0.borrow().tabs.active_index() {
             self.keep_active_tab(|tabs| tabs.close_others(index));
@@ -330,7 +337,6 @@ impl Navigator {
         }
     }
 
-    #[allow(dead_code)] // Used by the tab menu (Task 10).
     pub fn duplicate_tab(&self, index: usize) {
         self.keep_active_tab(|tabs| tabs.duplicate(index));
         self.update_chrome();
