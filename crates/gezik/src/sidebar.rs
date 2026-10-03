@@ -206,8 +206,8 @@ impl Sidebar {
             if changed {
                 // A pinned folder may have appeared or gone with the drive.
                 Sidebar(inner).refresh();
-                crate::places::load_in_background(window, |places| {
-                    crate::navigation::with_current(|nav| nav.set_places(places));
+                crate::places::load_in_background(window, |part| {
+                    crate::navigation::with_current(|nav| nav.set_places(part));
                 });
             }
         });

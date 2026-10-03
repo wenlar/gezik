@@ -12,7 +12,7 @@ use gezik_core::{Entry, format_size, list_dir};
 use gezik_platform::Drive;
 use slint::{ComponentHandle, Model, ModelNotify, ModelRc, ModelTracker, VecModel};
 
-use crate::places::Places;
+use crate::places::{Places, PlacesPart};
 use crate::{AppWindow, CrumbItem, FileRow, TabItem};
 
 /// Address bar parts shown before older ones collapse into "…".
@@ -203,8 +203,9 @@ impl Navigator {
         self.0.borrow().places.clone()
     }
 
-    pub fn set_places(&self, places: Places) {
-        self.0.borrow_mut().places = places;
+    /// Takes in known folders or drives (whichever `part` carries) and retitles.
+    pub fn set_places(&self, part: PlacesPart) {
+        self.0.borrow_mut().places.apply(part);
         self.update_chrome();
     }
 

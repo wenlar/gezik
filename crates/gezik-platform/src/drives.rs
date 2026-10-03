@@ -74,11 +74,43 @@ pub fn drives() -> Vec<Drive> {
                 DRIVE_CDROM => DriveKind::Optical,
                 _ => DriveKind::Fixed,
             };
-            let label = crate::known::display_name(std::path::Path::new(&root))
-                .unwrap_or_else(|| root.trim_end_matches('\\').to_owned());
+            let letter = (b'A' + i) as char;
+            let label = match kind {
+                // The Shell name of a disconnected network drive (or an empty optical one) can
+                // block for tens of seconds; the volume label alone does not ask the Shell.
+                DriveKind::Network | DriveKind::Optical => labeled(&kind, letter, volume_label(&root).as_deref()),
+                DriveKind::Fixed | DriveKind::Removable => crate::known::display_name(std::path::Path::new(&root))
+                    .unwrap_or_else(|| root.trim_end_matches('\\').to_owned()),
+            };
             Drive { path: PathBuf::from(root), label, kind }
         })
         .collect()
+}
+
+/// The volume label of the drive at `root` (`Z:\`), if it can be read.
+#[cfg(windows)]
+fn volume_label(root: &str) -> Option<String> {
+    use windows::Win32::Storage::FileSystem::GetVolumeInformationW;
+    use windows::core::HSTRING;
+    let mut name = [0u16; 261];
+    unsafe { GetVolumeInformationW(&HSTRING::from(root), Some(&mut name), None, None, None, None) }.ok()?;
+    let end = name.iter().position(|&c| c == 0).unwrap_or(name.len());
+    Some(String::from_utf16_lossy(&name[..end]))
+}
+
+/// `Label (Z:)`, or `Network (Z:)` / `CD Drive (E:)` when there is no usable volume label.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn labeled(kind: &DriveKind, letter: char, volume_label: Option<&str>) -> String {
+    let name = match volume_label.map(str::trim).filter(|l| !l.is_empty()) {
+        Some(label) => label,
+        None => match kind {
+            DriveKind::Network => "Network",
+            DriveKind::Optical => "CD Drive",
+            DriveKind::Removable => "Removable Disk",
+            DriveKind::Fixed => "Local Disk",
+        },
+    };
+    format!("{name} ({letter}:)")
 }
 
 #[cfg(windows)]
@@ -149,6 +181,16 @@ mod tests {
     #[test]
     fn signature_is_stable_without_changes() {
         assert_eq!(drive_signature(), drive_signature());
+    }
+
+    #[test]
+    fn network_and_optical_labels_fall_back_to_the_kind() {
+        assert_eq!(labeled(&DriveKind::Network, 'Z', Some("Share")), "Share (Z:)");
+        assert_eq!(labeled(&DriveKind::Network, 'Z', None), "Network (Z:)");
+        assert_eq!(labeled(&DriveKind::Network, 'Z', Some("")), "Network (Z:)");
+        assert_eq!(labeled(&DriveKind::Network, 'Z', Some("  ")), "Network (Z:)");
+        assert_eq!(labeled(&DriveKind::Optical, 'E', None), "CD Drive (E:)");
+        assert_eq!(labeled(&DriveKind::Optical, 'E', Some("WIN11_DVD")), "WIN11_DVD (E:)");
     }
 
     #[test]

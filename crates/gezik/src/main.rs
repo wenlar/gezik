@@ -272,7 +272,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let nav = navigation::Navigator::new(&window, plan.first, plan.select, plan.start);
     nav.install();
     // Captures no navigator (it is not `Send`): the result finds it on the UI thread.
-    places::load_in_background(window.as_weak(), move |places| navigation::with_current(|nav| nav.set_places(places)));
+    places::load_in_background(window.as_weak(), |part| navigation::with_current(|nav| nav.set_places(part)));
 
     let sidebar = sidebar::Sidebar::new(&window, nav.clone(), config.clone());
     sidebar.install();
