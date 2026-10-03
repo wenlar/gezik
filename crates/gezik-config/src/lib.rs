@@ -4,6 +4,7 @@
 pub mod paths;
 pub mod theme;
 pub mod settings;
+pub mod store;
 
 mod color;
 mod warning;
