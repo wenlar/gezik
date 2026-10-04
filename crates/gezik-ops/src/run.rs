@@ -148,7 +148,7 @@ impl ScanSink for Sink<'_> {
         {
             let existing = facts_of(&meta);
             let kind = kind_of(item.facts, existing);
-            if kind == ConflictKind::Folder && item.stage == Stage::Before {
+            if kind == ConflictKind::Folder && item.stage == Stage::Before && item.preset.is_none() {
                 // The folder is there already: merge, its contents meet one by one.
                 self.merges.push(conflict(&item, &target, kind, existing, Decision::Merge));
                 control.item_done();

@@ -19,6 +19,10 @@ pub(crate) fn test_dir(name: &str) -> PathBuf {
     dir
 }
 
+pub(crate) fn read(path: &Path) -> String {
+    std::fs::read_to_string(path).unwrap_or_else(|err| panic!("{}: {err}", path.display()))
+}
+
 /// Writes `text` to `path`, making its folders.
 pub(crate) fn write(path: &Path, text: &str) {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
