@@ -13,7 +13,9 @@ use gezik_core::ops::threads::CopyThreads;
 use gezik_platform::fs::{self, DriveFacts};
 
 use crate::control::Control;
+use crate::pending::{PendingDeletes, is_hidden};
 use crate::task::{Outcome, Task, TaskKind};
+use crate::tasks::DeleteTask;
 
 pub type JobId = u64;
 
@@ -221,6 +223,7 @@ pub(crate) struct Shared {
     drives: Mutex<HashMap<PathBuf, DriveFacts>>,
     reporter: AtomicBool,
     next_id: AtomicU64,
+    pending: Option<Arc<PendingDeletes>>,
 }
 
 impl Shared {
@@ -375,6 +378,7 @@ pub struct Engine(pub(crate) Arc<Shared>);
 impl Engine {
     /// `notify` is called (on any thread) whenever events are waiting in [`Engine::drain`].
     pub fn new(settings: Settings, notify: impl Fn() + Send + Sync + 'static) -> Engine {
+        let pending = settings.pending_deletes.clone().map(|file| Arc::new(PendingDeletes::new(file)));
         Engine(Arc::new(Shared {
             settings: Mutex::new(settings),
             jobs: Mutex::default(),
@@ -384,7 +388,27 @@ impl Engine {
             drives: Mutex::default(),
             reporter: AtomicBool::new(false),
             next_id: AtomicU64::new(0),
+            pending,
         }))
+    }
+
+    /// The list instant deletes note their hidden folders in (`None`: deletes run in place).
+    pub fn pending_deletes(&self) -> Option<Arc<PendingDeletes>> {
+        self.0.pending.clone()
+    }
+
+    /// Finishes deletes an earlier run left unfinished (call once at start).
+    pub fn recover_deletes(&self) -> Option<JobId> {
+        let pending = self.0.pending.clone()?;
+        let mut roots = Vec::new();
+        for path in pending.load() {
+            if is_hidden(&path) && std::fs::symlink_metadata(&path).is_ok() {
+                roots.push(path);
+            } else {
+                pending.remove(&path);
+            }
+        }
+        (!roots.is_empty()).then(|| self.submit(Box::new(DeleteTask::recover(roots, pending))))
     }
 
     pub fn set_threads(&self, threads: CopyThreads) {
