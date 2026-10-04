@@ -2,9 +2,10 @@
 //! Gezik's own items inserted at the top.
 
 use std::cell::RefCell;
+use std::path::{Path, PathBuf};
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
+use windows::Win32::Foundation::{E_INVALIDARG, HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::Graphics::Gdi::{BeginPaint, ClientToScreen, EndPaint, PAINTSTRUCT};
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoTaskMemFree};
 use windows::Win32::UI::Shell::Common::ITEMIDLIST;
@@ -64,26 +65,51 @@ fn validate_ids(extra: &[(u32, &str)]) -> Result<(), String> {
 }
 
 unsafe fn context_menu_for(hwnd: HWND, target: &MenuTarget) -> windows::core::Result<IContextMenu> {
-    let path = match target {
-        MenuTarget::Item(p) | MenuTarget::Background(p) => p,
-    };
+    match target {
+        MenuTarget::Item(path) => unsafe { items_menu(hwnd, std::slice::from_ref(path)) },
+        MenuTarget::Items(paths) => unsafe { items_menu(hwnd, paths) },
+        MenuTarget::Background(path) => unsafe { background_menu(hwnd, path) },
+    }
+}
+
+/// The menu of `paths`, which share one parent folder (as a selection does).
+unsafe fn items_menu(hwnd: HWND, paths: &[PathBuf]) -> windows::core::Result<IContextMenu> {
+    let mut pidls: Vec<*mut ITEMIDLIST> = Vec::with_capacity(paths.len());
+    let parsed = paths.iter().try_for_each(|path| {
+        let mut pidl: *mut ITEMIDLIST = std::ptr::null_mut();
+        unsafe { SHParseDisplayName(&HSTRING::from(path.as_os_str()), None, &mut pidl, 0, None)? };
+        pidls.push(pidl);
+        Ok(())
+    });
+    // Separate from the parsing, so `?` cannot skip the CoTaskMemFree below.
+    let menu = parsed.and_then(|()| unsafe {
+        let mut parent: Option<IShellFolder> = None;
+        let mut children: Vec<*const ITEMIDLIST> = Vec::with_capacity(pidls.len());
+        for &pidl in &pidls {
+            let mut child: *mut ITEMIDLIST = std::ptr::null_mut();
+            let folder: IShellFolder = SHBindToParent(pidl, Some(&mut child))?;
+            parent.get_or_insert(folder);
+            children.push(child as *const ITEMIDLIST);
+        }
+        let parent = parent.ok_or_else(|| windows::core::Error::from(E_INVALIDARG))?;
+        parent.GetUIObjectOf::<IContextMenu>(hwnd, &children, None)
+    });
+    for pidl in pidls {
+        unsafe { CoTaskMemFree(Some(pidl as *const _)) };
+    }
+    menu
+}
+
+/// The menu of empty space in `folder`'s listing.
+unsafe fn background_menu(hwnd: HWND, folder: &Path) -> windows::core::Result<IContextMenu> {
     let mut pidl: *mut ITEMIDLIST = std::ptr::null_mut();
-    unsafe { SHParseDisplayName(&HSTRING::from(path.as_os_str()), None, &mut pidl, 0, None)? };
+    unsafe { SHParseDisplayName(&HSTRING::from(folder.as_os_str()), None, &mut pidl, 0, None)? };
     // The closure keeps `?` from skipping the CoTaskMemFree below.
     let menu = (|| unsafe {
-        match target {
-            MenuTarget::Item(_) => {
-                let mut child: *mut ITEMIDLIST = std::ptr::null_mut();
-                let parent: IShellFolder = SHBindToParent(pidl, Some(&mut child))?;
-                parent.GetUIObjectOf::<IContextMenu>(hwnd, &[child as *const ITEMIDLIST], None)
-            }
-            MenuTarget::Background(_) => {
-                let desktop = SHGetDesktopFolder()?;
-                let folder: windows::core::Result<IShellFolder> =
-                    if (*pidl).mkid.cb == 0 { Ok(desktop) } else { desktop.BindToObject(pidl, None) };
-                folder.and_then(|f| f.CreateViewObject::<IContextMenu>(hwnd))
-            }
-        }
+        let desktop = SHGetDesktopFolder()?;
+        let folder: windows::core::Result<IShellFolder> =
+            if (*pidl).mkid.cb == 0 { Ok(desktop) } else { desktop.BindToObject(pidl, None) };
+        folder.and_then(|f| f.CreateViewObject::<IContextMenu>(hwnd))
     })();
     unsafe { CoTaskMemFree(Some(pidl as *const _)) };
     menu
@@ -271,12 +297,17 @@ mod tests {
         let file_items = count_items(&crate::MenuTarget::Item(file));
         let folder_items = count_items(&crate::MenuTarget::Item(sub));
         let background = count_items(&crate::MenuTarget::Background(dir.clone()));
+        let file2 = dir.join("b.txt");
+        std::fs::write(&file2, "y").unwrap();
+        let several = count_items(&crate::MenuTarget::Items(vec![dir.join("a.txt"), file2]));
         let _ = std::fs::remove_dir_all(&dir);
 
         let (file_items, folder_items, background) = (file_items.unwrap(), folder_items.unwrap(), background.unwrap());
         assert!(file_items > 3, "file menu had {file_items} entries");
         assert!(folder_items > 3, "folder menu had {folder_items} entries");
         assert!(background > 0, "background menu had {background} entries");
+        let several = several.unwrap();
+        assert!(several > 3, "multi-item menu had {several} entries");
     }
 
     #[test]
