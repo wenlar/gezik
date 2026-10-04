@@ -7,8 +7,29 @@ theme = "auto"
 theme-light = "light"
 theme-dark = "dark"
 
+# Where new tabs open: "{home}", "drives" (This PC), or any folder.
+# Tokens like {home}, {documents}, {downloads} work on every OS.
+start-folder = "{home}"
+
+# Folders pinned to the sidebar. Gezik updates this list when you pin, unpin
+# or reorder folders; your comments elsewhere in this file are kept.
+# Comments inside the pinned list itself are not kept when Gezik updates it.
+pinned = []
+
 [layout]
 # left | right | hidden
 sidebar = "left"
 # compact | comfortable
 density = "comfortable"
+
+[shortcuts]
+# Change any shortcut; "mod" is Cmd on macOS and Ctrl elsewhere; "" disables.
+# new-tab = "mod+t"
+# close-tab = "mod+w"
+# next-tab = "ctrl+tab"
+# prev-tab = "ctrl+shift+tab"
+# back = "alt+left"        # macOS: "mod+["
+# forward = "alt+right"    # macOS: "mod+]"
+# up = "alt+up"            # macOS: "mod+up"
+# focus-path = "mod+l"
+# refresh = "f5"           # macOS: "mod+r"

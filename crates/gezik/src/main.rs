@@ -1,125 +1,32 @@
 // Hide the console window in release builds on Windows.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod context_menu;
+mod keys;
+mod navigation;
+mod places;
+mod sidebar;
+mod start;
 mod theme_bridge;
 mod watcher;
 mod window_state;
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use gezik_config::Warning;
-use gezik_config::store::{self, ConfigFiles, ConfigStore};
+use gezik_config::settings::{Settings, SidebarPosition};
+use gezik_config::shortcuts::{Action, Chord, Key, Platform};
+use gezik_config::store::{self, ConfigFiles, ConfigStore, Loaded};
 use gezik_config::theme;
-use gezik_core::{Entry, format_size, list_dir};
-use slint::{Model, ModelNotify, ModelRc, ModelTracker};
+use slint::Model;
+use start::StartPlan;
 
 slint::include_modules!();
 
-/// Exposes the listed entries to the UI without copying them into a second list:
-/// a `FileRow` is built only when the ListView asks for a row that is on screen.
-struct EntryModel {
-    entries: Vec<Entry>,
-    notify: ModelNotify,
-}
-
-impl Model for EntryModel {
-    type Data = FileRow;
-
-    fn row_count(&self) -> usize {
-        self.entries.len()
-    }
-
-    fn row_data(&self, row: usize) -> Option<FileRow> {
-        self.entries.get(row).map(|e| FileRow {
-            name: e.name.as_str().into(),
-            is_dir: e.is_dir,
-            size: if e.is_dir { "".into() } else { format_size(e.size).into() },
-        })
-    }
-
-    fn model_tracker(&self) -> &dyn ModelTracker {
-        &self.notify
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-}
-
-fn entry_at(window: &AppWindow, index: i32) -> Option<Entry> {
-    let rows = window.get_rows();
-    let model = rows.as_any().downcast_ref::<EntryModel>()?;
-    model.entries.get(usize::try_from(index).ok()?).cloned()
-}
-
-#[derive(Default)]
-struct Nav {
-    current: Option<PathBuf>,
-    back: Vec<PathBuf>,
-}
-
-/// Shared between the UI thread and the background loaders.
-#[derive(Clone)]
-struct Ctx {
-    window: slint::Weak<AppWindow>,
-    nav: Arc<Mutex<Nav>>,
-    /// Bumped on every navigation so that results of an outdated load are dropped.
-    generation: Arc<AtomicU64>,
-}
-
-impl Ctx {
-    /// Lists `path` on a background thread and shows it when done. The UI thread never
-    /// waits on the file system. `record` pushes the current folder onto the back stack.
-    fn navigate(&self, path: PathBuf, record: bool) {
-        let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
-        if let Some(window) = self.window.upgrade() {
-            window.set_status("Loading…".into());
-        }
-
-        let ctx = self.clone();
-        std::thread::spawn(move || {
-            let result = list_dir(&path);
-            let window = ctx.window.clone();
-            let _ = window.upgrade_in_event_loop(move |window| {
-                if ctx.generation.load(Ordering::SeqCst) != generation {
-                    return;
-                }
-                match result {
-                    Ok(entries) => ctx.show(&window, path, entries, record),
-                    Err(err) => window.set_status(format!("Cannot open {}: {err}", path.display()).into()),
-                }
-            });
-        });
-    }
-
-    fn show(&self, window: &AppWindow, path: PathBuf, entries: Vec<Entry>, record: bool) {
-        let mut nav = self.nav.lock().unwrap();
-        if record && let Some(previous) = nav.current.take() {
-            nav.back.push(previous);
-        }
-
-        window.set_status(format!("{} items", entries.len()).into());
-        window.set_rows(ModelRc::new(EntryModel { entries, notify: ModelNotify::default() }));
-        window.set_current_path(path.display().to_string().into());
-        window.set_selected(-1);
-        window.set_can_go_back(!nav.back.is_empty());
-
-        nav.current = Some(path);
-    }
-}
-
-fn home_dir() -> PathBuf {
-    std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
-        .map(PathBuf::from)
-        .or_else(|| std::env::current_dir().ok())
-        .unwrap_or_else(|| PathBuf::from("/"))
-}
-
 /// Resolves settings + theme from `files` and shows them. No I/O, so it runs on the UI
 /// thread at startup, after config files change and when the system theme flips.
-fn apply_config(window: &AppWindow, files: &ConfigFiles) {
+fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
     let loaded = store::resolve(files, window.get_system_dark());
     if let Some(theme) = &loaded.theme {
         theme_bridge::apply(window, theme);
@@ -128,6 +35,164 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) {
         eprintln!("gezik: {warning}");
     }
     window.set_notice(notice_text(&loaded.warnings).into());
+    window.set_sidebar_position(match loaded.settings.sidebar {
+        SidebarPosition::Left => 0,
+        SidebarPosition::Right => 1,
+        SidebarPosition::Hidden => 2,
+    });
+    // Unchanged pins cost nothing (also after the reload that follows our own save).
+    sidebar::with_current(|sidebar| sidebar.set_pinned(loaded.settings.pinned.clone()));
+    keys::set_shortcuts(loaded.settings.shortcuts.clone());
+    loaded
+}
+
+/// Closes tab `index` once the current event is fully handled (the last tab closes the
+/// window). The tab is remembered by id, so a close that runs after other tab changes, or
+/// a second close of the same tab, never hits another tab.
+fn close_tab_later(nav: &navigation::Navigator, index: usize) {
+    if let Some(id) = nav.tab_id(index) {
+        let nav = nav.clone();
+        slint::Timer::single_shot(std::time::Duration::ZERO, move || nav.close_tab_by_id(id));
+    }
+}
+
+/// Handles a key press before the focused item sees it; returns whether it was used.
+/// Shortcuts work everywhere; with the address bar in typing mode, unmodified keys and
+/// the text editing shortcuts stay with the text box. The list keys (arrows, PgUp/PgDn,
+/// Home/End, Enter, type-ahead) are fixed and only act while the list has the focus.
+/// `chord` is the key as a shortcut (if it can be one); `has_modifier` is Ctrl, Alt or
+/// Meta (not Shift).
+fn handle_key(
+    window: &AppWindow,
+    nav: &navigation::Navigator,
+    type_ahead: &mut keys::TypeAhead,
+    text: &str,
+    chord: Option<Chord>,
+    has_modifier: bool,
+    menu_key: bool,
+) -> bool {
+    let editing = window.get_path_editing();
+
+    if editing && let Some(chord) = &chord {
+        if chord.key == Key::Escape && !has_modifier {
+            window.invoke_focus_list();
+            window.set_path_editing(false);
+            return true;
+        }
+        if !has_modifier || keys::is_text_edit(chord, Platform::current()) {
+            return false;
+        }
+    }
+
+    if let Some(action) = chord.as_ref().and_then(keys::action_for) {
+        match action {
+            Action::NewTab => nav.open_tab(nav.start(), true),
+            Action::CloseTab => close_tab_later(nav, nav.active_index()),
+            Action::NextTab => nav.next_tab(),
+            Action::PrevTab => nav.prev_tab(),
+            Action::Back => nav.back(),
+            Action::Forward => nav.forward(),
+            Action::Up => nav.up(),
+            Action::FocusPath => window.invoke_edit_path(),
+            Action::Refresh => nav.reload(),
+        }
+        // The typed text no longer fits once the location or tab changed.
+        if editing && action != Action::FocusPath {
+            window.invoke_focus_list();
+        }
+        return true;
+    }
+    if editing || has_modifier || !window.get_list_focused() {
+        return false;
+    }
+
+    // Shift+F10 or the Menu key: the selected row's menu (the background's if none).
+    if menu_key {
+        window.invoke_open_keyboard_menu();
+        return true;
+    }
+
+    // List navigation (fixed keys).
+    let count = i32::try_from(window.get_rows().row_count()).unwrap_or(i32::MAX);
+    let page = window.get_list_page_rows().max(1);
+    let selected = window.get_selected();
+    let target = match chord.map(|c| c.key) {
+        Some(Key::Down) => Some(selected.saturating_add(1)),
+        Some(Key::Up) => Some(selected.saturating_sub(1)),
+        Some(Key::PageDown) => Some(selected.saturating_add(page)),
+        Some(Key::PageUp) => Some(selected.saturating_sub(page)),
+        Some(Key::Home) => Some(0),
+        Some(Key::End) => Some(count - 1),
+        Some(Key::Enter) => {
+            if selected >= 0 {
+                nav.open_row(selected);
+            }
+            return true;
+        }
+        _ => {
+            let Some(c) = keys::typed_char(text) else { return false };
+            let found = type_ahead.type_char(c, std::time::Instant::now(), |typed| nav.find_prefix(typed));
+            // A typed character that matches nothing is still used up.
+            let Some(i) = found.and_then(|i| i32::try_from(i).ok()) else { return true };
+            Some(i)
+        }
+    };
+    match target {
+        Some(i) if count > 0 => {
+            let i = i.clamp(0, count - 1);
+            window.set_selected(i);
+            reveal_row(window, i);
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Scrolls the list so row `index` is fully visible. After a far jump (End, type-ahead)
+/// Slint's ListView snaps the offset to a row boundary on its next layout, which can leave
+/// a row at the bottom edge only partly visible; the offset is set again once that frame is
+/// done (see [`keys::scroll_was_snapped`]).
+fn reveal_row(window: &AppWindow, index: i32) {
+    window.invoke_ensure_visible(index);
+    let target = window.get_list_scroll();
+    let row_height = window.global::<Theme>().get_row_height();
+    let weak = window.as_weak();
+    slint::Timer::single_shot(navigation::SCROLL_RESTORE_DELAY, move || {
+        if let Some(window) = weak.upgrade()
+            && window.get_selected() == index
+            && keys::scroll_was_snapped(window.get_list_scroll(), target, row_height)
+        {
+            window.set_list_scroll(target);
+        }
+    });
+}
+
+/// Like [`apply_config`], and also resolves where the app opens. Start warnings (bad
+/// `start-folder`, missing command-line path) are added to `files` so the notice shows
+/// them (also after later re-resolves, until the files are read again).
+fn apply_config_and_start(window: &AppWindow, files: &mut ConfigFiles, cli: Option<PathBuf>) -> (Settings, StartPlan) {
+    let loaded = apply_config(window, files);
+    let plan = resolve_start(&loaded.settings, cli);
+    if !plan.warnings.is_empty() {
+        files.warnings.extend(plan.warnings.iter().cloned());
+        apply_config(window, files);
+    }
+    (loaded.settings, plan)
+}
+
+/// [`start::plan_start`] against the real file system.
+fn resolve_start(settings: &Settings, cli: Option<PathBuf>) -> StartPlan {
+    // Absolute, so the address bar parts and "up" work for `gezik .` too.
+    let cli = cli.map(|path| std::path::absolute(&path).unwrap_or(path));
+    let dirs = gezik_config::paths::KnownDirs::system();
+    start::plan_start(&settings.start_folder, cli, &dirs_home(), |text| dirs.expand_checked(text), start::path_kind)
+}
+
+fn dirs_home() -> PathBuf {
+    std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+        .map(PathBuf::from)
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_else(|| PathBuf::from("/"))
 }
 
 /// The first warning, plus how many more there are.
@@ -168,7 +233,8 @@ fn main() -> Result<(), slint::PlatformError> {
     }
     // Something sensible is on screen even if the selected theme cannot be read.
     theme_bridge::apply(&window, &theme::builtin_dark());
-    apply_config(&window, &files);
+    let (initial_settings, plan) =
+        apply_config_and_start(&window, &mut files, std::env::args_os().nth(1).map(PathBuf::from));
 
     // The latest config files, so a system light/dark switch can re-resolve without I/O.
     let files = Arc::new(Mutex::new(files));
@@ -195,7 +261,8 @@ fn main() -> Result<(), slint::PlatformError> {
             let _ = weak.upgrade_in_event_loop(move |window| {
                 let mut current = files.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                 *current = fresh;
-                apply_config(&window, &current);
+                let (_, plan) = apply_config_and_start(&window, &mut current, None);
+                navigation::with_current(|nav| nav.set_start(plan.start));
             });
         })
         .map_err(|err| {
@@ -226,49 +293,163 @@ fn main() -> Result<(), slint::PlatformError> {
             slint::CloseRequestResponse::HideWindow
         }
     });
-    let ctx = Ctx { window: window.as_weak(), nav: Arc::default(), generation: Arc::default() };
+
+    let nav = navigation::Navigator::new(&window, plan.first, plan.select, plan.start);
+    nav.install();
+    // Captures no navigator (it is not `Send`): the result finds it on the UI thread.
+    places::load_in_background(window.as_weak(), |part| navigation::with_current(|nav| nav.set_places(part)));
+
+    let sidebar = sidebar::Sidebar::new(&window, nav.clone(), config.clone());
+    sidebar.install();
+    sidebar.set_pinned(initial_settings.pinned);
+    window.on_sidebar_clicked({
+        let (nav, sidebar) = (nav.clone(), sidebar.clone());
+        move |section, index| {
+            if let Some(location) = sidebar.location_of(section, index) {
+                nav.go(location);
+            }
+        }
+    });
+    window.on_sidebar_middle_clicked({
+        let (nav, sidebar) = (nav.clone(), sidebar.clone());
+        move |section, index| {
+            if let Some(location) = sidebar.location_of(section, index) {
+                nav.open_tab(location, false);
+            }
+        }
+    });
+    window.on_pinned_move({
+        let sidebar = sidebar.clone();
+        move |from, to| {
+            if let (Ok(from), Ok(to)) = (usize::try_from(from), usize::try_from(to)) {
+                sidebar.move_pinned(from, to);
+            }
+        }
+    });
+    // The sidebar width stays in memory and is saved with the window state on close.
+
+    let menus = context_menu::Menus::new(&window, nav.clone(), sidebar);
+    window.on_row_menu({
+        let menus = menus.clone();
+        move |i, x, y| menus.row(i, x, y)
+    });
+    // The Windows menu opens at the cursor; there is no Slint menu for empty space.
+    window.on_background_menu({
+        let menus = menus.clone();
+        move |_, _| menus.background()
+    });
+    window.on_keyboard_menu({
+        let menus = menus.clone();
+        move |i, x, y| menus.keyboard(i, x, y)
+    });
+    window.on_sidebar_menu({
+        let menus = menus.clone();
+        move |section, i, x, y| menus.sidebar_entry(section, i, x, y)
+    });
+    // Slint passes indexes as `i32`: a negative one does nothing.
+    window.on_tab_menu(move |i, x, y| {
+        if let Ok(i) = usize::try_from(i) {
+            menus.tab(i, x, y);
+        }
+    });
 
     window.on_open_row({
-        let ctx = ctx.clone();
-        move |index| {
-            let Some(window) = ctx.window.upgrade() else { return };
-            let Some(entry) = entry_at(&window, index) else { return };
-            let Some(dir) = ctx.nav.lock().unwrap().current.clone() else { return };
-            let path = dir.join(&entry.name);
-            if entry.is_dir {
-                ctx.navigate(path, true);
-            } else if let Err(err) = open::that_detached(&path) {
-                window.set_status(format!("Cannot open {}: {err}", entry.name).into());
-            }
-        }
+        let nav = nav.clone();
+        move |i| nav.open_row(i)
     });
-
     window.on_go_back({
-        let ctx = ctx.clone();
-        move || {
-            let previous = ctx.nav.lock().unwrap().back.pop();
-            if let Some(path) = previous {
-                ctx.navigate(path, false);
-            }
-        }
+        let nav = nav.clone();
+        move || nav.back()
     });
-
+    window.on_go_forward({
+        let nav = nav.clone();
+        move || nav.forward()
+    });
     window.on_go_up({
-        let ctx = ctx.clone();
-        move || {
-            let parent = ctx.nav.lock().unwrap().current.as_ref().and_then(|p| p.parent()).map(PathBuf::from);
-            if let Some(path) = parent {
-                ctx.navigate(path, true);
+        let nav = nav.clone();
+        move || nav.up()
+    });
+    window.on_refresh({
+        let nav = nav.clone();
+        move || nav.reload()
+    });
+    window.on_navigate({
+        let nav = nav.clone();
+        move |text| nav.navigate_text(text.into())
+    });
+    window.on_crumb_clicked({
+        let nav = nav.clone();
+        move |i| nav.crumb_clicked(i)
+    });
+    // Slint passes indexes as `i32`: a negative one does nothing.
+    window.on_tab_activate({
+        let nav = nav.clone();
+        move |i| {
+            if let Ok(i) = usize::try_from(i) {
+                nav.activate_tab(i);
+            }
+        }
+    });
+    // Closed once the click is fully handled.
+    window.on_tab_close({
+        let nav = nav.clone();
+        move |i| {
+            if let Ok(i) = usize::try_from(i) {
+                close_tab_later(&nav, i);
+            }
+        }
+    });
+    window.on_tab_new({
+        let nav = nav.clone();
+        move || nav.open_tab(nav.start(), true)
+    });
+    window.on_tab_move({
+        let nav = nav.clone();
+        move |from, to| {
+            if let (Ok(from), Ok(to)) = (usize::try_from(from), usize::try_from(to)) {
+                nav.move_tab(from, to);
+            }
+        }
+    });
+    window.on_row_middle_clicked({
+        let nav = nav.clone();
+        move |i| {
+            if let Some((path, true)) = nav.entry_path(i) {
+                nav.open_tab(gezik_core::nav::Location::Path(path), false);
             }
         }
     });
 
-    window.on_navigate({
-        let ctx = ctx.clone();
-        move |text| ctx.navigate(PathBuf::from(text.trim()), true)
+    window.on_key_event({
+        let (nav, weak) = (nav.clone(), window.as_weak());
+        let mut type_ahead = keys::TypeAhead::new();
+        move |event| {
+            let Some(window) = weak.upgrade() else { return false };
+            let m = event.modifiers;
+            let chord = keys::chord_from_slint(&event.text, m.control, m.alt, m.shift, m.meta, Platform::current());
+            let menu_key = keys::is_context_menu_key(&event.text, m.control, m.alt, m.shift, m.meta);
+            handle_key(&window, &nav, &mut type_ahead, &event.text, chord, m.control || m.alt || m.meta, menu_key)
+        }
     });
 
-    let start = std::env::args_os().nth(1).map(PathBuf::from).unwrap_or_else(home_dir);
-    ctx.navigate(start, false);
+    // Mouse back/forward side buttons, anywhere in the window. Slint passes them on to
+    // the items too, which ignore them.
+    {
+        use slint::winit_030::{EventResult, WinitWindowAccessor, winit};
+        window.window().on_winit_window_event(move |_, event| {
+            if let winit::event::WindowEvent::MouseInput {
+                state: winit::event::ElementState::Pressed, button, ..
+            } = event
+            {
+                match button {
+                    winit::event::MouseButton::Back => nav.back(),
+                    winit::event::MouseButton::Forward => nav.forward(),
+                    _ => {}
+                }
+            }
+            EventResult::Propagate
+        });
+    }
+
     window.run()
 }

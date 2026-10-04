@@ -4,6 +4,12 @@ import { Theme } from "../theme.slint";
 export component TextField inherits Rectangle {
     in-out property <string> text;
     callback accepted(string);
+    out property <bool> has-focus: input.has-focus;
+
+    public function focus-and-select() {
+        input.focus();
+        input.select-all();
+    }
 
     height: Theme.row-height + 4px;
     horizontal-stretch: 1;

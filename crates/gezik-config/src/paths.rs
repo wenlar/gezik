@@ -63,6 +63,16 @@ impl KnownDirs {
         }
         PathBuf::from(text)
     }
+
+    /// [`expand`](Self::expand), but rejects text with a `..` segment (returns `None`).
+    pub fn expand_checked(&self, text: &str) -> Option<PathBuf> {
+        (!has_parent_segment(text)).then(|| self.expand(text))
+    }
+}
+
+/// Whether a stored path tries to climb out of its folder with `..`.
+pub fn has_parent_segment(text: &str) -> bool {
+    text.split(['/', '\\']).any(|segment| segment == "..")
 }
 
 /// Joins path components with `/` on every OS: `C:\a\b` → `C:/a/b`.
@@ -130,6 +140,17 @@ mod tests {
     #[test]
     fn unknown_tokens_stay_literal() {
         assert_eq!(fake().expand("{nope}/x"), PathBuf::from("{nope}/x"));
+    }
+
+    #[test]
+    fn parent_segments_are_detected_and_rejected() {
+        assert!(has_parent_segment("{home}/../x"));
+        assert!(has_parent_segment(r"C:\a\..\b"));
+        assert!(has_parent_segment(".."));
+        assert!(!has_parent_segment("{home}/a..b/c"));
+        assert!(!has_parent_segment("/srv/data"));
+        assert_eq!(fake().expand_checked("{home}/../x"), None);
+        assert_eq!(fake().expand_checked("{downloads}"), Some(PathBuf::from("/u/alice/Downloads")));
     }
 
     #[test]

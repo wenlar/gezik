@@ -1,0 +1,245 @@
+import { Theme } from "../theme.slint";
+
+export struct TabItem {
+    title: string,
+    active: bool,
+}
+
+// The tab strip: click to switch, middle-click or × to close, drag to reorder, + for a new tab.
+export component TabBar inherits Rectangle {
+    in property <[TabItem]> tabs;
+    callback activate(int);
+    callback close(int);
+    callback new-tab();
+    callback move-tab(int, int);
+    // Right-click on tab `int`, at a window position.
+    callback tab-menu(int, length, length);
+
+    // Equal-width tabs that shrink as more are opened, down to a minimum; then the strip scrolls.
+    property <length> tab-width: clamp((self.width - plus.width) / max(1, root.tabs.length), 90px, 220px);
+    // While a tab is dragged: where it came from and where it would be dropped.
+    property <int> drag-from: -1;
+    property <int> drag-to: -1;
+    // Set once the pointer moved far enough to count as a drag, so the release is no click.
+    property <bool> dragged;
+    // A drag in progress refers to tab indexes: when tabs are added or closed it is dropped.
+    property <int> tab-count: root.tabs.length;
+    // Set when a drag ends or is dropped; a new drag needs a new press.
+    property <bool> drag-blocked;
+    changed tab-count => { root.cancel-drag(); }
+
+    height: Theme.row-height + 10px;
+    background: Theme.surface;
+    accessible-role: tab-list;
+
+    function cancel-drag() {
+        root.drag-blocked = true;
+        root.drag-from = -1;
+        root.drag-to = -1;
+    }
+
+    // Scrolls the strip by `delta` (the wheel), staying within its content.
+    function scroll-by(delta: length) {
+        strip.content-x = clamp(strip.content-x + delta, min(0px, strip.width - strip.content-width), 0px);
+    }
+
+    // Scrolls the strip so that tab `i` is fully visible.
+    function reveal(i: int) {
+        if i * root.tab-width < -strip.content-x {
+            strip.content-x = -i * root.tab-width;
+        } else if (i + 1) * root.tab-width > strip.width - strip.content-x {
+            strip.content-x = strip.width - (i + 1) * root.tab-width;
+        }
+    }
+
+    // The wheel scrolls the strip; tabs pass the wheel through to here.
+    TouchArea {
+        width: strip.width;
+        scroll-event(event) => {
+            root.scroll-by(event.delta-x + event.delta-y);
+            accept
+        }
+    }
+
+    strip := Flickable {
+        x: 0;
+        width: root.width - plus.width;
+        height: root.height;
+        content-height: self.height;
+        content-width: max(self.width, root.tabs.length * root.tab-width);
+        // Scrolled by the wheel and `reveal`, so dragging a tab never pans the strip.
+        interactive: false;
+        // Keep the scroll position valid when tabs are closed or the window grows.
+        changed content-width => { root.scroll-by(0px); }
+        changed width => { root.scroll-by(0px); }
+
+        for item[i] in root.tabs: Rectangle {
+            property <bool> hovered: touch.has-hover || close-touch.has-hover;
+            property <bool> is-active: item.active;
+            changed is-active => {
+                if self.is-active { root.reveal(i); }
+            }
+            init => {
+                if self.is-active { root.reveal(i); }
+            }
+
+            x: i * root.tab-width;
+            width: root.tab-width;
+            height: parent.height;
+            accessible-role: tab;
+            accessible-label: item.title;
+            accessible-item-selectable: true;
+            accessible-item-selected: item.active;
+            accessible-item-index: i;
+            accessible-action-default => { root.activate(i); }
+
+            Rectangle {
+                x: 2px;
+                y: 4px;
+                width: parent.width - 4px;
+                height: parent.height - 4px;
+                border-radius: Theme.radius;
+                background: item.active ? Theme.background : hovered ? Theme.hover : transparent;
+
+                touch := TouchArea {
+                    clicked => {
+                        if !root.dragged { root.activate(i); }
+                    }
+                    pointer-event(event) => {
+                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                            root.dragged = false;
+                            root.drag-blocked = false;
+                        }
+                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.left && root.drag-from >= 0 {
+                            if root.drag-to != root.drag-from { root.move-tab(root.drag-from, root.drag-to); }
+                            root.cancel-drag();
+                        }
+                        if event.kind == PointerEventKind.cancel {
+                            root.cancel-drag();
+                        }
+                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.middle {
+                            root.close(i);
+                        }
+                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {
+                            root.tab-menu(i, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                        }
+                    }
+                    moved => {
+                        if self.pressed && !root.drag-blocked && (root.dragged || abs(self.mouse-x - self.pressed-x) > 6px) {
+                            root.dragged = true;
+                            root.drag-from = i;
+                            root.drag-to = clamp(floor((i * root.tab-width + self.mouse-x) / root.tab-width), 0, root.tabs.length - 1);
+                        }
+                    }
+                    scroll-event(event) => {
+                        root.scroll-by(event.delta-x + event.delta-y);
+                        accept
+                    }
+                }
+
+                // The × takes room only while it is shown (active or hovered tab), so a
+                // narrow tab keeps its title readable.
+                property <bool> close-shown: item.active || hovered;
+                HorizontalLayout {
+                    padding-left: Theme.spacing;
+                    padding-right: 2px;
+                    spacing: 0;
+                    VerticalLayout {
+                        alignment: center;
+                        Rectangle {
+                            width: Theme.icon-size * 0.75;
+                            height: self.width;
+                            border-radius: 2px;
+                            background: Theme.folder-icon;
+                        }
+                    }
+                    Rectangle { width: Theme.spacing; }
+                    Text {
+                        text: item.title;
+                        overflow: elide;
+                        horizontal-stretch: 1;
+                        min-width: 0;
+                        vertical-alignment: center;
+                        color: item.active ? Theme.foreground : Theme.foreground-muted;
+                    }
+                    Rectangle {
+                        width: close-shown ? Theme.icon-size + 6px : 0px;
+                        visible: close-shown;
+                        Rectangle {
+                            x: parent.width - self.width;
+                            y: (parent.height - self.height) / 2;
+                            width: Theme.icon-size + 4px;
+                            height: self.width;
+                            border-radius: Theme.radius;
+                            background: close-touch.has-hover ? Theme.hover : transparent;
+                            accessible-role: button;
+                            accessible-label: "Close " + item.title;
+                            accessible-action-default => { root.close(i); }
+                            // Drawn, not a "×" glyph: the software renderer has no font fallback.
+                            Path {
+                                width: Theme.icon-size * 0.625;
+                                height: self.width;
+                                viewbox-width: 16;
+                                viewbox-height: 16;
+                                commands: "M 3 3 L 13 13 M 13 3 L 3 13";
+                                stroke: Theme.foreground-muted;
+                                stroke-width: Theme.icon-size / 10;
+                            }
+                            close-touch := TouchArea {
+                                clicked => { root.close(i); }
+                                // Like the tab body: middle-click closes, right-click opens the menu.
+                                pointer-event(event) => {
+                                    if event.kind == PointerEventKind.up && event.button == PointerEventButton.middle {
+                                        root.close(i);
+                                    }
+                                    if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {
+                                        root.tab-menu(i, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Drop position while dragging.
+        if root.drag-from >= 0: Rectangle {
+            // Between two tabs; at either end, kept just inside the strip.
+            x: clamp((root.drag-to > root.drag-from ? root.drag-to + 1 : root.drag-to) * root.tab-width - 1px, 0px, parent.width - self.width);
+            y: 4px;
+            width: 2px;
+            height: parent.height - 4px;
+            background: Theme.accent;
+        }
+    }
+
+    plus := Rectangle {
+        x: strip.width;
+        width: root.height;
+        height: root.height;
+        accessible-role: button;
+        accessible-label: "New tab";
+        accessible-action-default => { root.new-tab(); }
+        Rectangle {
+            x: 4px;
+            y: 4px;
+            width: parent.width - 8px;
+            height: parent.height - 8px;
+            border-radius: Theme.radius;
+            background: plus-touch.has-hover ? Theme.hover : transparent;
+            Path {
+                width: Theme.icon-size * 0.75;
+                height: self.width;
+                viewbox-width: 16;
+                viewbox-height: 16;
+                commands: "M 8 2 L 8 14 M 2 8 L 14 8";
+                stroke: Theme.foreground;
+                stroke-width: Theme.icon-size / 10;
+            }
+            plus-touch := TouchArea {
+                clicked => { root.new-tab(); }
+            }
+        }
+    }
+}

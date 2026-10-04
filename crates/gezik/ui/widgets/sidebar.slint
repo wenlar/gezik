@@ -1,0 +1,156 @@
+import { Theme } from "../theme.slint";
+
+export struct SidebarRow {
+    header: bool,
+    label: string,
+    section: int,
+    index: int,
+    active: bool,
+}
+
+// Sections of places. Pinned rows (section 1) can be dragged to reorder.
+export component Sidebar inherits Rectangle {
+    in property <[SidebarRow]> rows;
+    // Position in `rows` of the first pinned item (-1 if none), and how many there are.
+    in property <int> pinned-first-row: -1;
+    in property <int> pinned-count;
+    callback clicked(int, int);
+    callback middle-clicked(int, int);
+    // Right-click on item (section, index), at a window position.
+    callback menu(int, int, length, length);
+    // Moves pinned item `from` to position `to` (indexes within the PINNED section).
+    callback pinned-move(int, int);
+
+    property <length> row-height: Theme.row-height;
+    // While a pinned item is dragged: where it came from and where it would be dropped.
+    property <int> drag-from: -1;
+    property <int> drag-to: -1;
+    // Set once the pointer moved far enough to count as a drag, so the release is no click.
+    property <bool> dragged;
+    // Set when a drag ends or is dropped; a new drag needs a new press.
+    property <bool> drag-blocked;
+    // A drag in progress refers to row indexes: when rows are added or removed it is dropped.
+    property <int> row-count: root.rows.length;
+    changed row-count => { root.cancel-drag(); }
+
+    background: Theme.surface;
+    accessible-role: list;
+    accessible-label: "Places";
+
+    function cancel-drag() {
+        root.drag-blocked = true;
+        root.drag-from = -1;
+        root.drag-to = -1;
+    }
+
+    // Scrolls by `delta` (the wheel), staying within the content.
+    function scroll-by(delta: length) {
+        scroller.content-y = clamp(scroller.content-y + delta, min(0px, scroller.height - scroller.content-height), 0px);
+    }
+
+    // The wheel scrolls the list; rows pass the wheel through to here.
+    TouchArea {
+        scroll-event(event) => {
+            root.scroll-by(event.delta-y);
+            accept
+        }
+    }
+
+    scroller := Flickable {
+        width: root.width;
+        height: root.height;
+        content-width: self.width;
+        content-height: root.rows.length * root.row-height + Theme.spacing * 2;
+        // Scrolled by the wheel only, so dragging a pinned item never pans the list.
+        interactive: false;
+        changed content-height => { root.scroll-by(0px); }
+        changed height => { root.scroll-by(0px); }
+
+        for row[i] in root.rows: Rectangle {
+            x: Theme.spacing;
+            y: Theme.spacing + i * root.row-height;
+            width: parent.width - Theme.spacing * 2;
+            height: root.row-height;
+
+            if row.header: Text {
+                x: Theme.spacing;
+                width: parent.width - Theme.spacing * 2;
+                height: parent.height;
+                text: row.label;
+                overflow: elide;
+                vertical-alignment: center;
+                font-size: Theme.font-size * 0.85;
+                font-weight: 600;
+                color: Theme.foreground-muted;
+            }
+
+            if !row.header: Rectangle {
+                width: parent.width;
+                height: parent.height;
+                border-radius: Theme.radius;
+                background: row.active ? Theme.selection : touch.has-hover ? Theme.hover : transparent;
+                accessible-role: list-item;
+                accessible-label: row.label;
+                accessible-item-selectable: true;
+                accessible-item-selected: row.active;
+                accessible-action-default => { root.clicked(row.section, row.index); }
+
+                Text {
+                    x: Theme.spacing * 3;
+                    width: parent.width - self.x - Theme.spacing;
+                    height: parent.height;
+                    text: row.label;
+                    overflow: elide;
+                    vertical-alignment: center;
+                    color: row.active ? Theme.selection-foreground : Theme.foreground;
+                }
+
+                touch := TouchArea {
+                    clicked => {
+                        if !root.dragged { root.clicked(row.section, row.index); }
+                    }
+                    pointer-event(event) => {
+                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                            root.dragged = false;
+                            root.drag-blocked = false;
+                        }
+                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.left && root.drag-from >= 0 {
+                            if root.drag-to != root.drag-from { root.pinned-move(root.drag-from, root.drag-to); }
+                            root.cancel-drag();
+                        }
+                        if event.kind == PointerEventKind.cancel {
+                            root.cancel-drag();
+                        }
+                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.middle {
+                            root.middle-clicked(row.section, row.index);
+                        }
+                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {
+                            root.menu(row.section, row.index, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                        }
+                    }
+                    moved => {
+                        if row.section == 1 && self.pressed && !root.drag-blocked && (root.dragged || abs(self.mouse-y - self.pressed-y) > 6px) {
+                            root.dragged = true;
+                            root.drag-from = row.index;
+                            // Pinned rows are contiguous, so the offset in rows is the offset in the section.
+                            root.drag-to = clamp(row.index + floor(self.mouse-y / root.row-height), 0, root.pinned-count - 1);
+                        }
+                    }
+                    scroll-event(event) => {
+                        root.scroll-by(event.delta-y);
+                        accept
+                    }
+                }
+            }
+        }
+
+        // Drop position while dragging: between two pinned items.
+        if root.drag-from >= 0 && root.pinned-first-row >= 0: Rectangle {
+            x: Theme.spacing;
+            y: Theme.spacing + (root.pinned-first-row + (root.drag-to > root.drag-from ? root.drag-to + 1 : root.drag-to)) * root.row-height - 1px;
+            width: parent.width - Theme.spacing * 2;
+            height: 2px;
+            background: Theme.accent;
+        }
+    }
+}

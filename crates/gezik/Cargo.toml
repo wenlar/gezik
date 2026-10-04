@@ -8,9 +8,11 @@ license.workspace = true
 [dependencies]
 gezik-core.workspace = true
 gezik-config.workspace = true
+gezik-platform.workspace = true
 # Software renderer only: no GPU or OpenGL driver needed, and it measured far lower
 # memory than FemtoVG (5 MB vs 35 MB idle) at the same scrolling CPU cost.
 # unstable-winit-030: monitor list, to keep restored windows on screen.
+# raw-window-handle-06: the native window handle, for the system context menu.
 slint = { version = "1.18", default-features = false, features = [
     "std",
     "compat-1-2",
@@ -19,6 +21,7 @@ slint = { version = "1.18", default-features = false, features = [
     "software-renderer-systemfonts",
     "accessibility",
     "unstable-winit-030",
+    "raw-window-handle-06",
 ] }
 open = "5.3"
 notify = "8"
