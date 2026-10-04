@@ -8,10 +8,11 @@ import { PreviewPane, PreviewInfo } from "widgets/preview-pane.slint";
 import { FileView, FileRow, ItemRow } from "widgets/file-view.slint";
 import { OpsPanel, OpRow } from "widgets/ops-panel.slint";
 import { Dialog } from "widgets/dialog.slint";
+import { ConflictList, ConflictRow } from "widgets/conflict-list.slint";
 
 // Re-exported so Rust can set it with `window.global::<Theme>()` and build crumbs, tabs
 // and sidebar rows.
-export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, OpRow }
+export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, OpRow, ConflictRow }
 
 // One item of the Slint context menu (tabs everywhere; also rows and the sidebar on
 // macOS/Linux). `id` is one of the ids in context_menu.rs.
@@ -163,6 +164,27 @@ export component AppWindow inherits Window {
     callback op-retry(int);
     callback op-dismiss(int);
     callback ops-toggle();
+    // The conflict list over the window (conflicts.rs).
+    in property <bool> conflicts-open;
+    in property <string> conflict-title;
+    in property <[ConflictRow]> conflict-rows;
+    in property <int> conflict-identical-count;
+    in property <bool> conflict-hide-identical;
+    in property <bool> conflict-apply-all;
+    in property <string> conflict-footer;
+    in-out property <length> conflict-scroll;
+    callback conflict-decide(int);
+    callback conflict-set-apply-all(bool);
+    callback conflict-toggle-identical();
+    callback conflict-pressed(int, bool, bool);
+    callback conflict-row-menu(int, length, length);
+    callback conflict-start();
+    callback conflict-cancel();
+    callback conflict-key(KeyEvent) -> bool;
+
+    public function conflict-ensure-visible(index: int) {
+        conflict-list.ensure-visible(index);
+    }
     // A question over the window (dialog.rs); `dialog-chosen` gets the button's index.
     in property <bool> dialog-open;
     in property <string> dialog-title;
@@ -504,6 +526,30 @@ export component AppWindow inherits Window {
                     }
                 }
             }
+        }
+        // Always there (hidden when closed), so Rust can scroll it.
+        conflict-list := ConflictList {
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.height;
+            visible: root.conflicts-open;
+            open: root.conflicts-open;
+            title: root.conflict-title;
+            rows: root.conflict-rows;
+            identical-count: root.conflict-identical-count;
+            hide-identical: root.conflict-hide-identical;
+            apply-all: root.conflict-apply-all;
+            footer: root.conflict-footer;
+            scroll <=> root.conflict-scroll;
+            decide(i) => { root.conflict-decide(i); }
+            set-apply-all(all) => { root.conflict-set-apply-all(all); }
+            toggle-identical => { root.conflict-toggle-identical(); }
+            pressed(i, ctrl, shift) => { root.conflict-pressed(i, ctrl, shift); }
+            row-menu(i, x, y) => { root.conflict-row-menu(i, x, y); }
+            start => { root.conflict-start(); }
+            cancel-operation => { root.conflict-cancel(); }
+            key(event) => { return root.conflict-key(event); }
         }
         if root.dialog-open: Dialog {
             x: 0;

@@ -281,6 +281,7 @@ struct Inner {
     /// when that was read.
     cut: RefCell<Vec<PathBuf>>,
     clip_sequence: Cell<u64>,
+    conflicts: crate::conflicts::Conflicts,
 }
 
 #[derive(Clone)]
@@ -312,6 +313,7 @@ impl Operations {
                 }
             }
         });
+        let conflicts = crate::conflicts::Conflicts::new(window, engine.clone());
         let rows = Rc::new(VecModel::default());
         window.set_op_rows(ModelRc::from(rows.clone()));
         let ops = Operations(Rc::new(Inner {
@@ -331,6 +333,7 @@ impl Operations {
             clip: RefCell::default(),
             cut: RefCell::default(),
             clip_sequence: Cell::new(0),
+            conflicts,
         }));
         ops.0.view.on_shown({
             let weak = Rc::downgrade(&ops.0);
@@ -350,6 +353,10 @@ impl Operations {
     pub fn set_files(&self, files: FilesSettings) {
         self.0.files.set(files);
         self.0.engine.set_threads(files.copy_threads);
+    }
+
+    pub fn conflicts(&self) -> &crate::conflicts::Conflicts {
+        &self.0.conflicts
     }
 
     pub fn collapsed(&self) -> bool {
@@ -768,7 +775,7 @@ impl Operations {
                     j.rate.record(Instant::now(), progress.bytes_done);
                     j.progress = Some(progress);
                 }),
-                Event::Conflicts { job, conflicts } => self.conflicts(job, conflicts),
+                Event::Conflicts { job, conflicts } => self.show_conflicts(job, conflicts),
                 Event::Paused { job, reason, path } => self.paused(job, reason, path),
                 Event::Finished { job, report } => self.finished(job, report),
                 Event::Changed { dirs } => {
@@ -780,10 +787,17 @@ impl Operations {
         self.update();
     }
 
-    /// Until the conflict list exists (Task 15): every conflict keeps its default (Skip).
-    fn conflicts(&self, job: JobId, conflicts: Vec<gezik_ops::ConflictItem>) {
-        let decisions = conflicts.iter().map(|c| c.decision).collect();
-        self.0.engine.decide(job, decisions);
+    /// A job found existing items: the list shows them, the job waits for Start.
+    fn show_conflicts(&self, job: JobId, conflicts: Vec<gezik_ops::ConflictItem>) {
+        let mut title = String::new();
+        self.with_job(job, |j| {
+            j.shown = true;
+            title = j.title.clone();
+        });
+        if self.0.collapsed.get() {
+            self.0.collapsed.set(false);
+        }
+        self.0.conflicts.open(job, &title, conflicts);
     }
 
     fn paused(&self, job: JobId, reason: PauseReason, path: Option<PathBuf>) {
@@ -818,6 +832,7 @@ impl Operations {
     }
 
     fn finished(&self, id: JobId, report: Report) {
+        self.0.conflicts.close_if(id);
         self.0.asked.borrow_mut().remove(&id);
         let problems = !report.cancelled && !report.failures.is_empty();
         let mut after = After::Nothing;
