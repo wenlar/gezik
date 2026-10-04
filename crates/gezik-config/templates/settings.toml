@@ -47,3 +47,4 @@ thumbnails = true      # pictures and videos show a preview in the grid
 # view-list = "mod+1"
 # view-grid = "mod+2"
 # toggle-preview = "alt+p"
+# quick-look = "space"     # only while the file list has the focus

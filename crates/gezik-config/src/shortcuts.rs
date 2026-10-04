@@ -123,10 +123,11 @@ pub enum Action {
     ViewList,
     ViewGrid,
     TogglePreview,
+    QuickLook,
 }
 
 impl Action {
-    pub const ALL: [Action; 13] = [
+    pub const ALL: [Action; 14] = [
         Action::NewTab,
         Action::CloseTab,
         Action::NextTab,
@@ -140,6 +141,7 @@ impl Action {
         Action::ViewList,
         Action::ViewGrid,
         Action::TogglePreview,
+        Action::QuickLook,
     ];
 
     pub fn name(self) -> &'static str {
@@ -157,6 +159,7 @@ impl Action {
             Action::ViewList => "view-list",
             Action::ViewGrid => "view-grid",
             Action::TogglePreview => "toggle-preview",
+            Action::QuickLook => "quick-look",
         }
     }
 
@@ -183,6 +186,7 @@ impl Action {
             (Action::ViewList, _) => "mod+1",
             (Action::ViewGrid, _) => "mod+2",
             (Action::TogglePreview, _) => "alt+p",
+            (Action::QuickLook, _) => "space",
         }
     }
 }

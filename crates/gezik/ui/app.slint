@@ -421,3 +421,31 @@ export component AppWindow inherits Window {
         }
     }
 }
+
+// Space on the file list: the selection, big. Space or Esc closes it; the arrow keys move
+// in the list underneath.
+export component QuickLookWindow inherits Window {
+    in property <PreviewInfo> info;
+    in property <string> mono-font;
+    title: root.info.title == "" ? "Gezik" : root.info.title + " — Gezik";
+    background: Theme.background;
+    default-font-family: Theme.font-family;
+    default-font-size: Theme.font-size;
+    // Every key press; returns whether it was used.
+    callback key(KeyEvent) -> bool;
+
+    init => { scope.focus(); }
+
+    scope := FocusScope {
+        key-pressed(event) => {
+            if root.key(event) {
+                return accept;
+            }
+            return reject;
+        }
+        PreviewPane {
+            info: root.info;
+            mono-font: root.mono-font;
+        }
+    }
+}

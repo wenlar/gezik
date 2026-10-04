@@ -3,6 +3,8 @@
 //! Slint's own `Palette` is read-only and is left to follow the system light/dark mode;
 //! only std-widgets we still use (the ListView scrollbar) take their colors from it.
 
+use std::cell::RefCell;
+
 use gezik_config::Color;
 use gezik_config::theme::ResolvedTheme;
 use slint::ComponentHandle;
@@ -13,9 +15,25 @@ fn color(c: Color) -> slint::Color {
     slint::Color::from_argb_u8(c.a, c.r, c.g, c.b)
 }
 
-/// No validation here: `gezik-config` guarantees every value is present and in range.
+thread_local! {
+    /// The theme on screen, for windows opened later (quick look).
+    static CURRENT: RefCell<Option<ResolvedTheme>> = const { RefCell::new(None) };
+}
+
+/// The theme on screen now.
+pub fn current() -> Option<ResolvedTheme> {
+    CURRENT.with(|c| c.borrow().clone())
+}
+
+/// Shows `theme` in the main window and every other open Gezik window.
 pub fn apply(window: &AppWindow, theme: &ResolvedTheme) {
-    let global = window.global::<Theme>();
+    apply_global(&window.global::<Theme>(), theme);
+    CURRENT.with(|c| *c.borrow_mut() = Some(theme.clone()));
+    crate::preview::with_current(|p| p.retheme(theme));
+}
+
+/// No validation here: `gezik-config` guarantees every value is present and in range.
+pub fn apply_global(global: &Theme<'_>, theme: &ResolvedTheme) {
     let c = &theme.colors;
     global.set_background(color(c.background));
     global.set_surface(color(c.surface));

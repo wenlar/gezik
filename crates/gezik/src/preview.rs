@@ -201,6 +201,7 @@ struct Inner {
     timer: slint::Timer,
     /// What is shown now (the quick look window opens with it).
     info: RefCell<PreviewInfo>,
+    quick_look: RefCell<Option<crate::quick_look::QuickLook>>,
 }
 
 #[derive(Clone)]
@@ -215,6 +216,7 @@ impl Preview {
             generation: Arc::default(),
             timer: slint::Timer::default(),
             info: RefCell::new(PreviewInfo::default()),
+            quick_look: RefCell::new(None),
         }));
         CURRENT.with(|c| *c.borrow_mut() = Some(preview.clone()));
         view.on_selection_changed(|| {
@@ -245,7 +247,7 @@ impl Preview {
 
     /// Whether anything shows the preview.
     fn active(&self) -> bool {
-        self.0.pane_open.get()
+        self.0.pane_open.get() || self.quick_look_open()
     }
 
     /// The selection changed: loads its preview once it stays for a moment.
@@ -284,7 +286,8 @@ impl Preview {
     /// The picture size to load, in physical pixels: what the pane can show.
     fn picture_px(&self) -> u32 {
         let Some(window) = self.0.window.upgrade() else { return 256 };
-        let logical = window.get_preview_width();
+        let quick = self.0.quick_look.borrow().as_ref().map_or(0.0, |q| q.width());
+        let logical = if self.0.pane_open.get() { window.get_preview_width().max(quick) } else { quick };
         (logical * window.window().scale_factor()).round().clamp(64.0, 1024.0) as u32
     }
 
@@ -292,7 +295,89 @@ impl Preview {
         if let Some(window) = self.0.window.upgrade() {
             window.set_preview(info.clone());
         }
+        if let Some(quick_look) = self.0.quick_look.borrow().as_ref() {
+            quick_look.set_info(info.clone());
+        }
         *self.0.info.borrow_mut() = info;
+    }
+
+    pub fn quick_look_open(&self) -> bool {
+        self.0.quick_look.borrow().is_some()
+    }
+
+    /// Space on the list: opens quick look, or closes it.
+    pub fn toggle_quick_look(&self) {
+        if self.quick_look_open() {
+            return self.close_quick_look();
+        }
+        let Some(window) = self.0.window.upgrade() else { return };
+        let info = self.0.info.borrow().clone();
+        let opened = crate::quick_look::QuickLook::open(
+            &window,
+            info,
+            window.get_mono_font(),
+            |text, ctrl, alt, shift, meta| {
+                with_current(|p| p.quick_look_key(text, ctrl, alt, shift, meta)).unwrap_or(false)
+            },
+            Preview::close_later,
+        );
+        match opened {
+            Ok(quick_look) => {
+                *self.0.quick_look.borrow_mut() = Some(quick_look);
+                self.refresh();
+            }
+            Err(err) => window.set_status(format!("Cannot open quick look: {err}").into()),
+        }
+    }
+
+    pub fn close_quick_look(&self) {
+        // Taken out first: no borrow is held while the window is hidden.
+        let quick_look = self.0.quick_look.borrow_mut().take();
+        if let Some(quick_look) = quick_look {
+            quick_look.close();
+        }
+        if !self.active() {
+            self.release();
+        }
+    }
+
+    /// Closes quick look once the current event is done: its window may be the one
+    /// handling it.
+    fn close_later() {
+        slint::Timer::single_shot(Duration::ZERO, || {
+            with_current(Preview::close_quick_look);
+        });
+    }
+
+    /// A key in the quick look window: Space or Esc closes it, arrows move in the list.
+    fn quick_look_key(&self, text: &str, ctrl: bool, alt: bool, shift: bool, meta: bool) -> bool {
+        use gezik_config::shortcuts::{Key, Platform};
+        use gezik_core::layout::Move;
+        let Some(chord) = crate::keys::chord_from_slint(text, ctrl, alt, shift, meta, Platform::current()) else {
+            return false;
+        };
+        if chord.ctrl || chord.alt || chord.meta || chord.shift {
+            return false;
+        }
+        let mv = match chord.key {
+            Key::Space | Key::Escape => {
+                Preview::close_later();
+                return true;
+            }
+            Key::Up => Move::Up,
+            Key::Down => Move::Down,
+            Key::Left => Move::Left,
+            Key::Right => Move::Right,
+            _ => return false,
+        };
+        self.0.view.key_move(mv, false, false, 1)
+    }
+
+    /// The theme changed: quick look follows (the main window is done by theme_bridge).
+    pub fn retheme(&self, theme: &gezik_config::theme::ResolvedTheme) {
+        if let Some(quick_look) = self.0.quick_look.borrow().as_ref() {
+            quick_look.retheme(theme);
+        }
     }
 
     /// Nothing shows the preview: lets go of its picture and drops loads in flight.

@@ -7,6 +7,7 @@ mod media;
 mod navigation;
 mod places;
 mod preview;
+mod quick_look;
 mod sidebar;
 mod start;
 mod theme_bridge;
@@ -92,26 +93,33 @@ fn handle_key(
     }
 
     if let Some(action) = chord.as_ref().and_then(keys::action_for) {
-        match action {
-            Action::NewTab => nav.open_tab(nav.start(), true),
-            Action::CloseTab => close_tab_later(nav, nav.active_index()),
-            Action::NextTab => nav.next_tab(),
-            Action::PrevTab => nav.prev_tab(),
-            Action::Back => nav.back(),
-            Action::Forward => nav.forward(),
-            Action::Up => nav.up(),
-            Action::FocusPath => window.invoke_edit_path(),
-            Action::Refresh => nav.reload(),
-            Action::SelectAll => view.select_all(),
-            Action::ViewList => view.set_mode(gezik_core::view::ViewMode::List),
-            Action::ViewGrid => view.set_mode(gezik_core::view::ViewMode::Grid),
-            Action::TogglePreview => preview.toggle_pane(),
+        // Space opens quick look only on the focused list and outside type-ahead; elsewhere
+        // it is an ordinary key.
+        let ordinary_key = action == Action::QuickLook
+            && (!window.get_list_focused() || type_ahead.is_active(std::time::Instant::now()));
+        if !ordinary_key {
+            match action {
+                Action::NewTab => nav.open_tab(nav.start(), true),
+                Action::CloseTab => close_tab_later(nav, nav.active_index()),
+                Action::NextTab => nav.next_tab(),
+                Action::PrevTab => nav.prev_tab(),
+                Action::Back => nav.back(),
+                Action::Forward => nav.forward(),
+                Action::Up => nav.up(),
+                Action::FocusPath => window.invoke_edit_path(),
+                Action::Refresh => nav.reload(),
+                Action::SelectAll => view.select_all(),
+                Action::ViewList => view.set_mode(gezik_core::view::ViewMode::List),
+                Action::ViewGrid => view.set_mode(gezik_core::view::ViewMode::Grid),
+                Action::TogglePreview => preview.toggle_pane(),
+                Action::QuickLook => preview.toggle_quick_look(),
+            }
+            // The typed text no longer fits once the location or tab changed.
+            if editing && action != Action::FocusPath {
+                window.invoke_focus_list();
+            }
+            return true;
         }
-        // The typed text no longer fits once the location or tab changed.
-        if editing && action != Action::FocusPath {
-            window.invoke_focus_list();
-        }
-        return true;
     }
     if editing || !window.get_list_focused() {
         return false;
