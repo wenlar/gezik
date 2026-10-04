@@ -231,9 +231,11 @@ mod tests {
         let text = match chord.key {
             Key::Char(c) => c.to_string(),
             Key::F(n) => text(match n {
+                2 => SlintKey::F2,
                 5 => SlintKey::F5,
                 other => panic!("no default uses f{other}"),
             }),
+            Key::Delete => text(SlintKey::Delete),
             Key::Left => text(SlintKey::LeftArrow),
             Key::Right => text(SlintKey::RightArrow),
             Key::Up => text(SlintKey::UpArrow),
@@ -264,6 +266,16 @@ mod tests {
                 Action::ViewGrid => "ctrl+2",
                 Action::TogglePreview => "alt+p",
                 Action::QuickLook => "space",
+                Action::Copy => "ctrl+c",
+                Action::Cut => "ctrl+x",
+                Action::Paste => "ctrl+v",
+                Action::Trash => "delete",
+                Action::DeletePermanently => "shift+delete",
+                Action::Rename => "f2",
+                Action::NewFolder => "ctrl+shift+n",
+                Action::Undo => "ctrl+z",
+                Action::Redo => "ctrl+y",
+                Action::PasteMove | Action::Duplicate => continue,
             };
             let chord = parse_chord(text, Platform::Other).unwrap().unwrap();
             let (t, control, alt, shift, meta) = other_event(&chord);
