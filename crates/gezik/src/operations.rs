@@ -402,12 +402,20 @@ impl Operations {
                 None
             }
             Ok(None) => {
-                view.end_rename(refocus);
+                if how == Commit::Tab {
+                    view.end_rename_for_next()
+                } else {
+                    view.end_rename(refocus)
+                }
                 Some(index)
             }
             Ok(Some(name)) => {
                 let path = view.entry_path(index).map(|(path, _)| path);
-                view.end_rename(refocus);
+                if how == Commit::Tab {
+                    view.end_rename_for_next()
+                } else {
+                    view.end_rename(refocus)
+                };
                 if let Some(path) = path {
                     // Going on to another entry: its refresh must not pull the selection away.
                     let after = if how == Commit::Tab { After::Nothing } else { After::Select };
@@ -423,7 +431,11 @@ impl Operations {
     }
 
     /// The field lost the keyboard to something else: keep a usable name, else the old one.
-    pub fn rename_blurred(&self, typed: String) {
+    pub fn rename_blurred(&self, typed: String, generation: i32) {
+        // A late blur of an earlier rename's field (Tab went on) is not this rename's.
+        if generation != self.0.view.rename_generation() {
+            return;
+        }
         self.commit_rename(&typed, Commit::Blur);
     }
 
@@ -438,7 +450,7 @@ impl Operations {
         if window.get_rename_focused() {
             return true;
         }
-        self.rename_blurred(window.get_rename_text().into());
+        self.rename_blurred(window.get_rename_text().into(), self.0.view.rename_generation());
         false
     }
 
