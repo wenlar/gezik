@@ -37,6 +37,10 @@ pub enum MenuOutcome {
 }
 
 #[cfg(windows)]
+mod keyboard;
+#[cfg(windows)]
 mod shell_menu;
+#[cfg(windows)]
+pub use keyboard::{ModifierKeys, modifier_keys_down};
 #[cfg(windows)]
 pub use shell_menu::show_shell_menu;

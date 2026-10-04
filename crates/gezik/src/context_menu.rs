@@ -349,6 +349,7 @@ impl Menus {
             let scale = window.window().scale_factor();
             let at = at.map(|(x, y)| ((x * scale).round() as i32, (y * scale).round() as i32));
             let outcome = gezik_platform::show_shell_menu(&handle, &target, &items, at);
+            release_stale_modifiers(&window);
             drop(claim);
             match outcome {
                 Ok(gezik_platform::MenuOutcome::Gezik(id)) => {
@@ -476,12 +477,58 @@ impl Menus {
     }
 }
 
+/// Tells Slint that the modifier keys not down now were released. The native menu's modal
+/// loop takes the key releases made while it is open (Shift after Shift+F10, or a modifier
+/// held for a right-click), and Slint knows modifiers only from key events, so it would go
+/// on treating plain clicks as Shift+clicks. Releasing a key Slint already counts as up
+/// changes nothing.
+#[cfg(windows)]
+fn release_stale_modifiers(window: &AppWindow) {
+    for key in released_modifiers(gezik_platform::modifier_keys_down()) {
+        window.window().dispatch_event(slint::platform::WindowEvent::KeyReleased { text: key.into() });
+    }
+}
+
+/// The Slint modifier keys that are up, given the keys `down`.
+#[cfg(windows)]
+fn released_modifiers(down: gezik_platform::ModifierKeys) -> Vec<slint::platform::Key> {
+    use slint::platform::Key;
+    [
+        (down.left_shift, Key::Shift),
+        (down.right_shift, Key::ShiftR),
+        (down.left_control, Key::Control),
+        (down.right_control, Key::ControlR),
+        // Slint reports either Alt as `Alt`, and right Alt as `AltGr` on layouts that have it.
+        (down.alt, Key::Alt),
+        (down.right_alt, Key::AltGr),
+        (down.left_meta, Key::Meta),
+        (down.right_meta, Key::MetaR),
+    ]
+    .into_iter()
+    .filter_map(|(is_down, key)| (!is_down).then_some(key))
+    .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn ids(v: Vec<(u32, &str)>) -> Vec<u32> {
         v.into_iter().map(|(id, _)| id).collect()
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn keys_up_after_a_native_menu_are_released() {
+        use gezik_platform::ModifierKeys;
+        use slint::platform::Key;
+        let all_up = released_modifiers(ModifierKeys::default());
+        assert_eq!(all_up.len(), 8);
+        assert!(all_up.contains(&Key::Shift) && all_up.contains(&Key::ShiftR) && all_up.contains(&Key::AltGr));
+        // Shift still held when the menu closes: its own release comes later as usual.
+        let held = released_modifiers(ModifierKeys { left_shift: true, alt: true, ..Default::default() });
+        assert!(!held.contains(&Key::Shift) && !held.contains(&Key::Alt));
+        assert!(held.contains(&Key::ShiftR) && held.contains(&Key::Control));
     }
 
     #[test]
