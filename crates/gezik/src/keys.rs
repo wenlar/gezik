@@ -117,17 +117,24 @@ impl TypeAhead {
         TypeAhead { typed: String::new(), last: None }
     }
 
-    /// Adds `c` (typed at `now`) and returns the index of the first name starting with the
-    /// typed text (case-insensitive), searching all names.
-    pub fn type_char(&mut self, c: char, now: Instant, names: impl Iterator<Item = String>) -> Option<usize> {
+    /// Adds `c` (typed at `now`) and returns what `find` returns for the typed text, in
+    /// lowercase: the index of the first name starting with it (see
+    /// [`starts_with_lowercase`]).
+    pub fn type_char(&mut self, c: char, now: Instant, find: impl FnOnce(&str) -> Option<usize>) -> Option<usize> {
         if self.last.is_none_or(|last| now.saturating_duration_since(last) > Self::WINDOW) {
             self.typed.clear();
         }
         self.last = Some(now);
         self.typed.extend(c.to_lowercase());
-        let typed = self.typed.as_str();
-        names.enumerate().find(|(_, name)| name.to_lowercase().starts_with(typed)).map(|(i, _)| i)
+        find(&self.typed)
     }
+}
+
+/// Whether `name` starts with `typed` (already lowercase), ignoring case. Allocates
+/// nothing, as it runs for every row of a folder on each typed character.
+pub fn starts_with_lowercase(name: &str, typed: &str) -> bool {
+    let mut name = name.chars().flat_map(char::to_lowercase);
+    typed.chars().all(|t| name.next() == Some(t))
 }
 
 impl Default for TypeAhead {
@@ -256,8 +263,9 @@ mod tests {
         assert_eq!(typed_char(""), None);
     }
 
-    fn names<'a>(list: &'a [&'a str]) -> impl Iterator<Item = String> + 'a {
-        list.iter().map(|s| s.to_string())
+    /// Finds the first of `list` starting with the typed text, as the navigator does.
+    fn names<'a>(list: &'a [&'a str]) -> impl FnOnce(&str) -> Option<usize> + 'a {
+        move |typed| list.iter().position(|name| starts_with_lowercase(name, typed))
     }
 
     #[test]

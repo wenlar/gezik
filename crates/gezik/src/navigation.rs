@@ -2,7 +2,7 @@
 //! Only the active tab's listing is kept in memory.
 
 use std::cell::RefCell;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -111,6 +111,40 @@ impl Listing {
             Listing::Drives(drives) => drives.iter().position(|d| d.label == name),
         }
     }
+
+    /// The first row whose name starts with `typed` (lowercase), ignoring case; no
+    /// allocation per row, so it stays fast in a folder of 100k files.
+    fn find_prefix(&self, typed: &str) -> Option<usize> {
+        match self {
+            Listing::Files(_, entries) => {
+                entries.iter().position(|e| crate::keys::starts_with_lowercase(&e.name, typed))
+            }
+            Listing::Drives(drives) => drives.iter().position(|d| crate::keys::starts_with_lowercase(&d.label, typed)),
+        }
+    }
+}
+
+/// Applies a failed load of `location` to what the active tab shows; see
+/// [`listing_after_failure`]. Returns whether `listing` was replaced. The empty listing
+/// says nothing about the tab's selection and scroll, so it counts as `cleared`: the next
+/// `save_view` keeps the tab's saved view instead of overwriting it.
+fn apply_failure(listing: &mut Listing, cleared: &mut bool, mode: &Mode, location: &Location) -> bool {
+    let Some(empty) = listing_after_failure(mode, location) else { return false };
+    *listing = empty;
+    *cleared = true;
+    true
+}
+
+/// The path typed into the address bar. A relative path is taken from `base` (the folder
+/// on screen) if there is one, else from the working folder; on Windows `..` parts are
+/// resolved too, so the address bar parts stay right.
+fn resolve_typed(text: &str, base: Option<&Path>) -> PathBuf {
+    let path = PathBuf::from(text);
+    let path = match base {
+        Some(base) if path.is_relative() => base.join(path),
+        _ => path,
+    };
+    std::path::absolute(&path).unwrap_or(path)
 }
 
 /// How a successful load updates the history.
@@ -130,8 +164,9 @@ struct Inner {
     window: slint::Weak<AppWindow>,
     tabs: Tabs,
     listing: Listing,
-    /// The listing was cleared for a tab switch and the active tab's own listing is not
-    /// shown yet, so what is on screen says nothing about that tab's selection and scroll.
+    /// The listing was cleared for a tab switch (or emptied by a failed reload) and the
+    /// active tab's own listing is not shown, so what is on screen says nothing about that
+    /// tab's selection and scroll.
     cleared: bool,
     places: Places,
     /// The tab bar's model, updated in place (see [`sync_model`]).
@@ -322,6 +357,16 @@ impl Navigator {
         self.0.borrow().tabs.len()
     }
 
+    /// The active tab's index. Read-only: unlike `with_tabs`, keeps a pending load.
+    pub fn active_index(&self) -> usize {
+        self.0.borrow().tabs.active_index()
+    }
+
+    /// The first row whose name starts with `typed` (lowercase), ignoring case.
+    pub fn find_prefix(&self, typed: &str) -> Option<usize> {
+        self.0.borrow().listing.find_prefix(typed)
+    }
+
     /// Closes the tab with `id`, wherever it is now; does nothing if it is already closed.
     pub fn close_tab_by_id(&self, id: u64) {
         if let Some(index) = self.tab_index(id) {
@@ -421,15 +466,17 @@ impl Navigator {
         }
     }
 
-    /// Goes to a typed path. A relative path is taken from the working folder, and on
-    /// Windows `..` parts are resolved, so the address bar parts stay right.
+    /// Goes to a typed path; see [`resolve_typed`].
     pub fn navigate_text(&self, text: String) {
         let text = text.trim();
         if text.is_empty() {
             return;
         }
-        let path = PathBuf::from(text);
-        self.go(Location::Path(std::path::absolute(&path).unwrap_or(path)));
+        let path = match self.active_location() {
+            Location::Path(base) => resolve_typed(text, Some(&base)),
+            Location::Drives => resolve_typed(text, None),
+        };
+        self.go(Location::Path(path));
     }
 
     pub fn crumb_clicked(&self, index: i32) {
@@ -520,11 +567,13 @@ impl Navigator {
 
     /// Shows `message` for a failed load; see [`listing_after_failure`].
     fn show_failed(&self, mode: &Mode, location: &Location, message: String) {
-        let Some(listing) = listing_after_failure(mode, location) else { return self.status(message) };
-        {
+        let replaced = {
             let mut inner = self.0.borrow_mut();
-            inner.listing = listing;
-            inner.cleared = false;
+            let inner = &mut *inner;
+            apply_failure(&mut inner.listing, &mut inner.cleared, mode, location)
+        };
+        if !replaced {
+            return self.status(message);
         }
         self.show_listing(Some(message));
         self.update_chrome();
@@ -733,6 +782,72 @@ mod tests {
         assert!(
             matches!(listing_after_failure(&Mode::Show, &Location::Drives), Some(Listing::Drives(d)) if d.is_empty())
         );
+    }
+
+    fn files(dir: &str, names: &[&str]) -> Listing {
+        let entries =
+            names.iter().map(|n| Entry { name: (*n).to_owned(), is_dir: false, size: 0, modified: None }).collect();
+        Listing::Files(PathBuf::from(dir), Rc::new(entries))
+    }
+
+    fn entry_count(listing: &Listing) -> usize {
+        match listing {
+            Listing::Files(_, entries) => entries.len(),
+            Listing::Drives(drives) => drives.len(),
+        }
+    }
+
+    #[test]
+    fn a_failed_show_keeps_the_tabs_saved_view() {
+        // The empty listing says nothing about the tab's selection and scroll, so the next
+        // `save_view` must not overwrite them.
+        for was_cleared in [false, true] {
+            let (mut listing, mut cleared) = (files("/x", &["a"]), was_cleared);
+            assert!(apply_failure(&mut listing, &mut cleared, &Mode::Show, &Location::Path("/x/locked".into())));
+            assert_eq!(entry_count(&listing), 0);
+            assert!(cleared, "was cleared: {was_cleared}");
+        }
+    }
+
+    #[test]
+    fn a_failed_move_changes_nothing() {
+        for mode in moves() {
+            let (mut listing, mut cleared) = (files("/x", &["a"]), false);
+            assert!(!apply_failure(&mut listing, &mut cleared, &mode, &Location::Path("/y".into())));
+            assert_eq!(entry_count(&listing), 1);
+            assert!(!cleared);
+        }
+    }
+
+    #[test]
+    fn type_ahead_search_ignores_case() {
+        let listing = files("/x", &["Apple", "Banana", "bandit", "İndir", "şablon"]);
+        assert_eq!(listing.find_prefix("ban"), Some(1));
+        assert_eq!(listing.find_prefix("band"), Some(2));
+        assert_eq!(listing.find_prefix("ş"), Some(4));
+        assert_eq!(listing.find_prefix(&"İ".to_lowercase()), Some(3));
+        assert_eq!(listing.find_prefix("z"), None);
+        assert_eq!(listing.find_prefix("applesauce"), None);
+    }
+
+    #[test]
+    fn a_typed_relative_path_starts_at_the_folder_on_screen() {
+        let base = std::path::absolute("/work/project").unwrap();
+        assert_eq!(resolve_typed("src", Some(&base)), base.join("src"));
+        assert_eq!(resolve_typed("src/lib", Some(&base)), base.join("src").join("lib"));
+        let elsewhere = std::path::absolute("/other").unwrap();
+        assert_eq!(resolve_typed(&elsewhere.display().to_string(), Some(&base)), elsewhere);
+        // In "This PC" there is no folder: the working folder is used.
+        assert_eq!(resolve_typed("src", None), std::path::absolute("src").unwrap());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_typed_parent_path_is_resolved_on_windows() {
+        let base = PathBuf::from(r"C:\Users\someone");
+        assert_eq!(resolve_typed(r"..\other", Some(&base)), PathBuf::from(r"C:\Users\other"));
+        assert_eq!(resolve_typed(r"D:\data", Some(&base)), PathBuf::from(r"D:\data"));
+        assert_eq!(resolve_typed(r"\root", Some(&base)), PathBuf::from(r"C:\root"));
     }
 
     #[test]

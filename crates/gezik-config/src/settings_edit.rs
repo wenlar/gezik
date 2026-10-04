@@ -101,6 +101,12 @@ mod tests {
     }
 
     #[test]
+    fn rejects_pinned_array_of_tables() {
+        let text = "theme = \"nord\"\n\n[[pinned]]\npath = \"/a\"\n";
+        assert!(with_pinned(text, &pins(&["/b"])).is_err());
+    }
+
+    #[test]
     fn rejects_pinned_string() {
         let text = "pinned = \"/a\"\n";
         let err = with_pinned(text, &pins(&["/b"])).unwrap_err();

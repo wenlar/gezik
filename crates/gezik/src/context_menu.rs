@@ -3,7 +3,7 @@
 //! On Windows, rows and sidebar entries get the Explorer menu with Gezik's items on top;
 //! tabs (and everything on macOS/Linux) get a Slint menu.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -97,6 +97,30 @@ enum Subject {
     Tab(u64),
 }
 
+/// Lets one native menu be pending or open at a time, so two right-clicks in quick
+/// succession (within the delay before it opens, or queued behind its modal loop) do not
+/// show two menus one after the other.
+#[derive(Clone, Default)]
+#[cfg_attr(not(windows), allow(dead_code))]
+struct MenuGate(Rc<Cell<bool>>);
+
+#[cfg_attr(not(windows), allow(dead_code))]
+impl MenuGate {
+    /// Claims the gate until the returned claim is dropped; `None` while a menu already
+    /// holds it.
+    fn claim(&self) -> Option<MenuClaim> {
+        (!self.0.replace(true)).then(|| MenuClaim(self.0.clone()))
+    }
+}
+
+struct MenuClaim(Rc<Cell<bool>>);
+
+impl Drop for MenuClaim {
+    fn drop(&mut self) {
+        self.0.set(false);
+    }
+}
+
 /// Opens context menus and runs their Gezik items.
 #[derive(Clone)]
 pub struct Menus {
@@ -105,11 +129,14 @@ pub struct Menus {
     sidebar: Sidebar,
     /// What the open Slint menu is for.
     subject: Rc<RefCell<Option<Subject>>>,
+    #[cfg_attr(not(windows), allow(dead_code))]
+    native_menu: MenuGate,
 }
 
 impl Menus {
     pub fn new(window: &AppWindow, nav: Navigator, sidebar: Sidebar) -> Menus {
-        let menus = Menus { window: window.as_weak(), nav, sidebar, subject: Rc::default() };
+        let menus =
+            Menus { window: window.as_weak(), nav, sidebar, subject: Rc::default(), native_menu: MenuGate::default() };
         window.on_menu_activated({
             let menus = menus.clone();
             move |id| {
@@ -172,13 +199,17 @@ impl Menus {
 
     /// Shows the Explorer menu at the cursor, with `items` on top. Its modal loop blocks the
     /// UI thread, so it opens once the click is fully handled and the selection is drawn.
+    /// A request while another menu is pending or open is dropped.
     #[cfg(windows)]
     fn open_native(&self, subject: Option<Subject>, target: MenuTarget, items: Vec<(u32, &'static str)>) {
+        let Some(claim) = self.native_menu.claim() else { return };
         let menus = self.clone();
         slint::Timer::single_shot(std::time::Duration::from_millis(16), move || {
             let Some(window) = menus.window.upgrade() else { return };
             let handle = window.window().window_handle();
-            match gezik_platform::show_shell_menu(&handle, &target, &items) {
+            let outcome = gezik_platform::show_shell_menu(&handle, &target, &items);
+            drop(claim);
+            match outcome {
                 Ok(gezik_platform::MenuOutcome::Gezik(id)) => {
                     if let Some(subject) = subject {
                         menus.run(id, subject);
@@ -287,6 +318,16 @@ mod tests {
         assert_eq!(ids(middle), [OPEN_IN_NEW_TAB, UNPIN, MOVE_UP, MOVE_DOWN]);
         let folder = items(Place::Sidebar { pinned_section: false, pinned: false, first: false, last: false }, true);
         assert_eq!(ids(folder), [OPEN_IN_NEW_TAB, PIN]);
+    }
+
+    #[test]
+    fn one_native_menu_at_a_time() {
+        let gate = MenuGate::default();
+        let first = gate.claim();
+        assert!(first.is_some());
+        assert!(gate.claim().is_none(), "a second right-click while one is pending is dropped");
+        drop(first);
+        assert!(gate.claim().is_some(), "the next menu opens once the first is closed");
     }
 
     #[test]

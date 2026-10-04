@@ -86,7 +86,7 @@ fn handle_key(
     if let Some(action) = chord.as_ref().and_then(keys::action_for) {
         match action {
             Action::NewTab => nav.open_tab(nav.start(), true),
-            Action::CloseTab => close_tab_later(nav, nav.with_tabs(|tabs| tabs.active_index())),
+            Action::CloseTab => close_tab_later(nav, nav.active_index()),
             Action::NextTab => nav.next_tab(),
             Action::PrevTab => nav.prev_tab(),
             Action::Back => nav.back(),
@@ -124,8 +124,7 @@ fn handle_key(
         }
         _ => {
             let Some(c) = keys::typed_char(text) else { return false };
-            let rows = window.get_rows();
-            let found = type_ahead.type_char(c, std::time::Instant::now(), rows.iter().map(|row| row.name.to_string()));
+            let found = type_ahead.type_char(c, std::time::Instant::now(), |typed| nav.find_prefix(typed));
             // A typed character that matches nothing is still used up.
             let Some(i) = found.and_then(|i| i32::try_from(i).ok()) else { return true };
             Some(i)
