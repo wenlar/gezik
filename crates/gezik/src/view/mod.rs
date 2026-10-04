@@ -18,6 +18,7 @@ use gezik_config::store::ConfigStore;
 use gezik_core::kind::fallback_type_name;
 use gezik_core::layout::{Geometry, Move, Rect};
 use gezik_core::nav::ViewState;
+use gezik_core::ops::names::rename_selection;
 use gezik_core::selection::Selection;
 use gezik_core::sort::{SortDir, SortKey, SortSpec, sort_entries};
 use gezik_core::view::{
@@ -55,6 +56,10 @@ struct Inner {
     /// Shown instead of the item count until the selection changes (e.g. "… no longer exists").
     note: RefCell<Option<String>>,
     on_selection: RefCell<Vec<Listener>>,
+    /// The entry being renamed: its index and its name before.
+    renaming: RefCell<Option<(usize, String)>>,
+    /// Called after each `show` (a folder loaded or reloaded).
+    on_shown: RefCell<Vec<Listener>>,
     defaults: Cell<ViewDefaults>,
     /// The shown folder's view: its own if it has one, else the defaults.
     current: Cell<ViewSettings>,
@@ -108,6 +113,8 @@ impl View {
             revealed: Cell::new(0),
             note: RefCell::new(None),
             on_selection: RefCell::new(Vec::new()),
+            renaming: RefCell::new(None),
+            on_shown: RefCell::new(Vec::new()),
             defaults: Cell::new(defaults),
             current: Cell::new(defaults.view),
             memory: RefCell::new(memory),
@@ -243,6 +250,20 @@ impl View {
             data.selection = selection;
             data.marquee_base = None;
         }
+        // A refresh must not break a rename: follow the entry, or give up if it is gone.
+        let renamed = self.0.renaming.borrow().as_ref().map(|(_, name)| name.clone());
+        if let Some(name) = renamed {
+            let index = self.0.data.borrow().listing.index_of(&name);
+            match index {
+                Some(index) => {
+                    *self.0.renaming.borrow_mut() = Some((index, name));
+                    if let Some(window) = self.0.window.upgrade() {
+                        window.set_renaming_index(i32::try_from(index).unwrap_or(-1));
+                    }
+                }
+                None => self.end_rename(),
+            }
+        }
         self.0.model.notify.reset();
         let shown = self.0.shown.get() + 1;
         self.0.shown.set(shown);
@@ -262,6 +283,80 @@ impl View {
         }
         self.update_status();
         self.notify_listeners();
+        let shown = self.0.on_shown.borrow().clone();
+        for f in &shown {
+            f();
+        }
+    }
+
+    /// Calls `f` after each folder load or reload is shown.
+    pub fn on_shown(&self, f: impl Fn() + 'static) {
+        self.0.on_shown.borrow_mut().push(Rc::new(f));
+    }
+
+    /// The only selected entry, if exactly one is.
+    pub fn single_selected(&self) -> Option<usize> {
+        let data = self.0.data.borrow();
+        (data.selection.count() == 1).then(|| data.selection.iter().next()).flatten()
+    }
+
+    /// Whether an entry other than `except` is called `name` (ignoring case where the file
+    /// system does).
+    pub fn has_other_named(&self, name: &str, except: usize) -> bool {
+        let data = self.0.data.borrow();
+        (0..data.listing.len()).filter(|&i| i != except).any(|i| {
+            data.listing.name_at(i).is_some_and(|other| {
+                if cfg!(any(windows, target_os = "macos")) {
+                    other.to_lowercase() == name.to_lowercase()
+                } else {
+                    other == name
+                }
+            })
+        })
+    }
+
+    /// Turns entry `index`'s name into a text field (files and folders only, not drives).
+    pub fn begin_rename(&self, index: usize) -> bool {
+        let (name, is_dir) = {
+            let data = self.0.data.borrow();
+            if !matches!(data.listing, Listing::Files(..)) {
+                return false;
+            }
+            let Some(name) = data.listing.name_at(index) else { return false };
+            (name.to_owned(), data.listing.is_dir(index))
+        };
+        let changes = self.0.data.borrow_mut().selection.select_only(index);
+        self.after_selection(&changes);
+        self.reveal(index);
+        let (_, end) = rename_selection(&name, is_dir);
+        let Some(window) = self.0.window.upgrade() else { return false };
+        window.set_rename_text(name.clone().into());
+        window.set_rename_select(i32::try_from(end).unwrap_or(0));
+        window.set_rename_error("".into());
+        *self.0.renaming.borrow_mut() = Some((index, name));
+        window.set_renaming_index(i32::try_from(index).unwrap_or(-1));
+        true
+    }
+
+    pub fn begin_rename_by_name(&self, name: &str) -> bool {
+        let index = self.0.data.borrow().listing.index_of(name);
+        index.is_some_and(|index| self.begin_rename(index))
+    }
+
+    /// The entry being renamed (index, name before).
+    pub fn renaming(&self) -> Option<(usize, String)> {
+        self.0.renaming.borrow().clone()
+    }
+
+    pub fn end_rename(&self) {
+        if self.0.renaming.borrow_mut().take().is_none() {
+            return;
+        }
+        if let Some(window) = self.0.window.upgrade() {
+            window.set_renaming_index(-1);
+            window.set_rename_error("".into());
+            window.invoke_focus_list();
+        }
     }
 
     /// Empties the view (a tab switch while the new tab loads). The status bar is left to

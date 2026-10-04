@@ -79,6 +79,7 @@ fn handle_key(
     nav: &navigation::Navigator,
     view: &view::View,
     preview: &preview::Preview,
+    ops: &operations::Operations,
     type_ahead: &mut keys::TypeAhead,
     text: &str,
     chord: Option<Chord>,
@@ -87,6 +88,10 @@ fn handle_key(
 ) -> bool {
     // A question or the conflict list over the window has the keyboard.
     if window.get_dialog_open() {
+        return false;
+    }
+    // The name field being edited has the keyboard (Enter, Esc, Tab are its own).
+    if view.renaming().is_some() {
         return false;
     }
     let editing = window.get_path_editing();
@@ -108,6 +113,12 @@ fn handle_key(
         let ordinary_key = action == Action::QuickLook
             && (!window.get_list_focused() || type_ahead.is_active(std::time::Instant::now()));
         if !ordinary_key {
+            if editing && matches!(action, Action::Rename | Action::NewFolder) {
+                return false;
+            }
+            if action == Action::Rename && !window.get_list_focused() {
+                return false;
+            }
             match action {
                 Action::NewTab => nav.open_tab(nav.start(), true),
                 Action::CloseTab => close_tab_later(nav, nav.active_index()),
@@ -123,14 +134,14 @@ fn handle_key(
                 Action::ViewGrid => view.set_mode(gezik_core::view::ViewMode::Grid),
                 Action::TogglePreview => preview.toggle_pane(),
                 Action::QuickLook => preview.toggle_quick_look(),
+                Action::Rename => ops.rename_start(),
+                Action::NewFolder => ops.new_folder(None),
                 Action::Copy
                 | Action::Cut
                 | Action::Paste
                 | Action::PasteMove
                 | Action::Trash
                 | Action::DeletePermanently
-                | Action::Rename
-                | Action::NewFolder
                 | Action::Duplicate
                 | Action::Undo
                 | Action::Redo => return false,
@@ -160,6 +171,11 @@ fn handle_key(
         let primary = keys::is_primary(chord, platform);
         let other = chord.alt || if platform == Platform::Mac { chord.ctrl } else { chord.meta };
         if !other {
+            // On macOS Enter renames, so opening is Cmd+Down (as in Finder).
+            if platform == Platform::Mac && primary && !chord.shift && chord.key == Key::Down {
+                nav.open_selected();
+                return true;
+            }
             let mv = match chord.key {
                 Key::Up => Some(Move::Up),
                 Key::Down => Some(Move::Down),
@@ -613,8 +629,26 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
+    window.on_rename_accepted({
+        let ops = ops.clone();
+        move |text| ops.rename_accepted(text.into())
+    });
+    window.on_rename_cancelled({
+        let ops = ops.clone();
+        move || ops.rename_cancelled()
+    });
+    window.on_rename_tab({
+        let ops = ops.clone();
+        move |text, back| ops.rename_tab(text.into(), back)
+    });
+    window.on_rename_edited({
+        let ops = ops.clone();
+        move |text| ops.rename_edited(&text)
+    });
+
     window.on_key_event({
-        let (nav, view, preview, weak) = (nav.clone(), view.clone(), preview.clone(), window.as_weak());
+        let (nav, view, preview, ops, weak) =
+            (nav.clone(), view.clone(), preview.clone(), ops.clone(), window.as_weak());
         let mut type_ahead = keys::TypeAhead::new();
         move |event| {
             let Some(window) = weak.upgrade() else { return false };
@@ -626,6 +660,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 &nav,
                 &view,
                 &preview,
+                &ops,
                 &mut type_ahead,
                 &event.text,
                 chord,

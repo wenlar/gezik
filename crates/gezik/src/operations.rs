@@ -132,6 +132,22 @@ pub fn taskbar_progress(rows: &[(RowState, f32)]) -> (TaskbarState, u64, u64) {
     (state, done, total)
 }
 
+/// Whether `typed` can replace the name `old`: `Ok(None)` if it stays the same, `Ok(Some(name))`
+/// with surrounding spaces trimmed, or the problem to show. `taken` says whether another entry
+/// in the folder already has a name.
+pub fn rename_check(typed: &str, old: &str, taken: impl Fn(&str) -> bool) -> Result<Option<String>, String> {
+    let name = typed.trim();
+    if name == old {
+        return Ok(None);
+    }
+    gezik_core::ops::names::validate_name(name, gezik_core::ops::names::NameRules::current())
+        .map_err(|err| err.to_string())?;
+    if taken(name) {
+        return Err("A file with this name already exists".to_owned());
+    }
+    Ok(Some(name.to_owned()))
+}
+
 /// The names in `folder` among `results` (to select them there).
 pub fn result_names(results: &[PathBuf], folder: &Path) -> Vec<String> {
     results
@@ -157,6 +173,8 @@ pub fn with_current(f: impl FnOnce(&Operations)) {
 pub enum After {
     #[default]
     Select,
+    /// Select and rename the first result (a new folder or file).
+    Rename,
     Nothing,
 }
 
@@ -227,6 +245,8 @@ struct Inner {
     taskbar: RefCell<Option<Taskbar>>,
     /// Jobs whose pause already has a question (several workers may report the same pause).
     asked: RefCell<HashSet<JobId>>,
+    /// A new entry to rename once its folder shows it.
+    rename_when_shown: RefCell<Option<PathBuf>>,
 }
 
 #[derive(Clone)]
@@ -273,7 +293,16 @@ impl Operations {
             collapsed: Cell::new(collapsed),
             taskbar: RefCell::default(),
             asked: RefCell::default(),
+            rename_when_shown: RefCell::default(),
         }));
+        ops.0.view.on_shown({
+            let weak = Rc::downgrade(&ops.0);
+            move || {
+                if let Some(inner) = weak.upgrade() {
+                    Operations(inner).folder_shown();
+                }
+            }
+        });
         CURRENT.with(|c| *c.borrow_mut() = Some(ops.clone()));
         ops
     }
@@ -304,6 +333,90 @@ impl Operations {
         self.0.jobs.borrow_mut().push(job);
         self.show_later(id);
         id
+    }
+
+    /// A folder is on screen: start a rename that waited for it (a new folder).
+    fn folder_shown(&self) {
+        let Some(path) = self.0.rename_when_shown.borrow().clone() else { return };
+        let Some(folder) = self.0.view.folder() else { return };
+        if !path.parent().is_some_and(|parent| same_path(parent, &folder)) {
+            return;
+        }
+        self.0.rename_when_shown.borrow_mut().take();
+        if let Some(name) = path.file_name().map(|n| n.to_string_lossy().into_owned()) {
+            self.0.view.begin_rename_by_name(&name);
+        }
+    }
+
+    /// F2: renames the selected entry (or the focused one).
+    pub fn rename_start(&self) {
+        let view = &self.0.view;
+        if let Some(index) = view.single_selected().or_else(|| view.focus()) {
+            view.begin_rename(index);
+        }
+    }
+
+    fn set_rename_error(&self, error: &str) {
+        if let Some(window) = self.0.window.upgrade() {
+            window.set_rename_error(error.into());
+        }
+    }
+
+    /// While typing: say at once what is wrong with the name.
+    pub fn rename_edited(&self, typed: &str) {
+        let Some((index, old)) = self.0.view.renaming() else { return };
+        let error =
+            rename_check(typed, &old, |name| self.0.view.has_other_named(name, index)).err().unwrap_or_default();
+        self.set_rename_error(&error);
+    }
+
+    /// Ends renaming with `typed`: the entry's index if the field closed (unchanged or
+    /// renamed), `None` if the name cannot be used (the field stays, with the problem shown).
+    fn commit_rename(&self, typed: &str) -> Option<usize> {
+        let view = &self.0.view;
+        let (index, old) = view.renaming()?;
+        match rename_check(typed, &old, |name| view.has_other_named(name, index)) {
+            Err(error) => {
+                self.set_rename_error(&error);
+                None
+            }
+            Ok(None) => {
+                view.end_rename();
+                Some(index)
+            }
+            Ok(Some(name)) => {
+                let path = view.entry_path(index).map(|(path, _)| path);
+                view.end_rename();
+                if let Some(path) = path {
+                    self.submit(Box::new(gezik_ops::MoveTask::rename(path, &name)), None, After::Select);
+                }
+                Some(index)
+            }
+        }
+    }
+
+    pub fn rename_accepted(&self, typed: String) {
+        self.commit_rename(&typed);
+    }
+
+    pub fn rename_cancelled(&self) {
+        self.0.view.end_rename();
+    }
+
+    /// Tab / Shift+Tab: keep the name and rename the next / previous entry.
+    pub fn rename_tab(&self, typed: String, back: bool) {
+        let Some(index) = self.commit_rename(&typed) else { return };
+        let next = if back { index.checked_sub(1) } else { Some(index + 1) };
+        if let Some(next) = next {
+            self.0.view.begin_rename(next);
+        }
+    }
+
+    /// A new folder in `dir` (else the folder shown), renamed right away.
+    pub fn new_folder(&self, dir: Option<PathBuf>) {
+        if let Some(dir) = dir.or_else(|| self.0.view.folder()) {
+            self.submit(Box::new(gezik_ops::NewTask::folder(&dir)), None, After::Rename);
+        }
     }
 
     /// Finishes deletes an earlier run left unfinished.
@@ -412,6 +525,9 @@ impl Operations {
         if problems {
             // Something failed: the panel opens by itself.
             self.0.collapsed.set(false);
+        }
+        if after == After::Rename {
+            *self.0.rename_when_shown.borrow_mut() = report.results.first().cloned();
         }
         let select = match (after, self.0.view.folder()) {
             (After::Nothing, _) | (_, None) => Vec::new(),
@@ -616,6 +732,16 @@ mod tests {
             results: Vec::new(),
             changed_dirs: Vec::new(),
         }
+    }
+
+    #[test]
+    fn rename_checks() {
+        let taken = |name: &str| name == "b.txt";
+        assert_eq!(rename_check("a.txt", "a.txt", taken), Ok(None));
+        assert_eq!(rename_check("  c.txt ", "a.txt", taken), Ok(Some("c.txt".into())));
+        assert_eq!(rename_check("b.txt", "a.txt", taken), Err("A file with this name already exists".into()));
+        assert_eq!(rename_check("", "a.txt", taken), Err("Type a name".into()));
+        assert!(rename_check("a/b", "a.txt", taken).is_err());
     }
 
     #[test]
