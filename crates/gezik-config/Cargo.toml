@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+gezik-core.workspace = true
 toml = { version = "1", features = ["preserve_order"] }
 toml_edit = "0.25"
 dirs = "7"

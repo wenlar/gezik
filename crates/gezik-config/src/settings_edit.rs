@@ -1,5 +1,5 @@
-//! Edits `settings.toml` in place: only the `pinned` value changes; the user's comments,
-//! key order and formatting stay as they were.
+//! Edits `settings.toml` in place: only `pinned` or the `[view]` defaults change; the user's
+//! comments, key order and formatting stay as they were.
 
 /// Returns `text` with `pinned` set to `pinned`. Errors with the parser's message if the
 /// file is not valid TOML (the caller must then leave the file alone).
@@ -30,6 +30,21 @@ pub fn with_pinned(text: &str, pinned: &[String]) -> Result<String, String> {
         doc["pinned"] = toml_edit::value(array);
     }
 
+    Ok(doc.to_string())
+}
+
+/// Returns `text` with `[view]`'s `mode`, `sort`, `sort-dir` and `grid-size` set from
+/// `view` ("Apply to all folders"); other `[view]` keys and the rest of the file stay.
+pub fn with_view_defaults(text: &str, view: &gezik_core::view::ViewSettings) -> Result<String, String> {
+    let mut doc = text.parse::<toml_edit::DocumentMut>().map_err(|err| err.to_string().trim().to_owned())?;
+    if doc.get("view").is_none() {
+        doc["view"] = toml_edit::table();
+    }
+    let Some(table) = doc["view"].as_table_like_mut() else { return Err("view must be a table".to_owned()) };
+    table.insert("mode", toml_edit::value(view.mode.as_str()));
+    table.insert("sort", toml_edit::value(view.sort.key.as_str()));
+    table.insert("sort-dir", toml_edit::value(view.sort.dir.as_str()));
+    table.insert("grid-size", toml_edit::value(view.grid_size.as_str()));
     Ok(doc.to_string())
 }
 
@@ -111,5 +126,30 @@ mod tests {
         let text = "pinned = \"/a\"\n";
         let err = with_pinned(text, &pins(&["/b"])).unwrap_err();
         assert_eq!(err, "pinned must be a list");
+    }
+
+    #[test]
+    fn writes_view_defaults_keeping_the_rest() {
+        use gezik_core::view::{GridSize, SortDir, SortKey, SortSpec, ViewMode, ViewSettings};
+        let view = ViewSettings {
+            mode: ViewMode::Grid,
+            sort: SortSpec { key: SortKey::Size, dir: SortDir::Desc },
+            grid_size: GridSize::Large,
+        };
+        let text = "# mine\ntheme = \"nord\"\n\n[view]\n# keep me\nicons = \"gezik\"\nmode = \"list\"\n";
+        let out = with_view_defaults(text, &view).unwrap();
+        assert!(out.contains("# mine") && out.contains("# keep me"), "{out}");
+        let parsed = out.parse::<toml::Table>().unwrap();
+        let v = parsed["view"].as_table().unwrap();
+        assert_eq!(v["mode"].as_str(), Some("grid"));
+        assert_eq!(v["sort"].as_str(), Some("size"));
+        assert_eq!(v["sort-dir"].as_str(), Some("desc"));
+        assert_eq!(v["grid-size"].as_str(), Some("large"));
+        assert_eq!(v["icons"].as_str(), Some("gezik"));
+
+        let added = with_view_defaults("theme = \"auto\"\n", &view).unwrap();
+        assert_eq!(added.parse::<toml::Table>().unwrap()["view"]["mode"].as_str(), Some("grid"));
+        assert!(with_view_defaults("view = 3\n", &view).is_err());
+        assert!(with_view_defaults("theme = \n", &view).is_err());
     }
 }

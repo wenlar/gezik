@@ -22,6 +22,16 @@ sidebar = "left"
 # compact | comfortable
 density = "comfortable"
 
+[view]
+# How folders look. A folder you change keeps its own view; "Apply to all folders"
+# in the View menu writes mode, sort, sort-dir and grid-size here.
+mode = "list"          # list | grid
+sort = "name"          # name | modified | created | type | size
+sort-dir = "asc"       # asc | desc
+grid-size = "medium"   # small | medium | large
+icons = "system"       # system | gezik (Gezik's own icons, colored by the theme)
+thumbnails = true      # pictures and videos show a preview in the grid
+
 [shortcuts]
 # Change any shortcut; "mod" is Cmd on macOS and Ctrl elsewhere; "" disables.
 # new-tab = "mod+t"

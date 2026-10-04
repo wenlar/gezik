@@ -57,5 +57,6 @@ pub fn capture(window: &AppWindow) -> State {
             y: Some(position.y),
         }),
         sidebar_width: Some(window.get_sidebar_width().round().clamp(120.0, 480.0) as u32),
+        ..State::default()
     }
 }

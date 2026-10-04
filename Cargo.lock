@@ -1452,6 +1452,7 @@ name = "gezik-config"
 version = "0.1.0"
 dependencies = [
  "dirs",
+ "gezik-core",
  "toml",
  "toml_edit",
 ]

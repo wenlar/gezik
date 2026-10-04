@@ -7,6 +7,7 @@ pub mod settings_edit;
 pub mod shortcuts;
 pub mod store;
 pub mod theme;
+pub mod views_file;
 
 mod color;
 mod warning;
