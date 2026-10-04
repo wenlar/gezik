@@ -2,8 +2,8 @@
 //! Nothing in here touches the UI, so it can be tested and reused freely.
 
 pub mod nav;
+pub mod sort;
 
-use std::cmp::Ordering;
 use std::io;
 use std::path::Path;
 use std::time::SystemTime;
@@ -16,9 +16,24 @@ pub struct Entry {
     pub is_dir: bool,
     pub size: u64,
     pub modified: Option<SystemTime>,
+    pub created: Option<SystemTime>,
 }
 
-/// Reads a directory and returns its entries sorted: folders first, then by name.
+impl Entry {
+    /// The extension without the dot (`"txt"`), or `""` for folders and names without one.
+    /// A leading dot alone (`.gitignore`) is not an extension, as with `Path::extension`.
+    pub fn extension(&self) -> &str {
+        if self.is_dir {
+            return "";
+        }
+        match self.name.rfind('.') {
+            Some(i) if i > 0 => &self.name[i + 1..],
+            _ => "",
+        }
+    }
+}
+
+/// Reads a directory and returns its entries sorted: folders first, then by natural name order (see `sort`).
 /// Entries that cannot be read (e.g. permission denied) are skipped instead of
 /// failing the whole listing.
 pub fn list_dir(path: &Path) -> io::Result<Vec<Entry>> {
@@ -32,20 +47,14 @@ pub fn list_dir(path: &Path) -> io::Result<Vec<Entry>> {
                 name: e.file_name().to_string_lossy().into_owned(),
                 is_dir,
                 size: if is_dir { 0 } else { meta.as_ref().map_or(0, |m| m.len()) },
-                modified: meta.and_then(|m| m.modified().ok()),
+                modified: meta.as_ref().and_then(|m| m.modified().ok()),
+                created: meta.as_ref().and_then(|m| m.created().ok()),
             })
         })
         .collect();
-    entries.sort_by(compare_entries);
+    sort::sort_entries(&mut entries, sort::SortSpec::default(), |_| String::new());
     entries.shrink_to_fit();
     Ok(entries)
-}
-
-fn compare_entries(a: &Entry, b: &Entry) -> Ordering {
-    b.is_dir
-        .cmp(&a.is_dir)
-        .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-        .then_with(|| a.name.cmp(&b.name))
 }
 
 /// Formats a byte count for display, e.g. `1.5 KB`.
@@ -114,5 +123,14 @@ mod tests {
         assert_eq!(format_size(1023), "1023 B");
         assert_eq!(format_size(1536), "1.5 KB");
         assert_eq!(format_size(5 * 1024 * 1024), "5.0 MB");
+    }
+
+    #[test]
+    fn extension_skips_folders_and_leading_dots() {
+        let e = |name: &str, is_dir| Entry { name: name.to_owned(), is_dir, size: 0, modified: None, created: None };
+        assert_eq!(e("a.tar.gz", false).extension(), "gz");
+        assert_eq!(e(".gitignore", false).extension(), "");
+        assert_eq!(e("noext", false).extension(), "");
+        assert_eq!(e("dir.d", true).extension(), "");
     }
 }

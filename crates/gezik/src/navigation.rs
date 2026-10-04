@@ -785,8 +785,10 @@ mod tests {
     }
 
     fn files(dir: &str, names: &[&str]) -> Listing {
-        let entries =
-            names.iter().map(|n| Entry { name: (*n).to_owned(), is_dir: false, size: 0, modified: None }).collect();
+        let entries = names
+            .iter()
+            .map(|n| Entry { name: (*n).to_owned(), is_dir: false, size: 0, modified: None, created: None })
+            .collect();
         Listing::Files(PathBuf::from(dir), Rc::new(entries))
     }
 
