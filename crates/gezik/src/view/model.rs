@@ -37,10 +37,17 @@ impl ItemsModel {
     }
 
     /// Redraws the lines holding the entries in `rows`; everything when that is many.
-    pub fn entries_changed(&self, rows: &[Range<usize>]) {
+    /// Returns whether the whole model was reset.
+    pub fn entries_changed(&self, rows: &[Range<usize>]) -> bool {
         match notify_plan(rows, self.per_row.get()) {
-            Plan::Reset => self.notify.reset(),
-            Plan::Lines(lines) => lines.into_iter().for_each(|line| self.notify.row_changed(line)),
+            Plan::Reset => {
+                self.notify.reset();
+                true
+            }
+            Plan::Lines(lines) => {
+                lines.into_iter().for_each(|line| self.notify.row_changed(line));
+                false
+            }
         }
     }
 }

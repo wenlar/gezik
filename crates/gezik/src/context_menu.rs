@@ -344,6 +344,15 @@ impl Menus {
                 }
             }
             (OPEN, Subject::Rows(paths)) => {
+                let paths = match crate::view::limit_open(paths) {
+                    Ok(paths) => paths,
+                    Err(message) => {
+                        if let Some(window) = self.window.upgrade() {
+                            window.set_status(message.into());
+                        }
+                        return;
+                    }
+                };
                 for path in paths {
                     if let Err(err) = open::that_detached(&path)
                         && let Some(window) = self.window.upgrade()

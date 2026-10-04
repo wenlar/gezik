@@ -388,7 +388,14 @@ impl Navigator {
         if items.is_empty() {
             items.extend(view.focus().and_then(|i| view.entry_path(i)));
         }
-        for (path, _) in items.iter().filter(|(_, is_dir)| !is_dir) {
+        // Too many files: nothing is opened, nor is the folder entered (it would hide the
+        // message). Folders do not count towards the limit.
+        let files = items.iter().filter(|(_, is_dir)| !is_dir).map(|(path, _)| path).collect();
+        let files = match crate::view::limit_open(files) {
+            Ok(files) => files,
+            Err(message) => return self.status(message),
+        };
+        for path in files {
             if let Err(err) = open::that_detached(path) {
                 self.status(format!("Cannot open {}: {err}", path.display()));
             }

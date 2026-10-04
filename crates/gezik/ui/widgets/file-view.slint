@@ -45,6 +45,8 @@ export component FileView inherits Rectangle {
     callback focus-requested();
 
     clip: true;
+    accessible-role: AccessibleRole.list;
+    accessible-label: "Files";
 
     // Scrolls so entry `index` is fully visible.
     public function ensure-visible(index: int) {

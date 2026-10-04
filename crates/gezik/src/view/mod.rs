@@ -38,6 +38,9 @@ struct Inner {
     /// Bumped on every `show` and `clear`, so a delayed scroll restore of an older
     /// listing is dropped.
     shown: Cell<u64>,
+    /// Bumped whenever the view scrolls on purpose (`reveal`), so a delayed scroll restore
+    /// after a model reset does not undo it.
+    revealed: Cell<u64>,
     /// Shown instead of the item count until the selection changes (e.g. "… no longer exists").
     note: RefCell<Option<String>>,
     on_selection: RefCell<Vec<Listener>>,
@@ -56,6 +59,7 @@ impl View {
             data,
             model,
             shown: Cell::new(0),
+            revealed: Cell::new(0),
             note: RefCell::new(None),
             on_selection: RefCell::new(Vec::new()),
         }))
@@ -244,13 +248,34 @@ impl View {
         if changes.is_empty() {
             return;
         }
-        self.0.model.entries_changed(changes);
+        let scroll = self.0.window.upgrade().map(|w| w.get_list_scroll());
+        if self.0.model.entries_changed(changes)
+            && let Some(scroll) = scroll
+        {
+            self.keep_scroll_after_reset(scroll);
+        }
         self.0.note.borrow_mut().take();
         if let Some(window) = self.0.window.upgrade() {
             self.sync_focus(&window);
         }
         self.update_status();
         self.notify_listeners();
+    }
+
+    /// A model reset (Ctrl+A in a large folder) makes the ListView re-place its lines on its
+    /// next layout, which can pull or snap the offset: `scroll` is applied again once that
+    /// frame is done, unless a listing was shown or an entry revealed meanwhile.
+    fn keep_scroll_after_reset(&self, scroll: f32) {
+        let (view, shown, revealed) = (self.clone(), self.0.shown.get(), self.0.revealed.get());
+        slint::Timer::single_shot(SCROLL_RESTORE_DELAY, move || {
+            if view.0.shown.get() == shown
+                && view.0.revealed.get() == revealed
+                && let Some(window) = view.0.window.upgrade()
+                && window.get_list_scroll() != scroll
+            {
+                window.set_list_scroll(scroll);
+            }
+        });
     }
 
     fn notify_listeners(&self) {
@@ -287,6 +312,7 @@ impl View {
     /// that frame is done (see [`crate::keys::scroll_was_snapped`]).
     fn reveal(&self, index: usize) {
         let Some(window) = self.0.window.upgrade() else { return };
+        self.0.revealed.set(self.0.revealed.get() + 1);
         let index = i32::try_from(index).unwrap_or(i32::MAX);
         window.invoke_ensure_visible(index);
         let (target, line_height) = (window.get_list_scroll(), window.get_item_height());
@@ -299,6 +325,19 @@ impl View {
                 window.set_list_scroll(target);
             }
         });
+    }
+}
+
+/// At most this many items are opened with their default apps at once (Enter, the menu's
+/// "Open"); Ctrl+A and Enter in a large folder would otherwise start thousands of apps.
+pub const MAX_OPEN_AT_ONCE: usize = 15;
+
+/// `items` if there are few enough to open at once, else the status bar message.
+pub fn limit_open<T>(items: Vec<T>) -> Result<Vec<T>, String> {
+    if items.len() > MAX_OPEN_AT_ONCE {
+        Err(format!("Select at most {MAX_OPEN_AT_ONCE} items to open"))
+    } else {
+        Ok(items)
     }
 }
 
@@ -332,6 +371,13 @@ mod tests {
         assert_eq!(status_text(1, 0, None), "1 item");
         assert_eq!(status_text(120, 3, Some(1536)), "120 items · 3 selected (1.5 KB)");
         assert_eq!(status_text(5, 2, None), "5 items · 2 selected");
+    }
+
+    #[test]
+    fn opening_is_capped() {
+        assert_eq!(limit_open(Vec::<u8>::new()), Ok(vec![]));
+        assert_eq!(limit_open(vec![0; MAX_OPEN_AT_ONCE]).map(|v| v.len()), Ok(MAX_OPEN_AT_ONCE));
+        assert_eq!(limit_open(vec![0; MAX_OPEN_AT_ONCE + 1]), Err("Select at most 15 items to open".to_owned()));
     }
 
     #[test]
