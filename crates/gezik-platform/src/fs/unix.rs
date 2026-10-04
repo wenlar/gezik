@@ -3,7 +3,7 @@
 
 use std::fs::{File, FileTimes, OpenOptions};
 use std::io::{self, Read, Write};
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
 use super::{DiskKind, DriveFacts, cancelled, nearest_existing};
@@ -263,8 +263,10 @@ pub fn trash(path: &Path) -> io::Result<Option<PathBuf>> {
     let dev = std::fs::symlink_metadata(&absolute)?.dev();
     let trash_dir = trash_dir_for(&absolute, dev)?;
     let (files, info) = (trash_dir.join("files"), trash_dir.join("info"));
-    std::fs::create_dir_all(&files)?;
-    std::fs::create_dir_all(&info)?;
+    // Private, so other users cannot read or swap what is in the trash.
+    for dir in [&files, &info] {
+        std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
+    }
     let name = absolute.file_name().ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?.as_bytes().to_vec();
     let info_of = |n: &[u8]| {
         let mut file = n.to_vec();
@@ -279,7 +281,11 @@ pub fn trash(path: &Path) -> io::Result<Option<PathBuf>> {
         let info_path = info_of(&candidate);
         match OpenOptions::new().write(true).create_new(true).open(&info_path) {
             Ok(mut file) => {
-                file.write_all(info_text(absolute.as_os_str().as_bytes(), &local_now()).as_bytes())?;
+                if let Err(err) = file.write_all(info_text(absolute.as_os_str().as_bytes(), &local_now()).as_bytes()) {
+                    drop(file);
+                    let _ = std::fs::remove_file(&info_path);
+                    return Err(err);
+                }
                 break (candidate, info_path);
             }
             Err(err) if err.kind() == io::ErrorKind::AlreadyExists => continue,
@@ -287,7 +293,7 @@ pub fn trash(path: &Path) -> io::Result<Option<PathBuf>> {
         }
     };
     let target = files.join(std::ffi::OsString::from_vec(chosen));
-    if let Err(err) = std::fs::rename(&absolute, &target) {
+    if let Err(err) = move_entry(&absolute, &target) {
         let _ = std::fs::remove_file(&info_path);
         return Err(err);
     }
@@ -309,7 +315,15 @@ fn trash_dir_for(path: &Path, dev: u64) -> io::Result<PathBuf> {
     }
     let top = drive_root(path).ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
     let uid = unsafe { libc::getuid() };
-    Ok(top.join(format!(".Trash-{uid}")))
+    let top_trash = top.join(format!(".Trash-{uid}"));
+    match std::fs::symlink_metadata(&top_trash) {
+        Ok(meta) if !meta.file_type().is_dir() || meta.uid() != uid => {
+            Err(io::Error::new(io::ErrorKind::PermissionDenied, "unsafe trash folder"))
+        }
+        Ok(_) => Ok(top_trash),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(top_trash),
+        Err(err) => Err(err),
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -321,16 +335,15 @@ fn local_now() -> String {
 }
 
 pub fn restore(trashed: &Path, original: &Path) -> io::Result<()> {
-    if std::fs::symlink_metadata(original).is_ok() {
-        return Err(io::Error::from(io::ErrorKind::AlreadyExists));
-    }
     if let Some(parent) = original.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::rename(trashed, original)?;
+    // Never replaces: an existing `original` is AlreadyExists.
+    move_entry(trashed, original)?;
     // freedesktop: drop `info/NAME.trashinfo` next to `files/NAME`.
     if cfg!(target_os = "linux")
         && let (Some(files), Some(name)) = (trashed.parent(), trashed.file_name())
+        && files.file_name() == Some(std::ffi::OsStr::new("files"))
         && let Some(root) = files.parent()
     {
         let mut info = name.to_os_string();

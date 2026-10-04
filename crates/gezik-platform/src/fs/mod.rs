@@ -207,6 +207,23 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn a_folder_ending_in_a_dot_never_trashes_the_file_in_its_sibling() {
+        let dir = test_dir("trash-dot-parent");
+        let (real, dotted) = (dir.join("a"), PathBuf::from(format!(r"\\?\{}\a.", dir.display())));
+        std::fs::create_dir(&real).unwrap();
+        std::fs::create_dir(&dotted).unwrap();
+        std::fs::write(real.join("x"), "real").unwrap();
+        std::fs::write(dotted.join("x"), "dotted").unwrap();
+        let path = PathBuf::from(format!(r"{}\a.\x", dir.display()));
+        let err = trash(&path).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{err}");
+        assert_eq!(std::fs::read_to_string(real.join("x")).unwrap(), "real");
+        assert_eq!(std::fs::read_to_string(dotted.join("x")).unwrap(), "dotted");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn a_name_ending_in_a_dot_never_trashes_its_sibling() {
         let dir = test_dir("trash-dot");
         let sibling = dir.join("x");

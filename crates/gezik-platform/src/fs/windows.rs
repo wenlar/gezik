@@ -445,7 +445,12 @@ impl IFileOperationProgressSink_Impl for DeleteSink_Impl {
 pub fn trash(path: &Path) -> io::Result<Option<PathBuf>> {
     // The Shell parses names like Explorer: it drops a trailing dot or space, so `x.` would
     // resolve to the sibling `x` (and `\\?\` paths are refused). Better no trash than the wrong file.
-    if path.file_name().and_then(|name| name.to_str()).is_some_and(|name| name.ends_with(['.', ' '])) {
+    // The Shell normalizes every component, so `a.\x` would resolve to `a\x`.
+    let dotted = path.components().any(|part| match part {
+        std::path::Component::Normal(name) => matches!(name.encode_wide().last(), Some(0x2E | 0x20)),
+        _ => false,
+    });
+    if dotted {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "names ending in a dot or space cannot go to the Recycle Bin",
@@ -476,7 +481,11 @@ pub fn trash(path: &Path) -> io::Result<Option<PathBuf>> {
             return Err(cancelled());
         }
         result.get().ok().map_err(io_error)?;
-        Ok(trashed.borrow_mut().take())
+        let trashed = trashed.borrow_mut().take();
+        if trashed.is_none() && std::fs::symlink_metadata(path).is_ok() {
+            return Err(io::Error::other("the Recycle Bin did not take the item"));
+        }
+        Ok(trashed)
     }
 }
 
@@ -488,7 +497,11 @@ pub fn restore(trashed: &Path, original: &Path) -> io::Result<()> {
     move_entry(trashed, original)?;
     // Next to the entry, `$Ixxxxxx.ext` records where it came from; without its entry the
     // Recycle Bin would list a broken item.
-    if let (Some(dir), Some(name)) = (trashed.parent(), trashed.file_name().and_then(|n| n.to_str()))
+    let in_bin = trashed
+        .ancestors()
+        .any(|dir| dir.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.eq_ignore_ascii_case("$Recycle.Bin")));
+    if in_bin
+        && let (Some(dir), Some(name)) = (trashed.parent(), trashed.file_name().and_then(|n| n.to_str()))
         && let Some(rest) = name.strip_prefix("$R")
     {
         let _ = std::fs::remove_file(dir.join(format!("$I{rest}")));
