@@ -27,11 +27,6 @@ impl Listing {
         }
     }
 
-    #[allow(dead_code, reason = "used by later view tasks (grid, preview)")]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
     pub fn name_at(&self, index: usize) -> Option<&str> {
         match self {
             Listing::Files(_, entries) => entries.get(index).map(|e| e.name.as_str()),
@@ -68,7 +63,6 @@ impl Listing {
     }
 
     /// The folder listed; `None` for the drives and the empty listing.
-    #[allow(dead_code, reason = "used by later view tasks (grid, preview)")]
     pub fn folder(&self) -> Option<&Path> {
         match self {
             Listing::Files(dir, _) if !dir.as_os_str().is_empty() => Some(dir),

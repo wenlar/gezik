@@ -302,11 +302,6 @@ impl View {
         ViewState { selected, focus: data.selection.focus().and_then(name), scroll }
     }
 
-    #[allow(dead_code, reason = "used by later view tasks (grid, preview)")]
-    pub fn len(&self) -> usize {
-        self.0.data.borrow().listing.len()
-    }
-
     pub fn focus(&self) -> Option<usize> {
         self.0.data.borrow().selection.focus()
     }

@@ -219,9 +219,10 @@ export component FileView inherits Rectangle {
         }
     }
 
-    // Ctrl+wheel anywhere in the view; a plain wheel scrolls.
+    // Ctrl+wheel anywhere in the view; a plain wheel scrolls. A sideways-only scroll
+    // (no vertical delta) does not zoom.
     function wheel(event: PointerScrollEvent) -> EventResult {
-        if event.modifiers.control {
+        if event.modifiers.control && event.delta-y != 0 {
             root.zoom(event.delta-y > 0);
             return accept;
         }
