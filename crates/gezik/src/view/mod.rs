@@ -58,6 +58,10 @@ struct Inner {
     on_selection: RefCell<Vec<Listener>>,
     /// The entry being renamed: its index and its name before.
     renaming: RefCell<Option<(usize, String)>>,
+    /// The folder the rename belongs to (as remembered in `folder`).
+    rename_folder: RefCell<Option<String>>,
+    /// Bumped for each new rename, so a recreated field does not select the stem again.
+    rename_generation: Cell<i32>,
     /// Called after each `show` (a folder loaded or reloaded).
     on_shown: RefCell<Vec<Listener>>,
     defaults: Cell<ViewDefaults>,
@@ -114,6 +118,8 @@ impl View {
             note: RefCell::new(None),
             on_selection: RefCell::new(Vec::new()),
             renaming: RefCell::new(None),
+            rename_folder: RefCell::new(None),
+            rename_generation: Cell::new(0),
             on_shown: RefCell::new(Vec::new()),
             defaults: Cell::new(defaults),
             current: Cell::new(defaults.view),
@@ -235,6 +241,10 @@ impl View {
     /// any, replaces the item count in the status bar until the selection changes.
     pub fn show(&self, listing: Listing, state: &ViewState, note: Option<String>) {
         let folder = listing.folder().map(|p| p.display().to_string());
+        // Only a reload of the same folder keeps a rename.
+        if self.0.renaming.borrow().is_some() && *self.0.rename_folder.borrow() != folder {
+            self.end_rename(false);
+        }
         let settings =
             folder.as_deref().and_then(|f| self.0.memory.borrow_mut().get(f)).unwrap_or(self.0.defaults.get().view);
         *self.0.folder.borrow_mut() = folder;
@@ -261,7 +271,7 @@ impl View {
                         window.set_renaming_index(i32::try_from(index).unwrap_or(-1));
                     }
                 }
-                None => self.end_rename(),
+                None => self.end_rename(false),
             }
         }
         self.0.model.notify.reset();
@@ -333,6 +343,10 @@ impl View {
         window.set_rename_text(name.clone().into());
         window.set_rename_select(i32::try_from(end).unwrap_or(0));
         window.set_rename_error("".into());
+        let generation = self.0.rename_generation.get().wrapping_add(1);
+        self.0.rename_generation.set(generation);
+        window.set_rename_generation(generation);
+        *self.0.rename_folder.borrow_mut() = self.0.folder.borrow().clone();
         *self.0.renaming.borrow_mut() = Some((index, name));
         window.set_renaming_index(i32::try_from(index).unwrap_or(-1));
         true
@@ -348,20 +362,26 @@ impl View {
         self.0.renaming.borrow().clone()
     }
 
-    pub fn end_rename(&self) {
+    /// Ends renaming. `refocus`: the field had the keyboard (Enter, Esc, Tab), so the list gets
+    /// it back; not after a blur, where another control took the focus on purpose.
+    pub fn end_rename(&self, refocus: bool) {
         if self.0.renaming.borrow_mut().take().is_none() {
             return;
         }
+        self.0.rename_folder.borrow_mut().take();
         if let Some(window) = self.0.window.upgrade() {
             window.set_renaming_index(-1);
             window.set_rename_error("".into());
-            window.invoke_focus_list();
+            if refocus {
+                window.invoke_focus_list();
+            }
         }
     }
 
     /// Empties the view (a tab switch while the new tab loads). The status bar is left to
     /// the caller ("Loading…").
     pub fn clear(&self) {
+        self.end_rename(false);
         self.0.media.new_generation();
         {
             let mut data = self.0.data.borrow_mut();

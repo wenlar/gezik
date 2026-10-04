@@ -641,6 +641,10 @@ fn main() -> Result<(), slint::PlatformError> {
         let ops = ops.clone();
         move |text, back| ops.rename_tab(text.into(), back)
     });
+    window.on_rename_blurred({
+        let ops = ops.clone();
+        move |text| ops.rename_blurred(text.into())
+    });
     window.on_rename_edited({
         let ops = ops.clone();
         move |text| ops.rename_edited(&text)

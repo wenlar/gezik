@@ -141,6 +141,9 @@ export component FileView inherits Rectangle {
     // Tab (false) or Shift+Tab (true): keep the name, go on to the next or previous entry.
     callback rename-tab(string, bool);
     callback rename-edited(string);
+    callback rename-blurred(string);
+    in property <int> rename-generation;
+    property <int> rename-applied: -1;
     out property <length> cell-width: max(root.picture-size + 24px, 96px);
     out property <length> cell-height: root.picture-size + 24px + Theme.font-size * 2.8;
     // Grid cells per line.
@@ -493,6 +496,9 @@ export component FileView inherits Rectangle {
                             cancelled => { root.rename-cancelled(); }
                             tab(t, back) => { root.rename-tab(t, back); }
                             edited(t) => { root.rename-edited(t); }
+                            blurred(t) => { root.rename-blurred(t); }
+                            generation: root.rename-generation;
+                            applied <=> root.rename-applied;
                         }
                     }
                     if root.col-modified > 0: Text {
@@ -598,6 +604,9 @@ export component FileView inherits Rectangle {
                             cancelled => { root.rename-cancelled(); }
                             tab(t, back) => { root.rename-tab(t, back); }
                             edited(t) => { root.rename-edited(t); }
+                            blurred(t) => { root.rename-blurred(t); }
+                            generation: root.rename-generation;
+                            applied <=> root.rename-applied;
                         }
 
                         // Cells never start a rectangle (a drag from an entry is kept for

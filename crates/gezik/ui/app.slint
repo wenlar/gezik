@@ -53,6 +53,8 @@ export component AppWindow inherits Window {
     callback rename-cancelled();
     callback rename-tab(string, bool);
     callback rename-edited(string);
+    callback rename-blurred(string);
+    in property <int> rename-generation;
     // The View button, with the window position for its menu.
     callback view-menu(length, length);
     in-out property <string> current-path;
@@ -361,6 +363,8 @@ export component AppWindow inherits Window {
                     rename-cancelled => { root.rename-cancelled(); }
                     rename-tab(t, back) => { root.rename-tab(t, back); }
                     rename-edited(t) => { root.rename-edited(t); }
+                    rename-blurred(t) => { root.rename-blurred(t); }
+                    rename-generation: root.rename-generation;
                     col-size <=> root.col-size;
                     sort-column: root.sort-column;
                     sort-desc: root.sort-desc;
