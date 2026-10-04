@@ -211,7 +211,11 @@ export component AppWindow inherits Window {
 
     // Gives the keyboard to the file list.
     public function focus-list() {
-        keys.focus();
+        if root.conflicts-open {
+            conflict-list.take-focus();
+        } else {
+            keys.focus();
+        }
     }
 
     // Called before any context menu opens: like Explorer, a menu ends typing in the address
@@ -535,6 +539,7 @@ export component AppWindow inherits Window {
             height: root.height;
             visible: root.conflicts-open;
             open: root.conflicts-open;
+            dialog-open: root.dialog-open;
             title: root.conflict-title;
             rows: root.conflict-rows;
             identical-count: root.conflict-identical-count;

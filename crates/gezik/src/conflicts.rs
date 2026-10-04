@@ -54,9 +54,8 @@ use gezik_core::format_size;
 use gezik_core::ops::conflict::{Facts, identical, source_newer};
 use gezik_core::selection::Selection;
 use gezik_ops::{ConflictItem, Engine, JobId};
-use slint::{ComponentHandle, ModelRc, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
-use crate::navigation::sync_model;
 use crate::{AppWindow, ConflictRow};
 
 /// Rows a PgUp / PgDn moves.
@@ -74,7 +73,8 @@ struct Data {
     selection: Selection,
     hide_identical: bool,
     apply_all: bool,
-    base: PathBuf,
+    /// Per item, built once at open: only decision / selected / focused change afterwards.
+    rows: Vec<ConflictRow>,
 }
 
 struct Inner {
@@ -82,6 +82,7 @@ struct Inner {
     engine: Engine,
     rows: Rc<VecModel<ConflictRow>>,
     data: RefCell<Data>,
+    queue: RefCell<ConflictQueue<(String, Vec<ConflictItem>)>>,
 }
 
 #[derive(Clone)]
@@ -91,7 +92,13 @@ impl Conflicts {
     pub fn new(window: &AppWindow, engine: Engine) -> Conflicts {
         let rows = Rc::new(VecModel::default());
         window.set_conflict_rows(ModelRc::from(rows.clone()));
-        let conflicts = Conflicts(Rc::new(Inner { window: window.as_weak(), engine, rows, data: RefCell::default() }));
+        let conflicts = Conflicts(Rc::new(Inner {
+            window: window.as_weak(),
+            engine,
+            rows,
+            data: RefCell::default(),
+            queue: RefCell::default(),
+        }));
         let c = conflicts.clone();
         window.on_conflict_decide(move |i| {
             if let Some(decision) = usize::try_from(i).ok().and_then(|i| DECISIONS.get(i)) {
@@ -122,10 +129,19 @@ impl Conflicts {
 
     /// Shows the conflicts of `job` ("Copying 312 items to D:\Yedek").
     pub fn open(&self, job: JobId, title: &str, items: Vec<ConflictItem>) {
+        if self.0.data.borrow().job.is_some() {
+            self.0.queue.borrow_mut().push(job, (title.to_owned(), items));
+            return;
+        }
+        self.show(job, title, items);
+    }
+
+    fn show(&self, job: JobId, title: &str, items: Vec<ConflictItem>) {
         let Some(window) = self.0.window.upgrade() else { return };
         let real = items.iter().filter(|c| c.kind != ConflictKind::Folder).count();
         let identical_count = items.iter().filter(|c| identical(c.source_facts, c.target_facts)).count();
         let targets: Vec<PathBuf> = items.iter().map(|c| c.target.clone()).collect();
+        let base = common_base(&targets);
         {
             let mut data = self.0.data.borrow_mut();
             *data = Data {
@@ -133,7 +149,7 @@ impl Conflicts {
                 decisions: items.iter().map(|c| c.decision).collect(),
                 shown: (0..items.len()).collect(),
                 selection: Selection::new(items.len()),
-                base: common_base(&targets),
+                rows: items.iter().map(|c| Self::static_row(c, &base)).collect(),
                 items,
                 ..Data::default()
             };
@@ -157,25 +173,33 @@ impl Conflicts {
     pub fn close_if(&self, job: JobId) {
         if self.0.data.borrow().job == Some(job) {
             self.close();
+        } else {
+            self.0.queue.borrow_mut().remove(job);
         }
     }
 
     fn close(&self) {
         *self.0.data.borrow_mut() = Data::default();
         self.0.rows.clear();
+        let next = self.0.queue.borrow_mut().next();
+        if let Some((job, (title, items))) = next {
+            self.show(job, &title, items);
+            return;
+        }
         if let Some(window) = self.0.window.upgrade() {
             window.set_conflicts_open(false);
-            window.invoke_focus_list();
+            if !window.get_dialog_open() {
+                window.invoke_focus_list();
+            }
         }
     }
 
-    fn row(data: &Data, position: usize) -> Option<ConflictRow> {
-        let i = *data.shown.get(position)?;
-        let item = data.items.get(i)?;
+    /// What never changes while the list is open.
+    fn static_row(item: &ConflictItem, base: &Path) -> ConflictRow {
         let date = |f: Facts| f.modified.map(gezik_platform::format_datetime).unwrap_or_default();
         let size = |f: Facts| if f.is_dir { String::new() } else { format_size(f.size) };
-        Some(ConflictRow {
-            name: row_name(&item.target, &data.base).into(),
+        ConflictRow {
+            name: row_name(&item.target, base).into(),
             source_size: size(item.source_facts).into(),
             source_date: date(item.source_facts).into(),
             target_size: size(item.target_facts).into(),
@@ -191,16 +215,38 @@ impl Conflicts {
                 ConflictKind::Folder => 1,
                 ConflictKind::Mismatch => 2,
             },
-            decision: data.decisions[i].label().into(),
-            selected: data.selection.is_selected(position),
-            focused: data.selection.focus() == Some(position),
-        })
+            decision: item.decision.label().into(),
+            selected: false,
+            focused: false,
+        }
+    }
+
+    /// The row at `position` of the shown ones, with the parts that change patched in.
+    fn row(data: &Data, position: usize) -> Option<ConflictRow> {
+        let i = *data.shown.get(position)?;
+        let mut row = data.rows.get(i)?.clone();
+        row.decision = data.decisions.get(i)?.label().into();
+        row.selected = data.selection.is_selected(position);
+        row.focused = data.selection.focus() == Some(position);
+        Some(row)
     }
 
     fn refresh(&self) {
         let data = self.0.data.borrow();
+        let model = &self.0.rows;
         let rows = (0..data.shown.len()).filter_map(|position| Self::row(&data, position));
-        sync_model(&self.0.rows, rows);
+        if model.row_count() != data.shown.len() {
+            model.set_vec(rows.collect::<Vec<_>>());
+            return;
+        }
+        for (position, row) in rows.enumerate() {
+            let same = model.row_data(position).is_some_and(|old| {
+                old.decision == row.decision && old.selected == row.selected && old.focused == row.focused
+            });
+            if !same {
+                model.set_row_data(position, row);
+            }
+        }
     }
 
     /// The conflicts a button or key acts on: all shown, else the selected, else the focused.
@@ -295,8 +341,8 @@ impl Conflicts {
         let primary = crate::keys::is_primary(&chord, platform);
         let plain = !primary && !chord.alt && !chord.shift;
         match chord.key {
-            Key::Enter => self.start(),
-            Key::Escape => self.cancel(),
+            Key::Enter if plain => self.start(),
+            Key::Escape if plain => self.cancel(),
             Key::Char('a') if primary => {
                 self.0.data.borrow_mut().selection.select_all();
                 self.refresh();
@@ -362,6 +408,31 @@ impl Conflicts {
     }
 }
 
+/// Conflict lists waiting behind the one on screen, first come first shown.
+pub struct ConflictQueue<T> {
+    waiting: std::collections::VecDeque<(JobId, T)>,
+}
+
+impl<T> Default for ConflictQueue<T> {
+    fn default() -> Self {
+        ConflictQueue { waiting: std::collections::VecDeque::new() }
+    }
+}
+
+impl<T> ConflictQueue<T> {
+    pub fn push(&mut self, job: JobId, value: T) {
+        self.waiting.push_back((job, value));
+    }
+
+    pub fn next(&mut self) -> Option<(JobId, T)> {
+        self.waiting.pop_front()
+    }
+
+    /// Drops what `job` has waiting.
+    pub fn remove(&mut self, job: JobId) {
+        self.waiting.retain(|(j, _)| *j != job);
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -383,5 +454,17 @@ mod tests {
         assert_eq!(decisions, [Decision::Replace, Decision::Skip, Decision::Merge]);
         apply(&mut decisions, &kinds, &[1], Decision::KeepBoth);
         assert_eq!(decisions[1], Decision::KeepBoth);
+    }
+
+    #[test]
+    fn queued_lists_come_in_order_and_a_finished_job_leaves_it() {
+        let mut queue = ConflictQueue::default();
+        queue.push(2, "b");
+        queue.push(3, "c");
+        queue.push(4, "d");
+        queue.remove(3);
+        assert_eq!(queue.next(), Some((2, "b")));
+        assert_eq!(queue.next(), Some((4, "d")));
+        assert_eq!(queue.next(), None);
     }
 }
