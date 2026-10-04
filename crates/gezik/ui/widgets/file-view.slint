@@ -1,0 +1,152 @@
+import { ListView } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+import { FileIcon } from "file-icon.slint";
+
+// One entry, as Rust (view/model.rs) builds it for the entries on screen.
+export struct FileRow {
+    name: string,
+    is-dir: bool,
+    // `Kind` in gezik-core kind.rs: Gezik's icon and its color.
+    kind: int,
+    size: string,
+    selected: bool,
+    // Has the keyboard focus; the ring shows only while the view has the keyboard.
+    focused: bool,
+}
+
+// One line of the view: one entry in the list.
+export struct ItemRow {
+    // The index of its first entry.
+    first: int,
+    cells: [FileRow],
+}
+
+// The folder's entries. Rust owns the selection: this reports presses and draws.
+export component FileView inherits Rectangle {
+    in property <[ItemRow]> items;
+    // The view has the keyboard: the focused entry shows a ring.
+    in property <bool> has-focus;
+    // Scroll offset (content-y: zero or negative).
+    in-out property <length> scroll;
+    out property <length> item-height: Theme.row-height;
+    // How many lines PgUp/PgDn move: one screen, less one line.
+    out property <int> page-rows: max(1, floor(list.visible-height / self.item-height) - 1);
+
+    // Left press on entry `index`, with Ctrl (Cmd on macOS) and Shift.
+    callback item-pressed(int, bool, bool);
+    callback item-double-clicked(int);
+    callback item-middle-clicked(int);
+    // Right-click on an entry, at a window position.
+    callback item-menu(int, length, length);
+    // Left click on empty space, with Ctrl.
+    callback background-pressed(bool);
+    callback background-menu(length, length);
+    // A press in the view: the keyboard should go to it.
+    callback focus-requested();
+
+    clip: true;
+
+    // Scrolls so entry `index` is fully visible.
+    public function ensure-visible(index: int) {
+        if index < 0 {
+            return;
+        }
+        let line = index;
+        if line * root.item-height < -root.scroll {
+            root.scroll = -line * root.item-height;
+        } else if (line + 1) * root.item-height > -root.scroll + list.visible-height {
+            root.scroll = -((line + 1) * root.item-height - list.visible-height);
+        }
+    }
+
+    // Where the keyboard menu of entry `index` opens (a window position): just below its
+    // name. -1: the background's, at the top left.
+    public function menu-x(index: int) -> length {
+        return list.absolute-position.x + Theme.spacing * (index < 0 ? 2 : 6);
+    }
+
+    public function menu-y(index: int) -> length {
+        if index < 0 {
+            return list.absolute-position.y + Theme.spacing * 2;
+        }
+        return list.absolute-position.y + root.scroll + (index + 1) * root.item-height;
+    }
+
+    // Behind the entries: presses on empty space (the list passes them through).
+    TouchArea {
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                root.focus-requested();
+                root.background-pressed(event.modifiers.control);
+            }
+            if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {
+                root.background-menu(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            }
+        }
+    }
+
+    // ListView only instantiates the lines on screen, so huge folders stay cheap.
+    list := ListView {
+        content-y <=> root.scroll;
+        for item in root.items: line := Rectangle {
+            property <FileRow> entry: item.cells[0];
+            property <int> index: item.first;
+            height: root.item-height;
+            background: self.entry.selected ? Theme.selection : touch.has-hover ? Theme.hover : transparent;
+            accessible-role: list-item;
+            accessible-label: self.entry.name;
+            accessible-item-selectable: true;
+            accessible-item-selected: self.entry.selected;
+            accessible-item-index: self.index;
+
+            touch := TouchArea {
+                double-clicked => { root.item-double-clicked(line.index); }
+                pointer-event(event) => {
+                    if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                        root.focus-requested();
+                        root.item-pressed(line.index, event.modifiers.control, event.modifiers.shift);
+                    }
+                    if event.kind == PointerEventKind.up && event.button == PointerEventButton.middle {
+                        root.item-middle-clicked(line.index);
+                    }
+                    if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {
+                        root.item-menu(line.index, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                padding-left: Theme.spacing + 4px;
+                padding-right: Theme.spacing + 4px;
+                spacing: Theme.spacing + 2px;
+                VerticalLayout {
+                    alignment: center;
+                    FileIcon {
+                        width: Theme.icon-size;
+                        height: Theme.icon-size;
+                        kind: line.entry.kind;
+                    }
+                }
+                Text {
+                    text: line.entry.name;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                    color: line.entry.selected ? Theme.selection-foreground : Theme.foreground;
+                }
+                Text {
+                    text: line.entry.size;
+                    width: 90px;
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
+                    color: line.entry.selected ? Theme.selection-foreground : Theme.foreground-muted;
+                }
+            }
+
+            if line.entry.focused && root.has-focus: Rectangle {
+                border-width: 1px;
+                border-color: Theme.focus-ring;
+            }
+        }
+    }
+}

@@ -13,6 +13,7 @@ use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::navigation::Navigator;
 use crate::sidebar::{SECTION_PINNED, Sidebar};
+use crate::view::View;
 use crate::{AppWindow, MenuEntry};
 
 pub const OPEN_IN_NEW_TAB: u32 = 1;
@@ -35,6 +36,8 @@ pub enum Place {
         is_dir: bool,
         pinned: bool,
     },
+    /// Several selected rows.
+    Rows,
     /// A sidebar entry; `pinned_section` = it is in the PINNED section.
     Sidebar {
         pinned_section: bool,
@@ -60,6 +63,12 @@ pub fn items(place: Place, native_shell: bool) -> Vec<(u32, &'static str)> {
             if !native_shell {
                 out.push((OPEN, "Open"));
                 out.push((OPEN_DEFAULT, "Open with default app"));
+            }
+        }
+        // The Explorer menu acts on all of them; elsewhere Gezik can open them.
+        Place::Rows => {
+            if !native_shell {
+                out.push((OPEN, "Open"));
             }
         }
         Place::Sidebar { pinned_section, pinned, first, last } => {
@@ -93,6 +102,7 @@ fn pin_toggle(pinned: bool) -> (u32, &'static str) {
 #[derive(Debug, Clone)]
 enum Subject {
     Row(PathBuf),
+    Rows(Vec<PathBuf>),
     SidebarEntry(PathBuf),
     Tab(u64),
 }
@@ -126,6 +136,7 @@ impl Drop for MenuClaim {
 pub struct Menus {
     window: slint::Weak<AppWindow>,
     nav: Navigator,
+    view: View,
     sidebar: Sidebar,
     /// What the open Slint menu is for.
     subject: Rc<RefCell<Option<Subject>>>,
@@ -134,9 +145,15 @@ pub struct Menus {
 }
 
 impl Menus {
-    pub fn new(window: &AppWindow, nav: Navigator, sidebar: Sidebar) -> Menus {
-        let menus =
-            Menus { window: window.as_weak(), nav, sidebar, subject: Rc::default(), native_menu: MenuGate::default() };
+    pub fn new(window: &AppWindow, nav: Navigator, view: View, sidebar: Sidebar) -> Menus {
+        let menus = Menus {
+            window: window.as_weak(),
+            nav,
+            view,
+            sidebar,
+            subject: Rc::default(),
+            native_menu: MenuGate::default(),
+        };
         window.on_menu_activated({
             let menus = menus.clone();
             move |id| {
@@ -171,9 +188,14 @@ impl Menus {
     }
 
     fn row_menu(&self, index: i32, x: f32, y: f32, at_position: bool) {
-        let Some((path, is_dir)) = self.nav.entry_path(index) else { return };
-        let place = Place::Row { is_dir, pinned: is_dir && self.sidebar.is_pinned(&path) };
+        let Ok(i) = usize::try_from(index) else { return };
         let at = at_position.then_some((x, y));
+        if self.view.is_selected(i) && self.view.selection_count() > 1 {
+            let paths = self.view.selected_paths();
+            return self.open(Subject::Rows(paths.clone()), Place::Rows, MenuTarget::Items(paths), x, y, at);
+        }
+        let Some((path, is_dir)) = self.view.entry_path(i) else { return };
+        let place = Place::Row { is_dir, pinned: is_dir && self.sidebar.is_pinned(&path) };
         self.open(Subject::Row(path.clone()), place, MenuTarget::Item(path), x, y, at);
     }
 
@@ -321,6 +343,15 @@ impl Menus {
                     window.set_status(format!("Cannot open {}: {err}", path.display()).into());
                 }
             }
+            (OPEN, Subject::Rows(paths)) => {
+                for path in paths {
+                    if let Err(err) = open::that_detached(&path)
+                        && let Some(window) = self.window.upgrade()
+                    {
+                        window.set_status(format!("Cannot open {}: {err}", path.display()).into());
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -344,6 +375,12 @@ mod tests {
     fn file_rows_rely_on_the_system_menu_on_windows() {
         assert!(items(Place::Row { is_dir: false, pinned: false }, true).is_empty());
         assert_eq!(ids(items(Place::Row { is_dir: false, pinned: false }, false)), [OPEN, OPEN_DEFAULT]);
+    }
+
+    #[test]
+    fn several_rows_get_the_system_menu_or_open() {
+        assert!(items(Place::Rows, true).is_empty());
+        assert_eq!(ids(items(Place::Rows, false)), [OPEN]);
     }
 
     #[test]

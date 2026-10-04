@@ -94,6 +94,15 @@ pub fn is_text_edit(chord: &Chord, platform: Platform) -> bool {
     primary && !chord.alt && matches!(chord.key, Key::Char('a' | 'c' | 'v' | 'x' | 'z' | 'y'))
 }
 
+/// Whether `chord` holds the platform's primary modifier (Cmd on macOS, Ctrl elsewhere),
+/// the one Explorer and Finder use for multiple selection.
+pub fn is_primary(chord: &Chord, platform: Platform) -> bool {
+    match platform {
+        Platform::Mac => chord.meta,
+        Platform::Other => chord.ctrl,
+    }
+}
+
 /// The character an unmodified key press types, for type-ahead: any printable character
 /// (also non-ASCII letters such as `ş`), but not control or named keys (arrows, F-keys…),
 /// which Slint sends as control or private-use characters.
@@ -243,6 +252,7 @@ mod tests {
                 Action::Up => "alt+up",
                 Action::FocusPath => "ctrl+l",
                 Action::Refresh => "f5",
+                Action::SelectAll => "ctrl+a",
             };
             let chord = parse_chord(text, Platform::Other).unwrap().unwrap();
             let (t, control, alt, shift, meta) = other_event(&chord);
@@ -289,6 +299,16 @@ mod tests {
         assert!(is_text_edit(&cmd_a, Platform::Mac));
         let ctrl_a = chord_from_slint("a", false, false, false, true, Platform::Mac).unwrap();
         assert!(!is_text_edit(&ctrl_a, Platform::Mac));
+    }
+
+    #[test]
+    fn primary_modifier_is_cmd_on_mac() {
+        let ctrl_a = chord_from_slint("a", true, false, false, false, Platform::Other).unwrap();
+        assert!(is_primary(&ctrl_a, Platform::Other));
+        let cmd_a = chord_from_slint("a", true, false, false, false, Platform::Mac).unwrap();
+        assert!(is_primary(&cmd_a, Platform::Mac));
+        let ctrl_on_mac = chord_from_slint("a", false, false, false, true, Platform::Mac).unwrap();
+        assert!(!is_primary(&ctrl_on_mac, Platform::Mac));
     }
 
     #[test]

@@ -1,0 +1,40 @@
+import { Theme } from "../theme.slint";
+
+// An entry's icon: the system's picture when Rust has one (`has-picture`), else Gezik's own
+// shape for `kind` (`Kind` in gezik-core kind.rs), colored by the theme.
+export component FileIcon inherits Rectangle {
+    in property <int> kind;
+    in property <image> picture;
+    in property <bool> has-picture;
+    accessible-role: none;
+
+    pure function kind-color(kind: int) -> color {
+        return kind == 0 ? Theme.icon-folder
+            : kind == 2 ? Theme.icon-image
+            : kind == 3 ? Theme.icon-video
+            : kind == 4 ? Theme.icon-audio
+            : kind == 5 || kind == 14 ? Theme.icon-archive
+            : (kind >= 6 && kind <= 9) || kind == 11 ? Theme.icon-document
+            : kind == 10 || kind == 12 ? Theme.icon-code
+            : Theme.icon-other;
+    }
+
+    if root.has-picture: Image {
+        width: root.width;
+        height: root.height;
+        source: root.picture;
+        image-fit: contain;
+    }
+
+    // A folder, or a page with a folded corner.
+    if !root.has-picture: Path {
+        width: root.width;
+        height: root.height;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        fill: root.kind-color(root.kind);
+        commands: root.kind == 0
+            ? "M 1 3 L 6 3 L 7.5 4.5 L 15 4.5 L 15 13.5 L 1 13.5 Z"
+            : "M 3 1 L 10 1 L 13 4 L 13 15 L 3 15 Z";
+    }
+}

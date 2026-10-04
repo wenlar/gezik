@@ -119,10 +119,11 @@ pub enum Action {
     Up,
     FocusPath,
     Refresh,
+    SelectAll,
 }
 
 impl Action {
-    pub const ALL: [Action; 9] = [
+    pub const ALL: [Action; 10] = [
         Action::NewTab,
         Action::CloseTab,
         Action::NextTab,
@@ -132,6 +133,7 @@ impl Action {
         Action::Up,
         Action::FocusPath,
         Action::Refresh,
+        Action::SelectAll,
     ];
 
     pub fn name(self) -> &'static str {
@@ -145,6 +147,7 @@ impl Action {
             Action::Up => "up",
             Action::FocusPath => "focus-path",
             Action::Refresh => "refresh",
+            Action::SelectAll => "select-all",
         }
     }
 
@@ -167,6 +170,7 @@ impl Action {
             (Action::FocusPath, _) => "mod+l",
             (Action::Refresh, Platform::Mac) => "mod+r",
             (Action::Refresh, Platform::Other) => "f5",
+            (Action::SelectAll, _) => "mod+a",
         }
     }
 }

@@ -8,6 +8,7 @@ mod places;
 mod sidebar;
 mod start;
 mod theme_bridge;
+mod view;
 mod watcher;
 mod window_state;
 
@@ -19,7 +20,7 @@ use gezik_config::settings::{Settings, SidebarPosition};
 use gezik_config::shortcuts::{Action, Chord, Key, Platform};
 use gezik_config::store::{self, ConfigFiles, ConfigStore, Loaded};
 use gezik_config::theme;
-use slint::Model;
+use gezik_core::layout::Move;
 use start::StartPlan;
 
 slint::include_modules!();
@@ -62,9 +63,11 @@ fn close_tab_later(nav: &navigation::Navigator, index: usize) {
 /// Home/End, Enter, type-ahead) are fixed and only act while the list has the focus.
 /// `chord` is the key as a shortcut (if it can be one); `has_modifier` is Ctrl, Alt or
 /// Meta (not Shift).
+#[allow(clippy::too_many_arguments, reason = "the key event, split up, and what it acts on")]
 fn handle_key(
     window: &AppWindow,
     nav: &navigation::Navigator,
+    view: &view::View,
     type_ahead: &mut keys::TypeAhead,
     text: &str,
     chord: Option<Chord>,
@@ -95,6 +98,7 @@ fn handle_key(
             Action::Up => nav.up(),
             Action::FocusPath => window.invoke_edit_path(),
             Action::Refresh => nav.reload(),
+            Action::SelectAll => view.select_all(),
         }
         // The typed text no longer fits once the location or tab changed.
         if editing && action != Action::FocusPath {
@@ -102,69 +106,66 @@ fn handle_key(
         }
         return true;
     }
-    if editing || has_modifier || !window.get_list_focused() {
+    if editing || !window.get_list_focused() {
         return false;
     }
 
-    // Shift+F10 or the Menu key: the selected row's menu (the background's if none).
+    // Shift+F10 or the Menu key: the selection's menu (the background's if none).
     if menu_key {
         window.invoke_open_keyboard_menu();
         return true;
     }
 
-    // List navigation (fixed keys).
-    let count = i32::try_from(window.get_rows().row_count()).unwrap_or(i32::MAX);
-    let page = window.get_list_page_rows().max(1);
-    let selected = window.get_selected();
-    let target = match chord.map(|c| c.key) {
-        Some(Key::Down) => Some(selected.saturating_add(1)),
-        Some(Key::Up) => Some(selected.saturating_sub(1)),
-        Some(Key::PageDown) => Some(selected.saturating_add(page)),
-        Some(Key::PageUp) => Some(selected.saturating_sub(page)),
-        Some(Key::Home) => Some(0),
-        Some(Key::End) => Some(count - 1),
-        Some(Key::Enter) => {
-            if selected >= 0 {
-                nav.open_row(selected);
+    // List keys (fixed): arrows, PgUp/PgDn, Home/End move; Shift extends, the primary
+    // modifier (Ctrl, Cmd on macOS) moves only the focus. Enter opens, Ctrl+Space flips
+    // the focused entry, Esc clears the selection.
+    if let Some(chord) = &chord {
+        let platform = Platform::current();
+        let primary = keys::is_primary(chord, platform);
+        let other = chord.alt || if platform == Platform::Mac { chord.ctrl } else { chord.meta };
+        if !other {
+            let mv = match chord.key {
+                Key::Up => Some(Move::Up),
+                Key::Down => Some(Move::Down),
+                Key::Left => Some(Move::Left),
+                Key::Right => Some(Move::Right),
+                Key::PageUp => Some(Move::PageUp),
+                Key::PageDown => Some(Move::PageDown),
+                Key::Home => Some(Move::Home),
+                Key::End => Some(Move::End),
+                _ => None,
+            };
+            if let Some(mv) = mv {
+                let page = usize::try_from(window.get_list_page_rows()).unwrap_or(1).max(1);
+                return view.key_move(mv, chord.shift, primary, page);
             }
-            return true;
+            match chord.key {
+                Key::Enter if !primary && !chord.shift => {
+                    nav.open_selected();
+                    return true;
+                }
+                Key::Space if primary && !chord.shift => {
+                    view.toggle_focus();
+                    return true;
+                }
+                Key::Escape if !primary && !chord.shift => {
+                    view.clear_selection();
+                    return true;
+                }
+                _ => {}
+            }
         }
-        _ => {
-            let Some(c) = keys::typed_char(text) else { return false };
-            let found = type_ahead.type_char(c, std::time::Instant::now(), |typed| nav.find_prefix(typed));
-            // A typed character that matches nothing is still used up.
-            let Some(i) = found.and_then(|i| i32::try_from(i).ok()) else { return true };
-            Some(i)
-        }
-    };
-    match target {
-        Some(i) if count > 0 => {
-            let i = i.clamp(0, count - 1);
-            window.set_selected(i);
-            reveal_row(window, i);
-            true
-        }
-        _ => false,
     }
-}
+    if has_modifier {
+        return false;
+    }
 
-/// Scrolls the list so row `index` is fully visible. After a far jump (End, type-ahead)
-/// Slint's ListView snaps the offset to a row boundary on its next layout, which can leave
-/// a row at the bottom edge only partly visible; the offset is set again once that frame is
-/// done (see [`keys::scroll_was_snapped`]).
-fn reveal_row(window: &AppWindow, index: i32) {
-    window.invoke_ensure_visible(index);
-    let target = window.get_list_scroll();
-    let row_height = window.global::<Theme>().get_row_height();
-    let weak = window.as_weak();
-    slint::Timer::single_shot(navigation::SCROLL_RESTORE_DELAY, move || {
-        if let Some(window) = weak.upgrade()
-            && window.get_selected() == index
-            && keys::scroll_was_snapped(window.get_list_scroll(), target, row_height)
-        {
-            window.set_list_scroll(target);
-        }
-    });
+    // Type-ahead. A typed character that matches nothing is still used up.
+    let Some(c) = keys::typed_char(text) else { return false };
+    if let Some(i) = type_ahead.type_char(c, std::time::Instant::now(), |typed| view.find_prefix(typed)) {
+        view.jump_to(i);
+    }
+    true
 }
 
 /// Like [`apply_config`], and also resolves where the app opens. Start warnings (bad
@@ -294,7 +295,8 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
-    let nav = navigation::Navigator::new(&window, plan.first, plan.select, plan.start);
+    let view = view::View::new(&window);
+    let nav = navigation::Navigator::new(&window, view.clone(), plan.first, plan.select, plan.start);
     nav.install();
     // Captures no navigator (it is not `Send`): the result finds it on the UI thread.
     places::load_in_background(window.as_weak(), |part| navigation::with_current(|nav| nav.set_places(part)));
@@ -328,15 +330,40 @@ fn main() -> Result<(), slint::PlatformError> {
     });
     // The sidebar width stays in memory and is saved with the window state on close.
 
-    let menus = context_menu::Menus::new(&window, nav.clone(), sidebar);
+    let menus = context_menu::Menus::new(&window, nav.clone(), view.clone(), sidebar);
     window.on_row_menu({
-        let menus = menus.clone();
-        move |i, x, y| menus.row(i, x, y)
+        let (menus, view) = (menus.clone(), view.clone());
+        move |i, x, y| {
+            if let Ok(index) = usize::try_from(i) {
+                view.prepare_menu(index);
+            }
+            menus.row(i, x, y)
+        }
     });
-    // The Windows menu opens at the cursor; there is no Slint menu for empty space.
+    // Right-click on empty space clears the selection, as in Explorer. The Windows menu
+    // opens at the cursor; there is no Slint menu for empty space.
     window.on_background_menu({
-        let menus = menus.clone();
-        move |_, _| menus.background()
+        let (menus, view) = (menus.clone(), view.clone());
+        move |_, _| {
+            view.clear_selection();
+            menus.background()
+        }
+    });
+    window.on_item_pressed({
+        let view = view.clone();
+        move |i, ctrl, shift| {
+            if let Ok(index) = usize::try_from(i) {
+                view.press(index, ctrl, shift);
+            }
+        }
+    });
+    window.on_background_pressed({
+        let view = view.clone();
+        move |ctrl| {
+            if !ctrl {
+                view.clear_selection();
+            }
+        }
     });
     window.on_keyboard_menu({
         let menus = menus.clone();
@@ -421,14 +448,23 @@ fn main() -> Result<(), slint::PlatformError> {
     });
 
     window.on_key_event({
-        let (nav, weak) = (nav.clone(), window.as_weak());
+        let (nav, view, weak) = (nav.clone(), view.clone(), window.as_weak());
         let mut type_ahead = keys::TypeAhead::new();
         move |event| {
             let Some(window) = weak.upgrade() else { return false };
             let m = event.modifiers;
             let chord = keys::chord_from_slint(&event.text, m.control, m.alt, m.shift, m.meta, Platform::current());
             let menu_key = keys::is_context_menu_key(&event.text, m.control, m.alt, m.shift, m.meta);
-            handle_key(&window, &nav, &mut type_ahead, &event.text, chord, m.control || m.alt || m.meta, menu_key)
+            handle_key(
+                &window,
+                &nav,
+                &view,
+                &mut type_ahead,
+                &event.text,
+                chord,
+                m.control || m.alt || m.meta,
+                menu_key,
+            )
         }
     });
 

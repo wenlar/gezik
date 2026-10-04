@@ -8,50 +8,16 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use gezik_core::nav::{Closed, Location, Step, Tabs, ViewState, crumbs, nearest_existing};
-use gezik_core::{Entry, format_size, list_dir};
+use gezik_core::{Entry, list_dir};
 use gezik_platform::Drive;
-use slint::{ComponentHandle, Model, ModelNotify, ModelRc, ModelTracker, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
 use crate::places::{Places, PlacesPart};
-use crate::{AppWindow, CrumbItem, FileRow, TabItem};
+use crate::view::{Listing, View};
+use crate::{AppWindow, CrumbItem, TabItem};
 
 /// Address bar parts shown before older ones collapse into "…".
 const MAX_CRUMBS: usize = 4;
-
-/// How long after showing a listing its saved scroll offset is applied again (see
-/// `show_listing`, and `reveal_row` in main.rs): about three frames.
-pub const SCROLL_RESTORE_DELAY: std::time::Duration = std::time::Duration::from_millis(50);
-
-/// Lists files to the UI without a second copy: it shares the navigator's entries, and a
-/// `FileRow` is built only for the rows on screen.
-pub struct EntryModel {
-    pub entries: Rc<Vec<Entry>>,
-    notify: ModelNotify,
-}
-
-impl Model for EntryModel {
-    type Data = FileRow;
-
-    fn row_count(&self) -> usize {
-        self.entries.len()
-    }
-
-    fn row_data(&self, row: usize) -> Option<FileRow> {
-        self.entries.get(row).map(|e| FileRow {
-            name: e.name.as_str().into(),
-            is_dir: e.is_dir,
-            size: if e.is_dir { "".into() } else { format_size(e.size).into() },
-        })
-    }
-
-    fn model_tracker(&self) -> &dyn ModelTracker {
-        &self.notify
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-}
 
 /// What a background load produces; `Send`, so it can cross back to the UI thread.
 #[derive(Debug)]
@@ -91,50 +57,6 @@ fn listing_after_failure(mode: &Mode, location: &Location) -> Option<Listing> {
     })
 }
 
-/// What the active tab currently shows.
-enum Listing {
-    Files(PathBuf, Rc<Vec<Entry>>),
-    Drives(Vec<Drive>),
-}
-
-impl Listing {
-    fn name_at(&self, index: usize) -> Option<String> {
-        match self {
-            Listing::Files(_, entries) => entries.get(index).map(|e| e.name.clone()),
-            Listing::Drives(drives) => drives.get(index).map(|d| d.label.clone()),
-        }
-    }
-
-    fn index_of(&self, name: &str) -> Option<usize> {
-        match self {
-            Listing::Files(_, entries) => entries.iter().position(|e| e.name == name),
-            Listing::Drives(drives) => drives.iter().position(|d| d.label == name),
-        }
-    }
-
-    /// The first row whose name starts with `typed` (lowercase), ignoring case; no
-    /// allocation per row, so it stays fast in a folder of 100k files.
-    fn find_prefix(&self, typed: &str) -> Option<usize> {
-        match self {
-            Listing::Files(_, entries) => {
-                entries.iter().position(|e| crate::keys::starts_with_lowercase(&e.name, typed))
-            }
-            Listing::Drives(drives) => drives.iter().position(|d| crate::keys::starts_with_lowercase(&d.label, typed)),
-        }
-    }
-}
-
-/// Applies a failed load of `location` to what the active tab shows; see
-/// [`listing_after_failure`]. Returns whether `listing` was replaced. The empty listing
-/// says nothing about the tab's selection and scroll, so it counts as `cleared`: the next
-/// `save_view` keeps the tab's saved view instead of overwriting it.
-fn apply_failure(listing: &mut Listing, cleared: &mut bool, mode: &Mode, location: &Location) -> bool {
-    let Some(empty) = listing_after_failure(mode, location) else { return false };
-    *listing = empty;
-    *cleared = true;
-    true
-}
-
 /// The path typed into the address bar. A relative path is taken from `base` (the folder
 /// on screen) if there is one, else from the working folder; on Windows `..` parts are
 /// resolved too, so the address bar parts stay right.
@@ -163,7 +85,7 @@ type Listener = Rc<dyn Fn(&Location)>;
 struct Inner {
     window: slint::Weak<AppWindow>,
     tabs: Tabs,
-    listing: Listing,
+    view: View,
     /// The listing was cleared for a tab switch (or emptied by a failed reload) and the
     /// active tab's own listing is not shown, so what is on screen says nothing about that
     /// tab's selection and scroll.
@@ -198,7 +120,7 @@ pub struct Navigator(Rc<RefCell<Inner>>);
 impl Navigator {
     /// The first tab opens at `first` with `select` selected; new tabs open at `start`.
     /// Does not load anything: call [`install`](Self::install) next.
-    pub fn new(window: &AppWindow, first: Location, select: Option<String>, start: Location) -> Navigator {
+    pub fn new(window: &AppWindow, view: View, first: Location, select: Option<String>, start: Location) -> Navigator {
         let mut tabs = Tabs::new(first);
         tabs.active_mut().set_view(ViewState {
             selected: select.iter().cloned().collect(),
@@ -210,7 +132,7 @@ impl Navigator {
         Navigator(Rc::new(RefCell::new(Inner {
             window: window.as_weak(),
             tabs,
-            listing: Listing::Files(PathBuf::new(), Rc::default()),
+            view,
             cleared: false,
             places: Places::default(),
             tab_model,
@@ -275,16 +197,13 @@ impl Navigator {
     /// Shows the (possibly new) active tab. Until its listing is loaded the file list is
     /// empty, so no other tab's files appear under its address.
     pub fn after_tabs_changed(&self) {
-        {
+        let view = {
             let mut inner = self.0.borrow_mut();
-            inner.listing = Listing::Files(PathBuf::new(), Rc::default());
             inner.cleared = true;
-            if let Some(window) = inner.window.upgrade() {
-                window.set_rows(ModelRc::default());
-                window.set_selected(-1);
-                window.set_list_scroll(0.0);
-            }
-        }
+            inner.view.clone()
+        };
+        // Not while borrowed: the view calls its selection listeners.
+        view.clear();
         self.update_chrome();
         self.load(self.active_location(), Mode::Show, None);
     }
@@ -364,11 +283,6 @@ impl Navigator {
     /// The active tab's index. Read-only: unlike `with_tabs`, keeps a pending load.
     pub fn active_index(&self) -> usize {
         self.0.borrow().tabs.active_index()
-    }
-
-    /// The first row whose name starts with `typed` (lowercase), ignoring case.
-    pub fn find_prefix(&self, typed: &str) -> Option<usize> {
-        self.0.borrow().listing.find_prefix(typed)
     }
 
     /// Closes the tab with `id`, wherever it is now; does nothing if it is already closed.
@@ -451,14 +365,10 @@ impl Navigator {
         self.load(self.active_location(), Mode::Show, None);
     }
 
-    /// Path of row `index` and whether it is a folder (drives count as folders).
+    /// Path of entry `index` and whether it is a folder (drives count as folders).
     pub fn entry_path(&self, index: i32) -> Option<(PathBuf, bool)> {
-        let inner = self.0.borrow();
         let index = usize::try_from(index).ok()?;
-        match &inner.listing {
-            Listing::Files(dir, entries) => entries.get(index).map(|e| (dir.join(&e.name), e.is_dir)),
-            Listing::Drives(drives) => drives.get(index).map(|d| (d.path.clone(), true)),
-        }
+        self.0.borrow().view.entry_path(index)
     }
 
     pub fn open_row(&self, index: i32) {
@@ -467,6 +377,24 @@ impl Navigator {
             self.go(Location::Path(path));
         } else if let Err(err) = open::that_detached(&path) {
             self.status(format!("Cannot open {}: {err}", path.display()));
+        }
+    }
+
+    /// Enter: opens the selected files with their default apps and goes into the first
+    /// selected folder; with nothing selected, the focused entry.
+    pub fn open_selected(&self) {
+        let view = self.0.borrow().view.clone();
+        let mut items = view.selected_items();
+        if items.is_empty() {
+            items.extend(view.focus().and_then(|i| view.entry_path(i)));
+        }
+        for (path, _) in items.iter().filter(|(_, is_dir)| !is_dir) {
+            if let Err(err) = open::that_detached(path) {
+                self.status(format!("Cannot open {}: {err}", path.display()));
+            }
+        }
+        if let Some((folder, _)) = items.into_iter().find(|(_, is_dir)| *is_dir) {
+            self.go(Location::Path(folder));
         }
     }
 
@@ -503,13 +431,7 @@ impl Navigator {
         if inner.cleared {
             return;
         }
-        let Some(window) = inner.window.upgrade() else { return };
-        let selected = usize::try_from(window.get_selected()).ok().and_then(|i| inner.listing.name_at(i));
-        let view = ViewState {
-            selected: selected.iter().cloned().collect(),
-            focus: selected,
-            scroll: window.get_list_scroll(),
-        };
+        let view = inner.view.capture();
         inner.tabs.active_mut().set_view(view);
     }
 
@@ -561,74 +483,30 @@ impl Navigator {
                 return self.show_failed(&mode, &location, format!("Cannot open {shown}: {err}"));
             }
         };
-        {
+        let (view, state) = {
             let mut inner = self.0.borrow_mut();
             if let Mode::Move(steps) = &mode {
                 inner.tabs.active_mut().apply_steps(steps);
             }
-            inner.listing = listing;
             inner.cleared = false;
-        }
-        self.show_listing(note);
+            (inner.view.clone(), inner.tabs.active().view().clone())
+        };
+        view.show(listing, &state, note);
         self.update_chrome();
     }
 
-    /// Shows `message` for a failed load; see [`listing_after_failure`].
+    /// Shows `message` for a failed load; see [`listing_after_failure`]. The empty listing
+    /// says nothing about the tab's selection and scroll, so it counts as `cleared`: the
+    /// next `save_view` keeps the tab's saved view instead of overwriting it.
     fn show_failed(&self, mode: &Mode, location: &Location, message: String) {
-        let replaced = {
+        let Some(empty) = listing_after_failure(mode, location) else { return self.status(message) };
+        let (view, state) = {
             let mut inner = self.0.borrow_mut();
-            let inner = &mut *inner;
-            apply_failure(&mut inner.listing, &mut inner.cleared, mode, location)
+            inner.cleared = true;
+            (inner.view.clone(), inner.tabs.active().view().clone())
         };
-        if !replaced {
-            return self.status(message);
-        }
-        self.show_listing(Some(message));
+        view.show(empty, &state, Some(message));
         self.update_chrome();
-    }
-
-    fn show_listing(&self, note: Option<String>) {
-        let inner = self.0.borrow();
-        let Some(window) = inner.window.upgrade() else { return };
-        let view = inner.tabs.active().view().clone();
-        let count = match &inner.listing {
-            Listing::Files(_, entries) => {
-                window.set_rows(ModelRc::new(EntryModel { entries: entries.clone(), notify: ModelNotify::default() }));
-                entries.len()
-            }
-            Listing::Drives(drives) => {
-                let rows: Vec<FileRow> = drives
-                    .iter()
-                    .map(|d| FileRow { name: d.label.as_str().into(), is_dir: true, size: "".into() })
-                    .collect();
-                window.set_rows(ModelRc::new(VecModel::from(rows)));
-                drives.len()
-            }
-        };
-        let selected = view
-            .focus
-            .as_deref()
-            .and_then(|n| inner.listing.index_of(n))
-            .and_then(|i| i32::try_from(i).ok())
-            .unwrap_or(-1);
-        window.set_selected(selected);
-        window.set_list_scroll(view.scroll);
-        // A new model makes the ListView re-place its rows on its next layout: until then the
-        // offset may be pulled back into the old list's bounds, and the first placement snaps
-        // it to a row boundary. Set it again once that frame is done, unless another load
-        // came first. (A zero timer would run before the frame.) The top needs no second pass.
-        if view.scroll != 0.0 && count > 0 {
-            let (weak, generation, scroll) = (inner.window.clone(), inner.generation.clone(), view.scroll);
-            let ticket = generation.load(Ordering::SeqCst);
-            slint::Timer::single_shot(SCROLL_RESTORE_DELAY, move || {
-                if generation.load(Ordering::SeqCst) == ticket
-                    && let Some(window) = weak.upgrade()
-                {
-                    window.set_list_scroll(scroll);
-                }
-            });
-        }
-        window.set_status(note.unwrap_or_else(|| format!("{count} items")).into());
     }
 
     /// Updates everything that depends on the active location: buttons, address bar, titles.
@@ -790,54 +668,6 @@ mod tests {
         assert!(
             matches!(listing_after_failure(&Mode::Show, &Location::Drives), Some(Listing::Drives(d)) if d.is_empty())
         );
-    }
-
-    fn files(dir: &str, names: &[&str]) -> Listing {
-        let entries = names
-            .iter()
-            .map(|n| Entry { name: (*n).to_owned(), is_dir: false, size: 0, modified: None, created: None })
-            .collect();
-        Listing::Files(PathBuf::from(dir), Rc::new(entries))
-    }
-
-    fn entry_count(listing: &Listing) -> usize {
-        match listing {
-            Listing::Files(_, entries) => entries.len(),
-            Listing::Drives(drives) => drives.len(),
-        }
-    }
-
-    #[test]
-    fn a_failed_show_keeps_the_tabs_saved_view() {
-        // The empty listing says nothing about the tab's selection and scroll, so the next
-        // `save_view` must not overwrite them.
-        for was_cleared in [false, true] {
-            let (mut listing, mut cleared) = (files("/x", &["a"]), was_cleared);
-            assert!(apply_failure(&mut listing, &mut cleared, &Mode::Show, &Location::Path("/x/locked".into())));
-            assert_eq!(entry_count(&listing), 0);
-            assert!(cleared, "was cleared: {was_cleared}");
-        }
-    }
-
-    #[test]
-    fn a_failed_move_changes_nothing() {
-        for mode in moves() {
-            let (mut listing, mut cleared) = (files("/x", &["a"]), false);
-            assert!(!apply_failure(&mut listing, &mut cleared, &mode, &Location::Path("/y".into())));
-            assert_eq!(entry_count(&listing), 1);
-            assert!(!cleared);
-        }
-    }
-
-    #[test]
-    fn type_ahead_search_ignores_case() {
-        let listing = files("/x", &["Apple", "Banana", "bandit", "İndir", "şablon"]);
-        assert_eq!(listing.find_prefix("ban"), Some(1));
-        assert_eq!(listing.find_prefix("band"), Some(2));
-        assert_eq!(listing.find_prefix("ş"), Some(4));
-        assert_eq!(listing.find_prefix(&"İ".to_lowercase()), Some(3));
-        assert_eq!(listing.find_prefix("z"), None);
-        assert_eq!(listing.find_prefix("applesauce"), None);
     }
 
     #[test]

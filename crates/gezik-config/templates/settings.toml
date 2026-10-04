@@ -43,3 +43,4 @@ thumbnails = true      # pictures and videos show a preview in the grid
 # up = "alt+up"            # macOS: "mod+up"
 # focus-path = "mod+l"
 # refresh = "f5"           # macOS: "mod+r"
+# select-all = "mod+a"
