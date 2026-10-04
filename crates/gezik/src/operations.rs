@@ -1,0 +1,666 @@
+//! File operations in the app: the engine, the operations panel and its summary, the taskbar,
+//! and what happens when a job ends (refresh, select, report problems).
+
+use std::cell::{Cell, RefCell};
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
+
+use gezik_config::settings::FilesSettings;
+use gezik_core::format_size;
+use gezik_core::ops::paths::same_path;
+use gezik_core::ops::rate::{Rate, format_eta, format_rate};
+use gezik_ops::{Engine, Event, JobId, JobState, PauseReason, Progress, Report, Settings, Task};
+use gezik_platform::taskbar::{Taskbar, TaskbarState};
+use slint::{ComponentHandle, ModelRc, VecModel};
+
+use crate::dialog::Dialogs;
+use crate::navigation::{Navigator, sync_model};
+use crate::sidebar::Sidebar;
+use crate::view::View;
+use crate::{AppWindow, OpRow};
+
+/// A job shows in the panel only if it still runs after this long.
+const SHOW_AFTER: Duration = Duration::from_secs(1);
+/// A finished row without problems stays this long.
+const DONE_FOR: Duration = Duration::from_secs(3);
+/// "Details" lists at most this many failures.
+const MAX_DETAILS: usize = 50;
+
+/// How a row looks; the numbers are `OpRow.state` in ops-panel.slint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowState {
+    Running = 0,
+    Waiting = 1,
+    Paused = 2,
+    Deciding = 3,
+    Done = 4,
+    Failed = 5,
+}
+
+/// How far a job is, 0–1: by bytes when it has any, else by items.
+fn fraction(progress: &Progress) -> f32 {
+    let ratio = |done: u64, total: u64| (done as f64 / total as f64).clamp(0.0, 1.0) as f32;
+    if progress.bytes_total > 0 {
+        ratio(progress.bytes_done, progress.bytes_total)
+    } else if progress.items_total > 0 {
+        ratio(progress.items_done, progress.items_total)
+    } else {
+        0.0
+    }
+}
+
+/// A row's state, its text after the title, and its bar (below 0: not known yet).
+pub fn describe(
+    progress: Option<&Progress>,
+    report: Option<&Report>,
+    speed: Option<f64>,
+    left: Option<Duration>,
+) -> (RowState, String, f32) {
+    if let Some(report) = report {
+        return match report.failures.len() {
+            _ if report.cancelled => (RowState::Done, "Cancelled".to_owned(), 1.0),
+            0 => (RowState::Done, "Done".to_owned(), 1.0),
+            1 => (RowState::Failed, "1 item failed".to_owned(), 1.0),
+            n => (RowState::Failed, format!("{n} items failed"), 1.0),
+        };
+    }
+    let Some(progress) = progress else { return (RowState::Waiting, "Starting".to_owned(), -1.0) };
+    let done = fraction(progress);
+    match progress.state {
+        JobState::Waiting => (RowState::Waiting, "Waiting for the drive".to_owned(), -1.0),
+        JobState::Scanning => {
+            let size = format_size(progress.bytes_total);
+            (RowState::Running, format!("Scanning… {} items · {size}", progress.items_total), -1.0)
+        }
+        JobState::Deciding => (RowState::Deciding, "Waiting for your decisions".to_owned(), done),
+        JobState::Paused(PauseReason::User) => (RowState::Paused, "Paused".to_owned(), done),
+        JobState::Paused(PauseReason::DiskFull) => (RowState::Paused, "The disk is full".to_owned(), done),
+        JobState::Paused(PauseReason::ManyFailures) => (RowState::Paused, "Paused after errors".to_owned(), done),
+        JobState::Running => {
+            let mut text = format!("{}%", (done * 100.0).floor() as u32);
+            if let Some(speed) = speed.filter(|s| *s > 0.0 && progress.bytes_total > 0) {
+                text.push_str(&format!(" · {}", format_rate(speed)));
+            }
+            if let Some(left) = left {
+                text.push_str(&format!(" · {}", format_eta(left)));
+            }
+            (RowState::Running, text, done)
+        }
+    }
+}
+
+/// The status bar's line for the panel: `2 operations · 61%`; `3 items failed` once only
+/// failed rows are left; empty when the panel has nothing.
+pub fn summary_text(running: usize, done: Option<f32>, failed_items: usize, rows: usize) -> String {
+    if rows == 0 {
+        return String::new();
+    }
+    if running == 0 {
+        return match failed_items {
+            0 => "Operations done".to_owned(),
+            1 => "1 item failed".to_owned(),
+            n => format!("{n} items failed"),
+        };
+    }
+    let what = if running == 1 { "1 operation".to_owned() } else { format!("{running} operations") };
+    match done {
+        Some(done) => format!("{what} · {}%", (done * 100.0).floor() as u32),
+        None => what,
+    }
+}
+
+/// The taskbar button for these rows (state, bar): paused if any waits for the user, red if
+/// any failed; off when nothing runs or failed.
+pub fn taskbar_progress(rows: &[(RowState, f32)]) -> (TaskbarState, u64, u64) {
+    let active: Vec<&(RowState, f32)> = rows.iter().filter(|(state, _)| *state != RowState::Done).collect();
+    if active.is_empty() {
+        return (TaskbarState::Off, 0, 0);
+    }
+    let state = if active.iter().any(|(s, _)| *s == RowState::Failed) {
+        TaskbarState::Error
+    } else if active.iter().any(|(s, _)| matches!(s, RowState::Paused | RowState::Deciding)) {
+        TaskbarState::Paused
+    } else {
+        TaskbarState::Normal
+    };
+    let total = active.len() as u64 * 1000;
+    let done: u64 = active.iter().map(|(_, f)| (f.clamp(0.0, 1.0) * 1000.0) as u64).sum();
+    (state, done, total)
+}
+
+/// The names in `folder` among `results` (to select them there).
+pub fn result_names(results: &[PathBuf], folder: &Path) -> Vec<String> {
+    results
+        .iter()
+        .filter(|path| path.parent().is_some_and(|parent| same_path(parent, folder)))
+        .filter_map(|path| path.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .collect()
+}
+
+thread_local! {
+    static CURRENT: RefCell<Option<Operations>> = const { RefCell::new(None) };
+}
+
+/// Runs `f` with this UI thread's operations, if set up.
+pub fn with_current(f: impl FnOnce(&Operations)) {
+    if let Some(ops) = CURRENT.with(|c| c.borrow().clone()) {
+        f(&ops);
+    }
+}
+
+/// What to do with a job's results once their folder shows them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum After {
+    #[default]
+    Select,
+    Nothing,
+}
+
+type Retry = Rc<dyn Fn() -> Box<dyn Task>>;
+
+struct JobView {
+    id: JobId,
+    title: String,
+    background: bool,
+    shown: bool,
+    progress: Option<Progress>,
+    rate: Rate,
+    report: Option<Report>,
+    retry: Option<Retry>,
+    after: After,
+}
+
+impl JobView {
+    fn new(id: JobId, title: String) -> JobView {
+        JobView {
+            id,
+            title,
+            background: false,
+            shown: false,
+            progress: None,
+            rate: Rate::new(Duration::from_secs(5)),
+            report: None,
+            retry: None,
+            after: After::Nothing,
+        }
+    }
+
+    fn row(&self) -> OpRow {
+        let left = self.progress.as_ref().and_then(|p| self.rate.remaining(p.bytes_total.saturating_sub(p.bytes_done)));
+        let (state, detail, progress) =
+            describe(self.progress.as_ref(), self.report.as_ref(), self.rate.per_second(), left);
+        let finished = self.report.is_some();
+        let failed = state == RowState::Failed;
+        let paused_by_user =
+            matches!(self.progress.as_ref().map(|p| p.state), Some(JobState::Paused(PauseReason::User)));
+        OpRow {
+            id: i32::try_from(self.id).unwrap_or(i32::MAX),
+            title: self.title.clone().into(),
+            detail: detail.into(),
+            progress,
+            state: state as i32,
+            can_pause: !finished && matches!(state, RowState::Running),
+            can_resume: !finished && paused_by_user,
+            can_start_now: !finished && state == RowState::Waiting && self.progress.is_some(),
+            can_retry: failed && self.retry.is_some(),
+            can_details: failed,
+            finished,
+        }
+    }
+}
+
+struct Inner {
+    window: slint::Weak<AppWindow>,
+    engine: Engine,
+    nav: Navigator,
+    view: View,
+    sidebar: Sidebar,
+    dialogs: Dialogs,
+    rows: Rc<VecModel<OpRow>>,
+    jobs: RefCell<Vec<JobView>>,
+    files: Cell<FilesSettings>,
+    collapsed: Cell<bool>,
+    taskbar: RefCell<Option<Taskbar>>,
+    /// Jobs whose pause already has a question (several workers may report the same pause).
+    asked: RefCell<HashSet<JobId>>,
+}
+
+#[derive(Clone)]
+pub struct Operations(Rc<Inner>);
+
+impl Operations {
+    #[allow(clippy::too_many_arguments, reason = "the parts of the app it works with")]
+    pub fn new(
+        window: &AppWindow,
+        nav: Navigator,
+        view: View,
+        sidebar: Sidebar,
+        dialogs: Dialogs,
+        settings: Settings,
+        files: FilesSettings,
+        collapsed: bool,
+    ) -> Operations {
+        // One wake-up for a burst of events: the flag is cleared just before draining.
+        let waiting = Arc::new(AtomicBool::new(false));
+        let engine = Engine::new(settings, {
+            let waiting = waiting.clone();
+            move || {
+                if !waiting.swap(true, Ordering::SeqCst) {
+                    let waiting = waiting.clone();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        waiting.store(false, Ordering::SeqCst);
+                        with_current(|ops| ops.drain());
+                    });
+                }
+            }
+        });
+        let rows = Rc::new(VecModel::default());
+        window.set_op_rows(ModelRc::from(rows.clone()));
+        let ops = Operations(Rc::new(Inner {
+            window: window.as_weak(),
+            engine,
+            nav,
+            view,
+            sidebar,
+            dialogs,
+            rows,
+            jobs: RefCell::default(),
+            files: Cell::new(files),
+            collapsed: Cell::new(collapsed),
+            taskbar: RefCell::default(),
+            asked: RefCell::default(),
+        }));
+        CURRENT.with(|c| *c.borrow_mut() = Some(ops.clone()));
+        ops
+    }
+
+    /// `[files]` changed.
+    pub fn set_files(&self, files: FilesSettings) {
+        self.0.files.set(files);
+        self.0.engine.set_threads(files.copy_threads);
+    }
+
+    pub fn collapsed(&self) -> bool {
+        self.0.collapsed.get()
+    }
+
+    pub fn toggle_collapsed(&self) {
+        self.0.collapsed.set(!self.0.collapsed.get());
+        self.update();
+    }
+
+    /// Runs `task`; `retry` runs the same operation again from its row, `after` says what to
+    /// do with the results.
+    pub fn submit(&self, task: Box<dyn Task>, retry: Option<Retry>, after: After) -> JobId {
+        let title = task.title();
+        let id = self.0.engine.submit(task);
+        let mut job = JobView::new(id, title);
+        job.retry = retry;
+        job.after = after;
+        self.0.jobs.borrow_mut().push(job);
+        self.show_later(id);
+        id
+    }
+
+    /// Finishes deletes an earlier run left unfinished.
+    pub fn recover(&self) {
+        let _ = self.0.engine.recover_deletes();
+    }
+
+    fn show_later(&self, id: JobId) {
+        let ops = self.clone();
+        slint::Timer::single_shot(SHOW_AFTER, move || {
+            if let Some(job) = ops.0.jobs.borrow_mut().iter_mut().find(|j| j.id == id && j.report.is_none()) {
+                job.shown = true;
+            }
+            ops.update();
+        });
+    }
+
+    fn with_job(&self, id: JobId, f: impl FnOnce(&mut JobView)) {
+        if let Some(job) = self.0.jobs.borrow_mut().iter_mut().find(|j| j.id == id) {
+            f(job);
+        }
+    }
+
+    /// Handles everything the engine reported.
+    pub fn drain(&self) {
+        for event in self.0.engine.drain() {
+            match event {
+                Event::Added { job, title, background, .. } => {
+                    let known = self.0.jobs.borrow().iter().any(|j| j.id == job);
+                    if !known {
+                        let mut view = JobView::new(job, title);
+                        view.background = background;
+                        self.0.jobs.borrow_mut().push(view);
+                        self.show_later(job);
+                    } else {
+                        self.with_job(job, |j| j.background = background);
+                    }
+                }
+                Event::Progress { job, progress } => self.with_job(job, |j| {
+                    j.rate.record(Instant::now(), progress.bytes_done);
+                    j.progress = Some(progress);
+                }),
+                Event::Conflicts { job, conflicts } => self.conflicts(job, conflicts),
+                Event::Paused { job, reason, path } => self.paused(job, reason, path),
+                Event::Finished { job, report } => self.finished(job, report),
+                Event::Changed { dirs } => self.0.nav.refresh_showing(&dirs, &[]),
+                Event::History => {}
+            }
+        }
+        self.update();
+    }
+
+    /// Until the conflict list exists (Task 14): every conflict keeps its default (Skip).
+    fn conflicts(&self, job: JobId, conflicts: Vec<gezik_ops::ConflictItem>) {
+        let decisions = conflicts.iter().map(|c| c.decision).collect();
+        self.0.engine.decide(job, decisions);
+    }
+
+    fn paused(&self, job: JobId, reason: PauseReason, path: Option<PathBuf>) {
+        self.with_job(job, |j| j.shown = true);
+        let (title, message) = match reason {
+            PauseReason::User => return,
+            PauseReason::DiskFull => (
+                "The disk is full".to_owned(),
+                format!(
+                    "Free some space{}, then resume.",
+                    path.as_deref().map(|p| format!(" for {}", p.display())).unwrap_or_default()
+                ),
+            ),
+            PauseReason::ManyFailures => (
+                "Many items failed in a row".to_owned(),
+                "The drive may have been disconnected. Resume to go on, or cancel.".to_owned(),
+            ),
+        };
+        if !self.0.asked.borrow_mut().insert(job) {
+            return;
+        }
+        // Waiting for the user: the panel opens by itself.
+        self.0.collapsed.set(false);
+        let ops = self.clone();
+        self.0.dialogs.ask(title, message, &["Resume", "Cancel"], move |choice| {
+            ops.0.asked.borrow_mut().remove(&job);
+            match choice {
+                Some(0) => ops.0.engine.resume(job),
+                _ => ops.0.engine.cancel(job),
+            }
+        });
+    }
+
+    fn finished(&self, id: JobId, report: Report) {
+        self.0.asked.borrow_mut().remove(&id);
+        let mut after = After::Nothing;
+        self.with_job(id, |job| {
+            after = job.after;
+            if !report.failures.is_empty() {
+                job.shown = true;
+            }
+            job.report = Some(report.clone());
+        });
+        if !report.failures.is_empty() {
+            // Something failed: the panel opens by itself.
+            self.0.collapsed.set(false);
+        }
+        let select = match (after, self.0.view.folder()) {
+            (After::Nothing, _) | (_, None) => Vec::new(),
+            (_, Some(folder)) => result_names(&report.results, &folder),
+        };
+        self.0.nav.refresh_showing(&report.changed_dirs, &select);
+        self.0.sidebar.refresh();
+        if report.skipped_changed > 0 {
+            let n = report.skipped_changed;
+            let what = if n == 1 { "1 item".to_owned() } else { format!("{n} items") };
+            self.0.view.note(format!("{what} changed since; skipped"));
+        }
+        if !report.no_trash.is_empty() {
+            self.ask_delete_for_good(report.no_trash.clone());
+        }
+        if report.failures.is_empty() {
+            let ops = self.clone();
+            slint::Timer::single_shot(DONE_FOR, move || ops.remove(id));
+        }
+    }
+
+    /// Items whose drive has no trash: delete them for good?
+    fn ask_delete_for_good(&self, paths: Vec<PathBuf>) {
+        let bin = if cfg!(windows) { "Recycle Bin" } else { "trash" };
+        let title = if paths.len() == 1 {
+            format!("{} cannot go to the {bin}", paths[0].file_name().map(|n| n.to_string_lossy()).unwrap_or_default())
+        } else {
+            format!("{} items cannot go to the {bin}", paths.len())
+        };
+        let ops = self.clone();
+        self.0.dialogs.ask(
+            title,
+            format!("This drive has no {bin}. Delete permanently? This cannot be undone."),
+            &["Delete", "Cancel"],
+            move |choice| {
+                if choice == Some(0) {
+                    let pending = ops.0.engine.pending_deletes();
+                    ops.submit(Box::new(gezik_ops::DeleteTask::new(paths, pending)), None, After::Nothing);
+                }
+            },
+        );
+    }
+
+    fn remove(&self, id: JobId) {
+        self.0.jobs.borrow_mut().retain(|j| j.id != id);
+        self.update();
+    }
+
+    /// Redraws the panel, the summary and the taskbar.
+    fn update(&self) {
+        let Some(window) = self.0.window.upgrade() else { return };
+        let jobs = self.0.jobs.borrow();
+        let shown: Vec<&JobView> = jobs.iter().filter(|j| j.shown).collect();
+        let rows: Vec<OpRow> = shown.iter().map(|j| j.row()).collect();
+        let states: Vec<(RowState, f32)> = rows
+            .iter()
+            .map(|r| {
+                let state = match r.state {
+                    0 => RowState::Running,
+                    1 => RowState::Waiting,
+                    2 => RowState::Paused,
+                    3 => RowState::Deciding,
+                    5 => RowState::Failed,
+                    _ => RowState::Done,
+                };
+                (state, r.progress.max(0.0))
+            })
+            .collect();
+        let running: Vec<&(RowState, f32)> =
+            states.iter().filter(|(s, _)| !matches!(s, RowState::Done | RowState::Failed)).collect();
+        let overall =
+            (!running.is_empty()).then(|| running.iter().map(|(_, f)| *f).sum::<f32>() / running.len() as f32);
+        let failed_items: usize = shown.iter().filter_map(|j| j.report.as_ref()).map(|r| r.failures.len()).sum();
+        window.set_ops_summary(summary_text(running.len(), overall, failed_items, rows.len()).into());
+        window.set_ops_collapsed(self.0.collapsed.get());
+        window.set_ops_panel_open(!rows.is_empty() && !self.0.collapsed.get());
+        sync_model(&self.0.rows, rows.into_iter());
+        let (state, done, total) = taskbar_progress(&states);
+        let mut taskbar = self.0.taskbar.borrow_mut();
+        if taskbar.is_none() && state != TaskbarState::Off {
+            *taskbar = Some(Taskbar::new(&window.window().window_handle()));
+        }
+        if let Some(taskbar) = taskbar.as_ref() {
+            taskbar.set(state, done, total);
+        }
+    }
+
+    fn id(id: i32) -> JobId {
+        JobId::try_from(id).unwrap_or(0)
+    }
+
+    pub fn pause(&self, id: i32) {
+        self.0.engine.pause(Self::id(id));
+    }
+
+    pub fn resume(&self, id: i32) {
+        self.0.asked.borrow_mut().remove(&Self::id(id));
+        self.0.engine.resume(Self::id(id));
+    }
+
+    pub fn cancel(&self, id: i32) {
+        self.0.engine.cancel(Self::id(id));
+    }
+
+    pub fn start_now(&self, id: i32) {
+        self.0.engine.start_now(Self::id(id));
+    }
+
+    pub fn dismiss(&self, id: i32) {
+        self.remove(Self::id(id));
+    }
+
+    /// Runs a failed row's operation again (what is done already shows as identical and is
+    /// skipped).
+    pub fn retry(&self, id: i32) {
+        let id = Self::id(id);
+        let retry = self.0.jobs.borrow().iter().find(|j| j.id == id).and_then(|j| j.retry.clone());
+        if let Some(retry) = retry {
+            self.remove(id);
+            self.submit(retry(), Some(retry.clone()), After::Select);
+        }
+    }
+
+    /// The failures of a row, with Retry.
+    pub fn details(&self, id: i32) {
+        let id = Self::id(id);
+        let (title, message, can_retry) = {
+            let jobs = self.0.jobs.borrow();
+            let Some(job) = jobs.iter().find(|j| j.id == id) else { return };
+            let Some(report) = &job.report else { return };
+            let failures = &report.failures;
+            let mut lines: Vec<String> = failures
+                .iter()
+                .take(MAX_DETAILS)
+                .map(|f| {
+                    format!("{}: {}", f.path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default(), f.message)
+                })
+                .collect();
+            if failures.len() > MAX_DETAILS {
+                lines.push(format!("…and {} more", failures.len() - MAX_DETAILS));
+            }
+            (job.title.clone(), lines.join("\n"), job.retry.is_some())
+        };
+        let ops = self.clone();
+        let buttons: &[&str] = if can_retry { &["Retry", "Close"] } else { &["Close"] };
+        self.0.dialogs.ask(title, message, buttons, move |choice| {
+            if can_retry && choice == Some(0) {
+                ops.retry(i32::try_from(id).unwrap_or(0));
+            }
+        });
+    }
+
+    /// Asks before closing while operations run; `quit` runs if the user cancels them.
+    /// Returns whether the window must stay open for now.
+    pub fn confirm_close(&self, quit: impl FnOnce() + 'static) -> bool {
+        if !self.0.engine.busy() {
+            return false;
+        }
+        let running = self.0.jobs.borrow().iter().filter(|j| j.report.is_none() && !j.background).count().max(1);
+        let title = if running == 1 {
+            "1 operation is running".to_owned()
+        } else {
+            format!("{running} operations are running")
+        };
+        let engine = self.0.engine.clone();
+        self.0.dialogs.ask(
+            title,
+            "Quitting cancels them. What is already copied or moved stays.",
+            &["Keep open", "Cancel them and quit"],
+            move |choice| {
+                if choice == Some(1) {
+                    engine.cancel_all();
+                    engine.wait_idle(Duration::from_secs(3));
+                    quit();
+                }
+            },
+        );
+        true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gezik_ops::{Failure, TaskKind};
+
+    fn progress(state: JobState, items: (u64, u64), bytes: (u64, u64)) -> Progress {
+        Progress { state, items_done: items.0, items_total: items.1, bytes_done: bytes.0, bytes_total: bytes.1 }
+    }
+
+    fn report(failures: usize, cancelled: bool) -> Report {
+        Report {
+            kind: TaskKind::Copy,
+            cancelled,
+            failures: (0..failures).map(|i| Failure { path: format!("/f{i}").into(), message: "x".into() }).collect(),
+            skipped_changed: 0,
+            no_trash: Vec::new(),
+            results: Vec::new(),
+            changed_dirs: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn running_rows_show_percent_speed_and_time_left() {
+        let p = progress(JobState::Running, (3, 10), (61, 100));
+        let (state, text, bar) = describe(Some(&p), None, Some(84.0 * 1024.0 * 1024.0), Some(Duration::from_secs(42)));
+        assert_eq!(state, RowState::Running);
+        assert!(text.starts_with("61% · ") && text.ends_with(" · ~0:42"), "{text}");
+        assert!((bar - 0.61).abs() < 0.001);
+        let items_only = progress(JobState::Running, (1, 4), (0, 0));
+        assert_eq!(describe(Some(&items_only), None, None, None).1, "25%");
+    }
+
+    #[test]
+    fn other_states() {
+        let scanning = progress(JobState::Scanning, (0, 12400), (0, 3 * 1024 * 1024 * 1024));
+        let (_, text, bar) = describe(Some(&scanning), None, None, None);
+        assert!(text.starts_with("Scanning… 12400 items · "), "{text}");
+        assert!(bar < 0.0);
+        let waiting = progress(JobState::Waiting, (0, 0), (0, 0));
+        assert_eq!(describe(Some(&waiting), None, None, None).0, RowState::Waiting);
+        let full = progress(JobState::Paused(PauseReason::DiskFull), (1, 2), (0, 0));
+        assert_eq!(describe(Some(&full), None, None, None).1, "The disk is full");
+        assert_eq!(describe(None, Some(&report(0, false)), None, None).1, "Done");
+        assert_eq!(
+            describe(None, Some(&report(3, false)), None, None),
+            (RowState::Failed, "3 items failed".into(), 1.0)
+        );
+        assert_eq!(describe(None, Some(&report(3, true)), None, None).1, "Cancelled");
+    }
+
+    #[test]
+    fn summary_line() {
+        assert_eq!(summary_text(0, None, 0, 0), "");
+        assert_eq!(summary_text(2, Some(0.615), 0, 2), "2 operations · 61%");
+        assert_eq!(summary_text(1, None, 0, 1), "1 operation");
+        assert_eq!(summary_text(0, None, 3, 1), "3 items failed");
+        assert_eq!(summary_text(0, None, 0, 1), "Operations done");
+    }
+
+    #[test]
+    fn taskbar_follows_the_rows() {
+        assert_eq!(taskbar_progress(&[]), (TaskbarState::Off, 0, 0));
+        assert_eq!(taskbar_progress(&[(RowState::Done, 1.0)]).0, TaskbarState::Off);
+        assert_eq!(
+            taskbar_progress(&[(RowState::Running, 0.5), (RowState::Running, 1.0)]),
+            (TaskbarState::Normal, 1500, 2000)
+        );
+        assert_eq!(taskbar_progress(&[(RowState::Running, 0.5), (RowState::Deciding, 0.1)]).0, TaskbarState::Paused);
+        assert_eq!(taskbar_progress(&[(RowState::Paused, 0.5), (RowState::Failed, 1.0)]).0, TaskbarState::Error);
+    }
+
+    #[test]
+    fn only_results_in_the_folder_are_selected() {
+        let results = [PathBuf::from("/a/x.txt"), PathBuf::from("/b/y.txt"), PathBuf::from("/a/sub")];
+        assert_eq!(result_names(&results, Path::new("/a")), ["x.txt", "sub"]);
+    }
+}

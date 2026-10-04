@@ -1,0 +1,74 @@
+import { Theme } from "../theme.slint";
+import { TextButton } from "text-button.slint";
+
+// A question over the window: a title, a message and buttons. Enter picks the first button,
+// Esc the last.
+export component Dialog inherits Rectangle {
+    in property <string> title;
+    in property <string> message;
+    in property <[string]> buttons;
+    callback chosen(int);
+
+    background: Theme.background.with-alpha(0.6);
+
+    // Clicks outside the box go nowhere.
+    TouchArea { }
+
+    scope := FocusScope {
+        init => { self.focus(); }
+        key-pressed(event) => {
+            if event.text == Key.Return {
+                root.chosen(0);
+                return accept;
+            }
+            if event.text == Key.Escape {
+                root.chosen(root.buttons.length - 1);
+                return accept;
+            }
+            return reject;
+        }
+    }
+
+    Rectangle {
+        width: min(460px, root.width - 40px);
+        height: content.preferred-height;
+        x: (root.width - self.width) / 2;
+        y: (root.height - self.height) / 3;
+        background: Theme.surface;
+        border-radius: Theme.radius * 1.5;
+        border-width: 1px;
+        border-color: Theme.border;
+        accessible-role: groupbox;
+        accessible-label: root.title;
+
+        content := VerticalLayout {
+            padding: Theme.spacing * 3;
+            spacing: Theme.spacing * 2;
+            Text {
+                text: root.title;
+                font-weight: 600;
+                wrap: word-wrap;
+                color: Theme.foreground;
+            }
+            if root.message != "": Flickable {
+                height: min(300px, message-text.preferred-height);
+                content-height: message-text.preferred-height;
+                message-text := Text {
+                    width: parent.width;
+                    text: root.message;
+                    wrap: word-wrap;
+                    color: Theme.foreground-muted;
+                }
+            }
+            HorizontalLayout {
+                alignment: end;
+                spacing: Theme.spacing;
+                for label[i] in root.buttons: TextButton {
+                    text: label;
+                    primary: i == 0;
+                    clicked => { root.chosen(i); }
+                }
+            }
+        }
+    }
+}
