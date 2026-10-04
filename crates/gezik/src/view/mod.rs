@@ -157,7 +157,8 @@ impl View {
         }
     }
 
-    /// Type names arrive one by one: sorts again once they stop for a moment.
+    /// Type names arrive one by one: sorts again once they stop for a moment, keeping the
+    /// scroll position (the user did not ask for it, so the view does not jump).
     fn resort_soon(&self) {
         if self.0.resort_pending.replace(true) {
             return;
@@ -165,7 +166,7 @@ impl View {
         let view = self.clone();
         slint::Timer::single_shot(Duration::from_millis(150), move || {
             view.0.resort_pending.set(false);
-            view.resort();
+            view.resort(false);
         });
     }
 
@@ -522,7 +523,7 @@ impl View {
         }
         if view.sort != old.sort {
             self.sync_header();
-            self.resort();
+            self.resort(true);
         }
     }
 
@@ -668,8 +669,9 @@ impl View {
             .unwrap_or_else(|| fallback_type_name(&entry.name, entry.is_dir))
     }
 
-    /// Sorts the current listing again, keeping the selection by name and the focus in view.
-    fn resort(&self) {
+    /// Sorts the current listing again, keeping the selection by name; then scrolls the
+    /// focus into view (`reveal`) or stays at the same scroll position.
+    fn resort(&self, reveal: bool) {
         let state = self.capture_all();
         let listing = std::mem::take(&mut self.0.data.borrow_mut().listing);
         let listing = self.sorted(listing, false);
@@ -682,8 +684,12 @@ impl View {
         self.0.model.notify.reset();
         if let Some(window) = self.0.window.upgrade() {
             self.sync_focus(&window);
+            if !reveal {
+                window.set_list_scroll(state.scroll);
+                self.keep_scroll_after_reset(state.scroll);
+            }
         }
-        if let Some(focus) = self.focus() {
+        if reveal && let Some(focus) = self.focus() {
             self.reveal(focus);
         }
         self.notify_listeners();
