@@ -242,6 +242,104 @@ pub fn set_hidden(_path: &Path) -> io::Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
+pub fn trash(path: &Path) -> io::Result<Option<PathBuf>> {
+    use objc2_foundation::{NSFileManager, NSString, NSURL};
+    let text = path.to_str().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "the path is not UTF-8"))?;
+    let url = NSURL::fileURLWithPath(&NSString::from_str(text));
+    let mut resulting = None;
+    NSFileManager::defaultManager()
+        .trashItemAtURL_resultingItemURL_error(&url, Some(&mut resulting))
+        .map_err(|err| io::Error::other(err.localizedDescription().to_string()))?;
+    Ok(resulting.and_then(|url| url.path()).map(|p| PathBuf::from(p.to_string())))
+}
+
+#[cfg(target_os = "linux")]
+pub fn trash(path: &Path) -> io::Result<Option<PathBuf>> {
+    use super::freedesktop::{free_name, info_text};
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+    let absolute = std::path::absolute(path)?;
+    let dev = std::fs::symlink_metadata(&absolute)?.dev();
+    let trash_dir = trash_dir_for(&absolute, dev)?;
+    let (files, info) = (trash_dir.join("files"), trash_dir.join("info"));
+    std::fs::create_dir_all(&files)?;
+    std::fs::create_dir_all(&info)?;
+    let name = absolute.file_name().ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?.as_bytes().to_vec();
+    let info_of = |n: &[u8]| {
+        let mut file = n.to_vec();
+        file.extend_from_slice(b".trashinfo");
+        info.join(std::ffi::OsString::from_vec(file))
+    };
+    // The info file is made first, with create_new: it claims the name.
+    let (chosen, info_path) = loop {
+        let candidate = free_name(&name, |n| {
+            info_of(n).exists() || std::fs::symlink_metadata(files.join(std::ffi::OsStr::from_bytes(n))).is_ok()
+        });
+        let info_path = info_of(&candidate);
+        match OpenOptions::new().write(true).create_new(true).open(&info_path) {
+            Ok(mut file) => {
+                file.write_all(info_text(absolute.as_os_str().as_bytes(), &local_now()).as_bytes())?;
+                break (candidate, info_path);
+            }
+            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(err),
+        }
+    };
+    let target = files.join(std::ffi::OsString::from_vec(chosen));
+    if let Err(err) = std::fs::rename(&absolute, &target) {
+        let _ = std::fs::remove_file(&info_path);
+        return Err(err);
+    }
+    Ok(Some(target))
+}
+
+/// The home trash if `path` is on the same device, else `.Trash-<uid>` at its mount point.
+#[cfg(target_os = "linux")]
+fn trash_dir_for(path: &Path, dev: u64) -> io::Result<PathBuf> {
+    let data_home = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| dirs::home_dir().map(|home| home.join(".local/share")))
+        .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
+    let home_trash = data_home.join("Trash");
+    let home_dev = nearest_existing(&home_trash).and_then(|p| std::fs::metadata(p).ok()).map(|m| m.dev());
+    if home_dev == Some(dev) {
+        return Ok(home_trash);
+    }
+    let top = drive_root(path).ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
+    let uid = unsafe { libc::getuid() };
+    Ok(top.join(format!(".Trash-{uid}")))
+}
+
+#[cfg(target_os = "linux")]
+fn local_now() -> String {
+    let now = unsafe { libc::time(std::ptr::null_mut()) };
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    unsafe { libc::localtime_r(&now, &mut tm) };
+    super::freedesktop::format_date(tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec)
+}
+
+pub fn restore(trashed: &Path, original: &Path) -> io::Result<()> {
+    if std::fs::symlink_metadata(original).is_ok() {
+        return Err(io::Error::from(io::ErrorKind::AlreadyExists));
+    }
+    if let Some(parent) = original.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::rename(trashed, original)?;
+    // freedesktop: drop `info/NAME.trashinfo` next to `files/NAME`.
+    if cfg!(target_os = "linux")
+        && let (Some(files), Some(name)) = (trashed.parent(), trashed.file_name())
+        && let Some(root) = files.parent()
+    {
+        let mut info = name.to_os_string();
+        info.push(".trashinfo");
+        let _ = std::fs::remove_file(root.join("info").join(info));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,6 +1,8 @@
 //! What the system does best for file operations: copying with progress, deleting, moving
 //! without replacing, and what kind of drive a path is on.
 
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+mod freedesktop;
 #[cfg(unix)]
 mod unix;
 #[cfg(windows)]
@@ -11,9 +13,9 @@ use std::path::{Path, PathBuf};
 
 pub use gezik_core::ops::threads::DiskKind;
 #[cfg(unix)]
-pub use unix::{copy_file, delete, drive_facts, drive_root, move_entry, set_hidden};
+pub use unix::{copy_file, delete, drive_facts, drive_root, move_entry, restore, set_hidden, trash};
 #[cfg(windows)]
-pub use windows::{copy_file, delete, drive_facts, drive_root, move_entry, set_hidden};
+pub use windows::{copy_file, delete, drive_facts, drive_root, move_entry, restore, set_hidden, trash};
 
 /// What the engine needs to know about the drive a path is on.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -162,6 +164,62 @@ mod tests {
     fn nearest_existing_walks_up() {
         let dir = test_dir("nearest");
         assert_eq!(nearest_existing(&dir.join("a").join("b")), Some(dir.clone()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn trash_and_restore_round_trip() {
+        let dir = test_dir("trash");
+        let file = dir.join("çöp testi.txt");
+        std::fs::write(&file, "keep me").unwrap();
+        let trashed = trash(&file).unwrap().expect("the temp folder has a trash");
+        assert!(!file.exists());
+        assert!(std::fs::symlink_metadata(&trashed).is_ok(), "{}", trashed.display());
+        restore(&trashed, &file).unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "keep me");
+        assert!(std::fs::symlink_metadata(&trashed).is_err());
+        #[cfg(windows)]
+        {
+            let name = trashed.file_name().unwrap().to_str().unwrap();
+            assert!(name.starts_with("$R") && name.ends_with(".txt"), "{}", trashed.display());
+            let info = trashed.with_file_name(format!("$I{}", &name[2..]));
+            assert!(std::fs::symlink_metadata(&info).is_err(), "the $I record is gone: {}", info.display());
+        }
+
+        let folder = dir.join("sub");
+        std::fs::create_dir(&folder).unwrap();
+        std::fs::write(folder.join("x"), "x").unwrap();
+        let trashed = trash(&folder).unwrap().unwrap();
+        std::fs::write(&folder, "in the way").ok();
+        assert_eq!(restore(&trashed, &folder).unwrap_err().kind(), io::ErrorKind::AlreadyExists);
+        std::fs::remove_file(&folder).unwrap();
+        restore(&trashed, &folder).unwrap();
+        assert!(folder.join("x").is_file());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn trashing_what_is_not_there_fails() {
+        let dir = test_dir("trash-missing");
+        assert!(trash(&dir.join("nothing-here")).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_name_ending_in_a_dot_never_trashes_its_sibling() {
+        let dir = test_dir("trash-dot");
+        let sibling = dir.join("x");
+        let dotted = PathBuf::from(format!(r"\\?\{}\x.", dir.display()));
+        std::fs::write(&sibling, "sibling").unwrap();
+        std::fs::write(&dotted, "dotted").unwrap();
+        // The Shell drops a trailing dot and would take `x`; neither spelling reaches `x.`.
+        for path in [PathBuf::from(format!(r"{}\x.", dir.display())), dotted.clone()] {
+            let err = trash(&path).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{err}");
+            assert_eq!(std::fs::read_to_string(&sibling).unwrap(), "sibling");
+            assert_eq!(std::fs::read_to_string(&dotted).unwrap(), "dotted");
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
