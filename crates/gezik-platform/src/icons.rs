@@ -39,11 +39,70 @@ pub fn type_name(ext: &str, is_dir: bool) -> Option<String> {
     imp::type_name(ext, is_dir)
 }
 
-/// The system's icon for `target`, at least `px` wide where the system has one that big
-/// (the UI scales it). `None` where there are no system icons: macOS and Linux use
-/// Gezik's own icons for now.
+/// The system's icon for `target`, at most `px` wide: smaller sizes come as the system has
+/// them (the UI scales them), bigger ones are shrunk to `px`. `None` where there are no
+/// system icons: macOS and Linux use Gezik's own icons for now.
 pub fn icon(target: &IconTarget, px: u32) -> Option<Rgba> {
     imp::icon(target, px)
+}
+
+/// The width and height of the part of `image` that is not fully transparent, measured
+/// from the top-left corner (where the shell puts small icons in a big canvas); `(0, 0)`
+/// if all of it is transparent.
+pub(crate) fn drawn_extent(image: &Rgba) -> (u32, u32) {
+    let (mut right, mut bottom) = (0, 0);
+    let width = image.width as usize;
+    if width == 0 {
+        return (0, 0);
+    }
+    for (row, line) in image.pixels.chunks(width * 4).enumerate() {
+        if let Some(last) = line.as_chunks::<4>().0.iter().rposition(|p| p[3] != 0) {
+            right = right.max(last as u32 + 1);
+            bottom = row as u32 + 1;
+        }
+    }
+    (right, bottom)
+}
+
+/// Whether a 256 px ("jumbo") icon is really a small one in a corner of a transparent
+/// canvas: then the 48 px icon looks better.
+pub(crate) fn is_small_in_big_canvas(image: &Rgba) -> bool {
+    let (width, height) = drawn_extent(image);
+    width <= 48 && height <= 48
+}
+
+/// `image` shrunk to fit `px` (keeping its aspect), or as it is if it already fits.
+/// Shrinks premultiplied, so transparent pixels do not darken the edges.
+pub(crate) fn shrink_to(image: Rgba, px: u32) -> Rgba {
+    let px = px.max(1);
+    if image.width <= px && image.height <= px {
+        return image;
+    }
+    let (width, height) = (image.width, image.height);
+    let Some(mut buffer) = image::RgbaImage::from_raw(width, height, image.pixels) else {
+        return Rgba { width: 0, height: 0, pixels: Vec::new() };
+    };
+    for pixel in buffer.pixels_mut() {
+        let a = u16::from(pixel[3]);
+        for c in &mut pixel.0[..3] {
+            *c = ((u16::from(*c) * a + 127) / 255) as u8;
+        }
+    }
+    let scale = f64::from(px) / f64::from(width.max(height));
+    let (w, h) = (
+        ((f64::from(width) * scale).round() as u32).clamp(1, px),
+        ((f64::from(height) * scale).round() as u32).clamp(1, px),
+    );
+    let mut small = image::imageops::resize(&buffer, w, h, image::imageops::FilterType::CatmullRom);
+    for pixel in small.pixels_mut() {
+        let a = u16::from(pixel[3]);
+        for c in &mut pixel.0[..3] {
+            if let Some(straight) = (u16::from(*c) * 255 + a / 2).checked_div(a) {
+                *c = straight.min(255) as u8;
+            }
+        }
+    }
+    Rgba { width: w, height: h, pixels: small.into_raw() }
 }
 
 #[cfg(windows)]
@@ -184,20 +243,40 @@ pub(crate) mod win {
         (!text.is_empty()).then_some(text)
     }
 
+    /// Looks up `name`'s place in the system image list (0 if it fails).
+    fn icon_index(
+        name: &HSTRING,
+        attributes: FILE_FLAGS_AND_ATTRIBUTES,
+        flags: SHGFI_FLAGS,
+        info: &mut SHFILEINFOW,
+    ) -> usize {
+        // The first lookup sets up the system image list; lookups racing it on other
+        // threads fail, so the first one runs alone.
+        static FIRST: std::sync::Once = std::sync::Once::new();
+        FIRST.call_once(|| {
+            let (name, attributes, flags) = query(&IconTarget::Folder);
+            let mut info = SHFILEINFOW::default();
+            // SAFETY: as below.
+            unsafe {
+                SHGetFileInfoW(
+                    &name,
+                    attributes,
+                    Some(&mut info),
+                    size_of::<SHFILEINFOW>() as u32,
+                    flags | SHGFI_SYSICONINDEX,
+                );
+            }
+        });
+        // SAFETY: `info` is a live SHFILEINFOW and its size is passed.
+        unsafe {
+            SHGetFileInfoW(name, attributes, Some(info), size_of::<SHFILEINFOW>() as u32, flags | SHGFI_SYSICONINDEX)
+        }
+    }
+
     pub fn icon(target: &IconTarget, px: u32) -> Option<Rgba> {
         let (name, attributes, flags) = query(target);
         let mut info = SHFILEINFOW::default();
-        // SAFETY: as in `type_name`.
-        let list = unsafe {
-            SHGetFileInfoW(
-                &name,
-                attributes,
-                Some(&mut info),
-                size_of::<SHFILEINFOW>() as u32,
-                flags | SHGFI_SYSICONINDEX,
-            )
-        };
-        if list == 0 {
+        if icon_index(&name, attributes, flags, &mut info) == 0 {
             return None;
         }
         let which = match px {
@@ -206,10 +285,25 @@ pub(crate) mod win {
             33..=48 => SHIL_EXTRALARGE,
             _ => SHIL_JUMBO,
         };
+        let icon = from_list(which, info.iIcon)?;
+        if which != SHIL_JUMBO {
+            return Some(icon);
+        }
+        // Jumbo icons are always 256 px; old icons sit small in their top-left corner.
+        if super::is_small_in_big_canvas(&icon)
+            && let Some(large) = from_list(SHIL_EXTRALARGE, info.iIcon)
+        {
+            return Some(large);
+        }
+        Some(super::shrink_to(icon, px))
+    }
+
+    /// Image `index` of the system image list `which`.
+    fn from_list(which: u32, index: i32) -> Option<Rgba> {
         // SAFETY: the icon is ours to destroy once converted.
         unsafe {
             let images: IImageList = SHGetImageList(which as i32).ok()?;
-            let icon = images.GetIcon(info.iIcon, ILD_TRANSPARENT.0).ok()?;
+            let icon = images.GetIcon(index, ILD_TRANSPARENT.0).ok()?;
             let rgba = icon_to_rgba(icon);
             let _ = DestroyIcon(icon);
             rgba
@@ -310,5 +404,74 @@ mod tests {
             assert_eq!(icon.pixels.len(), (icon.width * icon.height * 4) as usize);
             assert!(icon.pixels.as_chunks::<4>().0.iter().any(|p| p[3] > 0), "{target:?} is all transparent");
         }
+    }
+
+    #[test]
+    fn icons_load_on_several_threads_at_once() {
+        let threads: Vec<_> = (0..4)
+            .map(|t| {
+                std::thread::spawn(move || {
+                    init_thread();
+                    (0..8).all(|i| icon(&IconTarget::Extension("txt".into()), [16, 32, 48, 96][(i + t) % 4]).is_some())
+                })
+            })
+            .collect();
+        assert!(threads.into_iter().all(|t| t.join().unwrap()));
+    }
+
+    #[test]
+    fn big_icons_come_at_the_requested_size() {
+        init_thread();
+        for target in [IconTarget::Folder, IconTarget::Extension("txt".into())] {
+            let icon = icon(&target, 96).unwrap_or_else(|| panic!("no icon for {target:?}"));
+            assert!(icon.width <= 96 && icon.height <= 96 && icon.width >= 48, "{target:?}: {icon:?}");
+            assert_eq!(icon.pixels.len(), (icon.width * icon.height * 4) as usize);
+        }
+    }
+}
+
+#[cfg(test)]
+mod size_tests {
+    use super::*;
+
+    /// A `size`×`size` transparent canvas with an opaque `w`×`h` block at the top left.
+    fn canvas(size: u32, w: u32, h: u32) -> Rgba {
+        let mut pixels = vec![0u8; (size * size * 4) as usize];
+        for y in 0..h {
+            for x in 0..w {
+                let i = ((y * size + x) * 4) as usize;
+                pixels[i..i + 4].copy_from_slice(&[10, 20, 30, 255]);
+            }
+        }
+        Rgba { width: size, height: size, pixels }
+    }
+
+    #[test]
+    fn measures_what_is_drawn() {
+        assert_eq!(drawn_extent(&canvas(256, 32, 40)), (32, 40));
+        assert_eq!(drawn_extent(&canvas(256, 0, 0)), (0, 0));
+        assert_eq!(drawn_extent(&canvas(256, 256, 256)), (256, 256));
+        assert_eq!(drawn_extent(&Rgba { width: 0, height: 0, pixels: Vec::new() }), (0, 0));
+    }
+
+    #[test]
+    fn small_icons_in_a_big_canvas_fall_back() {
+        assert!(is_small_in_big_canvas(&canvas(256, 48, 48)));
+        assert!(is_small_in_big_canvas(&canvas(256, 32, 32)));
+        assert!(is_small_in_big_canvas(&canvas(256, 0, 0)));
+        assert!(!is_small_in_big_canvas(&canvas(256, 49, 20)));
+        assert!(!is_small_in_big_canvas(&canvas(256, 200, 256)));
+    }
+
+    #[test]
+    fn shrinks_to_the_requested_size() {
+        let small = shrink_to(canvas(256, 256, 256), 96);
+        assert_eq!((small.width, small.height), (96, 96));
+        assert_eq!(small.pixels.len(), 96 * 96 * 4);
+        assert_eq!(&small.pixels[..4], &[10, 20, 30, 255]);
+        let wide = shrink_to(Rgba { width: 200, height: 100, pixels: vec![255; 200 * 100 * 4] }, 50);
+        assert_eq!((wide.width, wide.height), (50, 25));
+        let fits = shrink_to(canvas(48, 48, 48), 96);
+        assert_eq!((fits.width, fits.height), (48, 48), "never enlarged");
     }
 }
