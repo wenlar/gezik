@@ -177,3 +177,21 @@ impl Task for FakeTask {
         Ok(Outcome::Nothing)
     }
 }
+
+/// Keeps a task's plan, for testing a task without the engine.
+#[derive(Default)]
+pub(crate) struct CollectSink {
+    pub items: Vec<PlanItem>,
+    pub failed: Vec<PathBuf>,
+}
+
+impl ScanSink for CollectSink {
+    fn item(&mut self, item: PlanItem) -> bool {
+        self.items.push(item);
+        true
+    }
+
+    fn failed(&mut self, path: &Path, _error: io::Error) {
+        self.failed.push(path.to_path_buf());
+    }
+}

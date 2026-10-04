@@ -1,10 +1,18 @@
 //! The file operations the engine runs.
 
 mod copy;
+mod delete;
 mod move_;
+mod new;
+mod restore;
+mod trash;
 
 pub use copy::CopyTask;
+pub use delete::DeleteTask;
 pub use move_::MoveTask;
+pub use new::NewTask;
+pub use restore::RestoreTask;
+pub use trash::TrashTask;
 
 use std::path::{Path, PathBuf};
 

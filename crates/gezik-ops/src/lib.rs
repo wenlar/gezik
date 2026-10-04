@@ -3,6 +3,7 @@
 
 mod control;
 mod engine;
+pub mod pending;
 mod run;
 mod task;
 mod tasks;
@@ -12,8 +13,9 @@ pub mod walk;
 
 pub use engine::{ConflictItem, Engine, Event, Failure, JobId, JobState, PauseReason, Progress, Report, Settings};
 pub use gezik_core::ops::conflict::{ConflictKind, Decision, Facts};
+pub use pending::PendingDeletes;
 pub use task::{
     ChangedSince, NoTrash, Outcome, PlanItem, Resources, RunCx, ScanSink, Stage, Task, TaskKind, Work, changed_since,
     facts_after, no_trash, unchanged,
 };
-pub use tasks::{CopyTask, MoveTask};
+pub use tasks::{CopyTask, DeleteTask, MoveTask, NewTask, RestoreTask, TrashTask};

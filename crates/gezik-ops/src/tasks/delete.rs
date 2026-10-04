@@ -1,0 +1,233 @@
+//! Deleting for good. With a pending list, each chosen item is first renamed to a hidden name
+//! (one quick rename), so it leaves the folder at once while its contents are deleted.
+
+use std::io;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+
+use gezik_platform::fs;
+
+use super::what;
+use crate::engine::lock;
+use crate::pending::{PendingDeletes, hidden_name};
+use crate::task::{Outcome, PlanItem, Resources, RunCx, ScanSink, Stage, Task, TaskKind, Work};
+use crate::walk::{Step, facts_of, walk};
+
+pub struct DeleteTask {
+    roots: Vec<PathBuf>,
+    pending: Option<Arc<PendingDeletes>>,
+    /// The roots are hidden folders of an earlier delete (from `pending-deletes`).
+    recovering: bool,
+    /// (hidden, original) for each root this delete hid.
+    hidden: Mutex<Vec<(PathBuf, PathBuf)>>,
+}
+
+impl DeleteTask {
+    pub fn new(paths: Vec<PathBuf>, pending: Option<Arc<PendingDeletes>>) -> DeleteTask {
+        DeleteTask { roots: paths, pending, recovering: false, hidden: Mutex::default() }
+    }
+
+    /// Finishes deleting folders an earlier delete hid.
+    pub(crate) fn recover(paths: Vec<PathBuf>, pending: Arc<PendingDeletes>) -> DeleteTask {
+        DeleteTask { roots: paths, pending: Some(pending), recovering: true, hidden: Mutex::default() }
+    }
+
+    /// Renames `root` to a hidden name next to it and notes it; the original if that fails.
+    fn hide(&self, root: &Path) -> PathBuf {
+        let (Some(pending), Some(parent)) = (&self.pending, root.parent()) else { return root.to_path_buf() };
+        if self.recovering {
+            return root.to_path_buf();
+        }
+        let hidden = parent.join(hidden_name());
+        if fs::move_entry(root, &hidden).is_err() {
+            return root.to_path_buf();
+        }
+        if pending.add(&hidden).is_err() {
+            // Not noted: a crash would leave it hidden forever. Put it back, delete in place.
+            let _ = fs::move_entry(&hidden, root);
+            return root.to_path_buf();
+        }
+        let _ = fs::set_hidden(&hidden);
+        lock(&self.hidden).push((hidden.clone(), root.to_path_buf()));
+        hidden
+    }
+}
+
+const FILE: u8 = 0;
+const DIR: u8 = 1;
+
+impl Task for DeleteTask {
+    fn kind(&self) -> TaskKind {
+        TaskKind::Delete
+    }
+
+    fn title(&self) -> String {
+        if self.recovering {
+            "Finishing an earlier delete".to_owned()
+        } else {
+            format!("Deleting {}", what(&self.roots))
+        }
+    }
+
+    fn count(&self) -> usize {
+        self.roots.len()
+    }
+
+    fn resources(&self) -> Resources {
+        Resources { paths: self.roots.clone(), work: Work::Disk }
+    }
+
+    fn plan(&self, sink: &mut dyn ScanSink) {
+        for (root, original) in self.roots.iter().enumerate() {
+            let path = self.hide(original);
+            let meta = match std::fs::symlink_metadata(&path) {
+                Ok(meta) => meta,
+                Err(err) => {
+                    sink.failed(original, err);
+                    continue;
+                }
+            };
+            let facts = facts_of(&meta);
+            if !facts.is_dir {
+                if !sink.item(PlanItem::new(Stage::Parallel, facts).source(&path).top(root).tag(FILE)) {
+                    return;
+                }
+                continue;
+            }
+            // Folders go last, the deepest first (After items run in reverse).
+            if !sink.item(PlanItem::new(Stage::After, facts).source(&path).top(root).tag(DIR)) {
+                return;
+            }
+            let walked = walk(&path, &mut |step| match step {
+                Step::Entry { path, facts, .. } => {
+                    let (stage, tag) = if facts.is_dir { (Stage::After, DIR) } else { (Stage::Parallel, FILE) };
+                    sink.item(PlanItem::new(stage, facts).source(path).under(root).tag(tag))
+                }
+                Step::Failed { path, error } => {
+                    sink.failed(path, error);
+                    true
+                }
+            });
+            if !walked {
+                return;
+            }
+        }
+    }
+
+    fn run(&self, item: &PlanItem, _cx: &RunCx<'_>) -> io::Result<Outcome> {
+        let Some(path) = &item.source else { return Ok(Outcome::Nothing) };
+        fs::delete(path)?;
+        Ok(Outcome::Deleted { path: path.clone() })
+    }
+
+    fn done(&self, _cancelled: bool) {
+        let Some(pending) = &self.pending else { return };
+        if self.recovering {
+            for root in &self.roots {
+                if std::fs::symlink_metadata(root).is_err() {
+                    pending.remove(root);
+                }
+            }
+            return;
+        }
+        for (hidden, original) in lock(&self.hidden).drain(..) {
+            // Cancelled, or something inside could not be deleted: what is left goes back
+            // under its own name, so nothing stays hidden and nothing is deleted later unasked.
+            if std::fs::symlink_metadata(&hidden).is_ok() {
+                let _ = fs::move_entry(&hidden, &original);
+            }
+            pending.remove(&hidden);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::{Engine, Settings};
+    use crate::testing::{CollectSink, defaults, finish, test_dir, write};
+
+    fn engine_with_pending(dir: &Path) -> Engine {
+        Engine::new(Settings { pending_deletes: Some(dir.join("pending-deletes")), ..Settings::default() }, || {})
+    }
+
+    fn names(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> =
+            std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn delete_hides_at_once_and_removes_everything() {
+        let dir = test_dir("delete");
+        let work = dir.join("work");
+        write(&work.join("victim/a/b.txt"), "b");
+        write(&work.join("victim/c.txt"), "c");
+        write(&work.join("file.txt"), "f");
+        write(&work.join("keep.txt"), "k");
+        let engine = engine_with_pending(&dir);
+        let task = DeleteTask::new(vec![work.join("victim"), work.join("file.txt")], engine.pending_deletes());
+        let job = engine.submit(Box::new(task));
+        let (report, _) = finish(&engine, job, defaults);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert_eq!(names(&work), ["keep.txt"], "nothing hidden is left behind");
+        assert!(!dir.join("pending-deletes").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn without_a_pending_list_it_deletes_in_place() {
+        let dir = test_dir("delete-in-place");
+        write(&dir.join("victim/a.txt"), "a");
+        let engine = crate::testing::engine();
+        let job = engine.submit(Box::new(DeleteTask::new(vec![dir.join("victim")], None)));
+        let (report, _) = finish(&engine, job, defaults);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert!(names(&dir).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_cancelled_delete_puts_the_folder_back() {
+        let dir = test_dir("delete-cancel");
+        write(&dir.join("victim/a.txt"), "a");
+        let pending = Arc::new(PendingDeletes::new(dir.join("pending-deletes")));
+        let task = DeleteTask::new(vec![dir.join("victim")], Some(pending.clone()));
+        let mut sink = CollectSink::default();
+        task.plan(&mut sink);
+        assert!(!dir.join("victim").exists(), "hidden at once");
+        assert_eq!(pending.load().len(), 1);
+        task.done(true);
+        assert_eq!(std::fs::read_to_string(dir.join("victim/a.txt")).unwrap(), "a");
+        assert!(pending.load().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn recovery_finishes_an_interrupted_delete() {
+        let dir = test_dir("delete-recover");
+        let hidden = dir.join(format!("{}left", crate::pending::HIDDEN_PREFIX));
+        write(&hidden.join("x/y.txt"), "y");
+        std::fs::write(dir.join("pending-deletes"), format!("{}\n", hidden.display())).unwrap();
+        let engine = engine_with_pending(&dir);
+        let job = engine.recover_deletes().expect("one folder to finish");
+        let (report, _) = finish(&engine, job, defaults);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert!(!hidden.exists());
+        assert!(!dir.join("pending-deletes").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn recovery_ignores_foreign_paths() {
+        let dir = test_dir("delete-recover-foreign");
+        write(&dir.join("Documents/important.txt"), "keep");
+        let text = format!("{}\n{}\n", dir.join("Documents").display(), dir.join("gone").display());
+        std::fs::write(dir.join("pending-deletes"), text).unwrap();
+        let engine = engine_with_pending(&dir);
+        assert_eq!(engine.recover_deletes(), None);
+        assert_eq!(std::fs::read_to_string(dir.join("Documents/important.txt")).unwrap(), "keep");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
