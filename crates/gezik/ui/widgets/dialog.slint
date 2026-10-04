@@ -2,11 +2,13 @@ import { Theme } from "../theme.slint";
 import { TextButton } from "text-button.slint";
 
 // A question over the window: a title, a message and buttons. Enter picks the first button,
-// Esc the last.
+// Esc the one in `escape`.
 export component Dialog inherits Rectangle {
     in property <string> title;
     in property <string> message;
     in property <[string]> buttons;
+    // The button Esc chooses.
+    in property <int> escape;
     callback chosen(int);
 
     background: Theme.background.with-alpha(0.6);
@@ -22,7 +24,7 @@ export component Dialog inherits Rectangle {
                 return accept;
             }
             if event.text == Key.Escape {
-                root.chosen(root.buttons.length - 1);
+                root.chosen(root.escape);
                 return accept;
             }
             return reject;

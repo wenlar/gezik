@@ -156,6 +156,7 @@ export component AppWindow inherits Window {
     in property <string> dialog-title;
     in property <string> dialog-message;
     in property <[string]> dialog-buttons;
+    in property <int> dialog-escape;
     callback dialog-chosen(int);
     callback key-event(KeyEvent) -> bool;
 
@@ -490,6 +491,7 @@ export component AppWindow inherits Window {
             title: root.dialog-title;
             message: root.dialog-message;
             buttons: root.dialog-buttons;
+            escape: root.dialog-escape;
             chosen(i) => { root.dialog-chosen(i); }
         }
     }

@@ -308,7 +308,10 @@ impl Operations {
 
     /// Finishes deletes an earlier run left unfinished.
     pub fn recover(&self) {
-        let _ = self.0.engine.recover_deletes();
+        let engine = self.0.engine.clone();
+        std::thread::spawn(move || {
+            let _ = engine.recover_deletes();
+        });
     }
 
     fn show_later(&self, id: JobId) {
@@ -349,14 +352,16 @@ impl Operations {
                 Event::Conflicts { job, conflicts } => self.conflicts(job, conflicts),
                 Event::Paused { job, reason, path } => self.paused(job, reason, path),
                 Event::Finished { job, report } => self.finished(job, report),
-                Event::Changed { dirs } => self.0.nav.refresh_showing(&dirs, &[]),
+                Event::Changed { dirs } => {
+                    self.0.nav.refresh_showing(&dirs, &[], None);
+                }
                 Event::History => {}
             }
         }
         self.update();
     }
 
-    /// Until the conflict list exists (Task 14): every conflict keeps its default (Skip).
+    /// Until the conflict list exists (Task 15): every conflict keeps its default (Skip).
     fn conflicts(&self, job: JobId, conflicts: Vec<gezik_ops::ConflictItem>) {
         let decisions = conflicts.iter().map(|c| c.decision).collect();
         self.0.engine.decide(job, decisions);
@@ -384,7 +389,7 @@ impl Operations {
         // Waiting for the user: the panel opens by itself.
         self.0.collapsed.set(false);
         let ops = self.clone();
-        self.0.dialogs.ask(title, message, &["Resume", "Cancel"], move |choice| {
+        self.0.dialogs.ask_escape(title, message, &["Resume", "Cancel"], 0, move |choice| {
             ops.0.asked.borrow_mut().remove(&job);
             match choice {
                 Some(0) => ops.0.engine.resume(job),
@@ -395,15 +400,16 @@ impl Operations {
 
     fn finished(&self, id: JobId, report: Report) {
         self.0.asked.borrow_mut().remove(&id);
+        let problems = !report.cancelled && !report.failures.is_empty();
         let mut after = After::Nothing;
         self.with_job(id, |job| {
             after = job.after;
-            if !report.failures.is_empty() {
+            if problems {
                 job.shown = true;
             }
             job.report = Some(report.clone());
         });
-        if !report.failures.is_empty() {
+        if problems {
             // Something failed: the panel opens by itself.
             self.0.collapsed.set(false);
         }
@@ -411,17 +417,20 @@ impl Operations {
             (After::Nothing, _) | (_, None) => Vec::new(),
             (_, Some(folder)) => result_names(&report.results, &folder),
         };
-        self.0.nav.refresh_showing(&report.changed_dirs, &select);
-        self.0.sidebar.refresh();
-        if report.skipped_changed > 0 {
+        let note = (report.skipped_changed > 0).then(|| {
             let n = report.skipped_changed;
             let what = if n == 1 { "1 item".to_owned() } else { format!("{n} items") };
-            self.0.view.note(format!("{what} changed since; skipped"));
+            format!("{what} changed since; skipped")
+        });
+        let reloading = self.0.nav.refresh_showing(&report.changed_dirs, &select, note.clone());
+        self.0.sidebar.refresh();
+        if let (false, Some(note)) = (reloading, note) {
+            self.0.view.note(note);
         }
         if !report.no_trash.is_empty() {
             self.ask_delete_for_good(report.no_trash.clone());
         }
-        if report.failures.is_empty() {
+        if !problems {
             let ops = self.clone();
             slint::Timer::single_shot(DONE_FOR, move || ops.remove(id));
         }
@@ -571,10 +580,11 @@ impl Operations {
             format!("{running} operations are running")
         };
         let engine = self.0.engine.clone();
-        self.0.dialogs.ask(
+        self.0.dialogs.ask_escape(
             title,
             "Quitting cancels them. What is already copied or moved stays.",
             &["Keep open", "Cancel them and quit"],
+            0,
             move |choice| {
                 if choice == Some(1) {
                     engine.cancel_all();

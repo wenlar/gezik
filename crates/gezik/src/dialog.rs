@@ -14,6 +14,8 @@ struct Question {
     title: String,
     message: String,
     buttons: Vec<String>,
+    /// The button Esc chooses.
+    escape: usize,
     answer: Answer,
 }
 
@@ -46,10 +48,23 @@ impl Dialogs {
         buttons: &[&str],
         answer: impl FnOnce(Option<usize>) + 'static,
     ) {
+        self.ask_escape(title, message, buttons, buttons.len().saturating_sub(1), answer);
+    }
+
+    /// Like `ask`, but Esc chooses button `escape`.
+    pub fn ask_escape(
+        &self,
+        title: impl Into<String>,
+        message: impl Into<String>,
+        buttons: &[&str],
+        escape: usize,
+        answer: impl FnOnce(Option<usize>) + 'static,
+    ) {
         self.0.queue.borrow_mut().push_back(Question {
             title: title.into(),
             message: message.into(),
             buttons: buttons.iter().map(|b| (*b).to_owned()).collect(),
+            escape,
             answer: Box::new(answer),
         });
         if self.0.open.borrow().is_none() {
@@ -64,6 +79,7 @@ impl Dialogs {
             Some(question) => {
                 window.set_dialog_title(question.title.into());
                 window.set_dialog_message(question.message.into());
+                window.set_dialog_escape(i32::try_from(question.escape).unwrap_or(0));
                 let buttons: Vec<SharedString> = question.buttons.into_iter().map(Into::into).collect();
                 window.set_dialog_buttons(ModelRc::new(VecModel::from(buttons)));
                 *self.0.open.borrow_mut() = Some(question.answer);
