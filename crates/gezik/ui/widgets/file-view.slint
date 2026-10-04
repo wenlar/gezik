@@ -51,7 +51,7 @@ export component FileView inherits Rectangle {
 
     // Right edge of the Name column: a drag that starts right of it, on a row, selects with
     // a rectangle; from the name it is kept for dragging files (sub-project 4).
-    property <length> name-end: root.width - (Theme.spacing + 4px) - 90px - (Theme.spacing + 2px);
+    property <length> name-end: list.visible-width - (Theme.spacing + 4px) - 90px - (Theme.spacing + 2px);
 
     property <bool> marquee-active;
     property <bool> marquee-additive;
@@ -135,15 +135,20 @@ export component FileView inherits Rectangle {
     // from here selects with a rectangle; a click clears the selection.
     TouchArea {
         property <bool> ctrl;
+        // The left button is down (a drag with another button never starts a rectangle).
+        property <bool> left-down;
         pointer-event(event) => {
             if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
                 self.ctrl = event.modifiers.control;
+                self.left-down = true;
                 root.focus-requested();
             }
-            if event.kind == PointerEventKind.up && event.button == PointerEventButton.left {
+            if event.kind == PointerEventKind.up {
+                let was-left = self.left-down && event.button == PointerEventButton.left;
+                self.left-down = false;
                 if root.marquee-active {
                     root.end-marquee();
-                } else {
+                } else if was-left {
                     root.background-pressed(self.ctrl);
                 }
             }
@@ -155,7 +160,7 @@ export component FileView inherits Rectangle {
             }
         }
         moved => {
-            if !root.marquee-active && (abs(self.mouse-x - self.pressed-x) > 4px || abs(self.mouse-y - self.pressed-y) > 4px) {
+            if self.left-down && !root.marquee-active && (abs(self.mouse-x - self.pressed-x) > 4px || abs(self.mouse-y - self.pressed-y) > 4px) {
                 root.begin-marquee(self.pressed-x, self.pressed-y, self.ctrl);
             }
             if root.marquee-active {
@@ -180,10 +185,12 @@ export component FileView inherits Rectangle {
 
             touch := TouchArea {
                 property <bool> ctrl;
+                property <bool> left-down;
                 double-clicked => { root.item-double-clicked(line.index); }
                 pointer-event(event) => {
                     if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
                         self.ctrl = event.modifiers.control;
+                        self.left-down = true;
                         root.focus-requested();
                         root.item-pressed(line.index, event.modifiers.control, event.modifiers.shift);
                     }
@@ -193,12 +200,15 @@ export component FileView inherits Rectangle {
                     if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {
                         root.item-menu(line.index, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
                     }
+                    if event.kind == PointerEventKind.up {
+                        self.left-down = false;
+                    }
                     if !self.pressed || event.kind == PointerEventKind.up {
                         root.marquee-pointer(event.kind, self.mouse-x, line.y + root.scroll + self.mouse-y);
                     }
                 }
                 moved => {
-                    if !root.marquee-active && self.pressed-x > root.name-end
+                    if self.left-down && !root.marquee-active && self.pressed-x > root.name-end
                         && (abs(self.mouse-x - self.pressed-x) > 4px || abs(self.mouse-y - self.pressed-y) > 4px) {
                         root.begin-marquee(self.pressed-x, line.y + root.scroll + self.pressed-y, self.ctrl);
                     }
