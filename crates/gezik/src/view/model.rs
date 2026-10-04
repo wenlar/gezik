@@ -85,6 +85,11 @@ impl Model for ItemsModel {
 pub fn file_row(data: &ViewData, i: usize) -> FileRow {
     let listing = &data.listing;
     let is_dir = listing.is_dir(i);
+    let entry = match listing {
+        Listing::Files(_, entries) => entries.get(i),
+        Listing::Drives(_) => None,
+    };
+    let date = |time: Option<std::time::SystemTime>| time.map(gezik_platform::format_datetime).unwrap_or_default();
     FileRow {
         name: listing.name_at(i).unwrap_or_default().into(),
         is_dir,
@@ -92,6 +97,12 @@ pub fn file_row(data: &ViewData, i: usize) -> FileRow {
         size: match listing {
             Listing::Files(..) if !is_dir => format_size(listing.file_size(i)).into(),
             _ => "".into(),
+        },
+        modified: date(entry.and_then(|e| e.modified)).into(),
+        created: date(entry.and_then(|e| e.created)).into(),
+        type_name: match entry {
+            Some(e) => gezik_core::kind::fallback_type_name(&e.name, e.is_dir).into(),
+            None => "Drive".into(),
         },
         selected: data.selection.is_selected(i),
         focused: data.selection.focus() == Some(i),

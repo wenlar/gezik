@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use gezik_core::nav::Location;
+use gezik_core::view::{ColumnKey, ColumnState};
 use gezik_platform::MenuTarget;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
@@ -92,6 +93,33 @@ pub fn items(place: Place, native_shell: bool) -> Vec<(u32, &'static str)> {
     out
 }
 
+/// Header menu: 20-23 show/hide the columns in `ColumnKey::ALL` order.
+pub const TOGGLE_COLUMN_FIRST: u32 = 20;
+pub const RESET_COLUMNS: u32 = 24;
+
+/// The column header's menu: show or hide each column, reset all.
+pub fn header_items(columns: &[ColumnState]) -> Vec<(u32, &'static str)> {
+    let mut out: Vec<(u32, &'static str)> = columns
+        .iter()
+        .map(|c| {
+            let id = TOGGLE_COLUMN_FIRST + u32::try_from(c.key.index() - 1).unwrap_or(0);
+            let title = match (c.key, c.visible) {
+                (ColumnKey::Modified, true) => "Hide Modified",
+                (ColumnKey::Modified, false) => "Show Modified",
+                (ColumnKey::Created, true) => "Hide Created",
+                (ColumnKey::Created, false) => "Show Created",
+                (ColumnKey::Type, true) => "Hide Type",
+                (ColumnKey::Type, false) => "Show Type",
+                (ColumnKey::Size, true) => "Hide Size",
+                (ColumnKey::Size, false) => "Show Size",
+            };
+            (id, title)
+        })
+        .collect();
+    out.push((RESET_COLUMNS, "Reset columns"));
+    out
+}
+
 fn pin_toggle(pinned: bool) -> (u32, &'static str) {
     if pinned { (UNPIN, "Unpin from sidebar") } else { (PIN, "Pin to sidebar") }
 }
@@ -105,6 +133,7 @@ enum Subject {
     Rows(Vec<PathBuf>),
     SidebarEntry(PathBuf),
     Tab(u64),
+    Header,
 }
 
 /// Lets one native menu be pending or open at a time, so two right-clicks in quick
@@ -228,6 +257,12 @@ impl Menus {
         let place = Place::Tab { only_tab: self.nav.tab_count() == 1 };
         *self.subject.borrow_mut() = Some(Subject::Tab(id));
         self.open_slint(&items(place, false), x, y);
+    }
+
+    /// Right-click on the column header, at window position `x`, `y`.
+    pub fn header(&self, x: f32, y: f32) {
+        *self.subject.borrow_mut() = Some(Subject::Header);
+        self.open_slint(&header_items(&self.view.columns()), x, y);
     }
 
     /// `at`: where the Windows menu opens (window position), else at the cursor.
@@ -361,6 +396,12 @@ impl Menus {
                     }
                 }
             }
+            (id, Subject::Header) if (TOGGLE_COLUMN_FIRST..TOGGLE_COLUMN_FIRST + 4).contains(&id) => {
+                if let Some(key) = ColumnKey::ALL.get((id - TOGGLE_COLUMN_FIRST) as usize) {
+                    self.view.toggle_column(*key);
+                }
+            }
+            (RESET_COLUMNS, Subject::Header) => self.view.reset_columns(),
             _ => {}
         }
     }
@@ -410,6 +451,22 @@ mod tests {
         assert!(gate.claim().is_none(), "a second right-click while one is pending is dropped");
         drop(first);
         assert!(gate.claim().is_some(), "the next menu opens once the first is closed");
+    }
+
+    #[test]
+    fn header_menu_toggles_each_column_and_resets() {
+        use gezik_core::view::default_columns;
+        let got = header_items(&default_columns());
+        assert_eq!(
+            got,
+            [
+                (TOGGLE_COLUMN_FIRST, "Hide Modified"),
+                (TOGGLE_COLUMN_FIRST + 1, "Show Created"),
+                (TOGGLE_COLUMN_FIRST + 2, "Hide Type"),
+                (TOGGLE_COLUMN_FIRST + 3, "Hide Size"),
+                (RESET_COLUMNS, "Reset columns"),
+            ]
+        );
     }
 
     #[test]

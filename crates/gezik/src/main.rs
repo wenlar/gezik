@@ -275,27 +275,25 @@ fn main() -> Result<(), slint::PlatformError> {
         .ok()
     });
     apply_config(&window, &files.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
-    if let Some(store) = &config {
-        window_state::restore(&window, &store.load_state());
-    }
+    let saved_state = config.as_ref().map(ConfigStore::load_state).unwrap_or_default();
+    window_state::restore(&window, &saved_state);
     keep_on_screen(window.as_weak(), 0);
+    let view = view::View::new(&window);
+    view.set_columns(saved_state.columns.clone().unwrap_or_else(gezik_core::view::default_columns));
     window.window().on_close_requested({
-        let weak = window.as_weak();
-        let store = config.clone();
+        let (weak, store, view) = (window.as_weak(), config.clone(), view.clone());
         move || {
-            // A minimized or maximized window has no meaningful normal rect: keep the old state.
-            if let (Some(window), Some(store)) = (weak.upgrade(), &store)
-                && !window.window().is_minimized()
-                && !window.window().is_maximized()
-                && let Err(err) = store.save_state(&window_state::capture(&window))
-            {
-                eprintln!("gezik: cannot save window state: {err}");
+            if let (Some(window), Some(store)) = (weak.upgrade(), &store) {
+                let mut state = store.load_state();
+                window_state::capture_into(&window, &mut state);
+                state.columns = Some(view.columns());
+                if let Err(err) = store.save_state(&state) {
+                    eprintln!("gezik: cannot save window state: {err}");
+                }
             }
             slint::CloseRequestResponse::HideWindow
         }
     });
-
-    let view = view::View::new(&window);
     let nav = navigation::Navigator::new(&window, view.clone(), plan.first, plan.select, plan.start);
     nav.install();
     // Captures no navigator (it is not `Send`): the result finds it on the UI thread.
@@ -380,6 +378,18 @@ fn main() -> Result<(), slint::PlatformError> {
     window.on_sidebar_menu({
         let menus = menus.clone();
         move |section, i, x, y| menus.sidebar_entry(section, i, x, y)
+    });
+    window.on_header_clicked({
+        let view = view.clone();
+        move |column| view.header_clicked(column)
+    });
+    window.on_columns_resized({
+        let view = view.clone();
+        move || view.columns_resized()
+    });
+    window.on_header_menu({
+        let menus = menus.clone();
+        move |x, y| menus.header(x, y)
     });
     // Slint passes indexes as `i32`: a negative one does nothing.
     window.on_tab_menu(move |i, x, y| {

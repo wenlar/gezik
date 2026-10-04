@@ -90,6 +90,19 @@ export component AppWindow inherits Window {
     // Left press on an entry with Ctrl (Cmd on macOS) and Shift; left click on empty space with Ctrl.
     callback item-pressed(int, bool, bool);
     callback background-pressed(bool);
+    // Column widths (0: hidden), set by Rust; dragging an edge changes them here.
+    in-out property <length> col-modified;
+    in-out property <length> col-created;
+    in-out property <length> col-type;
+    in-out property <length> col-size;
+    // The sort column (0 Name, 1-4 Modified, Created, Type, Size) and direction.
+    in property <int> sort-column;
+    in property <bool> sort-desc;
+    callback header-clicked(int);
+    // Right-click on the column header, at a window position.
+    callback header-menu(length, length);
+    // A column edge was released: Rust reads the widths.
+    callback columns-resized();
     // A rubber-band drag in the file view; see FileView.
     callback marquee(length, length, length, length, bool);
     callback marquee-done();
@@ -271,6 +284,18 @@ export component AppWindow inherits Window {
                     has-focus: keys.has-focus;
                     scroll <=> root.list-scroll;
                     focus-requested => { keys.focus(); }
+                    col-modified <=> root.col-modified;
+                    col-created <=> root.col-created;
+                    col-type <=> root.col-type;
+                    col-size <=> root.col-size;
+                    sort-column: root.sort-column;
+                    sort-desc: root.sort-desc;
+                    header-clicked(i) => { root.header-clicked(i); }
+                    header-menu(x, y) => {
+                        root.end-path-editing();
+                        root.header-menu(x, y);
+                    }
+                    columns-resized => { root.columns-resized(); }
                     item-pressed(i, ctrl, shift) => { root.item-pressed(i, ctrl, shift); }
                     item-double-clicked(i) => { root.open-row(i); }
                     item-middle-clicked(i) => { root.row-middle-clicked(i); }

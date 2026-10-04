@@ -9,6 +9,9 @@ export struct FileRow {
     // `Kind` in gezik-core kind.rs: Gezik's icon and its color.
     kind: int,
     size: string,
+    modified: string,
+    created: string,
+    type-name: string,
     selected: bool,
     // Has the keyboard focus; the ring shows only while the view has the keyboard.
     focused: bool,
@@ -21,6 +24,85 @@ export struct ItemRow {
     cells: [FileRow],
 }
 
+// A column title: click sorts, right-click opens the header menu, the left edge drags to
+// resize (the columns sit right of Name, so their left edge is the one between them).
+component HeaderCell inherits Rectangle {
+    in property <string> text;
+    in property <bool> sorted;
+    in property <bool> descending;
+    in property <bool> right-aligned;
+    in property <bool> resizable: true;
+    // Space before the title (Name: the icon's width).
+    in property <length> indent;
+    callback clicked();
+    callback menu(length, length);
+    // The new width while the left edge is dragged, then once when it is released.
+    callback resize(length);
+    callback resize-done();
+
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-description: root.sorted ? (root.descending ? "sorted descending" : "sorted ascending") : "";
+    accessible-action-default => { root.clicked(); }
+    background: touch.has-hover ? Theme.hover : transparent;
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {
+                root.menu(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            }
+        }
+    }
+
+    HorizontalLayout {
+        padding-left: root.indent;
+        spacing: 4px;
+        alignment: root.right-aligned ? end : start;
+        Text {
+            text: root.text;
+            vertical-alignment: center;
+            overflow: elide;
+            color: Theme.foreground-muted;
+        }
+        if root.sorted: VerticalLayout {
+            alignment: center;
+            Path {
+                width: 8px;
+                height: 8px;
+                viewbox-width: 8;
+                viewbox-height: 8;
+                stroke: Theme.foreground-muted;
+                stroke-width: 1.5px;
+                commands: root.descending ? "M 1 2.5 L 4 5.5 L 7 2.5" : "M 1 5.5 L 4 2.5 L 7 5.5";
+            }
+        }
+    }
+
+    if root.resizable: Rectangle {
+        x: -4px;
+        width: 7px;
+        accessible-role: none;
+        edge := TouchArea {
+            mouse-cursor: col-resize;
+            // The width and the pointer (window x) when the drag started. Absolute, because
+            // the edge itself moves as the column grows.
+            property <length> start-width;
+            property <length> start-x;
+            pointer-event(event) => {
+                if event.kind == PointerEventKind.down {
+                    self.start-width = root.width;
+                    self.start-x = self.absolute-position.x + self.mouse-x;
+                }
+                if event.kind == PointerEventKind.up {
+                    root.resize-done();
+                }
+            }
+            moved => { root.resize(self.start-width - (self.absolute-position.x + self.mouse-x - self.start-x)); }
+        }
+    }
+}
+
 // The folder's entries. Rust owns the selection: this reports presses and draws.
 export component FileView inherits Rectangle {
     in property <[ItemRow]> items;
@@ -28,6 +110,14 @@ export component FileView inherits Rectangle {
     in property <bool> has-focus;
     // Scroll offset (content-y: zero or negative).
     in-out property <length> scroll;
+    // Column widths (0: hidden); Rust sets them, a dragged edge changes them here.
+    in-out property <length> col-modified;
+    in-out property <length> col-created;
+    in-out property <length> col-type;
+    in-out property <length> col-size;
+    // The sort column (0 Name, 1 Modified, 2 Created, 3 Type, 4 Size) and direction.
+    in property <int> sort-column;
+    in property <bool> sort-desc;
     out property <length> item-height: Theme.row-height;
     // How many lines PgUp/PgDn move: one screen, less one line.
     out property <int> page-rows: max(1, floor(list.visible-height / self.item-height) - 1);
@@ -48,10 +138,20 @@ export component FileView inherits Rectangle {
     // layout.rs), on every pointer move; Ctrl adds to the selection the drag started with.
     callback marquee(length, length, length, length, bool);
     callback marquee-done();
+    callback header-clicked(int);
+    callback header-menu(length, length);
+    callback columns-resized();
+
+    property <length> header-height: Theme.row-height;
+    property <length> gap: Theme.spacing + 2px;
+    property <length> side: Theme.spacing + 4px;
+    property <int> shown-columns: (root.col-modified > 0 ? 1 : 0) + (root.col-created > 0 ? 1 : 0)
+        + (root.col-type > 0 ? 1 : 0) + (root.col-size > 0 ? 1 : 0);
 
     // Right edge of the Name column: a drag that starts right of it, on a row, selects with
     // a rectangle; from the name it is kept for dragging files (sub-project 4).
-    property <length> name-end: list.visible-width - (Theme.spacing + 4px) - 90px - (Theme.spacing + 2px);
+    property <length> name-end: list.visible-width - root.side - root.col-modified - root.col-created - root.col-type
+        - root.col-size - root.gap * root.shown-columns;
 
     property <bool> marquee-active;
     property <bool> marquee-additive;
@@ -131,9 +231,85 @@ export component FileView inherits Rectangle {
         return list.absolute-position.y + root.scroll + (index + 1) * root.item-height;
     }
 
+    header := Rectangle {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.header-height;
+        background: Theme.surface;
+
+        HorizontalLayout {
+            padding-left: root.side;
+            padding-right: root.side;
+            spacing: root.gap;
+            HeaderCell {
+                horizontal-stretch: 1;
+                min-width: 150px;
+                text: "Name";
+                indent: Theme.icon-size + root.gap;
+                resizable: false;
+                sorted: root.sort-column == 0;
+                descending: root.sort-desc;
+                clicked => { root.header-clicked(0); }
+                menu(x, y) => { root.header-menu(x, y); }
+            }
+            if root.col-modified > 0: HeaderCell {
+                width: root.col-modified;
+                text: "Modified";
+                sorted: root.sort-column == 1;
+                descending: root.sort-desc;
+                clicked => { root.header-clicked(1); }
+                menu(x, y) => { root.header-menu(x, y); }
+                resize(w) => { root.col-modified = clamp(w, 50px, 600px); }
+                resize-done => { root.columns-resized(); }
+            }
+            if root.col-created > 0: HeaderCell {
+                width: root.col-created;
+                text: "Created";
+                sorted: root.sort-column == 2;
+                descending: root.sort-desc;
+                clicked => { root.header-clicked(2); }
+                menu(x, y) => { root.header-menu(x, y); }
+                resize(w) => { root.col-created = clamp(w, 50px, 600px); }
+                resize-done => { root.columns-resized(); }
+            }
+            if root.col-type > 0: HeaderCell {
+                width: root.col-type;
+                text: "Type";
+                sorted: root.sort-column == 3;
+                descending: root.sort-desc;
+                clicked => { root.header-clicked(3); }
+                menu(x, y) => { root.header-menu(x, y); }
+                resize(w) => { root.col-type = clamp(w, 50px, 600px); }
+                resize-done => { root.columns-resized(); }
+            }
+            if root.col-size > 0: HeaderCell {
+                width: root.col-size;
+                text: "Size";
+                right-aligned: true;
+                sorted: root.sort-column == 4;
+                descending: root.sort-desc;
+                clicked => { root.header-clicked(4); }
+                menu(x, y) => { root.header-menu(x, y); }
+                resize(w) => { root.col-size = clamp(w, 50px, 600px); }
+                resize-done => { root.columns-resized(); }
+            }
+        }
+
+        Rectangle {
+            y: parent.height - 1px;
+            height: 1px;
+            background: Theme.border;
+        }
+    }
+
     // Behind the entries: presses on empty space (the list passes them through). A drag
     // from here selects with a rectangle; a click clears the selection.
     TouchArea {
+        x: list.x;
+        y: list.y;
+        width: list.width;
+        height: list.height;
         property <bool> ctrl;
         // The left button is down (a drag with another button never starts a rectangle).
         property <bool> left-down;
@@ -171,10 +347,16 @@ export component FileView inherits Rectangle {
 
     // ListView only instantiates the lines on screen, so huge folders stay cheap.
     list := ListView {
+        x: 0;
+        y: root.header-height;
+        width: root.width;
+        height: root.height - root.header-height;
         content-y <=> root.scroll;
         for item in root.items: line := Rectangle {
             property <FileRow> entry: item.cells[0];
             property <int> index: item.first;
+            property <color> text-color: self.entry.selected ? Theme.selection-foreground : Theme.foreground;
+            property <color> muted-color: self.entry.selected ? Theme.selection-foreground : Theme.foreground-muted;
             height: root.item-height;
             background: self.entry.selected ? Theme.selection : touch.has-hover ? Theme.hover : transparent;
             accessible-role: list-item;
@@ -219,30 +401,57 @@ export component FileView inherits Rectangle {
             }
 
             HorizontalLayout {
-                padding-left: Theme.spacing + 4px;
-                padding-right: Theme.spacing + 4px;
-                spacing: Theme.spacing + 2px;
-                VerticalLayout {
-                    alignment: center;
-                    FileIcon {
-                        width: Theme.icon-size;
-                        height: Theme.icon-size;
-                        kind: line.entry.kind;
+                padding-left: root.side;
+                padding-right: root.side;
+                spacing: root.gap;
+                HorizontalLayout {
+                    horizontal-stretch: 1;
+                    min-width: 150px;
+                    spacing: root.gap;
+                    VerticalLayout {
+                        alignment: center;
+                        FileIcon {
+                            width: Theme.icon-size;
+                            height: Theme.icon-size;
+                            kind: line.entry.kind;
+                        }
+                    }
+                    Text {
+                        text: line.entry.name;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                        overflow: elide;
+                        color: line.text-color;
                     }
                 }
-                Text {
-                    text: line.entry.name;
+                if root.col-modified > 0: Text {
+                    width: root.col-modified;
+                    text: line.entry.modified;
                     vertical-alignment: center;
-                    horizontal-stretch: 1;
                     overflow: elide;
-                    color: line.entry.selected ? Theme.selection-foreground : Theme.foreground;
+                    color: line.muted-color;
                 }
-                Text {
+                if root.col-created > 0: Text {
+                    width: root.col-created;
+                    text: line.entry.created;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    color: line.muted-color;
+                }
+                if root.col-type > 0: Text {
+                    width: root.col-type;
+                    text: line.entry.type-name;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    color: line.muted-color;
+                }
+                if root.col-size > 0: Text {
+                    width: root.col-size;
                     text: line.entry.size;
-                    width: 90px;
                     horizontal-alignment: right;
                     vertical-alignment: center;
-                    color: line.entry.selected ? Theme.selection-foreground : Theme.foreground-muted;
+                    overflow: elide;
+                    color: line.muted-color;
                 }
             }
 

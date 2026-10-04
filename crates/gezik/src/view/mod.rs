@@ -12,10 +12,15 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
 
-use gezik_core::format_size;
+use gezik_core::kind::fallback_type_name;
 use gezik_core::layout::{Geometry, Move, Rect};
 use gezik_core::nav::ViewState;
 use gezik_core::selection::Selection;
+use gezik_core::sort::{SortDir, SortKey, SortSpec, sort_entries};
+use gezik_core::view::{
+    ColumnKey, ColumnState, MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH, default_columns, normalize_columns,
+};
+use gezik_core::{Entry, format_size};
 use slint::{ComponentHandle, ModelRc};
 
 use crate::AppWindow;
@@ -44,6 +49,8 @@ struct Inner {
     /// Shown instead of the item count until the selection changes (e.g. "… no longer exists").
     note: RefCell<Option<String>>,
     on_selection: RefCell<Vec<Listener>>,
+    sort: Cell<SortSpec>,
+    columns: RefCell<Vec<ColumnState>>,
 }
 
 #[derive(Clone)]
@@ -54,7 +61,7 @@ impl View {
         let data = Rc::new(RefCell::new(ViewData::default()));
         let model = Rc::new(ItemsModel::new(data.clone()));
         window.set_items(ModelRc::from(model.clone()));
-        View(Rc::new(Inner {
+        let view = View(Rc::new(Inner {
             window: window.as_weak(),
             data,
             model,
@@ -62,7 +69,12 @@ impl View {
             revealed: Cell::new(0),
             note: RefCell::new(None),
             on_selection: RefCell::new(Vec::new()),
-        }))
+            sort: Cell::new(SortSpec::default()),
+            columns: RefCell::new(default_columns()),
+        }));
+        view.sync_columns();
+        view.sync_header();
+        view
     }
 
     /// Calls `f` whenever the selection or the focus changes (also when a listing is shown).
@@ -74,6 +86,7 @@ impl View {
     /// Shows `listing` with the selection, focus and scroll `state` remembers. `note`, if
     /// any, replaces the item count in the status bar until the selection changes.
     pub fn show(&self, listing: Listing, state: &ViewState, note: Option<String>) {
+        let listing = self.sorted(listing, true);
         let selection = restore_selection(&listing, state);
         let count = listing.len();
         {
@@ -257,6 +270,135 @@ impl View {
 
     pub fn marquee_done(&self) {
         self.0.data.borrow_mut().marquee_base = None;
+    }
+
+    pub fn sort(&self) -> SortSpec {
+        self.0.sort.get()
+    }
+
+    /// Sorts by `spec`, keeping the selection, focus and its visibility.
+    pub fn set_sort(&self, spec: SortSpec) {
+        if spec == self.0.sort.get() {
+            return;
+        }
+        self.0.sort.set(spec);
+        self.sync_header();
+        self.resort();
+    }
+
+    /// A click on column header `column` (0 Name, 1-4 `ColumnKey::index`): sorts by it,
+    /// ascending; again flips the direction.
+    pub fn header_clicked(&self, column: i32) {
+        let key = match column {
+            0 => SortKey::Name,
+            i => match ColumnKey::ALL.into_iter().find(|k| k.index() == i) {
+                Some(k) => k.sort_key(),
+                None => return,
+            },
+        };
+        let current = self.sort();
+        let dir = if current.key == key { current.dir.flipped() } else { SortDir::Asc };
+        self.set_sort(SortSpec { key, dir });
+    }
+
+    pub fn columns(&self) -> Vec<ColumnState> {
+        self.0.columns.borrow().clone()
+    }
+
+    pub fn set_columns(&self, columns: Vec<ColumnState>) {
+        *self.0.columns.borrow_mut() = normalize_columns(&columns);
+        self.sync_columns();
+    }
+
+    /// A column edge was dragged: takes the widths from the window.
+    pub fn columns_resized(&self) {
+        let Some(window) = self.0.window.upgrade() else { return };
+        for column in self.0.columns.borrow_mut().iter_mut().filter(|c| c.visible) {
+            let width = match column.key {
+                ColumnKey::Modified => window.get_col_modified(),
+                ColumnKey::Created => window.get_col_created(),
+                ColumnKey::Type => window.get_col_type(),
+                ColumnKey::Size => window.get_col_size(),
+            };
+            column.width = (width.round().max(0.0) as u32).clamp(MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH);
+        }
+        self.sync_columns();
+    }
+
+    pub fn toggle_column(&self, key: ColumnKey) {
+        if let Some(column) = self.0.columns.borrow_mut().iter_mut().find(|c| c.key == key) {
+            column.visible = !column.visible;
+        }
+        self.sync_columns();
+    }
+
+    pub fn reset_columns(&self) {
+        *self.0.columns.borrow_mut() = default_columns();
+        self.sync_columns();
+    }
+
+    fn sync_columns(&self) {
+        let Some(window) = self.0.window.upgrade() else { return };
+        let columns = self.0.columns.borrow();
+        let width = |key: ColumnKey| columns.iter().find(|c| c.key == key && c.visible).map_or(0.0, |c| c.width as f32);
+        window.set_col_modified(width(ColumnKey::Modified));
+        window.set_col_created(width(ColumnKey::Created));
+        window.set_col_type(width(ColumnKey::Type));
+        window.set_col_size(width(ColumnKey::Size));
+    }
+
+    fn sync_header(&self) {
+        let Some(window) = self.0.window.upgrade() else { return };
+        let spec = self.0.sort.get();
+        let column = match spec.key {
+            SortKey::Name => 0,
+            SortKey::Modified => ColumnKey::Modified.index(),
+            SortKey::Created => ColumnKey::Created.index(),
+            SortKey::Type => ColumnKey::Type.index(),
+            SortKey::Size => ColumnKey::Size.index(),
+        };
+        window.set_sort_column(column);
+        window.set_sort_desc(spec.dir == SortDir::Desc);
+    }
+
+    /// `listing` in the current sort order. A fresh folder load is already sorted by name
+    /// (`by_name`), so the default order costs nothing.
+    fn sorted(&self, listing: Listing, by_name: bool) -> Listing {
+        let spec = self.0.sort.get();
+        match listing {
+            Listing::Files(dir, entries) if !(by_name && spec == SortSpec::default()) => {
+                let mut entries = Rc::unwrap_or_clone(entries);
+                sort_entries(&mut entries, spec, |e| self.type_name_of(e));
+                Listing::Files(dir, Rc::new(entries))
+            }
+            other => other,
+        }
+    }
+
+    /// The Type column's text for sorting.
+    fn type_name_of(&self, entry: &Entry) -> String {
+        fallback_type_name(&entry.name, entry.is_dir)
+    }
+
+    /// Sorts the current listing again, keeping the selection by name and the focus in view.
+    fn resort(&self) {
+        let state = self.capture();
+        let listing = std::mem::take(&mut self.0.data.borrow_mut().listing);
+        let listing = self.sorted(listing, false);
+        let selection = restore_selection(&listing, &state);
+        {
+            let mut data = self.0.data.borrow_mut();
+            data.listing = listing;
+            data.selection = selection;
+        }
+        self.0.model.notify.reset();
+        if let Some(window) = self.0.window.upgrade() {
+            self.sync_focus(&window);
+        }
+        if let Some(focus) = self.focus() {
+            self.reveal(focus);
+        }
+        self.notify_listeners();
     }
 
     /// Where entries are on screen.
