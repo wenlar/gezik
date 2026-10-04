@@ -169,6 +169,14 @@ pub fn with_current(f: impl FnOnce(&Operations)) {
 }
 
 /// What to do with a job's results once their folder shows them.
+/// What ended a rename.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Commit {
+    Enter,
+    Tab,
+    Blur,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum After {
     #[default]
@@ -340,6 +348,12 @@ impl Operations {
         let Some(path) = self.0.rename_when_shown.borrow().clone() else { return };
         let Some(folder) = self.0.view.folder() else { return };
         if !path.parent().is_some_and(|parent| same_path(parent, &folder)) {
+            // Another folder is on screen: the wait is over.
+            self.0.rename_when_shown.borrow_mut().take();
+            return;
+        }
+        // A rename is open: wait for it to end.
+        if self.0.view.renaming().is_some() {
             return;
         }
         self.0.rename_when_shown.borrow_mut().take();
@@ -372,23 +386,32 @@ impl Operations {
 
     /// Ends renaming with `typed`: the entry's index if the field closed (unchanged or
     /// renamed), `None` if the name cannot be used (the field stays, with the problem shown).
-    fn commit_rename(&self, typed: &str) -> Option<usize> {
+    fn commit_rename(&self, typed: &str, how: Commit) -> Option<usize> {
         let view = &self.0.view;
         let (index, old) = view.renaming()?;
+        // Enter and Esc leave the keyboard with the list; a blur or Tab does not.
+        let refocus = how == Commit::Enter;
         match rename_check(typed, &old, |name| view.has_other_named(name, index)) {
+            Err(_) if how == Commit::Blur => {
+                // The field lost the focus with a name that cannot be used: keep the old one.
+                view.end_rename(false);
+                None
+            }
             Err(error) => {
                 self.set_rename_error(&error);
                 None
             }
             Ok(None) => {
-                view.end_rename();
+                view.end_rename(refocus);
                 Some(index)
             }
             Ok(Some(name)) => {
                 let path = view.entry_path(index).map(|(path, _)| path);
-                view.end_rename();
+                view.end_rename(refocus);
                 if let Some(path) = path {
-                    self.submit(Box::new(gezik_ops::MoveTask::rename(path, &name)), None, After::Select);
+                    // Going on to another entry: its refresh must not pull the selection away.
+                    let after = if how == Commit::Tab { After::Nothing } else { After::Select };
+                    self.submit(Box::new(gezik_ops::MoveTask::rename(path, &name)), None, after);
                 }
                 Some(index)
             }
@@ -396,19 +419,26 @@ impl Operations {
     }
 
     pub fn rename_accepted(&self, typed: String) {
-        self.commit_rename(&typed);
+        self.commit_rename(&typed, Commit::Enter);
+    }
+
+    /// The field lost the keyboard to something else: keep a usable name, else the old one.
+    pub fn rename_blurred(&self, typed: String) {
+        self.commit_rename(&typed, Commit::Blur);
     }
 
     pub fn rename_cancelled(&self) {
-        self.0.view.end_rename();
+        self.0.view.end_rename(true);
     }
 
     /// Tab / Shift+Tab: keep the name and rename the next / previous entry.
     pub fn rename_tab(&self, typed: String, back: bool) {
-        let Some(index) = self.commit_rename(&typed) else { return };
+        let Some(index) = self.commit_rename(&typed, Commit::Tab) else { return };
         let next = if back { index.checked_sub(1) } else { Some(index + 1) };
-        if let Some(next) = next {
-            self.0.view.begin_rename(next);
+        if !next.is_some_and(|next| self.0.view.begin_rename(next))
+            && let Some(window) = self.0.window.upgrade()
+        {
+            window.invoke_focus_list();
         }
     }
 
@@ -529,6 +559,8 @@ impl Operations {
         if after == After::Rename {
             *self.0.rename_when_shown.borrow_mut() = report.results.first().cloned();
         }
+        // A rename is open (Tab went on): the selection stays with it.
+        let after = if after == After::Select && self.0.view.renaming().is_some() { After::Nothing } else { after };
         let select = match (after, self.0.view.folder()) {
             (After::Nothing, _) | (_, None) => Vec::new(),
             (_, Some(folder)) => result_names(&report.results, &folder),
