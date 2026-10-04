@@ -333,6 +333,22 @@ pub fn set_hidden(path: &Path) -> io::Result<()> {
         .map_err(io_error)
 }
 
+pub fn clear_hidden(path: &Path) -> io::Result<()> {
+    let wide = verbatim(path);
+    let attributes = unsafe { GetFileAttributesW(&wide) };
+    if attributes == INVALID_FILE_ATTRIBUTES {
+        return Err(io::Error::last_os_error());
+    }
+    unsafe { SetFileAttributesW(&wide, FILE_FLAGS_AND_ATTRIBUTES(attributes & !FILE_ATTRIBUTE_HIDDEN.0)) }
+        .map_err(io_error)
+}
+
+/// Whether the hidden attribute is set.
+pub fn is_hidden_attr(path: &Path) -> bool {
+    let attributes = unsafe { GetFileAttributesW(&verbatim(path)) };
+    attributes != INVALID_FILE_ATTRIBUTES && attributes & FILE_ATTRIBUTE_HIDDEN.0 != 0
+}
+
 /// Hears where each deleted item went in the Recycle Bin.
 #[windows_core::implement(IFileOperationProgressSink)]
 struct DeleteSink {
@@ -515,6 +531,19 @@ mod tests {
 
     fn wide(text: &str) -> Vec<u16> {
         text.encode_utf16().collect()
+    }
+
+    #[test]
+    fn hidden_attribute_can_be_set_and_cleared() {
+        let dir = std::env::temp_dir().join(format!("gezik-platform-hidden-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(!is_hidden_attr(&dir));
+        set_hidden(&dir).unwrap();
+        assert!(is_hidden_attr(&dir));
+        clear_hidden(&dir).unwrap();
+        assert!(!is_hidden_attr(&dir));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

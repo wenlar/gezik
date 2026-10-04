@@ -5,6 +5,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use gezik_core::ops::names::next_free;
 use gezik_platform::fs;
 
 use super::what;
@@ -18,8 +19,8 @@ pub struct DeleteTask {
     pending: Option<Arc<PendingDeletes>>,
     /// The roots are hidden folders of an earlier delete (from `pending-deletes`).
     recovering: bool,
-    /// (hidden, original) for each root this delete hid.
-    hidden: Mutex<Vec<(PathBuf, PathBuf)>>,
+    /// For each root this delete hid: (hidden, original, whether it was hidden to begin with).
+    hidden: Mutex<Vec<(PathBuf, PathBuf, bool)>>,
 }
 
 impl DeleteTask {
@@ -39,17 +40,43 @@ impl DeleteTask {
             return root.to_path_buf();
         }
         let hidden = parent.join(hidden_name());
-        if fs::move_entry(root, &hidden).is_err() {
+        // Noted first: a crash between the note and the rename leaves a path that does not
+        // exist, which recovery drops; the other order could leave a folder hidden forever.
+        if pending.add(&hidden).is_err() {
             return root.to_path_buf();
         }
-        if pending.add(&hidden).is_err() {
-            // Not noted: a crash would leave it hidden forever. Put it back, delete in place.
-            let _ = fs::move_entry(&hidden, root);
+        let was_hidden = fs::is_hidden_attr(root);
+        if fs::move_entry(root, &hidden).is_err() {
+            pending.remove(&hidden);
             return root.to_path_buf();
         }
         let _ = fs::set_hidden(&hidden);
-        lock(&self.hidden).push((hidden.clone(), root.to_path_buf()));
+        lock(&self.hidden).push((hidden.clone(), root.to_path_buf(), was_hidden));
         hidden
+    }
+}
+
+/// Puts what is left of a hidden folder back: under its own name, or the next free one if
+/// that was taken meanwhile; the hidden attribute goes unless the folder had it before.
+fn restore_hidden(hidden: &Path, original: &Path, was_hidden: bool) {
+    let mut back = hidden.to_path_buf();
+    match fs::move_entry(hidden, original) {
+        Ok(()) => back = original.to_path_buf(),
+        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+            if let (Some(parent), Some(name)) = (original.parent(), original.file_name().and_then(|n| n.to_str())) {
+                let is_dir = std::fs::symlink_metadata(hidden).is_ok_and(|m| m.is_dir());
+                let free =
+                    next_free(name, is_dir, |candidate| std::fs::symlink_metadata(parent.join(candidate)).is_ok());
+                let target = parent.join(free);
+                if fs::move_entry(hidden, &target).is_ok() {
+                    back = target;
+                }
+            }
+        }
+        Err(_) => {}
+    }
+    if !was_hidden {
+        let _ = fs::clear_hidden(&back);
     }
 }
 
@@ -130,11 +157,11 @@ impl Task for DeleteTask {
             }
             return;
         }
-        for (hidden, original) in lock(&self.hidden).drain(..) {
+        for (hidden, original, was_hidden) in lock(&self.hidden).drain(..) {
             // Cancelled, or something inside could not be deleted: what is left goes back
             // under its own name, so nothing stays hidden and nothing is deleted later unasked.
             if std::fs::symlink_metadata(&hidden).is_ok() {
-                let _ = fs::move_entry(&hidden, &original);
+                restore_hidden(&hidden, &original, was_hidden);
             }
             pending.remove(&hidden);
         }
@@ -200,6 +227,36 @@ mod tests {
         assert_eq!(pending.load().len(), 1);
         task.done(true);
         assert_eq!(std::fs::read_to_string(dir.join("victim/a.txt")).unwrap(), "a");
+        assert!(pending.load().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_cancelled_delete_leaves_the_folder_visible() {
+        let dir = test_dir("delete-cancel-visible");
+        write(&dir.join("victim/a.txt"), "a");
+        let pending = Arc::new(PendingDeletes::new(dir.join("pending-deletes")));
+        let task = DeleteTask::new(vec![dir.join("victim")], Some(pending));
+        task.plan(&mut CollectSink::default());
+        assert!(!dir.join("victim").exists());
+        task.done(true);
+        assert!(dir.join("victim/a.txt").exists());
+        assert!(!fs::is_hidden_attr(&dir.join("victim")), "not hidden after coming back");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_taken_original_name_gets_the_next_free_one() {
+        let dir = test_dir("delete-cancel-taken");
+        write(&dir.join("victim/a.txt"), "a");
+        let pending = Arc::new(PendingDeletes::new(dir.join("pending-deletes")));
+        let task = DeleteTask::new(vec![dir.join("victim")], Some(pending.clone()));
+        task.plan(&mut CollectSink::default());
+        write(&dir.join("victim/other.txt"), "o");
+        task.done(true);
+        assert_eq!(std::fs::read_to_string(dir.join("victim (2)/a.txt")).unwrap(), "a");
+        assert!(dir.join("victim/other.txt").exists());
+        assert!(!fs::is_hidden_attr(&dir.join("victim (2)")));
         assert!(pending.load().is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -237,6 +237,16 @@ fn disk_kind(_dev: u64) -> DiskKind {
     DiskKind::Ssd
 }
 
+/// Unix hides by name only, so there is no attribute to clear.
+pub fn clear_hidden(_path: &Path) -> io::Result<()> {
+    Ok(())
+}
+
+/// Whether the hidden attribute is set (never, on Unix).
+pub fn is_hidden_attr(_path: &Path) -> bool {
+    false
+}
+
 pub fn set_hidden(_path: &Path) -> io::Result<()> {
     // A leading dot already hides it.
     Ok(())
