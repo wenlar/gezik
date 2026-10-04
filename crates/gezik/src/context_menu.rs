@@ -151,16 +151,36 @@ impl Menus {
 
     /// Right-click on file list row `index` (already selected), at window position `x`, `y`.
     pub fn row(&self, index: i32, x: f32, y: f32) {
-        let Some((path, is_dir)) = self.nav.entry_path(index) else { return };
-        let place = Place::Row { is_dir, pinned: is_dir && self.sidebar.is_pinned(&path) };
-        self.open(Subject::Row(path.clone()), place, MenuTarget::Item(path), x, y);
+        self.row_menu(index, x, y, false);
     }
 
     /// Right-click on empty space in the file list. Only the Windows menu has items for it.
     pub fn background(&self) {
+        self.background_menu(None);
+    }
+
+    /// Shift+F10 or the Menu key on the file list: the menu of row `index` (selected and
+    /// scrolled into view), or of the folder's background if it is -1, at window position
+    /// `x`, `y` (also for the Windows menu, which a right-click opens at the cursor).
+    pub fn keyboard(&self, index: i32, x: f32, y: f32) {
+        if index >= 0 {
+            self.row_menu(index, x, y, true);
+        } else {
+            self.background_menu(Some((x, y)));
+        }
+    }
+
+    fn row_menu(&self, index: i32, x: f32, y: f32, at_position: bool) {
+        let Some((path, is_dir)) = self.nav.entry_path(index) else { return };
+        let place = Place::Row { is_dir, pinned: is_dir && self.sidebar.is_pinned(&path) };
+        let at = at_position.then_some((x, y));
+        self.open(Subject::Row(path.clone()), place, MenuTarget::Item(path), x, y, at);
+    }
+
+    fn background_menu(&self, at: Option<(f32, f32)>) {
         let Location::Path(dir) = self.nav.active_location() else { return };
         if cfg!(windows) {
-            self.open_native(None, MenuTarget::Background(dir), Vec::new());
+            self.open_native(None, MenuTarget::Background(dir), Vec::new(), at);
         }
     }
 
@@ -176,7 +196,7 @@ impl Menus {
             first: index == 0,
             last: index + 1 >= count,
         };
-        self.open(Subject::SidebarEntry(path.clone()), place, MenuTarget::Item(path), x, y);
+        self.open(Subject::SidebarEntry(path.clone()), place, MenuTarget::Item(path), x, y, None);
     }
 
     /// Right-click on tab `index`, at window position `x`, `y`. Tabs get Gezik's own menu
@@ -188,26 +208,35 @@ impl Menus {
         self.open_slint(&items(place, false), x, y);
     }
 
-    fn open(&self, subject: Subject, place: Place, target: MenuTarget, x: f32, y: f32) {
+    /// `at`: where the Windows menu opens (window position), else at the cursor.
+    fn open(&self, subject: Subject, place: Place, target: MenuTarget, x: f32, y: f32, at: Option<(f32, f32)>) {
         if cfg!(windows) {
-            self.open_native(Some(subject), target, items(place, true));
+            self.open_native(Some(subject), target, items(place, true), at);
         } else {
             *self.subject.borrow_mut() = Some(subject);
             self.open_slint(&items(place, false), x, y);
         }
     }
 
-    /// Shows the Explorer menu at the cursor, with `items` on top. Its modal loop blocks the
-    /// UI thread, so it opens once the click is fully handled and the selection is drawn.
-    /// A request while another menu is pending or open is dropped.
+    /// Shows the Explorer menu at window position `at` (else at the cursor), with `items` on
+    /// top. Its modal loop blocks the UI thread, so it opens once the click is fully handled
+    /// and the selection is drawn. A request while another menu is pending or open is dropped.
     #[cfg(windows)]
-    fn open_native(&self, subject: Option<Subject>, target: MenuTarget, items: Vec<(u32, &'static str)>) {
+    fn open_native(
+        &self,
+        subject: Option<Subject>,
+        target: MenuTarget,
+        items: Vec<(u32, &'static str)>,
+        at: Option<(f32, f32)>,
+    ) {
         let Some(claim) = self.native_menu.claim() else { return };
         let menus = self.clone();
         slint::Timer::single_shot(std::time::Duration::from_millis(16), move || {
             let Some(window) = menus.window.upgrade() else { return };
             let handle = window.window().window_handle();
-            let outcome = gezik_platform::show_shell_menu(&handle, &target, &items);
+            let scale = window.window().scale_factor();
+            let at = at.map(|(x, y)| ((x * scale).round() as i32, (y * scale).round() as i32));
+            let outcome = gezik_platform::show_shell_menu(&handle, &target, &items, at);
             drop(claim);
             match outcome {
                 Ok(gezik_platform::MenuOutcome::Gezik(id)) => {
@@ -228,7 +257,14 @@ impl Menus {
     }
 
     #[cfg(not(windows))]
-    fn open_native(&self, _subject: Option<Subject>, _target: MenuTarget, _items: Vec<(u32, &'static str)>) {}
+    fn open_native(
+        &self,
+        _subject: Option<Subject>,
+        _target: MenuTarget,
+        _items: Vec<(u32, &'static str)>,
+        _at: Option<(f32, f32)>,
+    ) {
+    }
 
     fn open_slint(&self, items: &[(u32, &str)], x: f32, y: f32) {
         let Some(window) = self.window.upgrade() else { return };

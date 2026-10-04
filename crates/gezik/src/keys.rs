@@ -104,6 +104,17 @@ pub fn typed_char(text: &str) -> Option<char> {
     (!c.is_control() && !private_use).then_some(c)
 }
 
+/// Whether a key press asks for the context menu of the selection: the Menu key, or
+/// Shift+F10 (as in Explorer). Ctrl, Alt or Meta make it something else.
+pub fn is_context_menu_key(text: &str, ctrl: bool, alt: bool, shift: bool, meta: bool) -> bool {
+    if ctrl || alt || meta {
+        return false;
+    }
+    let mut chars = text.chars();
+    let (Some(c), None) = (chars.next(), chars.next()) else { return false };
+    c == char::from(SlintKey::Menu) || (shift && c == char::from(SlintKey::F10))
+}
+
 /// Whether the list's scroll offset `now` is `target` (just set to bring a row into view)
 /// moved to a row boundary. A jump of more than about a screen makes Slint's ListView
 /// place the first visible row at the top edge, dropping the part of a row that
@@ -155,6 +166,18 @@ impl Default for TypeAhead {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn menu_key_and_shift_f10_open_the_context_menu() {
+        let (menu, f10) = (text(SlintKey::Menu), text(SlintKey::F10));
+        assert!(is_context_menu_key(&menu, false, false, false, false));
+        assert!(is_context_menu_key(&menu, false, false, true, false));
+        assert!(is_context_menu_key(&f10, false, false, true, false));
+        assert!(!is_context_menu_key(&f10, false, false, false, false), "plain F10");
+        assert!(!is_context_menu_key(&f10, true, false, true, false), "Ctrl+Shift+F10");
+        assert!(!is_context_menu_key(&menu, false, true, false, false), "Alt+Menu");
+        assert!(!is_context_menu_key("a", false, false, true, false));
+    }
 
     #[test]
     fn a_far_jump_snapped_to_a_row_boundary_is_detected() {

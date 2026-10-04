@@ -69,6 +69,7 @@ fn handle_key(
     text: &str,
     chord: Option<Chord>,
     has_modifier: bool,
+    menu_key: bool,
 ) -> bool {
     let editing = window.get_path_editing();
 
@@ -103,6 +104,12 @@ fn handle_key(
     }
     if editing || has_modifier || !window.get_list_focused() {
         return false;
+    }
+
+    // Shift+F10 or the Menu key: the selected row's menu (the background's if none).
+    if menu_key {
+        window.invoke_open_keyboard_menu();
+        return true;
     }
 
     // List navigation (fixed keys).
@@ -331,6 +338,10 @@ fn main() -> Result<(), slint::PlatformError> {
         let menus = menus.clone();
         move |_, _| menus.background()
     });
+    window.on_keyboard_menu({
+        let menus = menus.clone();
+        move |i, x, y| menus.keyboard(i, x, y)
+    });
     window.on_sidebar_menu({
         let menus = menus.clone();
         move |section, i, x, y| menus.sidebar_entry(section, i, x, y)
@@ -416,7 +427,8 @@ fn main() -> Result<(), slint::PlatformError> {
             let Some(window) = weak.upgrade() else { return false };
             let m = event.modifiers;
             let chord = keys::chord_from_slint(&event.text, m.control, m.alt, m.shift, m.meta, Platform::current());
-            handle_key(&window, &nav, &mut type_ahead, &event.text, chord, m.control || m.alt || m.meta)
+            let menu_key = keys::is_context_menu_key(&event.text, m.control, m.alt, m.shift, m.meta);
+            handle_key(&window, &nav, &mut type_ahead, &event.text, chord, m.control || m.alt || m.meta, menu_key)
         }
     });
 

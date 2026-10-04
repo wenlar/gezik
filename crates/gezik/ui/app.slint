@@ -92,6 +92,9 @@ export component AppWindow inherits Window {
     // Right-click on a row / on empty space in the file list, at a window position.
     callback row-menu(int, length, length);
     callback background-menu(length, length);
+    // Shift+F10 or the Menu key on the list: the menu of row `int` (-1: the background), at
+    // a window position.
+    callback keyboard-menu(int, length, length);
     // Every key press, before the focused item sees it. Returns whether it was handled
     // (shortcuts, list keys; see keys.rs and main.rs).
     callback key-event(KeyEvent) -> bool;
@@ -133,6 +136,20 @@ export component AppWindow inherits Window {
             root.list-scroll = -index * Theme.row-height;
         } else if (index + 1) * Theme.row-height > -root.list-scroll + list.visible-height {
             root.list-scroll = -((index + 1) * Theme.row-height - list.visible-height);
+        }
+    }
+
+    // Opens the context menu from the keyboard: the selected row's, just below its name
+    // (scrolled into view first), or the background's at the list's top left if no row is
+    // selected.
+    public function open-keyboard-menu() {
+        if root.selected >= 0 && root.selected < root.rows.length {
+            root.ensure-visible(root.selected);
+            root.keyboard-menu(root.selected, list.absolute-position.x + Theme.spacing * 6,
+                list.absolute-position.y + root.list-scroll + (root.selected + 1) * Theme.row-height);
+        } else {
+            root.selected = -1;
+            root.keyboard-menu(-1, list.absolute-position.x + Theme.spacing * 2, list.absolute-position.y + Theme.spacing * 2);
         }
     }
 

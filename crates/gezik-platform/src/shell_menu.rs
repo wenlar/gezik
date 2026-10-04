@@ -5,7 +5,7 @@ use std::cell::RefCell;
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
-use windows::Win32::Graphics::Gdi::{BeginPaint, EndPaint, PAINTSTRUCT};
+use windows::Win32::Graphics::Gdi::{BeginPaint, ClientToScreen, EndPaint, PAINTSTRUCT};
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoTaskMemFree};
 use windows::Win32::UI::Shell::Common::ITEMIDLIST;
 use windows::Win32::UI::Shell::{
@@ -31,12 +31,14 @@ thread_local! {
     static ACTIVE: RefCell<Option<IContextMenu>> = const { RefCell::new(None) };
 }
 
-/// Shows the Explorer menu for `target` at the mouse cursor, with `extra` (id, label) items
-/// on top. Call on the UI thread; blocks until the menu closes.
+/// Shows the Explorer menu for `target` with `extra` (id, label) items on top: at `at`, a
+/// point in the window's client area in physical pixels (a menu opened from the keyboard),
+/// else at the mouse cursor. Call on the UI thread; blocks until the menu closes.
 pub fn show_shell_menu(
     window: &impl HasWindowHandle,
     target: &MenuTarget,
     extra: &[(u32, &str)],
+    at: Option<(i32, i32)>,
 ) -> Result<MenuOutcome, String> {
     validate_ids(extra)?;
     let handle = window.window_handle().map_err(|e| e.to_string())?;
@@ -46,7 +48,7 @@ pub fn show_shell_menu(
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         let menu = context_menu_for(hwnd, target).map_err(|e| e.to_string())?;
         let hmenu = CreatePopupMenu().map_err(|e| e.to_string())?;
-        let result = track(hwnd, hmenu, &menu, extra).map_err(|e| e.to_string());
+        let result = track(hwnd, hmenu, &menu, extra, at).map_err(|e| e.to_string());
         let _ = DestroyMenu(hmenu);
         result
     }
@@ -92,6 +94,7 @@ unsafe fn track(
     hmenu: HMENU,
     menu: &IContextMenu,
     extra: &[(u32, &str)],
+    at: Option<(i32, i32)>,
 ) -> windows::core::Result<MenuOutcome> {
     unsafe {
         menu.QueryContextMenu(hmenu, 0, FIRST_SHELL_ID, LAST_SHELL_ID, CMF_NORMAL).ok()?;
@@ -104,7 +107,13 @@ unsafe fn track(
         }
 
         let mut cursor = POINT::default();
-        GetCursorPos(&mut cursor)?;
+        match at {
+            Some((x, y)) => {
+                cursor = POINT { x, y };
+                let _ = ClientToScreen(hwnd, &mut cursor);
+            }
+            None => GetCursorPos(&mut cursor)?,
+        }
         ACTIVE.with(|active| *active.borrow_mut() = Some(menu.clone()));
         // Stays installed until the chosen command has run too, so Shell confirmation dialogs
         // shown by InvokeCommand are covered; the guard removes it on every path.
