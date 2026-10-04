@@ -619,12 +619,29 @@ impl View {
         }
     }
 
+    /// "This PC" is shown: its rows are drives, which no file operation may touch.
+    pub fn shows_drives(&self) -> bool {
+        matches!(self.0.data.borrow().listing, Listing::Drives(_))
+    }
+
+    /// Whether `path` is a folder (or drive) row of the listing shown; found by looking, not
+    /// by asking the disk.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub fn is_folder_row(&self, path: &Path) -> bool {
+        match &self.0.data.borrow().listing {
+            Listing::Files(dir, entries) => {
+                path.parent().is_some_and(|parent| gezik_core::ops::paths::same_path(parent, dir))
+                    && entries.iter().any(|e| e.is_dir && path.file_name().is_some_and(|n| n == e.name.as_str()))
+            }
+            Listing::Drives(drives) => drives.iter().any(|d| d.path == path),
+        }
+    }
+
     /// The folder shown; `None` for "This PC".
     pub fn folder(&self) -> Option<PathBuf> {
         self.0.data.borrow().listing.folder().map(Path::to_path_buf)
     }
 
-    /// Shows `text` in the status bar until the selection changes.
     /// The names in this folder on the clipboard as cut (they look faded).
     pub fn set_cut_names(&self, names: HashSet<String>) {
         if self.0.data.borrow().cut == names {
@@ -663,6 +680,7 @@ impl View {
         self.notify_listeners();
     }
 
+    /// Shows `text` in the status bar until the selection changes.
     pub fn note(&self, text: String) {
         self.set_note(text);
     }

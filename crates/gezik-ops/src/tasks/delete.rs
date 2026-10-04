@@ -106,6 +106,9 @@ impl Task for DeleteTask {
 
     fn plan(&self, sink: &mut dyn ScanSink) {
         for (root, original) in self.roots.iter().enumerate() {
+            if super::refuse_root(sink, original, "delete") {
+                continue;
+            }
             let path = self.hide(original);
             let meta = match std::fs::symlink_metadata(&path) {
                 Ok(meta) => meta,

@@ -161,6 +161,11 @@ pub fn result_names(results: &[PathBuf], folder: &Path) -> Vec<String> {
         .collect()
 }
 
+/// A drive or volume root (`C:`, `/`): it has no parent or no name.
+pub fn is_root(path: &Path) -> bool {
+    path.parent().is_none() || path.file_name().is_none()
+}
+
 /// `notlar.txt`, or `3 items` (for questions like "Delete 3 items permanently?").
 pub fn items_text(paths: &[PathBuf]) -> String {
     match paths {
@@ -210,6 +215,8 @@ struct JobView {
     report: Option<Report>,
     retry: Option<Retry>,
     after: After,
+    /// The folder rows were hidden in (trash, delete): reloaded when the job ends, whatever it did.
+    hidden_in: Option<PathBuf>,
 }
 
 impl JobView {
@@ -224,6 +231,7 @@ impl JobView {
             report: None,
             retry: None,
             after: After::Nothing,
+            hidden_in: None,
         }
     }
 
@@ -387,6 +395,9 @@ impl Operations {
 
     /// F2: renames the selected entry (or the focused one).
     pub fn rename_start(&self) {
+        if self.0.view.shows_drives() {
+            return;
+        }
         let view = &self.0.view;
         if let Some(index) = view.single_selected().or_else(|| view.focus()) {
             view.begin_rename(index);
@@ -501,10 +512,14 @@ impl Operations {
 
     /// Ctrl+C / Ctrl+X on the selection.
     pub fn copy(&self, cut: bool) {
+        if self.0.view.shows_drives() {
+            return;
+        }
         self.copy_paths(self.0.view.selected_paths(), cut);
     }
 
     pub fn copy_paths(&self, paths: Vec<PathBuf>, cut: bool) {
+        let paths = self.without_roots(paths, if cut { "cut" } else { "copy" });
         if paths.is_empty() {
             return;
         }
@@ -585,10 +600,25 @@ impl Operations {
 
     /// Delete / Shift+Delete on the selection.
     pub fn trash(&self, permanent: bool) {
+        if self.0.view.shows_drives() {
+            return;
+        }
         self.trash_paths(self.0.view.selected_paths(), permanent);
     }
 
     pub fn trash_paths(&self, paths: Vec<PathBuf>, permanent: bool) {
+        self.trash_with(paths, permanent, false);
+    }
+
+    /// Like `trash_paths`, but moving to the bin asks first even if the setting says not to
+    /// (for what was not picked in the list: Explorer's Delete on a sidebar entry).
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub fn trash_asking(&self, paths: Vec<PathBuf>, permanent: bool) {
+        self.trash_with(paths, permanent, true);
+    }
+
+    fn trash_with(&self, paths: Vec<PathBuf>, permanent: bool, always_ask: bool) {
+        let paths = self.without_roots(paths, if permanent { "delete" } else { "trash" });
         if paths.is_empty() {
             return;
         }
@@ -605,9 +635,9 @@ impl Operations {
                     }
                 },
             );
-        } else if self.0.files.get().confirm_trash {
+        } else if always_ask || self.0.files.get().confirm_trash {
             let bin = if cfg!(windows) { "Recycle Bin" } else { "Trash" };
-            self.0.dialogs.ask(format!("Move {what} to the {bin}?"), "", &["Delete", "Cancel"], move |choice| {
+            self.0.dialogs.ask(format!("Move {what} to the {bin}?"), "", &["Trash", "Cancel"], move |choice| {
                 if choice == Some(0) {
                     ops.trash_now(paths);
                 }
@@ -617,34 +647,51 @@ impl Operations {
         }
     }
 
-    fn hide(&self, paths: &[PathBuf]) {
-        if let Some(folder) = self.0.view.folder() {
-            self.0.view.hide_names(&result_names(paths, &folder));
+    /// Hides the rows of `paths` in the folder shown; the folder, to reload when the job ends.
+    fn hide(&self, paths: &[PathBuf]) -> Option<PathBuf> {
+        let folder = self.0.view.folder()?;
+        self.0.view.hide_names(&result_names(paths, &folder));
+        Some(folder)
+    }
+
+    /// `paths` without drive roots (no copying, moving or deleting those); says so when that
+    /// leaves nothing.
+    fn without_roots(&self, paths: Vec<PathBuf>, what: &str) -> Vec<PathBuf> {
+        let asked = paths.len();
+        let kept: Vec<PathBuf> = paths.into_iter().filter(|path| !is_root(path)).collect();
+        if kept.is_empty() && asked > 0 {
+            self.0.view.note(format!("Cannot {what} a drive"));
         }
+        kept
     }
 
     fn trash_now(&self, paths: Vec<PathBuf>) {
-        self.hide(&paths);
+        let hidden_in = self.hide(&paths);
         let retry: Retry = {
             let paths = paths.clone();
             Rc::new(move || -> Box<dyn Task> { Box::new(TrashTask::new(paths.clone())) })
         };
-        self.submit(retry(), Some(retry), After::Nothing);
+        let id = self.submit(retry(), Some(retry), After::Nothing);
+        self.with_job(id, |job| job.hidden_in = hidden_in);
     }
 
     fn delete_now(&self, paths: Vec<PathBuf>) {
-        self.hide(&paths);
+        let hidden_in = self.hide(&paths);
         let pending = self.0.engine.pending_deletes();
         let retry: Retry = {
             let paths = paths.clone();
             Rc::new(move || -> Box<dyn Task> { Box::new(DeleteTask::new(paths.clone(), pending.clone())) })
         };
-        self.submit(retry(), Some(retry), After::Nothing);
+        let id = self.submit(retry(), Some(retry), After::Nothing);
+        self.with_job(id, |job| job.hidden_in = hidden_in);
     }
 
     /// A copy of each selected item next to it.
     pub fn duplicate(&self) {
-        let paths = self.0.view.selected_paths();
+        if self.0.view.shows_drives() {
+            return;
+        }
+        let paths = self.without_roots(self.0.view.selected_paths(), "duplicate");
         if paths.is_empty() {
             return;
         }
@@ -774,8 +821,10 @@ impl Operations {
         self.0.asked.borrow_mut().remove(&id);
         let problems = !report.cancelled && !report.failures.is_empty();
         let mut after = After::Nothing;
+        let mut hidden_in = None;
         self.with_job(id, |job| {
             after = job.after;
+            hidden_in = job.hidden_in.take();
             if problems {
                 job.shown = true;
             }
@@ -794,12 +843,15 @@ impl Operations {
             (After::Nothing, _) | (_, None) => Vec::new(),
             (_, Some(folder)) => result_names(&report.results, &folder),
         };
+        // Rows hidden for this job come back if it changed nothing (failed, cancelled, no trash).
+        let mut dirs = report.changed_dirs.clone();
+        dirs.extend(hidden_in);
         let note = (report.skipped_changed > 0).then(|| {
             let n = report.skipped_changed;
             let what = if n == 1 { "1 item".to_owned() } else { format!("{n} items") };
             format!("{what} changed since; skipped")
         });
-        let reloading = self.0.nav.refresh_showing(&report.changed_dirs, &select, note.clone());
+        let reloading = self.0.nav.refresh_showing(&dirs, &select, note.clone());
         self.0.sidebar.refresh();
         if let (false, Some(note)) = (reloading, note) {
             self.0.view.note(note);
@@ -1059,6 +1111,13 @@ mod tests {
     fn items_read_well_in_questions() {
         assert_eq!(items_text(&[PathBuf::from("/a/notlar.txt")]), "notlar.txt");
         assert_eq!(items_text(&[PathBuf::from("/a"), PathBuf::from("/b")]), "2 items");
+    }
+
+    #[test]
+    fn roots_are_not_files_to_work_on() {
+        assert!(is_root(Path::new("/")));
+        assert!(!is_root(Path::new("/a")));
+        assert!(!is_root(Path::new("/a/b.txt")));
     }
 
     #[test]

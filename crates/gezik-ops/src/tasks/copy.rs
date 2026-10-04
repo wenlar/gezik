@@ -76,6 +76,9 @@ impl Task for CopyTask {
 
     fn plan(&self, sink: &mut dyn ScanSink) {
         for (root, ((source, target), preset)) in self.pairs.iter().zip(&self.presets).enumerate() {
+            if super::refuse_root(sink, source, "copy") {
+                continue;
+            }
             let meta = match std::fs::symlink_metadata(source) {
                 Ok(meta) => meta,
                 Err(err) => {
