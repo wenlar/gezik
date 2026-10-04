@@ -1,0 +1,89 @@
+import { Theme } from "../theme.slint";
+import { FileIcon } from "file-icon.slint";
+
+// What the preview shows; built by Rust (preview.rs).
+export struct PreviewInfo {
+    // 0 nothing selected, 1 a picture, 2 text, 3 another file (its thumbnail or icon),
+    // 4 a folder, 5 several items.
+    kind: int,
+    title: string,
+    picture: image,
+    has-picture: bool,
+    text: string,
+    // Lines of facts: type, size, dates, picture size, folder count.
+    details: string,
+    // `Kind` index, for the icon when there is no picture.
+    item-kind: int,
+    // The picture or text is still loading.
+    loading: bool,
+}
+
+export component PreviewPane inherits Rectangle {
+    in property <PreviewInfo> info;
+    // A fixed-width font for text files.
+    in property <string> mono-font;
+
+    background: Theme.surface;
+    accessible-role: none;
+
+    VerticalLayout {
+        padding: Theme.spacing * 2;
+        spacing: Theme.spacing * 2;
+
+        Rectangle {
+            vertical-stretch: 1;
+            min-height: 80px;
+
+            if root.info.kind == 2: Flickable {
+                content-height: text.preferred-height;
+                content-width: self.width;
+                text := Text {
+                    width: parent.width;
+                    text: root.info.text;
+                    font-family: root.mono-font;
+                    wrap: word-wrap;
+                    color: Theme.foreground;
+                }
+            }
+
+            if root.info.kind != 2 && root.info.has-picture: Image {
+                width: parent.width;
+                height: parent.height;
+                source: root.info.picture;
+                image-fit: contain;
+                accessible-role: image;
+                accessible-label: root.info.title;
+            }
+
+            if root.info.kind != 0 && root.info.kind != 2 && !root.info.has-picture: FileIcon {
+                width: min(parent.width, parent.height, 96px);
+                height: self.width;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                kind: root.info.kind == 4 ? 0 : root.info.item-kind;
+            }
+
+            if root.info.kind == 0: Text {
+                width: parent.width;
+                height: parent.height;
+                text: "Select a file to preview";
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                color: Theme.foreground-muted;
+            }
+        }
+
+        Text {
+            text: root.info.title;
+            font-weight: 600;
+            wrap: word-wrap;
+            color: Theme.foreground;
+        }
+
+        Text {
+            text: root.info.details;
+            wrap: word-wrap;
+            color: Theme.foreground-muted;
+        }
+    }
+}

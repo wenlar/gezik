@@ -1441,6 +1441,7 @@ dependencies = [
  "gezik-config",
  "gezik-core",
  "gezik-platform",
+ "image",
  "notify",
  "open",
  "slint",

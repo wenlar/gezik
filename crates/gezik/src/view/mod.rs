@@ -181,8 +181,44 @@ impl View {
         }
     }
 
+    /// What the preview shows: several selected items, or the selected entry (the focused
+    /// one if it is selected).
+    pub fn preview_target(&self) -> crate::preview::Target {
+        use crate::preview::Target;
+        let data = self.0.data.borrow();
+        let count = data.selection.count();
+        if count > 1 {
+            let mut size = None;
+            for i in data.selection.iter().filter(|i| !data.listing.is_dir(*i)) {
+                *size.get_or_insert(0) += data.listing.file_size(i);
+            }
+            return Target::Several { count, size };
+        }
+        let index = match data.selection.focus() {
+            Some(f) if data.selection.is_selected(f) => f,
+            _ => match data.selection.iter().next() {
+                Some(i) => i,
+                None => return Target::Nothing,
+            },
+        };
+        let Some((path, is_dir)) = data.listing.path_at(index) else { return Target::Nothing };
+        let entry = match &data.listing {
+            Listing::Files(_, entries) => entries.get(index),
+            Listing::Drives(_) => None,
+        };
+        Target::Entry {
+            name: data.listing.name_at(index).unwrap_or_default().to_owned(),
+            path,
+            is_dir,
+            type_name: model::type_name_for(&data, index),
+            size: (entry.is_some() && !is_dir).then(|| data.listing.file_size(index)),
+            modified: entry.and_then(|e| e.modified),
+            created: entry.and_then(|e| e.created),
+            kind: data.listing.kind(index).index(),
+        }
+    }
+
     /// Calls `f` whenever the selection or the focus changes (also when a listing is shown).
-    #[allow(dead_code, reason = "used by later view tasks (grid, preview)")]
     pub fn on_selection_changed(&self, f: impl Fn() + 'static) {
         self.0.on_selection.borrow_mut().push(Rc::new(f));
     }

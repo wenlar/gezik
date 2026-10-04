@@ -46,3 +46,4 @@ thumbnails = true      # pictures and videos show a preview in the grid
 # select-all = "mod+a"
 # view-list = "mod+1"
 # view-grid = "mod+2"
+# toggle-preview = "alt+p"

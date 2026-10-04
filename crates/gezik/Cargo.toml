@@ -28,3 +28,6 @@ notify = "8"
 
 [build-dependencies]
 slint-build = "1.18"
+
+[dev-dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }

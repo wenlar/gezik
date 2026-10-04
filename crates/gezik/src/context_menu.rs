@@ -13,6 +13,7 @@ use gezik_platform::MenuTarget;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::navigation::Navigator;
+use crate::preview::Preview;
 use crate::sidebar::{SECTION_PINNED, Sidebar};
 use crate::view::View;
 use crate::{AppWindow, MenuEntry};
@@ -133,11 +134,12 @@ pub const SORT_BY_TYPE: u32 = 38;
 pub const SORT_BY_SIZE: u32 = 39;
 pub const SORT_ASC: u32 = 40;
 pub const SORT_DESC: u32 = 41;
+pub const PREVIEW_PANE: u32 = 42;
 pub const APPLY_TO_ALL: u32 = 43;
 pub const RESET_FOLDER: u32 = 44;
 
 /// The View menu; the current choices are marked with a bullet.
-pub fn view_items(view: ViewSettings) -> Vec<(u32, String)> {
+pub fn view_items(view: ViewSettings, preview_open: bool) -> Vec<(u32, String)> {
     let mark = |on: bool, title: &str| format!("{}{title}", if on { "• " } else { "    " });
     let grid = view.mode == ViewMode::Grid;
     let mut out = vec![(VIEW_LIST, mark(!grid, "List")), (VIEW_GRID, mark(grid, "Grid"))];
@@ -158,6 +160,7 @@ pub fn view_items(view: ViewSettings) -> Vec<(u32, String)> {
     }
     out.push((SORT_ASC, mark(view.sort.dir == SortDir::Asc, "Ascending")));
     out.push((SORT_DESC, mark(view.sort.dir == SortDir::Desc, "Descending")));
+    out.push((PREVIEW_PANE, mark(preview_open, "Preview pane")));
     out.push((APPLY_TO_ALL, "Apply to all folders".to_owned()));
     out.push((RESET_FOLDER, "Reset this folder".to_owned()));
     out
@@ -210,6 +213,7 @@ pub struct Menus {
     window: slint::Weak<AppWindow>,
     nav: Navigator,
     view: View,
+    preview: Preview,
     sidebar: Sidebar,
     /// What the open Slint menu is for.
     subject: Rc<RefCell<Option<Subject>>>,
@@ -218,11 +222,12 @@ pub struct Menus {
 }
 
 impl Menus {
-    pub fn new(window: &AppWindow, nav: Navigator, view: View, sidebar: Sidebar) -> Menus {
+    pub fn new(window: &AppWindow, nav: Navigator, view: View, preview: Preview, sidebar: Sidebar) -> Menus {
         let menus = Menus {
             window: window.as_weak(),
             nav,
             view,
+            preview,
             sidebar,
             subject: Rc::default(),
             native_menu: MenuGate::default(),
@@ -312,7 +317,7 @@ impl Menus {
     /// The View button's menu, at window position `x`, `y`.
     pub fn view_menu(&self, x: f32, y: f32) {
         *self.subject.borrow_mut() = Some(Subject::View);
-        self.open_slint(&view_items(self.view.view_settings()), x, y);
+        self.open_slint(&view_items(self.view.view_settings(), self.preview.is_pane_open()), x, y);
     }
 
     /// `at`: where the Windows menu opens (window position), else at the cursor.
@@ -463,6 +468,7 @@ impl Menus {
             }
             (SORT_ASC, Subject::View) => self.view.set_sort(SortSpec { dir: SortDir::Asc, ..self.view.sort() }),
             (SORT_DESC, Subject::View) => self.view.set_sort(SortSpec { dir: SortDir::Desc, ..self.view.sort() }),
+            (PREVIEW_PANE, Subject::View) => self.preview.toggle_pane(),
             (APPLY_TO_ALL, Subject::View) => self.view.apply_to_all(),
             (RESET_FOLDER, Subject::View) => self.view.reset_folder(),
             _ => {}
@@ -541,7 +547,7 @@ mod tests {
     #[test]
     fn view_menu_marks_the_current_choices() {
         use gezik_core::view::{GridSize, SortDir, SortKey, SortSpec, ViewMode, ViewSettings};
-        let list = view_items(ViewSettings::default());
+        let list = view_items(ViewSettings::default(), false);
         let ids: Vec<u32> = list.iter().map(|(id, _)| *id).collect();
         assert_eq!(
             ids,
@@ -555,6 +561,7 @@ mod tests {
                 SORT_BY_SIZE,
                 SORT_ASC,
                 SORT_DESC,
+                PREVIEW_PANE,
                 APPLY_TO_ALL,
                 RESET_FOLDER
             ]
@@ -565,9 +572,12 @@ mod tests {
             sort: SortSpec { key: SortKey::Size, dir: SortDir::Desc },
             grid_size: GridSize::Large,
         };
-        let items = view_items(grid);
+        let items = view_items(grid, false);
         let marked: Vec<&str> =
             items.iter().filter(|(_, t)| t.starts_with("• ")).map(|(_, t)| t.trim_start_matches("• ")).collect();
         assert_eq!(marked, ["Grid", "Large icons", "Sort by size", "Descending"]);
+        assert!(
+            view_items(ViewSettings::default(), true).iter().any(|(id, t)| *id == PREVIEW_PANE && t.starts_with("• "))
+        );
     }
 }

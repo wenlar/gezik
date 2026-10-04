@@ -4,11 +4,12 @@ import { ToolButton } from "widgets/button.slint";
 import { Breadcrumb, CrumbItem } from "widgets/breadcrumb.slint";
 import { TabBar, TabItem } from "widgets/tab-bar.slint";
 import { Sidebar, SidebarRow } from "widgets/sidebar.slint";
+import { PreviewPane, PreviewInfo } from "widgets/preview-pane.slint";
 import { FileView, FileRow, ItemRow } from "widgets/file-view.slint";
 
 // Re-exported so Rust can set it with `window.global::<Theme>()` and build crumbs, tabs
 // and sidebar rows.
-export { Theme, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow }
+export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow }
 
 // One item of the Slint context menu (tabs everywhere; also rows and the sidebar on
 // macOS/Linux). `id` is one of the ids in context_menu.rs.
@@ -96,6 +97,15 @@ export component AppWindow inherits Window {
     callback pinned-move(int, int);
     // The splitter was released.
     callback sidebar-resized();
+    // The preview pane on the right (Alt+P); its width is dragged (200-600px) and saved
+    // in state.toml on close.
+    in property <bool> preview-open;
+    in-out property <length> preview-width: 280px;
+    in property <PreviewInfo> preview;
+    // A fixed-width font for text previews.
+    in property <string> mono-font;
+    // The preview splitter was released.
+    callback preview-resized();
     // A Slint context menu item was chosen (its `MenuEntry.id`).
     callback menu-activated(int);
     // Left press on an entry with Ctrl (Cmd on macOS) and Shift; left click on empty space with Ctrl.
@@ -334,6 +344,26 @@ export component AppWindow inherits Window {
                         root.end-path-editing();
                         root.background-menu(x, y);
                     }
+                }
+                // A 1px line, grabbable over 5px.
+                if root.preview-open: Rectangle {
+                    width: 5px;
+                    accessible-role: none;
+                    Rectangle {
+                        x: (parent.width - self.width) / 2;
+                        width: 1px;
+                        background: preview-splitter.has-hover || preview-splitter.pressed ? Theme.accent : Theme.border;
+                    }
+                    preview-splitter := TouchArea {
+                        mouse-cursor: col-resize;
+                        moved => { root.preview-width = clamp(root.preview-width - (self.mouse-x - self.pressed-x), 200px, 600px); }
+                        changed pressed => { if !self.pressed { root.preview-resized(); } }
+                    }
+                }
+                if root.preview-open: PreviewPane {
+                    width: root.preview-width;
+                    info: root.preview;
+                    mono-font: root.mono-font;
                 }
                 // A 1px line, grabbable over 5px.
                 if root.sidebar-position == 1: Rectangle {

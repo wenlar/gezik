@@ -6,6 +6,7 @@ mod keys;
 mod media;
 mod navigation;
 mod places;
+mod preview;
 mod sidebar;
 mod start;
 mod theme_bridge;
@@ -70,6 +71,7 @@ fn handle_key(
     window: &AppWindow,
     nav: &navigation::Navigator,
     view: &view::View,
+    preview: &preview::Preview,
     type_ahead: &mut keys::TypeAhead,
     text: &str,
     chord: Option<Chord>,
@@ -103,6 +105,7 @@ fn handle_key(
             Action::SelectAll => view.select_all(),
             Action::ViewList => view.set_mode(gezik_core::view::ViewMode::List),
             Action::ViewGrid => view.set_mode(gezik_core::view::ViewMode::Grid),
+            Action::TogglePreview => preview.toggle_pane(),
         }
         // The typed text no longer fits once the location or tab changed.
         if editing && action != Action::FocusPath {
@@ -289,13 +292,28 @@ fn main() -> Result<(), slint::PlatformError> {
     let view = view::View::new(&window, memory, config.clone());
     view.set_defaults(initial_settings.view);
     view.set_columns(saved_state.columns.clone().unwrap_or_else(gezik_core::view::default_columns));
+    window.set_mono_font(
+        if cfg!(windows) {
+            "Consolas"
+        } else if cfg!(target_os = "macos") {
+            "Menlo"
+        } else {
+            "monospace"
+        }
+        .into(),
+    );
+    window.set_preview_width(saved_state.preview_width.unwrap_or(280) as f32);
+    let preview = preview::Preview::new(&window, view.clone());
+    preview.set_pane_open(saved_state.preview_open);
     window.window().on_close_requested({
-        let (weak, store, view) = (window.as_weak(), config.clone(), view.clone());
+        let (weak, store, view, preview) = (window.as_weak(), config.clone(), view.clone(), preview.clone());
         move || {
             if let (Some(window), Some(store)) = (weak.upgrade(), &store) {
                 let mut state = store.load_state();
                 window_state::capture_into(&window, &mut state);
                 state.columns = Some(view.columns());
+                state.preview_open = preview.is_pane_open();
+                state.preview_width = Some(window.get_preview_width().round().clamp(200.0, 600.0) as u32);
                 if let Err(err) = store.save_state(&state) {
                     eprintln!("gezik: cannot save window state: {err}");
                 }
@@ -338,7 +356,7 @@ fn main() -> Result<(), slint::PlatformError> {
     });
     // The sidebar width stays in memory and is saved with the window state on close.
 
-    let menus = context_menu::Menus::new(&window, nav.clone(), view.clone(), sidebar);
+    let menus = context_menu::Menus::new(&window, nav.clone(), view.clone(), preview.clone(), sidebar);
     window.on_row_menu({
         let (menus, view) = (menus.clone(), view.clone());
         move |i, x, y| {
@@ -392,6 +410,10 @@ fn main() -> Result<(), slint::PlatformError> {
     window.on_header_clicked({
         let view = view.clone();
         move |column| view.header_clicked(column)
+    });
+    window.on_preview_resized({
+        let preview = preview.clone();
+        move || preview.schedule()
     });
     window.on_columns_resized({
         let view = view.clone();
@@ -488,7 +510,7 @@ fn main() -> Result<(), slint::PlatformError> {
     });
 
     window.on_key_event({
-        let (nav, view, weak) = (nav.clone(), view.clone(), window.as_weak());
+        let (nav, view, preview, weak) = (nav.clone(), view.clone(), preview.clone(), window.as_weak());
         let mut type_ahead = keys::TypeAhead::new();
         move |event| {
             let Some(window) = weak.upgrade() else { return false };
@@ -499,6 +521,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 &window,
                 &nav,
                 &view,
+                &preview,
                 &mut type_ahead,
                 &event.text,
                 chord,
