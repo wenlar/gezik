@@ -1,13 +1,14 @@
 //! The preview of the selection: the pane on the right (Alt+P) and the quick look window
-//! (Space) show the same thing. Loading runs on a short-lived thread per request; a newer
-//! request makes older results be dropped.
+//! (Space) show the same thing. Loading runs on one worker thread that only ever takes the
+//! latest request: a newer request replaces one still waiting, makes the one in progress
+//! stop at its next step, and makes older results be dropped.
 
 use std::cell::{Cell, RefCell};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, SystemTime};
 
 use gezik_core::format_size;
@@ -65,10 +66,20 @@ fn buffer(rgba: Rgba) -> Option<SharedPixelBuffer<Rgba8Pixel>> {
         .then(|| SharedPixelBuffer::clone_from_slice(&rgba.pixels, rgba.width, rgba.height))
 }
 
-/// Loads the preview of `target`, pictures fitting `px`. Runs on a worker thread; never
-/// panics on bad files.
+/// [`load_while`] that never gives up (tests).
+#[cfg(test)]
 pub fn load(target: &Target, px: u32) -> Body {
+    load_while(target, px, &|| true)
+}
+
+/// Loads the preview of `target`, pictures fitting `px`; gives up (with [`Body::None`])
+/// before each slow step once `wanted` says the result is no longer needed. Runs on a
+/// worker thread; never panics on bad files.
+pub fn load_while(target: &Target, px: u32, wanted: &dyn Fn() -> bool) -> Body {
     let Target::Entry { path, is_dir, .. } = target else { return Body::None };
+    if !wanted() {
+        return Body::None;
+    }
     if *is_dir {
         let (count, more) = count_entries(path);
         return Body::Folder { count, more };
@@ -80,15 +91,89 @@ pub fn load(target: &Target, px: u32) -> Body {
     {
         return Body::Picture(picture, Some((decoded.width, decoded.height)));
     }
+    if !wanted() {
+        return Body::None;
+    }
     if let Some(text) = read_text(path) {
         return Body::Text(text);
     }
-    let picture =
-        gezik_platform::thumbnail(path, px).or_else(|| gezik_platform::icon(&IconTarget::Path(path.clone()), px));
+    if !wanted() {
+        return Body::None;
+    }
+    let mut picture = gezik_platform::thumbnail(path, px);
+    if picture.is_none() && wanted() {
+        picture = gezik_platform::icon(&IconTarget::Path(path.clone()), px);
+    }
     match picture.and_then(buffer) {
         Some(picture) => Body::Picture(picture, None),
         None => Body::None,
     }
+}
+
+/// A one-place mailbox: [`Slot::put`] replaces what is waiting, [`Slot::take`] waits for
+/// something. The preview worker only ever sees the latest request this way.
+pub struct Slot<T> {
+    value: Mutex<Option<T>>,
+    ready: Condvar,
+}
+
+impl<T> Default for Slot<T> {
+    fn default() -> Self {
+        Slot { value: Mutex::new(None), ready: Condvar::new() }
+    }
+}
+
+impl<T> Slot<T> {
+    pub fn put(&self, value: T) {
+        *self.value.lock().unwrap_or_else(PoisonError::into_inner) = Some(value);
+        self.ready.notify_one();
+    }
+
+    /// Waits until a value is there and takes it.
+    pub fn take(&self) -> T {
+        let mut value = self.value.lock().unwrap_or_else(PoisonError::into_inner);
+        loop {
+            if let Some(taken) = value.take() {
+                return taken;
+            }
+            value = self.ready.wait(value).unwrap_or_else(PoisonError::into_inner);
+        }
+    }
+}
+
+/// What the worker loads: `target` with pictures fitting `px`, as request `generation`.
+struct Request {
+    target: Target,
+    px: u32,
+    generation: u64,
+}
+
+/// Starts the worker thread: it takes the latest request, skips it if a newer one came
+/// meanwhile, loads it and hands the result to the UI thread.
+fn start_worker(window: slint::Weak<AppWindow>, current: Arc<AtomicU64>) -> Arc<Slot<Request>> {
+    let slot = Arc::new(Slot::default());
+    let requests = slot.clone();
+    let spawned = std::thread::Builder::new().name("gezik-preview".into()).spawn(move || {
+        gezik_platform::init_thread();
+        loop {
+            let Request { target, px, generation } = requests.take();
+            let wanted = || current.load(Ordering::SeqCst) == generation;
+            let body = load_while(&target, px, &wanted);
+            if !wanted() {
+                continue;
+            }
+            let current = current.clone();
+            let _ = window.upgrade_in_event_loop(move |_| {
+                if current.load(Ordering::SeqCst) == generation {
+                    with_current(|p| p.publish(describe(&target, Some(body))));
+                }
+            });
+        }
+    });
+    if let Err(err) = spawned {
+        eprintln!("gezik: cannot start the preview thread: {err}");
+    }
+    slot
 }
 
 /// The start of a text file (at most [`TEXT_BYTES`]); `None` for binary files (a NUL in
@@ -198,6 +283,8 @@ struct Inner {
     pane_open: Cell<bool>,
     /// Bumped per request: a load whose number is no longer current is dropped.
     generation: Arc<AtomicU64>,
+    /// Requests for the worker thread, started with the first one.
+    worker: RefCell<Option<Arc<Slot<Request>>>>,
     timer: slint::Timer,
     /// What is shown now (the quick look window opens with it).
     info: RefCell<PreviewInfo>,
@@ -214,6 +301,7 @@ impl Preview {
             view: view.clone(),
             pane_open: Cell::new(false),
             generation: Arc::default(),
+            worker: RefCell::new(None),
             timer: slint::Timer::default(),
             info: RefCell::new(PreviewInfo::default()),
             quick_look: RefCell::new(None),
@@ -271,16 +359,14 @@ impl Preview {
         if !matches!(target, Target::Entry { .. }) {
             return;
         }
-        let (current, weak, px) = (self.0.generation.clone(), self.0.window.clone(), self.picture_px());
-        std::thread::spawn(move || {
-            gezik_platform::init_thread();
-            let body = load(&target, px);
-            let _ = weak.upgrade_in_event_loop(move |_| {
-                if current.load(Ordering::SeqCst) == generation {
-                    with_current(|p| p.publish(describe(&target, Some(body))));
-                }
-            });
-        });
+        let px = self.picture_px();
+        let worker = self
+            .0
+            .worker
+            .borrow_mut()
+            .get_or_insert_with(|| start_worker(self.0.window.clone(), self.0.generation.clone()))
+            .clone();
+        worker.put(Request { target, px, generation });
     }
 
     /// The picture size to load, in physical pixels: what the pane can show.
@@ -458,6 +544,33 @@ mod tests {
             Body::Picture(picture, Some((300, 200))) => assert_eq!((picture.width(), picture.height()), (100, 67)),
             _ => panic!("expected the picture"),
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_slot_keeps_only_the_latest_value() {
+        let slot = Slot::default();
+        slot.put(1);
+        slot.put(2);
+        assert_eq!(slot.take(), 2);
+        let slot = Arc::new(slot);
+        let taker = std::thread::spawn({
+            let slot = slot.clone();
+            move || slot.take()
+        });
+        std::thread::sleep(Duration::from_millis(20));
+        slot.put(3);
+        assert_eq!(taker.join().unwrap(), 3, "take waits for a value");
+    }
+
+    #[test]
+    fn stale_loads_stop_early() {
+        let dir = temp("stale");
+        let path = dir.join("p.png");
+        image::RgbaImage::from_pixel(30, 20, image::Rgba([1, 2, 3, 255])).save(&path).unwrap();
+        assert!(matches!(load_while(&entry(path.clone(), false), 100, &|| false), Body::None));
+        assert!(matches!(load_while(&entry(dir.clone(), true), 100, &|| false), Body::None));
+        assert!(matches!(load_while(&entry(path, false), 100, &|| true), Body::Picture(..)));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

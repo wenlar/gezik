@@ -9,6 +9,8 @@ use crate::Rgba;
 pub const MAX_DECODE_BYTES: u64 = 100 * 1024 * 1024;
 /// Pictures wider or taller than this are not decoded.
 pub const MAX_DECODE_SIDE: u32 = 8192;
+/// The most memory one decode may take (an 8192×8192 RGBA picture just fits).
+pub const MAX_DECODE_ALLOC: u64 = 256 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct Decoded {
@@ -36,6 +38,7 @@ pub fn decode_image(path: &Path, max_px: u32) -> Result<Decoded, String> {
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(MAX_DECODE_SIDE);
     limits.max_image_height = Some(MAX_DECODE_SIDE);
+    limits.max_alloc = Some(MAX_DECODE_ALLOC);
     reader.limits(limits);
     let picture = reader.decode().map_err(|e| e.to_string())?;
     let (width, height) = (picture.width(), picture.height());
