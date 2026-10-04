@@ -5,6 +5,7 @@ mod drives;
 mod icons;
 mod known;
 mod picture;
+mod text;
 
 use std::path::PathBuf;
 
@@ -13,6 +14,7 @@ pub use drives::{Drive, DriveKind, drive_signature, drives};
 pub use icons::{IconTarget, Rgba, icon, init_thread, type_name};
 pub use known::{KnownFolder, known_folders};
 pub use picture::{Decoded, MAX_DECODE_BYTES, MAX_DECODE_SIDE, can_decode, decode_image, thumbnail};
+pub use text::decode_ansi;
 
 /// What was right-clicked.
 #[derive(Debug, Clone, PartialEq, Eq)]
