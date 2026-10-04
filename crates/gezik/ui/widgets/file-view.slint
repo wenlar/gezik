@@ -232,9 +232,9 @@ export component FileView inherits Rectangle {
     }
 
     header := Rectangle {
-        x: 0;
+        x: list.x;
         y: 0;
-        width: root.width;
+        width: list.visible-width;
         height: root.header-height;
         background: Theme.surface;
 
