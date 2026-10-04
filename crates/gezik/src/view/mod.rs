@@ -7,11 +7,13 @@ mod model;
 pub use listing::Listing;
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashSet;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
 
+use gezik_config::settings::ViewDefaults;
 use gezik_core::kind::fallback_type_name;
 use gezik_core::layout::{Geometry, Move, Rect};
 use gezik_core::nav::ViewState;
@@ -23,7 +25,8 @@ use gezik_core::view::{
 use gezik_core::{Entry, format_size};
 use slint::{ComponentHandle, ModelRc};
 
-use crate::AppWindow;
+use crate::media::{Media, Ready};
+use crate::{AppWindow, Theme};
 use model::{ItemsModel, ViewData};
 
 /// How long after showing a listing (or a far jump) its scroll offset is applied again:
@@ -51,6 +54,21 @@ struct Inner {
     on_selection: RefCell<Vec<Listener>>,
     sort: Cell<SortSpec>,
     columns: RefCell<Vec<ColumnState>>,
+    media: Media,
+    /// A re-sort by type is scheduled (type names arrive one by one).
+    resort_pending: Cell<bool>,
+}
+
+thread_local! {
+    /// The view of this (UI) thread, for settings changes.
+    static CURRENT: RefCell<Option<View>> = const { RefCell::new(None) };
+}
+
+/// Runs `f` with this UI thread's view, if there is one yet.
+pub fn with_current(f: impl FnOnce(&View)) {
+    if let Some(view) = CURRENT.with(|c| c.borrow().clone()) {
+        f(&view);
+    }
 }
 
 #[derive(Clone)]
@@ -58,13 +76,17 @@ pub struct View(Rc<Inner>);
 
 impl View {
     pub fn new(window: &AppWindow) -> View {
-        let data = Rc::new(RefCell::new(ViewData::default()));
+        let media = Media::new();
+        media.install();
+        let data = Rc::new(RefCell::new(ViewData { media: media.clone(), ..ViewData::default() }));
         let model = Rc::new(ItemsModel::new(data.clone()));
         window.set_items(ModelRc::from(model.clone()));
         let view = View(Rc::new(Inner {
             window: window.as_weak(),
             data,
             model,
+            media: media.clone(),
+            resort_pending: Cell::new(false),
             shown: Cell::new(0),
             revealed: Cell::new(0),
             note: RefCell::new(None),
@@ -72,9 +94,69 @@ impl View {
             sort: Cell::new(SortSpec::default()),
             columns: RefCell::new(default_columns()),
         }));
+        // Weak: the media lives inside the view.
+        let weak = Rc::downgrade(&view.0);
+        media.on_ready(move |entries, ready| {
+            if let Some(inner) = weak.upgrade() {
+                View(inner).media_ready(entries, ready);
+            }
+        });
+        CURRENT.with(|c| *c.borrow_mut() = Some(view.clone()));
         view.sync_columns();
         view.sync_header();
         view
+    }
+
+    /// `[view]` settings, at startup and whenever settings.toml changes.
+    pub fn set_defaults(&self, defaults: ViewDefaults) {
+        let changed = {
+            let mut data = self.0.data.borrow_mut();
+            let changed = data.icons != defaults.icons;
+            data.icons = defaults.icons;
+            changed
+        };
+        if changed {
+            self.0.model.notify.reset();
+        }
+    }
+
+    fn update_icon_px(&self) {
+        let Some(window) = self.0.window.upgrade() else { return };
+        let logical = window.global::<Theme>().get_icon_size();
+        self.0.data.borrow_mut().icon_px = (logical * window.window().scale_factor()).round().max(1.0) as u32;
+    }
+
+    fn media_ready(&self, entries: &[usize], ready: Ready) {
+        let mut rows: Vec<Range<usize>> = entries.iter().map(|&i| i..i + 1).collect();
+        rows.sort_by_key(|r| r.start);
+        self.0.model.entries_changed(&rows);
+        if ready == Ready::TypeName && self.sort().key == SortKey::Type {
+            self.resort_soon();
+        }
+    }
+
+    /// Type names arrive one by one: sorts again once they stop for a moment.
+    fn resort_soon(&self) {
+        if self.0.resort_pending.replace(true) {
+            return;
+        }
+        let view = self.clone();
+        slint::Timer::single_shot(Duration::from_millis(150), move || {
+            view.0.resort_pending.set(false);
+            view.resort();
+        });
+    }
+
+    /// Asks for the system name of every type in `listing` (to sort by type).
+    fn request_type_names(&self, listing: &Listing) {
+        let Listing::Files(_, entries) = listing else { return };
+        let mut seen = HashSet::new();
+        for e in entries.iter() {
+            let ext = e.extension().to_lowercase();
+            if seen.insert((ext.clone(), e.is_dir)) {
+                self.0.media.type_name(&ext, e.is_dir, None);
+            }
+        }
     }
 
     /// Calls `f` whenever the selection or the focus changes (also when a listing is shown).
@@ -86,6 +168,8 @@ impl View {
     /// Shows `listing` with the selection, focus and scroll `state` remembers. `note`, if
     /// any, replaces the item count in the status bar until the selection changes.
     pub fn show(&self, listing: Listing, state: &ViewState, note: Option<String>) {
+        self.0.media.new_generation();
+        self.update_icon_px();
         let listing = self.sorted(listing, true);
         let selection = restore_selection(&listing, state);
         let count = listing.len();
@@ -119,6 +203,7 @@ impl View {
     /// Empties the view (a tab switch while the new tab loads). The status bar is left to
     /// the caller ("Loading…").
     pub fn clear(&self) {
+        self.0.media.new_generation();
         {
             let mut data = self.0.data.borrow_mut();
             data.listing = Listing::default();
@@ -265,7 +350,7 @@ impl View {
         let geometry = self.geometry();
         let changes = {
             let mut data = self.0.data.borrow_mut();
-            let ViewData { listing, selection, marquee_base } = &mut *data;
+            let ViewData { listing, selection, marquee_base, .. } = &mut *data;
             let base = marquee_base
                 .get_or_insert_with(|| if additive { selection.clone() } else { Selection::new(listing.len()) });
             let hits = geometry.items_in_rect(rect, listing.len());
@@ -371,6 +456,9 @@ impl View {
     /// (`by_name`), so the default order costs nothing.
     fn sorted(&self, listing: Listing, by_name: bool) -> Listing {
         let spec = self.0.sort.get();
+        if spec.key == SortKey::Type {
+            self.request_type_names(&listing);
+        }
         match listing {
             Listing::Files(dir, entries) if !(by_name && spec == SortSpec::default()) => {
                 let mut entries = Rc::unwrap_or_clone(entries);
@@ -381,9 +469,12 @@ impl View {
         }
     }
 
-    /// The Type column's text for sorting.
+    /// The Type column's text for sorting: the system's name if known, else `PNG File`.
     fn type_name_of(&self, entry: &Entry) -> String {
-        fallback_type_name(&entry.name, entry.is_dir)
+        self.0
+            .media
+            .known_type_name(&entry.extension().to_lowercase(), entry.is_dir)
+            .unwrap_or_else(|| fallback_type_name(&entry.name, entry.is_dir))
     }
 
     /// Sorts the current listing again, keeping the selection by name and the focus in view.

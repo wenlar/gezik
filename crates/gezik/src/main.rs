@@ -3,6 +3,7 @@
 
 mod context_menu;
 mod keys;
+mod media;
 mod navigation;
 mod places;
 mod sidebar;
@@ -43,6 +44,7 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
     });
     // Unchanged pins cost nothing (also after the reload that follows our own save).
     sidebar::with_current(|sidebar| sidebar.set_pinned(loaded.settings.pinned.clone()));
+    view::with_current(|view| view.set_defaults(loaded.settings.view));
     keys::set_shortcuts(loaded.settings.shortcuts.clone());
     loaded
 }
@@ -279,6 +281,7 @@ fn main() -> Result<(), slint::PlatformError> {
     window_state::restore(&window, &saved_state);
     keep_on_screen(window.as_weak(), 0);
     let view = view::View::new(&window);
+    view.set_defaults(initial_settings.view);
     view.set_columns(saved_state.columns.clone().unwrap_or_else(gezik_core::view::default_columns));
     window.window().on_close_requested({
         let (weak, store, view) = (window.as_weak(), config.clone(), view.clone());

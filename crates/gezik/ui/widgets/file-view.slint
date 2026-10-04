@@ -12,6 +12,9 @@ export struct FileRow {
     modified: string,
     created: string,
     type-name: string,
+    // The system's icon (`has-icon`), else Gezik's own for `kind`.
+    icon: image,
+    has-icon: bool,
     selected: bool,
     // Has the keyboard focus; the ring shows only while the view has the keyboard.
     focused: bool,
@@ -414,6 +417,8 @@ export component FileView inherits Rectangle {
                             width: Theme.icon-size;
                             height: Theme.icon-size;
                             kind: line.entry.kind;
+                            picture: line.entry.icon;
+                            has-picture: line.entry.has-icon;
                         }
                     }
                     Text {
