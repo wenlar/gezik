@@ -647,7 +647,7 @@ fn main() -> Result<(), slint::PlatformError> {
     });
     window.on_rename_blurred({
         let ops = ops.clone();
-        move |text| ops.rename_blurred(text.into())
+        move |text, generation| ops.rename_blurred(text.into(), generation)
     });
     window.on_rename_edited({
         let ops = ops.clone();

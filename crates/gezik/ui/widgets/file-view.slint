@@ -141,7 +141,7 @@ export component FileView inherits Rectangle {
     // Tab (false) or Shift+Tab (true): keep the name, go on to the next or previous entry.
     callback rename-tab(string, bool);
     callback rename-edited(string);
-    callback rename-blurred(string);
+    callback rename-blurred(string, int);
     in property <int> rename-generation;
     property <int> rename-applied: -1;
     in-out property <bool> rename-has-focus;
@@ -502,7 +502,7 @@ export component FileView inherits Rectangle {
                             cancelled => { root.rename-cancelled(); }
                             tab(t, back) => { root.rename-tab(t, back); }
                             edited(t) => { root.rename-edited(t); }
-                            blurred(t) => { root.rename-blurred(t); }
+                            blurred(t, g) => { root.rename-blurred(t, g); }
                             generation: root.rename-generation;
                             applied <=> root.rename-applied;
                             focused <=> root.rename-has-focus;
@@ -611,7 +611,7 @@ export component FileView inherits Rectangle {
                             cancelled => { root.rename-cancelled(); }
                             tab(t, back) => { root.rename-tab(t, back); }
                             edited(t) => { root.rename-edited(t); }
-                            blurred(t) => { root.rename-blurred(t); }
+                            blurred(t, g) => { root.rename-blurred(t, g); }
                             generation: root.rename-generation;
                             applied <=> root.rename-applied;
                             focused <=> root.rename-has-focus;

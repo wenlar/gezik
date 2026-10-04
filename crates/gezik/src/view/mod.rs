@@ -365,6 +365,21 @@ impl View {
     /// Ends renaming. `refocus`: the field had the keyboard (Enter, Esc, Tab), so the list gets
     /// it back; not after a blur, where another control took the focus on purpose.
     pub fn end_rename(&self, refocus: bool) {
+        self.finish_rename(refocus, true);
+    }
+
+    /// Ends renaming because another entry's rename starts at once: the list gets no focus in
+    /// between (the new field takes it).
+    pub fn end_rename_for_next(&self) {
+        self.finish_rename(false, false);
+    }
+
+    /// The current rename's number (a field only answers for its own).
+    pub fn rename_generation(&self) -> i32 {
+        self.0.rename_generation.get()
+    }
+
+    fn finish_rename(&self, refocus: bool, if_focused: bool) {
         if self.0.renaming.borrow_mut().take().is_none() {
             return;
         }
@@ -373,7 +388,7 @@ impl View {
             let had_focus = window.get_rename_focused();
             window.set_renaming_index(-1);
             window.set_rename_error("".into());
-            if refocus || had_focus {
+            if refocus || (if_focused && had_focus) {
                 window.invoke_focus_list();
             }
         }
