@@ -4,7 +4,7 @@ use crate::{Color, Warning};
 use std::collections::HashMap;
 
 /// Every color a theme can set, as written in `[colors]`.
-pub const COLOR_KEYS: [&str; 21] = [
+pub const COLOR_KEYS: [&str; 24] = [
     "background",
     "surface",
     "foreground",
@@ -26,6 +26,9 @@ pub const COLOR_KEYS: [&str; 21] = [
     "focus-ring",
     "marquee",
     "danger",
+    "progress",
+    "progress-paused",
+    "progress-error",
 ];
 
 /// Old color names still read, for themes written before the icon colors were split.
@@ -76,6 +79,11 @@ pub struct ThemeColors {
     /// Fill of the rubber-band selection rectangle (usually translucent).
     pub marquee: Color,
     pub danger: Color,
+    /// Progress bars of running file operations.
+    pub progress: Color,
+    /// A paused operation (waiting for decisions, a full disk, the user).
+    pub progress_paused: Color,
+    pub progress_error: Color,
 }
 
 impl ThemeColors {
@@ -103,6 +111,9 @@ impl ThemeColors {
             "focus-ring" => &mut self.focus_ring,
             "marquee" => &mut self.marquee,
             "danger" => &mut self.danger,
+            "progress" => &mut self.progress,
+            "progress-paused" => &mut self.progress_paused,
+            "progress-error" => &mut self.progress_error,
             _ => unreachable!("not a color key: {key}"),
         };
         *slot = color;
@@ -354,6 +365,15 @@ mod tests {
 
     fn hex(text: &str) -> Color {
         Color::parse(text).unwrap()
+    }
+
+    #[test]
+    fn progress_colors_are_read() {
+        let (theme, warnings) = parse("[colors]\nprogress = \"#112233\"\nprogress-paused = \"#445566\"\n");
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let theme = theme.unwrap();
+        assert!(theme.colors.iter().any(|(k, _)| *k == "progress"));
+        assert!(theme.colors.iter().any(|(k, _)| *k == "progress-paused"));
     }
 
     #[test]

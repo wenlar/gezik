@@ -28,6 +28,9 @@ icon-other = "#9aa3ad"
 focus-ring = "#88c0d0"   # the keyboard focus in the file list
 marquee = "#88c0d033"    # rubber-band selection
 danger = "#bf616a"       # warnings and destructive actions
+progress = "#88c0d0"     # running file operations
+progress-paused = "#ebcb8b"
+progress-error = "#bf616a"
 
 [metrics]
 # font-family = "Inter"  # leave out or "" for the system font
