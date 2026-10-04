@@ -25,7 +25,6 @@ impl TrashTask {
     }
 
     /// Undo of a copy or of something new: items changed since are left alone.
-    #[cfg_attr(not(test), expect(dead_code, reason = "used by undo (Task 11)"))]
     pub(crate) fn checked(items: Vec<(PathBuf, Option<Facts>)>) -> TrashTask {
         TrashTask { items, undoing: true }
     }

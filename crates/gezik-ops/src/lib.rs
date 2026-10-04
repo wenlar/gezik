@@ -3,6 +3,7 @@
 
 mod control;
 mod engine;
+mod inverse;
 pub mod pending;
 mod run;
 mod task;

@@ -53,7 +53,6 @@ impl MoveTask {
     }
 
     /// Moves items back where they came from: (where it is, where it was, how it must look).
-    #[expect(dead_code, reason = "first used by undo (Task 11)")]
     pub(crate) fn back(items: Vec<(PathBuf, PathBuf, Option<Facts>)>) -> MoveTask {
         let (pairs, expect) = items.into_iter().map(|(now, was, facts)| ((now, was), facts)).unzip();
         MoveTask { pairs, expect, kind: TaskKind::Move, back: true, cross: false }

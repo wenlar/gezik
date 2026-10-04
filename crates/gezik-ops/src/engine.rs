@@ -8,6 +8,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use gezik_core::ops::conflict::{ConflictKind, Decision, Facts};
+use gezik_core::ops::history::UndoStack;
 use gezik_core::ops::paths::DriveSet;
 use gezik_core::ops::threads::CopyThreads;
 use gezik_platform::fs::{self, DriveFacts};
@@ -18,6 +19,23 @@ use crate::task::{Outcome, Task, TaskKind};
 use crate::tasks::DeleteTask;
 
 pub type JobId = u64;
+
+/// Where a job came from: its result goes on the undo or the redo stack.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Origin {
+    New,
+    Undo,
+    Redo,
+}
+
+/// One undoable action: its label and the tasks that undo it.
+pub(crate) struct Record {
+    label: String,
+    inverse: Vec<Box<dyn Task>>,
+}
+
+/// How many actions can be undone.
+const HISTORY: usize = 100;
 
 /// From `[files]` and the config folder.
 #[derive(Debug, Clone, Default)]
@@ -154,6 +172,9 @@ pub(crate) struct Job {
     /// Whether `drives` is final (an earlier job whose drives are unknown yet blocks later ones).
     pub drives_known: AtomicBool,
     pub background: bool,
+    pub origin: Origin,
+    /// "Copy 3 items": what Undo will say.
+    pub label: String,
     pub done: AtomicBool,
     pub acc: Mutex<Acc>,
 }
@@ -224,6 +245,7 @@ pub(crate) struct Shared {
     reporter: AtomicBool,
     next_id: AtomicU64,
     pending: Option<Arc<PendingDeletes>>,
+    history: Mutex<UndoStack<Record>>,
 }
 
 impl Shared {
@@ -306,6 +328,17 @@ impl Shared {
             task.done(cancelled);
         }
         let acc = std::mem::take(&mut *lock(&job.acc));
+        let inverse = crate::inverse::build(&acc.outcomes);
+        let recorded = !inverse.is_empty();
+        if recorded {
+            let record = Record { label: job.label.clone(), inverse };
+            let mut history = lock(&self.history);
+            match job.origin {
+                Origin::New => history.push_new(record),
+                Origin::Undo => history.push_undone(record),
+                Origin::Redo => history.push_redone(record),
+            }
+        }
         let kind = job.tasks.first().map_or(TaskKind::Copy, |task| task.kind());
         let report = Report {
             kind,
@@ -322,6 +355,9 @@ impl Shared {
         let mut events = Vec::new();
         if !report.changed_dirs.is_empty() {
             events.push(Event::Changed { dirs: report.changed_dirs.clone() });
+        }
+        if recorded || job.origin != Origin::New {
+            events.push(Event::History);
         }
         events.push(Event::Finished { job: job.id, report });
         self.push(events);
@@ -389,6 +425,7 @@ impl Engine {
             reporter: AtomicBool::new(false),
             next_id: AtomicU64::new(0),
             pending,
+            history: Mutex::new(UndoStack::new(HISTORY)),
         }))
     }
 
@@ -416,14 +453,20 @@ impl Engine {
     }
 
     pub fn submit(&self, task: Box<dyn Task>) -> JobId {
-        self.start(vec![task], None)
+        self.start(vec![task], Origin::New, None)
     }
 
-    /// Starts a job of `tasks` (run in order) on its own thread.
-    pub(crate) fn start(&self, tasks: Vec<Box<dyn Task>>, title: Option<String>) -> JobId {
+    /// Starts a job of `tasks` (run in order) on its own thread. `label`: what Undo says
+    /// (default: from the first task); an undo or redo keeps the action's label.
+    pub(crate) fn start(&self, tasks: Vec<Box<dyn Task>>, origin: Origin, label: Option<String>) -> JobId {
         let id = self.0.next_id.fetch_add(1, Ordering::SeqCst) + 1;
         let Some(first) = tasks.first() else { return id };
-        let title = title.unwrap_or_else(|| first.title());
+        let label = label.unwrap_or_else(|| first.kind().label(first.count()));
+        let title = match origin {
+            Origin::New => first.title(),
+            Origin::Undo => format!("Undoing {label}"),
+            Origin::Redo => format!("Redoing {label}"),
+        };
         let kind = first.kind();
         let background = tasks.iter().all(|task| task.kind() == TaskKind::Delete);
         let job = Arc::new(Job {
@@ -433,6 +476,8 @@ impl Engine {
             drives: Mutex::default(),
             drives_known: AtomicBool::new(false),
             background,
+            origin,
+            label,
             done: AtomicBool::new(false),
             acc: Mutex::default(),
         });
@@ -447,6 +492,28 @@ impl Engine {
             self.0.finish(&job, true);
         }
         id
+    }
+
+    /// Undoes the last action; its progress shows like any job.
+    pub fn undo(&self) -> Option<JobId> {
+        let record = lock(&self.0.history).pop_undo()?;
+        self.0.push([Event::History]);
+        Some(self.start(record.inverse, Origin::Undo, Some(record.label)))
+    }
+
+    pub fn redo(&self) -> Option<JobId> {
+        let record = lock(&self.0.history).pop_redo()?;
+        self.0.push([Event::History]);
+        Some(self.start(record.inverse, Origin::Redo, Some(record.label)))
+    }
+
+    /// "Copy 3 items" if there is something to undo.
+    pub fn undo_label(&self) -> Option<String> {
+        lock(&self.0.history).peek_undo().map(|record| record.label.clone())
+    }
+
+    pub fn redo_label(&self) -> Option<String> {
+        lock(&self.0.history).peek_redo().map(|record| record.label.clone())
     }
 
     /// Puts events back at the front of the queue (test helpers).
@@ -531,7 +598,122 @@ impl Engine {
 mod tests {
     use super::*;
     use crate::testing::{FakeTask, Gate, defaults, engine, finish, test_dir};
+    use crate::testing::{read, write};
+    use crate::{CopyTask, DeleteTask, MoveTask, TrashTask};
     use std::sync::atomic::AtomicUsize;
+
+    fn run(engine: &Engine, job: JobId) -> Report {
+        finish(engine, job, defaults).0
+    }
+
+    #[test]
+    fn undo_and_redo_a_copy() {
+        let dir = test_dir("undo-copy");
+        write(&dir.join("src/a.txt"), "a");
+        std::fs::create_dir(dir.join("dst")).unwrap();
+        let engine = engine();
+        run(&engine, engine.submit(Box::new(CopyTask::into(vec![dir.join("src/a.txt")], &dir.join("dst")))));
+        assert_eq!(engine.undo_label().as_deref(), Some("Copy 1 item"));
+        let report = run(&engine, engine.undo().unwrap());
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert!(!dir.join("dst/a.txt").exists());
+        assert_eq!(engine.undo_label(), None);
+        assert_eq!(engine.redo_label().as_deref(), Some("Copy 1 item"));
+        run(&engine, engine.redo().unwrap());
+        assert_eq!(read(&dir.join("dst/a.txt")), "a", "back from the trash");
+        assert_eq!(engine.undo_label().as_deref(), Some("Copy 1 item"));
+        run(&engine, engine.undo().unwrap());
+        assert!(!dir.join("dst/a.txt").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn undo_rename_brings_the_old_name_back() {
+        let dir = test_dir("undo-rename");
+        write(&dir.join("a.txt"), "a");
+        let engine = engine();
+        run(&engine, engine.submit(Box::new(MoveTask::rename(dir.join("a.txt"), "b.txt"))));
+        assert_eq!(engine.undo_label().as_deref(), Some("Rename"));
+        run(&engine, engine.undo().unwrap());
+        assert_eq!(read(&dir.join("a.txt")), "a");
+        assert!(!dir.join("b.txt").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn undo_skips_changed_files() {
+        let dir = test_dir("undo-changed");
+        write(&dir.join("src/a.txt"), "a");
+        std::fs::create_dir(dir.join("dst")).unwrap();
+        let engine = engine();
+        run(&engine, engine.submit(Box::new(CopyTask::into(vec![dir.join("src/a.txt")], &dir.join("dst")))));
+        std::fs::write(dir.join("dst/a.txt"), "edited after the copy").unwrap();
+        let report = run(&engine, engine.undo().unwrap());
+        assert_eq!(report.skipped_changed, 1);
+        assert_eq!(read(&dir.join("dst/a.txt")), "edited after the copy");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn undo_of_replace_brings_the_old_file_back() {
+        let dir = test_dir("undo-replace");
+        write(&dir.join("src/a.txt"), "new");
+        write(&dir.join("dst/a.txt"), "old");
+        let engine = engine();
+        let job = engine.submit(Box::new(CopyTask::into(vec![dir.join("src/a.txt")], &dir.join("dst"))));
+        finish(&engine, job, |c| vec![Decision::Replace; c.len()]);
+        assert_eq!(read(&dir.join("dst/a.txt")), "new");
+        let report = run(&engine, engine.undo().unwrap());
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert_eq!(read(&dir.join("dst/a.txt")), "old");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn undo_of_trash_restores() {
+        let dir = test_dir("undo-trash");
+        write(&dir.join("x/y.txt"), "y");
+        let engine = engine();
+        run(&engine, engine.submit(Box::new(TrashTask::new(vec![dir.join("x")]))));
+        assert!(!dir.join("x").exists());
+        assert_eq!(engine.undo_label().as_deref(), Some("Delete 1 item"));
+        run(&engine, engine.undo().unwrap());
+        assert_eq!(read(&dir.join("x/y.txt")), "y");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn undo_of_a_merging_move_moves_the_files_back() {
+        let dir = test_dir("undo-merge");
+        write(&dir.join("src/d/a.txt"), "a");
+        write(&dir.join("dst/d/b.txt"), "b");
+        let engine = engine();
+        run(&engine, engine.submit(Box::new(MoveTask::into(vec![dir.join("src/d")], &dir.join("dst")))));
+        assert!(!dir.join("src/d").exists());
+        run(&engine, engine.undo().unwrap());
+        assert_eq!(read(&dir.join("src/d/a.txt")), "a");
+        assert_eq!(read(&dir.join("dst/d/b.txt")), "b");
+        assert!(!dir.join("dst/d/a.txt").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_new_action_ends_redo_and_deletes_are_not_undoable() {
+        let dir = test_dir("undo-new-action");
+        write(&dir.join("a.txt"), "a");
+        write(&dir.join("b.txt"), "b");
+        let engine = engine();
+        run(&engine, engine.submit(Box::new(MoveTask::rename(dir.join("a.txt"), "c.txt"))));
+        run(&engine, engine.undo().unwrap());
+        assert!(engine.redo_label().is_some());
+        let (_, events) =
+            finish(&engine, engine.submit(Box::new(MoveTask::rename(dir.join("b.txt"), "d.txt"))), defaults);
+        assert!(events.contains(&Event::History));
+        assert_eq!(engine.redo_label(), None);
+        run(&engine, engine.submit(Box::new(DeleteTask::new(vec![dir.join("d.txt")], None))));
+        assert_eq!(engine.undo_label().as_deref(), Some("Rename"), "the delete is not on the undo stack");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     fn wait_for(what: &str, mut ready: impl FnMut() -> bool) {
         let deadline = Instant::now() + Duration::from_secs(10);
