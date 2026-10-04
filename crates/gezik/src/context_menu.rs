@@ -351,7 +351,10 @@ impl Menus {
     /// File items after the row's own: Windows already has Cut, Copy, Delete... (taken over in
     /// `run_verb`), so only Duplicate is added there.
     fn file_extras(&self, single: bool, folder: bool, native: bool) -> Vec<(u32, String)> {
-        if native {
+        // Drives (This PC) are not files: no copying, deleting or renaming them.
+        if self.view.shows_drives() {
+            Vec::new()
+        } else if native {
             vec![(DUPLICATE, "Duplicate".to_owned())]
         } else {
             owned(file_items(single, folder, self.ops.can_paste()))
@@ -605,14 +608,22 @@ impl Menus {
             ShellVerb::Copy => self.ops.copy_paths(paths, false),
             ShellVerb::Paste => {
                 let into = match subject {
-                    Some(Subject::Row(path) | Subject::SidebarEntry(path) | Subject::Background(path)) => Some(path),
+                    // A row is a target only if it is a folder, else the shown folder gets it.
+                    Some(Subject::Row(path)) => self.view.is_folder_row(&path).then_some(path),
+                    Some(Subject::SidebarEntry(path) | Subject::Background(path)) => Some(path),
                     _ => None,
                 };
                 self.ops.paste(into, false);
             }
             ShellVerb::Delete => {
                 let keys = gezik_platform::modifier_keys_down();
-                self.ops.trash_paths(paths, keys.left_shift || keys.right_shift);
+                let permanent = keys.left_shift || keys.right_shift;
+                if matches!(subject, Some(Subject::SidebarEntry(_))) {
+                    // A pinned folder is not what is selected in the list: always ask first.
+                    self.ops.trash_asking(paths, permanent);
+                } else {
+                    self.ops.trash_paths(paths, permanent);
+                }
             }
             ShellVerb::Rename => {
                 if matches!(subject, Some(Subject::Row(_))) {

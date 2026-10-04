@@ -58,6 +58,9 @@ impl Task for TrashTask {
 
     fn plan(&self, sink: &mut dyn ScanSink) {
         for (root, (path, _)) in self.items.iter().enumerate() {
+            if super::refuse_root(sink, path, "move to the trash") {
+                continue;
+            }
             match std::fs::symlink_metadata(path) {
                 Ok(meta) => {
                     if !sink.item(PlanItem::new(Stage::Parallel, facts_of(&meta)).source(path).top(root)) {

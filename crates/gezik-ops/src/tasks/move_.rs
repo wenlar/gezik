@@ -109,6 +109,9 @@ impl Task for MoveTask {
 
     fn plan(&self, sink: &mut dyn ScanSink) {
         for (root, (source, target)) in self.pairs.iter().enumerate() {
+            if super::refuse_root(sink, source, "move") {
+                continue;
+            }
             if source == target {
                 continue;
             }
