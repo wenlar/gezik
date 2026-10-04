@@ -67,3 +67,21 @@ Alt proje 1 tamamlandıktan sonra bilerek ertelenen maddeler. Kaynak: görev inc
 - Boşta bellek yeniden ölçüldü (sürüm derlemesi, `scripts/perf/measure.ps1 -Runs 5 -Config <geçici klasör>`, varsayılan 900×600 pencere, ev klasörü): sistem ikonlarıyla (varsayılan) **6,7-6,8 MB**, `[view] icons = "gezik"` ile **6,3-6,4 MB**; görünüm işinden önceki sürüm (master) aynı koşulda 5,8 MB. Hedef ≤ 7 MB her iki ayarda da tutuyor. Önceki 7,8 MB'ın farkı pencere boyutundan: yazılımla çizim pencerenin her pikseli için 4 bayt tutuyor; kullanıcının `state.toml`'undaki 1334×600 pencereyle aynı derleme 7,8 MB, master 6,8 MB ölçüyor (~1 MB = 434×600×4). Görünüm işinin gerçek maliyeti ~1,0 MB; bunun ~0,5 MB'ı sistem ikonları ve tür adları için Windows kabuğunun bir kerelik maliyeti (`icons = "gezik"` ile kalkıyor), kalanı yeni kod, görüntü çözücüler ve iş parçacıkları. Eski "5,0 MB" ölçümü bu koşullarla yeniden üretilemedi (master bugün 5,8 MB veriyor).
 - Ekran testleri sonrası (2026-10-04, kilidi açık masaüstü): kaydırma CPU'su sütunlarla ~840 ms çıktı (master ~500 ms). Neden Slint'in yazılımla çizimi: her satırda ~44 harf (önce ~16) her karede yeniden çiziliyor ve 359 Hz ekranda saniyede ~360 kare çiziliyor; satır verisi hazırlamak %1'den az. Çözüm `max-fps` ayarı (varsayılan 120): çizim istekleri atılmıyor, bir sonraki kareye kadar bekletiliyor (atılan istek, pencere geri yüklenince sistemin istediği tam yeniden çizimi kaybettiriyordu). Sonuç ~270 ms. Izgara + 1000 fotoğraf (~600'ü sayfalanınca) 24 MB; 20 sekme +0,1 MB.
 - `icons = "gezik"` ikonları (Slint `Path`) her karede yeniden çiziliyor ve kaydırmaya ~100-150 ms ekliyor; önceden çizilmiş resimle hızlandırılabilir.
+
+## Dosya işlemleri 4a sonrası (2026-10-05)
+
+- Linux'ta sistem panosu yok (Gezik içi pano); X11/Wayland altyapısıyla birlikte 4b'de.
+- macOS/Linux kodu (kopyalama, çöp, pano, sürücü türü) bu makinede çalıştırılmadı; `cargo check -p gezik-core -p gezik-platform -p gezik-ops --target` sonucu: x86_64-unknown-linux-gnu ve aarch64-apple-darwin için derlendi (yalnız iki uyarı düzeltildi: kullanılmayan `DirBuilderExt` içe aktarımı, Windows dışında kullanılmayan `icons.rs` yardımcıları).
+- macOS ve Linux'ta `drive_facts().trash` her zaman true: çöpü olmayan bir sürücüde çöpe atma sistemden hata alır ve öğe başarısız sayılır (Windows'taki gibi "kalıcı silinsin mi?" sorusu gelmez).
+- Tarama tek iş parçacığında (`read_dir`); 100 bin öğe ön tarama süresi: ölçülmedi.
+- Geri alma, oluşturulmuş bir klasörü bütünüyle çöpe atar: işlemden sonra içinde düzenlenen dosyalar da gider (çöpten geri alınabilir). Yalnız tek tek dosyalar "changed since" denetlenir.
+- Retry, işlemin tamamını yeniden çalıştırır (bitmiş olanlar çakışma listesinde "identical" ve Skip olarak görünür); yalnız başarısız öğeleri seçerek yeniden deneme yok.
+- Farklı sürücüye taşıma otomatik testte yok (ikinci sürücü bilinmiyor); elle denendi: bekliyor (elle test aşaması).
+- Junction'lar kopyalanamıyor olabilir (CopyFileExW + COPY_FILE_COPY_SYMLINK sembolik bağlantıları kopyalar); denenmedi.
+- Windows Çöp Kutusu'na büyük bir klasör atmak sistemin boyut hesaplaması yüzünden yavaş; öğe listeden hemen kalktığı için beklenmez.
+- Çakışma listesi `VecModel` ile kuruluyor (tembel model değil); 10 bin satırda açılış: ölçülmedi (elle test aşaması).
+- Performans (sürüm derlemesi, Windows 11, `scripts/perf/ops.ps1`): 10 000 küçük dosya kopya Gezik 1610 ms / Explorer 12 399 ms (7,7 kat, hedef ≥ 2 kat tuttu); 10 000 dosya silme: klasörden kalkış 7 ms (hedef < 100 ms, tuttu), tamamı 397 ms (`rd /s /q` 979 ms). 50 000 dosya: kopya Gezik 9312 ms / Explorer 62 602 ms (6,7 kat); silme: klasörden kalkış 31 ms, tamamı 2187 ms (`rd /s /q` 4575 ms). 4 GB dosya karşılaştırması yapılmadı (elle, bekliyor). Boşta bellek 6,9 MB (hedef ≤ 7, tuttu); açılış 25 ms (hedef ~60, tuttu); exe 12,4 MB (`measure.ps1 -Runs 5`).
+- Geri alma işi hiçbir şey yapmazsa (örn. her şey "changed since") geri alma kaydı kayboluyor.
+- Bir önceki işin takılan sürücü sorgusu (örn. kopmuş ağ sürücüsü) sonraki işleri bloke ediyor.
+- Windows çöpü, adının bir bileşeni nokta veya boşlukla biten yolları reddediyor (Shell kardeş bir öğe üzerinde işlem yapardı).
+- Kalıcı silmede, geri koyma yeniden adlandırması da başarısız olursa gizli klasör artığı kalabilir.

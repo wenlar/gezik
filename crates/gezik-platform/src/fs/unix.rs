@@ -3,7 +3,7 @@
 
 use std::fs::{File, FileTimes, OpenOptions};
 use std::io::{self, Read, Write};
-use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
 use super::{DiskKind, DriveFacts, cancelled, nearest_existing};
@@ -268,6 +268,7 @@ pub fn trash(path: &Path) -> io::Result<Option<PathBuf>> {
 pub fn trash(path: &Path) -> io::Result<Option<PathBuf>> {
     use super::freedesktop::{free_name, info_text};
     use std::os::unix::ffi::{OsStrExt, OsStringExt};
+    use std::os::unix::fs::DirBuilderExt;
 
     let absolute = std::path::absolute(path)?;
     let dev = std::fs::symlink_metadata(&absolute)?.dev();

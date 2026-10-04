@@ -49,6 +49,7 @@ pub fn icon(target: &IconTarget, px: u32) -> Option<Rgba> {
 /// The width and height of the part of `image` that is not fully transparent, measured
 /// from the top-left corner (where the shell puts small icons in a big canvas); `(0, 0)`
 /// if all of it is transparent.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn drawn_extent(image: &Rgba) -> (u32, u32) {
     let (mut right, mut bottom) = (0, 0);
     let width = image.width as usize;
@@ -66,6 +67,7 @@ pub(crate) fn drawn_extent(image: &Rgba) -> (u32, u32) {
 
 /// Whether a 256 px ("jumbo") icon is really a small one in a corner of a transparent
 /// canvas: then the 48 px icon looks better.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn is_small_in_big_canvas(image: &Rgba) -> bool {
     let (width, height) = drawn_extent(image);
     width <= 48 && height <= 48
@@ -73,6 +75,7 @@ pub(crate) fn is_small_in_big_canvas(image: &Rgba) -> bool {
 
 /// `image` shrunk to fit `px` (keeping its aspect), or as it is if it already fits.
 /// Shrinks premultiplied, so transparent pixels do not darken the edges.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn shrink_to(image: Rgba, px: u32) -> Rgba {
     let px = px.max(1);
     if image.width <= px && image.height <= px {
