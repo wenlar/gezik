@@ -110,6 +110,19 @@ pub fn count_entries(path: &Path) -> (usize, bool) {
     (count.min(MAX_COUNTED), count > MAX_COUNTED)
 }
 
+/// `10000` as `10,000`.
+fn with_commas(n: usize) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// What the pane shows for `target`; `body` is `None` while it loads.
 pub fn describe(target: &Target, body: Option<Body>) -> PreviewInfo {
     match target {
@@ -154,7 +167,7 @@ pub fn describe(target: &Target, body: Option<Body>) -> PreviewInfo {
                     info.text = text.into();
                 }
                 Some(Body::Folder { count, more }) => lines.push(match (count, more) {
-                    (_, true) => format!("{MAX_COUNTED}+ items"),
+                    (_, true) => format!("{}+ items", with_commas(MAX_COUNTED)),
                     (1, false) => "1 item".to_owned(),
                     (n, false) => format!("{n} items"),
                 }),
@@ -247,6 +260,9 @@ impl Preview {
 
     /// Shows the selection's facts now and loads its picture or text in the background.
     pub fn refresh(&self) {
+        if !self.active() {
+            return;
+        }
         let target = self.0.view.preview_target();
         let generation = self.0.generation.fetch_add(1, Ordering::SeqCst) + 1;
         self.publish(describe(&target, None));
@@ -281,6 +297,7 @@ impl Preview {
 
     /// Nothing shows the preview: lets go of its picture and drops loads in flight.
     fn release(&self) {
+        self.0.timer.stop();
         self.0.generation.fetch_add(1, Ordering::SeqCst);
         self.publish(PreviewInfo::default());
     }
@@ -374,7 +391,7 @@ mod tests {
         let folder =
             describe(&entry(PathBuf::from("/x/sub"), true), Some(Body::Folder { count: MAX_COUNTED, more: true }));
         assert_eq!(folder.kind, 4);
-        assert!(folder.details.ends_with("10000+ items"), "{}", folder.details);
+        assert!(folder.details.ends_with("10,000+ items"), "{}", folder.details);
         assert_eq!(describe(&Target::Nothing, None).kind, 0);
     }
 }
