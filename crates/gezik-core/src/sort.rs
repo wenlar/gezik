@@ -77,49 +77,57 @@ impl Default for SortSpec {
     }
 }
 
-/// A name cut into runs: digits compare by value, everything else letter by letter.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-enum Part {
-    // Declared first: at the same position a number sorts before text (`a1` < `ab`).
-    // `Small` is a number up to 38 digits without leading zeros, compared by value; `Big`
-    // (longer) compares by `len` then `digits`, which is by value too, and is always larger.
-    // `zeros` then puts `7` before `007`.
-    Small { value: u128, zeros: usize },
-    Big { len: usize, digits: String, zeros: usize },
-    Text(Vec<u32>),
-}
+// Key tokens. A name becomes one flat `Vec<u32>` so building and comparing a key costs a
+// single allocation. Parts follow each other; a text part is its letter weights plus
+// `END`, a number part is `NUMBER`, its digit count, its digits and its leading-zero count.
+// The tokens are chosen so that comparing keys token by token gives natural order:
+// - `END` is lowest, so a shorter text sorts first (`a` < `a!`) and `a1` < `ab`;
+// - `NUMBER` is below every letter weight, so where one name has a number and the other a
+//   character, the number sorts first (`1` < `a`, `1` < `_`);
+// - digits are written without leading zeros after their count, so a longer number is
+//   larger, equal lengths compare digit by digit, and the zero count then puts `7` first
+//   before `007`.
+const END: u32 = 0;
+const NUMBER: u32 = 1;
+const TEXT_BASE: u32 = 2;
 
 /// What [`natural_cmp`] compares, computed once per name when sorting many.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct NaturalKey(Vec<Part>);
+pub struct NaturalKey(Vec<u32>);
 
 pub fn natural_key(name: &str) -> NaturalKey {
-    let mut parts = Vec::new();
-    let mut chars = name.chars().peekable();
-    while let Some(&c) = chars.peek() {
-        if c.is_ascii_digit() {
-            let mut run = String::new();
-            while let Some(&d) = chars.peek().filter(|d| d.is_ascii_digit()) {
-                run.push(d);
-                chars.next();
+    let mut key = Vec::with_capacity(name.len() + 4);
+    push_key(&mut key, name);
+    NaturalKey(key)
+}
+
+fn push_key(key: &mut Vec<u32>, name: &str) {
+    let bytes = name.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_digit() {
+            let start = i;
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
             }
-            let trimmed = run.trim_start_matches('0');
-            let digits = if trimmed.is_empty() { "0" } else { trimmed };
-            let zeros = run.len() - digits.len();
-            parts.push(match digits.parse::<u128>() {
-                Ok(value) if digits.len() <= 38 => Part::Small { value, zeros },
-                _ => Part::Big { len: digits.len(), digits: digits.to_owned(), zeros },
-            });
+            let run = &bytes[start..i];
+            let first = run.iter().position(|&b| b != b'0').unwrap_or(run.len() - 1);
+            let digits = &run[first..];
+            key.push(NUMBER);
+            key.push(u32::try_from(digits.len()).unwrap_or(u32::MAX));
+            key.extend(digits.iter().map(|&b| u32::from(b - b'0')));
+            key.push(u32::try_from(first).unwrap_or(u32::MAX));
         } else {
-            let mut weights = Vec::new();
-            while let Some(&t) = chars.peek().filter(|t| !t.is_ascii_digit()) {
-                weights.push(weight(t));
-                chars.next();
+            // Digits are ASCII, so they never occur inside a multi-byte character and
+            // `i` stays on a character boundary.
+            let rest = &name[i..];
+            for c in rest.chars().take_while(|c| !c.is_ascii_digit()) {
+                key.push(weight(c) + TEXT_BASE);
+                i += c.len_utf8();
             }
-            parts.push(Part::Text(weights));
+            key.push(END);
         }
     }
-    NaturalKey(parts)
 }
 
 /// Natural order, ignoring case; names equal that way are ordered by their exact text, so
@@ -224,38 +232,56 @@ fn alphabet_position(c: char) -> Option<(u32, u32)> {
 }
 
 /// The column value an entry sorts by, before its name.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Primary {
     None,
     Time(Option<SystemTime>),
     Size(u64),
-    Type(NaturalKey, String),
+    // Type name key (a span of the key buffer), then the lowercase extension.
+    Type((u32, u32), String),
 }
 
 /// Sorts `entries` by `spec`: folders first (in either direction), then the column, then
 /// natural name order, then the exact name so the order is total. `type_name` gives the
 /// Type column's text; it is called once per entry, and only when sorting by type.
 pub fn sort_entries(entries: &mut Vec<Entry>, spec: SortSpec, type_name: impl Fn(&Entry) -> String) {
-    let mut keyed: Vec<((Primary, NaturalKey), Entry)> = entries
-        .drain(..)
+    // All keys live in one buffer, so sorting 100k names allocates once, not 100k times.
+    let mut buf: Vec<u32> = Vec::with_capacity(entries.iter().map(|e| e.name.len() + 4).sum());
+    let mut push = |text: &str| {
+        let start = buf.len() as u32;
+        push_key(&mut buf, text);
+        (start, buf.len() as u32)
+    };
+    let keys: Vec<(Primary, (u32, u32))> = entries
+        .iter()
         .map(|e| {
             let primary = match spec.key {
                 SortKey::Name => Primary::None,
                 SortKey::Modified => Primary::Time(e.modified),
                 SortKey::Created => Primary::Time(e.created),
                 SortKey::Size => Primary::Size(if e.is_dir { 0 } else { e.size }),
-                SortKey::Type => Primary::Type(natural_key(&type_name(&e)), e.extension().to_lowercase()),
+                SortKey::Type => Primary::Type(push(&type_name(e)), e.extension().to_lowercase()),
             };
-            ((primary, natural_key(&e.name)), e)
+            (primary, push(&e.name))
         })
         .collect();
-    keyed.sort_by(|(ka, a), (kb, b)| {
+    let span = |(start, end): (u32, u32)| &buf[start as usize..end as usize];
+    // Sorting indices moves 8 bytes per swap instead of a whole `Entry`.
+    let mut order: Vec<usize> = (0..entries.len()).collect();
+    order.sort_unstable_by(|&i, &j| {
+        let (a, b) = (&entries[i], &entries[j]);
         b.is_dir.cmp(&a.is_dir).then_with(|| {
-            let order = ka.cmp(kb).then_with(|| a.name.cmp(&b.name));
+            let ((pa, na), (pb, nb)) = (&keys[i], &keys[j]);
+            let primary = match (pa, pb) {
+                (Primary::Type(ta, xa), Primary::Type(tb, xb)) => span(*ta).cmp(span(*tb)).then_with(|| xa.cmp(xb)),
+                _ => pa.cmp(pb),
+            };
+            let order = primary.then_with(|| span(*na).cmp(span(*nb))).then_with(|| a.name.cmp(&b.name));
             if spec.dir == SortDir::Desc { order.reverse() } else { order }
         })
     });
-    entries.extend(keyed.into_iter().map(|(_, e)| e));
+    let mut slots: Vec<Option<Entry>> = entries.drain(..).map(Some).collect();
+    entries.extend(order.into_iter().filter_map(|i| slots[i].take()));
 }
 
 #[cfg(test)]
@@ -377,6 +403,62 @@ mod tests {
     }
 
     #[test]
+    fn long_numbers_compare_by_value() {
+        let n = |digits: usize, first: char| format!("{first}{}", "0".repeat(digits - 1));
+        // Lengths around where a 128-bit integer would stop fitting.
+        for digits in [37, 38, 39, 40, 45] {
+            let smaller = format!("f{}", "9".repeat(digits - 1));
+            let larger = format!("f{}", n(digits + 1, '1'));
+            assert_eq!(natural_cmp(&smaller, &larger), Ordering::Less, "{digits} digits");
+            assert_eq!(natural_cmp(&larger, &smaller), Ordering::Greater, "{digits} digits");
+        }
+        let max = u128::MAX.to_string();
+        let above = "340282366920938463463374607431768211456"; // u128::MAX + 1
+        let below = "340282366920938463463374607431768211454";
+        assert_eq!(natural_cmp(&format!("x{below}"), &format!("x{max}")), Ordering::Less);
+        assert_eq!(natural_cmp(&format!("x{max}"), &format!("x{above}")), Ordering::Less);
+        assert_eq!(natural_cmp(&format!("x{above}"), &format!("x{max}")), Ordering::Greater);
+        // A long run against a short one, then the text after it.
+        let long = "1".repeat(45);
+        assert_eq!(natural_cmp(&format!("x{}", "9".repeat(10)), &format!("x{long}")), Ordering::Less);
+        assert_eq!(natural_cmp(&format!("x{long}a"), &format!("x{long}b")), Ordering::Less);
+        // Same leading digits, different length.
+        assert_eq!(natural_cmp(&"1".repeat(39), &"1".repeat(40)), Ordering::Less);
+        assert_eq!(natural_cmp(&"1".repeat(38), &"1".repeat(39)), Ordering::Less);
+        // Same value, same length differing only in the last digit.
+        assert_eq!(natural_cmp(&format!("{}1", "1".repeat(44)), &format!("{}2", "1".repeat(44))), Ordering::Less);
+    }
+
+    #[test]
+    fn leading_zeros_break_ties_for_long_numbers() {
+        let long = "7".repeat(45);
+        assert_eq!(natural_cmp(&long, &format!("0{long}")), Ordering::Less);
+        assert_eq!(natural_cmp(&format!("0{long}"), &format!("00{long}")), Ordering::Less);
+        // The value still beats the zeros.
+        assert_eq!(natural_cmp(&format!("00{long}"), &format!("{long}1")), Ordering::Less);
+        assert_eq!(natural_cmp(&format!("{long}0"), &format!("0{long}")), Ordering::Greater);
+        let max = u128::MAX.to_string();
+        assert_eq!(natural_cmp(&max, &format!("0{max}")), Ordering::Less);
+    }
+
+    #[test]
+    fn a_number_sorts_before_any_character_at_the_same_place() {
+        assert_eq!(natural_cmp("1", "a"), Ordering::Less);
+        assert_eq!(natural_cmp("a1", "a!"), Ordering::Less);
+        assert_eq!(natural_cmp("a1", "a_"), Ordering::Less);
+        assert_eq!(natural_cmp("a1", "a"), Ordering::Greater, "a prefix is shorter");
+        assert_eq!(natural_cmp("1", "!"), Ordering::Less);
+    }
+
+    #[test]
+    fn descending_type_reverses_ties_by_name() {
+        let mut v =
+            vec![entry("a.txt", false, 0, None), entry("b.txt", false, 0, None), entry("c.png", false, 0, None)];
+        let type_name = |e: &Entry| if e.extension() == "png" { "Picture".to_owned() } else { "Text".to_owned() };
+        sort_entries(&mut v, SortSpec { key: SortKey::Type, dir: SortDir::Desc }, type_name);
+        assert_eq!(names(&v), ["b.txt", "a.txt", "c.png"]);
+    }
+    #[test]
     fn sort_names_round_trip() {
         for key in SortKey::ALL {
             assert_eq!(SortKey::parse(key.as_str()), Some(key));
@@ -396,6 +478,7 @@ mod tests {
         let start = std::time::Instant::now();
         sort_entries(&mut v, SortSpec::default(), |_| String::new());
         let took = start.elapsed();
+        eprintln!("sorted 100k in {took:?}");
         assert!(took.as_millis() <= 50, "took {took:?}");
     }
 }
