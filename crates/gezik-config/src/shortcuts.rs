@@ -124,10 +124,22 @@ pub enum Action {
     ViewGrid,
     TogglePreview,
     QuickLook,
+    Copy,
+    Cut,
+    Paste,
+    /// Paste what was copied as a move (macOS ⌘⌥V, as in Finder).
+    PasteMove,
+    Trash,
+    DeletePermanently,
+    Rename,
+    NewFolder,
+    Duplicate,
+    Undo,
+    Redo,
 }
 
 impl Action {
-    pub const ALL: [Action; 14] = [
+    pub const ALL: [Action; 25] = [
         Action::NewTab,
         Action::CloseTab,
         Action::NextTab,
@@ -142,6 +154,17 @@ impl Action {
         Action::ViewGrid,
         Action::TogglePreview,
         Action::QuickLook,
+        Action::Copy,
+        Action::Cut,
+        Action::Paste,
+        Action::PasteMove,
+        Action::Trash,
+        Action::DeletePermanently,
+        Action::Rename,
+        Action::NewFolder,
+        Action::Duplicate,
+        Action::Undo,
+        Action::Redo,
     ];
 
     pub fn name(self) -> &'static str {
@@ -160,6 +183,17 @@ impl Action {
             Action::ViewGrid => "view-grid",
             Action::TogglePreview => "toggle-preview",
             Action::QuickLook => "quick-look",
+            Action::Copy => "copy",
+            Action::Cut => "cut",
+            Action::Paste => "paste",
+            Action::PasteMove => "paste-move",
+            Action::Trash => "trash",
+            Action::DeletePermanently => "delete-permanently",
+            Action::Rename => "rename",
+            Action::NewFolder => "new-folder",
+            Action::Duplicate => "duplicate",
+            Action::Undo => "undo",
+            Action::Redo => "redo",
         }
     }
 
@@ -167,8 +201,9 @@ impl Action {
         Action::ALL.into_iter().find(|a| a.name() == name)
     }
 
-    fn default_text(self, platform: Platform) -> &'static str {
-        match (self, platform) {
+    /// The default chord, if the action has one on `platform`.
+    fn default_text(self, platform: Platform) -> Option<&'static str> {
+        Some(match (self, platform) {
             (Action::NewTab, _) => "mod+t",
             (Action::CloseTab, _) => "mod+w",
             (Action::NextTab, _) => "ctrl+tab",
@@ -187,7 +222,25 @@ impl Action {
             (Action::ViewGrid, _) => "mod+2",
             (Action::TogglePreview, _) => "alt+p",
             (Action::QuickLook, _) => "space",
-        }
+            (Action::Copy, _) => "mod+c",
+            (Action::Cut, _) => "mod+x",
+            (Action::Paste, _) => "mod+v",
+            (Action::PasteMove, Platform::Mac) => "mod+alt+v",
+            (Action::PasteMove, Platform::Other) => return None,
+            (Action::Trash, Platform::Mac) => "mod+backspace",
+            (Action::Trash, Platform::Other) => "delete",
+            (Action::DeletePermanently, Platform::Mac) => "mod+alt+backspace",
+            (Action::DeletePermanently, Platform::Other) => "shift+delete",
+            (Action::Rename, Platform::Mac) => "enter",
+            (Action::Rename, Platform::Other) => "f2",
+            (Action::NewFolder, _) => "mod+shift+n",
+            // Ctrl+D deletes in Explorer: Windows and Linux users get no surprise copies.
+            (Action::Duplicate, Platform::Mac) => "mod+d",
+            (Action::Duplicate, Platform::Other) => return None,
+            (Action::Undo, _) => "mod+z",
+            (Action::Redo, Platform::Mac) => "mod+shift+z",
+            (Action::Redo, Platform::Other) => "mod+y",
+        })
     }
 }
 
@@ -254,7 +307,7 @@ impl Shortcuts {
             if user.iter().any(|(a, _)| *a == action) {
                 continue;
             }
-            let text = action.default_text(platform);
+            let Some(text) = action.default_text(platform) else { continue };
             let chord = parse_chord(text, platform).expect("defaults are valid").expect("defaults are set");
             if let Some((_, owner)) = bindings.iter().find(|(c, _)| *c == chord) {
                 warnings.push(Warning::new(
@@ -328,11 +381,35 @@ mod tests {
     }
 
     #[test]
+    fn file_operation_defaults() {
+        let other = Shortcuts::defaults(Platform::Other);
+        assert_eq!(other.action_for(&chord("delete")), Some(Action::Trash));
+        assert_eq!(other.action_for(&chord("shift+delete")), Some(Action::DeletePermanently));
+        assert_eq!(other.action_for(&chord("f2")), Some(Action::Rename));
+        assert_eq!(other.action_for(&chord("ctrl+shift+n")), Some(Action::NewFolder));
+        assert_eq!(other.action_for(&chord("ctrl+y")), Some(Action::Redo));
+        assert_eq!(other.action_for(&chord("ctrl+d")), None, "Ctrl+D deletes in Explorer: no duplicate");
+        let mac = Shortcuts::defaults(Platform::Mac);
+        let mac_chord = |t: &str| parse_chord(t, Platform::Mac).unwrap().unwrap();
+        assert_eq!(mac.action_for(&mac_chord("mod+d")), Some(Action::Duplicate));
+        assert_eq!(mac.action_for(&mac_chord("mod+backspace")), Some(Action::Trash));
+        assert_eq!(mac.action_for(&mac_chord("enter")), Some(Action::Rename));
+        assert_eq!(mac.action_for(&mac_chord("mod+shift+z")), Some(Action::Redo));
+    }
+
+    #[test]
+    fn an_action_without_a_default_can_be_bound() {
+        let (s, warnings) = build("[shortcuts]\nduplicate = \"ctrl+d\"\n");
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(s.action_for(&chord("ctrl+d")), Some(Action::Duplicate));
+    }
+
+    #[test]
     fn defaults_cover_every_action() {
         for platform in [Platform::Mac, Platform::Other] {
             let s = Shortcuts::defaults(platform);
             for action in Action::ALL {
-                let text = action.default_text(platform);
+                let Some(text) = action.default_text(platform) else { continue };
                 let c = parse_chord(text, platform).unwrap().unwrap();
                 assert_eq!(s.action_for(&c), Some(action), "{platform:?} {}", action.name());
             }

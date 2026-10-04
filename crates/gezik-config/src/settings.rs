@@ -2,6 +2,7 @@
 
 use crate::Warning;
 use crate::shortcuts::{Platform, Shortcuts};
+use gezik_core::ops::threads::{COPY_THREADS_RANGE, CopyThreads};
 use gezik_core::view::{
     ColumnKey, ColumnState, GridSize, IconMode, SortDir, SortKey, ViewMode, ViewSettings, normalize_columns,
 };
@@ -41,6 +42,14 @@ impl Default for ViewDefaults {
     }
 }
 
+/// `[files]`: file operations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FilesSettings {
+    /// Ask before moving to the trash.
+    pub confirm_trash: bool,
+    pub copy_threads: CopyThreads,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
     pub theme: ThemeChoice,
@@ -54,6 +63,7 @@ pub struct Settings {
     pub pinned: Vec<String>,
     pub shortcuts: Shortcuts,
     pub view: ViewDefaults,
+    pub files: FilesSettings,
     /// Most frames drawn per second (`MAX_FPS_RANGE`); 0 = as many as the display shows.
     pub max_fps: u32,
 }
@@ -73,6 +83,7 @@ impl Default for Settings {
             pinned: Vec::new(),
             shortcuts: Shortcuts::default(),
             view: ViewDefaults::default(),
+            files: FilesSettings::default(),
             max_fps: 120,
         }
     }
@@ -191,6 +202,13 @@ impl Settings {
                 None => warnings.push(Warning::new(file, format!("view: expected a table, got {value}"))),
             },
         }
+        match table.get("files") {
+            None => {}
+            Some(value) => match value.as_table() {
+                Some(files) => settings.files = parse_files(files, file, warnings),
+                None => warnings.push(Warning::new(file, format!("files: expected a table, got {value}"))),
+            },
+        }
         settings
     }
 
@@ -249,6 +267,39 @@ fn view_choice<T>(
     parsed
 }
 
+fn parse_files(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> FilesSettings {
+    let mut out = FilesSettings::default();
+    if let Some(value) = table.get("confirm-trash") {
+        match value.as_bool() {
+            Some(on) => out.confirm_trash = on,
+            None => {
+                warnings.push(Warning::new(file, format!("files.confirm-trash: expected true or false, got {value}")))
+            }
+        }
+    }
+    if let Some(value) = table.get("copy-threads") {
+        let parsed = match value {
+            toml::Value::String(text) if text.eq_ignore_ascii_case("auto") => Some(CopyThreads::Auto),
+            toml::Value::Integer(n) => {
+                u8::try_from(*n).ok().filter(|n| COPY_THREADS_RANGE.contains(n)).map(CopyThreads::Fixed)
+            }
+            _ => None,
+        };
+        match parsed {
+            Some(threads) => out.copy_threads = threads,
+            None => warnings.push(Warning::new(
+                file,
+                format!(
+                    "files.copy-threads: expected \"auto\" or a number from {} to {}, got {value}",
+                    COPY_THREADS_RANGE.start(),
+                    COPY_THREADS_RANGE.end()
+                ),
+            )),
+        }
+    }
+    out
+}
+
 /// Size in logical pixels, position in physical pixels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WindowState {
@@ -268,6 +319,8 @@ pub struct State {
     pub preview_open: bool,
     /// Preview pane width in logical pixels (200–600).
     pub preview_width: Option<u32>,
+    /// The operations panel is folded into the status bar.
+    pub operations_collapsed: bool,
 }
 
 impl State {
@@ -312,7 +365,13 @@ impl State {
             .and_then(|v| v.as_integer())
             .and_then(|w| u32::try_from(w).ok())
             .filter(|w| (200..=600).contains(w));
-        State { window, sidebar_width, columns, preview_open, preview_width }
+        let operations_collapsed = table
+            .get("operations")
+            .and_then(|v| v.as_table())
+            .and_then(|o| o.get("panel-collapsed"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        State { window, sidebar_width, columns, preview_open, preview_width, operations_collapsed }
     }
 
     pub fn to_toml(&self) -> String {
@@ -352,6 +411,11 @@ impl State {
                 preview.insert("width".into(), toml::Value::Integer(width.into()));
             }
             root.insert("preview".into(), toml::Value::Table(preview));
+        }
+        if self.operations_collapsed {
+            let mut operations = toml::Table::new();
+            operations.insert("panel-collapsed".into(), toml::Value::Boolean(true));
+            root.insert("operations".into(), toml::Value::Table(operations));
         }
         root.to_string()
     }
@@ -615,5 +679,35 @@ width = 900
         assert!(state.preview_open);
         assert_eq!(state.preview_width, None);
         assert_eq!(State::parse("").columns, None);
+    }
+
+    #[test]
+    fn reads_the_files_table() {
+        use gezik_core::ops::threads::CopyThreads;
+        let (settings, warnings) = parse("[files]\nconfirm-trash = true\ncopy-threads = 3\n");
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(settings.files, FilesSettings { confirm_trash: true, copy_threads: CopyThreads::Fixed(3) });
+        let (settings, _) = parse("[files]\ncopy-threads = \"Auto\"\n");
+        assert_eq!(settings.files.copy_threads, CopyThreads::Auto);
+        assert_eq!(Settings::default().files, FilesSettings::default());
+    }
+
+    #[test]
+    fn bad_files_values_keep_defaults_with_warnings() {
+        let (settings, warnings) = parse("[files]\nconfirm-trash = \"yes\"\ncopy-threads = 40\n");
+        assert_eq!(settings.files, FilesSettings::default());
+        let messages: Vec<_> = warnings.iter().map(|w| w.message.as_str()).collect();
+        assert_eq!(messages.len(), 2, "{messages:?}");
+        assert!(messages[0].starts_with("files.confirm-trash:"));
+        assert!(messages[1].starts_with("files.copy-threads:") && messages[1].contains("1 to 16"));
+        let (_, warnings) = parse("files = 1\n");
+        assert!(warnings[0].message.starts_with("files: expected a table"));
+    }
+
+    #[test]
+    fn operations_panel_state_round_trips() {
+        let state = State { operations_collapsed: true, ..State::default() };
+        assert_eq!(State::parse(&state.to_toml()), state);
+        assert!(!State::default().to_toml().contains("operations"), "the default is not written");
     }
 }

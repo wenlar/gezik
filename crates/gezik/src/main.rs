@@ -115,6 +115,17 @@ fn handle_key(
                 Action::ViewGrid => view.set_mode(gezik_core::view::ViewMode::Grid),
                 Action::TogglePreview => preview.toggle_pane(),
                 Action::QuickLook => preview.toggle_quick_look(),
+                Action::Copy
+                | Action::Cut
+                | Action::Paste
+                | Action::PasteMove
+                | Action::Trash
+                | Action::DeletePermanently
+                | Action::Rename
+                | Action::NewFolder
+                | Action::Duplicate
+                | Action::Undo
+                | Action::Redo => return false,
             }
             // The typed text no longer fits once the location or tab changed.
             if editing && action != Action::FocusPath {
