@@ -11,6 +11,10 @@ theme-dark = "dark"
 # Tokens like {home}, {documents}, {downloads} work on every OS.
 start-folder = "{home}"
 
+# Most frames drawn per second, e.g. while scrolling. Lower saves CPU on high refresh
+# rate displays; 0 draws as many as the display shows.
+max-fps = 120
+
 # Folders pinned to the sidebar. Gezik updates this list when you pin, unpin
 # or reorder folders; your comments elsewhere in this file are kept.
 # Comments inside the pinned list itself are not kept when Gezik updates it.

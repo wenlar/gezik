@@ -54,7 +54,12 @@ pub struct Settings {
     pub pinned: Vec<String>,
     pub shortcuts: Shortcuts,
     pub view: ViewDefaults,
+    /// Most frames drawn per second (`MAX_FPS_RANGE`); 0 = as many as the display shows.
+    pub max_fps: u32,
 }
+
+/// Allowed `max-fps` values besides 0 (no limit).
+pub const MAX_FPS_RANGE: std::ops::RangeInclusive<u32> = 10..=1000;
 
 impl Default for Settings {
     fn default() -> Self {
@@ -68,6 +73,7 @@ impl Default for Settings {
             pinned: Vec::new(),
             shortcuts: Shortcuts::default(),
             view: ViewDefaults::default(),
+            max_fps: 120,
         }
     }
 }
@@ -131,6 +137,19 @@ impl Settings {
         }
 
         // `text_value` borrows `warnings`; it is no longer used from here on.
+        if let Some(value) = table.get("max-fps") {
+            match value.as_integer().and_then(|n| u32::try_from(n).ok()) {
+                Some(n) if n == 0 || MAX_FPS_RANGE.contains(&n) => settings.max_fps = n,
+                _ => warnings.push(Warning::new(
+                    file,
+                    format!(
+                        "max-fps: expected 0 (no limit) or a number from {} to {}, got {value}",
+                        MAX_FPS_RANGE.start(),
+                        MAX_FPS_RANGE.end()
+                    ),
+                )),
+            }
+        }
         if let Some(start) = start_folder {
             if crate::paths::has_parent_segment(&start) {
                 warnings.push(Warning::new(file, format!("start-folder: \"{start}\" must not contain \"..\"")));
@@ -440,6 +459,25 @@ mod tests {
         assert_eq!(State::parse("[window]\nwidth = -900\nheight = 600\n"), State::default());
         assert_eq!(State::parse("garbage ["), State::default());
         assert_eq!(State::parse(""), State::default());
+    }
+
+    #[test]
+    fn max_fps_defaults_to_120_and_zero_means_unlimited() {
+        assert_eq!(Settings::default().max_fps, 120);
+        let (settings, warnings) = parse("max-fps = 60\n");
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(settings.max_fps, 60);
+        assert_eq!(parse("max-fps = 0\n").0.max_fps, 0);
+    }
+
+    #[test]
+    fn bad_max_fps_keeps_the_default_with_a_warning() {
+        for text in ["max-fps = 5\n", "max-fps = -1\n", "max-fps = \"fast\"\n", "max-fps = 100000\n"] {
+            let (settings, warnings) = parse(text);
+            assert_eq!(settings.max_fps, 120, "{text}");
+            assert_eq!(warnings.len(), 1, "{text}");
+            assert!(warnings[0].message.starts_with("max-fps:"), "{}", warnings[0].message);
+        }
     }
 
     #[test]

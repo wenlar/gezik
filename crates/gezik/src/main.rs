@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod context_menu;
+mod frame_limit;
 mod keys;
 mod media;
 mod navigation;
@@ -48,6 +49,7 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
     sidebar::with_current(|sidebar| sidebar.set_pinned(loaded.settings.pinned.clone()));
     view::with_current(|view| view.set_defaults(loaded.settings.view));
     keys::set_shortcuts(loaded.settings.shortcuts.clone());
+    frame_limit::set_max_fps(loaded.settings.max_fps);
     loaded
 }
 
@@ -546,6 +548,11 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         use slint::winit_030::{EventResult, WinitWindowAccessor, winit};
         window.window().on_winit_window_event(move |_, event| {
+            // Caps the frame rate at `max-fps`: Slint draws as often as the display refreshes.
+            if let winit::event::WindowEvent::RedrawRequested = event {
+                frame_limit::wait_for_frame();
+                return EventResult::Propagate;
+            }
             if let winit::event::WindowEvent::MouseInput {
                 state: winit::event::ElementState::Pressed, button, ..
             } = event
