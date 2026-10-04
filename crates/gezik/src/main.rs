@@ -547,7 +547,23 @@ fn main() -> Result<(), slint::PlatformError> {
     // the items too, which ignore them.
     {
         use slint::winit_030::{EventResult, WinitWindowAccessor, winit};
+        let weak = window.as_weak();
+        let minimized = std::cell::Cell::new(false);
         window.window().on_winit_window_event(move |_, event| {
+            // Windows drops a minimized window's picture, but the size on restore is the old
+            // one, so Slint redraws only what changed and the rest of the window stays empty.
+            if let winit::event::WindowEvent::Resized(size) = event {
+                let zero = size.width == 0 || size.height == 0;
+                if !zero && minimized.get() {
+                    let weak = weak.clone();
+                    slint::Timer::single_shot(std::time::Duration::ZERO, move || {
+                        if let Some(window) = weak.upgrade() {
+                            theme_bridge::repaint_all(&window);
+                        }
+                    });
+                }
+                minimized.set(zero);
+            }
             // Caps the frame rate at `max-fps`: Slint draws as often as the display refreshes.
             if let winit::event::WindowEvent::RedrawRequested = event {
                 frame_limit::wait_for_frame();

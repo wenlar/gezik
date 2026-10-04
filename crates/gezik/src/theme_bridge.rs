@@ -32,6 +32,16 @@ pub fn apply(window: &AppWindow, theme: &ResolvedTheme) {
     crate::preview::with_current(|p| p.retheme(theme));
 }
 
+/// Makes the next frame redraw the whole window: the window's background is set to another
+/// color and back, which marks all of it as changed (Slint has no direct call for this).
+pub fn repaint_all(window: &AppWindow) {
+    let global = window.global::<Theme>();
+    let background = global.get_background();
+    global.set_background(background.with_alpha(if background.alpha() == 255 { 0.99 } else { 1.0 }));
+    global.set_background(background);
+    window.window().request_redraw();
+}
+
 /// No validation here: `gezik-config` guarantees every value is present and in range.
 pub fn apply_global(global: &Theme<'_>, theme: &ResolvedTheme) {
     let c = &theme.colors;
