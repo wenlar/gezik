@@ -134,11 +134,30 @@ fn handle_key(
         Some(i) if count > 0 => {
             let i = i.clamp(0, count - 1);
             window.set_selected(i);
-            window.invoke_ensure_visible(i);
+            reveal_row(window, i);
             true
         }
         _ => false,
     }
+}
+
+/// Scrolls the list so row `index` is fully visible. After a far jump (End, type-ahead)
+/// Slint's ListView snaps the offset to a row boundary on its next layout, which can leave
+/// a row at the bottom edge only partly visible; the offset is set again once that frame is
+/// done (see [`keys::scroll_was_snapped`]).
+fn reveal_row(window: &AppWindow, index: i32) {
+    window.invoke_ensure_visible(index);
+    let target = window.get_list_scroll();
+    let row_height = window.global::<Theme>().get_row_height();
+    let weak = window.as_weak();
+    slint::Timer::single_shot(navigation::SCROLL_RESTORE_DELAY, move || {
+        if let Some(window) = weak.upgrade()
+            && window.get_selected() == index
+            && keys::scroll_was_snapped(window.get_list_scroll(), target, row_height)
+        {
+            window.set_list_scroll(target);
+        }
+    });
 }
 
 /// Like [`apply_config`], and also resolves where the app opens. Start warnings (bad

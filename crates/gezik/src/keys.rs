@@ -104,6 +104,15 @@ pub fn typed_char(text: &str) -> Option<char> {
     (!c.is_control() && !private_use).then_some(c)
 }
 
+/// Whether the list's scroll offset `now` is `target` (just set to bring a row into view)
+/// moved to a row boundary. A jump of more than about a screen makes Slint's ListView
+/// place the first visible row at the top edge, dropping the part of a row that
+/// `target` scrolled past, so a row brought in at the bottom ends up partly hidden.
+/// Any other difference (a row or more) is the user scrolling on: leave it alone.
+pub fn scroll_was_snapped(now: f32, target: f32, row_height: f32) -> bool {
+    now != target && (now - target).abs() < row_height && (now / row_height).fract().abs() < 0.001
+}
+
 /// Finds the next entry whose name starts with what the user typed within the last second.
 pub struct TypeAhead {
     typed: String,
@@ -146,6 +155,15 @@ impl Default for TypeAhead {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_far_jump_snapped_to_a_row_boundary_is_detected() {
+        // End on 60 rows of 26 px in a 654 px view: the target is -906, Slint shows -884.
+        assert!(scroll_was_snapped(-884.0, -906.0, 26.0));
+        assert!(!scroll_was_snapped(-906.0, -906.0, 26.0), "already right");
+        assert!(!scroll_was_snapped(-858.0, -906.0, 26.0), "scrolled on by the user");
+        assert!(!scroll_was_snapped(-900.0, -906.0, 26.0), "not on a row boundary");
+    }
 
     fn text(key: SlintKey) -> String {
         char::from(key).to_string()

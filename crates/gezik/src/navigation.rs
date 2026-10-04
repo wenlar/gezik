@@ -19,8 +19,8 @@ use crate::{AppWindow, CrumbItem, FileRow, TabItem};
 const MAX_CRUMBS: usize = 4;
 
 /// How long after showing a listing its saved scroll offset is applied again (see
-/// `show_listing`): about three frames.
-const SCROLL_RESTORE_DELAY: std::time::Duration = std::time::Duration::from_millis(50);
+/// `show_listing`, and `reveal_row` in main.rs): about three frames.
+pub const SCROLL_RESTORE_DELAY: std::time::Duration = std::time::Duration::from_millis(50);
 
 /// Lists files to the UI without a second copy: it shares the navigator's entries, and a
 /// `FileRow` is built only for the rows on screen.
