@@ -128,12 +128,17 @@ paging steps could not run):
 | Check | Result | Target |
 |---|---|---|
 | Startup to window | 24-35 ms | <= ~60 ms |
-| Idle memory | 7.8 MB | <= 7 MB (missed; was 5.0 MB before the view work) |
+| Idle memory, default window (900×600) | 6.8 MB system icons, 6.3 MB `icons = "gezik"` | <= 7 MB (5.8 MB before the view work) |
 | 100,000-file folder, after load | 17.2 MB | <= ~18 MB |
 | Sorting 100,000 names | 39 ms | <= 50 ms |
 | Scrolling CPU (100,000 files) | not measured | ~480 ms / 2.6 s |
 | Grid, 1000 pictures, after paging | not measured | <= ~50 MB |
 | 1 vs 20 tabs | not verified | |
+
+Idle memory grows with the window: the software renderer keeps one frame of 4 bytes per
+pixel, so a 1334×600 window measures 7.8 MB (system icons) instead of 6.8 MB. To measure
+with a clean config, pass a folder: `scripts/perf/measure.ps1 -Config <folder>` (its
+`settings.toml` may set `[view]` `icons = "gezik"`).
 
 ## Build
 
