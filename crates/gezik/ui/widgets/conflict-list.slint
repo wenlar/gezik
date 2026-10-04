@@ -22,6 +22,8 @@ export struct ConflictRow {
 // Over the window: everything that already exists where the files go, with a decision each.
 export component ConflictList inherits Rectangle {
     in property <bool> open;
+    // A question over the list has the keyboard.
+    in property <bool> dialog-open;
     in property <string> title;
     in property <[ConflictRow]> rows;
     in property <int> identical-count;
@@ -40,9 +42,13 @@ export component ConflictList inherits Rectangle {
     callback key(KeyEvent) -> bool;
 
     changed open => {
-        if self.open {
+        if self.open && !root.dialog-open {
             scope.focus();
         }
+    }
+
+    public function take-focus() {
+        scope.focus();
     }
 
     public function ensure-visible(index: int) {
