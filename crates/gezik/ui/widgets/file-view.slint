@@ -35,6 +35,8 @@ component HeaderCell inherits Rectangle {
     in property <bool> descending;
     in property <bool> right-aligned;
     in property <bool> resizable: true;
+    // The gap to the previous cell; the resize edge covers it and a little of this cell.
+    in property <length> gap-before;
     // Space before the title (Name: the icon's width).
     in property <length> indent;
     callback clicked();
@@ -83,8 +85,8 @@ component HeaderCell inherits Rectangle {
     }
 
     if root.resizable: Rectangle {
-        x: -4px;
-        width: 7px;
+        x: -root.gap-before;
+        width: root.gap-before + 4px;
         accessible-role: none;
         edge := TouchArea {
             mouse-cursor: col-resize;
@@ -289,6 +291,7 @@ export component FileView inherits Rectangle {
                 menu(x, y) => { root.header-menu(x, y); }
             }
             if root.col-modified > 0: HeaderCell {
+                gap-before: root.gap;
                 width: root.col-modified;
                 text: "Modified";
                 sorted: root.sort-column == 1;
@@ -299,6 +302,7 @@ export component FileView inherits Rectangle {
                 resize-done => { root.columns-resized(); }
             }
             if root.col-created > 0: HeaderCell {
+                gap-before: root.gap;
                 width: root.col-created;
                 text: "Created";
                 sorted: root.sort-column == 2;
@@ -309,6 +313,7 @@ export component FileView inherits Rectangle {
                 resize-done => { root.columns-resized(); }
             }
             if root.col-type > 0: HeaderCell {
+                gap-before: root.gap;
                 width: root.col-type;
                 text: "Type";
                 sorted: root.sort-column == 3;
@@ -319,6 +324,7 @@ export component FileView inherits Rectangle {
                 resize-done => { root.columns-resized(); }
             }
             if root.col-size > 0: HeaderCell {
+                gap-before: root.gap;
                 width: root.col-size;
                 text: "Size";
                 right-aligned: true;
