@@ -144,6 +144,12 @@ export component FileView inherits Rectangle {
     callback rename-blurred(string);
     in property <int> rename-generation;
     property <int> rename-applied: -1;
+    in-out property <bool> rename-has-focus;
+    // The field has the keyboard. A field whose row scrolled out is gone and says nothing, so
+    // it only counts while its row is on screen.
+    out property <bool> rename-focused: root.rename-has-focus && root.renaming-index >= 0
+        && (floor(root.renaming-index / root.per-row) + 1) * root.item-height > -root.scroll
+        && floor(root.renaming-index / root.per-row) * root.item-height < -root.scroll + list.visible-height;
     out property <length> cell-width: max(root.picture-size + 24px, 96px);
     out property <length> cell-height: root.picture-size + 24px + Theme.font-size * 2.8;
     // Grid cells per line.
@@ -499,6 +505,7 @@ export component FileView inherits Rectangle {
                             blurred(t) => { root.rename-blurred(t); }
                             generation: root.rename-generation;
                             applied <=> root.rename-applied;
+                            focused <=> root.rename-has-focus;
                         }
                     }
                     if root.col-modified > 0: Text {
@@ -607,6 +614,7 @@ export component FileView inherits Rectangle {
                             blurred(t) => { root.rename-blurred(t); }
                             generation: root.rename-generation;
                             applied <=> root.rename-applied;
+                            focused <=> root.rename-has-focus;
                         }
 
                         // Cells never start a rectangle (a drag from an entry is kept for

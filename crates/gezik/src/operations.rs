@@ -168,7 +168,6 @@ pub fn with_current(f: impl FnOnce(&Operations)) {
     }
 }
 
-/// What to do with a job's results once their folder shows them.
 /// What ended a rename.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Commit {
@@ -177,6 +176,7 @@ enum Commit {
     Blur,
 }
 
+/// What to do with a job's results once their folder shows them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum After {
     #[default]
@@ -425,6 +425,21 @@ impl Operations {
     /// The field lost the keyboard to something else: keep a usable name, else the old one.
     pub fn rename_blurred(&self, typed: String) {
         self.commit_rename(&typed, Commit::Blur);
+    }
+
+    /// For a key or press while a rename may be open: if its field has lost the keyboard (it
+    /// was destroyed with its row, which fires no blur), ends it like a blur. Returns whether
+    /// a rename is open with its field focused.
+    pub fn end_unfocused_rename(&self) -> bool {
+        let Some(window) = self.0.window.upgrade() else { return false };
+        if self.0.view.renaming().is_none() {
+            return false;
+        }
+        if window.get_rename_focused() {
+            return true;
+        }
+        self.rename_blurred(window.get_rename_text().into());
+        false
     }
 
     pub fn rename_cancelled(&self) {
