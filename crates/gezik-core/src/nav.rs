@@ -29,9 +29,12 @@ impl Location {
 /// What the user was looking at: restored when coming back via back/forward or a tab switch.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ViewState {
-    /// Selected entry by name (not index: the folder may have changed meanwhile).
-    pub selected: Option<String>,
-    /// List scroll offset (Slint `viewport-y`, zero or negative).
+    /// Selected entries by name (not index: the folder may have changed meanwhile). Empty
+    /// when more than 1000 were selected: only the focus is kept then.
+    pub selected: Vec<String>,
+    /// The entry with the keyboard focus, by name.
+    pub focus: Option<String>,
+    /// List scroll offset (Slint `content-y`, zero or negative).
     pub scroll: f32,
 }
 
@@ -344,7 +347,7 @@ mod tests {
     }
 
     fn view(name: &str, scroll: f32) -> ViewState {
-        ViewState { selected: Some(name.to_owned()), scroll }
+        ViewState { selected: vec![name.to_owned()], focus: Some(name.to_owned()), scroll }
     }
 
     // ---- Tab ids ----

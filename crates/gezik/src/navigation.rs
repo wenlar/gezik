@@ -200,7 +200,11 @@ impl Navigator {
     /// Does not load anything: call [`install`](Self::install) next.
     pub fn new(window: &AppWindow, first: Location, select: Option<String>, start: Location) -> Navigator {
         let mut tabs = Tabs::new(first);
-        tabs.active_mut().set_view(ViewState { selected: select, scroll: 0.0 });
+        tabs.active_mut().set_view(ViewState {
+            selected: select.iter().cloned().collect(),
+            focus: select,
+            scroll: 0.0,
+        });
         let tab_model = Rc::new(VecModel::default());
         window.set_tabs(ModelRc::from(tab_model.clone()));
         Navigator(Rc::new(RefCell::new(Inner {
@@ -501,7 +505,11 @@ impl Navigator {
         }
         let Some(window) = inner.window.upgrade() else { return };
         let selected = usize::try_from(window.get_selected()).ok().and_then(|i| inner.listing.name_at(i));
-        let view = ViewState { selected, scroll: window.get_list_scroll() };
+        let view = ViewState {
+            selected: selected.iter().cloned().collect(),
+            focus: selected,
+            scroll: window.get_list_scroll(),
+        };
         inner.tabs.active_mut().set_view(view);
     }
 
@@ -598,7 +606,7 @@ impl Navigator {
             }
         };
         let selected = view
-            .selected
+            .focus
             .as_deref()
             .and_then(|n| inner.listing.index_of(n))
             .and_then(|i| i32::try_from(i).ok())

@@ -6,6 +6,8 @@ pub mod layout;
 pub mod nav;
 pub mod selection;
 pub mod sort;
+pub mod view;
+pub mod view_memory;
 
 use std::io;
 use std::path::Path;
