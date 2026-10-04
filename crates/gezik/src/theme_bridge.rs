@@ -27,8 +27,16 @@ pub fn apply(window: &AppWindow, theme: &ResolvedTheme) {
     global.set_selection(color(c.selection));
     global.set_selection_foreground(color(c.selection_foreground));
     global.set_hover(color(c.hover));
-    global.set_folder_icon(color(c.folder_icon));
-    global.set_file_icon(color(c.file_icon));
+    global.set_icon_folder(color(c.icon_folder));
+    global.set_icon_image(color(c.icon_image));
+    global.set_icon_video(color(c.icon_video));
+    global.set_icon_audio(color(c.icon_audio));
+    global.set_icon_archive(color(c.icon_archive));
+    global.set_icon_document(color(c.icon_document));
+    global.set_icon_code(color(c.icon_code));
+    global.set_icon_other(color(c.icon_other));
+    global.set_focus_ring(color(c.focus_ring));
+    global.set_marquee(color(c.marquee));
     global.set_danger(color(c.danger));
 
     let m = &theme.metrics;
