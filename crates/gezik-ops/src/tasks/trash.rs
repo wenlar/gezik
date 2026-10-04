@@ -77,7 +77,12 @@ impl Task for TrashTask {
             return Err(changed_since());
         }
         if !cx.has_trash(path) {
-            let empty = if item.facts.is_dir { is_empty_dir(path) } else { item.facts.size == 0 };
+            // Looked at now, not at plan time: a file filled since must not be deleted.
+            let empty = match std::fs::symlink_metadata(path) {
+                Ok(meta) if meta.is_dir() => is_empty_dir(path),
+                Ok(meta) => meta.len() == 0,
+                Err(err) => return Err(err),
+            };
             if self.undoing && empty {
                 fs::delete(path)?;
                 return Ok(Outcome::Deleted { path: path.clone() });

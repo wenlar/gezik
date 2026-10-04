@@ -13,9 +13,13 @@ use std::path::{Path, PathBuf};
 
 pub use gezik_core::ops::threads::DiskKind;
 #[cfg(unix)]
-pub use unix::{copy_file, delete, drive_facts, drive_root, move_entry, restore, set_hidden, trash};
+pub use unix::{
+    clear_hidden, copy_file, delete, drive_facts, drive_root, is_hidden_attr, move_entry, restore, set_hidden, trash,
+};
 #[cfg(windows)]
-pub use windows::{copy_file, delete, drive_facts, drive_root, move_entry, restore, set_hidden, trash};
+pub use windows::{
+    clear_hidden, copy_file, delete, drive_facts, drive_root, is_hidden_attr, move_entry, restore, set_hidden, trash,
+};
 
 /// What the engine needs to know about the drive a path is on.
 #[derive(Debug, Clone, PartialEq, Eq)]
