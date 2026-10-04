@@ -153,6 +153,9 @@ pub const TRASH: u32 = 60;
 pub const DELETE_PERMANENTLY: u32 = 61;
 pub const PASTE_INTO: u32 = 62;
 
+/// 70–73: the conflict row menu, in `conflicts::DECISIONS` order.
+pub const CONFLICT_FIRST: u32 = 70;
+
 /// Gezik's file items for rows on macOS and Linux; Windows has them in its own menu (and
 /// Gezik takes them over, see `Menus::run_verb`).
 pub fn file_items(single: bool, folder: bool, can_paste: bool) -> Vec<(u32, &'static str)> {
@@ -237,6 +240,7 @@ enum Subject {
     Background(PathBuf),
     Header,
     View,
+    Conflict(usize),
 }
 
 /// Lets one native menu be pending or open at a time, so two right-clicks in quick
@@ -494,8 +498,29 @@ impl Menus {
         window.invoke_show_menu(x, y);
     }
 
+    /// The decision menu of conflict row `row`, at window position `x`, `y`.
+    pub fn conflict(&self, row: i32, x: f32, y: f32) {
+        let Ok(row) = usize::try_from(row) else { return };
+        let conflicts = self.ops.conflicts();
+        let list: Vec<(u32, &'static str)> = crate::conflicts::DECISIONS
+            .iter()
+            .enumerate()
+            .filter(|(_, d)| conflicts.choices_for(row).contains(d))
+            .map(|(i, d)| (CONFLICT_FIRST + i as u32, d.label()))
+            .collect();
+        if list.is_empty() {
+            return;
+        }
+        *self.subject.borrow_mut() = Some(Subject::Conflict(row));
+        self.open_slint(&list, x, y);
+    }
     fn run(&self, id: u32, subject: Subject) {
         match (id, subject) {
+            (id, Subject::Conflict(row)) if (CONFLICT_FIRST..CONFLICT_FIRST + 4).contains(&id) => {
+                if let Some(decision) = crate::conflicts::DECISIONS.get((id - CONFLICT_FIRST) as usize) {
+                    self.ops.conflicts().decide_row(row, *decision);
+                }
+            }
             (OPEN_IN_NEW_TAB, Subject::Row(path) | Subject::SidebarEntry(path)) => {
                 self.nav.open_tab(Location::Path(path), false);
             }

@@ -1,6 +1,7 @@
 // Hide the console window in release builds on Windows.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod conflicts;
 mod context_menu;
 mod dialog;
 mod frame_limit;
@@ -87,7 +88,7 @@ fn handle_key(
     menu_key: bool,
 ) -> bool {
     // A question or the conflict list over the window has the keyboard.
-    if window.get_dialog_open() {
+    if window.get_dialog_open() || window.get_conflicts_open() {
         return false;
     }
     // The name field being edited has the keyboard (Enter, Esc, Tab are its own).
@@ -555,6 +556,10 @@ fn main() -> Result<(), slint::PlatformError> {
     window.on_zoom({
         let view = view.clone();
         move |bigger| view.zoom(bigger)
+    });
+    window.on_conflict_row_menu({
+        let menus = menus.clone();
+        move |row, x, y| menus.conflict(row, x, y)
     });
     // Slint passes indexes as `i32`: a negative one does nothing.
     window.on_tab_menu(move |i, x, y| {
