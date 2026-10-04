@@ -374,6 +374,25 @@ impl Navigator {
         self.load(self.active_location(), Mode::Show, None);
     }
 
+    /// Reloads the active tab if it shows one of `dirs` (a file operation changed them),
+    /// keeping the scroll and selecting `select` (by name) if given. The status bar does not
+    /// flash "Loading…".
+    pub fn refresh_showing(&self, dirs: &[PathBuf], select: &[String]) {
+        let Location::Path(current) = self.active_location() else { return };
+        if self.0.borrow().cleared || !dirs.iter().any(|dir| gezik_core::ops::paths::same_path(dir, &current)) {
+            return;
+        }
+        self.save_view();
+        if !select.is_empty() {
+            let mut inner = self.0.borrow_mut();
+            let mut view = inner.tabs.active().view().clone();
+            view.selected = select.to_vec();
+            view.focus = select.first().cloned();
+            inner.tabs.active_mut().set_view(view);
+        }
+        self.load_with(Location::Path(current), Mode::Show, None, false);
+    }
+
     /// Path of entry `index` and whether it is a folder (drives count as folders).
     pub fn entry_path(&self, index: i32) -> Option<(PathBuf, bool)> {
         let index = usize::try_from(index).ok()?;
@@ -451,10 +470,14 @@ impl Navigator {
         inner.tabs.active_mut().set_view(view);
     }
 
+    fn load(&self, location: Location, mode: Mode, note: Option<String>) {
+        self.load_with(location, mode, note, true);
+    }
+
     /// Lists `location` off the UI thread, then applies `mode` and shows it. Results of a
     /// load overtaken by a newer one are dropped. `note`, if any, replaces the item count
     /// in the status bar once the listing is shown.
-    fn load(&self, location: Location, mode: Mode, note: Option<String>) {
+    fn load_with(&self, location: Location, mode: Mode, note: Option<String>, loading_text: bool) {
         let (window, generation, ticket) = {
             let mut inner = self.0.borrow_mut();
             let ticket = inner.generation.fetch_add(1, Ordering::SeqCst) + 1;
@@ -464,7 +487,7 @@ impl Navigator {
             };
             (inner.window.clone(), inner.generation.clone(), ticket)
         };
-        if let Some(w) = window.upgrade() {
+        if loading_text && let Some(w) = window.upgrade() {
             w.set_status("Loading…".into());
         }
         std::thread::spawn(move || {

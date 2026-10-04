@@ -9,7 +9,7 @@ pub use listing::Listing;
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::ops::Range;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -486,6 +486,16 @@ impl View {
                 self.reveal(focus);
             }
         }
+    }
+
+    /// The folder shown; `None` for "This PC".
+    pub fn folder(&self) -> Option<PathBuf> {
+        self.0.data.borrow().listing.folder().map(Path::to_path_buf)
+    }
+
+    /// Shows `text` in the status bar until the selection changes.
+    pub fn note(&self, text: String) {
+        self.set_note(text);
     }
 
     /// Writes `views.toml` now if a change is waiting (on close).

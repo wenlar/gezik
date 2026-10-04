@@ -2,10 +2,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod context_menu;
+mod dialog;
 mod frame_limit;
 mod keys;
 mod media;
 mod navigation;
+mod operations;
 mod places;
 mod preview;
 mod quick_look;
@@ -17,6 +19,7 @@ mod watcher;
 mod window_state;
 
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use gezik_config::Warning;
@@ -50,6 +53,7 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
     view::with_current(|view| view.set_defaults(loaded.settings.view));
     keys::set_shortcuts(loaded.settings.shortcuts.clone());
     frame_limit::set_max_fps(loaded.settings.max_fps);
+    operations::with_current(|ops| ops.set_files(loaded.settings.files));
     loaded
 }
 
@@ -81,6 +85,10 @@ fn handle_key(
     has_modifier: bool,
     menu_key: bool,
 ) -> bool {
+    // A question or the conflict list over the window has the keyboard.
+    if window.get_dialog_open() {
+        return false;
+    }
     let editing = window.get_path_editing();
 
     if editing && let Some(chord) = &chord {
@@ -326,25 +334,6 @@ fn main() -> Result<(), slint::PlatformError> {
     window.set_preview_width(saved_state.preview_width.unwrap_or(280) as f32);
     let preview = preview::Preview::new(&window, view.clone());
     preview.set_pane_open(saved_state.preview_open);
-    window.window().on_close_requested({
-        let (weak, store, view, preview) = (window.as_weak(), config.clone(), view.clone(), preview.clone());
-        move || {
-            if let (Some(window), Some(store)) = (weak.upgrade(), &store) {
-                let mut state = store.load_state();
-                window_state::capture_into(&window, &mut state);
-                state.columns = Some(view.columns());
-                state.preview_open = preview.is_pane_open();
-                state.preview_width = Some(window.get_preview_width().round().clamp(200.0, 600.0) as u32);
-                if let Err(err) = store.save_state(&state) {
-                    eprintln!("gezik: cannot save window state: {err}");
-                }
-                view.flush_memory();
-            }
-            // Its window would otherwise keep the event loop (and the process) running.
-            preview.close_quick_look();
-            slint::CloseRequestResponse::HideWindow
-        }
-    });
     let nav = navigation::Navigator::new(&window, view.clone(), plan.first, plan.select, plan.start);
     nav.install();
     // Captures no navigator (it is not `Send`): the result finds it on the UI thread.
@@ -353,6 +342,98 @@ fn main() -> Result<(), slint::PlatformError> {
     let sidebar = sidebar::Sidebar::new(&window, nav.clone(), config.clone());
     sidebar.install();
     sidebar.set_pinned(initial_settings.pinned);
+    let dialogs = dialog::Dialogs::new(&window);
+    let engine_settings = gezik_ops::Settings {
+        threads: initial_settings.files.copy_threads,
+        pending_deletes: config.as_ref().map(|store| store.dir().join("pending-deletes")),
+    };
+    let ops = operations::Operations::new(
+        &window,
+        nav.clone(),
+        view.clone(),
+        sidebar.clone(),
+        dialogs,
+        engine_settings,
+        initial_settings.files,
+        saved_state.operations_collapsed,
+    );
+    window.on_op_pause({
+        let ops = ops.clone();
+        move |id| ops.pause(id)
+    });
+    window.on_op_resume({
+        let ops = ops.clone();
+        move |id| ops.resume(id)
+    });
+    window.on_op_cancel({
+        let ops = ops.clone();
+        move |id| ops.cancel(id)
+    });
+    window.on_op_start_now({
+        let ops = ops.clone();
+        move |id| ops.start_now(id)
+    });
+    window.on_op_details({
+        let ops = ops.clone();
+        move |id| ops.details(id)
+    });
+    window.on_op_retry({
+        let ops = ops.clone();
+        move |id| ops.retry(id)
+    });
+    window.on_op_dismiss({
+        let ops = ops.clone();
+        move |id| ops.dismiss(id)
+    });
+    window.on_ops_toggle({
+        let ops = ops.clone();
+        move || ops.toggle_collapsed()
+    });
+    // Deletes cut short last time finish in the background once the window is up.
+    slint::Timer::single_shot(std::time::Duration::from_millis(500), {
+        let ops = ops.clone();
+        move || ops.recover()
+    });
+    let save_and_quit: Rc<dyn Fn()> = {
+        let (weak, store, view, preview, ops) =
+            (window.as_weak(), config.clone(), view.clone(), preview.clone(), ops.clone());
+        Rc::new(move || {
+            if let (Some(window), Some(store)) = (weak.upgrade(), &store) {
+                let mut state = store.load_state();
+                window_state::capture_into(&window, &mut state);
+                state.columns = Some(view.columns());
+                state.preview_open = preview.is_pane_open();
+                state.preview_width = Some(window.get_preview_width().round().clamp(200.0, 600.0) as u32);
+                state.operations_collapsed = ops.collapsed();
+                if let Err(err) = store.save_state(&state) {
+                    eprintln!("gezik: cannot save window state: {err}");
+                }
+                view.flush_memory();
+            }
+            // Its window would otherwise keep the event loop (and the process) running.
+            preview.close_quick_look();
+        })
+    };
+    window.window().on_close_requested({
+        let (ops, save_and_quit, weak) = (ops.clone(), save_and_quit.clone(), window.as_weak());
+        move || {
+            let quit = {
+                let (save_and_quit, weak) = (save_and_quit.clone(), weak.clone());
+                move || {
+                    save_and_quit();
+                    if let Some(window) = weak.upgrade() {
+                        let _ = window.hide();
+                    }
+                    let _ = slint::quit_event_loop();
+                }
+            };
+            if ops.confirm_close(quit) {
+                return slint::CloseRequestResponse::KeepWindowShown;
+            }
+            save_and_quit();
+            slint::CloseRequestResponse::HideWindow
+        }
+    });
     window.on_sidebar_clicked({
         let (nav, sidebar) = (nav.clone(), sidebar.clone());
         move |section, index| {
