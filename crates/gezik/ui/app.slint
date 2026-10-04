@@ -231,7 +231,10 @@ export component AppWindow inherits Window {
                     pinned-count: root.sidebar-pinned-count;
                     clicked(s, i) => { root.sidebar-clicked(s, i); }
                     middle-clicked(s, i) => { root.sidebar-middle-clicked(s, i); }
-                    menu(s, i, x, y) => { root.sidebar-menu(s, i, x, y); }
+                    menu(s, i, x, y) => {
+                        root.end-path-editing();
+                        root.sidebar-menu(s, i, x, y);
+                    }
                     pinned-move(a, b) => { root.pinned-move(a, b); }
                 }
                 // A 1px line, grabbable over 5px.
@@ -261,6 +264,7 @@ export component AppWindow inherits Window {
                         pointer-event(event) => {
                             if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {
                                 root.selected = -1;
+                                root.end-path-editing();
                                 root.background-menu(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
                             }
                         }
@@ -285,6 +289,7 @@ export component AppWindow inherits Window {
                                     // The right-clicked row is selected first.
                                     if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {
                                         root.selected = i;
+                                        root.end-path-editing();
                                         root.row-menu(i, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
                                     }
                                 }
@@ -343,7 +348,10 @@ export component AppWindow inherits Window {
                     pinned-count: root.sidebar-pinned-count;
                     clicked(s, i) => { root.sidebar-clicked(s, i); }
                     middle-clicked(s, i) => { root.sidebar-middle-clicked(s, i); }
-                    menu(s, i, x, y) => { root.sidebar-menu(s, i, x, y); }
+                    menu(s, i, x, y) => {
+                        root.end-path-editing();
+                        root.sidebar-menu(s, i, x, y);
+                    }
                     pinned-move(a, b) => { root.pinned-move(a, b); }
                 }
             }
