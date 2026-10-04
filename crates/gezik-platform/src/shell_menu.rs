@@ -14,13 +14,13 @@ use windows::Win32::UI::Shell::{
     IShellFolder, RemoveWindowSubclass, SHBindToParent, SHGetDesktopFolder, SHParseDisplayName, SetWindowSubclass,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreatePopupMenu, DeleteMenu, DestroyMenu, GetCursorPos, GetMenuItemCount, GetMenuItemID, HMENU, InsertMenuW,
-    MF_BYCOMMAND, MF_BYPOSITION, MF_SEPARATOR, MF_STRING, SW_SHOWNORMAL, TPM_RETURNCMD, TPM_RIGHTBUTTON,
-    TrackPopupMenuEx, WM_DRAWITEM, WM_INITMENUPOPUP, WM_MEASUREITEM, WM_MENUCHAR, WM_PAINT,
+    CreatePopupMenu, DestroyMenu, GetCursorPos, HMENU, InsertMenuW, MF_BYPOSITION, MF_SEPARATOR, MF_STRING,
+    SW_SHOWNORMAL, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenuEx, WM_DRAWITEM, WM_INITMENUPOPUP, WM_MEASUREITEM,
+    WM_MENUCHAR, WM_PAINT,
 };
 use windows::core::{HSTRING, Interface, PCSTR, PCWSTR, PSTR};
 
-use crate::{MenuOutcome, MenuTarget};
+use crate::{MenuOutcome, MenuTarget, ShellVerb};
 
 /// Shell command ids start here; Gezik's own ids must be below it.
 const FIRST_SHELL_ID: u32 = 1000;
@@ -163,7 +163,6 @@ unsafe fn track(
 ) -> windows::core::Result<MenuOutcome> {
     unsafe {
         menu.QueryContextMenu(hmenu, 0, FIRST_SHELL_ID, LAST_SHELL_ID, CMF_NORMAL).ok()?;
-        remove_explorer_only_items(hmenu, menu);
         if !extra.is_empty() {
             for (position, (id, label)) in extra.iter().enumerate() {
                 InsertMenuW(hmenu, position as u32, MF_BYPOSITION | MF_STRING, *id as usize, &HSTRING::from(*label))?;
@@ -191,6 +190,9 @@ unsafe fn track(
             0 => MenuOutcome::Dismissed,
             id if id < FIRST_SHELL_ID => MenuOutcome::Gezik(id),
             id => {
+                if let Some(verb) = gezik_verb(menu, id - FIRST_SHELL_ID) {
+                    return Ok(MenuOutcome::Verb(verb));
+                }
                 let info = CMINVOKECOMMANDINFO {
                     cbSize: size_of::<CMINVOKECOMMANDINFO>() as u32,
                     hwnd,
@@ -230,33 +232,13 @@ impl Drop for Subclass {
     }
 }
 
-/// Removes verbs that only work inside Explorer itself (they do nothing elsewhere).
-unsafe fn remove_explorer_only_items(hmenu: HMENU, menu: &IContextMenu) {
-    unsafe {
-        let count = GetMenuItemCount(Some(hmenu)).max(0);
-        let mut doomed = Vec::new();
-        for i in 0..count {
-            let id = GetMenuItemID(hmenu, i);
-            if id == u32::MAX || id < FIRST_SHELL_ID {
-                continue;
-            }
-            let mut verb = [0u8; 64];
-            let found = menu.GetCommandString(
-                (id - FIRST_SHELL_ID) as usize,
-                GCS_VERBA,
-                None,
-                PSTR(verb.as_mut_ptr()),
-                verb.len() as u32,
-            );
-            let end = verb.iter().position(|&b| b == 0).unwrap_or(verb.len());
-            if found.is_ok() && verb[..end].eq_ignore_ascii_case(b"rename") {
-                doomed.push(id);
-            }
-        }
-        for id in doomed {
-            let _ = DeleteMenu(hmenu, id, MF_BYCOMMAND);
-        }
-    }
+/// The command at `offset` if Gezik does it itself (cut, copy, paste, delete, rename).
+unsafe fn gezik_verb(menu: &IContextMenu, offset: u32) -> Option<ShellVerb> {
+    let mut verb = [0u8; 64];
+    unsafe { menu.GetCommandString(offset as usize, GCS_VERBA, None, PSTR(verb.as_mut_ptr()), verb.len() as u32) }
+        .ok()?;
+    let end = verb.iter().position(|&b| b == 0).unwrap_or(verb.len());
+    ShellVerb::from_name(&verb[..end])
 }
 
 /// Forwards owner-draw and submenu messages ("Send to", "Open with") while the menu is open,
@@ -313,6 +295,7 @@ fn count_items(target: &MenuTarget) -> windows::core::Result<i32> {
         let menu = context_menu_for(HWND::default(), target)?;
         let hmenu = CreatePopupMenu()?;
         menu.QueryContextMenu(hmenu, 0, FIRST_SHELL_ID, LAST_SHELL_ID, CMF_NORMAL).ok()?;
+        use windows::Win32::UI::WindowsAndMessaging::GetMenuItemCount;
         let count = GetMenuItemCount(Some(hmenu));
         let _ = DestroyMenu(hmenu);
         Ok(count)

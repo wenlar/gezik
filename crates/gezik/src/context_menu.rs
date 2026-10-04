@@ -363,6 +363,7 @@ impl Menus {
                     menus.nav.reload();
                     menus.sidebar.refresh();
                 }
+                Ok(gezik_platform::MenuOutcome::Verb(_)) => {}
                 Ok(gezik_platform::MenuOutcome::Dismissed) => {}
                 Err(err) => window.set_status(format!("Cannot show the menu: {err}").into()),
             }
