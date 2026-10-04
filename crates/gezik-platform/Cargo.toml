@@ -32,3 +32,10 @@ windows = { version = "0.62", features = [
     "Win32_UI_Shell_Common",
     "Win32_UI_WindowsAndMessaging",
 ] }
+# The #[implement] macro (a COM progress sink for the Recycle Bin) expands to windows_core paths.
+windows-core = "0.62"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSError", "NSFileManager", "NSString", "NSURL"] }
+objc2-app-kit = { version = "0.3", features = ["NSPasteboard"] }

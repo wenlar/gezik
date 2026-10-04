@@ -1,9 +1,11 @@
 //! Windows: CopyFileExW with progress, POSIX deletes, volume facts.
 
+use std::cell::{Cell, RefCell};
 use std::ffi::{OsString, c_void};
 use std::io;
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::Storage::FileSystem::{
@@ -22,7 +24,17 @@ use windows::Win32::System::Ioctl::{
     DEVICE_SEEK_PENALTY_DESCRIPTOR, IOCTL_STORAGE_QUERY_PROPERTY, PropertyStandardQuery, STORAGE_PROPERTY_QUERY,
     StorageDeviceSeekPenaltyProperty,
 };
-use windows::core::HSTRING;
+
+use windows::Win32::Foundation::S_OK;
+use windows::Win32::System::Com::{
+    CLSCTX_ALL, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemFree,
+};
+use windows::Win32::UI::Shell::{
+    FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOCONFIRMMKDIR, FOF_NOERRORUI, FOF_SILENT, FOF_WANTNUKEWARNING,
+    FOFX_EARLYFAILURE, FOFX_RECYCLEONDELETE, FileOperation, IFileOperation, IFileOperationProgressSink,
+    IFileOperationProgressSink_Impl, IShellItem, SHCreateItemFromParsingName, SIGDN_FILESYSPATH,
+};
+use windows::core::{HRESULT, HSTRING, PCWSTR, Ref};
 
 use super::{BIG_FILE, DiskKind, DriveFacts, cancelled};
 
@@ -319,6 +331,169 @@ pub fn set_hidden(path: &Path) -> io::Result<()> {
     }
     unsafe { SetFileAttributesW(&wide, FILE_FLAGS_AND_ATTRIBUTES(attributes | FILE_ATTRIBUTE_HIDDEN.0)) }
         .map_err(io_error)
+}
+
+/// Hears where each deleted item went in the Recycle Bin.
+#[windows_core::implement(IFileOperationProgressSink)]
+struct DeleteSink {
+    trashed: Rc<RefCell<Option<PathBuf>>>,
+    result: Rc<Cell<HRESULT>>,
+}
+
+impl IFileOperationProgressSink_Impl for DeleteSink_Impl {
+    fn StartOperations(&self) -> windows::core::Result<()> {
+        Ok(())
+    }
+    fn FinishOperations(&self, _: HRESULT) -> windows::core::Result<()> {
+        Ok(())
+    }
+    fn PreRenameItem(&self, _: u32, _: Ref<IShellItem>, _: &PCWSTR) -> windows::core::Result<()> {
+        Ok(())
+    }
+    fn PostRenameItem(
+        &self,
+        _: u32,
+        _: Ref<IShellItem>,
+        _: &PCWSTR,
+        _: HRESULT,
+        _: Ref<IShellItem>,
+    ) -> windows::core::Result<()> {
+        Ok(())
+    }
+    fn PreMoveItem(&self, _: u32, _: Ref<IShellItem>, _: Ref<IShellItem>, _: &PCWSTR) -> windows::core::Result<()> {
+        Ok(())
+    }
+    fn PostMoveItem(
+        &self,
+        _: u32,
+        _: Ref<IShellItem>,
+        _: Ref<IShellItem>,
+        _: &PCWSTR,
+        _: HRESULT,
+        _: Ref<IShellItem>,
+    ) -> windows::core::Result<()> {
+        Ok(())
+    }
+    fn PreCopyItem(&self, _: u32, _: Ref<IShellItem>, _: Ref<IShellItem>, _: &PCWSTR) -> windows::core::Result<()> {
+        Ok(())
+    }
+    fn PostCopyItem(
+        &self,
+        _: u32,
+        _: Ref<IShellItem>,
+        _: Ref<IShellItem>,
+        _: &PCWSTR,
+        _: HRESULT,
+        _: Ref<IShellItem>,
+    ) -> windows::core::Result<()> {
+        Ok(())
+    }
+    fn PreDeleteItem(&self, _: u32, _: Ref<IShellItem>) -> windows::core::Result<()> {
+        Ok(())
+    }
+    fn PostDeleteItem(
+        &self,
+        _: u32,
+        _: Ref<IShellItem>,
+        hr: HRESULT,
+        created: Ref<IShellItem>,
+    ) -> windows::core::Result<()> {
+        self.result.set(hr);
+        // `created` is the item in the Recycle Bin; none if it was deleted for good.
+        if let Ok(item) = created.ok()
+            && let Ok(name) = unsafe { item.GetDisplayName(SIGDN_FILESYSPATH) }
+        {
+            let text = unsafe { name.to_string() }.unwrap_or_default();
+            unsafe { CoTaskMemFree(Some(name.0 as *const c_void)) };
+            if !text.is_empty() {
+                *self.trashed.borrow_mut() = Some(PathBuf::from(text));
+            }
+        }
+        Ok(())
+    }
+    fn PreNewItem(&self, _: u32, _: Ref<IShellItem>, _: &PCWSTR) -> windows::core::Result<()> {
+        Ok(())
+    }
+    fn PostNewItem(
+        &self,
+        _: u32,
+        _: Ref<IShellItem>,
+        _: &PCWSTR,
+        _: &PCWSTR,
+        _: u32,
+        _: HRESULT,
+        _: Ref<IShellItem>,
+    ) -> windows::core::Result<()> {
+        Ok(())
+    }
+    fn UpdateProgress(&self, _: u32, _: u32) -> windows::core::Result<()> {
+        Ok(())
+    }
+    fn ResetTimer(&self) -> windows::core::Result<()> {
+        Ok(())
+    }
+    fn PauseTimer(&self) -> windows::core::Result<()> {
+        Ok(())
+    }
+    fn ResumeTimer(&self) -> windows::core::Result<()> {
+        Ok(())
+    }
+}
+
+/// Moves `path` to the Recycle Bin without any Windows dialog, except the one that asks before
+/// deleting an item for good that does not fit in the Recycle Bin.
+pub fn trash(path: &Path) -> io::Result<Option<PathBuf>> {
+    // The Shell parses names like Explorer: it drops a trailing dot or space, so `x.` would
+    // resolve to the sibling `x` (and `\\?\` paths are refused). Better no trash than the wrong file.
+    if path.file_name().and_then(|name| name.to_str()).is_some_and(|name| name.ends_with(['.', ' '])) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "names ending in a dot or space cannot go to the Recycle Bin",
+        ));
+    }
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let operation: IFileOperation = CoCreateInstance(&FileOperation, None, CLSCTX_ALL).map_err(io_error)?;
+        operation
+            .SetOperationFlags(
+                FOF_ALLOWUNDO
+                    | FOF_NOCONFIRMATION
+                    | FOF_SILENT
+                    | FOF_NOERRORUI
+                    | FOF_NOCONFIRMMKDIR
+                    | FOF_WANTNUKEWARNING
+                    | FOFX_RECYCLEONDELETE
+                    | FOFX_EARLYFAILURE,
+            )
+            .map_err(io_error)?;
+        let item: IShellItem = SHCreateItemFromParsingName(&HSTRING::from(path.as_os_str()), None).map_err(io_error)?;
+        let trashed = Rc::new(RefCell::new(None));
+        let result = Rc::new(Cell::new(S_OK));
+        let sink: IFileOperationProgressSink = DeleteSink { trashed: trashed.clone(), result: result.clone() }.into();
+        operation.DeleteItem(&item, &sink).map_err(io_error)?;
+        operation.PerformOperations().map_err(io_error)?;
+        if operation.GetAnyOperationsAborted().map_err(io_error)?.as_bool() {
+            return Err(cancelled());
+        }
+        result.get().ok().map_err(io_error)?;
+        Ok(trashed.borrow_mut().take())
+    }
+}
+
+/// Moves `trashed` (`…\$Recycle.Bin\…\$Rxxxxxx.ext`) back to `original`.
+pub fn restore(trashed: &Path, original: &Path) -> io::Result<()> {
+    if let Some(parent) = original.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    move_entry(trashed, original)?;
+    // Next to the entry, `$Ixxxxxx.ext` records where it came from; without its entry the
+    // Recycle Bin would list a broken item.
+    if let (Some(dir), Some(name)) = (trashed.parent(), trashed.file_name().and_then(|n| n.to_str()))
+        && let Some(rest) = name.strip_prefix("$R")
+    {
+        let _ = std::fs::remove_file(dir.join(format!("$I{rest}")));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
