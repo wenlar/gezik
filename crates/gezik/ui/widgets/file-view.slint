@@ -1,0 +1,619 @@
+import { ListView } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+import { FileIcon } from "file-icon.slint";
+
+// One entry, as Rust (view/model.rs) builds it for the entries on screen.
+export struct FileRow {
+    name: string,
+    is-dir: bool,
+    // `Kind` in gezik-core kind.rs: Gezik's icon and its color.
+    kind: int,
+    size: string,
+    modified: string,
+    created: string,
+    type-name: string,
+    // The system's icon or the thumbnail (`has-icon`), else Gezik's own for `kind`.
+    icon: image,
+    has-icon: bool,
+    selected: bool,
+    // Has the keyboard focus; the ring shows only while the view has the keyboard.
+    focused: bool,
+}
+
+// One line of the view: one entry in the list, a row of cells in the grid.
+export struct ItemRow {
+    // The index of its first entry.
+    first: int,
+    cells: [FileRow],
+}
+
+// A column title: click sorts, right-click opens the header menu, the left edge drags to
+// resize (the columns sit right of Name, so their left edge is the one between them).
+component HeaderCell inherits Rectangle {
+    in property <string> text;
+    in property <bool> sorted;
+    in property <bool> descending;
+    in property <bool> right-aligned;
+    in property <bool> resizable: true;
+    // The gap to the previous cell; the resize edge covers it and a little of this cell.
+    in property <length> gap-before;
+    // Space before the title (Name: the icon's width).
+    in property <length> indent;
+    callback clicked();
+    callback menu(length, length);
+    // The new width while the left edge is dragged, then once when it is released.
+    callback resize(length);
+    callback resize-done();
+
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-description: root.sorted ? (root.descending ? "sorted descending" : "sorted ascending") : "";
+    accessible-action-default => { root.clicked(); }
+    background: touch.has-hover ? Theme.hover : transparent;
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {
+                root.menu(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            }
+        }
+    }
+
+    HorizontalLayout {
+        padding-left: root.indent;
+        spacing: 4px;
+        alignment: root.right-aligned ? end : start;
+        Text {
+            text: root.text;
+            vertical-alignment: center;
+            overflow: elide;
+            color: Theme.foreground-muted;
+        }
+        if root.sorted: VerticalLayout {
+            alignment: center;
+            Path {
+                width: 8px;
+                height: 8px;
+                viewbox-width: 8;
+                viewbox-height: 8;
+                stroke: Theme.foreground-muted;
+                stroke-width: 1.5px;
+                commands: root.descending ? "M 1 2.5 L 4 5.5 L 7 2.5" : "M 1 5.5 L 4 2.5 L 7 5.5";
+            }
+        }
+    }
+
+    if root.resizable: Rectangle {
+        x: -root.gap-before;
+        width: root.gap-before + 4px;
+        accessible-role: none;
+        edge := TouchArea {
+            mouse-cursor: col-resize;
+            // The width and the pointer (window x) when the drag started. Absolute, because
+            // the edge itself moves as the column grows.
+            property <length> start-width;
+            property <length> start-x;
+            pointer-event(event) => {
+                if event.kind == PointerEventKind.down {
+                    self.start-width = root.width;
+                    self.start-x = self.absolute-position.x + self.mouse-x;
+                }
+                if event.kind == PointerEventKind.up {
+                    root.resize-done();
+                }
+            }
+            moved => { root.resize(self.start-width - (self.absolute-position.x + self.mouse-x - self.start-x)); }
+        }
+    }
+}
+
+// The folder's entries, as a list with columns or a grid. Rust owns the selection: this
+// reports presses and draws.
+export component FileView inherits Rectangle {
+    in property <[ItemRow]> items;
+    // 0: list, 1: grid.
+    in property <int> mode;
+    // The grid's picture size.
+    in property <length> picture-size: 96px;
+    // The view has the keyboard: the focused entry shows a ring.
+    in property <bool> has-focus;
+    // Scroll offset (content-y: zero or negative).
+    in-out property <length> scroll;
+    // Column widths (0: hidden); Rust sets them, a dragged edge changes them here.
+    in-out property <length> col-modified;
+    in-out property <length> col-created;
+    in-out property <length> col-type;
+    in-out property <length> col-size;
+    // The sort column (0 Name, 1 Modified, 2 Created, 3 Type, 4 Size) and direction.
+    in property <int> sort-column;
+    in property <bool> sort-desc;
+    out property <length> cell-width: max(root.picture-size + 24px, 96px);
+    out property <length> cell-height: root.picture-size + 24px + Theme.font-size * 2.8;
+    // Grid cells per line.
+    out property <int> grid-columns: max(1, floor(list.visible-width / root.cell-width));
+    out property <length> item-height: root.mode == 0 ? Theme.row-height : root.cell-height;
+    // How many lines PgUp/PgDn move: one screen, less one line.
+    out property <int> page-rows: max(1, floor(list.visible-height / self.item-height) - 1);
+
+    // Left press on entry `index`, with Ctrl (Cmd on macOS) and Shift.
+    callback item-pressed(int, bool, bool);
+    callback item-double-clicked(int);
+    callback item-middle-clicked(int);
+    // Right-click on an entry, at a window position.
+    callback item-menu(int, length, length);
+    // Left click on empty space, with Ctrl.
+    callback background-pressed(bool);
+    callback background-menu(length, length);
+    // A press in the view: the keyboard should go to it.
+    callback focus-requested();
+
+    // A rubber-band drag: the rectangle in content coordinates (`Rect` in gezik-core
+    // layout.rs), on every pointer move; Ctrl adds to the selection the drag started with.
+    callback marquee(length, length, length, length, bool);
+    callback marquee-done();
+    callback header-clicked(int);
+    callback header-menu(length, length);
+    callback columns-resized();
+    callback grid-columns-changed(int);
+    // Ctrl+wheel: true for bigger pictures.
+    callback zoom(bool);
+
+    changed grid-columns => { root.grid-columns-changed(self.grid-columns); }
+
+    property <int> per-row: root.mode == 0 ? 1 : root.grid-columns;
+    property <length> header-height: root.mode == 0 ? Theme.row-height : 0px;
+    property <length> gap: Theme.spacing + 2px;
+    property <length> side: Theme.spacing + 4px;
+    property <int> shown-columns: (root.col-modified > 0 ? 1 : 0) + (root.col-created > 0 ? 1 : 0)
+        + (root.col-type > 0 ? 1 : 0) + (root.col-size > 0 ? 1 : 0);
+
+    // Right edge of the Name column: a drag that starts right of it, on a row, selects with
+    // a rectangle; from the name it is kept for dragging files (sub-project 4).
+    property <length> name-end: max(root.side + 150px, list.visible-width - root.side - root.col-modified - root.col-created - root.col-type
+        - root.col-size - root.gap * root.shown-columns);
+
+    property <bool> marquee-active;
+    property <bool> marquee-additive;
+    // Where the drag started, in content coordinates, and where the pointer is, in the
+    // list's own coordinates (it stays put while the list scrolls under it).
+    property <length> start-x;
+    property <length> start-y;
+    property <length> pointer-x;
+    property <length> pointer-y;
+
+    // `x`, `y`: the press, in the list's coordinates.
+    function begin-marquee(x: length, y: length, additive: bool) {
+        root.start-x = x;
+        root.start-y = y - root.scroll;
+        root.pointer-x = x;
+        root.pointer-y = y;
+        root.marquee-additive = additive;
+        root.marquee-active = true;
+    }
+
+    function track-marquee(x: length, y: length) {
+        root.pointer-x = x;
+        root.pointer-y = y;
+        let content-y = y - root.scroll;
+        root.marquee(min(root.start-x, x), min(root.start-y, content-y), abs(x - root.start-x), abs(content-y - root.start-y), root.marquee-additive);
+    }
+
+    function end-marquee() {
+        if root.marquee-active {
+            root.marquee-active = false;
+            root.marquee-done();
+        }
+    }
+
+    // A move or release seen by any entry or the background while a drag runs: the entry
+    // that started it may have scrolled away (the list drops lines off screen) and taken
+    // the pointer grab with it.
+    function marquee-pointer(kind: PointerEventKind, x: length, y: length) {
+        if !root.marquee-active {
+            return;
+        }
+        if kind == PointerEventKind.move {
+            root.track-marquee(x, y);
+        }
+        if kind == PointerEventKind.up || kind == PointerEventKind.cancel {
+            root.end-marquee();
+        }
+    }
+
+    // Ctrl+wheel anywhere in the view; a plain wheel scrolls. A sideways-only scroll
+    // (no vertical delta) does not zoom.
+    function wheel(event: PointerScrollEvent) -> EventResult {
+        if event.modifiers.control && event.delta-y != 0 {
+            root.zoom(event.delta-y > 0);
+            return accept;
+        }
+        return reject;
+    }
+
+    clip: true;
+    accessible-role: AccessibleRole.list;
+    accessible-label: "Files";
+
+    // Scrolls so entry `index` is fully visible.
+    public function ensure-visible(index: int) {
+        if index < 0 {
+            return;
+        }
+        let line = floor(index / root.per-row);
+        if line * root.item-height < -root.scroll {
+            root.scroll = -line * root.item-height;
+        } else if (line + 1) * root.item-height > -root.scroll + list.visible-height {
+            root.scroll = -((line + 1) * root.item-height - list.visible-height);
+        }
+    }
+
+    // Where the keyboard menu of entry `index` opens (a window position): just below it.
+    // -1: the background's, at the top left.
+    public function menu-x(index: int) -> length {
+        if index < 0 {
+            return list.absolute-position.x + Theme.spacing * 2;
+        }
+        if root.mode == 0 {
+            return list.absolute-position.x + Theme.spacing * 6;
+        }
+        return list.absolute-position.x + mod(index, root.per-row) * root.cell-width + root.cell-width / 2;
+    }
+
+    public function menu-y(index: int) -> length {
+        if index < 0 {
+            return list.absolute-position.y + Theme.spacing * 2;
+        }
+        return list.absolute-position.y + root.scroll + (floor(index / root.per-row) + 1) * root.item-height;
+    }
+
+    // The column header, in the list only.
+    if root.mode == 0: Rectangle {
+        x: list.x;
+        y: 0;
+        width: list.visible-width;
+        height: root.header-height;
+        background: Theme.surface;
+
+        HorizontalLayout {
+            padding-left: root.side;
+            padding-right: root.side;
+            spacing: root.gap;
+            HeaderCell {
+                horizontal-stretch: 1;
+                min-width: 150px;
+                text: "Name";
+                indent: Theme.icon-size + root.gap;
+                resizable: false;
+                sorted: root.sort-column == 0;
+                descending: root.sort-desc;
+                clicked => { root.header-clicked(0); }
+                menu(x, y) => { root.header-menu(x, y); }
+            }
+            if root.col-modified > 0: HeaderCell {
+                gap-before: root.gap;
+                width: root.col-modified;
+                text: "Modified";
+                sorted: root.sort-column == 1;
+                descending: root.sort-desc;
+                clicked => { root.header-clicked(1); }
+                menu(x, y) => { root.header-menu(x, y); }
+                resize(w) => { root.col-modified = clamp(w, 50px, 600px); }
+                resize-done => { root.columns-resized(); }
+            }
+            if root.col-created > 0: HeaderCell {
+                gap-before: root.gap;
+                width: root.col-created;
+                text: "Created";
+                sorted: root.sort-column == 2;
+                descending: root.sort-desc;
+                clicked => { root.header-clicked(2); }
+                menu(x, y) => { root.header-menu(x, y); }
+                resize(w) => { root.col-created = clamp(w, 50px, 600px); }
+                resize-done => { root.columns-resized(); }
+            }
+            if root.col-type > 0: HeaderCell {
+                gap-before: root.gap;
+                width: root.col-type;
+                text: "Type";
+                sorted: root.sort-column == 3;
+                descending: root.sort-desc;
+                clicked => { root.header-clicked(3); }
+                menu(x, y) => { root.header-menu(x, y); }
+                resize(w) => { root.col-type = clamp(w, 50px, 600px); }
+                resize-done => { root.columns-resized(); }
+            }
+            if root.col-size > 0: HeaderCell {
+                gap-before: root.gap;
+                width: root.col-size;
+                text: "Size";
+                right-aligned: true;
+                sorted: root.sort-column == 4;
+                descending: root.sort-desc;
+                clicked => { root.header-clicked(4); }
+                menu(x, y) => { root.header-menu(x, y); }
+                resize(w) => { root.col-size = clamp(w, 50px, 600px); }
+                resize-done => { root.columns-resized(); }
+            }
+        }
+
+        Rectangle {
+            y: parent.height - 1px;
+            height: 1px;
+            background: Theme.border;
+        }
+    }
+
+    // Behind the entries: presses on empty space (the list passes them through). A drag
+    // from here selects with a rectangle; a click clears the selection.
+    TouchArea {
+        x: list.x;
+        y: list.y;
+        width: list.width;
+        height: list.height;
+        property <bool> ctrl;
+        // The left button is down (a drag with another button never starts a rectangle).
+        property <bool> left-down;
+        scroll-event(event) => { return root.wheel(event); }
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                self.ctrl = event.modifiers.control;
+                self.left-down = true;
+                root.focus-requested();
+            }
+            if event.kind == PointerEventKind.up {
+                let was-left = self.left-down && event.button == PointerEventButton.left;
+                self.left-down = false;
+                if root.marquee-active {
+                    root.end-marquee();
+                } else if was-left {
+                    root.background-pressed(self.ctrl);
+                }
+            }
+            if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {
+                root.background-menu(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            }
+            if event.kind == PointerEventKind.move && !self.pressed {
+                root.marquee-pointer(event.kind, self.mouse-x, self.mouse-y);
+            }
+        }
+        moved => {
+            if self.left-down && !root.marquee-active && (abs(self.mouse-x - self.pressed-x) > 4px || abs(self.mouse-y - self.pressed-y) > 4px) {
+                root.begin-marquee(self.pressed-x, self.pressed-y, self.ctrl);
+            }
+            if root.marquee-active {
+                root.track-marquee(self.mouse-x, self.mouse-y);
+            }
+        }
+    }
+
+    // ListView only instantiates the lines on screen, so huge folders stay cheap.
+    list := ListView {
+        x: 0;
+        y: root.header-height;
+        width: root.width;
+        height: root.height - root.header-height;
+        content-y <=> root.scroll;
+        for item in root.items: line := Rectangle {
+            height: root.item-height;
+
+            // The list: one entry with its columns.
+            if root.mode == 0: entry := Rectangle {
+                property <FileRow> file: item.cells[0];
+                property <int> index: item.first;
+                property <color> text-color: self.file.selected ? Theme.selection-foreground : Theme.foreground;
+                property <color> muted-color: self.file.selected ? Theme.selection-foreground : Theme.foreground-muted;
+                background: self.file.selected ? Theme.selection : touch.has-hover ? Theme.hover : transparent;
+                accessible-role: list-item;
+                accessible-label: self.file.name;
+                accessible-item-selectable: true;
+                accessible-item-selected: self.file.selected;
+                accessible-item-index: self.index;
+
+                touch := TouchArea {
+                    property <bool> ctrl;
+                    property <bool> left-down;
+                    double-clicked => { root.item-double-clicked(entry.index); }
+                    scroll-event(event) => { return root.wheel(event); }
+                    pointer-event(event) => {
+                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                            self.ctrl = event.modifiers.control;
+                            self.left-down = true;
+                            root.focus-requested();
+                            root.item-pressed(entry.index, event.modifiers.control, event.modifiers.shift);
+                        }
+                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.middle {
+                            root.item-middle-clicked(entry.index);
+                        }
+                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {
+                            root.item-menu(entry.index, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                        }
+                        if event.kind == PointerEventKind.up {
+                            self.left-down = false;
+                        }
+                        if !self.pressed || event.kind == PointerEventKind.up {
+                            root.marquee-pointer(event.kind, self.mouse-x, line.y + root.scroll + self.mouse-y);
+                        }
+                    }
+                    moved => {
+                        if self.left-down && !root.marquee-active && self.pressed-x > root.name-end
+                            && (abs(self.mouse-x - self.pressed-x) > 4px || abs(self.mouse-y - self.pressed-y) > 4px) {
+                            root.begin-marquee(self.pressed-x, line.y + root.scroll + self.pressed-y, self.ctrl);
+                        }
+                        if root.marquee-active {
+                            root.track-marquee(self.mouse-x, line.y + root.scroll + self.mouse-y);
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    padding-left: root.side;
+                    padding-right: root.side;
+                    spacing: root.gap;
+                    HorizontalLayout {
+                        horizontal-stretch: 1;
+                        min-width: 150px;
+                        spacing: root.gap;
+                        VerticalLayout {
+                            alignment: center;
+                            FileIcon {
+                                width: Theme.icon-size;
+                                height: Theme.icon-size;
+                                kind: entry.file.kind;
+                                picture: entry.file.icon;
+                                has-picture: entry.file.has-icon;
+                            }
+                        }
+                        Text {
+                            text: entry.file.name;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                            overflow: elide;
+                            color: entry.text-color;
+                        }
+                    }
+                    if root.col-modified > 0: Text {
+                        width: root.col-modified;
+                        text: entry.file.modified;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        color: entry.muted-color;
+                    }
+                    if root.col-created > 0: Text {
+                        width: root.col-created;
+                        text: entry.file.created;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        color: entry.muted-color;
+                    }
+                    if root.col-type > 0: Text {
+                        width: root.col-type;
+                        text: entry.file.type-name;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        color: entry.muted-color;
+                    }
+                    if root.col-size > 0: Text {
+                        width: root.col-size;
+                        text: entry.file.size;
+                        horizontal-alignment: right;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        color: entry.muted-color;
+                    }
+                }
+
+                if entry.file.focused && root.has-focus: Rectangle {
+                    border-width: 1px;
+                    border-color: Theme.focus-ring;
+                }
+            }
+
+            // The grid: a row of cells. The gaps between them let presses through to the
+            // background, where a drag selects with a rectangle. One tile per column, not
+            // per cell: a changed line (a new selection) brings a new cells model, a
+            // repeater over a new model rebuilds its tiles, and a rebuilt tile loses the
+            // press under the pointer and with it a double-click.
+            if root.mode == 1: Rectangle {
+                for c in root.per-row: Rectangle {
+                    if c < item.cells.length: tile := Rectangle {
+                        property <FileRow> cell: item.cells[c];
+                        property <int> index: item.first + c;
+                        x: c * root.cell-width;
+                        y: 0;
+                        width: root.cell-width;
+                        height: root.cell-height;
+                        accessible-role: list-item;
+                        accessible-label: tile.cell.name;
+                        accessible-item-selectable: true;
+                        accessible-item-selected: tile.cell.selected;
+                        accessible-item-index: self.index;
+
+                        Rectangle {
+                            x: 4px;
+                            y: 4px;
+                            width: parent.width - 8px;
+                            height: parent.height - 8px;
+                            border-radius: Theme.radius;
+                            background: tile.cell.selected ? Theme.selection : tile-touch.has-hover ? Theme.hover : transparent;
+                            border-width: tile.cell.focused && root.has-focus ? 1px : 0px;
+                            border-color: Theme.focus-ring;
+                        }
+
+                        FileIcon {
+                            x: (parent.width - self.width) / 2;
+                            y: 10px;
+                            width: root.picture-size;
+                            height: root.picture-size;
+                            kind: tile.cell.kind;
+                            picture: tile.cell.icon;
+                            has-picture: tile.cell.has-icon;
+                        }
+
+                        Text {
+                            x: 8px;
+                            y: 14px + root.picture-size;
+                            width: parent.width - 16px;
+                            height: parent.height - self.y - 8px;
+                            text: tile.cell.name;
+                            wrap: word-wrap;
+                            overflow: elide;
+                            horizontal-alignment: center;
+                            vertical-alignment: top;
+                            color: tile.cell.selected ? Theme.selection-foreground : Theme.foreground;
+                        }
+
+                        // Cells never start a rectangle (a drag from an entry is kept for
+                        // dragging files); they only pass moves and releases on to a running one.
+                        tile-touch := TouchArea {
+                            x: 4px;
+                            y: 4px;
+                            width: parent.width - 8px;
+                            height: parent.height - 8px;
+                            double-clicked => { root.item-double-clicked(tile.index); }
+                            scroll-event(event) => { return root.wheel(event); }
+                            pointer-event(event) => {
+                                if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                                    root.focus-requested();
+                                    root.item-pressed(tile.index, event.modifiers.control, event.modifiers.shift);
+                                }
+                                if event.kind == PointerEventKind.up && event.button == PointerEventButton.middle {
+                                    root.item-middle-clicked(tile.index);
+                                }
+                                if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {
+                                    root.item-menu(tile.index, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                                }
+                                if !self.pressed || event.kind == PointerEventKind.up {
+                                    root.marquee-pointer(event.kind, tile.x + self.x + self.mouse-x, line.y + root.scroll + self.y + self.mouse-y);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Near the top or bottom edge, a running drag scrolls the list.
+    Timer {
+        interval: 30ms;
+        running: root.marquee-active && (root.pointer-y < 24px || root.pointer-y > list.visible-height - 24px);
+        triggered => {
+            let step = root.item-height / 2;
+            let lowest = min(0px, list.visible-height - list.content-height);
+            root.scroll = clamp(root.pointer-y < 24px ? root.scroll + step : root.scroll - step, lowest, 0px);
+            root.track-marquee(root.pointer-x, root.pointer-y);
+        }
+    }
+
+    if root.marquee-active: Rectangle {
+        property <length> top: root.start-y + root.scroll;
+        x: list.x + min(root.start-x, root.pointer-x);
+        y: list.y + min(self.top, root.pointer-y);
+        width: abs(root.pointer-x - root.start-x);
+        height: abs(root.pointer-y - self.top);
+        background: Theme.marquee;
+        border-width: 1px;
+        border-color: Theme.focus-ring;
+    }
+}

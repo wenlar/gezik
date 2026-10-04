@@ -44,18 +44,20 @@ pub fn ensure_visible(window: &AppWindow) -> bool {
     true
 }
 
-/// The current size (logical pixels), position (physical pixels) and sidebar width.
-pub fn capture(window: &AppWindow) -> State {
+/// Updates `state` from the window: the size (logical pixels) and position (physical
+/// pixels) only while the window is in its normal state (a minimized or maximized one has
+/// no meaningful normal rect), the sidebar width always.
+pub fn capture_into(window: &AppWindow, state: &mut State) {
     let native = window.window();
-    let size = native.size().to_logical(native.scale_factor());
-    let position = native.position();
-    State {
-        window: Some(WindowState {
+    if !native.is_minimized() && !native.is_maximized() {
+        let size = native.size().to_logical(native.scale_factor());
+        let position = native.position();
+        state.window = Some(WindowState {
             width: size.width.round() as u32,
             height: size.height.round() as u32,
             x: Some(position.x),
             y: Some(position.y),
-        }),
-        sidebar_width: Some(window.get_sidebar_width().round().clamp(120.0, 480.0) as u32),
+        });
     }
+    state.sidebar_width = Some(window.get_sidebar_width().round().clamp(120.0, 480.0) as u32);
 }

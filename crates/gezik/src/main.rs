@@ -2,12 +2,17 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod context_menu;
+mod frame_limit;
 mod keys;
+mod media;
 mod navigation;
 mod places;
+mod preview;
+mod quick_look;
 mod sidebar;
 mod start;
 mod theme_bridge;
+mod view;
 mod watcher;
 mod window_state;
 
@@ -19,7 +24,7 @@ use gezik_config::settings::{Settings, SidebarPosition};
 use gezik_config::shortcuts::{Action, Chord, Key, Platform};
 use gezik_config::store::{self, ConfigFiles, ConfigStore, Loaded};
 use gezik_config::theme;
-use slint::Model;
+use gezik_core::layout::Move;
 use start::StartPlan;
 
 slint::include_modules!();
@@ -42,7 +47,9 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
     });
     // Unchanged pins cost nothing (also after the reload that follows our own save).
     sidebar::with_current(|sidebar| sidebar.set_pinned(loaded.settings.pinned.clone()));
+    view::with_current(|view| view.set_defaults(loaded.settings.view));
     keys::set_shortcuts(loaded.settings.shortcuts.clone());
+    frame_limit::set_max_fps(loaded.settings.max_fps);
     loaded
 }
 
@@ -62,9 +69,12 @@ fn close_tab_later(nav: &navigation::Navigator, index: usize) {
 /// Home/End, Enter, type-ahead) are fixed and only act while the list has the focus.
 /// `chord` is the key as a shortcut (if it can be one); `has_modifier` is Ctrl, Alt or
 /// Meta (not Shift).
+#[allow(clippy::too_many_arguments, reason = "the key event, split up, and what it acts on")]
 fn handle_key(
     window: &AppWindow,
     nav: &navigation::Navigator,
+    view: &view::View,
+    preview: &preview::Preview,
     type_ahead: &mut keys::TypeAhead,
     text: &str,
     chord: Option<Chord>,
@@ -85,86 +95,94 @@ fn handle_key(
     }
 
     if let Some(action) = chord.as_ref().and_then(keys::action_for) {
-        match action {
-            Action::NewTab => nav.open_tab(nav.start(), true),
-            Action::CloseTab => close_tab_later(nav, nav.active_index()),
-            Action::NextTab => nav.next_tab(),
-            Action::PrevTab => nav.prev_tab(),
-            Action::Back => nav.back(),
-            Action::Forward => nav.forward(),
-            Action::Up => nav.up(),
-            Action::FocusPath => window.invoke_edit_path(),
-            Action::Refresh => nav.reload(),
+        // Space opens quick look only on the focused list and outside type-ahead; elsewhere
+        // it is an ordinary key.
+        let ordinary_key = action == Action::QuickLook
+            && (!window.get_list_focused() || type_ahead.is_active(std::time::Instant::now()));
+        if !ordinary_key {
+            match action {
+                Action::NewTab => nav.open_tab(nav.start(), true),
+                Action::CloseTab => close_tab_later(nav, nav.active_index()),
+                Action::NextTab => nav.next_tab(),
+                Action::PrevTab => nav.prev_tab(),
+                Action::Back => nav.back(),
+                Action::Forward => nav.forward(),
+                Action::Up => nav.up(),
+                Action::FocusPath => window.invoke_edit_path(),
+                Action::Refresh => nav.reload(),
+                Action::SelectAll => view.select_all(),
+                Action::ViewList => view.set_mode(gezik_core::view::ViewMode::List),
+                Action::ViewGrid => view.set_mode(gezik_core::view::ViewMode::Grid),
+                Action::TogglePreview => preview.toggle_pane(),
+                Action::QuickLook => preview.toggle_quick_look(),
+            }
+            // The typed text no longer fits once the location or tab changed.
+            if editing && action != Action::FocusPath {
+                window.invoke_focus_list();
+            }
+            return true;
         }
-        // The typed text no longer fits once the location or tab changed.
-        if editing && action != Action::FocusPath {
-            window.invoke_focus_list();
-        }
-        return true;
     }
-    if editing || has_modifier || !window.get_list_focused() {
+    if editing || !window.get_list_focused() {
         return false;
     }
 
-    // Shift+F10 or the Menu key: the selected row's menu (the background's if none).
+    // Shift+F10 or the Menu key: the selection's menu (the background's if none).
     if menu_key {
         window.invoke_open_keyboard_menu();
         return true;
     }
 
-    // List navigation (fixed keys).
-    let count = i32::try_from(window.get_rows().row_count()).unwrap_or(i32::MAX);
-    let page = window.get_list_page_rows().max(1);
-    let selected = window.get_selected();
-    let target = match chord.map(|c| c.key) {
-        Some(Key::Down) => Some(selected.saturating_add(1)),
-        Some(Key::Up) => Some(selected.saturating_sub(1)),
-        Some(Key::PageDown) => Some(selected.saturating_add(page)),
-        Some(Key::PageUp) => Some(selected.saturating_sub(page)),
-        Some(Key::Home) => Some(0),
-        Some(Key::End) => Some(count - 1),
-        Some(Key::Enter) => {
-            if selected >= 0 {
-                nav.open_row(selected);
+    // List keys (fixed): arrows, PgUp/PgDn, Home/End move; Shift extends, the primary
+    // modifier (Ctrl, Cmd on macOS) moves only the focus. Enter opens, Ctrl+Space flips
+    // the focused entry, Esc clears the selection.
+    if let Some(chord) = &chord {
+        let platform = Platform::current();
+        let primary = keys::is_primary(chord, platform);
+        let other = chord.alt || if platform == Platform::Mac { chord.ctrl } else { chord.meta };
+        if !other {
+            let mv = match chord.key {
+                Key::Up => Some(Move::Up),
+                Key::Down => Some(Move::Down),
+                Key::Left => Some(Move::Left),
+                Key::Right => Some(Move::Right),
+                Key::PageUp => Some(Move::PageUp),
+                Key::PageDown => Some(Move::PageDown),
+                Key::Home => Some(Move::Home),
+                Key::End => Some(Move::End),
+                _ => None,
+            };
+            if let Some(mv) = mv {
+                let page = usize::try_from(window.get_list_page_rows()).unwrap_or(1).max(1);
+                return view.key_move(mv, chord.shift, primary, page);
             }
-            return true;
+            match chord.key {
+                Key::Enter if !primary && !chord.shift => {
+                    nav.open_selected();
+                    return true;
+                }
+                Key::Space if primary && !chord.shift => {
+                    view.toggle_focus();
+                    return true;
+                }
+                Key::Escape if !primary && !chord.shift => {
+                    view.clear_selection();
+                    return true;
+                }
+                _ => {}
+            }
         }
-        _ => {
-            let Some(c) = keys::typed_char(text) else { return false };
-            let found = type_ahead.type_char(c, std::time::Instant::now(), |typed| nav.find_prefix(typed));
-            // A typed character that matches nothing is still used up.
-            let Some(i) = found.and_then(|i| i32::try_from(i).ok()) else { return true };
-            Some(i)
-        }
-    };
-    match target {
-        Some(i) if count > 0 => {
-            let i = i.clamp(0, count - 1);
-            window.set_selected(i);
-            reveal_row(window, i);
-            true
-        }
-        _ => false,
     }
-}
+    if has_modifier {
+        return false;
+    }
 
-/// Scrolls the list so row `index` is fully visible. After a far jump (End, type-ahead)
-/// Slint's ListView snaps the offset to a row boundary on its next layout, which can leave
-/// a row at the bottom edge only partly visible; the offset is set again once that frame is
-/// done (see [`keys::scroll_was_snapped`]).
-fn reveal_row(window: &AppWindow, index: i32) {
-    window.invoke_ensure_visible(index);
-    let target = window.get_list_scroll();
-    let row_height = window.global::<Theme>().get_row_height();
-    let weak = window.as_weak();
-    slint::Timer::single_shot(navigation::SCROLL_RESTORE_DELAY, move || {
-        if let Some(window) = weak.upgrade()
-            && window.get_selected() == index
-            && keys::scroll_was_snapped(window.get_list_scroll(), target, row_height)
-        {
-            window.set_list_scroll(target);
-        }
-    });
+    // Type-ahead. A typed character that matches nothing is still used up.
+    let Some(c) = keys::typed_char(text) else { return false };
+    if let Some(i) = type_ahead.type_char(c, std::time::Instant::now(), |typed| view.find_prefix(typed)) {
+        view.jump_to(i);
+    }
+    true
 }
 
 /// Like [`apply_config`], and also resolves where the app opens. Start warnings (bad
@@ -236,6 +254,10 @@ fn main() -> Result<(), slint::PlatformError> {
     let (initial_settings, plan) =
         apply_config_and_start(&window, &mut files, std::env::args_os().nth(1).map(PathBuf::from));
 
+    // Folder views; a broken views.toml starts over and says so in the status bar.
+    let (memory, views_warning) = config.as_ref().map(ConfigStore::load_views).unwrap_or_default();
+    files.warnings.extend(views_warning);
+
     // The latest config files, so a system light/dark switch can re-resolve without I/O.
     let files = Arc::new(Mutex::new(files));
 
@@ -274,27 +296,45 @@ fn main() -> Result<(), slint::PlatformError> {
         .ok()
     });
     apply_config(&window, &files.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
-    if let Some(store) = &config {
-        window_state::restore(&window, &store.load_state());
-    }
+    let saved_state = config.as_ref().map(ConfigStore::load_state).unwrap_or_default();
+    window_state::restore(&window, &saved_state);
     keep_on_screen(window.as_weak(), 0);
+    let view = view::View::new(&window, memory, config.clone());
+    view.set_defaults(initial_settings.view);
+    view.set_columns(saved_state.columns.clone().unwrap_or_else(gezik_core::view::default_columns));
+    window.set_mono_font(
+        if cfg!(windows) {
+            "Consolas"
+        } else if cfg!(target_os = "macos") {
+            "Menlo"
+        } else {
+            "monospace"
+        }
+        .into(),
+    );
+    window.set_preview_width(saved_state.preview_width.unwrap_or(280) as f32);
+    let preview = preview::Preview::new(&window, view.clone());
+    preview.set_pane_open(saved_state.preview_open);
     window.window().on_close_requested({
-        let weak = window.as_weak();
-        let store = config.clone();
+        let (weak, store, view, preview) = (window.as_weak(), config.clone(), view.clone(), preview.clone());
         move || {
-            // A minimized or maximized window has no meaningful normal rect: keep the old state.
-            if let (Some(window), Some(store)) = (weak.upgrade(), &store)
-                && !window.window().is_minimized()
-                && !window.window().is_maximized()
-                && let Err(err) = store.save_state(&window_state::capture(&window))
-            {
-                eprintln!("gezik: cannot save window state: {err}");
+            if let (Some(window), Some(store)) = (weak.upgrade(), &store) {
+                let mut state = store.load_state();
+                window_state::capture_into(&window, &mut state);
+                state.columns = Some(view.columns());
+                state.preview_open = preview.is_pane_open();
+                state.preview_width = Some(window.get_preview_width().round().clamp(200.0, 600.0) as u32);
+                if let Err(err) = store.save_state(&state) {
+                    eprintln!("gezik: cannot save window state: {err}");
+                }
+                view.flush_memory();
             }
+            // Its window would otherwise keep the event loop (and the process) running.
+            preview.close_quick_look();
             slint::CloseRequestResponse::HideWindow
         }
     });
-
-    let nav = navigation::Navigator::new(&window, plan.first, plan.select, plan.start);
+    let nav = navigation::Navigator::new(&window, view.clone(), plan.first, plan.select, plan.start);
     nav.install();
     // Captures no navigator (it is not `Send`): the result finds it on the UI thread.
     places::load_in_background(window.as_weak(), |part| navigation::with_current(|nav| nav.set_places(part)));
@@ -328,15 +368,48 @@ fn main() -> Result<(), slint::PlatformError> {
     });
     // The sidebar width stays in memory and is saved with the window state on close.
 
-    let menus = context_menu::Menus::new(&window, nav.clone(), sidebar);
+    let menus = context_menu::Menus::new(&window, nav.clone(), view.clone(), preview.clone(), sidebar);
     window.on_row_menu({
-        let menus = menus.clone();
-        move |i, x, y| menus.row(i, x, y)
+        let (menus, view) = (menus.clone(), view.clone());
+        move |i, x, y| {
+            if let Ok(index) = usize::try_from(i) {
+                view.prepare_menu(index);
+            }
+            menus.row(i, x, y)
+        }
     });
-    // The Windows menu opens at the cursor; there is no Slint menu for empty space.
+    // Right-click on empty space clears the selection, as in Explorer. The Windows menu
+    // opens at the cursor; there is no Slint menu for empty space.
     window.on_background_menu({
-        let menus = menus.clone();
-        move |_, _| menus.background()
+        let (menus, view) = (menus.clone(), view.clone());
+        move |_, _| {
+            view.clear_selection();
+            menus.background()
+        }
+    });
+    window.on_item_pressed({
+        let view = view.clone();
+        move |i, ctrl, shift| {
+            if let Ok(index) = usize::try_from(i) {
+                view.press(index, ctrl, shift);
+            }
+        }
+    });
+    window.on_marquee({
+        let view = view.clone();
+        move |x, y, width, height, additive| view.marquee(gezik_core::layout::Rect { x, y, width, height }, additive)
+    });
+    window.on_marquee_done({
+        let view = view.clone();
+        move || view.marquee_done()
+    });
+    window.on_background_pressed({
+        let view = view.clone();
+        move |ctrl| {
+            if !ctrl {
+                view.clear_selection();
+            }
+        }
     });
     window.on_keyboard_menu({
         let menus = menus.clone();
@@ -345,6 +418,34 @@ fn main() -> Result<(), slint::PlatformError> {
     window.on_sidebar_menu({
         let menus = menus.clone();
         move |section, i, x, y| menus.sidebar_entry(section, i, x, y)
+    });
+    window.on_header_clicked({
+        let view = view.clone();
+        move |column| view.header_clicked(column)
+    });
+    window.on_preview_resized({
+        let preview = preview.clone();
+        move || preview.schedule()
+    });
+    window.on_columns_resized({
+        let view = view.clone();
+        move || view.columns_resized()
+    });
+    window.on_header_menu({
+        let menus = menus.clone();
+        move |x, y| menus.header(x, y)
+    });
+    window.on_view_menu({
+        let menus = menus.clone();
+        move |x, y| menus.view_menu(x, y)
+    });
+    window.on_grid_columns_changed({
+        let view = view.clone();
+        move |columns| view.grid_columns_changed(usize::try_from(columns).unwrap_or(1))
+    });
+    window.on_zoom({
+        let view = view.clone();
+        move |bigger| view.zoom(bigger)
     });
     // Slint passes indexes as `i32`: a negative one does nothing.
     window.on_tab_menu(move |i, x, y| {
@@ -421,14 +522,24 @@ fn main() -> Result<(), slint::PlatformError> {
     });
 
     window.on_key_event({
-        let (nav, weak) = (nav.clone(), window.as_weak());
+        let (nav, view, preview, weak) = (nav.clone(), view.clone(), preview.clone(), window.as_weak());
         let mut type_ahead = keys::TypeAhead::new();
         move |event| {
             let Some(window) = weak.upgrade() else { return false };
             let m = event.modifiers;
             let chord = keys::chord_from_slint(&event.text, m.control, m.alt, m.shift, m.meta, Platform::current());
             let menu_key = keys::is_context_menu_key(&event.text, m.control, m.alt, m.shift, m.meta);
-            handle_key(&window, &nav, &mut type_ahead, &event.text, chord, m.control || m.alt || m.meta, menu_key)
+            handle_key(
+                &window,
+                &nav,
+                &view,
+                &preview,
+                &mut type_ahead,
+                &event.text,
+                chord,
+                m.control || m.alt || m.meta,
+                menu_key,
+            )
         }
     });
 
@@ -437,6 +548,11 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         use slint::winit_030::{EventResult, WinitWindowAccessor, winit};
         window.window().on_winit_window_event(move |_, event| {
+            // Caps the frame rate at `max-fps`: Slint draws as often as the display refreshes.
+            if let winit::event::WindowEvent::RedrawRequested = event {
+                frame_limit::wait_for_frame();
+                return EventResult::Propagate;
+            }
             if let winit::event::WindowEvent::MouseInput {
                 state: winit::event::ElementState::Pressed, button, ..
             } = event

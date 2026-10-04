@@ -8,6 +8,9 @@ use crate::Warning;
 use crate::paths::{config_dir, write_atomic};
 use crate::settings::{Density, Settings, State};
 use crate::theme::{ResolvedTheme, ThemeError, resolve_theme};
+use crate::views_file::{parse_views, views_to_toml};
+use gezik_core::view::ViewSettings;
+use gezik_core::view_memory::ViewMemory;
 
 const SETTINGS_TEMPLATE: &str = include_str!("../templates/settings.toml");
 const THEME_TEMPLATE: &str = include_str!("../templates/example.toml");
@@ -98,6 +101,10 @@ impl ConfigStore {
         files
     }
 
+    fn views_path(&self) -> PathBuf {
+        self.dir.join("views.toml")
+    }
+
     pub fn load_state(&self) -> State {
         read_text(&self.state_path()).map(|text| State::parse(&text)).unwrap_or_default()
     }
@@ -106,15 +113,25 @@ impl ConfigStore {
         write_atomic(&self.state_path(), &state.to_toml())
     }
 
-    /// Writes the pinned folders into `settings.toml`, keeping everything else. Creates the
-    /// file from the template if it does not exist; refuses to touch a broken file.
+    /// Writes the pinned folders into `settings.toml`, keeping everything else.
     pub fn save_pinned(&self, pinned: &[String]) -> Result<(), Warning> {
+        self.edit_settings(|text| crate::settings_edit::with_pinned(text, pinned))
+    }
+
+    /// Writes `view` as the `[view]` defaults ("Apply to all folders"), keeping everything else.
+    pub fn save_view_defaults(&self, view: &ViewSettings) -> Result<(), Warning> {
+        self.edit_settings(|text| crate::settings_edit::with_view_defaults(text, view))
+    }
+
+    /// Applies `edit` to `settings.toml`. Creates the file from the template if it does not
+    /// exist; refuses to touch a broken file.
+    fn edit_settings(&self, edit: impl FnOnce(&str) -> Result<String, String>) -> Result<(), Warning> {
         let text = match read_text(&self.settings_path()) {
             Ok(text) => text,
             Err(err) if err.kind() == io::ErrorKind::NotFound => SETTINGS_TEMPLATE.to_owned(),
             Err(err) => return Err(Warning::new("settings.toml", format!("cannot read: {err}"))),
         };
-        let edited = crate::settings_edit::with_pinned(&text, pinned).map_err(|err| {
+        let edited = edit(&text).map_err(|err| {
             let first_line = err.lines().next().unwrap_or_default().to_owned();
             Warning::new("settings.toml", format!("Fix settings.toml first ({first_line})"))
         })?;
@@ -122,6 +139,29 @@ impl ConfigStore {
             .map_err(|err| Warning::new("settings.toml", format!("cannot write: {err}")))?;
         write_atomic(&self.settings_path(), &edited)
             .map_err(|err| Warning::new("settings.toml", format!("cannot write: {err}")))
+    }
+
+    /// The saved folder views. A missing file means none; an unreadable or broken one
+    /// starts over, with a warning.
+    pub fn load_views(&self) -> (ViewMemory, Option<Warning>) {
+        match read_text(&self.views_path()) {
+            Ok(text) => match parse_views(&text) {
+                Ok(folders) => (ViewMemory::from_folders(folders), None),
+                Err(err) => {
+                    (ViewMemory::default(), Some(Warning::new("views.toml", format!("{err}; folder views start over"))))
+                }
+            },
+            Err(err) if err.kind() == io::ErrorKind::NotFound => (ViewMemory::default(), None),
+            Err(err) => (
+                ViewMemory::default(),
+                Some(Warning::new("views.toml", format!("cannot read: {err}; folder views start over"))),
+            ),
+        }
+    }
+
+    pub fn save_views(&self, memory: &ViewMemory) -> io::Result<()> {
+        std::fs::create_dir_all(&self.dir)?;
+        write_atomic(&self.views_path(), &views_to_toml(memory.folders()))
     }
 
     /// Whether a change to `path` should reload the config: `settings.toml` or a theme
@@ -229,6 +269,7 @@ mod tests {
         let files = store.read_files();
         let loaded = resolve(&files, false);
         assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        assert_eq!(loaded.settings.view, crate::settings::ViewDefaults::default());
         assert_eq!(loaded.theme.unwrap().id, "light");
 
         let mut warnings = Vec::new();
@@ -304,6 +345,7 @@ mod tests {
         let state = State {
             window: Some(WindowState { width: 1000, height: 700, x: Some(10), y: Some(20) }),
             sidebar_width: None,
+            ..State::default()
         };
         store.save_state(&state).unwrap();
         assert_eq!(store.load_state(), state);
@@ -378,5 +420,50 @@ mod tests {
         assert!(err.message.contains("pinned must be a list"), "{}", err.message);
         // File must not be modified
         assert_eq!(std::fs::read_to_string(store.dir().join("settings.toml")).unwrap(), "pinned = \"not a list\"\n");
+    }
+
+    #[test]
+    fn views_round_trip_through_disk() {
+        use gezik_core::view::{ViewMode, ViewSettings};
+        let store = store("views");
+        let (memory, warning) = store.load_views();
+        assert!(memory.folders().is_empty() && warning.is_none(), "missing file: empty, quietly");
+        let mut memory = memory;
+        memory.set("/pics", ViewSettings { mode: ViewMode::Grid, ..ViewSettings::default() });
+        store.save_views(&memory).unwrap();
+        let (mut back, warning) = store.load_views();
+        assert!(warning.is_none());
+        assert_eq!(back.get("/pics").map(|v| v.mode), Some(ViewMode::Grid));
+    }
+
+    #[test]
+    fn broken_views_file_starts_empty_with_a_warning() {
+        let store = store("views-broken");
+        write(&store, "views.toml", "[[folder]\n");
+        let (memory, warning) = store.load_views();
+        assert!(memory.folders().is_empty());
+        let warning = warning.unwrap();
+        assert_eq!(warning.file, "views.toml");
+        assert!(warning.message.contains("start over"), "{}", warning.message);
+    }
+
+    #[test]
+    fn view_defaults_are_written_into_settings() {
+        use gezik_core::view::{ViewMode, ViewSettings};
+        let store = store("view-defaults");
+        write(&store, "settings.toml", "# mine\ntheme = \"dark\"\n");
+        store.save_view_defaults(&ViewSettings { mode: ViewMode::Grid, ..ViewSettings::default() }).unwrap();
+        let text = std::fs::read_to_string(store.dir().join("settings.toml")).unwrap();
+        assert!(text.contains("# mine"));
+        assert_eq!(resolve(&store.read_files(), true).settings.view.view.mode, ViewMode::Grid);
+        write(&store, "settings.toml", "theme = \n");
+        let err = store.save_view_defaults(&ViewSettings::default()).unwrap_err();
+        assert!(err.message.starts_with("Fix settings.toml first"), "{}", err.message);
+    }
+
+    #[test]
+    fn views_file_is_not_a_config_file() {
+        let store = store("views-watch");
+        assert!(!store.is_config_file(&store.dir().join("views.toml")));
     }
 }

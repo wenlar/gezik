@@ -1,0 +1,676 @@
+//! The preview of the selection: the pane on the right (Alt+P) and the quick look window
+//! (Space) show the same thing. Loading runs on one worker thread that only ever takes the
+//! latest request: a newer request replaces one still waiting, makes the one in progress
+//! stop at its next step, and makes older results be dropped.
+
+use std::cell::{Cell, RefCell};
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
+use std::time::{Duration, SystemTime};
+
+use gezik_core::format_size;
+use gezik_platform::{IconTarget, Rgba, format_datetime};
+use slint::{ComponentHandle, Image, Rgba8Pixel, SharedPixelBuffer};
+
+use crate::view::View;
+use crate::{AppWindow, PreviewInfo};
+
+/// How much of a text file is shown.
+pub const TEXT_BYTES: usize = 64 * 1024;
+/// A NUL byte in this much of the start makes a file binary, not text.
+pub const BINARY_PROBE: usize = 8 * 1024;
+/// A folder's entries are counted up to this many.
+pub const MAX_COUNTED: usize = 10_000;
+
+/// What to preview, captured on the UI thread.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Target {
+    Nothing,
+    Entry {
+        path: PathBuf,
+        is_dir: bool,
+        name: String,
+        type_name: String,
+        /// Files only.
+        size: Option<u64>,
+        modified: Option<SystemTime>,
+        created: Option<SystemTime>,
+        /// `Kind` index, for the fallback icon.
+        kind: i32,
+    },
+    Several {
+        count: usize,
+        /// Of the selected files; `None` if only folders are selected.
+        size: Option<u64>,
+    },
+}
+
+/// What the loading thread found; `Send`.
+pub enum Body {
+    None,
+    /// The picture, and its own size when it is the file itself (not a thumbnail or icon).
+    Picture(SharedPixelBuffer<Rgba8Pixel>, Option<(u32, u32)>),
+    Text(String),
+    Folder {
+        count: usize,
+        more: bool,
+    },
+}
+
+fn buffer(rgba: Rgba) -> Option<SharedPixelBuffer<Rgba8Pixel>> {
+    let expected = rgba.width as usize * rgba.height as usize * 4;
+    (rgba.width > 0 && rgba.pixels.len() == expected)
+        .then(|| SharedPixelBuffer::clone_from_slice(&rgba.pixels, rgba.width, rgba.height))
+}
+
+/// [`load_while`] that never gives up (tests).
+#[cfg(test)]
+pub fn load(target: &Target, px: u32) -> Body {
+    load_while(target, px, &|| true)
+}
+
+/// Loads the preview of `target`, pictures fitting `px`; gives up (with [`Body::None`])
+/// before each slow step once `wanted` says the result is no longer needed. Runs on a
+/// worker thread; never panics on bad files.
+pub fn load_while(target: &Target, px: u32, wanted: &dyn Fn() -> bool) -> Body {
+    let Target::Entry { path, is_dir, .. } = target else { return Body::None };
+    if !wanted() {
+        return Body::None;
+    }
+    if *is_dir {
+        let (count, more) = count_entries(path);
+        return Body::Folder { count, more };
+    }
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or_default().to_lowercase();
+    if gezik_platform::can_decode(&ext)
+        && let Ok(decoded) = gezik_platform::decode_image(path, px)
+        && let Some(picture) = buffer(decoded.image)
+    {
+        return Body::Picture(picture, Some((decoded.width, decoded.height)));
+    }
+    if !wanted() {
+        return Body::None;
+    }
+    if let Some(text) = read_text(path) {
+        return Body::Text(text);
+    }
+    if !wanted() {
+        return Body::None;
+    }
+    let mut picture = gezik_platform::thumbnail(path, px);
+    if picture.is_none() && wanted() {
+        picture = gezik_platform::icon(&IconTarget::Path(path.clone()), px);
+    }
+    match picture.and_then(buffer) {
+        Some(picture) => Body::Picture(picture, None),
+        None => Body::None,
+    }
+}
+
+/// A one-place mailbox: [`Slot::put`] replaces what is waiting, [`Slot::take`] waits for
+/// something. The preview worker only ever sees the latest request this way.
+pub struct Slot<T> {
+    value: Mutex<Option<T>>,
+    ready: Condvar,
+}
+
+impl<T> Default for Slot<T> {
+    fn default() -> Self {
+        Slot { value: Mutex::new(None), ready: Condvar::new() }
+    }
+}
+
+impl<T> Slot<T> {
+    pub fn put(&self, value: T) {
+        *self.value.lock().unwrap_or_else(PoisonError::into_inner) = Some(value);
+        self.ready.notify_one();
+    }
+
+    /// Waits until a value is there and takes it.
+    pub fn take(&self) -> T {
+        let mut value = self.value.lock().unwrap_or_else(PoisonError::into_inner);
+        loop {
+            if let Some(taken) = value.take() {
+                return taken;
+            }
+            value = self.ready.wait(value).unwrap_or_else(PoisonError::into_inner);
+        }
+    }
+}
+
+/// What the worker loads: `target` with pictures fitting `px`, as request `generation`.
+struct Request {
+    target: Target,
+    px: u32,
+    generation: u64,
+}
+
+/// Starts the worker thread: it takes the latest request, skips it if a newer one came
+/// meanwhile, loads it and hands the result to the UI thread.
+fn start_worker(window: slint::Weak<AppWindow>, current: Arc<AtomicU64>) -> Arc<Slot<Request>> {
+    let slot = Arc::new(Slot::default());
+    let requests = slot.clone();
+    let spawned = std::thread::Builder::new().name("gezik-preview".into()).spawn(move || {
+        gezik_platform::init_thread();
+        loop {
+            let Request { target, px, generation } = requests.take();
+            let wanted = || current.load(Ordering::SeqCst) == generation;
+            let body = load_while(&target, px, &wanted);
+            if !wanted() {
+                continue;
+            }
+            let current = current.clone();
+            let _ = window.upgrade_in_event_loop(move |_| {
+                if current.load(Ordering::SeqCst) == generation {
+                    with_current(|p| p.publish(describe(&target, Some(body))));
+                }
+            });
+        }
+    });
+    if let Err(err) = spawned {
+        eprintln!("gezik: cannot start the preview thread: {err}");
+    }
+    slot
+}
+
+/// The start of a text file (at most [`TEXT_BYTES`]); `None` for binary files (a NUL in
+/// the first [`BINARY_PROBE`] bytes) and unreadable ones.
+pub fn read_text(path: &Path) -> Option<String> {
+    let file = std::fs::File::open(path).ok()?;
+    let mut bytes = Vec::with_capacity(TEXT_BYTES);
+    file.take(TEXT_BYTES as u64).read_to_end(&mut bytes).ok()?;
+    decode_text(&bytes)
+}
+
+/// Text from the start of a file: UTF-16 or UTF-8 by their byte order mark, else UTF-8
+/// if it is valid, else the user's ANSI code page (lossy UTF-8 where there is none).
+/// `None` for binary data (a NUL in the first [`BINARY_PROBE`] bytes, after any UTF-16 mark).
+fn decode_text(bytes: &[u8]) -> Option<String> {
+    if let Some(rest) = bytes.strip_prefix(b"\xFF\xFE") {
+        return Some(utf16(rest, u16::from_le_bytes));
+    }
+    if let Some(rest) = bytes.strip_prefix(b"\xFE\xFF") {
+        return Some(utf16(rest, u16::from_be_bytes));
+    }
+    if bytes[..bytes.len().min(BINARY_PROBE)].contains(&0) {
+        return None;
+    }
+    let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
+    match std::str::from_utf8(bytes) {
+        Ok(text) => Some(text.to_owned()),
+        // Valid UTF-8 cut mid-character by the read limit.
+        Err(err) if err.error_len().is_none() => {
+            Some(String::from_utf8_lossy(&bytes[..err.valid_up_to()]).into_owned())
+        }
+        Err(_) => {
+            Some(gezik_platform::decode_ansi(bytes).unwrap_or_else(|| String::from_utf8_lossy(bytes).into_owned()))
+        }
+    }
+}
+
+/// UTF-16 code units from byte pairs; an odd last byte (cut by the read limit) is dropped.
+fn utf16(bytes: &[u8], unit: fn([u8; 2]) -> u16) -> String {
+    let (pairs, _) = bytes.as_chunks::<2>();
+    let mut units: Vec<u16> = pairs.iter().map(|&pair| unit(pair)).collect();
+    // Half a surrogate pair cut by the read limit.
+    if units.last().is_some_and(|u| (0xD800..0xDC00).contains(u)) {
+        units.pop();
+    }
+    String::from_utf16_lossy(&units)
+}
+
+/// How many entries a folder has, up to [`MAX_COUNTED`]; `true` if there are more.
+pub fn count_entries(path: &Path) -> (usize, bool) {
+    let Ok(entries) = std::fs::read_dir(path) else { return (0, false) };
+    let count = entries.take(MAX_COUNTED + 1).count();
+    (count.min(MAX_COUNTED), count > MAX_COUNTED)
+}
+
+/// `10000` as `10,000`.
+fn with_commas(n: usize) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// What the pane shows for `target`; `body` is `None` while it loads.
+pub fn describe(target: &Target, body: Option<Body>) -> PreviewInfo {
+    match target {
+        Target::Nothing => PreviewInfo::default(),
+        Target::Several { count, size } => PreviewInfo {
+            kind: 5,
+            title: format!("{count} items selected").into(),
+            details: size.map(|s| format!("Total size: {}", format_size(s))).unwrap_or_default().into(),
+            item_kind: 1,
+            ..PreviewInfo::default()
+        },
+        Target::Entry { name, type_name, size, modified, created, kind, is_dir, .. } => {
+            let mut lines = vec![type_name.clone()];
+            if let Some(size) = size {
+                lines.push(format_size(*size));
+            }
+            if let Some(time) = modified {
+                lines.push(format!("Modified {}", format_datetime(*time)));
+            }
+            if let Some(time) = created {
+                lines.push(format!("Created {}", format_datetime(*time)));
+            }
+            let mut info = PreviewInfo {
+                kind: if *is_dir { 4 } else { 3 },
+                title: name.as_str().into(),
+                item_kind: *kind,
+                loading: body.is_none(),
+                ..PreviewInfo::default()
+            };
+            match body {
+                None | Some(Body::None) => {}
+                Some(Body::Picture(picture, size)) => {
+                    if let Some((w, h)) = size {
+                        lines.push(format!("{w} × {h} pixels"));
+                        info.kind = 1;
+                    }
+                    info.picture = Image::from_rgba8(picture);
+                    info.has_picture = true;
+                }
+                Some(Body::Text(text)) => {
+                    info.kind = 2;
+                    info.text = text.into();
+                }
+                Some(Body::Folder { count, more }) => lines.push(match (count, more) {
+                    (_, true) => format!("{}+ items", with_commas(MAX_COUNTED)),
+                    (1, false) => "1 item".to_owned(),
+                    (n, false) => format!("{n} items"),
+                }),
+            }
+            info.details = lines.join("\n").into();
+            info
+        }
+    }
+}
+
+thread_local! {
+    /// The preview of this (UI) thread, so loading threads and timers can reach it.
+    static CURRENT: RefCell<Option<Preview>> = const { RefCell::new(None) };
+}
+
+/// Runs `f` with this UI thread's preview, if there is one.
+pub fn with_current<R>(f: impl FnOnce(&Preview) -> R) -> Option<R> {
+    let preview = CURRENT.with(|c| c.borrow().clone())?;
+    Some(f(&preview))
+}
+
+/// How long the selection must stay before its preview loads (arrow keys held down).
+const DELAY: Duration = Duration::from_millis(100);
+
+struct Inner {
+    window: slint::Weak<AppWindow>,
+    view: View,
+    pane_open: Cell<bool>,
+    /// Bumped per request: a load whose number is no longer current is dropped.
+    generation: Arc<AtomicU64>,
+    /// Requests for the worker thread, started with the first one.
+    worker: RefCell<Option<Arc<Slot<Request>>>>,
+    timer: slint::Timer,
+    /// What is shown now (the quick look window opens with it).
+    info: RefCell<PreviewInfo>,
+    quick_look: RefCell<Option<crate::quick_look::QuickLook>>,
+}
+
+#[derive(Clone)]
+pub struct Preview(Rc<Inner>);
+
+impl Preview {
+    pub fn new(window: &AppWindow, view: View) -> Preview {
+        let preview = Preview(Rc::new(Inner {
+            window: window.as_weak(),
+            view: view.clone(),
+            pane_open: Cell::new(false),
+            generation: Arc::default(),
+            worker: RefCell::new(None),
+            timer: slint::Timer::default(),
+            info: RefCell::new(PreviewInfo::default()),
+            quick_look: RefCell::new(None),
+        }));
+        CURRENT.with(|c| *c.borrow_mut() = Some(preview.clone()));
+        view.on_selection_changed(|| {
+            with_current(Preview::schedule);
+        });
+        preview
+    }
+
+    pub fn is_pane_open(&self) -> bool {
+        self.0.pane_open.get()
+    }
+
+    pub fn set_pane_open(&self, open: bool) {
+        self.0.pane_open.set(open);
+        if let Some(window) = self.0.window.upgrade() {
+            window.set_preview_open(open);
+        }
+        if open {
+            self.refresh();
+        } else if !self.active() {
+            self.release();
+        }
+    }
+
+    pub fn toggle_pane(&self) {
+        self.set_pane_open(!self.is_pane_open());
+    }
+
+    /// Whether anything shows the preview.
+    fn active(&self) -> bool {
+        self.0.pane_open.get() || self.quick_look_open()
+    }
+
+    /// The selection changed: loads its preview once it stays for a moment.
+    pub fn schedule(&self) {
+        if !self.active() {
+            return;
+        }
+        self.0.timer.start(slint::TimerMode::SingleShot, DELAY, || {
+            with_current(Preview::refresh);
+        });
+    }
+
+    /// Shows the selection's facts now and loads its picture or text in the background.
+    pub fn refresh(&self) {
+        if !self.active() {
+            return;
+        }
+        let target = self.0.view.preview_target();
+        let generation = self.0.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        self.publish(describe(&target, None));
+        if !matches!(target, Target::Entry { .. }) {
+            return;
+        }
+        let px = self.picture_px();
+        let worker = self
+            .0
+            .worker
+            .borrow_mut()
+            .get_or_insert_with(|| start_worker(self.0.window.clone(), self.0.generation.clone()))
+            .clone();
+        worker.put(Request { target, px, generation });
+    }
+
+    /// The picture size to load, in physical pixels: what the pane can show.
+    fn picture_px(&self) -> u32 {
+        let Some(window) = self.0.window.upgrade() else { return 256 };
+        let quick = self.0.quick_look.borrow().as_ref().map_or(0.0, |q| q.width());
+        let logical = if self.0.pane_open.get() { window.get_preview_width().max(quick) } else { quick };
+        (logical * window.window().scale_factor()).round().clamp(64.0, 1024.0) as u32
+    }
+
+    fn publish(&self, info: PreviewInfo) {
+        if let Some(window) = self.0.window.upgrade() {
+            window.set_preview(info.clone());
+        }
+        if let Some(quick_look) = self.0.quick_look.borrow().as_ref() {
+            quick_look.set_info(info.clone());
+        }
+        *self.0.info.borrow_mut() = info;
+    }
+
+    pub fn quick_look_open(&self) -> bool {
+        self.0.quick_look.borrow().is_some()
+    }
+
+    /// Space on the list: opens quick look, or closes it.
+    pub fn toggle_quick_look(&self) {
+        if self.quick_look_open() {
+            return self.close_quick_look();
+        }
+        // Nothing selected: nothing to look at.
+        if self.0.view.preview_target() == Target::Nothing {
+            return;
+        }
+        let Some(window) = self.0.window.upgrade() else { return };
+        let info = self.0.info.borrow().clone();
+        let opened = crate::quick_look::QuickLook::open(
+            &window,
+            info,
+            window.get_mono_font(),
+            |text, ctrl, alt, shift, meta| {
+                with_current(|p| p.quick_look_key(text, ctrl, alt, shift, meta)).unwrap_or(false)
+            },
+            Preview::close_later,
+        );
+        match opened {
+            Ok(quick_look) => {
+                *self.0.quick_look.borrow_mut() = Some(quick_look);
+                self.refresh();
+            }
+            Err(err) => window.set_status(format!("Cannot open quick look: {err}").into()),
+        }
+    }
+
+    pub fn close_quick_look(&self) {
+        // Taken out first: no borrow is held while the window is hidden.
+        let quick_look = self.0.quick_look.borrow_mut().take();
+        if let Some(quick_look) = quick_look {
+            quick_look.close();
+        }
+        if !self.active() {
+            self.release();
+        }
+    }
+
+    /// Closes quick look once the current event is done: its window may be the one
+    /// handling it.
+    fn close_later() {
+        slint::Timer::single_shot(Duration::ZERO, || {
+            with_current(Preview::close_quick_look);
+        });
+    }
+
+    /// A key in the quick look window: Space or Esc closes it, arrows move in the list.
+    fn quick_look_key(&self, text: &str, ctrl: bool, alt: bool, shift: bool, meta: bool) -> bool {
+        use gezik_config::shortcuts::{Key, Platform};
+        use gezik_core::layout::Move;
+        let Some(chord) = crate::keys::chord_from_slint(text, ctrl, alt, shift, meta, Platform::current()) else {
+            return false;
+        };
+        if chord.ctrl || chord.alt || chord.meta || chord.shift {
+            return false;
+        }
+        let mv = match chord.key {
+            Key::Space | Key::Escape => {
+                Preview::close_later();
+                return true;
+            }
+            Key::Up => Move::Up,
+            Key::Down => Move::Down,
+            Key::Left => Move::Left,
+            Key::Right => Move::Right,
+            _ => return false,
+        };
+        self.0.view.key_move(mv, false, false, 1)
+    }
+
+    /// The theme changed: quick look follows (the main window is done by theme_bridge).
+    pub fn retheme(&self, theme: &gezik_config::theme::ResolvedTheme) {
+        if let Some(quick_look) = self.0.quick_look.borrow().as_ref() {
+            quick_look.retheme(theme);
+        }
+    }
+
+    /// Nothing shows the preview: lets go of its picture and drops loads in flight.
+    fn release(&self) {
+        self.0.timer.stop();
+        self.0.generation.fetch_add(1, Ordering::SeqCst);
+        self.publish(PreviewInfo::default());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("gezik-preview-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn entry(path: PathBuf, is_dir: bool) -> Target {
+        Target::Entry {
+            name: path.file_name().unwrap().to_string_lossy().into_owned(),
+            path,
+            is_dir,
+            type_name: "Thing".into(),
+            size: (!is_dir).then_some(2048),
+            modified: None,
+            created: None,
+            kind: 1,
+        }
+    }
+
+    #[test]
+    fn text_files_show_their_start() {
+        let dir = temp("text");
+        let path = dir.join("a.txt");
+        std::fs::write(&path, "merhaba dünya").unwrap();
+        assert_eq!(read_text(&path).as_deref(), Some("merhaba dünya"));
+        let big = dir.join("big.log");
+        std::fs::write(&big, "x".repeat(TEXT_BYTES * 2)).unwrap();
+        assert_eq!(read_text(&big).unwrap().len(), TEXT_BYTES);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn utf8_with_a_byte_order_mark_drops_the_mark() {
+        assert_eq!(decode_text(b"\xEF\xBB\xBFSat\xC4\xB1r").as_deref(), Some("Satır"));
+        assert_eq!(decode_text(b"").as_deref(), Some(""));
+    }
+
+    #[test]
+    fn utf8_cut_mid_character_keeps_the_whole_characters() {
+        assert_eq!(decode_text(b"Sat\xC4").as_deref(), Some("Sat"));
+    }
+
+    #[test]
+    fn utf16_little_endian_with_a_mark_is_text() {
+        let mut bytes = vec![0xFF, 0xFE];
+        bytes.extend("Satır — x".encode_utf16().flat_map(u16::to_le_bytes));
+        assert_eq!(decode_text(&bytes).as_deref(), Some("Satır — x"));
+        // An odd byte cut by the read limit is dropped.
+        bytes.push(b'y');
+        assert_eq!(decode_text(&bytes).as_deref(), Some("Satır — x"));
+    }
+
+    #[test]
+    fn utf16_big_endian_with_a_mark_is_text() {
+        let mut bytes = vec![0xFE, 0xFF];
+        bytes.extend("Satır 😀".encode_utf16().flat_map(u16::to_be_bytes));
+        assert_eq!(decode_text(&bytes).as_deref(), Some("Satır 😀"));
+        // Half a surrogate pair cut by the read limit is dropped.
+        bytes.truncate(bytes.len() - 2);
+        assert_eq!(decode_text(&bytes).as_deref(), Some("Satır "));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn invalid_utf8_is_read_in_the_ansi_code_page() {
+        // "Satır — x" in Windows-1254; 0x97 is the em dash in the Windows code pages, so
+        // the dash holds on non-Turkish systems too.
+        let bytes = b"Sat\xFDr \x97 x";
+        let text = decode_text(bytes).unwrap();
+        assert_eq!(Some(text.clone()), gezik_platform::decode_ansi(bytes));
+        assert!(text.starts_with("Sat") && text.ends_with("r \u{2014} x"), "{text}");
+        assert!(!text.contains('\u{FFFD}'), "{text}");
+    }
+
+    #[test]
+    fn binary_files_are_not_text() {
+        let dir = temp("binary");
+        let path = dir.join("a.bin");
+        std::fs::write(&path, b"MZ\x90\x00\x03\x00").unwrap();
+        assert_eq!(read_text(&path), None);
+        assert_eq!(read_text(&dir.join("missing")), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn folders_are_counted_up_to_the_limit() {
+        let dir = temp("count");
+        for i in 0..3 {
+            std::fs::write(dir.join(format!("{i}")), "").unwrap();
+        }
+        assert_eq!(count_entries(&dir), (3, false));
+        assert_eq!(count_entries(&dir.join("missing")), (0, false));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn loads_pictures_with_their_size() {
+        let dir = temp("picture");
+        let path = dir.join("p.png");
+        image::RgbaImage::from_pixel(300, 200, image::Rgba([1, 2, 3, 255])).save(&path).unwrap();
+        match load(&entry(path, false), 100) {
+            Body::Picture(picture, Some((300, 200))) => assert_eq!((picture.width(), picture.height()), (100, 67)),
+            _ => panic!("expected the picture"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_slot_keeps_only_the_latest_value() {
+        let slot = Slot::default();
+        slot.put(1);
+        slot.put(2);
+        assert_eq!(slot.take(), 2);
+        let slot = Arc::new(slot);
+        let taker = std::thread::spawn({
+            let slot = slot.clone();
+            move || slot.take()
+        });
+        std::thread::sleep(Duration::from_millis(20));
+        slot.put(3);
+        assert_eq!(taker.join().unwrap(), 3, "take waits for a value");
+    }
+
+    #[test]
+    fn stale_loads_stop_early() {
+        let dir = temp("stale");
+        let path = dir.join("p.png");
+        image::RgbaImage::from_pixel(30, 20, image::Rgba([1, 2, 3, 255])).save(&path).unwrap();
+        assert!(matches!(load_while(&entry(path.clone(), false), 100, &|| false), Body::None));
+        assert!(matches!(load_while(&entry(dir.clone(), true), 100, &|| false), Body::None));
+        assert!(matches!(load_while(&entry(path, false), 100, &|| true), Body::Picture(..)));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn describes_entries_and_selections() {
+        let several = describe(&Target::Several { count: 3, size: Some(1536) }, None);
+        assert_eq!(
+            (several.kind, several.title.as_str(), several.details.as_str()),
+            (5, "3 items selected", "Total size: 1.5 KB")
+        );
+        let file = entry(PathBuf::from("/x/notes.txt"), false);
+        let loading = describe(&file, None);
+        assert!(loading.loading && loading.kind == 3);
+        assert_eq!(loading.details.as_str(), "Thing\n2.0 KB");
+        let text = describe(&file, Some(Body::Text("hi".into())));
+        assert_eq!((text.kind, text.text.as_str(), text.loading), (2, "hi", false));
+        let picture = describe(&file, Some(Body::Picture(SharedPixelBuffer::new(2, 2), Some((300, 200)))));
+        assert_eq!(picture.kind, 1);
+        assert!(picture.has_picture && picture.details.ends_with("300 × 200 pixels"));
+        let folder =
+            describe(&entry(PathBuf::from("/x/sub"), true), Some(Body::Folder { count: MAX_COUNTED, more: true }));
+        assert_eq!(folder.kind, 4);
+        assert!(folder.details.ends_with("10,000+ items"), "{}", folder.details);
+        assert_eq!(describe(&Target::Nothing, None).kind, 0);
+    }
+}

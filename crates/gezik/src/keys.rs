@@ -94,6 +94,15 @@ pub fn is_text_edit(chord: &Chord, platform: Platform) -> bool {
     primary && !chord.alt && matches!(chord.key, Key::Char('a' | 'c' | 'v' | 'x' | 'z' | 'y'))
 }
 
+/// Whether `chord` holds the platform's primary modifier (Cmd on macOS, Ctrl elsewhere),
+/// the one Explorer and Finder use for multiple selection.
+pub fn is_primary(chord: &Chord, platform: Platform) -> bool {
+    match platform {
+        Platform::Mac => chord.meta,
+        Platform::Other => chord.ctrl,
+    }
+}
+
 /// The character an unmodified key press types, for type-ahead: any printable character
 /// (also non-ASCII letters such as `ş`), but not control or named keys (arrows, F-keys…),
 /// which Slint sends as control or private-use characters.
@@ -135,6 +144,12 @@ impl TypeAhead {
 
     pub fn new() -> Self {
         TypeAhead { typed: String::new(), last: None }
+    }
+
+    /// Whether a name is being typed: a key came within the last second. Space then
+    /// belongs to the name, not to quick look.
+    pub fn is_active(&self, now: Instant) -> bool {
+        !self.typed.is_empty() && self.last.is_some_and(|last| now.saturating_duration_since(last) <= Self::WINDOW)
     }
 
     /// Adds `c` (typed at `now`) and returns what `find` returns for the typed text, in
@@ -223,6 +238,7 @@ mod tests {
             Key::Right => text(SlintKey::RightArrow),
             Key::Up => text(SlintKey::UpArrow),
             Key::Tab => "\t".to_owned(),
+            Key::Space => " ".to_owned(),
             other => panic!("no default uses {other:?}"),
         };
         (text, chord.ctrl, chord.alt, chord.shift, chord.meta)
@@ -243,6 +259,11 @@ mod tests {
                 Action::Up => "alt+up",
                 Action::FocusPath => "ctrl+l",
                 Action::Refresh => "f5",
+                Action::SelectAll => "ctrl+a",
+                Action::ViewList => "ctrl+1",
+                Action::ViewGrid => "ctrl+2",
+                Action::TogglePreview => "alt+p",
+                Action::QuickLook => "space",
             };
             let chord = parse_chord(text, Platform::Other).unwrap().unwrap();
             let (t, control, alt, shift, meta) = other_event(&chord);
@@ -289,6 +310,26 @@ mod tests {
         assert!(is_text_edit(&cmd_a, Platform::Mac));
         let ctrl_a = chord_from_slint("a", false, false, false, true, Platform::Mac).unwrap();
         assert!(!is_text_edit(&ctrl_a, Platform::Mac));
+    }
+
+    #[test]
+    fn primary_modifier_is_cmd_on_mac() {
+        let ctrl_a = chord_from_slint("a", true, false, false, false, Platform::Other).unwrap();
+        assert!(is_primary(&ctrl_a, Platform::Other));
+        let cmd_a = chord_from_slint("a", true, false, false, false, Platform::Mac).unwrap();
+        assert!(is_primary(&cmd_a, Platform::Mac));
+        let ctrl_on_mac = chord_from_slint("a", false, false, false, true, Platform::Mac).unwrap();
+        assert!(!is_primary(&ctrl_on_mac, Platform::Mac));
+    }
+
+    #[test]
+    fn type_ahead_is_active_for_a_second_after_a_key() {
+        let mut t = TypeAhead::new();
+        let t0 = Instant::now();
+        assert!(!t.is_active(t0));
+        t.type_char('a', t0, |_| None);
+        assert!(t.is_active(t0 + Duration::from_millis(900)));
+        assert!(!t.is_active(t0 + Duration::from_millis(1100)));
     }
 
     #[test]

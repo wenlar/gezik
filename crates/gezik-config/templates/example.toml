@@ -17,8 +17,16 @@ accent-foreground = "#2e3440"
 selection = "#434c5e"
 selection-foreground = "#eceff4"
 hover = "#4c566a80"
-folder-icon = "#ebcb8b"
-file-icon = "#9aa3ad"
+icon-folder = "#ebcb8b"  # Gezik's own icons (icons = "gezik"), and placeholders
+icon-image = "#a3be8c"
+icon-video = "#bf616a"
+icon-audio = "#b48ead"
+icon-archive = "#d08770"
+icon-document = "#81a1c1"
+icon-code = "#8fbcbb"
+icon-other = "#9aa3ad"
+focus-ring = "#88c0d0"   # the keyboard focus in the file list
+marquee = "#88c0d033"    # rubber-band selection
 danger = "#bf616a"       # warnings and destructive actions
 
 [metrics]

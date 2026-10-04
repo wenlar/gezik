@@ -1,7 +1,11 @@
 # Startup time and idle memory, averaged over several runs. Windows only.
 # Starts its own Gezik each run and stops only that one; other Gezik windows are left alone.
-# Usage: scripts/perf/measure.ps1 [-Runs 3]
-param([string]$Exe = "$PSScriptRoot\..\..\target\release\gezik.exe", [int]$Runs = 3)
+# Usage: scripts/perf/measure.ps1 [-Runs 3] [-Config <folder>]
+# -Config runs Gezik with that config folder (GEZIK_CONFIG_DIR), e.g. one whose
+# settings.toml has [view] icons = "gezik"; without it Gezik uses its usual config.
+param([string]$Exe = "$PSScriptRoot\..\..\target\release\gezik.exe", [int]$Runs = 3, [string]$Config = "")
+
+if ($Config) { $env:GEZIK_CONFIG_DIR = (Resolve-Path $Config).Path }
 
 . "$PSScriptRoot\_window.ps1"
 $open = @(); $mem = @()

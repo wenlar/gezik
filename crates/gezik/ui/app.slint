@@ -1,25 +1,21 @@
-import { ListView, Palette } from "std-widgets.slint";
+import { Palette } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { ToolButton } from "widgets/button.slint";
 import { Breadcrumb, CrumbItem } from "widgets/breadcrumb.slint";
 import { TabBar, TabItem } from "widgets/tab-bar.slint";
 import { Sidebar, SidebarRow } from "widgets/sidebar.slint";
+import { PreviewPane, PreviewInfo } from "widgets/preview-pane.slint";
+import { FileView, FileRow, ItemRow } from "widgets/file-view.slint";
 
 // Re-exported so Rust can set it with `window.global::<Theme>()` and build crumbs, tabs
 // and sidebar rows.
-export { Theme, CrumbItem, TabItem, SidebarRow }
+export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow }
 
 // One item of the Slint context menu (tabs everywhere; also rows and the sidebar on
 // macOS/Linux). `id` is one of the ids in context_menu.rs.
 export struct MenuEntry {
     id: int,
     title: string,
-}
-
-export struct FileRow {
-    name: string,
-    is-dir: bool,
-    size: string,
 }
 
 export component AppWindow inherits Window {
@@ -32,7 +28,22 @@ export component AppWindow inherits Window {
     default-font-family: Theme.font-family;
     default-font-size: Theme.font-size;
 
-    in property <[FileRow]> rows;
+    in property <[ItemRow]> items;
+    // The entry with the keyboard focus (-1: none), and whether it is selected.
+    in property <int> focus-row: -1;
+    in property <bool> focus-selected;
+    out property <length> item-height: file-view.item-height;
+    // 0: list, 1: grid; the grid's picture size.
+    in property <int> view-mode;
+    in property <length> grid-size: 96px;
+    out property <length> cell-width: file-view.cell-width;
+    out property <length> cell-height: file-view.cell-height;
+    out property <int> grid-columns: file-view.grid-columns;
+    callback grid-columns-changed(int);
+    // Ctrl+wheel in the view: true for bigger.
+    callback zoom(bool);
+    // The View button, with the window position for its menu.
+    callback view-menu(length, length);
     in-out property <string> current-path;
     in property <string> status;
     // Settings/theme problems, shown on the right of the status bar.
@@ -45,7 +56,6 @@ export component AppWindow inherits Window {
     // The file list's scroll offset (content-y), saved and restored per history entry.
     in-out property <length> list-scroll;
     in-out property <bool> path-editing;
-    in-out property <int> selected: -1;
     in property <[SidebarRow]> sidebar-rows;
     // Position in `sidebar-rows` of the first pinned item (-1 if none), and how many there are.
     in property <int> sidebar-pinned-first-row: -1;
@@ -87,9 +97,37 @@ export component AppWindow inherits Window {
     callback pinned-move(int, int);
     // The splitter was released.
     callback sidebar-resized();
+    // The preview pane on the right (Alt+P); its width is dragged (200-600px) and saved
+    // in state.toml on close.
+    in property <bool> preview-open;
+    in-out property <length> preview-width: 280px;
+    in property <PreviewInfo> preview;
+    // A fixed-width font for text previews.
+    in property <string> mono-font;
+    // The preview splitter was released.
+    callback preview-resized();
     // A Slint context menu item was chosen (its `MenuEntry.id`).
     callback menu-activated(int);
-    // Right-click on a row / on empty space in the file list, at a window position.
+    // Left press on an entry with Ctrl (Cmd on macOS) and Shift; left click on empty space with Ctrl.
+    callback item-pressed(int, bool, bool);
+    callback background-pressed(bool);
+    // Column widths (0: hidden), set by Rust; dragging an edge changes them here.
+    in-out property <length> col-modified;
+    in-out property <length> col-created;
+    in-out property <length> col-type;
+    in-out property <length> col-size;
+    // The sort column (0 Name, 1-4 Modified, Created, Type, Size) and direction.
+    in property <int> sort-column;
+    in property <bool> sort-desc;
+    callback header-clicked(int);
+    // Right-click on the column header, at a window position.
+    callback header-menu(length, length);
+    // A column edge was released: Rust reads the widths.
+    callback columns-resized();
+    // A rubber-band drag in the file view; see FileView.
+    callback marquee(length, length, length, length, bool);
+    callback marquee-done();
+    // Right-click on an entry (Rust selects it first if it was not selected) / on empty space, at a window position.
     callback row-menu(int, length, length);
     callback background-menu(length, length);
     // Shift+F10 or the Menu key on the list: the menu of row `int` (-1: the background), at
@@ -102,7 +140,7 @@ export component AppWindow inherits Window {
     // Whether the file list has keyboard focus (and not the address bar or a button).
     out property <bool> list-focused: keys.has-focus;
     // How many rows PgUp/PgDn move: one screen, less one row.
-    out property <int> list-page-rows: max(1, floor(list.visible-height / Theme.row-height) - 1);
+    out property <int> list-page-rows: file-view.page-rows;
 
     init => { keys.focus(); }
     // However typing ends (Enter, Esc, a click elsewhere, switching windows, a menu opening),
@@ -129,27 +167,19 @@ export component AppWindow inherits Window {
         }
     }
 
-    // Scrolls the list so row `index` is visible.
+    // Scrolls the view so entry `index` is visible.
     public function ensure-visible(index: int) {
-        if index < 0 { return; }
-        if index * Theme.row-height < -root.list-scroll {
-            root.list-scroll = -index * Theme.row-height;
-        } else if (index + 1) * Theme.row-height > -root.list-scroll + list.visible-height {
-            root.list-scroll = -((index + 1) * Theme.row-height - list.visible-height);
-        }
+        file-view.ensure-visible(index);
     }
 
-    // Opens the context menu from the keyboard: the selected row's, just below its name
-    // (scrolled into view first), or the background's at the list's top left if no row is
-    // selected.
+    // Opens the context menu from the keyboard: the selection's (just below the focused
+    // entry, scrolled into view) if the focused entry is selected, else the background's.
     public function open-keyboard-menu() {
-        if root.selected >= 0 && root.selected < root.rows.length {
-            root.ensure-visible(root.selected);
-            root.keyboard-menu(root.selected, list.absolute-position.x + Theme.spacing * 6,
-                list.absolute-position.y + root.list-scroll + (root.selected + 1) * Theme.row-height);
+        if root.focus-row >= 0 && root.focus-selected {
+            file-view.ensure-visible(root.focus-row);
+            root.keyboard-menu(root.focus-row, file-view.menu-x(root.focus-row), file-view.menu-y(root.focus-row));
         } else {
-            root.selected = -1;
-            root.keyboard-menu(-1, list.absolute-position.x + Theme.spacing * 2, list.absolute-position.y + Theme.spacing * 2);
+            root.keyboard-menu(-1, file-view.menu-x(-1), file-view.menu-y(-1));
         }
     }
 
@@ -236,6 +266,15 @@ export component AppWindow inherits Window {
                             root.navigate(path);
                         }
                     }
+                    ToolButton {
+                        text: "View";
+                        // Four squares.
+                        icon: "M 2 2 L 7 2 L 7 7 L 2 7 Z M 9 2 L 14 2 L 14 7 L 9 7 Z M 2 9 L 7 9 L 7 14 L 2 14 Z M 9 9 L 14 9 L 14 14 L 9 14 Z";
+                        clicked => {
+                            root.end-path-editing();
+                            root.view-menu(self.absolute-position.x, self.absolute-position.y + self.height);
+                        }
+                    }
                 }
             }
             Rectangle { height: 1px; background: Theme.border; }
@@ -269,79 +308,62 @@ export component AppWindow inherits Window {
                         changed pressed => { if !self.pressed { root.sidebar-resized(); } }
                     }
                 }
-                Rectangle {
+                file-view := FileView {
                     horizontal-stretch: 1;
-                    // Behind the rows: catches clicks on empty space (the list passes
-                    // right-clicks through).
-                    TouchArea {
-                        clicked => {
-                            root.selected = -1;
-                            keys.focus();
-                        }
-                        pointer-event(event) => {
-                            if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {
-                                root.selected = -1;
-                                root.end-path-editing();
-                                root.background-menu(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
-                            }
-                        }
+                    items: root.items;
+                    mode: root.view-mode;
+                    picture-size: root.grid-size;
+                    grid-columns-changed(n) => { root.grid-columns-changed(n); }
+                    zoom(bigger) => { root.zoom(bigger); }
+                    has-focus: keys.has-focus;
+                    scroll <=> root.list-scroll;
+                    focus-requested => { keys.focus(); }
+                    col-modified <=> root.col-modified;
+                    col-created <=> root.col-created;
+                    col-type <=> root.col-type;
+                    col-size <=> root.col-size;
+                    sort-column: root.sort-column;
+                    sort-desc: root.sort-desc;
+                    header-clicked(i) => { root.header-clicked(i); }
+                    header-menu(x, y) => {
+                        root.end-path-editing();
+                        root.header-menu(x, y);
                     }
-                    // ListView only instantiates the rows that are visible, so huge folders stay cheap.
-                    list := ListView {
-                        content-y <=> root.list-scroll;
-                        for row[i] in root.rows: Rectangle {
-                            height: Theme.row-height;
-                            background: i == root.selected ? Theme.selection : touch.has-hover ? Theme.hover : transparent;
-
-                            touch := TouchArea {
-                                clicked => {
-                                    root.selected = i;
-                                    keys.focus();
-                                }
-                                double-clicked => { root.open-row(i); }
-                                pointer-event(event) => {
-                                    if event.kind == PointerEventKind.up && event.button == PointerEventButton.middle {
-                                        root.row-middle-clicked(i);
-                                    }
-                                    // The right-clicked row is selected first.
-                                    if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {
-                                        root.selected = i;
-                                        root.end-path-editing();
-                                        root.row-menu(i, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
-                                    }
-                                }
-                            }
-
-                            HorizontalLayout {
-                                padding-left: Theme.spacing + 4px;
-                                padding-right: Theme.spacing + 4px;
-                                spacing: Theme.spacing + 2px;
-                                VerticalLayout {
-                                    alignment: center;
-                                    Rectangle {
-                                        width: Theme.icon-size * 0.75;
-                                        height: self.width;
-                                        border-radius: 2px;
-                                        background: row.is-dir ? Theme.folder-icon : Theme.file-icon;
-                                    }
-                                }
-                                Text {
-                                    text: row.name;
-                                    vertical-alignment: center;
-                                    horizontal-stretch: 1;
-                                    overflow: elide;
-                                    color: i == root.selected ? Theme.selection-foreground : Theme.foreground;
-                                }
-                                Text {
-                                    text: row.size;
-                                    width: 90px;
-                                    horizontal-alignment: right;
-                                    vertical-alignment: center;
-                                    color: i == root.selected ? Theme.selection-foreground : Theme.foreground-muted;
-                                }
-                            }
-                        }
+                    columns-resized => { root.columns-resized(); }
+                    item-pressed(i, ctrl, shift) => { root.item-pressed(i, ctrl, shift); }
+                    item-double-clicked(i) => { root.open-row(i); }
+                    item-middle-clicked(i) => { root.row-middle-clicked(i); }
+                    item-menu(i, x, y) => {
+                        root.end-path-editing();
+                        root.row-menu(i, x, y);
                     }
+                    background-pressed(ctrl) => { root.background-pressed(ctrl); }
+                    marquee(x, y, w, h, additive) => { root.marquee(x, y, w, h, additive); }
+                    marquee-done => { root.marquee-done(); }
+                    background-menu(x, y) => {
+                        root.end-path-editing();
+                        root.background-menu(x, y);
+                    }
+                }
+                // A 1px line, grabbable over 5px.
+                if root.preview-open: Rectangle {
+                    width: 5px;
+                    accessible-role: none;
+                    Rectangle {
+                        x: (parent.width - self.width) / 2;
+                        width: 1px;
+                        background: preview-splitter.has-hover || preview-splitter.pressed ? Theme.accent : Theme.border;
+                    }
+                    preview-splitter := TouchArea {
+                        mouse-cursor: col-resize;
+                        moved => { root.preview-width = clamp(root.preview-width - (self.mouse-x - self.pressed-x), 200px, 600px); }
+                        changed pressed => { if !self.pressed { root.preview-resized(); } }
+                    }
+                }
+                if root.preview-open: PreviewPane {
+                    width: root.preview-width;
+                    info: root.preview;
+                    mono-font: root.mono-font;
                 }
                 // A 1px line, grabbable over 5px.
                 if root.sidebar-position == 1: Rectangle {
@@ -396,6 +418,34 @@ export component AppWindow inherits Window {
                     }
                 }
             }
+        }
+    }
+}
+
+// Space on the file list: the selection, big. Space or Esc closes it; the arrow keys move
+// in the list underneath.
+export component QuickLookWindow inherits Window {
+    in property <PreviewInfo> info;
+    in property <string> mono-font;
+    title: root.info.title == "" ? "Gezik" : root.info.title + " — Gezik";
+    background: Theme.background;
+    default-font-family: Theme.font-family;
+    default-font-size: Theme.font-size;
+    // Every key press; returns whether it was used.
+    callback key(KeyEvent) -> bool;
+
+    init => { scope.focus(); }
+
+    scope := FocusScope {
+        key-pressed(event) => {
+            if root.key(event) {
+                return accept;
+            }
+            return reject;
+        }
+        PreviewPane {
+            info: root.info;
+            mono-font: root.mono-font;
         }
     }
 }

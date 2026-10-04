@@ -8,11 +8,14 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use gezik_core::nav::Location;
+use gezik_core::view::{ColumnKey, ColumnState, GridSize, SortDir, SortKey, SortSpec, ViewMode, ViewSettings};
 use gezik_platform::MenuTarget;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::navigation::Navigator;
+use crate::preview::Preview;
 use crate::sidebar::{SECTION_PINNED, Sidebar};
+use crate::view::View;
 use crate::{AppWindow, MenuEntry};
 
 pub const OPEN_IN_NEW_TAB: u32 = 1;
@@ -35,6 +38,8 @@ pub enum Place {
         is_dir: bool,
         pinned: bool,
     },
+    /// Several selected rows.
+    Rows,
     /// A sidebar entry; `pinned_section` = it is in the PINNED section.
     Sidebar {
         pinned_section: bool,
@@ -62,6 +67,12 @@ pub fn items(place: Place, native_shell: bool) -> Vec<(u32, &'static str)> {
                 out.push((OPEN_DEFAULT, "Open with default app"));
             }
         }
+        // The Explorer menu acts on all of them; elsewhere Gezik can open them.
+        Place::Rows => {
+            if !native_shell {
+                out.push((OPEN, "Open"));
+            }
+        }
         Place::Sidebar { pinned_section, pinned, first, last } => {
             out.push((OPEN_IN_NEW_TAB, "Open in new tab"));
             out.push(pin_toggle(pinned));
@@ -83,6 +94,78 @@ pub fn items(place: Place, native_shell: bool) -> Vec<(u32, &'static str)> {
     out
 }
 
+/// Header menu: 20-23 show/hide the columns in `ColumnKey::ALL` order.
+pub const TOGGLE_COLUMN_FIRST: u32 = 20;
+pub const RESET_COLUMNS: u32 = 24;
+
+/// The column header's menu: show or hide each column, reset all.
+pub fn header_items(columns: &[ColumnState]) -> Vec<(u32, &'static str)> {
+    let mut out: Vec<(u32, &'static str)> = columns
+        .iter()
+        .map(|c| {
+            let id = TOGGLE_COLUMN_FIRST + u32::try_from(c.key.index() - 1).unwrap_or(0);
+            let title = match (c.key, c.visible) {
+                (ColumnKey::Modified, true) => "Hide Modified",
+                (ColumnKey::Modified, false) => "Show Modified",
+                (ColumnKey::Created, true) => "Hide Created",
+                (ColumnKey::Created, false) => "Show Created",
+                (ColumnKey::Type, true) => "Hide Type",
+                (ColumnKey::Type, false) => "Show Type",
+                (ColumnKey::Size, true) => "Hide Size",
+                (ColumnKey::Size, false) => "Show Size",
+            };
+            (id, title)
+        })
+        .collect();
+    out.push((RESET_COLUMNS, "Reset columns"));
+    out
+}
+
+pub const VIEW_LIST: u32 = 30;
+pub const VIEW_GRID: u32 = 31;
+pub const GRID_SMALL: u32 = 32;
+pub const GRID_MEDIUM: u32 = 33;
+pub const GRID_LARGE: u32 = 34;
+/// 35–39: sort by the keys in `SortKey::ALL` order.
+pub const SORT_BY_NAME: u32 = 35;
+pub const SORT_BY_MODIFIED: u32 = 36;
+pub const SORT_BY_CREATED: u32 = 37;
+pub const SORT_BY_TYPE: u32 = 38;
+pub const SORT_BY_SIZE: u32 = 39;
+pub const SORT_ASC: u32 = 40;
+pub const SORT_DESC: u32 = 41;
+pub const PREVIEW_PANE: u32 = 42;
+pub const APPLY_TO_ALL: u32 = 43;
+pub const RESET_FOLDER: u32 = 44;
+
+/// The View menu; the current choices are marked with a bullet.
+pub fn view_items(view: ViewSettings, preview_open: bool) -> Vec<(u32, String)> {
+    let mark = |on: bool, title: &str| format!("{}{title}", if on { "• " } else { "    " });
+    let grid = view.mode == ViewMode::Grid;
+    let mut out = vec![(VIEW_LIST, mark(!grid, "List")), (VIEW_GRID, mark(grid, "Grid"))];
+    if grid {
+        out.push((GRID_SMALL, mark(view.grid_size == GridSize::Small, "Small icons")));
+        out.push((GRID_MEDIUM, mark(view.grid_size == GridSize::Medium, "Medium icons")));
+        out.push((GRID_LARGE, mark(view.grid_size == GridSize::Large, "Large icons")));
+    }
+    let sorts = [
+        (SORT_BY_NAME, SortKey::Name, "Sort by name"),
+        (SORT_BY_MODIFIED, SortKey::Modified, "Sort by date modified"),
+        (SORT_BY_CREATED, SortKey::Created, "Sort by date created"),
+        (SORT_BY_TYPE, SortKey::Type, "Sort by type"),
+        (SORT_BY_SIZE, SortKey::Size, "Sort by size"),
+    ];
+    for (id, key, title) in sorts {
+        out.push((id, mark(view.sort.key == key, title)));
+    }
+    out.push((SORT_ASC, mark(view.sort.dir == SortDir::Asc, "Ascending")));
+    out.push((SORT_DESC, mark(view.sort.dir == SortDir::Desc, "Descending")));
+    out.push((PREVIEW_PANE, mark(preview_open, "Preview pane")));
+    out.push((APPLY_TO_ALL, "Apply to all folders".to_owned()));
+    out.push((RESET_FOLDER, "Reset this folder".to_owned()));
+    out
+}
+
 fn pin_toggle(pinned: bool) -> (u32, &'static str) {
     if pinned { (UNPIN, "Unpin from sidebar") } else { (PIN, "Pin to sidebar") }
 }
@@ -93,8 +176,11 @@ fn pin_toggle(pinned: bool) -> (u32, &'static str) {
 #[derive(Debug, Clone)]
 enum Subject {
     Row(PathBuf),
+    Rows(Vec<PathBuf>),
     SidebarEntry(PathBuf),
     Tab(u64),
+    Header,
+    View,
 }
 
 /// Lets one native menu be pending or open at a time, so two right-clicks in quick
@@ -126,6 +212,8 @@ impl Drop for MenuClaim {
 pub struct Menus {
     window: slint::Weak<AppWindow>,
     nav: Navigator,
+    view: View,
+    preview: Preview,
     sidebar: Sidebar,
     /// What the open Slint menu is for.
     subject: Rc<RefCell<Option<Subject>>>,
@@ -134,9 +222,16 @@ pub struct Menus {
 }
 
 impl Menus {
-    pub fn new(window: &AppWindow, nav: Navigator, sidebar: Sidebar) -> Menus {
-        let menus =
-            Menus { window: window.as_weak(), nav, sidebar, subject: Rc::default(), native_menu: MenuGate::default() };
+    pub fn new(window: &AppWindow, nav: Navigator, view: View, preview: Preview, sidebar: Sidebar) -> Menus {
+        let menus = Menus {
+            window: window.as_weak(),
+            nav,
+            view,
+            preview,
+            sidebar,
+            subject: Rc::default(),
+            native_menu: MenuGate::default(),
+        };
         window.on_menu_activated({
             let menus = menus.clone();
             move |id| {
@@ -171,9 +266,14 @@ impl Menus {
     }
 
     fn row_menu(&self, index: i32, x: f32, y: f32, at_position: bool) {
-        let Some((path, is_dir)) = self.nav.entry_path(index) else { return };
-        let place = Place::Row { is_dir, pinned: is_dir && self.sidebar.is_pinned(&path) };
+        let Ok(i) = usize::try_from(index) else { return };
         let at = at_position.then_some((x, y));
+        if self.view.is_selected(i) && self.view.selection_count() > 1 {
+            let paths = self.view.selected_paths();
+            return self.open(Subject::Rows(paths.clone()), Place::Rows, MenuTarget::Items(paths), x, y, at);
+        }
+        let Some((path, is_dir)) = self.view.entry_path(i) else { return };
+        let place = Place::Row { is_dir, pinned: is_dir && self.sidebar.is_pinned(&path) };
         self.open(Subject::Row(path.clone()), place, MenuTarget::Item(path), x, y, at);
     }
 
@@ -208,6 +308,18 @@ impl Menus {
         self.open_slint(&items(place, false), x, y);
     }
 
+    /// Right-click on the column header, at window position `x`, `y`.
+    pub fn header(&self, x: f32, y: f32) {
+        *self.subject.borrow_mut() = Some(Subject::Header);
+        self.open_slint(&header_items(&self.view.columns()), x, y);
+    }
+
+    /// The View button's menu, at window position `x`, `y`.
+    pub fn view_menu(&self, x: f32, y: f32) {
+        *self.subject.borrow_mut() = Some(Subject::View);
+        self.open_slint(&view_items(self.view.view_settings(), self.preview.is_pane_open()), x, y);
+    }
+
     /// `at`: where the Windows menu opens (window position), else at the cursor.
     fn open(&self, subject: Subject, place: Place, target: MenuTarget, x: f32, y: f32, at: Option<(f32, f32)>) {
         if cfg!(windows) {
@@ -237,6 +349,7 @@ impl Menus {
             let scale = window.window().scale_factor();
             let at = at.map(|(x, y)| ((x * scale).round() as i32, (y * scale).round() as i32));
             let outcome = gezik_platform::show_shell_menu(&handle, &target, &items, at);
+            release_stale_modifiers(&window);
             drop(claim);
             match outcome {
                 Ok(gezik_platform::MenuOutcome::Gezik(id)) => {
@@ -266,14 +379,14 @@ impl Menus {
     ) {
     }
 
-    fn open_slint(&self, items: &[(u32, &str)], x: f32, y: f32) {
+    fn open_slint<S: AsRef<str>>(&self, items: &[(u32, S)], x: f32, y: f32) {
         let Some(window) = self.window.upgrade() else { return };
         if items.is_empty() {
             return;
         }
         let entries: Vec<MenuEntry> = items
             .iter()
-            .map(|(id, title)| MenuEntry { id: i32::try_from(*id).unwrap_or(0), title: (*title).into() })
+            .map(|(id, title)| MenuEntry { id: i32::try_from(*id).unwrap_or(0), title: title.as_ref().into() })
             .collect();
         window.set_menu_entries(ModelRc::new(VecModel::from(entries)));
         window.invoke_show_menu(x, y);
@@ -321,9 +434,79 @@ impl Menus {
                     window.set_status(format!("Cannot open {}: {err}", path.display()).into());
                 }
             }
+            (OPEN, Subject::Rows(paths)) => {
+                let paths = match crate::view::limit_open(paths) {
+                    Ok(paths) => paths,
+                    Err(message) => {
+                        if let Some(window) = self.window.upgrade() {
+                            window.set_status(message.into());
+                        }
+                        return;
+                    }
+                };
+                for path in paths {
+                    if let Err(err) = open::that_detached(&path)
+                        && let Some(window) = self.window.upgrade()
+                    {
+                        window.set_status(format!("Cannot open {}: {err}", path.display()).into());
+                    }
+                }
+            }
+            (id, Subject::Header) if (TOGGLE_COLUMN_FIRST..TOGGLE_COLUMN_FIRST + 4).contains(&id) => {
+                if let Some(key) = ColumnKey::ALL.get((id - TOGGLE_COLUMN_FIRST) as usize) {
+                    self.view.toggle_column(*key);
+                }
+            }
+            (RESET_COLUMNS, Subject::Header) => self.view.reset_columns(),
+            (VIEW_LIST, Subject::View) => self.view.set_mode(ViewMode::List),
+            (VIEW_GRID, Subject::View) => self.view.set_mode(ViewMode::Grid),
+            (GRID_SMALL, Subject::View) => self.view.set_grid_size(GridSize::Small),
+            (GRID_MEDIUM, Subject::View) => self.view.set_grid_size(GridSize::Medium),
+            (GRID_LARGE, Subject::View) => self.view.set_grid_size(GridSize::Large),
+            (id, Subject::View) if (SORT_BY_NAME..=SORT_BY_SIZE).contains(&id) => {
+                let key = SortKey::ALL[(id - SORT_BY_NAME) as usize];
+                self.view.set_sort(SortSpec { key, dir: self.view.sort().dir });
+            }
+            (SORT_ASC, Subject::View) => self.view.set_sort(SortSpec { dir: SortDir::Asc, ..self.view.sort() }),
+            (SORT_DESC, Subject::View) => self.view.set_sort(SortSpec { dir: SortDir::Desc, ..self.view.sort() }),
+            (PREVIEW_PANE, Subject::View) => self.preview.toggle_pane(),
+            (APPLY_TO_ALL, Subject::View) => self.view.apply_to_all(),
+            (RESET_FOLDER, Subject::View) => self.view.reset_folder(),
             _ => {}
         }
     }
+}
+
+/// Tells Slint that the modifier keys not down now were released. The native menu's modal
+/// loop takes the key releases made while it is open (Shift after Shift+F10, or a modifier
+/// held for a right-click), and Slint knows modifiers only from key events, so it would go
+/// on treating plain clicks as Shift+clicks. Releasing a key Slint already counts as up
+/// changes nothing.
+#[cfg(windows)]
+fn release_stale_modifiers(window: &AppWindow) {
+    for key in released_modifiers(gezik_platform::modifier_keys_down()) {
+        window.window().dispatch_event(slint::platform::WindowEvent::KeyReleased { text: key.into() });
+    }
+}
+
+/// The Slint modifier keys that are up, given the keys `down`.
+#[cfg(windows)]
+fn released_modifiers(down: gezik_platform::ModifierKeys) -> Vec<slint::platform::Key> {
+    use slint::platform::Key;
+    [
+        (down.left_shift, Key::Shift),
+        (down.right_shift, Key::ShiftR),
+        (down.left_control, Key::Control),
+        (down.right_control, Key::ControlR),
+        // Slint reports either Alt as `Alt`, and right Alt as `AltGr` on layouts that have it.
+        (down.alt, Key::Alt),
+        (down.right_alt, Key::AltGr),
+        (down.left_meta, Key::Meta),
+        (down.right_meta, Key::MetaR),
+    ]
+    .into_iter()
+    .filter_map(|(is_down, key)| (!is_down).then_some(key))
+    .collect()
 }
 
 #[cfg(test)]
@@ -332,6 +515,20 @@ mod tests {
 
     fn ids(v: Vec<(u32, &str)>) -> Vec<u32> {
         v.into_iter().map(|(id, _)| id).collect()
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn keys_up_after_a_native_menu_are_released() {
+        use gezik_platform::ModifierKeys;
+        use slint::platform::Key;
+        let all_up = released_modifiers(ModifierKeys::default());
+        assert_eq!(all_up.len(), 8);
+        assert!(all_up.contains(&Key::Shift) && all_up.contains(&Key::ShiftR) && all_up.contains(&Key::AltGr));
+        // Shift still held when the menu closes: its own release comes later as usual.
+        let held = released_modifiers(ModifierKeys { left_shift: true, alt: true, ..Default::default() });
+        assert!(!held.contains(&Key::Shift) && !held.contains(&Key::Alt));
+        assert!(held.contains(&Key::ShiftR) && held.contains(&Key::Control));
     }
 
     #[test]
@@ -344,6 +541,12 @@ mod tests {
     fn file_rows_rely_on_the_system_menu_on_windows() {
         assert!(items(Place::Row { is_dir: false, pinned: false }, true).is_empty());
         assert_eq!(ids(items(Place::Row { is_dir: false, pinned: false }, false)), [OPEN, OPEN_DEFAULT]);
+    }
+
+    #[test]
+    fn several_rows_get_the_system_menu_or_open() {
+        assert!(items(Place::Rows, true).is_empty());
+        assert_eq!(ids(items(Place::Rows, false)), [OPEN]);
     }
 
     #[test]
@@ -367,8 +570,61 @@ mod tests {
     }
 
     #[test]
+    fn header_menu_toggles_each_column_and_resets() {
+        use gezik_core::view::default_columns;
+        let got = header_items(&default_columns());
+        assert_eq!(
+            got,
+            [
+                (TOGGLE_COLUMN_FIRST, "Hide Modified"),
+                (TOGGLE_COLUMN_FIRST + 1, "Show Created"),
+                (TOGGLE_COLUMN_FIRST + 2, "Hide Type"),
+                (TOGGLE_COLUMN_FIRST + 3, "Hide Size"),
+                (RESET_COLUMNS, "Reset columns"),
+            ]
+        );
+    }
+
+    #[test]
     fn tab_menu_hides_close_others_for_a_single_tab() {
         assert_eq!(ids(items(Place::Tab { only_tab: false }, true)), [DUPLICATE_TAB, CLOSE_TAB, CLOSE_OTHER_TABS]);
         assert_eq!(ids(items(Place::Tab { only_tab: true }, true)), [DUPLICATE_TAB, CLOSE_TAB]);
+    }
+
+    #[test]
+    fn view_menu_marks_the_current_choices() {
+        use gezik_core::view::{GridSize, SortDir, SortKey, SortSpec, ViewMode, ViewSettings};
+        let list = view_items(ViewSettings::default(), false);
+        let ids: Vec<u32> = list.iter().map(|(id, _)| *id).collect();
+        assert_eq!(
+            ids,
+            [
+                VIEW_LIST,
+                VIEW_GRID,
+                SORT_BY_NAME,
+                SORT_BY_MODIFIED,
+                SORT_BY_CREATED,
+                SORT_BY_TYPE,
+                SORT_BY_SIZE,
+                SORT_ASC,
+                SORT_DESC,
+                PREVIEW_PANE,
+                APPLY_TO_ALL,
+                RESET_FOLDER
+            ]
+        );
+        assert!(list[0].1.starts_with("• ") && !list[1].1.starts_with("• "));
+        let grid = ViewSettings {
+            mode: ViewMode::Grid,
+            sort: SortSpec { key: SortKey::Size, dir: SortDir::Desc },
+            grid_size: GridSize::Large,
+        };
+        let items = view_items(grid, false);
+        let marked: Vec<&str> =
+            items.iter().filter(|(_, t)| t.starts_with("• ")).map(|(_, t)| t.trim_start_matches("• ")).collect();
+        assert_eq!(marked, ["Grid", "Large icons", "Sort by size", "Descending"]);
+        assert!(
+            view_items(ViewSettings::default(), true).iter().any(|(id, t)| *id == PREVIEW_PANE && t.starts_with("• "))
+        );
     }
 }

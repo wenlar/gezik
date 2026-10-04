@@ -1,0 +1,137 @@
+//! What the active tab shows: a folder's entries or the drives ("This PC").
+
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+
+use gezik_core::Entry;
+use gezik_core::kind::Kind;
+use gezik_platform::Drive;
+
+pub enum Listing {
+    Files(PathBuf, Rc<Vec<Entry>>),
+    Drives(Vec<Drive>),
+}
+
+impl Default for Listing {
+    fn default() -> Self {
+        Listing::Files(PathBuf::new(), Rc::default())
+    }
+}
+
+impl Listing {
+    pub fn len(&self) -> usize {
+        match self {
+            Listing::Files(_, entries) => entries.len(),
+            Listing::Drives(drives) => drives.len(),
+        }
+    }
+
+    pub fn name_at(&self, index: usize) -> Option<&str> {
+        match self {
+            Listing::Files(_, entries) => entries.get(index).map(|e| e.name.as_str()),
+            Listing::Drives(drives) => drives.get(index).map(|d| d.label.as_str()),
+        }
+    }
+
+    pub fn index_of(&self, name: &str) -> Option<usize> {
+        (0..self.len()).find(|&i| self.name_at(i) == Some(name))
+    }
+
+    /// Where each of `names` is, ascending; names not found are skipped. One pass, so
+    /// restoring thousands of selected names stays fast in a large folder.
+    pub fn indices_of(&self, names: &[String]) -> Vec<usize> {
+        if names.is_empty() {
+            return Vec::new();
+        }
+        let wanted: HashSet<&str> = names.iter().map(String::as_str).collect();
+        (0..self.len()).filter(|&i| self.name_at(i).is_some_and(|n| wanted.contains(n))).collect()
+    }
+
+    /// The first entry whose name starts with `typed` (lowercase), ignoring case; no
+    /// allocation per entry, so it stays fast in a folder of 100k files.
+    pub fn find_prefix(&self, typed: &str) -> Option<usize> {
+        (0..self.len()).find(|&i| self.name_at(i).is_some_and(|n| crate::keys::starts_with_lowercase(n, typed)))
+    }
+
+    /// Path of entry `index` and whether it is a folder (drives count as folders).
+    pub fn path_at(&self, index: usize) -> Option<(PathBuf, bool)> {
+        match self {
+            Listing::Files(dir, entries) => entries.get(index).map(|e| (dir.join(&e.name), e.is_dir)),
+            Listing::Drives(drives) => drives.get(index).map(|d| (d.path.clone(), true)),
+        }
+    }
+
+    /// The folder listed; `None` for the drives and the empty listing.
+    pub fn folder(&self) -> Option<&Path> {
+        match self {
+            Listing::Files(dir, _) if !dir.as_os_str().is_empty() => Some(dir),
+            _ => None,
+        }
+    }
+
+    pub fn is_dir(&self, index: usize) -> bool {
+        match self {
+            Listing::Files(_, entries) => entries.get(index).is_some_and(|e| e.is_dir),
+            Listing::Drives(_) => true,
+        }
+    }
+
+    /// A file's size; 0 for folders and drives.
+    pub fn file_size(&self, index: usize) -> u64 {
+        match self {
+            Listing::Files(_, entries) => entries.get(index).filter(|e| !e.is_dir).map_or(0, |e| e.size),
+            Listing::Drives(_) => 0,
+        }
+    }
+
+    pub fn kind(&self, index: usize) -> Kind {
+        match self {
+            Listing::Files(_, entries) => entries.get(index).map_or(Kind::File, |e| Kind::of(&e.name, e.is_dir)),
+            Listing::Drives(_) => Kind::Folder,
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn files(dir: &str, names: &[&str]) -> Listing {
+    let entries = names
+        .iter()
+        .map(|n| Entry { name: (*n).to_owned(), is_dir: n.ends_with('/'), size: 10, modified: None, created: None })
+        .collect();
+    Listing::Files(PathBuf::from(dir), Rc::new(entries))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn type_ahead_search_ignores_case() {
+        let listing = files("/x", &["Apple", "Banana", "bandit", "İndir", "şablon"]);
+        assert_eq!(listing.find_prefix("ban"), Some(1));
+        assert_eq!(listing.find_prefix("band"), Some(2));
+        assert_eq!(listing.find_prefix("ş"), Some(4));
+        assert_eq!(listing.find_prefix(&"İ".to_lowercase()), Some(3));
+        assert_eq!(listing.find_prefix("z"), None);
+        assert_eq!(listing.find_prefix("applesauce"), None);
+    }
+
+    #[test]
+    fn finds_many_names_in_one_pass() {
+        let listing = files("/x", &["a", "b", "c", "d"]);
+        assert_eq!(listing.indices_of(&["d".into(), "gone".into(), "b".into()]), [1, 3]);
+        assert!(listing.indices_of(&[]).is_empty());
+    }
+
+    #[test]
+    fn paths_sizes_and_folders() {
+        let listing = files("/x", &["sub/", "f.txt"]);
+        assert_eq!(listing.path_at(1), Some((PathBuf::from("/x").join("f.txt"), false)));
+        assert!(listing.is_dir(0) && !listing.is_dir(1));
+        assert_eq!((listing.file_size(0), listing.file_size(1)), (0, 10));
+        assert_eq!(listing.folder(), Some(Path::new("/x")));
+        assert_eq!(Listing::default().folder(), None);
+        assert_eq!(listing.kind(1), Kind::Text);
+    }
+}

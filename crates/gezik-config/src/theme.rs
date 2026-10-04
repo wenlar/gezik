@@ -4,7 +4,7 @@ use crate::{Color, Warning};
 use std::collections::HashMap;
 
 /// Every color a theme can set, as written in `[colors]`.
-pub const COLOR_KEYS: [&str; 13] = [
+pub const COLOR_KEYS: [&str; 21] = [
     "background",
     "surface",
     "foreground",
@@ -15,10 +15,22 @@ pub const COLOR_KEYS: [&str; 13] = [
     "selection",
     "selection-foreground",
     "hover",
-    "folder-icon",
-    "file-icon",
+    "icon-folder",
+    "icon-image",
+    "icon-video",
+    "icon-audio",
+    "icon-archive",
+    "icon-document",
+    "icon-code",
+    "icon-other",
+    "focus-ring",
+    "marquee",
     "danger",
 ];
+
+/// Old color names still read, for themes written before the icon colors were split.
+/// The new name wins when a theme sets both.
+const COLOR_ALIASES: [(&str, &str); 2] = [("folder-icon", "icon-folder"), ("file-icon", "icon-other")];
 
 /// Numeric `[metrics]` keys with their allowed range (inclusive).
 pub const METRIC_RANGES: [(&str, f32, f32); 5] = [
@@ -52,8 +64,17 @@ pub struct ThemeColors {
     pub selection: Color,
     pub selection_foreground: Color,
     pub hover: Color,
-    pub folder_icon: Color,
-    pub file_icon: Color,
+    pub icon_folder: Color,
+    pub icon_image: Color,
+    pub icon_video: Color,
+    pub icon_audio: Color,
+    pub icon_archive: Color,
+    pub icon_document: Color,
+    pub icon_code: Color,
+    pub icon_other: Color,
+    pub focus_ring: Color,
+    /// Fill of the rubber-band selection rectangle (usually translucent).
+    pub marquee: Color,
     pub danger: Color,
 }
 
@@ -71,8 +92,16 @@ impl ThemeColors {
             "selection" => &mut self.selection,
             "selection-foreground" => &mut self.selection_foreground,
             "hover" => &mut self.hover,
-            "folder-icon" => &mut self.folder_icon,
-            "file-icon" => &mut self.file_icon,
+            "icon-folder" => &mut self.icon_folder,
+            "icon-image" => &mut self.icon_image,
+            "icon-video" => &mut self.icon_video,
+            "icon-audio" => &mut self.icon_audio,
+            "icon-archive" => &mut self.icon_archive,
+            "icon-document" => &mut self.icon_document,
+            "icon-code" => &mut self.icon_code,
+            "icon-other" => &mut self.icon_other,
+            "focus-ring" => &mut self.focus_ring,
+            "marquee" => &mut self.marquee,
             "danger" => &mut self.danger,
             _ => unreachable!("not a color key: {key}"),
         };
@@ -272,6 +301,19 @@ pub(crate) fn parse_theme(file: &str, text: &str, warnings: &mut Vec<Warning>) -
                 )),
             }
         }
+        for (old, new) in COLOR_ALIASES {
+            if colors.contains_key(new) {
+                continue;
+            }
+            let Some(value) = colors.get(old) else { continue };
+            match value.as_str().and_then(Color::parse) {
+                Some(color) => theme.colors.push((new, color)),
+                None => warnings.push(Warning::new(
+                    file,
+                    format!("colors.{old}: expected \"#rrggbb\" or \"#rrggbbaa\", got {value}"),
+                )),
+            }
+        }
     }
 
     if let Some(metrics) = table.get("metrics").and_then(|v| v.as_table()) {
@@ -312,6 +354,40 @@ mod tests {
 
     fn hex(text: &str) -> Color {
         Color::parse(text).unwrap()
+    }
+
+    #[test]
+    fn old_icon_color_names_still_work() {
+        let (theme, warnings) = parse(
+            "[colors]
+folder-icon = \"#112233\"
+file-icon = \"#445566\"
+",
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(theme.unwrap().colors, [("icon-folder", hex("#112233")), ("icon-other", hex("#445566"))]);
+    }
+
+    #[test]
+    fn new_icon_color_names_win_over_old_ones() {
+        let (theme, _) = parse(
+            "[colors]
+folder-icon = \"#112233\"
+icon-folder = \"#abcdef\"
+",
+        );
+        assert_eq!(theme.unwrap().colors, [("icon-folder", hex("#abcdef"))]);
+    }
+
+    #[test]
+    fn bad_old_icon_color_warns_under_its_own_name() {
+        let (_, warnings) = parse(
+            "[colors]
+file-icon = \"blue\"
+",
+        );
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].message.starts_with("colors.file-icon:"), "{}", warnings[0].message);
     }
 
     #[test]

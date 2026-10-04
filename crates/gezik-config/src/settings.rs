@@ -2,6 +2,9 @@
 
 use crate::Warning;
 use crate::shortcuts::{Platform, Shortcuts};
+use gezik_core::view::{
+    ColumnKey, ColumnState, GridSize, IconMode, SortDir, SortKey, ViewMode, ViewSettings, normalize_columns,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ThemeChoice {
@@ -23,6 +26,21 @@ pub enum Density {
     Comfortable,
 }
 
+/// `[view]`: how folders look unless the user changed one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ViewDefaults {
+    pub view: ViewSettings,
+    pub icons: IconMode,
+    /// Pictures and videos show a thumbnail in the grid.
+    pub thumbnails: bool,
+}
+
+impl Default for ViewDefaults {
+    fn default() -> Self {
+        ViewDefaults { view: ViewSettings::default(), icons: IconMode::System, thumbnails: true }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
     pub theme: ThemeChoice,
@@ -35,7 +53,13 @@ pub struct Settings {
     /// Pinned folders as written (tokenized, `/` separators), in display order.
     pub pinned: Vec<String>,
     pub shortcuts: Shortcuts,
+    pub view: ViewDefaults,
+    /// Most frames drawn per second (`MAX_FPS_RANGE`); 0 = as many as the display shows.
+    pub max_fps: u32,
 }
+
+/// Allowed `max-fps` values besides 0 (no limit).
+pub const MAX_FPS_RANGE: std::ops::RangeInclusive<u32> = 10..=1000;
 
 impl Default for Settings {
     fn default() -> Self {
@@ -48,6 +72,8 @@ impl Default for Settings {
             start_folder: "{home}".to_owned(),
             pinned: Vec::new(),
             shortcuts: Shortcuts::default(),
+            view: ViewDefaults::default(),
+            max_fps: 120,
         }
     }
 }
@@ -111,6 +137,19 @@ impl Settings {
         }
 
         // `text_value` borrows `warnings`; it is no longer used from here on.
+        if let Some(value) = table.get("max-fps") {
+            match value.as_integer().and_then(|n| u32::try_from(n).ok()) {
+                Some(n) if n == 0 || MAX_FPS_RANGE.contains(&n) => settings.max_fps = n,
+                _ => warnings.push(Warning::new(
+                    file,
+                    format!(
+                        "max-fps: expected 0 (no limit) or a number from {} to {}, got {value}",
+                        MAX_FPS_RANGE.start(),
+                        MAX_FPS_RANGE.end()
+                    ),
+                )),
+            }
+        }
         if let Some(start) = start_folder {
             if crate::paths::has_parent_segment(&start) {
                 warnings.push(Warning::new(file, format!("start-folder: \"{start}\" must not contain \"..\"")));
@@ -145,6 +184,13 @@ impl Settings {
                 None => warnings.push(Warning::new(file, format!("shortcuts: expected a table, got {value}"))),
             },
         }
+        match table.get("view") {
+            None => {}
+            Some(value) => match value.as_table() {
+                Some(view) => settings.view = parse_view(view, file, warnings),
+                None => warnings.push(Warning::new(file, format!("view: expected a table, got {value}"))),
+            },
+        }
         settings
     }
 
@@ -156,6 +202,51 @@ impl Settings {
             ThemeChoice::Named(id) => id,
         }
     }
+}
+
+fn parse_view(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> ViewDefaults {
+    let mut out = ViewDefaults::default();
+    if let Some(mode) = view_choice(table, "mode", "\"list\" or \"grid\"", ViewMode::parse, file, warnings) {
+        out.view.mode = mode;
+    }
+    let keys = "\"name\", \"modified\", \"created\", \"type\" or \"size\"";
+    if let Some(key) = view_choice(table, "sort", keys, SortKey::parse, file, warnings) {
+        out.view.sort.key = key;
+    }
+    if let Some(dir) = view_choice(table, "sort-dir", "\"asc\" or \"desc\"", SortDir::parse, file, warnings) {
+        out.view.sort.dir = dir;
+    }
+    let sizes = "\"small\", \"medium\" or \"large\"";
+    if let Some(size) = view_choice(table, "grid-size", sizes, GridSize::parse, file, warnings) {
+        out.view.grid_size = size;
+    }
+    if let Some(icons) = view_choice(table, "icons", "\"system\" or \"gezik\"", IconMode::parse, file, warnings) {
+        out.icons = icons;
+    }
+    if let Some(value) = table.get("thumbnails") {
+        match value.as_bool() {
+            Some(on) => out.thumbnails = on,
+            None => warnings.push(Warning::new(file, format!("view.thumbnails: expected true or false, got {value}"))),
+        }
+    }
+    out
+}
+
+/// `[view].key` read with `parse`: `None` if missing; a bad value also warns.
+fn view_choice<T>(
+    table: &toml::Table,
+    key: &str,
+    options: &str,
+    parse: impl Fn(&str) -> Option<T>,
+    file: &str,
+    warnings: &mut Vec<Warning>,
+) -> Option<T> {
+    let value = table.get(key)?;
+    let parsed = value.as_str().and_then(&parse);
+    if parsed.is_none() {
+        warnings.push(Warning::new(file, format!("view.{key}: expected {options}, got {value}")));
+    }
+    parsed
 }
 
 /// Size in logical pixels, position in physical pixels.
@@ -172,6 +263,11 @@ pub struct State {
     pub window: Option<WindowState>,
     /// Sidebar width in logical pixels (120–480).
     pub sidebar_width: Option<u32>,
+    /// The list's columns; `None` until first saved (the defaults are used then).
+    pub columns: Option<Vec<ColumnState>>,
+    pub preview_open: bool,
+    /// Preview pane width in logical pixels (200–600).
+    pub preview_width: Option<u32>,
 }
 
 impl State {
@@ -195,7 +291,28 @@ impl State {
             .and_then(|v| v.as_integer())
             .and_then(|w| u32::try_from(w).ok())
             .filter(|w| (120..=480).contains(w));
-        State { window, sidebar_width }
+        let columns = table.get("columns").and_then(|v| v.as_array()).map(|items| {
+            let saved: Vec<ColumnState> = items
+                .iter()
+                .filter_map(|item| {
+                    let item = item.as_table()?;
+                    Some(ColumnState {
+                        key: ColumnKey::parse(item.get("key")?.as_str()?)?,
+                        visible: item.get("visible").and_then(|v| v.as_bool()).unwrap_or(true),
+                        width: u32::try_from(item.get("width")?.as_integer()?).ok()?,
+                    })
+                })
+                .collect();
+            normalize_columns(&saved)
+        });
+        let preview = table.get("preview").and_then(|v| v.as_table());
+        let preview_open = preview.and_then(|p| p.get("open")).and_then(|v| v.as_bool()).unwrap_or(false);
+        let preview_width = preview
+            .and_then(|p| p.get("width"))
+            .and_then(|v| v.as_integer())
+            .and_then(|w| u32::try_from(w).ok())
+            .filter(|w| (200..=600).contains(w));
+        State { window, sidebar_width, columns, preview_open, preview_width }
     }
 
     pub fn to_toml(&self) -> String {
@@ -214,6 +331,27 @@ impl State {
             let mut sidebar = toml::Table::new();
             sidebar.insert("width".into(), toml::Value::Integer(width.into()));
             root.insert("sidebar".into(), toml::Value::Table(sidebar));
+        }
+        if let Some(columns) = &self.columns {
+            let items = columns
+                .iter()
+                .map(|c| {
+                    let mut column = toml::Table::new();
+                    column.insert("key".into(), toml::Value::String(c.key.as_str().into()));
+                    column.insert("visible".into(), toml::Value::Boolean(c.visible));
+                    column.insert("width".into(), toml::Value::Integer(c.width.into()));
+                    toml::Value::Table(column)
+                })
+                .collect();
+            root.insert("columns".into(), toml::Value::Array(items));
+        }
+        if self.preview_open || self.preview_width.is_some() {
+            let mut preview = toml::Table::new();
+            preview.insert("open".into(), toml::Value::Boolean(self.preview_open));
+            if let Some(width) = self.preview_width {
+                preview.insert("width".into(), toml::Value::Integer(width.into()));
+            }
+            root.insert("preview".into(), toml::Value::Table(preview));
         }
         root.to_string()
     }
@@ -304,10 +442,14 @@ mod tests {
         let state = State {
             window: Some(WindowState { width: 1000, height: 700, x: Some(-50), y: Some(30) }),
             sidebar_width: None,
+            ..State::default()
         };
         assert_eq!(State::parse(&state.to_toml()), state);
-        let no_position =
-            State { window: Some(WindowState { width: 800, height: 600, x: None, y: None }), sidebar_width: None };
+        let no_position = State {
+            window: Some(WindowState { width: 800, height: 600, x: None, y: None }),
+            sidebar_width: None,
+            ..State::default()
+        };
         assert_eq!(State::parse(&no_position.to_toml()), no_position);
     }
 
@@ -317,6 +459,25 @@ mod tests {
         assert_eq!(State::parse("[window]\nwidth = -900\nheight = 600\n"), State::default());
         assert_eq!(State::parse("garbage ["), State::default());
         assert_eq!(State::parse(""), State::default());
+    }
+
+    #[test]
+    fn max_fps_defaults_to_120_and_zero_means_unlimited() {
+        assert_eq!(Settings::default().max_fps, 120);
+        let (settings, warnings) = parse("max-fps = 60\n");
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(settings.max_fps, 60);
+        assert_eq!(parse("max-fps = 0\n").0.max_fps, 0);
+    }
+
+    #[test]
+    fn bad_max_fps_keeps_the_default_with_a_warning() {
+        for text in ["max-fps = 5\n", "max-fps = -1\n", "max-fps = \"fast\"\n", "max-fps = 100000\n"] {
+            let (settings, warnings) = parse(text);
+            assert_eq!(settings.max_fps, 120, "{text}");
+            assert_eq!(warnings.len(), 1, "{text}");
+            assert!(warnings[0].message.starts_with("max-fps:"), "{}", warnings[0].message);
+        }
     }
 
     #[test]
@@ -380,7 +541,7 @@ refresh = \"ctrl+r\"
 
     #[test]
     fn sidebar_width_round_trips_and_is_bounded() {
-        let state = State { window: None, sidebar_width: Some(260) };
+        let state = State { window: None, sidebar_width: Some(260), ..State::default() };
         assert_eq!(State::parse(&state.to_toml()), state);
         assert_eq!(
             State::parse(
@@ -400,5 +561,59 @@ width = 900
             .sidebar_width,
             None
         );
+    }
+
+    #[test]
+    fn reads_the_view_table() {
+        use gezik_core::view::{GridSize, IconMode, SortDir, SortKey, ViewMode};
+        let (settings, warnings) = parse(
+            "[view]\nmode = \"grid\"\nsort = \"size\"\nsort-dir = \"desc\"\ngrid-size = \"large\"\n\
+             icons = \"gezik\"\nthumbnails = false\n",
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let v = settings.view;
+        assert_eq!((v.view.mode, v.view.sort.key, v.view.sort.dir), (ViewMode::Grid, SortKey::Size, SortDir::Desc));
+        assert_eq!((v.view.grid_size, v.icons, v.thumbnails), (GridSize::Large, IconMode::Gezik, false));
+    }
+
+    #[test]
+    fn bad_view_values_keep_defaults_with_warnings() {
+        let (settings, warnings) =
+            parse("[view]\nmode = \"tiles\"\nsort-dir = 1\nthumbnails = \"yes\"\nicons = \"system\"\n");
+        assert_eq!(settings.view, ViewDefaults::default());
+        let messages: Vec<_> = warnings.iter().map(|w| w.message.as_str()).collect();
+        assert_eq!(messages.len(), 3, "{messages:?}");
+        assert!(messages[0].starts_with("view.mode:") && messages[0].contains("\"tiles\""));
+        assert!(messages[1].starts_with("view.sort-dir:"));
+        assert!(messages[2].starts_with("view.thumbnails:"));
+        let (_, warnings) = parse("view = 3\n");
+        assert!(warnings[0].message.starts_with("view: expected a table"));
+    }
+
+    #[test]
+    fn columns_and_preview_round_trip() {
+        use gezik_core::view::{ColumnKey, default_columns};
+        let mut columns = default_columns();
+        columns[1].visible = true;
+        columns[3].width = 120;
+        let state =
+            State { columns: Some(columns.clone()), preview_open: true, preview_width: Some(320), ..State::default() };
+        let back = State::parse(&state.to_toml());
+        assert_eq!(back, state);
+        assert_eq!(back.columns.unwrap()[3].key, ColumnKey::Size);
+    }
+
+    #[test]
+    fn broken_columns_and_preview_values_are_repaired() {
+        let state = State::parse(
+            "[[columns]]\nkey = \"size\"\nwidth = 3\n\n[[columns]]\nkey = \"bogus\"\nwidth = 100\n\n\
+             [[columns]]\nwidth = 100\n\n[preview]\nopen = true\nwidth = 9000\n",
+        );
+        let columns = state.columns.unwrap();
+        assert_eq!(columns.len(), 4);
+        assert_eq!((columns[3].width, columns[3].visible), (gezik_core::view::MIN_COLUMN_WIDTH, true));
+        assert!(state.preview_open);
+        assert_eq!(state.preview_width, None);
+        assert_eq!(State::parse("").columns, None);
     }
 }

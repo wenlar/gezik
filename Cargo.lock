@@ -1441,6 +1441,7 @@ dependencies = [
  "gezik-config",
  "gezik-core",
  "gezik-platform",
+ "image",
  "notify",
  "open",
  "slint",
@@ -1452,6 +1453,7 @@ name = "gezik-config"
 version = "0.1.0"
 dependencies = [
  "dirs",
+ "gezik-core",
  "toml",
  "toml_edit",
 ]
@@ -1465,6 +1467,8 @@ name = "gezik-platform"
 version = "0.1.0"
 dependencies = [
  "dirs",
+ "image",
+ "libc",
  "raw-window-handle",
  "windows",
 ]
@@ -2173,6 +2177,9 @@ checksum = "85ab80394333c02fe689eaf900ab500fbd0c2213da414687ebf995a65d5a6104"
 dependencies = [
  "bytemuck",
  "byteorder-lite",
+ "color_quant",
+ "gif",
+ "image-webp",
  "moxcms",
  "num-traits",
  "png",
