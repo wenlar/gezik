@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+gezik-core.workspace = true
 dirs = "7"
 raw-window-handle = "0.6"
 # Only the formats Gezik previews itself; the system shows the rest.
@@ -19,8 +20,11 @@ windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Globalization",
     "Win32_Graphics_Gdi",
+    "Win32_Security",
     "Win32_Storage_FileSystem",
     "Win32_System_Com",
+    "Win32_System_IO",
+    "Win32_System_Ioctl",
     "Win32_System_Time",
     "Win32_UI_Controls",
     "Win32_UI_Input_KeyboardAndMouse",

@@ -1467,6 +1467,7 @@ name = "gezik-platform"
 version = "0.1.0"
 dependencies = [
  "dirs",
+ "gezik-core",
  "image",
  "libc",
  "raw-window-handle",
