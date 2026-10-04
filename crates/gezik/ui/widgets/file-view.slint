@@ -510,76 +510,82 @@ export component FileView inherits Rectangle {
             }
 
             // The grid: a row of cells. The gaps between them let presses through to the
-            // background, where a drag selects with a rectangle.
+            // background, where a drag selects with a rectangle. One tile per column, not
+            // per cell: a changed line (a new selection) brings a new cells model, a
+            // repeater over a new model rebuilds its tiles, and a rebuilt tile loses the
+            // press under the pointer and with it a double-click.
             if root.mode == 1: Rectangle {
-                for cell[c] in item.cells: tile := Rectangle {
-                    property <int> index: item.first + c;
-                    x: c * root.cell-width;
-                    y: 0;
-                    width: root.cell-width;
-                    height: root.cell-height;
-                    accessible-role: list-item;
-                    accessible-label: cell.name;
-                    accessible-item-selectable: true;
-                    accessible-item-selected: cell.selected;
-                    accessible-item-index: self.index;
+                for c in root.per-row: Rectangle {
+                    if c < item.cells.length: tile := Rectangle {
+                        property <FileRow> cell: item.cells[c];
+                        property <int> index: item.first + c;
+                        x: c * root.cell-width;
+                        y: 0;
+                        width: root.cell-width;
+                        height: root.cell-height;
+                        accessible-role: list-item;
+                        accessible-label: tile.cell.name;
+                        accessible-item-selectable: true;
+                        accessible-item-selected: tile.cell.selected;
+                        accessible-item-index: self.index;
 
-                    Rectangle {
-                        x: 4px;
-                        y: 4px;
-                        width: parent.width - 8px;
-                        height: parent.height - 8px;
-                        border-radius: Theme.radius;
-                        background: cell.selected ? Theme.selection : tile-touch.has-hover ? Theme.hover : transparent;
-                        border-width: cell.focused && root.has-focus ? 1px : 0px;
-                        border-color: Theme.focus-ring;
-                    }
+                        Rectangle {
+                            x: 4px;
+                            y: 4px;
+                            width: parent.width - 8px;
+                            height: parent.height - 8px;
+                            border-radius: Theme.radius;
+                            background: tile.cell.selected ? Theme.selection : tile-touch.has-hover ? Theme.hover : transparent;
+                            border-width: tile.cell.focused && root.has-focus ? 1px : 0px;
+                            border-color: Theme.focus-ring;
+                        }
 
-                    FileIcon {
-                        x: (parent.width - self.width) / 2;
-                        y: 10px;
-                        width: root.picture-size;
-                        height: root.picture-size;
-                        kind: cell.kind;
-                        picture: cell.icon;
-                        has-picture: cell.has-icon;
-                    }
+                        FileIcon {
+                            x: (parent.width - self.width) / 2;
+                            y: 10px;
+                            width: root.picture-size;
+                            height: root.picture-size;
+                            kind: tile.cell.kind;
+                            picture: tile.cell.icon;
+                            has-picture: tile.cell.has-icon;
+                        }
 
-                    Text {
-                        x: 8px;
-                        y: 14px + root.picture-size;
-                        width: parent.width - 16px;
-                        height: parent.height - self.y - 8px;
-                        text: cell.name;
-                        wrap: word-wrap;
-                        overflow: elide;
-                        horizontal-alignment: center;
-                        vertical-alignment: top;
-                        color: cell.selected ? Theme.selection-foreground : Theme.foreground;
-                    }
+                        Text {
+                            x: 8px;
+                            y: 14px + root.picture-size;
+                            width: parent.width - 16px;
+                            height: parent.height - self.y - 8px;
+                            text: tile.cell.name;
+                            wrap: word-wrap;
+                            overflow: elide;
+                            horizontal-alignment: center;
+                            vertical-alignment: top;
+                            color: tile.cell.selected ? Theme.selection-foreground : Theme.foreground;
+                        }
 
-                    // Cells never start a rectangle (a drag from an entry is kept for
-                    // dragging files); they only pass moves and releases on to a running one.
-                    tile-touch := TouchArea {
-                        x: 4px;
-                        y: 4px;
-                        width: parent.width - 8px;
-                        height: parent.height - 8px;
-                        double-clicked => { root.item-double-clicked(tile.index); }
-                        scroll-event(event) => { return root.wheel(event); }
-                        pointer-event(event) => {
-                            if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
-                                root.focus-requested();
-                                root.item-pressed(tile.index, event.modifiers.control, event.modifiers.shift);
-                            }
-                            if event.kind == PointerEventKind.up && event.button == PointerEventButton.middle {
-                                root.item-middle-clicked(tile.index);
-                            }
-                            if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {
-                                root.item-menu(tile.index, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
-                            }
-                            if !self.pressed || event.kind == PointerEventKind.up {
-                                root.marquee-pointer(event.kind, tile.x + self.x + self.mouse-x, line.y + root.scroll + self.y + self.mouse-y);
+                        // Cells never start a rectangle (a drag from an entry is kept for
+                        // dragging files); they only pass moves and releases on to a running one.
+                        tile-touch := TouchArea {
+                            x: 4px;
+                            y: 4px;
+                            width: parent.width - 8px;
+                            height: parent.height - 8px;
+                            double-clicked => { root.item-double-clicked(tile.index); }
+                            scroll-event(event) => { return root.wheel(event); }
+                            pointer-event(event) => {
+                                if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                                    root.focus-requested();
+                                    root.item-pressed(tile.index, event.modifiers.control, event.modifiers.shift);
+                                }
+                                if event.kind == PointerEventKind.up && event.button == PointerEventButton.middle {
+                                    root.item-middle-clicked(tile.index);
+                                }
+                                if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {
+                                    root.item-menu(tile.index, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                                }
+                                if !self.pressed || event.kind == PointerEventKind.up {
+                                    root.marquee-pointer(event.kind, tile.x + self.x + self.mouse-x, line.y + root.scroll + self.y + self.mouse-y);
+                                }
                             }
                         }
                     }
