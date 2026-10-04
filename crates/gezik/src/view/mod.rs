@@ -362,7 +362,7 @@ impl View {
         self.0.renaming.borrow().clone()
     }
 
-    /// Ends renaming. `refocus`: the field had the keyboard (Enter, Esc, Tab), so the list gets
+    /// Ends renaming. `refocus`: the field had the keyboard (Enter, Esc), so the list gets
     /// it back; not after a blur, where another control took the focus on purpose.
     pub fn end_rename(&self, refocus: bool) {
         self.finish_rename(refocus, true);
@@ -385,7 +385,13 @@ impl View {
         }
         self.0.rename_folder.borrow_mut().take();
         if let Some(window) = self.0.window.upgrade() {
-            let had_focus = window.get_rename_focused();
+            // Whether the field held the keyboard last, even if its row scrolled out of view
+            // (the field may still be alive and focused, or destroyed with nothing focused):
+            // either way the list must get the keyboard back. Cleared so it cannot go stale
+            // into the next rename.
+            let had_focus =
+                window.get_rename_field_focused() && !window.get_path_editing() && !window.get_dialog_open();
+            window.set_rename_field_focused(false);
             window.set_renaming_index(-1);
             window.set_rename_error("".into());
             if refocus || (if_focused && had_focus) {

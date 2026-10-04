@@ -76,7 +76,11 @@ export component RenameField inherits Rectangle {
                 root.accepted(self.text);
             }
             changed has-focus => {
-                root.focused = self.has-focus;
+                // A late change of an older field (after Tab opened the next one) must not
+                // overwrite the focus the new field has just taken.
+                if root.mine == root.generation {
+                    root.focused = self.has-focus;
+                }
                 if !self.has-focus && !root.done {
                     root.done = true;
                     root.blurred(self.text, root.mine);

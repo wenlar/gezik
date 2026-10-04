@@ -453,7 +453,9 @@ impl Menus {
             let scale = window.window().scale_factor();
             let at = at.map(|(x, y)| ((x * scale).round() as i32, (y * scale).round() as i32));
             let items: Vec<(u32, &str)> = items.iter().map(|(id, title)| (*id, title.as_str())).collect();
-            let outcome = gezik_platform::show_shell_menu(&handle, &target, &items, at);
+            // Gezik renames in place, only a single row of a folder listing (see run_verb).
+            let can_rename = matches!(subject, Some(Subject::Row(_))) && !menus.view.shows_drives();
+            let outcome = gezik_platform::show_shell_menu(&handle, &target, &items, at, can_rename);
             release_stale_modifiers(&window);
             drop(claim);
             match outcome {
