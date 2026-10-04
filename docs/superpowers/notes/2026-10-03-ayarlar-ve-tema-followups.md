@@ -39,3 +39,11 @@ Alt proje 1 tamamlandıktan sonra bilerek ertelenen maddeler. Kaynak: görev inc
 - Bazı ölçüler hâlâ px sabiti.
 - Pencere başına yalnızca bir winit pencere-olayı kancası kurulabiliyor.
 - Performans betikleri pencereyi başlığa göre değil süreç kimliğine göre buluyor (başlık artık "<yer> — Gezik"); `tabs.ps1` sekmeleri PostMessage ile açıyor, Gezik değiştirici tuş durumunu klavyeden okuyorsa `-Method SendKeys` gerekir. Gezinme performans ölçümleri (measure/stress/tabs) henüz yapılmadı.
+
+## Gezinme ekran testleri sonrası (2026-10-04)
+
+- Etkin sekme kapatıldıktan sonra durum çubuğundaki öğe sayısının eski değerde kaldığı bir kez görüldü; 13 denemede tekrar oluşturulamadı, kodda neden bulunamadı (şüphe: kaçırılan yeniden çizim).
+- End ile uzak atlamada son satır bir iki kare kısmen görünüp düzeliyor (Slint'in satır sınırına yaslaması; 50 ms sonra yeniden uygulanıyor).
+- Dar sekmede üzerine gelince × yer aldığı için başlık yeniden kısalıyor.
+- Kaydırma CPU'su sınırda (~499 ms / 2,6 sn, hedef ~480); ölçüm sırasında bilgisayar kullanılıyordu, tekrar ölçülmeli.
+- Test edilemeyenler: USB bellek takma/çıkarma, ağ sürücüsü / bağlantısı kopmuş Z:, ekran okuyucu, macOS.
