@@ -113,10 +113,7 @@ fn handle_key(
         let ordinary_key = action == Action::QuickLook
             && (!window.get_list_focused() || type_ahead.is_active(std::time::Instant::now()));
         if !ordinary_key {
-            if editing && matches!(action, Action::Rename | Action::NewFolder) {
-                return false;
-            }
-            if action == Action::Rename && !window.get_list_focused() {
+            if keys::acts_on_files(action) && (editing || (keys::needs_list(action) && !window.get_list_focused())) {
                 return false;
             }
             match action {
@@ -136,15 +133,15 @@ fn handle_key(
                 Action::QuickLook => preview.toggle_quick_look(),
                 Action::Rename => ops.rename_start(),
                 Action::NewFolder => ops.new_folder(None),
-                Action::Copy
-                | Action::Cut
-                | Action::Paste
-                | Action::PasteMove
-                | Action::Trash
-                | Action::DeletePermanently
-                | Action::Duplicate
-                | Action::Undo
-                | Action::Redo => return false,
+                Action::Copy => ops.copy(false),
+                Action::Cut => ops.copy(true),
+                Action::Paste => ops.paste(None, false),
+                Action::PasteMove => ops.paste(None, true),
+                Action::Trash => ops.trash(false),
+                Action::DeletePermanently => ops.trash(true),
+                Action::Duplicate => ops.duplicate(),
+                Action::Undo => ops.undo(),
+                Action::Redo => ops.redo(),
             }
             // The typed text no longer fits once the location or tab changed.
             if editing && action != Action::FocusPath {
@@ -476,7 +473,7 @@ fn main() -> Result<(), slint::PlatformError> {
     });
     // The sidebar width stays in memory and is saved with the window state on close.
 
-    let menus = context_menu::Menus::new(&window, nav.clone(), view.clone(), preview.clone(), sidebar);
+    let menus = context_menu::Menus::new(&window, nav.clone(), view.clone(), preview.clone(), sidebar, ops.clone());
     window.on_row_menu({
         let (menus, view) = (menus.clone(), view.clone());
         move |i, x, y| {
@@ -487,12 +484,12 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
     // Right-click on empty space clears the selection, as in Explorer. The Windows menu
-    // opens at the cursor; there is no Slint menu for empty space.
+    // opens at the cursor.
     window.on_background_menu({
         let (menus, view) = (menus.clone(), view.clone());
-        move |_, _| {
+        move |x, y| {
             view.clear_selection();
-            menus.background()
+            menus.background(x, y)
         }
     });
     window.on_item_pressed({
@@ -684,7 +681,11 @@ fn main() -> Result<(), slint::PlatformError> {
         use slint::winit_030::{EventResult, WinitWindowAccessor, winit};
         let weak = window.as_weak();
         let minimized = std::cell::Cell::new(false);
+        let ops = ops.clone();
         window.window().on_winit_window_event(move |_, event| {
+            if let winit::event::WindowEvent::Focused(true) = event {
+                ops.clipboard_check();
+            }
             // Windows drops a minimized window's picture, but the size on restore is the old
             // one, so Slint redraws only what changed and the rest of the window stays empty.
             if let winit::event::WindowEvent::Resized(size) = event {

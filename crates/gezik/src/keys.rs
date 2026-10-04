@@ -178,9 +178,42 @@ impl Default for TypeAhead {
     }
 }
 
+/// File operation shortcuts: never while typing in the address bar.
+pub fn acts_on_files(action: Action) -> bool {
+    matches!(
+        action,
+        Action::Copy
+            | Action::Cut
+            | Action::Paste
+            | Action::PasteMove
+            | Action::Trash
+            | Action::DeletePermanently
+            | Action::Rename
+            | Action::NewFolder
+            | Action::Duplicate
+            | Action::Undo
+            | Action::Redo
+    )
+}
+
+/// Those that act on the selection: only while the file list has the keyboard.
+pub fn needs_list(action: Action) -> bool {
+    matches!(
+        action,
+        Action::Copy | Action::Cut | Action::Trash | Action::DeletePermanently | Action::Rename | Action::Duplicate
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_shortcuts_need_the_list_only_for_the_selection() {
+        assert!(acts_on_files(Action::Paste) && !needs_list(Action::Paste));
+        assert!(needs_list(Action::Trash) && needs_list(Action::Copy));
+        assert!(!acts_on_files(Action::Refresh));
+    }
 
     #[test]
     fn menu_key_and_shift_f10_open_the_context_menu() {

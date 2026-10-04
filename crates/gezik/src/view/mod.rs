@@ -625,6 +625,44 @@ impl View {
     }
 
     /// Shows `text` in the status bar until the selection changes.
+    /// The names in this folder on the clipboard as cut (they look faded).
+    pub fn set_cut_names(&self, names: HashSet<String>) {
+        if self.0.data.borrow().cut == names {
+            return;
+        }
+        self.0.data.borrow_mut().cut = names;
+        self.0.model.notify.reset();
+    }
+
+    /// Takes `names` out of the listing at once (trashed or deleted: the reload after the job
+    /// brings back anything that stayed).
+    pub fn hide_names(&self, names: &[String]) {
+        let hidden: HashSet<&str> = names.iter().map(String::as_str).collect();
+        let state = self.capture_all();
+        let listing = std::mem::take(&mut self.0.data.borrow_mut().listing);
+        let listing = match listing {
+            Listing::Files(dir, entries) => {
+                let kept: Vec<Entry> = entries.iter().filter(|e| !hidden.contains(e.name.as_str())).cloned().collect();
+                Listing::Files(dir, Rc::new(kept))
+            }
+            other => other,
+        };
+        let selection = restore_selection(&listing, &state);
+        {
+            let mut data = self.0.data.borrow_mut();
+            data.listing = listing;
+            data.selection = selection;
+        }
+        self.0.model.notify.reset();
+        if let Some(window) = self.0.window.upgrade() {
+            self.sync_focus(&window);
+            window.set_list_scroll(state.scroll);
+            self.keep_scroll_after_reset(state.scroll);
+        }
+        self.update_status();
+        self.notify_listeners();
+    }
+
     pub fn note(&self, text: String) {
         self.set_note(text);
     }
