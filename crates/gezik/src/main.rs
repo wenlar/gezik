@@ -327,6 +327,8 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
                 view.flush_memory();
             }
+            // Its window would otherwise keep the event loop (and the process) running.
+            preview.close_quick_look();
             slint::CloseRequestResponse::HideWindow
         }
     });

@@ -310,6 +310,10 @@ impl Preview {
         if self.quick_look_open() {
             return self.close_quick_look();
         }
+        // Nothing selected: nothing to look at.
+        if self.0.view.preview_target() == Target::Nothing {
+            return;
+        }
         let Some(window) = self.0.window.upgrade() else { return };
         let info = self.0.info.borrow().clone();
         let opened = crate::quick_look::QuickLook::open(
