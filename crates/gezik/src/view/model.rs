@@ -17,6 +17,8 @@ use crate::{FileRow, ItemRow};
 pub struct ViewData {
     pub listing: Listing,
     pub selection: Selection,
+    /// The selection when a rubber-band drag started (Ctrl) or nothing; `None` when no drag.
+    pub marquee_base: Option<Selection>,
 }
 
 pub struct ItemsModel {

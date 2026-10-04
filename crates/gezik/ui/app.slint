@@ -90,6 +90,9 @@ export component AppWindow inherits Window {
     // Left press on an entry with Ctrl (Cmd on macOS) and Shift; left click on empty space with Ctrl.
     callback item-pressed(int, bool, bool);
     callback background-pressed(bool);
+    // A rubber-band drag in the file view; see FileView.
+    callback marquee(length, length, length, length, bool);
+    callback marquee-done();
     // Right-click on an entry (Rust selects it first if it was not selected) / on empty space, at a window position.
     callback row-menu(int, length, length);
     callback background-menu(length, length);
@@ -276,6 +279,8 @@ export component AppWindow inherits Window {
                         root.row-menu(i, x, y);
                     }
                     background-pressed(ctrl) => { root.background-pressed(ctrl); }
+                    marquee(x, y, w, h, additive) => { root.marquee(x, y, w, h, additive); }
+                    marquee-done => { root.marquee-done(); }
                     background-menu(x, y) => {
                         root.end-path-editing();
                         root.background-menu(x, y);

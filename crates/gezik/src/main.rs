@@ -357,6 +357,14 @@ fn main() -> Result<(), slint::PlatformError> {
             }
         }
     });
+    window.on_marquee({
+        let view = view.clone();
+        move |x, y, width, height, additive| view.marquee(gezik_core::layout::Rect { x, y, width, height }, additive)
+    });
+    window.on_marquee_done({
+        let view = view.clone();
+        move || view.marquee_done()
+    });
     window.on_background_pressed({
         let view = view.clone();
         move |ctrl| {

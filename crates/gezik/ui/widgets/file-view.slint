@@ -44,6 +44,63 @@ export component FileView inherits Rectangle {
     // A press in the view: the keyboard should go to it.
     callback focus-requested();
 
+    // A rubber-band drag: the rectangle in content coordinates (`Rect` in gezik-core
+    // layout.rs), on every pointer move; Ctrl adds to the selection the drag started with.
+    callback marquee(length, length, length, length, bool);
+    callback marquee-done();
+
+    // Right edge of the Name column: a drag that starts right of it, on a row, selects with
+    // a rectangle; from the name it is kept for dragging files (sub-project 4).
+    property <length> name-end: root.width - (Theme.spacing + 4px) - 90px - (Theme.spacing + 2px);
+
+    property <bool> marquee-active;
+    property <bool> marquee-additive;
+    // Where the drag started, in content coordinates, and where the pointer is, in the
+    // list's own coordinates (it stays put while the list scrolls under it).
+    property <length> start-x;
+    property <length> start-y;
+    property <length> pointer-x;
+    property <length> pointer-y;
+
+    // `x`, `y`: the press, in the list's coordinates.
+    function begin-marquee(x: length, y: length, additive: bool) {
+        root.start-x = x;
+        root.start-y = y - root.scroll;
+        root.pointer-x = x;
+        root.pointer-y = y;
+        root.marquee-additive = additive;
+        root.marquee-active = true;
+    }
+
+    function track-marquee(x: length, y: length) {
+        root.pointer-x = x;
+        root.pointer-y = y;
+        let content-y = y - root.scroll;
+        root.marquee(min(root.start-x, x), min(root.start-y, content-y), abs(x - root.start-x), abs(content-y - root.start-y), root.marquee-additive);
+    }
+
+    function end-marquee() {
+        if root.marquee-active {
+            root.marquee-active = false;
+            root.marquee-done();
+        }
+    }
+
+    // A move or release seen by any row or the background while a drag runs: the row that
+    // started it may have scrolled away (the list drops rows off screen) and taken the
+    // pointer grab with it.
+    function marquee-pointer(kind: PointerEventKind, x: length, y: length) {
+        if !root.marquee-active {
+            return;
+        }
+        if kind == PointerEventKind.move {
+            root.track-marquee(x, y);
+        }
+        if kind == PointerEventKind.up || kind == PointerEventKind.cancel {
+            root.end-marquee();
+        }
+    }
+
     clip: true;
     accessible-role: AccessibleRole.list;
     accessible-label: "Files";
@@ -74,15 +131,35 @@ export component FileView inherits Rectangle {
         return list.absolute-position.y + root.scroll + (index + 1) * root.item-height;
     }
 
-    // Behind the entries: presses on empty space (the list passes them through).
+    // Behind the entries: presses on empty space (the list passes them through). A drag
+    // from here selects with a rectangle; a click clears the selection.
     TouchArea {
+        property <bool> ctrl;
         pointer-event(event) => {
             if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                self.ctrl = event.modifiers.control;
                 root.focus-requested();
-                root.background-pressed(event.modifiers.control);
+            }
+            if event.kind == PointerEventKind.up && event.button == PointerEventButton.left {
+                if root.marquee-active {
+                    root.end-marquee();
+                } else {
+                    root.background-pressed(self.ctrl);
+                }
             }
             if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {
                 root.background-menu(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            }
+            if event.kind == PointerEventKind.move && !self.pressed {
+                root.marquee-pointer(event.kind, self.mouse-x, self.mouse-y);
+            }
+        }
+        moved => {
+            if !root.marquee-active && (abs(self.mouse-x - self.pressed-x) > 4px || abs(self.mouse-y - self.pressed-y) > 4px) {
+                root.begin-marquee(self.pressed-x, self.pressed-y, self.ctrl);
+            }
+            if root.marquee-active {
+                root.track-marquee(self.mouse-x, self.mouse-y);
             }
         }
     }
@@ -102,9 +179,11 @@ export component FileView inherits Rectangle {
             accessible-item-index: self.index;
 
             touch := TouchArea {
+                property <bool> ctrl;
                 double-clicked => { root.item-double-clicked(line.index); }
                 pointer-event(event) => {
                     if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                        self.ctrl = event.modifiers.control;
                         root.focus-requested();
                         root.item-pressed(line.index, event.modifiers.control, event.modifiers.shift);
                     }
@@ -113,6 +192,18 @@ export component FileView inherits Rectangle {
                     }
                     if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {
                         root.item-menu(line.index, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                    }
+                    if !self.pressed || event.kind == PointerEventKind.up {
+                        root.marquee-pointer(event.kind, self.mouse-x, line.y + root.scroll + self.mouse-y);
+                    }
+                }
+                moved => {
+                    if !root.marquee-active && self.pressed-x > root.name-end
+                        && (abs(self.mouse-x - self.pressed-x) > 4px || abs(self.mouse-y - self.pressed-y) > 4px) {
+                        root.begin-marquee(self.pressed-x, line.y + root.scroll + self.pressed-y, self.ctrl);
+                    }
+                    if root.marquee-active {
+                        root.track-marquee(self.mouse-x, line.y + root.scroll + self.mouse-y);
                     }
                 }
             }
@@ -150,5 +241,28 @@ export component FileView inherits Rectangle {
                 border-color: Theme.focus-ring;
             }
         }
+    }
+
+    // Near the top or bottom edge, a running drag scrolls the list.
+    Timer {
+        interval: 30ms;
+        running: root.marquee-active && (root.pointer-y < 24px || root.pointer-y > list.visible-height - 24px);
+        triggered => {
+            let step = root.item-height / 2;
+            let lowest = min(0px, list.visible-height - list.content-height);
+            root.scroll = clamp(root.pointer-y < 24px ? root.scroll + step : root.scroll - step, lowest, 0px);
+            root.track-marquee(root.pointer-x, root.pointer-y);
+        }
+    }
+
+    if root.marquee-active: Rectangle {
+        property <length> top: root.start-y + root.scroll;
+        x: list.x + min(root.start-x, root.pointer-x);
+        y: list.y + min(self.top, root.pointer-y);
+        width: abs(root.pointer-x - root.start-x);
+        height: abs(root.pointer-y - self.top);
+        background: Theme.marquee;
+        border-width: 1px;
+        border-color: Theme.focus-ring;
     }
 }

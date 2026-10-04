@@ -13,7 +13,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gezik_core::format_size;
-use gezik_core::layout::{Geometry, Move};
+use gezik_core::layout::{Geometry, Move, Rect};
 use gezik_core::nav::ViewState;
 use gezik_core::selection::Selection;
 use slint::{ComponentHandle, ModelRc};
@@ -80,6 +80,7 @@ impl View {
             let mut data = self.0.data.borrow_mut();
             data.listing = listing;
             data.selection = selection;
+            data.marquee_base = None;
         }
         self.0.model.notify.reset();
         let shown = self.0.shown.get() + 1;
@@ -109,6 +110,7 @@ impl View {
             let mut data = self.0.data.borrow_mut();
             data.listing = Listing::default();
             data.selection = Selection::new(0);
+            data.marquee_base = None;
         }
         self.0.model.notify.reset();
         self.0.shown.set(self.0.shown.get() + 1);
@@ -236,6 +238,25 @@ impl View {
         self.after_selection(&changes);
         self.reveal(target);
         true
+    }
+
+    /// A rubber-band drag over `rect` (content coordinates): selects what it touches, added
+    /// to the selection at the drag's start if `additive` (Ctrl).
+    pub fn marquee(&self, rect: Rect, additive: bool) {
+        let geometry = self.geometry();
+        let changes = {
+            let mut data = self.0.data.borrow_mut();
+            let ViewData { listing, selection, marquee_base } = &mut *data;
+            let base = marquee_base
+                .get_or_insert_with(|| if additive { selection.clone() } else { Selection::new(listing.len()) });
+            let hits = geometry.items_in_rect(rect, listing.len());
+            selection.set_rect(base, &hits)
+        };
+        self.after_selection(&changes);
+    }
+
+    pub fn marquee_done(&self) {
+        self.0.data.borrow_mut().marquee_base = None;
     }
 
     /// Where entries are on screen.
