@@ -57,6 +57,15 @@ fn listing_after_failure(mode: &Mode, location: &Location) -> Option<Listing> {
     })
 }
 
+/// [`listing_after_failure`], marking the view `cleared` when it empties it: the empty
+/// listing says nothing about the tab's selection and scroll, so the next `save_view`
+/// keeps the tab's saved view instead of overwriting it. A failed move leaves `cleared`.
+fn apply_failure(cleared: &mut bool, mode: &Mode, location: &Location) -> Option<Listing> {
+    let empty = listing_after_failure(mode, location)?;
+    *cleared = true;
+    Some(empty)
+}
+
 /// The path typed into the address bar. A relative path is taken from `base` (the folder
 /// on screen) if there is one, else from the working folder; on Windows `..` parts are
 /// resolved too, so the address bar parts stay right.
@@ -502,16 +511,14 @@ impl Navigator {
         self.update_chrome();
     }
 
-    /// Shows `message` for a failed load; see [`listing_after_failure`]. The empty listing
-    /// says nothing about the tab's selection and scroll, so it counts as `cleared`: the
-    /// next `save_view` keeps the tab's saved view instead of overwriting it.
+    /// Shows `message` for a failed load; see [`apply_failure`].
     fn show_failed(&self, mode: &Mode, location: &Location, message: String) {
-        let Some(empty) = listing_after_failure(mode, location) else { return self.status(message) };
-        let (view, state) = {
+        let (empty, view, state) = {
             let mut inner = self.0.borrow_mut();
-            inner.cleared = true;
-            (inner.view.clone(), inner.tabs.active().view().clone())
+            let empty = apply_failure(&mut inner.cleared, mode, location);
+            (empty, inner.view.clone(), inner.tabs.active().view().clone())
         };
+        let Some(empty) = empty else { return self.status(message) };
         view.show(empty, &state, Some(message));
         self.update_chrome();
     }
@@ -675,6 +682,25 @@ mod tests {
         assert!(
             matches!(listing_after_failure(&Mode::Show, &Location::Drives), Some(Listing::Drives(d)) if d.is_empty())
         );
+    }
+
+    #[test]
+    fn a_failed_show_keeps_the_tabs_saved_view() {
+        for was_cleared in [false, true] {
+            let mut cleared = was_cleared;
+            let empty = apply_failure(&mut cleared, &Mode::Show, &Location::Path("/x/locked".into()));
+            assert!(matches!(empty, Some(Listing::Files(_, entries)) if entries.is_empty()));
+            assert!(cleared, "was cleared: {was_cleared}");
+        }
+    }
+
+    #[test]
+    fn a_failed_move_changes_nothing() {
+        for was_cleared in [false, true] {
+            let mut cleared = was_cleared;
+            assert!(apply_failure(&mut cleared, &Mode::Move(Vec::new()), &Location::Path("/y".into())).is_none());
+            assert_eq!(cleared, was_cleared);
+        }
     }
 
     #[test]
