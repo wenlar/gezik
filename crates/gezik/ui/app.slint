@@ -116,6 +116,16 @@ export component AppWindow inherits Window {
         keys.focus();
     }
 
+    // Called before any context menu opens: like Explorer, a menu ends typing in the address
+    // bar (cancelling it), so the list has the keyboard once the menu closes. The focus moves
+    // here, before the menu takes it, rather than later in `changed path-editing`.
+    function end-path-editing() {
+        if root.path-editing {
+            root.path-editing = false;
+            keys.focus();
+        }
+    }
+
     // Scrolls the list so row `index` is visible.
     public function ensure-visible(index: int) {
         if index < 0 { return; }
@@ -168,7 +178,10 @@ export component AppWindow inherits Window {
                 close(i) => { root.tab-close(i); }
                 new-tab => { root.tab-new(); }
                 move-tab(from, to) => { root.tab-move(from, to); }
-                tab-menu(i, x, y) => { root.tab-menu(i, x, y); }
+                tab-menu(i, x, y) => {
+                    root.end-path-editing();
+                    root.tab-menu(i, x, y);
+                }
             }
             Rectangle {
                 background: Theme.surface;
