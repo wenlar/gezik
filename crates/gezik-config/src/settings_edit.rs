@@ -41,10 +41,22 @@ pub fn with_view_defaults(text: &str, view: &gezik_core::view::ViewSettings) -> 
         doc["view"] = toml_edit::table();
     }
     let Some(table) = doc["view"].as_table_like_mut() else { return Err("view must be a table".to_owned()) };
-    table.insert("mode", toml_edit::value(view.mode.as_str()));
-    table.insert("sort", toml_edit::value(view.sort.key.as_str()));
-    table.insert("sort-dir", toml_edit::value(view.sort.dir.as_str()));
-    table.insert("grid-size", toml_edit::value(view.grid_size.as_str()));
+    let entries = [
+        ("mode", view.mode.as_str()),
+        ("sort", view.sort.key.as_str()),
+        ("sort-dir", view.sort.dir.as_str()),
+        ("grid-size", view.grid_size.as_str()),
+    ];
+    for (key, text) in entries {
+        // Keep the old value's decor so inline comments (`# list | grid`) survive.
+        if let Some(old) = table.get_mut(key).and_then(|item| item.as_value_mut()) {
+            let decor = old.decor().clone();
+            *old = toml_edit::Value::from(text);
+            *old.decor_mut() = decor;
+        } else {
+            table.insert(key, toml_edit::value(text));
+        }
+    }
     Ok(doc.to_string())
 }
 
@@ -151,5 +163,23 @@ mod tests {
         assert_eq!(added.parse::<toml::Table>().unwrap()["view"]["mode"].as_str(), Some("grid"));
         assert!(with_view_defaults("view = 3\n", &view).is_err());
         assert!(with_view_defaults("theme = \n", &view).is_err());
+    }
+
+    #[test]
+    fn view_defaults_keep_inline_comments_of_the_template() {
+        use gezik_core::view::{GridSize, ViewMode, ViewSettings};
+        let template = include_str!("../templates/settings.toml");
+        let view = ViewSettings { mode: ViewMode::Grid, grid_size: GridSize::Large, ..ViewSettings::default() };
+        let out = with_view_defaults(template, &view).unwrap();
+        for hint in
+            ["# list | grid", "# name | modified | created | type | size", "# asc | desc", "# small | medium | large"]
+        {
+            assert!(
+                out.contains(hint),
+                "{hint} lost:
+{out}"
+            );
+        }
+        assert!(out.contains("mode = \"grid\""), "{out}");
     }
 }

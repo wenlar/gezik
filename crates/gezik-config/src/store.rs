@@ -152,7 +152,10 @@ impl ConfigStore {
                 }
             },
             Err(err) if err.kind() == io::ErrorKind::NotFound => (ViewMemory::default(), None),
-            Err(err) => (ViewMemory::default(), Some(Warning::new("views.toml", format!("cannot read: {err}")))),
+            Err(err) => (
+                ViewMemory::default(),
+                Some(Warning::new("views.toml", format!("cannot read: {err}; folder views start over"))),
+            ),
         }
     }
 
