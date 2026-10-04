@@ -117,7 +117,12 @@ mod imp {
         unsafe { EmptyClipboard() }.map_err(failed)?;
         put(u32::from(CF_HDROP.0), &super::dropfiles(paths))?;
         let effect = if cut { DROPEFFECT_MOVE.0 } else { DROPEFFECT_COPY.0 };
-        put(effect_format(), &effect.to_le_bytes())
+        if let Err(err) = put(effect_format(), &effect.to_le_bytes()) {
+            // Never leave files without their effect: a requested cut would read as a copy.
+            let _ = unsafe { EmptyClipboard() };
+            return Err(err);
+        }
+        Ok(())
     }
 
     pub fn read_files() -> Result<Option<ClipboardFiles>, ClipboardError> {
@@ -130,6 +135,9 @@ mod imp {
             let len = unsafe { DragQueryFileW(drop, i, None) } as usize;
             let mut buffer = vec![0u16; len + 1];
             let written = unsafe { DragQueryFileW(drop, i, Some(&mut buffer)) } as usize;
+            if written == 0 {
+                continue;
+            }
             paths.push(PathBuf::from(std::ffi::OsString::from_wide(&buffer[..written.min(len)])));
         }
         if paths.is_empty() {
@@ -188,11 +196,15 @@ mod imp {
     }
 
     pub fn write_files(paths: &[PathBuf], cut: bool) -> Result<(), ClipboardError> {
+        // Check every path before touching the pasteboard, so nothing partial is written.
+        let names: Vec<&str> = paths
+            .iter()
+            .map(|p| p.to_str().ok_or_else(|| ClipboardError::Failed("a path is not valid UTF-8".into())))
+            .collect::<Result<_, _>>()?;
         let pasteboard = NSPasteboard::generalPasteboard();
         pasteboard.clearContents();
-        let urls: Vec<Retained<ProtocolObject<dyn NSPasteboardWriting>>> = paths
-            .iter()
-            .filter_map(|p| p.to_str())
+        let urls: Vec<Retained<ProtocolObject<dyn NSPasteboardWriting>>> = names
+            .into_iter()
             .map(|p| ProtocolObject::from_retained(NSURL::fileURLWithPath(&NSString::from_str(p))))
             .collect();
         if !pasteboard.writeObjects(&NSArray::from_retained_slice(&urls)) {
@@ -211,6 +223,7 @@ mod imp {
         let paths: Vec<PathBuf> = objects
             .iter()
             .filter_map(|object| object.downcast::<NSURL>().ok())
+            .filter(|url| url.isFileURL())
             .filter_map(|url| url.path())
             .map(|path| PathBuf::from(path.to_string()))
             .collect();
