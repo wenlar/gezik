@@ -150,8 +150,8 @@ export component FileView inherits Rectangle {
 
     // Right edge of the Name column: a drag that starts right of it, on a row, selects with
     // a rectangle; from the name it is kept for dragging files (sub-project 4).
-    property <length> name-end: list.visible-width - root.side - root.col-modified - root.col-created - root.col-type
-        - root.col-size - root.gap * root.shown-columns;
+    property <length> name-end: max(root.side + 150px, list.visible-width - root.side - root.col-modified - root.col-created - root.col-type
+        - root.col-size - root.gap * root.shown-columns);
 
     property <bool> marquee-active;
     property <bool> marquee-additive;

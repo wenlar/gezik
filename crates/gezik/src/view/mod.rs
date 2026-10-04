@@ -137,13 +137,19 @@ impl View {
 
     /// The selection, focus and scroll, by name, for the history.
     pub fn capture(&self) -> ViewState {
+        self.capture_capped(MAX_REMEMBERED)
+    }
+
+    /// Like `capture`, but remembers every selected name (for a resort in place).
+    fn capture_all(&self) -> ViewState {
+        self.capture_capped(usize::MAX)
+    }
+
+    fn capture_capped(&self, max: usize) -> ViewState {
         let data = self.0.data.borrow();
         let name = |i: usize| data.listing.name_at(i).map(str::to_owned);
-        let selected = if data.selection.count() > MAX_REMEMBERED {
-            Vec::new()
-        } else {
-            data.selection.iter().filter_map(name).collect()
-        };
+        let selected =
+            if data.selection.count() > max { Vec::new() } else { data.selection.iter().filter_map(name).collect() };
         let scroll = self.0.window.upgrade().map_or(0.0, |w| w.get_list_scroll());
         ViewState { selected, focus: data.selection.focus().and_then(name), scroll }
     }
@@ -382,7 +388,7 @@ impl View {
 
     /// Sorts the current listing again, keeping the selection by name and the focus in view.
     fn resort(&self) {
-        let state = self.capture();
+        let state = self.capture_all();
         let listing = std::mem::take(&mut self.0.data.borrow_mut().listing);
         let listing = self.sorted(listing, false);
         let selection = restore_selection(&listing, &state);
@@ -541,6 +547,16 @@ mod tests {
         assert_eq!(limit_open(Vec::<u8>::new()), Ok(vec![]));
         assert_eq!(limit_open(vec![0; MAX_OPEN_AT_ONCE]).map(|v| v.len()), Ok(MAX_OPEN_AT_ONCE));
         assert_eq!(limit_open(vec![0; MAX_OPEN_AT_ONCE + 1]), Err("Select at most 15 items to open".to_owned()));
+    }
+
+    #[test]
+    fn restore_selection_keeps_more_than_the_history_cap() {
+        let names: Vec<String> = (0..2000).map(|i| format!("f{i:04}")).collect();
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        let listing = files("/x", &refs);
+        let state = ViewState { selected: names.clone(), focus: Some("f1500".into()), scroll: 0.0 };
+        let selection = restore_selection(&listing, &state);
+        assert_eq!((selection.count(), selection.focus()), (2000, Some(1500)));
     }
 
     #[test]
