@@ -67,12 +67,61 @@ fn validate_ids(extra: &[(u32, &str)]) -> Result<(), String> {
 unsafe fn context_menu_for(hwnd: HWND, target: &MenuTarget) -> windows::core::Result<IContextMenu> {
     match target {
         MenuTarget::Item(path) => unsafe { items_menu(hwnd, std::slice::from_ref(path)) },
-        MenuTarget::Items(paths) => unsafe { items_menu(hwnd, paths) },
+        MenuTarget::Items(paths) => match shared_parent(paths) {
+            Some((parent, names)) => unsafe { children_menu(hwnd, parent, &names) },
+            None => unsafe { items_menu(hwnd, paths) },
+        },
         MenuTarget::Background(path) => unsafe { background_menu(hwnd, path) },
     }
 }
 
-/// The menu of `paths`, which share one parent folder (as a selection does).
+/// The folder all of `paths` are in and their names; `None` if there is no such folder
+/// (drives, or paths from different folders).
+fn shared_parent(paths: &[PathBuf]) -> Option<(&Path, Vec<&std::ffi::OsStr>)> {
+    let parent = paths.first()?.parent()?;
+    let names: Option<Vec<_>> =
+        paths.iter().map(|path| path.file_name().filter(|_| path.parent() == Some(parent))).collect();
+    Some((parent, names?))
+}
+
+/// The menu of the entries `names` in `folder`. The folder is bound once and each name is
+/// parsed relative to it, so a selection of 100 000 files opens quickly.
+unsafe fn children_menu(hwnd: HWND, folder: &Path, names: &[&std::ffi::OsStr]) -> windows::core::Result<IContextMenu> {
+    let shell_folder = unsafe { bind_folder(folder)? };
+    let mut children: Vec<*mut ITEMIDLIST> = Vec::with_capacity(names.len());
+    let parsed = names.iter().try_for_each(|name| {
+        let mut child: *mut ITEMIDLIST = std::ptr::null_mut();
+        unsafe {
+            shell_folder.ParseDisplayName(hwnd, None, &HSTRING::from(*name), None, &mut child, std::ptr::null_mut())?
+        };
+        children.push(child);
+        Ok(())
+    });
+    // Separate from the parsing, so `?` cannot skip the CoTaskMemFree below.
+    let menu = parsed.and_then(|()| unsafe {
+        let children: Vec<*const ITEMIDLIST> = children.iter().map(|&c| c as *const ITEMIDLIST).collect();
+        shell_folder.GetUIObjectOf::<IContextMenu>(hwnd, &children, None)
+    });
+    for child in children {
+        unsafe { CoTaskMemFree(Some(child as *const _)) };
+    }
+    menu
+}
+
+/// `folder` as a shell folder (the desktop for the namespace root).
+unsafe fn bind_folder(folder: &Path) -> windows::core::Result<IShellFolder> {
+    let mut pidl: *mut ITEMIDLIST = std::ptr::null_mut();
+    unsafe { SHParseDisplayName(&HSTRING::from(folder.as_os_str()), None, &mut pidl, 0, None)? };
+    // The closure keeps `?` from skipping the CoTaskMemFree below.
+    let bound = (|| unsafe {
+        let desktop = SHGetDesktopFolder()?;
+        if (*pidl).mkid.cb == 0 { Ok(desktop) } else { desktop.BindToObject(pidl, None) }
+    })();
+    unsafe { CoTaskMemFree(Some(pidl as *const _)) };
+    bound
+}
+
+/// The menu of `paths` (one, or several from different folders), each parsed on its own.
 unsafe fn items_menu(hwnd: HWND, paths: &[PathBuf]) -> windows::core::Result<IContextMenu> {
     let mut pidls: Vec<*mut ITEMIDLIST> = Vec::with_capacity(paths.len());
     let parsed = paths.iter().try_for_each(|path| {
@@ -102,17 +151,7 @@ unsafe fn items_menu(hwnd: HWND, paths: &[PathBuf]) -> windows::core::Result<ICo
 
 /// The menu of empty space in `folder`'s listing.
 unsafe fn background_menu(hwnd: HWND, folder: &Path) -> windows::core::Result<IContextMenu> {
-    let mut pidl: *mut ITEMIDLIST = std::ptr::null_mut();
-    unsafe { SHParseDisplayName(&HSTRING::from(folder.as_os_str()), None, &mut pidl, 0, None)? };
-    // The closure keeps `?` from skipping the CoTaskMemFree below.
-    let menu = (|| unsafe {
-        let desktop = SHGetDesktopFolder()?;
-        let folder: windows::core::Result<IShellFolder> =
-            if (*pidl).mkid.cb == 0 { Ok(desktop) } else { desktop.BindToObject(pidl, None) };
-        folder.and_then(|f| f.CreateViewObject::<IContextMenu>(hwnd))
-    })();
-    unsafe { CoTaskMemFree(Some(pidl as *const _)) };
-    menu
+    unsafe { bind_folder(folder)?.CreateViewObject::<IContextMenu>(hwnd) }
 }
 
 unsafe fn track(
@@ -308,6 +347,41 @@ mod tests {
         assert!(background > 0, "background menu had {background} entries");
         let several = several.unwrap();
         assert!(several > 3, "multi-item menu had {several} entries");
+    }
+
+    #[test]
+    fn large_selections_open_quickly() {
+        let dir = std::env::temp_dir().join(format!("gezik-shell-menu-many-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let paths: Vec<PathBuf> = (0..2000)
+            .map(|i| {
+                let path = dir.join(format!("f{i}.txt"));
+                std::fs::write(&path, "x").unwrap();
+                path
+            })
+            .collect();
+        let started = std::time::Instant::now();
+        let items = count_items(&crate::MenuTarget::Items(paths));
+        let took = started.elapsed();
+        let missing = count_items(&crate::MenuTarget::Items(vec![dir.join("f1.txt"), dir.join("gone.txt")]));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(items.unwrap() > 3);
+        assert!(missing.is_err(), "a missing entry fails the menu");
+        eprintln!("2000-item menu: {took:?}");
+    }
+
+    #[test]
+    fn finds_the_shared_folder() {
+        let a = PathBuf::from(r"C:\x\a.txt");
+        let b = PathBuf::from(r"C:\x\b");
+        let both = [a.clone(), b];
+        let (parent, names) = shared_parent(&both).unwrap();
+        assert_eq!(parent, Path::new(r"C:\x"));
+        assert_eq!(names, [std::ffi::OsStr::new("a.txt"), std::ffi::OsStr::new("b")]);
+        assert!(shared_parent(&[a, PathBuf::from(r"C:\y\c")]).is_none());
+        assert!(shared_parent(&[PathBuf::from(r"C:\"), PathBuf::from(r"D:\")]).is_none());
+        assert!(shared_parent(&[]).is_none());
     }
 
     #[test]
