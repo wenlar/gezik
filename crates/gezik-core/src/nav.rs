@@ -100,6 +100,41 @@ impl History {
         self.back.push(previous);
         true
     }
+    /// Applies `step`. Returns `false` if it changed nothing.
+    pub fn step(&mut self, step: &Step) -> bool {
+        match step {
+            Step::Navigate(location) => self.navigate(location.clone()),
+            Step::Back => self.back(),
+            Step::Forward => self.forward(),
+        }
+    }
+    /// Where `steps` lead from here, without going there (to load it first); `None` if a
+    /// back or forward step has nowhere to go. A navigate to where the steps already are
+    /// is fine: it just changes nothing.
+    pub fn target_after(&self, steps: &[Step]) -> Option<Location> {
+        let mut history = self.clone();
+        for step in steps {
+            if !history.step(step) && !matches!(step, Step::Navigate(_)) {
+                return None;
+            }
+        }
+        Some(history.current.location)
+    }
+    /// Applies `steps` in order: all the moves that were queued while their target loaded.
+    pub fn apply_steps(&mut self, steps: &[Step]) {
+        for step in steps {
+            self.step(step);
+        }
+    }
+}
+
+/// One move in a tab's history. Moves made while an earlier one is still loading are
+/// queued after it and applied together once the final target has loaded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Step {
+    Navigate(Location),
+    Back,
+    Forward,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -449,6 +484,63 @@ mod tests {
         }
         assert_eq!(steps, MAX_BACK);
         assert_eq!(h.location(), &p("/5"));
+    }
+
+    // ---- Steps (moves queued while their target loads) ----
+
+    fn deep_history() -> History {
+        let mut h = History::new(p("/a"));
+        for path in ["/a/b", "/a/b/c", "/a/b/c/d"] {
+            h.navigate(p(path));
+        }
+        h
+    }
+
+    #[test]
+    fn three_queued_backs_go_three_steps_back() {
+        let mut h = deep_history();
+        let steps = [Step::Back, Step::Back, Step::Back];
+        assert_eq!(h.target_after(&steps[..1]), Some(p("/a/b/c")));
+        assert_eq!(h.target_after(&steps), Some(p("/a")));
+        assert_eq!(h.location(), &p("/a/b/c/d"), "computing a target changes nothing");
+        h.apply_steps(&steps);
+        assert_eq!(h.location(), &p("/a"));
+        assert!(!h.can_go_back());
+        assert_eq!(h.forward_target().unwrap().location, p("/a/b"));
+    }
+
+    #[test]
+    fn a_step_past_the_end_has_no_target() {
+        let h = deep_history();
+        assert_eq!(h.target_after(&[Step::Back, Step::Back, Step::Back, Step::Back]), None);
+        assert_eq!(h.target_after(&[Step::Forward]), None);
+        assert_eq!(h.target_after(&[Step::Back, Step::Forward]), Some(p("/a/b/c/d")));
+    }
+
+    #[test]
+    fn up_after_a_queued_navigate_goes_to_the_pending_targets_parent() {
+        let mut h = History::new(p("/a"));
+        let mut steps = vec![Step::Navigate(p("/x/y/z"))];
+        let pending = h.target_after(&steps).unwrap();
+        assert_eq!(pending, p("/x/y/z"));
+        steps.push(Step::Navigate(pending.parent().unwrap()));
+        assert_eq!(h.target_after(&steps), Some(p("/x/y")));
+        h.apply_steps(&steps);
+        assert_eq!(h.location(), &p("/x/y"));
+        h.back();
+        assert_eq!(h.location(), &p("/x/y/z"));
+        h.back();
+        assert_eq!(h.location(), &p("/a"));
+    }
+
+    #[test]
+    fn steps_whose_load_failed_change_nothing() {
+        // On failure the navigator never calls `apply_steps`: only `target_after` ran.
+        let h = deep_history();
+        let before = h.clone();
+        let _ = h.target_after(&[Step::Back, Step::Back]);
+        let _ = h.target_after(&[Step::Navigate(p("/elsewhere"))]);
+        assert_eq!(h, before);
     }
 
     // ---- Tabs ----

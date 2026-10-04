@@ -7,7 +7,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use gezik_core::nav::{Closed, Location, Tabs, ViewState, crumbs, nearest_existing};
+use gezik_core::nav::{Closed, Location, Step, Tabs, ViewState, crumbs, nearest_existing};
 use gezik_core::{Entry, format_size, list_dir};
 use gezik_platform::Drive;
 use slint::{ComponentHandle, Model, ModelNotify, ModelRc, ModelTracker, VecModel};
@@ -67,12 +67,12 @@ enum LoadResult {
 }
 
 /// Lists `location`. Runs on a background thread.
-fn list(location: &Location, mode: Mode) -> LoadResult {
+fn list(location: &Location, mode: &Mode) -> LoadResult {
     match location {
         Location::Drives => LoadResult::Drives(gezik_platform::drives()),
         Location::Path(path) => match list_dir(path) {
             Ok(entries) => LoadResult::Files(path.clone(), entries),
-            Err(err) if mode == Mode::Show && err.kind() == std::io::ErrorKind::NotFound => {
+            Err(err) if *mode == Mode::Show && err.kind() == std::io::ErrorKind::NotFound => {
                 LoadResult::Gone { fallback: nearest_existing(location, |p| p.is_dir()) }
             }
             Err(err) => LoadResult::Failed(err),
@@ -83,9 +83,9 @@ fn list(location: &Location, mode: Mode) -> LoadResult {
 /// The listing to show after a load of `location` failed. A failed `Show` leaves the tab at
 /// a location whose contents are unknown, so nothing listed for another folder (or tab) may
 /// stay on screen: it shows an empty listing for `location`. A failed move (navigate, back,
-/// forward) changes nothing, so the current listing stays.
-fn listing_after_failure(mode: Mode, location: &Location) -> Option<Listing> {
-    (mode == Mode::Show).then(|| match location {
+/// forward, up) changes nothing, so the current listing stays.
+fn listing_after_failure(mode: &Mode, location: &Location) -> Option<Listing> {
+    (*mode == Mode::Show).then(|| match location {
         Location::Path(path) => Listing::Files(path.clone(), Rc::default()),
         Location::Drives => Listing::Drives(Vec::new()),
     })
@@ -114,12 +114,11 @@ impl Listing {
 }
 
 /// How a successful load updates the history.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum Mode {
-    /// A new location: push it.
-    Navigate,
-    Back,
-    Forward,
+    /// Moves in the active tab's history, all applied once their final target has loaded
+    /// (none if it fails): more than one when back, forward or up came while one loaded.
+    Move(Vec<Step>),
     /// The active tab's current location (reload, tab switch): no history change.
     Show,
 }
@@ -140,6 +139,9 @@ struct Inner {
     start: Location,
     /// Bumped on every load so that results of an overtaken load are dropped.
     generation: Arc<AtomicU64>,
+    /// The history moves of the load started at this generation, so that back, forward
+    /// and up made while it loads go on from its target. Stale once the generation moved.
+    pending: Option<(u64, Vec<Step>)>,
     on_changed: Vec<Listener>,
 }
 
@@ -175,6 +177,7 @@ impl Navigator {
             tab_model,
             start,
             generation: Arc::default(),
+            pending: None,
             on_changed: Vec::new(),
         })))
     }
@@ -347,30 +350,50 @@ impl Navigator {
         self.update_chrome();
     }
 
+    /// Goes to `location` from the location on screen (a pending move is dropped: the
+    /// click or typed path was meant for what is shown).
     pub fn go(&self, location: Location) {
         self.save_view();
-        self.load(location, Mode::Navigate, None);
+        self.load(location.clone(), Mode::Move(vec![Step::Navigate(location)]), None);
     }
 
     pub fn back(&self) {
-        self.save_view();
-        let target = self.0.borrow().tabs.active().back_target().map(|e| e.location.clone());
-        if let Some(target) = target {
-            self.load(target, Mode::Back, None);
-        }
+        self.queue(|_| Some(Step::Back));
     }
 
     pub fn forward(&self) {
-        self.save_view();
-        let target = self.0.borrow().tabs.active().forward_target().map(|e| e.location.clone());
-        if let Some(target) = target {
-            self.load(target, Mode::Forward, None);
-        }
+        self.queue(|_| Some(Step::Forward));
     }
 
     pub fn up(&self) {
-        if let Some(parent) = self.active_location().parent() {
-            self.go(parent);
+        self.queue(|base| base.parent().map(Step::Navigate));
+    }
+
+    /// Adds the step `next` makes from `base` (where a pending move leads, else the current
+    /// location) after that pending move, and loads where they all lead. So pressing back
+    /// three times while a slow folder loads goes back three levels, not one.
+    fn queue(&self, next: impl FnOnce(&Location) -> Option<Step>) {
+        let mut steps = self.pending_steps();
+        let target = {
+            let inner = self.0.borrow();
+            let history = inner.tabs.active();
+            let Some(base) = history.target_after(&steps) else { return };
+            let Some(step) = next(&base) else { return };
+            steps.push(step);
+            history.target_after(&steps)
+        };
+        if let Some(target) = target {
+            self.save_view();
+            self.load(target, Mode::Move(steps), None);
+        }
+    }
+
+    /// The moves of the load still in flight, if its result would still apply.
+    fn pending_steps(&self) -> Vec<Step> {
+        let inner = self.0.borrow();
+        match &inner.pending {
+            Some((ticket, steps)) if *ticket == inner.generation.load(Ordering::SeqCst) => steps.clone(),
+            _ => Vec::new(),
         }
     }
 
@@ -439,16 +462,20 @@ impl Navigator {
     /// load overtaken by a newer one are dropped. `note`, if any, replaces the item count
     /// in the status bar once the listing is shown.
     fn load(&self, location: Location, mode: Mode, note: Option<String>) {
-        let (window, generation) = {
-            let inner = self.0.borrow();
-            (inner.window.clone(), inner.generation.clone())
+        let (window, generation, ticket) = {
+            let mut inner = self.0.borrow_mut();
+            let ticket = inner.generation.fetch_add(1, Ordering::SeqCst) + 1;
+            inner.pending = match &mode {
+                Mode::Move(steps) => Some((ticket, steps.clone())),
+                Mode::Show => None,
+            };
+            (inner.window.clone(), inner.generation.clone(), ticket)
         };
-        let ticket = generation.fetch_add(1, Ordering::SeqCst) + 1;
         if let Some(w) = window.upgrade() {
             w.set_status("Loading…".into());
         }
         std::thread::spawn(move || {
-            let result = list(&location, mode);
+            let result = list(&location, &mode);
             let _ = window.upgrade_in_event_loop(move |_| {
                 if generation.load(Ordering::SeqCst) != ticket {
                     return;
@@ -459,6 +486,8 @@ impl Navigator {
     }
 
     fn finish_load(&self, location: Location, mode: Mode, result: LoadResult, note: Option<String>) {
+        // This was the pending load (an overtaken one never gets here).
+        self.0.borrow_mut().pending = None;
         let shown = match &location {
             Location::Path(p) => p.display().to_string(),
             Location::Drives => "This PC".to_owned(),
@@ -468,26 +497,19 @@ impl Navigator {
             LoadResult::Drives(drives) => Listing::Drives(drives),
             LoadResult::Gone { fallback } => {
                 // The active tab's folder is gone: go to the nearest folder that still exists.
-                self.show_failed(mode, &location, String::new());
-                self.load(fallback, Mode::Navigate, Some(format!("{shown} no longer exists")));
+                self.show_failed(&mode, &location, String::new());
+                let step = Step::Navigate(fallback.clone());
+                self.load(fallback, Mode::Move(vec![step]), Some(format!("{shown} no longer exists")));
                 return;
             }
-            LoadResult::Failed(err) => return self.show_failed(mode, &location, format!("Cannot open {shown}: {err}")),
+            LoadResult::Failed(err) => {
+                return self.show_failed(&mode, &location, format!("Cannot open {shown}: {err}"));
+            }
         };
         {
             let mut inner = self.0.borrow_mut();
-            let history = inner.tabs.active_mut();
-            match mode {
-                Mode::Navigate => {
-                    history.navigate(location);
-                }
-                Mode::Back => {
-                    history.back();
-                }
-                Mode::Forward => {
-                    history.forward();
-                }
-                Mode::Show => {}
+            if let Mode::Move(steps) = &mode {
+                inner.tabs.active_mut().apply_steps(steps);
             }
             inner.listing = listing;
             inner.cleared = false;
@@ -497,7 +519,7 @@ impl Navigator {
     }
 
     /// Shows `message` for a failed load; see [`listing_after_failure`].
-    fn show_failed(&self, mode: Mode, location: &Location, message: String) {
+    fn show_failed(&self, mode: &Mode, location: &Location, message: String) {
         let Some(listing) = listing_after_failure(mode, location) else { return self.status(message) };
         {
             let mut inner = self.0.borrow_mut();
@@ -626,6 +648,16 @@ mod tests {
         }
     }
 
+    /// One of each kind of history move.
+    fn moves() -> [Mode; 4] {
+        [
+            Mode::Move(vec![Step::Navigate(Location::Drives)]),
+            Mode::Move(vec![Step::Back]),
+            Mode::Move(vec![Step::Forward]),
+            Mode::Move(vec![Step::Back, Step::Back]),
+        ]
+    }
+
     fn tab(title: &str, active: bool) -> TabItem {
         TabItem { title: title.into(), active }
     }
@@ -649,7 +681,7 @@ mod tests {
     fn list_reads_folders() {
         let tmp = TempDir::new("list");
         std::fs::write(tmp.0.join("a.txt"), "x").expect("write");
-        match list(&Location::Path(tmp.0.clone()), Mode::Navigate) {
+        match list(&Location::Path(tmp.0.clone()), &Mode::Show) {
             LoadResult::Files(path, entries) => {
                 assert_eq!(path, tmp.0);
                 assert_eq!(entries.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), ["a.txt"]);
@@ -662,7 +694,7 @@ mod tests {
     fn a_vanished_folder_on_show_falls_back_to_its_nearest_existing_ancestor() {
         let tmp = TempDir::new("gone");
         let gone = Location::Path(tmp.0.join("one").join("two"));
-        match list(&gone, Mode::Show) {
+        match list(&gone, &Mode::Show) {
             LoadResult::Gone { fallback } => assert_eq!(fallback, Location::Path(tmp.0.clone())),
             other => panic!("unexpected {other:?}"),
         }
@@ -672,8 +704,8 @@ mod tests {
     fn a_missing_folder_on_navigate_is_an_error() {
         let tmp = TempDir::new("missing");
         let missing = Location::Path(tmp.0.join("nope"));
-        for mode in [Mode::Navigate, Mode::Back, Mode::Forward] {
-            match list(&missing, mode) {
+        for mode in moves() {
+            match list(&missing, &mode) {
                 LoadResult::Failed(err) => assert_eq!(err.kind(), std::io::ErrorKind::NotFound),
                 other => panic!("unexpected {other:?} for {mode:?}"),
             }
@@ -685,13 +717,13 @@ mod tests {
         let tmp = TempDir::new("file");
         let file = tmp.0.join("f.txt");
         std::fs::write(&file, "x").expect("write");
-        assert!(matches!(list(&Location::Path(file), Mode::Show), LoadResult::Failed(_)));
+        assert!(matches!(list(&Location::Path(file), &Mode::Show), LoadResult::Failed(_)));
     }
 
     #[test]
     fn a_failed_show_empties_the_listing_for_that_location() {
         let place = Location::Path(PathBuf::from("/x/locked"));
-        match listing_after_failure(Mode::Show, &place) {
+        match listing_after_failure(&Mode::Show, &place) {
             Some(Listing::Files(path, entries)) => {
                 assert_eq!(path, PathBuf::from("/x/locked"));
                 assert!(entries.is_empty());
@@ -699,15 +731,15 @@ mod tests {
             _ => panic!("expected an empty listing"),
         }
         assert!(
-            matches!(listing_after_failure(Mode::Show, &Location::Drives), Some(Listing::Drives(d)) if d.is_empty())
+            matches!(listing_after_failure(&Mode::Show, &Location::Drives), Some(Listing::Drives(d)) if d.is_empty())
         );
     }
 
     #[test]
     fn a_failed_move_keeps_the_current_listing() {
         let place = Location::Path(PathBuf::from("/x/locked"));
-        for mode in [Mode::Navigate, Mode::Back, Mode::Forward] {
-            assert!(listing_after_failure(mode, &place).is_none(), "{mode:?}");
+        for mode in moves() {
+            assert!(listing_after_failure(&mode, &place).is_none(), "{mode:?}");
         }
     }
 }
