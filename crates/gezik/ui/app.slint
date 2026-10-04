@@ -57,6 +57,9 @@ export component AppWindow inherits Window {
     callback rename-blurred(string, int);
     in property <int> rename-generation;
     out property <bool> rename-focused: file-view.rename-focused;
+    // The rename field held the keyboard last, even if its row scrolled out: whether ending
+    // the rename must give the keyboard back to the list. Rust clears it when a rename ends.
+    in-out property <bool> rename-field-focused;
     // The View button, with the window position for its menu.
     callback view-menu(length, length);
     in-out property <string> current-path;
@@ -392,6 +395,7 @@ export component AppWindow inherits Window {
                     rename-edited(t) => { root.rename-edited(t); }
                     rename-blurred(t, g) => { root.rename-blurred(t, g); }
                     rename-generation: root.rename-generation;
+                    rename-has-focus <=> root.rename-field-focused;
                     col-size <=> root.col-size;
                     sort-column: root.sort-column;
                     sort-desc: root.sort-desc;
