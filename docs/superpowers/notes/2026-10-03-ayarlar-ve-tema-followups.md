@@ -85,3 +85,4 @@ Alt proje 1 tamamlandıktan sonra bilerek ertelenen maddeler. Kaynak: görev inc
 - Bir önceki işin takılan sürücü sorgusu (örn. kopmuş ağ sürücüsü) sonraki işleri bloke ediyor.
 - Windows çöpü, adının bir bileşeni nokta veya boşlukla biten yolları reddediyor (Shell kardeş bir öğe üzerinde işlem yapardı).
 - Kalıcı silmede, geri koyma yeniden adlandırması da başarısız olursa gizli klasör artığı kalabilir.
+- Spec'teki "kalıcı silmede Explorer'dan ≥ 3 kat hızlı" hedefi ölçülmedi: taban çizgisi olarak yalnız `rd /s /q` kullanıldı; Explorer'da Shift+Del süresinin elle tutulması bekliyor.

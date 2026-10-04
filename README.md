@@ -124,7 +124,7 @@ elsewhere, `""` disables one). Ctrl+wheel in a folder changes the grid or icon s
 
 The file list keys are fixed: arrow keys, PgUp/PgDn, Home/End move the focus; Shift with
 them extends the selection; Ctrl with the arrows moves the focus without selecting;
-Ctrl+Space toggles the focused item; Enter opens the selection; Esc clears it. Type a
+Ctrl+Space toggles the focused item; Enter opens the selection (on macOS Enter renames and ⌘↓ opens); Esc clears it. Type a
 name's first letters to jump to it. In quick look, the arrows move through the folder
 and Space or Esc closes it.
 
