@@ -5,6 +5,7 @@ mod control;
 mod engine;
 mod run;
 mod task;
+mod tasks;
 #[cfg(test)]
 mod testing;
 pub mod walk;
@@ -15,3 +16,4 @@ pub use task::{
     ChangedSince, NoTrash, Outcome, PlanItem, Resources, RunCx, ScanSink, Stage, Task, TaskKind, Work, changed_since,
     facts_after, no_trash, unchanged,
 };
+pub use tasks::{CopyTask, MoveTask};
