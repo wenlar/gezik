@@ -370,9 +370,10 @@ impl View {
         }
         self.0.rename_folder.borrow_mut().take();
         if let Some(window) = self.0.window.upgrade() {
+            let had_focus = window.get_rename_focused();
             window.set_renaming_index(-1);
             window.set_rename_error("".into());
-            if refocus {
+            if refocus || had_focus {
                 window.invoke_focus_list();
             }
         }

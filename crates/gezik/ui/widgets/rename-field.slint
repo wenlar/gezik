@@ -18,8 +18,10 @@ export component RenameField inherits Rectangle {
     // recreated while scrolling, and must select only when a rename starts.
     in property <int> generation;
     in-out property <int> applied: -1;
+    // Whether the input has the focus (written here, read by the view).
+    in-out property <bool> focused;
 
-    // Esc or Tab ended it: losing the focus right after does not accept again.
+    // Esc ended it: losing the focus right after does not accept again.
     property <bool> done;
 
     background: Theme.background;
@@ -38,8 +40,6 @@ export component RenameField inherits Rectangle {
                 return accept;
             }
             if event.text == Key.Tab || event.text == Key.Backtab {
-                // A name that cannot be used keeps the field open: a later blur still counts.
-                root.done = !root.invalid;
                 root.tab(input.text, event.modifiers.shift || event.text == Key.Backtab);
                 return accept;
             }
@@ -59,6 +59,7 @@ export component RenameField inherits Rectangle {
             selection-foreground-color: Theme.selection-foreground;
             init => {
                 self.focus();
+                root.focused = self.has-focus;
                 if root.applied != root.generation {
                     root.applied = root.generation;
                     self.set-selection-offsets(0, root.select-end);
@@ -72,6 +73,7 @@ export component RenameField inherits Rectangle {
                 root.accepted(self.text);
             }
             changed has-focus => {
+                root.focused = self.has-focus;
                 if !self.has-focus && !root.done {
                     root.done = true;
                     root.blurred(self.text);

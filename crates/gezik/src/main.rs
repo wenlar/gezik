@@ -91,7 +91,7 @@ fn handle_key(
         return false;
     }
     // The name field being edited has the keyboard (Enter, Esc, Tab are its own).
-    if view.renaming().is_some() {
+    if ops.end_unfocused_rename() {
         return false;
     }
     let editing = window.get_path_editing();
@@ -497,7 +497,9 @@ fn main() -> Result<(), slint::PlatformError> {
     });
     window.on_item_pressed({
         let view = view.clone();
+        let ops = ops.clone();
         move |i, ctrl, shift| {
+            ops.end_unfocused_rename();
             if let Ok(index) = usize::try_from(i) {
                 view.press(index, ctrl, shift);
             }
@@ -513,7 +515,9 @@ fn main() -> Result<(), slint::PlatformError> {
     });
     window.on_background_pressed({
         let view = view.clone();
+        let ops = ops.clone();
         move |ctrl| {
+            ops.end_unfocused_rename();
             if !ctrl {
                 view.clear_selection();
             }
