@@ -47,3 +47,20 @@ Alt proje 1 tamamlandıktan sonra bilerek ertelenen maddeler. Kaynak: görev inc
 - Dar sekmede üzerine gelince × yer aldığı için başlık yeniden kısalıyor.
 - Kaydırma CPU'su sınırda (~499 ms / 2,6 sn, hedef ~480); ölçüm sırasında bilgisayar kullanılıyordu, tekrar ölçülmeli.
 - Test edilemeyenler: USB bellek takma/çıkarma, ağ sürücüsü / bağlantısı kopmuş Z:, ekran okuyucu, macOS.
+
+## Görünüm sonrası (2026-10-04)
+
+- macOS ve Linux'ta sistem ikonları yok (Gezik ikonları kullanılıyor); macOS'ta tür adı uzantıdan; iki sistemde de küçük resimler yalnızca Gezik'in çözdüğü png/jpeg/gif/webp/bmp. Linux tür adları (shared-mime-info) ve tarih biçimi denenmedi. macOS/Linux'a özgü kod (cfg) yalnızca Windows hedefiyle derlendi, hiç derlenip çalıştırılmadı.
+- Sütunlar sığmayınca yatay kaydırma yok (sağdaki sütunlar kırpılıyor); sütunları sürükleyerek sıralama ve çift tıkla otomatik genişlik yok.
+- Seçili bir öğeye (çoklu seçim içinde) basmak seçimi hemen tek öğeye indiriyor; sürükle-bırak (Alt proje 4) için seçimin bırakmada daralması gerekecek.
+- Ekran ölçeği değişince (pencereyi başka monitöre taşımak) ikon boyutu bir sonraki klasör gösterimine kadar eskisi kalıyor.
+- Küçük resimlerin alfa kanalı önceden çarpılmış olabilir; saydam PNG küçük resimlerinde kenarlar koyu görünebilir. Tamamen saydam (alfa 0) 32 bit ikon/küçük resim opak yapılıyor.
+- Windows önizleme işleyicileri (PDF/Office canlı görüntüleme) yok; sistem küçük resmi gösteriliyor.
+- Çerçeve seçimi bir satırdan başlayıp o satır ekrandan çıkınca işaretçi yakalaması kaybolabiliyor; satırlar ve arka plan `move`/`up` olaylarını izleyerek telafi ediyor — farklı Slint sürümlerinde yeniden doğrulanmalı. Bırakma listenin dışında olursa çerçeve, bir sonraki tuş bırakılışına kadar takılı kalabilir.
+- Hızlı bakış penceresi ana pencerenin ortasında açılıyor; çok monitörlü kurulumlarda ekran dışına taşma kontrolü yok. Kapatınca odak listeye açıkça döndürülmüyor; seçim boşken Space boş pencere açıyor; ana pencere kapanırken açık hızlı bakış uygulamayı canlı tutabilir (kontrol edilmedi).
+- Çoklu "Open" / Enter 15 öğeyle sınırlı; menüdeki sınır klasörleri de sayıyor, Enter yalnızca dosyaları sayıyor.
+- Ctrl+tekerlek ızgara boşluklarında yakınlaştırmak yerine kaydırıyor; dokunmatik yüzey kıstırması boyutları sıçratabilir. "Reset this folder" Bu Bilgisayar'da etkisiz. Klasör açmak "son kullanılan"ı kalıcılaştırmıyor.
+- Sıralama durumu sekme başına değil görünüm geneli; klasör başına yalnızca `views.toml` ile saklanıyor.
+- Bilinen küçük eksikler: `ByteLru` çıkarma taraması çok küçük resimde O(n); uzantı başına önbellekler sınırsız; NUL içermeyen ikili dosyalar değiştirme karakterleriyle metin gösteriliyor; önizlemede 64 KB'lık kaydırmalı metin yerleşimi maliyeti ölçülmedi.
+- Ekranda doğrulanamayanlar (masaüstü kilitliydi; yalnızca derleme, testler ve kod incelemesi): ızgara ve liste çizimi, Ctrl+tekerlek yakınlaştırma, çerçeve seçimi, klavye seçimi, önizleme paneli ve hızlı bakış penceresi, görünüm menüsü, ikon/küçük resim yükleme, sütun yeniden boyutlandırma, tema renkleri (icon-*, focus-ring, marquee). Elle gözden geçirilmeli.
+- Performans ölçümleri (sürüm derlemesi, Windows 11; masaüstü kilitli olduğu için kaydırma/PgDn adımları çalışmadı): açılış 24-35 ms (hedef ~60); boşta 7,8 MB (hedef ≤ 7, **aşıldı**; görünüm işinden önce 5,0 MB — +2,8 MB'ın nedeni araştırılmadı, şüpheli: görüntü çözücüler, ikon/küçük resim hattı, ek iş parçacıkları); 100 bin dosya yüklendikten sonra 17,2 MB (hedef ~18, tamam); 100 bin ad sıralama 39 ms (hedef 50, tamam; ilk sürümde aşıyordu, düzeltildi); kaydırma CPU'su, ızgara + 1000 fotoğraf belleği (`grid.ps1` boşta 8,2 MB verdi ama sayfalama çalışmadığı için anlamsız) ve 1/20 sekme farkı ölçülemedi — kilitli olmayan masaüstünde tekrar çalıştırılmalı (`scripts/perf/stress.ps1`, `grid.ps1`, `tabs.ps1 -Method SendKeys`). Task 13 sırasında elle bakılan ızgara örnekleri ~51,6 MB gösterdi (büyük küçük resimli klasör; hedef ~50 sınırında).
