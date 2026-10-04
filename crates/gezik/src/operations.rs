@@ -13,7 +13,11 @@ use gezik_config::settings::FilesSettings;
 use gezik_core::format_size;
 use gezik_core::ops::paths::same_path;
 use gezik_core::ops::rate::{Rate, format_eta, format_rate};
-use gezik_ops::{Engine, Event, JobId, JobState, PauseReason, Progress, Report, Settings, Task};
+use gezik_ops::{
+    CopyTask, DeleteTask, Engine, Event, JobId, JobState, MoveTask, NewTask, PauseReason, Progress, Report, Settings,
+    Task, TrashTask,
+};
+use gezik_platform::clipboard::{self, ClipboardError, ClipboardFiles};
 use gezik_platform::taskbar::{Taskbar, TaskbarState};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
@@ -157,6 +161,14 @@ pub fn result_names(results: &[PathBuf], folder: &Path) -> Vec<String> {
         .collect()
 }
 
+/// `notlar.txt`, or `3 items` (for questions like "Delete 3 items permanently?").
+pub fn items_text(paths: &[PathBuf]) -> String {
+    match paths {
+        [one] => one.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| one.display().to_string()),
+        many => format!("{} items", many.len()),
+    }
+}
+
 thread_local! {
     static CURRENT: RefCell<Option<Operations>> = const { RefCell::new(None) };
 }
@@ -255,6 +267,12 @@ struct Inner {
     asked: RefCell<HashSet<JobId>>,
     /// A new entry to rename once its folder shows it.
     rename_when_shown: RefCell<Option<PathBuf>>,
+    /// What Gezik put on the clipboard (the only clipboard where the system has none for files).
+    clip: RefCell<Option<ClipboardFiles>>,
+    /// Paths on the clipboard as cut (faded in the list), and the clipboard's change number
+    /// when that was read.
+    cut: RefCell<Vec<PathBuf>>,
+    clip_sequence: Cell<u64>,
 }
 
 #[derive(Clone)]
@@ -302,12 +320,17 @@ impl Operations {
             taskbar: RefCell::default(),
             asked: RefCell::default(),
             rename_when_shown: RefCell::default(),
+            clip: RefCell::default(),
+            cut: RefCell::default(),
+            clip_sequence: Cell::new(0),
         }));
         ops.0.view.on_shown({
             let weak = Rc::downgrade(&ops.0);
             move || {
                 if let Some(inner) = weak.upgrade() {
-                    Operations(inner).folder_shown();
+                    let ops = Operations(inner);
+                    ops.folder_shown();
+                    ops.update_cut();
                 }
             }
         });
@@ -472,8 +495,187 @@ impl Operations {
     /// A new folder in `dir` (else the folder shown), renamed right away.
     pub fn new_folder(&self, dir: Option<PathBuf>) {
         if let Some(dir) = dir.or_else(|| self.0.view.folder()) {
-            self.submit(Box::new(gezik_ops::NewTask::folder(&dir)), None, After::Rename);
+            self.submit(Box::new(NewTask::folder(&dir)), None, After::Rename);
         }
+    }
+
+    /// Ctrl+C / Ctrl+X on the selection.
+    pub fn copy(&self, cut: bool) {
+        self.copy_paths(self.0.view.selected_paths(), cut);
+    }
+
+    pub fn copy_paths(&self, paths: Vec<PathBuf>, cut: bool) {
+        if paths.is_empty() {
+            return;
+        }
+        match clipboard::write_files(&paths, cut) {
+            Ok(()) | Err(ClipboardError::Unsupported) => {}
+            Err(ClipboardError::Failed(why)) => return self.0.view.note(format!("Cannot use the clipboard: {why}")),
+        }
+        *self.0.cut.borrow_mut() = if cut { paths.clone() } else { Vec::new() };
+        *self.0.clip.borrow_mut() = Some(ClipboardFiles { paths, cut });
+        self.0.clip_sequence.set(clipboard::sequence());
+        self.update_cut();
+    }
+
+    /// What paste would take: the system clipboard, or Gezik's own where the system has none.
+    fn clipboard(&self) -> Option<ClipboardFiles> {
+        match clipboard::read_files() {
+            Ok(files) => files,
+            Err(ClipboardError::Unsupported) => self.0.clip.borrow().clone(),
+            Err(ClipboardError::Failed(_)) => None,
+        }
+    }
+
+    pub fn can_paste(&self) -> bool {
+        self.clipboard().is_some()
+    }
+
+    /// Ctrl+V: into `into` (a folder's menu) or the folder shown. Cut items move; `force_move`
+    /// moves copied ones too (macOS Cmd+Option+V).
+    pub fn paste(&self, into: Option<PathBuf>, force_move: bool) {
+        let Some(dir) = into.or_else(|| self.0.view.folder()) else { return };
+        let Some(ClipboardFiles { paths, cut }) = self.clipboard() else { return };
+        let moving = cut || force_move;
+        let retry: Retry = {
+            let (paths, dir) = (paths.clone(), dir.clone());
+            Rc::new(move || -> Box<dyn Task> {
+                if moving {
+                    Box::new(MoveTask::into(paths.clone(), &dir))
+                } else {
+                    Box::new(CopyTask::into(paths.clone(), &dir))
+                }
+            })
+        };
+        self.submit(retry(), Some(retry), After::Select);
+        if cut {
+            // Pasted: cut items are no longer waiting anywhere (also Explorer's own).
+            let _ = clipboard::clear();
+            self.0.clip.borrow_mut().take();
+            self.0.cut.borrow_mut().clear();
+            self.0.clip_sequence.set(clipboard::sequence());
+            self.update_cut();
+        }
+    }
+
+    /// The clipboard may have changed in another program: re-read what is cut there (when
+    /// the window gets the focus, and before a menu).
+    pub fn clipboard_check(&self) {
+        let sequence = clipboard::sequence();
+        if sequence == 0 || sequence == self.0.clip_sequence.get() {
+            return;
+        }
+        self.0.clip_sequence.set(sequence);
+        let cut = match clipboard::read_files() {
+            Ok(Some(files)) if files.cut => files.paths,
+            _ => Vec::new(),
+        };
+        *self.0.cut.borrow_mut() = cut;
+        self.update_cut();
+    }
+
+    /// Fades the cut items of the folder shown.
+    fn update_cut(&self) {
+        let names: HashSet<String> = match self.0.view.folder() {
+            Some(folder) => result_names(&self.0.cut.borrow(), &folder).into_iter().collect(),
+            None => HashSet::new(),
+        };
+        self.0.view.set_cut_names(names);
+    }
+
+    /// Delete / Shift+Delete on the selection.
+    pub fn trash(&self, permanent: bool) {
+        self.trash_paths(self.0.view.selected_paths(), permanent);
+    }
+
+    pub fn trash_paths(&self, paths: Vec<PathBuf>, permanent: bool) {
+        if paths.is_empty() {
+            return;
+        }
+        let what = items_text(&paths);
+        let ops = self.clone();
+        if permanent {
+            self.0.dialogs.ask(
+                format!("Delete {what} permanently?"),
+                "This cannot be undone.",
+                &["Delete", "Cancel"],
+                move |choice| {
+                    if choice == Some(0) {
+                        ops.delete_now(paths);
+                    }
+                },
+            );
+        } else if self.0.files.get().confirm_trash {
+            let bin = if cfg!(windows) { "Recycle Bin" } else { "Trash" };
+            self.0.dialogs.ask(format!("Move {what} to the {bin}?"), "", &["Delete", "Cancel"], move |choice| {
+                if choice == Some(0) {
+                    ops.trash_now(paths);
+                }
+            });
+        } else {
+            self.trash_now(paths);
+        }
+    }
+
+    fn hide(&self, paths: &[PathBuf]) {
+        if let Some(folder) = self.0.view.folder() {
+            self.0.view.hide_names(&result_names(paths, &folder));
+        }
+    }
+
+    fn trash_now(&self, paths: Vec<PathBuf>) {
+        self.hide(&paths);
+        let retry: Retry = {
+            let paths = paths.clone();
+            Rc::new(move || -> Box<dyn Task> { Box::new(TrashTask::new(paths.clone())) })
+        };
+        self.submit(retry(), Some(retry), After::Nothing);
+    }
+
+    fn delete_now(&self, paths: Vec<PathBuf>) {
+        self.hide(&paths);
+        let pending = self.0.engine.pending_deletes();
+        let retry: Retry = {
+            let paths = paths.clone();
+            Rc::new(move || -> Box<dyn Task> { Box::new(DeleteTask::new(paths.clone(), pending.clone())) })
+        };
+        self.submit(retry(), Some(retry), After::Nothing);
+    }
+
+    /// A copy of each selected item next to it.
+    pub fn duplicate(&self) {
+        let paths = self.0.view.selected_paths();
+        if paths.is_empty() {
+            return;
+        }
+        let retry: Retry = Rc::new(move || -> Box<dyn Task> { Box::new(CopyTask::duplicate(paths.clone())) });
+        self.submit(retry(), Some(retry), After::Select);
+    }
+
+    pub fn new_file(&self, dir: Option<PathBuf>) {
+        if let Some(dir) = dir.or_else(|| self.0.view.folder()) {
+            self.submit(Box::new(NewTask::file(&dir)), None, After::Rename);
+        }
+    }
+
+    pub fn undo(&self) {
+        if self.0.engine.undo().is_none() {
+            self.0.view.note("Nothing to undo".to_owned());
+        }
+    }
+
+    pub fn redo(&self) {
+        if self.0.engine.redo().is_none() {
+            self.0.view.note("Nothing to redo".to_owned());
+        }
+    }
+
+    pub fn undo_label(&self) -> Option<String> {
+        self.0.engine.undo_label()
+    }
+
+    pub fn redo_label(&self) -> Option<String> {
+        self.0.engine.redo_label()
     }
 
     /// Finishes deletes an earlier run left unfinished.
@@ -627,7 +829,7 @@ impl Operations {
             move |choice| {
                 if choice == Some(0) {
                     let pending = ops.0.engine.pending_deletes();
-                    ops.submit(Box::new(gezik_ops::DeleteTask::new(paths, pending)), None, After::Nothing);
+                    ops.submit(Box::new(DeleteTask::new(paths, pending)), None, After::Nothing);
                 }
             },
         );
@@ -851,6 +1053,12 @@ mod tests {
         );
         assert_eq!(taskbar_progress(&[(RowState::Running, 0.5), (RowState::Deciding, 0.1)]).0, TaskbarState::Paused);
         assert_eq!(taskbar_progress(&[(RowState::Paused, 0.5), (RowState::Failed, 1.0)]).0, TaskbarState::Error);
+    }
+
+    #[test]
+    fn items_read_well_in_questions() {
+        assert_eq!(items_text(&[PathBuf::from("/a/notlar.txt")]), "notlar.txt");
+        assert_eq!(items_text(&[PathBuf::from("/a"), PathBuf::from("/b")]), "2 items");
     }
 
     #[test]

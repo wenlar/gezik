@@ -19,6 +19,8 @@ export struct FileRow {
     selected: bool,
     // Has the keyboard focus; the ring shows only while the view has the keyboard.
     focused: bool,
+    // On the clipboard as cut: drawn faded until it is pasted.
+    cut: bool,
 }
 
 // One line of the view: one entry in the list, a row of cells in the grid.
@@ -481,6 +483,7 @@ export component FileView inherits Rectangle {
                             FileIcon {
                                 width: Theme.icon-size;
                                 height: Theme.icon-size;
+                                opacity: entry.file.cut ? 0.5 : 1;
                                 kind: entry.file.kind;
                                 picture: entry.file.icon;
                                 has-picture: entry.file.has-icon;
@@ -488,6 +491,7 @@ export component FileView inherits Rectangle {
                         }
                         if entry.index != root.renaming-index: Text {
                             text: entry.file.name;
+                            opacity: entry.file.cut ? 0.5 : 1;
                             vertical-alignment: center;
                             horizontal-stretch: 1;
                             overflow: elide;
@@ -581,6 +585,7 @@ export component FileView inherits Rectangle {
                             y: 10px;
                             width: root.picture-size;
                             height: root.picture-size;
+                            opacity: tile.cell.cut ? 0.5 : 1;
                             kind: tile.cell.kind;
                             picture: tile.cell.icon;
                             has-picture: tile.cell.has-icon;
@@ -592,6 +597,7 @@ export component FileView inherits Rectangle {
                             width: parent.width - 16px;
                             height: parent.height - self.y - 8px;
                             text: tile.cell.name;
+                            opacity: tile.cell.cut ? 0.5 : 1;
                             wrap: word-wrap;
                             overflow: elide;
                             horizontal-alignment: center;
