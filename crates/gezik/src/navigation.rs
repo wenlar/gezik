@@ -108,6 +108,9 @@ struct Inner {
     /// The history moves of the load started at this generation, so that back, forward
     /// and up made while it loads go on from its target. Stale once the generation moved.
     pending: Option<(u64, Vec<Step>)>,
+    /// The generation of a load the user started (navigation, tab switch); a quiet refresh
+    /// must not overtake it.
+    user_load: Option<u64>,
     on_changed: Vec<Listener>,
 }
 
@@ -148,6 +151,7 @@ impl Navigator {
             start,
             generation: Arc::default(),
             pending: None,
+            user_load: None,
             on_changed: Vec::new(),
         })))
     }
@@ -377,10 +381,18 @@ impl Navigator {
     /// Reloads the active tab if it shows one of `dirs` (a file operation changed them),
     /// keeping the scroll and selecting `select` (by name) if given. The status bar does not
     /// flash "Loading…".
-    pub fn refresh_showing(&self, dirs: &[PathBuf], select: &[String]) {
-        let Location::Path(current) = self.active_location() else { return };
-        if self.0.borrow().cleared || !dirs.iter().any(|dir| gezik_core::ops::paths::same_path(dir, &current)) {
-            return;
+    /// `note`, if any, shows in the status bar once the listing is back. Returns whether a
+    /// reload started; none does while a load the user started is under way (it would
+    /// overtake it).
+    pub fn refresh_showing(&self, dirs: &[PathBuf], select: &[String], note: Option<String>) -> bool {
+        let Location::Path(current) = self.active_location() else { return false };
+        {
+            let inner = self.0.borrow();
+            let user_loading = inner.user_load == Some(inner.generation.load(Ordering::SeqCst));
+            if inner.cleared || user_loading || !dirs.iter().any(|dir| gezik_core::ops::paths::same_path(dir, &current))
+            {
+                return false;
+            }
         }
         self.save_view();
         if !select.is_empty() {
@@ -390,7 +402,8 @@ impl Navigator {
             view.focus = select.first().cloned();
             inner.tabs.active_mut().set_view(view);
         }
-        self.load_with(Location::Path(current), Mode::Show, None, false);
+        self.load_with(Location::Path(current), Mode::Show, note, false);
+        true
     }
 
     /// Path of entry `index` and whether it is a folder (drives count as folders).
@@ -485,6 +498,7 @@ impl Navigator {
                 Mode::Move(steps) => Some((ticket, steps.clone())),
                 Mode::Show => None,
             };
+            inner.user_load = loading_text.then_some(ticket);
             (inner.window.clone(), inner.generation.clone(), ticket)
         };
         if loading_text && let Some(w) = window.upgrade() {
@@ -503,7 +517,11 @@ impl Navigator {
 
     fn finish_load(&self, location: Location, mode: Mode, result: LoadResult, note: Option<String>) {
         // This was the pending load (an overtaken one never gets here).
-        self.0.borrow_mut().pending = None;
+        {
+            let mut inner = self.0.borrow_mut();
+            inner.pending = None;
+            inner.user_load = None;
+        }
         let shown = match &location {
             Location::Path(p) => p.display().to_string(),
             Location::Drives => "This PC".to_owned(),
