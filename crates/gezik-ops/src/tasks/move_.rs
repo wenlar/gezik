@@ -3,6 +3,7 @@
 
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use gezik_core::ops::conflict::Facts;
 use gezik_core::ops::paths::{is_within, same_path};
@@ -29,6 +30,8 @@ pub struct MoveTask {
     kind: TaskKind,
     /// Undo: missing parent folders are made again.
     back: bool,
+    /// Tests only: plan as if the target were on another drive.
+    cross: bool,
 }
 
 impl MoveTask {
@@ -40,20 +43,20 @@ impl MoveTask {
                 (source, target)
             })
             .collect();
-        MoveTask { expect: vec![None; pairs.len()], pairs, kind: TaskKind::Move, back: false }
+        MoveTask { expect: vec![None; pairs.len()], pairs, kind: TaskKind::Move, back: false, cross: false }
     }
 
     /// Renames `path` to `name` in its folder.
     pub fn rename(path: PathBuf, name: &str) -> MoveTask {
         let target = path.with_file_name(name);
-        MoveTask { pairs: vec![(path, target)], expect: vec![None], kind: TaskKind::Rename, back: false }
+        MoveTask { pairs: vec![(path, target)], expect: vec![None], kind: TaskKind::Rename, back: false, cross: false }
     }
 
     /// Moves items back where they came from: (where it is, where it was, how it must look).
-    #[allow(dead_code)] // first used by undo (Task 11)
+    #[expect(dead_code, reason = "first used by undo (Task 11)")]
     pub(crate) fn back(items: Vec<(PathBuf, PathBuf, Option<Facts>)>) -> MoveTask {
         let (pairs, expect) = items.into_iter().map(|(now, was, facts)| ((now, was), facts)).unzip();
-        MoveTask { pairs, expect, kind: TaskKind::Move, back: true }
+        MoveTask { pairs, expect, kind: TaskKind::Move, back: true, cross: false }
     }
 
     fn sources(&self) -> Vec<PathBuf> {
@@ -123,7 +126,7 @@ impl Task for MoveTask {
             } else if facts.is_dir && is_within(target, source) {
                 sink.failed(source, io::Error::new(io::ErrorKind::InvalidInput, "Cannot move a folder into itself"));
                 true
-            } else if same_drive(source, target.parent().unwrap_or(target)) {
+            } else if !self.cross && same_drive(source, target.parent().unwrap_or(target)) {
                 plan_rename(sink, source, target, facts, root, true)
             } else {
                 plan_cross(sink, source, target, facts, root)
@@ -137,6 +140,10 @@ impl Task for MoveTask {
     fn run(&self, item: &PlanItem, cx: &RunCx<'_>) -> io::Result<Outcome> {
         let Some(source) = &item.source else { return Ok(Outcome::Nothing) };
         if item.tag == RMDIR {
+            // Nothing was made at the target (held, skipped or failed): the folder stays.
+            if !item.target.as_ref().is_some_and(|target| target.is_dir()) {
+                return Ok(Outcome::Nothing);
+            }
             return match fs::delete(source) {
                 Ok(()) => Ok(Outcome::Deleted { path: source.clone() }),
                 // Something inside was skipped or failed: the folder stays.
@@ -159,10 +166,21 @@ impl Task for MoveTask {
                 })
             }
             CASE => {
-                let temp = source.with_file_name(format!(".gezik-rename-{}", std::process::id()));
+                self.check(item, source)?;
+                static NEXT: AtomicUsize = AtomicUsize::new(0);
+                let temp = source.with_file_name(format!(
+                    ".gezik-rename-{}-{}",
+                    std::process::id(),
+                    NEXT.fetch_add(1, Ordering::Relaxed)
+                ));
                 fs::move_entry(source, &temp)?;
                 if let Err(err) = fs::move_entry(&temp, target) {
-                    let _ = fs::move_entry(&temp, source);
+                    if let Err(restore) = fs::move_entry(&temp, source) {
+                        return Err(io::Error::new(
+                            err.kind(),
+                            format!("{err}; could not restore the name, it is at {}: {restore}", temp.display()),
+                        ));
+                    }
                     return Err(err);
                 }
                 Ok(Outcome::Moved {
@@ -205,6 +223,10 @@ impl Task for MoveTask {
 /// and then the emptied source folder removed. False once the job is cancelled.
 fn plan_rename(sink: &mut dyn ScanSink, source: &Path, target: &Path, facts: Facts, root: usize, top: bool) -> bool {
     if facts.is_dir && std::fs::symlink_metadata(target).is_ok_and(|meta| meta.is_dir()) {
+        // Before what is inside: the After items run in reverse, so the folder goes last.
+        if !sink.item(PlanItem::new(Stage::After, facts).source(source).target(target).under(root).tag(RMDIR)) {
+            return false;
+        }
         let entries = match std::fs::read_dir(source) {
             Ok(entries) => entries,
             Err(err) => {
@@ -232,7 +254,7 @@ fn plan_rename(sink: &mut dyn ScanSink, source: &Path, target: &Path, facts: Fac
                 return false;
             }
         }
-        return sink.item(PlanItem::new(Stage::After, facts).source(source).under(root).tag(RMDIR));
+        return true;
     }
     let item = PlanItem::new(Stage::Parallel, facts).source(source).target(target).checked().tag(RENAME);
     sink.item(if top { item.top(root) } else { item.under(root) })
@@ -246,7 +268,7 @@ fn plan_cross(sink: &mut dyn ScanSink, source: &Path, target: &Path, facts: Fact
         );
     }
     if !sink.item(PlanItem::new(Stage::Before, facts).source(source).target(target).checked().top(root).tag(MKDIR))
-        || !sink.item(PlanItem::new(Stage::After, facts).source(source).under(root).tag(RMDIR))
+        || !sink.item(PlanItem::new(Stage::After, facts).source(source).target(target).under(root).tag(RMDIR))
     {
         return false;
     }
@@ -256,7 +278,7 @@ fn plan_cross(sink: &mut dyn ScanSink, source: &Path, target: &Path, facts: Fact
             if facts.is_dir {
                 sink.item(
                     PlanItem::new(Stage::Before, facts).source(path).target(&target).checked().under(root).tag(MKDIR),
-                ) && sink.item(PlanItem::new(Stage::After, facts).source(path).under(root).tag(RMDIR))
+                ) && sink.item(PlanItem::new(Stage::After, facts).source(path).target(&target).under(root).tag(RMDIR))
             } else {
                 sink.item(
                     PlanItem::new(Stage::Parallel, facts)
@@ -337,6 +359,57 @@ mod tests {
         assert_eq!(read(&dir.join("dst/d/a.txt")), "a");
         assert_eq!(read(&dir.join("dst/d/b.txt")), "b");
         assert!(!dir.join("src/d").exists(), "the emptied source folder is removed");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_nested_merge_removes_every_emptied_folder() {
+        let dir = test_dir("move-merge-nested");
+        write(&dir.join("src/d/s/x.txt"), "x");
+        write(&dir.join("dst/d/s/y.txt"), "y");
+        let engine = engine();
+        let job = engine.submit(Box::new(MoveTask::into(vec![dir.join("src/d")], &dir.join("dst"))));
+        let (report, _) = finish(&engine, job, no_conflicts);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert_eq!(read(&dir.join("dst/d/s/x.txt")), "x");
+        assert_eq!(read(&dir.join("dst/d/s/y.txt")), "y");
+        assert!(!dir.join("src/d").exists(), "no emptied source folder is left");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_skipped_cross_drive_folder_is_not_removed() {
+        let dir = test_dir("move-cross-skip");
+        write(&dir.join("src/x/f.txt"), "f");
+        std::fs::create_dir_all(dir.join("src/x/e")).unwrap();
+        write(&dir.join("dst/x"), "a file");
+        let engine = engine();
+        let mut task = MoveTask::into(vec![dir.join("src/x")], &dir.join("dst"));
+        task.cross = true;
+        let job = engine.submit(Box::new(task));
+        let (report, _) = finish(&engine, job, defaults);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert_eq!(read(&dir.join("dst/x")), "a file");
+        assert!(dir.join("src/x/e").is_dir());
+        assert_eq!(read(&dir.join("src/x/f.txt")), "f");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_cross_drive_folder_moves_and_is_removed() {
+        let dir = test_dir("move-cross");
+        write(&dir.join("src/x/a/f.txt"), "f");
+        std::fs::create_dir_all(dir.join("src/x/e")).unwrap();
+        std::fs::create_dir(dir.join("dst")).unwrap();
+        let engine = engine();
+        let mut task = MoveTask::into(vec![dir.join("src/x")], &dir.join("dst"));
+        task.cross = true;
+        let job = engine.submit(Box::new(task));
+        let (report, _) = finish(&engine, job, no_conflicts);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert_eq!(read(&dir.join("dst/x/a/f.txt")), "f");
+        assert!(dir.join("dst/x/e").is_dir());
+        assert!(!dir.join("src/x").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
