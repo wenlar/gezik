@@ -2,6 +2,7 @@
 //! Nothing in here touches the UI, so it can be tested and reused freely.
 
 pub mod nav;
+pub mod selection;
 pub mod sort;
 
 use std::io;
