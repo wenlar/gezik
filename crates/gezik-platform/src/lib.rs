@@ -2,6 +2,7 @@
 
 mod datetime;
 mod drives;
+pub mod fs;
 mod icons;
 mod known;
 mod picture;
