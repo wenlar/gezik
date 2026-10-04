@@ -11,12 +11,30 @@ fn make_tree(dir: &Path, files: usize) {
     for f in 0..folders {
         let folder = dir.join(format!("folder{f:03}"));
         std::fs::create_dir_all(&folder).unwrap();
-        for i in 0..files / folders {
+        // Exactly `files` in all: the first `files % folders` folders get one more.
+        for i in 0..files / folders + usize::from(f < files % folders) {
             // 4–64 KB, different sizes.
             let size = 4096 + (i * 7919 + f * 104_729) % (60 * 1024);
             std::fs::write(folder.join(format!("file{i:04}.bin")), vec![(i % 251) as u8; size]).unwrap();
         }
     }
+}
+
+const MARKER: &str = ".gezik-ops-bench";
+
+/// Removes `work` only if it holds the marker this tool writes; refuses any other folder.
+fn clean(work: &Path) {
+    if !work.exists() {
+        return;
+    }
+    if !work.join(MARKER).exists() {
+        eprintln!(
+            "refusing to delete {}: it was not created by ops_bench (no {MARKER} inside); pick a new folder",
+            work.display()
+        );
+        std::process::exit(2);
+    }
+    std::fs::remove_dir_all(work).unwrap();
 }
 
 fn run(engine: &Engine, task: Box<dyn Task>) -> Duration {
@@ -43,7 +61,9 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let work = PathBuf::from(args.next().expect("usage: ops_bench <work folder> [files]"));
     let files: usize = args.next().and_then(|s| s.parse().ok()).unwrap_or(10_000);
-    let _ = std::fs::remove_dir_all(&work);
+    clean(&work);
+    std::fs::create_dir_all(&work).unwrap();
+    std::fs::write(work.join(MARKER), b"").unwrap();
     let (src, dst) = (work.join("src"), work.join("dst"));
     make_tree(&src, files);
     std::fs::create_dir_all(&dst).unwrap();
@@ -57,17 +77,23 @@ fn main() {
     let started = Instant::now();
     let pending = engine.pending_deletes();
     let job = engine.submit(Box::new(DeleteTask::new(vec![copied.clone()], pending)));
+    let deadline = Instant::now() + Duration::from_secs(60);
     while copied.exists() {
+        assert!(Instant::now() < deadline, "the deleted folder was still there after 60 s");
         std::thread::sleep(Duration::from_millis(1));
     }
     println!("delete: gone from the folder after {} ms", started.elapsed().as_millis());
     loop {
-        let finished = engine.drain().into_iter().any(|e| matches!(e, Event::Finished { job: j, .. } if j == job));
-        if finished {
+        let report = engine.drain().into_iter().find_map(|e| match e {
+            Event::Finished { job: j, report } if j == job => Some(report),
+            _ => None,
+        });
+        if let Some(report) = report {
+            assert!(report.failures.is_empty(), "{:?}", report.failures);
             break;
         }
         std::thread::sleep(Duration::from_millis(2));
     }
     println!("delete {files} files: {} ms in all", started.elapsed().as_millis());
-    let _ = std::fs::remove_dir_all(&work);
+    clean(&work);
 }
