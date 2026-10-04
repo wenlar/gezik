@@ -1,7 +1,7 @@
 //! Type names, icons and thumbnails: loaded off the UI thread, cached on it.
 //!
-//! Two worker threads: one for type names and icons (fast), one for thumbnails (a video's
-//! can take seconds). Requests are made while Slint builds a line on screen. The newest
+//! Two worker threads, each started with its first request: one for type names and icons
+//! (fast), one for thumbnails (a video's can take seconds). Requests are made while Slint builds a line on screen. The newest
 //! are served first and only the newest [`MAX_QUEUED`] are kept, so lines scrolled past
 //! long ago are dropped. Showing another folder starts a new generation: older requests
 //! are dropped and their results only fill the caches.
@@ -198,8 +198,9 @@ type ReadyListener = Rc<dyn Fn(&[usize], Ready)>;
 struct Inner {
     fast: Arc<Queue>,
     slow: Arc<Queue>,
-    /// Workers are started on the first request (`idle` never starts them: tests).
-    started: Cell<bool>,
+    /// Each worker is started on its first request (`idle` never starts them: tests).
+    fast_started: Cell<bool>,
+    slow_started: Cell<bool>,
     generation: Arc<AtomicU64>,
     /// `None`: the system has no name for it.
     type_names: RefCell<HashMap<(String, bool), Option<String>>>,
@@ -239,7 +240,8 @@ impl Media {
         Media(Rc::new(Inner {
             fast: Arc::default(),
             slow: Arc::default(),
-            started: Cell::new(false),
+            fast_started: Cell::new(false),
+            slow_started: Cell::new(false),
             generation: Arc::default(),
             type_names: RefCell::default(),
             shared: RefCell::default(),
@@ -256,7 +258,8 @@ impl Media {
     #[cfg(test)]
     pub fn idle() -> Media {
         let media = Media::new();
-        media.0.started.set(true);
+        media.0.fast_started.set(true);
+        media.0.slow_started.set(true);
         media
     }
 
@@ -347,7 +350,7 @@ impl Media {
         if !self.0.pending.borrow_mut().insert(key.clone()) {
             return;
         }
-        self.start();
+        self.start(key.slow());
         let queue = if key.slow() { &self.0.slow } else { &self.0.fast };
         if let Some(dropped) = queue.push(self.generation(), key) {
             self.0.pending.borrow_mut().remove(&dropped);
@@ -355,28 +358,32 @@ impl Media {
         }
     }
 
-    fn start(&self) {
-        if self.0.started.replace(true) {
+    /// Starts the thumbnail worker (`slow`) or the icon worker, unless it runs already.
+    fn start(&self, slow: bool) {
+        let (started, name, queue) = if slow {
+            (&self.0.slow_started, "gezik-thumbnails", &self.0.slow)
+        } else {
+            (&self.0.fast_started, "gezik-icons", &self.0.fast)
+        };
+        if started.replace(true) {
             return;
         }
-        for (name, queue) in [("gezik-icons", &self.0.fast), ("gezik-thumbnails", &self.0.slow)] {
-            let (queue, current) = (queue.clone(), self.0.generation.clone());
-            let spawned = std::thread::Builder::new().name(name.to_owned()).spawn(move || {
-                gezik_platform::init_thread();
-                loop {
-                    let (generation, key) = queue.pop();
-                    if generation != current.load(Ordering::SeqCst) {
-                        continue;
-                    }
-                    let outcome = run(&key);
-                    let _ = slint::invoke_from_event_loop(move || {
-                        with_current(|media| media.finish(generation, key, outcome));
-                    });
+        let (queue, current) = (queue.clone(), self.0.generation.clone());
+        let spawned = std::thread::Builder::new().name(name.to_owned()).spawn(move || {
+            gezik_platform::init_thread();
+            loop {
+                let (generation, key) = queue.pop();
+                if generation != current.load(Ordering::SeqCst) {
+                    continue;
                 }
-            });
-            if let Err(err) = spawned {
-                eprintln!("gezik: cannot start the {name} thread: {err}");
+                let outcome = run(&key);
+                let _ = slint::invoke_from_event_loop(move || {
+                    with_current(|media| media.finish(generation, key, outcome));
+                });
             }
+        });
+        if let Err(err) = spawned {
+            eprintln!("gezik: cannot start the {name} thread: {err}");
         }
     }
 
@@ -441,6 +448,16 @@ mod tests {
     }
 
     type Seen = Vec<(Vec<usize>, Ready)>;
+
+    #[test]
+    fn the_thumbnail_worker_starts_with_the_first_thumbnail() {
+        let media = Media::new();
+        assert_eq!(media.picture(icon("txt"), 0), None);
+        assert!(media.0.fast_started.get() && !media.0.slow_started.get(), "icons only: no thumbnail thread");
+        let thumbnail = MediaKey::Thumbnail { path: PathBuf::from("/x/missing.png"), px: 64, modified: None };
+        assert_eq!(media.picture(thumbnail, 1), None);
+        assert!(media.0.slow_started.get());
+    }
 
     /// Entries the listener was told about, in order.
     fn recorder(media: &Media) -> Rc<RefCell<Seen>> {
