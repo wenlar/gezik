@@ -14,14 +14,17 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gezik_config::settings::ViewDefaults;
+use gezik_config::store::ConfigStore;
 use gezik_core::kind::fallback_type_name;
 use gezik_core::layout::{Geometry, Move, Rect};
 use gezik_core::nav::ViewState;
 use gezik_core::selection::Selection;
 use gezik_core::sort::{SortDir, SortKey, SortSpec, sort_entries};
 use gezik_core::view::{
-    ColumnKey, ColumnState, MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH, default_columns, normalize_columns,
+    ColumnKey, ColumnState, GridSize, MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH, ViewMode, ViewSettings, default_columns,
+    normalize_columns,
 };
+use gezik_core::view_memory::ViewMemory;
 use gezik_core::{Entry, format_size};
 use slint::{ComponentHandle, ModelRc};
 
@@ -52,7 +55,15 @@ struct Inner {
     /// Shown instead of the item count until the selection changes (e.g. "… no longer exists").
     note: RefCell<Option<String>>,
     on_selection: RefCell<Vec<Listener>>,
-    sort: Cell<SortSpec>,
+    defaults: Cell<ViewDefaults>,
+    /// The shown folder's view: its own if it has one, else the defaults.
+    current: Cell<ViewSettings>,
+    memory: RefCell<ViewMemory>,
+    store: Option<ConfigStore>,
+    /// The shown folder as remembered in `memory`; `None` for "This PC".
+    folder: RefCell<Option<String>>,
+    /// A `views.toml` write is scheduled.
+    save_pending: Cell<bool>,
     columns: RefCell<Vec<ColumnState>>,
     media: Media,
     /// A re-sort by type is scheduled (type names arrive one by one).
@@ -75,10 +86,16 @@ pub fn with_current(f: impl FnOnce(&View)) {
 pub struct View(Rc<Inner>);
 
 impl View {
-    pub fn new(window: &AppWindow) -> View {
+    pub fn new(window: &AppWindow, memory: ViewMemory, store: Option<ConfigStore>) -> View {
         let media = Media::new();
         media.install();
-        let data = Rc::new(RefCell::new(ViewData { media: media.clone(), ..ViewData::default() }));
+        let defaults = ViewDefaults::default();
+        let data = Rc::new(RefCell::new(ViewData {
+            media: media.clone(),
+            icons: defaults.icons,
+            thumbnails: defaults.thumbnails,
+            ..ViewData::default()
+        }));
         let model = Rc::new(ItemsModel::new(data.clone()));
         window.set_items(ModelRc::from(model.clone()));
         let view = View(Rc::new(Inner {
@@ -91,7 +108,12 @@ impl View {
             revealed: Cell::new(0),
             note: RefCell::new(None),
             on_selection: RefCell::new(Vec::new()),
-            sort: Cell::new(SortSpec::default()),
+            defaults: Cell::new(defaults),
+            current: Cell::new(defaults.view),
+            memory: RefCell::new(memory),
+            store,
+            folder: RefCell::new(None),
+            save_pending: Cell::new(false),
             columns: RefCell::new(default_columns()),
         }));
         // Weak: the media lives inside the view.
@@ -103,27 +125,27 @@ impl View {
         });
         CURRENT.with(|c| *c.borrow_mut() = Some(view.clone()));
         view.sync_columns();
-        view.sync_header();
+        view.apply_layout();
         view
     }
 
-    /// `[view]` settings, at startup and whenever settings.toml changes.
+    /// `[view]` settings, at startup and whenever settings.toml changes. A folder without
+    /// its own view follows the new defaults at once.
     pub fn set_defaults(&self, defaults: ViewDefaults) {
-        let changed = {
-            let mut data = self.0.data.borrow_mut();
-            let changed = data.icons != defaults.icons;
-            data.icons = defaults.icons;
-            changed
-        };
-        if changed {
-            self.0.model.notify.reset();
+        if self.0.defaults.replace(defaults) == defaults {
+            return;
         }
-    }
-
-    fn update_icon_px(&self) {
-        let Some(window) = self.0.window.upgrade() else { return };
-        let logical = window.global::<Theme>().get_icon_size();
-        self.0.data.borrow_mut().icon_px = (logical * window.window().scale_factor()).round().max(1.0) as u32;
+        {
+            let mut data = self.0.data.borrow_mut();
+            data.icons = defaults.icons;
+            data.thumbnails = defaults.thumbnails;
+        }
+        let own = self.0.folder.borrow().as_deref().is_some_and(|f| self.0.memory.borrow().contains(f));
+        if !own {
+            self.switch_to(defaults.view);
+        }
+        // Icons or thumbnails may have changed even if the view did not.
+        self.0.model.notify.reset();
     }
 
     fn media_ready(&self, entries: &[usize], ready: Ready) {
@@ -168,8 +190,13 @@ impl View {
     /// Shows `listing` with the selection, focus and scroll `state` remembers. `note`, if
     /// any, replaces the item count in the status bar until the selection changes.
     pub fn show(&self, listing: Listing, state: &ViewState, note: Option<String>) {
+        let folder = listing.folder().map(|p| p.display().to_string());
+        let settings =
+            folder.as_deref().and_then(|f| self.0.memory.borrow_mut().get(f)).unwrap_or(self.0.defaults.get().view);
+        *self.0.folder.borrow_mut() = folder;
+        self.0.current.set(settings);
         self.0.media.new_generation();
-        self.update_icon_px();
+        self.apply_layout();
         let listing = self.sorted(listing, true);
         let selection = restore_selection(&listing, state);
         let count = listing.len();
@@ -364,17 +391,150 @@ impl View {
     }
 
     pub fn sort(&self) -> SortSpec {
-        self.0.sort.get()
+        self.0.current.get().sort
     }
 
-    /// Sorts by `spec`, keeping the selection, focus and its visibility.
+    /// Sorts by `spec`, keeping the selection, focus and its visibility; the folder
+    /// remembers it.
     pub fn set_sort(&self, spec: SortSpec) {
-        if spec == self.0.sort.get() {
+        self.change_view(|v| v.sort = spec);
+    }
+
+    pub fn view_settings(&self) -> ViewSettings {
+        self.0.current.get()
+    }
+
+    pub fn set_mode(&self, mode: ViewMode) {
+        self.change_view(|v| v.mode = mode);
+    }
+
+    pub fn set_grid_size(&self, size: GridSize) {
+        self.change_view(|v| v.grid_size = size);
+    }
+
+    /// Ctrl+wheel: the next grid size up or down; nothing in the list.
+    pub fn zoom(&self, bigger: bool) {
+        if self.0.current.get().mode == ViewMode::Grid {
+            self.change_view(|v| v.grid_size = if bigger { v.grid_size.bigger() } else { v.grid_size.smaller() });
+        }
+    }
+
+    /// "Apply to all folders": this folder's view becomes the `[view]` default and every
+    /// folder's own view is forgotten.
+    pub fn apply_to_all(&self) {
+        let view = self.0.current.get();
+        if let Some(store) = &self.0.store
+            && let Err(warning) = store.save_view_defaults(&view)
+        {
+            return self.set_note(warning.to_string());
+        }
+        let mut defaults = self.0.defaults.get();
+        defaults.view = view;
+        self.0.defaults.set(defaults);
+        self.0.memory.borrow_mut().clear();
+        self.save_memory_soon();
+    }
+
+    /// "Reset this folder": forgets its own view; the defaults apply.
+    pub fn reset_folder(&self) {
+        let Some(folder) = self.0.folder.borrow().clone() else { return };
+        let removed = self.0.memory.borrow_mut().remove(&folder);
+        if removed {
+            self.save_memory_soon();
+        }
+        self.switch_to(self.0.defaults.get().view);
+    }
+
+    /// The grid's width now fits `columns` cells per line.
+    pub fn grid_columns_changed(&self, columns: usize) {
+        if self.0.current.get().mode == ViewMode::Grid && columns.max(1) != self.0.model.per_row() {
+            self.0.model.set_per_row(columns);
+            self.0.model.notify.reset();
+            if let Some(focus) = self.focus() {
+                self.reveal(focus);
+            }
+        }
+    }
+
+    /// Writes `views.toml` now if a change is waiting (on close).
+    pub fn flush_memory(&self) {
+        if self.0.save_pending.get() {
+            self.save_memory_now();
+        }
+    }
+
+    /// A View menu or header change in this folder: applied, and remembered for it.
+    fn change_view(&self, change: impl FnOnce(&mut ViewSettings)) {
+        let mut view = self.0.current.get();
+        change(&mut view);
+        if view == self.0.current.get() {
             return;
         }
-        self.0.sort.set(spec);
+        let folder = self.0.folder.borrow().clone();
+        if let Some(folder) = folder {
+            self.0.memory.borrow_mut().set(&folder, view);
+            self.save_memory_soon();
+        }
+        self.switch_to(view);
+    }
+
+    /// Shows the current listing with `view`.
+    fn switch_to(&self, view: ViewSettings) {
+        let old = self.0.current.replace(view);
+        if view.mode != old.mode || view.grid_size != old.grid_size {
+            self.0.media.new_generation();
+            self.apply_layout();
+            self.0.model.notify.reset();
+            if let Some(focus) = self.focus() {
+                self.reveal(focus);
+            }
+        }
+        if view.sort != old.sort {
+            self.sync_header();
+            self.resort();
+        }
+    }
+
+    /// Mode, picture size and entries per line, from the current view.
+    fn apply_layout(&self) {
+        let Some(window) = self.0.window.upgrade() else { return };
+        let view = self.0.current.get();
+        let grid = view.mode == ViewMode::Grid;
+        window.set_view_mode(if grid { 1 } else { 0 });
+        window.set_grid_size(view.grid_size.px() as f32);
+        let logical = if grid { view.grid_size.px() as f32 } else { window.global::<Theme>().get_icon_size() };
+        {
+            let mut data = self.0.data.borrow_mut();
+            data.mode = view.mode;
+            data.icon_px = (logical * window.window().scale_factor()).round().max(1.0) as u32;
+        }
+        let per_row = if grid { usize::try_from(window.get_grid_columns()).unwrap_or(1) } else { 1 };
+        self.0.model.set_per_row(per_row);
         self.sync_header();
-        self.resort();
+    }
+
+    /// Writes `views.toml` a moment after the last change, so a burst of changes is one write.
+    fn save_memory_soon(&self) {
+        if self.0.store.is_none() || self.0.save_pending.replace(true) {
+            return;
+        }
+        let view = self.clone();
+        slint::Timer::single_shot(Duration::from_secs(1), move || view.flush_memory());
+    }
+
+    fn save_memory_now(&self) {
+        self.0.save_pending.set(false);
+        if let Some(store) = &self.0.store
+            && let Err(err) = store.save_views(&self.0.memory.borrow())
+        {
+            eprintln!("gezik: cannot save views.toml: {err}");
+        }
+    }
+
+    /// Shows `text` in the status bar until the selection changes.
+    fn set_note(&self, text: String) {
+        *self.0.note.borrow_mut() = Some(text);
+        self.update_status();
     }
 
     /// A click on column header `column` (0 Name, 1-4 `ColumnKey::index`): sorts by it,
@@ -440,7 +600,7 @@ impl View {
 
     fn sync_header(&self) {
         let Some(window) = self.0.window.upgrade() else { return };
-        let spec = self.0.sort.get();
+        let spec = self.0.current.get().sort;
         let column = match spec.key {
             SortKey::Name => 0,
             SortKey::Modified => ColumnKey::Modified.index(),
@@ -455,7 +615,7 @@ impl View {
     /// `listing` in the current sort order. A fresh folder load is already sorted by name
     /// (`by_name`), so the default order costs nothing.
     fn sorted(&self, listing: Listing, by_name: bool) -> Listing {
-        let spec = self.0.sort.get();
+        let spec = self.0.current.get().sort;
         if spec.key == SortKey::Type {
             self.request_type_names(&listing);
         }
@@ -500,8 +660,16 @@ impl View {
 
     /// Where entries are on screen.
     fn geometry(&self) -> Geometry {
-        let row_height = self.0.window.upgrade().map_or(26.0, |w| w.get_item_height());
-        Geometry::List { row_height }
+        let Some(window) = self.0.window.upgrade() else { return Geometry::List { row_height: 26.0 } };
+        if self.0.current.get().mode == ViewMode::Grid {
+            Geometry::Grid {
+                cell_width: window.get_cell_width(),
+                cell_height: window.get_cell_height(),
+                columns: self.0.model.per_row(),
+            }
+        } else {
+            Geometry::List { row_height: window.get_item_height() }
+        }
     }
 
     fn after_selection(&self, changes: &[Range<usize>]) {

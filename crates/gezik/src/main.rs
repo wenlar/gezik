@@ -101,6 +101,8 @@ fn handle_key(
             Action::FocusPath => window.invoke_edit_path(),
             Action::Refresh => nav.reload(),
             Action::SelectAll => view.select_all(),
+            Action::ViewList => view.set_mode(gezik_core::view::ViewMode::List),
+            Action::ViewGrid => view.set_mode(gezik_core::view::ViewMode::Grid),
         }
         // The typed text no longer fits once the location or tab changed.
         if editing && action != Action::FocusPath {
@@ -239,6 +241,10 @@ fn main() -> Result<(), slint::PlatformError> {
     let (initial_settings, plan) =
         apply_config_and_start(&window, &mut files, std::env::args_os().nth(1).map(PathBuf::from));
 
+    // Folder views; a broken views.toml starts over and says so in the status bar.
+    let (memory, views_warning) = config.as_ref().map(ConfigStore::load_views).unwrap_or_default();
+    files.warnings.extend(views_warning);
+
     // The latest config files, so a system light/dark switch can re-resolve without I/O.
     let files = Arc::new(Mutex::new(files));
 
@@ -280,7 +286,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let saved_state = config.as_ref().map(ConfigStore::load_state).unwrap_or_default();
     window_state::restore(&window, &saved_state);
     keep_on_screen(window.as_weak(), 0);
-    let view = view::View::new(&window);
+    let view = view::View::new(&window, memory, config.clone());
     view.set_defaults(initial_settings.view);
     view.set_columns(saved_state.columns.clone().unwrap_or_else(gezik_core::view::default_columns));
     window.window().on_close_requested({
@@ -293,6 +299,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 if let Err(err) = store.save_state(&state) {
                     eprintln!("gezik: cannot save window state: {err}");
                 }
+                view.flush_memory();
             }
             slint::CloseRequestResponse::HideWindow
         }
@@ -393,6 +400,18 @@ fn main() -> Result<(), slint::PlatformError> {
     window.on_header_menu({
         let menus = menus.clone();
         move |x, y| menus.header(x, y)
+    });
+    window.on_view_menu({
+        let menus = menus.clone();
+        move |x, y| menus.view_menu(x, y)
+    });
+    window.on_grid_columns_changed({
+        let view = view.clone();
+        move |columns| view.grid_columns_changed(usize::try_from(columns).unwrap_or(1))
+    });
+    window.on_zoom({
+        let view = view.clone();
+        move |bigger| view.zoom(bigger)
     });
     // Slint passes indexes as `i32`: a negative one does nothing.
     window.on_tab_menu(move |i, x, y| {

@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use gezik_core::nav::Location;
-use gezik_core::view::{ColumnKey, ColumnState};
+use gezik_core::view::{ColumnKey, ColumnState, GridSize, SortDir, SortKey, SortSpec, ViewMode, ViewSettings};
 use gezik_platform::MenuTarget;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
@@ -120,6 +120,49 @@ pub fn header_items(columns: &[ColumnState]) -> Vec<(u32, &'static str)> {
     out
 }
 
+pub const VIEW_LIST: u32 = 30;
+pub const VIEW_GRID: u32 = 31;
+pub const GRID_SMALL: u32 = 32;
+pub const GRID_MEDIUM: u32 = 33;
+pub const GRID_LARGE: u32 = 34;
+/// 35–39: sort by the keys in `SortKey::ALL` order.
+pub const SORT_BY_NAME: u32 = 35;
+pub const SORT_BY_MODIFIED: u32 = 36;
+pub const SORT_BY_CREATED: u32 = 37;
+pub const SORT_BY_TYPE: u32 = 38;
+pub const SORT_BY_SIZE: u32 = 39;
+pub const SORT_ASC: u32 = 40;
+pub const SORT_DESC: u32 = 41;
+pub const APPLY_TO_ALL: u32 = 43;
+pub const RESET_FOLDER: u32 = 44;
+
+/// The View menu; the current choices are marked with a bullet.
+pub fn view_items(view: ViewSettings) -> Vec<(u32, String)> {
+    let mark = |on: bool, title: &str| format!("{}{title}", if on { "• " } else { "    " });
+    let grid = view.mode == ViewMode::Grid;
+    let mut out = vec![(VIEW_LIST, mark(!grid, "List")), (VIEW_GRID, mark(grid, "Grid"))];
+    if grid {
+        out.push((GRID_SMALL, mark(view.grid_size == GridSize::Small, "Small icons")));
+        out.push((GRID_MEDIUM, mark(view.grid_size == GridSize::Medium, "Medium icons")));
+        out.push((GRID_LARGE, mark(view.grid_size == GridSize::Large, "Large icons")));
+    }
+    let sorts = [
+        (SORT_BY_NAME, SortKey::Name, "Sort by name"),
+        (SORT_BY_MODIFIED, SortKey::Modified, "Sort by date modified"),
+        (SORT_BY_CREATED, SortKey::Created, "Sort by date created"),
+        (SORT_BY_TYPE, SortKey::Type, "Sort by type"),
+        (SORT_BY_SIZE, SortKey::Size, "Sort by size"),
+    ];
+    for (id, key, title) in sorts {
+        out.push((id, mark(view.sort.key == key, title)));
+    }
+    out.push((SORT_ASC, mark(view.sort.dir == SortDir::Asc, "Ascending")));
+    out.push((SORT_DESC, mark(view.sort.dir == SortDir::Desc, "Descending")));
+    out.push((APPLY_TO_ALL, "Apply to all folders".to_owned()));
+    out.push((RESET_FOLDER, "Reset this folder".to_owned()));
+    out
+}
+
 fn pin_toggle(pinned: bool) -> (u32, &'static str) {
     if pinned { (UNPIN, "Unpin from sidebar") } else { (PIN, "Pin to sidebar") }
 }
@@ -134,6 +177,7 @@ enum Subject {
     SidebarEntry(PathBuf),
     Tab(u64),
     Header,
+    View,
 }
 
 /// Lets one native menu be pending or open at a time, so two right-clicks in quick
@@ -265,6 +309,12 @@ impl Menus {
         self.open_slint(&header_items(&self.view.columns()), x, y);
     }
 
+    /// The View button's menu, at window position `x`, `y`.
+    pub fn view_menu(&self, x: f32, y: f32) {
+        *self.subject.borrow_mut() = Some(Subject::View);
+        self.open_slint(&view_items(self.view.view_settings()), x, y);
+    }
+
     /// `at`: where the Windows menu opens (window position), else at the cursor.
     fn open(&self, subject: Subject, place: Place, target: MenuTarget, x: f32, y: f32, at: Option<(f32, f32)>) {
         if cfg!(windows) {
@@ -323,14 +373,14 @@ impl Menus {
     ) {
     }
 
-    fn open_slint(&self, items: &[(u32, &str)], x: f32, y: f32) {
+    fn open_slint<S: AsRef<str>>(&self, items: &[(u32, S)], x: f32, y: f32) {
         let Some(window) = self.window.upgrade() else { return };
         if items.is_empty() {
             return;
         }
         let entries: Vec<MenuEntry> = items
             .iter()
-            .map(|(id, title)| MenuEntry { id: i32::try_from(*id).unwrap_or(0), title: (*title).into() })
+            .map(|(id, title)| MenuEntry { id: i32::try_from(*id).unwrap_or(0), title: title.as_ref().into() })
             .collect();
         window.set_menu_entries(ModelRc::new(VecModel::from(entries)));
         window.invoke_show_menu(x, y);
@@ -402,6 +452,19 @@ impl Menus {
                 }
             }
             (RESET_COLUMNS, Subject::Header) => self.view.reset_columns(),
+            (VIEW_LIST, Subject::View) => self.view.set_mode(ViewMode::List),
+            (VIEW_GRID, Subject::View) => self.view.set_mode(ViewMode::Grid),
+            (GRID_SMALL, Subject::View) => self.view.set_grid_size(GridSize::Small),
+            (GRID_MEDIUM, Subject::View) => self.view.set_grid_size(GridSize::Medium),
+            (GRID_LARGE, Subject::View) => self.view.set_grid_size(GridSize::Large),
+            (id, Subject::View) if (SORT_BY_NAME..=SORT_BY_SIZE).contains(&id) => {
+                let key = SortKey::ALL[(id - SORT_BY_NAME) as usize];
+                self.view.set_sort(SortSpec { key, dir: self.view.sort().dir });
+            }
+            (SORT_ASC, Subject::View) => self.view.set_sort(SortSpec { dir: SortDir::Asc, ..self.view.sort() }),
+            (SORT_DESC, Subject::View) => self.view.set_sort(SortSpec { dir: SortDir::Desc, ..self.view.sort() }),
+            (APPLY_TO_ALL, Subject::View) => self.view.apply_to_all(),
+            (RESET_FOLDER, Subject::View) => self.view.reset_folder(),
             _ => {}
         }
     }
@@ -473,5 +536,38 @@ mod tests {
     fn tab_menu_hides_close_others_for_a_single_tab() {
         assert_eq!(ids(items(Place::Tab { only_tab: false }, true)), [DUPLICATE_TAB, CLOSE_TAB, CLOSE_OTHER_TABS]);
         assert_eq!(ids(items(Place::Tab { only_tab: true }, true)), [DUPLICATE_TAB, CLOSE_TAB]);
+    }
+
+    #[test]
+    fn view_menu_marks_the_current_choices() {
+        use gezik_core::view::{GridSize, SortDir, SortKey, SortSpec, ViewMode, ViewSettings};
+        let list = view_items(ViewSettings::default());
+        let ids: Vec<u32> = list.iter().map(|(id, _)| *id).collect();
+        assert_eq!(
+            ids,
+            [
+                VIEW_LIST,
+                VIEW_GRID,
+                SORT_BY_NAME,
+                SORT_BY_MODIFIED,
+                SORT_BY_CREATED,
+                SORT_BY_TYPE,
+                SORT_BY_SIZE,
+                SORT_ASC,
+                SORT_DESC,
+                APPLY_TO_ALL,
+                RESET_FOLDER
+            ]
+        );
+        assert!(list[0].1.starts_with("• ") && !list[1].1.starts_with("• "));
+        let grid = ViewSettings {
+            mode: ViewMode::Grid,
+            sort: SortSpec { key: SortKey::Size, dir: SortDir::Desc },
+            grid_size: GridSize::Large,
+        };
+        let items = view_items(grid);
+        let marked: Vec<&str> =
+            items.iter().filter(|(_, t)| t.starts_with("• ")).map(|(_, t)| t.trim_start_matches("• ")).collect();
+        assert_eq!(marked, ["Grid", "Large icons", "Sort by size", "Descending"]);
     }
 }

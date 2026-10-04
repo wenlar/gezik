@@ -8,7 +8,7 @@ use std::rc::Rc;
 use gezik_core::format_size;
 use gezik_core::kind::{fallback_type_name, has_own_icon};
 use gezik_core::selection::Selection;
-use gezik_core::view::IconMode;
+use gezik_core::view::{IconMode, ViewMode};
 use slint::{Model, ModelNotify, ModelRc, ModelTracker, VecModel};
 
 use super::listing::Listing;
@@ -24,6 +24,9 @@ pub struct ViewData {
     pub marquee_base: Option<Selection>,
     pub media: Media,
     pub icons: IconMode,
+    pub mode: ViewMode,
+    /// Pictures and videos show a thumbnail in the grid.
+    pub thumbnails: bool,
     /// The icon size to ask for, in physical pixels.
     pub icon_px: u32,
 }
@@ -40,9 +43,13 @@ impl ItemsModel {
         ItemsModel { data, per_row: Cell::new(1), notify: ModelNotify::default() }
     }
 
-    #[allow(dead_code, reason = "used by later view tasks (grid, preview)")]
     pub fn per_row(&self) -> usize {
         self.per_row.get()
+    }
+
+    /// Sets the entries per line (the grid's columns); the caller resets the model.
+    pub fn set_per_row(&self, per_row: usize) {
+        self.per_row.set(per_row.max(1));
     }
 
     /// Redraws the lines holding the entries in `rows`; everything when that is many.
@@ -97,7 +104,7 @@ pub fn file_row(data: &ViewData, i: usize) -> FileRow {
         Listing::Drives(_) => None,
     };
     let date = |time: Option<std::time::SystemTime>| time.map(gezik_platform::format_datetime).unwrap_or_default();
-    let icon = icon_for(data, i);
+    let icon = picture_for(data, i);
     FileRow {
         name: listing.name_at(i).unwrap_or_default().into(),
         is_dir,
@@ -128,6 +135,23 @@ pub fn type_name_for(data: &ViewData, i: usize) -> String {
         },
         Listing::Drives(_) => "Drive".to_owned(),
     }
+}
+
+/// In the grid with thumbnails on, a file's thumbnail once loaded (its icon until then).
+fn picture_for(data: &ViewData, i: usize) -> Option<slint::Image> {
+    if data.mode == ViewMode::Grid
+        && data.thumbnails
+        && let Listing::Files(dir, entries) = &data.listing
+        && let Some(e) = entries.get(i)
+        && !e.is_dir
+        && (cfg!(windows) || gezik_platform::can_decode(e.extension()))
+    {
+        let key = MediaKey::Thumbnail { path: dir.join(&e.name), modified: e.modified, px: data.icon_px };
+        if let Some(picture) = data.media.picture(key, i) {
+            return Some(picture);
+        }
+    }
+    icon_for(data, i)
 }
 
 /// The system icon of entry `i`, if loaded (it is requested otherwise). `None` with Gezik's

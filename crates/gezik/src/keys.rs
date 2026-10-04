@@ -253,6 +253,8 @@ mod tests {
                 Action::FocusPath => "ctrl+l",
                 Action::Refresh => "f5",
                 Action::SelectAll => "ctrl+a",
+                Action::ViewList => "ctrl+1",
+                Action::ViewGrid => "ctrl+2",
             };
             let chord = parse_chord(text, Platform::Other).unwrap().unwrap();
             let (t, control, alt, shift, meta) = other_event(&chord);

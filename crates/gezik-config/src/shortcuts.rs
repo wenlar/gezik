@@ -120,10 +120,12 @@ pub enum Action {
     FocusPath,
     Refresh,
     SelectAll,
+    ViewList,
+    ViewGrid,
 }
 
 impl Action {
-    pub const ALL: [Action; 10] = [
+    pub const ALL: [Action; 12] = [
         Action::NewTab,
         Action::CloseTab,
         Action::NextTab,
@@ -134,6 +136,8 @@ impl Action {
         Action::FocusPath,
         Action::Refresh,
         Action::SelectAll,
+        Action::ViewList,
+        Action::ViewGrid,
     ];
 
     pub fn name(self) -> &'static str {
@@ -148,6 +152,8 @@ impl Action {
             Action::FocusPath => "focus-path",
             Action::Refresh => "refresh",
             Action::SelectAll => "select-all",
+            Action::ViewList => "view-list",
+            Action::ViewGrid => "view-grid",
         }
     }
 
@@ -171,6 +177,8 @@ impl Action {
             (Action::Refresh, Platform::Mac) => "mod+r",
             (Action::Refresh, Platform::Other) => "f5",
             (Action::SelectAll, _) => "mod+a",
+            (Action::ViewList, _) => "mod+1",
+            (Action::ViewGrid, _) => "mod+2",
         }
     }
 }

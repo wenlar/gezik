@@ -51,7 +51,6 @@ pub enum MediaKey {
         path: PathBuf,
         px: u32,
     },
-    #[allow(dead_code, reason = "requested by the grid view task")]
     Thumbnail {
         path: PathBuf,
         modified: Option<SystemTime>,
