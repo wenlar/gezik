@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/gezik-core", "crates/gezik-config", "crates/gezik-platform", "crates/gezik"]
+members = ["crates/gezik-core", "crates/gezik-config", "crates/gezik-platform", "crates/gezik-ops", "crates/gezik"]
 
 [workspace.package]
 version = "0.1.0"
@@ -11,6 +11,7 @@ license = "PolyForm-Noncommercial-1.0.0"
 gezik-core = { path = "crates/gezik-core" }
 gezik-config = { path = "crates/gezik-config" }
 gezik-platform = { path = "crates/gezik-platform" }
+gezik-ops = { path = "crates/gezik-ops" }
 
 [profile.release]
 opt-level = 3
