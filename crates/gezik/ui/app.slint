@@ -44,6 +44,15 @@ export component AppWindow inherits Window {
     callback grid-columns-changed(int);
     // Ctrl+wheel in the view: true for bigger.
     callback zoom(bool);
+    // Renaming in place (view/mod.rs, operations.rs).
+    in property <int> renaming-index: -1;
+    in-out property <string> rename-text;
+    in property <int> rename-select;
+    in property <string> rename-error;
+    callback rename-accepted(string);
+    callback rename-cancelled();
+    callback rename-tab(string, bool);
+    callback rename-edited(string);
     // The View button, with the window position for its menu.
     callback view-menu(length, length);
     in-out property <string> current-path;
@@ -344,6 +353,14 @@ export component AppWindow inherits Window {
                     col-modified <=> root.col-modified;
                     col-created <=> root.col-created;
                     col-type <=> root.col-type;
+                    renaming-index: root.renaming-index;
+                    rename-text <=> root.rename-text;
+                    rename-select: root.rename-select;
+                    rename-error: root.rename-error;
+                    rename-accepted(t) => { root.rename-accepted(t); }
+                    rename-cancelled => { root.rename-cancelled(); }
+                    rename-tab(t, back) => { root.rename-tab(t, back); }
+                    rename-edited(t) => { root.rename-edited(t); }
                     col-size <=> root.col-size;
                     sort-column: root.sort-column;
                     sort-desc: root.sort-desc;

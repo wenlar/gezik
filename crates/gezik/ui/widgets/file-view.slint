@@ -1,6 +1,7 @@
 import { ListView } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
 import { FileIcon } from "file-icon.slint";
+import { RenameField } from "rename-field.slint";
 
 // One entry, as Rust (view/model.rs) builds it for the entries on screen.
 export struct FileRow {
@@ -128,6 +129,18 @@ export component FileView inherits Rectangle {
     // The sort column (0 Name, 1 Modified, 2 Created, 3 Type, 4 Size) and direction.
     in property <int> sort-column;
     in property <bool> sort-desc;
+    // The entry being renamed (-1: none): its name shows as a text field.
+    in property <int> renaming-index: -1;
+    in-out property <string> rename-text;
+    // Where the selection ends when renaming starts (bytes).
+    in property <int> rename-select;
+    // Why the typed name cannot be used; shown under the field.
+    in property <string> rename-error;
+    callback rename-accepted(string);
+    callback rename-cancelled();
+    // Tab (false) or Shift+Tab (true): keep the name, go on to the next or previous entry.
+    callback rename-tab(string, bool);
+    callback rename-edited(string);
     out property <length> cell-width: max(root.picture-size + 24px, 96px);
     out property <length> cell-height: root.picture-size + 24px + Theme.font-size * 2.8;
     // Grid cells per line.
@@ -464,12 +477,22 @@ export component FileView inherits Rectangle {
                                 has-picture: entry.file.has-icon;
                             }
                         }
-                        Text {
+                        if entry.index != root.renaming-index: Text {
                             text: entry.file.name;
                             vertical-alignment: center;
                             horizontal-stretch: 1;
                             overflow: elide;
                             color: entry.text-color;
+                        }
+                        if entry.index == root.renaming-index: RenameField {
+                            horizontal-stretch: 1;
+                            text <=> root.rename-text;
+                            select-end: root.rename-select;
+                            invalid: root.rename-error != "";
+                            accepted(t) => { root.rename-accepted(t); }
+                            cancelled => { root.rename-cancelled(); }
+                            tab(t, back) => { root.rename-tab(t, back); }
+                            edited(t) => { root.rename-edited(t); }
                         }
                     }
                     if root.col-modified > 0: Text {
@@ -550,7 +573,7 @@ export component FileView inherits Rectangle {
                             has-picture: tile.cell.has-icon;
                         }
 
-                        Text {
+                        if tile.index != root.renaming-index: Text {
                             x: 8px;
                             y: 14px + root.picture-size;
                             width: parent.width - 16px;
@@ -561,6 +584,20 @@ export component FileView inherits Rectangle {
                             horizontal-alignment: center;
                             vertical-alignment: top;
                             color: tile.cell.selected ? Theme.selection-foreground : Theme.foreground;
+                        }
+                        if tile.index == root.renaming-index: RenameField {
+                            x: 8px;
+                            y: 14px + root.picture-size;
+                            width: parent.width - 16px;
+                            height: Theme.row-height;
+                            centered: true;
+                            text <=> root.rename-text;
+                            select-end: root.rename-select;
+                            invalid: root.rename-error != "";
+                            accepted(t) => { root.rename-accepted(t); }
+                            cancelled => { root.rename-cancelled(); }
+                            tab(t, back) => { root.rename-tab(t, back); }
+                            edited(t) => { root.rename-edited(t); }
                         }
 
                         // Cells never start a rectangle (a drag from an entry is kept for
@@ -615,5 +652,24 @@ export component FileView inherits Rectangle {
         background: Theme.marquee;
         border-width: 1px;
         border-color: Theme.focus-ring;
+    }
+
+    // Why the typed name cannot be used, just under the entry.
+    if root.rename-error != "" && root.renaming-index >= 0: Rectangle {
+        property <int> line: floor(root.renaming-index / root.per-row);
+        x: list.x + (root.mode == 0 ? root.side + Theme.icon-size + root.gap : mod(root.renaming-index, root.per-row) * root.cell-width + 8px);
+        y: list.y + root.scroll + (self.line + 1) * root.item-height;
+        width: error-text.preferred-width + Theme.spacing * 2;
+        height: error-text.preferred-height + Theme.spacing;
+        background: Theme.danger;
+        border-radius: Theme.radius;
+        accessible-role: text;
+        accessible-label: root.rename-error;
+        error-text := Text {
+            x: Theme.spacing;
+            y: Theme.spacing / 2;
+            text: root.rename-error;
+            color: Theme.background;
+        }
     }
 }
