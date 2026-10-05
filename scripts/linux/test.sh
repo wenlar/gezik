@@ -85,6 +85,7 @@ wayland() {
     local sway=$!
     sleep 2
     export WAYLAND_DISPLAY=$(ls $XDG_RUNTIME_DIR | grep -m1 '^wayland-[0-9]*$')
+    export SWAYSOCK=$(ls $XDG_RUNTIME_DIR/sway-ipc.*.sock 2>/dev/null | head -1)
     unset DISPLAY
     check "wayland: sway runs" '[ -n "$WAYLAND_DISPLAY" ]'
     fresh_tree
@@ -101,9 +102,59 @@ wayland() {
     printf 'file:///tmp/src/z.txt\r\n' | wl-copy -t text/uri-list; sleep 0.5
     wtype -s 1000 -P Control_L -k v -p Control_L -s 500; sleep 2
     check "wayland: a URI list from wl-copy pastes as a copy" '[ -f /tmp/t/z.txt ] && [ -f /tmp/src/z.txt ]'
+
+    # Drag and drop between two Gezik windows (sway puts them side by side), with a virtual
+    # pointer: b.txt from the first window onto folder D in the second.
+    cargo build -p gezik-platform --example vpointer 2>&1 | tail -1
+    GEZIK_CONFIG_DIR=/tmp/cfg $GEZIK /tmp/t >/tmp/gezik-wl-b.log 2>&1 &
+    local second=$!
+    sleep 3
+    # Each window's content rectangle, left one first, and the output's size.
+    local geometry
+    geometry=$(swaymsg -t get_tree | python3 -c '
+import json, sys
+views = []
+def walk(node):
+    if node.get("pid") and "Gezik" in (node.get("name") or ""):
+        r = node["rect"]; w = node["window_rect"]
+        views.append((r["x"] + w["x"], r["y"] + w["y"]))
+    for child in node.get("nodes", []) + node.get("floating_nodes", []):
+        walk(child)
+tree = json.load(sys.stdin)
+walk(tree)
+views.sort()
+out = next(o for o in tree["nodes"] if o["name"] != "__i3")
+print(out["rect"]["width"], out["rect"]["height"], *[c for v in views for c in v])
+')
+    set -- $geometry
+    local fields=$#
+    echo "     output and windows: $geometry"
+    check "wayland: two windows side by side" '[ $fields -ge 6 ]'
+    if [ $fields -ge 6 ]; then
+        local w=$1 h=$2 x1=$3 y1=$4 x2=$5 y2=$6
+        local fx=$((x1 + 260)) fy=$((y1 + 170)) tx=$((x2 + 260)) ty=$((y2 + 118))
+        local path="move $fx $fy sleep 200 down sleep 200"
+        for i in 1 2 3 4 5 6 7 8 9 10; do
+            path="$path move $((fx + (tx - fx) * i / 10)) $((fy + (ty - fy) * i / 10)) sleep 100"
+        done
+        /target/debug/examples/vpointer $w $h $path sleep 500 up sleep 300
+        sleep 2
+        check "wayland: a drop from another window moves b.txt into D" '[ -f /tmp/t/D/b.txt ] && [ ! -f /tmp/t/b.txt ]'
+        # A drag that leaves its window (the compositor takes it) and comes back: a.txt (second
+        # row) out over the second window, then back onto D in its own window.
+        local ax=$((x1 + 260)) ay=$((y1 + 144)) dx=$((x1 + 260)) dy=$((y1 + 118)) ox=$((x2 + 300)) oy=$((y2 + 300))
+        path="move $ax $ay sleep 200 down sleep 200"
+        for i in 1 2 3 4 5 6 7 8; do path="$path move $((ax + (ox - ax) * i / 8)) $((ay + (oy - ay) * i / 8)) sleep 100"; done
+        for i in 1 2 3 4 5 6 7 8; do path="$path move $((ox + (dx - ox) * i / 8)) $((oy + (dy - oy) * i / 8)) sleep 100"; done
+        /target/debug/examples/vpointer $w $h $path sleep 500 up sleep 300
+        sleep 2
+        check "wayland: a drag back into its own window drops there" '[ -f /tmp/t/D/a.txt ] && [ ! -f /tmp/t/a.txt ]'
+    fi
+    kill $second 2>/dev/null
     kill $gezik $sway 2>/dev/null
     wait 2>/dev/null
-    grep -i "panicked" /tmp/gezik-wl.log && fail "wayland: no panic" || pass "wayland: no panic"
+    grep -i "panicked" /tmp/gezik-wl*.log && fail "wayland: no panic" || pass "wayland: no panic"
+    echo "--- gezik logs:"; tail -n 3 /tmp/gezik-wl.log /tmp/gezik-wl-b.log
 }
 
 case "${1:-all}" in

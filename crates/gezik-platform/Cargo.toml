@@ -48,6 +48,10 @@ x11rb = { version = "0.13", features = ["xfixes"] }
 wayland-client = "0.31"
 wayland-backend = { version = "0.3", features = ["client_system", "dlopen"] }
 
+[target.'cfg(all(unix, not(target_os = "macos")))'.dev-dependencies]
+# examples/vpointer.rs: a pointer for trying drag and drop in a headless compositor.
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSArray", "NSError", "NSFileManager", "NSGeometry", "NSString", "NSURL"] }
