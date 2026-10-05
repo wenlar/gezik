@@ -2,6 +2,7 @@
 
 pub mod clipboard;
 mod datetime;
+pub mod dnd;
 mod drives;
 pub mod fs;
 mod icons;

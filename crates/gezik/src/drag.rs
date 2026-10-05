@@ -16,6 +16,7 @@ use gezik_core::layout::Rect;
 use gezik_core::nav::Location;
 use gezik_core::ops::paths::is_within;
 use gezik_platform::DriveKind;
+use gezik_platform::dnd::{Answer, Attached, DropHandler, Offer};
 use slint::{ComponentHandle, Model, Timer, TimerMode};
 
 use crate::context_menu::Menus;
@@ -65,6 +66,8 @@ enum Phase {
         can_drag: bool,
     },
     Dragging(Dragging),
+    /// Files from another program are over the window (no ghost: the system draws them).
+    Offer(Dragging),
     /// Ended (Esc) while the button is still down: its release is no click.
     Ended,
 }
@@ -83,6 +86,8 @@ struct Inner {
     hover_tab: Cell<Option<usize>>,
     tab_timer: Timer,
     scroll_timer: Timer,
+    /// The window's drop target for other programs.
+    attached: RefCell<Option<Attached>>,
 }
 
 thread_local! {
@@ -130,6 +135,7 @@ impl Drags {
             hover_tab: Cell::new(None),
             tab_timer: Timer::default(),
             scroll_timer: Timer::default(),
+            attached: RefCell::default(),
         }));
         CURRENT.with(|c| *c.borrow_mut() = Some(drags.clone()));
         drags
@@ -258,6 +264,11 @@ impl Drags {
         let phase = std::mem::replace(&mut *self.0.phase.borrow_mut(), Phase::Idle);
         match phase {
             Phase::Idle => false,
+            // An offer from outside is not ended by Gezik's own button events.
+            offer @ Phase::Offer(_) => {
+                *self.0.phase.borrow_mut() = offer;
+                false
+            }
             Phase::Armed { index, right: pressed_right, .. } => {
                 if !pressed_right && !right {
                     self.0.view.release(index, false);
@@ -306,16 +317,20 @@ impl Drags {
     fn update(&self) {
         let Some(window) = self.0.window.upgrade() else { return };
         let layout = self.layout(&window);
-        let (x, y, target) = {
+        let (x, y, target, ghost) = {
             let phase = self.0.phase.borrow();
-            let Phase::Dragging(d) = &*phase else { return };
+            let (d, ghost) = match &*phase {
+                Phase::Dragging(d) => (d, true),
+                Phase::Offer(d) => (d, false),
+                _ => return,
+            };
             let hit = drag::hit(&layout, d.x, d.y, d.all_dirs);
-            (d.x, d.y, self.resolve(&window, hit, d))
+            (d.x, d.y, self.resolve(&window, hit, d), ghost)
         };
-        self.show(&window, x, y, &target, true);
+        self.show(&window, x, y, &target, ghost);
         self.follow_tab(target.hit);
         self.follow_edge(&layout, x, y);
-        if let Phase::Dragging(d) = &mut *self.0.phase.borrow_mut() {
+        if let Phase::Dragging(d) | Phase::Offer(d) = &mut *self.0.phase.borrow_mut() {
             d.target = Some(target);
         }
     }
@@ -467,7 +482,8 @@ impl Drags {
     }
 
     fn tab_rested(&self, i: usize) {
-        if self.0.hover_tab.get() != Some(i) || !self.is_active() {
+        if self.0.hover_tab.get() != Some(i) || !matches!(*self.0.phase.borrow(), Phase::Dragging(_) | Phase::Offer(_))
+        {
             return;
         }
         self.0.hover_tab.set(None);
@@ -492,7 +508,7 @@ impl Drags {
     fn scroll_step(&self) {
         let Some(window) = self.0.window.upgrade() else { return };
         let y = match &*self.0.phase.borrow() {
-            Phase::Dragging(d) => d.y,
+            Phase::Dragging(d) | Phase::Offer(d) => d.y,
             _ => return self.0.scroll_timer.stop(),
         };
         let layout = self.layout(&window);
@@ -506,7 +522,9 @@ impl Drags {
     }
 
     /// Ends the drag: drops `d` on its target (None: drops nothing) and clears the window.
-    fn finish(&self, d: Option<Dragging>) {
+    /// Ends the drag: drops `d` on its target (None: drops nothing) and clears the window.
+    /// Returns what the drop did at once (a menu, a pin or a refusal: nothing).
+    fn finish(&self, d: Option<Dragging>) -> Option<Effect> {
         self.0.tab_timer.stop();
         self.0.scroll_timer.stop();
         self.0.hover_tab.set(None);
@@ -516,16 +534,17 @@ impl Drags {
             window.set_drag_forbidden(false);
             self.show(&window, 0.0, 0.0, &Target { hit: Hit::Nothing, dir: None, action: None }, false);
         }
-        let Some(d) = d else { return };
-        let Some(target) = d.target.clone() else { return };
-        self.drop_on(d, target);
+        let d = d?;
+        let target = d.target.clone()?;
+        self.drop_on(d, target)
     }
 
-    fn drop_on(&self, d: Dragging, target: Target) {
+    fn drop_on(&self, d: Dragging, target: Target) -> Option<Effect> {
         if let (Hit::PinAt(position), Some(Action::Pin)) = (target.hit, target.action) {
-            return self.0.sidebar.pin_at(&d.sources, position);
+            self.0.sidebar.pin_at(&d.sources, position);
+            return None;
         }
-        let Some(dir) = target.dir else { return };
+        let dir = target.dir?;
         if d.right {
             let can = |effect| {
                 let allowed = match effect {
@@ -535,10 +554,115 @@ impl Drags {
                 allowed && self.writable(&dir) && !drag::refuse(&d.sources, &dir, effect)
             };
             let (can_copy, can_move) = (can(Effect::Copy), can(Effect::Move));
-            return self.0.menus.drop_menu(d.sources, dir, can_copy, can_move, d.x, d.y);
+            self.0.menus.drop_menu(d.sources, dir, can_copy, can_move, d.x, d.y);
+            return None;
         }
-        if let Some(Action::Transfer(effect)) = target.action {
-            self.0.ops.transfer(d.sources, dir, effect);
+        let Some(Action::Transfer(effect)) = target.action else { return None };
+        self.0.ops.transfer(d.sources, dir, effect);
+        Some(effect)
+    }
+
+    /// Puts Gezik's drop target on the window, once the native window exists (it does only
+    /// after the event loop starts, so this retries for a while).
+    pub fn attach_when_ready(&self, attempt: u32) {
+        let drags = self.clone();
+        Timer::single_shot(Duration::from_millis(20), move || {
+            let Some(window) = drags.0.window.upgrade() else { return };
+            let handler: Rc<dyn DropHandler> = Rc::new(Outside(drags.clone()));
+            let wake = std::sync::Arc::new(|| {
+                let _ = slint::invoke_from_event_loop(|| {
+                    with_current(|drags| drags.poll());
+                });
+            });
+            match gezik_platform::dnd::attach(&window.window().window_handle(), handler, wake) {
+                Some(attached) => *drags.0.attached.borrow_mut() = Some(attached),
+                None if attempt < 100 => drags.attach_when_ready(attempt + 1),
+                None => {}
+            }
+        });
+    }
+
+    /// Events from the drop target's thread (Linux).
+    fn poll(&self) {
+        if let Some(attached) = &*self.0.attached.borrow() {
+            attached.poll();
         }
+    }
+
+    /// Physical client pixels to Slint's logical ones.
+    fn logical(&self, x: f64, y: f64) -> (f32, f32) {
+        let scale = self.0.window.upgrade().map_or(1.0, |w| w.window().scale_factor());
+        ((x as f32) / scale, (y as f32) / scale)
+    }
+
+    /// Files from another program moved over the window: what dropping them here would do.
+    fn offer_over(&self, offer: &Offer, x: f64, y: f64, keys: Keys) -> Answer {
+        let (x, y) = self.logical(x, y);
+        {
+            let mut phase = self.0.phase.borrow_mut();
+            match &mut *phase {
+                Phase::Offer(d) => (d.x, d.y, d.keys, d.allowed) = (x, y, keys, offer.allowed),
+                Phase::Idle | Phase::Ended => {
+                    *phase = Phase::Offer(Dragging {
+                        sources: offer.paths.clone(),
+                        // Pinning dropped folders would need the disk to tell folders apart.
+                        all_dirs: false,
+                        right: offer.right,
+                        keys,
+                        allowed: offer.allowed,
+                        x,
+                        y,
+                        target: None,
+                        pressed: None,
+                    })
+                }
+                // Gezik's own drag (or a press) is under way: not an offer from outside.
+                _ => return Answer::default(),
+            }
+        }
+        self.update();
+        match &*self.0.phase.borrow() {
+            Phase::Offer(Dragging {
+                target: Some(Target { action: Some(Action::Transfer(effect)), dir: Some(dir), .. }),
+                ..
+            }) => Answer { effect: Some(*effect), folder: Some(drag::folder_name(dir)) },
+            _ => Answer::default(),
+        }
+    }
+
+    fn offer_left(&self) {
+        if matches!(*self.0.phase.borrow(), Phase::Offer(_)) {
+            *self.0.phase.borrow_mut() = Phase::Idle;
+            self.finish(None);
+        }
+    }
+
+    fn offer_dropped(&self, offer: &Offer, x: f64, y: f64, keys: Keys) -> Option<Effect> {
+        self.offer_over(offer, x, y, keys);
+        let phase = std::mem::replace(&mut *self.0.phase.borrow_mut(), Phase::Idle);
+        match phase {
+            Phase::Offer(d) => self.finish(Some(d)),
+            other => {
+                *self.0.phase.borrow_mut() = other;
+                None
+            }
+        }
+    }
+}
+
+/// The window's drop target, for files dragged in from other programs.
+struct Outside(Drags);
+
+impl DropHandler for Outside {
+    fn over(&self, offer: &Offer, x: f64, y: f64, keys: Keys) -> Answer {
+        self.0.offer_over(offer, x, y, keys)
+    }
+
+    fn leave(&self) {
+        self.0.offer_left();
+    }
+
+    fn dropped(&self, offer: &Offer, x: f64, y: f64, keys: Keys) -> Option<Effect> {
+        self.0.offer_dropped(offer, x, y, keys)
     }
 }

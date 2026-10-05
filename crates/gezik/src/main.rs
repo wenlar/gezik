@@ -481,6 +481,7 @@ fn main() -> Result<(), slint::PlatformError> {
         context_menu::Menus::new(&window, nav.clone(), view.clone(), preview.clone(), sidebar.clone(), ops.clone());
     let drags = drag::Drags::new(&window, nav.clone(), view.clone(), sidebar, ops.clone(), menus.clone());
     drags.install(&window);
+    drags.attach_when_ready(0);
     window.on_row_menu({
         let (menus, view) = (menus.clone(), view.clone());
         move |i, x, y| {
