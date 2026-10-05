@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use gezik_core::format_size;
 use gezik_core::kind::{fallback_type_name, has_own_icon};
-use gezik_core::selection::Selection;
+use gezik_core::selection::{PendingPress, Selection};
 use gezik_core::view::{IconMode, ViewMode};
 use slint::{Model, ModelNotify, ModelRc, ModelTracker, VecModel};
 
@@ -22,6 +22,8 @@ pub struct ViewData {
     pub selection: Selection,
     /// The selection when a rubber-band drag started (Ctrl) or nothing; `None` when no drag.
     pub marquee_base: Option<Selection>,
+    /// A press on a selected entry, waiting for its release.
+    pub pending: PendingPress,
     pub media: Media,
     pub icons: IconMode,
     pub mode: ViewMode,

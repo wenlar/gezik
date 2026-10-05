@@ -52,7 +52,7 @@ Alt proje 1 tamamlandıktan sonra bilerek ertelenen maddeler. Kaynak: görev inc
 
 - macOS ve Linux'ta sistem ikonları yok (Gezik ikonları kullanılıyor); macOS'ta tür adı uzantıdan; iki sistemde de küçük resimler yalnızca Gezik'in çözdüğü png/jpeg/gif/webp/bmp. Linux tür adları (shared-mime-info) ve tarih biçimi denenmedi. macOS/Linux'a özgü kod (cfg) yalnızca Windows hedefiyle derlendi, hiç derlenip çalıştırılmadı.
 - Sütunlar sığmayınca yatay kaydırma yok (sağdaki sütunlar kırpılıyor); sütunları sürükleyerek sıralama ve çift tıkla otomatik genişlik yok.
-- Seçili bir öğeye (çoklu seçim içinde) basmak seçimi hemen tek öğeye indiriyor; sürükle-bırak (Alt proje 4) için seçimin bırakmada daralması gerekecek.
+- ~~Seçili bir öğeye (çoklu seçim içinde) basmak seçimi hemen tek öğeye indiriyor~~ — 4b'de kapandı: seçim artık bırakınca daralıyor (Ctrl+tık da bırakınca çıkarıyor), böylece çoklu seçim sürüklenebiliyor.
 - Ekran ölçeği değişince (pencereyi başka monitöre taşımak) ikon boyutu bir sonraki klasör gösterimine kadar eskisi kalıyor.
 - Küçük resimlerin alfa kanalı önceden çarpılmış olabilir; saydam PNG küçük resimlerinde kenarlar koyu görünebilir. Tamamen saydam (alfa 0) 32 bit ikon/küçük resim opak yapılıyor.
 - Windows önizleme işleyicileri (PDF/Office canlı görüntüleme) yok; sistem küçük resmi gösteriliyor.

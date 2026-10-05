@@ -264,6 +264,7 @@ impl View {
             data.listing = listing;
             data.selection = selection;
             data.marquee_base = None;
+            data.pending = Default::default();
         }
         // A refresh must not break a rename: follow the entry, or give up if it is gone.
         let renamed = self.0.renaming.borrow().as_ref().map(|(_, name)| name.clone());
@@ -415,6 +416,7 @@ impl View {
             data.listing = Listing::default();
             data.selection = Selection::new(0);
             data.marquee_base = None;
+            data.pending = Default::default();
         }
         self.0.model.notify.reset();
         self.0.shown.set(self.0.shown.get() + 1);
@@ -477,15 +479,23 @@ impl View {
     }
 
     /// A left press on entry `index`: plain selects only it, Ctrl flips it, Shift selects
-    /// the range from the anchor (Ctrl+Shift adds that range).
+    /// the range from the anchor (Ctrl+Shift adds that range). On an entry already selected
+    /// (no Shift) that waits for the release, so the selection can be dragged.
     pub fn press(&self, index: usize, ctrl: bool, shift: bool) {
         let changes = {
             let mut data = self.0.data.borrow_mut();
-            match (ctrl, shift) {
-                (_, true) => data.selection.extend_to(index, ctrl),
-                (true, false) => data.selection.toggle(index),
-                (false, false) => data.selection.select_only(index),
-            }
+            let ViewData { selection, pending, .. } = &mut *data;
+            pending.press(selection, index, ctrl, shift)
+        };
+        self.after_selection(&changes);
+    }
+
+    /// The left button came up over entry `index` after a press; `dragged`: it became a drag.
+    pub fn release(&self, index: usize, dragged: bool) {
+        let changes = {
+            let mut data = self.0.data.borrow_mut();
+            let ViewData { selection, pending, .. } = &mut *data;
+            pending.release(selection, index, dragged)
         };
         self.after_selection(&changes);
     }

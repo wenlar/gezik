@@ -162,6 +162,8 @@ export component FileView inherits Rectangle {
 
     // Left press on entry `index`, with Ctrl (Cmd on macOS) and Shift.
     callback item-pressed(int, bool, bool);
+    // The left button came up after a press on entry `index`.
+    callback item-released(int);
     callback item-double-clicked(int);
     callback item-middle-clicked(int);
     // Right-click on an entry, at a window position.
@@ -460,6 +462,9 @@ export component FileView inherits Rectangle {
                         if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {
                             root.item-menu(entry.index, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
                         }
+                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.left {
+                            root.item-released(entry.index);
+                        }
                         if event.kind == PointerEventKind.up {
                             self.left-down = false;
                         }
@@ -644,6 +649,9 @@ export component FileView inherits Rectangle {
                                 if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
                                     root.focus-requested();
                                     root.item-pressed(tile.index, event.modifiers.control, event.modifiers.shift);
+                                }
+                                if event.kind == PointerEventKind.up && event.button == PointerEventButton.left {
+                                    root.item-released(tile.index);
                                 }
                                 if event.kind == PointerEventKind.up && event.button == PointerEventButton.middle {
                                     root.item-middle-clicked(tile.index);

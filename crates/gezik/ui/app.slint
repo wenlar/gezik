@@ -128,6 +128,8 @@ export component AppWindow inherits Window {
     callback menu-activated(int);
     // Left press on an entry with Ctrl (Cmd on macOS) and Shift; left click on empty space with Ctrl.
     callback item-pressed(int, bool, bool);
+    // The left button came up after a press on an entry.
+    callback item-released(int);
     callback background-pressed(bool);
     // Column widths (0: hidden), set by Rust; dragging an edge changes them here.
     in-out property <length> col-modified;
@@ -406,6 +408,7 @@ export component AppWindow inherits Window {
                     }
                     columns-resized => { root.columns-resized(); }
                     item-pressed(i, ctrl, shift) => { root.item-pressed(i, ctrl, shift); }
+                    item-released(i) => { root.item-released(i); }
                     item-double-clicked(i) => { root.open-row(i); }
                     item-middle-clicked(i) => { root.row-middle-clicked(i); }
                     item-menu(i, x, y) => {

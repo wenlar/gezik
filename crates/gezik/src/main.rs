@@ -505,6 +505,14 @@ fn main() -> Result<(), slint::PlatformError> {
             }
         }
     });
+    window.on_item_released({
+        let view = view.clone();
+        move |i| {
+            if let Ok(index) = usize::try_from(i) {
+                view.release(index, false);
+            }
+        }
+    });
     window.on_marquee({
         let view = view.clone();
         move |x, y, width, height, additive| view.marquee(gezik_core::layout::Rect { x, y, width, height }, additive)
