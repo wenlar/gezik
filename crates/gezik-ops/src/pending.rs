@@ -14,6 +14,9 @@ use crate::engine::lock;
 /// How the folders an instant delete hides are named.
 pub const HIDDEN_PREFIX: &str = ".gezik-deleting-";
 
+/// How a large file being copied is named until it is complete (a leftover is deleted).
+pub const COPYING_PREFIX: &str = ".gezik-copying-";
+
 /// Starts a restore line: `restore<TAB>hidden<TAB>original<TAB>0|1` (was it hidden before).
 const RESTORE: &str = "restore\t";
 
@@ -138,23 +141,32 @@ fn restore_of(line: &Path) -> Option<Restore> {
     .then_some(Restore { hidden, original, was_hidden })
 }
 
-/// Whether `path` is an absolute path to a folder an instant delete hid.
+/// Whether `path` is an absolute path to a folder an instant delete hid, or to a large file
+/// a copy had not finished.
 pub fn is_hidden(path: &Path) -> bool {
     path.is_absolute()
-        && path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.len() > HIDDEN_PREFIX.len() && name.starts_with(HIDDEN_PREFIX))
+        && path.file_name().and_then(|name| name.to_str()).is_some_and(|name| {
+            [HIDDEN_PREFIX, COPYING_PREFIX].iter().any(|prefix| name.len() > prefix.len() && name.starts_with(prefix))
+        })
 }
 
 /// A fresh hidden name.
 pub fn hidden_name() -> String {
+    format!("{HIDDEN_PREFIX}{}", unique())
+}
+
+/// A fresh name for a large file while it is copied.
+pub fn copying_name() -> String {
+    format!("{COPYING_PREFIX}{}", unique())
+}
+
+fn unique() -> String {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos() as u64);
     hasher.write_u64(nanos);
     hasher.write_u64(COUNTER.fetch_add(1, Ordering::Relaxed));
-    format!("{HIDDEN_PREFIX}{:016x}", hasher.finish())
+    format!("{:016x}", hasher.finish())
 }
 
 #[cfg(test)]

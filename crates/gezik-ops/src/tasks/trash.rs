@@ -127,7 +127,7 @@ mod tests {
         std::fs::create_dir(dir.join("empty")).unwrap();
         let control = Control::default();
         let no_bin = |_: &std::path::Path| false;
-        let cx = RunCx { control: &control, trash: &no_bin, added: std::cell::Cell::new(0) };
+        let cx = RunCx { control: &control, trash: &no_bin, added: std::cell::Cell::new(0), pending: None };
         let item = |path: PathBuf| {
             let facts = facts_of(&std::fs::symlink_metadata(&path).unwrap());
             PlanItem::new(Stage::Parallel, facts).source(path).top(0)

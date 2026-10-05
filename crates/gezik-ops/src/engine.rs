@@ -253,7 +253,7 @@ pub(crate) struct Shared {
     drives: Mutex<HashMap<PathBuf, DriveFacts>>,
     reporter: AtomicBool,
     next_id: AtomicU64,
-    pending: Option<Arc<PendingDeletes>>,
+    pub pending: Option<Arc<PendingDeletes>>,
     history: Mutex<UndoStack<Record>>,
     /// Tests: called before each drive query (to make one hang).
     #[cfg(test)]
