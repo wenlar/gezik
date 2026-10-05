@@ -60,11 +60,42 @@ pub fn with_view_defaults(text: &str, view: &gezik_core::view::ViewSettings) -> 
     Ok(doc.to_string())
 }
 
-/// Returns `text` with `[[rename-presets]]` replaced by `presets`; the rest stays.
+/// Returns `text` with `[[rename-presets]]` replaced by `presets`; the rest stays. Entries
+/// that do not parse as a preset (hand-written, broken) are not Gezik's to drop: they are
+/// written back unchanged after `presets`.
 pub fn with_rename_presets(text: &str, presets: &[crate::settings::RenamePreset]) -> Result<String, String> {
     let mut doc = text.parse::<toml_edit::DocumentMut>().map_err(|err| err.to_string().trim().to_owned())?;
-    doc.remove("rename-presets");
-    if !presets.is_empty() {
+    let plain = text.parse::<toml::Table>().map_err(|err| err.to_string().trim().to_owned())?;
+    // Whether each existing entry is a valid preset, by the same rules as `Settings::parse`.
+    let valid: Vec<bool> = plain
+        .get("rename-presets")
+        .and_then(|v| v.as_array())
+        .map(|items| items.iter().map(|item| crate::settings::parse_preset(item).is_ok()).collect())
+        .unwrap_or_default();
+    let mut broken: Vec<toml_edit::Table> = Vec::new();
+    match doc.remove("rename-presets") {
+        None => {}
+        Some(toml_edit::Item::ArrayOfTables(array)) => {
+            for (i, table) in array.into_iter().enumerate() {
+                if !valid.get(i).copied().unwrap_or(false) {
+                    broken.push(table);
+                }
+            }
+        }
+        Some(toml_edit::Item::Value(toml_edit::Value::Array(array))) => {
+            for (i, value) in array.into_iter().enumerate() {
+                if valid.get(i).copied().unwrap_or(false) {
+                    continue;
+                }
+                match value {
+                    toml_edit::Value::InlineTable(table) => broken.push(table.into_table()),
+                    _ => return Err("rename-presets must be [[rename-presets]] tables".to_owned()),
+                }
+            }
+        }
+        Some(_) => return Err("rename-presets must be [[rename-presets]] tables".to_owned()),
+    }
+    if !presets.is_empty() || !broken.is_empty() {
         let mut array = toml_edit::ArrayOfTables::new();
         for preset in presets {
             let table = crate::settings::preset_to_toml(preset);
@@ -72,9 +103,52 @@ pub fn with_rename_presets(text: &str, presets: &[crate::settings::RenamePreset]
             let parsed = text.parse::<toml_edit::DocumentMut>().map_err(|err| err.to_string())?;
             array.push(parsed.as_table().clone());
         }
+        for table in broken {
+            array.push(table);
+        }
+        // The tables come from other documents: their positions would scatter them (and
+        // their `[[rename-presets.rules]]`) among the file's tables. They go at the end.
+        let mut next = last_position(doc.as_table()) + 1;
+        for table in array.iter_mut() {
+            place(table, &mut next);
+        }
         doc.insert("rename-presets", toml_edit::Item::ArrayOfTables(array));
     }
     Ok(doc.to_string())
+}
+
+/// The highest position of `table` and the tables in it.
+fn last_position(table: &toml_edit::Table) -> isize {
+    let mut last = table.position().unwrap_or(0);
+    for (_, item) in table.iter() {
+        match item {
+            toml_edit::Item::Table(t) => last = last.max(last_position(t)),
+            toml_edit::Item::ArrayOfTables(a) => {
+                for t in a.iter() {
+                    last = last.max(last_position(t));
+                }
+            }
+            _ => {}
+        }
+    }
+    last
+}
+
+/// Gives `table` and the tables in it the positions from `next` on, in order.
+fn place(table: &mut toml_edit::Table, next: &mut isize) {
+    table.set_position(Some(*next));
+    *next += 1;
+    for (_, item) in table.iter_mut() {
+        match item {
+            toml_edit::Item::Table(t) => place(t, next),
+            toml_edit::Item::ArrayOfTables(a) => {
+                for t in a.iter_mut() {
+                    place(t, next);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 #[cfg(test)]
@@ -216,5 +290,61 @@ mod tests {
         assert_eq!(settings.rename_presets, [preset]);
         let out = with_rename_presets(&out, &[]).unwrap();
         assert!(!out.contains("rename-presets"), "{out}");
+    }
+
+    fn tatil() -> crate::settings::RenamePreset {
+        use gezik_core::batch::rules::{Rule, RuleEntry};
+        crate::settings::RenamePreset {
+            name: "Tatil".into(),
+            include_extension: false,
+            rules: vec![RuleEntry::new(Rule::Template("{n:03}".into()))],
+        }
+    }
+
+    #[test]
+    fn broken_hand_written_presets_are_kept() {
+        use crate::settings::Settings;
+        let text = "[[rename-presets]]
+name = \"good\"
+
+[[rename-presets]]
+name = \"broken\" # mine
+rules = 5
+";
+        let out = with_rename_presets(text, &[tatil()]).unwrap();
+        assert!(out.contains("name = \"broken\" # mine"), "{out}");
+        assert!(out.contains("rules = 5"), "{out}");
+        assert!(!out.contains("\"good\""), "a valid one is replaced: {out}");
+        let mut warnings = Vec::new();
+        let settings = Settings::parse("settings.toml", &out, &mut warnings);
+        assert_eq!(settings.rename_presets, [tatil()]);
+        assert_eq!(warnings.len(), 1, "the broken one still warns: {warnings:?}");
+        // Deleting every valid one keeps the broken one too.
+        let out = with_rename_presets(&out, &[]).unwrap();
+        assert!(out.contains("rules = 5"), "{out}");
+    }
+
+    #[test]
+    fn presets_parse_back_next_to_other_tables() {
+        use crate::settings::Settings;
+        let text = "theme = \"nord\"
+
+[view]
+mode = \"grid\"
+
+[files]
+confirm-trash = true
+
+[[rename-presets]]
+name = \"old\"
+";
+        let out = with_rename_presets(text, &[tatil()]).unwrap();
+        let mut warnings = Vec::new();
+        let settings = Settings::parse("settings.toml", &out, &mut warnings);
+        assert_eq!(settings.rename_presets, [tatil()], "{out}");
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let parsed = out.parse::<toml::Table>().unwrap();
+        assert_eq!(parsed["view"]["mode"].as_str(), Some("grid"));
+        assert_eq!(parsed["files"]["confirm-trash"].as_bool(), Some(true));
     }
 }

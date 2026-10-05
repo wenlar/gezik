@@ -124,6 +124,8 @@ export component RenameBatch inherits Rectangle {
     // The selected preview row's new name (Task 8 edits it).
     in-out property <string> name-text;
     in property <bool> name-enabled;
+    // Typing in the name field: Rust leaves its text alone.
+    out property <bool> name-focused: name-field.has-focus;
     // A row dragged by its handle: where from and where it would land (-1: no drag).
     property <int> drag-from: -1;
     property <int> drag-to: -1;

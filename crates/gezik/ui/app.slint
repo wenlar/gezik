@@ -235,6 +235,7 @@ export component AppWindow inherits Window {
     in-out property <length> rb-scroll;
     in-out property <string> rb-name-text;
     in property <bool> rb-name-enabled;
+    out property <bool> rb-name-focused: rename-batch.name-focused;
     callback rb-add-rule(length, length);
     callback rb-select-rule(int);
     callback rb-toggle-rule(int);

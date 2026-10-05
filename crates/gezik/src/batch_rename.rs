@@ -367,6 +367,8 @@ struct Inner {
     taken_ready: Cell<bool>,
     /// Counts openings: dates read for an earlier one are dropped.
     opening: Cell<u64>,
+    /// The display position whose name the name field shows.
+    name_shown: Cell<Option<usize>>,
 }
 
 #[derive(Clone)]
@@ -391,6 +393,7 @@ impl BatchRename {
             reading: Default::default(),
             taken_ready: Default::default(),
             opening: Default::default(),
+            name_shown: Default::default(),
         }));
         this.install(window);
         CURRENT.with(|c| *c.borrow_mut() = Some(this.clone()));
@@ -456,10 +459,7 @@ impl BatchRename {
         window
             .on_rb_drop_row(|y, row_height, count| drop_row(y, row_height, usize::try_from(count).unwrap_or(0)) as i32);
         let t = self.clone();
-        window.on_rb_sort(move |by| {
-            t.0.rules.borrow_mut().sort_order(by);
-            t.recompute();
-        });
+        window.on_rb_sort(move |by| t.sort(by));
         let t = self.clone();
         window.on_rb_name_edited(move |text| {
             let Some(position) = t.focused_position() else { return };
@@ -472,7 +472,8 @@ impl BatchRename {
         window.on_rb_name_reset(move || {
             let positions = t.selected_positions();
             t.0.rules.borrow_mut().reset_manual(&positions);
-            t.recompute();
+            t.update();
+            t.show_name();
         });
         // Add rule ▾ and Presets ▾ open Slint menus through context_menu.rs (main.rs wires them).
     }
@@ -594,10 +595,10 @@ impl BatchRename {
         }
     }
 
-    /// New names for everything, the name field included.
+    /// New names for everything, the name field included unless it is being typed in.
     fn recompute(&self) {
         self.update();
-        self.show_name();
+        self.follow_name();
     }
 
     /// New names, rules and preview; the name field is left as typed.
@@ -704,6 +705,35 @@ impl BatchRename {
         self.recompute();
     }
 
+    /// The sort buttons; the selected and focused items stay so (on their new rows).
+    fn sort(&self, by: i32) {
+        let (selected, focus) = {
+            let r = self.0.rules.borrow();
+            let shown = self.0.shown.borrow();
+            let selection = self.0.selection.borrow();
+            let item = |row: usize| shown.get(row).and_then(|&p| r.order.get(p)).copied();
+            (selection.iter().filter_map(item).collect::<Vec<_>>(), selection.focus().and_then(item))
+        };
+        self.0.rules.borrow_mut().sort_order(by);
+        self.update();
+        let (rows, focus) = {
+            let r = self.0.rules.borrow();
+            rows_of(&selected, focus, &r.order, &self.0.shown.borrow())
+        };
+        {
+            let mut selection = self.0.selection.borrow_mut();
+            *selection = Selection::new(self.0.shown.borrow().len());
+            for row in rows {
+                selection.toggle(row);
+            }
+            if let Some(row) = focus {
+                selection.set_focus(row);
+            }
+        }
+        self.refresh();
+        self.show_name();
+    }
+
     /// Display positions of the selected rows (the focused one if none).
     fn selected_positions(&self) -> Vec<usize> {
         let shown = self.0.shown.borrow();
@@ -720,11 +750,22 @@ impl BatchRename {
         self.0.shown.borrow().get(row).copied()
     }
 
+    /// The name field follows the names, but not while it is typed in for the row it shows.
+    fn follow_name(&self) {
+        let Some(window) = self.0.window.upgrade() else { return };
+        if window.get_rb_name_focused() && self.focused_position() == self.0.name_shown.get() {
+            return;
+        }
+        self.show_name();
+    }
+
     /// The name field shows the focused row's new name.
     fn show_name(&self) {
         let Some(window) = self.0.window.upgrade() else { return };
         let r = self.0.rules.borrow();
-        match self.focused_position().and_then(|p| r.new.get(p)) {
+        let position = self.focused_position();
+        self.0.name_shown.set(position);
+        match position.and_then(|p| r.new.get(p)) {
             Some(name) => {
                 window.set_rb_name_text(name.clone().into());
                 window.set_rb_name_enabled(true);
@@ -824,8 +865,9 @@ impl BatchRename {
         self.edit(|r| r.add_rule(kind), true);
     }
 
-    pub fn apply_preset(&self, index: usize) {
-        let Some(preset) = PRESETS.with(|p| p.borrow().get(index).cloned()) else { return };
+    /// The saved set called `name`, if it is still there.
+    pub fn apply_preset(&self, name: &str) {
+        let Some(preset) = PRESETS.with(|p| p.borrow().iter().find(|p| p.name == name).cloned()) else { return };
         self.0.reload_texts.set(true);
         self.edit(
             |r| {
@@ -859,9 +901,9 @@ impl BatchRename {
         self.write_presets(presets);
     }
 
-    pub fn delete_preset(&self, index: usize) {
+    pub fn delete_preset(&self, name: &str) {
         let mut presets = PRESETS.with(|p| p.borrow().clone());
-        if index < presets.len() {
+        if let Some(index) = presets.iter().position(|p| p.name == name) {
             presets.remove(index);
             self.write_presets(presets);
         }
@@ -871,6 +913,12 @@ impl BatchRename {
         set_presets(presets.clone());
         self.0.ops.save_rename_presets(&presets);
     }
+}
+
+/// The shown rows of `items` (and of the `focus` item) under `order`; hidden ones are left out.
+pub fn rows_of(items: &[usize], focus: Option<usize>, order: &[usize], shown: &[usize]) -> (Vec<usize>, Option<usize>) {
+    let row = |item: usize| order.iter().position(|&i| i == item).and_then(|p| shown.iter().position(|&s| s == p));
+    (items.iter().filter_map(|&i| row(i)).collect(), focus.and_then(row))
 }
 
 /// How many rows PgUp/PgDn move in the preview.
@@ -1079,6 +1127,16 @@ mod tests {
         assert_eq!(m.order, [1, 2, 0]);
         m.reset_order();
         assert_eq!(m.order, [0, 1, 2]);
+    }
+
+    #[test]
+    fn sorting_keeps_the_selected_items() {
+        // Items 2 and 0 selected, 0 focused; the new order puts them on positions 0 and 2.
+        let (rows, focus) = rows_of(&[0, 2], Some(0), &[2, 1, 0], &[0, 1, 2]);
+        assert_eq!((rows, focus), (vec![2, 0], Some(2)));
+        // "Only changed" hides position 1 (item 1): row numbers skip it.
+        let (rows, focus) = rows_of(&[1, 0], Some(1), &[2, 1, 0], &[0, 2]);
+        assert_eq!((rows, focus), (vec![1], None));
     }
 
     #[test]

@@ -314,7 +314,7 @@ fn parse_rules(value: Option<&toml::Value>) -> Result<Vec<gezik_core::batch::rul
         .collect()
 }
 
-fn parse_preset(value: &toml::Value) -> Result<RenamePreset, String> {
+pub(crate) fn parse_preset(value: &toml::Value) -> Result<RenamePreset, String> {
     let table = value.as_table().ok_or("expected a table")?;
     let name = table.get("name").and_then(|v| v.as_str()).filter(|n| !n.trim().is_empty()).ok_or("name is missing")?;
     let include_extension = table.get("include-extension").and_then(|v| v.as_bool()).unwrap_or(false);

@@ -267,8 +267,8 @@ enum Subject {
     Conflict(usize),
     /// Files dropped with the right button, and the folder they were dropped on.
     Drop(Vec<PathBuf>, PathBuf),
-    /// The batch rename layer's menus.
-    BatchRename,
+    /// The batch rename layer's menus, with the preset names shown (items are by index).
+    BatchRename(Vec<String>),
 }
 
 /// Lets one native menu be pending or open at a time, so two right-clicks in quick
@@ -572,29 +572,38 @@ impl Menus {
             .enumerate()
             .map(|(i, (_, label))| (ADD_RULE_FIRST + i as u32, *label))
             .collect();
-        *self.subject.borrow_mut() = Some(Subject::BatchRename);
+        *self.subject.borrow_mut() = Some(Subject::BatchRename(Vec::new()));
         self.open_slint(&list, x, y);
     }
 
     /// "Presets ▾": the saved sets, save, delete.
     pub fn presets(&self, x: f32, y: f32) {
-        *self.subject.borrow_mut() = Some(Subject::BatchRename);
-        self.open_slint(&preset_items(&crate::batch_rename::preset_names()), x, y);
+        let names = crate::batch_rename::preset_names();
+        let list = preset_items(&names);
+        *self.subject.borrow_mut() = Some(Subject::BatchRename(names));
+        self.open_slint(&list, x, y);
     }
 
     fn run(&self, id: u32, subject: Subject) {
         match (id, subject) {
-            (id, Subject::BatchRename) if (ADD_RULE_FIRST..ADD_RULE_FIRST + 10).contains(&id) => {
+            (id, Subject::BatchRename(_)) if (ADD_RULE_FIRST..ADD_RULE_FIRST + 10).contains(&id) => {
                 if let Some((kind, _)) = gezik_core::batch::rules::KINDS.get((id - ADD_RULE_FIRST) as usize) {
                     crate::batch_rename::with_current(|layer| layer.add_rule(kind));
                 }
             }
-            (id, Subject::BatchRename) if (PRESET_FIRST..PRESET_SAVE).contains(&id) => {
-                crate::batch_rename::with_current(|layer| layer.apply_preset((id - PRESET_FIRST) as usize));
+            // By name: settings.toml may have been reloaded since the menu opened.
+            (id, Subject::BatchRename(names)) if (PRESET_FIRST..PRESET_SAVE).contains(&id) => {
+                if let Some(name) = names.get((id - PRESET_FIRST) as usize) {
+                    crate::batch_rename::with_current(|layer| layer.apply_preset(name));
+                }
             }
-            (PRESET_SAVE, Subject::BatchRename) => crate::batch_rename::with_current(|layer| layer.ask_preset_name()),
-            (id, Subject::BatchRename) if (PRESET_DELETE_FIRST..PRESET_DELETE_FIRST + 40).contains(&id) => {
-                crate::batch_rename::with_current(|layer| layer.delete_preset((id - PRESET_DELETE_FIRST) as usize));
+            (PRESET_SAVE, Subject::BatchRename(_)) => {
+                crate::batch_rename::with_current(|layer| layer.ask_preset_name());
+            }
+            (id, Subject::BatchRename(names)) if (PRESET_DELETE_FIRST..PRESET_DELETE_FIRST + 40).contains(&id) => {
+                if let Some(name) = names.get((id - PRESET_DELETE_FIRST) as usize) {
+                    crate::batch_rename::with_current(|layer| layer.delete_preset(name));
+                }
             }
             (id, Subject::Conflict(row)) if (CONFLICT_FIRST..CONFLICT_FIRST + 4).contains(&id) => {
                 if let Some(decision) = crate::conflicts::DECISIONS.get((id - CONFLICT_FIRST) as usize) {
