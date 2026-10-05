@@ -3,7 +3,6 @@
 
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use gezik_core::ops::conflict::Facts;
@@ -13,7 +12,7 @@ use gezik_platform::fs;
 
 use super::name;
 use crate::engine::lock;
-use crate::pending::{PendingDeletes, RENAMING_PREFIX, Restore};
+use crate::pending::{PendingDeletes, Restore, renaming_name};
 use crate::task::{
     Outcome, PlanItem, Resources, RunCx, ScanSink, Stage, Task, TaskKind, Work, changed_since, facts_after, unchanged,
 };
@@ -39,8 +38,6 @@ pub struct RenameTask {
     in_temp: Mutex<Vec<usize>>,
 }
 
-static NEXT_TEMP: AtomicUsize = AtomicUsize::new(0);
-
 impl RenameTask {
     /// Renames `path` to `name` in its folder.
     pub fn one(path: PathBuf, name: &str) -> RenameTask {
@@ -61,13 +58,7 @@ impl RenameTask {
     }
 
     fn new(pairs: Vec<(PathBuf, PathBuf)>, expect: Vec<Option<Facts>>) -> RenameTask {
-        let temps = pairs
-            .iter()
-            .map(|(source, _)| {
-                let n = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
-                source.with_file_name(format!("{RENAMING_PREFIX}{}-{n}", std::process::id()))
-            })
-            .collect();
+        let temps = pairs.iter().map(|(source, _)| renaming_name(source)).collect();
         let steps = order(&pairs);
         RenameTask { pairs, expect, temps, steps, noted: OnceLock::new(), in_temp: Mutex::default() }
     }

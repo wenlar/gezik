@@ -639,6 +639,7 @@ fn sevenz_parts_replace_and_keep_both_cover_the_whole_set() {
     assert!(report.failures.is_empty(), "{:?}", report.failures);
     assert_eq!(set("set.7z."), ["set.7z.001", "set.7z.002"]);
     assert_eq!(unpacked(&d.join("set.7z.002"), &d, "back", None), tree(&new));
+    assert!(PendingDeletes::new(d.join("pending-deletes")).restores().is_empty(), "trashed: no note left");
     // Undo brings the old set back whole.
     let report = finish(&engine, engine.undo().unwrap(), nothing).0;
     assert!(report.failures.is_empty(), "{:?}", report.failures);
@@ -755,6 +756,7 @@ fn a_part_that_cannot_land_brings_the_old_set_back() {
     assert_eq!(std::fs::read(d.join("set.7z.002")).unwrap(), old_bytes[1]);
     assert!(d.join("set.7z.003").is_dir());
     assert!(leftovers(&d).is_empty(), "{:?}", leftovers(&d));
+    assert!(PendingDeletes::new(d.join("pending-deletes")).restores().is_empty(), "put back: no note left");
     let report = finish(&engine, engine.undo().unwrap(), nothing).0;
     assert!(report.failures.is_empty(), "{:?}", report.failures);
     assert_eq!(std::fs::read(d.join("set.7z.001")).unwrap(), old_bytes[0]);

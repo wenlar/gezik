@@ -427,6 +427,35 @@ impl RunCx<'_> {
         })
     }
 
+    /// A name next to `path` to set it aside under for a while (`.gezik-rn-…`: no temporary
+    /// file cleanup deletes it).
+    pub fn aside_name(&self, path: &Path) -> PathBuf {
+        crate::pending::renaming_name(path)
+    }
+
+    /// Notes items set aside, as (where it is now, its own name): if Gezik stops before
+    /// `forget_aside`, the next start puts each back under its own name (or a free `name (n)`).
+    pub fn note_aside(&self, pairs: &[(PathBuf, PathBuf)]) {
+        if let Some(pending) = self.pending() {
+            let restores: Vec<crate::pending::Restore> = pairs
+                .iter()
+                .map(|(aside, original)| crate::pending::Restore {
+                    hidden: aside.clone(),
+                    original: original.clone(),
+                    was_hidden: true,
+                })
+                .collect();
+            pending.add_restores(&restores);
+        }
+    }
+
+    /// The items set aside at `asides` are back, trashed or deleted: nothing to put back.
+    pub fn forget_aside(&self, asides: &[&Path]) {
+        if let Some(pending) = self.pending() {
+            pending.remove_restores(asides);
+        }
+    }
+
     /// Where the job notes what to put back if Gezik stops (`None`: nowhere).
     pub(crate) fn pending(&self) -> Option<&std::sync::Arc<PendingDeletes>> {
         self.temp.pending.as_ref()
@@ -594,6 +623,27 @@ mod tests {
         assert!(names(&dir.join("to")).is_empty());
         temp.done();
         assert!(pending.copies().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_item_set_aside_is_noted_until_forgotten() {
+        let dir = test_dir("aside");
+        let pending = std::sync::Arc::new(PendingDeletes::new(dir.join("pending-deletes")));
+        let temp = TempCopies::new(Some(pending.clone()));
+        let control = Control::default();
+        let no_bin = |_: &Path| false;
+        let cx = RunCx { control: &control, trash: &no_bin, added: Cell::new(0), temp: &temp, job: None };
+        let original = dir.join("x.7z.001");
+        let aside = cx.aside_name(&original);
+        assert_eq!(crate::pending::renaming_pid(&aside), Some(std::process::id()), "no temp cleanup takes it");
+        assert_ne!(cx.aside_name(&original), aside);
+        cx.note_aside(&[(aside.clone(), original.clone())]);
+        let restores = pending.restores();
+        assert_eq!(restores.len(), 1);
+        assert_eq!((&restores[0].hidden, &restores[0].original), (&aside, &original));
+        cx.forget_aside(&[&aside]);
+        assert!(pending.restores().is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

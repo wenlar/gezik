@@ -280,6 +280,14 @@ pub fn renaming_pid(path: &Path) -> Option<u32> {
     rest.split_once('-')?.0.parse().ok()
 }
 
+/// A fresh temporary name next to `path` for an item set aside for a while
+/// (`.gezik-rn-{pid}-{n}`): a leftover is put back under its own name, never deleted.
+pub fn renaming_name(path: &Path) -> PathBuf {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    path.with_file_name(format!("{RENAMING_PREFIX}{}-{n}", std::process::id()))
+}
+
 /// A fresh hidden name.
 pub fn hidden_name() -> String {
     format!("{HIDDEN_PREFIX}{}", unique())

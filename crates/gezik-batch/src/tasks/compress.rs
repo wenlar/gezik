@@ -45,7 +45,7 @@ impl CompressTask {
     }
 
     /// Writes the parts (at `temp.001`…) to their names. An older set of that name (Replace
-    /// was chosen for it) first steps aside under temporary names; once every new part has
+    /// was chosen for it) first steps aside under noted temporary names; once every new part has
     /// landed it goes to the trash (deleted on a drive without one). If a new part cannot land,
     /// the new ones are removed and the older set comes back: nothing is lost either way.
     /// "Keep both" gives the whole new set a free name.
@@ -57,17 +57,23 @@ impl CompressTask {
             Some(planned) => free_base(&strip_part(planned)),
             None => strip_part(first),
         };
+        // Names no temporary file cleanup deletes, noted before the first is taken: if Gezik
+        // stops meanwhile, the next start puts each part back under its own name.
+        let olds: Vec<(PathBuf, PathBuf)> = match renamed {
+            Some(_) => Vec::new(),
+            None => parts_of(&base).into_iter().map(|(_, old)| (run.aside_name(&old), old)).collect(),
+        };
+        run.note_aside(&olds);
         let mut aside: Vec<(PathBuf, PathBuf)> = Vec::new();
-        if renamed.is_none() {
-            for (_, old) in parts_of(&base) {
-                let temp = run.temp_file_for(&old);
-                if let Err(err) = gezik_platform::fs::move_entry(&old, &temp) {
-                    remove_all(written);
-                    put_back(&aside, run);
-                    return Err(err);
-                }
-                aside.push((old, temp));
+        for (temp, old) in &olds {
+            if let Err(err) = gezik_platform::fs::move_entry(old, temp) {
+                remove_all(written);
+                put_back(&aside, run);
+                let unused: Vec<&Path> = olds[aside.len()..].iter().map(|(temp, _)| temp.as_path()).collect();
+                run.forget_aside(&unused);
+                return Err(err);
             }
+            aside.push((old.clone(), temp.clone()));
         }
         let mut landed = Vec::new();
         for (n, part) in written.iter().enumerate() {
@@ -83,7 +89,10 @@ impl CompressTask {
         let mut outcomes = Vec::new();
         for (old, temp) in aside {
             match out_of_the_way(&old, &temp, run) {
-                Ok(outcome) => outcomes.push(outcome),
+                Ok(outcome) => {
+                    outcomes.push(outcome);
+                    run.forget_aside(&[&temp]);
+                }
                 Err(err) => keep_aside(&old, &temp, &err, run),
             }
         }
@@ -102,11 +111,13 @@ fn remove_all(paths: &[PathBuf]) {
     }
 }
 
-/// Brings the older parts set aside back to their names.
+/// Brings the older parts set aside back to their names; one that cannot go back stays noted
+/// (the next start puts it back).
 fn put_back(aside: &[(PathBuf, PathBuf)], run: &RunCx<'_>) {
     for (old, temp) in aside.iter().rev() {
-        if let Err(err) = gezik_platform::fs::move_entry(temp, old) {
-            run.fail(old, &io::Error::new(err.kind(), format!("{err}; it is at {}", temp.display())));
+        match gezik_platform::fs::move_entry(temp, old) {
+            Ok(()) => run.forget_aside(&[temp]),
+            Err(err) => run.fail(old, &io::Error::new(err.kind(), format!("{err}; it is at {}", temp.display()))),
         }
     }
 }
@@ -128,7 +139,10 @@ fn keep_aside(old: &Path, temp: &Path, err: &io::Error, run: &RunCx<'_>) {
     let free = next_free(&file_name(old), false, |name| folder.join(name).symlink_metadata().is_ok());
     let kept = folder.join(free);
     let message = match gezik_platform::fs::move_entry(temp, &kept) {
-        Ok(()) => format!("{err}; the old part was kept as {}", file_name(&kept)),
+        Ok(()) => {
+            run.forget_aside(&[temp]);
+            format!("{err}; the old part was kept as {}", file_name(&kept))
+        }
         Err(_) => format!("{err}; the old part is at {}", temp.display()),
     };
     run.fail(old, &io::Error::new(err.kind(), message));
