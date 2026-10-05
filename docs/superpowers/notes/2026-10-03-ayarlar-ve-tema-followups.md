@@ -86,3 +86,5 @@ Alt proje 1 tamamlandıktan sonra bilerek ertelenen maddeler. Kaynak: görev inc
 - Windows çöpü, adının bir bileşeni nokta veya boşlukla biten yolları reddediyor (Shell kardeş bir öğe üzerinde işlem yapardı).
 - Kalıcı silmede, geri koyma yeniden adlandırması da başarısız olursa gizli klasör artığı kalabilir.
 - Spec'teki "kalıcı silmede Explorer'dan ≥ 3 kat hızlı" hedefi ölçülmedi: taban çizgisi olarak yalnız `rd /s /q` kullanıldı; Explorer'da Shift+Del süresinin elle tutulması bekliyor.
+- Slint 1.18.1'de metin yerleşim önbelleği süpürülünce (1024 girişten sonra) seyrek çizilen metinler bir daha yeniden çizilmiyordu (örn. büyük klasörde kaydırdıktan sonra durum çubuğu eski seçim sayısında kalıyordu). Düzeltilmiş `i-slint-core` `vendor/` altında, `[patch.crates-io]` ile kullanılıyor (`vendor/README.md`). Slint'e bildirilmedi; Slint yükseltilirken yamanın hâlâ gerekip gerekmediğine bakılmalı.
+- Yeniden adlandırılan satır ekrandan kayınca adlandırma, başka yere tıklanmış gibi yazılan adla bitiyor (Slint odaktaki öğe yok olunca tuşları hiçbir yere iletmiyor).
