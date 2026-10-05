@@ -5,6 +5,7 @@ pub mod kind;
 pub mod layout;
 pub mod nav;
 pub mod ops;
+pub mod refresh;
 pub mod selection;
 pub mod sort;
 pub mod view;

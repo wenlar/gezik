@@ -247,9 +247,14 @@ impl View {
         }
         let settings =
             folder.as_deref().and_then(|f| self.0.memory.borrow_mut().get(f)).unwrap_or(self.0.defaults.get().view);
+        // A reload of the same folder (it changed on disk) keeps the icons and thumbnails asked
+        // for: a folder that changes all the time would never get its slow thumbnails.
+        let same_folder = folder.is_some() && *self.0.folder.borrow() == folder;
         *self.0.folder.borrow_mut() = folder;
         self.0.current.set(settings);
-        self.0.media.new_generation();
+        if !same_folder {
+            self.0.media.new_generation();
+        }
         self.apply_layout();
         let listing = self.sorted(listing, true);
         let selection = restore_selection(&listing, state);
@@ -557,6 +562,11 @@ impl View {
 
     pub fn marquee_done(&self) {
         self.0.data.borrow_mut().marquee_base = None;
+    }
+
+    /// A rubber-band drag is going on (a reload now would break it).
+    pub fn marquee_active(&self) -> bool {
+        self.0.data.borrow().marquee_base.is_some()
     }
 
     pub fn sort(&self) -> SortSpec {

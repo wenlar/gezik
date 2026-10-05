@@ -6,12 +6,16 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
 use gezik_core::nav::{Closed, Location, Step, Tabs, ViewState, crumbs, nearest_existing};
+use gezik_core::ops::paths::same_path;
+use gezik_core::refresh::{QUIET, RefreshPace};
 use gezik_core::{Entry, list_dir};
 use gezik_platform::Drive;
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
+use crate::folder_watch::FolderWatch;
 use crate::places::{Places, PlacesPart};
 use crate::view::{Listing, View};
 use crate::{AppWindow, CrumbItem, TabItem};
@@ -112,6 +116,11 @@ struct Inner {
     /// must not overtake it.
     user_load: Option<u64>,
     on_changed: Vec<Listener>,
+    /// Watches the folder on screen; its changes reload it, paced by `pace`.
+    watch: FolderWatch,
+    watched: Option<PathBuf>,
+    pace: RefreshPace,
+    refresh_timer: slint::Timer,
 }
 
 thread_local! {
@@ -153,7 +162,58 @@ impl Navigator {
             pending: None,
             user_load: None,
             on_changed: Vec::new(),
+            watch: FolderWatch::new(|| {
+                let _ = slint::invoke_from_event_loop(|| with_current(Navigator::folder_changed));
+            }),
+            watched: None,
+            pace: RefreshPace::new(),
+            refresh_timer: slint::Timer::default(),
         })))
+    }
+
+    /// The watched folder changed on disk.
+    fn folder_changed(&self) {
+        {
+            let mut inner = self.0.borrow_mut();
+            if inner.watch.take_change() {
+                inner.pace.changed(Instant::now());
+            }
+        }
+        self.schedule_refresh();
+    }
+
+    /// Sets the timer for the reload the watched folder's changes call for, if any.
+    fn schedule_refresh(&self) {
+        let inner = self.0.borrow();
+        if let Some(at) = inner.pace.next() {
+            let delay = at.saturating_duration_since(Instant::now());
+            inner.refresh_timer.start(slint::TimerMode::SingleShot, delay, || with_current(Navigator::refresh_due));
+        }
+    }
+
+    /// Reloads the watched folder for its changes, quietly; later while the user loads
+    /// something, drags a selection rectangle or renames.
+    fn refresh_due(&self) {
+        let watched = {
+            let inner = self.0.borrow();
+            // A reload rebuilds the rows: it would end a rubber-band drag, and put a rename's
+            // caret back at the start.
+            let busy = inner.user_load.is_some()
+                || inner.cleared
+                || inner.view.marquee_active()
+                || inner.view.renaming().is_some();
+            if busy {
+                inner.refresh_timer.start(slint::TimerMode::SingleShot, QUIET, || with_current(Navigator::refresh_due));
+                return;
+            }
+            inner.watched.clone()
+        };
+        let Some(watched) = watched else { return };
+        if !matches!(self.active_location(), Location::Path(ref path) if same_path(path, &watched)) {
+            return;
+        }
+        self.save_view();
+        self.load_with(Location::Path(watched), Mode::Show, None, false);
     }
 
     /// Makes this navigator reachable from background-load callbacks and shows the first
@@ -499,6 +559,12 @@ impl Navigator {
                 Mode::Show => None,
             };
             inner.user_load = loading_text.then_some(ticket);
+            // Any load of the watched folder covers its changes so far.
+            if let Location::Path(path) = &location
+                && inner.watched.as_deref().is_some_and(|watched| same_path(watched, path))
+            {
+                inner.pace.started(Instant::now());
+            }
             (inner.window.clone(), inner.generation.clone(), ticket)
         };
         if loading_text && let Some(w) = window.upgrade() {
@@ -521,6 +587,7 @@ impl Navigator {
             let mut inner = self.0.borrow_mut();
             inner.pending = None;
             inner.user_load = None;
+            inner.pace.finished(Instant::now());
         }
         let shown = match &location {
             Location::Path(p) => p.display().to_string(),
@@ -548,8 +615,30 @@ impl Navigator {
             inner.cleared = false;
             (inner.view.clone(), inner.tabs.active().view().clone())
         };
+        self.watch_shown(&location);
         view.show(listing, &state, note);
         self.update_chrome();
+        self.schedule_refresh();
+    }
+
+    /// Watches the folder now on screen (none for This PC).
+    fn watch_shown(&self, location: &Location) {
+        let folder = match location {
+            Location::Path(path) => Some(path.clone()),
+            Location::Drives => None,
+        };
+        let mut inner = self.0.borrow_mut();
+        let same = match (&folder, &inner.watched) {
+            (Some(a), Some(b)) => same_path(a, b),
+            (None, None) => true,
+            _ => false,
+        };
+        if !same {
+            inner.watch.watch(folder.as_deref());
+            inner.watched = folder;
+            inner.pace.reset();
+            inner.refresh_timer.stop();
+        }
     }
 
     /// Shows `message` for a failed load; see [`apply_failure`].
