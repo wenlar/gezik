@@ -430,10 +430,7 @@ impl Operations {
         if self.0.view.shows_drives() {
             return;
         }
-        let mut items = self.0.view.selected_items();
-        if items.is_empty() {
-            items.extend(self.0.view.focus().and_then(|i| self.0.view.entry_path(i)));
-        }
+        let items = self.0.view.selected_entries();
         if items.is_empty() {
             return;
         }

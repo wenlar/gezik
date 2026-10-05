@@ -90,9 +90,17 @@ fn handle_key(
     has_modifier: bool,
     menu_key: bool,
 ) -> bool {
-    // A question, the conflict list or the batch rename layer over the window has the keyboard.
-    if window.get_dialog_open() || window.get_conflicts_open() || window.get_rb_open() {
+    // A question or the conflict list over the window has the keyboard.
+    if window.get_dialog_open() || window.get_conflicts_open() {
         return false;
+    }
+    // The batch rename layer: Esc and Ctrl+Enter wherever its focus is, other keys to it.
+    if window.get_rb_open() {
+        let mut used = false;
+        if let Some(chord) = &chord {
+            batch_rename::with_current(|layer| used = layer.chord(chord));
+        }
+        return used;
     }
     // The name field being edited has the keyboard (Enter, Esc, Tab are its own).
     if ops.end_unfocused_rename() {

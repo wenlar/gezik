@@ -9,9 +9,12 @@ use std::time::Duration;
 
 use gezik_batch::rename::{Item, Status, check, compile, new_names};
 use gezik_config::settings::BatchRenameState;
+use gezik_config::shortcuts::{Chord, Key, Platform};
+use gezik_core::Entry;
 use gezik_core::batch::case::{CaseMode, Lang};
 use gezik_core::batch::rules::{ExtensionRule, NumberAt, Rule, RuleEntry};
 use gezik_core::ops::names::NameRules;
+use gezik_core::selection::Selection;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::{AppWindow, RenamePreviewRow, RuleOptions, RuleRow};
@@ -293,7 +296,7 @@ struct Inner {
     rules: RefCell<Rules>,
     rows: Rc<VecModel<RenamePreviewRow>>,
     /// Over display positions (shown rows when "Only changed").
-    selection: RefCell<gezik_core::selection::Selection>,
+    selection: RefCell<Selection>,
     /// Display positions on screen ("Only changed" hides some).
     shown: RefCell<Vec<usize>>,
     only_changed: std::cell::Cell<bool>,
@@ -317,7 +320,7 @@ impl BatchRename {
             ops,
             rules: RefCell::default(),
             rows,
-            selection: RefCell::new(gezik_core::selection::Selection::new(0)),
+            selection: RefCell::new(Selection::new(0)),
             shown: RefCell::default(),
             only_changed: Default::default(),
             open: Default::default(),
@@ -388,28 +391,25 @@ impl BatchRename {
 
     /// Opens the layer for `items` (paths and whether each is a folder), in list order.
     /// `others`: the folder's other names; `last`: the rules used last time.
-    pub fn open(&self, items: Vec<(PathBuf, bool)>, others: Vec<String>, last: BatchRenameState) {
+    pub fn open(&self, items: Vec<(PathBuf, Entry)>, others: Vec<String>, last: BatchRenameState) {
         let Some(window) = self.0.window.upgrade() else { return };
-        let selected: HashSet<String> =
-            items.iter().filter_map(|(p, _)| p.file_name().map(|n| n.to_string_lossy().into_owned())).collect();
+        let selected: HashSet<String> = items.iter().map(|(_, e)| e.name.clone()).collect();
         let lang = Lang::from_code(&gezik_platform::language());
+        // From the listing: the UI thread does not ask the file system.
         let list: Vec<Item> = items
             .iter()
-            .map(|(path, is_dir)| {
-                let meta = std::fs::symlink_metadata(path).ok();
-                Item {
-                    name: path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
-                    is_dir: *is_dir,
-                    parent: path
-                        .parent()
-                        .and_then(|p| p.file_name())
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_default(),
-                    folder: 0,
-                    size: meta.as_ref().map_or(0, |m| m.len()),
-                    modified: meta.and_then(|m| m.modified().ok()).and_then(gezik_platform::local_date_parts),
-                    taken: None,
-                }
+            .map(|(path, entry)| Item {
+                name: entry.name.clone(),
+                is_dir: entry.is_dir,
+                parent: path
+                    .parent()
+                    .and_then(|p| p.file_name())
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                folder: 0,
+                size: if entry.is_dir { 0 } else { entry.size },
+                modified: entry.modified.and_then(gezik_platform::local_date_parts),
+                taken: None,
             })
             .collect();
         {
@@ -435,6 +435,8 @@ impl BatchRename {
         self.0.only_changed.set(false);
         self.0.shown_rule.set(None);
         self.0.reload_texts.set(true);
+        *self.0.selection.borrow_mut() = Selection::new(count);
+        self.0.shown.borrow_mut().clear();
         window.set_rb_scroll(0.0);
         self.0.open.set(true);
         self.recompute();
@@ -511,8 +513,9 @@ impl BatchRename {
             .filter(|&p| !only_changed || r.statuses.get(p).is_some_and(|s| *s != Status::Unchanged))
             .collect();
         let mut selection = self.0.selection.borrow_mut();
-        if selection.len() != shown.len() {
-            *selection = gezik_core::selection::Selection::new(shown.len());
+        // Other rows show ("Only changed"): row numbers mean other items now.
+        if *self.0.shown.borrow() != shown {
+            *selection = Selection::new(shown.len());
         }
         let rows: Vec<RenamePreviewRow> =
             shown.iter().enumerate().filter_map(|(row, &p)| r.preview_row(p, selection.is_selected(row))).collect();
@@ -550,20 +553,38 @@ impl BatchRename {
         self.0.ops.submit(Box::new(gezik_ops::RenameTask::many(pairs)), None, crate::operations::After::Select);
     }
 
-    /// A key while the layer has the keyboard; returns whether it was used.
+    /// A key that reached the layer's own focus scope; returns whether it was used.
     fn key(&self, text: &str, control: bool, alt: bool, shift: bool, meta: bool) -> bool {
-        use gezik_config::shortcuts::{Key, Platform};
         let platform = Platform::current();
-        let Some(chord) = crate::keys::chord_from_slint(text, control, alt, shift, meta, platform) else {
-            return false;
-        };
-        let primary = crate::keys::is_primary(&chord, platform);
-        match chord.key {
-            Key::Escape if !primary && !chord.shift => self.close(),
-            Key::Enter if primary => self.rename(),
-            _ => return false,
+        crate::keys::chord_from_slint(text, control, alt, shift, meta, platform).is_some_and(|c| self.chord(&c))
+    }
+
+    /// A key while the layer is open, wherever its focus is (main.rs sends every key here
+    /// first, so Esc and Ctrl+Enter work in the option fields too); returns whether it was used.
+    pub fn chord(&self, chord: &Chord) -> bool {
+        match key_action(chord, Platform::current()) {
+            Some(KeyAction::Close) => self.close(),
+            Some(KeyAction::Rename) => self.rename(),
+            None => return false,
         }
         true
+    }
+}
+
+/// What a key does in the layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyAction {
+    Close,
+    Rename,
+}
+
+/// Esc closes, Ctrl+Enter (Cmd on macOS) renames; other keys are for the fields and lists.
+pub fn key_action(chord: &Chord, platform: Platform) -> Option<KeyAction> {
+    let primary = crate::keys::is_primary(chord, platform);
+    match chord.key {
+        Key::Escape if !primary && !chord.shift => Some(KeyAction::Close),
+        Key::Enter if primary => Some(KeyAction::Rename),
+        _ => None,
     }
 }
 
@@ -636,6 +657,20 @@ mod tests {
         m.recompute();
         assert!(!m.can_rename());
         assert!(!m.rule_rows()[0].error.is_empty());
+    }
+
+    #[test]
+    fn esc_closes_and_primary_enter_renames() {
+        let chord = |key: Key, ctrl: bool, shift: bool, meta: bool| Chord { ctrl, alt: false, shift, meta, key };
+        let other = Platform::Other;
+        assert_eq!(key_action(&chord(Key::Escape, false, false, false), other), Some(KeyAction::Close));
+        assert_eq!(key_action(&chord(Key::Escape, false, true, false), other), None);
+        assert_eq!(key_action(&chord(Key::Escape, true, false, false), other), None);
+        assert_eq!(key_action(&chord(Key::Enter, true, false, false), other), Some(KeyAction::Rename));
+        assert_eq!(key_action(&chord(Key::Enter, false, false, false), other), None, "plain Enter is the field's");
+        assert_eq!(key_action(&chord(Key::Char('a'), false, false, false), other), None);
+        assert_eq!(key_action(&chord(Key::Enter, false, false, true), Platform::Mac), Some(KeyAction::Rename));
+        assert_eq!(key_action(&chord(Key::Enter, true, false, false), Platform::Mac), None);
     }
 
     #[test]

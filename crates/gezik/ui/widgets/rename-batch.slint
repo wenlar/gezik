@@ -229,13 +229,17 @@ export component RenameBatch inherits Rectangle {
                             accessible-item-selectable: true;
                             accessible-item-selected: rule.selected;
                             rule-touch := TouchArea {
-                                clicked => { root.select-rule(i); }
+                                clicked => {
+                                    // A field of the old rule's options may go away.
+                                    scope.focus();
+                                    root.select-rule(i);
+                                }
                             }
                             HorizontalLayout {
                                 padding-left: Theme.spacing;
                                 spacing: Theme.spacing;
                                 Check {
-                                    width: 20px;
+                                    width: 24px;
                                     text: "";
                                     checked: rule.enabled;
                                     toggled => { root.toggle-rule(i); }
