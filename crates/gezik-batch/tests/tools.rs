@@ -226,7 +226,7 @@ fn a_bad_hash_leaves_nothing() {
 }
 
 #[test]
-fn a_failed_download_says_what_curl_said() {
+fn a_failed_download_says_why() {
     let d = dir("refused");
     let build = build(10, "0".repeat(64));
     let data = d.join("data");
@@ -236,13 +236,15 @@ fn a_failed_download_says_what_curl_said() {
     let task = DownloadTask::new(build, data.clone()).with_url(format!("http://127.0.0.1:{port}/7zip.zip"));
     let report = run(&engine, task, |_| false);
     assert_eq!(report.failures.len(), 1, "{:?}", report.failures);
-    assert!(report.failures[0].message.starts_with("curl: ("), "{}", report.failures[0].message);
+    // WinHTTP, NSURLSession, curl and wget all say they could not connect.
+    let message = &report.failures[0].message;
+    assert!(message.to_lowercase().contains("connect"), "{message}");
     assert!(leftovers(&data.join("tools")).is_empty());
     let _ = std::fs::remove_dir_all(&d);
 }
 
 #[test]
-fn cancel_kills_curl() {
+fn cancel_stops_the_download() {
     let d = dir("cancel");
     // 4 MiB at 64 KiB per 100 ms: about 6.4 s if it ran to the end.
     let body: Vec<u8> = (0..4u32 * 1024 * 1024).map(|i| (i % 251) as u8).collect();
@@ -261,7 +263,7 @@ fn cancel_kills_curl() {
     assert!(!install_dir(build, &data).exists());
     let tools = data.join("tools");
     assert!(leftovers(&tools).is_empty(), "{:?}", leftovers(&tools));
-    // curl is gone: the server cannot send the rest.
+    // The download is gone: the server cannot send the rest.
     std::thread::sleep(Duration::from_millis(500));
     assert!(!sent.load(Ordering::SeqCst), "the whole body went out");
     let _ = std::fs::remove_dir_all(&d);

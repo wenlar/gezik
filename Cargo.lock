@@ -1720,6 +1720,7 @@ dependencies = [
 name = "gezik-platform"
 version = "0.1.0"
 dependencies = [
+ "block2 0.6.2",
  "dirs",
  "gezik-core",
  "image",
