@@ -484,7 +484,7 @@ impl Engine {
         crate::journal::recover(&pending.journal_dir());
         let mut cleaned = Vec::new();
         for note in pending.copies() {
-            if note.pid != std::process::id() && gezik_platform::process_alive(note.pid) {
+            if gezik_platform::process_alive(note.pid) {
                 continue;
             }
             match std::fs::read_dir(&note.folder) {
@@ -514,7 +514,7 @@ impl Engine {
             }
         }
         let mut roots = Vec::new();
-        for path in pending.load() {
+        for path in pending.load_unowned() {
             if is_hidden(&path) && std::fs::symlink_metadata(&path).is_ok() {
                 roots.push(path);
             } else {

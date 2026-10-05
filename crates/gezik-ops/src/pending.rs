@@ -1,5 +1,7 @@
-//! `pending-deletes`: the hidden folders an instant delete has not finished, one path per
-//! line. Read at start, so a delete cut short (Gezik closed or crashed) finishes later. A
+//! `pending-deletes`: the hidden folders an instant delete has not finished, one per line
+//! (`deleting<TAB>pid<TAB>path`; an older Gezik wrote the path alone). Read at start, so a
+//! delete cut short (Gezik closed or crashed) finishes later, unless the process that noted
+//! it still runs (another Gezik window is deleting it). A
 //! line starting with `restore` and a tab is instead a hidden folder that could not be put
 //! back under its own name (something held it open): at start it is put back, not deleted.
 //! A line starting with `copies` and a tab is a folder a running copy writes into: what it
@@ -22,6 +24,9 @@ pub const COPYING_PREFIX: &str = ".gezik-copying-";
 
 /// Starts a copies line: `copies<TAB>pid<TAB>folder<TAB>prefix`.
 const COPIES: &str = "copies\t";
+
+/// Starts a delete line: `deleting<TAB>pid<TAB>path`.
+const DELETING: &str = "deleting\t";
 
 /// A folder a copy writes its files into under temporary names starting with `prefix`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,8 +62,11 @@ impl PendingDeletes {
     pub fn add(&self, path: &Path) -> io::Result<()> {
         let _guard = lock(&self.guard);
         let mut list = self.read();
-        if !list.iter().any(|p| p == path) {
-            list.push(path.to_path_buf());
+        let line = PathBuf::from(format!("{DELETING}{}\t{}", std::process::id(), path.display()));
+        match list.iter().position(|noted| delete_of(noted).is_some_and(|(_, noted)| noted == path)) {
+            // Noted already: it keeps its place, under this process.
+            Some(at) => list[at] = line,
+            None => list.push(line),
         }
         self.write(&list)
     }
@@ -67,7 +75,7 @@ impl PendingDeletes {
         let _guard = lock(&self.guard);
         let mut list = self.read();
         let before = list.len();
-        list.retain(|p| p != path);
+        list.retain(|line| delete_of(line).is_none_or(|(_, noted)| noted != path));
         if list.len() != before {
             let _ = self.write(&list);
         }
@@ -78,7 +86,10 @@ impl PendingDeletes {
     pub fn add_restore(&self, restore: &Restore) {
         let _guard = lock(&self.guard);
         let mut list = self.read();
-        list.retain(|p| p != &restore.hidden && restore_of(p).is_none_or(|r| r.hidden != restore.hidden));
+        list.retain(|p| {
+            delete_of(p).is_none_or(|(_, noted)| noted != restore.hidden)
+                && restore_of(p).is_none_or(|r| r.hidden != restore.hidden)
+        });
         list.push(PathBuf::from(format!(
             "{RESTORE}{}\t{}\t{}",
             restore.hidden.display(),
@@ -140,7 +151,18 @@ impl PendingDeletes {
     /// or edited file can never make Gezik delete other things.
     pub fn load(&self) -> Vec<PathBuf> {
         let _guard = lock(&self.guard);
-        self.read().into_iter().filter(|path| is_hidden(path)).collect()
+        self.read().iter().filter_map(|line| delete_of(line)).map(|(_, path)| path).collect()
+    }
+
+    /// Like [`Self::load`], without what a running Gezik process (this one too) is deleting.
+    pub fn load_unowned(&self) -> Vec<PathBuf> {
+        let _guard = lock(&self.guard);
+        self.read()
+            .iter()
+            .filter_map(|line| delete_of(line))
+            .filter(|(pid, _)| pid.is_none_or(|pid| !gezik_platform::process_alive(pid)))
+            .map(|(_, path)| path)
+            .collect()
     }
 
     fn read(&self) -> Vec<PathBuf> {
@@ -186,6 +208,20 @@ fn restore_of(line: &Path) -> Option<Restore> {
         && original.file_name().is_some()
         && original.parent() == hidden.parent())
     .then_some(Restore { hidden, original, was_hidden })
+}
+
+/// A delete line, if `line` is one for something Gezik hid: the process that noted it (an
+/// older Gezik noted none) and the path.
+fn delete_of(line: &Path) -> Option<(Option<u32>, PathBuf)> {
+    let text = line.to_str()?;
+    let (pid, path) = match text.strip_prefix(DELETING) {
+        Some(rest) => {
+            let (pid, path) = rest.split_once('\t')?;
+            (Some(pid.parse().ok()?), PathBuf::from(path))
+        }
+        None => (None, line.to_path_buf()),
+    };
+    is_hidden(&path).then_some((pid, path))
 }
 
 /// A copies line, if `line` is one whose prefix can only match files a copy named.
@@ -247,6 +283,25 @@ mod tests {
         assert_eq!(pending.load(), std::slice::from_ref(&b));
         pending.remove(&b);
         assert!(!dir.join("pending-deletes").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_delete_note_names_its_process_and_an_old_plain_one_still_counts() {
+        let dir = test_dir("pending-owner");
+        let file = dir.join("pending-deletes");
+        let pending = PendingDeletes::new(file.clone());
+        let (mine, old) = (dir.join(hidden_name()), dir.join(hidden_name()));
+        pending.add(&mine).unwrap();
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert_eq!(text, format!("{DELETING}{}\t{}\n", std::process::id(), mine.display()));
+        std::fs::write(&file, format!("{text}{}\n", old.display())).unwrap();
+        assert_eq!(pending.load(), [mine.clone(), old.clone()]);
+        // This process noted `mine` and runs; another start must leave it to this one.
+        assert_eq!(pending.load_unowned(), std::slice::from_ref(&old));
+        pending.remove(&mine);
+        pending.remove(&old);
+        assert!(!file.exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
