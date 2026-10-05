@@ -1,10 +1,13 @@
 //! The engine tasks of archives: extracting runs as a chain of an `ExtractTask` (unpack into
 //! a staging folder) and a `PlaceTask` (move what came out to where it goes) per archive,
 //! undone as one action. `CompressTask` makes an archive, `AddToArchiveTask` adds to one,
-//! `DownloadTask` fetches a tool (7-Zip).
+//! `DownloadTask` fetches a tool (7-Zip, ffmpeg). `ConvertTask` converts files and
+//! `CommandTask` runs a user command on them.
 
 mod add;
+mod command;
 mod compress;
+mod convert;
 mod download;
 mod external;
 mod extract;
@@ -20,7 +23,9 @@ use gezik_core::batch::archive::archive_stem;
 use gezik_ops::RunCx;
 
 pub use self::add::AddToArchiveTask;
+pub use self::command::{CommandTask, find_program};
 pub use self::compress::{CompressTask, default_name};
+pub use self::convert::{ConvertTask, ConvertTools, ConvertWhat, is_ffmpeg_needed, skipped_inputs};
 pub use self::download::DownloadTask;
 use self::extract::ExtractTask;
 use self::place::PlaceTask;

@@ -43,11 +43,11 @@ pub(crate) fn run_job(shared: &Shared, job: &Arc<Job>) {
 
 fn run_task(shared: &Shared, job: &Job, task: &dyn Task, kinds: &[gezik_core::ops::threads::DiskKind]) {
     let control = &job.control;
-    let count = match task.resources().work {
+    let count = task.workers().unwrap_or_else(|| match task.resources().work {
         Work::Disk => workers(shared.settings().threads, kinds),
         Work::Cpu => std::thread::available_parallelism().map_or(2, |n| n.get()),
         Work::External => 2,
-    };
+    });
     let (sender, receiver) = mpsc::channel::<PlanItem>();
     let receiver = Mutex::new(receiver);
     let mut after: Vec<PlanItem> = Vec::new();

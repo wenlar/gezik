@@ -78,6 +78,8 @@ pub enum TaskKind {
     Compress,
     AddToArchive,
     Download,
+    Convert,
+    Command,
 }
 
 impl TaskKind {
@@ -95,6 +97,8 @@ impl TaskKind {
             TaskKind::Compress => "Compress",
             TaskKind::AddToArchive => "Add to archive",
             TaskKind::Download => "Download",
+            TaskKind::Convert => "Convert",
+            TaskKind::Command => "Run command on",
         }
     }
 
@@ -314,6 +318,11 @@ pub trait Task: Send + Sync {
     /// How many things the user chose (for "Copy 3 items").
     fn count(&self) -> usize;
     fn resources(&self) -> Resources;
+    /// How many items run at once, when the task knows better than its kind of work (one
+    /// ffmpeg at a time, a user command's `parallel`); `None`: as `Work` says.
+    fn workers(&self) -> Option<usize> {
+        None
+    }
     /// Lists what to do; a folder before what is in it.
     fn plan(&self, sink: &mut dyn ScanSink);
     /// Does `item`. Its target is free: conflicts are settled before.
@@ -661,6 +670,8 @@ mod tests {
         assert_eq!(TaskKind::Rename.label(1), "Rename");
         assert_eq!(TaskKind::Rename.label(24), "Rename 24 items");
         assert_eq!(TaskKind::NewFolder.label(1), "New folder");
+        assert_eq!(TaskKind::Convert.label(12), "Convert 12 items");
+        assert_eq!(TaskKind::Command.label(1), "Run command on 1 item");
     }
 
     #[test]
