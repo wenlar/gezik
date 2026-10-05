@@ -21,6 +21,19 @@ pub fn same_path(a: &Path, b: &Path) -> bool {
     parts(a) == parts(b)
 }
 
+/// The roots (`c:\`, `\\server\share\`, `/`) of `paths`, read from the text alone: known at
+/// once, even when the drive behind a root does not answer (a lost network drive).
+pub fn lexical_roots<'a>(paths: impl IntoIterator<Item = &'a Path>) -> DriveSet {
+    DriveSet::new(paths.into_iter().map(|path| {
+        let root: String = path
+            .components()
+            .take_while(|c| matches!(c, Component::Prefix(_) | Component::RootDir))
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect();
+        if IGNORE_CASE { root.to_lowercase() } else { root }
+    }))
+}
+
 /// Whether `path` is `dir` itself or inside it.
 pub fn is_within(path: &Path, dir: &Path) -> bool {
     let (path, dir) = (parts(path), parts(dir));
@@ -66,6 +79,22 @@ pub fn cover<T>(mut items: Vec<T>, path: impl Fn(&T) -> &Path) -> Vec<T> {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn roots_come_from_the_path_text() {
+        let roots = lexical_roots([Path::new("/a/b"), Path::new("/c")]);
+        assert_eq!(roots.ids(), [std::path::MAIN_SEPARATOR_STR]);
+        if cfg!(windows) {
+            let roots = lexical_roots([
+                Path::new(r"C:\Users\a"),
+                Path::new(r"c:\temp"),
+                Path::new(r"\\Server\Share\x"),
+                Path::new(r"Z:\"),
+            ]);
+            assert_eq!(roots.ids(), [r"\\server\share\", r"c:\", r"z:\"]);
+            assert!(!roots.intersects(&lexical_roots([Path::new(r"D:\x")])));
+        }
+    }
 
     #[test]
     fn within_compares_whole_parts() {

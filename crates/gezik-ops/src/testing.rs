@@ -95,7 +95,7 @@ impl Gate {
         self.0.1.notify_all();
     }
 
-    fn wait(&self) {
+    pub fn wait(&self) {
         let mut open = lock(&self.0.0);
         while !*open {
             open = self.0.1.wait(open).unwrap();
