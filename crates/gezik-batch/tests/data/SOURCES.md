@@ -19,6 +19,9 @@ and `test_read_format_rar_encryption.c` there state them, checked with 7-Zip 25.
 | `test_read_format_rar5_multiple_files.rar` | RAR5 | none | `test1.bin` … `test4.bin`, 4096 bytes each (binary) |
 | `test_read_format_rar5_encrypted_filenames.rar` | RAR5, encrypted headers (`rar -hp`) | `password` | `a.txt` … `d.txt` ("This is from a.txt" …, 18 bytes each) |
 | `test_rar_multivolume_single_file.part1.rar` … `part3.rar` | RAR4, three volumes | none | `LibarchiveAddingTest.html` (20111 bytes) across the three |
+| `test_read_format_rar5_hardlink.rar` | RAR5 | none | `file.txt` ("1234\n"), `hardlink.txt` (a hard link to `file.txt`) |
+| `test_read_format_rar5_symlink.rar` | RAR5 | none | `file.txt`, `symlink.txt` (link to `file.txt`), `dirlink` (link to `dir`), folder `dir` |
+| `test_read_format_rar_multivolume.part0001.rar` … `part0004.rar` | RAR4, four volumes | none | `ppmd_lzss_conversion_test.txt` (241,647,978 bytes, PPMd) first, then smaller files; used only to cancel inside a large entry |
 
-The volume set is libarchive's `test_rar_multivolume_single_file` rather than
-`test_read_format_rar_multivolume`, whose first entry unpacks to 241 MB.
+The volume test uses `test_rar_multivolume_single_file`; `test_read_format_rar_multivolume`
+(first entry 241 MB) serves only the cancel test, which stops after 1 MiB.

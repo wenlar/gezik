@@ -839,21 +839,25 @@ fn link_chains_cannot_escape() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
+#[cfg(feature = "rar")]
 /// A file of the test data (`tests/data/…`).
 fn data(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data").join(name)
 }
 
+#[cfg(feature = "rar")]
 /// FNV-1a: checks the content of the downloaded test archives without keeping a copy.
 fn fnv(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf2_9ce4_8422_2325, |h, &b| (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3))
 }
 
+#[cfg(feature = "rar")]
 /// The files under `root` as (path, length, FNV-1a).
 fn hashed(root: &Path) -> Vec<(String, usize, u64)> {
     tree(root).into_iter().map(|(name, bytes)| (name, bytes.len(), fnv(&bytes))).collect()
 }
 
+#[cfg(feature = "rar")]
 #[test]
 fn rar4_and_rar5_extract() {
     let d = dir("rar");
@@ -900,16 +904,63 @@ fn rar4_and_rar5_extract() {
     let diff = modified.duration_since(want).unwrap_or_else(|e| e.duration());
     assert!(diff < Duration::from_nanos(100), "{modified:?}");
 
-    // A cancel stops before the next entry (UnRAR cannot stop inside one).
+    // UnRAR's data callback counts every byte.
+    assert_eq!(cx.bytes.get(), 4 * 4096);
+
+    // A cancel stops inside the first entry, and its file is removed.
     let stage = self::stage(&d);
     let mut cx = Cx::new(None);
     cx.cancel_after = Some(1);
     let err = extract(&data("rar/test_read_format_rar5_multiple_files.rar"), &stage, &cx).unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::Interrupted);
-    assert!(tree(&stage).len() < 4);
+    assert!(tree(&stage).is_empty());
     let _ = std::fs::remove_dir_all(&d);
 }
 
+#[cfg(feature = "rar")]
+#[test]
+fn rar_hard_links_and_copies_are_skipped_and_symlinks_follow_the_link_rules() {
+    let d = dir("rar-links");
+    // UnRAR would resolve a hard link's source itself; it is never asked to.
+    let stage = stage(&d);
+    let cx = Cx::new(None);
+    extract(&data("rar/test_read_format_rar5_hardlink.rar"), &stage, &cx).unwrap();
+    assert_eq!(cx.failed(), ["hardlink.txt"]);
+    assert_eq!(tree(&stage), files(&[("file.txt", b"1234\n")]));
+
+    // RAR5 symbolic links carry their target in the header.
+    let stage = self::stage(&d);
+    let cx = Cx::new(None);
+    extract(&data("rar/test_read_format_rar5_symlink.rar"), &stage, &cx).unwrap();
+    assert!(stage.join("dir").is_dir());
+    if cfg!(windows) {
+        assert_eq!(cx.failed(), ["symlink.txt", "dirlink"]);
+    } else {
+        assert!(cx.failed().is_empty(), "{:?}", cx.failed());
+        assert_eq!(std::fs::read_link(stage.join("symlink.txt")).unwrap(), Path::new("file.txt"));
+        assert_eq!(std::fs::read_link(stage.join("dirlink")).unwrap(), Path::new("dir"));
+    }
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[cfg(feature = "rar")]
+#[test]
+fn rar_cancel_inside_a_large_entry() {
+    // The first entry of this set unpacks to 241 MB; the cancel comes after 1 MiB.
+    let d = dir("rar-big");
+    let stage = stage(&d);
+    let mut cx = Cx::new(None);
+    cx.cancel_after = Some(1 << 20);
+    let started = std::time::Instant::now();
+    let err = extract(&data("rar/test_read_format_rar_multivolume.part0001.rar"), &stage, &cx).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::Interrupted);
+    assert!(tree(&stage).is_empty());
+    assert!(cx.bytes.get() < 16 << 20, "{}", cx.bytes.get());
+    assert!(started.elapsed() < Duration::from_secs(20));
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[cfg(feature = "rar")]
 #[test]
 fn rar_wrong_password_asks_again_then_skips() {
     let d = dir("rar-pw");
@@ -964,6 +1015,7 @@ fn rar_wrong_password_asks_again_then_skips() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
+#[cfg(feature = "rar")]
 #[test]
 fn rar_missing_volume_is_a_clear_error() {
     let d = dir("rar-vol");
@@ -1272,9 +1324,11 @@ fn udf_and_rare_formats_need_seven_zip() {
     use gezik_core::batch::archive::Format;
     assert!(!archive::supported(&Format::Udf));
     assert!(!archive::supported(&Format::Other("lzh".into())));
-    for format in [Format::Rar, Format::Cab, Format::Iso, Format::Cpio, Format::Ar, Format::Deb] {
+    for format in [Format::Cab, Format::Iso, Format::Cpio, Format::Ar, Format::Deb] {
         assert!(archive::supported(&format), "{format:?}");
     }
+    // Without the `rar` feature (no C++ compiler for the target) RAR goes to 7-Zip.
+    assert_eq!(archive::supported(&Format::Rar), cfg!(feature = "rar"));
     let d = dir("rare");
     std::fs::write(d.join("a.lzh"), b"\x1a\x00-lh5-\x10\x00\x00\x00").unwrap();
     // A UDF-only image: the UDF descriptors without an ISO 9660 one.

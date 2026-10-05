@@ -1,7 +1,7 @@
 //! cpio archives: newc (`070701`, `070702`) through the `cpio` crate, and the old portable
 //! format odc (`070707`) through our own parser. Binary cpio is left to 7-Zip.
 
-use std::io::{BufRead, ErrorKind, Read};
+use std::io::{BufRead, Cursor, ErrorKind, Read};
 use std::path::Path;
 
 use gezik_core::batch::archive::safe_join;
@@ -60,7 +60,8 @@ impl ArchiveSource for CpioSource {
                 // What a skipped or failed entry left unread.
                 std::io::copy(&mut data, &mut std::io::sink()).map_err(damaged)?;
             } else {
-                let mut data = ::cpio::NewcReader::new(r).map_err(damaged)?;
+                let raw = read_newc(&mut r).map_err(damaged)?;
+                let mut data = ::cpio::NewcReader::new(Cursor::new(raw).chain(r)).map_err(damaged)?;
                 let e = data.entry();
                 if e.is_trailer() {
                     break;
@@ -73,7 +74,7 @@ impl ArchiveSource for CpioSource {
                 };
                 let result = entry(&header, &mut data, dest, &mut links, cx);
                 report_stream(&header.name, result, cx)?;
-                r = data.finish().map_err(damaged)?;
+                r = data.finish().map_err(damaged)?.into_inner().1;
             }
         }
         links.create(dest, cx);
@@ -82,6 +83,21 @@ impl ArchiveSource for CpioSource {
 }
 
 const TRAILER: &str = "TRAILER!!!";
+
+/// The longest entry name a header may announce.
+const MAX_NAME: u64 = 64 << 10;
+
+/// Reads a newc header (110 bytes: the magic, then 13 fields of 8 hex digits) for the crate to
+/// parse, refusing a name size over 64 KiB first: the crate allocates whatever it says.
+fn read_newc(r: &mut dyn Read) -> IoResult<[u8; 110]> {
+    let mut raw = [0u8; 110];
+    r.read_exact(&mut raw)?;
+    let name_size = std::str::from_utf8(&raw[94..102]).ok().and_then(|s| u64::from_str_radix(s, 16).ok());
+    if name_size.is_none_or(|size| size > MAX_NAME) {
+        return Err(IoError::new(ErrorKind::InvalidData, "bad name size in a cpio header"));
+    }
+    Ok(raw)
+}
 
 /// Writes one entry; `Ok(false)` for a link made later.
 fn entry(
@@ -123,6 +139,9 @@ fn read_odc(r: &mut dyn BufRead) -> IoResult<Header> {
     let mtime = octal(&raw[48..59])?;
     let name_size = octal(&raw[59..65])?;
     let size = octal(&raw[65..76])?;
+    if name_size > MAX_NAME {
+        return Err(IoError::new(ErrorKind::InvalidData, "bad name size in a cpio header"));
+    }
     let mut name = vec![0u8; name_size as usize];
     r.read_exact(&mut name)?;
     if name.pop() != Some(0) {
@@ -178,6 +197,24 @@ mod tests {
         r = &r[5..];
         assert_eq!(read_odc(&mut r).unwrap().name, TRAILER);
         assert!(r.is_empty());
+    }
+
+    #[test]
+    fn refuses_a_huge_newc_name_size() {
+        let header = |name_size: &str| {
+            let mut h = b"070701".to_vec();
+            for _ in 0..11 {
+                h.extend(b"00000000");
+            }
+            h.extend(name_size.as_bytes());
+            h.extend(b"00000000");
+            h
+        };
+        let ok = header("00000002");
+        assert_eq!(read_newc(&mut &ok[..]).unwrap()[..], ok[..]);
+        for bad in [header("FFFFFFFF"), header("00010001"), header("0000000G")] {
+            assert_eq!(read_newc(&mut &bad[..]).unwrap_err().kind(), ErrorKind::InvalidData);
+        }
     }
 
     #[test]

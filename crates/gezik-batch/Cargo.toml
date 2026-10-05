@@ -23,13 +23,19 @@ lzma-rust2 = { version = "0.21.0", default-features = false, features = ["std", 
 bzip2 = "0.6.1"
 ruzstd = { version = "0.9.0", default-features = false, features = ["std"] }
 # RAR through UnRAR (C++, freeware licence: extraction only; see THIRD-PARTY.md).
-unrar-ng = { version = "0.7.7", default-features = false }
+unrar-ng = { version = "0.7.7", default-features = false, optional = true }
 cab = "0.6.0"
 # ISO 9660 with Joliet and Rock Ridge; no UDF (7-Zip reads those).
 hadris-iso = { version = "2.5.0", default-features = false, features = ["std", "sync", "read"] }
 # newc only; odc is read by our own parser.
 cpio = "0.4.1"
 ar = "0.9.0"
+
+[features]
+default = ["rar"]
+# RAR through UnRAR's C++ (needs a C++ compiler for the target); without it RAR archives go
+# to 7-Zip.
+rar = ["dep:unrar-ng"]
 
 [dev-dependencies]
 # Writes the ISO images the tests read.

@@ -8,6 +8,7 @@ mod cab;
 mod cpio;
 pub mod io;
 mod iso;
+#[cfg(feature = "rar")]
 mod rar;
 mod sevenz;
 mod single;
@@ -77,7 +78,10 @@ pub fn open(path: &Path) -> IoResult<Box<dyn ArchiveSource + Send>> {
         Format::SevenZ => Box::new(sevenz::SevenZSource::open(volumes)?),
         Format::Tar(codec) => Box::new(tar::TarSource::new(volumes, codec)),
         Format::Single(codec) => Box::new(single::SingleSource::new(volumes, codec)),
+        #[cfg(feature = "rar")]
         Format::Rar => Box::new(rar::RarSource::open(volumes)?),
+        #[cfg(not(feature = "rar"))]
+        Format::Rar => return Err(seven_zip_needed()),
         Format::Cab => Box::new(cab::CabSource::open(volumes)?),
         Format::Iso => Box::new(iso::IsoSource::new(volumes)),
         Format::Cpio => Box::new(cpio::CpioSource::open(volumes)?),
@@ -89,7 +93,8 @@ pub fn open(path: &Path) -> IoResult<Box<dyn ArchiveSource + Send>> {
 
 /// Whether Gezik itself can open it (false: 7-Zip is needed).
 pub fn supported(format: &Format) -> bool {
-    !matches!(format, Format::Udf | Format::Other(_))
+    // RAR needs the `rar` feature (UnRAR's C++).
+    !matches!(format, Format::Udf | Format::Other(_)) && (cfg!(feature = "rar") || *format != Format::Rar)
 }
 
 /// The error of an archive only 7-Zip reads.

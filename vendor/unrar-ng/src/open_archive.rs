@@ -771,6 +771,43 @@ impl OpenArchive<Process, CursorBeforeFile> {
         self.process_file::<Extract>(None, Some(&dest))
     }
 
+    /// Gezik patch: extracts the file to `file`, with `base` as UnRAR's destination folder
+    /// (so nothing it resolves itself lands outside it), calling `progress` with each piece
+    /// of unpacked data; `progress` returning `false` stops the entry (the error is then
+    /// UnRAR's user-break code).
+    pub fn extract_into<F: FnMut(u64) -> bool>(
+        self,
+        base: &Path,
+        file: &Path,
+        progress: F,
+    ) -> UnrarResult<OpenArchive<Process, CursorBeforeHeader>> {
+        let (base, file) = extract_into_names(base, file);
+        let mut user_data = Watched { progress, next_volume: None };
+        unsafe {
+            native::RARSetCallback(
+                self.handle.0.as_ptr(),
+                Some(watched_callback::<F>),
+                &mut user_data as *mut Watched<F> as native::LPARAM,
+            );
+        }
+        let result = Code::from(pathed::process_file(
+            self.handle.0.as_ptr(),
+            private::Operation::Extract as i32,
+            Some(&base),
+            Some(&file),
+        ));
+        match result {
+            Code::Success => Ok(OpenArchive {
+                extra: CursorBeforeHeader,
+                damaged: self.damaged,
+                handle: self.handle,
+                flags: self.flags,
+                marker: std::marker::PhantomData,
+            }),
+            _ => Err(UnrarError::from(result, When::Process)),
+        }
+    }
+
     /// extracting into a directory if the filename has unicode characters
     /// does not work on Linux, so we must specify the full path for Linux
     fn dir_extract(
@@ -782,6 +819,9 @@ impl OpenArchive<Process, CursorBeforeFile> {
     }
 }
 
+/// Gezik patch: the size of the buffer for a redirect entry's target.
+const REDIR_NAME_SIZE: usize = 2048;
+
 fn read_header(handle: &Handle) -> UnrarResult<Option<FileHeader>> {
     let mut userdata: Userdata<<Skip as ProcessMode>::Output> = Default::default();
     unsafe {
@@ -792,13 +832,62 @@ fn read_header(handle: &Handle) -> UnrarResult<Option<FileHeader>> {
         );
     }
     let mut header = native::HeaderDataEx::default();
+    // Gezik patch: a buffer for a redirect entry's target.
+    let mut redir_name: Vec<native::WCHAR> = vec![0; REDIR_NAME_SIZE];
+    header.redir_name = redir_name.as_mut_ptr();
+    header.redir_name_size = REDIR_NAME_SIZE as c_uint;
     let read_result = Code::from(unsafe {
         native::RARReadHeaderEx(handle.0.as_ptr(), &mut header as *mut _)
     });
     match read_result {
-        Code::Success => Ok(Some(header.into())),
+        Code::Success => {
+            let mut entry: FileHeader = header.into();
+            // The buffer starts zeroed and UnRAR ends the name with a NUL inside it.
+            let target = unsafe { widestring::WideCString::from_ptr_str(redir_name.as_ptr() as *const _) };
+            if entry.redirect != Redirect::None && !target.is_empty() {
+                entry.redirect_target = Some(PathBuf::from(target.to_os_string()));
+            }
+            Ok(Some(entry))
+        }
         Code::EndArchive => Ok(None),
         _ => Err(UnrarError::from(read_result, When::Read)),
+    }
+}
+
+/// Gezik patch: the destination folder and file names `extract_into` passes to UnRAR.
+fn extract_into_names(base: &Path, file: &Path) -> (pathed::RarString, pathed::RarString) {
+    (pathed::construct(base), pathed::construct(file))
+}
+
+/// Gezik patch: what `extract_into`'s callback works with.
+struct Watched<F> {
+    progress: F,
+    next_volume: Option<widestring::WideCString>,
+}
+
+extern "C" fn watched_callback<F: FnMut(u64) -> bool>(
+    msg: native::UINT,
+    user_data: native::LPARAM,
+    p1: native::LPARAM,
+    p2: native::LPARAM,
+) -> c_int {
+    if user_data == 0 {
+        return 0;
+    }
+    let user_data = unsafe { &mut *(user_data as *mut Watched<F>) };
+    match msg {
+        native::UCM_CHANGEVOLUMEW => {
+            let next = unsafe { widestring::WideCString::from_ptr_str(p1 as *const _) };
+            user_data.next_volume = Some(next);
+            match p2 {
+                native::RAR_VOL_ASK => -1,
+                _ => 0,
+            }
+        }
+        native::UCM_PROCESSDATA => {
+            if (user_data.progress)(p2 as u64) { 0 } else { -1 }
+        }
+        _ => 0,
     }
 }
 
@@ -934,6 +1023,43 @@ pub struct FileHeader {
     pub file_time: u32,
     pub method: u32,
     pub file_attr: u32,
+    /// Gezik patch: what a link or copy entry points to (RAR5 keeps it in the header; RAR4
+    /// Unix links keep their target as data, so `redirect_target` is `None` there).
+    pub redirect: Redirect,
+    pub redirect_target: Option<PathBuf>,
+}
+
+/// Gezik patch: the kind of a redirect entry (UnRAR's `FILE_SYSTEM_REDIRECT`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Redirect {
+    /// A plain entry.
+    None,
+    /// A Unix symbolic link.
+    UnixSymlink,
+    /// A Windows symbolic link.
+    WinSymlink,
+    /// A Windows junction.
+    Junction,
+    /// A hard link to an earlier entry; UnRAR would resolve its source itself.
+    HardLink,
+    /// A copy of an earlier entry; UnRAR would resolve its source itself.
+    FileCopy,
+    /// A kind this version does not know.
+    Unknown(u32),
+}
+
+impl Redirect {
+    fn from_raw(raw: u32) -> Redirect {
+        match raw {
+            0 => Redirect::None,
+            1 => Redirect::UnixSymlink,
+            2 => Redirect::WinSymlink,
+            3 => Redirect::Junction,
+            4 => Redirect::HardLink,
+            5 => Redirect::FileCopy,
+            other => Redirect::Unknown(other),
+        }
+    }
 }
 
 impl FileHeader {
@@ -1014,6 +1140,7 @@ impl From<native::HeaderDataEx> for FileHeader {
         let file_time = header.file_time;
         let method = header.method;
         let file_attr = header.file_attr;
+        let redir_type = header.redir_type;
 
         FileHeader {
             filename: PathBuf::from(filename.to_os_string()),
@@ -1023,6 +1150,8 @@ impl From<native::HeaderDataEx> for FileHeader {
             file_time,
             method,
             file_attr,
+            redirect: Redirect::from_raw(redir_type),
+            redirect_target: None,
         }
     }
 }
@@ -1033,6 +1162,14 @@ fn unpack_unp_size(unp_size: c_uint, unp_size_high: c_uint) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn extract_into_passes_the_base_folder() {
+        use std::path::Path;
+        let (base, file) = super::extract_into_names(Path::new("stage"), Path::new("stage/a.txt"));
+        assert_eq!(super::pathed::construct(Path::new("stage")), base);
+        assert_eq!(super::pathed::construct(Path::new("stage/a.txt")), file);
+    }
+
     #[test]
     fn combine_size() {
         use super::unpack_unp_size;
