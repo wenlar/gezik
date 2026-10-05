@@ -184,6 +184,14 @@ export component FileView inherits Rectangle {
     callback zoom(bool);
 
     changed grid-columns => { root.grid-columns-changed(self.grid-columns); }
+    // The field's row went off screen while the field had the keyboard: the list drops the
+    // field without a blur, and with nothing focused Slint delivers key presses nowhere. The
+    // rename ends as on a click elsewhere (as Explorer does on a scroll).
+    changed rename-focused => {
+        if !self.rename-focused && root.rename-has-focus && root.renaming-index >= 0 {
+            root.rename-blurred(root.rename-text, root.rename-generation);
+        }
+    }
 
     property <int> per-row: root.mode == 0 ? 1 : root.grid-columns;
     property <length> header-height: root.mode == 0 ? Theme.row-height : 0px;
