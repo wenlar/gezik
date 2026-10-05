@@ -10,7 +10,7 @@ use gezik_platform::fs;
 
 use super::what;
 use crate::engine::lock;
-use crate::pending::{PendingDeletes, hidden_name};
+use crate::pending::{PendingDeletes, Restore, hidden_name};
 use crate::task::{Outcome, PlanItem, Resources, RunCx, ScanSink, Stage, Task, TaskKind, Work};
 use crate::walk::{Step, facts_of, walk};
 
@@ -56,9 +56,15 @@ impl DeleteTask {
     }
 }
 
+/// How often putting a hidden folder back is tried before it is left for the next start
+/// (something that opened a file in it, like a virus scanner, may let go quickly).
+const RESTORE_TRIES: u32 = 5;
+const RESTORE_WAIT: std::time::Duration = std::time::Duration::from_millis(100);
+
 /// Puts what is left of a hidden folder back: under its own name, or the next free one if
 /// that was taken meanwhile; the hidden attribute goes unless the folder had it before.
-fn restore_hidden(hidden: &Path, original: &Path, was_hidden: bool) {
+/// Returns whether it is back.
+pub(crate) fn restore_hidden(hidden: &Path, original: &Path, was_hidden: bool) -> bool {
     let mut back = hidden.to_path_buf();
     match fs::move_entry(hidden, original) {
         Ok(()) => back = original.to_path_buf(),
@@ -78,6 +84,7 @@ fn restore_hidden(hidden: &Path, original: &Path, was_hidden: bool) {
     if !was_hidden {
         let _ = fs::clear_hidden(&back);
     }
+    back != hidden
 }
 
 const FILE: u8 = 0;
@@ -163,10 +170,18 @@ impl Task for DeleteTask {
         for (hidden, original, was_hidden) in lock(&self.hidden).drain(..) {
             // Cancelled, or something inside could not be deleted: what is left goes back
             // under its own name, so nothing stays hidden and nothing is deleted later unasked.
-            if std::fs::symlink_metadata(&hidden).is_ok() {
-                restore_hidden(&hidden, &original, was_hidden);
+            // If it cannot go back now, the next start puts it back.
+            let back = (0..RESTORE_TRIES).any(|attempt| {
+                if attempt > 0 {
+                    std::thread::sleep(RESTORE_WAIT);
+                }
+                std::fs::symlink_metadata(&hidden).is_err() || restore_hidden(&hidden, &original, was_hidden)
+            });
+            if back {
+                pending.remove(&hidden);
+            } else {
+                pending.add_restore(&Restore { hidden, original, was_hidden });
             }
-            pending.remove(&hidden);
         }
     }
 }
@@ -261,6 +276,31 @@ mod tests {
         assert!(dir.join("victim/other.txt").exists());
         assert!(!fs::is_hidden_attr(&dir.join("victim (2)")));
         assert!(pending.load().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Something opened a file in the hidden folder (a virus scanner): it cannot be renamed
+    /// back now, so it is noted and put back at the next start, never deleted.
+    #[cfg(windows)]
+    #[test]
+    fn a_folder_that_cannot_go_back_now_goes_back_at_the_next_start() {
+        let dir = test_dir("delete-cancel-held");
+        write(&dir.join("victim/a.txt"), "a");
+        let pending = Arc::new(PendingDeletes::new(dir.join("pending-deletes")));
+        let task = DeleteTask::new(vec![dir.join("victim")], Some(pending.clone()));
+        task.plan(&mut CollectSink::default());
+        let hidden = pending.load().pop().unwrap();
+        let held = std::fs::File::open(hidden.join("a.txt")).unwrap();
+        task.done(true);
+        assert!(pending.load().is_empty(), "not deleted later");
+        assert_eq!(pending.restores().len(), 1, "noted to go back");
+        drop(held);
+
+        let engine = engine_with_pending(&dir);
+        assert_eq!(engine.recover_deletes(), None, "nothing to delete");
+        assert_eq!(std::fs::read_to_string(dir.join("victim/a.txt")).unwrap(), "a");
+        assert!(!fs::is_hidden_attr(&dir.join("victim")));
+        assert!(!dir.join("pending-deletes").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

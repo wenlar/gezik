@@ -9,6 +9,7 @@ mod trash;
 
 pub use copy::CopyTask;
 pub use delete::DeleteTask;
+pub(crate) use delete::restore_hidden;
 pub use move_::MoveTask;
 pub use new::NewTask;
 pub use restore::RestoreTask;
