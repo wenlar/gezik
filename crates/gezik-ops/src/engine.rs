@@ -185,6 +185,8 @@ pub(crate) struct Job {
     pub label: String,
     pub done: AtomicBool,
     pub acc: Mutex<Acc>,
+    /// Temporary names of the files it copies.
+    pub temp: crate::task::TempCopies,
 }
 
 impl Job {
@@ -352,6 +354,7 @@ impl Shared {
         for task in &job.tasks {
             task.done(cancelled);
         }
+        job.temp.done();
         let acc = std::mem::take(&mut *lock(&job.acc));
         let inverse = crate::inverse::build(&acc.outcomes);
         let recorded = !inverse.is_empty();
@@ -476,6 +479,32 @@ impl Engine {
     /// Finishes deletes an earlier run left unfinished (call once at start).
     pub fn recover_deletes(&self) -> Option<JobId> {
         let pending = self.0.pending.clone()?;
+        // Copies an earlier run cut short go: small ones from their journals, large ones left
+        // under temporary names; not those of a copy that still runs (another Gezik window).
+        crate::journal::recover(&pending.journal_dir());
+        let mut cleaned = Vec::new();
+        for note in pending.copies() {
+            if note.pid != std::process::id() && gezik_platform::process_alive(note.pid) {
+                continue;
+            }
+            match std::fs::read_dir(&note.folder) {
+                Ok(entries) => {
+                    for entry in entries.flatten() {
+                        let ours = entry.file_name().to_str().is_some_and(|name| name.starts_with(&note.prefix));
+                        if ours && entry.file_type().is_ok_and(|kind| kind.is_file()) {
+                            let _ = fs::delete(&entry.path());
+                        }
+                    }
+                    cleaned.push(note.prefix);
+                }
+                Err(err) if err.kind() == io::ErrorKind::NotFound => cleaned.push(note.prefix),
+                // Not reachable now (a network drive): tried again at the next start.
+                Err(_) => {}
+            }
+        }
+        for prefix in cleaned {
+            pending.remove_copies(&prefix);
+        }
         // Folders a delete could not put back (something held them open) go back first.
         for restore in pending.restores() {
             if std::fs::symlink_metadata(&restore.hidden).is_err()
@@ -530,6 +559,7 @@ impl Engine {
             label,
             done: AtomicBool::new(false),
             acc: Mutex::default(),
+            temp: crate::task::TempCopies::new(self.0.pending.clone()),
         });
         lock(&self.0.jobs).push(job.clone());
         self.0.push([Event::Added { job: id, title, kind, background }]);
@@ -806,6 +836,22 @@ mod tests {
             "{} folders reported, not the one shown",
             report.changed_dirs.len()
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_finished_copy_leaves_no_journal() {
+        let dir = test_dir("journal-engine");
+        write(&dir.join("src/a.txt"), "a");
+        write(&dir.join("src/sub/b.txt"), "b");
+        std::fs::create_dir(dir.join("dst")).unwrap();
+        let settings = Settings { pending_deletes: Some(dir.join("config/pending-deletes")), ..Settings::default() };
+        let engine = Engine::new(settings, || {});
+        let report = run(&engine, engine.submit(Box::new(CopyTask::into(vec![dir.join("src")], &dir.join("dst")))));
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert_eq!(read(&dir.join("dst/src/sub/b.txt")), "b");
+        let journals = std::fs::read_dir(dir.join("config/copying")).map(|e| e.count()).unwrap_or(0);
+        assert_eq!(journals, 0, "the journal goes when the copy ends");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

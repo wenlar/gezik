@@ -4,6 +4,7 @@
 mod control;
 mod engine;
 mod inverse;
+mod journal;
 pub mod pending;
 mod run;
 mod task;

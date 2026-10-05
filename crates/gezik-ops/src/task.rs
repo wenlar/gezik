@@ -8,11 +8,60 @@ use std::path::{Path, PathBuf};
 use gezik_core::ops::conflict::{Decision, Facts};
 
 use crate::control::Control;
-use crate::pending::{PendingDeletes, copying_name};
+use crate::engine::lock;
+use crate::journal::Journal;
+use crate::pending::{COPYING_PREFIX, PendingDeletes, copy_prefix};
 use crate::walk::facts_of;
 
-/// Files at least this big are copied under a temporary name and renamed when complete.
+/// Files at least this big are copied under a temporary name and renamed when complete;
+/// smaller ones under their own name, noted in the job's journal (a rename per small file
+/// would double the time of a copy of many of them).
 pub(crate) const TEMP_COPY_MIN: u64 = 64 * 1024 * 1024;
+
+/// How one job keeps what it copies from looking finished if Gezik is killed: temporary names
+/// for large files (`prefix` and a number, their folders noted in `pending-deletes`), a
+/// journal for the others. Both are cleaned up at the next start.
+pub(crate) struct TempCopies {
+    prefix: String,
+    pending: Option<std::sync::Arc<PendingDeletes>>,
+    noted: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
+    next: std::sync::atomic::AtomicU64,
+    journal: Journal,
+}
+
+impl TempCopies {
+    pub fn new(pending: Option<std::sync::Arc<PendingDeletes>>) -> TempCopies {
+        let prefix = copy_prefix();
+        let id = prefix.trim_start_matches(COPYING_PREFIX).trim_end_matches('-').to_owned();
+        let journal = Journal::new(pending.as_ref().map(|pending| pending.journal_dir()), &id);
+        TempCopies { prefix, pending, noted: Default::default(), next: Default::default(), journal }
+    }
+
+    /// A fresh temporary path next to `target`; its folder is noted before anything is written.
+    fn next_to(&self, target: &Path) -> Option<PathBuf> {
+        let folder = target.parent()?;
+        if let Some(pending) = &self.pending {
+            // Held while noting: no other item writes into the folder before the note is there.
+            let mut noted = lock(&self.noted);
+            if !noted.contains(folder) {
+                pending.add_copies(std::process::id(), folder, &self.prefix);
+                noted.insert(folder.to_path_buf());
+            }
+        }
+        let number = self.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Some(folder.join(format!("{}{number}", self.prefix)))
+    }
+
+    /// The job ended: every file it copied is finished or gone.
+    pub fn done(&self) {
+        if let Some(pending) = &self.pending
+            && !lock(&self.noted).is_empty()
+        {
+            pending.remove_copies(&self.prefix);
+        }
+        self.journal.done();
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskKind {
@@ -231,8 +280,8 @@ pub struct RunCx<'a> {
     pub(crate) trash: &'a dyn Fn(&Path) -> bool,
     /// Bytes this item counted so far (the engine counts the rest when it is done).
     pub(crate) added: Cell<u64>,
-    /// Where leftovers to delete at the next start are noted (`None`: nowhere).
-    pub(crate) pending: Option<&'a PendingDeletes>,
+    /// The job's temporary names for copies.
+    pub(crate) temp: &'a TempCopies,
 }
 
 impl RunCx<'_> {
@@ -250,22 +299,19 @@ impl RunCx<'_> {
         (self.trash)(path)
     }
 
-    /// Copies a file, counting its bytes and stopping when the job is cancelled. A large file
-    /// is copied under a temporary name and renamed when complete: the system makes the copy
-    /// its full size at once, so if Gezik is killed meanwhile the leftover must not look like
-    /// a complete file (it is noted and deleted at the next start).
+    /// Copies a file, counting its bytes and stopping when the job is cancelled. The system
+    /// makes the copy its full size at once, so if Gezik is killed meanwhile the leftover must
+    /// not pass for a finished file: a large one is copied under a temporary name and renamed
+    /// when complete, a small one is noted in the job's journal first (see `TempCopies`).
     pub fn copy_file(&self, from: &Path, to: &Path, size: u64) -> io::Result<()> {
-        let Some(parent) = to.parent().filter(|_| size >= TEMP_COPY_MIN) else {
+        let temp = if size >= TEMP_COPY_MIN { self.temp.next_to(to) } else { None };
+        let Some(temp) = temp else {
+            self.temp.journal.note(from, to);
             return self.copy_to(from, to, size);
         };
-        let temp = parent.join(copying_name());
-        let noted = self.pending.filter(|pending| pending.add(&temp).is_ok());
         let result = self.copy_to(from, &temp, size).and_then(|()| gezik_platform::fs::move_entry(&temp, to));
         if result.is_err() {
             let _ = gezik_platform::fs::delete(&temp);
-        }
-        if let Some(pending) = noted {
-            pending.remove(&temp);
         }
         result
     }
@@ -348,7 +394,7 @@ mod tests {
         names
     }
 
-    fn big_file(path: &Path) -> u64 {
+    fn some_file(path: &Path) -> u64 {
         let data: Vec<u8> = (0..TEMP_COPY_MIN + 1000).map(|i| (i % 251) as u8).collect();
         std::fs::write(path, &data).unwrap();
         data.len() as u64
@@ -358,15 +404,16 @@ mod tests {
     fn a_large_copy_lands_under_its_name_only_when_complete() {
         let dir = test_dir("temp-copy");
         std::fs::create_dir(dir.join("to")).unwrap();
-        let size = big_file(&dir.join("big.bin"));
-        let pending = PendingDeletes::new(dir.join("pending-deletes"));
+        let size = some_file(&dir.join("big.bin"));
+        let pending = std::sync::Arc::new(PendingDeletes::new(dir.join("pending-deletes")));
+        let temp = TempCopies::new(Some(pending.clone()));
         let control = Control::default();
         control.pause(PauseReason::User);
         let no_bin = |_: &Path| false;
         let (from, to) = (dir.join("big.bin"), dir.join("to/big.bin"));
         std::thread::scope(|scope| {
             let copy = scope.spawn(|| {
-                let cx = RunCx { control: &control, trash: &no_bin, added: Cell::new(0), pending: Some(&pending) };
+                let cx = RunCx { control: &control, trash: &no_bin, added: Cell::new(0), temp: &temp };
                 cx.copy_file(&from, &to, size)
             });
             // Held by the pause in the middle of the copy: only a noted leftover is there.
@@ -377,14 +424,17 @@ mod tests {
             }
             let during = names(&dir.join("to"));
             assert_eq!(during.len(), 1);
-            assert!(during[0].starts_with(crate::pending::COPYING_PREFIX), "{during:?}");
-            assert_eq!(pending.load(), [dir.join("to").join(&during[0])], "noted for the next start");
+            let notes = pending.copies();
+            assert_eq!(notes.len(), 1, "the folder is noted for the next start");
+            assert_eq!(notes[0].folder, dir.join("to"));
+            assert!(during[0].starts_with(&notes[0].prefix), "{during:?}");
             control.resume();
             copy.join().unwrap().unwrap();
         });
         assert_eq!(names(&dir.join("to")), ["big.bin"]);
         assert_eq!(std::fs::read(&to).unwrap(), std::fs::read(&from).unwrap());
-        assert!(pending.load().is_empty());
+        temp.done();
+        assert!(pending.copies().is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -392,15 +442,17 @@ mod tests {
     fn a_cancelled_large_copy_leaves_nothing() {
         let dir = test_dir("temp-copy-cancel");
         std::fs::create_dir(dir.join("to")).unwrap();
-        let size = big_file(&dir.join("big.bin"));
-        let pending = PendingDeletes::new(dir.join("pending-deletes"));
+        let size = some_file(&dir.join("big.bin"));
+        let pending = std::sync::Arc::new(PendingDeletes::new(dir.join("pending-deletes")));
+        let temp = TempCopies::new(Some(pending.clone()));
         let control = Control::default();
         control.cancel();
         let no_bin = |_: &Path| false;
-        let cx = RunCx { control: &control, trash: &no_bin, added: Cell::new(0), pending: Some(&pending) };
+        let cx = RunCx { control: &control, trash: &no_bin, added: Cell::new(0), temp: &temp };
         assert!(cx.copy_file(&dir.join("big.bin"), &dir.join("to/big.bin"), size).is_err());
         assert!(names(&dir.join("to")).is_empty());
-        assert!(pending.load().is_empty());
+        temp.done();
+        assert!(pending.copies().is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
