@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use gezik_config::settings::FilesSettings;
+use gezik_core::drag::Effect;
 use gezik_core::format_size;
 use gezik_core::ops::paths::same_path;
 use gezik_core::ops::rate::{Rate, format_eta, format_rate};
@@ -558,18 +559,7 @@ impl Operations {
     pub fn paste(&self, into: Option<PathBuf>, force_move: bool) {
         let Some(dir) = into.or_else(|| self.0.view.folder()) else { return };
         let Some(ClipboardFiles { paths, cut }) = self.clipboard() else { return };
-        let moving = cut || force_move;
-        let retry: Retry = {
-            let (paths, dir) = (paths.clone(), dir.clone());
-            Rc::new(move || -> Box<dyn Task> {
-                if moving {
-                    Box::new(MoveTask::into(paths.clone(), &dir))
-                } else {
-                    Box::new(CopyTask::into(paths.clone(), &dir))
-                }
-            })
-        };
-        self.submit(retry(), Some(retry), After::Select);
+        self.transfer(paths, dir, if cut || force_move { Effect::Move } else { Effect::Copy });
         if cut {
             // Pasted: cut items are no longer waiting anywhere (also Explorer's own).
             let _ = clipboard::clear();
@@ -578,6 +568,17 @@ impl Operations {
             self.0.clip_sequence.set(clipboard::sequence());
             self.update_cut();
         }
+    }
+
+    /// Copies or moves `paths` into folder `dir` (a paste or a drop), as one undoable job.
+    pub fn transfer(&self, paths: Vec<PathBuf>, dir: PathBuf, effect: Effect) {
+        let retry: Retry = Rc::new(move || -> Box<dyn Task> {
+            match effect {
+                Effect::Move => Box::new(MoveTask::into(paths.clone(), &dir)),
+                Effect::Copy => Box::new(CopyTask::into(paths.clone(), &dir)),
+            }
+        });
+        self.submit(retry(), Some(retry), After::Select);
     }
 
     /// The clipboard may have changed in another program: re-read what is cut there (when

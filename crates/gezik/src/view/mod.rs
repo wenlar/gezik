@@ -470,6 +470,22 @@ impl View {
         data.selection.iter().filter_map(|i| data.listing.path_at(i)).collect()
     }
 
+    /// Entry `index` as the list draws it (its icon, for the dragged items).
+    pub fn file_row(&self, index: usize) -> Option<crate::FileRow> {
+        let data = self.0.data.borrow();
+        (index < data.listing.len()).then(|| model::file_row(&data, index))
+    }
+
+    /// How many entries the view shows.
+    pub fn len(&self) -> usize {
+        self.0.data.borrow().listing.len()
+    }
+
+    /// Where the entries are: the list or the grid, as laid out now.
+    pub fn layout_geometry(&self) -> Geometry {
+        self.geometry()
+    }
+
     pub fn selected_paths(&self) -> Vec<PathBuf> {
         self.selected_items().into_iter().map(|(path, _)| path).collect()
     }

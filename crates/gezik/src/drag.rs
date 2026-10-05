@@ -1,0 +1,544 @@
+//! Dragging files with the mouse. Inside the window the drag is Gezik's own: Slint reports
+//! presses, moves and releases on entries and draws the dragged items; this finds the drop
+//! target from the window geometry (`gezik_core::drag`) and drops through the engine, so a
+//! drop is a job like any other and Ctrl+Z undoes it.
+
+use std::cell::{Cell, RefCell};
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::time::Duration;
+
+use gezik_config::shortcuts::Platform;
+use gezik_core::drag::{
+    self, Action, Allowed, CrumbArea, Effect, Hit, Keys, Layout, ListArea, SideRow, SidebarArea, TabArea,
+};
+use gezik_core::layout::Rect;
+use gezik_core::nav::Location;
+use gezik_core::ops::paths::is_within;
+use gezik_platform::DriveKind;
+use slint::{ComponentHandle, Model, Timer, TimerMode};
+
+use crate::context_menu::Menus;
+use crate::navigation::Navigator;
+use crate::operations::Operations;
+use crate::sidebar::{SECTION_PINNED, Sidebar};
+use crate::view::View;
+use crate::{AppWindow, Theme};
+
+/// How often a drag near the list's top or bottom edge scrolls it.
+const SCROLL_STEP: Duration = Duration::from_millis(30);
+
+/// Where a drop would land and what it would do.
+#[derive(Debug, Clone, PartialEq)]
+struct Target {
+    hit: Hit,
+    /// The folder it would go into (none for pinning, or where nothing can be dropped).
+    dir: Option<PathBuf>,
+    /// None: the drop is refused.
+    action: Option<Action>,
+}
+
+/// A drag under way.
+struct Dragging {
+    sources: Vec<PathBuf>,
+    /// Every source is a folder, so they can be pinned.
+    all_dirs: bool,
+    right: bool,
+    keys: Keys,
+    allowed: Allowed,
+    /// The pointer, in window coordinates.
+    x: f32,
+    y: f32,
+    target: Option<Target>,
+    /// The entry whose press started it (that press waits for the release).
+    pressed: Option<usize>,
+}
+
+enum Phase {
+    Idle,
+    /// A button went down on an entry; a drag starts once the pointer moves far enough.
+    Armed {
+        index: usize,
+        x: f32,
+        y: f32,
+        right: bool,
+        can_drag: bool,
+    },
+    Dragging(Dragging),
+    /// Ended (Esc) while the button is still down: its release is no click.
+    Ended,
+}
+
+struct Inner {
+    window: slint::Weak<AppWindow>,
+    nav: Navigator,
+    view: View,
+    sidebar: Sidebar,
+    ops: Operations,
+    menus: Menus,
+    phase: RefCell<Phase>,
+    /// Where each address bar part is (window x, width), as Slint last reported it.
+    crumbs: RefCell<Vec<(f32, f32)>>,
+    /// The tab under the pointer, waiting to open.
+    hover_tab: Cell<Option<usize>>,
+    tab_timer: Timer,
+    scroll_timer: Timer,
+}
+
+thread_local! {
+    static CURRENT: RefCell<Option<Drags>> = const { RefCell::new(None) };
+}
+
+/// Runs `f` with this UI thread's drags, if there are any yet.
+pub fn with_current<R>(f: impl FnOnce(&Drags) -> R) -> Option<R> {
+    CURRENT.with(|c| c.borrow().clone()).map(|drags| f(&drags))
+}
+
+/// The keys held: Shift moves; Ctrl copies (Option on macOS, as in Finder).
+fn keys(shift: bool, ctrl: bool, alt: bool) -> Keys {
+    Keys { shift, copy: if Platform::current() == Platform::Mac { alt } else { ctrl } }
+}
+
+fn path_of(location: Location) -> Option<PathBuf> {
+    match location {
+        Location::Path(path) => Some(path),
+        Location::Drives => None,
+    }
+}
+
+#[derive(Clone)]
+pub struct Drags(Rc<Inner>);
+
+impl Drags {
+    pub fn new(
+        window: &AppWindow,
+        nav: Navigator,
+        view: View,
+        sidebar: Sidebar,
+        ops: Operations,
+        menus: Menus,
+    ) -> Drags {
+        let drags = Drags(Rc::new(Inner {
+            window: window.as_weak(),
+            nav,
+            view,
+            sidebar,
+            ops,
+            menus,
+            phase: RefCell::new(Phase::Idle),
+            crumbs: RefCell::default(),
+            hover_tab: Cell::new(None),
+            tab_timer: Timer::default(),
+            scroll_timer: Timer::default(),
+        }));
+        CURRENT.with(|c| *c.borrow_mut() = Some(drags.clone()));
+        drags
+    }
+
+    pub fn install(&self, window: &AppWindow) {
+        window.on_item_down({
+            let drags = self.clone();
+            move |i, x, y, right, can_drag| {
+                if let Ok(index) = usize::try_from(i) {
+                    drags.down(index, x, y, right, can_drag);
+                }
+            }
+        });
+        window.on_item_drag({
+            let drags = self.clone();
+            move |x, y, shift, ctrl, alt| drags.moved(x, y, keys(shift, ctrl, alt))
+        });
+        window.on_item_up({
+            let drags = self.clone();
+            move |_, x, y, right| drags.up(x, y, right)
+        });
+        window.on_item_cancel({
+            let drags = self.clone();
+            move || drags.cancel()
+        });
+        window.on_drag_keys({
+            let drags = self.clone();
+            move |shift, ctrl, alt| drags.keys_changed(keys(shift, ctrl, alt))
+        });
+        window.on_crumb_span({
+            let drags = self.clone();
+            move |i, x, width| {
+                if let Ok(i) = usize::try_from(i) {
+                    let mut crumbs = drags.0.crumbs.borrow_mut();
+                    if crumbs.len() <= i {
+                        crumbs.resize(i + 1, (0.0, 0.0));
+                    }
+                    crumbs[i] = (x, width);
+                }
+            }
+        });
+    }
+
+    /// Whether files are being dragged (Esc cancels).
+    pub fn is_active(&self) -> bool {
+        matches!(*self.0.phase.borrow(), Phase::Dragging(_))
+    }
+
+    /// Esc: drops nothing. Returns whether a drag was cancelled.
+    pub fn escape(&self) -> bool {
+        if !self.is_active() {
+            return false;
+        }
+        self.finish(None);
+        *self.0.phase.borrow_mut() = Phase::Ended;
+        true
+    }
+
+    /// A left or right press on entry `index` at window position (`x`, `y`).
+    fn down(&self, index: usize, x: f32, y: f32, right: bool, can_drag: bool) {
+        if right {
+            // The menu or the drag is for this entry: select it first if it is not.
+            self.0.view.prepare_menu(index);
+        }
+        // Drives (This PC) are not files to move.
+        let can_drag = can_drag && !self.0.view.shows_drives();
+        *self.0.phase.borrow_mut() = Phase::Armed { index, x, y, right, can_drag };
+    }
+
+    fn moved(&self, x: f32, y: f32, keys: Keys) {
+        let start = match &*self.0.phase.borrow() {
+            Phase::Armed { index, x: x0, y: y0, right, can_drag } => {
+                (*can_drag && drag::past_threshold(x - x0, y - y0)).then_some((*index, *right))
+            }
+            _ => None,
+        };
+        if let Some((index, right)) = start {
+            self.start(index, right, keys);
+        }
+        let dragging = {
+            let mut phase = self.0.phase.borrow_mut();
+            match &mut *phase {
+                Phase::Dragging(d) => {
+                    (d.x, d.y, d.keys) = (x, y, keys);
+                    true
+                }
+                _ => false,
+            }
+        };
+        if dragging {
+            self.update();
+        }
+    }
+
+    /// The pointer went far enough from the press on entry `index`: drag the selection.
+    fn start(&self, index: usize, right: bool, keys: Keys) {
+        let items = self.0.view.selected_items();
+        if items.is_empty() {
+            *self.0.phase.borrow_mut() = Phase::Idle;
+            return;
+        }
+        let Some(window) = self.0.window.upgrade() else { return };
+        if let Some(row) = self.0.view.file_row(index) {
+            window.set_drag_icon(row.icon);
+            window.set_drag_has_icon(row.has_icon);
+            window.set_drag_kind(row.kind);
+        }
+        window.set_drag_count(i32::try_from(items.len()).unwrap_or(i32::MAX));
+        window.set_drag_active(true);
+        *self.0.phase.borrow_mut() = Phase::Dragging(Dragging {
+            all_dirs: items.iter().all(|(_, is_dir)| *is_dir),
+            sources: items.into_iter().map(|(path, _)| path).collect(),
+            right,
+            keys,
+            allowed: Allowed::BOTH,
+            x: 0.0,
+            y: 0.0,
+            target: None,
+            pressed: Some(index),
+        });
+    }
+
+    /// A button came up. Returns whether a drag used it (then it is no click and no menu).
+    fn up(&self, x: f32, y: f32, right: bool) -> bool {
+        let phase = std::mem::replace(&mut *self.0.phase.borrow_mut(), Phase::Idle);
+        match phase {
+            Phase::Idle => false,
+            Phase::Armed { index, right: pressed_right, .. } => {
+                if !pressed_right && !right {
+                    self.0.view.release(index, false);
+                }
+                false
+            }
+            Phase::Ended => true,
+            Phase::Dragging(mut d) => {
+                (d.x, d.y) = (x, y);
+                if let Some(index) = d.pressed {
+                    self.0.view.release(index, true);
+                }
+                *self.0.phase.borrow_mut() = Phase::Dragging(d);
+                self.update();
+                let phase = std::mem::replace(&mut *self.0.phase.borrow_mut(), Phase::Idle);
+                if let Phase::Dragging(d) = phase {
+                    self.finish(Some(d));
+                }
+                true
+            }
+        }
+    }
+
+    /// The press was taken away (a menu opened, the window lost the pointer).
+    fn cancel(&self) {
+        if self.is_active() {
+            self.finish(None);
+        }
+        *self.0.phase.borrow_mut() = Phase::Idle;
+    }
+
+    fn keys_changed(&self, keys: Keys) {
+        let dragging = match &mut *self.0.phase.borrow_mut() {
+            Phase::Dragging(d) => {
+                d.keys = keys;
+                true
+            }
+            _ => false,
+        };
+        if dragging {
+            self.update();
+        }
+    }
+
+    /// Finds the target under the pointer and shows it.
+    fn update(&self) {
+        let Some(window) = self.0.window.upgrade() else { return };
+        let layout = self.layout(&window);
+        let (x, y, target) = {
+            let phase = self.0.phase.borrow();
+            let Phase::Dragging(d) = &*phase else { return };
+            let hit = drag::hit(&layout, d.x, d.y, d.all_dirs);
+            (d.x, d.y, self.resolve(&window, hit, d))
+        };
+        self.show(&window, x, y, &target, true);
+        self.follow_tab(target.hit);
+        self.follow_edge(&layout, x, y);
+        if let Phase::Dragging(d) = &mut *self.0.phase.borrow_mut() {
+            d.target = Some(target);
+        }
+    }
+
+    /// Where everything a drop can land on is, from the window as it is now.
+    fn layout(&self, window: &AppWindow) -> Layout {
+        let g = window.get_drop_geometry();
+        let theme = window.global::<Theme>();
+        let list = ListArea {
+            rect: Rect { x: g.view_x, y: g.view_y + g.list_top, width: g.list_width, height: g.list_height },
+            scroll: window.get_list_scroll(),
+            geometry: self.0.view.layout_geometry(),
+            count: self.0.view.len(),
+        };
+        let sidebar = match window.get_sidebar_position() {
+            position @ (0 | 1) => {
+                let width = window.get_sidebar_width();
+                let x = if position == 0 { 0.0 } else { g.window_width - width };
+                let rows = window
+                    .get_sidebar_rows()
+                    .iter()
+                    .map(|row| match (row.header, row.section, usize::try_from(row.index)) {
+                        (true, ..) => SideRow::Header,
+                        (false, SECTION_PINNED, Ok(i)) => SideRow::Pinned(i),
+                        _ => SideRow::Item,
+                    })
+                    .collect();
+                Some(SidebarArea {
+                    rect: Rect { x, y: g.view_y, width, height: g.view_height },
+                    scroll: g.sidebar_scroll,
+                    pad: theme.get_spacing(),
+                    row_height: theme.get_row_height(),
+                    rows,
+                })
+            }
+            _ => None,
+        };
+        let tabs = TabArea {
+            rect: Rect { x: 0.0, y: 0.0, width: g.tab_strip_width, height: g.tab_height },
+            scroll: g.tab_scroll,
+            tab_width: g.tab_width,
+            count: window.get_tabs().row_count(),
+        };
+        let spans = if window.get_path_editing() {
+            Vec::new()
+        } else {
+            let crumbs = self.0.crumbs.borrow();
+            crumbs[..crumbs.len().min(window.get_crumbs().row_count())].to_vec()
+        };
+        let crumbs =
+            CrumbArea { rect: Rect { x: 0.0, y: g.address_y, width: g.window_width, height: g.address_height }, spans };
+        Layout { width: g.window_width, height: g.window_height, list, sidebar, tabs, crumbs }
+    }
+
+    /// What dropping `d` at `hit` would do.
+    fn resolve(&self, window: &AppWindow, hit: Hit, d: &Dragging) -> Target {
+        let (hit, dir) = match hit {
+            Hit::Entry(i) => match self.0.view.entry_path(i) {
+                Some((path, true)) => (hit, Some(path)),
+                // A file: into the folder it is in.
+                _ => (Hit::Background, self.0.view.folder()),
+            },
+            Hit::Background => (hit, self.0.view.folder()),
+            Hit::Sidebar(row) => {
+                let place = window.get_sidebar_rows().row_data(row);
+                (hit, place.and_then(|r| self.0.sidebar.location_of(r.section, r.index)).and_then(path_of))
+            }
+            Hit::Tab(i) => (hit, self.0.nav.tab_location(i).and_then(path_of)),
+            Hit::Crumb(i) => (hit, self.0.nav.crumb_location(i).and_then(path_of)),
+            Hit::PinAt(_) => return Target { hit, dir: None, action: Some(Action::Pin) },
+            Hit::Outside | Hit::Nothing => (hit, None),
+        };
+        let action = dir.as_deref().and_then(|dir| self.effect(d, dir)).map(Action::Transfer);
+        Target { hit, dir, action }
+    }
+
+    /// The effect of dropping `d` into `dir`, or None if it must be refused.
+    fn effect(&self, d: &Dragging, dir: &Path) -> Option<Effect> {
+        if !self.writable(dir) {
+            return None;
+        }
+        let roots: Vec<PathBuf> = self.0.nav.places().drives.into_iter().map(|drive| drive.path).collect();
+        let first = d.sources.first()?;
+        let effect = drag::choose(d.keys, drag::same_drive(first, dir, &roots), d.allowed)?;
+        (!drag::refuse(&d.sources, dir, effect)).then_some(effect)
+    }
+
+    /// Whether files can be dropped into `dir` as far as Gezik knows without touching the
+    /// disk: not on an optical drive.
+    fn writable(&self, dir: &Path) -> bool {
+        !self.0.nav.places().drives.iter().any(|drive| drive.kind == DriveKind::Optical && is_within(dir, &drive.path))
+    }
+
+    /// Shows `target`: highlighted, and (with `ghost`) described next to the dragged items.
+    fn show(&self, window: &AppWindow, x: f32, y: f32, target: &Target, ghost: bool) {
+        let index = |i: usize| i32::try_from(i).unwrap_or(-1);
+        let on = target.action.is_some();
+        window.set_drop_entry(match target.hit {
+            Hit::Entry(i) if on => index(i),
+            _ => -1,
+        });
+        window.set_drop_sidebar_row(match target.hit {
+            Hit::Sidebar(row) if on => index(row),
+            _ => -1,
+        });
+        window.set_drop_pin_row(match target.hit {
+            Hit::PinAt(p) if on && window.get_sidebar_pinned_first_row() >= 0 => {
+                window.get_sidebar_pinned_first_row() + index(p)
+            }
+            _ => -1,
+        });
+        window.set_drop_tab(match target.hit {
+            Hit::Tab(i) if on => index(i),
+            _ => -1,
+        });
+        window.set_drop_crumb(match target.hit {
+            Hit::Crumb(i) if on => index(i),
+            _ => -1,
+        });
+        if ghost {
+            window.set_drag_x(x);
+            window.set_drag_y(y);
+            let label = match (target.action, &target.dir) {
+                (Some(Action::Pin), _) => drag::label(Action::Pin, Path::new("")),
+                (Some(action), Some(dir)) => drag::label(action, dir),
+                _ => String::new(),
+            };
+            window.set_drag_label(label.into());
+            window.set_drag_forbidden(!on && target.hit != Hit::Outside);
+        }
+    }
+
+    /// Resting on a tab opens it after a moment, and the drag goes on in it.
+    fn follow_tab(&self, hit: Hit) {
+        let tab = match hit {
+            Hit::Tab(i) if i != self.0.nav.active_index() => Some(i),
+            _ => None,
+        };
+        if tab == self.0.hover_tab.get() {
+            return;
+        }
+        self.0.hover_tab.set(tab);
+        match tab {
+            Some(i) => self.0.tab_timer.start(TimerMode::SingleShot, drag::TAB_HOVER, move || {
+                with_current(|drags| drags.tab_rested(i));
+            }),
+            None => self.0.tab_timer.stop(),
+        }
+    }
+
+    fn tab_rested(&self, i: usize) {
+        if self.0.hover_tab.get() != Some(i) || !self.is_active() {
+            return;
+        }
+        self.0.hover_tab.set(None);
+        self.0.nav.activate_tab(i);
+        self.update();
+    }
+
+    /// Near the list's top or bottom edge the list scrolls while the pointer rests there.
+    fn follow_edge(&self, layout: &Layout, x: f32, y: f32) {
+        let list = &layout.list;
+        let near = list.rect.contains(x, y)
+            && drag::edge_scroll(y - list.rect.y, list.rect.height, list.geometry.row_height() / 2.0) != 0.0;
+        if near && !self.0.scroll_timer.running() {
+            self.0.scroll_timer.start(TimerMode::Repeated, SCROLL_STEP, || {
+                with_current(|drags| drags.scroll_step());
+            });
+        } else if !near {
+            self.0.scroll_timer.stop();
+        }
+    }
+
+    fn scroll_step(&self) {
+        let Some(window) = self.0.window.upgrade() else { return };
+        let y = match &*self.0.phase.borrow() {
+            Phase::Dragging(d) => d.y,
+            _ => return self.0.scroll_timer.stop(),
+        };
+        let layout = self.layout(&window);
+        let list = &layout.list;
+        let row_height = list.geometry.row_height();
+        let step = drag::edge_scroll(y - list.rect.y, list.rect.height, row_height / 2.0);
+        let content = list.geometry.row_count(list.count) as f32 * row_height;
+        let lowest = (list.rect.height - content).min(0.0);
+        window.set_list_scroll((list.scroll + step).clamp(lowest, 0.0));
+        self.update();
+    }
+
+    /// Ends the drag: drops `d` on its target (None: drops nothing) and clears the window.
+    fn finish(&self, d: Option<Dragging>) {
+        self.0.tab_timer.stop();
+        self.0.scroll_timer.stop();
+        self.0.hover_tab.set(None);
+        if let Some(window) = self.0.window.upgrade() {
+            window.set_drag_active(false);
+            window.set_drag_label("".into());
+            window.set_drag_forbidden(false);
+            self.show(&window, 0.0, 0.0, &Target { hit: Hit::Nothing, dir: None, action: None }, false);
+        }
+        let Some(d) = d else { return };
+        let Some(target) = d.target.clone() else { return };
+        self.drop_on(d, target);
+    }
+
+    fn drop_on(&self, d: Dragging, target: Target) {
+        if let (Hit::PinAt(position), Some(Action::Pin)) = (target.hit, target.action) {
+            return self.0.sidebar.pin_at(&d.sources, position);
+        }
+        let Some(dir) = target.dir else { return };
+        if d.right {
+            let can = |effect| {
+                let allowed = match effect {
+                    Effect::Copy => d.allowed.copy,
+                    Effect::Move => d.allowed.move_,
+                };
+                allowed && self.writable(&dir) && !drag::refuse(&d.sources, &dir, effect)
+            };
+            let (can_copy, can_move) = (can(Effect::Copy), can(Effect::Move));
+            return self.0.menus.drop_menu(d.sources, dir, can_copy, can_move, d.x, d.y);
+        }
+        if let Some(Action::Transfer(effect)) = target.action {
+            self.0.ops.transfer(d.sources, dir, effect);
+        }
+    }
+}

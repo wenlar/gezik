@@ -4,6 +4,7 @@
 mod conflicts;
 mod context_menu;
 mod dialog;
+mod drag;
 mod folder_watch;
 mod frame_limit;
 mod keys;
@@ -476,7 +477,10 @@ fn main() -> Result<(), slint::PlatformError> {
     });
     // The sidebar width stays in memory and is saved with the window state on close.
 
-    let menus = context_menu::Menus::new(&window, nav.clone(), view.clone(), preview.clone(), sidebar, ops.clone());
+    let menus =
+        context_menu::Menus::new(&window, nav.clone(), view.clone(), preview.clone(), sidebar.clone(), ops.clone());
+    let drags = drag::Drags::new(&window, nav.clone(), view.clone(), sidebar, ops.clone(), menus.clone());
+    drags.install(&window);
     window.on_row_menu({
         let (menus, view) = (menus.clone(), view.clone());
         move |i, x, y| {
@@ -503,16 +507,6 @@ fn main() -> Result<(), slint::PlatformError> {
             if let Ok(index) = usize::try_from(i) {
                 view.press(index, ctrl, shift);
             }
-        }
-    });
-    // Until drag.rs takes the releases: a release is a click.
-    window.on_item_up({
-        let view = view.clone();
-        move |i, _, _, right| {
-            if let (Ok(index), false) = (usize::try_from(i), right) {
-                view.release(index, false);
-            }
-            false
         }
     });
     window.on_marquee({
@@ -671,12 +665,17 @@ fn main() -> Result<(), slint::PlatformError> {
     window.on_key_event({
         let (nav, view, preview, ops, weak) =
             (nav.clone(), view.clone(), preview.clone(), ops.clone(), window.as_weak());
+        let drags = drags.clone();
         let mut type_ahead = keys::TypeAhead::new();
         move |event| {
             let Some(window) = weak.upgrade() else { return false };
             let m = event.modifiers;
             let chord = keys::chord_from_slint(&event.text, m.control, m.alt, m.shift, m.meta, Platform::current());
             let menu_key = keys::is_context_menu_key(&event.text, m.control, m.alt, m.shift, m.meta);
+            // Esc while dragging files drops nothing.
+            if chord.as_ref().is_some_and(|c| c.key == Key::Escape) && drags.escape() {
+                return true;
+            }
             handle_key(
                 &window,
                 &nav,
