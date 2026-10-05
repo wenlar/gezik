@@ -1,7 +1,7 @@
 # Alt Proje 4: Dosya İşlemleri — Tasarım
 
 - **Tarih:** 2026-10-04
-- **Durum:** İncelemede
+- **Durum:** 4a tamamlandı; 4b uygulandı (incelemede)
 - **Kapsam:** Gezik yol haritasının 4. alt projesi; iki plan ve iki PR: **4a** (motor ve işlemler), **4b** (sürükle-bırak ve Linux sistem panosu)
 - **Dayandığı:** `2026-10-03-ayarlar-ve-tema-design.md` (ayar dosyası, tema, kısayol biçimi), `2026-10-04-gezinme-design.md` (sekmeler, Shell menüsü), `2026-10-04-gorunum-design.md` (çoklu seçim, `EntryModel`, ızgara)
 
