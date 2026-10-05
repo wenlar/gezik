@@ -88,7 +88,7 @@ in.bmp             fmt=Bmp color=Rgb8 640x480 ...
 - CMYK JPEG decodes to Rgb8 (zune-jpeg converts it).
 - **ICO picks the entry with the highest bits-per-pixel first, then the largest size** (`best_entry` scores `(bpp, w*h)`). An ICO whose 256 px entry has a directory bpp of 8 (ImageMagick wrote one) decodes as the 48 px 32-bit entry. That is acceptable, but it is not always "largest".
 - The GIF decoder through `from_decoder` gives frame 1 as Rgba8.
-- `ImageReader` has default limits (`max_alloc` 512 MiB). Pass `reader.limits(...)` if 100+ MP inputs must work.
+- **Limits do not apply on the `into_decoder()` path.** `ImageReader`'s default limits (`max_alloc` 512 MiB) are enforced by `ImageReader::decode()`, but `into_decoder()` + `DynamicImage::from_decoder` allocates whatever the header claims (a 60-byte PNG claiming 100000x100000 asks for 30 GB and aborts the process). After `into_decoder()`, check yourself: `let mut limits = Limits::default(); limits.max_image_width = Some(65535); limits.max_image_height = Some(65535); limits.check_dimensions(w, h)?; decoder.set_limits(limits.clone())?; limits.reserve(decoder.total_bytes())?;` (Gezik: `gezik-batch::convert::image::decode`). Resize targets need the same budget (Gezik: every RGBA buffer ≤ 512 MiB).
 
 ### 1.2 Orientation
 ```rust
@@ -312,6 +312,7 @@ in-place GPS strip ok=true len_same=true bytes_outside_exif_same=true -> orient=
 ```
 Gotchas:
 - **XMP can hold GPS too** (`exif:GPSLatitude` in an APP1 segment starting with `http://ns.adobe.com/xap/1.0/\0`, written by Lightroom and phones). The in-place JPEG path must also drop that segment, which needs a segment-copy rewrite: copy every segment except that APP1. The re-encode path drops XMP anyway.
+- Gezik's lossless path (`exifclean::jpeg_without_location`) also drops APP13 (Photoshop/IPTC, which can name the city and place) and everything after the main picture's EOI together with the MPF APP2 index: MPF secondary pictures (Ultra HDR gain maps, previews) carry their own EXIF, and a motion photo's video can carry a location; their XMP descriptions are gone anyway. It fails closed: an EXIF block whose IFD0 cannot be read, or whose GPS IFD cannot be stripped, gives `None`, and the caller re-encodes without metadata.
 - MakerNotes are kept. Nikon and Apple MakerNotes carry no coordinates, but some vendors store GPS in MakerNotes. To be strict, wipe 0x927C in the Exif IFD the same way as `wipe_entry`.
 - For PNG (`eXIf`, needs a CRC32 recompute) and WebP (`EXIF` chunk, no CRC), the same in-place call works on the chunk payload. That was not exercised in the probe.
 - The kamadak-exif 0.6.1 reader (`exif::Reader::new().read_raw(Vec<u8>)`) parses the result. kamadak has no writer.

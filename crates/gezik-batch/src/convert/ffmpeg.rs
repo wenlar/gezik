@@ -1,6 +1,6 @@
 //! Running ffmpeg for one picture step (a HEIC decode, a lossy WebP or AVIF encode), and
-//! asking a program which ffmpeg version it is. Media conversions with progress come on top
-//! of this.
+//! asking a program which ffmpeg version it is. Kept to two calls, `run_ffmpeg` and
+//! `version`, which the media runner (finding ffmpeg, progress) can take over or replace.
 
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -49,7 +49,8 @@ type Versions = HashMap<PathBuf, (Option<SystemTime>, Option<(u32, u32)>)>;
 
 /// The (major, minor) version of the ffmpeg at `path` from `ffmpeg -version`; `None` when it
 /// does not start, takes longer than 5 s or is a build from git. Asked once per program and
-/// change time.
+/// change time. The first ask blocks (up to 5 s) without looking at a stop; the full ffmpeg
+/// runner (finding it, progress) is meant to take this over.
 pub fn version(path: &Path) -> Option<(u32, u32)> {
     static SEEN: Mutex<Option<Versions>> = Mutex::new(None);
     let modified = std::fs::metadata(path).and_then(|meta| meta.modified()).ok();

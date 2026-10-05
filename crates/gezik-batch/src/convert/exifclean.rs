@@ -2,8 +2,10 @@
 //! prefix, as `ImageDecoder::exif_metadata` gives it) that never move bytes, so every offset
 //! in it stays valid and the length stays the same: remove the GPS data, drop the IFD1
 //! thumbnail, set the pixel dimensions. And the location removal of a JPEG file without
-//! re-encoding it. A damaged block is left as it is (the edit answers `false`); nothing here
-//! panics on bad input.
+//! re-encoding it, which also leaves out XMP, IPTC and whatever follows the main picture
+//! (MPF secondary pictures such as an Ultra HDR gain map, a motion photo's video). A
+//! damaged block is left as it is (the edit answers `false`); nothing here panics on bad
+//! input.
 
 use std::ops::Range;
 
@@ -102,20 +104,36 @@ fn sub_ifd(t: Tiff, b: &[u8], tag: u16) -> Option<usize> {
     Some(t.u32(b, e.at + 8)? as usize)
 }
 
+/// The smallest offset an IFD can have: right after the 8-byte header.
+const FIRST_IFD: usize = 8;
+
+/// Whether the block has a GPS IFD pointer; `None` when its IFD0 cannot be read (then it may
+/// hold a location nothing here can find).
+pub fn has_gps(b: &[u8]) -> Option<bool> {
+    let t = Tiff::new(b)?;
+    let (list, _) = entries(t, b, ifd0(t, b)?)?;
+    Some(list.iter().any(|e| e.tag == 0x8825))
+}
+
 /// Removes the location: every GPS value (and its out-of-line data) is zeroed, and the GPS
 /// IFD keeps one entry, `GPSVersionID = 2.2.0.0`, so that strict readers still find a valid
-/// IFD where IFD0 points. Answers whether there was a GPS IFD to clean.
+/// IFD where IFD0 points. Answers whether it did; `false` also when there is no GPS IFD, or
+/// when it cannot be read (then nothing is changed: see [`has_gps`]).
 pub fn strip_gps(b: &mut [u8]) -> bool {
     (|| {
         let t = Tiff::new(b)?;
         let gps = sub_ifd(t, b, 0x8825)?;
+        if gps < FIRST_IFD || gps == ifd0(t, b)? {
+            return None;
+        }
         let (list, next) = entries(t, b, gps)?;
+        // Room for what is written at the end, the one entry and the next-IFD field after
+        // it (2 + 12 + 4 bytes), checked before anything changes.
+        b.get(gps..gps.checked_add(18)?)?;
         for e in list {
             wipe_entry(t, b, e);
         }
         b[next..next + 4].fill(0);
-        // The one entry and the next-IFD field after it: 2 + 12 + 4 bytes.
-        b.get(gps..gps.checked_add(18)?)?;
         t.put_u16(b, gps, 1);
         let e0 = gps + 2;
         t.put_u16(b, e0, 0x0000); // GPSVersionID
@@ -136,7 +154,7 @@ pub fn drop_thumbnail(b: &mut [u8]) -> bool {
         let t = Tiff::new(b)?;
         let (_, next0) = entries(t, b, ifd0(t, b)?)?;
         let ifd1 = t.u32(b, next0)? as usize;
-        if ifd1 == 0 {
+        if ifd1 < FIRST_IFD || ifd1 == ifd0(t, b)? {
             return None;
         }
         let (list, next1) = entries(t, b, ifd1)?;
@@ -246,28 +264,70 @@ pub fn jpeg_exif_range(jpeg: &[u8]) -> Option<Range<usize>> {
     list.iter().find_map(|s| exif_payload(jpeg, s))
 }
 
-/// Whether an APP1 payload is XMP (or the extended XMP that continues a long one).
-fn is_xmp(segment: &Segment, jpeg: &[u8]) -> bool {
+/// Whether a segment is left out of a JPEG without its location: XMP (and the extended
+/// XMP that continues a long one), Photoshop's APP13 (IPTC, which names the city and the
+/// place), and the MPF index of the secondary pictures, which are left out too.
+fn left_out(segment: &Segment, jpeg: &[u8]) -> bool {
     let body = &jpeg[segment.body.clone()];
-    segment.marker == 0xE1 && (body.starts_with(XMP) || body.starts_with(XMP_EXTENSION))
+    match segment.marker {
+        0xE1 => body.starts_with(XMP) || body.starts_with(XMP_EXTENSION),
+        0xE2 => body.starts_with(b"MPF\0"),
+        0xED => true,
+        _ => false,
+    }
+}
+
+/// Where the main picture ends (after its EOI), given where its first scan starts; the end
+/// of the file when it has no EOI. What comes after is a trailer: MPF's secondary pictures
+/// (Ultra HDR's gain map, a camera's preview), a motion photo's video.
+fn picture_end(jpeg: &[u8], scan: usize) -> usize {
+    let mut p = scan;
+    while p + 1 < jpeg.len() {
+        if jpeg[p] != 0xFF {
+            p += 1;
+            continue;
+        }
+        match jpeg[p + 1] {
+            0xD9 => return p + 2,
+            // Stuffed 0xFF, a restart marker, or a fill byte: still image data.
+            0x00 | 0xD0..=0xD7 | 0xFF => p += 1,
+            // A segment between scans (SOS, DHT…): skip it; the data after it is scanned on.
+            _ => match jpeg.get(p + 2..p + 4) {
+                Some(len) => p += 2 + usize::from(u16::from_be_bytes([len[0], len[1]])),
+                None => break,
+            },
+        }
+    }
+    jpeg.len()
 }
 
 /// A JPEG file without its location, the picture itself untouched (no re-encode): the GPS
-/// data in each EXIF block is removed in place ([`strip_gps`]), and XMP segments, which can
-/// hold the location too, are left out. Everything else is copied byte for byte. `None` when
-/// `jpeg` is not a JPEG this can read.
+/// data in each EXIF block is removed in place ([`strip_gps`]); XMP and IPTC (APP13), which
+/// can hold the location too, are left out; so is everything after the main picture (MPF
+/// secondary pictures with their own EXIF, a motion photo's video, which can carry a
+/// location of its own, and whose XMP description is gone anyway). Everything else is
+/// copied byte for byte. `None` when `jpeg` is not a JPEG this can read, or has an EXIF
+/// block whose location cannot be removed this way (then it has to be re-encoded).
 pub fn jpeg_without_location(jpeg: &[u8]) -> Option<Vec<u8>> {
     let (list, scan) = segments(jpeg)?;
-    let mut out = Vec::with_capacity(jpeg.len());
+    let end = picture_end(jpeg, scan);
+    let mut out = Vec::with_capacity(end);
     out.extend_from_slice(&jpeg[..2]);
-    for segment in list.iter().filter(|s| !is_xmp(s, jpeg)) {
+    for segment in list.iter().filter(|s| !left_out(s, jpeg)) {
         let at = out.len();
         out.extend_from_slice(&jpeg[segment.range.clone()]);
         if let Some(tiff) = exif_payload(jpeg, segment) {
             let start = at + (tiff.start - segment.range.start);
-            strip_gps(&mut out[start..start + tiff.len()]);
+            let block = &mut out[start..start + tiff.len()];
+            // Fail closed: a block whose GPS cannot be found or removed is not passed on.
+            if !has_gps(block)? {
+                continue;
+            }
+            if !strip_gps(block) {
+                return None;
+            }
         }
     }
-    out.extend_from_slice(&jpeg[scan..]);
+    out.extend_from_slice(&jpeg[scan..end]);
     Some(out)
 }

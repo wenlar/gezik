@@ -94,6 +94,21 @@ impl TiffWriter {
 /// An EXIF block as a camera writes it: make, orientation, date, pixel size, a location and
 /// a thumbnail.
 fn exif_block(le: bool, orientation: u16, w: u32, h: u32, thumb: &[u8]) -> Vec<u8> {
+    exif_layout(le, orientation, w, h, thumb).bytes
+}
+
+/// An EXIF block and where its parts are.
+struct Layout {
+    bytes: Vec<u8>,
+    /// IFD0's next-IFD field.
+    next0: usize,
+    /// The value field of IFD0's GPS pointer.
+    gps_pointer: usize,
+    /// The GPS IFD.
+    gps: usize,
+}
+
+fn exif_layout(le: bool, orientation: u16, w: u32, h: u32, thumb: &[u8]) -> Layout {
     let mut t = TiffWriter::new(le);
     let ifd0 = [
         (0x010F, 2, 8, b"TESTCAM\0".to_vec()),
@@ -121,10 +136,15 @@ fn exif_block(le: bool, orientation: u16, w: u32, h: u32, thumb: &[u8]) -> Vec<u
     let thumb_at = t.b.len() as u32;
     t.b.extend_from_slice(thumb);
     t.patch(values1[1], thumb_at);
-    t.b
+    Layout { bytes: t.b, next0, gps_pointer: values0[3], gps: gps_at as usize }
 }
 
-const ICC: &[u8] = b"a test ICC profile: only its bytes are compared, nothing reads its colours";
+/// An ICC profile as far as Gezik looks at it: bytes 16-19 name the colour space.
+const ICC: &[u8] = b"test ICC profileRGB XYZ only its bytes are compared, nothing reads its colours";
+
+fn icc_of(space: &[u8; 4]) -> Vec<u8> {
+    [&ICC[..16], space, &ICC[20..]].concat()
+}
 
 /// XMP holding the location (as phones and Lightroom write it).
 const XMP: &[u8] = b"http://ns.adobe.com/xap/1.0/\0<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF \
@@ -141,6 +161,13 @@ fn jpeg_bytes(rgb: &[u8], w: u16, h: u16, quality: u8) -> Vec<u8> {
 /// A 64×32 JPEG stored sideways (orientation 6): its left half red, its right half blue, so
 /// that upright (32×64) the top is red and the bottom blue.
 fn camera_jpeg(path: &Path, le: bool) {
+    let thumb = jpeg_bytes(&[128; 8 * 8 * 3], 8, 8, 50);
+    camera_jpeg_with(path, &exif_block(le, 6, 64, 32, &thumb), &[], &[]);
+}
+
+/// The camera JPEG with this EXIF block, more APP segments (number, payload) and bytes
+/// after its end.
+fn camera_jpeg_with(path: &Path, exif: &[u8], segments: &[(u8, Vec<u8>)], trailer: &[u8]) {
     let (w, h) = (64u32, 32u32);
     let mut rgb = Vec::new();
     for _ in 0..h {
@@ -148,14 +175,16 @@ fn camera_jpeg(path: &Path, le: bool) {
             rgb.extend_from_slice(if x < w / 2 { &[220, 20, 20] } else { &[20, 20, 220] });
         }
     }
-    let thumb = jpeg_bytes(&[128; 8 * 8 * 3], 8, 8, 50);
-    let exif = exif_block(le, 6, w, h, &thumb);
     let mut out = Vec::new();
     let mut encoder = jpeg_encoder::Encoder::new(&mut out, 95);
-    encoder.add_exif_metadata(&exif).unwrap();
+    encoder.add_exif_metadata(exif).unwrap();
     encoder.add_icc_profile(ICC).unwrap();
     encoder.add_app_segment(1, XMP.to_vec()).unwrap();
+    for (number, payload) in segments {
+        encoder.add_app_segment(*number, payload.clone()).unwrap();
+    }
     encoder.encode(&rgb, w as u16, h as u16, jpeg_encoder::ColorType::Rgb).unwrap();
+    out.extend_from_slice(trailer);
     std::fs::write(path, out).unwrap();
 }
 
@@ -676,4 +705,178 @@ fn a_failing_ffmpeg_reports_its_errors() {
     let err = gezik_batch::convert::ffmpeg::run_ffmpeg(&ffmpeg, args, &never).unwrap_err();
     let text = err.to_string();
     assert!(text.starts_with("ffmpeg failed (exit code") && text.contains("missing.mov"), "{text}");
+}
+
+// ---- Limits, failing closed, trailers, colour profiles -------------------------------------
+
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc = !0u32;
+    for &byte in bytes {
+        crc ^= u32::from(byte);
+        for _ in 0..8 {
+            crc = if crc & 1 != 0 { (crc >> 1) ^ 0xEDB8_8320 } else { crc >> 1 };
+        }
+    }
+    !crc
+}
+
+fn png_chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
+    out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+    let body = [&kind[..], data].concat();
+    out.extend_from_slice(&body);
+    out.extend_from_slice(&crc32(&body).to_be_bytes());
+}
+
+#[test]
+fn a_header_claiming_a_huge_picture_is_refused_before_allocating() {
+    let d = dir("bomb");
+    let output = d.join("out.tmp");
+    let too_large = |input: &Path| {
+        let err = convert_image(&job(input, &output, &options(ImageFormat::Jpeg)), &never).unwrap_err();
+        let inner = err.get_ref().and_then(|e| e.downcast_ref::<gezik_batch::convert::ImageError>());
+        assert_eq!(
+            inner,
+            Some(&gezik_batch::convert::ImageError::NotSupported("too large to convert".into())),
+            "{}",
+            input.display()
+        );
+        assert!(!output.exists());
+    };
+    // A PNG of a few dozen bytes claiming 100000×100000, and one at the 65535 limit (12 GB).
+    for side in [100_000u32, 65_535] {
+        let png = d.join(format!("bomb{side}.png"));
+        let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+        let ihdr = [&side.to_be_bytes()[..], &side.to_be_bytes(), &[8, 2, 0, 0, 0]].concat();
+        png_chunk(&mut bytes, b"IHDR", &ihdr);
+        png_chunk(&mut bytes, b"IDAT", &[0x78, 0x9C, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01]);
+        png_chunk(&mut bytes, b"IEND", &[]);
+        std::fs::write(&png, bytes).unwrap();
+        too_large(&png);
+    }
+    // A JPEG whose frame header says 65535×65535.
+    let jpeg = d.join("bomb.jpg");
+    camera_jpeg(&jpeg, true);
+    let mut bytes = std::fs::read(&jpeg).unwrap();
+    let sof = bytes.windows(2).rposition(|w| w == [0xFF, 0xC0]).unwrap();
+    bytes[sof + 5..sof + 9].copy_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF]);
+    std::fs::write(&jpeg, bytes).unwrap();
+    too_large(&jpeg);
+}
+
+#[test]
+fn a_resize_too_large_to_hold_is_refused() {
+    let d = dir("big-resize");
+    let (input, output) = (d.join("plain.png"), d.join("out.tmp"));
+    RgbImage::from_pixel(1200, 1200, Rgb([10, 20, 30])).save(&input).unwrap();
+    // 12000×12000 RGBA: 576 MB, over the 512 MiB a buffer may take.
+    let o = ImageOptions { resize: Resize::Percent(1000), never_enlarge: false, ..options(ImageFormat::Png) };
+    let err = convert_image(&job(&input, &output, &o), &never).unwrap_err();
+    assert_eq!(err.to_string(), "too large to convert");
+    assert!(!output.exists());
+}
+
+#[test]
+fn location_removal_fails_closed_on_gps_it_cannot_remove() {
+    let d = dir("gps-damaged");
+    let (input, output) = (d.join("camera.jpg"), d.join("out.tmp"));
+    let thumb = jpeg_bytes(&[128; 8 * 8 * 3], 8, 8, 50);
+    let mut layout = exif_layout(true, 6, 64, 32, &thumb);
+    // The GPS IFD claims more entries than the block holds.
+    layout.bytes[layout.gps..layout.gps + 2].copy_from_slice(&0xFFFFu16.to_le_bytes());
+    let mut copy = layout.bytes.clone();
+    assert!(!exifclean::strip_gps(&mut copy));
+    assert_eq!(copy, layout.bytes, "nothing changed by a failed strip");
+    assert_eq!(exifclean::has_gps(&layout.bytes), Some(true));
+    camera_jpeg_with(&input, &layout.bytes, &[], &[]);
+
+    let err = strip_location(&input, &output).unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    assert!(!output.exists());
+
+    // The preset re-encodes it instead, without EXIF.
+    let preset = gezik_core::batch::convert::preset(gezik_core::batch::convert::REMOVE_LOCATION).unwrap();
+    let gezik_core::batch::convert::PresetWhat::Image(base) = preset.what else { panic!() };
+    let o = ImageOptions { format: ImageFormat::Jpeg, ..base };
+    remove_location(&job(&input, &output, &o), &never).unwrap();
+    let r = read(&output);
+    assert!(r.exif.is_none());
+    assert_eq!((r.img.width(), r.img.height()), (32, 64));
+    assert!(!contains(&std::fs::read(&output).unwrap(), &TiffWriter::new(true).rationals(&[(1234, 100)])));
+}
+
+#[test]
+fn location_removal_leaves_out_iptc_and_what_follows_the_picture() {
+    let d = dir("trailer");
+    let (input, output) = (d.join("camera.jpg"), d.join("out.tmp"));
+    let thumb = jpeg_bytes(&[128; 8 * 8 * 3], 8, 8, 50);
+    let exif = exif_block(true, 6, 64, 32, &thumb);
+    let iptc = b"Photoshop 3.0\x008BIM\x04\x04\x00\x00\x00\x00\x00\x10\x1c\x02\x5a\x00\x09Barcelona".to_vec();
+    let mpf = b"MPF\x00II*\x00\x08\x00\x00\x00".to_vec();
+    // A secondary picture with its own location after the main one, as MPF files and motion
+    // photos append them.
+    let mut second = Vec::new();
+    let mut encoder = jpeg_encoder::Encoder::new(&mut second, 80);
+    encoder.add_exif_metadata(&exif).unwrap();
+    encoder.encode(&[50; 8 * 8 * 3], 8, 8, jpeg_encoder::ColorType::Rgb).unwrap();
+    camera_jpeg_with(&input, &exif, &[(13, iptc), (2, mpf)], &second);
+
+    strip_location(&input, &output).unwrap();
+    let (before, after) = (std::fs::read(&input).unwrap(), std::fs::read(&output).unwrap());
+    assert!(contains(&before, b"Barcelona") && !contains(&after, b"Barcelona"), "IPTC goes");
+    assert!(contains(&before, b"MPF\x00") && !contains(&after, b"MPF\x00"));
+    let main = &before[..before.len() - second.len()];
+    assert_eq!(scan_data(&after), scan_data(main), "the main picture unchanged, nothing after it");
+    assert_eq!(read(&input).img.to_rgb8(), read(&output).img.to_rgb8());
+    let lat = TiffWriter::new(true).rationals(&[(1234, 100)]);
+    assert!(contains(&before[main.len()..], &lat));
+    assert!(!contains(&after, &lat), "no location left anywhere");
+}
+
+#[test]
+fn a_colour_profile_goes_only_with_matching_colours() {
+    let d = dir("icc-space");
+    let output = d.join("out.tmp");
+    let png_with = |name: &str, img: &DynamicImage, space: &[u8; 4]| {
+        let path = d.join(name);
+        let mut file = std::fs::File::create(&path).unwrap();
+        let mut encoder = image::codecs::png::PngEncoder::new(&mut file);
+        encoder.set_icc_profile(icc_of(space)).unwrap();
+        img.write_with_encoder(encoder).unwrap();
+        path
+    };
+    let grey = DynamicImage::ImageLuma8(image::GrayImage::from_pixel(8, 8, image::Luma([100])));
+    let colour = DynamicImage::ImageRgb8(RgbImage::from_pixel(8, 8, Rgb([10, 100, 200])));
+    let cases = [
+        (png_with("grey-gray.png", &grey, b"GRAY"), ImageFormat::Jpeg, Some(icc_of(b"GRAY"))),
+        (png_with("grey-gray2.png", &grey, b"GRAY"), ImageFormat::Png, Some(icc_of(b"GRAY"))),
+        // WebP is always colour.
+        (png_with("grey-gray3.png", &grey, b"GRAY"), ImageFormat::WebpLossless, None),
+        (png_with("grey-rgb.png", &grey, b"RGB "), ImageFormat::Jpeg, None),
+        (png_with("rgb-gray.png", &colour, b"GRAY"), ImageFormat::Jpeg, None),
+        (png_with("rgb-cmyk.png", &colour, b"CMYK"), ImageFormat::Png, None),
+        (png_with("rgb-rgb.png", &colour, b"RGB "), ImageFormat::WebpLossless, Some(icc_of(b"RGB "))),
+    ];
+    for (input, format, icc) in cases {
+        convert_image(&job(&input, &output, &options(format)), &never).unwrap();
+        assert_eq!(read(&output).icc, icc, "{} as {format:?}", input.display());
+    }
+}
+
+#[test]
+fn self_pointing_ifds_are_left_alone() {
+    let thumb = jpeg_bytes(&[128; 8 * 8 * 3], 8, 8, 50);
+    let layout = exif_layout(true, 6, 64, 32, &thumb);
+    let t = TiffWriter::new(true);
+    // IFD1 is IFD0 itself.
+    let mut b = layout.bytes.clone();
+    b[layout.next0..layout.next0 + 4].copy_from_slice(&t.long(8));
+    let before = b.clone();
+    assert!(!exifclean::drop_thumbnail(&mut b));
+    assert_eq!(b, before);
+    // The GPS IFD is IFD0 itself.
+    let mut b = layout.bytes.clone();
+    b[layout.gps_pointer..layout.gps_pointer + 4].copy_from_slice(&t.long(8));
+    let before = b.clone();
+    assert!(!exifclean::strip_gps(&mut b));
+    assert_eq!(b, before);
 }

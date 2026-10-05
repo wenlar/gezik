@@ -17,11 +17,11 @@ use ::image::codecs::bmp::BmpEncoder;
 use ::image::codecs::png::{CompressionType, FilterType as PngFilter, PngEncoder};
 use ::image::codecs::webp::WebPEncoder;
 use ::image::metadata::Orientation;
-use ::image::{ColorType, DynamicImage, ImageDecoder, ImageEncoder, ImageReader, Rgb, RgbImage, RgbaImage};
+use ::image::{ColorType, DynamicImage, ImageDecoder, ImageEncoder, ImageReader, Limits, Rgb, RgbImage, RgbaImage};
 use fast_image_resize::pixels::U8x4;
 use fast_image_resize::{FilterType, IntoImageView, IntoImageViewMut, ResizeAlg, ResizeOptions, Resizer};
 use gezik_core::batch::convert::{
-    FfmpegImage, ImageFormat, ImageOptions, ffmpeg_image_args, needs_ffmpeg_to_read, target_size,
+    FfmpegImage, ImageFormat, ImageOptions, MAX_SIDE, ffmpeg_image_args, needs_ffmpeg_to_read, target_size,
 };
 
 use super::exifclean;
@@ -75,6 +75,30 @@ fn not_supported(why: impl Into<String>) -> io::Error {
     io::Error::other(ImageError::NotSupported(why.into()))
 }
 
+fn too_large() -> io::Error {
+    not_supported("too large to convert")
+}
+
+/// The most bytes one picture buffer may take: image's default allocation limit (512 MiB).
+const MAX_BUFFER: u64 = 512 << 20;
+
+/// Whether a `w`×`h` buffer of `bytes_per_pixel` fits in [`MAX_BUFFER`].
+fn fits(w: u32, h: u32, bytes_per_pixel: u64) -> bool {
+    u64::from(w) * u64::from(h) * bytes_per_pixel <= MAX_BUFFER
+}
+
+/// The ICC profile, if it is for the output's colours: grey or RGB (bytes 16-19 name the
+/// colour space). A grey picture written in colour, or a CMYK one decoded to RGB, goes
+/// without it.
+fn icc_for(icc: Option<&[u8]>, grey: bool) -> Option<&[u8]> {
+    let wanted: &[u8] = if grey { b"GRAY" } else { b"RGB " };
+    icc.filter(|icc| icc.get(16..20) == Some(wanted))
+}
+
+fn is_grey(img: &DynamicImage) -> bool {
+    matches!(img.color(), ColorType::L8 | ColorType::L16 | ColorType::La8 | ColorType::La16)
+}
+
 fn cancelled() -> io::Error {
     io::Error::new(io::ErrorKind::Interrupted, "cancelled")
 }
@@ -95,8 +119,8 @@ pub fn convert_image(job: &ImageJob, stop: &dyn Fn() -> bool) -> io::Result<()> 
 }
 
 /// "Remove location data" for one picture: a JPEG written as a JPEG loses its location
-/// without being re-encoded ([`strip_location`]); anything else (or a JPEG too damaged to
-/// edit) is converted with `job.options`, which drop the metadata.
+/// without being re-encoded ([`strip_location`]); anything else (or a JPEG whose location
+/// cannot be removed that way) is converted with `job.options`, which drop the metadata.
 pub fn remove_location(job: &ImageJob, stop: &dyn Fn() -> bool) -> io::Result<()> {
     if job.options.format == ImageFormat::Jpeg && starts_like_jpeg(job.input)? {
         let bytes = std::fs::read(job.input)?;
@@ -109,8 +133,10 @@ pub fn remove_location(job: &ImageJob, stop: &dyn Fn() -> bool) -> io::Result<()
 }
 
 /// Writes `jpeg_in` to `jpeg_out` without its location and without re-encoding it: the GPS
-/// data of its EXIF is removed in place and its XMP left out; the picture's bytes stay as
-/// they are. On failure nothing is left at `jpeg_out`.
+/// data of its EXIF is removed in place, its XMP and IPTC are left out, and so is whatever
+/// follows the main picture (MPF secondary pictures, a motion photo's video); the picture's
+/// bytes stay as they are. Fails (`InvalidData`) on a JPEG it cannot walk or whose EXIF
+/// location it cannot remove. On failure nothing is left at `jpeg_out`.
 pub fn strip_location(jpeg_in: &Path, jpeg_out: &Path) -> io::Result<()> {
     let bytes = std::fs::read(jpeg_in)?;
     let clean = exifclean::jpeg_without_location(&bytes)
@@ -207,11 +233,12 @@ fn convert(job: &ImageJob, stop: &dyn Fn() -> bool) -> io::Result<()> {
             });
             write_jpeg(&img, output, options.quality, options.background, icc, exif.as_deref())
         }
-        ImageFormat::Png => write_png(&img, output, icc, CompressionType::Default),
+        ImageFormat::Png => write_png(&img, output, icc_for(icc, is_grey(&img)), CompressionType::Default),
         ImageFormat::WebpLossless => {
             let mut file = BufWriter::new(File::create(output)?);
             let mut encoder = WebPEncoder::new_lossless(&mut file);
-            if let Some(icc) = icc {
+            // WebP is always RGB.
+            if let Some(icc) = icc_for(icc, false) {
                 let _ = encoder.set_icc_profile(icc.to_vec());
             }
             img.write_with_encoder(encoder).map_err(image_error)?;
@@ -228,7 +255,7 @@ fn convert(job: &ImageJob, stop: &dyn Fn() -> bool) -> io::Result<()> {
             let img =
                 if alpha { DynamicImage::ImageRgba8(img.to_rgba8()) } else { DynamicImage::ImageRgb8(img.to_rgb8()) };
             let png = temps.next(output, "enc.png");
-            write_png(&img, &png, icc, CompressionType::Fast)?;
+            write_png(&img, &png, icc_for(icc, false), CompressionType::Fast)?;
             drop(img);
             check(stop)?;
             let step = match options.format {
@@ -263,6 +290,16 @@ fn decode(path: &Path) -> io::Result<Source> {
     let reader = ImageReader::open(path)?.with_guessed_format()?;
     let jpeg = reader.format() == Some(::image::ImageFormat::Jpeg);
     let mut decoder = reader.into_decoder().map_err(image_error)?;
+    // `from_decoder` allocates what the header claims without asking any limit: a few bytes
+    // claiming 100000×100000 would take 30 GB. So the size is checked here, against image's
+    // default allocation limit.
+    let mut limits = Limits::default();
+    limits.max_image_width = Some(MAX_SIDE);
+    limits.max_image_height = Some(MAX_SIDE);
+    let (w, h) = decoder.dimensions();
+    limits.check_dimensions(w, h).map_err(|_| too_large())?;
+    decoder.set_limits(limits.clone()).map_err(|_| too_large())?;
+    limits.reserve(decoder.total_bytes()).map_err(|_| too_large())?;
     // Before from_decoder, which takes the decoder. Metadata that cannot be read is left out.
     let icc = decoder.icc_profile().ok().flatten();
     let exif = decoder.exif_metadata().ok().flatten();
@@ -276,7 +313,7 @@ fn image_error(err: ::image::ImageError) -> io::Error {
     match err {
         E::IoError(err) => err,
         E::Unsupported(err) => not_supported(err.to_string()),
-        E::Limits(err) => not_supported(format!("too large to convert ({err})")),
+        E::Limits(_) => too_large(),
         E::Decoding(err) => io::Error::new(io::ErrorKind::InvalidData, format!("the picture is damaged ({err})")),
         err => io::Error::other(err.to_string()),
     }
@@ -286,6 +323,10 @@ fn image_error(err: ::image::ImageError) -> io::Error {
 /// type keeps the resizer small), then back to grey or RGB when the picture had no colour or
 /// no alpha; a 16-bit picture becomes 8-bit.
 fn resize(img: &DynamicImage, w: u32, h: u32) -> io::Result<DynamicImage> {
+    // The RGBA copy of the source and the RGBA result.
+    if !fits(img.width(), img.height(), 4) || !fits(w, h, 4) {
+        return Err(too_large());
+    }
     let color = img.color();
     let src = img.to_rgba8();
     let mut dst = RgbaImage::new(w, h);
@@ -345,9 +386,11 @@ fn write_jpeg(
     let (Ok(w), Ok(h)) = (u16::try_from(img.width()), u16::try_from(img.height())) else {
         return Err(not_supported("a JPEG is at most 65535 pixels wide and high"));
     };
-    let (pixels, color) = match img.color() {
-        ColorType::L8 | ColorType::L16 => (img.to_luma8().into_raw(), jpeg_encoder::ColorType::Luma),
-        _ => (flatten(img, background).into_raw(), jpeg_encoder::ColorType::Rgb),
+    let grey = matches!(img.color(), ColorType::L8 | ColorType::L16);
+    let (pixels, color) = if grey {
+        (img.to_luma8().into_raw(), jpeg_encoder::ColorType::Luma)
+    } else {
+        (flatten(img, background).into_raw(), jpeg_encoder::ColorType::Rgb)
     };
     let mut file = BufWriter::new(File::create(out)?);
     let quality = quality.clamp(1, 100);
@@ -366,7 +409,7 @@ fn write_jpeg(
     if let Some(exif) = exif.filter(|exif| exif.len() <= MAX_JPEG_EXIF) {
         encoder.add_exif_metadata(exif).map_err(jpeg_error)?;
     }
-    if let Some(icc) = icc {
+    if let Some(icc) = icc_for(icc, grey) {
         // Too large for a JPEG (over 16 MB): left out.
         let _ = encoder.add_icc_profile(icc);
     }
