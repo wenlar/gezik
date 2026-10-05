@@ -5,7 +5,8 @@ use std::path::{Component, Path};
 /// Windows and macOS file systems ignore case by default.
 const IGNORE_CASE: bool = cfg!(any(windows, target_os = "macos"));
 
-fn parts(path: &Path) -> Vec<String> {
+/// What `same_path` compares: the parts, in lower case where the file system ignores case.
+pub fn path_key(path: &Path) -> Vec<String> {
     path.components()
         .filter(|c| !matches!(c, Component::CurDir))
         .map(|c| {
@@ -18,7 +19,7 @@ fn parts(path: &Path) -> Vec<String> {
 /// Whether `a` and `b` name the same entry (case-insensitive on Windows and macOS; a trailing
 /// separator does not matter).
 pub fn same_path(a: &Path, b: &Path) -> bool {
-    parts(a) == parts(b)
+    path_key(a) == path_key(b)
 }
 
 /// The roots (`c:\`, `\\server\share\`, `/`) of `paths`, read from the text alone: known at
@@ -36,7 +37,7 @@ pub fn lexical_roots<'a>(paths: impl IntoIterator<Item = &'a Path>) -> DriveSet 
 
 /// Whether `path` is `dir` itself or inside it.
 pub fn is_within(path: &Path, dir: &Path) -> bool {
-    let (path, dir) = (parts(path), parts(dir));
+    let (path, dir) = (path_key(path), path_key(dir));
     path.len() >= dir.len() && path[..dir.len()] == dir[..]
 }
 
@@ -64,7 +65,7 @@ impl DriveSet {
 /// The items not inside another item's path: trashing a created folder covers what is in it.
 pub fn cover<T>(mut items: Vec<T>, path: impl Fn(&T) -> &Path) -> Vec<T> {
     // A parent sorts before what is inside it.
-    items.sort_by_cached_key(|item| parts(path(item)));
+    items.sort_by_cached_key(|item| path_key(path(item)));
     let mut kept: Vec<T> = Vec::new();
     for item in items {
         let inside = kept.last().is_some_and(|last| is_within(path(&item), path(last)));
