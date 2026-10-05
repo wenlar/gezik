@@ -3,7 +3,7 @@
 //! stopped at once.
 
 use std::ffi::OsStr;
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::path::Path;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::mpsc::{self, Receiver};
@@ -40,7 +40,8 @@ pub fn process_alive(pid: u32) -> bool {
 /// How often `wait_or_stop` looks.
 const POLL: Duration = Duration::from_millis(50);
 
-/// A program Gezik runs (7-Zip), with no window, no input, its output read on other threads,
+/// A program Gezik runs (7-Zip), with no window, no input (or bytes given once, then its
+/// input is closed), its output read on other threads,
 /// and what it starts in turn kept with it: Windows puts them in one job object (closed with
 /// the last handle, which ends them all), Unix in one process group.
 pub struct ChildProcess {
@@ -79,8 +80,25 @@ impl ChildProcess {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
+        ChildProcess::spawn_with_input(program, args, cwd, None)
+    }
+
+    /// Like `spawn`, with `input` written to the program's input on another thread (a
+    /// password: never on its command line, where other users' tools can see it), which is
+    /// then closed.
+    pub fn spawn_with_input<I, S>(
+        program: &Path,
+        args: I,
+        cwd: Option<&Path>,
+        input: Option<Vec<u8>>,
+    ) -> io::Result<ChildProcess>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
         let mut command = Command::new(program);
-        command.args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        let stdin = if input.is_some() { Stdio::piped() } else { Stdio::null() };
+        command.args(args).stdin(stdin).stdout(Stdio::piped()).stderr(Stdio::piped());
         if let Some(cwd) = cwd {
             command.current_dir(cwd);
         }
@@ -103,6 +121,12 @@ impl ChildProcess {
             let _ = child.kill();
             let _ = child.wait();
             return Err(err);
+        }
+        if let (Some(mut stdin), Some(input)) = (child.stdin.take(), input) {
+            // A program that never reads it ends the pipe: that error is no failure.
+            std::thread::spawn(move || {
+                let _ = stdin.write_all(&input);
+            });
         }
         let (sender, receiver) = mpsc::channel();
         if let Some(mut stdout) = child.stdout.take() {
@@ -355,6 +379,22 @@ mod tests {
         assert!(group_alive());
         assert_eq!(child.wait_or_stop(|| true).unwrap(), None);
         assert!(eventually(|| !group_alive()), "the shell's children still run");
+    }
+
+    #[test]
+    fn input_is_given_once_and_closed() {
+        let (program, args): (&str, &[&str]) = if cfg!(windows) {
+            ("cmd", &["/c", "set /p LINE=& call echo got %LINE%"])
+        } else {
+            ("sh", &["-c", "read LINE; echo got $LINE"])
+        };
+        let mut child =
+            ChildProcess::spawn_with_input(Path::new(program), args, None, Some(b"p w\n".to_vec())).unwrap();
+        let lines = child.stdout_lines();
+        let status = child.wait_or_stop(|| false).unwrap().unwrap();
+        assert!(status.success());
+        let lines: Vec<String> = lines.map(|line| line.trim().to_owned()).collect();
+        assert_eq!(lines, ["got p w"]);
     }
 
     #[test]
