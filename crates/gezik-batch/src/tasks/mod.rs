@@ -1,9 +1,11 @@
 //! The engine tasks of archives: extracting runs as a chain of an `ExtractTask` (unpack into
 //! a staging folder) and a `PlaceTask` (move what came out to where it goes) per archive,
-//! undone as one action. `CompressTask` makes an archive, `AddToArchiveTask` adds to one.
+//! undone as one action. `CompressTask` makes an archive, `AddToArchiveTask` adds to one,
+//! `DownloadTask` fetches a tool (7-Zip).
 
 mod add;
 mod compress;
+mod download;
 mod external;
 mod extract;
 mod place;
@@ -19,6 +21,7 @@ use gezik_ops::RunCx;
 
 pub use self::add::AddToArchiveTask;
 pub use self::compress::{CompressTask, default_name};
+pub use self::download::DownloadTask;
 use self::extract::ExtractTask;
 use self::place::PlaceTask;
 pub use crate::archive::write::{CompressOptions, Level, OutFormat};

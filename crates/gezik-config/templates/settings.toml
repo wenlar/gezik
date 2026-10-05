@@ -42,6 +42,15 @@ confirm-trash = false
 # Files copied or deleted at once: "auto" (SSD 6, spinning disk 1, network 4) or 1-16.
 copy-threads = "auto"
 
+[archives]
+# What double-clicking an archive does: open it with the system's program, or extract it
+# next to itself.
+double-click = "system"   # system | extract-here
+
+[tools]
+download = true           # offer to download 7-Zip, ffmpeg and pdfium when needed
+seven-zip = ""            # path to 7-Zip; empty = Gezik's download, then PATH
+
 [shortcuts]
 # Change any shortcut; "mod" is Cmd on macOS and Ctrl elsewhere; "" disables.
 # new-tab = "mod+t"

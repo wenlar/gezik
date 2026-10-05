@@ -50,6 +50,50 @@ pub struct FilesSettings {
     pub copy_threads: CopyThreads,
 }
 
+/// `[tools]`: the programs Gezik may download.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolsSettings {
+    /// Offer to download 7-Zip (later ffmpeg and pdfium) when needed; off, only say so.
+    pub download: bool,
+    /// The 7-Zip to use (`seven-zip`); `None`: Gezik's download, then PATH.
+    pub seven_zip: Option<String>,
+}
+
+impl Default for ToolsSettings {
+    fn default() -> Self {
+        ToolsSettings { download: true, seven_zip: None }
+    }
+}
+
+/// What double-clicking an archive does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DoubleClick {
+    /// Opens it with the system's program for it.
+    #[default]
+    System,
+    /// Extracts it next to itself.
+    ExtractHere,
+}
+
+/// `[archives]`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ArchivesSettings {
+    pub double_click: DoubleClick,
+}
+
+/// The Compress layer's last choices and the last "Extract to…" folder (state.toml
+/// `[archive]`). Never a password.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ArchiveState {
+    /// The format's ending: `zip`, `7z`, `tar`, `tar.gz`, `tar.xz`, `gz` or `xz`.
+    pub format: Option<String>,
+    /// `store`, `fast`, `normal` or `best`.
+    pub level: Option<String>,
+    /// 7z parts of this many bytes.
+    pub split: Option<u64>,
+    pub last_extract_to: Option<String>,
+}
+
 /// A saved set of rename rules (`[[rename-presets]]`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenamePreset {
@@ -83,6 +127,8 @@ pub struct Settings {
     pub max_fps: u32,
     /// Saved rename rule sets.
     pub rename_presets: Vec<RenamePreset>,
+    pub archives: ArchivesSettings,
+    pub tools: ToolsSettings,
 }
 
 /// Allowed `max-fps` values besides 0 (no limit).
@@ -103,6 +149,8 @@ impl Default for Settings {
             files: FilesSettings::default(),
             max_fps: 120,
             rename_presets: Vec::new(),
+            archives: ArchivesSettings::default(),
+            tools: ToolsSettings::default(),
         }
     }
 }
@@ -225,6 +273,20 @@ impl Settings {
             Some(value) => match value.as_table() {
                 Some(files) => settings.files = parse_files(files, file, warnings),
                 None => warnings.push(Warning::new(file, format!("files: expected a table, got {value}"))),
+            },
+        }
+        match table.get("archives") {
+            None => {}
+            Some(value) => match value.as_table() {
+                Some(archives) => settings.archives = parse_archives(archives, file, warnings),
+                None => warnings.push(Warning::new(file, format!("archives: expected a table, got {value}"))),
+            },
+        }
+        match table.get("tools") {
+            None => {}
+            Some(value) => match value.as_table() {
+                Some(tools) => settings.tools = parse_tools(tools, file, warnings),
+                None => warnings.push(Warning::new(file, format!("tools: expected a table, got {value}"))),
             },
         }
         if let Some(value) = table.get("rename-presets") {
@@ -363,6 +425,40 @@ fn parse_files(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> 
     out
 }
 
+fn parse_archives(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> ArchivesSettings {
+    let mut out = ArchivesSettings::default();
+    if let Some(value) = table.get("double-click") {
+        match value.as_str() {
+            Some("system") => out.double_click = DoubleClick::System,
+            Some("extract-here") => out.double_click = DoubleClick::ExtractHere,
+            _ => warnings.push(Warning::new(
+                file,
+                format!("archives.double-click: expected \"system\" or \"extract-here\", got {value}"),
+            )),
+        }
+    }
+    out
+}
+
+fn parse_tools(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> ToolsSettings {
+    let mut out = ToolsSettings::default();
+    if let Some(value) = table.get("download") {
+        match value.as_bool() {
+            Some(on) => out.download = on,
+            None => warnings.push(Warning::new(file, format!("tools.download: expected true or false, got {value}"))),
+        }
+    }
+    if let Some(value) = table.get("seven-zip") {
+        match value.as_str() {
+            // Empty: none set.
+            Some(path) if path.trim().is_empty() => {}
+            Some(path) => out.seven_zip = Some(path.to_owned()),
+            None => warnings.push(Warning::new(file, format!("tools.seven-zip: expected text, got {value}"))),
+        }
+    }
+    out
+}
+
 /// Size in logical pixels, position in physical pixels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WindowState {
@@ -386,6 +482,7 @@ pub struct State {
     pub operations_collapsed: bool,
     /// The rename layer's last rules.
     pub batch_rename: Option<BatchRenameState>,
+    pub archive: ArchiveState,
 }
 
 impl State {
@@ -441,7 +538,26 @@ impl State {
             // The app wrote it: a broken rule just drops the list.
             rules: parse_rules(t.get("rules")).unwrap_or_default(),
         });
-        State { window, sidebar_width, columns, preview_open, preview_width, operations_collapsed, batch_rename }
+        let archive = table.get("archive").and_then(|v| v.as_table()).map_or_else(ArchiveState::default, |t| {
+            let text = |key: &str| t.get(key).and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(str::to_owned);
+            let split = t.get("split").and_then(|v| v.as_integer()).and_then(|n| u64::try_from(n).ok());
+            ArchiveState {
+                format: text("format"),
+                level: text("level"),
+                split: split.filter(|n| *n > 0),
+                last_extract_to: text("last-extract-to"),
+            }
+        });
+        State {
+            window,
+            sidebar_width,
+            columns,
+            preview_open,
+            preview_width,
+            operations_collapsed,
+            batch_rename,
+            archive,
+        }
     }
 
     pub fn to_toml(&self) -> String {
@@ -493,6 +609,21 @@ impl State {
             let rules = batch.rules.iter().map(|r| toml::Value::Table(crate::batch_toml::rule_to_toml(r))).collect();
             table.insert("rules".into(), toml::Value::Array(rules));
             root.insert("batch-rename".into(), toml::Value::Table(table));
+        }
+        if self.archive != ArchiveState::default() {
+            let archive = &self.archive;
+            let mut table = toml::Table::new();
+            let texts =
+                [("format", &archive.format), ("level", &archive.level), ("last-extract-to", &archive.last_extract_to)];
+            for (key, value) in texts {
+                if let Some(value) = value {
+                    table.insert(key.into(), toml::Value::String(value.clone()));
+                }
+            }
+            if let Some(split) = archive.split.and_then(|n| i64::try_from(n).ok()) {
+                table.insert("split".into(), toml::Value::Integer(split));
+            }
+            root.insert("archive".into(), toml::Value::Table(table));
         }
         root.to_string()
     }
@@ -817,5 +948,63 @@ rules = []
             ..State::default()
         };
         assert_eq!(State::parse(&state.to_toml()), state);
+    }
+
+    #[test]
+    fn reads_archives_and_tools() {
+        let (settings, warnings) = parse(
+            "[archives]\ndouble-click = \"extract-here\"\n[tools]\ndownload = false\nseven-zip = \"C:/7-Zip/7z.exe\"\n",
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(settings.archives.double_click, DoubleClick::ExtractHere);
+        assert_eq!(settings.tools, ToolsSettings { download: false, seven_zip: Some("C:/7-Zip/7z.exe".to_owned()) });
+        let defaults = Settings::default();
+        assert_eq!((defaults.archives.double_click, defaults.tools.download), (DoubleClick::System, true));
+        // Empty means none set.
+        let (settings, warnings) = parse("[tools]\nseven-zip = \"\"\n");
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(settings.tools.seven_zip, None);
+    }
+
+    #[test]
+    fn bad_archives_and_tools_values_keep_defaults_with_warnings() {
+        let (settings, warnings) =
+            parse("[archives]\ndouble-click = \"open\"\n[tools]\ndownload = \"yes\"\nseven-zip = 7\n");
+        assert_eq!(settings.archives, ArchivesSettings::default());
+        assert_eq!(settings.tools, ToolsSettings::default());
+        let messages: Vec<_> = warnings.iter().map(|w| w.message.as_str()).collect();
+        assert_eq!(messages.len(), 3, "{messages:?}");
+        assert!(messages[0].starts_with("archives.double-click:") && messages[0].contains("\"open\""));
+        assert!(messages[1].starts_with("tools.download:"));
+        assert!(messages[2].starts_with("tools.seven-zip:"));
+        let (_, warnings) = parse("tools = 1\narchives = \"x\"\n");
+        let messages: Vec<_> = warnings.iter().map(|w| w.message.as_str()).collect();
+        assert!(messages.iter().any(|m| m.starts_with("tools: expected a table")), "{messages:?}");
+        assert!(messages.iter().any(|m| m.starts_with("archives: expected a table")), "{messages:?}");
+    }
+
+    #[test]
+    fn the_template_reads_with_the_defaults() {
+        let (settings, warnings) = parse(include_str!("../templates/settings.toml"));
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(settings.archives, ArchivesSettings::default());
+        assert_eq!(settings.tools, ToolsSettings::default());
+    }
+
+    #[test]
+    fn archive_state_round_trips() {
+        let state = State {
+            archive: ArchiveState {
+                format: Some("7z".to_owned()),
+                level: Some("best".to_owned()),
+                split: Some(100 * 1024 * 1024),
+                last_extract_to: Some("D:/Out".to_owned()),
+            },
+            ..State::default()
+        };
+        assert_eq!(State::parse(&state.to_toml()), state);
+        assert!(!State::default().to_toml().contains("archive"), "the default is not written");
+        let broken = State::parse("[archive]\nformat = 3\nsplit = -5\nlevel = \"\"\n");
+        assert_eq!(broken.archive, ArchiveState::default());
     }
 }

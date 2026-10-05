@@ -33,6 +33,8 @@ hadris-iso = { version = "2.5.0", default-features = false, features = ["std", "
 # newc only; odc is read by our own parser.
 cpio = "0.4.1"
 ar = "0.9.0"
+# Checks downloaded tools. 0.11: the version lzma-rust2 and sevenz-rust2 already bring.
+sha2 = "0.11"
 
 [features]
 default = ["rar"]

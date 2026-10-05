@@ -1688,6 +1688,7 @@ dependencies = [
  "regex",
  "ruzstd",
  "sevenz-rust2",
+ "sha2",
  "tar",
  "unrar-ng",
  "zip",
