@@ -1,7 +1,7 @@
 # Alt Proje 5: Toplu İşlemler — Tasarım
 
 - **Tarih:** 2026-10-05
-- **Durum:** Tasarım onaylandı (2026-10-05); 5a planlanıyor
+- **Durum:** Tasarım onaylandı (2026-10-05); 5a uygulandı
 - **Kapsam:** Gezik yol haritasının 5. alt projesi; tek spec, dört plan ve dört PR: **5a** toplu yeniden adlandırma, **5b** arşivler, **5c** dönüştürme ve kullanıcı komutları, **5d** PDF
 - **Dayandığı:** `2026-10-04-dosya-islemleri-design.md` (motor, `Task`, çakışma listesi, geri alma, ilerleme paneli, `pending` toparlaması, sürükle-bırak), `2026-10-03-ayarlar-ve-tema-design.md` (ayar dosyası, canlı yeniden yükleme, kısayol biçimi)
 
@@ -16,7 +16,7 @@ Explorer'da olmayan ya da zayıf kalan toplu işleri Gezik'in kendi motoruyla, h
 - zip oluşturma, Windows'un "Sıkıştırılmış klasöre gönder"inden ≥ 2 kat hızlıdır (1 GB'lık karışık klasör).
 - 100 fotoğrafı 1920 px jpeg'e dönüştürme tüm çekirdekleri kullanır.
 - ffmpeg hiç kurulu değilken bir video, katmandaki tek "Download" tıklamasıyla dönüştürülebilir.
-- Boşta bellek değişmez (≤ 7 MB); exe büyümesi 5a ≤ +0,5 MB, 5b ≤ +3 MB, 5c ≤ +1 MB, 5d ≤ +1 MB. Her PR'da ölçülür.
+- Boşta bellek değişmez (≤ 7 MB); exe büyümesi 5a ≤ +0,5 MB (5a ölçülen +1,1 MB: Slint katmanı + motor ~0,7 MB, regex ~0,45 MB; Unicode regex Türkçe adlar için tutuldu), 5b ≤ +3 MB, 5c ≤ +1 MB, 5d ≤ +1 MB. Her PR'da ölçülür.
 - Her iş 4a'nın kuyruğunda çalışır: panelde ilerleme, duraklat/iptal, çakışma listesi, tek Ctrl+Z.
 
 ### Kapsam dışı (bilerek)
@@ -456,7 +456,7 @@ Yeni renk yok: uyarılar `progress-error` ve mevcut ikincil metin rengini, ✎ i
 | zip açma, aynı arşiv | Explorer'ın "Tümünü ayıkla"sından ≥ 2 kat hızlı |
 | 100 fotoğraf (24 MP) → 1920 px JPEG | Tüm çekirdekler kullanılır; ölçülüp kaydedilir |
 | Arayüz, iş sürerken | Kaydırma CPU'su ve kare süresi iş yokkenkiyle aynı (olaylar ≤ 10/s) |
-| exe büyümesi | 5a ≤ +0,5 MB, 5b ≤ +3 MB, 5c ≤ +1 MB, 5d ≤ +1 MB |
+| exe büyümesi | 5a ≤ +0,5 MB (5a ölçülen +1,1 MB: Slint katmanı + motor ~0,7 MB, regex ~0,45 MB; Unicode regex Türkçe adlar için tutuldu), 5b ≤ +3 MB, 5c ≤ +1 MB, 5d ≤ +1 MB |
 
 ## 12. Test
 
