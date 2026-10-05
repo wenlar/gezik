@@ -34,3 +34,16 @@ UnRAR licence (`license.txt` in the UnRAR sources):
 > full text of this paragraph, starting from "UnRAR source code"
 > words, is included in license, or in documentation if license
 > is not available, and in source code comments of resulting package.
+
+## 7-Zip (downloaded on request)
+
+7-Zip is not built into Gezik. When the user asks for it, Gezik downloads an unmodified
+official 7-Zip build (7-Zip 26.03 by Igor Pavlov, https://www.7-zip.org/) from
+https://github.com/wenlar/gezik-tools and runs it as a separate program. Each download holds
+the 7-Zip programs (`7z.exe` and `7z.dll` on Windows, `7zz` on macOS and Linux) and 7-Zip's
+`License.txt`, which is installed next to them. 7-Zip is under the GNU LGPL 2.1 or later; some
+code in `7z.dll` and `7zz` is under the BSD 3-clause and BSD 2-clause licences, and its RAR
+code is under the GNU LGPL with the unRAR licence restriction (the unRAR sources cannot be used
+to re-create the RAR compression algorithm, and modified ones may not be used to develop a
+RAR (WinRAR) compatible archiver). The source is at
+https://www.7-zip.org/download.html. How the downloads are made: `scripts/tools/README.md`.

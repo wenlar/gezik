@@ -266,3 +266,27 @@ fn cancel_kills_curl() {
     assert!(!sent.load(Ordering::SeqCst), "the whole body went out");
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// Every build in MANIFEST, from the folder `scripts/tools/prepare.ps1` wrote (GEZIK_TOOLS_DIR),
+/// downloads and installs with its programs and licence. Skipped without that folder.
+#[test]
+fn the_prepared_seven_zip_builds_install() {
+    let Some(folder) = std::env::var_os("GEZIK_TOOLS_DIR").map(PathBuf::from) else { return };
+    let d = dir("prepared");
+    for build in gezik_core::batch::tools::MANIFEST {
+        let name = build.url.rsplit('/').next().unwrap();
+        let body = std::fs::read(folder.join(name)).unwrap_or_else(|err| panic!("{name}: {err}"));
+        assert_eq!(body.len() as u64, build.size, "{name}");
+        assert_eq!(hex_sha256(&body), build.sha256, "{name}");
+        let data = d.join(format!("{:?}", build.platform));
+        let (url, _) = serve(body, 64 * 1024, Duration::ZERO);
+        let engine = engine(&d);
+        let report = run(&engine, DownloadTask::new(build, data.clone()).with_url(url), |_| false);
+        assert!(report.failures.is_empty(), "{name}: {:?}", report.failures);
+        let installed = install_dir(build, &data);
+        for program in build.programs.iter().chain(&["License.txt"]) {
+            assert!(installed.join(program).is_file(), "{name}: {program}");
+        }
+    }
+    let _ = std::fs::remove_dir_all(&d);
+}
