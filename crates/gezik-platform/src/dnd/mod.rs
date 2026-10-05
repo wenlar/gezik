@@ -37,6 +37,32 @@ pub trait DropHandler {
     fn dropped(&self, offer: &Offer, x: f64, y: f64, keys: Keys) -> Option<Effect>;
 }
 
+/// How a drag that left Gezik's window ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DragEnd {
+    Dropped,
+    Cancelled,
+    /// The pointer came back into Gezik's window, button still down: the drag goes on there.
+    Returned,
+}
+
+/// A drag outside the window that Gezik drives itself (X11); elsewhere the system drives it
+/// and these do nothing.
+pub trait OutsideDrag {
+    /// The pointer moved (physical client pixels; outside the window).
+    fn moved(&mut self, x: f64, y: f64, keys: Keys);
+    fn released(&mut self);
+    fn cancel(&mut self);
+}
+
+/// A drag handed to the system.
+pub enum Handoff {
+    /// Over already (Windows: the system's drag loop blocks until the drop).
+    Ended(DragEnd),
+    /// Under way; the `on_end` given to [`Attached::drag_out`] is called when it ends.
+    Running(Box<dyn OutsideDrag>),
+}
+
 /// The window's drop target, registered while this lives.
 pub struct Attached {
     #[cfg(windows)]
@@ -64,6 +90,26 @@ pub fn attach(
 }
 
 impl Attached {
+    /// Hands the drag of `paths` (all in one folder) to the system: the pointer left the
+    /// window with the button (`right`: the right one) still down.
+    pub fn drag_out(
+        &self,
+        paths: &[PathBuf],
+        right: bool,
+        on_end: Box<dyn FnOnce(DragEnd)>,
+    ) -> Result<Handoff, String> {
+        let _ = on_end;
+        #[cfg(windows)]
+        {
+            self.inner.drag_out(paths, right).map(Handoff::Ended)
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (paths, right);
+            Err("dragging out is not supported here".into())
+        }
+    }
+
     /// Hands waiting events to the handler (Linux; nothing elsewhere).
     pub fn poll(&self) {
         #[cfg(windows)]

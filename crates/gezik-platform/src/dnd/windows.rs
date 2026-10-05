@@ -1,11 +1,15 @@
 //! Windows: Gezik's own OLE drop target in place of winit's (which only reports paths, with
 //! no position or keys), and the Shell's drag image over the window.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use windows::Win32::Foundation::{GlobalFree, HWND, POINT, POINTL};
+use windows::Win32::Foundation::{
+    DRAGDROP_S_CANCEL, DRAGDROP_S_DROP, DRAGDROP_S_USEDEFAULTCURSORS, GlobalFree, HWND, LPARAM, POINT, POINTL, RECT,
+    WPARAM,
+};
 use windows::Win32::Graphics::Gdi::ScreenToClient;
 use windows::Win32::System::Com::{
     CLSCTX_INPROC_SERVER, CoCreateInstance, DVASPECT_CONTENT, FORMATETC, IDataObject, STGMEDIUM, STGMEDIUM_0,
@@ -14,17 +18,22 @@ use windows::Win32::System::Com::{
 use windows::Win32::System::DataExchange::RegisterClipboardFormatW;
 use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock};
 use windows::Win32::System::Ole::{
-    CF_HDROP, DROPEFFECT, DROPEFFECT_COPY, DROPEFFECT_MOVE, DROPEFFECT_NONE, IDropTarget, IDropTarget_Impl,
-    RegisterDragDrop, ReleaseStgMedium, RevokeDragDrop,
+    CF_HDROP, DROPEFFECT, DROPEFFECT_COPY, DROPEFFECT_MOVE, DROPEFFECT_NONE, IDropSource, IDropSource_Impl,
+    IDropTarget, IDropTarget_Impl, RegisterDragDrop, ReleaseStgMedium, RevokeDragDrop,
 };
-use windows::Win32::System::SystemServices::{MK_CONTROL, MK_RBUTTON, MK_SHIFT, MODIFIERKEYS_FLAGS};
+use windows::Win32::System::SystemServices::{MK_CONTROL, MK_LBUTTON, MK_RBUTTON, MK_SHIFT, MODIFIERKEYS_FLAGS};
+use windows::Win32::UI::Input::KeyboardAndMouse::SetCapture;
 use windows::Win32::UI::Shell::{
     CFSTR_DROPDESCRIPTION, CFSTR_LOGICALPERFORMEDDROPEFFECT, CFSTR_PERFORMEDDROPEFFECT, CLSID_DragDropHelper,
     DROPDESCRIPTION, DROPIMAGE_COPY, DROPIMAGE_INVALID, DROPIMAGE_MOVE, DROPIMAGE_NONE, HDROP, IDropTargetHelper,
+    SHDoDragDrop,
 };
-use windows_core::{PCWSTR, Ref, implement};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GA_ROOT, GetAncestor, GetClientRect, GetCursorPos, PostMessageW, WM_LBUTTONUP, WM_RBUTTONUP, WindowFromPoint,
+};
+use windows_core::{BOOL, HRESULT, PCWSTR, Ref, implement};
 
-use super::{Allowed, Answer, DropHandler, Effect, Keys, Offer};
+use super::{Allowed, Answer, DragEnd, DropHandler, Effect, Keys, Offer};
 
 /// What `Drop` answers for `effect`: the effect returned to the source, then the "Performed
 /// DropEffect" and "Logical Performed DropEffect" written to the data object. A move is an
@@ -278,6 +287,89 @@ pub struct Registration {
     hwnd: HWND,
 }
 
+impl Registration {
+    /// Runs the system's drag loop for `paths` (all in one folder), with the Shell's own data
+    /// object and drag image, as Explorer does; blocks until it ends. Gezik never deletes
+    /// anything here: a target that moves does so itself.
+    pub fn drag_out(&self, paths: &[PathBuf], right: bool) -> Result<DragEnd, String> {
+        let (folder, names) = crate::shell_menu::shared_parent(paths).ok_or("the items are not in one folder")?;
+        let data: IDataObject =
+            unsafe { crate::shell_menu::children_object(self.hwnd, folder, &names) }.map_err(|e| e.to_string())?;
+        let source = Rc::new(SourceState { hwnd: self.hwnd, right, ended: Cell::new(Next::Go) });
+        let drop_source: IDropSource = Source(source.clone()).into();
+        let effects = DROPEFFECT(DROPEFFECT_COPY.0 | DROPEFFECT_MOVE.0);
+        // Its result cannot tell a cancel from an optimized move (both "none"), so the source
+        // remembers how the loop ended.
+        let result = unsafe { SHDoDragDrop(Some(self.hwnd), &data, &drop_source, effects) };
+        if source.ended.get() == Next::Returned {
+            // The button is still down: the window takes the mouse back, so the drag goes on
+            // in Gezik even when the pointer leaves again.
+            unsafe { SetCapture(self.hwnd) };
+            return Ok(DragEnd::Returned);
+        }
+        // winit never saw the button come up (the drag loop took it): tell it, so it and
+        // Slint end the press.
+        let mut cursor = POINT::default();
+        unsafe {
+            let _ = GetCursorPos(&mut cursor);
+            let _ = ScreenToClient(self.hwnd, &mut cursor);
+            let lparam = ((cursor.y as u32 & 0xFFFF) << 16) | (cursor.x as u32 & 0xFFFF);
+            let message = if right { WM_RBUTTONUP } else { WM_LBUTTONUP };
+            let _ = PostMessageW(Some(self.hwnd), message, WPARAM(0), LPARAM(lparam as isize));
+        }
+        match (result, source.ended.get()) {
+            (Err(err), _) => Err(err.to_string()),
+            (Ok(_), Next::Drop) => Ok(DragEnd::Dropped),
+            (Ok(_), _) => Ok(DragEnd::Cancelled),
+        }
+    }
+}
+
+/// Whether the cursor is over Gezik's window `hwnd`, inside its client area.
+fn over_window(hwnd: HWND) -> bool {
+    unsafe {
+        let mut cursor = POINT::default();
+        if GetCursorPos(&mut cursor).is_err() || GetAncestor(WindowFromPoint(cursor), GA_ROOT) != hwnd {
+            return false;
+        }
+        let mut client = cursor;
+        let _ = ScreenToClient(hwnd, &mut client);
+        let mut rect = RECT::default();
+        let _ = GetClientRect(hwnd, &mut rect);
+        client.x >= rect.left && client.x < rect.right && client.y >= rect.top && client.y < rect.bottom
+    }
+}
+
+struct SourceState {
+    hwnd: HWND,
+    right: bool,
+    /// How the drag loop ended (`Go` while it runs).
+    ended: Cell<Next>,
+}
+
+#[implement(IDropSource)]
+struct Source(Rc<SourceState>);
+
+impl IDropSource_Impl for Source_Impl {
+    fn QueryContinueDrag(&self, escape: BOOL, state: MODIFIERKEYS_FLAGS) -> HRESULT {
+        let button = if self.0.right { MK_RBUTTON } else { MK_LBUTTON };
+        let down = state.0 & button.0 != 0;
+        // Asked only while the button is down: a release over the window drops on it.
+        let over = down && over_window(self.0.hwnd);
+        let next = next_step(escape.as_bool(), down, over);
+        self.0.ended.set(next);
+        match next {
+            Next::Go => HRESULT(0),
+            Next::Drop => DRAGDROP_S_DROP,
+            Next::Cancel | Next::Returned => DRAGDROP_S_CANCEL,
+        }
+    }
+
+    fn GiveFeedback(&self, _effect: DROPEFFECT) -> HRESULT {
+        DRAGDROP_S_USEDEFAULTCURSORS
+    }
+}
+
 impl Drop for Registration {
     fn drop(&mut self) {
         let _ = unsafe { RevokeDragDrop(self.hwnd) };
@@ -311,9 +403,44 @@ pub fn register(window: &impl HasWindowHandle, handler: Rc<dyn DropHandler>) -> 
     Some(Registration { hwnd })
 }
 
+/// What the system's drag loop does next.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Next {
+    Go,
+    Drop,
+    Cancel,
+    /// Back over Gezik's window with the button down: Gezik takes the drag back.
+    Returned,
+}
+
+/// `IDropSource::QueryContinueDrag`: Esc cancels, releasing the button drops (also over
+/// Gezik's own window: its drop target takes it), coming back over Gezik's window hands the
+/// drag back to Gezik.
+pub(crate) fn next_step(escape: bool, button_down: bool, over_gezik: bool) -> Next {
+    if escape {
+        Next::Cancel
+    } else if !button_down {
+        Next::Drop
+    } else if over_gezik {
+        Next::Returned
+    } else {
+        Next::Go
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_drag_loop_ends_as_the_pointer_says() {
+        assert_eq!(next_step(false, true, false), Next::Go);
+        assert_eq!(next_step(true, true, false), Next::Cancel);
+        assert_eq!(next_step(true, false, true), Next::Cancel, "Esc wins");
+        assert_eq!(next_step(false, false, false), Next::Drop);
+        assert_eq!(next_step(false, false, true), Next::Drop, "released at once over Gezik: its target drops");
+        assert_eq!(next_step(false, true, true), Next::Returned);
+    }
 
     #[test]
     fn move_drop_reports_an_optimized_move() {

@@ -16,7 +16,7 @@ use gezik_core::layout::Rect;
 use gezik_core::nav::Location;
 use gezik_core::ops::paths::is_within;
 use gezik_platform::DriveKind;
-use gezik_platform::dnd::{Answer, Attached, DropHandler, Offer};
+use gezik_platform::dnd::{Answer, Attached, DragEnd, DropHandler, Handoff, Offer, OutsideDrag};
 use slint::{ComponentHandle, Model, Timer, TimerMode};
 
 use crate::context_menu::Menus;
@@ -40,6 +40,7 @@ struct Target {
 }
 
 /// A drag under way.
+#[derive(Clone)]
 struct Dragging {
     sources: Vec<PathBuf>,
     /// Every source is a folder, so they can be pinned.
@@ -68,6 +69,8 @@ enum Phase {
     Dragging(Dragging),
     /// Files from another program are over the window (no ghost: the system draws them).
     Offer(Dragging),
+    /// Gezik's drag left the window and the system has it now.
+    Outside(Dragging),
     /// Ended (Esc) while the button is still down: its release is no click.
     Ended,
 }
@@ -88,6 +91,10 @@ struct Inner {
     scroll_timer: Timer,
     /// The window's drop target for other programs.
     attached: RefCell<Option<Attached>>,
+    /// A drag outside the window that Gezik drives itself (X11).
+    outside: RefCell<Option<Box<dyn OutsideDrag>>>,
+    /// Handing this drag to the system failed: it stays in the window.
+    handoff_failed: Cell<bool>,
 }
 
 thread_local! {
@@ -136,6 +143,8 @@ impl Drags {
             tab_timer: Timer::default(),
             scroll_timer: Timer::default(),
             attached: RefCell::default(),
+            outside: RefCell::default(),
+            handoff_failed: Cell::new(false),
         }));
         CURRENT.with(|c| *c.borrow_mut() = Some(drags.clone()));
         drags
@@ -187,6 +196,11 @@ impl Drags {
 
     /// Esc: drops nothing. Returns whether a drag was cancelled.
     pub fn escape(&self) -> bool {
+        if let Some(mut outside) = self.0.outside.borrow_mut().take() {
+            outside.cancel();
+            *self.0.phase.borrow_mut() = Phase::Ended;
+            return true;
+        }
         if !self.is_active() {
             return false;
         }
@@ -215,6 +229,9 @@ impl Drags {
         };
         if let Some((index, right)) = start {
             self.start(index, right, keys);
+        }
+        if matches!(*self.0.phase.borrow(), Phase::Outside(_)) {
+            return self.moved_outside(x, y, keys);
         }
         let dragging = {
             let mut phase = self.0.phase.borrow_mut();
@@ -246,6 +263,7 @@ impl Drags {
         }
         window.set_drag_count(i32::try_from(items.len()).unwrap_or(i32::MAX));
         window.set_drag_active(true);
+        self.0.handoff_failed.set(false);
         *self.0.phase.borrow_mut() = Phase::Dragging(Dragging {
             all_dirs: items.iter().all(|(_, is_dir)| *is_dir),
             sources: items.into_iter().map(|(path, _)| path).collect(),
@@ -276,6 +294,16 @@ impl Drags {
                 false
             }
             Phase::Ended => true,
+            // Gezik drives this drag outside the window: the release drops it there.
+            Phase::Outside(d) => {
+                if let Some(mut outside) = self.0.outside.borrow_mut().take() {
+                    outside.released();
+                }
+                if let Some(index) = d.pressed {
+                    self.0.view.release(index, true);
+                }
+                true
+            }
             Phase::Dragging(mut d) => {
                 (d.x, d.y) = (x, y);
                 if let Some(index) = d.pressed {
@@ -327,6 +355,9 @@ impl Drags {
             let hit = drag::hit(&layout, d.x, d.y, d.all_dirs);
             (d.x, d.y, self.resolve(&window, hit, d), ghost)
         };
+        if ghost && target.hit == Hit::Outside && !self.0.handoff_failed.get() && self.0.attached.borrow().is_some() {
+            return self.hand_off();
+        }
         self.show(&window, x, y, &target, ghost);
         self.follow_tab(target.hit);
         self.follow_edge(&layout, x, y);
@@ -562,6 +593,100 @@ impl Drags {
         Some(effect)
     }
 
+    /// The pointer left the window with the drag: the system takes it over (Windows: until
+    /// the drop, or until the pointer comes back into the window).
+    fn hand_off(&self) {
+        let d = match std::mem::replace(&mut *self.0.phase.borrow_mut(), Phase::Idle) {
+            Phase::Dragging(d) => d,
+            other => {
+                *self.0.phase.borrow_mut() = other;
+                return;
+            }
+        };
+        self.finish(None);
+        let (sources, right) = (d.sources.clone(), d.right);
+        *self.0.phase.borrow_mut() = Phase::Outside(d.clone());
+        let on_end: Box<dyn FnOnce(DragEnd)> = Box::new(|end| {
+            with_current(|drags| drags.outside_ended(end));
+        });
+        let result = match &*self.0.attached.borrow() {
+            Some(attached) => attached.drag_out(&sources, right, on_end),
+            None => Err("no drop target".into()),
+        };
+        match result {
+            // Its last position is outside the window: the next move (inside) places it.
+            Ok(Handoff::Ended(DragEnd::Returned)) => self.resume(d, false),
+            Ok(Handoff::Ended(_)) => {
+                // The press ended in the system's drag loop; its release (sent back to the
+                // window) is no click.
+                *self.0.phase.borrow_mut() = Phase::Ended;
+                if let Some(index) = d.pressed {
+                    self.0.view.release(index, true);
+                }
+            }
+            Ok(Handoff::Running(outside)) => *self.0.outside.borrow_mut() = Some(outside),
+            Err(why) => {
+                eprintln!("gezik: cannot drag out of the window: {why}");
+                self.0.handoff_failed.set(true);
+                self.resume(d, true);
+            }
+        }
+    }
+
+    /// The drag is back in the window: Gezik draws it again (`place`: at its position now).
+    fn resume(&self, d: Dragging, place: bool) {
+        *self.0.phase.borrow_mut() = Phase::Dragging(d);
+        if let Some(window) = self.0.window.upgrade() {
+            window.set_drag_active(true);
+        }
+        if place {
+            self.update();
+        }
+    }
+
+    /// A move while Gezik drives the drag outside the window (X11): back inside, Gezik's own
+    /// drag goes on.
+    fn moved_outside(&self, x: f32, y: f32, keys: Keys) {
+        let Some(window) = self.0.window.upgrade() else { return };
+        let g = window.get_drop_geometry();
+        let inside = x >= 0.0 && y >= 0.0 && x < g.window_width && y < g.window_height;
+        let mut outside = self.0.outside.borrow_mut();
+        let Some(driver) = outside.as_mut() else { return };
+        if inside {
+            driver.cancel();
+            *outside = None;
+            drop(outside);
+            let phase = std::mem::replace(&mut *self.0.phase.borrow_mut(), Phase::Idle);
+            if let Phase::Outside(mut d) = phase {
+                (d.x, d.y, d.keys) = (x, y, keys);
+                self.resume(d, true);
+            }
+        } else {
+            let scale = f64::from(window.window().scale_factor());
+            driver.moved(f64::from(x) * scale, f64::from(y) * scale, keys);
+        }
+    }
+
+    /// The system ended a drag Gezik handed it (macOS, Wayland): the window never saw the
+    /// button come up, so Slint is told, and that release is no click.
+    fn outside_ended(&self, _end: DragEnd) {
+        let phase = std::mem::replace(&mut *self.0.phase.borrow_mut(), Phase::Ended);
+        let Phase::Outside(d) = phase else {
+            *self.0.phase.borrow_mut() = phase;
+            return;
+        };
+        self.0.outside.borrow_mut().take();
+        if let Some(index) = d.pressed {
+            self.0.view.release(index, true);
+        }
+        if let Some(window) = self.0.window.upgrade() {
+            use slint::platform::{PointerEventButton, WindowEvent};
+            let button = if d.right { PointerEventButton::Right } else { PointerEventButton::Left };
+            let position = slint::LogicalPosition::new(d.x, d.y);
+            window.window().dispatch_event(WindowEvent::PointerReleased { position, button });
+        }
+    }
+
     /// Puts Gezik's drop target on the window, once the native window exists (it does only
     /// after the event loop starts, so this retries for a while).
     pub fn attach_when_ready(&self, attempt: u32) {
@@ -602,7 +727,8 @@ impl Drags {
             let mut phase = self.0.phase.borrow_mut();
             match &mut *phase {
                 Phase::Offer(d) => (d.x, d.y, d.keys, d.allowed) = (x, y, keys, offer.allowed),
-                Phase::Idle | Phase::Ended => {
+                // Outside: Gezik's own drag, dropped back on its window by the system.
+                Phase::Idle | Phase::Ended | Phase::Outside(_) => {
                     *phase = Phase::Offer(Dragging {
                         sources: offer.paths.clone(),
                         // Pinning dropped folders would need the disk to tell folders apart.

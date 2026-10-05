@@ -86,7 +86,7 @@ unsafe fn context_menu_for(hwnd: HWND, target: &MenuTarget) -> windows::core::Re
 
 /// The folder all of `paths` are in and their names; `None` if there is no such folder
 /// (drives, or paths from different folders).
-fn shared_parent(paths: &[PathBuf]) -> Option<(&Path, Vec<&std::ffi::OsStr>)> {
+pub(crate) fn shared_parent(paths: &[PathBuf]) -> Option<(&Path, Vec<&std::ffi::OsStr>)> {
     let parent = paths.first()?.parent()?;
     let names: Option<Vec<_>> =
         paths.iter().map(|path| path.file_name().filter(|_| path.parent() == Some(parent))).collect();
@@ -96,6 +96,16 @@ fn shared_parent(paths: &[PathBuf]) -> Option<(&Path, Vec<&std::ffi::OsStr>)> {
 /// The menu of the entries `names` in `folder`. The folder is bound once and each name is
 /// parsed relative to it, so a selection of 100 000 files opens quickly.
 unsafe fn children_menu(hwnd: HWND, folder: &Path, names: &[&std::ffi::OsStr]) -> windows::core::Result<IContextMenu> {
+    unsafe { children_object(hwnd, folder, names) }
+}
+
+/// The Shell's `T` (a menu, a data object) for the entries `names` in `folder`, as Explorer
+/// gets it for a selection.
+pub(crate) unsafe fn children_object<T: Interface>(
+    hwnd: HWND,
+    folder: &Path,
+    names: &[&std::ffi::OsStr],
+) -> windows::core::Result<T> {
     let shell_folder = unsafe { bind_folder(folder)? };
     let mut children: Vec<*mut ITEMIDLIST> = Vec::with_capacity(names.len());
     let parsed = names.iter().try_for_each(|name| {
@@ -107,14 +117,14 @@ unsafe fn children_menu(hwnd: HWND, folder: &Path, names: &[&std::ffi::OsStr]) -
         Ok(())
     });
     // Separate from the parsing, so `?` cannot skip the CoTaskMemFree below.
-    let menu = parsed.and_then(|()| unsafe {
+    let object = parsed.and_then(|()| unsafe {
         let children: Vec<*const ITEMIDLIST> = children.iter().map(|&c| c as *const ITEMIDLIST).collect();
-        shell_folder.GetUIObjectOf::<IContextMenu>(hwnd, &children, None)
+        shell_folder.GetUIObjectOf::<T>(hwnd, &children, None)
     });
     for child in children {
         unsafe { CoTaskMemFree(Some(child as *const _)) };
     }
-    menu
+    object
 }
 
 /// `folder` as a shell folder (the desktop for the namespace root).
