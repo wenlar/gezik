@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use gezik_core::ops::conflict::{ConflictKind, Decision, Facts};
 use gezik_core::ops::history::{Stamp, UndoStack};
-use gezik_core::ops::paths::DriveSet;
+use gezik_core::ops::paths::{DriveSet, lexical_roots};
 use gezik_core::ops::threads::CopyThreads;
 use gezik_platform::fs::{self, DriveFacts};
 
@@ -34,6 +34,9 @@ pub(crate) struct Record {
     label: String,
     inverse: Vec<Arc<dyn Task>>,
 }
+
+#[cfg(test)]
+pub(crate) type DriveQueryHook = Arc<dyn Fn(&Path) + Send + Sync>;
 
 /// How many actions can be undone.
 const HISTORY: usize = 100;
@@ -170,8 +173,12 @@ pub(crate) struct Job {
     pub control: Control,
     /// Set on the job's thread before it waits for its turn.
     pub drives: Mutex<DriveSet>,
-    /// Whether `drives` is final (an earlier job whose drives are unknown yet blocks later ones).
+    /// Whether `drives` is final (an earlier job whose drives are unknown yet blocks later ones
+    /// on the same roots).
     pub drives_known: AtomicBool,
+    /// The roots of the paths it touches, known at once: a drive query that hangs (a lost
+    /// network drive) holds back only the jobs on the same roots.
+    pub roots: DriveSet,
     pub background: bool,
     pub origin: Origin,
     /// "Copy 3 items": what Undo will say.
@@ -247,6 +254,9 @@ pub(crate) struct Shared {
     next_id: AtomicU64,
     pending: Option<Arc<PendingDeletes>>,
     history: Mutex<UndoStack<Record>>,
+    /// Tests: called before each drive query (to make one hang).
+    #[cfg(test)]
+    pub drive_query_hook: Mutex<Option<DriveQueryHook>>,
 }
 
 impl Shared {
@@ -268,6 +278,14 @@ impl Shared {
 
     /// The facts of the drive `path` is on, cached per drive root.
     pub fn drive(&self, path: &Path) -> Option<DriveFacts> {
+        #[cfg(test)]
+        {
+            // Not under the lock: the hook may wait.
+            let hook = lock(&self.drive_query_hook).clone();
+            if let Some(hook) = hook {
+                hook(path);
+            }
+        }
         let existing = fs::nearest_existing(path).unwrap_or_else(|| path.to_path_buf());
         let root = fs::drive_root(&existing).unwrap_or_else(|| existing.clone());
         if let Some(facts) = lock(&self.drives).get(&root) {
@@ -287,8 +305,9 @@ impl Shared {
         self.push([Event::Paused { job: job.id, reason, path }]);
     }
 
-    /// Waits until no earlier unfinished job shares a drive with `job` (or it may start now).
-    /// False if it is cancelled first.
+    /// Waits until no earlier unfinished job shares a drive with `job` (or it may start now);
+    /// an earlier job whose drives are not known yet counts if it shares a root. False if it
+    /// is cancelled first.
     pub fn wait_turn(&self, job: &Job) -> bool {
         let mut jobs = lock(&self.jobs);
         loop {
@@ -298,9 +317,13 @@ impl Shared {
             let drives = lock(&job.drives).clone();
             let earlier = jobs.iter().take_while(|other| other.id != job.id);
             let blocked = !job.control.start_now.load(Ordering::SeqCst)
-                && earlier
-                    .filter(|other| !other.done.load(Ordering::SeqCst))
-                    .any(|other| !other.drives_known.load(Ordering::SeqCst) || lock(&other.drives).intersects(&drives));
+                && earlier.filter(|other| !other.done.load(Ordering::SeqCst)).any(|other| {
+                    if other.drives_known.load(Ordering::SeqCst) {
+                        lock(&other.drives).intersects(&drives)
+                    } else {
+                        other.roots.intersects(&job.roots)
+                    }
+                });
             if !blocked {
                 job.control.running.store(true, Ordering::SeqCst);
                 return true;
@@ -438,6 +461,8 @@ impl Engine {
             next_id: AtomicU64::new(0),
             pending,
             history: Mutex::new(UndoStack::new(HISTORY)),
+            #[cfg(test)]
+            drive_query_hook: Mutex::default(),
         }))
     }
 
@@ -481,12 +506,15 @@ impl Engine {
         };
         let kind = first.kind();
         let background = tasks.iter().all(|task| task.kind() == TaskKind::Delete);
+        let paths: Vec<PathBuf> = tasks.iter().flat_map(|task| task.resources().paths).collect();
+        let roots = lexical_roots(paths.iter().map(PathBuf::as_path));
         let job = Arc::new(Job {
             id,
             tasks,
             control: Control::default(),
             drives: Mutex::default(),
             drives_known: AtomicBool::new(false),
+            roots,
             background,
             origin,
             label,
@@ -671,6 +699,35 @@ mod tests {
         let report = run(&engine, engine.undo().unwrap());
         assert_eq!(report.skipped_changed, 1);
         assert_eq!(read(&dir.join("dst/a.txt")), "edited after the copy");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A lost network drive can hang its query; jobs on other drives must not wait for it.
+    #[cfg(windows)]
+    #[test]
+    fn a_hanging_drive_query_holds_back_only_jobs_on_that_root() {
+        let dir = test_dir("hanging-drive");
+        write(&dir.join("src/a.txt"), "a");
+        std::fs::create_dir(dir.join("dst")).unwrap();
+        let engine = engine();
+        let gate = Gate::default();
+        let held = gate.clone();
+        *lock(&engine.0.drive_query_hook) = Some(Arc::new(move |path: &Path| {
+            if path.starts_with(r"Q:\") {
+                held.wait();
+            }
+        }));
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let mut stuck = FakeTask::new("stuck", 1, &log);
+        stuck.paths = vec![PathBuf::from(r"Q:\lost\a")];
+        let stuck = engine.submit(Box::new(stuck));
+        let copy = engine.submit(Box::new(CopyTask::into(vec![dir.join("src/a.txt")], &dir.join("dst"))));
+        let started = Instant::now();
+        let report = run(&engine, copy);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert!(started.elapsed() < Duration::from_secs(5), "the copy waited for the hanging drive");
+        gate.open();
+        run(&engine, stuck);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
