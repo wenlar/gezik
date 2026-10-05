@@ -54,8 +54,9 @@ fn is_heif(head: &[u8]) -> bool {
     }
     let size = u32::from_be_bytes([head[0], head[1], head[2], head[3]]) as usize;
     // The major brand, then (after the minor version) the compatible ones.
-    let brands = std::iter::once(&head[8..12]).chain(head.get(16..size.min(head.len())).unwrap_or(&[]).chunks_exact(4));
-    brands.into_iter().any(|brand| BRANDS.iter().any(|known| brand == known.as_slice()))
+    let major = [head[8], head[9], head[10], head[11]];
+    let (compatible, _) = head.get(16..size.min(head.len())).unwrap_or(&[]).as_chunks::<4>();
+    std::iter::once(&major).chain(compatible).any(|brand| BRANDS.contains(&brand))
 }
 
 /// `2024:07:01 09:30:00`.
