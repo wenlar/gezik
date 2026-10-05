@@ -8,7 +8,7 @@ use gezik_core::ops::conflict::Facts;
 use gezik_core::ops::paths::cover;
 
 use crate::task::{Outcome, Task};
-use crate::tasks::{MoveTask, RestoreTask, TrashTask};
+use crate::tasks::{MoveTask, RenameTask, RestoreTask, TrashTask};
 
 /// Files are checked before undo touches them; folders are not (they change as files land).
 fn expect(facts: &Facts) -> Option<Facts> {
@@ -39,6 +39,12 @@ pub(crate) fn build(outcomes: &[Outcome]) -> Vec<Arc<dyn Task>> {
         tasks.push(Arc::new(TrashTask::checked(made)));
     }
     let moved = cover(moved, |(path, _, _)| path);
+    // Renames in one folder may swap names: they go back in an order that never collides.
+    let (renamed, moved): (Vec<_>, Vec<_>) =
+        moved.into_iter().partition(|(now, was, _)| now.parent().is_some() && now.parent() == was.parent());
+    if !renamed.is_empty() {
+        tasks.push(Arc::new(RenameTask::back(renamed)));
+    }
     if !moved.is_empty() {
         tasks.push(Arc::new(MoveTask::back(moved)));
     }
@@ -70,6 +76,18 @@ mod tests {
         let kinds: Vec<TaskKind> = tasks.iter().map(|t| t.kind()).collect();
         assert_eq!(kinds, [TaskKind::Trash, TaskKind::Move, TaskKind::Restore]);
         assert_eq!(tasks[0].count(), 1, "the new folder covers what is inside it");
+    }
+
+    #[test]
+    fn renames_in_one_folder_undo_as_renames() {
+        let outcomes = vec![
+            Outcome::Moved { from: "/d/a".into(), to: "/d/b".into(), facts: file() },
+            Outcome::Moved { from: "/d/b".into(), to: "/d/a".into(), facts: file() },
+        ];
+        let tasks = build(&outcomes);
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].kind(), TaskKind::Rename);
+        assert_eq!(tasks[0].count(), 2);
     }
 
     #[test]

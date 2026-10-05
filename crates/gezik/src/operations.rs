@@ -461,7 +461,7 @@ impl Operations {
                 if let Some(path) = path {
                     // Going on to another entry: its refresh must not pull the selection away.
                     let after = if how == Commit::Tab { After::Nothing } else { After::Select };
-                    self.submit(Box::new(gezik_ops::MoveTask::rename(path, &name)), None, after);
+                    self.submit(Box::new(gezik_ops::RenameTask::one(path, &name)), None, after);
                 }
                 Some(index)
             }

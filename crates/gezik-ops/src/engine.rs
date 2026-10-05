@@ -687,7 +687,7 @@ mod tests {
     use super::*;
     use crate::testing::{FakeTask, Gate, defaults, engine, finish, test_dir};
     use crate::testing::{read, write};
-    use crate::{CopyTask, DeleteTask, MoveTask, TrashTask};
+    use crate::{CopyTask, DeleteTask, MoveTask, RenameTask, TrashTask};
     use std::sync::atomic::AtomicUsize;
 
     fn run(engine: &Engine, job: JobId) -> Report {
@@ -720,7 +720,7 @@ mod tests {
         let dir = test_dir("undo-rename");
         write(&dir.join("a.txt"), "a");
         let engine = engine();
-        run(&engine, engine.submit(Box::new(MoveTask::rename(dir.join("a.txt"), "b.txt"))));
+        run(&engine, engine.submit(Box::new(RenameTask::one(dir.join("a.txt"), "b.txt"))));
         assert_eq!(engine.undo_label().as_deref(), Some("Rename"));
         run(&engine, engine.undo().unwrap());
         assert_eq!(read(&dir.join("a.txt")), "a");
@@ -910,8 +910,8 @@ mod tests {
         write(&dir.join("a.txt"), "a");
         write(&dir.join("b.txt"), "b");
         let engine = engine();
-        run(&engine, engine.submit(Box::new(MoveTask::rename(dir.join("a.txt"), "a2.txt"))));
-        run(&engine, engine.submit(Box::new(MoveTask::rename(dir.join("b.txt"), "b2.txt"))));
+        run(&engine, engine.submit(Box::new(RenameTask::one(dir.join("a.txt"), "a2.txt"))));
+        run(&engine, engine.submit(Box::new(RenameTask::one(dir.join("b.txt"), "b2.txt"))));
         std::fs::remove_file(dir.join("b2.txt")).unwrap();
         let report = run(&engine, engine.undo().unwrap());
         assert_eq!(report.failures.len() + report.skipped_changed, 1, "{report:?}");
@@ -970,11 +970,11 @@ mod tests {
         write(&dir.join("a.txt"), "a");
         write(&dir.join("b.txt"), "b");
         let engine = engine();
-        run(&engine, engine.submit(Box::new(MoveTask::rename(dir.join("a.txt"), "c.txt"))));
+        run(&engine, engine.submit(Box::new(RenameTask::one(dir.join("a.txt"), "c.txt"))));
         run(&engine, engine.undo().unwrap());
         assert!(engine.redo_label().is_some());
         let (_, events) =
-            finish(&engine, engine.submit(Box::new(MoveTask::rename(dir.join("b.txt"), "d.txt"))), defaults);
+            finish(&engine, engine.submit(Box::new(RenameTask::one(dir.join("b.txt"), "d.txt"))), defaults);
         assert!(events.contains(&Event::History));
         assert_eq!(engine.redo_label(), None);
         run(&engine, engine.submit(Box::new(DeleteTask::new(vec![dir.join("d.txt")], None))));

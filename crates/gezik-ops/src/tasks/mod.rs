@@ -4,6 +4,7 @@ mod copy;
 mod delete;
 mod move_;
 mod new;
+mod rename;
 mod restore;
 mod trash;
 
@@ -12,6 +13,7 @@ pub use delete::DeleteTask;
 pub(crate) use delete::restore_hidden;
 pub use move_::MoveTask;
 pub use new::NewTask;
+pub use rename::RenameTask;
 pub use restore::RestoreTask;
 pub use trash::TrashTask;
 
@@ -82,6 +84,7 @@ mod tests {
             refused(&CopyTask::into(vec![root.clone()], &dir), &root);
             refused(&CopyTask::duplicate(vec![root.clone()]), &root);
             refused(&MoveTask::into(vec![root.clone()], &dir), &root);
+            refused(&RenameTask::one(root.clone(), "x"), &root);
         }
         assert!(!is_root(&std::env::temp_dir().join("x")));
     }

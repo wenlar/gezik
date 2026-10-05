@@ -93,7 +93,8 @@ impl TaskKind {
     pub fn label(self, count: usize) -> String {
         let verb = self.verb();
         match self {
-            TaskKind::Rename | TaskKind::NewFolder | TaskKind::NewFile => verb.to_owned(),
+            TaskKind::NewFolder | TaskKind::NewFile => verb.to_owned(),
+            TaskKind::Rename if count <= 1 => verb.to_owned(),
             _ if count == 1 => format!("{verb} 1 item"),
             _ => format!("{verb} {count} items"),
         }
@@ -299,6 +300,24 @@ impl RunCx<'_> {
         (self.trash)(path)
     }
 
+    /// `temp` holds `original` for a moment (a rename through a temporary name): if Gezik
+    /// stops before [`forget_temp`](Self::forget_temp), the next start puts it back.
+    pub fn note_temp(&self, temp: &Path, original: &Path) {
+        if let Some(pending) = &self.temp.pending {
+            pending.add_restore(&crate::pending::Restore {
+                hidden: temp.to_path_buf(),
+                original: original.to_path_buf(),
+                was_hidden: true,
+            });
+        }
+    }
+
+    pub fn forget_temp(&self, temp: &Path) {
+        if let Some(pending) = &self.temp.pending {
+            pending.remove_restore(temp);
+        }
+    }
+
     /// Copies a file, counting its bytes and stopping when the job is cancelled. The system
     /// makes the copy its full size at once, so if Gezik is killed meanwhile the leftover must
     /// not pass for a finished file: a large one is copied under a temporary name and renamed
@@ -469,6 +488,7 @@ mod tests {
         assert_eq!(TaskKind::Copy.label(3), "Copy 3 items");
         assert_eq!(TaskKind::Trash.label(1), "Delete 1 item");
         assert_eq!(TaskKind::Rename.label(1), "Rename");
+        assert_eq!(TaskKind::Rename.label(24), "Rename 24 items");
         assert_eq!(TaskKind::NewFolder.label(1), "New folder");
     }
 

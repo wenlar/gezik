@@ -22,6 +22,10 @@ pub const HIDDEN_PREFIX: &str = ".gezik-deleting-";
 /// How a file being copied is named until it is complete (a leftover is deleted).
 pub const COPYING_PREFIX: &str = ".gezik-copying-";
 
+/// How an item being renamed through a temporary name is named meanwhile (a leftover is put
+/// back under its own name).
+pub const RENAMING_PREFIX: &str = ".gezik-rn-";
+
 /// Starts a copies line: `copies<TAB>pid<TAB>folder<TAB>prefix`.
 const COPIES: &str = "copies\t";
 
@@ -236,16 +240,18 @@ fn copies_of(line: &Path) -> Option<CopyNote> {
     .then(|| CopyNote { pid, folder, prefix: prefix.to_owned() })
 }
 
-/// Whether `path` is an absolute path to a folder an instant delete hid, or to a file a copy
-/// had not finished.
+/// Whether `path` is an absolute path to a folder an instant delete hid, to a file a copy
+/// had not finished, or to an item a rename holds under a temporary name.
 pub fn is_hidden(path: &Path) -> bool {
     path.is_absolute() && path.file_name().and_then(|name| name.to_str()).is_some_and(is_internal_name)
 }
 
-/// Whether `name` is one Gezik gives what a copy or delete is still working on (lists leave
-/// those out).
+/// Whether `name` is one Gezik gives what a copy, delete or rename is still working on (lists
+/// leave those out).
 pub fn is_internal_name(name: &str) -> bool {
-    [HIDDEN_PREFIX, COPYING_PREFIX].iter().any(|prefix| name.len() > prefix.len() && name.starts_with(prefix))
+    [HIDDEN_PREFIX, COPYING_PREFIX, RENAMING_PREFIX]
+        .iter()
+        .any(|prefix| name.len() > prefix.len() && name.starts_with(prefix))
 }
 
 /// A fresh hidden name.
