@@ -243,11 +243,19 @@ impl Dispatch<WlSeat, ()> for State {
     fn event(state: &mut Self, seat: &WlSeat, event: wl_seat::Event, _: &(), _: &Connection, qh: &QueueHandle<Self>) {
         let wl_seat::Event::Capabilities { capabilities: WEnum::Value(caps) } = event else { return };
         let mut inner = state.0.inner();
-        if caps.contains(Capability::Pointer) && inner.pointer.is_none() {
-            inner.pointer = Some(seat.get_pointer(qh, ()));
+        // Devices come and go (a keyboard plugged in or out): an object for a device that left
+        // gets no more events, so it is let go and a new one made when the device is back.
+        match (caps.contains(Capability::Pointer), inner.pointer.take()) {
+            (true, Some(pointer)) => inner.pointer = Some(pointer),
+            (true, None) => inner.pointer = Some(seat.get_pointer(qh, ())),
+            (false, Some(pointer)) if pointer.version() >= 3 => pointer.release(),
+            (false, _) => {}
         }
-        if caps.contains(Capability::Keyboard) && inner.keyboard.is_none() {
-            inner.keyboard = Some(seat.get_keyboard(qh, ()));
+        match (caps.contains(Capability::Keyboard), inner.keyboard.take()) {
+            (true, Some(keyboard)) => inner.keyboard = Some(keyboard),
+            (true, None) => inner.keyboard = Some(seat.get_keyboard(qh, ())),
+            (false, Some(keyboard)) if keyboard.version() >= 3 => keyboard.release(),
+            (false, _) => {}
         }
     }
 }
