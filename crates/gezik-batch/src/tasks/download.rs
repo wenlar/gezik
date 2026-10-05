@@ -45,7 +45,7 @@ impl DownloadTask {
     /// Runs curl into `temp` (in `folder`, its working folder), counting what arrives.
     fn download(&self, curl: &Path, folder: &Path, temp: &Path, cx: &RunCx<'_>) -> io::Result<()> {
         let size = self.build.size;
-        let mut child = ChildProcess::spawn(curl, arguments(&self.url, temp), Some(folder))?;
+        let mut child = ChildProcess::spawn(curl, arguments(&self.url, temp, size), Some(folder))?;
         let counted = Cell::new(0u64);
         let looked = Cell::new(Instant::now());
         let status = child.wait_or_stop(|| {
@@ -176,16 +176,34 @@ fn curl() -> Option<PathBuf> {
     on_path(&["curl"], &std::env::var_os("PATH")?)
 }
 
-/// curl's arguments: HTTPS only (plain HTTP too for an `http://` address, which only tests
-/// give), into `temp` given by its name (curl runs in its folder: no non-ASCII path in the
-/// arguments).
-fn arguments(url: &str, temp: &Path) -> Vec<OsString> {
+/// curl's arguments: no `.curlrc` (`--disable`, which must come first), HTTPS only for the
+/// address and every redirect (plain HTTP too for an `http://` address, which only tests
+/// give), at most `size` + 1 MiB, into `temp` given by its name (curl runs in its folder: no
+/// non-ASCII path in the arguments).
+fn arguments(url: &str, temp: &Path, size: u64) -> Vec<OsString> {
     let protocols = if url.starts_with("http://") { "=http,https" } else { "=https" };
-    let mut args: Vec<OsString> =
-        ["--fail", "--location", "--proto", protocols, "--max-redirs", "5", "--silent", "--show-error", "--output"]
-            .into_iter()
-            .map(OsString::from)
-            .collect();
+    let max = size.saturating_add(1 << 20).to_string();
+    let mut args: Vec<OsString> = [
+        "--disable",
+        "--fail",
+        "--location",
+        "--proto",
+        protocols,
+        "--proto-redir",
+        protocols,
+        "--max-redirs",
+        "5",
+        "--max-filesize",
+        &max,
+        "--connect-timeout",
+        "30",
+        "--silent",
+        "--show-error",
+        "--output",
+    ]
+    .into_iter()
+    .map(OsString::from)
+    .collect();
     args.push(temp.file_name().unwrap_or(temp.as_os_str()).to_owned());
     args.push(url.into());
     args
@@ -249,14 +267,21 @@ mod tests {
     #[test]
     fn curl_arguments() {
         let temp = Path::new("tools").join(".gezik-copying-1-0");
-        let args = arguments("https://example.com/a.zip", &temp);
+        let args = arguments("https://example.com/a.zip", &temp, 1000);
         let expected = [
+            "--disable",
             "--fail",
             "--location",
             "--proto",
             "=https",
+            "--proto-redir",
+            "=https",
             "--max-redirs",
             "5",
+            "--max-filesize",
+            "1049576",
+            "--connect-timeout",
+            "30",
             "--silent",
             "--show-error",
             "--output",
@@ -264,7 +289,8 @@ mod tests {
             "https://example.com/a.zip",
         ];
         assert_eq!(args, expected);
-        assert_eq!(arguments("http://127.0.0.1:1/a.zip", &temp)[3], "=http,https");
+        let http = arguments("http://127.0.0.1:1/a.zip", &temp, 1000);
+        assert_eq!((&http[4], &http[6]), (&OsString::from("=http,https"), &OsString::from("=http,https")));
         assert_eq!(
             message("curl: (22) The requested URL returned error: 404\n"),
             "curl: (22) The requested URL returned error: 404"
