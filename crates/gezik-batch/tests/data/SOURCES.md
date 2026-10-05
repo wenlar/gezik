@@ -3,3 +3,22 @@
 - `exif.jpg`: a 16×16 red JPEG made with ffmpeg, with a hand-written EXIF block
   (`DateTimeOriginal = 2024:07:01 09:30:00`); see `docs/superpowers/plans/2026-10-05-toplu-islemler-5a.md`, Task 4.
 - `exif.png`: the same picture as a PNG, with the same date in an `eXIf` chunk after the image data.
+
+## RAR archives (`rar/`)
+
+From libarchive's test suite (BSD 2-clause licence, https://github.com/libarchive/libarchive,
+`COPYING`), decoded from the uuencoded `.uu` files at
+`https://raw.githubusercontent.com/libarchive/libarchive/master/libarchive/test/<name>.uu`.
+Contents and passwords as `test_read_format_rar.c`, `test_read_format_rar_encryption_data.c`
+and `test_read_format_rar_encryption.c` there state them, checked with 7-Zip 25.
+
+| File | Format | Password | Content |
+|---|---|---|---|
+| `test_read_format_rar.rar` | RAR4, packed on Unix | none | `test.txt` and `testdir/test.txt` ("test text document\r\n", 20 bytes each), `testlink` (symbolic link to `test.txt`), folders `testdir` and `testemptydir` |
+| `test_read_format_rar_encryption_data.rar` | RAR4, encrypted data, plain headers | `12345678` | `foo.txt` ("data of foo.txt\n"), `bar.txt` ("data of bar.txt\n") |
+| `test_read_format_rar5_multiple_files.rar` | RAR5 | none | `test1.bin` … `test4.bin`, 4096 bytes each (binary) |
+| `test_read_format_rar5_encrypted_filenames.rar` | RAR5, encrypted headers (`rar -hp`) | `password` | `a.txt` … `d.txt` ("This is from a.txt" …, 18 bytes each) |
+| `test_rar_multivolume_single_file.part1.rar` … `part3.rar` | RAR4, three volumes | none | `LibarchiveAddingTest.html` (20111 bytes) across the three |
+
+The volume set is libarchive's `test_rar_multivolume_single_file` rather than
+`test_read_format_rar_multivolume`, whose first entry unpacks to 241 MB.

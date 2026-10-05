@@ -1,8 +1,14 @@
-//! Reading archives into a staging folder: zip, 7z, the tar family and single compressed
-//! files (`.gz .xz .bz2 .zst`), with passwords, volumes, cancel and size limits. Every entry
-//! name goes through `safe_join`; nothing is written outside the staging folder.
+//! Reading archives into a staging folder: zip, 7z, rar, the tar family, single compressed
+//! files (`.gz .xz .bz2 .zst`), cab, iso, cpio and ar/deb, with passwords, volumes, cancel
+//! and size limits. Every entry name goes through `safe_join`; nothing is written outside
+//! the staging folder.
 
+mod ar;
+mod cab;
+mod cpio;
 pub mod io;
+mod iso;
+mod rar;
 mod sevenz;
 mod single;
 mod tar;
@@ -71,13 +77,24 @@ pub fn open(path: &Path) -> IoResult<Box<dyn ArchiveSource + Send>> {
         Format::SevenZ => Box::new(sevenz::SevenZSource::open(volumes)?),
         Format::Tar(codec) => Box::new(tar::TarSource::new(volumes, codec)),
         Format::Single(codec) => Box::new(single::SingleSource::new(volumes, codec)),
-        _ => return Err(IoError::new(ErrorKind::Unsupported, "7-Zip needed")),
+        Format::Rar => Box::new(rar::RarSource::open(volumes)?),
+        Format::Cab => Box::new(cab::CabSource::open(volumes)?),
+        Format::Iso => Box::new(iso::IsoSource::new(volumes)),
+        Format::Cpio => Box::new(cpio::CpioSource::open(volumes)?),
+        Format::Ar => Box::new(ar::ArSource::new(volumes, false)),
+        Format::Deb => Box::new(ar::ArSource::new(volumes, true)),
+        Format::Udf | Format::Other(_) => return Err(seven_zip_needed()),
     })
 }
 
 /// Whether Gezik itself can open it (false: 7-Zip is needed).
 pub fn supported(format: &Format) -> bool {
-    matches!(format, Format::Zip | Format::SevenZ | Format::Tar(_) | Format::Single(_))
+    !matches!(format, Format::Udf | Format::Other(_))
+}
+
+/// The error of an archive only 7-Zip reads.
+fn seven_zip_needed() -> IoError {
+    IoError::new(ErrorKind::Unsupported, "7-Zip needed")
 }
 
 /// The files an archive is made of, and the name it goes by (`a.7z` for `a.7z.002`).
@@ -281,6 +298,11 @@ fn dos_attributes(raw: u32) -> u32 {
     let mode = raw >> 16;
     let read_only = mode != 0 && mode & 0o200 == 0;
     (raw & 0xFF) | u32::from(read_only)
+}
+
+/// Whether an entry names the archive's own top folder (`.`, `./`): nothing to make.
+fn is_top(name: &str) -> bool {
+    Path::new(&name.replace('\\', "/")).components().all(|c| c == std::path::Component::CurDir)
 }
 
 /// Makes a folder entry.

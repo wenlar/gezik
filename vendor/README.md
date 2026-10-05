@@ -28,3 +28,24 @@ cannot be built outside the Slint repository.
 `[patch.crates-io]` section and the `exclude` entry in the root `Cargo.toml`, and the
 `i-slint-core` dev-dependency and test in `crates/gezik`. If not, copy the new release here
 and apply the same change to `properties.rs`.
+
+## unrar-ng 0.7.7 (patched)
+
+The published `unrar-ng` 0.7.7, unchanged except for one line in `src/open_archive.rs`
+(the `UCM_CHANGEVOLUMEW` callback, marked "Gezik patch"). The root `Cargo.toml` uses it
+through `[patch.crates-io]`.
+
+**The bug.** When UnRAR moves to the next volume it calls back with the volume's name. For
+`RAR_VOL_NOTIFY` that name is the `data()` of a `std::wstring`, sized to the name, but the
+callback copied a fixed 2048 wide characters from it: a heap read past the end of the
+string on every volume change (8 KB on Linux, 4 KB on Windows). Debug builds on Linux
+caught it now and then as "unsafe precondition(s) violated: ptr::copy_nonoverlapping" in
+`rar_missing_volume_is_a_clear_error`; a release build could crash at the end of a heap
+mapping.
+
+**The fix.** The name is read up to its NUL (`WideCString::from_ptr_str`); UnRAR always
+ends it with one.
+
+**Updating unrar-ng.** Check whether the new release still reads a fixed length there. If
+it does not, remove this folder and its `[patch.crates-io]` line; if it does, copy the new
+release here and change the same line.

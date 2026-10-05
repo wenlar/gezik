@@ -838,3 +838,453 @@ fn link_chains_cannot_escape() {
     assert!(!stage.join("d/foo").exists() && !d.join("x").exists());
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// A file of the test data (`tests/data/…`).
+fn data(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data").join(name)
+}
+
+/// FNV-1a: checks the content of the downloaded test archives without keeping a copy.
+fn fnv(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |h, &b| (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3))
+}
+
+/// The files under `root` as (path, length, FNV-1a).
+fn hashed(root: &Path) -> Vec<(String, usize, u64)> {
+    tree(root).into_iter().map(|(name, bytes)| (name, bytes.len(), fnv(&bytes))).collect()
+}
+
+#[test]
+fn rar4_and_rar5_extract() {
+    let d = dir("rar");
+    // RAR4 packed on Unix: two files, a symbolic link, a folder and an empty folder.
+    let stage = stage(&d);
+    let cx = Cx::new(None);
+    let mut source = archive::open(&data("rar/test_read_format_rar.rar")).unwrap();
+    let listed = source.list(&cx).unwrap().unwrap();
+    let names: Vec<&str> = listed.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(names, ["test.txt", "testlink", "testdir/test.txt", "testdir", "testemptydir"]);
+    assert!(listed[3].is_dir && listed[0].size == Some(20) && !listed[0].encrypted);
+    source.extract(&stage, &cx).unwrap();
+    let text = b"test text document\r\n";
+    assert!(stage.join("testemptydir").is_dir());
+    assert_eq!(cx.bytes.get(), 40);
+    if cfg!(windows) {
+        assert_eq!(cx.failed(), ["testlink"]);
+        assert_eq!(tree(&stage), files(&[("test.txt", text), ("testdir/test.txt", text)]));
+    } else {
+        assert!(cx.failed().is_empty(), "{:?}", cx.failed());
+        assert_eq!(std::fs::read_link(stage.join("testlink")).unwrap(), Path::new("test.txt"));
+    }
+    let modified = std::fs::metadata(stage.join("test.txt")).unwrap().modified().unwrap();
+    assert_eq!(gezik_platform::local_date_parts(modified).map(|p| (p.year, p.month, p.day)), Some((2011, 6, 26)));
+
+    // RAR5.
+    let stage = self::stage(&d);
+    let cx = Cx::new(None);
+    extract(&data("rar/test_read_format_rar5_multiple_files.rar"), &stage, &cx).unwrap();
+    assert!(cx.failed().is_empty(), "{:?}", cx.failed());
+    assert_eq!(cx.asked.get(), 0);
+    assert_eq!(
+        hashed(&stage),
+        [
+            ("test1.bin".to_string(), 4096, 0x990a_8e41_3bc9_0e83),
+            ("test2.bin".to_string(), 4096, 0xd02d_b38e_fa4d_5ce3),
+            ("test3.bin".to_string(), 4096, 0x998f_c865_54aa_8d0b),
+            ("test4.bin".to_string(), 4096, 0x65fc_b635_5daa_e8e3),
+        ]
+    );
+    let modified = std::fs::metadata(stage.join("test1.bin")).unwrap().modified().unwrap();
+    // RAR5 keeps nanoseconds; NTFS holds 100 ns steps.
+    let want = SystemTime::UNIX_EPOCH + Duration::new(1_538_023_271, 278_813_210);
+    let diff = modified.duration_since(want).unwrap_or_else(|e| e.duration());
+    assert!(diff < Duration::from_nanos(100), "{modified:?}");
+
+    // A cancel stops before the next entry (UnRAR cannot stop inside one).
+    let stage = self::stage(&d);
+    let mut cx = Cx::new(None);
+    cx.cancel_after = Some(1);
+    let err = extract(&data("rar/test_read_format_rar5_multiple_files.rar"), &stage, &cx).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::Interrupted);
+    assert!(tree(&stage).len() < 4);
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn rar_wrong_password_asks_again_then_skips() {
+    let d = dir("rar-pw");
+    // RAR4, encrypted data, plain headers: no password check, so a wrong one is bad data.
+    let rar4 = data("rar/test_read_format_rar_encryption_data.rar");
+    let stage = stage(&d);
+    let cx = Cx::new(Some("12345678"));
+    let mut source = archive::open(&rar4).unwrap();
+    let listed = source.list(&cx).unwrap().unwrap();
+    assert_eq!(cx.asked.get(), 0);
+    assert!(listed.iter().all(|e| e.encrypted));
+    source.extract(&stage, &cx).unwrap();
+    assert_eq!(cx.asked.get(), 1);
+    assert!(cx.failed().is_empty(), "{:?}", cx.failed());
+    assert_eq!(tree(&stage), files(&[("bar.txt", b"data of bar.txt\n"), ("foo.txt", b"data of foo.txt\n")]));
+
+    let stage = self::stage(&d);
+    let cx = Cx::new(Some("wrong"));
+    extract(&rar4, &stage, &cx).unwrap();
+    assert_eq!(cx.asked.get(), 2);
+    assert_eq!(cx.failed(), ["test_read_format_rar_encryption_data.rar"]);
+    assert_eq!(std::fs::read_dir(&stage).unwrap().count(), 0);
+
+    // RAR5 with encrypted headers (`rar -hp`): the listing needs the password already.
+    let rar5 = data("rar/test_read_format_rar5_encrypted_filenames.rar");
+    let stage = self::stage(&d);
+    let cx = Cx::new(Some("password"));
+    let mut source = archive::open(&rar5).unwrap();
+    let listed = source.list(&cx).unwrap().unwrap();
+    assert_eq!(listed.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), ["a.txt", "b.txt", "c.txt", "d.txt"]);
+    source.extract(&stage, &cx).unwrap();
+    assert_eq!(cx.asked.get(), 1);
+    assert!(cx.failed().is_empty(), "{:?}", cx.failed());
+    let want: Vec<(String, Vec<u8>)> = ["a", "b", "c", "d"]
+        .iter()
+        .map(|n| (format!("{n}.txt"), format!("This is from {n}.txt").into_bytes()))
+        .collect();
+    assert_eq!(tree(&stage), want);
+
+    for listing in [true, false] {
+        let stage = self::stage(&d);
+        let cx = Cx::new(Some("wrong"));
+        let mut source = archive::open(&rar5).unwrap();
+        if listing {
+            assert_eq!(source.list(&cx).unwrap(), Some(Vec::new()));
+        }
+        source.extract(&stage, &cx).unwrap();
+        assert_eq!(cx.asked.get(), 2);
+        assert_eq!(cx.failed(), ["test_read_format_rar5_encrypted_filenames.rar"]);
+        assert_eq!(std::fs::read_dir(&stage).unwrap().count(), 0);
+    }
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn rar_missing_volume_is_a_clear_error() {
+    let d = dir("rar-vol");
+    let parts: Vec<PathBuf> = (1..=3)
+        .map(|n| {
+            let name = format!("test_rar_multivolume_single_file.part{n}.rar");
+            let copy = d.join(&name);
+            std::fs::copy(data(&format!("rar/{name}")), &copy).unwrap();
+            copy
+        })
+        .collect();
+    // One file across three volumes, opened from the middle one.
+    let stage = stage(&d);
+    let cx = Cx::new(None);
+    extract(&parts[1], &stage, &cx).unwrap();
+    assert!(cx.failed().is_empty(), "{:?}", cx.failed());
+    assert_eq!(hashed(&stage), [("LibarchiveAddingTest.html".to_string(), 20111, 0xa46d_d6be_0077_5a17)]);
+
+    std::fs::remove_file(&parts[2]).unwrap();
+    let stage = self::stage(&d);
+    let cx = Cx::new(None);
+    let err = extract(&parts[0], &stage, &cx).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+    assert_eq!(err.to_string(), "a later part (test_rar_multivolume_single_file.part3.rar) is missing");
+    assert_eq!(cx.failed(), ["LibarchiveAddingTest.html"]);
+    assert_eq!(std::fs::read_dir(&stage).unwrap().count(), 0);
+    let err = archive::open(&parts[0]).unwrap().list(&cx).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+
+    std::fs::remove_file(&parts[0]).unwrap();
+    let err = archive::open(&parts[1]).err().unwrap();
+    assert_eq!(err.to_string(), "the first part (test_rar_multivolume_single_file.part1.rar) is missing");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn cab_mszip_and_lzx() {
+    let d = dir("cab");
+    let big = noise(300_000, 31);
+    let path = d.join("a.cab");
+    {
+        let mut b = cab::CabinetBuilder::new();
+        let folder = b.add_folder(cab::CompressionType::MsZip);
+        folder.add_file("docs\\big.bin");
+        folder.add_file("small.txt").set_is_read_only(true);
+        let folder = b.add_folder(cab::CompressionType::None);
+        folder.add_file("plain.txt");
+        folder.add_file("..\\evil.txt");
+        let mut w = b.build(std::fs::File::create(&path).unwrap()).unwrap();
+        while let Some(mut fw) = w.next_file().unwrap() {
+            let bytes: &[u8] = match fw.file_name() {
+                "docs\\big.bin" => &big,
+                "small.txt" => b"small",
+                "plain.txt" => b"plain",
+                _ => b"evil",
+            };
+            fw.write_all(bytes).unwrap();
+        }
+        w.finish().unwrap();
+    }
+    let stage = stage(&d);
+    let cx = Cx::new(None);
+    let mut source = archive::open(&path).unwrap();
+    let listed = source.list(&cx).unwrap().unwrap();
+    assert_eq!(listed.len(), 4);
+    assert!(listed.iter().any(|e| e.name == "docs/big.bin" && e.size == Some(300_000)));
+    source.extract(&stage, &cx).unwrap();
+    assert_eq!(cx.failed(), ["../evil.txt"]);
+    assert_eq!(tree(&stage), files(&[("docs/big.bin", &big), ("plain.txt", b"plain"), ("small.txt", b"small")]));
+    assert!(std::fs::metadata(stage.join("small.txt")).unwrap().permissions().readonly());
+
+    // A compressed folder of many files is 7-Zip's.
+    let many = d.join("many.cab");
+    {
+        let mut b = cab::CabinetBuilder::new();
+        let folder = b.add_folder(cab::CompressionType::MsZip);
+        for i in 0..201 {
+            folder.add_file(format!("f{i}.txt"));
+        }
+        let mut w = b.build(std::fs::File::create(&many).unwrap()).unwrap();
+        while let Some(mut fw) = w.next_file().unwrap() {
+            fw.write_all(b"x").unwrap();
+        }
+        w.finish().unwrap();
+    }
+    assert_eq!(archive::open(&many).err().unwrap().kind(), std::io::ErrorKind::Unsupported);
+
+    // LZX: only makecab writes it.
+    #[cfg(windows)]
+    if Path::new(r"C:\Windows\System32\makecab.exe").exists() {
+        std::fs::write(d.join("big.bin"), &big).unwrap();
+        let status = std::process::Command::new("makecab")
+            .args(["/D", "CompressionType=LZX", "/D", "CompressionMemory=21", "big.bin", "lzx.cab"])
+            .current_dir(&d)
+            .stdout(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let stage = self::stage(&d);
+        let cx = Cx::new(None);
+        extract(&d.join("lzx.cab"), &stage, &cx).unwrap();
+        assert!(cx.failed().is_empty(), "{:?}", cx.failed());
+        assert_eq!(tree(&stage), files(&[("big.bin", &big)]));
+    }
+    std::fs::remove_dir_all(&d).unwrap();
+}
+
+/// Writes an ISO image with `features` holding a file, and a folder with a big file and a
+/// Unicode name.
+fn make_iso(path: &Path, big: &[u8], features: hadris_iso::write::options::CreationFeatures) {
+    use hadris_iso::read::PathSeparator;
+    use hadris_iso::write::options::IsoFormatOptions;
+    use hadris_iso::write::{File as IsoFile, InputFiles, IsoImageWriter};
+    use std::sync::Arc;
+    let files = InputFiles {
+        path_separator: PathSeparator::ForwardSlash,
+        files: vec![
+            IsoFile::File { name: Arc::new("readme.txt".into()), contents: b"Hello ISO".to_vec() },
+            IsoFile::Directory {
+                name: Arc::new("Docs".into()),
+                children: vec![
+                    IsoFile::File { name: Arc::new("Big File.bin".into()), contents: big.to_vec() },
+                    IsoFile::File { name: Arc::new("Türkçe ağaç.txt".into()), contents: b"unicode".to_vec() },
+                ],
+            },
+        ],
+    };
+    let options = IsoFormatOptions {
+        volume_name: "GEZIK".into(),
+        system_id: None,
+        volume_set_id: None,
+        publisher_id: None,
+        preparer_id: None,
+        application_id: None,
+        sector_size: 2048,
+        path_separator: PathSeparator::ForwardSlash,
+        features,
+        strict_charset: false,
+    };
+    let mut out = std::fs::File::options().read(true).write(true).create(true).truncate(true).open(path).unwrap();
+    IsoImageWriter::create(&mut out, files, options).unwrap();
+}
+
+#[test]
+fn iso_with_joliet_and_rock_ridge() {
+    use hadris_iso::joliet::JolietLevel;
+    use hadris_iso::write::options::CreationFeatures;
+    let d = dir("iso");
+    let big = noise(300_000, 41);
+    let want =
+        files(&[("Docs/Big File.bin", &big), ("Docs/Türkçe ağaç.txt", b"unicode"), ("readme.txt", b"Hello ISO")]);
+    for (name, features) in
+        [("both.iso", CreationFeatures::extensions()), ("joliet.iso", CreationFeatures::joliet(JolietLevel::Level3))]
+    {
+        let path = d.join(name);
+        make_iso(&path, &big, features);
+        let stage = stage(&d);
+        let cx = Cx::new(None);
+        let mut source = archive::open(&path).unwrap();
+        let listed = source.list(&cx).unwrap().unwrap();
+        assert_eq!(listed.len(), 4, "{name}");
+        assert!(listed.iter().any(|e| e.name == "Docs" && e.is_dir), "{name}");
+        assert!(listed.iter().any(|e| e.name == "Docs/Big File.bin" && e.size == Some(300_000)), "{name}");
+        source.extract(&stage, &cx).unwrap();
+        assert!(cx.failed().is_empty(), "{name}: {:?}", cx.failed());
+        assert_eq!(tree(&stage), want, "{name}");
+        assert_eq!(cx.bytes.get(), 300_000 + 7 + 9, "{name}");
+    }
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// An odc cpio header (76 octal bytes) and name for `name` with `size` bytes of data.
+fn odc_header(name: &str, mode: u32, size: usize) -> Vec<u8> {
+    let fields = [(0u64, 6), (7, 6), (u64::from(mode), 6), (0, 6), (0, 6), (1, 6), (0, 6), (1_715_953_530, 11)];
+    let mut h = b"070707".to_vec();
+    for (value, width) in fields.into_iter().chain([((name.len() + 1) as u64, 6), (size as u64, 11)]) {
+        h.extend(format!("{value:0width$o}").into_bytes());
+    }
+    h.extend(name.as_bytes());
+    h.push(0);
+    h
+}
+
+#[test]
+fn cpio_newc_and_odc() {
+    let d = dir("cpio");
+    let big = noise(100_001, 51);
+    let newc = d.join("a.cpio");
+    {
+        let entry = |name: &str, mode: u32, bytes: &[u8]| {
+            (cpio::NewcBuilder::new(name).mode(mode).mtime(1_715_953_530), std::io::Cursor::new(bytes.to_vec()))
+        };
+        let inputs = vec![
+            entry(".", 0o040755, b""),
+            entry("etc", 0o040755, b""),
+            entry("etc/big.bin", 0o100644, &big),
+            entry("../evil", 0o100644, b"x"),
+            entry("dev/null", 0o020666, b""),
+            entry("run.sh", 0o100755, b"echo\n"),
+        ];
+        cpio::write_cpio(inputs.into_iter(), std::fs::File::create(&newc).unwrap()).unwrap();
+    }
+    // odc by hand: the header, the name with its NUL, then the data.
+    let odc = d.join("b.cpio");
+    {
+        let mut bytes = odc_header("etc", 0o040755, 0);
+        bytes.extend(odc_header("etc/big.bin", 0o100644, big.len()));
+        bytes.extend(&big);
+        bytes.extend(odc_header("../evil", 0o100644, 1));
+        bytes.extend(b"x");
+        bytes.extend(odc_header("run.sh", 0o100755, 5));
+        bytes.extend(b"echo\n");
+        bytes.extend(odc_header("TRAILER!!!", 0, 0));
+        std::fs::write(&odc, bytes).unwrap();
+    }
+    for path in [&newc, &odc] {
+        let stage = stage(&d);
+        let cx = Cx::new(None);
+        let mut source = archive::open(path).unwrap();
+        assert_eq!(source.list(&cx).unwrap(), None);
+        source.extract(&stage, &cx).unwrap();
+        let failed = if path == &newc { vec!["../evil", "dev/null"] } else { vec!["../evil"] };
+        assert_eq!(cx.failed(), failed, "{}", path.display());
+        assert_eq!(tree(&stage), files(&[("etc/big.bin", &big), ("run.sh", b"echo\n")]), "{}", path.display());
+        let modified = std::fs::metadata(stage.join("etc/big.bin")).unwrap().modified().unwrap();
+        assert_eq!(modified, SystemTime::UNIX_EPOCH + Duration::from_secs(1_715_953_530));
+    }
+    // Binary cpio is 7-Zip's.
+    let mut binary = vec![0xC7, 0x71];
+    binary.resize(600, 0);
+    std::fs::write(d.join("c.cpio"), binary).unwrap();
+    assert_eq!(archive::open(&d.join("c.cpio")).err().unwrap().kind(), std::io::ErrorKind::Unsupported);
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// A tar of `entries` (names, contents), with a `./` folder first as dpkg-deb writes it.
+fn deb_tar(entries: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut b = tar::Builder::new(Vec::new());
+    let mut h = tar::Header::new_gnu();
+    h.set_entry_type(tar::EntryType::Directory);
+    h.set_mode(0o755);
+    h.set_size(0);
+    b.append_data(&mut h, "./", std::io::empty()).unwrap();
+    for (name, bytes) in entries {
+        let mut h = tar::Header::new_gnu();
+        h.set_size(bytes.len() as u64);
+        h.set_mode(0o644);
+        b.append_data(&mut h, name, *bytes).unwrap();
+    }
+    b.into_inner().unwrap()
+}
+
+#[test]
+fn deb_layout() {
+    let d = dir("deb");
+    let big = noise(200_000, 61);
+    let path = d.join("gezik_1.0_amd64.deb");
+    {
+        let data = deb_tar(&[("./usr/share/gezik/big.bin", &big)]);
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        gz.write_all(&data).unwrap();
+        let data_gz = gz.finish().unwrap();
+        let control = deb_tar(&[("./control", b"Package: gezik\n")]);
+        let mut xz = lzma_rust2::XzWriter::new(Vec::new(), lzma_rust2::XzOptions::with_preset(1)).unwrap();
+        xz.write_all(&control).unwrap();
+        let control_xz = xz.finish().unwrap();
+        let mut a = ar::Builder::new(std::fs::File::create(&path).unwrap());
+        let members = [("debian-binary", b"2.0\n".to_vec()), ("control.tar.xz", control_xz), ("data.tar.gz", data_gz)];
+        for (name, bytes) in members {
+            let mut h = ar::Header::new(name.as_bytes().to_vec(), bytes.len() as u64);
+            h.set_mode(0o100644);
+            a.append(&h, bytes.as_slice()).unwrap();
+        }
+    }
+    let stage = stage(&d);
+    let cx = Cx::new(None);
+    extract(&path, &stage, &cx).unwrap();
+    assert!(cx.failed().is_empty(), "{:?}", cx.failed());
+    assert_eq!(tree(&stage), files(&[("DEBIAN/control", b"Package: gezik\n"), ("usr/share/gezik/big.bin", &big)]));
+
+    // A plain ar: its members are the files.
+    let plain = d.join("lib.a");
+    {
+        let mut a = ar::Builder::new(std::fs::File::create(&plain).unwrap());
+        for (name, bytes) in [("one.o", &b"one"[..]), ("two.o", &b"second"[..])] {
+            let mut h = ar::Header::new(name.as_bytes().to_vec(), bytes.len() as u64);
+            h.set_mode(0o100644);
+            h.set_mtime(1_715_953_530);
+            a.append(&h, bytes).unwrap();
+        }
+    }
+    let stage = self::stage(&d);
+    let cx = Cx::new(None);
+    let mut source = archive::open(&plain).unwrap();
+    assert_eq!(source.list(&cx).unwrap().unwrap().len(), 2);
+    source.extract(&stage, &cx).unwrap();
+    assert!(cx.failed().is_empty(), "{:?}", cx.failed());
+    assert_eq!(tree(&stage), files(&[("one.o", b"one"), ("two.o", b"second")]));
+    let modified = std::fs::metadata(stage.join("one.o")).unwrap().modified().unwrap();
+    assert_eq!(modified, SystemTime::UNIX_EPOCH + Duration::from_secs(1_715_953_530));
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn udf_and_rare_formats_need_seven_zip() {
+    use gezik_core::batch::archive::Format;
+    assert!(!archive::supported(&Format::Udf));
+    assert!(!archive::supported(&Format::Other("lzh".into())));
+    for format in [Format::Rar, Format::Cab, Format::Iso, Format::Cpio, Format::Ar, Format::Deb] {
+        assert!(archive::supported(&format), "{format:?}");
+    }
+    let d = dir("rare");
+    std::fs::write(d.join("a.lzh"), b"\x1a\x00-lh5-\x10\x00\x00\x00").unwrap();
+    // A UDF-only image: the UDF descriptors without an ISO 9660 one.
+    let mut udf = vec![0u8; 0x9800];
+    udf[0x8001..0x8006].copy_from_slice(b"BEA01");
+    udf[0x8801..0x8806].copy_from_slice(b"NSR02");
+    std::fs::write(d.join("win.iso"), udf).unwrap();
+    for name in ["a.lzh", "win.iso"] {
+        let err = archive::open(&d.join(name)).err().unwrap();
+        assert_eq!(err.kind(), std::io::ErrorKind::Unsupported, "{name}");
+    }
+    let _ = std::fs::remove_dir_all(&d);
+}
