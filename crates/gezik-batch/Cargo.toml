@@ -7,7 +7,18 @@ license.workspace = true
 
 [dependencies]
 gezik-core.workspace = true
+# Local time for zip's DOS dates, and the hidden attribute of extracted files.
+gezik-platform.workspace = true
 # Unicode \w and case-insensitive matching, no other Unicode tables (size). No `perf`:
 # names are short, and it measured 0.45 MB of the release exe.
 regex = { version = "1", default-features = false, features = ["std", "unicode-case", "unicode-perl"] }
 kamadak-exif = "0.6"
+# Archives, all pure Rust. zip's zstd/lzma/xz and sevenz's deflate stay off (C code, a second
+# lzma copy, and a switch of the whole binary's flate2 to zlib-rs).
+zip = { version = "8.6.0", default-features = false, features = ["aes-crypto", "deflate-flate2", "deflate64", "bzip2"] }
+sevenz-rust2 = { version = "0.23.0", default-features = false, features = ["aes256", "compress", "bzip2", "ppmd"] }
+tar = { version = "0.4.46", default-features = false }
+flate2 = "1.1.10"
+lzma-rust2 = { version = "0.21.0", default-features = false, features = ["std", "encoder", "optimization", "xz"] }
+bzip2 = "0.6.1"
+ruzstd = { version = "0.9.0", default-features = false, features = ["std"] }
