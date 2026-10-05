@@ -1,9 +1,11 @@
-//! The tools Gezik can download (7-Zip now; ffmpeg and pdfium later): where each build is,
-//! its size and SHA-256, and which programs are inside.
+//! The tools Gezik can download (7-Zip and ffmpeg; pdfium later): where each build is, its
+//! size and SHA-256, and which programs are inside.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tool {
     SevenZip,
+    /// ffmpeg with ffprobe beside it (`programs = ["ffmpeg", "ffprobe"]`, `.exe` on Windows).
+    Ffmpeg,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,6 +56,8 @@ pub struct ToolBuild {
 }
 
 /// 7-Zip 26.03 from 7-zip.org, repackaged by `scripts/tools/prepare.ps1` (its output, pasted).
+/// ffmpeg's builds (9.0.2, one solid 7z per platform) are not published yet: until they are
+/// added here, ffmpeg is only found in settings or on PATH.
 pub static MANIFEST: &[ToolBuild] = &[
     ToolBuild {
         tool: Tool::SevenZip,

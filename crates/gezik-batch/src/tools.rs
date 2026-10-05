@@ -1,4 +1,4 @@
-//! The tools Gezik uses from outside (7-Zip): where one is (the path in settings, Gezik's
+//! The tools Gezik uses from outside (7-Zip, ffmpeg): where one is (the path in settings, Gezik's
 //! download, then PATH), and where a download goes (`<data>/tools/<name>-<version>/`).
 //! Downloading itself is `tasks::DownloadTask`.
 
@@ -33,7 +33,7 @@ const SEVEN_ZIP_MIN: (u32, u32) = (25, 0);
 /// Programs asked for their version: the answer, by path and the change time it was for.
 type Versions = HashMap<PathBuf, (Option<SystemTime>, bool)>;
 
-/// Whether the program at `path` is a version Gezik trusts. Asked once per program and
+/// Whether the program at `path` is a version Gezik trusts (for ffmpeg: any ffmpeg). Asked once per program and
 /// change time.
 fn recent_enough(tool: Tool, path: &Path) -> bool {
     static SEEN: Mutex<Option<Versions>> = Mutex::new(None);
@@ -47,6 +47,8 @@ fn recent_enough(tool: Tool, path: &Path) -> bool {
     drop(seen);
     let ok = match tool {
         Tool::SevenZip => banner(path).is_some_and(|text| seven_zip_version(&text).is_some_and(|v| v >= SEVEN_ZIP_MIN)),
+        // Any ffmpeg does audio and video; what needs a newer one (HEIC) asks for the version.
+        Tool::Ffmpeg => crate::convert::ffmpeg::is_ffmpeg(path),
     };
     SEEN.lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -113,6 +115,7 @@ pub fn says_damaged(message: &str) -> bool {
 pub(crate) fn folder_name(tool: Tool) -> &'static str {
     match tool {
         Tool::SevenZip => "7zip",
+        Tool::Ffmpeg => "ffmpeg",
     }
 }
 
@@ -120,6 +123,7 @@ pub(crate) fn folder_name(tool: Tool) -> &'static str {
 pub(crate) fn display_name(tool: Tool) -> &'static str {
     match tool {
         Tool::SevenZip => "7-Zip",
+        Tool::Ffmpeg => "ffmpeg",
     }
 }
 
@@ -148,17 +152,18 @@ fn find_in(
 fn path_names(tool: Tool) -> &'static [&'static str] {
     match tool {
         Tool::SevenZip => &["7z", "7zz", "7za"],
+        Tool::Ffmpeg => &["ffmpeg"],
     }
 }
 
-/// Where an installer puts the tool (Windows' 7-Zip in Program Files).
+/// Where an installer puts the tool (Windows' 7-Zip in Program Files; ffmpeg has none).
 fn installed_elsewhere(tool: Tool) -> Option<PathBuf> {
     match tool {
         Tool::SevenZip if cfg!(windows) => {
             let dir = PathBuf::from(std::env::var_os("ProgramFiles")?);
             Some(dir.join("7-Zip").join("7z.exe")).filter(|p| executable(p))
         }
-        Tool::SevenZip => None,
+        Tool::SevenZip | Tool::Ffmpeg => None,
     }
 }
 
