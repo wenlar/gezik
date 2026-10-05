@@ -1,7 +1,7 @@
 //! Reading archives into a staging folder: zip, 7z, rar, the tar family, single compressed
 //! files (`.gz .xz .bz2 .zst`), cab, iso, cpio and ar/deb, with passwords, volumes, cancel
 //! and size limits. Every entry name goes through `safe_join`; nothing is written outside
-//! the staging folder.
+//! the staging folder. Writing zip, 7z and tar archives is in `write`.
 
 mod ar;
 mod cab;
@@ -13,6 +13,7 @@ mod rar;
 mod sevenz;
 mod single;
 mod tar;
+pub mod write;
 mod zip;
 
 use std::fs::{self, File};

@@ -1,7 +1,9 @@
 //! The engine tasks of archives: extracting runs as a chain of an `ExtractTask` (unpack into
 //! a staging folder) and a `PlaceTask` (move what came out to where it goes) per archive,
-//! undone as one action.
+//! undone as one action. `CompressTask` makes an archive, `AddToArchiveTask` adds to one.
 
+mod add;
+mod compress;
 mod external;
 mod extract;
 mod place;
@@ -13,8 +15,13 @@ use std::sync::{Arc, Mutex};
 
 use gezik_core::batch::archive::archive_stem;
 
+use gezik_ops::RunCx;
+
+pub use self::add::AddToArchiveTask;
+pub use self::compress::{CompressTask, default_name};
 use self::extract::ExtractTask;
 use self::place::PlaceTask;
+pub use crate::archive::write::{CompressOptions, Level, OutFormat};
 
 /// Where the extracted files go.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -105,6 +112,41 @@ fn file_name(path: &Path) -> String {
 
 fn cancelled() -> io::Error {
     io::Error::new(io::ErrorKind::Interrupted, "cancelled")
+}
+
+/// `rapor.pdf`, or `3 items`.
+fn what(paths: &[PathBuf]) -> String {
+    match paths {
+        [one] => file_name(one),
+        many => format!("{} items", many.len()),
+    }
+}
+
+/// How many threads compress zip entries: one per core.
+fn workers() -> usize {
+    std::thread::available_parallelism().map_or(1, |n| n.get())
+}
+
+/// Writing's needs, met by the engine: progress, cancel, failure rows.
+struct Writing<'a, 'r>(&'a RunCx<'r>);
+
+impl crate::archive::write::WriteCx for Writing<'_, '_> {
+    fn add_bytes(&self, n: u64) {
+        self.0.add_bytes(n);
+    }
+
+    fn entry_done(&self) {
+        self.0.one_done(0);
+    }
+
+    fn entry_failed(&self, path: &Path, error: &io::Error) {
+        self.0.fail(path, error);
+        self.0.one_done(0);
+    }
+
+    fn stopped(&self) -> bool {
+        self.0.stopped()
+    }
 }
 
 #[cfg(test)]

@@ -198,7 +198,7 @@ fn drain(r: &mut dyn Read, cx: &dyn ExtractCx) {
     }
 }
 
-fn sz_error(e: SzError) -> io::Error {
+pub(super) fn sz_error(e: SzError) -> io::Error {
     match e {
         SzError::Io(e, _) | SzError::FileOpen(e, _) => e,
         SzError::PasswordRequired => io::Error::new(io::ErrorKind::PermissionDenied, "no password"),

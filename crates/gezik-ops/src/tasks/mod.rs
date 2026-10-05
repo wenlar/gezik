@@ -15,7 +15,7 @@ pub use move_::MoveTask;
 pub use new::NewTask;
 pub use rename::RenameTask;
 pub use restore::RestoreTask;
-pub use trash::TrashTask;
+pub use trash::{TrashTask, trash_path};
 
 use std::path::{Path, PathBuf};
 
