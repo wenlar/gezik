@@ -42,6 +42,9 @@ const OTHER_EXTENSIONS: [&str; 24] = [
 
 const TAR_ENDINGS: [&str; 9] = [".tar.gz", ".tgz", ".tar.xz", ".txz", ".tar.bz2", ".tbz2", ".tbz", ".tar.zst", ".tzst"];
 
+/// Endings of names that are archives (as the base of a numbered volume, or alone).
+const ARCHIVE_EXTENSIONS: [&str; 11] = ["7z", "zip", "rar", "tar", "gz", "xz", "bz2", "zst", "cab", "iso", "tar.gz"];
+
 /// What `head` (the file's first 0x9010 bytes, or all of a shorter file) is, with `name`
 /// deciding tar against a single compressed file and naming the rare formats.
 pub fn detect(head: &[u8], name: &str) -> Option<Format> {
@@ -71,14 +74,14 @@ pub fn detect(head: &[u8], name: &str) -> Option<Format> {
     if at(0, b"\x28\xB5\x2F\xFD") {
         return Some(tar_or_single(Codec::Zst));
     }
+    if at(0, b"070701") || at(0, b"070702") || at(0, b"070707") {
+        return Some(Format::Cpio);
+    }
     if at(0, b"MSCF\0\0\0\0") {
         return Some(Format::Cab);
     }
     if at(0, b"!<arch>\n") {
         return Some(if at(8, b"debian-binary") { Format::Deb } else { Format::Ar });
-    }
-    if at(0, b"070701") || at(0, b"070702") || at(0, b"070707") || at(0, &[0xC7, 0x71]) || at(0, &[0x71, 0xC7]) {
-        return Some(Format::Cpio);
     }
     if at(257, b"ustar") {
         return Some(Format::Tar(Codec::None));
@@ -92,6 +95,10 @@ pub fn detect(head: &[u8], name: &str) -> Option<Format> {
     }
     if head.len() >= 512 && v7_tar_checksum_ok(&head[..512]) {
         return Some(Format::Tar(Codec::None));
+    }
+    // The two-byte binary cpio magics go last so they cannot shadow a tar or an ISO.
+    if at(0, &[0xC7, 0x71]) || at(0, &[0x71, 0xC7]) {
+        return Some(Format::Cpio);
     }
     let ext = lower.rsplit_once('.')?.1;
     OTHER_EXTENSIONS.contains(&ext).then(|| Format::Other(ext.to_string()))
@@ -118,10 +125,16 @@ pub fn safe_join(dest: &Path, entry: &str) -> Option<PathBuf> {
         match c {
             Component::Normal(part) => {
                 let part = part.to_str()?;
-                if part.contains(':') || part.contains('\0') {
+                if part.contains(':') || part.chars().any(char::is_control) {
                     return None;
                 }
-                if let Err(NameError::Reserved(_)) = names::validate_name(part, NameRules::Windows) {
+                // Windows drops trailing dots and spaces, so `NUL.` is the NUL device and `.. ` is `..`.
+                if part.ends_with(['.', ' ']) {
+                    return None;
+                }
+                if let Err(NameError::Reserved(_) | NameError::TooLong | NameError::TrailingDotOrSpace) =
+                    names::validate_name(part, NameRules::Windows)
+                {
                     return None;
                 }
                 out.push(part);
@@ -140,7 +153,7 @@ pub enum VolumeKind {
     /// `big.7z.001`, `big.7z.002`…: the number is appended to the whole name.
     Numbered { width: usize },
     /// `big.part01.rar`, `big.part02.rar`…: the number goes between the name and `.rar`.
-    RarPart { width: usize },
+    RarPart { width: usize, upper: bool },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -168,11 +181,18 @@ fn split_volume(name: &str) -> Option<(&str, VolumeKind)> {
     {
         let digits = &head[at + 5..];
         if at > 0 && !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) {
-            return Some((&name[..at], VolumeKind::RarPart { width: digits.len() }));
+            return Some((
+                &name[..at],
+                VolumeKind::RarPart { width: digits.len(), upper: name[at + 1..].starts_with('P') },
+            ));
         }
     }
     let (base, digits) = name.rsplit_once('.')?;
-    if digits.len() >= 3 && digits.bytes().all(|b| b.is_ascii_digit()) && !base.is_empty() {
+    let lower_base = &lower[..base.len()];
+    if digits.len() >= 3
+        && digits.bytes().all(|b| b.is_ascii_digit())
+        && ARCHIVE_EXTENSIONS.iter().any(|e| lower_base.ends_with(&format!(".{e}")))
+    {
         return Some((base, VolumeKind::Numbered { width: digits.len() }));
     }
     None
@@ -182,19 +202,25 @@ fn split_volume(name: &str) -> Option<(&str, VolumeKind)> {
 pub fn volume_name(base: &str, kind: VolumeKind, n: u32) -> String {
     match kind {
         VolumeKind::Numbered { width } => format!("{base}.{n:0width$}"),
-        VolumeKind::RarPart { width } => format!("{base}.part{n:0width$}.rar"),
+        VolumeKind::RarPart { width, upper: false } => format!("{base}.part{n:0width$}.rar"),
+        VolumeKind::RarPart { width, upper: true } => format!("{base}.PART{n:0width$}.RAR"),
     }
 }
 
 /// What an extracted archive's folder is called: `a.tar.gz`, `a.part1.rar`, `a.7z.001` and
-/// `a.zip` all give `a`.
+/// `a.zip` all give `a`; a name that is only an extension gives an empty string.
 pub fn archive_stem(name: &str) -> &str {
     let name = match split_volume(name) {
         Some((base, VolumeKind::RarPart { .. })) => return base,
         Some((base, VolumeKind::Numbered { .. })) => base,
         None => name,
     };
-    names::split_name(name, false).0
+    let (stem, _) = names::split_name(name, false);
+    // A name that is only an extension (`.zip`) has no stem; callers fall back to a default.
+    if stem.starts_with('.') && ARCHIVE_EXTENSIONS.contains(&stem[1..].to_ascii_lowercase().as_str()) {
+        return "";
+    }
+    stem
 }
 
 /// What a single compressed file is called once unpacked: `notes.txt.gz` gives `notes.txt`.
@@ -274,6 +300,15 @@ mod tests {
     }
 
     #[test]
+    fn binary_cpio_magic_does_not_shadow_tar() {
+        let mut tar = head(b"ustar\x0000", 257);
+        tar[0] = 0xC7;
+        tar[1] = 0x71;
+        assert_eq!(detect(&tar, "a.tar"), Some(Format::Tar(Codec::None)));
+        assert_eq!(detect(&[0xC7, 0x71, 0], "a.cpio"), Some(Format::Cpio));
+    }
+
+    #[test]
     fn rare_formats_go_to_seven_zip_by_extension() {
         for name in ["a.lzh", "a.lha", "a.arj", "a.wim", "a.dmg", "a.msi", "a.rpm", "a.z01", "a.vhd", "a.xar"] {
             assert!(matches!(detect(b"\0\0\0\0", name), Some(Format::Other(_))), "{name}");
@@ -286,9 +321,31 @@ mod tests {
         assert_eq!(safe_join(dest, "a/b.txt"), Some(dest.join("a").join("b.txt")));
         assert_eq!(safe_join(dest, "a\\b.txt"), Some(dest.join("a").join("b.txt")));
         assert_eq!(safe_join(dest, "./a"), Some(dest.join("a")));
-        for bad in ["../x", "a/../../x", "/etc/passwd", "\\x", "C:\\x", "C:x", "\\\\srv\\s\\x", "a:stream", "", ".."] {
+        for bad in [
+            "../x",
+            "a/../../x",
+            "/etc/passwd",
+            "\\x",
+            "C:\\x",
+            "C:x",
+            "\\\\srv\\s\\x",
+            "a:stream",
+            "",
+            "..",
+            "CON.",
+            "NUL ",
+            "aux.txt.",
+            "a/.. ",
+            "a/... ",
+            "CON .txt",
+            "a.",
+            "COM1 ",
+            "con.txt ",
+            "a/\u{1}b",
+        ] {
             assert_eq!(safe_join(dest, bad), None, "{bad}");
         }
+        assert_eq!(safe_join(dest, &"x".repeat(300)), None);
         for reserved in ["CON", "con.txt", "a/NUL", "LPT1.log"] {
             assert_eq!(safe_join(dest, reserved), None, "{reserved}");
         }
@@ -308,7 +365,14 @@ mod tests {
         assert_eq!(volume_name("big.7z", set.kind, 12), "big.7z.012");
         assert_eq!(volume_set("x.part3.rar").unwrap().first, "x.part1.rar");
         assert_eq!(volume_set("x.part03.rar").unwrap().first, "x.part01.rar");
+        assert_eq!(volume_set("X.PART03.RAR").unwrap().first, "X.PART01.RAR");
         assert!(volume_set("x.zip").is_none());
+        assert!(volume_set("report.2024").is_none());
+        assert!(volume_set("version.001.txt").is_none());
+        assert_eq!(volume_set("a.zip.003").unwrap().first, "a.zip.001");
+        assert_eq!(volume_set("a.7z.001").unwrap().first, "a.7z.001");
+        assert_eq!(archive_stem(".zip"), "");
+        assert_eq!(archive_stem(".gitignore"), ".gitignore");
     }
 
     #[test]
