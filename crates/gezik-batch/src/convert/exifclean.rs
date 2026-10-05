@@ -107,12 +107,16 @@ fn sub_ifd(t: Tiff, b: &[u8], tag: u16) -> Option<usize> {
 /// The smallest offset an IFD can have: right after the 8-byte header.
 const FIRST_IFD: usize = 8;
 
-/// Whether the block has a GPS IFD pointer; `None` when its IFD0 cannot be read (then it may
-/// hold a location nothing here can find).
+/// Whether the block has a GPS IFD pointer; `None` when its IFD0 cannot be read, or has more
+/// than one GPS pointer (then it may hold a location nothing here can find).
 pub fn has_gps(b: &[u8]) -> Option<bool> {
     let t = Tiff::new(b)?;
     let (list, _) = entries(t, b, ifd0(t, b)?)?;
-    Some(list.iter().any(|e| e.tag == 0x8825))
+    match list.iter().filter(|e| e.tag == 0x8825).count() {
+        0 => Some(false),
+        1 => Some(true),
+        _ => None,
+    }
 }
 
 /// Removes the location: every GPS value (and its out-of-line data) is zeroed, and the GPS
@@ -122,6 +126,7 @@ pub fn has_gps(b: &[u8]) -> Option<bool> {
 pub fn strip_gps(b: &mut [u8]) -> bool {
     (|| {
         let t = Tiff::new(b)?;
+        has_gps(b)?;
         let gps = sub_ifd(t, b, 0x8825)?;
         if gps < FIRST_IFD || gps == ifd0(t, b)? {
             return None;
@@ -279,8 +284,11 @@ fn left_out(segment: &Segment, jpeg: &[u8]) -> bool {
 
 /// Where the main picture ends (after its EOI), given where its first scan starts; the end
 /// of the file when it has no EOI. What comes after is a trailer: MPF's secondary pictures
-/// (Ultra HDR's gain map, a camera's preview), a motion photo's video.
-fn picture_end(jpeg: &[u8], scan: usize) -> usize {
+/// (Ultra HDR's gain map, a camera's preview), a motion photo's video. `None` (fail closed)
+/// when something between the scans could hold metadata that is not looked at (an APPn
+/// segment), or when another picture starts before this one ended (SOI, or the TEM marker
+/// that has no place there): a truncated main picture must not pass on what follows.
+fn picture_end(jpeg: &[u8], scan: usize) -> Option<usize> {
     let mut p = scan;
     while p + 1 < jpeg.len() {
         if jpeg[p] != 0xFF {
@@ -288,9 +296,10 @@ fn picture_end(jpeg: &[u8], scan: usize) -> usize {
             continue;
         }
         match jpeg[p + 1] {
-            0xD9 => return p + 2,
+            0xD9 => return Some(p + 2),
             // Stuffed 0xFF, a restart marker, or a fill byte: still image data.
             0x00 | 0xD0..=0xD7 | 0xFF => p += 1,
+            0xD8 | 0x01 | 0xE0..=0xEF => return None,
             // A segment between scans (SOS, DHT…): skip it; the data after it is scanned on.
             _ => match jpeg.get(p + 2..p + 4) {
                 Some(len) => p += 2 + usize::from(u16::from_be_bytes([len[0], len[1]])),
@@ -298,7 +307,7 @@ fn picture_end(jpeg: &[u8], scan: usize) -> usize {
             },
         }
     }
-    jpeg.len()
+    Some(jpeg.len())
 }
 
 /// A JPEG file without its location, the picture itself untouched (no re-encode): the GPS
@@ -310,7 +319,7 @@ fn picture_end(jpeg: &[u8], scan: usize) -> usize {
 /// block whose location cannot be removed this way (then it has to be re-encoded).
 pub fn jpeg_without_location(jpeg: &[u8]) -> Option<Vec<u8>> {
     let (list, scan) = segments(jpeg)?;
-    let end = picture_end(jpeg, scan);
+    let end = picture_end(jpeg, scan)?;
     let mut out = Vec::with_capacity(end);
     out.extend_from_slice(&jpeg[..2]);
     for segment in list.iter().filter(|s| !left_out(s, jpeg)) {

@@ -300,6 +300,11 @@ fn decode(path: &Path) -> io::Result<Source> {
     limits.check_dimensions(w, h).map_err(|_| too_large())?;
     decoder.set_limits(limits.clone()).map_err(|_| too_large())?;
     limits.reserve(decoder.total_bytes()).map_err(|_| too_large())?;
+    // The conversion makes 8-bit RGBA copies (flatten, transparency, ffmpeg's PNG, resize):
+    // a grey picture takes four times its own size there.
+    if !fits(w, h, 4) {
+        return Err(too_large());
+    }
     // Before from_decoder, which takes the decoder. Metadata that cannot be read is left out.
     let icc = decoder.icc_profile().ok().flatten();
     let exif = decoder.exif_metadata().ok().flatten();

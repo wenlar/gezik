@@ -880,3 +880,91 @@ fn self_pointing_ifds_are_left_alone() {
     assert!(!exifclean::strip_gps(&mut b));
     assert_eq!(b, before);
 }
+
+#[test]
+fn a_grey_picture_too_large_as_rgba_is_refused_before_decoding() {
+    let d = dir("grey-bomb");
+    let (png, output) = (d.join("grey.png"), d.join("out.tmp"));
+    // 16384² grey: 256 MiB decoded (within image's limit), 1 GiB as RGBA. The image data is
+    // a tiny stream that does not hold the picture: refused before it is read.
+    let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+    let side = 16_384u32.to_be_bytes();
+    png_chunk(&mut bytes, b"IHDR", &[&side[..], &side, &[8, 0, 0, 0, 0]].concat());
+    png_chunk(&mut bytes, b"IDAT", &[0x78, 0x9C, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01]);
+    png_chunk(&mut bytes, b"IEND", &[]);
+    std::fs::write(&png, bytes).unwrap();
+    for format in [ImageFormat::Jpeg, ImageFormat::Png] {
+        let err = convert_image(&job(&png, &output, &options(format)), &never).unwrap_err();
+        assert_eq!(err.to_string(), "too large to convert", "{format:?}");
+        assert!(!output.exists());
+    }
+}
+
+/// The camera JPEG with `insert` put just before its EOI and `after` after it; with `cut`,
+/// that many bytes of image data and the EOI are left out (a truncated picture).
+fn camera_jpeg_spliced(path: &Path, insert: &[u8], cut: usize, after: &[u8]) {
+    camera_jpeg(path, true);
+    let bytes = std::fs::read(path).unwrap();
+    let end = bytes.len() - 2 - cut;
+    let eoi: &[u8] = if cut == 0 { &[0xFF, 0xD9] } else { &[] };
+    std::fs::write(path, [&bytes[..end], insert, eoi, after].concat()).unwrap();
+}
+
+#[test]
+fn location_removal_fails_closed_on_what_it_does_not_walk() {
+    let d = dir("walk");
+    let output = d.join("out.tmp");
+    let lat = TiffWriter::new(true).rationals(&[(1234, 100)]);
+    let thumb = jpeg_bytes(&[128; 8 * 8 * 3], 8, 8, 50);
+    let exif = exif_block(true, 1, 8, 8, &thumb);
+    let mut second = Vec::new();
+    let mut encoder = jpeg_encoder::Encoder::new(&mut second, 80);
+    encoder.add_exif_metadata(&exif).unwrap();
+    encoder.encode(&[50; 8 * 8 * 3], 8, 8, jpeg_encoder::ColorType::Rgb).unwrap();
+
+    let app = |marker: u8, payload: &[u8]| {
+        [&[0xFF, marker][..], &((payload.len() + 2) as u16).to_be_bytes(), payload].concat()
+    };
+    let exif_segment = app(0xE1, &[b"Exif\x00\x00", &exif[..]].concat());
+    let cases: Vec<(&str, Vec<u8>, usize, Vec<u8>)> = vec![
+        // APPn segments after the first scan (between progressive scans).
+        ("app1 after the scan", exif_segment.clone(), 0, vec![]),
+        ("app13 after the scan", app(0xED, b"Photoshop 3.0\x00Barcelona"), 0, vec![]),
+        ("mpf after the scan", app(0xE2, b"MPF\x00II*\x00\x08\x00\x00\x00"), 0, vec![]),
+        // A truncated main picture (no EOI) followed by another picture.
+        ("picture after a truncated one", vec![], 6, second.clone()),
+        ("TEM in the image data", vec![0xFF, 0x01], 0, vec![]),
+    ];
+    for (name, insert, cut, after) in cases {
+        let input = d.join("camera.jpg");
+        camera_jpeg_spliced(&input, &insert, cut, &after);
+        let err = strip_location(&input, &output).expect_err(name);
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData, "{name}");
+        assert!(!output.exists(), "{name}");
+        // The preset re-encodes it instead (when the picture can be read at all).
+        let preset = gezik_core::batch::convert::preset(gezik_core::batch::convert::REMOVE_LOCATION).unwrap();
+        let gezik_core::batch::convert::PresetWhat::Image(base) = preset.what else { panic!() };
+        let o = ImageOptions { format: ImageFormat::Jpeg, ..base };
+        if remove_location(&job(&input, &output, &o), &never).is_ok() {
+            assert!(!contains(&std::fs::read(&output).unwrap(), &lat), "{name}");
+            std::fs::remove_file(&output).unwrap();
+        }
+    }
+}
+
+#[test]
+fn two_gps_pointers_fail_closed() {
+    let d = dir("two-gps");
+    let (input, output) = (d.join("camera.jpg"), d.join("out.tmp"));
+    let thumb = jpeg_bytes(&[128; 8 * 8 * 3], 8, 8, 50);
+    let mut block = exif_block(true, 6, 64, 32, &thumb);
+    // IFD0's first entry (Make, at 8 + 2) becomes a second GPS pointer.
+    block[10..12].copy_from_slice(&0x8825u16.to_le_bytes());
+    assert_eq!(exifclean::has_gps(&block), None);
+    let mut copy = block.clone();
+    assert!(!exifclean::strip_gps(&mut copy));
+    assert_eq!(copy, block);
+    camera_jpeg_with(&input, &block, &[], &[]);
+    assert_eq!(strip_location(&input, &output).unwrap_err().kind(), io::ErrorKind::InvalidData);
+    assert!(!output.exists());
+}
