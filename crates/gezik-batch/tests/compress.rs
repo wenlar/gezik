@@ -340,7 +340,7 @@ fn finish(engine: &Engine, job: JobId, mut on: impl FnMut(&Engine, JobId, &Event
                 Event::Conflicts { job: j, conflicts } if *j == job && !handled => {
                     engine.decide(job, conflicts.iter().map(|c| c.decision).collect());
                 }
-                Event::Question { job: j, .. } if *j == job && !handled => engine.answer(job, Answer::Cancel),
+                Event::Question { job: j, id, .. } if *j == job && !handled => engine.answer(job, *id, Answer::Cancel),
                 Event::Finished { job: j, report } if *j == job => {
                     let report = report.clone();
                     seen.push(event);
@@ -465,9 +465,9 @@ fn add_to_zip_keeps_aes_entries() {
     // No password given: it is asked, a wrong one again.
     let mut asked = Vec::new();
     let (report, _) = add(&engine, &archive, children(&more), None, |engine, job, event| {
-        let Event::Question { question, .. } = event else { return false };
+        let Event::Question { id, question, .. } = event else { return false };
         asked.push(question.clone());
-        engine.answer(job, Answer::Text(if asked.len() == 1 { "wrong" } else { "Passw0rd" }.into()));
+        engine.answer(job, *id, Answer::Text(if asked.len() == 1 { "wrong" } else { "Passw0rd" }.into()));
         true
     });
     assert!(report.failures.is_empty(), "{:?}", report.failures);
@@ -509,9 +509,9 @@ fn add_to_tar_gz_repacks() {
     let engine = engine(&d);
     let mut questions = Vec::new();
     let (report, _) = add(&engine, &archive, children(&more), None, |engine, job, event| {
-        let Event::Question { question, .. } = event else { return false };
+        let Event::Question { id, question, .. } = event else { return false };
         questions.push(question.clone());
-        engine.answer(job, Answer::Button(2));
+        engine.answer(job, *id, Answer::Button(2));
         true
     });
     assert!(report.failures.is_empty(), "{:?}", report.failures);
@@ -538,14 +538,77 @@ fn add_to_tar_gz_repacks() {
     // Replace this time.
     make(&more, &[("Docs/a.txt", b"newer a")]);
     let (report, _) = add(&engine, &archive, vec![more.join("Docs")], None, |engine, job, event| {
-        let Event::Question { .. } = event else { return false };
-        engine.answer(job, Answer::Button(0));
+        let Event::Question { id, .. } = event else { return false };
+        engine.answer(job, *id, Answer::Button(0));
         true
     });
     assert!(report.failures.is_empty(), "{:?}", report.failures);
     let back = unpacked(&archive, &d, "back", None);
     assert!(back.contains(&("Docs/a.txt".to_owned(), b"newer a".to_vec())), "{back:?}");
     assert_eq!(back.len(), 4);
+    assert!(leftovers(&d).is_empty(), "{:?}", leftovers(&d));
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn add_keeps_the_unix_facts_of_entries_packed_again() {
+    let d = dir("add-unix");
+    // A tar.gz made on Unix: a 0755 script with its owner and time.
+    let archive = d.join("tools.tar.gz");
+    {
+        let gz = flate2::write::GzEncoder::new(std::fs::File::create(&archive).unwrap(), flate2::Compression::fast());
+        let mut builder = tar::Builder::new(gz);
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(tar::EntryType::Regular);
+        header.set_size(10);
+        header.set_mode(0o755);
+        header.set_mtime(1_700_000_000);
+        header.set_uid(1000);
+        header.set_gid(100);
+        header.set_username("teo").unwrap();
+        header.set_groupname("staff").unwrap();
+        builder.append_data(&mut header, "bin/run.sh", &b"#!/bin/sh\n"[..]).unwrap();
+        builder.into_inner().unwrap().finish().unwrap();
+    }
+    // A 7z whose entry carries a Unix mode (7-Zip's 0x8000 flag), on every system.
+    let sevenz = d.join("tools.7z");
+    {
+        let src = d.join("src");
+        make(&src, &[("run.sh", b"#!/bin/sh\n")]);
+        let mut items = inputs(&children(&src));
+        items[0].mode = 0o755;
+        items[0].keep_mode = true;
+        write::write(&items, &sevenz, &options(OutFormat::SevenZ, Level::Normal), 1, &W::default()).unwrap();
+    }
+    let more = d.join("more");
+    make(&more, &[("new.txt", b"new")]);
+    let engine = engine(&d);
+    for target in [&archive, &sevenz] {
+        let (report, _) = add(&engine, target, children(&more), None, nothing);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+    }
+    let gz = flate2::read::GzDecoder::new(std::fs::File::open(&archive).unwrap());
+    let mut tar = tar::Archive::new(gz);
+    let mut found = false;
+    for entry in tar.entries().unwrap() {
+        let entry = entry.unwrap();
+        let header = entry.header();
+        if entry.path().unwrap() == Path::new("bin/run.sh") {
+            found = true;
+            assert_eq!(header.mode().unwrap() & 0o7777, 0o755);
+            assert_eq!(header.mtime().unwrap(), 1_700_000_000);
+            assert_eq!((header.uid().unwrap(), header.gid().unwrap()), (1000, 100));
+            assert_eq!(header.username().unwrap(), Some("teo"));
+            assert_eq!(header.groupname().unwrap(), Some("staff"));
+        }
+    }
+    assert!(found, "bin/run.sh is kept");
+    let packed = sevenz_rust2::Archive::open(&sevenz).unwrap();
+    let entry = packed.files.iter().find(|e| e.name() == "run.sh").expect("run.sh is kept");
+    let attributes = entry.windows_attributes();
+    assert!(attributes & 0x8000 != 0, "{attributes:#x}");
+    assert_eq!((attributes >> 16) & 0o7777, 0o755);
+    assert!(packed.files.iter().any(|e| e.name() == "new.txt"));
     assert!(leftovers(&d).is_empty(), "{:?}", leftovers(&d));
     let _ = std::fs::remove_dir_all(&d);
 }
@@ -685,9 +748,9 @@ fn add_clashes_ignore_case_and_see_files_against_folders() {
     let engine = engine(&d);
     let mut titles = Vec::new();
     let (report, _) = add(&engine, &archive, children(&more), None, |engine, job, event| {
-        let Event::Question { question: Question::Confirm { title, .. }, .. } = event else { return false };
+        let Event::Question { id, question: Question::Confirm { title, .. }, .. } = event else { return false };
         titles.push(title.clone());
-        engine.answer(job, Answer::Button(2));
+        engine.answer(job, *id, Answer::Button(2));
         true
     });
     assert!(report.failures.is_empty(), "{:?}", report.failures);
@@ -702,8 +765,8 @@ fn add_clashes_ignore_case_and_see_files_against_folders() {
     let file = d.join("file");
     make(&file, &[("pics", b"now a file")]);
     let (report, _) = add(&engine, &archive, vec![file.join("pics")], None, |engine, job, event| {
-        let Event::Question { .. } = event else { return false };
-        engine.answer(job, Answer::Button(0));
+        let Event::Question { id, .. } = event else { return false };
+        engine.answer(job, *id, Answer::Button(0));
         true
     });
     assert!(report.failures.is_empty(), "{:?}", report.failures);
@@ -715,8 +778,8 @@ fn add_clashes_ignore_case_and_see_files_against_folders() {
     let before = std::fs::read(&archive).unwrap();
     let label = engine.undo_label();
     let (report, _) = add(&engine, &archive, vec![file.join("pics")], None, |engine, job, event| {
-        let Event::Question { .. } = event else { return false };
-        engine.answer(job, Answer::Button(1));
+        let Event::Question { id, .. } = event else { return false };
+        engine.answer(job, *id, Answer::Button(1));
         true
     });
     assert!(report.failures.is_empty(), "{:?}", report.failures);
