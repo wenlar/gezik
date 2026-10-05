@@ -309,17 +309,21 @@ pub fn drive_facts(path: &Path) -> io::Result<DriveFacts> {
     let root_wide = HSTRING::from(root.as_os_str());
     let drive_type = unsafe { GetDriveTypeW(&root_wide) };
     if drive_type == DRIVE_REMOTE || root_text.starts_with(r"\\") {
-        return Ok(DriveFacts { id: root_text.to_lowercase(), kind: DiskKind::Network, trash: false });
+        return Ok(DriveFacts { id: root_text.to_lowercase(), kind: DiskKind::Network, trash: false, max_file: None });
     }
     let mut serial = 0u32;
-    unsafe { GetVolumeInformationW(&root_wide, None, Some(&mut serial), None, None, None) }.map_err(io_error)?;
+    let mut file_system = [0u16; 64];
+    unsafe { GetVolumeInformationW(&root_wide, None, Some(&mut serial), None, None, Some(&mut file_system)) }
+        .map_err(io_error)?;
+    let end = file_system.iter().position(|&c| c == 0).unwrap_or(file_system.len());
+    let max_file = super::max_file_for(&String::from_utf16_lossy(&file_system[..end]));
     let kind = match seek_penalty(&root_text) {
         Some(true) => DiskKind::Hdd,
         Some(false) => DiskKind::Ssd,
         None => DiskKind::Unknown,
     };
     // Removable drives (USB sticks) and optical drives have no Recycle Bin.
-    Ok(DriveFacts { id: format!("{serial:08x}"), kind, trash: drive_type == DRIVE_FIXED })
+    Ok(DriveFacts { id: format!("{serial:08x}"), kind, trash: drive_type == DRIVE_FIXED, max_file })
 }
 
 /// Whether the disk behind drive `root` (`C:\`) has to seek, like a spinning disk does.

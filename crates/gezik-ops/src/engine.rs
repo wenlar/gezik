@@ -806,6 +806,29 @@ mod tests {
         }
     }
 
+    /// FAT32 holds no file of 4 GB or more, and says "disk full" for one: a file too big for
+    /// the target drive fails at once with that reason (it is not paused for space).
+    #[test]
+    fn a_file_too_big_for_the_target_drive_fails_and_the_rest_goes_on() {
+        let dir = test_dir("too-big");
+        write(&dir.join("src/big.bin"), "01234567890123456789");
+        write(&dir.join("src/small.bin"), "01234");
+        std::fs::create_dir(dir.join("dst")).unwrap();
+        let engine = engine();
+        let root = fs::drive_root(&dir).unwrap();
+        let facts = fs::drive_facts(&dir).unwrap();
+        lock(&engine.0.drives).insert(root, DriveFacts { max_file: Some(10), ..facts });
+        let sources = vec![dir.join("src/big.bin"), dir.join("src/small.bin")];
+        let (report, events) =
+            finish(&engine, engine.submit(Box::new(CopyTask::into(sources, &dir.join("dst")))), defaults);
+        assert_eq!(report.failures.len(), 1, "{:?}", report.failures);
+        assert!(report.failures[0].message.contains("too big for this drive"), "{}", report.failures[0].message);
+        assert!(!events.iter().any(|e| matches!(e, Event::Paused { .. })), "not paused for space");
+        assert!(!dir.join("dst/big.bin").exists());
+        assert_eq!(read(&dir.join("dst/small.bin")), "01234");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// The list must drop a partial file that a cancelled or failed item left and removed.
     #[test]
     fn a_cancelled_or_failed_item_reports_its_folder_as_changed() {
