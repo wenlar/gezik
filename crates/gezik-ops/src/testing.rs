@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use gezik_core::ops::conflict::{Decision, Facts};
 
 use crate::engine::{ConflictItem, Engine, Event, JobId, Report, Settings, lock};
-use crate::task::{Outcome, PlanItem, Resources, RunCx, ScanSink, Stage, Task, TaskKind, Work};
+use crate::task::{Answer, Outcome, PlanItem, Question, Resources, RunCx, ScanSink, Stage, Task, TaskKind, Work};
 
 /// A fresh, empty folder.
 pub(crate) fn test_dir(name: &str) -> PathBuf {
@@ -80,6 +80,7 @@ fn event_job(event: &Event) -> Option<JobId> {
         | Event::Progress { job, .. }
         | Event::Conflicts { job, .. }
         | Event::Paused { job, .. }
+        | Event::Question { job, .. }
         | Event::Finished { job, .. } => Some(*job),
         Event::Changed { .. } | Event::History => None,
     }
@@ -193,5 +194,75 @@ impl ScanSink for CollectSink {
 
     fn failed(&mut self, path: &Path, _error: io::Error) {
         self.failed.push(path.to_path_buf());
+    }
+}
+
+/// Asks for a password once; its result is the answer's text.
+#[derive(Default)]
+pub(crate) struct AskingTask;
+
+impl Task for AskingTask {
+    fn kind(&self) -> TaskKind {
+        TaskKind::Extract
+    }
+
+    fn title(&self) -> String {
+        "Asking".into()
+    }
+
+    fn count(&self) -> usize {
+        1
+    }
+
+    fn resources(&self) -> Resources {
+        Resources { paths: Vec::new(), work: Work::Cpu }
+    }
+
+    fn plan(&self, sink: &mut dyn ScanSink) {
+        sink.item(PlanItem::new(Stage::Parallel, Facts::default()).top(0));
+    }
+
+    fn run(&self, _: &PlanItem, cx: &RunCx<'_>) -> io::Result<Outcome> {
+        match cx.ask(Question::Password { archive: "a.zip".into(), retry: false }) {
+            Answer::Text(text) => Ok(Outcome::Created { path: text.into(), facts: Facts::default(), from: None }),
+            _ => Err(io::Error::new(io::ErrorKind::Interrupted, "cancelled")),
+        }
+    }
+}
+
+/// Makes a staging folder with a file in it.
+pub(crate) struct StagingTask(PathBuf);
+
+impl StagingTask {
+    pub fn new(dir: PathBuf) -> StagingTask {
+        StagingTask(dir)
+    }
+}
+
+impl Task for StagingTask {
+    fn kind(&self) -> TaskKind {
+        TaskKind::Extract
+    }
+
+    fn title(&self) -> String {
+        "Staging".into()
+    }
+
+    fn count(&self) -> usize {
+        1
+    }
+
+    fn resources(&self) -> Resources {
+        Resources { paths: vec![self.0.clone()], work: Work::Disk }
+    }
+
+    fn plan(&self, sink: &mut dyn ScanSink) {
+        sink.item(PlanItem::new(Stage::Parallel, Facts::default()).target(self.0.join("x")).top(0));
+    }
+
+    fn run(&self, _: &PlanItem, cx: &RunCx<'_>) -> io::Result<Outcome> {
+        let staging = cx.staging_dir(&self.0.join("x"))?;
+        std::fs::write(staging.join("f.txt"), "f")?;
+        Ok(Outcome::Nothing)
     }
 }

@@ -7,6 +7,7 @@ use std::time::Duration;
 use gezik_core::ops::conflict::Decision;
 
 use crate::engine::{PauseReason, lock};
+use crate::task::Answer;
 
 #[derive(Default)]
 pub(crate) struct Control {
@@ -15,10 +16,16 @@ pub(crate) struct Control {
     resumed: Condvar,
     decisions: Mutex<Option<Vec<Decision>>>,
     decided: Condvar,
+    answer: Mutex<Option<Answer>>,
+    answered: Condvar,
+    /// Held while an item asks: one question at a time.
+    pub asking_turn: Mutex<()>,
     pub start_now: AtomicBool,
     pub running: AtomicBool,
     pub scanning: AtomicBool,
     pub deciding: AtomicBool,
+    /// Waiting for the answer to a question.
+    pub asking: AtomicBool,
     pub items_done: AtomicU64,
     pub items_total: AtomicU64,
     pub bytes_done: AtomicU64,
@@ -34,6 +41,7 @@ impl Control {
         self.cancel.store(true, Ordering::SeqCst);
         self.resumed.notify_all();
         self.decided.notify_all();
+        self.answered.notify_all();
     }
 
     pub fn cancelled(&self) -> bool {
@@ -81,6 +89,33 @@ impl Control {
                 return None;
             }
             decisions = match self.decided.wait_timeout(decisions, RECHECK) {
+                Ok((guard, _)) => guard,
+                Err(poisoned) => poisoned.into_inner().0,
+            };
+        }
+    }
+
+    pub fn set_answer(&self, answer: Answer) {
+        *lock(&self.answer) = Some(answer);
+        self.answered.notify_all();
+    }
+
+    /// Drops an answer left from an earlier question.
+    pub fn clear_answer(&self) {
+        *lock(&self.answer) = None;
+    }
+
+    /// Waits for the user's answer; `None` if the job is cancelled meanwhile.
+    pub fn wait_answer(&self) -> Option<Answer> {
+        let mut answer = lock(&self.answer);
+        loop {
+            if let Some(given) = answer.take() {
+                return Some(given);
+            }
+            if self.cancelled() {
+                return None;
+            }
+            answer = match self.answered.wait_timeout(answer, RECHECK) {
                 Ok((guard, _)) => guard,
                 Err(poisoned) => poisoned.into_inner().0,
             };

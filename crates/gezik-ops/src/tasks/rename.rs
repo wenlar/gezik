@@ -359,7 +359,7 @@ mod tests {
         let temp = crate::task::TempCopies::new(None);
         let control = crate::control::Control::default();
         let no_bin = |_: &Path| false;
-        let cx = RunCx { control: &control, trash: &no_bin, added: std::cell::Cell::new(0), temp: &temp };
+        let cx = RunCx { control: &control, trash: &no_bin, added: std::cell::Cell::new(0), temp: &temp, job: None };
         let task =
             RenameTask::many(vec![(dir.join("a.txt"), dir.join("b.txt")), (dir.join("b.txt"), dir.join("a.txt"))]);
         let facts = facts_after(&dir.join("a.txt"), false);
@@ -384,7 +384,7 @@ mod tests {
         let temp = crate::task::TempCopies::new(Some(pending.clone()));
         let control = crate::control::Control::default();
         let no_bin = |_: &Path| false;
-        let cx = RunCx { control: &control, trash: &no_bin, added: std::cell::Cell::new(0), temp: &temp };
+        let cx = RunCx { control: &control, trash: &no_bin, added: std::cell::Cell::new(0), temp: &temp, job: None };
         let task =
             RenameTask::many(vec![(dir.join("a.txt"), dir.join("b.txt")), (dir.join("b.txt"), dir.join("a.txt"))]);
         let i = task.through_temp().next().unwrap();
@@ -415,7 +415,7 @@ mod tests {
         let temp = crate::task::TempCopies::new(None);
         let control = crate::control::Control::default();
         let no_bin = |_: &Path| false;
-        let cx = RunCx { control: &control, trash: &no_bin, added: std::cell::Cell::new(0), temp: &temp };
+        let cx = RunCx { control: &control, trash: &no_bin, added: std::cell::Cell::new(0), temp: &temp, job: None };
         let task =
             RenameTask::many(vec![(dir.join("a.txt"), dir.join("b.txt")), (dir.join("b.txt"), dir.join("a.txt"))]);
         let i = task.through_temp().next().unwrap();

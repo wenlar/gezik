@@ -840,6 +840,8 @@ impl Operations {
                 }),
                 Event::Conflicts { job, conflicts } => self.show_conflicts(job, conflicts),
                 Event::Paused { job, reason, path } => self.paused(job, reason, path),
+                // Nothing here asks yet: a question is turned down rather than left waiting.
+                Event::Question { job, .. } => self.0.engine.answer(job, gezik_ops::Answer::Cancel),
                 Event::Finished { job, report } => self.finished(job, report),
                 Event::Changed { dirs } => {
                     self.0.nav.refresh_showing(&dirs, &[], None);

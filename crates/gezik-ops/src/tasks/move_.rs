@@ -29,11 +29,19 @@ pub struct MoveTask {
     expect: Vec<Option<Facts>>,
     /// Undo: missing parent folders are made again.
     back: bool,
+    /// Places new things (from a staging folder): what lands counts as made, so undo trashes it.
+    placing: bool,
+    /// `Move`, or the kind of the job that places.
+    kind: TaskKind,
     /// Tests only: plan as if the target were on another drive.
     cross: bool,
 }
 
 impl MoveTask {
+    fn with(pairs: Vec<(PathBuf, PathBuf)>, expect: Vec<Option<Facts>>, back: bool) -> MoveTask {
+        MoveTask { pairs, expect, back, placing: false, kind: TaskKind::Move, cross: false }
+    }
+
     pub fn into(sources: Vec<PathBuf>, dir: &Path) -> MoveTask {
         let pairs: Vec<(PathBuf, PathBuf)> = sources
             .into_iter()
@@ -42,13 +50,34 @@ impl MoveTask {
                 (source, target)
             })
             .collect();
-        MoveTask { expect: vec![None; pairs.len()], pairs, back: false, cross: false }
+        let expect = vec![None; pairs.len()];
+        MoveTask::with(pairs, expect, false)
     }
 
     /// Moves items back where they came from: (where it is, where it was, how it must look).
     pub(crate) fn back(items: Vec<(PathBuf, PathBuf, Option<Facts>)>) -> MoveTask {
         let (pairs, expect) = items.into_iter().map(|(now, was, facts)| ((now, was), facts)).unzip();
-        MoveTask { pairs, expect, back: true, cross: false }
+        MoveTask::with(pairs, expect, true)
+    }
+
+    /// Moves what a job made in a staging folder to where it goes (a folder that is there
+    /// already is merged); undo trashes what was placed. `kind`: the job's own kind.
+    pub fn placing(pairs: Vec<(PathBuf, PathBuf)>, kind: TaskKind) -> MoveTask {
+        // Rebuilt from their parts: a path joined with `/` (an archive entry's name) has the
+        // system's separators then, which the Windows trash needs for undo.
+        let tidy = |path: PathBuf| path.components().collect::<PathBuf>();
+        let pairs: Vec<(PathBuf, PathBuf)> = pairs.into_iter().map(|(from, to)| (tidy(from), tidy(to))).collect();
+        let expect = vec![None; pairs.len()];
+        let mut task = MoveTask::with(pairs, expect, false);
+        task.placing = true;
+        task.kind = kind;
+        task
+    }
+
+    /// What doing `source` → `target` made: new (placing), or moved from `source`.
+    fn made(&self, source: &Path, target: &Path, facts: Facts) -> Outcome {
+        let from = (!self.placing).then(|| source.to_path_buf());
+        Outcome::Created { path: target.to_path_buf(), facts, from }
     }
 
     fn sources(&self) -> Vec<PathBuf> {
@@ -74,7 +103,7 @@ impl MoveTask {
 
 impl Task for MoveTask {
     fn kind(&self) -> TaskKind {
-        TaskKind::Move
+        self.kind
     }
 
     fn title(&self) -> String {
@@ -153,11 +182,11 @@ impl Task for MoveTask {
                 self.check(item, source)?;
                 self.make_parent(target)?;
                 fs::move_entry(source, target)?;
-                Ok(Outcome::Moved {
-                    from: source.clone(),
-                    to: target.clone(),
-                    facts: facts_after(target, item.facts.is_dir),
-                })
+                let facts = facts_after(target, item.facts.is_dir);
+                if self.placing {
+                    return Ok(self.made(source, target, facts));
+                }
+                Ok(Outcome::Moved { from: source.clone(), to: target.clone(), facts })
             }
             CASE => {
                 self.check(item, source)?;
@@ -199,16 +228,12 @@ impl Task for MoveTask {
                         format!("Copied, but could not remove the original: {}", fs::describe(&err)),
                     ));
                 }
-                Ok(Outcome::Created { path: target.clone(), facts, from: Some(source.clone()) })
+                Ok(self.made(source, target, facts))
             }
             MKDIR => {
                 self.make_parent(target)?;
                 match std::fs::create_dir(target) {
-                    Ok(()) => Ok(Outcome::Created {
-                        path: target.clone(),
-                        facts: facts_after(target, true),
-                        from: Some(source.clone()),
-                    }),
+                    Ok(()) => Ok(self.made(source, target, facts_after(target, true))),
                     Err(err) if err.kind() == io::ErrorKind::AlreadyExists && target.is_dir() => Ok(Outcome::Nothing),
                     Err(err) => Err(err),
                 }
@@ -409,6 +434,23 @@ mod tests {
         assert_eq!(read(&dir.join("dst/x/a/f.txt")), "f");
         assert!(dir.join("dst/x/e").is_dir());
         assert!(!dir.join("src/x").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn placing_reports_created_so_undo_trashes() {
+        let dir = test_dir("move-placing");
+        write(&dir.join("stage/x/a.txt"), "a");
+        write(&dir.join("dst/x/b.txt"), "b");
+        let engine = engine();
+        let task = MoveTask::placing(vec![(dir.join("stage/x"), dir.join("dst/x"))], TaskKind::Extract);
+        let job = engine.submit(Box::new(task));
+        let (report, _) = finish(&engine, job, no_conflicts);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert_eq!(read(&dir.join("dst/x/a.txt")), "a");
+        finish(&engine, engine.undo().unwrap(), no_conflicts);
+        assert!(!dir.join("dst/x/a.txt").exists(), "the placed file went to the trash");
+        assert_eq!(read(&dir.join("dst/x/b.txt")), "b", "what was there stays");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -336,7 +336,8 @@ pub(crate) fn execute(shared: &Shared, job: &Job, task: &dyn Task, item: PlanIte
         return;
     }
     let has_trash = |path: &Path| shared.has_trash(path);
-    let cx = RunCx { control, trash: &has_trash, added: std::cell::Cell::new(0), temp: &job.temp };
+    let cx =
+        RunCx { control, trash: &has_trash, added: std::cell::Cell::new(0), temp: &job.temp, job: Some((shared, job)) };
     // A cancelled or failed item may have made or removed something (a partial copy): its
     // folders are reloaded like those of a finished one.
     let touch = || job.touch(item.source.as_deref().into_iter().chain(item.target.as_deref()), item.is_root);
