@@ -31,4 +31,6 @@ notify = "8"
 slint-build = "1.18"
 
 [dev-dependencies]
+# Tests the patched Slint in vendor/ (see vendor/README.md).
+i-slint-core = { version = "=1.18.1", default-features = false, features = ["std"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
