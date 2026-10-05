@@ -23,6 +23,12 @@ use crate::{AppWindow, CrumbItem, TabItem};
 /// Address bar parts shown before older ones collapse into "…".
 const MAX_CRUMBS: usize = 4;
 
+/// How long letting go of a drive about to be removed may take before Windows tries it.
+const REMOVAL_GRACE: std::time::Duration = std::time::Duration::from_millis(150);
+/// After that, how often (and how many times) to look whether the drive went.
+const REMOVAL_CHECK: std::time::Duration = std::time::Duration::from_millis(500);
+const REMOVAL_CHECKS: u32 = 20;
+
 /// What a background load produces; `Send`, so it can cross back to the UI thread.
 #[derive(Debug)]
 enum LoadResult {
@@ -125,6 +131,8 @@ struct Inner {
     watched: Option<PathBuf>,
     pace: RefreshPace,
     refresh_timer: slint::Timer,
+    /// Told when the watched folder's drive is about to be removed (Windows), to let go of it.
+    removal: Option<gezik_platform::RemovalWatch>,
 }
 
 thread_local! {
@@ -172,6 +180,7 @@ impl Navigator {
             watched: None,
             pace: RefreshPace::new(),
             refresh_timer: slint::Timer::default(),
+            removal: None,
         })))
     }
 
@@ -640,10 +649,51 @@ impl Navigator {
         };
         if !same {
             inner.watch.watch(folder.as_deref());
+            inner.removal = None;
+            inner.removal = folder.as_deref().and_then(|folder| {
+                let window = inner.window.upgrade()?;
+                gezik_platform::watch_removal(&window.window().window_handle(), folder, || {
+                    with_current(Navigator::drive_removal_asked);
+                })
+            });
             inner.watched = folder;
             inner.pace.reset();
             inner.refresh_timer.stop();
         }
+    }
+
+    /// The watched folder's drive is about to be removed: let go of it now. Then see, for a
+    /// while, whether it went (the list moves to the nearest folder still there) or stayed
+    /// (watched again).
+    fn drive_removal_asked(&self) {
+        let (removal, folder) = {
+            let mut inner = self.0.borrow_mut();
+            inner.watch.stop_now();
+            inner.refresh_timer.stop();
+            (inner.removal.take(), inner.watched.clone())
+        };
+        drop(removal);
+        // Windows tries the drive as soon as this returns; the watcher's thread closes its
+        // handles within moments.
+        std::thread::sleep(REMOVAL_GRACE);
+        let Some(folder) = folder else { return };
+        let checks = Rc::new(std::cell::Cell::new(0u32));
+        self.0.borrow().refresh_timer.start(slint::TimerMode::Repeated, REMOVAL_CHECK, move || {
+            let gone = !folder.exists();
+            checks.set(checks.get() + 1);
+            if gone || checks.get() >= REMOVAL_CHECKS {
+                with_current(|nav| {
+                    nav.0.borrow().refresh_timer.stop();
+                    // Still there after all: watch it again (forgotten first, so it starts anew).
+                    nav.0.borrow_mut().watched = None;
+                    if gone {
+                        nav.reload();
+                    } else {
+                        nav.watch_shown(&nav.active_location());
+                    }
+                });
+            }
+        });
     }
 
     /// Shows `message` for a failed load; see [`apply_failure`].

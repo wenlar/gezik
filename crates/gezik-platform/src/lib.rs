@@ -70,11 +70,31 @@ pub enum MenuOutcome {
 #[cfg(windows)]
 mod keyboard;
 #[cfg(windows)]
+mod removal;
+#[cfg(windows)]
 mod shell_menu;
 #[cfg(windows)]
 pub use keyboard::{ModifierKeys, modifier_keys_down};
 #[cfg(windows)]
+pub use removal::{RemovalWatch, watch_removal};
+#[cfg(windows)]
 pub use shell_menu::show_shell_menu;
+
+/// Elsewhere a drive is not asked about before it goes: nothing to watch.
+#[cfg(not(windows))]
+mod removal_elsewhere {
+    pub struct RemovalWatch;
+
+    pub fn watch_removal(
+        _window: &impl raw_window_handle::HasWindowHandle,
+        _folder: &std::path::Path,
+        _on_asked: impl Fn() + 'static,
+    ) -> Option<RemovalWatch> {
+        None
+    }
+}
+#[cfg(not(windows))]
+pub use removal_elsewhere::{RemovalWatch, watch_removal};
 
 #[cfg(test)]
 mod tests {

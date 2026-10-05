@@ -19,6 +19,8 @@ pub use unix::{
     clear_hidden, copy_file, delete, drive_facts, drive_root, is_hidden_attr, move_entry, restore, set_hidden, trash,
 };
 #[cfg(windows)]
+pub(crate) use windows::verbatim;
+#[cfg(windows)]
 pub use windows::{
     clear_hidden, copy_file, delete, drive_facts, drive_root, is_hidden_attr, move_entry, restore, set_hidden, trash,
 };

@@ -57,6 +57,15 @@ impl FolderWatch {
     pub fn take_change(&self) -> bool {
         self.0.changed.swap(false, Ordering::SeqCst)
     }
+
+    /// Stops watching right away, on this thread: the drive is about to be removed and must
+    /// not be held. The watcher's own thread closes its handles a moment later.
+    pub fn stop_now(&self) {
+        self.0.generation.fetch_add(1, Ordering::SeqCst);
+        self.0.changed.store(false, Ordering::SeqCst);
+        let watcher = lock(&self.0.watcher).take();
+        drop(watcher);
+    }
 }
 
 /// Watches what is in `folder`, and its parent for the folder itself being deleted or renamed
