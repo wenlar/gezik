@@ -363,9 +363,10 @@ impl Shared {
                     Origin::Undo(_) => history.push_undone(record),
                     Origin::Redo(_) => history.push_redone(record),
                 }
-            } else {
-                // Nothing was undone or redone (everything changed since, or cancelled before
-                // it started): the action stays where it was, to be tried again.
+            } else if cancelled && acc.failures.is_empty() && acc.skipped_changed == 0 && acc.no_trash.is_empty() {
+                // An undo or redo cancelled before it did anything: the action stays where it
+                // was. One whose items failed or changed since is dropped (trying it again would
+                // fail the same way and keep older actions out of reach); its report says why.
                 let record = Record { label: job.label.clone(), inverse: job.tasks.clone() };
                 match job.origin {
                     Origin::New => {}
@@ -740,24 +741,45 @@ mod tests {
     }
 
     #[test]
-    fn an_undo_that_did_nothing_stays_undoable() {
-        let dir = test_dir("undo-nothing");
+    fn an_undo_cancelled_before_it_did_anything_stays_undoable() {
+        let dir = test_dir("undo-cancelled");
         write(&dir.join("src/a.txt"), "a");
         std::fs::create_dir(dir.join("dst")).unwrap();
         let engine = engine();
         run(&engine, engine.submit(Box::new(CopyTask::into(vec![dir.join("src/a.txt")], &dir.join("dst")))));
-        let copied = std::fs::metadata(dir.join("dst/a.txt")).unwrap().modified().unwrap();
-        std::fs::write(dir.join("dst/a.txt"), "edited after the copy").unwrap();
-        run(&engine, engine.undo().unwrap());
+        // A job on the same drive keeps the undo waiting; it is cancelled meanwhile.
+        let log = Arc::default();
+        let gate = Gate::default();
+        let mut busy = FakeTask::new("busy", 1, &log);
+        busy.paths = vec![dir.clone()];
+        busy.gate = Some(gate.clone());
+        let busy = engine.submit(Box::new(busy));
+        wait_for("busy to start", || lock(&log).contains(&"busy+0".to_owned()));
+        let undo = engine.undo().unwrap();
+        engine.cancel(undo);
+        run(&engine, undo);
+        gate.open();
+        run(&engine, busy);
+        assert!(dir.join("dst/a.txt").exists());
         assert_eq!(engine.undo_label().as_deref(), Some("Copy 1 item"), "the copy is still undoable");
-        assert_eq!(engine.redo_label(), None, "nothing was undone");
+        assert_eq!(engine.redo_label(), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
-        // Once the edit is gone (content and time), the undo works.
-        std::fs::write(dir.join("dst/a.txt"), "a").unwrap();
-        std::fs::File::options().write(true).open(dir.join("dst/a.txt")).unwrap().set_modified(copied).unwrap();
+    #[test]
+    fn an_undo_whose_items_fail_does_not_block_older_actions() {
+        let dir = test_dir("undo-failed");
+        write(&dir.join("a.txt"), "a");
+        write(&dir.join("b.txt"), "b");
+        let engine = engine();
+        run(&engine, engine.submit(Box::new(MoveTask::rename(dir.join("a.txt"), "a2.txt"))));
+        run(&engine, engine.submit(Box::new(MoveTask::rename(dir.join("b.txt"), "b2.txt"))));
+        std::fs::remove_file(dir.join("b2.txt")).unwrap();
         let report = run(&engine, engine.undo().unwrap());
-        assert_eq!(report.skipped_changed, 0);
-        assert!(!dir.join("dst/a.txt").exists());
+        assert_eq!(report.failures.len() + report.skipped_changed, 1, "{report:?}");
+        // The next undo reaches the older rename instead of failing on the same one again.
+        run(&engine, engine.undo().unwrap());
+        assert_eq!(read(&dir.join("a.txt")), "a");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
