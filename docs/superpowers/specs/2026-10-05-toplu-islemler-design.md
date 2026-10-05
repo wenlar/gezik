@@ -1,7 +1,7 @@
 # Alt Proje 5: Toplu İşlemler — Tasarım
 
 - **Tarih:** 2026-10-05
-- **Durum:** Tasarım onaylandı; plan bekliyor
+- **Durum:** Tasarım onaylandı (2026-10-05); 5a planlanıyor
 - **Kapsam:** Gezik yol haritasının 5. alt projesi; tek spec, dört plan ve dört PR: **5a** toplu yeniden adlandırma, **5b** arşivler, **5c** dönüştürme ve kullanıcı komutları, **5d** PDF
 - **Dayandığı:** `2026-10-04-dosya-islemleri-design.md` (motor, `Task`, çakışma listesi, geri alma, ilerleme paneli, `pending` toparlaması, sürükle-bırak), `2026-10-03-ayarlar-ve-tema-design.md` (ayar dosyası, canlı yeniden yükleme, kısayol biçimi)
 
@@ -311,7 +311,7 @@ rules = [
 
 - **HEIC/HEIF girdisi** (iPhone fotoğrafları, karo yapılı ızgara dahil), **AVIF girdisi**, **kayıplı WebP** ve **AVIF çıktısı** ffmpeg ile yapılır; bu seçenekler "¹ needs ffmpeg" işaretiyle görünür ve ffmpeg yoksa araç kutusunu açar.
 - Akış: ffmpeg girdiyi kayıpsız PNG'ye (geçici) çözer → Gezik boyutlandırma/döndürme/meta veriyi uygular → çıktı içeride kodlanabiliyorsa içeride, değilse (kayıplı WebP, AVIF) ffmpeg ile kodlanır.
-- **Doğrulama (plan görevi):** indirilecek ffmpeg sürümünün iPhone HEIC'lerini (ızgara + EXIF yön) doğru çözdüğü örnek dosyalarla sınanır. Yetmezse yedek yol: Windows'ta WIC (HEIF/HEVC uzantıları kuruluysa), macOS'ta ImageIO; Linux'ta "not supported" + kullanıcı komutu önerisi. Bu yedek yol yalnız doğrulama başarısız olursa yapılır ve spec'e işlenir.
+- **Doğrulama (plan görevi):** indirilecek ffmpeg sürümünün iPhone HEIC'lerini (ızgara + EXIF yön) doğru çözdüğü örnek dosyalarla sınanır. Yetmezse yedek yol: Windows'ta WIC (HEIF/HEVC uzantıları kuruluysa), macOS'ta ImageIO; Linux'ta "not supported" + kullanıcı komutu önerisi. Bu yedek yol yalnız doğrulama başarısız olursa yapılır ve spec'e işlenir (2026-10-05 kararı: başarısızsa yedek yol yazılır, HEIC kapsamdan çıkarılmaz).
 - HEIC dosyaları toplu yeniden adlandırmada EXIF tarihi için yine içeride okunur (4.3; yalnız başlık).
 
 ## 7. 5c — Kullanıcı komutları
@@ -372,7 +372,7 @@ parallel = 4                     # varsayılan 1
 
 ### 8.2 Kaynak ve doğrulama
 
-- Dosyalar Gezik'in kendi GitHub deposunun sürümlerinde (`wenlar/gezik-tools`, sabit etiketler: `ffmpeg-7.1-1`, `7zip-24.09-1`, `pdfium-6996-1`) barındırılır. Platformlar: Windows x64/arm64, macOS arm64/x64, Linux x64/arm64.
+- Dosyalar Gezik'in kendi GitHub deposunun sürümlerinde (`wenlar/gezik-tools`, sabit etiketler: `ffmpeg-7.1-1`, `7zip-24.09-1`, `pdfium-6996-1`) barındırılır. Platformlar: Windows x64/arm64, macOS arm64/x64, Linux x64/arm64. Depo herkese açıktır (yalnız araç ikilileri, lisans notları ve hazırlama betiği). Depoyu ve sürümleri `gh` ile Gezik geliştiricisi oluşturur (2026-10-05 kararı). ffmpeg **essentials** türü derlemedir (x264, x265, libwebp, SVT-AV1/aom, dav1d; GPL); üst kaynaklar: Windows gyan.dev, macOS ve Linux için planda seçilen sabit sürümlü statik derlemeler.
 - Araç bildirimi `gezik-core::batch::tools`'ta derlemeye gömülüdür: araç, sürüm, platform başına adres, boyut, **SHA-256**, arşiv içindeki çalıştırılabilir yollar.
 - İndirme sistemin `curl`'üyle yapılır (Windows 10 1803+ `curl.exe`, macOS ve Linux'ta `curl`; yoksa "curl not found" hatası). `--fail --location --proto =https --max-redirs 5`, geçici dosyaya; ilerleme `curl`'ün yazdığı bayt sayısından (dosya boyutu izlenerek).
 - İndirilen dosyanın SHA-256'sı Rust'ta (`sha2`) hesaplanır; tutmazsa silinir ve hata satırı "download damaged — try again". Tutarsa 5b'nin arşiv kodu ile `<veri>/tools/<araç>-<sürüm>/` altına açılır (aşama klasörü + yeniden adlandırma; yarım kurulum görünmez).
@@ -467,7 +467,7 @@ Her kural ve kural sırası; şablon ayrıştırma ve hatalı şablon; Türkçe 
 ### 12.2 Bütünleşme testleri (`gezik-batch`, geçici klasörler)
 
 - Her yazılabilir biçimde oluştur → aç → karşılaştır (içerik, tarih, Unix izinleri).
-- Depoda küçük test arşivleri (`crates/gezik-batch/tests/data/`): rar4, rar5, şifreli rar/zip/7z, çok parçalı 7z ve rar, bozuk zip (CRC), zip-slip zip'i, sembolik bağlantılı tar, cab, iso, deb, sıkıştırma bombası taklidi (küçük ama yüksek oran bildiren).
+- Depoda küçük test arşivleri (`crates/gezik-batch/tests/data/`): rar4, rar5, şifreli rar/zip/7z, çok parçalı 7z ve rar, bozuk zip (CRC), zip-slip zip'i, sembolik bağlantılı tar, cab, iso, deb, sıkıştırma bombası taklidi (küçük ama yüksek oran bildiren). RAR örnekleri libarchive'in test arşivlerinden (BSD), HEIC örnekleri libheif örneklerinden indirilir; `tests/data/SOURCES.md` kaynak ve lisansı yazar. zip/7z/tar örnekleri testte üretilir ya da makinedeki 7-Zip ile bir kez üretilip eklenir.
 - Açma: akıllı Extract here, çakışma listesi, birleştirme, geri alma; iptal ve çökme sonrası aşama klasörünün açılışta silinmesi.
 - Var olan arşive ekleme ve geri alma.
 - Toplu yeniden adlandırma: döngüler, iptal ortasında geri koyma, geri alma.
