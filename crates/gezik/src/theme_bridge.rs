@@ -69,6 +69,7 @@ pub fn apply_global(global: &Theme<'_>, theme: &ResolvedTheme) {
     global.set_progress(color(c.progress));
     global.set_progress_paused(color(c.progress_paused));
     global.set_progress_error(color(c.progress_error));
+    global.set_drop_target(color(c.drop_target));
 
     let m = &theme.metrics;
     global.set_font_family(m.font_family.as_str().into());

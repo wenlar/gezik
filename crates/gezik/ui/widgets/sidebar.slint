@@ -20,6 +20,12 @@ export component Sidebar inherits Rectangle {
     callback menu(int, int, length, length);
     // Moves pinned item `from` to position `to` (indexes within the PINNED section).
     callback pinned-move(int, int);
+    // The scroll offset (content-y), shared with the window so drag.rs can find the rows.
+    in-out property <length> scroll <=> scroller.content-y;
+    // While files are dragged: the row they would drop on, and the row a pin line is drawn
+    // above (-1: none).
+    in property <int> drop-row: -1;
+    in property <int> pin-line: -1;
 
     property <length> row-height: Theme.row-height;
     // While a pinned item is dragged: where it came from and where it would be dropped.
@@ -88,7 +94,9 @@ export component Sidebar inherits Rectangle {
                 width: parent.width;
                 height: parent.height;
                 border-radius: Theme.radius;
-                background: row.active ? Theme.selection : touch.has-hover ? Theme.hover : transparent;
+                background: i == root.drop-row ? Theme.drop-target : row.active ? Theme.selection : touch.has-hover ? Theme.hover : transparent;
+                border-width: i == root.drop-row ? 1px : 0px;
+                border-color: Theme.accent;
                 accessible-role: list-item;
                 accessible-label: row.label;
                 accessible-item-selectable: true;
@@ -142,6 +150,15 @@ export component Sidebar inherits Rectangle {
                     }
                 }
             }
+        }
+
+        // Dragged folders would be pinned here.
+        if root.pin-line >= 0: Rectangle {
+            x: Theme.spacing;
+            y: Theme.spacing + root.pin-line * root.row-height - 1px;
+            width: parent.width - Theme.spacing * 2;
+            height: 2px;
+            background: Theme.accent;
         }
 
         // Drop position while dragging: between two pinned items.

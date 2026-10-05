@@ -4,6 +4,7 @@
 mod conflicts;
 mod context_menu;
 mod dialog;
+mod drag;
 mod folder_watch;
 mod frame_limit;
 mod keys;
@@ -476,7 +477,11 @@ fn main() -> Result<(), slint::PlatformError> {
     });
     // The sidebar width stays in memory and is saved with the window state on close.
 
-    let menus = context_menu::Menus::new(&window, nav.clone(), view.clone(), preview.clone(), sidebar, ops.clone());
+    let menus =
+        context_menu::Menus::new(&window, nav.clone(), view.clone(), preview.clone(), sidebar.clone(), ops.clone());
+    let drags = drag::Drags::new(&window, nav.clone(), view.clone(), sidebar, ops.clone(), menus.clone());
+    drags.install(&window);
+    drags.attach_when_ready(0);
     window.on_row_menu({
         let (menus, view) = (menus.clone(), view.clone());
         move |i, x, y| {
@@ -661,12 +666,17 @@ fn main() -> Result<(), slint::PlatformError> {
     window.on_key_event({
         let (nav, view, preview, ops, weak) =
             (nav.clone(), view.clone(), preview.clone(), ops.clone(), window.as_weak());
+        let drags = drags.clone();
         let mut type_ahead = keys::TypeAhead::new();
         move |event| {
             let Some(window) = weak.upgrade() else { return false };
             let m = event.modifiers;
             let chord = keys::chord_from_slint(&event.text, m.control, m.alt, m.shift, m.meta, Platform::current());
             let menu_key = keys::is_context_menu_key(&event.text, m.control, m.alt, m.shift, m.meta);
+            // Esc while dragging files drops nothing.
+            if chord.as_ref().is_some_and(|c| c.key == Key::Escape) && drags.escape() {
+                return true;
+            }
             handle_key(
                 &window,
                 &nav,
@@ -689,9 +699,13 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = window.as_weak();
         let minimized = std::cell::Cell::new(false);
         let ops = ops.clone();
+        let drags = drags.clone();
         window.window().on_winit_window_event(move |_, event| {
             if let winit::event::WindowEvent::Focused(true) = event {
                 ops.clipboard_check();
+            }
+            if let winit::event::WindowEvent::DroppedFile(path) = event {
+                drags.dropped_file(path.clone());
             }
             // Windows drops a minimized window's picture, but the size on restore is the old
             // one, so Slint redraws only what changed and the rest of the window stays empty.

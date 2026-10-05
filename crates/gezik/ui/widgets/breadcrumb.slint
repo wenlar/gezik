@@ -12,6 +12,11 @@ export component Breadcrumb inherits Rectangle {
     in-out property <bool> editing;
     callback crumb-clicked(int);
     callback accepted(string);
+    // Where part `int` is (window x and width), each time it moves: drag.rs finds the parts
+    // by it (their widths follow their text).
+    callback crumb-span(int, length, length);
+    // While files are dragged: the part they would drop on (-1: none).
+    in property <int> drop-crumb: -1;
 
     height: Theme.row-height + 4px;
     horizontal-stretch: 1;
@@ -45,9 +50,16 @@ export component Breadcrumb inherits Rectangle {
                     width: self.preferred-width + Theme.spacing;
                     horizontal-alignment: center;
                 }
-                Rectangle {
+                part := Rectangle {
+                    property <length> left: self.absolute-position.x;
+                    property <length> span: self.width;
+                    init => { root.crumb-span(i, self.left, self.span); }
+                    changed left => { root.crumb-span(i, self.left, self.span); }
+                    changed span => { root.crumb-span(i, self.left, self.span); }
                     border-radius: Theme.radius;
-                    background: part-touch.has-hover ? Theme.hover : transparent;
+                    background: i == root.drop-crumb ? Theme.drop-target : part-touch.has-hover ? Theme.hover : transparent;
+                    border-width: i == root.drop-crumb ? 1px : 0px;
+                    border-color: Theme.accent;
                     min-width: 0px;
                     preferred-width: part-label.preferred-width + Theme.spacing * 2;
                     accessible-role: button;

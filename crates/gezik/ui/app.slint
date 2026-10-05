@@ -9,6 +9,7 @@ import { FileView, FileRow, ItemRow } from "widgets/file-view.slint";
 import { OpsPanel, OpRow } from "widgets/ops-panel.slint";
 import { Dialog } from "widgets/dialog.slint";
 import { ConflictList, ConflictRow } from "widgets/conflict-list.slint";
+import { FileIcon } from "widgets/file-icon.slint";
 
 // Re-exported so Rust can set it with `window.global::<Theme>()` and build crumbs, tabs
 // and sidebar rows.
@@ -19,6 +20,27 @@ export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, O
 export struct MenuEntry {
     id: int,
     title: string,
+}
+
+// Where the drop targets are, in window coordinates (drag.rs reads it while files are
+// dragged; every field is computed when read).
+export struct DropGeometry {
+    window-width: length,
+    window-height: length,
+    // The file view, and the visible list inside it (below the column header).
+    view-x: length,
+    view-y: length,
+    view-height: length,
+    list-top: length,
+    list-width: length,
+    list-height: length,
+    sidebar-scroll: length,
+    tab-scroll: length,
+    tab-width: length,
+    tab-strip-width: length,
+    tab-height: length,
+    address-y: length,
+    address-height: length,
 }
 
 export component AppWindow inherits Window {
@@ -197,6 +219,52 @@ export component AppWindow inherits Window {
     callback dialog-chosen(int);
     callback key-event(KeyEvent) -> bool;
 
+    // Dragging files (drag.rs). Presses, moves and releases on entries; see FileView.
+    callback item-down(int, length, length, bool, bool);
+    callback item-drag(length, length, bool, bool, bool);
+    callback item-up(int, length, length, bool) -> bool;
+    callback item-cancel();
+    // An address bar part moved (index, window x, width).
+    callback crumb-span(int, length, length);
+    // A key went down or up while files are dragged (Shift, Ctrl, Alt held now).
+    callback drag-keys(bool, bool, bool);
+    // What is dragged, drawn at the pointer (`drag-x`, `drag-y`): the first item's icon, how
+    // many there are, and what dropping here would do ("Move to Documents"; empty: nothing).
+    in property <bool> drag-active;
+    in property <length> drag-x;
+    in property <length> drag-y;
+    in property <image> drag-icon;
+    in property <bool> drag-has-icon;
+    in property <int> drag-kind;
+    in property <int> drag-count;
+    in property <string> drag-label;
+    in property <bool> drag-forbidden;
+    // The drop target, highlighted (-1: none): an entry, a sidebar row (and the row a pin
+    // line is drawn above), a tab, an address bar part.
+    in property <int> drop-entry: -1;
+    in property <int> drop-sidebar-row: -1;
+    in property <int> drop-pin-row: -1;
+    in property <int> drop-tab: -1;
+    in property <int> drop-crumb: -1;
+    in-out property <length> sidebar-scroll;
+    out property <DropGeometry> drop-geometry: {
+        window-width: root.width,
+        window-height: root.height,
+        view-x: file-view.absolute-position.x,
+        view-y: file-view.absolute-position.y,
+        view-height: file-view.height,
+        list-top: file-view.list-top,
+        list-width: file-view.list-width,
+        list-height: file-view.list-height,
+        sidebar-scroll: root.sidebar-scroll,
+        tab-scroll: tab-bar.scroll,
+        tab-width: tab-bar.tab-width,
+        tab-strip-width: tab-bar.strip-width,
+        tab-height: tab-bar.height,
+        address-y: address.absolute-position.y,
+        address-height: address.height,
+    };
+
     // Whether the file list has keyboard focus (and not the address bar or a button).
     out property <bool> list-focused: keys.has-focus;
     // How many rows PgUp/PgDn move: one screen, less one row.
@@ -278,13 +346,23 @@ export component AppWindow inherits Window {
     keys := FocusScope {
         focus-on-click: false;
         capture-key-pressed(event) => {
+            if root.drag-active {
+                root.drag-keys(event.modifiers.shift, event.modifiers.control, event.modifiers.alt);
+            }
             if root.key-event(event) { return accept; }
+            return reject;
+        }
+        capture-key-released(event) => {
+            if root.drag-active {
+                root.drag-keys(event.modifiers.shift, event.modifiers.control, event.modifiers.alt);
+            }
             return reject;
         }
 
         VerticalLayout {
-            TabBar {
+            tab-bar := TabBar {
                 tabs: root.tabs;
+                drop-tab: root.drop-tab;
                 activate(i) => { root.tab-activate(i); }
                 close(i) => { root.tab-close(i); }
                 new-tab => { root.tab-new(); }
@@ -325,6 +403,8 @@ export component AppWindow inherits Window {
                         path-text: root.current-path;
                         editing <=> root.path-editing;
                         crumb-clicked(i) => { root.crumb-clicked(i); }
+                        crumb-span(i, x, w) => { root.crumb-span(i, x, w); }
+                        drop-crumb: root.drop-crumb;
                         accepted(path) => {
                             keys.focus();
                             root.navigate(path);
@@ -349,6 +429,9 @@ export component AppWindow inherits Window {
                     rows: root.sidebar-rows;
                     pinned-first-row: root.sidebar-pinned-first-row;
                     pinned-count: root.sidebar-pinned-count;
+                    scroll <=> root.sidebar-scroll;
+                    drop-row: root.drop-sidebar-row;
+                    pin-line: root.drop-pin-row;
                     clicked(s, i) => { root.sidebar-clicked(s, i); }
                     middle-clicked(s, i) => { root.sidebar-middle-clicked(s, i); }
                     menu(s, i, x, y) => {
@@ -406,6 +489,13 @@ export component AppWindow inherits Window {
                     }
                     columns-resized => { root.columns-resized(); }
                     item-pressed(i, ctrl, shift) => { root.item-pressed(i, ctrl, shift); }
+                    item-down(i, x, y, right, can-drag) => { root.item-down(i, x, y, right, can-drag); }
+                    item-drag(x, y, shift, ctrl, alt) => { root.item-drag(x, y, shift, ctrl, alt); }
+                    item-up(i, x, y, right) => { return root.item-up(i, x, y, right); }
+                    item-cancel => { root.item-cancel(); }
+                    drag-active: root.drag-active;
+                    drag-forbidden: root.drag-forbidden;
+                    drop-entry: root.drop-entry;
                     item-double-clicked(i) => { root.open-row(i); }
                     item-middle-clicked(i) => { root.row-middle-clicked(i); }
                     item-menu(i, x, y) => {
@@ -460,6 +550,9 @@ export component AppWindow inherits Window {
                     rows: root.sidebar-rows;
                     pinned-first-row: root.sidebar-pinned-first-row;
                     pinned-count: root.sidebar-pinned-count;
+                    scroll <=> root.sidebar-scroll;
+                    drop-row: root.drop-sidebar-row;
+                    pin-line: root.drop-pin-row;
                     clicked(s, i) => { root.sidebar-clicked(s, i); }
                     middle-clicked(s, i) => { root.sidebar-middle-clicked(s, i); }
                     menu(s, i, x, y) => {
@@ -570,6 +663,56 @@ export component AppWindow inherits Window {
             buttons: root.dialog-buttons;
             escape: root.dialog-escape;
             chosen(i) => { root.dialog-chosen(i); }
+        }
+        // What is being dragged, just below and right of the pointer. Takes no input.
+        if root.drag-active: Rectangle {
+            x: root.drag-x + 14px;
+            y: root.drag-y + 14px;
+            width: max(Theme.icon-size * 2 + 8px, label-box.width);
+            height: Theme.icon-size * 2 + (root.drag-label != "" ? label-box.height + 4px : 0px);
+            accessible-role: none;
+            FileIcon {
+                x: 0;
+                y: 0;
+                width: Theme.icon-size * 2;
+                height: Theme.icon-size * 2;
+                opacity: root.drag-forbidden ? 0.4 : 0.85;
+                kind: root.drag-kind;
+                picture: root.drag-icon;
+                has-picture: root.drag-has-icon;
+            }
+            if root.drag-count > 1: Rectangle {
+                x: Theme.icon-size * 2 - self.width / 2;
+                y: -4px;
+                width: max(self.height, count-text.preferred-width + 8px);
+                height: count-text.preferred-height + 2px;
+                border-radius: self.height / 2;
+                background: Theme.accent;
+                count-text := Text {
+                    text: root.drag-count;
+                    color: Theme.accent-foreground;
+                    font-size: Theme.font-size * 0.85;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+            label-box := Rectangle {
+                x: 0;
+                y: Theme.icon-size * 2 + 4px;
+                visible: root.drag-label != "";
+                width: label-text.preferred-width + Theme.spacing * 2;
+                height: label-text.preferred-height + Theme.spacing;
+                border-radius: Theme.radius;
+                background: Theme.surface;
+                border-width: 1px;
+                border-color: Theme.border;
+                label-text := Text {
+                    x: Theme.spacing;
+                    y: Theme.spacing / 2;
+                    text: root.drag-label;
+                    color: Theme.foreground;
+                }
+            }
         }
     }
 }

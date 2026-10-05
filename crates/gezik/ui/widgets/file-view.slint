@@ -162,6 +162,25 @@ export component FileView inherits Rectangle {
 
     // Left press on entry `index`, with Ctrl (Cmd on macOS) and Shift.
     callback item-pressed(int, bool, bool);
+    // Dragging entries (drag.rs). A left or right press on entry `index` at a window
+    // position; `can-drag`: a drag from there moves files (in the list, only from the name).
+    callback item-down(int, length, length, bool, bool);
+    // The pointer moved with a button down after `item-down` (window position, Shift, Ctrl, Alt).
+    callback item-drag(length, length, bool, bool, bool);
+    // The button came up (right: the right one). Returns whether a drag used it: then the
+    // release opens no menu.
+    callback item-up(int, length, length, bool) -> bool;
+    // The press was taken away (the pointer left the window, a menu opened).
+    callback item-cancel();
+    // While files are dragged: the entry they would drop on (-1: none), and whether the
+    // drop would be refused (the pointer shows it).
+    in property <bool> drag-active;
+    in property <bool> drag-forbidden;
+    in property <int> drop-entry: -1;
+    // Where the entries are, for drag.rs: the header's height and the visible list.
+    out property <length> list-top: root.header-height;
+    out property <length> list-width: list.visible-width;
+    out property <length> list-height: list.visible-height;
     callback item-double-clicked(int);
     callback item-middle-clicked(int);
     // Right-click on an entry, at a window position.
@@ -388,6 +407,15 @@ export component FileView inherits Rectangle {
         property <bool> left-down;
         scroll-event(event) => { return root.wheel(event); }
         pointer-event(event) => {
+            // A drag whose entry scrolled away (taking the pointer grab with it) goes on here.
+            if root.drag-active && event.kind == PointerEventKind.move {
+                root.item-drag(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y,
+                    event.modifiers.shift, event.modifiers.control, event.modifiers.alt);
+            }
+            let drag-used = root.drag-active && event.kind == PointerEventKind.up
+                && (event.button == PointerEventButton.left || event.button == PointerEventButton.right)
+                && root.item-up(-1, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y,
+                    event.button == PointerEventButton.right);
             if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
                 self.ctrl = event.modifiers.control;
                 self.left-down = true;
@@ -402,7 +430,7 @@ export component FileView inherits Rectangle {
                     root.background-pressed(self.ctrl);
                 }
             }
-            if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {
+            if event.kind == PointerEventKind.up && event.button == PointerEventButton.right && !drag-used {
                 root.background-menu(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
             }
             if event.kind == PointerEventKind.move && !self.pressed {
@@ -435,7 +463,9 @@ export component FileView inherits Rectangle {
                 property <int> index: item.first;
                 property <color> text-color: self.file.selected ? Theme.selection-foreground : Theme.foreground;
                 property <color> muted-color: self.file.selected ? Theme.selection-foreground : Theme.foreground-muted;
-                background: self.file.selected ? Theme.selection : touch.has-hover ? Theme.hover : transparent;
+                background: root.drop-entry == self.index ? Theme.drop-target : self.file.selected ? Theme.selection : touch.has-hover && !root.drag-active ? Theme.hover : transparent;
+                border-width: root.drop-entry == self.index ? 1px : 0px;
+                border-color: Theme.accent;
                 accessible-role: list-item;
                 accessible-label: self.file.name;
                 accessible-item-selectable: true;
@@ -445,6 +475,9 @@ export component FileView inherits Rectangle {
                 touch := TouchArea {
                     property <bool> ctrl;
                     property <bool> left-down;
+                    // A left or right button is down after a press here.
+                    property <bool> button-down;
+                    mouse-cursor: root.drag-active && root.drag-forbidden ? MouseCursor.not-allowed : MouseCursor.default;
                     double-clicked => { root.item-double-clicked(entry.index); }
                     scroll-event(event) => { return root.wheel(event); }
                     pointer-event(event) => {
@@ -454,11 +487,32 @@ export component FileView inherits Rectangle {
                             root.focus-requested();
                             root.item-pressed(entry.index, event.modifiers.control, event.modifiers.shift);
                         }
+                        if event.kind == PointerEventKind.down && (event.button == PointerEventButton.left || event.button == PointerEventButton.right) {
+                            self.button-down = true;
+                            root.item-down(entry.index, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y,
+                                event.button == PointerEventButton.right, self.mouse-x <= root.name-end);
+                        }
+                        // Also from another entry: the one pressed may have scrolled away
+                        // during the drag, taking the pointer grab with it.
+                        if event.kind == PointerEventKind.move && (self.button-down || root.drag-active) {
+                            root.item-drag(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y,
+                                event.modifiers.shift, event.modifiers.control, event.modifiers.alt);
+                        }
+                        if event.kind == PointerEventKind.cancel && self.button-down {
+                            self.button-down = false;
+                            root.item-cancel();
+                        }
                         if event.kind == PointerEventKind.up && event.button == PointerEventButton.middle {
                             root.item-middle-clicked(entry.index);
                         }
-                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {
-                            root.item-menu(entry.index, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                        if event.kind == PointerEventKind.up && (event.button == PointerEventButton.left || event.button == PointerEventButton.right)
+                            && (self.button-down || root.drag-active) {
+                            self.button-down = false;
+                            let used = root.item-up(entry.index, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y,
+                                event.button == PointerEventButton.right);
+                            if !used && event.button == PointerEventButton.right {
+                                root.item-menu(entry.index, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                            }
                         }
                         if event.kind == PointerEventKind.up {
                             self.left-down = false;
@@ -583,9 +637,9 @@ export component FileView inherits Rectangle {
                             width: parent.width - 8px;
                             height: parent.height - 8px;
                             border-radius: Theme.radius;
-                            background: tile.cell.selected ? Theme.selection : tile-touch.has-hover ? Theme.hover : transparent;
-                            border-width: tile.cell.focused && root.has-focus ? 1px : 0px;
-                            border-color: Theme.focus-ring;
+                            background: root.drop-entry == tile.index ? Theme.drop-target : tile.cell.selected ? Theme.selection : tile-touch.has-hover && !root.drag-active ? Theme.hover : transparent;
+                            border-width: root.drop-entry == tile.index || (tile.cell.focused && root.has-focus) ? 1px : 0px;
+                            border-color: root.drop-entry == tile.index ? Theme.accent : Theme.focus-ring;
                         }
 
                         FileIcon {
@@ -638,6 +692,8 @@ export component FileView inherits Rectangle {
                             y: 4px;
                             width: parent.width - 8px;
                             height: parent.height - 8px;
+                            property <bool> button-down;
+                            mouse-cursor: root.drag-active && root.drag-forbidden ? MouseCursor.not-allowed : MouseCursor.default;
                             double-clicked => { root.item-double-clicked(tile.index); }
                             scroll-event(event) => { return root.wheel(event); }
                             pointer-event(event) => {
@@ -645,11 +701,30 @@ export component FileView inherits Rectangle {
                                     root.focus-requested();
                                     root.item-pressed(tile.index, event.modifiers.control, event.modifiers.shift);
                                 }
+                                if event.kind == PointerEventKind.down && (event.button == PointerEventButton.left || event.button == PointerEventButton.right) {
+                                    self.button-down = true;
+                                    root.item-down(tile.index, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y,
+                                        event.button == PointerEventButton.right, true);
+                                }
+                                if event.kind == PointerEventKind.move && (self.button-down || root.drag-active) {
+                                    root.item-drag(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y,
+                                        event.modifiers.shift, event.modifiers.control, event.modifiers.alt);
+                                }
+                                if event.kind == PointerEventKind.cancel && self.button-down {
+                                    self.button-down = false;
+                                    root.item-cancel();
+                                }
                                 if event.kind == PointerEventKind.up && event.button == PointerEventButton.middle {
                                     root.item-middle-clicked(tile.index);
                                 }
-                                if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {
-                                    root.item-menu(tile.index, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                                if event.kind == PointerEventKind.up && (event.button == PointerEventButton.left || event.button == PointerEventButton.right)
+                                    && (self.button-down || root.drag-active) {
+                                    self.button-down = false;
+                                    let used = root.item-up(tile.index, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y,
+                                        event.button == PointerEventButton.right);
+                                    if !used && event.button == PointerEventButton.right {
+                                        root.item-menu(tile.index, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                                    }
                                 }
                                 if !self.pressed || event.kind == PointerEventKind.up {
                                     root.marquee-pointer(event.kind, tile.x + self.x + self.mouse-x, line.y + root.scroll + self.y + self.mouse-y);

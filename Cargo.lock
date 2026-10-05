@@ -1484,8 +1484,12 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
  "raw-window-handle",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols-wlr",
  "windows",
  "windows-core",
+ "x11rb",
 ]
 
 [[package]]

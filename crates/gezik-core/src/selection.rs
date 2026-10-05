@@ -226,6 +226,44 @@ fn merge(mut rows: Vec<Range<usize>>) -> Vec<Range<usize>> {
     out
 }
 
+/// A left press waiting for its release. Pressing an entry that is already selected (with
+/// no Shift) changes nothing yet, so the whole selection can be dragged; a release without a
+/// drag then does what the press would have done (plain: only that entry; Ctrl: flip it).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PendingPress {
+    waiting: Option<(usize, bool)>,
+}
+
+impl PendingPress {
+    /// A left press on entry `index`; returns the rows whose look changed.
+    pub fn press(&mut self, selection: &mut Selection, index: usize, ctrl: bool, shift: bool) -> Vec<Range<usize>> {
+        self.waiting = None;
+        match (ctrl, shift) {
+            (_, true) => selection.extend_to(index, ctrl),
+            (_, false) if selection.is_selected(index) => {
+                self.waiting = Some((index, ctrl));
+                selection.set_focus(index)
+            }
+            (true, false) => selection.toggle(index),
+            (false, false) => selection.select_only(index),
+        }
+    }
+
+    /// The left button came up over entry `index`; `dragged`: the press became a drag.
+    pub fn release(&mut self, selection: &mut Selection, index: usize, dragged: bool) -> Vec<Range<usize>> {
+        match self.waiting.take() {
+            Some((pressed, ctrl)) if pressed == index && !dragged => {
+                if ctrl {
+                    selection.toggle(index)
+                } else {
+                    selection.select_only(index)
+                }
+            }
+            _ => Vec::new(),
+        }
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::single_range_in_vec_init)]
 mod tests {
@@ -233,6 +271,43 @@ mod tests {
 
     fn selected(s: &Selection) -> Vec<usize> {
         s.iter().collect()
+    }
+
+    #[test]
+    fn pressing_a_selected_entry_waits_for_the_release() {
+        let mut s = Selection::new(5);
+        s.select_only(0);
+        s.extend_to(2, false);
+        let mut pending = PendingPress::default();
+        pending.press(&mut s, 1, false, false);
+        assert_eq!(s.count(), 3, "nothing is unselected yet");
+        assert_eq!(s.focus(), Some(1));
+        pending.release(&mut s, 1, true);
+        assert_eq!(s.count(), 3, "a drag keeps the selection");
+        pending.press(&mut s, 1, false, false);
+        pending.release(&mut s, 1, false);
+        assert_eq!(selected(&s), vec![1]);
+        s.select_all();
+        pending.press(&mut s, 3, true, false);
+        assert!(s.is_selected(3));
+        pending.release(&mut s, 3, false);
+        assert!(!s.is_selected(3) && s.count() == 4, "ctrl+click on a selected entry drops it on release");
+        pending.press(&mut s, 3, false, false);
+        assert_eq!(selected(&s), vec![3], "an unselected entry is selected at once");
+        pending.release(&mut s, 3, false);
+        assert_eq!(selected(&s), vec![3]);
+    }
+
+    #[test]
+    fn a_release_elsewhere_does_nothing() {
+        let mut s = Selection::new(5);
+        s.select_all();
+        let mut pending = PendingPress::default();
+        pending.press(&mut s, 1, false, false);
+        pending.release(&mut s, 2, false);
+        assert_eq!(s.count(), 5, "released over another entry: no click");
+        pending.release(&mut s, 1, false);
+        assert_eq!(s.count(), 5, "a release only answers one press");
     }
 
     #[test]

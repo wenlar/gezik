@@ -48,6 +48,22 @@ pub fn pin_entry(pinned: &mut Vec<String>, entry: String) -> bool {
     true
 }
 
+/// Pins `entries` at stored position `at` (clamped), in order. An entry already pinned
+/// moves there instead of appearing twice.
+pub fn insert_entries(pinned: &mut Vec<String>, entries: Vec<String>, at: usize) {
+    let mut at = at.min(pinned.len());
+    for entry in entries {
+        if let Some(old) = pinned.iter().position(|p| same_text(p, &entry)) {
+            pinned.remove(old);
+            if old < at {
+                at -= 1;
+            }
+        }
+        pinned.insert(at, entry);
+        at += 1;
+    }
+}
+
 /// Moves pinned item `from` to `to` (clamped). An out-of-range `from` does nothing.
 pub fn move_entry(pinned: &mut [String], from: usize, to: usize) {
     if from >= pinned.len() {
@@ -240,6 +256,19 @@ impl Sidebar {
         }
     }
 
+    /// Pins the folders `paths` at shown position `position` of the PINNED section (dropped
+    /// between two pinned folders); a folder already pinned moves there.
+    pub fn pin_at(&self, paths: &[PathBuf], position: usize) {
+        let (entries, at) = {
+            let inner = self.0.borrow();
+            let entries: Vec<String> = paths.iter().map(|path| inner.dirs.collapse(path)).collect();
+            (entries, inner.pins.stored_index(position).unwrap_or(inner.pins.pinned.len()))
+        };
+        let mut pinned = self.pinned();
+        insert_entries(&mut pinned, entries, at);
+        self.save(pinned);
+    }
+
     /// How many rows the PINNED section shows.
     pub fn visible_pinned_count(&self) -> usize {
         self.0.borrow().pins.visible.len()
@@ -387,6 +416,19 @@ mod tests {
 
     fn pin(entry: &str, path: &str) -> Pin {
         Pin { entry: entry.to_owned(), path: PathBuf::from(path) }
+    }
+
+    #[test]
+    fn dropped_folders_are_pinned_where_they_land() {
+        let mut pinned = strings(&["/a", "/b", "/c"]);
+        insert_entries(&mut pinned, strings(&["/x", "/y"]), 1);
+        assert_eq!(pinned, ["/a", "/x", "/y", "/b", "/c"]);
+        insert_entries(&mut pinned, strings(&["/c"]), 0);
+        assert_eq!(pinned, ["/c", "/a", "/x", "/y", "/b"], "an existing pin moves");
+        insert_entries(&mut pinned, strings(&["/a"]), 4);
+        assert_eq!(pinned, ["/c", "/x", "/y", "/a", "/b"], "moving down: the gap it leaves is counted");
+        insert_entries(&mut pinned, strings(&["/z"]), 99);
+        assert_eq!(pinned.last().map(String::as_str), Some("/z"), "past the end: last");
     }
 
     #[test]

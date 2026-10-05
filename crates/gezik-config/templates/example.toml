@@ -31,6 +31,7 @@ danger = "#bf616a"       # warnings and destructive actions
 progress = "#88c0d0"     # running file operations
 progress-paused = "#ebcb8b"
 progress-error = "#bf616a"
+drop-target = "#88c0d040"   # where dragged files would land
 
 [metrics]
 # font-family = "Inter"  # leave out or "" for the system font

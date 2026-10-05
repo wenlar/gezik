@@ -131,8 +131,9 @@ mod tests {
     fn wait_until_watching(watch: &FolderWatch, folder: &Path, rx: &mpsc::Receiver<()>) {
         for i in 0..100 {
             std::fs::write(folder.join(format!("probe{i}")), "").unwrap();
-            if rx.recv_timeout(Duration::from_millis(100)).is_ok() {
-                assert!(watch.take_change());
+            // A late word from the watch before (sent before `watch` reset the flag) is no
+            // sign of this one: only a word with the flag set is.
+            if rx.recv_timeout(Duration::from_millis(100)).is_ok() && watch.take_change() {
                 // Late events of the probes.
                 std::thread::sleep(Duration::from_millis(200));
                 while rx.try_recv().is_ok() {}

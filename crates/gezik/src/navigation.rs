@@ -357,6 +357,11 @@ impl Navigator {
         self.0.borrow().tabs.id(index)
     }
 
+    /// The location tab `index` shows.
+    pub fn tab_location(&self, index: usize) -> Option<Location> {
+        self.0.borrow().tabs.get(index).map(|history| history.location().clone())
+    }
+
     /// Where the tab with `id` is now; `None` once it is closed.
     pub fn tab_index(&self, id: u64) -> Option<usize> {
         self.0.borrow().tabs.index_of(id)
@@ -533,11 +538,14 @@ impl Navigator {
     }
 
     pub fn crumb_clicked(&self, index: i32) {
-        let location = self.active_location();
-        let crumb = usize::try_from(index).ok().and_then(|i| crumbs(&location, MAX_CRUMBS).into_iter().nth(i));
-        if let Some(crumb) = crumb {
-            self.go(crumb.location);
+        if let Some(location) = usize::try_from(index).ok().and_then(|i| self.crumb_location(i)) {
+            self.go(location);
         }
+    }
+
+    /// Where address bar part `index` leads.
+    pub fn crumb_location(&self, index: usize) -> Option<Location> {
+        crumbs(&self.active_location(), MAX_CRUMBS).into_iter().nth(index).map(|crumb| crumb.location)
     }
 
     fn status(&self, text: String) {

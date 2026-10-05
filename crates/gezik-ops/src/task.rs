@@ -411,7 +411,15 @@ mod tests {
         control.pause(PauseReason::User);
         let no_bin = |_: &Path| false;
         let (from, to) = (dir.join("big.bin"), dir.join("to/big.bin"));
+        // A failed check below must not leave the copy paused: the scope would wait forever.
+        struct Resume<'a>(&'a Control);
+        impl Drop for Resume<'_> {
+            fn drop(&mut self) {
+                self.0.resume();
+            }
+        }
         std::thread::scope(|scope| {
+            let _resume = Resume(&control);
             let copy = scope.spawn(|| {
                 let cx = RunCx { control: &control, trash: &no_bin, added: Cell::new(0), temp: &temp };
                 cx.copy_file(&from, &to, size)

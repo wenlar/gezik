@@ -4,7 +4,7 @@ use crate::{Color, Warning};
 use std::collections::HashMap;
 
 /// Every color a theme can set, as written in `[colors]`.
-pub const COLOR_KEYS: [&str; 24] = [
+pub const COLOR_KEYS: [&str; 25] = [
     "background",
     "surface",
     "foreground",
@@ -29,6 +29,7 @@ pub const COLOR_KEYS: [&str; 24] = [
     "progress",
     "progress-paused",
     "progress-error",
+    "drop-target",
 ];
 
 /// Old color names still read, for themes written before the icon colors were split.
@@ -84,6 +85,8 @@ pub struct ThemeColors {
     /// A paused operation (waiting for decisions, a full disk, the user).
     pub progress_paused: Color,
     pub progress_error: Color,
+    /// A folder, tab or place a dragged file would be dropped on.
+    pub drop_target: Color,
 }
 
 impl ThemeColors {
@@ -114,6 +117,7 @@ impl ThemeColors {
             "progress" => &mut self.progress,
             "progress-paused" => &mut self.progress_paused,
             "progress-error" => &mut self.progress_error,
+            "drop-target" => &mut self.drop_target,
             _ => unreachable!("not a color key: {key}"),
         };
         *slot = color;

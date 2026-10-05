@@ -25,6 +25,7 @@ danger = "#ff6b6b"
 progress = "#60cdff"
 progress-paused = "#e8b33f"
 progress-error = "#ff6b6b"
+drop-target = "#60cdff40"
 
 [metrics]
 font-family = ""

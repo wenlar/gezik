@@ -75,9 +75,15 @@ look.
 
 Gezik copies, moves and deletes with its own engine on every OS:
 
-- **Copy, cut, paste** (Ctrl+C / Ctrl+X / Ctrl+V) use the system clipboard on Windows and
-  macOS: copy in Gezik and paste in Explorer or Finder, or the other way round. Cut items look
-  faded until they are pasted. (Linux: Gezik's own clipboard for now.)
+- **Copy, cut, paste** (Ctrl+C / Ctrl+X / Ctrl+V) use the system clipboard: copy in Gezik
+  and paste in Explorer, Finder or a Linux file manager (X11 or Wayland), or the other way
+  round. Cut items look faded until they are pasted.
+- **Drag and drop** files onto a folder in the list, the empty space (the folder shown), a
+  folder or drive in the sidebar, a part of the address bar or a tab (rest on it to open it).
+  The same drive moves, another drive copies; Shift moves, Ctrl (⌥ on macOS) copies; the right
+  button asks. Drop folders between pinned ones to pin them. Drags go out to Explorer, the
+  desktop or any program that takes files, and come in from them; a drop is undone with Ctrl+Z
+  like any other operation.
 - **Conflicts are asked up front**: before anything is replaced, every item that already
   exists shows in one list with a decision each (Replace, Skip, Keep both, If newer).
   Nothing is replaced unless you choose so, and replaced files go to the trash.

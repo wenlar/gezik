@@ -1,5 +1,5 @@
 //! The system clipboard, for files: copy or cut in Gezik and paste in Explorer or Finder, and
-//! the other way round. Linux has no system clipboard here yet (sub-project 4b).
+//! the other way round. On Linux, X11's or Wayland's (see `linux`).
 
 use std::fmt;
 use std::path::PathBuf;
@@ -48,9 +48,27 @@ fn dropfiles(paths: &[PathBuf]) -> Vec<u8> {
     out
 }
 
+/// The paths in `CF_HDROP` data (the clipboard's, or a dropped data object's).
+#[cfg(windows)]
+pub(crate) fn hdrop_paths(drop: windows::Win32::UI::Shell::HDROP) -> Vec<PathBuf> {
+    use std::os::windows::ffi::OsStringExt;
+    use windows::Win32::UI::Shell::DragQueryFileW;
+    let count = unsafe { DragQueryFileW(drop, u32::MAX, None) };
+    let mut paths = Vec::new();
+    for i in 0..count {
+        let len = unsafe { DragQueryFileW(drop, i, None) } as usize;
+        let mut buffer = vec![0u16; len + 1];
+        let written = unsafe { DragQueryFileW(drop, i, Some(&mut buffer)) } as usize;
+        if written == 0 {
+            continue;
+        }
+        paths.push(PathBuf::from(std::ffi::OsString::from_wide(&buffer[..written.min(len)])));
+    }
+    paths
+}
+
 #[cfg(windows)]
 mod imp {
-    use std::os::windows::ffi::OsStringExt;
     use std::path::PathBuf;
 
     use windows::Win32::Foundation::{GlobalFree, HANDLE, HGLOBAL};
@@ -60,7 +78,7 @@ mod imp {
     };
     use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock};
     use windows::Win32::System::Ole::{CF_HDROP, DROPEFFECT_COPY, DROPEFFECT_MOVE};
-    use windows::Win32::UI::Shell::{CFSTR_PREFERREDDROPEFFECT, DragQueryFileW, HDROP};
+    use windows::Win32::UI::Shell::{CFSTR_PREFERREDDROPEFFECT, HDROP};
 
     use super::{ClipboardError, ClipboardFiles};
 
@@ -128,18 +146,7 @@ mod imp {
     pub fn read_files() -> Result<Option<ClipboardFiles>, ClipboardError> {
         let _open = Open::new()?;
         let Ok(handle) = (unsafe { GetClipboardData(u32::from(CF_HDROP.0)) }) else { return Ok(None) };
-        let drop = HDROP(handle.0);
-        let count = unsafe { DragQueryFileW(drop, u32::MAX, None) };
-        let mut paths = Vec::new();
-        for i in 0..count {
-            let len = unsafe { DragQueryFileW(drop, i, None) } as usize;
-            let mut buffer = vec![0u16; len + 1];
-            let written = unsafe { DragQueryFileW(drop, i, Some(&mut buffer)) } as usize;
-            if written == 0 {
-                continue;
-            }
-            paths.push(PathBuf::from(std::ffi::OsString::from_wide(&buffer[..written.min(len)])));
-        }
+        let paths = super::hdrop_paths(HDROP(handle.0));
         if paths.is_empty() {
             return Ok(None);
         }
@@ -245,31 +252,35 @@ mod imp {
     }
 }
 
+/// X11 or Wayland, through the backend of Gezik's window; before the window exists (or
+/// without a backend) Gezik keeps its own clipboard.
 #[cfg(not(any(windows, target_os = "macos")))]
 mod imp {
     use std::path::PathBuf;
 
     use super::{ClipboardError, ClipboardFiles};
+    use crate::linux::backend;
 
-    pub fn write_files(_paths: &[PathBuf], _cut: bool) -> Result<(), ClipboardError> {
-        Err(ClipboardError::Unsupported)
+    pub fn write_files(paths: &[PathBuf], cut: bool) -> Result<(), ClipboardError> {
+        backend().ok_or(ClipboardError::Unsupported)?.write_files(paths, cut)
     }
 
     pub fn read_files() -> Result<Option<ClipboardFiles>, ClipboardError> {
-        Err(ClipboardError::Unsupported)
+        backend().ok_or(ClipboardError::Unsupported)?.read_files()
     }
 
     pub fn sequence() -> u64 {
-        0
+        backend().map_or(0, |b| b.sequence())
     }
 
     pub fn clear() -> Result<(), ClipboardError> {
-        Err(ClipboardError::Unsupported)
+        backend().ok_or(ClipboardError::Unsupported)?.clear()
     }
 }
 
 #[cfg(test)]
 mod tests {
+    #[cfg(any(windows, target_os = "macos"))]
     use super::*;
 
     #[cfg(windows)]

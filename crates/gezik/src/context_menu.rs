@@ -7,6 +7,7 @@ use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
 
+use gezik_core::drag::Effect;
 use gezik_core::nav::Location;
 use gezik_core::view::{ColumnKey, ColumnState, GridSize, SortDir, SortKey, SortSpec, ViewMode, ViewSettings};
 use gezik_platform::MenuTarget;
@@ -156,6 +157,11 @@ pub const PASTE_INTO: u32 = 62;
 /// 70–73: the conflict row menu, in `conflicts::DECISIONS` order.
 pub const CONFLICT_FIRST: u32 = 70;
 
+/// The menu after a drag with the right button (drag.rs).
+pub const COPY_HERE: u32 = 80;
+pub const MOVE_HERE: u32 = 81;
+pub const CANCEL_DROP: u32 = 82;
+
 /// Gezik's file items for rows on macOS and Linux; Windows has them in its own menu (and
 /// Gezik takes them over, see `Menus::run_verb`).
 pub fn file_items(single: bool, folder: bool, can_paste: bool) -> Vec<(u32, &'static str)> {
@@ -241,6 +247,8 @@ enum Subject {
     Header,
     View,
     Conflict(usize),
+    /// Files dropped with the right button, and the folder they were dropped on.
+    Drop(Vec<PathBuf>, PathBuf),
 }
 
 /// Lets one native menu be pending or open at a time, so two right-clicks in quick
@@ -500,6 +508,24 @@ impl Menus {
         window.invoke_show_menu(x, y);
     }
 
+    /// Copy here / Move here / Cancel for files dropped with the right button on `dir`, at
+    /// window position `x`, `y`; only the effects that make sense there are offered.
+    pub fn drop_menu(&self, paths: Vec<PathBuf>, dir: PathBuf, can_copy: bool, can_move: bool, x: f32, y: f32) {
+        let mut list = Vec::new();
+        if can_copy {
+            list.push((COPY_HERE, "Copy here"));
+        }
+        if can_move {
+            list.push((MOVE_HERE, "Move here"));
+        }
+        if list.is_empty() {
+            return;
+        }
+        list.push((CANCEL_DROP, "Cancel"));
+        *self.subject.borrow_mut() = Some(Subject::Drop(paths, dir));
+        self.open_slint(&list, x, y);
+    }
+
     /// The decision menu of conflict row `row`, at window position `x`, `y`.
     pub fn conflict(&self, row: i32, x: f32, y: f32) {
         let Ok(row) = usize::try_from(row) else { return };
@@ -523,6 +549,8 @@ impl Menus {
                     self.ops.conflicts().decide_row(row, *decision);
                 }
             }
+            (COPY_HERE, Subject::Drop(paths, dir)) => self.ops.transfer(paths, dir, Effect::Copy),
+            (MOVE_HERE, Subject::Drop(paths, dir)) => self.ops.transfer(paths, dir, Effect::Move),
             (OPEN_IN_NEW_TAB, Subject::Row(path) | Subject::SidebarEntry(path)) => {
                 self.nav.open_tab(Location::Path(path), false);
             }
@@ -698,6 +726,55 @@ fn released_modifiers(down: gezik_platform::ModifierKeys) -> Vec<slint::platform
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn drop_menu_ids_are_their_own() {
+        let others = [
+            OPEN_IN_NEW_TAB,
+            PIN,
+            UNPIN,
+            MOVE_UP,
+            MOVE_DOWN,
+            DUPLICATE_TAB,
+            CLOSE_TAB,
+            CLOSE_OTHER_TABS,
+            OPEN,
+            OPEN_DEFAULT,
+            RESET_COLUMNS,
+            VIEW_LIST,
+            VIEW_GRID,
+            GRID_SMALL,
+            GRID_MEDIUM,
+            GRID_LARGE,
+            SORT_BY_NAME,
+            SORT_BY_MODIFIED,
+            SORT_BY_CREATED,
+            SORT_BY_TYPE,
+            SORT_BY_SIZE,
+            SORT_ASC,
+            SORT_DESC,
+            PREVIEW_PANE,
+            APPLY_TO_ALL,
+            RESET_FOLDER,
+            UNDO,
+            REDO,
+            PASTE,
+            NEW_FOLDER,
+            NEW_FILE,
+            REFRESH,
+            CUT,
+            COPY,
+            DUPLICATE,
+            RENAME,
+            TRASH,
+            DELETE_PERMANENTLY,
+            PASTE_INTO,
+        ];
+        let ranges = [TOGGLE_COLUMN_FIRST..RESET_COLUMNS, CONFLICT_FIRST..CONFLICT_FIRST + 4];
+        for id in [COPY_HERE, MOVE_HERE, CANCEL_DROP] {
+            assert!(!others.contains(&id) && !ranges.iter().any(|r| r.contains(&id)), "{id} is taken");
+        }
+    }
 
     fn ids(v: Vec<(u32, &str)>) -> Vec<u32> {
         v.into_iter().map(|(id, _)| id).collect()
