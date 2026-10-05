@@ -4,6 +4,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use gezik_core::ops::conflict::Facts;
 use gezik_core::ops::paths::path_key;
@@ -11,7 +12,8 @@ use gezik_core::ops::renames::{Step, order};
 use gezik_platform::fs;
 
 use super::name;
-use crate::pending::RENAMING_PREFIX;
+use crate::engine::lock;
+use crate::pending::{PendingDeletes, RENAMING_PREFIX, Restore};
 use crate::task::{
     Outcome, PlanItem, Resources, RunCx, ScanSink, Stage, Task, TaskKind, Work, changed_since, facts_after, unchanged,
 };
@@ -28,6 +30,13 @@ pub struct RenameTask {
     expect: Vec<Option<Facts>>,
     /// The temporary name of each pair that needs one (set while planning).
     temps: Vec<PathBuf>,
+    /// The order the pairs run in.
+    steps: Vec<Step>,
+    /// Where the temporary names were noted, once the first item went to one (`None` inside:
+    /// nowhere to note).
+    noted: OnceLock<Option<Arc<PendingDeletes>>>,
+    /// The pairs that went to their temporary name.
+    in_temp: Mutex<Vec<usize>>,
 }
 
 static NEXT_TEMP: AtomicUsize = AtomicUsize::new(0);
@@ -59,11 +68,35 @@ impl RenameTask {
                 source.with_file_name(format!("{RENAMING_PREFIX}{}-{n}", std::process::id()))
             })
             .collect();
-        RenameTask { pairs, expect, temps }
+        let steps = order(&pairs);
+        RenameTask { pairs, expect, temps, steps, noted: OnceLock::new(), in_temp: Mutex::default() }
     }
 
     fn index(item: &PlanItem) -> usize {
         item.root
+    }
+
+    /// The pairs the order sends through a temporary name.
+    fn through_temp(&self) -> impl Iterator<Item = usize> + '_ {
+        self.steps.iter().filter_map(|step| if let Step::ToTemp(i) = step { Some(*i) } else { None })
+    }
+
+    /// Notes every temporary name the job will use, in one write before the first is taken:
+    /// if Gezik stops meanwhile, the next start puts the items back.
+    fn note_temps(&self, cx: &RunCx<'_>) {
+        self.noted.get_or_init(|| {
+            let pending = cx.pending()?;
+            let restores: Vec<Restore> = self
+                .through_temp()
+                .map(|i| Restore { hidden: self.temps[i].clone(), original: self.pairs[i].0.clone(), was_hidden: true })
+                .collect();
+            pending.add_restores(&restores);
+            Some(pending.clone())
+        });
+    }
+
+    fn went_to_temp(&self, i: usize) -> bool {
+        lock(&self.in_temp).contains(&i)
     }
 }
 
@@ -100,7 +133,7 @@ impl Task for RenameTask {
         let freed: std::collections::HashSet<Vec<String>> =
             self.pairs.iter().map(|(source, _)| path_key(source)).collect();
         // Before: run one by one, in this order, on the planning thread.
-        for step in order(&self.pairs) {
+        for &step in &self.steps {
             let (i, tag) = match step {
                 Step::Direct(i) => (i, DIRECT),
                 Step::ToTemp(i) => (i, TO_TEMP),
@@ -114,6 +147,10 @@ impl Task for RenameTask {
             let at = if tag == FROM_TEMP { &self.temps[i] } else { source };
             let facts = match std::fs::symlink_metadata(at) {
                 Ok(meta) => facts_of(&meta),
+                Err(_) if tag == FROM_TEMP && self.went_to_temp(i) => {
+                    sink.failed(source, moved_back());
+                    continue;
+                }
                 // The temporary name is gone already only if an earlier step failed: skip.
                 Err(_) if tag == FROM_TEMP => continue,
                 Err(err) => {
@@ -122,6 +159,9 @@ impl Task for RenameTask {
                 }
             };
             let mut item = PlanItem::new(Stage::Before, facts).source(source).target(target).top(i).tag(tag);
+            if tag == TO_TEMP {
+                item = item.uncounted();
+            }
             // A target held by something outside this job is a real conflict.
             if tag != TO_TEMP && !freed.contains(&path_key(target)) {
                 // The engine takes a Before folder onto an existing folder as a merge (and would
@@ -152,33 +192,26 @@ impl Task for RenameTask {
                 if !unchanged(source, self.expect.get(i).copied().flatten()) {
                     return Err(changed_since());
                 }
-                cx.note_temp(temp, source);
-                if let Err(err) = fs::move_entry(source, temp) {
-                    cx.forget_temp(temp);
-                    return Err(err);
-                }
+                self.note_temps(cx);
+                fs::move_entry(source, temp)?;
+                lock(&self.in_temp).push(i);
                 // Nothing to undo yet: the item counts once it reaches its name.
                 Ok(Outcome::Nothing)
             }
             FROM_TEMP => {
                 if std::fs::symlink_metadata(temp).is_err() {
-                    return Ok(Outcome::Nothing);
+                    return Err(moved_back());
                 }
                 match fs::move_entry(temp, target) {
-                    Ok(()) => {
-                        cx.forget_temp(temp);
-                        Ok(Outcome::Moved {
-                            from: source.clone(),
-                            to: target.clone(),
-                            facts: facts_after(target, item.facts.is_dir),
-                        })
-                    }
+                    Ok(()) => Ok(Outcome::Moved {
+                        from: source.clone(),
+                        to: target.clone(),
+                        facts: facts_after(target, item.facts.is_dir),
+                    }),
                     Err(err) => {
                         // Back under its own name (or a free one next to it); else the note puts
                         // it back later.
-                        if super::restore_hidden(temp, source, true) {
-                            cx.forget_temp(temp);
-                        }
+                        super::restore_hidden(temp, source, true);
                         Err(err)
                     }
                 }
@@ -198,15 +231,30 @@ impl Task for RenameTask {
     }
 
     /// A job cancelled between an item's two steps leaves it under its temporary name: it goes
-    /// back under its own name (or a free one next to it). A note left behind is dropped at the
-    /// next start, as its temporary name is gone.
+    /// back under its own name (or a free one next to it). The notes of the temporary names
+    /// that are gone go in one write; one that stays is put back at the next start.
     fn done(&self, _cancelled: bool) {
-        for (temp, (source, _)) in self.temps.iter().zip(&self.pairs) {
+        for &i in lock(&self.in_temp).iter() {
+            let (temp, (source, _)) = (&self.temps[i], &self.pairs[i]);
             if std::fs::symlink_metadata(temp).is_ok() {
                 super::restore_hidden(temp, source, true);
             }
         }
+        if let Some(Some(pending)) = self.noted.get() {
+            let gone: Vec<&Path> = self
+                .through_temp()
+                .map(|i| self.temps[i].as_path())
+                .filter(|temp| std::fs::symlink_metadata(temp).is_err())
+                .collect();
+            pending.remove_restores(&gone);
+        }
     }
+}
+
+/// The item left its temporary name before its second step: another Gezik window starting
+/// meanwhile put it back.
+fn moved_back() -> io::Error {
+    io::Error::new(io::ErrorKind::NotFound, "It was moved back by another Gezik window")
 }
 
 #[cfg(test)]
@@ -328,28 +376,94 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_second_step_leaves_a_restore_note() {
+    fn a_note_is_there_while_an_item_sits_under_its_temporary_name() {
         let dir = test_dir("rename-note");
         write(&dir.join("a.txt"), "a");
-        let pending = std::sync::Arc::new(crate::pending::PendingDeletes::new(dir.join("pending-deletes")));
+        write(&dir.join("b.txt"), "b");
+        let pending = Arc::new(PendingDeletes::new(dir.join("pending-deletes")));
         let temp = crate::task::TempCopies::new(Some(pending.clone()));
         let control = crate::control::Control::default();
         let no_bin = |_: &Path| false;
         let cx = RunCx { control: &control, trash: &no_bin, added: std::cell::Cell::new(0), temp: &temp };
-        let task = RenameTask::many(vec![(dir.join("a.txt"), dir.join("x/b.txt"))]);
-        let facts = facts_after(&dir.join("a.txt"), false);
-        let to_temp = PlanItem::new(Stage::Before, facts)
-            .source(dir.join("a.txt"))
-            .target(dir.join("x/b.txt"))
-            .top(0)
+        let task =
+            RenameTask::many(vec![(dir.join("a.txt"), dir.join("b.txt")), (dir.join("b.txt"), dir.join("a.txt"))]);
+        let i = task.through_temp().next().unwrap();
+        let (source, target) = task.pairs[i].clone();
+        let to_temp = PlanItem::new(Stage::Before, facts_after(&source, false))
+            .source(&source)
+            .target(&target)
+            .top(i)
             .tag(TO_TEMP);
         task.run(&to_temp, &cx).unwrap();
+        assert!(!source.exists(), "under its temporary name");
         assert_eq!(pending.restores().len(), 1, "the temporary name is noted");
-        // The target's folder does not exist: the second step fails and the item goes back.
+        // The other item still holds the target: the second step fails and the item goes back.
         let from_temp = to_temp.clone().tag(FROM_TEMP);
         assert!(task.run(&from_temp, &cx).is_err());
-        assert_eq!(read(&dir.join("a.txt")), "a");
+        assert_eq!(read(&source), source.file_stem().unwrap().to_str().unwrap());
+        task.done(false);
         assert!(pending.restores().is_empty(), "back under its name: the note is gone");
+        assert_eq!(names(&dir), ["a.txt", "b.txt"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_item_put_back_by_another_window_fails_its_second_step() {
+        let dir = test_dir("rename-moved-back");
+        write(&dir.join("a.txt"), "a");
+        write(&dir.join("b.txt"), "b");
+        let temp = crate::task::TempCopies::new(None);
+        let control = crate::control::Control::default();
+        let no_bin = |_: &Path| false;
+        let cx = RunCx { control: &control, trash: &no_bin, added: std::cell::Cell::new(0), temp: &temp };
+        let task =
+            RenameTask::many(vec![(dir.join("a.txt"), dir.join("b.txt")), (dir.join("b.txt"), dir.join("a.txt"))]);
+        let i = task.through_temp().next().unwrap();
+        let (source, target) = task.pairs[i].clone();
+        let to_temp = PlanItem::new(Stage::Before, facts_after(&source, false))
+            .source(&source)
+            .target(&target)
+            .top(i)
+            .tag(TO_TEMP);
+        task.run(&to_temp, &cx).unwrap();
+        std::fs::rename(&task.temps[i], &source).unwrap();
+        let err = task.run(&to_temp.clone().tag(FROM_TEMP), &cx).unwrap_err();
+        assert!(err.to_string().contains("another Gezik window"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_cycle_and_case_only_renames_leave_no_notes() {
+        let dir = test_dir("rename-cycle-notes");
+        let work = dir.join("work");
+        for name in ["a.txt", "b.txt", "c.txt", "d.txt", "e.txt"] {
+            write(&work.join(name), name);
+        }
+        let pairs = vec![
+            (work.join("a.txt"), work.join("b.txt")),
+            (work.join("b.txt"), work.join("c.txt")),
+            (work.join("c.txt"), work.join("a.txt")),
+            (work.join("d.txt"), work.join("D.txt")),
+            (work.join("e.txt"), work.join("E.TXT")),
+        ];
+        // A step to a temporary name is not an item of its own in the progress.
+        let mut sink = crate::testing::CollectSink::default();
+        RenameTask::many(pairs.clone()).plan(&mut sink);
+        let to_temp = sink.items.iter().filter(|item| item.tag == TO_TEMP).count();
+        assert!(to_temp >= 1);
+        assert!(sink.items.iter().all(|item| item.counted == (item.tag != TO_TEMP)));
+        let pending_file = dir.join("pending-deletes");
+        let engine = crate::Engine::new(
+            crate::Settings { pending_deletes: Some(pending_file.clone()), ..crate::Settings::default() },
+            || {},
+        );
+        let (report, _) = finish(&engine, engine.submit(Box::new(RenameTask::many(pairs))), no_conflicts);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert_eq!(names(&work), ["D.txt", "E.TXT", "a.txt", "b.txt", "c.txt"]);
+        assert_eq!(read(&work.join("b.txt")), "a.txt");
+        assert_eq!(read(&work.join("a.txt")), "c.txt");
+        assert!(PendingDeletes::new(pending_file.clone()).restores().is_empty());
+        assert!(!pending_file.exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

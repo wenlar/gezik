@@ -148,6 +148,8 @@ pub struct PlanItem {
     pub tag: u8,
     /// The existing target goes to the trash first (set by the engine for "Replace").
     pub(crate) replace: bool,
+    /// Counts in the job's progress (a rename's step to a temporary name does not).
+    pub(crate) counted: bool,
 }
 
 impl PlanItem {
@@ -163,6 +165,7 @@ impl PlanItem {
             root: 0,
             tag: 0,
             replace: false,
+            counted: true,
         }
     }
 
@@ -201,6 +204,12 @@ impl PlanItem {
 
     pub fn tag(mut self, tag: u8) -> PlanItem {
         self.tag = tag;
+        self
+    }
+
+    /// Left out of the job's progress: a step on the way, not an item of its own.
+    pub(crate) fn uncounted(mut self) -> PlanItem {
+        self.counted = false;
         self
     }
 
@@ -300,22 +309,9 @@ impl RunCx<'_> {
         (self.trash)(path)
     }
 
-    /// `temp` holds `original` for a moment (a rename through a temporary name): if Gezik
-    /// stops before [`forget_temp`](Self::forget_temp), the next start puts it back.
-    pub fn note_temp(&self, temp: &Path, original: &Path) {
-        if let Some(pending) = &self.temp.pending {
-            pending.add_restore(&crate::pending::Restore {
-                hidden: temp.to_path_buf(),
-                original: original.to_path_buf(),
-                was_hidden: true,
-            });
-        }
-    }
-
-    pub fn forget_temp(&self, temp: &Path) {
-        if let Some(pending) = &self.temp.pending {
-            pending.remove_restore(temp);
-        }
+    /// Where the job notes what to put back if Gezik stops (`None`: nowhere).
+    pub(crate) fn pending(&self) -> Option<&std::sync::Arc<PendingDeletes>> {
+        self.temp.pending.as_ref()
     }
 
     /// Copies a file, counting its bytes and stopping when the job is cancelled. The system
