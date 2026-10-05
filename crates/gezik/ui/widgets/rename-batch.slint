@@ -1,0 +1,449 @@
+import { ListView } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+import { TextButton } from "text-button.slint";
+import { TextField } from "text-field.slint";
+
+// One rule in the list (batch_rename.rs builds them).
+export struct RuleRow {
+    summary: string,
+    enabled: bool,
+    error: string,
+    selected: bool,
+}
+
+// One item in the preview.
+export struct RenamePreviewRow {
+    old-name: string,
+    new-name: string,
+    // 0 unchanged, 1 changed, 2 duplicate, 3 exists, 4 invalid.
+    status: int,
+    // The tip for a warning ("Another item gets this name").
+    note: string,
+    // Typed by hand: the rules leave it alone.
+    manual: bool,
+    selected: bool,
+}
+
+// The switches of the selected rule; which ones show depends on `kind`. Its texts are
+// separate two-way properties (`opt-*`): a typed field keeps its binding that way.
+export struct RuleOptions {
+    kind: string,
+    // Replace
+    regex: bool,
+    case-sensitive: bool,
+    all: bool,
+    // Number
+    at-start: bool,
+    per-folder: bool,
+    // Case (0-3: lower, upper, title, sentence) and Extension (0 set, 1 lower, 2 upper)
+    mode: int,
+    // Clean
+    trim: bool,
+    collapse: bool,
+    separators: bool,
+    underscores: bool,
+}
+
+component Check inherits Rectangle {
+    in property <string> text;
+    in property <bool> checked;
+    callback toggled();
+    height: Theme.row-height;
+    min-width: label.preferred-width + 24px;
+    accessible-role: checkbox;
+    accessible-checked: root.checked;
+    accessible-label: root.text;
+    accessible-action-default => { root.toggled(); }
+    Rectangle {
+        x: 0;
+        y: (parent.height - 14px) / 2;
+        width: 14px;
+        height: 14px;
+        border-radius: 3px;
+        border-width: 1px;
+        border-color: root.checked ? Theme.accent : Theme.border;
+        background: root.checked ? Theme.accent : transparent;
+        if root.checked: Path {
+            width: 14px;
+            height: 14px;
+            viewbox-width: 14;
+            viewbox-height: 14;
+            stroke: Theme.accent-foreground;
+            stroke-width: 2px;
+            commands: "M 3 7 L 6 10 L 11 4";
+        }
+    }
+    label := Text {
+        x: 20px;
+        height: parent.height;
+        text: root.text;
+        vertical-alignment: center;
+        color: Theme.foreground;
+    }
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.toggled(); }
+    }
+}
+
+component Labeled inherits HorizontalLayout {
+    in property <string> label;
+    spacing: Theme.spacing;
+    Text {
+        text: root.label;
+        width: 72px;
+        vertical-alignment: center;
+        color: Theme.foreground-muted;
+    }
+    @children
+}
+
+export component RenameBatch inherits Rectangle {
+    in property <bool> open;
+    in property <bool> dialog-open;
+    in property <string> title;
+    in property <[RuleRow]> rules;
+    in property <int> selected-rule: -1;
+    in property <RuleOptions> options;
+    // The selected rule's texts (Rust loads them when another rule is selected).
+    in-out property <string> opt-find;
+    in-out property <string> opt-with;
+    in-out property <string> opt-start;
+    in-out property <string> opt-step;
+    in-out property <string> opt-digits;
+    in-out property <string> opt-separator;
+    in-out property <string> opt-prefix;
+    in-out property <string> opt-suffix;
+    in-out property <string> opt-text;
+    in property <[RenamePreviewRow]> rows;
+    in property <bool> include-extension;
+    in property <bool> only-changed;
+    in property <string> footer;
+    in property <bool> can-rename;
+    in-out property <length> scroll;
+    // The selected preview row's new name (Task 8 edits it).
+    in-out property <string> name-text;
+    in property <bool> name-enabled;
+
+    callback add-rule(length, length);
+    callback select-rule(int);
+    callback toggle-rule(int);
+    callback move-rule(int);   // -1 up, +1 down
+    callback remove-rule();
+    // A text option changed: (key, value), keys as in RuleOptions.
+    callback option-text(string, string);
+    // A switch option: (key, value).
+    callback option-flag(string, bool);
+    callback option-mode(int);
+    callback toggle-extension();
+    callback toggle-only-changed();
+    callback row-pressed(int, bool, bool);
+    callback rename();
+    callback cancel();
+    callback presets(length, length);
+    callback name-edited(string);
+    callback name-reset();
+    callback reorder(int, int);
+    callback key(KeyEvent) -> bool;
+
+    changed open => {
+        if self.open && !root.dialog-open {
+            scope.focus();
+        }
+    }
+
+    public function take-focus() {
+        scope.focus();
+    }
+
+    public function focus-name() {
+        name-field.focus-and-select();
+    }
+
+    public function ensure-visible(index: int) {
+        if index * Theme.row-height < -root.scroll {
+            root.scroll = -index * Theme.row-height;
+        } else if (index + 1) * Theme.row-height > -root.scroll + preview.visible-height {
+            root.scroll = -((index + 1) * Theme.row-height - preview.visible-height);
+        }
+    }
+
+    background: Theme.background.with-alpha(0.6);
+    TouchArea { }
+
+    scope := FocusScope {
+        key-pressed(event) => {
+            if root.key(event) { return accept; }
+            return reject;
+        }
+    }
+
+    Rectangle {
+        x: 24px;
+        y: 24px;
+        width: root.width - 48px;
+        height: root.height - 48px;
+        background: Theme.surface;
+        border-radius: Theme.radius * 1.5;
+        border-width: 1px;
+        border-color: Theme.border;
+        accessible-role: groupbox;
+        accessible-label: root.title;
+
+        VerticalLayout {
+            padding: Theme.spacing * 2;
+            spacing: Theme.spacing;
+
+            HorizontalLayout {
+                spacing: Theme.spacing;
+                Text {
+                    text: root.title;
+                    font-weight: 600;
+                    horizontal-stretch: 1;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    color: Theme.foreground;
+                }
+                TextButton {
+                    text: "Presets ▾";
+                    clicked => { root.presets(self.absolute-position.x, self.absolute-position.y + self.height); }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: Theme.spacing * 2;
+                vertical-stretch: 1;
+
+                // Rules and the selected rule's options.
+                VerticalLayout {
+                    width: min(360px, parent.width * 0.42);
+                    spacing: Theme.spacing;
+                    Text { text: "Rules"; color: Theme.foreground-muted; }
+                    rule-list := ListView {
+                        vertical-stretch: 1;
+                        for rule[i] in root.rules: Rectangle {
+                            height: Theme.row-height;
+                            background: rule.selected ? Theme.selection : rule-touch.has-hover ? Theme.hover : transparent;
+                            accessible-role: list-item;
+                            accessible-label: rule.summary;
+                            accessible-item-selectable: true;
+                            accessible-item-selected: rule.selected;
+                            rule-touch := TouchArea {
+                                clicked => { root.select-rule(i); }
+                            }
+                            HorizontalLayout {
+                                padding-left: Theme.spacing;
+                                spacing: Theme.spacing;
+                                Check {
+                                    width: 20px;
+                                    text: "";
+                                    checked: rule.enabled;
+                                    toggled => { root.toggle-rule(i); }
+                                }
+                                Text {
+                                    text: (i + 1) + "  " + rule.summary;
+                                    horizontal-stretch: 1;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                    color: rule.error != "" ? Theme.danger
+                                        : rule.selected ? Theme.selection-foreground
+                                        : rule.enabled ? Theme.foreground : Theme.foreground-muted;
+                                }
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.spacing;
+                        TextButton {
+                            text: "+ Add rule ▾";
+                            clicked => { root.add-rule(self.absolute-position.x, self.absolute-position.y + self.height); }
+                        }
+                        TextButton { text: "↑"; min-width: 32px; clicked => { root.move-rule(-1); } }
+                        TextButton { text: "↓"; min-width: 32px; clicked => { root.move-rule(1); } }
+                        TextButton { text: "✕"; min-width: 32px; clicked => { root.remove-rule(); } }
+                    }
+                    if root.selected-rule >= 0 && root.rules[root.selected-rule].error != "": Text {
+                        text: root.rules[root.selected-rule].error;
+                        color: Theme.danger;
+                        wrap: word-wrap;
+                    }
+                    // The selected rule's options.
+                    if root.options.kind == "replace": VerticalLayout {
+                        spacing: Theme.spacing;
+                        Labeled { label: "Find"; TextField { text <=> root.opt-find; edited(t) => { root.option-text("find", t); } } }
+                        Labeled { label: "Replace"; TextField { text <=> root.opt-with; edited(t) => { root.option-text("with", t); } } }
+                        HorizontalLayout {
+                            spacing: Theme.spacing * 2;
+                            Check { text: "Regex"; checked: root.options.regex; toggled => { root.option-flag("regex", !root.options.regex); } }
+                            Check { text: "Match case"; checked: root.options.case-sensitive; toggled => { root.option-flag("case-sensitive", !root.options.case-sensitive); } }
+                            Check { text: "All"; checked: root.options.all; toggled => { root.option-flag("all", !root.options.all); } }
+                        }
+                    }
+                    if root.options.kind == "number": VerticalLayout {
+                        spacing: Theme.spacing;
+                        HorizontalLayout {
+                            spacing: Theme.spacing;
+                            Labeled { label: "Start"; TextField { text <=> root.opt-start; edited(t) => { root.option-text("start", t); } } }
+                            Labeled { label: "Step"; TextField { text <=> root.opt-step; edited(t) => { root.option-text("step", t); } } }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.spacing;
+                            Labeled { label: "Digits"; TextField { text <=> root.opt-digits; edited(t) => { root.option-text("digits", t); } } }
+                            Labeled { label: "Separator"; TextField { text <=> root.opt-separator; edited(t) => { root.option-text("separator", t); } } }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.spacing;
+                            TextButton { text: "At start"; checked: root.options.at-start; clicked => { root.option-flag("at-start", true); } }
+                            TextButton { text: "At end"; checked: !root.options.at-start; clicked => { root.option-flag("at-start", false); } }
+                            Check { text: "Per folder"; checked: root.options.per-folder; toggled => { root.option-flag("per-folder", !root.options.per-folder); } }
+                        }
+                    }
+                    if root.options.kind == "case": HorizontalLayout {
+                        spacing: Theme.spacing;
+                        TextButton { text: "lower"; checked: root.options.mode == 0; clicked => { root.option-mode(0); } }
+                        TextButton { text: "UPPER"; checked: root.options.mode == 1; clicked => { root.option-mode(1); } }
+                        TextButton { text: "Title"; checked: root.options.mode == 2; clicked => { root.option-mode(2); } }
+                        TextButton { text: "Sentence"; checked: root.options.mode == 3; clicked => { root.option-mode(3); } }
+                    }
+                    if root.options.kind == "add-text": VerticalLayout {
+                        spacing: Theme.spacing;
+                        Labeled { label: "Before"; TextField { text <=> root.opt-prefix; edited(t) => { root.option-text("prefix", t); } } }
+                        Labeled { label: "After"; TextField { text <=> root.opt-suffix; edited(t) => { root.option-text("suffix", t); } } }
+                    }
+                    if root.options.kind == "extension": VerticalLayout {
+                        spacing: Theme.spacing;
+                        HorizontalLayout {
+                            spacing: Theme.spacing;
+                            TextButton { text: "New"; checked: root.options.mode == 0; clicked => { root.option-mode(0); } }
+                            TextButton { text: "lower"; checked: root.options.mode == 1; clicked => { root.option-mode(1); } }
+                            TextButton { text: "UPPER"; checked: root.options.mode == 2; clicked => { root.option-mode(2); } }
+                        }
+                        if root.options.mode == 0: Labeled { label: "Extension"; TextField { text <=> root.opt-text; edited(t) => { root.option-text("text", t); } } }
+                    }
+                    if root.options.kind == "template": VerticalLayout {
+                        spacing: Theme.spacing;
+                        Labeled { label: "Name"; TextField { text <=> root.opt-text; edited(t) => { root.option-text("text", t); } } }
+                        Text {
+                            text: "{name} {ext} {n:03} {parent} {date:%Y-%m-%d} {taken:%Y-%m-%d} {size}";
+                            color: Theme.foreground-muted;
+                            wrap: word-wrap;
+                        }
+                    }
+                    if root.options.kind == "clean": VerticalLayout {
+                        spacing: Theme.spacing;
+                        Check { text: "Trim spaces at the ends"; checked: root.options.trim; toggled => { root.option-flag("trim", !root.options.trim); } }
+                        Check { text: "Collapse repeated spaces"; checked: root.options.collapse; toggled => { root.option-flag("collapse", !root.options.collapse); } }
+                        Check { text: "_ . - become spaces"; checked: root.options.separators; toggled => { root.option-flag("separators", !root.options.separators); } }
+                        Check { text: "Spaces become _"; checked: root.options.underscores; toggled => { root.option-flag("underscores", !root.options.underscores); } }
+                    }
+                    Check {
+                        text: "Include extension";
+                        checked: root.include-extension;
+                        toggled => { root.toggle-extension(); }
+                    }
+                }
+
+                Rectangle { width: 1px; background: Theme.border; }
+
+                // Preview.
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    spacing: Theme.spacing;
+                    HorizontalLayout {
+                        spacing: Theme.spacing;
+                        Text { text: "Preview"; horizontal-stretch: 1; color: Theme.foreground-muted; }
+                        Check { text: "Only changed"; checked: root.only-changed; toggled => { root.toggle-only-changed(); } }
+                    }
+                    HorizontalLayout {
+                        height: Theme.row-height;
+                        padding-left: Theme.spacing + 20px;
+                        spacing: Theme.spacing * 2;
+                        Text { text: "Old name"; horizontal-stretch: 1; color: Theme.foreground-muted; vertical-alignment: center; }
+                        Text { text: "New name"; horizontal-stretch: 1; color: Theme.foreground-muted; vertical-alignment: center; }
+                    }
+                    preview := ListView {
+                        vertical-stretch: 1;
+                        content-y <=> root.scroll;
+                        for row[i] in root.rows: line := Rectangle {
+                            property <color> fg: row.selected ? Theme.selection-foreground : Theme.foreground;
+                            height: Theme.row-height;
+                            background: row.selected ? Theme.selection : row-touch.has-hover ? Theme.hover : transparent;
+                            accessible-role: list-item;
+                            accessible-label: row.old-name + " to " + row.new-name;
+                            accessible-description: row.note;
+                            accessible-item-selectable: true;
+                            accessible-item-selected: row.selected;
+                            accessible-item-index: i;
+                            row-touch := TouchArea {
+                                pointer-event(event) => {
+                                    if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                                        scope.focus();
+                                        root.row-pressed(i, event.modifiers.control, event.modifiers.shift);
+                                    }
+                                }
+                                double-clicked => { name-field.focus-and-select(); }
+                            }
+                            HorizontalLayout {
+                                padding-left: Theme.spacing;
+                                spacing: Theme.spacing * 2;
+                                // The drag handle (Task 8) and the row's mark.
+                                handle := Rectangle {
+                                    width: 14px;
+                                    Text {
+                                        text: row.manual ? "✎" : row.status >= 2 ? "⚠" : "≡";
+                                        color: row.status >= 2 ? Theme.danger : Theme.foreground-muted;
+                                        vertical-alignment: center;
+                                        height: parent.height;
+                                    }
+                                }
+                                Text {
+                                    text: row.old-name;
+                                    horizontal-stretch: 1;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                    color: line.fg;
+                                }
+                                Text {
+                                    text: row.new-name;
+                                    horizontal-stretch: 1;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                    color: row.status >= 2 && !row.selected ? Theme.danger : line.fg;
+                                    font-weight: row.status == 1 ? 600 : 400;
+                                }
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.spacing;
+                        Text { text: "Name"; vertical-alignment: center; color: Theme.foreground-muted; }
+                        name-field := TextField {
+                            text <=> root.name-text;
+                            enabled: root.name-enabled;
+                            edited(t) => { root.name-edited(t); }
+                        }
+                        TextButton { text: "Reset to rules"; clicked => { root.name-reset(); } }
+                    }
+                }
+            }
+
+            Rectangle { height: 1px; background: Theme.border; }
+            HorizontalLayout {
+                spacing: Theme.spacing;
+                Text {
+                    text: root.footer;
+                    horizontal-stretch: 1;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    color: Theme.foreground-muted;
+                }
+                TextButton { text: "Cancel"; clicked => { root.cancel(); } }
+                TextButton {
+                    text: "Rename";
+                    primary: root.can-rename;
+                    clicked => { if root.can-rename { root.rename(); } }
+                }
+            }
+        }
+    }
+}

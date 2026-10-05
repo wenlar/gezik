@@ -331,6 +331,14 @@ impl View {
         })
     }
 
+    /// The names of every entry shown (the folder's listing).
+    pub fn all_names(&self) -> Vec<String> {
+        (0..self.len())
+            .filter_map(|i| self.entry_path(i))
+            .filter_map(|(path, _)| path.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .collect()
+    }
+
     /// Turns entry `index`'s name into a text field (files and folders only, not drives).
     pub fn begin_rename(&self, index: usize) -> bool {
         let (name, is_dir) = {

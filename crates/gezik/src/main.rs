@@ -1,6 +1,7 @@
 // Hide the console window in release builds on Windows.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod batch_rename;
 mod conflicts;
 mod context_menu;
 mod dialog;
@@ -89,8 +90,8 @@ fn handle_key(
     has_modifier: bool,
     menu_key: bool,
 ) -> bool {
-    // A question or the conflict list over the window has the keyboard.
-    if window.get_dialog_open() || window.get_conflicts_open() {
+    // A question, the conflict list or the batch rename layer over the window has the keyboard.
+    if window.get_dialog_open() || window.get_conflicts_open() || window.get_rb_open() {
         return false;
     }
     // The name field being edited has the keyboard (Enter, Esc, Tab are its own).
@@ -143,7 +144,7 @@ fn handle_key(
                 Action::Trash => ops.trash(false),
                 Action::DeletePermanently => ops.trash(true),
                 Action::Duplicate => ops.duplicate(),
-                Action::BatchRename => ops.rename_start(),
+                Action::BatchRename => ops.batch_rename(),
                 Action::Undo => ops.undo(),
                 Action::Redo => ops.redo(),
             }
@@ -374,7 +375,10 @@ fn main() -> Result<(), slint::PlatformError> {
         engine_settings,
         initial_settings.files,
         saved_state.operations_collapsed,
+        config.clone(),
+        saved_state.batch_rename.clone().unwrap_or_default(),
     );
+    let _batch_rename = batch_rename::BatchRename::new(&window, ops.clone());
     window.on_op_pause({
         let ops = ops.clone();
         move |id| ops.pause(id)

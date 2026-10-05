@@ -1438,6 +1438,7 @@ dependencies = [
 name = "gezik"
 version = "0.1.0"
 dependencies = [
+ "gezik-batch",
  "gezik-config",
  "gezik-core",
  "gezik-ops",

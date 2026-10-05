@@ -9,7 +9,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use gezik_config::settings::FilesSettings;
+use gezik_config::settings::{BatchRenameState, FilesSettings};
+use gezik_config::store::ConfigStore;
 use gezik_core::drag::Effect;
 use gezik_core::format_size;
 use gezik_core::ops::paths::same_path;
@@ -283,6 +284,10 @@ struct Inner {
     cut: RefCell<Vec<PathBuf>>,
     clip_sequence: Cell<u64>,
     conflicts: crate::conflicts::Conflicts,
+    /// Where state.toml is (none: nothing is saved).
+    store: Option<ConfigStore>,
+    /// The batch rename layer's last rules.
+    batch_last: RefCell<BatchRenameState>,
 }
 
 #[derive(Clone)]
@@ -299,6 +304,8 @@ impl Operations {
         settings: Settings,
         files: FilesSettings,
         collapsed: bool,
+        store: Option<ConfigStore>,
+        batch_last: BatchRenameState,
     ) -> Operations {
         // One wake-up for a burst of events: the flag is cleared just before draining.
         let waiting = Arc::new(AtomicBool::new(false));
@@ -335,6 +342,8 @@ impl Operations {
             cut: RefCell::default(),
             clip_sequence: Cell::new(0),
             conflicts,
+            store,
+            batch_last: RefCell::new(batch_last),
         }));
         ops.0.view.on_shown({
             let weak = Rc::downgrade(&ops.0);
@@ -401,14 +410,52 @@ impl Operations {
         }
     }
 
-    /// F2: renames the selected entry (or the focused one).
+    /// F2: renames the selected entry in place, or opens batch rename for two or more.
     pub fn rename_start(&self) {
         if self.0.view.shows_drives() {
             return;
         }
         let view = &self.0.view;
+        if view.selection_count() >= 2 {
+            self.batch_rename();
+            return;
+        }
         if let Some(index) = view.single_selected().or_else(|| view.focus()) {
             view.begin_rename(index);
+        }
+    }
+
+    /// The batch rename layer for the selection (also for one item: the batch-rename shortcut).
+    pub fn batch_rename(&self) {
+        if self.0.view.shows_drives() {
+            return;
+        }
+        let mut items = self.0.view.selected_items();
+        if items.is_empty() {
+            items.extend(self.0.view.focus().and_then(|i| self.0.view.entry_path(i)));
+        }
+        if items.is_empty() {
+            return;
+        }
+        let others = self.0.view.all_names();
+        let last = self.0.batch_last.borrow().clone();
+        crate::batch_rename::with_current(|layer| {
+            // Already open (a menu over it): keep what is being edited.
+            if !layer.is_open() {
+                layer.open(items, others, last);
+            }
+        });
+    }
+
+    /// The rules used last; written to state.toml now (the layer may be used once per run).
+    pub fn save_batch_rename(&self, state: BatchRenameState) {
+        *self.0.batch_last.borrow_mut() = state.clone();
+        if let Some(store) = &self.0.store {
+            let mut saved = store.load_state();
+            saved.batch_rename = Some(state);
+            if let Err(err) = store.save_state(&saved) {
+                eprintln!("gezik: cannot save the rename rules: {err}");
+            }
         }
     }
 

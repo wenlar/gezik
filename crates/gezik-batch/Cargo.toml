@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 gezik-core.workspace = true
-# Unicode \w and case-insensitive matching, no other Unicode tables (size).
-regex = { version = "1", default-features = false, features = ["std", "perf", "unicode-case", "unicode-perl"] }
+# Unicode \w and case-insensitive matching, no other Unicode tables (size). No `perf`:
+# names are short, and it measured 0.45 MB of the release exe.
+regex = { version = "1", default-features = false, features = ["std", "unicode-case", "unicode-perl"] }
 kamadak-exif = "0.6"
