@@ -150,7 +150,7 @@ pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// At most this many changed folders are tracked per job.
+/// At most this many changed folders are tracked per job (besides those of chosen items).
 const MAX_CHANGED: usize = 256;
 
 /// What a job gathers while it runs.
@@ -208,11 +208,12 @@ impl Job {
         lock(&self.acc).results.push(path);
     }
 
-    /// The folders holding `paths` changed.
-    pub fn touch<'a>(&self, paths: impl IntoIterator<Item = &'a Path>) {
+    /// The folders holding `paths` changed. Those of a chosen item (`root`) always count: they
+    /// are the folders on screen, and a delete reaches them last, after every folder inside.
+    pub fn touch<'a>(&self, paths: impl IntoIterator<Item = &'a Path>, root: bool) {
         let mut acc = lock(&self.acc);
         for parent in paths.into_iter().filter_map(Path::parent) {
-            if acc.changed.len() < MAX_CHANGED && acc.changed.insert(parent.to_path_buf()) {
+            if (root || acc.changed.len() < MAX_CHANGED) && acc.changed.insert(parent.to_path_buf()) {
                 acc.unsent.insert(parent.to_path_buf());
             }
         }
@@ -786,6 +787,25 @@ mod tests {
         wait_for("the partial file", || dir.join("b.bin").exists());
         engine.cancel(cancelled);
         assert_eq!(run(&engine, cancelled).changed_dirs, std::slice::from_ref(&dir));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Deep folders must not use up the changed folders and leave out the one on screen.
+    #[test]
+    fn the_folder_of_a_chosen_item_is_reported_even_after_many_others() {
+        let dir = test_dir("changed-cap");
+        for i in 0..(MAX_CHANGED + 50) {
+            write(&dir.join(format!("victim/d{i:03}/f.txt")), "x");
+        }
+        let engine = engine();
+        let report = run(&engine, engine.submit(Box::new(DeleteTask::new(vec![dir.join("victim")], None))));
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert!(!dir.join("victim").exists());
+        assert!(
+            report.changed_dirs.contains(&dir),
+            "{} folders reported, not the one shown",
+            report.changed_dirs.len()
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
