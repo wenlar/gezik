@@ -1,7 +1,7 @@
-//! When a photo was taken, from its EXIF data (JPEG, TIFF, HEIC, WebP, PNG). Only the start
-//! of the file is read.
+//! When a photo was taken, from its EXIF data (JPEG, TIFF, HEIC, WebP, PNG). A JPEG's EXIF
+//! is at its start, so only the start is read; the other formats are read as far as needed.
 
-use std::io::{BufReader, Read};
+use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 
 use gezik_core::batch::date::DateParts;
@@ -15,10 +15,18 @@ pub fn may_have_exif(name: &str) -> bool {
 /// The date the photo was taken (`DateTimeOriginal`, else `DateTime`), as the camera wrote it
 /// (local time). `None` if the file has none or cannot be read.
 pub fn taken(path: &Path) -> Option<DateParts> {
-    // The EXIF block is near the start; 256 KB is plenty and bounds the read.
-    let file = std::fs::File::open(path).ok()?;
-    let mut reader = BufReader::new(file.take(256 * 1024));
-    let exif = exif::Reader::new().read_from_container(&mut reader).ok()?;
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut magic = [0u8; 2];
+    let jpeg = file.read_exact(&mut magic).is_ok() && magic == [0xFF, 0xD8];
+    file.seek(SeekFrom::Start(0)).ok()?;
+    // A JPEG's EXIF is in its first segments: 256 KB is plenty and bounds the read. The
+    // other containers can keep it after the image data, so they are read from a plain file.
+    let exif = if jpeg {
+        exif::Reader::new().read_from_container(&mut BufReader::new(file.take(256 * 1024)))
+    } else {
+        exif::Reader::new().read_from_container(&mut BufReader::new(file))
+    }
+    .ok()?;
     [exif::Tag::DateTimeOriginal, exif::Tag::DateTime].into_iter().find_map(|tag| {
         let field = exif.get_field(tag, exif::In::PRIMARY)?;
         match &field.value {
@@ -64,6 +72,13 @@ mod tests {
     fn reads_a_real_photo() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/exif.jpg");
         let parts = taken(&path).expect("tests/data/exif.jpg has a DateTimeOriginal");
+        assert_eq!((parts.year, parts.month, parts.day), (2024, 7, 1));
+    }
+
+    #[test]
+    fn reads_exif_kept_after_the_image_data() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/exif.png");
+        let parts = taken(&path).expect("tests/data/exif.png has an eXIf chunk");
         assert_eq!((parts.year, parts.month, parts.day), (2024, 7, 1));
     }
 

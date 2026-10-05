@@ -85,7 +85,7 @@ fn ready(rule: &Rule) -> Result<Option<(Ready, bool)>, String> {
                 .case_insensitive(!r.case_sensitive)
                 .size_limit(1 << 20)
                 .build()
-                .map_err(|err| first_line(&err.to_string()))?;
+                .map_err(|err| last_line(&err.to_string()))?;
             // Plain text is put in as written: `$` means nothing there.
             let with = if r.regex { r.with.clone() } else { r.with.replace('$', "$$") };
             (Ready::Replace { regex, with, all: r.all }, false)
@@ -108,7 +108,7 @@ fn ready(rule: &Rule) -> Result<Option<(Ready, bool)>, String> {
 }
 
 /// The regex crate's errors span lines with a caret drawing: the last line says what is wrong.
-fn first_line(text: &str) -> String {
+fn last_line(text: &str) -> String {
     text.lines()
         .rev()
         .find(|line| !line.trim().is_empty())
@@ -182,32 +182,24 @@ fn clean(text: &str, rule: &CleanRule) -> String {
 
 /// Each item's new name, in order: `items` in the order the layer shows them.
 pub fn new_names(items: &[Item], compiled: &Compiled, include_extension: bool, lang: Lang) -> Vec<String> {
-    let mut counters: Vec<(usize, usize)> = Vec::new(); // (folder, items seen there)
+    let mut seen: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+    // `{n}` in templates counts like the first Number rule, else from 1.
+    let first_number = compiled.ready.iter().find_map(|r| match r {
+        Ready::Number(rule) => Some(rule),
+        _ => None,
+    });
     let mut out = Vec::with_capacity(items.len());
     for (index, item) in items.iter().enumerate() {
-        let in_folder = match counters.iter_mut().find(|(folder, _)| *folder == item.folder) {
-            Some((_, seen)) => {
-                *seen += 1;
-                *seen - 1
-            }
-            None => {
-                counters.push((item.folder, 1));
-                0
-            }
-        };
+        let count = seen.entry(item.folder).or_default();
+        let in_folder = *count;
+        *count += 1;
         let mut name = item.name.clone();
         for ready in &compiled.ready {
-            let position = |rule: &NumberRule| if rule.per_folder { in_folder } else { index };
+            let position = |rule: &NumberRule| if rule.per_folder { in_folder } else { index } as i64;
+            let counter_of = |rule: &NumberRule| rule.start.saturating_add(rule.step.saturating_mul(position(rule)));
             let counter = match ready {
-                Ready::Number(rule) => rule.start + rule.step * position(rule) as i64,
-                _ => {
-                    // `{n}` in templates counts like the first Number rule, else from 1.
-                    let rule = compiled.ready.iter().find_map(|r| match r {
-                        Ready::Number(rule) => Some(rule),
-                        _ => None,
-                    });
-                    rule.map_or(1 + index as i64, |rule| rule.start + rule.step * position(rule) as i64)
-                }
+                Ready::Number(rule) => counter_of(rule),
+                _ => first_number.map_or(1 + index as i64, counter_of),
             };
             let cx = Context { item, counter };
             name = apply(ready, &name, item.is_dir, include_extension, lang, &cx);
@@ -294,14 +286,16 @@ pub fn check(
         .iter()
         .zip(new)
         .map(|(item, name)| {
+            let duplicate = counts.get(&key(item.folder, name)).copied().unwrap_or(0) > 1;
+            if *name == item.name {
+                // Not renamed: its current name is not judged, but others may collide with it.
+                return if duplicate { Status::Duplicate } else { Status::Unchanged };
+            }
             if let Err(err) = validate_name(name, rules) {
                 return Status::Invalid(err);
             }
-            if counts.get(&key(item.folder, name)).copied().unwrap_or(0) > 1 {
+            if duplicate {
                 return Status::Duplicate;
-            }
-            if *name == item.name {
-                return Status::Unchanged;
             }
             let only_case = ignore_case && name.to_lowercase() == item.name.to_lowercase();
             if !only_case && existing(item.folder, name) {
@@ -444,6 +438,22 @@ mod tests {
         assert_eq!(statuses[3], Status::Unchanged);
         assert!(matches!(statuses[4], Status::Invalid(_)));
         assert!(statuses[2].blocks() && !statuses[3].blocks());
+    }
+
+    #[test]
+    fn unchanged_items_are_not_judged_but_can_collide() {
+        let list = items(&["a.txt", "b.txt", "bad/name"]);
+        let new: Vec<String> = ["a.txt", "a.txt", "bad/name"].iter().map(|s| s.to_string()).collect();
+        let statuses = check(&list, &new, &|_, _| false, NameRules::Unix, false);
+        assert_eq!(statuses, [Status::Duplicate, Status::Duplicate, Status::Unchanged]);
+    }
+
+    #[test]
+    fn huge_numbers_saturate() {
+        let rule =
+            NumberRule { start: i64::MAX, step: i64::MAX, digits: 1, separator: "".into(), ..NumberRule::default() };
+        let compiled = compile(&[RuleEntry::new(Rule::Number(rule))]);
+        assert_eq!(new_names(&items(&["a", "b"]), &compiled, false, Lang::Other).len(), 2);
     }
 
     #[test]
