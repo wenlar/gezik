@@ -44,7 +44,7 @@ impl ArchiveSource for SingleSource {
                 {
                     name = inner.to_owned();
                 }
-                meta.modified = (header.mtime() > 0).then(|| unix_time(i64::from(header.mtime())));
+                meta.modified = (header.mtime() > 0).then(|| unix_time(i64::from(header.mtime()))).flatten();
             }
             (len, Box::new(gz))
         } else {

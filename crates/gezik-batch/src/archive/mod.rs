@@ -96,10 +96,15 @@ impl Volumes {
                 let message = format!("the first part ({}) is missing", set.first);
                 return Err(IoError::new(ErrorKind::NotFound, message));
             }
-            let paths = (1..)
+            let paths: Vec<PathBuf> = (1..)
                 .map(|n| path.with_file_name(volume_name(&set.base, set.kind, n)))
                 .take_while(|p| p.is_file())
                 .collect();
+            // A later part beside a missing one: the set has a hole.
+            if last_volume(path, &set.base) > paths.len() as u64 {
+                let missing = volume_name(&set.base, set.kind, paths.len() as u32 + 1);
+                return Err(IoError::new(ErrorKind::NotFound, format!("part {missing} is missing")));
+            }
             return Ok(Volumes { paths, name: set.base });
         }
         Ok(Volumes { paths: vec![path.to_path_buf()], name })
@@ -114,6 +119,21 @@ impl Volumes {
     fn no_password(&self, cx: &dyn ExtractCx) {
         cx.entry_failed(&self.name, &IoError::new(ErrorKind::PermissionDenied, "no password"));
     }
+}
+
+/// The highest number among the numbered volumes `base.NNN` beside `path` (0 if none).
+fn last_volume(path: &Path, base: &str) -> u64 {
+    let folder = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let Ok(listing) = fs::read_dir(folder) else { return 0 };
+    let prefix = format!("{base}.");
+    listing
+        .filter_map(|entry| {
+            let name = entry.ok()?.file_name().into_string().ok()?;
+            let digits = name.strip_prefix(&prefix)?;
+            (digits.len() >= 3 && digits.bytes().all(|b| b.is_ascii_digit())).then(|| digits.parse().ok()).flatten()
+        })
+        .max()
+        .unwrap_or(0)
 }
 
 /// What an entry's file gets besides its bytes.
@@ -167,6 +187,7 @@ fn write_file(
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(Stop::Skip)?;
     }
+    remove_earlier(path).map_err(Stop::Skip)?;
     let mut file = File::create(path).map_err(Stop::Skip)?;
     let result = copy(r, &mut file, declared, cx);
     if result.is_ok()
@@ -181,6 +202,26 @@ fn write_file(
     }
     apply_meta(path, meta);
     Ok(())
+}
+
+/// Removes a file an earlier entry of the same name wrote (the last one wins), read-only or
+/// hidden as it may be. A folder stays (the file then cannot be made).
+fn remove_earlier(path: &Path) -> IoResult<()> {
+    let Ok(metadata) = path.symlink_metadata() else { return Ok(()) };
+    if metadata.is_dir() {
+        return Ok(());
+    }
+    #[cfg(windows)]
+    {
+        let _ = gezik_platform::fs::clear_hidden(path);
+        let mut permissions = metadata.permissions();
+        if permissions.readonly() {
+            #[allow(clippy::permissions_set_readonly_false)]
+            permissions.set_readonly(false);
+            fs::set_permissions(path, permissions)?;
+        }
+    }
+    fs::remove_file(path)
 }
 
 /// Copies in 64 KB pieces, stopping when cancelled or past `declared * 1.1 + 1 MiB`; less
@@ -315,36 +356,38 @@ fn link_target(r: &mut dyn Read) -> Result<String, Stop> {
     String::from_utf8(target).map_err(|_| Stop::Skip(IoError::new(ErrorKind::InvalidData, "link target is not text")))
 }
 
-/// Makes link `path` → `target` if both stay inside `dest`. `..` may not step out of another
-/// link, so the target's real place is where its name says.
+/// Makes link `path` → `target` only when that cannot lead outside `dest`: every folder on
+/// the way to it is a real folder (made by a regular entry; none is made here), and the
+/// target is relative with `..` only at its start, not climbing above `dest`. A target then
+/// starts from a real folder inside `dest` and only goes down, through links that themselves
+/// obey this rule.
 #[cfg(unix)]
 fn make_link(dest: &Path, path: &Path, target: &str) -> IoResult<()> {
-    let outside = || IoError::new(ErrorKind::PermissionDenied, "link points outside the archive; skipped");
-    let root = fs::canonicalize(dest)?;
-    let (Some(parent), Some(file_name)) = (path.parent(), path.file_name()) else { return Err(outside()) };
-    fs::create_dir_all(parent)?;
-    let parent = fs::canonicalize(parent)?;
-    if !parent.starts_with(&root) {
-        return Err(outside());
-    }
-    let mut resolved = parent.clone();
     use std::path::Component;
-    for part in Path::new(target).components() {
-        match part {
-            Component::Normal(p) => resolved.push(p),
-            Component::CurDir => {}
-            Component::ParentDir => {
-                if resolved.symlink_metadata().is_ok_and(|m| m.file_type().is_symlink()) || !resolved.pop() {
-                    return Err(outside());
-                }
-            }
-            Component::RootDir | Component::Prefix(_) => return Err(outside()),
+    let skipped = || IoError::new(ErrorKind::PermissionDenied, "symbolic link skipped");
+    let folder = path.parent().and_then(|p| p.strip_prefix(dest).ok()).ok_or_else(skipped)?;
+    let mut at = dest.to_path_buf();
+    for part in folder.components() {
+        at.push(part);
+        // `symlink_metadata`: a link to a folder is not a real folder.
+        if !at.symlink_metadata().is_ok_and(|m| m.is_dir()) {
+            return Err(skipped());
         }
     }
-    if !resolved.starts_with(&root) {
-        return Err(outside());
+    let mut ups = 0;
+    let mut down = false;
+    for part in Path::new(target).components() {
+        match part {
+            Component::ParentDir if !down => ups += 1,
+            Component::Normal(_) => down = true,
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => return Err(skipped()),
+        }
     }
-    std::os::unix::fs::symlink(target, parent.join(file_name))
+    if target.is_empty() || ups > folder.components().count() {
+        return Err(skipped());
+    }
+    std::os::unix::fs::symlink(target, path)
 }
 
 /// A tar hard link: a copy of the file `target` names, written earlier.
@@ -359,12 +402,13 @@ fn copy_of(dest: &Path, target: &str, path: &Path, meta: &Meta, cx: &dyn Extract
     write_file(&mut file, path, Some(len), meta, cx).map(|()| true)
 }
 
-/// Seconds since 1970 as a time (before 1970 too).
-fn unix_time(secs: i64) -> SystemTime {
+/// Seconds since 1970 as a time (before 1970 too); `None` past what the system can hold
+/// (a crafted header's date is dropped, not a panic).
+fn unix_time(secs: i64) -> Option<SystemTime> {
     if secs >= 0 {
-        UNIX_EPOCH + Duration::from_secs(secs as u64)
+        UNIX_EPOCH.checked_add(Duration::from_secs(secs as u64))
     } else {
-        UNIX_EPOCH - Duration::from_secs(secs.unsigned_abs())
+        UNIX_EPOCH.checked_sub(Duration::from_secs(secs.unsigned_abs()))
     }
 }
 
@@ -374,10 +418,10 @@ fn local_time(parts: DateParts) -> Option<SystemTime> {
     // The local offset at that moment; a second round settles a daylight-saving change.
     let mut utc = naive;
     for _ in 0..2 {
-        let local = seconds(gezik_platform::local_date_parts(unix_time(utc))?)?;
+        let local = seconds(gezik_platform::local_date_parts(unix_time(utc)?)?)?;
         utc = naive - (local - utc);
     }
-    Some(unix_time(utc))
+    unix_time(utc)
 }
 
 /// `parts` as seconds since 1970, read as UTC.

@@ -50,7 +50,7 @@ impl ArchiveSource for TarSource {
             };
             let header = entry.header();
             let meta = Meta {
-                modified: header.mtime().ok().map(|secs| unix_time(i64::try_from(secs).unwrap_or(i64::MAX))),
+                modified: header.mtime().ok().and_then(|secs| unix_time(i64::try_from(secs).ok()?)),
                 mode: header.mode().ok(),
                 attributes: None,
             };

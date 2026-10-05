@@ -133,12 +133,12 @@ fn info(archive: &mut ZipArchive<BufReader<MultiFileReader>>, i: usize) -> IoRes
                 modified = ntfs
                     .mtime()
                     .checked_sub(116_444_736_000_000_000)
-                    .map(|t| UNIX_EPOCH + Duration::from_nanos(t) * 100);
+                    .and_then(|t| UNIX_EPOCH.checked_add(Duration::new(t / 10_000_000, (t % 10_000_000) as u32 * 100)));
                 break;
             }
             ExtraField::ExtendedTimestamp(stamp) => {
                 if let Some(secs) = stamp.mod_time() {
-                    modified = Some(unix_time(i64::from(secs)));
+                    modified = unix_time(i64::from(secs));
                 }
             }
         }

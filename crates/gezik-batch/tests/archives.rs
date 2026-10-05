@@ -351,6 +351,17 @@ fn sevenz_volumes_open_from_any_part() {
     assert!(cx.failed().is_empty(), "{:?}", cx.failed());
     assert_eq!(tree(&stage), content);
 
+    // A hole in the set: `.002` missing while `.003` is there.
+    let middle = d.join("v.7z.002");
+    let kept = std::fs::read(&middle).unwrap();
+    std::fs::remove_file(&middle).unwrap();
+    for part in ["v.7z.001", "v.7z.003"] {
+        let err = archive::open(&d.join(part)).err().unwrap();
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+        assert_eq!(err.to_string(), "part v.7z.002 is missing");
+    }
+    std::fs::write(&middle, kept).unwrap();
+
     std::fs::remove_file(d.join("v.7z.001")).unwrap();
     let err = archive::open(&d.join("v.7z.003")).err().unwrap();
     assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
@@ -680,4 +691,150 @@ fn zip_keeps_read_only() {
     assert!(!std::fs::metadata(stage.join("rw.txt")).unwrap().permissions().readonly());
     // A staging folder with read-only files in it can still be removed.
     std::fs::remove_dir_all(&d).unwrap();
+}
+
+#[test]
+fn a_huge_tar_date_is_dropped_without_a_panic() {
+    let d = dir("tar-date");
+    let mut out = Vec::new();
+    {
+        let mut b = tar::Builder::new(&mut out);
+        b.mode(tar::HeaderMode::Complete);
+        // Base-256 dates: past u64 seconds as i64, and past what a SystemTime holds.
+        for (name, mtime) in [("max.txt", u64::MAX), ("far.txt", 1u64 << 62)] {
+            let mut h = tar::Header::new_gnu();
+            h.set_size(2);
+            h.set_mtime(mtime);
+            b.append_data(&mut h, name, &b"ok"[..]).unwrap();
+        }
+        b.finish().unwrap();
+    }
+    std::fs::write(d.join("dates.tar"), out).unwrap();
+    let stage = stage(&d);
+    let cx = Cx::new(None);
+    extract(&d.join("dates.tar"), &stage, &cx).unwrap();
+    assert!(cx.failed().is_empty(), "{:?}", cx.failed());
+    assert_eq!(tree(&stage), files(&[("far.txt", b"ok"), ("max.txt", b"ok")]));
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn duplicate_names_the_last_one_wins() {
+    let d = dir("dup");
+    let path = d.join("dup.zip");
+    {
+        // The writer refuses a name twice, so the second is renamed in the bytes afterwards
+        // (a name is not part of the CRC). The first is read-only, the second must replace it.
+        let mut zw = ZipWriter::new(std::fs::File::create(&path).unwrap());
+        zw.start_file("one.txt", SimpleFileOptions::default().unix_permissions(0o444)).unwrap();
+        zw.write_all(b"first").unwrap();
+        zw.start_file("two.txt", SimpleFileOptions::default()).unwrap();
+        zw.write_all(b"second").unwrap();
+        zw.finish().unwrap();
+    }
+    let mut bytes = std::fs::read(&path).unwrap();
+    let mut from = 0;
+    while let Some(at) = bytes[from..].windows(7).position(|w| w == b"two.txt") {
+        bytes[from + at..from + at + 7].copy_from_slice(b"one.txt");
+        from += at + 7;
+    }
+    std::fs::write(&path, &bytes).unwrap();
+
+    let stage = stage(&d);
+    let cx = Cx::new(None);
+    extract(&path, &stage, &cx).unwrap();
+    assert!(cx.failed().is_empty(), "{:?}", cx.failed());
+    assert_eq!(tree(&stage), files(&[("one.txt", b"second")]));
+    std::fs::remove_dir_all(&d).unwrap();
+}
+
+/// Cancels after 1 MiB of a 5 MB entry: `Interrupted`, and nothing half written stays.
+fn assert_cancels(path: &Path, d: &Path) {
+    let stage = stage(d);
+    let mut cx = Cx::new(None);
+    cx.cancel_after = Some(1 << 20);
+    let started = std::time::Instant::now();
+    let err = extract(path, &stage, &cx).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::Interrupted, "{}", path.display());
+    assert!(tree(&stage).is_empty(), "{}", path.display());
+    assert!(cx.bytes.get() < 2 << 20, "{}", path.display());
+    assert!(started.elapsed() < Duration::from_secs(20));
+}
+
+#[test]
+fn cancel_stops_7z_tar_gz_and_xz() {
+    let d = dir("cancel-more");
+    let data = noise(5 << 20, 11);
+    // A solid 7z: the cancelled entry is not decoded to its end, nor is the one after it.
+    let seven = d.join("big.7z");
+    {
+        let mut w = ArchiveWriter::create(&seven).unwrap();
+        w.set_content_methods(vec![Lzma2Options::from_level(1).into()]);
+        let entries = vec![sz_entry("big.bin"), sz_entry("next.bin")];
+        let readers = vec![SourceReader::new(data.as_slice()), SourceReader::new(data.as_slice())];
+        w.push_archive_entries(entries, readers).unwrap();
+        w.finish().unwrap();
+    }
+    assert_cancels(&seven, &d);
+
+    let tar = {
+        let mut out = Vec::new();
+        let mut b = tar::Builder::new(&mut out);
+        let mut h = tar::Header::new_gnu();
+        h.set_size(data.len() as u64);
+        b.append_data(&mut h, "big.bin", data.as_slice()).unwrap();
+        b.finish().unwrap();
+        drop(b);
+        out
+    };
+    let mut gz = flate2::write::GzEncoder::new(
+        std::fs::File::create(d.join("big.tar.gz")).unwrap(),
+        flate2::Compression::fast(),
+    );
+    gz.write_all(&tar).unwrap();
+    gz.finish().unwrap();
+    assert_cancels(&d.join("big.tar.gz"), &d);
+
+    let mut xz = lzma_rust2::XzWriter::new(
+        std::fs::File::create(d.join("big.bin.xz")).unwrap(),
+        lzma_rust2::XzOptions::with_preset(0),
+    )
+    .unwrap();
+    xz.write_all(&data).unwrap();
+    xz.finish().unwrap();
+    assert_cancels(&d.join("big.bin.xz"), &d);
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// Unix only: links that could lead out of the stage through another link are skipped, and
+/// no folder is made for a link.
+#[cfg(unix)]
+#[test]
+fn link_chains_cannot_escape() {
+    let d = dir("link-chain");
+    let path = d.join("chain.zip");
+    {
+        let mut zw = ZipWriter::new(std::fs::File::create(&path).unwrap());
+        let opts = SimpleFileOptions::default();
+        zw.add_directory("d/", opts).unwrap();
+        // `..` after a name: with B → "." below, A would point outside.
+        zw.add_symlink("d/A", "B/../../x", opts).unwrap();
+        zw.add_symlink("d/B", ".", opts).unwrap();
+        // Above the stage.
+        zw.add_symlink("up", "..", opts).unwrap();
+        // Through a link: its folder is not a real one.
+        zw.add_symlink("L", "d", opts).unwrap();
+        zw.add_symlink("L/foo/c", "x", opts).unwrap();
+        zw.add_symlink("d/sib", "../d/B", opts).unwrap();
+        zw.finish().unwrap();
+    }
+    let stage = stage(&d);
+    let cx = Cx::new(None);
+    extract(&path, &stage, &cx).unwrap();
+    assert_eq!(cx.failed(), ["d/A", "up", "L/foo/c"]);
+    assert!(stage.join("d/B").symlink_metadata().unwrap().file_type().is_symlink());
+    assert!(stage.join("L").symlink_metadata().unwrap().file_type().is_symlink());
+    assert!(stage.join("d/sib").symlink_metadata().unwrap().file_type().is_symlink());
+    assert!(!stage.join("d/foo").exists() && !d.join("x").exists());
+    let _ = std::fs::remove_dir_all(&d);
 }

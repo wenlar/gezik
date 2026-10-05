@@ -9,7 +9,7 @@ use gezik_core::batch::archive::safe_join;
 use sevenz_rust2::{Archive, ArchiveEntry, ArchiveReader, EncoderMethod, Error as SzError, Password};
 
 use super::{
-    ArchiveSource, Entry, ExtractCx, IoResult, Links, Meta, Stop, Volumes, cancelled, dos_attributes, link_target,
+    ArchiveSource, BUF, Entry, ExtractCx, IoResult, Links, Meta, Stop, Volumes, cancelled, dos_attributes, link_target,
     make_dir, unsafe_path, write_file,
 };
 
@@ -117,7 +117,7 @@ impl ArchiveSource for SevenZSource {
             let result = reader.for_each_entries(|e, r| {
                 seen += 1;
                 if seen <= done {
-                    drain(r);
+                    drain(r, cx);
                     return Ok(true);
                 }
                 if cx.stopped() {
@@ -125,7 +125,9 @@ impl ArchiveSource for SevenZSource {
                     return Err(SzError::Other("cancelled".into()));
                 }
                 let result = entry(e, r, dest, &mut links, cx);
-                drain(r);
+                if !matches!(result, Err(Stop::Cancelled)) {
+                    drain(r, cx);
+                }
                 match result {
                     Ok(finished) => {
                         confirmed |= e.has_stream() && e.size() > 0;
@@ -185,8 +187,15 @@ fn encrypted(archive: &Archive, b: usize) -> bool {
     })
 }
 
-fn drain(r: &mut dyn Read) {
-    let _ = io::copy(r, &mut io::sink());
+/// Reads an entry to its end (solid blocks need it), stopping early once cancelled.
+fn drain(r: &mut dyn Read, cx: &dyn ExtractCx) {
+    let mut buf = vec![0u8; BUF];
+    while !cx.stopped() {
+        match r.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {}
+        }
+    }
 }
 
 fn sz_error(e: SzError) -> io::Error {
