@@ -1,9 +1,16 @@
 //! Windows: WinHTTP, synchronous, with the system's (or the PAC script's) proxy and the system's
 //! certificate store. Redirects are WinHTTP's own: never from https to http, at most 5.
+//!
+//! `WinHttpCrackUrl` gets no `ICU_ESCAPE`/`ICU_DECODE`: both need caller buffers for the pieces,
+//! and the addresses are the manifest's, already escaped ASCII (`WinHttpOpenRequest` escapes
+//! what is left by default).
 
 use std::ffi::c_void;
 use std::io::{self, Write};
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::time::Duration;
 
 use windows::Win32::Networking::WinHttp::{
     ICU_REJECT_USERPWD, URL_COMPONENTS, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_FLAG_SECURE,
@@ -20,6 +27,9 @@ use super::{MAX_REDIRECTS, Throttle, interrupted, too_big};
 /// Name resolution, connecting and sending may take 30 s each, a pause in what arrives 60 s.
 const CONNECT_MS: i32 = 30_000;
 const RECEIVE_MS: i32 = 60_000;
+
+/// How often the worker's progress and `stop` are looked at.
+const POLL: Duration = Duration::from_millis(100);
 
 /// How much is asked for per read.
 const CHUNK: usize = 64 * 1024;
@@ -47,7 +57,7 @@ pub(super) fn download(
     unsafe { WinHttpSetTimeouts(session.0, CONNECT_MS, CONNECT_MS, CONNECT_MS, RECEIVE_MS) }.map_err(failure)?;
     let connection = Handle::new(unsafe { WinHttpConnect(session.0, PCWSTR(parts.host.as_ptr()), parts.port, 0) })?;
     let flags = if parts.secure { WINHTTP_FLAG_SECURE } else { WINHTTP_OPEN_REQUEST_FLAGS(0) };
-    let request = Handle::new(unsafe {
+    let mut request = Handle::new(unsafe {
         WinHttpOpenRequest(
             connection.0,
             w!("GET"),
@@ -62,26 +72,63 @@ pub(super) fn download(
     // ends up on http.
     request.set_u32(WINHTTP_OPTION_REDIRECT_POLICY, WINHTTP_OPTION_REDIRECT_POLICY_DISALLOW_HTTPS_TO_HTTP)?;
     request.set_u32(WINHTTP_OPTION_MAX_HTTP_AUTOMATIC_REDIRECTS, MAX_REDIRECTS)?;
-    unsafe { WinHttpSendRequest(request.0, None, None, 0, 0, 0) }.map_err(failure)?;
-    unsafe { WinHttpReceiveResponse(request.0, std::ptr::null_mut()) }.map_err(failure)?;
+    // The request runs on a worker thread; this one tells the progress and watches `stop`.
+    // A stop closes the request handle, which aborts a synchronous call in progress on it
+    // (a stalled server would otherwise hold the worker for up to the 60 s timeout).
+    let raw = request.0 as usize;
+    let received = AtomicU64::new(0);
+    let mut throttle = Throttle::new(progress);
+    std::thread::scope(|scope| {
+        let (sender, receiver) = mpsc::channel();
+        let received = &received;
+        scope.spawn(move || {
+            let _ = sender.send(transfer(raw as *mut c_void, dest, max_bytes, allow_http, received));
+        });
+        loop {
+            match receiver.recv_timeout(POLL) {
+                Ok(result) => return result,
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => {
+                    return Err(io::Error::other("the download stopped unexpectedly"));
+                }
+            }
+            if stop() {
+                request.close();
+                // The worker ends with an error now; whatever it was, this was a stop. The
+                // scope waits for it, so the file is closed before it is removed.
+                let _ = receiver.recv();
+                return Err(interrupted());
+            }
+            throttle.update(received.load(Ordering::Relaxed));
+        }
+    })
+}
+
+/// Sends the request (`request`, a handle another thread may close to abort it), checks the
+/// answer and reads the body into `dest`, counting it in `received`.
+fn transfer(
+    request: *mut c_void,
+    dest: &Path,
+    max_bytes: u64,
+    allow_http: bool,
+    received: &AtomicU64,
+) -> io::Result<()> {
+    unsafe { WinHttpSendRequest(request, None, None, 0, 0, 0) }.map_err(failure)?;
+    unsafe { WinHttpReceiveResponse(request, std::ptr::null_mut()) }.map_err(failure)?;
     // Where the redirects led, checked once more.
-    if !allow_http && !request.final_url()?.to_ascii_lowercase().starts_with("https://") {
-        return Err(io::Error::other("the download was redirected away from https"));
+    if !allow_http && !final_url(request)?.to_ascii_lowercase().starts_with("https://") {
+        return Err(io::Error::other("the download was redirected to an insecure address"));
     }
-    let status = request.status()?;
+    let status = status(request)?;
     if status != 200 {
         return Err(io::Error::other(format!("the server answered {status}")));
     }
     let mut file = std::fs::File::create(dest)?;
     let mut buf = vec![0u8; CHUNK];
     let mut total = 0u64;
-    let mut throttle = Throttle::new(progress);
     loop {
-        if stop() {
-            return Err(interrupted());
-        }
         let mut read = 0u32;
-        unsafe { WinHttpReadData(request.0, buf.as_mut_ptr().cast(), CHUNK as u32, &mut read) }.map_err(failure)?;
+        unsafe { WinHttpReadData(request, buf.as_mut_ptr().cast(), CHUNK as u32, &mut read) }.map_err(failure)?;
         if read == 0 {
             break;
         }
@@ -90,7 +137,7 @@ pub(super) fn download(
             return Err(too_big());
         }
         file.write_all(&buf[..read as usize])?;
-        throttle.update(total);
+        received.store(total, Ordering::Relaxed);
     }
     file.sync_all()
 }
@@ -162,44 +209,52 @@ impl Handle {
         unsafe { WinHttpSetOption(Some(self.0), option, Some(&value.to_ne_bytes())) }.map_err(failure)
     }
 
-    /// The response's status code.
-    fn status(&self) -> io::Result<u32> {
-        let mut status = 0u32;
-        let mut len = size_of::<u32>() as u32;
-        unsafe {
-            WinHttpQueryHeaders(
-                self.0,
-                WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                PCWSTR::null(),
-                Some((&raw mut status).cast()),
-                &mut len,
-                std::ptr::null_mut(),
-            )
+    /// Closes it now (once; the drop then does nothing).
+    fn close(&mut self) {
+        if !self.0.is_null() {
+            unsafe {
+                let _ = WinHttpCloseHandle(self.0);
+            }
+            self.0 = std::ptr::null_mut();
         }
-        .map_err(failure)?;
-        Ok(status)
-    }
-
-    /// The address the response came from, after redirects.
-    fn final_url(&self) -> io::Result<String> {
-        let mut len = 0u32;
-        // The first call only says how many bytes it needs.
-        let _ = unsafe { WinHttpQueryOption(self.0, WINHTTP_OPTION_URL, None, &mut len) };
-        let mut buf = vec![0u16; (len as usize).div_ceil(2) + 1];
-        let mut size = (buf.len() * 2) as u32;
-        unsafe { WinHttpQueryOption(self.0, WINHTTP_OPTION_URL, Some(buf.as_mut_ptr().cast()), &mut size) }
-            .map_err(failure)?;
-        let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
-        Ok(String::from_utf16_lossy(&buf[..end]))
     }
 }
 
 impl Drop for Handle {
     fn drop(&mut self) {
-        unsafe {
-            let _ = WinHttpCloseHandle(self.0);
-        }
+        self.close();
     }
+}
+
+/// The response's status code.
+fn status(request: *mut c_void) -> io::Result<u32> {
+    let mut status = 0u32;
+    let mut len = size_of::<u32>() as u32;
+    unsafe {
+        WinHttpQueryHeaders(
+            request,
+            WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+            PCWSTR::null(),
+            Some((&raw mut status).cast()),
+            &mut len,
+            std::ptr::null_mut(),
+        )
+    }
+    .map_err(failure)?;
+    Ok(status)
+}
+
+/// The address the response came from, after redirects.
+fn final_url(request: *mut c_void) -> io::Result<String> {
+    let mut len = 0u32;
+    // The first call only says how many bytes it needs.
+    let _ = unsafe { WinHttpQueryOption(request, WINHTTP_OPTION_URL, None, &mut len) };
+    let mut buf = vec![0u16; (len as usize).div_ceil(2) + 1];
+    let mut size = (buf.len() * 2) as u32;
+    unsafe { WinHttpQueryOption(request, WINHTTP_OPTION_URL, Some(buf.as_mut_ptr().cast()), &mut size) }
+        .map_err(failure)?;
+    let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+    Ok(String::from_utf16_lossy(&buf[..end]))
 }
 
 /// A WinHTTP call's error in words.

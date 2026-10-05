@@ -28,24 +28,26 @@ pub struct DownloadTask {
     build: &'static ToolBuild,
     data_dir: PathBuf,
     url: String,
+    /// Plain http allowed: only for a test server's address given by `with_url`.
+    allow_http: bool,
 }
 
 impl DownloadTask {
     pub fn new(build: &'static ToolBuild, data_dir: PathBuf) -> DownloadTask {
-        DownloadTask { build, data_dir, url: build.url.to_owned() }
+        DownloadTask { build, data_dir, url: build.url.to_owned(), allow_http: false }
     }
 
-    /// Downloads from `url` instead of the build's own address (tests).
+    /// Downloads from `url` instead of the build's own address (tests: a local server, so
+    /// plain http is allowed).
     pub fn with_url(mut self, url: String) -> DownloadTask {
         self.url = url;
+        self.allow_http = true;
         self
     }
 
     /// Downloads into `temp` with the system's HTTP client, counting what arrives.
     fn download(&self, temp: &Path, cx: &RunCx<'_>) -> io::Result<()> {
         let size = self.build.size;
-        // Plain http only for a test server's address (`with_url`); the builds' are https.
-        let allow_http = self.url.starts_with("http://");
         let mut counted = 0u64;
         let mut progress = |bytes: u64| {
             let now = bytes.min(size);
@@ -55,7 +57,9 @@ impl DownloadTask {
             }
         };
         let result =
-            http::download(&self.url, temp, size.saturating_add(SLACK), allow_http, &mut progress, &|| cx.stopped());
+            http::download(&self.url, temp, size.saturating_add(SLACK), self.allow_http, &mut progress, &|| {
+                cx.stopped()
+            });
         match result {
             Err(err) if err.kind() == io::ErrorKind::Interrupted => return Err(cancelled()),
             result => result?,

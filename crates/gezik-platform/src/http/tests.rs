@@ -23,16 +23,29 @@ struct Reply {
     body: Vec<u8>,
     chunk: usize,
     pause: Duration,
+    /// Says nothing for this long: before the head, or after it (before the body).
+    stall: Option<(Stall, Duration)>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Stall {
+    BeforeHead,
+    AfterHead,
 }
 
 impl Reply {
     fn ok(body: Vec<u8>) -> Reply {
-        Reply { status: "200 OK", location: None, body, chunk: 64 * 1024, pause: Duration::ZERO }
+        Reply { status: "200 OK", location: None, body, chunk: 64 * 1024, pause: Duration::ZERO, stall: None }
     }
 
     fn slow(mut self, chunk: usize, pause: Duration) -> Reply {
         self.chunk = chunk;
         self.pause = pause;
+        self
+    }
+
+    fn stalled(mut self, when: Stall) -> Reply {
+        self.stall = Some((when, Duration::from_secs(20)));
         self
     }
 }
@@ -90,7 +103,17 @@ fn respond(mut stream: TcpStream, base: &str, seen: &Seen, answer: &Answer) -> i
         head.push_str(&format!("Location: {location}\r\n"));
     }
     head.push_str("\r\n");
+    let stall = |when: Stall| {
+        if let Some((at, long)) = reply.stall
+            && at == when
+        {
+            std::thread::sleep(long);
+        }
+    };
+    stall(Stall::BeforeHead);
     stream.write_all(head.as_bytes())?;
+    stream.flush()?;
+    stall(Stall::AfterHead);
     for piece in reply.body.chunks(reply.chunk.max(1)) {
         stream.write_all(piece)?;
         stream.flush()?;
@@ -148,6 +171,26 @@ fn a_stop_mid_body_interrupts_and_leaves_no_file() {
     assert!(!dest.exists());
     std::thread::sleep(Duration::from_millis(500));
     assert!(!seen.sent.load(Ordering::SeqCst), "the whole body went out");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// A server that stops answering: a stop still ends the download at once.
+#[test]
+fn a_stop_while_the_server_stalls_returns_quickly() {
+    let d = dir("stall");
+    for when in [Stall::BeforeHead, Stall::AfterHead] {
+        let (base, _) = serve(move |_, _| Reply::ok(body(1000)).stalled(when));
+        let dest = d.join("file.bin");
+        let started = Instant::now();
+        let stop_at = started + Duration::from_millis(500);
+        let err =
+            download(&format!("{base}/file.bin"), &dest, 1 << 20, true, &mut |_| {}, &|| Instant::now() >= stop_at)
+                .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Interrupted, "{err}");
+        let took = started.elapsed();
+        assert!(took < Duration::from_millis(1500), "{took:?}");
+        assert!(!dest.exists());
+    }
     let _ = std::fs::remove_dir_all(&d);
 }
 
@@ -289,6 +332,7 @@ mod unix {
             "--timeout=60",
             "--tries=1",
             "--quiet",
+            "--server-response",
             "-O",
             "a.part",
             "https://example.com/a.zip",
@@ -296,7 +340,48 @@ mod unix {
         assert_eq!(args, expected);
         let http = imp::wget_arguments("http://127.0.0.1:1/a.zip", OsStr::new("a.part"), true);
         assert!(!http.iter().any(|arg| arg == "--https-only"));
-        assert_eq!(imp::wget_message(Some(8)), "wget: the server answered with an error");
+        assert_eq!(imp::wget_message(Some(8), ""), "wget: the server answered with an error");
+        let headers = "  HTTP/1.1 302 Found
+  Location: https://a.example/x
+  HTTP/1.1 404 Not Found
+  Content-Length: 0
+";
+        assert_eq!(imp::wget_message(Some(8), headers), "wget: the server answered 404 Not Found");
+        assert!(imp::wget_message(Some(1), "").contains("curl"));
+    }
+
+    /// A sample of what `wget --quiet --server-response` (GNU Wget 1.25) printed for a redirect.
+    #[test]
+    fn insecure_redirects_are_seen_in_wgets_headers() {
+        let sample = "  HTTP/1.0 302 Found
+  Server: BaseHTTP/0.6 Python/3.13.5
+  Date: Mon, 05 Oct 2026 21:46:10 GMT
+  Location: http://127.0.0.1:8000/f
+  Content-Length: 0
+  HTTP/1.0 200 OK
+  Server: BaseHTTP/0.6 Python/3.13.5
+  Content-Length: 3
+";
+        assert!(imp::insecure_redirect(sample));
+        assert!(imp::insecure_redirect(&sample.replace("http://", "HTTP://")));
+        assert!(imp::insecure_redirect(&sample.replace("http://", "ftp://")));
+        assert!(!imp::insecure_redirect(&sample.replace("http://", "https://")));
+        // Relative: same scheme as before.
+        assert!(!imp::insecure_redirect(
+            "  Location: /f
+  location: other/f [following]
+"
+        ));
+        // The verbose form ("[following]") is read too.
+        assert!(imp::insecure_redirect(
+            "Location: http://a.example/f [following]
+"
+        ));
+        assert!(!imp::insecure_redirect(
+            "  HTTP/1.1 200 OK
+  Content-Length: 3
+"
+        ));
     }
 
     #[test]
@@ -323,7 +408,10 @@ mod unix {
             let d = dir(&format!("program-{name}"));
             let data = body(512 * 1024);
             let sent = data.clone();
-            let (base, _) = serve(move |_, path| match path {
+            let (base, _) = serve(move |base, path| match path {
+                "/to-http" => {
+                    Reply { status: "302 Found", location: Some(format!("{base}/file")), ..Reply::ok(Vec::new()) }
+                }
                 "/slow" => Reply::ok(body(4 * 1024 * 1024)).slow(64 * 1024, Duration::from_millis(100)),
                 "/missing" => Reply { status: "404 Not Found", ..Reply::ok(Vec::new()) },
                 _ => Reply::ok(sent.clone()).slow(32 * 1024, Duration::from_millis(10)),
@@ -354,6 +442,14 @@ mod unix {
             )
             .unwrap_err();
             assert_eq!(err.kind(), io::ErrorKind::Interrupted, "{name}: {err}");
+            // Without `allow_http` a redirect to http is refused (curl does not ask; wget does
+            // and its headers give it away).
+            let err = imp::run(&program, which, &format!("{base}/to-http"), &dest, 1 << 20, false, &mut |_| {}, &never)
+                .unwrap_err();
+            if which == Downloader::Wget {
+                assert_eq!(err.to_string(), "the download was redirected to an insecure address");
+            }
+            let _ = std::fs::remove_file(&dest);
             let _ = std::fs::remove_dir_all(&d);
         }
     }

@@ -22,8 +22,7 @@ mod tests;
 /// How often `progress` is told at most.
 const PROGRESS_EVERY: Duration = Duration::from_millis(100);
 
-/// How many redirects are followed at most (NSURLSession keeps its own count).
-#[cfg_attr(target_os = "macos", allow(dead_code))]
+/// How many redirects are followed at most.
 const MAX_REDIRECTS: u32 = 5;
 
 /// Downloads `url` (https; http only when `allow_http`) into `dest`, calling `progress(bytes_so_far)`

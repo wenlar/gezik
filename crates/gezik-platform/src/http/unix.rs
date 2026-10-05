@@ -90,10 +90,17 @@ pub(super) fn run(
         return Err(too_big());
     }
     let Some(status) = status else { return Err(interrupted()) };
+    let errors = child.stderr_text();
+    // wget's `--https-only` only holds in recursive mode: where its redirects led is read
+    // from the headers it printed (`--server-response`). The request went out, but nothing
+    // it brought is kept.
+    if which == Downloader::Wget && !allow_http && insecure_redirect(&errors) {
+        return Err(io::Error::other("the download was redirected to an insecure address"));
+    }
     if !status.success() {
         let text = match which {
-            Downloader::Curl => curl_message(&child.stderr_text()),
-            Downloader::Wget => wget_message(status.code()),
+            Downloader::Curl => curl_message(&errors),
+            Downloader::Wget => wget_message(status.code(), &errors),
         };
         return Err(io::Error::other(text));
     }
@@ -146,15 +153,16 @@ pub(super) fn curl_arguments(url: &str, name: &OsStr, max_bytes: u64, allow_http
     args
 }
 
-/// wget's arguments: no `.wgetrc`, HTTPS only (unless `allow_http`) for the address and every
-/// redirect, one try, into `name`.
+/// wget's arguments: no `.wgetrc`, at most 5 redirects, one try, the server's headers on the
+/// error output (for `insecure_redirect`), into `name`. `--https-only` is given too, though
+/// it only holds for recursive downloads.
 pub(super) fn wget_arguments(url: &str, name: &OsStr, allow_http: bool) -> Vec<OsString> {
     let mut args: Vec<OsString> = vec!["--no-config".into()];
     if !allow_http {
         args.push("--https-only".into());
     }
     let redirects = format!("--max-redirect={MAX_REDIRECTS}");
-    for arg in [redirects.as_str(), "--timeout=60", "--tries=1", "--quiet", "-O"] {
+    for arg in [redirects.as_str(), "--timeout=60", "--tries=1", "--quiet", "--server-response", "-O"] {
         args.push(arg.into());
     }
     args.push(name.to_owned());
@@ -168,9 +176,30 @@ pub(super) fn curl_message(errors: &str) -> String {
     if lines.is_empty() { "the download failed".to_owned() } else { lines.join(" ") }
 }
 
-/// What wget's exit code says (it is quiet).
-pub(super) fn wget_message(code: Option<i32>) -> String {
+/// Whether a `Location:` header in wget's `--server-response` output leads anywhere but
+/// https (a relative one stays where it was).
+pub(super) fn insecure_redirect(server_response: &str) -> bool {
+    server_response
+        .lines()
+        .filter_map(|line| {
+            let (name, value) = line.trim().split_once(':')?;
+            name.eq_ignore_ascii_case("location").then(|| value.trim().to_ascii_lowercase())
+        })
+        .any(|target| target.contains("://") && !target.starts_with("https://"))
+}
+
+/// What wget's exit code says (it is quiet but for the headers in `server_response`).
+pub(super) fn wget_message(code: Option<i32>, server_response: &str) -> String {
+    // The last status line is the answer that failed: "HTTP/1.1 404 Not Found".
+    let answer = server_response.lines().map(str::trim).rfind(|line| line.starts_with("HTTP/"));
+    if code == Some(8)
+        && let Some((_, status)) = answer.and_then(|line| line.split_once(' '))
+    {
+        return format!("wget: the server answered {status}");
+    }
     let text = match code {
+        // BusyBox's wget knows none of the options: its usage message ends it with 1.
+        Some(1) | Some(2) => "the download failed (if this wget is BusyBox's, install curl)",
         Some(3) => "could not write the file",
         Some(4) => "could not connect to the server (network failure)",
         Some(5) => "the server's certificate could not be verified",
