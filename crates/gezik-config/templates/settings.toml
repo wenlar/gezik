@@ -73,6 +73,7 @@ copy-threads = "auto"
 
 # Saved rule sets for batch rename (Rename… with two or more items selected). The rename
 # layer writes them with "Presets ▾ › Save current rules as…"; they can also be written here.
+# Saving or deleting a set there rewrites the saved sets (comments inside them are not kept).
 # [[rename-presets]]
 # name = "Holiday photos"
 # include-extension = false
