@@ -166,10 +166,13 @@ pub const CANCEL_DROP: u32 = 82;
 
 /// 90-99: "Add rule" in the batch rename layer, in `gezik_core::batch::rules::KINDS` order.
 pub const ADD_RULE_FIRST: u32 = 90;
-/// 100-149: saved rule sets; 150 "Save current rules as…"; 160-199 delete one.
+/// 100-299: saved rule sets; 300 "Save current rules as…"; 400-599 delete one (ids stay
+/// below the Shell's, which start at 1000).
 pub const PRESET_FIRST: u32 = 100;
-pub const PRESET_SAVE: u32 = 150;
-pub const PRESET_DELETE_FIRST: u32 = 160;
+pub const PRESET_SAVE: u32 = 300;
+pub const PRESET_DELETE_FIRST: u32 = 400;
+/// How many saved sets the menu lists (and can delete).
+pub const PRESET_MAX: u32 = 200;
 
 /// Gezik's file items for rows on macOS and Linux; Windows has them in its own menu (and
 /// Gezik takes them over, see `Menus::run_verb`).
@@ -236,13 +239,17 @@ pub fn view_items(view: ViewSettings, preview_open: bool) -> Vec<(u32, String)> 
     out
 }
 
-/// "Presets ▾": each saved set (up to 50), Save, then a Delete item for each (up to 40).
+/// "Presets ▾": each saved set, Save, then a Delete item for each (up to `PRESET_MAX` each).
 pub fn preset_items(names: &[String]) -> Vec<(u32, String)> {
     let mut list: Vec<(u32, String)> =
-        names.iter().enumerate().take(50).map(|(i, n)| (PRESET_FIRST + i as u32, n.clone())).collect();
+        names.iter().enumerate().take(PRESET_MAX as usize).map(|(i, n)| (PRESET_FIRST + i as u32, n.clone())).collect();
     list.push((PRESET_SAVE, "Save current rules as…".to_owned()));
     list.extend(
-        names.iter().enumerate().take(40).map(|(i, n)| (PRESET_DELETE_FIRST + i as u32, format!("Delete \"{n}\""))),
+        names
+            .iter()
+            .enumerate()
+            .take(PRESET_MAX as usize)
+            .map(|(i, n)| (PRESET_DELETE_FIRST + i as u32, format!("Delete \"{n}\""))),
     );
     list
 }
@@ -592,7 +599,7 @@ impl Menus {
                 }
             }
             // By name: settings.toml may have been reloaded since the menu opened.
-            (id, Subject::BatchRename(names)) if (PRESET_FIRST..PRESET_SAVE).contains(&id) => {
+            (id, Subject::BatchRename(names)) if (PRESET_FIRST..PRESET_FIRST + PRESET_MAX).contains(&id) => {
                 if let Some(name) = names.get((id - PRESET_FIRST) as usize) {
                     crate::batch_rename::with_current(|layer| layer.apply_preset(name));
                 }
@@ -600,7 +607,9 @@ impl Menus {
             (PRESET_SAVE, Subject::BatchRename(_)) => {
                 crate::batch_rename::with_current(|layer| layer.ask_preset_name());
             }
-            (id, Subject::BatchRename(names)) if (PRESET_DELETE_FIRST..PRESET_DELETE_FIRST + 40).contains(&id) => {
+            (id, Subject::BatchRename(names))
+                if (PRESET_DELETE_FIRST..PRESET_DELETE_FIRST + PRESET_MAX).contains(&id) =>
+            {
                 if let Some(name) = names.get((id - PRESET_DELETE_FIRST) as usize) {
                     crate::batch_rename::with_current(|layer| layer.delete_preset(name));
                 }
@@ -837,6 +846,14 @@ mod tests {
         for id in [COPY_HERE, MOVE_HERE, CANCEL_DROP, ADD_RULE_FIRST, ADD_RULE_FIRST + 9, PRESET_FIRST, PRESET_SAVE] {
             assert!(!others.contains(&id) && !ranges.iter().any(|r| r.contains(&id)), "{id} is taken");
         }
+        // The preset ranges meet nothing else, nor each other, and stay below the Shell's ids.
+        let presets = [PRESET_FIRST..PRESET_FIRST + PRESET_MAX, PRESET_DELETE_FIRST..PRESET_DELETE_FIRST + PRESET_MAX];
+        let singles = others.iter().chain(&[COPY_HERE, MOVE_HERE, CANCEL_DROP, PRESET_SAVE]);
+        for id in singles.copied().chain(ADD_RULE_FIRST..ADD_RULE_FIRST + 10).chain(CONFLICT_FIRST..CONFLICT_FIRST + 4)
+        {
+            assert!(!presets.iter().any(|r| r.contains(&id)), "{id} is in a preset range");
+        }
+        assert!(presets[0].end <= PRESET_DELETE_FIRST && presets[1].end < 1000);
     }
 
     fn ids(v: Vec<(u32, &str)>) -> Vec<u32> {
@@ -860,6 +877,10 @@ mod tests {
         assert_eq!(ids, [PRESET_FIRST, PRESET_FIRST + 1, PRESET_SAVE, PRESET_DELETE_FIRST, PRESET_DELETE_FIRST + 1]);
         assert_eq!(list[3].1, "Delete \"Photos\"");
         assert_eq!(preset_items(&[]), [(PRESET_SAVE, "Save current rules as…".to_owned())]);
+        let many: Vec<String> = (0..PRESET_MAX + 5).map(|i| format!("Set {i}")).collect();
+        let list = preset_items(&many);
+        assert_eq!(list.len(), 2 * PRESET_MAX as usize + 1);
+        assert_eq!(list.last().unwrap().0, PRESET_DELETE_FIRST + PRESET_MAX - 1);
         assert!(gezik_core::batch::rules::KINDS.len() <= 10, "Add rule has ids 90-99");
     }
 
