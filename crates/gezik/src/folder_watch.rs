@@ -6,6 +6,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
+use gezik_core::ops::paths::same_path;
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
 #[derive(Clone)]
@@ -58,12 +59,15 @@ impl FolderWatch {
     }
 }
 
+/// Watches what is in `folder`, and its parent for the folder itself being deleted or renamed
+/// (which changes nothing inside it).
 fn start(shared: &Arc<Shared>, generation: u64, folder: &Path) -> Option<RecommendedWatcher> {
     let events = Arc::downgrade(shared);
+    let watched = folder.to_path_buf();
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<Event>| {
         let Some(shared) = events.upgrade() else { return };
-        // Reading a file changes nothing on screen; an error (lost events) may hide anything.
-        let relevant = event.map_or(true, |event| !matches!(event.kind, EventKind::Access(_)));
+        // An error (lost events) may hide anything.
+        let relevant = event.map_or(true, |event| concerns(&event, &watched));
         if relevant
             && shared.generation.load(Ordering::SeqCst) == generation
             && !shared.changed.swap(true, Ordering::SeqCst)
@@ -74,7 +78,25 @@ fn start(shared: &Arc<Shared>, generation: u64, folder: &Path) -> Option<Recomme
     .ok()?;
     // Cannot be watched (no permission, a drive that does not support it): no watch.
     watcher.watch(folder, RecursiveMode::NonRecursive).ok()?;
+    if let Some(parent) = folder.parent() {
+        // Without it, only a deletion or rename of the folder goes unseen.
+        let _ = watcher.watch(parent, RecursiveMode::NonRecursive);
+    }
     Some(watcher)
+}
+
+/// Whether `event` changes what the list of `folder` shows: something in it, or the folder
+/// itself (its parent's events about siblings do not). Reading a file changes nothing.
+fn concerns(event: &Event, folder: &Path) -> bool {
+    if matches!(event.kind, EventKind::Access(_)) {
+        return false;
+    }
+    // No path: say it changed rather than miss something.
+    event.paths.is_empty()
+        || event
+            .paths
+            .iter()
+            .any(|path| path.parent().is_some_and(|parent| same_path(parent, folder)) || same_path(path, folder))
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -150,6 +172,40 @@ mod tests {
         watch.watch(None);
         let _ = std::fs::remove_dir_all(&old);
         let _ = std::fs::remove_dir_all(&new);
+    }
+
+    /// Deleting or renaming the folder itself changes nothing inside it (an empty one says
+    /// nothing at all): its parent tells.
+    #[test]
+    fn the_folder_itself_going_away_is_told() {
+        let parent = temp("parent");
+        let (tx, rx) = mpsc::channel();
+        let tx = Mutex::new(tx);
+        let watch = FolderWatch::new(move || lock(&tx).send(()).unwrap());
+        for case in ["deleted", "renamed"] {
+            let folder = parent.join(case);
+            std::fs::create_dir(&folder).unwrap();
+            watch.watch(Some(&folder));
+            wait_until_watching(&watch, &folder, &rx);
+            for i in 0..100 {
+                let _ = std::fs::remove_file(folder.join(format!("probe{i}")));
+            }
+            std::thread::sleep(Duration::from_millis(300));
+            while rx.try_recv().is_ok() {}
+            watch.take_change();
+
+            std::fs::write(parent.join("sibling.txt"), case).unwrap();
+            assert!(rx.recv_timeout(Duration::from_millis(500)).is_err(), "{case}: a sibling is not the folder");
+            if case == "deleted" {
+                std::fs::remove_dir(&folder).unwrap();
+            } else {
+                std::fs::rename(&folder, parent.join("elsewhere")).unwrap();
+            }
+            rx.recv_timeout(Duration::from_secs(5)).unwrap_or_else(|_| panic!("{case}: told"));
+            assert!(watch.take_change());
+        }
+        watch.watch(None);
+        let _ = std::fs::remove_dir_all(&parent);
     }
 
     #[test]
