@@ -27,17 +27,28 @@ Windows ones come out of the official installers); only the packaging is ours.
 On Windows, with 7-Zip installed and Git for Windows (its GNU tar and xz):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/tools/prepare.ps1 -Out C:\temp\gezik-tools -Version 26.03
+powershell -ExecutionPolicy Bypass -File scripts/tools/prepare.ps1 -Out D:\Work\gezik-tools\7zip-26.03-1 -Version 26.03
 ```
 
-It downloads the official files from `https://www.7-zip.org/a/`, writes the six packages to
+It downloads the official files from `https://www.7-zip.org/a/` and checks each against its
+size and SHA-256 in `sources.sha256` (committed), stopping on any difference. A signed Windows
+installer must also carry Igor Pavlov's valid Authenticode signature; the 26.03 installers are
+unsigned, so for them the pinned hash is the only check. It then writes the six packages to
 `-Out`, prints their sizes and SHA-256s and the Rust lines for `MANIFEST`, and writes those
-lines to `<Out>\manifest.rs.txt`. Running it again gives byte-identical files.
+lines, headed by the official files' hashes, to `<Out>\manifest.rs.txt`.
+
+The packages are reproducible: for 26.03, two runs into fresh folders gave byte-identical
+files (all six compared with `cmp`) and the same `manifest.rs.txt`. They depend on the tools'
+versions too (7-Zip 24.09's zip writer, Git for Windows' GNU tar 1.35 and xz), so a run on
+another machine may differ; publish the files of one run and pin those.
+
+The 26.03 files are kept in `D:\Work\gezik-tools\7zip-26.03-1\` (outside the repository; no
+binaries are committed).
 
 Check them with Gezik's own reader (installs every package through the download task):
 
 ```bash
-GEZIK_TOOLS_DIR='C:\temp\gezik-tools' cargo test -p gezik-batch --test tools prepared
+GEZIK_TOOLS_DIR='D:\Work\gezik-tools\7zip-26.03-1' cargo test -p gezik-batch --test tools prepared
 ```
 
 ## Publishing
@@ -48,9 +59,10 @@ With the GitHub CLI (`gh auth status` signed in as an owner of `wenlar`). Once:
 gh repo create wenlar/gezik-tools --public --description "Tool downloads for Gezik (official builds, repackaged)"
 ```
 
-Each release (from the `-Out` folder):
+Each release, from the folder `prepare.ps1` wrote (for 26.03, `D:\Work\gezik-tools\7zip-26.03-1\`):
 
 ```bash
+cd /d/Work/gezik-tools/7zip-26.03-1
 gh release create 7zip-26.03-1 --repo wenlar/gezik-tools --title "7-Zip 26.03" \
   7zip-26.03-windows-x64.zip 7zip-26.03-windows-arm64.zip \
   7zip-26.03-macos-arm64.tar.xz 7zip-26.03-macos-x64.tar.xz \
@@ -70,7 +82,10 @@ Each hash must equal the `sha256` of that platform in `MANIFEST` (and `manifest.
 
 ## Updating to a new version
 
-1. Run `prepare.ps1 -Version <new>` (take the version from https://www.7-zip.org/download.html).
+1. Run `prepare.ps1 -Version <new> -UpdateSources -Out D:\Work\gezik-tools\7zip-<new>-1` (take
+   the version from https://www.7-zip.org/download.html). It rewrites `sources.sha256` from
+   what it downloaded: compare those hashes with the ones on 7-Zip's GitHub release
+   (https://github.com/ip7z/7zip/releases) before committing the file.
 2. Put the printed lines in `MANIFEST` in place of the old ones and run
    `cargo test -p gezik-core tools` and the `GEZIK_TOOLS_DIR` test above.
 3. Publish the release `7zip-<new>-1` as above and check the hashes.

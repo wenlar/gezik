@@ -1,7 +1,11 @@
 # Builds the 7-Zip downloads Gezik offers from 7-Zip's official releases (7-zip.org), one
 # per platform, and prints the Rust lines for MANIFEST in crates/gezik-core/src/batch/tools.rs
 # (also written to <Out>\manifest.rs.txt). Windows only; see scripts/tools/README.md.
-# Usage: scripts/tools/prepare.ps1 -Out <folder> [-Version 26.03] [-Release 1]
+# Usage: scripts/tools/prepare.ps1 -Out <folder> [-Version 26.03] [-Release 1] [-UpdateSources]
+# Every official file must match its size and SHA-256 in scripts/tools/sources.sha256, or the
+# script stops; -UpdateSources rewrites that file from what was downloaded (for a new version,
+# after checking the files by hand). Signed Windows installers must carry Igor Pavlov's valid
+# signature (7-Zip's installers have so far been unsigned; then only the pinned hash counts).
 # Needs the installed 7-Zip (to unpack the Windows installers and write the zips) and Git for
 # Windows' GNU tar and xz (to write the tar.xz files). Safe to run again: it replaces what it
 # made before and leaves nothing behind in the temp folder.
@@ -9,6 +13,7 @@ param(
     [Parameter(Mandatory = $true)][string]$Out,
     [string]$Version = "26.03",
     [string]$Release = "1",
+    [switch]$UpdateSources,
     [string]$SevenZip = "$env:ProgramFiles\7-Zip\7z.exe",
     [string]$Tar = "$env:ProgramFiles\Git\usr\bin\tar.exe",
     [string]$Xz = "$env:ProgramFiles\Git\mingw64\bin\xz.exe"
@@ -46,14 +51,50 @@ $Out = (Resolve-Path $Out).Path
 $work = Join-Path ([IO.Path]::GetTempPath()) ("gezik-tools-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory $work | Out-Null
 
+$sourcesFile = Join-Path $PSScriptRoot "sources.sha256"
+# The pinned official files: "<sha256> <size> <name>" per line, # starts a comment.
+$pinned = @{}
+if (Test-Path $sourcesFile) {
+    foreach ($line in [IO.File]::ReadAllLines($sourcesFile)) {
+        if ($line -match '^\s*(#|$)') { continue }
+        $hash, $size, $name = $line -split '\s+'
+        $pinned[$name] = @{ Sha256 = $hash; Size = [long]$size }
+    }
+}
+
 $lines = @()
+$sources = @()
 try {
+    foreach ($name in ($builds | ForEach-Object { $_.Source } | Select-Object -Unique)) {
+        $source = Join-Path $work $name
+        Write-Host "Downloading $name"
+        Invoke-Tool "curl.exe" @("-sSfL", "--proto", "=https", "-o", $source, "https://www.7-zip.org/a/$name")
+        $size = (Get-Item $source).Length
+        $sha256 = (Get-FileHash -Algorithm SHA256 $source).Hash.ToLowerInvariant()
+        if (-not $UpdateSources) {
+            $pin = $pinned[$name]
+            if (-not $pin) { throw "$name is not in $sourcesFile (run with -UpdateSources for a new version)" }
+            if ($pin.Sha256 -ne $sha256 -or $pin.Size -ne $size) {
+                throw "$name is $size bytes, SHA-256 $sha256; $sourcesFile pins $($pin.Size) bytes, $($pin.Sha256)"
+            }
+        }
+        if ($name.EndsWith(".exe")) {
+            $signature = Get-AuthenticodeSignature $source
+            if ($signature.Status -eq "NotSigned") {
+                Write-Host "  $name is not signed; the pinned hash is the check"
+            } elseif ($signature.Status -ne "Valid" -or $signature.SignerCertificate.Subject -notmatch "Igor Pavlov") {
+                throw "$name has a bad signature: $($signature.Status), $($signature.SignerCertificate.Subject)"
+            }
+        }
+        $sources += "$sha256 $size $name"
+    }
+    if ($UpdateSources) {
+        $header = "# The official 7-Zip $Version files prepare.ps1 repackages (https://www.7-zip.org/a/): sha256 size name"
+        [IO.File]::WriteAllText($sourcesFile, ((@($header) + $sources) -join "`n") + "`n")
+        Write-Host "Wrote $sourcesFile"
+    }
     foreach ($build in $builds) {
         $source = Join-Path $work $build.Source
-        if (-not (Test-Path $source)) {
-            Write-Host "Downloading $($build.Source)"
-            Invoke-Tool "curl.exe" @("-sSfL", "--proto", "=https", "-o", $source, "https://www.7-zip.org/a/$($build.Source)")
-        }
         $unpacked = Join-Path $work ($build.Platform)
         New-Item -ItemType Directory $unpacked | Out-Null
         $target = Join-Path $Out $build.Name
@@ -104,6 +145,9 @@ try {
 }
 
 $manifest = Join-Path $Out "manifest.rs.txt"
+$notes = @("    // Made from the official 7-Zip $Version files (https://www.7-zip.org/a/), sha256 size name:")
+$notes += $sources | ForEach-Object { "    // $_" }
+$lines = $notes + $lines
 [IO.File]::WriteAllText($manifest, (($lines -join "`n") + "`n"))
 Write-Host ""
 $lines | ForEach-Object { Write-Host $_ }
