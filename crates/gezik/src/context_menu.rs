@@ -412,9 +412,9 @@ impl Menus {
         if self.view.shows_drives() {
             return;
         }
-        let mut format = gezik_batch::tasks::OutFormat::Zip;
-        crate::archives::with_current(|archives| format = archives.last_format());
-        let extra = crate::archives::menu_items(&rows, format);
+        let mut last = (gezik_batch::tasks::OutFormat::Zip, gezik_batch::tasks::Level::Normal);
+        crate::archives::with_current(|archives| last = (archives.last_format(), archives.last_level()));
+        let extra = crate::archives::menu_items(&rows, last.0, last.1);
         *self.rows.borrow_mut() = rows;
         if native {
             list.splice(0..0, extra);

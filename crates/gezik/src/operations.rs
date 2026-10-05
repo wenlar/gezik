@@ -895,14 +895,14 @@ impl Operations {
         match question {
             Question::Password { archive, retry } => {
                 let (title, message) = crate::archives::password_text(&archive, retry);
-                self.0.dialogs.ask_password(title, message, &["OK", "Skip"], move |text| {
+                self.0.dialogs.ask_password(job, title, message, &["OK", "Skip"], move |text| {
                     engine.answer(job, text.map_or(Answer::Cancel, Answer::Text));
                 });
             }
             Question::Confirm { title, message, buttons } => {
                 let labels: Vec<&str> = buttons.iter().map(String::as_str).collect();
                 let escape = labels.len().saturating_sub(1);
-                self.0.dialogs.ask_escape(title, message, &labels, escape, move |choice| {
+                self.0.dialogs.ask_for_job(job, title, message, &labels, escape, move |choice| {
                     engine.answer(job, choice.map_or(Answer::Cancel, Answer::Button));
                 });
             }
@@ -942,6 +942,8 @@ impl Operations {
 
     fn finished(&self, id: JobId, report: Report) {
         self.0.conflicts.close_if(id);
+        // Its questions are moot now (answering one is harmless: nothing waits for it).
+        self.0.dialogs.forget_job(id);
         self.0.asked.borrow_mut().remove(&id);
         let problems = !report.cancelled && !report.failures.is_empty();
         let mut after = After::Nothing;

@@ -35,8 +35,9 @@ const TOOLS_PAGE: &str = "https://github.com/wenlar/gezik-tools";
 const SEVEN_ZIP_LICENSE: &str = "https://www.7-zip.org/license.txt";
 
 /// The Extract and Compress items for the selected `items` (path, is a folder): Extract
-/// when every one is an archive by its name, Compress always. `format` is the one used last.
-pub fn menu_items(items: &[(PathBuf, bool)], format: OutFormat) -> Vec<(u32, String)> {
+/// when every one is an archive by its name, Compress always. `format` and `level` are the
+/// ones used last.
+pub fn menu_items(items: &[(PathBuf, bool)], format: OutFormat, level: Level) -> Vec<(u32, String)> {
     let mut out = Vec::new();
     if items.is_empty() {
         return out;
@@ -50,9 +51,39 @@ pub fn menu_items(items: &[(PathBuf, bool)], format: OutFormat) -> Vec<(u32, Str
         out.push((EXTRACT_TO, "Extract to…".to_owned()));
     }
     out.push((COMPRESS, "Compress…".to_owned()));
-    let format = compress_format(items, format);
+    let format = written_format(compress_format(items, format), level);
     out.push((COMPRESS_TO, format!("Compress to \"{}\"", default_name(items, format))));
     out
+}
+
+/// What `format` at `level` writes: Store makes a plain `.tar` of a `.tar.gz` or `.tar.xz`
+/// (as `CompressTask` does), so the name shown is the one made.
+pub fn written_format(format: OutFormat, level: Level) -> OutFormat {
+    match format {
+        OutFormat::TarGz | OutFormat::TarXz if level == Level::Store => OutFormat::Tar,
+        other => other,
+    }
+}
+
+/// The layer's note for `format` at `level` (empty: none).
+pub fn store_note(format: OutFormat, level: Level) -> &'static str {
+    if written_format(format, level) != format { "Store makes a plain .tar" } else { "" }
+}
+
+/// The name typed in the layer after the format or level changed from `from` to `to`
+/// (each a format and a level): its ending follows what is written.
+pub fn renamed_for(name: &str, from: (OutFormat, Level), to: (OutFormat, Level)) -> String {
+    let (old, new) = (written_format(from.0, from.1), written_format(to.0, to.1));
+    if old == new { name.to_owned() } else { swap_extension(name, old, new) }
+}
+
+/// `archives` split into those Gezik opens itself (or all, with 7-Zip there) and those that
+/// wait for 7-Zip, known by name.
+pub fn split_by_seven_zip(archives: Vec<PathBuf>, have_seven_zip: bool) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    if have_seven_zip {
+        return (archives, Vec::new());
+    }
+    archives.into_iter().partition(|archive| !needs_seven_zip(&name_of(archive)))
 }
 
 /// The formats offered for `items`: `.gz` and `.xz` only for one file.
@@ -236,15 +267,17 @@ fn total_size(paths: &[PathBuf], stop: impl Fn() -> bool) -> (u64, u64) {
 /// What a job of ours waits to do when it ends.
 enum Pending {
     Extract { archives: Vec<PathBuf>, to: ExtractTo },
-    Download { build: &'static ToolBuild, then: Option<Then> },
+    Download { build: &'static ToolBuild, then: Vec<Then> },
 }
 
-/// Extracting to run again once 7-Zip is there, and the failed row it replaces.
+/// Extracting to run once 7-Zip is there, and the failed row it replaces.
 #[derive(Clone)]
 struct Then {
     archives: Vec<PathBuf>,
     to: ExtractTo,
     row: Option<JobId>,
+    /// "Extract to…": the folder is made first.
+    make_dir: bool,
 }
 
 /// The Compress layer's choices (its texts live in the window).
@@ -274,6 +307,8 @@ struct Inner {
     jobs: RefCell<HashMap<JobId, Pending>>,
     /// The 7-Zip box is on screen (several archives that need it ask once).
     offering: Cell<bool>,
+    /// What runs once 7-Zip is there, gathered while the box is on screen.
+    waiting: RefCell<Vec<Then>>,
     layer: RefCell<Option<Layer>>,
     /// Counts openings of the layer: a size added up for an earlier one is dropped.
     sizing: Arc<AtomicU64>,
@@ -324,6 +359,7 @@ impl Archives {
             state: RefCell::new(state),
             jobs: RefCell::default(),
             offering: Cell::new(false),
+            waiting: RefCell::default(),
             layer: RefCell::default(),
             sizing: Arc::default(),
         }));
@@ -334,11 +370,15 @@ impl Archives {
 
     fn install(&self, window: &AppWindow) {
         let t = self.clone();
-        window.on_cp_set_format(move |i| t.set_format(i));
+        window.on_cp_set_format(move |i| {
+            if let Ok(i) = usize::try_from(i) {
+                t.choose(Some(i), None);
+            }
+        });
         let t = self.clone();
         window.on_cp_set_level(move |i| {
             if let Some(level) = usize::try_from(i).ok().and_then(|i| LEVELS.get(i)) {
-                t.edit(|layer| layer.level = level.0);
+                t.choose(None, Some(level.0));
             }
         });
         let t = self.clone();
@@ -370,7 +410,7 @@ impl Archives {
         self.0.state.borrow().format.as_deref().and_then(format_from_key).unwrap_or(OutFormat::Zip)
     }
 
-    fn last_level(&self) -> Level {
+    pub fn last_level(&self) -> Level {
         self.0.state.borrow().level.as_deref().and_then(level_from_key).unwrap_or(Level::Normal)
     }
 
@@ -412,41 +452,51 @@ impl Archives {
         });
     }
 
-    /// Finds 7-Zip on a thread (it looks at the disk), then starts the job.
+    /// Finds 7-Zip on a thread (it looks at the disk), then starts the job for what can be
+    /// opened; what needs 7-Zip and lacks it waits for the box. `make_dir`: the folder is made
+    /// first (only when something is extracted now).
     fn extract(&self, archives: Vec<PathBuf>, to: ExtractTo, make_dir: bool) {
         let configured = tools_settings().seven_zip.map(PathBuf::from);
         let data = self.data_dir();
         std::thread::spawn(move || {
-            if make_dir {
+            let seven_zip = gezik_batch::tools::find(Tool::SevenZip, &data, configured.as_deref());
+            let (now, waiting) = split_by_seven_zip(archives, seven_zip.is_some());
+            if make_dir && !now.is_empty() {
                 // A failure shows when the job cannot use the folder.
                 let _ = std::fs::create_dir_all(to.dir());
             }
-            let seven_zip = gezik_batch::tools::find(Tool::SevenZip, &data, configured.as_deref());
             let _ = slint::invoke_from_event_loop(move || {
-                with_current(|this| this.extract_found(archives, to, seven_zip));
+                with_current(|this| this.extract_found(now, waiting, to, seven_zip, make_dir));
             });
         });
     }
 
-    fn extract_found(&self, archives: Vec<PathBuf>, to: ExtractTo, seven_zip: Option<PathBuf>) {
-        if seven_zip.is_none()
-            && let Some(archive) = archives.iter().find(|a| needs_seven_zip(&name_of(a)))
-        {
-            // Known by its name: offered before any job starts.
-            let ext = extension_of(archive);
-            return self.offer_seven_zip(&ext, Some(Then { archives, to, row: None }));
+    fn extract_found(
+        &self,
+        now: Vec<PathBuf>,
+        waiting: Vec<PathBuf>,
+        to: ExtractTo,
+        seven_zip: Option<PathBuf>,
+        make_dir: bool,
+    ) {
+        if !now.is_empty() {
+            let tasks = extract_chain(now.clone(), to.clone(), seven_zip);
+            let again: Rc<dyn Fn()> = {
+                let (archives, to) = (now.clone(), to.clone());
+                Rc::new(move || {
+                    let (archives, to) = (archives.clone(), to.clone());
+                    with_current(|this| this.extract(archives, to, false));
+                })
+            };
+            let label = extract_label(&now);
+            let id = self.0.ops.submit_chain(tasks, Some(label), Some(again), After::Select);
+            self.0.jobs.borrow_mut().insert(id, Pending::Extract { archives: now, to: to.clone() });
         }
-        let tasks = extract_chain(archives.clone(), to.clone(), seven_zip);
-        let again: Rc<dyn Fn()> = {
-            let (archives, to) = (archives.clone(), to.clone());
-            Rc::new(move || {
-                let (archives, to) = (archives.clone(), to.clone());
-                with_current(|this| this.extract(archives, to, false));
-            })
-        };
-        let label = extract_label(&archives);
-        let id = self.0.ops.submit_chain(tasks, Some(label), Some(again), After::Select);
-        self.0.jobs.borrow_mut().insert(id, Pending::Extract { archives, to });
+        if let Some(first) = waiting.first() {
+            // Known by its name: offered before a job tries it.
+            let ext = extension_of(first);
+            self.offer_seven_zip(&ext, Then { archives: waiting, to, row: None, make_dir });
+        }
     }
 
     /// A job ended (operations.rs tells every one): 7-Zip was needed, or a download is done.
@@ -463,16 +513,16 @@ impl Archives {
                     .collect();
                 if let Some(first) = needing.first() {
                     let ext = extension_of(first);
-                    self.offer_seven_zip(&ext, Some(Then { archives: needing, to, row: Some(id) }));
+                    self.offer_seven_zip(&ext, Then { archives: needing, to, row: Some(id), make_dir: false });
                 }
             }
             Pending::Download { build, then } => {
                 if report.failures.is_empty() {
-                    if let Some(then) = then {
+                    for then in then {
                         if let Some(row) = then.row {
                             self.0.ops.forget(row);
                         }
-                        self.extract(then.archives, then.to, false);
+                        self.extract(then.archives, then.to, then.make_dir);
                     }
                 } else if report.failures.iter().any(|f| says_damaged(&f.message)) {
                     let this = self.clone();
@@ -492,34 +542,46 @@ impl Archives {
         }
     }
 
-    /// The "needs 7-Zip" box; Download fetches it and then runs `then`.
-    fn offer_seven_zip(&self, ext: &str, then: Option<Then>) {
-        if self.0.offering.replace(true) {
-            return;
+    /// The "needs 7-Zip" box; Download fetches it and then runs `then`. While it is on screen,
+    /// more archives that need it join the same box.
+    fn offer_seven_zip(&self, ext: &str, then: Then) {
+        self.0.waiting.borrow_mut().push(then);
+        if !self.0.offering.replace(true) {
+            self.show_offer(ext.to_owned());
         }
+    }
+
+    fn show_offer(&self, ext: String) {
         let tools = tools_settings();
         let build = Platform::current().and_then(|platform| build_for(Tool::SevenZip, platform));
-        let (message, buttons) = seven_zip_offer(ext, build.map(|b| b.size), tools.download, cfg!(target_os = "linux"));
+        let (message, buttons) =
+            seven_zip_offer(&ext, build.map(|b| b.size), tools.download, cfg!(target_os = "linux"));
         let offers = buttons.len() > 1;
         let escape = buttons.len() - 1;
         let this = self.clone();
-        let ext = ext.to_owned();
         self.0.dialogs.ask_escape("7-Zip needed", message, &buttons, escape, move |choice| {
-            this.0.offering.set(false);
             match (choice, build) {
-                (Some(0), Some(build)) if offers => this.download(build, then),
                 (Some(1), _) if offers => {
                     for page in [TOOLS_PAGE, SEVEN_ZIP_LICENSE] {
                         let _ = open::that_detached(page);
                     }
-                    this.offer_seven_zip(&ext, then);
+                    // The same box again, with what waits for it.
+                    this.show_offer(ext);
                 }
-                _ => {}
+                (Some(0), Some(build)) if offers => {
+                    this.0.offering.set(false);
+                    let then = std::mem::take(&mut *this.0.waiting.borrow_mut());
+                    this.download(build, then);
+                }
+                _ => {
+                    this.0.offering.set(false);
+                    this.0.waiting.borrow_mut().clear();
+                }
             }
         });
     }
 
-    fn download(&self, build: &'static ToolBuild, then: Option<Then>) {
+    fn download(&self, build: &'static ToolBuild, then: Vec<Then>) {
         let task = DownloadTask::new(build, self.data_dir());
         let id = self.0.ops.submit(Box::new(task), None, After::Nothing);
         self.0.jobs.borrow_mut().insert(id, Pending::Download { build, then });
@@ -531,10 +593,10 @@ impl Archives {
     /// last.
     pub fn compress_to(&self, items: Vec<(PathBuf, bool)>) {
         let Some(folder) = items.first().and_then(|(p, _)| p.parent()).map(Path::to_path_buf) else { return };
-        let format = compress_format(&items, self.last_format());
+        let level = self.last_level();
+        let format = written_format(compress_format(&items, self.last_format()), level);
         let target = folder.join(default_name(&items, format));
-        let options =
-            CompressOptions { format, level: self.last_level(), password: None, encrypt_names: false, split: None };
+        let options = CompressOptions { format, level, password: None, encrypt_names: false, split: None };
         let sources: Vec<PathBuf> = items.into_iter().map(|(p, _)| p).collect();
         self.submit_compress(sources, target, options);
     }
@@ -571,7 +633,7 @@ impl Archives {
             many => format!("Compress {} items", many.len()),
         };
         window.set_cp_title(title.into());
-        window.set_cp_name(default_name(&items, format).into());
+        window.set_cp_name(default_name(&items, written_format(format, self.last_level())).into());
         window.set_cp_folder(folder.display().to_string().into());
         let labels: Vec<SharedString> = formats.iter().map(|f| format_label(*f).into()).collect();
         window.set_cp_formats(ModelRc::new(VecModel::from(labels)));
@@ -623,6 +685,7 @@ impl Archives {
         window.set_cp_is_7z(format == OutFormat::SevenZ);
         window.set_cp_encrypt_names(layer.encrypt_names);
         window.set_cp_split(i32::try_from(layer.split).unwrap_or(0));
+        window.set_cp_note(store_note(format, layer.level).into());
     }
 
     fn edit(&self, f: impl FnOnce(&mut Layer)) {
@@ -633,19 +696,22 @@ impl Archives {
         self.show_layer();
     }
 
-    /// Another format: the name's ending follows.
-    fn set_format(&self, index: i32) {
+    /// Another format (an index into the layer's formats) or level: the name's ending follows
+    /// what is written.
+    fn choose(&self, format: Option<usize>, level: Option<Level>) {
         let Some(window) = self.0.window.upgrade() else { return };
-        let Ok(index) = usize::try_from(index) else { return };
-        let mut swapped = None;
-        if let Some(layer) = self.0.layer.borrow_mut().as_mut()
-            && index < layer.formats.len()
-        {
-            let (from, to) = (layer.format(), layer.formats[index]);
-            layer.format = index;
-            swapped = Some(swap_extension(&window.get_cp_name(), from, to));
+        let mut renamed = None;
+        if let Some(layer) = self.0.layer.borrow_mut().as_mut() {
+            let from = (layer.format(), layer.level);
+            if let Some(index) = format.filter(|i| *i < layer.formats.len()) {
+                layer.format = index;
+            }
+            if let Some(level) = level {
+                layer.level = level;
+            }
+            renamed = Some(renamed_for(&window.get_cp_name(), from, (layer.format(), layer.level)));
         }
-        if let Some(name) = swapped {
+        if let Some(name) = renamed {
             window.set_cp_name(name.into());
         }
         self.set_error("");
@@ -734,11 +800,10 @@ impl Archives {
         let this = self.clone();
         self.0.dialogs.ask_text("Add to archive", "Archive:", "", &["Add", "Cancel"], move |text| {
             let Some(archive) = text.and_then(|text| resolve_folder(&text, &base)) else { return };
-            let Some(window) = this.0.window.upgrade() else { return };
             let Some(sources) = this.0.layer.borrow().as_ref().map(|layer| layer.sources.clone()) else { return };
-            let password = window.get_cp_password().to_string();
             this.close();
-            this.add_to(archive, sources, (!password.is_empty()).then_some(password));
+            // The password typed is for a new archive; the task asks for this one's if needed.
+            this.add_to(archive, sources, None);
         });
     }
 }
@@ -758,22 +823,37 @@ mod tests {
         let text = (PathBuf::from("d").join("notes.txt"), false);
         let folder = (PathBuf::from("d").join("Belgeler"), true);
 
-        let one = menu_items(std::slice::from_ref(&zip), OutFormat::Zip);
+        let one = menu_items(std::slice::from_ref(&zip), OutFormat::Zip, Level::Normal);
         assert_eq!(ids(&one), [EXTRACT_HERE, EXTRACT_TO_OWN, EXTRACT_TO, COMPRESS, COMPRESS_TO]);
         assert_eq!(one[1].1, format!("Extract to \"Fotolar{MAIN_SEPARATOR}\""));
         assert_eq!(one[4].1, "Compress to \"Fotolar.zip\"");
 
-        let two = menu_items(&[zip.clone(), rar], OutFormat::SevenZ);
+        let two = menu_items(&[zip.clone(), rar], OutFormat::SevenZ, Level::Normal);
         assert_eq!(two[1].1, "Extract each to its own folder");
         assert_eq!(two[4].1, "Compress to \"d.7z\"");
 
         // An archive with something else: only Compress.
-        assert_eq!(ids(&menu_items(&[zip, text.clone()], OutFormat::Zip)), [COMPRESS, COMPRESS_TO]);
-        assert_eq!(menu_items(std::slice::from_ref(&folder), OutFormat::TarGz)[1].1, "Compress to \"Belgeler.tar.gz\"");
+        assert_eq!(ids(&menu_items(&[zip, text.clone()], OutFormat::Zip, Level::Normal)), [COMPRESS, COMPRESS_TO]);
+        assert_eq!(
+            menu_items(std::slice::from_ref(&folder), OutFormat::TarGz, Level::Normal)[1].1,
+            "Compress to \"Belgeler.tar.gz\""
+        );
         // .gz is for one file; a folder gets zip.
-        assert_eq!(menu_items(std::slice::from_ref(&text), OutFormat::Gz)[1].1, "Compress to \"notes.txt.gz\"");
-        assert_eq!(menu_items(&[folder], OutFormat::Gz)[1].1, "Compress to \"Belgeler.zip\"");
-        assert!(menu_items(&[], OutFormat::Zip).is_empty());
+        assert_eq!(
+            menu_items(std::slice::from_ref(&text), OutFormat::Gz, Level::Best)[1].1,
+            "Compress to \"notes.txt.gz\""
+        );
+        assert_eq!(
+            menu_items(std::slice::from_ref(&folder), OutFormat::Gz, Level::Normal)[1].1,
+            "Compress to \"Belgeler.zip\""
+        );
+        // Store makes a plain tar of a tar.gz or tar.xz: the item names what is made.
+        assert_eq!(
+            menu_items(std::slice::from_ref(&folder), OutFormat::TarXz, Level::Store)[1].1,
+            "Compress to \"Belgeler.tar\""
+        );
+        assert_eq!(menu_items(&[folder], OutFormat::Zip, Level::Store)[1].1, "Compress to \"Belgeler.zip\"");
+        assert!(menu_items(&[], OutFormat::Zip, Level::Normal).is_empty());
     }
 
     #[test]
@@ -792,6 +872,34 @@ mod tests {
         assert_eq!(swap_extension("Fotolar.tar.gz", OutFormat::TarGz, OutFormat::Tar), "Fotolar.tar");
         assert_eq!(swap_extension("my name", OutFormat::Zip, OutFormat::SevenZ), "my name.7z");
         assert_eq!(default_name(&file, OutFormat::Zip), "a.zip");
+    }
+
+    #[test]
+    fn store_makes_a_plain_tar() {
+        assert_eq!(written_format(OutFormat::TarGz, Level::Store), OutFormat::Tar);
+        assert_eq!(written_format(OutFormat::TarXz, Level::Store), OutFormat::Tar);
+        assert_eq!(written_format(OutFormat::TarGz, Level::Fast), OutFormat::TarGz);
+        assert_eq!(written_format(OutFormat::Zip, Level::Store), OutFormat::Zip);
+        assert_eq!(store_note(OutFormat::TarGz, Level::Store), "Store makes a plain .tar");
+        assert_eq!(store_note(OutFormat::SevenZ, Level::Store), "");
+        let (gz, xz, zip) =
+            ((OutFormat::TarGz, Level::Normal), (OutFormat::TarXz, Level::Store), (OutFormat::Zip, Level::Store));
+        // Store on a tar.gz: the name becomes .tar; back to Normal: .tar.gz again.
+        assert_eq!(renamed_for("x.tar.gz", gz, (OutFormat::TarGz, Level::Store)), "x.tar");
+        assert_eq!(renamed_for("x.tar", (OutFormat::TarGz, Level::Store), gz), "x.tar.gz");
+        assert_eq!(renamed_for("x.tar", xz, zip), "x.zip");
+        assert_eq!(renamed_for("x.zip", zip, (OutFormat::Zip, Level::Best)), "x.zip");
+        assert_eq!(renamed_for("x.zip", zip, xz), "x.tar");
+    }
+
+    #[test]
+    fn only_what_needs_seven_zip_waits_for_it() {
+        let (zip, lzh, arj) = (PathBuf::from("d/a.zip"), PathBuf::from("d/b.lzh"), PathBuf::from("d/c.arj"));
+        let all = vec![zip.clone(), lzh.clone(), arj.clone()];
+        assert_eq!(split_by_seven_zip(all.clone(), false), (vec![zip.clone()], vec![lzh.clone(), arj.clone()]));
+        assert_eq!(split_by_seven_zip(all.clone(), true), (all, Vec::new()));
+        assert_eq!(split_by_seven_zip(vec![lzh.clone()], false), (Vec::new(), vec![lzh]));
+        assert_eq!(split_by_seven_zip(vec![zip.clone()], false), (vec![zip], Vec::new()));
     }
 
     #[test]

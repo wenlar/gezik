@@ -37,6 +37,8 @@ export component CompressLayer inherits Rectangle {
     in-out property <string> split-mb;
     in property <string> size-text;
     in property <string> error;
+    // Says what a choice does that the buttons do not show ("Store makes a plain .tar").
+    in property <string> note;
     property <bool> show-password;
     callback set-format(int);
     callback set-level(int);
@@ -179,6 +181,11 @@ export component CompressLayer inherits Rectangle {
             Text {
                 text: root.size-text;
                 overflow: elide;
+                color: Theme.foreground-muted;
+            }
+            if root.note != "": Text {
+                text: root.note;
+                wrap: word-wrap;
                 color: Theme.foreground-muted;
             }
             if root.error != "": Text {

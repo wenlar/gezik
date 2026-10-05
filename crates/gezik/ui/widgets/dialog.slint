@@ -15,11 +15,9 @@ export component Dialog inherits Rectangle {
     in property <bool> has-input;
     in-out property <string> input;
     in property <bool> input-secret;
-    property <bool> show-secret;
+    // Whether "Show" is checked; dialog.rs clears it for each new question.
+    in-out property <bool> show-secret;
     callback chosen(int);
-
-    // A new question (the next one may follow at once) hides its text again.
-    changed message => { root.show-secret = false; }
 
     background: Theme.background.with-alpha(0.6);
 

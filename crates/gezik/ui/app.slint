@@ -281,6 +281,7 @@ export component AppWindow inherits Window {
     in-out property <string> cp-split-mb;
     in property <string> cp-size-text;
     in property <string> cp-error;
+    in property <string> cp-note;
     callback cp-set-format(int);
     callback cp-set-level(int);
     callback cp-toggle-encrypt-names();
@@ -301,6 +302,7 @@ export component AppWindow inherits Window {
     in-out property <string> dialog-input;
     // The text is a password: dots, with "Show".
     in property <bool> dialog-input-secret;
+    in-out property <bool> dialog-show-secret;
     callback dialog-chosen(int);
     callback key-event(KeyEvent) -> bool;
 
@@ -789,6 +791,7 @@ export component AppWindow inherits Window {
             split-mb <=> root.cp-split-mb;
             size-text: root.cp-size-text;
             error: root.cp-error;
+            note: root.cp-note;
             set-format(i) => { root.cp-set-format(i); }
             set-level(i) => { root.cp-set-level(i); }
             toggle-encrypt-names => { root.cp-toggle-encrypt-names(); }
@@ -835,6 +838,7 @@ export component AppWindow inherits Window {
             has-input: root.dialog-has-input;
             input <=> root.dialog-input;
             input-secret: root.dialog-input-secret;
+            show-secret <=> root.dialog-show-secret;
             chosen(i) => { root.dialog-chosen(i); }
         }
         // What is being dragged, just below and right of the pointer. Takes no input.
