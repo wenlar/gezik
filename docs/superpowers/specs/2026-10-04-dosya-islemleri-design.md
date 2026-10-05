@@ -346,7 +346,7 @@ Panel satırları ve çakışma listesi erişilebilirlik rolleri ve adlarıyla (
 |---|---|
 | Boşta bellek | Değişmez (≤ 7 MB) |
 | 10.000 küçük dosya (4-64 KB) kopyalama | Explorer'dan ≥ 2 kat hızlı |
-| Tek 4 GB dosya kopyalama | Explorer'ın ±%5'i |
+| Tek 4 GB dosya kopyalama | Veri diske yazılana kadar Explorer'dan yavaş değil (2026-10-05 kararı: önbelleksiz kopya "bitti" dediğinde veri diskte; Explorer önbellekten kopyalayıp daha erken "bitti" der, bu anda Gezik ~0,2 s geç kalabilir) |
 | 50.000 dosyalık ağacı kalıcı silme | Öğe < 100 ms'de kaybolur; tamamı Explorer'dan ≥ 3 kat hızlı |
 | 100.000 öğe ön tarama (sıcak önbellek) | ≤ ~1 sn |
 | Kopyalama sırasında arayüz | Kaydırma CPU'su ve kare süresi işlem yokkenkiyle aynı (olaylar ≤ 10/s) |
