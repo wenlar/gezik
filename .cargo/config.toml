@@ -1,0 +1,6 @@
+[env]
+# UnRAR (unrar-ng-sys, C++) reports errors and a cancel by throwing. MSVC runs destructors
+# while unwinding only with /EHsc, which the cc crate does not pass: without it a cancelled
+# or failed entry left its file open (and its memory allocated).
+CXXFLAGS_x86_64_pc_windows_msvc = "/EHsc"
+CXXFLAGS_aarch64_pc_windows_msvc = "/EHsc"

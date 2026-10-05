@@ -1,9 +1,11 @@
 import { Theme } from "../theme.slint";
 import { TextButton } from "text-button.slint";
 import { TextField } from "text-field.slint";
+import { Check } from "check.slint";
 
 // A question over the window: a title, a message and buttons. Enter picks the first button,
-// Esc the one in `escape`. With `has-input`, a text field under the message has the keyboard.
+// Esc the one in `escape`. With `has-input`, a text field under the message has the keyboard;
+// with `input-secret` it shows dots, and "Show" shows the text.
 export component Dialog inherits Rectangle {
     in property <string> title;
     in property <string> message;
@@ -12,6 +14,9 @@ export component Dialog inherits Rectangle {
     in property <int> escape;
     in property <bool> has-input;
     in-out property <string> input;
+    in property <bool> input-secret;
+    // Whether "Show" is checked; dialog.rs clears it for each new question.
+    in-out property <bool> show-secret;
     callback chosen(int);
 
     background: Theme.background.with-alpha(0.6);
@@ -78,10 +83,19 @@ export component Dialog inherits Rectangle {
                     }
                     return reject;
                 }
-                field := TextField {
-                    text <=> root.input;
-                    init => { self.focus-and-select(); }
-                    accepted => { root.chosen(0); }
+                HorizontalLayout {
+                    spacing: Theme.spacing * 2;
+                    field := TextField {
+                        text <=> root.input;
+                        secret: root.input-secret && !root.show-secret;
+                        init => { self.focus-and-select(); }
+                        accepted => { root.chosen(0); }
+                    }
+                    if root.input-secret: Check {
+                        text: "Show";
+                        checked: root.show-secret;
+                        toggled => { root.show-secret = !root.show-secret; }
+                    }
                 }
             }
             HorizontalLayout {

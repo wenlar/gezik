@@ -1,0 +1,48 @@
+import { Theme } from "../theme.slint";
+
+// A check box with a label.
+export component Check inherits Rectangle {
+    in property <string> text;
+    in property <bool> checked;
+    in property <bool> enabled: true;
+    callback toggled();
+    height: Theme.row-height;
+    min-width: label.preferred-width + 24px;
+    accessible-role: checkbox;
+    accessible-checked: root.checked;
+    accessible-label: root.text;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { if root.enabled { root.toggled(); } }
+    opacity: root.enabled ? 1 : 0.5;
+    Rectangle {
+        x: 0;
+        y: (parent.height - 14px) / 2;
+        width: 14px;
+        height: 14px;
+        border-radius: 3px;
+        border-width: 1px;
+        border-color: root.checked ? Theme.accent : Theme.border;
+        background: root.checked ? Theme.accent : transparent;
+        if root.checked: Path {
+            width: 14px;
+            height: 14px;
+            viewbox-width: 14;
+            viewbox-height: 14;
+            stroke: Theme.accent-foreground;
+            stroke-width: 2px;
+            commands: "M 3 7 L 6 10 L 11 4";
+        }
+    }
+    label := Text {
+        x: 20px;
+        height: parent.height;
+        text: root.text;
+        vertical-alignment: center;
+        color: Theme.foreground;
+    }
+    TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { root.toggled(); }
+    }
+}

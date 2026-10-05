@@ -11,6 +11,7 @@ import { Dialog } from "widgets/dialog.slint";
 import { ConflictList, ConflictRow } from "widgets/conflict-list.slint";
 import { RenameBatch, RuleRow, RenamePreviewRow, RuleOptions } from "widgets/rename-batch.slint";
 import { FileIcon } from "widgets/file-icon.slint";
+import { CompressLayer } from "widgets/compress.slint";
 
 // Re-exported so Rust can set it with `window.global::<Theme>()` and build crumbs, tabs
 // and sidebar rows.
@@ -264,6 +265,32 @@ export component AppWindow inherits Window {
         rename-batch.focus-name();
     }
 
+    // The Compress layer (archives.rs).
+    in property <bool> cp-open;
+    in property <string> cp-title;
+    in-out property <string> cp-name;
+    in-out property <string> cp-folder;
+    in property <[string]> cp-formats;
+    in property <int> cp-format;
+    in property <int> cp-level;
+    in-out property <string> cp-password;
+    in property <bool> cp-can-encrypt;
+    in property <bool> cp-is-7z;
+    in property <bool> cp-encrypt-names;
+    in property <int> cp-split;
+    in-out property <string> cp-split-mb;
+    in property <string> cp-size-text;
+    in property <string> cp-error;
+    in property <string> cp-note;
+    callback cp-set-format(int);
+    callback cp-set-level(int);
+    callback cp-toggle-encrypt-names();
+    callback cp-set-split(int);
+    callback cp-add-existing();
+    callback cp-compress();
+    callback cp-cancel();
+    callback cp-edited();
+
     // A question over the window (dialog.rs); `dialog-chosen` gets the button's index.
     in property <bool> dialog-open;
     in property <string> dialog-title;
@@ -273,6 +300,9 @@ export component AppWindow inherits Window {
     // A question that asks for a text too (dialog.rs `ask_text`): the field and its text.
     in property <bool> dialog-has-input;
     in-out property <string> dialog-input;
+    // The text is a password: dots, with "Show".
+    in property <bool> dialog-input-secret;
+    in-out property <bool> dialog-show-secret;
     callback dialog-chosen(int);
     callback key-event(KeyEvent) -> bool;
 
@@ -343,6 +373,8 @@ export component AppWindow inherits Window {
             conflict-list.take-focus();
         } else if root.rb-open {
             rename-batch.take-focus();
+        } else if root.cp-open {
+            compress-layer.take-focus();
         } else {
             keys.focus();
         }
@@ -737,6 +769,38 @@ export component AppWindow inherits Window {
             sort(by) => { root.rb-sort(by); }
             key(event) => { return root.rb-key(event); }
         }
+        compress-layer := CompressLayer {
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.height;
+            visible: root.cp-open;
+            open: root.cp-open;
+            dialog-open: root.dialog-open || root.conflicts-open;
+            title: root.cp-title;
+            name-text <=> root.cp-name;
+            folder-text <=> root.cp-folder;
+            formats: root.cp-formats;
+            format: root.cp-format;
+            level: root.cp-level;
+            password <=> root.cp-password;
+            can-encrypt: root.cp-can-encrypt;
+            is-7z: root.cp-is-7z;
+            encrypt-names: root.cp-encrypt-names;
+            split: root.cp-split;
+            split-mb <=> root.cp-split-mb;
+            size-text: root.cp-size-text;
+            error: root.cp-error;
+            note: root.cp-note;
+            set-format(i) => { root.cp-set-format(i); }
+            set-level(i) => { root.cp-set-level(i); }
+            toggle-encrypt-names => { root.cp-toggle-encrypt-names(); }
+            set-split(i) => { root.cp-set-split(i); }
+            add-existing => { root.cp-add-existing(); }
+            compress => { root.cp-compress(); }
+            cancel => { root.cp-cancel(); }
+            edited => { root.cp-edited(); }
+        }
         // Always there (hidden when closed), so Rust can scroll it.
         conflict-list := ConflictList {
             x: 0;
@@ -773,6 +837,8 @@ export component AppWindow inherits Window {
             escape: root.dialog-escape;
             has-input: root.dialog-has-input;
             input <=> root.dialog-input;
+            input-secret: root.dialog-input-secret;
+            show-secret <=> root.dialog-show-secret;
             chosen(i) => { root.dialog-chosen(i); }
         }
         // What is being dragged, just below and right of the pointer. Takes no input.

@@ -37,6 +37,15 @@ struct Target {
     dir: Option<PathBuf>,
     /// None: the drop is refused.
     action: Option<Action>,
+    /// The zip, 7z or tar file it would be added to (`Action::AddToArchive`).
+    archive: Option<PathBuf>,
+}
+
+impl Target {
+    /// Nothing can be dropped there.
+    fn none(hit: Hit) -> Target {
+        Target { hit, dir: None, action: None, archive: None }
+    }
 }
 
 /// A drag under way.
@@ -495,6 +504,12 @@ impl Drags {
         let (hit, dir) = match hit {
             Hit::Entry(i) => match self.0.view.entry_path(i) {
                 Some((path, true)) => (hit, Some(path)),
+                // A zip, 7z or tar file (not one of those dragged): the files are added to it.
+                Some((path, false)) if self.can_add_to(d, &path) => {
+                    let folder = path.parent().map(Path::to_path_buf);
+                    let action = folder.as_deref().is_some_and(|f| self.writable(f)).then_some(Action::AddToArchive);
+                    return Target { hit, dir: folder, action, archive: Some(path) };
+                }
                 // A file: into the folder it is in.
                 _ => (Hit::Background, self.0.view.folder()),
             },
@@ -505,11 +520,18 @@ impl Drags {
             }
             Hit::Tab(i) => (hit, self.0.nav.tab_location(i).and_then(path_of)),
             Hit::Crumb(i) => (hit, self.0.nav.crumb_location(i).and_then(path_of)),
-            Hit::PinAt(_) => return Target { hit, dir: None, action: Some(Action::Pin) },
+            Hit::PinAt(_) => return Target { action: Some(Action::Pin), ..Target::none(hit) },
             Hit::Outside | Hit::Nothing => (hit, None),
         };
         let action = dir.as_deref().and_then(|dir| self.effect(d, dir)).map(Action::Transfer);
-        Target { hit, dir, action }
+        Target { hit, dir, action, archive: None }
+    }
+
+    /// Whether `d` can be added to the file `path`: an archive by its name, not one of the
+    /// files dragged.
+    fn can_add_to(&self, d: &Dragging, path: &Path) -> bool {
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        gezik_core::batch::archive::can_add_to(&name) && !d.sources.iter().any(|source| source == path)
     }
 
     /// The effect of dropping `d` into `dir`, or None if it must be refused.
@@ -560,6 +582,9 @@ impl Drags {
             window.set_drag_y(y);
             let label = match (target.action, &target.dir) {
                 (Some(Action::Pin), _) => drag::label(Action::Pin, Path::new("")),
+                (Some(Action::AddToArchive), _) => {
+                    drag::label(Action::AddToArchive, target.archive.as_deref().unwrap_or(Path::new("")))
+                }
                 (Some(action), Some(dir)) => drag::label(action, dir),
                 _ => String::new(),
             };
@@ -647,6 +672,11 @@ impl Drags {
                 target: Some(Target { action: Some(Action::Transfer(effect)), dir: Some(dir), .. }),
                 ..
             }) => Answer { effect: Some(*effect), folder: Some(drag::folder_name(dir)) },
+            // Added to an archive: the files themselves stay where they are.
+            Phase::Offer(Dragging {
+                target: Some(Target { action: Some(Action::AddToArchive), archive: Some(archive), .. }),
+                ..
+            }) => Answer { effect: Some(Effect::Copy), folder: Some(drag::folder_name(archive)) },
             _ => Answer::default(),
         }
     }
@@ -661,7 +691,7 @@ impl Drags {
             window.set_drag_active(false);
             window.set_drag_label("".into());
             window.set_drag_forbidden(false);
-            self.show(&window, 0.0, 0.0, &Target { hit: Hit::Nothing, dir: None, action: None }, false);
+            self.show(&window, 0.0, 0.0, &Target::none(Hit::Nothing), false);
         }
         let d = d?;
         let target = d.target.clone()?;
@@ -683,8 +713,13 @@ impl Drags {
                 allowed && self.writable(&dir) && !drag::refuse(&d.sources, &dir, effect)
             };
             let (can_copy, can_move) = (can(Effect::Copy), can(Effect::Move));
-            self.0.menus.drop_menu(d.sources, dir, can_copy, can_move, d.x, d.y);
+            let archive = target.archive.filter(|_| target.action == Some(Action::AddToArchive));
+            self.0.menus.drop_menu(d.sources, dir, archive, can_copy, can_move, d.x, d.y);
             return None;
+        }
+        if let (Some(Action::AddToArchive), Some(archive)) = (target.action, target.archive) {
+            crate::archives::with_current(|archives| archives.add_to(archive, d.sources, None));
+            return Some(Effect::Copy);
         }
         let Some(Action::Transfer(effect)) = target.action else { return None };
         self.0.ops.transfer(d.sources, dir, effect);

@@ -28,6 +28,12 @@ slint = { version = "1.18", default-features = false, features = [
 open = "5.3"
 notify = "8"
 
+[features]
+default = ["rar"]
+# RAR archives through UnRAR's C++ (needs a C++ compiler for the target); without it 7-Zip
+# opens them.
+rar = ["gezik-batch/rar"]
+
 [build-dependencies]
 slint-build = "1.18"
 

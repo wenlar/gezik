@@ -1,7 +1,7 @@
 //! Moving to the trash (Recycle Bin).
 
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use gezik_core::ops::conflict::Facts;
 use gezik_platform::fs;
@@ -34,7 +34,17 @@ impl TrashTask {
     }
 }
 
-fn is_empty_dir(path: &std::path::Path) -> bool {
+/// Moves `path` to the trash and gives where it went, for a task that replaces a file it
+/// rewrote (undo brings the old one back). A name the trash cannot take, or a trash that
+/// deleted the item for good instead, is an error (the item may then be gone).
+pub fn trash_path(path: &Path) -> io::Result<PathBuf> {
+    if !fs::can_trash_name(path) {
+        return Err(no_trash());
+    }
+    fs::trash(path)?.ok_or_else(|| io::Error::other("deleted for good instead of moved to the trash"))
+}
+
+fn is_empty_dir(path: &Path) -> bool {
     std::fs::read_dir(path).is_ok_and(|mut entries| entries.next().is_none())
 }
 
@@ -121,6 +131,16 @@ mod tests {
     }
 
     #[test]
+    fn trash_path_gives_where_the_item_went() {
+        let dir = test_dir("trash-path");
+        write(&dir.join("old.zip"), "old");
+        let trashed = trash_path(&dir.join("old.zip")).unwrap();
+        assert!(!dir.join("old.zip").exists());
+        assert_ne!(trashed, dir.join("old.zip"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn without_a_trash_only_an_empty_undo_item_is_deleted() {
         let dir = test_dir("trash-none");
         write(&dir.join("full.txt"), "x");
@@ -128,7 +148,7 @@ mod tests {
         let control = Control::default();
         let no_bin = |_: &std::path::Path| false;
         let temp = crate::task::TempCopies::new(None);
-        let cx = RunCx { control: &control, trash: &no_bin, added: std::cell::Cell::new(0), temp: &temp };
+        let cx = RunCx { control: &control, trash: &no_bin, added: std::cell::Cell::new(0), temp: &temp, job: None };
         let item = |path: PathBuf| {
             let facts = facts_of(&std::fs::symlink_metadata(&path).unwrap());
             PlanItem::new(Stage::Parallel, facts).source(path).top(0)

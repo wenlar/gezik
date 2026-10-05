@@ -4,13 +4,14 @@ use std::cell::Cell;
 use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use gezik_core::ops::conflict::{Decision, Facts};
 
 use crate::control::Control;
-use crate::engine::lock;
+use crate::engine::{Event, Job, Shared, lock};
 use crate::journal::Journal;
-use crate::pending::{COPYING_PREFIX, PendingDeletes, copy_prefix};
+use crate::pending::{COPYING_PREFIX, HIDDEN_PREFIX, PendingDeletes, copy_prefix};
 use crate::walk::facts_of;
 
 /// Files at least this big are copied under a temporary name and renamed when complete;
@@ -38,7 +39,7 @@ impl TempCopies {
     }
 
     /// A fresh temporary path next to `target`; its folder is noted before anything is written.
-    fn next_to(&self, target: &Path) -> Option<PathBuf> {
+    pub(crate) fn next_to(&self, target: &Path) -> Option<PathBuf> {
         let folder = target.parent()?;
         if let Some(pending) = &self.pending {
             // Held while noting: no other item writes into the folder before the note is there.
@@ -73,6 +74,10 @@ pub enum TaskKind {
     Restore,
     NewFolder,
     NewFile,
+    Extract,
+    Compress,
+    AddToArchive,
+    Download,
 }
 
 impl TaskKind {
@@ -86,6 +91,10 @@ impl TaskKind {
             TaskKind::Restore => "Restore",
             TaskKind::NewFolder => "New folder",
             TaskKind::NewFile => "New file",
+            TaskKind::Extract => "Extract",
+            TaskKind::Compress => "Compress",
+            TaskKind::AddToArchive => "Add to archive",
+            TaskKind::Download => "Download",
         }
     }
 
@@ -208,7 +217,7 @@ impl PlanItem {
     }
 
     /// Left out of the job's progress: a step on the way, not an item of its own.
-    pub(crate) fn uncounted(mut self) -> PlanItem {
+    pub fn uncounted(mut self) -> PlanItem {
         self.counted = false;
         self
     }
@@ -247,6 +256,8 @@ pub enum Outcome {
     },
     /// Nothing changed (a folder that was already there).
     Nothing,
+    /// One item did several of these (an archive replaced: the old one trashed, the new made).
+    Several(Vec<Outcome>),
 }
 
 impl Outcome {
@@ -256,9 +267,36 @@ impl Outcome {
             Outcome::Created { path, .. }
             | Outcome::Restored { original: path, .. }
             | Outcome::Moved { to: path, .. } => Some(path),
+            Outcome::Several(outcomes) => outcomes.iter().find_map(Outcome::created),
             _ => None,
         }
     }
+
+    /// The first path made, looking inside `Several` too.
+    fn created(&self) -> Option<&Path> {
+        match self {
+            Outcome::Created { path, .. } => Some(path),
+            Outcome::Several(outcomes) => outcomes.iter().find_map(Outcome::created),
+            _ => None,
+        }
+    }
+}
+
+/// What a job asks the user while it runs; it waits for an [`Answer`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Question {
+    /// The archive is encrypted; `retry`: the last password was wrong.
+    Password { archive: PathBuf, retry: bool },
+    /// A choice between `buttons`.
+    Confirm { title: String, message: String, buttons: Vec<String> },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Answer {
+    Text(String),
+    /// Which of the question's buttons.
+    Button(usize),
+    Cancel,
 }
 
 /// Where a task's plan goes.
@@ -284,7 +322,7 @@ pub trait Task: Send + Sync {
     fn done(&self, _cancelled: bool) {}
 }
 
-/// What `Task::run` may use: progress, pause and cancel, the drive's trash.
+/// What `Task::run` may use: progress, pause and cancel, the drive's trash, questions.
 pub struct RunCx<'a> {
     pub(crate) control: &'a Control,
     pub(crate) trash: &'a dyn Fn(&Path) -> bool,
@@ -292,6 +330,8 @@ pub struct RunCx<'a> {
     pub(crate) added: Cell<u64>,
     /// The job's temporary names for copies.
     pub(crate) temp: &'a TempCopies,
+    /// The engine and the job it runs in (`None` in tests that run an item alone).
+    pub(crate) job: Option<(&'a Shared, &'a Job)>,
 }
 
 impl RunCx<'_> {
@@ -307,6 +347,120 @@ impl RunCx<'_> {
 
     pub fn has_trash(&self, path: &Path) -> bool {
         (self.trash)(path)
+    }
+
+    /// Asks the user and waits for the answer (`Cancel` once the job is cancelled). One
+    /// question at a time: other items asking wait their turn.
+    pub fn ask(&self, question: Question) -> Answer {
+        let Some((shared, job)) = self.job else { return Answer::Cancel };
+        let control = self.control;
+        let _turn = lock(&control.asking_turn);
+        if control.cancelled() {
+            return Answer::Cancel;
+        }
+        let id = control.new_question();
+        control.asking.store(true, Ordering::SeqCst);
+        shared.push([Event::Question { job: job.id, id, question }]);
+        let answer = control.wait_answer();
+        control.asking.store(false, Ordering::SeqCst);
+        answer.unwrap_or(Answer::Cancel)
+    }
+
+    /// Work found while running (the entries of an archive): added to the job's totals.
+    pub fn found(&self, items: u64, bytes: u64) {
+        self.control.add_total(items, bytes);
+    }
+
+    /// One piece of found work is done.
+    pub fn one_done(&self, bytes: u64) {
+        self.control.item_done();
+        self.add_bytes(bytes);
+    }
+
+    /// Reports `path` as failed; the item goes on.
+    pub fn fail(&self, path: &Path, err: &io::Error) {
+        if let Some((_, job)) = self.job {
+            job.fail(path, err);
+        }
+    }
+
+    /// Notes that `path` was left out on purpose (`why`); not a failure.
+    pub fn skip(&self, path: &Path, why: &io::Error) {
+        if let Some((_, job)) = self.job {
+            job.skip(path, why);
+        }
+    }
+
+    /// A new hidden folder next to `near` to build things in. It is noted for removal if
+    /// Gezik stops, and removed (with what is left in it) when the job ends.
+    pub fn staging_dir(&self, near: &Path) -> io::Result<PathBuf> {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let parent = near.parent().unwrap_or(Path::new(""));
+        loop {
+            let n = NEXT.fetch_add(1, Ordering::Relaxed);
+            let path = parent.join(format!("{HIDDEN_PREFIX}x-{}-{n}", std::process::id()));
+            // Noted first: a crash between the note and the folder leaves a path that does not
+            // exist, which recovery drops.
+            if let Some(pending) = self.pending() {
+                pending.add(&path)?;
+            }
+            match std::fs::create_dir(&path) {
+                Ok(()) => {
+                    let _ = gezik_platform::fs::set_hidden(&path);
+                    if let Some((_, job)) = self.job {
+                        lock(&job.staging).push(path.clone());
+                    }
+                    return Ok(path);
+                }
+                // A leftover of an earlier run with the same process id: it stays noted (it
+                // goes at the next start) and the next name is tried.
+                Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(err) => {
+                    if let Some(pending) = self.pending() {
+                        pending.remove(&path);
+                    }
+                    return Err(err);
+                }
+            }
+        }
+    }
+
+    /// A temporary name next to `target` to write it under until it is complete; a leftover
+    /// is deleted at the next start.
+    pub fn temp_file_for(&self, target: &Path) -> PathBuf {
+        self.temp.next_to(target).unwrap_or_else(|| {
+            let number = self.temp.next.fetch_add(1, Ordering::Relaxed);
+            target.with_file_name(format!("{}{number}", self.temp.prefix))
+        })
+    }
+
+    /// A name next to `path` to set it aside under for a while (`.gezik-rn-…`: no temporary
+    /// file cleanup deletes it).
+    pub fn aside_name(&self, path: &Path) -> PathBuf {
+        crate::pending::renaming_name(path)
+    }
+
+    /// Notes items set aside, as (where it is now, its own name): if Gezik stops before
+    /// `forget_aside`, the next start puts each back under its own name (or a free `name (n)`).
+    pub fn note_aside(&self, pairs: &[(PathBuf, PathBuf)]) {
+        if let Some(pending) = self.pending() {
+            let restores: Vec<crate::pending::Restore> = pairs
+                .iter()
+                .map(|(aside, original)| crate::pending::Restore {
+                    hidden: aside.clone(),
+                    original: original.clone(),
+                    was_hidden: true,
+                })
+                .collect();
+            pending.add_restores(&restores);
+        }
+    }
+
+    /// The items set aside at `asides` are back, trashed or deleted: nothing to put back.
+    pub fn forget_aside(&self, asides: &[&Path]) {
+        if let Some(pending) = self.pending() {
+            pending.remove_restores(asides);
+        }
     }
 
     /// Where the job notes what to put back if Gezik stops (`None`: nowhere).
@@ -436,7 +590,7 @@ mod tests {
         std::thread::scope(|scope| {
             let _resume = Resume(&control);
             let copy = scope.spawn(|| {
-                let cx = RunCx { control: &control, trash: &no_bin, added: Cell::new(0), temp: &temp };
+                let cx = RunCx { control: &control, trash: &no_bin, added: Cell::new(0), temp: &temp, job: None };
                 cx.copy_file(&from, &to, size)
             });
             // Held by the pause in the middle of the copy: only a noted leftover is there.
@@ -471,11 +625,32 @@ mod tests {
         let control = Control::default();
         control.cancel();
         let no_bin = |_: &Path| false;
-        let cx = RunCx { control: &control, trash: &no_bin, added: Cell::new(0), temp: &temp };
+        let cx = RunCx { control: &control, trash: &no_bin, added: Cell::new(0), temp: &temp, job: None };
         assert!(cx.copy_file(&dir.join("big.bin"), &dir.join("to/big.bin"), size).is_err());
         assert!(names(&dir.join("to")).is_empty());
         temp.done();
         assert!(pending.copies().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_item_set_aside_is_noted_until_forgotten() {
+        let dir = test_dir("aside");
+        let pending = std::sync::Arc::new(PendingDeletes::new(dir.join("pending-deletes")));
+        let temp = TempCopies::new(Some(pending.clone()));
+        let control = Control::default();
+        let no_bin = |_: &Path| false;
+        let cx = RunCx { control: &control, trash: &no_bin, added: Cell::new(0), temp: &temp, job: None };
+        let original = dir.join("x.7z.001");
+        let aside = cx.aside_name(&original);
+        assert_eq!(crate::pending::renaming_pid(&aside), Some(std::process::id()), "no temp cleanup takes it");
+        assert_ne!(cx.aside_name(&original), aside);
+        cx.note_aside(&[(aside.clone(), original.clone())]);
+        let restores = pending.restores();
+        assert_eq!(restores.len(), 1);
+        assert_eq!((&restores[0].hidden, &restores[0].original), (&aside, &original));
+        cx.forget_aside(&[&aside]);
+        assert!(pending.restores().is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -1,6 +1,7 @@
 // Hide the console window in release builds on Windows.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod archives;
 mod batch_rename;
 mod conflicts;
 mod context_menu;
@@ -59,6 +60,7 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
     frame_limit::set_max_fps(loaded.settings.max_fps);
     operations::with_current(|ops| ops.set_files(loaded.settings.files));
     batch_rename::set_presets(loaded.settings.rename_presets.clone());
+    archives::set_settings(loaded.settings.tools.clone(), loaded.settings.archives);
     loaded
 }
 
@@ -100,6 +102,14 @@ fn handle_key(
         let mut used = false;
         if let Some(chord) = &chord {
             batch_rename::with_current(|layer| used = layer.chord(chord));
+        }
+        return used;
+    }
+    // The Compress layer: Esc and Ctrl+Enter wherever its focus is, other keys to its fields.
+    if window.get_cp_open() {
+        let mut used = false;
+        if let Some(chord) = &chord {
+            archives::with_current(|layer| used = layer.chord(chord));
         }
         return used;
     }
@@ -380,7 +390,7 @@ fn main() -> Result<(), slint::PlatformError> {
         nav.clone(),
         view.clone(),
         sidebar.clone(),
-        dialogs,
+        dialogs.clone(),
         engine_settings,
         initial_settings.files,
         saved_state.operations_collapsed,
@@ -388,6 +398,8 @@ fn main() -> Result<(), slint::PlatformError> {
         saved_state.batch_rename.clone().unwrap_or_default(),
     );
     let _batch_rename = batch_rename::BatchRename::new(&window, ops.clone());
+    // Tools Gezik downloads (7-Zip) go to `<config dir>/tools/`, next to the pending deletes.
+    let archives = archives::Archives::new(&window, ops.clone(), dialogs, config.clone(), saved_state.archive.clone());
     window.on_op_pause({
         let ops = ops.clone();
         move |id| ops.pause(id)
@@ -597,9 +609,21 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
+    // Double-click; an archive is extracted there if `[archives] double-click` says so.
     window.on_open_row({
-        let nav = nav.clone();
-        move |i| nav.open_row(i)
+        let (nav, view) = (nav.clone(), view.clone());
+        move |i| {
+            let archive = usize::try_from(i).ok().and_then(|i| view.entry_path(i)).filter(|(path, is_dir)| {
+                !is_dir
+                    && path
+                        .file_name()
+                        .is_some_and(|n| gezik_core::batch::archive::looks_like_archive(&n.to_string_lossy()))
+            });
+            match archive {
+                Some((path, _)) if archives::extracts_on_double_click() => archives.extract_here(vec![path]),
+                _ => nav.open_row(i),
+            }
+        }
     });
     window.on_go_back({
         let nav = nav.clone();

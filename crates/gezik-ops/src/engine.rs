@@ -15,7 +15,7 @@ use gezik_platform::fs::{self, DriveFacts};
 
 use crate::control::Control;
 use crate::pending::{PendingDeletes, is_hidden};
-use crate::task::{Outcome, Task, TaskKind};
+use crate::task::{Answer, Outcome, Question, Task, TaskKind};
 use crate::tasks::DeleteTask;
 
 pub type JobId = u64;
@@ -100,6 +100,9 @@ pub struct Report {
     pub kind: TaskKind,
     pub cancelled: bool,
     pub failures: Vec<Failure>,
+    /// Items left out on purpose (the user gave no password, a link Gezik does not make):
+    /// notes, not failures.
+    pub skipped: Vec<Failure>,
     /// Items an undo left alone because they changed since.
     pub skipped_changed: usize,
     /// Items not trashed because their drive has no trash: the UI offers to delete them.
@@ -127,6 +130,13 @@ pub enum Event {
     Conflicts {
         job: JobId,
         conflicts: Vec<ConflictItem>,
+    },
+    /// The job waits for `Engine::answer` with this `id` (or `cancel`).
+    Question {
+        job: JobId,
+        /// Which of the job's questions it is: an answer meant for another is dropped.
+        id: u64,
+        question: Question,
     },
     /// The job waits for `Engine::resume` (or `cancel`).
     Paused {
@@ -158,6 +168,7 @@ const MAX_CHANGED: usize = 256;
 pub(crate) struct Acc {
     pub outcomes: Vec<Outcome>,
     pub failures: Vec<Failure>,
+    pub skipped: Vec<Failure>,
     pub skipped_changed: usize,
     pub no_trash: Vec<PathBuf>,
     pub results: Vec<PathBuf>,
@@ -187,6 +198,8 @@ pub(crate) struct Job {
     pub acc: Mutex<Acc>,
     /// Temporary names of the files it copies.
     pub temp: crate::task::TempCopies,
+    /// Hidden folders its items build things in; removed when it ends.
+    pub staging: Mutex<Vec<PathBuf>>,
 }
 
 impl Job {
@@ -196,6 +209,10 @@ impl Job {
 
     pub fn fail(&self, path: &Path, error: &io::Error) {
         lock(&self.acc).failures.push(Failure { path: path.to_path_buf(), message: fs::describe(error) });
+    }
+
+    pub fn skip(&self, path: &Path, why: &io::Error) {
+        lock(&self.acc).skipped.push(Failure { path: path.to_path_buf(), message: fs::describe(why) });
     }
 
     pub fn skipped_changed(&self) {
@@ -225,7 +242,7 @@ impl Job {
         let c = &self.control;
         let state = if let Some(reason) = c.pause_reason() {
             JobState::Paused(reason)
-        } else if c.deciding.load(Ordering::SeqCst) {
+        } else if c.deciding.load(Ordering::SeqCst) || c.asking.load(Ordering::SeqCst) {
             JobState::Deciding
         } else if c.scanning.load(Ordering::SeqCst) {
             JobState::Scanning
@@ -355,6 +372,16 @@ impl Shared {
             task.done(cancelled);
         }
         job.temp.done();
+        for dir in std::mem::take(&mut *lock(&job.staging)) {
+            // Emptied by its items, or not: either way it goes. If it cannot, its note stays
+            // and the next start deletes it.
+            let gone = fs::delete(&dir).is_ok()
+                || std::fs::remove_dir_all(&dir).is_ok()
+                || std::fs::symlink_metadata(&dir).is_err_and(|err| err.kind() == io::ErrorKind::NotFound);
+            if gone && let Some(pending) = &self.pending {
+                pending.remove(&dir);
+            }
+        }
         let acc = std::mem::take(&mut *lock(&job.acc));
         let inverse = crate::inverse::build(&acc.outcomes);
         let recorded = !inverse.is_empty();
@@ -384,6 +411,7 @@ impl Shared {
             kind,
             cancelled,
             failures: acc.failures,
+            skipped: acc.skipped,
             skipped_changed: acc.skipped_changed,
             no_trash: acc.no_trash,
             results: acc.results,
@@ -536,6 +564,11 @@ impl Engine {
         self.start(vec![Arc::from(task)], Origin::New, None)
     }
 
+    /// One job of `tasks`, run in order, undone as one action (`label`: what Undo says).
+    pub fn submit_chain(&self, tasks: Vec<Box<dyn Task>>, label: Option<String>) -> JobId {
+        self.start(tasks.into_iter().map(Arc::from).collect(), Origin::New, label)
+    }
+
     /// Starts a job of `tasks` (run in order) on its own thread. `label`: what Undo says
     /// (default: from the first task); an undo or redo keeps the action's label.
     pub(crate) fn start(&self, tasks: Vec<Arc<dyn Task>>, origin: Origin, label: Option<String>) -> JobId {
@@ -564,6 +597,7 @@ impl Engine {
             done: AtomicBool::new(false),
             acc: Mutex::default(),
             temp: crate::task::TempCopies::new(self.0.pending.clone()),
+            staging: Mutex::default(),
         });
         lock(&self.0.jobs).push(job.clone());
         self.0.push([Event::Added { job: id, title, kind, background }]);
@@ -627,6 +661,13 @@ impl Engine {
     pub fn decide(&self, job: JobId, decisions: Vec<Decision>) {
         if let Some(job) = self.job(job) {
             job.control.set_decisions(decisions);
+        }
+    }
+
+    /// The user's answer to the job's `Question` event `id`.
+    pub fn answer(&self, job: JobId, id: u64, answer: Answer) {
+        if let Some(job) = self.job(job) {
+            job.control.set_answer(id, answer);
         }
     }
 
@@ -696,6 +737,91 @@ mod tests {
 
     fn run(engine: &Engine, job: JobId) -> Report {
         finish(engine, job, defaults).0
+    }
+
+    #[test]
+    fn a_chain_is_one_job_and_one_undo() {
+        let dir = test_dir("chain");
+        write(&dir.join("a.txt"), "a");
+        let engine = engine();
+        let tasks: Vec<Box<dyn Task>> = vec![
+            Box::new(CopyTask::into(vec![dir.join("a.txt")], &dir.join("b"))),
+            Box::new(CopyTask::into(vec![dir.join("a.txt")], &dir.join("c"))),
+        ];
+        std::fs::create_dir_all(dir.join("b")).unwrap();
+        std::fs::create_dir_all(dir.join("c")).unwrap();
+        let job = engine.submit_chain(tasks, Some("Copy twice".into()));
+        let (report, _) = finish(&engine, job, defaults);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert_eq!(engine.undo_label().as_deref(), Some("Copy twice"));
+        finish(&engine, engine.undo().unwrap(), defaults);
+        assert!(!dir.join("b/a.txt").exists() && !dir.join("c/a.txt").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_task_can_ask_and_wait_for_the_answer() {
+        // A test task asks once and records the answer in its outcome path.
+        let engine = engine();
+        let job = engine.submit(Box::new(crate::testing::AskingTask));
+        let mut asked = false;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            for event in engine.drain() {
+                if let Event::Question { job: j, id, question: Question::Password { retry, .. } } = event {
+                    assert_eq!(j, job);
+                    assert!(!retry);
+                    asked = true;
+                    // An answer to another question is dropped; the right one is taken.
+                    engine.answer(job, id + 1, Answer::Text("stale".into()));
+                    engine.answer(job, id, Answer::Text("pw".into()));
+                }
+                if let Event::Finished { job: j, report } = event {
+                    assert_eq!(j, job);
+                    assert!(asked);
+                    assert_eq!(report.results, [PathBuf::from("pw")]);
+                    return;
+                }
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn cancelling_a_waiting_question_answers_cancel() {
+        let engine = engine();
+        let job = engine.submit(Box::new(crate::testing::AskingTask));
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            for event in engine.drain() {
+                if matches!(event, Event::Question { .. }) {
+                    engine.cancel(job);
+                }
+                if let Event::Finished { report, .. } = event {
+                    assert!(report.cancelled);
+                    assert!(report.results.is_empty());
+                    return;
+                }
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn a_staging_folder_is_noted_and_gone_when_the_job_ends() {
+        let dir = test_dir("staging");
+        let pending = dir.join("pending-deletes");
+        let engine = Engine::new(Settings { pending_deletes: Some(pending.clone()), ..Settings::default() }, || {});
+        let job = engine.submit(Box::new(crate::testing::StagingTask::new(dir.clone())));
+        let (report, _) = finish(&engine, job, defaults);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        let left: Vec<String> =
+            std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        assert!(left.iter().all(|name| !name.starts_with(".gezik-")), "{left:?}");
+        assert!(PendingDeletes::new(pending).load_unowned().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

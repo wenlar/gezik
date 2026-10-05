@@ -16,14 +16,16 @@ pub use describe::describe;
 pub use gezik_core::ops::threads::DiskKind;
 #[cfg(unix)]
 pub use unix::{
-    clear_hidden, copy_file, delete, drive_facts, drive_root, is_hidden_attr, move_entry, restore, set_hidden, trash,
+    clear_hidden, copy_file, delete, drive_facts, drive_root, free_space, is_hidden_attr, move_entry, restore,
+    set_hidden, trash,
 };
-#[cfg(windows)]
-pub(crate) use windows::verbatim;
 #[cfg(windows)]
 pub use windows::{
-    clear_hidden, copy_file, delete, drive_facts, drive_root, is_hidden_attr, move_entry, restore, set_hidden, trash,
+    clear_hidden, copy_file, delete, drive_facts, drive_root, free_space, is_hidden_attr, move_entry, restore,
+    set_hidden, trash,
 };
+#[cfg(windows)]
+pub(crate) use windows::{io_error, verbatim};
 
 /// What the engine needs to know about the drive a path is on.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -187,6 +189,14 @@ mod tests {
         assert!(!a.id.is_empty());
         assert_eq!(a.id, b.id);
         assert!(drive_root(&dir).is_some());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn free_space_is_known_for_an_existing_folder() {
+        let dir = test_dir("free");
+        assert!(free_space(&dir).unwrap() > 0);
+        assert!(free_space(&dir.join("not-there")).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

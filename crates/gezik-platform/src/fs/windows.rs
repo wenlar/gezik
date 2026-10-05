@@ -14,10 +14,10 @@ use windows::Win32::Storage::FileSystem::{
     FILE_ATTRIBUTE_READONLY, FILE_DISPOSITION_FLAG_DELETE, FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE,
     FILE_DISPOSITION_FLAG_POSIX_SEMANTICS, FILE_DISPOSITION_INFO_EX, FILE_DISPOSITION_INFO_EX_FLAGS,
     FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_DELETE,
-    FILE_SHARE_READ, FILE_SHARE_WRITE, FileDispositionInfoEx, GetDriveTypeW, GetFileAttributesW, GetVolumeInformationW,
-    GetVolumePathNameW, INVALID_FILE_ATTRIBUTES, LPPROGRESS_ROUTINE_CALLBACK_REASON, MOVE_FILE_FLAGS, MoveFileExW,
-    OPEN_EXISTING, PROGRESS_CANCEL, PROGRESS_CONTINUE, RemoveDirectoryW, SetFileAttributesW,
-    SetFileInformationByHandle,
+    FILE_SHARE_READ, FILE_SHARE_WRITE, FileDispositionInfoEx, GetDiskFreeSpaceExW, GetDriveTypeW, GetFileAttributesW,
+    GetVolumeInformationW, GetVolumePathNameW, INVALID_FILE_ATTRIBUTES, LPPROGRESS_ROUTINE_CALLBACK_REASON,
+    MOVE_FILE_FLAGS, MoveFileExW, OPEN_EXISTING, PROGRESS_CANCEL, PROGRESS_CONTINUE, RemoveDirectoryW,
+    SetFileAttributesW, SetFileInformationByHandle,
 };
 use windows::Win32::System::IO::DeviceIoControl;
 use windows::Win32::System::Ioctl::{
@@ -301,6 +301,13 @@ pub fn drive_root(path: &Path) -> Option<PathBuf> {
     unsafe { GetVolumePathNameW(&HSTRING::from(path.as_os_str()), &mut buffer) }.ok()?;
     let end = buffer.iter().position(|&c| c == 0).unwrap_or(buffer.len());
     Some(PathBuf::from(OsString::from_wide(&buffer[..end])))
+}
+
+/// Bytes this user may still write on the drive `path` is on (`path` must exist).
+pub fn free_space(path: &Path) -> io::Result<u64> {
+    let mut free = 0u64;
+    unsafe { GetDiskFreeSpaceExW(&HSTRING::from(path.as_os_str()), Some(&mut free), None, None) }.map_err(io_error)?;
+    Ok(free)
 }
 
 pub fn drive_facts(path: &Path) -> io::Result<DriveFacts> {

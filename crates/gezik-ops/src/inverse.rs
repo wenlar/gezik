@@ -15,13 +15,25 @@ fn expect(facts: &Facts) -> Option<Facts> {
     (!facts.is_dir).then_some(*facts)
 }
 
+/// `outcomes` with every `Several` opened up, in order.
+fn flatten<'a>(outcomes: &'a [Outcome], into: &mut Vec<&'a Outcome>) {
+    for outcome in outcomes {
+        match outcome {
+            Outcome::Several(inner) => flatten(inner, into),
+            other => into.push(other),
+        }
+    }
+}
+
 /// The tasks that undo `outcomes`, in order: trash what was made, move back what was moved,
 /// restore what was trashed (an item replaced by a copy comes back after the copy left).
 pub(crate) fn build(outcomes: &[Outcome]) -> Vec<Arc<dyn Task>> {
     let mut made: Vec<(PathBuf, Option<Facts>)> = Vec::new();
     let mut moved: Vec<(PathBuf, PathBuf, Option<Facts>)> = Vec::new();
     let mut trashed: Vec<(PathBuf, PathBuf)> = Vec::new();
-    for outcome in outcomes {
+    let mut flat = Vec::new();
+    flatten(outcomes, &mut flat);
+    for outcome in flat {
         match outcome {
             Outcome::Created { path, facts, from: None } => made.push((path.clone(), expect(facts))),
             Outcome::Created { path, facts, from: Some(from) } => {
@@ -30,7 +42,7 @@ pub(crate) fn build(outcomes: &[Outcome]) -> Vec<Arc<dyn Task>> {
             Outcome::Moved { from, to, facts } => moved.push((to.clone(), from.clone(), expect(facts))),
             Outcome::Trashed { original, trashed: at } => trashed.push((at.clone(), original.clone())),
             Outcome::Restored { original, facts } => made.push((original.clone(), expect(facts))),
-            Outcome::Deleted { .. } | Outcome::Nothing => {}
+            Outcome::Deleted { .. } | Outcome::Nothing | Outcome::Several(_) => {}
         }
     }
     let mut tasks: Vec<Arc<dyn Task>> = Vec::new();
@@ -88,6 +100,16 @@ mod tests {
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].kind(), TaskKind::Rename);
         assert_eq!(tasks[0].count(), 2);
+    }
+
+    #[test]
+    fn several_outcomes_are_flattened() {
+        let outcomes = vec![Outcome::Several(vec![
+            Outcome::Trashed { original: "/d/a.zip".into(), trashed: "/bin/1".into() },
+            Outcome::Created { path: "/d/a.zip".into(), facts: file(), from: None },
+        ])];
+        let kinds: Vec<TaskKind> = build(&outcomes).iter().map(|t| t.kind()).collect();
+        assert_eq!(kinds, [TaskKind::Trash, TaskKind::Restore]);
     }
 
     #[test]

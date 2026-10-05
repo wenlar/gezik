@@ -247,14 +247,17 @@ pub fn same_drive(a: &Path, b: &Path, roots: &[PathBuf]) -> bool {
 pub enum Action {
     Transfer(Effect),
     Pin,
+    /// Onto a zip, 7z or tar file: the files are added to it.
+    AddToArchive,
 }
 
-/// The text next to the dragged items.
+/// The text next to the dragged items; `folder` is the archive for `AddToArchive`.
 pub fn label(action: Action, folder: &Path) -> String {
     match action {
         Action::Transfer(Effect::Move) => format!("Move to {}", folder_name(folder)),
         Action::Transfer(Effect::Copy) => format!("Copy to {}", folder_name(folder)),
         Action::Pin => "Pin to sidebar".to_owned(),
+        Action::AddToArchive => format!("Add to {}", folder_name(folder)),
     }
 }
 
@@ -444,6 +447,7 @@ mod tests {
         let p = PathBuf::from(if cfg!(windows) { r"C:\Users\Belgeler" } else { "/home/Belgeler" });
         assert_eq!(label(Action::Transfer(Effect::Move), &p), "Move to Belgeler");
         assert_eq!(label(Action::Pin, &p), "Pin to sidebar");
+        assert_eq!(label(Action::AddToArchive, &p.join("Fotolar.zip")), "Add to Fotolar.zip");
         let root = PathBuf::from(if cfg!(windows) { r"D:\" } else { "/" });
         assert_eq!(label(Action::Transfer(Effect::Copy), &root), format!("Copy to {}", root.display()));
     }
