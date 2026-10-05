@@ -358,9 +358,9 @@ impl RunCx<'_> {
         if control.cancelled() {
             return Answer::Cancel;
         }
-        control.clear_answer();
+        let id = control.new_question();
         control.asking.store(true, Ordering::SeqCst);
-        shared.push([Event::Question { job: job.id, question }]);
+        shared.push([Event::Question { job: job.id, id, question }]);
         let answer = control.wait_answer();
         control.asking.store(false, Ordering::SeqCst);
         answer.unwrap_or(Answer::Cancel)
@@ -381,6 +381,13 @@ impl RunCx<'_> {
     pub fn fail(&self, path: &Path, err: &io::Error) {
         if let Some((_, job)) = self.job {
             job.fail(path, err);
+        }
+    }
+
+    /// Notes that `path` was left out on purpose (`why`); not a failure.
+    pub fn skip(&self, path: &Path, why: &io::Error) {
+        if let Some((_, job)) = self.job {
+            job.skip(path, why);
         }
     }
 

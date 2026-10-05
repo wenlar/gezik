@@ -100,6 +100,9 @@ pub struct Report {
     pub kind: TaskKind,
     pub cancelled: bool,
     pub failures: Vec<Failure>,
+    /// Items left out on purpose (the user gave no password, a link Gezik does not make):
+    /// notes, not failures.
+    pub skipped: Vec<Failure>,
     /// Items an undo left alone because they changed since.
     pub skipped_changed: usize,
     /// Items not trashed because their drive has no trash: the UI offers to delete them.
@@ -128,9 +131,11 @@ pub enum Event {
         job: JobId,
         conflicts: Vec<ConflictItem>,
     },
-    /// The job waits for `Engine::answer` (or `cancel`).
+    /// The job waits for `Engine::answer` with this `id` (or `cancel`).
     Question {
         job: JobId,
+        /// Which of the job's questions it is: an answer meant for another is dropped.
+        id: u64,
         question: Question,
     },
     /// The job waits for `Engine::resume` (or `cancel`).
@@ -163,6 +168,7 @@ const MAX_CHANGED: usize = 256;
 pub(crate) struct Acc {
     pub outcomes: Vec<Outcome>,
     pub failures: Vec<Failure>,
+    pub skipped: Vec<Failure>,
     pub skipped_changed: usize,
     pub no_trash: Vec<PathBuf>,
     pub results: Vec<PathBuf>,
@@ -203,6 +209,10 @@ impl Job {
 
     pub fn fail(&self, path: &Path, error: &io::Error) {
         lock(&self.acc).failures.push(Failure { path: path.to_path_buf(), message: fs::describe(error) });
+    }
+
+    pub fn skip(&self, path: &Path, why: &io::Error) {
+        lock(&self.acc).skipped.push(Failure { path: path.to_path_buf(), message: fs::describe(why) });
     }
 
     pub fn skipped_changed(&self) {
@@ -401,6 +411,7 @@ impl Shared {
             kind,
             cancelled,
             failures: acc.failures,
+            skipped: acc.skipped,
             skipped_changed: acc.skipped_changed,
             no_trash: acc.no_trash,
             results: acc.results,
@@ -653,10 +664,10 @@ impl Engine {
         }
     }
 
-    /// The user's answer to the job's `Question` event.
-    pub fn answer(&self, job: JobId, answer: Answer) {
+    /// The user's answer to the job's `Question` event `id`.
+    pub fn answer(&self, job: JobId, id: u64, answer: Answer) {
         if let Some(job) = self.job(job) {
-            job.control.set_answer(answer);
+            job.control.set_answer(id, answer);
         }
     }
 
@@ -757,11 +768,13 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             for event in engine.drain() {
-                if let Event::Question { job: j, question: Question::Password { retry, .. } } = event {
+                if let Event::Question { job: j, id, question: Question::Password { retry, .. } } = event {
                     assert_eq!(j, job);
                     assert!(!retry);
                     asked = true;
-                    engine.answer(job, Answer::Text("pw".into()));
+                    // An answer to another question is dropped; the right one is taken.
+                    engine.answer(job, id + 1, Answer::Text("stale".into()));
+                    engine.answer(job, id, Answer::Text("pw".into()));
                 }
                 if let Event::Finished { job: j, report } = event {
                     assert_eq!(j, job);

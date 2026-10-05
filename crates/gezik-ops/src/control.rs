@@ -16,7 +16,8 @@ pub(crate) struct Control {
     resumed: Condvar,
     decisions: Mutex<Option<Vec<Decision>>>,
     decided: Condvar,
-    answer: Mutex<Option<Answer>>,
+    /// The id of the last question asked, and its answer once given.
+    answer: Mutex<(u64, Option<Answer>)>,
     answered: Condvar,
     /// Held while an item asks: one question at a time.
     pub asking_turn: Mutex<()>,
@@ -95,21 +96,29 @@ impl Control {
         }
     }
 
-    pub fn set_answer(&self, answer: Answer) {
-        *lock(&self.answer) = Some(answer);
-        self.answered.notify_all();
+    /// The answer to question `id`; one to an earlier question (late, or given twice) is
+    /// dropped.
+    pub fn set_answer(&self, id: u64, answer: Answer) {
+        let mut current = lock(&self.answer);
+        if current.0 == id {
+            current.1 = Some(answer);
+            self.answered.notify_all();
+        }
     }
 
-    /// Drops an answer left from an earlier question.
-    pub fn clear_answer(&self) {
-        *lock(&self.answer) = None;
+    /// A new question's id; an answer left from an earlier one is dropped.
+    pub fn new_question(&self) -> u64 {
+        let mut current = lock(&self.answer);
+        current.0 += 1;
+        current.1 = None;
+        current.0
     }
 
     /// Waits for the user's answer; `None` if the job is cancelled meanwhile.
     pub fn wait_answer(&self) -> Option<Answer> {
         let mut answer = lock(&self.answer);
         loop {
-            if let Some(given) = answer.take() {
+            if let Some(given) = answer.1.take() {
                 return Some(given);
             }
             if self.cancelled() {

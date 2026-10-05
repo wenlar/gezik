@@ -16,8 +16,8 @@ use gezik_core::format_size;
 use gezik_core::ops::paths::same_path;
 use gezik_core::ops::rate::{Rate, format_eta, format_rate};
 use gezik_ops::{
-    Answer, CopyTask, DeleteTask, Engine, Event, JobId, JobState, MoveTask, NewTask, PauseReason, Progress, Question,
-    Report, Settings, Task, TrashTask,
+    Answer, CopyTask, DeleteTask, Engine, Event, Failure, JobId, JobState, MoveTask, NewTask, PauseReason, Progress,
+    Question, Report, Settings, Task, TrashTask,
 };
 use gezik_platform::clipboard::{self, ClipboardError, ClipboardFiles};
 use gezik_platform::taskbar::{Taskbar, TaskbarState};
@@ -69,7 +69,12 @@ pub fn describe(
     if let Some(report) = report {
         return match report.failures.len() {
             _ if report.cancelled => (RowState::Done, "Cancelled".to_owned(), 1.0),
-            0 => (RowState::Done, "Done".to_owned(), 1.0),
+            // Left out on purpose (no password given, a link): a note, not a failure.
+            0 => match report.skipped.len() {
+                0 => (RowState::Done, "Done".to_owned(), 1.0),
+                1 => (RowState::Done, "Done · 1 item skipped".to_owned(), 1.0),
+                n => (RowState::Done, format!("Done · {n} items skipped"), 1.0),
+            },
             1 => (RowState::Failed, "1 item failed".to_owned(), 1.0),
             n => (RowState::Failed, format!("{n} items failed"), 1.0),
         };
@@ -259,7 +264,7 @@ impl JobView {
             can_resume: !finished && paused_by_user,
             can_start_now: !finished && state == RowState::Waiting && self.progress.is_some(),
             can_retry: failed && (self.retry.is_some() || self.again.is_some()),
-            can_details: failed,
+            can_details: failed || self.report.as_ref().is_some_and(|r| !r.cancelled && !r.skipped.is_empty()),
             finished,
         }
     }
@@ -863,7 +868,7 @@ impl Operations {
                 }),
                 Event::Conflicts { job, conflicts } => self.show_conflicts(job, conflicts),
                 Event::Paused { job, reason, path } => self.paused(job, reason, path),
-                Event::Question { job, question } => self.question(job, question),
+                Event::Question { job, id, question } => self.question(job, id, question),
                 Event::Finished { job, report } => self.finished(job, report),
                 Event::Changed { dirs } => {
                     self.0.nav.refresh_showing(&dirs, &[], None);
@@ -889,21 +894,21 @@ impl Operations {
 
     /// A job asks something (an archive's password, whether to go on); its answer goes back
     /// to it. Several questions wait their turn.
-    fn question(&self, job: JobId, question: Question) {
+    fn question(&self, job: JobId, id: u64, question: Question) {
         self.with_job(job, |j| j.shown = true);
         let engine = self.0.engine.clone();
         match question {
             Question::Password { archive, retry } => {
                 let (title, message) = crate::archives::password_text(&archive, retry);
                 self.0.dialogs.ask_password(job, title, message, &["OK", "Skip"], move |text| {
-                    engine.answer(job, text.map_or(Answer::Cancel, Answer::Text));
+                    engine.answer(job, id, text.map_or(Answer::Cancel, Answer::Text));
                 });
             }
             Question::Confirm { title, message, buttons } => {
                 let labels: Vec<&str> = buttons.iter().map(String::as_str).collect();
                 let escape = labels.len().saturating_sub(1);
                 self.0.dialogs.ask_for_job(job, title, message, &labels, escape, move |choice| {
-                    engine.answer(job, choice.map_or(Answer::Cancel, Answer::Button));
+                    engine.answer(job, id, choice.map_or(Answer::Cancel, Answer::Button));
                 });
             }
         }
@@ -985,7 +990,9 @@ impl Operations {
         if !report.no_trash.is_empty() {
             self.ask_delete_for_good(report.no_trash.clone());
         }
-        if !problems {
+        // A row with skipped items stays until closed, for its Details.
+        let notes = !report.cancelled && !report.skipped.is_empty();
+        if !problems && !notes {
             let ops = self.clone();
             slint::Timer::single_shot(DONE_FOR, move || ops.remove(id));
         }
@@ -1114,18 +1121,25 @@ impl Operations {
             let jobs = self.0.jobs.borrow();
             let Some(job) = jobs.iter().find(|j| j.id == id) else { return };
             let Some(report) = &job.report else { return };
-            let failures = &report.failures;
-            let mut lines: Vec<String> = failures
-                .iter()
-                .take(MAX_DETAILS)
-                .map(|f| {
-                    format!("{}: {}", f.path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default(), f.message)
-                })
-                .collect();
-            if failures.len() > MAX_DETAILS {
-                lines.push(format!("…and {} more", failures.len() - MAX_DETAILS));
+            let named = |f: &Failure| {
+                format!("{}: {}", f.path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default(), f.message)
+            };
+            let mut lines: Vec<String> = report.failures.iter().take(MAX_DETAILS).map(named).collect();
+            // What was left out on purpose comes after, under its own heading.
+            let room = MAX_DETAILS.saturating_sub(lines.len());
+            if !report.skipped.is_empty() && room > 0 {
+                if !lines.is_empty() {
+                    lines.push(String::new());
+                }
+                lines.push("Skipped:".to_owned());
+                lines.extend(report.skipped.iter().take(room).map(named));
             }
-            (job.title.clone(), lines.join("\n"), job.retry.is_some() || job.again.is_some())
+            let all = report.failures.len() + report.skipped.len();
+            if all > MAX_DETAILS {
+                lines.push(format!("…and {} more", all - MAX_DETAILS));
+            }
+            let can_retry = !report.failures.is_empty() && (job.retry.is_some() || job.again.is_some());
+            (job.title.clone(), lines.join("\n"), can_retry)
         };
         let ops = self.clone();
         let buttons: &[&str] = if can_retry { &["Retry", "Close"] } else { &["Close"] };
@@ -1207,6 +1221,7 @@ mod tests {
             kind: TaskKind::Copy,
             cancelled,
             failures: (0..failures).map(|i| Failure { path: format!("/f{i}").into(), message: "x".into() }).collect(),
+            skipped: Vec::new(),
             skipped_changed: 0,
             no_trash: Vec::new(),
             results: Vec::new(),
@@ -1251,6 +1266,9 @@ mod tests {
             (RowState::Failed, "3 items failed".into(), 1.0)
         );
         assert_eq!(describe(None, Some(&report(3, true)), None, None).1, "Cancelled");
+        let mut skipped = report(0, false);
+        skipped.skipped.push(Failure { path: "/a.zip".into(), message: "no password".into() });
+        assert_eq!(describe(None, Some(&skipped), None, None), (RowState::Done, "Done · 1 item skipped".into(), 1.0));
     }
 
     #[test]

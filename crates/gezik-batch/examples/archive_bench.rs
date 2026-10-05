@@ -15,7 +15,7 @@ fn finish(engine: &Engine, job: JobId) -> usize {
                 Event::Conflicts { job: j, conflicts } if j == job => {
                     engine.decide(job, conflicts.iter().map(|c| c.decision).collect());
                 }
-                Event::Question { job: j, .. } if j == job => engine.answer(job, Answer::Cancel),
+                Event::Question { job: j, id, .. } if j == job => engine.answer(job, id, Answer::Cancel),
                 Event::Finished { job: j, report } if j == job => return report.failures.len(),
                 _ => {}
             }
