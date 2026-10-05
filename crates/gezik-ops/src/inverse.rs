@@ -2,6 +2,7 @@
 //! what it trashed comes back. Nothing here knows the task kinds.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use gezik_core::ops::conflict::Facts;
 use gezik_core::ops::paths::cover;
@@ -16,7 +17,7 @@ fn expect(facts: &Facts) -> Option<Facts> {
 
 /// The tasks that undo `outcomes`, in order: trash what was made, move back what was moved,
 /// restore what was trashed (an item replaced by a copy comes back after the copy left).
-pub(crate) fn build(outcomes: &[Outcome]) -> Vec<Box<dyn Task>> {
+pub(crate) fn build(outcomes: &[Outcome]) -> Vec<Arc<dyn Task>> {
     let mut made: Vec<(PathBuf, Option<Facts>)> = Vec::new();
     let mut moved: Vec<(PathBuf, PathBuf, Option<Facts>)> = Vec::new();
     let mut trashed: Vec<(PathBuf, PathBuf)> = Vec::new();
@@ -32,17 +33,17 @@ pub(crate) fn build(outcomes: &[Outcome]) -> Vec<Box<dyn Task>> {
             Outcome::Deleted { .. } | Outcome::Nothing => {}
         }
     }
-    let mut tasks: Vec<Box<dyn Task>> = Vec::new();
+    let mut tasks: Vec<Arc<dyn Task>> = Vec::new();
     let made = cover(made, |(path, _)| path);
     if !made.is_empty() {
-        tasks.push(Box::new(TrashTask::checked(made)));
+        tasks.push(Arc::new(TrashTask::checked(made)));
     }
     let moved = cover(moved, |(path, _, _)| path);
     if !moved.is_empty() {
-        tasks.push(Box::new(MoveTask::back(moved)));
+        tasks.push(Arc::new(MoveTask::back(moved)));
     }
     if !trashed.is_empty() {
-        tasks.push(Box::new(RestoreTask::new(trashed)));
+        tasks.push(Arc::new(RestoreTask::new(trashed)));
     }
     tasks
 }
