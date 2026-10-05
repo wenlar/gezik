@@ -3,7 +3,9 @@ import { Theme } from "../theme.slint";
 // A single-line text box. Replaces the std-widgets LineEdit, whose colors cannot be themed.
 export component TextField inherits Rectangle {
     in-out property <string> text;
+    in property <bool> enabled: true;
     callback accepted(string);
+    callback edited(string);
     out property <bool> has-focus: input.has-focus;
 
     public function focus-and-select() {
@@ -31,6 +33,8 @@ export component TextField inherits Rectangle {
         color: Theme.foreground;
         selection-background-color: Theme.selection;
         selection-foreground-color: Theme.selection-foreground;
+        enabled: root.enabled;
         accepted => { root.accepted(self.text); }
+        edited => { root.edited(self.text); }
     }
 }

@@ -6,4 +6,5 @@ pub mod history;
 pub mod names;
 pub mod paths;
 pub mod rate;
+pub mod renames;
 pub mod threads;

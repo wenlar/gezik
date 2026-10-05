@@ -93,7 +93,8 @@ impl TaskKind {
     pub fn label(self, count: usize) -> String {
         let verb = self.verb();
         match self {
-            TaskKind::Rename | TaskKind::NewFolder | TaskKind::NewFile => verb.to_owned(),
+            TaskKind::NewFolder | TaskKind::NewFile => verb.to_owned(),
+            TaskKind::Rename if count <= 1 => verb.to_owned(),
             _ if count == 1 => format!("{verb} 1 item"),
             _ => format!("{verb} {count} items"),
         }
@@ -147,6 +148,8 @@ pub struct PlanItem {
     pub tag: u8,
     /// The existing target goes to the trash first (set by the engine for "Replace").
     pub(crate) replace: bool,
+    /// Counts in the job's progress (a rename's step to a temporary name does not).
+    pub(crate) counted: bool,
 }
 
 impl PlanItem {
@@ -162,6 +165,7 @@ impl PlanItem {
             root: 0,
             tag: 0,
             replace: false,
+            counted: true,
         }
     }
 
@@ -200,6 +204,12 @@ impl PlanItem {
 
     pub fn tag(mut self, tag: u8) -> PlanItem {
         self.tag = tag;
+        self
+    }
+
+    /// Left out of the job's progress: a step on the way, not an item of its own.
+    pub(crate) fn uncounted(mut self) -> PlanItem {
+        self.counted = false;
         self
     }
 
@@ -297,6 +307,11 @@ impl RunCx<'_> {
 
     pub fn has_trash(&self, path: &Path) -> bool {
         (self.trash)(path)
+    }
+
+    /// Where the job notes what to put back if Gezik stops (`None`: nowhere).
+    pub(crate) fn pending(&self) -> Option<&std::sync::Arc<PendingDeletes>> {
+        self.temp.pending.as_ref()
     }
 
     /// Copies a file, counting its bytes and stopping when the job is cancelled. The system
@@ -469,6 +484,7 @@ mod tests {
         assert_eq!(TaskKind::Copy.label(3), "Copy 3 items");
         assert_eq!(TaskKind::Trash.label(1), "Delete 1 item");
         assert_eq!(TaskKind::Rename.label(1), "Rename");
+        assert_eq!(TaskKind::Rename.label(24), "Rename 24 items");
         assert_eq!(TaskKind::NewFolder.label(1), "New folder");
     }
 

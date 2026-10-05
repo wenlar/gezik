@@ -415,6 +415,28 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Another Gezik window renames through these right now: only a dead one's go back.
+    #[test]
+    fn recovery_puts_back_only_what_a_dead_rename_left() {
+        let dir = test_dir("delete-recover-rename");
+        let rn = crate::pending::RENAMING_PREFIX;
+        let (live, dead) =
+            (dir.join(format!("{rn}{}-0", std::process::id())), dir.join(format!("{rn}{}-0", finished_pid())));
+        write(&live, "live");
+        write(&dead, "dead");
+        let pending = PendingDeletes::new(dir.join("pending-deletes"));
+        pending.add_restores(&[
+            Restore { hidden: live.clone(), original: dir.join("a.txt"), was_hidden: true },
+            Restore { hidden: dead.clone(), original: dir.join("b.txt"), was_hidden: true },
+        ]);
+        let engine = engine_with_pending(&dir);
+        assert_eq!(engine.recover_deletes(), None);
+        assert_eq!(std::fs::read_to_string(&live).unwrap(), "live", "left to the running rename");
+        assert_eq!(std::fs::read_to_string(dir.join("b.txt")).unwrap(), "dead");
+        assert_eq!(pending.restores().len(), 1, "the running rename's note stays");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn recovery_ignores_foreign_paths() {
         let dir = test_dir("delete-recover-foreign");

@@ -153,6 +153,8 @@ pub const RENAME: u32 = 59;
 pub const TRASH: u32 = 60;
 pub const DELETE_PERMANENTLY: u32 = 61;
 pub const PASTE_INTO: u32 = 62;
+/// Windows only: "Rename N items…" (Explorer's menu has no Rename for several).
+pub const BATCH_RENAME: u32 = 63;
 
 /// 70–73: the conflict row menu, in `conflicts::DECISIONS` order.
 pub const CONFLICT_FIRST: u32 = 70;
@@ -162,6 +164,16 @@ pub const COPY_HERE: u32 = 80;
 pub const MOVE_HERE: u32 = 81;
 pub const CANCEL_DROP: u32 = 82;
 
+/// 90-99: "Add rule" in the batch rename layer, in `gezik_core::batch::rules::KINDS` order.
+pub const ADD_RULE_FIRST: u32 = 90;
+/// 100-299: saved rule sets; 300 "Save current rules as…"; 400-599 delete one (ids stay
+/// below the Shell's, which start at 1000).
+pub const PRESET_FIRST: u32 = 100;
+pub const PRESET_SAVE: u32 = 300;
+pub const PRESET_DELETE_FIRST: u32 = 400;
+/// How many saved sets the menu lists (and can delete).
+pub const PRESET_MAX: u32 = 200;
+
 /// Gezik's file items for rows on macOS and Linux; Windows has them in its own menu (and
 /// Gezik takes them over, see `Menus::run_verb`).
 pub fn file_items(single: bool, folder: bool, can_paste: bool) -> Vec<(u32, &'static str)> {
@@ -170,9 +182,7 @@ pub fn file_items(single: bool, folder: bool, can_paste: bool) -> Vec<(u32, &'st
         out.push((PASTE_INTO, "Paste into folder"));
     }
     out.push((DUPLICATE, "Duplicate"));
-    if single {
-        out.push((RENAME, "Rename"));
-    }
+    out.push((RENAME, if single { "Rename" } else { "Rename items…" }));
     out.push((TRASH, "Move to Trash"));
     out.push((DELETE_PERMANENTLY, "Delete permanently"));
     out
@@ -229,6 +239,21 @@ pub fn view_items(view: ViewSettings, preview_open: bool) -> Vec<(u32, String)> 
     out
 }
 
+/// "Presets ▾": each saved set, Save, then a Delete item for each (up to `PRESET_MAX` each).
+pub fn preset_items(names: &[String]) -> Vec<(u32, String)> {
+    let mut list: Vec<(u32, String)> =
+        names.iter().enumerate().take(PRESET_MAX as usize).map(|(i, n)| (PRESET_FIRST + i as u32, n.clone())).collect();
+    list.push((PRESET_SAVE, "Save current rules as…".to_owned()));
+    list.extend(
+        names
+            .iter()
+            .enumerate()
+            .take(PRESET_MAX as usize)
+            .map(|(i, n)| (PRESET_DELETE_FIRST + i as u32, format!("Delete \"{n}\""))),
+    );
+    list
+}
+
 fn pin_toggle(pinned: bool) -> (u32, &'static str) {
     if pinned { (UNPIN, "Unpin from sidebar") } else { (PIN, "Pin to sidebar") }
 }
@@ -249,6 +274,8 @@ enum Subject {
     Conflict(usize),
     /// Files dropped with the right button, and the folder they were dropped on.
     Drop(Vec<PathBuf>, PathBuf),
+    /// The batch rename layer's menus, with the preset names shown (items are by index).
+    BatchRename(Vec<String>),
 }
 
 /// Lets one native menu be pending or open at a time, so two right-clicks in quick
@@ -351,6 +378,9 @@ impl Menus {
             let paths = self.view.selected_paths();
             let mut list = owned(items(Place::Rows, native));
             list.extend(self.file_extras(false, false, native));
+            if native && !self.view.shows_drives() {
+                list.push((BATCH_RENAME, format!("Rename {} items…", paths.len())));
+            }
             return self.open(Subject::Rows(paths.clone()), list, MenuTarget::Items(paths), x, y, at);
         }
         let Some((path, is_dir)) = self.view.entry_path(i) else { return };
@@ -542,8 +572,48 @@ impl Menus {
         *self.subject.borrow_mut() = Some(Subject::Conflict(row));
         self.open_slint(&list, x, y);
     }
+    /// "Add rule ▾" of the batch rename layer, at window position `x`, `y`.
+    pub fn add_rule(&self, x: f32, y: f32) {
+        let list: Vec<(u32, &str)> = gezik_core::batch::rules::KINDS
+            .iter()
+            .enumerate()
+            .map(|(i, (_, label))| (ADD_RULE_FIRST + i as u32, *label))
+            .collect();
+        *self.subject.borrow_mut() = Some(Subject::BatchRename(Vec::new()));
+        self.open_slint(&list, x, y);
+    }
+
+    /// "Presets ▾": the saved sets, save, delete.
+    pub fn presets(&self, x: f32, y: f32) {
+        let names = crate::batch_rename::preset_names();
+        let list = preset_items(&names);
+        *self.subject.borrow_mut() = Some(Subject::BatchRename(names));
+        self.open_slint(&list, x, y);
+    }
+
     fn run(&self, id: u32, subject: Subject) {
         match (id, subject) {
+            (id, Subject::BatchRename(_)) if (ADD_RULE_FIRST..ADD_RULE_FIRST + 10).contains(&id) => {
+                if let Some((kind, _)) = gezik_core::batch::rules::KINDS.get((id - ADD_RULE_FIRST) as usize) {
+                    crate::batch_rename::with_current(|layer| layer.add_rule(kind));
+                }
+            }
+            // By name: settings.toml may have been reloaded since the menu opened.
+            (id, Subject::BatchRename(names)) if (PRESET_FIRST..PRESET_FIRST + PRESET_MAX).contains(&id) => {
+                if let Some(name) = names.get((id - PRESET_FIRST) as usize) {
+                    crate::batch_rename::with_current(|layer| layer.apply_preset(name));
+                }
+            }
+            (PRESET_SAVE, Subject::BatchRename(_)) => {
+                crate::batch_rename::with_current(|layer| layer.ask_preset_name());
+            }
+            (id, Subject::BatchRename(names))
+                if (PRESET_DELETE_FIRST..PRESET_DELETE_FIRST + PRESET_MAX).contains(&id) =>
+            {
+                if let Some(name) = names.get((id - PRESET_DELETE_FIRST) as usize) {
+                    crate::batch_rename::with_current(|layer| layer.delete_preset(name));
+                }
+            }
             (id, Subject::Conflict(row)) if (CONFLICT_FIRST..CONFLICT_FIRST + 4).contains(&id) => {
                 if let Some(decision) = crate::conflicts::DECISIONS.get((id - CONFLICT_FIRST) as usize) {
                     self.ops.conflicts().decide_row(row, *decision);
@@ -635,7 +705,8 @@ impl Menus {
             (CUT | COPY, Subject::Rows(paths)) => self.ops.copy_paths(paths, id == CUT),
             (PASTE_INTO, Subject::Row(path)) => self.ops.paste(Some(path), false),
             (DUPLICATE, Subject::Row(_) | Subject::Rows(_)) => self.ops.duplicate(),
-            (RENAME, Subject::Row(_)) => self.ops.rename_start(),
+            (RENAME, Subject::Row(_) | Subject::Rows(_)) => self.ops.rename_start(),
+            (BATCH_RENAME, Subject::Rows(_)) => self.ops.batch_rename(),
             (TRASH | DELETE_PERMANENTLY, Subject::Row(path)) => {
                 self.ops.trash_paths(vec![path], id == DELETE_PERMANENTLY)
             }
@@ -769,11 +840,20 @@ mod tests {
             TRASH,
             DELETE_PERMANENTLY,
             PASTE_INTO,
+            BATCH_RENAME,
         ];
         let ranges = [TOGGLE_COLUMN_FIRST..RESET_COLUMNS, CONFLICT_FIRST..CONFLICT_FIRST + 4];
-        for id in [COPY_HERE, MOVE_HERE, CANCEL_DROP] {
+        for id in [COPY_HERE, MOVE_HERE, CANCEL_DROP, ADD_RULE_FIRST, ADD_RULE_FIRST + 9, PRESET_FIRST, PRESET_SAVE] {
             assert!(!others.contains(&id) && !ranges.iter().any(|r| r.contains(&id)), "{id} is taken");
         }
+        // The preset ranges meet nothing else, nor each other, and stay below the Shell's ids.
+        let presets = [PRESET_FIRST..PRESET_FIRST + PRESET_MAX, PRESET_DELETE_FIRST..PRESET_DELETE_FIRST + PRESET_MAX];
+        let singles = others.iter().chain(&[COPY_HERE, MOVE_HERE, CANCEL_DROP, PRESET_SAVE]);
+        for id in singles.copied().chain(ADD_RULE_FIRST..ADD_RULE_FIRST + 10).chain(CONFLICT_FIRST..CONFLICT_FIRST + 4)
+        {
+            assert!(!presets.iter().any(|r| r.contains(&id)), "{id} is in a preset range");
+        }
+        assert!(presets[0].end <= PRESET_DELETE_FIRST && presets[1].end < 1000);
     }
 
     fn ids(v: Vec<(u32, &str)>) -> Vec<u32> {
@@ -783,8 +863,25 @@ mod tests {
     #[test]
     fn file_items_depend_on_the_selection() {
         assert_eq!(ids(file_items(true, false, true)), [CUT, COPY, DUPLICATE, RENAME, TRASH, DELETE_PERMANENTLY]);
-        assert_eq!(ids(file_items(false, true, true)), [CUT, COPY, PASTE_INTO, DUPLICATE, TRASH, DELETE_PERMANENTLY]);
+        let several = ids(file_items(false, true, true));
+        assert_eq!(several, [CUT, COPY, PASTE_INTO, DUPLICATE, RENAME, TRASH, DELETE_PERMANENTLY]);
         assert!(!ids(file_items(true, true, false)).contains(&PASTE_INTO));
+        assert!(file_items(false, false, false).contains(&(RENAME, "Rename items…")));
+    }
+
+    #[test]
+    fn preset_menu_lists_saves_and_deletes() {
+        let names = ["Photos".to_owned(), "Music".to_owned()];
+        let list = preset_items(&names);
+        let ids: Vec<u32> = list.iter().map(|(id, _)| *id).collect();
+        assert_eq!(ids, [PRESET_FIRST, PRESET_FIRST + 1, PRESET_SAVE, PRESET_DELETE_FIRST, PRESET_DELETE_FIRST + 1]);
+        assert_eq!(list[3].1, "Delete \"Photos\"");
+        assert_eq!(preset_items(&[]), [(PRESET_SAVE, "Save current rules as…".to_owned())]);
+        let many: Vec<String> = (0..PRESET_MAX + 5).map(|i| format!("Set {i}")).collect();
+        let list = preset_items(&many);
+        assert_eq!(list.len(), 2 * PRESET_MAX as usize + 1);
+        assert_eq!(list.last().unwrap().0, PRESET_DELETE_FIRST + PRESET_MAX - 1);
+        assert!(gezik_core::batch::rules::KINDS.len() <= 10, "Add rule has ids 90-99");
     }
 
     #[test]

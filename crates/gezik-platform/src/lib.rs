@@ -8,6 +8,7 @@ pub mod fs;
 mod icons;
 mod known;
 mod linux;
+mod locale;
 mod picture;
 mod process;
 pub mod taskbar;
@@ -15,10 +16,11 @@ mod text;
 
 use std::path::PathBuf;
 
-pub use datetime::format_datetime;
+pub use datetime::{format_datetime, local_date_parts};
 pub use drives::{Drive, DriveKind, drive_signature, drives};
 pub use icons::{IconTarget, Rgba, icon, init_thread, type_name};
 pub use known::{KnownFolder, known_folders};
+pub use locale::language;
 pub use picture::{Decoded, MAX_DECODE_BYTES, MAX_DECODE_SIDE, can_decode, decode_image, thumbnail};
 pub use process::process_alive;
 pub use text::decode_ansi;

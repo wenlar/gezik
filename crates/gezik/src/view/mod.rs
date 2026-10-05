@@ -331,6 +331,12 @@ impl View {
         })
     }
 
+    /// The names of every entry shown (the folder's listing).
+    pub fn all_names(&self) -> Vec<String> {
+        let data = self.0.data.borrow();
+        (0..data.listing.len()).filter_map(|i| data.listing.name_at(i).map(str::to_owned)).collect()
+    }
+
     /// Turns entry `index`'s name into a text field (files and folders only, not drives).
     pub fn begin_rename(&self, index: usize) -> bool {
         let (name, is_dir) = {
@@ -468,6 +474,18 @@ impl View {
     pub fn selected_items(&self) -> Vec<(PathBuf, bool)> {
         let data = self.0.data.borrow();
         data.selection.iter().filter_map(|i| data.listing.path_at(i)).collect()
+    }
+
+    /// The selected files and folders (the focused one if none is selected), in list order,
+    /// with their paths: what the listing knows of them, without asking the file system.
+    pub fn selected_entries(&self) -> Vec<(PathBuf, Entry)> {
+        let data = self.0.data.borrow();
+        let Listing::Files(dir, entries) = &data.listing else { return Vec::new() };
+        let mut indices: Vec<usize> = data.selection.iter().collect();
+        if indices.is_empty() {
+            indices.extend(data.selection.focus());
+        }
+        indices.into_iter().filter_map(|i| entries.get(i)).map(|e| (dir.join(&e.name), e.clone())).collect()
     }
 
     /// Entry `index` as the list draws it (its icon, for the dragged items).

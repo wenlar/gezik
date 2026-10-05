@@ -20,4 +20,4 @@ pub use task::{
     ChangedSince, NoTrash, Outcome, PlanItem, Resources, RunCx, ScanSink, Stage, Task, TaskKind, Work, changed_since,
     facts_after, no_trash, unchanged,
 };
-pub use tasks::{CopyTask, DeleteTask, MoveTask, NewTask, RestoreTask, TrashTask};
+pub use tasks::{CopyTask, DeleteTask, MoveTask, NewTask, RenameTask, RestoreTask, TrashTask};

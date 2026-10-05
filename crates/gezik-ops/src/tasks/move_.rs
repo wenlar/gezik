@@ -9,7 +9,7 @@ use gezik_core::ops::conflict::Facts;
 use gezik_core::ops::paths::{is_within, same_path};
 use gezik_platform::fs;
 
-use super::{name, same_drive, what};
+use super::{same_drive, what};
 use crate::task::{
     Outcome, PlanItem, Resources, RunCx, ScanSink, Stage, Task, TaskKind, Work, changed_since, facts_after, unchanged,
 };
@@ -27,7 +27,6 @@ pub struct MoveTask {
     pairs: Vec<(PathBuf, PathBuf)>,
     /// How each chosen item must still look (undo); `None`: anything.
     expect: Vec<Option<Facts>>,
-    kind: TaskKind,
     /// Undo: missing parent folders are made again.
     back: bool,
     /// Tests only: plan as if the target were on another drive.
@@ -43,19 +42,13 @@ impl MoveTask {
                 (source, target)
             })
             .collect();
-        MoveTask { expect: vec![None; pairs.len()], pairs, kind: TaskKind::Move, back: false, cross: false }
-    }
-
-    /// Renames `path` to `name` in its folder.
-    pub fn rename(path: PathBuf, name: &str) -> MoveTask {
-        let target = path.with_file_name(name);
-        MoveTask { pairs: vec![(path, target)], expect: vec![None], kind: TaskKind::Rename, back: false, cross: false }
+        MoveTask { expect: vec![None; pairs.len()], pairs, back: false, cross: false }
     }
 
     /// Moves items back where they came from: (where it is, where it was, how it must look).
     pub(crate) fn back(items: Vec<(PathBuf, PathBuf, Option<Facts>)>) -> MoveTask {
         let (pairs, expect) = items.into_iter().map(|(now, was, facts)| ((now, was), facts)).unzip();
-        MoveTask { pairs, expect, kind: TaskKind::Move, back: true, cross: false }
+        MoveTask { pairs, expect, back: true, cross: false }
     }
 
     fn sources(&self) -> Vec<PathBuf> {
@@ -81,19 +74,18 @@ impl MoveTask {
 
 impl Task for MoveTask {
     fn kind(&self) -> TaskKind {
-        self.kind
+        TaskKind::Move
     }
 
     fn title(&self) -> String {
         let sources = self.sources();
-        match (self.kind, self.pairs.first()) {
-            (TaskKind::Rename, Some((from, to))) => format!("Renaming {} to {}", name(from), name(to)),
+        match self.pairs.first() {
             _ if self.back => format!("Moving {} back", what(&sources)),
-            (_, Some((_, to))) => {
+            Some((_, to)) => {
                 let dir = to.parent().map(|p| p.display().to_string()).unwrap_or_default();
                 format!("Moving {} to {dir}", what(&sources))
             }
-            (_, None) => "Moving".to_owned(),
+            None => "Moving".to_owned(),
         }
     }
 
@@ -431,36 +423,6 @@ mod tests {
         assert!(report.failures.is_empty(), "{:?}", report.failures);
         assert_eq!(read(&dir.join("dst/d/a.txt")), "old");
         assert_eq!(read(&dir.join("src/d/a.txt")), "new", "skipped: still where it was");
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn rename_changes_the_name_and_also_only_its_case() {
-        let dir = test_dir("rename");
-        write(&dir.join("a.txt"), "a");
-        let engine = engine();
-        let job = engine.submit(Box::new(MoveTask::rename(dir.join("a.txt"), "b.txt")));
-        finish(&engine, job, no_conflicts);
-        assert_eq!(read(&dir.join("b.txt")), "a");
-        let job = engine.submit(Box::new(MoveTask::rename(dir.join("b.txt"), "B.txt")));
-        let (report, _) = finish(&engine, job, no_conflicts);
-        assert!(report.failures.is_empty(), "{:?}", report.failures);
-        let names: Vec<String> =
-            std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
-        assert_eq!(names, ["B.txt"]);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn renaming_onto_a_taken_name_asks() {
-        let dir = test_dir("rename-taken");
-        write(&dir.join("a.txt"), "a");
-        write(&dir.join("b.txt"), "b");
-        let engine = engine();
-        let job = engine.submit(Box::new(MoveTask::rename(dir.join("a.txt"), "b.txt")));
-        let (_, events) = finish(&engine, job, defaults);
-        assert!(events.iter().any(|e| matches!(e, crate::Event::Conflicts { .. })));
-        assert_eq!((read(&dir.join("a.txt")), read(&dir.join("b.txt"))), ("a".into(), "b".into()));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

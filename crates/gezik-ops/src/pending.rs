@@ -22,6 +22,10 @@ pub const HIDDEN_PREFIX: &str = ".gezik-deleting-";
 /// How a file being copied is named until it is complete (a leftover is deleted).
 pub const COPYING_PREFIX: &str = ".gezik-copying-";
 
+/// How an item being renamed through a temporary name is named meanwhile (a leftover is put
+/// back under its own name).
+pub const RENAMING_PREFIX: &str = ".gezik-rn-";
+
 /// Starts a copies line: `copies<TAB>pid<TAB>folder<TAB>prefix`.
 const COPIES: &str = "copies\t";
 
@@ -84,26 +88,46 @@ impl PendingDeletes {
     /// `restore.hidden` is to be put back, never deleted: its delete note becomes a restore
     /// note.
     pub fn add_restore(&self, restore: &Restore) {
+        self.add_restores(std::slice::from_ref(restore));
+    }
+
+    /// [`Self::add_restore`] for many at once, in one write.
+    pub fn add_restores(&self, restores: &[Restore]) {
+        if restores.is_empty() {
+            return;
+        }
         let _guard = lock(&self.guard);
+        let hidden: std::collections::HashSet<&Path> = restores.iter().map(|r| r.hidden.as_path()).collect();
         let mut list = self.read();
         list.retain(|p| {
-            delete_of(p).is_none_or(|(_, noted)| noted != restore.hidden)
-                && restore_of(p).is_none_or(|r| r.hidden != restore.hidden)
+            delete_of(p).is_none_or(|(_, noted)| !hidden.contains(noted.as_path()))
+                && restore_of(p).is_none_or(|r| !hidden.contains(r.hidden.as_path()))
         });
-        list.push(PathBuf::from(format!(
-            "{RESTORE}{}\t{}\t{}",
-            restore.hidden.display(),
-            restore.original.display(),
-            u8::from(restore.was_hidden)
-        )));
+        list.extend(restores.iter().map(|restore| {
+            PathBuf::from(format!(
+                "{RESTORE}{}\t{}\t{}",
+                restore.hidden.display(),
+                restore.original.display(),
+                u8::from(restore.was_hidden)
+            ))
+        }));
         let _ = self.write(&list);
     }
 
     pub fn remove_restore(&self, hidden: &Path) {
+        self.remove_restores(&[hidden]);
+    }
+
+    /// [`Self::remove_restore`] for many at once, in one write.
+    pub fn remove_restores(&self, hidden: &[&Path]) {
+        if hidden.is_empty() {
+            return;
+        }
         let _guard = lock(&self.guard);
+        let hidden: std::collections::HashSet<&Path> = hidden.iter().copied().collect();
         let mut list = self.read();
         let before = list.len();
-        list.retain(|p| restore_of(p).is_none_or(|r| r.hidden != hidden));
+        list.retain(|p| restore_of(p).is_none_or(|r| !hidden.contains(r.hidden.as_path())));
         if list.len() != before {
             let _ = self.write(&list);
         }
@@ -236,16 +260,24 @@ fn copies_of(line: &Path) -> Option<CopyNote> {
     .then(|| CopyNote { pid, folder, prefix: prefix.to_owned() })
 }
 
-/// Whether `path` is an absolute path to a folder an instant delete hid, or to a file a copy
-/// had not finished.
+/// Whether `path` is an absolute path to a folder an instant delete hid, to a file a copy
+/// had not finished, or to an item a rename holds under a temporary name.
 pub fn is_hidden(path: &Path) -> bool {
     path.is_absolute() && path.file_name().and_then(|name| name.to_str()).is_some_and(is_internal_name)
 }
 
-/// Whether `name` is one Gezik gives what a copy or delete is still working on (lists leave
-/// those out).
+/// Whether `name` is one Gezik gives what a copy, delete or rename is still working on (lists
+/// leave those out).
 pub fn is_internal_name(name: &str) -> bool {
-    [HIDDEN_PREFIX, COPYING_PREFIX].iter().any(|prefix| name.len() > prefix.len() && name.starts_with(prefix))
+    [HIDDEN_PREFIX, COPYING_PREFIX, RENAMING_PREFIX]
+        .iter()
+        .any(|prefix| name.len() > prefix.len() && name.starts_with(prefix))
+}
+
+/// The process that holds `path` under a rename's temporary name (`.gezik-rn-{pid}-{n}`).
+pub fn renaming_pid(path: &Path) -> Option<u32> {
+    let rest = path.file_name()?.to_str()?.strip_prefix(RENAMING_PREFIX)?;
+    rest.split_once('-')?.0.parse().ok()
 }
 
 /// A fresh hidden name.

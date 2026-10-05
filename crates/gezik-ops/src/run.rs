@@ -134,7 +134,9 @@ impl ScanSink for Sink<'_> {
         if control.cancelled() {
             return false;
         }
-        control.add_total(1, if item.facts.is_dir { 0 } else { item.facts.size });
+        if item.counted {
+            control.add_total(1, if item.facts.is_dir { 0 } else { item.facts.size });
+        }
         self.follow_renames(&mut item);
         if let Some(target) = &item.target
             && let Some(&(_, index)) = self.blocked.iter().find(|(dir, _)| is_within(target, dir))
@@ -327,8 +329,10 @@ pub(crate) fn execute(shared: &Shared, job: &Job, task: &dyn Task, item: PlanIte
             format!("It is too big for this drive (files there can be at most {gb} GB)"),
         );
         job.fail(item.path(), &err);
-        control.item_done();
-        control.add_bytes(item.facts.size);
+        if item.counted {
+            control.item_done();
+            control.add_bytes(item.facts.size);
+        }
         return;
     }
     let has_trash = |path: &Path| shared.has_trash(path);
@@ -380,6 +384,9 @@ pub(crate) fn execute(shared: &Shared, job: &Job, task: &dyn Task, item: PlanIte
                 break;
             }
         }
+    }
+    if !item.counted {
+        return;
     }
     control.item_done();
     // Whatever the task did not count itself (a rename, a delete) is done now too.

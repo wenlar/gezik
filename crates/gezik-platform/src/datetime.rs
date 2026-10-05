@@ -3,6 +3,8 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use gezik_core::batch::date::DateParts;
+
 pub fn format_datetime(time: SystemTime) -> String {
     #[cfg(windows)]
     if let Some(text) = win::format(time) {
@@ -13,6 +15,29 @@ pub fn format_datetime(time: SystemTime) -> String {
         Err(e) => -i64::try_from(e.duration().as_secs()).unwrap_or(i64::MAX),
     };
     iso_minutes(secs.saturating_add(local_offset(secs)))
+}
+
+/// `time` as a local date and time.
+pub fn local_date_parts(time: SystemTime) -> Option<DateParts> {
+    #[cfg(windows)]
+    if let Some(parts) = win::parts(time) {
+        return Some(parts);
+    }
+    let secs = match time.duration_since(UNIX_EPOCH) {
+        Ok(d) => i64::try_from(d.as_secs()).ok()?,
+        Err(e) => -i64::try_from(e.duration().as_secs()).ok()?,
+    };
+    let local = secs.saturating_add(local_offset(secs));
+    let (days, rest) = (local.div_euclid(86_400), local.rem_euclid(86_400));
+    let (year, month, day) = civil_from_days(days);
+    Some(DateParts {
+        year: i32::try_from(year).ok()?,
+        month: month as u8,
+        day: day as u8,
+        hour: (rest / 3600) as u8,
+        minute: (rest % 3600 / 60) as u8,
+        second: (rest % 60) as u8,
+    })
 }
 
 /// `YYYY-MM-DD HH:MM` for seconds since 1970-01-01 (already shifted to local time).
@@ -67,6 +92,25 @@ mod win {
     /// 100 ns ticks from 1601-01-01 (FILETIME's epoch) to 1970-01-01.
     const UNIX_EPOCH_TICKS: u128 = 116_444_736_000_000_000;
 
+    pub fn parts(time: SystemTime) -> Option<gezik_core::batch::date::DateParts> {
+        let ticks = time.duration_since(UNIX_EPOCH).ok()?.as_nanos() / 100 + UNIX_EPOCH_TICKS;
+        let filetime = FILETIME { dwLowDateTime: ticks as u32, dwHighDateTime: (ticks >> 32) as u32 };
+        let (mut utc, mut local) = (SYSTEMTIME::default(), SYSTEMTIME::default());
+        // SAFETY: pointers to live locals of the right types.
+        unsafe {
+            FileTimeToSystemTime(&filetime, &mut utc).ok()?;
+            SystemTimeToTzSpecificLocalTime(None, &utc, &mut local).ok()?;
+        }
+        Some(gezik_core::batch::date::DateParts {
+            year: i32::from(local.wYear),
+            month: local.wMonth as u8,
+            day: local.wDay as u8,
+            hour: local.wHour as u8,
+            minute: local.wMinute as u8,
+            second: local.wSecond as u8,
+        })
+    }
+
     pub fn format(time: SystemTime) -> Option<String> {
         let ticks = time.duration_since(UNIX_EPOCH).ok()?.as_nanos() / 100 + UNIX_EPOCH_TICKS;
         let filetime = FILETIME { dwLowDateTime: ticks as u32, dwHighDateTime: (ticks >> 32) as u32 };
@@ -119,5 +163,23 @@ mod tests {
     fn formats_a_real_time() {
         let text = format_datetime(UNIX_EPOCH + Duration::from_secs(1_700_000_000));
         assert!(text.contains("23") && text.chars().any(|c| c.is_ascii_digit()), "{text}");
+    }
+}
+
+#[cfg(test)]
+mod parts_tests {
+    use super::*;
+
+    #[test]
+    fn local_parts_are_a_valid_date_and_match_the_list_format() {
+        let now = SystemTime::now();
+        let parts = local_date_parts(now).unwrap();
+        assert!((1..=12).contains(&parts.month) && (1..=31).contains(&parts.day) && parts.hour < 24);
+        // Off Windows the list shows `YYYY-MM-DD HH:MM` from the same conversion.
+        #[cfg(not(windows))]
+        assert_eq!(
+            format_datetime(now),
+            format!("{:04}-{:02}-{:02} {:02}:{:02}", parts.year, parts.month, parts.day, parts.hour, parts.minute)
+        );
     }
 }

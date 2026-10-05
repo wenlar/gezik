@@ -123,6 +123,11 @@ impl ConfigStore {
         self.edit_settings(|text| crate::settings_edit::with_view_defaults(text, view))
     }
 
+    /// Writes the saved rename rule sets into `settings.toml`, keeping everything else.
+    pub fn save_rename_presets(&self, presets: &[crate::settings::RenamePreset]) -> Result<(), Warning> {
+        self.edit_settings(|text| crate::settings_edit::with_rename_presets(text, presets))
+    }
+
     /// Applies `edit` to `settings.toml`. Creates the file from the template if it does not
     /// exist; refuses to touch a broken file.
     fn edit_settings(&self, edit: impl FnOnce(&str) -> Result<String, String>) -> Result<(), Warning> {

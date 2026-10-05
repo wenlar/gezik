@@ -50,6 +50,21 @@ pub struct FilesSettings {
     pub copy_threads: CopyThreads,
 }
 
+/// A saved set of rename rules (`[[rename-presets]]`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenamePreset {
+    pub name: String,
+    pub include_extension: bool,
+    pub rules: Vec<gezik_core::batch::rules::RuleEntry>,
+}
+
+/// The rename layer's last rules (state.toml `[batch-rename]`).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct BatchRenameState {
+    pub include_extension: bool,
+    pub rules: Vec<gezik_core::batch::rules::RuleEntry>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
     pub theme: ThemeChoice,
@@ -66,6 +81,8 @@ pub struct Settings {
     pub files: FilesSettings,
     /// Most frames drawn per second (`MAX_FPS_RANGE`); 0 = as many as the display shows.
     pub max_fps: u32,
+    /// Saved rename rule sets.
+    pub rename_presets: Vec<RenamePreset>,
 }
 
 /// Allowed `max-fps` values besides 0 (no limit).
@@ -85,6 +102,7 @@ impl Default for Settings {
             view: ViewDefaults::default(),
             files: FilesSettings::default(),
             max_fps: 120,
+            rename_presets: Vec::new(),
         }
     }
 }
@@ -209,6 +227,22 @@ impl Settings {
                 None => warnings.push(Warning::new(file, format!("files: expected a table, got {value}"))),
             },
         }
+        if let Some(value) = table.get("rename-presets") {
+            match value.as_array() {
+                None => warnings.push(Warning::new(
+                    file,
+                    format!("rename-presets: expected [[rename-presets]] tables, got {value}"),
+                )),
+                Some(items) => {
+                    for (i, item) in items.iter().enumerate() {
+                        match parse_preset(item) {
+                            Ok(preset) => settings.rename_presets.push(preset),
+                            Err(err) => warnings.push(Warning::new(file, format!("rename-presets[{}]: {err}", i + 1))),
+                        }
+                    }
+                }
+            }
+        }
         settings
     }
 
@@ -267,6 +301,35 @@ fn view_choice<T>(
     parsed
 }
 
+fn parse_rules(value: Option<&toml::Value>) -> Result<Vec<gezik_core::batch::rules::RuleEntry>, String> {
+    let Some(value) = value else { return Ok(Vec::new()) };
+    let items = value.as_array().ok_or_else(|| format!("rules: expected a list, got {value}"))?;
+    items
+        .iter()
+        .enumerate()
+        .map(|(i, item)| {
+            let table = item.as_table().ok_or_else(|| format!("rules[{}]: expected a table", i + 1))?;
+            crate::batch_toml::rule_from_toml(table).map_err(|err| format!("rules[{}]: {err}", i + 1))
+        })
+        .collect()
+}
+
+pub(crate) fn parse_preset(value: &toml::Value) -> Result<RenamePreset, String> {
+    let table = value.as_table().ok_or("expected a table")?;
+    let name = table.get("name").and_then(|v| v.as_str()).filter(|n| !n.trim().is_empty()).ok_or("name is missing")?;
+    let include_extension = table.get("include-extension").and_then(|v| v.as_bool()).unwrap_or(false);
+    Ok(RenamePreset { name: name.to_owned(), include_extension, rules: parse_rules(table.get("rules"))? })
+}
+
+pub fn preset_to_toml(preset: &RenamePreset) -> toml::Table {
+    let mut table = toml::Table::new();
+    table.insert("name".into(), toml::Value::String(preset.name.clone()));
+    table.insert("include-extension".into(), toml::Value::Boolean(preset.include_extension));
+    let rules = preset.rules.iter().map(|r| toml::Value::Table(crate::batch_toml::rule_to_toml(r))).collect();
+    table.insert("rules".into(), toml::Value::Array(rules));
+    table
+}
+
 fn parse_files(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> FilesSettings {
     let mut out = FilesSettings::default();
     if let Some(value) = table.get("confirm-trash") {
@@ -321,6 +384,8 @@ pub struct State {
     pub preview_width: Option<u32>,
     /// The operations panel is folded into the status bar.
     pub operations_collapsed: bool,
+    /// The rename layer's last rules.
+    pub batch_rename: Option<BatchRenameState>,
 }
 
 impl State {
@@ -371,7 +436,12 @@ impl State {
             .and_then(|o| o.get("panel-collapsed"))
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        State { window, sidebar_width, columns, preview_open, preview_width, operations_collapsed }
+        let batch_rename = table.get("batch-rename").and_then(|v| v.as_table()).map(|t| BatchRenameState {
+            include_extension: t.get("include-extension").and_then(|v| v.as_bool()).unwrap_or(false),
+            // The app wrote it: a broken rule just drops the list.
+            rules: parse_rules(t.get("rules")).unwrap_or_default(),
+        });
+        State { window, sidebar_width, columns, preview_open, preview_width, operations_collapsed, batch_rename }
     }
 
     pub fn to_toml(&self) -> String {
@@ -416,6 +486,13 @@ impl State {
             let mut operations = toml::Table::new();
             operations.insert("panel-collapsed".into(), toml::Value::Boolean(true));
             root.insert("operations".into(), toml::Value::Table(operations));
+        }
+        if let Some(batch) = &self.batch_rename {
+            let mut table = toml::Table::new();
+            table.insert("include-extension".into(), toml::Value::Boolean(batch.include_extension));
+            let rules = batch.rules.iter().map(|r| toml::Value::Table(crate::batch_toml::rule_to_toml(r))).collect();
+            table.insert("rules".into(), toml::Value::Array(rules));
+            root.insert("batch-rename".into(), toml::Value::Table(table));
         }
         root.to_string()
     }
@@ -709,5 +786,36 @@ width = 900
         let state = State { operations_collapsed: true, ..State::default() };
         assert_eq!(State::parse(&state.to_toml()), state);
         assert!(!State::default().to_toml().contains("operations"), "the default is not written");
+    }
+
+    #[test]
+    fn rename_presets_are_read_and_bad_ones_warned() {
+        let text = r#"
+[[rename-presets]]
+name = "Tatil"
+rules = [{ kind = "template", text = "{taken} {n:03}" }, { kind = "case", mode = "lower" }]
+
+[[rename-presets]]
+rules = []
+"#;
+        let mut warnings = Vec::new();
+        let settings = Settings::parse("settings.toml", text, &mut warnings);
+        assert_eq!(settings.rename_presets.len(), 1);
+        assert_eq!(settings.rename_presets[0].rules.len(), 2);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].to_string().contains("rename-presets[2]: name is missing"), "{}", warnings[0]);
+    }
+
+    #[test]
+    fn last_rename_rules_survive_state() {
+        use gezik_core::batch::rules::{Rule, RuleEntry};
+        let state = State {
+            batch_rename: Some(BatchRenameState {
+                include_extension: true,
+                rules: vec![RuleEntry::new(Rule::Template("{name}".into()))],
+            }),
+            ..State::default()
+        };
+        assert_eq!(State::parse(&state.to_toml()), state);
     }
 }

@@ -1,6 +1,7 @@
 // Hide the console window in release builds on Windows.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod batch_rename;
 mod conflicts;
 mod context_menu;
 mod dialog;
@@ -57,6 +58,7 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
     keys::set_shortcuts(loaded.settings.shortcuts.clone());
     frame_limit::set_max_fps(loaded.settings.max_fps);
     operations::with_current(|ops| ops.set_files(loaded.settings.files));
+    batch_rename::set_presets(loaded.settings.rename_presets.clone());
     loaded
 }
 
@@ -92,6 +94,14 @@ fn handle_key(
     // A question or the conflict list over the window has the keyboard.
     if window.get_dialog_open() || window.get_conflicts_open() {
         return false;
+    }
+    // The batch rename layer: Esc and Ctrl+Enter wherever its focus is, other keys to it.
+    if window.get_rb_open() {
+        let mut used = false;
+        if let Some(chord) = &chord {
+            batch_rename::with_current(|layer| used = layer.chord(chord));
+        }
+        return used;
     }
     // The name field being edited has the keyboard (Enter, Esc, Tab are its own).
     if ops.end_unfocused_rename() {
@@ -143,6 +153,7 @@ fn handle_key(
                 Action::Trash => ops.trash(false),
                 Action::DeletePermanently => ops.trash(true),
                 Action::Duplicate => ops.duplicate(),
+                Action::BatchRename => ops.batch_rename(),
                 Action::Undo => ops.undo(),
                 Action::Redo => ops.redo(),
             }
@@ -373,7 +384,10 @@ fn main() -> Result<(), slint::PlatformError> {
         engine_settings,
         initial_settings.files,
         saved_state.operations_collapsed,
+        config.clone(),
+        saved_state.batch_rename.clone().unwrap_or_default(),
     );
+    let _batch_rename = batch_rename::BatchRename::new(&window, ops.clone());
     window.on_op_pause({
         let ops = ops.clone();
         move |id| ops.pause(id)
@@ -567,6 +581,14 @@ fn main() -> Result<(), slint::PlatformError> {
     window.on_conflict_row_menu({
         let menus = menus.clone();
         move |row, x, y| menus.conflict(row, x, y)
+    });
+    window.on_rb_add_rule({
+        let menus = menus.clone();
+        move |x, y| menus.add_rule(x, y)
+    });
+    window.on_rb_presets({
+        let menus = menus.clone();
+        move |x, y| menus.presets(x, y)
     });
     // Slint passes indexes as `i32`: a negative one does nothing.
     window.on_tab_menu(move |i, x, y| {
