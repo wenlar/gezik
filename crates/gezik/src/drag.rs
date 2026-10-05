@@ -710,6 +710,9 @@ impl Drags {
     /// Events from the drop target's thread (Linux).
     fn poll(&self) {
         if let Some(attached) = &*self.0.attached.borrow() {
+            if let Some(window) = self.0.window.upgrade() {
+                attached.set_scale(window.window().scale_factor());
+            }
             attached.poll();
         }
     }

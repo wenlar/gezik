@@ -10,6 +10,8 @@ pub(crate) mod xdnd;
 pub(crate) use backend::*;
 
 #[cfg(all(unix, not(target_os = "macos")))]
+mod wayland;
+#[cfg(all(unix, not(target_os = "macos")))]
 mod x11;
 
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -17,7 +19,7 @@ mod backend {
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
 
-    use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawWindowHandle};
+    use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
 
     use crate::clipboard::{ClipboardError, ClipboardFiles};
     use crate::dnd::{Answer, DragEnd, Effect, Keys, Offer, OutsideDrag};
@@ -54,6 +56,8 @@ mod backend {
         /// The drop was taken (`done`) or refused.
         fn finish(&self, done: Option<Effect>);
         fn drag_out(&self, paths: &[PathBuf]) -> Result<Box<dyn OutsideDrag>, String>;
+        /// Gezik's scale factor, for backends that speak logical pixels (Wayland).
+        fn set_scale(&self, _scale: f64) {}
     }
 
     static BACKEND: Mutex<Option<Arc<dyn Backend>>> = Mutex::new(None);
@@ -72,6 +76,15 @@ mod backend {
         let started: Result<Arc<dyn Backend>, String> = match handle.as_raw() {
             RawWindowHandle::Xlib(h) => super::x11::X11::start(h.window as u32, wake).map(|b| Arc::new(b) as _),
             RawWindowHandle::Xcb(h) => super::x11::X11::start(h.window.get(), wake).map(|b| Arc::new(b) as _),
+            RawWindowHandle::Wayland(h) => match window.display_handle().ok().map(|d| d.as_raw()) {
+                // Safety: winit's display and surface live as long as its window, which
+                // outlives Gezik's use of them (the app quits when the window closes).
+                Some(RawDisplayHandle::Wayland(d)) => unsafe {
+                    super::wayland::Wayland::start(d.display.as_ptr(), h.surface.as_ptr(), wake)
+                        .map(|b| Arc::new(b) as _)
+                },
+                _ => Err("a Wayland window without a Wayland display".into()),
+            },
             other => Err(format!("no clipboard or drag and drop for {other:?} windows")),
         };
         match started {

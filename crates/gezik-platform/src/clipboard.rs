@@ -280,6 +280,7 @@ mod imp {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(any(windows, target_os = "macos"))]
     use super::*;
 
     #[cfg(windows)]

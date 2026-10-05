@@ -72,6 +72,18 @@ pub struct Attached {
     inner: windows::Registration,
     #[cfg(all(unix, not(target_os = "macos")))]
     inner: linux::Attachment,
+    #[cfg(target_os = "macos")]
+    inner: macos::Registration,
+}
+
+/// A drag the system runs by itself (macOS): nothing for Gezik to pass on.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+struct SystemDrag;
+
+impl OutsideDrag for SystemDrag {
+    fn moved(&mut self, _x: f64, _y: f64, _keys: Keys) {}
+    fn released(&mut self) {}
+    fn cancel(&mut self) {}
 }
 
 /// Makes `window` take files dropped from other programs. `wake` is called from another
@@ -94,8 +106,9 @@ pub fn attach(
     }
     #[cfg(target_os = "macos")]
     {
-        let _ = (window, handler, wake);
-        None
+        let _ = wake;
+        let inner = macos::register(window, handler)?;
+        Some(Attached { inner })
     }
 }
 
@@ -115,9 +128,17 @@ impl Attached {
         }
         #[cfg(target_os = "macos")]
         {
-            let _ = (paths, right, on_end);
-            Err("dragging out is not supported here".into())
+            let _ = right;
+            self.inner.drag_out(paths, on_end).map(|()| Handoff::Running(Box::new(SystemDrag)))
         }
+    }
+
+    /// Gezik's scale factor, for window systems that speak logical pixels (Wayland).
+    pub fn set_scale(&self, scale: f32) {
+        #[cfg(all(unix, not(target_os = "macos")))]
+        self.inner.set_scale(f64::from(scale));
+        #[cfg(not(all(unix, not(target_os = "macos"))))]
+        let _ = scale;
     }
 
     /// Hands waiting events to the handler (Linux; nothing elsewhere).
@@ -129,6 +150,9 @@ impl Attached {
 
 #[cfg(windows)]
 mod windows;
+
+#[cfg(target_os = "macos")]
+mod macos;
 
 #[cfg(all(unix, not(target_os = "macos")))]
 mod linux {
@@ -157,6 +181,10 @@ mod linux {
             let drag = self.backend.drag_out(paths)?;
             *self.on_end.borrow_mut() = Some(on_end);
             Ok(drag)
+        }
+
+        pub fn set_scale(&self, scale: f64) {
+            self.backend.set_scale(scale);
         }
 
         pub fn poll(&self) {

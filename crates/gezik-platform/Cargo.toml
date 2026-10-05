@@ -44,8 +44,23 @@ windows-core = "0.62"
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 # The clipboard and drag and drop on X11 (Gezik's own connection; winit uses x11rb too).
 x11rb = { version = "0.13", features = ["xfixes"] }
+# The clipboard and drag and drop on Wayland, on winit's own connection.
+wayland-client = "0.31"
+wayland-backend = { version = "0.3", features = ["client_system", "dlopen"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", features = ["NSArray", "NSError", "NSFileManager", "NSString", "NSURL"] }
-objc2-app-kit = { version = "0.3", features = ["NSPasteboard"] }
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSError", "NSFileManager", "NSGeometry", "NSString", "NSURL"] }
+objc2-app-kit = { version = "0.3", features = [
+    "NSApplication",
+    "NSDragging",
+    "NSDraggingItem",
+    "NSDraggingSession",
+    "NSEvent",
+    "NSImage",
+    "NSPasteboard",
+    "NSResponder",
+    "NSView",
+    "NSWindow",
+    "NSWorkspace",
+] }
