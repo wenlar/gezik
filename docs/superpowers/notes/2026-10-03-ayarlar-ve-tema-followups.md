@@ -76,7 +76,7 @@ Alt proje 1 tamamlandıktan sonra bilerek ertelenen maddeler. Kaynak: görev inc
 - Tarama tek iş parçacığında (`read_dir`); 100 bin öğe ön tarama süresi: ölçülmedi.
 - Geri alma, oluşturulmuş bir klasörü bütünüyle çöpe atar: işlemden sonra içinde düzenlenen dosyalar da gider (çöpten geri alınabilir). Yalnız tek tek dosyalar "changed since" denetlenir.
 - Retry, işlemin tamamını yeniden çalıştırır (bitmiş olanlar çakışma listesinde "identical" ve Skip olarak görünür); yalnız başarısız öğeleri seçerek yeniden deneme yok.
-- Farklı sürücüye taşıma otomatik testte yok (ikinci sürücü bilinmiyor); elle denendi: bekliyor (elle test aşaması).
+- Farklı sürücüye taşıma otomatik testte yok (ikinci sürücü bilinmiyor); ekranda denendi (2026-10-05, C: → D:, iç içe klasörler, küçük dosyalar ve 100 MB'lık dosya): kaynak kalktı, hedefteki dosyalar birebir aynı, geçici ad artığı yok; Ctrl+Z hepsini C:'ye geri taşıdı.
 - Junction'lar kopyalanamıyor olabilir (CopyFileExW + COPY_FILE_COPY_SYMLINK sembolik bağlantıları kopyalar); denenmedi.
 - Windows Çöp Kutusu'na büyük bir klasör atmak sistemin boyut hesaplaması yüzünden yavaş; öğe listeden hemen kalktığı için beklenmez.
 - Çakışma listesi `VecModel` ile kuruluyor (tembel model değil); 10 bin satırda açılış: ölçülmedi (elle test aşaması).
@@ -96,3 +96,4 @@ Alt proje 1 tamamlandıktan sonra bilerek ertelenen maddeler. Kaynak: görev inc
 - Bekleyen silme kayıtları artık süreç kimliği taşıyor (`deleting<TAB>pid<TAB>yol`; eski düz yol satırları da okunuyor): ikinci bir Gezik penceresinin açılışı, ilk pencerenin süren silmesini kendisi de başlatmıyor (2026-10-05, iki pencereyle denendi). Kopya kayıtları ve günlükleri gibi, sahibi çalışan (bu süreç dahil) kayda dokunulmuyor.
 - Gezik'in geçici adları (`.gezik-copying-…`, `.gezik-deleting-…`) artık listelerde gösterilmiyor (2026-10-05).
 - İzlenen klasörün kendisi silinince ya da adı değişince (boş klasör dahil) liste en yakın klasöre geçiyor; bunun için üst klasör de izleniyor, yalnız klasörün kendisine dair olaylar sayılıyor (2026-10-05). Adı değişen klasörün yeni adına gidilmiyor, silinmiş gibi davranılıyor.
+- Ekranda ayrıca denendi (2026-10-05): "Retry" (panelden ve ayrıntı penceresinden; kilitli dosya açılınca işlem tamamlandı); çakışma listesi yalnız klavyeyle (↑/↓, Home, Ctrl+A, R/S/K/N, Enter ile başlatma, Esc ile iptal). Hata bulunmadı.
