@@ -1,4 +1,5 @@
-# Compares Gezik's engine with Explorer on many small files (copy) and with rd /s on a delete.
+# Compares Gezik's engine with Explorer on many small files: copy, and a permanent delete
+# (also against rd /s).
 # Release build; run on a quiet machine. Usage: scripts\perf\ops.ps1 [-Work <folder>] [-Files 10000]
 # The work folder is deleted and recreated: it must not exist yet or must have been created by
 # this tool (it holds a .gezik-ops-bench marker file); any other folder is refused.
@@ -53,9 +54,22 @@ try {
     $watch.Stop()
     Write-Host ("copy {0} files: {1} ms" -f $Files, $watch.ElapsedMilliseconds)
 
+    # A second, identical tree for the rd baseline.
+    $second = "$target-rd"
+    robocopy $target $second /E /MT:16 /NFL /NDL /NJH /NJS /NP | Out-Null
+    if ($LASTEXITCODE -ge 8) { throw "robocopy failed (exit $LASTEXITCODE)" }
+
+    Write-Host "== Explorer permanent delete (the Shell's delete, as Shift+Del, no UI)"
+    Add-Type -AssemblyName Microsoft.VisualBasic
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($target, 'OnlyErrorDialogs', 'DeletePermanently')
+    $watch.Stop()
+    if (Test-Path $target) { throw "the Shell did not delete $target" }
+    Write-Host ("delete {0} files: {1} ms" -f $Files, $watch.ElapsedMilliseconds)
+
     Write-Host "== rd /s /q (delete baseline)"
     $watch = [Diagnostics.Stopwatch]::StartNew()
-    cmd /c rd /s /q "$target"
+    cmd /c rd /s /q "$second"
     $watch.Stop()
     Write-Host ("delete {0} files: {1} ms" -f $Files, $watch.ElapsedMilliseconds)
 }

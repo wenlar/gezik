@@ -1,5 +1,9 @@
-//! Times the engine on a generated tree of small files: copy, then an instant delete.
+//! Times the engine on a generated tree of small files: copy, then an instant delete; or
+//! (`big`) the copy of one large file.
 //! `cargo run -p gezik-ops --release --example ops_bench -- <work folder> [files]`
+//! `cargo run -p gezik-ops --release --example ops_bench -- <work folder> big <GB>`
+//! `cargo run -p gezik-ops --release --example ops_bench -- copyfile <file> <folder>` (copies
+//! only; `scripts/perf/ops_big.ps1` uses it to compare with Explorer on the same file)
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -57,13 +61,53 @@ fn run(engine: &Engine, task: Box<dyn Task>) -> Duration {
     }
 }
 
+/// Writes `gb` GB that do not compress or repeat in a way a disk could skip.
+fn make_big(path: &Path, gb: u64) {
+    use std::io::Write;
+    let mut file = std::io::BufWriter::with_capacity(1 << 20, std::fs::File::create(path).unwrap());
+    let mut state = 0x9E37_79B9_7F4A_7C15u64;
+    let mut block = vec![0u8; 64 << 20];
+    for _ in 0..gb * 16 {
+        for chunk in block.chunks_exact_mut(8) {
+            // xorshift64
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            chunk.copy_from_slice(&state.to_le_bytes());
+        }
+        file.write_all(&block).unwrap();
+    }
+    file.flush().unwrap();
+}
+
 fn main() {
     let mut args = std::env::args().skip(1);
-    let work = PathBuf::from(args.next().expect("usage: ops_bench <work folder> [files]"));
-    let files: usize = args.next().and_then(|s| s.parse().ok()).unwrap_or(10_000);
+    if std::env::args().nth(1).as_deref() == Some("copyfile") {
+        let (file, folder) = (args.nth(1).map(PathBuf::from), args.next().map(PathBuf::from));
+        let (Some(file), Some(folder)) = (file, folder) else { panic!("usage: ops_bench copyfile <file> <folder>") };
+        let engine = Engine::new(Settings::default(), || {});
+        let copy = run(&engine, Box::new(CopyTask::into(vec![file], &folder)));
+        println!("copy: {} ms", copy.as_millis());
+        return;
+    }
+    let work = PathBuf::from(args.next().expect("usage: ops_bench <work folder> [files | big <GB>]"));
+    let mode = args.next();
     clean(&work);
     std::fs::create_dir_all(&work).unwrap();
     std::fs::write(work.join(MARKER), b"").unwrap();
+    if mode.as_deref() == Some("big") {
+        let gb: u64 = args.next().and_then(|s| s.parse().ok()).unwrap_or(4);
+        let (src, dst) = (work.join("big.bin"), work.join("dst"));
+        make_big(&src, gb);
+        std::fs::create_dir_all(&dst).unwrap();
+        let engine = Engine::new(Settings::default(), || {});
+        let copy = run(&engine, Box::new(CopyTask::into(vec![src.clone()], &dst)));
+        assert_eq!(std::fs::metadata(dst.join("big.bin")).unwrap().len(), gb << 30);
+        println!("copy {gb} GB file: {} ms", copy.as_millis());
+        clean(&work);
+        return;
+    }
+    let files: usize = mode.and_then(|s| s.parse().ok()).unwrap_or(10_000);
     let (src, dst) = (work.join("src"), work.join("dst"));
     make_tree(&src, files);
     std::fs::create_dir_all(&dst).unwrap();
