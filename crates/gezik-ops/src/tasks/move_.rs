@@ -180,7 +180,12 @@ impl Task for MoveTask {
                     if let Err(restore) = fs::move_entry(&temp, source) {
                         return Err(io::Error::new(
                             err.kind(),
-                            format!("{err}; could not restore the name, it is at {}: {restore}", temp.display()),
+                            format!(
+                                "{}; could not restore the name, it is at {}: {}",
+                                fs::describe(&err),
+                                temp.display(),
+                                fs::describe(&restore)
+                            ),
                         ));
                     }
                     return Err(err);
@@ -199,7 +204,7 @@ impl Task for MoveTask {
                 if let Err(err) = fs::delete(source) {
                     return Err(io::Error::new(
                         err.kind(),
-                        format!("Copied, but could not remove the original: {err}"),
+                        format!("Copied, but could not remove the original: {}", fs::describe(&err)),
                     ));
                 }
                 Ok(Outcome::Created { path: target.clone(), facts, from: Some(source.clone()) })
