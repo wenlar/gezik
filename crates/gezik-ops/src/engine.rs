@@ -8,7 +8,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use gezik_core::ops::conflict::{ConflictKind, Decision, Facts};
-use gezik_core::ops::history::UndoStack;
+use gezik_core::ops::history::{Stamp, UndoStack};
 use gezik_core::ops::paths::DriveSet;
 use gezik_core::ops::threads::CopyThreads;
 use gezik_platform::fs::{self, DriveFacts};
@@ -20,18 +20,19 @@ use crate::tasks::DeleteTask;
 
 pub type JobId = u64;
 
-/// Where a job came from: its result goes on the undo or the redo stack.
+/// Where a job came from: its result goes on the undo or the redo stack. An undo or redo
+/// that did nothing puts its action back where it was (`Stamp`: taken when it was popped).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Origin {
     New,
-    Undo,
-    Redo,
+    Undo(Stamp),
+    Redo(Stamp),
 }
 
 /// One undoable action: its label and the tasks that undo it.
 pub(crate) struct Record {
     label: String,
-    inverse: Vec<Box<dyn Task>>,
+    inverse: Vec<Arc<dyn Task>>,
 }
 
 /// How many actions can be undone.
@@ -165,7 +166,7 @@ pub(crate) struct Acc {
 /// One submitted unit of work: its tasks run one after the other (an undo can be several).
 pub(crate) struct Job {
     pub id: JobId,
-    pub tasks: Vec<Box<dyn Task>>,
+    pub tasks: Vec<Arc<dyn Task>>,
     pub control: Control,
     /// Set on the job's thread before it waits for its turn.
     pub drives: Mutex<DriveSet>,
@@ -330,13 +331,24 @@ impl Shared {
         let acc = std::mem::take(&mut *lock(&job.acc));
         let inverse = crate::inverse::build(&acc.outcomes);
         let recorded = !inverse.is_empty();
-        if recorded {
-            let record = Record { label: job.label.clone(), inverse };
+        {
             let mut history = lock(&self.history);
-            match job.origin {
-                Origin::New => history.push_new(record),
-                Origin::Undo => history.push_undone(record),
-                Origin::Redo => history.push_redone(record),
+            if recorded {
+                let record = Record { label: job.label.clone(), inverse };
+                match job.origin {
+                    Origin::New => history.push_new(record),
+                    Origin::Undo(_) => history.push_undone(record),
+                    Origin::Redo(_) => history.push_redone(record),
+                }
+            } else {
+                // Nothing was undone or redone (everything changed since, or cancelled before
+                // it started): the action stays where it was, to be tried again.
+                let record = Record { label: job.label.clone(), inverse: job.tasks.clone() };
+                match job.origin {
+                    Origin::New => {}
+                    Origin::Undo(stamp) => history.put_back_undo(record, stamp),
+                    Origin::Redo(stamp) => history.put_back_redo(record, stamp),
+                }
             }
         }
         let kind = job.tasks.first().map_or(TaskKind::Copy, |task| task.kind());
@@ -453,19 +465,19 @@ impl Engine {
     }
 
     pub fn submit(&self, task: Box<dyn Task>) -> JobId {
-        self.start(vec![task], Origin::New, None)
+        self.start(vec![Arc::from(task)], Origin::New, None)
     }
 
     /// Starts a job of `tasks` (run in order) on its own thread. `label`: what Undo says
     /// (default: from the first task); an undo or redo keeps the action's label.
-    pub(crate) fn start(&self, tasks: Vec<Box<dyn Task>>, origin: Origin, label: Option<String>) -> JobId {
+    pub(crate) fn start(&self, tasks: Vec<Arc<dyn Task>>, origin: Origin, label: Option<String>) -> JobId {
         let id = self.0.next_id.fetch_add(1, Ordering::SeqCst) + 1;
         let Some(first) = tasks.first() else { return id };
         let label = label.unwrap_or_else(|| first.kind().label(first.count()));
         let title = match origin {
             Origin::New => first.title(),
-            Origin::Undo => format!("Undoing {label}"),
-            Origin::Redo => format!("Redoing {label}"),
+            Origin::Undo(_) => format!("Undoing {label}"),
+            Origin::Redo(_) => format!("Redoing {label}"),
         };
         let kind = first.kind();
         let background = tasks.iter().all(|task| task.kind() == TaskKind::Delete);
@@ -496,15 +508,23 @@ impl Engine {
 
     /// Undoes the last action; its progress shows like any job.
     pub fn undo(&self) -> Option<JobId> {
-        let record = lock(&self.0.history).pop_undo()?;
+        let (record, stamp) = {
+            let mut history = lock(&self.0.history);
+            let stamp = history.stamp();
+            (history.pop_undo()?, stamp)
+        };
         self.0.push([Event::History]);
-        Some(self.start(record.inverse, Origin::Undo, Some(record.label)))
+        Some(self.start(record.inverse, Origin::Undo(stamp), Some(record.label)))
     }
 
     pub fn redo(&self) -> Option<JobId> {
-        let record = lock(&self.0.history).pop_redo()?;
+        let (record, stamp) = {
+            let mut history = lock(&self.0.history);
+            let stamp = history.stamp();
+            (history.pop_redo()?, stamp)
+        };
         self.0.push([Event::History]);
-        Some(self.start(record.inverse, Origin::Redo, Some(record.label)))
+        Some(self.start(record.inverse, Origin::Redo(stamp), Some(record.label)))
     }
 
     /// "Copy 3 items" if there is something to undo.
@@ -651,6 +671,28 @@ mod tests {
         let report = run(&engine, engine.undo().unwrap());
         assert_eq!(report.skipped_changed, 1);
         assert_eq!(read(&dir.join("dst/a.txt")), "edited after the copy");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_undo_that_did_nothing_stays_undoable() {
+        let dir = test_dir("undo-nothing");
+        write(&dir.join("src/a.txt"), "a");
+        std::fs::create_dir(dir.join("dst")).unwrap();
+        let engine = engine();
+        run(&engine, engine.submit(Box::new(CopyTask::into(vec![dir.join("src/a.txt")], &dir.join("dst")))));
+        let copied = std::fs::metadata(dir.join("dst/a.txt")).unwrap().modified().unwrap();
+        std::fs::write(dir.join("dst/a.txt"), "edited after the copy").unwrap();
+        run(&engine, engine.undo().unwrap());
+        assert_eq!(engine.undo_label().as_deref(), Some("Copy 1 item"), "the copy is still undoable");
+        assert_eq!(engine.redo_label(), None, "nothing was undone");
+
+        // Once the edit is gone (content and time), the undo works.
+        std::fs::write(dir.join("dst/a.txt"), "a").unwrap();
+        std::fs::File::options().write(true).open(dir.join("dst/a.txt")).unwrap().set_modified(copied).unwrap();
+        let report = run(&engine, engine.undo().unwrap());
+        assert_eq!(report.skipped_changed, 0);
+        assert!(!dir.join("dst/a.txt").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
