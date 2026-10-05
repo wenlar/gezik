@@ -103,6 +103,11 @@ pub fn is_seven_zip_needed(err: &io::Error) -> bool {
     err.get_ref().is_some_and(|inner| inner.is::<SevenZipNeeded>())
 }
 
+/// Whether a failure's text, as the engine's report keeps it, says 7-Zip is needed.
+pub fn says_seven_zip_needed(message: &str) -> bool {
+    message == SevenZipNeeded.to_string()
+}
+
 /// The name of the folder an archive goes into (`a` for `a.tar.gz`).
 fn stem_of(archive: &Path) -> String {
     let stem = archive_stem(&file_name(archive)).to_owned();
@@ -181,5 +186,8 @@ mod tests {
         assert!(is_seven_zip_needed(&seven_zip_needed()));
         assert_eq!(seven_zip_needed().to_string(), "7-Zip needed to open this kind of archive");
         assert!(!is_seven_zip_needed(&io::Error::new(io::ErrorKind::Unsupported, "7-Zip needed")));
+        // The report keeps the text the engine made of the error.
+        assert!(says_seven_zip_needed(&gezik_platform::fs::describe(&seven_zip_needed())));
+        assert!(!says_seven_zip_needed("7-Zip needed"));
     }
 }

@@ -4,6 +4,8 @@ import { Theme } from "../theme.slint";
 export component TextField inherits Rectangle {
     in-out property <string> text;
     in property <bool> enabled: true;
+    // Shows dots instead of the text (a password).
+    in property <bool> secret;
     callback accepted(string);
     callback edited(string);
     out property <bool> has-focus: input.has-focus;
@@ -29,8 +31,9 @@ export component TextField inherits Rectangle {
         height: parent.height;
         vertical-alignment: center;
         single-line: true;
+        input-type: root.secret ? InputType.password : InputType.text;
         text <=> root.text;
-        color: Theme.foreground;
+        color: root.enabled ? Theme.foreground : Theme.foreground-muted;
         selection-background-color: Theme.selection;
         selection-foreground-color: Theme.selection-foreground;
         enabled: root.enabled;

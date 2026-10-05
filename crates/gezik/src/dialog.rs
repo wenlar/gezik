@@ -18,6 +18,8 @@ struct Question {
     escape: usize,
     /// The text field's first text; `None`: no field.
     input: Option<String>,
+    /// The field holds a password: dots, with "Show".
+    secret: bool,
     answer: Answer,
 }
 
@@ -68,6 +70,7 @@ impl Dialogs {
             buttons: buttons.iter().map(|b| (*b).to_owned()).collect(),
             escape,
             input: None,
+            secret: false,
             answer: Box::new(answer),
         });
         if self.0.open.borrow().is_none() {
@@ -85,15 +88,46 @@ impl Dialogs {
         buttons: &[&str],
         answer: impl FnOnce(Option<String>) + 'static,
     ) {
+        self.ask_input(title.into(), message.into(), initial.into(), buttons, false, Box::new(answer));
+    }
+
+    /// Like `ask_text` with an empty field that shows dots (a password).
+    pub fn ask_password(
+        &self,
+        title: impl Into<String>,
+        message: impl Into<String>,
+        buttons: &[&str],
+        answer: impl FnOnce(Option<String>) + 'static,
+    ) {
+        self.ask_input(title.into(), message.into(), String::new(), buttons, true, Box::new(answer));
+    }
+
+    fn ask_input(
+        &self,
+        title: String,
+        message: String,
+        initial: String,
+        buttons: &[&str],
+        secret: bool,
+        answer: Box<dyn FnOnce(Option<String>)>,
+    ) {
         let window = self.0.window.clone();
         self.0.queue.borrow_mut().push_back(Question {
-            title: title.into(),
-            message: message.into(),
+            title,
+            message,
             buttons: buttons.iter().map(|b| (*b).to_owned()).collect(),
             escape: buttons.len().saturating_sub(1),
-            input: Some(initial.into()),
+            input: Some(initial),
+            secret,
             answer: Box::new(move |choice| {
-                let text = window.upgrade().map(|w| w.get_dialog_input().to_string());
+                let text = window.upgrade().map(|w| {
+                    let text = w.get_dialog_input().to_string();
+                    // A password does not stay in the window.
+                    if secret {
+                        w.set_dialog_input("".into());
+                    }
+                    text
+                });
                 answer(text.filter(|_| choice == Some(0)));
             }),
         });
@@ -111,6 +145,7 @@ impl Dialogs {
                 window.set_dialog_message(question.message.into());
                 window.set_dialog_escape(i32::try_from(question.escape).unwrap_or(0));
                 window.set_dialog_has_input(question.input.is_some());
+                window.set_dialog_input_secret(question.secret);
                 window.set_dialog_input(question.input.unwrap_or_default().into());
                 let buttons: Vec<SharedString> = question.buttons.into_iter().map(Into::into).collect();
                 window.set_dialog_buttons(ModelRc::new(VecModel::from(buttons)));

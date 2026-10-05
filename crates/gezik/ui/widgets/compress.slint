@@ -1,0 +1,217 @@
+import { Theme } from "../theme.slint";
+import { TextButton } from "text-button.slint";
+import { TextField } from "text-field.slint";
+import { Check } from "check.slint";
+
+component Labeled inherits HorizontalLayout {
+    in property <string> label;
+    spacing: Theme.spacing;
+    Text {
+        text: root.label;
+        width: 88px;
+        vertical-alignment: center;
+        color: Theme.foreground-muted;
+    }
+    @children
+}
+
+// The Compress layer (archives.rs): the archive's name and folder, its format and level, a
+// password, and parts for a 7z. Esc closes and Ctrl+Enter compresses (main.rs routes them).
+export component CompressLayer inherits Rectangle {
+    in property <bool> open;
+    in property <bool> dialog-open;
+    in property <string> title;
+    in-out property <string> name-text;
+    in-out property <string> folder-text;
+    in property <[string]> formats;
+    in property <int> format;
+    // 0 Store, 1 Fast, 2 Normal, 3 Best.
+    in property <int> level;
+    in-out property <string> password;
+    // zip and 7z can have a password; only 7z encrypts names and makes parts.
+    in property <bool> can-encrypt;
+    in property <bool> is-7z;
+    in property <bool> encrypt-names;
+    // 0 none, 1-3 the fixed sizes, 4 custom (`split-mb`).
+    in property <int> split;
+    in-out property <string> split-mb;
+    in property <string> size-text;
+    in property <string> error;
+    property <bool> show-password;
+    callback set-format(int);
+    callback set-level(int);
+    callback toggle-encrypt-names();
+    callback set-split(int);
+    callback add-existing();
+    callback compress();
+    callback cancel();
+    callback edited();
+
+    changed open => {
+        if self.open {
+            root.show-password = false;
+            if !root.dialog-open {
+                name-field.focus-and-select();
+            }
+        }
+    }
+
+    public function take-focus() {
+        name-field.focus();
+    }
+
+    background: Theme.background.with-alpha(0.6);
+    // Clicks outside the box go nowhere.
+    TouchArea { }
+
+    Rectangle {
+        width: min(680px, root.width - 48px);
+        height: min(content.preferred-height, root.height - 48px);
+        x: (root.width - self.width) / 2;
+        y: max(24px, (root.height - self.height) / 3);
+        background: Theme.surface;
+        border-radius: Theme.radius * 1.5;
+        border-width: 1px;
+        border-color: Theme.border;
+        accessible-role: groupbox;
+        accessible-label: root.title;
+
+        content := VerticalLayout {
+            padding: Theme.spacing * 3;
+            spacing: Theme.spacing * 1.5;
+
+            Text {
+                text: root.title;
+                font-weight: 600;
+                overflow: elide;
+                color: Theme.foreground;
+            }
+            Labeled {
+                label: "Name";
+                name-field := TextField {
+                    text <=> root.name-text;
+                    edited => { root.edited(); }
+                    accepted => { root.compress(); }
+                }
+            }
+            Labeled {
+                label: "Folder";
+                TextField {
+                    text <=> root.folder-text;
+                    edited => { root.edited(); }
+                    accepted => { root.compress(); }
+                }
+            }
+            Labeled {
+                label: "Format";
+                HorizontalLayout {
+                    spacing: Theme.spacing;
+                    for label[i] in root.formats: TextButton {
+                        text: label;
+                        min-width: 56px;
+                        checked: i == root.format;
+                        clicked => { root.set-format(i); }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                }
+            }
+            Labeled {
+                label: "Level";
+                HorizontalLayout {
+                    spacing: Theme.spacing;
+                    for label[i] in ["Store", "Fast", "Normal", "Best"]: TextButton {
+                        text: label;
+                        min-width: 64px;
+                        checked: i == root.level;
+                        clicked => { root.set-level(i); }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                }
+            }
+            Labeled {
+                label: "Password";
+                TextField {
+                    text <=> root.password;
+                    secret: !root.show-password;
+                    enabled: root.can-encrypt;
+                    edited => { root.edited(); }
+                }
+                Check {
+                    text: "Show";
+                    checked: root.show-password;
+                    enabled: root.can-encrypt;
+                    toggled => { root.show-password = !root.show-password; }
+                }
+            }
+            if root.is-7z: Labeled {
+                label: "";
+                Check {
+                    text: "Encrypt file names";
+                    checked: root.encrypt-names;
+                    enabled: root.password != "";
+                    toggled => { root.toggle-encrypt-names(); }
+                }
+            }
+            if root.is-7z: Labeled {
+                label: "Split";
+                HorizontalLayout {
+                    spacing: Theme.spacing;
+                    for label[i] in ["None", "100 MB", "700 MB", "4 GB (FAT32)", "Custom…"]: TextButton {
+                        text: label;
+                        min-width: 56px;
+                        checked: i == root.split;
+                        clicked => { root.set-split(i); }
+                    }
+                    if root.split == 4: TextField {
+                        width: 72px;
+                        horizontal-stretch: 0;
+                        text <=> root.split-mb;
+                        edited => { root.edited(); }
+                    }
+                    if root.split == 4: Text {
+                        text: "MB";
+                        vertical-alignment: center;
+                        color: Theme.foreground-muted;
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                }
+            }
+            Text {
+                text: root.size-text;
+                overflow: elide;
+                color: Theme.foreground-muted;
+            }
+            if root.error != "": Text {
+                text: root.error;
+                wrap: word-wrap;
+                color: Theme.danger;
+            }
+            Rectangle { height: 1px; background: Theme.border; }
+            HorizontalLayout {
+                spacing: Theme.spacing;
+                Rectangle {
+                    min-width: link-text.preferred-width;
+                    accessible-role: button;
+                    accessible-label: link-text.text;
+                    accessible-action-default => { root.add-existing(); }
+                    link-text := Text {
+                        text: "Add to existing archive…";
+                        vertical-alignment: center;
+                        color: Theme.accent;
+                    }
+                    TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.add-existing(); }
+                    }
+                }
+                Rectangle { horizontal-stretch: 1; }
+                TextButton { text: "Cancel"; clicked => { root.cancel(); } }
+                TextButton {
+                    text: "Compress";
+                    primary: true;
+                    clicked => { root.compress(); }
+                }
+            }
+        }
+    }
+}

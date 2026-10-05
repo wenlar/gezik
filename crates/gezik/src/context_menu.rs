@@ -174,6 +174,15 @@ pub const PRESET_DELETE_FIRST: u32 = 400;
 /// How many saved sets the menu lists (and can delete).
 pub const PRESET_MAX: u32 = 200;
 
+/// 600-609: archives (archives.rs builds the items).
+pub const EXTRACT_HERE: u32 = 600;
+pub const EXTRACT_TO_OWN: u32 = 601;
+pub const EXTRACT_TO: u32 = 602;
+pub const COMPRESS: u32 = 603;
+pub const COMPRESS_TO: u32 = 604;
+/// After a drag with the right button onto an archive.
+pub const ADD_TO_ARCHIVE: u32 = 605;
+
 /// Gezik's file items for rows on macOS and Linux; Windows has them in its own menu (and
 /// Gezik takes them over, see `Menus::run_verb`).
 pub fn file_items(single: bool, folder: bool, can_paste: bool) -> Vec<(u32, &'static str)> {
@@ -272,8 +281,9 @@ enum Subject {
     Header,
     View,
     Conflict(usize),
-    /// Files dropped with the right button, and the folder they were dropped on.
-    Drop(Vec<PathBuf>, PathBuf),
+    /// Files dropped with the right button, the folder they were dropped on, and the
+    /// archive if they were dropped on one.
+    Drop(Vec<PathBuf>, PathBuf, Option<PathBuf>),
     /// The batch rename layer's menus, with the preset names shown (items are by index).
     BatchRename(Vec<String>),
 }
@@ -313,6 +323,8 @@ pub struct Menus {
     ops: Operations,
     /// What the open Slint menu is for.
     subject: Rc<RefCell<Option<Subject>>>,
+    /// The rows a row menu was opened for (path, is a folder), for its archive items.
+    rows: Rc<RefCell<Vec<(PathBuf, bool)>>>,
     #[cfg_attr(not(windows), allow(dead_code))]
     native_menu: MenuGate,
 }
@@ -334,6 +346,7 @@ impl Menus {
             sidebar,
             ops,
             subject: Rc::default(),
+            rows: Rc::default(),
             native_menu: MenuGate::default(),
         };
         window.on_menu_activated({
@@ -375,8 +388,10 @@ impl Menus {
         let native = cfg!(windows);
         self.ops.clipboard_check();
         if self.view.is_selected(i) && self.view.selection_count() > 1 {
-            let paths = self.view.selected_paths();
+            let rows = self.view.selected_items();
+            let paths: Vec<PathBuf> = rows.iter().map(|(path, _)| path.clone()).collect();
             let mut list = owned(items(Place::Rows, native));
+            self.add_archive_items(&mut list, rows, native);
             list.extend(self.file_extras(false, false, native));
             if native && !self.view.shows_drives() {
                 list.push((BATCH_RENAME, format!("Rename {} items…", paths.len())));
@@ -386,8 +401,26 @@ impl Menus {
         let Some((path, is_dir)) = self.view.entry_path(i) else { return };
         let place = Place::Row { is_dir, pinned: is_dir && self.sidebar.is_pinned(&path) };
         let mut list = owned(items(place, native));
+        self.add_archive_items(&mut list, vec![(path.clone(), is_dir)], native);
         list.extend(self.file_extras(true, is_dir, native));
         self.open(Subject::Row(path.clone()), list, MenuTarget::Item(path), x, y, at);
+    }
+
+    /// Extract and Compress for `rows`: first on Windows (above the Explorer menu's own
+    /// items), after the row's other items elsewhere. Not for drives.
+    fn add_archive_items(&self, list: &mut Vec<(u32, String)>, rows: Vec<(PathBuf, bool)>, native: bool) {
+        if self.view.shows_drives() {
+            return;
+        }
+        let mut format = gezik_batch::tasks::OutFormat::Zip;
+        crate::archives::with_current(|archives| format = archives.last_format());
+        let extra = crate::archives::menu_items(&rows, format);
+        *self.rows.borrow_mut() = rows;
+        if native {
+            list.splice(0..0, extra);
+        } else {
+            list.extend(extra);
+        }
     }
 
     /// File items after the row's own: Windows already has Cut, Copy, Delete... (taken over in
@@ -540,8 +573,22 @@ impl Menus {
 
     /// Copy here / Move here / Cancel for files dropped with the right button on `dir`, at
     /// window position `x`, `y`; only the effects that make sense there are offered.
-    pub fn drop_menu(&self, paths: Vec<PathBuf>, dir: PathBuf, can_copy: bool, can_move: bool, x: f32, y: f32) {
+    /// `archive`: they were dropped on one, which "Add to archive" adds them to.
+    #[allow(clippy::too_many_arguments, reason = "what was dropped where, and what it may do")]
+    pub fn drop_menu(
+        &self,
+        paths: Vec<PathBuf>,
+        dir: PathBuf,
+        archive: Option<PathBuf>,
+        can_copy: bool,
+        can_move: bool,
+        x: f32,
+        y: f32,
+    ) {
         let mut list = Vec::new();
+        if archive.is_some() {
+            list.push((ADD_TO_ARCHIVE, "Add to archive"));
+        }
         if can_copy {
             list.push((COPY_HERE, "Copy here"));
         }
@@ -552,7 +599,7 @@ impl Menus {
             return;
         }
         list.push((CANCEL_DROP, "Cancel"));
-        *self.subject.borrow_mut() = Some(Subject::Drop(paths, dir));
+        *self.subject.borrow_mut() = Some(Subject::Drop(paths, dir, archive));
         self.open_slint(&list, x, y);
     }
 
@@ -619,8 +666,22 @@ impl Menus {
                     self.ops.conflicts().decide_row(row, *decision);
                 }
             }
-            (COPY_HERE, Subject::Drop(paths, dir)) => self.ops.transfer(paths, dir, Effect::Copy),
-            (MOVE_HERE, Subject::Drop(paths, dir)) => self.ops.transfer(paths, dir, Effect::Move),
+            (COPY_HERE, Subject::Drop(paths, dir, _)) => self.ops.transfer(paths, dir, Effect::Copy),
+            (MOVE_HERE, Subject::Drop(paths, dir, _)) => self.ops.transfer(paths, dir, Effect::Move),
+            (ADD_TO_ARCHIVE, Subject::Drop(paths, _, Some(archive))) => {
+                crate::archives::with_current(|archives| archives.add_to(archive, paths, None));
+            }
+            (EXTRACT_HERE..=COMPRESS_TO, Subject::Row(_) | Subject::Rows(_)) => {
+                let rows = std::mem::take(&mut *self.rows.borrow_mut());
+                let paths: Vec<PathBuf> = rows.iter().map(|(path, _)| path.clone()).collect();
+                crate::archives::with_current(|archives| match id {
+                    EXTRACT_HERE => archives.extract_here(paths),
+                    EXTRACT_TO_OWN => archives.extract_to_own(paths),
+                    EXTRACT_TO => archives.extract_to_asked(paths),
+                    COMPRESS => archives.open_compress(rows),
+                    _ => archives.compress_to(rows),
+                });
+            }
             (OPEN_IN_NEW_TAB, Subject::Row(path) | Subject::SidebarEntry(path)) => {
                 self.nav.open_tab(Location::Path(path), false);
             }
@@ -843,17 +904,26 @@ mod tests {
             BATCH_RENAME,
         ];
         let ranges = [TOGGLE_COLUMN_FIRST..RESET_COLUMNS, CONFLICT_FIRST..CONFLICT_FIRST + 4];
+        let archives = [EXTRACT_HERE, EXTRACT_TO_OWN, EXTRACT_TO, COMPRESS, COMPRESS_TO, ADD_TO_ARCHIVE];
         for id in [COPY_HERE, MOVE_HERE, CANCEL_DROP, ADD_RULE_FIRST, ADD_RULE_FIRST + 9, PRESET_FIRST, PRESET_SAVE] {
             assert!(!others.contains(&id) && !ranges.iter().any(|r| r.contains(&id)), "{id} is taken");
         }
+        // The archive items are their own, distinct, and meet no other range.
+        for (i, id) in archives.iter().enumerate() {
+            assert!(!archives[..i].contains(id), "{id} twice");
+            assert!(!others.contains(id) && !ranges.iter().any(|r| r.contains(id)), "{id} is taken");
+            assert!(![COPY_HERE, MOVE_HERE, CANCEL_DROP, PRESET_SAVE].contains(id), "{id} is taken");
+            assert!(!(ADD_RULE_FIRST..ADD_RULE_FIRST + 10).contains(id), "{id} is a rule id");
+        }
         // The preset ranges meet nothing else, nor each other, and stay below the Shell's ids.
         let presets = [PRESET_FIRST..PRESET_FIRST + PRESET_MAX, PRESET_DELETE_FIRST..PRESET_DELETE_FIRST + PRESET_MAX];
-        let singles = others.iter().chain(&[COPY_HERE, MOVE_HERE, CANCEL_DROP, PRESET_SAVE]);
+        let singles = others.iter().chain(&[COPY_HERE, MOVE_HERE, CANCEL_DROP, PRESET_SAVE]).chain(&archives);
         for id in singles.copied().chain(ADD_RULE_FIRST..ADD_RULE_FIRST + 10).chain(CONFLICT_FIRST..CONFLICT_FIRST + 4)
         {
             assert!(!presets.iter().any(|r| r.contains(&id)), "{id} is in a preset range");
         }
         assert!(presets[0].end <= PRESET_DELETE_FIRST && presets[1].end < 1000);
+        assert!(archives.iter().all(|id| (presets[1].end..1000).contains(id)), "below the Shell's ids");
     }
 
     fn ids(v: Vec<(u32, &str)>) -> Vec<u32> {

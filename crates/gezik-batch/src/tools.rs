@@ -42,6 +42,11 @@ pub fn is_damaged(err: &io::Error) -> bool {
     err.get_ref().is_some_and(|inner| inner.is::<Damaged>())
 }
 
+/// Whether a failure's text, as the engine's report keeps it, says the download was damaged.
+pub fn says_damaged(message: &str) -> bool {
+    message == Damaged.to_string()
+}
+
 /// The first part of a tool's folder name (`7zip` in `7zip-25.01`).
 pub(crate) fn folder_name(tool: Tool) -> &'static str {
     match tool {
@@ -196,5 +201,7 @@ mod tests {
         assert!(is_damaged(&damaged()));
         assert_eq!(damaged().to_string(), "download damaged — try again");
         assert!(!is_damaged(&io::Error::other("download damaged — try again")));
+        assert!(says_damaged(&gezik_platform::fs::describe(&damaged())));
+        assert!(!says_damaged("curl: (22) The requested URL returned error: 404"));
     }
 }

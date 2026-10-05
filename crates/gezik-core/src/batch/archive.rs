@@ -45,6 +45,35 @@ const TAR_ENDINGS: [&str; 9] = [".tar.gz", ".tgz", ".tar.xz", ".txz", ".tar.bz2"
 /// Endings of names that are archives (as the base of a numbered volume, or alone).
 const ARCHIVE_EXTENSIONS: [&str; 11] = ["7z", "zip", "rar", "tar", "gz", "xz", "bz2", "zst", "cab", "iso", "tar.gz"];
 
+/// Endings of archives Gezik opens itself (lowercase, without the dot); `a.tar.gz` ends in
+/// `gz`.
+const OPENABLE: [&str; 16] =
+    ["zip", "7z", "rar", "tar", "tgz", "txz", "tbz", "tbz2", "tzst", "gz", "xz", "bz2", "zst", "cab", "iso", "cpio"];
+
+/// Whether `name` looks like an archive Gezik can extract (itself or with 7-Zip), by its
+/// ending alone: for the menus, which must not read the file. What it really is, is found
+/// when the job starts.
+pub fn looks_like_archive(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    if volume_set(&lower).is_some() {
+        return true;
+    }
+    match lower.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() => {
+            OPENABLE.contains(&ext) || ext == "deb" || OTHER_EXTENSIONS.contains(&ext)
+        }
+        _ => false,
+    }
+}
+
+/// Whether files can be added to the archive `name` (zip, 7z or tar, plain or gz, xz,
+/// bz2), by its name alone.
+pub fn can_add_to(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    let endings = [".zip", ".7z", ".tar", ".tar.gz", ".tgz", ".tar.xz", ".txz", ".tar.bz2", ".tbz2", ".tbz"];
+    endings.iter().any(|e| lower.len() > e.len() && lower.ends_with(e))
+}
+
 /// What `head` (the file's first 0x9010 bytes, or all of a shorter file) is, with `name`
 /// deciding tar against a single compressed file and naming the rare formats.
 pub fn detect(head: &[u8], name: &str) -> Option<Format> {
@@ -373,6 +402,34 @@ mod tests {
         assert_eq!(volume_set("a.7z.001").unwrap().first, "a.7z.001");
         assert_eq!(archive_stem(".zip"), "");
         assert_eq!(archive_stem(".gitignore"), ".gitignore");
+    }
+
+    #[test]
+    fn archives_by_name() {
+        for name in [
+            "a.zip",
+            "A.ZIP",
+            "a.tar.gz",
+            "a.tgz",
+            "a.7z",
+            "a.rar",
+            "a.part2.rar",
+            "a.7z.003",
+            "a.iso",
+            "a.lzh",
+            "a.deb",
+        ] {
+            assert!(looks_like_archive(name), "{name}");
+        }
+        for name in ["a.txt", "zip", ".zip", "a.docx", "a.001", "a.zip.txt", "photo.jpg"] {
+            assert!(!looks_like_archive(name), "{name}");
+        }
+        for name in ["a.zip", "a.7z", "a.tar", "a.TAR.GZ", "a.tgz", "a.tar.xz", "a.tar.bz2"] {
+            assert!(can_add_to(name), "{name}");
+        }
+        for name in ["a.rar", "a.gz", "a.7z.001", "a.iso", ".zip", "a.tar.zst"] {
+            assert!(!can_add_to(name), "{name}");
+        }
     }
 
     #[test]

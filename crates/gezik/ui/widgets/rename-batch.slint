@@ -2,6 +2,7 @@ import { ListView } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
 import { TextButton } from "text-button.slint";
 import { TextField } from "text-field.slint";
+import { Check } from "check.slint";
 
 // One rule in the list (batch_rename.rs builds them).
 export struct RuleRow {
@@ -42,48 +43,6 @@ export struct RuleOptions {
     collapse: bool,
     separators: bool,
     underscores: bool,
-}
-
-component Check inherits Rectangle {
-    in property <string> text;
-    in property <bool> checked;
-    callback toggled();
-    height: Theme.row-height;
-    min-width: label.preferred-width + 24px;
-    accessible-role: checkbox;
-    accessible-checked: root.checked;
-    accessible-label: root.text;
-    accessible-action-default => { root.toggled(); }
-    Rectangle {
-        x: 0;
-        y: (parent.height - 14px) / 2;
-        width: 14px;
-        height: 14px;
-        border-radius: 3px;
-        border-width: 1px;
-        border-color: root.checked ? Theme.accent : Theme.border;
-        background: root.checked ? Theme.accent : transparent;
-        if root.checked: Path {
-            width: 14px;
-            height: 14px;
-            viewbox-width: 14;
-            viewbox-height: 14;
-            stroke: Theme.accent-foreground;
-            stroke-width: 2px;
-            commands: "M 3 7 L 6 10 L 11 4";
-        }
-    }
-    label := Text {
-        x: 20px;
-        height: parent.height;
-        text: root.text;
-        vertical-alignment: center;
-        color: Theme.foreground;
-    }
-    TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.toggled(); }
-    }
 }
 
 component Labeled inherits HorizontalLayout {

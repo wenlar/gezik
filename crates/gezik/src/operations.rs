@@ -16,8 +16,8 @@ use gezik_core::format_size;
 use gezik_core::ops::paths::same_path;
 use gezik_core::ops::rate::{Rate, format_eta, format_rate};
 use gezik_ops::{
-    CopyTask, DeleteTask, Engine, Event, JobId, JobState, MoveTask, NewTask, PauseReason, Progress, Report, Settings,
-    Task, TrashTask,
+    Answer, CopyTask, DeleteTask, Engine, Event, JobId, JobState, MoveTask, NewTask, PauseReason, Progress, Question,
+    Report, Settings, Task, TrashTask,
 };
 use gezik_platform::clipboard::{self, ClipboardError, ClipboardFiles};
 use gezik_platform::taskbar::{Taskbar, TaskbarState};
@@ -206,6 +206,8 @@ pub enum After {
 }
 
 type Retry = Rc<dyn Fn() -> Box<dyn Task>>;
+/// Runs a failed operation again however it was started (a chain of tasks).
+type Again = Rc<dyn Fn()>;
 
 struct JobView {
     id: JobId,
@@ -216,6 +218,7 @@ struct JobView {
     rate: Rate,
     report: Option<Report>,
     retry: Option<Retry>,
+    again: Option<Again>,
     after: After,
     /// The folder rows were hidden in (trash, delete): reloaded when the job ends, whatever it did.
     hidden_in: Option<PathBuf>,
@@ -232,6 +235,7 @@ impl JobView {
             rate: Rate::new(Duration::from_secs(5)),
             report: None,
             retry: None,
+            again: None,
             after: After::Nothing,
             hidden_in: None,
         }
@@ -254,7 +258,7 @@ impl JobView {
             can_pause: !finished && matches!(state, RowState::Running),
             can_resume: !finished && paused_by_user,
             can_start_now: !finished && state == RowState::Waiting && self.progress.is_some(),
-            can_retry: failed && self.retry.is_some(),
+            can_retry: failed && (self.retry.is_some() || self.again.is_some()),
             can_details: failed,
             finished,
         }
@@ -385,6 +389,25 @@ impl Operations {
         let id = self.0.engine.submit(task);
         let mut job = JobView::new(id, title);
         job.retry = retry;
+        job.after = after;
+        self.0.jobs.borrow_mut().push(job);
+        self.show_later(id);
+        id
+    }
+
+    /// Runs `tasks` as one job, undone as one action (`label`: what Undo says); `again` runs
+    /// it again from its row.
+    pub fn submit_chain(
+        &self,
+        tasks: Vec<Box<dyn Task>>,
+        label: Option<String>,
+        again: Option<Again>,
+        after: After,
+    ) -> JobId {
+        let title = tasks.first().map(|task| task.title()).unwrap_or_default();
+        let id = self.0.engine.submit_chain(tasks, label);
+        let mut job = JobView::new(id, title);
+        job.again = again;
         job.after = after;
         self.0.jobs.borrow_mut().push(job);
         self.show_later(id);
@@ -840,8 +863,7 @@ impl Operations {
                 }),
                 Event::Conflicts { job, conflicts } => self.show_conflicts(job, conflicts),
                 Event::Paused { job, reason, path } => self.paused(job, reason, path),
-                // Nothing here asks yet: a question is turned down rather than left waiting.
-                Event::Question { job, .. } => self.0.engine.answer(job, gezik_ops::Answer::Cancel),
+                Event::Question { job, question } => self.question(job, question),
                 Event::Finished { job, report } => self.finished(job, report),
                 Event::Changed { dirs } => {
                     self.0.nav.refresh_showing(&dirs, &[], None);
@@ -863,6 +885,28 @@ impl Operations {
             self.0.collapsed.set(false);
         }
         self.0.conflicts.open(job, &title, conflicts);
+    }
+
+    /// A job asks something (an archive's password, whether to go on); its answer goes back
+    /// to it. Several questions wait their turn.
+    fn question(&self, job: JobId, question: Question) {
+        self.with_job(job, |j| j.shown = true);
+        let engine = self.0.engine.clone();
+        match question {
+            Question::Password { archive, retry } => {
+                let (title, message) = crate::archives::password_text(&archive, retry);
+                self.0.dialogs.ask_password(title, message, &["OK", "Skip"], move |text| {
+                    engine.answer(job, text.map_or(Answer::Cancel, Answer::Text));
+                });
+            }
+            Question::Confirm { title, message, buttons } => {
+                let labels: Vec<&str> = buttons.iter().map(String::as_str).collect();
+                let escape = labels.len().saturating_sub(1);
+                self.0.dialogs.ask_escape(title, message, &labels, escape, move |choice| {
+                    engine.answer(job, choice.map_or(Answer::Cancel, Answer::Button));
+                });
+            }
+        }
     }
 
     fn paused(&self, job: JobId, reason: PauseReason, path: Option<PathBuf>) {
@@ -943,6 +987,8 @@ impl Operations {
             let ops = self.clone();
             slint::Timer::single_shot(DONE_FOR, move || ops.remove(id));
         }
+        // An archive that needs 7-Zip, a download that is done.
+        crate::archives::with_current(|archives| archives.job_finished(id, &report));
     }
 
     /// Items the trash cannot take (no trash on their drive, or a name it cannot take): delete
@@ -966,6 +1012,11 @@ impl Operations {
                 }
             },
         );
+    }
+
+    /// Takes a finished job's row away (its operation runs again in another).
+    pub fn forget(&self, id: JobId) {
+        self.remove(id);
     }
 
     fn remove(&self, id: JobId) {
@@ -1041,10 +1092,16 @@ impl Operations {
     /// skipped).
     pub fn retry(&self, id: i32) {
         let id = Self::id(id);
-        let retry = self.0.jobs.borrow().iter().find(|j| j.id == id).and_then(|j| j.retry.clone());
+        let (retry, again) = match self.0.jobs.borrow().iter().find(|j| j.id == id) {
+            Some(job) => (job.retry.clone(), job.again.clone()),
+            None => return,
+        };
         if let Some(retry) = retry {
             self.remove(id);
             self.submit(retry(), Some(retry.clone()), After::Select);
+        } else if let Some(again) = again {
+            self.remove(id);
+            again();
         }
     }
 
@@ -1066,7 +1123,7 @@ impl Operations {
             if failures.len() > MAX_DETAILS {
                 lines.push(format!("…and {} more", failures.len() - MAX_DETAILS));
             }
-            (job.title.clone(), lines.join("\n"), job.retry.is_some())
+            (job.title.clone(), lines.join("\n"), job.retry.is_some() || job.again.is_some())
         };
         let ops = self.clone();
         let buttons: &[&str] = if can_retry { &["Retry", "Close"] } else { &["Close"] };

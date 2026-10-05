@@ -13,7 +13,8 @@ gezik-core = { path = "crates/gezik-core" }
 gezik-config = { path = "crates/gezik-config" }
 gezik-platform = { path = "crates/gezik-platform" }
 gezik-ops = { path = "crates/gezik-ops" }
-gezik-batch = { path = "crates/gezik-batch" }
+# Without RAR unless asked for (gezik forwards its own `rar` feature).
+gezik-batch = { path = "crates/gezik-batch", default-features = false }
 
 [profile.release]
 opt-level = 3
