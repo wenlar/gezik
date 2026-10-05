@@ -1,6 +1,7 @@
 //! What the system does best for file operations: copying with progress, deleting, moving
 //! without replacing, and what kind of drive a path is on.
 
+mod describe;
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 mod freedesktop;
 #[cfg(unix)]
@@ -11,6 +12,7 @@ mod windows;
 use std::io;
 use std::path::{Path, PathBuf};
 
+pub use describe::describe;
 pub use gezik_core::ops::threads::DiskKind;
 #[cfg(unix)]
 pub use unix::{

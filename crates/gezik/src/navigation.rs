@@ -481,7 +481,7 @@ impl Navigator {
         if is_dir {
             self.go(Location::Path(path));
         } else if let Err(err) = open::that_detached(&path) {
-            self.status(format!("Cannot open {}: {err}", path.display()));
+            self.status(format!("Cannot open {}: {}", path.display(), gezik_platform::fs::describe(&err)));
         }
     }
 
@@ -502,7 +502,7 @@ impl Navigator {
         };
         for path in files {
             if let Err(err) = open::that_detached(path) {
-                self.status(format!("Cannot open {}: {err}", path.display()));
+                self.status(format!("Cannot open {}: {}", path.display(), gezik_platform::fs::describe(&err)));
             }
         }
         if let Some((folder, _)) = items.into_iter().find(|(_, is_dir)| *is_dir) {
@@ -608,7 +608,8 @@ impl Navigator {
                 return;
             }
             LoadResult::Failed(err) => {
-                return self.show_failed(&mode, &location, format!("Cannot open {shown}: {err}"));
+                let why = gezik_platform::fs::describe(&err);
+                return self.show_failed(&mode, &location, format!("Cannot open {shown}: {why}"));
             }
         };
         let (view, state) = {

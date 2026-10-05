@@ -41,15 +41,62 @@ use super::{BIG_FILE, DiskKind, DriveFacts, cancelled};
 const DRIVE_FIXED: u32 = 3;
 const DRIVE_REMOTE: u32 = 4;
 
-/// A Win32 error as an `io::Error` with its code (so `kind()` works).
+/// A Win32 error as an `io::Error` with its code (so `kind()` works). The Shell's own copy
+/// engine errors (the Recycle Bin) become the Win32 code they stand for, so they read as
+/// plainly; Windows has no text for them.
 pub(crate) fn io_error(err: windows::core::Error) -> io::Error {
     let hr = err.code().0 as u32;
     // HRESULT_FROM_WIN32: 0x8007xxxx carries the Win32 error code.
     if hr & 0xFFFF_0000 == 0x8007_0000 {
         io::Error::from_raw_os_error((hr & 0xFFFF) as i32)
+    } else if let Some(code) = copy_engine_code(err.code()) {
+        io::Error::from_raw_os_error(code)
     } else {
         io::Error::other(err)
     }
+}
+
+/// The Win32 error a `COPYENGINE_E_*` result stands for.
+fn copy_engine_code(hr: HRESULT) -> Option<i32> {
+    use windows::Win32::UI::Shell::*;
+    let is = |codes: &[HRESULT]| codes.contains(&hr);
+    Some(if is(&[COPYENGINE_E_SHARING_VIOLATION_SRC, COPYENGINE_E_SHARING_VIOLATION_DEST]) {
+        32 // ERROR_SHARING_VIOLATION
+    } else if is(&[
+        COPYENGINE_E_ACCESS_DENIED_SRC,
+        COPYENGINE_E_ACCESS_DENIED_DEST,
+        COPYENGINE_E_ACCESSDENIED_READONLY,
+        COPYENGINE_E_REQUIRES_ELEVATION,
+    ]) {
+        5 // ERROR_ACCESS_DENIED
+    } else if is(&[COPYENGINE_E_PATH_NOT_FOUND_SRC]) {
+        2 // ERROR_FILE_NOT_FOUND
+    } else if is(&[COPYENGINE_E_PATH_NOT_FOUND_DEST]) {
+        3 // ERROR_PATH_NOT_FOUND
+    } else if is(&[COPYENGINE_E_NET_DISCONNECT_SRC, COPYENGINE_E_NET_DISCONNECT_DEST]) {
+        64 // ERROR_NETNAME_DELETED
+    } else if is(&[COPYENGINE_E_DISK_FULL, COPYENGINE_E_DISK_FULL_CLEAN, COPYENGINE_E_REMOVABLE_FULL]) {
+        112 // ERROR_DISK_FULL
+    } else if is(&[
+        COPYENGINE_E_ALREADY_EXISTS_NORMAL,
+        COPYENGINE_E_ALREADY_EXISTS_READONLY,
+        COPYENGINE_E_ALREADY_EXISTS_SYSTEM,
+        COPYENGINE_E_ALREADY_EXISTS_FOLDER,
+    ]) {
+        183 // ERROR_ALREADY_EXISTS
+    } else if is(&[COPYENGINE_E_DIR_NOT_EMPTY]) {
+        145 // ERROR_DIR_NOT_EMPTY
+    } else if is(&[
+        COPYENGINE_E_PATH_TOO_DEEP_SRC,
+        COPYENGINE_E_PATH_TOO_DEEP_DEST,
+        COPYENGINE_E_NEWFILE_NAME_TOO_LONG,
+        COPYENGINE_E_NEWFOLDER_NAME_TOO_LONG,
+        COPYENGINE_E_RECYCLE_PATH_TOO_LONG,
+    ]) {
+        206 // ERROR_FILENAME_EXCED_RANGE
+    } else {
+        return None;
+    })
 }
 
 /// `wide` with the `\\?\` prefix (`\\?\UNC\` for shares), so Win32 calls take paths longer
@@ -525,6 +572,17 @@ mod tests {
 
     fn wide(text: &str) -> Vec<u16> {
         text.encode_utf16().collect()
+    }
+
+    #[test]
+    fn the_shell_s_copy_engine_errors_read_plainly() {
+        use windows::Win32::UI::Shell::COPYENGINE_E_SHARING_VIOLATION_SRC;
+        let err = io_error(windows::core::Error::from(COPYENGINE_E_SHARING_VIOLATION_SRC));
+        assert_eq!(err.raw_os_error(), Some(32));
+        assert_eq!(super::super::describe(&err), "It is open in another program");
+        // One it does not know still reads as a sentence, not a bare number.
+        let unknown = io_error(windows::core::Error::from(HRESULT(0x8027_00FFu32 as i32)));
+        assert!(super::super::describe(&unknown).starts_with("Windows could not do it"), "{unknown}");
     }
 
     #[test]

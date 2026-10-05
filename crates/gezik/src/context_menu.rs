@@ -560,7 +560,8 @@ impl Menus {
                 if let Err(err) = open::that_detached(&path)
                     && let Some(window) = self.window.upgrade()
                 {
-                    window.set_status(format!("Cannot open {}: {err}", path.display()).into());
+                    let why = gezik_platform::fs::describe(&err);
+                    window.set_status(format!("Cannot open {}: {why}", path.display()).into());
                 }
             }
             (OPEN, Subject::Rows(paths)) => {
@@ -577,7 +578,8 @@ impl Menus {
                     if let Err(err) = open::that_detached(&path)
                         && let Some(window) = self.window.upgrade()
                     {
-                        window.set_status(format!("Cannot open {}: {err}", path.display()).into());
+                        let why = gezik_platform::fs::describe(&err);
+                        window.set_status(format!("Cannot open {}: {why}", path.display()).into());
                     }
                 }
             }

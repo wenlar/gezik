@@ -195,7 +195,7 @@ impl Job {
     }
 
     pub fn fail(&self, path: &Path, error: &io::Error) {
-        lock(&self.acc).failures.push(Failure { path: path.to_path_buf(), message: error.to_string() });
+        lock(&self.acc).failures.push(Failure { path: path.to_path_buf(), message: fs::describe(error) });
     }
 
     pub fn skipped_changed(&self) {
