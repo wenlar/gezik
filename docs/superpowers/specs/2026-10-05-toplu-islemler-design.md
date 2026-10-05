@@ -1,7 +1,7 @@
 # Alt Proje 5: Toplu İşlemler — Tasarım
 
 - **Tarih:** 2026-10-05
-- **Durum:** Tasarım onaylandı (2026-10-05); 5a uygulandı
+- **Durum:** Tasarım onaylandı (2026-10-05); 5a, 5b uygulandı
 - **Kapsam:** Gezik yol haritasının 5. alt projesi; tek spec, dört plan ve dört PR: **5a** toplu yeniden adlandırma, **5b** arşivler, **5c** dönüştürme ve kullanıcı komutları, **5d** PDF
 - **Dayandığı:** `2026-10-04-dosya-islemleri-design.md` (motor, `Task`, çakışma listesi, geri alma, ilerleme paneli, `pending` toparlaması, sürükle-bırak), `2026-10-03-ayarlar-ve-tema-design.md` (ayar dosyası, canlı yeniden yükleme, kısayol biçimi)
 
