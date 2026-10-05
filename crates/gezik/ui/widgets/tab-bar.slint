@@ -16,7 +16,12 @@ export component TabBar inherits Rectangle {
     callback tab-menu(int, length, length);
 
     // Equal-width tabs that shrink as more are opened, down to a minimum; then the strip scrolls.
-    property <length> tab-width: clamp((self.width - plus.width) / max(1, root.tabs.length), 90px, 220px);
+    out property <length> tab-width: clamp((self.width - plus.width) / max(1, root.tabs.length), 90px, 220px);
+    // For drag.rs: the strip's scroll offset (content-x) and width.
+    out property <length> scroll: strip.content-x;
+    out property <length> strip-width: strip.width;
+    // While files are dragged: the tab they would drop on (-1: none).
+    in property <int> drop-tab: -1;
     // While a tab is dragged: where it came from and where it would be dropped.
     property <int> drag-from: -1;
     property <int> drag-to: -1;
@@ -99,7 +104,9 @@ export component TabBar inherits Rectangle {
                 width: parent.width - 4px;
                 height: parent.height - 4px;
                 border-radius: Theme.radius;
-                background: item.active ? Theme.background : hovered ? Theme.hover : transparent;
+                background: i == root.drop-tab ? Theme.drop-target : item.active ? Theme.background : hovered ? Theme.hover : transparent;
+                border-width: i == root.drop-tab ? 1px : 0px;
+                border-color: Theme.accent;
 
                 touch := TouchArea {
                     clicked => {

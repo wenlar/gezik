@@ -505,12 +505,14 @@ fn main() -> Result<(), slint::PlatformError> {
             }
         }
     });
-    window.on_item_released({
+    // Until drag.rs takes the releases: a release is a click.
+    window.on_item_up({
         let view = view.clone();
-        move |i| {
-            if let Ok(index) = usize::try_from(i) {
+        move |i, _, _, right| {
+            if let (Ok(index), false) = (usize::try_from(i), right) {
                 view.release(index, false);
             }
+            false
         }
     });
     window.on_marquee({
