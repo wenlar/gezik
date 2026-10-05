@@ -114,8 +114,22 @@ x11() {
     key F2; sleep 0.5; shot gui-x11-focus-back; typ beta; key Return; sleep 1
     check "x11: after the window loses the focus during F2, the keyboard still reaches the list" \
         '[ -f /tmp/t/beta.txt ]'
+    [ -f /tmp/t/beta.txt ] && mv /tmp/t/beta.txt /tmp/t/a.txt; sleep 1
+    # The same with the new folder's name field, then F2 on the new folder.
+    click 255 196; key ctrl+shift+n; sleep 1
+    xdotool windowfocus --sync "$(xdotool search --name "Event Tester" | head -1)"; sleep 0.5
+    key F2; sleep 0.5; typ Neu2; key Return; sleep 1
+    check "x11: after the window loses the focus while naming a new folder, F2 renames it" '[ -d /tmp/t/Neu2 ]'
+    rm -rf /tmp/t/Neu2 "/tmp/t/New folder"; sleep 1
+    # And with the batch layer open: Esc still closes it, then F2 renames in place.
+    # Docs, Neu, Proj, a.txt (196), c.txt (222).
+    click 255 196; xdotool keydown shift; click 255 222; xdotool keyup shift
+    key F2; sleep 1
+    xdotool windowfocus --sync "$(xdotool search --name "Event Tester" | head -1)"; sleep 0.5
+    key Escape End F2; sleep 0.5; typ gamma; key Return; sleep 1
+    check "x11: after the window loses the focus with the batch layer open, Esc then F2 work" '[ -f /tmp/t/gamma.txt ]'
     kill $other 2>/dev/null
-    [ -f /tmp/t/beta.txt ] && mv /tmp/t/beta.txt /tmp/t/a.txt
+    [ -f /tmp/t/gamma.txt ] && mv /tmp/t/gamma.txt /tmp/t/c.txt
 
     # B. Batch rename in Proj: a.txt, b.txt, photo1-3.txt.
     dclick 255 170; sleep 0.5
@@ -280,6 +294,11 @@ walk(json.load(sys.stdin))'; }
     check "wayland: F2 renames in place" '[ -f /tmp/t/alpha.txt ] && [ ! -f /tmp/t/a.txt ]'
     ctrl z; sleep 1
     check "wayland: Ctrl+Z undoes it" '[ -f /tmp/t/a.txt ] && [ ! -f /tmp/t/alpha.txt ]'
+    # F2 alone: the end of its wtype takes the keyboard away, which ends the editor; the next
+    # wtype's keys must still reach the list.
+    vclick 260 "$(wrow /tmp/t a.txt)"; wk -k F2; wk -k F2 -s 800 beta -k Return; sleep 1
+    check "wayland: after the keyboard leaves during F2, the keyboard still reaches the list" '[ -f /tmp/t/beta.txt ]'
+    [ -f /tmp/t/beta.txt ] && mv /tmp/t/beta.txt /tmp/t/a.txt; sleep 1
     # Batch rename: the three photos in Proj, Find/Replace typed into fields clicked first.
     vclick 260 "$(wrow /tmp/t Proj)"; wk -k Return; sleep 0.5
     vclick 260 "$(wrow /tmp/t/Proj photo1.txt)"; vclick 260 "$(wrow /tmp/t/Proj photo3.txt)"
@@ -287,13 +306,13 @@ walk(json.load(sys.stdin))'; }
     vclick 256 524; wk photo; vclick 256 560; wk img; wshot gui-wl-batch-typed
     vclick 1202 667; sleep 1.5
     check "wayland: batch Find/Replace renames on disk" '[ -f /tmp/t/Proj/img1.txt ] && [ -f /tmp/t/Proj/img3.txt ]'
+    # The keyboard is back in the list once the layer closes (the next wtype is the window
+    # getting the keyboard again): Home, F2 and a name rename the first entry, a.txt.
+    wk -k Home -k F2 -s 800 q -k Return; sleep 1; wshot gui-wl-f2-after-batch
+    check "wayland: F2 right after a batch (keyboard back in the list)" '[ -f /tmp/t/Proj/q.txt ]'
+    [ -f /tmp/t/Proj/q.txt ] && { ctrl z; sleep 1; }
     ctrl z; sleep 1.5
     check "wayland: Ctrl+Z undoes the batch" '[ -f /tmp/t/Proj/photo2.txt ] && [ ! -e /tmp/t/Proj/img2.txt ]'
-    # A click first: after the layer closes, the window's keyboard coming back (a new wtype)
-    # does not reach the list (as after F2 in x11's focus check).
-    wk -k F2; sleep 1; wshot gui-wl-f2-after-batch
-    check "wayland: F2 right after a batch (keyboard back in the list)" '[ "$(px gui-wl-f2-after-batch 16 45)" != "$(px gui-wl-start 16 45)" ]'
-    [ "$(px gui-wl-f2-after-batch 16 45)" != "$(px gui-wl-start 16 45)" ] && wk -k Escape
     vclick 260 "$(wrow /tmp/t/Proj photo3.txt)"
     wk -P Shift_L -k Up -k Up -p Shift_L -k F2; sleep 1; wshot gui-wl-batch-open; wk -k Escape; sleep 0.5; wshot gui-wl-batch-closed
     check "wayland: Esc closes the layer" '[ "$(px gui-wl-batch-closed 16 45)" != "$(px gui-wl-batch-open 16 45)" ]'
