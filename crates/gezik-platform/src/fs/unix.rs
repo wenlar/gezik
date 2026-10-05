@@ -203,7 +203,8 @@ pub fn drive_root(path: &Path) -> Option<PathBuf> {
 pub fn drive_facts(path: &Path) -> io::Result<DriveFacts> {
     let existing = nearest_existing(path).ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
     let dev = std::fs::metadata(&existing)?.dev();
-    Ok(DriveFacts { id: format!("{dev:x}"), kind: disk_kind(dev), trash: true })
+    // FAT on Unix is not told apart yet: a too big file there pauses as "disk full".
+    Ok(DriveFacts { id: format!("{dev:x}"), kind: disk_kind(dev), trash: true, max_file: None })
 }
 
 /// glibc's encoding of a device number's major part.

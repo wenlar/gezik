@@ -73,6 +73,7 @@ fn by_code(code: i32) -> Option<&'static str> {
         123 => "The name is not valid",
         145 => "The folder is not empty",
         206 => "The name or path is too long",
+        223 => "It is too big for this drive",
         225 => "Windows Security blocked it (it found a threat)",
         1392 => "The file is damaged and cannot be read",
         _ => return None,

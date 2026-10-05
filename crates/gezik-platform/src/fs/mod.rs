@@ -31,6 +31,15 @@ pub struct DriveFacts {
     pub kind: DiskKind,
     /// Whether deleting can go to the trash (Recycle Bin).
     pub trash: bool,
+    /// The biggest file its file system holds, if that is a limit a copy can hit (FAT32:
+    /// 4 GB less a byte; it says "disk full" for a bigger one).
+    pub max_file: Option<u64>,
+}
+
+/// The biggest file a file system named `name` (as Windows names it) holds, if it is small
+/// enough to matter.
+pub fn max_file_for(name: &str) -> Option<u64> {
+    matches!(name.to_ascii_uppercase().as_str(), "FAT" | "FAT12" | "FAT16" | "FAT32").then_some(u64::from(u32::MAX))
 }
 
 /// Whether the trash can take `path` by its name. The Windows Shell parses a path like
@@ -79,6 +88,15 @@ pub(crate) fn test_dir(name: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fat_holds_files_up_to_4_gb_and_the_others_have_no_limit_that_matters() {
+        assert_eq!(max_file_for("FAT32"), Some(4 * 1024 * 1024 * 1024 - 1));
+        assert_eq!(max_file_for("FAT"), Some(4 * 1024 * 1024 * 1024 - 1));
+        assert_eq!(max_file_for("NTFS"), None);
+        assert_eq!(max_file_for("exFAT"), None);
+        assert_eq!(max_file_for("ReFS"), None);
+    }
 
     #[test]
     fn copy_copies_and_reports_progress() {

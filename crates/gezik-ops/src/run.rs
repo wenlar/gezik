@@ -314,6 +314,23 @@ pub(crate) fn execute(shared: &Shared, job: &Job, task: &dyn Task, item: PlanIte
             }
         }
     }
+    // A file the target drive cannot hold (FAT32 and 4 GB) would end as "disk full", which
+    // freeing space does not help: it fails at once with the real reason.
+    if !item.facts.is_dir
+        && let Some(target) = &item.target
+        && let Some(max) = shared.drive(target).and_then(|facts| facts.max_file)
+        && item.facts.size > max
+    {
+        let gb = (max + 1) >> 30;
+        let err = io::Error::new(
+            io::ErrorKind::FileTooLarge,
+            format!("It is too big for this drive (files there can be at most {gb} GB)"),
+        );
+        job.fail(item.path(), &err);
+        control.item_done();
+        control.add_bytes(item.facts.size);
+        return;
+    }
     let has_trash = |path: &Path| shared.has_trash(path);
     let cx = RunCx { control, trash: &has_trash, added: std::cell::Cell::new(0), temp: &job.temp };
     // A cancelled or failed item may have made or removed something (a partial copy): its
