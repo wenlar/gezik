@@ -129,6 +129,8 @@ export component RenameBatch inherits Rectangle {
     // A row dragged by its handle: where from and where it would land (-1: no drag).
     property <int> drag-from: -1;
     property <int> drag-to: -1;
+    // The ▾ after a button that opens a menu, drawn: the UI font may lack the glyph.
+    property <string> menu-arrow: "M 1 2.5 L 4 5.5 L 7 2.5";
 
     callback add-rule(length, length);
     callback select-rule(int);
@@ -214,7 +216,8 @@ export component RenameBatch inherits Rectangle {
                     color: Theme.foreground;
                 }
                 TextButton {
-                    text: "Presets ▾";
+                    text: "Presets";
+                    icon: root.menu-arrow;
                     clicked => { root.presets(self.absolute-position.x, self.absolute-position.y + self.height); }
                 }
             }
@@ -268,12 +271,13 @@ export component RenameBatch inherits Rectangle {
                     HorizontalLayout {
                         spacing: Theme.spacing;
                         TextButton {
-                            text: "+ Add rule ▾";
+                            text: "+ Add rule";
+                            icon: root.menu-arrow;
                             clicked => { root.add-rule(self.absolute-position.x, self.absolute-position.y + self.height); }
                         }
                         TextButton { text: "↑"; min-width: 32px; clicked => { root.move-rule(-1); } }
                         TextButton { text: "↓"; min-width: 32px; clicked => { root.move-rule(1); } }
-                        TextButton { text: "✕"; min-width: 32px; clicked => { root.remove-rule(); } }
+                        TextButton { label: "Remove rule"; icon: "M 1 1 L 7 7 M 7 1 L 1 7"; min-width: 32px; clicked => { root.remove-rule(); } }
                     }
                     if root.selected-rule >= 0 && root.rules[root.selected-rule].error != "": Text {
                         text: root.rules[root.selected-rule].error;
@@ -336,10 +340,11 @@ export component RenameBatch inherits Rectangle {
                     if root.options.kind == "template": VerticalLayout {
                         spacing: Theme.spacing;
                         Labeled { label: "Name"; TextField { text <=> root.opt-text; edited(t) => { root.option-text("text", t); } } }
+                        // Line breaks between fields only: a field split in two reads wrong.
                         Text {
-                            text: "{name} {ext} {n:03} {parent} {date:%Y-%m-%d} {taken:%Y-%m-%d} {size}";
+                            text: "{name} {ext} {n:03} {parent} {size}\n{date:%Y-%m-%d} {taken:%Y-%m-%d}";
                             color: Theme.foreground-muted;
-                            wrap: word-wrap;
+                            overflow: elide;
                         }
                     }
                     if root.options.kind == "clean": VerticalLayout {
@@ -373,10 +378,11 @@ export component RenameBatch inherits Rectangle {
                     }
                     HorizontalLayout {
                         height: Theme.row-height;
-                        padding-left: Theme.spacing + 20px;
+                        // Lines up with the rows: their padding, handle and spacing.
+                        padding-left: Theme.spacing * 3 + 14px;
                         spacing: Theme.spacing * 2;
-                        Text { text: "Old name"; horizontal-stretch: 1; color: Theme.foreground-muted; vertical-alignment: center; }
-                        Text { text: "New name"; horizontal-stretch: 1; color: Theme.foreground-muted; vertical-alignment: center; }
+                        Text { text: "Old name"; horizontal-stretch: 1; preferred-width: 0px; color: Theme.foreground-muted; vertical-alignment: center; }
+                        Text { text: "New name"; horizontal-stretch: 1; preferred-width: 0px; color: Theme.foreground-muted; vertical-alignment: center; }
                     }
                     preview := ListView {
                         vertical-stretch: 1;
@@ -406,8 +412,19 @@ export component RenameBatch inherits Rectangle {
                                 // The drag handle and the row's mark.
                                 handle := Rectangle {
                                     width: 14px;
-                                    Text {
-                                        text: row.manual ? "✎" : row.status >= 2 ? "⚠" : "≡";
+                                    // A pencil for a name typed by hand, drawn: the UI font may lack ✎.
+                                    if row.manual: Path {
+                                        y: (parent.height - 12px) / 2;
+                                        width: 12px;
+                                        height: 12px;
+                                        viewbox-width: 12;
+                                        viewbox-height: 12;
+                                        stroke: row.status >= 2 ? Theme.danger : Theme.foreground-muted;
+                                        stroke-width: 1.2px;
+                                        commands: "M 1.5 10.5 L 2 8 L 8 2 L 10 4 L 4 10 Z M 7 3 L 9 5";
+                                    }
+                                    if !row.manual: Text {
+                                        text: row.status >= 2 ? "⚠" : "≡";
                                         color: row.status >= 2 ? Theme.danger : Theme.foreground-muted;
                                         vertical-alignment: center;
                                         height: parent.height;
@@ -433,6 +450,8 @@ export component RenameBatch inherits Rectangle {
                                 Text {
                                     text: row.old-name;
                                     horizontal-stretch: 1;
+                                    // Equal columns whatever the names' lengths.
+                                    preferred-width: 0px;
                                     vertical-alignment: center;
                                     overflow: elide;
                                     color: line.fg;
@@ -440,6 +459,7 @@ export component RenameBatch inherits Rectangle {
                                 Text {
                                     text: row.new-name;
                                     horizontal-stretch: 1;
+                                    preferred-width: 0px;
                                     vertical-alignment: center;
                                     overflow: elide;
                                     color: row.status >= 2 && !row.selected ? Theme.danger : line.fg;

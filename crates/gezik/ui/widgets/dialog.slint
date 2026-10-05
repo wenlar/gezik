@@ -69,6 +69,8 @@ export component Dialog inherits Rectangle {
             }
             // The field's own keys: Enter picks the first button, Esc the `escape` one.
             if root.has-input: FocusScope {
+                // Not a layout: without a height the field would overlap the message.
+                height: field.height;
                 key-pressed(event) => {
                     if event.text == Key.Escape {
                         root.chosen(root.escape);

@@ -73,12 +73,18 @@ pub fn with_rename_presets(text: &str, presets: &[crate::settings::RenamePreset]
         .map(|items| items.iter().map(|item| crate::settings::parse_preset(item).is_ok()).collect())
         .unwrap_or_default();
     let mut broken: Vec<toml_edit::Table> = Vec::new();
+    // Comments above the presets that are replaced: the end of the table before them (see below).
+    let mut comments = String::new();
     match doc.remove("rename-presets") {
         None => {}
         Some(toml_edit::Item::ArrayOfTables(array)) => {
             for (i, table) in array.into_iter().enumerate() {
                 if !valid.get(i).copied().unwrap_or(false) {
                     broken.push(table);
+                } else if let Some(prefix) = table.decor().prefix().and_then(|p| p.as_str())
+                    && prefix.contains('#')
+                {
+                    comments.push_str(prefix);
                 }
             }
         }
@@ -95,6 +101,14 @@ pub fn with_rename_presets(text: &str, presets: &[crate::settings::RenamePreset]
         }
         Some(_) => return Err("rename-presets must be [[rename-presets]] tables".to_owned()),
     }
+    // Comments at the end of the file belong to its last table (the template's commented
+    // `[shortcuts]` examples): they stay above the presets, which go after it.
+    let trailing = doc.trailing().as_str().unwrap_or("").to_owned();
+    if trailing.contains('#') {
+        comments.push_str(&trailing);
+        doc.set_trailing("");
+    }
+    let comments = end_with_one_line_break(&comments);
     if !presets.is_empty() || !broken.is_empty() {
         let mut array = toml_edit::ArrayOfTables::new();
         for preset in presets {
@@ -112,9 +126,28 @@ pub fn with_rename_presets(text: &str, presets: &[crate::settings::RenamePreset]
         for table in array.iter_mut() {
             place(table, &mut next);
         }
+        if let Some(first) = array.get_mut(0)
+            && !comments.is_empty()
+        {
+            let own = first.decor().prefix().and_then(|p| p.as_str()).unwrap_or("").to_owned();
+            first.decor_mut().set_prefix(format!("{comments}\n{}", own.trim_start_matches(['\r', '\n'])));
+        }
         doc.insert("rename-presets", toml_edit::Item::ArrayOfTables(array));
+    } else if !comments.is_empty() {
+        doc.set_trailing(comments);
     }
     Ok(doc.to_string())
+}
+
+/// `text` without the blank lines at its end; whitespace only becomes empty.
+fn end_with_one_line_break(text: &str) -> String {
+    let body = text.trim_end();
+    if body.is_empty() {
+        return String::new();
+    }
+    let rest = &text[body.len()..];
+    let line_break = if rest.starts_with("\r\n") { "\r\n" } else { "\n" };
+    format!("{body}{line_break}")
 }
 
 /// The highest position of `table` and the tables in it.
@@ -346,5 +379,40 @@ name = \"old\"
         let parsed = out.parse::<toml::Table>().unwrap();
         assert_eq!(parsed["view"]["mode"].as_str(), Some("grid"));
         assert_eq!(parsed["files"]["confirm-trash"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn presets_go_after_the_template_comments() {
+        use crate::settings::Settings;
+        let template = include_str!("../templates/settings.toml");
+        let header = |text: &str| text.lines().position(|l| l.trim() == "[[rename-presets]]");
+        // The commented shortcut examples: the lines under `[shortcuts]` like `# up = "alt+up"`.
+        let start = template.lines().position(|l| l.trim() == "[shortcuts]").unwrap();
+        let examples: Vec<&str> = template
+            .lines()
+            .skip(start)
+            .take_while(|l| !l.starts_with("# Saved rule sets"))
+            .filter(|l| l.starts_with("# ") && l.contains(" = \""))
+            .collect();
+        assert!(examples.len() > 10, "{examples:?}");
+
+        let out = with_rename_presets(template, &[tatil()]).unwrap();
+        let at = header(&out).unwrap_or_else(|| panic!("no header: {out}"));
+        let lines: Vec<&str> = out.lines().collect();
+        for example in &examples {
+            let line = lines.iter().position(|l| l == example).unwrap_or_else(|| panic!("{example} lost: {out}"));
+            assert!(line < at, "{example} is under the presets: {out}");
+        }
+        let mut warnings = Vec::new();
+        let settings = Settings::parse("settings.toml", &out, &mut warnings);
+        assert_eq!(settings.rename_presets, [tatil()], "{out}");
+        assert!(warnings.is_empty(), "{warnings:?}");
+
+        // Saving again keeps the layout; removing them all gives the template back.
+        let again = with_rename_presets(&out, &[tatil()]).unwrap();
+        assert_eq!(again, out);
+        let back = with_rename_presets(&out, &[]).unwrap();
+        // toml_edit writes `\n` line breaks (the checkout may have `\r\n`).
+        assert_eq!(back, template.replace("\r\n", "\n"));
     }
 }

@@ -4,29 +4,55 @@ import { Theme } from "../theme.slint";
 // chosen one of a pair.
 export component TextButton inherits Rectangle {
     in property <string> text;
+    // SVG path commands in an 8×8 box, drawn after the label (or alone when there is no text):
+    // a menu arrow or a symbol the UI font may not have (the software renderer has no font
+    // fallback).
+    in property <string> icon;
+    // What screen readers say; the text unless set (an icon-only button needs it).
+    in property <string> label: root.text;
     in property <bool> primary;
     in property <bool> checked;
     callback clicked();
 
+    // The label and the icon, centered together.
+    property <length> gap: root.text != "" && root.icon != "" ? Theme.spacing : 0px;
+    property <length> content-width: caption.preferred-width + (root.icon != "" ? root.gap + 8px : 0px);
+
     height: Theme.row-height + 4px;
-    min-width: max(72px, label.preferred-width + Theme.spacing * 4);
+    min-width: max(72px, root.content-width + Theme.spacing * 4);
+    // Wider only when nothing else in the layout grows (the label used to size the button).
+    horizontal-stretch: 0;
     border-radius: Theme.radius;
     border-width: root.primary ? 0px : (scope.has-focus || root.checked ? 2px : 1px);
     border-color: scope.has-focus || root.checked ? Theme.accent : Theme.border;
     background: root.primary ? Theme.accent : (touch.has-hover ? Theme.hover : transparent);
     forward-focus: scope;
     accessible-role: button;
-    accessible-label: root.text;
+    accessible-label: root.label;
     accessible-checked: root.checked;
     accessible-action-default => { root.clicked(); }
 
-    label := Text {
+    // Centered, moved left to make room for the icon.
+    caption := Text {
+        x: (caption.preferred-width - root.content-width) / 2;
         width: parent.width;
         height: parent.height;
         text: root.text;
         color: root.primary ? Theme.accent-foreground : Theme.foreground;
         horizontal-alignment: center;
         vertical-alignment: center;
+    }
+
+    if root.icon != "": Path {
+        x: (parent.width - root.content-width) / 2 + caption.preferred-width + root.gap;
+        y: (parent.height - 8px) / 2;
+        width: 8px;
+        height: 8px;
+        viewbox-width: 8;
+        viewbox-height: 8;
+        stroke: root.primary ? Theme.accent-foreground : Theme.foreground;
+        stroke-width: 1.5px;
+        commands: root.icon;
     }
 
     scope := FocusScope {
