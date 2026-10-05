@@ -153,6 +153,7 @@ Yeni bir özellik yeni bir `Task` demektir; kuyruk, panel, çakışma listesi, i
 - **Yer kalmaması:** iş duraklatılır ve sorulur ("D: is full — free space and Resume, or Cancel").
 - **Art arda hatalar:** 20 öğe art arda başarısız olursa (ör. ağ koptu) iş duraklatılır ve sorulur.
 - **İptal:** büyük dosyada blok düzeyinde etki eder; yarım hedef dosya silinir; bitmiş öğeler kalır ve geri alınabilir.
+- **Zorla kapanma (2026-10-05):** 64 MB ve üstü dosyalar hedefte `.gezik-copying-…` adıyla kopyalanır ve bitince gerçek adına çevrilir; sistem kopyayı baştan tam boyuta ayırdığı için yarım kalan dosya tamamlanmış görünmesin. Geçici yol `pending-deletes`'e yazılır, bir sonraki açılışta silinir.
 - **Hız/kalan süre:** son ~5 sn'nin hareketli ortalaması; kalan süre ön taramadaki toplam bayttan. Tarama bitmeden yalnızca öğe sayısı gösterilir.
 - **Yeniden adlandırmada ad varsa:** çakışma listesi açılmaz; ipucu "A file with this name already exists". Yalnızca büyük/küçük harf değişen ad (Windows/macOS) iki adımda (geçici ad üzerinden) yapılır.
 

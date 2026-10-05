@@ -320,6 +320,23 @@ mod tests {
     }
 
     #[test]
+    fn recovery_deletes_a_large_copy_left_unfinished() {
+        let dir = test_dir("delete-recover-copy");
+        let partial = dir.join(format!("{}left", crate::pending::COPYING_PREFIX));
+        std::fs::write(&partial, "part").unwrap();
+        write(&dir.join("keep.bin"), "k");
+        std::fs::write(dir.join("pending-deletes"), format!("{}\n", partial.display())).unwrap();
+        let engine = engine_with_pending(&dir);
+        let job = engine.recover_deletes().expect("one leftover to delete");
+        let (report, _) = finish(&engine, job, defaults);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert!(!partial.exists());
+        assert!(dir.join("keep.bin").exists());
+        assert!(!dir.join("pending-deletes").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn recovery_ignores_foreign_paths() {
         let dir = test_dir("delete-recover-foreign");
         write(&dir.join("Documents/important.txt"), "keep");

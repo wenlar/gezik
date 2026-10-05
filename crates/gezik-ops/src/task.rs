@@ -8,7 +8,11 @@ use std::path::{Path, PathBuf};
 use gezik_core::ops::conflict::{Decision, Facts};
 
 use crate::control::Control;
+use crate::pending::{PendingDeletes, copying_name};
 use crate::walk::facts_of;
+
+/// Files at least this big are copied under a temporary name and renamed when complete.
+pub(crate) const TEMP_COPY_MIN: u64 = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskKind {
@@ -227,6 +231,8 @@ pub struct RunCx<'a> {
     pub(crate) trash: &'a dyn Fn(&Path) -> bool,
     /// Bytes this item counted so far (the engine counts the rest when it is done).
     pub(crate) added: Cell<u64>,
+    /// Where leftovers to delete at the next start are noted (`None`: nowhere).
+    pub(crate) pending: Option<&'a PendingDeletes>,
 }
 
 impl RunCx<'_> {
@@ -244,8 +250,27 @@ impl RunCx<'_> {
         (self.trash)(path)
     }
 
-    /// Copies a file, counting its bytes and stopping when the job is cancelled.
+    /// Copies a file, counting its bytes and stopping when the job is cancelled. A large file
+    /// is copied under a temporary name and renamed when complete: the system makes the copy
+    /// its full size at once, so if Gezik is killed meanwhile the leftover must not look like
+    /// a complete file (it is noted and deleted at the next start).
     pub fn copy_file(&self, from: &Path, to: &Path, size: u64) -> io::Result<()> {
+        let Some(parent) = to.parent().filter(|_| size >= TEMP_COPY_MIN) else {
+            return self.copy_to(from, to, size);
+        };
+        let temp = parent.join(copying_name());
+        let noted = self.pending.filter(|pending| pending.add(&temp).is_ok());
+        let result = self.copy_to(from, &temp, size).and_then(|()| gezik_platform::fs::move_entry(&temp, to));
+        if result.is_err() {
+            let _ = gezik_platform::fs::delete(&temp);
+        }
+        if let Some(pending) = noted {
+            pending.remove(&temp);
+        }
+        result
+    }
+
+    fn copy_to(&self, from: &Path, to: &Path, size: u64) -> io::Result<()> {
         let mut counted = 0u64;
         gezik_platform::fs::copy_file(from, to, size, &mut |done| {
             self.add_bytes(done.saturating_sub(counted));
@@ -312,6 +337,72 @@ pub fn facts_after(path: &Path, is_dir: bool) -> Facts {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::PauseReason;
+    use crate::pending::PendingDeletes;
+    use crate::testing::test_dir;
+
+    fn names(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> =
+            std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        names.sort();
+        names
+    }
+
+    fn big_file(path: &Path) -> u64 {
+        let data: Vec<u8> = (0..TEMP_COPY_MIN + 1000).map(|i| (i % 251) as u8).collect();
+        std::fs::write(path, &data).unwrap();
+        data.len() as u64
+    }
+
+    #[test]
+    fn a_large_copy_lands_under_its_name_only_when_complete() {
+        let dir = test_dir("temp-copy");
+        std::fs::create_dir(dir.join("to")).unwrap();
+        let size = big_file(&dir.join("big.bin"));
+        let pending = PendingDeletes::new(dir.join("pending-deletes"));
+        let control = Control::default();
+        control.pause(PauseReason::User);
+        let no_bin = |_: &Path| false;
+        let (from, to) = (dir.join("big.bin"), dir.join("to/big.bin"));
+        std::thread::scope(|scope| {
+            let copy = scope.spawn(|| {
+                let cx = RunCx { control: &control, trash: &no_bin, added: Cell::new(0), pending: Some(&pending) };
+                cx.copy_file(&from, &to, size)
+            });
+            // Held by the pause in the middle of the copy: only a noted leftover is there.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while names(&dir.join("to")).is_empty() {
+                assert!(std::time::Instant::now() < deadline, "the copy did not start");
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            let during = names(&dir.join("to"));
+            assert_eq!(during.len(), 1);
+            assert!(during[0].starts_with(crate::pending::COPYING_PREFIX), "{during:?}");
+            assert_eq!(pending.load(), [dir.join("to").join(&during[0])], "noted for the next start");
+            control.resume();
+            copy.join().unwrap().unwrap();
+        });
+        assert_eq!(names(&dir.join("to")), ["big.bin"]);
+        assert_eq!(std::fs::read(&to).unwrap(), std::fs::read(&from).unwrap());
+        assert!(pending.load().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_cancelled_large_copy_leaves_nothing() {
+        let dir = test_dir("temp-copy-cancel");
+        std::fs::create_dir(dir.join("to")).unwrap();
+        let size = big_file(&dir.join("big.bin"));
+        let pending = PendingDeletes::new(dir.join("pending-deletes"));
+        let control = Control::default();
+        control.cancel();
+        let no_bin = |_: &Path| false;
+        let cx = RunCx { control: &control, trash: &no_bin, added: Cell::new(0), pending: Some(&pending) };
+        assert!(cx.copy_file(&dir.join("big.bin"), &dir.join("to/big.bin"), size).is_err());
+        assert!(names(&dir.join("to")).is_empty());
+        assert!(pending.load().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn labels_count_items() {
