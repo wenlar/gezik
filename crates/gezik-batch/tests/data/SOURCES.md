@@ -4,6 +4,16 @@
   (`DateTimeOriginal = 2024:07:01 09:30:00`); see `docs/superpowers/plans/2026-10-05-toplu-islemler-5a.md`, Task 4.
 - `exif.png`: the same picture as a PNG, with the same date in an `eXIf` chunk after the image data.
 
+## Pictures for conversion
+
+None are kept here: `tests/convert_image.rs` makes its pictures itself (a "camera" JPEG with
+EXIF orientation 6, GPS, a thumbnail, an ICC profile and XMP; PNGs with alpha and 16 bits; a
+GIF). The samples the library notes used (`DSCN0010.jpg`, `landscape_6.jpg` from
+github.com/ianare/exif-samples) are not copied: that repository has no licence file, and its
+README puts only user-contributed pictures under CC BY-SA 4.0. The HEIC test downloads
+libheif's `examples/example.heic` into a temporary folder when `GEZIK_TEST_FFMPEG` names an
+ffmpeg 9 or later, and is skipped offline.
+
 ## RAR archives (`rar/`)
 
 From libarchive's test suite (BSD 2-clause licence, https://github.com/libarchive/libarchive,

@@ -1,7 +1,8 @@
 # Third-party code
 
 Gezik's own code is under the PolyForm Noncommercial License 1.0.0 (see `LICENSE.md`). The
-crates below are built into it for reading and writing archives; each keeps its own licence.
+crates below are built into it for reading and writing archives and for converting pictures;
+each keeps its own licence.
 
 | Crate | Version | Licence | Source |
 |---|---|---|---|
@@ -18,6 +19,16 @@ crates below are built into it for reading and writing archives; each keeps its 
 | hadris-iso and its hadris-* parts | 2.5.0 | MIT | https://github.com/hxyulin/hadris |
 | cpio | 0.4.1 | MIT | https://github.com/jcreekmore/cpio-rs |
 | ar | 0.9.0 | MIT | https://github.com/mdsteele/rust-ar |
+| image | 0.25.10 | MIT OR Apache-2.0 | https://github.com/image-rs/image |
+| tiff (through image) | 0.11.3 | MIT | https://github.com/image-rs/image-tiff |
+| fax (through tiff) | 0.2.7 | MIT | https://github.com/pdf-rs/fax |
+| jpeg-encoder | 0.7.1 | (MIT OR Apache-2.0) AND IJG (below) | https://github.com/vstroebel/jpeg-encoder |
+| fast_image_resize | 6.1.0 | MIT OR Apache-2.0 | https://github.com/cykooz/fast_image_resize |
+
+## Independent JPEG Group
+
+JPEG pictures are written with jpeg-encoder, whose forward DCT is ported from mozjpeg. This
+software is based in part on the work of the Independent JPEG Group.
 
 ## UnRAR
 
