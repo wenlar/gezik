@@ -452,6 +452,9 @@ fn parse_tools(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> 
         match value.as_str() {
             // Empty: none set.
             Some(path) if path.trim().is_empty() => {}
+            // A relative path would depend on the folder Gezik was started in.
+            Some(path) if !std::path::Path::new(path).is_absolute() => warnings
+                .push(Warning::new(file, format!("tools.seven-zip: \"{path}\" must be a full path (it is ignored)"))),
             Some(path) => out.seven_zip = Some(path.to_owned()),
             None => warnings.push(Warning::new(file, format!("tools.seven-zip: expected text, got {value}"))),
         }
@@ -952,18 +955,23 @@ rules = []
 
     #[test]
     fn reads_archives_and_tools() {
-        let (settings, warnings) = parse(
-            "[archives]\ndouble-click = \"extract-here\"\n[tools]\ndownload = false\nseven-zip = \"C:/7-Zip/7z.exe\"\n",
-        );
+        let program = if cfg!(windows) { "C:/7-Zip/7z.exe" } else { "/opt/7-Zip/7zz" };
+        let (settings, warnings) = parse(&format!(
+            "[archives]\ndouble-click = \"extract-here\"\n[tools]\ndownload = false\nseven-zip = \"{program}\"\n"
+        ));
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(settings.archives.double_click, DoubleClick::ExtractHere);
-        assert_eq!(settings.tools, ToolsSettings { download: false, seven_zip: Some("C:/7-Zip/7z.exe".to_owned()) });
+        assert_eq!(settings.tools, ToolsSettings { download: false, seven_zip: Some(program.to_owned()) });
         let defaults = Settings::default();
         assert_eq!((defaults.archives.double_click, defaults.tools.download), (DoubleClick::System, true));
         // Empty means none set.
         let (settings, warnings) = parse("[tools]\nseven-zip = \"\"\n");
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(settings.tools.seven_zip, None);
+        // A relative path is ignored with a warning.
+        let (settings, warnings) = parse("[tools]\nseven-zip = \"7-Zip/7z.exe\"\n");
+        assert_eq!(settings.tools.seven_zip, None);
+        assert!(warnings[0].message.contains("must be a full path"), "{warnings:?}");
     }
 
     #[test]

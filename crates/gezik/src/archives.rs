@@ -173,13 +173,13 @@ pub fn seven_zip_offer(ext: &str, size: Option<u64>, download: bool, linux: bool
         Some(size) if download => {
             let mut message = format!("Opening {ext} archives needs 7-Zip (~{}, free).", format_size(size));
             if linux {
-                message.push_str(" Download it, or install it with your package manager (p7zip / 7zip).");
+                message.push_str(" Download it, or install 7-Zip 25 or newer yourself.");
             }
             (message, vec!["Download", "Where does it come from?", "Cancel"])
         }
         _ => {
-            let how =
-                if linux { "install it with your package manager (p7zip / 7zip)" } else { "install 7-Zip yourself" };
+            // An older one is not used (Gezik passes over it).
+            let how = "install 7-Zip 25 or newer yourself";
             let message = if download {
                 format!("Opening {ext} archives needs 7-Zip. Gezik cannot download it for this system yet: {how}.")
             } else {
@@ -921,7 +921,8 @@ mod tests {
         assert!(message.starts_with("Opening .lzh archives needs 7-Zip (~1.6 MB, free)."), "{message}");
         assert_eq!(buttons, ["Download", "Where does it come from?", "Cancel"]);
         let (linux, _) = seven_zip_offer(".lzh", Some(1_700_000), true, true);
-        assert!(linux.contains("or install it with your package manager (p7zip / 7zip)"), "{linux}");
+        assert!(linux.ends_with("Download it, or install 7-Zip 25 or newer yourself."), "{linux}");
+        assert!(!linux.contains("p7zip"), "{linux}");
         let (off, buttons) = seven_zip_offer(".lzh", Some(1_700_000), false, false);
         assert_eq!(buttons, ["OK"]);
         assert!(off.contains("[tools]"), "{off}");

@@ -2,18 +2,80 @@
 //! download, then PATH), and where a download goes (`<data>/tools/<name>-<version>/`).
 //! Downloading itself is `tasks::DownloadTask`.
 
+use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::{Duration, Instant, SystemTime};
+
+use gezik_platform::ChildProcess;
 
 use gezik_core::batch::tools::{Platform, Tool, ToolBuild, build_for};
 
-/// Where a tool's program is: the path in settings, Gezik's download, then PATH.
+/// Where a tool's program is: the path in settings (a full one), Gezik's download, PATH,
+/// then where an installer puts it. Only a recent enough one counts (`recent_enough`); it
+/// starts the program, so this runs off the UI thread.
 pub fn find(tool: Tool, data_dir: &Path, configured: Option<&Path>) -> Option<PathBuf> {
     let build = Platform::current().and_then(|platform| build_for(tool, platform));
     let installed = build.and_then(|build| program_in(build, &install_dir(build, data_dir)));
-    find_in(tool, configured, installed, std::env::var_os("PATH").as_deref()).or_else(|| installed_elsewhere(tool))
+    let configured = configured.filter(|path| path.is_absolute());
+    let ok = |path: &Path| recent_enough(tool, path);
+    find_in(tool, configured, installed, std::env::var_os("PATH").as_deref(), &ok)
+        .or_else(|| installed_elsewhere(tool).filter(|path| ok(path)))
+}
+
+/// The oldest 7-Zip Gezik hands an archive to: 25.00 fixed how links in an archive are
+/// unpacked (CVE-2025-11001/11002). p7zip (16.02, unmaintained) never counts.
+const SEVEN_ZIP_MIN: (u32, u32) = (25, 0);
+
+/// Programs asked for their version: the answer, by path and the change time it was for.
+type Versions = HashMap<PathBuf, (Option<SystemTime>, bool)>;
+
+/// Whether the program at `path` is a version Gezik trusts. Asked once per program and
+/// change time.
+fn recent_enough(tool: Tool, path: &Path) -> bool {
+    static SEEN: Mutex<Option<Versions>> = Mutex::new(None);
+    let modified = std::fs::metadata(path).and_then(|meta| meta.modified()).ok();
+    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((when, ok)) = seen.get_or_insert_with(HashMap::new).get(path)
+        && *when == modified
+    {
+        return *ok;
+    }
+    drop(seen);
+    let ok = match tool {
+        Tool::SevenZip => banner(path).is_some_and(|text| seven_zip_version(&text).is_some_and(|v| v >= SEVEN_ZIP_MIN)),
+    };
+    SEEN.lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get_or_insert_with(HashMap::new)
+        .insert(path.to_path_buf(), (modified, ok));
+    ok
+}
+
+/// What the program prints when started without arguments (its name and version first);
+/// `None` if it does not start or takes longer than 5 s.
+fn banner(path: &Path) -> Option<String> {
+    let mut child = ChildProcess::spawn(path, std::iter::empty::<&str>(), None).ok()?;
+    let lines = child.stdout_lines();
+    let started = Instant::now();
+    child.wait_or_stop(|| started.elapsed() > Duration::from_secs(5)).ok()??;
+    Some(lines.take(10).collect::<Vec<_>>().join("\n"))
+}
+
+/// 7-Zip's version from its banner (`7-Zip 26.03 (x64) : Copyright…`, `7-Zip (z) 24.08`);
+/// `None` for p7zip (`p7zip Version 16.02`) or no 7-Zip at all.
+fn seven_zip_version(banner: &str) -> Option<(u32, u32)> {
+    if banner.contains("p7zip") {
+        return None;
+    }
+    let line = banner.lines().map(str::trim).find(|line| line.starts_with("7-Zip"))?;
+    line.split_whitespace().find_map(|word| {
+        let (major, minor) = word.split_once('.')?;
+        Some((major.parse().ok()?, minor.parse().ok()?))
+    })
 }
 
 /// `<data>/tools/<name>-<version>/`.
@@ -67,17 +129,19 @@ fn program_in(build: &ToolBuild, dir: &Path) -> Option<PathBuf> {
     Some(program.split('/').fold(dir.to_path_buf(), |path, part| path.join(part))).filter(|p| executable(p))
 }
 
-/// The search without the machine's own places: `configured`, `installed`, then `path_var`.
+/// The search without the machine's own places: `configured`, `installed`, then `path_var`,
+/// each only if `ok` says so.
 fn find_in(
     tool: Tool,
     configured: Option<&Path>,
     installed: Option<PathBuf>,
     path_var: Option<&OsStr>,
+    ok: &dyn Fn(&Path) -> bool,
 ) -> Option<PathBuf> {
-    if let Some(path) = configured.filter(|path| executable(path)) {
+    if let Some(path) = configured.filter(|path| executable(path) && ok(path)) {
         return Some(path.to_path_buf());
     }
-    installed.or_else(|| on_path(path_names(tool), path_var?))
+    installed.filter(|path| ok(path)).or_else(|| on_path(path_names(tool), path_var?).filter(|path| ok(path)))
 }
 
 /// The tool's program names on PATH.
@@ -177,7 +241,7 @@ mod tests {
         let path_var = std::env::join_paths([d.join("nothing-here"), on_path_dir.clone()]).unwrap();
         let installed = || program_in(build, &install_dir(build, &data));
         let find = |configured: Option<&Path>, installed| {
-            find_in(Tool::SevenZip, configured, installed, Some(path_var.as_os_str()))
+            find_in(Tool::SevenZip, configured, installed, Some(path_var.as_os_str()), &|_| true)
         };
 
         assert_eq!(find(Some(&configured), installed()), Some(configured.clone()));
@@ -193,7 +257,34 @@ mod tests {
         std::fs::create_dir(on_path_dir.join(exe("7z"))).unwrap();
         assert_eq!(on_path(&["7z"], path_var.as_os_str()), None);
         assert_eq!(on_path(&["7z"], OsStr::new(".")), None);
+        // One that is too old is passed over.
+        let old = |path: &Path| path != configured;
+        let found = find_in(Tool::SevenZip, Some(&configured), None, Some(path_var.as_os_str()), &old);
+        assert_eq!(found, None);
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn seven_zip_versions_are_read_from_the_banner() {
+        let read = seven_zip_version;
+        assert_eq!(read("\n7-Zip 26.03 (x64) : Copyright (c) 1999-2026 Igor Pavlov : 2026-03-01\n"), Some((26, 3)));
+        assert_eq!(read("7-Zip (z) 24.08 (x64) : Copyright (c) 1999-2024 Igor Pavlov"), Some((24, 8)));
+        assert_eq!(
+            read("7-Zip [64] 16.02 : Copyright (c) 1999-2016 Igor Pavlov : 2016-05-21\np7zip Version 16.02"),
+            None
+        );
+        assert_eq!(read("usage: something else 1.2"), None);
+        assert!(read("7-Zip 25.00 (x64)").is_some_and(|v| v >= SEVEN_ZIP_MIN));
+        assert!(read("7-Zip 24.09 (x64)").is_some_and(|v| v < SEVEN_ZIP_MIN));
+    }
+
+    /// The installed 7-Zip's version is read (when there is one).
+    #[cfg(windows)]
+    #[test]
+    fn installed_seven_zip_banner_is_read() {
+        let Some(path) = installed_elsewhere(Tool::SevenZip) else { return };
+        let banner = banner(&path).expect("7-Zip printed its banner");
+        assert!(seven_zip_version(&banner).is_some(), "{banner}");
     }
 
     #[test]
