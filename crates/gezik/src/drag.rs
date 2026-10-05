@@ -75,6 +75,18 @@ enum Phase {
     Ended,
 }
 
+/// A drag handed to a system that runs it by itself (Wayland, macOS): what its end must
+/// undo, even if the drag came back over Gezik's window as an offer meanwhile.
+#[derive(Clone, Copy)]
+struct Handed {
+    /// The entry whose press started it.
+    pressed: Option<usize>,
+    right: bool,
+    /// Where the pointer was when it left the window.
+    x: f32,
+    y: f32,
+}
+
 struct Inner {
     window: slint::Weak<AppWindow>,
     nav: Navigator,
@@ -95,6 +107,7 @@ struct Inner {
     outside: RefCell<Option<Box<dyn OutsideDrag>>>,
     /// Handing this drag to the system failed: it stays in the window.
     handoff_failed: Cell<bool>,
+    handed: Cell<Option<Handed>>,
 }
 
 thread_local! {
@@ -145,6 +158,7 @@ impl Drags {
             attached: RefCell::default(),
             outside: RefCell::default(),
             handoff_failed: Cell::new(false),
+            handed: Cell::new(None),
         }));
         CURRENT.with(|c| *c.borrow_mut() = Some(drags.clone()));
         drags
@@ -198,6 +212,7 @@ impl Drags {
     pub fn escape(&self) -> bool {
         if let Some(mut outside) = self.0.outside.borrow_mut().take() {
             outside.cancel();
+            self.0.handed.set(None);
             *self.0.phase.borrow_mut() = Phase::Ended;
             return true;
         }
@@ -296,6 +311,7 @@ impl Drags {
             Phase::Ended => true,
             // Gezik drives this drag outside the window: the release drops it there.
             Phase::Outside(d) => {
+                self.0.handed.set(None);
                 if let Some(mut outside) = self.0.outside.borrow_mut().take() {
                     outside.released();
                 }
@@ -520,6 +536,7 @@ impl Drags {
         self.0.hover_tab.set(None);
         self.0.nav.activate_tab(i);
         self.update();
+        self.reanswer();
     }
 
     /// Near the list's top or bottom edge the list scrolls while the pointer rests there.
@@ -550,9 +567,32 @@ impl Drags {
         let lowest = (list.rect.height - content).min(0.0);
         window.set_list_scroll((list.scroll + step).clamp(lowest, 0.0));
         self.update();
+        self.reanswer();
     }
 
-    /// Ends the drag: drops `d` on its target (None: drops nothing) and clears the window.
+    /// The target of an offer from outside changed with no move (a tab opened, the list
+    /// scrolled): the source is told, so a drop is never taken without being accepted first.
+    fn reanswer(&self) {
+        if !matches!(*self.0.phase.borrow(), Phase::Offer(_)) {
+            return;
+        }
+        let answer = self.offer_answer();
+        if let Some(attached) = &*self.0.attached.borrow() {
+            attached.answer(&answer);
+        }
+    }
+
+    /// What dropping the offer from outside at its target would do.
+    fn offer_answer(&self) -> Answer {
+        match &*self.0.phase.borrow() {
+            Phase::Offer(Dragging {
+                target: Some(Target { action: Some(Action::Transfer(effect)), dir: Some(dir), .. }),
+                ..
+            }) => Answer { effect: Some(*effect), folder: Some(drag::folder_name(dir)) },
+            _ => Answer::default(),
+        }
+    }
+
     /// Ends the drag: drops `d` on its target (None: drops nothing) and clears the window.
     /// Returns what the drop did at once (a menu, a pin or a refusal: nothing).
     fn finish(&self, d: Option<Dragging>) -> Option<Effect> {
@@ -624,7 +664,10 @@ impl Drags {
                     self.0.view.release(index, true);
                 }
             }
-            Ok(Handoff::Running(outside)) => *self.0.outside.borrow_mut() = Some(outside),
+            Ok(Handoff::Running(outside)) => {
+                *self.0.outside.borrow_mut() = Some(outside);
+                self.0.handed.set(Some(Handed { pressed: d.pressed, right: d.right, x: d.x, y: d.y }));
+            }
             Err(why) => {
                 eprintln!("gezik: cannot drag out of the window: {why}");
                 self.0.handoff_failed.set(true);
@@ -659,6 +702,7 @@ impl Drags {
             let phase = std::mem::replace(&mut *self.0.phase.borrow_mut(), Phase::Idle);
             if let Phase::Outside(mut d) = phase {
                 (d.x, d.y, d.keys) = (x, y, keys);
+                self.0.handed.set(None);
                 self.resume(d, true);
             }
         } else {
@@ -670,19 +714,23 @@ impl Drags {
     /// The system ended a drag Gezik handed it (macOS, Wayland): the window never saw the
     /// button come up, so Slint is told, and that release is no click.
     fn outside_ended(&self, _end: DragEnd) {
-        let phase = std::mem::replace(&mut *self.0.phase.borrow_mut(), Phase::Ended);
-        let Phase::Outside(d) = phase else {
-            *self.0.phase.borrow_mut() = phase;
-            return;
-        };
         self.0.outside.borrow_mut().take();
-        if let Some(index) = d.pressed {
+        // Gone already when the release was seen in the window (X11): nothing left to undo.
+        let Some(handed) = self.0.handed.take() else { return };
+        {
+            let mut phase = self.0.phase.borrow_mut();
+            // Also when the drag came back as an offer and was dropped on Gezik meanwhile.
+            if matches!(*phase, Phase::Outside(_) | Phase::Idle) {
+                *phase = Phase::Ended;
+            }
+        }
+        if let Some(index) = handed.pressed {
             self.0.view.release(index, true);
         }
         if let Some(window) = self.0.window.upgrade() {
             use slint::platform::{PointerEventButton, WindowEvent};
-            let button = if d.right { PointerEventButton::Right } else { PointerEventButton::Left };
-            let position = slint::LogicalPosition::new(d.x, d.y);
+            let button = if handed.right { PointerEventButton::Right } else { PointerEventButton::Left };
+            let position = slint::LogicalPosition::new(handed.x, handed.y);
             window.window().dispatch_event(WindowEvent::PointerReleased { position, button });
         }
     }
@@ -750,13 +798,7 @@ impl Drags {
             }
         }
         self.update();
-        match &*self.0.phase.borrow() {
-            Phase::Offer(Dragging {
-                target: Some(Target { action: Some(Action::Transfer(effect)), dir: Some(dir), .. }),
-                ..
-            }) => Answer { effect: Some(*effect), folder: Some(drag::folder_name(dir)) },
-            _ => Answer::default(),
-        }
+        self.offer_answer()
     }
 
     fn offer_left(&self) {

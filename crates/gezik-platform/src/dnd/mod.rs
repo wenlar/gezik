@@ -133,6 +133,15 @@ impl Attached {
         }
     }
 
+    /// Tells the source what a drop would do now, when that changed with no move (Linux;
+    /// Windows and macOS ask again by themselves).
+    pub fn answer(&self, answer: &Answer) {
+        #[cfg(all(unix, not(target_os = "macos")))]
+        self.inner.answer(answer);
+        #[cfg(not(all(unix, not(target_os = "macos"))))]
+        let _ = answer;
+    }
+
     /// Gezik's scale factor, for window systems that speak logical pixels (Wayland).
     pub fn set_scale(&self, scale: f32) {
         #[cfg(all(unix, not(target_os = "macos")))]
@@ -185,6 +194,10 @@ mod linux {
 
         pub fn set_scale(&self, scale: f64) {
             self.backend.set_scale(scale);
+        }
+
+        pub fn answer(&self, answer: &super::Answer) {
+            self.backend.answer(answer);
         }
 
         pub fn poll(&self) {

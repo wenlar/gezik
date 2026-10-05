@@ -10,6 +10,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use wayland_backend::client::{Backend as WlBackend, ObjectId};
+use wayland_client::protocol::wl_buffer::WlBuffer;
+use wayland_client::protocol::wl_compositor::WlCompositor;
 use wayland_client::protocol::wl_data_device::{self, WlDataDevice};
 use wayland_client::protocol::wl_data_device_manager::{DndAction, WlDataDeviceManager};
 use wayland_client::protocol::wl_data_offer::{self, WlDataOffer};
@@ -18,8 +20,10 @@ use wayland_client::protocol::wl_keyboard::{self, WlKeyboard};
 use wayland_client::protocol::wl_pointer::{self, WlPointer};
 use wayland_client::protocol::wl_registry::{self, WlRegistry};
 use wayland_client::protocol::wl_seat::{self, Capability, WlSeat};
+use wayland_client::protocol::wl_shm::{Format, WlShm};
+use wayland_client::protocol::wl_shm_pool::WlShmPool;
 use wayland_client::protocol::wl_surface::WlSurface;
-use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum, event_created_child};
+use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum, delegate_noop, event_created_child};
 
 use super::{UiEvent, uri};
 use crate::clipboard::{ClipboardError, ClipboardFiles};
@@ -64,11 +68,13 @@ impl Owned {
 struct OfferInfo {
     types: Vec<String>,
     source_actions: DndAction,
+    /// The action the compositor chose for a drag (none until it says).
+    action: DndAction,
 }
 
 impl Default for OfferInfo {
     fn default() -> OfferInfo {
-        OfferInfo { types: Vec::new(), source_actions: DndAction::empty() }
+        OfferInfo { types: Vec::new(), source_actions: DndAction::empty(), action: DndAction::empty() }
     }
 }
 
@@ -82,12 +88,35 @@ struct Incoming {
     x: f64,
     y: f64,
     paths: Option<Vec<PathBuf>>,
+    /// Gezik's last answer took it (a type was accepted).
+    accepted: bool,
+    /// Dropped: the compositor's `leave` that follows the drop does not end it; `finish` does.
+    dropped: bool,
+}
+
+/// What a drag Gezik started needs to stay alive: its data source and its picture.
+struct Dragged {
+    source: WlDataSource,
+    icon: Option<(WlSurface, WlBuffer, WlShmPool)>,
+}
+
+impl Dragged {
+    fn destroy(self) {
+        self.source.destroy();
+        if let Some((surface, buffer, pool)) = self.icon {
+            surface.destroy();
+            buffer.destroy();
+            pool.destroy();
+        }
+    }
 }
 
 #[derive(Default)]
 struct Inner {
     manager: Option<WlDataDeviceManager>,
     seat: Option<WlSeat>,
+    compositor: Option<WlCompositor>,
+    shm: Option<WlShm>,
     device: Option<WlDataDevice>,
     pointer: Option<WlPointer>,
     keyboard: Option<WlKeyboard>,
@@ -98,7 +127,7 @@ struct Inner {
     selection: Option<WlDataOffer>,
     sequence: u64,
     clipboard: Option<(WlDataSource, Owned)>,
-    dragged: Option<WlDataSource>,
+    dragged: Option<Dragged>,
     incoming: Option<Incoming>,
     events: Vec<UiEvent>,
     /// Gezik's scale factor: Wayland speaks logical pixels, Gezik's handler physical ones.
@@ -146,6 +175,25 @@ impl Shared {
         Some(source)
     }
 
+    /// The picture under the pointer while Gezik's drag is outside the window: a page.
+    fn drag_icon(&self) -> Option<(WlSurface, WlBuffer, WlShmPool)> {
+        let (compositor, shm) = {
+            let inner = self.inner();
+            (inner.compositor.clone()?, inner.shm.clone()?)
+        };
+        let pixels = page_icon();
+        let fd = memfd(&pixels)?;
+        let size = i32::try_from(pixels.len()).ok()?;
+        let pool = shm.create_pool(fd.as_fd(), size, &self.qh, ());
+        let side = ICON_SIDE as i32;
+        let buffer = pool.create_buffer(0, side, side, side * 4, Format::Argb8888, &self.qh, ());
+        let surface = compositor.create_surface(&self.qh, ());
+        surface.attach(Some(&buffer), 0, 0);
+        surface.damage(0, 0, side, side);
+        surface.commit();
+        Some((surface, buffer, pool))
+    }
+
     fn offer(&self) -> Option<Offer> {
         let (offer, known) = {
             let inner = self.inner();
@@ -171,6 +219,50 @@ impl Shared {
         };
         Some(Offer { paths, allowed, right: false })
     }
+}
+
+/// The drag picture's side, in pixels.
+const ICON_SIDE: usize = 32;
+
+/// A page with a folded corner, as ARGB8888 pixels (little-endian bytes: B, G, R, A).
+pub(crate) fn page_icon() -> Vec<u8> {
+    let mut out = Vec::with_capacity(ICON_SIDE * ICON_SIDE * 4);
+    let (left, right, top, bottom, fold) = (6, 25, 2, 29, 7);
+    for y in 0..ICON_SIDE {
+        for x in 0..ICON_SIDE {
+            let inside = (left..=right).contains(&x)
+                && (top..=bottom).contains(&y)
+                && !(x > right - fold && y < top + fold && (x - (right - fold)) > (y - top));
+            let edge = inside
+                && (x == left
+                    || x == right
+                    || y == top
+                    || y == bottom
+                    || (x > right - fold && y < top + fold && (x - (right - fold)) == (y - top) + 1));
+            let (b, g, r, a): (u8, u8, u8, u8) = if edge {
+                (0x70, 0x70, 0x70, 0xFF)
+            } else if inside {
+                (0xFA, 0xFA, 0xFA, 0xF0)
+            } else {
+                (0, 0, 0, 0)
+            };
+            out.extend_from_slice(&[b, g, r, a]);
+        }
+    }
+    out
+}
+
+/// An anonymous shared file holding `bytes`.
+fn memfd(bytes: &[u8]) -> Option<OwnedFd> {
+    use std::os::fd::FromRawFd;
+    let fd = unsafe { libc::memfd_create(c"gezik-drag".as_ptr(), libc::MFD_CLOEXEC) };
+    if fd < 0 {
+        return None;
+    }
+    let fd = unsafe { OwnedFd::from_raw_fd(fd) };
+    let mut file = std::fs::File::from(fd);
+    file.write_all(bytes).ok()?;
+    Some(file.into())
 }
 
 /// A pipe whose ends are closed on exec.
@@ -230,6 +322,10 @@ impl Dispatch<WlRegistry, ()> for State {
             inner.seat = Some(registry.bind::<WlSeat, _, _>(name, version.min(5), qh, ()));
         } else if interface == WlDataDeviceManager::interface().name && inner.manager.is_none() {
             inner.manager = Some(registry.bind::<WlDataDeviceManager, _, _>(name, version.min(3), qh, ()));
+        } else if interface == WlCompositor::interface().name && inner.compositor.is_none() {
+            inner.compositor = Some(registry.bind::<WlCompositor, _, _>(name, version.min(4), qh, ()));
+        } else if interface == WlShm::interface().name && inner.shm.is_none() {
+            inner.shm = Some(registry.bind::<WlShm, _, _>(name, 1, qh, ()));
         }
         if inner.device.is_none()
             && let (Some(manager), Some(seat)) = (&inner.manager, &inner.seat)
@@ -294,6 +390,12 @@ impl Dispatch<WlKeyboard, ()> for State {
     }
 }
 
+delegate_noop!(State: ignore WlCompositor);
+delegate_noop!(State: ignore WlShm);
+delegate_noop!(State: ignore WlShmPool);
+delegate_noop!(State: ignore WlBuffer);
+delegate_noop!(State: ignore WlSurface);
+
 impl Dispatch<WlDataDeviceManager, ()> for State {
     fn event(
         _: &mut Self,
@@ -332,7 +434,8 @@ impl Dispatch<WlDataDevice, ()> for State {
                 }
                 let scale = {
                     let mut inner = shared.inner();
-                    inner.incoming = Some(Incoming { offer, serial, x, y, paths: None });
+                    inner.incoming =
+                        Some(Incoming { offer, serial, x, y, paths: None, accepted: false, dropped: false });
                     inner.scale
                 };
                 shared.queue(UiEvent::Over { offer: None, x: x * scale, y: y * scale, keys: Keys::default() });
@@ -347,14 +450,21 @@ impl Dispatch<WlDataDevice, ()> for State {
                 shared.queue(UiEvent::Over { offer: None, x: x * scale, y: y * scale, keys: Keys::default() });
             }
             wl_data_device::Event::Leave => {
-                let incoming = shared.inner().incoming.take();
+                // Compositors send `leave` right after `drop`: a dropped offer waits for Gezik.
+                let incoming = {
+                    let mut inner = shared.inner();
+                    if inner.incoming.as_ref().is_some_and(|i| i.dropped) { None } else { inner.incoming.take() }
+                };
                 if let Some(incoming) = incoming {
                     incoming.offer.destroy();
                     shared.queue(UiEvent::Leave);
                 }
             }
-            wl_data_device::Event::Drop if shared.inner().incoming.is_some() => {
-                shared.queue(UiEvent::Dropped { offer: None, x: 0.0, y: 0.0, keys: Keys::default() });
+            wl_data_device::Event::Drop => {
+                let dropped = shared.inner().incoming.as_mut().map(|i| i.dropped = true).is_some();
+                if dropped {
+                    shared.queue(UiEvent::Dropped { offer: None, x: 0.0, y: 0.0, keys: Keys::default() });
+                }
             }
             _ => {}
         }
@@ -380,6 +490,7 @@ impl Dispatch<WlDataOffer, OfferData> for State {
             wl_data_offer::Event::SourceActions { source_actions: WEnum::Value(actions) } => {
                 info.source_actions = actions
             }
+            wl_data_offer::Event::Action { dnd_action: WEnum::Value(action) } => info.action = action,
             _ => {}
         }
     }
@@ -408,29 +519,29 @@ impl Dispatch<WlDataSource, Mutex<Owned>> for State {
                     if inner.clipboard.as_ref().is_some_and(|(s, _)| s == source) {
                         inner.clipboard = None;
                     }
-                    let dragged = inner.dragged.as_ref() == Some(source);
-                    if dragged {
-                        inner.dragged = None;
-                    }
-                    dragged
+                    let dragged = inner.dragged.as_ref().is_some_and(|d| d.source == *source);
+                    dragged.then(|| inner.dragged.take()).flatten()
                 };
-                source.destroy();
-                if dragged {
-                    shared.queue(UiEvent::SourceEnded(DragEnd::Cancelled));
+                match dragged {
+                    Some(dragged) => {
+                        dragged.destroy();
+                        shared.queue(UiEvent::SourceEnded(DragEnd::Cancelled));
+                    }
+                    None => source.destroy(),
                 }
             }
             wl_data_source::Event::DndFinished => {
                 let dragged = {
                     let mut inner = shared.inner();
-                    let dragged = inner.dragged.as_ref() == Some(source);
-                    if dragged {
-                        inner.dragged = None;
-                    }
-                    dragged
+                    let dragged = inner.dragged.as_ref().is_some_and(|d| d.source == *source);
+                    dragged.then(|| inner.dragged.take()).flatten()
                 };
-                source.destroy();
-                if dragged {
-                    shared.queue(UiEvent::SourceEnded(DragEnd::Dropped));
+                match dragged {
+                    Some(dragged) => {
+                        dragged.destroy();
+                        shared.queue(UiEvent::SourceEnded(DragEnd::Dropped));
+                    }
+                    None => source.destroy(),
                 }
             }
             _ => {}
@@ -577,24 +688,35 @@ impl super::Backend for Wayland {
 
     fn answer(&self, answer: &Answer) {
         let s = &self.0;
-        let inner = s.inner();
-        let Some(incoming) = inner.incoming.as_ref() else { return };
-        // Only "copy" is ever chosen with the source: Gezik moves the files itself, so the
-        // source must not delete them after the drop.
-        if answer.effect.is_some() {
-            incoming.offer.set_actions(DndAction::Copy, DndAction::Copy);
-            incoming.offer.accept(incoming.serial, Some(URI_LIST.to_owned()));
-        } else {
-            incoming.offer.set_actions(DndAction::None, DndAction::None);
-            incoming.offer.accept(incoming.serial, None);
+        let mut inner = s.inner();
+        let Some(incoming) = inner.incoming.as_mut() else { return };
+        if incoming.dropped {
+            return;
         }
+        // Only "copy" is ever chosen with the source: Gezik moves the files itself, so the
+        // source must not delete them after the drop. (Actions are version 3.)
+        let take = answer.effect.is_some();
+        if incoming.offer.version() >= 3 {
+            let action = if take { DndAction::Copy } else { DndAction::None };
+            incoming.offer.set_actions(action, action);
+        }
+        incoming.offer.accept(incoming.serial, take.then(|| URI_LIST.to_owned()));
+        incoming.accepted = take;
+        drop(inner);
         let _ = s.conn.flush();
     }
 
     fn finish(&self, done: Option<Effect>) {
         let s = &self.0;
         let Some(incoming) = s.inner().incoming.take() else { return };
-        if done.is_some() {
+        // `finish` is only allowed on an offer Gezik accepted and the compositor gave an
+        // action to; anything else would be a protocol error, which ends the connection.
+        let action = incoming
+            .offer
+            .data::<OfferData>()
+            .map(|d| d.lock().unwrap_or_else(std::sync::PoisonError::into_inner).action);
+        let chosen = action.is_some_and(|a| !a.is_empty());
+        if done.is_some() && incoming.accepted && chosen && incoming.offer.version() >= 3 {
             incoming.offer.finish();
         }
         incoming.offer.destroy();
@@ -612,10 +734,15 @@ impl super::Backend for Wayland {
         let source = s
             .create_source(Owned { paths: paths.to_vec(), cut: false }, &[URI_LIST, TEXT])
             .ok_or("no Wayland data device")?;
-        source.set_actions(DndAction::Copy | DndAction::Move);
-        device.start_drag(Some(&source), &s.surface, None, serial);
+        if source.version() >= 3 {
+            source.set_actions(DndAction::Copy | DndAction::Move);
+        }
+        let icon = s.drag_icon();
+        device.start_drag(Some(&source), &s.surface, icon.as_ref().map(|(surface, ..)| surface), serial);
         s.conn.flush().map_err(|e| e.to_string())?;
-        s.inner().dragged = Some(source);
+        if let Some(old) = s.inner().dragged.replace(Dragged { source, icon }) {
+            old.destroy();
+        }
         Ok(Box::new(WaylandDrag))
     }
 
@@ -643,6 +770,16 @@ mod tests {
         assert_eq!(preferred_mime(&types(&[URI_LIST, GNOME_FILES])), Some(GNOME_FILES));
         assert_eq!(preferred_mime(&types(&["text/plain", URI_LIST])), Some(URI_LIST));
         assert_eq!(preferred_mime(&types(&["image/png"])), None);
+    }
+
+    #[test]
+    fn the_drag_picture_is_a_page_with_clear_corners() {
+        let pixels = page_icon();
+        assert_eq!(pixels.len(), ICON_SIDE * ICON_SIDE * 4);
+        let alpha = |x: usize, y: usize| pixels[(y * ICON_SIDE + x) * 4 + 3];
+        assert_eq!(alpha(0, 0), 0, "outside the page");
+        assert_eq!(alpha(15, 15), 0xF0, "the page");
+        assert_eq!(alpha(25, 2), 0, "the folded corner is cut away");
     }
 
     #[test]
