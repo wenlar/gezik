@@ -474,6 +474,14 @@ impl Engine {
     /// Finishes deletes an earlier run left unfinished (call once at start).
     pub fn recover_deletes(&self) -> Option<JobId> {
         let pending = self.0.pending.clone()?;
+        // Folders a delete could not put back (something held them open) go back first.
+        for restore in pending.restores() {
+            if std::fs::symlink_metadata(&restore.hidden).is_err()
+                || crate::tasks::restore_hidden(&restore.hidden, &restore.original, restore.was_hidden)
+            {
+                pending.remove_restore(&restore.hidden);
+            }
+        }
         let mut roots = Vec::new();
         for path in pending.load() {
             if is_hidden(&path) && std::fs::symlink_metadata(&path).is_ok() {
