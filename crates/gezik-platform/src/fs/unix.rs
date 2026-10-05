@@ -15,11 +15,8 @@ pub fn copy_file(from: &Path, to: &Path, size: u64, progress: &mut dyn FnMut(u64
         std::os::unix::fs::symlink(std::fs::read_link(from)?, to)?;
         return Ok(());
     }
-    if !progress(0) {
-        return Err(cancelled());
-    }
     #[cfg(target_os = "macos")]
-    if clone_file(from, to).is_ok() {
+    if progress(0) && clone_file(from, to).is_ok() {
         return if progress(size) {
             Ok(())
         } else {
@@ -29,7 +26,9 @@ pub fn copy_file(from: &Path, to: &Path, size: u64, progress: &mut dyn FnMut(u64
     }
     let mut source = File::open(from)?;
     let mut target = OpenOptions::new().write(true).create_new(true).mode(meta.mode()).open(to)?;
-    let copied = copy_contents(&mut source, &mut target, size, progress);
+    // As on Windows, the first word comes once the copy exists: a pause or a cancel here
+    // already finds it (under its temporary name, for a large file).
+    let copied = if progress(0) { copy_contents(&mut source, &mut target, size, progress) } else { Err(cancelled()) };
     let copied = copied.and_then(|()| {
         let times = FileTimes::new().set_modified(meta.modified()?).set_accessed(meta.accessed()?);
         target.set_times(times)
