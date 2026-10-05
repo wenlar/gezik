@@ -456,6 +456,24 @@ impl Operations {
         }
     }
 
+    /// The saved rule sets, written to settings.toml.
+    pub fn save_rename_presets(&self, presets: &[gezik_config::settings::RenamePreset]) {
+        if let Some(store) = &self.0.store
+            && let Err(warning) = store.save_rename_presets(presets)
+        {
+            self.0.view.note(warning.to_string());
+        }
+    }
+
+    /// Asks for a text over the window; `f` gets it when Save is chosen.
+    pub fn ask_text(&self, title: &str, message: &str, f: impl FnOnce(String) + 'static) {
+        self.0.dialogs.ask_text(title, message, "", &["Save", "Cancel"], move |text| {
+            if let Some(text) = text {
+                f(text);
+            }
+        });
+    }
+
     fn set_rename_error(&self, error: &str) {
         if let Some(window) = self.0.window.upgrade() {
             window.set_rename_error(error.into());

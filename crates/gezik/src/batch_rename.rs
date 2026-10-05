@@ -1,17 +1,18 @@
 //! The batch rename layer: rules on the left, the preview on the right, Rename runs one
 //! `RenameTask`. The rules and their results live here; Slint only shows them.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
 
 use gezik_batch::rename::{Item, Status, check, compile, new_names};
-use gezik_config::settings::BatchRenameState;
+use gezik_config::settings::{BatchRenameState, RenamePreset};
 use gezik_config::shortcuts::{Chord, Key, Platform};
 use gezik_core::Entry;
 use gezik_core::batch::case::{CaseMode, Lang};
+use gezik_core::batch::date::DateParts;
 use gezik_core::batch::rules::{ExtensionRule, NumberAt, Rule, RuleEntry};
 use gezik_core::ops::names::NameRules;
 use gezik_core::selection::Selection;
@@ -41,6 +42,10 @@ pub struct Rules {
     pub new: Vec<String>,
     pub statuses: Vec<Status>,
     pub rule_errors: Vec<Option<String>>,
+    /// Some rule uses `{taken}` (set by `recompute`).
+    pub needs_taken: bool,
+    /// The photo dates are still being read: no renaming yet.
+    pub waiting: bool,
 }
 
 impl Rules {
@@ -59,7 +64,55 @@ impl Rules {
             |_: usize, name: &str| others.contains(&if IGNORE_CASE { name.to_lowercase() } else { name.to_owned() });
         self.statuses = check(&items, &new, &existing, NameRules::current(), IGNORE_CASE);
         self.rule_errors = compiled.errors().to_vec();
+        self.needs_taken = compiled.needs_taken();
         self.new = new;
+    }
+
+    /// Display position `from` moves to `to`.
+    pub fn reorder(&mut self, from: usize, to: usize) {
+        if from >= self.order.len() || to >= self.order.len() || from == to {
+            return;
+        }
+        let item = self.order.remove(from);
+        self.order.insert(to, item);
+    }
+
+    /// The name at display position `position`, typed by hand; the rules' name clears it.
+    pub fn set_manual(&mut self, position: usize, name: &str) {
+        let Some(&i) = self.order.get(position) else { return };
+        self.manual.remove(&i);
+        // What the rules give without the manual name.
+        self.recompute();
+        if self.new.get(position).is_none_or(|ruled| ruled != name) {
+            self.manual.insert(i, name.to_owned());
+        }
+    }
+
+    pub fn reset_manual(&mut self, positions: &[usize]) {
+        for &p in positions {
+            if let Some(i) = self.order.get(p) {
+                self.manual.remove(i);
+            }
+        }
+    }
+
+    /// Back to the list's order.
+    pub fn reset_order(&mut self) {
+        self.order = (0..self.items.len()).collect();
+    }
+
+    /// The sort buttons: by name (0), date modified (1) or size (2); a dragged order is gone.
+    pub fn sort_order(&mut self, by: i32) {
+        self.reset_order();
+        let items = &self.items;
+        match by {
+            0 => self.order.sort_by(|&a, &b| gezik_core::sort::natural_cmp(&items[a].name, &items[b].name)),
+            1 => self
+                .order
+                .sort_by_key(|&i| items[i].modified.map(|d| (d.year, d.month, d.day, d.hour, d.minute, d.second))),
+            2 => self.order.sort_by_key(|&i| items[i].size),
+            _ => {}
+        }
     }
 
     pub fn changed(&self) -> usize {
@@ -71,13 +124,16 @@ impl Rules {
     }
 
     pub fn can_rename(&self) -> bool {
-        self.changed() > 0 && self.blocked() == 0 && self.rule_errors.iter().all(Option::is_none)
+        !self.waiting && self.changed() > 0 && self.blocked() == 0 && self.rule_errors.iter().all(Option::is_none)
     }
 
     /// "1 duplicate name · 22 will change".
     pub fn footer(&self) -> String {
         let count = |want: fn(&Status) -> bool| self.statuses.iter().filter(|s| want(s)).count();
         let mut parts = Vec::new();
+        if self.waiting {
+            parts.push("reading photo dates…".to_owned());
+        }
         let plural = |n: usize, one: &str, many: &str| if n == 1 { format!("1 {one}") } else { format!("{n} {many}") };
         let duplicates = count(|s| *s == Status::Duplicate);
         if duplicates > 0 {
@@ -299,13 +355,18 @@ struct Inner {
     selection: RefCell<Selection>,
     /// Display positions on screen ("Only changed" hides some).
     shown: RefCell<Vec<usize>>,
-    only_changed: std::cell::Cell<bool>,
-    open: std::cell::Cell<bool>,
+    only_changed: Cell<bool>,
+    open: Cell<bool>,
     timer: slint::Timer,
     /// The rule (and rule count) whose texts the fields show.
-    shown_rule: std::cell::Cell<Option<(usize, usize)>>,
+    shown_rule: Cell<Option<(usize, usize)>>,
     /// Load the texts on the next `show_rules` (a preset or a mode replaced the rule).
-    reload_texts: std::cell::Cell<bool>,
+    reload_texts: Cell<bool>,
+    /// The photo dates are being read (or were) for this opening.
+    reading: Cell<bool>,
+    taken_ready: Cell<bool>,
+    /// Counts openings: dates read for an earlier one are dropped.
+    opening: Cell<u64>,
 }
 
 #[derive(Clone)]
@@ -327,6 +388,9 @@ impl BatchRename {
             timer: slint::Timer::default(),
             shown_rule: Default::default(),
             reload_texts: Default::default(),
+            reading: Default::default(),
+            taken_ready: Default::default(),
+            opening: Default::default(),
         }));
         this.install(window);
         CURRENT.with(|c| *c.borrow_mut() = Some(this.clone()));
@@ -366,6 +430,7 @@ impl BatchRename {
         window.on_rb_toggle_only_changed(move || {
             t.0.only_changed.set(!t.0.only_changed.get());
             t.refresh();
+            t.show_name();
         });
         let t = self.clone();
         window.on_rb_row_pressed(move |row, ctrl, shift| {
@@ -382,7 +447,34 @@ impl BatchRename {
             let m = event.modifiers;
             t.key(&event.text, m.control, m.alt, m.shift, m.meta)
         });
-        // Add rule ▾ and Presets ▾ open Slint menus through context_menu.rs (Task 8 for presets).
+        let t = self.clone();
+        window.on_rb_reorder(move |from, to| {
+            if let (Ok(from), Ok(to)) = (usize::try_from(from), usize::try_from(to)) {
+                t.reorder(from, to);
+            }
+        });
+        window
+            .on_rb_drop_row(|y, row_height, count| drop_row(y, row_height, usize::try_from(count).unwrap_or(0)) as i32);
+        let t = self.clone();
+        window.on_rb_sort(move |by| {
+            t.0.rules.borrow_mut().sort_order(by);
+            t.recompute();
+        });
+        let t = self.clone();
+        window.on_rb_name_edited(move |text| {
+            let Some(position) = t.focused_position() else { return };
+            t.0.rules.borrow_mut().set_manual(position, &text);
+            // The field keeps what is typed: only the preview follows.
+            let t2 = t.clone();
+            t.0.timer.start(slint::TimerMode::SingleShot, Duration::from_millis(50), move || t2.update());
+        });
+        let t = self.clone();
+        window.on_rb_name_reset(move || {
+            let positions = t.selected_positions();
+            t.0.rules.borrow_mut().reset_manual(&positions);
+            t.recompute();
+        });
+        // Add rule ▾ and Presets ▾ open Slint menus through context_menu.rs (main.rs wires them).
     }
 
     pub fn is_open(&self) -> bool {
@@ -435,6 +527,9 @@ impl BatchRename {
         self.0.only_changed.set(false);
         self.0.shown_rule.set(None);
         self.0.reload_texts.set(true);
+        self.0.reading.set(false);
+        self.0.taken_ready.set(false);
+        self.0.opening.set(self.0.opening.get() + 1);
         *self.0.selection.borrow_mut() = Selection::new(count);
         self.0.shown.borrow_mut().clear();
         window.set_rb_scroll(0.0);
@@ -499,8 +594,23 @@ impl BatchRename {
         }
     }
 
+    /// New names for everything, the name field included.
     fn recompute(&self) {
-        self.0.rules.borrow_mut().recompute();
+        self.update();
+        self.show_name();
+    }
+
+    /// New names, rules and preview; the name field is left as typed.
+    fn update(&self) {
+        let needs_taken = {
+            let mut r = self.0.rules.borrow_mut();
+            r.recompute();
+            r.waiting = r.needs_taken && !self.0.taken_ready.get();
+            r.needs_taken
+        };
+        if needs_taken && self.0.open.get() {
+            self.read_taken();
+        }
         self.show_rules();
         self.refresh();
     }
@@ -526,6 +636,49 @@ impl BatchRename {
         window.set_rb_only_changed(only_changed);
     }
 
+    /// Reads the photo dates on another thread, once per opening; `{taken}` falls back to
+    /// the modified date (and Rename waits) until they are in.
+    fn read_taken(&self) {
+        if self.0.reading.replace(true) {
+            return;
+        }
+        let paths: Vec<(usize, PathBuf)> = {
+            let r = self.0.rules.borrow();
+            r.paths
+                .iter()
+                .enumerate()
+                .filter(|&(i, p)| {
+                    !r.items[i].is_dir
+                        && p.file_name().is_some_and(|n| gezik_batch::exif::may_have_exif(&n.to_string_lossy()))
+                })
+                .map(|(i, p)| (i, p.clone()))
+                .collect()
+        };
+        let opening = self.0.opening.get();
+        let weak = self.0.window.clone();
+        std::thread::spawn(move || {
+            let dates: Vec<(usize, DateParts)> =
+                paths.into_iter().filter_map(|(i, p)| gezik_batch::exif::taken(&p).map(|d| (i, d))).collect();
+            let _ = weak.upgrade_in_event_loop(move |_| {
+                with_current(|layer| {
+                    if layer.0.opening.get() != opening || !layer.is_open() {
+                        return;
+                    }
+                    {
+                        let mut r = layer.0.rules.borrow_mut();
+                        for (i, date) in dates {
+                            if let Some(item) = r.items.get_mut(i) {
+                                item.taken = Some(date);
+                            }
+                        }
+                    }
+                    layer.0.taken_ready.set(true);
+                    layer.recompute();
+                });
+            });
+        });
+    }
+
     fn pressed(&self, row: usize, ctrl: bool, shift: bool) {
         {
             let mut selection = self.0.selection.borrow_mut();
@@ -536,6 +689,51 @@ impl BatchRename {
             };
         }
         self.refresh();
+        self.show_name();
+    }
+
+    /// The row dragged by its handle from `from` to `to` (shown rows); it stays selected.
+    fn reorder(&self, from: usize, to: usize) {
+        let positions = {
+            let shown = self.0.shown.borrow();
+            shown.get(from).copied().zip(shown.get(to).copied())
+        };
+        let Some((from, to_position)) = positions else { return };
+        self.0.rules.borrow_mut().reorder(from, to_position);
+        self.0.selection.borrow_mut().select_only(to);
+        self.recompute();
+    }
+
+    /// Display positions of the selected rows (the focused one if none).
+    fn selected_positions(&self) -> Vec<usize> {
+        let shown = self.0.shown.borrow();
+        let selection = self.0.selection.borrow();
+        let mut rows: Vec<usize> = selection.iter().collect();
+        if rows.is_empty() {
+            rows.extend(selection.focus());
+        }
+        rows.into_iter().filter_map(|row| shown.get(row).copied()).collect()
+    }
+
+    fn focused_position(&self) -> Option<usize> {
+        let row = self.0.selection.borrow().focus()?;
+        self.0.shown.borrow().get(row).copied()
+    }
+
+    /// The name field shows the focused row's new name.
+    fn show_name(&self) {
+        let Some(window) = self.0.window.upgrade() else { return };
+        let r = self.0.rules.borrow();
+        match self.focused_position().and_then(|p| r.new.get(p)) {
+            Some(name) => {
+                window.set_rb_name_text(name.clone().into());
+                window.set_rb_name_enabled(true);
+            }
+            None => {
+                window.set_rb_name_text("".into());
+                window.set_rb_name_enabled(false);
+            }
+        }
     }
 
     fn rename(&self) {
@@ -553,22 +751,137 @@ impl BatchRename {
         self.0.ops.submit(Box::new(gezik_ops::RenameTask::many(pairs)), None, crate::operations::After::Select);
     }
 
-    /// A key that reached the layer's own focus scope; returns whether it was used.
+    /// A key that reached the layer's own focus scope (the preview, not a text field);
+    /// returns whether it was used.
     fn key(&self, text: &str, control: bool, alt: bool, shift: bool, meta: bool) -> bool {
         let platform = Platform::current();
-        crate::keys::chord_from_slint(text, control, alt, shift, meta, platform).is_some_and(|c| self.chord(&c))
+        crate::keys::chord_from_slint(text, control, alt, shift, meta, platform).is_some_and(|c| self.act(&c, true))
     }
 
     /// A key while the layer is open, wherever its focus is (main.rs sends every key here
     /// first, so Esc and Ctrl+Enter work in the option fields too); returns whether it was used.
     pub fn chord(&self, chord: &Chord) -> bool {
-        match key_action(chord, Platform::current()) {
-            Some(KeyAction::Close) => self.close(),
-            Some(KeyAction::Rename) => self.rename(),
-            None => return false,
+        self.act(chord, false)
+    }
+
+    fn act(&self, chord: &Chord, in_list: bool) -> bool {
+        let Some(action) = key_action(chord, Platform::current(), in_list) else { return false };
+        match action {
+            KeyAction::Close => self.close(),
+            KeyAction::Rename => self.rename(),
+            KeyAction::FocusName => {
+                if let Some(window) = self.0.window.upgrade() {
+                    window.invoke_rb_focus_name();
+                }
+            }
+            KeyAction::SelectAll => {
+                self.0.selection.borrow_mut().select_all();
+                self.refresh();
+                self.show_name();
+            }
+            KeyAction::Move(key) => {
+                self.move_focus(key, chord.shift, crate::keys::is_primary(chord, Platform::current()))
+            }
         }
         true
     }
+
+    /// Arrows, PgUp/PgDn, Home/End in the preview: Shift extends, the primary key only moves
+    /// the focus.
+    fn move_focus(&self, key: Key, shift: bool, primary: bool) {
+        let target = {
+            let len = self.0.shown.borrow().len();
+            if len == 0 {
+                return;
+            }
+            let mut selection = self.0.selection.borrow_mut();
+            let at = selection.focus().unwrap_or(0);
+            let target = match key {
+                Key::Up => at.saturating_sub(1),
+                Key::Down => (at + 1).min(len - 1),
+                Key::PageUp => at.saturating_sub(PAGE),
+                Key::PageDown => (at + PAGE).min(len - 1),
+                Key::Home => 0,
+                _ => len - 1,
+            };
+            if shift {
+                selection.extend_to(target, primary);
+            } else if primary {
+                selection.set_focus(target);
+            } else {
+                selection.select_only(target);
+            }
+            target
+        };
+        self.refresh();
+        self.show_name();
+        if let Some(window) = self.0.window.upgrade() {
+            window.invoke_rb_ensure_visible(i32::try_from(target).unwrap_or(0));
+        }
+    }
+
+    pub fn add_rule(&self, kind: &str) {
+        self.edit(|r| r.add_rule(kind), true);
+    }
+
+    pub fn apply_preset(&self, index: usize) {
+        let Some(preset) = PRESETS.with(|p| p.borrow().get(index).cloned()) else { return };
+        self.0.reload_texts.set(true);
+        self.edit(
+            |r| {
+                r.rules = preset.rules;
+                r.include_extension = preset.include_extension;
+                r.selected_rule = if r.rules.is_empty() { None } else { Some(0) };
+            },
+            true,
+        );
+    }
+
+    /// Asks for a name over the layer, then saves the current rules under it.
+    pub fn ask_preset_name(&self) {
+        let t = self.clone();
+        self.0.ops.ask_text("Save rules as", "Name for this set of rules:", move |name| t.save_preset(name));
+    }
+
+    fn save_preset(&self, name: String) {
+        let name = name.trim().to_owned();
+        if name.is_empty() {
+            return;
+        }
+        let state = self.state();
+        let mut presets = PRESETS.with(|p| p.borrow().clone());
+        let preset =
+            RenamePreset { name: name.clone(), include_extension: state.include_extension, rules: state.rules };
+        match presets.iter_mut().find(|p| p.name == name) {
+            Some(old) => *old = preset,
+            None => presets.push(preset),
+        }
+        self.write_presets(presets);
+    }
+
+    pub fn delete_preset(&self, index: usize) {
+        let mut presets = PRESETS.with(|p| p.borrow().clone());
+        if index < presets.len() {
+            presets.remove(index);
+            self.write_presets(presets);
+        }
+    }
+
+    fn write_presets(&self, presets: Vec<RenamePreset>) {
+        set_presets(presets.clone());
+        self.0.ops.save_rename_presets(&presets);
+    }
+}
+
+/// How many rows PgUp/PgDn move in the preview.
+const PAGE: usize = 10;
+
+/// The preview row under `y` (in the list's content), for a drag: clamped to the rows.
+pub fn drop_row(y: f32, row_height: f32, count: usize) -> usize {
+    if count == 0 || row_height <= 0.0 || y <= 0.0 {
+        return 0;
+    }
+    ((y / row_height) as usize).min(count - 1)
 }
 
 /// What a key does in the layer.
@@ -576,20 +889,41 @@ impl BatchRename {
 pub enum KeyAction {
     Close,
     Rename,
+    FocusName,
+    SelectAll,
+    /// Moves the preview's selection: an arrow, PgUp/PgDn, Home or End.
+    Move(Key),
 }
 
-/// Esc closes, Ctrl+Enter (Cmd on macOS) renames; other keys are for the fields and lists.
-pub fn key_action(chord: &Chord, platform: Platform) -> Option<KeyAction> {
+/// Esc closes, Ctrl+Enter (Cmd on macOS) renames and F2 goes to the name field wherever the
+/// focus is; `in_list` (the preview has the keyboard, not a text field): the arrows,
+/// PgUp/PgDn, Home/End and Ctrl+A act on the preview. Other keys are for the fields.
+pub fn key_action(chord: &Chord, platform: Platform, in_list: bool) -> Option<KeyAction> {
     let primary = crate::keys::is_primary(chord, platform);
     match chord.key {
         Key::Escape if !primary && !chord.shift => Some(KeyAction::Close),
         Key::Enter if primary => Some(KeyAction::Rename),
+        Key::F(2) if !primary && !chord.alt && !chord.shift => Some(KeyAction::FocusName),
+        Key::Char('a') if primary && in_list => Some(KeyAction::SelectAll),
+        Key::Up | Key::Down | Key::PageUp | Key::PageDown | Key::Home | Key::End if in_list && !chord.alt => {
+            Some(KeyAction::Move(chord.key))
+        }
         _ => None,
     }
 }
 
 thread_local! {
     static CURRENT: RefCell<Option<BatchRename>> = const { RefCell::new(None) };
+    static PRESETS: RefCell<Vec<RenamePreset>> = const { RefCell::new(Vec::new()) };
+}
+
+/// settings.toml changed: the saved sets.
+pub fn set_presets(presets: Vec<RenamePreset>) {
+    PRESETS.with(|p| *p.borrow_mut() = presets);
+}
+
+pub fn preset_names() -> Vec<String> {
+    PRESETS.with(|p| p.borrow().iter().map(|p| p.name.clone()).collect())
 }
 
 /// Runs `f` with this UI thread's batch rename layer, if set up.
@@ -663,14 +997,99 @@ mod tests {
     fn esc_closes_and_primary_enter_renames() {
         let chord = |key: Key, ctrl: bool, shift: bool, meta: bool| Chord { ctrl, alt: false, shift, meta, key };
         let other = Platform::Other;
-        assert_eq!(key_action(&chord(Key::Escape, false, false, false), other), Some(KeyAction::Close));
-        assert_eq!(key_action(&chord(Key::Escape, false, true, false), other), None);
-        assert_eq!(key_action(&chord(Key::Escape, true, false, false), other), None);
-        assert_eq!(key_action(&chord(Key::Enter, true, false, false), other), Some(KeyAction::Rename));
-        assert_eq!(key_action(&chord(Key::Enter, false, false, false), other), None, "plain Enter is the field's");
-        assert_eq!(key_action(&chord(Key::Char('a'), false, false, false), other), None);
-        assert_eq!(key_action(&chord(Key::Enter, false, false, true), Platform::Mac), Some(KeyAction::Rename));
-        assert_eq!(key_action(&chord(Key::Enter, true, false, false), Platform::Mac), None);
+        assert_eq!(key_action(&chord(Key::Escape, false, false, false), other, false), Some(KeyAction::Close));
+        assert_eq!(key_action(&chord(Key::Escape, false, true, false), other, false), None);
+        assert_eq!(key_action(&chord(Key::Escape, true, false, false), other, false), None);
+        assert_eq!(key_action(&chord(Key::Enter, true, false, false), other, false), Some(KeyAction::Rename));
+        let plain_enter = key_action(&chord(Key::Enter, false, false, false), other, true);
+        assert_eq!(plain_enter, None, "plain Enter is the field's");
+        assert_eq!(key_action(&chord(Key::Char('a'), false, false, false), other, true), None);
+        assert_eq!(key_action(&chord(Key::Enter, false, false, true), Platform::Mac, false), Some(KeyAction::Rename));
+        assert_eq!(key_action(&chord(Key::Enter, true, false, false), Platform::Mac, false), None);
+    }
+
+    #[test]
+    fn list_keys_act_only_on_the_preview() {
+        let chord = |key: Key, ctrl: bool, shift: bool| Chord { ctrl, alt: false, shift, meta: false, key };
+        let other = Platform::Other;
+        assert_eq!(key_action(&chord(Key::F(2), false, false), other, false), Some(KeyAction::FocusName));
+        assert_eq!(key_action(&chord(Key::F(2), false, false), other, true), Some(KeyAction::FocusName));
+        for key in [Key::Up, Key::Down, Key::PageUp, Key::PageDown, Key::Home, Key::End] {
+            assert_eq!(key_action(&chord(key, false, false), other, true), Some(KeyAction::Move(key)));
+            assert_eq!(key_action(&chord(key, false, true), other, true), Some(KeyAction::Move(key)));
+            assert_eq!(key_action(&chord(key, false, false), other, false), None, "{key:?} in a text field");
+        }
+        assert_eq!(key_action(&chord(Key::Char('a'), true, false), other, true), Some(KeyAction::SelectAll));
+        assert_eq!(key_action(&chord(Key::Char('a'), true, false), other, false), None, "Ctrl+A selects the text");
+    }
+
+    #[test]
+    fn numbers_follow_a_dragged_order() {
+        let mut m = model(&["a", "b", "c"], &[]);
+        m.add_rule("number");
+        m.set_text("digits", "1");
+        m.set_text("separator", "");
+        m.recompute();
+        assert_eq!(m.new, ["a1", "b2", "c3"]);
+        m.reorder(2, 0);
+        m.recompute();
+        assert_eq!(m.new, ["c1", "a2", "b3"]);
+        assert_eq!(m.pairs()[0], (PathBuf::from("/d/c"), PathBuf::from("/d/c1")));
+    }
+
+    #[test]
+    fn a_manual_name_wins_until_reset() {
+        let mut m = model(&["a.txt", "b.txt"], &[]);
+        m.add_rule("case");
+        m.set_mode(1);
+        m.recompute();
+        m.set_manual(1, "Kapak.txt");
+        m.recompute();
+        assert_eq!(m.new, ["A.txt", "Kapak.txt"]);
+        assert!(m.preview_row(1, false).unwrap().manual);
+        m.set_manual(1, "B.txt");
+        assert!(m.manual.is_empty(), "typing what the rules give is no manual name");
+        m.set_manual(1, "x.txt");
+        m.reset_manual(&[1]);
+        m.recompute();
+        assert_eq!(m.new[1], "B.txt");
+    }
+
+    #[test]
+    fn waits_for_photo_dates() {
+        let mut m = model(&["a.jpg"], &[]);
+        m.add_rule("template");
+        m.set_text("text", "{taken}");
+        m.waiting = true;
+        m.recompute();
+        assert!(!m.can_rename());
+        assert!(m.footer().starts_with("reading photo dates"), "{}", m.footer());
+    }
+
+    #[test]
+    fn sort_buttons_replace_a_dragged_order() {
+        let mut m = model(&["b10", "b9", "a"], &[]);
+        m.items[0].size = 5;
+        m.items[1].size = 1;
+        m.items[2].size = 3;
+        m.reorder(0, 2);
+        m.sort_order(0);
+        assert_eq!(m.order, [2, 1, 0], "natural order: b9 before b10");
+        m.sort_order(2);
+        assert_eq!(m.order, [1, 2, 0]);
+        m.reset_order();
+        assert_eq!(m.order, [0, 1, 2]);
+    }
+
+    #[test]
+    fn a_drop_row_is_clamped() {
+        assert_eq!(drop_row(-5.0, 24.0, 3), 0);
+        assert_eq!(drop_row(0.0, 24.0, 3), 0);
+        assert_eq!(drop_row(47.9, 24.0, 3), 1);
+        assert_eq!(drop_row(48.0, 24.0, 3), 2);
+        assert_eq!(drop_row(500.0, 24.0, 3), 2);
+        assert_eq!(drop_row(10.0, 24.0, 0), 0);
+        assert_eq!(drop_row(10.0, 0.0, 3), 0);
     }
 
     #[test]

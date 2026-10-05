@@ -58,6 +58,7 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
     keys::set_shortcuts(loaded.settings.shortcuts.clone());
     frame_limit::set_max_fps(loaded.settings.max_fps);
     operations::with_current(|ops| ops.set_files(loaded.settings.files));
+    batch_rename::set_presets(loaded.settings.rename_presets.clone());
     loaded
 }
 
@@ -580,6 +581,14 @@ fn main() -> Result<(), slint::PlatformError> {
     window.on_conflict_row_menu({
         let menus = menus.clone();
         move |row, x, y| menus.conflict(row, x, y)
+    });
+    window.on_rb_add_rule({
+        let menus = menus.clone();
+        move |x, y| menus.add_rule(x, y)
+    });
+    window.on_rb_presets({
+        let menus = menus.clone();
+        move |x, y| menus.presets(x, y)
     });
     // Slint passes indexes as `i32`: a negative one does nothing.
     window.on_tab_menu(move |i, x, y| {

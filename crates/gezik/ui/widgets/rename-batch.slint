@@ -124,6 +124,9 @@ export component RenameBatch inherits Rectangle {
     // The selected preview row's new name (Task 8 edits it).
     in-out property <string> name-text;
     in property <bool> name-enabled;
+    // A row dragged by its handle: where from and where it would land (-1: no drag).
+    property <int> drag-from: -1;
+    property <int> drag-to: -1;
 
     callback add-rule(length, length);
     callback select-rule(int);
@@ -144,6 +147,10 @@ export component RenameBatch inherits Rectangle {
     callback name-edited(string);
     callback name-reset();
     callback reorder(int, int);
+    // The row under `y` in the preview's content while dragging: (y, row height, row count).
+    pure callback drop-row(length, length, int) -> int;
+    // The sort buttons: 0 name, 1 date modified, 2 size.
+    callback sort(int);
     callback key(KeyEvent) -> bool;
 
     changed open => {
@@ -355,7 +362,11 @@ export component RenameBatch inherits Rectangle {
                     spacing: Theme.spacing;
                     HorizontalLayout {
                         spacing: Theme.spacing;
-                        Text { text: "Preview"; horizontal-stretch: 1; color: Theme.foreground-muted; }
+                        Text { text: "Preview"; horizontal-stretch: 1; color: Theme.foreground-muted; vertical-alignment: center; }
+                        Text { text: "Sort by"; color: Theme.foreground-muted; vertical-alignment: center; }
+                        TextButton { text: "Name"; clicked => { root.sort(0); } }
+                        TextButton { text: "Date"; clicked => { root.sort(1); } }
+                        TextButton { text: "Size"; clicked => { root.sort(2); } }
                         Check { text: "Only changed"; checked: root.only-changed; toggled => { root.toggle-only-changed(); } }
                     }
                     HorizontalLayout {
@@ -390,7 +401,7 @@ export component RenameBatch inherits Rectangle {
                             HorizontalLayout {
                                 padding-left: Theme.spacing;
                                 spacing: Theme.spacing * 2;
-                                // The drag handle (Task 8) and the row's mark.
+                                // The drag handle and the row's mark.
                                 handle := Rectangle {
                                     width: 14px;
                                     Text {
@@ -398,6 +409,23 @@ export component RenameBatch inherits Rectangle {
                                         color: row.status >= 2 ? Theme.danger : Theme.foreground-muted;
                                         vertical-alignment: center;
                                         height: parent.height;
+                                    }
+                                    TouchArea {
+                                        mouse-cursor: grab;
+                                        // `line.y` is in the list's content (the handle spans the row): no scroll to add.
+                                        moved => {
+                                            if self.pressed {
+                                                root.drag-to = root.drop-row(line.y + self.mouse-y, Theme.row-height, root.rows.length);
+                                                root.drag-from = i;
+                                            }
+                                        }
+                                        changed pressed => {
+                                            if !self.pressed && root.drag-from >= 0 {
+                                                if root.drag-to != root.drag-from { root.reorder(root.drag-from, root.drag-to); }
+                                                root.drag-from = -1;
+                                                root.drag-to = -1;
+                                            }
+                                        }
                                     }
                                 }
                                 Text {
@@ -415,6 +443,12 @@ export component RenameBatch inherits Rectangle {
                                     color: row.status >= 2 && !row.selected ? Theme.danger : line.fg;
                                     font-weight: row.status == 1 ? 600 : 400;
                                 }
+                            }
+                            // Where the dragged row lands.
+                            if root.drag-from >= 0 && root.drag-to == i && root.drag-to != root.drag-from: Rectangle {
+                                y: root.drag-to < root.drag-from ? 0 : parent.height - 2px;
+                                height: 2px;
+                                background: Theme.accent;
                             }
                         }
                     }

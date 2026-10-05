@@ -252,6 +252,8 @@ export component AppWindow inherits Window {
     callback rb-name-edited(string);
     callback rb-name-reset();
     callback rb-reorder(int, int);
+    pure callback rb-drop-row(length, length, int) -> int;
+    callback rb-sort(int);
     callback rb-key(KeyEvent) -> bool;
 
     public function rb-ensure-visible(index: int) {
@@ -267,6 +269,9 @@ export component AppWindow inherits Window {
     in property <string> dialog-message;
     in property <[string]> dialog-buttons;
     in property <int> dialog-escape;
+    // A question that asks for a text too (dialog.rs `ask_text`): the field and its text.
+    in property <bool> dialog-has-input;
+    in-out property <string> dialog-input;
     callback dialog-chosen(int);
     callback key-event(KeyEvent) -> bool;
 
@@ -727,6 +732,8 @@ export component AppWindow inherits Window {
             name-edited(t) => { root.rb-name-edited(t); }
             name-reset => { root.rb-name-reset(); }
             reorder(a, b) => { root.rb-reorder(a, b); }
+            drop-row(y, h, n) => { return root.rb-drop-row(y, h, n); }
+            sort(by) => { root.rb-sort(by); }
             key(event) => { return root.rb-key(event); }
         }
         // Always there (hidden when closed), so Rust can scroll it.
@@ -763,6 +770,8 @@ export component AppWindow inherits Window {
             message: root.dialog-message;
             buttons: root.dialog-buttons;
             escape: root.dialog-escape;
+            has-input: root.dialog-has-input;
+            input <=> root.dialog-input;
             chosen(i) => { root.dialog-chosen(i); }
         }
         // What is being dragged, just below and right of the pointer. Takes no input.

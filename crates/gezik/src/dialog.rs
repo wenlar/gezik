@@ -1,4 +1,4 @@
-//! One question at a time over the window: a title, a message and buttons.
+//! One question at a time over the window: a title, a message, buttons and maybe a text field.
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -16,6 +16,8 @@ struct Question {
     buttons: Vec<String>,
     /// The button Esc chooses.
     escape: usize,
+    /// The text field's first text; `None`: no field.
+    input: Option<String>,
     answer: Answer,
 }
 
@@ -65,7 +67,35 @@ impl Dialogs {
             message: message.into(),
             buttons: buttons.iter().map(|b| (*b).to_owned()).collect(),
             escape,
+            input: None,
             answer: Box::new(answer),
+        });
+        if self.0.open.borrow().is_none() {
+            self.show_next();
+        }
+    }
+
+    /// Asks for a text, starting from `initial`; `answer` gets it if the first button is
+    /// chosen (Enter), else `None` (Esc: the last button).
+    pub fn ask_text(
+        &self,
+        title: impl Into<String>,
+        message: impl Into<String>,
+        initial: impl Into<String>,
+        buttons: &[&str],
+        answer: impl FnOnce(Option<String>) + 'static,
+    ) {
+        let window = self.0.window.clone();
+        self.0.queue.borrow_mut().push_back(Question {
+            title: title.into(),
+            message: message.into(),
+            buttons: buttons.iter().map(|b| (*b).to_owned()).collect(),
+            escape: buttons.len().saturating_sub(1),
+            input: Some(initial.into()),
+            answer: Box::new(move |choice| {
+                let text = window.upgrade().map(|w| w.get_dialog_input().to_string());
+                answer(text.filter(|_| choice == Some(0)));
+            }),
         });
         if self.0.open.borrow().is_none() {
             self.show_next();
@@ -80,6 +110,8 @@ impl Dialogs {
                 window.set_dialog_title(question.title.into());
                 window.set_dialog_message(question.message.into());
                 window.set_dialog_escape(i32::try_from(question.escape).unwrap_or(0));
+                window.set_dialog_has_input(question.input.is_some());
+                window.set_dialog_input(question.input.unwrap_or_default().into());
                 let buttons: Vec<SharedString> = question.buttons.into_iter().map(Into::into).collect();
                 window.set_dialog_buttons(ModelRc::new(VecModel::from(buttons)));
                 *self.0.open.borrow_mut() = Some(question.answer);
