@@ -5,6 +5,8 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use gezik_batch::rename::{Item, Status, check, compile, new_names};
@@ -365,8 +367,9 @@ struct Inner {
     /// The photo dates are being read (or were) for this opening.
     reading: Cell<bool>,
     taken_ready: Cell<bool>,
-    /// Counts openings: dates read for an earlier one are dropped.
-    opening: Cell<u64>,
+    /// Counts openings and closings: dates read for an earlier opening are dropped, and the
+    /// reader stops once it changes.
+    opening: Arc<AtomicU64>,
     /// The display position whose name the name field shows.
     name_shown: Cell<Option<usize>>,
 }
@@ -530,7 +533,7 @@ impl BatchRename {
         self.0.reload_texts.set(true);
         self.0.reading.set(false);
         self.0.taken_ready.set(false);
-        self.0.opening.set(self.0.opening.get() + 1);
+        self.0.opening.fetch_add(1, Ordering::Relaxed);
         *self.0.selection.borrow_mut() = Selection::new(count);
         self.0.shown.borrow_mut().clear();
         window.set_rb_scroll(0.0);
@@ -541,6 +544,7 @@ impl BatchRename {
 
     pub fn close(&self) {
         self.0.open.set(false);
+        self.0.opening.fetch_add(1, Ordering::Relaxed);
         self.0.timer.stop();
         self.0.rows.clear();
         if let Some(window) = self.0.window.upgrade() {
@@ -655,14 +659,21 @@ impl BatchRename {
                 .map(|(i, p)| (i, p.clone()))
                 .collect()
         };
-        let opening = self.0.opening.get();
+        let counter = self.0.opening.clone();
+        let opening = counter.load(Ordering::Relaxed);
         let weak = self.0.window.clone();
         std::thread::spawn(move || {
-            let dates: Vec<(usize, DateParts)> =
-                paths.into_iter().filter_map(|(i, p)| gezik_batch::exif::taken(&p).map(|d| (i, d))).collect();
+            let mut dates: Vec<(usize, DateParts)> = Vec::new();
+            for (i, path) in paths {
+                // Closed or opened again: these dates are not wanted any more.
+                if counter.load(Ordering::Relaxed) != opening {
+                    return;
+                }
+                dates.extend(gezik_batch::exif::taken(&path).map(|d| (i, d)));
+            }
             let _ = weak.upgrade_in_event_loop(move |_| {
                 with_current(|layer| {
-                    if layer.0.opening.get() != opening || !layer.is_open() {
+                    if layer.0.opening.load(Ordering::Relaxed) != opening || !layer.is_open() {
                         return;
                     }
                     {
