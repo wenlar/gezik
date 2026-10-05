@@ -6,14 +6,14 @@ use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ::zip::result::ZipError;
-use ::zip::{DateTime, ExtraField, HasZipMetadata, ZipArchive};
+use ::zip::{CompressionMethod, DateTime, ExtraField, HasZipMetadata, ZipArchive};
 use gezik_core::batch::archive::safe_join;
 use gezik_core::batch::date::DateParts;
 
 use super::io::MultiFileReader;
 use super::{
     ArchiveSource, Entry, ExtractCx, IoResult, Links, Meta, Stop, Volumes, cancelled, dos_attributes, link_target,
-    local_time, make_dir, report, unix_time, unsafe_path, write_file,
+    local_time, make_dir, report, seven_zip_needed, unix_time, unsafe_path, write_file,
 };
 
 pub(super) struct ZipSource {
@@ -50,6 +50,17 @@ impl ArchiveSource for ZipSource {
         let mut entries = Vec::with_capacity(archive.len());
         for i in 0..archive.len() {
             let file = archive.by_index_raw(i)?;
+            // LZMA, zstd, xz, PPMd and older methods are not compiled in: 7-Zip reads them.
+            let known = matches!(
+                file.compression(),
+                CompressionMethod::Stored
+                    | CompressionMethod::Deflated
+                    | CompressionMethod::Deflate64
+                    | CompressionMethod::Bzip2
+            );
+            if !known && !file.is_dir() {
+                return Err(seven_zip_needed());
+            }
             entries.push(Entry {
                 name: file.name().to_owned(),
                 is_dir: file.is_dir(),

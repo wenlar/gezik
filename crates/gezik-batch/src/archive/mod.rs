@@ -51,6 +51,24 @@ pub trait ExtractCx {
     fn password(&self, retry: bool) -> Option<String>;
     /// An entry was skipped or failed; the rest goes on.
     fn entry_failed(&self, name: &str, error: &IoError);
+    /// An entry (or the whole archive) was left out on purpose: no password was given, or it
+    /// is a link Gezik does not make. Where nothing may be lost, it is a failure.
+    fn entry_skipped(&self, name: &str, why: &IoError) {
+        self.entry_failed(name, why);
+    }
+    /// What the header of the entry written at `path` says besides its data (an archive
+    /// packed again keeps it; Windows itself has no place for a Unix mode or owner).
+    fn entry_header(&self, _path: &Path, _header: &Header) {}
+}
+
+/// An entry's Unix facts as its archive keeps them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Header {
+    /// Permission bits (`0o7777` at most).
+    pub mode: Option<u32>,
+    pub modified: Option<SystemTime>,
+    /// tar only.
+    pub owner: Option<write::Owner>,
 }
 
 pub trait ArchiveSource {
@@ -140,7 +158,7 @@ impl Volumes {
 
     /// Reports that the archive was skipped for want of a password.
     fn no_password(&self, cx: &dyn ExtractCx) {
-        cx.entry_failed(&self.name, &IoError::new(ErrorKind::PermissionDenied, "no password"));
+        cx.entry_skipped(&self.name, &IoError::new(ErrorKind::PermissionDenied, "no password"));
     }
 }
 
@@ -180,6 +198,8 @@ enum Stop {
     Read(IoError),
     /// Only this entry: its name is unsafe, or writing it failed.
     Skip(IoError),
+    /// Only this entry, left out on purpose (a link on Windows).
+    Note(IoError),
 }
 
 fn cancelled() -> IoError {
@@ -324,6 +344,7 @@ fn report(name: &str, result: Result<bool, Stop>, cx: &dyn ExtractCx) -> IoResul
         Ok(false) => {}
         Err(Stop::Cancelled) => return Err(cancelled()),
         Err(Stop::Read(e) | Stop::Skip(e)) => cx.entry_failed(name, &e),
+        Err(Stop::Note(e)) => cx.entry_skipped(name, &e),
     }
     Ok(())
 }
@@ -350,7 +371,7 @@ impl Links {
     /// Keeps link `name` at `path` pointing to `target`; `Ok(false)` (done later) on Unix.
     fn add(&mut self, name: &str, path: PathBuf, target: String) -> Result<bool, Stop> {
         if cfg!(windows) {
-            return Err(Stop::Skip(IoError::new(ErrorKind::Unsupported, "symbolic link skipped")));
+            return Err(Stop::Note(IoError::new(ErrorKind::Unsupported, "symbolic link skipped")));
         }
         self.pending.push((name.to_owned(), path, target));
         Ok(false)
@@ -362,6 +383,7 @@ impl Links {
         for (name, path, target) in self.pending {
             match make_link(dest, &path, &target) {
                 Ok(()) => cx.entry_done(),
+                Err(e) if e.kind() == ErrorKind::PermissionDenied => cx.entry_skipped(&name, &e),
                 Err(e) => cx.entry_failed(&name, &e),
             }
         }
@@ -384,13 +406,19 @@ fn link_target(r: &mut dyn Read) -> Result<String, Stop> {
     String::from_utf8(target).map_err(|_| Stop::Skip(IoError::new(ErrorKind::InvalidData, "link target is not text")))
 }
 
-/// Makes link `path` → `target` only when that cannot lead outside `dest`: every folder on
-/// the way to it is a real folder (made by a regular entry; none is made here), and the
-/// target is relative with `..` only at its start, not climbing above `dest`. A target then
-/// starts from a real folder inside `dest` and only goes down, through links that themselves
-/// obey this rule.
+/// Makes link `path` → `target` only when that cannot lead outside `dest` (`check_link`).
 #[cfg(unix)]
 fn make_link(dest: &Path, path: &Path, target: &str) -> IoResult<()> {
+    check_link(dest, path, Path::new(target))?;
+    std::os::unix::fs::symlink(target, path)
+}
+
+/// Whether link `path` → `target` cannot lead outside `dest`: every folder on the way to it
+/// is a real folder (made by a regular entry; none is made here), and the target is relative
+/// with `..` only at its start, not climbing above `dest`. A target then starts from a real
+/// folder inside `dest` and only goes down, through links that themselves obey this rule.
+#[cfg(unix)]
+pub(crate) fn check_link(dest: &Path, path: &Path, target: &Path) -> IoResult<()> {
     use std::path::Component;
     let skipped = || IoError::new(ErrorKind::PermissionDenied, "symbolic link skipped");
     let folder = path.parent().and_then(|p| p.strip_prefix(dest).ok()).ok_or_else(skipped)?;
@@ -404,7 +432,7 @@ fn make_link(dest: &Path, path: &Path, target: &str) -> IoResult<()> {
     }
     let mut ups = 0;
     let mut down = false;
-    for part in Path::new(target).components() {
+    for part in target.components() {
         match part {
             Component::ParentDir if !down => ups += 1,
             Component::Normal(_) => down = true,
@@ -412,10 +440,10 @@ fn make_link(dest: &Path, path: &Path, target: &str) -> IoResult<()> {
             Component::ParentDir | Component::RootDir | Component::Prefix(_) => return Err(skipped()),
         }
     }
-    if target.is_empty() || ups > folder.components().count() {
+    if target.as_os_str().is_empty() || ups > folder.components().count() {
         return Err(skipped());
     }
-    std::os::unix::fs::symlink(target, path)
+    Ok(())
 }
 
 /// A tar hard link: a copy of the file `target` names, written earlier.

@@ -63,7 +63,9 @@ fn extract(
     finish(engine, job, on)
 }
 
-/// Runs `job` to the end; `on` returns true when it handled an event itself.
+/// Runs `job` to the end; `on` returns true when it handled an event itself. A pause (a
+/// full disk, many failures) cancels the job; one that does not end in time fails the test
+/// with the last events it sent.
 fn finish(engine: &Engine, job: JobId, mut on: impl FnMut(&Engine, JobId, &Event) -> bool) -> (Report, Vec<Event>) {
     let deadline = Instant::now() + Duration::from_secs(60);
     let mut seen = Vec::new();
@@ -74,7 +76,8 @@ fn finish(engine: &Engine, job: JobId, mut on: impl FnMut(&Engine, JobId, &Event
                 Event::Conflicts { job: j, conflicts } if *j == job && !handled => {
                     engine.decide(job, conflicts.iter().map(|c| c.decision).collect());
                 }
-                Event::Question { job: j, .. } if *j == job && !handled => engine.answer(job, Answer::Cancel),
+                Event::Question { job: j, id, .. } if *j == job && !handled => engine.answer(job, *id, Answer::Cancel),
+                Event::Paused { job: j, .. } if *j == job && !handled => engine.cancel(job),
                 Event::Finished { job: j, report } if *j == job => {
                     let report = report.clone();
                     seen.push(event);
@@ -84,7 +87,10 @@ fn finish(engine: &Engine, job: JobId, mut on: impl FnMut(&Engine, JobId, &Event
             }
             seen.push(event);
         }
-        assert!(Instant::now() < deadline, "job {job} did not finish");
+        if Instant::now() > deadline {
+            let last: Vec<&Event> = seen.iter().rev().take(20).collect();
+            panic!("job {job} did not finish in 60 s; its last events, newest first: {last:#?}");
+        }
         std::thread::sleep(Duration::from_millis(5));
     }
 }
@@ -227,10 +233,10 @@ fn password_question_flow() {
     let mut questions = Vec::new();
     let (report, _) =
         extract(&engine, vec![archive.clone()], ExtractTo::Smart(d.clone()), None, |engine, job, event| {
-            let Event::Question { question, .. } = event else { return false };
+            let Event::Question { id, question, .. } = event else { return false };
             questions.push(question.clone());
             let password = if questions.len() == 1 { "wrong" } else { "Passw0rd" };
-            engine.answer(job, Answer::Text(password.into()));
+            engine.answer(job, *id, Answer::Text(password.into()));
             true
         });
     assert!(report.failures.is_empty(), "{:?}", report.failures);
@@ -343,5 +349,129 @@ fn seven_zip_fallback() {
     }
     undo(&engine);
     assert!(!d.join("out/image").exists());
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// Makes `archive` from `files` (name, contents) with the installed 7-Zip and `switches`.
+fn seven_zip_archive(seven_zip: &Path, archive: &Path, files: &[(&str, &str)], switches: &[&str]) {
+    let src = archive.with_extension("src");
+    std::fs::create_dir_all(&src).unwrap();
+    for (name, data) in files {
+        std::fs::write(src.join(name), data).unwrap();
+    }
+    let status = std::process::Command::new(seven_zip)
+        .arg("a")
+        .args(switches)
+        .args(["-bso0", "-bsp0"])
+        .arg(archive)
+        .args(files.iter().map(|(name, _)| src.join(name)))
+        .status()
+        .unwrap();
+    assert!(status.success());
+    std::fs::remove_dir_all(&src).unwrap();
+}
+
+/// Listing without questions (no archive here is header-encrypted).
+struct Lister;
+
+impl gezik_batch::archive::ExtractCx for Lister {
+    fn add_bytes(&self, _: u64) {}
+    fn entry_done(&self) {}
+    fn stopped(&self) -> bool {
+        false
+    }
+    fn password(&self, _: bool) -> Option<String> {
+        None
+    }
+    fn entry_failed(&self, name: &str, error: &std::io::Error) {
+        panic!("{name}: {error}");
+    }
+}
+
+#[test]
+fn methods_gezik_cannot_decode_go_to_seven_zip() {
+    let Some(seven_zip) = installed_seven_zip() else {
+        eprintln!("methods_gezik_cannot_decode_go_to_seven_zip: no 7-Zip installed; skipped");
+        return;
+    };
+    let d = dir("methods");
+    // Long enough that 7-Zip does not just store them.
+    let (deflated, lzma_text) = ("deflated in a 7z ".repeat(100), "lzma in a zip ".repeat(100));
+    let deflate = d.join("deflate.7z");
+    seven_zip_archive(&seven_zip, &deflate, &[("d.txt", &deflated)], &["-t7z", "-m0=Deflate"]);
+    let lzma = d.join("lzma.zip");
+    seven_zip_archive(&seven_zip, &lzma, &[("l.txt", &lzma_text)], &["-tzip", "-mm=LZMA"]);
+    for archive in [&deflate, &lzma] {
+        // The reader alone says so when it opens or lists, before writing anything.
+        let listed = gezik_batch::archive::open(archive).and_then(|mut source| source.list(&Lister));
+        let err = listed.err().unwrap_or_else(|| panic!("{} was listed", archive.display()));
+        assert_eq!(err.kind(), std::io::ErrorKind::Unsupported, "{err}");
+        // Without 7-Zip the job says it is needed.
+        let engine = engine(&d);
+        let (report, _) = extract(&engine, vec![archive.clone()], ExtractTo::Into(d.join("none")), None, nothing);
+        assert_eq!(report.failures.len(), 1, "{:?}", report.failures);
+        assert!(report.failures[0].message.contains("7-Zip needed to open this kind of archive"), "{report:?}");
+    }
+    let engine = engine(&d);
+    let out = d.join("out");
+    std::fs::create_dir(&out).unwrap();
+    let (report, _) =
+        extract(&engine, vec![deflate, lzma], ExtractTo::Into(out.clone()), Some(seven_zip.clone()), nothing);
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    assert_eq!(read(&out.join("d.txt")), deflated);
+    assert_eq!(read(&out.join("l.txt")), lzma_text);
+    assert!(leftovers(&out).is_empty());
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn seven_zip_gets_the_password_on_its_input() {
+    let Some(seven_zip) = installed_seven_zip() else {
+        eprintln!("seven_zip_gets_the_password_on_its_input: no 7-Zip installed; skipped");
+        return;
+    };
+    let d = dir("seven-zip-password");
+    // AES with LZMA: only 7-Zip reads it.
+    let archive = d.join("secret.zip");
+    let secret = "secret data ".repeat(100);
+    seven_zip_archive(&seven_zip, &archive, &[("s.txt", &secret)], &["-tzip", "-mm=LZMA", "-mem=AES256", "-ppw"]);
+    let engine = engine(&d);
+    let mut questions = Vec::new();
+    let (report, _) = extract(
+        &engine,
+        vec![archive.clone()],
+        ExtractTo::Smart(d.clone()),
+        Some(seven_zip.clone()),
+        |engine, job, event| {
+            let Event::Question { id, question, .. } = event else { return false };
+            questions.push(question.clone());
+            let password = if questions.len() == 1 { "wrong" } else { "pw" };
+            engine.answer(job, *id, Answer::Text(password.into()));
+            true
+        },
+    );
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    assert_eq!(
+        questions,
+        [
+            Question::Password { archive: archive.clone(), retry: false },
+            Question::Password { archive: archive.clone(), retry: true },
+        ]
+    );
+    assert_eq!(read(&d.join("s.txt")), secret);
+
+    // Skip: a note, not a failure, and nothing lands.
+    std::fs::remove_file(d.join("s.txt")).unwrap();
+    let (report, _) =
+        extract(&engine, vec![archive.clone()], ExtractTo::Smart(d.clone()), Some(seven_zip), |engine, job, event| {
+            let Event::Question { id, .. } = event else { return false };
+            engine.answer(job, *id, Answer::Button(1));
+            true
+        });
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    assert_eq!(report.skipped.len(), 1, "{report:?}");
+    assert_eq!(report.skipped[0].path, archive);
+    assert!(!d.join("s.txt").exists());
+    assert!(leftovers(&d).is_empty(), "{:?}", leftovers(&d));
     let _ = std::fs::remove_dir_all(&d);
 }

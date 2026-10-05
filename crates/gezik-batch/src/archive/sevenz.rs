@@ -9,8 +9,8 @@ use gezik_core::batch::archive::safe_join;
 use sevenz_rust2::{Archive, ArchiveEntry, ArchiveReader, EncoderMethod, Error as SzError, Password};
 
 use super::{
-    ArchiveSource, BUF, Entry, ExtractCx, IoResult, Links, Meta, Stop, Volumes, cancelled, dos_attributes, link_target,
-    make_dir, unsafe_path, write_file,
+    ArchiveSource, BUF, Entry, ExtractCx, Header, IoResult, Links, Meta, Stop, Volumes, cancelled, dos_attributes,
+    link_target, make_dir, seven_zip_needed, unsafe_path, write_file,
 };
 
 pub(super) struct SevenZSource {
@@ -28,7 +28,7 @@ pub(super) struct SevenZSource {
 impl SevenZSource {
     pub(super) fn open(volumes: Volumes) -> IoResult<SevenZSource> {
         let archive = match Archive::read(&mut volumes.reader()?, &Password::empty()) {
-            Ok(archive) => Some(archive),
+            Ok(archive) => Some(decodable(archive)?),
             Err(SzError::PasswordRequired) => None,
             Err(e) => return Err(sz_error(e)),
         };
@@ -53,7 +53,7 @@ impl SevenZSource {
             let password = Password::new(self.password.as_deref().unwrap_or_default());
             match Archive::read(&mut self.volumes.reader()?, &password) {
                 Ok(archive) => {
-                    self.archive = Some(archive);
+                    self.archive = Some(decodable(archive)?);
                     self.header_password = true;
                 }
                 Err(SzError::MaybeBadPassword(_) | SzError::PasswordRequired) => retry = true,
@@ -142,6 +142,7 @@ impl ArchiveSource for SevenZSource {
                     // Before any entry decoded in full, bad data means a wrong password.
                     Err(Stop::Read(error)) if !confirmed => return Err(SzError::MaybeBadPassword(error)),
                     Err(Stop::Read(error) | Stop::Skip(error)) => cx.entry_failed(e.name(), &error),
+                    Err(Stop::Note(error)) => cx.entry_skipped(e.name(), &error),
                 }
                 done = seen;
                 Ok(true)
@@ -162,22 +163,55 @@ impl ArchiveSource for SevenZSource {
 /// Writes one entry; `Ok(false)` for a link made later.
 fn entry(e: &ArchiveEntry, r: &mut dyn Read, dest: &Path, links: &mut Links, cx: &dyn ExtractCx) -> Result<bool, Stop> {
     let path = safe_join(dest, e.name()).ok_or_else(|| Stop::Skip(unsafe_path()))?;
-    if e.is_directory() {
-        return make_dir(&path).map(|()| true);
-    }
     let attributes = e.has_windows_attributes.then_some(e.windows_attributes());
     // 7-Zip keeps a Unix mode in the high half, flagged by 0x8000.
     let mode = attributes.filter(|a| a & 0x8000 != 0).map(|a| a >> 16);
+    let modified = e.has_last_modified_date.then(|| e.last_modified_date().into());
+    cx.entry_header(&path, &Header { mode: mode.map(|m| m & 0o7777), modified, owner: None });
+    if e.is_directory() {
+        return make_dir(&path).map(|()| true);
+    }
     if mode.is_some_and(|m| m & 0o170000 == 0o120000) {
         let target = link_target(r)?;
         return links.add(e.name(), path, target);
     }
-    let meta = Meta {
-        modified: e.has_last_modified_date.then(|| e.last_modified_date().into()),
-        mode,
-        attributes: attributes.map(dos_attributes),
-    };
+    let meta = Meta { modified, mode, attributes: attributes.map(dos_attributes) };
     write_file(r, &path, Some(e.size()), &meta, cx).map(|()| true)
+}
+
+/// `archive` if Gezik decodes every method of it, else "7-Zip needed": the job then hands
+/// the archive to 7-Zip before writing anything (sevenz's Deflate, zstd, brotli, lz4 and BCJ2
+/// are not compiled in).
+fn decodable(archive: Archive) -> IoResult<Archive> {
+    let known = |coder: &sevenz_rust2::Coder| {
+        let id = coder.encoder_method_id();
+        let filter = [
+            EncoderMethod::ID_BCJ_X86,
+            EncoderMethod::ID_BCJ_PPC,
+            EncoderMethod::ID_BCJ_IA64,
+            EncoderMethod::ID_BCJ_ARM,
+            EncoderMethod::ID_BCJ_ARM64,
+            EncoderMethod::ID_BCJ_ARM_THUMB,
+            EncoderMethod::ID_BCJ_SPARC,
+            EncoderMethod::ID_BCJ_RISCV,
+        ];
+        let method = [
+            EncoderMethod::ID_COPY,
+            EncoderMethod::ID_DELTA,
+            EncoderMethod::ID_LZMA,
+            EncoderMethod::ID_LZMA2,
+            EncoderMethod::ID_PPMD,
+            EncoderMethod::ID_BZIP2,
+            EncoderMethod::ID_AES256_SHA256,
+        ];
+        // A branch filter's start offset (rare) is not read by the crate.
+        method.contains(&id) || (filter.contains(&id) && coder.properties().is_empty())
+    };
+    if archive.blocks.iter().all(|block| block.coders.iter().all(known)) {
+        Ok(archive)
+    } else {
+        Err(seven_zip_needed())
+    }
 }
 
 /// Whether block `b` is AES-encrypted.

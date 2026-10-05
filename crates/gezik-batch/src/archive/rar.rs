@@ -135,7 +135,7 @@ impl RarSource {
                 // UnRAR resolves a hard link's or a copy's source itself, from a name in the
                 // archive that can lead anywhere (outside the stage, too): never let it.
                 Some(_) if matches!(redirect, Redirect::HardLink | Redirect::FileCopy | Redirect::Unknown(_)) => {
-                    cx.entry_failed(&name, &IoError::new(ErrorKind::Unsupported, "link or copy entry skipped"));
+                    cx.entry_skipped(&name, &IoError::new(ErrorKind::Unsupported, "link or copy entry skipped"));
                     header.skip()
                 }
                 // Symbolic links and junctions go through `Links` and its rules.

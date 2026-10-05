@@ -1,10 +1,11 @@
 //! Adding files to an existing zip, 7z or tar archive. The archive is written anew under a
 //! temporary name (zip: the entries there copied as they are; 7z and tar: unpacked into a
-//! staging folder and packed again), then the old one goes to the trash and the new one takes
-//! its name, so undo brings the old one back.
+//! staging folder and packed again, with each entry's Unix mode, time and owner as the
+//! archive had them), then the old one steps aside, the new one takes its name and the old one
+//! goes to the trash, so undo brings the old one back.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{self, BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -17,9 +18,10 @@ use gezik_ops::{
 use zip::ZipArchive;
 use zip::result::ZipError;
 
+use super::compress::{keep_aside, out_of_the_way};
 use super::{Writing, cancelled, file_name, what, workers};
 use crate::archive::write::{self, CompressOptions, Input, InputKind, Level, OutFormat};
-use crate::archive::{self, ExtractCx};
+use crate::archive::{self, ExtractCx, Header};
 
 /// The archives Gezik can add to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -130,6 +132,7 @@ impl AddToArchiveTask {
             used: RefCell::new(None),
             declined: Cell::new(false),
             failed: Cell::new(false),
+            headers: RefCell::new(HashMap::new()),
         };
         archive::open(&self.archive)?.extract(&content, &unpack)?;
         if unpack.declined.get() {
@@ -146,6 +149,18 @@ impl AddToArchiveTask {
             std::fs::read_dir(&content)?.map(|e| e.map(|e| e.path())).collect::<Result<_, _>>()?;
         children.sort();
         let mut old = write::collect(&children, false, &mut |path, err| run.fail(path, &err));
+        // What the disk could not keep (a Unix mode on Windows, the owner) comes from the archive.
+        let headers = unpack.headers.take();
+        for input in &mut old {
+            if let Some(header) = headers.get(&input.path) {
+                if let Some(mode) = header.mode {
+                    input.mode = mode;
+                    input.keep_mode = true;
+                }
+                input.modified = header.modified.or(input.modified);
+                input.owner = header.owner.clone();
+            }
+        }
         let mut names = Names::default();
         for input in &old {
             let set = if input.kind == InputKind::Dir { &mut names.dirs } else { &mut names.files };
@@ -189,38 +204,37 @@ impl AddToArchiveTask {
         Ok(true)
     }
 
-    /// The old archive to the trash, the new one (at `temp`) in its place.
+    /// The new archive (at `temp`) in the old one's place, as compressing replaces: the old one
+    /// first steps aside under a noted name (if Gezik stops meanwhile, the next start puts it
+    /// back), the new one takes its name, then the old one goes to the trash. If the new one
+    /// cannot land, the old one comes back.
     fn replace(&self, temp: &Path, run: &RunCx<'_>) -> io::Result<Outcome> {
         let archive = &self.archive;
-        let mut outcomes = Vec::new();
-        match gezik_ops::trash_path(archive) {
-            Ok(trashed) => outcomes.push(Outcome::Trashed { original: archive.clone(), trashed }),
-            // Deleted for good instead (too large for the trash): the new one still goes there.
-            Err(_) if std::fs::symlink_metadata(archive).is_err() => {
-                outcomes.push(Outcome::Deleted { path: archive.clone() });
-            }
-            Err(err) => {
-                let _ = std::fs::remove_file(temp);
-                return Err(err);
-            }
+        let aside = run.aside_name(archive);
+        run.note_aside(&[(aside.clone(), archive.clone())]);
+        if let Err(err) = gezik_platform::fs::move_entry(archive, &aside) {
+            run.forget_aside(&[&aside]);
+            let _ = std::fs::remove_file(temp);
+            return Err(err);
         }
         if let Err(err) = gezik_platform::fs::move_entry(temp, archive) {
-            // The old one is in the trash (undo brings it back); the new one is kept beside it.
-            let folder = archive.parent().unwrap_or(Path::new(""));
-            let free = next_free(&file_name(archive), false, |name| folder.join(name).symlink_metadata().is_ok());
-            let kept = folder.join(free);
-            match gezik_platform::fs::move_entry(temp, &kept) {
-                Ok(()) => {
-                    let message = format!("{err}; the new archive was kept as {}", file_name(&kept));
-                    run.fail(archive, &io::Error::new(err.kind(), message));
-                    outcomes.push(Outcome::Created { facts: facts_after(&kept, false), path: kept, from: None });
-                }
-                Err(_) => {
-                    let _ = std::fs::remove_file(temp);
-                    run.fail(archive, &err);
+            let _ = std::fs::remove_file(temp);
+            match gezik_platform::fs::move_entry(&aside, archive) {
+                Ok(()) => run.forget_aside(&[&aside]),
+                Err(back) => {
+                    let message = format!("{back}; it is at {}", aside.display());
+                    run.fail(archive, &io::Error::new(back.kind(), message));
                 }
             }
-            return Ok(Outcome::Several(outcomes));
+            return Err(err);
+        }
+        let mut outcomes = Vec::new();
+        match out_of_the_way(archive, &aside, run) {
+            Ok(outcome) => {
+                outcomes.push(outcome);
+                run.forget_aside(&[&aside]);
+            }
+            Err(err) => keep_aside(archive, &aside, &err, run),
         }
         outcomes.push(Outcome::Created { path: archive.clone(), facts: facts_after(archive, false), from: None });
         Ok(Outcome::Several(outcomes))
@@ -391,6 +405,8 @@ struct Unpack<'a, 'r> {
     used: RefCell<Option<String>>,
     declined: Cell<bool>,
     failed: Cell<bool>,
+    /// Each unpacked entry's header, by where it was written.
+    headers: RefCell<HashMap<PathBuf, Header>>,
 }
 
 impl ExtractCx for Unpack<'_, '_> {
@@ -420,5 +436,9 @@ impl ExtractCx for Unpack<'_, '_> {
         self.failed.set(true);
         let path = if name == file_name(self.archive) { self.archive.to_path_buf() } else { self.archive.join(name) };
         self.run.fail(&path, error);
+    }
+
+    fn entry_header(&self, path: &Path, header: &Header) {
+        self.headers.borrow_mut().insert(path.to_path_buf(), header.clone());
     }
 }

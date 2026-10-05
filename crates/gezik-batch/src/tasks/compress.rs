@@ -124,7 +124,7 @@ fn put_back(aside: &[(PathBuf, PathBuf)], run: &RunCx<'_>) {
 
 /// An older part (set aside at `temp`) to the trash, recorded under its own name so undo puts
 /// it back there; deleted on a drive without a trash (as the engine's "Replace" does).
-fn out_of_the_way(old: &Path, temp: &Path, run: &RunCx<'_>) -> io::Result<Outcome> {
+pub(super) fn out_of_the_way(old: &Path, temp: &Path, run: &RunCx<'_>) -> io::Result<Outcome> {
     if run.has_trash(old) {
         let trashed = gezik_ops::trash_path(temp)?;
         return Ok(Outcome::Trashed { original: old.to_path_buf(), trashed });
@@ -133,17 +133,18 @@ fn out_of_the_way(old: &Path, temp: &Path, run: &RunCx<'_>) -> io::Result<Outcom
     Ok(Outcome::Deleted { path: old.to_path_buf() })
 }
 
-/// An older part that could not go to the trash stays, under a free name next to the new set.
-fn keep_aside(old: &Path, temp: &Path, err: &io::Error, run: &RunCx<'_>) {
+/// An older part (or archive) that could not go to the trash stays, under a free name next to
+/// the new one.
+pub(super) fn keep_aside(old: &Path, temp: &Path, err: &io::Error, run: &RunCx<'_>) {
     let folder = old.parent().unwrap_or(Path::new(""));
     let free = next_free(&file_name(old), false, |name| folder.join(name).symlink_metadata().is_ok());
     let kept = folder.join(free);
     let message = match gezik_platform::fs::move_entry(temp, &kept) {
         Ok(()) => {
             run.forget_aside(&[temp]);
-            format!("{err}; the old part was kept as {}", file_name(&kept))
+            format!("{err}; the old one was kept as {}", file_name(&kept))
         }
-        Err(_) => format!("{err}; the old part is at {}", temp.display()),
+        Err(_) => format!("{err}; the old one is at {}", temp.display()),
     };
     run.fail(old, &io::Error::new(err.kind(), message));
 }
@@ -257,17 +258,24 @@ impl Task for CompressTask {
         let first = item.target.clone().unwrap_or_else(|| self.first());
         let target = if self.options.split.is_some() { strip_part(&first) } else { first.clone() };
         let inputs = write::inputs(&self.sources, &mut |path, err| run.fail(path, &err));
-        run.found(inputs.len() as u64, inputs.iter().map(write::Input::size).sum());
+        let total: u64 = inputs.iter().map(write::Input::size).sum();
+        // Finishing (the last block, the header, moving the parts in) counts as one more item
+        // of 2 % of the bytes: the bar stays short of 100 % until the archive is in place.
+        let finishing = total / 50 + 1;
+        run.found(inputs.len() as u64 + 1, total + finishing);
         let temp = run.temp_file_for(&target);
         let written = write::write(&inputs, &temp, &self.options, workers(), &Writing::new(run))?;
-        if self.options.split.is_some() {
-            return self.place_parts(&written, &first, run);
-        }
-        if let Err(err) = gezik_platform::fs::move_entry(&temp, &target) {
-            let _ = std::fs::remove_file(&temp);
-            return Err(err);
-        }
-        Ok(Outcome::Created { path: target.clone(), facts: facts_after(&target, false), from: None })
+        let outcome = if self.options.split.is_some() {
+            self.place_parts(&written, &first, run)?
+        } else {
+            if let Err(err) = gezik_platform::fs::move_entry(&temp, &target) {
+                let _ = std::fs::remove_file(&temp);
+                return Err(err);
+            }
+            Outcome::Created { path: target.clone(), facts: facts_after(&target, false), from: None }
+        };
+        run.one_done(finishing);
+        Ok(outcome)
     }
 }
 

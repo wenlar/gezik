@@ -9,9 +9,10 @@ use ::tar::{Archive, EntryType};
 use gezik_core::batch::archive::{Codec, safe_join};
 
 use super::io::decoder;
+use super::write::Owner;
 use super::{
-    ArchiveSource, Entry, ExtractCx, IoError, IoResult, Links, Meta, Stop, Volumes, cancelled, copy_of, damaged,
-    is_top, link_target_of, make_dir, report_stream, unix_time, unsafe_path, write_file,
+    ArchiveSource, Entry, ExtractCx, Header, IoError, IoResult, Links, Meta, Stop, Volumes, cancelled, copy_of,
+    damaged, is_top, link_target_of, make_dir, report_stream, unix_time, unsafe_path, write_file,
 };
 
 pub(super) struct TarSource {
@@ -61,6 +62,14 @@ pub(super) fn extract_tar(r: impl Read, dest: &Path, cx: &dyn ExtractCx) -> IoRe
             mode: header.mode().ok(),
             attributes: None,
         };
+        let owner = Owner {
+            uid: header.uid().unwrap_or(0),
+            gid: header.gid().unwrap_or(0),
+            user: header.username().ok().flatten().map(str::to_owned),
+            group: header.groupname().ok().flatten().map(str::to_owned),
+        };
+        let facts = Header { mode: meta.mode.map(|m| m & 0o7777), modified: meta.modified, owner: Some(owner) };
+        cx.entry_header(&path, &facts);
         let link = entry.link_name_bytes().map(|target| String::from_utf8_lossy(&target).into_owned());
         let size = entry.size();
         let result = match kind {

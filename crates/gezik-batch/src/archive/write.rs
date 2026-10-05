@@ -105,6 +105,20 @@ pub struct Input {
     /// Unix permission bits (on Windows from the read-only flag).
     pub mode: u32,
     pub read_only: bool,
+    /// `mode` is a real Unix mode though Gezik runs on Windows (an entry of an archive being
+    /// packed again): 7z keeps it too.
+    pub keep_mode: bool,
+    /// Who owned it in the archive it came from (tar keeps it).
+    pub owner: Option<Owner>,
+}
+
+/// A tar entry's owner.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Owner {
+    pub uid: u64,
+    pub gid: u64,
+    pub user: Option<String>,
+    pub group: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -211,6 +225,8 @@ fn add(path: &Path, parent: &Path, skip_ours: bool, out: &mut Vec<Input>, failed
         modified: meta.modified().ok(),
         mode: mode_of(&meta),
         read_only,
+        keep_mode: false,
+        owner: None,
     });
     if !is_dir {
         return;
@@ -785,7 +801,7 @@ fn sz_entry(input: &Input, is_dir: bool) -> ArchiveEntry {
     if input.read_only {
         attributes |= 1;
     }
-    if cfg!(unix) {
+    if cfg!(unix) || input.keep_mode {
         let kind = if is_dir { 0o040000 } else { 0o100000 };
         attributes |= 0x8000 | ((kind | input.mode) << 16);
     }
@@ -893,6 +909,17 @@ fn tar_into(w: &mut dyn Write, inputs: &[Input], cx: &dyn WriteCx) -> io::Result
         let mut header = tar::Header::new_gnu();
         header.set_mtime(unix_secs(input.modified));
         header.set_mode(input.mode);
+        if let Some(owner) = &input.owner {
+            header.set_uid(owner.uid);
+            header.set_gid(owner.gid);
+            // A name too long for the header is left out; the number stays.
+            if let Some(user) = &owner.user {
+                let _ = header.set_username(user);
+            }
+            if let Some(group) = &owner.group {
+                let _ = header.set_groupname(group);
+            }
+        }
         match &input.kind {
             InputKind::Dir => {
                 header.set_entry_type(tar::EntryType::Directory);

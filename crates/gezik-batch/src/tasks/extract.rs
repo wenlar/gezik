@@ -116,22 +116,24 @@ impl Task for ExtractTask {
     }
 
     fn run(&self, _item: &PlanItem, run: &RunCx<'_>) -> io::Result<Outcome> {
+        // A format, or a method inside a known format, that only 7-Zip reads: found when the
+        // archive is opened or listed, before anything is written.
+        let only_seven_zip = |err: &io::Error| err.kind() == io::ErrorKind::Unsupported;
         let content = match archive::open(&self.archive) {
             Ok(mut source) => {
                 let cx = Adapter { run, archive: &self.archive, counting: false.into() };
-                if !self.check(source.as_mut(), run, &cx)? {
-                    return Ok(Outcome::Nothing);
+                match self.check(source.as_mut(), run, &cx) {
+                    Ok(true) => {
+                        let content = self.content_dir(run)?;
+                        source.extract(&content, &cx)?;
+                        content
+                    }
+                    Ok(false) => return Ok(Outcome::Nothing),
+                    Err(err) if only_seven_zip(&err) => self.with_seven_zip(run)?,
+                    Err(err) => return Err(err),
                 }
-                let content = self.content_dir(run)?;
-                source.extract(&content, &cx)?;
-                content
             }
-            Err(err) if err.kind() == io::ErrorKind::Unsupported => {
-                let Some(seven_zip) = &self.seven_zip else { return Err(seven_zip_needed()) };
-                let content = self.content_dir(run)?;
-                external::extract(seven_zip, &self.archive, &content, run)?;
-                content
-            }
+            Err(err) if only_seven_zip(&err) => self.with_seven_zip(run)?,
             Err(err) => return Err(err),
         };
         *self.stage.lock().unwrap_or_else(|e| e.into_inner()) = Some(content);
@@ -141,6 +143,14 @@ impl Task for ExtractTask {
 }
 
 impl ExtractTask {
+    /// Extracts with 7-Zip into a fresh staging folder; "7-Zip needed" when there is none.
+    fn with_seven_zip(&self, run: &RunCx<'_>) -> io::Result<PathBuf> {
+        let Some(seven_zip) = &self.seven_zip else { return Err(seven_zip_needed()) };
+        let content = self.content_dir(run)?;
+        external::extract(seven_zip, &self.archive, &content, run)?;
+        Ok(content)
+    }
+
     /// A fresh staging folder in the target folder, and the folder for the entries in it.
     fn content_dir(&self, run: &RunCx<'_>) -> io::Result<PathBuf> {
         let stage = run.staging_dir(&self.dir.join(CONTENT))?;
@@ -181,9 +191,19 @@ impl ExtractCx for Adapter<'_, '_> {
     }
 
     fn entry_failed(&self, name: &str, error: &io::Error) {
-        // The archive itself (skipped for want of a password), or an entry inside it.
-        let path = if name == file_name(self.archive) { self.archive.to_path_buf() } else { self.archive.join(name) };
-        self.run.fail(&path, error);
+        self.run.fail(&self.path(name), error);
         self.entry_done();
+    }
+
+    fn entry_skipped(&self, name: &str, why: &io::Error) {
+        self.run.skip(&self.path(name), why);
+        self.entry_done();
+    }
+}
+
+impl Adapter<'_, '_> {
+    /// The archive itself (skipped for want of a password), or an entry inside it.
+    fn path(&self, name: &str) -> PathBuf {
+        if name == file_name(self.archive) { self.archive.to_path_buf() } else { self.archive.join(name) }
     }
 }
