@@ -70,7 +70,7 @@ Alt proje 1 tamamlandıktan sonra bilerek ertelenen maddeler. Kaynak: görev inc
 
 ## Dosya işlemleri 4a sonrası (2026-10-05)
 
-- Linux'ta sistem panosu yok (Gezik içi pano); X11/Wayland altyapısıyla birlikte 4b'de.
+- Linux'ta sistem panosu yok (Gezik içi pano); X11/Wayland altyapısıyla birlikte 4b'de. (2026-10-05: 4b kapsamına alındı; spec bölüm 8 ve 13.)
 - macOS/Linux kodu (kopyalama, çöp, pano, sürücü türü) bu makinede çalıştırılmadı; `cargo check -p gezik-core -p gezik-platform -p gezik-ops --target` sonucu: x86_64-unknown-linux-gnu ve aarch64-apple-darwin için derlendi (yalnız iki uyarı düzeltildi: kullanılmayan `DirBuilderExt` içe aktarımı, Windows dışında kullanılmayan `icons.rs` yardımcıları).
 - macOS ve Linux'ta `drive_facts().trash` her zaman true: çöpü olmayan bir sürücüde çöpe atma sistemden hata alır ve öğe başarısız sayılır (Windows'taki gibi "kalıcı silinsin mi?" sorusu gelmez).
 - Tarama tek iş parçacığında (`read_dir`); 100 bin öğe ön tarama süresi: ölçülmedi.

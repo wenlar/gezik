@@ -2,7 +2,7 @@
 
 - **Tarih:** 2026-10-04
 - **Durum:** İncelemede
-- **Kapsam:** Gezik yol haritasının 4. alt projesi; iki plan ve iki PR: **4a** (motor ve işlemler), **4b** (sürükle-bırak)
+- **Kapsam:** Gezik yol haritasının 4. alt projesi; iki plan ve iki PR: **4a** (motor ve işlemler), **4b** (sürükle-bırak ve Linux sistem panosu)
 - **Dayandığı:** `2026-10-03-ayarlar-ve-tema-design.md` (ayar dosyası, tema, kısayol biçimi), `2026-10-04-gezinme-design.md` (sekmeler, Shell menüsü), `2026-10-04-gorunum-design.md` (çoklu seçim, `EntryModel`, ızgara)
 
 ## 1. Amaç
@@ -266,6 +266,8 @@ Yeni bir özellik yeni bir `Task` demektir; kuyruk, panel, çakışma listesi, i
 
 macOS ve Linux pano kodu bu geliştirme makinesinde çalıştırılamaz; "denenmedi" olarak takip notuna yazılır.
 
+- **Linux 4b'de (2026-10-05 kararı):** 4a'da Linux'ta yalnız Gezik içi pano vardır. Sistem panosu (X11 seçim sahipliği, Wayland `data-control` ya da odaklıyken `wl_data_device`; yukarıdaki biçimler) 4b'de, sürükle-bırak için kurulan X11/Wayland bağlantısıyla gelir.
+
 ## 9. Sürükle-bırak (4b)
 
 ### 9.1 Davranış
@@ -380,7 +382,7 @@ Kopyalamanın ilerleme ve iptali, POSIX silme, disk türü/kimliği, çöp deste
 ## 13. Bölme: 4a ve 4b
 
 - **4a — Motor ve işlemler:** bölüm 3–8, 10–12 (sürükle-bırak hariç). Tek başına kullanılabilir.
-- **4b — Sürükle-bırak:** bölüm 9; 4a'nın motorunu, `Task`'larını ve platform veri nesnelerini (pano için kurulan `SHCreateDataObject` yolu) kullanır.
+- **4b — Sürükle-bırak ve Linux sistem panosu:** bölüm 9 ve bölüm 8'in Linux satırı; 4a'nın motorunu, `Task`'larını ve platform veri nesnelerini (pano için kurulan `SHCreateDataObject` yolu) kullanır. Üç sistemde de tam (2026-10-05 kararı): Windows burada denenir, macOS/Linux derlenir ve "denenmedi" işaretlenir; bölüm 9.2'deki yedek yol yalnız bir sistemde yol tıkanırsa kullanılır.
 
 ## 14. Yol haritasındaki yeri
 
@@ -389,7 +391,7 @@ Kopyalamanın ilerleme ve iptali, POSIX silme, disk türü/kimliği, çöp deste
 | 1 | Ayarlar + Tema sistemi — tamamlandı |
 | 2 | Gezinme — tamamlandı |
 | 3 | Görünüm — tamamlandı |
-| **4** | **Dosya işlemleri (bu belge): 4a motor ve işlemler, 4b sürükle-bırak** |
+| **4** | **Dosya işlemleri (bu belge): 4a motor ve işlemler, 4b sürükle-bırak ve Linux sistem panosu** |
 | 5 | Toplu işlemler: toplu yeniden adlandırma, dönüştürme (resim, metin kodlaması/satır sonu, ffmpeg ile ses/video, kullanıcı komutu), arşiv oluşturma ve açma (zip, 7z, gzip/tar) |
 | 6 | Etiketler |
 | 7 | Taşınabilirlik |
