@@ -7,6 +7,7 @@ mod drives;
 pub mod fs;
 mod icons;
 mod known;
+mod linux;
 mod picture;
 mod process;
 pub mod taskbar;
