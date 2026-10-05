@@ -389,6 +389,32 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Another Gezik window deletes it right now: a start must not delete it alongside.
+    #[test]
+    fn recovery_leaves_a_delete_that_still_runs() {
+        let dir = test_dir("delete-recover-running-delete");
+        let hidden = dir.join(crate::pending::hidden_name());
+        write(&hidden.join("x.txt"), "x");
+        let mut running = if cfg!(windows) {
+            std::process::Command::new("cmd").args(["/c", "ping -n 30 127.0.0.1 >nul"]).spawn().unwrap()
+        } else {
+            std::process::Command::new("sleep").arg("30").spawn().unwrap()
+        };
+        std::fs::write(dir.join("pending-deletes"), format!("deleting\t{}\t{}\n", running.id(), hidden.display()))
+            .unwrap();
+        let engine = engine_with_pending(&dir);
+        assert_eq!(engine.recover_deletes(), None);
+        let _ = running.kill();
+        let _ = running.wait();
+        assert!(hidden.join("x.txt").exists());
+        assert_eq!(
+            PendingDeletes::new(dir.join("pending-deletes")).load(),
+            std::slice::from_ref(&hidden),
+            "still noted"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn recovery_ignores_foreign_paths() {
         let dir = test_dir("delete-recover-foreign");

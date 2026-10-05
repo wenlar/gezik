@@ -66,7 +66,7 @@ pub(crate) fn recover(dir: &Path) {
         else {
             continue;
         };
-        if pid != std::process::id() && gezik_platform::process_alive(pid) {
+        if gezik_platform::process_alive(pid) {
             continue;
         }
         let (Ok(text), Ok(written)) = (std::fs::read_to_string(&path), entry.metadata().and_then(|m| m.modified()))
