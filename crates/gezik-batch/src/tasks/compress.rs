@@ -44,32 +44,48 @@ impl CompressTask {
         parts_of(&self.target).into_iter().next().map_or_else(|| volume(&self.target, 1), |(_, path)| path)
     }
 
-    /// Writes the parts (at `temp.001`…) to their names on `base`. An older set there goes
-    /// first (Replace was chosen for it); "Keep both" moves the whole set to a free name. All
-    /// parts land or none: undo then brings back the older set.
+    /// Writes the parts (at `temp.001`…) to their names. An older set of that name (Replace
+    /// was chosen for it) first steps aside under temporary names; once every new part has
+    /// landed it goes to the trash (deleted on a drive without one). If a new part cannot land,
+    /// the new ones are removed and the older set comes back: nothing is lost either way.
+    /// "Keep both" gives the whole new set a free name.
     fn place_parts(&self, written: &[PathBuf], first: &Path, run: &RunCx<'_>) -> io::Result<Outcome> {
         let planned = self.planned.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        let base = strip_part(first);
-        let mut outcomes = Vec::new();
-        let base = if let Some(planned) = planned.filter(|planned| planned != first) {
+        let renamed = planned.filter(|planned| planned != first);
+        let base = match &renamed {
             // "Keep both" named it `x.7z (2).001`, which is no volume name: `x (2).7z.001`.
-            free_base(&strip_part(&planned))
-        } else {
-            for (_, old) in parts_of(&base) {
-                match out_of_the_way(&old, run) {
-                    Ok(outcome) => outcomes.push(outcome),
-                    Err(err) => return fail_parts(written, &[], &old, err, outcomes, run),
-                }
-            }
-            base
+            Some(planned) => free_base(&strip_part(planned)),
+            None => strip_part(first),
         };
+        let mut aside: Vec<(PathBuf, PathBuf)> = Vec::new();
+        if renamed.is_none() {
+            for (_, old) in parts_of(&base) {
+                let temp = run.temp_file_for(&old);
+                if let Err(err) = gezik_platform::fs::move_entry(&old, &temp) {
+                    remove_all(written);
+                    put_back(&aside, run);
+                    return Err(err);
+                }
+                aside.push((old, temp));
+            }
+        }
         let mut landed = Vec::new();
         for (n, part) in written.iter().enumerate() {
             let dest = volume(&base, n + 1);
             if let Err(err) = gezik_platform::fs::move_entry(part, &dest) {
-                return fail_parts(&written[n..], &landed, &dest, err, outcomes, run);
+                remove_all(&landed);
+                remove_all(&written[n..]);
+                put_back(&aside, run);
+                return Err(io::Error::new(err.kind(), format!("{}: {err}", dest.display())));
             }
             landed.push(dest);
+        }
+        let mut outcomes = Vec::new();
+        for (old, temp) in aside {
+            match out_of_the_way(&old, &temp, run) {
+                Ok(outcome) => outcomes.push(outcome),
+                Err(err) => keep_aside(&old, &temp, &err, run),
+            }
         }
         outcomes.extend(landed.into_iter().map(|path| Outcome::Created {
             facts: facts_after(&path, false),
@@ -80,38 +96,46 @@ impl CompressTask {
     }
 }
 
-/// Undoes a half-placed set: removes the parts written and those that landed. With older parts
-/// already in the trash the item reports the failure and gives those (undo brings them back).
-fn fail_parts(
-    written: &[PathBuf],
-    landed: &[PathBuf],
-    at: &Path,
-    err: io::Error,
-    outcomes: Vec<Outcome>,
-    run: &RunCx<'_>,
-) -> io::Result<Outcome> {
-    for path in written.iter().chain(landed) {
+fn remove_all(paths: &[PathBuf]) {
+    for path in paths {
         let _ = std::fs::remove_file(path);
     }
-    if outcomes.is_empty() {
-        return Err(err);
-    }
-    run.fail(at, &err);
-    Ok(Outcome::Several(outcomes))
 }
 
-/// Moves an older part out of the way: to the trash, or deleted on a drive without one (as
-/// the engine's "Replace" does).
-fn out_of_the_way(path: &Path, run: &RunCx<'_>) -> io::Result<Outcome> {
-    if run.has_trash(path) {
-        let trashed = gezik_ops::trash_path(path)?;
-        return Ok(Outcome::Trashed { original: path.to_path_buf(), trashed });
+/// Brings the older parts set aside back to their names.
+fn put_back(aside: &[(PathBuf, PathBuf)], run: &RunCx<'_>) {
+    for (old, temp) in aside.iter().rev() {
+        if let Err(err) = gezik_platform::fs::move_entry(temp, old) {
+            run.fail(old, &io::Error::new(err.kind(), format!("{err}; it is at {}", temp.display())));
+        }
     }
-    gezik_platform::fs::delete(path)?;
-    Ok(Outcome::Deleted { path: path.to_path_buf() })
 }
 
-/// The existing parts `base.001`, `base.002`… (any number of at least three digits), in order.
+/// An older part (set aside at `temp`) to the trash, recorded under its own name so undo puts
+/// it back there; deleted on a drive without a trash (as the engine's "Replace" does).
+fn out_of_the_way(old: &Path, temp: &Path, run: &RunCx<'_>) -> io::Result<Outcome> {
+    if run.has_trash(old) {
+        let trashed = gezik_ops::trash_path(temp)?;
+        return Ok(Outcome::Trashed { original: old.to_path_buf(), trashed });
+    }
+    gezik_platform::fs::delete(temp)?;
+    Ok(Outcome::Deleted { path: old.to_path_buf() })
+}
+
+/// An older part that could not go to the trash stays, under a free name next to the new set.
+fn keep_aside(old: &Path, temp: &Path, err: &io::Error, run: &RunCx<'_>) {
+    let folder = old.parent().unwrap_or(Path::new(""));
+    let free = next_free(&file_name(old), false, |name| folder.join(name).symlink_metadata().is_ok());
+    let kept = folder.join(free);
+    let message = match gezik_platform::fs::move_entry(temp, &kept) {
+        Ok(()) => format!("{err}; the old part was kept as {}", file_name(&kept)),
+        Err(_) => format!("{err}; the old part is at {}", temp.display()),
+    };
+    run.fail(old, &io::Error::new(err.kind(), message));
+}
+
+/// The existing parts `base.001`, `base.002`… (files numbered with at least three digits), in
+/// order.
 fn parts_of(base: &Path) -> Vec<(u32, PathBuf)> {
     let folder = base.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
     let prefix = format!("{}.", file_name(base));
@@ -120,6 +144,7 @@ fn parts_of(base: &Path) -> Vec<(u32, PathBuf)> {
     let Ok(entries) = std::fs::read_dir(folder) else { return Vec::new() };
     let mut parts: Vec<(u32, PathBuf)> = entries
         .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
         .filter_map(|entry| {
             let name = fold(&entry.file_name().to_string_lossy());
             let digits = name.strip_prefix(&prefix)?;

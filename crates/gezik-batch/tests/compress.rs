@@ -724,3 +724,41 @@ fn add_clashes_ignore_case_and_see_files_against_folders() {
     assert!(leftovers(&d).is_empty(), "{:?}", leftovers(&d));
     let _ = std::fs::remove_dir_all(&d);
 }
+
+#[test]
+fn a_part_that_cannot_land_brings_the_old_set_back() {
+    let d = dir("parts-rollback");
+    let (old, new) = (d.join("old"), d.join("new"));
+    make(&old, &[("old.bin", &noise(150_000, 5))]);
+    make(&new, &[("new.bin", &noise(250_000, 6))]);
+    let engine = engine(&d);
+    let parts = || CompressOptions { split: Some(100_000), ..options(OutFormat::SevenZ, Level::Store) };
+    let task = CompressTask::new(children(&old), d.join("set.7z"), parts());
+    let (report, _) = finish(&engine, engine.submit(Box::new(task)), nothing);
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    let old_bytes: Vec<Vec<u8>> = (1..=2).map(|n| std::fs::read(d.join(format!("set.7z.{n:03}"))).unwrap()).collect();
+    // The new set has three parts; the third cannot land (a folder has its name).
+    std::fs::create_dir(d.join("set.7z.003")).unwrap();
+    let task = CompressTask::new(children(&new), d.join("set.7z"), parts());
+    let (report, _) = finish(&engine, engine.submit(Box::new(task)), |engine, job, event| match event {
+        Event::Conflicts { job: j, conflicts } if *j == job => {
+            engine.decide(job, vec![Decision::Replace; conflicts.len()]);
+            true
+        }
+        _ => false,
+    });
+    assert_eq!(report.failures.len(), 1, "{:?}", report.failures);
+    assert!(report.failures[0].message.contains("set.7z.003"), "{:?}", report.failures);
+    // No new part stays; the old part set aside is back. The first old part was trashed by
+    // the engine for "Replace" before the run: undo brings it back.
+    assert!(!d.join("set.7z.001").exists());
+    assert_eq!(std::fs::read(d.join("set.7z.002")).unwrap(), old_bytes[1]);
+    assert!(d.join("set.7z.003").is_dir());
+    assert!(leftovers(&d).is_empty(), "{:?}", leftovers(&d));
+    let report = finish(&engine, engine.undo().unwrap(), nothing).0;
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    assert_eq!(std::fs::read(d.join("set.7z.001")).unwrap(), old_bytes[0]);
+    std::fs::remove_dir(d.join("set.7z.003")).unwrap();
+    assert_eq!(unpacked(&d.join("set.7z.001"), &d, "back", None), tree(&old));
+    let _ = std::fs::remove_dir_all(&d);
+}
