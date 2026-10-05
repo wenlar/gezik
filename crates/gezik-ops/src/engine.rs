@@ -740,6 +740,55 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Writes a partial file, then removes it and fails, or (cancelled) is interrupted.
+    struct PartialTask {
+        target: PathBuf,
+        fail: bool,
+    }
+
+    impl Task for PartialTask {
+        fn kind(&self) -> TaskKind {
+            TaskKind::Copy
+        }
+        fn title(&self) -> String {
+            "partial".into()
+        }
+        fn count(&self) -> usize {
+            1
+        }
+        fn resources(&self) -> crate::task::Resources {
+            crate::task::Resources { paths: vec![self.target.clone()], work: crate::task::Work::Disk }
+        }
+        fn plan(&self, sink: &mut dyn crate::task::ScanSink) {
+            let facts = gezik_core::ops::conflict::Facts { is_dir: false, size: 1, modified: None };
+            sink.item(crate::task::PlanItem::new(crate::task::Stage::Parallel, facts).target(&self.target).top(0));
+        }
+        fn run(&self, _item: &crate::task::PlanItem, cx: &crate::task::RunCx<'_>) -> io::Result<crate::task::Outcome> {
+            std::fs::write(&self.target, "part")?;
+            if !self.fail {
+                while !cx.stopped() {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            }
+            std::fs::remove_file(&self.target)?;
+            Err(if self.fail { io::Error::other("boom") } else { io::Error::from(io::ErrorKind::Interrupted) })
+        }
+    }
+
+    /// The list must drop a partial file that a cancelled or failed item left and removed.
+    #[test]
+    fn a_cancelled_or_failed_item_reports_its_folder_as_changed() {
+        let dir = test_dir("partial");
+        let engine = engine();
+        let failed = engine.submit(Box::new(PartialTask { target: dir.join("a.bin"), fail: true }));
+        assert_eq!(run(&engine, failed).changed_dirs, std::slice::from_ref(&dir));
+        let cancelled = engine.submit(Box::new(PartialTask { target: dir.join("b.bin"), fail: false }));
+        wait_for("the partial file", || dir.join("b.bin").exists());
+        engine.cancel(cancelled);
+        assert_eq!(run(&engine, cancelled).changed_dirs, std::slice::from_ref(&dir));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn an_undo_cancelled_before_it_did_anything_stays_undoable() {
         let dir = test_dir("undo-cancelled");
