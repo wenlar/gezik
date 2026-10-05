@@ -174,8 +174,9 @@ impl Task for RenameTask {
                         })
                     }
                     Err(err) => {
-                        // Back under its own name if it can; else the note puts it back later.
-                        if fs::move_entry(temp, source).is_ok() {
+                        // Back under its own name (or a free one next to it); else the note puts
+                        // it back later.
+                        if super::restore_hidden(temp, source, true) {
                             cx.forget_temp(temp);
                         }
                         Err(err)
@@ -192,6 +193,17 @@ impl Task for RenameTask {
                     to: target.clone(),
                     facts: facts_after(target, item.facts.is_dir),
                 })
+            }
+        }
+    }
+
+    /// A job cancelled between an item's two steps leaves it under its temporary name: it goes
+    /// back under its own name (or a free one next to it). A note left behind is dropped at the
+    /// next start, as its temporary name is gone.
+    fn done(&self, _cancelled: bool) {
+        for (temp, (source, _)) in self.temps.iter().zip(&self.pairs) {
+            if std::fs::symlink_metadata(temp).is_ok() {
+                super::restore_hidden(temp, source, true);
             }
         }
     }
@@ -288,6 +300,30 @@ mod tests {
         assert_eq!(report.failures.len(), 1);
         assert_eq!(read(&dir.join("a/x.txt")), "x");
         assert!(!dir.join("b/x.txt").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_job_cancelled_between_the_steps_puts_the_names_back() {
+        let dir = test_dir("rename-cancel");
+        write(&dir.join("a.txt"), "a");
+        write(&dir.join("b.txt"), "b");
+        let temp = crate::task::TempCopies::new(None);
+        let control = crate::control::Control::default();
+        let no_bin = |_: &Path| false;
+        let cx = RunCx { control: &control, trash: &no_bin, added: std::cell::Cell::new(0), temp: &temp };
+        let task =
+            RenameTask::many(vec![(dir.join("a.txt"), dir.join("b.txt")), (dir.join("b.txt"), dir.join("a.txt"))]);
+        let facts = facts_after(&dir.join("a.txt"), false);
+        let to_temp =
+            PlanItem::new(Stage::Before, facts).source(dir.join("a.txt")).target(dir.join("b.txt")).top(0).tag(TO_TEMP);
+        task.run(&to_temp, &cx).unwrap();
+        assert_eq!(names(&dir).len(), 2);
+        assert!(!dir.join("a.txt").exists(), "under its temporary name");
+        // Cancelled here: the second steps never run.
+        task.done(true);
+        assert_eq!(names(&dir), ["a.txt", "b.txt"], "no temporary name is left");
+        assert_eq!((read(&dir.join("a.txt")), read(&dir.join("b.txt"))), ("a".into(), "b".into()));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
