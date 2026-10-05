@@ -880,7 +880,8 @@ impl Operations {
         }
     }
 
-    /// Items whose drive has no trash: delete them for good?
+    /// Items the trash cannot take (no trash on their drive, or a name it cannot take): delete
+    /// them for good?
     fn ask_delete_for_good(&self, paths: Vec<PathBuf>) {
         let bin = if cfg!(windows) { "Recycle Bin" } else { "trash" };
         let title = if paths.len() == 1 {
@@ -891,7 +892,7 @@ impl Operations {
         let ops = self.clone();
         self.0.dialogs.ask(
             title,
-            format!("This drive has no {bin}. Delete permanently? This cannot be undone."),
+            format!("{} Delete permanently? This cannot be undone.", no_trash_reason(&paths, bin)),
             &["Delete", "Cancel"],
             move |choice| {
                 if choice == Some(0) {
@@ -1041,10 +1042,37 @@ impl Operations {
     }
 }
 
+/// Why `paths` cannot go to the trash (`bin`): their drive has none, or (Windows) their
+/// names end in a dot or a space.
+fn no_trash_reason(paths: &[PathBuf], bin: &str) -> String {
+    let named = paths.iter().filter(|path| !gezik_platform::fs::can_trash_name(path)).count();
+    if named == 0 {
+        format!("This drive has no {bin}.")
+    } else if named == paths.len() {
+        format!("The {bin} cannot take names that end in a dot or a space.")
+    } else {
+        format!("Some are on a drive without a {bin}, some have names that end in a dot or a space.")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use gezik_ops::{Failure, TaskKind};
+
+    #[test]
+    fn no_trash_reasons() {
+        let bin = "Recycle Bin";
+        assert_eq!(no_trash_reason(&[PathBuf::from("/usb/a.txt")], bin), "This drive has no Recycle Bin.");
+        if cfg!(windows) {
+            let dotted = PathBuf::from(r"C:\x.");
+            assert_eq!(
+                no_trash_reason(std::slice::from_ref(&dotted), bin),
+                "The Recycle Bin cannot take names that end in a dot or a space."
+            );
+            assert!(no_trash_reason(&[dotted, PathBuf::from(r"E:\a")], bin).starts_with("Some are"));
+        }
+    }
 
     fn progress(state: JobState, items: (u64, u64), bytes: (u64, u64)) -> Progress {
         Progress { state, items_done: items.0, items_total: items.1, bytes_done: bytes.0, bytes_total: bytes.1 }

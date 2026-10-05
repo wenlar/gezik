@@ -31,6 +31,17 @@ pub struct DriveFacts {
     pub trash: bool,
 }
 
+/// Whether the trash can take `path` by its name. The Windows Shell parses a path like
+/// Explorer and drops a trailing dot or space from each of its parts, so `x.` (or anything
+/// in `a.\`) would reach the sibling `x` (or `a\`): such paths cannot go to the Recycle Bin.
+pub fn can_trash_name(path: &Path) -> bool {
+    !cfg!(windows)
+        || !path.components().any(|part| match part {
+            std::path::Component::Normal(name) => name.to_string_lossy().ends_with(['.', ' ']),
+            _ => false,
+        })
+}
+
 /// Files at least this big are copied past the system file cache, so a large copy does not
 /// push everything else out of it.
 pub const BIG_FILE: u64 = 256 * 1024 * 1024;

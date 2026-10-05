@@ -78,7 +78,9 @@ impl Task for TrashTask {
         if !unchanged(path, expected) {
             return Err(changed_since());
         }
-        if !cx.has_trash(path) {
+        // A name the trash cannot take (Windows: `x.`) is offered for a permanent delete like an
+        // item on a drive without a trash.
+        if !cx.has_trash(path) || !fs::can_trash_name(path) {
             // Looked at now, not at plan time: a file filled since must not be deleted.
             let empty = match std::fs::symlink_metadata(path) {
                 Ok(meta) if meta.is_dir() => is_empty_dir(path),
@@ -138,5 +140,32 @@ mod tests {
         assert!(is_marker::<crate::NoTrash>(&undo.run(&item(dir.join("full.txt")), &cx).unwrap_err()));
         assert!(dir.join("full.txt").exists());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The Recycle Bin cannot take `x.` (the Shell would take `x`): it is offered for a
+    /// permanent delete like an item on a drive without a trash, and `x` is never touched.
+    #[cfg(windows)]
+    #[test]
+    fn a_name_ending_in_a_dot_is_offered_for_a_permanent_delete() {
+        let dir = test_dir("trash-dotted");
+        write(&dir.join("x"), "plain");
+        let verbatim = PathBuf::from(format!(r"\\?\{}", dir.display()));
+        std::fs::write(verbatim.join("x."), "dotted").unwrap();
+        let dotted = dir.join("x.");
+        let engine = engine();
+        let job = engine.submit(Box::new(TrashTask::new(vec![dotted.clone()])));
+        let (report, _) = finish(&engine, job, defaults);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert_eq!(report.no_trash, std::slice::from_ref(&dotted));
+        assert_eq!(std::fs::read_to_string(dir.join("x")).unwrap(), "plain");
+        assert_eq!(std::fs::read_to_string(verbatim.join("x.")).unwrap(), "dotted");
+
+        let pending = std::sync::Arc::new(crate::PendingDeletes::new(dir.join("pending-deletes")));
+        let job = engine.submit(Box::new(crate::DeleteTask::new(vec![dotted], Some(pending))));
+        let (report, _) = finish(&engine, job, defaults);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert!(std::fs::symlink_metadata(verbatim.join("x.")).is_err(), "the dotted file is gone");
+        assert_eq!(std::fs::read_to_string(dir.join("x")).unwrap(), "plain");
+        let _ = std::fs::remove_dir_all(&verbatim);
     }
 }
