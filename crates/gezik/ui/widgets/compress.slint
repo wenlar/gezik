@@ -158,9 +158,9 @@ export component CompressLayer inherits Rectangle {
                 label: "Split";
                 HorizontalLayout {
                     spacing: Theme.spacing;
+                    // Each as wide as its text ("4 GB (FAT32)" is the widest).
                     for label[i] in ["None", "100 MB", "700 MB", "4 GB (FAT32)", "Custom…"]: TextButton {
                         text: label;
-                        min-width: 56px;
                         checked: i == root.split;
                         clicked => { root.set-split(i); }
                     }
