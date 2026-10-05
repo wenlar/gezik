@@ -4,6 +4,7 @@
 mod conflicts;
 mod context_menu;
 mod dialog;
+mod folder_watch;
 mod frame_limit;
 mod keys;
 mod media;
