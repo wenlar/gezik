@@ -316,6 +316,9 @@ pub(crate) fn execute(shared: &Shared, job: &Job, task: &dyn Task, item: PlanIte
     }
     let has_trash = |path: &Path| shared.has_trash(path);
     let cx = RunCx { control, trash: &has_trash, added: std::cell::Cell::new(0) };
+    // A cancelled or failed item may have made or removed something (a partial copy): its
+    // folders are reloaded like those of a finished one.
+    let touch = || job.touch(item.source.as_deref().into_iter().chain(item.target.as_deref()));
     loop {
         match task.run(&item, &cx) {
             Ok(outcome) => {
@@ -325,14 +328,18 @@ pub(crate) fn execute(shared: &Shared, job: &Job, task: &dyn Task, item: PlanIte
                 {
                     job.result(path.to_path_buf());
                 }
-                job.touch(item.source.as_deref().into_iter().chain(item.target.as_deref()));
+                touch();
                 job.outcome(outcome);
                 break;
             }
-            Err(err) if err.kind() == io::ErrorKind::Interrupted && control.cancelled() => return,
+            Err(err) if err.kind() == io::ErrorKind::Interrupted && control.cancelled() => {
+                touch();
+                return;
+            }
             Err(err) if fs::is_disk_full(&err) => {
                 shared.pause(job, PauseReason::DiskFull, item.target.clone());
                 if control.stopped() {
+                    touch();
                     return;
                 }
                 // Resumed: try the same item again.
@@ -346,6 +353,7 @@ pub(crate) fn execute(shared: &Shared, job: &Job, task: &dyn Task, item: PlanIte
                 break;
             }
             Err(err) => {
+                touch();
                 job.fail(item.path(), &err);
                 if control.failed_once() >= MAX_FAILURES_IN_ROW {
                     control.succeeded();
