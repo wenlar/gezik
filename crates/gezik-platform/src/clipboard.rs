@@ -1,5 +1,5 @@
 //! The system clipboard, for files: copy or cut in Gezik and paste in Explorer or Finder, and
-//! the other way round. Linux has no system clipboard here yet (sub-project 4b).
+//! the other way round. On Linux, X11's or Wayland's (see `linux`).
 
 use std::fmt;
 use std::path::PathBuf;
@@ -252,26 +252,29 @@ mod imp {
     }
 }
 
+/// X11 or Wayland, through the backend of Gezik's window; before the window exists (or
+/// without a backend) Gezik keeps its own clipboard.
 #[cfg(not(any(windows, target_os = "macos")))]
 mod imp {
     use std::path::PathBuf;
 
     use super::{ClipboardError, ClipboardFiles};
+    use crate::linux::backend;
 
-    pub fn write_files(_paths: &[PathBuf], _cut: bool) -> Result<(), ClipboardError> {
-        Err(ClipboardError::Unsupported)
+    pub fn write_files(paths: &[PathBuf], cut: bool) -> Result<(), ClipboardError> {
+        backend().ok_or(ClipboardError::Unsupported)?.write_files(paths, cut)
     }
 
     pub fn read_files() -> Result<Option<ClipboardFiles>, ClipboardError> {
-        Err(ClipboardError::Unsupported)
+        backend().ok_or(ClipboardError::Unsupported)?.read_files()
     }
 
     pub fn sequence() -> u64 {
-        0
+        backend().map_or(0, |b| b.sequence())
     }
 
     pub fn clear() -> Result<(), ClipboardError> {
-        Err(ClipboardError::Unsupported)
+        backend().ok_or(ClipboardError::Unsupported)?.clear()
     }
 }
 

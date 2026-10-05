@@ -16,7 +16,7 @@ use gezik_core::layout::Rect;
 use gezik_core::nav::Location;
 use gezik_core::ops::paths::is_within;
 use gezik_platform::DriveKind;
-use gezik_platform::dnd::{Answer, Attached, DragEnd, DropHandler, Handoff, Offer, OutsideDrag};
+use gezik_platform::dnd::{Answer, Attached, DragEnd, DropHandler, Handoff, Offer, OnEnd, OutsideDrag};
 use slint::{ComponentHandle, Model, Timer, TimerMode};
 
 use crate::context_menu::Menus;
@@ -606,7 +606,7 @@ impl Drags {
         self.finish(None);
         let (sources, right) = (d.sources.clone(), d.right);
         *self.0.phase.borrow_mut() = Phase::Outside(d.clone());
-        let on_end: Box<dyn FnOnce(DragEnd)> = Box::new(|end| {
+        let on_end: OnEnd = Box::new(|end| {
             with_current(|drags| drags.outside_ended(end));
         });
         let result = match &*self.0.attached.borrow() {

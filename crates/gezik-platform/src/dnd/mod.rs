@@ -55,6 +55,9 @@ pub trait OutsideDrag {
     fn cancel(&mut self);
 }
 
+/// Called once when a drag handed to the system ends.
+pub type OnEnd = Box<dyn FnOnce(DragEnd)>;
+
 /// A drag handed to the system.
 pub enum Handoff {
     /// Over already (Windows: the system's drag loop blocks until the drop).
@@ -67,6 +70,8 @@ pub enum Handoff {
 pub struct Attached {
     #[cfg(windows)]
     inner: windows::Registration,
+    #[cfg(all(unix, not(target_os = "macos")))]
+    inner: linux::Attachment,
 }
 
 /// Makes `window` take files dropped from other programs. `wake` is called from another
@@ -76,15 +81,20 @@ pub fn attach(
     handler: Rc<dyn DropHandler>,
     wake: Arc<dyn Fn() + Send + Sync>,
 ) -> Option<Attached> {
-    let _ = &wake;
     #[cfg(windows)]
     {
+        let _ = wake;
         let inner = windows::register(window, handler)?;
         Some(Attached { inner })
     }
-    #[cfg(not(windows))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
-        let _ = (window, handler);
+        let inner = linux::Attachment::new(crate::linux::start(window, wake)?, handler);
+        Some(Attached { inner })
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = (window, handler, wake);
         None
     }
 }
@@ -92,30 +102,85 @@ pub fn attach(
 impl Attached {
     /// Hands the drag of `paths` (all in one folder) to the system: the pointer left the
     /// window with the button (`right`: the right one) still down.
-    pub fn drag_out(
-        &self,
-        paths: &[PathBuf],
-        right: bool,
-        on_end: Box<dyn FnOnce(DragEnd)>,
-    ) -> Result<Handoff, String> {
-        let _ = on_end;
+    pub fn drag_out(&self, paths: &[PathBuf], right: bool, on_end: OnEnd) -> Result<Handoff, String> {
         #[cfg(windows)]
         {
+            let _ = on_end;
             self.inner.drag_out(paths, right).map(Handoff::Ended)
         }
-        #[cfg(not(windows))]
+        #[cfg(all(unix, not(target_os = "macos")))]
         {
-            let _ = (paths, right);
+            let _ = right;
+            self.inner.drag_out(paths, on_end).map(Handoff::Running)
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let _ = (paths, right, on_end);
             Err("dragging out is not supported here".into())
         }
     }
 
     /// Hands waiting events to the handler (Linux; nothing elsewhere).
     pub fn poll(&self) {
-        #[cfg(windows)]
-        let _ = &self.inner;
+        #[cfg(all(unix, not(target_os = "macos")))]
+        self.inner.poll();
     }
 }
 
 #[cfg(windows)]
 mod windows;
+
+#[cfg(all(unix, not(target_os = "macos")))]
+mod linux {
+    use std::cell::RefCell;
+    use std::path::PathBuf;
+    use std::rc::Rc;
+    use std::sync::Arc;
+
+    use super::{DropHandler, OnEnd, OutsideDrag};
+    use crate::linux::{Backend, UiEvent};
+
+    /// The window's backend and Gezik's side of it, on the UI thread.
+    pub struct Attachment {
+        backend: Arc<dyn Backend>,
+        handler: Rc<dyn DropHandler>,
+        /// Called when Gezik's drag outside the window ends.
+        on_end: RefCell<Option<OnEnd>>,
+    }
+
+    impl Attachment {
+        pub fn new(backend: Arc<dyn Backend>, handler: Rc<dyn DropHandler>) -> Attachment {
+            Attachment { backend, handler, on_end: RefCell::new(None) }
+        }
+
+        pub fn drag_out(&self, paths: &[PathBuf], on_end: OnEnd) -> Result<Box<dyn OutsideDrag>, String> {
+            let drag = self.backend.drag_out(paths)?;
+            *self.on_end.borrow_mut() = Some(on_end);
+            Ok(drag)
+        }
+
+        pub fn poll(&self) {
+            for event in self.backend.take_events() {
+                match event {
+                    UiEvent::Over { offer: Some(offer), x, y, keys } => {
+                        let answer = self.handler.over(&offer, x, y, keys);
+                        self.backend.answer(&answer);
+                    }
+                    UiEvent::Over { offer: None, .. } => self.backend.answer(&Default::default()),
+                    UiEvent::Leave => self.handler.leave(),
+                    UiEvent::Dropped { offer: Some(offer), x, y, keys } => {
+                        let done = self.handler.dropped(&offer, x, y, keys);
+                        self.backend.finish(done);
+                    }
+                    UiEvent::Dropped { offer: None, .. } => self.backend.finish(None),
+                    UiEvent::SourceEnded(end) => {
+                        let on_end = self.on_end.borrow_mut().take();
+                        if let Some(on_end) = on_end {
+                            on_end(end);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

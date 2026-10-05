@@ -1486,6 +1486,7 @@ dependencies = [
  "raw-window-handle",
  "windows",
  "windows-core",
+ "x11rb",
 ]
 
 [[package]]
