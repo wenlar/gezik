@@ -217,7 +217,7 @@ impl PlanItem {
     }
 
     /// Left out of the job's progress: a step on the way, not an item of its own.
-    pub(crate) fn uncounted(mut self) -> PlanItem {
+    pub fn uncounted(mut self) -> PlanItem {
         self.counted = false;
         self
     }

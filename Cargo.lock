@@ -1680,6 +1680,7 @@ dependencies = [
  "cpio",
  "flate2",
  "gezik-core",
+ "gezik-ops",
  "gezik-platform",
  "hadris-iso",
  "kamadak-exif",

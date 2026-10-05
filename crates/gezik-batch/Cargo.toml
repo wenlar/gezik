@@ -7,7 +7,10 @@ license.workspace = true
 
 [dependencies]
 gezik-core.workspace = true
-# Local time for zip's DOS dates, and the hidden attribute of extracted files.
+# Extracting runs as engine tasks (questions, staging, placing with one undo).
+gezik-ops.workspace = true
+# Local time for zip's DOS dates, the hidden attribute of extracted files, free space, and
+# running 7-Zip.
 gezik-platform.workspace = true
 # Unicode \w and case-insensitive matching, no other Unicode tables (size). No `perf`:
 # names are short, and it measured 0.45 MB of the release exe.

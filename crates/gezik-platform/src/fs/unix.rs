@@ -199,6 +199,19 @@ pub fn drive_root(path: &Path) -> Option<PathBuf> {
     Some(root)
 }
 
+/// Bytes this user may still write on the drive `path` is on (`path` must exist).
+pub fn free_space(path: &Path) -> io::Result<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let path = std::ffi::CString::new(path.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "a NUL in the path"))?;
+    let mut stats: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(path.as_ptr(), &mut stats) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    #[allow(clippy::unnecessary_cast)]
+    Ok(stats.f_bavail as u64 * stats.f_frsize as u64)
+}
+
 pub fn drive_facts(path: &Path) -> io::Result<DriveFacts> {
     let existing = nearest_existing(path).ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
     let dev = std::fs::metadata(&existing)?.dev();
