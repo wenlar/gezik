@@ -239,10 +239,13 @@ fn copies_of(line: &Path) -> Option<CopyNote> {
 /// Whether `path` is an absolute path to a folder an instant delete hid, or to a file a copy
 /// had not finished.
 pub fn is_hidden(path: &Path) -> bool {
-    path.is_absolute()
-        && path.file_name().and_then(|name| name.to_str()).is_some_and(|name| {
-            [HIDDEN_PREFIX, COPYING_PREFIX].iter().any(|prefix| name.len() > prefix.len() && name.starts_with(prefix))
-        })
+    path.is_absolute() && path.file_name().and_then(|name| name.to_str()).is_some_and(is_internal_name)
+}
+
+/// Whether `name` is one Gezik gives what a copy or delete is still working on (lists leave
+/// those out).
+pub fn is_internal_name(name: &str) -> bool {
+    [HIDDEN_PREFIX, COPYING_PREFIX].iter().any(|prefix| name.len() > prefix.len() && name.starts_with(prefix))
 }
 
 /// A fresh hidden name.
