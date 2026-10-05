@@ -43,6 +43,10 @@ jpeg-encoder = "0.7.1"
 # Lanczos3 resizing, one pixel type only (`resize_typed`) and no rayon: each picture runs on
 # its own core already, and every other pixel type's kernels cost about 1.5 MB.
 fast_image_resize = { version = "6.1.0", default-features = false, features = ["image"] }
+# Converting text: every WHATWG encoding (encoding_rs) and guessing a file's encoding when it
+# has no BOM (chardetng).
+encoding_rs = "0.8.42"
+chardetng = "1.0.0"
 
 [features]
 default = ["rar"]

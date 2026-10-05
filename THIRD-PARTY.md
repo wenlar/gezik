@@ -1,8 +1,8 @@
 # Third-party code
 
 Gezik's own code is under the PolyForm Noncommercial License 1.0.0 (see `LICENSE.md`). The
-crates below are built into it for reading and writing archives and for converting pictures;
-each keeps its own licence.
+crates below are built into it for reading and writing archives and for converting pictures
+and text; each keeps its own licence.
 
 | Crate | Version | Licence | Source |
 |---|---|---|---|
@@ -24,11 +24,48 @@ each keeps its own licence.
 | fax (through tiff) | 0.2.7 | MIT | https://github.com/pdf-rs/fax |
 | jpeg-encoder | 0.7.1 | (MIT OR Apache-2.0) AND IJG (below) | https://github.com/vstroebel/jpeg-encoder |
 | fast_image_resize | 6.1.0 | MIT OR Apache-2.0 | https://github.com/cykooz/fast_image_resize |
+| encoding_rs | 0.8.42 | (Apache-2.0 OR MIT) AND BSD-3-Clause (the WHATWG data, below) | https://github.com/hsivonen/encoding_rs |
+| chardetng | 1.0.0 | Apache-2.0 OR MIT | https://github.com/hsivonen/chardetng |
+| core_detect (through encoding_rs) | 1.0.0 | MIT OR Apache-2.0 | https://github.com/thomcc/core_detect |
+| simdutf8 (through encoding_rs) | 0.1.5 | MIT OR Apache-2.0 | https://github.com/rusticstuff/simdutf8 |
 
 ## Independent JPEG Group
 
 JPEG pictures are written with jpeg-encoder, whose forward DCT is ported from mozjpeg. This
 software is based in part on the work of the Independent JPEG Group.
+
+## WHATWG Encoding Standard data
+
+Text is converted with encoding_rs, whose encoding tables are generated from the index files
+of the WHATWG Encoding Standard (https://encoding.spec.whatwg.org/). Their licence
+(`LICENSE-WHATWG` in the encoding_rs sources):
+
+> Copyright © WHATWG (Apple, Google, Mozilla, Microsoft).
+>
+> Redistribution and use in source and binary forms, with or without
+> modification, are permitted provided that the following conditions are met:
+>
+> 1. Redistributions of source code must retain the above copyright notice, this
+>    list of conditions and the following disclaimer.
+>
+> 2. Redistributions in binary form must reproduce the above copyright notice,
+>    this list of conditions and the following disclaimer in the documentation
+>    and/or other materials provided with the distribution.
+>
+> 3. Neither the name of the copyright holder nor the names of its
+>    contributors may be used to endorse or promote products derived from
+>    this software without specific prior written permission.
+>
+> THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+> AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+> IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+> DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+> FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+> DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+> SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+> CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+> OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+> OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ## UnRAR
 
