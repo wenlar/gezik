@@ -13,10 +13,19 @@ fn main() {
     let engine = gezik_ops::Engine::new(gezik_ops::Settings::default(), || {});
     let start = std::time::Instant::now();
     let job = engine.submit(Box::new(gezik_ops::RenameTask::many(pairs)));
-    loop {
-        if engine.drain().iter().any(|e| matches!(e, gezik_ops::Event::Finished { job: j, .. } if *j == job)) {
-            break;
+    let deadline = start + std::time::Duration::from_secs(120);
+    'wait: loop {
+        for event in engine.drain() {
+            if let gezik_ops::Event::Finished { job: j, report } = event
+                && j == job
+            {
+                for failure in &report.failures {
+                    eprintln!("failed: {failure:?}");
+                }
+                break 'wait;
+            }
         }
+        assert!(std::time::Instant::now() < deadline, "rename job did not finish in 120 s");
         std::thread::sleep(std::time::Duration::from_millis(2));
     }
     println!("renamed in {} ms", start.elapsed().as_millis());
