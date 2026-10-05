@@ -14,8 +14,8 @@ use gezik_core::ops::names::next_free;
 use gezik_ops::{
     Answer, Facts, Outcome, PlanItem, Question, Resources, RunCx, ScanSink, Stage, Task, TaskKind, Work, facts_after,
 };
+use zip::ZipArchive;
 use zip::result::ZipError;
-use zip::{HasZipMetadata, ZipArchive};
 
 use super::{Writing, cancelled, file_name, what, workers};
 use crate::archive::write::{self, CompressOptions, Input, InputKind, Level, OutFormat};
@@ -45,32 +45,44 @@ impl AddToArchiveTask {
         AddToArchiveTask { archive, sources, password }
     }
 
-    /// Writes the zip with the new entries to `temp`; false: the user said no.
+    /// Writes the zip with the new entries to `temp`; false: nothing to add.
     fn add_zip(&self, mut fresh: Vec<Input>, temp: &Path, run: &RunCx<'_>) -> io::Result<bool> {
         let mut zip = ZipArchive::new(BufReader::new(File::open(&self.archive)?))?;
-        let (mut files, mut dirs) = (HashSet::new(), HashSet::new());
-        let mut encrypted = None;
+        let mut names = Names::default();
+        // The smallest encrypted entry: it is read through to check a password.
+        let mut encrypted: Option<(u64, usize)> = None;
         for i in 0..zip.len() {
             let entry = zip.by_index_raw(i)?;
-            let name = entry.name().trim_end_matches('/').to_owned();
+            let name = key(entry.name().trim_end_matches('/'));
             if entry.is_dir() {
-                dirs.insert(name);
+                names.dirs.insert(name);
             } else {
-                encrypted = encrypted.or(entry.encrypted().then_some(i));
-                files.insert(name);
+                if entry.encrypted() && encrypted.is_none_or(|(size, _)| entry.compressed_size() < size) {
+                    encrypted = Some((entry.compressed_size(), i));
+                }
+                names.files.insert(name);
             }
         }
         let password = match encrypted {
-            Some(i) => match self.zip_password(&mut zip, i, run)? {
+            Some((_, i)) => match self.zip_password(&mut zip, i, run)? {
                 Some(password) => Some(password),
                 None => return Ok(false),
             },
             None => None,
         };
-        let Some(replaced) = settle(&mut fresh, &files, &dirs, run)? else { return Ok(false) };
+        let Some(replaced) = settle(&mut fresh, &names, run)? else { return Ok(false) };
+        if fresh.is_empty() {
+            return Ok(false);
+        }
         run.found(fresh.len() as u64, fresh.iter().map(Input::size).sum());
-        let keep = |name: &str| !replaced.contains(name.trim_end_matches('/'));
-        write::rewrite_zip(&mut zip, &keep, &fresh, temp, password.as_deref(), workers(), &Writing(run))?;
+        let keep = |name: &str| !covered(&key(name.trim_end_matches('/')), &replaced);
+        let cx = Writing::new(run);
+        write::rewrite_zip(&mut zip, &keep, &fresh, temp, password.as_deref(), workers(), &cx)?;
+        if cx.failed.borrow().len() >= fresh.len() {
+            // Nothing new could be read: the archive stays as it is.
+            let _ = std::fs::remove_file(temp);
+            return Ok(false);
+        }
         Ok(true)
     }
 
@@ -104,7 +116,7 @@ impl AddToArchiveTask {
     }
 
     /// Unpacks the 7z or tar into a staging folder and packs it again with the new items into
-    /// `temp`; false: the user said no.
+    /// `temp`; false: nothing to add.
     fn repack(&self, kind: Kind, mut fresh: Vec<Input>, temp: &Path, run: &RunCx<'_>) -> io::Result<bool> {
         let names_encrypted = kind == Kind::SevenZ
             && matches!(sevenz_rust2::Archive::open(&self.archive), Err(sevenz_rust2::Error::PasswordRequired));
@@ -134,13 +146,20 @@ impl AddToArchiveTask {
             std::fs::read_dir(&content)?.map(|e| e.map(|e| e.path())).collect::<Result<_, _>>()?;
         children.sort();
         let mut old = write::collect(&children, false, &mut |path, err| run.fail(path, &err));
-        let files: HashSet<String> = old.iter().filter(|i| i.kind != InputKind::Dir).map(|i| i.name.clone()).collect();
-        let dirs: HashSet<String> = old.iter().filter(|i| i.kind == InputKind::Dir).map(|i| i.name.clone()).collect();
-        let Some(replaced) = settle(&mut fresh, &files, &dirs, run)? else { return Ok(false) };
-        old.retain(|input| !replaced.contains(&input.name));
+        let mut names = Names::default();
+        for input in &old {
+            let set = if input.kind == InputKind::Dir { &mut names.dirs } else { &mut names.files };
+            set.insert(key(&input.name));
+        }
+        let Some(replaced) = settle(&mut fresh, &names, run)? else { return Ok(false) };
+        if fresh.is_empty() {
+            return Ok(false);
+        }
+        let added = fresh.len();
+        old.retain(|input| !covered(&key(&input.name), &replaced));
         old.extend(fresh);
         run.found(old.len() as u64, old.iter().map(Input::size).sum());
-        let cx = Writing(run);
+        let cx = Writing::new(run);
         let password = unpack.used.into_inner();
         match kind {
             Kind::Tar(codec) => write::write_tar(&old, temp, codec, Level::Normal, &cx)?,
@@ -155,6 +174,18 @@ impl AddToArchiveTask {
                 write::write(&old, temp, &options, workers(), &cx)?
             }
         };
+        let failed = cx.failed.into_inner();
+        if failed.iter().any(|path| path.starts_with(&content)) {
+            let _ = std::fs::remove_file(temp);
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Some items of the archive could not be packed again; nothing was added",
+            ));
+        }
+        if failed.len() >= added {
+            let _ = std::fs::remove_file(temp);
+            return Ok(false);
+        }
         Ok(true)
     }
 
@@ -174,9 +205,21 @@ impl AddToArchiveTask {
             }
         }
         if let Err(err) = gezik_platform::fs::move_entry(temp, archive) {
-            // The old one is in the trash: undo brings it back.
-            let _ = std::fs::remove_file(temp);
-            run.fail(archive, &err);
+            // The old one is in the trash (undo brings it back); the new one is kept beside it.
+            let folder = archive.parent().unwrap_or(Path::new(""));
+            let free = next_free(&file_name(archive), false, |name| folder.join(name).symlink_metadata().is_ok());
+            let kept = folder.join(free);
+            match gezik_platform::fs::move_entry(temp, &kept) {
+                Ok(()) => {
+                    let message = format!("{err}; the new archive was kept as {}", file_name(&kept));
+                    run.fail(archive, &io::Error::new(err.kind(), message));
+                    outcomes.push(Outcome::Created { facts: facts_after(&kept, false), path: kept, from: None });
+                }
+                Err(_) => {
+                    let _ = std::fs::remove_file(temp);
+                    run.fail(archive, &err);
+                }
+            }
             return Ok(Outcome::Several(outcomes));
         }
         outcomes.push(Outcome::Created { path: archive.clone(), facts: facts_after(archive, false), from: None });
@@ -250,12 +293,11 @@ fn kind_of(archive: &Path) -> io::Result<Kind> {
     }
 }
 
-/// Whether `password` opens zip entry `i` (a ZipCrypto one is read to its end: its own check
-/// lets 1 in 256 wrong passwords through, the CRC then catches them).
+/// Whether `password` opens zip entry `i`, read to its end: its AES check value or ZipCrypto
+/// byte lets some wrong passwords through, the HMAC or CRC at the end catches them.
 fn opens(zip: &mut ZipArchive<BufReader<File>>, i: usize, password: &str) -> io::Result<bool> {
-    let weak = zip.by_index_raw(i)?.get_metadata().aes_mode.is_none();
     match zip.by_index_decrypt(i, password.as_bytes()) {
-        Ok(mut entry) => Ok(!weak || io::copy(&mut entry, &mut io::sink()).is_ok()),
+        Ok(mut entry) => Ok(io::copy(&mut entry, &mut io::sink()).is_ok()),
         Err(ZipError::InvalidPassword) => Ok(false),
         Err(err) => Err(err.into()),
     }
@@ -265,49 +307,74 @@ fn no_password() -> io::Error {
     io::Error::new(io::ErrorKind::PermissionDenied, "no password")
 }
 
+/// The names an archive has, as `key`s.
+#[derive(Default)]
+struct Names {
+    files: HashSet<String>,
+    dirs: HashSet<String>,
+}
+
+/// A name as names are compared: case folded where the file system ignores case.
+fn key(name: &str) -> String {
+    if cfg!(any(windows, target_os = "macos")) { name.to_lowercase() } else { name.to_owned() }
+}
+
+/// Whether `name` (a key) is one of `roots` or inside one.
+fn covered(name: &str, roots: &[String]) -> bool {
+    roots.iter().any(|root| name == root || name.strip_prefix(root.as_str()).is_some_and(|rest| rest.starts_with('/')))
+}
+
 /// Settles the new items whose names the archive has already, with one question for all of
-/// them (Replace / Skip / Keep both). A folder already there is not added again. Gives the
-/// archive's names to leave out (Replace); `None`: the user said Cancel.
-fn settle(
-    fresh: &mut Vec<Input>,
-    files: &HashSet<String>,
-    dirs: &HashSet<String>,
-    run: &RunCx<'_>,
-) -> io::Result<Option<HashSet<String>>> {
-    fresh.retain(|input| input.kind != InputKind::Dir || !dirs.contains(&input.name));
-    let clashes: Vec<String> =
-        fresh.iter().filter(|i| i.kind != InputKind::Dir && files.contains(&i.name)).map(|i| i.name.clone()).collect();
+/// them (Replace / Skip / Keep both). A folder already there merges; a file against a folder
+/// (or the other way) clashes, and the folder goes or stays with all it holds. Gives the
+/// archive's names to leave out (Replace), as keys; `None`: the user said Cancel.
+fn settle(fresh: &mut Vec<Input>, names: &Names, run: &RunCx<'_>) -> io::Result<Option<Vec<String>>> {
+    fresh.retain(|input| input.kind != InputKind::Dir || !names.dirs.contains(&key(&input.name)));
+    let clashes: Vec<(String, bool)> = fresh
+        .iter()
+        .filter(|input| {
+            let k = key(&input.name);
+            names.files.contains(&k) || (input.kind != InputKind::Dir && names.dirs.contains(&k))
+        })
+        .map(|input| (input.name.clone(), input.kind == InputKind::Dir))
+        .collect();
     if clashes.is_empty() {
-        return Ok(Some(HashSet::new()));
+        return Ok(Some(Vec::new()));
     }
     let title = match clashes.len() {
         1 => "1 item already in the archive".to_owned(),
         n => format!("{n} items already in the archive"),
     };
-    let mut message = clashes.iter().take(10).cloned().collect::<Vec<_>>().join("\n");
+    let mut message = clashes.iter().take(10).map(|(name, _)| name.clone()).collect::<Vec<_>>().join("\n");
     if clashes.len() > 10 {
         message.push_str(&format!("\n…and {} more", clashes.len() - 10));
     }
     let buttons = ["Replace", "Skip", "Keep both", "Cancel"].map(str::to_owned).to_vec();
-    let clashes: HashSet<String> = clashes.into_iter().collect();
+    let roots: Vec<String> = clashes.iter().map(|(name, _)| key(name)).collect();
     match run.ask(Question::Confirm { title, message, buttons }) {
-        Answer::Button(0) => Ok(Some(clashes)),
+        Answer::Button(0) => Ok(Some(roots)),
         Answer::Button(1) => {
-            fresh.retain(|input| input.kind == InputKind::Dir || !clashes.contains(&input.name));
-            Ok(Some(HashSet::new()))
+            fresh.retain(|input| !covered(&key(&input.name), &roots));
+            Ok(Some(Vec::new()))
         }
         Answer::Button(2) => {
-            let mut taken: HashSet<String> = files.iter().chain(fresh.iter().map(|i| &i.name)).cloned().collect();
-            for input in fresh.iter_mut().filter(|i| i.kind != InputKind::Dir && clashes.contains(&i.name)) {
-                let (folder, name) = match input.name.rsplit_once('/') {
-                    Some((folder, name)) => (format!("{folder}/"), name.to_owned()),
-                    None => (String::new(), input.name.clone()),
+            let mut taken: HashSet<String> =
+                names.files.iter().chain(&names.dirs).cloned().chain(fresh.iter().map(|i| key(&i.name))).collect();
+            for (name, is_dir) in clashes {
+                let (folder, last) = match name.rsplit_once('/') {
+                    Some((folder, last)) => (format!("{folder}/"), last.to_owned()),
+                    None => (String::new(), name.clone()),
                 };
-                let free = next_free(&name, false, |candidate| taken.contains(&format!("{folder}{candidate}")));
-                input.name = format!("{folder}{free}");
-                taken.insert(input.name.clone());
+                let free = next_free(&last, is_dir, |candidate| taken.contains(&key(&format!("{folder}{candidate}"))));
+                let renamed = format!("{folder}{free}");
+                taken.insert(key(&renamed));
+                // The item and, for a folder, all it holds.
+                let root = [key(&name)];
+                for input in fresh.iter_mut().filter(|input| covered(&key(&input.name), &root)) {
+                    input.name = format!("{renamed}{}", &input.name[name.len()..]);
+                }
             }
-            Ok(Some(HashSet::new()))
+            Ok(Some(Vec::new()))
         }
         _ if run.stopped() => Err(cancelled()),
         _ => Ok(None),

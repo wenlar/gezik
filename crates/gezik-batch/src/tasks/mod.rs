@@ -127,25 +127,36 @@ fn workers() -> usize {
     std::thread::available_parallelism().map_or(1, |n| n.get())
 }
 
-/// Writing's needs, met by the engine: progress, cancel, failure rows.
-struct Writing<'a, 'r>(&'a RunCx<'r>);
+/// Writing's needs, met by the engine: progress, cancel, failure rows (kept, to see what
+/// was left out).
+struct Writing<'a, 'r> {
+    run: &'a RunCx<'r>,
+    failed: std::cell::RefCell<Vec<PathBuf>>,
+}
+
+impl<'a, 'r> Writing<'a, 'r> {
+    fn new(run: &'a RunCx<'r>) -> Self {
+        Writing { run, failed: Default::default() }
+    }
+}
 
 impl crate::archive::write::WriteCx for Writing<'_, '_> {
     fn add_bytes(&self, n: u64) {
-        self.0.add_bytes(n);
+        self.run.add_bytes(n);
     }
 
     fn entry_done(&self) {
-        self.0.one_done(0);
+        self.run.one_done(0);
     }
 
     fn entry_failed(&self, path: &Path, error: &io::Error) {
-        self.0.fail(path, error);
-        self.0.one_done(0);
+        self.failed.borrow_mut().push(path.to_path_buf());
+        self.run.fail(path, error);
+        self.run.one_done(0);
     }
 
     fn stopped(&self) -> bool {
-        self.0.stopped()
+        self.run.stopped()
     }
 }
 

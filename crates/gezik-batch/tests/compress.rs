@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use gezik_batch::archive::write::{self, Input, WriteCx};
 use gezik_batch::archive::{self, ExtractCx};
 use gezik_batch::tasks::{AddToArchiveTask, CompressOptions, CompressTask, Level, OutFormat, default_name};
-use gezik_ops::{Answer, Engine, Event, JobId, PendingDeletes, Question, Report, Settings};
+use gezik_ops::{Answer, Decision, Engine, Event, JobId, PendingDeletes, Question, Report, Settings};
 
 fn dir(name: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!("gezik-compress-{name}-{}", std::process::id()));
@@ -246,6 +246,21 @@ fn zip_parallel_matches_serial_content() {
     assert_eq!(unpacked(&serial, &d, "s", Some("pw")), want);
     assert_eq!(unpacked(&parallel, &d, "p", Some("pw")), want);
     seven_zip_tests(&parallel, Some("pw"));
+    // In the inputs' order: the same input gives the same bytes (no password: AES salts differ).
+    let plain = options(OutFormat::Zip, Level::Normal);
+    let (one, two) = (d.join("one.zip"), d.join("two.zip"));
+    write::write(&all, &one, &plain, 4, &W::default()).unwrap();
+    write::write(&all, &two, &plain, 3, &W::default()).unwrap();
+    assert_eq!(std::fs::read(&one).unwrap(), std::fs::read(&two).unwrap());
+    let names: Vec<String> =
+        zip::ZipArchive::new(std::fs::File::open(&one).unwrap()).unwrap().file_names().map(str::to_owned).collect();
+    let listed: Vec<String> = all
+        .iter()
+        .map(|i| if i.kind == write::InputKind::Dir { format!("{}/", i.name) } else { i.name.clone() })
+        .collect();
+    let mut dirs_first: Vec<String> = listed.iter().filter(|n| n.ends_with('/')).cloned().collect();
+    dirs_first.extend(listed.iter().filter(|n| !n.ends_with('/')).cloned());
+    assert_eq!(names, dirs_first);
     let leftovers: Vec<PathBuf> = children(&d).into_iter().filter(|p| p.to_string_lossy().contains(".zip.")).collect();
     assert!(leftovers.is_empty(), "no worker part is left: {leftovers:?}");
     let _ = std::fs::remove_dir_all(&d);
@@ -564,20 +579,148 @@ fn add_undo_restores_the_old_archive() {
 
 #[test]
 fn default_names() {
-    let d = dir("names");
-    make(&d, &[("report.pdf", b""), ("notes.txt", b""), ("x/a", b""), ("y/b", b"")]);
-    std::fs::create_dir_all(d.join("Photos.2024")).unwrap();
-    let folder = d.file_name().unwrap().to_string_lossy().into_owned();
-    assert_eq!(default_name(&[d.join("report.pdf")], OutFormat::Zip), "report.zip");
-    assert_eq!(default_name(&[d.join("Photos.2024")], OutFormat::SevenZ), "Photos.2024.7z");
-    assert_eq!(default_name(&[d.join("notes.txt")], OutFormat::Gz), "notes.txt.gz");
-    assert_eq!(
-        default_name(&[d.join("report.pdf"), d.join("notes.txt")], OutFormat::TarGz),
-        format!("{folder}.tar.gz")
-    );
-    assert_eq!(default_name(&[d.join("x/a"), d.join("y/b")], OutFormat::Zip), format!("{folder}.zip"));
-    let root = gezik_platform::fs::drive_root(&d).unwrap();
-    assert_eq!(default_name(&[root.join("a"), root.join("b")], OutFormat::Zip), "Archive.zip");
-    assert_eq!(default_name(&[root], OutFormat::Zip), "Archive.zip");
+    let file = |name: &str| (PathBuf::from("d").join(name), false);
+    let folder = |name: &str| (PathBuf::from("d").join(name), true);
+    assert_eq!(default_name(&[file("report.pdf")], OutFormat::Zip), "report.zip");
+    assert_eq!(default_name(&[folder("Photos.2024")], OutFormat::SevenZ), "Photos.2024.7z");
+    assert_eq!(default_name(&[file("notes.txt")], OutFormat::Gz), "notes.txt.gz");
+    assert_eq!(default_name(&[file(".bashrc")], OutFormat::Zip), ".bashrc.zip");
+    assert_eq!(default_name(&[file("report.pdf"), file("notes.txt")], OutFormat::TarGz), "d.tar.gz");
+    assert_eq!(default_name(&[file("x/a"), folder("y/b")], OutFormat::Zip), "d.zip");
+    let root = gezik_platform::fs::drive_root(&std::env::temp_dir()).unwrap();
+    assert_eq!(default_name(&[(root.join("a"), false), (root.join("b"), true)], OutFormat::Zip), "Archive.zip");
+    assert_eq!(default_name(&[(root, true)], OutFormat::Zip), "Archive.zip");
+    assert_eq!(default_name(&[], OutFormat::Zip), "Archive.zip");
+}
+
+#[test]
+fn sevenz_parts_replace_and_keep_both_cover_the_whole_set() {
+    let d = dir("parts-conflict");
+    let (old, new) = (d.join("old"), d.join("new"));
+    make(&old, &[("big.bin", &noise(250_000, 3))]);
+    make(&new, &[("small.bin", &noise(150_000, 4))]);
+    let engine = engine(&d);
+    let parts = || CompressOptions { split: Some(100_000), ..options(OutFormat::SevenZ, Level::Store) };
+    let compress = |source: &Path, decision: Decision| {
+        let task = CompressTask::new(children(source), d.join("set.7z"), parts());
+        finish(&engine, engine.submit(Box::new(task)), |engine, job, event| match event {
+            Event::Conflicts { job: j, conflicts } if *j == job => {
+                engine.decide(job, vec![decision; conflicts.len()]);
+                true
+            }
+            _ => false,
+        })
+        .0
+    };
+    let set = |base: &str| -> Vec<String> {
+        let mut names: Vec<String> = children(&d)
+            .into_iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with(base))
+            .collect();
+        names.sort();
+        names
+    };
+    let report = compress(&old, Decision::Replace);
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    assert_eq!(set("set.7z."), ["set.7z.001", "set.7z.002", "set.7z.003"]);
+
+    // Keep both: the whole new set goes to a free name, the old set stays whole.
+    let report = compress(&new, Decision::KeepBoth);
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    assert_eq!(set("set.7z."), ["set.7z.001", "set.7z.002", "set.7z.003"]);
+    assert_eq!(unpacked(&d.join("set.7z.001"), &d, "back", None), tree(&old));
+    let kept: Vec<PathBuf> = children(&d).into_iter().filter(|p| p.to_string_lossy().contains("set (2).7z.")).collect();
+    assert_eq!(kept.len(), 2, "{kept:?}");
+    assert_eq!(unpacked(&kept[0], &d, "back", None), tree(&new));
+
+    // Replace: every old part goes, only the new two remain and open.
+    let report = compress(&new, Decision::Replace);
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    assert_eq!(set("set.7z."), ["set.7z.001", "set.7z.002"]);
+    assert_eq!(unpacked(&d.join("set.7z.002"), &d, "back", None), tree(&new));
+    // Undo brings the old set back whole.
+    let report = finish(&engine, engine.undo().unwrap(), nothing).0;
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    assert_eq!(set("set.7z."), ["set.7z.001", "set.7z.002", "set.7z.003"]);
+    assert_eq!(unpacked(&d.join("set.7z.001"), &d, "back", None), tree(&old));
+    assert!(leftovers(&d).is_empty(), "{:?}", leftovers(&d));
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn unreadable_inputs_are_left_out() {
+    let d = dir("unreadable");
+    let src = d.join("src");
+    make(&src, &[("a.txt", b"a"), ("gone.txt", b"gone"), ("z.txt", b"z")]);
+    let all = inputs(&children(&src));
+    // Removed after it was listed, before it is read.
+    std::fs::remove_file(src.join("gone.txt")).unwrap();
+    let want = tree(&src);
+    for format in [OutFormat::Zip, OutFormat::SevenZ, OutFormat::TarGz] {
+        for workers in [1, 4] {
+            let out = d.join(format!("out-{workers}.{}", format.extension()));
+            let cx = W::default();
+            write::write(&all, &out, &options(format, Level::Normal), workers, &cx).unwrap();
+            assert_eq!(*cx.failed.borrow(), [src.join("gone.txt")], "{format:?}");
+            assert_eq!(cx.done.get(), 2, "{format:?}");
+            assert_eq!(unpacked(&out, &d, "back", None), want, "{format:?}: left out, not stored empty");
+        }
+    }
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn add_clashes_ignore_case_and_see_files_against_folders() {
+    let d = dir("add-clash");
+    let src = d.join("src");
+    make(&src, &[("Notes.txt", b"old notes"), ("pics/a.jpg", b"jpeg")]);
+    let archive = d.join("a.zip");
+    write::write(&inputs(&children(&src)), &archive, &options(OutFormat::Zip, Level::Normal), 1, &W::default())
+        .unwrap();
+    let more = d.join("more");
+    // `pics` is a file here: it clashes with the folder in the archive.
+    make(&more, &[("pics", b"a file"), ("notes.TXT", b"new notes")]);
+    let engine = engine(&d);
+    let mut titles = Vec::new();
+    let (report, _) = add(&engine, &archive, children(&more), None, |engine, job, event| {
+        let Event::Question { question: Question::Confirm { title, .. }, .. } = event else { return false };
+        titles.push(title.clone());
+        engine.answer(job, Answer::Button(2));
+        true
+    });
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    let case_blind = cfg!(any(windows, target_os = "macos"));
+    assert_eq!(titles, [if case_blind { "2 items already in the archive" } else { "1 item already in the archive" }]);
+    let names: Vec<String> = unpacked(&archive, &d, "back", None).into_iter().map(|(n, _)| n).collect();
+    let mut want = vec!["Notes.txt", "pics (2)", "pics/a.jpg", if case_blind { "notes (2).TXT" } else { "notes.TXT" }];
+    want.sort();
+    assert_eq!(names, want);
+
+    // Replace: the folder goes with what it holds.
+    let file = d.join("file");
+    make(&file, &[("pics", b"now a file")]);
+    let (report, _) = add(&engine, &archive, vec![file.join("pics")], None, |engine, job, event| {
+        let Event::Question { .. } = event else { return false };
+        engine.answer(job, Answer::Button(0));
+        true
+    });
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    let back = unpacked(&archive, &d, "back", None);
+    assert!(back.contains(&("pics".to_owned(), b"now a file".to_vec())), "{back:?}");
+    assert!(!back.iter().any(|(n, _)| n.starts_with("pics/")), "{back:?}");
+
+    // Skip everything: nothing to add, the archive is left as it is and there is nothing to undo.
+    let before = std::fs::read(&archive).unwrap();
+    let label = engine.undo_label();
+    let (report, _) = add(&engine, &archive, vec![file.join("pics")], None, |engine, job, event| {
+        let Event::Question { .. } = event else { return false };
+        engine.answer(job, Answer::Button(1));
+        true
+    });
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    assert_eq!(std::fs::read(&archive).unwrap(), before);
+    assert_eq!(engine.undo_label(), label);
+    assert!(leftovers(&d).is_empty(), "{:?}", leftovers(&d));
     let _ = std::fs::remove_dir_all(&d);
 }

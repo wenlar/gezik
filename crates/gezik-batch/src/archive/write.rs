@@ -3,7 +3,7 @@
 //! goes to a path the caller names (a temporary one); what was written is removed again if it
 //! fails or is cancelled.
 
-use std::cmp::Reverse;
+use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{self, BufReader, BufWriter, Cursor, Read, Seek, Write};
 use std::num::NonZeroU64;
@@ -514,8 +514,17 @@ enum Part {
     File(PathBuf),
 }
 
-/// Each file is compressed by one of `workers` threads into a zip of its own (the largest
-/// first, so the threads end together); this thread copies them in as they come.
+/// Why a worker made no part.
+struct Failed {
+    /// The file could not be read: it is left out and the rest goes on. Otherwise writing
+    /// failed, and so does the archive.
+    read: bool,
+    error: io::Error,
+}
+
+/// Each file is compressed by one of `workers` threads into a zip of its own; this thread
+/// copies them in, in the inputs' order (the same input gives the same archive). A worker
+/// stays at most `2 * workers` files ahead of the copying, so few parts wait in memory.
 fn zip_parallel<W: Write + Seek>(
     zw: &mut ZipWriter<W>,
     files: &[&Input],
@@ -524,26 +533,31 @@ fn zip_parallel<W: Write + Seek>(
     scratch: &Path,
     cx: &dyn WriteCx,
 ) -> io::Result<()> {
-    let mut order: Vec<usize> = (0..files.len()).collect();
-    order.sort_by_key(|&i| Reverse(files[i].size()));
     let next = AtomicUsize::new(0);
+    let merged = AtomicUsize::new(0);
     let halt = AtomicBool::new(false);
     let read = AtomicU64::new(0);
-    // No queue: a worker hands its part over only when this thread takes it, so at most one
-    // part per worker is held.
-    let (sender, receiver) = mpsc::sync_channel::<(usize, io::Result<Part>)>(0);
+    let window = 2 * workers;
+    let (sender, receiver) = mpsc::channel::<(usize, Result<Part, Failed>)>();
     std::thread::scope(|scope| {
         for _ in 0..workers.min(files.len()) {
             let sender = sender.clone();
-            let (order, next, halt, read) = (&order, &next, &halt, &read);
+            let (next, merged, halt, read) = (&next, &merged, &halt, &read);
             scope.spawn(move || {
-                while let Some(&i) = order.get(next.fetch_add(1, Ordering::Relaxed)) {
+                loop {
+                    let i = next.fetch_add(1, Ordering::Relaxed);
+                    if i >= files.len() {
+                        break;
+                    }
+                    while i >= merged.load(Ordering::Relaxed) + window && !halt.load(Ordering::Relaxed) {
+                        std::thread::sleep(Duration::from_millis(2));
+                    }
                     if halt.load(Ordering::Relaxed) {
                         break;
                     }
-                    let part = mini_zip(files[i], base, &volume(scratch, 1000 + i), read, halt);
-                    if let Err(mpsc::SendError((_, part))) = sender.send((i, part)) {
-                        if let Ok(Part::File(path)) = part {
+                    let made = mini_zip(files[i], base, &volume(scratch, 1000 + i), read, halt);
+                    if let Err(mpsc::SendError((_, made))) = sender.send((i, made)) {
+                        if let Ok(Part::File(path)) = made {
                             let _ = fs::remove_file(path);
                         }
                         break;
@@ -552,11 +566,15 @@ fn zip_parallel<W: Write + Seek>(
             });
         }
         drop(sender);
-        let result = merge_parts(zw, files, &receiver, &read, cx);
+        let mut waiting = BTreeMap::new();
+        let result = merge_parts(zw, files, &receiver, &mut waiting, &read, &merged, cx);
         if result.is_err() {
+            // The workers stop; a halted one's error is no failure of its file.
             halt.store(true, Ordering::Relaxed);
-            for (_, part) in receiver.iter() {
-                if let Ok(Part::File(path)) = part {
+            let left: Vec<Result<Part, Failed>> =
+                waiting.into_values().chain(receiver.iter().map(|(_, made)| made)).collect();
+            for made in left {
+                if let Ok(Part::File(path)) = made {
                     let _ = fs::remove_file(path);
                 }
             }
@@ -565,40 +583,57 @@ fn zip_parallel<W: Write + Seek>(
     })
 }
 
-/// Merges the workers' parts into `zw` until they are all done, passing on their progress.
+/// Copies the workers' parts into `zw` in order until they are all done, passing on their
+/// progress; `waiting` holds those that came early.
 fn merge_parts<W: Write + Seek>(
     zw: &mut ZipWriter<W>,
     files: &[&Input],
-    receiver: &mpsc::Receiver<(usize, io::Result<Part>)>,
+    receiver: &mpsc::Receiver<(usize, Result<Part, Failed>)>,
+    waiting: &mut BTreeMap<usize, Result<Part, Failed>>,
     read: &AtomicU64,
+    merged: &AtomicUsize,
     cx: &dyn WriteCx,
 ) -> io::Result<()> {
     let mut counted = 0;
+    let mut want = 0;
     loop {
         let got = receiver.recv_timeout(Duration::from_millis(100));
         let now = read.load(Ordering::Relaxed);
         cx.add_bytes(now - counted);
         counted = now;
-        match got {
-            Ok((_, Ok(part))) => {
-                let merged = match &part {
-                    Part::Memory(bytes) => {
-                        ZipArchive::new(Cursor::new(bytes.as_slice())).and_then(|mut archive| merge(zw, &mut archive))
-                    }
-                    Part::File(path) => File::open(path)
-                        .map_err(Into::into)
-                        .and_then(|f| ZipArchive::new(BufReader::new(f)))
-                        .and_then(|mut archive| merge(zw, &mut archive)),
-                };
-                if let Part::File(path) = &part {
-                    let _ = fs::remove_file(path);
-                }
-                merged?;
-                cx.entry_done();
+        let finished = match got {
+            Ok((i, made)) => {
+                waiting.insert(i, made);
+                false
             }
-            Ok((i, Err(err))) => cx.entry_failed(&files[i].path, &err),
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
+            Err(mpsc::RecvTimeoutError::Timeout) => false,
+            Err(mpsc::RecvTimeoutError::Disconnected) => true,
+        };
+        while let Some(made) = waiting.remove(&want) {
+            match made {
+                Ok(part) => {
+                    let copied = match &part {
+                        Part::Memory(bytes) => ZipArchive::new(Cursor::new(bytes.as_slice()))
+                            .and_then(|mut archive| merge(zw, &mut archive)),
+                        Part::File(path) => File::open(path)
+                            .map_err(Into::into)
+                            .and_then(|f| ZipArchive::new(BufReader::new(f)))
+                            .and_then(|mut archive| merge(zw, &mut archive)),
+                    };
+                    if let Part::File(path) = &part {
+                        let _ = fs::remove_file(path);
+                    }
+                    copied?;
+                    cx.entry_done();
+                }
+                Err(Failed { read: true, error }) => cx.entry_failed(&files[want].path, &error),
+                Err(Failed { read: false, error }) => return Err(error),
+            }
+            want += 1;
+            merged.store(want, Ordering::Relaxed);
+        }
+        if finished {
+            return Ok(());
         }
         if cx.stopped() {
             return Err(stop());
@@ -625,32 +660,33 @@ fn mini_zip(
     path: &Path,
     read: &AtomicU64,
     halt: &AtomicBool,
-) -> io::Result<Part> {
-    let file = File::open(&input.path)?;
+) -> Result<Part, Failed> {
+    let file = File::open(&input.path).map_err(|error| Failed { read: true, error })?;
     let mut feed = Feed::new(file, |n| {
         read.fetch_add(n, Ordering::Relaxed);
         !halt.load(Ordering::Relaxed)
     });
     let options = zip_options(base, input);
-    if input.size() < PART_IN_FILE {
-        let mut zw = ZipWriter::new(Cursor::new(Vec::new())).set_auto_large_file();
-        zw.start_file(input.name.as_str(), options)?;
-        io::copy(&mut feed, &mut zw)?;
-        return Ok(Part::Memory(zw.finish()?.into_inner()));
-    }
-    let result = (|| {
-        let mut zw = ZipWriter::new(BufWriter::new(File::create(path)?)).set_auto_large_file();
-        zw.start_file(input.name.as_str(), options)?;
-        io::copy(&mut feed, &mut zw)?;
-        zw.finish()?.flush()
-    })();
-    match result {
-        Ok(()) => Ok(Part::File(path.to_path_buf())),
-        Err(err) => {
-            let _ = fs::remove_file(path);
-            Err(err)
-        }
-    }
+    let result = if input.size() < PART_IN_FILE {
+        (|| {
+            let mut zw = ZipWriter::new(Cursor::new(Vec::new())).set_auto_large_file();
+            zw.start_file(input.name.as_str(), options)?;
+            io::copy(&mut feed, &mut zw)?;
+            Ok(Part::Memory(zw.finish()?.into_inner()))
+        })()
+    } else {
+        (|| {
+            let mut zw = ZipWriter::new(BufWriter::new(File::create(path)?)).set_auto_large_file();
+            zw.start_file(input.name.as_str(), options)?;
+            io::copy(&mut feed, &mut zw)?;
+            zw.finish()?.flush()?;
+            Ok(Part::File(path.to_path_buf()))
+        })()
+    };
+    result.map_err(|error: io::Error| {
+        let _ = fs::remove_file(path);
+        Failed { read: feed.read_failed, error }
+    })
 }
 
 // --- 7z ---
@@ -705,6 +741,12 @@ fn sevenz_into<W: Write + Seek>(w: W, inputs: &[Input], options: &CompressOption
                 cx.entry_done();
             }
             InputKind::File { .. } => {
+                // Opened now to leave out what cannot be read: once in the block, an entry
+                // cannot be taken back.
+                if let Err(err) = File::open(&input.path) {
+                    cx.entry_failed(&input.path, &err);
+                    continue;
+                }
                 entries.push(sz_entry(input, false));
                 readers.push(SourceReader::new(Lazy { input, cx, file: None, ended: false }));
             }
@@ -753,7 +795,7 @@ fn sz_entry(input: &Input, is_dir: bool) -> ArchiveEntry {
 }
 
 /// A file opened only when the solid block reaches it (not thousands at once). One that
-/// cannot be opened is reported and stored empty: its entry is already in the block.
+/// cannot be opened by then fails the archive: its entry is already in the block.
 struct Lazy<'a> {
     input: &'a Input,
     cx: &'a dyn WriteCx,
@@ -767,15 +809,9 @@ impl Read for Lazy<'_> {
             return Ok(0);
         }
         if self.file.is_none() {
-            match File::open(&self.input.path) {
-                Ok(file) => self.file = Some(file),
-                Err(err) => {
-                    self.ended = true;
-                    let err = io::Error::new(err.kind(), format!("{err}; stored empty"));
-                    self.cx.entry_failed(&self.input.path, &err);
-                    return Ok(0);
-                }
-            }
+            let file = File::open(&self.input.path)
+                .map_err(|err| io::Error::new(err.kind(), format!("{}: {err}", self.input.path.display())))?;
+            self.file = Some(file);
         }
         let n = self.file.as_mut().map_or(Ok(0), |f| f.read(buf))?;
         if n == 0 {
@@ -828,9 +864,11 @@ fn compressed(
         Codec::Xz => {
             let mut options = lzma_rust2::XzOptions::with_preset(level.deflate());
             let cores = std::thread::available_parallelism().map_or(1, |n| n.get()) as u32;
-            if cores > 1 && total >= 2 * XZ_BLOCK {
+            // A thread at preset 9 holds about 700 MB.
+            let threads = cores.min(if level == Level::Best { 4 } else { 8 }).max(1);
+            if threads > 1 && total >= 2 * XZ_BLOCK {
                 options.set_block_size(NonZeroU64::new(XZ_BLOCK));
-                let mut xz = lzma_rust2::XzWriterMt::new(file, options, cores)?;
+                let mut xz = lzma_rust2::XzWriterMt::new(file, options, threads)?;
                 body(&mut xz)?;
                 xz.finish()?.flush()
             } else {
