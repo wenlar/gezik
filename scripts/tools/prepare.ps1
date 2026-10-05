@@ -3,7 +3,7 @@
 # (also written to <Out>\manifest.rs.txt). Windows only; see scripts/tools/README.md.
 # Usage: scripts/tools/prepare.ps1 -Out <folder> [-Version 26.03] [-Release 1] [-UpdateSources]
 # Every official file must match its size and SHA-256 in scripts/tools/sources.sha256, or the
-# script stops; -UpdateSources rewrites that file from what was downloaded (for a new version,
+# script stops; -UpdateSources rewrites its 7-Zip lines from what was downloaded (for a new version,
 # after checking the files by hand). Signed Windows installers must carry Igor Pavlov's valid
 # signature (7-Zip's installers have so far been unsigned; then only the pinned hash counts).
 # Needs the installed 7-Zip (to unpack the Windows installers and write the zips) and Git for
@@ -54,11 +54,17 @@ New-Item -ItemType Directory $work | Out-Null
 $sourcesFile = Join-Path $PSScriptRoot "sources.sha256"
 # The pinned official files: "<sha256> <size> <name>" per line, # starts a comment.
 $pinned = @{}
+# The other tools' lines (ffmpeg's), which -UpdateSources keeps.
+$kept = @()
 if (Test-Path $sourcesFile) {
     foreach ($line in [IO.File]::ReadAllLines($sourcesFile)) {
-        if ($line -match '^\s*(#|$)') { continue }
-        $hash, $size, $name = $line -split '\s+'
-        $pinned[$name] = @{ Sha256 = $hash; Size = [long]$size }
+        $mine = $line.StartsWith("# The official 7-Zip")
+        if ($line -notmatch '^\s*(#|$)') {
+            $hash, $size, $name = $line -split '\s+'
+            $pinned[$name] = @{ Sha256 = $hash; Size = [long]$size }
+            $mine = $name.StartsWith("7z")
+        }
+        if (-not $mine -and $line -notmatch '^\s*$') { $kept += $line }
     }
 }
 
@@ -90,7 +96,7 @@ try {
     }
     if ($UpdateSources) {
         $header = "# The official 7-Zip $Version files prepare.ps1 repackages (https://www.7-zip.org/a/): sha256 size name"
-        [IO.File]::WriteAllText($sourcesFile, ((@($header) + $sources) -join "`n") + "`n")
+        [IO.File]::WriteAllText($sourcesFile, ((@($header) + $sources + $kept) -join "`n") + "`n")
         Write-Host "Wrote $sourcesFile"
     }
     foreach ($build in $builds) {

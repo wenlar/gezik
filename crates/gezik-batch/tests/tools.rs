@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use gezik_batch::archive::write::{self, CompressOptions, Level, OutFormat, WriteCx};
+use gezik_batch::convert::ffmpeg::find_ffmpeg;
 use gezik_batch::tasks::DownloadTask;
 use gezik_batch::tools::install_dir;
 use gezik_core::batch::tools::{Platform, Tool, ToolBuild};
@@ -126,9 +127,14 @@ fn answer(mut stream: TcpStream, body: &[u8], chunk: usize, pause: Duration) -> 
 }
 
 /// Runs `task` to the end; `on` sees each event and returns true to cancel.
-fn run(engine: &Engine, task: DownloadTask, mut on: impl FnMut(&Event) -> bool) -> Report {
+fn run(engine: &Engine, task: DownloadTask, on: impl FnMut(&Event) -> bool) -> Report {
+    run_within(engine, task, Duration::from_secs(60), on)
+}
+
+/// `run`, failing when it takes longer than `limit`.
+fn run_within(engine: &Engine, task: DownloadTask, limit: Duration, mut on: impl FnMut(&Event) -> bool) -> Report {
     let job = engine.submit(Box::new(task));
-    let deadline = Instant::now() + Duration::from_secs(60);
+    let deadline = Instant::now() + limit;
     loop {
         for event in engine.drain() {
             if on(&event) {
@@ -206,6 +212,30 @@ fn a_tar_xz_download_installs() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
+/// The ffmpeg downloads are solid 7z archives; on Unix the programs come out executable
+/// whatever modes the archive holds (7-Zip on Windows stores none).
+#[test]
+fn a_7z_download_installs() {
+    let d = dir("7z");
+    let body = tool_archive(&d, OutFormat::SevenZ);
+    let build = build_of(body.len() as u64, hex_sha256(&body), "7z");
+    let data = d.join("data");
+    let (url, _) = serve(body, 64 * 1024, Duration::ZERO);
+    let engine = engine(&d);
+    let report = run(&engine, DownloadTask::new(build, data.clone()).with_url(url), |_| false);
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    let installed = install_dir(build, &data);
+    assert_eq!(std::fs::read(installed.join("7z.exe")).unwrap(), b"not really 7-Zip");
+    assert_eq!(std::fs::read(installed.join("readme.txt")).unwrap(), b"hello");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(installed.join("7z.exe")).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o755);
+    }
+    let _ = std::fs::remove_dir_all(&d);
+}
+
 #[test]
 fn a_bad_hash_leaves_nothing() {
     let d = dir("bad-hash");
@@ -269,26 +299,44 @@ fn cancel_stops_the_download() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
-/// Every build in MANIFEST, from the folder `scripts/tools/prepare.ps1` wrote (GEZIK_TOOLS_DIR),
-/// downloads and installs with its programs and licence. Skipped without that folder.
+/// Every build in MANIFEST whose file is in the folder `scripts/tools/prepare.ps1` or
+/// `prepare-ffmpeg.ps1` wrote (GEZIK_TOOLS_DIR) downloads and installs with its programs and
+/// licence; this machine's ffmpeg is then found there and is 9.0 or newer. Skipped without
+/// that folder.
 #[test]
-fn the_prepared_seven_zip_builds_install() {
+fn the_prepared_builds_install() {
     let Some(folder) = std::env::var_os("GEZIK_TOOLS_DIR").map(PathBuf::from) else { return };
     let d = dir("prepared");
+    let mut tested = 0;
     for build in gezik_core::batch::tools::MANIFEST {
         let name = build.url.rsplit('/').next().unwrap();
-        let body = std::fs::read(folder.join(name)).unwrap_or_else(|err| panic!("{name}: {err}"));
+        let Ok(body) = std::fs::read(folder.join(name)) else { continue };
         assert_eq!(body.len() as u64, build.size, "{name}");
         assert_eq!(hex_sha256(&body), build.sha256, "{name}");
-        let data = d.join(format!("{:?}", build.platform));
-        let (url, _) = serve(body, 64 * 1024, Duration::ZERO);
+        let data = d.join(format!("{:?}-{:?}", build.tool, build.platform));
+        let (url, _) = serve(body, 1024 * 1024, Duration::ZERO);
         let engine = engine(&d);
-        let report = run(&engine, DownloadTask::new(build, data.clone()).with_url(url), |_| false);
+        // ffmpeg unpacks to about 400 MB, which takes minutes in a debug build.
+        let task = DownloadTask::new(build, data.clone()).with_url(url);
+        let report = run_within(&engine, task, Duration::from_secs(1800), |_| false);
         assert!(report.failures.is_empty(), "{name}: {:?}", report.failures);
         let installed = install_dir(build, &data);
-        for program in build.programs.iter().chain(&["License.txt"]) {
-            assert!(installed.join(program).is_file(), "{name}: {program}");
+        let extra: &[&str] = match build.tool {
+            Tool::SevenZip => &["License.txt"],
+            Tool::Ffmpeg => &["LICENSE", "SOURCE.txt"],
+        };
+        for file in build.programs.iter().chain(extra) {
+            assert!(installed.join(file).is_file(), "{name}: {file}");
         }
+        if build.tool == Tool::Ffmpeg && Some(build.platform) == Platform::current() {
+            let found = find_ffmpeg(&data, None).expect("the installed ffmpeg is found");
+            assert_eq!(found.ffmpeg, installed.join(build.programs[0]));
+            assert_eq!(found.ffprobe.as_deref(), Some(installed.join(build.programs[1]).as_path()));
+            assert!(found.version.is_some_and(|v| v >= (9, 0)), "{:?}", found.version);
+        }
+        let _ = std::fs::remove_dir_all(&data);
+        tested += 1;
     }
+    assert!(tested > 0, "no MANIFEST file is in {}", folder.display());
     let _ = std::fs::remove_dir_all(&d);
 }

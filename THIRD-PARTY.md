@@ -95,3 +95,18 @@ code is under the GNU LGPL with the unRAR licence restriction (the unRAR sources
 to re-create the RAR compression algorithm, and modified ones may not be used to develop a
 RAR (WinRAR) compatible archiver). The source is at
 https://www.7-zip.org/download.html. How the downloads are made: `scripts/tools/README.md`.
+
+## ffmpeg (downloaded on request)
+
+ffmpeg is not built into Gezik. When the user asks for it, Gezik downloads an unmodified
+ffmpeg 9.0.2 build from https://github.com/wenlar/gezik-tools and runs `ffmpeg` and `ffprobe`
+as separate programs. The builds come from third parties and are only repackaged: on Windows
+x64 the essentials build by Gyan Doshi (https://www.gyan.dev/ffmpeg/builds/); on Windows arm64
+and Linux BtbN's GPL builds (https://github.com/BtbN/FFmpeg-Builds; FFmpeg `n9.0.2-17-g2a571b6068`,
+the 9.0 branch with fixes after 9.0.2); on macOS Martin Riedl's builds
+(https://ffmpeg.martin-riedl.de/, signed with his Developer ID, which is kept). These builds
+include GPL code (x264, x265 and others) and are distributed under the GNU General Public
+License version 3. Each download holds the two programs, the licence text (`LICENSE`) and
+`SOURCE.txt`, which names the FFmpeg commit, the builder's scripts and the upstream files with
+their SHA-256. FFmpeg's source is at https://ffmpeg.org/download.html. How the downloads are
+made: `scripts/tools/README.md`.
