@@ -153,7 +153,11 @@ Yeni bir özellik yeni bir `Task` demektir; kuyruk, panel, çakışma listesi, i
 - **Yer kalmaması:** iş duraklatılır ve sorulur ("D: is full — free space and Resume, or Cancel").
 - **Art arda hatalar:** 20 öğe art arda başarısız olursa (ör. ağ koptu) iş duraklatılır ve sorulur.
 - **İptal:** büyük dosyada blok düzeyinde etki eder; yarım hedef dosya silinir; bitmiş öğeler kalır ve geri alınabilir.
-- **Zorla kapanma (2026-10-05):** 64 MB ve üstü dosyalar hedefte `.gezik-copying-…` adıyla kopyalanır ve bitince gerçek adına çevrilir; sistem kopyayı baştan tam boyuta ayırdığı için yarım kalan dosya tamamlanmış görünmesin. Geçici yol `pending-deletes`'e yazılır, bir sonraki açılışta silinir.
+- **Zorla kapanma (2026-10-05):** sistem kopyayı baştan tam boyuta ayırır ve kaynağın değişme zamanını en son yazar; yarım kalan dosya bitmiş sayılmasın diye:
+  - 64 MB ve üstü dosyalar hedefte işe özel `.gezik-copying-<iş>-<n>` adıyla kopyalanır, bitince gerçek adına çevrilir. Hedef klasör `pending-deletes`'e `copies<TAB>pid<TAB>klasör<TAB>önek` satırıyla yazılır; açılışta o klasörde yalnız o önekli dosyalar silinir.
+  - Daha küçük dosyalar kendi adlarıyla kopyalanır; işin günlüğüne (`<ayar klasörü>/copying/<pid>-<iş>.log`) kopyadan önce `kaynak<TAB>hedef` satırı eklenir. Açılışta boyutu ve değişme zamanı kaynakla tutmayan hedef silinir; kaynağı olmayan (taşıma bitmiş) ya da günlükten sonra değiştirilmiş hedefe dokunulmaz. Zaman tam eşit olmalı; yalnız hedef zamanı FAT gibi 2 saniyeye yuvarlanmışsa 2 saniye tolerans.
+  - Her küçük dosyayı geçici adla kopyalamak 10 000 dosyada kopyayı ~1,9 s'den ~3,7 s'ye çıkarıyordu (bu makinede bir yeniden adlandırma ~0,2 ms); günlüğün ölçülebilir maliyeti yok.
+  - Hâlâ çalışan bir Gezik sürecinin (pid) satırlarına ve günlüklerine dokunulmaz.
 - **Hız/kalan süre:** son ~5 sn'nin hareketli ortalaması; kalan süre ön taramadaki toplam bayttan. Tarama bitmeden yalnızca öğe sayısı gösterilir.
 - **Yeniden adlandırmada ad varsa:** çakışma listesi açılmaz; ipucu "A file with this name already exists". Yalnızca büyük/küçük harf değişen ad (Windows/macOS) iki adımda (geçici ad üzerinden) yapılır.
 

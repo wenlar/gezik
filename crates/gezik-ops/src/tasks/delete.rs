@@ -336,6 +336,59 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    fn finished_pid() -> u32 {
+        let mut child = if cfg!(windows) {
+            std::process::Command::new("cmd").args(["/c", "exit"]).spawn().unwrap()
+        } else {
+            std::process::Command::new("true").spawn().unwrap()
+        };
+        child.wait().unwrap();
+        child.id()
+    }
+
+    #[test]
+    fn recovery_deletes_only_what_a_dead_copy_left_under_its_prefix() {
+        let dir = test_dir("delete-recover-copies");
+        let (dead, other) = (crate::pending::copy_prefix(), crate::pending::copy_prefix());
+        write(&dir.join(format!("{dead}0")), "part");
+        write(&dir.join(format!("{dead}1")), "part");
+        write(&dir.join(format!("{dead}2/inside.txt")), "a folder with the name is not ours");
+        write(&dir.join(format!("{other}0")), "another copy's");
+        write(&dir.join("keep.bin"), "k");
+        let pending = PendingDeletes::new(dir.join("pending-deletes"));
+        pending.add_copies(finished_pid(), &dir, &dead);
+        let engine = engine_with_pending(&dir);
+        assert_eq!(engine.recover_deletes(), None, "cleaned at once, no job");
+        let mut left = names(&dir);
+        left.retain(|name| name != "pending-deletes");
+        let mut expected = vec![format!("{dead}2"), format!("{other}0"), "keep.bin".to_owned()];
+        expected.sort();
+        assert_eq!(left, expected);
+        assert!(!dir.join("pending-deletes").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn recovery_leaves_the_files_of_a_copy_that_still_runs() {
+        let dir = test_dir("delete-recover-running");
+        let prefix = crate::pending::copy_prefix();
+        write(&dir.join(format!("{prefix}0")), "being copied");
+        let mut running = if cfg!(windows) {
+            std::process::Command::new("cmd").args(["/c", "ping -n 30 127.0.0.1 >nul"]).spawn().unwrap()
+        } else {
+            std::process::Command::new("sleep").arg("30").spawn().unwrap()
+        };
+        let pending = PendingDeletes::new(dir.join("pending-deletes"));
+        pending.add_copies(running.id(), &dir, &prefix);
+        let engine = engine_with_pending(&dir);
+        engine.recover_deletes();
+        let _ = running.kill();
+        let _ = running.wait();
+        assert!(dir.join(format!("{prefix}0")).exists());
+        assert_eq!(pending.copies().len(), 1, "kept for a later start");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn recovery_ignores_foreign_paths() {
         let dir = test_dir("delete-recover-foreign");

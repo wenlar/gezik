@@ -2,6 +2,9 @@
 //! line. Read at start, so a delete cut short (Gezik closed or crashed) finishes later. A
 //! line starting with `restore` and a tab is instead a hidden folder that could not be put
 //! back under its own name (something held it open): at start it is put back, not deleted.
+//! A line starting with `copies` and a tab is a folder a running copy writes into: what it
+//! left under its temporary names (files starting with its prefix) is deleted at start, unless
+//! the process that wrote the line still runs.
 
 use std::hash::{BuildHasher, Hasher};
 use std::io;
@@ -14,8 +17,20 @@ use crate::engine::lock;
 /// How the folders an instant delete hides are named.
 pub const HIDDEN_PREFIX: &str = ".gezik-deleting-";
 
-/// How a large file being copied is named until it is complete (a leftover is deleted).
+/// How a file being copied is named until it is complete (a leftover is deleted).
 pub const COPYING_PREFIX: &str = ".gezik-copying-";
+
+/// Starts a copies line: `copies<TAB>pid<TAB>folder<TAB>prefix`.
+const COPIES: &str = "copies\t";
+
+/// A folder a copy writes its files into under temporary names starting with `prefix`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CopyNote {
+    /// The process that copies.
+    pub pid: u32,
+    pub folder: PathBuf,
+    pub prefix: String,
+}
 
 /// Starts a restore line: `restore<TAB>hidden<TAB>original<TAB>0|1` (was it hidden before).
 const RESTORE: &str = "restore\t";
@@ -89,6 +104,38 @@ impl PendingDeletes {
         self.read().iter().filter_map(|line| restore_of(line)).collect()
     }
 
+    /// `folder` gets files named `prefix…` from process `pid` until the copy ends.
+    pub fn add_copies(&self, pid: u32, folder: &Path, prefix: &str) {
+        let _guard = lock(&self.guard);
+        let mut list = self.read();
+        let line = PathBuf::from(format!("{COPIES}{pid}\t{}\t{prefix}", folder.display()));
+        if !list.contains(&line) {
+            list.push(line);
+            let _ = self.write(&list);
+        }
+    }
+
+    /// The copy with `prefix` ended: none of its files are left under temporary names.
+    pub fn remove_copies(&self, prefix: &str) {
+        let _guard = lock(&self.guard);
+        let mut list = self.read();
+        let before = list.len();
+        list.retain(|p| copies_of(p).is_none_or(|note| note.prefix != prefix));
+        if list.len() != before {
+            let _ = self.write(&list);
+        }
+    }
+
+    pub fn copies(&self) -> Vec<CopyNote> {
+        let _guard = lock(&self.guard);
+        self.read().iter().filter_map(|line| copies_of(line)).collect()
+    }
+
+    /// Where copies keep their journals (see `journal.rs`).
+    pub fn journal_dir(&self) -> PathBuf {
+        self.file.with_file_name("copying")
+    }
+
     /// The listed folders Gezik itself hid; anything else in the file is ignored, so a damaged
     /// or edited file can never make Gezik delete other things.
     pub fn load(&self) -> Vec<PathBuf> {
@@ -141,8 +188,20 @@ fn restore_of(line: &Path) -> Option<Restore> {
     .then_some(Restore { hidden, original, was_hidden })
 }
 
-/// Whether `path` is an absolute path to a folder an instant delete hid, or to a large file
-/// a copy had not finished.
+/// A copies line, if `line` is one whose prefix can only match files a copy named.
+fn copies_of(line: &Path) -> Option<CopyNote> {
+    let mut parts = line.to_str()?.strip_prefix(COPIES)?.split('\t');
+    let (pid, folder, prefix) = (parts.next()?.parse().ok()?, PathBuf::from(parts.next()?), parts.next()?);
+    (parts.next().is_none()
+        && folder.is_absolute()
+        && prefix.len() > COPYING_PREFIX.len()
+        && prefix.starts_with(COPYING_PREFIX)
+        && !prefix.contains(['/', '\\']))
+    .then(|| CopyNote { pid, folder, prefix: prefix.to_owned() })
+}
+
+/// Whether `path` is an absolute path to a folder an instant delete hid, or to a file a copy
+/// had not finished.
 pub fn is_hidden(path: &Path) -> bool {
     path.is_absolute()
         && path.file_name().and_then(|name| name.to_str()).is_some_and(|name| {
@@ -155,9 +214,9 @@ pub fn hidden_name() -> String {
     format!("{HIDDEN_PREFIX}{}", unique())
 }
 
-/// A fresh name for a large file while it is copied.
-pub fn copying_name() -> String {
-    format!("{COPYING_PREFIX}{}", unique())
+/// A fresh prefix for the temporary names of one copy's files.
+pub fn copy_prefix() -> String {
+    format!("{COPYING_PREFIX}{}-", unique())
 }
 
 fn unique() -> String {
@@ -226,6 +285,44 @@ mod tests {
             PendingDeletes::new(file).restores(),
             [Restore { hidden, original: dir.join("z"), was_hidden: true }]
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn copy_notes_are_added_once_and_removed_by_prefix() {
+        let dir = test_dir("pending-copies");
+        let pending = PendingDeletes::new(dir.join("pending-deletes"));
+        let (mine, other) = (copy_prefix(), copy_prefix());
+        assert_ne!(mine, other);
+        pending.add_copies(7, &dir.join("a"), &mine);
+        pending.add_copies(7, &dir.join("a"), &mine);
+        pending.add_copies(7, &dir.join("b"), &mine);
+        pending.add_copies(8, &dir.join("a"), &other);
+        let note = |pid, folder: &str, prefix: &str| CopyNote { pid, folder: dir.join(folder), prefix: prefix.into() };
+        assert_eq!(pending.copies(), [note(7, "a", &mine), note(7, "b", &mine), note(8, "a", &other)]);
+        assert!(pending.load().is_empty(), "nothing to delete as a whole");
+        pending.remove_copies(&mine);
+        assert_eq!(pending.copies(), [note(8, "a", &other)]);
+        pending.remove_copies(&other);
+        assert!(!dir.join("pending-deletes").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_copy_note_needs_a_gezik_prefix_and_an_absolute_folder() {
+        let dir = test_dir("pending-copies-foreign");
+        let file = dir.join("pending-deletes");
+        let good = format!("{COPYING_PREFIX}abc-");
+        let text = format!(
+            "{COPIES}1\t{}\t\n{COPIES}1\t{}\tdoc\n{COPIES}1\trelative\t{good}\n{COPIES}x\t{}\t{good}\n{COPIES}1\t{}\t{COPYING_PREFIX}a\\b\n{COPIES}2\t{}\t{good}\n",
+            dir.display(),
+            dir.display(),
+            dir.display(),
+            dir.display(),
+            dir.display(),
+        );
+        std::fs::write(&file, text).unwrap();
+        assert_eq!(PendingDeletes::new(file).copies(), [CopyNote { pid: 2, folder: dir.clone(), prefix: good }]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
