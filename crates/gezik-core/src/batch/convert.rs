@@ -790,6 +790,11 @@ mod tests {
         list.iter().map(|s| s.to_str().unwrap()).collect()
     }
 
+    /// An absolute root on any platform, for paths the commands get.
+    fn root() -> PathBuf {
+        if cfg!(windows) { PathBuf::from("C:\\") } else { PathBuf::from("/") }
+    }
+
     fn split(s: &str) -> Vec<&str> {
         s.split(' ').collect()
     }
@@ -938,7 +943,7 @@ mod tests {
 
     #[test]
     fn output_names() {
-        let dir = Path::new("C:\\photos");
+        let dir = &root().join("photos");
         let png = dir.join("foto.png");
         let jpg = dir.join("foto.jpg");
         assert_eq!(output_path(&png, "webp", &Output::SameFolder), dir.join("foto.webp"));
@@ -946,7 +951,7 @@ mod tests {
         assert_eq!(output_path(&dir.join("foto.JPG"), "jpg", &Output::SameFolder), dir.join("foto (converted).jpg"));
         assert_eq!(output_path(&jpg, "jpg", &Output::Subfolder), dir.join("converted").join("foto.jpg"));
         assert_eq!(output_path(&png, "webp", &Output::Subfolder), dir.join("converted").join("foto.webp"));
-        let other = Path::new("D:\\out");
+        let other = &root().join("out");
         assert_eq!(output_path(&jpg, "jpg", &Output::Folder(other.to_path_buf())), other.join("foto.jpg"));
         assert_eq!(output_path(&png, "jpg", &Output::Folder(other.to_path_buf())), other.join("foto.jpg"));
         assert_eq!(
@@ -954,7 +959,7 @@ mod tests {
             dir.join("foto (converted).jpg"),
             "the input's own folder chosen"
         );
-        let upper = Path::new("C:\\PHOTOS").to_path_buf();
+        let upper = root().join("PHOTOS");
         let expected = if cfg!(any(windows, target_os = "macos")) {
             upper.join("foto (converted).jpg")
         } else {
@@ -1176,8 +1181,8 @@ mod tests {
     #[test]
     fn special_names_stay_one_argument() {
         let spec = command(&["magick", "{in}", "-resize", "50%", "{out}"], Some("{name}-small.{ext}"), &[]);
-        let input = Path::new("C:\\pics").join("a \"b\"; $c & d ş.jpg");
-        let out = Path::new("C:\\pics").join(".gezik-tmp-3");
+        let input = root().join("pics").join("a \"b\"; $c & d ş.jpg");
+        let out = root().join("pics").join(".gezik-tmp-3");
         let list = expand_command(&spec, &input, false, Some(&out)).unwrap();
         assert_eq!(list.len(), 5);
         assert_eq!(list[0], "magick");
@@ -1194,19 +1199,22 @@ mod tests {
             Some("{name}.pdf"),
             &[],
         );
-        let input = Path::new("C:\\docs").join("report.final.docx");
-        let out = Path::new("D:\\out").join(".gezik-tmp-4");
+        let docs = root().join("docs");
+        let input = docs.join("report.final.docx");
+        let out = root().join("out").join(".gezik-tmp-4");
         let list = expand_command(&spec, &input, false, Some(&out)).unwrap();
         let mut both = input.as_os_str().to_os_string();
         both.push(input.as_os_str());
-        assert_eq!(list[1], "--dir=C:\\docs");
+        let mut dir_arg = OsString::from("--dir=");
+        dir_arg.push(&docs);
+        assert_eq!(list[1], dir_arg);
         assert_eq!(list[2], "report.final.docx");
-        assert_eq!(list[3], "D:\\out");
+        assert_eq!(list[3], root().join("out").as_os_str());
         assert_eq!(list[4], "x{y}z");
         assert_eq!(list[5], both);
         // Without an output, {outdir} is the input's folder.
         let in_place = command(&["tool", "{outdir}"], None, &[]);
-        assert_eq!(expand_command(&in_place, &input, false, None).unwrap()[1], "C:\\docs");
+        assert_eq!(expand_command(&in_place, &input, false, None).unwrap()[1], docs.as_os_str());
         assert_eq!(expand_output_name("{name}.pdf", &input, false).unwrap(), "report.final.pdf");
         assert_eq!(expand_output_name("{name}-small.{ext}", &input, false).unwrap(), "report.final-small.docx");
         assert!(expand_output_name("{in}.pdf", &input, false).is_err());
@@ -1214,12 +1222,12 @@ mod tests {
             assert!(expand_output_name(bad, &input, false).is_err(), "{bad}");
         }
         // An empty name from the input itself.
-        assert!(expand_output_name("{ext}", &Path::new("C:\\docs").join("noext"), false).is_err());
+        assert!(expand_output_name("{ext}", &docs.join("noext"), false).is_err());
     }
 
     #[test]
     fn folder_placeholders() {
-        let folder = Path::new("C:\\work").join("site.v2");
+        let folder = root().join("work").join("site.v2");
         let spec = CommandSpec { folders: true, ..command(&["zip", "{name}|{ext}|{in}"], Some("{name}.zip"), &[]) };
         let list = expand_command(&spec, &folder, true, None).unwrap();
         let mut expected = OsString::from("site.v2||");
@@ -1231,7 +1239,7 @@ mod tests {
 
     #[test]
     fn bad_placeholders() {
-        let input = Path::new("C:\\a.jpg");
+        let input = &root().join("a.jpg");
         assert!(expand_command(&command(&["t", "{x}"], None, &[]), input, false, None).unwrap_err().contains("{x}"));
         assert!(expand_command(&command(&["t", "{in"], None, &[]), input, false, None).is_err());
         assert!(expand_command(&command(&["t", "a}b"], None, &[]), input, false, None).is_err());
