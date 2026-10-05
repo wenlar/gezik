@@ -41,7 +41,11 @@ fn list(location: &Location, mode: &Mode) -> LoadResult {
     match location {
         Location::Drives => LoadResult::Drives(gezik_platform::drives()),
         Location::Path(path) => match list_dir(path) {
-            Ok(entries) => LoadResult::Files(path.clone(), entries),
+            Ok(mut entries) => {
+                // What a copy or delete is still working on under a temporary name.
+                entries.retain(|entry| !gezik_ops::pending::is_internal_name(&entry.name));
+                LoadResult::Files(path.clone(), entries)
+            }
             Err(err) if *mode == Mode::Show && err.kind() == std::io::ErrorKind::NotFound => {
                 LoadResult::Gone { fallback: nearest_existing(location, |p| p.is_dir()) }
             }
@@ -764,6 +768,23 @@ mod tests {
             LoadResult::Files(path, entries) => {
                 assert_eq!(path, tmp.0);
                 assert_eq!(entries.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), ["a.txt"]);
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    /// What a running copy or delete keeps under its own temporary names is not shown.
+    #[test]
+    fn list_leaves_out_gezik_temporary_names() {
+        let tmp = TempDir::new("list-temp");
+        std::fs::write(tmp.0.join("a.txt"), "x").expect("write");
+        std::fs::write(tmp.0.join(".gezik-copying-0123456789abcdef-0"), "x").expect("write");
+        std::fs::create_dir(tmp.0.join(".gezik-deleting-0123456789abcdef")).expect("mkdir");
+        std::fs::write(tmp.0.join(".gezik-copying-"), "a user's name, not ours").expect("write");
+        match list(&Location::Path(tmp.0.clone()), &Mode::Show) {
+            LoadResult::Files(_, entries) => {
+                let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+                assert_eq!(names, [".gezik-copying-", "a.txt"]);
             }
             other => panic!("unexpected {other:?}"),
         }
