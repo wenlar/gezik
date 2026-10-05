@@ -23,6 +23,11 @@ impl Rect {
     pub fn from_points(x0: f32, y0: f32, x1: f32, y1: f32) -> Rect {
         Rect { x: x0.min(x1), y: y0.min(y1), width: (x1 - x0).abs(), height: (y1 - y0).abs() }
     }
+
+    /// Whether point (`x`, `y`) is inside (the left and top edges are, the others are not).
+    pub fn contains(&self, x: f32, y: f32) -> bool {
+        x >= self.x && x < self.x + self.width && y >= self.y && y < self.y + self.height
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
