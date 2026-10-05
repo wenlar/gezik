@@ -1,0 +1,286 @@
+import { ListView } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+import { TextButton } from "text-button.slint";
+
+// One conflict, as Rust (conflicts.rs) builds it.
+export struct ConflictRow {
+    name: string,
+    source-size: string,
+    source-date: string,
+    target-size: string,
+    target-date: string,
+    // 1: the source is newer, 2: the target is, 0: neither.
+    newer: int,
+    identical: bool,
+    // 0 two files, 1 two folders (merged), 2 a file and a folder.
+    kind: int,
+    decision: string,
+    selected: bool,
+    focused: bool,
+}
+
+// Over the window: everything that already exists where the files go, with a decision each.
+export component ConflictList inherits Rectangle {
+    in property <bool> open;
+    // A question over the list has the keyboard.
+    in property <bool> dialog-open;
+    in property <string> title;
+    in property <[ConflictRow]> rows;
+    in property <int> identical-count;
+    in property <bool> hide-identical;
+    in property <bool> apply-all;
+    in property <string> footer;
+    in-out property <length> scroll;
+    // 0 Replace, 1 Skip, 2 Keep both, 3 If newer (DECISIONS in conflicts.rs).
+    callback decide(int);
+    callback set-apply-all(bool);
+    callback toggle-identical();
+    callback pressed(int, bool, bool);
+    callback row-menu(int, length, length);
+    callback start();
+    callback cancel-operation();
+    callback key(KeyEvent) -> bool;
+
+    changed open => {
+        if self.open && !root.dialog-open {
+            scope.focus();
+        }
+    }
+
+    public function take-focus() {
+        scope.focus();
+    }
+
+    public function ensure-visible(index: int) {
+        if index * Theme.row-height < -root.scroll {
+            root.scroll = -index * Theme.row-height;
+        } else if (index + 1) * Theme.row-height > -root.scroll + list.visible-height {
+            root.scroll = -((index + 1) * Theme.row-height - list.visible-height);
+        }
+    }
+
+    background: Theme.background.with-alpha(0.6);
+
+    // Clicks outside the box go nowhere.
+    TouchArea { }
+
+    scope := FocusScope {
+        key-pressed(event) => {
+            if root.key(event) {
+                return accept;
+            }
+            return reject;
+        }
+    }
+
+    Rectangle {
+        x: 24px;
+        y: 24px;
+        width: root.width - 48px;
+        height: root.height - 48px;
+        background: Theme.surface;
+        border-radius: Theme.radius * 1.5;
+        border-width: 1px;
+        border-color: Theme.border;
+        accessible-role: groupbox;
+        accessible-label: root.title;
+
+        VerticalLayout {
+            padding: Theme.spacing * 2;
+            spacing: Theme.spacing;
+
+            Text {
+                text: root.title;
+                font-weight: 600;
+                overflow: elide;
+                color: Theme.foreground;
+            }
+
+            HorizontalLayout {
+                spacing: Theme.spacing;
+                TextButton {
+                    text: "Replace";
+                    clicked => { root.decide(0); }
+                }
+                TextButton {
+                    text: "Skip";
+                    clicked => { root.decide(1); }
+                }
+                TextButton {
+                    text: "Keep both";
+                    clicked => { root.decide(2); }
+                }
+                TextButton {
+                    text: "If newer";
+                    clicked => { root.decide(3); }
+                }
+                Rectangle { horizontal-stretch: 1; }
+                Text {
+                    text: "Apply to:";
+                    vertical-alignment: center;
+                    color: Theme.foreground-muted;
+                }
+                TextButton {
+                    text: "Selected";
+                    checked: !root.apply-all;
+                    clicked => { root.set-apply-all(false); }
+                }
+                TextButton {
+                    text: "All";
+                    checked: root.apply-all;
+                    clicked => { root.set-apply-all(true); }
+                }
+            }
+
+            if root.identical-count > 0: HorizontalLayout {
+                alignment: LayoutAlignment.start;
+                TextButton {
+                    text: (root.hide-identical ? "Show identical (" : "Hide identical (") + root.identical-count + ")";
+                    checked: root.hide-identical;
+                    clicked => { root.toggle-identical(); }
+                }
+            }
+
+            HorizontalLayout {
+                height: Theme.row-height;
+                padding-left: Theme.spacing;
+                spacing: Theme.spacing * 2;
+                Text {
+                    text: "Name";
+                    horizontal-stretch: 1;
+                    vertical-alignment: center;
+                    color: Theme.foreground-muted;
+                }
+                Text {
+                    text: "Source";
+                    width: 200px;
+                    vertical-alignment: center;
+                    color: Theme.foreground-muted;
+                }
+                Text {
+                    text: "Target";
+                    width: 200px;
+                    vertical-alignment: center;
+                    color: Theme.foreground-muted;
+                }
+                Text {
+                    text: "Action";
+                    width: 110px;
+                    vertical-alignment: center;
+                    color: Theme.foreground-muted;
+                }
+            }
+            Rectangle { height: 1px; background: Theme.border; }
+
+            list := ListView {
+                vertical-stretch: 1;
+                content-y <=> root.scroll;
+                for row[i] in root.rows: line := Rectangle {
+                    property <color> fg: row.selected ? Theme.selection-foreground : Theme.foreground;
+                    property <color> muted: row.selected ? Theme.selection-foreground : Theme.foreground-muted;
+                    height: Theme.row-height;
+                    background: row.selected ? Theme.selection : touch.has-hover ? Theme.hover : transparent;
+                    accessible-role: list-item;
+                    accessible-label: row.name;
+                    accessible-description: row.decision;
+                    accessible-item-selectable: true;
+                    accessible-item-selected: row.selected;
+                    accessible-item-index: i;
+
+                    touch := TouchArea {
+                        pointer-event(event) => {
+                            if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                                scope.focus();
+                                root.pressed(i, event.modifiers.control, event.modifiers.shift);
+                            }
+                            if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {
+                                root.row-menu(i, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                            }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        padding-left: Theme.spacing;
+                        spacing: Theme.spacing * 2;
+                        Text {
+                            text: row.name + (row.kind == 1 ? "  (folder)" : row.kind == 2 ? "  (file and folder)" : "")
+                                + (row.identical ? "  · identical" : "");
+                            horizontal-stretch: 1;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            color: line.fg;
+                        }
+                        Text {
+                            text: row.source-size + "  " + row.source-date + (row.newer == 1 ? "  (newer)" : "");
+                            width: 200px;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            color: line.muted;
+                        }
+                        Text {
+                            text: row.target-size + "  " + row.target-date + (row.newer == 2 ? "  (newer)" : "");
+                            width: 200px;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            color: line.muted;
+                        }
+                        Rectangle {
+                            width: 110px;
+                            border-radius: Theme.radius;
+                            background: choice.has-hover && row.kind != 1 ? Theme.hover : transparent;
+                            Text {
+                                x: 4px;
+                                height: parent.height;
+                                text: row.decision;
+                                vertical-alignment: center;
+                                color: line.fg;
+                            }
+                            if row.kind != 1: Path {
+                                x: parent.width - 14px;
+                                y: (parent.height - 8px) / 2;
+                                width: 8px;
+                                height: 8px;
+                                viewbox-width: 8;
+                                viewbox-height: 8;
+                                stroke: line.muted;
+                                stroke-width: 1.5px;
+                                commands: "M 1 2.5 L 4 5.5 L 7 2.5";
+                            }
+                            choice := TouchArea {
+                                enabled: row.kind != 1;
+                                clicked => { root.row-menu(i, self.absolute-position.x, self.absolute-position.y + self.height); }
+                            }
+                        }
+                    }
+
+                    if row.focused: Rectangle {
+                        border-width: 1px;
+                        border-color: Theme.focus-ring;
+                    }
+                }
+            }
+
+            Rectangle { height: 1px; background: Theme.border; }
+
+            HorizontalLayout {
+                spacing: Theme.spacing;
+                Text {
+                    text: root.footer;
+                    horizontal-stretch: 1;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    color: Theme.foreground-muted;
+                }
+                TextButton {
+                    text: "Cancel operation";
+                    clicked => { root.cancel-operation(); }
+                }
+                TextButton {
+                    text: "Start";
+                    primary: true;
+                    clicked => { root.start(); }
+                }
+            }
+        }
+    }
+}

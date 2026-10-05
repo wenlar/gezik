@@ -6,10 +6,13 @@ import { TabBar, TabItem } from "widgets/tab-bar.slint";
 import { Sidebar, SidebarRow } from "widgets/sidebar.slint";
 import { PreviewPane, PreviewInfo } from "widgets/preview-pane.slint";
 import { FileView, FileRow, ItemRow } from "widgets/file-view.slint";
+import { OpsPanel, OpRow } from "widgets/ops-panel.slint";
+import { Dialog } from "widgets/dialog.slint";
+import { ConflictList, ConflictRow } from "widgets/conflict-list.slint";
 
 // Re-exported so Rust can set it with `window.global::<Theme>()` and build crumbs, tabs
 // and sidebar rows.
-export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow }
+export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, OpRow, ConflictRow }
 
 // One item of the Slint context menu (tabs everywhere; also rows and the sidebar on
 // macOS/Linux). `id` is one of the ids in context_menu.rs.
@@ -42,6 +45,21 @@ export component AppWindow inherits Window {
     callback grid-columns-changed(int);
     // Ctrl+wheel in the view: true for bigger.
     callback zoom(bool);
+    // Renaming in place (view/mod.rs, operations.rs).
+    in property <int> renaming-index: -1;
+    in-out property <string> rename-text;
+    in property <int> rename-select;
+    in property <string> rename-error;
+    callback rename-accepted(string);
+    callback rename-cancelled();
+    callback rename-tab(string, bool);
+    callback rename-edited(string);
+    callback rename-blurred(string, int);
+    in property <int> rename-generation;
+    out property <bool> rename-focused: file-view.rename-focused;
+    // The rename field held the keyboard last, even if its row scrolled out: whether ending
+    // the rename must give the keyboard back to the list. Rust clears it when a rename ends.
+    in-out property <bool> rename-field-focused;
     // The View button, with the window position for its menu.
     callback view-menu(length, length);
     in-out property <string> current-path;
@@ -135,6 +153,48 @@ export component AppWindow inherits Window {
     callback keyboard-menu(int, length, length);
     // Every key press, before the focused item sees it. Returns whether it was handled
     // (shortcuts, list keys; see keys.rs and main.rs).
+    // File operations (operations.rs): the panel above the status bar, folded into the
+    // summary on the status bar's right when `ops-collapsed`.
+    in property <[OpRow]> op-rows;
+    in property <bool> ops-panel-open;
+    in property <string> ops-summary;
+    in property <bool> ops-collapsed;
+    callback op-pause(int);
+    callback op-resume(int);
+    callback op-cancel(int);
+    callback op-start-now(int);
+    callback op-details(int);
+    callback op-retry(int);
+    callback op-dismiss(int);
+    callback ops-toggle();
+    // The conflict list over the window (conflicts.rs).
+    in property <bool> conflicts-open;
+    in property <string> conflict-title;
+    in property <[ConflictRow]> conflict-rows;
+    in property <int> conflict-identical-count;
+    in property <bool> conflict-hide-identical;
+    in property <bool> conflict-apply-all;
+    in property <string> conflict-footer;
+    in-out property <length> conflict-scroll;
+    callback conflict-decide(int);
+    callback conflict-set-apply-all(bool);
+    callback conflict-toggle-identical();
+    callback conflict-pressed(int, bool, bool);
+    callback conflict-row-menu(int, length, length);
+    callback conflict-start();
+    callback conflict-cancel();
+    callback conflict-key(KeyEvent) -> bool;
+
+    public function conflict-ensure-visible(index: int) {
+        conflict-list.ensure-visible(index);
+    }
+    // A question over the window (dialog.rs); `dialog-chosen` gets the button's index.
+    in property <bool> dialog-open;
+    in property <string> dialog-title;
+    in property <string> dialog-message;
+    in property <[string]> dialog-buttons;
+    in property <int> dialog-escape;
+    callback dialog-chosen(int);
     callback key-event(KeyEvent) -> bool;
 
     // Whether the file list has keyboard focus (and not the address bar or a button).
@@ -154,7 +214,11 @@ export component AppWindow inherits Window {
 
     // Gives the keyboard to the file list.
     public function focus-list() {
-        keys.focus();
+        if root.conflicts-open {
+            conflict-list.take-focus();
+        } else {
+            keys.focus();
+        }
     }
 
     // Called before any context menu opens: like Explorer, a menu ends typing in the address
@@ -321,6 +385,17 @@ export component AppWindow inherits Window {
                     col-modified <=> root.col-modified;
                     col-created <=> root.col-created;
                     col-type <=> root.col-type;
+                    renaming-index: root.renaming-index;
+                    rename-text <=> root.rename-text;
+                    rename-select: root.rename-select;
+                    rename-error: root.rename-error;
+                    rename-accepted(t) => { root.rename-accepted(t); }
+                    rename-cancelled => { root.rename-cancelled(); }
+                    rename-tab(t, back) => { root.rename-tab(t, back); }
+                    rename-edited(t) => { root.rename-edited(t); }
+                    rename-blurred(t, g) => { root.rename-blurred(t, g); }
+                    rename-generation: root.rename-generation;
+                    rename-has-focus <=> root.rename-field-focused;
                     col-size <=> root.col-size;
                     sort-column: root.sort-column;
                     sort-desc: root.sort-desc;
@@ -395,6 +470,17 @@ export component AppWindow inherits Window {
                 }
             }
 
+            if root.ops-panel-open: Rectangle { height: 1px; background: Theme.border; }
+            if root.ops-panel-open: OpsPanel {
+                rows: root.op-rows;
+                pause(i) => { root.op-pause(i); }
+                resume(i) => { root.op-resume(i); }
+                cancel(i) => { root.op-cancel(i); }
+                start-now(i) => { root.op-start-now(i); }
+                details(i) => { root.op-details(i); }
+                retry(i) => { root.op-retry(i); }
+                dismiss(i) => { root.op-dismiss(i); }
+            }
             Rectangle { height: 1px; background: Theme.border; }
             Rectangle {
                 height: Theme.row-height;
@@ -408,6 +494,36 @@ export component AppWindow inherits Window {
                         vertical-alignment: center;
                         color: Theme.foreground-muted;
                     }
+                    if root.ops-summary != "": Rectangle {
+                        width: summary-text.preferred-width + 26px;
+                        border-radius: Theme.radius;
+                        background: summary-touch.has-hover ? Theme.hover : transparent;
+                        accessible-role: button;
+                        accessible-label: root.ops-summary;
+                        accessible-action-default => { root.ops-toggle(); }
+                        summary-text := Text {
+                            x: 4px;
+                            height: parent.height;
+                            text: root.ops-summary;
+                            vertical-alignment: center;
+                            color: Theme.foreground-muted;
+                        }
+                        Path {
+                            x: parent.width - 14px;
+                            y: (parent.height - 8px) / 2;
+                            width: 8px;
+                            height: 8px;
+                            viewbox-width: 8;
+                            viewbox-height: 8;
+                            stroke: Theme.foreground-muted;
+                            stroke-width: 1.5px;
+                            commands: root.ops-collapsed ? "M 1 5.5 L 4 2.5 L 7 5.5" : "M 1 2.5 L 4 5.5 L 7 2.5";
+                        }
+                        summary-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.ops-toggle(); }
+                        }
+                    }
                     Text {
                         text: root.notice;
                         horizontal-stretch: 1;
@@ -418,6 +534,42 @@ export component AppWindow inherits Window {
                     }
                 }
             }
+        }
+        // Always there (hidden when closed), so Rust can scroll it.
+        conflict-list := ConflictList {
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.height;
+            visible: root.conflicts-open;
+            open: root.conflicts-open;
+            dialog-open: root.dialog-open;
+            title: root.conflict-title;
+            rows: root.conflict-rows;
+            identical-count: root.conflict-identical-count;
+            hide-identical: root.conflict-hide-identical;
+            apply-all: root.conflict-apply-all;
+            footer: root.conflict-footer;
+            scroll <=> root.conflict-scroll;
+            decide(i) => { root.conflict-decide(i); }
+            set-apply-all(all) => { root.conflict-set-apply-all(all); }
+            toggle-identical => { root.conflict-toggle-identical(); }
+            pressed(i, ctrl, shift) => { root.conflict-pressed(i, ctrl, shift); }
+            row-menu(i, x, y) => { root.conflict-row-menu(i, x, y); }
+            start => { root.conflict-start(); }
+            cancel-operation => { root.conflict-cancel(); }
+            key(event) => { return root.conflict-key(event); }
+        }
+        if root.dialog-open: Dialog {
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.height;
+            title: root.dialog-title;
+            message: root.dialog-message;
+            buttons: root.dialog-buttons;
+            escape: root.dialog-escape;
+            chosen(i) => { root.dialog-chosen(i); }
         }
     }
 }

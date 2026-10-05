@@ -6,18 +6,28 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
 use gezik_core::nav::{Closed, Location, Step, Tabs, ViewState, crumbs, nearest_existing};
+use gezik_core::ops::paths::same_path;
+use gezik_core::refresh::{QUIET, RefreshPace};
 use gezik_core::{Entry, list_dir};
 use gezik_platform::Drive;
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
+use crate::folder_watch::FolderWatch;
 use crate::places::{Places, PlacesPart};
 use crate::view::{Listing, View};
 use crate::{AppWindow, CrumbItem, TabItem};
 
 /// Address bar parts shown before older ones collapse into "…".
 const MAX_CRUMBS: usize = 4;
+
+/// How long letting go of a drive about to be removed may take before Windows tries it.
+const REMOVAL_GRACE: std::time::Duration = std::time::Duration::from_millis(150);
+/// After that, how often (and how many times) to look whether the drive went.
+const REMOVAL_CHECK: std::time::Duration = std::time::Duration::from_millis(500);
+const REMOVAL_CHECKS: u32 = 20;
 
 /// What a background load produces; `Send`, so it can cross back to the UI thread.
 #[derive(Debug)]
@@ -37,7 +47,11 @@ fn list(location: &Location, mode: &Mode) -> LoadResult {
     match location {
         Location::Drives => LoadResult::Drives(gezik_platform::drives()),
         Location::Path(path) => match list_dir(path) {
-            Ok(entries) => LoadResult::Files(path.clone(), entries),
+            Ok(mut entries) => {
+                // What a copy or delete is still working on under a temporary name.
+                entries.retain(|entry| !gezik_ops::pending::is_internal_name(&entry.name));
+                LoadResult::Files(path.clone(), entries)
+            }
             Err(err) if *mode == Mode::Show && err.kind() == std::io::ErrorKind::NotFound => {
                 LoadResult::Gone { fallback: nearest_existing(location, |p| p.is_dir()) }
             }
@@ -108,7 +122,17 @@ struct Inner {
     /// The history moves of the load started at this generation, so that back, forward
     /// and up made while it loads go on from its target. Stale once the generation moved.
     pending: Option<(u64, Vec<Step>)>,
+    /// The generation of a load the user started (navigation, tab switch); a quiet refresh
+    /// must not overtake it.
+    user_load: Option<u64>,
     on_changed: Vec<Listener>,
+    /// Watches the folder on screen; its changes reload it, paced by `pace`.
+    watch: FolderWatch,
+    watched: Option<PathBuf>,
+    pace: RefreshPace,
+    refresh_timer: slint::Timer,
+    /// Told when the watched folder's drive is about to be removed (Windows), to let go of it.
+    removal: Option<gezik_platform::RemovalWatch>,
 }
 
 thread_local! {
@@ -148,8 +172,61 @@ impl Navigator {
             start,
             generation: Arc::default(),
             pending: None,
+            user_load: None,
             on_changed: Vec::new(),
+            watch: FolderWatch::new(|| {
+                let _ = slint::invoke_from_event_loop(|| with_current(Navigator::folder_changed));
+            }),
+            watched: None,
+            pace: RefreshPace::new(),
+            refresh_timer: slint::Timer::default(),
+            removal: None,
         })))
+    }
+
+    /// The watched folder changed on disk.
+    fn folder_changed(&self) {
+        {
+            let mut inner = self.0.borrow_mut();
+            if inner.watch.take_change() {
+                inner.pace.changed(Instant::now());
+            }
+        }
+        self.schedule_refresh();
+    }
+
+    /// Sets the timer for the reload the watched folder's changes call for, if any.
+    fn schedule_refresh(&self) {
+        let inner = self.0.borrow();
+        if let Some(at) = inner.pace.next() {
+            let delay = at.saturating_duration_since(Instant::now());
+            inner.refresh_timer.start(slint::TimerMode::SingleShot, delay, || with_current(Navigator::refresh_due));
+        }
+    }
+
+    /// Reloads the watched folder for its changes, quietly; later while the user loads
+    /// something, drags a selection rectangle or renames.
+    fn refresh_due(&self) {
+        let watched = {
+            let inner = self.0.borrow();
+            // A reload rebuilds the rows: it would end a rubber-band drag, and put a rename's
+            // caret back at the start.
+            let busy = inner.user_load.is_some()
+                || inner.cleared
+                || inner.view.marquee_active()
+                || inner.view.renaming().is_some();
+            if busy {
+                inner.refresh_timer.start(slint::TimerMode::SingleShot, QUIET, || with_current(Navigator::refresh_due));
+                return;
+            }
+            inner.watched.clone()
+        };
+        let Some(watched) = watched else { return };
+        if !matches!(self.active_location(), Location::Path(ref path) if same_path(path, &watched)) {
+            return;
+        }
+        self.save_view();
+        self.load_with(Location::Path(watched), Mode::Show, None, false);
     }
 
     /// Makes this navigator reachable from background-load callbacks and shows the first
@@ -374,6 +451,34 @@ impl Navigator {
         self.load(self.active_location(), Mode::Show, None);
     }
 
+    /// Reloads the active tab if it shows one of `dirs` (a file operation changed them),
+    /// keeping the scroll and selecting `select` (by name) if given. The status bar does not
+    /// flash "Loading…".
+    /// `note`, if any, shows in the status bar once the listing is back. Returns whether a
+    /// reload started; none does while a load the user started is under way (it would
+    /// overtake it).
+    pub fn refresh_showing(&self, dirs: &[PathBuf], select: &[String], note: Option<String>) -> bool {
+        let Location::Path(current) = self.active_location() else { return false };
+        {
+            let inner = self.0.borrow();
+            let user_loading = inner.user_load == Some(inner.generation.load(Ordering::SeqCst));
+            if inner.cleared || user_loading || !dirs.iter().any(|dir| gezik_core::ops::paths::same_path(dir, &current))
+            {
+                return false;
+            }
+        }
+        self.save_view();
+        if !select.is_empty() {
+            let mut inner = self.0.borrow_mut();
+            let mut view = inner.tabs.active().view().clone();
+            view.selected = select.to_vec();
+            view.focus = select.first().cloned();
+            inner.tabs.active_mut().set_view(view);
+        }
+        self.load_with(Location::Path(current), Mode::Show, note, false);
+        true
+    }
+
     /// Path of entry `index` and whether it is a folder (drives count as folders).
     pub fn entry_path(&self, index: i32) -> Option<(PathBuf, bool)> {
         let index = usize::try_from(index).ok()?;
@@ -385,7 +490,7 @@ impl Navigator {
         if is_dir {
             self.go(Location::Path(path));
         } else if let Err(err) = open::that_detached(&path) {
-            self.status(format!("Cannot open {}: {err}", path.display()));
+            self.status(format!("Cannot open {}: {}", path.display(), gezik_platform::fs::describe(&err)));
         }
     }
 
@@ -406,7 +511,7 @@ impl Navigator {
         };
         for path in files {
             if let Err(err) = open::that_detached(path) {
-                self.status(format!("Cannot open {}: {err}", path.display()));
+                self.status(format!("Cannot open {}: {}", path.display(), gezik_platform::fs::describe(&err)));
             }
         }
         if let Some((folder, _)) = items.into_iter().find(|(_, is_dir)| *is_dir) {
@@ -451,10 +556,14 @@ impl Navigator {
         inner.tabs.active_mut().set_view(view);
     }
 
+    fn load(&self, location: Location, mode: Mode, note: Option<String>) {
+        self.load_with(location, mode, note, true);
+    }
+
     /// Lists `location` off the UI thread, then applies `mode` and shows it. Results of a
     /// load overtaken by a newer one are dropped. `note`, if any, replaces the item count
     /// in the status bar once the listing is shown.
-    fn load(&self, location: Location, mode: Mode, note: Option<String>) {
+    fn load_with(&self, location: Location, mode: Mode, note: Option<String>, loading_text: bool) {
         let (window, generation, ticket) = {
             let mut inner = self.0.borrow_mut();
             let ticket = inner.generation.fetch_add(1, Ordering::SeqCst) + 1;
@@ -462,9 +571,16 @@ impl Navigator {
                 Mode::Move(steps) => Some((ticket, steps.clone())),
                 Mode::Show => None,
             };
+            inner.user_load = loading_text.then_some(ticket);
+            // Any load of the watched folder covers its changes so far.
+            if let Location::Path(path) = &location
+                && inner.watched.as_deref().is_some_and(|watched| same_path(watched, path))
+            {
+                inner.pace.started(Instant::now());
+            }
             (inner.window.clone(), inner.generation.clone(), ticket)
         };
-        if let Some(w) = window.upgrade() {
+        if loading_text && let Some(w) = window.upgrade() {
             w.set_status("Loading…".into());
         }
         std::thread::spawn(move || {
@@ -480,7 +596,12 @@ impl Navigator {
 
     fn finish_load(&self, location: Location, mode: Mode, result: LoadResult, note: Option<String>) {
         // This was the pending load (an overtaken one never gets here).
-        self.0.borrow_mut().pending = None;
+        {
+            let mut inner = self.0.borrow_mut();
+            inner.pending = None;
+            inner.user_load = None;
+            inner.pace.finished(Instant::now());
+        }
         let shown = match &location {
             Location::Path(p) => p.display().to_string(),
             Location::Drives => "This PC".to_owned(),
@@ -496,7 +617,8 @@ impl Navigator {
                 return;
             }
             LoadResult::Failed(err) => {
-                return self.show_failed(&mode, &location, format!("Cannot open {shown}: {err}"));
+                let why = gezik_platform::fs::describe(&err);
+                return self.show_failed(&mode, &location, format!("Cannot open {shown}: {why}"));
             }
         };
         let (view, state) = {
@@ -507,8 +629,71 @@ impl Navigator {
             inner.cleared = false;
             (inner.view.clone(), inner.tabs.active().view().clone())
         };
+        self.watch_shown(&location);
         view.show(listing, &state, note);
         self.update_chrome();
+        self.schedule_refresh();
+    }
+
+    /// Watches the folder now on screen (none for This PC).
+    fn watch_shown(&self, location: &Location) {
+        let folder = match location {
+            Location::Path(path) => Some(path.clone()),
+            Location::Drives => None,
+        };
+        let mut inner = self.0.borrow_mut();
+        let same = match (&folder, &inner.watched) {
+            (Some(a), Some(b)) => same_path(a, b),
+            (None, None) => true,
+            _ => false,
+        };
+        if !same {
+            inner.watch.watch(folder.as_deref());
+            inner.removal = None;
+            inner.removal = folder.as_deref().and_then(|folder| {
+                let window = inner.window.upgrade()?;
+                gezik_platform::watch_removal(&window.window().window_handle(), folder, || {
+                    with_current(Navigator::drive_removal_asked);
+                })
+            });
+            inner.watched = folder;
+            inner.pace.reset();
+            inner.refresh_timer.stop();
+        }
+    }
+
+    /// The watched folder's drive is about to be removed: let go of it now. Then see, for a
+    /// while, whether it went (the list moves to the nearest folder still there) or stayed
+    /// (watched again).
+    fn drive_removal_asked(&self) {
+        let (removal, folder) = {
+            let mut inner = self.0.borrow_mut();
+            inner.watch.stop_now();
+            inner.refresh_timer.stop();
+            (inner.removal.take(), inner.watched.clone())
+        };
+        drop(removal);
+        // Windows tries the drive as soon as this returns; the watcher's thread closes its
+        // handles within moments.
+        std::thread::sleep(REMOVAL_GRACE);
+        let Some(folder) = folder else { return };
+        let checks = Rc::new(std::cell::Cell::new(0u32));
+        self.0.borrow().refresh_timer.start(slint::TimerMode::Repeated, REMOVAL_CHECK, move || {
+            let gone = !folder.exists();
+            checks.set(checks.get() + 1);
+            if gone || checks.get() >= REMOVAL_CHECKS {
+                with_current(|nav| {
+                    nav.0.borrow().refresh_timer.stop();
+                    // Still there after all: watch it again (forgotten first, so it starts anew).
+                    nav.0.borrow_mut().watched = None;
+                    if gone {
+                        nav.reload();
+                    } else {
+                        nav.watch_shown(&nav.active_location());
+                    }
+                });
+            }
+        });
     }
 
     /// Shows `message` for a failed load; see [`apply_failure`].
@@ -634,6 +819,23 @@ mod tests {
             LoadResult::Files(path, entries) => {
                 assert_eq!(path, tmp.0);
                 assert_eq!(entries.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), ["a.txt"]);
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    /// What a running copy or delete keeps under its own temporary names is not shown.
+    #[test]
+    fn list_leaves_out_gezik_temporary_names() {
+        let tmp = TempDir::new("list-temp");
+        std::fs::write(tmp.0.join("a.txt"), "x").expect("write");
+        std::fs::write(tmp.0.join(".gezik-copying-0123456789abcdef-0"), "x").expect("write");
+        std::fs::create_dir(tmp.0.join(".gezik-deleting-0123456789abcdef")).expect("mkdir");
+        std::fs::write(tmp.0.join(".gezik-copying-"), "a user's name, not ours").expect("write");
+        match list(&Location::Path(tmp.0.clone()), &Mode::Show) {
+            LoadResult::Files(_, entries) => {
+                let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+                assert_eq!(names, [".gezik-copying-", "a.txt"]);
             }
             other => panic!("unexpected {other:?}"),
         }

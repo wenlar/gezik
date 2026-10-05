@@ -1,0 +1,91 @@
+import { Theme } from "../theme.slint";
+
+// The name of an entry being renamed. Enter or a click elsewhere keeps the new name, Esc
+// keeps the old one, Tab keeps it and goes on to the next entry (Shift+Tab: the previous).
+export component RenameField inherits Rectangle {
+    in-out property <string> text;
+    // Selected when it opens: the name up to its extension (bytes).
+    in property <int> select-end;
+    in property <bool> invalid;
+    in property <bool> centered;
+    callback accepted(string);
+    callback cancelled();
+    callback tab(string, bool);
+    callback edited(string);
+    // The field lost the focus to something else (not Enter, Esc or Tab).
+    callback blurred(string, int);
+    // Which rename this is, and the last one whose stem was selected: the field is
+    // recreated while scrolling, and must select only when a rename starts.
+    in property <int> generation;
+    in-out property <int> applied: -1;
+    // Whether the input has the focus (written here, read by the view).
+    in-out property <bool> focused;
+    // The rename this field was made for: a late blur of an older one must not count.
+    property <int> mine;
+
+    // Esc ended it: losing the focus right after does not accept again.
+    property <bool> done;
+
+    background: Theme.background;
+    border-width: 1px;
+    border-color: root.invalid ? Theme.danger : Theme.accent;
+    border-radius: 2px;
+    accessible-role: text-input;
+    accessible-label: "Name";
+    accessible-value: root.text;
+
+    FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape {
+                root.done = true;
+                root.cancelled();
+                return accept;
+            }
+            if event.text == Key.Tab || event.text == Key.Backtab {
+                root.tab(input.text, event.modifiers.shift || event.text == Key.Backtab);
+                return accept;
+            }
+            return reject;
+        }
+
+        input := TextInput {
+            x: 3px;
+            width: parent.width - 6px;
+            height: parent.height;
+            vertical-alignment: center;
+            horizontal-alignment: root.centered ? center : left;
+            single-line: true;
+            text <=> root.text;
+            color: Theme.foreground;
+            selection-background-color: Theme.selection;
+            selection-foreground-color: Theme.selection-foreground;
+            init => {
+                root.mine = root.generation;
+                self.focus();
+                root.focused = self.has-focus;
+                if root.applied != root.generation {
+                    root.applied = root.generation;
+                    self.set-selection-offsets(0, root.select-end);
+                }
+            }
+            edited => {
+                root.done = false;
+                root.edited(self.text);
+            }
+            accepted => {
+                root.accepted(self.text);
+            }
+            changed has-focus => {
+                // A late change of an older field (after Tab opened the next one) must not
+                // overwrite the focus the new field has just taken.
+                if root.mine == root.generation {
+                    root.focused = self.has-focus;
+                }
+                if !self.has-focus && !root.done {
+                    root.done = true;
+                    root.blurred(self.text, root.mine);
+                }
+            }
+        }
+    }
+}

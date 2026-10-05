@@ -29,6 +29,8 @@ pub struct ViewData {
     pub thumbnails: bool,
     /// The icon size to ask for, in physical pixels.
     pub icon_px: u32,
+    /// Names in this folder on the clipboard as cut: they look faded.
+    pub cut: std::collections::HashSet<String>,
 }
 
 pub struct ItemsModel {
@@ -120,6 +122,7 @@ pub fn file_row(data: &ViewData, i: usize) -> FileRow {
         icon: icon.unwrap_or_default(),
         selected: data.selection.is_selected(i),
         focused: data.selection.focus() == Some(i),
+        cut: matches!(listing, Listing::Files(..)) && listing.name_at(i).is_some_and(|name| data.cut.contains(name)),
     }
 }
 

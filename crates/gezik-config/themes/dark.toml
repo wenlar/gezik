@@ -22,6 +22,9 @@ icon-other = "#9aa3ad"
 focus-ring = "#60cdff"
 marquee = "#60cdff33"
 danger = "#ff6b6b"
+progress = "#60cdff"
+progress-paused = "#e8b33f"
+progress-error = "#ff6b6b"
 
 [metrics]
 font-family = ""

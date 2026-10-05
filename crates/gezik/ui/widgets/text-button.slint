@@ -1,0 +1,46 @@
+import { Theme } from "../theme.slint";
+
+// A button with a text label. `primary` fills it with the accent color; `checked` marks the
+// chosen one of a pair.
+export component TextButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> primary;
+    in property <bool> checked;
+    callback clicked();
+
+    height: Theme.row-height + 4px;
+    min-width: max(72px, label.preferred-width + Theme.spacing * 4);
+    border-radius: Theme.radius;
+    border-width: root.primary ? 0px : (scope.has-focus || root.checked ? 2px : 1px);
+    border-color: scope.has-focus || root.checked ? Theme.accent : Theme.border;
+    background: root.primary ? Theme.accent : (touch.has-hover ? Theme.hover : transparent);
+    forward-focus: scope;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-checked: root.checked;
+    accessible-action-default => { root.clicked(); }
+
+    label := Text {
+        width: parent.width;
+        height: parent.height;
+        text: root.text;
+        color: root.primary ? Theme.accent-foreground : Theme.foreground;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    scope := FocusScope {
+        key-pressed(event) => {
+            if (event.text == Key.Return || event.text == " ") {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}

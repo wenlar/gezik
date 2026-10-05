@@ -40,6 +40,8 @@ Set the `GEZIK_CONFIG_DIR` environment variable to use another folder.
   high refresh rate displays a cap saves a lot of CPU.
 - `pinned` — folders pinned to the sidebar. Gezik updates this list when you pin,
   unpin or reorder; the rest of the file, including your comments, is kept.
+- `pending-deletes` — permanent deletes not finished yet (Gezik finishes them on start).
+  Local to this machine; not meant to be copied.
 
 Changes apply as soon as you save; no restart needed. Problems (a typo, an invalid
 color) show up in the status bar with the file and line, and never stop Gezik from
@@ -69,6 +71,33 @@ the default. The preview pane (Alt+P) shows a picture, the start of a text file,
 thumbnail, folder item counts or file facts for the selection; Space opens a larger quick
 look.
 
+### File operations
+
+Gezik copies, moves and deletes with its own engine on every OS:
+
+- **Copy, cut, paste** (Ctrl+C / Ctrl+X / Ctrl+V) use the system clipboard on Windows and
+  macOS: copy in Gezik and paste in Explorer or Finder, or the other way round. Cut items look
+  faded until they are pasted. (Linux: Gezik's own clipboard for now.)
+- **Conflicts are asked up front**: before anything is replaced, every item that already
+  exists shows in one list with a decision each (Replace, Skip, Keep both, If newer).
+  Nothing is replaced unless you choose so, and replaced files go to the trash.
+- **Delete** moves to the Recycle Bin / Trash; **Shift+Delete** deletes for good, after a
+  question. A permanent delete takes the items out of the folder at once and finishes in the
+  background; if Gezik closes first, it finishes on the next start (`pending-deletes` in the
+  config folder keeps the list).
+- **Undo / Redo** (Ctrl+Z / Ctrl+Y, ⌘Z / ⌘⇧Z on macOS) work for copy, move, rename, new
+  items, trash and replace, for the whole session. Items changed since are left alone.
+- **Rename in place** with F2 (Enter on macOS); **New folder** with Ctrl+Shift+N.
+- Operations on the same drive wait for each other; different drives run at the same time.
+  Long ones show in a panel above the status bar (fold it into the status bar with the
+  arrow), with pause, cancel and, on Windows, progress on the taskbar button.
+
+```toml
+[files]
+confirm-trash = false     # ask before moving to the trash
+copy-threads = "auto"     # auto (SSD 6, spinning disk 1, network 4) or 1-16
+```
+
 ### Keyboard shortcuts
 
 | Action | Windows / Linux | macOS |
@@ -83,13 +112,19 @@ look.
 | List view / grid view (`view-list`, `view-grid`) | Ctrl+1 / Ctrl+2 | ⌘1 / ⌘2 |
 | Show or hide the preview pane (`toggle-preview`) | Alt+P | Alt+P |
 | Quick look (`quick-look`, only while the file list has focus) | Space | Space |
+| Copy / cut / paste | Ctrl+C / Ctrl+X / Ctrl+V | ⌘C / ⌘X / ⌘V (⌘⌥V moves) |
+| Delete / delete permanently | Delete / Shift+Delete | ⌘⌫ / ⌘⌥⌫ |
+| Rename | F2 | Enter |
+| New folder | Ctrl+Shift+N | ⌘⇧N |
+| Duplicate | (menu) | ⌘D |
+| Undo / redo | Ctrl+Z / Ctrl+Y | ⌘Z / ⌘⇧Z |
 
 Change them in `settings.toml` under `[shortcuts]` (`"mod"` is ⌘ on macOS and Ctrl
 elsewhere, `""` disables one). Ctrl+wheel in a folder changes the grid or icon size.
 
 The file list keys are fixed: arrow keys, PgUp/PgDn, Home/End move the focus; Shift with
 them extends the selection; Ctrl with the arrows moves the focus without selecting;
-Ctrl+Space toggles the focused item; Enter opens the selection; Esc clears it. Type a
+Ctrl+Space toggles the focused item; Enter opens the selection (on macOS Enter renames and ⌘↓ opens); Esc clears it. Type a
 name's first letters to jump to it. In quick look, the arrows move through the folder
 and Space or Esc closes it.
 

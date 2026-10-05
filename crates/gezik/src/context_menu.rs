@@ -13,6 +13,7 @@ use gezik_platform::MenuTarget;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::navigation::Navigator;
+use crate::operations::Operations;
 use crate::preview::Preview;
 use crate::sidebar::{SECTION_PINNED, Sidebar};
 use crate::view::View;
@@ -138,6 +139,62 @@ pub const PREVIEW_PANE: u32 = 42;
 pub const APPLY_TO_ALL: u32 = 43;
 pub const RESET_FOLDER: u32 = 44;
 
+pub const UNDO: u32 = 50;
+pub const REDO: u32 = 51;
+pub const PASTE: u32 = 52;
+pub const NEW_FOLDER: u32 = 53;
+pub const NEW_FILE: u32 = 54;
+pub const REFRESH: u32 = 55;
+pub const CUT: u32 = 56;
+pub const COPY: u32 = 57;
+pub const DUPLICATE: u32 = 58;
+pub const RENAME: u32 = 59;
+pub const TRASH: u32 = 60;
+pub const DELETE_PERMANENTLY: u32 = 61;
+pub const PASTE_INTO: u32 = 62;
+
+/// 70–73: the conflict row menu, in `conflicts::DECISIONS` order.
+pub const CONFLICT_FIRST: u32 = 70;
+
+/// Gezik's file items for rows on macOS and Linux; Windows has them in its own menu (and
+/// Gezik takes them over, see `Menus::run_verb`).
+pub fn file_items(single: bool, folder: bool, can_paste: bool) -> Vec<(u32, &'static str)> {
+    let mut out = vec![(CUT, "Cut"), (COPY, "Copy")];
+    if folder && can_paste {
+        out.push((PASTE_INTO, "Paste into folder"));
+    }
+    out.push((DUPLICATE, "Duplicate"));
+    if single {
+        out.push((RENAME, "Rename"));
+    }
+    out.push((TRASH, "Move to Trash"));
+    out.push((DELETE_PERMANENTLY, "Delete permanently"));
+    out
+}
+
+/// The items for empty space in a folder: Undo/Redo say what they would do.
+pub fn background_items(undo: Option<&str>, redo: Option<&str>, can_paste: bool) -> Vec<(u32, String)> {
+    let mut out = Vec::new();
+    if let Some(label) = undo {
+        out.push((UNDO, format!("Undo {label}")));
+    }
+    if let Some(label) = redo {
+        out.push((REDO, format!("Redo {label}")));
+    }
+    if can_paste {
+        out.push((PASTE, "Paste".to_owned()));
+    }
+    out.push((NEW_FOLDER, "New folder".to_owned()));
+    out.push((NEW_FILE, "New file".to_owned()));
+    out.push((REFRESH, "Refresh".to_owned()));
+    out
+}
+
+/// `items` with owned labels, to add items whose labels are made at run time.
+fn owned(items: Vec<(u32, &'static str)>) -> Vec<(u32, String)> {
+    items.into_iter().map(|(id, title)| (id, title.to_owned())).collect()
+}
+
 /// The View menu; the current choices are marked with a bullet.
 pub fn view_items(view: ViewSettings, preview_open: bool) -> Vec<(u32, String)> {
     let mark = |on: bool, title: &str| format!("{}{title}", if on { "• " } else { "    " });
@@ -179,8 +236,11 @@ enum Subject {
     Rows(Vec<PathBuf>),
     SidebarEntry(PathBuf),
     Tab(u64),
+    /// Empty space in this folder.
+    Background(PathBuf),
     Header,
     View,
+    Conflict(usize),
 }
 
 /// Lets one native menu be pending or open at a time, so two right-clicks in quick
@@ -215,6 +275,7 @@ pub struct Menus {
     view: View,
     preview: Preview,
     sidebar: Sidebar,
+    ops: Operations,
     /// What the open Slint menu is for.
     subject: Rc<RefCell<Option<Subject>>>,
     #[cfg_attr(not(windows), allow(dead_code))]
@@ -222,13 +283,21 @@ pub struct Menus {
 }
 
 impl Menus {
-    pub fn new(window: &AppWindow, nav: Navigator, view: View, preview: Preview, sidebar: Sidebar) -> Menus {
+    pub fn new(
+        window: &AppWindow,
+        nav: Navigator,
+        view: View,
+        preview: Preview,
+        sidebar: Sidebar,
+        ops: Operations,
+    ) -> Menus {
         let menus = Menus {
             window: window.as_weak(),
             nav,
             view,
             preview,
             sidebar,
+            ops,
             subject: Rc::default(),
             native_menu: MenuGate::default(),
         };
@@ -249,9 +318,9 @@ impl Menus {
         self.row_menu(index, x, y, false);
     }
 
-    /// Right-click on empty space in the file list. Only the Windows menu has items for it.
-    pub fn background(&self) {
-        self.background_menu(None);
+    /// Right-click on empty space in the file list, at window position `x`, `y`.
+    pub fn background(&self, x: f32, y: f32) {
+        self.background_menu(None, x, y);
     }
 
     /// Shift+F10 or the Menu key on the file list: the menu of row `index` (selected and
@@ -261,27 +330,47 @@ impl Menus {
         if index >= 0 {
             self.row_menu(index, x, y, true);
         } else {
-            self.background_menu(Some((x, y)));
+            self.background_menu(Some((x, y)), x, y);
         }
     }
 
     fn row_menu(&self, index: i32, x: f32, y: f32, at_position: bool) {
         let Ok(i) = usize::try_from(index) else { return };
         let at = at_position.then_some((x, y));
+        let native = cfg!(windows);
+        self.ops.clipboard_check();
         if self.view.is_selected(i) && self.view.selection_count() > 1 {
             let paths = self.view.selected_paths();
-            return self.open(Subject::Rows(paths.clone()), Place::Rows, MenuTarget::Items(paths), x, y, at);
+            let mut list = owned(items(Place::Rows, native));
+            list.extend(self.file_extras(false, false, native));
+            return self.open(Subject::Rows(paths.clone()), list, MenuTarget::Items(paths), x, y, at);
         }
         let Some((path, is_dir)) = self.view.entry_path(i) else { return };
         let place = Place::Row { is_dir, pinned: is_dir && self.sidebar.is_pinned(&path) };
-        self.open(Subject::Row(path.clone()), place, MenuTarget::Item(path), x, y, at);
+        let mut list = owned(items(place, native));
+        list.extend(self.file_extras(true, is_dir, native));
+        self.open(Subject::Row(path.clone()), list, MenuTarget::Item(path), x, y, at);
     }
 
-    fn background_menu(&self, at: Option<(f32, f32)>) {
-        let Location::Path(dir) = self.nav.active_location() else { return };
-        if cfg!(windows) {
-            self.open_native(None, MenuTarget::Background(dir), Vec::new(), at);
+    /// File items after the row's own: Windows already has Cut, Copy, Delete... (taken over in
+    /// `run_verb`), so only Duplicate is added there.
+    fn file_extras(&self, single: bool, folder: bool, native: bool) -> Vec<(u32, String)> {
+        // Drives (This PC) are not files: no copying, deleting or renaming them.
+        if self.view.shows_drives() {
+            Vec::new()
+        } else if native {
+            vec![(DUPLICATE, "Duplicate".to_owned())]
+        } else {
+            owned(file_items(single, folder, self.ops.can_paste()))
         }
+    }
+
+    fn background_menu(&self, at: Option<(f32, f32)>, x: f32, y: f32) {
+        let Location::Path(dir) = self.nav.active_location() else { return };
+        self.ops.clipboard_check();
+        let list =
+            background_items(self.ops.undo_label().as_deref(), self.ops.redo_label().as_deref(), self.ops.can_paste());
+        self.open(Subject::Background(dir.clone()), list, MenuTarget::Background(dir), x, y, at);
     }
 
     /// Right-click on sidebar entry (`section`, `index`), at window position `x`, `y`.
@@ -296,7 +385,14 @@ impl Menus {
             first: index == 0,
             last: index + 1 >= count,
         };
-        self.open(Subject::SidebarEntry(path.clone()), place, MenuTarget::Item(path), x, y, None);
+        self.open(
+            Subject::SidebarEntry(path.clone()),
+            owned(items(place, cfg!(windows))),
+            MenuTarget::Item(path),
+            x,
+            y,
+            None,
+        );
     }
 
     /// Right-click on tab `index`, at window position `x`, `y`. Tabs get Gezik's own menu
@@ -321,12 +417,20 @@ impl Menus {
     }
 
     /// `at`: where the Windows menu opens (window position), else at the cursor.
-    fn open(&self, subject: Subject, place: Place, target: MenuTarget, x: f32, y: f32, at: Option<(f32, f32)>) {
+    fn open(
+        &self,
+        subject: Subject,
+        items: Vec<(u32, String)>,
+        target: MenuTarget,
+        x: f32,
+        y: f32,
+        at: Option<(f32, f32)>,
+    ) {
         if cfg!(windows) {
-            self.open_native(Some(subject), target, items(place, true), at);
+            self.open_native(Some(subject), target, items, at);
         } else {
             *self.subject.borrow_mut() = Some(subject);
-            self.open_slint(&items(place, false), x, y);
+            self.open_slint(&items, x, y);
         }
     }
 
@@ -338,7 +442,7 @@ impl Menus {
         &self,
         subject: Option<Subject>,
         target: MenuTarget,
-        items: Vec<(u32, &'static str)>,
+        items: Vec<(u32, String)>,
         at: Option<(f32, f32)>,
     ) {
         let Some(claim) = self.native_menu.claim() else { return };
@@ -348,7 +452,10 @@ impl Menus {
             let handle = window.window().window_handle();
             let scale = window.window().scale_factor();
             let at = at.map(|(x, y)| ((x * scale).round() as i32, (y * scale).round() as i32));
-            let outcome = gezik_platform::show_shell_menu(&handle, &target, &items, at);
+            let items: Vec<(u32, &str)> = items.iter().map(|(id, title)| (*id, title.as_str())).collect();
+            // Gezik renames in place, only a single row of a folder listing (see run_verb).
+            let can_rename = matches!(subject, Some(Subject::Row(_))) && !menus.view.shows_drives();
+            let outcome = gezik_platform::show_shell_menu(&handle, &target, &items, at, can_rename);
             release_stale_modifiers(&window);
             drop(claim);
             match outcome {
@@ -363,6 +470,7 @@ impl Menus {
                     menus.nav.reload();
                     menus.sidebar.refresh();
                 }
+                Ok(gezik_platform::MenuOutcome::Verb(verb)) => menus.run_verb(verb, subject),
                 Ok(gezik_platform::MenuOutcome::Dismissed) => {}
                 Err(err) => window.set_status(format!("Cannot show the menu: {err}").into()),
             }
@@ -374,7 +482,7 @@ impl Menus {
         &self,
         _subject: Option<Subject>,
         _target: MenuTarget,
-        _items: Vec<(u32, &'static str)>,
+        _items: Vec<(u32, String)>,
         _at: Option<(f32, f32)>,
     ) {
     }
@@ -392,8 +500,29 @@ impl Menus {
         window.invoke_show_menu(x, y);
     }
 
+    /// The decision menu of conflict row `row`, at window position `x`, `y`.
+    pub fn conflict(&self, row: i32, x: f32, y: f32) {
+        let Ok(row) = usize::try_from(row) else { return };
+        let conflicts = self.ops.conflicts();
+        let list: Vec<(u32, &'static str)> = crate::conflicts::DECISIONS
+            .iter()
+            .enumerate()
+            .filter(|(_, d)| conflicts.choices_for(row).contains(d))
+            .map(|(i, d)| (CONFLICT_FIRST + i as u32, d.label()))
+            .collect();
+        if list.is_empty() {
+            return;
+        }
+        *self.subject.borrow_mut() = Some(Subject::Conflict(row));
+        self.open_slint(&list, x, y);
+    }
     fn run(&self, id: u32, subject: Subject) {
         match (id, subject) {
+            (id, Subject::Conflict(row)) if (CONFLICT_FIRST..CONFLICT_FIRST + 4).contains(&id) => {
+                if let Some(decision) = crate::conflicts::DECISIONS.get((id - CONFLICT_FIRST) as usize) {
+                    self.ops.conflicts().decide_row(row, *decision);
+                }
+            }
             (OPEN_IN_NEW_TAB, Subject::Row(path) | Subject::SidebarEntry(path)) => {
                 self.nav.open_tab(Location::Path(path), false);
             }
@@ -431,7 +560,8 @@ impl Menus {
                 if let Err(err) = open::that_detached(&path)
                     && let Some(window) = self.window.upgrade()
                 {
-                    window.set_status(format!("Cannot open {}: {err}", path.display()).into());
+                    let why = gezik_platform::fs::describe(&err);
+                    window.set_status(format!("Cannot open {}: {why}", path.display()).into());
                 }
             }
             (OPEN, Subject::Rows(paths)) => {
@@ -448,7 +578,8 @@ impl Menus {
                     if let Err(err) = open::that_detached(&path)
                         && let Some(window) = self.window.upgrade()
                     {
-                        window.set_status(format!("Cannot open {}: {err}", path.display()).into());
+                        let why = gezik_platform::fs::describe(&err);
+                        window.set_status(format!("Cannot open {}: {why}", path.display()).into());
                     }
                 }
             }
@@ -472,7 +603,62 @@ impl Menus {
             (PREVIEW_PANE, Subject::View) => self.preview.toggle_pane(),
             (APPLY_TO_ALL, Subject::View) => self.view.apply_to_all(),
             (RESET_FOLDER, Subject::View) => self.view.reset_folder(),
+            (CUT | COPY, Subject::Row(path)) => self.ops.copy_paths(vec![path], id == CUT),
+            (CUT | COPY, Subject::Rows(paths)) => self.ops.copy_paths(paths, id == CUT),
+            (PASTE_INTO, Subject::Row(path)) => self.ops.paste(Some(path), false),
+            (DUPLICATE, Subject::Row(_) | Subject::Rows(_)) => self.ops.duplicate(),
+            (RENAME, Subject::Row(_)) => self.ops.rename_start(),
+            (TRASH | DELETE_PERMANENTLY, Subject::Row(path)) => {
+                self.ops.trash_paths(vec![path], id == DELETE_PERMANENTLY)
+            }
+            (TRASH | DELETE_PERMANENTLY, Subject::Rows(paths)) => self.ops.trash_paths(paths, id == DELETE_PERMANENTLY),
+            (UNDO, Subject::Background(_)) => self.ops.undo(),
+            (REDO, Subject::Background(_)) => self.ops.redo(),
+            (PASTE, Subject::Background(dir)) => self.ops.paste(Some(dir), false),
+            (NEW_FOLDER, Subject::Background(dir)) => self.ops.new_folder(Some(dir)),
+            (NEW_FILE, Subject::Background(dir)) => self.ops.new_file(Some(dir)),
+            (REFRESH, Subject::Background(_)) => self.nav.reload(),
             _ => {}
+        }
+    }
+
+    /// Explorer's own Cut, Copy, Paste, Delete and Rename, done by Gezik (its engine, its
+    /// conflict list, its undo).
+    #[cfg(windows)]
+    fn run_verb(&self, verb: gezik_platform::ShellVerb, subject: Option<Subject>) {
+        use gezik_platform::ShellVerb;
+        let paths = match &subject {
+            Some(Subject::Row(path) | Subject::SidebarEntry(path)) => vec![path.clone()],
+            Some(Subject::Rows(paths)) => paths.clone(),
+            _ => Vec::new(),
+        };
+        match verb {
+            ShellVerb::Cut => self.ops.copy_paths(paths, true),
+            ShellVerb::Copy => self.ops.copy_paths(paths, false),
+            ShellVerb::Paste => {
+                let into = match subject {
+                    // A row is a target only if it is a folder, else the shown folder gets it.
+                    Some(Subject::Row(path)) => self.view.is_folder_row(&path).then_some(path),
+                    Some(Subject::SidebarEntry(path) | Subject::Background(path)) => Some(path),
+                    _ => None,
+                };
+                self.ops.paste(into, false);
+            }
+            ShellVerb::Delete => {
+                let keys = gezik_platform::modifier_keys_down();
+                let permanent = keys.left_shift || keys.right_shift;
+                if matches!(subject, Some(Subject::SidebarEntry(_))) {
+                    // A pinned folder is not what is selected in the list: always ask first.
+                    self.ops.trash_asking(paths, permanent);
+                } else {
+                    self.ops.trash_paths(paths, permanent);
+                }
+            }
+            ShellVerb::Rename => {
+                if matches!(subject, Some(Subject::Row(_))) {
+                    self.ops.rename_start();
+                }
+            }
         }
     }
 }
@@ -515,6 +701,23 @@ mod tests {
 
     fn ids(v: Vec<(u32, &str)>) -> Vec<u32> {
         v.into_iter().map(|(id, _)| id).collect()
+    }
+
+    #[test]
+    fn file_items_depend_on_the_selection() {
+        assert_eq!(ids(file_items(true, false, true)), [CUT, COPY, DUPLICATE, RENAME, TRASH, DELETE_PERMANENTLY]);
+        assert_eq!(ids(file_items(false, true, true)), [CUT, COPY, PASTE_INTO, DUPLICATE, TRASH, DELETE_PERMANENTLY]);
+        assert!(!ids(file_items(true, true, false)).contains(&PASTE_INTO));
+    }
+
+    #[test]
+    fn background_items_say_what_undo_does() {
+        let items = background_items(Some("Copy 3 items"), None, true);
+        assert_eq!(items[0], (UNDO, "Undo Copy 3 items".to_owned()));
+        let ids: Vec<u32> = items.iter().map(|(id, _)| *id).collect();
+        assert_eq!(ids, [UNDO, PASTE, NEW_FOLDER, NEW_FILE, REFRESH]);
+        let bare: Vec<u32> = background_items(None, None, false).iter().map(|(id, _)| *id).collect();
+        assert_eq!(bare, [NEW_FOLDER, NEW_FILE, REFRESH]);
     }
 
     #[cfg(windows)]

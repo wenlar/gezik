@@ -10,17 +10,18 @@ use windows::Win32::Graphics::Gdi::{BeginPaint, ClientToScreen, EndPaint, PAINTS
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoTaskMemFree};
 use windows::Win32::UI::Shell::Common::ITEMIDLIST;
 use windows::Win32::UI::Shell::{
-    CMF_NORMAL, CMINVOKECOMMANDINFO, DefSubclassProc, GCS_VERBA, IContextMenu, IContextMenu2, IContextMenu3,
-    IShellFolder, RemoveWindowSubclass, SHBindToParent, SHGetDesktopFolder, SHParseDisplayName, SetWindowSubclass,
+    CMF_CANRENAME, CMF_NORMAL, CMINVOKECOMMANDINFO, DefSubclassProc, GCS_VERBA, IContextMenu, IContextMenu2,
+    IContextMenu3, IShellFolder, RemoveWindowSubclass, SHBindToParent, SHGetDesktopFolder, SHParseDisplayName,
+    SetWindowSubclass,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreatePopupMenu, DeleteMenu, DestroyMenu, GetCursorPos, GetMenuItemCount, GetMenuItemID, HMENU, InsertMenuW,
-    MF_BYCOMMAND, MF_BYPOSITION, MF_SEPARATOR, MF_STRING, SW_SHOWNORMAL, TPM_RETURNCMD, TPM_RIGHTBUTTON,
-    TrackPopupMenuEx, WM_DRAWITEM, WM_INITMENUPOPUP, WM_MEASUREITEM, WM_MENUCHAR, WM_PAINT,
+    CreatePopupMenu, DestroyMenu, GetCursorPos, HMENU, InsertMenuW, MF_BYPOSITION, MF_SEPARATOR, MF_STRING,
+    SW_SHOWNORMAL, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenuEx, WM_DRAWITEM, WM_INITMENUPOPUP, WM_MEASUREITEM,
+    WM_MENUCHAR, WM_PAINT,
 };
 use windows::core::{HSTRING, Interface, PCSTR, PCWSTR, PSTR};
 
-use crate::{MenuOutcome, MenuTarget};
+use crate::{MenuOutcome, MenuTarget, ShellVerb};
 
 /// Shell command ids start here; Gezik's own ids must be below it.
 const FIRST_SHELL_ID: u32 = 1000;
@@ -34,12 +35,15 @@ thread_local! {
 
 /// Shows the Explorer menu for `target` with `extra` (id, label) items on top: at `at`, a
 /// point in the window's client area in physical pixels (a menu opened from the keyboard),
-/// else at the mouse cursor. Call on the UI thread; blocks until the menu closes.
+/// else at the mouse cursor. `can_rename`: the menu has the Shell's "Rename" (returned as
+/// `ShellVerb::Rename`, the caller renames). Call on the UI thread; blocks until the menu
+/// closes.
 pub fn show_shell_menu(
     window: &impl HasWindowHandle,
     target: &MenuTarget,
     extra: &[(u32, &str)],
     at: Option<(i32, i32)>,
+    can_rename: bool,
 ) -> Result<MenuOutcome, String> {
     validate_ids(extra)?;
     let handle = window.window_handle().map_err(|e| e.to_string())?;
@@ -49,10 +53,15 @@ pub fn show_shell_menu(
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         let menu = context_menu_for(hwnd, target).map_err(|e| e.to_string())?;
         let hmenu = CreatePopupMenu().map_err(|e| e.to_string())?;
-        let result = track(hwnd, hmenu, &menu, extra, at).map_err(|e| e.to_string());
+        let result = track(hwnd, hmenu, &menu, extra, at, can_rename).map_err(|e| e.to_string());
         let _ = DestroyMenu(hmenu);
         result
     }
+}
+
+/// Without CMF_CANRENAME the Shell leaves its "Rename" out.
+fn query_flags(can_rename: bool) -> u32 {
+    if can_rename { CMF_NORMAL | CMF_CANRENAME } else { CMF_NORMAL }
 }
 
 /// Gezik's own item ids must be in 1..FIRST_SHELL_ID (0 means "dismissed", 1000+ are Shell ids).
@@ -160,10 +169,10 @@ unsafe fn track(
     menu: &IContextMenu,
     extra: &[(u32, &str)],
     at: Option<(i32, i32)>,
+    can_rename: bool,
 ) -> windows::core::Result<MenuOutcome> {
     unsafe {
-        menu.QueryContextMenu(hmenu, 0, FIRST_SHELL_ID, LAST_SHELL_ID, CMF_NORMAL).ok()?;
-        remove_explorer_only_items(hmenu, menu);
+        menu.QueryContextMenu(hmenu, 0, FIRST_SHELL_ID, LAST_SHELL_ID, query_flags(can_rename)).ok()?;
         if !extra.is_empty() {
             for (position, (id, label)) in extra.iter().enumerate() {
                 InsertMenuW(hmenu, position as u32, MF_BYPOSITION | MF_STRING, *id as usize, &HSTRING::from(*label))?;
@@ -191,6 +200,9 @@ unsafe fn track(
             0 => MenuOutcome::Dismissed,
             id if id < FIRST_SHELL_ID => MenuOutcome::Gezik(id),
             id => {
+                if let Some(verb) = gezik_verb(menu, id - FIRST_SHELL_ID) {
+                    return Ok(MenuOutcome::Verb(verb));
+                }
                 let info = CMINVOKECOMMANDINFO {
                     cbSize: size_of::<CMINVOKECOMMANDINFO>() as u32,
                     hwnd,
@@ -230,33 +242,13 @@ impl Drop for Subclass {
     }
 }
 
-/// Removes verbs that only work inside Explorer itself (they do nothing elsewhere).
-unsafe fn remove_explorer_only_items(hmenu: HMENU, menu: &IContextMenu) {
-    unsafe {
-        let count = GetMenuItemCount(Some(hmenu)).max(0);
-        let mut doomed = Vec::new();
-        for i in 0..count {
-            let id = GetMenuItemID(hmenu, i);
-            if id == u32::MAX || id < FIRST_SHELL_ID {
-                continue;
-            }
-            let mut verb = [0u8; 64];
-            let found = menu.GetCommandString(
-                (id - FIRST_SHELL_ID) as usize,
-                GCS_VERBA,
-                None,
-                PSTR(verb.as_mut_ptr()),
-                verb.len() as u32,
-            );
-            let end = verb.iter().position(|&b| b == 0).unwrap_or(verb.len());
-            if found.is_ok() && verb[..end].eq_ignore_ascii_case(b"rename") {
-                doomed.push(id);
-            }
-        }
-        for id in doomed {
-            let _ = DeleteMenu(hmenu, id, MF_BYCOMMAND);
-        }
-    }
+/// The command at `offset` if Gezik does it itself (cut, copy, paste, delete, rename).
+unsafe fn gezik_verb(menu: &IContextMenu, offset: u32) -> Option<ShellVerb> {
+    let mut verb = [0u8; 64];
+    unsafe { menu.GetCommandString(offset as usize, GCS_VERBA, None, PSTR(verb.as_mut_ptr()), verb.len() as u32) }
+        .ok()?;
+    let end = verb.iter().position(|&b| b == 0).unwrap_or(verb.len());
+    ShellVerb::from_name(&verb[..end])
 }
 
 /// Forwards owner-draw and submenu messages ("Send to", "Open with") while the menu is open,
@@ -308,14 +300,33 @@ unsafe extern "system" fn forward_menu_messages(
 /// Number of entries the Shell menu for `target` has (for tests; nothing is shown).
 #[cfg(test)]
 fn count_items(target: &MenuTarget) -> windows::core::Result<i32> {
+    Ok(menu_verbs(target, false)?.len() as i32)
+}
+
+/// The verbs Gezik does itself found in the top level of the Shell menu for `target`, one
+/// entry per menu item (`None` for the others); for tests, nothing is shown.
+#[cfg(test)]
+fn menu_verbs(target: &MenuTarget, can_rename: bool) -> windows::core::Result<Vec<Option<ShellVerb>>> {
+    use windows::Win32::UI::WindowsAndMessaging::{GetMenuItemCount, GetMenuItemID};
     unsafe {
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         let menu = context_menu_for(HWND::default(), target)?;
         let hmenu = CreatePopupMenu()?;
-        menu.QueryContextMenu(hmenu, 0, FIRST_SHELL_ID, LAST_SHELL_ID, CMF_NORMAL).ok()?;
+        menu.QueryContextMenu(hmenu, 0, FIRST_SHELL_ID, LAST_SHELL_ID, query_flags(can_rename)).ok()?;
         let count = GetMenuItemCount(Some(hmenu));
+        let verbs = (0..count.max(0))
+            .map(|position| {
+                let id = GetMenuItemID(hmenu, position);
+                // Separators and submenus give 0 or u32::MAX.
+                if (FIRST_SHELL_ID..=LAST_SHELL_ID).contains(&id) {
+                    gezik_verb(&menu, id - FIRST_SHELL_ID)
+                } else {
+                    None
+                }
+            })
+            .collect();
         let _ = DestroyMenu(hmenu);
-        Ok(count)
+        Ok(verbs)
     }
 }
 
@@ -347,6 +358,23 @@ mod tests {
         assert!(background > 0, "background menu had {background} entries");
         let several = several.unwrap();
         assert!(several > 3, "multi-item menu had {several} entries");
+    }
+
+    #[test]
+    fn rename_is_offered_only_when_asked() {
+        let dir = std::env::temp_dir().join(format!("gezik-shell-menu-rename-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.txt");
+        std::fs::write(&file, "x").unwrap();
+
+        let with = menu_verbs(&crate::MenuTarget::Item(file.clone()), true);
+        let without = menu_verbs(&crate::MenuTarget::Item(file), false);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let (with, without) = (with.unwrap(), without.unwrap());
+        assert!(with.contains(&Some(ShellVerb::Rename)), "menu with CMF_CANRENAME: {with:?}");
+        assert!(!without.contains(&Some(ShellVerb::Rename)), "menu without CMF_CANRENAME: {without:?}");
     }
 
     #[test]

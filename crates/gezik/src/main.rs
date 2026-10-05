@@ -1,11 +1,15 @@
 // Hide the console window in release builds on Windows.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod conflicts;
 mod context_menu;
+mod dialog;
+mod folder_watch;
 mod frame_limit;
 mod keys;
 mod media;
 mod navigation;
+mod operations;
 mod places;
 mod preview;
 mod quick_look;
@@ -17,6 +21,7 @@ mod watcher;
 mod window_state;
 
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use gezik_config::Warning;
@@ -50,6 +55,7 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
     view::with_current(|view| view.set_defaults(loaded.settings.view));
     keys::set_shortcuts(loaded.settings.shortcuts.clone());
     frame_limit::set_max_fps(loaded.settings.max_fps);
+    operations::with_current(|ops| ops.set_files(loaded.settings.files));
     loaded
 }
 
@@ -75,12 +81,21 @@ fn handle_key(
     nav: &navigation::Navigator,
     view: &view::View,
     preview: &preview::Preview,
+    ops: &operations::Operations,
     type_ahead: &mut keys::TypeAhead,
     text: &str,
     chord: Option<Chord>,
     has_modifier: bool,
     menu_key: bool,
 ) -> bool {
+    // A question or the conflict list over the window has the keyboard.
+    if window.get_dialog_open() || window.get_conflicts_open() {
+        return false;
+    }
+    // The name field being edited has the keyboard (Enter, Esc, Tab are its own).
+    if ops.end_unfocused_rename() {
+        return false;
+    }
     let editing = window.get_path_editing();
 
     if editing && let Some(chord) = &chord {
@@ -100,6 +115,9 @@ fn handle_key(
         let ordinary_key = action == Action::QuickLook
             && (!window.get_list_focused() || type_ahead.is_active(std::time::Instant::now()));
         if !ordinary_key {
+            if keys::acts_on_files(action) && (editing || (keys::needs_list(action) && !window.get_list_focused())) {
+                return false;
+            }
             match action {
                 Action::NewTab => nav.open_tab(nav.start(), true),
                 Action::CloseTab => close_tab_later(nav, nav.active_index()),
@@ -115,6 +133,17 @@ fn handle_key(
                 Action::ViewGrid => view.set_mode(gezik_core::view::ViewMode::Grid),
                 Action::TogglePreview => preview.toggle_pane(),
                 Action::QuickLook => preview.toggle_quick_look(),
+                Action::Rename => ops.rename_start(),
+                Action::NewFolder => ops.new_folder(None),
+                Action::Copy => ops.copy(false),
+                Action::Cut => ops.copy(true),
+                Action::Paste => ops.paste(None, false),
+                Action::PasteMove => ops.paste(None, true),
+                Action::Trash => ops.trash(false),
+                Action::DeletePermanently => ops.trash(true),
+                Action::Duplicate => ops.duplicate(),
+                Action::Undo => ops.undo(),
+                Action::Redo => ops.redo(),
             }
             // The typed text no longer fits once the location or tab changed.
             if editing && action != Action::FocusPath {
@@ -141,6 +170,11 @@ fn handle_key(
         let primary = keys::is_primary(chord, platform);
         let other = chord.alt || if platform == Platform::Mac { chord.ctrl } else { chord.meta };
         if !other {
+            // On macOS Enter renames, so opening is Cmd+Down (as in Finder).
+            if platform == Platform::Mac && primary && !chord.shift && chord.key == Key::Down {
+                nav.open_selected();
+                return true;
+            }
             let mv = match chord.key {
                 Key::Up => Some(Move::Up),
                 Key::Down => Some(Move::Down),
@@ -240,9 +274,10 @@ fn main() -> Result<(), slint::PlatformError> {
     let init_error = config.as_ref().and_then(|store| store.ensure_initialized().err().map(|e| (store, e)));
     let mut files = config.as_ref().map(ConfigStore::read_files).unwrap_or_default();
     if let Some((store, err)) = init_error {
+        let why = gezik_platform::fs::describe(&err);
         files
             .warnings
-            .push(Warning::new(store.dir().display().to_string(), format!("cannot create config folder: {err}")));
+            .push(Warning::new(store.dir().display().to_string(), format!("cannot create config folder: {why}")));
     }
     // Release builds hide stderr, so config problems also go to the status bar.
     if config.is_none() {
@@ -315,25 +350,6 @@ fn main() -> Result<(), slint::PlatformError> {
     window.set_preview_width(saved_state.preview_width.unwrap_or(280) as f32);
     let preview = preview::Preview::new(&window, view.clone());
     preview.set_pane_open(saved_state.preview_open);
-    window.window().on_close_requested({
-        let (weak, store, view, preview) = (window.as_weak(), config.clone(), view.clone(), preview.clone());
-        move || {
-            if let (Some(window), Some(store)) = (weak.upgrade(), &store) {
-                let mut state = store.load_state();
-                window_state::capture_into(&window, &mut state);
-                state.columns = Some(view.columns());
-                state.preview_open = preview.is_pane_open();
-                state.preview_width = Some(window.get_preview_width().round().clamp(200.0, 600.0) as u32);
-                if let Err(err) = store.save_state(&state) {
-                    eprintln!("gezik: cannot save window state: {err}");
-                }
-                view.flush_memory();
-            }
-            // Its window would otherwise keep the event loop (and the process) running.
-            preview.close_quick_look();
-            slint::CloseRequestResponse::HideWindow
-        }
-    });
     let nav = navigation::Navigator::new(&window, view.clone(), plan.first, plan.select, plan.start);
     nav.install();
     // Captures no navigator (it is not `Send`): the result finds it on the UI thread.
@@ -342,6 +358,98 @@ fn main() -> Result<(), slint::PlatformError> {
     let sidebar = sidebar::Sidebar::new(&window, nav.clone(), config.clone());
     sidebar.install();
     sidebar.set_pinned(initial_settings.pinned);
+    let dialogs = dialog::Dialogs::new(&window);
+    let engine_settings = gezik_ops::Settings {
+        threads: initial_settings.files.copy_threads,
+        pending_deletes: config.as_ref().map(|store| store.dir().join("pending-deletes")),
+    };
+    let ops = operations::Operations::new(
+        &window,
+        nav.clone(),
+        view.clone(),
+        sidebar.clone(),
+        dialogs,
+        engine_settings,
+        initial_settings.files,
+        saved_state.operations_collapsed,
+    );
+    window.on_op_pause({
+        let ops = ops.clone();
+        move |id| ops.pause(id)
+    });
+    window.on_op_resume({
+        let ops = ops.clone();
+        move |id| ops.resume(id)
+    });
+    window.on_op_cancel({
+        let ops = ops.clone();
+        move |id| ops.cancel(id)
+    });
+    window.on_op_start_now({
+        let ops = ops.clone();
+        move |id| ops.start_now(id)
+    });
+    window.on_op_details({
+        let ops = ops.clone();
+        move |id| ops.details(id)
+    });
+    window.on_op_retry({
+        let ops = ops.clone();
+        move |id| ops.retry(id)
+    });
+    window.on_op_dismiss({
+        let ops = ops.clone();
+        move |id| ops.dismiss(id)
+    });
+    window.on_ops_toggle({
+        let ops = ops.clone();
+        move || ops.toggle_collapsed()
+    });
+    // Deletes cut short last time finish in the background once the window is up.
+    slint::Timer::single_shot(std::time::Duration::from_millis(500), {
+        let ops = ops.clone();
+        move || ops.recover()
+    });
+    let save_and_quit: Rc<dyn Fn()> = {
+        let (weak, store, view, preview, ops) =
+            (window.as_weak(), config.clone(), view.clone(), preview.clone(), ops.clone());
+        Rc::new(move || {
+            if let (Some(window), Some(store)) = (weak.upgrade(), &store) {
+                let mut state = store.load_state();
+                window_state::capture_into(&window, &mut state);
+                state.columns = Some(view.columns());
+                state.preview_open = preview.is_pane_open();
+                state.preview_width = Some(window.get_preview_width().round().clamp(200.0, 600.0) as u32);
+                state.operations_collapsed = ops.collapsed();
+                if let Err(err) = store.save_state(&state) {
+                    eprintln!("gezik: cannot save window state: {err}");
+                }
+                view.flush_memory();
+            }
+            // Its window would otherwise keep the event loop (and the process) running.
+            preview.close_quick_look();
+        })
+    };
+    window.window().on_close_requested({
+        let (ops, save_and_quit, weak) = (ops.clone(), save_and_quit.clone(), window.as_weak());
+        move || {
+            let quit = {
+                let (save_and_quit, weak) = (save_and_quit.clone(), weak.clone());
+                move || {
+                    save_and_quit();
+                    if let Some(window) = weak.upgrade() {
+                        let _ = window.hide();
+                    }
+                    let _ = slint::quit_event_loop();
+                }
+            };
+            if ops.confirm_close(quit) {
+                return slint::CloseRequestResponse::KeepWindowShown;
+            }
+            save_and_quit();
+            slint::CloseRequestResponse::HideWindow
+        }
+    });
     window.on_sidebar_clicked({
         let (nav, sidebar) = (nav.clone(), sidebar.clone());
         move |section, index| {
@@ -368,7 +476,7 @@ fn main() -> Result<(), slint::PlatformError> {
     });
     // The sidebar width stays in memory and is saved with the window state on close.
 
-    let menus = context_menu::Menus::new(&window, nav.clone(), view.clone(), preview.clone(), sidebar);
+    let menus = context_menu::Menus::new(&window, nav.clone(), view.clone(), preview.clone(), sidebar, ops.clone());
     window.on_row_menu({
         let (menus, view) = (menus.clone(), view.clone());
         move |i, x, y| {
@@ -379,17 +487,19 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
     // Right-click on empty space clears the selection, as in Explorer. The Windows menu
-    // opens at the cursor; there is no Slint menu for empty space.
+    // opens at the cursor.
     window.on_background_menu({
         let (menus, view) = (menus.clone(), view.clone());
-        move |_, _| {
+        move |x, y| {
             view.clear_selection();
-            menus.background()
+            menus.background(x, y)
         }
     });
     window.on_item_pressed({
         let view = view.clone();
+        let ops = ops.clone();
         move |i, ctrl, shift| {
+            ops.end_unfocused_rename();
             if let Ok(index) = usize::try_from(i) {
                 view.press(index, ctrl, shift);
             }
@@ -405,7 +515,9 @@ fn main() -> Result<(), slint::PlatformError> {
     });
     window.on_background_pressed({
         let view = view.clone();
+        let ops = ops.clone();
         move |ctrl| {
+            ops.end_unfocused_rename();
             if !ctrl {
                 view.clear_selection();
             }
@@ -446,6 +558,10 @@ fn main() -> Result<(), slint::PlatformError> {
     window.on_zoom({
         let view = view.clone();
         move |bigger| view.zoom(bigger)
+    });
+    window.on_conflict_row_menu({
+        let menus = menus.clone();
+        move |row, x, y| menus.conflict(row, x, y)
     });
     // Slint passes indexes as `i32`: a negative one does nothing.
     window.on_tab_menu(move |i, x, y| {
@@ -521,8 +637,30 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
+    window.on_rename_accepted({
+        let ops = ops.clone();
+        move |text| ops.rename_accepted(text.into())
+    });
+    window.on_rename_cancelled({
+        let ops = ops.clone();
+        move || ops.rename_cancelled()
+    });
+    window.on_rename_tab({
+        let ops = ops.clone();
+        move |text, back| ops.rename_tab(text.into(), back)
+    });
+    window.on_rename_blurred({
+        let ops = ops.clone();
+        move |text, generation| ops.rename_blurred(text.into(), generation)
+    });
+    window.on_rename_edited({
+        let ops = ops.clone();
+        move |text| ops.rename_edited(&text)
+    });
+
     window.on_key_event({
-        let (nav, view, preview, weak) = (nav.clone(), view.clone(), preview.clone(), window.as_weak());
+        let (nav, view, preview, ops, weak) =
+            (nav.clone(), view.clone(), preview.clone(), ops.clone(), window.as_weak());
         let mut type_ahead = keys::TypeAhead::new();
         move |event| {
             let Some(window) = weak.upgrade() else { return false };
@@ -534,6 +672,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 &nav,
                 &view,
                 &preview,
+                &ops,
                 &mut type_ahead,
                 &event.text,
                 chord,
@@ -549,7 +688,11 @@ fn main() -> Result<(), slint::PlatformError> {
         use slint::winit_030::{EventResult, WinitWindowAccessor, winit};
         let weak = window.as_weak();
         let minimized = std::cell::Cell::new(false);
+        let ops = ops.clone();
         window.window().on_winit_window_event(move |_, event| {
+            if let winit::event::WindowEvent::Focused(true) = event {
+                ops.clipboard_check();
+            }
             // Windows drops a minimized window's picture, but the size on restore is the old
             // one, so Slint redraws only what changed and the rest of the window stays empty.
             if let winit::event::WindowEvent::Resized(size) = event {

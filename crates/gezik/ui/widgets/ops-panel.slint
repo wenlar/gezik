@@ -1,0 +1,145 @@
+import { Theme } from "../theme.slint";
+import { ToolButton } from "button.slint";
+
+// One running (or just finished) operation, as Rust (operations.rs) builds it.
+export struct OpRow {
+    id: int,
+    title: string,
+    detail: string,
+    // 0–1; below 0 while the amount is not known (scanning).
+    progress: float,
+    // 0 running, 1 waiting, 2 paused, 3 deciding, 4 done, 5 failed (RowState in operations.rs).
+    state: int,
+    can-pause: bool,
+    can-resume: bool,
+    can-start-now: bool,
+    can-retry: bool,
+    can-details: bool,
+    finished: bool,
+}
+
+// A link-like text button for the panel.
+component LinkButton inherits Rectangle {
+    in property <string> text;
+    callback clicked();
+
+    width: label.preferred-width + Theme.spacing * 2;
+    border-radius: Theme.radius;
+    background: touch.has-hover ? Theme.hover : transparent;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-action-default => { root.clicked(); }
+
+    label := Text {
+        width: parent.width;
+        height: parent.height;
+        text: root.text;
+        color: Theme.accent;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// Running operations above the status bar: one line each with a bar, the progress text and
+// its buttons.
+export component OpsPanel inherits Rectangle {
+    in property <[OpRow]> rows;
+    callback pause(int);
+    callback resume(int);
+    callback cancel(int);
+    callback start-now(int);
+    callback details(int);
+    callback retry(int);
+    callback dismiss(int);
+
+    background: Theme.surface;
+    accessible-role: list;
+    accessible-label: "Operations";
+
+    VerticalLayout {
+        padding-left: Theme.spacing + 4px;
+        padding-right: Theme.spacing;
+        for row in root.rows: Rectangle {
+            height: Theme.row-height + 6px;
+            accessible-role: list-item;
+            accessible-label: row.title;
+            accessible-description: row.detail;
+
+            HorizontalLayout {
+                spacing: Theme.spacing * 2;
+                Text {
+                    text: row.title;
+                    horizontal-stretch: 1;
+                    min-width: 120px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    color: Theme.foreground;
+                }
+                if !row.finished: VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 160px;
+                        height: 6px;
+                        border-radius: 3px;
+                        background: Theme.border;
+                        accessible-role: progress-indicator;
+                        accessible-value: row.progress >= 0 ? round(row.progress * 100) + "%" : "";
+                        Rectangle {
+                            x: 0;
+                            width: row.progress >= 0 ? parent.width * clamp(row.progress, 0, 1) : parent.width * 0.3;
+                            height: parent.height;
+                            border-radius: 3px;
+                            background: row.state == 2 || row.state == 3 ? Theme.progress-paused
+                                : row.state == 5 ? Theme.progress-error : Theme.progress;
+                        }
+                    }
+                }
+                Text {
+                    text: row.detail;
+                    min-width: 160px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    color: row.state == 5 ? Theme.danger : Theme.foreground-muted;
+                }
+                if row.can-start-now: LinkButton {
+                    text: "Start now";
+                    clicked => { root.start-now(row.id); }
+                }
+                if row.can-details: LinkButton {
+                    text: "Details";
+                    clicked => { root.details(row.id); }
+                }
+                if row.can-retry: LinkButton {
+                    text: "Retry";
+                    clicked => { root.retry(row.id); }
+                }
+                if row.can-pause: ToolButton {
+                    text: "Pause";
+                    icon: "M 5 3 L 5 13 M 11 3 L 11 13";
+                    clicked => { root.pause(row.id); }
+                }
+                if row.can-resume: ToolButton {
+                    text: "Resume";
+                    icon: "M 5 3 L 13 8 L 5 13 Z";
+                    clicked => { root.resume(row.id); }
+                }
+                ToolButton {
+                    text: row.finished ? "Close" : "Cancel";
+                    icon: "M 4 4 L 12 12 M 12 4 L 4 12";
+                    clicked => {
+                        if row.finished {
+                            root.dismiss(row.id);
+                        } else {
+                            root.cancel(row.id);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

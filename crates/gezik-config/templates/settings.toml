@@ -36,6 +36,12 @@ grid-size = "medium"   # small | medium | large
 icons = "system"       # system | gezik (Gezik's own icons, colored by the theme)
 thumbnails = true      # pictures and videos show a preview in the grid
 
+[files]
+# Ask before moving to the trash (Delete).
+confirm-trash = false
+# Files copied or deleted at once: "auto" (SSD 6, spinning disk 1, network 4) or 1-16.
+copy-threads = "auto"
+
 [shortcuts]
 # Change any shortcut; "mod" is Cmd on macOS and Ctrl elsewhere; "" disables.
 # new-tab = "mod+t"
@@ -52,3 +58,14 @@ thumbnails = true      # pictures and videos show a preview in the grid
 # view-grid = "mod+2"
 # toggle-preview = "alt+p"
 # quick-look = "space"     # only while the file list has the focus
+# copy = "mod+c"
+# cut = "mod+x"
+# paste = "mod+v"
+# paste-move = ""          # macOS: "mod+alt+v" (paste what was copied as a move)
+# trash = "delete"         # macOS: "mod+backspace"
+# delete-permanently = "shift+delete"   # macOS: "mod+alt+backspace"
+# rename = "f2"            # macOS: "enter"
+# new-folder = "mod+shift+n"
+# duplicate = ""           # macOS: "mod+d"
+# undo = "mod+z"
+# redo = "mod+y"           # macOS: "mod+shift+z"

@@ -1,0 +1,10 @@
+[package]
+name = "gezik-ops"
+description = "File operations engine of the Gezik file manager: queue, conflicts, progress, undo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+gezik-core.workspace = true
+gezik-platform.workspace = true

@@ -1,0 +1,389 @@
+//! Running a job: wait for the drives, plan, settle conflicts, do the items.
+
+use std::collections::HashSet;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, mpsc};
+
+use gezik_core::ops::conflict::{ConflictKind, Decision, Facts, Resolution, default_decision, kind_of, resolve};
+use gezik_core::ops::names::next_free;
+use gezik_core::ops::paths::{DriveSet, is_within};
+use gezik_core::ops::threads::workers;
+use gezik_platform::fs;
+
+use crate::engine::{ConflictItem, Event, Job, PauseReason, Shared, lock};
+use crate::task::{ChangedSince, NoTrash, Outcome, PlanItem, RunCx, ScanSink, Stage, Task, Work, is_marker};
+use crate::walk::facts_of;
+
+/// After this many failures in a row the job pauses and asks.
+const MAX_FAILURES_IN_ROW: u32 = 20;
+
+pub(crate) fn run_job(shared: &Shared, job: &Arc<Job>) {
+    let mut ids = Vec::new();
+    let mut kinds = Vec::new();
+    for task in &job.tasks {
+        for path in task.resources().paths {
+            if let Some(facts) = shared.drive(&path) {
+                ids.push(facts.id);
+                kinds.push(facts.kind);
+            }
+        }
+    }
+    shared.publish_drives(job, DriveSet::new(ids));
+    if shared.wait_turn(job) {
+        for task in &job.tasks {
+            if job.control.cancelled() {
+                break;
+            }
+            run_task(shared, job, task.as_ref(), &kinds);
+        }
+    }
+    shared.finish(job, job.control.cancelled());
+}
+
+fn run_task(shared: &Shared, job: &Job, task: &dyn Task, kinds: &[gezik_core::ops::threads::DiskKind]) {
+    let control = &job.control;
+    let count = match task.resources().work {
+        Work::Disk => workers(shared.settings().threads, kinds),
+        Work::Cpu => std::thread::available_parallelism().map_or(2, |n| n.get()),
+        Work::External => 2,
+    };
+    let (sender, receiver) = mpsc::channel::<PlanItem>();
+    let receiver = Mutex::new(receiver);
+    let mut after: Vec<PlanItem> = Vec::new();
+    std::thread::scope(|scope| {
+        for _ in 0..count.max(1) {
+            scope.spawn(|| {
+                loop {
+                    let next = lock(&receiver).recv();
+                    let Ok(item) = next else { break };
+                    execute(shared, job, task, item);
+                }
+            });
+        }
+        control.scanning.store(true, std::sync::atomic::Ordering::SeqCst);
+        let mut sink = Sink {
+            shared,
+            job,
+            task,
+            sender: &sender,
+            after: &mut after,
+            held: Vec::new(),
+            merges: Vec::new(),
+            renames: Vec::new(),
+            blocked: Vec::new(),
+            taken: HashSet::new(),
+        };
+        task.plan(&mut sink);
+        control.scanning.store(false, std::sync::atomic::Ordering::SeqCst);
+        if !sink.held.is_empty() && !control.cancelled() {
+            sink.settle();
+        }
+        drop(sink);
+        // The workers stop once the queue is empty and closed.
+        drop(sender);
+    });
+    for item in after.into_iter().rev() {
+        if control.cancelled() {
+            break;
+        }
+        execute(shared, job, task, item);
+    }
+}
+
+/// An item waiting for the user's decision, with what is inside it (a held folder).
+struct Held {
+    item: PlanItem,
+    conflict: ConflictItem,
+    children: Vec<PlanItem>,
+}
+
+/// Takes a task's plan: runs `Before` items, queues `Parallel` ones, keeps `After` ones and
+/// holds conflicts.
+struct Sink<'a> {
+    shared: &'a Shared,
+    job: &'a Job,
+    task: &'a dyn Task,
+    sender: &'a mpsc::Sender<PlanItem>,
+    after: &'a mut Vec<PlanItem>,
+    held: Vec<Held>,
+    /// Folders merged into existing ones, shown with the conflicts.
+    merges: Vec<ConflictItem>,
+    /// Targets given a new name so far: what goes inside them follows.
+    renames: Vec<(PathBuf, PathBuf)>,
+    /// Held folders (target, index in `held`): what goes inside them waits with them.
+    blocked: Vec<(PathBuf, usize)>,
+    /// Names this task chose that may not exist on disk yet.
+    taken: HashSet<PathBuf>,
+}
+
+fn conflict(item: &PlanItem, target: &Path, kind: ConflictKind, existing: Facts, decision: Decision) -> ConflictItem {
+    ConflictItem {
+        source: item.source.clone().unwrap_or_default(),
+        target: target.to_path_buf(),
+        kind,
+        source_facts: item.facts,
+        target_facts: existing,
+        decision,
+    }
+}
+
+impl ScanSink for Sink<'_> {
+    fn item(&mut self, mut item: PlanItem) -> bool {
+        let control = &self.job.control;
+        if control.cancelled() {
+            return false;
+        }
+        control.add_total(1, if item.facts.is_dir { 0 } else { item.facts.size });
+        self.follow_renames(&mut item);
+        if let Some(target) = &item.target
+            && let Some(&(_, index)) = self.blocked.iter().find(|(dir, _)| is_within(target, dir))
+        {
+            self.held[index].children.push(item);
+            return true;
+        }
+        if item.check_target
+            && let Some(target) = item.target.clone()
+            && let Ok(meta) = std::fs::symlink_metadata(&target)
+        {
+            let existing = facts_of(&meta);
+            let kind = kind_of(item.facts, existing);
+            if kind == ConflictKind::Folder && item.stage == Stage::Before && item.preset.is_none() {
+                // The folder is there already: merge, its contents meet one by one.
+                self.merges.push(conflict(&item, &target, kind, existing, Decision::Merge));
+                control.item_done();
+                if item.is_root {
+                    self.job.result(target);
+                }
+                return true;
+            }
+            // A folder that cannot merge here (a one-step rename onto a folder).
+            let kind = if kind == ConflictKind::Folder { ConflictKind::Mismatch } else { kind };
+            if let Some(decision) = item.preset {
+                self.apply(item, kind, existing, decision);
+                return true;
+            }
+            let decision = default_decision(kind, item.facts, existing);
+            let index = self.held.len();
+            if item.facts.is_dir {
+                self.blocked.push((target.clone(), index));
+            }
+            self.held.push(Held {
+                conflict: conflict(&item, &target, kind, existing, decision),
+                item,
+                children: Vec::new(),
+            });
+            return true;
+        }
+        self.dispatch(item);
+        true
+    }
+
+    fn failed(&mut self, path: &Path, error: io::Error) {
+        self.job.fail(path, &error);
+    }
+}
+
+impl Sink<'_> {
+    fn dispatch(&mut self, item: PlanItem) {
+        match item.stage {
+            Stage::Before => execute(self.shared, self.job, self.task, item),
+            Stage::Parallel => {
+                let _ = self.sender.send(item);
+            }
+            Stage::After => self.after.push(item),
+        }
+    }
+
+    fn follow_renames(&self, item: &mut PlanItem) {
+        let Some(target) = &item.target else { return };
+        let moved = self.renames.iter().find_map(|(old, new)| {
+            target
+                .strip_prefix(old)
+                .ok()
+                .map(|rest| if rest.as_os_str().is_empty() { new.clone() } else { new.join(rest) })
+        });
+        if let Some(moved) = moved {
+            item.target = Some(moved);
+        }
+    }
+
+    /// A skipped item counts as done.
+    fn skip(&self, item: &PlanItem) {
+        let control = &self.job.control;
+        control.item_done();
+        if !item.facts.is_dir {
+            control.add_bytes(item.facts.size);
+        }
+    }
+
+    /// A free `name (n)` next to `target`.
+    fn free_target(&mut self, target: &Path, is_dir: bool) -> PathBuf {
+        let parent = target.parent().unwrap_or(Path::new(""));
+        let name = target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let taken = &self.taken;
+        let free = next_free(&name, is_dir, |candidate| {
+            let path = parent.join(candidate);
+            taken.contains(&path) || std::fs::symlink_metadata(&path).is_ok()
+        });
+        let path = parent.join(free);
+        self.taken.insert(path.clone());
+        path
+    }
+
+    /// Settles one conflict; returns whether the item was skipped.
+    fn apply(&mut self, mut item: PlanItem, kind: ConflictKind, existing: Facts, decision: Decision) -> bool {
+        match resolve(decision, kind, item.facts, existing) {
+            Resolution::Write => self.dispatch(item),
+            Resolution::Replace => {
+                item.replace = true;
+                self.dispatch(item);
+            }
+            Resolution::Skip => {
+                self.skip(&item);
+                return true;
+            }
+            Resolution::Rename => {
+                let Some(target) = item.target.clone() else { return true };
+                let free = self.free_target(&target, item.facts.is_dir);
+                self.renames.push((target, free.clone()));
+                item.target = Some(free);
+                self.dispatch(item);
+            }
+        }
+        false
+    }
+
+    /// Shows the held conflicts and applies the user's decisions.
+    fn settle(&mut self) {
+        let control = &self.job.control;
+        let merges = std::mem::take(&mut self.merges);
+        let shown = merges.len();
+        let conflicts: Vec<ConflictItem> =
+            merges.into_iter().chain(self.held.iter().map(|h| h.conflict.clone())).collect();
+        control.deciding.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.shared.push([Event::Conflicts { job: self.job.id, conflicts }]);
+        let decisions = control.wait_decisions();
+        control.deciding.store(false, std::sync::atomic::Ordering::SeqCst);
+        let Some(decisions) = decisions else { return };
+        let held = std::mem::take(&mut self.held);
+        self.blocked.clear();
+        let mut chosen = decisions.into_iter().skip(shown);
+        for Held { item, conflict, children } in held {
+            let decision = chosen.next().unwrap_or(conflict.decision);
+            let skipped = self.apply(item, conflict.kind, conflict.target_facts, decision);
+            for mut child in children {
+                if skipped {
+                    self.skip(&child);
+                } else {
+                    self.follow_renames(&mut child);
+                    self.dispatch(child);
+                }
+            }
+        }
+    }
+}
+
+/// Moves an existing target out of the way for "Replace": to the trash if its drive has one.
+fn replace_target(shared: &Shared, target: &Path) -> io::Result<Outcome> {
+    if shared.has_trash(target) {
+        return Ok(match fs::trash(target)? {
+            Some(trashed) => Outcome::Trashed { original: target.to_path_buf(), trashed },
+            None => Outcome::Deleted { path: target.to_path_buf() },
+        });
+    }
+    fs::delete(target)?;
+    Ok(Outcome::Deleted { path: target.to_path_buf() })
+}
+
+/// Does one item, on a worker or the planning thread.
+pub(crate) fn execute(shared: &Shared, job: &Job, task: &dyn Task, item: PlanItem) {
+    let control = &job.control;
+    if control.stopped() {
+        return;
+    }
+    if item.replace
+        && let Some(target) = &item.target
+    {
+        match replace_target(shared, target) {
+            Ok(outcome) => job.outcome(outcome),
+            Err(err) => {
+                job.fail(target, &err);
+                control.item_done();
+                return;
+            }
+        }
+    }
+    // A file the target drive cannot hold (FAT32 and 4 GB) would end as "disk full", which
+    // freeing space does not help: it fails at once with the real reason.
+    if !item.facts.is_dir
+        && let Some(target) = &item.target
+        && let Some(max) = shared.drive(target).and_then(|facts| facts.max_file)
+        && item.facts.size > max
+    {
+        let gb = (max + 1) >> 30;
+        let err = io::Error::new(
+            io::ErrorKind::FileTooLarge,
+            format!("It is too big for this drive (files there can be at most {gb} GB)"),
+        );
+        job.fail(item.path(), &err);
+        control.item_done();
+        control.add_bytes(item.facts.size);
+        return;
+    }
+    let has_trash = |path: &Path| shared.has_trash(path);
+    let cx = RunCx { control, trash: &has_trash, added: std::cell::Cell::new(0), temp: &job.temp };
+    // A cancelled or failed item may have made or removed something (a partial copy): its
+    // folders are reloaded like those of a finished one.
+    let touch = || job.touch(item.source.as_deref().into_iter().chain(item.target.as_deref()), item.is_root);
+    loop {
+        match task.run(&item, &cx) {
+            Ok(outcome) => {
+                control.succeeded();
+                if item.is_root
+                    && let Some(path) = outcome.result()
+                {
+                    job.result(path.to_path_buf());
+                }
+                touch();
+                job.outcome(outcome);
+                break;
+            }
+            Err(err) if err.kind() == io::ErrorKind::Interrupted && control.cancelled() => {
+                touch();
+                return;
+            }
+            Err(err) if fs::is_disk_full(&err) => {
+                shared.pause(job, PauseReason::DiskFull, item.target.clone());
+                if control.stopped() {
+                    touch();
+                    return;
+                }
+                // Resumed: try the same item again.
+            }
+            Err(err) if is_marker::<ChangedSince>(&err) => {
+                job.skipped_changed();
+                break;
+            }
+            Err(err) if is_marker::<NoTrash>(&err) => {
+                job.no_trash(item.path());
+                break;
+            }
+            Err(err) => {
+                touch();
+                job.fail(item.path(), &err);
+                if control.failed_once() >= MAX_FAILURES_IN_ROW {
+                    control.succeeded();
+                    shared.pause(job, PauseReason::ManyFailures, None);
+                    let _ = control.stopped();
+                }
+                break;
+            }
+        }
+    }
+    control.item_done();
+    // Whatever the task did not count itself (a rename, a delete) is done now too.
+    if !item.facts.is_dir {
+        control.add_bytes(item.facts.size.saturating_sub(cx.added.get()));
+    }
+}

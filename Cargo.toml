@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
-members = ["crates/gezik-core", "crates/gezik-config", "crates/gezik-platform", "crates/gezik"]
+members = ["crates/gezik-core", "crates/gezik-config", "crates/gezik-platform", "crates/gezik-ops", "crates/gezik"]
+exclude = ["vendor"]
 
 [workspace.package]
 version = "0.1.0"
@@ -11,6 +12,7 @@ license = "PolyForm-Noncommercial-1.0.0"
 gezik-core = { path = "crates/gezik-core" }
 gezik-config = { path = "crates/gezik-config" }
 gezik-platform = { path = "crates/gezik-platform" }
+gezik-ops = { path = "crates/gezik-ops" }
 
 [profile.release]
 opt-level = 3
@@ -18,3 +20,7 @@ lto = true
 codegen-units = 1
 strip = true
 panic = "abort"
+
+# Slint with a fix that is not released yet; see vendor/README.md.
+[patch.crates-io]
+i-slint-core = { path = "vendor/i-slint-core" }
