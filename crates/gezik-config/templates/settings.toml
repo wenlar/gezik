@@ -69,3 +69,14 @@ copy-threads = "auto"
 # duplicate = ""           # macOS: "mod+d"
 # undo = "mod+z"
 # redo = "mod+y"           # macOS: "mod+shift+z"
+# batch-rename = ""        # rename with rules, even for one item
+
+# Saved rule sets for batch rename (Rename… with two or more items selected). The rename
+# layer writes them with "Presets ▾ › Save current rules as…"; they can also be written here.
+# [[rename-presets]]
+# name = "Holiday photos"
+# include-extension = false
+# rules = [
+#   { kind = "template", text = "{taken:%Y-%m-%d} {n:03}" },
+#   { kind = "case", mode = "lower" },
+# ]

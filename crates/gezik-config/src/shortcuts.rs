@@ -136,10 +136,12 @@ pub enum Action {
     Duplicate,
     Undo,
     Redo,
+    /// Opens the batch rename layer even for one item.
+    BatchRename,
 }
 
 impl Action {
-    pub const ALL: [Action; 25] = [
+    pub const ALL: [Action; 26] = [
         Action::NewTab,
         Action::CloseTab,
         Action::NextTab,
@@ -165,6 +167,7 @@ impl Action {
         Action::Duplicate,
         Action::Undo,
         Action::Redo,
+        Action::BatchRename,
     ];
 
     pub fn name(self) -> &'static str {
@@ -194,6 +197,7 @@ impl Action {
             Action::Duplicate => "duplicate",
             Action::Undo => "undo",
             Action::Redo => "redo",
+            Action::BatchRename => "batch-rename",
         }
     }
 
@@ -240,6 +244,7 @@ impl Action {
             (Action::Undo, _) => "mod+z",
             (Action::Redo, Platform::Mac) => "mod+shift+z",
             (Action::Redo, Platform::Other) => "mod+y",
+            (Action::BatchRename, _) => return None,
         })
     }
 }

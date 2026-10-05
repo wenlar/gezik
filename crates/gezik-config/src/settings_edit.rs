@@ -60,6 +60,23 @@ pub fn with_view_defaults(text: &str, view: &gezik_core::view::ViewSettings) -> 
     Ok(doc.to_string())
 }
 
+/// Returns `text` with `[[rename-presets]]` replaced by `presets`; the rest stays.
+pub fn with_rename_presets(text: &str, presets: &[crate::settings::RenamePreset]) -> Result<String, String> {
+    let mut doc = text.parse::<toml_edit::DocumentMut>().map_err(|err| err.to_string().trim().to_owned())?;
+    doc.remove("rename-presets");
+    if !presets.is_empty() {
+        let mut array = toml_edit::ArrayOfTables::new();
+        for preset in presets {
+            let table = crate::settings::preset_to_toml(preset);
+            let text = toml::to_string(&table).map_err(|err| err.to_string())?;
+            let parsed = text.parse::<toml_edit::DocumentMut>().map_err(|err| err.to_string())?;
+            array.push(parsed.as_table().clone());
+        }
+        doc.insert("rename-presets", toml_edit::Item::ArrayOfTables(array));
+    }
+    Ok(doc.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -181,5 +198,23 @@ mod tests {
             );
         }
         assert!(out.contains("mode = \"grid\""), "{out}");
+    }
+
+    #[test]
+    fn rename_presets_are_written_keeping_the_rest() {
+        use crate::settings::{RenamePreset, Settings};
+        use gezik_core::batch::rules::{Rule, RuleEntry};
+        let preset = RenamePreset {
+            name: "Tatil".into(),
+            include_extension: false,
+            rules: vec![RuleEntry::new(Rule::Template("{n:03}".into()))],
+        };
+        let text = "# mine\ntheme = \"nord\"\n\n[[rename-presets]]\nname = \"old\"\n";
+        let out = with_rename_presets(text, std::slice::from_ref(&preset)).unwrap();
+        assert!(out.contains("# mine"), "{out}");
+        let settings = Settings::parse("settings.toml", &out, &mut Vec::new());
+        assert_eq!(settings.rename_presets, [preset]);
+        let out = with_rename_presets(&out, &[]).unwrap();
+        assert!(!out.contains("rename-presets"), "{out}");
     }
 }

@@ -1,6 +1,7 @@
 //! Settings and themes for Gezik. Knows nothing about the UI: inputs are files and
 //! text, outputs are validated values plus warnings to show the user.
 
+pub mod batch_toml;
 pub mod paths;
 pub mod settings;
 pub mod settings_edit;

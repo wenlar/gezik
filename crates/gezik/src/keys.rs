@@ -193,6 +193,7 @@ pub fn acts_on_files(action: Action) -> bool {
             | Action::Duplicate
             | Action::Undo
             | Action::Redo
+            | Action::BatchRename
     )
 }
 
@@ -200,7 +201,13 @@ pub fn acts_on_files(action: Action) -> bool {
 pub fn needs_list(action: Action) -> bool {
     matches!(
         action,
-        Action::Copy | Action::Cut | Action::Trash | Action::DeletePermanently | Action::Rename | Action::Duplicate
+        Action::Copy
+            | Action::Cut
+            | Action::Trash
+            | Action::DeletePermanently
+            | Action::Rename
+            | Action::Duplicate
+            | Action::BatchRename
     )
 }
 
@@ -308,7 +315,7 @@ mod tests {
                 Action::NewFolder => "ctrl+shift+n",
                 Action::Undo => "ctrl+z",
                 Action::Redo => "ctrl+y",
-                Action::PasteMove | Action::Duplicate => continue,
+                Action::PasteMove | Action::Duplicate | Action::BatchRename => continue,
             };
             let chord = parse_chord(text, Platform::Other).unwrap().unwrap();
             let (t, control, alt, shift, meta) = other_event(&chord);

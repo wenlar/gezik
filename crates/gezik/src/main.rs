@@ -143,6 +143,7 @@ fn handle_key(
                 Action::Trash => ops.trash(false),
                 Action::DeletePermanently => ops.trash(true),
                 Action::Duplicate => ops.duplicate(),
+                Action::BatchRename => ops.rename_start(),
                 Action::Undo => ops.undo(),
                 Action::Redo => ops.redo(),
             }
