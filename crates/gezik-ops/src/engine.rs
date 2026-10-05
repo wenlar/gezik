@@ -505,8 +505,12 @@ impl Engine {
         for prefix in cleaned {
             pending.remove_copies(&prefix);
         }
-        // Folders a delete could not put back (something held them open) go back first.
+        // Folders a delete could not put back (something held them open) go back first, and
+        // items a rename left under temporary names, unless that rename still runs.
         for restore in pending.restores() {
+            if crate::pending::renaming_pid(&restore.hidden).is_some_and(gezik_platform::process_alive) {
+                continue;
+            }
             if std::fs::symlink_metadata(&restore.hidden).is_err()
                 || crate::tasks::restore_hidden(&restore.hidden, &restore.original, restore.was_hidden)
             {
