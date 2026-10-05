@@ -1,0 +1,12 @@
+[package]
+name = "gezik-batch"
+description = "Batch operations of the Gezik file manager: rename rules, and later archives and conversion"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+gezik-core.workspace = true
+# Unicode \w and case-insensitive matching, no other Unicode tables (size).
+regex = { version = "1", default-features = false, features = ["std", "perf", "unicode-case", "unicode-perl"] }
+kamadak-exif = "0.6"
