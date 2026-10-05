@@ -699,9 +699,13 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = window.as_weak();
         let minimized = std::cell::Cell::new(false);
         let ops = ops.clone();
+        let drags = drags.clone();
         window.window().on_winit_window_event(move |_, event| {
             if let winit::event::WindowEvent::Focused(true) = event {
                 ops.clipboard_check();
+            }
+            if let winit::event::WindowEvent::DroppedFile(path) = event {
+                drags.dropped_file(path.clone());
             }
             // Windows drops a minimized window's picture, but the size on restore is the old
             // one, so Slint redraws only what changed and the rest of the window stays empty.

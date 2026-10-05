@@ -235,18 +235,21 @@ impl Registration {
     pub fn drag_out(&self, paths: &[PathBuf], on_end: OnEnd) -> Result<(), String> {
         let mtm = MainThreadMarker::new().ok_or("not on the main thread")?;
         let event = NSApplication::sharedApplication(mtm).currentEvent().ok_or("no current event")?;
-        let workspace = NSWorkspace::sharedWorkspace();
         let start = self.view.convertPoint_fromView(event.locationInWindow(), None);
+        // One icon (the first item's) for all: reading each file's icon would make a large
+        // selection slow to pick up.
+        let first = paths.first().and_then(|path| path.to_str()).ok_or("no path can be dragged")?;
+        let icon = NSWorkspace::sharedWorkspace().iconForFile(&NSString::from_str(first));
         let items: Vec<Retained<NSDraggingItem>> = paths
             .iter()
-            .filter_map(|path| path.to_str())
+            .filter_map(|path| {
+                // Built from the text: `fileURLWithPath` would ask the disk whether it is a folder.
+                NSURL::URLWithString(&NSString::from_str(&crate::linux::uri::file_uri(path)))
+            })
             .enumerate()
-            .map(|(i, path)| {
-                let name = NSString::from_str(path);
-                let url = NSURL::fileURLWithPath(&name);
+            .map(|(i, url)| {
                 let writer: &ProtocolObject<dyn NSPasteboardWriting> = ProtocolObject::from_ref(&*url);
                 let item = NSDraggingItem::initWithPasteboardWriter(NSDraggingItem::alloc(), writer);
-                let icon = workspace.iconForFile(&name);
                 let offset = 4.0 * i as f64;
                 let frame = NSRect::new(
                     NSPoint::new(start.x - 16.0 + offset, start.y - 16.0 - offset),

@@ -509,8 +509,12 @@ impl Dispatch<WlDataSource, Mutex<Owned>> for State {
         match event {
             wl_data_source::Event::Send { mime_type, fd } => {
                 let bytes = owned.lock().unwrap_or_else(std::sync::PoisonError::into_inner).render(&mime_type);
+                // Written on a thread of its own: a reader that stops reading must not hold up
+                // Gezik's Wayland events.
                 if let Some(bytes) = bytes {
-                    let _ = std::fs::File::from(fd).write_all(&bytes);
+                    let _ = std::thread::Builder::new()
+                        .name("gezik-wayland-send".into())
+                        .spawn(move || std::fs::File::from(fd).write_all(&bytes));
                 }
             }
             wl_data_source::Event::Cancelled => {

@@ -96,7 +96,7 @@ struct Inner {
     menus: Menus,
     phase: RefCell<Phase>,
     /// Where each address bar part is (window x, width), as Slint last reported it.
-    crumbs: RefCell<Vec<(f32, f32)>>,
+    crumbs: RefCell<Vec<(String, f32, f32)>>,
     /// The tab under the pointer, waiting to open.
     hover_tab: Cell<Option<usize>>,
     tab_timer: Timer,
@@ -108,6 +108,9 @@ struct Inner {
     /// Handing this drag to the system failed: it stays in the window.
     handoff_failed: Cell<bool>,
     handed: Cell<Option<Handed>>,
+    /// Files winit reported dropped (an X11 source that ignores `XdndProxy`), gathered until
+    /// the batch ends.
+    dropped_files: RefCell<Vec<PathBuf>>,
 }
 
 thread_local! {
@@ -122,6 +125,19 @@ pub fn with_current<R>(f: impl FnOnce(&Drags) -> R) -> Option<R> {
 /// The keys held: Shift moves; Ctrl copies (Option on macOS, as in Finder).
 fn keys(shift: bool, ctrl: bool, alt: bool) -> Keys {
     Keys { shift, copy: if Platform::current() == Platform::Mac { alt } else { ctrl } }
+}
+
+/// The address bar parts' places Slint reported, kept only where the part still shows the
+/// label it had then (right after a navigation, the old places would point at new parts).
+fn current_spans(stored: &[(String, f32, f32)], labels: &[String]) -> Vec<(f32, f32)> {
+    labels
+        .iter()
+        .enumerate()
+        .map(|(i, label)| match stored.get(i) {
+            Some((was, x, width)) if was == label => (*x, *width),
+            _ => (0.0, 0.0),
+        })
+        .collect()
 }
 
 fn path_of(location: Location) -> Option<PathBuf> {
@@ -159,6 +175,7 @@ impl Drags {
             outside: RefCell::default(),
             handoff_failed: Cell::new(false),
             handed: Cell::new(None),
+            dropped_files: RefCell::default(),
         }));
         CURRENT.with(|c| *c.borrow_mut() = Some(drags.clone()));
         drags
@@ -193,11 +210,18 @@ impl Drags {
             let drags = self.clone();
             move |i, x, width| {
                 if let Ok(i) = usize::try_from(i) {
+                    let label = drags
+                        .0
+                        .window
+                        .upgrade()
+                        .and_then(|w| w.get_crumbs().row_data(i))
+                        .map(|crumb| crumb.label.to_string())
+                        .unwrap_or_default();
                     let mut crumbs = drags.0.crumbs.borrow_mut();
                     if crumbs.len() <= i {
-                        crumbs.resize(i + 1, (0.0, 0.0));
+                        crumbs.resize(i + 1, (String::new(), 0.0, 0.0));
                     }
-                    crumbs[i] = (x, width);
+                    crumbs[i] = (label, x, width);
                 }
             }
         });
@@ -206,6 +230,40 @@ impl Drags {
     /// Whether files are being dragged (Esc cancels).
     pub fn is_active(&self) -> bool {
         matches!(*self.0.phase.borrow(), Phase::Dragging(_))
+    }
+
+    /// winit says a file was dropped on the window, with no position: it comes from a program
+    /// that went past Gezik's own drop target. The files of one drop go into the folder shown,
+    /// with the drive rule (no keys are known).
+    pub fn dropped_file(&self, path: PathBuf) {
+        let first = {
+            let mut files = self.0.dropped_files.borrow_mut();
+            files.push(path);
+            files.len() == 1
+        };
+        if first {
+            let drags = self.clone();
+            Timer::single_shot(Duration::ZERO, move || drags.take_dropped_files());
+        }
+    }
+
+    fn take_dropped_files(&self) {
+        let sources = std::mem::take(&mut *self.0.dropped_files.borrow_mut());
+        let Some(dir) = self.0.view.folder() else { return };
+        let d = Dragging {
+            sources,
+            all_dirs: false,
+            right: false,
+            keys: Keys::default(),
+            allowed: Allowed::BOTH,
+            x: 0.0,
+            y: 0.0,
+            target: None,
+            pressed: None,
+        };
+        if let Some(effect) = self.effect(&d, &dir) {
+            self.0.ops.transfer(d.sources, dir, effect);
+        }
     }
 
     /// Esc: drops nothing. Returns whether a drag was cancelled.
@@ -424,8 +482,8 @@ impl Drags {
         let spans = if window.get_path_editing() {
             Vec::new()
         } else {
-            let crumbs = self.0.crumbs.borrow();
-            crumbs[..crumbs.len().min(window.get_crumbs().row_count())].to_vec()
+            let labels: Vec<String> = window.get_crumbs().iter().map(|crumb| crumb.label.to_string()).collect();
+            current_spans(&self.0.crumbs.borrow(), &labels)
         };
         let crumbs =
             CrumbArea { rect: Rect { x: 0.0, y: g.address_y, width: g.window_width, height: g.address_height }, spans };
@@ -835,5 +893,19 @@ impl DropHandler for Outside {
 
     fn dropped(&self, offer: &Offer, x: f64, y: f64, keys: Keys) -> Option<Effect> {
         self.0.offer_dropped(offer, x, y, keys)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn crumb_places_are_kept_only_for_unchanged_parts() {
+        let stored =
+            vec![("This PC".to_owned(), 10.0, 60.0), ("C:".to_owned(), 80.0, 30.0), ("old".to_owned(), 120.0, 40.0)];
+        let labels = vec!["This PC".to_owned(), "C:".to_owned(), "new".to_owned(), "deeper".to_owned()];
+        assert_eq!(current_spans(&stored, &labels), vec![(10.0, 60.0), (80.0, 30.0), (0.0, 0.0), (0.0, 0.0)]);
+        assert_eq!(current_spans(&stored, &labels[..1]), vec![(10.0, 60.0)], "fewer parts now");
     }
 }

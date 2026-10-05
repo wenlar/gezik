@@ -9,6 +9,44 @@ pub(crate) mod xdnd;
 #[cfg(all(unix, not(target_os = "macos")))]
 pub(crate) use backend::*;
 
+/// What to ask a clipboard owner for, from the formats it offers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
+pub(crate) struct Ask {
+    /// The format with the file list.
+    pub files: u32,
+    /// Also KDE's cut flag (a URI list says nothing about cut).
+    pub kde_cut: bool,
+}
+
+/// GNOME's list (it says copy or cut itself), else a URI list and KDE's cut flag if offered;
+/// None if no file list is offered. Each format asked for is a wait on the owner.
+#[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
+pub(crate) fn what_to_ask(offered: &[u32], gnome: u32, uri_list: u32, kde: u32) -> Option<Ask> {
+    if offered.contains(&gnome) {
+        Some(Ask { files: gnome, kde_cut: false })
+    } else if offered.contains(&uri_list) {
+        Some(Ask { files: uri_list, kde_cut: offered.contains(&kde) })
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_offered_formats_are_asked_for() {
+        let (gnome, uris, kde, text) = (1, 2, 3, 4);
+        assert_eq!(what_to_ask(&[text, uris, gnome], gnome, uris, kde), Some(Ask { files: gnome, kde_cut: false }));
+        assert_eq!(what_to_ask(&[uris, kde], gnome, uris, kde), Some(Ask { files: uris, kde_cut: true }));
+        assert_eq!(what_to_ask(&[uris], gnome, uris, kde), Some(Ask { files: uris, kde_cut: false }));
+        assert_eq!(what_to_ask(&[text], gnome, uris, kde), None);
+        assert_eq!(what_to_ask(&[], gnome, uris, kde), None);
+    }
+}
+
 #[cfg(all(unix, not(target_os = "macos")))]
 mod wayland;
 #[cfg(all(unix, not(target_os = "macos")))]

@@ -3,6 +3,7 @@
 //! winit's window reach that window through `XdndProxy` (client messages sent to a window only
 //! reach the connection that created it).
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -325,7 +326,11 @@ impl Shared {
                 self.queue(UiEvent::Leave);
             }
         } else if event.type_ == a.XdndDrop {
-            let has_uris = self.state().incoming.as_ref().map(|i| i.has_uris);
+            // The data is asked for with the drop's own time (XDND: `data.l[2]`).
+            let has_uris = self.state().incoming.as_mut().map(|i| {
+                i.time = data[2];
+                i.has_uris
+            });
             match has_uris {
                 Some(true) => self.queue(UiEvent::Dropped { offer: None, x: 0.0, y: 0.0, keys: Keys::default() }),
                 Some(false) => {
@@ -465,17 +470,22 @@ impl super::Backend for X11 {
         if s.owns(s.atoms.CLIPBOARD) {
             return Ok(s.state().clipboard.clone().map(|o| ClipboardFiles { paths: o.paths, cut: o.cut }));
         }
-        if let Some(text) = s.transfer(s.atoms.CLIPBOARD, s.atoms.GNOME_FILES, CURRENT_TIME)
-            && let Some((cut, paths)) = uri::parse_gnome_copied_files(&String::from_utf8_lossy(&text))
-        {
-            return Ok(Some(ClipboardFiles { paths, cut }));
+        // The owner's formats first: a wait (at most a second) for each format asked for, so
+        // only what it offers is asked for.
+        let Some(targets) = s.transfer(s.atoms.CLIPBOARD, s.atoms.TARGETS, CURRENT_TIME) else { return Ok(None) };
+        let offered: Vec<Atom> = targets.as_chunks::<4>().0.iter().map(|c| u32::from_ne_bytes(*c)).collect();
+        let a = &s.atoms;
+        let Some(ask) = super::what_to_ask(&offered, a.GNOME_FILES, a.URI_LIST, a.KDE_CUT) else { return Ok(None) };
+        let Some(text) = s.transfer(a.CLIPBOARD, ask.files, CURRENT_TIME) else { return Ok(None) };
+        let text = String::from_utf8_lossy(&text);
+        if ask.files == a.GNOME_FILES {
+            return Ok(uri::parse_gnome_copied_files(&text).map(|(cut, paths)| ClipboardFiles { paths, cut }));
         }
-        let Some(text) = s.transfer(s.atoms.CLIPBOARD, s.atoms.URI_LIST, CURRENT_TIME) else { return Ok(None) };
-        let paths = uri::parse_uri_list(&String::from_utf8_lossy(&text));
+        let paths = uri::parse_uri_list(&text);
         if paths.is_empty() {
             return Ok(None);
         }
-        let cut = s.transfer(s.atoms.CLIPBOARD, s.atoms.KDE_CUT, CURRENT_TIME).is_some_and(|v| v == b"1");
+        let cut = ask.kde_cut && s.transfer(a.CLIPBOARD, a.KDE_CUT, CURRENT_TIME).is_some_and(|v| v == b"1");
         Ok(Some(ClipboardFiles { paths, cut }))
     }
 
@@ -537,7 +547,7 @@ impl super::Backend for X11 {
         }
         s.conn.set_selection_owner(s.window, s.atoms.XdndSelection, CURRENT_TIME).map_err(|e| e.to_string())?;
         s.conn.flush().map_err(|e| e.to_string())?;
-        Ok(Box::new(X11Drag(s.clone())))
+        Ok(Box::new(X11Drag { shared: s.clone(), origin: None, aware: HashMap::new() }))
     }
 }
 
@@ -567,50 +577,80 @@ impl X11 {
 
 /// Gezik's drag over other windows: Gezik sends the XDND messages itself, following Slint's
 /// pointer moves (winit keeps the pointer while the button is down).
-struct X11Drag(Arc<Shared>);
+struct X11Drag {
+    shared: Arc<Shared>,
+    /// Where winit's window is on the root window (it does not move during a drag).
+    origin: Option<(i16, i16)>,
+    /// What each top-level window under the pointer takes drops on, found once per drag: a
+    /// pointer move then costs one request, not a walk down the window tree.
+    aware: HashMap<Window, Option<(Window, Window, u32)>>,
+}
+
+type Aware = Option<(Window, Window, u32)>;
 
 impl X11Drag {
     /// The window under root (`x`, `y`) that takes XDND drops, where to send to, and the version.
-    fn aware_at(&self, x: i16, y: i16) -> Option<(Window, Window, u32)> {
-        let s = &self.0;
-        let mut window = s.root;
+    fn aware_at(&mut self, x: i16, y: i16) -> Aware {
+        let s = self.shared.clone();
+        let top = s.conn.translate_coordinates(s.root, s.root, x, y).ok()?.reply().ok()?.child;
+        if top == NONE {
+            return None;
+        }
+        if let Some(known) = self.aware.get(&top) {
+            return *known;
+        }
+        let found = Self::aware_below(&s, top, x, y);
+        self.aware.insert(top, found);
+        found
+    }
+
+    /// `aware_at` within top-level window `top` (itself first).
+    fn aware_below(s: &Shared, top: Window, x: i16, y: i16) -> Aware {
+        let mut window = top;
         loop {
+            if let Some(found) = Self::aware(s, window) {
+                return found;
+            }
             let child = s.conn.translate_coordinates(s.root, window, x, y).ok()?.reply().ok()?.child;
             if child == NONE {
                 return None;
             }
             window = child;
-            let version = s
-                .conn
-                .get_property(false, window, s.atoms.XdndAware, AtomEnum::ATOM, 0, 1)
-                .ok()
-                .and_then(|c| c.reply().ok())
-                .and_then(|r| r.value32().and_then(|mut v| v.next()));
-            if let Some(version) = version {
-                if version < 3 {
-                    return None;
-                }
-                let proxy = s
-                    .conn
-                    .get_property(false, window, s.atoms.XdndProxy, AtomEnum::WINDOW, 0, 1)
-                    .ok()
-                    .and_then(|c| c.reply().ok())
-                    .and_then(|r| r.value32().and_then(|mut v| v.next()))
-                    .filter(|&proxy| proxy != NONE);
-                return Some((window, proxy.unwrap_or(window), version.min(xdnd::VERSION)));
-            }
         }
+    }
+
+    /// Whether `window` takes XDND drops: None if it says nothing, Some(None) if its version is
+    /// too old, else where messages go and the version.
+    fn aware(s: &Shared, window: Window) -> Option<Aware> {
+        let version = s
+            .conn
+            .get_property(false, window, s.atoms.XdndAware, AtomEnum::ATOM, 0, 1)
+            .ok()
+            .and_then(|c| c.reply().ok())
+            .and_then(|r| r.value32().and_then(|mut v| v.next()))?;
+        if version < 3 {
+            return Some(None);
+        }
+        let proxy = s
+            .conn
+            .get_property(false, window, s.atoms.XdndProxy, AtomEnum::WINDOW, 0, 1)
+            .ok()
+            .and_then(|c| c.reply().ok())
+            .and_then(|r| r.value32().and_then(|mut v| v.next()))
+            .filter(|&proxy| proxy != NONE);
+        Some(Some((window, proxy.unwrap_or(window), version.min(xdnd::VERSION))))
     }
 }
 
 impl OutsideDrag for X11Drag {
     fn moved(&mut self, x: f64, y: f64, keys: Keys) {
-        let s = &self.0;
-        let Some(origin) = s.conn.translate_coordinates(s.target, s.root, 0, 0).ok().and_then(|c| c.reply().ok())
-        else {
-            return;
-        };
-        let (rx, ry) = ((f64::from(origin.dst_x) + x) as i16, (f64::from(origin.dst_y) + y) as i16);
+        let s = self.shared.clone();
+        if self.origin.is_none() {
+            let reply = s.conn.translate_coordinates(s.target, s.root, 0, 0).ok().and_then(|c| c.reply().ok());
+            self.origin = reply.map(|r| (r.dst_x, r.dst_y));
+        }
+        let Some((ox, oy)) = self.origin else { return };
+        let (rx, ry) = ((f64::from(ox) + x) as i16, (f64::from(oy) + y) as i16);
         let found = self.aware_at(rx, ry).filter(|(window, ..)| *window != s.target);
         let old = s.state().outgoing.as_ref().and_then(|o| o.target);
         if old.map(|t| t.0) != found.map(|t| t.0) {
@@ -632,7 +672,7 @@ impl OutsideDrag for X11Drag {
     }
 
     fn released(&mut self) {
-        let s = self.0.clone();
+        let s = self.shared.clone();
         let (target, accepted) = match s.state().outgoing.as_ref() {
             Some(o) => (o.target, o.accepted),
             None => return,
@@ -663,7 +703,7 @@ impl OutsideDrag for X11Drag {
     }
 
     fn cancel(&mut self) {
-        let s = &self.0;
+        let s = &self.shared;
         let outgoing = s.state().outgoing.take();
         if let Some((_, to, _)) = outgoing.and_then(|o| o.target) {
             s.send(to, s.atoms.XdndLeave, xdnd::leave(s.window));
