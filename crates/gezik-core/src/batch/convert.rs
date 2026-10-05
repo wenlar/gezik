@@ -6,6 +6,8 @@
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
+use crate::ops::paths::same_path;
+
 /// The groups of the Convert layer's preset list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -232,8 +234,45 @@ impl Preset {
         }
     }
 
-    /// Whether running it needs ffmpeg whatever the inputs are.
+    /// Whether it writes each picture in the format it already has ("Remove location data")
+    /// instead of its options' `format`.
+    pub fn keeps_format(&self) -> bool {
+        self.id == REMOVE_LOCATION
+    }
+
+    /// The format it writes the picture `name` in: its options' format, or for a preset that
+    /// [keeps the format](Self::keeps_format) the picture's own, with WebP written lossless (no
+    /// ffmpeg, no generation loss). `None` for a format Gezik cannot write (gif, tiff, heic…)
+    /// and for presets that are not about pictures.
+    pub fn format_for(&self, name: &str) -> Option<ImageFormat> {
+        let PresetWhat::Image(options) = self.what else { return None };
+        if !self.keeps_format() {
+            return Some(options.format);
+        }
+        match ImageFormat::of_name(name)? {
+            ImageFormat::WebpLossy => Some(ImageFormat::WebpLossless),
+            format => Some(format),
+        }
+    }
+
+    /// Whether running it on `name` needs ffmpeg: media always, pictures when the picture is
+    /// read through ffmpeg (HEIC, HEIF, AVIF) or written by it (lossy WebP, AVIF).
+    pub fn needs_ffmpeg_for(&self, name: &str) -> bool {
+        match self.what {
+            PresetWhat::Image(_) => {
+                needs_ffmpeg_to_read(name) || self.format_for(name).is_some_and(ImageFormat::needs_ffmpeg)
+            }
+            PresetWhat::Text(_) => false,
+            PresetWhat::Media(_) => true,
+        }
+    }
+
+    /// Whether running it needs ffmpeg whatever the inputs are (for a preset that keeps the
+    /// format, that depends on the inputs: [`Self::needs_ffmpeg_for`]).
     pub fn needs_ffmpeg(&self) -> bool {
+        if self.keeps_format() {
+            return false;
+        }
         match self.what {
             PresetWhat::Image(options) => options.format.needs_ffmpeg(),
             PresetWhat::Text(_) => false,
@@ -242,8 +281,9 @@ impl Preset {
     }
 }
 
-/// The id of "Remove location data": it keeps each picture's format ([`ImageFormat::of_name`])
-/// and, for a JPEG, does not re-encode (its `format` field is only a placeholder).
+/// The id of "Remove location data": it keeps each picture's format ([`Preset::format_for`])
+/// and, for a JPEG, does not re-encode (its `format` field is only a placeholder). It rotates
+/// by EXIF when it re-encodes, since the orientation tag goes with the EXIF.
 pub const REMOVE_LOCATION: &str = "remove-location";
 
 const fn image(format: ImageFormat, quality: u8, resize: Resize, strip_metadata: bool) -> PresetWhat {
@@ -292,7 +332,7 @@ pub const PRESETS: &[Preset] = &[
             quality: 85,
             resize: Resize::None,
             never_enlarge: true,
-            rotate_by_exif: false,
+            rotate_by_exif: true,
             strip_metadata: true,
             background: [255, 255, 255],
         }),
@@ -334,9 +374,13 @@ pub fn preset(id: &str) -> Option<&'static Preset> {
     PRESETS.iter().find(|p| p.id == id)
 }
 
+/// The largest width or height [`target_size`] gives.
+pub const MAX_SIDE: u32 = 65535;
+
 /// The size a `w`×`h` picture is resized to, or `None` when it stays as it is (no resize, the
 /// same size, or larger while `never_enlarge`). Call it after the EXIF rotation, so that
-/// "width" is the width as shown.
+/// "width" is the width as shown. Neither side gets larger than [`MAX_SIDE`] (jpeg-encoder's
+/// limit): a larger result is scaled down further, keeping the aspect ratio.
 pub fn target_size(w: u32, h: u32, resize: &Resize, never_enlarge: bool) -> Option<(u32, u32)> {
     if w == 0 || h == 0 {
         return None;
@@ -351,6 +395,7 @@ pub fn target_size(w: u32, h: u32, resize: &Resize, never_enlarge: bool) -> Opti
     if scale <= 0.0 || (never_enlarge && scale >= 1.0) {
         return None;
     }
+    let scale = scale.min(MAX_SIDE as f64 / w.max(h) as f64);
     let nw = ((w as f64 * scale).round() as u32).max(1);
     let nh = ((h as f64 * scale).round() as u32).max(1);
     if (nw, nh) == (w, h) { None } else { Some((nw, nh)) }
@@ -358,7 +403,7 @@ pub fn target_size(w: u32, h: u32, resize: &Resize, never_enlarge: bool) -> Opti
 
 /// The final path of `input` converted to a file ending in `ext` (without the dot; empty for
 /// no extension). It is the input itself for [`Output::ReplaceOriginal`] when the extension
-/// stays.
+/// stays. When the output would be the input itself in another mode, it gets ` (converted)`.
 pub fn output_path(input: &Path, ext: &str, output: &Output) -> PathBuf {
     let dir = input.parent().unwrap_or(Path::new(""));
     let stem = input.file_stem().unwrap_or(OsStr::new(""));
@@ -377,8 +422,10 @@ pub fn output_path(input: &Path, ext: &str, output: &Output) -> PathBuf {
         Output::SameFolder if same_ext => dir.join(named(" (converted)")),
         Output::SameFolder | Output::ReplaceOriginal => dir.join(named("")),
         Output::Subfolder => dir.join(SUBFOLDER).join(named("")),
-        Output::Folder(folder) if same_ext && folder == dir => folder.join(named(" (converted)")),
-        Output::Folder(folder) => folder.join(named("")),
+        Output::Folder(folder) => {
+            let path = folder.join(named(""));
+            if same_path(&path, input) { folder.join(named(" (converted)")) } else { path }
+        }
     }
 }
 
@@ -615,7 +662,8 @@ fn pieces(text: &str) -> Result<Vec<Result<String, &str>>, String> {
 }
 
 /// Checks a command without a file: `run` not empty, placeholders known, `{out}` only with
-/// `output`, `output` only with `{name}` and `{ext}`, `parallel` 1-16.
+/// `output`, `output` a file name (no `/` or `\`, not `.` or `..`) with only `{name}` and
+/// `{ext}`, `parallel` 1-16.
 pub fn check_command(spec: &CommandSpec) -> Result<(), String> {
     if spec.run.first().is_none_or(|program| program.trim().is_empty()) {
         return Err("run has no program".to_owned());
@@ -629,15 +677,18 @@ pub fn check_command(spec: &CommandSpec) -> Result<(), String> {
     }
     if let Some(output) = &spec.output {
         for piece in pieces(output)? {
-            if let Err(field) = piece
-                && field != "name"
-                && field != "ext"
-            {
-                return Err(format!("output can only use {{name}} and {{ext}}, not {{{field}}}"));
+            match piece {
+                Ok(text) if text.contains(['/', '\\']) => {
+                    return Err("output must be a file name, without / or \\".to_owned());
+                }
+                Err(field) if field != "name" && field != "ext" => {
+                    return Err(format!("output can only use {{name}} and {{ext}}, not {{{field}}}"));
+                }
+                _ => {}
             }
         }
-        if output.trim().is_empty() {
-            return Err("output is empty".to_owned());
+        if matches!(output.trim(), "" | "." | "..") {
+            return Err(format!("output \"{output}\" is not a file name"));
         }
     }
     if !(1..=16).contains(&spec.parallel) {
@@ -650,8 +701,15 @@ pub fn check_command(spec: &CommandSpec) -> Result<(), String> {
 /// (temporary) output path. Placeholders are replaced inside each argument, which stays one
 /// argument whatever the name holds: `{in}`, `{out}`, `{dir}` (the input's folder), `{name}`
 /// (its name without the extension), `{ext}` (without the dot), `{outdir}` (the output's
-/// folder, else the input's). An unknown placeholder, or `{out}` without `out`, is an error.
-pub fn expand_command(spec: &CommandSpec, input: &Path, out: Option<&Path>) -> Result<Vec<OsString>, String> {
+/// folder, else the input's). For a folder (`is_dir`), `{name}` is its whole name and `{ext}`
+/// is empty. An unknown placeholder, or `{out}` without `out`, is an error.
+pub fn expand_command(
+    spec: &CommandSpec,
+    input: &Path,
+    is_dir: bool,
+    out: Option<&Path>,
+) -> Result<Vec<OsString>, String> {
+    debug_assert!(input.is_absolute(), "{} is not absolute", input.display());
     if spec.run.is_empty() {
         return Err("run has no program".to_owned());
     }
@@ -667,9 +725,10 @@ pub fn expand_command(spec: &CommandSpec, input: &Path, out: Option<&Path>) -> R
                     Err("in") => expanded.push(input),
                     Err("out") => expanded.push(out.ok_or("{out} needs an output")?),
                     Err("dir") => expanded.push(dir),
-                    Err("name") => expanded.push(input.file_stem().unwrap_or_default()),
-                    Err("ext") => expanded.push(input.extension().unwrap_or_default()),
-                    Err(_) => expanded.push(outdir),
+                    Err("name") => expanded.push(name_of(input, is_dir)),
+                    Err("ext") => expanded.push(ext_of(input, is_dir)),
+                    Err("outdir") => expanded.push(outdir),
+                    Err(field) => unreachable!("pieces lets through only known placeholders, not {field}"),
                 }
             }
             Ok(expanded)
@@ -677,16 +736,32 @@ pub fn expand_command(spec: &CommandSpec, input: &Path, out: Option<&Path>) -> R
         .collect()
 }
 
-/// The output's file name for `input`, from the `output` template (`{name}`, `{ext}`).
-pub fn expand_output_name(template: &str, input: &Path) -> Result<OsString, String> {
+/// `{name}`: the name without its extension, or a folder's whole name.
+fn name_of(input: &Path, is_dir: bool) -> &OsStr {
+    if is_dir { input.file_name() } else { input.file_stem() }.unwrap_or_default()
+}
+
+/// `{ext}`: the extension without its dot; empty for a folder.
+fn ext_of(input: &Path, is_dir: bool) -> &OsStr {
+    if is_dir { None } else { input.extension() }.unwrap_or_default()
+}
+
+/// The output's file name for `input` (a folder when `is_dir`), from the `output` template
+/// (`{name}`, `{ext}`). It must come out a plain file name: not empty, not `.` or `..`,
+/// without `/` or `\`.
+pub fn expand_output_name(template: &str, input: &Path, is_dir: bool) -> Result<OsString, String> {
     let mut name = OsString::new();
     for piece in pieces(template)? {
         match piece {
             Ok(text) => name.push(text),
-            Err("name") => name.push(input.file_stem().unwrap_or_default()),
-            Err("ext") => name.push(input.extension().unwrap_or_default()),
+            Err("name") => name.push(name_of(input, is_dir)),
+            Err("ext") => name.push(ext_of(input, is_dir)),
             Err(field) => return Err(format!("output can only use {{name}} and {{ext}}, not {{{field}}}")),
         }
+    }
+    let text = name.to_string_lossy();
+    if matches!(text.trim(), "" | "." | "..") || text.contains(['/', '\\']) {
+        return Err(format!("output \"{text}\" is not a file name"));
     }
     Ok(name)
 }
@@ -769,7 +844,28 @@ mod tests {
         let PresetWhat::Image(location) = preset(REMOVE_LOCATION).unwrap().what else { panic!() };
         assert!(location.strip_metadata);
         assert_eq!(location.resize, Resize::None);
-        assert!(!location.rotate_by_exif);
+        assert!(location.rotate_by_exif);
+        let remove = preset(REMOVE_LOCATION).unwrap();
+        assert!(remove.keeps_format());
+        assert_eq!(remove.format_for("a.JPG"), Some(ImageFormat::Jpeg));
+        assert_eq!(remove.format_for("a.png"), Some(ImageFormat::Png));
+        assert_eq!(remove.format_for("a.webp"), Some(ImageFormat::WebpLossless));
+        assert_eq!(remove.format_for("a.avif"), Some(ImageFormat::Avif));
+        assert_eq!(remove.format_for("a.gif"), None);
+        assert!(!remove.needs_ffmpeg());
+        assert!(!remove.needs_ffmpeg_for("a.jpg"));
+        assert!(!remove.needs_ffmpeg_for("a.webp"));
+        assert!(remove.needs_ffmpeg_for("a.avif"));
+        assert!(remove.needs_ffmpeg_for("a.heic"));
+        let png = preset("to-png").unwrap();
+        assert!(!png.keeps_format());
+        assert_eq!(png.format_for("a.webp"), Some(ImageFormat::Png));
+        assert!(!png.needs_ffmpeg_for("a.jpg"));
+        assert!(png.needs_ffmpeg_for("IMG.HEIC"));
+        assert!(preset("to-avif").unwrap().needs_ffmpeg_for("a.png"));
+        assert!(preset("mp3").unwrap().needs_ffmpeg_for("a.mp4"));
+        assert!(!preset("to-utf8").unwrap().needs_ffmpeg_for("a.txt"));
+        assert_eq!(preset("mp3").unwrap().format_for("a.png"), None);
 
         assert!(preset("to-avif").unwrap().needs_ffmpeg());
         assert!(!preset("to-webp").unwrap().needs_ffmpeg());
@@ -833,6 +929,11 @@ mod tests {
         assert_eq!(target_size(10000, 1, &Resize::Width(100), true), Some((100, 1)));
         assert_eq!(target_size(800, 600, &Resize::Percent(200), true), None);
         assert_eq!(target_size(800, 600, &Resize::Percent(200), false), Some((1600, 1200)));
+        // Capped at 65535 a side, keeping the aspect ratio.
+        assert_eq!(target_size(40000, 20000, &Resize::Percent(200), false), Some((65535, 32768)));
+        assert_eq!(target_size(1000, 10, &Resize::Height(1000), false), Some((65535, 655)));
+        assert_eq!(target_size(65535, 100, &Resize::Width(70000), false), None);
+        assert_eq!(MAX_SIDE, 65535);
     }
 
     #[test]
@@ -852,6 +953,21 @@ mod tests {
             output_path(&jpg, "jpg", &Output::Folder(dir.to_path_buf())),
             dir.join("foto (converted).jpg"),
             "the input's own folder chosen"
+        );
+        let upper = Path::new("C:\\PHOTOS").to_path_buf();
+        let expected = if cfg!(any(windows, target_os = "macos")) {
+            upper.join("foto (converted).jpg")
+        } else {
+            upper.join("foto.jpg")
+        };
+        assert_eq!(output_path(&jpg, "jpg", &Output::Folder(upper.clone())), expected, "the same folder in other case");
+        assert_eq!(
+            output_path(&dir.join("foto.JPG"), "jpg", &Output::Folder(dir.to_path_buf())),
+            if cfg!(any(windows, target_os = "macos")) {
+                dir.join("foto (converted).jpg")
+            } else {
+                dir.join("foto.jpg")
+            }
         );
         assert_eq!(output_path(&jpg, "jpg", &Output::ReplaceOriginal), jpg);
         assert_eq!(output_path(&png, "jpg", &Output::ReplaceOriginal), dir.join("foto.jpg"));
@@ -1062,7 +1178,7 @@ mod tests {
         let spec = command(&["magick", "{in}", "-resize", "50%", "{out}"], Some("{name}-small.{ext}"), &[]);
         let input = Path::new("C:\\pics").join("a \"b\"; $c & d ş.jpg");
         let out = Path::new("C:\\pics").join(".gezik-tmp-3");
-        let list = expand_command(&spec, &input, Some(&out)).unwrap();
+        let list = expand_command(&spec, &input, false, Some(&out)).unwrap();
         assert_eq!(list.len(), 5);
         assert_eq!(list[0], "magick");
         assert_eq!(list[1], input.as_os_str());
@@ -1080,7 +1196,7 @@ mod tests {
         );
         let input = Path::new("C:\\docs").join("report.final.docx");
         let out = Path::new("D:\\out").join(".gezik-tmp-4");
-        let list = expand_command(&spec, &input, Some(&out)).unwrap();
+        let list = expand_command(&spec, &input, false, Some(&out)).unwrap();
         let mut both = input.as_os_str().to_os_string();
         both.push(input.as_os_str());
         assert_eq!(list[1], "--dir=C:\\docs");
@@ -1090,21 +1206,38 @@ mod tests {
         assert_eq!(list[5], both);
         // Without an output, {outdir} is the input's folder.
         let in_place = command(&["tool", "{outdir}"], None, &[]);
-        assert_eq!(expand_command(&in_place, &input, None).unwrap()[1], "C:\\docs");
-        assert_eq!(expand_output_name("{name}.pdf", &input).unwrap(), "report.final.pdf");
-        assert_eq!(expand_output_name("{name}-small.{ext}", &input).unwrap(), "report.final-small.docx");
-        assert!(expand_output_name("{in}.pdf", &input).is_err());
+        assert_eq!(expand_command(&in_place, &input, false, None).unwrap()[1], "C:\\docs");
+        assert_eq!(expand_output_name("{name}.pdf", &input, false).unwrap(), "report.final.pdf");
+        assert_eq!(expand_output_name("{name}-small.{ext}", &input, false).unwrap(), "report.final-small.docx");
+        assert!(expand_output_name("{in}.pdf", &input, false).is_err());
+        for bad in ["", " ", ".", "..", "out/{name}.pdf", "..\\{name}.pdf", "{name}/x"] {
+            assert!(expand_output_name(bad, &input, false).is_err(), "{bad}");
+        }
+        // An empty name from the input itself.
+        assert!(expand_output_name("{ext}", &Path::new("C:\\docs").join("noext"), false).is_err());
+    }
+
+    #[test]
+    fn folder_placeholders() {
+        let folder = Path::new("C:\\work").join("site.v2");
+        let spec = CommandSpec { folders: true, ..command(&["zip", "{name}|{ext}|{in}"], Some("{name}.zip"), &[]) };
+        let list = expand_command(&spec, &folder, true, None).unwrap();
+        let mut expected = OsString::from("site.v2||");
+        expected.push(folder.as_os_str());
+        assert_eq!(list[1], expected);
+        assert_eq!(expand_output_name("{name}.zip", &folder, true).unwrap(), "site.v2.zip");
+        assert_eq!(expand_output_name("{name}.{ext}", &folder, false).unwrap(), "site.v2");
     }
 
     #[test]
     fn bad_placeholders() {
         let input = Path::new("C:\\a.jpg");
-        assert!(expand_command(&command(&["t", "{x}"], None, &[]), input, None).unwrap_err().contains("{x}"));
-        assert!(expand_command(&command(&["t", "{in"], None, &[]), input, None).is_err());
-        assert!(expand_command(&command(&["t", "a}b"], None, &[]), input, None).is_err());
-        assert!(expand_command(&command(&["t", "{IN}"], None, &[]), input, None).is_err());
-        assert!(expand_command(&command(&["t", "{out}"], None, &[]), input, None).is_err());
-        assert!(expand_command(&command(&[], None, &[]), input, None).is_err());
+        assert!(expand_command(&command(&["t", "{x}"], None, &[]), input, false, None).unwrap_err().contains("{x}"));
+        assert!(expand_command(&command(&["t", "{in"], None, &[]), input, false, None).is_err());
+        assert!(expand_command(&command(&["t", "a}b"], None, &[]), input, false, None).is_err());
+        assert!(expand_command(&command(&["t", "{IN}"], None, &[]), input, false, None).is_err());
+        assert!(expand_command(&command(&["t", "{out}"], None, &[]), input, false, None).is_err());
+        assert!(expand_command(&command(&[], None, &[]), input, false, None).is_err());
     }
 
     #[test]
@@ -1117,6 +1250,9 @@ mod tests {
         assert!(check_command(&command(&["t", "{nope}"], None, &[])).is_err());
         assert!(check_command(&command(&["t"], Some("{dir}.pdf"), &[])).is_err());
         assert!(check_command(&command(&["t"], Some(""), &[])).is_err());
+        for bad in [".", "..", " ", "sub/{name}.pdf", "..\\{name}.pdf"] {
+            assert!(check_command(&command(&["t"], Some(bad), &[])).is_err(), "{bad}");
+        }
         let mut spec = command(&["t"], None, &[]);
         spec.parallel = 0;
         assert!(check_command(&spec).is_err());
