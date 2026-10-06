@@ -1,0 +1,383 @@
+import { Theme } from "../theme.slint";
+import { TextButton } from "text-button.slint";
+import { TextField } from "text-field.slint";
+import { Check } from "check.slint";
+
+// What the Convert layer shows (convert.rs fills it).
+export struct ConvertView {
+    title: string,
+    // The preset button's text.
+    preset: string,
+    // 0 a user command, 1 picture options, 2 text options, 3 audio/video (the preset only),
+    // 4 "Remove location data" (no options).
+    kind: int,
+    // Under the preset: what a command runs, what "Remove location data" keeps.
+    note: string,
+    // Picture: the format buttons and the chosen one; quality for JPEG, lossy WebP and AVIF;
+    // resize 0 none, 1 longest side, 2 width, 3 height, 4 percent; the background for JPEG.
+    formats: [string],
+    format: int,
+    show-quality: bool,
+    resize: int,
+    never-enlarge: bool,
+    rotate: bool,
+    strip: bool,
+    show-background: bool,
+    // Text: the encodings' button texts, what was detected, BOM, line endings (0 as they
+    // are, 1 LF, 2 CRLF, 3 CR), the clean-ups.
+    from: string,
+    detected: string,
+    to: string,
+    bom: bool,
+    eol: int,
+    trim: bool,
+    final-newline: bool,
+    // Output: 0 same folder, 1 subfolder "converted", 2 the chosen folder, 3 replace originals.
+    show-output: bool,
+    output: int,
+    folder: string,
+    can-replace: bool,
+    replace-note: string,
+    // Footer: "3 items skipped: not images", "¹ needs ffmpeg", what is wrong.
+    skipped: string,
+    ffmpeg-note: string,
+    error: string,
+}
+
+component Labeled inherits HorizontalLayout {
+    in property <string> label;
+    spacing: Theme.spacing;
+    Text {
+        text: root.label;
+        width: 88px;
+        vertical-alignment: center;
+        color: Theme.foreground-muted;
+    }
+    @children
+}
+
+component Heading inherits HorizontalLayout {
+    in property <string> text;
+    spacing: Theme.spacing;
+    Text {
+        text: root.text;
+        font-weight: 600;
+        vertical-alignment: center;
+        color: Theme.foreground-muted;
+    }
+    VerticalLayout {
+        alignment: center;
+        Rectangle { height: 1px; background: Theme.border; }
+    }
+}
+
+// The Convert layer (convert.rs): a preset, its options, where the outputs go. Esc closes
+// and Ctrl+Enter converts (main.rs routes them).
+export component ConvertLayer inherits Rectangle {
+    in property <bool> open;
+    in property <bool> dialog-open;
+    in property <ConvertView> view;
+    in-out property <string> quality;
+    in-out property <string> resize-value;
+    in-out property <string> background-text;
+    callback presets(length, length);
+    callback set-format(int);
+    callback set-resize(int);
+    // A switch: "enlarge", "rotate", "strip", "bom", "trim", "final".
+    callback toggle(string);
+    callback from(length, length);
+    callback to(length, length);
+    callback set-eol(int);
+    callback set-output(int);
+    callback edited();
+    callback convert();
+    callback cancel();
+
+    property <string> menu-arrow: "M 1 2.5 L 4 5.5 L 7 2.5";
+
+    changed open => {
+        if self.open && !root.dialog-open {
+            preset-button.focus();
+        }
+    }
+
+    public function take-focus() {
+        preset-button.focus();
+    }
+
+    background: Theme.background.with-alpha(0.6);
+    // Clicks outside the box go nowhere.
+    TouchArea { }
+
+    Rectangle {
+        width: min(720px, root.width - 48px);
+        height: min(content.preferred-height, root.height - 48px);
+        x: (root.width - self.width) / 2;
+        y: max(24px, (root.height - self.height) / 3);
+        background: Theme.surface;
+        border-radius: Theme.radius * 1.5;
+        border-width: 1px;
+        border-color: Theme.border;
+        accessible-role: groupbox;
+        accessible-label: root.view.title;
+
+        content := VerticalLayout {
+            padding: Theme.spacing * 3;
+            spacing: Theme.spacing * 1.5;
+
+            Text {
+                text: root.view.title;
+                font-weight: 600;
+                overflow: elide;
+                color: Theme.foreground;
+            }
+            Labeled {
+                label: "Preset";
+                preset-button := TextButton {
+                    text: root.view.preset;
+                    icon: root.menu-arrow;
+                    min-width: 280px;
+                    clicked => { root.presets(self.absolute-position.x, self.absolute-position.y + self.height); }
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            if root.view.note != "": Labeled {
+                label: "";
+                Text {
+                    text: root.view.note;
+                    wrap: word-wrap;
+                    color: Theme.foreground-muted;
+                }
+            }
+
+            // Pictures.
+            if root.view.kind == 1: Heading { text: "Image"; }
+            if root.view.kind == 1: Labeled {
+                label: "Format";
+                HorizontalLayout {
+                    spacing: Theme.spacing;
+                    for label[i] in root.view.formats: TextButton {
+                        text: label;
+                        checked: i == root.view.format;
+                        clicked => { root.set-format(i); }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                }
+            }
+            if root.view.kind == 1 && root.view.show-quality: Labeled {
+                label: "Quality";
+                TextField {
+                    width: 72px;
+                    horizontal-stretch: 0;
+                    text <=> root.quality;
+                    edited => { root.edited(); }
+                    accepted => { root.convert(); }
+                }
+                Text {
+                    text: "1-100";
+                    vertical-alignment: center;
+                    color: Theme.foreground-muted;
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            if root.view.kind == 1: Labeled {
+                label: "Resize";
+                HorizontalLayout {
+                    spacing: Theme.spacing;
+                    for label[i] in ["None", "Longest side", "Width", "Height", "Percent"]: TextButton {
+                        text: label;
+                        checked: i == root.view.resize;
+                        clicked => { root.set-resize(i); }
+                    }
+                    if root.view.resize > 0: TextField {
+                        width: 72px;
+                        horizontal-stretch: 0;
+                        text <=> root.resize-value;
+                        edited => { root.edited(); }
+                        accepted => { root.convert(); }
+                    }
+                    if root.view.resize > 0: Text {
+                        text: root.view.resize == 4 ? "%" : "px";
+                        vertical-alignment: center;
+                        color: Theme.foreground-muted;
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                }
+            }
+            if root.view.kind == 1: Labeled {
+                label: "";
+                Check {
+                    text: "Never enlarge";
+                    checked: root.view.never-enlarge;
+                    enabled: root.view.resize > 0;
+                    toggled => { root.toggle("enlarge"); }
+                }
+                Check {
+                    text: "Rotate by EXIF";
+                    checked: root.view.rotate;
+                    toggled => { root.toggle("rotate"); }
+                }
+                Check {
+                    text: "Remove metadata (incl. location)";
+                    checked: root.view.strip;
+                    toggled => { root.toggle("strip"); }
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            if root.view.kind == 1 && root.view.show-background: Labeled {
+                label: "Background";
+                TextField {
+                    width: 96px;
+                    horizontal-stretch: 0;
+                    text <=> root.background-text;
+                    edited => { root.edited(); }
+                    accepted => { root.convert(); }
+                }
+                Text {
+                    text: "for transparent parts (#rrggbb)";
+                    vertical-alignment: center;
+                    color: Theme.foreground-muted;
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+
+            // Text.
+            if root.view.kind == 2: Heading { text: "Text"; }
+            if root.view.kind == 2: Labeled {
+                label: "From";
+                TextButton {
+                    text: root.view.from;
+                    icon: root.menu-arrow;
+                    min-width: 200px;
+                    clicked => { root.from(self.absolute-position.x, self.absolute-position.y + self.height); }
+                }
+                Text {
+                    text: root.view.detected;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                    color: Theme.foreground-muted;
+                }
+            }
+            if root.view.kind == 2: Labeled {
+                label: "To";
+                TextButton {
+                    text: root.view.to;
+                    icon: root.menu-arrow;
+                    min-width: 200px;
+                    clicked => { root.to(self.absolute-position.x, self.absolute-position.y + self.height); }
+                }
+                Check {
+                    text: "Byte order mark (BOM)";
+                    checked: root.view.bom;
+                    toggled => { root.toggle("bom"); }
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            if root.view.kind == 2: Labeled {
+                label: "Line endings";
+                HorizontalLayout {
+                    spacing: Theme.spacing;
+                    for label[i] in ["As they are", "LF", "CRLF", "CR"]: TextButton {
+                        text: label;
+                        checked: i == root.view.eol;
+                        clicked => { root.set-eol(i); }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                }
+            }
+            if root.view.kind == 2: Labeled {
+                label: "";
+                Check {
+                    text: "Remove trailing spaces";
+                    checked: root.view.trim;
+                    toggled => { root.toggle("trim"); }
+                }
+                Check {
+                    text: "One line ending at the end";
+                    checked: root.view.final-newline;
+                    toggled => { root.toggle("final"); }
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+
+            // Where the outputs go.
+            if root.view.show-output: Heading { text: "Output"; }
+            if root.view.show-output: Labeled {
+                label: "";
+                HorizontalLayout {
+                    spacing: Theme.spacing;
+                    TextButton {
+                        text: "Same folder, new name";
+                        checked: root.view.output == 0;
+                        clicked => { root.set-output(0); }
+                    }
+                    TextButton {
+                        text: "Subfolder \"converted\"";
+                        checked: root.view.output == 1;
+                        clicked => { root.set-output(1); }
+                    }
+                    TextButton {
+                        text: "Choose…";
+                        checked: root.view.output == 2;
+                        clicked => { root.set-output(2); }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                }
+            }
+            if root.view.show-output && root.view.output == 2: Labeled {
+                label: "";
+                Text {
+                    text: root.view.folder;
+                    overflow: elide;
+                    color: Theme.foreground-muted;
+                }
+            }
+            if root.view.show-output: Labeled {
+                label: "";
+                TextButton {
+                    text: "Replace originals";
+                    checked: root.view.output == 3;
+                    enabled: root.view.can-replace;
+                    clicked => { root.set-output(3); }
+                }
+                Text {
+                    text: root.view.replace-note;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                    color: Theme.foreground-muted;
+                }
+            }
+            if root.view.error != "": Text {
+                text: root.view.error;
+                wrap: word-wrap;
+                color: Theme.danger;
+            }
+            Rectangle { height: 1px; background: Theme.border; }
+            HorizontalLayout {
+                spacing: Theme.spacing * 2;
+                Text {
+                    text: root.view.skipped;
+                    vertical-alignment: center;
+                    color: Theme.foreground-muted;
+                }
+                Text {
+                    text: root.view.ffmpeg-note;
+                    vertical-alignment: center;
+                    color: Theme.foreground-muted;
+                }
+                Rectangle { horizontal-stretch: 1; }
+                HorizontalLayout {
+                    spacing: Theme.spacing;
+                    TextButton { text: "Cancel"; clicked => { root.cancel(); } }
+                    TextButton {
+                        text: "Convert";
+                        primary: true;
+                        clicked => { root.convert(); }
+                    }
+                }
+            }
+        }
+    }
+}

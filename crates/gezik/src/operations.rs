@@ -1020,8 +1020,9 @@ impl Operations {
             let ops = self.clone();
             slint::Timer::single_shot(DONE_FOR, move || ops.remove(id));
         }
-        // An archive that needs 7-Zip, a download that is done.
+        // An archive that needs 7-Zip, a download that is done, a conversion that needs ffmpeg.
         crate::archives::with_current(|archives| archives.job_finished(id, &report));
+        crate::convert::with_current(|convert| convert.job_finished(id, &report));
     }
 
     /// Items the trash cannot take (no trash on their drive, or a name it cannot take): delete

@@ -83,7 +83,7 @@ pub use keyboard::{ModifierKeys, modifier_keys_down};
 #[cfg(windows)]
 pub use removal::{RemovalWatch, watch_removal};
 #[cfg(windows)]
-pub use shell_menu::show_shell_menu;
+pub use shell_menu::{ShellSubmenu, show_shell_menu};
 
 /// Elsewhere a drive is not asked about before it goes: nothing to watch.
 #[cfg(not(windows))]

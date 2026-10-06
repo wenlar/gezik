@@ -5,6 +5,7 @@ mod archives;
 mod batch_rename;
 mod conflicts;
 mod context_menu;
+mod convert;
 mod dialog;
 mod drag;
 mod folder_watch;
@@ -61,6 +62,7 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
     operations::with_current(|ops| ops.set_files(loaded.settings.files));
     batch_rename::set_presets(loaded.settings.rename_presets.clone());
     archives::set_settings(loaded.settings.tools.clone(), loaded.settings.archives);
+    convert::set_settings(loaded.settings.convert.clone(), loaded.settings.commands.clone());
     loaded
 }
 
@@ -110,6 +112,14 @@ fn handle_key(
         let mut used = false;
         if let Some(chord) = &chord {
             archives::with_current(|layer| used = layer.chord(chord));
+        }
+        return used;
+    }
+    // The Convert layer: the same.
+    if window.get_cv_open() {
+        let mut used = false;
+        if let Some(chord) = &chord {
+            convert::with_current(|layer| used = layer.chord(chord));
         }
         return used;
     }
@@ -399,7 +409,9 @@ fn main() -> Result<(), slint::PlatformError> {
     );
     let _batch_rename = batch_rename::BatchRename::new(&window, ops.clone());
     // Tools Gezik downloads (7-Zip) go to `<config dir>/tools/`, next to the pending deletes.
-    let archives = archives::Archives::new(&window, ops.clone(), dialogs, config.clone(), saved_state.archive.clone());
+    let archives =
+        archives::Archives::new(&window, ops.clone(), dialogs.clone(), config.clone(), saved_state.archive.clone());
+    let _convert = convert::Convert::new(&window, ops.clone(), dialogs, config.clone(), saved_state.convert.clone());
     window.on_op_pause({
         let ops = ops.clone();
         move |id| ops.pause(id)
@@ -601,6 +613,31 @@ fn main() -> Result<(), slint::PlatformError> {
     window.on_rb_presets({
         let menus = menus.clone();
         move |x, y| menus.presets(x, y)
+    });
+    // The Convert layer's menus: its presets, the text encodings.
+    window.on_cv_presets({
+        let menus = menus.clone();
+        move |x, y| {
+            let mut items = Vec::new();
+            convert::with_current(|convert| items = convert.preset_menu());
+            menus.convert_menu(items, x, y);
+        }
+    });
+    window.on_cv_from({
+        let menus = menus.clone();
+        move |x, y| {
+            let mut items = Vec::new();
+            convert::with_current(|convert| items = convert.encoding_menu(true));
+            menus.convert_menu(items, x, y);
+        }
+    });
+    window.on_cv_to({
+        let menus = menus.clone();
+        move |x, y| {
+            let mut items = Vec::new();
+            convert::with_current(|convert| items = convert.encoding_menu(false));
+            menus.convert_menu(items, x, y);
+        }
     });
     // Slint passes indexes as `i32`: a negative one does nothing.
     window.on_tab_menu(move |i, x, y| {

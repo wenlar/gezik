@@ -12,16 +12,18 @@ import { ConflictList, ConflictRow } from "widgets/conflict-list.slint";
 import { RenameBatch, RuleRow, RenamePreviewRow, RuleOptions } from "widgets/rename-batch.slint";
 import { FileIcon } from "widgets/file-icon.slint";
 import { CompressLayer } from "widgets/compress.slint";
+import { ConvertLayer, ConvertView } from "widgets/convert.slint";
 
 // Re-exported so Rust can set it with `window.global::<Theme>()` and build crumbs, tabs
 // and sidebar rows.
-export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, OpRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions }
+export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, OpRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView }
 
 // One item of the Slint context menu (tabs everywhere; also rows and the sidebar on
-// macOS/Linux). `id` is one of the ids in context_menu.rs.
+// macOS/Linux). `id` is one of the ids in context_menu.rs; a greyed one cannot be chosen.
 export struct MenuEntry {
     id: int,
     title: string,
+    enabled: bool,
 }
 
 // Where the drop targets are, in window coordinates (drag.rs reads it while files are
@@ -106,8 +108,12 @@ export component AppWindow inherits Window {
     in property <int> sidebar-position;
     // Dragged with the splitter (120–480px); saved in state.toml on close.
     in-out property <length> sidebar-width: 200px;
-    // What the Slint context menu shows; set from Rust before `show-menu`.
+    // What the Slint context menu shows; set from Rust before `show-menu`: the items, then
+    // a submenu ("Commands", none when it has no entries), then more items.
     in property <[MenuEntry]> menu-entries;
+    in property <string> menu-sub-title;
+    in property <[MenuEntry]> menu-sub-entries;
+    in property <[MenuEntry]> menu-entries-after;
 
     // Follows the OS light/dark mode (Palette is left to the system on purpose; see
     // theme_bridge.rs). Rust re-resolves the theme when it flips.
@@ -291,6 +297,24 @@ export component AppWindow inherits Window {
     callback cp-cancel();
     callback cp-edited();
 
+    // The Convert layer (convert.rs).
+    in property <bool> cv-open;
+    in property <ConvertView> cv-view;
+    in-out property <string> cv-quality;
+    in-out property <string> cv-resize-value;
+    in-out property <string> cv-background;
+    callback cv-presets(length, length);
+    callback cv-set-format(int);
+    callback cv-set-resize(int);
+    callback cv-toggle(string);
+    callback cv-from(length, length);
+    callback cv-to(length, length);
+    callback cv-set-eol(int);
+    callback cv-set-output(int);
+    callback cv-edited();
+    callback cv-convert();
+    callback cv-cancel();
+
     // A question over the window (dialog.rs); `dialog-chosen` gets the button's index.
     in property <bool> dialog-open;
     in property <string> dialog-title;
@@ -375,6 +399,8 @@ export component AppWindow inherits Window {
             rename-batch.take-focus();
         } else if root.cp-open {
             compress-layer.take-focus();
+        } else if root.cv-open {
+            convert-layer.take-focus();
         } else {
             keys.focus();
         }
@@ -427,6 +453,20 @@ export component AppWindow inherits Window {
         Menu {
             for entry in root.menu-entries: MenuItem {
                 title: entry.title;
+                enabled: entry.enabled;
+                activated => { root.menu-activated(entry.id); }
+            }
+            if root.menu-sub-entries.length > 0: Menu {
+                title: root.menu-sub-title;
+                for entry in root.menu-sub-entries: MenuItem {
+                    title: entry.title;
+                    enabled: entry.enabled;
+                    activated => { root.menu-activated(entry.id); }
+                }
+            }
+            for entry in root.menu-entries-after: MenuItem {
+                title: entry.title;
+                enabled: entry.enabled;
                 activated => { root.menu-activated(entry.id); }
             }
         }
@@ -800,6 +840,30 @@ export component AppWindow inherits Window {
             compress => { root.cp-compress(); }
             cancel => { root.cp-cancel(); }
             edited => { root.cp-edited(); }
+        }
+        convert-layer := ConvertLayer {
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.height;
+            visible: root.cv-open;
+            open: root.cv-open;
+            dialog-open: root.dialog-open || root.conflicts-open;
+            view: root.cv-view;
+            quality <=> root.cv-quality;
+            resize-value <=> root.cv-resize-value;
+            background-text <=> root.cv-background;
+            presets(x, y) => { root.cv-presets(x, y); }
+            set-format(i) => { root.cv-set-format(i); }
+            set-resize(i) => { root.cv-set-resize(i); }
+            toggle(key) => { root.cv-toggle(key); }
+            from(x, y) => { root.cv-from(x, y); }
+            to(x, y) => { root.cv-to(x, y); }
+            set-eol(i) => { root.cv-set-eol(i); }
+            set-output(i) => { root.cv-set-output(i); }
+            edited => { root.cv-edited(); }
+            convert => { root.cv-convert(); }
+            cancel => { root.cv-cancel(); }
         }
         // Always there (hidden when closed), so Rust can scroll it.
         conflict-list := ConflictList {
