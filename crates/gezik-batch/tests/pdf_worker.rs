@@ -275,7 +275,11 @@ fn merge_split_extract_and_render_with_pdfium() {
     run(&real_worker(), &req(&lib, &out, WorkerJob::Merge, &[&a, &b]), &mut |r| replies.push(r.clone()), &never)
         .unwrap();
     assert_eq!(replies.first(), Some(&Reply::Steps(5)));
-    assert_eq!(replies.iter().filter(|r| **r == Reply::Step).count(), 5);
+    // One line per document, not one per page.
+    assert_eq!(
+        replies.iter().filter(|r| matches!(r, Reply::Stepped(_))).collect::<Vec<_>>(),
+        [&Reply::Stepped(3), &Reply::Stepped(2)]
+    );
     assert_eq!(replies.last(), Some(&Reply::Done));
     assert_eq!(count(&lib, &out.join("a (merged).pdf")), 5);
     let out = fresh(&d, "split");

@@ -157,10 +157,11 @@ impl PdfTask {
                     most.0 = this.0;
                 }
             }
-            Reply::Step => {
-                this.1 += 1;
+            Reply::Step | Reply::Stepped(_) => {
+                let n = if let Reply::Stepped(n) = reply { *n } else { 1 };
+                this.1 = this.1.saturating_add(n);
                 // Never more done than found.
-                if this.1 > most.1 && most.1 < most.0 {
+                while most.1 < this.1.min(most.0) {
                     run.one_done(0);
                     most.1 += 1;
                 }
@@ -314,7 +315,7 @@ impl Task for PdfTask {
             // Told only once the pictures have landed: a try that fails or is paused made none.
             let mut lowered: Vec<(PathBuf, io::Error)> = Vec::new();
             let mut on_reply = |reply: &Reply| match reply {
-                Reply::Steps(_) | Reply::Step => self.tally(index, &mut this, reply, run),
+                Reply::Steps(_) | Reply::Step | Reply::Stepped(_) => self.tally(index, &mut this, reply, run),
                 Reply::Lowered { page, dpi } => {
                     let PdfWork::Render { dpi: asked, image } = &self.work else { return };
                     let name = page_image_name(&inputs[0], page.saturating_sub(1), *image);

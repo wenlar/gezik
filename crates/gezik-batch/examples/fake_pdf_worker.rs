@@ -19,8 +19,9 @@
 //!
 //! Inputs are all opened first (a missing password: `needs-password i`, a wrong one:
 //! `wrong-password i`, both exit 0; damage: `failed i damaged …`, exit 1); then the job writes
-//! `steps`/`step` and its outputs into the request's folder under their real names, each
-//! holding `fake <job> <pages>`; `count` answers `pages 0 N`. Last comes `done`.
+//! `steps`/`step` (in a merge `stepped` per document, as the real worker) and its outputs into
+//! the request's folder under their real names, each holding `fake <job> <pages>`; `count`
+//! answers `pages 0 N`. Last comes `done`.
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -157,9 +158,11 @@ fn main() {
         WorkerJob::Merge => {
             let total: u32 = scripts.iter().map(|s| s.pages).sum();
             reply(&Reply::Steps(u64::from(total)));
+            // As the real worker: one line per document.
             for s in &scripts {
-                for _ in 0..s.pages {
-                    step();
+                reply(&Reply::Stepped(u64::from(s.pages)));
+                if crashes {
+                    crash();
                 }
             }
             write(merged_name(input), "merge", total as usize);

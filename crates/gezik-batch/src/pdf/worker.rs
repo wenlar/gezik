@@ -143,9 +143,11 @@ pub fn serve(request_text: &str, out: &mut dyn Write) -> i32 {
     let input = &request.inputs[0];
     let dir = &request.dir;
     let first = &docs[0];
+    // One line for all of a document's or a part's pages: per-page lines all at once could
+    // overflow what the parent keeps waiting to be read.
     let steps = |out: &mut dyn Write, n: u32| {
-        for _ in 0..n {
-            say(out, &Reply::Step);
+        if n > 0 {
+            say(out, &Reply::Stepped(u64::from(n)));
         }
     };
     match &request.job {

@@ -449,10 +449,14 @@ fn a_lowered_page_is_a_note_not_a_failure() {
     assert_eq!(report.skipped[0].message, "page 2 was made at 41 dpi: at 300 dpi it would be too large");
     assert!(d.join("a - page 1.png").is_file() && d.join("a - page 2.png").is_file());
     // A render that fails after all made no pictures, so nothing is said of their dpi.
-    let b = script(&d, "b.pdf", "pages 2
+    let b = script(
+        &d,
+        "b.pdf",
+        "pages 2
 lowered 2 41
 late-failure
-");
+",
+    );
     let work = PdfWork::Render { dpi: 300, image: PageImage::Png };
     let job = engine.submit_chain(pdf_chain(work, vec![b.clone()], fake_tools()), None);
     let (report, _) = finish_with(&engine, job, None);

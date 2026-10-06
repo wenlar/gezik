@@ -308,6 +308,9 @@ pub enum Reply {
     Steps(u64),
     /// One page step done.
     Step,
+    /// This many page steps done at once (a document's pages copied in one go): one line, so
+    /// a burst of them cannot crowd out other replies.
+    Stepped(u64),
     /// 1-based page rendered at a lower dpi.
     Lowered {
         page: u32,
@@ -330,6 +333,7 @@ impl Reply {
             Reply::Pages { input, pages } => format!("pages\t{input}\t{pages}"),
             Reply::Steps(n) => format!("steps\t{n}"),
             Reply::Step => "step".to_string(),
+            Reply::Stepped(n) => format!("stepped	{n}"),
             Reply::Lowered { page, dpi } => format!("lowered\t{page}\t{dpi}"),
             Reply::NeedsPassword(i) => format!("needs-password\t{i}"),
             Reply::WrongPassword(i) => format!("wrong-password\t{i}"),
@@ -348,6 +352,7 @@ impl Reply {
             ["pages", i, n] => Some(Reply::Pages { input: i.parse().ok()?, pages: n.parse().ok()? }),
             ["steps", n] => Some(Reply::Steps(n.parse().ok()?)),
             ["step"] => Some(Reply::Step),
+            ["stepped", n] => Some(Reply::Stepped(n.parse().ok()?)),
             ["lowered", page, dpi] => Some(Reply::Lowered { page: page.parse().ok()?, dpi: dpi.parse().ok()? }),
             ["needs-password", i] => Some(Reply::NeedsPassword(i.parse().ok()?)),
             ["wrong-password", i] => Some(Reply::WrongPassword(i.parse().ok()?)),
@@ -453,6 +458,7 @@ mod tests {
             Reply::Pages { input: 0, pages: 14 },
             Reply::Steps(20_000),
             Reply::Step,
+            Reply::Stepped(7),
             Reply::Lowered { page: 3, dpi: 41 },
             Reply::NeedsPassword(1),
             Reply::WrongPassword(0),
