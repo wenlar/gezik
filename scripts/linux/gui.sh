@@ -1234,6 +1234,9 @@ C
     check "paths: ↓ ↓ Enter goes to the second suggestion" 'is inner2'
     key ctrl+l; typ /tmp/p/b; sleep 0.5; key Tab; sleep 0.3; key Return; sleep 1
     check "paths: Tab takes the first suggestion" 'is beta'
+    # A row chosen, then typing: Enter goes where the text now says, not to the row.
+    key ctrl+l; typ /tmp/p/al; sleep 0.5; key Down; typ pine; key Return; sleep 1
+    check "paths: typing after ↓ forgets the chosen row" 'is alpine'
 
     # A click on a row goes there: the first row is under the field.
     key ctrl+l; typ /tmp/p/alpi; sleep 0.5; shot paths-click
@@ -1264,7 +1267,9 @@ C
     check "paths: a folder being read is not read again" '[ "$(readers)" = 1 ]'
     key Escape; key ctrl+l; typ /tmp/p/beta; key Return; sleep 0.5
     check "paths: the window answers while a read hangs ($((SECONDS - t0)) s)" 'is beta && [ $((SECONDS - t0)) -lt 7 ]'
-    # The late result is kept for the next key: once it is in, slowdir/a lists aaa at once.
+    # The late result is kept for the next key of the same typing: once it is in, slowdir/a
+    # lists aaa at once. (A read from an earlier typing is dropped: the one above ends first.)
+    sleep $((t0 + 9 - SECONDS))
     key ctrl+l; typ /tmp/p/slowdir/; sleep 9.5; shot paths-slow-late
     typ a; sleep 0.5; key Tab; sleep 0.3; shot paths-slow-cached; key Return; sleep 1
     check "paths: a late result serves the next key" 'is aaa'

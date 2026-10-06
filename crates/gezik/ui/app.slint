@@ -198,10 +198,10 @@ export component AppWindow inherits Window {
     // (-1: none, the text is what counts).
     in property <[PathRow]> path-rows;
     in property <int> path-current: -1;
-    // The address text as typed; a suggestion clicked (its path); typing ended however.
+    // The address text as typed; a suggestion clicked (its path); typing began or ended.
     callback path-edited(string);
     callback path-chosen(string);
-    callback path-editing-ended();
+    callback path-editing-changed();
     // The filter bar above the file list (Ctrl+F): open, its text, "12 / 340" and what is
     // wrong with the text.
     in property <bool> filter-open;
@@ -533,7 +533,7 @@ export component AppWindow inherits Window {
     // `key-event` at all. Done even while the window is inactive, so the list gets the focus
     // back when the window is activated again.
     changed path-editing => {
-        if !self.path-editing { root.path-editing-ended(); }
+        root.path-editing-changed();
         if !self.path-editing && !keys.has-focus && !filter-bar.field-focused { keys.focus(); }
     }
 

@@ -21,8 +21,11 @@ use crate::{AppWindow, PathRow};
 
 /// How long typing pauses before the folder is read.
 const DEBOUNCE: Duration = Duration::from_millis(80);
-/// How long a read may take (a network share, a sleeping disk) before the list gives up on it.
+/// How long the list waits for a read (a network share, a sleeping disk) before it gives up on
+/// it, counted from the pause in typing that asked for it (each pause waits anew).
 const READ_LIMIT: Duration = Duration::from_secs(1);
+/// Folders read at once at most: hung shares do not pile up threads.
+const MAX_READS: usize = 4;
 
 /// A line of the suggestion list.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,7 +56,11 @@ pub fn completion_target(text: &str, base: Option<&Path>, windows: bool) -> Opti
     let (folder, typed) = split_typed(text, windows);
     let folder = if folder.is_empty() {
         base?.to_path_buf()
-    } else if Path::new(&folder).is_relative() && base.is_none() {
+    } else if base.is_none()
+        && !Path::new(&folder).has_root()
+        && !matches!(Path::new(&folder).components().next(), Some(std::path::Component::Prefix(_)))
+    {
+        // `X:name` and `\path` lead somewhere in This PC too.
         return None;
     } else {
         resolve_typed(&folder, base)
@@ -183,13 +190,15 @@ pub enum PathKey {
 
 /// What `key` (with `shift`, no other modifier) does with the list `open` or not and row
 /// `current` chosen: ↓ opens and moves down, ↑ moves up, Tab writes the chosen or first row
-/// (or opens), → writes only a chosen row, Enter goes only to a chosen row, Esc closes.
+/// (or opens), → writes only a chosen row, Enter goes only to a chosen row, Esc closes; with
+/// Shift every key is the field's.
 pub fn path_key(key: Key, shift: bool, open: bool, current: Option<usize>) -> PathKey {
     match key {
+        // Shift+arrows select text, Shift+Tab moves the focus.
+        _ if shift => PathKey::Field,
         Key::Down if open => PathKey::Move(true),
         Key::Down => PathKey::Open,
         Key::Up if open => PathKey::Move(false),
-        Key::Tab if shift => PathKey::Field,
         Key::Tab if open => PathKey::Accept,
         Key::Tab => PathKey::Open,
         Key::Right if open && current.is_some() => PathKey::Accept,
@@ -229,6 +238,8 @@ pub enum Read {
     /// Being read already: a slow share is not read twice.
     Wait,
     Start,
+    /// `MAX_READS` folders are being read (hung shares): no suggestions.
+    Busy,
 }
 
 pub fn read_needed(folder: &Path, cached: Option<&Path>, reading: &[PathBuf]) -> Read {
@@ -236,8 +247,40 @@ pub fn read_needed(folder: &Path, cached: Option<&Path>, reading: &[PathBuf]) ->
         Read::Cached
     } else if reading.iter().any(|path| same_path(path, folder)) {
         Read::Wait
+    } else if reading.len() >= MAX_READS {
+        Read::Busy
     } else {
         Read::Start
+    }
+}
+
+/// Whether a read made in typing `of` (a generation) is kept now, in `generation`, while the
+/// address is `editing`: names are never kept from one typing to the next.
+pub fn keeps(of: u64, generation: u64, editing: bool) -> bool {
+    editing && of == generation
+}
+
+/// The rows shown and the one chosen with ↑ ↓ (none: the text is what counts).
+#[derive(Debug, Default)]
+pub struct List {
+    rows: Vec<Row>,
+    current: Option<usize>,
+}
+
+impl List {
+    fn show(&mut self, rows: Vec<Row>) {
+        self.rows = rows;
+        self.current = None;
+    }
+
+    /// The text changed: the chosen row may not be where it leads any more.
+    fn edited(&mut self) {
+        self.current = None;
+    }
+
+    /// What `key` does while the address is typed in.
+    fn key(&self, key: Key, shift: bool) -> PathKey {
+        path_key(key, shift, !self.rows.is_empty(), self.current)
     }
 }
 
@@ -267,8 +310,9 @@ struct Inner {
     nav: Navigator,
     /// The text as last typed; `None`: not changed since typing began (the path on screen).
     text: RefCell<Option<String>>,
-    rows: RefCell<Vec<Row>>,
-    current: Cell<Option<usize>>,
+    list: RefCell<List>,
+    /// Bumped when typing begins or ends: reads of an earlier typing are dropped.
+    generation: Cell<u64>,
     debounce: slint::Timer,
     limit: slint::Timer,
     /// The last folder read and its sub-folders, for this typing.
@@ -325,8 +369,8 @@ impl PathBox {
             window: window.as_weak(),
             nav: nav.clone(),
             text: RefCell::default(),
-            rows: RefCell::default(),
-            current: Cell::new(None),
+            list: RefCell::default(),
+            generation: Cell::new(0),
             debounce: slint::Timer::default(),
             limit: slint::Timer::default(),
             cache: RefCell::default(),
@@ -339,7 +383,7 @@ impl PathBox {
         window.on_path_edited(|text| with_current(|p| p.edited(text.into())));
         // By path, not by row: whatever happened to the list meanwhile, the click goes there.
         window.on_path_chosen(|path| with_current(|p| p.go_to(PathBuf::from(path.as_str()))));
-        window.on_path_editing_ended(|| with_current(PathBox::reset));
+        window.on_path_editing_changed(|| with_current(PathBox::reset));
         nav.on_visited(|path| with_current(|p| p.visited(path)));
         CURRENT.with(|c| *c.borrow_mut() = Some(this.clone()));
         this
@@ -347,11 +391,15 @@ impl PathBox {
 
     fn edited(&self, text: String) {
         *self.0.text.borrow_mut() = Some(text);
+        self.0.list.borrow_mut().edited();
+        self.set_current(None);
         self.0.debounce.start(slint::TimerMode::SingleShot, DEBOUNCE, || with_current(PathBox::update));
     }
 
-    /// Typing began or ended: the list, the text and what was read are forgotten.
+    /// Typing began or ended: the list, the text and what was read are forgotten (reads
+    /// still under way too, when they end).
     pub fn reset(&self) {
+        self.0.generation.set(self.0.generation.get() + 1);
         self.0.text.take();
         self.0.cache.take();
         self.0.checked.borrow_mut().clear();
@@ -377,7 +425,7 @@ impl PathBox {
     }
 
     fn is_open(&self) -> bool {
-        !self.0.rows.borrow().is_empty() && self.0.window.upgrade().is_some_and(|w| w.get_path_editing())
+        !self.0.list.borrow().rows.is_empty() && self.0.window.upgrade().is_some_and(|w| w.get_path_editing())
     }
 
     /// The list for the text now: the history (Task 8) or the folder's names, read first if
@@ -401,8 +449,15 @@ impl PathBox {
                 let names = cached.map(|(_, names)| names).unwrap_or_default();
                 self.show(self.suggestions(folder_rows(&folder, &names, &prefix)));
             }
-            Read::Wait => self.wait_for(folder, prefix),
+            // Another folder's rows go while this one is read (the history's for this text
+            // stay).
+            Read::Busy => self.show(self.suggestions(Vec::new())),
+            Read::Wait => {
+                self.show(self.suggestions(Vec::new()));
+                self.wait_for(folder, prefix);
+            }
             Read::Start => {
+                self.show(self.suggestions(Vec::new()));
                 self.wait_for(folder.clone(), prefix);
                 self.read(folder);
             }
@@ -497,11 +552,12 @@ impl PathBox {
     /// Reads `folder` on a thread of its own.
     fn read(&self, folder: PathBuf) {
         self.0.reading.borrow_mut().push(folder.clone());
+        let generation = self.0.generation.get();
         let spawned = std::thread::Builder::new().name("gezik-complete".into()).spawn({
             let folder = folder.clone();
             move || {
                 let names = list_subfolders(&folder);
-                let _ = slint::invoke_from_event_loop(move || with_current(|p| p.listed(folder, names)));
+                let _ = slint::invoke_from_event_loop(move || with_current(|p| p.listed(generation, folder, names)));
             }
         });
         if spawned.is_err() {
@@ -510,8 +566,12 @@ impl PathBox {
     }
 
     /// A read is done: kept for this typing, shown if the list still waits for it.
-    fn listed(&self, folder: PathBuf, names: std::io::Result<Vec<String>>) {
+    fn listed(&self, generation: u64, folder: PathBuf, names: std::io::Result<Vec<String>>) {
         self.0.reading.borrow_mut().retain(|path| !same_path(path, &folder));
+        let editing = self.0.window.upgrade().is_some_and(|w| w.get_path_editing());
+        if !keeps(generation, self.0.generation.get(), editing) {
+            return;
+        }
         // An unreadable folder suggests nothing.
         let names = Rc::new(names.unwrap_or_default());
         *self.0.cache.borrow_mut() = Some((folder.clone(), names.clone()));
@@ -534,23 +594,22 @@ impl PathBox {
     }
 
     fn show(&self, rows: Vec<Row>) {
-        self.0.current.set(None);
         if let Some(window) = self.0.window.upgrade() {
             window.set_path_rows(ModelRc::new(VecModel::from(rows.iter().map(slint_row).collect::<Vec<_>>())));
             window.set_path_current(-1);
         }
-        *self.0.rows.borrow_mut() = rows;
+        self.0.list.borrow_mut().show(rows);
     }
 
     fn set_current(&self, current: Option<usize>) {
-        self.0.current.set(current);
+        self.0.list.borrow_mut().current = current;
         if let Some(window) = self.0.window.upgrade() {
             window.set_path_current(current.and_then(|i| i32::try_from(i).ok()).unwrap_or(-1));
         }
     }
 
     fn path_of(&self, index: usize) -> Option<PathBuf> {
-        match self.0.rows.borrow().get(index) {
+        match self.0.list.borrow().rows.get(index) {
             Some(Row::Folder { path, .. }) => Some(path.clone()),
             _ => None,
         }
@@ -558,24 +617,33 @@ impl PathBox {
 
     /// A key while the address bar is typed in (no Ctrl, Alt or ⌘); returns whether it was used.
     pub fn chord(&self, chord: &Chord) -> bool {
-        match path_key(chord.key, chord.shift, self.is_open(), self.0.current.get()) {
+        let key = || self.0.list.borrow().key(chord.key, chord.shift);
+        let mut what = key();
+        // Typed since the list was made (the pause not over): the list for the text first.
+        if !matches!(what, PathKey::Field | PathKey::Close) && self.0.debounce.running() {
+            self.0.debounce.stop();
+            self.update();
+            what = key();
+        }
+        let current = self.0.list.borrow().current;
+        match what {
             PathKey::Field => return false,
             PathKey::Open => {
                 self.0.debounce.stop();
                 self.update();
             }
             PathKey::Move(down) => {
-                let next = step(&self.0.rows.borrow(), self.0.current.get(), down);
+                let next = step(&self.0.list.borrow().rows, current, down);
                 self.set_current(next);
             }
             PathKey::Accept => {
-                let chosen = self.0.current.get().or_else(|| first_folder(&self.0.rows.borrow()));
+                let chosen = current.or_else(|| first_folder(&self.0.list.borrow().rows));
                 if let Some(path) = chosen.and_then(|i| self.path_of(i)) {
                     self.accept(&path);
                 }
             }
             PathKey::Go => {
-                if let Some(path) = self.0.current.get().and_then(|i| self.path_of(i)) {
+                if let Some(path) = current.and_then(|i| self.path_of(i)) {
                     self.go_to(path);
                 }
             }
@@ -627,6 +695,10 @@ mod tests {
         assert_eq!(path_key(Key::Escape, false, true, None), Close);
         assert_eq!(path_key(Key::Escape, false, false, None), Field, "the second Esc ends typing");
         assert_eq!(path_key(Key::Char('a'), false, true, Some(0)), Field);
+        assert_eq!(path_key(Key::Down, true, true, Some(0)), Field, "with Shift every key is the field's");
+        assert_eq!(path_key(Key::Right, true, true, Some(0)), Field);
+        assert_eq!(path_key(Key::Enter, true, true, Some(0)), Field);
+        assert_eq!(path_key(Key::Escape, true, true, None), Field);
     }
 
     #[test]
@@ -658,6 +730,41 @@ mod tests {
         assert_eq!(read_needed(a, None, &[]), Read::Start);
     }
 
+    #[test]
+    fn typing_forgets_the_chosen_row() {
+        let mut list = List::default();
+        list.show(vec![folder("a"), folder("b")]);
+        list.current = step(&list.rows, None, true);
+        assert_eq!(list.key(Key::Enter, false), PathKey::Go);
+        list.edited();
+        assert_eq!(list.key(Key::Enter, false), PathKey::Field, "Enter goes to the typed path");
+        assert_eq!(list.key(Key::Right, false), PathKey::Field);
+    }
+
+    #[test]
+    fn only_a_read_of_this_typing_is_kept() {
+        assert!(keeps(3, 3, true));
+        assert!(!keeps(2, 3, true), "a read from an earlier typing is dropped");
+        assert!(!keeps(3, 3, false), "nothing is kept once typing ended");
+    }
+
+    #[test]
+    fn at_most_four_folders_are_read_at_once() {
+        let a = Path::new("/a");
+        let reading: Vec<PathBuf> = ["/1", "/2", "/3", "/4"].map(PathBuf::from).to_vec();
+        assert_eq!(read_needed(a, None, &reading), Read::Busy);
+        assert_eq!(read_needed(a, None, &reading[..3]), Read::Start);
+        assert_eq!(read_needed(Path::new("/4"), None, &reading), Read::Wait);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_drive_or_rooted_text_completes_in_this_pc() {
+        let (folder, typed) = completion_target(r"\Windows\Sys", None, true).unwrap();
+        assert_eq!((folder, typed.as_str()), (std::path::absolute(r"\Windows").unwrap(), "Sys"));
+        let (folder, typed) = completion_target("C:Win", None, true).unwrap();
+        assert_eq!((folder, typed.as_str()), (std::path::absolute("C:").unwrap(), "Win"));
+    }
     #[test]
     fn the_folder_to_list_is_where_the_text_points() {
         let windows = cfg!(windows);
