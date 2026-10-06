@@ -36,7 +36,7 @@ impl Kind {
             "mp4" | "mkv" | "mov" | "avi" | "wmv" | "webm" | "m4v" | "flv" | "mpg" | "mpeg" => Kind::Video,
             "mp3" | "wav" | "flac" | "ogg" | "m4a" | "aac" | "wma" | "opus" => Kind::Audio,
             "zip" | "rar" | "7z" | "tar" | "gz" | "bz2" | "xz" | "zst" | "tgz" | "txz" | "tbz" | "tbz2" | "tzst"
-            | "cab" | "cpio" | "wim" | "swm" | "esd" | "lzh" | "lha" | "arj" | "xar" => Kind::Archive,
+            | "cab" | "cpio" | "wim" | "swm" | "esd" | "lzh" | "lha" | "arj" | "xar" | "z01" => Kind::Archive,
             "doc" | "docx" | "odt" | "rtf" | "pages" => Kind::Document,
             "xls" | "xlsx" | "ods" | "csv" | "numbers" => Kind::Spreadsheet,
             "ppt" | "pptx" | "odp" | "key" => Kind::Presentation,
@@ -101,34 +101,15 @@ pub fn own_type_name(name: &str, is_dir: bool) -> Option<String> {
     })
 }
 
-/// The archive endings a split part's name tells (longest first, so `tar.gz` wins over `gz`).
-const SPLIT_BASES: [&str; 12] =
-    ["tar.gz", "tar.xz", "tar.bz2", "7z", "zip", "rar", "tar", "gz", "xz", "bz2", "zst", "wim"];
-
-/// Whether `name` is a part of a split archive, and the ending of what was split (`7z` for
-/// `big.7z.001`, `rar` for `big.part2.rar`, empty for `film.001`): a number of three or
-/// more digits after an archive's name, or of exactly three after any name (a year such
-/// as `report.2024` is not one).
+/// Whether `name` is a part of a split archive, and the ending of what was split: the same
+/// test the Extract items use (`batch::archive::split_ending`).
 fn split_part(name: &str) -> Option<&'static str> {
-    let lower = name.to_ascii_lowercase();
-    if let Some(head) = lower.strip_suffix(".rar")
-        && let Some(at) = head.rfind(".part")
-        && at > 0
-    {
-        let digits = &head[at + 5..];
-        if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) {
-            return Some("rar");
-        }
-    }
-    let (base, digits) = lower.rsplit_once('.')?;
-    if base.is_empty() || digits.len() < 3 || !digits.bytes().all(|b| b.is_ascii_digit()) {
+    // Most names end in letters: no lowercase copy for them.
+    let last = name.rsplit('.').next().unwrap_or("");
+    if !last.bytes().all(|b| b.is_ascii_digit()) && !last.eq_ignore_ascii_case("rar") {
         return None;
     }
-    match SPLIT_BASES.iter().find(|ending| base.len() > ending.len() + 1 && base.ends_with(&format!(".{ending}"))) {
-        Some(ending) => Some(ending),
-        None if digits.len() == 3 => Some(""),
-        None => None,
-    }
+    crate::batch::archive::split_ending(name)
 }
 
 /// The ending an archive's type is named by: `tar.gz` for `a.tar.gz`, else the last one.
@@ -204,13 +185,21 @@ mod tests {
             "b.part1.rar",
             "b.PART02.RAR",
             "film.001",
-            "film.999",
+            "film.099",
             "big.7z.0001",
+            "x.wim.001",
+            "x.iso.001",
+            "a.z01",
         ] {
             assert_eq!(Kind::of(name, false), Kind::Archive, "{name}");
         }
         // Numbers that are not parts.
         assert_eq!(Kind::of("report.2024", false), Kind::File);
+        // Three-digit endings of their own (raw H.264/HEVC, Lotus 1-2-3).
+        assert_eq!(Kind::of("clip.264", false), Kind::File);
+        assert_eq!(Kind::of("clip.265", false), Kind::File);
+        assert_eq!(Kind::of("sheet.123", false), Kind::File);
+        assert_eq!(Kind::of("film.999", false), Kind::File);
         assert_eq!(Kind::of("a.01", false), Kind::File);
         assert_eq!(Kind::of(".001", false), Kind::File);
         assert_eq!(Kind::of("buyuk.7z.001", true), Kind::Folder);
@@ -226,6 +215,16 @@ mod tests {
         assert_eq!(own_type_name("b.rar", false), None);
         assert_eq!(own_type_name("test.wim", false), None);
         assert_eq!(own_type_name("report.2024", false), None);
+        assert_eq!(own_type_name("clip.264", false), None);
+        assert_eq!(own_type_name("x.wim.001", false).as_deref(), Some("Split WIM archive"));
+        assert_eq!(own_type_name("x.iso.001", false).as_deref(), Some("Split ISO archive"));
+        assert_eq!(own_type_name("a.tar.zst.001", false).as_deref(), Some("Split TAR.ZST archive"));
+        // The icon, the type name and the Extract items agree.
+        for name in ["film.001", "x.wim.001", "x.iso.001", "a.7z.002", "b.part1.rar", "clip.264", "film.999"] {
+            let part = own_type_name(name, false).is_some();
+            assert_eq!(part, crate::batch::archive::looks_like_archive(name), "{name}");
+            assert_eq!(part, Kind::of(name, false) == Kind::Archive, "{name}");
+        }
         assert_eq!(own_type_name("x.7z.001", true), None);
         if !cfg!(target_os = "macos") {
             assert_eq!(fallback_type_name("buyuk.7z.003", false), "Split 7Z archive");

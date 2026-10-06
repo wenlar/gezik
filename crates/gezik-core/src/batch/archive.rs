@@ -42,8 +42,11 @@ const OTHER_EXTENSIONS: [&str; 24] = [
 
 const TAR_ENDINGS: [&str; 9] = [".tar.gz", ".tgz", ".tar.xz", ".txz", ".tar.bz2", ".tbz2", ".tbz", ".tar.zst", ".tzst"];
 
-/// Endings of names that are archives (as the base of a numbered volume, or alone).
-const ARCHIVE_EXTENSIONS: [&str; 11] = ["7z", "zip", "rar", "tar", "gz", "xz", "bz2", "zst", "cab", "iso", "tar.gz"];
+/// Endings of names that are archives (as the base of a numbered volume, or alone); the
+/// two-part ones name a split tar's type (`a.tar.xz.001`: "TAR.XZ").
+const ARCHIVE_EXTENSIONS: [&str; 15] = [
+    "7z", "zip", "rar", "tar", "gz", "xz", "bz2", "zst", "cab", "iso", "wim", "tar.gz", "tar.xz", "tar.bz2", "tar.zst",
+];
 
 /// Endings of archives Gezik opens itself (lowercase, without the dot); `a.tar.gz` ends in
 /// `gz`.
@@ -202,7 +205,25 @@ pub fn volume_set(name: &str) -> Option<VolumeSet> {
     Some(VolumeSet { base: base.to_string(), kind, first })
 }
 
-/// `name` split into its set's base and numbering.
+/// Whether `name` is one volume of a split archive, and the ending of what was split: `7z`
+/// for `big.7z.003`, `tar.gz` for `a.tar.gz.002`, `rar` for `big.part2.rar`, empty for a
+/// bare `film.001`. The file kind, the type name and the Extract items all ask this.
+pub fn split_ending(name: &str) -> Option<&'static str> {
+    let (base, kind) = split_volume(name)?;
+    if let VolumeKind::RarPart { .. } = kind {
+        return Some("rar");
+    }
+    let lower = base.to_ascii_lowercase();
+    let ending = ARCHIVE_EXTENSIONS
+        .iter()
+        .filter(|e| lower.len() > e.len() + 1 && lower.ends_with(&format!(".{e}")))
+        .max_by_key(|e| e.len());
+    Some(ending.copied().unwrap_or(""))
+}
+
+/// `name` split into its set's base and numbering: a number of three or more digits after an
+/// archive's name (`big.7z.003`), or `.000`–`.099` after any name (`film.001`, as HJSplit and
+/// 7-Zip number the parts of any file; `.264`, `.123` or a year are endings of their own).
 fn split_volume(name: &str) -> Option<(&str, VolumeKind)> {
     let lower = name.to_ascii_lowercase();
     if let Some(head) = lower.strip_suffix(".rar")
@@ -218,13 +239,12 @@ fn split_volume(name: &str) -> Option<(&str, VolumeKind)> {
     }
     let (base, digits) = name.rsplit_once('.')?;
     let lower_base = &lower[..base.len()];
-    if digits.len() >= 3
-        && digits.bytes().all(|b| b.is_ascii_digit())
-        && ARCHIVE_EXTENSIONS.iter().any(|e| lower_base.ends_with(&format!(".{e}")))
-    {
-        return Some((base, VolumeKind::Numbered { width: digits.len() }));
+    if base.is_empty() || digits.len() < 3 || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
     }
-    None
+    let archive = ARCHIVE_EXTENSIONS.iter().any(|e| lower_base.ends_with(&format!(".{e}")));
+    let bare = digits.len() == 3 && digits.starts_with('0');
+    (archive || bare).then_some((base, VolumeKind::Numbered { width: digits.len() }))
 }
 
 /// Volume `n` of the set with `base` and `kind`: `("big.7z", Numbered 3, 12)` → `big.7z.012`.
@@ -400,6 +420,25 @@ mod tests {
         assert!(volume_set("version.001.txt").is_none());
         assert_eq!(volume_set("a.zip.003").unwrap().first, "a.zip.001");
         assert_eq!(volume_set("a.7z.001").unwrap().first, "a.7z.001");
+        // Any file's parts: .000-.099 only.
+        assert_eq!(volume_set("film.001").unwrap().first, "film.001");
+        assert_eq!(volume_set("film.002").unwrap().base, "film");
+        assert!(volume_set("clip.264").is_none() && volume_set("sheet.123").is_none());
+        assert!(volume_set(".001").is_none());
+        assert_eq!(volume_set("x.wim.002").unwrap().first, "x.wim.001");
+        for (name, ending) in [
+            ("big.7z.003", Some("7z")),
+            ("a.tar.gz.002", Some("tar.gz")),
+            ("a.TAR.ZST.001", Some("tar.zst")),
+            ("x.iso.001", Some("iso")),
+            ("x.wim.001", Some("wim")),
+            ("b.part2.rar", Some("rar")),
+            ("film.001", Some("")),
+            ("clip.265", None),
+            ("a.zip", None),
+        ] {
+            assert_eq!(split_ending(name), ending, "{name}");
+        }
         assert_eq!(archive_stem(".zip"), "");
         assert_eq!(archive_stem(".gitignore"), ".gitignore");
     }
@@ -421,7 +460,9 @@ mod tests {
         ] {
             assert!(looks_like_archive(name), "{name}");
         }
-        for name in ["a.txt", "zip", ".zip", "a.docx", "a.001", "a.zip.txt", "photo.jpg"] {
+        // A bare `.001` is a part of something: 7-Zip opens such sets.
+        assert!(looks_like_archive("a.001") && looks_like_archive("x.wim.001") && looks_like_archive("x.iso.001"));
+        for name in ["a.txt", "zip", ".zip", "a.docx", "a.264", "a.123", "a.zip.txt", "photo.jpg"] {
             assert!(!looks_like_archive(name), "{name}");
         }
         for name in ["a.zip", "a.7z", "a.tar", "a.TAR.GZ", "a.tgz", "a.tar.xz", "a.tar.bz2"] {
