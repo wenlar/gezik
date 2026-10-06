@@ -164,6 +164,10 @@ fn handle_key(
                 Action::DeletePermanently => ops.trash(true),
                 Action::Duplicate => ops.duplicate(),
                 Action::BatchRename => ops.batch_rename(),
+                Action::ToggleHidden => {
+                    view.toggle_hidden();
+                    nav.reload();
+                }
                 Action::Undo => ops.undo(),
                 Action::Redo => ops.redo(),
             }

@@ -56,7 +56,7 @@ pub fn chord_from_event(text: &str, ctrl: bool, alt: bool, shift: bool, meta: bo
     ];
     let key = if let Some((_, key)) = named.iter().find(|(k, _)| char::from(*k) == c) {
         *key
-    } else if c.is_ascii_alphanumeric() || c == '[' || c == ']' {
+    } else if c.is_ascii_alphanumeric() || matches!(c, '[' | ']' | '.') {
         Key::Char(c.to_ascii_lowercase())
     } else {
         return None;
@@ -85,12 +85,18 @@ pub fn chord_from_slint(
 
 /// The text a key press with ⌘ (`command`) is matched by. On macOS a ⌘ shortcut on a bracket
 /// goes by the key's place, as the system's own do: on a layout where that key types another
-/// letter (`ğ` on Turkish-QWERTY-PC), ⌘[ and ⌘] still work. Elsewhere, and without ⌘, the
-/// text stays as typed.
+/// letter (`ğ` on Turkish-QWERTY-PC), ⌘[ and ⌘] still work. ⌘⇧. goes by the key that types
+/// `.`, whatever Shift makes of it. Elsewhere, and without ⌘, the text stays as typed.
 pub fn shortcut_text(text: &str, command: bool) -> std::borrow::Cow<'_, str> {
     #[cfg(target_os = "macos")]
-    if command && let Some(bracket) = gezik_platform::key_place::bracket_of_key_being_pressed() {
-        return bracket_text(text, bracket);
+    if command {
+        if let Some(bracket) = gezik_platform::key_place::bracket_of_key_being_pressed() {
+            return bracket_text(text, bracket);
+        }
+        // ⌘⇧. types `>` (US) or `:` (Turkish): the shortcut is named by the key's own `.`.
+        if gezik_platform::key_place::unshifted_text_of_key_being_pressed().as_deref() == Some(".") {
+            return std::borrow::Cow::Borrowed(".");
+        }
     }
     let _ = command;
     std::borrow::Cow::Borrowed(text)
@@ -338,7 +344,7 @@ mod tests {
                 Action::NewFolder => "ctrl+shift+n",
                 Action::Undo => "ctrl+z",
                 Action::Redo => "ctrl+y",
-                Action::PasteMove | Action::Duplicate | Action::BatchRename => continue,
+                Action::PasteMove | Action::Duplicate | Action::BatchRename | Action::ToggleHidden => continue,
             };
             let chord = parse_chord(text, Platform::Other).unwrap().unwrap();
             let (t, control, alt, shift, meta) = other_event(&chord);
@@ -370,6 +376,9 @@ mod tests {
         let text = bracket_text("ü", ']');
         let cmd_u = chord_from_slint(&text, true, false, false, false, Platform::Mac).unwrap();
         assert_eq!(defaults.action_for(&cmd_u), Some(Action::Forward));
+        // ⌘⇧. shows hidden files (the text is the key's own `.`, see `shortcut_text`).
+        let cmd_shift_dot = chord_from_slint(".", true, false, true, false, Platform::Mac).unwrap();
+        assert_eq!(defaults.action_for(&cmd_shift_dot), Some(Action::ToggleHidden));
         let cmd_r = chord_from_slint("r", true, false, false, false, Platform::Mac).unwrap();
         assert_eq!(defaults.action_for(&cmd_r), Some(Action::Refresh));
         // Physical Ctrl+T is not Cmd+T.

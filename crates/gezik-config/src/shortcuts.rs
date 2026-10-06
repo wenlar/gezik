@@ -5,7 +5,7 @@ use crate::Warning;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Key {
-    /// Lowercase ASCII letter or digit, `[` or `]`.
+    /// Lowercase ASCII letter or digit, `[`, `]` or `.`.
     Char(char),
     F(u8),
     Left,
@@ -47,7 +47,7 @@ impl Key {
                 }
                 let mut chars = name.chars();
                 let (Some(c), None) = (chars.next(), chars.next()) else { return None };
-                if c.is_ascii_alphanumeric() || c == '[' || c == ']' {
+                if c.is_ascii_alphanumeric() || matches!(c, '[' | ']' | '.') {
                     Key::Char(c.to_ascii_lowercase())
                 } else {
                     return None;
@@ -138,10 +138,12 @@ pub enum Action {
     Redo,
     /// Opens the batch rename layer even for one item.
     BatchRename,
+    /// Shows or hides the files whose names start with a dot (macOS ⌘⇧., as in Finder).
+    ToggleHidden,
 }
 
 impl Action {
-    pub const ALL: [Action; 26] = [
+    pub const ALL: [Action; 27] = [
         Action::NewTab,
         Action::CloseTab,
         Action::NextTab,
@@ -168,6 +170,7 @@ impl Action {
         Action::Undo,
         Action::Redo,
         Action::BatchRename,
+        Action::ToggleHidden,
     ];
 
     pub fn name(self) -> &'static str {
@@ -198,6 +201,7 @@ impl Action {
             Action::Undo => "undo",
             Action::Redo => "redo",
             Action::BatchRename => "batch-rename",
+            Action::ToggleHidden => "toggle-hidden",
         }
     }
 
@@ -245,6 +249,9 @@ impl Action {
             (Action::Redo, Platform::Mac) => "mod+shift+z",
             (Action::Redo, Platform::Other) => "mod+y",
             (Action::BatchRename, _) => return None,
+            // Elsewhere hidden files are shown as before, with nothing to toggle.
+            (Action::ToggleHidden, Platform::Mac) => "mod+shift+.",
+            (Action::ToggleHidden, Platform::Other) => return None,
         })
     }
 }

@@ -4,7 +4,7 @@
 //! `[` is ⌥8).
 
 use objc2::MainThreadMarker;
-use objc2_app_kit::{NSApplication, NSEventType};
+use objc2_app_kit::{NSApplication, NSEventModifierFlags, NSEventType};
 
 /// The bracket the key of the key press being handled has on a US keyboard, if it is one of
 /// the two bracket keys.
@@ -15,6 +15,17 @@ pub fn bracket_of_key_being_pressed() -> Option<char> {
         return None;
     }
     bracket_of_key_code(event.keyCode())
+}
+
+/// What the key of the key press being handled types with no modifier at all, on the
+/// layout in use (`.` for the key whose Shift gives `>` or `:`).
+pub fn unshifted_text_of_key_being_pressed() -> Option<String> {
+    let mtm = MainThreadMarker::new()?;
+    let event = NSApplication::sharedApplication(mtm).currentEvent()?;
+    if event.r#type() != NSEventType::KeyDown {
+        return None;
+    }
+    Some(event.charactersByApplyingModifiers(NSEventModifierFlags::empty())?.to_string())
 }
 
 /// `kVK_ANSI_LeftBracket` and `kVK_ANSI_RightBracket`: key codes name places, not characters.
@@ -43,5 +54,6 @@ mod tests {
     #[test]
     fn no_key_is_being_pressed_in_a_test() {
         assert_eq!(bracket_of_key_being_pressed(), None);
+        assert_eq!(unshifted_text_of_key_being_pressed(), None);
     }
 }
