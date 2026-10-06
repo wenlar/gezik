@@ -14,6 +14,17 @@ README puts only user-contributed pictures under CC BY-SA 4.0. The HEIC test dow
 libheif's `examples/example.heic` into a temporary folder when `GEZIK_TEST_FFMPEG` names an
 ffmpeg 9 or later, and is skipped offline.
 
+## PDFs (`pdf/`)
+
+- `enc_aes256.pdf`: three pages of pictures written by Gezik itself (`write_pdf` in
+  `tests/pdf_worker.rs`: three 64×48 PNGs, as `three_page_pdf` makes them), encrypted with
+  qpdf 12.4.2 (https://github.com/qpdf/qpdf/releases/tag/v12.4.2, Windows zip):
+  `qpdf --encrypt --user-password=pw --owner-password=own --bits=256 -- three.pdf enc_aes256.pdf`
+  (AES-256, R6; user password `pw`, owner password `own`). Gezik's own pages: no licence
+  question.
+
+The other PDFs the tests use are made by the tests.
+
 ## RAR archives (`rar/`)
 
 From libarchive's test suite (BSD 2-clause licence, https://github.com/libarchive/libarchive,

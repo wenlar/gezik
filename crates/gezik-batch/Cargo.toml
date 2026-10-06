@@ -51,6 +51,10 @@ chardetng = "1.0.0"
 # miniz_oxide compresses samples and ICC profiles (already linked through flate2).
 pdf-writer = "0.15.0"
 miniz_oxide = "0.9.1"
+# Reading PDFs (merge, split, extract, pages to pictures), only ever in the worker process
+# (`gezik --pdf-worker`): pdfium is loaded at run time from the library Gezik downloads. No
+# `thread_safe` (one thread per worker) and no `image_*` (`as_rgba_bytes` is enough).
+pdfium-render = { version = "0.9.4", default-features = false, features = ["pdfium_7881"] }
 
 [features]
 default = ["rar"]

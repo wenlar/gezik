@@ -2,7 +2,7 @@
 
 Gezik's own code is under the PolyForm Noncommercial License 1.0.0 (see `LICENSE.md`). The
 crates below are built into it for reading and writing archives, for converting pictures
-and text, and for writing PDFs; each keeps its own licence.
+and text, and for reading and writing PDFs; each keeps its own licence.
 
 | Crate | Version | Licence | Source |
 |---|---|---|---|
@@ -30,6 +30,11 @@ and text, and for writing PDFs; each keeps its own licence.
 | simdutf8 (through encoding_rs) | 0.1.5 | MIT OR Apache-2.0 | https://github.com/rusticstuff/simdutf8 |
 | pdf-writer | 0.15.0 | MIT OR Apache-2.0 | https://github.com/typst/pdf-writer |
 | ryu (through pdf-writer) | 1.0.23 | Apache-2.0 OR BSL-1.0 | https://github.com/dtolnay/ryu |
+| pdfium-render | 0.9.4 | MIT OR Apache-2.0 | https://github.com/ajrcarey/pdfium-render |
+| maybe-owned (through pdfium-render) | 0.3.4 | MIT OR Apache-2.0 | https://github.com/rustonaut/maybe-owned |
+| utf16string (through pdfium-render) | 0.2.0 | MIT OR Apache-2.0 | https://github.com/getsentry/utf16string |
+| vecmath (through pdfium-render) | 1.0.0 | MIT | https://github.com/pistondevelopers/vecmath |
+| piston-float (through vecmath) | 1.0.1 | MIT | https://github.com/pistondevelopers/float |
 
 ## Independent JPEG Group
 
