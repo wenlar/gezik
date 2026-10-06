@@ -4,13 +4,16 @@
 //! (`View::set_filter`); this is the keyboard, the bar's focus and the saved filters.
 
 use std::cell::RefCell;
+use std::sync::mpsc;
 use std::time::Duration;
 
+use gezik_config::Warning;
 use gezik_config::settings::{KeyboardSettings, SavedFilter, Typing};
 use gezik_config::store::ConfigStore;
 use slint::ComponentHandle;
 
 use crate::AppWindow;
+use crate::context_menu::FILTER_MAX;
 use crate::dialog::Dialogs;
 use crate::view::View;
 
@@ -19,6 +22,9 @@ thread_local! {
     static CURRENT: RefCell<Option<Filter>> = const { RefCell::new(None) };
     /// `[keyboard]` and `[[filters]]` of the settings in effect.
     static SETTINGS: RefCell<(KeyboardSettings, Vec<SavedFilter>)> = RefCell::default();
+    /// Saves on their way to settings.toml: the last one's number, and the list after it while
+    /// any is on its way (the next edit builds on it, so quick saves do not undo one another).
+    static WRITING: RefCell<(u64, Option<Vec<SavedFilter>>)> = const { RefCell::new((0, None)) };
 }
 
 /// settings.toml changed (every resolve): the typing mode and the saved filters.
@@ -38,6 +44,45 @@ pub fn saved() -> Vec<SavedFilter> {
 
 fn set_saved(filters: Vec<SavedFilter>) {
     SETTINGS.with(|s| s.borrow_mut().1 = filters);
+}
+
+/// The saved filters as the next edit sees them: after the saves on their way, if any.
+fn latest() -> Vec<SavedFilter> {
+    WRITING.with(|w| w.borrow().1.clone()).unwrap_or_else(saved)
+}
+
+/// `filters` is on its way to settings.toml: its number.
+fn queue_write(filters: Vec<SavedFilter>) -> u64 {
+    WRITING.with(|w| {
+        let mut w = w.borrow_mut();
+        w.0 += 1;
+        w.1 = Some(filters);
+        w.0
+    })
+}
+
+/// Save number `seq` of `filters` ended with `result`: written, the list is in effect; not, the
+/// list stays as settings.toml has it and the error is returned, to be said.
+fn finish_write(seq: u64, filters: Vec<SavedFilter>, result: Result<(), Warning>) -> Option<String> {
+    WRITING.with(|w| {
+        let mut w = w.borrow_mut();
+        if w.0 == seq {
+            w.1 = None;
+        }
+    });
+    match result {
+        Ok(()) => {
+            set_saved(filters);
+            None
+        }
+        Err(warning) => Some(warning.to_string()),
+    }
+}
+
+/// Whether `name` can be saved next to `filters`: a name already there (ignoring case) is
+/// replaced; a new one needs fewer than [`FILTER_MAX`] (what the menu lists).
+fn room_for(filters: &[SavedFilter], name: &str) -> bool {
+    find_saved(filters, name).is_some() || filters.len() < FILTER_MAX as usize
 }
 
 /// The saved filter called `name`, ignoring case (saved names are unique that way).
@@ -81,13 +126,16 @@ pub struct Filter {
     window: slint::Weak<AppWindow>,
     view: View,
     dialogs: Dialogs,
-    store: Option<ConfigStore>,
+    /// The thread that writes settings.toml (none without a config folder): numbered lists,
+    /// written in turn.
+    writer: Option<mpsc::Sender<(u64, Vec<SavedFilter>)>>,
 }
 
 impl Filter {
     /// The ▾ menu is `Menus::filter_menu`'s (main.rs connects it).
     pub fn new(window: &AppWindow, view: View, dialogs: Dialogs, store: Option<ConfigStore>) -> Filter {
-        let filter = Filter { window: window.as_weak(), view, dialogs, store };
+        let writer = store.map(|store| spawn_writer(store, window.as_weak()));
+        let filter = Filter { window: window.as_weak(), view, dialogs, writer };
         window.on_filter_edited({
             let view = filter.view.clone();
             move |text| view.set_filter(Some(&text))
@@ -184,7 +232,7 @@ impl Filter {
         let filter = self.clone();
         self.dialogs.ask_text("Save filter", "Name for this filter:", "", &["Save", "Cancel"], move |name| {
             let Some(name) = name.map(|n| n.trim().to_owned()).filter(|n| !n.is_empty()) else { return };
-            let filters = saved();
+            let filters = latest();
             match find_saved(&filters, &name) {
                 Some(i) => {
                     let message = format!("A filter called \"{}\" already exists. Replace it?", filters[i].name);
@@ -201,26 +249,37 @@ impl Filter {
     }
 
     fn save(&self, name: &str, pattern: &str) {
-        let mut filters = saved();
+        let mut filters = latest();
+        if !room_for(&filters, name) {
+            return self.view.note(format!("Up to {FILTER_MAX} saved filters"));
+        }
         put_saved(&mut filters, name, pattern);
         self.write(filters);
     }
 
     /// Deletes the saved filter `name`, if it is still there.
     pub fn delete_saved(&self, name: &str) {
-        let mut filters = saved();
+        let mut filters = latest();
         if remove_saved(&mut filters, name) {
             self.write(filters);
         }
     }
 
-    /// The list in effect at once; settings.toml (`[[filters]]`) after it.
+    /// Sends `filters` to settings.toml (`[[filters]]`); the menu lists them once they are
+    /// written ([`Filter::written`]). Without a config folder they are only kept in memory.
     fn write(&self, filters: Vec<SavedFilter>) {
-        set_saved(filters.clone());
-        if let Some(store) = &self.store
-            && let Err(warning) = store.save_filters(&filters)
-        {
-            self.view.note(warning.to_string());
+        let Some(writer) = &self.writer else { return set_saved(filters) };
+        let seq = queue_write(filters.clone());
+        if writer.send((seq, filters.clone())).is_err() {
+            let warning = Warning::new("settings.toml", "cannot write: the writer stopped");
+            self.written(seq, filters, Err(warning));
+        }
+    }
+
+    /// The writer thread is done with save `seq`.
+    fn written(&self, seq: u64, filters: Vec<SavedFilter>, result: Result<(), Warning>) {
+        if let Some(note) = finish_write(seq, filters, result) {
+            self.view.note(note);
         }
     }
 
@@ -235,6 +294,22 @@ impl Filter {
             }
         });
     }
+}
+
+/// The thread that writes the saved filters into settings.toml, off the UI thread, one list
+/// after the other; each result goes back to the UI thread's filter.
+fn spawn_writer(store: ConfigStore, window: slint::Weak<AppWindow>) -> mpsc::Sender<(u64, Vec<SavedFilter>)> {
+    let (send, receive) = mpsc::channel::<(u64, Vec<SavedFilter>)>();
+    let spawned = std::thread::Builder::new().name("gezik-filters".to_owned()).spawn(move || {
+        for (seq, filters) in receive {
+            let result = store.save_filters(&filters);
+            let _ = window.upgrade_in_event_loop(move |_| with_current(|f| f.written(seq, filters, result)));
+        }
+    });
+    if let Err(err) = spawned {
+        eprintln!("gezik: cannot start the filter writer: {err}");
+    }
+    send
 }
 
 /// Why the filter cannot open here: "This PC", or no folder listed (it could not be read, or
@@ -288,6 +363,70 @@ mod tests {
         assert!(remove_saved(&mut list, "Resimler"));
         assert_eq!(list, [saved("Belgeler", "*.pdf")]);
         assert!(!remove_saved(&mut list, "Resimler"), "gone already");
+    }
+
+    fn temp_store(name: &str, settings: Option<&str>) -> ConfigStore {
+        let dir = std::env::temp_dir().join(format!("gezik-filters-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        if let Some(text) = settings {
+            std::fs::write(dir.join("settings.toml"), text).unwrap();
+        }
+        ConfigStore::new(dir)
+    }
+
+    #[test]
+    fn a_failed_save_keeps_the_list_as_the_file_has_it() {
+        let broken = "[keyboard
+typing = \"filter\"
+";
+        let store = temp_store("broken", Some(broken));
+        set_settings(KeyboardSettings::default(), vec![saved("A", "a")]);
+        let wanted = vec![saved("A", "a"), saved("B", "b")];
+        let seq = queue_write(wanted.clone());
+        assert_eq!(latest(), wanted, "the next edit builds on the save on its way");
+        let note = finish_write(seq, wanted.clone(), store.save_filters(&wanted));
+        assert!(note.is_some_and(|n| n.contains("settings.toml")));
+        assert_eq!(super::saved(), [saved("A", "a")], "the menu stays as the file is");
+        assert_eq!(latest(), [saved("A", "a")]);
+        assert_eq!(std::fs::read_to_string(store.dir().join("settings.toml")).unwrap(), broken);
+        let _ = std::fs::remove_dir_all(store.dir());
+    }
+
+    #[test]
+    fn a_good_save_takes_effect() {
+        let store = temp_store("good", None);
+        set_settings(KeyboardSettings::default(), Vec::new());
+        let wanted = vec![saved("Resimler", "*.jpg")];
+        let seq = queue_write(wanted.clone());
+        assert_eq!(finish_write(seq, wanted.clone(), store.save_filters(&wanted)), None);
+        assert_eq!(super::saved(), wanted);
+        let text = std::fs::read_to_string(store.dir().join("settings.toml")).unwrap();
+        assert!(text.contains("[[filters]]") && text.contains("name = \"Resimler\""));
+        let _ = std::fs::remove_dir_all(store.dir());
+    }
+
+    #[test]
+    fn quick_saves_build_on_one_another() {
+        set_settings(KeyboardSettings::default(), Vec::new());
+        let one = vec![saved("A", "a")];
+        let first = queue_write(one.clone());
+        let two = vec![saved("A", "a"), saved("B", "b")];
+        let second = queue_write(two.clone());
+        assert_eq!(finish_write(first, one.clone(), Ok(())), None);
+        assert_eq!(super::saved(), one);
+        assert_eq!(latest(), two, "the second is still on its way");
+        assert_eq!(finish_write(second, two.clone(), Ok(())), None);
+        assert_eq!(super::saved(), two);
+        assert_eq!(latest(), two);
+    }
+
+    #[test]
+    fn thirty_saved_filters_at_most() {
+        let full: Vec<SavedFilter> = (0..FILTER_MAX).map(|i| saved(&format!("F{i}"), "x")).collect();
+        assert!(!room_for(&full, "New"));
+        assert!(room_for(&full, "f3"), "replacing one needs no room");
+        assert!(room_for(&full[1..], "New"));
     }
 
     #[test]

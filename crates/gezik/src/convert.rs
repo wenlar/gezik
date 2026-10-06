@@ -364,8 +364,10 @@ pub fn preset_list(
             rows.push(Row::Choice(preset.label.to_owned(), true));
         }
     }
+    // The commands that fit after the other choices: each choice has its menu id.
+    let room = (CONVERT_PRESET_MAX as usize).saturating_sub(choices.len());
     let shown: Vec<usize> =
-        (0..commands.len().min(states.len())).filter(|i| states[*i] != CommandState::Hidden).collect();
+        (0..commands.len().min(states.len())).filter(|i| states[*i] != CommandState::Hidden).take(room).collect();
     if !shown.is_empty() {
         rows.push(Row::Heading(group_title(Kind::Command)));
         for i in shown {
@@ -2175,6 +2177,20 @@ mod tests {
         assert_eq!(not_found_tip("magick", true), "magick not found (use the full name, e.g. magick.cmd)");
         assert_eq!(not_found_tip("tool.bat", true), "tool.bat not found");
         assert_eq!(not_found_tip(r"C:\bin\tool", true), r"C:\bin\tool not found");
+    }
+
+    #[test]
+    fn the_preset_list_never_outgrows_its_ids() {
+        let kinds = [Kind::Image, Kind::Text, Kind::Media, Kind::Pdf];
+        let commands: Vec<CommandSpec> =
+            (0..COMMAND_MAX as usize).map(|i| spec(&format!("C{i}"), &["c", "{in}"], None, &[], false)).collect();
+        let states = vec![CommandState::Ready; commands.len()];
+        let (choices, rows) = preset_list(&kinds, &PdfOp::ALL, &commands, &states);
+        assert_eq!(choices.len(), CONVERT_PRESET_MAX as usize, "the commands fill it up to the last id");
+        let menu = preset_menu(&rows, 0);
+        let last = menu.iter().map(|(id, _, _)| *id).max().unwrap();
+        assert!(last < CONVERT_PRESET_FIRST + CONVERT_PRESET_MAX);
+        assert_eq!(menu.iter().filter(|(id, _, _)| *id != HEADING).count(), choices.len(), "every choice has an id");
     }
 
     #[test]
