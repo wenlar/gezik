@@ -143,6 +143,17 @@ fn keys(shift: bool, ctrl: bool, alt: bool) -> Keys {
     Keys { shift, copy: if Platform::current() == Platform::Mac { alt } else { ctrl } }
 }
 
+/// Whether the window's own pointer events drive the drag in `phase`, and with which keys:
+/// only once its pointer grab was lost to a tab switch (`grab_lost`), while Gezik draws it
+/// in the window or drives it outside (X11; on Windows the drag is back in the window when
+/// these come).
+fn window_drives(grab_lost: bool, phase: &Phase) -> Option<Keys> {
+    match phase {
+        Phase::Dragging(d) | Phase::Outside(d) if grab_lost => Some(d.keys),
+        _ => None,
+    }
+}
+
 /// The address bar parts' places Slint reported, kept only where the part still shows the
 /// label it had then (right after a navigation, the old places would point at new parts).
 fn current_spans(stored: &[(String, f32, f32)], labels: &[String]) -> Vec<(f32, f32)> {
@@ -285,25 +296,29 @@ impl Drags {
 
     /// The pointer moved to window position (`x`, `y`), as the window saw it. Only followed
     /// once a tab opened under the drag: before that the pressed entry reports every move.
+    /// Also while the drag is outside the window (X11: Gezik drives it there from these).
     pub fn window_pointer_moved(&self, x: f32, y: f32) {
-        if !self.0.grab_lost.get() {
-            return;
-        }
-        let keys = match &*self.0.phase.borrow() {
-            Phase::Dragging(d) => d.keys,
-            _ => return,
-        };
+        let Some(keys) = window_drives(self.0.grab_lost.get(), &self.0.phase.borrow()) else { return };
         self.moved(x, y, keys);
     }
 
     /// A button came up, as the window saw it: drops a drag whose pointer grab was lost to a
-    /// tab switch (nothing else in the window would). Returns whether it did, and the event
-    /// must go no further.
+    /// tab switch (nothing else in the window would), inside the window or outside it.
+    /// Returns whether it did. The event may still go on to Slint: a release that reaches an
+    /// entry then is no click (`Phase::Ended`).
     pub fn window_released(&self, x: f32, y: f32, right: bool) -> bool {
-        if !self.0.grab_lost.get() || !self.is_active() {
+        if window_drives(self.0.grab_lost.get(), &self.0.phase.borrow()).is_none() {
             return false;
         }
-        self.up(x, y, right)
+        let used = self.up(x, y, right);
+        self.0.grab_lost.set(false);
+        if used {
+            let mut phase = self.0.phase.borrow_mut();
+            if matches!(*phase, Phase::Idle) {
+                *phase = Phase::Ended;
+            }
+        }
+        used
     }
 
     /// Esc: drops nothing. Returns whether a drag was cancelled.
@@ -311,6 +326,7 @@ impl Drags {
         if let Some(mut outside) = self.0.outside.borrow_mut().take() {
             outside.cancel();
             self.0.handed.set(None);
+            self.0.grab_lost.set(false);
             *self.0.phase.borrow_mut() = Phase::Ended;
             return true;
         }
@@ -411,6 +427,7 @@ impl Drags {
             // Gezik drives this drag outside the window: the release drops it there.
             Phase::Outside(d) => {
                 self.0.handed.set(None);
+                self.0.grab_lost.set(false);
                 if let Some(mut outside) = self.0.outside.borrow_mut().take() {
                     outside.released();
                 }
@@ -779,7 +796,11 @@ impl Drags {
                 return;
             }
         };
+        // The window's events may be all that follows this drag (a tab opened under it): that
+        // stays so outside the window and when it comes back.
+        let grab_lost = self.0.grab_lost.get();
         self.finish(None);
+        self.0.grab_lost.set(grab_lost);
         let (sources, right) = (d.sources.clone(), d.right);
         *self.0.phase.borrow_mut() = Phase::Outside(d.clone());
         let on_end: OnEnd = Box::new(|end| {
@@ -795,6 +816,7 @@ impl Drags {
             Ok(Handoff::Ended(_)) => {
                 // The press ended in the system's drag loop; its release (sent back to the
                 // window) is no click.
+                self.0.grab_lost.set(false);
                 *self.0.phase.borrow_mut() = Phase::Ended;
                 if let Some(index) = d.pressed {
                     self.0.view.release(index, true);
@@ -851,6 +873,7 @@ impl Drags {
     /// button come up, so Slint is told, and that release is no click.
     fn outside_ended(&self, _end: DragEnd) {
         self.0.outside.borrow_mut().take();
+        self.0.grab_lost.set(false);
         // Gone already when the release was seen in the window (X11): nothing left to undo.
         let Some(handed) = self.0.handed.take() else { return };
         {
@@ -977,6 +1000,35 @@ impl DropHandler for Outside {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn dragging() -> Dragging {
+        Dragging {
+            sources: vec![PathBuf::from("a.txt")],
+            all_dirs: false,
+            right: false,
+            keys: Keys { shift: true, copy: false },
+            allowed: Allowed::BOTH,
+            x: 0.0,
+            y: 0.0,
+            target: None,
+            pressed: None,
+        }
+    }
+
+    #[test]
+    fn after_a_tab_switch_the_window_drives_the_drag_inside_and_outside() {
+        let keys = Some(Keys { shift: true, copy: false });
+        assert_eq!(window_drives(true, &Phase::Dragging(dragging())), keys);
+        // Handed to the system after resting on a tab (X11 drives it from the window's events).
+        assert_eq!(window_drives(true, &Phase::Outside(dragging())), keys);
+        // The pressed entry still reports the moves: the window's events are not used.
+        assert_eq!(window_drives(false, &Phase::Dragging(dragging())), None);
+        assert_eq!(window_drives(false, &Phase::Outside(dragging())), None);
+        // Files from another program, or no drag: never.
+        assert_eq!(window_drives(true, &Phase::Offer(dragging())), None);
+        assert_eq!(window_drives(true, &Phase::Idle), None);
+        assert_eq!(window_drives(true, &Phase::Ended), None);
+    }
 
     #[test]
     fn crumb_places_are_kept_only_for_unchanged_parts() {

@@ -846,9 +846,9 @@ fn main() -> Result<(), slint::PlatformError> {
             } = event
             {
                 let (x, y) = pointer.get();
-                if drags.window_released(x, y, *button == winit::event::MouseButton::Right) {
-                    return EventResult::PreventDefault;
-                }
+                // Slint still sees the button come up (its grab points at an entry that is
+                // gone); a release that reaches an entry after the drop is no click.
+                drags.window_released(x, y, *button == winit::event::MouseButton::Right);
             }
             if let winit::event::WindowEvent::MouseInput {
                 state: winit::event::ElementState::Pressed, button, ..

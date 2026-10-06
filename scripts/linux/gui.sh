@@ -3,7 +3,7 @@
 # input: xdotool (XTEST) under Xvfb, wtype and the vpointer example under a headless sway.
 #   docker build -t gezik-linux scripts/linux
 #   docker run --rm -v "$PWD:/src" -v gezik-target:/target -v gezik-cargo:/usr/local/cargo/registry \
-#       -e CARGO_TARGET_DIR=/target gezik-linux bash scripts/linux/gui.sh [x11|wayland|popups|all]
+#       -e CARGO_TARGET_DIR=/target gezik-linux bash scripts/linux/gui.sh [x11|wayland|popups|tabdrag|all]
 # Needs the network (apt for 7-Zip, Gezik's own 7-Zip download). Screenshots go to
 # .superpowers/linux-shots/gui-*.png. Each check prints "ok" or "FAIL"; the exit code is the
 # number of failures. Coordinates are the window's (no window manager under Xvfb, so it is
@@ -420,12 +420,60 @@ output = "{name}-copy.{ext}"
     grep -i "panicked" /tmp/gezik-gui-popups.log && fail "popups: no panic" || pass "popups: no panic"
 }
 
+# A drag that rests on a tab (the tab opens, the list under the drag is rebuilt) and then
+# leaves the window: it must still drop on another Gezik window's folder. X11, two windows.
+tabdrag() {
+    Xvfb :99 -screen 0 1900x900x24 >/dev/null 2>&1 &
+    local xvfb=$!
+    unset WAYLAND_DISPLAY
+    export DISPLAY=:99
+    sleep 1
+    . /src/scripts/linux/gui-lib.sh
+    rm -rf /tmp/s /tmp/s2 /tmp/dst /tmp/cfg /tmp/cfg2 && mkdir -p /tmp/s /tmp/s2 /tmp/dst/in /tmp/cfg /tmp/cfg2
+    echo d > /tmp/s/d.txt; echo f > /tmp/s/f.txt; echo e > /tmp/s2/e.txt
+    GEZIK_CONFIG_DIR=/tmp/cfg2 $GEZIK /tmp/dst >/tmp/gezik-gui-tabdrag2.log 2>&1 &
+    local pb=$!
+    sleep 3
+    local b; b=$(xdotool search --pid $pb 2>/dev/null | tail -1)
+    GEZIK_CONFIG_DIR=/tmp/cfg $GEZIK /tmp/s >/tmp/gezik-gui-tabdrag.log 2>&1 &
+    local pa=$!
+    sleep 3
+    local a; a=$(xdotool search --pid $pa 2>/dev/null | tail -1)
+    xdotool windowmove "$b" 950 0; xdotool windowsize "$b" 900 600
+    xdotool windowmove "$a" 0 0; xdotool windowsize "$a" 900 600; sleep 0.5
+    # A second tab on /tmp/s2, then back to the first (/tmp/s: d.txt 118, f.txt 144).
+    xdotool windowfocus --sync "$a"; xdotool key ctrl+t; sleep 1; xdotool key ctrl+l; sleep 0.3
+    xdotool type --delay 50 /tmp/s2; xdotool key Return; sleep 1
+    click 100 20; sleep 0.8
+    shot tabdrag-start
+    # d.txt: rest on the s2 tab, then out onto the other window's "in" folder (y 118).
+    click 260 118; xdotool mousemove 260 118 mousedown 1
+    for d in 5 10 20 40; do xdotool mousemove 262 $((118 - d)); sleep 0.1; done
+    xdotool mousemove 330 20; sleep 0.3; xdotool mousemove 332 21; sleep 1.2
+    shot tabdrag-rested
+    for x in 500 700 880 940 1000 1100 1200; do xdotool mousemove $x 118; sleep 0.15; done
+    xdotool mousemove 1210 118; sleep 0.6; shot tabdrag-over-other-window
+    xdotool mouseup 1; sleep 2; shot tabdrag-dropped
+    check "tabdrag: rest on a tab, then drop on a folder in another window"         '[ -f /tmp/dst/in/d.txt ] && [ ! -f /tmp/s/d.txt ]'
+    # The window is not wedged: a plain drag afterwards (f.txt onto the other window's folder).
+    click 100 20; sleep 0.8
+    click 260 118; xdotool mousemove 260 118 mousedown 1
+    for x in 270 300 500 880 940 1100 1200; do xdotool mousemove $x 118; sleep 0.15; done
+    xdotool mousemove 1210 118; sleep 0.6; xdotool mouseup 1; sleep 2
+    check "tabdrag: a plain drag afterwards still drops" '[ -f /tmp/dst/in/f.txt ]'
+    kill $pa $pb 2>/dev/null
+    kill $xvfb 2>/dev/null
+    wait 2>/dev/null
+    grep -i "panicked" /tmp/gezik-gui-tabdrag.log /tmp/gezik-gui-tabdrag2.log && fail "tabdrag: no panic" || pass "tabdrag: no panic"
+}
+
 setup_7zip
 case "${1:-all}" in
     x11) x11 ;;
     wayland) wayland ;;
     popups) popups ;;
-    *) x11; wayland; popups ;;
+    tabdrag) tabdrag ;;
+    *) x11; wayland; popups; tabdrag ;;
 esac
 echo "failures: $failures"
 exit $failures
