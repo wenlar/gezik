@@ -122,9 +122,9 @@ fn view_to_show(mode: &Mode, saved: &ViewState) -> ViewState {
 }
 
 /// Whether a finished load is a visit (spec 6.2): a move, or the first show of a tab opened
-/// there; not a reload or a tab switch.
-fn is_visit(mode: &Mode, opened: bool) -> bool {
-    matches!(mode, Mode::Move(_)) || opened
+/// there; not a reload, a tab switch, or the `fallback` from a folder found gone.
+fn is_visit(mode: &Mode, opened: bool, fallback: bool) -> bool {
+    (matches!(mode, Mode::Move(_)) || opened) && !fallback
 }
 
 /// Called when the active location is shown.
@@ -161,8 +161,10 @@ struct Inner {
     /// Told when the watched folder's drive is about to be removed (Windows), to let go of it.
     removal: Option<gezik_platform::RemovalWatch>,
     on_visited: Vec<VisitListener>,
-    /// A tab was opened in front: its first show is a visit.
-    visit_next_show: bool,
+    /// A tab was opened in front (its id): its first show is a visit.
+    visit_next_show: Option<u64>,
+    /// The load (its generation) going to the nearest folder of one found gone: no visit.
+    fallback: Option<u64>,
 }
 
 thread_local! {
@@ -213,7 +215,8 @@ impl Navigator {
             refresh_timer: slint::Timer::default(),
             removal: None,
             on_visited: Vec::new(),
-            visit_next_show: false,
+            visit_next_show: None,
+            fallback: None,
         })))
     }
 
@@ -336,8 +339,8 @@ impl Navigator {
     /// Opens a tab at `location` right after the active one; `activate` switches to it.
     pub fn open_tab(&self, location: Location, activate: bool) {
         if activate {
-            self.0.borrow_mut().visit_next_show = true;
-            self.with_tabs(|tabs| tabs.open(location, true));
+            let index = self.with_tabs(|tabs| tabs.open(location, true));
+            self.0.borrow_mut().visit_next_show = self.tab_id(index);
             self.after_tabs_changed();
         } else {
             self.keep_active_tab(|tabs| tabs.open(location, false));
@@ -694,12 +697,15 @@ impl Navigator {
     fn finish_load(&self, location: Location, mode: Mode, result: LoadResult, note: Option<String>) {
         // This was the pending load (an overtaken one never gets here). A tab opened on a
         // folder that fails is no visit, nor is its next reload.
-        let opened = {
+        let (opened, fallback) = {
             let mut inner = self.0.borrow_mut();
-            inner.pending = None;
+            let ticket = inner.pending.take().map(|(ticket, _)| ticket);
             inner.user_load = None;
             inner.pace.finished(Instant::now());
-            std::mem::take(&mut inner.visit_next_show)
+            let active = inner.tabs.id(inner.tabs.active_index());
+            let opened = inner.visit_next_show.take().is_some_and(|id| Some(id) == active);
+            let fallback = inner.fallback.take();
+            (opened, ticket.is_some() && fallback == ticket)
         };
         let shown = match &location {
             Location::Path(p) => p.display().to_string(),
@@ -713,6 +719,8 @@ impl Navigator {
                 self.show_failed(&mode, &location, String::new());
                 let step = Step::Navigate(fallback.clone());
                 self.load(fallback, Mode::Move(vec![step]), Some(format!("{shown} no longer exists")));
+                let mut inner = self.0.borrow_mut();
+                inner.fallback = inner.pending.as_ref().map(|(ticket, _)| *ticket);
                 return;
             }
             LoadResult::Failed(err) => {
@@ -733,7 +741,7 @@ impl Navigator {
         self.update_chrome();
         self.schedule_refresh();
         let visited = self.0.borrow().on_visited.clone();
-        if is_visit(&mode, opened)
+        if is_visit(&mode, opened, fallback)
             && let Location::Path(path) = &location
         {
             for f in &visited {
@@ -919,10 +927,11 @@ mod tests {
     #[test]
     fn moves_and_opened_tabs_are_visits_but_reloads_are_not() {
         for mode in moves() {
-            assert!(is_visit(&mode, false), "{mode:?}");
+            assert!(is_visit(&mode, false, false), "{mode:?}");
+            assert!(!is_visit(&mode, false, true), "the folder a gone one falls back to: {mode:?}");
         }
-        assert!(!is_visit(&Mode::Show, false), "a reload or a tab switch");
-        assert!(is_visit(&Mode::Show, true), "a tab opened there");
+        assert!(!is_visit(&Mode::Show, false, false), "a reload or a tab switch");
+        assert!(is_visit(&Mode::Show, true, false), "a tab opened there");
     }
 
     fn tab(title: &str, active: bool) -> TabItem {
