@@ -80,6 +80,104 @@ fn names(d: &Path) -> Vec<String> {
     names
 }
 
+/// What the trash holds that was trashed from `original`, as its records say (the Recycle
+/// Bin's `$I` files, the freedesktop `.trashinfo` files); `None` where the trash is not looked
+/// into (macOS).
+fn trashed_from(original: &Path) -> Option<Vec<PathBuf>> {
+    #[cfg(windows)]
+    {
+        let root = original.ancestors().last()?;
+        let wanted = original.to_string_lossy().to_lowercase();
+        let mut found = Vec::new();
+        for user in std::fs::read_dir(root.join("$Recycle.Bin")).ok()?.flatten() {
+            let Ok(entries) = std::fs::read_dir(user.path()) else { continue };
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let Some(rest) = name.strip_prefix("$I") else { continue };
+                let Ok(bytes) = std::fs::read(entry.path()) else { continue };
+                // Version 2: the path's length (in UTF-16 units) at 24, the path at 28;
+                // version 1: the path at 24, 260 units.
+                let path = match bytes.get(..8).map(|v| v[0]) {
+                    Some(2) if bytes.len() >= 28 => &bytes[28..],
+                    Some(1) if bytes.len() >= 24 => &bytes[24..],
+                    _ => continue,
+                };
+                let units: Vec<u16> =
+                    path.as_chunks::<2>().0.iter().map(|&c| u16::from_le_bytes(c)).take_while(|&u| u != 0).collect();
+                if String::from_utf16_lossy(&units).to_lowercase() == wanted {
+                    found.push(user.path().join(format!("$R{rest}")));
+                }
+            }
+        }
+        Some(found)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let uid = std::fs::metadata(original.parent()?).ok()?.uid();
+        let data_home = std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))?;
+        let mut trashes = vec![data_home.join("Trash")];
+        trashes.extend(original.ancestors().skip(1).map(|dir| dir.join(format!(".Trash-{uid}"))));
+        let mut found = Vec::new();
+        for trash in trashes {
+            let Ok(entries) = std::fs::read_dir(trash.join("info")) else { continue };
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let Some(stem) = name.strip_suffix(".trashinfo") else { continue };
+                let text = std::fs::read_to_string(entry.path()).unwrap_or_default();
+                let Some(path) = text.lines().find_map(|line| line.strip_prefix("Path=")) else { continue };
+                if Path::new(&percent_decoded(path)) == original {
+                    found.push(trash.join("files").join(stem));
+                }
+            }
+        }
+        Some(found)
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        let _ = original;
+        None
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn percent_decoded(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && let Some(byte) = text.get(i + 1..i + 3).and_then(|hex| u8::from_str_radix(hex, 16).ok())
+        {
+            out.push(byte);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// The trash holds `original` under its own name and folder, with `bytes` (not under a
+/// temporary name Gezik gave it).
+fn in_the_trash(original: &Path, bytes: &[u8]) {
+    let Some(found) = trashed_from(original) else {
+        if cfg!(any(windows, target_os = "linux")) {
+            panic!("the trash could not be looked into");
+        }
+        return;
+    };
+    assert!(
+        found.iter().any(|item| std::fs::read(item).is_ok_and(|b| b == bytes)),
+        "{} is not in the trash under its own name ({found:?})",
+        original.display()
+    );
+}
+
 /// A small picture at `path`, in the format its extension says.
 fn picture(path: &Path) {
     let img = image::RgbImage::from_fn(8, 6, |x, y| image::Rgb([(x * 30) as u8, (y * 40) as u8, 128]));
@@ -163,6 +261,9 @@ fn replacing_originals_trashes_them_and_undo_brings_back_their_bytes() {
     assert!(leftovers(&d).is_empty(), "{:?}", leftovers(&d));
     let notes = gezik_ops::PendingDeletes::new(d.join("pending-deletes"));
     assert!(notes.restores().is_empty(), "nothing is left noted aside");
+    // The trash lists each original under its own name, in its own folder.
+    in_the_trash(&png, &png_bytes);
+    in_the_trash(&jpg, &jpg_bytes);
     undo(&engine);
     assert_eq!(names(&d), ["a.png", "b.jpg"]);
     assert_eq!(std::fs::read(&png).unwrap(), png_bytes);
@@ -369,7 +470,7 @@ fn a_command_with_an_output_writes_it_and_undo_trashes_it() {
 }
 
 #[test]
-fn a_command_in_place_is_undone_from_a_trashed_copy() {
+fn a_command_in_place_is_undone_from_the_trashed_original() {
     let d = dir("command-in-place");
     let input = d.join("a.txt");
     std::fs::write(&input, b"hello").unwrap();
@@ -378,6 +479,7 @@ fn a_command_in_place_is_undone_from_a_trashed_copy() {
     assert!(report.failures.is_empty(), "{:?}", report.failures);
     assert_eq!(std::fs::read(&input).unwrap(), b"hello changed");
     assert!(leftovers(&d).is_empty(), "{:?}", leftovers(&d));
+    in_the_trash(&input, b"hello");
     undo(&engine);
     assert_eq!(std::fs::read(&input).unwrap(), b"hello");
     assert_eq!(names(&d), ["a.txt"]);
@@ -534,9 +636,9 @@ fn pausing_ends_a_command_and_runs_it_again_once_resumed() {
     std::fs::write(&hold, b"").unwrap();
     let spec = command(&["hold", &path(&hold), &path(&log), "{in}"], None);
     let job = engine.submit(Box::new(CommandTask::new(vec![(input.clone(), false)], spec)));
-    wait("the command to change the file", || std::fs::read(&input).unwrap() == b"hello half");
+    wait("the command to change the file", || std::fs::read(&input).is_ok_and(|b| b == b"hello half"));
     engine.pause(job);
-    wait("the file to be put back", || std::fs::read(&input).unwrap() == b"hello");
+    wait("the file to be put back", || std::fs::read(&input).is_ok_and(|b| b == b"hello"));
     std::fs::remove_file(&hold).unwrap();
     engine.resume(job);
     let report = finish_with(&engine, job, None).0;
@@ -581,6 +683,11 @@ fn pausing_ends_ffmpeg_and_the_file_starts_over_without_counting_twice() {
     let job = engine.submit(Box::new(task));
     let mut events = Vec::new();
     wait("ffmpeg to start", || lines(&log).len() == 1);
+    // Its first progress is counted before the pause.
+    wait("the first try's progress", || {
+        events.extend(engine.drain());
+        events.iter().any(|e| matches!(e, Event::Progress { job: j, progress } if *j == job && progress.bytes_done > 0))
+    });
     engine.pause(job);
     let pid: u32 = lines(&log)[0].parse().unwrap();
     wait("ffmpeg to be ended", || !gezik_platform::process_alive(pid));
@@ -606,6 +713,9 @@ fn pausing_ends_ffmpeg_and_the_file_starts_over_without_counting_twice() {
         .collect();
     assert!(progress.iter().any(|p| p.bytes_done > 0), "{progress:?}");
     assert!(progress.iter().all(|p| p.bytes_done <= p.bytes_total), "counted twice: {progress:?}");
+    // The file starts over after the pause, and so does what the bar counted for it.
+    let went_back = progress.windows(2).any(|pair| pair[1].bytes_done < pair[0].bytes_done);
+    assert!(went_back, "the bar kept the first try's bytes: {progress:?}");
     let _ = std::fs::remove_dir_all(&d);
 }
 

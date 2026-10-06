@@ -1,8 +1,8 @@
 //! Running a user command (`settings.toml` `[[commands]]`) on each chosen item as one engine
 //! job: no shell, the item's folder as the working folder, no input, no window. With an
 //! `output` the command writes to a temporary name that is renamed when it succeeded; without
-//! one it changes the item in place, after a copy of the item went to the trash so that undo
-//! can bring it back.
+//! one it changes the item in place: the item itself goes to the trash (under its own name)
+//! and a copy of it takes its place, so that undo can bring the original back.
 
 use std::collections::HashSet;
 use std::ffi::OsStr;
@@ -14,7 +14,7 @@ use gezik_core::ops::paths::{path_key, same_path};
 use gezik_ops::{Facts, Outcome, PlanItem, Resources, RunCx, ScanSink, Stage, Task, TaskKind, Work, facts_after};
 use gezik_platform::ChildProcess;
 
-use super::convert::needs_trash;
+use super::convert::{Swapped, needs_trash, swap_in};
 use super::{cancelled, file_name, what};
 use crate::convert::ffmpeg::stderr_tail;
 
@@ -93,9 +93,10 @@ impl CommandTask {
         Ok(Outcome::Created { path: target.to_path_buf(), facts: facts_after(target, made_dir), from: None })
     }
 
-    /// In place: a copy of the file goes to the trash first (under the file's name for undo),
-    /// then the command changes the file. A pause ends the command and puts the file back as
-    /// it was (from the trashed copy); once resumed the command runs on it again.
+    /// In place: the file goes to the trash first (as it is, under its own name, for undo) and
+    /// a copy of it takes its place, which the command then changes. A pause ends the command
+    /// and puts the file back as it was (from the trashed original); once resumed the command
+    /// runs on it again.
     fn in_place(&self, input: &Path, is_dir: bool, size: u64, run: &RunCx<'_>) -> io::Result<Outcome> {
         if is_dir {
             return Err(io::Error::new(io::ErrorKind::Unsupported, "a command without an output runs only on files"));
@@ -110,12 +111,10 @@ impl CommandTask {
             let _ = std::fs::remove_file(&copy);
             return Err(err);
         }
-        let trashed = match gezik_ops::trash_path(&copy) {
-            Ok(trashed) => trashed,
-            Err(err) => {
-                let _ = std::fs::remove_file(&copy);
-                return Err(err);
-            }
+        let trashed = match swap_in(input, &copy, input, gezik_platform::fs::move_entry)? {
+            Swapped::Trashed(trashed) => trashed,
+            // The copy is in its place, but nothing could undo the command: it is not run.
+            Swapped::Deleted(err) => return Err(err),
         };
         let result = loop {
             match self.execute(input, &args, run) {
@@ -133,13 +132,27 @@ impl CommandTask {
         // The file as the command left it: undo trashes it only if it is still so.
         let outcome = Outcome::Several(vec![
             Outcome::Created { path: input.to_path_buf(), facts: facts_after(input, false), from: None },
-            Outcome::Trashed { original: input.to_path_buf(), trashed },
+            Outcome::Trashed { original: input.to_path_buf(), trashed: trashed.clone() },
         ]);
         match result {
             Ok(()) => Ok(outcome),
-            // Unchanged: nothing to undo (the copy stays in the trash).
-            Err(err) if facts_after(input, false) == before => Err(err),
-            // Changed before it failed or was cancelled: undo brings the copy back.
+            // Unchanged: nothing to undo, and the original comes back from the trash in place
+            // of its copy (if it cannot, the copy stays and the original is in the trash).
+            Err(err) if facts_after(input, false) == before => {
+                let spare = run.temp_file_for(input);
+                if gezik_platform::fs::move_entry(input, &spare).is_ok() {
+                    match gezik_platform::fs::restore(&trashed, input) {
+                        Ok(()) => {
+                            let _ = std::fs::remove_file(&spare);
+                        }
+                        Err(_) => {
+                            let _ = gezik_platform::fs::move_entry(&spare, input);
+                        }
+                    }
+                }
+                Err(err)
+            }
+            // Changed before it failed or was cancelled: undo brings the original back.
             Err(err) => {
                 if !(err.kind() == io::ErrorKind::Interrupted && run.cancelled()) {
                     run.fail(input, &err);

@@ -1,7 +1,7 @@
 //! Converting files as one engine job: each picture, text or media file is written under a
 //! temporary name next to its output and renamed when complete. "Replace original" trashes
-//! the original once the new file is in place; one undo trashes what was made and brings
-//! the originals back.
+//! the original (under its own name) and moves the new file in; one undo trashes what was
+//! made and brings the originals back.
 
 use std::collections::HashSet;
 use std::io;
@@ -13,7 +13,6 @@ use gezik_core::batch::convert::{
 use gezik_core::ops::paths::{path_key, same_path};
 use gezik_ops::{Facts, Outcome, PlanItem, Resources, RunCx, ScanSink, Stage, Task, TaskKind, Work, facts_after};
 
-use super::compress::keep_aside;
 use super::{file_name, what};
 use crate::convert::ffmpeg::{Ffmpeg, duration_us, run_preset};
 use crate::convert::image::{ImageError, ImageJob, convert_image, remove_location};
@@ -133,6 +132,60 @@ pub(super) fn needs_trash() -> io::Error {
     io::Error::new(io::ErrorKind::Unsupported, what)
 }
 
+/// What [`swap_in`] did with the original.
+#[derive(Debug)]
+pub(super) enum Swapped {
+    /// It is in the trash at this path, under its own name and folder: undo brings it back.
+    Trashed(PathBuf),
+    /// The trash deleted it for good instead (Windows asks first, for an item too big for the
+    /// Recycle Bin): the new file is in place but nothing can bring the original back.
+    Deleted(io::Error),
+}
+
+/// Puts `new` at `target` in place of `original` (`target` may be `original` itself). The
+/// original goes to the trash first, as it is, so that the trash lists it under its own name
+/// and folder; then `new` is moved in with `move_in`. If that fails, the original comes back
+/// from the trash and `new` is removed: on every error the original is where it was (or, if
+/// even that fails, in the trash under its own name, which the error says). Nothing is set
+/// aside meanwhile, so there is nothing to note for a crash: between the two steps the
+/// original is in the trash and `new` under a temporary name.
+pub(super) fn swap_in(
+    original: &Path,
+    new: &Path,
+    target: &Path,
+    move_in: impl FnOnce(&Path, &Path) -> io::Result<()>,
+) -> io::Result<Swapped> {
+    let trashed = match gezik_ops::trash_path(original) {
+        Ok(trashed) => trashed,
+        // Still there: nothing changed.
+        Err(err) if std::fs::symlink_metadata(original).is_ok() => {
+            let _ = std::fs::remove_file(new);
+            return Err(err);
+        }
+        Err(err) => {
+            return match move_in(new, target) {
+                Ok(()) => Ok(Swapped::Deleted(err)),
+                Err(moved) => {
+                    let _ = std::fs::remove_file(new);
+                    Err(moved)
+                }
+            };
+        }
+    };
+    if let Err(err) = move_in(new, target) {
+        let _ = std::fs::remove_file(new);
+        if let Err(back) = gezik_platform::fs::restore(&trashed, original) {
+            let bin = if cfg!(windows) { "Recycle Bin" } else { "Trash" };
+            return Err(io::Error::new(
+                err.kind(),
+                format!("{err}; the original is in the {bin} as {} ({back})", file_name(original)),
+            ));
+        }
+        return Err(err);
+    }
+    Ok(Swapped::Trashed(trashed))
+}
+
 /// The plan item's note: a file to convert, a folder to make first, a file left out, a file
 /// whose output folder could not be made.
 const CONVERT: u8 = 0;
@@ -205,8 +258,8 @@ impl ConvertTask {
         }
     }
 
-    /// Puts the finished `temp` at `target`; replacing, the original goes to the trash once
-    /// the new file is in place (set aside under a noted name meanwhile, so it is never lost).
+    /// Puts the finished `temp` at `target`; replacing, the original goes to the trash first,
+    /// under its own name (see [`swap_in`]).
     fn place(&self, input: &Path, temp: &Path, target: &Path, run: &RunCx<'_>) -> io::Result<Outcome> {
         let created =
             |path: &Path| Outcome::Created { path: path.to_path_buf(), facts: facts_after(path, false), from: None };
@@ -217,34 +270,12 @@ impl ConvertTask {
             }
             return Ok(created(target));
         }
-        let aside = run.aside_name(input);
-        run.note_aside(&[(aside.clone(), input.to_path_buf())]);
-        if let Err(err) = gezik_platform::fs::move_entry(input, &aside) {
-            run.forget_aside(&[&aside]);
-            let _ = std::fs::remove_file(temp);
-            return Err(err);
-        }
-        if let Err(err) = gezik_platform::fs::move_entry(temp, target) {
-            let _ = std::fs::remove_file(temp);
-            match gezik_platform::fs::move_entry(&aside, input) {
-                Ok(()) => run.forget_aside(&[&aside]),
-                Err(back) => {
-                    return Err(io::Error::new(
-                        err.kind(),
-                        format!("{err}; the original is at {} ({back})", aside.display()),
-                    ));
-                }
-            }
-            return Err(err);
-        }
-        match gezik_ops::trash_path(&aside) {
-            Ok(trashed) => {
-                run.forget_aside(&[&aside]);
+        match swap_in(input, temp, target, gezik_platform::fs::move_entry)? {
+            Swapped::Trashed(trashed) => {
                 Ok(Outcome::Several(vec![Outcome::Trashed { original: input.to_path_buf(), trashed }, created(target)]))
             }
-            Err(err) => {
-                // The new file stays; the original is kept next to it under a free name.
-                keep_aside(input, &aside, &err, run);
+            Swapped::Deleted(err) => {
+                run.fail(input, &err);
                 Ok(created(target))
             }
         }
@@ -434,6 +465,56 @@ mod tests {
         assert_eq!(skipped_inputs(&inputs, &text), paths(&["d/sub"]));
         let media = ConvertWhat::Media(MediaPreset::Mp3);
         assert_eq!(skipped_inputs(&inputs, &media), paths(&["d/a.jpg", "d/b.PNG", "d/c.heic", "d/notes.txt", "d/sub"]));
+    }
+
+    fn swap_dir(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("gezik-swap-in-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn a_failed_move_brings_the_original_back_from_the_trash() {
+        let d = swap_dir("fail");
+        let (original, new) = (d.join("clip.mp4"), d.join(".gezik-copying-test-0"));
+        std::fs::write(&original, b"the original bytes").unwrap();
+        std::fs::write(&new, b"converted").unwrap();
+        let mut trashed_meanwhile = false;
+        let failing = |_: &Path, _: &Path| {
+            // The original is in the trash when the new file moves in.
+            trashed_meanwhile = std::fs::symlink_metadata(&original).is_err();
+            Err(io::Error::other("no room"))
+        };
+        let err = swap_in(&original, &new, &original, failing).unwrap_err();
+        assert_eq!(err.to_string(), "no room");
+        assert!(trashed_meanwhile);
+        assert_eq!(std::fs::read(&original).unwrap(), b"the original bytes");
+        assert!(!new.exists(), "the new file is removed");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn swapping_in_trashes_the_original_as_it_is() {
+        let d = swap_dir("ok");
+        let (original, new) = (d.join("a.png"), d.join(".gezik-copying-test-1"));
+        std::fs::write(&original, b"png bytes").unwrap();
+        std::fs::write(&new, b"jpeg bytes").unwrap();
+        let target = d.join("a.jpg");
+        let Swapped::Trashed(trashed) = swap_in(&original, &new, &target, gezik_platform::fs::move_entry).unwrap()
+        else {
+            panic!("not trashed");
+        };
+        assert!(!original.exists() && !new.exists());
+        assert_eq!(std::fs::read(&target).unwrap(), b"jpeg bytes");
+        assert_eq!(std::fs::read(&trashed).unwrap(), b"png bytes");
+        // The item in the trash is the original itself (on macOS and Linux it keeps its name).
+        if !cfg!(windows) {
+            assert!(file_name(&trashed).starts_with("a"), "{}", trashed.display());
+        }
+        gezik_platform::fs::restore(&trashed, &original).unwrap();
+        assert_eq!(std::fs::read(&original).unwrap(), b"png bytes");
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
