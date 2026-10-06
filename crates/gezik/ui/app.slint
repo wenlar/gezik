@@ -326,6 +326,9 @@ export component AppWindow inherits Window {
     in property <int> drag-count;
     in property <string> drag-label;
     in property <bool> drag-forbidden;
+    // What dropping files from another program here would do, next to the system's drag
+    // image (macOS, whose image has no such text; empty: nothing to say).
+    in property <string> offer-label;
     // The drop target, highlighted (-1: none): an entry, a sidebar row (and the row a pin
     // line is drawn above), a tab, an address bar part.
     in property <int> drop-entry: -1;
@@ -840,6 +843,23 @@ export component AppWindow inherits Window {
             input-secret: root.dialog-input-secret;
             show-secret <=> root.dialog-show-secret;
             chosen(i) => { root.dialog-chosen(i); }
+        }
+        if root.offer-label != "": Rectangle {
+            x: root.drag-x + 14px;
+            y: root.drag-y + 24px;
+            width: offer-text.preferred-width + Theme.spacing * 2;
+            height: offer-text.preferred-height + Theme.spacing;
+            border-radius: Theme.radius;
+            background: Theme.surface;
+            border-width: 1px;
+            border-color: Theme.border;
+            accessible-role: none;
+            offer-text := Text {
+                x: Theme.spacing;
+                y: Theme.spacing / 2;
+                text: root.offer-label;
+                color: Theme.foreground;
+            }
         }
         // What is being dragged, just below and right of the pointer. Takes no input.
         if root.drag-active: Rectangle {

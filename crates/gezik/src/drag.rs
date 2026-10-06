@@ -84,6 +84,10 @@ enum Phase {
     Ended,
 }
 
+/// The system's drag image of files from another program says what a drop would do on
+/// Windows and Linux (`Answer::folder`); macOS has no such text, so Gezik shows it.
+const OFFER_LABEL: bool = cfg!(target_os = "macos");
+
 /// A drag handed to a system that runs it by itself (Wayland, macOS): what its end must
 /// undo, even if the drag came back over Gezik's window as an offer meanwhile.
 #[derive(Clone, Copy)]
@@ -577,19 +581,23 @@ impl Drags {
             Hit::Crumb(i) if on => index(i),
             _ => -1,
         });
+        let label = match (target.action, &target.dir) {
+            (Some(Action::Pin), _) => drag::label(Action::Pin, Path::new("")),
+            (Some(Action::AddToArchive), _) => {
+                drag::label(Action::AddToArchive, target.archive.as_deref().unwrap_or(Path::new("")))
+            }
+            (Some(action), Some(dir)) => drag::label(action, dir),
+            _ => String::new(),
+        };
         if ghost {
             window.set_drag_x(x);
             window.set_drag_y(y);
-            let label = match (target.action, &target.dir) {
-                (Some(Action::Pin), _) => drag::label(Action::Pin, Path::new("")),
-                (Some(Action::AddToArchive), _) => {
-                    drag::label(Action::AddToArchive, target.archive.as_deref().unwrap_or(Path::new("")))
-                }
-                (Some(action), Some(dir)) => drag::label(action, dir),
-                _ => String::new(),
-            };
             window.set_drag_label(label.into());
             window.set_drag_forbidden(!on && target.hit != Hit::Outside);
+        } else if OFFER_LABEL {
+            window.set_drag_x(x);
+            window.set_drag_y(y);
+            window.set_offer_label(label.into());
         }
     }
 

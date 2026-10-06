@@ -1,7 +1,6 @@
 //! macOS: files dropped on winit's view reach Gezik's handler (with their position and the
 //! keys held) through Gezik's own `NSDraggingDestination` methods, put in place of winit's;
 //! a drag leaving the window becomes an `NSDraggingSession` with the files' URLs.
-//! Compiled here, never run (no Mac to try it on).
 
 use std::cell::RefCell;
 use std::ffi::c_char;
@@ -13,7 +12,7 @@ use objc2::runtime::{AnyClass, Imp, NSObject, NSObjectProtocol, ProtocolObject, 
 use objc2::{AllocAnyThread, ClassType, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSApplication, NSDragOperation, NSDraggingContext, NSDraggingInfo, NSDraggingItem, NSDraggingSession,
-    NSDraggingSource, NSEvent, NSEventModifierFlags, NSPasteboardWriting, NSView, NSWorkspace,
+    NSDraggingSource, NSEvent, NSEventModifierFlags, NSPasteboardTypeFileURL, NSPasteboardWriting, NSView, NSWorkspace,
 };
 use objc2_foundation::{NSArray, NSPoint, NSRect, NSSize, NSString, NSURL};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -193,6 +192,9 @@ pub fn register(window: &impl HasWindowHandle, handler: Rc<dyn DropHandler>) -> 
         replace(class, sel!(prepareForDragOperation:), imp(prepare as Decide as *const ()), RETURNS_BOOL);
         replace(class, sel!(performDragOperation:), imp(perform as Decide as *const ()), RETURNS_BOOL);
     }
+    // winit registers the window, so drags go to its delegate (with no position or keys);
+    // a registered view under the pointer comes first, so the methods above are asked.
+    view.registerForDraggedTypes(&NSArray::from_slice(&[unsafe { NSPasteboardTypeFileURL }]));
     TARGET.with(|t| *t.borrow_mut() = Some(Target { handler, offer: None }));
     Some(Registration { view })
 }
