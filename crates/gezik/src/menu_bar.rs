@@ -1,9 +1,10 @@
 //! macOS: the menu bar at the top of the screen (`MenuBar` in app.slint, shown only here).
 //! An item stands for an action: choosing it, by its shortcut or with the mouse, plays the
 //! action's shortcut to the window, so it does just what the keys would do where the focus is
-//! (⌘C copies the text of a name being edited, and the files otherwise).
+//! (⌘C copies the text of a name being edited, and the files otherwise). A keypad key cannot be
+//! played (its text is the main key's): such an action, or one without a shortcut, is run here.
 
-use gezik_config::shortcuts::{Action, Chord, Platform};
+use gezik_config::shortcuts::{Action, Chord, Key, Platform};
 use slint::ComponentHandle;
 use slint::platform::{Key as SlintKey, WindowEvent};
 
@@ -23,7 +24,7 @@ pub fn install(window: &AppWindow, view: View, nav: Navigator, ops: Operations) 
             "zoom" => window.window().set_maximized(!window.window().is_maximized()),
             name => {
                 let Some(action) = Action::from_name(name) else { return };
-                match keys::chord_for(action) {
+                match keys::chord_for(action).filter(|c| !matches!(c.key, Key::Num(_))) {
                     // After the menu is done with this item: playing the keys changes the
                     // menu's shortcuts, which Slint must not rebuild while it activates one.
                     Some(chord) => {
@@ -34,7 +35,9 @@ pub fn install(window: &AppWindow, view: View, nav: Navigator, ops: Operations) 
                             }
                         });
                     }
-                    // No shortcut (none by default, or turned off in settings.toml).
+                    // No shortcut (none by default, or turned off in settings.toml), or only
+                    // the keypad's.
+                    None if crate::actions::run(action, &nav, &view) => {}
                     None => match action {
                         Action::BatchRename => ops.batch_rename(),
                         Action::ToggleHidden => {

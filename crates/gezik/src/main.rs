@@ -1,6 +1,7 @@
 // Hide the console window in release builds on Windows.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod actions;
 mod archives;
 mod batch_rename;
 mod conflicts;
@@ -184,6 +185,28 @@ fn handle_key(
                 }
                 Action::Undo => ops.undo(),
                 Action::Redo => ops.redo(),
+                Action::Filter
+                | Action::InvertSelection
+                | Action::SelectPattern
+                | Action::DeselectPattern
+                | Action::SelectSameType
+                | Action::RestoreSelection
+                | Action::Tab1
+                | Action::Tab2
+                | Action::Tab3
+                | Action::Tab4
+                | Action::Tab5
+                | Action::Tab6
+                | Action::Tab7
+                | Action::Tab8
+                | Action::TabLast
+                | Action::ReopenTab
+                | Action::TabPicker
+                | Action::ToggleTabLock => {
+                    if !actions::run(action, nav, view) {
+                        return false;
+                    }
+                }
             }
             // The typed text no longer fits once the location or tab changed.
             if editing && action != Action::FocusPath {
@@ -786,8 +809,9 @@ fn main() -> Result<(), slint::PlatformError> {
             let Some(window) = weak.upgrade() else { return false };
             let m = event.modifiers;
             // Slint's `control` is ⌘ on macOS.
+            let physical = keys::take_pressed();
             let text = keys::shortcut_text(&event.text, m.control);
-            let chord = keys::chord_from_slint(&text, m.control, m.alt, m.shift, m.meta, Platform::current());
+            let chord = keys::chord_from_press(&text, physical, m.control, m.alt, m.shift, m.meta, Platform::current());
             let menu_key = keys::is_context_menu_key(&event.text, m.control, m.alt, m.shift, m.meta);
             // Esc while dragging files drops nothing.
             if chord.as_ref().is_some_and(|c| c.key == Key::Escape) && drags.escape() {
@@ -819,6 +843,16 @@ fn main() -> Result<(), slint::PlatformError> {
         let ops = ops.clone();
         let drags = drags.clone();
         window.window().on_winit_window_event(move |_, event| {
+            // The keypad's keys and Ctrl+Shift+digits, which Slint's text cannot tell apart
+            // (keys.rs `Physical`): noted before Slint hands the key to `key-event`.
+            if let winit::event::WindowEvent::KeyboardInput { event, .. } = event
+                && event.state == winit::event::ElementState::Pressed
+            {
+                keys::note_pressed(match event.physical_key {
+                    winit::keyboard::PhysicalKey::Code(code) => keys::physical_of(code),
+                    winit::keyboard::PhysicalKey::Unidentified(_) => keys::Physical::Other,
+                });
+            }
             if let winit::event::WindowEvent::Focused(true) = event {
                 ops.clipboard_check();
             }

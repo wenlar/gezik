@@ -81,11 +81,18 @@ export component AppWindow inherits Window {
             MenuItem { title: "Paste"; shortcut: root.menu-keys ? @keys(Control + V) : @keys(); activated => { root.menu-command("paste"); } }
             MenuItem { title: "Move Item Here"; shortcut: root.menu-keys ? @keys(Control + Alt + V) : @keys(); activated => { root.menu-command("paste-move"); } }
             MenuItem { title: "Select All"; shortcut: root.menu-keys ? @keys(Control + A) : @keys(); activated => { root.menu-command("select-all"); } }
+            MenuSeparator { }
+            MenuItem { title: "Filter…"; shortcut: root.menu-keys ? @keys(Control + F) : @keys(); activated => { root.menu-command("filter"); } }
+            MenuItem { title: "Invert Selection"; shortcut: root.menu-keys ? @keys(Control + Shift + I) : @keys(); activated => { root.menu-command("invert-selection"); } }
+            MenuItem { title: "Select by Pattern…"; shortcut: root.menu-keys ? @keys(Control + "=") : @keys(); activated => { root.menu-command("select-pattern"); } }
+            MenuItem { title: "Deselect by Pattern…"; shortcut: root.menu-keys ? @keys(Control + "-") : @keys(); activated => { root.menu-command("deselect-pattern"); } }
+            MenuItem { title: "Select Same Type"; activated => { root.menu-command("select-same-type"); } }
+            MenuItem { title: "Restore Selection"; activated => { root.menu-command("restore-selection"); } }
         }
         Menu {
             title: "View";
-            MenuItem { title: "as List"; shortcut: root.menu-keys ? @keys(Control + "1") : @keys(); activated => { root.menu-command("view-list"); } }
-            MenuItem { title: "as Grid"; shortcut: root.menu-keys ? @keys(Control + "2") : @keys(); activated => { root.menu-command("view-grid"); } }
+            MenuItem { title: "as List"; shortcut: root.menu-keys ? @keys(Control + Shift + "1") : @keys(); activated => { root.menu-command("view-list"); } }
+            MenuItem { title: "as Grid"; shortcut: root.menu-keys ? @keys(Control + Shift + "2") : @keys(); activated => { root.menu-command("view-grid"); } }
             MenuSeparator { }
             MenuItem { title: "Show Preview"; activated => { root.menu-command("toggle-preview"); } }
             MenuItem { title: "Show Hidden Files"; shortcut: root.menu-keys ? @keys(Control + Shift + ".") : @keys(); activated => { root.menu-command("toggle-hidden"); } }
@@ -107,6 +114,20 @@ export component AppWindow inherits Window {
             MenuSeparator { }
             MenuItem { title: "Show Next Tab"; activated => { root.menu-command("next-tab"); } }
             MenuItem { title: "Show Previous Tab"; activated => { root.menu-command("prev-tab"); } }
+            MenuSeparator { }
+            MenuItem { title: "Reopen Closed Tab"; shortcut: root.menu-keys ? @keys(Control + Shift + T) : @keys(); activated => { root.menu-command("reopen-tab"); } }
+            MenuItem { title: "Show All Tabs…"; shortcut: root.menu-keys ? @keys(Control + Shift + A) : @keys(); activated => { root.menu-command("tab-picker"); } }
+            MenuItem { title: "Lock Tab"; activated => { root.menu-command("toggle-tab-lock"); } }
+            MenuSeparator { }
+            MenuItem { title: "Tab 1"; shortcut: root.menu-keys ? @keys(Control + "1") : @keys(); activated => { root.menu-command("tab-1"); } }
+            MenuItem { title: "Tab 2"; shortcut: root.menu-keys ? @keys(Control + "2") : @keys(); activated => { root.menu-command("tab-2"); } }
+            MenuItem { title: "Tab 3"; shortcut: root.menu-keys ? @keys(Control + "3") : @keys(); activated => { root.menu-command("tab-3"); } }
+            MenuItem { title: "Tab 4"; shortcut: root.menu-keys ? @keys(Control + "4") : @keys(); activated => { root.menu-command("tab-4"); } }
+            MenuItem { title: "Tab 5"; shortcut: root.menu-keys ? @keys(Control + "5") : @keys(); activated => { root.menu-command("tab-5"); } }
+            MenuItem { title: "Tab 6"; shortcut: root.menu-keys ? @keys(Control + "6") : @keys(); activated => { root.menu-command("tab-6"); } }
+            MenuItem { title: "Tab 7"; shortcut: root.menu-keys ? @keys(Control + "7") : @keys(); activated => { root.menu-command("tab-7"); } }
+            MenuItem { title: "Tab 8"; shortcut: root.menu-keys ? @keys(Control + "8") : @keys(); activated => { root.menu-command("tab-8"); } }
+            MenuItem { title: "Last Tab"; shortcut: root.menu-keys ? @keys(Control + "9") : @keys(); activated => { root.menu-command("tab-last"); } }
         }
     }
     default-font-family: Theme.font-family;

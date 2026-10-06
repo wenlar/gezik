@@ -58,7 +58,7 @@ pub fn chord_from_event(text: &str, ctrl: bool, alt: bool, shift: bool, meta: bo
     let (Some(c), None) = (chars.next(), chars.next()) else { return None };
     let key = if let Some((_, key)) = NAMED.iter().find(|(k, _)| char::from(*k) == c) {
         *key
-    } else if c.is_ascii_alphanumeric() || matches!(c, '[' | ']' | '.') {
+    } else if c.is_ascii_alphanumeric() || matches!(c, '[' | ']' | '.' | '=' | '-') {
         Key::Char(c.to_ascii_lowercase())
     } else {
         return None;
@@ -82,6 +82,81 @@ pub fn chord_from_slint(
     match platform {
         Platform::Mac => chord_from_event(text, meta, alt, shift, control),
         Platform::Other => chord_from_event(text, control, alt, shift, meta),
+    }
+}
+
+/// What winit says the key being pressed is, where Slint's text cannot tell: the keypad's
+/// + - * / type what the main keys type, and Ctrl+Shift+1 arrives as Ctrl+Shift+!.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Physical {
+    Numpad(char),
+    Digit(char),
+    Other,
+}
+
+thread_local! {
+    /// The physical key of the press Slint is about to hand to `key-event`: set by the winit
+    /// hook (main.rs), which runs first, and taken by the key handler.
+    static PRESSED: std::cell::Cell<Physical> = const { std::cell::Cell::new(Physical::Other) };
+}
+
+pub fn note_pressed(physical: Physical) {
+    PRESSED.with(|p| p.set(physical));
+}
+
+/// The press's physical key, once (a key Slint makes up itself finds `Other`).
+pub fn take_pressed() -> Physical {
+    PRESSED.with(|p| p.replace(Physical::Other))
+}
+
+pub fn physical_of(code: slint::winit_030::winit::keyboard::KeyCode) -> Physical {
+    use slint::winit_030::winit::keyboard::KeyCode as K;
+    match code {
+        K::NumpadAdd => Physical::Numpad('+'),
+        K::NumpadSubtract => Physical::Numpad('-'),
+        K::NumpadMultiply => Physical::Numpad('*'),
+        K::NumpadDivide => Physical::Numpad('/'),
+        K::Digit0 => Physical::Digit('0'),
+        K::Digit1 => Physical::Digit('1'),
+        K::Digit2 => Physical::Digit('2'),
+        K::Digit3 => Physical::Digit('3'),
+        K::Digit4 => Physical::Digit('4'),
+        K::Digit5 => Physical::Digit('5'),
+        K::Digit6 => Physical::Digit('6'),
+        K::Digit7 => Physical::Digit('7'),
+        K::Digit8 => Physical::Digit('8'),
+        K::Digit9 => Physical::Digit('9'),
+        _ => Physical::Other,
+    }
+}
+
+/// The chord of a key press (see `chord_from_slint`), with what winit said the key was: the
+/// keypad's + - * / are `Key::Num`; Ctrl (⌘) + Shift on a digit key is that digit, whatever
+/// Shift types there (`!`, `'`). Not with Alt: AltGr (Ctrl+Alt on Windows) types characters.
+/// Only a press that types something: a modifier key (one `menu_bar` plays after the menu bar
+/// took a digit's press) goes by its text.
+pub fn chord_from_press(
+    text: &str,
+    physical: Physical,
+    control: bool,
+    alt: bool,
+    shift: bool,
+    meta: bool,
+    platform: Platform,
+) -> Option<Chord> {
+    // Slint's `control` is ⌘ on macOS (see `chord_from_slint`).
+    let (ctrl, cmd) = match platform {
+        Platform::Mac => (meta, control),
+        Platform::Other => (control, meta),
+    };
+    match physical {
+        Physical::Numpad(c) if typed_char(text) == Some(c) => {
+            Some(Chord { ctrl, alt, shift, meta: cmd, key: Key::Num(c) })
+        }
+        Physical::Digit(d) if (ctrl || cmd) && shift && !alt && typed_char(text).is_some() => {
+            Some(Chord { ctrl, alt, shift, meta: cmd, key: Key::Char(d) })
+        }
+        _ => chord_from_slint(text, control, alt, shift, meta, platform),
     }
 }
 
@@ -113,7 +188,7 @@ pub fn slint_keys(chord: &Chord, platform: Platform) -> (Vec<SlintKey>, String) 
     let text = match chord.key {
         // A letter typed with Shift comes upper case.
         Key::Char(c) if chord.shift => c.to_ascii_uppercase().to_string(),
-        Key::Char(c) => c.to_string(),
+        Key::Char(c) | Key::Num(c) => c.to_string(),
         key => NAMED.iter().find(|(_, k)| *k == key).map(|(k, _)| char::from(*k).to_string()).unwrap_or_default(),
     };
     (modifiers, text)
@@ -333,6 +408,10 @@ mod tests {
             let defaults = Shortcuts::defaults(platform);
             for action in Action::ALL {
                 let Some(chord) = defaults.chord_for(action) else { continue };
+                // The keypad's: the menu bar runs those itself (actions::run).
+                if matches!(chord.key, Key::Num(_)) {
+                    continue;
+                }
                 let (modifiers, text) = slint_keys(&chord, platform);
                 let held = |k: SlintKey| modifiers.contains(&k);
                 let got = chord_from_slint(
@@ -354,31 +433,47 @@ mod tests {
         assert_eq!(c, Chord { ctrl: true, alt: false, shift: true, meta: false, key: Key::Tab });
     }
 
-    /// What the Windows/Linux backend sends for `chord`: Ctrl as `control`, Win as `meta`;
-    /// Shift+Tab arrives as Tab with shift.
-    fn other_event(chord: &Chord) -> (String, bool, bool, bool, bool) {
-        let text = match chord.key {
-            Key::Char(c) => c.to_string(),
-            Key::F(n) => text(match n {
-                2 => SlintKey::F2,
-                5 => SlintKey::F5,
-                other => panic!("no default uses f{other}"),
-            }),
-            Key::Delete => text(SlintKey::Delete),
-            Key::Left => text(SlintKey::LeftArrow),
-            Key::Right => text(SlintKey::RightArrow),
-            Key::Up => text(SlintKey::UpArrow),
-            Key::Tab => "\t".to_owned(),
-            Key::Space => " ".to_owned(),
+    /// What the Windows/Linux backend sends for `chord`, with what winit says the key is:
+    /// Ctrl as `control`, Win as `meta`; Shift+Tab arrives as Tab with shift; Shift on a digit
+    /// types what it types on a US layout; the keypad's keys type their character.
+    fn other_event(chord: &Chord) -> (String, Physical, bool, bool, bool, bool) {
+        let (text, physical) = match chord.key {
+            Key::Num(c) => (c.to_string(), Physical::Numpad(c)),
+            Key::Char(d) if d.is_ascii_digit() && chord.shift => {
+                let shifted = ")!@#$%^&*(".chars().nth(d.to_digit(10).unwrap() as usize).unwrap();
+                (shifted.to_string(), Physical::Digit(d))
+            }
+            Key::Char(d) if d.is_ascii_digit() => (d.to_string(), Physical::Digit(d)),
+            Key::Char(c) => (c.to_string(), Physical::Other),
+            Key::F(n) => (
+                text(match n {
+                    2 => SlintKey::F2,
+                    5 => SlintKey::F5,
+                    other => panic!("no default uses f{other}"),
+                }),
+                Physical::Other,
+            ),
+            Key::Delete => (text(SlintKey::Delete), Physical::Other),
+            Key::Left => (text(SlintKey::LeftArrow), Physical::Other),
+            Key::Right => (text(SlintKey::RightArrow), Physical::Other),
+            Key::Up => (text(SlintKey::UpArrow), Physical::Other),
+            Key::Tab => ("\t".to_owned(), Physical::Other),
+            Key::Space => (" ".to_owned(), Physical::Other),
             other => panic!("no default uses {other:?}"),
         };
-        (text, chord.ctrl, chord.alt, chord.shift, chord.meta)
+        (text, physical, chord.ctrl, chord.alt, chord.shift, chord.meta)
     }
 
     #[test]
     fn every_default_is_reachable_on_windows_and_linux() {
         use gezik_config::shortcuts::parse_chord;
         let defaults = Shortcuts::defaults(Platform::Other);
+        let reach = |text: &str| {
+            let chord = parse_chord(text, Platform::Other).unwrap().unwrap();
+            let (t, physical, control, alt, shift, meta) = other_event(&chord);
+            let got = chord_from_press(&t, physical, control, alt, shift, meta, Platform::Other).unwrap();
+            defaults.action_for(&got)
+        };
         for action in Action::ALL {
             let text = match action {
                 Action::NewTab => "ctrl+t",
@@ -391,8 +486,8 @@ mod tests {
                 Action::FocusPath => "ctrl+l",
                 Action::Refresh => "f5",
                 Action::SelectAll => "ctrl+a",
-                Action::ViewList => "ctrl+1",
-                Action::ViewGrid => "ctrl+2",
+                Action::ViewList => "ctrl+shift+1",
+                Action::ViewGrid => "ctrl+shift+2",
                 Action::TogglePreview => "alt+p",
                 Action::QuickLook => "space",
                 Action::Copy => "ctrl+c",
@@ -405,13 +500,30 @@ mod tests {
                 Action::Undo => "ctrl+z",
                 Action::Redo => "ctrl+y",
                 Action::ToggleHidden => "ctrl+h",
-                Action::PasteMove | Action::Duplicate | Action::BatchRename => continue,
+                Action::Filter => "ctrl+f",
+                Action::InvertSelection => "ctrl+shift+i",
+                Action::SelectPattern => "ctrl+=",
+                Action::DeselectPattern => "ctrl+-",
+                Action::SelectSameType => "alt+num+",
+                Action::RestoreSelection => "num/",
+                Action::Tab1 => "ctrl+1",
+                Action::Tab2 => "ctrl+2",
+                Action::Tab3 => "ctrl+3",
+                Action::Tab4 => "ctrl+4",
+                Action::Tab5 => "ctrl+5",
+                Action::Tab6 => "ctrl+6",
+                Action::Tab7 => "ctrl+7",
+                Action::Tab8 => "ctrl+8",
+                Action::TabLast => "ctrl+9",
+                Action::ReopenTab => "ctrl+shift+t",
+                Action::TabPicker => "ctrl+shift+a",
+                Action::PasteMove | Action::Duplicate | Action::BatchRename | Action::ToggleTabLock => continue,
             };
-            let chord = parse_chord(text, Platform::Other).unwrap().unwrap();
-            let (t, control, alt, shift, meta) = other_event(&chord);
-            let got = chord_from_slint(&t, control, alt, shift, meta, Platform::Other).unwrap();
-            assert_eq!(defaults.action_for(&got), Some(action), "{text}");
+            assert_eq!(reach(text), Some(action), "{text}");
         }
+        // The second keys of the defaults.
+        assert_eq!(reach("num+"), Some(Action::SelectPattern));
+        assert_eq!(reach("num-"), Some(Action::DeselectPattern));
         // `.` is a key of its own; Shift+. arrives as the character it types (`>` on US, `:`
         // on Turkish Q), which is no chord off macOS: `ctrl+shift+.` cannot match there.
         let dot = parse_chord("ctrl+.", Platform::Other).unwrap().unwrap();
@@ -426,7 +538,69 @@ mod tests {
         assert_eq!(defaults.action_for(&ctrl_h), Some(Action::ToggleHidden));
         // Ctrl+Shift+T arrives as "T" with control and shift: not new-tab.
         let got = chord_from_slint("T", true, false, true, false, Platform::Other).unwrap();
-        assert_eq!(defaults.action_for(&got), None);
+        assert_eq!(defaults.action_for(&got), Some(Action::ReopenTab));
+    }
+
+    #[test]
+    fn the_keypad_keys_are_their_own() {
+        let defaults = Shortcuts::defaults(Platform::Other);
+        let press =
+            |text, physical, alt, shift| chord_from_press(text, physical, false, alt, shift, false, Platform::Other);
+        assert_eq!(press("+", Physical::Numpad('+'), false, false).unwrap().key, Key::Num('+'));
+        assert_eq!(
+            defaults.action_for(&press("+", Physical::Numpad('+'), true, false).unwrap()),
+            Some(Action::SelectSameType)
+        );
+        assert_eq!(
+            defaults.action_for(&press("/", Physical::Numpad('/'), false, false).unwrap()),
+            Some(Action::RestoreSelection)
+        );
+        // The main row's + (Shift+= on a US layout) is no keypad key and no chord.
+        assert_eq!(press("+", Physical::Other, false, true), None);
+        // A keypad key whose text is something else goes by its text.
+        assert_eq!(press("4", Physical::Numpad('+'), false, false).unwrap().key, Key::Char('4'));
+        // macOS: ⌘ is Slint's `control`.
+        let cmd_plus = chord_from_press("+", Physical::Numpad('+'), true, false, false, false, Platform::Mac).unwrap();
+        assert!(cmd_plus.meta && !cmd_plus.ctrl && cmd_plus.key == Key::Num('+'));
+    }
+
+    #[test]
+    fn ctrl_shift_and_a_digit_is_the_digit_whatever_shift_types() {
+        let defaults = Shortcuts::defaults(Platform::Other);
+        // US: Shift+1 types !, Shift+2 @; Turkish Q: Shift+2 types '.
+        for (text, digit, action) in
+            [("!", '1', Action::ViewList), ("@", '2', Action::ViewGrid), ("'", '2', Action::ViewGrid)]
+        {
+            let got =
+                chord_from_press(text, Physical::Digit(digit), true, false, true, false, Platform::Other).unwrap();
+            assert_eq!(defaults.action_for(&got), Some(action), "{text}");
+        }
+        let cmd = chord_from_press("!", Physical::Digit('1'), true, false, true, false, Platform::Mac).unwrap();
+        assert_eq!(Shortcuts::defaults(Platform::Mac).action_for(&cmd), Some(Action::ViewList));
+        // AltGr (Ctrl+Alt on Windows) types what the layout says: Turkish Q AltGr+7 is `{`.
+        assert_eq!(chord_from_press("{", Physical::Digit('7'), true, true, false, false, Platform::Other), None);
+        // Plain Shift+1 types `!`: no chord.
+        assert_eq!(chord_from_press("!", Physical::Digit('1'), false, false, true, false, Platform::Other), None);
+    }
+
+    #[test]
+    fn winit_key_codes_are_sorted_out() {
+        use slint::winit_030::winit::keyboard::KeyCode;
+        assert_eq!(physical_of(KeyCode::NumpadAdd), Physical::Numpad('+'));
+        assert_eq!(physical_of(KeyCode::NumpadSubtract), Physical::Numpad('-'));
+        assert_eq!(physical_of(KeyCode::NumpadMultiply), Physical::Numpad('*'));
+        assert_eq!(physical_of(KeyCode::NumpadDivide), Physical::Numpad('/'));
+        assert_eq!(physical_of(KeyCode::Digit0), Physical::Digit('0'));
+        assert_eq!(physical_of(KeyCode::Digit9), Physical::Digit('9'));
+        assert_eq!(physical_of(KeyCode::Numpad1), Physical::Other);
+        assert_eq!(physical_of(KeyCode::KeyA), Physical::Other);
+    }
+
+    #[test]
+    fn a_noted_key_is_taken_once() {
+        note_pressed(Physical::Numpad('+'));
+        assert_eq!(take_pressed(), Physical::Numpad('+'));
+        assert_eq!(take_pressed(), Physical::Other);
     }
 
     #[test]

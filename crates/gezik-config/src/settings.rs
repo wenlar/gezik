@@ -1265,6 +1265,32 @@ rules = []
     }
 
     #[test]
+    fn the_template_shortcut_examples_are_the_defaults_off_macos() {
+        let template = include_str!("../templates/settings.toml");
+        let start = template.find("[shortcuts]").expect("the template has a [shortcuts] table");
+        let examples: String = template[start..]
+            .lines()
+            .skip(1)
+            .take_while(|line| !line.trim().is_empty())
+            .filter_map(|line| line.strip_prefix("# "))
+            .filter(|line| line.contains(" = "))
+            .map(|line| format!("{line}\n"))
+            .collect();
+        let table: toml::Table = examples.parse().unwrap_or_else(|e| panic!("{e}\n{examples}"));
+        assert!(table.contains_key("select-pattern") && table.contains_key("toggle-tab-lock"), "{examples}");
+        let mut warnings = Vec::new();
+        let shortcuts = Shortcuts::from_table(Some(&table), Platform::Other, "settings.toml", &mut warnings);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let defaults = Shortcuts::defaults(Platform::Other);
+        for action in crate::shortcuts::Action::ALL {
+            if action.tab_number().is_some_and(|n| n > 1) {
+                continue; // "tab-2 … tab-8 likewise"
+            }
+            assert_eq!(shortcuts.chord_for(action), defaults.chord_for(action), "{}", action.name());
+        }
+    }
+
+    #[test]
     fn the_template_documents_escaped_braces() {
         let template = include_str!("../templates/settings.toml");
         assert!(template.contains("\"{{\" and \"}}\""));

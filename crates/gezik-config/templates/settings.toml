@@ -66,8 +66,8 @@ seven-zip = ""            # path to 7-Zip; empty = Gezik's download, then PATH
 # focus-path = "mod+l"
 # refresh = "f5"           # macOS: "mod+r"
 # select-all = "mod+a"
-# view-list = "mod+1"
-# view-grid = "mod+2"
+# view-list = "mod+shift+1"
+# view-grid = "mod+shift+2"
 # toggle-preview = "alt+p"
 # quick-look = "space"     # only while the file list has the focus
 # copy = "mod+c"
@@ -83,6 +83,17 @@ seven-zip = ""            # path to 7-Zip; empty = Gezik's download, then PATH
 # redo = "mod+y"           # macOS: "mod+shift+z"
 # batch-rename = ""        # rename with rules, even for one item
 # toggle-hidden = "ctrl+h" # show or hide names starting with a dot; macOS: "mod+shift+."
+# filter = "mod+f"         # also "/" on the file list (not changeable)
+# invert-selection = "mod+shift+i"
+# select-pattern = ["mod+=", "num+"]     # num+ is the keypad's +; a list gives several keys
+# deselect-pattern = ["mod+-", "num-"]
+# select-same-type = "alt+num+"
+# restore-selection = "num/"   # the selection before the last file operation
+# tab-1 = "mod+1"          # tab-2 … tab-8 likewise
+# tab-last = "mod+9"
+# reopen-tab = "mod+shift+t"
+# tab-picker = "mod+shift+a"
+# toggle-tab-lock = ""     # a locked tab does not close
 
 # Saved rule sets for batch rename (Rename… with two or more items selected). The rename
 # layer writes them with "Presets ▾ › Save current rules as…"; they can also be written here.
