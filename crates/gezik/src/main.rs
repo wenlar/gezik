@@ -744,6 +744,8 @@ fn main() -> Result<(), slint::PlatformError> {
         use slint::winit_030::{EventResult, WinitWindowAccessor, winit};
         let weak = window.as_weak();
         let minimized = std::cell::Cell::new(false);
+        // The pointer's last window position (logical pixels).
+        let pointer = std::cell::Cell::new((0.0f32, 0.0f32));
         let ops = ops.clone();
         let drags = drags.clone();
         window.window().on_winit_window_event(move |_, event| {
@@ -771,6 +773,24 @@ fn main() -> Result<(), slint::PlatformError> {
             if let winit::event::WindowEvent::RedrawRequested = event {
                 frame_limit::wait_for_frame();
                 return EventResult::Propagate;
+            }
+            // A drag that lost its pointer grab to a tab switch follows the window's events.
+            if let winit::event::WindowEvent::CursorMoved { position, .. } = event {
+                let scale = weak.upgrade().map_or(1.0, |w| w.window().scale_factor());
+                let at = position.to_logical::<f32>(f64::from(scale));
+                drags.window_pointer_moved(at.x, at.y);
+                pointer.set((at.x, at.y));
+            }
+            if let winit::event::WindowEvent::MouseInput {
+                state: winit::event::ElementState::Released,
+                button: button @ (winit::event::MouseButton::Left | winit::event::MouseButton::Right),
+                ..
+            } = event
+            {
+                let (x, y) = pointer.get();
+                if drags.window_released(x, y, *button == winit::event::MouseButton::Right) {
+                    return EventResult::PreventDefault;
+                }
             }
             if let winit::event::WindowEvent::MouseInput {
                 state: winit::event::ElementState::Pressed, button, ..

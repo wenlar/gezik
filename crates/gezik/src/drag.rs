@@ -120,6 +120,9 @@ struct Inner {
     outside: RefCell<Option<Box<dyn OutsideDrag>>>,
     /// Handing this drag to the system failed: it stays in the window.
     handoff_failed: Cell<bool>,
+    /// A tab opened under the drag: the list was rebuilt, and the entry that held the
+    /// pointer grab with it, so the pointer is followed from the window's own events.
+    grab_lost: Cell<bool>,
     handed: Cell<Option<Handed>>,
     /// Files winit reported dropped (an X11 source that ignores `XdndProxy`), gathered until
     /// the batch ends.
@@ -187,6 +190,7 @@ impl Drags {
             attached: RefCell::default(),
             outside: RefCell::default(),
             handoff_failed: Cell::new(false),
+            grab_lost: Cell::new(false),
             handed: Cell::new(None),
             dropped_files: RefCell::default(),
         }));
@@ -279,6 +283,29 @@ impl Drags {
         }
     }
 
+    /// The pointer moved to window position (`x`, `y`), as the window saw it. Only followed
+    /// once a tab opened under the drag: before that the pressed entry reports every move.
+    pub fn window_pointer_moved(&self, x: f32, y: f32) {
+        if !self.0.grab_lost.get() {
+            return;
+        }
+        let keys = match &*self.0.phase.borrow() {
+            Phase::Dragging(d) => d.keys,
+            _ => return,
+        };
+        self.moved(x, y, keys);
+    }
+
+    /// A button came up, as the window saw it: drops a drag whose pointer grab was lost to a
+    /// tab switch (nothing else in the window would). Returns whether it did, and the event
+    /// must go no further.
+    pub fn window_released(&self, x: f32, y: f32, right: bool) -> bool {
+        if !self.0.grab_lost.get() || !self.is_active() {
+            return false;
+        }
+        self.up(x, y, right)
+    }
+
     /// Esc: drops nothing. Returns whether a drag was cancelled.
     pub fn escape(&self) -> bool {
         if let Some(mut outside) = self.0.outside.borrow_mut().take() {
@@ -350,6 +377,7 @@ impl Drags {
         window.set_drag_count(i32::try_from(items.len()).unwrap_or(i32::MAX));
         window.set_drag_active(true);
         self.0.handoff_failed.set(false);
+        self.0.grab_lost.set(false);
         *self.0.phase.borrow_mut() = Phase::Dragging(Dragging {
             all_dirs: items.iter().all(|(_, is_dir)| *is_dir),
             sources: items.into_iter().map(|(path, _)| path).collect(),
@@ -626,6 +654,12 @@ impl Drags {
         }
         self.0.hover_tab.set(None);
         self.0.nav.activate_tab(i);
+        if let Phase::Dragging(d) = &mut *self.0.phase.borrow_mut() {
+            // The pressed entry is gone with the old list, and so is its pointer grab: a
+            // release over anything but the list would reach no one.
+            d.pressed = None;
+            self.0.grab_lost.set(true);
+        }
         self.update();
         self.reanswer();
     }
@@ -692,6 +726,7 @@ impl Drags {
     /// Ends the drag: drops `d` on its target (None: drops nothing) and clears the window.
     /// Returns what the drop did at once (a menu, a pin or a refusal: nothing).
     fn finish(&self, d: Option<Dragging>) -> Option<Effect> {
+        self.0.grab_lost.set(false);
         self.0.tab_timer.stop();
         self.0.scroll_timer.stop();
         self.0.hover_tab.set(None);
