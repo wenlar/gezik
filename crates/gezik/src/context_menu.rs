@@ -458,9 +458,7 @@ impl Menus {
         if self.view.shows_drives() {
             return None;
         }
-        let mut last = (gezik_batch::tasks::OutFormat::Zip, gezik_batch::tasks::Level::Normal);
-        crate::archives::with_current(|archives| last = (archives.last_format(), archives.last_level()));
-        let mut extra = crate::archives::menu_items(&rows, last.0, last.1);
+        let mut extra = crate::archives::menu_items(&rows);
         let (convert, commands) = crate::convert::menu_items(&rows);
         extra.extend(convert);
         *self.rows.borrow_mut() = rows;

@@ -110,7 +110,8 @@ pub struct ArchiveState {
     pub format: Option<String>,
     /// `store`, `fast`, `normal` or `best`.
     pub level: Option<String>,
-    /// 7z parts of this many bytes.
+    /// 7z parts of this many bytes. Still read, but no longer written: the layer opens with
+    /// Split off and clears one saved by an older Gezik.
     pub split: Option<u64>,
     pub last_extract_to: Option<String>,
 }

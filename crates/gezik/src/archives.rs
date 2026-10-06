@@ -46,9 +46,9 @@ pub fn release_page(url: &str) -> String {
 }
 
 /// The Extract and Compress items for the selected `items` (path, is a folder): Extract
-/// when every one is an archive by its name, Compress always. `format` and `level` are the
-/// ones used last.
-pub fn menu_items(items: &[(PathBuf, bool)], format: OutFormat, level: Level) -> Vec<(u32, String)> {
+/// when every one is an archive by its name, Compress always. "Compress to" names the zip
+/// that `quick_compress` makes.
+pub fn menu_items(items: &[(PathBuf, bool)]) -> Vec<(u32, String)> {
     let mut out = Vec::new();
     if items.is_empty() {
         return out;
@@ -62,9 +62,45 @@ pub fn menu_items(items: &[(PathBuf, bool)], format: OutFormat, level: Level) ->
         out.push((EXTRACT_TO, "Extract to…".to_owned()));
     }
     out.push((COMPRESS, "Compress…".to_owned()));
-    let format = written_format(compress_format(items, format), level);
-    out.push((COMPRESS_TO, format!("Compress to \"{}\"", default_name(items, format))));
+    out.push((COMPRESS_TO, format!("Compress to \"{}\"", quick_compress(items).0)));
     out
+}
+
+/// "Compress to "<name>.zip"": the archive's name and how it is made. Always a zip at the
+/// Normal level, whatever the layer used last: nothing the menu item does not show (no
+/// parts, no password).
+pub fn quick_compress(items: &[(PathBuf, bool)]) -> (String, CompressOptions) {
+    let options = CompressOptions {
+        format: OutFormat::Zip,
+        level: Level::Normal,
+        password: None,
+        encrypt_names: false,
+        split: None,
+    };
+    (default_name(items, OutFormat::Zip), options)
+}
+
+/// What the Compress layer shows when it opens for `items`: the format and level used last
+/// (`last`), the name for them and how much of it is selected, and Split off. Parts are
+/// never remembered: a big archive split without the user seeing it surprises.
+pub fn layer_opening(items: &[(PathBuf, bool)], last: (OutFormat, Level)) -> Opening {
+    let (format, level) = (compress_format(items, last.0), last.1);
+    let written = written_format(format, level);
+    let name = default_name(items, written);
+    let select = name_stem_end(&name, written);
+    Opening { format, level, name, select, split: 0 }
+}
+
+/// The Compress layer's choices when it opens (`layer_opening`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Opening {
+    pub format: OutFormat,
+    pub level: Level,
+    pub name: String,
+    /// The name up to its ending (bytes): selected.
+    pub select: usize,
+    /// The split choice (0: none).
+    pub split: usize,
 }
 
 /// What `format` at `level` writes: Store makes a plain `.tar` of a `.tar.gz` or `.tar.xz`
@@ -319,18 +355,6 @@ pub fn seven_zip_offer(ext: &str, size: Option<u64>, download: bool, linux: bool
             };
             (message, vec!["OK"])
         }
-    }
-}
-
-/// The split choice (0 none, 1-3 `split_sizes`, 4 custom) and the custom size in MB for a
-/// saved part size.
-pub fn split_choice(split: Option<u64>) -> (usize, String) {
-    match split {
-        None => (0, String::new()),
-        Some(bytes) => match split_sizes().iter().position(|(_, size)| *size == bytes) {
-            Some(i) => (i + 1, String::new()),
-            None => (4, (bytes / 1_000_000).max(1).to_string()),
-        },
     }
 }
 
@@ -752,14 +776,11 @@ impl Archives {
 
     // Compressing.
 
-    /// "Compress to "<name>"": at once, next to the items, with the format and level used
-    /// last.
+    /// "Compress to "<name>.zip"": at once, next to the items (`quick_compress`).
     pub fn compress_to(&self, items: Vec<(PathBuf, bool)>) {
         let Some(folder) = items.first().and_then(|(p, _)| p.parent()).map(Path::to_path_buf) else { return };
-        let level = self.last_level();
-        let format = written_format(compress_format(&items, self.last_format()), level);
-        let target = folder.join(default_name(&items, format));
-        let options = CompressOptions { format, level, password: None, encrypt_names: false, split: None };
+        let (name, options) = quick_compress(&items);
+        let target = folder.join(name);
         let sources: Vec<PathBuf> = items.into_iter().map(|(p, _)| p).collect();
         self.submit_compress(sources, target, options);
     }
@@ -789,33 +810,30 @@ impl Archives {
             return;
         }
         let formats = formats_for(&items);
-        let format = compress_format(&items, self.last_format());
-        let (split, split_mb) = split_choice(self.0.state.borrow().split);
+        let opening = layer_opening(&items, (self.last_format(), self.last_level()));
         let title = match items.as_slice() {
             [(one, _)] => format!("Compress {}", name_of(one)),
             many => format!("Compress {} items", many.len()),
         };
         window.set_cp_title(title.into());
-        let name = default_name(&items, written_format(format, self.last_level()));
-        let select = name_stem_end(&name, written_format(format, self.last_level()));
-        window.set_cp_name(name.into());
-        window.set_cp_name_select(i32::try_from(select).unwrap_or(0));
+        window.set_cp_name(opening.name.as_str().into());
+        window.set_cp_name_select(i32::try_from(opening.select).unwrap_or(0));
         window.set_cp_folder(folder.display().to_string().into());
         let labels: Vec<SharedString> = formats.iter().map(|f| format_label(*f).into()).collect();
         window.set_cp_formats(ModelRc::new(VecModel::from(labels)));
         window.set_cp_password("".into());
-        window.set_cp_split_mb(split_mb.into());
+        window.set_cp_split_mb("".into());
         window.set_cp_error("".into());
         window.set_cp_size_text("Calculating…".into());
         let sources: Vec<PathBuf> = items.into_iter().map(|(p, _)| p).collect();
         *self.0.layer.borrow_mut() = Some(Layer {
             sources: sources.clone(),
             folder,
-            format: formats.iter().position(|f| *f == format).unwrap_or(0),
+            format: formats.iter().position(|f| *f == opening.format).unwrap_or(0),
             formats,
-            level: self.last_level(),
+            level: opening.level,
             encrypt_names: false,
-            split,
+            split: opening.split,
         });
         self.show_layer();
         window.set_cp_open(true);
@@ -927,14 +945,13 @@ impl Archives {
             Ok(job) => job,
             Err(error) => return self.set_error(&error),
         };
-        let split = options.split;
         let (format, level) = (options.format, options.level);
         self.save_state(|state| {
             state.format = Some(format.extension().to_owned());
             state.level = Some(level_key(level).to_owned());
-            if format == OutFormat::SevenZ {
-                state.split = split;
-            }
+            // Parts are not remembered (the layer opens with Split off): one saved before
+            // goes away.
+            state.split = None;
         });
         self.close();
         self.submit_compress(sources, target, options);
@@ -992,37 +1009,53 @@ mod tests {
         let text = (PathBuf::from("d").join("notes.txt"), false);
         let folder = (PathBuf::from("d").join("Belgeler"), true);
 
-        let one = menu_items(std::slice::from_ref(&zip), OutFormat::Zip, Level::Normal);
+        let one = menu_items(std::slice::from_ref(&zip));
         assert_eq!(ids(&one), [EXTRACT_HERE, EXTRACT_TO_OWN, EXTRACT_TO, COMPRESS, COMPRESS_TO]);
         assert_eq!(one[1].1, format!("Extract to \"Fotolar{MAIN_SEPARATOR}\""));
         assert_eq!(one[4].1, "Compress to \"Fotolar.zip\"");
 
-        let two = menu_items(&[zip.clone(), rar], OutFormat::SevenZ, Level::Normal);
+        let two = menu_items(&[zip.clone(), rar]);
         assert_eq!(two[1].1, "Extract each to its own folder");
-        assert_eq!(two[4].1, "Compress to \"d.7z\"");
+        assert_eq!(two[4].1, "Compress to \"d.zip\"");
 
         // An archive with something else: only Compress.
-        assert_eq!(ids(&menu_items(&[zip, text.clone()], OutFormat::Zip, Level::Normal)), [COMPRESS, COMPRESS_TO]);
-        assert_eq!(
-            menu_items(std::slice::from_ref(&folder), OutFormat::TarGz, Level::Normal)[1].1,
-            "Compress to \"Belgeler.tar.gz\""
-        );
-        // .gz is for one file; a folder gets zip.
-        assert_eq!(
-            menu_items(std::slice::from_ref(&text), OutFormat::Gz, Level::Best)[1].1,
-            "Compress to \"notes.txt.gz\""
-        );
-        assert_eq!(
-            menu_items(std::slice::from_ref(&folder), OutFormat::Gz, Level::Normal)[1].1,
-            "Compress to \"Belgeler.zip\""
-        );
-        // Store makes a plain tar of a tar.gz or tar.xz: the item names what is made.
-        assert_eq!(
-            menu_items(std::slice::from_ref(&folder), OutFormat::TarXz, Level::Store)[1].1,
-            "Compress to \"Belgeler.tar\""
-        );
-        assert_eq!(menu_items(&[folder], OutFormat::Zip, Level::Store)[1].1, "Compress to \"Belgeler.zip\"");
-        assert!(menu_items(&[], OutFormat::Zip, Level::Normal).is_empty());
+        assert_eq!(ids(&menu_items(&[zip, text.clone()])), [COMPRESS, COMPRESS_TO]);
+        // Always a zip, named after the item.
+        assert_eq!(menu_items(std::slice::from_ref(&folder))[1].1, "Compress to \"Belgeler.zip\"");
+        assert_eq!(menu_items(std::slice::from_ref(&text))[1].1, "Compress to \"notes.zip\"");
+        assert!(menu_items(&[]).is_empty());
+    }
+
+    #[test]
+    fn quick_compress_is_a_plain_zip() {
+        let big = [(PathBuf::from("d").join("buyuk.bin"), false)];
+        let (name, options) = quick_compress(&big);
+        assert_eq!(name, "buyuk.zip");
+        assert_eq!(options.format, OutFormat::Zip);
+        assert_eq!(options.level, Level::Normal);
+        assert_eq!(options.split, None);
+        assert_eq!(options.password, None);
+        assert!(!options.encrypt_names);
+        let folder = [(PathBuf::from("d").join("Belgeler"), true)];
+        assert_eq!(quick_compress(&folder).0, "Belgeler.zip");
+    }
+
+    #[test]
+    fn the_layer_opens_with_the_last_format_and_no_parts() {
+        let big = [(PathBuf::from("d").join("buyuk.bin"), false)];
+        let opening = layer_opening(&big, (OutFormat::SevenZ, Level::Store));
+        assert_eq!((opening.format, opening.level), (OutFormat::SevenZ, Level::Store));
+        assert_eq!(opening.name, "buyuk.7z");
+        assert_eq!(opening.select, "buyuk".len());
+        assert_eq!(opening.split, 0);
+        // .gz is for one file; a folder gets zip. Store on a tar.gz names the plain tar.
+        let folder = [(PathBuf::from("d").join("Belgeler"), true)];
+        assert_eq!(layer_opening(&folder, (OutFormat::Gz, Level::Normal)).name, "Belgeler.zip");
+        let tar = layer_opening(&folder, (OutFormat::TarGz, Level::Store));
+        assert_eq!((tar.format, tar.name.as_str(), tar.select), (OutFormat::TarGz, "Belgeler.tar", 8));
+        let text = [(PathBuf::from("d").join("notes.txt"), false)];
+        let gz = layer_opening(&text, (OutFormat::Gz, Level::Best));
+        assert_eq!((gz.name.as_str(), gz.select), ("notes.txt.gz", 9));
     }
 
     #[test]
@@ -1189,10 +1222,7 @@ mod tests {
     }
 
     #[test]
-    fn split_sizes_round_trip() {
-        assert_eq!(split_choice(None), (0, String::new()));
-        assert_eq!(split_choice(Some(700_000_000)), (2, String::new()));
-        assert_eq!(split_choice(Some(250_000_000)), (4, "250".to_owned()));
+    fn split_sizes_read_from_the_choice() {
         assert_eq!(split_bytes(0, ""), Ok(None));
         assert_eq!(split_bytes(3, ""), Ok(Some(4_294_967_295)));
         assert_eq!(split_bytes(4, " 250 "), Ok(Some(250_000_000)));
