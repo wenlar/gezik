@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 use gezik_core::batch::pdf::{extract_pages, merged_name, page_image_name, part_name, split_parts};
 use gezik_core::batch::pdf_worker::{Failure, Reply, Request, WorkerJob};
-use gezik_core::ops::names::next_free;
+use gezik_core::ops::names::next_free_os;
 use pdfium_render::prelude::{PdfDocument, PdfiumError};
 
 use super::pdfium::{OpenError, bind, open, pages_to_new, render_page};
@@ -79,32 +79,13 @@ fn unusable_password(request: &Request) -> Option<usize> {
 
 /// `dir/name`, or `dir/name (2)`… when an earlier output of this request took it (a split into
 /// "1-2, 1-2", or two labels that both fall back to "N pages"). The same numbering as placing
-/// ([`next_free`]).
+/// ([`next_free_os`]), which keeps a name that is not Unicode as it is.
 fn free_name(dir: &Path, name: OsString) -> PathBuf {
     let taken = |name: &std::ffi::OsStr| std::fs::symlink_metadata(dir.join(name)).is_ok();
     if !taken(&name) {
         return dir.join(name);
     }
-    if let Some(text) = name.to_str() {
-        return dir.join(next_free(text, false, |candidate| taken(candidate.as_ref())));
-    }
-    // Not Unicode: worker names are "<stem> - <label>.pdf", whose label never ends in "(n)", so
-    // `next_free` would give "<stem> - <label> (2).pdf"; the same, built on the OS string.
-    let path = Path::new(&name);
-    let (stem, ext) = (path.file_stem().unwrap_or_default(), path.extension());
-    let mut n = 2u32;
-    loop {
-        let mut candidate = stem.to_os_string();
-        candidate.push(format!(" ({n})"));
-        if let Some(ext) = ext {
-            candidate.push(".");
-            candidate.push(ext);
-        }
-        if !taken(&candidate) || n == u32::MAX {
-            return dir.join(candidate);
-        }
-        n += 1;
-    }
+    dir.join(next_free_os(&name, false, taken))
 }
 
 /// "page N has no size" for the 0-based page `i` of `width` × `height` points, when it has none.

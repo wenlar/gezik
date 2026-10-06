@@ -1,5 +1,6 @@
 //! New names (`rapor (2).pdf`) and whether a typed name is valid.
 
+use std::ffi::{OsStr, OsString};
 use std::fmt;
 
 /// Endings kept together when a number goes in: `arsiv (2).tar.gz`, not `arsiv.tar (2).gz`.
@@ -58,6 +59,33 @@ pub fn next_free(name: &str, is_dir: bool, taken: impl Fn(&str) -> bool) -> Stri
     let mut n = from.saturating_add(1);
     loop {
         let candidate = format!("{base} ({n}){ext}");
+        if !taken(&candidate) || n == u32::MAX {
+            return candidate;
+        }
+        n += 1;
+    }
+}
+
+/// [`next_free`] on an OS name, which keeps every byte of a name that is not Unicode (a Linux
+/// name in another encoding, a Windows name with a lone surrogate): such a name gets ` (n)`
+/// before its last extension (`<stem> (2).<ext>`).
+pub fn next_free_os(name: &OsStr, is_dir: bool, taken: impl Fn(&OsStr) -> bool) -> OsString {
+    if let Some(text) = name.to_str() {
+        return OsString::from(next_free(text, is_dir, |candidate| taken(OsStr::new(candidate))));
+    }
+    let path = std::path::Path::new(name);
+    let (stem, ext) = match (is_dir, path.file_stem(), path.extension()) {
+        (false, Some(stem), Some(ext)) => (stem, Some(ext)),
+        _ => (name, None),
+    };
+    let mut n = 2u32;
+    loop {
+        let mut candidate = stem.to_os_string();
+        candidate.push(format!(" ({n})"));
+        if let Some(ext) = ext {
+            candidate.push(".");
+            candidate.push(ext);
+        }
         if !taken(&candidate) || n == u32::MAX {
             return candidate;
         }
@@ -185,6 +213,28 @@ mod tests {
         // "(1)" and "(02)" are not Gezik numbers: the bracket stays part of the name.
         assert_eq!(next_free("a (1).txt", false, |_| false), "a (1) (2).txt");
         assert_eq!(next_free("a (02).txt", false, |_| false), "a (02) (2).txt");
+    }
+
+    #[test]
+    fn next_free_os_keeps_names_that_are_not_unicode() {
+        let taken = |n: &OsStr| n == "rapor (2).pdf";
+        assert_eq!(next_free_os(OsStr::new("rapor.pdf"), false, taken), "rapor (3).pdf");
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::{OsStrExt, OsStringExt};
+            let name = OsStr::from_bytes(b"r\xfcz.pdf");
+            assert_eq!(next_free_os(name, false, |_| false).into_vec(), b"r\xfcz (2).pdf");
+            assert_eq!(next_free_os(name, true, |_| false).into_vec(), b"r\xfcz.pdf (2)");
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::ffi::{OsStrExt, OsStringExt};
+            let wide: Vec<u16> = [0x72, 0xD800].into_iter().chain(".pdf".encode_utf16()).collect();
+            let name = OsString::from_wide(&wide);
+            let got: Vec<u16> = next_free_os(&name, false, |_| false).encode_wide().collect();
+            let want: Vec<u16> = [0x72, 0xD800].into_iter().chain(" (2).pdf".encode_utf16()).collect();
+            assert_eq!(got, want);
+        }
     }
 
     #[test]
