@@ -6,6 +6,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use super::convert::{image_inputs, needs_ffmpeg_to_read};
+use crate::ops::names::{NameError, NameRules, validate_name};
 
 /// The PDF group of the Convert layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -129,6 +130,10 @@ pub fn resolve(ranges: &[PageRange], pages: u32) -> Result<Vec<Vec<u32>>, String
     ranges
         .iter()
         .map(|range| {
+            // `parse_ranges` never gives 0; a range made by hand might.
+            if range.first == 0 {
+                return Err("Pages start at 1".to_string());
+            }
             if range.first > pages {
                 return Err(past_the_end(range.first));
             }
@@ -202,11 +207,59 @@ fn stem_of(path: &Path) -> OsString {
     path.file_stem().map(OsString::from).unwrap_or_default()
 }
 
+/// The most bytes an output name may take: 255 is the limit of every file system Gezik
+/// writes to (bytes on Linux and macOS, UTF-16 units on Windows, never more than the UTF-8
+/// bytes), less room for a number a clash adds (" (999)").
+pub const NAME_MAX: usize = 240;
+
+/// `stem` + `suffix`, the stem cut short (at a character) so that the name stays within
+/// [`NAME_MAX`] bytes.
+fn named(stem: OsString, suffix: &str) -> OsString {
+    let room = NAME_MAX.saturating_sub(suffix.len());
+    let mut name = cut(stem, room);
+    name.push(suffix);
+    name
+}
+
+/// `stem` in at most `room` bytes (a Unicode stem by whole characters).
+fn cut(stem: OsString, room: usize) -> OsString {
+    if stem.len() <= room {
+        return stem;
+    }
+    if let Some(text) = stem.to_str() {
+        let end = text.char_indices().map(|(i, c)| i + c.len_utf8()).take_while(|&end| end <= room).last();
+        return OsString::from(&text[..end.unwrap_or(0)]);
+    }
+    cut_raw(stem, room)
+}
+
+#[cfg(unix)]
+fn cut_raw(stem: OsString, room: usize) -> OsString {
+    use std::os::unix::ffi::OsStringExt;
+    let mut bytes = stem.into_vec();
+    bytes.truncate(room);
+    OsString::from_vec(bytes)
+}
+
+#[cfg(windows)]
+fn cut_raw(stem: OsString, room: usize) -> OsString {
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    // At most `room` UTF-16 units, and at most 3 bytes each in the length `OsStr` counts.
+    let mut units: Vec<u16> = stem.encode_wide().take(room / 3).collect();
+    if units.last().is_some_and(|u| (0xD800..0xDC00).contains(u)) {
+        units.pop();
+    }
+    OsString::from_wide(&units)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn cut_raw(stem: OsString, room: usize) -> OsString {
+    cut(OsString::from(stem.to_string_lossy().into_owned()), room)
+}
+
 /// "a (merged).pdf" for the merge of PDFs starting with `first`.
 pub fn merged_name(first: &Path) -> OsString {
-    let mut name = stem_of(first);
-    name.push(" (merged).pdf");
-    name
+    named(stem_of(first), " (merged).pdf")
 }
 
 /// "a - page 3.pdf"; a label longer than 40 characters gives the count: "a - 23 pages.pdf".
@@ -215,9 +268,7 @@ pub fn part_name(input: &Path, pages: &[u32]) -> OsString {
     if label.chars().count() > 40 {
         label = format!("{} pages", pages.len());
     }
-    let mut name = stem_of(input);
-    name.push(format!(" - {label}.pdf"));
-    name
+    named(stem_of(input), &format!(" - {label}.pdf"))
 }
 
 /// The picture format "PDF to images" writes.
@@ -235,22 +286,28 @@ pub fn page_image_name(input: &Path, page: u32, image: PageImage) -> OsString {
         PageImage::Png => "png",
         PageImage::Jpeg => "jpg",
     };
-    let mut name = stem_of(input);
-    name.push(format!(" - page {}.{ext}", page + 1));
-    name
+    named(stem_of(input), &format!(" - page {}.{ext}", page + 1))
 }
 
 /// Where "Images to PDF" writes: next to a single picture under its name, otherwise in the
-/// first picture's folder under the folder's name ("Pictures" for a root).
+/// first picture's folder under the folder's name ("Pictures" for a root). A name Windows
+/// keeps for a device (`CON.pdf`) gets an underscore (`CON_.pdf`).
 pub fn pictures_pdf_name(pictures: &[PathBuf]) -> Option<PathBuf> {
+    pictures_pdf_name_under(pictures, NameRules::current())
+}
+
+fn pictures_pdf_name_under(pictures: &[PathBuf], rules: NameRules) -> Option<PathBuf> {
     let first = pictures.first()?;
     let dir = first.parent().unwrap_or(Path::new(""));
-    let mut name = if pictures.len() == 1 {
+    let stem = if pictures.len() == 1 {
         stem_of(first)
     } else {
         dir.file_name().map(OsString::from).unwrap_or_else(|| OsString::from("Pictures"))
     };
-    name.push(".pdf");
+    let mut name = named(stem.clone(), ".pdf");
+    if matches!(validate_name(&name.to_string_lossy(), rules), Err(NameError::Reserved(_))) {
+        name = named(stem, "_.pdf");
+    }
     Some(dir.join(name))
 }
 
@@ -267,8 +324,10 @@ pub struct RenderSize {
     pub lowered: bool,
 }
 
+/// At least 1: a size that is no number (a page of no size, a dpi of 0) is 1 pixel.
 fn pixels(points: f32, dpi: f64) -> u32 {
-    (f64::from(points) * dpi / 72.0).ceil().clamp(1.0, f64::from(u32::MAX)) as u32
+    let px = f64::from(points) * dpi / 72.0;
+    if px.is_nan() { 1 } else { px.ceil().clamp(1.0, f64::from(u32::MAX)) as u32 }
 }
 
 /// The pixel size of a page of `width_pt` × `height_pt` points at `dpi`, kept within
@@ -341,12 +400,15 @@ pub struct Placement {
 }
 
 /// Where a picture of `shown_w` × `shown_h` pixels (as shown, orientation applied) goes.
+/// A picture of no pixels counts as 1 x 1, and a density that is not a positive number as
+/// none, so the numbers are always finite.
 pub fn place(shown_w: u32, shown_h: u32, dpi: Option<(f32, f32)>, options: &PageOptions) -> Placement {
-    let (dw, dh) = (shown_w as f32, shown_h as f32);
+    let (dw, dh) = (shown_w.max(1) as f32, shown_h.max(1) as f32);
     let m = options.margin.points();
     match options.size {
         PageSize::Picture => {
-            let (dx, dy) = dpi.unwrap_or((72.0, 72.0));
+            let usable = |d: f32| d.is_finite() && d > 0.0;
+            let (dx, dy) = dpi.filter(|&(x, y)| usable(x) && usable(y)).unwrap_or((72.0, 72.0));
             let (mut w, mut h) = (dw * 72.0 / dx, dh * 72.0 / dy);
             // Acrobat's page limit is 14400 pt; scale down beyond it.
             let k = (MAX_PAGE_POINTS - 2.0 * m) / w.max(h);
@@ -419,6 +481,8 @@ mod tests {
         assert_eq!(resolve(&parse_ranges("1-99").unwrap(), 14).unwrap_err(), "Page 99 is past the end (14 pages)");
         assert_eq!(resolve(&parse_ranges("15-").unwrap(), 14).unwrap_err(), "Page 15 is past the end (14 pages)");
         assert_eq!(extract_pages("3, 3, 1", 5).unwrap(), vec![2, 2, 0]);
+        // A range made by hand that starts at 0.
+        assert_eq!(resolve(&[r(0, Some(2))], 5).unwrap_err(), "Pages start at 1");
     }
 
     #[test]
@@ -458,6 +522,67 @@ mod tests {
             Some(PathBuf::from("/Pictures.pdf"))
         );
         assert_eq!(pictures_pdf_name(&[]), None);
+    }
+
+    #[test]
+    fn long_stems_are_cut_to_fit_a_name() {
+        // 400 bytes.
+        let long = "\u{15f}".repeat(200);
+        let a = Path::new("d").join(format!("{long}.pdf"));
+        let pictures = pictures_pdf_name(&[Path::new("d").join(format!("{long}.jpg"))]).unwrap();
+        for name in [
+            merged_name(&a),
+            part_name(&a, &[0, 1, 2, 4, 7, 8, 9]),
+            page_image_name(&a, 11, PageImage::Jpeg),
+            pictures.file_name().unwrap().to_os_string(),
+        ] {
+            let text = name.to_str().unwrap();
+            assert!(text.len() <= NAME_MAX, "{} bytes", text.len());
+            assert!(text.starts_with("\u{15f}\u{15f}"), "{text}");
+        }
+        assert!(part_name(&a, &[0, 1, 2]).to_str().unwrap().ends_with("\u{15f} - pages 1-3.pdf"));
+        // A short one is left as it is.
+        assert_eq!(merged_name(Path::new("a.pdf")), "a (merged).pdf");
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            let raw = Path::new(std::ffi::OsStr::from_bytes(&[0xFC; 300]));
+            assert!(merged_name(raw).len() <= NAME_MAX);
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::ffi::OsStringExt;
+            let mut wide = vec![0xD800u16];
+            wide.extend(std::iter::repeat_n(u16::from(b'a'), 300));
+            let raw = PathBuf::from(OsString::from_wide(&wide));
+            assert!(merged_name(&raw).len() <= NAME_MAX);
+        }
+    }
+
+    #[test]
+    fn a_device_name_gets_an_underscore_on_windows() {
+        let d = Path::new("x");
+        let con = [d.join("CON.jpg")];
+        assert_eq!(pictures_pdf_name_under(&con, NameRules::Windows), Some(d.join("CON_.pdf")));
+        assert_eq!(pictures_pdf_name_under(&[d.join("com1.x.png")], NameRules::Windows), Some(d.join("com1.x_.pdf")));
+        assert_eq!(pictures_pdf_name_under(&con, NameRules::Unix), Some(d.join("CON.pdf")));
+        assert_eq!(pictures_pdf_name_under(&[d.join("cone.jpg")], NameRules::Windows), Some(d.join("cone.pdf")));
+    }
+
+    #[test]
+    fn sizes_that_are_no_number_stay_finite() {
+        assert_eq!(render_size(0.0, 0.0, 300).width, 1);
+        assert_eq!(render_size(f32::NAN, 10.0, 72).width, 1);
+        assert_eq!(render_size(100.0, 100.0, 0).width, 1);
+        for dpi in [Some((0.0, 0.0)), Some((-1.0, 72.0)), Some((f32::NAN, 72.0)), Some((f32::INFINITY, 72.0)), None] {
+            for options in [PageOptions::DEFAULT, PageOptions { size: PageSize::A4, margin: Margin::Small }] {
+                for (w, h) in [(0, 0), (0, 10), (640, 480)] {
+                    let p = place(w, h, dpi, &options);
+                    let all = [p.page_width, p.page_height, p.x, p.y, p.width, p.height];
+                    assert!(all.iter().all(|v| v.is_finite()), "{w}x{h} {dpi:?}: {p:?}");
+                }
+            }
+        }
     }
 
     #[test]
