@@ -23,6 +23,9 @@ pub struct ViewData {
     /// The folder's entries without the hidden files, sorted, before the filter; empty for
     /// "This PC" and the empty listing.
     pub full: Rc<Vec<gezik_core::Entry>>,
+    /// Where each entry of `listing` is in `full` while the filter shows a part of it;
+    /// `None` when `listing` is `full` (or the drives).
+    pub rows: Option<Vec<usize>>,
     pub selection: Selection,
     /// The selection when a rubber-band drag started (Ctrl) or nothing; `None` when no drag.
     pub marquee_base: Option<Selection>,

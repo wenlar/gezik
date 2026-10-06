@@ -31,6 +31,54 @@ impl Selection {
         s
     }
 
+    /// This selection moved to another list of the same entries whose entry `k` is entry
+    /// `from[k]` of this one (filtered, sorted again, or with entries taken out): what was
+    /// selected stays selected, and the focus (and anchor) follows its entry, or goes to the
+    /// first selected one if it is gone. Indices past this list are skipped. No name is
+    /// compared, and with nothing selected only the focus is looked for.
+    pub fn carried(&self, from: &[usize]) -> Selection {
+        let mut s = Selection::new(from.len());
+        let mut focus = None;
+        if self.count > 0 || self.focus.is_some() {
+            for (k, &i) in from.iter().enumerate() {
+                if self.count > 0 && self.is_selected(i) {
+                    s.set(k, true);
+                }
+                if self.focus == Some(i) {
+                    focus = Some(k);
+                }
+            }
+        }
+        s.focus = focus.or_else(|| s.iter().next());
+        s.anchor = s.focus;
+        s
+    }
+
+    /// This selection of a list whose entry `i` is entry `rows[i]` of a list of `len`
+    /// entries (a filtered list and the full one), as a selection of that list; focus and
+    /// anchor follow their entries.
+    pub fn spread(&self, rows: &[usize], len: usize) -> Selection {
+        let mut s = Selection::new(len);
+        for i in self.iter() {
+            if let Some(&row) = rows.get(i)
+                && row < len
+            {
+                s.set(row, true);
+            }
+        }
+        let map = |i: Option<usize>| i.and_then(|i| rows.get(i).copied()).filter(|&row| row < len);
+        s.focus = map(self.focus);
+        s.anchor = map(self.anchor);
+        s
+    }
+
+    /// The same selection with the focus and anchor on `focus` (ignored past the end).
+    pub fn focused_at(mut self, focus: Option<usize>) -> Selection {
+        self.focus = focus.filter(|&f| f < self.len);
+        self.anchor = self.focus;
+        self
+    }
+
     pub fn len(&self) -> usize {
         self.len
     }
@@ -310,6 +358,29 @@ mod tests {
 
     fn selected(s: &Selection) -> Vec<usize> {
         s.iter().collect()
+    }
+
+    #[test]
+    fn a_selection_is_carried_by_position_not_by_name() {
+        // Shown rows 0..4 are full entries [1, 3, 4, 7] of 9; rows 1 and 3 selected, focus 3.
+        let shown = Selection::from_indices(4, [1, 3], Some(3));
+        let full = shown.spread(&[1, 3, 4, 7], 9);
+        assert_eq!(selected(&full), [3, 7]);
+        assert_eq!((full.focus(), full.anchor()), (Some(7), Some(7)));
+        // A new filter shows full entries [0, 3, 5, 6, 7].
+        let next = full.carried(&[0, 3, 5, 6, 7]);
+        assert_eq!((next.len(), selected(&next)), (5, vec![1, 4]));
+        assert_eq!(next.focus(), Some(4), "the focus follows its entry");
+        // Its focused entry filtered out: the focus goes to the first selected one.
+        let gone = full.carried(&[3, 5]);
+        assert_eq!((selected(&gone), gone.focus()), (vec![0], Some(0)));
+        // A sort is a permutation: entry k now was entry from[k] before.
+        let sorted = full.carried(&[8, 7, 6, 5, 4, 3, 2, 1, 0]);
+        assert_eq!((selected(&sorted), sorted.focus()), (vec![1, 5], Some(1)));
+        let none = Selection::new(9).focused_at(Some(4)).carried(&[4, 5]);
+        assert_eq!((none.count(), none.focus()), (0, Some(0)), "nothing selected: only the focus");
+        assert_eq!(Selection::new(9).carried(&[1, 2]).focus(), None);
+        assert_eq!(Selection::new(3).focused_at(Some(5)).focus(), None, "past the end");
     }
 
     #[test]

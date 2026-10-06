@@ -222,9 +222,8 @@ impl View {
         });
     }
 
-    /// Asks for the system name of every type in `listing` (to sort by type).
-    fn request_type_names(&self, listing: &Listing) {
-        let Listing::Files(_, entries) = listing else { return };
+    /// Asks for the system name of every type in `entries` (to sort by type).
+    fn request_type_names(&self, entries: &[Entry]) {
         let mut seen = HashSet::new();
         for e in entries.iter() {
             let ext = e.extension().to_lowercase();
@@ -303,19 +302,19 @@ impl View {
         // tab switch). Only folders have one.
         let cleared = self.0.cleared.replace(false);
         let live = same_folder && !cleared;
-        let (full, listing) = match listing {
+        let (full, listing, rows) = match listing {
             Listing::Files(dir, full) if !dir.as_os_str().is_empty() => {
                 let filter = if live {
                     self.0.filter.borrow_mut().take()
                 } else {
                     state.filter.as_deref().map(|text| FilterState::new(text, None))
                 };
-                let shown = match &filter {
+                let (shown, rows) = match &filter {
                     Some(filter) => filtered_listing(&dir, &full, &filter.pattern),
-                    None => Listing::Files(dir, full.clone()),
+                    None => (Listing::Files(dir, full.clone()), None),
                 };
                 *self.0.filter.borrow_mut() = filter;
-                (full, shown)
+                (full, shown, rows)
             }
             // "This PC", or nothing (a folder that cannot be listed).
             other => {
@@ -324,7 +323,7 @@ impl View {
                     Listing::Files(_, full) => full.clone(),
                     Listing::Drives(_) => Rc::default(),
                 };
-                (full, other)
+                (full, other, None)
             }
         };
         let selection = restore_selection(&listing, state);
@@ -333,6 +332,7 @@ impl View {
             let mut data = self.0.data.borrow_mut();
             data.listing = listing;
             data.full = full;
+            data.rows = rows;
             data.selection = selection;
             data.marquee_base = None;
             data.pending = Default::default();
@@ -505,6 +505,7 @@ impl View {
             let mut data = self.0.data.borrow_mut();
             data.listing = Listing::default();
             data.full = Rc::default();
+            data.rows = None;
             data.selection = Selection::new(0);
             data.marquee_base = None;
             data.pending = Default::default();
@@ -525,11 +526,6 @@ impl View {
     /// The selection, focus and scroll, by name, for the history.
     pub fn capture(&self) -> ViewState {
         self.capture_capped(MAX_REMEMBERED)
-    }
-
-    /// Like `capture`, but remembers every selected name (for a resort in place).
-    fn capture_all(&self) -> ViewState {
-        self.capture_capped(usize::MAX)
     }
 
     fn capture_capped(&self, max: usize) -> ViewState {
@@ -577,19 +573,25 @@ impl View {
             if self.0.renaming.borrow().is_some() {
                 self.end_rename(false);
             }
-            let state = self.capture_all();
             let full = self.0.data.borrow().full.clone();
-            let shown = filtered_listing(&dir, &full, &new_pattern);
-            // Closing keeps what was selected and the focused entry; a new pattern starts at
-            // the first entry it shows.
-            let selection = if closing {
-                restore_selection(&shown, &state)
-            } else {
-                selection_after_filter(&shown, &state.selected)
+            let (shown, rows) = filtered_listing(&dir, &full, &new_pattern);
+            // What was selected and still shows stays selected, carried by position through
+            // the full list (no names: Ctrl+A in 100k entries, then typing, stays fast). Closing
+            // keeps the focused entry; a new pattern starts at the first entry it shows.
+            let selection = {
+                let data = self.0.data.borrow();
+                if closing {
+                    carry(&data.selection, data.rows.as_deref(), full.len(), None)
+                } else if data.selection.count() == 0 {
+                    Selection::new(shown.len()).focused_at(Some(0))
+                } else {
+                    carry(&data.selection, data.rows.as_deref(), full.len(), rows.as_deref()).focused_at(Some(0))
+                }
             };
             {
                 let mut data = self.0.data.borrow_mut();
                 data.listing = shown;
+                data.rows = rows;
                 data.selection = selection;
                 data.marquee_base = None;
                 data.pending = Default::default();
@@ -973,43 +975,52 @@ impl View {
     /// brings back anything that stayed).
     pub fn hide_names(&self, names: &[String]) {
         let hidden: HashSet<&str> = names.iter().map(String::as_str).collect();
-        let state = self.capture_all();
-        let (listing, full) = {
-            let mut data = self.0.data.borrow_mut();
-            (std::mem::take(&mut data.listing), std::mem::take(&mut data.full))
-        };
-        let (listing, full) = match listing {
+        let scroll = self.0.window.upgrade().map_or(0.0, |w| w.get_list_scroll());
+        let (listing, full, old_rows, selection) = self.take_listing();
+        let (listing, full, rows, selection) = match listing {
             Listing::Files(dir, _) => {
-                let kept: Vec<Entry> = full.iter().filter(|e| !hidden.contains(e.name.as_str())).cloned().collect();
-                let full = Rc::new(kept);
-                (self.filtered(&dir, &full), full)
+                let kept: Vec<usize> = (0..full.len()).filter(|&i| !hidden.contains(full[i].name.as_str())).collect();
+                // The selection by position: into the full list, then what the filter shows.
+                let in_full = carry(&selection, old_rows.as_deref(), full.len(), Some(&kept));
+                let full = Rc::new(kept.iter().map(|&i| full[i].clone()).collect::<Vec<Entry>>());
+                let (shown, rows) = self.filtered(&dir, &full);
+                let selection = carry(&in_full, None, full.len(), rows.as_deref());
+                (shown, full, rows, selection)
             }
-            other => (other, full),
+            other => (other, full, old_rows, selection),
         };
-        let selection = restore_selection(&listing, &state);
         {
             let mut data = self.0.data.borrow_mut();
             data.listing = listing;
             data.full = full;
+            data.rows = rows;
             data.selection = selection;
         }
         self.0.model.notify.reset();
         if let Some(window) = self.0.window.upgrade() {
             self.sync_focus(&window);
-            window.set_list_scroll(state.scroll);
-            self.keep_scroll_after_reset(state.scroll);
+            window.set_list_scroll(scroll);
+            self.keep_scroll_after_reset(scroll);
             self.sync_filter_bar(&window);
         }
         self.update_status();
         self.notify_listeners();
     }
 
-    /// What the filter lets through of `full`, the entries of `dir`.
-    fn filtered(&self, dir: &Path, full: &Rc<Vec<Entry>>) -> Listing {
+    /// What the filter lets through of `full`, the entries of `dir`, and where they are in it.
+    fn filtered(&self, dir: &Path, full: &Rc<Vec<Entry>>) -> (Listing, Option<Vec<usize>>) {
         match self.0.filter.borrow().as_ref() {
             Some(filter) => filtered_listing(dir, full, &filter.pattern),
-            None => Listing::Files(dir.to_path_buf(), full.clone()),
+            None => (Listing::Files(dir.to_path_buf(), full.clone()), None),
         }
+    }
+
+    /// Takes the listing, the full list, the rows and the selection out of the view, to put
+    /// back changed.
+    fn take_listing(&self) -> (Listing, Rc<Vec<Entry>>, Option<Vec<usize>>, Selection) {
+        let mut data = self.0.data.borrow_mut();
+        let listing = std::mem::take(&mut data.listing);
+        (listing, std::mem::take(&mut data.full), data.rows.take(), std::mem::take(&mut data.selection))
     }
 
     /// Shows `text` in the status bar until the selection changes.
@@ -1176,18 +1187,24 @@ impl View {
     /// `listing` in the current sort order. A fresh folder load is already sorted by name
     /// (`by_name`), so the default order costs nothing.
     fn sorted(&self, listing: Listing, by_name: bool) -> Listing {
-        let spec = self.0.current.get().sort;
-        if spec.key == SortKey::Type {
-            self.request_type_names(&listing);
-        }
         match listing {
-            Listing::Files(dir, entries) if !(by_name && spec == SortSpec::default()) => {
-                let mut entries = Rc::unwrap_or_clone(entries);
-                sort_entries(&mut entries, spec, |e| self.type_name_of(e));
-                Listing::Files(dir, Rc::new(entries))
+            Listing::Files(dir, entries) if !(by_name && self.sort() == SortSpec::default()) => {
+                Listing::Files(dir, self.sort_now(entries).0)
             }
             other => other,
         }
+    }
+
+    /// `entries` in the current sort order (copied only if shared), and where each came from
+    /// (`sort_entries`).
+    fn sort_now(&self, entries: Rc<Vec<Entry>>) -> (Rc<Vec<Entry>>, Vec<usize>) {
+        let spec = self.sort();
+        if spec.key == SortKey::Type {
+            self.request_type_names(&entries);
+        }
+        let mut entries = Rc::unwrap_or_clone(entries);
+        let order = sort_entries(&mut entries, spec, |e| self.type_name_of(e));
+        (Rc::new(entries), order)
     }
 
     /// The Type column's text for sorting: as the column shows it (`model::type_name_for`),
@@ -1198,39 +1215,39 @@ impl View {
             .unwrap_or_else(|| fallback_type_name(&entry.name, entry.is_dir))
     }
 
-    /// Sorts the current listing again, keeping the selection by name; then scrolls the
-    /// focus into view (`reveal`) or stays at the same scroll position.
+    /// Sorts the current listing again, keeping the selection (by position, through the order
+    /// the sort gives); then scrolls the focus into view (`reveal`) or stays at the same scroll
+    /// position.
     fn resort(&self, reveal: bool) {
-        let state = self.capture_all();
-        let (listing, full) = {
-            let mut data = self.0.data.borrow_mut();
-            (std::mem::take(&mut data.listing), std::mem::take(&mut data.full))
-        };
+        let scroll = self.0.window.upgrade().map_or(0.0, |w| w.get_list_scroll());
+        let (listing, full, old_rows, selection) = self.take_listing();
         // The full list is sorted (no longer shared with the shown one, so not copied), then
-        // filtered again.
-        let (listing, full) = match listing {
+        // filtered again. The drives are not sorted.
+        let (listing, full, rows, selection) = match listing {
             Listing::Files(dir, shown) => {
                 drop(shown);
-                match self.sorted(Listing::Files(dir, full), false) {
-                    Listing::Files(dir, full) => (self.filtered(&dir, &full), full),
-                    drives => (drives, Rc::default()),
-                }
+                let full_len = full.len();
+                let (full, order) = self.sort_now(full);
+                let in_full = carry(&selection, old_rows.as_deref(), full_len, Some(&order));
+                let (shown, rows) = self.filtered(&dir, &full);
+                let selection = carry(&in_full, None, full.len(), rows.as_deref());
+                (shown, full, rows, selection)
             }
-            drives => (self.sorted(drives, false), full),
+            drives => (drives, full, old_rows, selection),
         };
-        let selection = restore_selection(&listing, &state);
         {
             let mut data = self.0.data.borrow_mut();
             data.listing = listing;
             data.full = full;
+            data.rows = rows;
             data.selection = selection;
         }
         self.0.model.notify.reset();
         if let Some(window) = self.0.window.upgrade() {
             self.sync_focus(&window);
             if !reveal {
-                window.set_list_scroll(state.scroll);
-                self.keep_scroll_after_reset(state.scroll);
+                window.set_list_scroll(scroll);
+                self.keep_scroll_after_reset(scroll);
             }
         }
         if reveal && let Some(focus) = self.focus() {
@@ -1382,12 +1399,19 @@ fn restore_in(listing: &Listing, selection: &mut Selection, names: &[String]) ->
     Some(selection.replace(Selection::from_indices(listing.len(), indices, Some(first))))
 }
 
-/// After the filter changed: what was selected and still shows stays selected; the focus is
-/// on the first entry shown.
-fn selection_after_filter(listing: &Listing, selected: &[String]) -> Selection {
-    let indices = listing.indices_of(selected);
-    let focus = (listing.len() > 0).then_some(0);
-    Selection::from_indices(listing.len(), indices, focus)
+/// `selection` of a list showing entries `old_rows` of a full list of `full_len` entries
+/// (`None`: all of it), carried to a list showing entries `new_rows` of it: by position,
+/// through a bitset of the full list, with no name compared. The focus follows its entry, or
+/// goes to the first selected one if it is gone.
+fn carry(selection: &Selection, old_rows: Option<&[usize]>, full_len: usize, new_rows: Option<&[usize]>) -> Selection {
+    let in_full = match old_rows {
+        Some(rows) => selection.spread(rows, full_len),
+        None => selection.clone(),
+    };
+    match new_rows {
+        Some(rows) => in_full.carried(rows),
+        None => in_full,
+    }
 }
 
 /// How many of `names` `pattern` hides (none without a filter). No allocation per name.
@@ -1517,12 +1541,20 @@ mod tests {
     }
 
     #[test]
-    fn after_a_filter_change_the_hidden_are_unselected_and_the_focus_is_first() {
-        let shown = files("/x", &["b.jpg", "d.jpg"]);
-        let selection = selection_after_filter(&shown, &["a.txt".into(), "d.jpg".into()]);
-        assert_eq!(selection.iter().collect::<Vec<_>>(), [1]);
-        assert_eq!(selection.focus(), Some(0));
-        assert_eq!(selection_after_filter(&files("/x", &[]), &[]).focus(), None);
+    fn the_selection_is_carried_through_the_full_list_by_position() {
+        // Full: a.txt b.jpg c.txt d.jpg e.jpg; "*.jpg" shows rows [1, 3, 4]; b and e selected.
+        let shown = Selection::from_indices(3, [0, 2], Some(2));
+        // "d;e" shows [3, 4]: only e stays selected, and the focus follows it.
+        let next = carry(&shown, Some(&[1, 3, 4]), 5, Some(&[3, 4]));
+        assert_eq!((next.iter().collect::<Vec<_>>(), next.focus()), (vec![1], Some(1)));
+        // Closing shows the full list: b and e, focus on e.
+        let all = carry(&shown, Some(&[1, 3, 4]), 5, None);
+        assert_eq!((all.iter().collect::<Vec<_>>(), all.focus()), (vec![1, 4], Some(4)));
+        // Ctrl+A with no filter, then a filter: what it shows stays selected.
+        let mut everything = Selection::new(5);
+        everything.select_all();
+        assert_eq!(carry(&everything, None, 5, Some(&[1, 3, 4])).count(), 3);
+        assert_eq!(carry(&Selection::new(0), None, 0, Some(&[])).focus(), None);
     }
 
     #[test]

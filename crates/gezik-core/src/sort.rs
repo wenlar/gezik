@@ -243,8 +243,9 @@ enum Primary {
 
 /// Sorts `entries` by `spec`: folders first (in either direction), then the column, then
 /// natural name order, then the exact name so the order is total. `type_name` gives the
-/// Type column's text; it is called once per entry, and only when sorting by type.
-pub fn sort_entries(entries: &mut Vec<Entry>, spec: SortSpec, type_name: impl Fn(&Entry) -> String) {
+/// Type column's text; it is called once per entry, and only when sorting by type. Returns
+/// where each entry came from: entry `k` now was entry `order[k]` before.
+pub fn sort_entries(entries: &mut Vec<Entry>, spec: SortSpec, type_name: impl Fn(&Entry) -> String) -> Vec<usize> {
     // All keys live in one buffer, so sorting 100k names allocates once, not 100k times.
     let mut buf: Vec<u32> = Vec::with_capacity(entries.iter().map(|e| e.name.len() + 4).sum());
     let mut push = |text: &str| {
@@ -281,7 +282,8 @@ pub fn sort_entries(entries: &mut Vec<Entry>, spec: SortSpec, type_name: impl Fn
         })
     });
     let mut slots: Vec<Option<Entry>> = entries.drain(..).map(Some).collect();
-    entries.extend(order.into_iter().filter_map(|i| slots[i].take()));
+    entries.extend(order.iter().filter_map(|&i| slots[i].take()));
+    order
 }
 
 #[cfg(test)]
@@ -364,8 +366,9 @@ mod tests {
         let mut v = vec![entry("b.txt", false, 0, None), entry("Zeta", true, 0, None), entry("a10", false, 0, None)];
         v.push(entry("a9", false, 0, None));
         v.push(entry("alpha", true, 0, None));
-        sort_entries(&mut v, SortSpec::default(), |_| String::new());
+        let order = sort_entries(&mut v, SortSpec::default(), |_| String::new());
         assert_eq!(names(&v), ["alpha", "Zeta", "a9", "a10", "b.txt"]);
+        assert_eq!(order, [4, 1, 3, 2, 0], "where each entry was before");
         sort_entries(&mut v, SortSpec { key: SortKey::Name, dir: SortDir::Desc }, |_| String::new());
         assert_eq!(names(&v), ["Zeta", "alpha", "b.txt", "a10", "a9"]);
     }

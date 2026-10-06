@@ -73,6 +73,11 @@ pub fn matching_entries(entries: &[Entry], pattern: &Pattern) -> Vec<Entry> {
     entries.iter().filter(|entry| pattern.matches(&entry.name)).cloned().collect()
 }
 
+/// Where the entries whose names `pattern` lets through are in `entries`, ascending.
+pub fn matching_rows(entries: &[Entry], pattern: &Pattern) -> Vec<usize> {
+    entries.iter().enumerate().filter(|(_, entry)| pattern.matches(&entry.name)).map(|(i, _)| i).collect()
+}
+
 /// One part as tokens; without wildcards it is `*part*` (anywhere in the name).
 fn tokens(body: &str) -> Vec<Token> {
     let wild = body.contains(['*', '?']);
@@ -226,6 +231,7 @@ mod tests {
         let entries: Vec<Entry> = ["b.jpg", "a.txt", "c.JPG"].map(entry).into();
         let kept = matching_entries(&entries, &Pattern::compile("*.jpg").unwrap());
         assert_eq!(kept.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), ["b.jpg", "c.JPG"]);
+        assert_eq!(matching_rows(&entries, &Pattern::compile("*.jpg").unwrap()), [0, 2]);
     }
 
     /// The pure part's share of the 30 ms budget (plan sapma 19): compile, match and copy what
