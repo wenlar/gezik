@@ -442,6 +442,16 @@ mod tests {
         }
     }
 
+    /// macOS: the startup disk is `/`, another volume is mounted under /Volumes.
+    #[cfg(unix)]
+    #[test]
+    fn a_volume_mounted_under_the_root_is_another_drive() {
+        let roots = [PathBuf::from("/"), PathBuf::from("/Volumes/Backup")];
+        assert!(!same_drive(Path::new("/tmp/a.txt"), Path::new("/Volumes/Backup/x"), &roots));
+        assert!(same_drive(Path::new("/tmp/a.txt"), Path::new("/Users/me"), &roots));
+        assert!(same_drive(Path::new("/Volumes/Backup/a"), Path::new("/Volumes/Backup/b"), &roots));
+    }
+
     #[test]
     fn labels_name_the_folder() {
         let p = PathBuf::from(if cfg!(windows) { r"C:\Users\Belgeler" } else { "/home/Belgeler" });

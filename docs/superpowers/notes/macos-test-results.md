@@ -241,3 +241,113 @@ At 480×360 the layout holds: the sidebar stays and the Type and Size columns dr
 - **Context menus are cut off at the window's bottom edge:** a right-click on a row near the bottom opens the menu downward, and the lower items ("Cut", "Copy", … "Delete permanently") are cut off instead of the menu flipping up.
 - `Extract to "sifreli/"` on an archive whose single root is `sifreli/`, while that folder already exists, merged into it and gave `sifreli/sifreli/…`. This is what 7-Zip does too; just noting it.
 - Fonts and Retina scaling look sharp. Dialogs, panels and the light/dark themes are consistent.
+
+## Fixes on fix/macos
+
+Branch `fix/macos` from `master` (`104f168`), tested on the same Mac (Turkish-QWERTY-PC layout). One commit per fix. On macOS, `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo fmt --all -- --check` all pass. Every fix was checked on screen with the steps that showed the bug, and checklist items 0, 2, 8 and 13, plus the menu and language extras, were run again on the final build.
+
+| # | Bug | Commit | After the fix |
+|---|-----|--------|---------------|
+| 1 | Folder watch with symlinked paths | `7501764` | PASS |
+| 2 | `a_large_copy_lands_under_its_name_only_when_complete` | `a5d0327` | PASS |
+| 3 | ⌘[ / ⌘] without a `[` key | `27d1ee3` | PASS |
+| 4 | Drops from Finder: rows, label, ⌥ | `ac9d4c5` | PASS |
+| 5 | Drop after resting on a tab | `a820d77` (shared code) | PASS |
+| 6 | Sidebar drop onto another volume moved | `ec72af8` | PASS |
+| 7 | Language detection | `4826e75` | PASS |
+| 8 | Menu bar, ⌘M, "Gezik" | `276e410` | PASS (with a note) |
+| 9 | macOS wording, kinds, dotfiles | `2b20804`, `ec3247d`, `c594232` | PASS |
+| – | clippy `drop_non_drop` off Windows (also on master) | `a120800` | PASS |
+
+### 1. Folder watch: PASS
+- **Cause:** as found before: FSEvents reports `/private/tmp/…`, the folder was watched as `/tmp/…`, and the paths were compared with `==`.
+- **Fix:** `folder_watch::start` now watches and compares the canonical path on macOS; other systems are unchanged.
+- **Tests:** the 3 folder_watch tests pass, plus a new `a_folder_opened_through_a_symlink_is_watched` (unix).
+- **On screen (item 0):** with Gezik on `/tmp/gezik-test`, `touch canli0.txt` shows up at once.
+
+### 2. Copy test: PASS
+`copy_file` now clones first and calls `progress(0)` after the clone exists; a cancel there removes the clone. Both `a_large_copy_lands_under_its_name_only_when_complete` and `a_cancelled_large_copy_leaves_nothing` pass.
+
+### 3. ⌘[ / ⌘]: PASS
+- **Fix:** with ⌘ held, a press of the key right of P (`kVK_ANSI_LeftBracket`/`RightBracket`, read from the `NSEvent` being handled) is matched as `[` / `]`, by the key's place, as macOS's own shortcuts are. This is `gezik_platform::key_place` and `keys::shortcut_text`.
+- **Tests:** key-code mapping, and `ğ`/`ü` with ⌘ give Back/Forward.
+- **On screen:** on Turkish-QWERTY-PC, ⌘+(key that types `ğ`) goes back and ⌘+(`ü`) goes forward. The US layout (simulated `[`/`]` text) still works. The menu's Go ▸ Back/Forward work too.
+
+### 4. Drops from Finder: PASS
+- **Cause:** winit registers the NSWindow, not the view, for dragged files. So AppKit sent drags to winit's window delegate (DroppedFile, with no position and no keys), and Gezik's own `NSDraggingDestination` methods on the view were never called.
+- **Fix:** the view is now registered for `NSPasteboardTypeFileURL`, so those methods are used.
+- **On screen:**
+  - Finder → the `tek` row: the row is highlighted, the label says "Move to tek", and the file goes into `tek/`.
+  - With ⌥: the label says "Copy to klasor2", the file is copied, and the source stays.
+  - Onto `arsiv.zip`: the row is highlighted and the file is added to the zip.
+  - The label follows ⌥ while dragging. macOS's drag image has no text, so Gezik draws the label (macOS only).
+- **Not automated:** an `NSDraggingInfo` test needs a real drag session.
+
+### 5. Drop after a tab switch: PASS (shared code)
+- **Cause:** opening the tab rebuilds the list, so the pressed entry and its Slint pointer grab are gone. A release over the tab bar then reached no one.
+- **Fix:** after `tab_rested` opens a tab, the drag follows winit's `CursorMoved` / `MouseInput` events and is dropped on release.
+- **Shared:** this is shared code: Slint and winit lose the grab the same way on Windows and Linux.
+- **On screen, all three cases work and no ghost is left:**
+  - Rest on the tab, then release on the tab: moved.
+  - Rest on the tab, then release over the new list: moved.
+  - Quick drop before the switch: moved.
+
+### 6. Sidebar drop onto another volume: PASS
+- **Cause:** drives came from `/Volumes`, where the startup disk is a link (`/Volumes/Macintosh HD` → `/`). A file under `/tmp` was on no known drive, and the lexical-root fallback said "same drive".
+- **Fix:** each `/Volumes` entry is resolved, so the startup disk is `/`.
+- **Tests:** `the_startup_disk_is_the_root` (macOS) and `a_volume_mounted_under_the_root_is_another_drive`.
+- **On screen:** `d.txt` onto GezikHedef shows "Copy to GezikHedef" and is copied; the source stays.
+- **Side effect:** clicking "Macintosh HD" in the sidebar now opens `/`.
+
+### 7. Language: PASS
+- **Fix:** on macOS `language()` takes the first of `NSLocale.preferredLanguages`, and only falls back to LC_ALL / LC_CTYPE / LANG if that list is empty.
+- **Tests:** `language_is_the_first_preferred_one_on_macos`; it passes whatever LANG says.
+- **On screen (item 13):** with Turkish first in AppleLanguages (set for the test, then put back to `en-TR, tr-TR`) and a normal launch (no LC_ALL, the terminal's LANG is `C.UTF-8`):
+  - UPPER previews `FOTO İKİNCİ.txt` and `FOTO İLK.txt`.
+  - lower previews `ılık ışık.txt`.
+
+### 8. Menu bar: PASS (with a note)
+- **Fix:** a `MenuBar` in app.slint, shown only on macOS (`native-menu-bar`, set from Rust there). Its menus:
+  - **File:** New Tab ⌘T, New Folder ⇧⌘N, Quick Look, Rename, Rename Items…, Duplicate ⌘D, Move to Trash ⌘⌫, Delete Immediately… ⌥⌘⌫, Close Tab ⌘W.
+  - **Edit:** Undo ⌘Z, Redo ⇧⌘Z, Cut, Copy, Paste, Move Item Here ⌥⌘V, Select All. (macOS adds its own AutoFill, Dictation and Emoji items, as it does for Finder.)
+  - **View:** as List ⌘1, as Grid ⌘2, Show Preview, Show Hidden Files ⇧⌘., Refresh ⌘R, Enter Full Screen.
+  - **Go:** Back ⌘[, Forward ⌘], Enclosing Folder ⌘↑, Go to Folder… ⌘L.
+  - **Window:** Minimize ⌘M, Zoom, Show Next/Previous Tab.
+- **How an item works:** choosing it, with its shortcut or with the mouse, plays the action's current shortcut to the window (`menu_bar.rs`). So it does what the keys do where the focus is.
+  - Slint matches menu bar shortcuts before anything else, so they are switched off while the keys are played.
+  - That happens after the menu is done with the item. An earlier build switched them during the activation; Slint rebuilt the menu under itself and panicked ("RefCell already borrowed", `i-slint-core/menus.rs:99`).
+- **On screen:**
+  - ⌘2 and ⌘1 work, and View ▸ as List with the mouse works.
+  - ⌘C in a name being edited copies the text ("tek"); ⌘C in the list copies the file (`«class furl»`).
+  - ⌘L, ⌘A and ⌘V in the path field work.
+  - ⇧⌘. shows and hides dotfiles, and so does View ▸ Show Hidden Files.
+  - ⌘M minimizes (`AXMinimized` = true).
+  - No crash.
+- **App name:** the executable carries an Info.plist (`__TEXT,__info_plist`, `crates/gezik/macos/Info.plist`, bundle id `com.wenlar.gezik`, which I chose; change it if there is a real one), so the app menu is titled **Gezik**. macOS window tabs are off, so "Show Tab Bar" / "Show All Tabs" are gone from View.
+- **Note:** the items Slint adds to the app menu still read "About gezik", "Hide gezik" and "Quit gezik". Muda takes that name from `NSRunningApplication.localizedName`, which is the executable's file name for a binary outside an .app bundle. It will read "Gezik" once Gezik ships as `Gezik.app`.
+- **Note:** the menu shows the default shortcuts. A shortcut rebound in settings.toml still works, and the menu item still runs the action, but the menu shows the default (Slint's `Keys` can't be built from Rust with the public API).
+- **Tests:** `played_keys_are_the_chord` (every default chord played as Slint keys comes back as the same chord), and `⌘⇧.` → toggle-hidden.
+
+### 9. Wording and defaults: PASS
+- **Names:** on macOS the address bar starts with **Computer** (Finder's Go ▸ Computer) and the sidebar section is **LOCATIONS**.
+- **Kinds:**
+  - The Type column uses Launch Services kinds: "Folder", "Plain Text Document", "ZIP archive", and "Document" for unknown types, as in Finder's Kind column, in the system's language.
+  - They come from `LSCopyKindStringForTypeInfo`. It is deprecated but is the only call that names a type from its extension alone.
+  - `UTType.localizedDescription` was tried first; it gives lower-case "text" and "folder".
+  - The fallback before the name arrives is "Folder" / "Document".
+- **Dotfiles:**
+  - On macOS, names starting with a dot are hidden by default (`.DS_Store`, `.gizli` are gone: 6 items instead of 8).
+  - The new `toggle-hidden` action (⇧⌘. by default, View ▸ Show Hidden Files) shows them again.
+  - The shortcut goes by the key that types `.` on the layout in use. Shift turns it into `>` (US) or `:` (Turkish); on Turkish-QWERTY-PC that is the key at the ANSI `/` place.
+  - Windows and Linux list everything as before; toggle-hidden has no default binding there.
+- **Tests:** type names (macOS), fallbacks, `without_dotfiles`, `DRIVES_NAME` in the crumb tests.
+
+### Shared code touched
+Each of these was kept to macOS where the logic allowed:
+- `drag.rs` and `main.rs`: the tab-switch drop (5). Shared on purpose.
+- `gezik-config` shortcuts: the `.` key, the new `toggle-hidden` action, `Action::from_name` / `Shortcuts::chord_for` made public. The Other platform has no default for toggle-hidden.
+- `gezik-core`:
+  - `DRIVES_NAME` is "This PC" except on macOS.
+  - `fallback_type_name` is unchanged except on macOS.
+  - A new `same_drive` test.
+- `navigation.rs`: the clippy allow, off Windows only.

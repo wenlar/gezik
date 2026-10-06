@@ -15,9 +15,10 @@ pub fn copy_file(from: &Path, to: &Path, size: u64, progress: &mut dyn FnMut(u64
         std::os::unix::fs::symlink(std::fs::read_link(from)?, to)?;
         return Ok(());
     }
+    // The clone is instant, so the first word comes after it, as below once the copy exists.
     #[cfg(target_os = "macos")]
-    if progress(0) && clone_file(from, to).is_ok() {
-        return if progress(size) {
+    if clone_file(from, to).is_ok() {
+        return if progress(0) && progress(size) {
             Ok(())
         } else {
             let _ = std::fs::remove_file(to);

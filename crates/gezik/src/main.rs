@@ -12,6 +12,8 @@ mod folder_watch;
 mod frame_limit;
 mod keys;
 mod media;
+#[cfg(target_os = "macos")]
+mod menu_bar;
 mod navigation;
 mod operations;
 mod places;
@@ -175,6 +177,10 @@ fn handle_key(
                 Action::DeletePermanently => ops.trash(true),
                 Action::Duplicate => ops.duplicate(),
                 Action::BatchRename => ops.batch_rename(),
+                Action::ToggleHidden => {
+                    view.toggle_hidden();
+                    nav.reload();
+                }
                 Action::Undo => ops.undo(),
                 Action::Redo => ops.redo(),
             }
@@ -301,6 +307,9 @@ fn keep_on_screen(window: slint::Weak<AppWindow>, attempt: u32) {
 }
 
 fn main() -> Result<(), slint::PlatformError> {
+    // Gezik has its own tabs: no window tabs of macOS (nor their items in the View menu).
+    #[cfg(target_os = "macos")]
+    gezik_platform::app::no_window_tabs();
     let window = AppWindow::new()?;
 
     let config = ConfigStore::system();
@@ -409,6 +418,8 @@ fn main() -> Result<(), slint::PlatformError> {
         saved_state.batch_rename.clone().unwrap_or_default(),
     );
     let _batch_rename = batch_rename::BatchRename::new(&window, ops.clone());
+    #[cfg(target_os = "macos")]
+    menu_bar::install(&window, view.clone(), nav.clone(), ops.clone());
     // Tools Gezik downloads (7-Zip) go to `<config dir>/tools/`, next to the pending deletes.
     let archives =
         archives::Archives::new(&window, ops.clone(), dialogs.clone(), config.clone(), saved_state.archive.clone());
@@ -762,7 +773,9 @@ fn main() -> Result<(), slint::PlatformError> {
         move |event| {
             let Some(window) = weak.upgrade() else { return false };
             let m = event.modifiers;
-            let chord = keys::chord_from_slint(&event.text, m.control, m.alt, m.shift, m.meta, Platform::current());
+            // Slint's `control` is ⌘ on macOS.
+            let text = keys::shortcut_text(&event.text, m.control);
+            let chord = keys::chord_from_slint(&text, m.control, m.alt, m.shift, m.meta, Platform::current());
             let menu_key = keys::is_context_menu_key(&event.text, m.control, m.alt, m.shift, m.meta);
             // Esc while dragging files drops nothing.
             if chord.as_ref().is_some_and(|c| c.key == Key::Escape) && drags.escape() {
@@ -789,6 +802,8 @@ fn main() -> Result<(), slint::PlatformError> {
         use slint::winit_030::{EventResult, WinitWindowAccessor, winit};
         let weak = window.as_weak();
         let minimized = std::cell::Cell::new(false);
+        // The pointer's last window position (logical pixels).
+        let pointer = std::cell::Cell::new((0.0f32, 0.0f32));
         let ops = ops.clone();
         let drags = drags.clone();
         window.window().on_winit_window_event(move |_, event| {
@@ -816,6 +831,24 @@ fn main() -> Result<(), slint::PlatformError> {
             if let winit::event::WindowEvent::RedrawRequested = event {
                 frame_limit::wait_for_frame();
                 return EventResult::Propagate;
+            }
+            // A drag that lost its pointer grab to a tab switch follows the window's events.
+            if let winit::event::WindowEvent::CursorMoved { position, .. } = event {
+                let scale = weak.upgrade().map_or(1.0, |w| w.window().scale_factor());
+                let at = position.to_logical::<f32>(f64::from(scale));
+                drags.window_pointer_moved(at.x, at.y);
+                pointer.set((at.x, at.y));
+            }
+            if let winit::event::WindowEvent::MouseInput {
+                state: winit::event::ElementState::Released,
+                button: button @ (winit::event::MouseButton::Left | winit::event::MouseButton::Right),
+                ..
+            } = event
+            {
+                let (x, y) = pointer.get();
+                if drags.window_released(x, y, *button == winit::event::MouseButton::Right) {
+                    return EventResult::PreventDefault;
+                }
             }
             if let winit::event::WindowEvent::MouseInput {
                 state: winit::event::ElementState::Pressed, button, ..

@@ -69,7 +69,12 @@ pub fn has_own_icon(name: &str) -> bool {
 }
 
 /// The Type column until (or unless) the system names the type: `PNG File`, `WIM archive`.
+/// On macOS, Finder's words: the system names nearly every type there. A split archive's
+/// part is named by `own_type_name` first, everywhere.
 pub fn fallback_type_name(name: &str, is_dir: bool) -> String {
+    if cfg!(target_os = "macos") {
+        return if is_dir { "Folder" } else { "Document" }.to_owned();
+    }
     if is_dir {
         return "File folder".to_owned();
     }
@@ -174,6 +179,7 @@ mod tests {
         assert!(!has_own_icon("exe"));
     }
 
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn fallback_type_names() {
         assert_eq!(fallback_type_name("a.png", false), "PNG File");
@@ -221,6 +227,15 @@ mod tests {
         assert_eq!(own_type_name("test.wim", false), None);
         assert_eq!(own_type_name("report.2024", false), None);
         assert_eq!(own_type_name("x.7z.001", true), None);
-        assert_eq!(fallback_type_name("buyuk.7z.003", false), "Split 7Z archive");
+        if !cfg!(target_os = "macos") {
+            assert_eq!(fallback_type_name("buyuk.7z.003", false), "Split 7Z archive");
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn fallback_type_names_are_finders_on_macos() {
+        assert_eq!(fallback_type_name("a.png", false), "Document");
+        assert_eq!(fallback_type_name("x", true), "Folder");
     }
 }

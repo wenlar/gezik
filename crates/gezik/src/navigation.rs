@@ -612,7 +612,7 @@ impl Navigator {
         }
         let shown = match &location {
             Location::Path(p) => p.display().to_string(),
-            Location::Drives => "This PC".to_owned(),
+            Location::Drives => gezik_core::nav::DRIVES_NAME.to_owned(),
         };
         let listing = match result {
             LoadResult::Files(path, entries) => Listing::Files(path, Rc::new(entries)),
@@ -680,6 +680,8 @@ impl Navigator {
             inner.refresh_timer.stop();
             (inner.removal.take(), inner.watched.clone())
         };
+        // A no-op elsewhere (no removal watch there), and clippy says so on macOS and Linux.
+        #[cfg_attr(not(windows), allow(clippy::drop_non_drop))]
         drop(removal);
         // Windows tries the drive as soon as this returns; the watcher's thread closes its
         // handles within moments.

@@ -85,6 +85,17 @@ impl Listing {
         }
     }
 
+    /// Without the files whose names start with a dot (`.DS_Store`, `.git`).
+    pub fn without_dotfiles(self) -> Listing {
+        match self {
+            Listing::Files(dir, entries) if entries.iter().any(|e| e.name.starts_with('.')) => {
+                let kept = entries.iter().filter(|e| !e.name.starts_with('.')).cloned().collect();
+                Listing::Files(dir, Rc::new(kept))
+            }
+            other => other,
+        }
+    }
+
     pub fn kind(&self, index: usize) -> Kind {
         match self {
             Listing::Files(_, entries) => entries.get(index).map_or(Kind::File, |e| Kind::of(&e.name, e.is_dir)),
@@ -105,6 +116,14 @@ pub(crate) fn files(dir: &str, names: &[&str]) -> Listing {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dotfiles_can_be_left_out() {
+        let listing = files("/x", &[".DS_Store", ".git/", "a.txt", "b/"]).without_dotfiles();
+        let names: Vec<&str> = (0..listing.len()).filter_map(|i| listing.name_at(i)).collect();
+        assert_eq!(names, ["a.txt", "b/"]);
+        assert_eq!(listing.folder(), Some(Path::new("/x")));
+    }
 
     #[test]
     fn type_ahead_search_ignores_case() {
