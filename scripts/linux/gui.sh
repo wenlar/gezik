@@ -3,7 +3,9 @@
 # input: xdotool (XTEST) under Xvfb, wtype and the vpointer example under a headless sway.
 #   docker build -t gezik-linux scripts/linux
 #   docker run --rm -v "$PWD:/src" -v gezik-target:/target -v gezik-cargo:/usr/local/cargo/registry \
-#       -e CARGO_TARGET_DIR=/target gezik-linux bash scripts/linux/gui.sh [x11|wayland|popups|tabdrag|pdf|pdfnote|filter|select|tabs|all]
+#       -e CARGO_TARGET_DIR=/target gezik-linux bash scripts/linux/gui.sh [x11|wayland|popups|tabdrag|pdf|pdfnote|filter|select|tabs|keyboard|all]
+#   (not in `all`, release builds: `filterperf` times the filter at 100,000 files, `memory [exe]`
+#   gives idle memory)
 # Needs the network (apt for 7-Zip, Gezik's own 7-Zip download). Screenshots go to
 # .superpowers/linux-shots/gui-*.png. Each check prints "ok" or "FAIL"; the exit code is the
 # number of failures. Coordinates are the window's (no window manager under Xvfb, so it is
@@ -939,6 +941,183 @@ tabs() {
     grep -i "panicked" /tmp/gezik-gui-tabs.log && fail "tabs: no panic" || pass "tabs: no panic"
 }
 
+# 6a end to end, by keys only: the filter (Ctrl+F, `/`, Esc on the list and in the field,
+# Turkish İ), the pattern box (Ctrl+=, keypad + and -, Ctrl+Shift+I), the selection back
+# (keypad /), tabs by number, the view keys (Ctrl+Shift+1/2), reopening a closed tab with its
+# history, a lock bound in settings.toml, the tab picker and `typing = "filter"`. What is
+# selected is read from the clipboard after Ctrl+C (the names, in any order). X11, 900x600.
+keyboard() {
+    Xvfb :99 -screen 0 1600x900x24 >/dev/null 2>&1 &
+    local xvfb=$!
+    unset WAYLAND_DISPLAY
+    export DISPLAY=:99
+    sleep 1
+    . /src/scripts/linux/gui-lib.sh
+    rm -rf /tmp/k /tmp/cfg /root/.local/share/Trash && mkdir -p /tmp/k/Docs /tmp/cfg
+    for n in a.jpg b.JPG c.png d.txt İSTANBUL.txt; do echo "$n" > "/tmp/k/$n"; done
+    # Something in Docs, so that its grid differs from its list.
+    for n in 1 2 3; do echo $n > /tmp/k/Docs/note$n.txt; done
+    printf '[shortcuts]\ntoggle-tab-lock = "ctrl+shift+l"\n' >/tmp/cfg/settings.toml
+    start_k() {
+        GEZIK_CONFIG_DIR=/tmp/cfg $GEZIK /tmp/k >>/tmp/gezik-gui-keyboard.log 2>&1 &
+        gezik=$!
+        sleep 3
+        xdotool windowmove "$(win)" 0 0; xdotool windowsize "$(win)" 900 600; sleep 0.5
+    }
+    : >/tmp/gezik-gui-keyboard.log
+    local gezik
+    start_k
+    title() { xdotool getwindowname "$(win)"; }
+    is() { [ "$(title)" = "$1 — Gezik" ]; }
+    # The names Ctrl+C put on the clipboard, sorted, on one line.
+    copied() {
+        xclip -selection clipboard -t x-special/gnome-copied-files -o 2>/dev/null | tail -n +2 | python3 -c '
+import sys, os, urllib.parse
+names = [os.path.basename(urllib.parse.unquote(l.strip()[len("file://"):])) for l in sys.stdin if l.strip()]
+print(" ".join(sorted(names)))'
+    }
+    sorted() { printf '%s\n' "$@" | LC_ALL=C sort | paste -sd' '; }
+    copies() { key ctrl+c; sleep 0.4; [ "$(copied)" = "$(sorted "$@")" ]; }
+    # Rows (folders first): Docs 118, a.jpg 144, b.JPG 170, c.png 196, d.txt 222, İSTANBUL.txt 248.
+    click 255 144
+
+    # The filter.
+    key ctrl+f; typ jpg; key Down ctrl+a
+    check "keyboard: filter: only the shown items are selected" 'copies a.jpg b.JPG'
+    key Escape; sleep 0.5; key ctrl+a
+    check "keyboard: Esc on the list closes the filter (all six)" \
+        'copies Docs a.jpg b.JPG c.png d.txt İSTANBUL.txt'
+    key slash; typ istanbul; key Down ctrl+a
+    check "keyboard: / and istanbul show İSTANBUL.txt" 'copies İSTANBUL.txt'
+    key ctrl+f; sleep 0.3; key Escape; sleep 0.5; key ctrl+a
+    check "keyboard: Esc in the field closes it" 'copies Docs a.jpg b.JPG c.png d.txt İSTANBUL.txt'
+
+    # The pattern box, invert.
+    key Escape ctrl+equal; sleep 0.8; typ '*.png;*.txt'; key Return; sleep 0.5
+    check "keyboard: Ctrl+= selects by pattern" 'copies c.png d.txt İSTANBUL.txt'
+    key ctrl+shift+i; sleep 0.3
+    check "keyboard: Ctrl+Shift+I inverts" 'copies Docs a.jpg b.JPG'
+    key Escape; sleep 0.3; shot keyboard-no-box
+    key KP_Add; sleep 0.8; shot keyboard-box
+    check "keyboard: keypad + opens the box" '! cmp -s "$SHOTS/keyboard-box.png" "$SHOTS/keyboard-no-box.png"'
+    key ctrl+a; typ 'd*'; key Return; sleep 0.5
+    check "keyboard: keypad + selects d*" 'copies Docs d.txt'
+    key KP_Subtract; sleep 0.8; key ctrl+a; typ '*.txt'; key Return; sleep 0.5
+    check "keyboard: keypad - deselects *.txt" 'copies Docs'
+
+    # The selection back after a delete.
+    click 255 222; key Delete; sleep 1.5; key ctrl+z; sleep 2
+    key KP_Divide; sleep 0.5
+    check "keyboard: keypad / brings back the selection of the delete" 'copies d.txt'
+
+    # Tabs by number, the view keys.
+    key ctrl+t; sleep 1; key ctrl+l; typ /tmp/k/Docs; key Return; sleep 1
+    key ctrl+1; sleep 0.8; check "keyboard: Ctrl+1 shows the first tab" 'is k'
+    key ctrl+2; sleep 0.8; check "keyboard: Ctrl+2 shows the second" 'is Docs'
+    key ctrl+1 ctrl+9; sleep 0.8; check "keyboard: Ctrl+9 shows the last" 'is Docs'
+    click 255 300; shot keyboard-list
+    key ctrl+shift+2; sleep 0.8; shot keyboard-grid
+    check "keyboard: Ctrl+Shift+2 shows the grid" '! cmp -s "$SHOTS/keyboard-grid.png" "$SHOTS/keyboard-list.png"'
+    key ctrl+shift+1; sleep 0.8; shot keyboard-list-again
+    check "keyboard: Ctrl+Shift+1 the list again" '! cmp -s "$SHOTS/keyboard-list-again.png" "$SHOTS/keyboard-grid.png"'
+
+    # Close and reopen, with the history.
+    key ctrl+w; sleep 1; check "keyboard: Ctrl+W closes the Docs tab" 'is k'
+    key ctrl+shift+t; sleep 1.5; check "keyboard: Ctrl+Shift+T reopens it" 'is Docs'
+    key alt+Left; sleep 1; check "keyboard: with its history (Back leaves Docs)" '! is Docs'
+    key alt+Right; sleep 1
+
+    # The lock, bound in settings.toml.
+    key ctrl+shift+l; sleep 0.5; key ctrl+w; sleep 1
+    check "keyboard: locked tab stays" 'is Docs'
+    key ctrl+shift+l; sleep 0.5
+
+    # The tab picker.
+    key ctrl+1; sleep 0.8; key ctrl+shift+a; sleep 0.8; typ docs; key Return; sleep 1
+    check "keyboard: the tab picker goes to Docs" 'is Docs'
+
+    # typing = "filter".
+    kill $gezik 2>/dev/null; wait $gezik 2>/dev/null
+    printf '[shortcuts]\ntoggle-tab-lock = "ctrl+shift+l"\n\n[keyboard]\ntyping = "filter"\n' >/tmp/cfg/settings.toml
+    rm -f /tmp/cfg/state.toml
+    start_k
+    click 255 144; typ c.; key Down ctrl+a
+    check "keyboard: typing = filter: c. filters" 'copies c.png'
+    kill $gezik 2>/dev/null
+    kill $xvfb 2>/dev/null
+    wait 2>/dev/null
+    grep -i "panicked" /tmp/gezik-gui-keyboard.log && fail "keyboard: no panic" || pass "keyboard: no panic"
+}
+
+# Not in `all`. The filter in a folder of 100,000 files, release build: the process's CPU
+# time (all threads, /proc/<pid>/task/*/schedstat) from before each keystroke to 300 ms after
+# it, less the idle CPU of 300 ms with the bar open. Twice: nothing selected, then after
+# Ctrl+A. Esc (closing the bar) too. X11, 900x600.
+filterperf() {
+    cargo build --release -p gezik 2>&1 | tail -1
+    Xvfb :99 -screen 0 1600x900x24 >/dev/null 2>&1 &
+    local xvfb=$!
+    unset WAYLAND_DISPLAY
+    export DISPLAY=:99
+    sleep 1
+    . /src/scripts/linux/gui-lib.sh
+    local dir=/tmp/gezik-stress-100000
+    if [ "$(ls $dir 2>/dev/null | wc -l)" != 100000 ]; then
+        rm -rf $dir && mkdir -p $dir && (cd $dir && seq 0 99999 | sed 's/.*/file_&.txt/' | xargs touch)
+    fi
+    rm -rf /tmp/cfg && mkdir -p /tmp/cfg
+    GEZIK_CONFIG_DIR=/tmp/cfg /target/release/gezik $dir >/tmp/gezik-filterperf.log 2>&1 &
+    local gezik=$!
+    sleep 6
+    xdotool windowmove "$(win)" 0 0; xdotool windowsize "$(win)" 900 600; sleep 1
+    cpu() { cat /proc/$gezik/task/*/schedstat 2>/dev/null | awk '{s += $1} END {printf "%d", s / 1000}'; }   # µs
+    # The CPU of one key (xdotool key NAME) in ms, from before it to 300 ms after it.
+    one() { local c0 c1; c0=$(cpu); xdotool key "$1"; sleep 0.3; c1=$(cpu); echo $(( (c1 - c0) / 1000 )); }
+    stats() { sort -n | awk '{a[NR] = $1} END {printf "worst %d ms, median %d ms (%d)", a[NR], a[int((NR + 1) / 2)], NR}'; }
+    idle() { for _ in 1 2 3 4 5; do local c0 c1; c0=$(cpu); sleep 0.3; c1=$(cpu); echo $(( (c1 - c0) / 1000 )); done | stats; }
+    typed() { for k in f i l e underscore 1 2 3 4; do one $k; done | stats; }
+    xdotool windowfocus --sync "$(win)"; click 255 118
+    key ctrl+f; sleep 1
+    echo "idle with the bar open: $(idle)"
+    echo "file_1234, nothing selected: $(typed)"; shot filterperf-typed
+    echo "Esc, nothing selected: $(one Escape) ms"
+    sleep 1; key Escape ctrl+a; sleep 1; key ctrl+f; sleep 1
+    echo "file_1234 after Ctrl+A on 100,000: $(typed)"; shot filterperf-typed-all
+    echo "Esc after Ctrl+A: $(one Escape) ms"
+    kill $gezik 2>/dev/null
+    kill $xvfb 2>/dev/null
+    wait 2>/dev/null
+    grep -i "panicked" /tmp/gezik-filterperf.log && fail "filterperf: no panic" || pass "filterperf: no panic"
+}
+
+# Not in `all`. Idle memory of a release Gezik (EXE, default the branch's) on its home folder
+# with an empty config, 900x600, 3 s after it opened: RSS, its anonymous part and the private
+# (unshared) memory, the Linux side of Task Manager's figure. Five runs.
+memory() {
+    local exe=${1:-/target/release/gezik}
+    [ -x "$exe" ] || cargo build --release -p gezik 2>&1 | tail -1
+    Xvfb :99 -screen 0 1600x900x24 >/dev/null 2>&1 &
+    local xvfb=$!
+    unset WAYLAND_DISPLAY
+    export DISPLAY=:99
+    sleep 1
+    . /src/scripts/linux/gui-lib.sh
+    for run in 1 2 3 4 5; do
+        rm -rf /tmp/cfg && mkdir -p /tmp/cfg
+        GEZIK_CONFIG_DIR=/tmp/cfg "$exe" >/dev/null 2>&1 &
+        local pid=$!
+        sleep 2; xdotool windowsize "$(win)" 900 600; sleep 3
+        printf 'run %s: ' $run
+        awk '/^VmRSS|^RssAnon/ {printf "%s %.1f MiB, ", $1, $2 / 1024}' /proc/$pid/status
+        # AnonHugePages: with transparent huge pages on "always", a fresh mapping (a thread's
+        # arena) may be backed by a whole 2 MiB page now and then.
+        awk '/^Private/ {p += $2} /^AnonHugePages/ {h = $2} END {printf "Private %.1f MiB, AnonHugePages %.1f MiB\n", p / 1024, h / 1024}' /proc/$pid/smaps_rollup
+        kill $pid; wait $pid 2>/dev/null
+    done
+    kill $xvfb 2>/dev/null
+    wait 2>/dev/null
+}
+
 setup_7zip
 case "${1:-all}" in
     x11) x11 ;;
@@ -950,7 +1129,10 @@ case "${1:-all}" in
     filter) filter ;;
     select) selection ;;
     tabs) tabs ;;
-    *) x11; wayland; popups; tabdrag; pdfpopups; pdfnote; filter; selection; tabs ;;
+    keyboard) keyboard ;;
+    filterperf) filterperf ;;
+    memory) memory "${2:-}" ;;
+    *) x11; wayland; popups; tabdrag; pdfpopups; pdfnote; filter; selection; tabs; keyboard ;;
 esac
 echo "failures: $failures"
 exit $failures

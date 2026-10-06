@@ -62,6 +62,13 @@ Note in the results any other line in the terminal.
 | Path field | Ctrl+L |
 | Preview pane | Alt+P |
 | Start a layer's job | Ctrl+Enter |
+| Filter the list | Ctrl+F, or `/` while the list has the keyboard |
+| Select / deselect by pattern | Ctrl+= / Ctrl+-, or keypad + / keypad - |
+| Select the same type | Alt+keypad + |
+| Invert the selection | Ctrl+Shift+I |
+| Restore the last selection | keypad / |
+| Tabs | Ctrl+1…Ctrl+8, Ctrl+9 (the last), Ctrl+Shift+T (reopen a closed tab), Ctrl+Shift+A (tab picker) |
+| List / grid view | Ctrl+Shift+1 / Ctrl+Shift+2 |
 
 All of these are listed in `settings.toml` under `[shortcuts]`.
 
@@ -303,6 +310,27 @@ Display
     - Clicks land where they should.
     - The menu positions and drop highlights match the pointer.
 33. **Wayland vs X11 summary:** repeat 9-14 in the other session type (GNOME: "GNOME on Xorg" at login, where available; KDE: Plasma (X11)). Also run once with `env -u WAYLAND_DISPLAY ./gezik` (XWayland) in a Wayland session. Fill a small table of what differs.
+
+Keyboard (6a: filter, selection, tabs)
+34. **Filter:** in `~/gezik-test`, Ctrl+F opens a bar above the list with the field focused. Type `jpg`: only names with `jpg` show, and the counter says shown / all (`2 / 14`).
+    - Down gives the list the keyboard and the bar stays. Ctrl+A then Delete trashes only the shown items. Ctrl+Z brings them back, and the filter stays.
+    - Esc on the list closes the filter, and a second Esc clears the selection. Esc in the field closes it too.
+    - `/` on the list opens the bar. `istanbul` shows `ılık İstanbul.txt` (Turkish İ), and so does `ILIK`.
+    - A second tab keeps its own filter (Ctrl+Tab back and forth). Going into a folder or Back opens it without a filter.
+    - Copy a file into the folder from Nautilus/Dolphin while it is filtered. The list refreshes by itself and the counter follows.
+    - `!` alone shows a red line and "Type a name after "!"", and the list stays.
+35. **Pattern box:** Ctrl+= and keypad + open "Select by pattern", starting with the last pattern. "N items match" follows the text, and a bad pattern is said in red. Select adds the matches. Ctrl+- and keypad - deselect.
+    - The main-row `+` (Shift+=) does not open the box.
+    - Ctrl+Shift+I inverts. Alt+keypad + on a `.jpg` adds every `.jpg`.
+    - Select two files, Delete, Ctrl+Z, then keypad /: the two are selected again.
+    - On a non-US layout where `=` needs Shift (Turkish Q: Shift+0), Ctrl+= doesn't work. `select-pattern = ["num+", "ctrl+shift+0"]` under `[shortcuts]` makes it work. Ctrl+- works.
+36. **Keypad on Wayland:** repeat 35's keypad + / - / / and Alt+keypad + in a Wayland session, and in an X11 session with NumLock on and off. Write down which work.
+37. **Tabs:** open four tabs. Ctrl+1…Ctrl+4 switch, Ctrl+7 does nothing, Ctrl+9 shows the last. Ctrl+Shift+2 shows the grid and Ctrl+Shift+1 the list (also on Turkish Q).
+    - Go two folders deep in a tab, filter it, then Ctrl+W and Ctrl+Shift+T. The tab is back in its place with its filter, and Alt+Left goes to the folder before.
+    - Right-click a tab, then Lock tab: a lock shows and the × goes. Ctrl+W, a middle-click and "Close other tabs" leave it open, and the status bar says so. Unlock tab.
+    - Ctrl+Shift+A opens the tab picker with the active tab selected. Typing filters it, Up/Down move, Enter switches and Esc closes.
+38. **Typing mode:** add `[keyboard]` `typing = "filter"` to `settings.toml` (picked up live). Typing a letter on the list opens the filter with it. Back to `"jump"`, a letter jumps to a name again.
+39. **Saved filters:** ▾ in the bar, Save as… "Resimler". `settings.toml` gets `[[filters]]`. ▾ then Resimler fills the bar. ▾, Delete "Resimler" takes it out.
 
 ## Known gaps (not bugs)
 
