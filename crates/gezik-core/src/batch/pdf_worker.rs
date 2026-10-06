@@ -190,16 +190,19 @@ impl Request {
         for line in lines {
             let (key, rest) = line.split_once('\t').unwrap_or((line, ""));
             match key {
-                "library" => library = Some(decode_path(rest).ok_or("bad library path")?),
-                "dir" => dir = Some(decode_path(rest).ok_or("bad dir path")?),
-                "job" => job = Some(parse_job(rest)?),
+                "library" => once(&mut library, "library", decode_path(rest).ok_or("bad library path")?)?,
+                "dir" => once(&mut dir, "dir", decode_path(rest).ok_or("bad dir path")?)?,
+                "job" => once(&mut job, "job", parse_job(rest)?)?,
                 "in" => inputs.push(decode_path(rest).ok_or("bad input path")?),
                 "password" => {
                     let (index, password) = rest.split_once('\t').ok_or("bad password line")?;
                     let index = index.parse::<usize>().map_err(|_| "bad password line")?;
+                    if passwords.iter().any(|(i, _)| *i == index) {
+                        return Err(format!("two passwords for input {index}"));
+                    }
                     passwords.push((index, unescape(password).ok_or("bad password line")?));
                 }
-                _ => return Err(format!("unknown line \"{key}\"")),
+                _ => return Err(format!("unknown line \"{}\"", shown_key(key))),
             }
         }
         let library = library.ok_or("missing library")?;
@@ -229,6 +232,24 @@ impl Request {
     pub fn password(&self, input: usize) -> Option<&str> {
         self.passwords.iter().find(|(index, _)| *index == input).map(|(_, p)| p.as_str())
     }
+}
+
+/// Sets `slot` from a line that may come once only.
+fn once<T>(slot: &mut Option<T>, key: &str, value: T) -> Result<(), String> {
+    if slot.is_some() {
+        return Err(format!("two {key} lines"));
+    }
+    *slot = Some(value);
+    Ok(())
+}
+
+/// An unknown key as an error quotes it: at most 32 characters, control characters as `?`.
+fn shown_key(key: &str) -> String {
+    let mut shown: String = key.chars().take(32).map(|c| if c.is_control() { '?' } else { c }).collect();
+    if key.chars().count() > 32 {
+        shown.push('…');
+    }
+    shown
 }
 
 fn job_name(job: &WorkerJob) -> &'static str {
@@ -450,6 +471,16 @@ mod tests {
         let one = request(WorkerJob::Merge, &["a.pdf"]).to_text();
         assert_eq!(Request::parse(&one).unwrap_err(), "merge needs two inputs");
         assert_eq!(Request::parse(&format!("{ok}password\t3\tx\n")).unwrap_err(), "password for a missing input");
+        // A line that may come once, twice.
+        assert_eq!(Request::parse(&format!("{ok}library\ts:x\n")).unwrap_err(), "two library lines");
+        assert_eq!(Request::parse(&format!("{ok}job\tcount\n")).unwrap_err(), "two job lines");
+        let twice = format!("{ok}password\t0\ta\npassword\t0\tb\n");
+        assert_eq!(Request::parse(&twice).unwrap_err(), "two passwords for input 0");
+        // An unknown key is quoted short and without control characters.
+        let long = format!("{ok}{}\u{1b}\tx\n", "k".repeat(100));
+        assert_eq!(Request::parse(&long).unwrap_err(), format!("unknown line \"{}…\"", "k".repeat(32)));
+        let odd = format!("{ok}a\u{1b}b\tx\n");
+        assert_eq!(Request::parse(&odd).unwrap_err(), "unknown line \"a?b\"");
     }
 
     #[test]
