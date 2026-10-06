@@ -94,7 +94,10 @@ pub fn parse_chord(text: &str, platform: Platform) -> Result<Option<Chord>, Stri
     // "num+" ends in the separator: it is taken off before the rest is split.
     let (modifiers, key) = match text.strip_suffix("num+") {
         Some("") => ("", Key::Num('+')),
-        Some(rest) if rest.ends_with('+') => (&rest[..rest.len() - 1], Key::Num('+')),
+        Some(rest) if rest.trim_end().ends_with('+') => {
+            let rest = rest.trim_end();
+            (&rest[..rest.len() - 1], Key::Num('+'))
+        }
         _ => {
             let (modifiers, name) = text.rsplit_once('+').unwrap_or(("", text.as_str()));
             let name = name.trim();
@@ -415,29 +418,27 @@ impl Shortcuts {
             }
         }
 
-        // What a key taken by another action costs: the whole action, or just that key.
-        let lost = |action: Action, keys: usize| {
-            if keys > 1 { "that key is left out".to_owned() } else { format!("{} is disabled", action.name()) }
-        };
+        // A key taken by an earlier binding costs just that key while the action keeps another
+        // one; with none left, the action is disabled.
         let mut bindings: Vec<(Chord, Action)> = Vec::new();
         for (action, chords) in &user {
+            let mut taken: Vec<Action> = Vec::new();
             for chord in chords {
-                if let Some((_, owner)) = bindings.iter().find(|(c, _)| c == chord) {
+                match bindings.iter().find(|(c, _)| c == chord) {
                     // The same key written twice for one action is just that key.
-                    if owner != action {
-                        warnings.push(Warning::new(
-                            file,
-                            format!(
-                                "shortcuts.{}: already used by {}; {}",
-                                action.name(),
-                                owner.name(),
-                                lost(*action, chords.len())
-                            ),
-                        ));
-                    }
-                    continue;
+                    Some((_, owner)) if owner == action => {}
+                    Some((_, owner)) => taken.push(*owner),
+                    None => bindings.push((*chord, *action)),
                 }
-                bindings.push((*chord, *action));
+            }
+            let kept = bindings.iter().any(|(_, a)| a == action);
+            for owner in taken {
+                let cost =
+                    if kept { "that key is left out".to_owned() } else { format!("{} is disabled", action.name()) };
+                warnings.push(Warning::new(
+                    file,
+                    format!("shortcuts.{}: already used by {}; {cost}", action.name(), owner.name()),
+                ));
             }
         }
 
@@ -445,22 +446,29 @@ impl Shortcuts {
             if user.iter().any(|(a, _)| *a == action) {
                 continue;
             }
-            let texts = action.default_texts(platform);
-            for text in texts {
+            let mut taken: Vec<(&str, Action)> = Vec::new();
+            for text in action.default_texts(platform) {
                 let chord = parse_chord(text, platform).expect("defaults are valid").expect("defaults are set");
-                if let Some((_, owner)) = bindings.iter().find(|(c, _)| *c == chord) {
-                    warnings.push(Warning::new(
-                        file,
-                        format!(
-                            "shortcuts: the default \"{text}\" of {} is used by {}; {}",
-                            action.name(),
-                            owner.name(),
-                            lost(action, texts.len())
-                        ),
-                    ));
-                    continue;
+                match bindings.iter().find(|(c, _)| *c == chord) {
+                    Some((_, owner)) => taken.push((text, *owner)),
+                    None => bindings.push((chord, action)),
                 }
-                bindings.push((chord, action));
+            }
+            let kept = bindings.iter().any(|(_, a)| *a == action);
+            for (text, owner) in taken {
+                let cost = if kept {
+                    "that key is left out".to_owned()
+                } else {
+                    format!("{} is disabled (give {} another key to use it)", action.name(), owner.name())
+                };
+                warnings.push(Warning::new(
+                    file,
+                    format!(
+                        "shortcuts: the default \"{text}\" of {} is used by {}; {cost}",
+                        action.name(),
+                        owner.name()
+                    ),
+                ));
             }
         }
         Shortcuts { bindings }
@@ -607,7 +615,8 @@ view-list = \"mod+1\"
         assert_eq!(s.action_for(&chord("ctrl+shift+1")), None, "the user's binding replaces the default");
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert!(
-            warnings[0].message.contains("tab-1") && warnings[0].message.ends_with("tab-1 is disabled"),
+            warnings[0].message.contains("tab-1")
+                && warnings[0].message.ends_with("tab-1 is disabled (give view-list another key to use it)"),
             "{warnings:?}"
         );
     }
@@ -640,8 +649,8 @@ duplicate = \"ctrl+d\"
         assert_eq!(
             messages,
             [
-                "shortcuts: the default \"mod+1\" of tab-1 is used by view-list; tab-1 is disabled",
-                "shortcuts: the default \"mod+2\" of tab-2 is used by view-grid; tab-2 is disabled",
+                "shortcuts: the default \"mod+1\" of tab-1 is used by view-list; tab-1 is disabled (give view-list another key to use it)",
+                "shortcuts: the default \"mod+2\" of tab-2 is used by view-grid; tab-2 is disabled (give view-grid another key to use it)",
             ]
         );
     }
@@ -677,6 +686,77 @@ refresh = \"num+\"
         assert_eq!(s.action_for(&chord("num+")), Some(Action::Refresh));
         assert_eq!(s.action_for(&chord("ctrl+=")), Some(Action::SelectPattern), "its other key stays");
         assert!(warnings[0].message.ends_with("that key is left out"), "{warnings:?}");
+    }
+
+    #[test]
+    fn num_plus_parses_with_spaces_around_the_separator() {
+        assert_eq!(
+            chord("ctrl + num+"),
+            Chord { ctrl: true, alt: false, shift: false, meta: false, key: Key::Num('+') }
+        );
+        assert_eq!(
+            chord(" Ctrl + Alt +NUM+ "),
+            Chord { ctrl: true, alt: true, shift: false, meta: false, key: Key::Num('+') }
+        );
+        assert_eq!(
+            chord("alt + num-"),
+            Chord { ctrl: false, alt: true, shift: false, meta: false, key: Key::Num('-') }
+        );
+        assert!(parse_chord("ctrl + + num+", Platform::Other).is_err());
+    }
+
+    #[test]
+    fn an_action_left_with_no_key_is_disabled() {
+        // Both default keys of select-pattern are taken: it has none left.
+        let (s, warnings) = build(
+            "[shortcuts]
+refresh = \"num+\"
+up = \"ctrl+=\"
+",
+        );
+        assert_eq!(s.chord_for(Action::SelectPattern), None);
+        let messages: Vec<&str> = warnings.iter().map(|w| w.message.as_str()).collect();
+        assert_eq!(
+            messages,
+            [
+                "shortcuts: the default \"mod+=\" of select-pattern is used by up; select-pattern is disabled (give up another key to use it)",
+                "shortcuts: the default \"num+\" of select-pattern is used by refresh; select-pattern is disabled (give refresh another key to use it)",
+            ]
+        );
+        // One of two taken: only that key goes.
+        let (_, warnings) = build(
+            "[shortcuts]
+refresh = \"num+\"
+",
+        );
+        assert_eq!(
+            warnings[0].message,
+            "shortcuts: the default \"num+\" of select-pattern is used by refresh; that key is left out"
+        );
+        // The user's own list, all of it taken by keys written before it.
+        let (s, warnings) = build(
+            "[shortcuts]
+up = \"ctrl+u\"
+forward = \"ctrl+j\"
+back = [\"ctrl+u\", \"ctrl+j\"]
+",
+        );
+        assert_eq!(s.chord_for(Action::Back), None);
+        let messages: Vec<&str> = warnings.iter().map(|w| w.message.as_str()).collect();
+        assert_eq!(
+            messages,
+            [
+                "shortcuts.back: already used by up; back is disabled",
+                "shortcuts.back: already used by forward; back is disabled"
+            ]
+        );
+        let (_, warnings) = build(
+            "[shortcuts]
+up = \"ctrl+u\"
+back = [\"ctrl+u\", \"ctrl+j\"]
+",
+        );
+        assert_eq!(warnings[0].message, "shortcuts.back: already used by up; that key is left out");
     }
 
     #[test]

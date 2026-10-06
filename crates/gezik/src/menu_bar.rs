@@ -56,6 +56,9 @@ pub fn install(window: &AppWindow, view: View, nav: Navigator, ops: Operations) 
 fn play(window: &AppWindow, chord: &Chord) {
     let (modifiers, text) = keys::slint_keys(chord, Platform::Mac);
     let send = |event| window.window().dispatch_event(event);
+    // The real press the menu bar took never reached `key-event`: its noted physical key
+    // (keys.rs `Physical`) must not pass to these made-up ones.
+    let _ = keys::take_pressed();
     // Slint matches the menu bar's shortcuts first (as macOS does): it would take these keys
     // for the item again instead of passing them on.
     window.set_menu_keys(false);

@@ -131,10 +131,10 @@ pub fn physical_of(code: slint::winit_030::winit::keyboard::KeyCode) -> Physical
 }
 
 /// The chord of a key press (see `chord_from_slint`), with what winit said the key was: the
-/// keypad's + - * / are `Key::Num`; Ctrl (⌘) + Shift on a digit key is that digit, whatever
-/// Shift types there (`!`, `'`). Not with Alt: AltGr (Ctrl+Alt on Windows) types characters.
-/// Only a press that types something: a modifier key (one `menu_bar` plays after the menu bar
-/// took a digit's press) goes by its text.
+/// keypad's + - * / are `Key::Num`; Ctrl (⌘) on a digit key is that digit, with or without
+/// Shift, whatever the key types (`!` and `'` with Shift; `&`, `é` unshifted on AZERTY). Not
+/// with Alt: AltGr (Ctrl+Alt on Windows) types characters. Only a press that types something:
+/// a modifier key goes by its text.
 pub fn chord_from_press(
     text: &str,
     physical: Physical,
@@ -153,7 +153,7 @@ pub fn chord_from_press(
         Physical::Numpad(c) if typed_char(text) == Some(c) => {
             Some(Chord { ctrl, alt, shift, meta: cmd, key: Key::Num(c) })
         }
-        Physical::Digit(d) if (ctrl || cmd) && shift && !alt && typed_char(text).is_some() => {
+        Physical::Digit(d) if (ctrl || cmd) && !alt && typed_char(text).is_some() => {
             Some(Chord { ctrl, alt, shift, meta: cmd, key: Key::Char(d) })
         }
         _ => chord_from_slint(text, control, alt, shift, meta, platform),
@@ -581,6 +581,39 @@ mod tests {
         assert_eq!(chord_from_press("{", Physical::Digit('7'), true, true, false, false, Platform::Other), None);
         // Plain Shift+1 types `!`: no chord.
         assert_eq!(chord_from_press("!", Physical::Digit('1'), false, false, true, false, Platform::Other), None);
+    }
+
+    #[test]
+    fn ctrl_and_a_digit_key_is_the_digit_on_azerty_too() {
+        let defaults = Shortcuts::defaults(Platform::Other);
+        let other = |text, digit, shift| {
+            let got = chord_from_press(text, Physical::Digit(digit), true, false, shift, false, Platform::Other);
+            got.and_then(|c| defaults.action_for(&c))
+        };
+        // French/Belgian AZERTY: the digit row types & é " ' ( - è _ ç unshifted, digits with Shift.
+        for (text, digit, action) in [
+            ("&", '1', Action::Tab1),
+            ("é", '2', Action::Tab2),
+            ("\"", '3', Action::Tab3),
+            ("-", '6', Action::Tab6),
+            ("_", '8', Action::Tab8),
+            ("ç", '9', Action::TabLast),
+        ] {
+            assert_eq!(other(text, digit, false), Some(action), "{text}");
+        }
+        assert_eq!(other("1", '1', true), Some(Action::ViewList), "AZERTY Ctrl+Shift+1 types 1");
+        // QWERTY and Turkish Q as before.
+        assert_eq!(other("1", '1', false), Some(Action::Tab1));
+        assert_eq!(other("9", '9', false), Some(Action::TabLast));
+        assert_eq!(other("'", '2', true), Some(Action::ViewGrid));
+        // AltGr still types: AZERTY AltGr+0 is `@`, Turkish Q AltGr+7 is `{`.
+        assert_eq!(chord_from_press("@", Physical::Digit('0'), true, true, false, false, Platform::Other), None);
+        assert_eq!(chord_from_press("{", Physical::Digit('7'), true, true, false, false, Platform::Other), None);
+        // Without Ctrl (⌘) a digit key is what it types.
+        assert_eq!(chord_from_press("&", Physical::Digit('1'), false, false, false, false, Platform::Other), None);
+        // macOS AZERTY: ⌘ (Slint's `control`) + the 1 key.
+        let cmd = chord_from_press("&", Physical::Digit('1'), true, false, false, false, Platform::Mac).unwrap();
+        assert_eq!(Shortcuts::defaults(Platform::Mac).action_for(&cmd), Some(Action::Tab1));
     }
 
     #[test]
