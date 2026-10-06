@@ -554,7 +554,11 @@ mod tests {
                 Action::TabLast => "ctrl+9",
                 Action::ReopenTab => "ctrl+shift+t",
                 Action::TabPicker => "ctrl+shift+a",
-                Action::PasteMove | Action::Duplicate | Action::BatchRename | Action::ToggleTabLock => continue,
+                Action::PasteMove
+                | Action::Duplicate
+                | Action::BatchRename
+                | Action::ToggleTabLock
+                | Action::ClearHistory => continue,
             };
             assert_eq!(reach(text), Some(action), "{text}");
         }

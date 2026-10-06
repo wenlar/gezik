@@ -59,6 +59,11 @@ seven-zip = ""            # path to 7-Zip; empty = Gezik's download, then PATH
 # what you typed; "filter" opens the filter (Ctrl+F, or / ) with it.
 typing = "jump"           # jump | filter
 
+[history]
+# Remember the folders you open, for the address bar's Recent and Frequent lists (kept in
+# state.toml). false also forgets them; "clear-history" (no key by default) empties the list.
+remember = true
+
 [shortcuts]
 # Change any shortcut; "mod" is Cmd on macOS and Ctrl elsewhere; "" disables.
 # new-tab = "mod+t"
@@ -99,6 +104,7 @@ typing = "jump"           # jump | filter
 # reopen-tab = "mod+shift+t"
 # tab-picker = "mod+shift+a"
 # toggle-tab-lock = ""     # a locked tab does not close
+# clear-history = ""     # forget the folders the address bar remembers
 
 # Saved rule sets for batch rename (Rename… with two or more items selected). The rename
 # layer writes them with "Presets ▾ › Save current rules as…"; they can also be written here.
@@ -132,6 +138,11 @@ typing = "jump"           # jump | filter
 # file. Also: folders = true (run on folders too), parallel = 1-16 (how many run at once,
 # default 1). The program is looked up in PATH or given as a full path. A command that is
 # not valid, or has a key not named here (a typo), is reported and left out.
+# {files} puts in every selected item (full paths, one argument each) and runs the command
+# once, in their folder; it can't be used with {in}, {name}, {ext}, {out} or "output", and
+# what it does can't be undone. shortcut = "ctrl+alt+z" runs a command on the selection (the
+# keys of [shortcuts]; a key already taken is left out, with a warning); menu = "Archives"
+# lists it under that heading in "Commands >"; ask = true asks "Run … on N items?" first.
 # [[commands]]
 # name = "Resize to 50% (ImageMagick)"
 # run = ["magick", "{in}", "-resize", "50%", "{out}"]
@@ -150,3 +161,11 @@ typing = "jump"           # jump | filter
 # run = ["ebook-convert", "{in}", "{out}"]
 # output = "{name}.epub"
 # types = ["mobi", "azw3", "fb2"]
+#
+# [[commands]]
+# name = "Zip together (7-Zip)"
+# run = ["7z", "a", "-tzip", "together.zip", "{files}"]
+# folders = true
+# shortcut = "ctrl+alt+z"
+# menu = "Archives"
+# ask = true

@@ -238,7 +238,8 @@ fn handle_key(
                 | Action::TabLast
                 | Action::ReopenTab
                 | Action::TabPicker
-                | Action::ToggleTabLock => {
+                | Action::ToggleTabLock
+                | Action::ClearHistory => {
                     if action == Action::Filter && editing {
                         window.set_path_editing(false);
                     }

@@ -60,7 +60,8 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         | Action::Undo
         | Action::Redo
         | Action::BatchRename
-        | Action::ToggleHidden => return false,
+        | Action::ToggleHidden
+        | Action::ClearHistory => return false,
     }
     true
 }

@@ -178,10 +178,12 @@ pub enum Action {
     ReopenTab,
     TabPicker,
     ToggleTabLock,
+    /// Forgets the folders the address bar remembers (6b).
+    ClearHistory,
 }
 
 impl Action {
-    pub const ALL: [Action; 45] = [
+    pub const ALL: [Action; 46] = [
         Action::NewTab,
         Action::CloseTab,
         Action::NextTab,
@@ -227,6 +229,7 @@ impl Action {
         Action::ReopenTab,
         Action::TabPicker,
         Action::ToggleTabLock,
+        Action::ClearHistory,
     ];
 
     pub fn name(self) -> &'static str {
@@ -276,6 +279,7 @@ impl Action {
             Action::ReopenTab => "reopen-tab",
             Action::TabPicker => "tab-picker",
             Action::ToggleTabLock => "toggle-tab-lock",
+            Action::ClearHistory => "clear-history",
         }
     }
 
@@ -362,13 +366,24 @@ impl Action {
             (Action::ReopenTab, _) => &["mod+shift+t"],
             (Action::TabPicker, _) => &["mod+shift+a"],
             (Action::ToggleTabLock, _) => &[],
+            (Action::ClearHistory, _) => &[],
         }
     }
+}
+
+/// What a key is bound to already.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyOwner {
+    Action(Action),
+    /// A `[[commands]]` entry, by its index among the valid ones.
+    Command(usize),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Shortcuts {
     bindings: Vec<(Chord, Action)>,
+    /// The keys of `[[commands]]` entries, by their index among the valid ones.
+    commands: Vec<(Chord, usize)>,
 }
 
 impl Default for Shortcuts {
@@ -471,7 +486,7 @@ impl Shortcuts {
                 ));
             }
         }
-        Shortcuts { bindings }
+        Shortcuts { bindings, commands: Vec::new() }
     }
 
     pub fn action_for(&self, chord: &Chord) -> Option<Action> {
@@ -481,6 +496,30 @@ impl Shortcuts {
     /// The chord bound to `action`, if any.
     pub fn chord_for(&self, action: Action) -> Option<Chord> {
         self.bindings.iter().find(|(_, a)| *a == action).map(|(c, _)| *c)
+    }
+
+    /// Binds `chord` to command `index` (its place among the valid `[[commands]]`), unless an
+    /// action (default or written) or an earlier command has it: then nothing changes and
+    /// the owner is returned.
+    pub fn bind_command(&mut self, index: usize, chord: Chord) -> Result<(), KeyOwner> {
+        if let Some(action) = self.action_for(&chord) {
+            return Err(KeyOwner::Action(action));
+        }
+        if let Some(other) = self.command_for(&chord) {
+            return Err(KeyOwner::Command(other));
+        }
+        self.commands.push((chord, index));
+        Ok(())
+    }
+
+    /// The command `chord` runs, by its index among the valid `[[commands]]`.
+    pub fn command_for(&self, chord: &Chord) -> Option<usize> {
+        self.commands.iter().find(|(c, _)| c == chord).map(|(_, i)| *i)
+    }
+
+    /// The key of command `index`, if it has one.
+    pub fn command_chord(&self, index: usize) -> Option<Chord> {
+        self.commands.iter().find(|(_, i)| *i == index).map(|(c, _)| *c)
     }
 }
 
@@ -833,5 +872,27 @@ back = [\"ctrl+u\", \"ctrl+j\"]
         assert!(warnings[0].message.starts_with("shortcuts.back:"));
         // back lost its user binding and is disabled (not reverted to its default).
         assert_eq!(s.action_for(&chord("alt+left")), None);
+    }
+
+    #[test]
+    fn clear_history_has_a_name_and_no_key() {
+        assert_eq!(Action::from_name("clear-history"), Some(Action::ClearHistory));
+        assert_eq!(Shortcuts::defaults(Platform::Other).chord_for(Action::ClearHistory), None);
+        let (s, warnings) = build(
+            "[shortcuts]
+clear-history = \"ctrl+shift+h\"
+",
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(s.action_for(&chord("ctrl+shift+h")), Some(Action::ClearHistory));
+    }
+
+    #[test]
+    fn a_command_key_never_takes_an_action_key() {
+        let mut s = Shortcuts::defaults(Platform::Other);
+        assert_eq!(s.bind_command(0, chord("ctrl+f")), Err(KeyOwner::Action(Action::Filter)));
+        assert_eq!(s.bind_command(0, chord("ctrl+alt+x")), Ok(()));
+        assert_eq!(s.bind_command(1, chord("ctrl+alt+x")), Err(KeyOwner::Command(0)));
+        assert_eq!((s.command_for(&chord("ctrl+alt+x")), s.action_for(&chord("ctrl+alt+x"))), (Some(0), None));
     }
 }
