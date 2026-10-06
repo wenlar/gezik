@@ -445,3 +445,166 @@ fn a_failing_command_reports_its_errors_and_leaves_nothing() {
     assert!(leftovers(&d).is_empty(), "{:?}", leftovers(&d));
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// Waits up to 30 s for `ready`.
+fn wait(what: &str, mut ready: impl FnMut() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !ready() {
+        assert!(Instant::now() < deadline, "timed out waiting for {what}");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// The lines of a log the fakes write (none while it is missing).
+fn lines(path: &Path) -> Vec<String> {
+    std::fs::read_to_string(path).unwrap_or_default().lines().map(str::to_owned).collect()
+}
+
+#[test]
+fn a_command_that_names_its_output_itself_writes_into_outdir() {
+    let d = dir("command-outdir");
+    let input = d.join("report.docx");
+    std::fs::write(&input, b"doc").unwrap();
+    let engine = engine(&d);
+    // As the template's LibreOffice example: `--outdir {outdir}`, the tool picks the name.
+    let spec = || command(&["todir", "{outdir}", "{in}", "pdf"], Some("{name}.pdf"));
+    let report = run(&engine, CommandTask::new(vec![(input.clone(), false)], spec()));
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    assert_eq!(report.results, [d.join("report.pdf")]);
+    assert_eq!(std::fs::read(d.join("report.pdf")).unwrap(), b"from the tool");
+    assert!(leftovers(&d).is_empty(), "{:?}", leftovers(&d));
+    undo(&engine);
+    assert_eq!(names(&d), ["report.docx"]);
+
+    // "Keep both" with an existing report.pdf: the tool still writes report.pdf, but in its
+    // own folder, and Gezik moves it to report (2).pdf; the kept file is never overwritten.
+    std::fs::write(d.join("report.pdf"), b"keep me").unwrap();
+    let job = engine.submit(Box::new(CommandTask::new(vec![(input.clone(), false)], spec())));
+    let report = finish_with(&engine, job, Some(Decision::KeepBoth)).0;
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    assert_eq!(names(&d), ["report (2).pdf", "report.docx", "report.pdf"]);
+    assert_eq!(std::fs::read(d.join("report.pdf")).unwrap(), b"keep me");
+    assert_eq!(std::fs::read(d.join("report (2).pdf")).unwrap(), b"from the tool");
+    assert!(leftovers(&d).is_empty(), "{:?}", leftovers(&d));
+    undo(&engine);
+    assert_eq!(names(&d), ["report.docx", "report.pdf"]);
+    assert_eq!(std::fs::read(d.join("report.pdf")).unwrap(), b"keep me");
+
+    // A tool that writes another name than `output` says: a failure, nothing left behind.
+    let spec = command(&["todir", "{outdir}", "{in}", "odt"], Some("{name}.txt"));
+    let report = run(&engine, CommandTask::new(vec![(input.clone(), false)], spec));
+    assert_eq!(report.failures.len(), 1, "{:?}", report.failures);
+    assert!(report.failures[0].message.contains("made no report.txt"), "{:?}", report.failures);
+    assert_eq!(names(&d), ["report.docx", "report.pdf"]);
+    assert!(leftovers(&d).is_empty(), "{:?}", leftovers(&d));
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn pausing_ends_a_command_and_runs_it_again_once_resumed() {
+    let d = dir("command-pause");
+    let control = dir("command-pause-control");
+    let (hold, log) = (control.join("hold"), control.join("log"));
+    let input = d.join("a.txt");
+    std::fs::write(&input, b"hello").unwrap();
+    let engine = engine(&d);
+    let path = |p: &Path| p.to_string_lossy().into_owned();
+
+    // With an output.
+    std::fs::write(&hold, b"").unwrap();
+    let spec = command(&["hold", &path(&hold), &path(&log), "{out}"], Some("{name}.out"));
+    let job = engine.submit(Box::new(CommandTask::new(vec![(input.clone(), false)], spec)));
+    wait("the command to start", || lines(&log).len() == 1);
+    engine.pause(job);
+    let pid: u32 = lines(&log)[0].parse().unwrap();
+    wait("the command to be ended", || !gezik_platform::process_alive(pid));
+    wait("its folder to go", || leftovers(&d).is_empty());
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(lines(&log).len(), 1, "not started again while paused");
+    std::fs::remove_file(&hold).unwrap();
+    engine.resume(job);
+    let report = finish_with(&engine, job, None).0;
+    assert!(report.failures.is_empty() && !report.cancelled, "{:?}", report.failures);
+    assert_eq!(lines(&log).len(), 2, "started again from the start");
+    assert_eq!(std::fs::read(d.join("a.out")).unwrap(), b" half");
+    assert!(leftovers(&d).is_empty(), "{:?}", leftovers(&d));
+
+    // In place: the file is put back as it was, and the command runs on it again.
+    std::fs::remove_file(&log).unwrap();
+    std::fs::write(&hold, b"").unwrap();
+    let spec = command(&["hold", &path(&hold), &path(&log), "{in}"], None);
+    let job = engine.submit(Box::new(CommandTask::new(vec![(input.clone(), false)], spec)));
+    wait("the command to change the file", || std::fs::read(&input).unwrap() == b"hello half");
+    engine.pause(job);
+    wait("the file to be put back", || std::fs::read(&input).unwrap() == b"hello");
+    std::fs::remove_file(&hold).unwrap();
+    engine.resume(job);
+    let report = finish_with(&engine, job, None).0;
+    assert!(report.failures.is_empty() && !report.cancelled, "{:?}", report.failures);
+    assert_eq!(lines(&log).len(), 2);
+    assert_eq!(std::fs::read(&input).unwrap(), b"hello half");
+    undo(&engine);
+    assert_eq!(std::fs::read(&input).unwrap(), b"hello");
+
+    // Cancelled while paused: it ends, and nothing is left.
+    std::fs::remove_file(&log).unwrap();
+    std::fs::write(&hold, b"").unwrap();
+    let spec = command(&["hold", &path(&hold), &path(&log), "{out}"], Some("{name}.out2"));
+    let job = engine.submit(Box::new(CommandTask::new(vec![(input.clone(), false)], spec)));
+    wait("the command to start", || lines(&log).len() == 1);
+    engine.pause(job);
+    wait("its folder to go", || leftovers(&d).is_empty());
+    engine.cancel(job);
+    let report = finish_with(&engine, job, None).0;
+    assert!(report.cancelled);
+    assert_eq!(lines(&log).len(), 1);
+    assert!(!d.join("a.out2").exists());
+    let _ = std::fs::remove_dir_all(&d);
+    let _ = std::fs::remove_dir_all(&control);
+}
+
+#[test]
+fn pausing_ends_ffmpeg_and_the_file_starts_over_without_counting_twice() {
+    let d = dir("media-pause");
+    let input = d.join("song.wav");
+    // The fake ffprobe prints the input's text: a one-second file (padded, to count bytes).
+    let mut text = b"1.0".to_vec();
+    text.resize(100_003, b'\n');
+    std::fs::write(&input, &text).unwrap();
+    let (hold, log) = (d.join("song.wav.hold"), d.join("song.wav.log"));
+    std::fs::write(&hold, b"").unwrap();
+    let fake = example("fake_ffmpeg");
+    let ff = gezik_batch::convert::ffmpeg::Ffmpeg { ffmpeg: fake.clone(), ffprobe: Some(fake), version: Some((9, 0)) };
+    let tools = ConvertTools { ffmpeg: Some(ff) };
+    let engine = engine(&d);
+    let task = ConvertTask::new(vec![input.clone()], ConvertWhat::Media(MediaPreset::Mp3), Output::SameFolder, tools);
+    let job = engine.submit(Box::new(task));
+    let mut events = Vec::new();
+    wait("ffmpeg to start", || lines(&log).len() == 1);
+    engine.pause(job);
+    let pid: u32 = lines(&log)[0].parse().unwrap();
+    wait("ffmpeg to be ended", || !gezik_platform::process_alive(pid));
+    wait("its unfinished output to go", || leftovers(&d).is_empty());
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(lines(&log).len(), 1, "not started again while paused");
+    // Resumed with the hold still there: the second try waits too, so its progress shows.
+    engine.resume(job);
+    wait("ffmpeg to start again", || lines(&log).len() == 2);
+    std::thread::sleep(Duration::from_millis(400));
+    events.extend(engine.drain());
+    std::fs::remove_file(&hold).unwrap();
+    let (report, rest) = finish_with(&engine, job, None);
+    events.extend(rest);
+    assert!(report.failures.is_empty() && !report.cancelled, "{:?}", report.failures);
+    assert_eq!(std::fs::read(d.join("song.mp3")).unwrap(), b"fake output");
+    let progress: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Progress { job: j, progress } if *j == job => Some(progress.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(progress.iter().any(|p| p.bytes_done > 0), "{progress:?}");
+    assert!(progress.iter().all(|p| p.bytes_done <= p.bytes_total), "counted twice: {progress:?}");
+    let _ = std::fs::remove_dir_all(&d);
+}

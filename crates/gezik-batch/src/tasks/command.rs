@@ -34,7 +34,8 @@ impl CommandTask {
     }
 
     /// Runs the command (`args` from `expand_command`) in `input`'s folder; an error unless
-    /// it ended with 0.
+    /// it ended with 0. A pause ends it (it would go on using the machine while the job is
+    /// paused) and the answer is `restart`; a cancel ends it too.
     fn execute(&self, input: &Path, args: &[std::ffi::OsString], run: &RunCx<'_>) -> io::Result<()> {
         let Some((program, rest)) = args.split_first() else {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "run has no program"));
@@ -48,9 +49,11 @@ impl CommandTask {
         let lines = child.stdout_lines();
         let status = child.wait_or_stop(|| {
             lines.ready().for_each(drop);
-            run.stopped()
+            run.cancelled() || run.paused()
         })?;
-        let Some(status) = status else { return Err(cancelled()) };
+        let Some(status) = status else {
+            return Err(if run.cancelled() { cancelled() } else { gezik_ops::restart() });
+        };
         if status.success() {
             return Ok(());
         }
@@ -63,33 +66,36 @@ impl CommandTask {
         }))
     }
 
-    /// With an output: the command writes `{out}` (a temporary name with the output's
-    /// extension), which then gets the output's name.
+    /// With an output: the command writes into a staging folder of its own next to the
+    /// target. `{out}` is the output's name in it and `{outdir}` the folder itself, so a tool
+    /// that names its output itself (LibreOffice's `--outdir`) writes there too, never over a
+    /// file next to the target. Once it ended with 0, the file the `output` template names is
+    /// moved from there to the target (which the conflict list may have renamed: "Keep
+    /// both"). The folder goes when the item ends, or at the next start if Gezik stops first.
     fn with_output(&self, input: &Path, is_dir: bool, target: &Path, run: &RunCx<'_>) -> io::Result<Outcome> {
-        let mut temp = run.temp_file_for(target).into_os_string();
-        // Tools pick the format by the extension of what they write.
-        if let Some(ext) = target.extension() {
-            temp.push(".");
-            temp.push(ext);
-        }
-        let temp = PathBuf::from(temp);
-        let args = expand_command(&self.spec, input, is_dir, Some(&temp)).map_err(invalid)?;
-        let result = self.execute(input, &args, run).and_then(|()| {
-            if std::fs::symlink_metadata(&temp).is_err() {
-                return Err(io::Error::other(format!("the command made no {}", file_name(target))));
-            }
-            gezik_platform::fs::move_entry(&temp, target)
-        });
-        if let Err(err) = result {
-            remove(&temp);
-            return Err(err);
-        }
+        let template = self.spec.output.as_deref().unwrap_or_default();
+        let name = expand_output_name(template, input, is_dir).map_err(invalid)?;
+        let staging = run.staging_dir(target)?;
+        let made = staging.join(&name);
+        let result = expand_command(&self.spec, input, is_dir, Some(&made))
+            .map_err(invalid)
+            .and_then(|args| self.execute(input, &args, run))
+            .and_then(|()| {
+                if std::fs::symlink_metadata(&made).is_err() {
+                    return Err(io::Error::other(format!("the command made no {}", name.to_string_lossy())));
+                }
+                gezik_platform::fs::move_entry(&made, target)
+            });
+        // With whatever the command left in it (the job removes it too, if this fails).
+        let _ = std::fs::remove_dir_all(&staging);
+        result?;
         let made_dir = target.is_dir();
         Ok(Outcome::Created { path: target.to_path_buf(), facts: facts_after(target, made_dir), from: None })
     }
 
     /// In place: a copy of the file goes to the trash first (under the file's name for undo),
-    /// then the command changes the file.
+    /// then the command changes the file. A pause ends the command and puts the file back as
+    /// it was (from the trashed copy); once resumed the command runs on it again.
     fn in_place(&self, input: &Path, is_dir: bool, size: u64, run: &RunCx<'_>) -> io::Result<Outcome> {
         if is_dir {
             return Err(io::Error::new(io::ErrorKind::Unsupported, "a command without an output runs only on files"));
@@ -111,7 +117,19 @@ impl CommandTask {
                 return Err(err);
             }
         };
-        let result = self.execute(input, &args, run);
+        let result = loop {
+            match self.execute(input, &args, run) {
+                Err(err) if gezik_ops::is_restart(&err) => {
+                    if let Err(err) = std::fs::copy(&trashed, input) {
+                        break Err(err);
+                    }
+                    if run.stopped() {
+                        break Err(cancelled());
+                    }
+                }
+                ended => break ended,
+            }
+        };
         // The file as the command left it: undo trashes it only if it is still so.
         let outcome = Outcome::Several(vec![
             Outcome::Created { path: input.to_path_buf(), facts: facts_after(input, false), from: None },
@@ -123,7 +141,7 @@ impl CommandTask {
             Err(err) if facts_after(input, false) == before => Err(err),
             // Changed before it failed or was cancelled: undo brings the copy back.
             Err(err) => {
-                if !(err.kind() == io::ErrorKind::Interrupted && run.stopped()) {
+                if !(err.kind() == io::ErrorKind::Interrupted && run.cancelled()) {
                     run.fail(input, &err);
                 }
                 Ok(outcome)
@@ -134,15 +152,6 @@ impl CommandTask {
 
 fn invalid(message: String) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, message)
-}
-
-/// Removes what a command left at `path` (a file or a folder).
-fn remove(path: &Path) {
-    if path.is_dir() {
-        let _ = std::fs::remove_dir_all(path);
-    } else {
-        let _ = std::fs::remove_file(path);
-    }
 }
 
 /// The program a command's `run[0]` names: an absolute path as it is, a bare name in an

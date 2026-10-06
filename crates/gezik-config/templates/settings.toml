@@ -98,10 +98,12 @@ seven-zip = ""            # path to 7-Zip; empty = Gezik's download, then PATH
 # menu under "Commands >" (only for files that match "types"). No shell is used: "run" is a
 # program followed by its arguments, and placeholders are replaced inside each argument, so
 # file names with spaces or quotes are safe. Write "{{" and "}}" for a literal { or }.
-# Placeholders: {in} (full path), {out} (full output path, Gezik's temporary name), {dir},
-# {name}, {ext} (no dot), {outdir} (the output's folder). "output" is the output's file name
-# ({name} and {ext} only); without it the command changes the file in place and Gezik first
-# keeps a copy in the recycle bin so Undo works. Also: folders = true (run on folders too),
+# Placeholders: {in} (full path), {dir}, {name}, {ext} (no dot), {out} (the full output
+# path, in a temporary folder of Gezik's) and {outdir} (that folder, for a program that names
+# its output itself). "output" is the output's file name ({name} and {ext} only): once the
+# command ends, Gezik moves the file of that name from the temporary folder to its place.
+# Without "output" the command changes the file in place and Gezik first keeps a copy in the
+# recycle bin so Undo works. Also: folders = true (run on folders too),
 # parallel = 1-16 (how many run at once, default 1). The program is looked up in PATH or
 # given as a full path. A command that is not valid is reported and left out.
 # [[commands]]

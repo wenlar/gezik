@@ -175,20 +175,29 @@ impl ConvertTask {
             ConvertWhat::Media(preset) => {
                 let ff = ffmpeg.ok_or_else(ffmpeg_needed)?;
                 let size = std::fs::metadata(input).map_or(0, |meta| meta.len());
-                let mut counted = 0u64;
+                // Against what the item counted in earlier tries (a full disk, a pause): a try
+                // that starts over counts only what goes past them.
                 let mut on_progress = |fraction: f64| {
                     let now = ((size as f64 * fraction) as u64).min(size);
+                    let counted = run.counted();
                     if now > counted {
                         run.add_bytes(now - counted);
-                        counted = now;
                     }
                 };
                 let args = gezik_core::batch::convert::ffmpeg_args(*preset, input, temp);
-                let result = run_preset(ff, args, duration_us(ff, input), &mut on_progress, &stop);
+                // A pause ends ffmpeg (it would go on using every core) without waiting: the
+                // file is done again from the start once the job is resumed.
+                let interrupted = || run.cancelled() || run.paused();
+                let result = run_preset(ff, args, duration_us(ff, input), &mut on_progress, &interrupted);
                 if result.is_err() {
                     let _ = std::fs::remove_file(temp);
                 }
-                result
+                match result {
+                    Err(err) if err.kind() == io::ErrorKind::Interrupted && !run.cancelled() => {
+                        Err(gezik_ops::restart())
+                    }
+                    result => result,
+                }
             }
         }
     }
