@@ -680,6 +680,8 @@ impl Navigator {
             inner.refresh_timer.stop();
             (inner.removal.take(), inner.watched.clone())
         };
+        // A no-op elsewhere (no removal watch there), and clippy says so on macOS and Linux.
+        #[cfg_attr(not(windows), allow(clippy::drop_non_drop))]
         drop(removal);
         // Windows tries the drive as soon as this returns; the watcher's thread closes its
         // handles within moments.
