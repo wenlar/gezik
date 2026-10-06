@@ -123,7 +123,13 @@ pub fn drives() -> Vec<Drive> {
     let Ok(entries) = std::fs::read_dir("/Volumes") else { return Vec::new() };
     let mut drives: Vec<Drive> = entries
         .filter_map(Result::ok)
-        .map(|e| Drive { label: e.file_name().to_string_lossy().into_owned(), path: e.path(), kind: DriveKind::Fixed })
+        .map(|e| Drive {
+            label: e.file_name().to_string_lossy().into_owned(),
+            // The startup disk is a link to `/` there: its files are under `/`, not under
+            // `/Volumes/Macintosh HD`, and the drive rule must find them on it.
+            path: std::fs::canonicalize(e.path()).unwrap_or_else(|_| e.path()),
+            kind: DriveKind::Fixed,
+        })
         .collect();
     drives.sort_by(|a, b| a.label.cmp(&b.label));
     drives
@@ -176,6 +182,13 @@ mod tests {
         assert!(!drives.is_empty());
         assert!(drives.iter().all(|d| !d.label.is_empty()));
         assert!(drives.iter().filter(|d| d.kind == DriveKind::Fixed).all(|d| d.path.exists()));
+    }
+
+    /// The startup disk's entry in /Volumes links to `/`; it is the drive of `/`.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_startup_disk_is_the_root() {
+        assert!(drives().iter().any(|d| d.path == std::path::Path::new("/")), "{:?}", drives());
     }
 
     #[test]
