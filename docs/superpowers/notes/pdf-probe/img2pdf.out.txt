@@ -1,0 +1,50 @@
+  samples/DSCN0010.jpg   jpeg passthrough sof=0xc0 comps=3 adobe=None icc=0 orient=NoTransforms
+  samples/rgba.png       flate Rgba8 -> 8 bpc n=3 smask=true icc=0 (196608 -> 1705 B)
+  samples/landscape_6.jpg jpeg passthrough sof=0xc0 comps=3 adobe=None icc=1960 orient=Rotate90
+out/three.pdf: 314846 B
+  samples/cmyk.jpg       jpeg passthrough sof=0xc0 comps=4 adobe=Some(2) icc=0 orient=NoTransforms
+  samples/gray.jpg       jpeg passthrough sof=0xc0 comps=1 adobe=None icc=0 orient=NoTransforms
+  samples/progressive.jpg jpeg passthrough sof=0xc2 comps=3 adobe=None icc=0 orient=NoTransforms
+  samples/all.jpg        jpeg passthrough sof=0xc0 comps=3 adobe=None icc=548 orient=Rotate90
+  samples/rgba16.png     flate Rgba16 -> 16 bpc n=3 smask=true icc=0 (393216 -> 1905 B)
+  samples/rgb16.png      flate Rgb16 -> 16 bpc n=3 smask=false icc=0 (720000 -> 1551 B)
+  samples/gray.png       flate L8 -> 8 bpc n=1 smask=false icc=0 (60000 -> 469 B)
+  samples/rgba_icc.png   flate Rgba8 -> 8 bpc n=3 smask=true icc=548 (196608 -> 1705 B)
+out/extra.pdf: 643736 B
+  samples/landscape_6.jpg jpeg passthrough sof=0xc0 comps=3 adobe=None icc=1960 orient=Rotate90
+  samples/all.jpg        jpeg passthrough sof=0xc0 comps=3 adobe=None icc=548 orient=Rotate90
+  samples/rgba_icc.png   flate Rgba8 -> 8 bpc n=3 smask=true icc=548 (196608 -> 1705 B)
+out/noicc.pdf: 337509 B
+  samples/cmyk.jpg       jpeg passthrough sof=0xc0 comps=4 adobe=Some(2) icc=0 orient=NoTransforms
+out/filedpi.pdf: 177023 B
+  samples/cmyk.jpg       jpeg passthrough sof=0xc0 comps=4 adobe=Some(2) icc=0 orient=NoTransforms
+out/cmyk_nodecode.pdf: 176987 B
+  samples/orient/o1.jpg  jpeg passthrough sof=0xc0 comps=3 adobe=None icc=0 orient=NoTransforms
+out/orient_o1.pdf: 41219 B
+  samples/orient/o2.jpg  jpeg passthrough sof=0xc0 comps=3 adobe=None icc=0 orient=FlipHorizontal
+out/orient_o2.pdf: 41235 B
+  samples/orient/o3.jpg  jpeg passthrough sof=0xc0 comps=3 adobe=None icc=0 orient=Rotate180
+out/orient_o3.pdf: 41236 B
+  samples/orient/o4.jpg  jpeg passthrough sof=0xc0 comps=3 adobe=None icc=0 orient=FlipVertical
+out/orient_o4.pdf: 41235 B
+  samples/orient/o5.jpg  jpeg passthrough sof=0xc0 comps=3 adobe=None icc=0 orient=Rotate90FlipH
+out/orient_o5.pdf: 41236 B
+  samples/orient/o6.jpg  jpeg passthrough sof=0xc0 comps=3 adobe=None icc=0 orient=Rotate90
+out/orient_o6.pdf: 41235 B
+  samples/orient/o7.jpg  jpeg passthrough sof=0xc0 comps=3 adobe=None icc=0 orient=Rotate270FlipH
+out/orient_o7.pdf: 41234 B
+  samples/orient/o8.jpg  jpeg passthrough sof=0xc0 comps=3 adobe=None icc=0 orient=Rotate270
+out/orient_o8.pdf: 41235 B
+  samples/DSCN0010.jpg   jpeg passthrough sof=0xc0 comps=3 adobe=None icc=0 orient=NoTransforms
+  samples/rgba.png       flate Rgba8 -> 8 bpc n=3 smask=true icc=0 (196608 -> 1705 B)
+  samples/landscape_6.jpg jpeg passthrough sof=0xc0 comps=3 adobe=None icc=1960 orient=Rotate90
+out/three_a4.pdf: 314939 B
+  samples/DSCN0010.jpg   jpeg passthrough sof=0xc0 comps=3 adobe=None icc=0 orient=NoTransforms
+  samples/rgba.png       flate Rgba8 -> 8 bpc n=3 smask=true icc=0 (196608 -> 1705 B)
+  samples/landscape_6.jpg jpeg passthrough sof=0xc0 comps=3 adobe=None icc=1960 orient=Rotate90
+out/three_letter.pdf: 314853 B
+bench100.pdf: 384500739 B in 377.8864ms; working set 5.0 MiB (peak 16.1), private 1.2 MiB (peak 17.0)
+bench_png.pdf (5 x 12 MP PNG, Paeth+Flate 6): 94089246 B in 12.8629522s
+  12 MP PNG + screenshot, predictor=false level=6: 30323251 B in 731.6715ms
+  12 MP PNG + screenshot, predictor=true level=1: 19215940 B in 408.3414ms
+  12 MP PNG + screenshot, predictor=true level=9: 18917095 B in 2.2675547s
