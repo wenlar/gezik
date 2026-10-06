@@ -16,18 +16,18 @@
 | – | `cargo test --workspace` | **FAIL** (4 tests) |
 | 0 | (extra) Live refresh of the open folder | **FAIL** (symlinked paths) |
 | 1 | Window opens, follows light/dark, switches live | PASS |
-| 2 | Navigation keys, tabs, sidebar | **FAIL** (⌘[ on Turkish layout) |
+| 2 | Navigation keys, tabs, sidebar | **FAIL** (⌘[ on Turkish layout; fine on US) |
 | 3 | Rename: Enter / Escape / `/` tip | PASS |
 | 4 | ⌘⇧N new folder | PASS |
 | 5 | ⌘C / ⌘X / ⌘V / ⌘⌥V inside Gezik | PASS |
 | 6 | Finder clipboard interop | PASS |
 | 7 | Trash, undo, permanent delete | PASS |
-| 8 | Drag and drop | **FAIL** (tab drop, cross-volume move, drop on folder row from Finder) |
+| 8 | Drag and drop | **FAIL** (drop after a tab switch hangs; drops from Finder ignore rows and ⌥; sidebar move across volumes) |
 | 9 | Quick look, ⌘A, ⌘1 / ⌘2 | PASS |
 | 10 | Large copy: progress, pause, resume, cancel | PASS |
 | 11 | Conflict list: Replace / Skip / Keep both, undo | PASS |
 | 12 | Batch rename layer opens | PASS |
-| 13 | Replace / Number / Case live preview, rename, undo | PASS (Turkish casing NOT TESTED) |
+| 13 | Replace / Number / Case live preview, rename, undo | PASS (Turkish casing only with `LC_ALL=tr_TR…`; see "Language detection") |
 | 14 | Swap two names by hand, undo | PASS |
 | 15 | Presets save / apply / delete, `settings.toml` | PASS |
 | 16 | Extract here: single root, multi root, undo | PASS |
@@ -37,6 +37,11 @@
 | 20 | Drag onto a zip row adds, undo restores | PASS |
 | 21 | 7-Zip download for .dmg | PASS |
 | 22 | Cancel a big extraction leaves no `.gezik-*` | PASS |
+| – | (extra) Language detection on macOS | **FAIL** |
+| – | (extra) Menu bar and standard ⌘ shortcuts | **FAIL** (no ⌘M, no Edit/Window menus) |
+| – | (extra) ⌘Z after a plain copy and a cut/paste | PASS |
+| – | (extra) Window resizing | PASS (minor) |
+| – | Retina vs. non-Retina scaling | NOT TESTED (no second display) |
 
 ## Build
 
@@ -72,7 +77,7 @@ Opens in dark mode. Setting the system to light mode while Gezik runs switches i
   - `keys::chord_from_event` keeps only ASCII letters, digits, `[` and `]`, so ⌘ + the physical key (text `ğ`) becomes no chord.
   - ⌘⌥8 (text `[`) becomes Cmd+Alt+[, which doesn't match either.
   - Finder handles this through its menu key equivalents. Matching bracket shortcuts on the physical key code (or ignoring ⌥ when it was needed to type the character) would fix it.
-  - Not checked on a US layout.
+  - **US layout: PASS.** Simulated by sending the `[` key with the text `[` (CGEventKeyboardSetUnicodeString). In `wim/test`, ⌘[ went back to `wim`. So only layouts without a `[` key are affected.
 
 ### 3. Rename: PASS
 Enter opens the field with the stem selected (Finder style). Typing `q/w` shows the red tip "A name cannot contain /". Escape cancels and `a.txt` stays. Enter with `a2` renames the file to `a2.txt` on disk.
@@ -97,10 +102,19 @@ Enter opens the field with the stem selected (Finder style). Typing `q/w` shows 
 - The first click after switching to Gezik from another app only focuses the window and doesn't select. Finder does the same, so this isn't a bug.
 
 ### 8. Drag and drop: FAIL
-- **Gezik → Finder window:** PASS. On the same volume the file was moved (`istanbul_ılık.txt` from `gezik-test/` to `yeni/`).
-- **Finder → Gezik:** the file arrives (moved, same volume). Twice, a drop on a folder **row** (`tek`, `klasor2`) put the file in the open folder (`gezik-test/`) instead of that folder, and the row wasn't highlighted while hovering. ⌥-drag (force copy) couldn't be checked with synthetic events. → **needs a check by hand.**
-- **Between two Gezik tabs:** FAIL (twice). Hovering a tab switches to it and shows "Move to klasor2", but **releasing the mouse doesn't drop**: the drag ghost and label keep following the pointer after mouse-up. Escape cancels it, and nothing is moved. The same synthetic drag onto a sidebar entry did drop, so it looks like a real problem with the tab target (maybe because the hovered tab swaps the view under the drag). → worth confirming by hand.
-- **Onto a sidebar entry:** the drop works. But dropping `klasor2/c.txt` onto **GezikHedef** (a separate volume) showed "Move to GezikHedef" and **moved** the file. Finder copies across volumes, and the checklist says "copied, or moved on the same volume". FAIL on that point.
+- **Gezik → Finder, same volume:** PASS. The file was moved (`istanbul_ılık.txt` from `gezik-test/` to `yeni/`).
+- **Gezik → Finder, other volume:** PASS. `wim/test.wim` dragged into a Finder window on GezikHedef was copied; the source stayed.
+- **Inside Gezik onto a folder row:** PASS. The row is highlighted, the label says "Move to takas", and the file is moved into `takas/`. With ⌥ held the label says "Copy to toplu" and the file is copied.
+- **Finder → Gezik: FAIL (3 times).**
+  - The file arrives, but always in the **open folder**. While hovering a folder row (`tek`, `klasor2`) or a zip row (`arsiv.zip`), nothing is highlighted and no label shows. The drop ignores the row and puts the file in `gezik-test/`.
+  - **⌥ is ignored:** an ⌥-drag from Finder to Gezik **moved** the file (it left `yeni/`).
+  - Control test: the same ⌥-drag method between two Finder windows copied the file. So the ⌥ really did reach the system, and the problem is on Gezik's side.
+  - It looks like external drops never go through the row hit-testing that internal drags use, and don't read the modifier keys.
+- **Between two Gezik tabs: FAIL when the tab has already switched.**
+  - A quick drop on the other tab (released before it switches) works: `test.wim` moved into `klasor2`.
+  - If the pointer rests on the tab, `drag.rs::tab_rested` → `nav.activate_tab(i)` switches to it ("Move to klasor2" shows). Releasing then **doesn't drop**: the drag ghost and label keep following the pointer after mouse-up, and only Escape ends it. Nothing is moved. Reproduced 3 times.
+  - Likely cause: the switch rebuilds the list that started the drag, so the release never reaches the drag handler.
+- **Onto a sidebar entry:** the drop works. But dropping `klasor2/c.txt` onto **GezikHedef** (a separate volume) showed "Move to GezikHedef" and **moved** the file. Gezik → Finder across volumes copies (see above), and so does Finder. FAIL on that point.
 
 ### 9. Quick look, select all, views: PASS
 Space opens a quick look window ("ılık İstanbul" renders correctly, with type, size and dates), and Space closes it. ⌘A selects 27 of 27. ⌘2 shows the grid and ⌘1 the list.
@@ -124,10 +138,13 @@ Pasting `b.txt` over `klasor2/b.txt` opens "1 conflict · Copying b.txt to …" 
 ### 12. Batch rename layer: PASS
 4 files selected, Enter → "Rename 4 items".
 
-### 13. Rules: PASS (Turkish casing NOT TESTED)
+### 13. Rules: PASS (Turkish casing only with a Turkish `LC_ALL`/`LANG`)
 - Replace `foto` → `resim`, Number (001, at end) and Case UPPER update the preview live.
 - Rename gave `RESIM IKINCI 001.txt` … `RESIM ÜÇÜNCÜ 004.txt`, and ⌘Z restored all 4 names.
-- The system's first language is English (en-TR), so `i` → `I` is correct. Turkish `i` → `İ` would need Turkish as the first language; not tested.
+- Relaunched with `LC_ALL=tr_TR.UTF-8`:
+  - UPPER gives `FOTO İKİNCİ.txt`, `FOTO İLK.txt`, `FOTO İSTANBUL.txt`, `FOTO ÜÇÜNCÜ.txt` (on disk too), and ⌘Z restores them.
+  - lower turns `ILIK IŞIK.txt` into `ılık ışık.txt`.
+  - The Turkish rules themselves are right. But see "Language detection" below: a normal launch never picks Turkish.
 - The rules from the last session come back when the layer is reopened. That seems intended, since they're saved in `state.toml`.
 
 ### 14. Swap: PASS
@@ -151,7 +168,7 @@ With the rules turned off, `a.txt` was given the name `b.txt` and `b.txt` the na
 - `arsiv.tar.gz`: extracted (to `arsiv/`).
 - RAR5 multiple files, RAR5 with symlinks (links kept as links), RAR4 `test_read_format_rar.rar`, and multi-volume `test_rar_multivolume_single_file.part1.rar` (part1-3): all extracted.
 - 7z: the archive made in 19 extracted after its password.
-- The split `buyuk.7z.001` offers "Extract here" (not run, because `buyuk.bin` already sat next to it).
+- Split 7z: `buyuk.7z.001/.002/.003` (made with `7zz -v700m`). "Extract here" on `.001` rebuilt `buyuk.bin`, byte-identical to the source (`cmp`).
 
 ### 18. AES zip: PASS
 The zip was made with Gezik's own Compress (zip + password). `unzip` skips its entries as an "unsupported compression" method, i.e. AES.
@@ -165,6 +182,9 @@ The zip was made with Gezik's own Compress (zip + password). `unzip` skips its e
 - 7z with password + "Encrypt file names": `sifreli.7z`. Gezik asks for the password before it extracts.
 - 7z, Store, split 700 MB: `buyuk.7z.001` / `.002` / `.003` (700 MB + 700 MB + 173 MB).
 - "Compress to …" without the layer: works, but see below.
+- Checked with 7-Zip 26.03:
+  - `sifreli.zip` entries are "AES-256 Deflate" (WinZip AES).
+  - `sifreli.7z` can't even be listed without the password (names are encrypted). With `-pgizli` it lists `sifreli/arsiv/klasor1/…`.
 - **Notes:**
   - **The extension can be lost.** In the layer, the whole name `arsiv.zip` is selected. Typing `sifreli` replaces the extension too, and the archive was saved as `sifreli`, with no extension and so no longer recognized as a zip. Adding the extension for the chosen format (or selecting only the stem, like rename does) would fix it.
   - **Quick compress uses the last format, not zip.** After using 7z in the layer, the menu says `Compress to "b.7z"` and makes a 7z. The checklist expects `x.zip`.
@@ -181,11 +201,38 @@ A `.dmg` made with `hdiutil create -format UDZO`, then "Extract to "disk/"":
 - Download installs `/tmp/gezik-cfg/tools/7zip-26.03/7zz` (universal x86_64 + arm64, ad-hoc signed) and `License.txt`.
 - No Gatekeeper prompt: the file has no `com.apple.quarantine` attribute. `7zz i` runs and reports "7-Zip (z) 26.03 (arm64)". (`spctl` rejects it, "no usable signature", but without quarantine that doesn't matter.)
 - The dmg then extracted (`m1.txt`, `m2.txt`).
+- `.wim`: made with `7zz a -twim` from `klasor1`. "Extract to "test/"" gives `test/klasor1/{alt/y.txt,d.txt,x.txt}` (7-Zip was already installed by then). The `.wim` row has a plain file icon, not the archive icon.
 
 ### 22. Cancel extraction: PASS
 Extracted a 5.9 GB store zip and pressed Cancel at 31 %. The panel says "Cancelled". `ls -a` afterwards shows only `dev.zip`: no `.gezik-*` left.
 
 While it runs, the extraction is staged in `.gezik-deleting-x-<pid>-<n>/x/` and moved into place at the end. The ops panel only appears after about a second, so short jobs can't be cancelled from it.
+
+## Extra checks
+
+### Language detection: FAIL
+`gezik_platform::language()` reads `LC_ALL` / `LC_CTYPE` / `LANG` on every non-Windows system. Its comment says "macOS apps get LANG from the system", but that's not true for GUI apps:
+- `launchctl getenv LANG` is empty, so an app started from Finder or the Dock gets no language at all.
+- Started from Terminal here, the app had `LANG=C.UTF-8` and `LC_CTYPE=UTF-8`, so it read "UTF-8".
+
+Either way it never picks Turkish, even with Turkish first in System Settings. On macOS this should come from `CFLocaleCopyPreferredLanguages` (or `NSLocale.preferredLanguages`). The Turkish rules themselves work (see 13).
+
+### Menu bar and ⌘ shortcuts: FAIL
+The menu bar has only the app menu, named **"gezik"** (lowercase, from the binary name): About gezik, Services, Hide gezik ⌘H, Hide Others ⌥⌘H, Show All, Quit gezik ⌘Q.
+- There's no File, Edit, View, Go or Window menu. So shortcuts can't be found from the menu, and macOS's own key-equivalent handling (which would fix ⌘[ on the Turkish layout) isn't used.
+- ⌘Q quits (the next start removed nothing it shouldn't). ⌘H hides.
+- **⌘M doesn't minimize.** The window stays (`AXMinimized` = false), and the shortcut table has no minimize action.
+- ⌘, does nothing (settings live in `settings.toml`; there's no settings window).
+
+### ⌘Z after a plain copy and a cut/paste: PASS
+- Copied `ILIK IŞIK.txt` from `toplu/` to `takas/`. ⌘Z removed the copy, and the original stayed.
+- Cut `a.txt` from `takas/` and pasted it into `toplu/`. ⌘Z put it back in `takas/`.
+
+### Window resizing: PASS (minor)
+At 480×360 the layout holds: the sidebar stays and the Type and Size columns drop out. The Modified column is cut at the right edge with no horizontal scroll. At 1500×950 the columns spread out cleanly.
+
+### Not tested
+- Retina vs. non-Retina scaling: only the built-in Retina display was available. At 2× everything looks sharp.
 
 ## Other things noticed
 
