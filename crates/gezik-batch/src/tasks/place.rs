@@ -1,6 +1,6 @@
-//! Placing what an archive unpacked: decides where it goes (as it is, or in a folder of its
-//! own), then moves it there through `MoveTask::placing`, so conflicts are asked like any
-//! move's and undo trashes what landed.
+//! Placing what a job made in a staging folder: what an archive unpacked (as it is, or in a
+//! folder of its own) or what a PDF job wrote (as it is). It moves there through
+//! `MoveTask::placing`, so conflicts are asked like any move's and undo trashes what landed.
 
 use std::io;
 use std::path::PathBuf;
@@ -12,8 +12,13 @@ use gezik_ops::{MoveTask, Outcome, PlanItem, Resources, RunCx, ScanSink, Task, T
 use super::{ExtractTo, file_name, stem_of};
 
 pub(super) struct PlaceTask {
+    /// The archive whose stem names its folder (`ExtractTo::Smart`/`Folder`); for outputs,
+    /// the folder they go into (never used for a name there).
     archive: PathBuf,
     to: ExtractTo,
+    /// The job's kind and the panel's line (an extract's, or the PDF job's).
+    kind: TaskKind,
+    title: String,
     /// The unpacked contents, set by the `ExtractTask` before it (none: it did not finish).
     stage: Arc<Mutex<Option<PathBuf>>>,
     /// The move, made when planning (the contents are known only then).
@@ -22,7 +27,13 @@ pub(super) struct PlaceTask {
 
 impl PlaceTask {
     pub fn new(archive: PathBuf, to: ExtractTo, stage: Arc<Mutex<Option<PathBuf>>>) -> PlaceTask {
-        PlaceTask { archive, to, stage, moves: OnceLock::new() }
+        let title = format!("Extracting {}", file_name(&archive));
+        PlaceTask { archive, to, kind: TaskKind::Extract, title, stage, moves: OnceLock::new() }
+    }
+
+    /// What a job made in `stage` moved into `dir` as it is (conflicts asked); undo trashes it.
+    pub fn outputs(dir: PathBuf, stage: Arc<Mutex<Option<PathBuf>>>, kind: TaskKind, title: String) -> PlaceTask {
+        PlaceTask { archive: dir.clone(), to: ExtractTo::Into(dir), kind, title, stage, moves: OnceLock::new() }
     }
 
     /// (where it is, where it goes) for what is in `content`.
@@ -64,11 +75,11 @@ impl PlaceTask {
 
 impl Task for PlaceTask {
     fn kind(&self) -> TaskKind {
-        TaskKind::Extract
+        self.kind
     }
 
     fn title(&self) -> String {
-        format!("Extracting {}", file_name(&self.archive))
+        self.title.clone()
     }
 
     fn count(&self) -> usize {
@@ -86,7 +97,7 @@ impl Task for PlaceTask {
         if pairs.is_empty() {
             return;
         }
-        let moves = self.moves.get_or_init(|| MoveTask::placing(pairs, TaskKind::Extract));
+        let moves = self.moves.get_or_init(|| MoveTask::placing(pairs, self.kind));
         moves.plan(sink);
     }
 

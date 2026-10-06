@@ -2,7 +2,9 @@
 //! a staging folder) and a `PlaceTask` (move what came out to where it goes) per archive,
 //! undone as one action. `CompressTask` makes an archive, `AddToArchiveTask` adds to one,
 //! `DownloadTask` fetches a tool (7-Zip, ffmpeg). `ConvertTask` converts files and
-//! `CommandTask` runs a user command on them.
+//! `CommandTask` runs a user command on them. PDF work runs as a chain of a `PdfTask` (the
+//! PDF worker into a staging folder) and a `PlaceTask` (`pdf_chain`); `ImagesToPdfTask` writes
+//! pictures into one PDF.
 
 mod add;
 mod command;
@@ -11,6 +13,8 @@ mod convert;
 mod download;
 mod external;
 mod extract;
+mod images_pdf;
+mod pdf;
 mod place;
 
 use std::fmt;
@@ -28,6 +32,8 @@ pub use self::compress::{CompressTask, default_name};
 pub use self::convert::{ConvertTask, ConvertTools, ConvertWhat, is_ffmpeg_needed, skipped_inputs};
 pub use self::download::DownloadTask;
 use self::extract::ExtractTask;
+pub use self::images_pdf::{ImagesToPdfTask, images_pdf_label};
+pub use self::pdf::{PdfTools, PdfWork, pdf_chain, pdf_label};
 use self::place::PlaceTask;
 pub use crate::archive::write::{CompressOptions, Level, OutFormat};
 
