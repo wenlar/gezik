@@ -321,10 +321,21 @@ impl List {
 }
 
 /// The names of the folders in `dir` (links to folders too, not Gezik's temporary names),
-/// sorted as suggestions list them. Touches the disk: only on a worker thread.
-pub fn list_subfolders(dir: &Path) -> std::io::Result<Vec<String>> {
+/// sorted as suggestions list them. On Windows, folders marked hidden or system only with
+/// `hidden` (hidden items shown). Touches the disk: only on a worker thread.
+#[cfg_attr(not(windows), allow(unused_variables))]
+pub fn list_subfolders(dir: &Path, hidden: bool) -> std::io::Result<Vec<String>> {
     let mut names = Vec::new();
     for entry in std::fs::read_dir(dir)?.flatten() {
+        // Free on Windows: the listing brought the attributes along.
+        #[cfg(windows)]
+        if !hidden {
+            use std::os::windows::fs::MetadataExt;
+            const HIDDEN_OR_SYSTEM: u32 = 0x2 | 0x4;
+            if entry.metadata().is_ok_and(|meta| meta.file_attributes() & HIDDEN_OR_SYSTEM != 0) {
+                continue;
+            }
+        }
         let is_dir = match entry.file_type() {
             Ok(kind) if kind.is_symlink() => entry.path().is_dir(),
             Ok(kind) => kind.is_dir(),
@@ -613,10 +624,12 @@ impl PathBox {
         let number = self.0.reads.get() + 1;
         self.0.reads.set(number);
         self.0.reading.borrow_mut().push((folder.clone(), generation));
+        let mut hidden = true;
+        crate::view::with_current(|view| hidden = view.shows_hidden());
         let spawned = std::thread::Builder::new().name("gezik-complete".into()).spawn({
             let folder = folder.clone();
             move || {
-                let names = list_subfolders(&folder);
+                let names = list_subfolders(&folder, hidden);
                 let _ = slint::invoke_from_event_loop(move || {
                     with_current(|p| p.listed(generation, number, folder, names));
                 });
@@ -883,8 +896,22 @@ mod tests {
             std::fs::create_dir_all(dir.join(name)).unwrap();
         }
         std::fs::write(dir.join("c.txt"), "x").unwrap();
-        assert_eq!(list_subfolders(&dir).unwrap(), ["A", "b"]);
-        assert!(list_subfolders(&dir.join("missing")).is_err());
+        assert_eq!(list_subfolders(&dir, false).unwrap(), ["A", "b"]);
+        assert!(list_subfolders(&dir.join("missing"), true).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn hidden_folders_are_suggested_only_while_hidden_items_show() {
+        let dir = std::env::temp_dir().join(format!("gezik-path-box-hidden-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        for name in ["Shown", "Hidden"] {
+            std::fs::create_dir_all(dir.join(name)).unwrap();
+        }
+        gezik_platform::fs::set_hidden(&dir.join("Hidden")).unwrap();
+        assert_eq!(list_subfolders(&dir, false).unwrap(), ["Shown"]);
+        assert_eq!(list_subfolders(&dir, true).unwrap(), ["Hidden", "Shown"]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -981,7 +1008,7 @@ mod tests {
             std::fs::create_dir_all(dir.join(format!("Klasör {i:05}"))).unwrap();
         }
         let started = Instant::now();
-        let names = list_subfolders(&dir).unwrap();
+        let names = list_subfolders(&dir, true).unwrap();
         let read = started.elapsed();
         let rows = folder_rows(&dir, &names, "klasör 0999");
         let took = started.elapsed();
