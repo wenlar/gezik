@@ -227,6 +227,55 @@ pub fn unknown_note(counts: &[Option<u32>]) -> &'static str {
     if !counts.is_empty() && counts.iter().all(Option::is_none) { "Page count unknown (encrypted PDF)" } else { "" }
 }
 
+/// `note` with what it leaves out said: "Makes 3 files. 1 PDF could not be read" (`unread`:
+/// PDFs whose pages could not be counted, damaged or not PDFs at all).
+pub fn with_unread(note: &str, unread: usize) -> String {
+    let unread_text = match unread {
+        0 => return note.to_owned(),
+        1 => "1 PDF could not be read".to_owned(),
+        n => format!("{} PDFs could not be read", grouped(n)),
+    };
+    if note.is_empty() { unread_text } else { format!("{note}. {unread_text}") }
+}
+
+/// What to do when pdfium fails to load in a job.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PdfiumFailed {
+    /// Offer to download it again (the first time).
+    Download,
+    /// It was downloaded again and still does not load: say so, no download.
+    Explain,
+}
+
+/// After a fresh download (`resubmitted`) a second failure gets no more downloads.
+pub fn after_pdfium_failed(resubmitted: bool) -> PdfiumFailed {
+    if resubmitted { PdfiumFailed::Explain } else { PdfiumFailed::Download }
+}
+
+/// The longest reason the plain box quotes.
+const REASON_MAX: usize = 160;
+
+/// A short reason from "pdfium could not be loaded (…)": the loader's own words (`desc:
+/// "…"`) when the text has them, else what is in the brackets, at most 160 characters.
+pub fn pdfium_reason(message: &str) -> String {
+    let inner = message
+        .split_once("pdfium could not be loaded (")
+        .map_or(message, |(_, rest)| rest.strip_suffix(')').unwrap_or(rest));
+    let reason =
+        inner.split_once("desc: \"").and_then(|(_, rest)| rest.split_once('"')).map_or(inner, |(desc, _)| desc).trim();
+    let reason = if reason.is_empty() { "unknown error" } else { reason };
+    if reason.chars().count() > REASON_MAX {
+        format!("{}…", reason.chars().take(REASON_MAX).collect::<String>())
+    } else {
+        reason.to_owned()
+    }
+}
+
+/// The plain box after a second failure: "pdfium does not load on this system: <reason>".
+pub fn pdfium_explained(message: &str) -> String {
+    format!("pdfium does not load on this system: {}", pdfium_reason(message))
+}
+
 /// The row dragged from `from` lands at `to` (the others shift).
 pub fn move_in_order(order: &mut Vec<PathBuf>, from: usize, to: usize) {
     if from >= order.len() || to >= order.len() || from == to {
@@ -352,6 +401,26 @@ mod tests {
         assert_eq!(order, ["a", "b", "c"].iter().map(PathBuf::from).collect::<Vec<_>>());
         move_in_order(&mut order, 1, 9);
         assert_eq!(order, ["a", "b", "c"].iter().map(PathBuf::from).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn unreadable_pdfs_are_said() {
+        assert_eq!(with_unread("Makes 3 files", 1), "Makes 3 files. 1 PDF could not be read");
+        assert_eq!(with_unread("", 2), "2 PDFs could not be read");
+        assert_eq!(with_unread("Makes 3 files", 0), "Makes 3 files");
+    }
+
+    #[test]
+    fn a_second_load_failure_offers_no_download() {
+        assert_eq!(after_pdfium_failed(false), PdfiumFailed::Download);
+        assert_eq!(after_pdfium_failed(true), PdfiumFailed::Explain);
+        let raw =
+            "pdfium could not be loaded (LoadLibraryError(DlOpen { desc: \"/x/libpdfium.so: invalid ELF header\" }))";
+        assert_eq!(pdfium_explained(raw), "pdfium does not load on this system: /x/libpdfium.so: invalid ELF header");
+        assert_eq!(pdfium_reason("pdfium could not be loaded (Unknown)"), "Unknown");
+        assert_eq!(pdfium_reason("pdfium could not be loaded ()"), "unknown error");
+        let long = format!("pdfium could not be loaded ({})", "x".repeat(300));
+        assert_eq!(pdfium_reason(&long).chars().count(), REASON_MAX + 1);
     }
 
     #[test]

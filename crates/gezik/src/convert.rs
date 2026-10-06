@@ -43,8 +43,9 @@ use crate::context_menu::{
 use crate::dialog::Dialogs;
 use crate::operations::{After, Operations, items_text};
 use crate::pdf::{
-    MARGINS, MAX_EVERY, PdfChoices, SIZES, SplitChoice, choices_from, choices_text, extract_note, files_note,
-    move_in_order, pdf_counts, pdf_inputs, says_pdfium_failed, unknown_note,
+    MARGINS, MAX_EVERY, PdfChoices, PdfiumFailed, SIZES, SplitChoice, after_pdfium_failed, choices_from, choices_text,
+    extract_note, files_note, move_in_order, pdf_counts, pdf_inputs, pdfium_explained, says_pdfium_failed,
+    unknown_note, with_unread,
 };
 use crate::{AppWindow, ConvertView};
 
@@ -870,8 +871,18 @@ enum Count {
 /// A PDF job to start: pictures into one PDF (in this process), or PDF work (the worker).
 #[derive(Clone)]
 enum PdfJob {
-    Pictures { pictures: Vec<PathBuf>, output: PathBuf, page: gezik_core::batch::pdf::PageOptions },
-    Pdfs { work: PdfWork, inputs: Vec<PathBuf> },
+    Pictures {
+        pictures: Vec<PathBuf>,
+        output: PathBuf,
+        page: gezik_core::batch::pdf::PageOptions,
+    },
+    /// `resubmitted`: started again after pdfium was downloaded again because it did not
+    /// load; a second such failure gets no more downloads.
+    Pdfs {
+        work: PdfWork,
+        inputs: Vec<PathBuf>,
+        resubmitted: bool,
+    },
 }
 
 /// "Every [N] pages" as typed.
@@ -991,6 +1002,14 @@ impl Layer {
             .collect()
     }
 
+    /// How many PDFs could not be counted (damaged, not PDFs); none while counting.
+    fn unread(&self) -> usize {
+        if self.counting() {
+            return 0;
+        }
+        self.pdfs.iter().filter(|p| self.pages.get(*p) == Some(&Count::Failed)).count()
+    }
+
     /// The note under a split or an extract and the mistake in what is typed (live), for the
     /// typed "every" and ranges.
     fn pdf_note(&self, op: PdfOp, every: &str, ranges: &str) -> (String, String) {
@@ -1005,8 +1024,8 @@ impl Layer {
         let blank = wants_ranges && ranges.trim().is_empty();
         match result {
             Ok(note) if note.is_empty() && self.counting() => ("Counting pages…".to_owned(), String::new()),
-            Ok(note) if note.is_empty() => (unknown_note(&counts).to_owned(), String::new()),
-            Ok(note) => (note, String::new()),
+            Ok(note) if note.is_empty() => (with_unread(unknown_note(&counts), self.unread()), String::new()),
+            Ok(note) => (with_unread(&note, self.unread()), String::new()),
             Err(_) if blank => (String::new(), String::new()),
             Err(err) => (String::new(), err),
         }
@@ -1037,6 +1056,10 @@ struct Inner {
     jobs: RefCell<HashMap<JobId, Job>>,
     /// PDF jobs running, for a pdfium that turns out not to load.
     pdf_jobs: RefCell<HashMap<JobId, PdfJob>>,
+    /// The order list's names: one model, changed only when the order does, so that a row
+    /// held for a drag is not rebuilt under the pointer (page counts arriving redraw the
+    /// layer).
+    pdf_order: Rc<VecModel<SharedString>>,
 }
 
 #[derive(Clone)]
@@ -1132,6 +1155,7 @@ impl Convert {
             opening: Arc::default(),
             jobs: RefCell::default(),
             pdf_jobs: RefCell::default(),
+            pdf_order: Rc::new(VecModel::default()),
         }));
         this.install(window);
         CURRENT.with(|c| *c.borrow_mut() = Some(this.clone()));
@@ -1632,6 +1656,7 @@ impl Convert {
             _ => Vec::new(),
         };
         let error = if layer.error.is_empty() { pdf_error } else { layer.error.clone() };
+        crate::batch_rename::update_rows(&self.0.pdf_order, order);
         let format = layer.image.format;
         let replace_note = match layer.can_replace {
             Some(true) if cfg!(windows) => "Originals go to the Recycle Bin",
@@ -1676,7 +1701,7 @@ impl Convert {
             ffmpeg_note: tool_note.into(),
             error: error.into(),
             pdf_op: pdf_op.and_then(|op| PdfOp::ALL.iter().position(|o| *o == op)).map_or(-1, |i| i as i32),
-            pdf_order: ModelRc::new(VecModel::from(order)),
+            pdf_order: ModelRc::from(self.0.pdf_order.clone()),
             pdf_page: SIZES.iter().position(|(s, _)| *s == layer.pdf.page.size).unwrap_or(0) as i32,
             pdf_margin: MARGINS.iter().position(|(m, _)| *m == layer.pdf.page.margin).unwrap_or(0) as i32,
             pdf_split: SPLIT_CHOICES.iter().position(|s| *s == layer.pdf.split).unwrap_or(0) as i32,
@@ -1810,7 +1835,7 @@ impl Convert {
             PdfOp::ToImages => PdfWork::Render { dpi: choices.dpi, image: choices.image },
             PdfOp::Merge | PdfOp::ImagesToPdf => PdfWork::Merge,
         };
-        Ok(Ready::Pdf(PdfJob::Pdfs { work, inputs }, choices))
+        Ok(Ready::Pdf(PdfJob::Pdfs { work, inputs, resubmitted: false }, choices))
     }
 
     /// Starts a PDF job: pictures at once; PDF work once pdfium is found (on a thread), else
@@ -1824,14 +1849,14 @@ impl Convert {
                 let task: Box<dyn gezik_ops::Task> = Box::new(ImagesToPdfTask::new(pictures, output, page));
                 self.0.ops.submit_chain(vec![task], Some(label), Some(again), After::Select);
             }
-            PdfJob::Pdfs { work, inputs } => {
+            PdfJob::Pdfs { work, inputs, resubmitted } => {
                 let data = self.data_dir();
                 std::thread::spawn(move || {
                     let library = gezik_batch::tools::find(Tool::Pdfium, &data, None);
                     let hint = if library.is_none() { gezik_platform::http::tool_missing_hint() } else { None };
                     let worker = Worker::this_exe().map_err(|err| err.to_string());
                     let _ = slint::invoke_from_event_loop(move || {
-                        with_current(|this| this.pdf_found(work, inputs, library, worker, hint));
+                        with_current(|this| this.pdf_found(work, inputs, resubmitted, library, worker, hint));
                     });
                 });
             }
@@ -1842,12 +1867,14 @@ impl Convert {
         &self,
         work: PdfWork,
         inputs: Vec<PathBuf>,
+        resubmitted: bool,
         library: Option<PathBuf>,
         worker: Result<Worker, String>,
         hint: Option<String>,
     ) {
-        let job = PdfJob::Pdfs { work: work.clone(), inputs: inputs.clone() };
-        let again = self.pdf_again(job.clone());
+        // From its row it starts afresh: a load failure then offers the download again.
+        let again = self.pdf_again(PdfJob::Pdfs { work: work.clone(), inputs: inputs.clone(), resubmitted: false });
+        let job = PdfJob::Pdfs { work: work.clone(), inputs: inputs.clone(), resubmitted };
         let Some(library) = library else {
             crate::archives::with_current(|archives| archives.offer_pdfium(false, hint, again, None));
             return;
@@ -1875,11 +1902,22 @@ impl Convert {
     }
 
     /// PDF job `id` ended with pdfium failing to load (a broken download): the box offers to
-    /// get it again, then starts the job again in place of its row.
+    /// get it again, then starts the job again in place of its row. When that fresh download
+    /// fails to load too, a plain box says why: another download would not help.
     fn pdf_finished(&self, id: JobId, job: PdfJob, report: &Report) {
-        if report.cancelled || !report.failures.iter().any(|f| says_pdfium_failed(&f.message)) {
+        if report.cancelled {
             return;
         }
+        let Some(failed) = report.failures.iter().find(|f| says_pdfium_failed(&f.message)) else { return };
+        let resubmitted = matches!(job, PdfJob::Pdfs { resubmitted: true, .. });
+        if after_pdfium_failed(resubmitted) == PdfiumFailed::Explain {
+            self.0.dialogs.ask("pdfium failed to load", pdfium_explained(&failed.message), &["OK"], |_| {});
+            return;
+        }
+        let job = match job {
+            PdfJob::Pdfs { work, inputs, .. } => PdfJob::Pdfs { work, inputs, resubmitted: true },
+            other => other,
+        };
         std::thread::spawn(move || {
             let hint = gezik_platform::http::tool_missing_hint();
             let _ = slint::invoke_from_event_loop(move || {

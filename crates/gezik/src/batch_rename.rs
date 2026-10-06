@@ -18,7 +18,7 @@ use gezik_core::batch::date::DateParts;
 use gezik_core::batch::rules::{ExtensionRule, NumberAt, Rule, RuleEntry};
 use gezik_core::ops::names::NameRules;
 use gezik_core::selection::Selection;
-use slint::{ComponentHandle, ModelRc, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
 use crate::{AppWindow, RenamePreviewRow, RuleOptions, RuleRow};
 
@@ -634,7 +634,7 @@ impl BatchRename {
         }
         let rows: Vec<RenamePreviewRow> =
             shown.iter().enumerate().filter_map(|(row, &p)| r.preview_row(p, selection.is_selected(row))).collect();
-        self.0.rows.set_vec(rows);
+        update_rows(&self.0.rows, rows);
         *self.0.shown.borrow_mut() = shown;
         window.set_rb_footer(r.footer().into());
         window.set_rb_can_rename(r.can_rename());
@@ -935,6 +935,20 @@ pub fn rows_of(items: &[usize], focus: Option<usize>, order: &[usize], shown: &[
 /// How many rows PgUp/PgDn move in the preview.
 const PAGE: usize = 10;
 
+/// Puts `rows` into `model`, changing only the rows that differ while the count stays: the
+/// rows' items (and a handle held for a drag) are not rebuilt under the pointer.
+pub fn update_rows<T: Clone + PartialEq + 'static>(model: &VecModel<T>, rows: Vec<T>) {
+    if model.row_count() != rows.len() {
+        model.set_vec(rows);
+        return;
+    }
+    for (i, row) in rows.into_iter().enumerate() {
+        if model.row_data(i).as_ref() != Some(&row) {
+            model.set_row_data(i, row);
+        }
+    }
+}
+
 /// The preview row under `y` (in the list's content), for a drag: clamped to the rows.
 pub fn drop_row(y: f32, row_height: f32, count: usize) -> usize {
     if count == 0 || row_height <= 0.0 || y <= 0.0 {
@@ -1148,6 +1162,15 @@ mod tests {
         // "Only changed" hides position 1 (item 1): row numbers skip it.
         let (rows, focus) = rows_of(&[1, 0], Some(1), &[2, 1, 0], &[0, 2]);
         assert_eq!((rows, focus), (vec![1], None));
+    }
+
+    #[test]
+    fn rows_are_updated_in_place() {
+        let model = VecModel::from(vec![1, 2, 3]);
+        update_rows(&model, vec![1, 5, 3]);
+        assert_eq!(model.iter().collect::<Vec<_>>(), [1, 5, 3]);
+        update_rows(&model, vec![7]);
+        assert_eq!(model.iter().collect::<Vec<_>>(), [7]);
     }
 
     #[test]
