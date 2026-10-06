@@ -275,6 +275,8 @@ export component AppWindow inherits Window {
     in property <bool> cp-open;
     in property <string> cp-title;
     in-out property <string> cp-name;
+    // Selected when the layer opens: the name up to its ending (bytes).
+    in property <int> cp-name-select;
     in-out property <string> cp-folder;
     in property <[string]> cp-formats;
     in property <int> cp-format;
@@ -819,6 +821,7 @@ export component AppWindow inherits Window {
             dialog-open: root.dialog-open || root.conflicts-open;
             title: root.cp-title;
             name-text <=> root.cp-name;
+            name-select: root.cp-name-select;
             folder-text <=> root.cp-folder;
             formats: root.cp-formats;
             format: root.cp-format;

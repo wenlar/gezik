@@ -157,6 +157,34 @@ pub fn swap_extension(name: &str, from: OutFormat, to: OutFormat) -> String {
     format!("{stem}.{}", to.extension())
 }
 
+/// Where the name ends without `format`'s ending (bytes): what the layer selects when it
+/// opens, so typing a name keeps the ending (`Fotolar.tar.gz` → `Fotolar`).
+pub fn name_stem_end(name: &str, format: OutFormat) -> usize {
+    let ending = format!(".{}", format.extension());
+    match name.len().checked_sub(ending.len()) {
+        Some(at) if at > 0 && name.is_char_boundary(at) && name[at..].eq_ignore_ascii_case(&ending) => at,
+        _ => name.len(),
+    }
+}
+
+/// `name` ending in `format`'s ending: added when it lacks it (`sifreli` → `sifreli.7z`); a
+/// name ending in the first part of a two-part one gets the rest (`x.tar` → `x.tar.gz`).
+pub fn with_extension(name: &str, format: OutFormat) -> String {
+    let extension = format.extension();
+    if name_stem_end(name, format) < name.len() {
+        return name.to_owned();
+    }
+    let lower = name.to_ascii_lowercase();
+    // `tar.gz`: a name ending in `.tar` takes `.gz`.
+    if let Some((first, rest)) = extension.split_once('.')
+        && lower.ends_with(&format!(".{first}"))
+        && lower.len() > first.len() + 1
+    {
+        return format!("{name}.{rest}");
+    }
+    format!("{name}.{extension}")
+}
+
 /// The folder typed in a field: relative to `base`; `None` if empty.
 pub fn resolve_folder(typed: &str, base: &Path) -> Option<PathBuf> {
     let typed = typed.trim();
@@ -768,7 +796,10 @@ impl Archives {
             many => format!("Compress {} items", many.len()),
         };
         window.set_cp_title(title.into());
-        window.set_cp_name(default_name(&items, written_format(format, self.last_level())).into());
+        let name = default_name(&items, written_format(format, self.last_level()));
+        let select = name_stem_end(&name, written_format(format, self.last_level()));
+        window.set_cp_name(name.into());
+        window.set_cp_name_select(i32::try_from(select).unwrap_or(0));
         window.set_cp_folder(folder.display().to_string().into());
         let labels: Vec<SharedString> = formats.iter().map(|f| format_label(*f).into()).collect();
         window.set_cp_formats(ModelRc::new(VecModel::from(labels)));
@@ -914,6 +945,9 @@ impl Archives {
         validate_name(&name, NameRules::current()).map_err(|err| err.to_string())?;
         let folder = resolve_folder(&window.get_cp_folder(), &layer.folder).unwrap_or_else(|| layer.folder.clone());
         let format = layer.format();
+        // A name typed without its ending gets the one of what is written.
+        let name = with_extension(&name, written_format(format, layer.level));
+        validate_name(&name, NameRules::current()).map_err(|err| err.to_string())?;
         let split =
             if format == OutFormat::SevenZ { split_bytes(layer.split, &window.get_cp_split_mb())? } else { None };
         let password = window.get_cp_password().to_string();
@@ -1007,6 +1041,37 @@ mod tests {
         assert_eq!(swap_extension("Fotolar.tar.gz", OutFormat::TarGz, OutFormat::Tar), "Fotolar.tar");
         assert_eq!(swap_extension("my name", OutFormat::Zip, OutFormat::SevenZ), "my name.7z");
         assert_eq!(default_name(&file, OutFormat::Zip), "a.zip");
+    }
+
+    #[test]
+    fn the_layer_keeps_the_ending() {
+        // Opening selects the stem only.
+        assert_eq!(name_stem_end("arsiv.zip", OutFormat::Zip), 5);
+        assert_eq!(name_stem_end("Fotolar.tar.gz", OutFormat::TarGz), 7);
+        assert_eq!(name_stem_end("notes.txt.gz", OutFormat::Gz), 9);
+        assert_eq!(name_stem_end("ARSIV.ZIP", OutFormat::Zip), 5);
+        assert_eq!(name_stem_end("sifreli", OutFormat::SevenZ), 7);
+        assert_eq!(name_stem_end(".zip", OutFormat::Zip), 4);
+        // Bytes, not chars: Slint selects by byte offsets.
+        assert_eq!(name_stem_end("ılık.zip", OutFormat::Zip), "ılık".len());
+        // A name typed without the ending gets it.
+        assert_eq!(with_extension("sifreli", OutFormat::SevenZ), "sifreli.7z");
+        assert_eq!(with_extension("sifreli.7z", OutFormat::SevenZ), "sifreli.7z");
+        assert_eq!(with_extension("sifreli.7Z", OutFormat::SevenZ), "sifreli.7Z");
+        assert_eq!(with_extension("yedek", OutFormat::TarGz), "yedek.tar.gz");
+        assert_eq!(with_extension("yedek.tar.gz", OutFormat::TarGz), "yedek.tar.gz");
+        assert_eq!(with_extension("yedek.tar", OutFormat::TarXz), "yedek.tar.xz");
+        assert_eq!(with_extension("v1.2", OutFormat::Zip), "v1.2.zip");
+        assert_eq!(with_extension("a.zip", OutFormat::SevenZ), "a.zip.7z");
+        assert_eq!(with_extension("notes.txt", OutFormat::Gz), "notes.txt.gz");
+        // Store on a tar.gz writes a plain tar: the layer adds what is written.
+        let written = written_format(OutFormat::TarGz, Level::Store);
+        assert_eq!(with_extension("yedek", written), "yedek.tar");
+        // Changing the format changes the ending in the field, typed or not.
+        let (zip, seven) = ((OutFormat::Zip, Level::Normal), (OutFormat::SevenZ, Level::Normal));
+        assert_eq!(renamed_for("sifreli.zip", zip, seven), "sifreli.7z");
+        assert_eq!(renamed_for("sifreli", zip, seven), "sifreli.7z");
+        assert_eq!(renamed_for("sifreli.7z", seven, (OutFormat::TarGz, Level::Fast)), "sifreli.tar.gz");
     }
 
     #[test]
