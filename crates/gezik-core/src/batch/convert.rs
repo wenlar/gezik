@@ -15,6 +15,7 @@ pub enum Kind {
     Text,
     Media,
     Command,
+    Pdf,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

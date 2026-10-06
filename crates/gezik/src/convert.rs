@@ -283,6 +283,7 @@ fn group_title(kind: Kind) -> &'static str {
         Kind::Text => "Text",
         Kind::Media => "Audio/Video",
         Kind::Command => "Commands",
+        Kind::Pdf => "PDF",
     }
 }
 
@@ -375,7 +376,7 @@ pub fn wanted_presets<'a>(state: &'a ConvertState, kinds: &[Kind]) -> Vec<&'a st
             Kind::Image => state.image.as_deref().and_then(saved_preset),
             Kind::Text => state.text.as_deref().and_then(saved_preset),
             Kind::Media => state.media.as_deref(),
-            Kind::Command => None,
+            Kind::Command | Kind::Pdf => None,
         };
         out.extend(remembered);
     }
