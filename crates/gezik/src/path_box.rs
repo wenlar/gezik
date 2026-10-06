@@ -133,20 +133,48 @@ fn is_network_text(path: &Path) -> bool {
     text.starts_with(r"\\") || text.starts_with("//")
 }
 
-/// Whether `path` is gone from a local disk (spec 6.2): the system says it is not there and
-/// its drive is no network one (an unanswering share keeps its folders). Touches the disk:
-/// only on a worker thread.
+/// What the gone check found of the folder a missing folder was in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Parent {
+    /// Nothing in it (or it cannot be read): likely a mount point with nothing mounted.
+    pub empty: bool,
+    /// On a network share (or the system would not say).
+    pub network: bool,
+}
+
+/// Where volumes are mounted on macOS and Linux (`/media/<user>`, `/run/media/<user>`): a
+/// folder missing in one is a volume not there now, not one deleted.
+fn is_mount_parent(dir: &Path) -> bool {
+    let mut parts = dir.components();
+    if parts.next() != Some(std::path::Component::RootDir) {
+        return false;
+    }
+    let parts: Vec<_> = parts.map(|part| part.as_os_str().to_str().unwrap_or("")).collect();
+    matches!(parts.as_slice(), ["Volumes" | "media" | "mnt"] | ["media", _] | ["run", "media", _])
+}
+
+/// Whether a visited folder, not there (`missing`), is gone for good (spec 6.2): the folder it
+/// was in (`parent`, `None` if not there either) is still there, holds something, and is on a
+/// local disk. An unplugged disk, an unmounted volume or share, or one that does not answer
+/// keeps its folders.
+pub fn is_gone(path: &Path, missing: bool, parent: Option<Parent>) -> bool {
+    missing
+        && !is_network_text(path)
+        && parent.is_some_and(|parent| !parent.empty && !parent.network)
+        && !path.parent().is_some_and(is_mount_parent)
+}
+
+/// [`is_gone`] for `path`, asking the disk: only on a worker thread.
 pub fn gone_locally(path: &Path) -> bool {
     if is_network_text(path) {
         return false;
     }
-    match std::fs::metadata(path) {
-        // The drive is asked about through what is still there of the path.
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => gezik_platform::fs::nearest_existing(path)
-            .and_then(|existing| gezik_platform::fs::drive_facts(&existing).ok())
-            .is_some_and(|facts| facts.kind != gezik_platform::fs::DiskKind::Network),
-        _ => false,
-    }
+    let missing = std::fs::metadata(path).is_err_and(|err| err.kind() == std::io::ErrorKind::NotFound);
+    let parent = path.parent().filter(|parent| missing && parent.is_dir()).map(|parent| Parent {
+        empty: std::fs::read_dir(parent).map_or(true, |mut entries| entries.next().is_none()),
+        network: gezik_platform::fs::is_network(parent).unwrap_or(true),
+    });
+    is_gone(path, missing, parent)
 }
 
 fn now() -> u64 {
@@ -325,6 +353,8 @@ struct Inner {
     store: Option<ConfigStore>,
     /// The folders looked at for being gone in this typing.
     checked: RefCell<Vec<PathBuf>>,
+    /// A gone check is under way (one at a time: a hung share holds its thread).
+    checking: Cell<bool>,
 }
 
 #[derive(Clone)]
@@ -379,6 +409,7 @@ impl PathBox {
             history: RefCell::new(history),
             store,
             checked: RefCell::default(),
+            checking: Cell::new(false),
         }));
         window.on_path_edited(|text| with_current(|p| p.edited(text.into())));
         // By path, not by row: whatever happened to the list meanwhile, the click goes there.
@@ -511,8 +542,12 @@ impl PathBox {
     }
 
     /// Looks on a thread whether the folders of `rows` not looked at yet in this typing are
-    /// gone from a local disk.
+    /// gone from a local disk; not while an earlier check is still under way (those folders
+    /// are looked at the next time).
     fn check_gone(&self, rows: &[Row]) {
+        if self.0.checking.get() {
+            return;
+        }
         let paths: Vec<PathBuf> = {
             let checked = self.0.checked.borrow();
             rows.iter()
@@ -526,15 +561,19 @@ impl PathBox {
             return;
         }
         self.0.checked.borrow_mut().extend(paths.iter().cloned());
-        let _ = std::thread::Builder::new().name("gezik-history-check".into()).spawn(move || {
+        self.0.checking.set(true);
+        let spawned = std::thread::Builder::new().name("gezik-history-check".into()).spawn(move || {
             let gone: Vec<PathBuf> = paths.into_iter().filter(|path| gone_locally(path)).collect();
-            if !gone.is_empty() {
-                let _ = slint::invoke_from_event_loop(move || with_current(|p| p.gone(gone)));
-            }
+            let _ = slint::invoke_from_event_loop(move || with_current(|p| p.gone(gone)));
         });
+        if spawned.is_err() {
+            self.0.checking.set(false);
+        }
     }
 
+    /// The gone check is done: `gone` are dropped from the history.
     fn gone(&self, gone: Vec<PathBuf>) {
+        self.0.checking.set(false);
         if !self.0.history.borrow_mut().remove(&gone) {
             return;
         }
@@ -859,12 +898,33 @@ mod tests {
         assert!(!gone_locally(&dir.join("here")));
         assert!(!gone_locally(Path::new(r"\\gezik-no-such-server\share\x")));
         assert!(!gone_locally(Path::new("//gezik-no-such-server/share/x")));
-        // A file system read as a network one (a container's overlay, tmpfs, btrfs on Linux)
-        // keeps its folders.
-        let local =
-            gezik_platform::fs::drive_facts(&dir).is_ok_and(|f| f.kind != gezik_platform::fs::DiskKind::Network);
-        assert_eq!(gone_locally(&dir.join("gone")), local);
+        // The temp folder is on a local disk (a container's overlay or tmpfs too).
+        assert!(gone_locally(&dir.join("gone")));
+        assert!(!gone_locally(&dir.join("no-volume").join("x")), "its folder is gone too: a volume not there");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_missing_folder_is_gone_only_from_a_folder_still_there_on_a_local_disk() {
+        let local = Some(Parent { empty: false, network: false });
+        assert!(is_gone(Path::new("/home/ali/old"), true, local));
+        assert!(!is_gone(Path::new("/home/ali/here"), false, local), "still there");
+        // An unplugged disk, an unmounted share: the folder it was in is not there either.
+        assert!(!is_gone(Path::new("/media/ali/USB/Photos"), true, None));
+        assert!(!is_gone(Path::new("/Volumes/NAS/Projects"), true, None));
+        assert!(!is_gone(Path::new("E:/Photos"), true, None));
+        // On a share, which may just not answer for it.
+        assert!(!is_gone(Path::new("/net/projects/old"), true, Some(Parent { empty: false, network: true })));
+        assert!(!is_gone(Path::new(r"\\server\share\old"), true, local));
+        assert!(!is_gone(Path::new("//server/share/old"), true, local));
+        // An empty folder is most likely a mount point with nothing mounted (fstab's /mnt/nas).
+        assert!(!is_gone(Path::new("/mnt/nas/Projects"), true, Some(Parent { empty: true, network: false })));
+        // A volume's own folder: the place volumes are mounted in is no proof it is gone.
+        for path in ["/Volumes/NAS", "/media/USB", "/media/ali/USB", "/run/media/ali/USB", "/mnt/usb"] {
+            assert!(!is_gone(Path::new(path), true, local), "{path}");
+        }
+        assert!(is_gone(Path::new("/media/ali/USB/old"), true, local), "a folder on a volume that is there");
+        assert!(is_gone(Path::new("/run/media/old"), true, local));
     }
 
     /// Spec 1: suggestions within 100 ms of a pause: 80 ms of it waiting, the rest for reading

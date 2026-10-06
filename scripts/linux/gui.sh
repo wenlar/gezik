@@ -1323,7 +1323,7 @@ C
 # The folder history (spec 6.2): moves and foreground tabs are visits, reloads, tab switches
 # and background tabs are not; state.toml keeps them; an empty address lists Recent then
 # Frequent; typed text adds the history's matches under the folders; a folder gone from a
-# local disk is dropped (on /target, a real disk: /tmp is overlay, read as a network one);
+# local disk is dropped (/tmp: overlay or tmpfs, local), one whose volume is not there is kept;
 # `[history] remember = false` forgets and stops recording; clear-history forgets. X11, 900x600.
 history() {
     Xvfb :99 -screen 0 1600x900x24 >/dev/null 2>&1 &
@@ -1332,8 +1332,8 @@ history() {
     export DISPLAY=:99
     sleep 1
     . /src/scripts/linux/gui-lib.sh
-    local gone=/target/gezik-hgone
-    rm -rf /tmp/h /tmp/cfg $gone && mkdir -p /tmp/h/other/projeler /tmp/h/proj-b /tmp/cfg $gone
+    local gone=/tmp/h/hgone
+    rm -rf /tmp/h /tmp/cfg /mnt/gezik-usb && mkdir -p /tmp/h/other/projeler /tmp/h/proj-b /tmp/cfg $gone
     for d in bg d1 d2 d3 d4 music proj-a tabhome work; do mkdir -p /tmp/h/$d; done
     cat >/tmp/cfg/settings.toml <<'TOML'
 start-folder = "/tmp/h/tabhome"
@@ -1392,6 +1392,13 @@ TOML
     rm -rf $gone
     key ctrl+l BackSpace; sleep 1.5; shot hist-gone; key Escape Escape; sleep 1.5
     check "history: a folder gone from a local disk is dropped" '[ -z "$(count_of $gone)" ] && [ "$(count_of /tmp/h/work)" = 4 ]'
+
+    # A volume not there (its folder gone too, or a volume's own folder in /mnt) keeps its folders.
+    mkdir -p /tmp/h/vol/data /mnt/gezik-usb
+    go /tmp/h/vol/data; go /mnt/gezik-usb; go /tmp/h
+    rm -rf /tmp/h/vol /mnt/gezik-usb
+    key ctrl+l BackSpace; sleep 1.5; key Escape Escape; sleep 1.5
+    check "history: a folder whose volume is not there is kept"         '[ "$(count_of /tmp/h/vol/data)" = 1 ] && [ "$(count_of /mnt/gezik-usb)" = 1 ]'
 
     # Typed text: proj-a and proj-b (sub-folders), then "History" with other/projeler.
     go /tmp/h

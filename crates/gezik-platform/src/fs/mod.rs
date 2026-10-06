@@ -16,13 +16,13 @@ pub use describe::describe;
 pub use gezik_core::ops::threads::DiskKind;
 #[cfg(unix)]
 pub use unix::{
-    clear_hidden, copy_file, delete, drive_facts, drive_root, free_space, is_hidden_attr, move_entry, restore,
-    set_hidden, trash,
+    clear_hidden, copy_file, delete, drive_facts, drive_root, free_space, is_hidden_attr, is_network, move_entry,
+    restore, set_hidden, trash,
 };
 #[cfg(windows)]
 pub use windows::{
-    clear_hidden, copy_file, delete, drive_facts, drive_root, free_space, is_hidden_attr, move_entry, restore,
-    set_hidden, trash,
+    clear_hidden, copy_file, delete, drive_facts, drive_root, free_space, is_hidden_attr, is_network, move_entry,
+    restore, set_hidden, trash,
 };
 #[cfg(windows)]
 pub(crate) use windows::{io_error, verbatim};
@@ -205,6 +205,13 @@ mod tests {
         assert!(is_disk_full(&io::Error::from(io::ErrorKind::StorageFull)));
         assert!(is_disk_full(&io::Error::from_raw_os_error(DISK_FULL_CODES[0])));
         assert!(!is_disk_full(&io::Error::from(io::ErrorKind::NotFound)));
+    }
+
+    #[test]
+    fn the_temp_folder_is_on_no_network_share() {
+        let dir = test_dir("network");
+        assert!(!is_network(&dir).unwrap(), "{}", dir.display());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

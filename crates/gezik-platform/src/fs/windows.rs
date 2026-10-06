@@ -310,6 +310,13 @@ pub fn free_space(path: &Path) -> io::Result<u64> {
     Ok(free)
 }
 
+/// Whether `path` (which exists) is on a network drive: a share or a drive letter mapped to one.
+pub fn is_network(path: &Path) -> io::Result<bool> {
+    let root = drive_root(path).ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no drive for this path"))?;
+    Ok(root.to_string_lossy().starts_with(r"\\")
+        || unsafe { GetDriveTypeW(&HSTRING::from(root.as_os_str())) } == DRIVE_REMOTE)
+}
+
 pub fn drive_facts(path: &Path) -> io::Result<DriveFacts> {
     let root = drive_root(path).ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no drive for this path"))?;
     let root_text = root.to_string_lossy().into_owned();

@@ -220,6 +220,56 @@ pub fn drive_facts(path: &Path) -> io::Result<DriveFacts> {
     Ok(DriveFacts { id: format!("{dev:x}"), kind: disk_kind(dev), trash: true, max_file: None })
 }
 
+/// Whether `path` (which exists) is on a file system that lives elsewhere: an NFS or SMB
+/// share, a FUSE mount (sshfs and the like), Ceph, AFS, Coda, 9P or NCP. Unlike
+/// `drive_facts`' kind, a btrfs, tmpfs or overlay file system (no block device) is local.
+#[cfg(target_os = "linux")]
+pub fn is_network(path: &Path) -> io::Result<bool> {
+    // statfs(2)'s f_type of each (linux/magic.h).
+    const NETWORK: [u32; 11] = [
+        0x6969,      // NFS
+        0x517b,      // SMB
+        0xff53_4d42, // CIFS
+        0xfe53_4d42, // SMB2
+        0x6573_5546, // FUSE
+        0x00c3_6400, // Ceph
+        0x5346_414f, // AFS
+        0x6b41_4653, // kAFS
+        0x7375_7245, // Coda
+        0x0102_1997, // 9P
+        0x564c,      // NCP
+    ];
+    let stats = statfs(path)?;
+    // f_type is a long in glibc, an unsigned one in musl; the magic numbers are 32 bits.
+    #[allow(clippy::unnecessary_cast, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    Ok(NETWORK.contains(&(stats.f_type as u32)))
+}
+
+/// Whether `path` (which exists) is on a file system that is not local (`MNT_LOCAL` unset):
+/// an SMB, NFS or AFP share, WebDAV.
+#[cfg(target_os = "macos")]
+pub fn is_network(path: &Path) -> io::Result<bool> {
+    const MNT_LOCAL: u32 = 0x1000;
+    Ok(statfs(path)?.f_flags & MNT_LOCAL == 0)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+pub fn is_network(_path: &Path) -> io::Result<bool> {
+    Ok(false)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn statfs(path: &Path) -> io::Result<libc::statfs> {
+    use std::os::unix::ffi::OsStrExt;
+    let path = std::ffi::CString::new(path.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "a NUL in the path"))?;
+    let mut stats: libc::statfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statfs(path.as_ptr(), &mut stats) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(stats)
+}
+
 /// glibc's encoding of a device number's major part.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn dev_major(dev: u64) -> u64 {
