@@ -177,8 +177,9 @@ impl ConvertTask {
             ConvertWhat::Media(preset) => {
                 let ff = ffmpeg.ok_or_else(ffmpeg_needed)?;
                 let size = std::fs::metadata(input).map_or(0, |meta| meta.len());
-                // Against what the item counted in earlier tries (a full disk, a pause): a try
-                // that starts over counts only what goes past them.
+                // Against what the item counted in earlier tries (a full disk): a try that
+                // starts over counts only what goes past them. After a pause the engine took
+                // back what it counted, so the bar starts again from where the file began.
                 let mut on_progress = |fraction: f64| {
                     let now = ((size as f64 * fraction) as u64).min(size);
                     let counted = run.counted();

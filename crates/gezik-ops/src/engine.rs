@@ -942,6 +942,8 @@ mod tests {
     struct RestartTask {
         target: PathBuf,
         tries: Arc<AtomicUsize>,
+        /// What the item and the job had counted when the second try began.
+        counted_on_retry: Arc<Mutex<Option<(u64, u64)>>>,
     }
 
     impl Task for RestartTask {
@@ -963,11 +965,14 @@ mod tests {
         }
         fn run(&self, _item: &crate::task::PlanItem, cx: &crate::task::RunCx<'_>) -> io::Result<crate::task::Outcome> {
             if self.tries.fetch_add(1, Ordering::SeqCst) > 0 {
+                let job_done = cx.control.bytes_done.load(Ordering::Relaxed);
+                *self.counted_on_retry.lock().unwrap() = Some((cx.counted(), job_done));
                 std::fs::write(&self.target, "done")?;
                 let facts = crate::task::facts_after(&self.target, false);
                 return Ok(crate::task::Outcome::Created { path: self.target.clone(), facts, from: None });
             }
             std::fs::write(&self.target, "part")?;
+            cx.add_bytes(3);
             while !cx.cancelled() && !cx.paused() {
                 std::thread::sleep(Duration::from_millis(5));
             }
@@ -981,8 +986,11 @@ mod tests {
         let dir = test_dir("restart");
         let engine = engine();
         let tries = Arc::new(AtomicUsize::new(0));
+        let counted_on_retry = Arc::new(Mutex::new(None));
         let target = dir.join("a.bin");
-        let job = engine.submit(Box::new(RestartTask { target: target.clone(), tries: tries.clone() }));
+        let task =
+            RestartTask { target: target.clone(), tries: tries.clone(), counted_on_retry: counted_on_retry.clone() };
+        let job = engine.submit(Box::new(task));
         wait_for("the first try", || target.exists());
         engine.pause(job);
         wait_for("the partial file to go", || !target.exists());
@@ -994,11 +1002,14 @@ mod tests {
         assert!(report.failures.is_empty() && !report.cancelled, "{:?}", report.failures);
         assert_eq!(tries.load(Ordering::SeqCst), 2);
         assert_eq!(read(&target), "done");
+        // The bytes the first try counted were taken back: the item and the bar start over.
+        assert_eq!(*counted_on_retry.lock().unwrap(), Some((0, 0)));
 
         // Cancelled while paused: it ends without another try.
         let tries = Arc::new(AtomicUsize::new(0));
         let target = dir.join("b.bin");
-        let job = engine.submit(Box::new(RestartTask { target: target.clone(), tries: tries.clone() }));
+        let task = RestartTask { target: target.clone(), tries: tries.clone(), counted_on_retry: Default::default() };
+        let job = engine.submit(Box::new(task));
         wait_for("the first try", || target.exists());
         engine.pause(job);
         wait_for("the partial file to go", || !target.exists());

@@ -360,7 +360,9 @@ pub(crate) fn execute(shared: &Shared, job: &Job, task: &dyn Task, item: PlanIte
             }
             Err(err) if is_marker::<Restart>(&err) => {
                 // Paused while it ran a program, which was ended: once resumed, the item is
-                // done again from the start.
+                // done again from the start, so what it counted is taken back now (the bar
+                // shows where the job really is, not the try that was thrown away).
+                control.take_back_bytes(cx.added.replace(0));
                 if control.stopped() {
                     touch();
                     return;

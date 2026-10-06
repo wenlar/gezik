@@ -367,7 +367,8 @@ impl RunCx<'_> {
     }
 
     /// The bytes this item counted so far (with `add_bytes`), over all its tries: an item
-    /// done again after a pause or a full disk counts only what goes past them.
+    /// tried again after a full disk counts only what goes past them. An item that returned
+    /// [`restart`] starts again from 0 (the engine took back what it counted).
     pub fn counted(&self) -> u64 {
         self.added.get()
     }

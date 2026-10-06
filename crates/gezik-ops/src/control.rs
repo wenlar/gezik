@@ -145,6 +145,12 @@ impl Control {
         self.bytes_done.fetch_add(bytes, Ordering::Relaxed);
     }
 
+    /// Takes back bytes counted for work that is done again (an item started over).
+    pub fn take_back_bytes(&self, bytes: u64) {
+        let _ =
+            self.bytes_done.try_update(Ordering::Relaxed, Ordering::Relaxed, |done| Some(done.saturating_sub(bytes)));
+    }
+
     pub fn item_done(&self) {
         self.items_done.fetch_add(1, Ordering::Relaxed);
     }
