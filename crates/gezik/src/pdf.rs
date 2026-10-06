@@ -285,17 +285,28 @@ pub fn move_in_order(order: &mut Vec<PathBuf>, from: usize, to: usize) {
     order.insert(to, item);
 }
 
-/// The worker's "pdfium could not be loaded (…)": the library is there and broken.
+/// The start of the worker's "pdfium could not be loaded (…)" (`PdfFailed`'s text for a
+/// library failure).
+const PDFIUM_FAILED_TEXT: &str = "pdfium could not be loaded (";
+
+/// The worker's "pdfium could not be loaded (…)": the library is there and broken. Only the
+/// start counts: a file named so in another failure is not one.
 pub fn says_pdfium_failed(message: &str) -> bool {
-    message.contains("pdfium could not be loaded")
+    message.starts_with(PDFIUM_FAILED_TEXT)
 }
 
-/// What a row's details say instead of pdfium's own text when it could not be loaded.
+/// What the pdfium box asks when the one there could not be loaded.
 pub const PDFIUM_FAILED: &str = "Could not load pdfium. Download it again?";
 
-/// A failure's message as the panel's details show it.
-pub fn failure_shown(message: &str) -> &str {
-    if says_pdfium_failed(message) { PDFIUM_FAILED } else { message }
+/// A failure's message as the panel's details show it: pdfium's own text shortened to its
+/// reason. It offers nothing: the box after the job does (once), and says why when a fresh
+/// download does not load either.
+pub fn failure_shown(message: &str) -> std::borrow::Cow<'_, str> {
+    if says_pdfium_failed(message) {
+        format!("Could not load pdfium: {}", pdfium_reason(message)).into()
+    } else {
+        message.into()
+    }
 }
 
 #[cfg(test)]
@@ -429,6 +440,10 @@ mod tests {
         assert_eq!(failure_shown(raw), raw);
         let library = "pdfium could not be loaded (LoadLibraryError(DlOpen { desc: \"x\" }))";
         assert!(says_pdfium_failed(library));
-        assert_eq!(failure_shown(library), PDFIUM_FAILED);
+        assert_eq!(failure_shown(library), "Could not load pdfium: x");
+        // A name that holds the words is not a load failure.
+        let named = "cannot write pdfium could not be loaded (x).pdf: denied";
+        assert!(!says_pdfium_failed(named));
+        assert_eq!(failure_shown(named), named);
     }
 }
