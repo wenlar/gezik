@@ -274,6 +274,51 @@ fn a_crashing_worker_fails_its_pdf_and_the_others_still_land() {
 }
 
 #[test]
+fn outputs_of_a_pdf_that_fails_never_land_and_the_worker_writes_beside_what_is_placed() {
+    let d = dir("late-failure");
+    let a = script(
+        &d,
+        "a.pdf",
+        "pages 2
+stall
+late-failure
+",
+    );
+    let hold = d.join("a.pdf.hold");
+    std::fs::write(&hold, "").unwrap();
+    let ok = script(
+        &d, "ok.pdf", "pages 1
+",
+    );
+    let engine = engine(&d);
+    let job = engine.submit_chain(pdf_chain(PdfWork::Split(Split::EachPage), vec![a.clone(), ok], fake_tools()), None);
+    // While the worker waits with its outputs written: they are in a folder of their own in
+    // the staging folder, and the folder that gets placed holds none of them.
+    let mut staging = None;
+    wait("the outputs to be written", || {
+        staging = std::fs::read_dir(&d)
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .find(|p| p.join(".0").join("a - page 2.pdf").exists());
+        staging.is_some()
+    });
+    let staging = staging.unwrap();
+    assert!(staging.file_name().unwrap().to_string_lossy().starts_with(".gezik-"), "{}", staging.display());
+    let placed: Vec<_> = std::fs::read_dir(staging.join("x")).unwrap().flatten().map(|e| e.file_name()).collect();
+    assert!(placed.is_empty(), "{placed:?}");
+    std::fs::remove_file(&hold).unwrap();
+    let (report, _) = finish_with(&engine, job, None);
+    assert_eq!(report.failures.len(), 1, "{:?}", report.failures);
+    assert_eq!(report.failures[0].path, a);
+    assert_eq!(
+        names(&d),
+        ["a.pdf", "a.pdf.args", "a.pdf.log", "ok - page 1.pdf", "ok.pdf", "ok.pdf.args", "ok.pdf.log"]
+    );
+    assert!(leftovers(&d).is_empty(), "{:?}", leftovers(&d));
+}
+
+#[test]
 fn cancel_ends_the_worker_and_leaves_nothing() {
     let d = dir("cancel");
     let h = script(&d, "h.pdf", "pages 5\nhang\n");
@@ -403,6 +448,17 @@ fn a_lowered_page_is_a_note_not_a_failure() {
     assert_eq!(report.skipped[0].path, d.join("a - page 2.png"));
     assert_eq!(report.skipped[0].message, "page 2 was made at 41 dpi: at 300 dpi it would be too large");
     assert!(d.join("a - page 1.png").is_file() && d.join("a - page 2.png").is_file());
+    // A render that fails after all made no pictures, so nothing is said of their dpi.
+    let b = script(&d, "b.pdf", "pages 2
+lowered 2 41
+late-failure
+");
+    let work = PdfWork::Render { dpi: 300, image: PageImage::Png };
+    let job = engine.submit_chain(pdf_chain(work, vec![b.clone()], fake_tools()), None);
+    let (report, _) = finish_with(&engine, job, None);
+    assert_eq!(report.failures.len(), 1, "{:?}", report.failures);
+    assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+    assert!(!d.join("b - page 2.png").exists());
 }
 
 #[test]

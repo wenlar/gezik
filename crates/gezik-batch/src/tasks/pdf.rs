@@ -7,14 +7,14 @@
 //! from the start once the job is resumed; cancel ends it at once.
 
 use std::collections::HashMap;
-use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use gezik_core::batch::pdf::{PageImage, Split, page_image_name};
 use gezik_core::batch::pdf_worker::{Reply, Request, WorkerJob};
-use gezik_core::ops::names::next_free;
+use gezik_core::ops::names::next_free_os;
 use gezik_ops::{Answer, Facts, Outcome, PlanItem, Question, Resources, RunCx, ScanSink, Stage, Task, TaskKind, Work};
 
 use super::place::PlaceTask;
@@ -52,7 +52,15 @@ pub fn pdf_chain(work: PdfWork, inputs: Vec<PathBuf>, tools: PdfTools) -> Vec<Bo
     let Some(first) = inputs.first() else { return Vec::new() };
     let dir = first.parent().map(Path::to_path_buf).unwrap_or_default();
     let stage = Arc::new(Mutex::new(None));
-    let task = PdfTask { work, inputs, tools, dir: dir.clone(), stage: stage.clone(), counts: Mutex::default() };
+    let task = PdfTask {
+        work,
+        inputs,
+        tools,
+        dir: dir.clone(),
+        stage: stage.clone(),
+        counts: Mutex::default(),
+        spoiled: AtomicBool::new(false),
+    };
     let title = task.title();
     vec![Box::new(task), Box::new(PlaceTask::outputs(dir, stage, TaskKind::Pdf, title))]
 }
@@ -88,7 +96,11 @@ pub(super) struct PdfTask {
     /// By item: the most page steps found and done in any try, so that a try after a pause
     /// (or a password) counts only what goes past the earlier ones.
     counts: Mutex<HashMap<usize, (u64, u64)>>,
+    /// Set by [`PdfTask::spoil`].
+    spoiled: AtomicBool,
 }
+
+const SPOILED: &str = "an earlier PDF's outputs could not be cleared away; nothing from this job is placed";
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|e| e.into_inner())
@@ -108,17 +120,29 @@ impl PdfTask {
         }
     }
 
-    /// The content folder of the job's staging folder, made the first time.
+    /// The content folder of the job's staging folder, made the first time. Fails once an
+    /// input's outputs could not be taken back out of it ([`PdfTask::spoil`]).
     fn content(&self, run: &RunCx<'_>) -> io::Result<PathBuf> {
         let mut stage = lock(&self.stage);
         if let Some(content) = &*stage {
             return Ok(content.clone());
+        }
+        if self.spoiled.load(Ordering::Relaxed) {
+            return Err(io::Error::other(SPOILED));
         }
         let staging = run.staging_dir(&self.dir.join(CONTENT))?;
         let content = staging.join(CONTENT);
         std::fs::create_dir(&content)?;
         *stage = Some(content.clone());
         Ok(content)
+    }
+
+    /// Nothing from this job is placed: part of a failed input's outputs could not be taken out
+    /// of the content folder, and placing it would show half-made output. The staging folder
+    /// still goes at the job's end.
+    fn spoil(&self) {
+        self.spoiled.store(true, Ordering::Relaxed);
+        *lock(&self.stage) = None;
     }
 
     /// Counts a reply's steps against what the item counted in earlier tries.
@@ -146,19 +170,64 @@ impl PdfTask {
     }
 }
 
-/// Moves every file the worker wrote in `out` into `content` (the same drive); a name another
-/// input's outputs already took there gets a number.
-fn gather(out: &Path, content: &Path) -> io::Result<()> {
-    for entry in std::fs::read_dir(out)? {
-        let entry = entry?;
-        let name = entry.file_name();
-        let mut target = content.join(&name);
-        if std::fs::symlink_metadata(&target).is_ok() {
-            let text = name.to_string_lossy();
-            let free = next_free(&text, false, |candidate| std::fs::symlink_metadata(content.join(candidate)).is_ok());
-            target = content.join(OsString::from(free));
+/// A fresh folder for one try of input `index`'s worker, beside `content` in the staging
+/// folder (never in it: what is in `content` is placed). `.N`, or `.N.2`… when an earlier try's
+/// folder could not be removed.
+fn scratch(staging: &Path, index: usize) -> io::Result<PathBuf> {
+    let mut n = 1u32;
+    loop {
+        let name = if n == 1 { format!(".{index}") } else { format!(".{index}.{n}") };
+        let out = staging.join(name);
+        match std::fs::create_dir(&out) {
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists && n < 1000 => n += 1,
+            made => return made.map(|()| out),
         }
-        std::fs::rename(entry.path(), target)?;
+    }
+}
+
+/// Why [`gather`] failed, and whether what it had moved could all be taken back.
+#[derive(Debug)]
+struct GatherFailed {
+    error: io::Error,
+    /// Some of this input's outputs are still in `content` (taking them back failed too).
+    stuck: bool,
+}
+
+/// Moves every file the worker wrote in `out` into `content` (the same drive), all or none: a
+/// name another input's outputs already took there gets a number, and when a move fails the
+/// ones made before it are moved back (or removed).
+fn gather(out: &Path, content: &Path) -> Result<(), GatherFailed> {
+    gather_with(out, content, &mut |from, to| std::fs::rename(from, to), &mut |path| std::fs::remove_file(path))
+}
+
+type Move<'a> = dyn FnMut(&Path, &Path) -> io::Result<()> + 'a;
+type Remove<'a> = dyn FnMut(&Path) -> io::Result<()> + 'a;
+
+fn gather_with(out: &Path, content: &Path, mv: &mut Move<'_>, rm: &mut Remove<'_>) -> Result<(), GatherFailed> {
+    let failed = |error| GatherFailed { error, stuck: false };
+    // Every name first: a listing that fails moves nothing.
+    let mut names = Vec::new();
+    for entry in std::fs::read_dir(out).map_err(failed)? {
+        names.push(entry.map_err(failed)?.file_name());
+    }
+    let mut moved: Vec<(PathBuf, PathBuf)> = Vec::new();
+    for name in names {
+        let taken = |candidate: &std::ffi::OsStr| {
+            std::fs::symlink_metadata(content.join(candidate)).is_ok()
+                || moved.iter().any(|(_, to)| to.file_name() == Some(candidate))
+        };
+        let free = if taken(&name) { next_free_os(&name, false, taken) } else { name.clone() };
+        let (from, to) = (out.join(&name), content.join(free));
+        if let Err(error) = mv(&from, &to) {
+            // Taken back where it came from, or else removed; what is left in `content` would
+            // be placed.
+            let stuck = moved.iter().rev().fold(false, |stuck, (from, to)| {
+                let back = mv(to, from).is_ok() || rm(to).is_ok();
+                stuck || !back
+            });
+            return Err(GatherFailed { error, stuck });
+        }
+        moved.push((from, to));
     }
     Ok(())
 }
@@ -230,11 +299,10 @@ impl Task for PdfTask {
         let index = item.root;
         let inputs: Vec<PathBuf> = if self.merging() { self.inputs.clone() } else { vec![self.inputs[index].clone()] };
         let content = self.content(run)?;
-        let out = content.join(format!(".{index}"));
+        let staging = content.parent().map(Path::to_path_buf).unwrap_or_default();
         let mut passwords: Vec<(usize, String)> = Vec::new();
         loop {
-            let _ = std::fs::remove_dir_all(&out);
-            std::fs::create_dir(&out)?;
+            let out = scratch(&staging, index)?;
             let request = Request {
                 library: self.tools.library.clone(),
                 dir: out.clone(),
@@ -243,6 +311,8 @@ impl Task for PdfTask {
                 passwords: passwords.clone(),
             };
             let mut this = (0u64, 0u64);
+            // Told only once the pictures have landed: a try that fails or is paused made none.
+            let mut lowered: Vec<(PathBuf, io::Error)> = Vec::new();
             let mut on_reply = |reply: &Reply| match reply {
                 Reply::Steps(_) | Reply::Step => self.tally(index, &mut this, reply, run),
                 Reply::Lowered { page, dpi } => {
@@ -251,7 +321,7 @@ impl Task for PdfTask {
                     let why = io::Error::other(format!(
                         "page {page} was made at {dpi} dpi: at {asked} dpi it would be too large"
                     ));
-                    run.skip(&self.dir.join(name), &why);
+                    lowered.push((self.dir.join(name), why));
                 }
                 _ => {}
             };
@@ -266,11 +336,23 @@ impl Task for PdfTask {
                 now
             };
             let result = client::run(&self.tools.worker, &request, &mut on_reply, &stop);
+            // `out` is beside the content folder: if it cannot be removed it is never placed,
+            // and it goes with the staging folder at the job's end.
             let (input, retry) = match result {
                 Ok(Ended::Done) => {
                     let gathered = gather(&out, &content);
                     let _ = std::fs::remove_dir_all(&out);
-                    gathered?;
+                    match gathered {
+                        Ok(()) => {}
+                        Err(GatherFailed { error, stuck: false }) => return Err(error),
+                        Err(GatherFailed { error, stuck: true }) => {
+                            self.spoil();
+                            return Err(io::Error::new(error.kind(), format!("{error}; {SPOILED}")));
+                        }
+                    }
+                    for (path, why) in &lowered {
+                        run.skip(path, why);
+                    }
                     // What lands is reported by the PlaceTask.
                     return Ok(Outcome::Nothing);
                 }
@@ -324,7 +406,15 @@ mod tests {
     fn task(work: PdfWork, inputs: &[&str]) -> PdfTask {
         let tools = PdfTools { worker: Worker { program: "w".into(), args: vec![] }, library: "lib".into() };
         let inputs: Vec<PathBuf> = inputs.iter().map(PathBuf::from).collect();
-        PdfTask { work, inputs, tools, dir: "d".into(), stage: Arc::default(), counts: Mutex::default() }
+        PdfTask {
+            work,
+            inputs,
+            tools,
+            dir: "d".into(),
+            stage: Arc::default(),
+            counts: Mutex::default(),
+            spoiled: AtomicBool::new(false),
+        }
     }
 
     #[test]
@@ -364,6 +454,86 @@ mod tests {
         assert_eq!(std::fs::read_to_string(content.join("a - page 1 (2).pdf")).unwrap(), "second");
         assert_eq!(std::fs::read_to_string(content.join("a - page 2.pdf")).unwrap(), "two");
         assert_eq!(std::fs::read_dir(&out).unwrap().count(), 0);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    fn gather_dirs(name: &str) -> (PathBuf, PathBuf, PathBuf) {
+        let d = std::env::temp_dir().join(format!("gezik-pdf-gather-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let (out, content) = (d.join("out"), d.join("content"));
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::create_dir_all(&content).unwrap();
+        for i in 1..=3 {
+            std::fs::write(out.join(format!("a - page {i}.pdf")), format!("{i}")).unwrap();
+        }
+        std::fs::write(content.join("b - page 1.pdf"), "b").unwrap();
+        (d, out, content)
+    }
+
+    fn listing(d: &Path) -> Vec<String> {
+        let mut names: Vec<String> =
+            std::fs::read_dir(d).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn a_gather_that_fails_partway_leaves_nothing_of_it_in_the_content_folder() {
+        let (d, out, content) = gather_dirs("partway");
+        // The second move fails; the first is taken back.
+        let mut calls = 0;
+        let mut mv = |from: &Path, to: &Path| {
+            calls += 1;
+            if calls == 2 { Err(io::Error::other("held by a scanner")) } else { std::fs::rename(from, to) }
+        };
+        let failed = gather_with(&out, &content, &mut mv, &mut |p| std::fs::remove_file(p)).unwrap_err();
+        assert!(!failed.stuck);
+        assert_eq!(failed.error.to_string(), "held by a scanner");
+        assert_eq!(listing(&content), ["b - page 1.pdf"]);
+        assert_eq!(listing(&out).len(), 3);
+
+        // Taking it back fails too: it is removed instead.
+        let mut calls = 0;
+        let mut mv = |from: &Path, to: &Path| {
+            calls += 1;
+            if calls >= 2 { Err(io::Error::other("held")) } else { std::fs::rename(from, to) }
+        };
+        let failed = gather_with(&out, &content, &mut mv, &mut |p| std::fs::remove_file(p)).unwrap_err();
+        assert!(!failed.stuck);
+        assert_eq!(listing(&content), ["b - page 1.pdf"]);
+
+        // Neither works: the caller is told, and places nothing of the job.
+        std::fs::write(out.join("a - page 9.pdf"), "9").unwrap();
+        let mut calls = 0;
+        let mut mv = |from: &Path, to: &Path| {
+            calls += 1;
+            if calls >= 2 { Err(io::Error::other("held")) } else { std::fs::rename(from, to) }
+        };
+        let failed = gather_with(&out, &content, &mut mv, &mut |_| Err(io::Error::other("held"))).unwrap_err();
+        assert!(failed.stuck);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_spoiled_job_places_nothing() {
+        let t = task(PdfWork::Split(Split::EachPage), &["d/a.pdf", "d/b.pdf"]);
+        *lock(&t.stage) = Some("d/.gezik-x/x".into());
+        t.spoil();
+        assert!(lock(&t.stage).is_none());
+        assert!(t.spoiled.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn scratch_folders_are_beside_the_content_folder_and_fresh() {
+        let d = std::env::temp_dir().join(format!("gezik-pdf-scratch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join(CONTENT)).unwrap();
+        let first = scratch(&d, 3).unwrap();
+        assert_eq!(first, d.join(".3"));
+        // A folder an earlier try could not remove is left alone.
+        std::fs::write(first.join("left.pdf"), "x").unwrap();
+        assert_eq!(scratch(&d, 3).unwrap(), d.join(".3.2"));
+        assert_eq!(listing(&d.join(CONTENT)), Vec::<String>::new());
         let _ = std::fs::remove_dir_all(&d);
     }
 }

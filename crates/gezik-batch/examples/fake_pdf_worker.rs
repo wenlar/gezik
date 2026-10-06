@@ -13,7 +13,9 @@
 //! - `hold`: after opening, wait while `<input>.hold` exists;
 //! - `slow MS`: wait MS milliseconds after each step;
 //! - `lowered PAGE DPI`: rendering page PAGE (1-based) reports `lowered PAGE DPI`;
-//! - `long`: after opening, write a reply line of 70 000 bytes.
+//! - `long`: after opening, write a reply line of 70 000 bytes;
+//! - `stall`: after writing every output, wait while `<input>.hold` exists;
+//! - `late-failure`: after writing every output, fail (exit code 1) instead of `done`.
 //!
 //! Inputs are all opened first (a missing password: `needs-password i`, a wrong one:
 //! `wrong-password i`, both exit 0; damage: `failed i damaged …`, exit 1); then the job writes
@@ -38,6 +40,8 @@ struct Script {
     slow: u64,
     lowered: Vec<(u32, u32)>,
     long: bool,
+    stall: bool,
+    late_failure: bool,
 }
 
 fn script(input: &Path) -> Script {
@@ -54,6 +58,8 @@ fn script(input: &Path) -> Script {
             ["slow", ms] => s.slow = ms.parse().unwrap(),
             ["lowered", page, dpi] => s.lowered.push((page.parse().unwrap(), dpi.parse().unwrap())),
             ["long"] => s.long = true,
+            ["stall"] => s.stall = true,
+            ["late-failure"] => s.late_failure = true,
             _ => {}
         }
     }
@@ -186,6 +192,16 @@ fn main() {
                 step();
             }
         }
+    }
+    for (input, s) in request.inputs.iter().zip(&scripts) {
+        let hold = with_suffix(input, ".hold");
+        while s.stall && hold.exists() {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+    if scripts.iter().any(|s| s.late_failure) {
+        reply(&Reply::Failed { input: Some(0), why: Failure::Other, message: "failed after writing".into() });
+        std::process::exit(1);
     }
     if scripts.iter().any(|s| s.hang) {
         loop {
