@@ -981,7 +981,7 @@ pub fn native_menus() -> bool {
 /// A title for Gezik's own menus: on Windows they are native menus, which would take `&` as the
 /// access key mark, so it is doubled to show as itself.
 fn menu_title(title: &str) -> String {
-    if cfg!(windows) { title.replace('&', "&&") } else { title.to_owned() }
+    if cfg!(windows) && native_menus() { title.replace('&', "&&") } else { title.to_owned() }
 }
 
 #[cfg(test)]

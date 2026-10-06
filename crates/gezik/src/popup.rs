@@ -52,8 +52,9 @@ fn place_axis(start: f32, flip_end: f32, length: f32, area: f32) -> (f32, f32) {
     let far = area - MARGIN;
     if start + length <= far {
         (start.max(MARGIN), length)
-    } else if flip_end - length >= MARGIN {
-        (flip_end - length, length)
+    } else if flip_end.min(far) - length >= MARGIN {
+        // A pointer within the margin of the far edge: the menu still keeps the margin.
+        (flip_end.min(far) - length, length)
     } else {
         // Room on neither side: as far from the edge it ran past as it can be.
         (far - length, length)
@@ -140,6 +141,13 @@ mod tests {
         let button = Anchor::below(200.0, 500.0, 400.0, 530.0);
         let placed = place_menu(button, (200.0, 200.0), AREA);
         assert_eq!((placed.x, placed.y), (200.0, 300.0));
+    }
+
+    #[test]
+    fn a_flipped_menu_keeps_the_margin() {
+        // A right-click 1 px from the right edge.
+        let placed = place_menu(Anchor::point(899.0, 100.0), (200.0, 100.0), AREA);
+        assert_eq!(placed.x, 900.0 - MARGIN - 200.0);
     }
 
     #[test]
