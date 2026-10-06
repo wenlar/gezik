@@ -47,6 +47,10 @@ fast_image_resize = { version = "6.1.0", default-features = false, features = ["
 # has no BOM (chardetng).
 encoding_rs = "0.8.42"
 chardetng = "1.0.0"
+# Images to PDF: pdf-writer writes the objects (each streamed to the file as it is made),
+# miniz_oxide compresses samples and ICC profiles (already linked through flate2).
+pdf-writer = "0.15.0"
+miniz_oxide = "0.9.1"
 
 [features]
 default = ["rar"]

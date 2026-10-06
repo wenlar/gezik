@@ -2,11 +2,13 @@
 //! the EXIF date reader. The renames themselves run as `gezik_ops::RenameTask`. 5b: reading
 //! archives into a staging folder, the engine tasks that extract and make them, and
 //! downloading the tools Gezik runs (7-Zip). 5c: converting pictures and text, and running
-//! ffmpeg with progress and cancel.
+//! ffmpeg with progress and cancel. 5d: the PDF group, starting with writing pictures into a
+//! PDF.
 
 pub mod archive;
 pub mod convert;
 pub mod exif;
+pub mod pdf;
 pub mod rename;
 pub mod tasks;
 pub mod tools;
