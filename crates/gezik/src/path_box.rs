@@ -263,23 +263,31 @@ pub fn accept_text(path: &Path) -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Read {
     Cached,
-    /// Being read already: a slow share is not read twice.
+    /// Being read already in this typing: a slow share is not read twice.
     Wait,
     Start,
     /// `MAX_READS` folders are being read (hung shares): no suggestions.
     Busy,
 }
 
-pub fn read_needed(folder: &Path, cached: Option<&Path>, reading: &[PathBuf]) -> Read {
+/// What `folder` needs in typing `generation`, with `reading` the folders being read and the
+/// typing each was asked for in (one of an earlier typing is dropped when it ends).
+pub fn read_needed(folder: &Path, cached: Option<&Path>, reading: &[(PathBuf, u64)], generation: u64) -> Read {
     if cached.is_some_and(|cached| same_path(cached, folder)) {
         Read::Cached
-    } else if reading.iter().any(|path| same_path(path, folder)) {
+    } else if reading.iter().any(|(path, of)| *of == generation && same_path(path, folder)) {
         Read::Wait
     } else if reading.len() >= MAX_READS {
         Read::Busy
     } else {
         Read::Start
     }
+}
+
+/// Whether a read done, the `read`th started, goes into memory over the one there (the
+/// `cached`th): only a newer one does, or the one the list waits for (`wanted`).
+pub fn caches(read: u64, cached: Option<u64>, wanted: bool) -> bool {
+    wanted || cached.is_none_or(|cached| read > cached)
 }
 
 /// Whether a read made in typing `of` (a generation) is kept now, in `generation`, while the
@@ -333,6 +341,9 @@ pub fn list_subfolders(dir: &Path) -> std::io::Result<Vec<String>> {
     Ok(names)
 }
 
+/// A folder read, its sub-folders and the read's number.
+type Cached = (PathBuf, Rc<Vec<String>>, u64);
+
 struct Inner {
     window: slint::Weak<AppWindow>,
     nav: Navigator,
@@ -343,10 +354,12 @@ struct Inner {
     generation: Cell<u64>,
     debounce: slint::Timer,
     limit: slint::Timer,
-    /// The last folder read and its sub-folders, for this typing.
-    cache: RefCell<Option<(PathBuf, Rc<Vec<String>>)>>,
-    /// Folders being read now.
-    reading: RefCell<Vec<PathBuf>>,
+    /// The last folder read, its sub-folders and the read's number, for this typing.
+    cache: RefCell<Option<Cached>>,
+    /// Folders being read now, with the typing (generation) each is for.
+    reading: RefCell<Vec<(PathBuf, u64)>>,
+    /// Reads started so far.
+    reads: Cell<u64>,
     /// The folder, and the start of a name in it, the list waits for.
     wanted: RefCell<Option<(PathBuf, String)>>,
     history: RefCell<FolderHistory>,
@@ -405,6 +418,7 @@ impl PathBox {
             limit: slint::Timer::default(),
             cache: RefCell::default(),
             reading: RefCell::default(),
+            reads: Cell::new(0),
             wanted: RefCell::default(),
             history: RefCell::new(history),
             store,
@@ -474,10 +488,15 @@ impl PathBox {
             return self.show(self.suggestions(Vec::new()));
         };
         let cached = self.0.cache.borrow().clone();
-        let decision = read_needed(&folder, cached.as_ref().map(|(f, _)| f.as_path()), &self.0.reading.borrow());
+        let decision = read_needed(
+            &folder,
+            cached.as_ref().map(|(f, ..)| f.as_path()),
+            &self.0.reading.borrow(),
+            self.0.generation.get(),
+        );
         match decision {
             Read::Cached => {
-                let names = cached.map(|(_, names)| names).unwrap_or_default();
+                let names = cached.map(|(_, names, _)| names).unwrap_or_default();
                 self.show(self.suggestions(folder_rows(&folder, &names, &prefix)));
             }
             // Another folder's rows go while this one is read (the history's for this text
@@ -590,34 +609,47 @@ impl PathBox {
 
     /// Reads `folder` on a thread of its own.
     fn read(&self, folder: PathBuf) {
-        self.0.reading.borrow_mut().push(folder.clone());
         let generation = self.0.generation.get();
+        let number = self.0.reads.get() + 1;
+        self.0.reads.set(number);
+        self.0.reading.borrow_mut().push((folder.clone(), generation));
         let spawned = std::thread::Builder::new().name("gezik-complete".into()).spawn({
             let folder = folder.clone();
             move || {
                 let names = list_subfolders(&folder);
-                let _ = slint::invoke_from_event_loop(move || with_current(|p| p.listed(generation, folder, names)));
+                let _ = slint::invoke_from_event_loop(move || {
+                    with_current(|p| p.listed(generation, number, folder, names));
+                });
             }
         });
         if spawned.is_err() {
-            self.0.reading.borrow_mut().retain(|path| !same_path(path, &folder));
+            self.done_reading(&folder, generation);
         }
     }
 
-    /// A read is done: kept for this typing, shown if the list still waits for it.
-    fn listed(&self, generation: u64, folder: PathBuf, names: std::io::Result<Vec<String>>) {
-        self.0.reading.borrow_mut().retain(|path| !same_path(path, &folder));
+    fn done_reading(&self, folder: &Path, generation: u64) {
+        let mut reading = self.0.reading.borrow_mut();
+        if let Some(at) = reading.iter().position(|(path, of)| *of == generation && same_path(path, folder)) {
+            reading.remove(at);
+        }
+    }
+
+    /// Read number `number` is done: kept for this typing unless a newer read is, shown if the
+    /// list still waits for it.
+    fn listed(&self, generation: u64, number: u64, folder: PathBuf, names: std::io::Result<Vec<String>>) {
+        self.done_reading(&folder, generation);
         let editing = self.0.window.upgrade().is_some_and(|w| w.get_path_editing());
         if !keeps(generation, self.0.generation.get(), editing) {
             return;
         }
         // An unreadable folder suggests nothing.
         let names = Rc::new(names.unwrap_or_default());
-        *self.0.cache.borrow_mut() = Some((folder.clone(), names.clone()));
-        let wanted = self.0.wanted.borrow().clone();
-        if let Some((want, prefix)) = wanted
-            && same_path(&want, &folder)
-        {
+        let wanted = self.0.wanted.borrow().clone().filter(|(want, _)| same_path(want, &folder));
+        let cached = self.0.cache.borrow().as_ref().map(|(.., n)| *n);
+        if caches(number, cached, wanted.is_some()) {
+            *self.0.cache.borrow_mut() = Some((folder.clone(), names.clone(), number));
+        }
+        if let Some((_, prefix)) = wanted {
             self.0.wanted.take();
             self.0.limit.stop();
             self.show(self.suggestions(folder_rows(&folder, &names, &prefix)));
@@ -763,10 +795,20 @@ mod tests {
     #[test]
     fn a_folder_is_read_once_at_a_time() {
         let (a, b) = (Path::new("/a"), Path::new("/b"));
-        assert_eq!(read_needed(a, Some(a), &[]), Read::Cached);
-        assert_eq!(read_needed(a, Some(b), &[a.to_path_buf()]), Read::Wait, "a slow share is not read twice");
-        assert_eq!(read_needed(a, Some(b), &[b.to_path_buf()]), Read::Start);
-        assert_eq!(read_needed(a, None, &[]), Read::Start);
+        assert_eq!(read_needed(a, Some(a), &[], 1), Read::Cached);
+        assert_eq!(read_needed(a, Some(b), &[(a.to_path_buf(), 1)], 1), Read::Wait, "a slow share is not read twice");
+        assert_eq!(read_needed(a, Some(b), &[(b.to_path_buf(), 1)], 1), Read::Start);
+        assert_eq!(read_needed(a, None, &[], 1), Read::Start);
+        // An earlier typing's read is dropped when it ends: this typing reads anew.
+        assert_eq!(read_needed(a, None, &[(a.to_path_buf(), 0)], 1), Read::Start);
+    }
+
+    #[test]
+    fn a_late_read_never_replaces_a_newer_one() {
+        assert!(caches(2, None, false), "nothing in memory");
+        assert!(caches(3, Some(2), false), "newer than what is in memory");
+        assert!(!caches(1, Some(2), false), "a read started earlier, done later");
+        assert!(caches(1, Some(2), true), "the folder the list waits for");
     }
 
     #[test]
@@ -790,10 +832,11 @@ mod tests {
     #[test]
     fn at_most_four_folders_are_read_at_once() {
         let a = Path::new("/a");
-        let reading: Vec<PathBuf> = ["/1", "/2", "/3", "/4"].map(PathBuf::from).to_vec();
-        assert_eq!(read_needed(a, None, &reading), Read::Busy);
-        assert_eq!(read_needed(a, None, &reading[..3]), Read::Start);
-        assert_eq!(read_needed(Path::new("/4"), None, &reading), Read::Wait);
+        let reading: Vec<(PathBuf, u64)> = ["/1", "/2", "/3", "/4"].map(|p| (PathBuf::from(p), 1)).to_vec();
+        assert_eq!(read_needed(a, None, &reading, 1), Read::Busy);
+        assert_eq!(read_needed(a, None, &reading[..3], 1), Read::Start);
+        assert_eq!(read_needed(Path::new("/4"), None, &reading, 1), Read::Wait);
+        assert_eq!(read_needed(Path::new("/4"), None, &reading, 2), Read::Busy, "earlier typings' reads count too");
     }
 
     #[cfg(windows)]
