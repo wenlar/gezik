@@ -327,10 +327,9 @@ fn media_runs_through_ffmpeg_or_says_it_is_needed() {
     assert_eq!(report.failures.len(), 1, "{:?}", report.failures);
     assert!(is_ffmpeg_needed(&report.failures[0].message), "{:?}", report.failures);
 
-    let tools = d.join("tools");
-    std::fs::create_dir(&tools).unwrap();
-    let ffmpeg = tools.join(format!("ffmpeg{}", std::env::consts::EXE_SUFFIX));
-    std::fs::copy(example("fake_ffmpeg"), &ffmpeg).unwrap();
+    // The fake where cargo built it: a copy made here could be started while another test's
+    // process still holds its handle ("Text file busy" on Linux).
+    let ffmpeg = example("fake_ffmpeg");
     let tools = ConvertTools { ffmpeg: find_ffmpeg(&d.join("data"), Some(&ffmpeg)) };
     assert!(tools.ffmpeg.is_some());
     let task = ConvertTask::new(vec![input.clone()], ConvertWhat::Media(MediaPreset::Mp3), Output::SameFolder, tools);

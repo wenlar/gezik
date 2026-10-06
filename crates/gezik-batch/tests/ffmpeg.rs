@@ -6,16 +6,74 @@ use std::cell::Cell;
 use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use gezik_batch::convert::ffmpeg::{Ffmpeg, duration_us, find_ffmpeg, run_preset};
 use gezik_core::batch::convert::{MediaPreset, ffmpeg_args};
 
+/// The banners `versions_are_read_from_real_banners` reads, with the version each gives.
+const BANNERS: [(&str, Option<(u32, u32)>); 4] = [
+    (
+        "ffmpeg version 9.0.2-essentials_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers\n",
+        Some((9, 0)),
+    ),
+    ("ffmpeg version n9.0.2-22-g1a2b3c4d5e-20261001 Copyright (c) 2000-2026 the FFmpeg developers\n", Some((9, 0))),
+    ("ffmpeg version 7.1.1 Copyright (c) 2000-2025 the FFmpeg developers\nbuilt with Apple clang\n", Some((7, 1))),
+    // A build from git is still ffmpeg (fine for audio and video); its version is unknown.
+    ("ffmpeg version 2025-05-19-git-c55d65ac0a-full_build-www.gyan.dev Copyright (c) 2000-2025\n", None),
+];
+
+/// Each test's folder: its name, whether the fake is copied in as `ffmpeg`, whether also as
+/// `ffprobe`, and the banner its `-version` prints (`banner.txt`).
+const FOLDERS: [(&str, bool, bool, Option<&str>); 13] = [
+    ("find", true, true, None),
+    ("banner0", true, false, Some(BANNERS[0].0)),
+    ("banner1", true, false, Some(BANNERS[1].0)),
+    ("banner2", true, false, Some(BANNERS[2].0)),
+    ("banner3", true, false, Some(BANNERS[3].0)),
+    ("not-ffmpeg", true, false, Some("usage: something else 1.2\n")),
+    ("duration", true, true, None),
+    ("progress", true, true, None),
+    ("no-duration", true, true, None),
+    ("cancel", true, true, None),
+    ("failure", true, true, None),
+    ("adds-progress", true, true, None),
+    ("real", false, false, None),
+];
+
+/// The test `name`'s folder (see `FOLDERS`).
+///
+/// Every folder is made, fakes copied in, the first time any test asks, so before any test
+/// starts a program: on Linux a copy made on one thread while another thread starts a process
+/// can have its open handle inherited by that process for a moment, and starting the copy then
+/// fails with "Text file busy" (ETXTBSY).
 fn dir(name: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("gezik-ffmpeg-{name}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&d);
-    std::fs::create_dir_all(&d).unwrap();
-    d
+    static ROOT: OnceLock<PathBuf> = OnceLock::new();
+    let root = ROOT.get_or_init(|| {
+        let root = std::env::temp_dir().join(format!("gezik-ffmpeg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for (folder, ffmpeg, ffprobe, banner) in FOLDERS {
+            let d = root.join(folder);
+            std::fs::create_dir_all(&d).unwrap();
+            if ffmpeg {
+                std::fs::copy(fake(), exe(&d, "ffmpeg")).unwrap();
+            }
+            if ffprobe {
+                std::fs::copy(fake(), exe(&d, "ffprobe")).unwrap();
+            }
+            if let Some(banner) = banner {
+                std::fs::write(d.join("banner.txt"), banner).unwrap();
+            }
+        }
+        root
+    });
+    assert!(FOLDERS.iter().any(|(folder, ..)| *folder == name), "add {name} to FOLDERS");
+    root.join(name)
+}
+
+fn exe(d: &Path, name: &str) -> PathBuf {
+    d.join(format!("{name}{}", std::env::consts::EXE_SUFFIX))
 }
 
 /// The fake ffmpeg that `cargo test` builds with the examples (as a program, not a test:
@@ -32,22 +90,8 @@ fn fake() -> PathBuf {
     path
 }
 
-/// Copies of the fake as `ffmpeg` (and `ffprobe` with `probe`) in a folder of their own, with
-/// `banner` as what `-version` prints.
-fn install(d: &Path, banner: Option<&str>, probe: bool) -> PathBuf {
-    let exe = |name: &str| d.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
-    std::fs::copy(fake(), exe("ffmpeg")).unwrap();
-    if probe {
-        std::fs::copy(fake(), exe("ffprobe")).unwrap();
-    }
-    if let Some(banner) = banner {
-        std::fs::write(d.join("banner.txt"), banner).unwrap();
-    }
-    exe("ffmpeg")
-}
-
 fn ff(d: &Path) -> Ffmpeg {
-    let path = install(d, None, true);
+    let path = exe(d, "ffmpeg");
     find_ffmpeg(&d.join("data"), Some(&path)).expect("the fake is found")
 }
 
@@ -64,7 +108,7 @@ fn never() -> bool {
 #[test]
 fn configured_ffmpeg_is_found_with_ffprobe_and_version() {
     let d = dir("find");
-    let path = install(&d, None, true);
+    let path = exe(&d, "ffmpeg");
     let found = find_ffmpeg(&d.join("data"), Some(&path)).unwrap();
     assert_eq!(found.ffmpeg, path);
     assert_eq!(found.ffprobe, Some(d.join(format!("ffprobe{}", std::env::consts::EXE_SUFFIX))));
@@ -74,19 +118,9 @@ fn configured_ffmpeg_is_found_with_ffprobe_and_version() {
 
 #[test]
 fn versions_are_read_from_real_banners() {
-    let banners: [(&str, Option<(u32, u32)>); 4] = [
-        (
-            "ffmpeg version 9.0.2-essentials_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers\n",
-            Some((9, 0)),
-        ),
-        ("ffmpeg version n9.0.2-22-g1a2b3c4d5e-20261001 Copyright (c) 2000-2026 the FFmpeg developers\n", Some((9, 0))),
-        ("ffmpeg version 7.1.1 Copyright (c) 2000-2025 the FFmpeg developers\nbuilt with Apple clang\n", Some((7, 1))),
-        // A build from git is still ffmpeg (fine for audio and video); its version is unknown.
-        ("ffmpeg version 2025-05-19-git-c55d65ac0a-full_build-www.gyan.dev Copyright (c) 2000-2025\n", None),
-    ];
-    for (n, (banner, version)) in banners.into_iter().enumerate() {
+    for (n, (banner, version)) in BANNERS.into_iter().enumerate() {
         let d = dir(&format!("banner{n}"));
-        let path = install(&d, Some(banner), false);
+        let path = exe(&d, "ffmpeg");
         let found = find_ffmpeg(&d.join("data"), Some(&path)).unwrap_or_else(|| panic!("{banner}"));
         assert_eq!(found.version, version, "{banner}");
         let _ = std::fs::remove_dir_all(&d);
@@ -96,7 +130,7 @@ fn versions_are_read_from_real_banners() {
 #[test]
 fn a_program_that_is_no_ffmpeg_is_passed_over() {
     let d = dir("not-ffmpeg");
-    let path = install(&d, Some("usage: something else 1.2\n"), false);
+    let path = exe(&d, "ffmpeg");
     // Whatever PATH holds, the configured program is not what is found.
     let found = find_ffmpeg(&d.join("data"), Some(&path));
     assert!(found.is_none_or(|f| f.ffmpeg != path));
