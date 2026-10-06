@@ -612,7 +612,7 @@ impl Navigator {
         }
         let shown = match &location {
             Location::Path(p) => p.display().to_string(),
-            Location::Drives => "This PC".to_owned(),
+            Location::Drives => gezik_core::nav::DRIVES_NAME.to_owned(),
         };
         let listing = match result {
             LoadResult::Files(path, entries) => Listing::Files(path, Rc::new(entries)),
