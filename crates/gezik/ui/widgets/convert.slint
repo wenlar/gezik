@@ -1,5 +1,6 @@
 import { Theme } from "../theme.slint";
 import { TextButton } from "text-button.slint";
+import { DisablableButton } from "disablable-button.slint";
 import { TextField } from "text-field.slint";
 import { Check } from "check.slint";
 
@@ -335,7 +336,7 @@ export component ConvertLayer inherits Rectangle {
             }
             if root.view.show-output: Labeled {
                 label: "";
-                TextButton {
+                DisablableButton {
                     text: "Replace originals";
                     checked: root.view.output == 3;
                     enabled: root.view.can-replace;

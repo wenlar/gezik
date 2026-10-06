@@ -12,8 +12,6 @@ export component TextButton inherits Rectangle {
     in property <string> label: root.text;
     in property <bool> primary;
     in property <bool> checked;
-    // Off: greyed, and neither a click nor a key does anything.
-    in property <bool> enabled: true;
     callback clicked();
 
     // The label and the icon, centered together.
@@ -32,9 +30,7 @@ export component TextButton inherits Rectangle {
     accessible-role: button;
     accessible-label: root.label;
     accessible-checked: root.checked;
-    accessible-enabled: root.enabled;
-    accessible-action-default => { if root.enabled { root.clicked(); } }
-    opacity: root.enabled ? 1 : 0.5;
+    accessible-action-default => { root.clicked(); }
 
     // Centered, moved left to make room for the icon.
     caption := Text {
@@ -61,7 +57,7 @@ export component TextButton inherits Rectangle {
 
     scope := FocusScope {
         key-pressed(event) => {
-            if root.enabled && (event.text == Key.Return || event.text == " ") {
+            if (event.text == Key.Return || event.text == " ") {
                 root.clicked();
                 return accept;
             }
@@ -70,7 +66,6 @@ export component TextButton inherits Rectangle {
     }
 
     touch := TouchArea {
-        enabled: root.enabled;
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
     }
