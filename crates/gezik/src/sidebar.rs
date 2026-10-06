@@ -18,6 +18,9 @@ pub const SECTION_FOLDERS: i32 = 0;
 pub const SECTION_PINNED: i32 = 1;
 pub const SECTION_DRIVES: i32 = 2;
 
+/// The drives' section title: Finder calls it "Locations".
+const DRIVES_HEADER: &str = if cfg!(target_os = "macos") { "LOCATIONS" } else { "DRIVES" };
+
 /// How often the (cheap) drive signature is checked.
 const DRIVE_POLL: Duration = Duration::from_secs(3);
 
@@ -397,7 +400,7 @@ impl Sidebar {
                 item(&label, SECTION_PINNED, i, &pin.path)
             }));
         }
-        rows.push(header("DRIVES", SECTION_DRIVES));
+        rows.push(header(DRIVES_HEADER, SECTION_DRIVES));
         rows.extend(places.drives.iter().enumerate().map(|(i, d)| item(&d.label, SECTION_DRIVES, i, &d.path)));
 
         window.set_sidebar_pinned_first_row(pinned_first_row);

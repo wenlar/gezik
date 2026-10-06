@@ -71,6 +71,8 @@ impl FolderWatch {
 /// Watches what is in `folder`, and its parent for the folder itself being deleted or renamed
 /// (which changes nothing inside it).
 fn start(shared: &Arc<Shared>, generation: u64, folder: &Path) -> Option<RecommendedWatcher> {
+    let real = real_path(folder);
+    let folder = real.as_path();
     let events = Arc::downgrade(shared);
     let watched = folder.to_path_buf();
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<Event>| {
@@ -92,6 +94,19 @@ fn start(shared: &Arc<Shared>, generation: u64, folder: &Path) -> Option<Recomme
         let _ = watcher.watch(parent, RecursiveMode::NonRecursive);
     }
     Some(watcher)
+}
+
+/// The path FSEvents reports for `folder`: it names files by their real path, so a folder
+/// opened through a symlink (`/tmp` is `/private/tmp`) would never match its own events.
+#[cfg(target_os = "macos")]
+fn real_path(folder: &Path) -> std::path::PathBuf {
+    std::fs::canonicalize(folder).unwrap_or_else(|_| folder.to_path_buf())
+}
+
+/// Other systems report the path as it was watched.
+#[cfg(not(target_os = "macos"))]
+fn real_path(folder: &Path) -> std::path::PathBuf {
+    folder.to_path_buf()
 }
 
 /// Whether `event` changes what the list of `folder` shows: something in it, or the folder
@@ -216,6 +231,27 @@ mod tests {
         }
         watch.watch(None);
         let _ = std::fs::remove_dir_all(&parent);
+    }
+
+    /// A folder opened through a symlink (as `/tmp` is on macOS) still hears its changes.
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_opened_through_a_symlink_is_watched() {
+        let dir = temp("real");
+        let link = temp("link-parent").join("link");
+        std::os::unix::fs::symlink(&dir, &link).unwrap();
+        let (tx, rx) = mpsc::channel();
+        let tx = Mutex::new(tx);
+        let watch = FolderWatch::new(move || lock(&tx).send(()).unwrap());
+        watch.watch(Some(&link));
+        wait_until_watching(&watch, &link, &rx);
+
+        std::fs::write(link.join("a.txt"), "a").unwrap();
+        rx.recv_timeout(Duration::from_secs(5)).expect("told about the change");
+        assert!(watch.take_change());
+        watch.watch(None);
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(link.parent().unwrap());
     }
 
     #[test]

@@ -45,6 +45,8 @@ type Listener = Rc<dyn Fn()>;
 
 struct Inner {
     window: slint::Weak<AppWindow>,
+    /// Files whose names start with a dot are listed (macOS hides them, as Finder does).
+    show_hidden: Cell<bool>,
     data: Rc<RefCell<ViewData>>,
     model: Rc<ItemsModel>,
     /// Bumped on every `show` and `clear`, so a delayed scroll restore of an older
@@ -128,6 +130,7 @@ impl View {
             folder: RefCell::new(None),
             save_pending: Cell::new(false),
             columns: RefCell::new(default_columns()),
+            show_hidden: Cell::new(!cfg!(target_os = "macos")),
         }));
         // Weak: the media lives inside the view.
         let weak = Rc::downgrade(&view.0);
@@ -256,6 +259,7 @@ impl View {
             self.0.media.new_generation();
         }
         self.apply_layout();
+        let listing = if self.0.show_hidden.get() { listing } else { listing.without_dotfiles() };
         let listing = self.sorted(listing, true);
         let selection = restore_selection(&listing, state);
         let count = listing.len();
@@ -695,6 +699,12 @@ impl View {
             }
             Listing::Drives(drives) => drives.iter().any(|d| d.path == path),
         }
+    }
+
+    /// Shows the files whose names start with a dot if they were hidden, or hides them; the
+    /// folder must be listed again to take effect.
+    pub fn toggle_hidden(&self) {
+        self.0.show_hidden.set(!self.0.show_hidden.get());
     }
 
     /// The folder shown; `None` for "This PC".

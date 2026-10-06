@@ -253,6 +253,10 @@ mod tests {
         };
         let row = file_row(&data, 0);
         assert!(!row.has_icon);
-        assert_eq!(row.type_name.as_str(), "TXT File", "the system name is still asked for");
+        assert_eq!(
+            row.type_name.as_str(),
+            gezik_core::kind::fallback_type_name("a.txt", false),
+            "the system name is still asked for"
+        );
     }
 }

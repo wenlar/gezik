@@ -120,13 +120,71 @@ mod imp {
     }
 
     #[cfg(target_os = "macos")]
-    pub fn type_name(_ext: &str, _is_dir: bool) -> Option<String> {
-        None
+    pub fn type_name(ext: &str, is_dir: bool) -> Option<String> {
+        super::kinds::type_name(ext, is_dir)
     }
 
     #[cfg(not(target_os = "macos"))]
     pub fn type_name(ext: &str, is_dir: bool) -> Option<String> {
         super::mime::type_name(ext, is_dir)
+    }
+}
+
+/// macOS: type names as Finder's Kind column shows them ("Plain Text Document", "Folder",
+/// "ZIP archive"), from Launch Services, in the system's language.
+#[cfg(target_os = "macos")]
+mod kinds {
+    use std::ffi::c_void;
+
+    use objc2::rc::Retained;
+    use objc2_foundation::NSString;
+
+    #[link(name = "CoreServices", kind = "framework")]
+    unsafe extern "C" {
+        /// Deprecated since macOS 10.10 but kept working: the one call that names a type by
+        /// its extension alone exactly as Finder does (the newer ones want a file).
+        fn LSCopyKindStringForTypeInfo(
+            in_type: u32,
+            in_creator: u32,
+            in_extension: *const c_void,
+            out_kind: *mut *mut c_void,
+        ) -> i32;
+    }
+
+    /// `kLSUnknownType` and `kLSUnknownCreator`.
+    const UNKNOWN: u32 = 0;
+    /// The classic type code of a folder, `'fold'`.
+    const FOLDER: u32 = u32::from_be_bytes(*b"fold");
+
+    pub fn type_name(ext: &str, is_dir: bool) -> Option<String> {
+        let ext = (!is_dir).then(|| NSString::from_str(ext));
+        let ext_ptr = ext.as_deref().map_or(std::ptr::null(), |e| (e as *const NSString).cast::<c_void>());
+        let mut out: *mut c_void = std::ptr::null_mut();
+        // SAFETY: an NSString is a CFString (toll-free bridged); `out` gets a +1 CFString.
+        let status =
+            unsafe { LSCopyKindStringForTypeInfo(if is_dir { FOLDER } else { UNKNOWN }, UNKNOWN, ext_ptr, &mut out) };
+        if status != 0 || out.is_null() {
+            return None;
+        }
+        // SAFETY: the copy is ours to release, and a CFString is an NSString.
+        let kind = unsafe { Retained::from_raw(out.cast::<NSString>()) }?;
+        Some(kind.to_string()).filter(|k| !k.is_empty())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn types_are_named_as_finder_names_them() {
+            let text = type_name("txt", false).unwrap();
+            assert!(!text.is_empty() && text != "TXT File", "{text}");
+            assert_eq!(type_name("TXT", false), Some(text), "the case of the extension does not matter");
+            let folder = type_name("", true).unwrap();
+            assert!(!folder.is_empty() && folder != "File folder", "{folder}");
+            let unknown = type_name("gezikunknownext", false).unwrap();
+            assert_eq!(type_name("", false), Some(unknown), "no extension: an unknown document");
+        }
     }
 }
 

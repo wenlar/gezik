@@ -65,7 +65,11 @@ pub fn has_own_icon(name: &str) -> bool {
 }
 
 /// The Type column until (or unless) the system names the type: `PNG File`.
+/// On macOS, Finder's words: the system names nearly every type there.
 pub fn fallback_type_name(name: &str, is_dir: bool) -> String {
+    if cfg!(target_os = "macos") {
+        return if is_dir { "Folder" } else { "Document" }.to_owned();
+    }
     if is_dir {
         return "File folder".to_owned();
     }
@@ -112,10 +116,18 @@ mod tests {
         assert!(!has_own_icon("exe"));
     }
 
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn fallback_type_names() {
         assert_eq!(fallback_type_name("a.png", false), "PNG File");
         assert_eq!(fallback_type_name("Makefile", false), "File");
         assert_eq!(fallback_type_name("x", true), "File folder");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn fallback_type_names_are_finders_on_macos() {
+        assert_eq!(fallback_type_name("a.png", false), "Document");
+        assert_eq!(fallback_type_name("x", true), "Folder");
     }
 }
