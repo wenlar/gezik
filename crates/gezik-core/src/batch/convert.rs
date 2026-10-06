@@ -679,6 +679,9 @@ pub fn check_command(spec: &CommandSpec) -> Result<(), String> {
         return Err("run has no program".to_owned());
     }
     let files = uses_files(spec);
+    if spec.run.first().is_some_and(|program| pieces(program).is_ok_and(|p| p.contains(&Err("files")))) {
+        return Err("{files} can't be the program".to_owned());
+    }
     for arg in &spec.run {
         let pieces = pieces(arg)?;
         if pieces.contains(&Err("files")) && pieces.len() != 1 {
@@ -799,6 +802,9 @@ pub fn uses_files(spec: &CommandSpec) -> bool {
 pub fn expand_files_command(spec: &CommandSpec, dir: &Path, files: &[PathBuf]) -> Result<Vec<OsString>, String> {
     if spec.run.is_empty() {
         return Err("run has no program".to_owned());
+    }
+    if files.is_empty() {
+        return Err("no items to run on".to_owned());
     }
     let mut out = Vec::with_capacity(spec.run.len() + files.len());
     for arg in &spec.run {
@@ -1385,7 +1391,7 @@ mod tests {
         let wanted: Vec<OsString> = files.iter().map(|f| f.as_os_str().to_os_string()).collect();
         assert_eq!(&list[3..6], wanted.as_slice());
         assert_eq!(list[7], "x{y}");
-        assert_eq!(expand_files_command(&spec, &dir, &[]).unwrap().len(), 5, "no files: no arguments for them");
+        assert!(expand_files_command(&spec, &dir, &[]).is_err(), "an empty selection is no run");
         spec.run = vec!["t".into(), "{in}".into()];
         assert!(expand_files_command(&spec, &dir, &files).is_err());
     }
@@ -1400,6 +1406,7 @@ mod tests {
         assert_eq!(check(&["t", "{files}"], Some("{name}.zip")).unwrap_err(), FILES_ALONE);
         assert_eq!(check(&["t", "{files}", "{out}"], Some("x")).unwrap_err(), FILES_ALONE);
         assert!(check(&["t", "{dir}", "{outdir}", "{files}"], None).is_ok());
+        assert_eq!(check(&["{files}", "x"], None).unwrap_err(), "{files} can't be the program");
         let per_item = command(&["t", "{files}"], None, &[]);
         assert!(expand_command(&per_item, &root().join("a"), false, None).is_err(), "never one item at a time");
         assert!(!uses_files(&command(&["t", "{in}", "{{files}}"], None, &[])), "escaped braces are text");

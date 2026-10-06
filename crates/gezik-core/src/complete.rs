@@ -22,6 +22,8 @@ pub fn split_typed(text: &str, windows: bool) -> (String, String) {
     let separators: &[char] = if windows { &['/', '\\'] } else { &['/'] };
     match text.rfind(separators) {
         Some(i) => (text[..=i].to_owned(), text[i + 1..].to_owned()),
+        // `X:name`: the drive's folder `X:` and the start of a name in it.
+        None if windows && text.len() > 2 && is_drive(&text[..2]) => (text[..2].to_owned(), text[2..].to_owned()),
         None => (String::new(), text.to_owned()),
     }
 }
@@ -90,6 +92,8 @@ mod tests {
         assert_eq!(split_typed(r"C:\Users\al", true), pair(r"C:\Users\", "al"));
         assert_eq!(split_typed("C:/Users/al", true), pair("C:/Users/", "al"));
         assert_eq!(split_typed("D:", true), pair(r"D:\", ""));
+        assert_eq!(split_typed("D:abc", true), pair("D:", "abc"));
+        assert_eq!(split_typed("D:abc", false), pair("", "D:abc"));
         assert_eq!(split_typed(r"\\server\share\do", true), pair(r"\\server\share\", "do"));
     }
 

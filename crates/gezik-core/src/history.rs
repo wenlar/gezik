@@ -51,7 +51,14 @@ impl FolderHistory {
     /// time), none counted 0, at most `MAX_VISITS` (the lowest scores at `now` go).
     pub fn from_visits(visits: Vec<Visit>, now: u64) -> FolderHistory {
         let mut history = FolderHistory::default();
-        for visit in visits.into_iter().filter(|visit| visit.count > 0) {
+        // Keep the most recent 2 x MAX_VISITS first, so a huge file costs little to fold.
+        let mut visits: Vec<Visit> = visits.into_iter().filter(|visit| visit.count > 0).collect();
+        if visits.len() > 2 * MAX_VISITS {
+            visits.sort_by_key(|visit| std::cmp::Reverse(visit.last));
+            visits.truncate(2 * MAX_VISITS);
+        }
+        for mut visit in visits {
+            visit.last = visit.last.min(now);
             match history.visits.iter_mut().find(|kept| same_path(&kept.path, &visit.path)) {
                 Some(kept) => {
                     kept.count = kept.count.saturating_add(visit.count);
@@ -266,5 +273,15 @@ mod tests {
         assert_eq!(h.visits(), [v("/b", 1, NOW)]);
         h.clear();
         assert!(h.is_empty());
+    }
+
+    #[test]
+    fn a_future_time_is_clamped_and_a_huge_file_is_cut() {
+        let h = FolderHistory::from_visits(vec![v("/a", 1, NOW + 5000)], NOW);
+        assert_eq!(h.visits()[0].last, NOW);
+        let many: Vec<Visit> = (0..10_000u64).map(|i| v(&format!("/m{i}"), 1, NOW - 20_000 + i)).collect();
+        let h = FolderHistory::from_visits(many, NOW);
+        assert_eq!(h.visits().len(), MAX_VISITS);
+        assert!(h.visits().iter().all(|x| x.last >= NOW - 20_000 + 9_000), "the most recent kept");
     }
 }

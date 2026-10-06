@@ -448,10 +448,19 @@ pub fn expand_typed(text: &str, home: &Path, var: impl Fn(&str) -> Option<String
                     out.push_str(&value);
                     rest = &after[end + 1..];
                 }
-                None => {
-                    out.push('%');
-                    rest = after;
-                }
+                None => match after.find('%').filter(|end| *end > 0) {
+                    // An unknown name stays as typed, closing % and all, so that % is not
+                    // taken for the next variable's opening one.
+                    Some(end) => {
+                        out.push('%');
+                        out.push_str(&after[..=end]);
+                        rest = &after[end + 1..];
+                    }
+                    None => {
+                        out.push('%');
+                        rest = after;
+                    }
+                },
             }
         }
     } else {
@@ -994,6 +1003,9 @@ mod tests {
         assert_eq!(expand_typed(r"%NOPE%\x", home, var, true), r"%NOPE%\x");
         assert_eq!(expand_typed("100%", home, var, true), "100%");
         assert_eq!(expand_typed("%%", home, var, true), "%%");
+        assert_eq!(expand_typed("%NOPE%PATH%", home, var, true), "%NOPE%PATH%");
+        assert_eq!(expand_typed("%NOPE%A%", home, var, true), "%NOPE%A%", "its closing % is not an opening one");
+        assert_eq!(expand_typed("%NOPE%%A%", home, var, true), "%NOPE%1");
         assert_eq!(expand_typed("$A", home, var, true), "$A", "no $ on Windows");
     }
 

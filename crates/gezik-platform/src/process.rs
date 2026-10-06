@@ -39,18 +39,22 @@ pub fn process_alive(pid: u32) -> bool {
 }
 
 /// The longest command line Gezik starts a program with, kept short of the system's limit:
-/// on Windows 32,000 characters (of 32,767); elsewhere half of `ARG_MAX` (the other half is
-/// the environment's), or 64 KiB if the system does not say.
-pub fn command_line_limit() -> usize {
+/// on Windows 32,000 characters (of 32,767), but 8,000 (of 8,191) for a `.bat` or `.cmd`
+/// `program`, which `cmd.exe` runs and which also rewrites `%`; elsewhere half of `ARG_MAX`
+/// (the other half is the environment's) but at most 3 MiB (the kernel's own cap is
+/// `min(stack / 4, 6 MiB)` however large `ARG_MAX` reads), or 64 KiB if the system does not say.
+pub fn command_line_limit(program: &str) -> usize {
     #[cfg(windows)]
     {
-        32_000
+        let extension = Path::new(program).extension().map(|e| e.to_string_lossy().to_ascii_lowercase());
+        if matches!(extension.as_deref(), Some("bat" | "cmd")) { 8_000 } else { 32_000 }
     }
     #[cfg(unix)]
     {
+        let _ = program;
         // SAFETY: sysconf only reads a value of the system.
         let max = unsafe { libc::sysconf(libc::_SC_ARG_MAX) };
-        usize::try_from(max).ok().filter(|max| *max > 0).map_or(64 * 1024, |max| max / 2)
+        usize::try_from(max).ok().filter(|max| *max > 0).map_or(64 * 1024, |max| (max / 2).min(3 * 1024 * 1024))
     }
 }
 
@@ -574,11 +578,14 @@ mod tests {
 
     #[test]
     fn the_command_line_limit_leaves_room() {
-        let limit = command_line_limit();
+        let limit = command_line_limit("zip");
         if cfg!(windows) {
             assert_eq!(limit, 32_000);
+            assert_eq!(command_line_limit("run.BAT"), 8_000);
+            assert_eq!(command_line_limit(r"C:\tools\run.cmd"), 8_000);
+            assert_eq!(command_line_limit(r"C:\tools\run.exe"), 32_000);
         } else {
-            assert!((16 * 1024..=64 * 1024 * 1024).contains(&limit), "{limit}");
+            assert!((16 * 1024..=3 * 1024 * 1024).contains(&limit), "{limit}");
         }
     }
 }
