@@ -17,7 +17,7 @@ pub use engine::{ConflictItem, Engine, Event, Failure, JobId, JobState, PauseRea
 pub use gezik_core::ops::conflict::{ConflictKind, Decision, Facts};
 pub use pending::PendingDeletes;
 pub use task::{
-    Answer, ChangedSince, NoTrash, Outcome, PlanItem, Question, Resources, RunCx, ScanSink, Stage, Task, TaskKind,
-    Work, changed_since, facts_after, no_trash, unchanged,
+    Answer, ChangedSince, NoTrash, Outcome, PlanItem, Question, Resources, Restart, RunCx, ScanSink, Stage, Task,
+    TaskKind, Work, changed_since, facts_after, is_restart, no_trash, restart, unchanged,
 };
 pub use tasks::{CopyTask, DeleteTask, MoveTask, NewTask, RenameTask, RestoreTask, TrashTask, trash_path};

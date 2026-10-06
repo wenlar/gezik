@@ -12,7 +12,7 @@ use gezik_core::ops::threads::workers;
 use gezik_platform::fs;
 
 use crate::engine::{ConflictItem, Event, Job, PauseReason, Shared, lock};
-use crate::task::{ChangedSince, NoTrash, Outcome, PlanItem, RunCx, ScanSink, Stage, Task, Work, is_marker};
+use crate::task::{ChangedSince, NoTrash, Outcome, PlanItem, Restart, RunCx, ScanSink, Stage, Task, Work, is_marker};
 use crate::walk::facts_of;
 
 /// After this many failures in a row the job pauses and asks.
@@ -357,6 +357,14 @@ pub(crate) fn execute(shared: &Shared, job: &Job, task: &dyn Task, item: PlanIte
             Err(err) if err.kind() == io::ErrorKind::Interrupted && control.cancelled() => {
                 touch();
                 return;
+            }
+            Err(err) if is_marker::<Restart>(&err) => {
+                // Paused while it ran a program, which was ended: once resumed, the item is
+                // done again from the start.
+                if control.stopped() {
+                    touch();
+                    return;
+                }
             }
             Err(err) if fs::is_disk_full(&err) => {
                 shared.pause(job, PauseReason::DiskFull, item.target.clone());

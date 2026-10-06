@@ -354,6 +354,24 @@ impl RunCx<'_> {
         self.control.stopped()
     }
 
+    /// Whether the job is cancelled; does not wait.
+    pub fn cancelled(&self) -> bool {
+        self.control.cancelled()
+    }
+
+    /// Whether the job is paused now; does not wait. An item that runs a program ends it
+    /// then (the program would go on using the machine), removes what it wrote and returns
+    /// [`restart`]: the engine waits until the job is resumed and does the item again.
+    pub fn paused(&self) -> bool {
+        self.control.paused()
+    }
+
+    /// The bytes this item counted so far (with `add_bytes`), over all its tries: an item
+    /// done again after a pause or a full disk counts only what goes past them.
+    pub fn counted(&self) -> u64 {
+        self.added.get()
+    }
+
     pub fn has_trash(&self, path: &Path) -> bool {
         (self.trash)(path)
     }
@@ -515,6 +533,29 @@ impl fmt::Display for ChangedSince {
 }
 
 impl std::error::Error for ChangedSince {}
+
+/// The item was cut short because the job was paused (the program it ran was ended and what
+/// it wrote removed): it is done again from the start once the job is resumed.
+#[derive(Debug)]
+pub struct Restart;
+
+impl fmt::Display for Restart {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "paused; it starts again when resumed")
+    }
+}
+
+impl std::error::Error for Restart {}
+
+/// What `Task::run` returns when a pause cut its item short (see [`RunCx::paused`]).
+pub fn restart() -> io::Error {
+    io::Error::new(io::ErrorKind::Interrupted, Restart)
+}
+
+/// Whether `err` is [`restart`]'s.
+pub fn is_restart(err: &io::Error) -> bool {
+    is_marker::<Restart>(err)
+}
 
 /// The item's drive has no trash; the user is asked whether to delete it for good.
 #[derive(Debug)]

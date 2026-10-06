@@ -62,6 +62,11 @@ impl Control {
         *lock(&self.paused)
     }
 
+    /// Whether the job is paused now; unlike `stopped`, it does not wait.
+    pub fn paused(&self) -> bool {
+        lock(&self.paused).is_some()
+    }
+
     /// Waits while paused; true once cancelled.
     pub fn stopped(&self) -> bool {
         let mut paused = lock(&self.paused);
