@@ -126,6 +126,34 @@ impl Selection {
         self.change(|s| s.fill(true))
     }
 
+    /// Flips every entry; focus and anchor stay.
+    pub fn invert(&mut self) -> Vec<Range<usize>> {
+        self.change(|s| {
+            for word in &mut s.bits {
+                *word = !*word;
+            }
+            // Bits past the end stay clear.
+            if !s.len.is_multiple_of(64)
+                && let Some(last) = s.bits.last_mut()
+            {
+                *last &= (1u64 << (s.len % 64)) - 1;
+            }
+            s.count = s.len - s.count;
+        })
+    }
+
+    /// Selects (`on`) or unselects each entry `matches` says yes to; the others, focus and
+    /// anchor stay.
+    pub fn set_where(&mut self, on: bool, mut matches: impl FnMut(usize) -> bool) -> Vec<Range<usize>> {
+        self.change(|s| {
+            for i in 0..s.len {
+                if matches(i) {
+                    s.set(i, on);
+                }
+            }
+        })
+    }
+
     /// Ctrl+arrow: moves the focus only.
     pub fn set_focus(&mut self, i: usize) -> Vec<Range<usize>> {
         if i >= self.len {
@@ -355,6 +383,33 @@ mod tests {
         s.extend_to(2, false);
         assert_eq!(selected(&s), [2]);
         assert_eq!(s.anchor(), Some(2));
+    }
+
+    #[test]
+    fn invert_flips_every_entry_and_reports_the_rows() {
+        let mut s = Selection::from_indices(130, [0, 1, 129], Some(1));
+        assert_eq!(s.invert(), [0..130]);
+        assert_eq!(s.count(), 127);
+        assert!(!s.is_selected(0) && s.is_selected(2) && !s.is_selected(129) && !s.is_selected(130));
+        assert_eq!((s.focus(), s.anchor()), (Some(1), Some(1)), "focus and anchor stay");
+        s.invert();
+        assert_eq!(selected(&s), [0, 1, 129]);
+        let mut full = Selection::new(128);
+        full.select_all();
+        full.invert();
+        assert_eq!(full.count(), 0);
+        assert!(Selection::new(0).invert().is_empty());
+    }
+
+    #[test]
+    fn set_where_adds_or_removes_only_the_matches() {
+        let mut s = Selection::from_indices(10, [1], Some(1));
+        assert_eq!(s.set_where(true, |i| i % 3 == 0), [0..1, 3..4, 6..7, 9..10]);
+        assert_eq!(selected(&s), [0, 1, 3, 6, 9]);
+        assert_eq!(s.set_where(false, |i| i < 4), [0..2, 3..4]);
+        assert_eq!(selected(&s), [6, 9]);
+        assert!(s.set_where(true, |i| i == 6).is_empty(), "already selected: nothing changes");
+        assert_eq!((s.focus(), s.count()), (Some(1), 2));
     }
 
     #[test]
