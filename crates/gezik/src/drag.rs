@@ -824,6 +824,10 @@ impl Drags {
                 }
             }
             Ok(Handoff::Running(outside)) => {
+                // Only a drag Gezik drives (X11) follows the window's events out there.
+                if !outside.driven_by_gezik() {
+                    self.0.grab_lost.set(false);
+                }
                 *self.0.outside.borrow_mut() = Some(outside);
                 self.0.handed.set(Some(Handed { pressed: d.pressed, right: d.right, x: d.x, y: d.y }));
             }

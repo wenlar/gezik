@@ -53,6 +53,10 @@ pub trait OutsideDrag {
     fn moved(&mut self, x: f64, y: f64, keys: Keys);
     fn released(&mut self);
     fn cancel(&mut self);
+    /// Whether Gezik drives it from the window's pointer events (X11), not the system.
+    fn driven_by_gezik(&self) -> bool {
+        false
+    }
 }
 
 /// Called once when a drag handed to the system ends.
