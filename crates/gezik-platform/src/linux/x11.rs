@@ -643,6 +643,10 @@ impl X11Drag {
 }
 
 impl OutsideDrag for X11Drag {
+    fn driven_by_gezik(&self) -> bool {
+        true
+    }
+
     fn moved(&mut self, x: f64, y: f64, keys: Keys) {
         let s = self.shared.clone();
         if self.origin.is_none() {

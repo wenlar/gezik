@@ -13,18 +13,11 @@ import { RenameBatch, RuleRow, RenamePreviewRow, RuleOptions } from "widgets/ren
 import { FileIcon } from "widgets/file-icon.slint";
 import { CompressLayer } from "widgets/compress.slint";
 import { ConvertLayer, ConvertView } from "widgets/convert.slint";
+import { PopupMenu, MenuEntry, MenuPlace } from "widgets/popup-menu.slint";
 
 // Re-exported so Rust can set it with `window.global::<Theme>()` and build crumbs, tabs
 // and sidebar rows.
-export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, OpRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView }
-
-// One item of the Slint context menu (tabs everywhere; also rows and the sidebar on
-// macOS/Linux). `id` is one of the ids in context_menu.rs; a greyed one cannot be chosen.
-export struct MenuEntry {
-    id: int,
-    title: string,
-    enabled: bool,
-}
+export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, OpRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView, MenuEntry, MenuPlace }
 
 // Where the drop targets are, in window coordinates (drag.rs reads it while files are
 // dragged; every field is computed when read).
@@ -148,8 +141,9 @@ export component AppWindow inherits Window {
     // The rename field held the keyboard last, even if its row scrolled out: whether ending
     // the rename must give the keyboard back to the list. Rust clears it when a rename ends.
     in-out property <bool> rename-field-focused;
-    // The View button, with the window position for its menu.
-    callback view-menu(length, length);
+    // The View button, with its box for its menu: (left, bottom, right, top), as for every
+    // menu that opens under a button (the menu flips above it or to its right edge).
+    callback view-menu(length, length, length, length);
     in-out property <string> current-path;
     in property <string> status;
     // Settings/theme problems, shown on the right of the status bar.
@@ -176,6 +170,15 @@ export component AppWindow inherits Window {
     in property <string> menu-sub-title;
     in property <[MenuEntry]> menu-sub-entries;
     in property <[MenuEntry]> menu-entries-after;
+    // The same for Gezik's own menu, in one list: the submenu's item has id -1.
+    in property <[MenuEntry]> menu-lines;
+    // Whether Slint shows menus as the system's (Windows, macOS); else Gezik draws its own.
+    in property <bool> native-menus;
+    // Where Gezik's own menu goes (popup.rs): (x, y, flip-x, flip-y, width, height, area
+    // width, area height).
+    pure callback place-menu(length, length, length, length, length, length, length, length) -> MenuPlace;
+    // The line Up/Down moves to in Gezik's own menu, past greyed ones (popup.rs).
+    pure callback menu-step([MenuEntry], int, bool) -> int;
 
     // Follows the OS light/dark mode (Palette is left to the system on purpose; see
     // theme_bridge.rs). Rust re-resolves the theme when it flips.
@@ -305,7 +308,7 @@ export component AppWindow inherits Window {
     in-out property <string> rb-name-text;
     in property <bool> rb-name-enabled;
     out property <bool> rb-name-focused: rename-batch.name-focused;
-    callback rb-add-rule(length, length);
+    callback rb-add-rule(length, length, length, length);
     callback rb-select-rule(int);
     callback rb-toggle-rule(int);
     callback rb-move-rule(int);
@@ -318,7 +321,7 @@ export component AppWindow inherits Window {
     callback rb-row-pressed(int, bool, bool);
     callback rb-rename();
     callback rb-cancel();
-    callback rb-presets(length, length);
+    callback rb-presets(length, length, length, length);
     callback rb-name-edited(string);
     callback rb-name-reset();
     callback rb-reorder(int, int);
@@ -337,6 +340,8 @@ export component AppWindow inherits Window {
     in property <bool> cp-open;
     in property <string> cp-title;
     in-out property <string> cp-name;
+    // Selected when the layer opens: the name up to its ending (bytes).
+    in property <int> cp-name-select;
     in-out property <string> cp-folder;
     in property <[string]> cp-formats;
     in property <int> cp-format;
@@ -367,12 +372,12 @@ export component AppWindow inherits Window {
     in-out property <string> cv-background;
     in-out property <string> cv-pdf-every;
     in-out property <string> cv-pdf-ranges;
-    callback cv-presets(length, length);
+    callback cv-presets(length, length, length, length);
     callback cv-set-format(int);
     callback cv-set-resize(int);
     callback cv-toggle(string);
-    callback cv-from(length, length);
-    callback cv-to(length, length);
+    callback cv-from(length, length, length, length);
+    callback cv-to(length, length, length, length);
     callback cv-set-eol(int);
     callback cv-set-output(int);
     callback cv-edited();
@@ -507,9 +512,14 @@ export component AppWindow inherits Window {
         address.edit();
     }
 
-    // Shows `menu-entries` at a window position.
-    public function show-menu(x: length, y: length) {
-        menu-area.show({ x: x, y: y });
+    // Shows `menu-entries` at a window position: at `x`, `y` (its top left) when there is
+    // room, else flipped to end at `flip-x` or `flip-y`. A system menu places itself.
+    public function show-menu(x: length, y: length, flip-x: length, flip-y: length) {
+        if root.native-menus {
+            menu-area.show({ x: x, y: y });
+        } else {
+            popup-menu.show(x, y, flip-x, flip-y);
+        }
     }
 
     // Covers the whole window, but only opens when Rust calls `show-menu`: right-clicks
@@ -617,7 +627,7 @@ export component AppWindow inherits Window {
                         icon: "M 2 2 L 7 2 L 7 7 L 2 7 Z M 9 2 L 14 2 L 14 7 L 9 7 Z M 2 9 L 7 9 L 7 14 L 2 14 Z M 9 9 L 14 9 L 14 14 L 9 14 Z";
                         clicked => {
                             root.end-path-editing();
-                            root.view-menu(self.absolute-position.x, self.absolute-position.y + self.height);
+                            root.view-menu(self.absolute-position.x, self.absolute-position.y + self.height, self.absolute-position.x + self.width, self.absolute-position.y);
                         }
                     }
                 }
@@ -858,7 +868,7 @@ export component AppWindow inherits Window {
             scroll <=> root.rb-scroll;
             name-text <=> root.rb-name-text;
             name-enabled: root.rb-name-enabled;
-            add-rule(x, y) => { root.rb-add-rule(x, y); }
+            add-rule(x, y, r, t) => { root.rb-add-rule(x, y, r, t); }
             select-rule(i) => { root.rb-select-rule(i); }
             toggle-rule(i) => { root.rb-toggle-rule(i); }
             move-rule(d) => { root.rb-move-rule(d); }
@@ -871,7 +881,7 @@ export component AppWindow inherits Window {
             row-pressed(i, c, s) => { root.rb-row-pressed(i, c, s); }
             rename => { root.rb-rename(); }
             cancel => { root.rb-cancel(); }
-            presets(x, y) => { root.rb-presets(x, y); }
+            presets(x, y, r, t) => { root.rb-presets(x, y, r, t); }
             name-edited(t) => { root.rb-name-edited(t); }
             name-reset => { root.rb-name-reset(); }
             reorder(a, b) => { root.rb-reorder(a, b); }
@@ -889,6 +899,7 @@ export component AppWindow inherits Window {
             dialog-open: root.dialog-open || root.conflicts-open;
             title: root.cp-title;
             name-text <=> root.cp-name;
+            name-select: root.cp-name-select;
             folder-text <=> root.cp-folder;
             formats: root.cp-formats;
             format: root.cp-format;
@@ -925,12 +936,12 @@ export component AppWindow inherits Window {
             background-text <=> root.cv-background;
             pdf-every <=> root.cv-pdf-every;
             pdf-ranges <=> root.cv-pdf-ranges;
-            presets(x, y) => { root.cv-presets(x, y); }
+            presets(x, y, r, t) => { root.cv-presets(x, y, r, t); }
             set-format(i) => { root.cv-set-format(i); }
             set-resize(i) => { root.cv-set-resize(i); }
             toggle(key) => { root.cv-toggle(key); }
-            from(x, y) => { root.cv-from(x, y); }
-            to(x, y) => { root.cv-to(x, y); }
+            from(x, y, r, t) => { root.cv-from(x, y, r, t); }
+            to(x, y, r, t) => { root.cv-to(x, y, r, t); }
             set-eol(i) => { root.cv-set-eol(i); }
             set-output(i) => { root.cv-set-output(i); }
             edited => { root.cv-edited(); }
@@ -1045,6 +1056,24 @@ export component AppWindow inherits Window {
                     text: root.drag-label;
                     color: Theme.foreground;
                 }
+            }
+        }
+    }
+
+    // Gezik's own menu (where Slint has no system one), over everything.
+    popup-menu := PopupMenu {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.height;
+        lines: root.menu-lines;
+        sub-lines: root.menu-sub-entries;
+        place(x, y, fx, fy, w, h, aw, ah) => { return root.place-menu(x, y, fx, fy, w, h, aw, ah); }
+        step(lines, from, down) => { return root.menu-step(lines, from, down); }
+        activated(id) => { root.menu-activated(id); }
+        closed => {
+            if !root.dialog-open {
+                root.focus-list();
             }
         }
     }

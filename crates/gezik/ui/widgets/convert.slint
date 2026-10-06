@@ -99,13 +99,13 @@ export component ConvertLayer inherits Rectangle {
     in-out property <string> background-text;
     in-out property <string> pdf-every;
     in-out property <string> pdf-ranges;
-    callback presets(length, length);
+    callback presets(length, length, length, length);
     callback set-format(int);
     callback set-resize(int);
     // A switch: "enlarge", "rotate", "strip", "bom", "trim", "final".
     callback toggle(string);
-    callback from(length, length);
-    callback to(length, length);
+    callback from(length, length, length, length);
+    callback to(length, length, length, length);
     callback set-eol(int);
     callback set-output(int);
     callback edited();
@@ -164,7 +164,7 @@ export component ConvertLayer inherits Rectangle {
                     text: root.view.preset;
                     icon: root.menu-arrow;
                     min-width: 340px;
-                    clicked => { root.presets(self.absolute-position.x, self.absolute-position.y + self.height); }
+                    clicked => { root.presets(self.absolute-position.x, self.absolute-position.y + self.height, self.absolute-position.x + self.width, self.absolute-position.y); }
                 }
                 Rectangle { horizontal-stretch: 1; }
             }
@@ -276,7 +276,7 @@ export component ConvertLayer inherits Rectangle {
                     text: root.view.from;
                     icon: root.menu-arrow;
                     min-width: 200px;
-                    clicked => { root.from(self.absolute-position.x, self.absolute-position.y + self.height); }
+                    clicked => { root.from(self.absolute-position.x, self.absolute-position.y + self.height, self.absolute-position.x + self.width, self.absolute-position.y); }
                 }
                 Text {
                     text: root.view.detected;
@@ -292,7 +292,7 @@ export component ConvertLayer inherits Rectangle {
                     text: root.view.to;
                     icon: root.menu-arrow;
                     min-width: 200px;
-                    clicked => { root.to(self.absolute-position.x, self.absolute-position.y + self.height); }
+                    clicked => { root.to(self.absolute-position.x, self.absolute-position.y + self.height, self.absolute-position.x + self.width, self.absolute-position.y); }
                 }
                 Check {
                     text: "Byte order mark (BOM)";

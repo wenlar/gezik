@@ -15,6 +15,12 @@ export component TextField inherits Rectangle {
         input.select-all();
     }
 
+    // Focuses and selects the text up to `end` (bytes): a name without its ending.
+    public function focus-and-select-to(end: int) {
+        input.focus();
+        input.set-selection-offsets(0, end);
+    }
+
     height: Theme.row-height + 4px;
     horizontal-stretch: 1;
     border-radius: Theme.radius;

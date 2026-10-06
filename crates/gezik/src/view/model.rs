@@ -6,7 +6,7 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use gezik_core::format_size;
-use gezik_core::kind::{fallback_type_name, has_own_icon};
+use gezik_core::kind::{fallback_type_name, has_own_icon, own_type_name};
 use gezik_core::selection::{PendingPress, Selection};
 use gezik_core::view::{IconMode, ViewMode};
 use slint::{Model, ModelNotify, ModelRc, ModelTracker, VecModel};
@@ -128,13 +128,13 @@ pub fn file_row(data: &ViewData, i: usize) -> FileRow {
     }
 }
 
-/// The Type column: the system's name once known, until then `PNG File`.
+/// The Type column: Gezik's own name for a split archive's part, else the system's name once
+/// known, until then `PNG File`.
 pub fn type_name_for(data: &ViewData, i: usize) -> String {
     match &data.listing {
         Listing::Files(_, entries) => match entries.get(i) {
-            Some(e) => data
-                .media
-                .type_name(&e.extension().to_lowercase(), e.is_dir, Some(i))
+            Some(e) => own_type_name(&e.name, e.is_dir)
+                .or_else(|| data.media.type_name(&e.extension().to_lowercase(), e.is_dir, Some(i)))
                 .unwrap_or_else(|| fallback_type_name(&e.name, e.is_dir)),
             None => String::new(),
         },

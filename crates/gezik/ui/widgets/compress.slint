@@ -22,6 +22,8 @@ export component CompressLayer inherits Rectangle {
     in property <bool> dialog-open;
     in property <string> title;
     in-out property <string> name-text;
+    // Selected when it opens: the name up to its ending (bytes), so typing keeps it.
+    in property <int> name-select;
     in-out property <string> folder-text;
     in property <[string]> formats;
     in property <int> format;
@@ -53,7 +55,7 @@ export component CompressLayer inherits Rectangle {
         if self.open {
             root.show-password = false;
             if !root.dialog-open {
-                name-field.focus-and-select();
+                name-field.focus-and-select-to(root.name-select);
             }
         }
     }

@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use gezik_config::settings::ViewDefaults;
 use gezik_config::store::ConfigStore;
-use gezik_core::kind::fallback_type_name;
+use gezik_core::kind::{fallback_type_name, own_type_name};
 use gezik_core::layout::{Geometry, Move, Rect};
 use gezik_core::nav::ViewState;
 use gezik_core::ops::names::rename_selection;
@@ -928,11 +928,11 @@ impl View {
         }
     }
 
-    /// The Type column's text for sorting: the system's name if known, else `PNG File`.
+    /// The Type column's text for sorting: as the column shows it (`model::type_name_for`),
+    /// the system's name if known, else `PNG File`.
     fn type_name_of(&self, entry: &Entry) -> String {
-        self.0
-            .media
-            .known_type_name(&entry.extension().to_lowercase(), entry.is_dir)
+        own_type_name(&entry.name, entry.is_dir)
+            .or_else(|| self.0.media.known_type_name(&entry.extension().to_lowercase(), entry.is_dir))
             .unwrap_or_else(|| fallback_type_name(&entry.name, entry.is_dir))
     }
 

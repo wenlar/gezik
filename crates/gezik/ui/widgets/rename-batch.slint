@@ -91,7 +91,7 @@ export component RenameBatch inherits Rectangle {
     // The ▾ after a button that opens a menu, drawn: the UI font may lack the glyph.
     property <string> menu-arrow: "M 1 2.5 L 4 5.5 L 7 2.5";
 
-    callback add-rule(length, length);
+    callback add-rule(length, length, length, length);
     callback select-rule(int);
     callback toggle-rule(int);
     callback move-rule(int);   // -1 up, +1 down
@@ -106,7 +106,7 @@ export component RenameBatch inherits Rectangle {
     callback row-pressed(int, bool, bool);
     callback rename();
     callback cancel();
-    callback presets(length, length);
+    callback presets(length, length, length, length);
     callback name-edited(string);
     callback name-reset();
     callback reorder(int, int);
@@ -177,7 +177,7 @@ export component RenameBatch inherits Rectangle {
                 TextButton {
                     text: "Presets";
                     icon: root.menu-arrow;
-                    clicked => { root.presets(self.absolute-position.x, self.absolute-position.y + self.height); }
+                    clicked => { root.presets(self.absolute-position.x, self.absolute-position.y + self.height, self.absolute-position.x + self.width, self.absolute-position.y); }
                 }
             }
 
@@ -232,7 +232,7 @@ export component RenameBatch inherits Rectangle {
                         TextButton {
                             text: "+ Add rule";
                             icon: root.menu-arrow;
-                            clicked => { root.add-rule(self.absolute-position.x, self.absolute-position.y + self.height); }
+                            clicked => { root.add-rule(self.absolute-position.x, self.absolute-position.y + self.height, self.absolute-position.x + self.width, self.absolute-position.y); }
                         }
                         TextButton { text: "↑"; min-width: 32px; clicked => { root.move-rule(-1); } }
                         TextButton { text: "↓"; min-width: 32px; clicked => { root.move-rule(1); } }
