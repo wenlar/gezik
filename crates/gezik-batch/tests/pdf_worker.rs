@@ -83,8 +83,8 @@ fn count(lib: &Path, pdf: &Path) -> u32 {
     count_pages(&real_worker(), lib, pdf, &never).unwrap().expect("not encrypted")
 }
 
-/// A PDF named `name` in `d`, written by Gezik (`write_pdf`): `pages` pictures of 64 × 48 px,
-/// with no density, so each page is 64 × 48 pt.
+/// A PDF named `name` in `d` (in place of one there), written by Gezik (`write_pdf`): `pages`
+/// pictures of 64 × 48 px, with no density, so each page is 64 × 48 pt.
 fn pdf_of(d: &Path, name: impl AsRef<std::ffi::OsStr>, pages: u8) -> PathBuf {
     let pics: Vec<PathBuf> = (0..pages)
         .map(|i| {
@@ -94,6 +94,8 @@ fn pdf_of(d: &Path, name: impl AsRef<std::ffi::OsStr>, pages: u8) -> PathBuf {
         })
         .collect();
     let out = d.join(name.as_ref());
+    // `write_pdf` never writes over a file: an earlier one of this name goes first.
+    let _ = std::fs::remove_file(&out);
     write_pdf(&pics, &out, &PageOptions::DEFAULT, &mut |_, _| {}, &never).unwrap();
     out
 }
