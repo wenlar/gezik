@@ -143,6 +143,11 @@ impl ConfigStore {
         self.edit_settings(|text| crate::settings_edit::with_rename_presets(text, presets))
     }
 
+    /// Writes the saved filters into `settings.toml`, keeping everything else.
+    pub fn save_filters(&self, filters: &[crate::settings::SavedFilter]) -> Result<(), Warning> {
+        self.edit_settings(|text| crate::settings_edit::with_filters(text, filters))
+    }
+
     /// Applies `edit` to `settings.toml`. Creates the file from the template if it does not
     /// exist; refuses to touch a broken file.
     fn edit_settings(&self, edit: impl FnOnce(&str) -> Result<String, String>) -> Result<(), Warning> {
@@ -491,5 +496,31 @@ mod tests {
     fn views_file_is_not_a_config_file() {
         let store = store("views-watch");
         assert!(!store.is_config_file(&store.dir().join("views.toml")));
+    }
+
+    #[test]
+    fn saved_filters_are_written_into_settings() {
+        use crate::settings::SavedFilter;
+        let store = store("save-filters");
+        write(
+            &store,
+            "settings.toml",
+            "# mine
+theme = \"dark\"
+",
+        );
+        let filter = SavedFilter { name: "Resimler".into(), pattern: "*.jpg;*.png".into() };
+        store.save_filters(std::slice::from_ref(&filter)).unwrap();
+        let text = std::fs::read_to_string(store.dir().join("settings.toml")).unwrap();
+        assert!(text.contains("# mine"));
+        assert_eq!(resolve(&store.read_files(), true).settings.filters, [filter]);
+        write(
+            &store,
+            "settings.toml",
+            "theme = 
+",
+        );
+        let err = store.save_filters(&[]).unwrap_err();
+        assert!(err.message.starts_with("Fix settings.toml first"), "{}", err.message);
     }
 }

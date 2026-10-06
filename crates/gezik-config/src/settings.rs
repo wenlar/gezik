@@ -126,6 +126,35 @@ pub struct RenamePreset {
     pub rules: Vec<gezik_core::batch::rules::RuleEntry>,
 }
 
+/// What typing a letter on the file list does (`[keyboard] typing`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Typing {
+    /// Go to the first name starting with what was typed.
+    #[default]
+    Jump,
+    /// Open the filter with it.
+    Filter,
+}
+
+/// `[keyboard]`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct KeyboardSettings {
+    pub typing: Typing,
+}
+
+/// A saved filter (`[[filters]]`): a name and a pattern of the filter's own language.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SavedFilter {
+    pub name: String,
+    pub pattern: String,
+}
+
+/// The last pattern of "Select by pattern" (state.toml `[selection]`).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SelectionState {
+    pub last_pattern: Option<String>,
+}
+
 /// The rename layer's last rules (state.toml `[batch-rename]`).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct BatchRenameState {
@@ -151,6 +180,9 @@ pub struct Settings {
     pub max_fps: u32,
     /// Saved rename rule sets.
     pub rename_presets: Vec<RenamePreset>,
+    pub keyboard: KeyboardSettings,
+    /// Saved filters; invalid ones are left out.
+    pub filters: Vec<SavedFilter>,
     pub archives: ArchivesSettings,
     pub tools: ToolsSettings,
     pub convert: ConvertSettings,
@@ -176,6 +208,8 @@ impl Default for Settings {
             files: FilesSettings::default(),
             max_fps: 120,
             rename_presets: Vec::new(),
+            keyboard: KeyboardSettings::default(),
+            filters: Vec::new(),
             archives: ArchivesSettings::default(),
             tools: ToolsSettings::default(),
             convert: ConvertSettings::default(),
@@ -334,6 +368,36 @@ impl Settings {
                 }
             }
         }
+        match table.get("keyboard") {
+            None => {}
+            Some(value) => match value.as_table() {
+                Some(keyboard) => settings.keyboard = parse_keyboard(keyboard, file, warnings),
+                None => warnings.push(Warning::new(file, format!("keyboard: expected a table, got {value}"))),
+            },
+        }
+        if let Some(value) = table.get("filters") {
+            match value.as_array() {
+                None => warnings.push(Warning::new(file, format!("filters: expected [[filters]] tables, got {value}"))),
+                Some(items) => {
+                    for (i, item) in items.iter().enumerate() {
+                        match parse_filter(item) {
+                            Ok(filter) if settings.filters.iter().any(|f| f.name == filter.name) => {
+                                warnings.push(Warning::new(
+                                    file,
+                                    format!(
+                                        "filters[{}]: \"{}\" is already used; this one is left out",
+                                        i + 1,
+                                        filter.name
+                                    ),
+                                ));
+                            }
+                            Ok(filter) => settings.filters.push(filter),
+                            Err(err) => warnings.push(Warning::new(file, format!("filters[{}]: {err}", i + 1))),
+                        }
+                    }
+                }
+            }
+        }
         match table.get("convert") {
             None => {}
             Some(value) => match value.as_table() {
@@ -440,6 +504,36 @@ pub fn preset_to_toml(preset: &RenamePreset) -> toml::Table {
     table.insert("include-extension".into(), toml::Value::Boolean(preset.include_extension));
     let rules = preset.rules.iter().map(|r| toml::Value::Table(crate::batch_toml::rule_to_toml(r))).collect();
     table.insert("rules".into(), toml::Value::Array(rules));
+    table
+}
+
+fn parse_keyboard(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> KeyboardSettings {
+    let mut out = KeyboardSettings::default();
+    if let Some(value) = table.get("typing") {
+        match value.as_str() {
+            Some("jump") => out.typing = Typing::Jump,
+            Some("filter") => out.typing = Typing::Filter,
+            _ => warnings
+                .push(Warning::new(file, format!("keyboard.typing: expected \"jump\" or \"filter\", got {value}"))),
+        }
+    }
+    out
+}
+
+pub(crate) fn parse_filter(value: &toml::Value) -> Result<SavedFilter, String> {
+    let table = value.as_table().ok_or_else(|| format!("expected a table, got {value}"))?;
+    let name =
+        table.get("name").and_then(|v| v.as_str()).map(str::trim).filter(|n| !n.is_empty()).ok_or("name is missing")?;
+    let pattern =
+        table.get("pattern").and_then(|v| v.as_str()).filter(|p| !p.trim().is_empty()).ok_or("pattern is missing")?;
+    gezik_core::pattern::Pattern::compile(pattern).map_err(|err| format!("pattern: {err}"))?;
+    Ok(SavedFilter { name: name.to_owned(), pattern: pattern.to_owned() })
+}
+
+pub fn filter_to_toml(filter: &SavedFilter) -> toml::Table {
+    let mut table = toml::Table::new();
+    table.insert("name".into(), toml::Value::String(filter.name.clone()));
+    table.insert("pattern".into(), toml::Value::String(filter.pattern.clone()));
     table
 }
 
@@ -620,6 +714,7 @@ pub struct State {
     pub batch_rename: Option<BatchRenameState>,
     pub archive: ArchiveState,
     pub convert: ConvertState,
+    pub selection: SelectionState,
 }
 
 impl State {
@@ -697,6 +792,15 @@ impl State {
                 last_folder: text("last-folder"),
             }
         });
+        let selection = SelectionState {
+            last_pattern: table
+                .get("selection")
+                .and_then(|v| v.as_table())
+                .and_then(|t| t.get("last-pattern"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned),
+        };
         State {
             window,
             sidebar_width,
@@ -707,6 +811,7 @@ impl State {
             batch_rename,
             archive,
             convert,
+            selection,
         }
     }
 
@@ -795,6 +900,11 @@ impl State {
                 table.insert("last-output".into(), toml::Value::String(convert.last_output.clone()));
             }
             root.insert("convert".into(), toml::Value::Table(table));
+        }
+        if let Some(pattern) = &self.selection.last_pattern {
+            let mut table = toml::Table::new();
+            table.insert("last-pattern".into(), toml::Value::String(pattern.clone()));
+            root.insert("selection".into(), toml::Value::Table(table));
         }
         root.to_string()
     }
@@ -1165,6 +1275,98 @@ rules = []
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(settings.archives, ArchivesSettings::default());
         assert_eq!(settings.tools, ToolsSettings::default());
+        assert_eq!(settings.keyboard, KeyboardSettings::default());
+        assert!(settings.filters.is_empty());
+    }
+
+    #[test]
+    fn keyboard_typing_is_read() {
+        let (settings, warnings) = parse(
+            "[keyboard]
+typing = \"filter\"
+",
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(settings.keyboard.typing, Typing::Filter);
+        let (settings, warnings) = parse(
+            "[keyboard]
+typing = \"search\"
+",
+        );
+        assert_eq!(settings.keyboard.typing, Typing::Jump);
+        assert!(warnings[0].message.starts_with("keyboard.typing: expected \"jump\" or \"filter\""), "{warnings:?}");
+    }
+
+    #[test]
+    fn saved_filters_are_read_and_bad_ones_warned() {
+        let text = "[[filters]]
+name = \"Resimler\"
+pattern = \"*.jpg;*.png\"
+                    [[filters]]
+name = \"\"
+pattern = \"x\"
+                    [[filters]]
+name = \"Boş\"
+pattern = \" \"
+                    [[filters]]
+name = \"Kötü\"
+pattern = \"a;!\"
+                    [[filters]]
+name = \"Resimler\"
+pattern = \"*.gif\"
+";
+        let (settings, warnings) = parse(text);
+        assert_eq!(settings.filters, [SavedFilter { name: "Resimler".into(), pattern: "*.jpg;*.png".into() }]);
+        let messages: Vec<&str> = warnings.iter().map(|w| w.message.as_str()).collect();
+        assert_eq!(
+            messages,
+            [
+                "filters[2]: name is missing",
+                "filters[3]: pattern is missing",
+                "filters[4]: pattern: Type a name after \"!\"",
+                "filters[5]: \"Resimler\" is already used; this one is left out",
+            ]
+        );
+    }
+
+    #[test]
+    fn selection_state_round_trips() {
+        let state = State { selection: SelectionState { last_pattern: Some("*.jpg;!a*".into()) }, ..State::default() };
+        assert_eq!(State::parse(&state.to_toml()), state);
+        assert!(!State::default().to_toml().contains("selection"));
+        assert_eq!(
+            State::parse(
+                "[selection]
+last-pattern = \"\"
+"
+            )
+            .selection,
+            SelectionState::default()
+        );
+    }
+
+    #[test]
+    fn the_template_filter_example_reads_once_uncommented() {
+        let template = include_str!("../templates/settings.toml");
+        let start = template.find("# [[filters]]").expect("the template has a filter example");
+        let example: String = template[start..]
+            .lines()
+            .take_while(|line| line.starts_with('#'))
+            .map(|line| {
+                format!(
+                    "{}
+",
+                    line.strip_prefix("# ").unwrap_or(line)
+                )
+            })
+            .collect();
+        let (settings, warnings) = parse(&example);
+        assert!(
+            warnings.is_empty(),
+            "{warnings:?}
+{example}"
+        );
+        assert_eq!(settings.filters.len(), 1);
     }
 
     #[test]
