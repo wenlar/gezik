@@ -9,6 +9,7 @@ mod context_menu;
 mod convert;
 mod dialog;
 mod drag;
+mod filter;
 mod folder_watch;
 mod frame_limit;
 mod keys;
@@ -145,13 +146,37 @@ fn handle_key(
         }
     }
 
+    // The filter bar's field: Esc closes the filter, Down or Enter give the list the keyboard
+    // (the bar stays); other plain keys and the text editing shortcuts are the field's.
+    let filtering = window.get_filter_focused();
+    if filtering && let Some(chord) = &chord {
+        if !has_modifier && !chord.shift {
+            match chord.key {
+                Key::Escape => {
+                    filter::with_current(filter::Filter::close);
+                    return true;
+                }
+                Key::Down | Key::Enter => {
+                    window.invoke_focus_list();
+                    return true;
+                }
+                _ => {}
+            }
+        }
+        if !has_modifier || keys::is_text_edit(chord, Platform::current()) {
+            return false;
+        }
+    }
+
     if let Some(action) = chord.as_ref().and_then(keys::action_for) {
         // Space opens quick look only on the focused list and outside type-ahead; elsewhere
         // it is an ordinary key.
         let ordinary_key = action == Action::QuickLook
             && (!window.get_list_focused() || type_ahead.is_active(std::time::Instant::now()));
         if !ordinary_key {
-            if keys::acts_on_files(action) && (editing || (keys::needs_list(action) && !window.get_list_focused())) {
+            if keys::acts_on_files(action)
+                && (editing || filtering || (keys::needs_list(action) && !window.get_list_focused()))
+            {
                 return false;
             }
             match action {
@@ -203,13 +228,16 @@ fn handle_key(
                 | Action::ReopenTab
                 | Action::TabPicker
                 | Action::ToggleTabLock => {
+                    if action == Action::Filter && editing {
+                        window.set_path_editing(false);
+                    }
                     if !actions::run(action, nav, view) {
                         return false;
                     }
                 }
             }
             // The typed text no longer fits once the location or tab changed.
-            if editing && action != Action::FocusPath {
+            if (editing || filtering) && !matches!(action, Action::FocusPath | Action::Filter) {
                 window.invoke_focus_list();
             }
             return true;
@@ -262,8 +290,13 @@ fn handle_key(
                     view.toggle_focus();
                     return true;
                 }
+                // The first Esc closes the filter, the next clears the selection.
                 Key::Escape if !primary && !chord.shift => {
-                    view.clear_selection();
+                    if view.filter_text().is_some() {
+                        filter::with_current(filter::Filter::close);
+                    } else {
+                        view.clear_selection();
+                    }
                     return true;
                 }
                 _ => {}
@@ -421,6 +454,7 @@ fn main() -> Result<(), slint::PlatformError> {
     );
     window.set_preview_width(saved_state.preview_width.unwrap_or(280) as f32);
     let preview = preview::Preview::new(&window, view.clone());
+    let _filter = filter::Filter::new(&window, view.clone());
     preview.set_pane_open(saved_state.preview_open);
     let nav = navigation::Navigator::new(&window, view.clone(), plan.first, plan.select, plan.start);
     nav.install();

@@ -24,9 +24,9 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
             }
         }
         Action::TabLast => nav.activate_tab(nav.tab_count().saturating_sub(1)),
-        // Task 6-9 fill these in.
-        Action::Filter
-        | Action::InvertSelection
+        Action::Filter => crate::filter::with_current(crate::filter::Filter::open),
+        // Task 7-9 fill these in.
+        Action::InvertSelection
         | Action::SelectPattern
         | Action::DeselectPattern
         | Action::SelectSameType

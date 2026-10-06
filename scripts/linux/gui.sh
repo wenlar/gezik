@@ -3,7 +3,7 @@
 # input: xdotool (XTEST) under Xvfb, wtype and the vpointer example under a headless sway.
 #   docker build -t gezik-linux scripts/linux
 #   docker run --rm -v "$PWD:/src" -v gezik-target:/target -v gezik-cargo:/usr/local/cargo/registry \
-#       -e CARGO_TARGET_DIR=/target gezik-linux bash scripts/linux/gui.sh [x11|wayland|popups|tabdrag|pdf|pdfnote|all]
+#       -e CARGO_TARGET_DIR=/target gezik-linux bash scripts/linux/gui.sh [x11|wayland|popups|tabdrag|pdf|pdfnote|filter|all]
 # Needs the network (apt for 7-Zip, Gezik's own 7-Zip download). Screenshots go to
 # .superpowers/linux-shots/gui-*.png. Each check prints "ok" or "FAIL"; the exit code is the
 # number of failures. Coordinates are the window's (no window manager under Xvfb, so it is
@@ -566,6 +566,70 @@ PY
     grep -i "panicked" /tmp/gezik-gui-pdfnote.log && fail "pdf note: no panic" || pass "pdf note: no panic"
 }
 
+# 6a's filter bar: Ctrl+F, typing narrows the list (only what shows is acted on), an error
+# keeps the list, Esc closes it, the hidden files toggle and a tab switch keep it, a move to
+# another folder (and back) drops it, and "This PC" says it has none. X11, 900x600.
+filter() {
+    Xvfb :99 -screen 0 1600x900x24 >/dev/null 2>&1 &
+    local xvfb=$!
+    unset WAYLAND_DISPLAY
+    export DISPLAY=:99
+    sleep 1
+    . /src/scripts/linux/gui-lib.sh
+    rm -rf /tmp/f /tmp/cfg /root/.local/share/Trash && mkdir -p /tmp/f/sub /tmp/cfg
+    for n in a.jpg b.txt c.JPG d.png e.txt .h.jpg; do echo $n > /tmp/f/$n; done
+    GEZIK_CONFIG_DIR=/tmp/cfg $GEZIK /tmp/f >/tmp/gezik-gui-filter.log 2>&1 &
+    local gezik=$!
+    sleep 3
+    xdotool windowmove "$(win)" 0 0; xdotool windowsize "$(win)" 900 600; sleep 0.5
+    title() { xdotool getwindowname "$(win)"; }
+    trashed() { [ -f "$HOME/.local/share/Trash/files/$1" ]; }
+    shot filter-start
+    # Rows: sub 118, .h.jpg 144 (hidden files show on Linux), a.jpg 170 ...
+    click 255 118; key ctrl+f; sleep 0.3; shot filter-open
+    check "filter: Ctrl+F opens the bar (the rows move down)" '[ "$(px filter-open 255 122)" != "$(px filter-start 255 122)" ]'
+    typ jpg; shot filter-jpg           # 3 / 7: .h.jpg, a.jpg, c.JPG
+    key ctrl+h; sleep 1.5; shot filter-jpg-unhidden   # the reload keeps it: 2 / 6
+    key Down; key ctrl+a Delete; sleep 1.5; shot filter-trashed
+    check "filter: Ctrl+A and Delete trash only what the filter shows" \
+        'trashed a.jpg && trashed c.JPG && [ -f /tmp/f/b.txt ] && [ -f /tmp/f/.h.jpg ] && [ -f /tmp/f/d.png ]'
+    key ctrl+z; sleep 1.5
+    check "filter: Ctrl+Z brings them back" '[ -f /tmp/f/a.jpg ] && [ -f /tmp/f/c.JPG ]'
+    # A half-typed part: red line and text, the list stays as "jpg" showed it.
+    key ctrl+f; sleep 0.3; key End; typ ';!'; shot filter-error
+    key Escape; sleep 0.5; shot filter-closed
+    check "filter: Esc in the field closes the bar" '[ "$(px filter-closed 255 122)" = "$(px filter-start 255 122)" ] || [ "$(px filter-closed 255 122)" != "$(px filter-open 255 122)" ]'
+    # The list has the keyboard and shows everything again.
+    key ctrl+a; sleep 0.3; shot filter-all-selected
+    key Escape; sleep 0.3; shot filter-selection-cleared
+    # Esc on the list: first the filter, then the selection.
+    key ctrl+f; typ txt; key Down; key Escape; sleep 0.3; shot filter-esc-list
+    key ctrl+a Delete; sleep 1.5
+    check "filter: Esc on the list closes the filter (everything is acted on)" 'trashed a.jpg && trashed b.txt && trashed d.png'
+    key ctrl+z; sleep 1.5
+    # A tab switch keeps it.
+    key ctrl+f; typ txt; sleep 0.3
+    key ctrl+t; sleep 1; click 100 20; sleep 1; shot filter-tab-back
+    key ctrl+f Down; key ctrl+a Delete; sleep 1.5
+    check "filter: a tab switch keeps the filter" 'trashed b.txt && trashed e.txt && [ -f /tmp/f/a.jpg ]'
+    key ctrl+z; sleep 1.5
+    # Into a folder and back: no filter.
+    key ctrl+f ctrl+a; typ sub; key Down Return; sleep 1; shot filter-in-sub
+    check "filter: Enter opens the folder the filter shows" '[ "$(title)" = "sub — Gezik" ]'
+    key alt+Left; sleep 1; shot filter-back
+    key ctrl+a Delete; sleep 1.5
+    check "filter: back in the folder, no filter" 'trashed a.jpg && trashed b.txt'
+    key ctrl+z; sleep 1.5
+    # "This PC": no filter there.
+    key ctrl+l; typ /; key Return; sleep 1; key alt+Up; sleep 1.5
+    key ctrl+f; sleep 0.5; shot filter-this-pc
+    check "filter: no bar in This PC" '[ "$(px filter-this-pc 255 122)" != "$(px filter-open 255 122)" ]'
+    kill $gezik 2>/dev/null
+    kill $xvfb 2>/dev/null
+    wait 2>/dev/null
+    grep -i "panicked" /tmp/gezik-gui-filter.log && fail "filter: no panic" || pass "filter: no panic"
+}
+
 setup_7zip
 case "${1:-all}" in
     x11) x11 ;;
@@ -574,7 +638,8 @@ case "${1:-all}" in
     tabdrag) tabdrag ;;
     pdf) pdfpopups; pdfnote ;;
     pdfnote) pdfnote ;;
-    *) x11; wayland; popups; tabdrag; pdfpopups; pdfnote ;;
+    filter) filter ;;
+    *) x11; wayland; popups; tabdrag; pdfpopups; pdfnote; filter ;;
 esac
 echo "failures: $failures"
 exit $failures

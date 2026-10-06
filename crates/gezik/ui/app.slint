@@ -6,6 +6,7 @@ import { TabBar, TabItem } from "widgets/tab-bar.slint";
 import { Sidebar, SidebarRow } from "widgets/sidebar.slint";
 import { PreviewPane, PreviewInfo } from "widgets/preview-pane.slint";
 import { FileView, FileRow, ItemRow } from "widgets/file-view.slint";
+import { FilterBar } from "widgets/filter-bar.slint";
 import { OpsPanel, OpRow } from "widgets/ops-panel.slint";
 import { Dialog } from "widgets/dialog.slint";
 import { ConflictList, ConflictRow } from "widgets/conflict-list.slint";
@@ -177,6 +178,17 @@ export component AppWindow inherits Window {
     // The file list's scroll offset (content-y), saved and restored per history entry.
     in-out property <length> list-scroll;
     in-out property <bool> path-editing;
+    // The filter bar above the file list (Ctrl+F): open, its text, "12 / 340" and what is
+    // wrong with the text.
+    in property <bool> filter-open;
+    in-out property <string> filter-text;
+    in property <string> filter-count;
+    in property <string> filter-error;
+    // The filter bar's field has the keyboard.
+    out property <bool> filter-focused: filter-bar.field-focused;
+    callback filter-edited(string);
+    // The saved filters' button, with its box (as `view-menu`).
+    callback filter-menu(length, length, length, length);
     in property <[SidebarRow]> sidebar-rows;
     // Position in `sidebar-rows` of the first pinned item (-1 if none), and how many there are.
     in property <int> sidebar-pinned-first-row: -1;
@@ -484,7 +496,26 @@ export component AppWindow inherits Window {
     // `key-event` at all. Done even while the window is inactive, so the list gets the focus
     // back when the window is activated again.
     changed path-editing => {
-        if !self.path-editing && !keys.has-focus { keys.focus(); }
+        if !self.path-editing && !keys.has-focus && !filter-bar.field-focused { keys.focus(); }
+    }
+
+    // Gives the keyboard to the filter bar's field, the cursor at byte `at`.
+    public function focus-filter(at: int) {
+        root.end-path-editing-for-filter();
+        filter-bar.focus-at(at);
+    }
+
+    // Gives the keyboard to the filter bar's field with its whole text selected.
+    public function select-filter-text() {
+        root.end-path-editing-for-filter();
+        filter-bar.select-all();
+    }
+
+    // Typing in the address bar ends when the filter takes the keyboard.
+    function end-path-editing-for-filter() {
+        if root.path-editing {
+            root.path-editing = false;
+        }
     }
 
     // Gives the keyboard to the file list.
@@ -687,59 +718,75 @@ export component AppWindow inherits Window {
                         changed pressed => { if !self.pressed { root.sidebar-resized(); } }
                     }
                 }
-                file-view := FileView {
+                VerticalLayout {
                     horizontal-stretch: 1;
-                    items: root.items;
-                    mode: root.view-mode;
-                    picture-size: root.grid-size;
-                    grid-columns-changed(n) => { root.grid-columns-changed(n); }
-                    zoom(bigger) => { root.zoom(bigger); }
-                    has-focus: keys.has-focus;
-                    scroll <=> root.list-scroll;
-                    focus-requested => { keys.focus(); }
-                    col-modified <=> root.col-modified;
-                    col-created <=> root.col-created;
-                    col-type <=> root.col-type;
-                    renaming-index: root.renaming-index;
-                    rename-text <=> root.rename-text;
-                    rename-select: root.rename-select;
-                    rename-error: root.rename-error;
-                    rename-accepted(t) => { root.rename-accepted(t); }
-                    rename-cancelled => { root.rename-cancelled(); }
-                    rename-tab(t, back) => { root.rename-tab(t, back); }
-                    rename-edited(t) => { root.rename-edited(t); }
-                    rename-blurred(t, g) => { root.rename-blurred(t, g); }
-                    rename-generation: root.rename-generation;
-                    rename-has-focus <=> root.rename-field-focused;
-                    col-size <=> root.col-size;
-                    sort-column: root.sort-column;
-                    sort-desc: root.sort-desc;
-                    header-clicked(i) => { root.header-clicked(i); }
-                    header-menu(x, y) => {
-                        root.end-path-editing();
-                        root.header-menu(x, y);
+                    filter-bar := FilterBar {
+                        height: root.filter-open ? Theme.row-height + 8px : 0px;
+                        visible: root.filter-open;
+                        text <=> root.filter-text;
+                        count: root.filter-count;
+                        error: root.filter-error;
+                        edited(t) => { root.filter-edited(t); }
+                        menu(x, y, fx, fy) => {
+                            root.end-path-editing();
+                            root.filter-menu(x, y, fx, fy);
+                        }
                     }
-                    columns-resized => { root.columns-resized(); }
-                    item-pressed(i, ctrl, shift) => { root.item-pressed(i, ctrl, shift); }
-                    item-down(i, x, y, right, can-drag) => { root.item-down(i, x, y, right, can-drag); }
-                    item-drag(x, y, shift, ctrl, alt) => { root.item-drag(x, y, shift, ctrl, alt); }
-                    item-up(i, x, y, right) => { return root.item-up(i, x, y, right); }
-                    item-cancel => { root.item-cancel(); }
-                    drag-active: root.drag-active;
-                    drag-forbidden: root.drag-forbidden;
-                    drop-entry: root.drop-entry;
-                    item-double-clicked(i) => { root.open-row(i); }
-                    item-middle-clicked(i) => { root.row-middle-clicked(i); }
-                    item-menu(i, x, y) => {
-                        root.end-path-editing();
-                        root.row-menu(i, x, y);
-                    }
-                    background-pressed(ctrl) => { root.background-pressed(ctrl); }
-                    marquee(x, y, w, h, additive) => { root.marquee(x, y, w, h, additive); }
-                    marquee-done => { root.marquee-done(); }
-                    background-menu(x, y) => {
-                        root.end-path-editing();
-                        root.background-menu(x, y);
+                    if root.filter-open: Rectangle { height: 1px; background: Theme.border; }
+                    file-view := FileView {
+                        horizontal-stretch: 1;
+                        items: root.items;
+                        mode: root.view-mode;
+                        picture-size: root.grid-size;
+                        grid-columns-changed(n) => { root.grid-columns-changed(n); }
+                        zoom(bigger) => { root.zoom(bigger); }
+                        has-focus: keys.has-focus;
+                        scroll <=> root.list-scroll;
+                        focus-requested => { keys.focus(); }
+                        col-modified <=> root.col-modified;
+                        col-created <=> root.col-created;
+                        col-type <=> root.col-type;
+                        renaming-index: root.renaming-index;
+                        rename-text <=> root.rename-text;
+                        rename-select: root.rename-select;
+                        rename-error: root.rename-error;
+                        rename-accepted(t) => { root.rename-accepted(t); }
+                        rename-cancelled => { root.rename-cancelled(); }
+                        rename-tab(t, back) => { root.rename-tab(t, back); }
+                        rename-edited(t) => { root.rename-edited(t); }
+                        rename-blurred(t, g) => { root.rename-blurred(t, g); }
+                        rename-generation: root.rename-generation;
+                        rename-has-focus <=> root.rename-field-focused;
+                        col-size <=> root.col-size;
+                        sort-column: root.sort-column;
+                        sort-desc: root.sort-desc;
+                        header-clicked(i) => { root.header-clicked(i); }
+                        header-menu(x, y) => {
+                            root.end-path-editing();
+                            root.header-menu(x, y);
+                        }
+                        columns-resized => { root.columns-resized(); }
+                        item-pressed(i, ctrl, shift) => { root.item-pressed(i, ctrl, shift); }
+                        item-down(i, x, y, right, can-drag) => { root.item-down(i, x, y, right, can-drag); }
+                        item-drag(x, y, shift, ctrl, alt) => { root.item-drag(x, y, shift, ctrl, alt); }
+                        item-up(i, x, y, right) => { return root.item-up(i, x, y, right); }
+                        item-cancel => { root.item-cancel(); }
+                        drag-active: root.drag-active;
+                        drag-forbidden: root.drag-forbidden;
+                        drop-entry: root.drop-entry;
+                        item-double-clicked(i) => { root.open-row(i); }
+                        item-middle-clicked(i) => { root.row-middle-clicked(i); }
+                        item-menu(i, x, y) => {
+                            root.end-path-editing();
+                            root.row-menu(i, x, y);
+                        }
+                        background-pressed(ctrl) => { root.background-pressed(ctrl); }
+                        marquee(x, y, w, h, additive) => { root.marquee(x, y, w, h, additive); }
+                        marquee-done => { root.marquee-done(); }
+                        background-menu(x, y) => {
+                            root.end-path-editing();
+                            root.background-menu(x, y);
+                        }
                     }
                 }
                 // A 1px line, grabbable over 5px.

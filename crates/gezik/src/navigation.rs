@@ -110,6 +110,14 @@ enum Mode {
     Show,
 }
 
+/// The view to show once a load is done: a move to another place starts without the filter.
+fn view_to_show(mode: &Mode, saved: &ViewState) -> ViewState {
+    match mode {
+        Mode::Show => saved.clone(),
+        Mode::Move(_) => ViewState { filter: None, ..saved.clone() },
+    }
+}
+
 /// Called when the active location is shown.
 type Listener = Rc<dyn Fn(&Location)>;
 
@@ -656,7 +664,7 @@ impl Navigator {
                 inner.tabs.active_mut().apply_steps(steps);
             }
             inner.cleared = false;
-            (inner.view.clone(), inner.tabs.active().view().clone())
+            (inner.view.clone(), view_to_show(&mode, inner.tabs.active().view()))
         };
         self.watch_shown(&location);
         view.show(listing, &state, note);
@@ -821,6 +829,15 @@ mod tests {
             Mode::Move(vec![Step::Forward]),
             Mode::Move(vec![Step::Back, Step::Back]),
         ]
+    }
+
+    #[test]
+    fn a_move_shows_the_place_without_its_filter_and_a_reload_keeps_it() {
+        let saved = ViewState { filter: Some("*.jpg".into()), ..ViewState::default() };
+        assert_eq!(view_to_show(&Mode::Show, &saved).filter.as_deref(), Some("*.jpg"), "reload, tab switch");
+        for mode in moves() {
+            assert_eq!(view_to_show(&mode, &saved).filter, None, "{mode:?}");
+        }
     }
 
     fn tab(title: &str, active: bool) -> TabItem {

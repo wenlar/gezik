@@ -21,6 +21,12 @@ export component TextField inherits Rectangle {
         input.set-selection-offsets(0, end);
     }
 
+    // Focuses with the cursor at `offset` (bytes), nothing selected.
+    public function focus-at(offset: int) {
+        input.focus();
+        input.set-selection-offsets(offset, offset);
+    }
+
     height: Theme.row-height + 4px;
     horizontal-stretch: 1;
     border-radius: Theme.radius;

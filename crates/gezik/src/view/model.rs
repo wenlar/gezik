@@ -18,7 +18,11 @@ use crate::{FileRow, ItemRow};
 /// What the view shows; read whenever Slint builds a line.
 #[derive(Default)]
 pub struct ViewData {
+    /// What the view shows: `full` as the filter lets it through.
     pub listing: Listing,
+    /// The folder's entries without the hidden files, sorted, before the filter; empty for
+    /// "This PC" and the empty listing.
+    pub full: Rc<Vec<gezik_core::Entry>>,
     pub selection: Selection,
     /// The selection when a rubber-band drag started (Ctrl) or nothing; `None` when no drag.
     pub marquee_base: Option<Selection>,

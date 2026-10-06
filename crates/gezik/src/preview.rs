@@ -230,7 +230,7 @@ pub fn count_entries(path: &Path) -> (usize, bool) {
 }
 
 /// `10000` as `10,000`.
-fn with_commas(n: usize) -> String {
+pub fn with_commas(n: usize) -> String {
     let digits = n.to_string();
     let mut out = String::new();
     for (i, c) in digits.chars().enumerate() {

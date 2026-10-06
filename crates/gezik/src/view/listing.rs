@@ -6,6 +6,7 @@ use std::rc::Rc;
 
 use gezik_core::Entry;
 use gezik_core::kind::Kind;
+use gezik_core::pattern::{Pattern, matching_entries};
 use gezik_platform::Drive;
 
 pub enum Listing {
@@ -104,6 +105,30 @@ impl Listing {
     }
 }
 
+/// The listing of `dir` showing what `pattern` lets through of `full`: the same entries
+/// (no copy) for an empty pattern.
+pub fn filtered_listing(dir: &Path, full: &Rc<Vec<Entry>>, pattern: &Pattern) -> Listing {
+    if pattern.is_empty() {
+        Listing::Files(dir.to_path_buf(), full.clone())
+    } else {
+        Listing::Files(dir.to_path_buf(), Rc::new(matching_entries(full, pattern)))
+    }
+}
+
+/// Whether an entry of `entries` other than `except` is called `name` (ignoring case where
+/// the file system does).
+pub fn name_taken(entries: &[Entry], name: &str, except: &str) -> bool {
+    let fold = cfg!(any(windows, target_os = "macos"));
+    entries.iter().filter(|e| e.name != except).any(|e| {
+        if fold {
+            // Character by character: no allocation per entry.
+            e.name.chars().flat_map(char::to_lowercase).eq(name.chars().flat_map(char::to_lowercase))
+        } else {
+            e.name == name
+        }
+    })
+}
+
 #[cfg(test)]
 pub(crate) fn files(dir: &str, names: &[&str]) -> Listing {
     let entries = names
@@ -116,6 +141,26 @@ pub(crate) fn files(dir: &str, names: &[&str]) -> Listing {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_filtered_listing_shares_the_entries_without_a_pattern() {
+        let Listing::Files(_, full) = files("/x", &["a.jpg", "b.txt", "c.JPG"]) else { unreachable!() };
+        let all = filtered_listing(Path::new("/x"), &full, &Pattern::default());
+        assert!(matches!(&all, Listing::Files(_, shown) if Rc::ptr_eq(shown, &full)), "no copy");
+        let jpgs = filtered_listing(Path::new("/x"), &full, &Pattern::compile("*.jpg").unwrap());
+        let names: Vec<&str> = (0..jpgs.len()).filter_map(|i| jpgs.name_at(i)).collect();
+        assert_eq!(names, ["a.jpg", "c.JPG"]);
+        assert_eq!(jpgs.folder(), Some(Path::new("/x")));
+    }
+
+    #[test]
+    fn a_hidden_name_is_still_taken() {
+        let Listing::Files(_, full) = files("/x", &["a.txt", "b.txt"]) else { unreachable!() };
+        assert!(name_taken(&full, "b.txt", "a.txt"), "b.txt is filtered out, but it is there");
+        assert!(!name_taken(&full, "a.txt", "a.txt"), "its own name");
+        assert!(!name_taken(&full, "c.txt", "a.txt"));
+        assert_eq!(name_taken(&full, "B.TXT", "a.txt"), cfg!(any(windows, target_os = "macos")));
+    }
 
     #[test]
     fn dotfiles_can_be_left_out() {
