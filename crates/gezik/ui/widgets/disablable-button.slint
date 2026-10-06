@@ -1,0 +1,54 @@
+import { Theme } from "../theme.slint";
+
+// A TextButton (without an icon) that can be turned off. Kept apart from TextButton so that
+// the many TextButtons that are never off do not carry `enabled` and its bindings: Slint
+// generates each instance in full. `checked` marks the chosen one of a group.
+export component DisablableButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> primary;
+    in property <bool> checked;
+    // Off: greyed, and neither a click nor a key does anything.
+    in property <bool> enabled: true;
+    callback clicked();
+
+    height: Theme.row-height + 4px;
+    min-width: max(72px, caption.preferred-width + Theme.spacing * 4);
+    // Wider only when nothing else in the layout grows (the label used to size the button).
+    horizontal-stretch: 0;
+    border-radius: Theme.radius;
+    border-width: root.primary ? 0px : (scope.has-focus || root.checked ? 2px : 1px);
+    border-color: scope.has-focus || root.checked ? Theme.accent : Theme.border;
+    background: root.primary ? Theme.accent : (touch.has-hover ? Theme.hover : transparent);
+    forward-focus: scope;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-checked: root.checked;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { if root.enabled { root.clicked(); } }
+    opacity: root.enabled ? 1 : 0.5;
+
+    caption := Text {
+        width: parent.width;
+        height: parent.height;
+        text: root.text;
+        color: root.primary ? Theme.accent-foreground : Theme.foreground;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    scope := FocusScope {
+        key-pressed(event) => {
+            if root.enabled && (event.text == Key.Return || event.text == " ") {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}

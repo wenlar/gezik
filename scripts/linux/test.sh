@@ -2,8 +2,9 @@
 # Tries Gezik's Linux clipboard and drag and drop in a container (see Dockerfile):
 #   docker build -t gezik-linux scripts/linux
 #   docker run --rm -v "$PWD:/src" -v gezik-target:/target -v gezik-cargo:/usr/local/cargo/registry \
-#       -e CARGO_TARGET_DIR=/target gezik-linux bash scripts/linux/test.sh [x11|wayland|all]
-# Each check prints "ok" or "FAIL"; the exit code is the number of failures.
+#       -e CARGO_TARGET_DIR=/target gezik-linux bash scripts/linux/test.sh [x11|wayland|all|unit]
+# Each check prints "ok" or "FAIL"; the exit code is the number of failures. `unit` runs
+# `cargo test --workspace` instead (not part of `all`).
 set -u
 cd /src
 cargo build -p gezik 2>&1 | tail -1
@@ -157,9 +158,22 @@ print(out["rect"]["width"], out["rect"]["height"], *[c for v in views for c in v
     echo "--- gezik logs:"; tail -n 3 /tmp/gezik-wl.log /tmp/gezik-wl-b.log
 }
 
+unit() {
+    # Temporary files on the same drive as the home folder, whose trash (~/.local/share/Trash)
+    # the undo tests use: /tmp is often a tmpfs, another drive with no trash. (In this image
+    # / and /tmp are one overlay, so here it changes nothing.)
+    export TMPDIR="$HOME/tmp"
+    mkdir -p "$TMPDIR"
+    cargo test --workspace >/tmp/unit.log 2>&1
+    local status=$?
+    grep -E "^(test result|failures:|    [a-z_:]+$)|panicked|Running " /tmp/unit.log
+    check "unit: cargo test --workspace" '[ $status -eq 0 ]'
+}
+
 case "${1:-all}" in
     x11) x11 ;;
     wayland) wayland ;;
+    unit) unit ;;
     *) x11; wayland ;;
 esac
 echo "failures: $failures"

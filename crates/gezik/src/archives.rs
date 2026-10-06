@@ -1,9 +1,10 @@
 //! Archives in the app: the Extract and Compress menu items, the Compress layer, the
-//! passwords and questions extraction asks, and the offer to download 7-Zip when an archive
-//! needs it. The work runs as engine jobs (gezik-batch's tasks); the UI thread never reads
-//! the disk: menus decide by name, and finding 7-Zip or adding up sizes runs on a thread.
+//! passwords and questions extraction asks, and the box that offers to download a tool:
+//! 7-Zip when an archive needs it, ffmpeg when a conversion does (convert.rs asks). The work
+//! runs as engine jobs (gezik-batch's tasks); the UI thread never reads the disk: menus
+//! decide by name, and finding 7-Zip or adding up sizes runs on a thread.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{MAIN_SEPARATOR, Path, PathBuf};
 use std::rc::Rc;
@@ -30,9 +31,19 @@ use crate::context_menu::{COMPRESS, COMPRESS_TO, EXTRACT_HERE, EXTRACT_TO, EXTRA
 use crate::dialog::Dialogs;
 use crate::operations::{After, Operations};
 
-/// Where Gezik's download comes from, and 7-Zip's licence ("Where does it come from?").
+/// Where Gezik's downloads come from, when a build's own release page is not known.
 const TOOLS_PAGE: &str = "https://github.com/wenlar/gezik-tools";
-const SEVEN_ZIP_LICENSE: &str = "https://www.7-zip.org/license.txt";
+
+/// "Where does it come from?": the release page of the build's download (its notes link the
+/// licence and the sources), from `…/releases/download/<tag>/<file>`; the tools page if the
+/// address is not one of those.
+pub fn release_page(url: &str) -> String {
+    let Some((base, rest)) = url.split_once("/releases/download/") else { return TOOLS_PAGE.to_owned() };
+    match rest.split_once('/') {
+        Some((tag, _)) if !tag.is_empty() => format!("{base}/releases/tag/{tag}"),
+        _ => TOOLS_PAGE.to_owned(),
+    }
+}
 
 /// The Extract and Compress items for the selected `items` (path, is a folder): Extract
 /// when every one is an archive by its name, Compress always. `format` and `level` are the
@@ -166,6 +177,99 @@ pub fn password_text(archive: &Path, retry: bool) -> (String, String) {
     ("Password".to_owned(), message)
 }
 
+/// What a tool is needed for, which its box says.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Need {
+    /// 7-Zip, to open archives with this ending (`.lzh`).
+    Archive(String),
+    /// ffmpeg, for audio or video.
+    Media,
+    /// ffmpeg, to write pictures (lossy WebP, AVIF): any version.
+    Pictures,
+    /// ffmpeg 9 or newer, to read HEIC, HEIF or AVIF pictures; there is none.
+    Heic,
+    /// The same, and the ffmpeg there is older.
+    NewerFfmpeg,
+    /// The same, and the ffmpeg there does not say its version (a build from git).
+    UnknownFfmpeg,
+    /// The same, and the older one is set in settings.toml (`[convert] ffmpeg`): a download
+    /// would not be used.
+    ConfiguredTooOld,
+    /// The same, and the one set in settings.toml does not say its version.
+    ConfiguredUnknown,
+    /// The ffmpeg there is 9 or newer, and it failed to read the pictures anyway (when they
+    /// were tried again): a download would not help.
+    FfmpegFailed,
+}
+
+impl Need {
+    fn tool(&self) -> Tool {
+        if matches!(self, Need::Archive(_)) { Tool::SevenZip } else { Tool::Ffmpeg }
+    }
+}
+
+/// The box offering a tool for `need`: its title, message and buttons. `size`: the download
+/// for this system (none: Gezik has no build for it yet); `download`: `[tools] download`;
+/// `hint`: what to install first for downloading to work at all (Linux without curl or wget).
+pub fn tool_offer(
+    need: &Need,
+    size: Option<u64>,
+    download: bool,
+    linux: bool,
+    hint: Option<&str>,
+) -> (&'static str, String, Vec<&'static str>) {
+    let lead = match need {
+        Need::Archive(ext) => {
+            let (message, buttons) = seven_zip_offer(ext, size, download, linux);
+            return ("7-Zip needed", message, buttons);
+        }
+        Need::ConfiguredTooOld | Need::ConfiguredUnknown => {
+            let which = if *need == Need::ConfiguredTooOld { "is older" } else { "does not say its version" };
+            let message = format!(
+                "Reading HEIC and AVIF pictures needs ffmpeg 9 or newer. The ffmpeg set under [convert] in \
+                 settings.toml {which}: set it to ffmpeg 9 or newer, or remove it to use Gezik's download."
+            );
+            return ("ffmpeg needed", message, vec!["OK"]);
+        }
+        Need::FfmpegFailed => {
+            let message = "ffmpeg failed to read these HEIC or AVIF pictures. Try again; if it fails again, the \
+                files may be damaged or of a kind ffmpeg does not read.";
+            return ("ffmpeg failed", message.to_owned(), vec!["OK"]);
+        }
+        Need::Media => "Video conversion needs ffmpeg",
+        Need::Pictures => "Converting to this format needs ffmpeg",
+        Need::Heic => "Reading HEIC and AVIF pictures needs ffmpeg 9 or newer",
+        Need::NewerFfmpeg => "Reading HEIC and AVIF pictures needs ffmpeg 9 or newer (the one found is older)",
+        Need::UnknownFfmpeg => {
+            "Reading HEIC and AVIF pictures needs ffmpeg 9 or newer (the one found does not say its version)"
+        }
+    };
+    // Linux packages are often older than 9, which reads HEIC wrongly: no package hint then.
+    let nine = matches!(need, Need::Heic | Need::NewerFfmpeg | Need::UnknownFfmpeg);
+    let yourself =
+        if nine { "install ffmpeg 9 or newer yourself" } else { "install it yourself (sudo apt install ffmpeg)" };
+    let message = match size {
+        Some(size) if download => {
+            let mut message = format!("{lead} (~{}, free).", format_size(size));
+            match hint {
+                Some(hint) => {
+                    message.push_str(&format!(" {hint} to download it, or {yourself}."));
+                    return ("ffmpeg needed", message, vec!["OK"]);
+                }
+                None if linux => message.push_str(&format!(" Download it, or {yourself}.")),
+                None => {}
+            }
+            return ("ffmpeg needed", message, vec!["Download", "Where does it come from?", "Cancel"]);
+        }
+        _ if download => {
+            let how = if linux { yourself } else { "install it yourself" };
+            format!("{lead}. Gezik cannot download it for this system yet: {how}.")
+        }
+        _ => format!("{lead}: install it yourself, or set ffmpeg under [convert] in settings.toml."),
+    };
+    ("ffmpeg needed", message, vec!["OK"])
+}
+
 /// The "needs 7-Zip" box: its message and buttons. `size`: the download for this system
 /// (none: Gezik has no build for it yet); `download`: `[tools] download`.
 pub fn seven_zip_offer(ext: &str, size: Option<u64>, download: bool, linux: bool) -> (String, Vec<&'static str>) {
@@ -270,14 +374,19 @@ enum Pending {
     Download { build: &'static ToolBuild, then: Vec<Then> },
 }
 
-/// Extracting to run once 7-Zip is there, and the failed row it replaces.
+/// What runs once a downloaded tool is there.
 #[derive(Clone)]
-struct Then {
-    archives: Vec<PathBuf>,
-    to: ExtractTo,
-    row: Option<JobId>,
-    /// "Extract to…": the folder is made first.
-    make_dir: bool,
+enum Then {
+    /// Extracting, and the failed row it replaces.
+    Extract {
+        archives: Vec<PathBuf>,
+        to: ExtractTo,
+        row: Option<JobId>,
+        /// "Extract to…": the folder is made first.
+        make_dir: bool,
+    },
+    /// Anything else started again (a conversion), and the failed row it replaces.
+    Again { again: Rc<dyn Fn()>, row: Option<JobId> },
 }
 
 /// The Compress layer's choices (its texts live in the window).
@@ -305,10 +414,10 @@ struct Inner {
     store: Option<ConfigStore>,
     state: RefCell<ArchiveState>,
     jobs: RefCell<HashMap<JobId, Pending>>,
-    /// The 7-Zip box is on screen (several archives that need it ask once).
-    offering: Cell<bool>,
-    /// What runs once 7-Zip is there, gathered while the box is on screen.
-    waiting: RefCell<Vec<Then>>,
+    /// The tools whose box is on screen (several things that need one ask once).
+    offering: RefCell<Vec<Tool>>,
+    /// What runs once each tool is there, gathered while its box is on screen.
+    waiting: RefCell<Vec<(Tool, Then)>>,
     layer: RefCell<Option<Layer>>,
     /// Counts openings of the layer: a size added up for an earlier one is dropped.
     sizing: Arc<AtomicU64>,
@@ -327,7 +436,7 @@ pub fn set_settings(tools: ToolsSettings, archives: ArchivesSettings) {
     SETTINGS.with(|s| *s.borrow_mut() = (tools, archives));
 }
 
-fn tools_settings() -> ToolsSettings {
+pub fn tools_settings() -> ToolsSettings {
     SETTINGS.with(|s| s.borrow().0.clone())
 }
 
@@ -358,7 +467,7 @@ impl Archives {
             store,
             state: RefCell::new(state),
             jobs: RefCell::default(),
-            offering: Cell::new(false),
+            offering: RefCell::default(),
             waiting: RefCell::default(),
             layer: RefCell::default(),
             sizing: Arc::default(),
@@ -418,11 +527,8 @@ impl Archives {
     fn save_state(&self, f: impl FnOnce(&mut ArchiveState)) {
         f(&mut self.0.state.borrow_mut());
         if let Some(store) = &self.0.store {
-            let mut saved = store.load_state();
-            saved.archive = self.0.state.borrow().clone();
-            if let Err(err) = store.save_state(&saved) {
-                eprintln!("gezik: cannot save the archive choices: {err}");
-            }
+            let archive = self.0.state.borrow().clone();
+            store.update_state(|saved| saved.archive = archive);
         }
     }
 
@@ -495,7 +601,7 @@ impl Archives {
         if let Some(first) = waiting.first() {
             // Known by its name: offered before a job tries it.
             let ext = extension_of(first);
-            self.offer_seven_zip(&ext, Then { archives: waiting, to, row: None, make_dir });
+            self.offer(Need::Archive(ext), None, Then::Extract { archives: waiting, to, row: None, make_dir });
         }
     }
 
@@ -513,16 +619,27 @@ impl Archives {
                     .collect();
                 if let Some(first) = needing.first() {
                     let ext = extension_of(first);
-                    self.offer_seven_zip(&ext, Then { archives: needing, to, row: Some(id), make_dir: false });
+                    let then = Then::Extract { archives: needing, to, row: Some(id), make_dir: false };
+                    self.offer(Need::Archive(ext), None, then);
                 }
             }
             Pending::Download { build, then } => {
                 if report.failures.is_empty() {
                     for then in then {
-                        if let Some(row) = then.row {
-                            self.0.ops.forget(row);
+                        match then {
+                            Then::Extract { archives, to, row, make_dir } => {
+                                if let Some(row) = row {
+                                    self.0.ops.forget(row);
+                                }
+                                self.extract(archives, to, make_dir);
+                            }
+                            Then::Again { again, row } => {
+                                if let Some(row) = row {
+                                    self.0.ops.forget(row);
+                                }
+                                again();
+                            }
                         }
-                        self.extract(then.archives, then.to, then.make_dir);
                     }
                 } else if report.failures.iter().any(|f| says_damaged(&f.message)) {
                     let this = self.clone();
@@ -542,40 +659,58 @@ impl Archives {
         }
     }
 
-    /// The "needs 7-Zip" box; Download fetches it and then runs `then`. While it is on screen,
-    /// more archives that need it join the same box.
-    fn offer_seven_zip(&self, ext: &str, then: Then) {
-        self.0.waiting.borrow_mut().push(then);
-        if !self.0.offering.replace(true) {
-            self.show_offer(ext.to_owned());
+    /// The box for ffmpeg (convert.rs): Download fetches it and then calls `again`, after
+    /// taking away the failed row `row` if there is one. `hint`: what to install first for
+    /// downloading to work (found on a thread). While the box is on screen, more that need
+    /// ffmpeg join it.
+    pub fn offer_ffmpeg(&self, need: Need, hint: Option<String>, again: Rc<dyn Fn()>, row: Option<JobId>) {
+        self.offer(need, hint, Then::Again { again, row });
+    }
+
+    /// The box for `need`'s tool; Download fetches it and then runs `then`. While it is on
+    /// screen, more that need the same tool join it.
+    fn offer(&self, need: Need, hint: Option<String>, then: Then) {
+        let tool = need.tool();
+        self.0.waiting.borrow_mut().push((tool, then));
+        if !self.0.offering.borrow().contains(&tool) {
+            self.0.offering.borrow_mut().push(tool);
+            self.show_offer(need, hint);
         }
     }
 
-    fn show_offer(&self, ext: String) {
+    /// Takes what waits for `tool`: its box closed.
+    fn take_waiting(&self, tool: Tool) -> Vec<Then> {
+        self.0.offering.borrow_mut().retain(|t| *t != tool);
+        let mut waiting = self.0.waiting.borrow_mut();
+        let (mine, others): (Vec<_>, Vec<_>) = std::mem::take(&mut *waiting).into_iter().partition(|(t, _)| *t == tool);
+        *waiting = others;
+        mine.into_iter().map(|(_, then)| then).collect()
+    }
+
+    fn show_offer(&self, need: Need, hint: Option<String>) {
         let tools = tools_settings();
-        let build = Platform::current().and_then(|platform| build_for(Tool::SevenZip, platform));
-        let (message, buttons) =
-            seven_zip_offer(&ext, build.map(|b| b.size), tools.download, cfg!(target_os = "linux"));
+        let tool = need.tool();
+        let build = Platform::current().and_then(|platform| build_for(tool, platform));
+        let (title, message, buttons) =
+            tool_offer(&need, build.map(|b| b.size), tools.download, cfg!(target_os = "linux"), hint.as_deref());
         let offers = buttons.len() > 1;
         let escape = buttons.len() - 1;
         let this = self.clone();
-        self.0.dialogs.ask_escape("7-Zip needed", message, &buttons, escape, move |choice| {
+        self.0.dialogs.ask_escape(title, message, &buttons, escape, move |choice| {
             match (choice, build) {
                 (Some(1), _) if offers => {
-                    for page in [TOOLS_PAGE, SEVEN_ZIP_LICENSE] {
-                        let _ = open::that_detached(page);
-                    }
+                    // One page: the build's release, whose notes link the licence and sources.
+                    let page = build.map_or_else(|| TOOLS_PAGE.to_owned(), |build| release_page(build.url));
+                    let _ = open::that_detached(page);
                     // The same box again, with what waits for it.
-                    this.show_offer(ext);
+                    this.show_offer(need, hint);
                 }
                 (Some(0), Some(build)) if offers => {
-                    this.0.offering.set(false);
-                    let then = std::mem::take(&mut *this.0.waiting.borrow_mut());
+                    let then = this.take_waiting(tool);
                     this.download(build, then);
                 }
                 _ => {
-                    this.0.offering.set(false);
-                    this.0.waiting.borrow_mut().clear();
+                    this.take_waiting(tool);
                 }
             }
         });
@@ -931,6 +1066,61 @@ mod tests {
         assert!(none.contains("cannot download it for this system yet"), "{none}");
         assert_eq!(extension_of(Path::new("d/A.LZH")), ".lzh");
         assert!(needs_seven_zip("a.lzh") && !needs_seven_zip("a.zip"));
+    }
+
+    #[test]
+    fn where_it_comes_from_is_the_release_page() {
+        let url = "https://github.com/wenlar/gezik-tools/releases/download/ffmpeg-9.0.2-1/ffmpeg-9.0.2-linux-arm64.7z";
+        assert_eq!(release_page(url), "https://github.com/wenlar/gezik-tools/releases/tag/ffmpeg-9.0.2-1");
+        assert_eq!(release_page("https://example.com/a.zip"), TOOLS_PAGE);
+        // Every build of this system has one.
+        for tool in [Tool::SevenZip, Tool::Ffmpeg] {
+            if let Some(build) = Platform::current().and_then(|p| build_for(tool, p)) {
+                assert!(release_page(build.url).contains("/releases/tag/"), "{}", build.url);
+            }
+        }
+    }
+
+    #[test]
+    fn one_box_offers_each_tool() {
+        // 7-Zip's box is as before.
+        let (title, message, buttons) = tool_offer(&Need::Archive(".lzh".into()), Some(1_700_000), true, false, None);
+        assert_eq!((title, buttons.len()), ("7-Zip needed", 3));
+        assert_eq!(message, seven_zip_offer(".lzh", Some(1_700_000), true, false).0);
+
+        let size = Some(31_000_000);
+        let (title, message, buttons) = tool_offer(&Need::Media, size, true, false, None);
+        assert_eq!(title, "ffmpeg needed");
+        assert_eq!(message, "Video conversion needs ffmpeg (~29.6 MB, free).");
+        assert_eq!(buttons, ["Download", "Where does it come from?", "Cancel"]);
+        // Linux: a package does for video, not for HEIC (packages are often older than 9).
+        let linux = tool_offer(&Need::Media, size, true, true, None).1;
+        assert!(linux.ends_with("Download it, or install it yourself (sudo apt install ffmpeg)."), "{linux}");
+        let heic = tool_offer(&Need::Heic, size, true, true, None).1;
+        assert!(heic.contains("ffmpeg 9 or newer") && !heic.contains("apt"), "{heic}");
+        assert!(tool_offer(&Need::NewerFfmpeg, size, true, false, None).1.contains("older"));
+        // A git build is of unknown version, not older; one of 9 that failed gets no Download.
+        let unknown = tool_offer(&Need::UnknownFfmpeg, size, true, false, None).1;
+        assert!(unknown.contains("does not say its version") && !unknown.contains("older"), "{unknown}");
+        let (title, failed, buttons) = tool_offer(&Need::FfmpegFailed, size, true, false, None);
+        assert!(failed.contains("failed to read") && !failed.contains("older"), "{failed}");
+        assert_eq!((title, buttons), ("ffmpeg failed", vec!["OK"]));
+        let configured = tool_offer(&Need::ConfiguredUnknown, size, true, false, None).1;
+        assert!(configured.contains("does not say its version") && !configured.contains("older"), "{configured}");
+        // An older one set in settings.toml would come before a download: no Download then.
+        let (_, configured, buttons) = tool_offer(&Need::ConfiguredTooOld, size, true, false, None);
+        assert!(configured.contains("[convert]") && configured.contains("9 or newer"), "{configured}");
+        assert_eq!(buttons, ["OK"]);
+        // Nothing that downloads (Linux without curl or wget): the box says what to install.
+        let hint = "Install curl with your package manager (sudo apt install curl)";
+        let (_, message, buttons) = tool_offer(&Need::Pictures, size, true, true, Some(hint));
+        assert!(message.contains("(sudo apt install curl) to download it"), "{message}");
+        assert_eq!(buttons, ["OK"]);
+        // [tools] download = false: only says so.
+        let (_, off, buttons) = tool_offer(&Need::Media, size, false, false, None);
+        assert!(off.contains("[convert]") && buttons == ["OK"], "{off}");
+        let (_, none, buttons) = tool_offer(&Need::Media, None, true, false, None);
+        assert!(none.contains("cannot download it for this system yet") && buttons == ["OK"], "{none}");
     }
 
     #[test]

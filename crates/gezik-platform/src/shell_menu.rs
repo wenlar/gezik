@@ -15,9 +15,9 @@ use windows::Win32::UI::Shell::{
     SetWindowSubclass,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreatePopupMenu, DestroyMenu, GetCursorPos, HMENU, InsertMenuW, MF_BYPOSITION, MF_SEPARATOR, MF_STRING,
-    SW_SHOWNORMAL, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenuEx, WM_DRAWITEM, WM_INITMENUPOPUP, WM_MEASUREITEM,
-    WM_MENUCHAR, WM_PAINT,
+    AppendMenuW, CreatePopupMenu, DestroyMenu, GetCursorPos, HMENU, InsertMenuW, MF_BYPOSITION, MF_GRAYED, MF_POPUP,
+    MF_SEPARATOR, MF_STRING, SW_SHOWNORMAL, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenuEx, WM_DRAWITEM,
+    WM_INITMENUPOPUP, WM_MEASUREITEM, WM_MENUCHAR, WM_PAINT,
 };
 use windows::core::{HSTRING, Interface, PCSTR, PCWSTR, PSTR};
 
@@ -33,19 +33,33 @@ thread_local! {
     static ACTIVE: RefCell<Option<IContextMenu>> = const { RefCell::new(None) };
 }
 
-/// Shows the Explorer menu for `target` with `extra` (id, label) items on top: at `at`, a
-/// point in the window's client area in physical pixels (a menu opened from the keyboard),
-/// else at the mouse cursor. `can_rename`: the menu has the Shell's "Rename" (returned as
+/// A submenu among Gezik's own items ("Commands ▸"): its title, where it goes among them
+/// (0: first), and its items (id, label, enabled).
+#[derive(Debug, Clone, Copy)]
+pub struct ShellSubmenu<'a> {
+    pub title: &'a str,
+    pub at: usize,
+    pub items: &'a [(u32, &'a str, bool)],
+}
+
+/// Shows the Explorer menu for `target` with `extra` (id, label) items on top, and `sub` among
+/// them: at `at`, a point in the window's client area in physical pixels (a menu opened from
+/// the keyboard), else at the mouse cursor. `can_rename`: the menu has the Shell's "Rename" (returned as
 /// `ShellVerb::Rename`, the caller renames). Call on the UI thread; blocks until the menu
 /// closes.
 pub fn show_shell_menu(
     window: &impl HasWindowHandle,
     target: &MenuTarget,
     extra: &[(u32, &str)],
+    sub: Option<ShellSubmenu<'_>>,
     at: Option<(i32, i32)>,
     can_rename: bool,
 ) -> Result<MenuOutcome, String> {
     validate_ids(extra)?;
+    if let Some(sub) = &sub {
+        let ids: Vec<(u32, &str)> = sub.items.iter().map(|(id, label, _)| (*id, *label)).collect();
+        validate_ids(&ids)?;
+    }
     let handle = window.window_handle().map_err(|e| e.to_string())?;
     let RawWindowHandle::Win32(win32) = handle.as_raw() else { return Err("not a Win32 window".into()) };
     let hwnd = HWND(win32.hwnd.get() as *mut _);
@@ -53,10 +67,20 @@ pub fn show_shell_menu(
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         let menu = context_menu_for(hwnd, target).map_err(|e| e.to_string())?;
         let hmenu = CreatePopupMenu().map_err(|e| e.to_string())?;
-        let result = track(hwnd, hmenu, &menu, extra, at, can_rename).map_err(|e| e.to_string());
+        let result = track(hwnd, hmenu, &menu, extra, sub, at, can_rename).map_err(|e| e.to_string());
         let _ = DestroyMenu(hmenu);
         result
     }
+}
+
+/// A label as Win32 menus take it: `&` marks the access key, so a literal one (a file or
+/// command name) is doubled.
+fn menu_label(text: &str) -> HSTRING {
+    HSTRING::from(escape_ampersands(text))
+}
+
+fn escape_ampersands(text: &str) -> String {
+    text.replace('&', "&&")
 }
 
 /// Without CMF_CANRENAME the Shell leaves its "Rename" out.
@@ -178,16 +202,35 @@ unsafe fn track(
     hmenu: HMENU,
     menu: &IContextMenu,
     extra: &[(u32, &str)],
+    sub: Option<ShellSubmenu<'_>>,
     at: Option<(i32, i32)>,
     can_rename: bool,
 ) -> windows::core::Result<MenuOutcome> {
     unsafe {
         menu.QueryContextMenu(hmenu, 0, FIRST_SHELL_ID, LAST_SHELL_ID, query_flags(can_rename)).ok()?;
-        if !extra.is_empty() {
-            for (position, (id, label)) in extra.iter().enumerate() {
-                InsertMenuW(hmenu, position as u32, MF_BYPOSITION | MF_STRING, *id as usize, &HSTRING::from(*label))?;
+        let mut ours = extra.len();
+        for (position, (id, label)) in extra.iter().enumerate() {
+            InsertMenuW(hmenu, position as u32, MF_BYPOSITION | MF_STRING, *id as usize, &menu_label(label))?;
+        }
+        if let Some(sub) = sub.filter(|sub| !sub.items.is_empty()) {
+            // Once in `hmenu`, destroyed with it (DestroyMenu takes its submenus along).
+            let popup = CreatePopupMenu()?;
+            let filled = sub.items.iter().try_for_each(|(id, label, enabled)| {
+                let flags = if *enabled { MF_STRING } else { MF_STRING | MF_GRAYED };
+                AppendMenuW(popup, flags, *id as usize, &menu_label(label))
+            });
+            let at = sub.at.min(extra.len()) as u32;
+            let inserted = filled.and_then(|()| {
+                InsertMenuW(hmenu, at, MF_BYPOSITION | MF_POPUP, popup.0 as usize, &menu_label(sub.title))
+            });
+            if let Err(err) = inserted {
+                let _ = DestroyMenu(popup);
+                return Err(err);
             }
-            InsertMenuW(hmenu, extra.len() as u32, MF_BYPOSITION | MF_SEPARATOR, 0, PCWSTR::null())?;
+            ours += 1;
+        }
+        if ours > 0 {
+            InsertMenuW(hmenu, ours as u32, MF_BYPOSITION | MF_SEPARATOR, 0, PCWSTR::null())?;
         }
 
         let mut cursor = POINT::default();
@@ -429,5 +472,31 @@ mod tests {
         assert!(validate_ids(&[(0, "a")]).is_err());
         assert!(validate_ids(&[(1000, "a")]).is_err());
         assert!(validate_ids(&[(1, "a"), (1000, "b")]).is_err());
+    }
+
+    #[test]
+    fn ampersands_in_labels_stay_literal() {
+        assert_eq!(escape_ampersands(r#"Compress to "Tom & Jerry.zip""#), r#"Compress to "Tom && Jerry.zip""#);
+        assert_eq!(escape_ampersands("R&&D"), "R&&&&D");
+        assert_eq!(escape_ampersands("plain"), "plain");
+    }
+
+    #[test]
+    fn submenu_ids_are_checked_too() {
+        let window = NoWindow;
+        let target = MenuTarget::Background(PathBuf::from(r"C:\"));
+        let items = [(700, "Resize", true), (1000, "Bad", false)];
+        let sub = ShellSubmenu { title: "Commands", at: 0, items: &items };
+        let err = show_shell_menu(&window, &target, &[(1, "a")], Some(sub), None, false).unwrap_err();
+        assert!(err.contains("1..1000"), "{err}");
+    }
+
+    /// A window that is never reached: the ids are checked first.
+    struct NoWindow;
+
+    impl HasWindowHandle for NoWindow {
+        fn window_handle(&self) -> Result<raw_window_handle::WindowHandle<'_>, raw_window_handle::HandleError> {
+            Err(raw_window_handle::HandleError::Unavailable)
+        }
     }
 }

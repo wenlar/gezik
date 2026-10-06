@@ -3,10 +3,12 @@
 use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::Warning;
 use crate::paths::{config_dir, write_atomic};
 use crate::settings::{Density, Settings, State};
+use crate::state_store::StateCell;
 use crate::theme::{ResolvedTheme, ThemeError, resolve_theme};
 use crate::views_file::{parse_views, views_to_toml};
 use gezik_core::view::ViewSettings;
@@ -26,14 +28,17 @@ pub struct ConfigFiles {
     pub warnings: Vec<Warning>,
 }
 
+/// The config folder. Its clones share one `state.toml` in memory and its writer thread.
 #[derive(Debug, Clone)]
 pub struct ConfigStore {
     dir: PathBuf,
+    state: Arc<StateCell>,
 }
 
 impl ConfigStore {
     pub fn new(dir: PathBuf) -> Self {
-        Self { dir }
+        let state = Arc::new(StateCell::new(dir.join("state.toml")));
+        Self { dir, state }
     }
 
     /// The store in the standard per-user location, if the OS has one.
@@ -47,10 +52,6 @@ impl ConfigStore {
 
     fn settings_path(&self) -> PathBuf {
         self.dir.join("settings.toml")
-    }
-
-    fn state_path(&self) -> PathBuf {
-        self.dir.join("state.toml")
     }
 
     fn themes_dir(&self) -> PathBuf {
@@ -105,12 +106,26 @@ impl ConfigStore {
         self.dir.join("views.toml")
     }
 
+    /// The last state: read from `state.toml` the first time (at start), then kept in memory.
     pub fn load_state(&self) -> State {
-        read_text(&self.state_path()).map(|text| State::parse(&text)).unwrap_or_default()
+        self.state.get()
     }
 
+    /// Changes the state in memory; one thread of its own writes `state.toml` soon after
+    /// (the UI thread never waits for the disk). Changes from anywhere, close together, all
+    /// reach the file.
+    pub fn update_state(&self, change: impl FnOnce(&mut State)) {
+        self.state.update(change);
+    }
+
+    /// Waits (up to 5 s) until every change of the state is written: before quitting.
+    pub fn flush_state(&self) {
+        self.state.flush();
+    }
+
+    /// Sets the state and writes it now, on this thread.
     pub fn save_state(&self, state: &State) -> io::Result<()> {
-        write_atomic(&self.state_path(), &state.to_toml())
+        self.state.save(state)
     }
 
     /// Writes the pinned folders into `settings.toml`, keeping everything else.
@@ -192,7 +207,7 @@ pub struct Loaded {
 }
 
 /// Reads a text file, dropping the UTF-8 byte order mark some Windows editors add.
-fn read_text(path: &Path) -> io::Result<String> {
+pub(crate) fn read_text(path: &Path) -> io::Result<String> {
     let text = std::fs::read_to_string(path)?;
     Ok(match text.strip_prefix('\u{feff}') {
         Some(rest) => rest.to_owned(),
@@ -354,6 +369,12 @@ mod tests {
         };
         store.save_state(&state).unwrap();
         assert_eq!(store.load_state(), state);
+        // Read again from the file by a new store; a change written by the writer thread.
+        let again = ConfigStore::new(store.dir().to_path_buf());
+        assert_eq!(again.load_state(), state);
+        again.update_state(|state| state.preview_open = true);
+        again.flush_state();
+        assert!(ConfigStore::new(store.dir().to_path_buf()).load_state().preview_open);
         let names: Vec<_> = std::fs::read_dir(store.dir()).unwrap().map(|e| e.unwrap().file_name()).collect();
         assert_eq!(names, ["state.toml"]);
     }

@@ -35,6 +35,18 @@ cpio = "0.4.1"
 ar = "0.9.0"
 # Checks downloaded tools. 0.11: the version lzma-rust2 and sevenz-rust2 already bring.
 sha2 = "0.11"
+# Converting pictures: gezik-platform's decoders plus TIFF and ICO; the encoders come with
+# the same features.
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff", "ico"] }
+# JPEG output: optimized Huffman tables (18% smaller than image's encoder, twice as fast).
+jpeg-encoder = "0.7.1"
+# Lanczos3 resizing, one pixel type only (`resize_typed`) and no rayon: each picture runs on
+# its own core already, and every other pixel type's kernels cost about 1.5 MB.
+fast_image_resize = { version = "6.1.0", default-features = false, features = ["image"] }
+# Converting text: every WHATWG encoding (encoding_rs) and guessing a file's encoding when it
+# has no BOM (chardetng).
+encoding_rs = "0.8.42"
+chardetng = "1.0.0"
 
 [features]
 default = ["rar"]

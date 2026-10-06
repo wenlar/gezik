@@ -62,6 +62,11 @@ impl Control {
         *lock(&self.paused)
     }
 
+    /// Whether the job is paused now; unlike `stopped`, it does not wait.
+    pub fn paused(&self) -> bool {
+        lock(&self.paused).is_some()
+    }
+
     /// Waits while paused; true once cancelled.
     pub fn stopped(&self) -> bool {
         let mut paused = lock(&self.paused);
@@ -138,6 +143,12 @@ impl Control {
 
     pub fn add_bytes(&self, bytes: u64) {
         self.bytes_done.fetch_add(bytes, Ordering::Relaxed);
+    }
+
+    /// Takes back bytes counted for work that is done again (an item started over).
+    pub fn take_back_bytes(&self, bytes: u64) {
+        let _ =
+            self.bytes_done.try_update(Ordering::Relaxed, Ordering::Relaxed, |done| Some(done.saturating_sub(bytes)));
     }
 
     pub fn item_done(&self) {

@@ -200,6 +200,25 @@ enum Commit {
     Blur,
 }
 
+/// Whether ending a rename gives the keyboard back to the list. Enter does; Tab does not
+/// (the next entry's field takes it); a blur leaves it where it went, unless it went nowhere:
+/// the window lost the focus (switching windows). Slint then keeps the field as the window's
+/// focused item, the field goes away with the rename, and once the window is active again no
+/// key would reach anything. A dialog over the window keeps the keyboard.
+fn refocus_after(how: Commit, window_active: bool, dialog_open: bool) -> bool {
+    match how {
+        Commit::Enter => true,
+        Commit::Tab => false,
+        Commit::Blur => !window_active && !dialog_open,
+    }
+}
+
+/// Whether the window has the system's keyboard focus (true where that is unknown).
+fn window_active(window: &AppWindow) -> bool {
+    use slint::winit_030::WinitWindowAccessor;
+    window.window().with_winit_window(|native| native.has_focus()).unwrap_or(true)
+}
+
 /// What to do with a job's results once their folder shows them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum After {
@@ -476,11 +495,7 @@ impl Operations {
     pub fn save_batch_rename(&self, state: BatchRenameState) {
         *self.0.batch_last.borrow_mut() = state.clone();
         if let Some(store) = &self.0.store {
-            let mut saved = store.load_state();
-            saved.batch_rename = Some(state);
-            if let Err(err) = store.save_state(&saved) {
-                eprintln!("gezik: cannot save the rename rules: {err}");
-            }
+            store.update_state(|saved| saved.batch_rename = Some(state));
         }
     }
 
@@ -521,12 +536,17 @@ impl Operations {
     fn commit_rename(&self, typed: &str, how: Commit) -> Option<usize> {
         let view = &self.0.view;
         let (index, old) = view.renaming()?;
-        // Enter and Esc leave the keyboard with the list; a blur or Tab does not.
-        let refocus = how == Commit::Enter;
+        // Enter and Esc leave the keyboard with the list; a blur or Tab does not, but for a
+        // window switch.
+        let refocus = self
+            .0
+            .window
+            .upgrade()
+            .is_some_and(|window| refocus_after(how, window_active(&window), window.get_dialog_open()));
         match rename_check(typed, &old, |name| view.has_other_named(name, index)) {
             Err(_) if how == Commit::Blur => {
                 // The field lost the focus with a name that cannot be used: keep the old one.
-                view.end_rename(false);
+                view.end_rename(refocus);
                 None
             }
             Err(error) => {
@@ -996,8 +1016,9 @@ impl Operations {
             let ops = self.clone();
             slint::Timer::single_shot(DONE_FOR, move || ops.remove(id));
         }
-        // An archive that needs 7-Zip, a download that is done.
+        // An archive that needs 7-Zip, a download that is done, a conversion that needs ffmpeg.
         crate::archives::with_current(|archives| archives.job_finished(id, &report));
+        crate::convert::with_current(|convert| convert.job_finished(id, &report));
     }
 
     /// Items the trash cannot take (no trash on their drive, or a name it cannot take): delete
@@ -1227,6 +1248,20 @@ mod tests {
             results: Vec::new(),
             changed_dirs: Vec::new(),
         }
+    }
+
+    #[test]
+    fn a_rename_ended_by_switching_windows_gives_the_list_the_keyboard() {
+        // Enter: always; Tab: never (the next field takes it).
+        assert!(refocus_after(Commit::Enter, true, false));
+        assert!(!refocus_after(Commit::Tab, true, false));
+        assert!(!refocus_after(Commit::Tab, false, false));
+        // A click elsewhere in the active window: the keyboard stays where it went.
+        assert!(!refocus_after(Commit::Blur, true, false));
+        // The window lost the focus: nothing else holds the keyboard, and the field goes away.
+        assert!(refocus_after(Commit::Blur, false, false));
+        // But a dialog keeps it.
+        assert!(!refocus_after(Commit::Blur, false, true));
     }
 
     #[test]

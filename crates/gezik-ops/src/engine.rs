@@ -936,6 +936,91 @@ mod tests {
         }
     }
 
+    /// Like a task running a program: its first try writes a partial file and goes on until
+    /// the job is paused or cancelled, then removes it and returns `restart` (or is
+    /// interrupted); a later try finishes at once.
+    struct RestartTask {
+        target: PathBuf,
+        tries: Arc<AtomicUsize>,
+        /// What the item and the job had counted when the second try began.
+        counted_on_retry: Arc<Mutex<Option<(u64, u64)>>>,
+    }
+
+    impl Task for RestartTask {
+        fn kind(&self) -> TaskKind {
+            TaskKind::Copy
+        }
+        fn title(&self) -> String {
+            "restart".into()
+        }
+        fn count(&self) -> usize {
+            1
+        }
+        fn resources(&self) -> crate::task::Resources {
+            crate::task::Resources { paths: vec![self.target.clone()], work: crate::task::Work::External }
+        }
+        fn plan(&self, sink: &mut dyn crate::task::ScanSink) {
+            let facts = gezik_core::ops::conflict::Facts { is_dir: false, size: 4, modified: None };
+            sink.item(crate::task::PlanItem::new(crate::task::Stage::Parallel, facts).target(&self.target).top(0));
+        }
+        fn run(&self, _item: &crate::task::PlanItem, cx: &crate::task::RunCx<'_>) -> io::Result<crate::task::Outcome> {
+            if self.tries.fetch_add(1, Ordering::SeqCst) > 0 {
+                let job_done = cx.control.bytes_done.load(Ordering::Relaxed);
+                *self.counted_on_retry.lock().unwrap() = Some((cx.counted(), job_done));
+                std::fs::write(&self.target, "done")?;
+                let facts = crate::task::facts_after(&self.target, false);
+                return Ok(crate::task::Outcome::Created { path: self.target.clone(), facts, from: None });
+            }
+            std::fs::write(&self.target, "part")?;
+            cx.add_bytes(3);
+            while !cx.cancelled() && !cx.paused() {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            std::fs::remove_file(&self.target)?;
+            Err(if cx.cancelled() { io::Error::from(io::ErrorKind::Interrupted) } else { crate::task::restart() })
+        }
+    }
+
+    #[test]
+    fn an_item_cut_short_by_a_pause_is_done_again_once_resumed() {
+        let dir = test_dir("restart");
+        let engine = engine();
+        let tries = Arc::new(AtomicUsize::new(0));
+        let counted_on_retry = Arc::new(Mutex::new(None));
+        let target = dir.join("a.bin");
+        let task =
+            RestartTask { target: target.clone(), tries: tries.clone(), counted_on_retry: counted_on_retry.clone() };
+        let job = engine.submit(Box::new(task));
+        wait_for("the first try", || target.exists());
+        engine.pause(job);
+        wait_for("the partial file to go", || !target.exists());
+        // Paused: not tried again until resumed.
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(tries.load(Ordering::SeqCst), 1);
+        engine.resume(job);
+        let report = run(&engine, job);
+        assert!(report.failures.is_empty() && !report.cancelled, "{:?}", report.failures);
+        assert_eq!(tries.load(Ordering::SeqCst), 2);
+        assert_eq!(read(&target), "done");
+        // The bytes the first try counted were taken back: the item and the bar start over.
+        assert_eq!(*counted_on_retry.lock().unwrap(), Some((0, 0)));
+
+        // Cancelled while paused: it ends without another try.
+        let tries = Arc::new(AtomicUsize::new(0));
+        let target = dir.join("b.bin");
+        let task = RestartTask { target: target.clone(), tries: tries.clone(), counted_on_retry: Default::default() };
+        let job = engine.submit(Box::new(task));
+        wait_for("the first try", || target.exists());
+        engine.pause(job);
+        wait_for("the partial file to go", || !target.exists());
+        engine.cancel(job);
+        let report = run(&engine, job);
+        assert!(report.cancelled);
+        assert_eq!(tries.load(Ordering::SeqCst), 1);
+        assert!(!target.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// FAT32 holds no file of 4 GB or more, and says "disk full" for one: a file too big for
     /// the target drive fails at once with that reason (it is not paused for space).
     #[test]

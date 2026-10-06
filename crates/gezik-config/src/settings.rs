@@ -2,6 +2,7 @@
 
 use crate::Warning;
 use crate::shortcuts::{Platform, Shortcuts};
+use gezik_core::batch::convert::{CommandSpec, check_command};
 use gezik_core::ops::threads::{COPY_THREADS_RANGE, CopyThreads};
 use gezik_core::view::{
     ColumnKey, ColumnState, GridSize, IconMode, SortDir, SortKey, ViewMode, ViewSettings, normalize_columns,
@@ -63,6 +64,26 @@ impl Default for ToolsSettings {
     fn default() -> Self {
         ToolsSettings { download: true, seven_zip: None }
     }
+}
+
+/// `[convert]`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ConvertSettings {
+    /// The ffmpeg to use (`ffmpeg`), an absolute path; `None`: Gezik's download, then PATH.
+    pub ffmpeg: Option<String>,
+}
+
+/// The Convert layer's last choices (state.toml `[convert]`). The options are the layer's own
+/// text for them, read back by the layer.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ConvertState {
+    pub last_preset: Option<String>,
+    pub image: Option<String>,
+    pub text: Option<String>,
+    pub media: Option<String>,
+    /// The output choice (empty: none saved).
+    pub last_output: String,
+    pub last_folder: Option<String>,
 }
 
 /// What double-clicking an archive does.
@@ -129,6 +150,9 @@ pub struct Settings {
     pub rename_presets: Vec<RenamePreset>,
     pub archives: ArchivesSettings,
     pub tools: ToolsSettings,
+    pub convert: ConvertSettings,
+    /// User commands (`[[commands]]`); invalid ones are left out.
+    pub commands: Vec<CommandSpec>,
 }
 
 /// Allowed `max-fps` values besides 0 (no limit).
@@ -151,6 +175,8 @@ impl Default for Settings {
             rename_presets: Vec::new(),
             archives: ArchivesSettings::default(),
             tools: ToolsSettings::default(),
+            convert: ConvertSettings::default(),
+            commands: Vec::new(),
         }
     }
 }
@@ -300,6 +326,28 @@ impl Settings {
                         match parse_preset(item) {
                             Ok(preset) => settings.rename_presets.push(preset),
                             Err(err) => warnings.push(Warning::new(file, format!("rename-presets[{}]: {err}", i + 1))),
+                        }
+                    }
+                }
+            }
+        }
+        match table.get("convert") {
+            None => {}
+            Some(value) => match value.as_table() {
+                Some(convert) => settings.convert = parse_convert(convert, file, warnings),
+                None => warnings.push(Warning::new(file, format!("convert: expected a table, got {value}"))),
+            },
+        }
+        if let Some(value) = table.get("commands") {
+            match value.as_array() {
+                None => {
+                    warnings.push(Warning::new(file, format!("commands: expected [[commands]] tables, got {value}")))
+                }
+                Some(items) => {
+                    for (i, item) in items.iter().enumerate() {
+                        match parse_command(item) {
+                            Ok(command) => settings.commands.push(command),
+                            Err(err) => warnings.push(Warning::new(file, format!("commands[{}]: {err}", i + 1))),
                         }
                     }
                 }
@@ -462,6 +510,88 @@ fn parse_tools(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> 
     out
 }
 
+fn parse_convert(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> ConvertSettings {
+    let mut out = ConvertSettings::default();
+    if let Some(value) = table.get("ffmpeg") {
+        match value.as_str() {
+            Some(path) if path.trim().is_empty() => {}
+            Some(path) if !std::path::Path::new(path).is_absolute() => warnings
+                .push(Warning::new(file, format!("convert.ffmpeg: \"{path}\" must be a full path (it is ignored)"))),
+            Some(path) => out.ffmpeg = Some(path.to_owned()),
+            None => warnings.push(Warning::new(file, format!("convert.ffmpeg: expected text, got {value}"))),
+        }
+    }
+    out
+}
+
+/// A list of strings, or an error naming the key.
+fn string_list(value: &toml::Value, key: &str) -> Result<Vec<String>, String> {
+    let items = value.as_array().ok_or_else(|| format!("{key} must be a list of text, got {value}"))?;
+    items
+        .iter()
+        .map(|item| item.as_str().map(str::to_owned).ok_or_else(|| format!("{key} must be a list of text, got {item}")))
+        .collect()
+}
+
+/// One `[[commands]]` entry; the error is the reason it is left out.
+fn parse_command(value: &toml::Value) -> Result<CommandSpec, String> {
+    let table = value.as_table().ok_or_else(|| format!("expected a table, got {value}"))?;
+    // A misspelt key would be passed over and widen what the command runs on (`type` for
+    // `types`: every file): the command is left out instead.
+    const KEYS: [&str; 6] = ["name", "run", "output", "types", "folders", "parallel"];
+    if let Some(key) = table.keys().find(|key| !KEYS.contains(&key.as_str())) {
+        return Err(format!("unknown key \"{key}\" (known: {})", KEYS.join(", ")));
+    }
+    let name = match table.get("name") {
+        None => return Err("name is missing".to_owned()),
+        Some(v) => v.as_str().filter(|n| !n.trim().is_empty()).ok_or("name must be text that is not empty")?,
+    };
+    let run = match table.get("run") {
+        None => return Err("run is missing".to_owned()),
+        Some(v) => string_list(v, "run")?,
+    };
+    if run.is_empty() {
+        return Err("run has no program".to_owned());
+    }
+    let output = match table.get("output") {
+        None => None,
+        Some(v) => Some(v.as_str().ok_or_else(|| format!("output must be text, got {v}"))?.to_owned()),
+    };
+    let types = match table.get("types") {
+        None => Vec::new(),
+        Some(v) => string_list(v, "types")?,
+    };
+    // Endings without the dot ("jpg"; a leading dot is dropped, "tar.gz" is fine). A pattern
+    // or a path would never match: the command is left out rather than shown for nothing.
+    let types = types
+        .iter()
+        .map(|t| {
+            let t = t.trim();
+            let t = t.strip_prefix('.').unwrap_or(t);
+            if t.is_empty() || t.contains(['*', '?', '/', '\\']) {
+                Err(format!("types: \"{t}\" is not a file ending (write \"jpg\", no * or ?)"))
+            } else {
+                Ok(t.to_owned())
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let folders = match table.get("folders") {
+        None => false,
+        Some(v) => v.as_bool().ok_or_else(|| format!("folders must be true or false, got {v}"))?,
+    };
+    let parallel = match table.get("parallel") {
+        None => 1,
+        Some(v) => v
+            .as_integer()
+            .and_then(|n| u8::try_from(n).ok())
+            .filter(|n| (1..=16).contains(n))
+            .ok_or_else(|| format!("parallel must be 1-16, got {v}"))?,
+    };
+    let spec = CommandSpec { name: name.to_owned(), run, output, types, folders, parallel };
+    check_command(&spec)?;
+    Ok(spec)
+}
+
 /// Size in logical pixels, position in physical pixels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WindowState {
@@ -486,6 +616,7 @@ pub struct State {
     /// The rename layer's last rules.
     pub batch_rename: Option<BatchRenameState>,
     pub archive: ArchiveState,
+    pub convert: ConvertState,
 }
 
 impl State {
@@ -551,6 +682,17 @@ impl State {
                 last_extract_to: text("last-extract-to"),
             }
         });
+        let convert = table.get("convert").and_then(|v| v.as_table()).map_or_else(ConvertState::default, |t| {
+            let text = |key: &str| t.get(key).and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(str::to_owned);
+            ConvertState {
+                last_preset: text("last-preset"),
+                image: text("image"),
+                text: text("text"),
+                media: text("media"),
+                last_output: text("last-output").unwrap_or_default(),
+                last_folder: text("last-folder"),
+            }
+        });
         State {
             window,
             sidebar_width,
@@ -560,6 +702,7 @@ impl State {
             operations_collapsed,
             batch_rename,
             archive,
+            convert,
         }
     }
 
@@ -627,6 +770,26 @@ impl State {
                 table.insert("split".into(), toml::Value::Integer(split));
             }
             root.insert("archive".into(), toml::Value::Table(table));
+        }
+        if self.convert != ConvertState::default() {
+            let convert = &self.convert;
+            let mut table = toml::Table::new();
+            let texts = [
+                ("last-preset", &convert.last_preset),
+                ("image", &convert.image),
+                ("text", &convert.text),
+                ("media", &convert.media),
+                ("last-folder", &convert.last_folder),
+            ];
+            for (key, value) in texts {
+                if let Some(value) = value {
+                    table.insert(key.into(), toml::Value::String(value.clone()));
+                }
+            }
+            if !convert.last_output.is_empty() {
+                table.insert("last-output".into(), toml::Value::String(convert.last_output.clone()));
+            }
+            root.insert("convert".into(), toml::Value::Table(table));
         }
         root.to_string()
     }
@@ -1014,5 +1177,134 @@ rules = []
         assert!(!State::default().to_toml().contains("archive"), "the default is not written");
         let broken = State::parse("[archive]\nformat = 3\nsplit = -5\nlevel = \"\"\n");
         assert_eq!(broken.archive, ArchiveState::default());
+    }
+
+    #[test]
+    fn reads_convert_and_commands() {
+        let program = if cfg!(windows) { "C:/ffmpeg/ffmpeg.exe" } else { "/opt/ffmpeg/ffmpeg" };
+        let (settings, warnings) = parse(&format!(
+            "[convert]\nffmpeg = \"{program}\"\n\n[[commands]]\nname = \"Small\"\nrun = [\"magick\", \"{{in}}\", \"{{out}}\"]\n\
+             output = \"{{name}}-small.{{ext}}\"\ntypes = [\"jpg\", \"png\"]\nfolders = true\nparallel = 4\n\n\
+             [[commands]]\nname = \"Min\"\nrun = [\"touch\", \"{{in}}\"]\n"
+        ));
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(settings.convert.ffmpeg.as_deref(), Some(program));
+        assert_eq!(settings.commands.len(), 2);
+        assert_eq!(
+            settings.commands[0],
+            CommandSpec {
+                name: "Small".to_owned(),
+                run: vec!["magick".to_owned(), "{in}".to_owned(), "{out}".to_owned()],
+                output: Some("{name}-small.{ext}".to_owned()),
+                types: vec!["jpg".to_owned(), "png".to_owned()],
+                folders: true,
+                parallel: 4,
+            }
+        );
+        let min = &settings.commands[1];
+        assert_eq!((min.output.as_deref(), min.types.len(), min.folders, min.parallel), (None, 0, false, 1));
+        let defaults = Settings::default();
+        assert_eq!((defaults.convert.ffmpeg, defaults.commands.len()), (None, 0));
+        let (settings, warnings) = parse("[convert]\nffmpeg = \"\"\n");
+        assert!(warnings.is_empty() && settings.convert.ffmpeg.is_none(), "{warnings:?}");
+    }
+
+    #[test]
+    fn relative_or_bad_ffmpeg_warns() {
+        let (settings, warnings) = parse("[convert]\nffmpeg = \"bin/ffmpeg\"\n");
+        assert_eq!(settings.convert.ffmpeg, None);
+        assert!(warnings[0].message.contains("convert.ffmpeg") && warnings[0].message.contains("full path"));
+        let (_, warnings) = parse("[convert]\nffmpeg = 3\n");
+        assert!(warnings[0].message.starts_with("convert.ffmpeg: expected text"), "{warnings:?}");
+        let (_, warnings) = parse("convert = 1\ncommands = 2\n");
+        let messages: Vec<_> = warnings.iter().map(|w| w.message.as_str()).collect();
+        assert!(messages.iter().any(|m| m.starts_with("convert: expected a table")), "{messages:?}");
+        assert!(messages.iter().any(|m| m.starts_with("commands: expected [[commands]]")), "{messages:?}");
+    }
+
+    #[test]
+    fn invalid_commands_warn_and_are_skipped() {
+        let bad = [
+            ("run = [\"x\"]", "name is missing"),
+            ("name = \"\"\nrun = [\"x\"]", "name must be"),
+            ("name = \"A\"", "run is missing"),
+            ("name = \"A\"\nrun = []", "run has no program"),
+            ("name = \"A\"\nrun = \"x\"", "run must be a list of text"),
+            ("name = \"A\"\nrun = [\"x\", 3]", "run must be a list of text"),
+            ("name = \"A\"\nrun = [\"x\"]\noutput = 5", "output must be text"),
+            ("name = \"A\"\nrun = [\"x\"]\ntypes = \"jpg\"", "types must be a list of text"),
+            ("name = \"A\"\nrun = [\"x\"]\nfolders = \"yes\"", "folders must be true or false"),
+            ("name = \"A\"\nrun = [\"x\"]\nparallel = 0", "parallel must be 1-16"),
+            ("name = \"A\"\nrun = [\"x\"]\nparallel = 17", "parallel must be 1-16"),
+            ("name = \"A\"\nrun = [\"x\"]\nparallel = \"2\"", "parallel must be 1-16"),
+            ("name = \"A\"\nrun = [\"x\", \"{nope}\"]", "unknown placeholder"),
+            ("name = \"A\"\nrun = [\"x\", \"{out}\"]", "{out} needs an output"),
+            ("name = \"A\"\nrun = [\"x\"]\noutput = \"a/b\"", "file name"),
+            ("name = \"A\"\nrun = [\"x\"]\ntype = [\"jpg\"]", "unknown key \"type\""),
+            ("name = \"A\"\nrun = [\"x\"]\nparalel = 2", "unknown key \"paralel\""),
+            ("name = \"A\"\nrun = [\"x\"]\ntypes = [\"*.jpg\"]", "types: \"*.jpg\""),
+            ("name = \"A\"\nrun = [\"x\"]\ntypes = [\"jpg\", \"photos/x\"]", "is not a file ending"),
+            ("name = \"A\"\nrun = [\"x\"]\ntypes = [\".\"]", "is not a file ending"),
+        ];
+        for (body, expected) in bad {
+            let (settings, warnings) = parse(&format!("[[commands]]\n{body}\n"));
+            assert!(settings.commands.is_empty(), "{body}");
+            assert_eq!(warnings.len(), 1, "{body}: {warnings:?}");
+            let message = &warnings[0].message;
+            assert!(message.starts_with("commands[1]: ") && message.contains(expected), "{body}: {message}");
+        }
+        // The good one stays; the bad one is numbered by its place.
+        let (settings, warnings) = parse("[[commands]]\nname = \"Ok\"\nrun = [\"x\"]\n[[commands]]\nname = \"Bad\"\n");
+        assert_eq!(settings.commands.len(), 1);
+        assert!(warnings[0].message.starts_with("commands[2]: "), "{warnings:?}");
+    }
+
+    #[test]
+    fn the_template_documents_escaped_braces() {
+        let template = include_str!("../templates/settings.toml");
+        assert!(template.contains("\"{{\" and \"}}\""));
+        assert!(template.contains("--outdir") && template.contains("ebook-convert") && template.contains("magick"));
+    }
+
+    #[test]
+    fn the_template_command_examples_read_without_warnings_once_uncommented() {
+        let template = include_str!("../templates/settings.toml");
+        let start = template.find("# [[commands]]").expect("the template has command examples");
+        let examples: String = template[start..]
+            .lines()
+            .take_while(|line| line.starts_with('#'))
+            .map(|line| line.strip_prefix("# ").or_else(|| line.strip_prefix('#')).unwrap_or(line))
+            .map(|line| format!("{line}\n"))
+            .collect();
+        let (settings, warnings) = parse(&examples);
+        assert!(warnings.is_empty(), "{warnings:?}\n{examples}");
+        let names: Vec<&str> = settings.commands.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["Resize to 50% (ImageMagick)", "Office to PDF (LibreOffice)", "E-book to EPUB (Calibre)"]);
+    }
+
+    #[test]
+    fn a_leading_dot_in_types_is_dropped() {
+        let (settings, warnings) = parse("[[commands]]\nname = \"A\"\nrun = [\"x\"]\ntypes = [\".JPG\", \"tar.gz\"]\n");
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(settings.commands[0].types, ["JPG", "tar.gz"]);
+    }
+
+    #[test]
+    fn convert_state_round_trips() {
+        let state = State {
+            convert: ConvertState {
+                last_preset: Some("Web".to_owned()),
+                image: Some("jpeg;q=85".to_owned()),
+                text: Some("utf-8;lf".to_owned()),
+                media: Some("mp3-192".to_owned()),
+                last_output: "folder".to_owned(),
+                last_folder: Some("D:/Out".to_owned()),
+            },
+            ..State::default()
+        };
+        assert_eq!(State::parse(&state.to_toml()), state);
+        assert!(!State::default().to_toml().contains("convert"), "the default is not written");
+        let broken = State::parse("[convert]\nimage = 3\nlast-output = 4\nlast-folder = \"\"\n");
+        assert_eq!(broken.convert, ConvertState::default());
     }
 }

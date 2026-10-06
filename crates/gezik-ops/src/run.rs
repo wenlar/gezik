@@ -12,7 +12,7 @@ use gezik_core::ops::threads::workers;
 use gezik_platform::fs;
 
 use crate::engine::{ConflictItem, Event, Job, PauseReason, Shared, lock};
-use crate::task::{ChangedSince, NoTrash, Outcome, PlanItem, RunCx, ScanSink, Stage, Task, Work, is_marker};
+use crate::task::{ChangedSince, NoTrash, Outcome, PlanItem, Restart, RunCx, ScanSink, Stage, Task, Work, is_marker};
 use crate::walk::facts_of;
 
 /// After this many failures in a row the job pauses and asks.
@@ -43,11 +43,11 @@ pub(crate) fn run_job(shared: &Shared, job: &Arc<Job>) {
 
 fn run_task(shared: &Shared, job: &Job, task: &dyn Task, kinds: &[gezik_core::ops::threads::DiskKind]) {
     let control = &job.control;
-    let count = match task.resources().work {
+    let count = task.workers().unwrap_or_else(|| match task.resources().work {
         Work::Disk => workers(shared.settings().threads, kinds),
         Work::Cpu => std::thread::available_parallelism().map_or(2, |n| n.get()),
         Work::External => 2,
-    };
+    });
     let (sender, receiver) = mpsc::channel::<PlanItem>();
     let receiver = Mutex::new(receiver);
     let mut after: Vec<PlanItem> = Vec::new();
@@ -357,6 +357,16 @@ pub(crate) fn execute(shared: &Shared, job: &Job, task: &dyn Task, item: PlanIte
             Err(err) if err.kind() == io::ErrorKind::Interrupted && control.cancelled() => {
                 touch();
                 return;
+            }
+            Err(err) if is_marker::<Restart>(&err) => {
+                // Paused while it ran a program, which was ended: once resumed, the item is
+                // done again from the start, so what it counted is taken back now (the bar
+                // shows where the job really is, not the try that was thrown away).
+                control.take_back_bytes(cx.added.replace(0));
+                if control.stopped() {
+                    touch();
+                    return;
+                }
             }
             Err(err) if fs::is_disk_full(&err) => {
                 shared.pause(job, PauseReason::DiskFull, item.target.clone());

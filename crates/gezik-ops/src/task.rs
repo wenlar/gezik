@@ -78,6 +78,8 @@ pub enum TaskKind {
     Compress,
     AddToArchive,
     Download,
+    Convert,
+    Command,
 }
 
 impl TaskKind {
@@ -95,6 +97,8 @@ impl TaskKind {
             TaskKind::Compress => "Compress",
             TaskKind::AddToArchive => "Add to archive",
             TaskKind::Download => "Download",
+            TaskKind::Convert => "Convert",
+            TaskKind::Command => "Run command on",
         }
     }
 
@@ -314,6 +318,11 @@ pub trait Task: Send + Sync {
     /// How many things the user chose (for "Copy 3 items").
     fn count(&self) -> usize;
     fn resources(&self) -> Resources;
+    /// How many items run at once, when the task knows better than its kind of work (one
+    /// ffmpeg at a time, a user command's `parallel`); `None`: as `Work` says.
+    fn workers(&self) -> Option<usize> {
+        None
+    }
     /// Lists what to do; a folder before what is in it.
     fn plan(&self, sink: &mut dyn ScanSink);
     /// Does `item`. Its target is free: conflicts are settled before.
@@ -343,6 +352,25 @@ impl RunCx<'_> {
     /// Waits while the job is paused; true once it is cancelled.
     pub fn stopped(&self) -> bool {
         self.control.stopped()
+    }
+
+    /// Whether the job is cancelled; does not wait.
+    pub fn cancelled(&self) -> bool {
+        self.control.cancelled()
+    }
+
+    /// Whether the job is paused now; does not wait. An item that runs a program ends it
+    /// then (the program would go on using the machine), removes what it wrote and returns
+    /// [`restart`]: the engine waits until the job is resumed and does the item again.
+    pub fn paused(&self) -> bool {
+        self.control.paused()
+    }
+
+    /// The bytes this item counted so far (with `add_bytes`), over all its tries: an item
+    /// tried again after a full disk counts only what goes past them. An item that returned
+    /// [`restart`] starts again from 0 (the engine took back what it counted).
+    pub fn counted(&self) -> u64 {
+        self.added.get()
     }
 
     pub fn has_trash(&self, path: &Path) -> bool {
@@ -507,6 +535,29 @@ impl fmt::Display for ChangedSince {
 
 impl std::error::Error for ChangedSince {}
 
+/// The item was cut short because the job was paused (the program it ran was ended and what
+/// it wrote removed): it is done again from the start once the job is resumed.
+#[derive(Debug)]
+pub struct Restart;
+
+impl fmt::Display for Restart {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "paused; it starts again when resumed")
+    }
+}
+
+impl std::error::Error for Restart {}
+
+/// What `Task::run` returns when a pause cut its item short (see [`RunCx::paused`]).
+pub fn restart() -> io::Error {
+    io::Error::new(io::ErrorKind::Interrupted, Restart)
+}
+
+/// Whether `err` is [`restart`]'s.
+pub fn is_restart(err: &io::Error) -> bool {
+    is_marker::<Restart>(err)
+}
+
 /// The item's drive has no trash; the user is asked whether to delete it for good.
 #[derive(Debug)]
 pub struct NoTrash;
@@ -661,6 +712,8 @@ mod tests {
         assert_eq!(TaskKind::Rename.label(1), "Rename");
         assert_eq!(TaskKind::Rename.label(24), "Rename 24 items");
         assert_eq!(TaskKind::NewFolder.label(1), "New folder");
+        assert_eq!(TaskKind::Convert.label(12), "Convert 12 items");
+        assert_eq!(TaskKind::Command.label(1), "Run command on 1 item");
     }
 
     #[test]

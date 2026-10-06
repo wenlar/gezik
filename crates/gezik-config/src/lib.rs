@@ -6,6 +6,7 @@ pub mod paths;
 pub mod settings;
 pub mod settings_edit;
 pub mod shortcuts;
+mod state_store;
 pub mod store;
 pub mod theme;
 pub mod views_file;
