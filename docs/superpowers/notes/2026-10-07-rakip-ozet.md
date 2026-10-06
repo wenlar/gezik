@@ -1,7 +1,7 @@
 # Rakip karşılaştırmalarının özeti ve önerilen yol haritası
 
 - **Tarih:** 2026-10-07
-- **Kaynak notlar** (hepsi bu klasörde, 2026-10-07): OneCommander (**OC**), Files (**Fi**), Directory Opus (**DO**), File Pilot (**FP**), Far Manager + far2l (**Far**), ForkLift 4 (**FL**), Path Finder (**PF**).
+- **Kaynak notlar** (hepsi bu klasörde, 2026-10-07): OneCommander (**OC**), Files (**Fi**), Directory Opus (**DO**), File Pilot (**FP**), Far Manager + far2l (**Far**), ForkLift 4 (**FL**), Path Finder (**PF**). Sonradan eklenen: Total Commander (**TC**; bkz. §6).
 - **Gezik tabanı:** `master` (29dcb45) + 5d (PDF) var sayıldı.
 - **Adım numaraları:** Notlar adımları farklı numaralıyor. Far notu 6 Etiketler, 7 Taşınabilirlik, 8 Bulut, 9 Gelişmiş diyor. Diğerleri ad kullanıyor. Ayarlar spec'inin §8'inde ise 5 Taşınabilirlik, 6 Bulut, 7 Gelişmiş yazıyor. Bu belgede hepsi şu listeye çevrildi:
   - **Bitenler:** 1 Ayarlar + tema, 2 Gezinme, 3 Görünüm, 4 Dosya işlemleri, 5 Toplu işlemler (5a ad, 5b arşiv, 5c dönüştürme + komutlar, 5d PDF).
@@ -14,68 +14,74 @@
 
 Benzer satırlar tek satırda birleştirildi. Örneğin "yazarken süz", "hızlı filtre", "panel filtresi", "Filter Bar" ve "bulanık süzme" tek satır oldu. Değer ve emek, notlardaki tahminlerin ortak paydası. Emek, Gezik'in bugünkü altyapısına göre tahmin edildi. Sıralama: önce kaç uygulamada olduğu, sonra değer, sonra emek (düşük emek önce).
 
-| # | Özellik | OC | Fi | DO | FP | Far | FL | PF | Σ | Gezik | Değer | Emek | Adım |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | Yazarken süzme / hızlı filtre (joker, `!` ile hariç, sonraki eşleşme, kayıtlı filtre) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | 7 | Kısmen (yalnız harfle atlama) | Yüksek | Düşük | Klavye paketi |
-| 2 | Özyinelemeli arama (ad, içerik, tarih/boyut; sonuçta önizleme) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | 7 | Planlı | Yüksek | Orta | Arama |
-| 3 | Klasör boyutu (arka planda, sütun, sıralama; sıralamayı bekletmeden) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | 7 | Yok | Yüksek | Orta | Arama |
-| 4 | Çift panel + karşı panele kopyala/taşı (F5/F6, Tab, sekmeyi diğer panele taşı) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | 7 | Planlı | Yüksek | Yüksek | Düzenler |
-| 5 | Grafik ayar penceresi | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | 7 | Kısmen (yalnız TOML) | Yüksek | Yüksek | Taşınabilirlik |
-| 6 | Sürücü çıkarma, ağ paylaşımına bağlanma/eşleme, ağ keşfi | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | 7 | Kısmen (liste var) | Orta | Orta | Sistem bütünleşmesi |
-| 7 | Yolu kopyala: kısayol, biçimler (tırnaklı, `/`, UNC), üç sistemde | ✓ | ✓ | | ✓ | ✓ | ✓ | ✓ | 6 | Kısmen (yalnız Windows Shell menüsü) | Yüksek | Düşük | Günlük kolaylıklar |
-| 8 | Oturum geri yükleme, sekme setleri / workspaces / kayıtlı düzenler | ✓ | ✓ | ✓ | ✓ | | ✓ | ✓ | 6 | Yok (spec'te bilerek dışarıda) | Yüksek | Düşük | Günlük kolaylıklar |
-| 9 | Arayüz çevirisi (önce Türkçe) | ✓ | ✓ | ✓ | | ✓ | ✓ | ✓ | 6 | Yok (bilerek dışarıda) | Yüksek | Orta | Yerelleştirme |
-| 10 | Yol tamamlama, son klasörler, geçmiş açılır listesi, ortam değişkeni / `{home}` | ✓ | | ✓ | ✓ | ✓ | ✓ | ✓ | 6 | Kısmen (Ctrl+L) | Orta | Düşük | Klavye paketi |
-| 11 | Görünüm seçenekleri: gizli/sistem ayrımı, uzantı gizleme, "klasörler önce" anahtarı, boyut ve tarih biçimi | ✓ | ✓ | ✓ | ✓ | ✓ | | ✓ | 6 | Kısmen | Orta | Düşük | Günlük kolaylıklar |
-| 12 | Arşivin içinde klasör gibi gezinme, içinden sürükleme, arşivden silme | | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | 6 | Planlı | Orta | Orta | Gelişmiş |
-| 13 | Zengin önizleme: video/ses, çok sayfalı PDF, kod renklendirme, resim yakınlaştırma, tam metin/hex | ✓ | ✓ | ✓ | | ✓ | ✓ | ✓ | 6 | Kısmen | Orta | Orta | Önizleme 2 |
-| 14 | Varsayılan dosya yöneticisi olma (Win+E, `NSFileViewer`) | ✓ | ✓ | ✓ | ✓ | | ✓ | ✓ | 6 | Yok | Orta | Orta | Sistem bütünleşmesi |
-| 15 | Kısayol / symlink / hardlink / junction oluşturma | ✓ | ✓ | ✓ | | ✓ | ✓ | ✓ | 6 | Yok (bilerek dışarıda) | Düşük | Düşük | Günlük kolaylıklar |
-| 16 | Terminalde aç (terminal seçimi; yönetici olarak) | ✓ | ✓ | | | ✓ | ✓ | ✓ | 5 | Yok | Yüksek | Düşük | Günlük kolaylıklar |
-| 17 | Otomatik güncelleme | ✓ | ✓ | ✓ | | | ✓ | ✓ | 5 | Planlı (ilk sürümden önce) | Yüksek | Orta | Yayın hazırlığı |
-| 18 | Etiketler: renk, kenar çubuğu, etikete göre süz/sırala; macOS'ta Finder uyumlu | ✓ | ✓ | ✓ | | | ✓ | ✓ | 5 | Planlı | Yüksek | Orta | Etiketler |
-| 19 | Favori grupları, takma ad, simge/renk, numaralı klasör kısayolu | ✓ | | ✓ | | ✓ | ✓ | ✓ | 5 | Kısmen (tek PINNED listesi) | Orta | Düşük | Günlük kolaylıklar |
-| 20 | Gruplama (tür, tarih, boyut, etiket) | | ✓ | ✓ | ✓ | | ✓ | ✓ | 5 | Yok (bilerek dışarıda) | Orta | Orta | Düzenler |
-| 21 | Meta veri paneli ve sütunları (EXIF, ID3, süre, boyutlar) | ✓ | ✓ | ✓ | | | ✓ | ✓ | 5 | Kısmen (piksel boyutu) | Orta | Orta | Önizleme 2 |
-| 22 | Bulut sürücüleri: kenar çubuğunda otomatik, durum simgeleri, indir/boşalt | ✓ | ✓ | ✓ | | | ✓ | ✓ | 5 | Yok | Orta | Orta | Sistem bütünleşmesi |
-| 23 | Çok pencere, sekmeyi koparıp yeni pencere | ✓ | ✓ | ✓ | | | ✓ | ✓ | 5 | Kısmen (ikinci süreç) | Orta | Orta | Düzenler |
-| 24 | Uzak bağlantılar: SFTP, FTP(S), WebDAV, S3 | | ✓ | ✓ | | ✓ | ✓ | ✓ | 5 | Yok | Orta (azınlığa yüksek) | Yüksek | Uzak bağlantılar (karar) |
-| 25 | Puan, yorum, klasör notu (`descript.ion`, `.2do`) | ✓ | | ✓ | | ✓ | ✓ | ✓ | 5 | Yok | Düşük | Düşük | Etiketler |
-| 26 | Özellikler / Get Info: izin, sahip, öznitelik ve zaman damgası düzenleme | | ✓ | ✓ | | ✓ | ✓ | ✓ | 5 | Kısmen (Windows sistem penceresi) | Düşük | Orta | Sistem bütünleşmesi |
-| 27 | Komut paleti / Quick Open / FAYT komut modu | | ✓ | ✓ | ✓ | | ✓ | | 4 | Planlı | Yüksek | Orta | Arama |
-| 28 | Sekme kolaylıkları: kapatılanı geri aç, Ctrl+1…9, sekme seçici/arama | ✓ | ✓ | ✓ | ✓ | | | | 4 | Yok | Orta | Düşük | Klavye paketi |
-| 29 | Desenle seç/bırak, ters çevir, aynı uzantıyı seç, önceki seçime dön | | | ✓ | | ✓ | ✓ | ✓ | 4 | Yok | Orta | Düşük | Klavye paketi |
-| 30 | `[[commands]]` büyütme: kısayol, alt menü, `ask`, tüm seçim `{files}`, diğer panel, iki dosya | ✓ | | ✓ | | ✓ | ✓ | | 4 | Kısmen | Orta | Düşük | Klavye paketi |
-| 31 | Sağlama toplamı (MD5/SHA; kopyala, karşılaştır, CSV) | | ✓ | ✓ | | | ✓ | ✓ | 4 | Yok | Orta | Düşük | Araçlar |
-| 32 | Klasör ağacı (kenar çubuğunda ya da panel) | | ✓ | ✓ | ✓ | ✓ | | | 4 | Yok | Orta | Orta | Düzenler |
-| 33 | Çöp kutusu görünümü: gez, geri yükle, boşalt | ✓ | ✓ | ✓ | | | | ✓ | 4 | Kısmen (Ctrl+Z ile geri) | Orta | Orta | Sistem bütünleşmesi |
-| 34 | "Birlikte aç" listesi, Share/AirDrop, Services (macOS/Linux'ta) | ✓ | ✓ | | | | ✓ | ✓ | 4 | Kısmen (yalnız Windows) | Orta | Orta | Sistem bütünleşmesi |
-| 35 | Klasör karşılaştırma ve eşitleme (tek/iki yönlü, kayıtlı senkron) | | | ✓ | | ✓ | ✓ | ✓ | 4 | Yok | Orta | Yüksek | Araçlar |
-| 36 | Miller sütunları / Column View | ✓ | ✓ | | | | ✓ | ✓ | 4 | Yok | Orta | Yüksek | Düzenler |
-| 37 | Sistem geneli kısayol, tepside bekleme, girişte başlama | ✓ | ✓ | ✓ | | | | ✓ | 4 | Yok | Düşük | Orta | Sistem bütünleşmesi |
-| 38 | Yönetici yetkisiyle işlem (UAC, ayrıcalıklı yardımcı) | ✓ | | ✓ | | ✓ | | ✓ | 4 | Yok | Düşük | Orta | Sistem bütünleşmesi |
-| 39 | Tarayıcı/e-postadan sanal dosya bırakma (file promise, `FileGroupDescriptor`) | ✓ | | | ✓ | | ✓ | | 3 | Yok | Orta | Orta | Sistem bütünleşmesi |
-| 40 | Git: durum işaretleri, sütunlar, add/commit/push/pull | | ✓ | | | | ✓ | ✓ | 3 | Planlı | Orta (geliştiriciye yüksek) | Yüksek | Gelişmiş |
-| 41 | Eşli gezinme (Sync Browsing, Paired Folders, SameFolder) | | | ✓ | | ✓ | ✓ | | 3 | Yok | Düşük | Düşük | Düzenler |
-| 42 | Tek tıkla açma seçeneği | | ✓ | | ✓ | | | ✓ | 3 | Yok | Düşük | Düşük | Günlük kolaylıklar |
-| 43 | Komut satırı seçenekleri (`-newtab`, `/select`, PATH'e ekleme) | ✓ | | ✓ | ✓ | | | | 3 | Kısmen (yalnız klasör) | Düşük | Düşük | Sistem bütünleşmesi |
-| 44 | MTP / telefon / iOS aygıtları | ✓ | | ✓ | | | | ✓ | 3 | Planlı | Düşük | Yüksek | Gelişmiş |
-| 45 | macOS sistem simgeleri, QuickLook küçük resimleri, sistem QL paneli | | | | | | ✓ | ✓ | 2 | Yok (macOS'ta hep Gezik simgesi) | Yüksek (macOS'ta ilk izlenim) | Orta | Sistem bütünleşmesi |
-| 46 | Panodaki resmi/metni dosya olarak yapıştırma | ✓ | ✓ | | | | | | 2 | Yok (bilerek dışarıda) | Orta | Düşük | Günlük kolaylıklar |
-| 47 | Yeni dosya şablonları; seçilenlerle yeni klasör | ✓ | ✓ | | | | | | 2 | Kısmen (boş `.txt`) | Orta | Düşük | Günlük kolaylıklar |
-| 48 | Drop Stack / Shelf (geçici toplama alanı) | | ✓ | | | | | ✓ | 2 | Yok | Orta | Düşük | Günlük kolaylıklar |
-| 49 | Kayıtlı aramalar (Smart Folder) | | | ✓ | | | | ✓ | 2 | Yok | Orta | Düşük | Arama |
-| 50 | Vurgulama kuralları (maske → renk), sıralama grupları | | | ✓ | | ✓ | | | 2 | Kısmen (tür rengi) | Orta | Düşük | Etiketler |
-| 51 | Düz görünüm (alt klasörler tek listede) | | | ✓ | ✓ | | | | 2 | Yok | Orta | Orta | Arama |
-| 52 | Yinelenen dosya bulucu | | | ✓ | | | | ✓ | 2 | Yok | Orta | Orta | Araçlar |
-| 53 | Gömülü terminal / panel altı komut satırı (adres çubuğunda `>`) | | | | | ✓ | | ✓ | 2 | Yok | Orta | Yüksek | Gelişmiş (sonra) |
-| 54 | İki dosyayı dış diff aracıyla ya da yan yana karşılaştırma | | | | | | ✓ | ✓ | 2 | Yok | Düşük | Düşük | Araçlar |
-| 55 | Görünür işlem günlüğü (log) | | | ✓ | | | ✓ | | 2 | Kısmen ("N failed · Details") | Düşük | Düşük | Günlük kolaylıklar |
-| 56 | Listede ve kenar çubuğunda yaylı klasörler | | | | | | ✓ | ✓ | 2 | Kısmen (yalnız sekmede) | Düşük | Düşük | Günlük kolaylıklar |
-| 57 | Kuyruk düzenleme, bant sınırı, kopya sonrası doğrulama | | | ✓ | | | ✓ | | 2 | Kısmen | Düşük | Orta | — (biriken) |
-| 58 | Yerleştirilebilir paneller (PF modüllerinin hafif hali; `settings.toml`'da yerleşim listesi) | | | | | | | ✓ | 1 | Yok | Orta | Yüksek | Düzenler |
-| 59 | Boyut haritası (Size Browser halka grafiği) | | | | | | | ✓ | 1 | Yok | Düşük | Orta | Araçlar |
-| 60 | Klasör listesini dışa aktarma (metin/CSV/HTML) | | | ✓ | | | | | 1 | Yok | Düşük | Düşük | Araçlar |
+| # | Özellik | OC | Fi | DO | FP | Far | FL | PF | TC | Σ | Gezik | Değer | Emek | Adım |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | Yazarken süzme / hızlı filtre (joker, `!` ile hariç, sonraki eşleşme, kayıtlı filtre) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | 8 | Kısmen (yalnız harfle atlama) | Yüksek | Düşük | Klavye paketi |
+| 2 | Özyinelemeli arama (ad, içerik, tarih/boyut; sonuçta önizleme) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | 8 | Planlı | Yüksek | Orta | Arama |
+| 3 | Klasör boyutu (arka planda, sütun, sıralama; sıralamayı bekletmeden) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | 8 | Yok | Yüksek | Orta | Arama |
+| 4 | Çift panel + karşı panele kopyala/taşı (F5/F6, Tab, sekmeyi diğer panele taşı) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | 8 | Planlı | Yüksek | Yüksek | Düzenler |
+| 5 | Grafik ayar penceresi | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | 8 | Kısmen (yalnız TOML) | Yüksek | Yüksek | Taşınabilirlik |
+| 6 | Sürücü çıkarma, ağ paylaşımına bağlanma/eşleme, ağ keşfi | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | 8 | Kısmen (liste var) | Orta | Orta | Sistem bütünleşmesi |
+| 7 | Yolu kopyala: kısayol, biçimler (tırnaklı, `/`, UNC), üç sistemde | ✓ | ✓ | | ✓ | ✓ | ✓ | ✓ | ✓ | 7 | Kısmen (yalnız Windows Shell menüsü) | Yüksek | Düşük | Günlük kolaylıklar |
+| 8 | Oturum geri yükleme, sekme setleri / workspaces / kayıtlı düzenler | ✓ | ✓ | ✓ | ✓ | | ✓ | ✓ | ✓ | 7 | Yok (spec'te bilerek dışarıda) | Yüksek | Düşük | Günlük kolaylıklar |
+| 9 | Arayüz çevirisi (önce Türkçe) | ✓ | ✓ | ✓ | | ✓ | ✓ | ✓ | ✓ | 7 | Yok (bilerek dışarıda) | Yüksek | Orta | Yerelleştirme |
+| 10 | Yol tamamlama, son klasörler, geçmiş açılır listesi, ortam değişkeni / `{home}` | ✓ | | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | 7 | Kısmen (Ctrl+L) | Orta | Düşük | Klavye paketi |
+| 11 | Görünüm seçenekleri: gizli/sistem ayrımı, uzantı gizleme, "klasörler önce" anahtarı, boyut ve tarih biçimi | ✓ | ✓ | ✓ | ✓ | ✓ | | ✓ | ✓ | 7 | Kısmen | Orta | Düşük | Günlük kolaylıklar |
+| 12 | Arşivin içinde klasör gibi gezinme, içinden sürükleme, arşivden silme | | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | 7 | Planlı | Orta | Orta | Gelişmiş |
+| 13 | Zengin önizleme: video/ses, çok sayfalı PDF, kod renklendirme, resim yakınlaştırma, tam metin/hex | ✓ | ✓ | ✓ | | ✓ | ✓ | ✓ | ✓ | 7 | Kısmen | Orta | Orta | Önizleme 2 |
+| 14 | Varsayılan dosya yöneticisi olma (Win+E, `NSFileViewer`) | ✓ | ✓ | ✓ | ✓ | | ✓ | ✓ | | 6 | Yok | Orta | Orta | Sistem bütünleşmesi |
+| 15 | Kısayol / symlink / hardlink / junction oluşturma | ✓ | ✓ | ✓ | | ✓ | ✓ | ✓ | ✓ | 7 | Yok (bilerek dışarıda) | Düşük | Düşük | Günlük kolaylıklar |
+| 16 | Terminalde aç (terminal seçimi; yönetici olarak) | ✓ | ✓ | | | ✓ | ✓ | ✓ | ✓ | 6 | Yok | Yüksek | Düşük | Günlük kolaylıklar |
+| 17 | Otomatik güncelleme | ✓ | ✓ | ✓ | | | ✓ | ✓ | | 5 | Planlı (ilk sürümden önce) | Yüksek | Orta | Yayın hazırlığı |
+| 18 | Etiketler: renk, kenar çubuğu, etikete göre süz/sırala; macOS'ta Finder uyumlu | ✓ | ✓ | ✓ | | | ✓ | ✓ | | 5 | Planlı | Yüksek | Orta | Etiketler |
+| 19 | Favori grupları, takma ad, simge/renk, numaralı klasör kısayolu | ✓ | | ✓ | | ✓ | ✓ | ✓ | ✓ | 6 | Kısmen (tek PINNED listesi) | Orta | Düşük | Günlük kolaylıklar |
+| 20 | Gruplama (tür, tarih, boyut, etiket) | | ✓ | ✓ | ✓ | | ✓ | ✓ | | 5 | Yok (bilerek dışarıda) | Orta | Orta | Düzenler |
+| 21 | Meta veri paneli ve sütunları (EXIF, ID3, süre, boyutlar) | ✓ | ✓ | ✓ | | | ✓ | ✓ | ✓ | 6 | Kısmen (piksel boyutu) | Orta | Orta | Önizleme 2 |
+| 22 | Bulut sürücüleri: kenar çubuğunda otomatik, durum simgeleri, indir/boşalt | ✓ | ✓ | ✓ | | | ✓ | ✓ | ✓ | 6 | Yok | Orta | Orta | Sistem bütünleşmesi |
+| 23 | Çok pencere, sekmeyi koparıp yeni pencere | ✓ | ✓ | ✓ | | | ✓ | ✓ | | 5 | Kısmen (ikinci süreç) | Orta | Orta | Düzenler |
+| 24 | Uzak bağlantılar: SFTP, FTP(S), WebDAV, S3 | | ✓ | ✓ | | ✓ | ✓ | ✓ | ✓ | 6 | Yok | Orta (azınlığa yüksek) | Yüksek | Uzak bağlantılar (karar) |
+| 25 | Puan, yorum, klasör notu (`descript.ion`, `.2do`) | ✓ | | ✓ | | ✓ | ✓ | ✓ | ✓ | 6 | Yok | Düşük | Düşük | Etiketler |
+| 26 | Özellikler / Get Info: izin, sahip, öznitelik ve zaman damgası düzenleme | | ✓ | ✓ | | ✓ | ✓ | ✓ | ✓ | 6 | Kısmen (Windows sistem penceresi) | Düşük | Orta | Sistem bütünleşmesi |
+| 27 | Komut paleti / Quick Open / FAYT komut modu | | ✓ | ✓ | ✓ | | ✓ | | | 4 | Planlı | Yüksek | Orta | Arama |
+| 28 | Sekme kolaylıkları: kapatılanı geri aç, Ctrl+1…9, sekme seçici/arama | ✓ | ✓ | ✓ | ✓ | | | | ✓ | 5 | Yok | Orta | Düşük | Klavye paketi |
+| 29 | Desenle seç/bırak, ters çevir, aynı uzantıyı seç, önceki seçime dön | | | ✓ | | ✓ | ✓ | ✓ | ✓ | 5 | Yok | Orta | Düşük | Klavye paketi |
+| 30 | `[[commands]]` büyütme: kısayol, alt menü, `ask`, tüm seçim `{files}`, diğer panel, iki dosya | ✓ | | ✓ | | ✓ | ✓ | | ✓ | 5 | Kısmen | Orta | Düşük | Klavye paketi |
+| 31 | Sağlama toplamı (MD5/SHA; kopyala, karşılaştır, CSV) | | ✓ | ✓ | | | ✓ | ✓ | ✓ | 5 | Yok | Orta | Düşük | Araçlar |
+| 32 | Klasör ağacı (kenar çubuğunda ya da panel) | | ✓ | ✓ | ✓ | ✓ | | | ✓ | 5 | Yok | Orta | Orta | Düzenler |
+| 33 | Çöp kutusu görünümü: gez, geri yükle, boşalt | ✓ | ✓ | ✓ | | | | ✓ | ✓ | 5 | Kısmen (Ctrl+Z ile geri) | Orta | Orta | Sistem bütünleşmesi |
+| 34 | "Birlikte aç" listesi, Share/AirDrop, Services (macOS/Linux'ta) | ✓ | ✓ | | | | ✓ | ✓ | ✓ | 5 | Kısmen (yalnız Windows) | Orta | Orta | Sistem bütünleşmesi |
+| 35 | Klasör karşılaştırma ve eşitleme (tek/iki yönlü, kayıtlı senkron) | | | ✓ | | ✓ | ✓ | ✓ | ✓ | 5 | Yok | Orta | Yüksek | Araçlar |
+| 36 | Miller sütunları / Column View | ✓ | ✓ | | | | ✓ | ✓ | | 4 | Yok | Orta | Yüksek | Düzenler |
+| 37 | Sistem geneli kısayol, tepside bekleme, girişte başlama | ✓ | ✓ | ✓ | | | | ✓ | ✓ | 5 | Yok | Düşük | Orta | Sistem bütünleşmesi |
+| 38 | Yönetici yetkisiyle işlem (UAC, ayrıcalıklı yardımcı) | ✓ | | ✓ | | ✓ | | ✓ | ✓ | 5 | Yok | Düşük | Orta | Sistem bütünleşmesi |
+| 39 | Tarayıcı/e-postadan sanal dosya bırakma (file promise, `FileGroupDescriptor`) | ✓ | | | ✓ | | ✓ | | | 3 | Yok | Orta | Orta | Sistem bütünleşmesi |
+| 40 | Git: durum işaretleri, sütunlar, add/commit/push/pull | | ✓ | | | | ✓ | ✓ | | 3 | Planlı | Orta (geliştiriciye yüksek) | Yüksek | Gelişmiş |
+| 41 | Eşli gezinme (Sync Browsing, Paired Folders, SameFolder) | | | ✓ | | ✓ | ✓ | | ✓ | 4 | Yok | Düşük | Düşük | Düzenler |
+| 42 | Tek tıkla açma seçeneği | | ✓ | | ✓ | | | ✓ | ✓ | 4 | Yok | Düşük | Düşük | Günlük kolaylıklar |
+| 43 | Komut satırı seçenekleri (`-newtab`, `/select`, PATH'e ekleme) | ✓ | | ✓ | ✓ | | | | ✓ | 4 | Kısmen (yalnız klasör) | Düşük | Düşük | Sistem bütünleşmesi |
+| 44 | MTP / telefon / iOS aygıtları | ✓ | | ✓ | | | | ✓ | ✓ | 4 | Planlı | Düşük | Yüksek | Gelişmiş |
+| 45 | macOS sistem simgeleri, QuickLook küçük resimleri, sistem QL paneli | | | | | | ✓ | ✓ | | 2 | Yok (macOS'ta hep Gezik simgesi) | Yüksek (macOS'ta ilk izlenim) | Orta | Sistem bütünleşmesi |
+| 46 | Panodaki resmi/metni dosya olarak yapıştırma | ✓ | ✓ | | | | | | | 2 | Yok (bilerek dışarıda) | Orta | Düşük | Günlük kolaylıklar |
+| 47 | Yeni dosya şablonları; seçilenlerle yeni klasör | ✓ | ✓ | | | | | | ✓ | 3 | Kısmen (boş `.txt`) | Orta | Düşük | Günlük kolaylıklar |
+| 48 | Drop Stack / Shelf (geçici toplama alanı) | | ✓ | | | | | ✓ | | 2 | Yok | Orta | Düşük | Günlük kolaylıklar |
+| 49 | Kayıtlı aramalar (Smart Folder) | | | ✓ | | | | ✓ | ✓ | 3 | Yok | Orta | Düşük | Arama |
+| 50 | Vurgulama kuralları (maske → renk), sıralama grupları | | | ✓ | | ✓ | | | ✓ | 3 | Kısmen (tür rengi) | Orta | Düşük | Etiketler |
+| 51 | Düz görünüm (alt klasörler tek listede) | | | ✓ | ✓ | | | | ✓ | 3 | Yok | Orta | Orta | Arama |
+| 52 | Yinelenen dosya bulucu | | | ✓ | | | | ✓ | ✓ | 3 | Yok | Orta | Orta | Araçlar |
+| 53 | Gömülü terminal / panel altı komut satırı (adres çubuğunda `>`) | | | | | ✓ | | ✓ | ✓ | 3 | Yok | Orta | Yüksek | Gelişmiş (sonra) |
+| 54 | İki dosyayı dış diff aracıyla ya da yan yana karşılaştırma | | | | | | ✓ | ✓ | ✓ | 3 | Yok | Düşük | Düşük | Araçlar |
+| 55 | Görünür işlem günlüğü (log) | | | ✓ | | | ✓ | | ✓ | 3 | Kısmen ("N failed · Details") | Düşük | Düşük | Günlük kolaylıklar |
+| 56 | Listede ve kenar çubuğunda yaylı klasörler | | | | | | ✓ | ✓ | | 2 | Kısmen (yalnız sekmede) | Düşük | Düşük | Günlük kolaylıklar |
+| 57 | Kuyruk düzenleme, bant sınırı, kopya sonrası doğrulama | | | ✓ | | | ✓ | | ✓ | 3 | Kısmen | Düşük | Orta | — (biriken) |
+| 58 | Yerleştirilebilir paneller (PF modüllerinin hafif hali; `settings.toml`'da yerleşim listesi) | | | | | | | ✓ | | 1 | Yok | Orta | Yüksek | Düzenler |
+| 59 | Boyut haritası (Size Browser halka grafiği) | | | | | | | ✓ | | 1 | Yok | Düşük | Orta | Araçlar |
+| 60 | Klasör listesini dışa aktarma (metin/CSV/HTML) | | | ✓ | | | | | ✓ | 2 | Yok | Düşük | Düşük | Araçlar |
+| 61 | Süzgeçli kopyalama (yalnız eşleşenler, klasör süzgeci, ilişkili dosyalar `*.jpg>*.cr2`) ve jokerle hedef adı | | | ✓ | | ✓ | | | ✓ | 3 | Yok | Düşük-orta | Orta | Araçlar |
+| 62 | Dosya bölme / birleştirme (ham `.001` parçaları, CRC) | | | ✓ | | | | | ✓ | 2 | Kısmen (7z parçalı arşiv) | Düşük | Düşük | Araçlar |
+| 63 | Otomatik görünüm kuralları (yol, konum türü, içerik oranı → sütun, sıralama, renk) | | | | | | | | ✓ | 1 | Kısmen (klasör başına hafıza) | Orta | Orta | Düzenler |
+| 64 | Kilitli sekmeler ("kilitli ama gezilebilir") | | | ✓ | | | | | ✓ | 2 | Yok | Düşük | Düşük | Klavye paketi |
+| 65 | Taşınabilir mod (ayarlar exe yanında, USB paketi) | ✓ | | ✓ | | ✓ | | | ✓ | 4 | Kısmen (`GEZIK_CONFIG_DIR`) | Orta | Düşük | Yayın hazırlığı |
+| 66 | Meta veri alanlarını her yerde kullanma: sütun, arama kuralı, ad şablonu, eşitleme karşılaştırması, renk kuralı | | | ✓ | | | | | ✓ | 2 | Kısmen (EXIF tarihi adda) | Orta | Orta | Önizleme 2 |
 
 **Notlarda önerilmeyenler** (tabloya alınmadı):
 
@@ -208,3 +214,34 @@ Satılık uygulamaların hepsi ticari kullanıma para karşılığı izin veriyo
 12. Nadir arşiv okuyucuları ikili boyutu düşürmek için isteğe bağlı indirmeye alınsın mı?
 13. Yüksek tazelemeli ekranlar için isteğe bağlı GPU çizici sunulsun mu?
 14. Eklenti API'si (WASM ya da ayrı süreç) uzun vadede yol haritasına girsin mi, yoksa `[[commands]]` ve komut paleti yeterli mi?
+
+---
+
+## 6. Rakip-ozet güncellemesi: Total Commander
+
+Kaynak not: `2026-10-07-totalcommander-karsilastirma.md` (TC 11.58 ve Android 3.62; 109 satır: 12 Var, 36 Kısmen, 20 Yok, 41 Planlı).
+
+**Tabloda değişenler**
+
+- §1'deki tabloya **TC** sütunu eklendi ve Σ sekiz uygulamaya göre yeniden sayıldı. Satır numaraları ve sıra değişmedi; diğer notlardaki "rö N" göndermeleri geçerli.
+- TC ilk 60 satırın 45'inde var. Bu, sekiz uygulamanın en yükseğidir. 1-6. satırlar (süzme, arama, klasör boyutu, çift panel, ayar penceresi, sürücü/ağ) artık sekiz uygulamanın hepsinde var.
+- Yeni satırlar 61-66: süzgeçli kopya (61), bölme/birleştirme (62), otomatik görünüm kuralları (63), kilitli sekmeler (64), taşınabilir mod (65), meta veri alanlarını her yerde kullanma (66).
+
+**Yol haritasına etkisi** (yeni adım yok; sıra aynı)
+
+| Adım | Eklenen |
+|---|---|
+| 6 Klavye paketi | Kilitli sekmeler (64); Quick Search'te "baştan / her yerde" seçeneği ve liste süzgeci menüsü (rö 1); geçmişte ziyaret sıklığı (rö 10) |
+| 8 Arama | Düz görünüm (rö 51) ile arama sonucu aynı sanal liste olsun; toplu ad ve kopya bu listeyle çalışsın (TC'nin Branch View + "keep relative paths" modeli) |
+| 10 Düzenler | Otomatik görünüm kuralları (63) |
+| 11 Araçlar | Süzgeçli kopya (61), bölme/birleştirme (62). **rö 57** (doğrulama, hız sınırı, kuyruk düzenleme) artık üç uygulamada, "biriken"den 11'e alınmalı. Klasör eşitlemede (rö 35) TC ayrıntıları: asimetrik (yedek) kip, satır başına yön oku, göster düğmeleri, 1x/2x/←/→ süzgeç kipleri, FAT saniye toleransı, kayıtlı profiller, klasör↔arşiv eşitleme |
+| 13 Önizleme 2 | Tek **meta veri alanı kaydı** (66): sütun, arama kuralı, ad şablonu, renk kuralı aynı kaydı okur (TC'nin WDX içerik eklentilerinin API'siz karşılığı) |
+| Yayın hazırlığı | Taşınabilir paket (65) |
+
+**§3'e düzeltme:** "Yedisinde de olmayanlar" listesi sekiz uygulama için de geçerli; TC'de de hiçbiri yok. Komut paleti TC'de de yok (yok olanlar: OC, PF, Far, TC). Git TC'de de yok (yok olanlar: OC, DO, FP, Far, TC). TC'de dosya işlemleri için geri alma da yok; yalnız Multi-Rename'in son işlemi geri alınabiliyor.
+
+**§4 lisans tablosuna ek:** Total Commander: shareware, 30 gün deneme, açılışta hatırlatma ekranı; 42 € + KDV, kalıcı, eşzamanlı kullanıcı başına; güncellemeler 1.0'dan beri ücretsiz; ticari kullanım aynı lisansla serbest. Android sürümü ücretsiz.
+
+**Önerilmeyenlere ek:** Düğme çubuğu ve ana menü düzenleyici; dört türlü eklenti API'si (WCX/WFX/WLX/WDX; meta veri alanı kaydı en değerli kısmı karşılar); kodla/çöz (UUE/XXE/BinHex); paralel/USB kablo bağlantısı; sistem bilgisi.
+
+**Açık kararlara katkı:** Karar 7 (Everything) için TC örneği: TC, Everything'i hem aramada (`ev:`, `ed:`) hem klasör boyutunda isteğe bağlı kullanıyor; kendi tarayıcısı her zaman yedek olarak duruyor. Karar 14 (eklenti API'si) için TC örneği: TC'nin gücünün büyük kısmı üçüncü taraf eklentilerden geliyor. Gezik'te bunun yerine meta veri alanı kaydı ve `[[commands]]` yeterli görünüyor.
