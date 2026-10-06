@@ -143,7 +143,8 @@ remember = true
 # what it does can't be undone. shortcut = "ctrl+alt+z" runs a command on the selection while
 # the file list has the keyboard (the keys of [shortcuts], with Ctrl, Alt or Cmd, or an F key;
 # a key already taken is left out, with a warning); menu = "Archives" lists it under that
-# heading in "Commands >"; ask = true asks "Run … on N items?" first.
+# heading in "Commands >"; ask = true asks "Run … on N items?" first. Ctrl+Alt+letter may type a
+# character on some layouts (AltGr on Windows), so the command never runs: pick another key then.
 # [[commands]]
 # name = "Resize to 50% (ImageMagick)"
 # run = ["magick", "{in}", "-resize", "50%", "{out}"]

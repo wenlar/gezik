@@ -2174,10 +2174,9 @@ impl Convert {
         crate::archives::with_current(|archives| archives.offer_ffmpeg(need, hint, again, Some(id)));
     }
 
+    /// Says `text` in the status bar until the selection changes.
     fn note(&self, text: String) {
-        if let Some(window) = self.0.window.upgrade() {
-            window.set_status(text.into());
-        }
+        crate::view::with_current(|view| view.note(text));
     }
 
     /// A command asked for by its key: on the items it takes; when it takes none or cannot

@@ -109,12 +109,20 @@ const NAMED: [(SlintKey, Key); 27] = [
     (SlintKey::F12, Key::F(12)),
 ];
 
+/// Whether Ctrl+Alt and `c` is AltGr typing it: on Windows, which reports AltGr as Ctrl+Alt,
+/// for a character that is no letter or digit (Turkish Q AltGr+8 is `[`), as on the digit row.
+pub fn altgr_types(c: char, ctrl: bool, alt: bool, windows: bool) -> bool {
+    windows && ctrl && alt && !c.is_ascii_alphanumeric()
+}
+
 /// Converts a Slint key event's text and modifiers into a chord, if the key is one we know.
 pub fn chord_from_event(text: &str, ctrl: bool, alt: bool, shift: bool, meta: bool) -> Option<Chord> {
     let mut chars = text.chars();
     let (Some(c), None) = (chars.next(), chars.next()) else { return None };
     let key = if let Some((_, key)) = NAMED.iter().find(|(k, _)| char::from(*k) == c) {
         *key
+    } else if altgr_types(c, ctrl, alt, cfg!(windows)) {
+        return None;
     } else if c.is_ascii_alphanumeric() || matches!(c, '[' | ']' | '.' | '=' | '-') {
         Key::Char(c.to_ascii_lowercase())
     } else {
@@ -434,6 +442,20 @@ pub fn needs_list(action: Action) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn altgr_punctuation_types_on_windows() {
+        // Turkish Q AltGr+8 is `[`: on Windows that comes as Ctrl+Alt+[ and types it.
+        assert!(altgr_types('[', true, true, true));
+        assert!(altgr_types('-', true, true, true));
+        assert!(!altgr_types('[', true, true, false), "Ctrl+Alt is no AltGr elsewhere");
+        assert!(!altgr_types('k', true, true, true), "Ctrl+Alt+letter stays a chord");
+        assert!(!altgr_types('[', true, false, true));
+        let got = chord_from_event("[", true, true, false, false);
+        assert_eq!(got.is_none(), cfg!(windows));
+        assert!(chord_from_event("[", true, false, false, false).is_some());
+        assert!(chord_from_event("k", true, true, false, false).is_some());
+    }
 
     #[test]
     fn file_shortcuts_need_the_list_only_for_the_selection() {

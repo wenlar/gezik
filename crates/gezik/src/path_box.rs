@@ -563,8 +563,8 @@ impl PathBox {
         if had {
             self.save();
         }
-        if say && let Some(window) = self.0.window.upgrade() {
-            window.set_status("Folder history cleared".into());
+        if say {
+            crate::view::with_current(|view| view.note("Folder history cleared".to_owned()));
         }
         if self.is_open() {
             self.update();
