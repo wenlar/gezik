@@ -7,8 +7,11 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
 
+use gezik_config::settings::HistorySettings;
 use gezik_config::shortcuts::{Chord, Key};
+use gezik_config::store::ConfigStore;
 use gezik_core::complete::{rank, shows_history, sort_names, split_typed};
+use gezik_core::history::{FolderHistory, Visit};
 use gezik_core::nav::{Location, expand_typed};
 use gezik_core::ops::paths::same_path;
 use slint::{ComponentHandle, ModelRc, VecModel};
@@ -25,7 +28,6 @@ const READ_LIMIT: Duration = Duration::from_secs(1);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Row {
     /// A greyed group title.
-    #[allow(dead_code, reason = "the history's group titles come with Task 8")]
     Heading(&'static str),
     /// A folder: its name, the folder it is in (or ""), and where it leads.
     Folder { title: String, detail: String, path: PathBuf },
@@ -65,6 +67,101 @@ pub fn folder_rows(folder: &Path, names: &[String], typed: &str) -> Vec<Row> {
         .into_iter()
         .map(|i| Row::Folder { title: names[i].clone(), detail: String::new(), path: folder.join(&names[i]) })
         .collect()
+}
+
+/// Rows of the empty address's lists.
+pub const RECENT: usize = 5;
+pub const FREQUENT: usize = 7;
+/// History rows under a folder's suggestions.
+pub const HISTORY_MATCHES: usize = 5;
+
+/// A visited folder's row: its name (the whole path for a root) and the folder it is in.
+fn visit_row(visit: &Visit) -> Row {
+    let title = visit
+        .path
+        .file_name()
+        .map_or_else(|| visit.path.display().to_string(), |name| name.to_string_lossy().into_owned());
+    let detail = visit.path.parent().map(|parent| parent.display().to_string()).unwrap_or_default();
+    Row::Folder { title, detail, path: visit.path.clone() }
+}
+
+/// The list of an empty address (or `~`, a root): "Recent" (the last 5) and "Frequent" (the
+/// best 7 of the others) (spec 6.2).
+pub fn history_rows(history: &FolderHistory, now: u64) -> Vec<Row> {
+    let recent = history.recent(RECENT);
+    let frequent = history.frequent(FREQUENT, now, &recent);
+    let mut rows = Vec::new();
+    if !recent.is_empty() {
+        rows.push(Row::Heading("Recent"));
+        rows.extend(recent.iter().map(|visit| visit_row(visit)));
+    }
+    if !frequent.is_empty() {
+        rows.push(Row::Heading("Frequent"));
+        rows.extend(frequent.iter().map(|visit| visit_row(visit)));
+    }
+    rows
+}
+
+/// `rows` (a folder's suggestions) with the history's folders whose path holds `typed` under
+/// them, after a "History" heading (at most 5, none already listed).
+pub fn with_history(mut rows: Vec<Row>, history: &FolderHistory, typed: &str, now: u64) -> Vec<Row> {
+    let listed: Vec<PathBuf> = rows
+        .iter()
+        .filter_map(|row| match row {
+            Row::Folder { path, .. } => Some(path.clone()),
+            Row::Heading(_) => None,
+        })
+        .collect();
+    let found = history.matching(typed, HISTORY_MATCHES, now, |path| listed.iter().any(|l| same_path(l, path)));
+    if !found.is_empty() {
+        rows.push(Row::Heading("History"));
+        rows.extend(found.iter().map(|visit| visit_row(visit)));
+    }
+    rows
+}
+
+/// `\\server\share` (and `//server`) paths are network ones, whatever the drive says.
+fn is_network_text(path: &Path) -> bool {
+    let text = path.to_string_lossy();
+    text.starts_with(r"\\") || text.starts_with("//")
+}
+
+/// Whether `path` is gone from a local disk (spec 6.2): the system says it is not there and
+/// its drive is no network one (an unanswering share keeps its folders). Touches the disk:
+/// only on a worker thread.
+pub fn gone_locally(path: &Path) -> bool {
+    if is_network_text(path) {
+        return false;
+    }
+    match std::fs::metadata(path) {
+        // The drive is asked about through what is still there of the path.
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => gezik_platform::fs::nearest_existing(path)
+            .and_then(|existing| gezik_platform::fs::drive_facts(&existing).ok())
+            .is_some_and(|facts| facts.kind != gezik_platform::fs::DiskKind::Network),
+        _ => false,
+    }
+}
+
+fn now() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}
+
+thread_local! {
+    /// settings.toml's `[history] remember`.
+    static REMEMBER: Cell<bool> = const { Cell::new(true) };
+}
+
+fn remember() -> bool {
+    REMEMBER.with(Cell::get)
+}
+
+/// settings.toml changed: with `remember = false` nothing is recorded and what was is
+/// forgotten (spec 6.2).
+pub fn set_settings(history: HistorySettings) {
+    REMEMBER.with(|r| r.set(history.remember));
+    if !history.remember {
+        with_current(|p| p.forget(false));
+    }
 }
 
 /// What a key does in the address bar (spec 6.1).
@@ -180,6 +277,10 @@ struct Inner {
     reading: RefCell<Vec<PathBuf>>,
     /// The folder, and the start of a name in it, the list waits for.
     wanted: RefCell<Option<(PathBuf, String)>>,
+    history: RefCell<FolderHistory>,
+    store: Option<ConfigStore>,
+    /// The folders looked at for being gone in this typing.
+    checked: RefCell<Vec<PathBuf>>,
 }
 
 #[derive(Clone)]
@@ -209,10 +310,20 @@ fn slint_row(row: &Row) -> PathRow {
 }
 
 impl PathBox {
-    pub fn new(window: &AppWindow, nav: Navigator) -> PathBox {
+    pub fn new(window: &AppWindow, nav: Navigator, store: Option<ConfigStore>, saved: Vec<Visit>) -> PathBox {
+        let history = if remember() {
+            FolderHistory::from_visits(saved, now())
+        } else {
+            if !saved.is_empty()
+                && let Some(store) = &store
+            {
+                store.update_state(|state| state.history.clear());
+            }
+            FolderHistory::default()
+        };
         let this = PathBox(Rc::new(Inner {
             window: window.as_weak(),
-            nav,
+            nav: nav.clone(),
             text: RefCell::default(),
             rows: RefCell::default(),
             current: Cell::new(None),
@@ -221,11 +332,15 @@ impl PathBox {
             cache: RefCell::default(),
             reading: RefCell::default(),
             wanted: RefCell::default(),
+            history: RefCell::new(history),
+            store,
+            checked: RefCell::default(),
         }));
         window.on_path_edited(|text| with_current(|p| p.edited(text.into())));
         // By path, not by row: whatever happened to the list meanwhile, the click goes there.
         window.on_path_chosen(|path| with_current(|p| p.go_to(PathBuf::from(path.as_str()))));
         window.on_path_editing_ended(|| with_current(PathBox::reset));
+        nav.on_visited(|path| with_current(|p| p.visited(path)));
         CURRENT.with(|c| *c.borrow_mut() = Some(this.clone()));
         this
     }
@@ -239,6 +354,7 @@ impl PathBox {
     pub fn reset(&self) {
         self.0.text.take();
         self.0.cache.take();
+        self.0.checked.borrow_mut().clear();
         self.close();
     }
 
@@ -293,14 +409,84 @@ impl PathBox {
         }
     }
 
-    /// The folder's suggestions as shown (Task 8 adds the history's matches under them).
+    /// The folder's suggestions as shown, the history's matches under them.
     fn suggestions(&self, rows: Vec<Row>) -> Vec<Row> {
+        let typed = expand(&self.typed());
+        let typed = if cfg!(windows) { typed.replace('/', "\\") } else { typed };
+        with_history(rows, &self.0.history.borrow(), &typed, now())
+    }
+
+    /// The list for an empty address: Recent and Frequent.
+    fn history_list(&self) -> Vec<Row> {
+        let rows = history_rows(&self.0.history.borrow(), now());
+        self.check_gone(&rows);
         rows
     }
 
-    /// The list for an empty address (Task 8: Recent and Frequent).
-    fn history_list(&self) -> Vec<Row> {
-        Vec::new()
+    /// A folder was gone to: counted, and state.toml written by its writer thread.
+    fn visited(&self, path: &Path) {
+        if !remember() {
+            return;
+        }
+        self.0.history.borrow_mut().visit(path, now());
+        self.save();
+    }
+
+    fn save(&self) {
+        if let Some(store) = &self.0.store {
+            let visits = self.0.history.borrow().visits().to_vec();
+            store.update_state(move |state| state.history = visits);
+        }
+    }
+
+    /// Forgets every folder visited (`clear-history`; `remember = false`); `say`: the status
+    /// bar says so.
+    pub fn forget(&self, say: bool) {
+        let had = !self.0.history.borrow().is_empty();
+        self.0.history.borrow_mut().clear();
+        if had {
+            self.save();
+        }
+        if say && let Some(window) = self.0.window.upgrade() {
+            window.set_status("Folder history cleared".into());
+        }
+        if self.is_open() {
+            self.update();
+        }
+    }
+
+    /// Looks on a thread whether the folders of `rows` not looked at yet in this typing are
+    /// gone from a local disk.
+    fn check_gone(&self, rows: &[Row]) {
+        let paths: Vec<PathBuf> = {
+            let checked = self.0.checked.borrow();
+            rows.iter()
+                .filter_map(|row| match row {
+                    Row::Folder { path, .. } if !checked.iter().any(|c| same_path(c, path)) => Some(path.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+        if paths.is_empty() {
+            return;
+        }
+        self.0.checked.borrow_mut().extend(paths.iter().cloned());
+        let _ = std::thread::Builder::new().name("gezik-history-check".into()).spawn(move || {
+            let gone: Vec<PathBuf> = paths.into_iter().filter(|path| gone_locally(path)).collect();
+            if !gone.is_empty() {
+                let _ = slint::invoke_from_event_loop(move || with_current(|p| p.gone(gone)));
+            }
+        });
+    }
+
+    fn gone(&self, gone: Vec<PathBuf>) {
+        if !self.0.history.borrow_mut().remove(&gone) {
+            return;
+        }
+        self.save();
+        if self.is_open() {
+            self.update();
+        }
     }
 
     fn wait_for(&self, folder: PathBuf, prefix: String) {
@@ -510,6 +696,67 @@ mod tests {
         std::fs::write(dir.join("c.txt"), "x").unwrap();
         assert_eq!(list_subfolders(&dir).unwrap(), ["A", "b"]);
         assert!(list_subfolders(&dir.join("missing")).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    const NOW: u64 = 1_800_000_000;
+
+    fn titles(rows: &[Row]) -> Vec<String> {
+        rows.iter()
+            .map(|row| match row {
+                Row::Heading(title) => format!("# {title}"),
+                Row::Folder { title, .. } => title.clone(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn an_empty_address_lists_recent_then_frequent() {
+        let visits: Vec<Visit> = (0..6u64)
+            .map(|i| Visit { path: PathBuf::from(format!("/r{i}")), count: 1, last: NOW - 100 + i })
+            .chain([Visit { path: PathBuf::from("/often"), count: 40, last: NOW - 30 * 86_400 }])
+            .collect();
+        let history = FolderHistory::from_visits(visits, NOW);
+        assert_eq!(
+            titles(&history_rows(&history, NOW)),
+            ["# Recent", "r5", "r4", "r3", "r2", "r1", "# Frequent", "often", "r0"]
+        );
+        let Row::Folder { detail, .. } = &history_rows(&history, NOW)[1] else { panic!("a folder row") };
+        assert_eq!(detail, &Path::new("/").display().to_string());
+        assert!(history_rows(&FolderHistory::default(), NOW).is_empty());
+    }
+
+    #[test]
+    fn typed_text_adds_matching_history_under_the_folders() {
+        let history = FolderHistory::from_visits(
+            vec![
+                Visit { path: PathBuf::from("/srv/Projeler"), count: 3, last: NOW },
+                Visit { path: PathBuf::from("/home/ali/proje-eski"), count: 1, last: NOW },
+                Visit { path: PathBuf::from("/home/ali/Belgeler"), count: 9, last: NOW },
+            ],
+            NOW,
+        );
+        let folder = Path::new("/home/ali");
+        let rows = folder_rows(folder, &["proje-eski".to_owned(), "Projeler".to_owned()], "proje");
+        let rows = with_history(rows, &history, "proje", NOW);
+        assert_eq!(titles(&rows), ["proje-eski", "Projeler", "# History", "Projeler"]);
+        let Row::Folder { detail, .. } = &rows[3] else { panic!("a folder row") };
+        assert_eq!(detail, &Path::new("/srv").display().to_string());
+        assert!(with_history(Vec::new(), &history, "zzz", NOW).is_empty());
+    }
+
+    #[test]
+    fn only_a_folder_gone_from_a_local_disk_is_dropped() {
+        let dir = std::env::temp_dir().join(format!("gezik-gone-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("here")).unwrap();
+        assert!(!gone_locally(&dir.join("here")));
+        assert!(!gone_locally(Path::new(r"\\gezik-no-such-server\share\x")));
+        assert!(!gone_locally(Path::new("//gezik-no-such-server/share/x")));
+        // A file system read as a network one (a container's overlay, tmpfs, btrfs on Linux)
+        // keeps its folders.
+        let local =
+            gezik_platform::fs::drive_facts(&dir).is_ok_and(|f| f.kind != gezik_platform::fs::DiskKind::Network);
+        assert_eq!(gone_locally(&dir.join("gone")), local);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

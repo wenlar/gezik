@@ -75,6 +75,7 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
     archives::set_settings(loaded.settings.tools.clone(), loaded.settings.archives);
     convert::set_settings(loaded.settings.convert.clone(), loaded.settings.commands.clone());
     filter::set_settings(loaded.settings.keyboard, loaded.settings.filters.clone());
+    path_box::set_settings(loaded.settings.history);
     loaded
 }
 
@@ -501,7 +502,7 @@ fn main() -> Result<(), slint::PlatformError> {
     preview.set_pane_open(saved_state.preview_open);
     let nav = navigation::Navigator::new(&window, view.clone(), plan.first, plan.select, plan.start);
     nav.install();
-    let _path_box = path_box::PathBox::new(&window, nav.clone());
+    let _path_box = path_box::PathBox::new(&window, nav.clone(), config.clone(), saved_state.history.clone());
     // Captures no navigator (it is not `Send`): the result finds it on the UI thread.
     places::load_in_background(window.as_weak(), |part| navigation::with_current(|nav| nav.set_places(part)));
 

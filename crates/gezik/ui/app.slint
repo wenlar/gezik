@@ -111,6 +111,8 @@ export component AppWindow inherits Window {
             MenuItem { title: "Enclosing Folder"; shortcut: root.menu-keys ? @keys(Control + UpArrow) : @keys(); activated => { root.menu-command("up"); } }
             MenuSeparator { }
             MenuItem { title: "Go to Folder…"; shortcut: root.menu-keys ? @keys(Control + L) : @keys(); activated => { root.menu-command("focus-path"); } }
+            MenuSeparator { }
+            MenuItem { title: "Clear Folder History"; activated => { root.menu-command("clear-history"); } }
         }
         if root.bar-commands.length > 0: Menu {
             title: "Commands";

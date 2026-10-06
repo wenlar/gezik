@@ -3,7 +3,7 @@
 # input: xdotool (XTEST) under Xvfb, wtype and the vpointer example under a headless sway.
 #   docker build -t gezik-linux scripts/linux
 #   docker run --rm -v "$PWD:/src" -v gezik-target:/target -v gezik-cargo:/usr/local/cargo/registry \
-#       -e CARGO_TARGET_DIR=/target gezik-linux bash scripts/linux/gui.sh [x11|wayland|popups|tabdrag|pdf|pdfnote|filter|select|tabs|keyboard|commands|paths|all]
+#       -e CARGO_TARGET_DIR=/target gezik-linux bash scripts/linux/gui.sh [x11|wayland|popups|tabdrag|pdf|pdfnote|filter|select|tabs|keyboard|commands|paths|history|all]
 #   (not in `all`, release builds: `filterperf` times the filter at 100,000 files, `memory [exe]`
 #   gives idle memory)
 # Needs the network (apt for 7-Zip, Gezik's own 7-Zip download). Screenshots go to
@@ -1275,6 +1275,111 @@ C
     grep -i "panicked" /tmp/gezik-gui-paths.log && fail "paths: no panic" || pass "paths: no panic"
 }
 
+# The folder history (spec 6.2): moves and foreground tabs are visits, reloads, tab switches
+# and background tabs are not; state.toml keeps them; an empty address lists Recent then
+# Frequent; typed text adds the history's matches under the folders; a folder gone from a
+# local disk is dropped (on /target, a real disk: /tmp is overlay, read as a network one);
+# `[history] remember = false` forgets and stops recording; clear-history forgets. X11, 900x600.
+history() {
+    Xvfb :99 -screen 0 1600x900x24 >/dev/null 2>&1 &
+    local xvfb=$!
+    unset WAYLAND_DISPLAY
+    export DISPLAY=:99
+    sleep 1
+    . /src/scripts/linux/gui-lib.sh
+    local gone=/target/gezik-hgone
+    rm -rf /tmp/h /tmp/cfg $gone && mkdir -p /tmp/h/other/projeler /tmp/h/proj-b /tmp/cfg $gone
+    for d in bg d1 d2 d3 d4 music proj-a tabhome work; do mkdir -p /tmp/h/$d; done
+    cat >/tmp/cfg/settings.toml <<'TOML'
+start-folder = "/tmp/h/tabhome"
+
+[shortcuts]
+clear-history = "ctrl+shift+h"
+TOML
+    : >/tmp/gezik-gui-history.log
+    GEZIK_CONFIG_DIR=/tmp/cfg $GEZIK /tmp/h >>/tmp/gezik-gui-history.log 2>&1 &
+    local gezik=$!
+    sleep 3
+    xdotool windowmove "$(win)" 0 0; xdotool windowsize "$(win)" 900 600; sleep 0.5
+    title() { xdotool getwindowname "$(win)"; }
+    is() { [ "$(title)" = "$1 — Gezik" ]; }
+    differ() { compare -metric AE "$SHOTS/$1.png[$3x$4+$5+$6]" "$SHOTS/$2.png[$3x$4+$5+$6]" null: 2>&1 | cut -d' ' -f1; }
+    same_under() { [ "$(differ "$1" "$2" 400 150 200 80)" = 0 ]; }
+    # A folder's count in state.toml ("" when it is not there).
+    count_of() {
+        awk -v p="$1" '/^\[\[history\.folders\]\]/ { if (path == p) print c; path = ""; c = "" }
+            /^count = / { c = $3 } /^path = / { path = $3; gsub(/"/, "", path) }
+            END { if (path == p) print c }' /tmp/cfg/state.toml 2>/dev/null
+    }
+    folders() { cat /tmp/cfg/state.toml 2>/dev/null | grep -c '^\[\[history\.folders\]\]'; }
+    go() { key ctrl+l; typ "$1"; key Return; sleep 1; }
+    # Opens the empty address's list: NAME-open, then NAME-closed after Esc.
+    empty_list() { key ctrl+l BackSpace; sleep 0.6; shot "$1-open"; key Escape; sleep 0.3; shot "$1-closed"; }
+    click 255 300
+
+    # The start is no visit: the empty address lists nothing.
+    empty_list hist-none; key Escape
+    check "history: the start is no visit and the empty address lists nothing" \
+        'same_under hist-none-open hist-none-closed && [ "$(folders)" = 0 ]'
+
+    for d in work proj-a work music other/projeler work d1 d2 d3 d4; do go /tmp/h/$d; done
+    go $gone
+    key F5; sleep 1; key F5; sleep 1.5
+    check "history: the folders gone to are in state.toml ([[history.folders]])" \
+        '[ "$(count_of /tmp/h/work)" = 3 ] && [ "$(count_of /tmp/h/d4)" = 1 ] && [ "$(folders)" = 9 ]'
+    check "history: a reload is no visit" '[ "$(count_of $gone)" = 1 ]'
+    # A tab opened in front is a visit; one opened behind (middle click) and switching to it are not.
+    go /tmp/h; key ctrl+t; sleep 1.5
+    check "history: a tab opened in front is a visit" '[ "$(count_of /tmp/h/tabhome)" = 1 ]'
+    key ctrl+w; sleep 1; click 255 "$(row /tmp/h bg)" 2; sleep 1; key ctrl+Tab; sleep 1.5
+    check "history: a tab opened behind, and switching to it, are no visit" 'is bg && [ -z "$(count_of /tmp/h/bg)" ]'
+    key ctrl+w; sleep 1
+
+    # Recent: tabhome h hgone d4 d3; Frequent: work (3 visits), then d2 d1 projeler music proj-a.
+    empty_list hist-lists
+    check "history: the empty address lists Recent and Frequent (see the shot)" '! same_under hist-lists-open hist-lists-closed'
+    key Escape; key ctrl+l BackSpace; sleep 0.6; key Down Down Down Down Return; sleep 1
+    check "history: Recent's 4th row is d4" 'is d4'
+    key ctrl+l BackSpace; sleep 0.6; key Down Down Down Down Down Down Return; sleep 1
+    check "history: Frequent's first row is work" 'is work'
+
+    # A folder gone from a local disk goes from the list and from state.toml.
+    rm -rf $gone
+    key ctrl+l BackSpace; sleep 1.5; shot hist-gone; key Escape Escape; sleep 1.5
+    check "history: a folder gone from a local disk is dropped" '[ -z "$(count_of $gone)" ] && [ "$(count_of /tmp/h/work)" = 4 ]'
+
+    # Typed text: proj-a and proj-b (sub-folders), then "History" with other/projeler.
+    go /tmp/h
+    key ctrl+l; typ proj; sleep 0.6; shot hist-typed; key Down Down Down Return; sleep 1
+    check "history: typing adds the history's matches under the folders" 'is projeler'
+
+    # remember = false: forgotten (state.toml too) and nothing recorded any more.
+    printf '[history]\nremember = false\n\n[shortcuts]\nclear-history = "ctrl+shift+h"\n' >/tmp/cfg/settings.toml
+    sleep 2.5
+    check "history: remember = false forgets the folders" '[ "$(folders)" = 0 ]'
+    go /tmp/h/work; go /tmp/h/music; sleep 1.5
+    empty_list hist-off
+    check "history: ...and records nothing more" '[ "$(folders)" = 0 ] && same_under hist-off-open hist-off-closed'
+    key Escape
+
+    # clear-history (Ctrl+Shift+H here): forgotten, the status bar says so.
+    printf '[shortcuts]\nclear-history = "ctrl+shift+h"\n' >/tmp/cfg/settings.toml
+    sleep 2.5
+    go /tmp/h/work; go /tmp/h/music; sleep 1.5
+    check "history: remembering again records" '[ "$(folders)" = 2 ]'
+    shot hist-before-clear; key ctrl+shift+h; sleep 1.5; shot hist-cleared
+    check "history: clear-history forgets the folders" '[ "$(folders)" = 0 ]'
+    check "history: ...and the status bar says so (see the shot)" '[ "$(differ hist-before-clear hist-cleared 900 30 0 570)" != 0 ]'
+    empty_list hist-after-clear
+    check "history: ...and the empty address lists nothing" 'same_under hist-after-clear-open hist-after-clear-closed'
+
+    kill $gezik 2>/dev/null
+    kill $xvfb 2>/dev/null
+    wait 2>/dev/null
+    rm -rf $gone
+    grep -i "panicked" /tmp/gezik-gui-history.log && fail "history: no panic" || pass "history: no panic"
+}
+
 # Not in `all`. The filter in a folder of 100,000 files, release build: the process's CPU
 # time (all threads, /proc/<pid>/task/*/schedstat) from before each keystroke to 300 ms after
 # it, less the idle CPU of 300 ms with the bar open. Twice: nothing selected, then after
@@ -1358,9 +1463,10 @@ case "${1:-all}" in
     keyboard) keyboard ;;
     commands) commands ;;
     paths) paths ;;
+    history) history ;;
     filterperf) filterperf ;;
     memory) memory "${2:-}" ;;
-    *) x11; wayland; popups; tabdrag; pdfpopups; pdfnote; filter; selection; tabs; keyboard; commands; paths ;;
+    *) x11; wayland; popups; tabdrag; pdfpopups; pdfnote; filter; selection; tabs; keyboard; commands; paths; history ;;
 esac
 echo "failures: $failures"
 exit $failures

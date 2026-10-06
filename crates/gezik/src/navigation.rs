@@ -121,8 +121,16 @@ fn view_to_show(mode: &Mode, saved: &ViewState) -> ViewState {
     }
 }
 
+/// Whether a finished load is a visit (spec 6.2): a move, or the first show of a tab opened
+/// there; not a reload or a tab switch.
+fn is_visit(mode: &Mode, opened: bool) -> bool {
+    matches!(mode, Mode::Move(_)) || opened
+}
+
 /// Called when the active location is shown.
 type Listener = Rc<dyn Fn(&Location)>;
+/// Called with each folder gone to.
+type VisitListener = Rc<dyn Fn(&Path)>;
 
 struct Inner {
     window: slint::Weak<AppWindow>,
@@ -152,6 +160,9 @@ struct Inner {
     refresh_timer: slint::Timer,
     /// Told when the watched folder's drive is about to be removed (Windows), to let go of it.
     removal: Option<gezik_platform::RemovalWatch>,
+    on_visited: Vec<VisitListener>,
+    /// A tab was opened in front: its first show is a visit.
+    visit_next_show: bool,
 }
 
 thread_local! {
@@ -201,6 +212,8 @@ impl Navigator {
             pace: RefreshPace::new(),
             refresh_timer: slint::Timer::default(),
             removal: None,
+            on_visited: Vec::new(),
+            visit_next_show: false,
         })))
     }
 
@@ -323,6 +336,7 @@ impl Navigator {
     /// Opens a tab at `location` right after the active one; `activate` switches to it.
     pub fn open_tab(&self, location: Location, activate: bool) {
         if activate {
+            self.0.borrow_mut().visit_next_show = true;
             self.with_tabs(|tabs| tabs.open(location, true));
             self.after_tabs_changed();
         } else {
@@ -678,13 +692,15 @@ impl Navigator {
     }
 
     fn finish_load(&self, location: Location, mode: Mode, result: LoadResult, note: Option<String>) {
-        // This was the pending load (an overtaken one never gets here).
-        {
+        // This was the pending load (an overtaken one never gets here). A tab opened on a
+        // folder that fails is no visit, nor is its next reload.
+        let opened = {
             let mut inner = self.0.borrow_mut();
             inner.pending = None;
             inner.user_load = None;
             inner.pace.finished(Instant::now());
-        }
+            std::mem::take(&mut inner.visit_next_show)
+        };
         let shown = match &location {
             Location::Path(p) => p.display().to_string(),
             Location::Drives => gezik_core::nav::DRIVES_NAME.to_owned(),
@@ -716,6 +732,19 @@ impl Navigator {
         view.show(listing, &state, note);
         self.update_chrome();
         self.schedule_refresh();
+        let visited = self.0.borrow().on_visited.clone();
+        if is_visit(&mode, opened)
+            && let Location::Path(path) = &location
+        {
+            for f in &visited {
+                f(path);
+            }
+        }
+    }
+
+    /// Calls `f` with each folder the user goes to (spec 6.2).
+    pub fn on_visited(&self, f: impl Fn(&Path) + 'static) {
+        self.0.borrow_mut().on_visited.push(Rc::new(f));
     }
 
     /// Watches the folder now on screen (none for This PC).
@@ -885,6 +914,15 @@ mod tests {
         for mode in moves() {
             assert_eq!(view_to_show(&mode, &saved).filter, None, "{mode:?}");
         }
+    }
+
+    #[test]
+    fn moves_and_opened_tabs_are_visits_but_reloads_are_not() {
+        for mode in moves() {
+            assert!(is_visit(&mode, false), "{mode:?}");
+        }
+        assert!(!is_visit(&Mode::Show, false), "a reload or a tab switch");
+        assert!(is_visit(&Mode::Show, true), "a tab opened there");
     }
 
     fn tab(title: &str, active: bool) -> TabItem {
