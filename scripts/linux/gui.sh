@@ -3,7 +3,7 @@
 # input: xdotool (XTEST) under Xvfb, wtype and the vpointer example under a headless sway.
 #   docker build -t gezik-linux scripts/linux
 #   docker run --rm -v "$PWD:/src" -v gezik-target:/target -v gezik-cargo:/usr/local/cargo/registry \
-#       -e CARGO_TARGET_DIR=/target gezik-linux bash scripts/linux/gui.sh [x11|wayland|all]
+#       -e CARGO_TARGET_DIR=/target gezik-linux bash scripts/linux/gui.sh [x11|wayland|popups|all]
 # Needs the network (apt for 7-Zip, Gezik's own 7-Zip download). Screenshots go to
 # .superpowers/linux-shots/gui-*.png. Each check prints "ok" or "FAIL"; the exit code is the
 # number of failures. Coordinates are the window's (no window manager under Xvfb, so it is
@@ -351,12 +351,81 @@ walk(json.load(sys.stdin))'; }
     grep -i "panicked" /tmp/gezik-gui-wl.log && fail "wayland: no panic" || pass "wayland: no panic"
 }
 
+# Gezik's own menus (Linux has no system ones for Slint) stay inside the window: flipped up
+# or left at the window's edges, and scrolling when taller than it. X11, 900x600.
+popups() {
+    Xvfb :99 -screen 0 1600x900x24 >/dev/null 2>&1 &
+    local xvfb=$!
+    # After the Wayland run: X11 again.
+    unset WAYLAND_DISPLAY
+    export DISPLAY=:99
+    sleep 1
+    . /src/scripts/linux/gui-lib.sh
+    rm -rf /tmp/p /tmp/cfg /root/.local/share/Trash && mkdir -p /tmp/p /tmp/cfg
+    printf 'Привет
+' > /tmp/p/cyr.txt
+    for i in $(seq -w 1 30); do echo "line $i" > /tmp/p/f$i.txt; done
+    printf '[[commands]]
+name = "Copy it"
+run = ["cp", "{in}", "{out}"]
+output = "{name}-copy.{ext}"
+' > /tmp/cfg/settings.toml
+    GEZIK_CONFIG_DIR=/tmp/cfg $GEZIK /tmp/p >/tmp/gezik-gui-popups.log 2>&1 &
+    local gezik=$!
+    sleep 3
+    xdotool windowmove "$(win)" 0 0; xdotool windowsize "$(win)" 900 600; sleep 0.5
+    shot pop-start
+    # Bottom right, on f17.txt (y 560): the menu ends at the pointer. Its last items are on
+    # screen: "Move to Trash" is the second from the bottom (lines of 32, 6 of padding).
+    local y; y=$(row /tmp/p f17.txt)
+    rclick 820 "$y"; sleep 0.5; shot pop-menu-bottom-right
+    check "popups: near the bottom right the menu opens up and left"         '[ "$(px pop-menu-bottom-right 700 $((y - 40)))" != "$(px pop-start 700 $((y - 40)))" ] && [ "$(px pop-menu-bottom-right 830 300)" = "$(px pop-start 830 300)" ]'
+    click 700 $((y - 1 - 6 - 32 - 16)); sleep 1.5
+    check "popups: its lower items can be chosen (Move to Trash)" '[ ! -f /tmp/p/f17.txt ] && [ -f ~/.local/share/Trash/files/f17.txt ]'
+    # The Commands submenu (its 6th line) at the right edge opens to the left of the menu.
+    local sub=$((180 + 1 + 6 + 32 * 5 + 16))
+    rclick 820 180; sleep 0.5; xdotool mousemove 760 "$sub"; sleep 0.8
+    shot pop-submenu-left
+    check "popups: a submenu at the right edge opens to the left"         '[ "$(px pop-submenu-left 560 $sub)" != "$(px pop-start 560 $sub)" ]'
+    key Escape Escape; sleep 0.5
+    # The Presets menu of the rename layer, at the window's right edge: it ends at the
+    # button's right edge.
+    click 260 144; xdotool keydown shift; click 260 170; xdotool keyup shift; key F2; sleep 1
+    click 820 51; sleep 0.8; shot pop-presets
+    click 760 88; sleep 0.8; typ P1; key Return; sleep 1
+    check "popups: its item can be chosen (Save current rules as…)" 'grep -q "P1" /tmp/cfg/settings.toml'
+    click 820 51; sleep 0.8; shot pop-presets-saved; key Escape; sleep 0.3; key Escape; sleep 0.5
+    # The encodings (40) are taller than the window: the list fits in it and scrolls.
+    rclick 260 118; sleep 0.5; click 330 $((118 + 20 + 32 * 4)); sleep 1; shot pop-convert
+    click 301 221; sleep 0.8; shot pop-encodings
+    check "popups: a list taller than the window stays inside it"         '[ "$(px pop-encodings 300 8)" != "$(px pop-convert 300 8)" ] && [ "$(px pop-encodings 300 592)" != "$(px pop-convert 300 592)" ]'
+    xdotool mousemove 300 400; for _ in 1 2 3 4 5 6 7 8 9 10; do xdotool click 5; sleep 0.1; done; sleep 0.5
+    shot pop-encodings-scrolled
+    check "popups: the wheel scrolls it" '! cmp -s "$SHOTS/pop-encodings.png" "$SHOTS/pop-encodings-scrolled.png"'
+    # Scrolled to its end, the list ends at the window's bottom: EUC-KR at 573, Mac Cyrillic
+    # four lines above.
+    click 300 $((573 - 4 * 32)); sleep 0.5; shot pop-encoding-chosen
+    key ctrl+Return; sleep 2
+    cyrillic() {
+        local f
+        for f in $(find /tmp/p -name "cyr*"); do
+            [ "$(iconv -f MACCYRILLIC -t UTF-8 "$f" 2>/dev/null)" = "Привет" ] && return 0
+        done
+        return 1
+    }
+    check "popups: an encoding at the end of the list is chosen (cyr.txt in Mac Cyrillic)" cyrillic
+    kill $gezik 2>/dev/null
+    kill $xvfb 2>/dev/null
+    wait 2>/dev/null
+    grep -i "panicked" /tmp/gezik-gui-popups.log && fail "popups: no panic" || pass "popups: no panic"
+}
 
 setup_7zip
 case "${1:-all}" in
     x11) x11 ;;
     wayland) wayland ;;
-    *) x11; wayland ;;
+    popups) popups ;;
+    *) x11; wayland; popups ;;
 esac
 echo "failures: $failures"
 exit $failures

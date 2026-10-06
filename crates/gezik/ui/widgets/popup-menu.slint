@@ -1,0 +1,338 @@
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+
+// One item of a menu. `id` is one of the ids in context_menu.rs (-1 in Gezik's own menu: the
+// item that opens the submenu); a greyed one cannot be chosen.
+export struct MenuEntry {
+    id: int,
+    title: string,
+    enabled: bool,
+}
+
+// Where a menu goes in the window (popup.rs works it out).
+export struct MenuPlace {
+    x: length,
+    y: length,
+    width: length,
+    height: length,
+}
+
+component MenuLine inherits Rectangle {
+    in property <MenuEntry> entry;
+    in property <bool> current;
+    // The submenu it opens is open.
+    in property <bool> opened;
+    callback hovered();
+    callback activate();
+
+    height: 32px;
+    border-radius: Theme.radius;
+    background: (root.current || root.opened) && root.entry.enabled ? Theme.hover : transparent;
+    accessible-role: list-item;
+    accessible-label: root.entry.title;
+    accessible-enabled: root.entry.enabled;
+    accessible-item-selectable: true;
+    accessible-item-selected: root.current;
+    accessible-action-default => { root.activate(); }
+
+    TouchArea {
+        changed has-hover => {
+            if self.has-hover {
+                root.hovered();
+            }
+        }
+        clicked => { root.activate(); }
+    }
+    HorizontalLayout {
+        padding-left: 28px;
+        padding-right: 16px;
+        spacing: 16px;
+        Text {
+            text: root.entry.title;
+            vertical-alignment: center;
+            color: root.entry.enabled ? Theme.foreground : Theme.foreground-muted;
+        }
+        // The submenu's arrow, drawn: the UI font may lack the glyph.
+        if root.entry.id == -1: Rectangle {
+            width: 8px;
+            Path {
+                width: 8px;
+                height: 8px;
+                commands: "M 2.5 1 L 5.5 4 L 2.5 7";
+                stroke: root.entry.enabled ? Theme.foreground : Theme.foreground-muted;
+                stroke-width: 1.2px;
+                viewbox-width: 8;
+                viewbox-height: 8;
+            }
+        }
+    }
+}
+
+// The frame of a menu: its lines, scrolling when the window is too small for them.
+component MenuBox inherits Rectangle {
+    in property <[MenuEntry]> lines;
+    in property <int> current;
+    in property <int> opened: -1;
+    // The size it wants (the lines, the frame included).
+    out property <length> wanted-width: max(180px, column.preferred-width + 2px);
+    out property <length> wanted-height: column.preferred-height + 2px;
+    callback hovered(int);
+    callback activate(int);
+
+    // Scrolls line `index` into view.
+    public function show-line(index: int) {
+        if index < 0 {
+            return;
+        }
+        let top = Theme.spacing + index * 32px;
+        if top + view.content-y < 0 {
+            view.content-y = -top + Theme.spacing;
+        } else if top + 32px + view.content-y > view.visible-height {
+            view.content-y = -(top + 32px - view.visible-height + Theme.spacing);
+        }
+    }
+
+    public function scroll-top() {
+        view.content-y = 0;
+    }
+
+    // The top of line `index` in the window.
+    public pure function line-top(index: int) -> length {
+        return self.y + 1px + Theme.spacing + index * 32px + view.content-y;
+    }
+
+    background: Theme.surface;
+    border-width: 1px;
+    border-color: Theme.border;
+    border-radius: Theme.radius;
+    accessible-role: list;
+    // A click between the lines stays in the menu.
+    TouchArea { }
+    view := ScrollView {
+        x: 1px;
+        y: 1px;
+        width: parent.width - 2px;
+        height: parent.height - 2px;
+        content-width: self.visible-width;
+        content-height: column.preferred-height;
+        column := VerticalLayout {
+            width: parent.width;
+            padding: Theme.spacing;
+            for line[i] in root.lines: MenuLine {
+                entry: line;
+                current: i == root.current;
+                opened: i == root.opened;
+                hovered => { root.hovered(i); }
+                activate => { root.activate(i); }
+            }
+        }
+    }
+}
+
+// Gezik's own menu where the system has none for Slint (Linux): drawn in the window, kept
+// inside it (popup.rs places it: flipped up or left, scrolling when taller than the window),
+// with one submenu. Up/Down/Enter/Right/Left/Esc work as in Slint's menus; a press outside
+// closes it.
+export component PopupMenu inherits Rectangle {
+    in property <[MenuEntry]> lines;
+    in property <[MenuEntry]> sub-lines;
+    out property <bool> is-open: root.open;
+    // Where it goes: (x, y, flip-x, flip-y, width, height, area width, area height).
+    pure callback place(length, length, length, length, length, length, length, length) -> MenuPlace;
+    callback activated(int);
+    // Closed without a choice, or before the chosen item runs: the keyboard goes back.
+    callback closed();
+
+    property <bool> open;
+    property <length> at-x;
+    property <length> at-y;
+    property <length> flip-x;
+    property <length> flip-y;
+    property <int> current: -1;
+    // The submenu: open from line `sub-at`, and whether the keyboard is in it.
+    property <bool> sub-open;
+    property <int> sub-at: -1;
+    property <bool> in-sub;
+    property <int> sub-current: -1;
+    property <MenuPlace> main-place: root.place(
+        root.at-x, root.at-y, root.flip-x, root.flip-y,
+        main.wanted-width, main.wanted-height, root.width, root.height);
+    property <length> sub-top: main.line-top(root.sub-at);
+    property <MenuPlace> sub-place: root.place(
+        main-place.x + main-place.width - 2px, root.sub-top - Theme.spacing - 1px,
+        main-place.x + 2px, root.sub-top + 32px + Theme.spacing + 1px,
+        sub.wanted-width, sub.wanted-height, root.width, root.height);
+
+    public function show(x: length, y: length, flip-x: length, flip-y: length) {
+        root.at-x = x;
+        root.at-y = y;
+        root.flip-x = flip-x;
+        root.flip-y = flip-y;
+        root.current = -1;
+        root.sub-open = false;
+        root.in-sub = false;
+        root.open = true;
+        main.scroll-top();
+        scope.focus();
+    }
+
+    public function hide() {
+        if root.open {
+            root.open = false;
+            root.sub-open = false;
+            root.in-sub = false;
+            root.closed();
+        }
+    }
+
+    function open-sub(index: int, keyboard: bool) {
+        if root.sub-lines.length == 0 {
+            return;
+        }
+        if !root.sub-open || root.sub-at != index {
+            root.sub-at = index;
+            sub.scroll-top();
+        }
+        root.sub-open = true;
+        root.in-sub = keyboard;
+        root.sub-current = keyboard ? 0 : -1;
+    }
+
+    function activate(index: int) {
+        if index < 0 || index >= root.lines.length || !root.lines[index].enabled {
+            return;
+        }
+        if root.lines[index].id == -1 {
+            root.open-sub(index, false);
+            return;
+        }
+        root.choose(root.lines[index].id);
+    }
+
+    function activate-sub(index: int) {
+        if index < 0 || index >= root.sub-lines.length || !root.sub-lines[index].enabled {
+            return;
+        }
+        root.choose(root.sub-lines[index].id);
+    }
+
+    // Closes first, so the keyboard is back where it was before the item runs (which may
+    // give it to something else: a name field, a question).
+    function choose(id: int) {
+        root.hide();
+        root.activated(id);
+    }
+
+    function step(index: int, count: int, down: bool) -> int {
+        if count == 0 {
+            return -1;
+        }
+        if down {
+            return index >= count - 1 ? 0 : index + 1;
+        }
+        return index < 1 ? count - 1 : index - 1;
+    }
+
+    visible: root.open;
+
+    // A press outside closes it (and does nothing else).
+    TouchArea {
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.down {
+                root.hide();
+            }
+        }
+        scroll-event(event) => {
+            return accept;
+        }
+    }
+
+    // Only for the keys: the pointer goes to the menus and the area around them.
+    scope := FocusScope {
+        x: 0;
+        y: 0;
+        width: 0;
+        height: 0;
+        key-pressed(event) => {
+            if event.text == Key.Escape {
+                if root.in-sub {
+                    root.in-sub = false;
+                    root.sub-open = false;
+                } else {
+                    root.hide();
+                }
+                return accept;
+            }
+            if root.in-sub {
+                if event.text == Key.UpArrow || event.text == Key.DownArrow {
+                    root.sub-current = root.step(root.sub-current, root.sub-lines.length, event.text == Key.DownArrow);
+                    sub.show-line(root.sub-current);
+                } else if event.text == Key.Return {
+                    root.activate-sub(root.sub-current);
+                } else if event.text == Key.LeftArrow {
+                    root.in-sub = false;
+                    root.sub-open = false;
+                }
+                return accept;
+            }
+            if event.text == Key.UpArrow || event.text == Key.DownArrow {
+                root.current = root.step(root.current, root.lines.length, event.text == Key.DownArrow);
+                main.show-line(root.current);
+                if root.sub-open && root.current != root.sub-at {
+                    root.sub-open = false;
+                }
+            } else if event.text == Key.Return {
+                if root.current >= 0 && root.current < root.lines.length && root.lines[root.current].id == -1 {
+                    if root.lines[root.current].enabled {
+                        root.open-sub(root.current, true);
+                    }
+                } else {
+                    root.activate(root.current);
+                }
+            } else if event.text == Key.RightArrow {
+                if root.current >= 0 && root.current < root.lines.length && root.lines[root.current].id == -1
+                    && root.lines[root.current].enabled {
+                    root.open-sub(root.current, true);
+                }
+            }
+            return accept;
+        }
+    }
+
+    main := MenuBox {
+        x: root.main-place.x;
+        y: root.main-place.y;
+        width: root.main-place.width;
+        height: root.main-place.height;
+        lines: root.lines;
+        current: root.in-sub ? -1 : root.current;
+        opened: root.sub-open ? root.sub-at : -1;
+        hovered(i) => {
+            root.current = i;
+            root.in-sub = false;
+            if root.lines[i].id == -1 {
+                if root.lines[i].enabled {
+                    root.open-sub(i, false);
+                }
+            } else {
+                root.sub-open = false;
+            }
+        }
+        activate(i) => { root.activate(i); }
+    }
+
+    sub := MenuBox {
+        visible: root.sub-open;
+        x: root.sub-place.x;
+        y: root.sub-place.y;
+        width: root.sub-place.width;
+        height: root.sub-place.height;
+        lines: root.sub-lines;
+        current: root.sub-current;
+        hovered(i) => {
+            root.sub-current = i;
+            root.in-sub = true;
+        }
+        activate(i) => { root.activate-sub(i); }
+    }
+}
