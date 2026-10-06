@@ -250,9 +250,10 @@ impl Action {
             (Action::Redo, Platform::Mac) => "mod+shift+z",
             (Action::Redo, Platform::Other) => "mod+y",
             (Action::BatchRename, _) => return None,
-            // Elsewhere hidden files are shown as before, with nothing to toggle.
+            // Ctrl+H elsewhere, as in Linux file managers: Ctrl+Shift+. would never match
+            // there (Shift+. types `>` or `:`, and only macOS maps keys by their place).
             (Action::ToggleHidden, Platform::Mac) => "mod+shift+.",
-            (Action::ToggleHidden, Platform::Other) => return None,
+            (Action::ToggleHidden, Platform::Other) => "ctrl+h",
         })
     }
 }

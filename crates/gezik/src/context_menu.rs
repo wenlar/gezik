@@ -15,6 +15,7 @@ use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::navigation::Navigator;
 use crate::operations::Operations;
+use crate::popup::Anchor;
 use crate::preview::Preview;
 use crate::sidebar::{SECTION_PINNED, Sidebar};
 use crate::view::View;
@@ -458,9 +459,7 @@ impl Menus {
         if self.view.shows_drives() {
             return None;
         }
-        let mut last = (gezik_batch::tasks::OutFormat::Zip, gezik_batch::tasks::Level::Normal);
-        crate::archives::with_current(|archives| last = (archives.last_format(), archives.last_level()));
-        let mut extra = crate::archives::menu_items(&rows, last.0, last.1);
+        let mut extra = crate::archives::menu_items(&rows);
         let (convert, commands) = crate::convert::menu_items(&rows);
         extra.extend(convert);
         *self.rows.borrow_mut() = rows;
@@ -524,19 +523,19 @@ impl Menus {
         let Some(id) = self.nav.tab_id(index) else { return };
         let place = Place::Tab { only_tab: self.nav.tab_count() == 1 };
         *self.subject.borrow_mut() = Some(Subject::Tab(id));
-        self.open_slint(&items(place, false), x, y);
+        self.open_slint(&items(place, false), Anchor::point(x, y));
     }
 
     /// Right-click on the column header, at window position `x`, `y`.
     pub fn header(&self, x: f32, y: f32) {
         *self.subject.borrow_mut() = Some(Subject::Header);
-        self.open_slint(&header_items(&self.view.columns()), x, y);
+        self.open_slint(&header_items(&self.view.columns()), Anchor::point(x, y));
     }
 
-    /// The View button's menu, at window position `x`, `y`.
-    pub fn view_menu(&self, x: f32, y: f32) {
+    /// The View button's menu, under it.
+    pub fn view_menu(&self, at: Anchor) {
         *self.subject.borrow_mut() = Some(Subject::View);
-        self.open_slint(&view_items(self.view.view_settings(), self.preview.is_pane_open()), x, y);
+        self.open_slint(&view_items(self.view.view_settings(), self.preview.is_pane_open()), at);
     }
 
     /// `sub`: a submenu among `items`. `at`: where the Windows menu opens (window position),
@@ -557,7 +556,7 @@ impl Menus {
         } else {
             *self.subject.borrow_mut() = Some(subject);
             let entries: Vec<(u32, String, bool)> = items.into_iter().map(|(id, title)| (id, title, true)).collect();
-            self.open_slint_entries(&entries, sub, x, y);
+            self.open_slint_entries(&entries, sub, Anchor::point(x, y));
         }
     }
 
@@ -625,15 +624,16 @@ impl Menus {
     ) {
     }
 
-    fn open_slint<S: AsRef<str>>(&self, items: &[(u32, S)], x: f32, y: f32) {
+    fn open_slint<S: AsRef<str>>(&self, items: &[(u32, S)], at: Anchor) {
         let entries: Vec<(u32, String, bool)> =
             items.iter().map(|(id, title)| (*id, title.as_ref().to_owned(), true)).collect();
-        self.open_slint_entries(&entries, None, x, y);
+        self.open_slint_entries(&entries, None, at);
     }
 
-    /// Shows `items` (id, title, enabled), with `sub` among them.
-    /// (Slint shows these as native Windows menus, where `&` marks the access key.)
-    fn open_slint_entries(&self, items: &[(u32, String, bool)], sub: Option<Submenu>, x: f32, y: f32) {
+    /// Shows `items` (id, title, enabled), with `sub` among them, at `anchor`.
+    /// (Slint shows these as native menus on Windows, where `&` marks the access key, and on
+    /// macOS; elsewhere Gezik draws its own, which popup.rs keeps inside the window.)
+    fn open_slint_entries(&self, items: &[(u32, String, bool)], sub: Option<Submenu>, anchor: Anchor) {
         let Some(window) = self.window.upgrade() else { return };
         if items.is_empty() && sub.is_none() {
             return;
@@ -646,22 +646,26 @@ impl Menus {
         let at = sub.as_ref().map_or(items.len(), |sub| sub.at.min(items.len()));
         let before: Vec<MenuEntry> = items[..at].iter().map(entry).collect();
         let after: Vec<MenuEntry> = items[at..].iter().map(entry).collect();
-        let (title, inner) = match &sub {
+        let (title, inner): (String, Vec<MenuEntry>) = match &sub {
             Some(sub) => (menu_title(&sub.title), sub.items.iter().map(entry).collect()),
             None => (String::new(), Vec::new()),
         };
-        window.set_menu_entries(ModelRc::new(VecModel::from(before)));
+        let inner_count = inner.len();
+        window.set_menu_entries(ModelRc::new(VecModel::from(before.clone())));
         window.set_menu_sub_title(title.as_str().into());
         window.set_menu_sub_entries(ModelRc::new(VecModel::from(inner)));
-        window.set_menu_entries_after(ModelRc::new(VecModel::from(after)));
-        window.invoke_show_menu(x, y);
+        window.set_menu_entries_after(ModelRc::new(VecModel::from(after.clone())));
+        if !window.get_native_menus() {
+            window.set_menu_lines(ModelRc::new(VecModel::from(menu_lines(before, &title, inner_count, after))));
+        }
+        window.invoke_show_menu(anchor.x, anchor.y, anchor.flip_x, anchor.flip_y);
     }
 
     /// One of the Convert layer's menus (convert.rs builds it): `items` (id, title, enabled)
-    /// at window position `x`, `y`.
-    pub fn convert_menu(&self, items: Vec<(u32, String, bool)>, x: f32, y: f32) {
+    /// under its button.
+    pub fn convert_menu(&self, items: Vec<(u32, String, bool)>, at: Anchor) {
         *self.subject.borrow_mut() = Some(Subject::Convert);
-        self.open_slint_entries(&items, None, x, y);
+        self.open_slint_entries(&items, None, at);
     }
 
     /// Copy here / Move here / Cancel for files dropped with the right button on `dir`, at
@@ -693,7 +697,7 @@ impl Menus {
         }
         list.push((CANCEL_DROP, "Cancel"));
         *self.subject.borrow_mut() = Some(Subject::Drop(paths, dir, archive));
-        self.open_slint(&list, x, y);
+        self.open_slint(&list, Anchor::point(x, y));
     }
 
     /// The decision menu of conflict row `row`, at window position `x`, `y`.
@@ -710,25 +714,25 @@ impl Menus {
             return;
         }
         *self.subject.borrow_mut() = Some(Subject::Conflict(row));
-        self.open_slint(&list, x, y);
+        self.open_slint(&list, Anchor::point(x, y));
     }
-    /// "Add rule ▾" of the batch rename layer, at window position `x`, `y`.
-    pub fn add_rule(&self, x: f32, y: f32) {
+    /// "Add rule ▾" of the batch rename layer, under it.
+    pub fn add_rule(&self, at: Anchor) {
         let list: Vec<(u32, &str)> = gezik_core::batch::rules::KINDS
             .iter()
             .enumerate()
             .map(|(i, (_, label))| (ADD_RULE_FIRST + i as u32, *label))
             .collect();
         *self.subject.borrow_mut() = Some(Subject::BatchRename(Vec::new()));
-        self.open_slint(&list, x, y);
+        self.open_slint(&list, at);
     }
 
     /// "Presets ▾": the saved sets, save, delete.
-    pub fn presets(&self, x: f32, y: f32) {
+    pub fn presets(&self, at: Anchor) {
         let names = crate::batch_rename::preset_names();
         let list = preset_items(&names);
         *self.subject.borrow_mut() = Some(Subject::BatchRename(names));
-        self.open_slint(&list, x, y);
+        self.open_slint(&list, at);
     }
 
     fn run(&self, id: u32, subject: Subject) {
@@ -957,15 +961,42 @@ fn released_modifiers(down: gezik_platform::ModifierKeys) -> Vec<slint::platform
     .collect()
 }
 
+/// Gezik's own menu in one list (widgets/popup-menu.slint): `before`, the submenu's item (id
+/// -1, titled `sub_title`) when the submenu has `sub_count` items, then `after`.
+fn menu_lines(before: Vec<MenuEntry>, sub_title: &str, sub_count: usize, after: Vec<MenuEntry>) -> Vec<MenuEntry> {
+    let mut lines = before;
+    if sub_count > 0 {
+        lines.push(MenuEntry { id: -1, title: sub_title.into(), enabled: true });
+    }
+    lines.extend(after);
+    lines
+}
+
+/// Whether Slint shows its menus as the system's: on Windows and macOS (through muda),
+/// unless `SLINT_NO_MUDA` turns that off. Elsewhere Gezik draws its own.
+pub fn native_menus() -> bool {
+    cfg!(any(windows, target_os = "macos")) && std::env::var_os("SLINT_NO_MUDA").is_none()
+}
+
 /// A title for Gezik's own menus: on Windows they are native menus, which would take `&` as the
 /// access key mark, so it is doubled to show as itself.
 fn menu_title(title: &str) -> String {
-    if cfg!(windows) { title.replace('&', "&&") } else { title.to_owned() }
+    if cfg!(windows) && native_menus() { title.replace('&', "&&") } else { title.to_owned() }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gezik_menus_list_the_submenu_among_the_items() {
+        let entry = |id: i32, title: &str| MenuEntry { id, title: title.into(), enabled: true };
+        let lines = menu_lines(vec![entry(1, "Open")], "Commands", 2, vec![entry(2, "Cut")]);
+        let shown: Vec<(i32, &str)> = lines.iter().map(|l| (l.id, l.title.as_str())).collect();
+        assert_eq!(shown, [(1, "Open"), (-1, "Commands"), (2, "Cut")]);
+        // An empty submenu is left out.
+        assert_eq!(menu_lines(vec![entry(1, "Open")], "Commands", 0, Vec::new()).len(), 1);
+    }
 
     #[test]
     fn an_ampersand_shows_as_itself() {

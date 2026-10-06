@@ -110,7 +110,8 @@ pub struct ArchiveState {
     pub format: Option<String>,
     /// `store`, `fast`, `normal` or `best`.
     pub level: Option<String>,
-    /// 7z parts of this many bytes.
+    /// 7z parts of this many bytes. Still read, but always cleared now (Compress sets it to
+    /// `None`, which is not written): the layer opens with Split off.
     pub split: Option<u64>,
     pub last_extract_to: Option<String>,
 }

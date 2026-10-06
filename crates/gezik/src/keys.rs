@@ -404,13 +404,26 @@ mod tests {
                 Action::NewFolder => "ctrl+shift+n",
                 Action::Undo => "ctrl+z",
                 Action::Redo => "ctrl+y",
-                Action::PasteMove | Action::Duplicate | Action::BatchRename | Action::ToggleHidden => continue,
+                Action::ToggleHidden => "ctrl+h",
+                Action::PasteMove | Action::Duplicate | Action::BatchRename => continue,
             };
             let chord = parse_chord(text, Platform::Other).unwrap().unwrap();
             let (t, control, alt, shift, meta) = other_event(&chord);
             let got = chord_from_slint(&t, control, alt, shift, meta, Platform::Other).unwrap();
             assert_eq!(defaults.action_for(&got), Some(action), "{text}");
         }
+        // `.` is a key of its own; Shift+. arrives as the character it types (`>` on US, `:`
+        // on Turkish Q), which is no chord off macOS: `ctrl+shift+.` cannot match there.
+        let dot = parse_chord("ctrl+.", Platform::Other).unwrap().unwrap();
+        assert_eq!(dot.key, Key::Char('.'));
+        assert_eq!(chord_from_slint(".", true, false, false, false, Platform::Other), Some(dot));
+        assert!(parse_chord("ctrl+shift+.", Platform::Other).unwrap().is_some());
+        assert_eq!(chord_from_slint(">", true, false, true, false, Platform::Other), None);
+        assert_eq!(chord_from_slint(":", true, false, true, false, Platform::Other), None);
+        assert!(parse_chord("ctrl+>", Platform::Other).is_err());
+        // Ctrl+H is free for toggle-hidden: nothing else uses it.
+        let ctrl_h = chord_from_slint("h", true, false, false, false, Platform::Other).unwrap();
+        assert_eq!(defaults.action_for(&ctrl_h), Some(Action::ToggleHidden));
         // Ctrl+Shift+T arrives as "T" with control and shift: not new-tab.
         let got = chord_from_slint("T", true, false, true, false, Platform::Other).unwrap();
         assert_eq!(defaults.action_for(&got), None);

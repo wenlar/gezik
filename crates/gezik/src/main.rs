@@ -17,6 +17,7 @@ mod menu_bar;
 mod navigation;
 mod operations;
 mod places;
+mod popup;
 mod preview;
 mod quick_look;
 mod sidebar;
@@ -526,6 +527,18 @@ fn main() -> Result<(), slint::PlatformError> {
     });
     // The sidebar width stays in memory and is saved with the window state on close.
 
+    // Gezik's own menus (where Slint has no system ones) stay inside the window.
+    window.set_native_menus(context_menu::native_menus());
+    window.on_place_menu(|x, y, flip_x, flip_y, width, height, area_width, area_height| {
+        let anchor = popup::Anchor { x, y, flip_x, flip_y };
+        let placed = popup::place_menu(anchor, (width, height), (area_width, area_height));
+        MenuPlace { x: placed.x, y: placed.y, width: placed.width, height: placed.height }
+    });
+    window.on_menu_step(|lines, from, down| {
+        use slint::Model;
+        let enabled: Vec<bool> = lines.iter().map(|line| line.enabled).collect();
+        popup::step_line(&enabled, from, down)
+    });
     let menus =
         context_menu::Menus::new(&window, nav.clone(), view.clone(), preview.clone(), sidebar.clone(), ops.clone());
     let drags = drag::Drags::new(&window, nav.clone(), view.clone(), sidebar, ops.clone(), menus.clone());
@@ -603,7 +616,7 @@ fn main() -> Result<(), slint::PlatformError> {
     });
     window.on_view_menu({
         let menus = menus.clone();
-        move |x, y| menus.view_menu(x, y)
+        move |left, bottom, right, top| menus.view_menu(popup::Anchor::below(left, top, right, bottom))
     });
     window.on_grid_columns_changed({
         let view = view.clone();
@@ -619,35 +632,35 @@ fn main() -> Result<(), slint::PlatformError> {
     });
     window.on_rb_add_rule({
         let menus = menus.clone();
-        move |x, y| menus.add_rule(x, y)
+        move |left, bottom, right, top| menus.add_rule(popup::Anchor::below(left, top, right, bottom))
     });
     window.on_rb_presets({
         let menus = menus.clone();
-        move |x, y| menus.presets(x, y)
+        move |left, bottom, right, top| menus.presets(popup::Anchor::below(left, top, right, bottom))
     });
     // The Convert layer's menus: its presets, the text encodings.
     window.on_cv_presets({
         let menus = menus.clone();
-        move |x, y| {
+        move |left, bottom, right, top| {
             let mut items = Vec::new();
             convert::with_current(|convert| items = convert.preset_menu());
-            menus.convert_menu(items, x, y);
+            menus.convert_menu(items, popup::Anchor::below(left, top, right, bottom));
         }
     });
     window.on_cv_from({
         let menus = menus.clone();
-        move |x, y| {
+        move |left, bottom, right, top| {
             let mut items = Vec::new();
             convert::with_current(|convert| items = convert.encoding_menu(true));
-            menus.convert_menu(items, x, y);
+            menus.convert_menu(items, popup::Anchor::below(left, top, right, bottom));
         }
     });
     window.on_cv_to({
         let menus = menus.clone();
-        move |x, y| {
+        move |left, bottom, right, top| {
             let mut items = Vec::new();
             convert::with_current(|convert| items = convert.encoding_menu(false));
-            menus.convert_menu(items, x, y);
+            menus.convert_menu(items, popup::Anchor::below(left, top, right, bottom));
         }
     });
     // Slint passes indexes as `i32`: a negative one does nothing.
@@ -838,6 +851,8 @@ fn main() -> Result<(), slint::PlatformError> {
             } = event
             {
                 let (x, y) = pointer.get();
+                // A left release goes on to Slint (its grab points at an entry that is gone);
+                // a right one would open a second menu after the drop's (see drag.rs).
                 if drags.window_released(x, y, *button == winit::event::MouseButton::Right) {
                     return EventResult::PreventDefault;
                 }
