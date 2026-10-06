@@ -1,0 +1,76 @@
+import { Theme } from "../theme.slint";
+
+export struct PathRow {
+    title: string,
+    // The folder it is in (history rows), or "".
+    detail: string,
+    // Where it leads, as shown ("" for a heading).
+    path: string,
+    // A greyed group title ("Recent", "Frequent", "History").
+    heading: bool,
+}
+
+// The address bar's suggestions (path_box.rs), under the field while a path is typed. The
+// field keeps the keyboard (a TouchArea takes no focus, as in the tab picker); ↑ ↓ Tab →
+// Enter Esc reach Rust first; a click goes to the row's folder.
+export component PathSuggestions inherits Rectangle {
+    in property <[PathRow]> rows;
+    in property <int> current: -1;
+    callback chosen(string);
+
+    property <length> row-height: Theme.row-height;
+    height: min(root.rows.length, 18) * root.row-height + Theme.spacing;
+    background: Theme.surface;
+    border-radius: Theme.radius;
+    border-width: 1px;
+    border-color: Theme.border;
+    drop-shadow-blur: 8px;
+    drop-shadow-color: #00000040;
+    accessible-role: list;
+    accessible-label: "Suggestions";
+
+    // Clicks between rows reach nothing under the list.
+    TouchArea { }
+
+    for row[i] in root.rows: Rectangle {
+        x: 2px;
+        y: Theme.spacing / 2 + i * root.row-height;
+        width: parent.width - 4px;
+        height: root.row-height;
+        border-radius: Theme.radius;
+        background: i == root.current ? Theme.selection : (touch.has-hover && !row.heading) ? Theme.hover : transparent;
+        accessible-role: list-item;
+        accessible-label: row.title;
+        accessible-item-selectable: !row.heading;
+        accessible-item-selected: i == root.current;
+        // Placed by hand, not by a layout (smaller): the name, and the folder it is in on
+        // the right when there is one.
+        property <length> pad: Theme.spacing * 1.5;
+        property <length> inner: self.width - 2 * self.pad;
+        property <length> name-width: row.detail == "" ? self.inner : self.inner * 0.55;
+        Text {
+            x: parent.pad;
+            width: parent.name-width;
+            text: row.title;
+            vertical-alignment: center;
+            overflow: elide;
+            font-weight: row.heading ? 600 : 400;
+            font-size: row.heading ? Theme.font-size * 0.85 : Theme.font-size;
+            color: row.heading ? Theme.foreground-muted : i == root.current ? Theme.selection-foreground : Theme.foreground;
+        }
+        Text {
+            x: parent.pad + parent.name-width + Theme.spacing * 2;
+            width: max(0px, parent.inner - parent.name-width - Theme.spacing * 2);
+            text: row.detail;
+            vertical-alignment: center;
+            horizontal-alignment: right;
+            overflow: elide;
+            color: i == root.current ? Theme.selection-foreground : Theme.foreground-muted;
+        }
+        touch := TouchArea {
+            enabled: !row.heading;
+            mouse-cursor: row.heading ? MouseCursor.default : MouseCursor.pointer;
+            clicked => { root.chosen(row.path); }
+        }
+    }
+}

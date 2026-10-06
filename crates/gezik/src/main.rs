@@ -18,6 +18,7 @@ mod media;
 mod menu_bar;
 mod navigation;
 mod operations;
+mod path_box;
 mod pdf;
 mod places;
 mod popup;
@@ -149,6 +150,14 @@ fn handle_key(
     let editing = window.get_path_editing();
 
     if editing && let Some(chord) = &chord {
+        // The suggestion list's keys first: ↓ ↑ Tab → Enter Esc (spec 6.1).
+        if !has_modifier {
+            let mut used = false;
+            path_box::with_current(|p| used = p.chord(chord));
+            if used {
+                return true;
+            }
+        }
         if chord.key == Key::Escape && !has_modifier {
             window.invoke_focus_list();
             window.set_path_editing(false);
@@ -200,7 +209,10 @@ fn handle_key(
                 Action::Back => nav.back(),
                 Action::Forward => nav.forward(),
                 Action::Up => nav.up(),
-                Action::FocusPath => window.invoke_edit_path(),
+                Action::FocusPath => {
+                    path_box::with_current(path_box::PathBox::reset);
+                    window.invoke_edit_path()
+                }
                 Action::Refresh => nav.reload(),
                 Action::SelectAll => view.select_all(),
                 Action::ViewList => view.set_mode(gezik_core::view::ViewMode::List),
@@ -366,14 +378,13 @@ fn resolve_start(settings: &Settings, cli: Option<PathBuf>) -> StartPlan {
     // Absolute, so the address bar parts and "up" work for `gezik .` too.
     let cli = cli.map(|path| std::path::absolute(&path).unwrap_or(path));
     let dirs = gezik_config::paths::KnownDirs::system();
-    start::plan_start(&settings.start_folder, cli, &dirs_home(), |text| dirs.expand_checked(text), start::path_kind)
-}
-
-fn dirs_home() -> PathBuf {
-    std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
-        .map(PathBuf::from)
-        .or_else(|| std::env::current_dir().ok())
-        .unwrap_or_else(|| PathBuf::from("/"))
+    start::plan_start(
+        &settings.start_folder,
+        cli,
+        &path_box::home(),
+        |text| dirs.expand_checked(text),
+        start::path_kind,
+    )
 }
 
 /// The first warning, plus how many more there are.
@@ -490,6 +501,7 @@ fn main() -> Result<(), slint::PlatformError> {
     preview.set_pane_open(saved_state.preview_open);
     let nav = navigation::Navigator::new(&window, view.clone(), plan.first, plan.select, plan.start);
     nav.install();
+    let _path_box = path_box::PathBox::new(&window, nav.clone());
     // Captures no navigator (it is not `Send`): the result finds it on the UI thread.
     places::load_in_background(window.as_weak(), |part| navigation::with_current(|nav| nav.set_places(part)));
 

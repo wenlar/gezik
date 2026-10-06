@@ -3,7 +3,7 @@
 # input: xdotool (XTEST) under Xvfb, wtype and the vpointer example under a headless sway.
 #   docker build -t gezik-linux scripts/linux
 #   docker run --rm -v "$PWD:/src" -v gezik-target:/target -v gezik-cargo:/usr/local/cargo/registry \
-#       -e CARGO_TARGET_DIR=/target gezik-linux bash scripts/linux/gui.sh [x11|wayland|popups|tabdrag|pdf|pdfnote|filter|select|tabs|keyboard|commands|all]
+#       -e CARGO_TARGET_DIR=/target gezik-linux bash scripts/linux/gui.sh [x11|wayland|popups|tabdrag|pdf|pdfnote|filter|select|tabs|keyboard|commands|paths|all]
 #   (not in `all`, release builds: `filterperf` times the filter at 100,000 files, `memory [exe]`
 #   gives idle memory)
 # Needs the network (apt for 7-Zip, Gezik's own 7-Zip download). Screenshots go to
@@ -1173,6 +1173,108 @@ TOML
     grep -i "panicked" /tmp/gezik-gui-commands.log && fail "commands: no panic" || pass "commands: no panic"
 }
 
+# The address bar's suggestions (spec 6.1): they come after a pause in typing, ↓ ↑ Tab →
+# Enter Esc and a click work on them, `~` and `$HOME` are put in, and a folder that takes 8 s
+# to read (an LD_PRELOAD shim that sleeps in opendir, as a hung share would) neither freezes
+# the window nor is read twice. X11, 900x600.
+paths() {
+    Xvfb :99 -screen 0 1600x900x24 >/dev/null 2>&1 &
+    local xvfb=$!
+    unset WAYLAND_DISPLAY
+    export DISPLAY=:99
+    sleep 1
+    . /src/scripts/linux/gui-lib.sh
+    rm -rf /tmp/p /tmp/cfg /root/gzhome && mkdir -p /tmp/p/alpha/inner1 /tmp/p/alpha/inner2 /tmp/p/alpine \
+        /tmp/p/beta /tmp/p/slowdir/aaa /tmp/cfg /root/gzhome/deep
+    echo x > /tmp/p/alpha/file.txt
+    cat >/tmp/slow.c <<'C'
+#define _GNU_SOURCE
+#include <dirent.h>
+#include <dlfcn.h>
+#include <string.h>
+#include <unistd.h>
+DIR *opendir(const char *name) {
+    static DIR *(*real)(const char *);
+    if (!real) real = (DIR *(*)(const char *))dlsym(RTLD_NEXT, "opendir");
+    size_t n = strlen(name);
+    if ((n >= 8 && !strcmp(name + n - 8, "/slowdir")) || (n >= 9 && !strcmp(name + n - 9, "/slowdir/"))) sleep(8);
+    return real(name);
+}
+C
+    gcc -shared -fPIC -o /tmp/slow.so /tmp/slow.c -ldl || fail "paths: the slow shim builds"
+    : >/tmp/gezik-gui-paths.log
+    LD_PRELOAD=/tmp/slow.so GEZIK_CONFIG_DIR=/tmp/cfg $GEZIK /tmp/p >>/tmp/gezik-gui-paths.log 2>&1 &
+    local gezik=$!
+    sleep 3
+    xdotool windowmove "$(win)" 0 0; xdotool windowsize "$(win)" 900 600; sleep 0.5
+    title() { xdotool getwindowname "$(win)"; }
+    is() { [ "$(title)" = "$1 — Gezik" ]; }
+    # How many pixels differ in a box (W H X Y) of two screenshots.
+    differ() { compare -metric AE "$SHOTS/$1.png[$3x$4+$5+$6]" "$SHOTS/$2.png[$3x$4+$5+$6]" null: 2>&1 | cut -d' ' -f1; }
+    # The part under the address bar where the list opens; the address bar.
+    same_under() { [ "$(differ "$1" "$2" 400 150 200 80)" = 0 ]; }
+    same_bar() { [ "$(differ "$1" "$2" 500 24 200 44)" = 0 ]; }
+    readers() { grep -l gezik-complete /proc/$gezik/task/*/comm 2>/dev/null | wc -l; }
+    click 255 300; shot paths-crumbs
+    key ctrl+l; sleep 0.5; shot paths-editing
+
+    # Suggestions after a pause: /tmp/p/al lists alpha and alpine.
+    typ /tmp/p/al; sleep 0.5; shot paths-al
+    check "paths: suggestions appear after typing (see the shot)" '! same_under paths-editing paths-al'
+    # ↓ chooses alpha, Tab writes "/tmp/p/alpha/" and lists its folders; Enter (none chosen)
+    # goes where the text says.
+    key Down; shot paths-down
+    check "paths: ↓ marks a row" '! same_under paths-al paths-down'
+    key Tab; sleep 0.5; shot paths-tab
+    key Return; sleep 1
+    check "paths: ↓ Tab writes alpha/ and Enter goes there" 'is alpha'
+
+    # Tab with nothing chosen takes the first; ↓ ↓ Enter goes to the second row.
+    key ctrl+l; typ /tmp/p/alpha/in; sleep 0.5; key Down Down; shot paths-second; key Return; sleep 1
+    check "paths: ↓ ↓ Enter goes to the second suggestion" 'is inner2'
+    key ctrl+l; typ /tmp/p/b; sleep 0.5; key Tab; sleep 0.3; key Return; sleep 1
+    check "paths: Tab takes the first suggestion" 'is beta'
+
+    # A click on a row goes there: the first row is under the field.
+    key ctrl+l; typ /tmp/p/alpi; sleep 0.5; shot paths-click
+    click 260 92; sleep 1
+    check "paths: a click on a suggestion goes there" 'is alpine'
+
+    # ~ and $HOME (HOME=/root): in the suggestions and when going.
+    key ctrl+l; typ '~/gz'; sleep 0.5; key Down Return; sleep 1
+    check "paths: ~/ completes in the home folder" 'is gzhome'
+    key ctrl+l; typ '~/gzhome/deep'; key Return; sleep 1
+    check "paths: Enter on ~/gzhome/deep goes there" 'is deep'
+    key ctrl+l; typ '$HOME/gzhome'; key Return; sleep 1
+    check "paths: Enter on \$HOME/gzhome goes there" 'is gzhome'
+
+    # Esc closes the list first (typing goes on), then ends typing.
+    key ctrl+l; sleep 0.5; shot paths-esc-before; typ /tmp/p/al; sleep 0.5; shot paths-esc-open
+    key Escape; sleep 0.3; shot paths-esc-1
+    check "paths: the first Esc closes the list" 'same_under paths-esc-before paths-esc-1'
+    typ pha; key Return; sleep 1; shot paths-alpha-crumbs
+    check "paths: ...and typing goes on" 'is alpha'
+    key ctrl+l; typ /tmp/p/b; sleep 0.5; key Escape Escape; sleep 0.3; shot paths-esc-2
+    check "paths: the second Esc ends typing (the parts are back)" 'is alpha && same_bar paths-alpha-crumbs paths-esc-2'
+
+    # A folder that takes 8 s to read: the window keeps working meanwhile.
+    key ctrl+l; typ /tmp/p/slowdir/; sleep 0.3
+    local t0=$SECONDS
+    typ a; sleep 0.3; typ a; sleep 0.3
+    check "paths: a folder being read is not read again" '[ "$(readers)" = 1 ]'
+    key Escape; key ctrl+l; typ /tmp/p/beta; key Return; sleep 0.5
+    check "paths: the window answers while a read hangs ($((SECONDS - t0)) s)" 'is beta && [ $((SECONDS - t0)) -lt 7 ]'
+    # The late result is kept for the next key: once it is in, slowdir/a lists aaa at once.
+    key ctrl+l; typ /tmp/p/slowdir/; sleep 9.5; shot paths-slow-late
+    typ a; sleep 0.5; key Tab; sleep 0.3; shot paths-slow-cached; key Return; sleep 1
+    check "paths: a late result serves the next key" 'is aaa'
+
+    kill $gezik 2>/dev/null
+    kill $xvfb 2>/dev/null
+    wait 2>/dev/null
+    grep -i "panicked" /tmp/gezik-gui-paths.log && fail "paths: no panic" || pass "paths: no panic"
+}
+
 # Not in `all`. The filter in a folder of 100,000 files, release build: the process's CPU
 # time (all threads, /proc/<pid>/task/*/schedstat) from before each keystroke to 300 ms after
 # it, less the idle CPU of 300 ms with the bar open. Twice: nothing selected, then after
@@ -1255,9 +1357,10 @@ case "${1:-all}" in
     tabs) tabs ;;
     keyboard) keyboard ;;
     commands) commands ;;
+    paths) paths ;;
     filterperf) filterperf ;;
     memory) memory "${2:-}" ;;
-    *) x11; wayland; popups; tabdrag; pdfpopups; pdfnote; filter; selection; tabs; keyboard; commands ;;
+    *) x11; wayland; popups; tabdrag; pdfpopups; pdfnote; filter; selection; tabs; keyboard; commands; paths ;;
 esac
 echo "failures: $failures"
 exit $failures

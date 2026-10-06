@@ -91,7 +91,7 @@ fn apply_failure(cleared: &mut bool, mode: &Mode, location: &Location) -> Option
 /// The path typed into the address bar. A relative path is taken from `base` (the folder
 /// on screen) if there is one, else from the working folder; on Windows `..` parts are
 /// resolved too, so the address bar parts stay right.
-fn resolve_typed(text: &str, base: Option<&Path>) -> PathBuf {
+pub(crate) fn resolve_typed(text: &str, base: Option<&Path>) -> PathBuf {
     let path = PathBuf::from(text);
     let path = match base {
         Some(base) if path.is_relative() => base.join(path),
@@ -599,15 +599,15 @@ impl Navigator {
         }
     }
 
-    /// Goes to a typed path; see [`resolve_typed`].
+    /// Goes to a typed path: `~` and environment variables put in, then [`resolve_typed`].
     pub fn navigate_text(&self, text: String) {
-        let text = text.trim();
+        let text = crate::path_box::expand(text.trim());
         if text.is_empty() {
             return;
         }
         let path = match self.active_location() {
-            Location::Path(base) => resolve_typed(text, Some(&base)),
-            Location::Drives => resolve_typed(text, None),
+            Location::Path(base) => resolve_typed(&text, Some(&base)),
+            Location::Drives => resolve_typed(&text, None),
         };
         self.go(Location::Path(path));
     }
@@ -1009,6 +1009,14 @@ mod tests {
         assert_eq!(resolve_typed(&elsewhere.display().to_string(), Some(&base)), elsewhere);
         // In "This PC" there is no folder: the working folder is used.
         assert_eq!(resolve_typed("src", None), std::path::absolute("src").unwrap());
+    }
+
+    #[test]
+    fn a_typed_path_is_expanded_before_it_is_resolved() {
+        let base = std::path::absolute("/work").unwrap();
+        let home = std::path::absolute("/home/ali").unwrap();
+        let text = gezik_core::nav::expand_typed("~/x", &home, |_| None, cfg!(windows));
+        assert_eq!(resolve_typed(&text, Some(&base)), home.join("x"));
     }
 
     #[cfg(windows)]
