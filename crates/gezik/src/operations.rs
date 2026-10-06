@@ -265,6 +265,15 @@ impl JobView {
         }
     }
 
+    /// The job ended with `report`. A row with failures or notes (skipped items) is shown even
+    /// if the job ended before its row came up: else it would stay, hidden, until restart.
+    fn finish(&mut self, report: Report) {
+        if !report.cancelled && (!report.failures.is_empty() || !report.skipped.is_empty()) {
+            self.shown = true;
+        }
+        self.report = Some(report);
+    }
+
     fn row(&self) -> OpRow {
         let left = self.progress.as_ref().and_then(|p| self.rate.remaining(p.bytes_total.saturating_sub(p.bytes_done)));
         let (state, detail, progress) =
@@ -976,10 +985,7 @@ impl Operations {
         self.with_job(id, |job| {
             after = job.after;
             hidden_in = job.hidden_in.take();
-            if problems {
-                job.shown = true;
-            }
-            job.report = Some(report.clone());
+            job.finish(report.clone());
         });
         if problems {
             // Something failed: the panel opens by itself.
@@ -1252,6 +1258,32 @@ mod tests {
             results: Vec::new(),
             changed_dirs: Vec::new(),
         }
+    }
+
+    #[test]
+    fn a_quick_job_with_only_notes_still_shows_its_row() {
+        // `huge.pdf`: rendered at a lower dpi, done before the row came up; its note stays.
+        let mut notes = report(0, false);
+        notes.skipped.push(Failure {
+            path: "/huge - page 1.jpg".into(),
+            message: "page 1 was made at 40 dpi: at 300 dpi it would be too large".into(),
+        });
+        let mut job = JobView::new(1, "PDF to images".into());
+        job.finish(notes.clone());
+        assert!(job.shown);
+        assert!(job.row().can_details);
+        assert_eq!(job.row().detail, "Done · 1 item skipped");
+        // A failure shows too; a clean or cancelled job that ended first does not.
+        let mut failed = JobView::new(2, "x".into());
+        failed.finish(report(1, false));
+        assert!(failed.shown);
+        let mut clean = JobView::new(3, "x".into());
+        clean.finish(report(0, false));
+        assert!(!clean.shown);
+        let mut cancelled = JobView::new(4, "x".into());
+        notes.cancelled = true;
+        cancelled.finish(notes);
+        assert!(!cancelled.shown);
     }
 
     #[test]

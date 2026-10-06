@@ -3,7 +3,7 @@
 # input: xdotool (XTEST) under Xvfb, wtype and the vpointer example under a headless sway.
 #   docker build -t gezik-linux scripts/linux
 #   docker run --rm -v "$PWD:/src" -v gezik-target:/target -v gezik-cargo:/usr/local/cargo/registry \
-#       -e CARGO_TARGET_DIR=/target gezik-linux bash scripts/linux/gui.sh [x11|wayland|popups|tabdrag|pdf|all]
+#       -e CARGO_TARGET_DIR=/target gezik-linux bash scripts/linux/gui.sh [x11|wayland|popups|tabdrag|pdf|pdfnote|all]
 # Needs the network (apt for 7-Zip, Gezik's own 7-Zip download). Screenshots go to
 # .superpowers/linux-shots/gui-*.png. Each check prints "ok" or "FAIL"; the exit code is the
 # number of failures. Coordinates are the window's (no window manager under Xvfb, so it is
@@ -514,14 +514,67 @@ pdfpopups() {
     grep -i "panicked" /tmp/gezik-gui-pdf.log && fail "pdf popups: no panic" || pass "pdf popups: no panic"
 }
 
+# "PDF to images" on a page too large for 300 dpi: the dpi is lowered and the job, done before
+# its row came up, still leaves the row with the note. Needs the network (Gezik's pdfium build).
+pdfnote() {
+    Xvfb :99 -screen 0 1600x900x24 >/dev/null 2>&1 &
+    local xvfb=$!
+    unset WAYLAND_DISPLAY
+    export DISPLAY=:99
+    sleep 1
+    . /src/scripts/linux/gui-lib.sh
+    rm -rf /tmp/h /tmp/cfg && mkdir -p /tmp/h /tmp/cfg/tools/pdfium-8086
+    curl -sSL -o /tmp/pdfium.7z \
+        https://github.com/wenlar/gezik-tools/releases/download/pdfium-8086-1/pdfium-8086-linux-x64.7z
+    $SEVEN x -y -o/tmp/cfg/tools/pdfium-8086 /tmp/pdfium.7z >/dev/null
+    chmod +x /tmp/cfg/tools/pdfium-8086/libpdfium.so
+    # One empty 14,400 pt page, as huge.pdf in the Windows run.
+    python3 - <<'PY'
+objs = [b"<< /Type /Catalog /Pages 2 0 R >>", b"<< /Type /Pages /Kids [4 0 R] /Count 1 >>",
+        b"<< /Length 0 >>\nstream\n\nendstream",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 14400 14400] /Resources << >> /Contents 3 0 R >>"]
+out, offs = bytearray(b"%PDF-1.7\n"), []
+for i, o in enumerate(objs, 1):
+    offs.append(len(out)); out += b"%d 0 obj\n" % i + o + b"\nendobj\n"
+xref = len(out)
+out += b"xref\n0 5\n0000000000 65535 f \n" + b"".join(b"%010d 00000 n \n" % o for o in offs)
+out += b"trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % xref
+open("/tmp/h/huge.pdf", "wb").write(out)
+PY
+    printf '[convert]\nlast-preset = "pdf:pdf-to-images"\npdf = "op=to-images dpi=300 image=jpeg"\n' >/tmp/cfg/state.toml
+    GEZIK_CONFIG_DIR=/tmp/cfg $GEZIK /tmp/h >/tmp/gezik-gui-pdfnote.log 2>&1 &
+    local gezik=$!
+    sleep 3
+    xdotool windowmove "$(win)" 0 0; xdotool windowsize "$(win)" 900 600; sleep 0.5
+    shot pdfnote-start
+    # On huge.pdf (y 118) Convert… is the menu's 5th line; the layer opens on "PDF to images".
+    rclick 260 118; sleep 0.5; shot pdfnote-menu
+    click 330 $((118 + 20 + 32 * 4)); sleep 1.5; shot pdfnote-layer
+    key ctrl+Return
+    for _ in $(seq 60); do [ -f "/tmp/h/huge - page 1.jpg" ] && break; sleep 0.5; done
+    # Past the row's "show after" and "done for" times: a row that stays has a note.
+    sleep 5; shot pdfnote-done
+    check "pdf note: the huge page is made" '[ -f "/tmp/h/huge - page 1.jpg" ]'
+    check "pdf note: the picture is made at a lower dpi" '[ "$(identify -format %w "/tmp/h/huge - page 1.jpg")" -lt 60000 ]'
+    # The panel's row is the strip above the status bar (y 545-570), empty without a row.
+    check "pdf note: the panel keeps the job's row"         'awk "BEGIN { exit !($(dark pdfnote-done 860 24 10 545) > 0.01 && $(dark pdfnote-start 860 24 10 545) < 0.001) }"'
+    click 823 557; sleep 1; shot pdfnote-details
+    check "pdf note: Details opens" '! cmp -s "$SHOTS/pdfnote-done.png" "$SHOTS/pdfnote-details.png"'
+    kill $gezik 2>/dev/null
+    kill $xvfb 2>/dev/null
+    wait 2>/dev/null
+    grep -i "panicked" /tmp/gezik-gui-pdfnote.log && fail "pdf note: no panic" || pass "pdf note: no panic"
+}
+
 setup_7zip
 case "${1:-all}" in
     x11) x11 ;;
     wayland) wayland ;;
     popups) popups ;;
     tabdrag) tabdrag ;;
-    pdf) pdfpopups ;;
-    *) x11; wayland; popups; tabdrag; pdfpopups ;;
+    pdf) pdfpopups; pdfnote ;;
+    pdfnote) pdfnote ;;
+    *) x11; wayland; popups; tabdrag; pdfpopups; pdfnote ;;
 esac
 echo "failures: $failures"
 exit $failures

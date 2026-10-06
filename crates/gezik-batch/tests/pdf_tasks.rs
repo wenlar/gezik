@@ -466,6 +466,22 @@ late-failure
 }
 
 #[test]
+fn a_one_page_render_lowered_keeps_its_note() {
+    // As `huge.pdf` in the GUI run: one page, JPEG, lowered to 40 dpi.
+    let d = dir("lowered-one");
+    let huge = script(&d, "huge.pdf", "pages 1\nlowered 1 40\n");
+    let engine = engine(&d);
+    let work = PdfWork::Render { dpi: 300, image: PageImage::Jpeg };
+    let job = engine.submit_chain(pdf_chain(work, vec![huge], fake_tools()), None);
+    let (report, _) = finish_with(&engine, job, None);
+    assert!(!report.cancelled && report.failures.is_empty(), "{:?}", report.failures);
+    assert_eq!(report.skipped.len(), 1, "{:?}", report.skipped);
+    assert_eq!(report.skipped[0].path, d.join("huge - page 1.jpg"));
+    assert_eq!(report.skipped[0].message, "page 1 was made at 40 dpi: at 300 dpi it would be too large");
+    assert!(d.join("huge - page 1.jpg").is_file());
+}
+
+#[test]
 fn damaged_pdfs_fail_with_their_reason() {
     let d = dir("damaged");
     let a = script(&d, "a.pdf", "damaged\n");
