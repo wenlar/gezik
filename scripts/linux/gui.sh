@@ -680,6 +680,18 @@ filter() {
     click 879 96; sleep 0.8; shot filter-menu-deleted
     check "filter: the menu no longer lists it" '! cmp -s "$SHOTS/filter-menu-deleted.png" "$SHOTS/filter-menu-restart.png"'
     key Escape; sleep 0.3
+    # A new folder with the filter on: the filter closes, the name is edited in place.
+    key ctrl+f ctrl+a; typ '*.jpg'; key Down; sleep 0.3; shot filter-before-new-folder
+    key ctrl+shift+n; sleep 1.5; shot filter-new-folder
+    typ Yeni; key Return; sleep 1
+    check "filter: Ctrl+Shift+N closes the filter and names the folder in place"         '[ -d /tmp/f/Yeni ] && [ ! -e "/tmp/f/New folder" ]'
+    check "filter: the bar is closed after it" '[ "$(px filter-new-folder 255 122)" != "$(px filter-before-new-folder 255 122)" ]'
+    # A paste the filter hides: the filter stays, the status bar says so.
+    echo x > /tmp/f/sub/x.txt
+    key ctrl+l; typ /tmp/f/sub; key Return; sleep 1; click 255 118; key ctrl+c
+    key alt+Left; sleep 1
+    key ctrl+f; typ '*.jpg'; key Down ctrl+v; sleep 1.5; shot filter-paste-hidden
+    check "filter: a paste the filter hides still lands (the note: see the shot)" '[ -f /tmp/f/x.txt ]'
     kill $gezik 2>/dev/null
     kill $xvfb 2>/dev/null
     wait 2>/dev/null

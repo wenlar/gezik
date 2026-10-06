@@ -26,7 +26,7 @@ use slint::{ComponentHandle, ModelRc, VecModel};
 use crate::dialog::Dialogs;
 use crate::navigation::{Navigator, sync_model};
 use crate::sidebar::Sidebar;
-use crate::view::View;
+use crate::view::{View, hidden_note};
 use crate::{AppWindow, OpRow};
 
 /// A job shows in the panel only if it still runs after this long.
@@ -462,6 +462,11 @@ impl Operations {
         }
         self.0.rename_when_shown.borrow_mut().take();
         if let Some(name) = path.file_name().map(|n| n.to_string_lossy().into_owned()) {
+            // A new folder or file is named in the whole folder: the filter (which would most
+            // likely hide "New folder") closes first.
+            if self.0.view.filter_text().is_some() {
+                crate::filter::with_current(crate::filter::Filter::close);
+            }
             self.0.view.begin_rename_by_name(&name);
         }
     }
@@ -1003,11 +1008,18 @@ impl Operations {
         // Rows hidden for this job come back if it changed nothing (failed, cancelled, no trash).
         let mut dirs = report.changed_dirs.clone();
         dirs.extend(hidden_in);
-        let note = (report.skipped_changed > 0).then(|| {
+        let skipped = (report.skipped_changed > 0).then(|| {
             let n = report.skipped_changed;
             let what = if n == 1 { "1 item".to_owned() } else { format!("{n} items") };
             format!("{what} changed since; skipped")
         });
+        // New items here the filter hides (a paste, a drop, an extract): the filter stays, the
+        // status bar says so. A new folder's rename closes the filter instead.
+        let hidden = if after == After::Rename { None } else { hidden_note(self.0.view.hidden_by_filter(&select)) };
+        let note = match (skipped, hidden) {
+            (Some(a), Some(b)) => Some(format!("{a} · {b}")),
+            (a, b) => a.or(b),
+        };
         let reloading = self.0.nav.refresh_showing(&dirs, &select, note.clone());
         self.0.sidebar.refresh();
         if let (false, Some(note)) = (reloading, note) {

@@ -43,7 +43,7 @@
 - **Çubuk:** dosya listesinin üstünde tek satır: metin alanı, sağında "12 / 340" sayacı ve bir menü düğmesi (kayıtlı süzgeçler). Görünüm temadan gelir; hatalı desende alan altı kırmızı ince çizgi ve açıklama ipucu.
 - **Süzme:** her tuş vuruşunda (gecikme yok; 100.000 dosyada bütçe 30 ms) liste daralır. Seçim süzgeç değişince görünmeyen öğelerden temizlenir; odak görünen ilk öğeye geçer.
 - **Klavye:** ↓ veya Enter odağı listeye verir (çubuk açık kalır); listede Esc önce süzgeci kapatır (ikinci Esc seçimi temizler); çubukta Esc süzgeci kapatıp tam listeye döner. Ctrl+F çubuk açıkken metni seçer.
-- **Kapanma:** başka klasöre geçmek, sekmeyi değiştirmek (her sekmenin kendi süzgeci vardır, geri gelince süzgeç durur), Esc. Yenileme (dosya izleyici) süzgeci korur.
+- **Kapanma:** başka klasöre geçmek, sekmeyi değiştirmek (her sekmenin kendi süzgeci vardır, geri gelince süzgeç durur), Esc. Yenileme (dosya izleyici) süzgeci korur; ekrandaki klasöre yeniden gitmek (kendi adres parçasına ya da kenar çubuğu girdisine tıklamak, aynı yolu yazmak) da yenileme sayılır ve süzgeci korur. Yeni klasör ve yeni dosya, yeniden adlandırma başlamadan önce süzgeci kapatır; yapıştırma, bırakma, açma ya da dönüştürmenin süzgeçle gizlenen yeni öğeleri için süzgeç durur, durum çubuğu "N items hidden by the filter" der.
 - **Gizli dosyalar:** süzgeç, gizli dosya süzgecinden sonra uygulanır.
 
 ### 3.2 Desen dili (`gezik-core::pattern`)

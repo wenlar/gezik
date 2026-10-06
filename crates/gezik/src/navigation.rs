@@ -111,6 +111,9 @@ enum Mode {
 }
 
 /// The view to show once a load is done: a move to another place starts without the filter.
+/// A move that lands on the folder already on screen (its breadcrumb or sidebar entry clicked,
+/// its path typed again) counts as a refresh and keeps the filter: `View::show` keeps the bar
+/// as it is for the same folder, whatever the state says.
 fn view_to_show(mode: &Mode, saved: &ViewState) -> ViewState {
     match mode {
         Mode::Show => saved.clone(),

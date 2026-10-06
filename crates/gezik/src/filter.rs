@@ -99,8 +99,8 @@ impl Filter {
     /// Ctrl+F: opens the bar empty and gives it the keyboard; on an open bar, selects its text.
     pub fn open(&self) {
         let Some(window) = self.window.upgrade() else { return };
-        if self.view.shows_drives() {
-            return self.view.note("The filter works in folders".to_owned());
+        if !self.can_filter() {
+            return;
         }
         if self.view.filter_text().is_some() {
             // Focused or not, the field gets the keyboard with its text selected.
@@ -114,8 +114,8 @@ impl Filter {
     /// Opens the bar with `c`, or adds `c` to the open bar's text; the field gets the keyboard
     /// with the cursor at the end.
     pub fn typed(&self, c: char) {
-        if self.view.shows_drives() {
-            return self.view.note("The filter works in folders".to_owned());
+        if !self.can_filter() {
+            return;
         }
         let text = match self.view.filter_text() {
             Some(mut text) => {
@@ -131,6 +131,17 @@ impl Filter {
             window.invoke_focus_filter(end);
         } else {
             self.focus_later(end);
+        }
+    }
+
+    /// Whether a folder is on screen to filter; if not, the status bar says why.
+    fn can_filter(&self) -> bool {
+        match unavailable_note(self.view.shows_drives(), self.view.folder().is_some()) {
+            Some(note) => {
+                self.view.note(note.to_owned());
+                false
+            }
+            None => true,
         }
     }
 
@@ -153,8 +164,8 @@ impl Filter {
     pub fn apply_saved(&self, name: &str) {
         let filters = saved();
         let Some(i) = find_saved(&filters, name) else { return };
-        if self.view.shows_drives() {
-            return self.view.note("The filter works in folders".to_owned());
+        if !self.can_filter() {
+            return;
         }
         self.view.set_filter(Some(&filters[i].pattern));
         // Once the menu is gone (it gives the keyboard back to where it was).
@@ -226,9 +237,28 @@ impl Filter {
     }
 }
 
+/// Why the filter cannot open here: "This PC", or no folder listed (it could not be read, or
+/// it is still loading). `None` in a folder.
+fn unavailable_note(shows_drives: bool, has_folder: bool) -> Option<&'static str> {
+    if shows_drives {
+        Some("The filter works in folders")
+    } else if !has_folder {
+        Some("No folder to filter")
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_filter_says_why_it_cannot_open() {
+        assert_eq!(unavailable_note(true, false), Some("The filter works in folders"));
+        assert_eq!(unavailable_note(false, false), Some("No folder to filter"), "a folder that failed to load");
+        assert_eq!(unavailable_note(false, true), None);
+    }
 
     fn saved(name: &str, pattern: &str) -> SavedFilter {
         SavedFilter { name: name.to_owned(), pattern: pattern.to_owned() }

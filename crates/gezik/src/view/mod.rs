@@ -294,8 +294,9 @@ impl View {
         let listing = if self.0.show_hidden.get() { listing } else { listing.without_dotfiles() };
         let listing = self.sorted(listing, true);
         // A reload of the folder on screen keeps the bar as it is now (the text may have
-        // changed while it loaded); otherwise the filter the place had (a tab switch). Only
-        // folders have one.
+        // changed while it loaded); so does a move to it (its breadcrumb or sidebar entry, its
+        // path typed again), which counts as a refresh. Otherwise the filter the place had (a
+        // tab switch). Only folders have one.
         let cleared = self.0.cleared.replace(false);
         let live = same_folder && !cleared;
         let (full, listing) = match listing {
@@ -349,7 +350,11 @@ impl View {
         self.0.model.notify.reset();
         let shown = self.0.shown.get() + 1;
         self.0.shown.set(shown);
-        *self.0.note.borrow_mut() = note;
+        // A reload of the folder on screen (the watcher, right after an operation) leaves a note
+        // standing ("2 items hidden by the filter"): it goes when the selection changes.
+        if note.is_some() || !live {
+            *self.0.note.borrow_mut() = note;
+        }
         let Some(window) = self.0.window.upgrade() else { return };
         self.sync_focus(&window);
         self.sync_filter_bar(&window);
@@ -530,6 +535,11 @@ impl View {
             if data.selection.count() > max { Vec::new() } else { data.selection.iter().filter_map(name).collect() };
         let scroll = self.0.window.upgrade().map_or(0.0, |w| w.get_list_scroll());
         ViewState { selected, focus: data.selection.focus().and_then(name), scroll, filter: self.filter_text() }
+    }
+
+    /// How many of `names` (entries of the folder shown) the filter hides.
+    pub fn hidden_by_filter(&self, names: &[String]) -> usize {
+        hidden_count(self.0.filter.borrow().as_ref().map(|f| &f.pattern), names)
     }
 
     /// The filter bar's text; `None` while it is closed.
@@ -1284,6 +1294,20 @@ fn selection_after_filter(listing: &Listing, selected: &[String]) -> Selection {
     Selection::from_indices(listing.len(), indices, focus)
 }
 
+/// How many of `names` `pattern` hides (none without a filter). No allocation per name.
+fn hidden_count(pattern: Option<&Pattern>, names: &[String]) -> usize {
+    pattern.map_or(0, |pattern| names.iter().filter(|name| !pattern.matches(name)).count())
+}
+
+/// The status bar's note for new items (a paste, a drop, an extract) the filter hides.
+pub fn hidden_note(hidden: usize) -> Option<String> {
+    match hidden {
+        0 => None,
+        1 => Some("1 item hidden by the filter".to_owned()),
+        n => Some(format!("{n} items hidden by the filter")),
+    }
+}
+
 /// The filter bar's counter: shown of all, `1,234 / 100,000`.
 pub fn filter_count_text(shown: usize, total: usize) -> String {
     use crate::preview::with_commas;
@@ -1315,6 +1339,18 @@ mod tests {
         assert_eq!(bad.pattern, first.pattern, "the list keeps showing the jpgs");
         assert_eq!(bad.text, "*.jpg;!");
         assert!(FilterState::new("!", None).pattern.is_empty(), "nothing good before: everything shows");
+    }
+
+    #[test]
+    fn new_items_the_filter_hides_are_counted() {
+        let names: Vec<String> = ["a.jpg", "b.txt", "C.JPG", "d.png"].map(String::from).into();
+        let jpg = Pattern::compile("*.jpg").unwrap();
+        assert_eq!(hidden_count(Some(&jpg), &names), 2);
+        assert_eq!(hidden_count(None, &names), 0, "no filter: nothing hidden");
+        assert_eq!(hidden_count(Some(&Pattern::default()), &names), 0, "an empty bar hides nothing");
+        assert_eq!(hidden_note(0), None);
+        assert_eq!(hidden_note(1).as_deref(), Some("1 item hidden by the filter"));
+        assert_eq!(hidden_note(3).as_deref(), Some("3 items hidden by the filter"));
     }
 
     #[test]
