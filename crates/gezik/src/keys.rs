@@ -134,7 +134,9 @@ pub fn physical_of(code: slint::winit_030::winit::keyboard::KeyCode) -> Physical
 /// keypad's + - * / are `Key::Num`; Ctrl (⌘) on a digit key is that digit, with or without
 /// Shift, whatever the key types (`!` and `'` with Shift; `&`, `é` unshifted on AZERTY). Not
 /// with Alt: AltGr (Ctrl+Alt on Windows) types characters. Only a press that types something:
-/// a modifier key goes by its text.
+/// a modifier key goes by its text. Never one that types a Latin letter: no layout has those
+/// on the digit row, but a virtual keyboard's own keymap (wtype, an on-screen keyboard on
+/// Wayland) can put `c` on the 1 key's scan code.
 pub fn chord_from_press(
     text: &str,
     physical: Physical,
@@ -153,7 +155,7 @@ pub fn chord_from_press(
         Physical::Numpad(c) if typed_char(text) == Some(c) => {
             Some(Chord { ctrl, alt, shift, meta: cmd, key: Key::Num(c) })
         }
-        Physical::Digit(d) if (ctrl || cmd) && !alt && typed_char(text).is_some() => {
+        Physical::Digit(d) if (ctrl || cmd) && !alt && typed_char(text).is_some_and(|c| !c.is_ascii_alphabetic()) => {
             Some(Chord { ctrl, alt, shift, meta: cmd, key: Key::Char(d) })
         }
         _ => chord_from_slint(text, control, alt, shift, meta, platform),
@@ -649,6 +651,22 @@ mod tests {
         // macOS AZERTY: ⌘ (Slint's `control`) + the 1 key.
         let cmd = chord_from_press("&", Physical::Digit('1'), true, false, false, false, Platform::Mac).unwrap();
         assert_eq!(Shortcuts::defaults(Platform::Mac).action_for(&cmd), Some(Action::Tab1));
+    }
+
+    #[test]
+    fn a_key_that_types_a_latin_letter_is_not_a_digit_key() {
+        // A virtual keyboard (wtype, an on-screen keyboard on Wayland) brings its own keymap,
+        // where `c` may sit on the scan code of the 1 key: Ctrl+C stays Ctrl+C, not Tab1.
+        let defaults = Shortcuts::defaults(Platform::Other);
+        for (text, shift, action) in
+            [("c", false, Action::Copy), ("z", false, Action::Undo), ("N", true, Action::NewFolder)]
+        {
+            let got = chord_from_press(text, Physical::Digit('1'), true, false, shift, false, Platform::Other);
+            assert_eq!(got.and_then(|c| defaults.action_for(&c)), Some(action), "{text}");
+        }
+        // Letters that some layouts put on the digit row still count (Czech `ě`, Lithuanian `ą`).
+        let czech = chord_from_press("ě", Physical::Digit('2'), true, false, false, false, Platform::Other);
+        assert_eq!(czech.and_then(|c| defaults.action_for(&c)), Some(Action::Tab2));
     }
 
     #[test]
