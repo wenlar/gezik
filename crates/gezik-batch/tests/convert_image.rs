@@ -386,6 +386,25 @@ fn the_remove_location_preset_keeps_jpegs_and_re_encodes_the_rest() {
     assert_eq!(r.img.to_rgb8(), read(&png).img.to_rgb8());
 }
 
+/// A file named `.jpg` too big to read whole is refused before it is read, with a reason.
+#[test]
+fn removing_location_from_a_huge_jpeg_is_refused_before_reading_it() {
+    let d = dir("huge-jpeg");
+    let (input, output) = (d.join("huge.jpg"), d.join("out.tmp"));
+    {
+        let file = std::fs::File::create(&input).unwrap();
+        std::io::Write::write_all(&mut &file, &[0xFF, 0xD8, 0xFF, 0xE0]).unwrap();
+        // Sparse where the file system can: nothing is written past the header.
+        file.set_len(300 << 20).unwrap();
+    }
+    let o = ImageOptions { format: ImageFormat::Jpeg, strip_metadata: true, ..ImageOptions::DEFAULT };
+    let err = remove_location(&job(&input, &output, &o), &never).unwrap_err();
+    assert!(err.to_string().contains("too large to remove location data"), "{err}");
+    assert!(strip_location(&input, &output).unwrap_err().to_string().contains("too large"));
+    assert!(!output.exists());
+    let _ = std::fs::remove_dir_all(&d);
+}
+
 /// 64×32, its left half fully transparent black, its right half opaque green.
 fn half_transparent(path: &Path) -> RgbaImage {
     let img = RgbaImage::from_fn(64, 32, |x, _| if x < 32 { Rgba([0, 0, 0, 0]) } else { Rgba([0, 200, 0, 255]) });

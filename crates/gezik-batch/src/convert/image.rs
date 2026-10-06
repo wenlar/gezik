@@ -123,7 +123,7 @@ pub fn convert_image(job: &ImageJob, stop: &dyn Fn() -> bool) -> io::Result<()> 
 /// cannot be removed that way) is converted with `job.options`, which drop the metadata.
 pub fn remove_location(job: &ImageJob, stop: &dyn Fn() -> bool) -> io::Result<()> {
     if job.options.format == ImageFormat::Jpeg && starts_like_jpeg(job.input)? {
-        let bytes = std::fs::read(job.input)?;
+        let bytes = read_jpeg(job.input)?;
         check(stop)?;
         if let Some(clean) = exifclean::jpeg_without_location(&bytes) {
             return write_or_remove(job.output, &clean);
@@ -138,10 +138,23 @@ pub fn remove_location(job: &ImageJob, stop: &dyn Fn() -> bool) -> io::Result<()
 /// bytes stay as they are. Fails (`InvalidData`) on a JPEG it cannot walk or whose EXIF
 /// location it cannot remove. On failure nothing is left at `jpeg_out`.
 pub fn strip_location(jpeg_in: &Path, jpeg_out: &Path) -> io::Result<()> {
-    let bytes = std::fs::read(jpeg_in)?;
+    let bytes = read_jpeg(jpeg_in)?;
     let clean = exifclean::jpeg_without_location(&bytes)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "not a JPEG file Gezik can edit"))?;
     write_or_remove(jpeg_out, &clean)
+}
+
+/// The largest JPEG whose location is removed in place: it is read whole into memory. (A
+/// camera's JPEG is a few MB; a bigger file named `.jpg` is refused before it is read.)
+const MAX_JPEG_EDIT: u64 = 256 << 20;
+
+/// The bytes of a JPEG to edit, if it is at most [`MAX_JPEG_EDIT`].
+fn read_jpeg(path: &Path) -> io::Result<Vec<u8>> {
+    let size = std::fs::metadata(path)?.len();
+    if size > MAX_JPEG_EDIT {
+        return Err(not_supported("too large to remove location data from (over 256 MB)"));
+    }
+    std::fs::read(path)
 }
 
 fn write_or_remove(path: &Path, bytes: &[u8]) -> io::Result<()> {
