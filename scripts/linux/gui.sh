@@ -568,7 +568,10 @@ PY
 
 # 6a's filter bar: Ctrl+F, typing narrows the list (only what shows is acted on), an error
 # keeps the list, Esc closes it, the hidden files toggle and a tab switch keep it, a move to
-# another folder (and back) drops it, and "This PC" says it has none. X11, 900x600.
+# another folder (and back) drops it, and "This PC" says it has none. Then `/`, the typing
+# mode ([keyboard] typing = "filter") and the saved filters of the ▾ menu: Save as… (a name
+# already there, in any case, is replaced after asking), kept in settings.toml over a
+# restart, chosen, deleted. X11, 900x600.
 filter() {
     Xvfb :99 -screen 0 1600x900x24 >/dev/null 2>&1 &
     local xvfb=$!
@@ -624,6 +627,59 @@ filter() {
     key ctrl+l; typ /; key Return; sleep 1; key alt+Up; sleep 1.5
     key ctrl+f; sleep 0.5; shot filter-this-pc
     check "filter: no bar in This PC" '[ "$(px filter-this-pc 255 122)" != "$(px filter-open 255 122)" ]'
+
+    # `/` opens it, whatever the typing mode. Rows (no bar): sub 118, then the files.
+    key ctrl+l; typ /tmp/f; key Return; sleep 1.5; click 255 118; shot filter-slash-before
+    key slash; sleep 0.3; typ txt; shot filter-slash
+    check "filter: / opens the bar" '[ "$(px filter-slash 255 122)" != "$(px filter-slash-before 255 122)" ]'
+    key Down; key ctrl+a Delete; sleep 1.5
+    check "filter: / then txt: only the .txt files are acted on" \
+        'trashed b.txt && trashed e.txt && [ -f /tmp/f/a.jpg ] && [ -f /tmp/f/d.png ]'
+    key ctrl+z; sleep 1.5; key Escape; sleep 0.5
+    # "jump" (the default): a letter goes to a name, no bar.
+    typ c; sleep 0.5; shot filter-jump
+    check "filter: in jump mode a letter opens no bar" '[ "$(px filter-jump 255 122)" = "$(px filter-slash-before 255 122)" ] || [ "$(px filter-jump 255 122)" != "$(px filter-slash 255 122)" ]'
+    # typing = "filter": a letter opens the bar with it, the next ones go on in the field.
+    printf '[keyboard]\ntyping = "filter"\n' >/tmp/cfg/settings.toml; sleep 2
+    click 255 118; typ jp; sleep 0.5; shot filter-typed
+    check "filter: in filter mode a letter opens the bar" '[ "$(px filter-typed 255 122)" != "$(px filter-slash-before 255 122)" ]'
+    key Down; key ctrl+a Delete; sleep 1.5
+    check "filter: the typed letters filter (jp)" 'trashed a.jpg && trashed c.JPG && [ -f /tmp/f/b.txt ] && [ -f /tmp/f/d.png ]'
+    key ctrl+z; sleep 1.5
+    # Save as… (the first item with nothing saved): the bar's text under a name.
+    key ctrl+f ctrl+a; typ txt; sleep 0.3; shot filter-menu-before
+    click 879 96; sleep 0.8; shot filter-menu-empty
+    check "filter: the ▾ menu opens" '! cmp -s "$SHOTS/filter-menu-empty.png" "$SHOTS/filter-menu-before.png"'
+    click 800 131; sleep 0.8; typ Resimler; key Return; sleep 1.5
+    check "filter: Save as… writes [[filters]] to settings.toml" \
+        'grep -q "^\[\[filters\]\]" /tmp/cfg/settings.toml && grep -q "name = \"Resimler\"" /tmp/cfg/settings.toml && grep -q "pattern = \"txt\"" /tmp/cfg/settings.toml'
+    # The same name in another case: asked, Replace (the first button) replaces it.
+    key ctrl+f ctrl+a; typ jpg; sleep 0.3
+    click 879 96; sleep 0.8; shot filter-menu-one     # Resimler 131, Save as… 163, Delete 195
+    click 800 163; sleep 0.8; typ resimler; key Return; sleep 0.8; shot filter-replace
+    key Return; sleep 1.5
+    check "filter: a name already there (any case) is replaced after asking" \
+        '[ "$(grep -c "^\[\[filters\]\]" /tmp/cfg/settings.toml)" = 1 ] && grep -q "name = \"resimler\"" /tmp/cfg/settings.toml && grep -q "pattern = \"jpg\"" /tmp/cfg/settings.toml'
+    # Kept over a restart; chosen from the menu, it fills the bar and the list keeps the keyboard.
+    kill $gezik 2>/dev/null; wait $gezik 2>/dev/null
+    GEZIK_CONFIG_DIR=/tmp/cfg $GEZIK /tmp/f >>/tmp/gezik-gui-filter.log 2>&1 &
+    gezik=$!
+    sleep 3
+    xdotool windowmove "$(win)" 0 0; xdotool windowsize "$(win)" 900 600; sleep 0.5
+    click 255 118; key slash; sleep 0.3
+    click 879 96; sleep 0.8; shot filter-menu-restart
+    click 800 131; sleep 0.8; shot filter-chosen
+    key ctrl+a Delete; sleep 1.5
+    check "filter: the saved filter, chosen after a restart, filters (the list has the keyboard)" \
+        'trashed a.jpg && trashed c.JPG && [ -f /tmp/f/b.txt ] && [ -f /tmp/f/d.png ]'
+    key ctrl+z; sleep 1.5
+    # Delete "resimler".
+    click 879 96; sleep 0.8; click 800 195; sleep 1.5
+    check "filter: Delete takes it out of settings.toml" \
+        '! grep -q "^\[\[filters\]\]" /tmp/cfg/settings.toml && ! grep -q "resimler" /tmp/cfg/settings.toml'
+    click 879 96; sleep 0.8; shot filter-menu-deleted
+    check "filter: the menu no longer lists it" '! cmp -s "$SHOTS/filter-menu-deleted.png" "$SHOTS/filter-menu-restart.png"'
+    key Escape; sleep 0.3
     kill $gezik 2>/dev/null
     kill $xvfb 2>/dev/null
     wait 2>/dev/null

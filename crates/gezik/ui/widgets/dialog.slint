@@ -24,6 +24,12 @@ export component Dialog inherits Rectangle {
     // Clicks outside the box go nowhere.
     TouchArea { }
 
+    // A question asked by the answer to one with a field ("Replace it?" after a name) comes
+    // into the same box: the field goes, and the keyboard with it, so the box takes it.
+    changed has-input => {
+        if !root.has-input { scope.focus(); }
+    }
+
     scope := FocusScope {
         init => {
             if !root.has-input { self.focus(); }

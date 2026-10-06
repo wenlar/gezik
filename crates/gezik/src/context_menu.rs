@@ -33,6 +33,10 @@ pub const CLOSE_OTHER_TABS: u32 = 8;
 pub const OPEN: u32 = 9;
 /// macOS/Linux only.
 pub const OPEN_DEFAULT: u32 = 10;
+#[allow(dead_code, reason = "Task 9's tab menu uses them")]
+pub const LOCK_TAB: u32 = 11;
+#[allow(dead_code, reason = "Task 9's tab menu uses them")]
+pub const UNLOCK_TAB: u32 = 12;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Place {
@@ -196,9 +200,15 @@ pub const ENCODING_MAX: u32 = 40;
 /// 700-799: "Commands ▸", settings.toml's `[[commands]]` by index.
 pub const COMMAND_FIRST: u32 = 700;
 pub const COMMAND_MAX: u32 = 100;
-/// 800-999: the Convert layer's preset list, by index (ids stay below the Shell's).
+/// 800-899: the Convert layer's preset list, by index.
 pub const CONVERT_PRESET_FIRST: u32 = 800;
-pub const CONVERT_PRESET_MAX: u32 = 200;
+pub const CONVERT_PRESET_MAX: u32 = 100;
+/// 900-929: the filter bar's saved filters, by index; 930 "Save as…"; 940-969 delete one
+/// (ids stay below the Shell's, which start at 1000).
+pub const FILTER_FIRST: u32 = 900;
+pub const FILTER_MAX: u32 = 30;
+pub const FILTER_SAVE: u32 = 930;
+pub const FILTER_DELETE_FIRST: u32 = 940;
 /// Group headings in a Slint menu: shown greyed, never chosen.
 pub const HEADING: u32 = 0;
 
@@ -291,6 +301,17 @@ pub fn preset_items(names: &[String]) -> Vec<(u32, String)> {
     list
 }
 
+/// The filter bar's ▾ menu: each saved filter, "Save as…" (only with a good, non-empty text),
+/// then a Delete item for each (up to `FILTER_MAX` each).
+pub fn filter_items(names: &[String], can_save: bool) -> Vec<(u32, String, bool)> {
+    let shown = names.iter().take(FILTER_MAX as usize).enumerate();
+    let mut list: Vec<(u32, String, bool)> =
+        shown.clone().map(|(i, name)| (FILTER_FIRST + i as u32, name.clone(), true)).collect();
+    list.push((FILTER_SAVE, "Save as…".to_owned(), can_save));
+    list.extend(shown.map(|(i, name)| (FILTER_DELETE_FIRST + i as u32, format!("Delete \"{name}\""), true)));
+    list
+}
+
 fn pin_toggle(pinned: bool) -> (u32, &'static str) {
     if pinned { (UNPIN, "Unpin from sidebar") } else { (PIN, "Pin to sidebar") }
 }
@@ -316,6 +337,8 @@ enum Subject {
     BatchRename(Vec<String>),
     /// The Convert layer's menus (presets, encodings).
     Convert,
+    /// The filter bar's ▾ menu, with the saved filters' names shown (items are by index).
+    Filter(Vec<String>),
 }
 
 /// Lets one native menu be pending or open at a time, so two right-clicks in quick
@@ -737,8 +760,30 @@ impl Menus {
         self.open_slint(&list, at);
     }
 
+    /// The filter bar's ▾ menu, under its button: the saved filters, "Save as…", Delete.
+    pub fn filter_menu(&self, at: Anchor) {
+        let names: Vec<String> = crate::filter::saved().into_iter().map(|f| f.name).collect();
+        let mut can_save = false;
+        crate::filter::with_current(|filter| can_save = filter.can_save());
+        let items = filter_items(&names, can_save);
+        *self.subject.borrow_mut() = Some(Subject::Filter(names));
+        self.open_slint_entries(&items, None, at);
+    }
+
     fn run(&self, id: u32, subject: Subject) {
         match (id, subject) {
+            // By name: settings.toml may have been reloaded since the menu opened.
+            (id, Subject::Filter(names)) if (FILTER_FIRST..FILTER_FIRST + FILTER_MAX).contains(&id) => {
+                if let Some(name) = names.get((id - FILTER_FIRST) as usize) {
+                    crate::filter::with_current(|filter| filter.apply_saved(name));
+                }
+            }
+            (FILTER_SAVE, Subject::Filter(_)) => crate::filter::with_current(crate::filter::Filter::ask_save),
+            (id, Subject::Filter(names)) if (FILTER_DELETE_FIRST..FILTER_DELETE_FIRST + FILTER_MAX).contains(&id) => {
+                if let Some(name) = names.get((id - FILTER_DELETE_FIRST) as usize) {
+                    crate::filter::with_current(|filter| filter.delete_saved(name));
+                }
+            }
             (id, Subject::BatchRename(_)) if (ADD_RULE_FIRST..ADD_RULE_FIRST + 10).contains(&id) => {
                 if let Some((kind, _)) = gezik_core::batch::rules::KINDS.get((id - ADD_RULE_FIRST) as usize) {
                     crate::batch_rename::with_current(|layer| layer.add_rule(kind));
@@ -1054,6 +1099,8 @@ mod tests {
             DELETE_PERMANENTLY,
             PASTE_INTO,
             BATCH_RENAME,
+            LOCK_TAB,
+            UNLOCK_TAB,
         ];
         let ranges = [TOGGLE_COLUMN_FIRST..RESET_COLUMNS, CONFLICT_FIRST..CONFLICT_FIRST + 4];
         let archives = [EXTRACT_HERE, EXTRACT_TO_OWN, EXTRACT_TO, COMPRESS, COMPRESS_TO, ADD_TO_ARCHIVE];
@@ -1134,6 +1181,9 @@ mod tests {
             ADD_TO_ARCHIVE,
             CONVERT,
             IMAGES_TO_PDF,
+            LOCK_TAB,
+            UNLOCK_TAB,
+            FILTER_SAVE,
         ];
         let mut ranges: Vec<std::ops::Range<u32>> = singles.iter().map(|id| *id..id + 1).collect();
         ranges.extend([
@@ -1146,6 +1196,8 @@ mod tests {
             ENCODING_TO_FIRST..ENCODING_TO_FIRST + ENCODING_MAX,
             COMMAND_FIRST..COMMAND_FIRST + COMMAND_MAX,
             CONVERT_PRESET_FIRST..CONVERT_PRESET_FIRST + CONVERT_PRESET_MAX,
+            FILTER_FIRST..FILTER_FIRST + FILTER_MAX,
+            FILTER_DELETE_FIRST..FILTER_DELETE_FIRST + FILTER_MAX,
         ]);
         for (i, a) in ranges.iter().enumerate() {
             assert!(a.start >= 1 && a.end <= 1000, "{a:?}: 1..1000 (0 is a heading, 1000 on the Shell's)");
@@ -1169,6 +1221,17 @@ mod tests {
         assert_eq!(several, [CUT, COPY, PASTE_INTO, DUPLICATE, RENAME, TRASH, DELETE_PERMANENTLY]);
         assert!(!ids(file_items(true, true, false)).contains(&PASTE_INTO));
         assert!(file_items(false, false, false).contains(&(RENAME, "Rename items…")));
+    }
+
+    #[test]
+    fn the_filter_menu_lists_saves_and_deletes() {
+        let names = vec!["Resimler".to_owned(), "Belgeler".to_owned()];
+        let items = filter_items(&names, true);
+        let ids: Vec<u32> = items.iter().map(|(id, _, _)| *id).collect();
+        assert_eq!(ids, [FILTER_FIRST, FILTER_FIRST + 1, FILTER_SAVE, FILTER_DELETE_FIRST, FILTER_DELETE_FIRST + 1]);
+        assert_eq!(items[2], (FILTER_SAVE, "Save as…".to_owned(), true));
+        assert_eq!(items[3].1, "Delete \"Resimler\"");
+        assert!(!filter_items(&[], false)[0].2, "nothing to save: greyed");
     }
 
     #[test]

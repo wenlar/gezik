@@ -35,7 +35,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use gezik_config::Warning;
-use gezik_config::settings::{Settings, SidebarPosition};
+use gezik_config::settings::{Settings, SidebarPosition, Typing};
 use gezik_config::shortcuts::{Action, Chord, Key, Platform};
 use gezik_config::store::{self, ConfigFiles, ConfigStore, Loaded};
 use gezik_config::theme;
@@ -69,6 +69,7 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
     batch_rename::set_presets(loaded.settings.rename_presets.clone());
     archives::set_settings(loaded.settings.tools.clone(), loaded.settings.archives);
     convert::set_settings(loaded.settings.convert.clone(), loaded.settings.commands.clone());
+    filter::set_settings(loaded.settings.keyboard, loaded.settings.filters.clone());
     loaded
 }
 
@@ -307,8 +308,19 @@ fn handle_key(
         return false;
     }
 
-    // Type-ahead. A typed character that matches nothing is still used up.
     let Some(c) = keys::typed_char(text) else { return false };
+    // `/` is in no name: it opens the filter whatever the typing mode (and on a layout where
+    // it needs Shift, as no shortcut could).
+    if c == '/' {
+        filter::with_current(filter::Filter::open);
+        return true;
+    }
+    // A space is no letter: it stays quick look's (or type-ahead's, as before).
+    if filter::typing() == Typing::Filter && c != ' ' && !view.shows_drives() {
+        filter::with_current(|f| f.typed(c));
+        return true;
+    }
+    // Type-ahead. A typed character that matches nothing is still used up.
     if let Some(i) = type_ahead.type_char(c, std::time::Instant::now(), |typed| view.find_prefix(typed)) {
         view.jump_to(i);
     }
@@ -454,7 +466,6 @@ fn main() -> Result<(), slint::PlatformError> {
     );
     window.set_preview_width(saved_state.preview_width.unwrap_or(280) as f32);
     let preview = preview::Preview::new(&window, view.clone());
-    let _filter = filter::Filter::new(&window, view.clone());
     preview.set_pane_open(saved_state.preview_open);
     let nav = navigation::Navigator::new(&window, view.clone(), plan.first, plan.select, plan.start);
     nav.install();
@@ -465,6 +476,7 @@ fn main() -> Result<(), slint::PlatformError> {
     sidebar.install();
     sidebar.set_pinned(initial_settings.pinned);
     let dialogs = dialog::Dialogs::new(&window);
+    let _filter = filter::Filter::new(&window, view.clone(), dialogs.clone(), config.clone());
     let engine_settings = gezik_ops::Settings {
         threads: initial_settings.files.copy_threads,
         pending_deletes: config.as_ref().map(|store| store.dir().join("pending-deletes")),
@@ -677,6 +689,10 @@ fn main() -> Result<(), slint::PlatformError> {
     window.on_header_menu({
         let menus = menus.clone();
         move |x, y| menus.header(x, y)
+    });
+    window.on_filter_menu({
+        let menus = menus.clone();
+        move |left, bottom, right, top| menus.filter_menu(popup::Anchor::below(left, top, right, bottom))
     });
     window.on_view_menu({
         let menus = menus.clone();
