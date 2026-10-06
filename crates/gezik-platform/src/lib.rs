@@ -71,6 +71,8 @@ pub enum MenuOutcome {
     Dismissed,
 }
 
+#[cfg(target_os = "macos")]
+pub mod key_place;
 #[cfg(windows)]
 mod keyboard;
 #[cfg(windows)]

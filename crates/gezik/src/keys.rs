@@ -83,6 +83,29 @@ pub fn chord_from_slint(
     }
 }
 
+/// The text a key press with ⌘ (`command`) is matched by. On macOS a ⌘ shortcut on a bracket
+/// goes by the key's place, as the system's own do: on a layout where that key types another
+/// letter (`ğ` on Turkish-QWERTY-PC), ⌘[ and ⌘] still work. Elsewhere, and without ⌘, the
+/// text stays as typed.
+pub fn shortcut_text(text: &str, command: bool) -> std::borrow::Cow<'_, str> {
+    #[cfg(target_os = "macos")]
+    if command && let Some(bracket) = gezik_platform::key_place::bracket_of_key_being_pressed() {
+        return bracket_text(text, bracket);
+    }
+    let _ = command;
+    std::borrow::Cow::Borrowed(text)
+}
+
+/// The text of a press of the bracket key `bracket`: the bracket, whatever the layout typed.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn bracket_text(text: &str, bracket: char) -> std::borrow::Cow<'_, str> {
+    if text.chars().eq([bracket]) {
+        std::borrow::Cow::Borrowed(text)
+    } else {
+        std::borrow::Cow::Owned(bracket.to_string())
+    }
+}
+
 /// Whether `chord` is a text editing shortcut (select all, copy, paste, cut, undo, redo
 /// with the platform's primary modifier: Cmd on macOS, Ctrl elsewhere), which belongs to
 /// a focused text box.
@@ -340,6 +363,13 @@ mod tests {
         assert_eq!(defaults.action_for(&ctrl_shift_tab), Some(Action::PrevTab));
         let cmd_bracket = chord_from_slint("[", true, false, false, false, Platform::Mac).unwrap();
         assert_eq!(defaults.action_for(&cmd_bracket), Some(Action::Back));
+        // Turkish-QWERTY-PC: the key right of P types `ğ`; ⌘ on it is still ⌘[ (by its place).
+        let text = bracket_text("ğ", '[');
+        let cmd_g = chord_from_slint(&text, true, false, false, false, Platform::Mac).unwrap();
+        assert_eq!(defaults.action_for(&cmd_g), Some(Action::Back));
+        let text = bracket_text("ü", ']');
+        let cmd_u = chord_from_slint(&text, true, false, false, false, Platform::Mac).unwrap();
+        assert_eq!(defaults.action_for(&cmd_u), Some(Action::Forward));
         let cmd_r = chord_from_slint("r", true, false, false, false, Platform::Mac).unwrap();
         assert_eq!(defaults.action_for(&cmd_r), Some(Action::Refresh));
         // Physical Ctrl+T is not Cmd+T.

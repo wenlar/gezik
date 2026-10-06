@@ -717,7 +717,9 @@ fn main() -> Result<(), slint::PlatformError> {
         move |event| {
             let Some(window) = weak.upgrade() else { return false };
             let m = event.modifiers;
-            let chord = keys::chord_from_slint(&event.text, m.control, m.alt, m.shift, m.meta, Platform::current());
+            // Slint's `control` is ⌘ on macOS.
+            let text = keys::shortcut_text(&event.text, m.control);
+            let chord = keys::chord_from_slint(&text, m.control, m.alt, m.shift, m.meta, Platform::current());
             let menu_key = keys::is_context_menu_key(&event.text, m.control, m.alt, m.shift, m.meta);
             // Esc while dragging files drops nothing.
             if chord.as_ref().is_some_and(|c| c.key == Key::Escape) && drags.escape() {
