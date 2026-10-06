@@ -21,6 +21,63 @@ pub fn action_for(chord: &Chord) -> Option<Action> {
     SHORTCUTS.with(|s| s.borrow().action_for(chord))
 }
 
+/// The `[[commands]]` entry `chord` runs, by its index.
+pub fn command_for(chord: &Chord) -> Option<usize> {
+    SHORTCUTS.with(|s| s.borrow().command_for(chord))
+}
+
+/// The key of `[[commands]]` entry `index`, if it has one.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn command_chord(index: usize) -> Option<Chord> {
+    SHORTCUTS.with(|s| s.borrow().command_chord(index))
+}
+
+/// A chord as a menu shows it: ⌃⌥⇧⌘ and the key on macOS, "Ctrl+Alt+Shift+K" elsewhere.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn chord_label(chord: &Chord, platform: Platform) -> String {
+    let key = match chord.key {
+        Key::Char(c) => c.to_ascii_uppercase().to_string(),
+        Key::Num(c) => format!("Num {c}"),
+        Key::F(n) => format!("F{n}"),
+        Key::Left => "←".to_owned(),
+        Key::Right => "→".to_owned(),
+        Key::Up => "↑".to_owned(),
+        Key::Down => "↓".to_owned(),
+        Key::Enter => "Enter".to_owned(),
+        Key::Tab => "Tab".to_owned(),
+        Key::Backspace => "Backspace".to_owned(),
+        Key::Delete => "Delete".to_owned(),
+        Key::Home => "Home".to_owned(),
+        Key::End => "End".to_owned(),
+        Key::PageUp => "PgUp".to_owned(),
+        Key::PageDown => "PgDn".to_owned(),
+        Key::Escape => "Esc".to_owned(),
+        Key::Space => "Space".to_owned(),
+    };
+    match platform {
+        Platform::Mac => {
+            let mut out = String::new();
+            for (held, sign) in [(chord.ctrl, '⌃'), (chord.alt, '⌥'), (chord.shift, '⇧'), (chord.meta, '⌘')] {
+                if held {
+                    out.push(sign);
+                }
+            }
+            out + &key
+        }
+        Platform::Other => {
+            let mut parts: Vec<&str> = Vec::new();
+            for (held, name) in [(chord.ctrl, "Ctrl"), (chord.alt, "Alt"), (chord.shift, "Shift"), (chord.meta, "Win")]
+            {
+                if held {
+                    parts.push(name);
+                }
+            }
+            parts.push(&key);
+            parts.join("+")
+        }
+    }
+}
+
 /// Slint's named keys and the chord keys they are (Backtab is Shift+Tab).
 const NAMED: [(SlintKey, Key); 27] = [
     (SlintKey::LeftArrow, Key::Left),
@@ -796,5 +853,16 @@ mod tests {
         let mut t = TypeAhead::default();
         let list = ["Belgeler", "İndirilenler", "şablonlar"];
         assert_eq!(t.type_char('Ş', Instant::now(), names(&list)), Some(2));
+    }
+
+    #[test]
+    fn chords_read_as_menus_show_them() {
+        use gezik_config::shortcuts::parse_chord;
+        let c = parse_chord("ctrl+alt+z", Platform::Other).unwrap().unwrap();
+        assert_eq!(chord_label(&c, Platform::Other), "Ctrl+Alt+Z");
+        let m = parse_chord("mod+shift+k", Platform::Mac).unwrap().unwrap();
+        assert_eq!(chord_label(&m, Platform::Mac), "⇧⌘K");
+        let num = parse_chord("num+", Platform::Other).unwrap().unwrap();
+        assert_eq!(chord_label(&num, Platform::Other), "Num +");
     }
 }

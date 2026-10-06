@@ -140,9 +140,10 @@ remember = true
 # not valid, or has a key not named here (a typo), is reported and left out.
 # {files} puts in every selected item (full paths, one argument each) and runs the command
 # once, in their folder; it can't be used with {in}, {name}, {ext}, {out} or "output", and
-# what it does can't be undone. shortcut = "ctrl+alt+z" runs a command on the selection (the
-# keys of [shortcuts]; a key already taken is left out, with a warning); menu = "Archives"
-# lists it under that heading in "Commands >"; ask = true asks "Run … on N items?" first.
+# what it does can't be undone. shortcut = "ctrl+alt+z" runs a command on the selection while
+# the file list has the keyboard (the keys of [shortcuts], with Ctrl, Alt or Cmd, or an F key;
+# a key already taken is left out, with a warning); menu = "Archives" lists it under that
+# heading in "Commands >"; ask = true asks "Run … on N items?" first.
 # [[commands]]
 # name = "Resize to 50% (ImageMagick)"
 # run = ["magick", "{in}", "-resize", "50%", "{out}"]

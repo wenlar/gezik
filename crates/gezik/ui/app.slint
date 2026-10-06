@@ -56,6 +56,8 @@ export component AppWindow inherits Window {
     in property <bool> native-menu-bar;
     // Off while Rust plays an item's shortcut: Slint would take it for the item again.
     in property <bool> menu-keys: true;
+    // The Commands menu: the `[[commands]]` with a key (id: the command's index, -1 a heading).
+    in property <[MenuEntry]> bar-commands;
     callback menu-command(string);
     if root.native-menu-bar: MenuBar {
         Menu {
@@ -108,6 +110,14 @@ export component AppWindow inherits Window {
             MenuItem { title: "Enclosing Folder"; shortcut: root.menu-keys ? @keys(Control + UpArrow) : @keys(); activated => { root.menu-command("up"); } }
             MenuSeparator { }
             MenuItem { title: "Go to Folder…"; shortcut: root.menu-keys ? @keys(Control + L) : @keys(); activated => { root.menu-command("focus-path"); } }
+        }
+        if root.bar-commands.length > 0: Menu {
+            title: "Commands";
+            for entry in root.bar-commands: MenuItem {
+                title: entry.title;
+                enabled: entry.enabled;
+                activated => { root.menu-command("command:" + entry.id); }
+            }
         }
         Menu {
             title: "Window";

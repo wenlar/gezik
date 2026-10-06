@@ -73,6 +73,15 @@ pub struct Chord {
     pub key: Key,
 }
 
+impl Chord {
+    /// Whether the chord can be a `[[commands]]` key: with Ctrl, Alt or Cmd, or an F key. A
+    /// bare key (or Shift and a key) types: it would take letters from type-ahead and the
+    /// filter.
+    pub fn leaves_typing_alone(&self) -> bool {
+        self.ctrl || self.alt || self.meta || matches!(self.key, Key::F(_))
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Platform {
     Mac,

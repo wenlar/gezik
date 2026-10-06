@@ -246,6 +246,19 @@ struct JobView {
     after: After,
     /// The folder rows were hidden in (trash, delete): reloaded when the job ends, whatever it did.
     hidden_in: Option<PathBuf>,
+    /// Said after the detail in the panel ([`CANT_UNDO`]).
+    note: Option<&'static str>,
+}
+
+/// The note of a `{files}` run in the panel (spec 7).
+pub const CANT_UNDO: &str = "can't be undone";
+
+/// A row's detail with the job's note after it: "Done · can't be undone".
+pub fn with_note(detail: String, note: Option<&str>) -> String {
+    match note {
+        Some(note) => format!("{detail} · {note}"),
+        None => detail,
+    }
 }
 
 impl JobView {
@@ -262,13 +275,15 @@ impl JobView {
             again: None,
             after: After::Nothing,
             hidden_in: None,
+            note: None,
         }
     }
 
-    /// The job ended with `report`. A row with failures or notes (skipped items) is shown even
-    /// if the job ended before its row came up: else it would stay, hidden, until restart.
+    /// The job ended with `report`. A row with failures or notes (skipped items, the job's own
+    /// note) is shown even if the job ended before its row came up: else it would stay, hidden,
+    /// until restart, or the note would go unread.
     fn finish(&mut self, report: Report) {
-        if !report.cancelled && (!report.failures.is_empty() || !report.skipped.is_empty()) {
+        if !report.cancelled && (!report.failures.is_empty() || !report.skipped.is_empty() || self.note.is_some()) {
             self.shown = true;
         }
         self.report = Some(report);
@@ -285,7 +300,7 @@ impl JobView {
         OpRow {
             id: i32::try_from(self.id).unwrap_or(i32::MAX),
             title: self.title.clone().into(),
-            detail: detail.into(),
+            detail: with_note(detail, self.note).into(),
             progress,
             state: state as i32,
             can_pause: !finished && matches!(state, RowState::Running),
@@ -452,6 +467,13 @@ impl Operations {
         self.0.jobs.borrow_mut().push(job);
         self.show_later(id);
         id
+    }
+
+    /// Puts `note` after job `id`'s detail in the panel.
+    pub fn set_note(&self, id: JobId, note: &'static str) {
+        if let Some(job) = self.0.jobs.borrow_mut().iter_mut().find(|job| job.id == id) {
+            job.note = Some(note);
+        }
     }
 
     /// A folder is on screen: start a rename that waited for it (a new folder).
@@ -1411,5 +1433,26 @@ mod tests {
     fn only_results_in_the_folder_are_selected() {
         let results = [PathBuf::from("/a/x.txt"), PathBuf::from("/b/y.txt"), PathBuf::from("/a/sub")];
         assert_eq!(result_names(&results, Path::new("/a")), ["x.txt", "sub"]);
+    }
+
+    #[test]
+    fn a_note_follows_the_detail() {
+        assert_eq!(with_note("Done".to_owned(), Some(CANT_UNDO)), "Done · can't be undone");
+        assert_eq!(with_note("45%".to_owned(), None), "45%");
+    }
+
+    #[test]
+    fn a_job_with_a_note_shows_it_even_when_quick() {
+        // A `{files}` run done before its row came up: the row shows, saying so.
+        let mut job = JobView::new(1, "List them".into());
+        job.note = Some(CANT_UNDO);
+        job.finish(report(0, false));
+        assert!(job.shown);
+        assert!(job.row().detail.ends_with("· can't be undone"), "{}", job.row().detail);
+        // Cancelled, it did nothing to warn about.
+        let mut cancelled = JobView::new(2, "List them".into());
+        cancelled.note = Some(CANT_UNDO);
+        cancelled.finish(report(0, true));
+        assert!(!cancelled.shown);
     }
 }

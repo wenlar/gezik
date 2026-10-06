@@ -66,6 +66,8 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
     sidebar::with_current(|sidebar| sidebar.set_pinned(loaded.settings.pinned.clone()));
     view::with_current(|view| view.set_defaults(loaded.settings.view));
     keys::set_shortcuts(loaded.settings.shortcuts.clone());
+    #[cfg(target_os = "macos")]
+    menu_bar::set_commands(window, &loaded.settings.commands);
     frame_limit::set_max_fps(loaded.settings.max_fps);
     operations::with_current(|ops| ops.set_files(loaded.settings.files));
     batch_rename::set_presets(loaded.settings.rename_presets.clone());
@@ -254,6 +256,14 @@ fn handle_key(
             }
             return true;
         }
+    }
+    // A `[[commands]]` key: on the selection, only while the file list has the keyboard.
+    if let Some(index) = chord.as_ref().and_then(keys::command_for) {
+        if editing || filtering || !window.get_list_focused() {
+            return false;
+        }
+        actions::run_command(index, view);
+        return true;
     }
     if editing || !window.get_list_focused() {
         return false;

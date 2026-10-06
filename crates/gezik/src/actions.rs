@@ -6,6 +6,19 @@ use gezik_config::shortcuts::Action;
 use crate::navigation::Navigator;
 use crate::view::View;
 
+/// `[[commands]]` entry `index`, run by its key or the macOS menu bar on the selection (the
+/// focused item when nothing is selected).
+pub fn run_command(index: usize, view: &View) {
+    if view.shows_drives() {
+        return view.note("Commands run on files and folders".to_owned());
+    }
+    let mut items = view.selected_items();
+    if items.is_empty() {
+        items.extend(view.focus().and_then(|i| view.entry_path(i)));
+    }
+    crate::convert::run_by_index(index, items);
+}
+
 /// Runs `action` if it is one of 6a's; returns whether it ran.
 pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
     match action {

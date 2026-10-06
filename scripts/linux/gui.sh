@@ -3,7 +3,7 @@
 # input: xdotool (XTEST) under Xvfb, wtype and the vpointer example under a headless sway.
 #   docker build -t gezik-linux scripts/linux
 #   docker run --rm -v "$PWD:/src" -v gezik-target:/target -v gezik-cargo:/usr/local/cargo/registry \
-#       -e CARGO_TARGET_DIR=/target gezik-linux bash scripts/linux/gui.sh [x11|wayland|popups|tabdrag|pdf|pdfnote|filter|select|tabs|keyboard|all]
+#       -e CARGO_TARGET_DIR=/target gezik-linux bash scripts/linux/gui.sh [x11|wayland|popups|tabdrag|pdf|pdfnote|filter|select|tabs|keyboard|commands|all]
 #   (not in `all`, release builds: `filterperf` times the filter at 100,000 files, `memory [exe]`
 #   gives idle memory)
 # Needs the network (apt for 7-Zip, Gezik's own 7-Zip download). Screenshots go to
@@ -1061,6 +1061,118 @@ print(" ".join(sorted(names)))'
     grep -i "panicked" /tmp/gezik-gui-keyboard.log && fail "keyboard: no panic" || pass "keyboard: no panic"
 }
 
+# 6b's user commands in the window: a command run by its key on the selection (and on the
+# focused item, with the status bar saying why it does not run there), never in the address
+# bar; `ask` asks first (Esc: nothing runs; Enter: Run); a `{files}` run keeps its panel row,
+# "Done · can't be undone"; "Commands ▸" lists a `menu` group under its greyed heading; a
+# bare key as a command's shortcut is refused when settings.toml loads. X11, 900x600.
+commands() {
+    Xvfb :99 -screen 0 1600x900x24 >/dev/null 2>&1 &
+    local xvfb=$!
+    unset WAYLAND_DISPLAY
+    export DISPLAY=:99
+    sleep 1
+    . /src/scripts/linux/gui-lib.sh
+    rm -rf /tmp/cm /tmp/cm-* /tmp/cfg /root/.local/share/Trash && mkdir -p /tmp/cm/Sub /tmp/cfg
+    for n in a.txt b.txt c.jpg; do echo "$n" > "/tmp/cm/$n"; done
+    cat >/tmp/cfg/settings.toml <<'TOML'
+[[commands]]
+name = "Copy txt"
+run = ["cp", "{in}", "{out}"]
+output = "{name}-copy.{ext}"
+types = ["txt"]
+shortcut = "ctrl+alt+k"
+
+[[commands]]
+name = "List them"
+run = ["sh", "-c", "printf '%s\n' \"$@\" > /tmp/cm-listed", "sh", "{files}"]
+folders = true
+shortcut = "ctrl+alt+l"
+menu = "Tests"
+ask = true
+
+[[commands]]
+name = "Mark"
+run = ["sh", "-c", "echo \"$1\" >> /tmp/cm-marked", "sh", "{in}"]
+types = ["txt"]
+shortcut = "f9"
+menu = "Tests"
+
+[[commands]]
+name = "Bare"
+run = ["sh", "-c", "echo \"$1\" >> /tmp/cm-bare", "sh", "{in}"]
+shortcut = "x"
+TOML
+    : >/tmp/gezik-gui-commands.log
+    GEZIK_CONFIG_DIR=/tmp/cfg $GEZIK /tmp/cm >>/tmp/gezik-gui-commands.log 2>&1 &
+    local gezik=$!
+    sleep 3
+    xdotool windowmove "$(win)" 0 0; xdotool windowsize "$(win)" 900 600; sleep 0.5
+    shot commands-start
+    # Rows (folders first): Sub 118, a.txt 144, b.txt 170, c.jpg 196.
+    check "commands: a bare-key shortcut is refused when settings load" \
+        'grep -q "commands\[4\]: shortcut \"x\" needs Ctrl, Alt or Cmd (or an F key); the command has no key" /tmp/gezik-gui-commands.log'
+
+    # By its key, on the selection.
+    click 255 144; key shift+Down
+    key ctrl+alt+k; sleep 2
+    check "commands: Ctrl+Alt+K copies the two selected .txt" '[ -f /tmp/cm/a-copy.txt ] && [ -f /tmp/cm/b-copy.txt ]'
+    # A quick job that can be undone leaves no row behind.
+    sleep 5; shot commands-copied
+    check "commands: the copy leaves no panel row" 'awk "BEGIN { exit !($(dark commands-copied 860 24 10 545) < 0.001) }"'
+
+    # The bare key stays type-ahead's: x runs nothing.
+    key x; sleep 1.5
+    check "commands: the bare key x runs nothing" '[ ! -e /tmp/cm-bare ]'
+
+    # The focused item when nothing is selected: on c.jpg, Copy txt says why it does not run.
+    click 255 "$(row /tmp/cm c.jpg)"; key Escape; sleep 0.3; shot commands-before-note
+    key ctrl+alt+k; sleep 1; shot commands-not-for-jpg
+    check "commands: on c.jpg the status bar says why (see the shot)" \
+        '! cmp -s "$SHOTS/commands-before-note.png" "$SHOTS/commands-not-for-jpg.png"'
+    check "commands: nothing is made of c.jpg" '[ ! -e /tmp/cm/c-copy.jpg ] && [ "$(ls /tmp/cm | wc -l)" = 6 ]'
+
+    # Never in the address bar: F9 there types nothing and runs nothing; on the list it runs.
+    click 255 "$(row /tmp/cm a.txt)"; key ctrl+l; sleep 0.5; key F9; sleep 1.5
+    check "commands: F9 in the address bar runs nothing" '[ ! -e /tmp/cm-marked ]'
+    key Escape; sleep 0.5; click 255 "$(row /tmp/cm a.txt)"; key F9; sleep 2
+    check "commands: F9 on the list marks a.txt" '[ "$(wc -l < /tmp/cm-marked)" = 1 ]'
+
+    # `ask`: the question first; Esc runs nothing, Enter runs it.
+    key ctrl+a; sleep 0.3; shot commands-before-ask
+    key ctrl+alt+l; sleep 1; shot commands-ask
+    check "commands: Ctrl+Alt+L asks first" \
+        '! cmp -s "$SHOTS/commands-before-ask.png" "$SHOTS/commands-ask.png" && [ ! -e /tmp/cm-listed ]'
+    key Escape; sleep 1.5
+    check "commands: Esc cancels the run" '[ ! -e /tmp/cm-listed ]'
+    key ctrl+alt+l; sleep 1; key Return; sleep 1.5; shot commands-cant-undo
+    check "commands: Run runs it once on all six" '[ "$(wc -l < /tmp/cm-listed 2>/dev/null)" = 6 ]'
+    # A quick job, done before its row would come up: the note shows it anyway (for its
+    # "done for" time).
+    check "commands: the {files} run keeps its panel row (\"can't be undone\", see the shot)" \
+        'awk "BEGIN { exit !($(dark commands-cant-undo 860 24 10 545) > 0.01) }"'
+
+    # "Commands ▸" on a.txt: Copy txt, then the greyed "Tests" heading over List them and Mark.
+    local y; y=$(row /tmp/cm a.txt)
+    sleep 3; key Escape; click 255 "$y"; rclick 260 $y; sleep 0.5; shot commands-menu
+    # Commands is the menu's 6th line; its submenu opens to the right.
+    local sub=$((y + 20 + 32 * 5))
+    xdotool mousemove 330 "$sub"; sleep 0.3; xdotool mousemove 400 "$sub"; sleep 1; shot commands-submenu
+    # Its lines: Copy txt, Bare, the "Tests" heading, List them, Mark. The heading is greyed:
+    # fewer dark pixels than Bare's line, whose name is as long.
+    check "commands: Commands > has the greyed \"Tests\" heading over its group (see the shot)"         'awk "BEGIN { exit !($(dark commands-submenu 60 16 490 $((sub + 64 - 8))) < $(dark commands-submenu 60 16 490 $((sub + 32 - 8)))) }"'
+    click 520 $((sub + 64)); sleep 1.5
+    check "commands: choosing the heading runs nothing" '[ "$(wc -l < /tmp/cm-marked)" = 1 ] && [ "$(wc -l < /tmp/cm-listed)" = 6 ]'
+    key Escape Escape; click 255 "$y"; rclick 260 "$y"; sleep 0.5
+    xdotool mousemove 330 "$sub"; sleep 0.3; xdotool mousemove 400 "$sub"; sleep 1
+    click 520 $((sub + 128)); sleep 2
+    check "commands: Mark, under the heading, runs from the menu" '[ "$(wc -l < /tmp/cm-marked)" = 2 ]'
+    kill $gezik 2>/dev/null
+    kill $xvfb 2>/dev/null
+    wait 2>/dev/null
+    grep -i "panicked" /tmp/gezik-gui-commands.log && fail "commands: no panic" || pass "commands: no panic"
+}
+
 # Not in `all`. The filter in a folder of 100,000 files, release build: the process's CPU
 # time (all threads, /proc/<pid>/task/*/schedstat) from before each keystroke to 300 ms after
 # it, less the idle CPU of 300 ms with the bar open. Twice: nothing selected, then after
@@ -1142,9 +1254,10 @@ case "${1:-all}" in
     select) selection ;;
     tabs) tabs ;;
     keyboard) keyboard ;;
+    commands) commands ;;
     filterperf) filterperf ;;
     memory) memory "${2:-}" ;;
-    *) x11; wayland; popups; tabdrag; pdfpopups; pdfnote; filter; selection; tabs; keyboard ;;
+    *) x11; wayland; popups; tabdrag; pdfpopups; pdfnote; filter; selection; tabs; keyboard; commands ;;
 esac
 echo "failures: $failures"
 exit $failures

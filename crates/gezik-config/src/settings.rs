@@ -760,6 +760,13 @@ fn bind_command_key(settings: &mut Settings, spec: &CommandSpec, n: usize, file:
             return;
         }
     };
+    if !chord.leaves_typing_alone() {
+        warnings.push(Warning::new(
+            file,
+            format!("commands[{n}]: shortcut \"{text}\" needs Ctrl, Alt or Cmd (or an F key); the command has no key"),
+        ));
+        return;
+    }
     if let Err(owner) = settings.shortcuts.bind_command(index, chord) {
         let who = match owner {
             KeyOwner::Action(action) => action.name().to_owned(),
@@ -1724,6 +1731,53 @@ last-pattern = \"\"
             Some(crate::shortcuts::Action::NewTab),
             "the action keeps its key"
         );
+    }
+
+    #[test]
+    fn a_command_key_needs_a_modifier_or_an_f_key() {
+        // A bare key would take a letter from type-ahead and the filter: refused, with a warning.
+        let (settings, warnings) = parse(
+            "[[commands]]
+name = \"A\"
+run = [\"x\"]
+shortcut = \"f\"
+             [[commands]]
+name = \"B\"
+run = [\"x\"]
+shortcut = \"shift+b\"
+             [[commands]]
+name = \"C\"
+run = [\"x\"]
+shortcut = \"delete\"
+             [[commands]]
+name = \"D\"
+run = [\"x\"]
+shortcut = \"f7\"
+             [[commands]]
+name = \"E\"
+run = [\"x\"]
+shortcut = \"alt+e\"
+             [[commands]]
+name = \"F\"
+run = [\"x\"]
+shortcut = \"shift+f8\"
+",
+        );
+        assert_eq!(settings.commands.len(), 6, "every command stays, only its key goes");
+        let messages: Vec<&str> = warnings.iter().map(|w| w.message.as_str()).collect();
+        let refused = |n: usize, text: &str| {
+            format!("commands[{n}]: shortcut \"{text}\" needs Ctrl, Alt or Cmd (or an F key); the command has no key")
+        };
+        assert_eq!(messages, [refused(1, "f"), refused(2, "shift+b"), refused(3, "delete")]);
+        for (i, text) in [(0, "f"), (1, "shift+b"), (2, "delete")] {
+            let chord = parse_chord(text, Platform::current()).unwrap().unwrap();
+            assert_eq!(settings.shortcuts.command_for(&chord), None, "{text}");
+            assert_eq!(settings.shortcuts.command_chord(i), None, "{text}");
+        }
+        for (i, text) in [(3, "f7"), (4, "alt+e"), (5, "shift+f8")] {
+            let chord = parse_chord(text, Platform::current()).unwrap().unwrap();
+            assert_eq!(settings.shortcuts.command_for(&chord), Some(i), "{text}");
+        }
     }
 
     #[test]
