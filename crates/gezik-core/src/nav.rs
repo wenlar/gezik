@@ -36,6 +36,9 @@ pub struct ViewState {
     pub focus: Option<String>,
     /// List scroll offset (Slint `content-y`, zero or negative).
     pub scroll: f32,
+    /// The filter bar's text (`None`: closed). Kept by a tab switch and a reload; the
+    /// navigator shows a move to another place without it.
+    pub filter: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -140,11 +143,23 @@ pub enum Step {
     Forward,
 }
 
+/// How many closed tabs `Tabs::reopen` can bring back; the oldest are forgotten.
+pub const MAX_CLOSED: usize = 20;
+
+/// A closed tab: where it was and its whole history.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClosedTab {
+    pub index: usize,
+    pub history: History,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Closed {
     Remaining,
     /// The last tab was closed: the window should close.
     LastTab,
+    /// The tab is locked: nothing closed.
+    Locked,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -154,11 +169,22 @@ pub struct Tabs {
     ids: Vec<u64>,
     next_id: u64,
     active: usize,
+    /// The ids of the locked tabs.
+    locked: Vec<u64>,
+    /// The closed tabs, the newest last.
+    closed: Vec<ClosedTab>,
 }
 
 impl Tabs {
     pub fn new(location: Location) -> Self {
-        Self { tabs: vec![History::new(location)], ids: vec![0], next_id: 1, active: 0 }
+        Self {
+            tabs: vec![History::new(location)],
+            ids: vec![0],
+            next_id: 1,
+            active: 0,
+            locked: Vec::new(),
+            closed: Vec::new(),
+        }
     }
     fn new_id(&mut self) -> u64 {
         let id = self.next_id;
@@ -205,30 +231,87 @@ impl Tabs {
         }
         index
     }
-    /// Closes tab `index` (out of range: no-op). Closing the active tab activates its right
-    /// neighbour, or the left one if it was last.
+    /// Closes tab `index` (out of range: no-op; locked: `Locked`, nothing closes). Closing the
+    /// active tab activates its right neighbour, or the left one if it was last. The closed
+    /// tab goes on the list `reopen` takes from.
     pub fn close(&mut self, index: usize) -> Closed {
         if index >= self.tabs.len() {
             return Closed::Remaining;
         }
+        if self.is_locked(index) {
+            return Closed::Locked;
+        }
         if self.tabs.len() == 1 {
             return Closed::LastTab;
         }
-        self.tabs.remove(index);
-        self.ids.remove(index);
+        self.take_out(index);
         if index < self.active || (index == self.active && self.active == self.tabs.len()) {
             self.active -= 1;
         }
         Closed::Remaining
     }
-    pub fn close_others(&mut self, index: usize) {
+
+    /// Closes every tab but `index` and the locked ones; `index` becomes active. Returns how
+    /// many locked tabs stayed.
+    pub fn close_others(&mut self, index: usize) -> usize {
         if index >= self.tabs.len() {
-            return;
+            return 0;
         }
-        let keep = self.tabs.swap_remove(index);
-        self.tabs = vec![keep];
-        self.ids = vec![self.ids[index]];
-        self.active = 0;
+        let keep = self.ids[index];
+        let mut locked = 0;
+        // From the right, so that each tab's index is still the one it had.
+        for i in (0..self.tabs.len()).rev() {
+            if i == index {
+                continue;
+            }
+            if self.is_locked(i) {
+                locked += 1;
+            } else {
+                self.take_out(i);
+            }
+        }
+        self.active = self.index_of(keep).unwrap_or(0);
+        locked
+    }
+
+    /// Takes tab `index` out onto the closed list (the oldest is forgotten past `MAX_CLOSED`).
+    fn take_out(&mut self, index: usize) {
+        let history = self.tabs.remove(index);
+        self.ids.remove(index);
+        self.closed.push(ClosedTab { index, history });
+        if self.closed.len() > MAX_CLOSED {
+            self.closed.remove(0);
+        }
+    }
+
+    /// Opens the last closed tab again, with its history, where it was (at the end if there
+    /// are fewer tabs now), as the active tab. Returns its index; `None` if none is left.
+    pub fn reopen(&mut self) -> Option<usize> {
+        let ClosedTab { index, history } = self.closed.pop()?;
+        let index = index.min(self.tabs.len());
+        self.tabs.insert(index, history);
+        let id = self.new_id();
+        self.ids.insert(index, id);
+        self.active = index;
+        Some(index)
+    }
+
+    /// How many closed tabs `reopen` can bring back.
+    pub fn closed_count(&self) -> usize {
+        self.closed.len()
+    }
+
+    pub fn is_locked(&self, index: usize) -> bool {
+        self.id(index).is_some_and(|id| self.locked.contains(&id))
+    }
+
+    /// Locks or unlocks tab `index` (out of range: no-op). A locked tab does not close.
+    pub fn set_locked(&mut self, index: usize, locked: bool) {
+        let Some(id) = self.id(index) else { return };
+        self.locked.retain(|&l| l != id);
+        if locked {
+            self.locked.push(id);
+        }
     }
     /// Copies tab `index` (with its history) right after it. Returns the copy's index.
     pub fn duplicate(&mut self, index: usize) -> usize {
@@ -351,7 +434,7 @@ mod tests {
     }
 
     fn view(name: &str, scroll: f32) -> ViewState {
-        ViewState { selected: vec![name.to_owned()], focus: Some(name.to_owned()), scroll }
+        ViewState { selected: vec![name.to_owned()], focus: Some(name.to_owned()), scroll, filter: None }
     }
 
     // ---- Tab ids ----
@@ -723,5 +806,104 @@ mod tests {
     fn nearest_existing_ancestor_falls_back_to_drives() {
         assert_eq!(nearest_existing(&p("/gone/x"), |_| false), Location::Drives);
         assert_eq!(nearest_existing(&Location::Drives, |_| false), Location::Drives);
+    }
+
+    // ---- Closed tabs, locks, filter ----
+
+    #[test]
+    fn a_closed_tab_comes_back_where_it_was_with_its_history() {
+        let mut tabs = tabs_at(&["/a", "/b", "/c"]);
+        tabs.activate(1);
+        tabs.active_mut().navigate(p("/b/deeper"));
+        tabs.active_mut().set_view(ViewState { filter: Some("*.jpg".into()), ..view("x", -30.0) });
+        assert_eq!(tabs.close(1), Closed::Remaining);
+        assert_eq!(locations(&tabs), [p("/a"), p("/c")]);
+        assert_eq!(tabs.closed_count(), 1);
+        assert_eq!(tabs.reopen(), Some(1));
+        assert_eq!(locations(&tabs), [p("/a"), p("/b/deeper"), p("/c")]);
+        assert_eq!(tabs.active_index(), 1, "the reopened tab is active");
+        assert_eq!(tabs.active().view().filter.as_deref(), Some("*.jpg"));
+        assert!(tabs.active_mut().back());
+        assert_eq!(tabs.active().location(), &p("/b"));
+        assert_eq!(tabs.reopen(), None, "nothing more to reopen");
+    }
+
+    #[test]
+    fn the_closed_list_keeps_the_last_twenty() {
+        let mut tabs = Tabs::new(p("/0"));
+        for i in 1..=25 {
+            tabs.open(p(&format!("/{i}")), true);
+        }
+        for _ in 0..25 {
+            assert_eq!(tabs.close(1), Closed::Remaining);
+        }
+        assert_eq!(tabs.closed_count(), MAX_CLOSED);
+        assert_eq!(tabs.reopen(), Some(1));
+        assert_eq!(tabs.active().location(), &p("/25"), "the newest first");
+        for _ in 1..MAX_CLOSED {
+            assert!(tabs.reopen().is_some());
+        }
+        assert_eq!(tabs.reopen(), None, "/1-/5 were forgotten");
+        assert_eq!(tabs.len(), 21);
+    }
+
+    #[test]
+    fn a_locked_tab_stays_open() {
+        let mut tabs = tabs_at(&["/a", "/b", "/c", "/d"]);
+        tabs.set_locked(1, true);
+        assert!(tabs.is_locked(1) && !tabs.is_locked(0) && !tabs.is_locked(99));
+        assert_eq!(tabs.close(1), Closed::Locked);
+        assert_eq!((tabs.len(), tabs.closed_count()), (4, 0));
+        assert_eq!(tabs.close_others(2), 1, "one locked tab stayed");
+        assert_eq!(locations(&tabs), [p("/b"), p("/c")]);
+        assert_eq!(tabs.active().location(), &p("/c"), "the kept tab is active");
+        // The last tab, locked, does not close the window either.
+        tabs.close(1);
+        assert_eq!(tabs.close(0), Closed::Locked);
+        tabs.set_locked(0, false);
+        assert_eq!(tabs.close(0), Closed::LastTab);
+    }
+
+    #[test]
+    fn tabs_closed_together_come_back_in_their_places() {
+        let mut tabs = tabs_at(&["/a", "/b", "/c", "/d", "/e"]);
+        tabs.set_locked(3, true);
+        assert_eq!(tabs.close_others(1), 1);
+        assert_eq!(locations(&tabs), [p("/b"), p("/d")]);
+        assert_eq!(tabs.closed_count(), 3, "each closed tab is on the list");
+        while tabs.reopen().is_some() {}
+        assert_eq!(locations(&tabs), [p("/a"), p("/b"), p("/c"), p("/d"), p("/e")]);
+    }
+
+    #[test]
+    fn the_lock_follows_its_tab_and_a_copy_is_unlocked() {
+        let mut tabs = tabs_at(&["/a", "/b", "/c"]);
+        tabs.set_locked(0, true);
+        tabs.move_tab(0, 2);
+        assert!(tabs.is_locked(2) && !tabs.is_locked(0));
+        let copy = tabs.duplicate(2);
+        assert!(!tabs.is_locked(copy));
+        tabs.set_locked(2, false);
+        assert!(!tabs.is_locked(2));
+    }
+
+    #[test]
+    fn a_reopened_tab_whose_place_is_gone_goes_last() {
+        let mut tabs = tabs_at(&["/a", "/b"]);
+        tabs.closed.push(ClosedTab { index: 9, history: History::new(p("/z")) });
+        assert_eq!(tabs.reopen(), Some(2));
+        assert_eq!(locations(&tabs), [p("/a"), p("/b"), p("/z")]);
+        let new_id = tabs.id(2).unwrap();
+        assert!(tabs.id(0) != Some(new_id) && tabs.id(1) != Some(new_id), "a new id");
+    }
+
+    #[test]
+    fn each_place_keeps_its_filter_in_the_history() {
+        let mut h = History::new(p("/a"));
+        h.set_view(ViewState { filter: Some("jpg".into()), ..ViewState::default() });
+        h.navigate(p("/b"));
+        assert_eq!(h.view().filter, None, "a new place starts without one");
+        h.back();
+        assert_eq!(h.view().filter.as_deref(), Some("jpg"), "kept; the navigator decides whether to show it");
     }
 }

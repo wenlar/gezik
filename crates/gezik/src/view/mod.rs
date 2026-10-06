@@ -454,7 +454,7 @@ impl View {
         let selected =
             if data.selection.count() > max { Vec::new() } else { data.selection.iter().filter_map(name).collect() };
         let scroll = self.0.window.upgrade().map_or(0.0, |w| w.get_list_scroll());
-        ViewState { selected, focus: data.selection.focus().and_then(name), scroll }
+        ViewState { selected, focus: data.selection.focus().and_then(name), scroll, filter: None }
     }
 
     pub fn focus(&self) -> Option<usize> {
@@ -1117,7 +1117,7 @@ mod tests {
         let names: Vec<String> = (0..2000).map(|i| format!("f{i:04}")).collect();
         let refs: Vec<&str> = names.iter().map(String::as_str).collect();
         let listing = files("/x", &refs);
-        let state = ViewState { selected: names.clone(), focus: Some("f1500".into()), scroll: 0.0 };
+        let state = ViewState { selected: names.clone(), focus: Some("f1500".into()), scroll: 0.0, filter: None };
         let selection = restore_selection(&listing, &state);
         assert_eq!((selection.count(), selection.focus()), (2000, Some(1500)));
     }
@@ -1125,12 +1125,16 @@ mod tests {
     #[test]
     fn restore_selection_keeps_names_that_still_exist() {
         let listing = files("/x", &["a", "c", "d"]);
-        let state =
-            ViewState { selected: vec!["b".into(), "c".into(), "d".into()], focus: Some("b".into()), scroll: 0.0 };
+        let state = ViewState {
+            selected: vec!["b".into(), "c".into(), "d".into()],
+            focus: Some("b".into()),
+            scroll: 0.0,
+            filter: None,
+        };
         let selection = restore_selection(&listing, &state);
         assert_eq!(selection.iter().collect::<Vec<_>>(), [1, 2]);
         assert_eq!(selection.focus(), Some(1), "the focused entry is gone: first selected one");
-        let only_focus = ViewState { selected: vec![], focus: Some("d".into()), scroll: 0.0 };
+        let only_focus = ViewState { selected: vec![], focus: Some("d".into()), scroll: 0.0, filter: None };
         let selection = restore_selection(&listing, &only_focus);
         assert_eq!((selection.count(), selection.focus()), (0, Some(2)));
     }

@@ -23,6 +23,14 @@ use crate::{AppWindow, CrumbItem, TabItem};
 /// Address bar parts shown before older ones collapse into "…".
 const MAX_CRUMBS: usize = 4;
 
+/// The status line when a locked tab is asked to close.
+pub const LOCKED_TAB: &str = "This tab is locked";
+
+/// The status line when "close other tabs" left `n` locked tabs open.
+pub fn locked_kept_text(n: usize) -> String {
+    if n == 1 { "1 locked tab stays open".to_owned() } else { format!("{n} locked tabs stay open") }
+}
+
 /// How long letting go of a drive about to be removed may take before Windows tries it.
 const REMOVAL_GRACE: std::time::Duration = std::time::Duration::from_millis(150);
 /// After that, how often (and how many times) to look whether the drive went.
@@ -159,6 +167,7 @@ impl Navigator {
             selected: select.iter().cloned().collect(),
             focus: select,
             scroll: 0.0,
+            filter: None,
         });
         let tab_model = Rc::new(VecModel::default());
         window.set_tabs(ModelRc::from(tab_model.clone()));
@@ -334,6 +343,9 @@ impl Navigator {
     /// Closes tab `index`. Closing the last tab closes the window (state is saved as for
     /// any close request).
     pub fn close_tab(&self, index: usize) {
+        if self.0.borrow().tabs.is_locked(index) {
+            return self.status(LOCKED_TAB.to_owned());
+        }
         if index != self.0.borrow().tabs.active_index() {
             self.keep_active_tab(|tabs| tabs.close(index));
             return self.update_chrome();
@@ -349,6 +361,8 @@ impl Navigator {
                 }
             }
             Closed::Remaining => self.after_tabs_changed(),
+            // Caught above.
+            Closed::Locked => {}
         }
     }
 
@@ -384,12 +398,19 @@ impl Navigator {
     }
 
     pub fn close_other_tabs(&self, index: usize) {
-        if index == self.0.borrow().tabs.active_index() {
-            self.keep_active_tab(|tabs| tabs.close_others(index));
+        let locked = if index == self.0.borrow().tabs.active_index() {
+            let locked = self.keep_active_tab(|tabs| tabs.close_others(index));
             self.update_chrome();
+            locked
         } else if index < self.0.borrow().tabs.len() {
-            self.with_tabs(|tabs| tabs.close_others(index));
+            let locked = self.with_tabs(|tabs| tabs.close_others(index));
             self.after_tabs_changed();
+            locked
+        } else {
+            0
+        };
+        if locked > 0 {
+            self.status(locked_kept_text(locked));
         }
     }
 
@@ -941,5 +962,11 @@ mod tests {
         for mode in moves() {
             assert!(listing_after_failure(&mode, &place).is_none(), "{mode:?}");
         }
+    }
+
+    #[test]
+    fn locked_tabs_are_counted_in_words() {
+        assert_eq!(locked_kept_text(1), "1 locked tab stays open");
+        assert_eq!(locked_kept_text(3), "3 locked tabs stay open");
     }
 }
