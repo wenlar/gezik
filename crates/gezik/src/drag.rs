@@ -154,6 +154,14 @@ fn window_drives(grab_lost: bool, phase: &Phase) -> Option<Keys> {
     }
 }
 
+/// Whether the release that dropped a window-driven drag stops there. A left one goes on to
+/// Slint (whose grab points at an entry that is gone; nothing acts on a left release without
+/// its press). A right one would open the menu of the background, tab or sidebar row under
+/// the pointer as well as the drop's own.
+fn swallows_release(dropped: bool, right: bool) -> bool {
+    dropped && right
+}
+
 /// The address bar parts' places Slint reported, kept only where the part still shows the
 /// label it had then (right after a navigation, the old places would point at new parts).
 fn current_spans(stored: &[(String, f32, f32)], labels: &[String]) -> Vec<(f32, f32)> {
@@ -304,21 +312,14 @@ impl Drags {
 
     /// A button came up, as the window saw it: drops a drag whose pointer grab was lost to a
     /// tab switch (nothing else in the window would), inside the window or outside it.
-    /// Returns whether it did. The event may still go on to Slint: a release that reaches an
-    /// entry then is no click (`Phase::Ended`).
+    /// Returns whether Slint must not see the release too (`swallows_release`).
     pub fn window_released(&self, x: f32, y: f32, right: bool) -> bool {
         if window_drives(self.0.grab_lost.get(), &self.0.phase.borrow()).is_none() {
             return false;
         }
         let used = self.up(x, y, right);
         self.0.grab_lost.set(false);
-        if used {
-            let mut phase = self.0.phase.borrow_mut();
-            if matches!(*phase, Phase::Idle) {
-                *phase = Phase::Ended;
-            }
-        }
-        used
+        swallows_release(used, right)
     }
 
     /// Esc: drops nothing. Returns whether a drag was cancelled.
@@ -1028,6 +1029,14 @@ mod tests {
         assert_eq!(window_drives(true, &Phase::Offer(dragging())), None);
         assert_eq!(window_drives(true, &Phase::Idle), None);
         assert_eq!(window_drives(true, &Phase::Ended), None);
+    }
+
+    #[test]
+    fn only_a_right_release_that_dropped_stops_before_slint() {
+        assert!(swallows_release(true, true));
+        assert!(!swallows_release(true, false));
+        assert!(!swallows_release(false, true));
+        assert!(!swallows_release(false, false));
     }
 
     #[test]
