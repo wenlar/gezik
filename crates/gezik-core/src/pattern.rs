@@ -4,8 +4,9 @@
 //! starting with `!` leaves out what it matches. A part without `*` or `?` matches anywhere in
 //! the name; with them it must match the whole name (`*.jpg`: only names ending in `.jpg`).
 //! `[` and `]` are plain characters. A name passes if it matches an including part (or there
-//! is none) and no leaving-out part. Case is ignored, and so is the Turkish i/İ/ı/I. A
-//! pattern is compiled once; matching a name allocates nothing.
+//! is none) and no leaving-out part. Case is ignored, character by character (simple folding:
+//! no `ß` = `ss`), and so is the Turkish i/İ/ı/I and the Greek final ς/σ. A pattern is compiled
+//! once; matching a name allocates nothing.
 
 use crate::Entry;
 
@@ -111,10 +112,12 @@ fn tokens(body: &str) -> Vec<Token> {
     out
 }
 
-/// A character as compared: lower case, with i, İ, ı and I all one letter.
+/// A character as compared: lower case, with i, İ, ı and I all one letter, and the Greek
+/// final ς one with σ.
 fn fold(c: char) -> char {
     match c {
         'I' | 'İ' | 'ı' => 'i',
+        'ς' => 'σ',
         c if c.is_ascii() => c.to_ascii_lowercase(),
         c => c.to_lowercase().next().unwrap_or(c),
     }
@@ -233,6 +236,27 @@ mod tests {
         assert!(m("ŞEHİR", "şehir.png") && m("şehir", "ŞEHİR.png"));
         assert!(m("*.JPG", "a.jpg") && m("*.jpg", "B.JPG"));
         assert!(m("ğüöç", "ĞÜÖÇ"));
+        assert!(m("ΟΔΟΣ", "οδος.txt") && m("οδοσ", "ΟΔΟΣ") && m("*σ.txt", "οδος.txt"), "final sigma");
+    }
+
+    #[test]
+    fn a_question_mark_takes_one_whole_character() {
+        assert!(m("a?c", "aşc") && m("a?c", "a€c") && m("a?c", "a😀c"), "two, three and four bytes");
+        assert!(!m("a?c", "aşşc") && !m("a??c", "aşc"));
+        assert!(m("??", "şğ") && !m("???", "şğ"));
+        assert!(m("*?", "ğ") && m("?*", "ğ") && !m("?", ""));
+    }
+
+    #[test]
+    fn an_adversarial_glob_stays_linear_enough() {
+        // Many stars against a long run that almost matches: the classic matcher backs up to
+        // the last star only, so this is quick, not exponential.
+        let name = "a".repeat(20_000);
+        let started = Instant::now();
+        assert!(!m("*a*a*a*a*a*a*a*a*a*a*b", &name));
+        assert!(m("*a*a*a*a*a*a*a*a*a*a", &name));
+        assert!(!m(&format!("{}b", "*a".repeat(50)), &name));
+        assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
     }
 
     #[test]
