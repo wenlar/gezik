@@ -536,6 +536,12 @@ fn string_list(value: &toml::Value, key: &str) -> Result<Vec<String>, String> {
 /// One `[[commands]]` entry; the error is the reason it is left out.
 fn parse_command(value: &toml::Value) -> Result<CommandSpec, String> {
     let table = value.as_table().ok_or_else(|| format!("expected a table, got {value}"))?;
+    // A misspelt key would be passed over and widen what the command runs on (`type` for
+    // `types`: every file): the command is left out instead.
+    const KEYS: [&str; 6] = ["name", "run", "output", "types", "folders", "parallel"];
+    if let Some(key) = table.keys().find(|key| !KEYS.contains(&key.as_str())) {
+        return Err(format!("unknown key \"{key}\" (known: {})", KEYS.join(", ")));
+    }
     let name = match table.get("name") {
         None => return Err("name is missing".to_owned()),
         Some(v) => v.as_str().filter(|n| !n.trim().is_empty()).ok_or("name must be text that is not empty")?,
@@ -555,6 +561,20 @@ fn parse_command(value: &toml::Value) -> Result<CommandSpec, String> {
         None => Vec::new(),
         Some(v) => string_list(v, "types")?,
     };
+    // Endings without the dot ("jpg"; a leading dot is dropped, "tar.gz" is fine). A pattern
+    // or a path would never match: the command is left out rather than shown for nothing.
+    let types = types
+        .iter()
+        .map(|t| {
+            let t = t.trim();
+            let t = t.strip_prefix('.').unwrap_or(t);
+            if t.is_empty() || t.contains(['*', '?', '/', '\\']) {
+                Err(format!("types: \"{t}\" is not a file ending (write \"jpg\", no * or ?)"))
+            } else {
+                Ok(t.to_owned())
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let folders = match table.get("folders") {
         None => false,
         Some(v) => v.as_bool().ok_or_else(|| format!("folders must be true or false, got {v}"))?,
@@ -1220,6 +1240,11 @@ rules = []
             ("name = \"A\"\nrun = [\"x\", \"{nope}\"]", "unknown placeholder"),
             ("name = \"A\"\nrun = [\"x\", \"{out}\"]", "{out} needs an output"),
             ("name = \"A\"\nrun = [\"x\"]\noutput = \"a/b\"", "file name"),
+            ("name = \"A\"\nrun = [\"x\"]\ntype = [\"jpg\"]", "unknown key \"type\""),
+            ("name = \"A\"\nrun = [\"x\"]\nparalel = 2", "unknown key \"paralel\""),
+            ("name = \"A\"\nrun = [\"x\"]\ntypes = [\"*.jpg\"]", "types: \"*.jpg\""),
+            ("name = \"A\"\nrun = [\"x\"]\ntypes = [\"jpg\", \"photos/x\"]", "is not a file ending"),
+            ("name = \"A\"\nrun = [\"x\"]\ntypes = [\".\"]", "is not a file ending"),
         ];
         for (body, expected) in bad {
             let (settings, warnings) = parse(&format!("[[commands]]\n{body}\n"));
@@ -1239,6 +1264,29 @@ rules = []
         let template = include_str!("../templates/settings.toml");
         assert!(template.contains("\"{{\" and \"}}\""));
         assert!(template.contains("--outdir") && template.contains("ebook-convert") && template.contains("magick"));
+    }
+
+    #[test]
+    fn the_template_command_examples_read_without_warnings_once_uncommented() {
+        let template = include_str!("../templates/settings.toml");
+        let start = template.find("# [[commands]]").expect("the template has command examples");
+        let examples: String = template[start..]
+            .lines()
+            .take_while(|line| line.starts_with('#'))
+            .map(|line| line.strip_prefix("# ").or_else(|| line.strip_prefix('#')).unwrap_or(line))
+            .map(|line| format!("{line}\n"))
+            .collect();
+        let (settings, warnings) = parse(&examples);
+        assert!(warnings.is_empty(), "{warnings:?}\n{examples}");
+        let names: Vec<&str> = settings.commands.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["Resize to 50% (ImageMagick)", "Office to PDF (LibreOffice)", "E-book to EPUB (Calibre)"]);
+    }
+
+    #[test]
+    fn a_leading_dot_in_types_is_dropped() {
+        let (settings, warnings) = parse("[[commands]]\nname = \"A\"\nrun = [\"x\"]\ntypes = [\".JPG\", \"tar.gz\"]\n");
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(settings.commands[0].types, ["JPG", "tar.gz"]);
     }
 
     #[test]

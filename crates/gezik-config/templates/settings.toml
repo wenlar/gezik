@@ -103,9 +103,11 @@ seven-zip = ""            # path to 7-Zip; empty = Gezik's download, then PATH
 # its output itself). "output" is the output's file name ({name} and {ext} only): once the
 # command ends, Gezik moves the file of that name from the temporary folder to its place.
 # Without "output" the command changes the file in place and Gezik first keeps a copy in the
-# recycle bin so Undo works. Also: folders = true (run on folders too),
-# parallel = 1-16 (how many run at once, default 1). The program is looked up in PATH or
-# given as a full path. A command that is not valid is reported and left out.
+# recycle bin so Undo works. "types" lists file endings without the dot ("jpg", "tar.gz";
+# a leading dot is ignored, * and ? are not allowed); without it the command shows for every
+# file. Also: folders = true (run on folders too), parallel = 1-16 (how many run at once,
+# default 1). The program is looked up in PATH or given as a full path. A command that is
+# not valid, or has a key not named here (a typo), is reported and left out.
 # [[commands]]
 # name = "Resize to 50% (ImageMagick)"
 # run = ["magick", "{in}", "-resize", "50%", "{out}"]
