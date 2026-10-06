@@ -154,6 +154,17 @@ impl Selection {
         })
     }
 
+    /// Becomes `new` (selection, focus and anchor); returns only the rows whose selection or
+    /// focus changed (all of them if the length differs).
+    pub fn replace(&mut self, new: Selection) -> Vec<Range<usize>> {
+        if new.len != self.len {
+            let len = self.len.max(new.len);
+            *self = new;
+            return std::iter::once(0..len).filter(|r| !r.is_empty()).collect();
+        }
+        self.change(|s| *s = new)
+    }
+
     /// Ctrl+arrow: moves the focus only.
     pub fn set_focus(&mut self, i: usize) -> Vec<Range<usize>> {
         if i >= self.len {
@@ -383,6 +394,18 @@ mod tests {
         s.extend_to(2, false);
         assert_eq!(selected(&s), [2]);
         assert_eq!(s.anchor(), Some(2));
+    }
+
+    #[test]
+    fn replacing_reports_only_the_rows_that_changed() {
+        let mut s = Selection::from_indices(200, [3, 4, 150], Some(3));
+        let rows = s.replace(Selection::from_indices(200, [4, 150, 151], Some(4)));
+        assert_eq!(rows, [3..5, 151..152], "3 off and its focus moved to 4; 151 on");
+        assert_eq!((s.count(), s.focus(), s.anchor()), (3, Some(4), Some(4)));
+        assert!(s.replace(s.clone()).is_empty(), "the same: nothing");
+        let rows = s.replace(Selection::from_indices(10, [1], None));
+        assert_eq!(rows, [0..200], "another length: everything");
+        assert_eq!(s.len(), 10);
     }
 
     #[test]

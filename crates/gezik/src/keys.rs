@@ -321,7 +321,6 @@ impl Default for TypeAhead {
 }
 
 /// File operation shortcuts: never while typing in the address bar or the filter bar.
-/// Select-same-type too: its Alt+keypad + is a character typed with Alt on Windows.
 pub fn acts_on_files(action: Action) -> bool {
     matches!(
         action,
@@ -337,8 +336,26 @@ pub fn acts_on_files(action: Action) -> bool {
             | Action::Undo
             | Action::Redo
             | Action::BatchRename
-            | Action::SelectSameType
     )
+}
+
+/// The selection's shortcuts (invert, by pattern, same type, restore): they act on the list,
+/// not on the text being typed (Alt+keypad + is a character on Windows).
+pub fn acts_on_selection(action: Action) -> bool {
+    matches!(
+        action,
+        Action::InvertSelection
+            | Action::SelectPattern
+            | Action::DeselectPattern
+            | Action::SelectSameType
+            | Action::RestoreSelection
+    )
+}
+
+/// Shortcuts left to the path box and the filter bar while either has the keyboard: the
+/// file operations and the selection's. (A dialog has the keyboard to itself anyway.)
+pub fn waits_for_text_fields(action: Action) -> bool {
+    acts_on_files(action) || acts_on_selection(action)
 }
 
 /// Those that act on the selection: only while the file list has the keyboard.
@@ -367,9 +384,19 @@ mod tests {
     }
 
     #[test]
-    fn select_same_type_waits_while_a_text_field_has_the_keyboard() {
-        assert!(acts_on_files(Action::SelectSameType), "the path box and the filter bar keep Alt+num+");
-        assert!(!needs_list(Action::SelectSameType), "the list need not have the keyboard otherwise");
+    fn selection_keys_wait_while_a_text_field_has_the_keyboard() {
+        for action in [
+            Action::InvertSelection,
+            Action::SelectPattern,
+            Action::DeselectPattern,
+            Action::SelectSameType,
+            Action::RestoreSelection,
+        ] {
+            assert!(waits_for_text_fields(action), "{action:?}: the path box and the filter bar keep it");
+            assert!(!needs_list(action), "{action:?}: the list need not have the keyboard otherwise");
+        }
+        assert!(waits_for_text_fields(Action::Paste), "file operations too");
+        assert!(!waits_for_text_fields(Action::Filter) && !waits_for_text_fields(Action::NextTab));
     }
 
     #[test]

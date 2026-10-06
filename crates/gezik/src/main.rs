@@ -176,7 +176,7 @@ fn handle_key(
         let ordinary_key = action == Action::QuickLook
             && (!window.get_list_focused() || type_ahead.is_active(std::time::Instant::now()));
         if !ordinary_key {
-            if keys::acts_on_files(action)
+            if keys::waits_for_text_fields(action)
                 && (editing || filtering || (keys::needs_list(action) && !window.get_list_focused()))
             {
                 return false;

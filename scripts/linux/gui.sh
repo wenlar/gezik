@@ -699,8 +699,9 @@ filter() {
 }
 
 # 6a's selection tools: the pattern box (Ctrl+= and the keypad's -) with its live count,
-# select and deselect, invert (Ctrl+Shift+I), the same type (Alt+keypad +, not while the filter
-# bar has the keyboard), the selection back (keypad /) after a delete and after a copy, and
+# select and deselect, invert (Ctrl+Shift+I), the same type (Alt+keypad +), none of them while
+# the path box or the filter bar has the keyboard, the selection back (keypad /) after a
+# delete, a copy in the folder and a Ctrl+C here pasted elsewhere, and
 # the last pattern kept in state.toml over a restart. What is selected is seen by Delete
 # (what lands in the trash), then Ctrl+Z. X11, 900x600.
 selection() {
@@ -777,6 +778,28 @@ selection() {
     key Down Delete; sleep 1.5
     check "select: Alt+keypad + does nothing while the filter bar has the keyboard"         'trashed a.jpg && here b.JPG'
     undo; key Escape; sleep 0.5
+
+    # The other selection keys wait too: Ctrl+Shift+I from the path box and the filter bar.
+    click 255 248; key ctrl+l; sleep 0.3; key ctrl+shift+i; sleep 0.3; key Escape; sleep 0.3
+    key Delete; sleep 1.5
+    check "select: Ctrl+Shift+I does nothing while the path box has the keyboard"         'trashed d.txt && here e.txt && here a.jpg'
+    undo
+    click 255 170; key ctrl+f; sleep 0.3; typ 'jpg;'; key ctrl+shift+i; sleep 0.3
+    key Down Delete; sleep 1.5
+    check "select: Ctrl+Shift+I does nothing while the filter bar has the keyboard"         'trashed a.jpg && here b.JPG'
+    undo; key Escape; sleep 0.5
+
+    # Ctrl+C here, Ctrl+V in sub (then Ctrl+Z there, which must not count), back, the
+    # selection cleared, keypad /: this folder's selection at the copy.
+    click 255 170; xdotool keydown ctrl; click 255 222; xdotool keyup ctrl
+    key ctrl+c; dclick 255 144; sleep 0.5; key ctrl+v; sleep 1.5
+    check "select: the copy into sub lands" '[ -f /tmp/s/sub/a.jpg ] && [ -f /tmp/s/sub/c.png ]'
+    key ctrl+z; sleep 1.5
+    check "select: Ctrl+Z takes it back" '[ ! -e /tmp/s/sub/a.jpg ] && [ ! -e /tmp/s/sub/c.png ]'
+    key alt+Left; sleep 1; key Escape KP_Divide; sleep 0.5; shot select-restored-cross
+    key Delete; sleep 1.5
+    check "select: keypad / brings back the selection copied from here and pasted elsewhere"         'trashed a.jpg && trashed c.png && here b.JPG && here d.txt && here e.txt'
+    undo
 
     # After a copy: pasted into the same folder (the copies are new names), the selection
     # cleared, keypad /.

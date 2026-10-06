@@ -739,14 +739,13 @@ impl View {
 
     /// Selected entries become unselected and the others selected; the focus stays.
     pub fn invert_selection(&self) {
-        let changes = self.0.data.borrow_mut().selection.invert();
+        let changes = invert_in(&mut self.0.data.borrow_mut().selection);
         self.after_selection(&changes);
     }
 
     /// How many entries shown (the filter's hidden ones not) have names `pattern` matches.
     pub fn count_matching(&self, pattern: &Pattern) -> usize {
-        let data = self.0.data.borrow();
-        (0..data.listing.len()).filter(|&i| data.listing.name_at(i).is_some_and(|n| pattern.matches(n))).count()
+        count_matching_in(&self.0.data.borrow().listing, pattern)
     }
 
     /// Selects (`on`) or unselects the entries shown whose names `pattern` matches; the others
@@ -755,7 +754,7 @@ impl View {
         let changes = {
             let mut data = self.0.data.borrow_mut();
             let ViewData { listing, selection, .. } = &mut *data;
-            selection.set_where(on, |i| listing.name_at(i).is_some_and(|n| pattern.matches(n)))
+            select_matching_in(listing, selection, pattern, on)
         };
         self.after_selection(&changes);
     }
@@ -786,25 +785,22 @@ impl View {
     }
 
     /// Selects again what `remember_selection` kept, if its folder is shown: the names still
-    /// shown, focused on the first. Elsewhere nothing.
+    /// shown, focused on the first. Elsewhere, or if none of them shows any more (renamed,
+    /// deleted, filtered out), the selection stays as it is.
     pub fn restore_remembered(&self) {
-        let (changes, focus) = {
+        let changes = {
             let remembered = self.0.remembered.borrow();
             let Some((folder, names)) = remembered.as_ref() else { return };
             let mut data = self.0.data.borrow_mut();
             if !data.listing.folder().is_some_and(|f| gezik_core::ops::paths::same_path(f, folder)) {
                 return;
             }
-            let len = data.listing.len();
-            let indices = data.listing.indices_of(names);
-            // None of them shows any more: the focus stays where it is.
-            let focus = indices.first().copied().or(data.selection.focus());
-            data.selection = Selection::from_indices(len, indices, focus);
-            let changes: Vec<Range<usize>> = std::iter::once(0..len).filter(|r| !r.is_empty()).collect();
-            (changes, focus)
+            let ViewData { listing, selection, .. } = &mut *data;
+            let Some(changes) = restore_in(listing, selection, names) else { return };
+            changes
         };
         self.after_selection(&changes);
-        if let Some(focus) = focus {
+        if let Some(focus) = self.focus() {
             self.reveal(focus);
         }
     }
@@ -1362,6 +1358,30 @@ fn restore_selection(listing: &Listing, state: &ViewState) -> Selection {
     Selection::from_indices(listing.len(), indices, focus)
 }
 
+/// Every entry flips; the rows that changed (all of them).
+fn invert_in(selection: &mut Selection) -> Vec<Range<usize>> {
+    selection.invert()
+}
+
+/// How many entries of `listing` have names `pattern` matches. No allocation per name.
+fn count_matching_in(listing: &Listing, pattern: &Pattern) -> usize {
+    (0..listing.len()).filter(|&i| listing.name_at(i).is_some_and(|n| pattern.matches(n))).count()
+}
+
+/// Selects (`on`) or unselects the entries of `listing` whose names `pattern` matches; the
+/// rows that changed.
+fn select_matching_in(listing: &Listing, selection: &mut Selection, pattern: &Pattern, on: bool) -> Vec<Range<usize>> {
+    selection.set_where(on, |i| listing.name_at(i).is_some_and(|n| pattern.matches(n)))
+}
+
+/// Only `names` (those `listing` shows) selected, focused on the first; the rows that changed.
+/// `None`, the selection untouched, if none of them shows.
+fn restore_in(listing: &Listing, selection: &mut Selection, names: &[String]) -> Option<Vec<Range<usize>>> {
+    let indices = listing.indices_of(names);
+    let first = *indices.first()?;
+    Some(selection.replace(Selection::from_indices(listing.len(), indices, Some(first))))
+}
+
 /// After the filter changed: what was selected and still shows stays selected; the focus is
 /// on the first entry shown.
 fn selection_after_filter(listing: &Listing, selected: &[String]) -> Selection {
@@ -1405,6 +1425,67 @@ pub fn status_text(count: usize, selected: usize, selected_size: Option<u64>) ->
 mod tests {
     use super::*;
     use listing::files;
+
+    #[test]
+    #[allow(clippy::single_range_in_vec_init, reason = "one changed range of entries")]
+    fn select_matching_adds_or_takes_away_only_the_shown_matches() {
+        let listing = files("/x", &["sub/", "a.jpg", "b.JPG", "c.png", "d.txt"]);
+        let jpg = Pattern::compile("*.jpg").unwrap();
+        assert_eq!(count_matching_in(&listing, &jpg), 2);
+        assert_eq!(count_matching_in(&listing, &Pattern::default()), 5, "empty: everything shown");
+        let mut selection = Selection::from_indices(5, [3], Some(3));
+        let rows = select_matching_in(&listing, &mut selection, &jpg, true);
+        assert_eq!(rows, [1..3], "only the rows that changed");
+        assert_eq!(selection.iter().collect::<Vec<_>>(), [1, 2, 3]);
+        assert_eq!(selection.focus(), Some(3), "the focus stays");
+        let rows = select_matching_in(&listing, &mut selection, &Pattern::compile("a*").unwrap(), false);
+        assert_eq!(rows, [1..2]);
+        assert_eq!(selection.iter().collect::<Vec<_>>(), [2, 3]);
+        assert!(select_matching_in(&listing, &mut selection, &jpg, true).len() == 1, "b.JPG was on already");
+    }
+
+    #[test]
+    #[allow(clippy::single_range_in_vec_init, reason = "one changed range of entries")]
+    fn invert_selection_flips_every_shown_entry() {
+        let mut selection = Selection::from_indices(4, [0, 2], Some(2));
+        assert_eq!(invert_in(&mut selection), [0..4]);
+        assert_eq!(selection.iter().collect::<Vec<_>>(), [1, 3]);
+        assert_eq!(selection.focus(), Some(2));
+        assert!(invert_in(&mut Selection::new(0)).is_empty(), "nothing shown");
+    }
+
+    #[test]
+    fn restoring_pushes_only_what_changed_and_keeps_the_selection_if_nothing_shows() {
+        let names: Vec<String> = (0..1000).map(|i| format!("f{i:04}")).collect();
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        let listing = files("/x", &refs);
+        let mut selection = Selection::from_indices(1000, [500], Some(500));
+        let rows = restore_in(&listing, &mut selection, &["f0010".into(), "f0011".into(), "gone".into()]);
+        assert_eq!(rows, Some(vec![10..12, 500..501]), "not the whole listing");
+        assert_eq!(selection.iter().collect::<Vec<_>>(), [10, 11]);
+        assert_eq!(selection.focus(), Some(10), "on the first");
+        let before = selection.clone();
+        assert_eq!(restore_in(&listing, &mut selection, &["renamed".into()]), None);
+        assert_eq!(selection, before, "none of them shows: unchanged");
+    }
+
+    /// `count_matching` runs on every key typed in the pattern box: Task 1's budget for the
+    /// matcher (15 ms for 100,000 names), as counting adds nothing per name. Measured 4-10 ms.
+    /// Run: `cargo test --release -p gezik count_matching -- --ignored`.
+    #[test]
+    #[ignore = "timing; run in release with --ignored"]
+    fn count_matching_a_hundred_thousand_names_within_budget() {
+        let names: Vec<String> = (0..100_000).map(|i| format!("IMG_{i:06} Tatil ş{}.jpg", i % 7)).collect();
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        let listing = files("/x", &refs);
+        for text in ["i", "img_0", "*.jpg;*.png", "tatil;!*ş3.jpg", "zzz"] {
+            let pattern = Pattern::compile(text).unwrap();
+            let started = std::time::Instant::now();
+            let n = count_matching_in(&listing, &pattern);
+            let took = started.elapsed();
+            assert!(took < Duration::from_millis(15), "{text}: {took:?} ({n} match)");
+        }
+    }
 
     #[test]
     fn a_bad_filter_keeps_the_last_good_pattern() {

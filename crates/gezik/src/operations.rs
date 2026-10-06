@@ -650,6 +650,8 @@ impl Operations {
         if self.0.view.shows_drives() {
             return;
         }
+        // Pasted elsewhere, keypad / brings this selection back here.
+        self.0.view.remember_selection();
         self.copy_paths(self.0.view.selected_paths(), cut);
     }
 
