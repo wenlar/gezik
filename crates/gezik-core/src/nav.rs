@@ -425,6 +425,68 @@ pub fn nearest_existing(location: &Location, exists: impl Fn(&Path) -> bool) -> 
     }
 }
 
+/// The text typed into the address bar with `~` and environment variables put in (spec 6.1):
+/// `~` alone or followed by a separator is `home`; on Windows `%NAME%`, elsewhere `$NAME` and
+/// `${NAME}`. A variable `var` does not know stays as typed, and so does `~name`.
+pub fn expand_typed(text: &str, home: &Path, var: impl Fn(&str) -> Option<String>, windows: bool) -> String {
+    let separators: &[char] = if windows { &['/', '\\'] } else { &['/'] };
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    if let Some(after) = text.strip_prefix('~')
+        && (after.is_empty() || after.starts_with(separators))
+    {
+        out.push_str(&home.to_string_lossy());
+        rest = after;
+    }
+    if windows {
+        while let Some(start) = rest.find('%') {
+            out.push_str(&rest[..start]);
+            let after = &rest[start + 1..];
+            let found = after.find('%').filter(|end| *end > 0).and_then(|end| Some((end, var(&after[..end])?)));
+            match found {
+                Some((end, value)) => {
+                    out.push_str(&value);
+                    rest = &after[end + 1..];
+                }
+                None => {
+                    out.push('%');
+                    rest = after;
+                }
+            }
+        }
+    } else {
+        while let Some(start) = rest.find('$') {
+            out.push_str(&rest[..start]);
+            let after = &rest[start + 1..];
+            let (name, used) = match after.strip_prefix('{') {
+                Some(braced) => match braced.find('}') {
+                    Some(end) => (&braced[..end], end + 2),
+                    None => ("", 0),
+                },
+                None => {
+                    let len = after.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).unwrap_or(after.len());
+                    (&after[..len], len)
+                }
+            };
+            let valid = !name.is_empty()
+                && !name.starts_with(|c: char| c.is_ascii_digit())
+                && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+            match valid.then(|| var(name)).flatten() {
+                Some(value) => {
+                    out.push_str(&value);
+                    rest = &after[used..];
+                }
+                None => {
+                    out.push('$');
+                    rest = after;
+                }
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -905,5 +967,49 @@ mod tests {
         assert_eq!(h.view().filter, None, "a new place starts without one");
         h.back();
         assert_eq!(h.view().filter.as_deref(), Some("jpg"), "kept; the navigator decides whether to show it");
+    }
+
+    #[test]
+    fn a_tilde_at_the_start_is_home() {
+        let home = Path::new("/home/ali");
+        let none = |_: &str| None;
+        assert_eq!(expand_typed("~", home, none, false), "/home/ali");
+        assert_eq!(expand_typed("~/Projeler", home, none, false), "/home/ali/Projeler");
+        assert_eq!(expand_typed("~veli/x", home, none, false), "~veli/x", "another user's ~ stays");
+        assert_eq!(expand_typed("/srv/~/x", home, none, false), "/srv/~/x", "only at the start");
+        assert_eq!(expand_typed(r"~\Belgeler", Path::new(r"C:\Users\ali"), none, true), r"C:\Users\ali\Belgeler");
+        assert_eq!(expand_typed(r"~\x", home, none, false), r"~\x", "a backslash is no separator on Unix");
+    }
+
+    #[test]
+    fn windows_variables_are_between_percent_signs() {
+        let var = |name: &str| match name {
+            "USERPROFILE" => Some(r"C:\Users\ali".to_owned()),
+            "A" => Some("1".to_owned()),
+            _ => None,
+        };
+        let home = Path::new(r"C:\Users\ali");
+        assert_eq!(expand_typed(r"%USERPROFILE%\Desktop", home, var, true), r"C:\Users\ali\Desktop");
+        assert_eq!(expand_typed("%A%%A%", home, var, true), "11");
+        assert_eq!(expand_typed(r"%NOPE%\x", home, var, true), r"%NOPE%\x");
+        assert_eq!(expand_typed("100%", home, var, true), "100%");
+        assert_eq!(expand_typed("%%", home, var, true), "%%");
+        assert_eq!(expand_typed("$A", home, var, true), "$A", "no $ on Windows");
+    }
+
+    #[test]
+    fn unix_variables_start_with_a_dollar() {
+        let var = |name: &str| match name {
+            "HOME" => Some("/home/ali".to_owned()),
+            "X_1" => Some("x".to_owned()),
+            _ => None,
+        };
+        let home = Path::new("/home/ali");
+        assert_eq!(expand_typed("$HOME/Belgeler", home, var, false), "/home/ali/Belgeler");
+        assert_eq!(expand_typed("${HOME}x", home, var, false), "/home/alix");
+        assert_eq!(expand_typed("/a/$X_1-b", home, var, false), "/a/x-b");
+        assert_eq!(expand_typed("$NOPE/x ${NOPE}", home, var, false), "$NOPE/x ${NOPE}");
+        assert_eq!(expand_typed("a$ $1 ${HOME", home, var, false), "a$ $1 ${HOME");
+        assert_eq!(expand_typed("%HOME%", home, var, false), "%HOME%", "no % on Unix");
     }
 }
