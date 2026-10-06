@@ -328,6 +328,7 @@ impl View {
         };
         let selection = restore_selection(&listing, state);
         let count = listing.len();
+        let count_before = self.0.data.borrow().listing.len();
         {
             let mut data = self.0.data.borrow_mut();
             data.listing = listing;
@@ -354,11 +355,8 @@ impl View {
         self.0.model.notify.reset();
         let shown = self.0.shown.get() + 1;
         self.0.shown.set(shown);
-        // A reload of the folder on screen (the watcher, right after an operation) leaves a note
-        // standing ("2 items hidden by the filter"): it goes when the selection changes.
-        if note.is_some() || !live {
-            *self.0.note.borrow_mut() = note;
-        }
+        let kept = self.0.note.borrow_mut().take();
+        *self.0.note.borrow_mut() = note_after_show(kept, note, live, count != count_before);
         let Some(window) = self.0.window.upgrade() else { return };
         self.sync_focus(&window);
         self.sync_filter_bar(&window);
@@ -1438,6 +1436,15 @@ fn sources_in(folder: Option<&Path>, sources: &[PathBuf]) -> bool {
         && sources.iter().all(|s| s.parent().is_some_and(|parent| gezik_core::ops::paths::same_path(parent, folder)))
 }
 
+/// The status bar's note after a listing is shown: the new one if any. A reload of the folder
+/// on screen (the watcher, right after an operation) leaves the standing note ("2 items hidden
+/// by the filter", "Nothing to undo") only while the item count stays as it was, so a changed
+/// count is not hidden; any note also goes at the next selection change. Another folder or
+/// tab starts without one.
+fn note_after_show(standing: Option<String>, new: Option<String>, live: bool, count_changed: bool) -> Option<String> {
+    new.or(standing.filter(|_| live && !count_changed))
+}
+
 /// How many of `names` `pattern` hides (none without a filter). No allocation per name.
 fn hidden_count(pattern: Option<&Pattern>, names: &[String]) -> usize {
     pattern.map_or(0, |pattern| names.iter().filter(|name| !pattern.matches(name)).count())
@@ -1569,6 +1576,17 @@ mod tests {
         assert!(!sources_in(Some(a), &[PathBuf::from("/a/sub/deeper.txt")]), "in a subfolder");
         assert!(!sources_in(Some(a), &[]), "new folder: no sources");
         assert!(!sources_in(None, &in_a), "This PC");
+    }
+
+    #[test]
+    fn a_standing_note_survives_a_reload_only_while_the_count_stays() {
+        let note = || Some("Nothing to undo".to_owned());
+        assert_eq!(note_after_show(note(), None, true, false), note(), "a reload, same count");
+        assert_eq!(note_after_show(note(), None, true, true), None, "a reload that changed the count");
+        assert_eq!(note_after_show(note(), None, false, false), None, "another folder");
+        let hidden = Some("2 items hidden by the filter".to_owned());
+        assert_eq!(note_after_show(note(), hidden.clone(), true, true), hidden, "the job's own note");
+        assert_eq!(note_after_show(None, None, true, false), None);
     }
 
     #[test]
