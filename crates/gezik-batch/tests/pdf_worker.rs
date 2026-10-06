@@ -205,6 +205,65 @@ fn a_bad_request_is_refused_before_pdfium_loads() {
     assert_eq!(String::from_utf8(out).unwrap(), "failed\t-\tother\tbad request: not a gezik-pdf 1 request\n");
 }
 
+/// A password pdfium-render cannot take (it holds a NUL) is a wrong password: never a crash
+/// whose error output, password and all, would reach "PDF engine stopped (…)".
+#[test]
+fn a_password_with_a_nul_never_reaches_an_error() {
+    let d = dir("nulpw");
+    let pdf = three_page_pdf(&d);
+    // Before pdfium loads, so no library is needed.
+    let mut r = req(&d.join("nope.dll"), &d, WorkerJob::Count, &[&pdf]);
+    r.passwords = vec![(0, "geheim\0LEAK".into())];
+    assert_eq!(run(&real_worker(), &r, &mut |_| {}, &never).unwrap(), Ended::WrongPassword(0));
+    // With pdfium and a really encrypted file: the same, and no failure text at all.
+    let Some(lib) = library() else { return };
+    let mut r = req(&lib, &d, WorkerJob::Split(Split::EachPage), &[&data("pdf/enc_aes256.pdf")]);
+    r.passwords = vec![(0, "pw\0LEAK".into())];
+    match run(&real_worker(), &r, &mut |_| {}, &never) {
+        Ok(ended) => assert_eq!(ended, Ended::WrongPassword(0)),
+        Err(e) => panic!("failed (password shown: {}): {e}", e.to_string().contains("LEAK")),
+    }
+}
+
+/// Two parts with the same label ("1-2, 1-2") get "(2)", as placing does (`next_free`).
+#[test]
+fn parts_with_the_same_name_are_numbered() {
+    let Some(lib) = library() else { return };
+    let d = dir("dupes");
+    let a = three_page_pdf(&d);
+    let out = fresh(&d, "out");
+    let split = WorkerJob::Split(Split::Ranges("1-2, 1-2, 3".into()));
+    run(&real_worker(), &req(&lib, &out, split, &[&a]), &mut |_| {}, &never).unwrap();
+    assert_eq!(count(&lib, &out.join("a - pages 1-2.pdf")), 2);
+    assert_eq!(count(&lib, &out.join("a - pages 1-2 (2).pdf")), 2);
+    assert_eq!(count(&lib, &out.join("a - page 3.pdf")), 1);
+    assert_eq!(std::fs::read_dir(&out).unwrap().count(), 3);
+}
+
+/// A page whose box is empty: pdfium gives it a Letter size (612 × 792 pt), so it renders;
+/// it never ends in a "0 × 0 picture" error.
+#[test]
+fn a_page_with_an_empty_box_renders_or_says_it_has_no_size() {
+    let Some(lib) = library() else { return };
+    let d = dir("nosize");
+    let pdf = {
+        use pdf_writer::{Pdf, Rect, Ref};
+        let mut p = Pdf::new();
+        p.catalog(Ref::new(1)).pages(Ref::new(2));
+        p.pages(Ref::new(2)).kids([Ref::new(3)]).count(1);
+        p.page(Ref::new(3)).parent(Ref::new(2)).media_box(Rect::new(0.0, 0.0, 0.0, 0.0));
+        let path = d.join("flat.pdf");
+        std::fs::write(&path, p.finish()).unwrap();
+        path
+    };
+    let out = fresh(&d, "out");
+    let render = WorkerJob::Render { dpi: 72, image: PageImage::Png };
+    match run(&real_worker(), &req(&lib, &out, render, &[&pdf]), &mut |_| {}, &never) {
+        Ok(_) => assert!(image::open(out.join("flat - page 1.png")).unwrap().width() > 0),
+        Err(e) => assert_eq!(e.to_string(), "page 1 has no size"),
+    }
+}
+
 #[test]
 fn merge_split_extract_and_render_with_pdfium() {
     let Some(lib) = library() else { return };
