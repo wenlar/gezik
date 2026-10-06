@@ -60,9 +60,47 @@ fn place_axis(start: f32, flip_end: f32, length: f32, area: f32) -> (f32, f32) {
     }
 }
 
+/// The line Up (`down` false) or Down moves to from line `from` (-1: none yet) among lines
+/// that can (`true`) or cannot be chosen: the next one that can, wrapping round, as native
+/// menus skip greyed items. -1 if none can.
+pub fn step_line(enabled: &[bool], from: i32, down: bool) -> i32 {
+    let count = enabled.len() as i32;
+    let mut at = from;
+    for _ in 0..count {
+        at = if down {
+            if at >= count - 1 { 0 } else { at + 1 }
+        } else if at < 1 {
+            count - 1
+        } else {
+            at - 1
+        };
+        if enabled[at as usize] {
+            return at;
+        }
+    }
+    -1
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn up_and_down_skip_greyed_lines() {
+        let lines = [true, false, true, false];
+        assert_eq!(step_line(&lines, -1, true), 0);
+        assert_eq!(step_line(&lines, 0, true), 2);
+        // Past the end (and the greyed last one) round to the first.
+        assert_eq!(step_line(&lines, 2, true), 0);
+        assert_eq!(step_line(&lines, -1, false), 2);
+        assert_eq!(step_line(&lines, 2, false), 0);
+        assert_eq!(step_line(&lines, 0, false), 2);
+        assert_eq!(step_line(&[false, false], -1, true), -1);
+        assert_eq!(step_line(&[], -1, false), -1);
+        // All enabled: one at a time, as before.
+        assert_eq!(step_line(&[true; 3], 1, true), 2);
+        assert_eq!(step_line(&[true; 3], 2, true), 0);
+    }
 
     const AREA: (f32, f32) = (900.0, 600.0);
 

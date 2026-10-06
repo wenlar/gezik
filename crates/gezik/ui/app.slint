@@ -177,6 +177,8 @@ export component AppWindow inherits Window {
     // Where Gezik's own menu goes (popup.rs): (x, y, flip-x, flip-y, width, height, area
     // width, area height).
     pure callback place-menu(length, length, length, length, length, length, length, length) -> MenuPlace;
+    // The line Up/Down moves to in Gezik's own menu, past greyed ones (popup.rs).
+    pure callback menu-step([MenuEntry], int, bool) -> int;
 
     // Follows the OS light/dark mode (Palette is left to the system on purpose; see
     // theme_bridge.rs). Rust re-resolves the theme when it flips.
@@ -1057,6 +1059,7 @@ export component AppWindow inherits Window {
         lines: root.menu-lines;
         sub-lines: root.menu-sub-entries;
         place(x, y, fx, fy, w, h, aw, ah) => { return root.place-menu(x, y, fx, fy, w, h, aw, ah); }
+        step(lines, from, down) => { return root.menu-step(lines, from, down); }
         activated(id) => { root.menu-activated(id); }
         closed => {
             if !root.dialog-open {

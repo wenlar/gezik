@@ -139,6 +139,9 @@ export component PopupMenu inherits Rectangle {
     out property <bool> is-open: root.open;
     // Where it goes: (x, y, flip-x, flip-y, width, height, area width, area height).
     pure callback place(length, length, length, length, length, length, length, length) -> MenuPlace;
+    // The line Up (false) or Down (true) moves to from a line (-1: none), past greyed ones
+    // (popup.rs).
+    pure callback step([MenuEntry], int, bool) -> int;
     callback activated(int);
     // Closed without a choice, or before the chosen item runs: the keyboard goes back.
     callback closed();
@@ -223,15 +226,6 @@ export component PopupMenu inherits Rectangle {
         root.activated(id);
     }
 
-    function step(index: int, count: int, down: bool) -> int {
-        if count == 0 {
-            return -1;
-        }
-        if down {
-            return index >= count - 1 ? 0 : index + 1;
-        }
-        return index < 1 ? count - 1 : index - 1;
-    }
 
     visible: root.open;
 
@@ -265,7 +259,7 @@ export component PopupMenu inherits Rectangle {
             }
             if root.in-sub {
                 if event.text == Key.UpArrow || event.text == Key.DownArrow {
-                    root.sub-current = root.step(root.sub-current, root.sub-lines.length, event.text == Key.DownArrow);
+                    root.sub-current = root.step(root.sub-lines, root.sub-current, event.text == Key.DownArrow);
                     sub.show-line(root.sub-current);
                 } else if event.text == Key.Return {
                     root.activate-sub(root.sub-current);
@@ -276,7 +270,7 @@ export component PopupMenu inherits Rectangle {
                 return accept;
             }
             if event.text == Key.UpArrow || event.text == Key.DownArrow {
-                root.current = root.step(root.current, root.lines.length, event.text == Key.DownArrow);
+                root.current = root.step(root.lines, root.current, event.text == Key.DownArrow);
                 main.show-line(root.current);
                 if root.sub-open && root.current != root.sub-at {
                     root.sub-open = false;

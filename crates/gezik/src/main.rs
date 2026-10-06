@@ -534,6 +534,11 @@ fn main() -> Result<(), slint::PlatformError> {
         let placed = popup::place_menu(anchor, (width, height), (area_width, area_height));
         MenuPlace { x: placed.x, y: placed.y, width: placed.width, height: placed.height }
     });
+    window.on_menu_step(|lines, from, down| {
+        use slint::Model;
+        let enabled: Vec<bool> = lines.iter().map(|line| line.enabled).collect();
+        popup::step_line(&enabled, from, down)
+    });
     let menus =
         context_menu::Menus::new(&window, nav.clone(), view.clone(), preview.clone(), sidebar.clone(), ops.clone());
     let drags = drag::Drags::new(&window, nav.clone(), view.clone(), sidebar, ops.clone(), menus.clone());
