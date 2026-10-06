@@ -508,10 +508,15 @@ pub fn need_for(what: &ConvertWhat, inputs: &[PathBuf], found: Option<Have>) -> 
         Need::Media
     } else if inputs.iter().any(|p| needs_ffmpeg_to_read(&name_of(p))) {
         match found {
-            // A download would not be used: the configured one comes first.
-            Some(Have { configured: true, .. }) => Need::ConfiguredTooOld,
-            Some(_) => Need::NewerFfmpeg,
             None => Need::Heic,
+            // Recent enough, and it still failed to read them (after it was tried again).
+            Some(Have { version: Some(v), .. }) if v >= FFMPEG_TO_READ => Need::FfmpegFailed,
+            // A download would not be used: the configured one comes first.
+            Some(Have { configured: true, version: Some(_) }) => Need::ConfiguredTooOld,
+            Some(Have { configured: true, version: None }) => Need::ConfiguredUnknown,
+            Some(Have { version: Some(_), .. }) => Need::NewerFfmpeg,
+            // A build from git: its version is unknown, not older.
+            Some(Have { version: None, .. }) => Need::UnknownFfmpeg,
         }
     } else {
         Need::Pictures
@@ -1773,7 +1778,12 @@ mod tests {
         assert_eq!(none, (vec![jpg.clone()], vec![heic.clone()], Some(Need::Heic)));
         // An ffmpeg older than 9 (or of unknown version) does not read HEIC.
         assert_eq!(split_by_ffmpeg(&to_jpeg, both.clone(), have(Some((6, 1)))).2, Some(Need::NewerFfmpeg));
-        assert_eq!(split_by_ffmpeg(&to_jpeg, both.clone(), have(None)).2, Some(Need::NewerFfmpeg));
+        // A build from git: its version is unknown, not older.
+        assert_eq!(split_by_ffmpeg(&to_jpeg, both.clone(), have(None)).2, Some(Need::UnknownFfmpeg));
+        // One of 9 or newer that failed to read them anyway (tried again): not "older".
+        assert_eq!(need_for(&to_jpeg, &both, have(Some((9, 0)))), Need::FfmpegFailed);
+        let unknown_configured = Some(Have { version: None, configured: true });
+        assert_eq!(need_for(&to_jpeg, &both, unknown_configured), Need::ConfiguredUnknown);
         // One set in settings.toml comes before a download: the box says so.
         let configured = Some(Have { version: Some((7, 1)), configured: true });
         assert_eq!(split_by_ffmpeg(&to_jpeg, both.clone(), configured).2, Some(Need::ConfiguredTooOld));

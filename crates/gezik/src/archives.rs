@@ -188,11 +188,18 @@ pub enum Need {
     Pictures,
     /// ffmpeg 9 or newer, to read HEIC, HEIF or AVIF pictures; there is none.
     Heic,
-    /// The same, and the ffmpeg there is older (or of unknown version).
+    /// The same, and the ffmpeg there is older.
     NewerFfmpeg,
+    /// The same, and the ffmpeg there does not say its version (a build from git).
+    UnknownFfmpeg,
     /// The same, and the older one is set in settings.toml (`[convert] ffmpeg`): a download
     /// would not be used.
     ConfiguredTooOld,
+    /// The same, and the one set in settings.toml does not say its version.
+    ConfiguredUnknown,
+    /// The ffmpeg there is 9 or newer, and it failed to read the pictures anyway (when they
+    /// were tried again): a download would not help.
+    FfmpegFailed,
 }
 
 impl Need {
@@ -216,19 +223,29 @@ pub fn tool_offer(
             let (message, buttons) = seven_zip_offer(ext, size, download, linux);
             return ("7-Zip needed", message, buttons);
         }
-        Need::ConfiguredTooOld => {
-            let message = "Reading HEIC and AVIF pictures needs ffmpeg 9 or newer. The ffmpeg set under [convert] \
-                in settings.toml is older: set it to ffmpeg 9 or newer, or remove it to use Gezik's \
-                download.";
-            return ("ffmpeg needed", message.to_owned(), vec!["OK"]);
+        Need::ConfiguredTooOld | Need::ConfiguredUnknown => {
+            let which = if *need == Need::ConfiguredTooOld { "is older" } else { "does not say its version" };
+            let message = format!(
+                "Reading HEIC and AVIF pictures needs ffmpeg 9 or newer. The ffmpeg set under [convert] in \
+                 settings.toml {which}: set it to ffmpeg 9 or newer, or remove it to use Gezik's download."
+            );
+            return ("ffmpeg needed", message, vec!["OK"]);
+        }
+        Need::FfmpegFailed => {
+            let message = "ffmpeg failed to read these HEIC or AVIF pictures. Try again; if it fails again, the \
+                files may be damaged or of a kind ffmpeg does not read.";
+            return ("ffmpeg failed", message.to_owned(), vec!["OK"]);
         }
         Need::Media => "Video conversion needs ffmpeg",
         Need::Pictures => "Converting to this format needs ffmpeg",
         Need::Heic => "Reading HEIC and AVIF pictures needs ffmpeg 9 or newer",
         Need::NewerFfmpeg => "Reading HEIC and AVIF pictures needs ffmpeg 9 or newer (the one found is older)",
+        Need::UnknownFfmpeg => {
+            "Reading HEIC and AVIF pictures needs ffmpeg 9 or newer (the one found does not say its version)"
+        }
     };
     // Linux packages are often older than 9, which reads HEIC wrongly: no package hint then.
-    let nine = matches!(need, Need::Heic | Need::NewerFfmpeg);
+    let nine = matches!(need, Need::Heic | Need::NewerFfmpeg | Need::UnknownFfmpeg);
     let yourself =
         if nine { "install ffmpeg 9 or newer yourself" } else { "install it yourself (sudo apt install ffmpeg)" };
     let message = match size {
@@ -1082,6 +1099,14 @@ mod tests {
         let heic = tool_offer(&Need::Heic, size, true, true, None).1;
         assert!(heic.contains("ffmpeg 9 or newer") && !heic.contains("apt"), "{heic}");
         assert!(tool_offer(&Need::NewerFfmpeg, size, true, false, None).1.contains("older"));
+        // A git build is of unknown version, not older; one of 9 that failed gets no Download.
+        let unknown = tool_offer(&Need::UnknownFfmpeg, size, true, false, None).1;
+        assert!(unknown.contains("does not say its version") && !unknown.contains("older"), "{unknown}");
+        let (title, failed, buttons) = tool_offer(&Need::FfmpegFailed, size, true, false, None);
+        assert!(failed.contains("failed to read") && !failed.contains("older"), "{failed}");
+        assert_eq!((title, buttons), ("ffmpeg failed", vec!["OK"]));
+        let configured = tool_offer(&Need::ConfiguredUnknown, size, true, false, None).1;
+        assert!(configured.contains("does not say its version") && !configured.contains("older"), "{configured}");
         // An older one set in settings.toml would come before a download: no Download then.
         let (_, configured, buttons) = tool_offer(&Need::ConfiguredTooOld, size, true, false, None);
         assert!(configured.contains("[convert]") && configured.contains("9 or newer"), "{configured}");
