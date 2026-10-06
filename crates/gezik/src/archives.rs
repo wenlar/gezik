@@ -510,11 +510,8 @@ impl Archives {
     fn save_state(&self, f: impl FnOnce(&mut ArchiveState)) {
         f(&mut self.0.state.borrow_mut());
         if let Some(store) = &self.0.store {
-            let mut saved = store.load_state();
-            saved.archive = self.0.state.borrow().clone();
-            if let Err(err) = store.save_state(&saved) {
-                eprintln!("gezik: cannot save the archive choices: {err}");
-            }
+            let archive = self.0.state.borrow().clone();
+            store.update_state(|saved| saved.archive = archive);
         }
     }
 

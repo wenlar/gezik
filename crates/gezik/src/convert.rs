@@ -1008,11 +1008,8 @@ impl Convert {
     fn save_state(&self, f: impl FnOnce(&mut ConvertState)) {
         f(&mut self.0.state.borrow_mut());
         if let Some(store) = &self.0.store {
-            let mut saved = store.load_state();
-            saved.convert = self.0.state.borrow().clone();
-            if let Err(err) = store.save_state(&saved) {
-                eprintln!("gezik: cannot save the conversion choices: {err}");
-            }
+            let convert = self.0.state.borrow().clone();
+            store.update_state(|saved| saved.convert = convert);
         }
     }
 

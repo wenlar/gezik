@@ -495,11 +495,7 @@ impl Operations {
     pub fn save_batch_rename(&self, state: BatchRenameState) {
         *self.0.batch_last.borrow_mut() = state.clone();
         if let Some(store) = &self.0.store {
-            let mut saved = store.load_state();
-            saved.batch_rename = Some(state);
-            if let Err(err) = store.save_state(&saved) {
-                eprintln!("gezik: cannot save the rename rules: {err}");
-            }
+            store.update_state(|saved| saved.batch_rename = Some(state));
         }
     }
 

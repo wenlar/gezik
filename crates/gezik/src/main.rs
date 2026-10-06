@@ -454,15 +454,15 @@ fn main() -> Result<(), slint::PlatformError> {
             (window.as_weak(), config.clone(), view.clone(), preview.clone(), ops.clone());
         Rc::new(move || {
             if let (Some(window), Some(store)) = (weak.upgrade(), &store) {
-                let mut state = store.load_state();
-                window_state::capture_into(&window, &mut state);
-                state.columns = Some(view.columns());
-                state.preview_open = preview.is_pane_open();
-                state.preview_width = Some(window.get_preview_width().round().clamp(200.0, 600.0) as u32);
-                state.operations_collapsed = ops.collapsed();
-                if let Err(err) = store.save_state(&state) {
-                    eprintln!("gezik: cannot save window state: {err}");
-                }
+                store.update_state(|state| {
+                    window_state::capture_into(&window, state);
+                    state.columns = Some(view.columns());
+                    state.preview_open = preview.is_pane_open();
+                    state.preview_width = Some(window.get_preview_width().round().clamp(200.0, 600.0) as u32);
+                    state.operations_collapsed = ops.collapsed();
+                });
+                // Quitting: what the other parts changed lately is written too.
+                store.flush_state();
                 view.flush_memory();
             }
             // Its window would otherwise keep the event loop (and the process) running.
