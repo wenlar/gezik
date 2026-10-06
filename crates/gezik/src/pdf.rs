@@ -194,6 +194,22 @@ pub fn files_note(split: &Split, counts: &[Option<u32>]) -> Result<String, Strin
     Ok(note)
 }
 
+/// What the layer says before "PDF to images": "Makes 20,000 pictures" (one per page), "…, more
+/// from 1 encrypted PDF". `counts` as for [`files_note`]; empty while none is known.
+pub fn pictures_note(counts: &[Option<u32>]) -> String {
+    let known: Vec<u32> = counts.iter().flatten().copied().collect();
+    if known.is_empty() {
+        return String::new();
+    }
+    let pictures = known.iter().map(|&n| n as usize).fold(0usize, usize::saturating_add);
+    let mut note = format!("Makes {}", plural(pictures, "picture", "pictures"));
+    let encrypted = counts.len() - known.len();
+    if encrypted > 0 {
+        note.push_str(&format!(", more from {}", plural(encrypted, "encrypted PDF", "encrypted PDFs")));
+    }
+    note
+}
+
 /// What the layer says before an extract: "Makes 1 PDF of 11 pages"; with several PDFs "Makes
 /// 3 PDFs of 4 pages each" or "… of 2-4 pages". `counts` as for [`files_note`].
 pub fn extract_note(ranges: &str, counts: &[Option<u32>]) -> Result<String, String> {
@@ -412,6 +428,15 @@ mod tests {
         assert_eq!(order, ["a", "b", "c"].iter().map(PathBuf::from).collect::<Vec<_>>());
         move_in_order(&mut order, 1, 9);
         assert_eq!(order, ["a", "b", "c"].iter().map(PathBuf::from).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn pictures_are_counted_before_a_render() {
+        assert_eq!(pictures_note(&[Some(20_000)]), "Makes 20,000 pictures");
+        assert_eq!(pictures_note(&[Some(1)]), "Makes 1 picture");
+        assert_eq!(pictures_note(&[Some(3), None, Some(4)]), "Makes 7 pictures, more from 1 encrypted PDF");
+        assert_eq!(pictures_note(&[None]), "");
+        assert_eq!(pictures_note(&[]), "");
     }
 
     #[test]

@@ -44,8 +44,8 @@ use crate::dialog::Dialogs;
 use crate::operations::{After, Operations, items_text};
 use crate::pdf::{
     MARGINS, MAX_EVERY, PdfChoices, PdfiumFailed, SIZES, SplitChoice, after_pdfium_failed, choices_from, choices_text,
-    extract_note, files_note, move_in_order, pdf_counts, pdf_inputs, pdfium_explained, says_pdfium_failed,
-    unknown_note, with_unread,
+    extract_note, files_note, move_in_order, pdf_counts, pdf_inputs, pdfium_explained, pictures_note,
+    says_pdfium_failed, unknown_note, with_unread,
 };
 use crate::{AppWindow, ConvertView};
 
@@ -1010,13 +1010,14 @@ impl Layer {
         self.pdfs.iter().filter(|p| self.pages.get(*p) == Some(&Count::Failed)).count()
     }
 
-    /// The note under a split or an extract and the mistake in what is typed (live), for the
+    /// The note under a split, an extract or "PDF to images" and the mistake in what is typed (live), for the
     /// typed "every" and ranges.
     fn pdf_note(&self, op: PdfOp, every: &str, ranges: &str) -> (String, String) {
         let counts = self.counts();
         let result = match op {
             PdfOp::Split => split_of(self.pdf.split, every, ranges).and_then(|split| files_note(&split, &counts)),
             PdfOp::Extract => extract_note(ranges, &counts),
+            PdfOp::ToImages => Ok(pictures_note(&counts)),
             _ => return (String::new(), String::new()),
         };
         // Nothing typed is not a mistake yet: Convert says what to type.
