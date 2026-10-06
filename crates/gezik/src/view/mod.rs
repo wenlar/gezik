@@ -906,14 +906,22 @@ impl View {
     }
 
     /// "Apply to all folders": this folder's view becomes the `[view]` default and every
-    /// folder's own view is forgotten.
+    /// folder's own view is forgotten, once the settings writer thread has written it into
+    /// settings.toml (a failure is said in the status bar, and nothing changes).
     pub fn apply_to_all(&self) {
         let view = self.0.current.get();
-        if let Some(store) = &self.0.store
-            && let Err(warning) = store.save_view_defaults(&view)
-        {
-            return self.set_note(warning.to_string());
-        }
+        let Some(store) = &self.0.store else { return self.applied_to_all(view) };
+        store.write_settings(gezik_config::settings_writer::SettingsChange::ViewDefaults(view), move |result| {
+            let _ = slint::invoke_from_event_loop(move || {
+                with_current(|this| match result {
+                    Ok(()) => this.applied_to_all(view),
+                    Err(warning) => this.set_note(warning.to_string()),
+                });
+            });
+        });
+    }
+
+    fn applied_to_all(&self, view: ViewSettings) {
         let mut defaults = self.0.defaults.get();
         defaults.view = view;
         self.0.defaults.set(defaults);

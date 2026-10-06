@@ -8,13 +8,14 @@ use std::sync::Arc;
 use crate::Warning;
 use crate::paths::{config_dir, write_atomic};
 use crate::settings::{Density, Settings, State};
+use crate::settings_writer::{Done, SettingsChange, SettingsWriter};
 use crate::state_store::StateCell;
 use crate::theme::{ResolvedTheme, ThemeError, resolve_theme};
 use crate::views_file::{parse_views, views_to_toml};
 use gezik_core::view::ViewSettings;
 use gezik_core::view_memory::ViewMemory;
 
-const SETTINGS_TEMPLATE: &str = include_str!("../templates/settings.toml");
+pub(crate) const SETTINGS_TEMPLATE: &str = include_str!("../templates/settings.toml");
 const THEME_TEMPLATE: &str = include_str!("../templates/example.toml");
 
 /// Raw contents of the config folder. Reading does I/O, so it happens off the UI thread;
@@ -28,17 +29,20 @@ pub struct ConfigFiles {
     pub warnings: Vec<Warning>,
 }
 
-/// The config folder. Its clones share one `state.toml` in memory and its writer thread.
+/// The config folder. Its clones share one `state.toml` in memory and its writer thread, and
+/// one `settings.toml` writer thread.
 #[derive(Debug, Clone)]
 pub struct ConfigStore {
     dir: PathBuf,
     state: Arc<StateCell>,
+    settings: Arc<SettingsWriter>,
 }
 
 impl ConfigStore {
     pub fn new(dir: PathBuf) -> Self {
         let state = Arc::new(StateCell::new(dir.join("state.toml")));
-        Self { dir, state }
+        let settings = Arc::new(SettingsWriter::new(dir.clone()));
+        Self { dir, state, settings }
     }
 
     /// The store in the standard per-user location, if the OS has one.
@@ -128,42 +132,44 @@ impl ConfigStore {
         self.state.save(state)
     }
 
-    /// Writes the pinned folders into `settings.toml`, keeping everything else.
+    /// Has the one `settings.toml` writer thread make `change` (keeping everything else in the
+    /// file), after every change sent before it; `done` gets the result on that thread. The
+    /// UI writes settings only this way: it never waits for the disk, and no change is lost.
+    pub fn write_settings(&self, change: SettingsChange, done: impl FnOnce(Result<(), Warning>) + Send + 'static) {
+        let done: Done = Box::new(done);
+        self.settings.send(change, done);
+    }
+
+    /// Waits (up to 5 s) until every settings change sent so far is written: before quitting.
+    pub fn flush_settings(&self) {
+        self.settings.flush();
+    }
+
+    /// Makes `change` to `settings.toml` now, on this thread (one at a time with the writer
+    /// thread). Creates the file from the template if it does not exist; refuses to touch a
+    /// broken file.
+    pub fn save_settings(&self, change: &SettingsChange) -> Result<(), Warning> {
+        self.settings.save(change)
+    }
+
+    /// Writes the pinned folders into `settings.toml` now, keeping everything else.
     pub fn save_pinned(&self, pinned: &[String]) -> Result<(), Warning> {
-        self.edit_settings(|text| crate::settings_edit::with_pinned(text, pinned))
+        self.save_settings(&SettingsChange::Pinned(pinned.to_vec()))
     }
 
-    /// Writes `view` as the `[view]` defaults ("Apply to all folders"), keeping everything else.
+    /// Writes `view` as the `[view]` defaults ("Apply to all folders") now.
     pub fn save_view_defaults(&self, view: &ViewSettings) -> Result<(), Warning> {
-        self.edit_settings(|text| crate::settings_edit::with_view_defaults(text, view))
+        self.save_settings(&SettingsChange::ViewDefaults(*view))
     }
 
-    /// Writes the saved rename rule sets into `settings.toml`, keeping everything else.
+    /// Writes the saved rename rule sets into `settings.toml` now.
     pub fn save_rename_presets(&self, presets: &[crate::settings::RenamePreset]) -> Result<(), Warning> {
-        self.edit_settings(|text| crate::settings_edit::with_rename_presets(text, presets))
+        self.save_settings(&SettingsChange::RenamePresets(presets.to_vec()))
     }
 
-    /// Writes the saved filters into `settings.toml`, keeping everything else.
+    /// Writes the saved filters into `settings.toml` now.
     pub fn save_filters(&self, filters: &[crate::settings::SavedFilter]) -> Result<(), Warning> {
-        self.edit_settings(|text| crate::settings_edit::with_filters(text, filters))
-    }
-
-    /// Applies `edit` to `settings.toml`. Creates the file from the template if it does not
-    /// exist; refuses to touch a broken file.
-    fn edit_settings(&self, edit: impl FnOnce(&str) -> Result<String, String>) -> Result<(), Warning> {
-        let text = match read_text(&self.settings_path()) {
-            Ok(text) => text,
-            Err(err) if err.kind() == io::ErrorKind::NotFound => SETTINGS_TEMPLATE.to_owned(),
-            Err(err) => return Err(Warning::new("settings.toml", format!("cannot read: {err}"))),
-        };
-        let edited = edit(&text).map_err(|err| {
-            let first_line = err.lines().next().unwrap_or_default().to_owned();
-            Warning::new("settings.toml", format!("Fix settings.toml first ({first_line})"))
-        })?;
-        std::fs::create_dir_all(&self.dir)
-            .map_err(|err| Warning::new("settings.toml", format!("cannot write: {err}")))?;
-        write_atomic(&self.settings_path(), &edited)
-            .map_err(|err| Warning::new("settings.toml", format!("cannot write: {err}")))
+        self.save_settings(&SettingsChange::Filters(filters.to_vec()))
     }
 
     /// The saved folder views. A missing file means none; an unreadable or broken one

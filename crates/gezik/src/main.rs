@@ -566,8 +566,10 @@ fn main() -> Result<(), slint::PlatformError> {
                     state.preview_width = Some(window.get_preview_width().round().clamp(200.0, 600.0) as u32);
                     state.operations_collapsed = ops.collapsed();
                 });
-                // Quitting: what the other parts changed lately is written too.
+                // Quitting: what the other parts changed lately is written too (a saved
+                // filter, a pin or a default just sent to settings.toml as well).
                 store.flush_state();
+                store.flush_settings();
                 view.flush_memory();
             }
             // Its window would otherwise keep the event loop (and the process) running.

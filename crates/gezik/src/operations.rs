@@ -520,13 +520,18 @@ impl Operations {
         }
     }
 
-    /// The saved rule sets, written to settings.toml.
+    /// The saved rule sets, written to settings.toml by the settings writer thread; a failure
+    /// is said in the status bar.
     pub fn save_rename_presets(&self, presets: &[gezik_config::settings::RenamePreset]) {
-        if let Some(store) = &self.0.store
-            && let Err(warning) = store.save_rename_presets(presets)
-        {
-            self.0.view.note(warning.to_string());
-        }
+        let Some(store) = &self.0.store else { return };
+        let change = gezik_config::settings_writer::SettingsChange::RenamePresets(presets.to_vec());
+        store.write_settings(change, |result| {
+            if let Err(warning) = result {
+                let _ = slint::invoke_from_event_loop(move || {
+                    crate::view::with_current(|view| view.note(warning.to_string()));
+                });
+            }
+        });
     }
 
     /// Asks for a text over the window; `f` gets it when Save is chosen.

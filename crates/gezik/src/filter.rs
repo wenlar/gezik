@@ -4,11 +4,11 @@
 //! (`View::set_filter`); this is the keyboard, the bar's focus and the saved filters.
 
 use std::cell::RefCell;
-use std::sync::mpsc;
 use std::time::Duration;
 
 use gezik_config::Warning;
 use gezik_config::settings::{KeyboardSettings, SavedFilter, Typing};
+use gezik_config::settings_writer::SettingsChange;
 use gezik_config::store::ConfigStore;
 use slint::ComponentHandle;
 
@@ -126,16 +126,15 @@ pub struct Filter {
     window: slint::Weak<AppWindow>,
     view: View,
     dialogs: Dialogs,
-    /// The thread that writes settings.toml (none without a config folder): numbered lists,
-    /// written in turn.
-    writer: Option<mpsc::Sender<(u64, Vec<SavedFilter>)>>,
+    /// Where settings.toml is (none without a config folder); its one writer thread writes
+    /// the numbered lists in turn.
+    store: Option<ConfigStore>,
 }
 
 impl Filter {
     /// The ▾ menu is `Menus::filter_menu`'s (main.rs connects it).
     pub fn new(window: &AppWindow, view: View, dialogs: Dialogs, store: Option<ConfigStore>) -> Filter {
-        let writer = store.map(|store| spawn_writer(store, window.as_weak()));
-        let filter = Filter { window: window.as_weak(), view, dialogs, writer };
+        let filter = Filter { window: window.as_weak(), view, dialogs, store };
         window.on_filter_edited({
             let view = filter.view.clone();
             move |text| view.set_filter(Some(&text))
@@ -268,12 +267,12 @@ impl Filter {
     /// Sends `filters` to settings.toml (`[[filters]]`); the menu lists them once they are
     /// written ([`Filter::written`]). Without a config folder they are only kept in memory.
     fn write(&self, filters: Vec<SavedFilter>) {
-        let Some(writer) = &self.writer else { return set_saved(filters) };
+        let Some(store) = &self.store else { return set_saved(filters) };
         let seq = queue_write(filters.clone());
-        if writer.send((seq, filters.clone())).is_err() {
-            let warning = Warning::new("settings.toml", "cannot write: the writer stopped");
-            self.written(seq, filters, Err(warning));
-        }
+        let window = self.window.clone();
+        store.write_settings(SettingsChange::Filters(filters.clone()), move |result| {
+            let _ = window.upgrade_in_event_loop(move |_| with_current(|f| f.written(seq, filters, result)));
+        });
     }
 
     /// The writer thread is done with save `seq`.
@@ -294,22 +293,6 @@ impl Filter {
             }
         });
     }
-}
-
-/// The thread that writes the saved filters into settings.toml, off the UI thread, one list
-/// after the other; each result goes back to the UI thread's filter.
-fn spawn_writer(store: ConfigStore, window: slint::Weak<AppWindow>) -> mpsc::Sender<(u64, Vec<SavedFilter>)> {
-    let (send, receive) = mpsc::channel::<(u64, Vec<SavedFilter>)>();
-    let spawned = std::thread::Builder::new().name("gezik-filters".to_owned()).spawn(move || {
-        for (seq, filters) in receive {
-            let result = store.save_filters(&filters);
-            let _ = window.upgrade_in_event_loop(move |_| with_current(|f| f.written(seq, filters, result)));
-        }
-    });
-    if let Err(err) = spawned {
-        eprintln!("gezik: cannot start the filter writer: {err}");
-    }
-    send
 }
 
 /// Why the filter cannot open here: "This PC", or no folder listed (it could not be read, or

@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use gezik_config::Warning;
 use gezik_config::paths::KnownDirs;
+use gezik_config::settings_writer::SettingsChange;
 use gezik_config::store::ConfigStore;
 use gezik_core::nav::Location;
 use slint::{ComponentHandle, ModelRc, VecModel};
@@ -158,6 +159,10 @@ struct Inner {
     /// The rows' model, updated in place (see [`sync_model`]).
     rows: Rc<VecModel<SidebarRow>>,
     poll: slint::Timer,
+    /// Pin lists sent to the settings writer and not yet written (or failed).
+    pins_on_their_way: usize,
+    /// The pinned list settings.toml has, as last read or written.
+    pins_in_file: Vec<String>,
 }
 
 thread_local! {
@@ -189,6 +194,8 @@ impl Sidebar {
             drive_signature: gezik_platform::drive_signature(),
             rows,
             poll: slint::Timer::default(),
+            pins_on_their_way: 0,
+            pins_in_file: Vec::new(),
         })));
         // Re-highlight on location changes, relabel after places reload. No I/O here: this
         // runs on every navigation.
@@ -232,9 +239,22 @@ impl Sidebar {
         });
     }
 
-    /// Sets the pinned entries as written in settings.toml. Does nothing if they are
-    /// unchanged, so the settings reload that follows our own save costs nothing.
+    /// Sets the pinned entries as written in settings.toml (at start and on every settings
+    /// reload). Does nothing if they are unchanged, so the settings reload that follows our own
+    /// save costs nothing; nor while our own saves are on their way (the list shown is what
+    /// they write, and the next edit builds on it).
     pub fn set_pinned(&self, pinned: Vec<String>) {
+        let writing = {
+            let mut inner = self.0.borrow_mut();
+            inner.pins_in_file = pinned.clone();
+            inner.pins_on_their_way > 0
+        };
+        if !writing {
+            self.show_pinned(pinned);
+        }
+    }
+
+    fn show_pinned(&self, pinned: Vec<String>) {
         let changed = self.0.borrow_mut().pins.set(pinned);
         if changed {
             self.update_rows();
@@ -314,22 +334,44 @@ impl Sidebar {
         self.save(pinned);
     }
 
-    /// Writes `pinned` to settings.toml and shows it at once; the config watcher reloads
-    /// settings afterwards with the same list, which `set_pinned` ignores.
+    /// Shows `pinned` at once and has the settings writer thread put it into settings.toml;
+    /// the config watcher reloads settings afterwards with the same list, which `set_pinned`
+    /// ignores. If the write fails, the status bar says why and the list goes back to what the
+    /// file has.
     fn save(&self, pinned: Vec<String>) {
-        let store = self.0.borrow().store.clone();
-        let result = match &store {
-            Some(store) => store.save_pinned(&pinned),
-            None => Err(Warning::new("settings.toml", "no config folder; pins are not saved")),
+        let Some(store) = self.0.borrow().store.clone() else {
+            return self.say(&Warning::new("settings.toml", "no config folder; pins are not saved"));
         };
-        match result {
-            Ok(()) => self.set_pinned(pinned),
-            Err(warning) => {
-                let window = self.0.borrow().window.upgrade();
-                if let Some(window) = window {
-                    window.set_status(warning.to_string().into());
-                }
+        self.0.borrow_mut().pins_on_their_way += 1;
+        self.show_pinned(pinned.clone());
+        store.write_settings(SettingsChange::Pinned(pinned.clone()), move |result| {
+            let _ = slint::invoke_from_event_loop(move || with_current(|sidebar| sidebar.pins_written(pinned, result)));
+        });
+    }
+
+    /// The settings writer is done with one pin list.
+    fn pins_written(&self, pinned: Vec<String>, result: Result<(), Warning>) {
+        let (last, in_file) = {
+            let mut inner = self.0.borrow_mut();
+            inner.pins_on_their_way = inner.pins_on_their_way.saturating_sub(1);
+            if result.is_ok() {
+                inner.pins_in_file = pinned;
             }
+            (inner.pins_on_their_way == 0, inner.pins_in_file.clone())
+        };
+        if let Err(warning) = &result {
+            self.say(warning);
+        }
+        // The last one written (or failed): the list shown is the file's.
+        if last {
+            self.show_pinned(in_file);
+        }
+    }
+
+    fn say(&self, warning: &Warning) {
+        let window = self.0.borrow().window.upgrade();
+        if let Some(window) = window {
+            window.set_status(warning.to_string().into());
         }
     }
 
