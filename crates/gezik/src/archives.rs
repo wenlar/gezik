@@ -221,6 +221,17 @@ pub fn with_extension(name: &str, format: OutFormat) -> String {
     format!("{name}.{extension}")
 }
 
+/// The archive's name for what was typed: `with_extension`, except that a name that is only
+/// an ending (`.zip`, `.tar.gz`, `.tar` for a tar.gz) takes `stem`, the items' own name,
+/// rather than the ending twice.
+pub fn typed_name(name: &str, stem: &str, format: OutFormat) -> String {
+    let lower = name.to_ascii_lowercase();
+    let extension = format.extension();
+    let first = extension.split_once('.').map_or(extension, |(first, _)| first);
+    let only_ending = lower == format!(".{extension}") || lower == format!(".{first}");
+    if only_ending { with_extension(stem, format) } else { with_extension(name, format) }
+}
+
 /// The folder typed in a field: relative to `base`; `None` if empty.
 pub fn resolve_folder(typed: &str, base: &Path) -> Option<PathBuf> {
     let typed = typed.trim();
@@ -451,6 +462,9 @@ struct Layer {
     level: Level,
     encrypt_names: bool,
     split: usize,
+    /// The items' own name (`Fotolar` of `Fotolar.zip`): a name typed as only an ending
+    /// takes it.
+    stem: String,
 }
 
 impl Layer {
@@ -834,6 +848,7 @@ impl Archives {
             level: opening.level,
             encrypt_names: false,
             split: opening.split,
+            stem: opening.name[..opening.select].to_owned(),
         });
         self.show_layer();
         window.set_cp_open(true);
@@ -963,7 +978,7 @@ impl Archives {
         let folder = resolve_folder(&window.get_cp_folder(), &layer.folder).unwrap_or_else(|| layer.folder.clone());
         let format = layer.format();
         // A name typed without its ending gets the one of what is written.
-        let name = with_extension(&name, written_format(format, layer.level));
+        let name = typed_name(&name, &layer.stem, written_format(format, layer.level));
         validate_name(&name, NameRules::current()).map_err(|err| err.to_string())?;
         let split =
             if format == OutFormat::SevenZ { split_bytes(layer.split, &window.get_cp_split_mb())? } else { None };
@@ -1100,6 +1115,14 @@ mod tests {
         // Store on a tar.gz writes a plain tar: the layer adds what is written.
         let written = written_format(OutFormat::TarGz, Level::Store);
         assert_eq!(with_extension("yedek", written), "yedek.tar");
+        // A name that is only an ending takes the items' name, not the ending twice.
+        assert_eq!(typed_name(".zip", "Fotolar", OutFormat::Zip), "Fotolar.zip");
+        assert_eq!(typed_name(".ZIP", "Fotolar", OutFormat::Zip), "Fotolar.zip");
+        assert_eq!(typed_name(".tar.gz", "Fotolar", OutFormat::TarGz), "Fotolar.tar.gz");
+        assert_eq!(typed_name(".tar", "Fotolar", OutFormat::TarGz), "Fotolar.tar.gz");
+        assert_eq!(typed_name(".7z", "Fotolar", OutFormat::Zip), ".7z.zip");
+        assert_eq!(typed_name("sifreli", "Fotolar", OutFormat::SevenZ), "sifreli.7z");
+        assert_eq!(typed_name("x.tar", "Fotolar", OutFormat::TarXz), "x.tar.xz");
         // Changing the format changes the ending in the field, typed or not.
         let (zip, seven) = ((OutFormat::Zip, Level::Normal), (OutFormat::SevenZ, Level::Normal));
         assert_eq!(renamed_for("sifreli.zip", zip, seven), "sifreli.7z");
