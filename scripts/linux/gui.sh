@@ -131,8 +131,13 @@ x11() {
     kill $other 2>/dev/null
     [ -f /tmp/t/gamma.txt ] && mv /tmp/t/gamma.txt /tmp/t/c.txt
 
-    # B. Batch rename in Proj: a.txt, b.txt, photo1-3.txt.
-    dclick 255 170; sleep 0.5
+    # B. Batch rename in Proj: a.txt, b.txt, photo1-3.txt. The rename back just above makes
+    # the listing refresh, so a row may move under a double-click: go there by its path and
+    # wait until it is shown.
+    sleep 1
+    key ctrl+l; typ /tmp/t/Proj; key Return
+    for _ in $(seq 1 20); do [ "$(title)" = "Proj — Gezik" ] && break; sleep 0.25; done
+    sleep 0.5
     click 255 170; xdotool keydown shift; click 255 222; xdotool keyup shift
     key F2; sleep 1; shot gui-x11-batch
     # The layer dims the list behind it: the tab's folder icon fades.
