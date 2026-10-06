@@ -2,11 +2,12 @@
 //! a helper program (7-Zip) without a window, so that it and everything it starts can be
 //! stopped at once.
 
+use std::collections::VecDeque;
 use std::ffi::OsStr;
 use std::io::{self, Read, Write};
 use std::path::Path;
 use std::process::{Child, Command, ExitStatus, Stdio};
-use std::sync::mpsc::{self, Receiver};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -48,19 +49,72 @@ pub struct ChildProcess {
     child: Child,
     #[cfg(windows)]
     job: Job,
-    lines: Option<Receiver<String>>,
+    lines: Option<Lines>,
     stderr: Option<JoinHandle<String>>,
     finished: bool,
 }
 
+/// The longest piece of output passed on; the rest of a longer one is dropped.
+const MAX_PIECE: usize = 16 * 1024;
+
+/// The most output (in bytes) kept waiting to be read: past it the oldest pieces are
+/// dropped. A program that writes much more than is read (a chatty user command, binary
+/// output) never grows Gezik's memory, and is never held up on a full pipe either.
+const MAX_WAITING: usize = 1024 * 1024;
+
+/// How much of the end of a program's error output is kept (the failure message shows its
+/// last lines).
+const ERRORS_KEPT: usize = 64 * 1024;
+
+/// The output pieces not read yet.
+#[derive(Default)]
+struct Waiting {
+    pieces: VecDeque<String>,
+    bytes: usize,
+    /// The program closed its output.
+    closed: bool,
+}
+
+#[derive(Default)]
+struct Pieces {
+    waiting: Mutex<Waiting>,
+    came: Condvar,
+}
+
+impl Pieces {
+    fn lock(&self) -> MutexGuard<'_, Waiting> {
+        self.waiting.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Adds `piece`, dropping the oldest ones past [`MAX_WAITING`].
+    fn push(&self, piece: String) {
+        let mut waiting = self.lock();
+        waiting.bytes += piece.len();
+        waiting.pieces.push_back(piece);
+        while waiting.bytes > MAX_WAITING && waiting.pieces.len() > 1 {
+            let dropped = waiting.pieces.pop_front().map_or(0, |p| p.len());
+            waiting.bytes -= dropped;
+        }
+        self.came.notify_all();
+    }
+
+    fn close(&self) {
+        self.lock().closed = true;
+        self.came.notify_all();
+    }
+}
+
 /// The pieces of a program's output: lines, and the steps of a progress line it rewrites
-/// in place (separated by `\r` or backspaces).
-pub struct Lines(Receiver<String>);
+/// in place (separated by `\r` or backspaces). At most 1 MB waits to be read (the oldest
+/// pieces go first) and a piece is at most 16 KB long.
+pub struct Lines(Arc<Pieces>);
 
 impl Lines {
     /// What came so far, without waiting.
     pub fn ready(&self) -> impl Iterator<Item = String> + '_ {
-        self.0.try_iter()
+        let mut waiting = self.0.lock();
+        waiting.bytes = 0;
+        std::mem::take(&mut waiting.pieces).into_iter()
     }
 }
 
@@ -69,8 +123,78 @@ impl Iterator for Lines {
 
     /// Waits for the next piece; `None` once the program closed its output.
     fn next(&mut self) -> Option<String> {
-        self.0.recv().ok()
+        let mut waiting = self.0.lock();
+        loop {
+            if let Some(piece) = waiting.pieces.pop_front() {
+                waiting.bytes -= piece.len();
+                return Some(piece);
+            }
+            if waiting.closed {
+                return None;
+            }
+            waiting = self.0.came.wait(waiting).unwrap_or_else(PoisonError::into_inner);
+        }
     }
+}
+
+/// Reads `stdout` into `pieces` (split at `\n`, `\r` and backspaces) until it closes.
+fn read_pieces(mut stdout: impl Read, pieces: &Pieces) {
+    let mut buf = [0u8; 4096];
+    let mut piece = Vec::new();
+    let send = |piece: &mut Vec<u8>| {
+        if !piece.is_empty() {
+            pieces.push(String::from_utf8_lossy(piece).into_owned());
+            piece.clear();
+        }
+    };
+    loop {
+        match stdout.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                for &byte in &buf[..n] {
+                    if matches!(byte, b'\n' | b'\r' | 8) {
+                        send(&mut piece);
+                    } else if piece.len() < MAX_PIECE {
+                        piece.push(byte);
+                    }
+                }
+            }
+            Err(err) if err.kind() == io::ErrorKind::Interrupted => {}
+            Err(_) => break,
+        }
+    }
+    send(&mut piece);
+    pieces.close();
+}
+
+/// Reads `stderr` until it closes, keeping its last [`ERRORS_KEPT`] bytes (from the start of
+/// a line when it was cut).
+fn read_errors(mut stderr: impl Read) -> String {
+    let mut kept = Vec::new();
+    let mut cut = false;
+    let mut buf = [0u8; 4096];
+    loop {
+        match stderr.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                kept.extend_from_slice(&buf[..n]);
+                if kept.len() > 2 * ERRORS_KEPT {
+                    kept.drain(..kept.len() - ERRORS_KEPT);
+                    cut = true;
+                }
+            }
+            Err(err) if err.kind() == io::ErrorKind::Interrupted => {}
+            Err(_) => break,
+        }
+    }
+    if kept.len() > ERRORS_KEPT {
+        kept.drain(..kept.len() - ERRORS_KEPT);
+        cut = true;
+    }
+    if cut && let Some(newline) = kept.iter().position(|&b| b == b'\n') {
+        kept.drain(..=newline);
+    }
+    String::from_utf8_lossy(&kept).into_owned()
 }
 
 impl ChildProcess {
@@ -128,48 +252,20 @@ impl ChildProcess {
                 let _ = stdin.write_all(&input);
             });
         }
-        let (sender, receiver) = mpsc::channel();
-        if let Some(mut stdout) = child.stdout.take() {
-            std::thread::spawn(move || {
-                let mut buf = [0u8; 4096];
-                let mut line = Vec::new();
-                let send = |line: &mut Vec<u8>| {
-                    if !line.is_empty() {
-                        let _ = sender.send(String::from_utf8_lossy(line).into_owned());
-                        line.clear();
-                    }
-                };
-                loop {
-                    match stdout.read(&mut buf) {
-                        Ok(0) => break,
-                        Ok(n) => {
-                            for &byte in &buf[..n] {
-                                if matches!(byte, b'\n' | b'\r' | 8) {
-                                    send(&mut line);
-                                } else {
-                                    line.push(byte);
-                                }
-                            }
-                        }
-                        Err(err) if err.kind() == io::ErrorKind::Interrupted => {}
-                        Err(_) => break,
-                    }
-                }
-                send(&mut line);
-            });
+        let pieces = Arc::new(Pieces::default());
+        match child.stdout.take() {
+            Some(stdout) => {
+                let pieces = pieces.clone();
+                std::thread::spawn(move || read_pieces(stdout, &pieces));
+            }
+            None => pieces.close(),
         }
-        let stderr = child.stderr.take().map(|mut stderr| {
-            std::thread::spawn(move || {
-                let mut bytes = Vec::new();
-                let _ = stderr.read_to_end(&mut bytes);
-                String::from_utf8_lossy(&bytes).into_owned()
-            })
-        });
+        let stderr = child.stderr.take().map(|stderr| std::thread::spawn(move || read_errors(stderr)));
         Ok(ChildProcess {
             child,
             #[cfg(windows)]
             job,
-            lines: Some(receiver),
+            lines: Some(Lines(pieces)),
             stderr,
             finished: false,
         })
@@ -181,10 +277,15 @@ impl ChildProcess {
 
     /// Its output as it comes (taken once; later calls give nothing).
     pub fn stdout_lines(&mut self) -> Lines {
-        Lines(self.lines.take().unwrap_or_else(|| mpsc::channel().1))
+        self.lines.take().unwrap_or_else(|| {
+            let closed = Pieces::default();
+            closed.close();
+            Lines(Arc::new(closed))
+        })
     }
 
-    /// Everything it wrote to its error output; waits until it closed it (call after it ended).
+    /// The end of what it wrote to its error output (its last 64 KB); waits until it closed
+    /// it (call after it ended).
     pub fn stderr_text(&mut self) -> String {
         self.stderr.take().and_then(|thread| thread.join().ok()).unwrap_or_default()
     }
@@ -379,6 +480,35 @@ mod tests {
         assert!(group_alive());
         assert_eq!(child.wait_or_stop(|| true).unwrap(), None);
         assert!(eventually(|| !group_alive()), "the shell's children still run");
+    }
+
+    #[test]
+    fn only_the_end_of_the_error_output_is_kept() {
+        let text: String = (0..20_000).map(|n| format!("error line {n}\n")).collect();
+        let kept = read_errors(text.as_bytes());
+        assert!(kept.len() <= ERRORS_KEPT, "{}", kept.len());
+        assert!(kept.starts_with("error line "), "cut at a line's start");
+        assert!(kept.ends_with("error line 19999\n"));
+        assert_eq!(read_errors(&b"short\n"[..]), "short\n");
+    }
+
+    #[test]
+    fn output_nobody_reads_is_bounded() {
+        let mut text: Vec<u8> = (0..40_000).flat_map(|n| format!("{n:0>99}\n").into_bytes()).collect();
+        text.extend(std::iter::repeat_n(b'x', 50_000));
+        text.extend_from_slice(b"\nlast\n");
+        let pieces = Pieces::default();
+        read_pieces(&text[..], &pieces);
+        let waiting = pieces.lock();
+        assert!(waiting.bytes <= MAX_WAITING && waiting.closed);
+        assert_eq!(waiting.bytes, waiting.pieces.iter().map(String::len).sum::<usize>());
+        let n = waiting.pieces.len();
+        assert_eq!(waiting.pieces[n - 2].len(), MAX_PIECE, "a long piece is cut");
+        assert_eq!(waiting.pieces[n - 1], "last");
+        drop(waiting);
+        let mut lines = Lines(Arc::new(pieces));
+        assert_eq!(lines.ready().count(), n);
+        assert_eq!(lines.next(), None);
     }
 
     #[test]

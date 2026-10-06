@@ -18,6 +18,9 @@ use crate::tools::{Answers, Asked, on_path};
 /// How many of ffmpeg's last error lines a failure keeps.
 const STDERR_LINES: usize = 20;
 
+/// The most lines of one `-progress` block kept.
+const MAX_BLOCK_LINES: usize = 64;
+
 /// How long ffprobe may take before it is given up on.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -123,6 +126,11 @@ struct Reader<'a> {
 impl Reader<'_> {
     fn line(&mut self, line: String) {
         let ends_block = line.trim_start().starts_with("progress=");
+        // ffmpeg's blocks have about a dozen lines; a program that never ends one keeps only
+        // its latest lines.
+        if self.block.len() >= MAX_BLOCK_LINES {
+            self.block.remove(0);
+        }
         self.block.push(line);
         if !ends_block {
             return;
@@ -264,6 +272,18 @@ mod tests {
         reader.line("out_time_us=5".into());
         reader.line("progress=end".into());
         assert_eq!(calls, 0);
+        // Lines that never end a block are not all kept.
+        let mut seen = Vec::new();
+        let mut on_progress = |p| seen.push(p);
+        let mut reader =
+            Reader { block: Vec::new(), duration: Some(1_000_000), reported: 0.0, on_progress: &mut on_progress };
+        for n in 0..10_000 {
+            reader.line(format!("noise={n}"));
+        }
+        assert_eq!(reader.block.len(), MAX_BLOCK_LINES);
+        reader.line("out_time_us=250000".into());
+        reader.line("progress=continue".into());
+        assert_eq!(seen, [0.25]);
     }
 
     #[test]
