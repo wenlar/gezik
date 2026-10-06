@@ -23,9 +23,11 @@ pub fn with_current(f: impl FnOnce(&TabTools)) {
     }
 }
 
-/// The tabs whose title or path the query lets through (all for an empty or unfinished one).
-/// The pattern language takes names, which have no `/`: a path is typed with either slash,
-/// and both sides are matched with `\` for it.
+/// The tabs whose title or path the query lets through (all for an empty or unfinished one):
+/// an including part may match either, a leaving-out part must match neither (`!downloads`
+/// hides the tab whose path has it, whatever its title). The pattern language takes names,
+/// which have no `/`: a path is typed with either slash, and both sides are matched with `\`
+/// for it.
 pub fn picker_rows(tabs: &[(String, String)], query: &str) -> Vec<usize> {
     let all = || (0..tabs.len()).collect();
     let Ok(pattern) = Pattern::compile(&query.replace('/', "\\")) else { return all() };
@@ -34,9 +36,18 @@ pub fn picker_rows(tabs: &[(String, String)], query: &str) -> Vec<usize> {
     }
     tabs.iter()
         .enumerate()
-        .filter(|(_, (title, path))| pattern.matches(title) || pattern.matches(&path.replace('/', "\\")))
+        .filter(|(_, (title, path))| pattern.matches_any(&[title, &path.replace('/', "\\")]))
         .map(|(i, _)| i)
         .collect()
+}
+
+/// Whether a question, the conflict list or another layer is open over the window.
+fn over_another_layer(window: &AppWindow) -> bool {
+    window.get_dialog_open()
+        || window.get_conflicts_open()
+        || window.get_rb_open()
+        || window.get_cp_open()
+        || window.get_cv_open()
 }
 
 /// The row Up/Down moves to, within `len` rows.
@@ -91,8 +102,13 @@ impl TabTools {
     }
 
     /// Opens the picker on every tab, the active one current, the field with the keyboard.
+    /// Not over a question or another layer (the macOS menu bar can still ask for it): the
+    /// keys would go to the layer under it.
     pub fn open(&self) {
         let Some(window) = self.0.window.upgrade() else { return };
+        if over_another_layer(&window) {
+            return;
+        }
         *self.0.tabs.borrow_mut() = self.0.nav.tab_list();
         let all = picker_rows(&self.0.tabs.borrow(), "");
         *self.0.rows.borrow_mut() = all;
@@ -134,13 +150,12 @@ impl TabTools {
         self.show(&window);
     }
 
-    /// Switches to the current row's tab and closes.
+    /// Switches to the current row's tab and closes; with no rows shown, the picker stays
+    /// open for the query to be changed.
     fn choose(&self) {
-        let tab = self.0.rows.borrow().get(self.0.current.get()).copied();
+        let Some(tab) = self.0.rows.borrow().get(self.0.current.get()).copied() else { return };
         self.close();
-        if let Some(tab) = tab {
-            self.0.nav.activate_tab(tab);
-        }
+        self.0.nav.activate_tab(tab);
     }
 
     fn close(&self) {
@@ -193,6 +208,14 @@ mod tests {
         assert_eq!(picker_rows(&tabs(), "indir"), [1], "Turkish İ");
         assert_eq!(picker_rows(&tabs(), "zzz"), Vec::<usize>::new());
         assert_eq!(picker_rows(&tabs(), "!"), [0, 1, 2], "an unfinished pattern shows them all");
+    }
+
+    #[test]
+    fn an_exclusion_holds_for_both_title_and_path() {
+        assert_eq!(picker_rows(&tabs(), "!downloads"), [0, 2], "by path, though the title has no 'downloads'");
+        assert_eq!(picker_rows(&tabs(), "doc;!Users"), Vec::<usize>::new(), "Documents is under Users");
+        assert_eq!(picker_rows(&tabs(), "!this"), [0, 1], "by title");
+        assert_eq!(picker_rows(&tabs(), "a/d;!indir"), [0], "includes still match title or path");
     }
 
     #[test]

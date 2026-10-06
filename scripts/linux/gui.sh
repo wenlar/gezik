@@ -889,6 +889,16 @@ tabs() {
     check "tabs: the picker matches paths" 'is one'
     key ctrl+shift+a; sleep 0.8; click 450 218; sleep 1
     check "tabs: a click on a row picks it" 'is two'
+    # An exclusion holds for the path as well as the title: "two" and "three" have no
+    # "\tmp\tb\t" in their titles, but in their paths.
+    key ctrl+shift+a; sleep 0.8; typ '!/tmp/tb/t'; sleep 0.3; key Return; sleep 1
+    check "tabs: an exclusion in the picker hides by path too" 'is one'
+    # Enter with no rows keeps the picker open; Esc then closes it.
+    key ctrl+shift+a; sleep 0.8; typ zzz; sleep 0.3; key Return; sleep 0.5; shot tabs-picker-none
+    key Escape; sleep 0.5; shot tabs-picker-none-closed
+    check "tabs: Enter with no rows keeps the picker open" \
+        '! same_part tabs-picker-none tabs-picker-none-closed 480 300 210 60 && is one'
+    key ctrl+2; sleep 0.8
 
     # Ctrl+Shift+T: tab two, into sub, filtered by x1, closed; back in its place with all that.
     dclick 255 118; sleep 1

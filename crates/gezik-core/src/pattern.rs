@@ -61,10 +61,23 @@ impl Pattern {
         self.include.is_empty() && self.exclude.is_empty()
     }
 
+    /// Whether the pattern has an including part (else it lets through all that no
+    /// leaving-out part matches).
+    pub fn has_includes(&self) -> bool {
+        !self.include.is_empty()
+    }
+
     /// Whether `name` passes. Allocates nothing.
     pub fn matches(&self, name: &str) -> bool {
-        (self.include.is_empty() || self.include.iter().any(|part| glob(part, name)))
-            && !self.exclude.iter().any(|part| glob(part, name))
+        self.matches_any(&[name])
+    }
+
+    /// Whether a thing known by several `names` (a tab: its title and its path) passes: an
+    /// including part matches one of them (or there is none), and no leaving-out part matches
+    /// any of them. Allocates nothing.
+    pub fn matches_any(&self, names: &[&str]) -> bool {
+        let any = |parts: &[Vec<Token>]| parts.iter().any(|part| names.iter().any(|name| glob(part, name)));
+        (!self.has_includes() || any(&self.include)) && !any(&self.exclude)
     }
 }
 
@@ -197,6 +210,19 @@ mod tests {
         assert!(p.matches("a.jpg") && !p.matches("a thumb.jpg") && !p.matches("a.png"));
         assert!(m("! tmp", "a.txt") && !m("! tmp", "tmp.txt"), "spaces after ! are trimmed");
         assert!(m("!!a", "b") && !m("!!a", "x!a"), "a second ! is a plain character");
+    }
+
+    #[test]
+    fn several_names_pass_together() {
+        let p = Pattern::compile("doc;!Users").unwrap();
+        assert!(p.has_includes() && !Pattern::compile("!x").unwrap().has_includes());
+        assert!(p.matches_any(&["Documents", r"D:\Docs"]));
+        assert!(p.matches_any(&["Other", r"D:\Docs"]), "an include on either name");
+        assert!(!p.matches_any(&["Documents", r"C:\Users\a\Documents"]), "an exclusion on either name");
+        let only_out = Pattern::compile("!downloads").unwrap();
+        assert!(only_out.matches_any(&["Documents", r"C:\Users\a\Documents"]));
+        assert!(!only_out.matches_any(&["İndirilenler", r"C:\Users\a\Downloads"]));
+        assert!(Pattern::default().matches_any(&["a", "b"]) && Pattern::default().matches_any(&[]));
     }
 
     #[test]
