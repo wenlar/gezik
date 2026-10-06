@@ -902,15 +902,18 @@ fn main() -> Result<(), slint::PlatformError> {
             let Some(window) = weak.upgrade() else { return false };
             let m = event.modifiers;
             // Slint's `control` is ⌘ on macOS.
-            let physical = keys::take_pressed();
-            let text = keys::shortcut_text(&event.text, m.control);
-            let chord = keys::chord_from_press(&text, physical, m.control, m.alt, m.shift, m.meta, Platform::current());
-            let menu_key = keys::is_context_menu_key(&event.text, m.control, m.alt, m.shift, m.meta);
+            let press = keys::take_pressed();
+            // AltGr on a key it types nothing with is Ctrl+Alt (keys.rs `altgr_blank`).
+            let (control, alt) = press.modifiers(m.control, m.alt);
+            let text = keys::shortcut_text(&event.text, control);
+            let chord =
+                keys::chord_from_press(&text, press.physical, control, alt, m.shift, m.meta, Platform::current());
+            let menu_key = keys::is_context_menu_key(&event.text, control, alt, m.shift, m.meta);
             // Esc while dragging files drops nothing.
             if chord.as_ref().is_some_and(|c| c.key == Key::Escape) && drags.escape() {
                 return true;
             }
-            handle_key(
+            let used = handle_key(
                 &window,
                 &nav,
                 &view,
@@ -919,9 +922,10 @@ fn main() -> Result<(), slint::PlatformError> {
                 &mut type_ahead,
                 &event.text,
                 chord,
-                m.control || m.alt || m.meta,
+                control || alt || m.meta,
                 menu_key,
-            )
+            );
+            press.swallowed(used)
         }
     });
 
@@ -937,14 +941,13 @@ fn main() -> Result<(), slint::PlatformError> {
         let drags = drags.clone();
         window.window().on_winit_window_event(move |_, event| {
             // The keypad's keys and Ctrl+Shift+digits, which Slint's text cannot tell apart
-            // (keys.rs `Physical`): noted before Slint hands the key to `key-event`.
-            if let winit::event::WindowEvent::KeyboardInput { event, .. } = event
-                && event.state == winit::event::ElementState::Pressed
-            {
-                keys::note_pressed(match event.physical_key {
-                    winit::keyboard::PhysicalKey::Code(code) => keys::physical_of(code),
-                    winit::keyboard::PhysicalKey::Unidentified(_) => keys::Physical::Other,
-                });
+            // (keys.rs `Physical`), and AltGr on a key it types nothing with (keys.rs
+            // `altgr_blank`): noted before Slint hands the key to `key-event`.
+            if let winit::event::WindowEvent::KeyboardInput { event, .. } = event {
+                keys::note_key(event);
+            }
+            if let winit::event::WindowEvent::Focused(false) = event {
+                keys::forget_altgr();
             }
             if let winit::event::WindowEvent::Focused(true) = event {
                 ops.clipboard_check();

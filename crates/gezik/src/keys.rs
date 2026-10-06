@@ -159,19 +159,86 @@ pub enum Physical {
     Other,
 }
 
+/// What winit says of the press Slint is about to hand to `key-event`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Press {
+    pub physical: Physical,
+    /// AltGr on a key the layout makes no character with (see `altgr_blank`).
+    pub altgr_blank: bool,
+}
+
+impl Press {
+    /// A press winit said nothing of (one Slint makes up itself).
+    pub const NONE: Press = Press { physical: Physical::Other, altgr_blank: false };
+
+    /// Slint's `control` and `alt` for this press: AltGr on a key it types nothing with is
+    /// Ctrl+Alt, as the left keys make it.
+    pub fn modifiers(&self, control: bool, alt: bool) -> (bool, bool) {
+        (control || self.altgr_blank, alt || self.altgr_blank)
+    }
+
+    /// Whether `key-event` takes the press even when no shortcut used it: AltGr on a key it
+    /// types nothing with must not reach a text field, which would type the plain key.
+    pub fn swallowed(&self, used: bool) -> bool {
+        used || self.altgr_blank
+    }
+}
+
 thread_local! {
-    /// The physical key of the press Slint is about to hand to `key-event`: set by the winit
-    /// hook (main.rs), which runs first, and taken by the key handler.
-    static PRESSED: std::cell::Cell<Physical> = const { std::cell::Cell::new(Physical::Other) };
+    /// The press Slint is about to hand to `key-event`: set by the winit hook (main.rs),
+    /// which runs first, and taken by the key handler.
+    static PRESSED: std::cell::Cell<Press> = const { std::cell::Cell::new(Press::NONE) };
+    /// Whether AltGr is held now, as winit reported its presses and releases.
+    static ALTGR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-pub fn note_pressed(physical: Physical) {
-    PRESSED.with(|p| p.set(physical));
+pub fn note_pressed(press: Press) {
+    PRESSED.with(|p| p.set(press));
 }
 
-/// The press's physical key, once (a key Slint makes up itself finds `Other`).
-pub fn take_pressed() -> Physical {
-    PRESSED.with(|p| p.replace(Physical::Other))
+/// The press, once (a key Slint makes up itself finds `Press::NONE`).
+pub fn take_pressed() -> Press {
+    PRESSED.with(|p| p.replace(Press::NONE))
+}
+
+/// Notes a key event winit is about to hand Slint (main.rs's hook): whether AltGr is held,
+/// and, for a press, what `Press` says.
+pub fn note_key(event: &slint::winit_030::winit::event::KeyEvent) {
+    use slint::winit_030::winit::event::ElementState;
+    use slint::winit_030::winit::keyboard::{Key as WinitKey, NamedKey, PhysicalKey};
+    let pressed = event.state == ElementState::Pressed;
+    if event.logical_key == WinitKey::Named(NamedKey::AltGraph) {
+        ALTGR.with(|a| a.set(pressed));
+    }
+    if pressed {
+        let physical = match event.physical_key {
+            PhysicalKey::Code(code) => physical_of(code),
+            PhysicalKey::Unidentified(_) => Physical::Other,
+        };
+        let held = ALTGR.with(std::cell::Cell::get);
+        let blank = altgr_blank(held, event.text.as_deref(), &event.logical_key, cfg!(windows));
+        note_pressed(Press { physical, altgr_blank: blank });
+    }
+}
+
+/// Forgets a held AltGr whose release the window will not see (it lost the focus).
+pub fn forget_altgr() {
+    ALTGR.with(|a| a.set(false));
+}
+
+/// Whether a press is AltGr on a key the layout makes no character with (Turkish Q AltGr+K):
+/// on Windows AltGr is Ctrl+Alt, and the press is the Ctrl+Alt chord the left keys make, typing
+/// nothing. winit drops the Ctrl that Windows adds for AltGr and reports AltGr as no modifier,
+/// so Slint hands over the plain key's text (`k`) with neither. winit's own `text` is none and
+/// its key unidentified then; a key AltGr types with (`@`) has both, and named keys are left be.
+pub fn altgr_blank(
+    altgr_held: bool,
+    text: Option<&str>,
+    logical: &slint::winit_030::winit::keyboard::Key,
+    windows: bool,
+) -> bool {
+    use slint::winit_030::winit::keyboard::Key as WinitKey;
+    windows && altgr_held && text.is_none() && matches!(logical, WinitKey::Unidentified(_))
 }
 
 pub fn physical_of(code: slint::winit_030::winit::keyboard::KeyCode) -> Physical {
@@ -442,6 +509,42 @@ pub fn needs_list(action: Action) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn altgr_on_a_key_it_types_nothing_with_is_ctrl_alt() {
+        use slint::winit_030::winit::keyboard::{Key as WinitKey, NamedKey, NativeKey};
+        // What winit reports for Turkish Q AltGr+K: no text, an unidentified key.
+        let unidentified = WinitKey::Unidentified(NativeKey::Unidentified);
+        assert!(altgr_blank(true, None, &unidentified, true));
+        assert!(!altgr_blank(true, None, &unidentified, false), "AltGr is no Ctrl+Alt elsewhere");
+        // Left Ctrl+Alt+K: Slint already reports both modifiers.
+        assert!(!altgr_blank(false, None, &unidentified, true));
+        // AltGr+Q types `@`.
+        assert!(!altgr_blank(true, Some("@"), &WinitKey::Character("@".into()), true));
+        // Named and dead keys are left be.
+        assert!(!altgr_blank(true, None, &WinitKey::Named(NamedKey::ArrowLeft), true));
+        assert!(!altgr_blank(true, None, &WinitKey::Dead(Some('~')), true));
+
+        // Slint hands such a press over as a plain `k`: it is the Ctrl+Alt+K chord the left
+        // keys make, and a field may not type it whether a shortcut used it or not.
+        let press = Press { physical: Physical::Other, altgr_blank: true };
+        let (control, alt) = press.modifiers(false, false);
+        assert!(control && alt);
+        let got = chord_from_press("k", press.physical, control, alt, false, false, Platform::Other);
+        let want = gezik_config::shortcuts::parse_chord("ctrl+alt+k", Platform::Other).unwrap();
+        assert_eq!(got, want);
+        assert!(press.swallowed(false));
+        // With Shift too.
+        let got = chord_from_press("K", press.physical, control, alt, true, false, Platform::Other);
+        let want = gezik_config::shortcuts::parse_chord("ctrl+alt+shift+k", Platform::Other).unwrap();
+        assert_eq!(got, want);
+
+        // Any other press keeps Slint's modifiers and goes to the field when unused.
+        assert_eq!(Press::NONE.modifiers(false, false), (false, false));
+        assert_eq!(Press::NONE.modifiers(true, true), (true, true));
+        assert!(!Press::NONE.swallowed(false));
+        assert!(Press::NONE.swallowed(true));
+    }
 
     #[test]
     fn altgr_punctuation_types_on_windows() {
@@ -767,9 +870,10 @@ mod tests {
 
     #[test]
     fn a_noted_key_is_taken_once() {
-        note_pressed(Physical::Numpad('+'));
-        assert_eq!(take_pressed(), Physical::Numpad('+'));
-        assert_eq!(take_pressed(), Physical::Other);
+        let press = Press { physical: Physical::Numpad('+'), altgr_blank: true };
+        note_pressed(press);
+        assert_eq!(take_pressed(), press);
+        assert_eq!(take_pressed(), Press::NONE);
     }
 
     #[test]
