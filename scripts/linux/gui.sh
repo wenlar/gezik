@@ -3,7 +3,7 @@
 # input: xdotool (XTEST) under Xvfb, wtype and the vpointer example under a headless sway.
 #   docker build -t gezik-linux scripts/linux
 #   docker run --rm -v "$PWD:/src" -v gezik-target:/target -v gezik-cargo:/usr/local/cargo/registry \
-#       -e CARGO_TARGET_DIR=/target gezik-linux bash scripts/linux/gui.sh [x11|wayland|popups|tabdrag|all]
+#       -e CARGO_TARGET_DIR=/target gezik-linux bash scripts/linux/gui.sh [x11|wayland|popups|tabdrag|pdf|all]
 # Needs the network (apt for 7-Zip, Gezik's own 7-Zip download). Screenshots go to
 # .superpowers/linux-shots/gui-*.png. Each check prints "ok" or "FAIL"; the exit code is the
 # number of failures. Coordinates are the window's (no window manager under Xvfb, so it is
@@ -472,13 +472,56 @@ tabdrag() {
     grep -i "panicked" /tmp/gezik-gui-tabdrag.log /tmp/gezik-gui-tabdrag2.log && fail "tabdrag: no panic" || pass "tabdrag: no panic"
 }
 
+# 5d's menus through Gezik's own popups: the right-click "Images to PDF…" on pictures, and
+# the Convert layer's preset menu with its PDF group. X11, 900x600.
+pdfpopups() {
+    Xvfb :99 -screen 0 1600x900x24 >/dev/null 2>&1 &
+    local xvfb=$!
+    unset WAYLAND_DISPLAY
+    export DISPLAY=:99
+    sleep 1
+    . /src/scripts/linux/gui-lib.sh
+    local PDF_PRESET_X=371 PDF_PRESET_Y=164
+    rm -rf /tmp/q /tmp/cfg && mkdir -p /tmp/q /tmp/cfg
+    convert -size 64x48 xc:red /tmp/q/a.png
+    GEZIK_CONFIG_DIR=/tmp/cfg $GEZIK /tmp/q >/tmp/gezik-gui-pdf.log 2>&1 &
+    local gezik=$!
+    sleep 3
+    xdotool windowmove "$(win)" 0 0; xdotool windowsize "$(win)" 900 600; sleep 0.5
+    shot pdf-start
+    # On a.png (y 118) the menu's 6th line is "Images to PDF…" (after Convert…).
+    rclick 260 118; sleep 0.5; shot pdf-menu
+    click 330 $((118 + 20 + 32 * 5)); sleep 1.5; shot pdf-layer
+    key ctrl+Return; sleep 2; shot pdf-made
+    check "pdf popups: the right-click \"Images to PDF…\" makes a.pdf" '[ "$(head -c 5 /tmp/q/a.pdf 2>/dev/null)" = "%PDF-" ]'
+    # The preset menu: Convert… (5th line), then the Preset button (371, 164). Image's six
+    # choices, then the PDF group (a greyed heading, "Images to PDF").
+    rm -f /tmp/q/a.pdf; sleep 1
+    rclick 260 118; sleep 0.5; click 330 $((118 + 20 + 32 * 4)); sleep 1.5; shot pdf-convert
+    click "$PDF_PRESET_X" "$PDF_PRESET_Y"; sleep 0.8; shot pdf-presets
+    check "pdf popups: the preset menu opens" '! cmp -s "$SHOTS/pdf-convert.png" "$SHOTS/pdf-presets.png"'
+    # Another preset first (Convert to JPEG, 266), then back to the PDF group's line. The
+    # image layer is taller, so its Preset button is higher (105) and the line is at 399.
+    click 300 266; sleep 0.8; shot pdf-jpeg
+    click "$PDF_PRESET_X" 105; sleep 0.8; shot pdf-presets-again
+    click 300 399; sleep 0.8; shot pdf-chosen
+    check "pdf popups: the choice changes the layer" '! cmp -s "$SHOTS/pdf-jpeg.png" "$SHOTS/pdf-chosen.png"'
+    key ctrl+Return; sleep 2; shot pdf-made-again
+    check "pdf popups: \"Images to PDF\" chosen from the preset menu makes a.pdf" '[ "$(head -c 5 /tmp/q/a.pdf 2>/dev/null)" = "%PDF-" ]'
+    kill $gezik 2>/dev/null
+    kill $xvfb 2>/dev/null
+    wait 2>/dev/null
+    grep -i "panicked" /tmp/gezik-gui-pdf.log && fail "pdf popups: no panic" || pass "pdf popups: no panic"
+}
+
 setup_7zip
 case "${1:-all}" in
     x11) x11 ;;
     wayland) wayland ;;
     popups) popups ;;
     tabdrag) tabdrag ;;
-    *) x11; wayland; popups; tabdrag ;;
+    pdf) pdfpopups ;;
+    *) x11; wayland; popups; tabdrag; pdfpopups ;;
 esac
 echo "failures: $failures"
 exit $failures
