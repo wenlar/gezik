@@ -381,7 +381,8 @@ impl Settings {
                 Some(items) => {
                     for (i, item) in items.iter().enumerate() {
                         match parse_filter(item) {
-                            Ok(filter) if settings.filters.iter().any(|f| f.name == filter.name) => {
+                            // Names are told apart ignoring case, as the ▾ menu and Save as… do.
+                            Ok(filter) if settings.filters.iter().any(|f| same_filter_name(&f.name, &filter.name)) => {
                                 warnings.push(Warning::new(
                                     file,
                                     format!(
@@ -518,6 +519,11 @@ fn parse_keyboard(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) 
         }
     }
     out
+}
+
+/// Whether two saved filters' names are one, ignoring case.
+fn same_filter_name(a: &str, b: &str) -> bool {
+    a.to_lowercase() == b.to_lowercase()
 }
 
 pub(crate) fn parse_filter(value: &toml::Value) -> Result<SavedFilter, String> {
@@ -1312,7 +1318,7 @@ pattern = \" \"
 name = \"Kötü\"
 pattern = \"a;!\"
                     [[filters]]
-name = \"Resimler\"
+name = \"resimler\"
 pattern = \"*.gif\"
 ";
         let (settings, warnings) = parse(text);
@@ -1324,7 +1330,7 @@ pattern = \"*.gif\"
                 "filters[2]: name is missing",
                 "filters[3]: pattern is missing",
                 "filters[4]: pattern: Type a name after \"!\"",
-                "filters[5]: \"Resimler\" is already used; this one is left out",
+                "filters[5]: \"resimler\" is already used; this one is left out",
             ]
         );
     }
