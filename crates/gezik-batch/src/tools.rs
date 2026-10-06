@@ -1,5 +1,6 @@
-//! The tools Gezik uses from outside (7-Zip, ffmpeg): where one is (the path in settings, Gezik's
-//! download, then PATH), and where a download goes (`<data>/tools/<name>-<version>/`).
+//! The tools Gezik uses from outside (7-Zip, ffmpeg, the pdfium library): where one is (the
+//! path in settings, Gezik's download, then PATH; pdfium only in Gezik's download), and where a
+//! download goes (`<data>/tools/<name>-<version>/`).
 //! Downloading itself is `tasks::DownloadTask`.
 
 use std::collections::HashMap;
@@ -16,7 +17,8 @@ use gezik_core::batch::tools::{Platform, Tool, ToolBuild, build_for};
 
 /// Where a tool's program is: the path in settings (a full one), Gezik's download, PATH,
 /// then where an installer puts it. Only a recent enough one counts (`recent_enough`); it
-/// starts the program, so this runs off the UI thread.
+/// starts the program, so this runs off the UI thread. For pdfium it is the downloaded
+/// library's path or nothing (it has no setting; PATH and the system are not looked in).
 pub fn find(tool: Tool, data_dir: &Path, configured: Option<&Path>) -> Option<PathBuf> {
     let build = Platform::current().and_then(|platform| build_for(tool, platform));
     let installed = build.and_then(|build| program_in(build, &install_dir(build, data_dir)));
@@ -31,7 +33,8 @@ pub fn find(tool: Tool, data_dir: &Path, configured: Option<&Path>) -> Option<Pa
 const SEVEN_ZIP_MIN: (u32, u32) = (25, 0);
 
 /// Whether the program at `path` is a version Gezik trusts (for ffmpeg: any ffmpeg). Asked once per program and
-/// change time.
+/// change time. pdfium is a library, which cannot be run and asked: its version is the one
+/// MANIFEST pins (chromium/7881 or newer, what the bindings need).
 fn recent_enough(tool: Tool, path: &Path) -> bool {
     static SEEN: Answers<bool> = Answers::new();
     match tool {
@@ -44,6 +47,7 @@ fn recent_enough(tool: Tool, path: &Path) -> bool {
         // Any ffmpeg does audio and video; what needs a newer one (HEIC) asks for the version.
         // (It keeps its own answers.)
         Tool::Ffmpeg => crate::convert::ffmpeg::is_ffmpeg(path),
+        Tool::Pdfium => true,
     }
 }
 
@@ -158,6 +162,7 @@ pub(crate) fn folder_name(tool: Tool) -> &'static str {
     match tool {
         Tool::SevenZip => "7zip",
         Tool::Ffmpeg => "ffmpeg",
+        Tool::Pdfium => "pdfium",
     }
 }
 
@@ -166,6 +171,7 @@ pub(crate) fn display_name(tool: Tool) -> &'static str {
     match tool {
         Tool::SevenZip => "7-Zip",
         Tool::Ffmpeg => "ffmpeg",
+        Tool::Pdfium => "pdfium",
     }
 }
 
@@ -190,22 +196,24 @@ fn find_in(
     installed.filter(|path| ok(path)).or_else(|| on_path(path_names(tool), path_var?).filter(|path| ok(path)))
 }
 
-/// The tool's program names on PATH.
+/// The tool's program names on PATH (none for pdfium: only Gezik's download is used).
 fn path_names(tool: Tool) -> &'static [&'static str] {
     match tool {
         Tool::SevenZip => &["7z", "7zz", "7za"],
         Tool::Ffmpeg => &["ffmpeg"],
+        Tool::Pdfium => &[],
     }
 }
 
-/// Where an installer puts the tool (Windows' 7-Zip in Program Files; ffmpeg has none).
+/// Where an installer puts the tool (Windows' 7-Zip in Program Files; ffmpeg and pdfium have
+/// none).
 fn installed_elsewhere(tool: Tool) -> Option<PathBuf> {
     match tool {
         Tool::SevenZip if cfg!(windows) => {
             let dir = PathBuf::from(std::env::var_os("ProgramFiles")?);
             Some(dir.join("7-Zip").join("7z.exe")).filter(|p| executable(p))
         }
-        Tool::SevenZip | Tool::Ffmpeg => None,
+        Tool::SevenZip | Tool::Ffmpeg | Tool::Pdfium => None,
     }
 }
 
@@ -308,6 +316,30 @@ mod tests {
         let old = |path: &Path| path != configured;
         let found = find_in(Tool::SevenZip, Some(&configured), None, Some(path_var.as_os_str()), &old);
         assert_eq!(found, None);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// pdfium is found only in Gezik's download (`<data>/tools/pdfium-<build>/`), never on PATH.
+    #[test]
+    fn pdfium_is_only_the_downloaded_library() {
+        let d = dir("pdfium");
+        let data = d.join("data");
+        let build = build_for(Tool::Pdfium, Platform::current().unwrap()).unwrap();
+        let installed = install_dir(build, &data);
+        assert_eq!(installed, data.join("tools").join(format!("pdfium-{}", build.version)));
+        let library = program(&installed.join(build.programs[0]));
+        assert_eq!(find(Tool::Pdfium, &data, None), Some(library.clone()));
+        std::fs::remove_file(&library).unwrap();
+        assert_eq!(find(Tool::Pdfium, &data, None), None);
+        // A library of that name on PATH is not used.
+        let on_path_dir = d.join("path");
+        program(&on_path_dir.join(build.programs[0]));
+        program(&on_path_dir.join("pdfium.dll"));
+        let path_var = std::env::join_paths([on_path_dir]).unwrap();
+        let ok = |path: &Path| recent_enough(Tool::Pdfium, path);
+        assert_eq!(find_in(Tool::Pdfium, None, None, Some(path_var.as_os_str()), &ok), None);
+        assert_eq!(installed_elsewhere(Tool::Pdfium), None);
+        assert_eq!((folder_name(Tool::Pdfium), display_name(Tool::Pdfium)), ("pdfium", "pdfium"));
         let _ = std::fs::remove_dir_all(&d);
     }
 

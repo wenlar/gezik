@@ -1,8 +1,8 @@
 # Third-party code
 
 Gezik's own code is under the PolyForm Noncommercial License 1.0.0 (see `LICENSE.md`). The
-crates below are built into it for reading and writing archives and for converting pictures
-and text; each keeps its own licence.
+crates below are built into it for reading and writing archives, for converting pictures
+and text, and for reading and writing PDFs; each keeps its own licence.
 
 | Crate | Version | Licence | Source |
 |---|---|---|---|
@@ -28,6 +28,13 @@ and text; each keeps its own licence.
 | chardetng | 1.0.0 | Apache-2.0 OR MIT | https://github.com/hsivonen/chardetng |
 | core_detect (through encoding_rs) | 1.0.0 | MIT OR Apache-2.0 | https://github.com/thomcc/core_detect |
 | simdutf8 (through encoding_rs) | 0.1.5 | MIT OR Apache-2.0 | https://github.com/rusticstuff/simdutf8 |
+| pdf-writer | 0.15.0 | MIT OR Apache-2.0 | https://github.com/typst/pdf-writer |
+| ryu (through pdf-writer) | 1.0.23 | Apache-2.0 OR BSL-1.0 | https://github.com/dtolnay/ryu |
+| pdfium-render | 0.9.4 | MIT OR Apache-2.0 | https://github.com/ajrcarey/pdfium-render |
+| maybe-owned (through pdfium-render) | 0.3.4 | MIT OR Apache-2.0 | https://github.com/rustonaut/maybe-owned |
+| utf16string (through pdfium-render) | 0.2.0 | MIT OR Apache-2.0 | https://github.com/getsentry/utf16string |
+| vecmath (through pdfium-render) | 1.0.0 | MIT | https://github.com/pistondevelopers/vecmath |
+| piston-float (through vecmath) | 1.0.1 | MIT | https://github.com/pistondevelopers/float |
 
 ## Independent JPEG Group
 
@@ -110,3 +117,19 @@ License version 3. Each download holds the two programs, the licence text (`LICE
 `SOURCE.txt`, which names the FFmpeg commit, the builder's scripts and the upstream files with
 their SHA-256. FFmpeg's source is at https://ffmpeg.org/download.html. How the downloads are
 made: `scripts/tools/README.md`.
+
+## pdfium (downloaded on request)
+
+pdfium is not built into Gezik. When the user asks for PDF work that reads PDFs, Gezik downloads
+an unmodified PDFium 157.0.8086.0 (chromium/8086) build from https://github.com/wenlar/gezik-tools
+and loads it only in its separate PDF worker process (`gezik --pdf-worker`). The builds are
+Benoît Blanchon's (https://github.com/bblanchon/pdfium-binaries/releases/tag/chromium%2F8086),
+without V8 (JavaScript) and XFA, and are only repackaged; the macOS libraries keep their bytes
+(and the arm64 one its ad-hoc signature). PDFium (https://pdfium.googlesource.com/pdfium/) is
+under the BSD 3-clause and Apache 2.0 licences (`licenses/pdfium.txt`); the libraries built
+into it (abseil, agg, dragonbox, fast_float, FreeType, HarfBuzz, ICU, Little CMS, libjpeg-turbo,
+OpenJPEG, libpng, LLVM libc, simdutf, zlib) keep their own permissive licences (`licenses/`);
+the build scripts are under the MIT licence (`LICENSE`). Each download holds the library
+(`pdfium.dll`, `libpdfium.dylib` or `libpdfium.so`), `LICENSE`, the `licenses/` folder and
+`SOURCE.txt`, which names the upstream file and its SHA-256; all are installed next to the
+library. How the downloads are made: `scripts/tools/README.md`.

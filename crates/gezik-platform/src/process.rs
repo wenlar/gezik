@@ -38,6 +38,19 @@ pub fn process_alive(pid: u32) -> bool {
     unsafe { libc::kill(pid, 0) == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM) }
 }
 
+/// Makes a crash of this process a plain non-zero exit: on Windows no error reporting dialog
+/// and no "insert a disk" box (`SetErrorMode`, inherited by what it starts). For helper
+/// processes whose parent reports how they ended (the PDF worker). Elsewhere nothing to do.
+pub fn quiet_crashes() {
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::Diagnostics::Debug::{SEM_FAILCRITICALERRORS, SEM_NOGPFAULTERRORBOX, SetErrorMode};
+        unsafe {
+            SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+        }
+    }
+}
+
 /// How often `wait_or_stop` looks.
 const POLL: Duration = Duration::from_millis(50);
 

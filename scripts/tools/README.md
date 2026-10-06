@@ -1,6 +1,6 @@
 # Tool downloads
 
-Gezik offers to download tools it does not build in (7-Zip and ffmpeg now; pdfium later). The
+Gezik offers to download tools it does not build in (7-Zip, ffmpeg and pdfium). The
 downloads live as GitHub release files in the public repository `wenlar/gezik-tools`;
 `crates/gezik-core/src/batch/tools.rs` (`MANIFEST`) pins each file's address, size and SHA-256,
 and Gezik refuses a download whose hash differs.
@@ -164,3 +164,87 @@ month-end tag, build name and commit; the tag's commit; Martin Riedl's two folde
 https://ffmpeg.martin-riedl.de/), run it with `-UpdateSources` (it rewrites only the ffmpeg
 lines of `sources.sha256`; the publishers' hashes are still checked), then follow steps 2-4 of
 "Updating to a new version" with `ffmpeg-<new>-1`. Never go below 9.0.
+
+## pdfium
+
+pdfium is the library Gezik's PDF worker (`gezik --pdf-worker`) loads; only that helper
+process loads it. It must be chromium/7881 or newer: the bindings (`pdfium-render`'s
+`pdfium_7881`) look up every function at load, so an older library fails to load (6996 does).
+A future build could drop a function the bindings want, so `MANIFEST` pins one build and every
+upgrade reruns the `GEZIK_TOOLS_DIR` test below (it loads the library and counts pages). The
+release `pdfium-8086-1` holds one solid 7z per platform (`kind = "7z"`), each with the library,
+`LICENSE` (the build scripts' MIT licence), `licenses/` (PDFium's BSD-3-Clause/Apache-2.0
+licence and its 16 bundled libraries' licences, 17 files) and `SOURCE.txt` (the upstream file
+and its SHA-256):
+
+| File | Platform | Upstream file | Library | Size |
+|---|---|---|---|---|
+| `pdfium-8086-windows-x64.7z` | Windows x64 | `pdfium-win-x64.tgz` | `pdfium.dll` | 2,815,947 B |
+| `pdfium-8086-windows-arm64.7z` | Windows arm64 | `pdfium-win-arm64.tgz` | `pdfium.dll` | 2,436,166 B |
+| `pdfium-8086-macos-arm64.7z` | macOS arm64 | `pdfium-mac-arm64.tgz` | `libpdfium.dylib` | 2,373,968 B |
+| `pdfium-8086-macos-x64.7z` | macOS x64 | `pdfium-mac-x64.tgz` | `libpdfium.dylib` | 2,689,296 B |
+| `pdfium-8086-linux-x64.7z` | Linux x64 (glibc 2.16+) | `pdfium-linux-x64.tgz` | `libpdfium.so` | 2,764,635 B |
+| `pdfium-8086-linux-arm64.7z` | Linux arm64 (glibc 2.17+) | `pdfium-linux-arm64.tgz` | `libpdfium.so` | 2,513,984 B |
+
+The builds are Benoît Blanchon's pdfium-binaries, release `chromium/8086` (PDFium
+157.0.8086.0, https://github.com/bblanchon/pdfium-binaries/releases/tag/chromium%2F8086), the
+plain ones: no V8 (JavaScript), no XFA. The libraries are not changed: the macOS arm64 dylib is
+ad-hoc and linker signed and the x64 one unsigned, and both stay as they are (rewriting a
+dylib breaks its linker signature). The library is listed in `programs` like a program: on
+macOS and Linux the download task makes it 0755, which a shared library may be, and
+`tools::find(Tool::Pdfium, data, None)` gives its path (only Gezik's download; PATH and the
+system are never looked in).
+
+Make the files (Windows, with 7-Zip installed; about 22 MB of downloads and a minute):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/tools/prepare-pdfium.ps1 -Out D:\Work\gezik-tools\pdfium-8086-1
+```
+
+It downloads `pdfium-<p>.tgz` from the upstream release (`-Cache <folder>` keeps them, named
+`pdfium-<build>-<p>.tgz`) and checks each against its size and SHA-256 in `sources.sha256` and
+against GitHub's asset digest. It unpacks each (`7z x` twice: tgz, then tar), checks that
+`VERSION` says `BUILD=<build>`, that `args.gn` has `pdf_enable_v8 = false` and
+`pdf_enable_xfa = false`, and that `licenses/` holds 17 files, then packs each platform with
+`7z a -t7z -mx=9 -ms=on -mmt=1`. The x64 libraries (Windows, macOS and Linux) add `-mf=BCJ`:
+for x86 code in any of the three formats 7-Zip picks BCJ2 at `-mx=9`, which Gezik's 7z reader
+does not decode; for arm64 it picks the ARM64 filter, which the reader decodes. One thread
+keeps the files the same on any machine with the same 7-Zip (24.09 here); two runs gave
+byte-identical files. It prints sizes, SHA-256s and the `MANIFEST` lines, also written to
+`<Out>\manifest.rs.txt`.
+
+The upstream files also carry a signed SLSA provenance from the upstream build workflow; check
+it with the GitHub CLI (it looks at the file's hash, not its name):
+
+```bash
+for p in win-x64 win-arm64 mac-arm64 mac-x64 linux-x64 linux-arm64; do
+  gh attestation verify pdfium-8086-$p.tgz --repo bblanchon/pdfium-binaries
+done
+```
+
+For 8086 all six verified: signed by
+`bblanchon/pdfium-binaries/.github/workflows/build-all.yml@refs/heads/master` (commit
+`5325fa6d0d9379329f10f98fdc4839b4e40f2e79`, run 37320989355).
+
+Check the packages as above (`GEZIK_TOOLS_DIR='D:\Work\gezik-tools\pdfium-8086-1'`); this also
+loads this machine's library from the install through `examples/pdf_worker` and counts the
+pages of a 3-page PDF (run `cargo test -p gezik-batch` once first, which builds the example).
+
+Publish (the notes name the licences, the upstream release and PDFium's source):
+
+```bash
+cd /d/Work/gezik-tools/pdfium-8086-1
+gh release create pdfium-8086-1 --repo wenlar/gezik-tools --title "pdfium chromium/8086" \
+  pdfium-8086-windows-x64.7z pdfium-8086-windows-arm64.7z \
+  pdfium-8086-macos-arm64.7z pdfium-8086-macos-x64.7z \
+  pdfium-8086-linux-x64.7z pdfium-8086-linux-arm64.7z \
+  --notes "PDFium 157.0.8086.0 (chromium/8086), unmodified builds by Benoît Blanchon (https://github.com/bblanchon/pdfium-binaries/releases/tag/chromium%2F8086), without V8 and XFA, repackaged for Gezik. PDFium is under the BSD 3-clause and Apache 2.0 licences (licenses/pdfium.txt); the libraries built into it keep their own permissive licences (licenses/); the build scripts are MIT (LICENSE). Source: https://pdfium.googlesource.com/pdfium/. SOURCE.txt in each file names the upstream file and its SHA-256."
+```
+
+and check the served files against `MANIFEST` as for 7-Zip (`pdfium-8086-$f` for `$f` in
+`windows-x64.7z windows-arm64.7z macos-arm64.7z macos-x64.7z linux-x64.7z linux-arm64.7z`).
+
+For a new build: run `prepare-pdfium.ps1 -Build <new> -FullVersion <its PDFium version>
+-UpdateSources -Out D:\Work\gezik-tools\pdfium-<new>-1` (it rewrites only the pdfium lines of
+`sources.sha256`; GitHub's digest is still checked), verify the attestations, then follow
+steps 2-4 of "Updating to a new version" with `pdfium-<new>-1`. Never go below 7881.

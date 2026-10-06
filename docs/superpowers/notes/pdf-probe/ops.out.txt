@@ -1,0 +1,42 @@
+[mem] start: working set 4.2 MiB (peak 4.2), private 0.6 MiB (peak 0.6)
+bind + FPDF_InitLibrary: 4.3609ms
+[mem] after load: working set 8.0 MiB (peak 8.0), private 1.3 MiB (peak 1.3)
+merge 3+8+3 -> out/merged.pdf: 14 pages in 7.2963ms
+ranges '1-3, 5, 8-' of 14 -> [0, 1, 2, 4, 7, 8, 9, 10, 11, 12, 13]
+  parse_ranges("0-2") = None
+  parse_ranges("5-3") = None
+  parse_ranges("1-99") = None
+  parse_ranges("x") = None
+  parse_ranges("") = None
+extract -> out/extract.pdf: 11 pages
+split 14 single pages + 4 parts of 4 in 5.4709ms
+render 14 pages at 72 dpi to png: 89.6088ms; page 1 640x480, A4 page 12 842x595
+render 14 pages at 72 dpi to jpg: 105.2628ms; page 1 640x480, A4 page 12 842x595
+render 14 pages at 150 dpi to png: 199.2764ms; page 1 1333x1000, A4 page 12 1754x1240
+render 14 pages at 150 dpi to jpg: 297.057ms; page 1 1333x1000, A4 page 12 1754x1240
+render 14 pages at 300 dpi to png: 405.8422ms; page 1 2667x2000, A4 page 12 3508x2480
+render 14 pages at 300 dpi to jpg: 1.0035651s; page 1 2667x2000, A4 page 12 3508x2480
+[mem] after merge/split/render: working set 13.9 MiB (peak 106.2), private 3.9 MiB (peak 97.1)
+open out/enc_aes256.pdf pw=None: NeedsPassword
+open out/enc_aes256.pdf pw=Some("nope"): WrongPassword
+open out/enc_aes256.pdf pw=Some("pw"): OK, 3 pages, permissions-ok=Err(UnknownPdfSecurityHandlerRevision)
+open out/enc_aes256.pdf pw=Some("own"): OK, 3 pages, permissions-ok=Err(UnknownPdfSecurityHandlerRevision)
+open out/enc_rc4.pdf pw=None: NeedsPassword
+open out/enc_rc4.pdf pw=Some("pw"): OK, 3 pages, permissions-ok=Ok(Revision3)
+open out/enc_owner_only.pdf pw=None: OK, 3 pages, permissions-ok=Err(UnknownPdfSecurityHandlerRevision)
+open out/truncated.pdf pw=None: Damaged
+open out/garbage.pdf pw=None: Damaged
+open out/notpdf.pdf pw=None: Damaged
+open out/missing.pdf pw=None: Other("IoError(Os { code: 2, kind: NotFound, message: \"The system cannot find the file specified.\" })")
+huge_page: 14400x14400 pt
+  render 300 dpi capped at 100 MP -> 9990x9990 at 50.0 dpi in 675.3469ms
+[mem] after capped huge render: working set 12.5 MiB (peak 1060.1), private 2.5 MiB (peak 1052.2)
+  uncapped 300 dpi (60000x60000 = 14.4 GB BGRA): Err("PdfiumLibraryInternalError(Unknown)")
+userunit.pdf (14400 pt x UserUnit 10): pdfium reports 14400x14400 pt
+many_pages: 20000 pages, open 22.9274ms
+  append all + save: 182.0783ms
+  split first 200 single pages: 58.9339ms
+[mem] after many pages: working set 59.8 MiB (peak 1060.1), private 52.2 MiB (peak 1052.2)
+fonts.pdf rendered to out/render/fonts - page 1.png
+[mem] after drop(Pdfium): working set 13.8 MiB (peak 1060.1), private 4.5 MiB (peak 1052.2)
+rebind after drop: PdfiumLibraryBindingsAlreadyInitialized

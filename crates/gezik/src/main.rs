@@ -16,6 +16,7 @@ mod media;
 mod menu_bar;
 mod navigation;
 mod operations;
+mod pdf;
 mod places;
 mod popup;
 mod preview;
@@ -307,6 +308,12 @@ fn keep_on_screen(window: slint::Weak<AppWindow>, attempt: u32) {
 }
 
 fn main() -> Result<(), slint::PlatformError> {
+    // The PDF worker (`gezik --pdf-worker`) is this exe run by Gezik itself: it does one PDF
+    // request with pdfium and exits, before any window, Slint or settings. Its pipes come from
+    // the handles `ChildProcess` gives it, so this works in the windowless release build too.
+    if std::env::args_os().nth(1).is_some_and(|arg| arg == gezik_batch::pdf::client::WORKER_ARG) {
+        std::process::exit(gezik_batch::pdf::worker::main());
+    }
     // Gezik has its own tabs: no window tabs of macOS (nor their items in the View menu).
     #[cfg(target_os = "macos")]
     gezik_platform::app::no_window_tabs();

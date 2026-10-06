@@ -1,0 +1,26 @@
+out/three.pdf p1: page 640.0x480.0 pt, render 640x480, ref 640x480 (samples/DSCN0010.jpg), mean |diff| = 0.17
+out/three.pdf p2: page 256.0x256.0 pt, render 256x256, ref 256x256 (samples/rgba.png), mean |diff| = 0.00
+out/three.pdf p3: page 600.0x450.0 pt, render 600x450, ref 600x450 (samples/landscape_6.jpg), mean |diff| = 12.27
+out/extra.pdf p1: page 640.0x480.0 pt, render 640x480, ref 640x480 (samples/cmyk.jpg), mean |diff| = 15.93
+out/extra.pdf p2: page 640.0x480.0 pt, render 640x480, ref 640x480 (samples/gray.jpg), mean |diff| = 0.01
+out/extra.pdf p3: page 640.0x480.0 pt, render 640x480, ref 640x480 (samples/progressive.jpg), mean |diff| = 0.18
+out/extra.pdf p4: page 480.0x640.0 pt, render 480x640, ref 480x640 (samples/all.jpg), mean |diff| = 5.89
+out/extra.pdf p5: page 256.0x256.0 pt, render 256x256, ref 256x256 (samples/rgba16.png), mean |diff| = 0.03
+out/extra.pdf p6: page 400.0x300.0 pt, render 400x300, ref 400x300 (samples/rgb16.png), mean |diff| = 0.16
+out/extra.pdf p7: page 300.0x200.0 pt, render 300x200, ref 300x200 (samples/gray.png), mean |diff| = 0.00
+out/extra.pdf p8: page 256.0x256.0 pt, render 256x256, ref 256x256 (samples/rgba_icc.png), mean |diff| = 0.00
+out/noicc.pdf p1: page 600.0x450.0 pt, render 600x450, ref 600x450 (samples/landscape_6.jpg), mean |diff| = 0.29
+out/noicc.pdf p2: page 480.0x640.0 pt, render 480x640, ref 480x640 (samples/all.jpg), mean |diff| = 0.17
+out/noicc.pdf p3: page 256.0x256.0 pt, render 256x256, ref 256x256 (samples/rgba_icc.png), mean |diff| = 0.00
+out/cmyk_nodecode.pdf p1: page 640.0x480.0 pt, render 640x480, ref 640x480 (samples/cmyk.jpg), mean |diff| = 102.76
+out/orient_o1.pdf p1: page 320.0x240.0 pt, render 320x240, ref 320x240 (samples/orient/o1.jpg), mean |diff| = 0.16
+out/orient_o2.pdf p1: page 320.0x240.0 pt, render 320x240, ref 320x240 (samples/orient/o2.jpg), mean |diff| = 0.16
+out/orient_o3.pdf p1: page 320.0x240.0 pt, render 320x240, ref 320x240 (samples/orient/o3.jpg), mean |diff| = 0.16
+out/orient_o4.pdf p1: page 320.0x240.0 pt, render 320x240, ref 320x240 (samples/orient/o4.jpg), mean |diff| = 0.16
+out/orient_o5.pdf p1: page 240.0x320.0 pt, render 240x320, ref 240x320 (samples/orient/o5.jpg), mean |diff| = 0.16
+out/orient_o6.pdf p1: page 240.0x320.0 pt, render 240x320, ref 240x320 (samples/orient/o6.jpg), mean |diff| = 0.16
+out/orient_o7.pdf p1: page 240.0x320.0 pt, render 240x320, ref 240x320 (samples/orient/o7.jpg), mean |diff| = 0.16
+out/orient_o8.pdf p1: page 240.0x320.0 pt, render 240x320, ref 240x320 (samples/orient/o8.jpg), mean |diff| = 0.16
+out/three_a4.pdf: 3 pages, first sizes ["841.89x595.28", "595.28x841.89", "841.89x595.28"]
+out/three_letter.pdf: 3 pages, first sizes ["792.00x612.00", "612.00x792.00", "792.00x612.00"]
+out/bench100.pdf: 100 pages, first sizes ["841.89x595.28", "841.89x595.28", "841.89x595.28"]

@@ -80,6 +80,9 @@ pub enum TaskKind {
     Download,
     Convert,
     Command,
+    /// A PDF job (merge, split, extract, to pictures, pictures to PDF). PDF jobs bring their
+    /// own Undo label; the verb is only a fallback.
+    Pdf,
 }
 
 impl TaskKind {
@@ -99,6 +102,7 @@ impl TaskKind {
             TaskKind::Download => "Download",
             TaskKind::Convert => "Convert",
             TaskKind::Command => "Run command on",
+            TaskKind::Pdf => "Make PDF from",
         }
     }
 
@@ -714,6 +718,7 @@ mod tests {
         assert_eq!(TaskKind::NewFolder.label(1), "New folder");
         assert_eq!(TaskKind::Convert.label(12), "Convert 12 items");
         assert_eq!(TaskKind::Command.label(1), "Run command on 1 item");
+        assert_eq!(TaskKind::Pdf.label(3), "Make PDF from 3 items");
     }
 
     #[test]

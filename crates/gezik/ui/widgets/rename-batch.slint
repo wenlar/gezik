@@ -398,6 +398,11 @@ export component RenameBatch inherits Rectangle {
                                             }
                                         }
                                         changed pressed => {
+                                            // A press starts afresh: a drag whose row was rebuilt under it never saw its release.
+                                            if self.pressed {
+                                                root.drag-from = -1;
+                                                root.drag-to = -1;
+                                            }
                                             if !self.pressed && root.drag-from >= 0 {
                                                 if root.drag-to != root.drag-from { root.reorder(root.drag-from, root.drag-to); }
                                                 root.drag-from = -1;

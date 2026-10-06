@@ -75,15 +75,15 @@ fn not_supported(why: impl Into<String>) -> io::Error {
     io::Error::other(ImageError::NotSupported(why.into()))
 }
 
-fn too_large() -> io::Error {
+pub(crate) fn too_large() -> io::Error {
     not_supported("too large to convert")
 }
 
 /// The most bytes one picture buffer may take: image's default allocation limit (512 MiB).
-const MAX_BUFFER: u64 = 512 << 20;
+pub(crate) const MAX_BUFFER: u64 = 512 << 20;
 
 /// Whether a `w`×`h` buffer of `bytes_per_pixel` fits in [`MAX_BUFFER`].
-fn fits(w: u32, h: u32, bytes_per_pixel: u64) -> bool {
+pub(crate) fn fits(w: u32, h: u32, bytes_per_pixel: u64) -> bool {
     u64::from(w) * u64::from(h) * bytes_per_pixel <= MAX_BUFFER
 }
 
@@ -165,7 +165,7 @@ fn write_or_remove(path: &Path, bytes: &[u8]) -> io::Result<()> {
     result
 }
 
-fn starts_like_jpeg(path: &Path) -> io::Result<bool> {
+pub(crate) fn starts_like_jpeg(path: &Path) -> io::Result<bool> {
     let mut head = [0u8; 3];
     let mut file = File::open(path)?;
     let mut read = 0;
@@ -204,14 +204,14 @@ impl Drop for Temps {
 }
 
 /// A picture as read, with what of its metadata may be carried over.
-struct Source {
-    img: DynamicImage,
-    icc: Option<Vec<u8>>,
+pub(crate) struct Source {
+    pub(crate) img: DynamicImage,
+    pub(crate) icc: Option<Vec<u8>>,
     /// The TIFF payload, without `Exif\0\0`.
-    exif: Option<Vec<u8>>,
-    orientation: Orientation,
+    pub(crate) exif: Option<Vec<u8>>,
+    pub(crate) orientation: Orientation,
     /// Whether it was a JPEG (only a JPEG passes its EXIF on).
-    jpeg: bool,
+    pub(crate) jpeg: bool,
 }
 
 fn convert(job: &ImageJob, stop: &dyn Fn() -> bool) -> io::Result<()> {
@@ -299,7 +299,7 @@ fn read(job: &ImageJob, temps: &mut Temps, stop: &dyn Fn() -> bool) -> io::Resul
 
 /// Reads a picture (by its content, not its name) with its ICC profile, EXIF and
 /// orientation; GIF, WebP and APNG give their first frame.
-fn decode(path: &Path) -> io::Result<Source> {
+pub(crate) fn decode(path: &Path) -> io::Result<Source> {
     let reader = ImageReader::open(path)?.with_guessed_format()?;
     let jpeg = reader.format() == Some(::image::ImageFormat::Jpeg);
     let mut decoder = reader.into_decoder().map_err(image_error)?;

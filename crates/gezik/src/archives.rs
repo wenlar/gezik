@@ -1,6 +1,7 @@
 //! Archives in the app: the Extract and Compress menu items, the Compress layer, the
 //! passwords and questions extraction asks, and the box that offers to download a tool:
-//! 7-Zip when an archive needs it, ffmpeg when a conversion does (convert.rs asks). The work
+//! 7-Zip when an archive needs it, ffmpeg when a conversion does and pdfium for the PDF group
+//! (convert.rs asks for both). The work
 //! runs as engine jobs (gezik-batch's tasks); the UI thread never reads the disk: menus
 //! decide by name, and finding 7-Zip or adding up sizes runs on a thread.
 
@@ -275,11 +276,53 @@ pub enum Need {
     /// The ffmpeg there is 9 or newer, and it failed to read the pictures anyway (when they
     /// were tried again): a download would not help.
     FfmpegFailed,
+    /// pdfium, for merging, splitting, extracting and "PDF to images".
+    Pdf,
+    /// The pdfium there could not be loaded (a broken download): get it again.
+    PdfiumFailed,
 }
 
 impl Need {
     fn tool(&self) -> Tool {
-        if matches!(self, Need::Archive(_)) { Tool::SevenZip } else { Tool::Ffmpeg }
+        match self {
+            Need::Archive(_) => Tool::SevenZip,
+            Need::Pdf | Need::PdfiumFailed => Tool::Pdfium,
+            _ => Tool::Ffmpeg,
+        }
+    }
+}
+
+/// The box offering pdfium (`failed`: the one there could not be loaded). Linux distributions
+/// do not package pdfium: no package to suggest.
+fn pdfium_offer(failed: bool, size: Option<u64>, download: bool, hint: Option<&str>) -> (String, Vec<&'static str>) {
+    let ok = vec!["OK"];
+    match size {
+        Some(size) if download => {
+            let mut message = if failed {
+                format!("{} (~{}, free)", crate::pdf::PDFIUM_FAILED.trim_end_matches('?'), format_size(size))
+            } else {
+                format!("PDF tools need pdfium (~{}, free)", format_size(size))
+            };
+            match hint {
+                Some(hint) => {
+                    message.push_str(&format!(". {hint} to download it."));
+                    (message, ok)
+                }
+                None => {
+                    message.push(if failed { '?' } else { '.' });
+                    (message, vec!["Download", "Where does it come from?", "Cancel"])
+                }
+            }
+        }
+        _ => {
+            let lead = if failed { "Could not load pdfium" } else { "PDF tools need pdfium" };
+            let why = if download {
+                "Gezik cannot download it for this system yet."
+            } else {
+                "Downloading tools is off ([tools] download = false in settings.toml)."
+            };
+            (format!("{lead}. {why}"), ok)
+        }
     }
 }
 
@@ -294,6 +337,11 @@ pub fn tool_offer(
     hint: Option<&str>,
 ) -> (&'static str, String, Vec<&'static str>) {
     let lead = match need {
+        Need::Pdf | Need::PdfiumFailed => {
+            let failed = *need == Need::PdfiumFailed;
+            let (message, buttons) = pdfium_offer(failed, size, download, hint);
+            return (if failed { "pdfium failed to load" } else { "pdfium needed" }, message, buttons);
+        }
         Need::Archive(ext) => {
             let (message, buttons) = seven_zip_offer(ext, size, download, linux);
             return ("7-Zip needed", message, buttons);
@@ -730,6 +778,14 @@ impl Archives {
     /// downloading to work (found on a thread). While the box is on screen, more that need
     /// ffmpeg join it.
     pub fn offer_ffmpeg(&self, need: Need, hint: Option<String>, again: Rc<dyn Fn()>, row: Option<JobId>) {
+        self.offer(need, hint, Then::Again { again, row });
+    }
+
+    /// The box for pdfium (convert.rs): `failed` when the one there could not be loaded.
+    /// Download fetches it (again) and then calls `again`, after taking away the failed row
+    /// `row` if there is one; `hint` as for ffmpeg.
+    pub fn offer_pdfium(&self, failed: bool, hint: Option<String>, again: Rc<dyn Fn()>, row: Option<JobId>) {
+        let need = if failed { Need::PdfiumFailed } else { Need::Pdf };
         self.offer(need, hint, Then::Again { again, row });
     }
 
@@ -1195,7 +1251,7 @@ mod tests {
         assert_eq!(release_page(url), "https://github.com/wenlar/gezik-tools/releases/tag/ffmpeg-9.0.2-1");
         assert_eq!(release_page("https://example.com/a.zip"), TOOLS_PAGE);
         // Every build of this system has one.
-        for tool in [Tool::SevenZip, Tool::Ffmpeg] {
+        for tool in [Tool::SevenZip, Tool::Ffmpeg, Tool::Pdfium] {
             if let Some(build) = Platform::current().and_then(|p| build_for(tool, p)) {
                 assert!(release_page(build.url).contains("/releases/tag/"), "{}", build.url);
             }
@@ -1242,6 +1298,27 @@ mod tests {
         assert!(off.contains("[convert]") && buttons == ["OK"], "{off}");
         let (_, none, buttons) = tool_offer(&Need::Media, None, true, false, None);
         assert!(none.contains("cannot download it for this system yet") && buttons == ["OK"], "{none}");
+
+        let (title, message, buttons) = tool_offer(&Need::Pdf, Some(2_900_000), true, true, None);
+        assert_eq!(title, "pdfium needed");
+        assert_eq!(message, "PDF tools need pdfium (~2.8 MB, free).");
+        assert_eq!(buttons, ["Download", "Where does it come from?", "Cancel"]);
+        let (_, off, buttons) = tool_offer(&Need::Pdf, Some(2_900_000), false, false, None);
+        assert!(off.contains("[tools] download = false") && buttons == ["OK"], "{off}");
+        assert_eq!(off, "PDF tools need pdfium. Downloading tools is off ([tools] download = false in settings.toml).");
+        let (_, message, buttons) = tool_offer(&Need::Pdf, Some(2_900_000), true, true, Some(hint));
+        assert_eq!(message, format!("PDF tools need pdfium (~2.8 MB, free). {hint} to download it."));
+        assert_eq!(buttons, ["OK"]);
+        let (_, none, buttons) = tool_offer(&Need::Pdf, None, true, false, None);
+        assert_eq!(none, "PDF tools need pdfium. Gezik cannot download it for this system yet.");
+        assert_eq!(buttons, ["OK"]);
+        // One that is there and does not load: Download gets it again.
+        let (title, message, buttons) = tool_offer(&Need::PdfiumFailed, Some(2_900_000), true, false, None);
+        assert_eq!(title, "pdfium failed to load");
+        assert_eq!(message, "Could not load pdfium. Download it again (~2.8 MB, free)?");
+        assert_eq!(buttons, ["Download", "Where does it come from?", "Cancel"]);
+        assert_eq!(Need::PdfiumFailed.tool(), Tool::Pdfium);
+        assert_eq!(Need::Pdf.tool(), Tool::Pdfium);
     }
 
     #[test]

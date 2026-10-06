@@ -1,7 +1,7 @@
 # Alt Proje 5: Toplu İşlemler — Tasarım
 
 - **Tarih:** 2026-10-05
-- **Durum:** Tasarım onaylandı (2026-10-05); 5a, 5b, 5c uygulandı
+- **Durum:** Tasarım onaylandı (2026-10-05); 5a, 5b, 5c, 5d uygulandı
 - **Kapsam:** Gezik yol haritasının 5. alt projesi; tek spec, dört plan ve dört PR: **5a** toplu yeniden adlandırma, **5b** arşivler, **5c** dönüştürme ve kullanıcı komutları, **5d** PDF
 - **Dayandığı:** `2026-10-04-dosya-islemleri-design.md` (motor, `Task`, çakışma listesi, geri alma, ilerleme paneli, `pending` toparlaması, sürükle-bırak), `2026-10-03-ayarlar-ve-tema-design.md` (ayar dosyası, canlı yeniden yükleme, kısayol biçimi)
 
@@ -368,11 +368,11 @@ parallel = 4                     # varsayılan 1
 
 - Bir özellik dış araca ihtiyaç duyup aracı bulamadığında katmanda araç kutusu çıkar: "<Özellik> needs <araç> (~<boyut>, free). [Download]" ve küçük bir "Where does it come from?" bağlantısı (kaynak, lisans, sürüm).
 - Download → `Download` görevi kuyruğa girer (panelde ilerleme, iptal); bitince kutu kaybolur, katmandaki ilgili seçenekler etkinleşir.
-- Araçlar: **7-Zip** (5b; `7zz`/`7z.exe`, ~2 MB), **ffmpeg + ffprobe** (5c; ~35-80 MB, platforma göre), **pdfium** (5d; ~5 MB).
+- Araçlar: **7-Zip** (5b; `7zz`/`7z.exe`, ~2 MB), **ffmpeg + ffprobe** (5c; ~35-80 MB, platforma göre), **pdfium** (5d; ~3 MB indirme, ~8 MB disk).
 
 ### 8.2 Kaynak ve doğrulama
 
-- Dosyalar Gezik'in kendi GitHub deposunun sürümlerinde (`wenlar/gezik-tools`, sabit etiketler: `ffmpeg-7.1-1`, `7zip-24.09-1`, `pdfium-6996-1`) barındırılır. Platformlar: Windows x64/arm64, macOS arm64/x64, Linux x64/arm64. Depo herkese açıktır (yalnız araç ikilileri, lisans notları ve hazırlama betiği). Depoyu ve sürümleri `gh` ile Gezik geliştiricisi oluşturur (2026-10-05 kararı). ffmpeg **essentials** türü derlemedir (x264, x265, libwebp, SVT-AV1/aom, dav1d; GPL); üst kaynaklar: Windows gyan.dev, macOS ve Linux için planda seçilen sabit sürümlü statik derlemeler.
+- Dosyalar Gezik'in kendi GitHub deposunun sürümlerinde (`wenlar/gezik-tools`, sabit etiketler: `ffmpeg-7.1-1`, `7zip-24.09-1`, `pdfium-8086-1`) barındırılır. Platformlar: Windows x64/arm64, macOS arm64/x64, Linux x64/arm64. Depo herkese açıktır (yalnız araç ikilileri, lisans notları ve hazırlama betiği). Depoyu ve sürümleri `gh` ile Gezik geliştiricisi oluşturur (2026-10-05 kararı). ffmpeg **essentials** türü derlemedir (x264, x265, libwebp, SVT-AV1/aom, dav1d; GPL); üst kaynaklar: Windows gyan.dev, macOS ve Linux için planda seçilen sabit sürümlü statik derlemeler.
 - Araç bildirimi `gezik-core::batch::tools`'ta derlemeye gömülüdür: araç, sürüm, platform başına adres, boyut, **SHA-256**, arşiv içindeki çalıştırılabilir yollar.
 - İndirme sistemin kendi HTTP istemcisiyle yapılır (2026-10-06 kararı; Gezik'te Rust TLS yığını yok): Windows'ta WinHTTP, macOS'ta `NSURLSession` (ikisinde de sistemin proxy ayarları ve sertifikaları geçerli), Linux ve diğer Unix'lerde `curl`, yoksa `wget`; ikisi de yoksa hata "Install curl with your package manager (sudo apt install curl)". Yalnız HTTPS, en çok 5 yönlendirme, gövde araç boyutu + 1 MiB'ı aşarsa durur; geçici dosyaya yazılır, ilerleme en çok 100 ms'de bir gelen bayt sayısından; iptal beklemeden keser. Yönlendirmeler: WinHTTP'de https'ten http'ye yönlendirme politikası kapalı ve sayısı 5 ile sınırlı; macOS'ta bir oturum temsilcisi (`willPerformHTTPRedirection`) her yönlendirmeyi izlenmeden önce görür, https olmayanı ve altıncısını reddeder (ATS de düz http'yi varsayılan olarak reddeder); `curl`'de `--proto-redir =https --max-redirs 5`; `wget`'in `--https-only`'si yalnız özyinelemeli indirmede geçerli olduğundan `--server-response` başlıklarındaki her `Location:` okunur, http'ye giden varsa indirilen atılır. Windows ve macOS'ta yanıtın son adresi bir kez daha denetlenir; içeriği asıl koruyan SHA-256 denetimidir. Kod `gezik-platform::http`'te.
 - İndirilen dosyanın SHA-256'sı Rust'ta (`sha2`) hesaplanır; tutmazsa silinir ve hata satırı "download damaged — try again". Tutarsa 5b'nin arşiv kodu ile `<veri>/tools/<araç>-<sürüm>/` altına açılır (aşama klasörü + yeniden adlandırma; yarım kurulum görünmez).
@@ -400,7 +400,7 @@ parallel = 4                     # varsayılan 1
 | **Extract pages** | Aralıklar yeni PDF'e | pdfium |
 
 - Katman "PDF" grubu olarak Convert katmanındadır (hazır ayar listesinde); "Images to PDF" ayrıca sağ tık menüsünde.
-- pdfium (`pdfium-render`, dinamik yükleme) indirilen kütüphaneyi iş başında yükler, iş bitince bırakır; boşta bellek değişmez.
+- pdfium (`pdfium-render`, dinamik yükleme) indirilen kütüphaneyi yardımcı süreçte (`gezik --pdf-worker`) iş başında yükler, iş bitince bırakır; boşta bellek değişmez.
 - Şifreli PDF'te şifre sorulur (5.2'deki soru katmanı).
 - Çıktılar `Created`; Ctrl+Z çöpe atar. Ad önerileri: `ad (merged).pdf`, `ad - page 3.pdf`, `ad - pages 1-3.pdf`.
 - `Resources`: Images to PDF `Work::Cpu`; pdfium işleri `Work::Cpu`, tek iş parçacığı (pdfium iş parçacığı güvenli değil).
