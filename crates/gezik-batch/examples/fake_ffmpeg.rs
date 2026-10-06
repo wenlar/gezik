@@ -29,6 +29,13 @@ fn main() {
     };
     if has("-version") {
         let exe = std::env::current_exe().unwrap();
+        // A first start that waits (a virus scanner reading a new download): `slow.txt` says how
+        // many milliseconds.
+        if let Some(ms) =
+            std::fs::read_to_string(exe.with_file_name("slow.txt")).ok().and_then(|t| t.trim().parse().ok())
+        {
+            std::thread::sleep(Duration::from_millis(ms));
+        }
         let banner = std::fs::read_to_string(exe.with_file_name("banner.txt")).unwrap_or_else(|_| BANNER.to_string());
         print!("{banner}");
         return;

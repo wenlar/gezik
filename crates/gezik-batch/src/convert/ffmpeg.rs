@@ -4,24 +4,21 @@
 //! [`run_ffmpeg`].
 
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use gezik_core::batch::convert::{parse_ffmpeg_version, parse_progress_block};
 use gezik_core::batch::tools::Tool;
 use gezik_platform::ChildProcess;
 
-use crate::tools::on_path;
+use crate::tools::{Answers, Asked, on_path};
 
 /// How many of ffmpeg's last error lines a failure keeps.
 const STDERR_LINES: usize = 20;
 
-/// How long `-version` and ffprobe may take before they are given up on.
-const ASK_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long ffprobe may take before it is given up on.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// An ffmpeg Gezik can run: the program, ffprobe beside it (or on PATH) when there is one,
@@ -196,11 +193,8 @@ pub fn stderr_tail(text: &str) -> String {
 /// What `-version` said: whether the program is ffmpeg, and its version.
 type Answer = Option<Option<(u32, u32)>>;
 
-/// Programs asked: the answer, by path and the change time it was for.
-type Answers = HashMap<PathBuf, (Option<SystemTime>, Answer)>;
-
 /// The (major, minor) version of the ffmpeg at `path` from `ffmpeg -version`; `None` when it
-/// is no ffmpeg, does not start, takes longer than 5 s or is a build from git.
+/// is no ffmpeg, does not start or answer in time, or is a build from git.
 pub fn version(path: &Path) -> Option<(u32, u32)> {
     ask(path).flatten()
 }
@@ -210,32 +204,29 @@ pub fn is_ffmpeg(path: &Path) -> bool {
     ask(path).is_some()
 }
 
-/// `-version`'s answer, asked once per program and change time. The first ask blocks (up to
-/// 5 s) without looking at a stop.
+/// `-version`'s answer, asked once per program and change time. Only an answer is kept: a
+/// program that did not start or answer in time (the first start of a download, while a
+/// virus scanner reads it) counts as no ffmpeg this time and is asked again the next. The ask
+/// blocks (up to 20 s the first time) without looking at a stop.
 fn ask(path: &Path) -> Answer {
-    static SEEN: Mutex<Option<Answers>> = Mutex::new(None);
-    let modified = std::fs::metadata(path).and_then(|meta| meta.modified()).ok();
-    if let Some((when, answer)) =
-        SEEN.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).get(path)
-        && *when == modified
-    {
-        return *answer;
-    }
-    let answer = ask_version(path);
-    SEEN.lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .get_or_insert_with(HashMap::new)
-        .insert(path.to_path_buf(), (modified, answer));
-    answer
+    static SEEN: Answers<Answer> = Answers::new();
+    SEEN.get(path, |timeout| ask_version(path, timeout)).flatten()
 }
 
-fn ask_version(path: &Path) -> Answer {
-    let mut child = ChildProcess::spawn(path, ["-version"], None).ok()?;
+fn ask_version(path: &Path, timeout: Duration) -> Asked<Answer> {
+    let Ok(mut child) = ChildProcess::spawn(path, ["-version"], None) else { return Asked::NoAnswer };
     let mut lines = child.stdout_lines();
     let started = Instant::now();
-    child.wait_or_stop(|| started.elapsed() > ASK_TIMEOUT).ok()??;
-    let first = lines.next()?;
-    first.trim_start().starts_with("ffmpeg version ").then(|| parse_ffmpeg_version(&first))
+    if !matches!(child.wait_or_stop(|| started.elapsed() > timeout), Ok(Some(_))) {
+        return Asked::NoAnswer;
+    }
+    // It ran: what it printed (or not) is the answer.
+    Asked::Answer(
+        lines
+            .next()
+            .filter(|first| first.trim_start().starts_with("ffmpeg version "))
+            .map(|first| parse_ffmpeg_version(&first)),
+    )
 }
 
 #[cfg(test)]
@@ -273,6 +264,13 @@ mod tests {
         reader.line("out_time_us=5".into());
         reader.line("progress=end".into());
         assert_eq!(calls, 0);
+    }
+
+    #[test]
+    fn a_program_that_does_not_start_gives_no_answer() {
+        let missing = std::env::temp_dir().join(format!("gezik-no-ffmpeg-{}", std::process::id())).join("ffmpeg");
+        assert!(matches!(ask_version(&missing, Duration::from_secs(5)), Asked::NoAnswer));
+        assert!(!is_ffmpeg(&missing));
     }
 
     #[test]

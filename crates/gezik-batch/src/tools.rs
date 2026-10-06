@@ -30,41 +30,83 @@ pub fn find(tool: Tool, data_dir: &Path, configured: Option<&Path>) -> Option<Pa
 /// unpacked (CVE-2025-11001/11002). p7zip (16.02, unmaintained) never counts.
 const SEVEN_ZIP_MIN: (u32, u32) = (25, 0);
 
-/// Programs asked for their version: the answer, by path and the change time it was for.
-type Versions = HashMap<PathBuf, (Option<SystemTime>, bool)>;
-
 /// Whether the program at `path` is a version Gezik trusts (for ffmpeg: any ffmpeg). Asked once per program and
 /// change time.
 fn recent_enough(tool: Tool, path: &Path) -> bool {
-    static SEEN: Mutex<Option<Versions>> = Mutex::new(None);
-    let modified = std::fs::metadata(path).and_then(|meta| meta.modified()).ok();
-    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some((when, ok)) = seen.get_or_insert_with(HashMap::new).get(path)
-        && *when == modified
-    {
-        return *ok;
-    }
-    drop(seen);
-    let ok = match tool {
-        Tool::SevenZip => banner(path).is_some_and(|text| seven_zip_version(&text).is_some_and(|v| v >= SEVEN_ZIP_MIN)),
+    static SEEN: Answers<bool> = Answers::new();
+    match tool {
+        Tool::SevenZip => SEEN
+            .get(path, |timeout| match banner(path, timeout) {
+                Some(text) => Asked::Answer(seven_zip_version(&text).is_some_and(|v| v >= SEVEN_ZIP_MIN)),
+                None => Asked::NoAnswer,
+            })
+            .unwrap_or(false),
         // Any ffmpeg does audio and video; what needs a newer one (HEIC) asks for the version.
+        // (It keeps its own answers.)
         Tool::Ffmpeg => crate::convert::ffmpeg::is_ffmpeg(path),
-    };
-    SEEN.lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .get_or_insert_with(HashMap::new)
-        .insert(path.to_path_buf(), (modified, ok));
-    ok
+    }
 }
 
 /// What the program prints when started without arguments (its name and version first);
-/// `None` if it does not start or takes longer than 5 s.
-fn banner(path: &Path) -> Option<String> {
+/// `None` if it does not start or takes longer than `timeout`.
+fn banner(path: &Path, timeout: Duration) -> Option<String> {
     let mut child = ChildProcess::spawn(path, std::iter::empty::<&str>(), None).ok()?;
     let lines = child.stdout_lines();
     let started = Instant::now();
-    child.wait_or_stop(|| started.elapsed() > Duration::from_secs(5)).ok()??;
+    child.wait_or_stop(|| started.elapsed() > timeout).ok()??;
     Some(lines.take(10).collect::<Vec<_>>().join("\n"))
+}
+
+/// What asking a program (for its version) gave.
+pub(crate) enum Asked<T> {
+    /// It ran and said this (or something else, which is an answer too): kept until the
+    /// program changes.
+    Answer(T),
+    /// It did not start, or did not end in time: asked again next time. The first start of
+    /// a program just downloaded can wait long for a virus scanner (100 MB of ffmpeg); kept,
+    /// "no answer" would offer the download again and again while a good one is there.
+    NoAnswer,
+}
+
+/// How long a program may take to answer the first time it is asked: that start may wait for
+/// a virus scan of the whole program.
+pub(crate) const FIRST_ASK: Duration = Duration::from_secs(20);
+
+/// How long it may take when it is asked again after it did not answer in time.
+pub(crate) const ASK_AGAIN: Duration = Duration::from_secs(5);
+
+/// Programs asked, by path: the change time asked for, and the answer (`None`: none came).
+type Seen<T> = HashMap<PathBuf, (Option<SystemTime>, Option<T>)>;
+
+/// The answers programs gave, once per program and change time.
+pub(crate) struct Answers<T>(Mutex<Option<Seen<T>>>);
+
+impl<T: Clone> Answers<T> {
+    pub(crate) const fn new() -> Answers<T> {
+        Answers(Mutex::new(None))
+    }
+
+    /// The answer of the program at `path`: kept from before, or asked now with `ask`, which
+    /// is given how long it may wait ([`FIRST_ASK`], [`ASK_AGAIN`] after no answer). `None`
+    /// when no answer came (not kept). The ask blocks without looking at any stop.
+    pub(crate) fn get(&self, path: &Path, ask: impl FnOnce(Duration) -> Asked<T>) -> Option<T> {
+        let modified = std::fs::metadata(path).and_then(|meta| meta.modified()).ok();
+        let timeout = {
+            let mut seen = self.0.lock().unwrap_or_else(|e| e.into_inner());
+            match seen.get_or_insert_with(HashMap::new).get(path) {
+                Some((when, Some(answer))) if *when == modified => return Some(answer.clone()),
+                Some((when, None)) if *when == modified => ASK_AGAIN,
+                _ => FIRST_ASK,
+            }
+        };
+        let answer = match ask(timeout) {
+            Asked::Answer(answer) => Some(answer),
+            Asked::NoAnswer => None,
+        };
+        let mut seen = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        seen.get_or_insert_with(HashMap::new).insert(path.to_path_buf(), (modified, answer.clone()));
+        answer
+    }
 }
 
 /// 7-Zip's version from its banner (`7-Zip 26.03 (x64) : Copyright…`, `7-Zip (z) 24.08`);
@@ -288,8 +330,36 @@ mod tests {
     #[test]
     fn installed_seven_zip_banner_is_read() {
         let Some(path) = installed_elsewhere(Tool::SevenZip) else { return };
-        let banner = banner(&path).expect("7-Zip printed its banner");
+        let banner = banner(&path, FIRST_ASK).expect("7-Zip printed its banner");
         assert!(seven_zip_version(&banner).is_some(), "{banner}");
+    }
+
+    #[test]
+    fn only_answers_are_kept_and_a_first_ask_may_take_longer() {
+        let d = dir("answers");
+        let path = program(&d.join("tool.exe"));
+        let answers: Answers<bool> = Answers::new();
+        let asked = &std::cell::RefCell::new(Vec::new());
+        let ask = |reply: Option<bool>| {
+            move |timeout: Duration| {
+                asked.borrow_mut().push(timeout);
+                reply.map_or(Asked::NoAnswer, Asked::Answer)
+            }
+        };
+        // No answer (it timed out, or did not start): not kept, asked again (more briefly).
+        assert_eq!(answers.get(&path, ask(None)), None);
+        assert_eq!(answers.get(&path, ask(None)), None);
+        assert_eq!(answers.get(&path, ask(Some(true))), Some(true));
+        assert_eq!(*asked.borrow(), [FIRST_ASK, ASK_AGAIN, ASK_AGAIN]);
+        // An answer is kept: not asked again.
+        assert_eq!(answers.get(&path, ask(Some(false))), Some(true));
+        assert_eq!(asked.borrow().len(), 3);
+        // "Not this tool" is an answer too.
+        let other = program(&d.join("other.exe"));
+        assert_eq!(answers.get(&other, ask(Some(false))), Some(false));
+        assert_eq!(answers.get(&other, ask(Some(true))), Some(false));
+        assert_eq!(asked.borrow().len(), 4);
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

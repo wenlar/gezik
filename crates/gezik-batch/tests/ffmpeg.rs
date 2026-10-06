@@ -26,7 +26,7 @@ const BANNERS: [(&str, Option<(u32, u32)>); 4] = [
 
 /// Each test's folder: its name, whether the fake is copied in as `ffmpeg`, whether also as
 /// `ffprobe`, and the banner its `-version` prints (`banner.txt`).
-const FOLDERS: [(&str, bool, bool, Option<&str>); 13] = [
+const FOLDERS: [(&str, bool, bool, Option<&str>); 14] = [
     ("find", true, true, None),
     ("banner0", true, false, Some(BANNERS[0].0)),
     ("banner1", true, false, Some(BANNERS[1].0)),
@@ -39,6 +39,7 @@ const FOLDERS: [(&str, bool, bool, Option<&str>); 13] = [
     ("cancel", true, true, None),
     ("failure", true, true, None),
     ("adds-progress", true, true, None),
+    ("slow", true, false, None),
     ("real", false, false, None),
 ];
 
@@ -66,6 +67,8 @@ fn dir(name: &str) -> PathBuf {
                 std::fs::write(d.join("banner.txt"), banner).unwrap();
             }
         }
+        // Longer than the 5 s a later ask may take.
+        std::fs::write(root.join("slow").join("slow.txt"), "6000").unwrap();
         root
     });
     assert!(FOLDERS.iter().any(|(folder, ..)| *folder == name), "add {name} to FOLDERS");
@@ -125,6 +128,17 @@ fn versions_are_read_from_real_banners() {
         assert_eq!(found.version, version, "{banner}");
         let _ = std::fs::remove_dir_all(&d);
     }
+}
+
+/// The first start of a download can wait for a virus scanner: the first ask waits longer
+/// than 5 s for it (and a timeout would not be kept as "no ffmpeg").
+#[test]
+fn a_slow_first_answer_is_waited_for() {
+    let d = dir("slow");
+    let path = exe(&d, "ffmpeg");
+    let found = find_ffmpeg(&d.join("data"), Some(&path)).expect("found although it took 6 s");
+    assert_eq!(found.version, Some((9, 0)));
+    let _ = std::fs::remove_dir_all(&d);
 }
 
 #[test]
