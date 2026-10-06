@@ -6,6 +6,7 @@ pub mod case;
 pub mod convert;
 pub mod date;
 pub mod pdf;
+pub mod pdf_worker;
 pub mod rules;
 pub mod template;
 pub mod tools;
