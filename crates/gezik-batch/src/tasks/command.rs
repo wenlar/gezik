@@ -183,8 +183,6 @@ impl CommandTask {
     /// others go into one run in their folder; refused at once when they do not fit one
     /// command line.
     fn plan_once(&self, sink: &mut dyn ScanSink) {
-        let Some((first, _)) = self.inputs.first() else { return };
-        let dir = first.parent().unwrap_or(Path::new("")).to_path_buf();
         for (root, (input, is_dir)) in self.inputs.iter().enumerate() {
             if !command_applies(&self.spec, &file_name(input), *is_dir) {
                 let facts = Facts { is_dir: *is_dir, size: 0, modified: None };
@@ -194,9 +192,9 @@ impl CommandTask {
             }
         }
         let files = self.taken();
-        if files.is_empty() {
-            return;
-        }
+        // A failure is told on the first item it takes.
+        let Some(first) = files.first() else { return };
+        let dir = first.parent().unwrap_or(Path::new("")).to_path_buf();
         match expand_files_command(&self.spec, &dir, &files) {
             Err(message) => sink.failed(first, invalid(message)),
             Ok(args)

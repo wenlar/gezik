@@ -789,11 +789,15 @@ fn a_files_command_past_the_command_line_limit_does_not_run() {
     let spec = command(&["args", "list.log", "{files}"], None);
     let count = gezik_platform::process::command_line_limit(&spec.run[0]) / 200 + 10;
     // The plan of a {files} run reads no item: these need not exist.
-    let inputs: Vec<(PathBuf, bool)> = (0..count).map(|i| (d.join(format!("{long}{i}.txt")), false)).collect();
+    // First a folder, which the command does not take.
+    let inputs: Vec<(PathBuf, bool)> = std::iter::once((d.join("sub"), true))
+        .chain((0..count).map(|i| (d.join(format!("{long}{i}.txt")), false)))
+        .collect();
     let engine = engine(&d);
     let report = run(&engine, CommandTask::new(inputs, spec));
     assert_eq!(report.failures.len(), 1, "{:?}", report.failures);
     assert!(report.failures[0].message.contains("Too many items for one run of Fake"), "{:?}", report.failures);
+    assert_eq!(report.failures[0].path, d.join(format!("{long}0.txt")), "told on the first item it takes");
     assert!(!d.join("list.log").exists());
     let _ = std::fs::remove_dir_all(&d);
 }
