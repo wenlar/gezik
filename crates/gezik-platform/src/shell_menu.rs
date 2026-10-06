@@ -73,6 +73,16 @@ pub fn show_shell_menu(
     }
 }
 
+/// A label as Win32 menus take it: `&` marks the access key, so a literal one (a file or
+/// command name) is doubled.
+fn menu_label(text: &str) -> HSTRING {
+    HSTRING::from(escape_ampersands(text))
+}
+
+fn escape_ampersands(text: &str) -> String {
+    text.replace('&', "&&")
+}
+
 /// Without CMF_CANRENAME the Shell leaves its "Rename" out.
 fn query_flags(can_rename: bool) -> u32 {
     if can_rename { CMF_NORMAL | CMF_CANRENAME } else { CMF_NORMAL }
@@ -200,18 +210,18 @@ unsafe fn track(
         menu.QueryContextMenu(hmenu, 0, FIRST_SHELL_ID, LAST_SHELL_ID, query_flags(can_rename)).ok()?;
         let mut ours = extra.len();
         for (position, (id, label)) in extra.iter().enumerate() {
-            InsertMenuW(hmenu, position as u32, MF_BYPOSITION | MF_STRING, *id as usize, &HSTRING::from(*label))?;
+            InsertMenuW(hmenu, position as u32, MF_BYPOSITION | MF_STRING, *id as usize, &menu_label(label))?;
         }
         if let Some(sub) = sub.filter(|sub| !sub.items.is_empty()) {
             // Once in `hmenu`, destroyed with it (DestroyMenu takes its submenus along).
             let popup = CreatePopupMenu()?;
             let filled = sub.items.iter().try_for_each(|(id, label, enabled)| {
                 let flags = if *enabled { MF_STRING } else { MF_STRING | MF_GRAYED };
-                AppendMenuW(popup, flags, *id as usize, &HSTRING::from(*label))
+                AppendMenuW(popup, flags, *id as usize, &menu_label(label))
             });
             let at = sub.at.min(extra.len()) as u32;
             let inserted = filled.and_then(|()| {
-                InsertMenuW(hmenu, at, MF_BYPOSITION | MF_POPUP, popup.0 as usize, &HSTRING::from(sub.title))
+                InsertMenuW(hmenu, at, MF_BYPOSITION | MF_POPUP, popup.0 as usize, &menu_label(sub.title))
             });
             if let Err(err) = inserted {
                 let _ = DestroyMenu(popup);
@@ -462,6 +472,13 @@ mod tests {
         assert!(validate_ids(&[(0, "a")]).is_err());
         assert!(validate_ids(&[(1000, "a")]).is_err());
         assert!(validate_ids(&[(1, "a"), (1000, "b")]).is_err());
+    }
+
+    #[test]
+    fn ampersands_in_labels_stay_literal() {
+        assert_eq!(escape_ampersands(r#"Compress to "Tom & Jerry.zip""#), r#"Compress to "Tom && Jerry.zip""#);
+        assert_eq!(escape_ampersands("R&&D"), "R&&&&D");
+        assert_eq!(escape_ampersands("plain"), "plain");
     }
 
     #[test]

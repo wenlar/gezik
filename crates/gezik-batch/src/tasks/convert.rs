@@ -81,7 +81,11 @@ impl ConvertWhat {
             }
             .to_owned(),
             ConvertWhat::RemoveLocation(_) => String::new(),
-            ConvertWhat::Text(options) if !options.keeps_encoding() => options.to.clone(),
+            // As the layer names it ("Windows-1252", not the label "windows-1252").
+            ConvertWhat::Text(options) if !options.keeps_encoding() => {
+                encoding_rs::Encoding::for_label(options.to.as_bytes())
+                    .map_or_else(|| options.to.clone(), |encoding| crate::convert::text::name(encoding).to_owned())
+            }
             ConvertWhat::Text(_) => "new line endings".to_owned(),
             ConvertWhat::Media(preset) => preset.extension().to_ascii_uppercase(),
         }
@@ -423,5 +427,19 @@ mod tests {
         assert_eq!(task.title(), "Converting a.mkv to MP4");
         assert_eq!(task.workers(), Some(1));
         assert_eq!(task.resources().work, Work::External);
+        // Encodings by the name the layer shows.
+        let text = |to: &str| {
+            ConvertWhat::Text(TextOptions {
+                from: None,
+                to: to.to_owned(),
+                bom: false,
+                eol: gezik_core::batch::convert::Eol::Keep,
+                trim_trailing: false,
+                final_newline: false,
+            })
+        };
+        assert_eq!(text("windows-1252").to(), "Windows-1252");
+        assert_eq!(text("UTF-16LE").to(), "UTF-16 LE");
+        assert_eq!(text("").to(), "new line endings");
     }
 }

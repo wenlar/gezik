@@ -229,7 +229,7 @@ fn command_title(spec: &CommandSpec, state: &CommandState) -> (String, bool) {
 pub type MenuItems = (Vec<(u32, String)>, Option<Vec<(u32, String, bool)>>);
 
 /// "Convert…" and the "Commands ▸" items for `items`, given the commands and how each shows.
-/// No "Convert…" when nothing can be converted; no submenu without commands to show.
+/// No "Convert…" when nothing can be converted or run; no submenu without commands to show.
 pub fn menu_entries(items: &[(PathBuf, bool)], commands: &[CommandSpec], states: &[CommandState]) -> MenuItems {
     let sub: Vec<(u32, String, bool)> = commands
         .iter()
@@ -243,8 +243,10 @@ pub fn menu_entries(items: &[(PathBuf, bool)], commands: &[CommandSpec], states:
         })
         .collect();
     let convertible = items.iter().any(|(path, is_dir)| kind_of(&name_of(path), *is_dir).is_some());
+    // A greyed command alone gives the layer nothing to run.
+    let runnable = sub.iter().any(|(_, _, enabled)| *enabled);
     let mut top = Vec::new();
-    if convertible || !sub.is_empty() {
+    if convertible || runnable {
         top.push((CONVERT, "Convert…".to_owned()));
     }
     (top, (!sub.is_empty()).then_some(sub))
@@ -350,10 +352,53 @@ fn enabled_of(rows: &[Row]) -> Vec<bool> {
 
 /// The choice to start with: the one used last if it is there and can be chosen, else the
 /// first that can.
-fn first_choice(choices: &[Choice], enabled: &[bool], commands: &[CommandSpec], last: Option<&str>) -> Option<usize> {
+fn first_choice(choices: &[Choice], enabled: &[bool], commands: &[CommandSpec], wanted: &[&str]) -> Option<usize> {
     let usable = |i: &usize| enabled.get(*i).copied().unwrap_or(false);
-    last.and_then(|last| (0..choices.len()).filter(usable).find(|i| choices[*i].key(commands) == last))
+    wanted
+        .iter()
+        .find_map(|want| (0..choices.len()).filter(usable).find(|i| choices[*i].key(commands) == *want))
         .or_else(|| (0..choices.len()).find(usable))
+}
+
+/// The preset a kind's saved options were for (`preset=<id>` in them).
+pub fn saved_preset(text: &str) -> Option<&str> {
+    text.split_whitespace().find_map(|pair| pair.strip_prefix("preset="))
+}
+
+/// The presets to start with, best first: the one used last, then the one used last for
+/// each kind of the selection (`kinds`, the most common first), so that a picture after a
+/// text conversion gets the last picture preset.
+pub fn wanted_presets<'a>(state: &'a ConvertState, kinds: &[Kind]) -> Vec<&'a str> {
+    let mut out: Vec<&str> = state.last_preset.as_deref().into_iter().collect();
+    for kind in kinds {
+        let remembered = match kind {
+            Kind::Image => state.image.as_deref().and_then(saved_preset),
+            Kind::Text => state.text.as_deref().and_then(saved_preset),
+            Kind::Media => state.media.as_deref(),
+            Kind::Command => None,
+        };
+        out.extend(remembered);
+    }
+    out
+}
+
+/// Whether the options differ from those `preset` starts with (the Preset button then says so).
+pub fn options_changed(preset: &Preset, image: &ImageOptions, text: &TextOptions) -> bool {
+    match preset.what {
+        PresetWhat::Image(_) if preset.keeps_format() => false,
+        PresetWhat::Image(own) => {
+            let shown_quality = matches!(image.format, ImageFormat::Jpeg | ImageFormat::WebpLossy | ImageFormat::Avif);
+            image.format != own.format
+                || (shown_quality && image.quality != own.quality)
+                || image.resize != own.resize
+                || (image.resize != Resize::None && image.never_enlarge != own.never_enlarge)
+                || image.rotate_by_exif != own.rotate_by_exif
+                || image.strip_metadata != own.strip_metadata
+                || (image.format == ImageFormat::Jpeg && image.background != own.background)
+        }
+        PresetWhat::Text(own) => *text != own.options(),
+        PresetWhat::Media(_) => false,
+    }
 }
 
 /// What a preset converts, with the layer's options.
@@ -423,23 +468,51 @@ pub fn ffmpeg_note(kind: Kind, keeps_format: bool, found: Found) -> &'static str
     }
 }
 
-/// Whether `preset` can run on `name` with ffmpeg as `found` (`None`: there is none).
-fn runs_with(preset: &Preset, name: &str, found: Option<Option<(u32, u32)>>) -> bool {
-    if !preset.needs_ffmpeg_for(name) {
+/// An ffmpeg that was found: its version (`None`: a build from git, version unknown) and
+/// whether it is the one set in settings.toml (`[convert] ffmpeg`, used before any other).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Have {
+    pub version: Option<(u32, u32)>,
+    pub configured: bool,
+}
+
+/// Whether converting `name` as `what` says needs ffmpeg: audio and video always, pictures
+/// read through it (HEIC, HEIF, AVIF) or written by it (lossy WebP, AVIF). It goes by the
+/// options chosen, not by the preset they started from.
+pub fn needs_ffmpeg(what: &ConvertWhat, name: &str) -> bool {
+    match what {
+        ConvertWhat::Image(options) => needs_ffmpeg_to_read(name) || options.format.needs_ffmpeg(),
+        // Each picture keeps its format, a WebP written lossless.
+        ConvertWhat::RemoveLocation(_) => {
+            needs_ffmpeg_to_read(name) || ImageFormat::of_name(name) == Some(ImageFormat::Avif)
+        }
+        ConvertWhat::Text(_) => false,
+        ConvertWhat::Media(_) => true,
+    }
+}
+
+/// Whether `what` can run on `name` with ffmpeg as `found` (`None`: there is none).
+fn runs_with(what: &ConvertWhat, name: &str, found: Option<Have>) -> bool {
+    if !needs_ffmpeg(what, name) {
         return true;
     }
     match found {
         None => false,
-        Some(version) => !needs_ffmpeg_to_read(name) || version.is_some_and(|v| v >= FFMPEG_TO_READ),
+        Some(have) => !needs_ffmpeg_to_read(name) || have.version.is_some_and(|v| v >= FFMPEG_TO_READ),
     }
 }
 
-/// What the box says `preset` needs for `inputs`, with ffmpeg as `found`.
-pub fn need_for(preset: &Preset, inputs: &[PathBuf], found: Option<Option<(u32, u32)>>) -> Need {
-    if preset.kind == Kind::Media {
+/// What the box says `what` needs for `inputs`, with ffmpeg as `found`.
+pub fn need_for(what: &ConvertWhat, inputs: &[PathBuf], found: Option<Have>) -> Need {
+    if matches!(what, ConvertWhat::Media(_)) {
         Need::Media
     } else if inputs.iter().any(|p| needs_ffmpeg_to_read(&name_of(p))) {
-        if found.is_some() { Need::NewerFfmpeg } else { Need::Heic }
+        match found {
+            // A download would not be used: the configured one comes first.
+            Some(Have { configured: true, .. }) => Need::ConfiguredTooOld,
+            Some(_) => Need::NewerFfmpeg,
+            None => Need::Heic,
+        }
     } else {
         Need::Pictures
     }
@@ -448,13 +521,13 @@ pub fn need_for(preset: &Preset, inputs: &[PathBuf], found: Option<Option<(u32, 
 /// `inputs` split into those that run now and those that wait for ffmpeg (none, or older
 /// than 9 for HEIC, HEIF and AVIF), with what those need.
 pub fn split_by_ffmpeg(
-    preset: &Preset,
+    what: &ConvertWhat,
     inputs: Vec<PathBuf>,
-    found: Option<Option<(u32, u32)>>,
+    found: Option<Have>,
 ) -> (Vec<PathBuf>, Vec<PathBuf>, Option<Need>) {
     let (now, waiting): (Vec<PathBuf>, Vec<PathBuf>) =
-        inputs.into_iter().partition(|path| runs_with(preset, &name_of(path), found));
-    let need = (!waiting.is_empty()).then(|| need_for(preset, &waiting, found));
+        inputs.into_iter().partition(|path| runs_with(what, &name_of(path), found));
+    let need = (!waiting.is_empty()).then(|| need_for(what, &waiting, found));
     (now, waiting, need)
 }
 
@@ -719,6 +792,13 @@ struct Job {
     preset: &'static Preset,
     what: ConvertWhat,
     output: Output,
+    /// Started again after it failed for want of ffmpeg: a second such failure gets the box.
+    resubmitted: bool,
+}
+
+/// What the layer knows of the ffmpeg `ff`, found with `configured` set in settings.toml.
+fn have_of(ff: &Ffmpeg, configured: Option<&Path>) -> Have {
+    Have { version: ff.version, configured: configured.is_some_and(|c| c == ff.ffmpeg.as_path()) }
 }
 
 /// The Convert layer's choices (its texts live in the window).
@@ -971,24 +1051,31 @@ impl Convert {
         };
         let state = self.0.state.borrow().clone();
         let Some(choice) =
-            first_choice(&layer.choices, &layer.enabled(), &layer.commands, state.last_preset.as_deref())
+            first_choice(&layer.choices, &layer.enabled(), &layer.commands, &wanted_presets(&state, &kinds))
         else {
             return;
         };
         layer.choice = choice;
         self.load_choice(&mut layer, None);
-        // What was used last, when it was this preset.
-        if let Some(preset) = layer.preset()
-            && state.last_preset.as_deref() == Some(preset.id)
-        {
-            if let Some(text) = &state.image {
+        // The options used last with this preset (saved per kind), and the output when it was
+        // the last one used.
+        if let Some(preset) = layer.preset() {
+            let last = state.last_preset.as_deref() == Some(preset.id);
+            // Saved before options named their preset: the last one's.
+            let was_for = |text: &str| saved_preset(text).map_or(last, |id| id == preset.id);
+            if preset.kind == Kind::Image
+                && !preset.keeps_format()
+                && let Some(text) = state.image.as_deref().filter(|t| was_for(t))
+            {
                 layer.image = image_options_from(text, layer.image);
                 layer.resize_mode = resize_choice(layer.image.resize).0;
             }
-            if let Some(text) = &state.text {
+            if preset.kind == Kind::Text
+                && let Some(text) = state.text.as_deref().filter(|t| was_for(t))
+            {
                 layer.text = text_options_from(text, layer.text.clone());
             }
-            if let Some(output) = OutputChoice::from_key(&state.last_output) {
+            if last && let Some(output) = OutputChoice::from_key(&state.last_output) {
                 layer.output = output;
             }
         }
@@ -1210,7 +1297,23 @@ impl Convert {
                 } else {
                     String::new()
                 };
-                (preset.label.to_owned(), kind, note)
+                // The typed numbers count as they read now.
+                let mut image = layer.image;
+                if let Ok(q) = quality_from(&window.get_cv_quality()) {
+                    image.quality = q;
+                }
+                if let Ok(resize) = resize_from(layer.resize_mode, &window.get_cv_resize_value()) {
+                    image.resize = resize;
+                }
+                if let Ok(background) = background_from(&window.get_cv_background()) {
+                    image.background = background;
+                }
+                let title = if options_changed(preset, &image, &layer.text) {
+                    format!("{} (changed)", preset.label)
+                } else {
+                    preset.label.to_owned()
+                };
+                (title, kind, note)
             }
             Choice::Command(i) => {
                 let spec = &layer.commands[i];
@@ -1313,12 +1416,15 @@ impl Convert {
                 self.run_command(spec, items);
             }
             Ok(Ready::Convert(job)) => {
+                // Each kind remembers its own preset (and options) for the next time.
+                let id = job.preset.id;
                 let image = match &job.what {
-                    ConvertWhat::Image(options) => Some(image_options_text(options)),
+                    ConvertWhat::Image(options) => Some(format!("preset={id} {}", image_options_text(options))),
+                    ConvertWhat::RemoveLocation(_) => Some(format!("preset={id}")),
                     _ => None,
                 };
                 let text = match &job.what {
-                    ConvertWhat::Text(options) => Some(text_options_text(options)),
+                    ConvertWhat::Text(options) => Some(format!("preset={id} {}", text_options_text(options))),
                     _ => None,
                 };
                 let output = OutputChoice::of(&job.output);
@@ -1390,43 +1496,40 @@ impl Convert {
         if inputs.is_empty() {
             return Err("Nothing here to convert with this preset".to_owned());
         }
-        Ok(Ready::Convert(Job { inputs, preset, what, output }))
+        Ok(Ready::Convert(Job { inputs, preset, what, output, resubmitted: false }))
     }
 
     /// Finds ffmpeg on a thread if the job needs it, then starts what can run and offers
     /// ffmpeg for the rest.
     fn start(&self, job: Job) {
-        let wants = job.inputs.iter().any(|p| job.preset.needs_ffmpeg_for(&name_of(p)));
+        let wants = job.inputs.iter().any(|p| needs_ffmpeg(&job.what, &name_of(p)));
         let (data, configured) = (self.data_dir(), configured_ffmpeg());
         std::thread::spawn(move || {
             let ffmpeg = if wants { find_ffmpeg(&data, configured.as_deref()) } else { None };
             let hint = if wants { gezik_platform::http::tool_missing_hint() } else { None };
-            let found = ffmpeg.as_ref().map(|ff| ff.version);
-            let runs_now = job.inputs.iter().any(|p| runs_with(job.preset, &name_of(p), found));
+            let found = ffmpeg.as_ref().map(|ff| have_of(ff, configured.as_deref()));
+            let runs_now = job.inputs.iter().any(|p| runs_with(&job.what, &name_of(p), found));
             if runs_now && let Output::Folder(dir) = &job.output {
                 // A failure shows when the job cannot use the folder.
                 let _ = std::fs::create_dir_all(dir);
             }
             let _ = slint::invoke_from_event_loop(move || {
-                with_current(|this| this.found(job, ffmpeg, hint));
+                with_current(|this| this.found(job, ffmpeg, found, hint));
             });
         });
     }
 
-    fn found(&self, job: Job, ffmpeg: Option<Ffmpeg>, hint: Option<String>) {
-        let found = ffmpeg.as_ref().map(|ff| ff.version);
-        let (now, waiting, need) = split_by_ffmpeg(job.preset, job.inputs.clone(), found);
+    fn found(&self, job: Job, ffmpeg: Option<Ffmpeg>, found: Option<Have>, hint: Option<String>) {
+        let (now, waiting, need) = split_by_ffmpeg(&job.what, job.inputs.clone(), found);
         if !now.is_empty() {
-            let tools = ConvertTools { ffmpeg };
-            let (inputs, what, output) = (now.clone(), job.what.clone(), job.output.clone());
-            let retry: Rc<dyn Fn() -> Box<dyn gezik_ops::Task>> = Rc::new(move || {
-                Box::new(ConvertTask::new(inputs.clone(), what.clone(), output.clone(), tools.clone()))
-            });
-            let id = self.0.ops.submit(retry(), Some(retry), After::Select);
+            let task = ConvertTask::new(now.clone(), job.what.clone(), job.output.clone(), ConvertTools { ffmpeg });
+            // Retry goes through `start` again, so its job is followed too (and ffmpeg found anew).
+            let again = self.again(Job { inputs: now.clone(), resubmitted: false, ..job.clone() });
+            let id = self.0.ops.submit_chain(vec![Box::new(task)], None, Some(again), After::Select);
             self.0.jobs.borrow_mut().insert(id, Job { inputs: now, ..job.clone() });
         }
         if let Some(need) = need {
-            let again = self.again(Job { inputs: waiting, ..job });
+            let again = self.again(Job { inputs: waiting, resubmitted: false, ..job });
             crate::archives::with_current(|archives| archives.offer_ffmpeg(need, hint, again, None));
         }
     }
@@ -1440,7 +1543,8 @@ impl Convert {
     }
 
     /// A job ended (operations.rs tells every one): pictures or media that turned out to
-    /// need ffmpeg get the box, which starts them again after a download.
+    /// need ffmpeg run again when a good enough one is there now, else get the box, which
+    /// starts them again after a download.
     pub fn job_finished(&self, id: JobId, report: &Report) {
         let Some(job) = self.0.jobs.borrow_mut().remove(&id) else { return };
         if report.cancelled {
@@ -1458,16 +1562,26 @@ impl Convert {
         let job = Job { inputs: needing, ..job };
         let (data, configured) = (self.data_dir(), configured_ffmpeg());
         std::thread::spawn(move || {
-            let found = find_ffmpeg(&data, configured.as_deref()).map(|ff| ff.version);
+            let found = find_ffmpeg(&data, configured.as_deref()).map(|ff| have_of(&ff, configured.as_deref()));
             let hint = gezik_platform::http::tool_missing_hint();
             let _ = slint::invoke_from_event_loop(move || {
-                with_current(|this| {
-                    let need = need_for(job.preset, &job.inputs, found);
-                    let again = this.again(job);
-                    crate::archives::with_current(|archives| archives.offer_ffmpeg(need, hint, again, Some(id)));
-                });
+                with_current(|this| this.offer_or_again(id, job, found, hint));
             });
         });
+    }
+
+    /// After job `id` failed for want of ffmpeg on `job`'s inputs: run them again once if the
+    /// ffmpeg there now does for them (taking the failed row away), else offer the box.
+    fn offer_or_again(&self, id: JobId, job: Job, found: Option<Have>, hint: Option<String>) {
+        let all_run = job.inputs.iter().all(|p| runs_with(&job.what, &name_of(p), found));
+        if all_run && !job.resubmitted {
+            self.0.ops.forget(id);
+            self.start(Job { resubmitted: true, ..job });
+            return;
+        }
+        let need = need_for(&job.what, &job.inputs, found);
+        let again = self.again(Job { resubmitted: false, ..job });
+        crate::archives::with_current(|archives| archives.offer_ffmpeg(need, hint, again, Some(id)));
     }
 
     /// Runs a user command on the `items` it takes, as one job undone as one action.
@@ -1605,10 +1719,10 @@ mod tests {
         // The last choice when it is there and can be chosen, else the first that can.
         let enabled = enabled_of(&rows);
         let png = choices.iter().position(|c| *c == Choice::Preset(preset("to-png").unwrap()));
-        assert_eq!(first_choice(&choices, &enabled, &commands, Some("to-png")), png);
-        assert_eq!(first_choice(&choices, &enabled, &commands, Some("command:Lint")), Some(0));
-        assert_eq!(first_choice(&choices, &enabled, &commands, Some("mp3")), Some(0));
-        assert_eq!(first_choice(&choices, &[false; 3], &commands, None), None);
+        assert_eq!(first_choice(&choices, &enabled, &commands, &["to-png"]), png);
+        assert_eq!(first_choice(&choices, &enabled, &commands, &["command:Lint"]), Some(0));
+        assert_eq!(first_choice(&choices, &enabled, &commands, &["mp3"]), Some(0));
+        assert_eq!(first_choice(&choices, &[false; 3], &commands, &[]), None);
     }
 
     #[test]
@@ -1646,26 +1760,107 @@ mod tests {
         assert_eq!(ffmpeg_note(Kind::Command, false, Found::Missing), "");
     }
 
+    /// What a preset converts with its own options.
+    fn what_of(id: &str) -> ConvertWhat {
+        let preset = preset(id).unwrap();
+        convert_what(preset, preset_image(preset), &preset_text(preset))
+    }
+
+    fn have(version: Option<(u32, u32)>) -> Option<Have> {
+        Some(Have { version, configured: false })
+    }
+
     #[test]
     fn what_needs_ffmpeg_waits_for_it() {
         let (jpg, heic) = (PathBuf::from("d/a.jpg"), PathBuf::from("d/b.HEIC"));
-        let to_jpeg = preset("to-jpeg").unwrap();
+        let to_jpeg = what_of("to-jpeg");
         let both = vec![jpg.clone(), heic.clone()];
-        let none = split_by_ffmpeg(to_jpeg, both.clone(), None);
+        let none = split_by_ffmpeg(&to_jpeg, both.clone(), None);
         assert_eq!(none, (vec![jpg.clone()], vec![heic.clone()], Some(Need::Heic)));
         // An ffmpeg older than 9 (or of unknown version) does not read HEIC.
-        assert_eq!(split_by_ffmpeg(to_jpeg, both.clone(), Some(Some((6, 1)))).2, Some(Need::NewerFfmpeg));
-        assert_eq!(split_by_ffmpeg(to_jpeg, both.clone(), Some(None)).2, Some(Need::NewerFfmpeg));
-        assert_eq!(split_by_ffmpeg(to_jpeg, both.clone(), Some(Some((9, 0)))), (both, Vec::new(), None));
+        assert_eq!(split_by_ffmpeg(&to_jpeg, both.clone(), have(Some((6, 1)))).2, Some(Need::NewerFfmpeg));
+        assert_eq!(split_by_ffmpeg(&to_jpeg, both.clone(), have(None)).2, Some(Need::NewerFfmpeg));
+        // One set in settings.toml comes before a download: the box says so.
+        let configured = Some(Have { version: Some((7, 1)), configured: true });
+        assert_eq!(split_by_ffmpeg(&to_jpeg, both.clone(), configured).2, Some(Need::ConfiguredTooOld));
+        assert_eq!(split_by_ffmpeg(&to_jpeg, both.clone(), have(Some((9, 0)))), (both, Vec::new(), None));
         // Writing AVIF takes any ffmpeg.
-        let avif = preset("to-avif").unwrap();
-        assert_eq!(split_by_ffmpeg(avif, vec![jpg.clone()], None).2, Some(Need::Pictures));
-        assert!(split_by_ffmpeg(avif, vec![jpg], Some(Some((6, 0)))).1.is_empty());
-        let mp3 = preset("mp3").unwrap();
+        let avif = what_of("to-avif");
+        assert_eq!(split_by_ffmpeg(&avif, vec![jpg.clone()], None).2, Some(Need::Pictures));
+        assert!(split_by_ffmpeg(&avif, vec![jpg.clone()], have(Some((6, 0)))).1.is_empty());
+        let mp3 = what_of("mp3");
         let video = vec![PathBuf::from("d/v.mkv")];
-        assert_eq!(split_by_ffmpeg(mp3, video.clone(), None), (Vec::new(), video.clone(), Some(Need::Media)));
-        assert_eq!(split_by_ffmpeg(mp3, video.clone(), Some(None)).0, video);
-        assert_eq!(split_by_ffmpeg(preset("to-utf8").unwrap(), vec![PathBuf::from("a.txt")], None).2, None);
+        assert_eq!(split_by_ffmpeg(&mp3, video.clone(), None), (Vec::new(), video.clone(), Some(Need::Media)));
+        assert_eq!(split_by_ffmpeg(&mp3, video.clone(), have(None)).0, video);
+        assert_eq!(split_by_ffmpeg(&what_of("to-utf8"), vec![PathBuf::from("a.txt")], None).2, None);
+        // Remove location data: only an AVIF (kept as AVIF) or a HEIC needs it.
+        let location = what_of("remove-location");
+        assert!(!needs_ffmpeg(&location, "a.webp") && needs_ffmpeg(&location, "a.avif"));
+    }
+
+    #[test]
+    fn the_chosen_format_decides_on_ffmpeg_not_the_preset() {
+        // "Resize photos" writes JPEG; the format button changed it to lossy WebP.
+        let resize = preset("resize-photos").unwrap();
+        let lossy = ImageOptions { format: ImageFormat::WebpLossy, ..preset_image(resize) };
+        let what = convert_what(resize, lossy, &preset_text(resize));
+        let png = vec![PathBuf::from("d/alpha.png")];
+        assert!(needs_ffmpeg(&what, "alpha.png"));
+        assert_eq!(split_by_ffmpeg(&what, png.clone(), None), (Vec::new(), png.clone(), Some(Need::Pictures)));
+        assert_eq!(split_by_ffmpeg(&what, png.clone(), have(Some((9, 0)))).0, png);
+        // And the other way: "Convert to AVIF" switched to PNG needs none.
+        let avif = preset("to-avif").unwrap();
+        let what =
+            convert_what(avif, ImageOptions { format: ImageFormat::Png, ..preset_image(avif) }, &preset_text(avif));
+        assert!(!needs_ffmpeg(&what, "alpha.png"));
+    }
+
+    #[test]
+    fn convert_needs_something_to_run() {
+        let lint = spec("Lint", &["lint", "{in}"], None, &["exe"], false);
+        let off = [CommandState::Off("lint not found".to_owned())];
+        // A greyed command alone: the submenu shows it, but no Convert….
+        let (top, sub) = menu_entries(&[file("setup.exe")], std::slice::from_ref(&lint), &off);
+        assert!(top.is_empty(), "{top:?}");
+        assert_eq!(sub.map(|s| s.len()), Some(1));
+        let (top, _) = menu_entries(&[file("setup.exe")], &[lint], &[CommandState::Ready]);
+        assert_eq!(top.len(), 1);
+    }
+
+    #[test]
+    fn each_kind_remembers_its_preset() {
+        let state = ConvertState {
+            last_preset: Some("to-utf8".to_owned()),
+            image: Some("preset=to-jpeg format=jpeg strip=yes".to_owned()),
+            text: Some("preset=to-utf8 from=detect".to_owned()),
+            media: Some("mp3".to_owned()),
+            ..ConvertState::default()
+        };
+        assert_eq!(saved_preset("preset=to-jpeg format=jpeg"), Some("to-jpeg"));
+        assert_eq!(saved_preset("format=jpeg"), None);
+        assert_eq!(wanted_presets(&state, &[Kind::Media, Kind::Image]), ["to-utf8", "mp3", "to-jpeg"]);
+        // Pictures after a text conversion: the last picture preset, not the first one.
+        let kinds = [Kind::Image];
+        let (choices, rows) = preset_list(&kinds, &[], &[]);
+        let at = first_choice(&choices, &enabled_of(&rows), &[], &wanted_presets(&state, &kinds));
+        assert_eq!(at.map(|i| choices[i]), Some(Choice::Preset(preset("to-jpeg").unwrap())));
+    }
+
+    #[test]
+    fn the_preset_says_when_its_options_changed() {
+        let resize = preset("resize-photos").unwrap();
+        let own = preset_image(resize);
+        let text = preset_text(resize);
+        assert!(!options_changed(resize, &own, &text));
+        assert!(options_changed(resize, &ImageOptions { format: ImageFormat::WebpLossy, ..own }, &text));
+        assert!(options_changed(resize, &ImageOptions { strip_metadata: true, ..own }, &text));
+        // Quality does not show for PNG: changing it there changes nothing.
+        let png = preset("to-png").unwrap();
+        assert!(!options_changed(png, &ImageOptions { quality: 10, ..preset_image(png) }, &text));
+        let utf8 = preset("to-utf8").unwrap();
+        let bom = TextOptions { bom: true, ..preset_text(utf8) };
+        assert!(options_changed(utf8, &preset_image(utf8), &bom));
+        assert!(!options_changed(preset("mp3").unwrap(), &own, &text));
     }
 
     #[test]

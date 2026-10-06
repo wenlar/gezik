@@ -31,10 +31,19 @@ use crate::context_menu::{COMPRESS, COMPRESS_TO, EXTRACT_HERE, EXTRACT_TO, EXTRA
 use crate::dialog::Dialogs;
 use crate::operations::{After, Operations};
 
-/// Where Gezik's download comes from, and each tool's licence ("Where does it come from?").
+/// Where Gezik's downloads come from, when a build's own release page is not known.
 const TOOLS_PAGE: &str = "https://github.com/wenlar/gezik-tools";
-const SEVEN_ZIP_LICENSE: &str = "https://www.7-zip.org/license.txt";
-const FFMPEG_LICENSE: &str = "https://ffmpeg.org/legal.html";
+
+/// "Where does it come from?": the release page of the build's download (its notes link the
+/// licence and the sources), from `…/releases/download/<tag>/<file>`; the tools page if the
+/// address is not one of those.
+pub fn release_page(url: &str) -> String {
+    let Some((base, rest)) = url.split_once("/releases/download/") else { return TOOLS_PAGE.to_owned() };
+    match rest.split_once('/') {
+        Some((tag, _)) if !tag.is_empty() => format!("{base}/releases/tag/{tag}"),
+        _ => TOOLS_PAGE.to_owned(),
+    }
+}
 
 /// The Extract and Compress items for the selected `items` (path, is a folder): Extract
 /// when every one is an archive by its name, Compress always. `format` and `level` are the
@@ -181,6 +190,9 @@ pub enum Need {
     Heic,
     /// The same, and the ffmpeg there is older (or of unknown version).
     NewerFfmpeg,
+    /// The same, and the older one is set in settings.toml (`[convert] ffmpeg`): a download
+    /// would not be used.
+    ConfiguredTooOld,
 }
 
 impl Need {
@@ -203,6 +215,10 @@ pub fn tool_offer(
         Need::Archive(ext) => {
             let (message, buttons) = seven_zip_offer(ext, size, download, linux);
             return ("7-Zip needed", message, buttons);
+        }
+        Need::ConfiguredTooOld => {
+            let message = "Reading HEIC and AVIF pictures needs ffmpeg 9 or newer. The ffmpeg set under [convert]                            in settings.toml is older: set it to ffmpeg 9 or newer, or remove it to use Gezik's                            download.";
+            return ("ffmpeg needed", message.to_owned(), vec!["OK"]);
         }
         Need::Media => "Video conversion needs ffmpeg",
         Need::Pictures => "Converting to this format needs ffmpeg",
@@ -667,10 +683,9 @@ impl Archives {
         self.0.dialogs.ask_escape(title, message, &buttons, escape, move |choice| {
             match (choice, build) {
                 (Some(1), _) if offers => {
-                    let license = if tool == Tool::SevenZip { SEVEN_ZIP_LICENSE } else { FFMPEG_LICENSE };
-                    for page in [TOOLS_PAGE, license] {
-                        let _ = open::that_detached(page);
-                    }
+                    // One page: the build's release, whose notes link the licence and sources.
+                    let page = build.map_or_else(|| TOOLS_PAGE.to_owned(), |build| release_page(build.url));
+                    let _ = open::that_detached(page);
                     // The same box again, with what waits for it.
                     this.show_offer(need, hint);
                 }
@@ -1038,6 +1053,19 @@ mod tests {
     }
 
     #[test]
+    fn where_it_comes_from_is_the_release_page() {
+        let url = "https://github.com/wenlar/gezik-tools/releases/download/ffmpeg-9.0.2-1/ffmpeg-9.0.2-linux-arm64.7z";
+        assert_eq!(release_page(url), "https://github.com/wenlar/gezik-tools/releases/tag/ffmpeg-9.0.2-1");
+        assert_eq!(release_page("https://example.com/a.zip"), TOOLS_PAGE);
+        // Every build of this system has one.
+        for tool in [Tool::SevenZip, Tool::Ffmpeg] {
+            if let Some(build) = Platform::current().and_then(|p| build_for(tool, p)) {
+                assert!(release_page(build.url).contains("/releases/tag/"), "{}", build.url);
+            }
+        }
+    }
+
+    #[test]
     fn one_box_offers_each_tool() {
         // 7-Zip's box is as before.
         let (title, message, buttons) = tool_offer(&Need::Archive(".lzh".into()), Some(1_700_000), true, false, None);
@@ -1055,6 +1083,10 @@ mod tests {
         let heic = tool_offer(&Need::Heic, size, true, true, None).1;
         assert!(heic.contains("ffmpeg 9 or newer") && !heic.contains("apt"), "{heic}");
         assert!(tool_offer(&Need::NewerFfmpeg, size, true, false, None).1.contains("older"));
+        // An older one set in settings.toml would come before a download: no Download then.
+        let (_, configured, buttons) = tool_offer(&Need::ConfiguredTooOld, size, true, false, None);
+        assert!(configured.contains("[convert]") && configured.contains("9 or newer"), "{configured}");
+        assert_eq!(buttons, ["OK"]);
         // Nothing that downloads (Linux without curl or wget): the box says what to install.
         let hint = "Install curl with your package manager (sudo apt install curl)";
         let (_, message, buttons) = tool_offer(&Need::Pictures, size, true, true, Some(hint));

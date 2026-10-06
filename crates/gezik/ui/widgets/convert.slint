@@ -136,7 +136,7 @@ export component ConvertLayer inherits Rectangle {
                 preset-button := TextButton {
                     text: root.view.preset;
                     icon: root.menu-arrow;
-                    min-width: 280px;
+                    min-width: 340px;
                     clicked => { root.presets(self.absolute-position.x, self.absolute-position.y + self.height); }
                 }
                 Rectangle { horizontal-stretch: 1; }
