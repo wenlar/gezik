@@ -1,7 +1,7 @@
 //! `settings.toml` (portable, may be synced) and `state.toml` (this machine only).
 
 use crate::Warning;
-use crate::shortcuts::{KeyOwner, Platform, Shortcuts, parse_chord};
+use crate::shortcuts::{KeyOwner, Platform, Shortcuts, fixed_owner, parse_chord};
 use gezik_core::batch::convert::{CommandSpec, check_command};
 use gezik_core::history::Visit;
 use gezik_core::ops::threads::{COPY_THREADS_RANGE, CopyThreads};
@@ -767,11 +767,14 @@ fn bind_command_key(settings: &mut Settings, spec: &CommandSpec, n: usize, file:
         ));
         return;
     }
-    if let Err(owner) = settings.shortcuts.bind_command(index, chord) {
-        let who = match owner {
+    let taken = match fixed_owner(&chord, Platform::current()) {
+        Some(owner) => Err(owner.to_owned()),
+        None => settings.shortcuts.bind_command(index, chord).map_err(|owner| match owner {
             KeyOwner::Action(action) => action.name().to_owned(),
             KeyOwner::Command(other) => format!("\"{}\"", settings.commands[other].name),
-        };
+        }),
+    };
+    if let Err(who) = taken {
         warnings.push(Warning::new(
             file,
             format!("commands[{n}]: shortcut \"{text}\" is already used by {who}; the command has no key"),
@@ -1710,9 +1713,10 @@ last-pattern = \"\"
              [[commands]]\nname = \"B\"\nrun = [\"x\"]\nshortcut = \"ctrl+alt+r\"\n\
              [[commands]]\nname = \"C\"\nrun = [\"x\"]\nshortcut = \"ctrl+alt+k\"\n\
              [[commands]]\nname = \"D\"\nrun = [\"x\"]\nshortcut = \"CTRL+ALT+K\"\n\
-             [[commands]]\nname = \"E\"\nrun = [\"x\"]\nshortcut = \"ctrl+q+\"\n",
+             [[commands]]\nname = \"E\"\nrun = [\"x\"]\nshortcut = \"ctrl+q+\"\n\
+             [[commands]]\nname = \"F\"\nrun = [\"x\"]\nshortcut = \"shift+f10\"\n",
         );
-        assert_eq!(settings.commands.len(), 5, "every command stays, only its key goes");
+        assert_eq!(settings.commands.len(), 6, "every command stays, only its key goes");
         let messages: Vec<&str> = warnings.iter().map(|w| w.message.as_str()).collect();
         assert_eq!(
             messages,
@@ -1721,6 +1725,7 @@ last-pattern = \"\"
                 "commands[2]: shortcut \"ctrl+alt+r\" is already used by refresh; the command has no key",
                 "commands[4]: shortcut \"CTRL+ALT+K\" is already used by \"C\"; the command has no key",
                 "commands[5]: shortcut: missing key after \"+\"; the command has no key",
+                "commands[6]: shortcut \"shift+f10\" is already used by the file list; the command has no key",
             ]
         );
         let k = parse_chord("ctrl+alt+k", Platform::current()).unwrap().unwrap();

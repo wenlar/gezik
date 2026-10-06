@@ -94,6 +94,31 @@ impl Platform {
     }
 }
 
+/// Who has `chord` outside the shortcut table, if anyone: the file list's own keys (the
+/// primary modifier on arrows, PgUp/PgDn, Home/End and Space; Shift+F10, the menu key) or, on
+/// macOS, the menu bar's (Quit, Hide, Hide Others, Minimize), which never reach the window.
+pub fn fixed_owner(chord: &Chord, platform: Platform) -> Option<&'static str> {
+    let (primary, other) = match platform {
+        Platform::Mac => (chord.meta, chord.ctrl),
+        Platform::Other => (chord.ctrl, chord.meta),
+    };
+    let plain = !other && !chord.alt;
+    let moves = matches!(
+        chord.key,
+        Key::Up | Key::Down | Key::Left | Key::Right | Key::PageUp | Key::PageDown | Key::Home | Key::End
+    );
+    let menu_key = chord.shift && !primary && chord.key == Key::F(10);
+    if plain && (moves || menu_key || (primary && !chord.shift && chord.key == Key::Space)) {
+        return Some("the file list");
+    }
+    let menu_bar = platform == Platform::Mac
+        && primary
+        && !other
+        && !chord.shift
+        && matches!((chord.alt, chord.key), (false, Key::Char('q' | 'h' | 'm')) | (true, Key::Char('h')));
+    menu_bar.then_some("the macOS menu bar")
+}
+
 /// Parses `"mod+shift+t"`. `""` means "no shortcut" (`Ok(None)`).
 pub fn parse_chord(text: &str, platform: Platform) -> Result<Option<Chord>, String> {
     let text = text.trim().to_ascii_lowercase();
@@ -549,6 +574,27 @@ mod tests {
         let c = chord("Shift+CTRL+T");
         assert_eq!(c, Chord { ctrl: true, alt: false, shift: true, meta: false, key: key('t') });
         assert_eq!(chord("ctrl+shift+t"), c);
+    }
+
+    #[test]
+    fn the_file_lists_own_keys_and_the_macos_menus_are_taken() {
+        let other = |text| fixed_owner(&chord(text), Platform::Other);
+        let mac = |text| fixed_owner(&parse_chord(text, Platform::Mac).unwrap().unwrap(), Platform::Mac);
+        for text in ["ctrl+down", "ctrl+shift+end", "ctrl+pageup", "ctrl+home", "ctrl+space", "shift+f10"] {
+            assert_eq!(other(text), Some("the file list"), "{text}");
+        }
+        for text in ["ctrl+alt+down", "alt+home", "ctrl+shift+space", "f10", "ctrl+f10", "ctrl+q", "ctrl+h"] {
+            assert_eq!(other(text), None, "{text}");
+        }
+        for text in ["mod+down", "mod+shift+left", "mod+space", "shift+f10"] {
+            assert_eq!(mac(text), Some("the file list"), "{text}");
+        }
+        for text in ["mod+q", "mod+h", "mod+alt+h", "mod+m"] {
+            assert_eq!(mac(text), Some("the macOS menu bar"), "{text}");
+        }
+        for text in ["ctrl+down", "mod+shift+q", "mod+alt+q", "ctrl+q"] {
+            assert_eq!(mac(text), None, "{text}");
+        }
     }
 
     #[test]
