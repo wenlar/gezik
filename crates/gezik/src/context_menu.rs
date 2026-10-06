@@ -632,6 +632,7 @@ impl Menus {
     }
 
     /// Shows `items` (id, title, enabled), with `sub` among them.
+    /// (Slint shows these as native Windows menus, where `&` marks the access key.)
     fn open_slint_entries(&self, items: &[(u32, String, bool)], sub: Option<Submenu>, x: f32, y: f32) {
         let Some(window) = self.window.upgrade() else { return };
         if items.is_empty() && sub.is_none() {
@@ -639,18 +640,18 @@ impl Menus {
         }
         let entry = |(id, title, enabled): &(u32, String, bool)| MenuEntry {
             id: i32::try_from(*id).unwrap_or(0),
-            title: title.as_str().into(),
+            title: menu_title(title).into(),
             enabled: *enabled,
         };
         let at = sub.as_ref().map_or(items.len(), |sub| sub.at.min(items.len()));
         let before: Vec<MenuEntry> = items[..at].iter().map(entry).collect();
         let after: Vec<MenuEntry> = items[at..].iter().map(entry).collect();
         let (title, inner) = match &sub {
-            Some(sub) => (sub.title.as_str(), sub.items.iter().map(entry).collect()),
-            None => ("", Vec::new()),
+            Some(sub) => (menu_title(&sub.title), sub.items.iter().map(entry).collect()),
+            None => (String::new(), Vec::new()),
         };
         window.set_menu_entries(ModelRc::new(VecModel::from(before)));
-        window.set_menu_sub_title(title.into());
+        window.set_menu_sub_title(title.as_str().into());
         window.set_menu_sub_entries(ModelRc::new(VecModel::from(inner)));
         window.set_menu_entries_after(ModelRc::new(VecModel::from(after)));
         window.invoke_show_menu(x, y);
@@ -956,9 +957,21 @@ fn released_modifiers(down: gezik_platform::ModifierKeys) -> Vec<slint::platform
     .collect()
 }
 
+/// A title for Gezik's own menus: on Windows they are native menus, which would take `&` as the
+/// access key mark, so it is doubled to show as itself.
+fn menu_title(title: &str) -> String {
+    if cfg!(windows) { title.replace('&', "&&") } else { title.to_owned() }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_ampersand_shows_as_itself() {
+        let shown = if cfg!(windows) { "Copy && keep" } else { "Copy & keep" };
+        assert_eq!(menu_title("Copy & keep"), shown);
+    }
 
     #[test]
     fn drop_menu_ids_are_their_own() {

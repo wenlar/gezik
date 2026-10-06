@@ -217,7 +217,9 @@ pub fn tool_offer(
             return ("7-Zip needed", message, buttons);
         }
         Need::ConfiguredTooOld => {
-            let message = "Reading HEIC and AVIF pictures needs ffmpeg 9 or newer. The ffmpeg set under [convert]                            in settings.toml is older: set it to ffmpeg 9 or newer, or remove it to use Gezik's                            download.";
+            let message = "Reading HEIC and AVIF pictures needs ffmpeg 9 or newer. The ffmpeg set under [convert] \
+                in settings.toml is older: set it to ffmpeg 9 or newer, or remove it to use Gezik's \
+                download.";
             return ("ffmpeg needed", message.to_owned(), vec!["OK"]);
         }
         Need::Media => "Video conversion needs ffmpeg",
