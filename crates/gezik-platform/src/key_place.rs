@@ -4,7 +4,7 @@
 //! `[` is ⌥8).
 
 use objc2::MainThreadMarker;
-use objc2_app_kit::{NSApplication, NSEventModifierFlags, NSEventType};
+use objc2_app_kit::{NSApplication, NSEvent, NSEventModifierFlags, NSEventType};
 
 /// The bracket the key of the key press being handled has on a US keyboard, if it is one of
 /// the two bracket keys.
@@ -26,6 +26,25 @@ pub fn unshifted_text_of_key_being_pressed() -> Option<String> {
         return None;
     }
     Some(event.charactersByApplyingModifiers(NSEventModifierFlags::empty())?.to_string())
+}
+
+/// The modifier keys held down now.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Held {
+    pub command: bool,
+    pub shift: bool,
+    pub option: bool,
+    pub control: bool,
+}
+
+pub fn modifiers_held() -> Held {
+    let flags = NSEvent::modifierFlags_class();
+    Held {
+        command: flags.contains(NSEventModifierFlags::Command),
+        shift: flags.contains(NSEventModifierFlags::Shift),
+        option: flags.contains(NSEventModifierFlags::Option),
+        control: flags.contains(NSEventModifierFlags::Control),
+    }
 }
 
 /// `kVK_ANSI_LeftBracket` and `kVK_ANSI_RightBracket`: key codes name places, not characters.

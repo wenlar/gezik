@@ -205,7 +205,8 @@ impl Action {
         }
     }
 
-    fn from_name(name: &str) -> Option<Action> {
+    /// The action named `name` in settings.toml (`new-tab`).
+    pub fn from_name(name: &str) -> Option<Action> {
         Action::ALL.into_iter().find(|a| a.name() == name)
     }
 
@@ -340,6 +341,11 @@ impl Shortcuts {
 
     pub fn action_for(&self, chord: &Chord) -> Option<Action> {
         self.bindings.iter().find(|(c, _)| c == chord).map(|(_, a)| *a)
+    }
+
+    /// The chord bound to `action`, if any.
+    pub fn chord_for(&self, action: Action) -> Option<Chord> {
+        self.bindings.iter().find(|(_, a)| *a == action).map(|(c, _)| *c)
     }
 }
 

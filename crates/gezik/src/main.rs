@@ -11,6 +11,8 @@ mod folder_watch;
 mod frame_limit;
 mod keys;
 mod media;
+#[cfg(target_os = "macos")]
+mod menu_bar;
 mod navigation;
 mod operations;
 mod places;
@@ -294,6 +296,9 @@ fn keep_on_screen(window: slint::Weak<AppWindow>, attempt: u32) {
 }
 
 fn main() -> Result<(), slint::PlatformError> {
+    // Gezik has its own tabs: no window tabs of macOS (nor their items in the View menu).
+    #[cfg(target_os = "macos")]
+    gezik_platform::app::no_window_tabs();
     let window = AppWindow::new()?;
 
     let config = ConfigStore::system();
@@ -402,6 +407,8 @@ fn main() -> Result<(), slint::PlatformError> {
         saved_state.batch_rename.clone().unwrap_or_default(),
     );
     let _batch_rename = batch_rename::BatchRename::new(&window, ops.clone());
+    #[cfg(target_os = "macos")]
+    menu_bar::install(&window, view.clone(), nav.clone(), ops.clone());
     // Tools Gezik downloads (7-Zip) go to `<config dir>/tools/`, next to the pending deletes.
     let archives = archives::Archives::new(&window, ops.clone(), dialogs, config.clone(), saved_state.archive.clone());
     window.on_op_pause({

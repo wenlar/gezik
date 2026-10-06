@@ -21,40 +21,42 @@ pub fn action_for(chord: &Chord) -> Option<Action> {
     SHORTCUTS.with(|s| s.borrow().action_for(chord))
 }
 
+/// Slint's named keys and the chord keys they are (Backtab is Shift+Tab).
+const NAMED: [(SlintKey, Key); 27] = [
+    (SlintKey::LeftArrow, Key::Left),
+    (SlintKey::RightArrow, Key::Right),
+    (SlintKey::UpArrow, Key::Up),
+    (SlintKey::DownArrow, Key::Down),
+    (SlintKey::Return, Key::Enter),
+    (SlintKey::Tab, Key::Tab),
+    (SlintKey::Backtab, Key::Tab),
+    (SlintKey::Backspace, Key::Backspace),
+    (SlintKey::Delete, Key::Delete),
+    (SlintKey::Home, Key::Home),
+    (SlintKey::End, Key::End),
+    (SlintKey::PageUp, Key::PageUp),
+    (SlintKey::PageDown, Key::PageDown),
+    (SlintKey::Escape, Key::Escape),
+    (SlintKey::Space, Key::Space),
+    (SlintKey::F1, Key::F(1)),
+    (SlintKey::F2, Key::F(2)),
+    (SlintKey::F3, Key::F(3)),
+    (SlintKey::F4, Key::F(4)),
+    (SlintKey::F5, Key::F(5)),
+    (SlintKey::F6, Key::F(6)),
+    (SlintKey::F7, Key::F(7)),
+    (SlintKey::F8, Key::F(8)),
+    (SlintKey::F9, Key::F(9)),
+    (SlintKey::F10, Key::F(10)),
+    (SlintKey::F11, Key::F(11)),
+    (SlintKey::F12, Key::F(12)),
+];
+
 /// Converts a Slint key event's text and modifiers into a chord, if the key is one we know.
 pub fn chord_from_event(text: &str, ctrl: bool, alt: bool, shift: bool, meta: bool) -> Option<Chord> {
     let mut chars = text.chars();
     let (Some(c), None) = (chars.next(), chars.next()) else { return None };
-    let named = [
-        (SlintKey::LeftArrow, Key::Left),
-        (SlintKey::RightArrow, Key::Right),
-        (SlintKey::UpArrow, Key::Up),
-        (SlintKey::DownArrow, Key::Down),
-        (SlintKey::Return, Key::Enter),
-        (SlintKey::Tab, Key::Tab),
-        (SlintKey::Backtab, Key::Tab),
-        (SlintKey::Backspace, Key::Backspace),
-        (SlintKey::Delete, Key::Delete),
-        (SlintKey::Home, Key::Home),
-        (SlintKey::End, Key::End),
-        (SlintKey::PageUp, Key::PageUp),
-        (SlintKey::PageDown, Key::PageDown),
-        (SlintKey::Escape, Key::Escape),
-        (SlintKey::Space, Key::Space),
-        (SlintKey::F1, Key::F(1)),
-        (SlintKey::F2, Key::F(2)),
-        (SlintKey::F3, Key::F(3)),
-        (SlintKey::F4, Key::F(4)),
-        (SlintKey::F5, Key::F(5)),
-        (SlintKey::F6, Key::F(6)),
-        (SlintKey::F7, Key::F(7)),
-        (SlintKey::F8, Key::F(8)),
-        (SlintKey::F9, Key::F(9)),
-        (SlintKey::F10, Key::F(10)),
-        (SlintKey::F11, Key::F(11)),
-        (SlintKey::F12, Key::F(12)),
-    ];
-    let key = if let Some((_, key)) = named.iter().find(|(k, _)| char::from(*k) == c) {
+    let key = if let Some((_, key)) = NAMED.iter().find(|(k, _)| char::from(*k) == c) {
         *key
     } else if c.is_ascii_alphanumeric() || matches!(c, '[' | ']' | '.') {
         Key::Char(c.to_ascii_lowercase())
@@ -83,13 +85,49 @@ pub fn chord_from_slint(
     }
 }
 
+/// The chord bound to `action` now, if any.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn chord_for(action: Action) -> Option<Chord> {
+    SHORTCUTS.with(|s| s.borrow().chord_for(action))
+}
+
+/// The Slint key presses that make `chord` on `platform`: the modifier keys to hold (as Slint
+/// names them: ⌘ is `Control` on macOS) and the key's text, as the window would get them.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn slint_keys(chord: &Chord, platform: Platform) -> (Vec<SlintKey>, String) {
+    let (command, control) = match platform {
+        Platform::Mac => (chord.meta, chord.ctrl),
+        Platform::Other => (chord.ctrl, chord.meta),
+    };
+    let mut modifiers = Vec::new();
+    for (held, key) in [
+        (command, SlintKey::Control),
+        (control, SlintKey::Meta),
+        (chord.alt, SlintKey::Alt),
+        (chord.shift, SlintKey::Shift),
+    ] {
+        if held {
+            modifiers.push(key);
+        }
+    }
+    let text = match chord.key {
+        // A letter typed with Shift comes upper case.
+        Key::Char(c) if chord.shift => c.to_ascii_uppercase().to_string(),
+        Key::Char(c) => c.to_string(),
+        key => NAMED.iter().find(|(_, k)| *k == key).map(|(k, _)| char::from(*k).to_string()).unwrap_or_default(),
+    };
+    (modifiers, text)
+}
+
 /// The text a key press with ⌘ (`command`) is matched by. On macOS a ⌘ shortcut on a bracket
 /// goes by the key's place, as the system's own do: on a layout where that key types another
 /// letter (`ğ` on Turkish-QWERTY-PC), ⌘[ and ⌘] still work. ⌘⇧. goes by the key that types
 /// `.`, whatever Shift makes of it. Elsewhere, and without ⌘, the text stays as typed.
 pub fn shortcut_text(text: &str, command: bool) -> std::borrow::Cow<'_, str> {
+    // Only a key that types something: a modifier or named key pressed meanwhile (one
+    // `menu_bar` plays, say) is not the key the system is handling now.
     #[cfg(target_os = "macos")]
-    if command {
+    if command && typed_char(text).is_some() {
         if let Some(bracket) = gezik_platform::key_place::bracket_of_key_being_pressed() {
             return bracket_text(text, bracket);
         }
@@ -286,6 +324,28 @@ mod tests {
         assert_eq!(chord_from_event("[", true, false, false, false).unwrap().key, Key::Char('['));
         assert!(chord_from_event("é", false, false, false, false).is_none());
         assert!(chord_from_event("", false, false, false, false).is_none());
+    }
+
+    /// What `slint_keys` plays comes back as the same chord, for every default.
+    #[test]
+    fn played_keys_are_the_chord() {
+        for platform in [Platform::Mac, Platform::Other] {
+            let defaults = Shortcuts::defaults(platform);
+            for action in Action::ALL {
+                let Some(chord) = defaults.chord_for(action) else { continue };
+                let (modifiers, text) = slint_keys(&chord, platform);
+                let held = |k: SlintKey| modifiers.contains(&k);
+                let got = chord_from_slint(
+                    &text,
+                    held(SlintKey::Control),
+                    held(SlintKey::Alt),
+                    held(SlintKey::Shift),
+                    held(SlintKey::Meta),
+                    platform,
+                );
+                assert_eq!(got, Some(chord), "{platform:?} {}", action.name());
+            }
+        }
     }
 
     #[test]
