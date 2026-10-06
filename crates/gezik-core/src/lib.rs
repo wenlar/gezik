@@ -3,6 +3,7 @@
 
 pub mod batch;
 pub mod drag;
+pub mod history;
 pub mod kind;
 pub mod layout;
 pub mod nav;

@@ -123,6 +123,12 @@ fn fold(c: char) -> char {
     }
 }
 
+/// `text` as the pattern compares it: lower case, with i, İ, ı and I one letter (for the
+/// address bar, which matches by start and by "holds", not by pattern).
+pub fn fold_text(text: &str) -> String {
+    text.chars().map(fold).collect()
+}
+
 /// Whether the whole of `name` matches `tokens`: one pass with a single back-track point for
 /// the last `*` (the classic wildcard matcher), on byte offsets into `name`.
 fn glob(tokens: &[Token], name: &str) -> bool {
@@ -297,5 +303,11 @@ mod tests {
             let took = started.elapsed();
             assert!(took < Duration::from_millis(15), "{text}: {took:?} ({} kept)", kept.len());
         }
+    }
+
+    #[test]
+    fn text_folds_as_names_do() {
+        assert_eq!(fold_text("İndirilenler"), fold_text("indirilenler"));
+        assert_eq!(fold_text("ILIK Şehir"), "ilik şehir");
     }
 }
