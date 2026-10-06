@@ -54,6 +54,68 @@ export component AppWindow inherits Window {
     preferred-width: 900px;
     preferred-height: 600px;
     background: Theme.background;
+
+    // macOS: the menu bar at the top of the screen (set from Rust there only; elsewhere there
+    // is none). An item names the action whose shortcut it stands for; Rust plays that
+    // shortcut to the window, so it does what the keys would do where the focus is.
+    in property <bool> native-menu-bar;
+    // Off while Rust plays an item's shortcut: Slint would take it for the item again.
+    in property <bool> menu-keys: true;
+    callback menu-command(string);
+    if root.native-menu-bar: MenuBar {
+        Menu {
+            title: "File";
+            MenuItem { title: "New Tab"; shortcut: root.menu-keys ? @keys(Control + T) : @keys(); activated => { root.menu-command("new-tab"); } }
+            MenuItem { title: "New Folder"; shortcut: root.menu-keys ? @keys(Control + Shift + N) : @keys(); activated => { root.menu-command("new-folder"); } }
+            MenuSeparator { }
+            MenuItem { title: "Quick Look"; activated => { root.menu-command("quick-look"); } }
+            MenuItem { title: "Rename"; activated => { root.menu-command("rename"); } }
+            MenuItem { title: "Rename Items…"; activated => { root.menu-command("batch-rename"); } }
+            MenuItem { title: "Duplicate"; shortcut: root.menu-keys ? @keys(Control + D) : @keys(); activated => { root.menu-command("duplicate"); } }
+            MenuSeparator { }
+            MenuItem { title: "Move to Trash"; shortcut: root.menu-keys ? @keys(Control + Backspace) : @keys(); activated => { root.menu-command("trash"); } }
+            MenuItem { title: "Delete Immediately…"; shortcut: root.menu-keys ? @keys(Control + Alt + Backspace) : @keys(); activated => { root.menu-command("delete-permanently"); } }
+            MenuSeparator { }
+            MenuItem { title: "Close Tab"; shortcut: root.menu-keys ? @keys(Control + W) : @keys(); activated => { root.menu-command("close-tab"); } }
+        }
+        Menu {
+            title: "Edit";
+            MenuItem { title: "Undo"; shortcut: root.menu-keys ? @keys(Control + Z) : @keys(); activated => { root.menu-command("undo"); } }
+            MenuItem { title: "Redo"; shortcut: root.menu-keys ? @keys(Control + Shift + Z) : @keys(); activated => { root.menu-command("redo"); } }
+            MenuSeparator { }
+            MenuItem { title: "Cut"; shortcut: root.menu-keys ? @keys(Control + X) : @keys(); activated => { root.menu-command("cut"); } }
+            MenuItem { title: "Copy"; shortcut: root.menu-keys ? @keys(Control + C) : @keys(); activated => { root.menu-command("copy"); } }
+            MenuItem { title: "Paste"; shortcut: root.menu-keys ? @keys(Control + V) : @keys(); activated => { root.menu-command("paste"); } }
+            MenuItem { title: "Move Item Here"; shortcut: root.menu-keys ? @keys(Control + Alt + V) : @keys(); activated => { root.menu-command("paste-move"); } }
+            MenuItem { title: "Select All"; shortcut: root.menu-keys ? @keys(Control + A) : @keys(); activated => { root.menu-command("select-all"); } }
+        }
+        Menu {
+            title: "View";
+            MenuItem { title: "as List"; shortcut: root.menu-keys ? @keys(Control + "1") : @keys(); activated => { root.menu-command("view-list"); } }
+            MenuItem { title: "as Grid"; shortcut: root.menu-keys ? @keys(Control + "2") : @keys(); activated => { root.menu-command("view-grid"); } }
+            MenuSeparator { }
+            MenuItem { title: "Show Preview"; activated => { root.menu-command("toggle-preview"); } }
+            MenuItem { title: "Show Hidden Files"; shortcut: root.menu-keys ? @keys(Control + Shift + ".") : @keys(); activated => { root.menu-command("toggle-hidden"); } }
+            MenuSeparator { }
+            MenuItem { title: "Refresh"; shortcut: root.menu-keys ? @keys(Control + R) : @keys(); activated => { root.menu-command("refresh"); } }
+        }
+        Menu {
+            title: "Go";
+            MenuItem { title: "Back"; shortcut: root.menu-keys ? @keys(Control + "[") : @keys(); activated => { root.menu-command("back"); } }
+            MenuItem { title: "Forward"; shortcut: root.menu-keys ? @keys(Control + "]") : @keys(); activated => { root.menu-command("forward"); } }
+            MenuItem { title: "Enclosing Folder"; shortcut: root.menu-keys ? @keys(Control + UpArrow) : @keys(); activated => { root.menu-command("up"); } }
+            MenuSeparator { }
+            MenuItem { title: "Go to Folder…"; shortcut: root.menu-keys ? @keys(Control + L) : @keys(); activated => { root.menu-command("focus-path"); } }
+        }
+        Menu {
+            title: "Window";
+            MenuItem { title: "Minimize"; shortcut: root.menu-keys ? @keys(Control + M) : @keys(); activated => { root.menu-command("minimize"); } }
+            MenuItem { title: "Zoom"; activated => { root.menu-command("zoom"); } }
+            MenuSeparator { }
+            MenuItem { title: "Show Next Tab"; activated => { root.menu-command("next-tab"); } }
+            MenuItem { title: "Show Previous Tab"; activated => { root.menu-command("prev-tab"); } }
+        }
+    }
     default-font-family: Theme.font-family;
     default-font-size: Theme.font-size;
 
@@ -350,6 +412,9 @@ export component AppWindow inherits Window {
     in property <int> drag-count;
     in property <string> drag-label;
     in property <bool> drag-forbidden;
+    // What dropping files from another program here would do, next to the system's drag
+    // image (macOS, whose image has no such text; empty: nothing to say).
+    in property <string> offer-label;
     // The drop target, highlighted (-1: none): an entry, a sidebar row (and the row a pin
     // line is drawn above), a tab, an address bar part.
     in property <int> drop-entry: -1;
@@ -904,6 +969,23 @@ export component AppWindow inherits Window {
             input-secret: root.dialog-input-secret;
             show-secret <=> root.dialog-show-secret;
             chosen(i) => { root.dialog-chosen(i); }
+        }
+        if root.offer-label != "": Rectangle {
+            x: root.drag-x + 14px;
+            y: root.drag-y + 24px;
+            width: offer-text.preferred-width + Theme.spacing * 2;
+            height: offer-text.preferred-height + Theme.spacing;
+            border-radius: Theme.radius;
+            background: Theme.surface;
+            border-width: 1px;
+            border-color: Theme.border;
+            accessible-role: none;
+            offer-text := Text {
+                x: Theme.spacing;
+                y: Theme.spacing / 2;
+                text: root.offer-label;
+                color: Theme.foreground;
+            }
         }
         // What is being dragged, just below and right of the pointer. Takes no input.
         if root.drag-active: Rectangle {

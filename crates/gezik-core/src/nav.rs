@@ -287,11 +287,15 @@ pub struct Crumb {
     pub location: Location,
 }
 
-/// The address bar parts for `location`: always "This PC" first, then the path from its
+/// The name of the list of drives (`Location::Drives`): Explorer's "This PC"; on macOS,
+/// Finder's "Computer" (Go ▸ Computer lists the volumes too).
+pub const DRIVES_NAME: &str = if cfg!(target_os = "macos") { "Computer" } else { "This PC" };
+
+/// The address bar parts for `location`: always the drives (`DRIVES_NAME`) first, then the path from its
 /// root. With more than `max_parts` path parts, the leading ones collapse into one "…"
 /// part that goes to the first hidden folder's parent... (see tests).
 pub fn crumbs(location: &Location, max_parts: usize) -> Vec<Crumb> {
-    let mut out = vec![Crumb { label: "This PC".to_owned(), location: Location::Drives }];
+    let mut out = vec![Crumb { label: DRIVES_NAME.to_owned(), location: Location::Drives }];
     let Location::Path(path) = location else { return out };
 
     let mut parts: Vec<Crumb> = Vec::new();
@@ -682,9 +686,9 @@ mod tests {
 
     #[test]
     fn crumbs_for_drives_and_unix_paths() {
-        assert_eq!(labels(&crumbs(&Location::Drives, 4)), ["This PC"]);
+        assert_eq!(labels(&crumbs(&Location::Drives, 4)), [DRIVES_NAME]);
         let c = crumbs(&p("/home/a/docs"), 4);
-        assert_eq!(labels(&c), ["This PC", "/", "home", "a", "docs"]);
+        assert_eq!(labels(&c), [DRIVES_NAME, "/", "home", "a", "docs"]);
         assert_eq!(c[0].location, Location::Drives);
         assert_eq!(c[1].location, p("/"));
         assert_eq!(c[3].location, p("/home/a"));
@@ -693,7 +697,7 @@ mod tests {
     #[test]
     fn long_paths_collapse_leading_parts() {
         let c = crumbs(&p("/a/b/c/d/e/f"), 4);
-        assert_eq!(labels(&c), ["This PC", "…", "c", "d", "e", "f"]);
+        assert_eq!(labels(&c), [DRIVES_NAME, "…", "c", "d", "e", "f"]);
         assert_eq!(c[1].location, p("/a/b"));
     }
 
