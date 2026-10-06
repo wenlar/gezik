@@ -38,6 +38,22 @@ pub fn process_alive(pid: u32) -> bool {
     unsafe { libc::kill(pid, 0) == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM) }
 }
 
+/// The longest command line Gezik starts a program with, kept short of the system's limit:
+/// on Windows 32,000 characters (of 32,767); elsewhere half of `ARG_MAX` (the other half is
+/// the environment's), or 64 KiB if the system does not say.
+pub fn command_line_limit() -> usize {
+    #[cfg(windows)]
+    {
+        32_000
+    }
+    #[cfg(unix)]
+    {
+        // SAFETY: sysconf only reads a value of the system.
+        let max = unsafe { libc::sysconf(libc::_SC_ARG_MAX) };
+        usize::try_from(max).ok().filter(|max| *max > 0).map_or(64 * 1024, |max| max / 2)
+    }
+}
+
 /// Makes a crash of this process a plain non-zero exit: on Windows no error reporting dialog
 /// and no "insert a disk" box (`SetErrorMode`, inherited by what it starts). For helper
 /// processes whose parent reports how they ended (the PDF worker). Elsewhere nothing to do.
@@ -554,5 +570,15 @@ mod tests {
         let lines: Vec<String> = lines.map(|line| line.trim().to_owned()).collect();
         assert_eq!(lines, ["one", "two"]);
         assert_eq!(child.stderr_text(), "");
+    }
+
+    #[test]
+    fn the_command_line_limit_leaves_room() {
+        let limit = command_line_limit();
+        if cfg!(windows) {
+            assert_eq!(limit, 32_000);
+        } else {
+            assert!((16 * 1024..=64 * 1024 * 1024).contains(&limit), "{limit}");
+        }
     }
 }

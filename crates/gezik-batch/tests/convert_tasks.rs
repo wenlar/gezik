@@ -214,6 +214,9 @@ fn command(run: &[&str], output: Option<&str>) -> CommandSpec {
         types: Vec::new(),
         folders: false,
         parallel: 2,
+        shortcut: None,
+        menu: None,
+        ask: false,
     }
 }
 

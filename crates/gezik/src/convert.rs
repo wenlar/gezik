@@ -2119,6 +2119,9 @@ mod tests {
             types: types.iter().map(|s| (*s).to_owned()).collect(),
             folders,
             parallel: 1,
+            shortcut: None,
+            menu: None,
+            ask: false,
         }
     }
 

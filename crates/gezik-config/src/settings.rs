@@ -690,7 +690,17 @@ fn parse_command(value: &toml::Value) -> Result<CommandSpec, String> {
             .filter(|n| (1..=16).contains(n))
             .ok_or_else(|| format!("parallel must be 1-16, got {v}"))?,
     };
-    let spec = CommandSpec { name: name.to_owned(), run, output, types, folders, parallel };
+    let spec = CommandSpec {
+        name: name.to_owned(),
+        run,
+        output,
+        types,
+        folders,
+        parallel,
+        shortcut: None,
+        menu: None,
+        ask: false,
+    };
     check_command(&spec)?;
     Ok(spec)
 }
@@ -1412,6 +1422,9 @@ last-pattern = \"\"
                 types: vec!["jpg".to_owned(), "png".to_owned()],
                 folders: true,
                 parallel: 4,
+                shortcut: None,
+                menu: None,
+                ask: false,
             }
         );
         let min = &settings.commands[1];

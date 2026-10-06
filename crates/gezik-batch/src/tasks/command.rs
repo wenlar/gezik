@@ -307,6 +307,9 @@ mod tests {
             types: Vec::new(),
             folders: false,
             parallel,
+            shortcut: None,
+            menu: None,
+            ask: false,
         }
     }
 
