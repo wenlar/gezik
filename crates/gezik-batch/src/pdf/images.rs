@@ -21,7 +21,7 @@ use pdf_writer::types::Predictor;
 use pdf_writer::{Chunk, Content, Filter, Finish, Name, Rect, Ref, TextStr};
 
 use super::jpeg::{self, JpegInfo};
-use crate::convert::image::{MAX_BUFFER, decode, starts_like_jpeg, too_large};
+use crate::convert::image::{MAX_BUFFER, decode, fits, starts_like_jpeg, too_large};
 
 /// The miniz_oxide level for samples and ICC profiles: with the Paeth predictor, level 1 is
 /// within 2% of level 9 at a fifth of the time.
@@ -35,25 +35,12 @@ pub struct PicturesPdf {
     pub left_out: Vec<(PathBuf, io::Error)>,
 }
 
-/// Writes `pictures` (in this order, one page each) as a PDF at `out`. Each picture is read
-/// alone; `on_picture(path, its size)` after each page; `stop` between pictures (then
-/// `Interrupted`, and `out` is removed). A picture that cannot be read is left out (in
-/// `left_out`); with none left, an error and no file.
+/// Writes `pictures` (in this order, one page each) as a PDF at `out`, a name nothing has yet
+/// (it is made new, never written over). Each picture is read alone; `on_picture(path, its
+/// size)` after each page; `stop` between pictures (then `Interrupted`). A picture that cannot
+/// be read is left out (in `left_out`); with none left, an error. Whatever ends it early, an
+/// error or a panic, the file it made is removed.
 pub fn write_pdf(
-    pictures: &[PathBuf],
-    out: &Path,
-    options: &PageOptions,
-    on_picture: &mut dyn FnMut(&Path, u64),
-    stop: &dyn Fn() -> bool,
-) -> io::Result<PicturesPdf> {
-    let result = write(pictures, out, options, on_picture, stop);
-    if result.is_err() {
-        let _ = std::fs::remove_file(out);
-    }
-    result
-}
-
-fn write(
     pictures: &[PathBuf],
     out: &Path,
     options: &PageOptions,
@@ -63,7 +50,10 @@ fn write(
     if pictures.is_empty() {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "no pictures"));
     }
-    let mut pdf = PdfFile::create(out)?;
+    let file = File::options().write(true).create_new(true).open(out)?;
+    // Made before the writer, so dropped after it: the file is closed by then.
+    let mut made = Unfinished(Some(out));
+    let mut pdf = PdfFile::new(file)?;
     let mut left_out = Vec::new();
     for path in pictures {
         if stop() {
@@ -86,7 +76,19 @@ fn write(
         return Err(first);
     }
     pdf.finish()?;
+    made.0 = None;
     Ok(PicturesPdf { pages, left_out })
+}
+
+/// Removes the file it names when dropped (on an early return or a panic), unless cleared.
+struct Unfinished<'a>(Option<&'a Path>);
+
+impl Drop for Unfinished<'_> {
+    fn drop(&mut self) {
+        if let Some(path) = self.0 {
+            let _ = std::fs::remove_file(path);
+        }
+    }
 }
 
 /// A picture ready to be written: everything that can fail on its account has happened.
@@ -117,7 +119,9 @@ fn read(path: &Path) -> io::Result<(Picture, u64)> {
             return Err(too_large());
         }
         let data = std::fs::read(path)?;
-        if let Some(info) = jpeg::parse(&data).filter(JpegInfo::passthrough_ok) {
+        // One a decoder could not hold (see `fits`) is no photo either: the decode path says
+        // it is too large, instead of a PDF viewers may choke on.
+        if let Some(info) = jpeg::parse(&data).filter(|i| i.passthrough_ok() && fits(i.width, i.height, 4)) {
             return Ok((Picture::Jpeg { data, info }, size));
         }
     }
@@ -175,6 +179,12 @@ fn exif_number(o: Orientation) -> u8 {
     }
 }
 
+/// The density of the picture as shown: orientations 5-8 turn it a quarter, so the stored
+/// rows' density becomes the shown columns'.
+fn upright_dpi(dpi: Option<(f32, f32)>, exif_orientation: u8) -> Option<(f32, f32)> {
+    dpi.map(|(x, y)| if (5..=8).contains(&exif_orientation) { (y, x) } else { (x, y) })
+}
+
 const IDENTITY: [f32; 6] = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
 
 /// A PDF written as it is made: each object goes to the file at once, and only its offset
@@ -191,8 +201,8 @@ struct PdfFile {
 }
 
 impl PdfFile {
-    fn create(path: &Path) -> io::Result<Self> {
-        let mut out = BufWriter::with_capacity(1 << 20, File::create(path)?);
+    fn new(file: File) -> io::Result<Self> {
+        let mut out = BufWriter::with_capacity(1 << 20, file);
         // Same header as pdf-writer's Pdf::new (binary marker on line 2).
         let header = b"%PDF-1.7\n%\x80\x80\x80\x80\n\n";
         out.write_all(header)?;
@@ -255,8 +265,9 @@ impl PdfFile {
                 if let (Some(r), Some(icc)) = (icc_ref, icc) {
                     self.put_icc(r, icc, i32::from(info.components))?;
                 }
-                let dpi = info.dpi.filter(|&(x, y)| x > 0.0 && y > 0.0);
-                (info.width, info.height, exif_number(info.orientation), dpi)
+                let orientation = exif_number(info.orientation);
+                let dpi = upright_dpi(info.dpi.filter(|&(x, y)| x > 0.0 && y > 0.0), orientation);
+                (info.width, info.height, orientation, dpi)
             }
             Picture::Samples { width, height, colors, bits, color, alpha, icc } => {
                 let icc_ref = icc.as_ref().map(|_| self.alloc());
@@ -448,6 +459,16 @@ mod tests {
         for o in all {
             assert_eq!(Orientation::from_exif(exif_number(o)), Some(o));
         }
+    }
+
+    #[test]
+    fn a_quarter_turn_swaps_the_density() {
+        assert_eq!(upright_dpi(Some((300.0, 150.0)), 1), Some((300.0, 150.0)));
+        assert_eq!(upright_dpi(Some((300.0, 150.0)), 3), Some((300.0, 150.0)));
+        for o in 5..=8 {
+            assert_eq!(upright_dpi(Some((300.0, 150.0)), o), Some((150.0, 300.0)));
+        }
+        assert_eq!(upright_dpi(None, 6), None);
     }
 
     #[test]

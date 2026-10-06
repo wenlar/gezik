@@ -263,3 +263,44 @@ fn stop_removes_the_file() {
     assert_eq!(err.kind(), std::io::ErrorKind::Interrupted);
     assert!(!out.exists());
 }
+
+#[test]
+fn a_panic_removes_the_file_and_an_existing_one_is_never_written_over() {
+    let d = dir("panic");
+    let pics: Vec<PathBuf> = (0..2).map(|i| jpeg(&d.join(format!("{i}.jpg")), 8, 8, [0, 0, 0])).collect();
+    let out = d.join("o.pdf");
+    let seen = std::cell::Cell::new(0);
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        write_pdf(&pics, &out, &PageOptions::DEFAULT, &mut |_, _| seen.set(seen.get() + 1), &|| {
+            assert!(seen.get() < 1, "a decoder panics");
+            false
+        })
+    }));
+    assert!(panicked.is_err());
+    assert!(!out.exists());
+    // A file already there is left as it is.
+    std::fs::write(&out, b"mine").unwrap();
+    let err = write_pdf(&pics, &out, &PageOptions::DEFAULT, &mut |_, _| {}, &never).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+    assert_eq!(std::fs::read(&out).unwrap(), b"mine");
+}
+
+#[test]
+fn a_jpeg_too_large_to_hold_is_not_passed_through() {
+    let d = dir("huge");
+    // A baseline header stating 60000 x 60000 pixels, and no picture.
+    let mut huge = vec![0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x11, 8];
+    huge.extend_from_slice(&60_000u16.to_be_bytes());
+    huge.extend_from_slice(&60_000u16.to_be_bytes());
+    huge.extend_from_slice(&[3, 1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0]);
+    huge.extend_from_slice(&[0xFF, 0xDA, 0x00, 0x08, 1, 1, 0, 0, 0x3F, 0, 0xFF, 0xD9]);
+    let big = d.join("big.jpg");
+    std::fs::write(&big, huge).unwrap();
+    let good = jpeg(&d.join("g.jpg"), 8, 8, [1, 2, 3]);
+    let out = d.join("o.pdf");
+    let report = write_pdf(&[big.clone(), good], &out, &PageOptions::DEFAULT, &mut |_, _| {}, &never).unwrap();
+    assert_eq!(report.pages, 1);
+    assert_eq!(report.left_out.len(), 1);
+    assert_eq!(report.left_out[0].0, big);
+    Parsed::read(&out);
+}

@@ -83,7 +83,7 @@ pub(crate) fn too_large() -> io::Error {
 pub(crate) const MAX_BUFFER: u64 = 512 << 20;
 
 /// Whether a `w`×`h` buffer of `bytes_per_pixel` fits in [`MAX_BUFFER`].
-fn fits(w: u32, h: u32, bytes_per_pixel: u64) -> bool {
+pub(crate) fn fits(w: u32, h: u32, bytes_per_pixel: u64) -> bool {
     u64::from(w) * u64::from(h) * bytes_per_pixel <= MAX_BUFFER
 }
 
