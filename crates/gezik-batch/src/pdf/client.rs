@@ -86,22 +86,82 @@ impl PdfFailed {
     }
 }
 
-/// "PDF engine stopped (exit code 3)" or "PDF engine stopped (killed)", then ": " and the end
-/// of its error output when there is one (control characters other than line breaks become
-/// spaces).
-pub fn engine_stopped_text(code: Option<i32>, tail: &str) -> String {
-    let how = code.map_or_else(|| "killed".to_string(), |code| format!("exit code {code}"));
+/// How a process ended, for "PDF engine stopped (…)": "exit code 3"; a Windows crash as its
+/// NTSTATUS in hex ("exit code 0xC0000005, access violation"); a Unix signal by its name
+/// ("signal 11, SIGSEGV"); "killed" when neither is known.
+pub fn ended_how(code: Option<i32>, signal: Option<i32>) -> String {
+    match (code, signal) {
+        // NTSTATUS error values (0xC…) read as negative exit codes.
+        (Some(code), _) if (code as u32) >= 0xC000_0000 => {
+            let status = code as u32;
+            let name = match status {
+                0xC000_0005 => ", access violation",
+                0xC000_001D => ", illegal instruction",
+                0xC000_0094 => ", division by zero",
+                0xC000_00FD => ", stack overflow",
+                0xC000_0409 => ", stack buffer overrun",
+                0xC000_0374 => ", heap corruption",
+                0xC000_013A => ", ended by Ctrl+C",
+                _ => "",
+            };
+            format!("exit code {status:#010X}{name}").replacen("0X", "0x", 1)
+        }
+        (Some(code), _) => format!("exit code {code}"),
+        (None, Some(signal)) => {
+            let name = match signal {
+                4 => ", SIGILL",
+                6 => ", SIGABRT",
+                7 => ", SIGBUS",
+                8 => ", SIGFPE",
+                9 => ", SIGKILL",
+                11 => ", SIGSEGV",
+                15 => ", SIGTERM",
+                _ => "",
+            };
+            format!("signal {signal}{name}")
+        }
+        (None, None) => "killed".to_string(),
+    }
+}
+
+/// The signal that ended a Unix process.
+fn signal_of(status: &std::process::ExitStatus) -> Option<i32> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        status.signal()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = status;
+        None
+    }
+}
+
+/// "PDF engine stopped (exit code 3)" (`how`: [`ended_how`]), then ": " and the end of its
+/// error output when there is one (control characters other than line breaks become spaces).
+pub fn engine_stopped_text(how: &str, tail: &str) -> String {
     let tail = clean(tail.trim(), true);
     if tail.is_empty() { format!("PDF engine stopped ({how})") } else { format!("PDF engine stopped ({how}): {tail}") }
 }
 
-/// `text` with every control character (and every bidirectional override, which can make a
-/// name read backwards) turned into a space; line breaks stay when `keep_lines`.
+/// `text` with every control character, every bidirectional mark or override (which can make
+/// a name read backwards), the line and paragraph separators, and the invisible zero-width
+/// characters turned into a space; line breaks stay when `keep_lines`.
 fn clean(text: &str, keep_lines: bool) -> String {
     text.chars()
         .map(|c| {
-            let bidi = matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{200E}' | '\u{200F}');
-            if (c.is_control() && !(keep_lines && c == '\n')) || bidi { ' ' } else { c }
+            let hidden = matches!(
+                c,
+                '\u{202A}'..='\u{202E}'
+                    | '\u{2066}'..='\u{2069}'
+                    | '\u{200B}'..='\u{200F}'
+                    | '\u{061C}'
+                    | '\u{2028}'
+                    | '\u{2029}'
+                    | '\u{FEFF}'
+            );
+            if (c.is_control() && !(keep_lines && c == '\n')) || hidden { ' ' } else { c }
         })
         .collect()
 }
@@ -202,7 +262,8 @@ pub fn run(
                 None if replies.done && status.success() => return Ok(Ended::Done),
                 None => {
                     let tail = stderr_tail(&child.stderr_text());
-                    return Err(io::Error::other(engine_stopped_text(status.code(), &tail)));
+                    let how = ended_how(status.code(), signal_of(&status));
+                    return Err(io::Error::other(engine_stopped_text(&how, &tail)));
                 }
             }
         }
@@ -245,12 +306,25 @@ mod tests {
 
     #[test]
     fn an_engine_stop_says_how_and_why() {
-        assert_eq!(engine_stopped_text(Some(3), ""), "PDF engine stopped (exit code 3)");
-        assert_eq!(engine_stopped_text(None, "  \n"), "PDF engine stopped (killed)");
+        assert_eq!(engine_stopped_text(&ended_how(Some(3), None), ""), "PDF engine stopped (exit code 3)");
+        assert_eq!(engine_stopped_text(&ended_how(None, None), "  \n"), "PDF engine stopped (killed)");
         assert_eq!(
-            engine_stopped_text(Some(101), "thread panicked\n\u{1b}[31mboom\r"),
+            engine_stopped_text(&ended_how(Some(101), None), "thread panicked\n\u{1b}[31mboom\r"),
             "PDF engine stopped (exit code 101): thread panicked\n [31mboom"
         );
+        assert_eq!(ended_how(Some(-1_073_741_819), None), "exit code 0xC0000005, access violation");
+        assert_eq!(ended_how(Some(0xC000_0409_u32 as i32), None), "exit code 0xC0000409, stack buffer overrun");
+        assert_eq!(ended_how(Some(0xC000_0135_u32 as i32), None), "exit code 0xC0000135");
+        assert_eq!(ended_how(Some(-1), None), "exit code 0xFFFFFFFF");
+        assert_eq!(ended_how(None, Some(11)), "signal 11, SIGSEGV");
+        assert_eq!(ended_how(None, Some(31)), "signal 31");
+    }
+
+    #[test]
+    fn invisible_characters_are_cleaned() {
+        let hidden = "a\u{2028}b\u{2029}c\u{061C}d\u{200B}e\u{200C}f\u{200D}g\u{FEFF}h\u{200E}i\u{202E}j";
+        assert_eq!(clean(hidden, false), "a b c d e f g h i j");
+        assert_eq!(clean("ş\nğ", true), "ş\nğ");
     }
 
     #[test]
