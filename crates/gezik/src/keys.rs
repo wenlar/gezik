@@ -320,7 +320,8 @@ impl Default for TypeAhead {
     }
 }
 
-/// File operation shortcuts: never while typing in the address bar.
+/// File operation shortcuts: never while typing in the address bar or the filter bar.
+/// Select-same-type too: its Alt+keypad + is a character typed with Alt on Windows.
 pub fn acts_on_files(action: Action) -> bool {
     matches!(
         action,
@@ -336,6 +337,7 @@ pub fn acts_on_files(action: Action) -> bool {
             | Action::Undo
             | Action::Redo
             | Action::BatchRename
+            | Action::SelectSameType
     )
 }
 
@@ -362,6 +364,12 @@ mod tests {
         assert!(acts_on_files(Action::Paste) && !needs_list(Action::Paste));
         assert!(needs_list(Action::Trash) && needs_list(Action::Copy));
         assert!(!acts_on_files(Action::Refresh));
+    }
+
+    #[test]
+    fn select_same_type_waits_while_a_text_field_has_the_keyboard() {
+        assert!(acts_on_files(Action::SelectSameType), "the path box and the filter bar keep Alt+num+");
+        assert!(!needs_list(Action::SelectSameType), "the list need not have the keyboard otherwise");
     }
 
     #[test]

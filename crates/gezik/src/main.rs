@@ -23,6 +23,7 @@ mod places;
 mod popup;
 mod preview;
 mod quick_look;
+mod select_tools;
 mod sidebar;
 mod start;
 mod theme_bridge;
@@ -477,6 +478,12 @@ fn main() -> Result<(), slint::PlatformError> {
     sidebar.set_pinned(initial_settings.pinned);
     let dialogs = dialog::Dialogs::new(&window);
     let _filter = filter::Filter::new(&window, view.clone(), dialogs.clone(), config.clone());
+    let _select_tools = select_tools::SelectTools::new(
+        view.clone(),
+        dialogs.clone(),
+        config.clone(),
+        saved_state.selection.last_pattern.clone(),
+    );
     let engine_settings = gezik_ops::Settings {
         threads: initial_settings.files.copy_threads,
         pending_deletes: config.as_ref().map(|store| store.dir().join("pending-deletes")),

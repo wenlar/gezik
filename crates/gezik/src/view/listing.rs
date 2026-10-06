@@ -97,6 +97,27 @@ impl Listing {
         }
     }
 
+    /// Whether entries `a` and `b` are of one type: both folders, or files with the same
+    /// ending (ignoring case; no ending is a type too). Drives are all one type.
+    pub fn is_same_type(&self, a: usize, b: usize) -> bool {
+        match self {
+            Listing::Files(_, entries) => match (entries.get(a), entries.get(b)) {
+                (Some(a), Some(b)) => match (a.is_dir, b.is_dir) {
+                    (true, true) => true,
+                    // Character by character: no allocation per entry.
+                    (false, false) => a
+                        .extension()
+                        .chars()
+                        .flat_map(char::to_lowercase)
+                        .eq(b.extension().chars().flat_map(char::to_lowercase)),
+                    _ => false,
+                },
+                _ => false,
+            },
+            Listing::Drives(drives) => a < drives.len() && b < drives.len(),
+        }
+    }
+
     pub fn kind(&self, index: usize) -> Kind {
         match self {
             Listing::Files(_, entries) => entries.get(index).map_or(Kind::File, |e| Kind::of(&e.name, e.is_dir)),
@@ -186,6 +207,17 @@ mod tests {
         let listing = files("/x", &["a", "b", "c", "d"]);
         assert_eq!(listing.indices_of(&["d".into(), "gone".into(), "b".into()]), [1, 3]);
         assert!(listing.indices_of(&[]).is_empty());
+    }
+
+    #[test]
+    fn same_type_goes_by_the_ending_or_folders() {
+        let listing = files("/x", &["sub/", "other/", "a.JPG", "b.jpg", "c.png", "README", "LICENSE"]);
+        assert!(listing.is_same_type(0, 1), "two folders");
+        assert!(!listing.is_same_type(0, 2));
+        assert!(listing.is_same_type(2, 3), "endings ignore case");
+        assert!(!listing.is_same_type(2, 4));
+        assert!(listing.is_same_type(5, 6), "no ending is a type too");
+        assert!(!listing.is_same_type(2, 99));
     }
 
     #[test]

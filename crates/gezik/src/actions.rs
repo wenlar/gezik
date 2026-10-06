@@ -8,7 +8,6 @@ use crate::view::View;
 
 /// Runs `action` if it is one of 6a's; returns whether it ran.
 pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
-    let _ = view;
     match action {
         Action::Tab1
         | Action::Tab2
@@ -25,15 +24,13 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         }
         Action::TabLast => nav.activate_tab(nav.tab_count().saturating_sub(1)),
         Action::Filter => crate::filter::with_current(crate::filter::Filter::open),
-        // Task 7-9 fill these in.
-        Action::InvertSelection
-        | Action::SelectPattern
-        | Action::DeselectPattern
-        | Action::SelectSameType
-        | Action::RestoreSelection
-        | Action::ReopenTab
-        | Action::TabPicker
-        | Action::ToggleTabLock => return false,
+        Action::InvertSelection => view.invert_selection(),
+        Action::SelectSameType => view.select_same_type(),
+        Action::RestoreSelection => view.restore_remembered(),
+        Action::SelectPattern => crate::select_tools::with_current(|s| s.ask(true)),
+        Action::DeselectPattern => crate::select_tools::with_current(|s| s.ask(false)),
+        // Task 9 fills these in.
+        Action::ReopenTab | Action::TabPicker | Action::ToggleTabLock => return false,
         // Not 6a's: `handle_key` and the menu bar run these themselves. Listed one by one so
         // that a new action is a compile error here until it is placed.
         Action::NewTab

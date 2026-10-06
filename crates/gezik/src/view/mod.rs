@@ -86,6 +86,9 @@ struct Inner {
     /// The view was emptied (`clear`) since the last `show`: the next listing takes its filter
     /// from the state it comes with, not from the bar.
     cleared: Cell<bool>,
+    /// The selection before the last file operation: its folder and the selected names
+    /// (`restore_remembered`).
+    remembered: RefCell<Option<(PathBuf, Vec<String>)>>,
 }
 
 /// The filter bar's text, the pattern the list shows, and what is wrong with the text.
@@ -163,6 +166,7 @@ impl View {
             show_hidden: Cell::new(!cfg!(target_os = "macos")),
             filter: RefCell::new(None),
             cleared: Cell::new(false),
+            remembered: RefCell::new(None),
         }));
         // Weak: the media lives inside the view.
         let weak = Rc::downgrade(&view.0);
@@ -731,6 +735,78 @@ impl View {
     pub fn select_all(&self) {
         let changes = self.0.data.borrow_mut().selection.select_all();
         self.after_selection(&changes);
+    }
+
+    /// Selected entries become unselected and the others selected; the focus stays.
+    pub fn invert_selection(&self) {
+        let changes = self.0.data.borrow_mut().selection.invert();
+        self.after_selection(&changes);
+    }
+
+    /// How many entries shown (the filter's hidden ones not) have names `pattern` matches.
+    pub fn count_matching(&self, pattern: &Pattern) -> usize {
+        let data = self.0.data.borrow();
+        (0..data.listing.len()).filter(|&i| data.listing.name_at(i).is_some_and(|n| pattern.matches(n))).count()
+    }
+
+    /// Selects (`on`) or unselects the entries shown whose names `pattern` matches; the others
+    /// stay as they are.
+    pub fn select_matching(&self, pattern: &Pattern, on: bool) {
+        let changes = {
+            let mut data = self.0.data.borrow_mut();
+            let ViewData { listing, selection, .. } = &mut *data;
+            selection.set_where(on, |i| listing.name_at(i).is_some_and(|n| pattern.matches(n)))
+        };
+        self.after_selection(&changes);
+    }
+
+    /// Adds every entry of the focused entry's type (its ending, or folders) to the
+    /// selection; nothing without a focus.
+    pub fn select_same_type(&self) {
+        let changes = {
+            let mut data = self.0.data.borrow_mut();
+            let ViewData { listing, selection, .. } = &mut *data;
+            let Some(focus) = selection.focus() else { return };
+            selection.set_where(true, |i| listing.is_same_type(focus, i))
+        };
+        self.after_selection(&changes);
+    }
+
+    /// Keeps the folder shown and its selected names, for `restore_remembered` (a file
+    /// operation is about to start). In "This PC", or with nothing selected, the last one
+    /// stays.
+    pub fn remember_selection(&self) {
+        let data = self.0.data.borrow();
+        let Some(folder) = data.listing.folder() else { return };
+        if data.selection.count() == 0 {
+            return;
+        }
+        let names = data.selection.iter().filter_map(|i| data.listing.name_at(i).map(str::to_owned)).collect();
+        *self.0.remembered.borrow_mut() = Some((folder.to_path_buf(), names));
+    }
+
+    /// Selects again what `remember_selection` kept, if its folder is shown: the names still
+    /// shown, focused on the first. Elsewhere nothing.
+    pub fn restore_remembered(&self) {
+        let (changes, focus) = {
+            let remembered = self.0.remembered.borrow();
+            let Some((folder, names)) = remembered.as_ref() else { return };
+            let mut data = self.0.data.borrow_mut();
+            if !data.listing.folder().is_some_and(|f| gezik_core::ops::paths::same_path(f, folder)) {
+                return;
+            }
+            let len = data.listing.len();
+            let indices = data.listing.indices_of(names);
+            // None of them shows any more: the focus stays where it is.
+            let focus = indices.first().copied().or(data.selection.focus());
+            data.selection = Selection::from_indices(len, indices, focus);
+            let changes: Vec<Range<usize>> = std::iter::once(0..len).filter(|r| !r.is_empty()).collect();
+            (changes, focus)
+        };
+        self.after_selection(&changes);
+        if let Some(focus) = focus {
+            self.reveal(focus);
+        }
     }
 
     /// Ctrl+Space.

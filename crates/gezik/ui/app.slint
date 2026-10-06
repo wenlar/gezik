@@ -432,7 +432,12 @@ export component AppWindow inherits Window {
     // The text is a password: dots, with "Show".
     in property <bool> dialog-input-secret;
     in-out property <bool> dialog-show-secret;
+    // The line under the field (dialog.rs `ask_text_noted`), red if an error; `dialog-edited`
+    // gets the field's text as it is typed.
+    in property <string> dialog-note;
+    in property <bool> dialog-note-error;
     callback dialog-chosen(int);
+    callback dialog-edited(string);
     callback key-event(KeyEvent) -> bool;
 
     // Dragging files (drag.rs). Presses, moves and releases on entries; see FileView.
@@ -1057,7 +1062,10 @@ export component AppWindow inherits Window {
             input <=> root.dialog-input;
             input-secret: root.dialog-input-secret;
             show-secret <=> root.dialog-show-secret;
+            note: root.dialog-note;
+            note-error: root.dialog-note-error;
             chosen(i) => { root.dialog-chosen(i); }
+            edited(text) => { root.dialog-edited(text); }
         }
         if root.offer-label != "": Rectangle {
             x: root.drag-x + 14px;

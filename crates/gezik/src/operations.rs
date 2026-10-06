@@ -418,6 +418,8 @@ impl Operations {
     /// Runs `task`; `retry` runs the same operation again from its row, `after` says what to
     /// do with the results.
     pub fn submit(&self, task: Box<dyn Task>, retry: Option<Retry>, after: After) -> JobId {
+        // Num / selects it again once the job has changed the folder.
+        self.0.view.remember_selection();
         let title = task.title();
         let id = self.0.engine.submit(task);
         let mut job = JobView::new(id, title);
@@ -437,6 +439,7 @@ impl Operations {
         again: Option<Again>,
         after: After,
     ) -> JobId {
+        self.0.view.remember_selection();
         let title = tasks.first().map(|task| task.title()).unwrap_or_default();
         let id = self.0.engine.submit_chain(tasks, label);
         let mut job = JobView::new(id, title);
@@ -782,6 +785,8 @@ impl Operations {
     /// Hides the rows of `paths` in the folder shown; the folder, to reload when the job ends.
     fn hide(&self, paths: &[PathBuf]) -> Option<PathBuf> {
         let folder = self.0.view.folder()?;
+        // Before the names go: the job is submitted after this.
+        self.0.view.remember_selection();
         self.0.view.hide_names(&result_names(paths, &folder));
         Some(folder)
     }

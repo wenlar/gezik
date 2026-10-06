@@ -17,7 +17,12 @@ export component Dialog inherits Rectangle {
     in property <bool> input-secret;
     // Whether "Show" is checked; dialog.rs clears it for each new question.
     in-out property <bool> show-secret;
+    // A line under the field (dialog.rs `ask_text_noted`), red if `note-error`.
+    in property <string> note;
+    in property <bool> note-error;
     callback chosen(int);
+    // The field's text changed (typed, not set).
+    callback edited(string);
 
     background: Theme.background.with-alpha(0.6);
 
@@ -96,6 +101,7 @@ export component Dialog inherits Rectangle {
                         secret: root.input-secret && !root.show-secret;
                         init => { self.focus-and-select(); }
                         accepted => { root.chosen(0); }
+                        edited(text) => { root.edited(text); }
                     }
                     if root.input-secret: Check {
                         text: "Show";
@@ -103,6 +109,11 @@ export component Dialog inherits Rectangle {
                         toggled => { root.show-secret = !root.show-secret; }
                     }
                 }
+            }
+            if root.has-input && root.note != "": Text {
+                text: root.note;
+                wrap: word-wrap;
+                color: root.note-error ? Theme.danger : Theme.foreground-muted;
             }
             HorizontalLayout {
                 alignment: end;

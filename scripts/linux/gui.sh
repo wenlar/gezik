@@ -3,7 +3,7 @@
 # input: xdotool (XTEST) under Xvfb, wtype and the vpointer example under a headless sway.
 #   docker build -t gezik-linux scripts/linux
 #   docker run --rm -v "$PWD:/src" -v gezik-target:/target -v gezik-cargo:/usr/local/cargo/registry \
-#       -e CARGO_TARGET_DIR=/target gezik-linux bash scripts/linux/gui.sh [x11|wayland|popups|tabdrag|pdf|pdfnote|filter|all]
+#       -e CARGO_TARGET_DIR=/target gezik-linux bash scripts/linux/gui.sh [x11|wayland|popups|tabdrag|pdf|pdfnote|filter|select|all]
 # Needs the network (apt for 7-Zip, Gezik's own 7-Zip download). Screenshots go to
 # .superpowers/linux-shots/gui-*.png. Each check prints "ok" or "FAIL"; the exit code is the
 # number of failures. Coordinates are the window's (no window manager under Xvfb, so it is
@@ -698,6 +698,116 @@ filter() {
     grep -i "panicked" /tmp/gezik-gui-filter.log && fail "filter: no panic" || pass "filter: no panic"
 }
 
+# 6a's selection tools: the pattern box (Ctrl+= and the keypad's -) with its live count,
+# select and deselect, invert (Ctrl+Shift+I), the same type (Alt+keypad +, not while the filter
+# bar has the keyboard), the selection back (keypad /) after a delete and after a copy, and
+# the last pattern kept in state.toml over a restart. What is selected is seen by Delete
+# (what lands in the trash), then Ctrl+Z. X11, 900x600.
+selection() {
+    Xvfb :99 -screen 0 1600x900x24 >/dev/null 2>&1 &
+    local xvfb=$!
+    unset WAYLAND_DISPLAY
+    export DISPLAY=:99
+    sleep 1
+    . /src/scripts/linux/gui-lib.sh
+    rm -rf /tmp/s /tmp/cfg /root/.local/share/Trash && mkdir -p /tmp/s/other /tmp/s/sub /tmp/cfg
+    for n in a.jpg b.JPG c.png d.txt e.txt; do echo $n > /tmp/s/$n; done
+    GEZIK_CONFIG_DIR=/tmp/cfg $GEZIK /tmp/s >/tmp/gezik-gui-select.log 2>&1 &
+    local gezik=$!
+    sleep 3
+    xdotool windowmove "$(win)" 0 0; xdotool windowsize "$(win)" 900 600; sleep 0.5
+    trashed() { [ -f "$HOME/.local/share/Trash/files/$1" ]; }
+    here() { [ -f "/tmp/s/$1" ]; }
+    undo() { key ctrl+z; sleep 1.5; }
+    # The box, where the line under the field is.
+    box() { convert "$SHOTS/$1.png" -crop 460x260+220+60 +repage "$SHOTS/$1-box.png"; }
+    same_box() { box "$1"; box "$2"; cmp -s "$SHOTS/$1-box.png" "$SHOTS/$2-box.png"; }
+    # Rows: other 118, sub 144, a.jpg 170, b.JPG 196, c.png 222, d.txt 248, e.txt 274.
+    shot select-start
+
+    # The box: the count follows the text; an error is said.
+    click 255 170; key ctrl+equal; sleep 0.8; shot select-box-empty      # "7 items match"
+    typ '*.jpg'; sleep 0.3; shot select-box-jpg                          # "2 items match"
+    key ctrl+a; typ '*.gif'; sleep 0.3; shot select-box-none             # "No items match"
+    key ctrl+a; typ '!'; sleep 0.3; shot select-box-error                # red: Type a name after "!"
+    check "select: the box opens with a count" '! cmp -s "$SHOTS/select-box-empty.png" "$SHOTS/select-start.png"'
+    check "select: the count follows the text" '! same_box select-box-empty select-box-jpg && ! same_box select-box-jpg select-box-none'
+    check "select: a bad pattern is said under the field" '! same_box select-box-none select-box-error'
+    key ctrl+a; typ '*.jpg'; key Return; sleep 0.5; shot select-jpg
+    key Delete; sleep 1.5
+    check "select: Select adds the matching names (both cases)" \
+        'trashed a.jpg && trashed b.JPG && here c.png && here d.txt && here e.txt'
+    undo
+    # Keypad /: the selection before the delete comes back.
+    click 255 248; key KP_Divide; sleep 0.5; shot select-restored-delete
+    key Delete; sleep 1.5
+    check "select: keypad / brings back the selection of the last delete" \
+        'trashed a.jpg && trashed b.JPG && here d.txt'
+    undo
+
+    # Deselect: the keypad's -, the box starts with the last pattern.
+    click 255 222; key ctrl+a KP_Subtract; sleep 0.8; shot select-deselect-box
+    key Return; sleep 0.5
+    key Delete; sleep 1.5
+    check "select: Deselect (keypad -, the last pattern) leaves out the matches" \
+        'here a.jpg && here b.JPG && trashed c.png && trashed d.txt && trashed e.txt'
+    undo
+
+    # Invert.
+    click 255 222; key ctrl+shift+i; sleep 0.5; shot select-inverted
+    key Delete; sleep 1.5
+    check "select: Ctrl+Shift+I selects all but what was selected" \
+        'here c.png && trashed a.jpg && trashed b.JPG && trashed d.txt && trashed e.txt'
+    undo
+    # Only the folders again (the inverted delete restored them): rows as at the start.
+
+    # The same type.
+    click 255 170; key alt+KP_Add; sleep 0.5; shot select-same-type
+    key Delete; sleep 1.5
+    check "select: Alt+keypad + adds the focused entry's type" \
+        'trashed a.jpg && trashed b.JPG && here c.png && here d.txt'
+    undo
+    # A text field with the keyboard keeps Alt+keypad + (the path box, the filter bar: "jpg;"
+    # with or without a "+" typed after it shows the same).
+    click 255 248; key ctrl+l; sleep 0.3; key alt+KP_Add; sleep 0.3; key Escape; sleep 0.3
+    key Delete; sleep 1.5
+    check "select: Alt+keypad + does nothing while the path box has the keyboard"         'trashed d.txt && here e.txt'
+    undo
+    click 255 170; key ctrl+f; sleep 0.3; typ 'jpg;'; key alt+KP_Add; sleep 0.3; shot select-same-type-filter
+    key Down Delete; sleep 1.5
+    check "select: Alt+keypad + does nothing while the filter bar has the keyboard"         'trashed a.jpg && here b.JPG'
+    undo; key Escape; sleep 0.5
+
+    # After a copy: pasted into the same folder (the copies are new names), the selection
+    # cleared, keypad /.
+    click 255 170; xdotool keydown ctrl; click 255 222; xdotool keyup ctrl
+    key ctrl+c ctrl+v; sleep 1.5
+    check "select: the copy lands" '[ "$(ls /tmp/s | wc -l)" = 9 ]'
+    key Escape KP_Divide; sleep 0.5; shot select-restored-copy
+    key Delete; sleep 1.5
+    check "select: keypad / brings back the selection of the last copy"         'trashed a.jpg && trashed c.png && here e.txt && here b.JPG && [ "$(ls /tmp/s | wc -l)" = 7 ]'
+    undo
+    for f in /tmp/s/*; do case "$f" in /tmp/s/[a-e].*|/tmp/s/b.JPG|/tmp/s/other|/tmp/s/sub) ;; *) rm -rf "$f" ;; esac; done
+    sleep 1
+
+    # The last pattern, over a restart.
+    click 255 222; key Escape ctrl+equal; sleep 0.8; typ '*.txt;!e*'; key Return; sleep 2
+    kill $gezik 2>/dev/null; wait $gezik 2>/dev/null
+    check "select: state.toml keeps the last pattern" 'grep -q "last-pattern = \"\*.txt;!e\*\"" /tmp/cfg/state.toml'
+    GEZIK_CONFIG_DIR=/tmp/cfg $GEZIK /tmp/s >>/tmp/gezik-gui-select.log 2>&1 &
+    gezik=$!
+    sleep 3
+    xdotool windowmove "$(win)" 0 0; xdotool windowsize "$(win)" 900 600; sleep 0.5
+    click 255 222; key Escape KP_Add; sleep 0.8; shot select-box-restart
+    key Return; sleep 0.5; key Delete; sleep 1.5
+    check "select: after a restart the box starts with the last pattern" \
+        'trashed d.txt && here e.txt && here c.png && here a.jpg'
+    kill $gezik 2>/dev/null
+    kill $xvfb 2>/dev/null
+    wait 2>/dev/null
+    grep -i "panicked" /tmp/gezik-gui-select.log && fail "select: no panic" || pass "select: no panic"
+}
+
 setup_7zip
 case "${1:-all}" in
     x11) x11 ;;
@@ -707,7 +817,8 @@ case "${1:-all}" in
     pdf) pdfpopups; pdfnote ;;
     pdfnote) pdfnote ;;
     filter) filter ;;
-    *) x11; wayland; popups; tabdrag; pdfpopups; pdfnote; filter ;;
+    select) selection ;;
+    *) x11; wayland; popups; tabdrag; pdfpopups; pdfnote; filter; selection ;;
 esac
 echo "failures: $failures"
 exit $failures
