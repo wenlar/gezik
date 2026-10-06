@@ -751,3 +751,92 @@ fn a_chosen_folder_is_made_with_its_missing_parents_and_a_failure_is_said_once()
     assert_eq!(names(&d), ["a.png", "b.png", "blocker"]);
     let _ = std::fs::remove_dir_all(&d);
 }
+
+#[test]
+fn a_files_command_runs_once_on_every_item_in_their_folder_and_leaves_nothing_to_undo() {
+    let d = dir("command-files");
+    let names = ["a b&c;d.txt", "-x.txt", "ş 'q'.txt"];
+    let inputs: Vec<(PathBuf, bool)> = names
+        .iter()
+        .map(|name| {
+            let path = d.join(name);
+            std::fs::write(&path, b"x").unwrap();
+            (path, false)
+        })
+        .collect();
+    std::fs::create_dir(d.join("sub")).unwrap();
+    let mut all = inputs.clone();
+    all.push((d.join("sub"), true));
+    let engine = engine(&d);
+    let report = run(&engine, CommandTask::new(all, command(&["args", "list.log", "{files}", "{dir}"], None)));
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    assert_eq!(report.skipped.len(), 1, "the folder is not for it");
+    let text = std::fs::read_to_string(d.join("list.log")).unwrap();
+    let lines: Vec<&str> = text.split('\n').collect();
+    for (i, (path, _)) in inputs.iter().enumerate() {
+        assert_eq!(lines[i], path.to_string_lossy(), "one argument each");
+    }
+    assert_eq!(lines[3], d.to_string_lossy());
+    assert_eq!(std::fs::canonicalize(lines[4]).unwrap(), std::fs::canonicalize(&d).unwrap(), "it ran in their folder");
+    assert_eq!(engine.undo_label(), None, "nothing to undo");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn a_files_command_past_the_command_line_limit_does_not_run() {
+    let d = dir("command-files-long");
+    let long = "x".repeat(200);
+    let spec = command(&["args", "list.log", "{files}"], None);
+    let count = gezik_platform::process::command_line_limit(&spec.run[0]) / 200 + 10;
+    // The plan of a {files} run reads no item: these need not exist.
+    let inputs: Vec<(PathBuf, bool)> = (0..count).map(|i| (d.join(format!("{long}{i}.txt")), false)).collect();
+    let engine = engine(&d);
+    let report = run(&engine, CommandTask::new(inputs, spec));
+    assert_eq!(report.failures.len(), 1, "{:?}", report.failures);
+    assert!(report.failures[0].message.contains("Too many items for one run of Fake"), "{:?}", report.failures);
+    assert!(!d.join("list.log").exists());
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn pausing_does_not_end_a_files_command_but_cancelling_does() {
+    let d = dir("command-files-pause");
+    let control = dir("command-files-pause-control");
+    let (hold, log) = (control.join("hold"), control.join("log"));
+    let input = d.join("a.txt");
+    std::fs::write(&input, b"hello").unwrap();
+    let engine = engine(&d);
+    let path = |p: &Path| p.to_string_lossy().into_owned();
+
+    // Paused: it goes on, and is not started again.
+    std::fs::write(&hold, b"").unwrap();
+    let spec = || command(&["hold", &path(&hold), &path(&log), "{files}"], None);
+    let job = engine.submit(Box::new(CommandTask::new(vec![(input.clone(), false)], spec())));
+    wait("the command to start", || lines(&log).len() == 1);
+    engine.pause(job);
+    let pid: u32 = lines(&log)[0].parse().unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(gezik_platform::process_alive(pid), "a pause does not end it");
+    std::fs::remove_file(&hold).unwrap();
+    wait("the command to end", || !gezik_platform::process_alive(pid));
+    engine.resume(job);
+    let report = finish_with(&engine, job, None).0;
+    assert!(report.failures.is_empty() && !report.cancelled, "{:?}", report.failures);
+    assert_eq!(lines(&log).len(), 1, "run once");
+    assert_eq!(std::fs::read(&input).unwrap(), b"hello half");
+    assert_eq!(engine.undo_label(), None, "nothing to undo");
+
+    // Cancelled: it ends.
+    std::fs::remove_file(&log).unwrap();
+    std::fs::write(&hold, b"").unwrap();
+    let job = engine.submit(Box::new(CommandTask::new(vec![(input.clone(), false)], spec())));
+    wait("the command to start", || lines(&log).len() == 1);
+    let pid: u32 = lines(&log)[0].parse().unwrap();
+    engine.cancel(job);
+    let report = finish_with(&engine, job, None).0;
+    assert!(report.cancelled);
+    wait("the command to be ended", || !gezik_platform::process_alive(pid));
+    assert_eq!(lines(&log).len(), 1);
+    let _ = std::fs::remove_dir_all(&d);
+    let _ = std::fs::remove_dir_all(&control);
+}
