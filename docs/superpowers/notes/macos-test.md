@@ -305,6 +305,41 @@ Re-checks of the shared UI fixes (fix/shared-ui, on master)
 50. **Typing mode:** add `[keyboard]` `typing = "filter"` to `/tmp/gezik-cfg/settings.toml`. Gezik picks it up live, and a letter on the list opens the filter with it. Back to `"jump"`, a letter jumps to a name again.
 51. **Saved filters:** ▾ in the bar, then Save as… "Resimler". `settings.toml` gets a `[[filters]]` entry. ▾ then Resimler fills the bar, and ▾, Delete "Resimler" removes it.
 
+6b, keyboard (path completion, folder history, command keys; never run on a Mac)
+
+52. **Path suggestions:**
+    - ⌘L, then type `/Us`. After a short pause, a list under the field shows the sub-folders that match (`Users`), never files.
+    - ↓ marks a row, ↑ goes back up (from the first row back to the text). Tab writes the marked row (or the first) into the field with a `/` at the end, and the list shows that folder's sub-folders. Enter on a marked row goes there; with none marked, it goes where the text says.
+    - Esc closes the list and typing goes on; a second Esc ends typing and the path parts come back. A click on a row goes there.
+    - `~/Desktop` and `$HOME/Downloads` (also `${HOME}/Downloads`) go there. `$GEZIK_NOPE/x` stays as it is and opens nothing; `~veli` is not expanded.
+    - Typing doesn't stutter while the list is shown. On a mounted share that doesn't answer (unplug the network after mounting), typing stays smooth and the list is empty after about 1 s.
+53. **Folder history:**
+    - Go to a few folders. ⌘L, then delete the text: the empty field lists "Recent" (the last 5) and "Frequent" (the most visited).
+    - In another folder, type a part of a visited folder's name: under the sub-folders, a "History" heading lists the matches.
+    - Delete a visited folder in Finder, then open the empty list: it goes from the list within 1 s.
+    - Go ▸ Clear Folder History empties the list, and the status bar says "Folder history cleared". `state.toml` has no `[history]` any more.
+54. **Command keys.** Add to `/tmp/gezik-cfg/settings.toml`:
+    ```toml
+    [[commands]]
+    name = "Zip together"
+    run = ["zip", "-r", "together.zip", "{files}"]
+    folders = true
+    shortcut = "ctrl+alt+z"
+    menu = "Archives"
+    ask = true
+
+    [[commands]]
+    name = "Clash"
+    run = ["true"]
+    shortcut = "mod+f"
+    ```
+    - Select a few files and a folder, then ⌃⌥Z: "Run Zip together on N items?". Cancel runs nothing. Run makes one `together.zip` with all of them, and the panel row says "Done · can't be undone". ⌘Z doesn't undo it.
+    - The menu bar has a Commands menu with a greyed "Archives" heading and "Zip together" under it, with ⌃⌥Z in the title. Choosing it asks the same question.
+    - Right-click, then Commands ▸: the same greyed heading over its group. The heading can't be chosen.
+    - The notice says `commands[2]: shortcut "mod+f" is already used by filter; the command has no key`, and ⌘F still opens the filter.
+    - ⌃⌥Z while the path field or the filter field has the keyboard does nothing.
+55. **No history:** add `[history]` `remember = false`. `state.toml` loses its `[history]`, and new visits are not kept. Take the line out again.
+
 Report anything else that looks wrong: layout, fonts, Retina scaling, ⌘ shortcuts that don't work, and the wording of the boxes.
 
 ## Known gaps (not bugs)

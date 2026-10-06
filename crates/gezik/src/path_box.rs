@@ -879,9 +879,11 @@ mod tests {
         }
         let started = Instant::now();
         let names = list_subfolders(&dir).unwrap();
+        let read = started.elapsed();
         let rows = folder_rows(&dir, &names, "klasör 0999");
         let took = started.elapsed();
         let _ = std::fs::remove_dir_all(&dir);
+        eprintln!("10,000 folders: read {read:?}, read and ranked {took:?}");
         assert_eq!((names.len(), rows.len()), (10_000, 10));
         assert!(took < Duration::from_millis(20), "{took:?}");
     }

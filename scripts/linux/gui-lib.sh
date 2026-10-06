@@ -24,3 +24,13 @@ menu() { local y; y=$(row "$1" "$2"); rclick 260 "$y"; click 330 $((y + 20 + 32 
 px() { convert "$SHOTS/$1.png" -crop "1x1+$2+$3" txt:- | tail -1 | grep -o "#[0-9A-F]\{6\}"; }
 # The share (0-1) of dark pixels in a W x H box at X,Y of screenshot NAME.
 dark() { convert "$SHOTS/$1.png" -crop "$2x$3+$4+$5" -colorspace gray -threshold 50% -negate -format "%[fx:mean]" info:; }
+# The names Ctrl+C put on the clipboard, sorted, on one line.
+copied() {
+    xclip -selection clipboard -t x-special/gnome-copied-files -o 2>/dev/null | tail -n +2 | python3 -c '
+import sys, os, urllib.parse
+names = [os.path.basename(urllib.parse.unquote(l.strip()[len("file://"):])) for l in sys.stdin if l.strip()]
+print(" ".join(sorted(names)))'
+}
+sorted() { printf '%s\n' "$@" | LC_ALL=C sort | paste -sd' '; }
+# Whether the names Ctrl+C copies from the window are exactly NAME...
+copies() { key ctrl+c; sleep 0.4; [ "$(copied)" = "$(sorted "$@")" ]; }

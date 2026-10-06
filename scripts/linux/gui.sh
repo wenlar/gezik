@@ -981,15 +981,6 @@ keyboard() {
     start_k
     title() { xdotool getwindowname "$(win)"; }
     is() { [ "$(title)" = "$1 — Gezik" ]; }
-    # The names Ctrl+C put on the clipboard, sorted, on one line.
-    copied() {
-        xclip -selection clipboard -t x-special/gnome-copied-files -o 2>/dev/null | tail -n +2 | python3 -c '
-import sys, os, urllib.parse
-names = [os.path.basename(urllib.parse.unquote(l.strip()[len("file://"):])) for l in sys.stdin if l.strip()]
-print(" ".join(sorted(names)))'
-    }
-    sorted() { printf '%s\n' "$@" | LC_ALL=C sort | paste -sd' '; }
-    copies() { key ctrl+c; sleep 0.4; [ "$(copied)" = "$(sorted "$@")" ]; }
     # Rows (folders first): Docs 118, a.jpg 144, b.JPG 170, c.png 196, d.txt 222, İSTANBUL.txt 248.
     click 255 144
 
@@ -1064,8 +1055,10 @@ print(" ".join(sorted(names)))'
 # 6b's user commands in the window: a command run by its key on the selection (and on the
 # focused item, with the status bar saying why it does not run there), never in the address
 # bar; `ask` asks first (Esc: nothing runs; Enter: Run); a `{files}` run keeps its panel row,
-# "Done · can't be undone"; "Commands ▸" lists a `menu` group under its greyed heading; a
-# bare key as a command's shortcut is refused when settings.toml loads. X11, 900x600.
+# "Done · can't be undone", runs in the items' folder and leaves nothing to undo; "Commands ▸"
+# lists a `menu` group under its greyed heading; a bare key as a command's shortcut, and one
+# an action has (Ctrl+F), are refused when settings.toml loads; a `{files}` run past the command
+# line limit does not start. X11, 900x600.
 commands() {
     Xvfb :99 -screen 0 1600x900x24 >/dev/null 2>&1 &
     local xvfb=$!
@@ -1085,7 +1078,7 @@ shortcut = "ctrl+alt+k"
 
 [[commands]]
 name = "List them"
-run = ["sh", "-c", "printf '%s\n' \"$@\" > /tmp/cm-listed", "sh", "{files}"]
+run = ["sh", "-c", "printf '%s\n' \"$@\" > /tmp/cm-listed; pwd > /tmp/cm-cwd", "sh", "{files}"]
 folders = true
 shortcut = "ctrl+alt+l"
 menu = "Tests"
@@ -1102,6 +1095,19 @@ menu = "Tests"
 name = "Bare"
 run = ["sh", "-c", "echo \"$1\" >> /tmp/cm-bare", "sh", "{in}"]
 shortcut = "x"
+
+[[commands]]
+name = "Clash"
+run = ["sh", "-c", "echo clash >> /tmp/cm-clash"]
+types = ["zzz"]
+shortcut = "ctrl+f"
+
+[[commands]]
+name = "Count"
+run = ["sh", "-c", "echo $# > /tmp/cm-count", "sh", "{files}"]
+folders = true
+shortcut = "ctrl+alt+m"
+menu = "Tests"
 TOML
     : >/tmp/gezik-gui-commands.log
     GEZIK_CONFIG_DIR=/tmp/cfg $GEZIK /tmp/cm >>/tmp/gezik-gui-commands.log 2>&1 &
@@ -1112,6 +1118,8 @@ TOML
     # Rows (folders first): Sub 118, a.txt 144, b.txt 170, c.jpg 196.
     check "commands: a bare-key shortcut is refused when settings load" \
         'grep -q "commands\[4\]: shortcut \"x\" needs Ctrl, Alt or Cmd (or an F key); the command has no key" /tmp/gezik-gui-commands.log'
+    check "commands: a key taken by an action is left out, with a warning" \
+        'grep -q "commands\[5\]: shortcut \"ctrl+f\" is already used by filter; the command has no key" /tmp/gezik-gui-commands.log'
 
     # By its key, on the selection.
     click 255 144; key shift+Down
@@ -1151,6 +1159,12 @@ TOML
     # "done for" time).
     check "commands: the {files} run keeps its panel row (\"can't be undone\", see the shot)" \
         'awk "BEGIN { exit !($(dark commands-cant-undo 860 24 10 545) > 0.01) }"'
+    check "commands: the {files} run is in the items' folder" '[ "$(cat /tmp/cm-cwd 2>/dev/null)" = /tmp/cm ]'
+    # Nothing to undo of it: the first Ctrl+Z undoes Mark (a run in place: a.txt was kept in
+    # the trash), the second the copies.
+    sleep 3; key Escape; click 255 "$(row /tmp/cm c.jpg)"; key ctrl+z; sleep 2; key ctrl+z; sleep 2
+    check "commands: the {files} run leaves nothing to undo (Ctrl+Z twice: Mark, then the copies)" \
+        '[ ! -e /tmp/cm/a-copy.txt ] && [ ! -e /tmp/cm/b-copy.txt ] && [ "$(wc -l < /tmp/cm-listed)" = 6 ]'
 
     # "Commands ▸" on a.txt: Copy txt, then the greyed "Tests" heading over List them and Mark.
     local y; y=$(row /tmp/cm a.txt)
@@ -1167,6 +1181,27 @@ TOML
     xdotool mousemove 330 "$sub"; sleep 0.3; xdotool mousemove 400 "$sub"; sleep 1
     click 520 $((sub + 128)); sleep 2
     check "commands: Mark, under the heading, runs from the menu" '[ "$(wc -l < /tmp/cm-marked)" = 2 ]'
+
+    # Ctrl+F stays the filter's: c.jpg alone is shown and selected; Clash never ran.
+    key Escape; click 255 "$(row /tmp/cm c.jpg)"; key ctrl+f; typ jpg; key Down ctrl+a
+    check "commands: Ctrl+F is still the filter's" 'copies c.jpg && [ ! -e /tmp/cm-clash ]'
+    key Escape Escape
+
+    # Past the command line limit (half of ARG_MAX), short of ARG_MAX itself: names of 210
+    # bytes making ~0.7 ARG_MAX, so a run let through would start. Count asks nothing.
+    local n=$(( $(getconf ARG_MAX) * 7 / 10 / 240 ))
+    mkdir -p /tmp/cm/many
+    python3 -c "import sys
+for i in range(int(sys.argv[1])): open('/tmp/cm/many/%s%06d.txt' % ('x' * 200, i), 'w').close()" "$n"
+    # (No Return here: on the list it would open the selected files.)
+    key ctrl+l; typ /tmp/cm/many; key Return; sleep 4; click 255 118; shot commands-before-too-many
+    key ctrl+a ctrl+alt+m; sleep 2; shot commands-too-many
+    check "commands: too many items for one command line ($n): nothing runs" '[ ! -e /tmp/cm-count ]'
+    check "commands: ...and the status bar says so (see the shot)" \
+        '! cmp -s "$SHOTS/commands-before-too-many.png" "$SHOTS/commands-too-many.png"'
+    # A few of them fit: Count runs on them.
+    key Escape; click 255 118; key shift+Down shift+Down ctrl+alt+m; sleep 2
+    check "commands: ...while three of them run" '[ "$(cat /tmp/cm-count 2>/dev/null)" = 3 ]'
     kill $gezik 2>/dev/null
     kill $xvfb 2>/dev/null
     wait 2>/dev/null
@@ -1250,6 +1285,11 @@ C
     check "paths: Enter on ~/gzhome/deep goes there" 'is deep'
     key ctrl+l; typ '$HOME/gzhome'; key Return; sleep 1
     check "paths: Enter on \$HOME/gzhome goes there" 'is gzhome'
+    key ctrl+l; typ '${HOME}/gzhome/deep'; key Return; sleep 1
+    check "paths: \${NAME} too" 'is deep'
+    key ctrl+l; typ '$GEZIK_NOPE/x'; key Return; sleep 1
+    check "paths: an unknown variable stays (nothing opens)" 'is deep'
+    key Escape Escape; sleep 0.3
 
     # Esc closes the list first (typing goes on), then ends typing.
     key ctrl+l; sleep 0.5; shot paths-esc-before; typ /tmp/p/al; sleep 0.5; shot paths-esc-open
