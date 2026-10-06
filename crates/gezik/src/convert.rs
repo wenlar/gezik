@@ -1505,11 +1505,8 @@ impl Convert {
             let ffmpeg = if wants { find_ffmpeg(&data, configured.as_deref()) } else { None };
             let hint = if wants { gezik_platform::http::tool_missing_hint() } else { None };
             let found = ffmpeg.as_ref().map(|ff| have_of(ff, configured.as_deref()));
-            let runs_now = job.inputs.iter().any(|p| runs_with(&job.what, &name_of(p), found));
-            if runs_now && let Output::Folder(dir) = &job.output {
-                // A failure shows when the job cannot use the folder.
-                let _ = std::fs::create_dir_all(dir);
-            }
+            // A chosen folder that is not there is made by the job (with its missing parents),
+            // undone with it.
             let _ = slint::invoke_from_event_loop(move || {
                 with_current(|this| this.found(job, ffmpeg, found, hint));
             });

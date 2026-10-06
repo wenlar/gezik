@@ -133,10 +133,12 @@ pub(super) fn needs_trash() -> io::Error {
     io::Error::new(io::ErrorKind::Unsupported, what)
 }
 
-/// The plan item's note: a file to convert, a folder to make first, a file left out.
+/// The plan item's note: a file to convert, a folder to make first, a file left out, a file
+/// whose output folder could not be made.
 const CONVERT: u8 = 0;
 const FOLDER: u8 = 1;
 const LEFT_OUT: u8 = 2;
+const NO_FOLDER: u8 = 3;
 
 pub struct ConvertTask {
     inputs: Vec<PathBuf>,
@@ -288,6 +290,8 @@ impl Task for ConvertTask {
         // Outputs planned so far: two inputs must not write the same file.
         let mut outputs: HashSet<Vec<String>> = HashSet::new();
         let mut folders: HashSet<Vec<String>> = HashSet::new();
+        // Output folders that could not be made.
+        let mut unmade: HashSet<Vec<String>> = HashSet::new();
         for (root, input) in self.inputs.iter().enumerate() {
             let meta = match std::fs::metadata(input) {
                 Ok(meta) => meta,
@@ -317,19 +321,39 @@ impl Task for ConvertTask {
                 sink.failed(input, io::Error::new(io::ErrorKind::AlreadyExists, message));
                 continue;
             }
-            // The output's folder ("converted"), made first if it is not there: undo removes it.
+            // The output's folder ("converted", or one chosen with folders missing above it),
+            // made first where it is not there, outermost first: undo removes what was made.
+            // Folder items run at once, here: if one cannot be made, that is its one failure,
+            // and what would go into it is left out with a note.
             if let Some(folder) = target.parent()
                 && !folder.as_os_str().is_empty()
                 && folders.insert(path_key(folder))
-                && std::fs::symlink_metadata(folder).is_err()
             {
-                let make = PlanItem::new(Stage::Before, Facts { is_dir: true, ..Facts::default() })
-                    .target(folder)
-                    .tag(FOLDER)
-                    .uncounted();
-                if !sink.item(make) {
+                let missing: Vec<&Path> = folder
+                    .ancestors()
+                    .take_while(|dir| !dir.as_os_str().is_empty() && std::fs::symlink_metadata(dir).is_err())
+                    .collect();
+                for dir in missing.into_iter().rev() {
+                    let make = PlanItem::new(Stage::Before, Facts { is_dir: true, ..Facts::default() })
+                        .target(dir)
+                        .tag(FOLDER)
+                        .uncounted();
+                    if !sink.item(make) {
+                        return;
+                    }
+                    if !dir.is_dir() {
+                        unmade.insert(path_key(folder));
+                        break;
+                    }
+                }
+            }
+            if let Some(folder) = target.parent()
+                && unmade.contains(&path_key(folder))
+            {
+                if !sink.item(item.tag(NO_FOLDER)) {
                     return;
                 }
+                continue;
             }
             let item = item.target(target).tag(CONVERT);
             // Replacing under the same name: the original is the target, no conflict.
@@ -354,6 +378,11 @@ impl Task for ConvertTask {
             }
             LEFT_OUT => {
                 let why = io::Error::new(io::ErrorKind::Unsupported, self.what.not_taken(item.facts.is_dir));
+                run.skip(item.path(), &why);
+                return Ok(Outcome::Nothing);
+            }
+            NO_FOLDER => {
+                let why = io::Error::other("its output folder could not be made");
                 run.skip(item.path(), &why);
                 return Ok(Outcome::Nothing);
             }

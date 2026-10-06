@@ -608,3 +608,33 @@ fn pausing_ends_ffmpeg_and_the_file_starts_over_without_counting_twice() {
     assert!(progress.iter().all(|p| p.bytes_done <= p.bytes_total), "counted twice: {progress:?}");
     let _ = std::fs::remove_dir_all(&d);
 }
+
+#[test]
+fn a_chosen_folder_is_made_with_its_missing_parents_and_a_failure_is_said_once() {
+    let d = dir("folder-parents");
+    let inputs = vec![d.join("a.png"), d.join("b.png")];
+    for input in &inputs {
+        picture(input);
+    }
+    let engine = engine(&d);
+    let out = d.join("out").join("2026").join("pictures");
+    let what = || ConvertWhat::Image(image_options(ImageFormat::Jpeg));
+    let report = run(&engine, convert(inputs.clone(), what(), Output::Folder(out.clone())));
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    assert_eq!(names(&out), ["a.jpg", "b.jpg"]);
+    // One undo removes the pictures and every folder the job made.
+    undo(&engine);
+    assert_eq!(names(&d), ["a.png", "b.png"]);
+
+    // A folder that cannot be made (a file is where its parent should be): one failure, and
+    // the pictures that would go into it are left out with a note.
+    std::fs::write(d.join("blocker"), b"a file").unwrap();
+    let out = d.join("blocker").join("pictures");
+    let report = run(&engine, convert(inputs, what(), Output::Folder(out.clone())));
+    assert_eq!(report.failures.len(), 1, "{:?}", report.failures);
+    assert_eq!(report.failures[0].path, out);
+    assert_eq!(report.skipped.len(), 2, "{:?}", report.skipped);
+    assert!(report.skipped.iter().all(|s| s.message.contains("output folder")), "{:?}", report.skipped);
+    assert_eq!(names(&d), ["a.png", "b.png", "blocker"]);
+    let _ = std::fs::remove_dir_all(&d);
+}
