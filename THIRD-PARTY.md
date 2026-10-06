@@ -117,3 +117,19 @@ License version 3. Each download holds the two programs, the licence text (`LICE
 `SOURCE.txt`, which names the FFmpeg commit, the builder's scripts and the upstream files with
 their SHA-256. FFmpeg's source is at https://ffmpeg.org/download.html. How the downloads are
 made: `scripts/tools/README.md`.
+
+## pdfium (downloaded on request)
+
+pdfium is not built into Gezik. When the user asks for PDF work that reads PDFs, Gezik downloads
+an unmodified PDFium 157.0.8086.0 (chromium/8086) build from https://github.com/wenlar/gezik-tools
+and loads it only in its separate PDF worker process (`gezik --pdf-worker`). The builds are
+Benoît Blanchon's (https://github.com/bblanchon/pdfium-binaries/releases/tag/chromium%2F8086),
+without V8 (JavaScript) and XFA, and are only repackaged; the macOS libraries keep their bytes
+(and the arm64 one its ad-hoc signature). PDFium (https://pdfium.googlesource.com/pdfium/) is
+under the BSD 3-clause and Apache 2.0 licences (`licenses/pdfium.txt`); the libraries built
+into it (abseil, agg, dragonbox, fast_float, FreeType, HarfBuzz, ICU, Little CMS, libjpeg-turbo,
+OpenJPEG, libpng, LLVM libc, simdutf, zlib) keep their own permissive licences (`licenses/`);
+the build scripts are under the MIT licence (`LICENSE`). Each download holds the library
+(`pdfium.dll`, `libpdfium.dylib` or `libpdfium.so`), `LICENSE`, the `licenses/` folder and
+`SOURCE.txt`, which names the upstream file and its SHA-256; all are installed next to the
+library. How the downloads are made: `scripts/tools/README.md`.

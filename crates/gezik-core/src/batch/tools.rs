@@ -1,11 +1,14 @@
-//! The tools Gezik can download (7-Zip and ffmpeg; pdfium later): where each build is, its
-//! size and SHA-256, and which programs are inside.
+//! The tools Gezik can download (7-Zip, ffmpeg and pdfium): where each build is, its size and
+//! SHA-256, and which programs (for pdfium, the library) are inside.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tool {
     SevenZip,
     /// ffmpeg with ffprobe beside it (`programs = ["ffmpeg", "ffprobe"]`, `.exe` on Windows).
     Ffmpeg,
+    /// The pdfium library the PDF worker loads (`programs = ["pdfium.dll"]`, `libpdfium.dylib`
+    /// on macOS, `libpdfium.so` on Linux).
+    Pdfium,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,7 +52,7 @@ pub struct ToolBuild {
     pub url: &'static str,
     pub size: u64,
     pub sha256: &'static str,
-    /// The programs inside the download (paths in the archive).
+    /// The programs inside the download (paths in the archive); for pdfium, its library.
     pub programs: &'static [&'static str],
     /// The archive the download is (`zip`, `tar.xz` or `7z`).
     pub kind: &'static str,
@@ -57,7 +60,9 @@ pub struct ToolBuild {
 
 /// 7-Zip 26.03 from 7-zip.org, repackaged by `scripts/tools/prepare.ps1`, and ffmpeg 9.0.2
 /// (gyan.dev, BtbN and Martin Riedl builds, one solid 7z per platform), repackaged by
-/// `scripts/tools/prepare-ffmpeg.ps1` (their output, pasted).
+/// `scripts/tools/prepare-ffmpeg.ps1`, and pdfium chromium/8086 (bblanchon/pdfium-binaries,
+/// one solid 7z per platform), repackaged by `scripts/tools/prepare-pdfium.ps1` (their output,
+/// pasted).
 pub static MANIFEST: &[ToolBuild] = &[
     ToolBuild {
         tool: Tool::SevenZip,
@@ -189,6 +194,74 @@ pub static MANIFEST: &[ToolBuild] = &[
         programs: &["ffmpeg", "ffprobe"],
         kind: "7z",
     },
+    // pdfium chromium/8086 (bblanchon/pdfium-binaries), one solid 7z per platform, repackaged by scripts/tools/prepare-pdfium.ps1
+    // Made from these pdfium chromium/8086 builds (addresses in scripts/tools/prepare-pdfium.ps1), sha256 size name:
+    // 1fd8af952832dbb0eb16d9249f68fe09e5f5ebf7c3dd9f6066ea2720cc28487d 3866531 pdfium-8086-win-x64.tgz
+    // 1799b8034e6d64946fec0ae79f3edfc8ba58ccd80c70a46194803b1eba408344 3636496 pdfium-8086-win-arm64.tgz
+    // e98679e052c07edbb5a627980902abb823d4b3f35744d877bd21668bd9fc13ab 3521983 pdfium-8086-mac-arm64.tgz
+    // 933a85a138f6027243c56bff8676375c33ceeb767401389415ffc44d689ca85d 3717448 pdfium-8086-mac-x64.tgz
+    // 588577cf52dabc1a444988bac841920df54cc2f141801424de97ab04f4fbb935 3788766 pdfium-8086-linux-x64.tgz
+    // e7e2fe4686925618330103cb167950aca5a84bb00fd977a41b86be59dd1480a2 3708875 pdfium-8086-linux-arm64.tgz
+    ToolBuild {
+        tool: Tool::Pdfium,
+        platform: Platform::WindowsX64,
+        version: "8086",
+        url: "https://github.com/wenlar/gezik-tools/releases/download/pdfium-8086-1/pdfium-8086-windows-x64.7z",
+        size: 2815947,
+        sha256: "30db11d92017b821bc02b18fc3ef59146b428de1534725209498cdcfc81aca74",
+        programs: &["pdfium.dll"],
+        kind: "7z",
+    },
+    ToolBuild {
+        tool: Tool::Pdfium,
+        platform: Platform::WindowsArm64,
+        version: "8086",
+        url: "https://github.com/wenlar/gezik-tools/releases/download/pdfium-8086-1/pdfium-8086-windows-arm64.7z",
+        size: 2436166,
+        sha256: "5648f92b40c53ae25ff64002a7333e4712a39f4e19829cbe4a5be49d9d0f00ba",
+        programs: &["pdfium.dll"],
+        kind: "7z",
+    },
+    ToolBuild {
+        tool: Tool::Pdfium,
+        platform: Platform::MacArm64,
+        version: "8086",
+        url: "https://github.com/wenlar/gezik-tools/releases/download/pdfium-8086-1/pdfium-8086-macos-arm64.7z",
+        size: 2373968,
+        sha256: "8f61cf9299ff35bc9804385cdd19b67a267db53b015a60060642209fbd5a2817",
+        programs: &["libpdfium.dylib"],
+        kind: "7z",
+    },
+    ToolBuild {
+        tool: Tool::Pdfium,
+        platform: Platform::MacX64,
+        version: "8086",
+        url: "https://github.com/wenlar/gezik-tools/releases/download/pdfium-8086-1/pdfium-8086-macos-x64.7z",
+        size: 2689296,
+        sha256: "3f033009e838866042c46cda13ca10907d0b331e94d05236a2d90b202b882ee8",
+        programs: &["libpdfium.dylib"],
+        kind: "7z",
+    },
+    ToolBuild {
+        tool: Tool::Pdfium,
+        platform: Platform::LinuxX64,
+        version: "8086",
+        url: "https://github.com/wenlar/gezik-tools/releases/download/pdfium-8086-1/pdfium-8086-linux-x64.7z",
+        size: 2764635,
+        sha256: "4b409a85be9160952d6143ef8ee341a00a96402b2e69681e0800e2fd43726ae0",
+        programs: &["libpdfium.so"],
+        kind: "7z",
+    },
+    ToolBuild {
+        tool: Tool::Pdfium,
+        platform: Platform::LinuxArm64,
+        version: "8086",
+        url: "https://github.com/wenlar/gezik-tools/releases/download/pdfium-8086-1/pdfium-8086-linux-arm64.7z",
+        size: 2513984,
+        sha256: "b18b5daf0979b56c93d0e16fdc5ead1b6ce9018a5d5655c08d0dd35b2350803b",
+        programs: &["libpdfium.so"],
+        kind: "7z",
+    },
 ];
 
 pub fn build_for(tool: Tool, platform: Platform) -> Option<&'static ToolBuild> {
@@ -229,6 +302,28 @@ mod tests {
             assert_eq!(build.programs, [format!("ffmpeg{exe}"), format!("ffprobe{exe}")]);
             let version: Vec<u32> = build.version.split('.').map(|part| part.parse().unwrap()).collect();
             assert!(version >= vec![9, 0, 2], "{}", build.version);
+        }
+    }
+
+    /// pdfium for every platform: one solid 7z from the `pdfium-<build>-<n>` release holding the
+    /// library at its root; chromium/7881 or newer (the bindings are `pdfium_7881`).
+    #[test]
+    fn every_pdfium_build_is_complete() {
+        for platform in Platform::ALL {
+            let build = build_for(Tool::Pdfium, platform).expect("pdfium for every platform");
+            let release = format!("https://github.com/wenlar/gezik-tools/releases/download/pdfium-{}-", build.version);
+            assert!(build.url.starts_with(&release) && build.url.ends_with(".7z"), "{}", build.url);
+            assert_eq!(build.kind, "7z");
+            assert_eq!(build.sha256.len(), 64);
+            assert!(build.sha256.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+            assert!(build.size > 1_000_000 && build.size < 8_000_000, "{}", build.size);
+            let library = match platform {
+                Platform::WindowsX64 | Platform::WindowsArm64 => "pdfium.dll",
+                Platform::MacArm64 | Platform::MacX64 => "libpdfium.dylib",
+                Platform::LinuxX64 | Platform::LinuxArm64 => "libpdfium.so",
+            };
+            assert_eq!(build.programs, [library]);
+            assert!(build.version.parse::<u32>().unwrap() >= 7881, "{}", build.version);
         }
     }
 

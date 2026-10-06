@@ -11,8 +11,11 @@ use std::time::{Duration, Instant};
 
 use gezik_batch::archive::write::{self, CompressOptions, Level, OutFormat, WriteCx};
 use gezik_batch::convert::ffmpeg::find_ffmpeg;
+use gezik_batch::pdf::client::{WORKER_ARG, Worker, count_pages};
+use gezik_batch::pdf::images::write_pdf;
 use gezik_batch::tasks::DownloadTask;
-use gezik_batch::tools::install_dir;
+use gezik_batch::tools::{find, install_dir};
+use gezik_core::batch::pdf::PageOptions;
 use gezik_core::batch::tools::{Platform, Tool, ToolBuild};
 use gezik_ops::{Engine, Event, PendingDeletes, Report, Settings};
 use sha2::{Digest, Sha256};
@@ -299,10 +302,33 @@ fn cancel_stops_the_download() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
-/// Every build in MANIFEST whose file is in the folder `scripts/tools/prepare.ps1` or
-/// `prepare-ffmpeg.ps1` wrote (GEZIK_TOOLS_DIR) downloads and installs with its programs and
-/// licence; this machine's ffmpeg is then found there and is 9.0 or newer. Skipped without
-/// that folder.
+/// A 3-page PDF written by Gezik (`write_pdf`, a picture per page) in `d`.
+fn three_page_pdf(d: &Path) -> PathBuf {
+    let pics: Vec<PathBuf> = (0..3u8)
+        .map(|i| {
+            let png = d.join(format!("pic{i}.png"));
+            image::RgbImage::from_fn(64, 48, |x, y| image::Rgb([x as u8 * 4, y as u8 * 5, i * 60])).save(&png).unwrap();
+            png
+        })
+        .collect();
+    let out = d.join("three.pdf");
+    write_pdf(&pics, &out, &PageOptions::DEFAULT, &mut |_, _| {}, &|| false).unwrap();
+    out
+}
+
+/// The real PDF worker (`examples/pdf_worker.rs`, built by `cargo test -p gezik-batch`).
+fn pdf_worker() -> Worker {
+    let deps = std::env::current_exe().unwrap().parent().unwrap().to_path_buf();
+    let program = deps.parent().unwrap().join("examples").join(format!("pdf_worker{}", std::env::consts::EXE_SUFFIX));
+    assert!(program.is_file(), "{} is missing: run `cargo test -p gezik-batch`", program.display());
+    Worker { program, args: vec![WORKER_ARG.into()] }
+}
+
+/// Every build in MANIFEST whose file is in the folder `scripts/tools/prepare.ps1`,
+/// `prepare-ffmpeg.ps1` or `prepare-pdfium.ps1` wrote (GEZIK_TOOLS_DIR) downloads and installs
+/// with its programs and licence; this machine's ffmpeg is then found there and is 9.0 or
+/// newer, and this machine's pdfium is found there and counts the pages of a PDF through the
+/// worker (chromium/8086 loads with the `pdfium_7881` bindings). Skipped without that folder.
 #[test]
 fn the_prepared_builds_install() {
     let Some(folder) = std::env::var_os("GEZIK_TOOLS_DIR").map(PathBuf::from) else { return };
@@ -324,15 +350,23 @@ fn the_prepared_builds_install() {
         let extra: &[&str] = match build.tool {
             Tool::SevenZip => &["License.txt"],
             Tool::Ffmpeg => &["LICENSE", "SOURCE.txt"],
+            Tool::Pdfium => &["LICENSE", "SOURCE.txt", "licenses/pdfium.txt"],
         };
         for file in build.programs.iter().chain(extra) {
-            assert!(installed.join(file).is_file(), "{name}: {file}");
+            let path = file.split('/').fold(installed.clone(), |path, part| path.join(part));
+            assert!(path.is_file(), "{name}: {file}");
         }
         if build.tool == Tool::Ffmpeg && Some(build.platform) == Platform::current() {
             let found = find_ffmpeg(&data, None).expect("the installed ffmpeg is found");
             assert_eq!(found.ffmpeg, installed.join(build.programs[0]));
             assert_eq!(found.ffprobe.as_deref(), Some(installed.join(build.programs[1]).as_path()));
             assert!(found.version.is_some_and(|v| v >= (9, 0)), "{:?}", found.version);
+        }
+        if build.tool == Tool::Pdfium && Some(build.platform) == Platform::current() {
+            let library = find(Tool::Pdfium, &data, None).expect("the installed pdfium is found");
+            assert_eq!(library, installed.join(build.programs[0]));
+            let pdf = three_page_pdf(&data);
+            assert_eq!(count_pages(&pdf_worker(), &library, &pdf, &|| false).unwrap(), Some(3));
         }
         let _ = std::fs::remove_dir_all(&data);
         tested += 1;
