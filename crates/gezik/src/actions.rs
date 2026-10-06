@@ -29,8 +29,9 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         Action::RestoreSelection => view.restore_remembered(),
         Action::SelectPattern => crate::select_tools::with_current(|s| s.ask(true)),
         Action::DeselectPattern => crate::select_tools::with_current(|s| s.ask(false)),
-        // Task 9 fills these in.
-        Action::ReopenTab | Action::TabPicker | Action::ToggleTabLock => return false,
+        Action::ReopenTab => nav.reopen_tab(),
+        Action::ToggleTabLock => nav.toggle_tab_lock(nav.active_index()),
+        Action::TabPicker => crate::tab_tools::with_current(crate::tab_tools::TabTools::open),
         // Not 6a's: `handle_key` and the menu bar run these themselves. Listed one by one so
         // that a new action is a compile error here until it is placed.
         Action::NewTab

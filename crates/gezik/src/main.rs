@@ -26,6 +26,7 @@ mod quick_look;
 mod select_tools;
 mod sidebar;
 mod start;
+mod tab_tools;
 mod theme_bridge;
 mod view;
 mod watcher;
@@ -128,6 +129,14 @@ fn handle_key(
         let mut used = false;
         if let Some(chord) = &chord {
             convert::with_current(|layer| used = layer.chord(chord));
+        }
+        return used;
+    }
+    // The tab picker: Esc, Enter, Up and Down are its own, other keys go to its field.
+    if window.get_tp_open() {
+        let mut used = false;
+        if let Some(chord) = &chord {
+            tab_tools::with_current(|t| used = t.chord(chord));
         }
         return used;
     }
@@ -478,6 +487,7 @@ fn main() -> Result<(), slint::PlatformError> {
     sidebar.set_pinned(initial_settings.pinned);
     let dialogs = dialog::Dialogs::new(&window);
     let _filter = filter::Filter::new(&window, view.clone(), dialogs.clone(), config.clone());
+    let _tab_tools = tab_tools::TabTools::new(&window, nav.clone());
     let _select_tools = select_tools::SelectTools::new(
         view.clone(),
         dialogs.clone(),

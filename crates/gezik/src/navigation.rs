@@ -303,6 +303,12 @@ impl Navigator {
     /// Shows the (possibly new) active tab. Until its listing is loaded the file list is
     /// empty, so no other tab's files appear under its address.
     pub fn after_tabs_changed(&self) {
+        self.after_tabs_changed_noted(None);
+    }
+
+    /// [`after_tabs_changed`](Self::after_tabs_changed); `note`, if any, shows in the status bar
+    /// once the tab's listing is back (instead of its item count).
+    fn after_tabs_changed_noted(&self, note: Option<String>) {
         let view = {
             let mut inner = self.0.borrow_mut();
             inner.cleared = true;
@@ -311,7 +317,7 @@ impl Navigator {
         // Not while borrowed: the view calls its selection listeners.
         view.clear();
         self.update_chrome();
-        self.load(self.active_location(), Mode::Show, None);
+        self.load(self.active_location(), Mode::Show, note);
     }
 
     /// Opens a tab at `location` right after the active one; `activate` switches to it.
@@ -408,21 +414,58 @@ impl Navigator {
         }
     }
 
+    /// Closes every tab but `index` and the locked ones. The status bar says how many locked
+    /// tabs stayed; when `index` was not active, only once its listing is back (the listing's
+    /// item count would replace it).
     pub fn close_other_tabs(&self, index: usize) {
-        let locked = if index == self.0.borrow().tabs.active_index() {
+        let note = |locked: usize| (locked > 0).then(|| locked_kept_text(locked));
+        if index == self.0.borrow().tabs.active_index() {
             let locked = self.keep_active_tab(|tabs| tabs.close_others(index));
             self.update_chrome();
-            locked
+            if let Some(note) = note(locked) {
+                self.status(note);
+            }
         } else if index < self.0.borrow().tabs.len() {
             let locked = self.with_tabs(|tabs| tabs.close_others(index));
-            self.after_tabs_changed();
-            locked
-        } else {
-            0
-        };
-        if locked > 0 {
-            self.status(locked_kept_text(locked));
+            self.after_tabs_changed_noted(note(locked));
         }
+    }
+
+    /// Opens the last closed tab again where it was, with its history and its view (selection,
+    /// scroll, filter); nothing if no tab was closed.
+    pub fn reopen_tab(&self) {
+        if self.0.borrow().tabs.closed_count() == 0 {
+            return;
+        }
+        self.with_tabs(Tabs::reopen);
+        self.after_tabs_changed();
+    }
+
+    /// Locks tab `index` if it is unlocked, and the other way round.
+    pub fn toggle_tab_lock(&self, index: usize) {
+        self.keep_active_tab(|tabs| tabs.set_locked(index, !tabs.is_locked(index)));
+        self.update_chrome();
+    }
+
+    pub fn is_tab_locked(&self, index: usize) -> bool {
+        self.0.borrow().tabs.is_locked(index)
+    }
+
+    /// Every tab's title and path ("" for This PC), in tab order.
+    pub fn tab_list(&self) -> Vec<(String, String)> {
+        let inner = self.0.borrow();
+        inner
+            .tabs
+            .iter()
+            .map(|history| {
+                let location = history.location();
+                let path = match location {
+                    Location::Path(path) => path.display().to_string(),
+                    Location::Drives => String::new(),
+                };
+                (inner.places.title_for(location), path)
+            })
+            .collect()
     }
 
     pub fn duplicate_tab(&self, index: usize) {
@@ -769,12 +812,13 @@ impl Navigator {
             });
             window.set_title_text(format!("{} — Gezik", inner.places.title_for(&location)).into());
             let active = inner.tabs.active_index();
-            let tabs = inner
-                .tabs
-                .iter()
-                .enumerate()
-                .map(|(i, h)| TabItem { title: inner.places.title_for(h.location()).into(), active: i == active });
+            let tabs = inner.tabs.iter().enumerate().map(|(i, h)| TabItem {
+                title: inner.places.title_for(h.location()).into(),
+                active: i == active,
+                locked: inner.tabs.is_locked(i),
+            });
             sync_model(&inner.tab_model, tabs);
+            window.set_active_tab_locked(inner.tabs.is_locked(active));
             inner.on_changed.clone()
         };
         // Called with no borrow held, so listeners may use the navigator.
@@ -844,7 +888,7 @@ mod tests {
     }
 
     fn tab(title: &str, active: bool) -> TabItem {
-        TabItem { title: title.into(), active }
+        TabItem { title: title.into(), active, locked: false }
     }
 
     fn titles(model: &VecModel<TabItem>) -> Vec<(String, bool)> {

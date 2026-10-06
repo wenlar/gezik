@@ -3,7 +3,7 @@
 # input: xdotool (XTEST) under Xvfb, wtype and the vpointer example under a headless sway.
 #   docker build -t gezik-linux scripts/linux
 #   docker run --rm -v "$PWD:/src" -v gezik-target:/target -v gezik-cargo:/usr/local/cargo/registry \
-#       -e CARGO_TARGET_DIR=/target gezik-linux bash scripts/linux/gui.sh [x11|wayland|popups|tabdrag|pdf|pdfnote|filter|select|all]
+#       -e CARGO_TARGET_DIR=/target gezik-linux bash scripts/linux/gui.sh [x11|wayland|popups|tabdrag|pdf|pdfnote|filter|select|tabs|all]
 # Needs the network (apt for 7-Zip, Gezik's own 7-Zip download). Screenshots go to
 # .superpowers/linux-shots/gui-*.png. Each check prints "ok" or "FAIL"; the exit code is the
 # number of failures. Coordinates are the window's (no window manager under Xvfb, so it is
@@ -831,6 +831,114 @@ selection() {
     grep -i "panicked" /tmp/gezik-gui-select.log && fail "select: no panic" || pass "select: no panic"
 }
 
+# 6a's tabs: Ctrl+1..9, Ctrl+Shift+T (in its old place, with its history and its filter), the
+# lock (the tab's menu, its icon, Ctrl+W and middle-click say no, "Close other tabs" keeps it
+# and says so) and the tab picker (Ctrl+Shift+A: typing filters, Up/Down, Enter, Esc).
+# X11, 900x600: three tabs 220 px wide (centres 110, 330, 550), the bar at y 20.
+tabs() {
+    Xvfb :99 -screen 0 1600x900x24 >/dev/null 2>&1 &
+    local xvfb=$!
+    unset WAYLAND_DISPLAY
+    export DISPLAY=:99
+    sleep 1
+    . /src/scripts/linux/gui-lib.sh
+    rm -rf /tmp/tb /tmp/cfg /root/.local/share/Trash && mkdir -p /tmp/tb/one /tmp/tb/two/sub /tmp/tb/three /tmp/cfg
+    echo 1 > /tmp/tb/one/1.txt; echo 3 > /tmp/tb/three/3.txt
+    echo x > /tmp/tb/two/sub/x1.txt; echo y > /tmp/tb/two/sub/y1.txt
+    GEZIK_CONFIG_DIR=/tmp/cfg $GEZIK /tmp/tb/one >/tmp/gezik-gui-tabs.log 2>&1 &
+    local gezik=$!
+    sleep 3
+    xdotool windowmove "$(win)" 0 0; xdotool windowsize "$(win)" 900 600; sleep 0.5
+    title() { xdotool getwindowname "$(win)"; }
+    is() { [ "$(title)" = "$1 — Gezik" ]; }
+    trashed() { [ -f "$HOME/.local/share/Trash/files/$1" ]; }
+    # A part of a screenshot, to compare: crop NAME W H X Y.
+    crop() { convert "$SHOTS/$1.png" -crop "$2x$3+$4+$5" +repage "$SHOTS/$1-part.png"; }
+    same_part() { crop "$1" $3 $4 $5 $6; crop "$2" $3 $4 $5 $6; cmp -s "$SHOTS/$1-part.png" "$SHOTS/$2-part.png"; }
+    goto() { key ctrl+l; typ "$1"; key Return; sleep 1; }
+    click 255 300
+    key ctrl+t; sleep 1; goto /tmp/tb/two
+    key ctrl+t; sleep 1; goto /tmp/tb/three
+    shot tabs-three
+
+    # Ctrl+1..9.
+    key ctrl+1; sleep 0.8; check "tabs: Ctrl+1 shows the first tab" 'is one'
+    key ctrl+2; sleep 0.8; check "tabs: Ctrl+2 shows the second" 'is two'
+    key ctrl+9; sleep 0.8; check "tabs: Ctrl+9 shows the last" 'is three'
+    key ctrl+1; sleep 0.8; key ctrl+5; sleep 0.8
+    check "tabs: Ctrl+5 with three tabs does nothing" 'is one'
+
+    # The picker: typing filters, Enter switches; Up/Down move; Esc closes.
+    key ctrl+shift+a; sleep 0.8; shot tabs-picker
+    check "tabs: Ctrl+Shift+A opens the picker" '! same_part tabs-picker tabs-three 480 300 210 60'
+    typ thr; sleep 0.5; shot tabs-picker-thr
+    check "tabs: typing filters the picker" '! same_part tabs-picker-thr tabs-picker 480 300 210 60'
+    key Return; sleep 1; shot tabs-picked
+    check "tabs: Enter switches to the tab typed" 'is three'
+    check "tabs: the picker closes" '! same_part tabs-picked tabs-picker 480 300 210 60'
+    key ctrl+shift+a; sleep 0.8; key Up; key Return; sleep 1
+    check "tabs: Up then Enter picks the tab before" 'is two'
+    key ctrl+shift+a; sleep 0.8; key Down; key Escape; sleep 0.8; shot tabs-picker-esc
+    check "tabs: Esc closes the picker and switches nowhere" 'is two'
+    check "tabs: the picker is gone after Esc" '! same_part tabs-picker-esc tabs-picker 480 300 210 60'
+    key ctrl+shift+a; sleep 0.8; typ /tmp/tb/one; sleep 0.3; shot tabs-picker-path; key Return; sleep 1
+    check "tabs: the picker matches paths" 'is one'
+    key ctrl+shift+a; sleep 0.8; click 450 218; sleep 1
+    check "tabs: a click on a row picks it" 'is two'
+
+    # Ctrl+Shift+T: tab two, into sub, filtered by x1, closed; back in its place with all that.
+    dclick 255 118; sleep 1
+    check "tabs: into sub" 'is sub'
+    key ctrl+f; typ x1; key Down; sleep 0.3; shot tabs-sub-filtered
+    key ctrl+w; sleep 1
+    check "tabs: Ctrl+W closed it (the next tab shows)" 'is three'
+    key ctrl+shift+t; sleep 1.5; shot tabs-reopened
+    check "tabs: Ctrl+Shift+T brings it back" 'is sub'
+    key ctrl+1; sleep 0.8; key ctrl+2; sleep 1
+    check "tabs: in its old place" 'is sub'
+    key ctrl+a Delete; sleep 1.5
+    check "tabs: with its filter (only x1.txt went)" 'trashed x1.txt && [ -f /tmp/tb/two/sub/y1.txt ]'
+    key ctrl+z; sleep 1.5
+    key alt+Left; sleep 1
+    check "tabs: with its history (Back goes to two)" 'is two'
+    key ctrl+shift+t; sleep 1
+    check "tabs: nothing more to reopen: nothing happens" 'is two'
+
+    # The lock, from the tab's menu: Duplicate, Lock tab, Close, Close other tabs.
+    key ctrl+1; sleep 0.8; shot tabs-unlocked
+    rclick 110 20; sleep 0.5; shot tabs-menu-unlocked
+    click 180 72; sleep 0.5; click 450 300; sleep 0.3; shot tabs-locked
+    check "tabs: a lock shows on the locked tab" '! same_part tabs-locked tabs-unlocked 220 36 0 2'
+    key ctrl+w; sleep 1; shot tabs-locked-ctrlw
+    check "tabs: Ctrl+W leaves a locked tab open" 'is one'
+    click 110 20 2; sleep 1
+    key ctrl+3; sleep 0.8
+    check "tabs: middle-click leaves it open too (still three tabs)" 'is three'
+    key ctrl+1; sleep 0.8
+    rclick 110 20; sleep 0.5; shot tabs-menu-locked
+    check "tabs: the locked tab's menu differs (Unlock tab, no Close)" '! same_part tabs-menu-locked tabs-menu-unlocked 300 200 100 30'
+    key Escape; sleep 0.5
+
+    # Close other tabs on the second tab (not the active one): the locked first tab stays.
+    rclick 330 20; sleep 0.5; shot tabs-menu-second
+    click 400 136; sleep 2; shot tabs-closed-others
+    key ctrl+1; sleep 0.8; check "tabs: the locked tab stayed" 'is one'
+    key ctrl+3; sleep 0.8; check "tabs: only two tabs are left" 'is one'
+    key ctrl+2; sleep 1.5; shot tabs-second-reloaded
+    check "tabs: the second tab is the one kept" 'is two'
+    check "tabs: the status bar said a locked tab stayed (see the shot)" \
+        '! same_part tabs-closed-others tabs-second-reloaded 450 30 0 565'
+
+    # Unlocked again: it closes.
+    key ctrl+1; sleep 0.8; rclick 110 20; sleep 0.5; click 180 72; sleep 0.5
+    key ctrl+w; sleep 1
+    check "tabs: unlocked, Ctrl+W closes it" 'is two'
+    kill $gezik 2>/dev/null
+    kill $xvfb 2>/dev/null
+    wait 2>/dev/null
+    grep -i "panicked" /tmp/gezik-gui-tabs.log && fail "tabs: no panic" || pass "tabs: no panic"
+}
+
 setup_7zip
 case "${1:-all}" in
     x11) x11 ;;
@@ -841,7 +949,8 @@ case "${1:-all}" in
     pdfnote) pdfnote ;;
     filter) filter ;;
     select) selection ;;
-    *) x11; wayland; popups; tabdrag; pdfpopups; pdfnote; filter; selection ;;
+    tabs) tabs ;;
+    *) x11; wayland; popups; tabdrag; pdfpopups; pdfnote; filter; selection; tabs ;;
 esac
 echo "failures: $failures"
 exit $failures

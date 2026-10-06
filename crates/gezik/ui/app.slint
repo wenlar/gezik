@@ -15,10 +15,11 @@ import { FileIcon } from "widgets/file-icon.slint";
 import { CompressLayer } from "widgets/compress.slint";
 import { ConvertLayer, ConvertView } from "widgets/convert.slint";
 import { PopupMenu, MenuEntry, MenuPlace } from "widgets/popup-menu.slint";
+import { TabPicker, TabPickRow } from "widgets/tab-picker.slint";
 
 // Re-exported so Rust can set it with `window.global::<Theme>()` and build crumbs, tabs
 // and sidebar rows.
-export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, OpRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView, MenuEntry, MenuPlace }
+export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, OpRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView, MenuEntry, MenuPlace, TabPickRow }
 
 // Where the drop targets are, in window coordinates (drag.rs reads it while files are
 // dragged; every field is computed when read).
@@ -118,7 +119,7 @@ export component AppWindow inherits Window {
             MenuSeparator { }
             MenuItem { title: "Reopen Closed Tab"; shortcut: root.menu-keys ? @keys(Control + Shift + T) : @keys(); activated => { root.menu-command("reopen-tab"); } }
             MenuItem { title: "Show All Tabs…"; shortcut: root.menu-keys ? @keys(Control + Shift + A) : @keys(); activated => { root.menu-command("tab-picker"); } }
-            MenuItem { title: "Lock Tab"; activated => { root.menu-command("toggle-tab-lock"); } }
+            MenuItem { title: root.active-tab-locked ? "Unlock Tab" : "Lock Tab"; activated => { root.menu-command("toggle-tab-lock"); } }
             MenuSeparator { }
             MenuItem { title: "Tab 1"; shortcut: root.menu-keys ? @keys(Control + "1") : @keys(); activated => { root.menu-command("tab-1"); } }
             MenuItem { title: "Tab 2"; shortcut: root.menu-keys ? @keys(Control + "2") : @keys(); activated => { root.menu-command("tab-2"); } }
@@ -175,6 +176,8 @@ export component AppWindow inherits Window {
     in property <bool> can-go-up;
     in property <[CrumbItem]> crumbs;
     in property <[TabItem]> tabs;
+    // The active tab is locked (the menu bar's Lock/Unlock Tab).
+    in property <bool> active-tab-locked;
     // The file list's scroll offset (content-y), saved and restored per history entry.
     in-out property <length> list-scroll;
     in-out property <bool> path-editing;
@@ -420,6 +423,14 @@ export component AppWindow inherits Window {
     callback cv-pdf-reorder(int, int);
     pure callback cv-pdf-drop-row(length, length, int) -> int;
 
+    // The tab picker (tab_tools.rs): the tabs the query lets through, the row Enter picks.
+    in property <bool> tp-open;
+    in-out property <string> tp-query;
+    in property <[TabPickRow]> tp-rows;
+    in property <int> tp-current;
+    callback tp-edited(string);
+    callback tp-chosen(int);
+
     // A question over the window (dialog.rs); `dialog-chosen` gets the button's index.
     in property <bool> dialog-open;
     in property <string> dialog-title;
@@ -533,6 +544,8 @@ export component AppWindow inherits Window {
             compress-layer.take-focus();
         } else if root.cv-open {
             convert-layer.take-focus();
+        } else if root.tp-open {
+            tab-picker.take-focus();
         } else {
             keys.focus();
         }
@@ -1023,6 +1036,20 @@ export component AppWindow inherits Window {
             pdf-set(key, i) => { root.cv-pdf-set(key, i); }
             pdf-reorder(from, to) => { root.cv-pdf-reorder(from, to); }
             pdf-drop-row(y, h, count) => { return root.cv-pdf-drop-row(y, h, count); }
+        }
+        tab-picker := TabPicker {
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.height;
+            visible: root.tp-open;
+            open: root.tp-open;
+            dialog-open: root.dialog-open || root.conflicts-open;
+            query <=> root.tp-query;
+            rows: root.tp-rows;
+            current: root.tp-current;
+            edited(text) => { root.tp-edited(text); }
+            chosen(i) => { root.tp-chosen(i); }
         }
         // Always there (hidden when closed), so Rust can scroll it.
         conflict-list := ConflictList {

@@ -33,9 +33,7 @@ pub const CLOSE_OTHER_TABS: u32 = 8;
 pub const OPEN: u32 = 9;
 /// macOS/Linux only.
 pub const OPEN_DEFAULT: u32 = 10;
-#[allow(dead_code, reason = "Task 9's tab menu uses them")]
 pub const LOCK_TAB: u32 = 11;
-#[allow(dead_code, reason = "Task 9's tab menu uses them")]
 pub const UNLOCK_TAB: u32 = 12;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,6 +54,7 @@ pub enum Place {
     },
     Tab {
         only_tab: bool,
+        locked: bool,
     },
 }
 
@@ -90,9 +89,14 @@ pub fn items(place: Place, native_shell: bool) -> Vec<(u32, &'static str)> {
                 out.push((MOVE_DOWN, "Move down"));
             }
         }
-        Place::Tab { only_tab } => {
+        Place::Tab { only_tab, locked } => {
             out.push((DUPLICATE_TAB, "Duplicate"));
-            out.push((CLOSE_TAB, "Close"));
+            if locked {
+                out.push((UNLOCK_TAB, "Unlock tab"));
+            } else {
+                out.push((LOCK_TAB, "Lock tab"));
+                out.push((CLOSE_TAB, "Close"));
+            }
             if !only_tab {
                 out.push((CLOSE_OTHER_TABS, "Close other tabs"));
             }
@@ -546,7 +550,7 @@ impl Menus {
     /// everywhere.
     pub fn tab(&self, index: usize, x: f32, y: f32) {
         let Some(id) = self.nav.tab_id(index) else { return };
-        let place = Place::Tab { only_tab: self.nav.tab_count() == 1 };
+        let place = Place::Tab { only_tab: self.nav.tab_count() == 1, locked: self.nav.is_tab_locked(index) };
         *self.subject.borrow_mut() = Some(Subject::Tab(id));
         self.open_slint(&items(place, false), Anchor::point(x, y));
     }
@@ -867,6 +871,11 @@ impl Menus {
                 // After the menu is fully done: closing the last tab closes the window.
                 let nav = self.nav.clone();
                 slint::Timer::single_shot(std::time::Duration::ZERO, move || nav.close_tab_by_id(id));
+            }
+            (LOCK_TAB | UNLOCK_TAB, Subject::Tab(id)) => {
+                if let Some(i) = self.nav.tab_index(id) {
+                    self.nav.toggle_tab_lock(i);
+                }
             }
             (CLOSE_OTHER_TABS, Subject::Tab(id)) => {
                 if let Some(i) = self.nav.tab_index(id) {
@@ -1328,9 +1337,12 @@ mod tests {
     }
 
     #[test]
-    fn tab_menu_hides_close_others_for_a_single_tab() {
-        assert_eq!(ids(items(Place::Tab { only_tab: false }, true)), [DUPLICATE_TAB, CLOSE_TAB, CLOSE_OTHER_TABS]);
-        assert_eq!(ids(items(Place::Tab { only_tab: true }, true)), [DUPLICATE_TAB, CLOSE_TAB]);
+    fn the_tab_menu_offers_the_lock_and_no_close_on_a_locked_tab() {
+        let tab = |only_tab, locked| ids(items(Place::Tab { only_tab, locked }, false));
+        assert_eq!(tab(false, false), [DUPLICATE_TAB, LOCK_TAB, CLOSE_TAB, CLOSE_OTHER_TABS]);
+        assert_eq!(tab(true, false), [DUPLICATE_TAB, LOCK_TAB, CLOSE_TAB]);
+        assert_eq!(tab(false, true), [DUPLICATE_TAB, UNLOCK_TAB, CLOSE_OTHER_TABS]);
+        assert_eq!(tab(true, true), [DUPLICATE_TAB, UNLOCK_TAB]);
     }
 
     #[test]

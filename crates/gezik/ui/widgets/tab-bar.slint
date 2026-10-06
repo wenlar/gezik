@@ -3,9 +3,12 @@ import { Theme } from "../theme.slint";
 export struct TabItem {
     title: string,
     active: bool,
+    // A locked tab does not close (no ×, Ctrl+W and middle-click say so).
+    locked: bool,
 }
 
 // The tab strip: click to switch, middle-click or × to close, drag to reorder, + for a new tab.
+// A locked tab shows a lock before its title and no ×.
 export component TabBar inherits Rectangle {
     in property <[TabItem]> tabs;
     callback activate(int);
@@ -144,9 +147,9 @@ export component TabBar inherits Rectangle {
                     }
                 }
 
-                // The × takes room only while it is shown (active or hovered tab), so a
-                // narrow tab keeps its title readable.
-                property <bool> close-shown: item.active || hovered;
+                // The × takes room only while it is shown (active or hovered tab, not locked),
+                // so a narrow tab keeps its title readable.
+                property <bool> close-shown: !item.locked && (item.active || hovered);
                 HorizontalLayout {
                     padding-left: Theme.spacing;
                     padding-right: 2px;
@@ -161,6 +164,34 @@ export component TabBar inherits Rectangle {
                         }
                     }
                     Rectangle { width: Theme.spacing; }
+                    // Drawn, like the ×: a body and its shackle.
+                    if item.locked: VerticalLayout {
+                        alignment: center;
+                        Rectangle {
+                            width: 12px;
+                            height: 12px;
+                            accessible-role: image;
+                            accessible-label: "Locked";
+                            Path {
+                                width: parent.width;
+                                height: parent.height;
+                                viewbox-width: 16;
+                                viewbox-height: 16;
+                                commands: "M 5 8 L 5 5 A 3 3 0 0 1 11 5 L 11 8";
+                                stroke: item.active ? Theme.foreground : Theme.foreground-muted;
+                                stroke-width: 1.5px;
+                            }
+                            Path {
+                                width: parent.width;
+                                height: parent.height;
+                                viewbox-width: 16;
+                                viewbox-height: 16;
+                                commands: "M 3 7.5 L 13 7.5 L 13 15 L 3 15 Z";
+                                fill: item.active ? Theme.foreground : Theme.foreground-muted;
+                            }
+                        }
+                    }
+                    if item.locked: Rectangle { width: Theme.spacing * 0.75; }
                     Text {
                         text: item.title;
                         overflow: elide;
