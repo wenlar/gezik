@@ -800,6 +800,7 @@ impl BatchRename {
         let state = self.state();
         self.close();
         crate::operations::with_current(|ops| ops.save_batch_rename(state));
+        self.0.ops.remember_for(&pairs.iter().map(|(from, _)| from.clone()).collect::<Vec<_>>());
         self.0.ops.submit(Box::new(gezik_ops::RenameTask::many(pairs)), None, crate::operations::After::Select);
     }
 

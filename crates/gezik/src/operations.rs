@@ -415,11 +415,16 @@ impl Operations {
         self.update();
     }
 
+    /// Keeps the selection shown for keypad / (`View::restore_remembered`) when a job is
+    /// about to run on `sources`, if they are all in the folder shown: a paste or a drop from
+    /// elsewhere, or a job for a folder left meanwhile, leaves what was remembered alone.
+    pub fn remember_for(&self, sources: &[PathBuf]) {
+        self.0.view.remember_selection_for(sources);
+    }
+
     /// Runs `task`; `retry` runs the same operation again from its row, `after` says what to
-    /// do with the results.
+    /// do with the results. The selection is not remembered here: see `remember_for`.
     pub fn submit(&self, task: Box<dyn Task>, retry: Option<Retry>, after: After) -> JobId {
-        // Num / selects it again once the job has changed the folder.
-        self.0.view.remember_selection();
         let title = task.title();
         let id = self.0.engine.submit(task);
         let mut job = JobView::new(id, title);
@@ -439,7 +444,6 @@ impl Operations {
         again: Option<Again>,
         after: After,
     ) -> JobId {
-        self.0.view.remember_selection();
         let title = tasks.first().map(|task| task.title()).unwrap_or_default();
         let id = self.0.engine.submit_chain(tasks, label);
         let mut job = JobView::new(id, title);
@@ -586,6 +590,7 @@ impl Operations {
                     view.end_rename(refocus)
                 };
                 if let Some(path) = path {
+                    self.remember_for(std::slice::from_ref(&path));
                     // Going on to another entry: its refresh must not pull the selection away.
                     let after = if how == Commit::Tab { After::Nothing } else { After::Select };
                     self.submit(Box::new(gezik_ops::RenameTask::one(path, &name)), None, after);
@@ -701,6 +706,7 @@ impl Operations {
 
     /// Copies or moves `paths` into folder `dir` (a paste or a drop), as one undoable job.
     pub fn transfer(&self, paths: Vec<PathBuf>, dir: PathBuf, effect: Effect) {
+        self.remember_for(&paths);
         let retry: Retry = Rc::new(move || -> Box<dyn Task> {
             match effect {
                 Effect::Move => Box::new(MoveTask::into(paths.clone(), &dir)),
@@ -788,7 +794,7 @@ impl Operations {
     fn hide(&self, paths: &[PathBuf]) -> Option<PathBuf> {
         let folder = self.0.view.folder()?;
         // Before the names go: the job is submitted after this.
-        self.0.view.remember_selection();
+        self.remember_for(paths);
         self.0.view.hide_names(&result_names(paths, &folder));
         Some(folder)
     }
@@ -834,6 +840,7 @@ impl Operations {
         if paths.is_empty() {
             return;
         }
+        self.remember_for(&paths);
         let retry: Retry = Rc::new(move || -> Box<dyn Task> { Box::new(CopyTask::duplicate(paths.clone())) });
         self.submit(retry(), Some(retry), After::Select);
     }

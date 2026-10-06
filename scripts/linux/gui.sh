@@ -715,6 +715,7 @@ selection() {
     . /src/scripts/linux/gui-lib.sh
     rm -rf /tmp/s /tmp/cfg /root/.local/share/Trash && mkdir -p /tmp/s/other /tmp/s/sub /tmp/cfg
     for n in a.jpg b.JPG c.png d.txt e.txt; do echo $n > /tmp/s/$n; done
+    echo z > /tmp/s/sub/z.txt
     GEZIK_CONFIG_DIR=/tmp/cfg $GEZIK /tmp/s >/tmp/gezik-gui-select.log 2>&1 &
     local gezik=$!
     sleep 3
@@ -791,10 +792,11 @@ selection() {
     check "select: Ctrl+Shift+I does nothing while the filter bar has the keyboard"         'trashed a.jpg && here b.JPG'
     undo; key Escape; sleep 0.5
 
-    # Ctrl+C here, Ctrl+V in sub (then Ctrl+Z there, which must not count), back, the
-    # selection cleared, keypad /: this folder's selection at the copy.
+    # Ctrl+C here, Ctrl+V in sub with z.txt selected there (the paste must not remember sub's
+    # selection; then Ctrl+Z there, which must not count either), back, the selection cleared,
+    # keypad /: this folder's selection at the copy.
     click 255 170; xdotool keydown ctrl; click 255 222; xdotool keyup ctrl
-    key ctrl+c; dclick 255 144; sleep 0.5; key ctrl+v; sleep 1.5
+    key ctrl+c; dclick 255 144; sleep 0.5; click 255 118; key ctrl+v; sleep 1.5
     check "select: the copy into sub lands" '[ -f /tmp/s/sub/a.jpg ] && [ -f /tmp/s/sub/c.png ]'
     key ctrl+z; sleep 1.5
     check "select: Ctrl+Z takes it back" '[ ! -e /tmp/s/sub/a.jpg ] && [ ! -e /tmp/s/sub/c.png ]'

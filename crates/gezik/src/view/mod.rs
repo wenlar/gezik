@@ -786,6 +786,15 @@ impl View {
         *self.0.remembered.borrow_mut() = Some((folder.to_path_buf(), names));
     }
 
+    /// `remember_selection`, for a job on `sources`: only if they are all in the folder shown
+    /// (a paste or a drop from elsewhere must not replace another folder's selection).
+    pub fn remember_selection_for(&self, sources: &[PathBuf]) {
+        let here = sources_in(self.0.data.borrow().listing.folder(), sources);
+        if here {
+            self.remember_selection();
+        }
+    }
+
     /// Selects again what `remember_selection` kept, if its folder is shown: the names still
     /// shown, focused on the first. Elsewhere, or if none of them shows any more (renamed,
     /// deleted, filtered out), the selection stays as it is.
@@ -1414,6 +1423,13 @@ fn carry(selection: &Selection, old_rows: Option<&[usize]>, full_len: usize, new
     }
 }
 
+/// Whether every one of `sources` (at least one) is an entry of `folder`.
+fn sources_in(folder: Option<&Path>, sources: &[PathBuf]) -> bool {
+    let Some(folder) = folder else { return false };
+    !sources.is_empty()
+        && sources.iter().all(|s| s.parent().is_some_and(|parent| gezik_core::ops::paths::same_path(parent, folder)))
+}
+
 /// How many of `names` `pattern` hides (none without a filter). No allocation per name.
 fn hidden_count(pattern: Option<&Pattern>, names: &[String]) -> usize {
     pattern.map_or(0, |pattern| names.iter().filter(|name| !pattern.matches(name)).count())
@@ -1532,6 +1548,19 @@ mod tests {
         assert_eq!(hidden_note(0), None);
         assert_eq!(hidden_note(1).as_deref(), Some("1 item hidden by the filter"));
         assert_eq!(hidden_note(3).as_deref(), Some("3 items hidden by the filter"));
+    }
+
+    #[test]
+    fn only_a_job_on_the_folder_shown_remembers_its_selection() {
+        let a = Path::new("/a");
+        let in_a = [PathBuf::from("/a/x.txt"), PathBuf::from("/a/sub")];
+        assert!(sources_in(Some(a), &in_a), "Ctrl+C, Delete, rename, convert: from here");
+        // Ctrl+C in /a, Ctrl+V in /b: the paste's sources are in /a, /b is shown.
+        assert!(!sources_in(Some(Path::new("/b")), &in_a), "a paste from elsewhere");
+        assert!(!sources_in(Some(a), &[PathBuf::from("/a/x.txt"), PathBuf::from("/c/y.txt")]), "partly elsewhere");
+        assert!(!sources_in(Some(a), &[PathBuf::from("/a/sub/deeper.txt")]), "in a subfolder");
+        assert!(!sources_in(Some(a), &[]), "new folder: no sources");
+        assert!(!sources_in(None, &in_a), "This PC");
     }
 
     #[test]

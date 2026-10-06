@@ -1849,6 +1849,7 @@ impl Convert {
                 let again =
                     self.pdf_again(PdfJob::Pictures { pictures: pictures.clone(), output: output.clone(), page });
                 let label = images_pdf_label(pictures.len());
+                self.0.ops.remember_for(&pictures);
                 let task: Box<dyn gezik_ops::Task> = Box::new(ImagesToPdfTask::new(pictures, output, page));
                 self.0.ops.submit_chain(vec![task], Some(label), Some(again), After::Select);
             }
@@ -1891,6 +1892,7 @@ impl Convert {
             }
         };
         let label = pdf_label(&work, &inputs);
+        self.0.ops.remember_for(&inputs);
         let tasks = pdf_chain(work, inputs, PdfTools { worker, library });
         let id = self.0.ops.submit_chain(tasks, Some(label), Some(again), After::Select);
         self.0.pdf_jobs.borrow_mut().insert(id, job);
@@ -2002,6 +2004,7 @@ impl Convert {
             let task = ConvertTask::new(now.clone(), job.what.clone(), job.output.clone(), ConvertTools { ffmpeg });
             // Retry goes through `start` again, so its job is followed too (and ffmpeg found anew).
             let again = self.again(Job { inputs: now.clone(), resubmitted: false, ..job.clone() });
+            self.0.ops.remember_for(&now);
             let id = self.0.ops.submit_chain(vec![Box::new(task)], None, Some(again), After::Select);
             self.0.jobs.borrow_mut().insert(id, Job { inputs: now, ..job.clone() });
         }
@@ -2081,6 +2084,7 @@ impl Convert {
                 with_current(|this| this.run_command(spec, items));
             })
         };
+        self.0.ops.remember_for(&paths);
         let task: Box<dyn gezik_ops::Task> = Box::new(CommandTask::new(items, spec));
         self.0.ops.submit_chain(vec![task], Some(label), Some(again), After::Select);
     }
