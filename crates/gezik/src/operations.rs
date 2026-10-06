@@ -1143,7 +1143,11 @@ impl Operations {
             let Some(job) = jobs.iter().find(|j| j.id == id) else { return };
             let Some(report) = &job.report else { return };
             let named = |f: &Failure| {
-                format!("{}: {}", f.path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default(), f.message)
+                format!(
+                    "{}: {}",
+                    f.path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default(),
+                    crate::pdf::failure_shown(&f.message)
+                )
             };
             let mut lines: Vec<String> = report.failures.iter().take(MAX_DETAILS).map(named).collect();
             // What was left out on purpose comes after, under its own heading.

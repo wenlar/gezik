@@ -81,6 +81,8 @@ pub struct ConvertState {
     pub image: Option<String>,
     pub text: Option<String>,
     pub media: Option<String>,
+    /// The PDF group's choices (`op=split split=every every=10 dpi=150 …`); never a page range.
+    pub pdf: Option<String>,
     /// The output choice (empty: none saved).
     pub last_output: String,
     pub last_folder: Option<String>,
@@ -689,6 +691,7 @@ impl State {
                 image: text("image"),
                 text: text("text"),
                 media: text("media"),
+                pdf: text("pdf"),
                 last_output: text("last-output").unwrap_or_default(),
                 last_folder: text("last-folder"),
             }
@@ -779,6 +782,7 @@ impl State {
                 ("image", &convert.image),
                 ("text", &convert.text),
                 ("media", &convert.media),
+                ("pdf", &convert.pdf),
                 ("last-folder", &convert.last_folder),
             ];
             for (key, value) in texts {
@@ -1297,6 +1301,7 @@ rules = []
                 image: Some("jpeg;q=85".to_owned()),
                 text: Some("utf-8;lf".to_owned()),
                 media: Some("mp3-192".to_owned()),
+                pdf: Some("op=split split=every every=7 dpi=300 image=jpeg size=a4 margin=small".to_owned()),
                 last_output: "folder".to_owned(),
                 last_folder: Some("D:/Out".to_owned()),
             },

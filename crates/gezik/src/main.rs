@@ -16,6 +16,7 @@ mod media;
 mod menu_bar;
 mod navigation;
 mod operations;
+mod pdf;
 mod places;
 mod preview;
 mod quick_look;

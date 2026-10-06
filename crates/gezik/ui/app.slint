@@ -365,6 +365,8 @@ export component AppWindow inherits Window {
     in-out property <string> cv-quality;
     in-out property <string> cv-resize-value;
     in-out property <string> cv-background;
+    in-out property <string> cv-pdf-every;
+    in-out property <string> cv-pdf-ranges;
     callback cv-presets(length, length);
     callback cv-set-format(int);
     callback cv-set-resize(int);
@@ -376,6 +378,9 @@ export component AppWindow inherits Window {
     callback cv-edited();
     callback cv-convert();
     callback cv-cancel();
+    callback cv-pdf-set(string, int);
+    callback cv-pdf-reorder(int, int);
+    pure callback cv-pdf-drop-row(length, length, int) -> int;
 
     // A question over the window (dialog.rs); `dialog-chosen` gets the button's index.
     in property <bool> dialog-open;
@@ -918,6 +923,8 @@ export component AppWindow inherits Window {
             quality <=> root.cv-quality;
             resize-value <=> root.cv-resize-value;
             background-text <=> root.cv-background;
+            pdf-every <=> root.cv-pdf-every;
+            pdf-ranges <=> root.cv-pdf-ranges;
             presets(x, y) => { root.cv-presets(x, y); }
             set-format(i) => { root.cv-set-format(i); }
             set-resize(i) => { root.cv-set-resize(i); }
@@ -929,6 +936,9 @@ export component AppWindow inherits Window {
             edited => { root.cv-edited(); }
             convert => { root.cv-convert(); }
             cancel => { root.cv-cancel(); }
+            pdf-set(key, i) => { root.cv-pdf-set(key, i); }
+            pdf-reorder(from, to) => { root.cv-pdf-reorder(from, to); }
+            pdf-drop-row(y, h, count) => { return root.cv-pdf-drop-row(y, h, count); }
         }
         // Always there (hidden when closed), so Rust can scroll it.
         conflict-list := ConflictList {

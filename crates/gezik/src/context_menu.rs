@@ -185,6 +185,8 @@ pub const ADD_TO_ARCHIVE: u32 = 605;
 
 /// "Convert…" (convert.rs builds the conversion items).
 pub const CONVERT: u32 = 610;
+/// "Images to PDF…": the Convert layer opened on its PDF choice.
+pub const IMAGES_TO_PDF: u32 = 611;
 /// 620-659: the Convert layer's "From" encodings (the first: detect); 660-699: its "To"
 /// encodings (the first: keep each file's), in `gezik_batch::convert::text::encodings` order.
 pub const ENCODING_FROM_FIRST: u32 = 620;
@@ -769,6 +771,11 @@ impl Menus {
                 let rows = std::mem::take(&mut *self.rows.borrow_mut());
                 crate::convert::with_current(|convert| convert.open(rows));
             }
+            (IMAGES_TO_PDF, Subject::Row(_) | Subject::Rows(_)) => {
+                let rows = std::mem::take(&mut *self.rows.borrow_mut());
+                let choice = crate::convert::Choice::Pdf(gezik_core::batch::pdf::PdfOp::ImagesToPdf);
+                crate::convert::with_current(|convert| convert.open_with(rows, Some(choice)));
+            }
             (id, Subject::Row(_) | Subject::Rows(_)) if (COMMAND_FIRST..COMMAND_FIRST + COMMAND_MAX).contains(&id) => {
                 let rows = std::mem::take(&mut *self.rows.borrow_mut());
                 crate::convert::run_menu_command((id - COMMAND_FIRST) as usize, rows);
@@ -1095,6 +1102,7 @@ mod tests {
             COMPRESS_TO,
             ADD_TO_ARCHIVE,
             CONVERT,
+            IMAGES_TO_PDF,
         ];
         let mut ranges: Vec<std::ops::Range<u32>> = singles.iter().map(|id| *id..id + 1).collect();
         ranges.extend([

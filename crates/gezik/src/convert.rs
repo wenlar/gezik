@@ -1,8 +1,9 @@
-//! Converting in the app: the Convert… and Commands ▸ menu items, the Convert layer, and the
-//! offer to download ffmpeg (archives.rs's tool box) when a conversion needs it. The work runs
-//! as engine jobs (gezik-batch's `ConvertTask` and `CommandTask`); the UI thread never reads
-//! the disk: menus decide by name, and finding programs and ffmpeg, the trash check and the
-//! text detection run on threads.
+//! Converting in the app: the Convert…, Images to PDF… and Commands ▸ menu items, the Convert
+//! layer with its PDF group (pdf.rs), and the offer to download ffmpeg or pdfium (archives.rs's
+//! tool box) when a conversion needs it. The work runs as engine jobs (gezik-batch's
+//! `ConvertTask`, `CommandTask`, `ImagesToPdfTask` and PDF chain); the UI thread never reads
+//! the disk: menus decide by name, and finding programs, ffmpeg and pdfium, counting pages,
+//! the trash check and the text detection run on threads.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -14,8 +15,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use gezik_batch::convert::ffmpeg::{Ffmpeg, find_ffmpeg};
 use gezik_batch::convert::text::{Detected, SNIFF, detect, encodings};
+use gezik_batch::pdf::client::{Worker, count_pages};
 use gezik_batch::tasks::{
-    CommandTask, ConvertTask, ConvertTools, ConvertWhat, find_program, is_ffmpeg_needed, skipped_inputs,
+    CommandTask, ConvertTask, ConvertTools, ConvertWhat, ImagesToPdfTask, PdfTools, PdfWork, find_program,
+    images_pdf_label, is_ffmpeg_needed, pdf_chain, pdf_label, skipped_inputs,
 };
 use gezik_config::Color;
 use gezik_config::settings::{ConvertSettings, ConvertState};
@@ -25,16 +28,24 @@ use gezik_core::batch::convert::{
     CommandSpec, Eol, ImageFormat, ImageOptions, Kind, Output, PRESETS, Preset, PresetWhat, Resize, TextOptions,
     command_applies, image_inputs, media_inputs, needs_ffmpeg_to_read,
 };
+use gezik_core::batch::pdf::{
+    PageImage, PdfOp, RENDER_DPIS, Split, is_pdf, is_pdf_picture, ops_for, pictures_pdf_name,
+};
+use gezik_core::batch::tools::Tool;
 use gezik_ops::{JobId, Report};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::archives::{Need, resolve_folder};
 use crate::context_menu::{
     COMMAND_FIRST, COMMAND_MAX, CONVERT, CONVERT_PRESET_FIRST, CONVERT_PRESET_MAX, ENCODING_FROM_FIRST, ENCODING_MAX,
-    ENCODING_TO_FIRST, HEADING,
+    ENCODING_TO_FIRST, HEADING, IMAGES_TO_PDF,
 };
 use crate::dialog::Dialogs;
 use crate::operations::{After, Operations, items_text};
+use crate::pdf::{
+    MARGINS, MAX_EVERY, PdfChoices, SIZES, SplitChoice, choices_from, choices_text, extract_note, files_note,
+    move_in_order, pdf_counts, pdf_inputs, says_pdfium_failed, unknown_note,
+};
 use crate::{AppWindow, ConvertView};
 
 /// The oldest ffmpeg that reads HEIC, HEIF and AVIF right (gezik-batch's image.rs).
@@ -42,6 +53,9 @@ const FFMPEG_TO_READ: (u32, u32) = (9, 0);
 
 /// How many text files the layer reads to say which encodings they are in.
 const DETECT_MAX: usize = 200;
+
+/// How many PDFs the layer counts the pages of (each count starts the PDF worker).
+const COUNT_MAX: usize = 50;
 
 /// Text files, by their ending.
 const TEXT_EXTENSIONS: &[&str] = &[
@@ -151,7 +165,8 @@ fn kind_of(name: &str, is_dir: bool) -> Option<Kind> {
 }
 
 /// The preset groups for `items` (path, is a folder), the kind most of them are first (on a
-/// tie: pictures, text, audio/video).
+/// tie: pictures, text, audio/video). The PDF group comes when there is a PDF operation for
+/// the pictures and PDFs: first when PDFs are the most, else after the pictures' group.
 pub fn kinds_for(items: &[(PathBuf, bool)]) -> Vec<Kind> {
     let mut counts = [(Kind::Image, 0usize), (Kind::Text, 0), (Kind::Media, 0)];
     for (path, is_dir) in items {
@@ -163,9 +178,23 @@ pub fn kinds_for(items: &[(PathBuf, bool)]) -> Vec<Kind> {
             }
         }
     }
+    let most = counts.iter().map(|(_, n)| *n).max().unwrap_or(0);
     // A stable sort keeps the tie order.
     counts.sort_by_key(|a| std::cmp::Reverse(a.1));
-    counts.into_iter().filter(|(_, n)| *n > 0).map(|(k, _)| k).collect()
+    let mut kinds: Vec<Kind> = counts.into_iter().filter(|(_, n)| *n > 0).map(|(k, _)| k).collect();
+    let (pictures, pdfs) = pdf_counts(items);
+    if !ops_for(pictures, pdfs).is_empty() {
+        let at =
+            if pdfs > most { 0 } else { kinds.iter().position(|k| *k == Kind::Image).map_or(kinds.len(), |i| i + 1) };
+        kinds.insert(at, Kind::Pdf);
+    }
+    kinds
+}
+
+/// The PDF group's operations for `items`.
+pub fn pdf_ops_for(items: &[(PathBuf, bool)]) -> Vec<PdfOp> {
+    let (pictures, pdfs) = pdf_counts(items);
+    ops_for(pictures, pdfs)
 }
 
 /// How a user command shows for a selection.
@@ -242,12 +271,18 @@ pub fn menu_entries(items: &[(PathBuf, bool)], commands: &[CommandSpec], states:
             (COMMAND_FIRST + i as u32, title, enabled)
         })
         .collect();
-    let convertible = items.iter().any(|(path, is_dir)| kind_of(&name_of(path), *is_dir).is_some());
+    let convertible = items.iter().any(|(path, is_dir)| {
+        let name = name_of(path);
+        kind_of(&name, *is_dir).is_some() || (!is_dir && is_pdf(&name))
+    });
     // A greyed command alone gives the layer nothing to run.
     let runnable = sub.iter().any(|(_, _, enabled)| *enabled);
     let mut top = Vec::new();
     if convertible || runnable {
         top.push((CONVERT, "Convert…".to_owned()));
+    }
+    if items.iter().any(|(path, is_dir)| !is_dir && is_pdf_picture(&name_of(path))) {
+        top.push((IMAGES_TO_PDF, "Images to PDF…".to_owned()));
     }
     (top, (!sub.is_empty()).then_some(sub))
 }
@@ -258,6 +293,8 @@ pub enum Choice {
     Preset(&'static Preset),
     /// A user command, by its index in the layer's commands.
     Command(usize),
+    /// One of the PDF group's operations.
+    Pdf(PdfOp),
 }
 
 impl Choice {
@@ -265,14 +302,16 @@ impl Choice {
         match self {
             Choice::Preset(preset) => preset.kind,
             Choice::Command(_) => Kind::Command,
+            Choice::Pdf(_) => Kind::Pdf,
         }
     }
 
-    /// How state.toml names it: a preset's id, `command:<name>`.
+    /// How state.toml names it: a preset's id, `command:<name>`, `pdf:<id>`.
     fn key(self, commands: &[CommandSpec]) -> String {
         match self {
             Choice::Preset(preset) => preset.id.to_owned(),
             Choice::Command(i) => format!("command:{}", commands.get(i).map_or("", |c| c.name.as_str())),
+            Choice::Pdf(op) => format!("pdf:{}", op.id()),
         }
     }
 }
@@ -296,12 +335,28 @@ pub enum Row {
     Choice(String, bool),
 }
 
-/// The layer's preset list for the groups `kinds` and the commands with their states: the
-/// choices in order, and the lines of its menu.
-pub fn preset_list(kinds: &[Kind], commands: &[CommandSpec], states: &[CommandState]) -> (Vec<Choice>, Vec<Row>) {
+/// The layer's preset list for the groups `kinds`, the PDF operations `pdf_ops` (the PDF
+/// group's lines) and the commands with their states: the choices in order, and the lines of
+/// its menu.
+pub fn preset_list(
+    kinds: &[Kind],
+    pdf_ops: &[PdfOp],
+    commands: &[CommandSpec],
+    states: &[CommandState],
+) -> (Vec<Choice>, Vec<Row>) {
     let mut choices = Vec::new();
     let mut rows = Vec::new();
     for kind in kinds {
+        if *kind == Kind::Pdf {
+            if !pdf_ops.is_empty() {
+                rows.push(Row::Heading(group_title(Kind::Pdf)));
+            }
+            for op in pdf_ops {
+                choices.push(Choice::Pdf(*op));
+                rows.push(Row::Choice(op.label().to_owned(), true));
+            }
+            continue;
+        }
         rows.push(Row::Heading(group_title(*kind)));
         for preset in PRESETS.iter().filter(|p| p.kind == *kind) {
             choices.push(Choice::Preset(preset));
@@ -353,11 +408,16 @@ fn enabled_of(rows: &[Row]) -> Vec<bool> {
 
 /// The choice to start with: the one used last if it is there and can be chosen, else the
 /// first that can.
-fn first_choice(choices: &[Choice], enabled: &[bool], commands: &[CommandSpec], wanted: &[&str]) -> Option<usize> {
+fn first_choice(
+    choices: &[Choice],
+    enabled: &[bool],
+    commands: &[CommandSpec],
+    wanted: &[impl AsRef<str>],
+) -> Option<usize> {
     let usable = |i: &usize| enabled.get(*i).copied().unwrap_or(false);
     wanted
         .iter()
-        .find_map(|want| (0..choices.len()).filter(usable).find(|i| choices[*i].key(commands) == *want))
+        .find_map(|want| (0..choices.len()).filter(usable).find(|i| choices[*i].key(commands) == want.as_ref()))
         .or_else(|| (0..choices.len()).find(usable))
 }
 
@@ -369,18 +429,24 @@ pub fn saved_preset(text: &str) -> Option<&str> {
 /// The presets to start with, best first: the one used last, then the one used last for
 /// each kind of the selection (`kinds`, the most common first), so that a picture after a
 /// text conversion gets the last picture preset.
-pub fn wanted_presets<'a>(state: &'a ConvertState, kinds: &[Kind]) -> Vec<&'a str> {
-    let mut out: Vec<&str> = state.last_preset.as_deref().into_iter().collect();
+pub fn wanted_presets(state: &ConvertState, kinds: &[Kind]) -> Vec<String> {
+    let mut out: Vec<String> = state.last_preset.iter().cloned().collect();
     for kind in kinds {
         let remembered = match kind {
-            Kind::Image => state.image.as_deref().and_then(saved_preset),
-            Kind::Text => state.text.as_deref().and_then(saved_preset),
-            Kind::Media => state.media.as_deref(),
-            Kind::Command | Kind::Pdf => None,
+            Kind::Image => state.image.as_deref().and_then(saved_preset).map(str::to_owned),
+            Kind::Text => state.text.as_deref().and_then(saved_preset).map(str::to_owned),
+            Kind::Media => state.media.clone(),
+            Kind::Pdf => state.pdf.as_deref().map(|text| Choice::Pdf(saved_pdf(text).op).key(&[])),
+            Kind::Command => None,
         };
         out.extend(remembered);
     }
     out
+}
+
+/// The PDF group's choices saved in state.toml (the defaults for what is not saved).
+fn saved_pdf(text: &str) -> PdfChoices {
+    choices_from(text, PdfChoices::DEFAULT)
 }
 
 /// Whether the options differ from those `preset` starts with (the Preset button then says so).
@@ -791,6 +857,45 @@ fn encoding_shown(label: &str) -> String {
     encodings().into_iter().find(|(l, _)| *l == label).map_or_else(|| label.to_owned(), |(_, shown)| shown.to_owned())
 }
 
+/// What the worker said of a PDF's pages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Count {
+    Pages(u32),
+    /// It needs a password (the count asks none).
+    Encrypted,
+    /// It could not be opened (damaged, or pdfium did not load).
+    Failed,
+}
+
+/// A PDF job to start: pictures into one PDF (in this process), or PDF work (the worker).
+#[derive(Clone)]
+enum PdfJob {
+    Pictures { pictures: Vec<PathBuf>, output: PathBuf, page: gezik_core::batch::pdf::PageOptions },
+    Pdfs { work: PdfWork, inputs: Vec<PathBuf> },
+}
+
+/// "Every [N] pages" as typed.
+pub fn every_from(value: &str) -> Result<u32, String> {
+    value
+        .trim()
+        .parse::<u32>()
+        .ok()
+        .filter(|n| (1..=MAX_EVERY).contains(n))
+        .ok_or_else(|| "Type how many pages go in each file".to_owned())
+}
+
+/// The split the buttons and the typed texts say.
+pub fn split_of(choice: SplitChoice, every: &str, ranges: &str) -> Result<Split, String> {
+    match choice {
+        SplitChoice::EachPage => Ok(Split::EachPage),
+        SplitChoice::Every => every_from(every).map(Split::Every),
+        SplitChoice::Ranges => Ok(Split::Ranges(ranges.trim().to_owned())),
+    }
+}
+
+const SPLIT_CHOICES: [SplitChoice; 3] = [SplitChoice::EachPage, SplitChoice::Every, SplitChoice::Ranges];
+const PAGE_IMAGES: [PageImage; 2] = [PageImage::Png, PageImage::Jpeg];
+
 /// A conversion to start: what, on which inputs, to where.
 #[derive(Clone)]
 struct Job {
@@ -827,6 +932,15 @@ struct Layer {
     found: Found,
     detected: String,
     error: String,
+    /// The PDF group's choices (the typed "every" and ranges live in the window).
+    pdf: PdfChoices,
+    /// "Images to PDF"'s pictures and the PDFs, in the order they are used (dragged).
+    pictures: Vec<PathBuf>,
+    pdfs: Vec<PathBuf>,
+    /// Where pdfium is (`None`: not looked for yet; `Some(None)`: not there).
+    pdfium: Option<Option<PathBuf>>,
+    /// Each PDF's pages, as counted on a thread.
+    pages: HashMap<PathBuf, Count>,
 }
 
 impl Layer {
@@ -837,7 +951,64 @@ impl Layer {
     fn preset(&self) -> Option<&'static Preset> {
         match self.current() {
             Choice::Preset(preset) => Some(preset),
-            Choice::Command(_) => None,
+            Choice::Command(_) | Choice::Pdf(_) => None,
+        }
+    }
+
+    fn pdf_op(&self) -> Option<PdfOp> {
+        match self.current() {
+            Choice::Pdf(op) => Some(op),
+            _ => None,
+        }
+    }
+
+    /// The order `op` uses its inputs in (the list dragged in the layer).
+    fn order_mut(&mut self, op: PdfOp) -> &mut Vec<PathBuf> {
+        if op == PdfOp::ImagesToPdf { &mut self.pictures } else { &mut self.pdfs }
+    }
+
+    fn pdfium_found(&self) -> bool {
+        matches!(self.pdfium, Some(Some(_)))
+    }
+
+    /// Whether page counts are still coming.
+    fn counting(&self) -> bool {
+        self.pdfium_found() && self.pdfs.len() <= COUNT_MAX && self.pdfs.iter().any(|p| !self.pages.contains_key(p))
+    }
+
+    /// The PDFs' page counts (`None`: one that needs a password); empty when not counted.
+    fn counts(&self) -> Vec<Option<u32>> {
+        if self.counting() {
+            return Vec::new();
+        }
+        self.pdfs
+            .iter()
+            .filter_map(|p| match self.pages.get(p) {
+                Some(Count::Pages(n)) => Some(Some(*n)),
+                Some(Count::Encrypted) => Some(None),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The note under a split or an extract and the mistake in what is typed (live), for the
+    /// typed "every" and ranges.
+    fn pdf_note(&self, op: PdfOp, every: &str, ranges: &str) -> (String, String) {
+        let counts = self.counts();
+        let result = match op {
+            PdfOp::Split => split_of(self.pdf.split, every, ranges).and_then(|split| files_note(&split, &counts)),
+            PdfOp::Extract => extract_note(ranges, &counts),
+            _ => return (String::new(), String::new()),
+        };
+        // Nothing typed is not a mistake yet: Convert says what to type.
+        let wants_ranges = op == PdfOp::Extract || self.pdf.split == SplitChoice::Ranges;
+        let blank = wants_ranges && ranges.trim().is_empty();
+        match result {
+            Ok(note) if note.is_empty() && self.counting() => ("Counting pages…".to_owned(), String::new()),
+            Ok(note) if note.is_empty() => (unknown_note(&counts).to_owned(), String::new()),
+            Ok(note) => (note, String::new()),
+            Err(_) if blank => (String::new(), String::new()),
+            Err(err) => (String::new(), err),
         }
     }
 
@@ -864,6 +1035,8 @@ struct Inner {
     opening: Arc<AtomicU64>,
     /// Conversions running, for an ffmpeg they turn out to need.
     jobs: RefCell<HashMap<JobId, Job>>,
+    /// PDF jobs running, for a pdfium that turns out not to load.
+    pdf_jobs: RefCell<HashMap<JobId, PdfJob>>,
 }
 
 #[derive(Clone)]
@@ -958,6 +1131,7 @@ impl Convert {
             layer: RefCell::default(),
             opening: Arc::default(),
             jobs: RefCell::default(),
+            pdf_jobs: RefCell::default(),
         }));
         this.install(window);
         CURRENT.with(|c| *c.borrow_mut() = Some(this.clone()));
@@ -1003,6 +1177,37 @@ impl Convert {
         window.on_cv_convert(move || t.convert());
         let t = self.clone();
         window.on_cv_cancel(move || t.close());
+        let t = self.clone();
+        window.on_cv_pdf_set(move |key, i| t.pdf_set(key.as_str(), i));
+        let t = self.clone();
+        window.on_cv_pdf_reorder(move |from, to| {
+            let (Ok(from), Ok(to)) = (usize::try_from(from), usize::try_from(to)) else { return };
+            t.edit(|layer| {
+                if let Some(op) = layer.pdf_op() {
+                    move_in_order(layer.order_mut(op), from, to);
+                }
+            });
+        });
+        window.on_cv_pdf_drop_row(|y, row_height, count| {
+            crate::batch_rename::drop_row(y, row_height, usize::try_from(count).unwrap_or(0)) as i32
+        });
+    }
+
+    /// A button of the PDF group: `key` "page", "margin", "split", "dpi" or "image", `index`
+    /// its position.
+    fn pdf_set(&self, key: &str, index: i32) {
+        let Ok(i) = usize::try_from(index) else { return };
+        self.edit(|layer| {
+            let c = &mut layer.pdf;
+            match key {
+                "page" => c.page.size = SIZES.get(i).map_or(c.page.size, |(size, _)| *size),
+                "margin" => c.page.margin = MARGINS.get(i).map_or(c.page.margin, |(margin, _)| *margin),
+                "split" => c.split = SPLIT_CHOICES.get(i).copied().unwrap_or(c.split),
+                "dpi" => c.dpi = RENDER_DPIS.get(i).copied().unwrap_or(c.dpi),
+                "image" => c.image = PAGE_IMAGES.get(i).copied().unwrap_or(c.image),
+                _ => {}
+            }
+        });
     }
 
     /// Where downloaded tools are: `<config dir>/tools/` (as archives.rs has it).
@@ -1025,6 +1230,11 @@ impl Convert {
 
     /// "Convert…": the layer for `items` (path, is a folder).
     pub fn open(&self, items: Vec<(PathBuf, bool)>) {
+        self.open_with(items, None);
+    }
+
+    /// The layer for `items`, on `wanted` when it is offered for them ("Images to PDF…").
+    pub fn open_with(&self, items: Vec<(PathBuf, bool)>, wanted: Option<Choice>) {
         let Some(window) = self.0.window.upgrade() else { return };
         let Some(folder) = items.first().and_then(|(p, _)| p.parent()).map(Path::to_path_buf) else { return };
         if self.is_open() {
@@ -1033,7 +1243,10 @@ impl Convert {
         let commands = commands();
         let states = states_for(&commands, &items);
         let kinds = kinds_for(&items);
-        let (choices, rows) = preset_list(&kinds, &commands, &states);
+        let (choices, rows) = preset_list(&kinds, &pdf_ops_for(&items), &commands, &states);
+        let state = self.0.state.borrow().clone();
+        let pictures = pdf_inputs(&items, PdfOp::ImagesToPdf).0;
+        let pdfs = pdf_inputs(&items, PdfOp::Split).0;
         let mut layer = Layer {
             items,
             folder,
@@ -1051,11 +1264,17 @@ impl Convert {
             found: Found::Unknown,
             detected: String::new(),
             error: String::new(),
+            pdf: state.pdf.as_deref().map_or(PdfChoices::DEFAULT, saved_pdf),
+            pictures,
+            pdfs,
+            pdfium: None,
+            pages: HashMap::new(),
         };
-        let state = self.0.state.borrow().clone();
-        let Some(choice) =
-            first_choice(&layer.choices, &layer.enabled(), &layer.commands, &wanted_presets(&state, &kinds))
-        else {
+        let mut wanted_keys = wanted_presets(&state, &kinds);
+        if let Some(choice) = wanted {
+            wanted_keys.insert(0, choice.key(&layer.commands));
+        }
+        let Some(choice) = first_choice(&layer.choices, &layer.enabled(), &layer.commands, &wanted_keys) else {
             return;
         };
         layer.choice = choice;
@@ -1092,18 +1311,25 @@ impl Convert {
         window.set_cv_quality(layer.image.quality.to_string().into());
         window.set_cv_resize_value(value.into());
         window.set_cv_background(background_text(layer.image.background).into());
-        let probe = (layer.items.clone(), layer.folder.clone(), kinds);
+        window.set_cv_pdf_every(layer.pdf.every.to_string().into());
+        // Page ranges are for one document: never kept.
+        window.set_cv_pdf_ranges("".into());
+        let probe = (layer.items.clone(), layer.folder.clone(), kinds, layer.pdfs.clone());
         *self.0.layer.borrow_mut() = Some(layer);
         self.show();
         window.set_cv_open(true);
-        self.probe(probe.0, probe.1, &probe.2);
+        self.probe(probe.0, probe.1, &probe.2, probe.3);
     }
 
     /// Looks on a thread at what the layer cannot know by names: whether the drive has a
-    /// trash, which ffmpeg there is, what encodings the text files are in.
-    fn probe(&self, items: Vec<(PathBuf, bool)>, folder: PathBuf, kinds: &[Kind]) {
+    /// trash, which ffmpeg there is, what encodings the text files are in; on another,
+    /// whether pdfium is there and how many pages the PDFs have.
+    fn probe(&self, items: Vec<(PathBuf, bool)>, folder: PathBuf, kinds: &[Kind], pdfs: Vec<PathBuf>) {
         let opening = self.0.opening.fetch_add(1, Ordering::SeqCst) + 1;
         let current = self.0.opening.clone();
+        if !pdfs.is_empty() {
+            self.probe_pdfs(opening, pdfs);
+        }
         let wants_ffmpeg = kinds.iter().any(|k| matches!(k, Kind::Image | Kind::Media));
         let wants_text = kinds.contains(&Kind::Text);
         let (data, configured) = (self.data_dir(), configured_ffmpeg());
@@ -1142,6 +1368,52 @@ impl Convert {
         });
     }
 
+    /// Finds pdfium, then counts the pages of up to [`COUNT_MAX`] PDFs with it, one worker
+    /// at a time; a newer opening (or the layer closing) stops it.
+    fn probe_pdfs(&self, opening: u64, pdfs: Vec<PathBuf>) {
+        let current = self.0.opening.clone();
+        let data = self.data_dir();
+        std::thread::spawn(move || {
+            let stale = || current.load(Ordering::SeqCst) != opening;
+            let library = gezik_batch::tools::find(Tool::Pdfium, &data, None);
+            let found = library.clone();
+            let _ = slint::invoke_from_event_loop(move || with_current(|this| this.pdfium_found(opening, found)));
+            let Some(library) = library.filter(|_| pdfs.len() <= COUNT_MAX) else { return };
+            let worker = Worker::this_exe();
+            for pdf in pdfs {
+                if stale() {
+                    return;
+                }
+                let count = match worker.as_ref().map(|worker| count_pages(worker, &library, &pdf, &stale)) {
+                    Ok(Ok(Some(pages))) => Count::Pages(pages),
+                    Ok(Ok(None)) => Count::Encrypted,
+                    _ => Count::Failed,
+                };
+                let _ = slint::invoke_from_event_loop(move || with_current(|this| this.counted(opening, pdf, count)));
+            }
+        });
+    }
+
+    fn pdfium_found(&self, opening: u64, library: Option<PathBuf>) {
+        if self.0.opening.load(Ordering::SeqCst) != opening {
+            return;
+        }
+        if let Some(layer) = self.0.layer.borrow_mut().as_mut() {
+            layer.pdfium = Some(library);
+        }
+        self.show();
+    }
+
+    fn counted(&self, opening: u64, pdf: PathBuf, count: Count) {
+        if self.0.opening.load(Ordering::SeqCst) != opening {
+            return;
+        }
+        if let Some(layer) = self.0.layer.borrow_mut().as_mut() {
+            layer.pages.insert(pdf, count);
+        }
+        self.show();
+    }
+
     fn probed(&self, opening: u64, trash: bool, found: Found, detected: String) {
         if self.0.opening.load(Ordering::SeqCst) != opening {
             return;
@@ -1160,6 +1432,10 @@ impl Convert {
     /// Sets the options and output for the layer's current choice; `before`: the kind chosen
     /// before (the output follows a new kind's default).
     fn load_choice(&self, layer: &mut Layer, before: Option<Kind>) {
+        if let Choice::Pdf(op) = layer.current() {
+            layer.pdf.op = op;
+            return;
+        }
         let Choice::Preset(preset) = layer.current() else { return };
         layer.image = preset_image(preset);
         layer.resize_mode = resize_choice(layer.image.resize).0;
@@ -1322,6 +1598,10 @@ impl Convert {
                 let spec = &layer.commands[i];
                 (spec.name.clone(), 0, format!("Runs {}", spec.run.join(" ")))
             }
+            Choice::Pdf(op) if op.needs_pdfium() && !layer.pdfium_found() => {
+                (format!("{} ¹", op.label()), 5, String::new())
+            }
+            Choice::Pdf(op) => (op.label().to_owned(), 5, String::new()),
         };
         let what = layer.what();
         let skipped = match (&what, choice) {
@@ -1330,8 +1610,28 @@ impl Convert {
                 let spec = &layer.commands[i];
                 layer.items.iter().filter(|(p, d)| !command_applies(spec, &name_of(p), *d)).count()
             }
+            (None, Choice::Pdf(op)) => pdf_inputs(&layer.items, op).1,
             (None, _) => 0,
         };
+        let pdf_op = layer.pdf_op();
+        let skipped = match pdf_op {
+            Some(op) => crate::pdf::skipped_text(skipped, op),
+            None => skipped_text(skipped, what.as_ref()),
+        };
+        let tool_note = match pdf_op {
+            Some(op) if op.needs_pdfium() && !layer.pdfium_found() => "¹ needs pdfium",
+            Some(_) => "",
+            None => ffmpeg_note(choice.kind(), keeps_format, layer.found),
+        };
+        let (pdf_note, pdf_error) = pdf_op.map_or_else(Default::default, |op| {
+            layer.pdf_note(op, &window.get_cv_pdf_every(), &window.get_cv_pdf_ranges())
+        });
+        let order: Vec<SharedString> = match pdf_op {
+            Some(PdfOp::ImagesToPdf) => layer.pictures.iter().map(|p| name_of(p).into()).collect(),
+            Some(PdfOp::Merge) => layer.pdfs.iter().map(|p| name_of(p).into()).collect(),
+            _ => Vec::new(),
+        };
+        let error = if layer.error.is_empty() { pdf_error } else { layer.error.clone() };
         let format = layer.image.format;
         let replace_note = match layer.can_replace {
             Some(true) if cfg!(windows) => "Originals go to the Recycle Bin",
@@ -1372,9 +1672,18 @@ impl Convert {
             folder: layer.chosen.as_ref().map(|p| p.display().to_string()).unwrap_or_default().into(),
             can_replace: layer.can_replace != Some(false),
             replace_note: replace_note.into(),
-            skipped: skipped_text(skipped, what.as_ref()).into(),
-            ffmpeg_note: ffmpeg_note(choice.kind(), keeps_format, layer.found).into(),
-            error: layer.error.as_str().into(),
+            skipped: skipped.into(),
+            ffmpeg_note: tool_note.into(),
+            error: error.into(),
+            pdf_op: pdf_op.and_then(|op| PdfOp::ALL.iter().position(|o| *o == op)).map_or(-1, |i| i as i32),
+            pdf_order: ModelRc::new(VecModel::from(order)),
+            pdf_page: SIZES.iter().position(|(s, _)| *s == layer.pdf.page.size).unwrap_or(0) as i32,
+            pdf_margin: MARGINS.iter().position(|(m, _)| *m == layer.pdf.page.margin).unwrap_or(0) as i32,
+            pdf_split: SPLIT_CHOICES.iter().position(|s| *s == layer.pdf.split).unwrap_or(0) as i32,
+            pdf_dpi: RENDER_DPIS.iter().position(|d| *d == layer.pdf.dpi).unwrap_or(0) as i32,
+            pdf_image: PAGE_IMAGES.iter().position(|i| *i == layer.pdf.image).unwrap_or(0) as i32,
+            pdf_note: pdf_note.into(),
+            pdf_losses: if pdf_op.is_some_and(PdfOp::loses_extras) { crate::pdf::LOSSES } else { "" }.into(),
         };
         window.set_cv_view(view);
     }
@@ -1455,11 +1764,138 @@ impl Convert {
                 self.close();
                 self.start(job);
             }
+            Ok(Ready::Pdf(job, choices)) => {
+                let (key, text) = (Choice::Pdf(choices.op).key(&[]), choices_text(&choices));
+                self.save_state(|state| {
+                    state.last_preset = Some(key);
+                    state.pdf = Some(text);
+                });
+                self.close();
+                self.start_pdf(job);
+            }
         }
+    }
+
+    /// The PDF group's Convert: what the choices and the typed texts say, checked against the
+    /// page counts known.
+    fn check_pdf(&self, window: &AppWindow, layer: &Layer, op: PdfOp) -> Result<Ready, String> {
+        let mut choices = PdfChoices { op, ..layer.pdf.clone() };
+        let every = window.get_cv_pdf_every();
+        if let Ok(n) = every_from(&every) {
+            choices.every = n;
+        }
+        let ranges = window.get_cv_pdf_ranges().trim().to_owned();
+        let counts = layer.counts();
+        if op == PdfOp::ImagesToPdf {
+            let pictures = layer.pictures.clone();
+            let Some(output) = pictures_pdf_name(&pictures) else {
+                return Err("No pictures here that Gezik reads itself".to_owned());
+            };
+            return Ok(Ready::Pdf(PdfJob::Pictures { pictures, output, page: choices.page }, choices));
+        }
+        let inputs = layer.pdfs.clone();
+        if inputs.is_empty() {
+            return Err("No PDFs here".to_owned());
+        }
+        let work = match op {
+            PdfOp::Split => {
+                let split = split_of(choices.split, &every, &ranges)?;
+                files_note(&split, &counts)?;
+                PdfWork::Split(split)
+            }
+            PdfOp::Extract => {
+                extract_note(&ranges, &counts)?;
+                PdfWork::Extract(ranges)
+            }
+            PdfOp::ToImages => PdfWork::Render { dpi: choices.dpi, image: choices.image },
+            PdfOp::Merge | PdfOp::ImagesToPdf => PdfWork::Merge,
+        };
+        Ok(Ready::Pdf(PdfJob::Pdfs { work, inputs }, choices))
+    }
+
+    /// Starts a PDF job: pictures at once; PDF work once pdfium is found (on a thread), else
+    /// the box offers it and starts the job after the download.
+    fn start_pdf(&self, job: PdfJob) {
+        match job {
+            PdfJob::Pictures { pictures, output, page } => {
+                let again =
+                    self.pdf_again(PdfJob::Pictures { pictures: pictures.clone(), output: output.clone(), page });
+                let label = images_pdf_label(pictures.len());
+                let task: Box<dyn gezik_ops::Task> = Box::new(ImagesToPdfTask::new(pictures, output, page));
+                self.0.ops.submit_chain(vec![task], Some(label), Some(again), After::Select);
+            }
+            PdfJob::Pdfs { work, inputs } => {
+                let data = self.data_dir();
+                std::thread::spawn(move || {
+                    let library = gezik_batch::tools::find(Tool::Pdfium, &data, None);
+                    let hint = if library.is_none() { gezik_platform::http::tool_missing_hint() } else { None };
+                    let worker = Worker::this_exe().map_err(|err| err.to_string());
+                    let _ = slint::invoke_from_event_loop(move || {
+                        with_current(|this| this.pdf_found(work, inputs, library, worker, hint));
+                    });
+                });
+            }
+        }
+    }
+
+    fn pdf_found(
+        &self,
+        work: PdfWork,
+        inputs: Vec<PathBuf>,
+        library: Option<PathBuf>,
+        worker: Result<Worker, String>,
+        hint: Option<String>,
+    ) {
+        let job = PdfJob::Pdfs { work: work.clone(), inputs: inputs.clone() };
+        let again = self.pdf_again(job.clone());
+        let Some(library) = library else {
+            crate::archives::with_current(|archives| archives.offer_pdfium(false, hint, again, None));
+            return;
+        };
+        let worker = match worker {
+            Ok(worker) => worker,
+            Err(err) => {
+                let message = format!("Gezik could not start its PDF engine: {err}");
+                self.0.dialogs.ask("PDF tools", message, &["OK"], |_| {});
+                return;
+            }
+        };
+        let label = pdf_label(&work, &inputs);
+        let tasks = pdf_chain(work, inputs, PdfTools { worker, library });
+        let id = self.0.ops.submit_chain(tasks, Some(label), Some(again), After::Select);
+        self.0.pdf_jobs.borrow_mut().insert(id, job);
+    }
+
+    /// Starts `job` again (from its row, or once pdfium is there).
+    fn pdf_again(&self, job: PdfJob) -> Rc<dyn Fn()> {
+        Rc::new(move || {
+            let job = job.clone();
+            with_current(|this| this.start_pdf(job));
+        })
+    }
+
+    /// PDF job `id` ended with pdfium failing to load (a broken download): the box offers to
+    /// get it again, then starts the job again in place of its row.
+    fn pdf_finished(&self, id: JobId, job: PdfJob, report: &Report) {
+        if report.cancelled || !report.failures.iter().any(|f| says_pdfium_failed(&f.message)) {
+            return;
+        }
+        std::thread::spawn(move || {
+            let hint = gezik_platform::http::tool_missing_hint();
+            let _ = slint::invoke_from_event_loop(move || {
+                with_current(|this| {
+                    let again = this.pdf_again(job);
+                    crate::archives::with_current(|archives| archives.offer_pdfium(true, hint, again, Some(id)));
+                });
+            });
+        });
     }
 
     fn check(&self, window: &AppWindow, layer: &Layer) -> Result<Ready, String> {
         let choice = layer.current();
+        if let Choice::Pdf(op) = choice {
+            return self.check_pdf(window, layer, op);
+        }
         if let Choice::Command(i) = choice {
             let spec = layer.commands[i].clone();
             if let Some(CommandState::Off(tip)) = layer.states.get(i) {
@@ -1546,6 +1982,10 @@ impl Convert {
     /// need ffmpeg run again when a good enough one is there now, else get the box, which
     /// starts them again after a download.
     pub fn job_finished(&self, id: JobId, report: &Report) {
+        let pdf = self.0.pdf_jobs.borrow_mut().remove(&id);
+        if let Some(job) = pdf {
+            return self.pdf_finished(id, job, report);
+        }
         let Some(job) = self.0.jobs.borrow_mut().remove(&id) else { return };
         if report.cancelled {
             return;
@@ -1609,6 +2049,7 @@ impl Convert {
 enum Ready {
     Command(CommandSpec, Vec<(PathBuf, bool)>),
     Convert(Job),
+    Pdf(PdfJob, PdfChoices),
 }
 
 #[cfg(test)]
@@ -1639,7 +2080,8 @@ mod tests {
     #[test]
     fn the_most_common_kind_comes_first() {
         let items = [file("a.txt"), file("b.jpg"), file("c.mp4"), file("d.MP3"), folder("e"), file("f.exe")];
-        assert_eq!(kinds_for(&items), [Kind::Media, Kind::Image, Kind::Text]);
+        // A picture makes a PDF too: its group comes after the pictures'.
+        assert_eq!(kinds_for(&items), [Kind::Media, Kind::Image, Kind::Pdf, Kind::Text]);
         // A tie keeps pictures, text, audio/video.
         assert_eq!(kinds_for(&[file("a.csv"), file("b.heic")]), [Kind::Image, Kind::Text]);
         assert!(kinds_for(&[folder("x"), file("setup.exe"), file("README")]).is_empty());
@@ -1665,7 +2107,8 @@ mod tests {
         // In place on a folder is refused by the task: greyed.
         assert_eq!(states[2], CommandState::Off("changes items in place: not for folders".to_owned()));
         let (top, sub) = menu_entries(&items, &commands, &states);
-        assert_eq!(top, [(CONVERT, "Convert…".to_owned())]);
+        // A picture can also become a PDF.
+        assert_eq!(top, [(CONVERT, "Convert…".to_owned()), (IMAGES_TO_PDF, "Images to PDF…".to_owned())]);
         let sub = sub.unwrap();
         // By index in settings.toml: the hidden one keeps its id free.
         assert_eq!(sub[0], (COMMAND_FIRST, "Resize to 50%".to_owned(), true));
@@ -1697,13 +2140,16 @@ mod tests {
 
     #[test]
     fn the_preset_list_follows_the_selection() {
-        let kinds = kinds_for(&[file("a.txt"), file("b.txt"), file("c.png")]);
+        let items = [file("a.txt"), file("b.txt"), file("c.png")];
+        let kinds = kinds_for(&items);
         let commands = [spec("Lint", &["lint", "{in}"], None, &["txt"], false)];
-        let (choices, rows) = preset_list(&kinds, &commands, &[CommandState::Off("lint not found".to_owned())]);
+        let off = [CommandState::Off("lint not found".to_owned())];
+        let (choices, rows) = preset_list(&kinds, &pdf_ops_for(&items), &commands, &off);
         assert_eq!(rows[0], Row::Heading("Text"));
         assert_eq!(choices[0], Choice::Preset(preset("to-utf8").unwrap()));
         let images = PRESETS.iter().filter(|p| p.kind == Kind::Image).count();
-        assert_eq!(choices.len(), 3 + images + 1);
+        // Text, Image, PDF ("Images to PDF") and the command.
+        assert_eq!(choices.len(), 3 + images + 1 + 1);
         assert_eq!(*choices.last().unwrap(), Choice::Command(0));
         assert!(!rows.contains(&Row::Heading("Audio/Video")));
 
@@ -1714,7 +2160,7 @@ mod tests {
         let last = menu.last().unwrap();
         assert_eq!(last.0, CONVERT_PRESET_FIRST + choices.len() as u32 - 1);
         assert!(!last.2 && last.1.contains("lint not found"));
-        assert_eq!(menu.iter().filter(|(id, _, _)| *id == HEADING).count(), 3);
+        assert_eq!(menu.iter().filter(|(id, _, _)| *id == HEADING).count(), 4);
 
         // The last choice when it is there and can be chosen, else the first that can.
         let enabled = enabled_of(&rows);
@@ -1722,7 +2168,7 @@ mod tests {
         assert_eq!(first_choice(&choices, &enabled, &commands, &["to-png"]), png);
         assert_eq!(first_choice(&choices, &enabled, &commands, &["command:Lint"]), Some(0));
         assert_eq!(first_choice(&choices, &enabled, &commands, &["mp3"]), Some(0));
-        assert_eq!(first_choice(&choices, &[false; 3], &commands, &[]), None);
+        assert_eq!(first_choice(&choices, &[false; 3], &commands, &[] as &[&str]), None);
     }
 
     #[test]
@@ -1846,9 +2292,97 @@ mod tests {
         assert_eq!(wanted_presets(&state, &[Kind::Media, Kind::Image]), ["to-utf8", "mp3", "to-jpeg"]);
         // Pictures after a text conversion: the last picture preset, not the first one.
         let kinds = [Kind::Image];
-        let (choices, rows) = preset_list(&kinds, &[], &[]);
+        let (choices, rows) = preset_list(&kinds, &[], &[], &[]);
         let at = first_choice(&choices, &enabled_of(&rows), &[], &wanted_presets(&state, &kinds));
         assert_eq!(at.map(|i| choices[i]), Some(Choice::Preset(preset("to-jpeg").unwrap())));
+    }
+
+    /// The rows' titles, headings as `# PDF`.
+    fn titles(rows: &[Row]) -> Vec<String> {
+        rows.iter()
+            .map(|row| match row {
+                Row::Heading(title) => format!("# {title}"),
+                Row::Choice(title, _) => title.clone(),
+            })
+            .collect()
+    }
+
+    fn pdf_rows(items: &[(PathBuf, bool)]) -> (Vec<Choice>, Vec<String>) {
+        let (choices, rows) = preset_list(&kinds_for(items), &pdf_ops_for(items), &[], &[]);
+        (choices, titles(&rows))
+    }
+
+    #[test]
+    fn pdfs_get_the_pdf_group() {
+        let one = [file("a.pdf")];
+        assert_eq!(kinds_for(&one), [Kind::Pdf]);
+        let (top, sub) = menu_entries(&one, &[], &[]);
+        assert_eq!(top, [(CONVERT, "Convert…".to_owned())]);
+        assert!(sub.is_none());
+        let (choices, rows) = pdf_rows(&one);
+        assert_eq!(rows, ["# PDF", "Split PDF", "PDF to images", "Extract pages"]);
+        assert_eq!(choices[0], Choice::Pdf(PdfOp::Split));
+        // Two PDFs can be merged too.
+        let (_, rows) = pdf_rows(&[file("a.pdf"), file("b.PDF")]);
+        assert_eq!(rows, ["# PDF", "Merge PDFs", "Split PDF", "PDF to images", "Extract pages"]);
+        // A folder named like a PDF is not one.
+        assert!(kinds_for(&[folder("x.pdf")]).is_empty());
+        assert!(menu_entries(&[folder("x.pdf")], &[], &[]).0.is_empty());
+    }
+
+    #[test]
+    fn mixed_selections_get_both_groups() {
+        // More pictures: the pictures' group first, the PDF group right after it.
+        let items = [file("a.jpg"), file("b.png"), file("c.pdf"), file("d.txt")];
+        assert_eq!(kinds_for(&items), [Kind::Image, Kind::Pdf, Kind::Text]);
+        let (choices, rows) = pdf_rows(&items);
+        let at = rows.iter().position(|r| r == "# PDF").unwrap();
+        assert_eq!(rows[at + 1..at + 5], ["Images to PDF", "Split PDF", "PDF to images", "Extract pages"]);
+        assert!(choices.contains(&Choice::Pdf(PdfOp::ImagesToPdf)));
+        // More PDFs: the PDF group first.
+        let items = [file("a.jpg"), file("b.pdf"), file("c.pdf")];
+        assert_eq!(kinds_for(&items), [Kind::Pdf, Kind::Image]);
+        assert_eq!(pdf_rows(&items).1[..3], ["# PDF", "Images to PDF", "Merge PDFs"]);
+        // A tie keeps the pictures first.
+        assert_eq!(kinds_for(&[file("a.jpg"), file("b.pdf")]), [Kind::Image, Kind::Pdf]);
+    }
+
+    #[test]
+    fn pictures_offer_images_to_pdf_in_the_menu() {
+        let (top, _) = menu_entries(&[file("a.jpg"), file("b.heic"), folder("c")], &[], &[]);
+        assert_eq!(top, [(CONVERT, "Convert…".to_owned()), (IMAGES_TO_PDF, "Images to PDF…".to_owned())]);
+        // HEIC is read through ffmpeg only: no PDF from it, no PDF group.
+        let heic = [file("b.HEIC")];
+        assert_eq!(menu_entries(&heic, &[], &[]).0, [(CONVERT, "Convert…".to_owned())]);
+        assert_eq!(kinds_for(&heic), [Kind::Image]);
+        assert!(pdf_ops_for(&heic).is_empty());
+        // A PDF alone: no "Images to PDF…".
+        assert!(!menu_entries(&[file("a.pdf")], &[], &[]).0.iter().any(|(id, _)| *id == IMAGES_TO_PDF));
+    }
+
+    #[test]
+    fn the_pdf_group_remembers_its_operation() {
+        let items = [file("a.pdf"), file("b.pdf")];
+        let kinds = kinds_for(&items);
+        let (choices, rows) = preset_list(&kinds, &pdf_ops_for(&items), &[], &[]);
+        let state = ConvertState { pdf: Some("op=merge dpi=300".to_owned()), ..ConvertState::default() };
+        assert_eq!(wanted_presets(&state, &kinds), ["pdf:merge-pdfs"]);
+        let at = first_choice(&choices, &enabled_of(&rows), &[], &wanted_presets(&state, &kinds));
+        assert_eq!(at.map(|i| choices[i]), Some(Choice::Pdf(PdfOp::Merge)));
+        // The last one used comes first; "Images to PDF…" asks for its own.
+        let last = ConvertState { last_preset: Some("pdf:extract-pages".to_owned()), ..state };
+        let at = first_choice(&choices, &enabled_of(&rows), &[], &wanted_presets(&last, &kinds));
+        assert_eq!(at.map(|i| choices[i]), Some(Choice::Pdf(PdfOp::Extract)));
+        assert_eq!(Choice::Pdf(PdfOp::ImagesToPdf).key(&[]), "pdf:images-to-pdf");
+    }
+
+    #[test]
+    fn the_split_is_read_from_the_buttons_and_fields() {
+        assert_eq!(split_of(SplitChoice::EachPage, "x", ""), Ok(Split::EachPage));
+        assert_eq!(split_of(SplitChoice::Every, " 5 ", ""), Ok(Split::Every(5)));
+        assert_eq!(split_of(SplitChoice::Every, "0", ""), Err("Type how many pages go in each file".to_owned()));
+        assert_eq!(split_of(SplitChoice::Ranges, "", " 1-3, 5 "), Ok(Split::Ranges("1-3, 5".to_owned())));
+        assert!(every_from("abc").is_err() && every_from("1000001").is_err());
     }
 
     #[test]
