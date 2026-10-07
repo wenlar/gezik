@@ -7,4 +7,12 @@ fn main() {
         println!("cargo:rerun-if-changed={}", plist.display());
         println!("cargo:rustc-link-arg-bins=-Wl,-sectcreate,__TEXT,__info_plist,{}", plist.display());
     }
+    // WinHTTP (downloading 7-Zip, ffmpeg, pdfium) is loaded on its first call, not at start:
+    // loaded with the exe it cost ~50 KB of idle memory in every session.
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+        && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
+    {
+        println!("cargo:rustc-link-arg-bins=/DELAYLOAD:winhttp.dll");
+        println!("cargo:rustc-link-arg-bins=delayimp.lib");
+    }
 }
