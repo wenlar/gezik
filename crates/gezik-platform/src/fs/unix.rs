@@ -428,6 +428,11 @@ pub fn restore(trashed: &Path, original: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// No drive letters here.
+pub fn mapped_remote(_letter: char) -> Option<String> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

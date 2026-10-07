@@ -16,13 +16,13 @@ pub use describe::describe;
 pub use gezik_core::ops::threads::DiskKind;
 #[cfg(unix)]
 pub use unix::{
-    clear_hidden, copy_file, delete, drive_facts, drive_root, free_space, is_hidden_attr, is_network, move_entry,
-    restore, set_hidden, trash,
+    clear_hidden, copy_file, delete, drive_facts, drive_root, free_space, is_hidden_attr, is_network, mapped_remote,
+    move_entry, restore, set_hidden, trash,
 };
 #[cfg(windows)]
 pub use windows::{
-    clear_hidden, copy_file, delete, drive_facts, drive_root, free_space, is_hidden_attr, is_network, move_entry,
-    restore, set_hidden, trash,
+    clear_hidden, copy_file, delete, drive_facts, drive_root, free_space, is_hidden_attr, is_network, mapped_remote,
+    move_entry, restore, set_hidden, trash,
 };
 #[cfg(windows)]
 pub(crate) use windows::{io_error, verbatim};

@@ -584,6 +584,26 @@ pub fn restore(trashed: &Path, original: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// The share a mapped drive letter stands for (`Z` → `\\server\share`); `None` for a drive
+/// that is not mapped. A persistent mapping that is not connected now still says its share.
+pub fn mapped_remote(letter: char) -> Option<String> {
+    use windows::Win32::Foundation::{ERROR_CONNECTION_UNAVAIL, NO_ERROR};
+    use windows::Win32::NetworkManagement::WNet::WNetGetConnectionW;
+    use windows::core::PWSTR;
+    if !letter.is_ascii_alphabetic() {
+        return None;
+    }
+    let local = HSTRING::from(format!("{}:", letter.to_ascii_uppercase()));
+    let mut buffer = [0u16; 1024];
+    let mut len = buffer.len() as u32;
+    let result = unsafe { WNetGetConnectionW(&local, Some(PWSTR(buffer.as_mut_ptr())), &mut len) };
+    if result != NO_ERROR && result != ERROR_CONNECTION_UNAVAIL {
+        return None;
+    }
+    let end = buffer.iter().position(|&c| c == 0).unwrap_or(buffer.len());
+    (end > 0).then(|| String::from_utf16_lossy(&buffer[..end]))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

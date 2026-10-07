@@ -13,6 +13,7 @@ mod locale;
 mod picture;
 pub mod process;
 pub mod taskbar;
+pub mod terminal;
 mod text;
 
 use std::path::PathBuf;
