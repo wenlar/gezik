@@ -31,6 +31,10 @@ export component ConflictList inherits Rectangle {
     in property <bool> apply-all;
     in property <string> footer;
     in-out property <length> scroll;
+    in property <int> focus-request;
+    // `ensure-visible(reveal-index)` each time `reveal-request` changes.
+    in property <int> reveal-index;
+    in property <int> reveal-request;
     // 0 Replace, 1 Skip, 2 Keep both, 3 If newer (DECISIONS in conflicts.rs).
     callback decide(int);
     callback set-apply-all(bool);
@@ -41,11 +45,21 @@ export component ConflictList inherits Rectangle {
     callback cancel-operation();
     callback key(KeyEvent) -> bool;
 
-    changed open => {
-        if self.open && !root.dialog-open {
+    // Built when it opens (an `if` in app.slint): it takes the keyboard then, and again
+    // each time `focus-request` changes (the window's `focus-list`).
+    init => {
+        if root.open && !root.dialog-open {
             scope.focus();
         }
     }
+    // The request is seen a moment after it is made (`changed` runs later): by then a
+    // question may have opened over the layer, and its field keeps the keyboard.
+    changed focus-request => {
+        if !root.dialog-open {
+            root.take-focus();
+        }
+    }
+    changed reveal-request => { root.ensure-visible(root.reveal-index); }
 
     public function take-focus() {
         scope.focus();

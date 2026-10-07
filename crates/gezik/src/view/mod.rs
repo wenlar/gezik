@@ -1047,7 +1047,7 @@ impl View {
         self.set_note(text);
     }
 
-    /// Writes `views.toml` now if a change is waiting (on close).
+    /// Hands a change still waiting for its timer to the `views.toml` writer now (on close).
     pub fn flush_memory(&self) {
         if self.0.save_pending.get() {
             self.save_memory_now();
@@ -1113,12 +1113,11 @@ impl View {
         slint::Timer::single_shot(Duration::from_secs(1), move || view.flush_memory());
     }
 
+    /// Hands the folder views to the store's `views.toml` writer thread.
     fn save_memory_now(&self) {
         self.0.save_pending.set(false);
-        if let Some(store) = &self.0.store
-            && let Err(err) = store.save_views(&self.0.memory.borrow())
-        {
-            eprintln!("gezik: cannot save views.toml: {err}");
+        if let Some(store) = &self.0.store {
+            store.write_views(&self.0.memory.borrow());
         }
     }
 

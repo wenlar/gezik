@@ -17,6 +17,7 @@ export component TabPicker inherits Rectangle {
     in property <[TabPickRow]> rows;
     // The row Enter picks (shown selected).
     in property <int> current;
+    in property <int> focus-request;
     // The field's text changed (typed, not set).
     callback edited(string);
     callback chosen(int);
@@ -29,14 +30,25 @@ export component TabPicker inherits Rectangle {
         field.focus-and-select();
     }
 
-    changed open => {
-        if self.open && !root.dialog-open {
+    // Built when it opens (an `if` in app.slint): it takes the keyboard then, and again
+    // each time `focus-request` changes (the window's `focus-list`).
+    init => {
+        if root.open && !root.dialog-open {
+            root.take-focus();
+        }
+        root.reveal-current();
+    }
+    // The request is seen a moment after it is made (`changed` runs later): by then a
+    // question may have opened over the layer, and its field keeps the keyboard.
+    changed focus-request => {
+        if !root.dialog-open {
             root.take-focus();
         }
     }
+    changed current => { root.reveal-current(); }
 
     // Keeps the current row in sight.
-    changed current => {
+    function reveal-current() {
         if root.current * root.row-height < -list.content-y {
             list.content-y = -root.current * root.row-height;
         } else if (root.current + 1) * root.row-height > list.height - list.content-y {
