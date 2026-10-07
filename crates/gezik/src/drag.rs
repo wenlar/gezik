@@ -162,6 +162,28 @@ fn swallows_release(dropped: bool, right: bool) -> bool {
     dropped && right
 }
 
+/// What a context menu opening or closing does to the drag in `phase`.
+#[derive(Debug, PartialEq, Eq)]
+enum AtMenu {
+    /// Nothing of Gezik's own is under way, or the system has it: it goes on.
+    Keep,
+    /// A press waiting for its release (or a release that is no click): the menu takes that
+    /// release (a native menu's modal loop eats it), so the press is forgotten. Kept, it
+    /// would turn the next move into a drag, and that drag's right release into Copy here /
+    /// Move here instead of the next menu.
+    Forget,
+    /// Gezik's drag in the window: it ends, dropping nothing.
+    Cancel,
+}
+
+fn at_menu(phase: &Phase) -> AtMenu {
+    match phase {
+        Phase::Idle | Phase::Offer(_) | Phase::Outside(_) => AtMenu::Keep,
+        Phase::Armed { .. } | Phase::Ended => AtMenu::Forget,
+        Phase::Dragging(_) => AtMenu::Cancel,
+    }
+}
+
 /// The address bar parts' places Slint reported, kept only where the part still shows the
 /// label it had then (right after a navigation, the old places would point at new parts).
 fn current_spans(stored: &[(String, f32, f32)], labels: &[String]) -> Vec<(f32, f32)> {
@@ -337,6 +359,19 @@ impl Drags {
         self.finish(None);
         *self.0.phase.borrow_mut() = Phase::Ended;
         true
+    }
+
+    /// A context menu opened or closed: no press from before it goes on (`at_menu`).
+    pub fn menu_shown(&self) {
+        let at = at_menu(&self.0.phase.borrow());
+        match at {
+            AtMenu::Keep => return,
+            AtMenu::Cancel => {
+                self.finish(None);
+            }
+            AtMenu::Forget => {}
+        }
+        *self.0.phase.borrow_mut() = Phase::Idle;
     }
 
     /// A left or right press on entry `index` at window position (`x`, `y`).
@@ -1041,6 +1076,30 @@ mod tests {
         assert!(!swallows_release(true, false));
         assert!(!swallows_release(false, true));
         assert!(!swallows_release(false, false));
+    }
+
+    fn armed(right: bool) -> Phase {
+        Phase::Armed { index: 0, x: 10.0, y: 20.0, right, can_drag: true }
+    }
+
+    #[test]
+    fn a_menu_forgets_a_press_waiting_for_its_release() {
+        // The press whose release the menu took: kept, the next move would start a right
+        // drag and its release would show Copy here instead of the next menu.
+        assert_eq!(at_menu(&armed(true)), AtMenu::Forget);
+        assert_eq!(at_menu(&armed(false)), AtMenu::Forget);
+        assert_eq!(at_menu(&Phase::Ended), AtMenu::Forget);
+        // A drag in the window ends without a drop.
+        assert_eq!(at_menu(&Phase::Dragging(dragging())), AtMenu::Cancel);
+    }
+
+    #[test]
+    fn a_menu_leaves_drops_and_drags_the_system_has_alone() {
+        // The drop menu itself opens with the drag already ended (`up` set Idle).
+        assert_eq!(at_menu(&Phase::Idle), AtMenu::Keep);
+        // Files from another program, and a drag handed to the system, end by themselves.
+        assert_eq!(at_menu(&Phase::Offer(dragging())), AtMenu::Keep);
+        assert_eq!(at_menu(&Phase::Outside(dragging())), AtMenu::Keep);
     }
 
     #[test]

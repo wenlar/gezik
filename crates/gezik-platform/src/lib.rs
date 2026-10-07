@@ -79,11 +79,15 @@ pub mod key_place;
 #[cfg(windows)]
 mod keyboard;
 #[cfg(windows)]
+mod pointer;
+#[cfg(windows)]
 mod removal;
 #[cfg(windows)]
 mod shell_menu;
 #[cfg(windows)]
 pub use keyboard::{ModifierKeys, modifier_keys_down};
+#[cfg(windows)]
+pub use pointer::catch_up_pointer;
 #[cfg(windows)]
 pub use removal::{RemovalWatch, watch_removal};
 #[cfg(windows)]

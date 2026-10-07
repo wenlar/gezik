@@ -278,6 +278,8 @@ export component AppWindow inherits Window {
     callback preview-resized();
     // A Slint context menu item was chosen (its `MenuEntry.id`).
     callback menu-activated(int);
+    // Gezik's own menu closed (chosen, Esc or a press outside it).
+    callback menu-closed();
     // Left press on an entry with Ctrl (Cmd on macOS) and Shift; left click on empty space with Ctrl.
     callback item-pressed(int, bool, bool);
     callback background-pressed(bool);
@@ -1211,6 +1213,7 @@ export component AppWindow inherits Window {
         step(lines, from, down) => { return root.menu-step(lines, from, down); }
         activated(id) => { root.menu-activated(id); }
         closed => {
+            root.menu-closed();
             if !root.dialog-open {
                 root.focus-list();
             }
