@@ -94,7 +94,7 @@ pub fn describe(
         JobState::Running => {
             let mut text = format!("{}%", (done * 100.0).floor() as u32);
             if let Some(speed) = speed.filter(|s| *s > 0.0 && progress.bytes_total > 0) {
-                text.push_str(&format!(" · {}", format_rate(speed)));
+                text.push_str(&format!(" · {}", format_rate(speed, gezik_core::view::SizeFormat::Binary)));
             }
             if let Some(left) = left {
                 text.push_str(&format!(" · {}", format_eta(left)));

@@ -127,19 +127,27 @@ pub fn list_dir(path: &Path) -> io::Result<Vec<Entry>> {
     Ok(entries)
 }
 
-/// Formats a byte count for display, e.g. `1.5 KB`.
+/// Formats a byte count for display, e.g. `1.5 KB` (binary steps; see `format_size_in`).
 pub fn format_size(bytes: u64) -> String {
-    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
-    if bytes < 1024 {
+    format_size_in(bytes, view::SizeFormat::Binary)
+}
+
+/// A byte count as `format` writes it: `1.5 KB` (steps of 1024) or `1.5 kB` (steps of 1000).
+pub fn format_size_in(bytes: u64, format: view::SizeFormat) -> String {
+    let (step, units): (f64, [&str; 5]) = match format {
+        view::SizeFormat::Binary => (1024.0, ["B", "KB", "MB", "GB", "TB"]),
+        view::SizeFormat::Decimal => (1000.0, ["B", "kB", "MB", "GB", "TB"]),
+    };
+    if (bytes as f64) < step {
         return format!("{bytes} B");
     }
     let mut value = bytes as f64;
     let mut unit = 0;
-    while value >= 1024.0 && unit < UNITS.len() - 1 {
-        value /= 1024.0;
+    while value >= step && unit < units.len() - 1 {
+        value /= step;
         unit += 1;
     }
-    format!("{value:.1} {}", UNITS[unit])
+    format!("{value:.1} {}", units[unit])
 }
 
 #[cfg(test)]
@@ -260,6 +268,22 @@ mod tests {
     #[test]
     fn missing_directory_is_an_error() {
         assert!(list_dir(Path::new("/definitely/not/here/gezik")).is_err());
+    }
+
+    #[test]
+    fn sizes_in_both_formats() {
+        use crate::view::SizeFormat::{Binary, Decimal};
+        assert_eq!(format_size_in(1536, Binary), "1.5 KB");
+        assert_eq!(format_size_in(1023, Binary), "1023 B");
+        assert_eq!(format_size_in(1024, Binary), "1.0 KB");
+        assert_eq!(format_size_in(1500, Decimal), "1.5 kB");
+        assert_eq!(format_size_in(999, Decimal), "999 B");
+        assert_eq!(format_size_in(1000, Decimal), "1.0 kB");
+        assert_eq!(format_size_in(1_000_000, Decimal), "1.0 MB");
+        assert_eq!(format_size_in(5 * 1024 * 1024, Decimal), "5.2 MB");
+        assert_eq!(format_size_in(u64::MAX, Binary), "16777216.0 TB");
+        assert_eq!(format_size_in(u64::MAX, Decimal), "18446744.1 TB");
+        assert_eq!(format_size(1536), format_size_in(1536, Binary), "format_size stays binary");
     }
 
     #[test]

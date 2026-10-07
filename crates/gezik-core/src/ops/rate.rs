@@ -45,8 +45,8 @@ pub fn format_eta(left: Duration) -> String {
 }
 
 /// `84 MB/s`.
-pub fn format_rate(per_second: f64) -> String {
-    format!("{}/s", crate::format_size(per_second.max(0.0) as u64))
+pub fn format_rate(per_second: f64, format: crate::view::SizeFormat) -> String {
+    format!("{}/s", crate::format_size_in(per_second.max(0.0) as u64, format))
 }
 
 #[cfg(test)]
@@ -85,6 +85,14 @@ mod tests {
         assert_eq!(format_eta(Duration::from_secs(42)), "~0:42");
         assert_eq!(format_eta(Duration::from_secs(725)), "~12:05");
         assert_eq!(format_eta(Duration::from_secs(3910)), "~1:05:10");
-        assert!(format_rate(84.0 * 1024.0 * 1024.0).ends_with("/s"));
+        assert!(format_rate(84.0 * 1024.0 * 1024.0, crate::view::SizeFormat::Binary).ends_with("/s"));
+    }
+
+    #[test]
+    fn rates_follow_the_size_format() {
+        use crate::view::SizeFormat;
+        assert_eq!(format_rate(1_500_000.0, SizeFormat::Decimal), "1.5 MB/s");
+        assert_eq!(format_rate(1_500_000.0, SizeFormat::Binary), "1.4 MB/s");
+        assert_eq!(format_rate(-3.0, SizeFormat::Binary), "0 B/s");
     }
 }
