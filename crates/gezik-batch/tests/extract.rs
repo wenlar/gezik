@@ -11,6 +11,10 @@ use zip::write::SimpleFileOptions;
 use zip::{AesMode, CompressionMethod, ZipWriter};
 
 fn dir(name: &str) -> PathBuf {
+    // Every test starts here: a crash or an abort in this binary (the Shell's code runs in it
+    // when undo trashes) must end it, never wait on a dialog.
+    static QUIET: std::sync::Once = std::sync::Once::new();
+    QUIET.call_once(gezik_platform::process::quiet_crashes);
     let d = std::env::temp_dir().join(format!("gezik-extract-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
