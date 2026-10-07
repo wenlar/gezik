@@ -153,6 +153,36 @@ pub struct ClosedTab {
     pub history: History,
 }
 
+/// A tab as the session keeps it (spec 5.1): where it is and whether it is locked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionTab {
+    pub location: Location,
+    pub locked: bool,
+}
+
+/// The open tabs, to open them again at the next start; `active` counts from 0.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Session {
+    pub tabs: Vec<SessionTab>,
+    pub active: usize,
+}
+
+impl Session {
+    pub fn is_empty(&self) -> bool {
+        self.tabs.is_empty()
+    }
+
+    /// One unlocked tab at `location` (today's start).
+    pub fn single(location: Location) -> Session {
+        Session { tabs: vec![SessionTab { location, locked: false }], active: 0 }
+    }
+
+    /// Where the tab in front is: `active`, or the first when that is out of range.
+    pub fn active_location(&self) -> Option<&Location> {
+        self.tabs.get(self.active).or(self.tabs.first()).map(|tab| &tab.location)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Closed {
     Remaining,
@@ -294,6 +324,71 @@ impl Tabs {
         self.ids.insert(index, id);
         self.active = index;
         Some(index)
+    }
+
+    /// Adds a tab at the end, not activated; its index.
+    fn push(&mut self, location: Location) -> usize {
+        self.tabs.push(History::new(location));
+        let id = self.new_id();
+        self.ids.push(id);
+        self.tabs.len() - 1
+    }
+
+    /// The tabs of `session`, its active one in front (the first if `active` is out of
+    /// range), its locks on; `None` for an empty session.
+    pub fn from_session(session: &Session) -> Option<Tabs> {
+        let first = session.tabs.first()?;
+        let mut tabs = Tabs::new(first.location.clone());
+        for tab in &session.tabs[1..] {
+            tabs.push(tab.location.clone());
+        }
+        for (i, tab) in session.tabs.iter().enumerate() {
+            if tab.locked {
+                tabs.set_locked(i, true);
+            }
+        }
+        tabs.active = if session.active < tabs.tabs.len() { session.active } else { 0 };
+        Some(tabs)
+    }
+
+    /// The tabs as the session keeps them.
+    pub fn session(&self) -> Session {
+        let tabs = self
+            .tabs
+            .iter()
+            .enumerate()
+            .map(|(i, history)| SessionTab { location: history.location().clone(), locked: self.is_locked(i) })
+            .collect();
+        Session { tabs, active: self.active }
+    }
+
+    /// Opens `locations` as tabs at the end, the first of them active (a tab set, spec 5.2).
+    /// `replace` first closes the tabs that were open, but the locked ones, onto the closed
+    /// list (as "close other tabs" does). Returns how many locked tabs stayed (0 without
+    /// `replace`); no locations change nothing.
+    pub fn open_set(&mut self, locations: Vec<Location>, replace: bool) -> usize {
+        if locations.is_empty() {
+            return 0;
+        }
+        let old = self.tabs.len();
+        let mut first = None;
+        for location in locations {
+            let index = self.push(location);
+            first.get_or_insert(self.ids[index]);
+        }
+        let mut locked = 0;
+        if replace {
+            // From the right, so that each tab's index is still the one it had.
+            for i in (0..old).rev() {
+                if self.is_locked(i) {
+                    locked += 1;
+                } else {
+                    self.take_out(i);
+                }
+            }
+        }
+        self.active = first.and_then(|id| self.index_of(id)).unwrap_or(0);
+        locked
     }
 
     /// How many closed tabs `reopen` can bring back.
@@ -506,6 +601,62 @@ mod tests {
 
     fn view(name: &str, scroll: f32) -> ViewState {
         ViewState { selected: vec![name.to_owned()], focus: Some(name.to_owned()), scroll, filter: None }
+    }
+
+    // ---- Session and tab sets ----
+
+    #[test]
+    fn a_session_round_trips_through_the_tabs() {
+        let session = Session {
+            tabs: vec![
+                SessionTab { location: p("/a"), locked: false },
+                SessionTab { location: Location::Drives, locked: true },
+                SessionTab { location: p("/c"), locked: true },
+            ],
+            active: 2,
+        };
+        let tabs = Tabs::from_session(&session).unwrap();
+        assert_eq!(tabs.len(), 3);
+        assert_eq!(tabs.active_index(), 2);
+        assert!(!tabs.is_locked(0) && tabs.is_locked(1) && tabs.is_locked(2));
+        assert_eq!(tabs.session(), session);
+        assert_eq!(ids(&tabs).len(), 3, "every tab has its own id");
+        assert!(Tabs::from_session(&Session::default()).is_none());
+    }
+
+    #[test]
+    fn an_active_tab_out_of_range_is_the_first() {
+        let session = Session { tabs: vec![SessionTab { location: p("/a"), locked: false }], active: 7 };
+        assert_eq!(Tabs::from_session(&session).unwrap().active_index(), 0);
+        assert_eq!(session.active_location(), Some(&p("/a")));
+        assert_eq!(Session::default().active_location(), None);
+        assert_eq!(Session::single(p("/x")).tabs, [SessionTab { location: p("/x"), locked: false }]);
+    }
+
+    #[test]
+    fn a_tab_set_opens_at_the_end_with_its_first_tab_in_front() {
+        let mut tabs = Tabs::new(p("/a"));
+        tabs.open(p("/b"), false);
+        assert_eq!(tabs.open_set(vec![p("/x"), Location::Drives], false), 0);
+        let shown: Vec<Location> = tabs.iter().map(|h| h.location().clone()).collect();
+        assert_eq!(shown, [p("/a"), p("/b"), p("/x"), Location::Drives]);
+        assert_eq!(tabs.active_index(), 2);
+        assert_eq!(tabs.open_set(Vec::new(), true), 0);
+        assert_eq!(tabs.len(), 4, "an empty set changes nothing");
+    }
+
+    #[test]
+    fn replacing_tabs_with_a_set_keeps_the_locked_ones() {
+        let mut tabs = Tabs::new(p("/a"));
+        tabs.open(p("/b"), true);
+        tabs.open(p("/c"), false);
+        tabs.set_locked(1, true);
+        assert_eq!(tabs.open_set(vec![p("/x"), p("/y")], true), 1);
+        let shown: Vec<Location> = tabs.iter().map(|h| h.location().clone()).collect();
+        assert_eq!(shown, [p("/b"), p("/x"), p("/y")]);
+        assert_eq!(tabs.active_index(), 1);
+        assert!(tabs.is_locked(0));
+        assert_eq!(tabs.closed_count(), 2, "the closed tabs can be reopened");
     }
 
     // ---- Tab ids ----
