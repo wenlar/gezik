@@ -23,8 +23,9 @@ use windows::core::{HSTRING, Interface, PCSTR, PCWSTR, PSTR};
 
 use crate::{MenuOutcome, MenuTarget, ShellVerb};
 
-/// Shell command ids start here; Gezik's own ids must be below it.
-const FIRST_SHELL_ID: u32 = 1000;
+/// Shell command ids start here; Gezik's own are below it (spec 11.1: 1-970 was full).
+/// Explorer keeps 4096-0x7FFF, over 28,000 ids.
+pub const FIRST_SHELL_ID: u32 = 4096;
 const LAST_SHELL_ID: u32 = 0x7FFF;
 const SUBCLASS_ID: usize = 0x6765_7A69;
 
@@ -42,7 +43,7 @@ pub struct ShellSubmenu<'a> {
     pub items: &'a [(u32, &'a str, bool)],
 }
 
-/// Shows the Explorer menu for `target` with `extra` (id, label) items on top, and `sub` among
+/// Shows the Explorer menu for `target` with `extra` (id, label) items on top, and `subs` among
 /// them: at `at`, a point in the window's client area in physical pixels (a menu opened from
 /// the keyboard), else at the mouse cursor. `can_rename`: the menu has the Shell's "Rename" (returned as
 /// `ShellVerb::Rename`, the caller renames). Call on the UI thread; blocks until the menu
@@ -51,12 +52,12 @@ pub fn show_shell_menu(
     window: &impl HasWindowHandle,
     target: &MenuTarget,
     extra: &[(u32, &str)],
-    sub: Option<ShellSubmenu<'_>>,
+    subs: &[ShellSubmenu<'_>],
     at: Option<(i32, i32)>,
     can_rename: bool,
 ) -> Result<MenuOutcome, String> {
     validate_ids(extra)?;
-    if let Some(sub) = &sub {
+    for sub in subs {
         let ids: Vec<(u32, &str)> = sub.items.iter().map(|(id, label, _)| (*id, *label)).collect();
         validate_ids(&ids)?;
     }
@@ -67,7 +68,7 @@ pub fn show_shell_menu(
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         let menu = context_menu_for(hwnd, target).map_err(|e| e.to_string())?;
         let hmenu = CreatePopupMenu().map_err(|e| e.to_string())?;
-        let result = track(hwnd, hmenu, &menu, extra, sub, at, can_rename).map_err(|e| e.to_string());
+        let result = track(hwnd, hmenu, &menu, extra, subs, at, can_rename).map_err(|e| e.to_string());
         let _ = DestroyMenu(hmenu);
         result
     }
@@ -88,13 +89,22 @@ fn query_flags(can_rename: bool) -> u32 {
     if can_rename { CMF_NORMAL | CMF_CANRENAME } else { CMF_NORMAL }
 }
 
-/// Gezik's own item ids must be in 1..FIRST_SHELL_ID (0 means "dismissed", 1000+ are Shell ids).
+/// Gezik's own item ids must be in 1..FIRST_SHELL_ID (0 means "dismissed", the rest are Shell ids).
 fn validate_ids(extra: &[(u32, &str)]) -> Result<(), String> {
     if extra.iter().all(|(id, _)| (1..FIRST_SHELL_ID).contains(id)) {
         Ok(())
     } else {
-        Err("menu item ids must be in 1..1000".into())
+        Err(format!("menu item ids must be in 1..{FIRST_SHELL_ID}"))
     }
+}
+
+/// Where each submenu goes in the menu (index into `subs`, position), the empty ones left out:
+/// at its place among the `extra` items, the earlier places first, each one inserted moving
+/// the ones after it down by one.
+fn submenu_places(subs: &[ShellSubmenu<'_>], extra: usize) -> Vec<(usize, u32)> {
+    let mut order: Vec<usize> = (0..subs.len()).filter(|i| !subs[*i].items.is_empty()).collect();
+    order.sort_by_key(|i| subs[*i].at);
+    order.into_iter().enumerate().map(|(inserted, i)| (i, (subs[i].at.min(extra) + inserted) as u32)).collect()
 }
 
 unsafe fn context_menu_for(hwnd: HWND, target: &MenuTarget) -> windows::core::Result<IContextMenu> {
@@ -202,7 +212,7 @@ unsafe fn track(
     hmenu: HMENU,
     menu: &IContextMenu,
     extra: &[(u32, &str)],
-    sub: Option<ShellSubmenu<'_>>,
+    subs: &[ShellSubmenu<'_>],
     at: Option<(i32, i32)>,
     can_rename: bool,
 ) -> windows::core::Result<MenuOutcome> {
@@ -212,16 +222,16 @@ unsafe fn track(
         for (position, (id, label)) in extra.iter().enumerate() {
             InsertMenuW(hmenu, position as u32, MF_BYPOSITION | MF_STRING, *id as usize, &menu_label(label))?;
         }
-        if let Some(sub) = sub.filter(|sub| !sub.items.is_empty()) {
+        for (i, position) in submenu_places(subs, extra.len()) {
+            let sub = &subs[i];
             // Once in `hmenu`, destroyed with it (DestroyMenu takes its submenus along).
             let popup = CreatePopupMenu()?;
             let filled = sub.items.iter().try_for_each(|(id, label, enabled)| {
                 let flags = if *enabled { MF_STRING } else { MF_STRING | MF_GRAYED };
                 AppendMenuW(popup, flags, *id as usize, &menu_label(label))
             });
-            let at = sub.at.min(extra.len()) as u32;
             let inserted = filled.and_then(|()| {
-                InsertMenuW(hmenu, at, MF_BYPOSITION | MF_POPUP, popup.0 as usize, &menu_label(sub.title))
+                InsertMenuW(hmenu, position, MF_BYPOSITION | MF_POPUP, popup.0 as usize, &menu_label(sub.title))
             });
             if let Err(err) = inserted {
                 let _ = DestroyMenu(popup);
@@ -468,10 +478,10 @@ mod tests {
     #[test]
     fn extra_ids_must_be_below_the_shell_range() {
         assert!(validate_ids(&[]).is_ok());
-        assert!(validate_ids(&[(1, "a"), (999, "b")]).is_ok());
+        assert!(validate_ids(&[(1, "a"), (4095, "b")]).is_ok());
         assert!(validate_ids(&[(0, "a")]).is_err());
-        assert!(validate_ids(&[(1000, "a")]).is_err());
-        assert!(validate_ids(&[(1, "a"), (1000, "b")]).is_err());
+        assert!(validate_ids(&[(4096, "a")]).is_err());
+        assert!(validate_ids(&[(1, "a"), (4096, "b")]).is_err());
     }
 
     #[test]
@@ -485,10 +495,19 @@ mod tests {
     fn submenu_ids_are_checked_too() {
         let window = NoWindow;
         let target = MenuTarget::Background(PathBuf::from(r"C:\"));
-        let items = [(700, "Resize", true), (1000, "Bad", false)];
+        let items = [(700, "Resize", true), (4096, "Bad", false)];
         let sub = ShellSubmenu { title: "Commands", at: 0, items: &items };
-        let err = show_shell_menu(&window, &target, &[(1, "a")], Some(sub), None, false).unwrap_err();
-        assert!(err.contains("1..1000"), "{err}");
+        let err = show_shell_menu(&window, &target, &[(1, "a")], &[sub], None, false).unwrap_err();
+        assert!(err.contains("1..4096"), "{err}");
+    }
+
+    #[test]
+    fn several_submenus_go_in_their_places() {
+        let items = [(700, "A", true)];
+        let sub = |at| ShellSubmenu { title: "S", at, items: &items };
+        let empty = ShellSubmenu { title: "E", at: 0, items: &[] };
+        // extra [x, y, z]: Commands before x (0), Copy path after y (2), one past the end.
+        assert_eq!(submenu_places(&[sub(2), sub(0), empty, sub(9)], 3), [(1, 0), (0, 3), (3, 5)]);
     }
 
     /// A window that is never reached: the ids are checked first.

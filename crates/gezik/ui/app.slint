@@ -14,13 +14,13 @@ import { RenameBatch, RuleRow, RenamePreviewRow, RuleOptions } from "widgets/ren
 import { FileIcon } from "widgets/file-icon.slint";
 import { CompressLayer } from "widgets/compress.slint";
 import { ConvertLayer, ConvertView } from "widgets/convert.slint";
-import { PopupMenu, MenuEntry, MenuPlace } from "widgets/popup-menu.slint";
+import { PopupMenu, MenuEntry, MenuPlace, MenuSub } from "widgets/popup-menu.slint";
 import { TabPicker, TabPickRow } from "widgets/tab-picker.slint";
 import { PathSuggestions, PathRow } from "widgets/path-suggestions.slint";
 
 // Re-exported so Rust can set it with `window.global::<Theme>()` and build crumbs, tabs
 // and sidebar rows.
-export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, OpRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView, MenuEntry, MenuPlace, TabPickRow, PathRow }
+export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, OpRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView, MenuEntry, MenuPlace, MenuSub, TabPickRow, PathRow }
 
 // Where the drop targets are, in window coordinates (drag.rs reads it while files are
 // dragged; every field is computed when read).
@@ -222,12 +222,10 @@ export component AppWindow inherits Window {
     // Dragged with the splitter (120–480px); saved in state.toml on close.
     in-out property <length> sidebar-width: 200px;
     // What the Slint context menu shows; set from Rust before `show-menu`: the items, then
-    // a submenu ("Commands", none when it has no entries), then more items.
+    // up to four submenus, each with the items after it.
     in property <[MenuEntry]> menu-entries;
-    in property <string> menu-sub-title;
-    in property <[MenuEntry]> menu-sub-entries;
-    in property <[MenuEntry]> menu-entries-after;
-    // The same for Gezik's own menu, in one list: the submenu's item has id -1.
+    in property <[MenuSub]> menu-subs;
+    // The same for Gezik's own menu, in one list: the submenus' items have ids -1…-4.
     in property <[MenuEntry]> menu-lines;
     // Whether Slint shows menus as the system's (Windows, macOS); else Gezik draws its own.
     in property <bool> native-menus;
@@ -633,15 +631,54 @@ export component AppWindow inherits Window {
                 enabled: entry.enabled;
                 activated => { root.menu-activated(entry.id); }
             }
-            if root.menu-sub-entries.length > 0: Menu {
-                title: root.menu-sub-title;
-                for entry in root.menu-sub-entries: MenuItem {
+            if root.menu-subs[0].entries.length > 0: Menu {
+                title: root.menu-subs[0].title;
+                for entry in root.menu-subs[0].entries: MenuItem {
                     title: entry.title;
                     enabled: entry.enabled;
                     activated => { root.menu-activated(entry.id); }
                 }
             }
-            for entry in root.menu-entries-after: MenuItem {
+            for entry in root.menu-subs[0].after: MenuItem {
+                title: entry.title;
+                enabled: entry.enabled;
+                activated => { root.menu-activated(entry.id); }
+            }
+            if root.menu-subs[1].entries.length > 0: Menu {
+                title: root.menu-subs[1].title;
+                for entry in root.menu-subs[1].entries: MenuItem {
+                    title: entry.title;
+                    enabled: entry.enabled;
+                    activated => { root.menu-activated(entry.id); }
+                }
+            }
+            for entry in root.menu-subs[1].after: MenuItem {
+                title: entry.title;
+                enabled: entry.enabled;
+                activated => { root.menu-activated(entry.id); }
+            }
+            if root.menu-subs[2].entries.length > 0: Menu {
+                title: root.menu-subs[2].title;
+                for entry in root.menu-subs[2].entries: MenuItem {
+                    title: entry.title;
+                    enabled: entry.enabled;
+                    activated => { root.menu-activated(entry.id); }
+                }
+            }
+            for entry in root.menu-subs[2].after: MenuItem {
+                title: entry.title;
+                enabled: entry.enabled;
+                activated => { root.menu-activated(entry.id); }
+            }
+            if root.menu-subs[3].entries.length > 0: Menu {
+                title: root.menu-subs[3].title;
+                for entry in root.menu-subs[3].entries: MenuItem {
+                    title: entry.title;
+                    enabled: entry.enabled;
+                    activated => { root.menu-activated(entry.id); }
+                }
+            }
+            for entry in root.menu-subs[3].after: MenuItem {
                 title: entry.title;
                 enabled: entry.enabled;
                 activated => { root.menu-activated(entry.id); }
@@ -1206,7 +1243,7 @@ export component AppWindow inherits Window {
         width: root.width;
         height: root.height;
         lines: root.menu-lines;
-        sub-lines: root.menu-sub-entries;
+        subs: root.menu-subs;
         place(x, y, fx, fy, w, h, aw, ah) => { return root.place-menu(x, y, fx, fy, w, h, aw, ah); }
         step(lines, from, down) => { return root.menu-step(lines, from, down); }
         activated(id) => { root.menu-activated(id); }

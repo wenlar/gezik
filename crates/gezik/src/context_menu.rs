@@ -19,7 +19,7 @@ use crate::popup::Anchor;
 use crate::preview::Preview;
 use crate::sidebar::{SECTION_PINNED, Sidebar};
 use crate::view::View;
-use crate::{AppWindow, MenuEntry};
+use crate::{AppWindow, MenuEntry, MenuSub};
 
 pub const OPEN_IN_NEW_TAB: u32 = 1;
 pub const PIN: u32 = 2;
@@ -176,7 +176,7 @@ pub const CANCEL_DROP: u32 = 82;
 /// 90-99: "Add rule" in the batch rename layer, in `gezik_core::batch::rules::KINDS` order.
 pub const ADD_RULE_FIRST: u32 = 90;
 /// 100-299: saved rule sets; 300 "Save current rules as…"; 400-599 delete one (ids stay
-/// below the Shell's, which start at 1000).
+/// below the Shell's, which start at `GEZIK_IDS_END`).
 pub const PRESET_FIRST: u32 = 100;
 pub const PRESET_SAVE: u32 = 300;
 pub const PRESET_DELETE_FIRST: u32 = 400;
@@ -208,7 +208,7 @@ pub const COMMAND_MAX: u32 = 100;
 pub const CONVERT_PRESET_FIRST: u32 = 800;
 pub const CONVERT_PRESET_MAX: u32 = 100;
 /// 900-929: the filter bar's saved filters, by index; 930 "Save as…"; 940-969 delete one
-/// (ids stay below the Shell's, which start at 1000).
+/// (ids stay below the Shell's, which start at `GEZIK_IDS_END`).
 pub const FILTER_FIRST: u32 = 900;
 pub const FILTER_MAX: u32 = 30;
 pub const FILTER_SAVE: u32 = 930;
@@ -217,6 +217,14 @@ pub const FILTER_DELETE_FIRST: u32 = 940;
 pub const COMMAND_GROUP: u32 = 970;
 /// Group headings in a Slint menu: shown greyed, never chosen.
 pub const HEADING: u32 = 0;
+/// Gezik's menu ids are below this; the Explorer menu's start here (gezik_platform's
+/// `FIRST_SHELL_ID` on Windows). 1000-4095 are new ranges (spec 11.1).
+#[cfg_attr(not(windows), allow(dead_code))]
+pub const GEZIK_IDS_END: u32 = 4096;
+#[cfg(windows)]
+const _: () = assert!(gezik_platform::FIRST_SHELL_ID == GEZIK_IDS_END, "Gezik's ids end where Explorer's begin");
+/// Most submenus a menu shows: app.slint and popup-menu.slint have this many places.
+pub const MAX_SUBMENUS: usize = 4;
 
 /// A submenu among a menu's items ("Commands ▸"): its title, its place among the items (0:
 /// first), and its items (id, title, enabled).
@@ -417,7 +425,7 @@ impl Menus {
                     // An item of a submenu leaves the keyboard nowhere once the menus close
                     // (Slint gives it back to the parent menu, which is gone): the list (or
                     // the layer over it) takes it, unless a question came up.
-                    if (COMMAND_FIRST..COMMAND_FIRST + COMMAND_MAX).contains(&id) {
+                    if from_submenu(id) {
                         let weak = menus.window.clone();
                         slint::Timer::single_shot(std::time::Duration::ZERO, move || {
                             if let Some(window) = weak.upgrade()
@@ -463,45 +471,52 @@ impl Menus {
             let rows = self.view.selected_items();
             let paths: Vec<PathBuf> = rows.iter().map(|(path, _)| path.clone()).collect();
             let mut list = owned(items(Place::Rows, native));
-            let sub = self.add_file_tools(&mut list, rows, native);
+            let mut subs = Vec::new();
+            self.add_file_tools(&mut list, &mut subs, rows, native);
             list.extend(self.file_extras(false, false, native));
             if native && !self.view.shows_drives() {
                 list.push((BATCH_RENAME, format!("Rename {} items…", paths.len())));
             }
-            return self.open(Subject::Rows(paths.clone()), list, sub, MenuTarget::Items(paths), x, y, at);
+            return self.open(Subject::Rows(paths.clone()), list, subs, MenuTarget::Items(paths), x, y, at);
         }
         let Some((path, is_dir)) = self.view.entry_path(i) else { return };
         let place = Place::Row { is_dir, pinned: is_dir && self.sidebar.is_pinned(&path) };
         let mut list = owned(items(place, native));
-        let sub = self.add_file_tools(&mut list, vec![(path.clone(), is_dir)], native);
+        let mut subs = Vec::new();
+        self.add_file_tools(&mut list, &mut subs, vec![(path.clone(), is_dir)], native);
         list.extend(self.file_extras(true, is_dir, native));
-        self.open(Subject::Row(path.clone()), list, sub, MenuTarget::Item(path), x, y, at);
+        self.open(Subject::Row(path.clone()), list, subs, MenuTarget::Item(path), x, y, at);
     }
 
     /// Extract, Compress, Convert and Commands ▸ for `rows`: first on Windows (above the
-    /// Explorer menu's own items), after the row's other items elsewhere. Not for drives.
-    /// Returns the Commands submenu, placed among `list`.
+    /// Explorer menu's own items, moving the places of `subs` down), after the row's other
+    /// items elsewhere. Not for drives.
     fn add_file_tools(
         &self,
         list: &mut Vec<(u32, String)>,
+        subs: &mut Vec<Submenu>,
         rows: Vec<(PathBuf, bool)>,
         native: bool,
-    ) -> Option<Submenu> {
+    ) {
         if self.view.shows_drives() {
-            return None;
+            return;
         }
         let mut extra = crate::archives::menu_items(&rows);
         let (convert, commands) = crate::convert::menu_items(&rows);
         extra.extend(convert);
         *self.rows.borrow_mut() = rows;
         let start = if native { 0 } else { list.len() };
-        let sub = commands.map(|items| Submenu { title: "Commands".to_owned(), at: start + extra.len(), items });
+        if native {
+            for sub in subs.iter_mut() {
+                sub.at += extra.len();
+            }
+        }
+        subs.extend(commands.map(|items| Submenu { title: "Commands".to_owned(), at: start + extra.len(), items }));
         if native {
             list.splice(0..0, extra);
         } else {
             list.extend(extra);
         }
-        sub
     }
 
     /// File items after the row's own: Windows already has Cut, Copy, Delete... (taken over in
@@ -522,7 +537,7 @@ impl Menus {
         self.ops.clipboard_check();
         let list =
             background_items(self.ops.undo_label().as_deref(), self.ops.redo_label().as_deref(), self.ops.can_paste());
-        self.open(Subject::Background(dir.clone()), list, None, MenuTarget::Background(dir), x, y, at);
+        self.open(Subject::Background(dir.clone()), list, Vec::new(), MenuTarget::Background(dir), x, y, at);
     }
 
     /// Right-click on sidebar entry (`section`, `index`), at window position `x`, `y`.
@@ -540,7 +555,7 @@ impl Menus {
         self.open(
             Subject::SidebarEntry(path.clone()),
             owned(items(place, cfg!(windows))),
-            None,
+            Vec::new(),
             MenuTarget::Item(path),
             x,
             y,
@@ -569,25 +584,25 @@ impl Menus {
         self.open_slint(&view_items(self.view.view_settings(), self.preview.is_pane_open()), at);
     }
 
-    /// `sub`: a submenu among `items`. `at`: where the Windows menu opens (window position),
+    /// `subs`: submenus among `items`. `at`: where the Windows menu opens (window position),
     /// else at the cursor.
     #[allow(clippy::too_many_arguments, reason = "what the menu is for, what it shows, and where")]
     fn open(
         &self,
         subject: Subject,
         items: Vec<(u32, String)>,
-        sub: Option<Submenu>,
+        subs: Vec<Submenu>,
         target: MenuTarget,
         x: f32,
         y: f32,
         at: Option<(f32, f32)>,
     ) {
         if cfg!(windows) {
-            self.open_native(Some(subject), target, items, sub, at);
+            self.open_native(Some(subject), target, items, subs, at);
         } else {
             *self.subject.borrow_mut() = Some(subject);
             let entries: Vec<(u32, String, bool)> = items.into_iter().map(|(id, title)| (id, title, true)).collect();
-            self.open_slint_entries(&entries, sub, Anchor::point(x, y));
+            self.open_slint_entries(&entries, subs, Anchor::point(x, y));
         }
     }
 
@@ -600,7 +615,7 @@ impl Menus {
         subject: Option<Subject>,
         target: MenuTarget,
         items: Vec<(u32, String)>,
-        sub: Option<Submenu>,
+        subs: Vec<Submenu>,
         at: Option<(f32, f32)>,
     ) {
         let Some(claim) = self.native_menu.claim() else { return };
@@ -611,18 +626,18 @@ impl Menus {
             let scale = window.window().scale_factor();
             let at = at.map(|(x, y)| ((x * scale).round() as i32, (y * scale).round() as i32));
             let items: Vec<(u32, &str)> = items.iter().map(|(id, title)| (*id, title.as_str())).collect();
-            let sub_items: Vec<(u32, &str, bool)> = sub
-                .as_ref()
+            let sub_items: Vec<Vec<(u32, &str, bool)>> = subs
+                .iter()
                 .map(|sub| sub.items.iter().map(|(id, title, on)| (*id, title.as_str(), *on)).collect())
-                .unwrap_or_default();
-            let sub = sub.as_ref().map(|sub| gezik_platform::ShellSubmenu {
-                title: sub.title.as_str(),
-                at: sub.at,
-                items: &sub_items,
-            });
+                .collect();
+            let shell_subs: Vec<gezik_platform::ShellSubmenu> = subs
+                .iter()
+                .zip(&sub_items)
+                .map(|(sub, items)| gezik_platform::ShellSubmenu { title: sub.title.as_str(), at: sub.at, items })
+                .collect();
             // Gezik renames in place, only a single row of a folder listing (see run_verb).
             let can_rename = matches!(subject, Some(Subject::Row(_))) && !menus.view.shows_drives();
-            let outcome = gezik_platform::show_shell_menu(&handle, &target, &items, sub, at, can_rename);
+            let outcome = gezik_platform::show_shell_menu(&handle, &target, &items, &shell_subs, at, can_rename);
             release_stale_modifiers(&window);
             drop(claim);
             match outcome {
@@ -650,7 +665,7 @@ impl Menus {
         _subject: Option<Subject>,
         _target: MenuTarget,
         _items: Vec<(u32, String)>,
-        _sub: Option<Submenu>,
+        _subs: Vec<Submenu>,
         _at: Option<(f32, f32)>,
     ) {
     }
@@ -658,15 +673,15 @@ impl Menus {
     fn open_slint<S: AsRef<str>>(&self, items: &[(u32, S)], at: Anchor) {
         let entries: Vec<(u32, String, bool)> =
             items.iter().map(|(id, title)| (*id, title.as_ref().to_owned(), true)).collect();
-        self.open_slint_entries(&entries, None, at);
+        self.open_slint_entries(&entries, Vec::new(), at);
     }
 
-    /// Shows `items` (id, title, enabled), with `sub` among them, at `anchor`.
+    /// Shows `items` (id, title, enabled), with `subs` among them, at `anchor`.
     /// (Slint shows these as native menus on Windows, where `&` marks the access key, and on
     /// macOS; elsewhere Gezik draws its own, which popup.rs keeps inside the window.)
-    fn open_slint_entries(&self, items: &[(u32, String, bool)], sub: Option<Submenu>, anchor: Anchor) {
+    fn open_slint_entries(&self, items: &[(u32, String, bool)], subs: Vec<Submenu>, anchor: Anchor) {
         let Some(window) = self.window.upgrade() else { return };
-        if items.is_empty() && sub.is_none() {
+        if items.is_empty() && subs.iter().all(|sub| sub.items.is_empty()) {
             return;
         }
         let entry = |(id, title, enabled): &(u32, String, bool)| MenuEntry {
@@ -674,20 +689,28 @@ impl Menus {
             title: menu_title(title).into(),
             enabled: *enabled,
         };
-        let at = sub.as_ref().map_or(items.len(), |sub| sub.at.min(items.len()));
-        let before: Vec<MenuEntry> = items[..at].iter().map(entry).collect();
-        let after: Vec<MenuEntry> = items[at..].iter().map(entry).collect();
-        let (title, inner): (String, Vec<MenuEntry>) = match &sub {
-            Some(sub) => (menu_title(&sub.title), sub.items.iter().map(entry).collect()),
-            None => (String::new(), Vec::new()),
-        };
-        let inner_count = inner.len();
-        window.set_menu_entries(ModelRc::new(VecModel::from(before.clone())));
-        window.set_menu_sub_title(title.as_str().into());
-        window.set_menu_sub_entries(ModelRc::new(VecModel::from(inner)));
-        window.set_menu_entries_after(ModelRc::new(VecModel::from(after.clone())));
+        let model = |entries: Vec<MenuEntry>| ModelRc::new(VecModel::from(entries));
+        let (before, parts) = split_menu(items, &subs);
+        let before: Vec<MenuEntry> = before.iter().map(entry).collect();
+        let parts: Vec<(String, Vec<MenuEntry>, Vec<MenuEntry>)> = parts
+            .into_iter()
+            .map(|(sub, after)| {
+                (menu_title(&sub.title), sub.items.iter().map(entry).collect(), after.iter().map(entry).collect())
+            })
+            .collect();
+        let slots: Vec<MenuSub> = parts
+            .iter()
+            .map(|(title, inner, after)| MenuSub {
+                title: title.as_str().into(),
+                entries: model(inner.clone()),
+                after: model(after.clone()),
+            })
+            .collect();
+        window.set_menu_entries(model(before.clone()));
+        window.set_menu_subs(ModelRc::new(VecModel::from(slots)));
         if !window.get_native_menus() {
-            window.set_menu_lines(ModelRc::new(VecModel::from(menu_lines(before, &title, inner_count, after))));
+            let lines = parts.into_iter().map(|(title, _, after)| (title, after)).collect();
+            window.set_menu_lines(model(menu_lines(before, lines)));
         }
         window.invoke_show_menu(anchor.x, anchor.y, anchor.flip_x, anchor.flip_y);
     }
@@ -696,7 +719,7 @@ impl Menus {
     /// under its button.
     pub fn convert_menu(&self, items: Vec<(u32, String, bool)>, at: Anchor) {
         *self.subject.borrow_mut() = Some(Subject::Convert);
-        self.open_slint_entries(&items, None, at);
+        self.open_slint_entries(&items, Vec::new(), at);
     }
 
     /// Copy here / Move here / Cancel for files dropped with the right button on `dir`, at
@@ -773,7 +796,7 @@ impl Menus {
         crate::filter::with_current(|filter| can_save = filter.can_save());
         let items = filter_items(&names, can_save);
         *self.subject.borrow_mut() = Some(Subject::Filter(names));
-        self.open_slint_entries(&items, None, at);
+        self.open_slint_entries(&items, Vec::new(), at);
     }
 
     fn run(&self, id: u32, subject: Subject) {
@@ -1024,15 +1047,40 @@ fn released_modifiers(down: gezik_platform::ModifierKeys) -> Vec<slint::platform
     .collect()
 }
 
-/// Gezik's own menu in one list (widgets/popup-menu.slint): `before`, the submenu's item (id
-/// -1, titled `sub_title`) when the submenu has `sub_count` items, then `after`.
-fn menu_lines(before: Vec<MenuEntry>, sub_title: &str, sub_count: usize, after: Vec<MenuEntry>) -> Vec<MenuEntry> {
+/// `items` cut at `subs`' places: the items before the first submenu, then each submenu (by
+/// place, empty ones left out, at most `MAX_SUBMENUS`) with the items after it.
+fn split_menu<'a, T: Clone>(items: &[T], subs: &'a [Submenu]) -> (Vec<T>, Vec<(&'a Submenu, Vec<T>)>) {
+    let mut kept: Vec<&Submenu> = subs.iter().filter(|sub| !sub.items.is_empty()).collect();
+    kept.sort_by_key(|sub| sub.at);
+    kept.truncate(MAX_SUBMENUS);
+    let place = |sub: &Submenu| sub.at.min(items.len());
+    let first = kept.first().map_or(items.len(), |sub| place(sub));
+    let parts = kept
+        .iter()
+        .enumerate()
+        .map(|(i, sub)| {
+            let end = kept.get(i + 1).map_or(items.len(), |next| place(next));
+            (*sub, items[place(sub)..end].to_vec())
+        })
+        .collect();
+    (items[..first].to_vec(), parts)
+}
+
+/// Gezik's own menu in one list (widgets/popup-menu.slint): `before`, then for each submenu
+/// its opener (id -1 for the first, -2 for the second…, titled as it) and the items after it.
+fn menu_lines(before: Vec<MenuEntry>, subs: Vec<(String, Vec<MenuEntry>)>) -> Vec<MenuEntry> {
     let mut lines = before;
-    if sub_count > 0 {
-        lines.push(MenuEntry { id: -1, title: sub_title.into(), enabled: true });
+    for (k, (title, after)) in subs.into_iter().enumerate() {
+        lines.push(MenuEntry { id: -1 - k as i32, title: title.into(), enabled: true });
+        lines.extend(after);
     }
-    lines.extend(after);
     lines
+}
+
+/// Whether `id` is an item of a submenu: once one is chosen, Slint leaves the keyboard
+/// nowhere (it gives it to the parent menu, which is gone).
+fn from_submenu(id: u32) -> bool {
+    (COMMAND_FIRST..COMMAND_FIRST + COMMAND_MAX).contains(&id)
 }
 
 /// Whether Slint shows its menus as the system's: on Windows and macOS (through muda),
@@ -1052,13 +1100,41 @@ mod tests {
     use super::*;
 
     #[test]
-    fn gezik_menus_list_the_submenu_among_the_items() {
+    fn gezik_menus_list_the_submenus_among_the_items() {
         let entry = |id: i32, title: &str| MenuEntry { id, title: title.into(), enabled: true };
-        let lines = menu_lines(vec![entry(1, "Open")], "Commands", 2, vec![entry(2, "Cut")]);
+        let lines = menu_lines(
+            vec![entry(1, "Open")],
+            vec![("Copy path as".to_owned(), vec![entry(2, "Cut")]), ("Commands".to_owned(), Vec::new())],
+        );
         let shown: Vec<(i32, &str)> = lines.iter().map(|l| (l.id, l.title.as_str())).collect();
-        assert_eq!(shown, [(1, "Open"), (-1, "Commands"), (2, "Cut")]);
-        // An empty submenu is left out.
-        assert_eq!(menu_lines(vec![entry(1, "Open")], "Commands", 0, Vec::new()).len(), 1);
+        assert_eq!(shown, [(1, "Open"), (-1, "Copy path as"), (2, "Cut"), (-2, "Commands")]);
+    }
+
+    #[test]
+    fn a_menu_is_cut_at_its_submenus() {
+        let sub = |title: &str, at: usize, n: usize| Submenu {
+            title: title.into(),
+            at,
+            items: vec![(1, "x".to_owned(), true); n],
+        };
+        let items = ["a", "b", "c", "d"];
+        let subs = [sub("Late", 9, 1), sub("Empty", 1, 0), sub("Mid", 2, 1), sub("First", 0, 2)];
+        let (before, parts) = split_menu(&items, &subs);
+        assert!(before.is_empty());
+        let shown: Vec<(&str, Vec<&str>)> = parts.iter().map(|(s, after)| (s.title.as_str(), after.clone())).collect();
+        assert_eq!(shown, [("First", vec!["a", "b"]), ("Mid", vec!["c", "d"]), ("Late", vec![])]);
+        let many: Vec<Submenu> = (0..6).map(|i| sub("S", i, 1)).collect();
+        let (_, parts) = split_menu(&items, &many);
+        assert_eq!(parts.len(), MAX_SUBMENUS);
+        assert_eq!(parts.last().unwrap().1, ["d"], "the items after one left out stay");
+        let (before, parts) = split_menu(&items, &[]);
+        assert_eq!((before.len(), parts.len()), (4, 0));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn gezik_ids_end_where_explorers_begin() {
+        assert_eq!(gezik_platform::FIRST_SHELL_ID, GEZIK_IDS_END);
     }
 
     #[test]
@@ -1133,8 +1209,8 @@ mod tests {
         {
             assert!(!presets.iter().any(|r| r.contains(&id)), "{id} is in a preset range");
         }
-        assert!(presets[0].end <= PRESET_DELETE_FIRST && presets[1].end < 1000);
-        assert!(archives.iter().all(|id| (presets[1].end..1000).contains(id)), "below the Shell's ids");
+        assert!(presets[0].end <= PRESET_DELETE_FIRST && presets[1].end < GEZIK_IDS_END);
+        assert!(archives.iter().all(|id| (presets[1].end..GEZIK_IDS_END).contains(id)), "below the Shell's ids");
     }
 
     #[test]
@@ -1213,7 +1289,7 @@ mod tests {
             FILTER_DELETE_FIRST..FILTER_DELETE_FIRST + FILTER_MAX,
         ]);
         for (i, a) in ranges.iter().enumerate() {
-            assert!(a.start >= 1 && a.end <= 1000, "{a:?}: 1..1000 (0 is a heading, 1000 on the Shell's)");
+            assert!(a.start >= 1 && a.end <= GEZIK_IDS_END, "{a:?}: 1..4096 (0 is a heading, 4096 on the Shell's)");
             for b in &ranges[i + 1..] {
                 assert!(a.end <= b.start || b.end <= a.start, "{a:?} meets {b:?}");
             }
