@@ -31,6 +31,7 @@ x11rb::atom_manager! {
         TARGETS,
         INCR,
         UTF8_STRING,
+        TEXT,
         TEXT_PLAIN: b"text/plain;charset=utf-8",
         URI_LIST: b"text/uri-list",
         GNOME_FILES: b"x-special/gnome-copied-files",
@@ -61,6 +62,8 @@ const FINISH_TIMEOUT: Duration = Duration::from_secs(5);
 struct Owned {
     paths: Vec<PathBuf>,
     cut: bool,
+    /// Text instead of files (copied paths): offered as text only.
+    text: Option<String>,
 }
 
 /// A drag from another program over Gezik's window.
@@ -158,9 +161,28 @@ impl Shared {
         }
     }
 
+    /// The formats Gezik offers for `owned`, `TARGETS` first.
+    fn targets(&self, owned: &Owned) -> Vec<Atom> {
+        let a = &self.atoms;
+        if owned.text.is_some() {
+            vec![a.TARGETS, a.UTF8_STRING, a.TEXT_PLAIN, a.TEXT, AtomEnum::STRING.into()]
+        } else {
+            vec![a.TARGETS, a.URI_LIST, a.GNOME_FILES, a.KDE_CUT, a.UTF8_STRING, a.TEXT_PLAIN]
+        }
+    }
+
     /// The bytes of `owned` in format `target`, if Gezik offers it.
     fn render(&self, owned: &Owned, target: Atom) -> Option<Vec<u8>> {
         let a = &self.atoms;
+        if let Some(text) = &owned.text {
+            return if target == a.UTF8_STRING || target == a.TEXT_PLAIN || target == a.TEXT {
+                Some(text.as_bytes().to_vec())
+            } else if target == Atom::from(AtomEnum::STRING) {
+                Some(super::latin1(text))
+            } else {
+                None
+            };
+        }
         if target == a.URI_LIST {
             Some(uri::uri_list(&owned.paths).into_bytes())
         } else if target == a.GNOME_FILES {
@@ -193,7 +215,7 @@ impl Shared {
         let mut answered = NONE;
         if let Some(owned) = owned {
             if request.target == a.TARGETS {
-                let targets = [a.TARGETS, a.URI_LIST, a.GNOME_FILES, a.KDE_CUT, a.UTF8_STRING, a.TEXT_PLAIN];
+                let targets = self.targets(&owned);
                 if self
                     .conn
                     .change_property32(PropMode::REPLACE, request.requestor, property, AtomEnum::ATOM, &targets)
@@ -204,11 +226,10 @@ impl Shared {
             } else if let Some(bytes) = self.render(&owned, request.target) {
                 // A file list never needs INCR; one too big for a single request is refused.
                 let fits = bytes.len() + 64 < self.conn.maximum_request_bytes();
+                // TEXT is answered in the encoding it was given in (ICCCM).
+                let kind = if request.target == a.TEXT { a.UTF8_STRING } else { request.target };
                 if fits
-                    && self
-                        .conn
-                        .change_property8(PropMode::REPLACE, request.requestor, property, request.target, &bytes)
-                        .is_ok()
+                    && self.conn.change_property8(PropMode::REPLACE, request.requestor, property, kind, &bytes).is_ok()
                 {
                     answered = property;
                 }
@@ -451,10 +472,11 @@ impl X11 {
     }
 }
 
-impl super::Backend for X11 {
-    fn write_files(&self, paths: &[PathBuf], cut: bool) -> Result<(), ClipboardError> {
+impl X11 {
+    /// Puts `owned` on the clipboard: Gezik's hidden window becomes its owner.
+    fn own_clipboard(&self, owned: Owned) -> Result<(), ClipboardError> {
         let s = &self.0;
-        s.state().clipboard = Some(Owned { paths: paths.to_vec(), cut });
+        s.state().clipboard = Some(owned);
         let set =
             s.conn.set_selection_owner(s.window, s.atoms.CLIPBOARD, CURRENT_TIME).is_ok() && s.conn.flush().is_ok();
         if set && s.owns(s.atoms.CLIPBOARD) {
@@ -464,11 +486,26 @@ impl super::Backend for X11 {
             Err(ClipboardError::Failed("cannot take the X11 clipboard".into()))
         }
     }
+}
+
+impl super::Backend for X11 {
+    fn write_files(&self, paths: &[PathBuf], cut: bool) -> Result<(), ClipboardError> {
+        self.own_clipboard(Owned { paths: paths.to_vec(), cut, text: None })
+    }
+
+    fn write_text(&self, text: &str) -> Result<(), ClipboardError> {
+        self.own_clipboard(Owned { paths: Vec::new(), cut: false, text: Some(text.to_owned()) })
+    }
 
     fn read_files(&self) -> Result<Option<ClipboardFiles>, ClipboardError> {
         let s = &self.0;
         if s.owns(s.atoms.CLIPBOARD) {
-            return Ok(s.state().clipboard.clone().map(|o| ClipboardFiles { paths: o.paths, cut: o.cut }));
+            return Ok(s
+                .state()
+                .clipboard
+                .clone()
+                .filter(|o| o.text.is_none())
+                .map(|o| ClipboardFiles { paths: o.paths, cut: o.cut }));
         }
         // The owner's formats first: a wait (at most a second) for each format asked for, so
         // only what it offers is asked for.
@@ -542,7 +579,7 @@ impl super::Backend for X11 {
         let s = &self.0;
         {
             let mut state = s.state();
-            state.dragged = Some(Owned { paths: paths.to_vec(), cut: false });
+            state.dragged = Some(Owned { paths: paths.to_vec(), cut: false, text: None });
             state.outgoing = Some(Outgoing { target: None, accepted: false, dropping: false });
         }
         s.conn.set_selection_owner(s.window, s.atoms.XdndSelection, CURRENT_TIME).map_err(|e| e.to_string())?;

@@ -33,6 +33,8 @@ const URI_LIST: &str = "text/uri-list";
 const GNOME_FILES: &str = "x-special/gnome-copied-files";
 const KDE_CUT: &str = "application/x-kde-cutselection";
 const TEXT: &str = "text/plain;charset=utf-8";
+/// The types text (copied paths) is offered as.
+const TEXT_TYPES: [&str; 5] = [TEXT, "text/plain", "UTF8_STRING", "TEXT", "STRING"];
 
 /// How long reading from another program may take.
 const TRANSFER_TIMEOUT: Duration = Duration::from_secs(1);
@@ -47,10 +49,15 @@ pub(crate) fn preferred_mime(types: &[String]) -> Option<&'static str> {
 struct Owned {
     paths: Vec<PathBuf>,
     cut: bool,
+    /// Text instead of files (copied paths): offered as text only.
+    text: Option<String>,
 }
 
 impl Owned {
     fn render(&self, mime: &str) -> Option<Vec<u8>> {
+        if let Some(text) = &self.text {
+            return TEXT_TYPES.contains(&mime).then(|| text.as_bytes().to_vec());
+        }
         match mime {
             URI_LIST => Some(uri::uri_list(&self.paths).into_bytes()),
             GNOME_FILES => Some(uri::gnome_copied_files(&self.paths, self.cut).into_bytes()),
@@ -593,8 +600,9 @@ impl Wayland {
     }
 }
 
-impl super::Backend for Wayland {
-    fn write_files(&self, paths: &[PathBuf], cut: bool) -> Result<(), ClipboardError> {
+impl Wayland {
+    /// Puts `owned` on the clipboard, offered as `types`.
+    fn own_clipboard(&self, owned: Owned, types: &[&str]) -> Result<(), ClipboardError> {
         let s = &self.0;
         let (device, serial) = {
             let inner = s.inner();
@@ -603,16 +611,24 @@ impl super::Backend for Wayland {
         let (Some(device), Some(serial)) = (device, serial) else {
             return Err(ClipboardError::Failed("the window needs the keyboard to use the clipboard".into()));
         };
-        let owned = Owned { paths: paths.to_vec(), cut };
-        let source = s
-            .create_source(owned.clone(), &[GNOME_FILES, URI_LIST, KDE_CUT, TEXT])
-            .ok_or(ClipboardError::Failed("no Wayland data device".into()))?;
+        let source =
+            s.create_source(owned.clone(), types).ok_or(ClipboardError::Failed("no Wayland data device".into()))?;
         device.set_selection(Some(&source), serial);
         let _ = s.conn.flush();
         if let Some((old, _)) = s.inner().clipboard.replace((source, owned)) {
             old.destroy();
         }
         Ok(())
+    }
+}
+
+impl super::Backend for Wayland {
+    fn write_files(&self, paths: &[PathBuf], cut: bool) -> Result<(), ClipboardError> {
+        self.own_clipboard(Owned { paths: paths.to_vec(), cut, text: None }, &[GNOME_FILES, URI_LIST, KDE_CUT, TEXT])
+    }
+
+    fn write_text(&self, text: &str) -> Result<(), ClipboardError> {
+        self.own_clipboard(Owned { paths: Vec::new(), cut: false, text: Some(text.to_owned()) }, &TEXT_TYPES)
     }
 
     fn read_files(&self) -> Result<Option<ClipboardFiles>, ClipboardError> {
@@ -625,6 +641,7 @@ impl super::Backend for Wayland {
                 .inner()
                 .clipboard
                 .as_ref()
+                .filter(|(_, o)| o.text.is_none())
                 .map(|(_, o)| ClipboardFiles { paths: o.paths.clone(), cut: o.cut }));
         };
         let types = offer
@@ -736,7 +753,7 @@ impl super::Backend for Wayland {
         let device = device.ok_or("no Wayland data device")?;
         let serial = serial.ok_or("no button press to drag from")?;
         let source = s
-            .create_source(Owned { paths: paths.to_vec(), cut: false }, &[URI_LIST, TEXT])
+            .create_source(Owned { paths: paths.to_vec(), cut: false, text: None }, &[URI_LIST, TEXT])
             .ok_or("no Wayland data device")?;
         if source.version() >= 3 {
             source.set_actions(DndAction::Copy | DndAction::Move);
@@ -796,5 +813,17 @@ mod tests {
         let (reader, writer) = pipe().unwrap();
         std::fs::File::from(writer).write_all(b"file:///x\r\n").unwrap();
         assert_eq!(read_with_timeout(reader, Duration::from_secs(1)), Some(b"file:///x\r\n".to_vec()));
+    }
+
+    #[test]
+    fn text_is_offered_as_text_only() {
+        let owned = Owned { paths: Vec::new(), cut: false, text: Some("/a/it's ş".to_owned()) };
+        for mime in TEXT_TYPES {
+            assert_eq!(owned.render(mime).as_deref(), Some("/a/it's ş".as_bytes()), "{mime}");
+        }
+        assert_eq!(owned.render(URI_LIST), None);
+        assert_eq!(owned.render(GNOME_FILES), None);
+        let files = Owned { paths: vec![PathBuf::from("/a/b")], cut: false, text: None };
+        assert_eq!(files.render(TEXT).as_deref(), Some(b"/a/b".as_slice()));
     }
 }
