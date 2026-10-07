@@ -33,7 +33,6 @@ pub fn command_chord(index: usize) -> Option<Chord> {
 }
 
 /// A chord as a menu shows it: ⌃⌥⇧⌘ and the key on macOS, "Ctrl+Alt+Shift+K" elsewhere.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn chord_label(chord: &Chord, platform: Platform) -> String {
     let key = match chord.key {
         Key::Char(c) => c.to_ascii_uppercase().to_string(),
@@ -309,7 +308,6 @@ fn digit_chord(ctrl: bool, alt: bool, cmd: bool, platform: Platform) -> bool {
 }
 
 /// The chord bound to `action` now, if any.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn chord_for(action: Action) -> Option<Chord> {
     SHORTCUTS.with(|s| s.borrow().chord_for(action))
 }

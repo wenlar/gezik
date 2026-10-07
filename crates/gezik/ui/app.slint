@@ -255,9 +255,14 @@ export component AppWindow inherits Window {
     // The saved filters' button, with its box (as `view-menu`).
     callback filter-menu(length, length, length, length);
     in property <[SidebarRow]> sidebar-rows;
-    // Position in `sidebar-rows` of the first pinned item (-1 if none), and how many there are.
+    // Position in `sidebar-rows` of the pinned part's first row (a heading; -1 if none), and the
+    // row after its last pin.
     in property <int> sidebar-pinned-first-row: -1;
-    in property <int> sidebar-pinned-count;
+    in property <int> sidebar-pinned-end-row: -1;
+    // The sidebar's tip (sidebar.slint), drawn over everything.
+    in-out property <string> sidebar-tip;
+    in-out property <length> sidebar-tip-x;
+    in-out property <length> sidebar-tip-y;
     // 0 left, 1 right, 2 hidden (`layout.sidebar`).
     in property <int> sidebar-position;
     // Dragged with the splitter (120–480px); saved in state.toml on close.
@@ -302,8 +307,8 @@ export component AppWindow inherits Window {
     callback sidebar-clicked(int, int);
     callback sidebar-middle-clicked(int, int);
     callback sidebar-menu(int, int, length, length);
-    // Moves pinned item `from` to position `to`.
-    callback pinned-move(int, int);
+    // A pinned row (a row of sidebar-rows) was dropped on the line above another row.
+    callback pinned-drop(int, int);
     // The splitter was released.
     callback sidebar-resized();
     // The preview pane on the right (Alt+P); its width is dragged (200-600px) and saved
@@ -839,7 +844,10 @@ export component AppWindow inherits Window {
                     width: root.sidebar-width;
                     rows: root.sidebar-rows;
                     pinned-first-row: root.sidebar-pinned-first-row;
-                    pinned-count: root.sidebar-pinned-count;
+                    pinned-end-row: root.sidebar-pinned-end-row;
+                    tip-text <=> root.sidebar-tip;
+                    tip-x <=> root.sidebar-tip-x;
+                    tip-y <=> root.sidebar-tip-y;
                     scroll <=> root.sidebar-scroll;
                     drop-row: root.drop-sidebar-row;
                     pin-line: root.drop-pin-row;
@@ -849,7 +857,7 @@ export component AppWindow inherits Window {
                         root.end-path-editing();
                         root.sidebar-menu(s, i, x, y);
                     }
-                    pinned-move(a, b) => { root.pinned-move(a, b); }
+                    pinned-drop(a, b) => { root.pinned-drop(a, b); }
                 }
                 // A 1px line, grabbable over 5px.
                 if root.sidebar-position == 0: Rectangle {
@@ -976,7 +984,10 @@ export component AppWindow inherits Window {
                     width: root.sidebar-width;
                     rows: root.sidebar-rows;
                     pinned-first-row: root.sidebar-pinned-first-row;
-                    pinned-count: root.sidebar-pinned-count;
+                    pinned-end-row: root.sidebar-pinned-end-row;
+                    tip-text <=> root.sidebar-tip;
+                    tip-x <=> root.sidebar-tip-x;
+                    tip-y <=> root.sidebar-tip-y;
                     scroll <=> root.sidebar-scroll;
                     drop-row: root.drop-sidebar-row;
                     pin-line: root.drop-pin-row;
@@ -986,7 +997,7 @@ export component AppWindow inherits Window {
                         root.end-path-editing();
                         root.sidebar-menu(s, i, x, y);
                     }
-                    pinned-move(a, b) => { root.pinned-move(a, b); }
+                    pinned-drop(a, b) => { root.pinned-drop(a, b); }
                 }
             }
 
@@ -1304,6 +1315,24 @@ export component AppWindow inherits Window {
                     text: root.drag-label;
                     color: Theme.foreground;
                 }
+            }
+        }
+        // The sidebar's tip, inside the window.
+        if root.sidebar-tip != "": Rectangle {
+            x: max(4px, min(root.sidebar-tip-x, root.width - self.width - 4px));
+            y: min(root.sidebar-tip-y, root.height - self.height - 4px);
+            width: tip-label.preferred-width + 12px;
+            height: tip-label.preferred-height + 8px;
+            background: Theme.surface;
+            border-width: 1px;
+            border-color: Theme.border;
+            border-radius: Theme.radius;
+            accessible-role: none;
+            tip-label := Text {
+                x: 6px;
+                y: 4px;
+                text: root.sidebar-tip;
+                color: Theme.foreground;
             }
         }
     }

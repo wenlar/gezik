@@ -22,7 +22,7 @@ use slint::{ComponentHandle, Model, Timer, TimerMode};
 use crate::context_menu::Menus;
 use crate::navigation::Navigator;
 use crate::operations::Operations;
-use crate::sidebar::{SECTION_PINNED, Sidebar};
+use crate::sidebar::{SECTION_GROUP, SECTION_PINNED, Sidebar};
 use crate::view::View;
 use crate::{AppWindow, Theme};
 
@@ -596,9 +596,10 @@ impl Drags {
                 let rows = window
                     .get_sidebar_rows()
                     .iter()
-                    .map(|row| match (row.header, row.section, usize::try_from(row.index)) {
-                        (true, ..) => SideRow::Header,
-                        (false, SECTION_PINNED, Ok(i)) => SideRow::Pinned(i),
+                    .map(|row| match (row.header, row.section) {
+                        (true, SECTION_PINNED | SECTION_GROUP) => SideRow::PinHeader,
+                        (true, _) => SideRow::Header,
+                        (false, SECTION_PINNED) => SideRow::Pinned,
                         _ => SideRow::Item,
                     })
                     .collect();
@@ -694,9 +695,7 @@ impl Drags {
             _ => -1,
         });
         window.set_drop_pin_row(match target.hit {
-            Hit::PinAt(p) if on && window.get_sidebar_pinned_first_row() >= 0 => {
-                window.get_sidebar_pinned_first_row() + index(p)
-            }
+            Hit::PinAt(row) if on => index(row),
             _ => -1,
         });
         window.set_drop_tab(match target.hit {
@@ -840,8 +839,8 @@ impl Drags {
     }
 
     fn drop_on(&self, d: Dragging, target: Target) -> Option<Effect> {
-        if let (Hit::PinAt(position), Some(Action::Pin)) = (target.hit, target.action) {
-            self.0.sidebar.pin_at(&d.sources, position);
+        if let (Hit::PinAt(row), Some(Action::Pin)) = (target.hit, target.action) {
+            self.0.sidebar.pin_at_row(&d.sources, row);
             return None;
         }
         let dir = target.dir?;

@@ -667,14 +667,8 @@ impl Menus {
     pub fn sidebar_entry(&self, section: i32, index: i32, x: f32, y: f32) {
         let Some(Location::Path(path)) = self.sidebar.location_of(section, index) else { return };
         let pinned_section = section == SECTION_PINNED;
-        let count = if pinned_section { self.sidebar.visible_pinned_count() } else { 0 };
-        let index = usize::try_from(index).unwrap_or(0);
-        let place = Place::Sidebar {
-            pinned_section,
-            pinned: self.sidebar.is_pinned(&path),
-            first: index == 0,
-            last: index + 1 >= count,
-        };
+        let (first, last) = if pinned_section { self.sidebar.group_ends(&path) } else { (true, true) };
+        let place = Place::Sidebar { pinned_section, pinned: self.sidebar.is_pinned(&path), first, last };
         let mut list = owned(items(place, cfg!(windows)));
         list.extend(owned(terminal_items(cfg!(windows))));
         let subs = vec![self.copy_path_sub(std::slice::from_ref(&path), list.len())];
@@ -1008,19 +1002,7 @@ impl Menus {
             }
             (PIN, Subject::Row(path) | Subject::SidebarEntry(path)) => self.sidebar.pin(path),
             (UNPIN, Subject::Row(path) | Subject::SidebarEntry(path)) => self.sidebar.unpin_path(&path),
-            (MOVE_UP, Subject::SidebarEntry(path)) => {
-                if let Some(i) = self.sidebar.visible_pinned_index(&path)
-                    && i > 0
-                {
-                    self.sidebar.move_pinned(i, i - 1);
-                }
-            }
-            (MOVE_DOWN, Subject::SidebarEntry(path)) => {
-                // `move_pinned` clamps, so the last entry stays put.
-                if let Some(i) = self.sidebar.visible_pinned_index(&path) {
-                    self.sidebar.move_pinned(i, i + 1);
-                }
-            }
+            (MOVE_UP | MOVE_DOWN, Subject::SidebarEntry(path)) => self.sidebar.move_in_group(&path, id == MOVE_UP),
             (SAVE_TAB_SET, Subject::Tab(..)) => crate::tab_sets::with_current(crate::tab_sets::TabSets::ask_save),
             (id, Subject::Tab(_, names)) if crate::tab_sets::set_item(id).is_some() => {
                 crate::tab_sets::with_current(|sets| sets.chosen(id, &names));

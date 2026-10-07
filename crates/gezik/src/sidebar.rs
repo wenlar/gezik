@@ -9,6 +9,7 @@ use gezik_config::Warning;
 use gezik_config::paths::KnownDirs;
 use gezik_config::pins::{self, PinEntry};
 use gezik_config::settings_writer::SettingsChange;
+use gezik_config::shortcuts::{Action, Platform};
 use gezik_config::store::ConfigStore;
 use gezik_core::nav::Location;
 use slint::{ComponentHandle, ModelRc, VecModel};
@@ -19,6 +20,7 @@ use crate::{AppWindow, SidebarRow};
 pub const SECTION_FOLDERS: i32 = 0;
 pub const SECTION_PINNED: i32 = 1;
 pub const SECTION_DRIVES: i32 = 2;
+pub const SECTION_GROUP: i32 = 3;
 
 /// The drives' section title: Finder calls it "Locations".
 const DRIVES_HEADER: &str = if cfg!(target_os = "macos") { "LOCATIONS" } else { "DRIVES" };
@@ -61,6 +63,67 @@ pub fn check_pins(dirs: &KnownDirs, pinned: &[PinEntry], exists: impl Fn(&Path) 
             Some(Pin { entry: entry.clone(), path })
         })
         .collect()
+}
+
+/// A row of the pinned part of the sidebar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PinLine {
+    /// "PINNED" (`None`: the pins without a group) or a group's heading.
+    Header(Option<String>),
+    /// Shown pin `n` (an index into the shown pins).
+    Pin(usize),
+}
+
+/// The pinned part's rows for the shown pins (in `pins::normalize` order): a heading before
+/// each run of one group, none before nothing (spec 6.2: a group shows only with a pin in it).
+pub fn pin_lines(visible: &[Pin]) -> Vec<PinLine> {
+    let mut lines = Vec::new();
+    let mut current: Option<Option<&str>> = None;
+    for (n, pin) in visible.iter().enumerate() {
+        let group = pin.entry.group.as_deref();
+        if current != Some(group) {
+            lines.push(PinLine::Header(group.map(str::to_owned)));
+            current = Some(group);
+        }
+        lines.push(PinLine::Pin(n));
+    }
+    lines
+}
+
+/// Where a pin dropped on a line goes: next to shown pin `pin`, before it or `after` it, in
+/// its group.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PinSlot {
+    pub pin: usize,
+    pub after: bool,
+}
+
+/// The slot of the line above row `line` of the pinned part (`lines.len()`: below the last):
+/// above a pin, before it; above a heading or below the last, after the pin before it.
+pub fn slot_at(lines: &[PinLine], line: usize) -> Option<PinSlot> {
+    if let Some(PinLine::Pin(n)) = lines.get(line) {
+        return Some(PinSlot { pin: *n, after: false });
+    }
+    match line.checked_sub(1).and_then(|i| lines.get(i)) {
+        Some(PinLine::Pin(n)) => Some(PinSlot { pin: *n, after: true }),
+        _ => None,
+    }
+}
+
+/// What a pinned row shows when the pointer rests on it: its full path, and the key of its
+/// number (`pin-N`, the first nine).
+pub fn pin_tip(path: &Path, key: Option<&str>) -> String {
+    match key {
+        Some(key) => format!("{}\n{key}", path.display()),
+        None => path.display().to_string(),
+    }
+}
+
+/// The shown pin next to shown pin `n` (before it with `up`) if it is in the same group.
+fn group_neighbour(visible: &[Pin], n: usize, up: bool) -> Option<usize> {
+    let m = if up { n.checked_sub(1)? } else { n + 1 };
+    let (this, other) = (visible.get(n)?, visible.get(m)?);
+    (this.entry.group == other.entry.group).then_some(m)
 }
 
 /// The pinned list and what the sidebar shows of it. Checking which pins exist can be
@@ -131,6 +194,12 @@ struct Inner {
     pins_on_their_way: usize,
     /// The pinned list settings.toml has, as last read or written.
     pins_in_file: Vec<PinEntry>,
+    /// The pinned part as last drawn: its rows, the sidebar row of its first, the groups shown.
+    lines: Vec<PinLine>,
+    first_pin_row: Option<usize>,
+    // Task 9 uses this.
+    #[allow(dead_code)]
+    groups: Vec<String>,
 }
 
 thread_local! {
@@ -164,6 +233,9 @@ impl Sidebar {
             poll: slint::Timer::default(),
             pins_on_their_way: 0,
             pins_in_file: Vec::new(),
+            lines: Vec::new(),
+            first_pin_row: None,
+            groups: Vec::new(),
         })));
         // Re-highlight on location changes, relabel after places reload. No I/O here: this
         // runs on every navigation.
@@ -252,28 +324,92 @@ impl Sidebar {
         self.edit(|list| pins::pin(list, entry));
     }
 
-    /// Pins the folders `paths` at shown position `position` of the PINNED section (dropped
-    /// between two pinned folders); a folder already pinned moves there.
-    pub fn pin_at(&self, paths: &[PathBuf], position: usize) {
-        let (entries, anchor) = {
-            let inner = self.0.borrow();
-            let entries: Vec<String> = paths.iter().map(|path| inner.dirs.collapse(path)).collect();
-            let last = inner.pins.visible.len().checked_sub(1);
-            let anchor = match inner.pins.stored_index(position) {
-                Some(i) => Some((i, false)),
-                None => last.and_then(|last| inner.pins.stored_index(last)).map(|i| (i, true)),
-            };
-            (entries, anchor)
+    /// The shown pin on sidebar row `row`, as its index in the pinned list.
+    fn pin_on_row(&self, row: usize) -> Option<usize> {
+        let inner = self.0.borrow();
+        match inner.lines.get(row.checked_sub(inner.first_pin_row?)?)? {
+            PinLine::Pin(n) => inner.pins.stored_index(*n),
+            PinLine::Header(_) => None,
+        }
+    }
+
+    /// Where a pin dropped on the line above sidebar row `row` goes: next to which pin of the
+    /// list, and whether after it.
+    fn anchor_at_row(&self, row: usize) -> Option<(usize, bool)> {
+        let inner = self.0.borrow();
+        let slot = slot_at(&inner.lines, row.checked_sub(inner.first_pin_row?)?)?;
+        Some((inner.pins.stored_index(slot.pin)?, slot.after))
+    }
+
+    /// The pinned row on sidebar row `from_row` was dragged to the line above row `line_row`: it
+    /// goes there, into that group (spec 6.2).
+    pub fn drop_pinned(&self, from_row: usize, line_row: usize) {
+        let (Some(pin), Some((anchor, after))) = (self.pin_on_row(from_row), self.anchor_at_row(line_row)) else {
+            return;
         };
+        self.edit(|list| {
+            let path = list[pin].path.clone();
+            pins::place(list, vec![path], anchor, after)
+        });
+    }
+
+    /// Folders dropped on the line above sidebar row `row` (drag.rs `Hit::PinAt`) are pinned
+    /// there, in that group; a folder already pinned moves there.
+    pub fn pin_at_row(&self, paths: &[PathBuf], row: usize) {
+        let entries: Vec<String> = {
+            let inner = self.0.borrow();
+            paths.iter().map(|path| inner.dirs.collapse(path)).collect()
+        };
+        let anchor = self.anchor_at_row(row);
         self.edit(|list| match anchor {
             Some((at, after)) => pins::place(list, entries, at, after),
             None => entries.into_iter().fold(false, |changed, entry| pins::pin(list, entry) | changed),
         });
     }
 
-    /// How many rows the PINNED section shows.
-    pub fn visible_pinned_count(&self) -> usize {
-        self.0.borrow().pins.visible.len()
+    /// Whether the shown pin of `path` is the first and the last of its group (Move up/down).
+    pub fn group_ends(&self, path: &Path) -> (bool, bool) {
+        let inner = self.0.borrow();
+        let visible = &inner.pins.visible;
+        let Some(n) = visible.iter().position(|pin| same_path(&pin.path, path)) else { return (true, true) };
+        (group_neighbour(visible, n, true).is_none(), group_neighbour(visible, n, false).is_none())
+    }
+
+    /// Move up / Move down: past the shown pin before or after it, in its group (the pins not on
+    /// this machine stay where they are).
+    pub fn move_in_group(&self, path: &Path, up: bool) {
+        let target = {
+            let inner = self.0.borrow();
+            let visible = &inner.pins.visible;
+            let n = visible.iter().position(|pin| same_path(&pin.path, path));
+            n.and_then(|n| group_neighbour(visible, n, up).zip(Some(n)))
+                .and_then(|(m, n)| inner.pins.stored_index(n).zip(inner.pins.stored_index(m)))
+        };
+        let Some((from, to)) = target else { return };
+        self.edit(|list| {
+            let path = list[from].path.clone();
+            pins::place(list, vec![path], to, !up)
+        });
+    }
+
+    /// The groups shown, in order (a group heading's `index` is its place here).
+    // Task 9 uses this.
+    #[allow(dead_code)]
+    pub fn shown_groups(&self) -> Vec<String> {
+        self.0.borrow().groups.clone()
+    }
+
+    /// The group of the shown pin of `path`.
+    // Task 9 uses this.
+    #[allow(dead_code)]
+    pub fn group_of(&self, path: &Path) -> Option<String> {
+        let inner = self.0.borrow();
+        inner.pins.visible.iter().find(|pin| same_path(&pin.path, path)).and_then(|pin| pin.entry.group.clone())
+    }
+
+    /// The pins' tips name their keys: the rows again once the shortcuts changed.
+    pub fn relabel(&self) {
+        self.update_rows();
     }
 
     /// The PINNED section row that shows `path`, if any.
@@ -294,20 +430,6 @@ impl Sidebar {
         if let Some(index) = self.visible_pinned_index(path) {
             self.unpin(index);
         }
-    }
-
-    /// Moves shown pinned row `from` to shown position `to` (clamped).
-    pub fn move_pinned(&self, from: usize, to: usize) {
-        let target = {
-            let pins = &self.0.borrow().pins;
-            let to = to.min(pins.visible.len().saturating_sub(1));
-            pins.stored_index(from).zip(pins.stored_index(to)).map(|(f, t)| (f, t, to > from))
-        };
-        let Some((from, to, after)) = target else { return };
-        self.edit(|list| {
-            let path = list[from].path.clone();
-            pins::place(list, vec![path], to, after)
-        });
     }
 
     /// Shows `pinned` at once and has the settings writer thread put it into settings.toml;
@@ -387,44 +509,77 @@ impl Sidebar {
         }
     }
 
-    /// Rebuilds the rows: sections, labels and the highlight of the exact current location.
-    /// No file system access.
+    /// Rebuilds the rows: sections, labels, the pinned part's headings and tips, and the
+    /// highlight of the exact current location. No file system access.
     fn update_rows(&self) {
-        let inner = self.0.borrow();
-        let Some(window) = inner.window.upgrade() else { return };
-        let places = inner.nav.places();
-        let current = inner.nav.active_location();
-        let is_current = |path: &Path| matches!(&current, Location::Path(p) if same_path(p, path));
-        let index = |i: usize| i32::try_from(i).unwrap_or(i32::MAX);
-        let header =
-            |label: &str, section| SidebarRow { header: true, label: label.into(), section, index: -1, active: false };
-        let item = |label: &str, section, i, path: &Path| SidebarRow {
-            header: false,
-            label: label.into(),
-            section,
-            index: index(i),
-            active: is_current(path),
+        let (lines, first, groups) = {
+            let inner = self.0.borrow();
+            let Some(window) = inner.window.upgrade() else { return };
+            let places = inner.nav.places();
+            let current = inner.nav.active_location();
+            let is_current = |path: &Path| matches!(&current, Location::Path(p) if same_path(p, path));
+            let index = |i: usize| i32::try_from(i).unwrap_or(i32::MAX);
+            let header = |label: &str, section, i| SidebarRow {
+                header: true,
+                label: label.into(),
+                section,
+                index: i,
+                active: false,
+                tip: "".into(),
+            };
+            let item = |label: &str, section, i, path: &Path| SidebarRow {
+                header: false,
+                label: label.into(),
+                section,
+                index: index(i),
+                active: is_current(path),
+                tip: "".into(),
+            };
+
+            let mut rows = vec![header("FOLDERS", SECTION_FOLDERS, -1)];
+            rows.extend(places.known.iter().enumerate().map(|(i, f)| item(&f.name, SECTION_FOLDERS, i, &f.path)));
+            let visible = &inner.pins.visible;
+            let lines = pin_lines(visible);
+            let first = (!lines.is_empty()).then_some(rows.len());
+            let mut groups: Vec<String> = Vec::new();
+            for line in &lines {
+                rows.push(match line {
+                    PinLine::Header(None) => header("PINNED", SECTION_PINNED, -1),
+                    PinLine::Header(Some(group)) => {
+                        groups.push(group.clone());
+                        header(group.as_str(), SECTION_GROUP, index(groups.len() - 1))
+                    }
+                    PinLine::Pin(n) => {
+                        let pin = &visible[*n];
+                        let label = pin
+                            .entry
+                            .name
+                            .clone()
+                            .unwrap_or_else(|| places.title_for(&Location::Path(pin.path.clone())));
+                        let key = Action::pin(n + 1)
+                            .and_then(crate::keys::chord_for)
+                            .map(|chord| crate::keys::chord_label(&chord, Platform::current()));
+                        SidebarRow {
+                            tip: pin_tip(&pin.path, key.as_deref()).into(),
+                            ..item(&label, SECTION_PINNED, *n, &pin.path)
+                        }
+                    }
+                });
+            }
+            let end = first.map(|_| rows.len());
+            rows.push(header(DRIVES_HEADER, SECTION_DRIVES, -1));
+            rows.extend(places.drives.iter().enumerate().map(|(i, d)| item(&d.label, SECTION_DRIVES, i, &d.path)));
+
+            let as_row = |row: Option<usize>| row.map_or(-1, index);
+            window.set_sidebar_pinned_first_row(as_row(first));
+            window.set_sidebar_pinned_end_row(as_row(end));
+            sync_model(&inner.rows, rows.into_iter());
+            (lines, first, groups)
         };
-
-        let mut rows = vec![header("FOLDERS", SECTION_FOLDERS)];
-        rows.extend(places.known.iter().enumerate().map(|(i, f)| item(&f.name, SECTION_FOLDERS, i, &f.path)));
-        let visible = &inner.pins.visible;
-        let mut pinned_first_row = -1;
-        if !visible.is_empty() {
-            rows.push(header("PINNED", SECTION_PINNED));
-            pinned_first_row = index(rows.len());
-            rows.extend(visible.iter().enumerate().map(|(i, pin)| {
-                let label =
-                    pin.entry.name.clone().unwrap_or_else(|| places.title_for(&Location::Path(pin.path.clone())));
-                item(&label, SECTION_PINNED, i, &pin.path)
-            }));
-        }
-        rows.push(header(DRIVES_HEADER, SECTION_DRIVES));
-        rows.extend(places.drives.iter().enumerate().map(|(i, d)| item(&d.label, SECTION_DRIVES, i, &d.path)));
-
-        window.set_sidebar_pinned_first_row(pinned_first_row);
-        window.set_sidebar_pinned_count(index(visible.len()));
-        sync_model(&inner.rows, rows.into_iter());
+        let mut inner = self.0.borrow_mut();
+        inner.lines = lines;
+        inner.first_pin_row = first;
+        inner.groups = groups;
     }
 }
 
@@ -503,5 +658,128 @@ mod tests {
         let named = PinEntry { path: "/a".into(), name: Some("Alpha".into()), group: None };
         assert!(pins.set(vec![named.clone()]));
         assert_eq!(pins.visible, [Pin { entry: named, path: PathBuf::from("/a") }], "no check needed");
+    }
+
+    fn grouped(path: &str, group: Option<&str>) -> Pin {
+        Pin {
+            entry: PinEntry { path: path.into(), name: None, group: group.map(str::to_owned) },
+            path: PathBuf::from(path),
+        }
+    }
+
+    fn entry(path: &str, group: Option<&str>) -> PinEntry {
+        PinEntry { path: path.into(), name: None, group: group.map(str::to_owned) }
+    }
+
+    #[test]
+    fn pin_lines_skip_hidden_pins_and_empty_groups() {
+        // The stored list has a pin that is not on this machine ("/gone") and a group whose only
+        // pin is not either ("Media"); the check leaves the rest, as the sidebar sees it.
+        let mut state = PinState::default();
+        state.set(vec![
+            entry("/a", None),
+            entry("/gone", None),
+            entry("/w1", Some("Work")),
+            entry("/w2", Some("Work")),
+            entry("/m", Some("Media")),
+            entry("/p", Some("Photos")),
+        ]);
+        let ticket = state.begin_check();
+        let found = [
+            grouped("/a", None),
+            grouped("/w1", Some("Work")),
+            grouped("/w2", Some("Work")),
+            grouped("/p", Some("Photos")),
+        ];
+        assert!(state.finish_check(ticket, found.to_vec()));
+        let lines = pin_lines(&state.visible);
+        assert_eq!(
+            lines,
+            [
+                PinLine::Header(None),
+                PinLine::Pin(0),
+                PinLine::Header(Some("Work".into())),
+                PinLine::Pin(1),
+                PinLine::Pin(2),
+                PinLine::Header(Some("Photos".into())),
+                PinLine::Pin(3),
+            ]
+        );
+        assert!(!lines.contains(&PinLine::Header(Some("Media".into()))), "no heading for a group with nothing shown");
+        // Every line's pin is a shown one; the hidden ones have none and the numbers skip them.
+        let shown: Vec<&str> = lines
+            .iter()
+            .filter_map(|line| match line {
+                PinLine::Pin(n) => Some(state.visible[*n].entry.path.as_str()),
+                PinLine::Header(_) => None,
+            })
+            .collect();
+        assert_eq!(shown, ["/a", "/w1", "/w2", "/p"]);
+        assert_eq!(state.stored_index(3), Some(5), "the shown /p is the sixth stored pin");
+        let only_grouped = [grouped("/w", Some("Work"))];
+        assert_eq!(
+            pin_lines(&only_grouped),
+            [PinLine::Header(Some("Work".into())), PinLine::Pin(0)],
+            "no PINNED heading without a pin under it"
+        );
+        assert!(pin_lines(&[]).is_empty());
+    }
+
+    #[test]
+    fn a_line_finds_its_slot() {
+        let lines = pin_lines(&[grouped("/a", None), grouped("/w1", Some("Work")), grouped("/w2", Some("Work"))]);
+        // 0 PINNED, 1 /a, 2 Work, 3 /w1, 4 /w2; a line is drawn above row n (5: below the last).
+        assert_eq!(slot_at(&lines, 0), None, "above the first heading");
+        assert_eq!(slot_at(&lines, 1), Some(PinSlot { pin: 0, after: false }));
+        assert_eq!(
+            slot_at(&lines, 2),
+            Some(PinSlot { pin: 0, after: true }),
+            "above a heading: after the pin before it"
+        );
+        assert_eq!(slot_at(&lines, 3), Some(PinSlot { pin: 1, after: false }), "the group's first place");
+        assert_eq!(slot_at(&lines, 5), Some(PinSlot { pin: 2, after: true }), "below the last");
+        assert_eq!(slot_at(&lines, 6), None);
+    }
+
+    #[test]
+    fn a_drop_past_the_end_joins_the_last_pins_group() {
+        // The last section is a group: below its last pin is that group's end (spec 6.2).
+        let stored = vec![entry("/a", None), entry("/w1", Some("Work")), entry("/w2", Some("Work"))];
+        let mut state = PinState::default();
+        state.set(stored.clone());
+        let ticket = state.begin_check();
+        state.finish_check(
+            ticket,
+            vec![grouped("/a", None), grouped("/w1", Some("Work")), grouped("/w2", Some("Work"))],
+        );
+        let lines = pin_lines(&state.visible);
+        let slot = slot_at(&lines, lines.len()).unwrap();
+        assert_eq!(slot, PinSlot { pin: 2, after: true });
+        let mut list = state.pinned.clone();
+        assert!(pins::place(&mut list, vec!["/new".into()], state.stored_index(slot.pin).unwrap(), slot.after));
+        assert_eq!(list.last().unwrap(), &entry("/new", Some("Work")), "in the last group, after its last pin");
+        // The line above the heading of that group is the end of the group before it instead.
+        let slot = slot_at(&lines, 2).unwrap();
+        let mut list = state.pinned.clone();
+        assert!(pins::place(&mut list, vec!["/new".into()], state.stored_index(slot.pin).unwrap(), slot.after));
+        assert_eq!(list[1], entry("/new", None), "after /a, ungrouped");
+    }
+
+    #[test]
+    fn a_neighbour_must_share_the_group() {
+        let visible = [grouped("/a", None), grouped("/w1", Some("Work")), grouped("/w2", Some("Work"))];
+        assert_eq!(group_neighbour(&visible, 0, true), None);
+        assert_eq!(group_neighbour(&visible, 0, false), None, "the next pin is in another group");
+        assert_eq!(group_neighbour(&visible, 1, true), None);
+        assert_eq!(group_neighbour(&visible, 1, false), Some(2));
+        assert_eq!(group_neighbour(&visible, 2, true), Some(1));
+        assert_eq!(group_neighbour(&visible, 2, false), None);
+    }
+
+    #[test]
+    fn a_pins_tip_is_its_path_and_its_key() {
+        let path = Path::new("/home/a/Projects");
+        assert_eq!(pin_tip(path, Some("Alt+1")), format!("{}\nAlt+1", path.display()));
+        assert_eq!(pin_tip(path, None), path.display().to_string());
     }
 }

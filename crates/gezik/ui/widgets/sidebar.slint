@@ -3,41 +3,57 @@ import { Theme } from "../theme.slint";
 export struct SidebarRow {
     header: bool,
     label: string,
+    // 0 folders, 1 pinned, 2 drives; a heading of the pinned part is 1 ("PINNED") or 3 (a
+    // group's, `index` its place among the groups shown).
     section: int,
     index: int,
     active: bool,
+    // Shown when the pointer rests on the row: a pinned folder's full path and its key.
+    tip: string,
 }
 
-// Sections of places. Pinned rows (section 1) can be dragged to reorder.
+// Sections of places. Pinned rows (section 1) can be dragged, into another group too; a
+// group's heading (section 3) has a menu.
 export component Sidebar inherits Rectangle {
     in property <[SidebarRow]> rows;
-    // Position in `rows` of the first pinned item (-1 if none), and how many there are.
+    // The pinned part: its first row (a heading; -1: none) and the row after its last pin.
     in property <int> pinned-first-row: -1;
-    in property <int> pinned-count;
+    in property <int> pinned-end-row: -1;
     callback clicked(int, int);
     callback middle-clicked(int, int);
-    // Right-click on item (section, index), at a window position.
+    // Right-click on item (section, index), or on a group's heading (3, group), at a window position.
     callback menu(int, int, length, length);
-    // Moves pinned item `from` to position `to` (indexes within the PINNED section).
-    callback pinned-move(int, int);
+    // The pinned row `from` (a row of `rows`) was dropped on the line above row `line`.
+    callback pinned-drop(int, int);
     // The scroll offset (content-y), shared with the window so drag.rs can find the rows.
     in-out property <length> scroll <=> scroller.content-y;
     // While files are dragged: the row they would drop on, and the row a pin line is drawn
     // above (-1: none).
     in property <int> drop-row: -1;
     in property <int> pin-line: -1;
+    // The tip of the row the pointer rests on and where it goes (window position); app.slint
+    // draws it over everything.
+    in-out property <string> tip-text;
+    in-out property <length> tip-x;
+    in-out property <length> tip-y;
 
     property <length> row-height: Theme.row-height;
-    // While a pinned item is dragged: where it came from and where it would be dropped.
+    // While a pinned row is dragged: its row, and the row the line is drawn above.
     property <int> drag-from: -1;
-    property <int> drag-to: -1;
+    property <int> drag-line: -1;
     // Set once the pointer moved far enough to count as a drag, so the release is no click.
     property <bool> dragged;
     // Set when a drag ends or is dropped; a new drag needs a new press.
     property <bool> drag-blocked;
     // A drag in progress refers to row indexes: when rows are added or removed it is dropped.
     property <int> row-count: root.rows.length;
-    changed row-count => { root.cancel-drag(); }
+    changed row-count => {
+        root.cancel-drag();
+        root.hover-row = -1;
+        root.tip-text = "";
+    }
+    // The row with a tip the pointer is on (-1: none).
+    property <int> hover-row: -1;
 
     background: Theme.surface;
     accessible-role: list;
@@ -46,7 +62,18 @@ export component Sidebar inherits Rectangle {
     function cancel-drag() {
         root.drag-blocked = true;
         root.drag-from = -1;
-        root.drag-to = -1;
+        root.drag-line = -1;
+    }
+
+    // The tip shows once the pointer rests on a row for a moment.
+    Timer {
+        interval: 700ms;
+        running: root.hover-row >= 0 && root.tip-text == "" && root.drag-from < 0;
+        triggered => {
+            root.tip-text = root.rows[root.hover-row].tip;
+            root.tip-x = root.absolute-position.x + Theme.spacing * 3;
+            root.tip-y = root.absolute-position.y + root.scroll + Theme.spacing + (root.hover-row + 1) * root.row-height + 2px;
+        }
     }
 
     // Scrolls by `delta` (the wheel), staying within the content.
@@ -90,6 +117,19 @@ export component Sidebar inherits Rectangle {
                 color: Theme.foreground-muted;
             }
 
+            // A group's heading: its menu on a right-click.
+            if row.header && row.section == 3: TouchArea {
+                pointer-event(event) => {
+                    if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {
+                        root.menu(row.section, row.index, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                    }
+                }
+                scroll-event(event) => {
+                    root.scroll-by(event.delta-y);
+                    accept
+                }
+            }
+
             if !row.header: Rectangle {
                 width: parent.width;
                 height: parent.height;
@@ -117,13 +157,25 @@ export component Sidebar inherits Rectangle {
                     clicked => {
                         if !root.dragged { root.clicked(row.section, row.index); }
                     }
+                    changed has-hover => {
+                        if self.has-hover && row.tip != "" {
+                            root.hover-row = i;
+                        } else if root.hover-row == i {
+                            root.hover-row = -1;
+                        }
+                        root.tip-text = "";
+                    }
                     pointer-event(event) => {
                         if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
                             root.dragged = false;
                             root.drag-blocked = false;
+                            root.tip-text = "";
                         }
                         if event.kind == PointerEventKind.up && event.button == PointerEventButton.left && root.drag-from >= 0 {
-                            if root.drag-to != root.drag-from { root.pinned-move(root.drag-from, root.drag-to); }
+                            // The line above or below itself: no move.
+                            if root.drag-line != root.drag-from && root.drag-line != root.drag-from + 1 {
+                                root.pinned-drop(root.drag-from, root.drag-line);
+                            }
                             root.cancel-drag();
                         }
                         if event.kind == PointerEventKind.cancel {
@@ -139,9 +191,9 @@ export component Sidebar inherits Rectangle {
                     moved => {
                         if row.section == 1 && self.pressed && !root.drag-blocked && (root.dragged || abs(self.mouse-y - self.pressed-y) > 6px) {
                             root.dragged = true;
-                            root.drag-from = row.index;
-                            // Pinned rows are contiguous, so the offset in rows is the offset in the section.
-                            root.drag-to = clamp(row.index + floor(self.mouse-y / root.row-height), 0, root.pinned-count - 1);
+                            root.drag-from = i;
+                            // The line nearest the pointer, inside the pinned part.
+                            root.drag-line = clamp(round(i + self.mouse-y / root.row-height), root.pinned-first-row + 1, root.pinned-end-row);
                         }
                     }
                     scroll-event(event) => {
@@ -161,10 +213,10 @@ export component Sidebar inherits Rectangle {
             background: Theme.accent;
         }
 
-        // Drop position while dragging: between two pinned items.
+        // A pinned row being dragged goes here.
         if root.drag-from >= 0 && root.pinned-first-row >= 0: Rectangle {
             x: Theme.spacing;
-            y: Theme.spacing + (root.pinned-first-row + (root.drag-to > root.drag-from ? root.drag-to + 1 : root.drag-to)) * root.row-height - 1px;
+            y: Theme.spacing + root.drag-line * root.row-height - 1px;
             width: parent.width - Theme.spacing * 2;
             height: 2px;
             background: Theme.accent;

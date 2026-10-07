@@ -84,11 +84,13 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
         SidebarPosition::Right => 1,
         SidebarPosition::Hidden => 2,
     });
+    // The shortcuts first: the pins' tips name their keys.
+    keys::set_shortcuts(loaded.settings.shortcuts.clone());
     // Unchanged pins cost nothing (also after the reload that follows our own save).
     sidebar::with_current(|sidebar| sidebar.set_pinned(loaded.settings.pinned.clone()));
+    sidebar::with_current(sidebar::Sidebar::relabel);
     view::with_current(|view| view.set_defaults(loaded.settings.view));
     view_options::set_from_file(loaded.settings.view.options);
-    keys::set_shortcuts(loaded.settings.shortcuts.clone());
     #[cfg(target_os = "macos")]
     menu_bar::set_commands(window, &loaded.settings.commands);
     frame_limit::set_max_fps(loaded.settings.max_fps);
@@ -697,11 +699,11 @@ fn main() -> Result<(), slint::PlatformError> {
             }
         }
     });
-    window.on_pinned_move({
+    window.on_pinned_drop({
         let sidebar = sidebar.clone();
-        move |from, to| {
-            if let (Ok(from), Ok(to)) = (usize::try_from(from), usize::try_from(to)) {
-                sidebar.move_pinned(from, to);
+        move |from, line| {
+            if let (Ok(from), Ok(line)) = (usize::try_from(from), usize::try_from(line)) {
+                sidebar.drop_pinned(from, line);
             }
         }
     });
