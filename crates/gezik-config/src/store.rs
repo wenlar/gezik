@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use crate::Warning;
 use crate::paths::{config_dir, write_atomic};
+use crate::pins::PinEntry;
 use crate::settings::{Density, Settings, State};
 use crate::settings_writer::{Done, SettingsChange, SettingsWriter};
 use crate::state_store::StateCell;
@@ -156,7 +157,7 @@ impl ConfigStore {
     }
 
     /// Writes the pinned folders into `settings.toml` now, keeping everything else.
-    pub fn save_pinned(&self, pinned: &[String]) -> Result<(), Warning> {
+    pub fn save_pinned(&self, pinned: &[PinEntry]) -> Result<(), Warning> {
         self.save_settings(&SettingsChange::Pinned(pinned.to_vec()))
     }
 
@@ -430,27 +431,27 @@ mod tests {
     fn save_pinned_keeps_user_comments() {
         let store = store("pin-save");
         write(&store, "settings.toml", "# mine\ntheme = \"dark\"\n");
-        store.save_pinned(&["/a".to_owned()]).unwrap();
+        store.save_pinned(&[PinEntry::plain("/a")]).unwrap();
         let text = std::fs::read_to_string(store.dir().join("settings.toml")).unwrap();
         assert!(text.contains("# mine"));
         let loaded = resolve(&store.read_files(), true);
-        assert_eq!(loaded.settings.pinned, ["/a"]);
+        assert_eq!(crate::pins::paths(&loaded.settings.pinned), ["/a"]);
     }
 
     #[test]
     fn save_pinned_creates_missing_file_from_template() {
         let store = store("pin-create");
-        store.save_pinned(&["/a".to_owned()]).unwrap();
+        store.save_pinned(&[PinEntry::plain("/a")]).unwrap();
         let loaded = resolve(&store.read_files(), true);
         assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
-        assert_eq!(loaded.settings.pinned, ["/a"]);
+        assert_eq!(crate::pins::paths(&loaded.settings.pinned), ["/a"]);
     }
 
     #[test]
     fn save_pinned_refuses_a_broken_file() {
         let store = store("pin-broken");
         write(&store, "settings.toml", "theme = \n");
-        let err = store.save_pinned(&["/a".to_owned()]).unwrap_err();
+        let err = store.save_pinned(&[PinEntry::plain("/a")]).unwrap_err();
         assert!(err.message.starts_with("Fix settings.toml first"), "{}", err.message);
         assert_eq!(std::fs::read_to_string(store.dir().join("settings.toml")).unwrap(), "theme = \n");
     }
@@ -459,21 +460,21 @@ mod tests {
     fn save_pinned_handles_bom() {
         let store = store("pin-bom");
         write(&store, "settings.toml", "\u{feff}# mine\ntheme = \"dark\"\n");
-        store.save_pinned(&["/a".to_owned()]).unwrap();
+        store.save_pinned(&[PinEntry::plain("/a")]).unwrap();
         // Read raw file to verify no BOM is written
         let text = std::fs::read_to_string(store.dir().join("settings.toml")).unwrap();
         assert!(!text.starts_with('\u{feff}'), "BOM should not be written");
         assert!(text.contains("# mine"), "user comment should be kept");
         let loaded = resolve(&store.read_files(), true);
         assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
-        assert_eq!(loaded.settings.pinned, ["/a"]);
+        assert_eq!(crate::pins::paths(&loaded.settings.pinned), ["/a"]);
     }
 
     #[test]
     fn save_pinned_refuses_non_array_pinned() {
         let store = store("pin-non-array");
         write(&store, "settings.toml", "pinned = \"not a list\"\n");
-        let err = store.save_pinned(&["/a".to_owned()]).unwrap_err();
+        let err = store.save_pinned(&[PinEntry::plain("/a")]).unwrap_err();
         assert!(err.message.starts_with("Fix settings.toml first"), "{}", err.message);
         assert!(err.message.contains("pinned must be a list"), "{}", err.message);
         // File must not be modified

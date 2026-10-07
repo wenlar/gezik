@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use gezik_config::Warning;
 use gezik_config::paths::KnownDirs;
+use gezik_config::pins::{self, PinEntry};
 use gezik_config::settings_writer::SettingsChange;
 use gezik_config::store::ConfigStore;
 use gezik_core::nav::Location;
@@ -42,60 +43,21 @@ pub fn same_path(a: &Path, b: &Path) -> bool {
                 .all(|(x, y)| same_text(&x.as_os_str().to_string_lossy(), &y.as_os_str().to_string_lossy())))
 }
 
-/// Adds `entry` (tokenized) unless an equal entry is already pinned (ignoring case on
-/// Windows). Returns whether it was added.
-pub fn pin_entry(pinned: &mut Vec<String>, entry: String) -> bool {
-    if pinned.iter().any(|p| same_text(p, &entry)) {
-        return false;
-    }
-    pinned.push(entry);
-    true
-}
-
-/// Pins `entries` at stored position `at` (clamped), in order. An entry already pinned
-/// moves there instead of appearing twice.
-pub fn insert_entries(pinned: &mut Vec<String>, entries: Vec<String>, at: usize) {
-    let mut at = at.min(pinned.len());
-    for entry in entries {
-        if let Some(old) = pinned.iter().position(|p| same_text(p, &entry)) {
-            pinned.remove(old);
-            if old < at {
-                at -= 1;
-            }
-        }
-        pinned.insert(at, entry);
-        at += 1;
-    }
-}
-
-/// Moves pinned item `from` to `to` (clamped). An out-of-range `from` does nothing.
-pub fn move_entry(pinned: &mut [String], from: usize, to: usize) {
-    if from >= pinned.len() {
-        return;
-    }
-    let to = to.min(pinned.len() - 1);
-    if from < to {
-        pinned[from..=to].rotate_left(1);
-    } else {
-        pinned[to..=from].rotate_right(1);
-    }
-}
-
 /// A pinned entry that exists on this machine.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pin {
-    /// As written in settings.toml.
-    pub entry: String,
+    /// As settings.toml has it (the path with tokens, the alias, the group).
+    pub entry: PinEntry,
     pub path: PathBuf,
 }
 
 /// The pinned entries that exist, in `pinned` order. `exists` checks the file system, so
 /// this runs off the UI thread.
-pub fn check_pins(dirs: &KnownDirs, pinned: &[String], exists: impl Fn(&Path) -> bool) -> Vec<Pin> {
+pub fn check_pins(dirs: &KnownDirs, pinned: &[PinEntry], exists: impl Fn(&Path) -> bool) -> Vec<Pin> {
     pinned
         .iter()
         .filter_map(|entry| {
-            let path = dirs.expand_checked(entry).filter(|p| exists(p))?;
+            let path = dirs.expand_checked(&entry.path).filter(|p| exists(p))?;
             Some(Pin { entry: entry.clone(), path })
         })
         .collect()
@@ -106,8 +68,8 @@ pub fn check_pins(dirs: &KnownDirs, pinned: &[String], exists: impl Fn(&Path) ->
 /// meanwhile `visible` keeps the entries already known to exist, in the new order.
 #[derive(Debug, Default)]
 struct PinState {
-    /// As written in settings.toml.
-    pinned: Vec<String>,
+    /// As settings.toml has it, in the order the sidebar shows it (`pins::normalize`).
+    pinned: Vec<PinEntry>,
     /// What the PINNED section shows; its indexes are the section's row indexes.
     visible: Vec<Pin>,
     /// Bumped by every check, so that the result of an overtaken check is dropped.
@@ -116,13 +78,19 @@ struct PinState {
 
 impl PinState {
     /// Takes a new pinned list. Returns false if it is unchanged.
-    fn set(&mut self, pinned: Vec<String>) -> bool {
+    fn set(&mut self, pinned: Vec<PinEntry>) -> bool {
+        let pinned = pins::normalize(pinned);
         if self.pinned == pinned {
             return false;
         }
         let known = std::mem::take(&mut self.visible);
-        self.visible =
-            pinned.iter().filter_map(|entry| known.iter().find(|pin| pin.entry == *entry).cloned()).collect();
+        self.visible = pinned
+            .iter()
+            .filter_map(|entry| {
+                let pin = known.iter().find(|pin| pin.entry.path == entry.path)?;
+                Some(Pin { entry: entry.clone(), path: pin.path.clone() })
+            })
+            .collect();
         self.pinned = pinned;
         true
     }
@@ -145,7 +113,7 @@ impl PinState {
     /// The index in `pinned` of shown row `index`.
     fn stored_index(&self, index: usize) -> Option<usize> {
         let pin = self.visible.get(index)?;
-        self.pinned.iter().position(|entry| *entry == pin.entry)
+        pins::find(&self.pinned, &pin.entry.path)
     }
 }
 
@@ -162,7 +130,7 @@ struct Inner {
     /// Pin lists sent to the settings writer and not yet written (or failed).
     pins_on_their_way: usize,
     /// The pinned list settings.toml has, as last read or written.
-    pins_in_file: Vec<String>,
+    pins_in_file: Vec<PinEntry>,
 }
 
 thread_local! {
@@ -243,7 +211,7 @@ impl Sidebar {
     /// reload). Does nothing if they are unchanged, so the settings reload that follows our own
     /// save costs nothing; nor while our own saves are on their way (the list shown is what
     /// they write, and the next edit builds on it).
-    pub fn set_pinned(&self, pinned: Vec<String>) {
+    pub fn set_pinned(&self, pinned: Vec<PinEntry>) {
         let writing = {
             let mut inner = self.0.borrow_mut();
             inner.pins_in_file = pinned.clone();
@@ -254,7 +222,7 @@ impl Sidebar {
         }
     }
 
-    fn show_pinned(&self, pinned: Vec<String>) {
+    fn show_pinned(&self, pinned: Vec<PinEntry>) {
         let changed = self.0.borrow_mut().pins.set(pinned);
         if changed {
             self.update_rows();
@@ -262,7 +230,7 @@ impl Sidebar {
         }
     }
 
-    pub fn pinned(&self) -> Vec<String> {
+    pub fn pinned(&self) -> Vec<PinEntry> {
         self.0.borrow().pins.pinned.clone()
     }
 
@@ -271,25 +239,36 @@ impl Sidebar {
         self.visible_pinned_index(path).is_some()
     }
 
-    pub fn pin(&self, path: PathBuf) {
-        let entry = self.0.borrow().dirs.collapse(&path);
+    /// Changes the pinned list with `change`; saves it if `change` says it changed.
+    fn edit(&self, change: impl FnOnce(&mut Vec<PinEntry>) -> bool) {
         let mut pinned = self.pinned();
-        if pin_entry(&mut pinned, entry) {
+        if change(&mut pinned) {
             self.save(pinned);
         }
+    }
+
+    pub fn pin(&self, path: PathBuf) {
+        let entry = self.0.borrow().dirs.collapse(&path);
+        self.edit(|list| pins::pin(list, entry));
     }
 
     /// Pins the folders `paths` at shown position `position` of the PINNED section (dropped
     /// between two pinned folders); a folder already pinned moves there.
     pub fn pin_at(&self, paths: &[PathBuf], position: usize) {
-        let (entries, at) = {
+        let (entries, anchor) = {
             let inner = self.0.borrow();
             let entries: Vec<String> = paths.iter().map(|path| inner.dirs.collapse(path)).collect();
-            (entries, inner.pins.stored_index(position).unwrap_or(inner.pins.pinned.len()))
+            let last = inner.pins.visible.len().checked_sub(1);
+            let anchor = match inner.pins.stored_index(position) {
+                Some(i) => Some((i, false)),
+                None => last.and_then(|last| inner.pins.stored_index(last)).map(|i| (i, true)),
+            };
+            (entries, anchor)
         };
-        let mut pinned = self.pinned();
-        insert_entries(&mut pinned, entries, at);
-        self.save(pinned);
+        self.edit(|list| match anchor {
+            Some((at, after)) => pins::place(list, entries, at, after),
+            None => entries.into_iter().fold(false, |changed, entry| pins::pin(list, entry) | changed),
+        });
     }
 
     /// How many rows the PINNED section shows.
@@ -305,10 +284,9 @@ impl Sidebar {
     /// Unpins the shown pinned row `index` (index within the PINNED section).
     pub fn unpin(&self, index: usize) {
         let stored = self.0.borrow().pins.stored_index(index);
-        let Some(stored) = stored else { return };
-        let mut pinned = self.pinned();
-        pinned.remove(stored);
-        self.save(pinned);
+        if let Some(stored) = stored {
+            self.edit(|list| pins::unpin(list, stored));
+        }
     }
 
     /// Unpins the shown pinned entry whose folder is `path`.
@@ -320,25 +298,23 @@ impl Sidebar {
 
     /// Moves shown pinned row `from` to shown position `to` (clamped).
     pub fn move_pinned(&self, from: usize, to: usize) {
-        let stored = {
+        let target = {
             let pins = &self.0.borrow().pins;
             let to = to.min(pins.visible.len().saturating_sub(1));
-            pins.stored_index(from).zip(pins.stored_index(to))
+            pins.stored_index(from).zip(pins.stored_index(to)).map(|(f, t)| (f, t, to > from))
         };
-        let Some((from, to)) = stored else { return };
-        if from == to {
-            return;
-        }
-        let mut pinned = self.pinned();
-        move_entry(&mut pinned, from, to);
-        self.save(pinned);
+        let Some((from, to, after)) = target else { return };
+        self.edit(|list| {
+            let path = list[from].path.clone();
+            pins::place(list, vec![path], to, after)
+        });
     }
 
     /// Shows `pinned` at once and has the settings writer thread put it into settings.toml;
     /// the config watcher reloads settings afterwards with the same list, which `set_pinned`
     /// ignores. If the write fails, the status bar says why and the list goes back to what the
     /// file has.
-    fn save(&self, pinned: Vec<String>) {
+    fn save(&self, pinned: Vec<PinEntry>) {
         let Some(store) = self.0.borrow().store.clone() else {
             return self.say(&Warning::new("settings.toml", "no config folder; pins are not saved"));
         };
@@ -350,7 +326,7 @@ impl Sidebar {
     }
 
     /// The settings writer is done with one pin list.
-    fn pins_written(&self, pinned: Vec<String>, result: Result<(), Warning>) {
+    fn pins_written(&self, pinned: Vec<PinEntry>, result: Result<(), Warning>) {
         let (last, in_file) = {
             let mut inner = self.0.borrow_mut();
             inner.pins_on_their_way = inner.pins_on_their_way.saturating_sub(1);
@@ -438,7 +414,8 @@ impl Sidebar {
             rows.push(header("PINNED", SECTION_PINNED));
             pinned_first_row = index(rows.len());
             rows.extend(visible.iter().enumerate().map(|(i, pin)| {
-                let label = places.title_for(&Location::Path(pin.path.clone()));
+                let label =
+                    pin.entry.name.clone().unwrap_or_else(|| places.title_for(&Location::Path(pin.path.clone())));
                 item(&label, SECTION_PINNED, i, &pin.path)
             }));
         }
@@ -455,47 +432,12 @@ impl Sidebar {
 mod tests {
     use super::*;
 
-    fn strings(items: &[&str]) -> Vec<String> {
-        items.iter().map(|s| (*s).to_owned()).collect()
+    fn plain(items: &[&str]) -> Vec<PinEntry> {
+        items.iter().map(|s| PinEntry::plain(*s)).collect()
     }
 
     fn pin(entry: &str, path: &str) -> Pin {
-        Pin { entry: entry.to_owned(), path: PathBuf::from(path) }
-    }
-
-    #[test]
-    fn dropped_folders_are_pinned_where_they_land() {
-        let mut pinned = strings(&["/a", "/b", "/c"]);
-        insert_entries(&mut pinned, strings(&["/x", "/y"]), 1);
-        assert_eq!(pinned, ["/a", "/x", "/y", "/b", "/c"]);
-        insert_entries(&mut pinned, strings(&["/c"]), 0);
-        assert_eq!(pinned, ["/c", "/a", "/x", "/y", "/b"], "an existing pin moves");
-        insert_entries(&mut pinned, strings(&["/a"]), 4);
-        assert_eq!(pinned, ["/c", "/x", "/y", "/a", "/b"], "moving down: the gap it leaves is counted");
-        insert_entries(&mut pinned, strings(&["/z"]), 99);
-        assert_eq!(pinned.last().map(String::as_str), Some("/z"), "past the end: last");
-    }
-
-    #[test]
-    fn pin_is_idempotent() {
-        let mut pinned = vec!["/a".to_owned()];
-        assert!(!pin_entry(&mut pinned, "/a".to_owned()));
-        assert!(pin_entry(&mut pinned, "/b".to_owned()));
-        assert_eq!(pinned, ["/a", "/b"]);
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn pin_ignores_case_on_windows() {
-        let mut pinned = vec!["C:/Work".to_owned()];
-        assert!(!pin_entry(&mut pinned, "c:/work".to_owned()));
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn pin_ignores_non_ascii_case_on_windows() {
-        let mut pinned = vec!["C:/ÇALIŞMA".to_owned()];
-        assert!(!pin_entry(&mut pinned, "c:/çalişma".to_owned()));
+        Pin { entry: PinEntry::plain(entry), path: PathBuf::from(path) }
     }
 
     #[cfg(windows)]
@@ -516,7 +458,7 @@ mod tests {
     #[test]
     fn check_pins_keeps_existing_entries_in_order() {
         let dirs = KnownDirs::new(vec![("documents", PathBuf::from("/u/docs"))]);
-        let pinned = strings(&["/gone", "{documents}", "/x/../y", "/work"]);
+        let pinned = plain(&["/gone", "{documents}", "/x/../y", "/work"]);
         let visible = check_pins(&dirs, &pinned, |p| p != Path::new("/gone"));
         // Entries with `..` are never expanded.
         assert_eq!(visible, [pin("{documents}", "/u/docs"), pin("/work", "/work")]);
@@ -525,26 +467,26 @@ mod tests {
     #[test]
     fn a_new_list_keeps_known_pins_until_checked() {
         let mut pins = PinState::default();
-        assert!(pins.set(strings(&["/a", "/b"])));
+        assert!(pins.set(plain(&["/a", "/b"])));
         assert!(pins.visible.is_empty(), "nothing is shown before the first check");
         let ticket = pins.begin_check();
         assert!(pins.finish_check(ticket, vec![pin("/a", "/a"), pin("/b", "/b")]));
         // Reordered with one added: known pins show at once in the new order, the new one
         // only once checked.
-        assert!(pins.set(strings(&["/c", "/b", "/a"])));
+        assert!(pins.set(plain(&["/c", "/b", "/a"])));
         assert_eq!(pins.visible, [pin("/b", "/b"), pin("/a", "/a")]);
         assert_eq!(pins.stored_index(0), Some(1));
         assert_eq!(pins.stored_index(1), Some(2));
         assert_eq!(pins.stored_index(2), None);
-        assert!(!pins.set(strings(&["/c", "/b", "/a"])), "an unchanged list is ignored");
+        assert!(!pins.set(plain(&["/c", "/b", "/a"])), "an unchanged list is ignored");
     }
 
     #[test]
     fn an_overtaken_check_is_dropped() {
         let mut pins = PinState::default();
-        pins.set(strings(&["/a"]));
+        pins.set(plain(&["/a"]));
         let old = pins.begin_check();
-        pins.set(strings(&["/a", "/b"]));
+        pins.set(plain(&["/a", "/b"]));
         let new = pins.begin_check();
         assert!(!pins.finish_check(old, vec![pin("/a", "/a")]));
         assert!(pins.visible.is_empty());
@@ -553,15 +495,13 @@ mod tests {
     }
 
     #[test]
-    fn move_entry_reorders() {
-        let mut pinned = vec!["a".to_owned(), "b".to_owned(), "c".to_owned()];
-        move_entry(&mut pinned, 0, 2);
-        assert_eq!(pinned, ["b", "c", "a"]);
-        move_entry(&mut pinned, 2, 0);
-        assert_eq!(pinned, ["a", "b", "c"]);
-        move_entry(&mut pinned, 1, 99);
-        assert_eq!(pinned, ["a", "c", "b"]);
-        move_entry(&mut pinned, 9, 0);
-        assert_eq!(pinned, ["a", "c", "b"]);
+    fn a_new_alias_shows_at_once() {
+        let mut pins = PinState::default();
+        pins.set(plain(&["/a"]));
+        let ticket = pins.begin_check();
+        pins.finish_check(ticket, vec![pin("/a", "/a")]);
+        let named = PinEntry { path: "/a".into(), name: Some("Alpha".into()), group: None };
+        assert!(pins.set(vec![named.clone()]));
+        assert_eq!(pins.visible, [Pin { entry: named, path: PathBuf::from("/a") }], "no check needed");
     }
 }

@@ -1,6 +1,7 @@
 //! `settings.toml` (portable, may be synced) and `state.toml` (this machine only).
 
 use crate::Warning;
+use crate::pins::{PinEntry, find as find_pin, parse_pin};
 use crate::shortcuts::{KeyOwner, Platform, Shortcuts, fixed_owner, parse_chord};
 use gezik_core::batch::convert::{CommandSpec, check_command};
 use gezik_core::history::Visit;
@@ -214,8 +215,9 @@ pub struct Settings {
     pub density: Density,
     /// `"drives"`, or a path (with `{home}`-style tokens) to open new tabs in.
     pub start_folder: String,
-    /// Pinned folders as written (tokenized, `/` separators), in display order.
-    pub pinned: Vec<String>,
+    /// Pinned folders as written (tokenized, `/` separators), in the file's order (the sidebar shows
+    /// them grouped: `pins::normalize`).
+    pub pinned: Vec<PinEntry>,
     pub shortcuts: Shortcuts,
     pub view: ViewDefaults,
     pub files: FilesSettings,
@@ -354,14 +356,13 @@ impl Settings {
                 None => warnings.push(Warning::new(file, format!("pinned: expected a list of folders, got {value}"))),
                 Some(items) => {
                     for item in items {
-                        let Some(text) = item.as_str() else {
-                            warnings.push(Warning::new(file, format!("pinned: expected text, got {item}")));
-                            continue;
-                        };
-                        if crate::paths::has_parent_segment(text) {
-                            warnings.push(Warning::new(file, format!("pinned: \"{text}\" must not contain \"..\"")));
-                        } else if !settings.pinned.iter().any(|p| p == text) {
-                            settings.pinned.push(text.to_owned());
+                        match parse_pin(item) {
+                            Ok(pin) if find_pin(&settings.pinned, &pin.path).is_some() => warnings.push(Warning::new(
+                                file,
+                                format!("pinned: \"{}\" is pinned twice; the second is left out", pin.path),
+                            )),
+                            Ok(pin) => settings.pinned.push(pin),
+                            Err(err) => warnings.push(Warning::new(file, format!("pinned: {err}"))),
                         }
                     }
                 }
@@ -1236,6 +1237,7 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pins::{self, PinEntry};
 
     fn parse(text: &str) -> (Settings, Vec<Warning>) {
         let mut warnings = Vec::new();
@@ -1365,7 +1367,7 @@ pinned = [\"{documents}/Projects\", \"D:/Work\"]
         );
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(settings.start_folder, "drives");
-        assert_eq!(settings.pinned, ["{documents}/Projects", "D:/Work"]);
+        assert_eq!(pins::paths(&settings.pinned), ["{documents}/Projects", "D:/Work"]);
     }
 
     #[test]
@@ -1374,11 +1376,57 @@ pinned = [\"{documents}/Projects\", \"D:/Work\"]
             "pinned = [\"/a\", \"/a\", \"{home}/../etc\", 3]
 ",
         );
-        assert_eq!(settings.pinned, ["/a"]);
+        assert_eq!(pins::paths(&settings.pinned), ["/a"]);
         let messages: Vec<_> = warnings.iter().map(|w| w.message.as_str()).collect();
-        assert_eq!(messages.len(), 2, "{messages:?}");
+        assert_eq!(messages.len(), 3, "{messages:?}");
+        assert!(messages.iter().any(|m| m.contains("pinned twice")));
         assert!(messages.iter().any(|m| m.contains("..")));
         assert!(messages.iter().any(|m| m.contains("expected text")));
+    }
+
+    #[test]
+    fn pins_of_both_forms_are_read_and_bad_ones_warned() {
+        let (settings, warnings) = parse(
+            "pinned = [\n  \"{documents}/Projects\",\n  { path = \"D:/Work/gezik\", name = \" Gezik \", group = \"Work\" },\n  \
+             { path = \"//nas/foto\", group = \"Media\" },\n  { path = \"/x\", icon = \"star\" },\n  { name = \"no path\" },\n  \
+             \"\",\n  \"{home}/../etc\",\n  3,\n  \"{documents}/Projects\",\n  { path = \"/n\", name = 5 },\n]\n",
+        );
+        assert_eq!(
+            settings.pinned,
+            [
+                PinEntry::plain("{documents}/Projects"),
+                PinEntry { path: "D:/Work/gezik".into(), name: Some("Gezik".into()), group: Some("Work".into()) },
+                PinEntry { path: "//nas/foto".into(), name: None, group: Some("Media".into()) },
+            ]
+        );
+        let messages: Vec<&str> = warnings.iter().map(|w| w.message.as_str()).collect();
+        assert_eq!(messages.len(), 7, "{messages:?}");
+        assert!(messages[0].starts_with("pinned: unknown key \"icon\" in "), "{messages:?}");
+        assert!(messages[1].starts_with("pinned: path is missing in "), "{messages:?}");
+        assert_eq!(messages[2], "pinned: path is missing in \"\"");
+        assert_eq!(messages[3], "pinned: \"{home}/../etc\" must not contain \"..\"");
+        assert_eq!(messages[4], "pinned: expected text or { path, name, group }, got 3");
+        assert_eq!(messages[5], "pinned: \"{documents}/Projects\" is pinned twice; the second is left out");
+        assert_eq!(messages[6], "pinned: name must be text, got 5");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_pin_twice_in_other_case_is_one_on_windows() {
+        let (settings, warnings) = parse("pinned = [\"C:/Work\", \"c:/work\"]\n");
+        assert_eq!(pins::paths(&settings.pinned), ["C:/Work"]);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+    }
+
+    #[test]
+    fn the_template_pinned_example_reads_once_uncommented() {
+        let template = include_str!("../templates/settings.toml");
+        let line =
+            template.lines().find(|l| l.starts_with("# pinned = [")).expect("the template shows a pinned example");
+        let (settings, warnings) = parse(&format!("{}\n", &line[2..]));
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(settings.pinned.len(), 2);
+        assert_eq!(settings.pinned[1].group.as_deref(), Some("Work"));
     }
 
     #[test]
@@ -1387,7 +1435,7 @@ pinned = [\"{documents}/Projects\", \"D:/Work\"]
             "pinned = [\"Z:/not/on/this/machine\"]
 ",
         );
-        assert_eq!(settings.pinned, ["Z:/not/on/this/machine"]);
+        assert_eq!(pins::paths(&settings.pinned), ["Z:/not/on/this/machine"]);
     }
 
     #[test]
