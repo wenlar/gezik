@@ -492,7 +492,7 @@ mod tests {
     #[test]
     fn views_handed_to_the_writer_are_on_disk_after_a_flush() {
         use gezik_core::view::{ViewMode, ViewSettings};
-        let store = store("views-writer");
+        let store = store("views-handed-over");
         let mut memory = ViewMemory::default();
         for i in 0..10 {
             memory.set(&format!("/f{i}"), ViewSettings { mode: ViewMode::Grid, ..ViewSettings::default() });
