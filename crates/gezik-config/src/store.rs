@@ -172,6 +172,11 @@ impl ConfigStore {
         self.save_settings(&SettingsChange::Filters(filters.to_vec()))
     }
 
+    /// Writes the tab sets into `settings.toml` now.
+    pub fn save_tab_sets(&self, sets: &[crate::settings::TabSet]) -> Result<(), Warning> {
+        self.save_settings(&SettingsChange::TabSets(sets.to_vec()))
+    }
+
     /// The saved folder views. A missing file means none; an unreadable or broken one
     /// starts over, with a warning.
     pub fn load_views(&self) -> (ViewMemory, Option<Warning>) {
@@ -528,5 +533,19 @@ theme = \"dark\"
         );
         let err = store.save_filters(&[]).unwrap_err();
         assert!(err.message.starts_with("Fix settings.toml first"), "{}", err.message);
+    }
+
+    #[test]
+    fn tab_sets_are_written_into_settings() {
+        use crate::settings::TabSet;
+        let store = store("save-tab-sets");
+        write(&store, "settings.toml", "# mine\ntheme = \"dark\"\n");
+        let set = TabSet { name: "Release".into(), tabs: vec!["{downloads}".into(), "drives".into()] };
+        store.save_tab_sets(std::slice::from_ref(&set)).unwrap();
+        let text = std::fs::read_to_string(store.dir().join("settings.toml")).unwrap();
+        assert!(text.contains("# mine"));
+        assert_eq!(resolve(&store.read_files(), true).settings.tab_sets, [set]);
+        store.save_tab_sets(&[]).unwrap();
+        assert!(resolve(&store.read_files(), true).settings.tab_sets.is_empty());
     }
 }

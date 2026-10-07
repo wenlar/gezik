@@ -667,6 +667,7 @@ mod tests {
             Key::F(n) => (
                 text(match n {
                     2 => SlintKey::F2,
+                    4 => SlintKey::F4,
                     5 => SlintKey::F5,
                     other => panic!("no default uses f{other}"),
                 }),
@@ -736,11 +737,15 @@ mod tests {
                 Action::TabLast => "ctrl+9",
                 Action::ReopenTab => "ctrl+shift+t",
                 Action::TabPicker => "ctrl+shift+a",
+                Action::OpenTerminal => "shift+f4",
+                Action::CopyPath => "ctrl+shift+c",
                 Action::PasteMove
                 | Action::Duplicate
                 | Action::BatchRename
                 | Action::ToggleTabLock
-                | Action::ClearHistory => continue,
+                | Action::ClearHistory
+                | Action::OpenTerminalAdmin
+                | Action::SaveTabSet => continue,
             };
             assert_eq!(reach(text), Some(action), "{text}");
         }

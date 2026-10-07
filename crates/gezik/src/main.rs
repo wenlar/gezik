@@ -254,7 +254,11 @@ fn handle_key(
                 | Action::ReopenTab
                 | Action::TabPicker
                 | Action::ToggleTabLock
-                | Action::ClearHistory => {
+                | Action::ClearHistory
+                | Action::OpenTerminal
+                | Action::OpenTerminalAdmin
+                | Action::CopyPath
+                | Action::SaveTabSet => {
                     if action == Action::Filter && editing {
                         window.set_path_editing(false);
                     }

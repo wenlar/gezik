@@ -4,10 +4,12 @@ use crate::Warning;
 use crate::shortcuts::{KeyOwner, Platform, Shortcuts, fixed_owner, parse_chord};
 use gezik_core::batch::convert::{CommandSpec, check_command};
 use gezik_core::history::Visit;
+use gezik_core::nav::{Location, Session, SessionTab};
 use gezik_core::ops::threads::{COPY_THREADS_RANGE, CopyThreads};
 use gezik_core::view::{
     ColumnKey, ColumnState, GridSize, IconMode, SortDir, SortKey, ViewMode, ViewSettings, normalize_columns,
 };
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ThemeChoice {
@@ -156,6 +158,33 @@ impl Default for HistorySettings {
     }
 }
 
+/// `[session]`: the tabs of last time at start (kept in state.toml).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionSettings {
+    pub restore: bool,
+}
+
+impl Default for SessionSettings {
+    fn default() -> Self {
+        SessionSettings { restore: true }
+    }
+}
+
+/// `[terminal]`: the command "Open terminal" runs instead of the one Gezik finds.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TerminalSettings {
+    /// A program and its arguments; `{dir}` is the folder.
+    pub command: Option<Vec<String>>,
+}
+
+/// A tab set (`[[tab-sets]]`): tabs opened together.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TabSet {
+    pub name: String,
+    /// Paths with `{home}`-style tokens, or "drives" (This PC).
+    pub tabs: Vec<String>,
+}
+
 /// A saved filter (`[[filters]]`): a name and a pattern of the filter's own language.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SavedFilter {
@@ -196,6 +225,10 @@ pub struct Settings {
     pub rename_presets: Vec<RenamePreset>,
     pub keyboard: KeyboardSettings,
     pub history: HistorySettings,
+    pub session: SessionSettings,
+    pub terminal: TerminalSettings,
+    /// Tab sets (`[[tab-sets]]`); invalid ones are left out.
+    pub tab_sets: Vec<TabSet>,
     /// Saved filters; invalid ones are left out.
     pub filters: Vec<SavedFilter>,
     pub archives: ArchivesSettings,
@@ -225,6 +258,9 @@ impl Default for Settings {
             rename_presets: Vec::new(),
             keyboard: KeyboardSettings::default(),
             history: HistorySettings::default(),
+            session: SessionSettings::default(),
+            terminal: TerminalSettings::default(),
+            tab_sets: Vec::new(),
             filters: Vec::new(),
             archives: ArchivesSettings::default(),
             tools: ToolsSettings::default(),
@@ -398,6 +434,20 @@ impl Settings {
                 None => warnings.push(Warning::new(file, format!("history: expected a table, got {value}"))),
             },
         }
+        match table.get("session") {
+            None => {}
+            Some(value) => match value.as_table() {
+                Some(session) => settings.session = parse_session(session, file, warnings),
+                None => warnings.push(Warning::new(file, format!("session: expected a table, got {value}"))),
+            },
+        }
+        match table.get("terminal") {
+            None => {}
+            Some(value) => match value.as_table() {
+                Some(terminal) => settings.terminal = parse_terminal(terminal, file, warnings),
+                None => warnings.push(Warning::new(file, format!("terminal: expected a table, got {value}"))),
+            },
+        }
         if let Some(value) = table.get("filters") {
             match value.as_array() {
                 None => warnings.push(Warning::new(file, format!("filters: expected [[filters]] tables, got {value}"))),
@@ -417,6 +467,32 @@ impl Settings {
                             }
                             Ok(filter) => settings.filters.push(filter),
                             Err(err) => warnings.push(Warning::new(file, format!("filters[{}]: {err}", i + 1))),
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(value) = table.get("tab-sets") {
+            match value.as_array() {
+                None => {
+                    warnings.push(Warning::new(file, format!("tab-sets: expected [[tab-sets]] tables, got {value}")))
+                }
+                Some(items) => {
+                    for (i, item) in items.iter().enumerate() {
+                        match parse_tab_set(item) {
+                            // Names are told apart ignoring case, as the menu and "Save tabs as…" do.
+                            Ok(set) if settings.tab_sets.iter().any(|s| same_filter_name(&s.name, &set.name)) => {
+                                warnings.push(Warning::new(
+                                    file,
+                                    format!(
+                                        "tab-sets[{}]: \"{}\" is already used; this one is left out",
+                                        i + 1,
+                                        set.name
+                                    ),
+                                ));
+                            }
+                            Ok(set) => settings.tab_sets.push(set),
+                            Err(err) => warnings.push(Warning::new(file, format!("tab-sets[{}]: {err}", i + 1))),
                         }
                     }
                 }
@@ -556,6 +632,66 @@ fn parse_history(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -
         }
     }
     out
+}
+
+fn parse_session(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> SessionSettings {
+    let mut out = SessionSettings::default();
+    if let Some(value) = table.get("restore") {
+        match value.as_bool() {
+            Some(on) => out.restore = on,
+            None => warnings.push(Warning::new(file, format!("session.restore: expected true or false, got {value}"))),
+        }
+    }
+    out
+}
+
+/// `[terminal] command`: a list of text with `{dir}` the only placeholder; an empty list is
+/// none (Gezik finds a terminal).
+fn parse_terminal(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> TerminalSettings {
+    let Some(value) = table.get("command") else { return TerminalSettings::default() };
+    let Ok(command) = string_list(value, "command") else {
+        warnings.push(Warning::new(file, format!("terminal.command: expected a list of text, got {value}")));
+        return TerminalSettings::default();
+    };
+    if command.is_empty() {
+        return TerminalSettings::default();
+    }
+    match gezik_core::batch::convert::check_dir_command(&command) {
+        Ok(()) => TerminalSettings { command: Some(command) },
+        Err(err) => {
+            warnings.push(Warning::new(file, format!("terminal.command: {err}; Gezik finds a terminal")));
+            TerminalSettings::default()
+        }
+    }
+}
+
+/// One `[[tab-sets]]` entry; the error is why it is left out (a path with `..` leaves out the
+/// whole set, which Gezik then keeps in the file as it is).
+pub(crate) fn parse_tab_set(value: &toml::Value) -> Result<TabSet, String> {
+    let table = value.as_table().ok_or_else(|| format!("expected a table, got {value}"))?;
+    let name =
+        table.get("name").and_then(|v| v.as_str()).map(str::trim).filter(|n| !n.is_empty()).ok_or("name is missing")?;
+    let tabs = match table.get("tabs") {
+        None => return Err("tabs is missing".to_owned()),
+        Some(value) => string_list(value, "tabs")?,
+    };
+    if tabs.is_empty() {
+        return Err("tabs is missing".to_owned());
+    }
+    if tabs.iter().any(|tab| tab.trim().is_empty()) {
+        return Err("tabs has an empty path".to_owned());
+    }
+    if let Some(bad) = tabs.iter().find(|tab| crate::paths::has_parent_segment(tab)) {
+        return Err(format!("\"{bad}\" must not contain \"..\""));
+    }
+    Ok(TabSet { name: name.to_owned(), tabs })
+}
+
+pub fn tab_set_to_toml(set: &TabSet) -> toml::Table {
+    let mut table = toml::Table::new();
+    table.insert("name".into(), toml::Value::String(set.name.clone()));
+    table.insert("tabs".into(), toml::Value::Array(set.tabs.iter().cloned().map(toml::Value::String).collect()));
+    table
 }
 
 /// Whether two saved filters' names are one, ignoring case.
@@ -821,6 +957,36 @@ pub struct State {
     pub selection: SelectionState,
     /// The folders visited (`[history] folders`), for the address bar's lists.
     pub history: Vec<Visit>,
+    /// The tabs of last time (`[session]`), opened at start if `[session] restore`.
+    pub session: Session,
+}
+
+/// state.toml's `[session]` (spec 5.1): the tabs in order and the one in front. An entry
+/// without a path (or `drives = true`), or with a relative one, is left out, and `active`
+/// counts the kept ones (the first if its entry was left out).
+fn session_state(value: Option<&toml::Value>) -> Session {
+    let Some(table) = value.and_then(|v| v.as_table()) else { return Session::default() };
+    let wanted = table.get("active").and_then(|v| v.as_integer()).and_then(|n| usize::try_from(n).ok()).unwrap_or(0);
+    let mut session = Session::default();
+    let mut active = None;
+    for (i, item) in table.get("tabs").and_then(|v| v.as_array()).into_iter().flatten().enumerate() {
+        let Some(tab) = item.as_table() else { continue };
+        let location = if tab.get("drives").and_then(|v| v.as_bool()) == Some(true) {
+            Location::Drives
+        } else {
+            match tab.get("path").and_then(|v| v.as_str()).map(PathBuf::from) {
+                Some(path) if path.is_absolute() => Location::Path(path),
+                _ => continue,
+            }
+        };
+        if i == wanted {
+            active = Some(session.tabs.len());
+        }
+        let locked = tab.get("locked").and_then(|v| v.as_bool()).unwrap_or(false);
+        session.tabs.push(SessionTab { location, locked });
+    }
+    session.active = active.unwrap_or(0);
+    session
 }
 
 impl State {
@@ -926,6 +1092,7 @@ impl State {
             convert,
             selection,
             history,
+            session: session_state(table.get("session")),
         }
     }
 
@@ -1035,6 +1202,32 @@ impl State {
             let mut history = toml::Table::new();
             history.insert("folders".into(), toml::Value::Array(folders));
             root.insert("history".into(), toml::Value::Table(history));
+        }
+        if !self.session.is_empty() {
+            let tabs = self
+                .session
+                .tabs
+                .iter()
+                .map(|tab| {
+                    let mut table = toml::Table::new();
+                    match &tab.location {
+                        Location::Path(path) => {
+                            table.insert("path".into(), toml::Value::String(path.to_string_lossy().into_owned()));
+                        }
+                        Location::Drives => {
+                            table.insert("drives".into(), toml::Value::Boolean(true));
+                        }
+                    }
+                    if tab.locked {
+                        table.insert("locked".into(), toml::Value::Boolean(true));
+                    }
+                    toml::Value::Table(table)
+                })
+                .collect();
+            let mut session = toml::Table::new();
+            session.insert("active".into(), toml::Value::Integer(i64::try_from(self.session.active).unwrap_or(0)));
+            session.insert("tabs".into(), toml::Value::Array(tabs));
+            root.insert("session".into(), toml::Value::Table(session));
         }
         root.to_string()
     }
@@ -1408,6 +1601,9 @@ rules = []
         assert_eq!(settings.keyboard, KeyboardSettings::default());
         assert_eq!(settings.history, HistorySettings::default());
         assert!(settings.filters.is_empty());
+        assert_eq!(settings.session, SessionSettings::default());
+        assert_eq!(settings.terminal, TerminalSettings::default());
+        assert!(settings.tab_sets.is_empty());
     }
 
     #[test]
@@ -1851,5 +2047,141 @@ shortcut = \"shift+f8\"
             broken.history,
             [Visit { path: "/b".into(), count: 2, last: 0 }, Visit { path: "/c".into(), count: 1, last: 0 }]
         );
+    }
+
+    #[test]
+    fn session_terminal_and_tab_sets_are_read() {
+        let (settings, warnings) = parse(
+            "[session]\nrestore = false\n\n[terminal]\ncommand = [\"wezterm\", \"start\", \"--cwd\", \"{dir}\"]\n\n\
+             [[tab-sets]]\nname = \" Release \"\ntabs = [\"D:/Work/gezik\", \"{downloads}\", \"drives\"]\n",
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(!settings.session.restore);
+        assert_eq!(settings.terminal.command.as_ref().map(Vec::len), Some(4));
+        assert_eq!(
+            settings.tab_sets,
+            [TabSet {
+                name: "Release".into(),
+                tabs: vec!["D:/Work/gezik".into(), "{downloads}".into(), "drives".into()]
+            }]
+        );
+        let defaults = Settings::default();
+        assert!(defaults.session.restore && defaults.terminal.command.is_none() && defaults.tab_sets.is_empty());
+    }
+
+    #[test]
+    fn bad_session_terminal_and_tab_sets_warn() {
+        let (settings, warnings) = parse(
+            "[session]\nrestore = \"yes\"\n\n[terminal]\ncommand = [\"x\", \"{foo}\"]\n\n\
+             [[tab-sets]]\nname = \"\"\ntabs = [\"/a\"]\n\
+             [[tab-sets]]\nname = \"Up\"\ntabs = [\"{home}/../x\"]\n\
+             [[tab-sets]]\nname = \"None\"\ntabs = []\n\
+             [[tab-sets]]\nname = \"Good\"\ntabs = [\"/a\"]\n\
+             [[tab-sets]]\nname = \"GOOD\"\ntabs = [\"/b\"]\n\
+             [[tab-sets]]\nname = \"Num\"\ntabs = [3]\n",
+        );
+        assert!(settings.session.restore, "a bad value keeps the default");
+        assert_eq!(settings.terminal.command, None);
+        assert_eq!(settings.tab_sets.len(), 1);
+        let messages: Vec<&str> = warnings.iter().map(|w| w.message.as_str()).collect();
+        assert_eq!(
+            messages,
+            [
+                "session.restore: expected true or false, got \"yes\"",
+                "terminal.command: unknown placeholder {foo}; Gezik finds a terminal",
+                "tab-sets[1]: name is missing",
+                "tab-sets[2]: \"{home}/../x\" must not contain \"..\"",
+                "tab-sets[3]: tabs is missing",
+                "tab-sets[5]: \"GOOD\" is already used; this one is left out",
+                "tab-sets[6]: tabs must be a list of text, got 3",
+            ]
+        );
+        let (_, warnings) = parse("terminal = 1\n");
+        assert!(warnings[0].message.starts_with("terminal: expected a table"), "{warnings:?}");
+        let (_, warnings) = parse("[terminal]\ncommand = \"wt\"\n");
+        assert!(warnings[0].message.starts_with("terminal.command: expected a list of text"), "{warnings:?}");
+        let (settings, warnings) = parse("[terminal]\ncommand = []\n");
+        assert!(warnings.is_empty() && settings.terminal.command.is_none());
+    }
+
+    #[test]
+    fn the_session_round_trips_in_state() {
+        use gezik_core::nav::{Location, Session, SessionTab};
+        let state = State {
+            session: Session {
+                tabs: vec![
+                    SessionTab { location: Location::Path(std::env::temp_dir().join("gezik ş 'x'")), locked: true },
+                    SessionTab { location: Location::Drives, locked: false },
+                ],
+                active: 1,
+            },
+            ..State::default()
+        };
+        assert_eq!(State::parse(&state.to_toml()), state);
+        assert!(!State::default().to_toml().contains("session"));
+    }
+
+    #[test]
+    fn broken_session_entries_are_left_out() {
+        use gezik_core::nav::{Location, Session, SessionTab};
+        let abs = std::env::temp_dir().join("a");
+        let text = format!(
+            "[session]\nactive = 3\n\n[[session.tabs]]\npath = \"relative/x\"\n\n[[session.tabs]]\nlocked = true\n\n\
+             [[session.tabs]]\ndrives = true\n\n[[session.tabs]]\npath = {}\nlocked = \"yes\"\n",
+            toml::Value::String(abs.to_string_lossy().into_owned())
+        );
+        let session = State::parse(&text).session;
+        assert_eq!(
+            session.tabs,
+            [
+                SessionTab { location: Location::Drives, locked: false },
+                SessionTab { location: Location::Path(abs), locked: false }
+            ]
+        );
+        assert_eq!(session.active, 1, "active counts the kept entries");
+        let gone = State::parse(
+            "[session]\nactive = 0\n\n[[session.tabs]]\npath = \"x\"\n\n[[session.tabs]]\ndrives = true\n",
+        );
+        assert_eq!(gone.session.active, 0, "the active entry was left out: the first");
+        assert_eq!(State::parse("[session]\nactive = -2\n").session, Session::default());
+    }
+
+    #[test]
+    fn the_template_tab_set_example_reads_once_uncommented() {
+        let template = include_str!("../templates/settings.toml");
+        let start = template.find("# [[tab-sets]]").expect("the template has a tab set example");
+        let example: String = template[start..]
+            .lines()
+            .take_while(|line| line.starts_with('#'))
+            .map(|line| format!("{}\n", line.strip_prefix("# ").unwrap_or(line)))
+            .collect();
+        let (settings, warnings) = parse(&example);
+        assert!(warnings.is_empty(), "{warnings:?}\n{example}");
+        assert_eq!(settings.tab_sets.len(), 1);
+    }
+
+    /// Files written before 7a (no `[session]`, `[terminal]` or `[[tab-sets]]`) still load
+    /// as they did, and the new parts take their defaults.
+    #[test]
+    fn pre_7a_settings_and_state_still_load() {
+        let (settings, warnings) = parse(
+            "theme = \"dark\"\nstart-folder = \"{home}\"\n\n[history]\nremember = false\n\n\
+             [keyboard]\ntyping = \"filter\"\n\n[shortcuts]\nclear-history = \"ctrl+shift+h\"\n\n\
+             [[filters]]\nname = \"Pictures\"\npattern = \"*.jpg\"\n",
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(!settings.history.remember);
+        assert_eq!(settings.filters.len(), 1);
+        assert_eq!(settings.session, SessionSettings::default());
+        assert_eq!(settings.terminal, TerminalSettings::default());
+        assert!(settings.tab_sets.is_empty());
+        let state = State::parse(
+            "[window]\nwidth = 1000\nheight = 700\n\n[preview]\nopen = true\n\n\
+             [history]\nfolders = [{ path = \"/a\", count = 2, last = 5 }]\n",
+        );
+        assert_eq!(state.window.map(|w| w.width), Some(1000));
+        assert!(state.preview_open);
+        assert_eq!(state.history.len(), 1);
+        assert!(state.session.is_empty());
     }
 }

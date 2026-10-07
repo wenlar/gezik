@@ -74,7 +74,12 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         | Action::Undo
         | Action::Redo
         | Action::BatchRename
-        | Action::ToggleHidden => return false,
+        | Action::ToggleHidden
+        // 7a's: Task 7 and Task 9 place these.
+        | Action::OpenTerminal
+        | Action::OpenTerminalAdmin
+        | Action::CopyPath
+        | Action::SaveTabSet => return false,
     }
     true
 }

@@ -75,6 +75,13 @@ pub fn with_filters(text: &str, filters: &[crate::settings::SavedFilter]) -> Res
     with_tables(text, "filters", tables, |item| crate::settings::parse_filter(item).is_ok())
 }
 
+/// Returns `text` with `[[tab-sets]]` replaced by `sets`; the rest stays, and so do the
+/// entries that do not read as a tab set (see `with_rename_presets`).
+pub fn with_tab_sets(text: &str, sets: &[crate::settings::TabSet]) -> Result<String, String> {
+    let tables = sets.iter().map(crate::settings::tab_set_to_toml).collect();
+    with_tables(text, "tab-sets", tables, |item| crate::settings::parse_tab_set(item).is_ok())
+}
+
 /// Replaces the `[[key]]` tables that `valid` accepts with `tables`; the entries it rejects
 /// are written back unchanged after them.
 fn with_tables(
@@ -473,6 +480,27 @@ name = \"broken\" # mine
                 "{line} lost:
 {back}"
             );
+        }
+    }
+
+    #[test]
+    fn tab_sets_are_written_keeping_the_rest() {
+        use crate::settings::{Settings, TabSet};
+        let set = TabSet { name: "Release".into(), tabs: vec!["{downloads}".into(), "drives".into()] };
+        let text = "# mine\n\n[[tab-sets]]\nname = \"old\"\ntabs = [\"/a\"]\n\n\
+                    [[tab-sets]]\nname = \"broken\" # mine\ntabs = [\"{home}/../x\"]\n";
+        let out = with_tab_sets(text, std::slice::from_ref(&set)).unwrap();
+        assert!(out.contains("# mine") && out.contains("name = \"broken\" # mine"), "{out}");
+        assert!(!out.contains("\"old\""), "a valid one is replaced: {out}");
+        let mut warnings = Vec::new();
+        let settings = Settings::parse("settings.toml", &out, &mut warnings);
+        assert_eq!(settings.tab_sets, [set]);
+        assert_eq!(warnings.len(), 1, "the broken one still warns: {warnings:?}");
+        let template = include_str!("../templates/settings.toml");
+        let one = [TabSet { name: "X".into(), tabs: vec!["/x".into()] }];
+        let back = with_tab_sets(&with_tab_sets(template, &one).unwrap(), &[]).unwrap();
+        for line in template.lines().filter(|l| l.starts_with('#')) {
+            assert!(back.lines().any(|b| b == line), "{line} lost:\n{back}");
         }
     }
 }

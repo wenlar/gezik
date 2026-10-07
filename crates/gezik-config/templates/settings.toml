@@ -64,6 +64,17 @@ typing = "jump"           # jump | filter
 # state.toml). false also forgets them; "clear-history" (no key by default) empties the list.
 remember = true
 
+[session]
+# Open the tabs of last time at start, in order, with the one in front and the locks (kept
+# in state.toml, this computer's own). false: one tab in start-folder, the kept tabs forgotten.
+restore = true
+
+[terminal]
+# The terminal "Open terminal" runs: a program and its arguments, {dir} is the folder ("{{"
+# and "}}" are braces). Unset: Gezik finds one (Windows Terminal, else PowerShell; Terminal on
+# macOS; $TERMINAL, x-terminal-emulator or a terminal it knows on Linux).
+# command = ["wezterm", "start", "--cwd", "{dir}"]
+
 [shortcuts]
 # Change any shortcut; "mod" is Cmd on macOS and Ctrl elsewhere; "" disables.
 # new-tab = "mod+t"
@@ -105,6 +116,10 @@ remember = true
 # tab-picker = "mod+shift+a"
 # toggle-tab-lock = ""     # a locked tab does not close
 # clear-history = ""     # forget the folders the address bar remembers
+# open-terminal = ["shift+f4", "ctrl+alt+t"]   # macOS: "mod+alt+t"
+# open-terminal-admin = ""   # Windows only: the terminal as administrator
+# copy-path = "ctrl+shift+c"   # the selected items' paths as text; macOS: "mod+alt+c"
+# save-tab-set = ""        # save the open tabs under a name
 
 # Saved rule sets for batch rename (Rename… with two or more items selected). The rename
 # layer writes them with "Presets ▾ › Save current rules as…"; they can also be written here.
@@ -123,6 +138,12 @@ remember = true
 # [[filters]]
 # name = "Pictures"
 # pattern = "*.jpg;*.jpeg;*.png;*.heic;*.webp"
+
+# Tab sets: tabs opened together from a tab's right-click menu ("Open tab set >"; "Save tabs
+# as…" there writes them here). "drives" is This PC; tokens like {home} work on every OS.
+# [[tab-sets]]
+# name = "Release"
+# tabs = ["{documents}/Projects", "{downloads}", "drives"]
 
 # Your own commands, shown in the Convert layer under "Commands" and in the right-click
 # menu under "Commands >" (only for files that match "types"). No shell is used: "run" is a
