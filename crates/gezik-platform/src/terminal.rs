@@ -3,7 +3,7 @@
 //! given in a `Lookup`), so every rule is tested on every system; `open` asks the real ones.
 //! Windows' and Linux's rules were tried in docs/superpowers/notes/2026-10-08-gunluk-kolayliklar-probe.md.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,13 +48,17 @@ pub enum TerminalError {
 /// The environment `choose` decides by.
 pub struct Lookup<'a> {
     pub os: Os,
-    /// `[terminal] command`.
+    /// `[terminal] command`. Its program must be `found`: a name on PATH (on Windows with or
+    /// without its extension, PATHEXT tried) or a path. A name only the App Paths key knows
+    /// needs its full path.
     pub command: Option<&'a [String]>,
-    /// `$TERMINAL` (Linux).
+    /// `$TERMINAL` (Linux): a program and its arguments, split at spaces, not parsed as a shell
+    /// would (no quotes). A known terminal named alone gets its folder flags.
     pub terminal_var: Option<&'a str>,
     /// `XDG_CURRENT_DESKTOP` (Linux), `:`-separated.
     pub desktop: Option<&'a str>,
-    /// Whether a program runs: a name on PATH (`.exe` added on Windows) or a path.
+    /// Whether a program runs: a name on PATH (PATHEXT tried on Windows for a name without an
+    /// extension) or a path.
     pub found: &'a dyn Fn(&str) -> bool,
     /// The file name of the program a link on PATH stands for (`x-terminal-emulator`).
     pub real_name: &'a dyn Fn(&str) -> Option<String>,
@@ -123,14 +127,36 @@ pub fn wt_dir(dir: &str) -> String {
     dir.replace(';', r"\;")
 }
 
-/// `args` as one Windows command line, the way `CommandLineToArgvW` splits it back.
+/// The characters PowerShell's tokenizer takes for a single quote: `'` and the typographic
+/// ones (U+2018-U+201B). Checked against every BMP character in Windows PowerShell 5.1's
+/// parser; PowerShell 7's `IsSingleQuote` has the same set.
+const POWERSHELL_SINGLE_QUOTES: [char; 5] = ['\'', '\u{2018}', '\u{2019}', '\u{201A}', '\u{201B}'];
+
+/// `text` as a PowerShell single-quoted string: each quote doubled (by itself), so none ends
+/// the string.
+pub fn powershell_literal(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 2);
+    out.push('\'');
+    for c in text.chars() {
+        if POWERSHELL_SINGLE_QUOTES.contains(&c) {
+            out.push(c);
+        }
+        out.push(c);
+    }
+    out.push('\'');
+    out
+}
+
+/// `args` as one Windows command line, the way `CommandLineToArgvW` splits it back. An
+/// argument with a character cmd.exe gives a meaning (`&|<>^()`) is quoted too, for a
+/// `[terminal] command` that runs through cmd.
 pub fn windows_command_line(args: &[String]) -> String {
     let mut out = String::new();
     for (i, arg) in args.iter().enumerate() {
         if i > 0 {
             out.push(' ');
         }
-        if !arg.is_empty() && !arg.contains([' ', '\t', '"']) {
+        if !arg.is_empty() && !arg.contains([' ', '\t', '"', '&', '|', '<', '>', '^', '(', ')']) {
             out.push_str(arg);
             continue;
         }
@@ -171,6 +197,10 @@ pub fn choose(dir: &Path, admin: bool, lookup: &Lookup<'_>) -> Result<Launch, Te
     if let Some(command) = lookup.command {
         let mut args = gezik_core::batch::convert::expand_dir_command(command, dir).map_err(TerminalError::Failed)?;
         let program = args.remove(0);
+        // Never handed to the Shell unfound: it would show its own "cannot find" dialog.
+        if !(lookup.found)(&program.to_string_lossy()) {
+            return Err(TerminalError::NotFound);
+        }
         return Ok(Launch { program, args, dir: dir.to_path_buf(), elevated: admin });
     }
     let found = lookup.found;
@@ -189,15 +219,21 @@ pub fn choose(dir: &Path, admin: bool, lookup: &Lookup<'_>) -> Result<Launch, Te
             };
             // Given as an argument: PowerShell 5.1 does not start in a folder with `[`, and an
             // elevated one does not always get its working folder (probe 4.1).
-            let go = format!("Set-Location -LiteralPath '{}'", text.replace('\'', "''"));
+            let go = format!("Set-Location -LiteralPath {}", powershell_literal(&text));
             Ok(launch(shell, vec!["-NoExit".into(), "-Command".into(), go.into()]))
         }
         Os::Mac => Ok(launch("/usr/bin/open", vec!["-a".into(), "Terminal".into(), dir.as_os_str().to_owned()])),
         Os::Linux => {
             if let Some(var) = lookup.terminal_var {
-                let mut words = var.split_whitespace();
-                if let Some(program) = words.next().filter(|program| found(program)) {
-                    return Ok(launch(program, words.map(OsString::from).collect()));
+                let words: Vec<&str> = var.split_whitespace().collect();
+                if let Some((program, rest)) = words.split_first().filter(|(program, _)| found(program)) {
+                    let args = if rest.is_empty() {
+                        let name = Path::new(program).file_name().and_then(OsStr::to_str).unwrap_or(program);
+                        flags_of(name, dir)
+                    } else {
+                        rest.iter().map(OsString::from).collect()
+                    };
+                    return Ok(launch(program, args));
                 }
             }
             if found("x-terminal-emulator") {
@@ -214,16 +250,37 @@ pub fn choose(dir: &Path, admin: bool, lookup: &Lookup<'_>) -> Result<Launch, Te
     }
 }
 
-/// Whether `name` runs: a path to a program, or a program in a folder of PATH (`.exe` added on
-/// Windows, where the Store's app aliases count: Rust 1.99 sees them as files, probe 4.1).
+/// Whether `name` runs (see `find_program`).
 fn on_path(name: &str) -> bool {
-    let path = Path::new(name);
-    if path.components().count() > 1 {
-        return runnable(path);
+    let pathext = std::env::var("PATHEXT").ok();
+    find_program(name, std::env::var_os("PATH").as_deref(), pathext.as_deref(), cfg!(windows)).is_some()
+}
+
+/// The program `name` stands for: a path as it is, else the first match in a folder of `path`
+/// (absolute ones only). On Windows (`windows`) a name with an extension is looked for as it
+/// is, one without with each of `pathext`'s (`.COM;.EXE;.BAT;.CMD` if unset). The Store's app
+/// aliases count: Rust 1.99 sees them as files (probe 4.1).
+fn find_program(name: &str, path: Option<&OsStr>, pathext: Option<&str>, windows: bool) -> Option<PathBuf> {
+    if name.is_empty() {
+        return None;
     }
-    let Some(dirs) = std::env::var_os("PATH") else { return false };
-    let file = format!("{name}{}", std::env::consts::EXE_SUFFIX);
-    std::env::split_paths(&dirs).filter(|dir| dir.is_absolute()).any(|dir| runnable(&dir.join(&file)))
+    let program = Path::new(name);
+    if program.components().count() > 1 || program.is_absolute() {
+        return runnable(program).then(|| program.to_path_buf());
+    }
+    let files: Vec<String> = if windows && program.extension().is_none() {
+        pathext
+            .unwrap_or(".COM;.EXE;.BAT;.CMD")
+            .split(';')
+            .filter(|ext| ext.len() > 1 && ext.starts_with('.'))
+            .map(|ext| format!("{name}{ext}"))
+            .collect()
+    } else {
+        vec![name.to_owned()]
+    };
+    std::env::split_paths(path?)
+        .filter(|dir| dir.is_absolute())
+        .find_map(|dir| files.iter().map(|file| dir.join(file)).find(|candidate| runnable(candidate)))
 }
 
 fn runnable(path: &Path) -> bool {
@@ -250,7 +307,30 @@ fn real_name(name: &str) -> Option<String> {
 /// Opens a terminal in `dir` (`admin`: as administrator, Windows only). Looks through PATH, so
 /// not on the UI thread. The terminal does not end with Gezik.
 pub fn open(dir: &Path, admin: bool, command: Option<&[String]>) -> Result<(), TerminalError> {
+    match std::fs::metadata(dir) {
+        Ok(meta) if meta.is_dir() => {}
+        Ok(_) => return Err(TerminalError::Failed("It is not a folder".to_owned())),
+        Err(err) => return Err(TerminalError::Failed(crate::fs::describe(&err))),
+    }
     let os = Os::current();
+    // The program by its full path, found as `choose` checks it: the Shell would look in
+    // Gezik's own working folder first.
+    let resolved: Option<Vec<String>> = command.map(|command| {
+        let mut command = command.to_vec();
+        if let Some(program) = command.first_mut()
+            && !program.contains('{')
+        {
+            let pathext = std::env::var("PATHEXT").ok();
+            let path = std::env::var_os("PATH");
+            if let Some(full) = find_program(program, path.as_deref(), pathext.as_deref(), cfg!(windows))
+                .and_then(|full| full.into_os_string().into_string().ok())
+            {
+                *program = full;
+            }
+        }
+        command
+    });
+    let command = resolved.as_deref();
     // An elevated session does not see the drives this user mapped: their share instead.
     let unc = (admin && os == Os::Windows)
         .then(|| gezik_core::path_text::unc_path(&dir.to_string_lossy(), &crate::fs::mapped_remote))
@@ -303,6 +383,10 @@ fn start(launch: &Launch) -> Result<(), TerminalError> {
     Err(TerminalError::Failed(crate::fs::describe(&std::io::Error::from_raw_os_error(err.0 as i32))))
 }
 
+/// Terminals whose waiting thread could not be started: reaped at the next start.
+#[cfg(unix)]
+static UNREAPED: std::sync::Mutex<Vec<std::process::Child>> = std::sync::Mutex::new(Vec::new());
+
 /// A process of its own group (Ctrl+C where Gezik was started does not reach it), waited for
 /// on a small thread so that one that exits at once (gnome-terminal hands its window to its
 /// server) leaves no zombie.
@@ -310,7 +394,9 @@ fn start(launch: &Launch) -> Result<(), TerminalError> {
 fn start(launch: &Launch) -> Result<(), TerminalError> {
     use std::os::unix::process::CommandExt;
     use std::process::{Command, Stdio};
-    let mut child = Command::new(&launch.program)
+    use std::sync::{Arc, Mutex, PoisonError};
+    UNREAPED.lock().unwrap_or_else(PoisonError::into_inner).retain_mut(|child| matches!(child.try_wait(), Ok(None)));
+    let child = Command::new(&launch.program)
         .args(&launch.args)
         .current_dir(&launch.dir)
         .stdin(Stdio::null())
@@ -319,9 +405,23 @@ fn start(launch: &Launch) -> Result<(), TerminalError> {
         .process_group(0)
         .spawn()
         .map_err(|err| TerminalError::Failed(crate::fs::describe(&err)))?;
-    let _ = std::thread::Builder::new().name("gezik-terminal".into()).stack_size(64 * 1024).spawn(move || {
-        let _ = child.wait();
+    // Shared with the thread, so that the child is still here if the thread cannot start.
+    let waiting = Arc::new(Mutex::new(Some(child)));
+    let theirs = waiting.clone();
+    let spawned = std::thread::Builder::new().name("gezik-terminal".into()).stack_size(64 * 1024).spawn(move || {
+        let child = theirs.lock().unwrap_or_else(PoisonError::into_inner).take();
+        if let Some(mut child) = child {
+            let _ = child.wait();
+        }
     });
+    if spawned.is_err() {
+        let child = waiting.lock().unwrap_or_else(PoisonError::into_inner).take();
+        if let Some(mut child) = child
+            && matches!(child.try_wait(), Ok(None))
+        {
+            UNREAPED.lock().unwrap_or_else(PoisonError::into_inner).push(child);
+        }
+    }
     Ok(())
 }
 
@@ -380,6 +480,54 @@ mod tests {
     }
 
     #[test]
+    fn every_quote_powershell_reads_is_doubled() {
+        // PowerShell ends a single-quoted string at ‘ ’ ‚ ‛ too: undoubled, `x’;calc;’` would
+        // run calc (elevated, with "as administrator").
+        let only_ps = |p: &str| p == "powershell";
+        let go = |dir: &str| args(&choose(Path::new(dir), true, &look(Os::Windows, &only_ps)).unwrap())[2].clone();
+        assert_eq!(go(r"C:\x’;calc;’"), "Set-Location -LiteralPath 'C:\\x’’;calc;’’'");
+        assert_eq!(go(r"C:\Ali’nin"), "Set-Location -LiteralPath 'C:\\Ali’’nin'");
+        assert_eq!(powershell_literal("'‘’‚‛"), "'''‘‘’’‚‚‛‛'");
+        assert_eq!(powershell_literal("ʼ′＇`\"“”$(x)"), "'ʼ′＇`\"“”$(x)'", "not quotes to PowerShell");
+        // Still one argument on the command line.
+        let line = windows_command_line(&["-Command".to_owned(), go(r"C:\x’;calc;’")]);
+        assert_eq!(line, "-Command \"Set-Location -LiteralPath 'C:\\x’’;calc;’’'\"");
+    }
+
+    /// The folder through the real chain: the command line `start` hands on, split by Windows
+    /// PowerShell and run (no window; `exit 7` stands in for an injected command).
+    #[cfg(windows)]
+    #[test]
+    fn powershell_lands_in_folders_with_quotes() {
+        use std::os::windows::process::CommandExt;
+        let Some(powershell) = find_program("powershell", std::env::var_os("PATH").as_deref(), None, true) else {
+            return;
+        };
+        let root = std::env::temp_dir().join(format!("gezik-ps-{}", std::process::id()));
+        let only_ps = |p: &str| p == "powershell";
+        for name in ["x’;exit 7;’", "[a] it's ‘b‚c‛ & (d)"] {
+            let dir = root.join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            let mut words = args(&choose(&dir, false, &look(Os::Windows, &only_ps)).unwrap());
+            assert_eq!(words.remove(0), "-NoExit");
+            words[1].push_str("; (Get-Location).ProviderPath");
+            words.splice(0..0, ["-NoProfile".to_owned(), "-NonInteractive".to_owned()]);
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            let output = std::process::Command::new(&powershell)
+                .raw_arg(windows_command_line(&words))
+                .creation_flags(CREATE_NO_WINDOW)
+                .stdin(std::process::Stdio::null())
+                .output()
+                .unwrap();
+            assert_eq!(output.status.code(), Some(0), "{name}");
+            // The console's code page may not hold every character: compare the ASCII ends.
+            let printed = String::from_utf8_lossy(&output.stdout);
+            assert!(printed.trim_end().starts_with(&*root.to_string_lossy()), "{name}: {printed}");
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn windows_command_lines_split_back_into_the_arguments() {
         let line = |a: &[&str]| windows_command_line(&a.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>());
         assert_eq!(line(&["-d", r"C:\"]), r"-d C:\");
@@ -390,6 +538,7 @@ mod tests {
             line(&["-NoExit", "-Command", "Set-Location -LiteralPath 'C:\\it''s'"]),
             r#"-NoExit -Command "Set-Location -LiteralPath 'C:\it''s'""#
         );
+        assert_eq!(line(&["a&b", "x|y", "<in>", "^", "(c)"]), r#""a&b" "x|y" "<in>" "^" "(c)""#);
     }
 
     #[test]
@@ -433,6 +582,22 @@ mod tests {
     }
 
     #[test]
+    fn a_known_terminal_alone_in_terminal_gets_its_flags() {
+        let dir = Path::new("/d");
+        let all = |_: &str| true;
+        let pick = |var: &str| {
+            let mut lookup = look(Os::Linux, &all);
+            lookup.terminal_var = Some(var);
+            let launch = choose(dir, false, &lookup).unwrap();
+            (program(&launch), args(&launch))
+        };
+        assert_eq!(pick("kitty"), ("kitty".to_owned(), vec!["--directory".to_owned(), "/d".to_owned()]));
+        assert_eq!(pick(" /usr/bin/foot "), ("/usr/bin/foot".to_owned(), vec!["--working-directory=/d".to_owned()]));
+        assert_eq!(pick("st"), ("st".to_owned(), vec![]), "an unknown one gets the working folder only");
+        assert_eq!(pick("kitty --single-instance"), ("kitty".to_owned(), vec!["--single-instance".to_owned()]));
+    }
+
+    #[test]
     fn the_debian_link_gets_the_flags_of_the_terminal_it_is() {
         let dir = Path::new("/d");
         let debian = |p: &str| p == "x-terminal-emulator";
@@ -472,9 +637,13 @@ mod tests {
     #[test]
     fn a_command_in_settings_wins_everywhere() {
         let none = |_: &str| false;
+        let wezterm = |p: &str| p == "wezterm";
         let command = vec!["wezterm".to_owned(), "start".to_owned(), "--cwd".to_owned(), "{dir}".to_owned()];
         for os in [Os::Windows, Os::Mac, Os::Linux] {
             let mut lookup = look(os, &none);
+            lookup.command = Some(&command);
+            assert_eq!(choose(Path::new("/w"), false, &lookup), Err(TerminalError::NotFound), "not found: not run");
+            let mut lookup = look(os, &wezterm);
             lookup.command = Some(&command);
             let launch = choose(Path::new("/w {x}"), false, &lookup).unwrap();
             assert_eq!(
@@ -489,6 +658,51 @@ mod tests {
             choose(Path::new("/w"), false, &lookup),
             Err(TerminalError::Failed("unknown placeholder {in}".to_owned()))
         );
+    }
+
+    #[test]
+    fn programs_are_found_with_their_extensions() {
+        let bin = std::env::temp_dir().join(format!("gezik-bin-{}", std::process::id()));
+        std::fs::create_dir_all(&bin).unwrap();
+        for file in ["term.cmd", "shell.exe", "notes.txt"] {
+            std::fs::write(bin.join(file), "").unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(bin.join(file), std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+        }
+        let path = std::env::join_paths([Path::new("relative"), &bin]).unwrap();
+        let find = |name: &str, pathext: Option<&str>, windows: bool| find_program(name, Some(&path), pathext, windows);
+        assert_eq!(find("term", Some(".exe;.cmd"), true), Some(bin.join("term.cmd")), "PATHEXT tried");
+        #[cfg(windows)]
+        assert!(find("term", None, true).is_some(), "PATHEXT's default");
+        assert_eq!(find("term", Some(".exe"), true), None);
+        assert_eq!(find("term.cmd", Some(".exe"), true), Some(bin.join("term.cmd")), "an extension: as it is");
+        assert_eq!(find("shell.exe", Some(".exe"), true), Some(bin.join("shell.exe")), "no .exe added again");
+        assert_eq!(find("notes.txt.exe", Some(".exe"), true), None);
+        assert_eq!(find("term", Some(".cmd"), false), None, "elsewhere the name as it is");
+        assert_eq!(find("term.cmd", None, false), Some(bin.join("term.cmd")));
+        let full = bin.join("shell.exe");
+        assert_eq!(find(&full.to_string_lossy(), None, true), Some(full.clone()), "a path as it is");
+        assert_eq!(find(&bin.join("gone.exe").to_string_lossy(), None, true), None);
+        assert_eq!(find("", None, true), None);
+        assert_eq!(find_program("term", None, None, true), None, "no PATH");
+        let _ = std::fs::remove_dir_all(&bin);
+    }
+
+    #[test]
+    fn nothing_is_started_for_a_missing_folder_or_program() {
+        let gone = std::env::temp_dir().join(format!("gezik-gone-{}", std::process::id()));
+        assert!(matches!(open(&gone, false, None), Err(TerminalError::Failed(_))));
+        let file = std::env::temp_dir().join(format!("gezik-file-{}", std::process::id()));
+        std::fs::write(&file, "").unwrap();
+        assert_eq!(open(&file, false, None), Err(TerminalError::Failed("It is not a folder".to_owned())));
+        let _ = std::fs::remove_file(&file);
+        let missing = vec!["gezik-no-such-terminal".to_owned(), "{dir}".to_owned()];
+        assert_eq!(open(&std::env::temp_dir(), false, Some(&missing)), Err(TerminalError::NotFound));
+        let missing_path = vec![gone.join("term.exe").to_string_lossy().into_owned()];
+        assert_eq!(open(&std::env::temp_dir(), false, Some(&missing_path)), Err(TerminalError::NotFound));
     }
 
     #[cfg(windows)]
