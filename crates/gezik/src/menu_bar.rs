@@ -48,10 +48,6 @@ pub fn install(window: &AppWindow, view: View, nav: Navigator, ops: Operations) 
                     None if crate::actions::run(action, &nav, &view) => {}
                     None => match action {
                         Action::BatchRename => ops.batch_rename(),
-                        Action::ToggleHidden => {
-                            view.toggle_hidden();
-                            nav.reload();
-                        }
                         _ => {}
                     },
                 }

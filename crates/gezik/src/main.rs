@@ -33,6 +33,7 @@ mod tab_tools;
 mod terminal;
 mod theme_bridge;
 mod view;
+mod view_options;
 mod watcher;
 mod window_state;
 
@@ -53,6 +54,21 @@ slint::include_modules!();
 
 /// Resolves settings + theme from `files` and shows them. No I/O, so it runs on the UI
 /// thread at startup, after config files change and when the system theme flips.
+/// Opens entry `index` of the list (a double-click, or a click with single-click-open): an
+/// archive is extracted next to itself if `[archives] double-click` says so.
+fn open_entry(nav: &navigation::Navigator, view: &view::View, index: usize) {
+    let archive = view.entry_path(index).filter(|(path, is_dir)| {
+        !is_dir
+            && path.file_name().is_some_and(|n| gezik_core::batch::archive::looks_like_archive(&n.to_string_lossy()))
+    });
+    match archive {
+        Some((path, _)) if archives::extracts_on_double_click() => {
+            archives::with_current(|archives| archives.extract_here(vec![path]));
+        }
+        _ => nav.open_row(i32::try_from(index).unwrap_or(-1)),
+    }
+}
+
 fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
     let loaded = store::resolve(files, window.get_system_dark());
     if let Some(theme) = &loaded.theme {
@@ -71,6 +87,7 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
     // Unchanged pins cost nothing (also after the reload that follows our own save).
     sidebar::with_current(|sidebar| sidebar.set_pinned(loaded.settings.pinned.clone()));
     view::with_current(|view| view.set_defaults(loaded.settings.view));
+    view_options::set_from_file(loaded.settings.view.options);
     keys::set_shortcuts(loaded.settings.shortcuts.clone());
     #[cfg(target_os = "macos")]
     menu_bar::set_commands(window, &loaded.settings.commands);
@@ -239,10 +256,6 @@ fn handle_key(
                 Action::DeletePermanently => ops.trash(true),
                 Action::Duplicate => ops.duplicate(),
                 Action::BatchRename => ops.batch_rename(),
-                Action::ToggleHidden => {
-                    view.toggle_hidden();
-                    nav.reload();
-                }
                 Action::Undo => ops.undo(),
                 Action::Redo => ops.redo(),
                 Action::Filter
@@ -268,6 +281,7 @@ fn handle_key(
                 | Action::OpenTerminalAdmin
                 | Action::CopyPath
                 | Action::SaveTabSet
+                | Action::ToggleHidden
                 | Action::Pin1
                 | Action::Pin2
                 | Action::Pin3
@@ -450,6 +464,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let window = AppWindow::new()?;
 
     let config = ConfigStore::system();
+    view_options::install(&window, config.clone());
     let init_error = config.as_ref().and_then(|store| store.ensure_initialized().err().map(|e| (store, e)));
     let mut files = config.as_ref().map(ConfigStore::read_files).unwrap_or_default();
     if let Some((store, err)) = init_error {
@@ -519,6 +534,7 @@ fn main() -> Result<(), slint::PlatformError> {
     keep_on_screen(window.as_weak(), 0);
     let view = view::View::new(&window, memory, config.clone());
     view.set_defaults(initial_settings.view);
+    view.set_options(view_options::current());
     view.set_columns(saved_state.columns.clone().unwrap_or_else(gezik_core::view::default_columns));
     window.set_mono_font(
         if cfg!(windows) {
@@ -581,7 +597,7 @@ fn main() -> Result<(), slint::PlatformError> {
     #[cfg(target_os = "macos")]
     menu_bar::install(&window, view.clone(), nav.clone(), ops.clone());
     // Tools Gezik downloads (7-Zip) go to `<config dir>/tools/`, next to the pending deletes.
-    let archives =
+    let _archives =
         archives::Archives::new(&window, ops.clone(), dialogs.clone(), config.clone(), saved_state.archive.clone());
     let _convert = convert::Convert::new(&window, ops.clone(), dialogs, config.clone(), saved_state.convert.clone());
     window.on_op_pause({
@@ -838,19 +854,14 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
-    // Double-click; an archive is extracted there if `[archives] double-click` says so.
+    // Double-click; with single-click-open the click already opened it.
     window.on_open_row({
         let (nav, view) = (nav.clone(), view.clone());
         move |i| {
-            let archive = usize::try_from(i).ok().and_then(|i| view.entry_path(i)).filter(|(path, is_dir)| {
-                !is_dir
-                    && path
-                        .file_name()
-                        .is_some_and(|n| gezik_core::batch::archive::looks_like_archive(&n.to_string_lossy()))
-            });
-            match archive {
-                Some((path, _)) if archives::extracts_on_double_click() => archives.extract_here(vec![path]),
-                _ => nav.open_row(i),
+            if let Ok(index) = usize::try_from(i)
+                && !view_options::current().single_click_open
+            {
+                open_entry(&nav, &view, index);
             }
         }
     });

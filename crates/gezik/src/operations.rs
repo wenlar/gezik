@@ -12,7 +12,6 @@ use std::time::{Duration, Instant};
 use gezik_config::settings::{BatchRenameState, FilesSettings};
 use gezik_config::store::ConfigStore;
 use gezik_core::drag::Effect;
-use gezik_core::format_size;
 use gezik_core::ops::paths::same_path;
 use gezik_core::ops::rate::{Rate, format_eta, format_rate};
 use gezik_ops::{
@@ -84,7 +83,7 @@ pub fn describe(
     match progress.state {
         JobState::Waiting => (RowState::Waiting, "Waiting for the drive".to_owned(), -1.0),
         JobState::Scanning => {
-            let size = format_size(progress.bytes_total);
+            let size = crate::view_options::size_text(progress.bytes_total);
             (RowState::Running, format!("Scanning… {} items · {size}", progress.items_total), -1.0)
         }
         JobState::Deciding => (RowState::Deciding, "Waiting for your decisions".to_owned(), done),
@@ -94,7 +93,7 @@ pub fn describe(
         JobState::Running => {
             let mut text = format!("{}%", (done * 100.0).floor() as u32);
             if let Some(speed) = speed.filter(|s| *s > 0.0 && progress.bytes_total > 0) {
-                text.push_str(&format!(" · {}", format_rate(speed, gezik_core::view::SizeFormat::Binary)));
+                text.push_str(&format!(" · {}", format_rate(speed, crate::view_options::current().size_format)));
             }
             if let Some(left) = left {
                 text.push_str(&format!(" · {}", format_eta(left)));

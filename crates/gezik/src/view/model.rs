@@ -5,7 +5,7 @@ use std::cell::{Cell, RefCell};
 use std::ops::Range;
 use std::rc::Rc;
 
-use gezik_core::format_size;
+use gezik_core::format_size_in;
 use gezik_core::kind::{fallback_type_name, has_own_icon, own_type_name};
 use gezik_core::selection::{PendingPress, Selection};
 use gezik_core::view::{IconMode, ViewMode};
@@ -40,6 +40,8 @@ pub struct ViewData {
     pub icon_px: u32,
     /// Names in this folder on the clipboard as cut: they look faded.
     pub cut: std::collections::HashSet<String>,
+    /// `[view]`'s options in effect (view_options.rs).
+    pub options: gezik_core::view::ViewOptions,
 }
 
 pub struct ItemsModel {
@@ -114,14 +116,20 @@ pub fn file_row(data: &ViewData, i: usize) -> FileRow {
         Listing::Files(_, entries) => entries.get(i),
         Listing::Drives(_) => None,
     };
-    let date = |time: Option<std::time::SystemTime>| time.map(gezik_platform::format_datetime).unwrap_or_default();
+    let options = data.options;
+    let now = std::time::SystemTime::now();
+    let date = |time: Option<std::time::SystemTime>| {
+        time.map(|time| gezik_platform::format_date(time, options.date_format, now)).unwrap_or_default()
+    };
     let icon = picture_for(data, i);
+    let name = listing.name_at(i).unwrap_or_default();
+    let hide = options.hide_extensions && matches!(listing, Listing::Files(..));
     FileRow {
-        name: listing.name_at(i).unwrap_or_default().into(),
+        name: gezik_core::shown_name(name, is_dir, hide).into(),
         is_dir,
         kind: listing.kind(i).index(),
         size: match listing {
-            Listing::Files(..) if !is_dir => format_size(listing.file_size(i)).into(),
+            Listing::Files(..) if !is_dir => format_size_in(listing.file_size(i), options.size_format).into(),
             _ => "".into(),
         },
         modified: date(entry.and_then(|e| e.modified)).into(),
@@ -220,6 +228,21 @@ pub fn notify_plan(rows: &[Range<usize>], per_row: usize) -> Plan {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rows_follow_the_view_options() {
+        let mut data = ViewData {
+            listing: super::super::listing::files("/x", &["sub.d/", "a.txt", ".gitignore", "a.tar.gz"]),
+            media: Media::idle(),
+            ..Default::default()
+        };
+        data.options.hide_extensions = true;
+        let names: Vec<String> = (0..4).map(|i| file_row(&data, i).name.to_string()).collect();
+        assert_eq!(names, ["sub.d/", "a", ".gitignore", "a.tar"], "folders and dot names keep theirs");
+        data.options.hide_extensions = false;
+        assert_eq!(file_row(&data, 1).name.as_str(), "a.txt");
+        assert_eq!(file_row(&data, 1).size.as_str(), "10 B");
+    }
 
     #[test]
     fn small_changes_redraw_their_lines() {

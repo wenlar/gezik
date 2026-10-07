@@ -86,11 +86,13 @@ impl Listing {
         }
     }
 
-    /// Without the files whose names start with a dot (`.DS_Store`, `.git`).
-    pub fn without_dotfiles(self) -> Listing {
+    /// Without what `[view]` hides: dot names and hidden items unless `show_hidden`, protected
+    /// system items unless `show_system` (`Entry::is_shown`). Shares the entries when nothing
+    /// is left out.
+    pub fn without_hidden(self, show_hidden: bool, show_system: bool) -> Listing {
         match self {
-            Listing::Files(dir, entries) if entries.iter().any(|e| e.name.starts_with('.')) => {
-                let kept = entries.iter().filter(|e| !e.name.starts_with('.')).cloned().collect();
+            Listing::Files(dir, entries) if entries.iter().any(|e| !e.is_shown(show_hidden, show_system)) => {
+                let kept = entries.iter().filter(|e| e.is_shown(show_hidden, show_system)).cloned().collect();
                 Listing::Files(dir, Rc::new(kept))
             }
             other => other,
@@ -195,11 +197,23 @@ mod tests {
     }
 
     #[test]
-    fn dotfiles_can_be_left_out() {
-        let listing = files("/x", &[".DS_Store", ".git/", "a.txt", "b/"]).without_dotfiles();
-        let names: Vec<&str> = (0..listing.len()).filter_map(|i| listing.name_at(i)).collect();
-        assert_eq!(names, ["a.txt", "b/"]);
-        assert_eq!(listing.folder(), Some(Path::new("/x")));
+    fn hidden_and_protected_items_can_be_left_out() {
+        let listing = || {
+            let Listing::Files(dir, entries) =
+                files("/x", &[".DS_Store", ".git/", "a.txt", "b/", "desktop.ini", "notes.txt"])
+            else {
+                unreachable!()
+            };
+            let mut entries = Rc::unwrap_or_clone(entries);
+            entries[4].flags = Entry::HIDDEN | Entry::SYSTEM;
+            entries[5].flags = Entry::HIDDEN;
+            Listing::Files(dir, Rc::new(entries))
+        };
+        let names = |l: Listing| (0..l.len()).filter_map(|i| l.name_at(i).map(str::to_owned)).collect::<Vec<_>>();
+        assert_eq!(names(listing().without_hidden(false, false)), ["a.txt", "b/"]);
+        assert_eq!(names(listing().without_hidden(true, false)), [".DS_Store", ".git/", "a.txt", "b/", "notes.txt"]);
+        assert_eq!(names(listing().without_hidden(false, true)), ["a.txt", "b/", "desktop.ini"]);
+        assert_eq!(names(listing().without_hidden(true, true)).len(), 6);
     }
 
     #[test]

@@ -43,6 +43,7 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         Action::RestoreSelection => view.restore_remembered(),
         Action::SelectPattern => crate::select_tools::with_current(|s| s.ask(true)),
         Action::DeselectPattern => crate::select_tools::with_current(|s| s.ask(false)),
+        Action::ToggleHidden => crate::view_options::toggle_hidden(),
         Action::ReopenTab => nav.reopen_tab(),
         Action::ToggleTabLock => nav.toggle_tab_lock(nav.active_index()),
         Action::TabPicker => crate::tab_tools::with_current(crate::tab_tools::TabTools::open),
@@ -79,7 +80,6 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         | Action::Undo
         | Action::Redo
         | Action::BatchRename
-        | Action::ToggleHidden
         | Action::Pin1
         | Action::Pin2
         | Action::Pin3

@@ -472,6 +472,12 @@ impl Drags {
             Phase::Armed { index, right: pressed_right, .. } => {
                 if !pressed_right && !right {
                     self.0.view.release(index, false);
+                    // Single-click-open: a plain click (no Ctrl, Cmd or Shift) opens (spec 7.1);
+                    // after the release is fully handled.
+                    if crate::view_options::current().single_click_open && self.0.view.take_plain_press(index) {
+                        let (nav, view) = (self.0.nav.clone(), self.0.view.clone());
+                        Timer::single_shot(Duration::ZERO, move || crate::open_entry(&nav, &view, index));
+                    }
                 }
                 false
             }
