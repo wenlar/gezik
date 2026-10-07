@@ -41,7 +41,9 @@ export component CompressLayer inherits Rectangle {
     in property <string> error;
     // Says what a choice does that the buttons do not show ("Store makes a plain .tar").
     in property <string> note;
+    // Built anew each time it opens, so the password starts hidden.
     property <bool> show-password;
+    in property <int> focus-request;
     callback set-format(int);
     callback set-level(int);
     callback toggle-encrypt-names();
@@ -51,12 +53,18 @@ export component CompressLayer inherits Rectangle {
     callback cancel();
     callback edited();
 
-    changed open => {
-        if self.open {
-            root.show-password = false;
-            if !root.dialog-open {
-                name-field.focus-and-select-to(root.name-select);
-            }
+    // Built when it opens (an `if` in app.slint): it takes the keyboard then, and again
+    // each time `focus-request` changes (the window's `focus-list`).
+    init => {
+        if root.open && !root.dialog-open {
+            name-field.focus-and-select-to(root.name-select);
+        }
+    }
+    // The request is seen a moment after it is made (`changed` runs later): by then a
+    // question may have opened over the layer, and its field keeps the keyboard.
+    changed focus-request => {
+        if !root.dialog-open {
+            root.take-focus();
         }
     }
 

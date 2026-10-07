@@ -85,6 +85,13 @@ export component RenameBatch inherits Rectangle {
     in property <bool> name-enabled;
     // Typing in the name field: Rust leaves its text alone.
     out property <bool> name-focused: name-field.has-focus;
+    in property <int> focus-request;
+    in property <int> focus-name-request;
+    // `ensure-visible(reveal-index)` each time `reveal-request` changes.
+    in property <int> reveal-index;
+    in property <int> reveal-request;
+    // The name field took or lost the keyboard.
+    callback name-focus-changed(bool);
     // A row dragged by its handle: where from and where it would land (-1: no drag).
     property <int> drag-from: -1;
     property <int> drag-to: -1;
@@ -116,11 +123,27 @@ export component RenameBatch inherits Rectangle {
     callback sort(int);
     callback key(KeyEvent) -> bool;
 
-    changed open => {
-        if self.open && !root.dialog-open {
+    // Built when it opens (an `if` in app.slint): it takes the keyboard then, and again
+    // each time `focus-request` changes (the window's `focus-list`).
+    init => {
+        if root.open && !root.dialog-open {
             scope.focus();
         }
     }
+    // The request is seen a moment after it is made (`changed` runs later): by then a
+    // question may have opened over the layer, and its field keeps the keyboard.
+    changed focus-request => {
+        if !root.dialog-open {
+            root.take-focus();
+        }
+    }
+    changed focus-name-request => {
+        if !root.dialog-open {
+            root.focus-name();
+        }
+    }
+    changed reveal-request => { root.ensure-visible(root.reveal-index); }
+    changed name-focused => { root.name-focus-changed(self.name-focused); }
 
     public function take-focus() {
         scope.focus();

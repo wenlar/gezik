@@ -121,10 +121,20 @@ export component ConvertLayer inherits Rectangle {
     property <string> menu-arrow: "M 1 2.5 L 4 5.5 L 7 2.5";
     property <int> drag-from: -1;
     property <int> drag-to: -1;
+    in property <int> focus-request;
 
-    changed open => {
-        if self.open && !root.dialog-open {
+    // Built when it opens (an `if` in app.slint): it takes the keyboard then, and again
+    // each time `focus-request` changes (the window's `focus-list`).
+    init => {
+        if root.open && !root.dialog-open {
             preset-button.focus();
+        }
+    }
+    // The request is seen a moment after it is made (`changed` runs later): by then a
+    // question may have opened over the layer, and its field keeps the keyboard.
+    changed focus-request => {
+        if !root.dialog-open {
+            root.take-focus();
         }
     }
 

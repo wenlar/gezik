@@ -337,8 +337,16 @@ export component AppWindow inherits Window {
     callback conflict-cancel();
     callback conflict-key(KeyEvent) -> bool;
 
+    // The batch layers below exist only while open (Slint builds an `if` element when its
+    // condition turns true): Rust reaches into them through these counters, which each
+    // layer watches, never by calling into the element.
+    property <int> conflict-focus-seq;
+    property <int> conflict-reveal-index;
+    property <int> conflict-reveal-seq;
+
     public function conflict-ensure-visible(index: int) {
-        conflict-list.ensure-visible(index);
+        root.conflict-reveal-index = index;
+        root.conflict-reveal-seq += 1;
     }
 
     // The batch rename layer (batch_rename.rs).
@@ -364,7 +372,12 @@ export component AppWindow inherits Window {
     in-out property <length> rb-scroll;
     in-out property <string> rb-name-text;
     in property <bool> rb-name-enabled;
-    out property <bool> rb-name-focused: rename-batch.name-focused;
+    // Whether the layer's name field has the keyboard (told by the layer while it is open).
+    out property <bool> rb-name-focused;
+    property <int> rb-focus-seq;
+    property <int> rb-focus-name-seq;
+    property <int> rb-reveal-index;
+    property <int> rb-reveal-seq;
     callback rb-add-rule(length, length, length, length);
     callback rb-select-rule(int);
     callback rb-toggle-rule(int);
@@ -387,14 +400,21 @@ export component AppWindow inherits Window {
     callback rb-key(KeyEvent) -> bool;
 
     public function rb-ensure-visible(index: int) {
-        rename-batch.ensure-visible(index);
+        root.rb-reveal-index = index;
+        root.rb-reveal-seq += 1;
     }
     public function rb-focus-name() {
-        rename-batch.focus-name();
+        root.rb-focus-name-seq += 1;
+    }
+    changed rb-open => {
+        if !self.rb-open {
+            root.rb-name-focused = false;
+        }
     }
 
     // The Compress layer (archives.rs).
     in property <bool> cp-open;
+    property <int> cp-focus-seq;
     in property <string> cp-title;
     in-out property <string> cp-name;
     // Selected when the layer opens: the name up to its ending (bytes).
@@ -423,6 +443,7 @@ export component AppWindow inherits Window {
 
     // The Convert layer (convert.rs).
     in property <bool> cv-open;
+    property <int> cv-focus-seq;
     in property <ConvertView> cv-view;
     in-out property <string> cv-quality;
     in-out property <string> cv-resize-value;
@@ -446,6 +467,7 @@ export component AppWindow inherits Window {
 
     // The tab picker (tab_tools.rs): the tabs the query lets through, the row Enter picks.
     in property <bool> tp-open;
+    property <int> tp-focus-seq;
     in-out property <string> tp-query;
     in property <[TabPickRow]> tp-rows;
     in property <int> tp-current;
@@ -559,15 +581,15 @@ export component AppWindow inherits Window {
     // Gives the keyboard to the file list.
     public function focus-list() {
         if root.conflicts-open {
-            conflict-list.take-focus();
+            root.conflict-focus-seq += 1;
         } else if root.rb-open {
-            rename-batch.take-focus();
+            root.rb-focus-seq += 1;
         } else if root.cp-open {
-            compress-layer.take-focus();
+            root.cp-focus-seq += 1;
         } else if root.cv-open {
-            convert-layer.take-focus();
+            root.cv-focus-seq += 1;
         } else if root.tp-open {
-            tab-picker.take-focus();
+            root.tp-focus-seq += 1;
         } else {
             keys.focus();
         }
@@ -953,13 +975,19 @@ export component AppWindow inherits Window {
                 }
             }
         }
-        rename-batch := RenameBatch {
+        // The batch layers are built when they open and dropped when they close: kept hidden
+        // they cost idle memory. What they show and keep lives in the properties above.
+        if root.rb-open: RenameBatch {
             x: 0;
             y: 0;
             width: root.width;
             height: root.height;
-            visible: root.rb-open;
             open: root.rb-open;
+            focus-request: root.rb-focus-seq;
+            focus-name-request: root.rb-focus-name-seq;
+            reveal-index: root.rb-reveal-index;
+            reveal-request: root.rb-reveal-seq;
+            name-focus-changed(focused) => { root.rb-name-focused = focused; }
             dialog-open: root.dialog-open || root.conflicts-open;
             title: root.rb-title;
             rules: root.rb-rules;
@@ -1003,13 +1031,13 @@ export component AppWindow inherits Window {
             sort(by) => { root.rb-sort(by); }
             key(event) => { return root.rb-key(event); }
         }
-        compress-layer := CompressLayer {
+        if root.cp-open: CompressLayer {
             x: 0;
             y: 0;
             width: root.width;
             height: root.height;
-            visible: root.cp-open;
             open: root.cp-open;
+            focus-request: root.cp-focus-seq;
             dialog-open: root.dialog-open || root.conflicts-open;
             title: root.cp-title;
             name-text <=> root.cp-name;
@@ -1036,13 +1064,13 @@ export component AppWindow inherits Window {
             cancel => { root.cp-cancel(); }
             edited => { root.cp-edited(); }
         }
-        convert-layer := ConvertLayer {
+        if root.cv-open: ConvertLayer {
             x: 0;
             y: 0;
             width: root.width;
             height: root.height;
-            visible: root.cv-open;
             open: root.cv-open;
+            focus-request: root.cv-focus-seq;
             dialog-open: root.dialog-open || root.conflicts-open;
             view: root.cv-view;
             quality <=> root.cv-quality;
@@ -1065,13 +1093,13 @@ export component AppWindow inherits Window {
             pdf-reorder(from, to) => { root.cv-pdf-reorder(from, to); }
             pdf-drop-row(y, h, count) => { return root.cv-pdf-drop-row(y, h, count); }
         }
-        tab-picker := TabPicker {
+        if root.tp-open: TabPicker {
             x: 0;
             y: 0;
             width: root.width;
             height: root.height;
-            visible: root.tp-open;
             open: root.tp-open;
+            focus-request: root.tp-focus-seq;
             dialog-open: root.dialog-open || root.conflicts-open;
             query <=> root.tp-query;
             rows: root.tp-rows;
@@ -1079,14 +1107,15 @@ export component AppWindow inherits Window {
             edited(text) => { root.tp-edited(text); }
             chosen(i) => { root.tp-chosen(i); }
         }
-        // Always there (hidden when closed), so Rust can scroll it.
-        conflict-list := ConflictList {
+        if root.conflicts-open: ConflictList {
             x: 0;
             y: 0;
             width: root.width;
             height: root.height;
-            visible: root.conflicts-open;
             open: root.conflicts-open;
+            focus-request: root.conflict-focus-seq;
+            reveal-index: root.conflict-reveal-index;
+            reveal-request: root.conflict-reveal-seq;
             dialog-open: root.dialog-open;
             title: root.conflict-title;
             rows: root.conflict-rows;
