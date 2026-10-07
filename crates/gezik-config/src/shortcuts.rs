@@ -5,8 +5,10 @@ use crate::Warning;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Key {
-    /// Lowercase ASCII letter or digit, `[`, `]` or `.`.
+    /// Lowercase ASCII letter or digit, `[`, `]`, `.`, `=` or `-`.
     Char(char),
+    /// A key of the numeric keypad: '+', '-', '*' or '/'.
+    Num(char),
     F(u8),
     Left,
     Right,
@@ -41,13 +43,16 @@ impl Key {
             "pagedown" => Key::PageDown,
             "escape" => Key::Escape,
             "space" => Key::Space,
+            "num-" => Key::Num('-'),
+            "num*" => Key::Num('*'),
+            "num/" => Key::Num('/'),
             _ => {
                 if let Some(n) = name.strip_prefix('f').and_then(|n| n.parse::<u8>().ok()) {
                     return (1..=12).contains(&n).then_some(Key::F(n));
                 }
                 let mut chars = name.chars();
                 let (Some(c), None) = (chars.next(), chars.next()) else { return None };
-                if c.is_ascii_alphanumeric() || matches!(c, '[' | ']' | '.') {
+                if c.is_ascii_alphanumeric() || matches!(c, '[' | ']' | '.' | '=' | '-') {
                     Key::Char(c.to_ascii_lowercase())
                 } else {
                     return None;
@@ -86,23 +91,35 @@ pub fn parse_chord(text: &str, platform: Platform) -> Result<Option<Chord>, Stri
     if text.is_empty() {
         return Ok(None);
     }
-    let parts: Vec<&str> = text.split('+').map(str::trim).collect();
-    let (key_name, modifiers) = parts.split_last().expect("split always yields one part");
-    if key_name.is_empty() {
-        return Err("missing key after \"+\"".to_owned());
-    }
-    let key = Key::parse(key_name).ok_or_else(|| format!("unknown key \"{key_name}\""))?;
+    // "num+" ends in the separator: it is taken off before the rest is split.
+    let (modifiers, key) = match text.strip_suffix("num+") {
+        Some("") => ("", Key::Num('+')),
+        Some(rest) if rest.trim_end().ends_with('+') => {
+            let rest = rest.trim_end();
+            (&rest[..rest.len() - 1], Key::Num('+'))
+        }
+        _ => {
+            let (modifiers, name) = text.rsplit_once('+').unwrap_or(("", text.as_str()));
+            let name = name.trim();
+            if name.is_empty() {
+                return Err("missing key after \"+\"".to_owned());
+            }
+            (modifiers, Key::parse(name).ok_or_else(|| format!("unknown key \"{name}\""))?)
+        }
+    };
     let mut chord = Chord { ctrl: false, alt: false, shift: false, meta: false, key };
-    for modifier in modifiers {
-        match *modifier {
-            "ctrl" => chord.ctrl = true,
-            "alt" => chord.alt = true,
-            "shift" => chord.shift = true,
-            "mod" => match platform {
-                Platform::Mac => chord.meta = true,
-                Platform::Other => chord.ctrl = true,
-            },
-            other => return Err(format!("unknown modifier \"{other}\"")),
+    if !modifiers.is_empty() {
+        for modifier in modifiers.split('+').map(str::trim) {
+            match modifier {
+                "ctrl" => chord.ctrl = true,
+                "alt" => chord.alt = true,
+                "shift" => chord.shift = true,
+                "mod" => match platform {
+                    Platform::Mac => chord.meta = true,
+                    Platform::Other => chord.ctrl = true,
+                },
+                other => return Err(format!("unknown modifier \"{other}\"")),
+            }
         }
     }
     Ok(Some(chord))
@@ -140,10 +157,31 @@ pub enum Action {
     BatchRename,
     /// Shows or hides the files whose names start with a dot (macOS ⌘⇧., as in Finder).
     ToggleHidden,
+    /// Opens the filter field of the place (6a).
+    Filter,
+    InvertSelection,
+    SelectPattern,
+    DeselectPattern,
+    /// Selects the files of the type (extension) of the focused one.
+    SelectSameType,
+    /// Brings back the selection from before the last file operation.
+    RestoreSelection,
+    Tab1,
+    Tab2,
+    Tab3,
+    Tab4,
+    Tab5,
+    Tab6,
+    Tab7,
+    Tab8,
+    TabLast,
+    ReopenTab,
+    TabPicker,
+    ToggleTabLock,
 }
 
 impl Action {
-    pub const ALL: [Action; 27] = [
+    pub const ALL: [Action; 45] = [
         Action::NewTab,
         Action::CloseTab,
         Action::NextTab,
@@ -171,6 +209,24 @@ impl Action {
         Action::Redo,
         Action::BatchRename,
         Action::ToggleHidden,
+        Action::Filter,
+        Action::InvertSelection,
+        Action::SelectPattern,
+        Action::DeselectPattern,
+        Action::SelectSameType,
+        Action::RestoreSelection,
+        Action::Tab1,
+        Action::Tab2,
+        Action::Tab3,
+        Action::Tab4,
+        Action::Tab5,
+        Action::Tab6,
+        Action::Tab7,
+        Action::Tab8,
+        Action::TabLast,
+        Action::ReopenTab,
+        Action::TabPicker,
+        Action::ToggleTabLock,
     ];
 
     pub fn name(self) -> &'static str {
@@ -202,7 +258,40 @@ impl Action {
             Action::Redo => "redo",
             Action::BatchRename => "batch-rename",
             Action::ToggleHidden => "toggle-hidden",
+            Action::Filter => "filter",
+            Action::InvertSelection => "invert-selection",
+            Action::SelectPattern => "select-pattern",
+            Action::DeselectPattern => "deselect-pattern",
+            Action::SelectSameType => "select-same-type",
+            Action::RestoreSelection => "restore-selection",
+            Action::Tab1 => "tab-1",
+            Action::Tab2 => "tab-2",
+            Action::Tab3 => "tab-3",
+            Action::Tab4 => "tab-4",
+            Action::Tab5 => "tab-5",
+            Action::Tab6 => "tab-6",
+            Action::Tab7 => "tab-7",
+            Action::Tab8 => "tab-8",
+            Action::TabLast => "tab-last",
+            Action::ReopenTab => "reopen-tab",
+            Action::TabPicker => "tab-picker",
+            Action::ToggleTabLock => "toggle-tab-lock",
         }
+    }
+
+    /// The tab a `tab-N` action shows (1-based): `Tab1` → 1 … `Tab8` → 8.
+    pub fn tab_number(self) -> Option<usize> {
+        Some(match self {
+            Action::Tab1 => 1,
+            Action::Tab2 => 2,
+            Action::Tab3 => 3,
+            Action::Tab4 => 4,
+            Action::Tab5 => 5,
+            Action::Tab6 => 6,
+            Action::Tab7 => 7,
+            Action::Tab8 => 8,
+            _ => return None,
+        })
     }
 
     /// The action named `name` in settings.toml (`new-tab`).
@@ -210,51 +299,70 @@ impl Action {
         Action::ALL.into_iter().find(|a| a.name() == name)
     }
 
-    /// The default chord, if the action has one on `platform`.
-    fn default_text(self, platform: Platform) -> Option<&'static str> {
-        Some(match (self, platform) {
-            (Action::NewTab, _) => "mod+t",
-            (Action::CloseTab, _) => "mod+w",
-            (Action::NextTab, _) => "ctrl+tab",
-            (Action::PrevTab, _) => "ctrl+shift+tab",
-            (Action::Back, Platform::Mac) => "mod+[",
-            (Action::Back, Platform::Other) => "alt+left",
-            (Action::Forward, Platform::Mac) => "mod+]",
-            (Action::Forward, Platform::Other) => "alt+right",
-            (Action::Up, Platform::Mac) => "mod+up",
-            (Action::Up, Platform::Other) => "alt+up",
-            (Action::FocusPath, _) => "mod+l",
-            (Action::Refresh, Platform::Mac) => "mod+r",
-            (Action::Refresh, Platform::Other) => "f5",
-            (Action::SelectAll, _) => "mod+a",
-            (Action::ViewList, _) => "mod+1",
-            (Action::ViewGrid, _) => "mod+2",
-            (Action::TogglePreview, _) => "alt+p",
-            (Action::QuickLook, _) => "space",
-            (Action::Copy, _) => "mod+c",
-            (Action::Cut, _) => "mod+x",
-            (Action::Paste, _) => "mod+v",
-            (Action::PasteMove, Platform::Mac) => "mod+alt+v",
-            (Action::PasteMove, Platform::Other) => return None,
-            (Action::Trash, Platform::Mac) => "mod+backspace",
-            (Action::Trash, Platform::Other) => "delete",
-            (Action::DeletePermanently, Platform::Mac) => "mod+alt+backspace",
-            (Action::DeletePermanently, Platform::Other) => "shift+delete",
-            (Action::Rename, Platform::Mac) => "enter",
-            (Action::Rename, Platform::Other) => "f2",
-            (Action::NewFolder, _) => "mod+shift+n",
+    /// The default chords on `platform` (none, one or several).
+    fn default_texts(self, platform: Platform) -> &'static [&'static str] {
+        match (self, platform) {
+            (Action::NewTab, _) => &["mod+t"],
+            (Action::CloseTab, _) => &["mod+w"],
+            (Action::NextTab, _) => &["ctrl+tab"],
+            (Action::PrevTab, _) => &["ctrl+shift+tab"],
+            (Action::Back, Platform::Mac) => &["mod+["],
+            (Action::Back, Platform::Other) => &["alt+left"],
+            (Action::Forward, Platform::Mac) => &["mod+]"],
+            (Action::Forward, Platform::Other) => &["alt+right"],
+            (Action::Up, Platform::Mac) => &["mod+up"],
+            (Action::Up, Platform::Other) => &["alt+up"],
+            (Action::FocusPath, _) => &["mod+l"],
+            (Action::Refresh, Platform::Mac) => &["mod+r"],
+            (Action::Refresh, Platform::Other) => &["f5"],
+            (Action::SelectAll, _) => &["mod+a"],
+            (Action::ViewList, _) => &["mod+shift+1"],
+            (Action::ViewGrid, _) => &["mod+shift+2"],
+            (Action::TogglePreview, _) => &["alt+p"],
+            (Action::QuickLook, _) => &["space"],
+            (Action::Copy, _) => &["mod+c"],
+            (Action::Cut, _) => &["mod+x"],
+            (Action::Paste, _) => &["mod+v"],
+            (Action::PasteMove, Platform::Mac) => &["mod+alt+v"],
+            (Action::PasteMove, Platform::Other) => &[],
+            (Action::Trash, Platform::Mac) => &["mod+backspace"],
+            (Action::Trash, Platform::Other) => &["delete"],
+            (Action::DeletePermanently, Platform::Mac) => &["mod+alt+backspace"],
+            (Action::DeletePermanently, Platform::Other) => &["shift+delete"],
+            (Action::Rename, Platform::Mac) => &["enter"],
+            (Action::Rename, Platform::Other) => &["f2"],
+            (Action::NewFolder, _) => &["mod+shift+n"],
             // Ctrl+D deletes in Explorer: Windows and Linux users get no surprise copies.
-            (Action::Duplicate, Platform::Mac) => "mod+d",
-            (Action::Duplicate, Platform::Other) => return None,
-            (Action::Undo, _) => "mod+z",
-            (Action::Redo, Platform::Mac) => "mod+shift+z",
-            (Action::Redo, Platform::Other) => "mod+y",
-            (Action::BatchRename, _) => return None,
+            (Action::Duplicate, Platform::Mac) => &["mod+d"],
+            (Action::Duplicate, Platform::Other) => &[],
+            (Action::Undo, _) => &["mod+z"],
+            (Action::Redo, Platform::Mac) => &["mod+shift+z"],
+            (Action::Redo, Platform::Other) => &["mod+y"],
+            (Action::BatchRename, _) => &[],
             // Ctrl+H elsewhere, as in Linux file managers: Ctrl+Shift+. would never match
             // there (Shift+. types `>` or `:`, and only macOS maps keys by their place).
-            (Action::ToggleHidden, Platform::Mac) => "mod+shift+.",
-            (Action::ToggleHidden, Platform::Other) => "ctrl+h",
-        })
+            (Action::ToggleHidden, Platform::Mac) => &["mod+shift+."],
+            (Action::ToggleHidden, Platform::Other) => &["ctrl+h"],
+            (Action::Filter, _) => &["mod+f"],
+            (Action::InvertSelection, _) => &["mod+shift+i"],
+            // The playable chord first: the macOS menu bar plays `chord_for`, the first binding.
+            (Action::SelectPattern, _) => &["mod+=", "num+"],
+            (Action::DeselectPattern, _) => &["mod+-", "num-"],
+            (Action::SelectSameType, _) => &["alt+num+"],
+            (Action::RestoreSelection, _) => &["num/"],
+            (Action::Tab1, _) => &["mod+1"],
+            (Action::Tab2, _) => &["mod+2"],
+            (Action::Tab3, _) => &["mod+3"],
+            (Action::Tab4, _) => &["mod+4"],
+            (Action::Tab5, _) => &["mod+5"],
+            (Action::Tab6, _) => &["mod+6"],
+            (Action::Tab7, _) => &["mod+7"],
+            (Action::Tab8, _) => &["mod+8"],
+            (Action::TabLast, _) => &["mod+9"],
+            (Action::ReopenTab, _) => &["mod+shift+t"],
+            (Action::TabPicker, _) => &["mod+shift+a"],
+            (Action::ToggleTabLock, _) => &[],
+        }
     }
 }
 
@@ -282,60 +390,86 @@ impl Shortcuts {
         file: &str,
         warnings: &mut Vec<Warning>,
     ) -> Shortcuts {
-        // Actions the user configured (validly), in file order; None = disabled.
-        let mut user: Vec<(Action, Option<Chord>)> = Vec::new();
+        // Actions the user configured (validly), in file order; no chords = disabled.
+        let mut user: Vec<(Action, Vec<Chord>)> = Vec::new();
         for (name, value) in table.into_iter().flatten() {
             let Some(action) = Action::from_name(name) else {
                 warnings.push(Warning::new(file, format!("shortcuts.{name}: unknown action")));
                 continue;
             };
-            let Some(text) = value.as_str() else {
-                warnings.push(Warning::new(file, format!("shortcuts.{name}: expected text, got {value}")));
+            // "text" or ["text", …].
+            let texts: Option<Vec<&str>> = match value {
+                toml::Value::String(text) => Some(vec![text.as_str()]),
+                toml::Value::Array(items) => items.iter().map(toml::Value::as_str).collect(),
+                _ => None,
+            };
+            let Some(texts) = texts else {
+                warnings.push(Warning::new(
+                    file,
+                    format!("shortcuts.{name}: expected text or a list of texts, got {value}"),
+                ));
                 continue;
             };
-            match parse_chord(text, platform) {
-                Ok(chord) => user.push((action, chord)),
+            let parsed: Result<Vec<Option<Chord>>, String> =
+                texts.iter().map(|text| parse_chord(text, platform)).collect();
+            match parsed {
+                Ok(chords) => user.push((action, chords.into_iter().flatten().collect())),
                 Err(err) => warnings.push(Warning::new(file, format!("shortcuts.{name}: {err}; using the default"))),
             }
         }
 
+        // A key taken by an earlier binding costs just that key while the action keeps another
+        // one; with none left, the action is disabled.
         let mut bindings: Vec<(Chord, Action)> = Vec::new();
-        for (action, chord) in &user {
-            let Some(chord) = chord else { continue };
-            if let Some((_, owner)) = bindings.iter().find(|(c, _)| c == chord) {
+        for (action, chords) in &user {
+            let mut taken: Vec<Action> = Vec::new();
+            for chord in chords {
+                match bindings.iter().find(|(c, _)| c == chord) {
+                    // The same key written twice for one action is just that key.
+                    Some((_, owner)) if owner == action => {}
+                    Some((_, owner)) => taken.push(*owner),
+                    None => bindings.push((*chord, *action)),
+                }
+            }
+            let kept = bindings.iter().any(|(_, a)| a == action);
+            for owner in taken {
+                let cost =
+                    if kept { "that key is left out".to_owned() } else { format!("{} is disabled", action.name()) };
                 warnings.push(Warning::new(
                     file,
-                    format!(
-                        "shortcuts.{}: already used by {}; {} is disabled",
-                        action.name(),
-                        owner.name(),
-                        action.name()
-                    ),
+                    format!("shortcuts.{}: already used by {}; {cost}", action.name(), owner.name()),
                 ));
-                continue;
             }
-            bindings.push((*chord, *action));
         }
 
         for action in Action::ALL {
             if user.iter().any(|(a, _)| *a == action) {
                 continue;
             }
-            let Some(text) = action.default_text(platform) else { continue };
-            let chord = parse_chord(text, platform).expect("defaults are valid").expect("defaults are set");
-            if let Some((_, owner)) = bindings.iter().find(|(c, _)| *c == chord) {
+            let mut taken: Vec<(&str, Action)> = Vec::new();
+            for text in action.default_texts(platform) {
+                let chord = parse_chord(text, platform).expect("defaults are valid").expect("defaults are set");
+                match bindings.iter().find(|(c, _)| *c == chord) {
+                    Some((_, owner)) => taken.push((text, *owner)),
+                    None => bindings.push((chord, action)),
+                }
+            }
+            let kept = bindings.iter().any(|(_, a)| *a == action);
+            for (text, owner) in taken {
+                let cost = if kept {
+                    "that key is left out".to_owned()
+                } else {
+                    format!("{} is disabled (give {} another key to use it)", action.name(), owner.name())
+                };
                 warnings.push(Warning::new(
                     file,
                     format!(
-                        "shortcuts: the default \"{text}\" of {} is used by {}; {} is disabled",
+                        "shortcuts: the default \"{text}\" of {} is used by {}; {cost}",
                         action.name(),
-                        owner.name(),
-                        action.name()
+                        owner.name()
                     ),
                 ));
-                continue;
             }
-            bindings.push((chord, action));
         }
         Shortcuts { bindings }
     }
@@ -428,11 +562,211 @@ mod tests {
         for platform in [Platform::Mac, Platform::Other] {
             let s = Shortcuts::defaults(platform);
             for action in Action::ALL {
-                let Some(text) = action.default_text(platform) else { continue };
-                let c = parse_chord(text, platform).unwrap().unwrap();
-                assert_eq!(s.action_for(&c), Some(action), "{platform:?} {}", action.name());
+                for text in action.default_texts(platform) {
+                    let c = parse_chord(text, platform).unwrap().unwrap();
+                    assert_eq!(s.action_for(&c), Some(action), "{platform:?} {} {text}", action.name());
+                }
             }
         }
+    }
+
+    #[test]
+    fn parses_keypad_keys_and_symbols() {
+        assert_eq!(chord("num+").key, Key::Num('+'));
+        assert_eq!(chord("alt+num+"), Chord { ctrl: false, alt: true, shift: false, meta: false, key: Key::Num('+') });
+        assert_eq!(chord("NUM-").key, Key::Num('-'));
+        assert_eq!(chord("num*").key, Key::Num('*'));
+        assert_eq!(chord("num/").key, Key::Num('/'));
+        assert_eq!(chord("ctrl+=").key, key('='));
+        assert_eq!(chord("ctrl+-").key, key('-'));
+        for bad in ["num", "num+x", "ctrl+num", "num%", "ctrlnum+", "ctrl++", "ctrl++t"] {
+            assert!(parse_chord(bad, Platform::Other).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn the_view_keys_moved_for_the_tab_numbers() {
+        let other = Shortcuts::defaults(Platform::Other);
+        assert_eq!(other.action_for(&chord("ctrl+1")), Some(Action::Tab1));
+        assert_eq!(other.action_for(&chord("ctrl+8")), Some(Action::Tab8));
+        assert_eq!(other.action_for(&chord("ctrl+9")), Some(Action::TabLast));
+        assert_eq!(other.action_for(&chord("ctrl+shift+1")), Some(Action::ViewList));
+        assert_eq!(other.action_for(&chord("ctrl+shift+2")), Some(Action::ViewGrid));
+        assert_eq!(other.action_for(&chord("ctrl+shift+t")), Some(Action::ReopenTab));
+        assert_eq!(other.action_for(&chord("ctrl+shift+a")), Some(Action::TabPicker));
+        assert_eq!(other.action_for(&chord("ctrl+shift+i")), Some(Action::InvertSelection));
+        assert_eq!(other.action_for(&chord("ctrl+f")), Some(Action::Filter));
+        assert_eq!(other.action_for(&chord("num/")), Some(Action::RestoreSelection));
+        assert_eq!(other.chord_for(Action::ToggleTabLock), None);
+        let mac = Shortcuts::defaults(Platform::Mac);
+        let mac_chord = |t: &str| parse_chord(t, Platform::Mac).unwrap().unwrap();
+        assert_eq!(mac.action_for(&mac_chord("mod+3")), Some(Action::Tab3));
+        assert_eq!(mac.action_for(&mac_chord("mod+shift+1")), Some(Action::ViewList));
+    }
+
+    #[test]
+    fn an_old_hand_binding_of_ctrl_1_still_works() {
+        let (s, warnings) = build(
+            "[shortcuts]
+view-list = \"mod+1\"
+",
+        );
+        assert_eq!(s.action_for(&chord("ctrl+1")), Some(Action::ViewList));
+        assert_eq!(s.action_for(&chord("ctrl+shift+1")), None, "the user's binding replaces the default");
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(
+            warnings[0].message.contains("tab-1")
+                && warnings[0].message.ends_with("tab-1 is disabled (give view-list another key to use it)"),
+            "{warnings:?}"
+        );
+    }
+
+    /// A `[shortcuts]` table written before actions could have several keys: single texts,
+    /// some shadowing today's defaults, still read as before.
+    #[test]
+    fn an_old_settings_file_still_reads() {
+        let (s, warnings) = build(
+            "[shortcuts]
+new-tab = \"ctrl+n\"
+view-list = \"mod+1\"
+view-grid = \"mod+2\"
+             refresh = \"\"
+toggle-hidden = \"ctrl+h\"
+duplicate = \"ctrl+d\"
+",
+        );
+        assert_eq!(s.action_for(&chord("ctrl+n")), Some(Action::NewTab));
+        assert_eq!(s.action_for(&chord("ctrl+t")), None);
+        assert_eq!(s.action_for(&chord("ctrl+1")), Some(Action::ViewList));
+        assert_eq!(s.action_for(&chord("ctrl+2")), Some(Action::ViewGrid));
+        assert_eq!(s.action_for(&chord("f5")), None);
+        assert_eq!(s.action_for(&chord("ctrl+h")), Some(Action::ToggleHidden));
+        assert_eq!(s.action_for(&chord("ctrl+d")), Some(Action::Duplicate));
+        assert_eq!(s.action_for(&chord("ctrl+3")), Some(Action::Tab3), "the other tab keys stay");
+        assert_eq!(s.chord_for(Action::Tab1), None);
+        assert_eq!(s.chord_for(Action::Tab2), None);
+        let messages: Vec<&str> = warnings.iter().map(|w| w.message.as_str()).collect();
+        assert_eq!(
+            messages,
+            [
+                "shortcuts: the default \"mod+1\" of tab-1 is used by view-list; tab-1 is disabled (give view-list another key to use it)",
+                "shortcuts: the default \"mod+2\" of tab-2 is used by view-grid; tab-2 is disabled (give view-grid another key to use it)",
+            ]
+        );
+    }
+
+    #[test]
+    fn an_action_can_have_several_keys() {
+        let other = Shortcuts::defaults(Platform::Other);
+        assert_eq!(other.action_for(&chord("num+")), Some(Action::SelectPattern));
+        assert_eq!(other.action_for(&chord("ctrl+=")), Some(Action::SelectPattern));
+        assert_eq!(other.action_for(&chord("alt+num+")), Some(Action::SelectSameType));
+        assert_eq!(other.chord_for(Action::SelectPattern), Some(chord("ctrl+=")), "the playable one first");
+        let (s, warnings) = build(
+            "[shortcuts]
+select-pattern = [\"num+\", \"ctrl+shift+0\"]
+deselect-pattern = \"\"
+",
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(s.action_for(&chord("ctrl+shift+0")), Some(Action::SelectPattern));
+        assert_eq!(s.action_for(&chord("ctrl+=")), None, "the list replaces both defaults");
+        assert_eq!(s.action_for(&chord("num-")), None);
+        let (_, warnings) = build(
+            "[shortcuts]
+filter = [\"ctrl+f\", 3]
+",
+        );
+        assert!(warnings[0].message.starts_with("shortcuts.filter: expected text or a list of texts"), "{warnings:?}");
+        let (s, warnings) = build(
+            "[shortcuts]
+refresh = \"num+\"
+",
+        );
+        assert_eq!(s.action_for(&chord("num+")), Some(Action::Refresh));
+        assert_eq!(s.action_for(&chord("ctrl+=")), Some(Action::SelectPattern), "its other key stays");
+        assert!(warnings[0].message.ends_with("that key is left out"), "{warnings:?}");
+    }
+
+    #[test]
+    fn num_plus_parses_with_spaces_around_the_separator() {
+        assert_eq!(
+            chord("ctrl + num+"),
+            Chord { ctrl: true, alt: false, shift: false, meta: false, key: Key::Num('+') }
+        );
+        assert_eq!(
+            chord(" Ctrl + Alt +NUM+ "),
+            Chord { ctrl: true, alt: true, shift: false, meta: false, key: Key::Num('+') }
+        );
+        assert_eq!(
+            chord("alt + num-"),
+            Chord { ctrl: false, alt: true, shift: false, meta: false, key: Key::Num('-') }
+        );
+        assert!(parse_chord("ctrl + + num+", Platform::Other).is_err());
+    }
+
+    #[test]
+    fn an_action_left_with_no_key_is_disabled() {
+        // Both default keys of select-pattern are taken: it has none left.
+        let (s, warnings) = build(
+            "[shortcuts]
+refresh = \"num+\"
+up = \"ctrl+=\"
+",
+        );
+        assert_eq!(s.chord_for(Action::SelectPattern), None);
+        let messages: Vec<&str> = warnings.iter().map(|w| w.message.as_str()).collect();
+        assert_eq!(
+            messages,
+            [
+                "shortcuts: the default \"mod+=\" of select-pattern is used by up; select-pattern is disabled (give up another key to use it)",
+                "shortcuts: the default \"num+\" of select-pattern is used by refresh; select-pattern is disabled (give refresh another key to use it)",
+            ]
+        );
+        // One of two taken: only that key goes.
+        let (_, warnings) = build(
+            "[shortcuts]
+refresh = \"num+\"
+",
+        );
+        assert_eq!(
+            warnings[0].message,
+            "shortcuts: the default \"num+\" of select-pattern is used by refresh; that key is left out"
+        );
+        // The user's own list, all of it taken by keys written before it.
+        let (s, warnings) = build(
+            "[shortcuts]
+up = \"ctrl+u\"
+forward = \"ctrl+j\"
+back = [\"ctrl+u\", \"ctrl+j\"]
+",
+        );
+        assert_eq!(s.chord_for(Action::Back), None);
+        let messages: Vec<&str> = warnings.iter().map(|w| w.message.as_str()).collect();
+        assert_eq!(
+            messages,
+            [
+                "shortcuts.back: already used by up; back is disabled",
+                "shortcuts.back: already used by forward; back is disabled"
+            ]
+        );
+        let (_, warnings) = build(
+            "[shortcuts]
+up = \"ctrl+u\"
+back = [\"ctrl+u\", \"ctrl+j\"]
+",
+        );
+        assert_eq!(warnings[0].message, "shortcuts.back: already used by up; that key is left out");
+    }
+
+    #[test]
+    fn every_action_has_a_name_that_reads_back() {
+        for action in Action::ALL {
+            assert_eq!(Action::from_name(action.name()), Some(action), "{}", action.name());
+        }
+        assert_eq!(Action::Tab3.tab_number(), Some(3));
+        assert_eq!(Action::Tab8.tab_number(), Some(8));
+        assert_eq!(Action::TabLast.tab_number(), None);
     }
 
     fn table(text: &str) -> toml::Table {

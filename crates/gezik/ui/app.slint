@@ -6,6 +6,7 @@ import { TabBar, TabItem } from "widgets/tab-bar.slint";
 import { Sidebar, SidebarRow } from "widgets/sidebar.slint";
 import { PreviewPane, PreviewInfo } from "widgets/preview-pane.slint";
 import { FileView, FileRow, ItemRow } from "widgets/file-view.slint";
+import { FilterBar } from "widgets/filter-bar.slint";
 import { OpsPanel, OpRow } from "widgets/ops-panel.slint";
 import { Dialog } from "widgets/dialog.slint";
 import { ConflictList, ConflictRow } from "widgets/conflict-list.slint";
@@ -14,10 +15,11 @@ import { FileIcon } from "widgets/file-icon.slint";
 import { CompressLayer } from "widgets/compress.slint";
 import { ConvertLayer, ConvertView } from "widgets/convert.slint";
 import { PopupMenu, MenuEntry, MenuPlace } from "widgets/popup-menu.slint";
+import { TabPicker, TabPickRow } from "widgets/tab-picker.slint";
 
 // Re-exported so Rust can set it with `window.global::<Theme>()` and build crumbs, tabs
 // and sidebar rows.
-export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, OpRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView, MenuEntry, MenuPlace }
+export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, OpRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView, MenuEntry, MenuPlace, TabPickRow }
 
 // Where the drop targets are, in window coordinates (drag.rs reads it while files are
 // dragged; every field is computed when read).
@@ -81,11 +83,18 @@ export component AppWindow inherits Window {
             MenuItem { title: "Paste"; shortcut: root.menu-keys ? @keys(Control + V) : @keys(); activated => { root.menu-command("paste"); } }
             MenuItem { title: "Move Item Here"; shortcut: root.menu-keys ? @keys(Control + Alt + V) : @keys(); activated => { root.menu-command("paste-move"); } }
             MenuItem { title: "Select All"; shortcut: root.menu-keys ? @keys(Control + A) : @keys(); activated => { root.menu-command("select-all"); } }
+            MenuSeparator { }
+            MenuItem { title: "Filter…"; shortcut: root.menu-keys ? @keys(Control + F) : @keys(); activated => { root.menu-command("filter"); } }
+            MenuItem { title: "Invert Selection"; shortcut: root.menu-keys ? @keys(Control + Shift + I) : @keys(); activated => { root.menu-command("invert-selection"); } }
+            MenuItem { title: "Select by Pattern…"; shortcut: root.menu-keys ? @keys(Control + "=") : @keys(); activated => { root.menu-command("select-pattern"); } }
+            MenuItem { title: "Deselect by Pattern…"; shortcut: root.menu-keys ? @keys(Control + "-") : @keys(); activated => { root.menu-command("deselect-pattern"); } }
+            MenuItem { title: "Select Same Type"; activated => { root.menu-command("select-same-type"); } }
+            MenuItem { title: "Restore Selection"; activated => { root.menu-command("restore-selection"); } }
         }
         Menu {
             title: "View";
-            MenuItem { title: "as List"; shortcut: root.menu-keys ? @keys(Control + "1") : @keys(); activated => { root.menu-command("view-list"); } }
-            MenuItem { title: "as Grid"; shortcut: root.menu-keys ? @keys(Control + "2") : @keys(); activated => { root.menu-command("view-grid"); } }
+            MenuItem { title: "as List"; shortcut: root.menu-keys ? @keys(Control + Shift + "1") : @keys(); activated => { root.menu-command("view-list"); } }
+            MenuItem { title: "as Grid"; shortcut: root.menu-keys ? @keys(Control + Shift + "2") : @keys(); activated => { root.menu-command("view-grid"); } }
             MenuSeparator { }
             MenuItem { title: "Show Preview"; activated => { root.menu-command("toggle-preview"); } }
             MenuItem { title: "Show Hidden Files"; shortcut: root.menu-keys ? @keys(Control + Shift + ".") : @keys(); activated => { root.menu-command("toggle-hidden"); } }
@@ -107,6 +116,20 @@ export component AppWindow inherits Window {
             MenuSeparator { }
             MenuItem { title: "Show Next Tab"; activated => { root.menu-command("next-tab"); } }
             MenuItem { title: "Show Previous Tab"; activated => { root.menu-command("prev-tab"); } }
+            MenuSeparator { }
+            MenuItem { title: "Reopen Closed Tab"; shortcut: root.menu-keys ? @keys(Control + Shift + T) : @keys(); activated => { root.menu-command("reopen-tab"); } }
+            MenuItem { title: "Show All Tabs…"; shortcut: root.menu-keys ? @keys(Control + Shift + A) : @keys(); activated => { root.menu-command("tab-picker"); } }
+            MenuItem { title: root.active-tab-locked ? "Unlock Tab" : "Lock Tab"; activated => { root.menu-command("toggle-tab-lock"); } }
+            MenuSeparator { }
+            MenuItem { title: "Tab 1"; shortcut: root.menu-keys ? @keys(Control + "1") : @keys(); activated => { root.menu-command("tab-1"); } }
+            MenuItem { title: "Tab 2"; shortcut: root.menu-keys ? @keys(Control + "2") : @keys(); activated => { root.menu-command("tab-2"); } }
+            MenuItem { title: "Tab 3"; shortcut: root.menu-keys ? @keys(Control + "3") : @keys(); activated => { root.menu-command("tab-3"); } }
+            MenuItem { title: "Tab 4"; shortcut: root.menu-keys ? @keys(Control + "4") : @keys(); activated => { root.menu-command("tab-4"); } }
+            MenuItem { title: "Tab 5"; shortcut: root.menu-keys ? @keys(Control + "5") : @keys(); activated => { root.menu-command("tab-5"); } }
+            MenuItem { title: "Tab 6"; shortcut: root.menu-keys ? @keys(Control + "6") : @keys(); activated => { root.menu-command("tab-6"); } }
+            MenuItem { title: "Tab 7"; shortcut: root.menu-keys ? @keys(Control + "7") : @keys(); activated => { root.menu-command("tab-7"); } }
+            MenuItem { title: "Tab 8"; shortcut: root.menu-keys ? @keys(Control + "8") : @keys(); activated => { root.menu-command("tab-8"); } }
+            MenuItem { title: "Last Tab"; shortcut: root.menu-keys ? @keys(Control + "9") : @keys(); activated => { root.menu-command("tab-last"); } }
         }
     }
     default-font-family: Theme.font-family;
@@ -153,9 +176,22 @@ export component AppWindow inherits Window {
     in property <bool> can-go-up;
     in property <[CrumbItem]> crumbs;
     in property <[TabItem]> tabs;
+    // The active tab is locked (the menu bar's Lock/Unlock Tab).
+    in property <bool> active-tab-locked;
     // The file list's scroll offset (content-y), saved and restored per history entry.
     in-out property <length> list-scroll;
     in-out property <bool> path-editing;
+    // The filter bar above the file list (Ctrl+F): open, its text, "12 / 340" and what is
+    // wrong with the text.
+    in property <bool> filter-open;
+    in-out property <string> filter-text;
+    in property <string> filter-count;
+    in property <string> filter-error;
+    // The filter bar's field has the keyboard.
+    out property <bool> filter-focused: filter-bar.field-focused;
+    callback filter-edited(string);
+    // The saved filters' button, with its box (as `view-menu`).
+    callback filter-menu(length, length, length, length);
     in property <[SidebarRow]> sidebar-rows;
     // Position in `sidebar-rows` of the first pinned item (-1 if none), and how many there are.
     in property <int> sidebar-pinned-first-row: -1;
@@ -387,6 +423,14 @@ export component AppWindow inherits Window {
     callback cv-pdf-reorder(int, int);
     pure callback cv-pdf-drop-row(length, length, int) -> int;
 
+    // The tab picker (tab_tools.rs): the tabs the query lets through, the row Enter picks.
+    in property <bool> tp-open;
+    in-out property <string> tp-query;
+    in property <[TabPickRow]> tp-rows;
+    in property <int> tp-current;
+    callback tp-edited(string);
+    callback tp-chosen(int);
+
     // A question over the window (dialog.rs); `dialog-chosen` gets the button's index.
     in property <bool> dialog-open;
     in property <string> dialog-title;
@@ -399,7 +443,12 @@ export component AppWindow inherits Window {
     // The text is a password: dots, with "Show".
     in property <bool> dialog-input-secret;
     in-out property <bool> dialog-show-secret;
+    // The line under the field (dialog.rs `ask_text_noted`), red if an error; `dialog-edited`
+    // gets the field's text as it is typed.
+    in property <string> dialog-note;
+    in property <bool> dialog-note-error;
     callback dialog-chosen(int);
+    callback dialog-edited(string);
     callback key-event(KeyEvent) -> bool;
 
     // Dragging files (drag.rs). Presses, moves and releases on entries; see FileView.
@@ -463,7 +512,26 @@ export component AppWindow inherits Window {
     // `key-event` at all. Done even while the window is inactive, so the list gets the focus
     // back when the window is activated again.
     changed path-editing => {
-        if !self.path-editing && !keys.has-focus { keys.focus(); }
+        if !self.path-editing && !keys.has-focus && !filter-bar.field-focused { keys.focus(); }
+    }
+
+    // Gives the keyboard to the filter bar's field, the cursor at byte `at`.
+    public function focus-filter(at: int) {
+        root.end-path-editing-for-filter();
+        filter-bar.focus-at(at);
+    }
+
+    // Gives the keyboard to the filter bar's field with its whole text selected.
+    public function select-filter-text() {
+        root.end-path-editing-for-filter();
+        filter-bar.select-all();
+    }
+
+    // Typing in the address bar ends when the filter takes the keyboard.
+    function end-path-editing-for-filter() {
+        if root.path-editing {
+            root.path-editing = false;
+        }
     }
 
     // Gives the keyboard to the file list.
@@ -476,6 +544,8 @@ export component AppWindow inherits Window {
             compress-layer.take-focus();
         } else if root.cv-open {
             convert-layer.take-focus();
+        } else if root.tp-open {
+            tab-picker.take-focus();
         } else {
             keys.focus();
         }
@@ -666,59 +736,75 @@ export component AppWindow inherits Window {
                         changed pressed => { if !self.pressed { root.sidebar-resized(); } }
                     }
                 }
-                file-view := FileView {
+                VerticalLayout {
                     horizontal-stretch: 1;
-                    items: root.items;
-                    mode: root.view-mode;
-                    picture-size: root.grid-size;
-                    grid-columns-changed(n) => { root.grid-columns-changed(n); }
-                    zoom(bigger) => { root.zoom(bigger); }
-                    has-focus: keys.has-focus;
-                    scroll <=> root.list-scroll;
-                    focus-requested => { keys.focus(); }
-                    col-modified <=> root.col-modified;
-                    col-created <=> root.col-created;
-                    col-type <=> root.col-type;
-                    renaming-index: root.renaming-index;
-                    rename-text <=> root.rename-text;
-                    rename-select: root.rename-select;
-                    rename-error: root.rename-error;
-                    rename-accepted(t) => { root.rename-accepted(t); }
-                    rename-cancelled => { root.rename-cancelled(); }
-                    rename-tab(t, back) => { root.rename-tab(t, back); }
-                    rename-edited(t) => { root.rename-edited(t); }
-                    rename-blurred(t, g) => { root.rename-blurred(t, g); }
-                    rename-generation: root.rename-generation;
-                    rename-has-focus <=> root.rename-field-focused;
-                    col-size <=> root.col-size;
-                    sort-column: root.sort-column;
-                    sort-desc: root.sort-desc;
-                    header-clicked(i) => { root.header-clicked(i); }
-                    header-menu(x, y) => {
-                        root.end-path-editing();
-                        root.header-menu(x, y);
+                    filter-bar := FilterBar {
+                        height: root.filter-open ? Theme.row-height + 8px : 0px;
+                        visible: root.filter-open;
+                        text <=> root.filter-text;
+                        count: root.filter-count;
+                        error: root.filter-error;
+                        edited(t) => { root.filter-edited(t); }
+                        menu(x, y, fx, fy) => {
+                            root.end-path-editing();
+                            root.filter-menu(x, y, fx, fy);
+                        }
                     }
-                    columns-resized => { root.columns-resized(); }
-                    item-pressed(i, ctrl, shift) => { root.item-pressed(i, ctrl, shift); }
-                    item-down(i, x, y, right, can-drag) => { root.item-down(i, x, y, right, can-drag); }
-                    item-drag(x, y, shift, ctrl, alt) => { root.item-drag(x, y, shift, ctrl, alt); }
-                    item-up(i, x, y, right) => { return root.item-up(i, x, y, right); }
-                    item-cancel => { root.item-cancel(); }
-                    drag-active: root.drag-active;
-                    drag-forbidden: root.drag-forbidden;
-                    drop-entry: root.drop-entry;
-                    item-double-clicked(i) => { root.open-row(i); }
-                    item-middle-clicked(i) => { root.row-middle-clicked(i); }
-                    item-menu(i, x, y) => {
-                        root.end-path-editing();
-                        root.row-menu(i, x, y);
-                    }
-                    background-pressed(ctrl) => { root.background-pressed(ctrl); }
-                    marquee(x, y, w, h, additive) => { root.marquee(x, y, w, h, additive); }
-                    marquee-done => { root.marquee-done(); }
-                    background-menu(x, y) => {
-                        root.end-path-editing();
-                        root.background-menu(x, y);
+                    if root.filter-open: Rectangle { height: 1px; background: Theme.border; }
+                    file-view := FileView {
+                        horizontal-stretch: 1;
+                        items: root.items;
+                        mode: root.view-mode;
+                        picture-size: root.grid-size;
+                        grid-columns-changed(n) => { root.grid-columns-changed(n); }
+                        zoom(bigger) => { root.zoom(bigger); }
+                        has-focus: keys.has-focus;
+                        scroll <=> root.list-scroll;
+                        focus-requested => { keys.focus(); }
+                        col-modified <=> root.col-modified;
+                        col-created <=> root.col-created;
+                        col-type <=> root.col-type;
+                        renaming-index: root.renaming-index;
+                        rename-text <=> root.rename-text;
+                        rename-select: root.rename-select;
+                        rename-error: root.rename-error;
+                        rename-accepted(t) => { root.rename-accepted(t); }
+                        rename-cancelled => { root.rename-cancelled(); }
+                        rename-tab(t, back) => { root.rename-tab(t, back); }
+                        rename-edited(t) => { root.rename-edited(t); }
+                        rename-blurred(t, g) => { root.rename-blurred(t, g); }
+                        rename-generation: root.rename-generation;
+                        rename-has-focus <=> root.rename-field-focused;
+                        col-size <=> root.col-size;
+                        sort-column: root.sort-column;
+                        sort-desc: root.sort-desc;
+                        header-clicked(i) => { root.header-clicked(i); }
+                        header-menu(x, y) => {
+                            root.end-path-editing();
+                            root.header-menu(x, y);
+                        }
+                        columns-resized => { root.columns-resized(); }
+                        item-pressed(i, ctrl, shift) => { root.item-pressed(i, ctrl, shift); }
+                        item-down(i, x, y, right, can-drag) => { root.item-down(i, x, y, right, can-drag); }
+                        item-drag(x, y, shift, ctrl, alt) => { root.item-drag(x, y, shift, ctrl, alt); }
+                        item-up(i, x, y, right) => { return root.item-up(i, x, y, right); }
+                        item-cancel => { root.item-cancel(); }
+                        drag-active: root.drag-active;
+                        drag-forbidden: root.drag-forbidden;
+                        drop-entry: root.drop-entry;
+                        item-double-clicked(i) => { root.open-row(i); }
+                        item-middle-clicked(i) => { root.row-middle-clicked(i); }
+                        item-menu(i, x, y) => {
+                            root.end-path-editing();
+                            root.row-menu(i, x, y);
+                        }
+                        background-pressed(ctrl) => { root.background-pressed(ctrl); }
+                        marquee(x, y, w, h, additive) => { root.marquee(x, y, w, h, additive); }
+                        marquee-done => { root.marquee-done(); }
+                        background-menu(x, y) => {
+                            root.end-path-editing();
+                            root.background-menu(x, y);
+                        }
                     }
                 }
                 // A 1px line, grabbable over 5px.
@@ -951,6 +1037,20 @@ export component AppWindow inherits Window {
             pdf-reorder(from, to) => { root.cv-pdf-reorder(from, to); }
             pdf-drop-row(y, h, count) => { return root.cv-pdf-drop-row(y, h, count); }
         }
+        tab-picker := TabPicker {
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.height;
+            visible: root.tp-open;
+            open: root.tp-open;
+            dialog-open: root.dialog-open || root.conflicts-open;
+            query <=> root.tp-query;
+            rows: root.tp-rows;
+            current: root.tp-current;
+            edited(text) => { root.tp-edited(text); }
+            chosen(i) => { root.tp-chosen(i); }
+        }
         // Always there (hidden when closed), so Rust can scroll it.
         conflict-list := ConflictList {
             x: 0;
@@ -989,7 +1089,10 @@ export component AppWindow inherits Window {
             input <=> root.dialog-input;
             input-secret: root.dialog-input-secret;
             show-secret <=> root.dialog-show-secret;
+            note: root.dialog-note;
+            note-error: root.dialog-note-error;
             chosen(i) => { root.dialog-chosen(i); }
+            edited(text) => { root.dialog-edited(text); }
         }
         if root.offer-label != "": Rectangle {
             x: root.drag-x + 14px;

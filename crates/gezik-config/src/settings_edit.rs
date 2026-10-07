@@ -1,4 +1,4 @@
-//! Edits `settings.toml` in place: only `pinned` or the `[view]` defaults change; the user's
+//! Edits `settings.toml` in place: only `pinned`, the `[view]` defaults or the saved tables change; the user's
 //! comments, key order and formatting stay as they were.
 
 /// Returns `text` with `pinned` set to `pinned`. Errors with the parser's message if the
@@ -64,18 +64,34 @@ pub fn with_view_defaults(text: &str, view: &gezik_core::view::ViewSettings) -> 
 /// that do not parse as a preset (hand-written, broken) are not Gezik's to drop: they are
 /// written back unchanged after `presets`.
 pub fn with_rename_presets(text: &str, presets: &[crate::settings::RenamePreset]) -> Result<String, String> {
+    let tables = presets.iter().map(crate::settings::preset_to_toml).collect();
+    with_tables(text, "rename-presets", tables, |item| crate::settings::parse_preset(item).is_ok())
+}
+
+/// Returns `text` with `[[filters]]` replaced by `filters`; the rest stays, and so do the
+/// entries that do not read as a filter (see `with_rename_presets`).
+pub fn with_filters(text: &str, filters: &[crate::settings::SavedFilter]) -> Result<String, String> {
+    let tables = filters.iter().map(crate::settings::filter_to_toml).collect();
+    with_tables(text, "filters", tables, |item| crate::settings::parse_filter(item).is_ok())
+}
+
+/// Replaces the `[[key]]` tables that `valid` accepts with `tables`; the entries it rejects
+/// are written back unchanged after them.
+fn with_tables(
+    text: &str,
+    key: &str,
+    tables: Vec<toml::Table>,
+    valid: impl Fn(&toml::Value) -> bool,
+) -> Result<String, String> {
     let mut doc = text.parse::<toml_edit::DocumentMut>().map_err(|err| err.to_string().trim().to_owned())?;
     let plain = text.parse::<toml::Table>().map_err(|err| err.to_string().trim().to_owned())?;
-    // Whether each existing entry is a valid preset, by the same rules as `Settings::parse`.
-    let valid: Vec<bool> = plain
-        .get("rename-presets")
-        .and_then(|v| v.as_array())
-        .map(|items| items.iter().map(|item| crate::settings::parse_preset(item).is_ok()).collect())
-        .unwrap_or_default();
+    // Whether each existing entry is valid, by the same rules as `Settings::parse`.
+    let valid: Vec<bool> =
+        plain.get(key).and_then(|v| v.as_array()).map(|items| items.iter().map(&valid).collect()).unwrap_or_default();
     let mut broken: Vec<toml_edit::Table> = Vec::new();
     // Comments above the presets that are replaced: the end of the table before them (see below).
     let mut comments = String::new();
-    match doc.remove("rename-presets") {
+    match doc.remove(key) {
         None => {}
         Some(toml_edit::Item::ArrayOfTables(array)) => {
             for (i, table) in array.into_iter().enumerate() {
@@ -95,11 +111,11 @@ pub fn with_rename_presets(text: &str, presets: &[crate::settings::RenamePreset]
                 }
                 match value {
                     toml_edit::Value::InlineTable(table) => broken.push(table.into_table()),
-                    _ => return Err("rename-presets must be [[rename-presets]] tables".to_owned()),
+                    _ => return Err(format!("{key} must be [[{key}]] tables")),
                 }
             }
         }
-        Some(_) => return Err("rename-presets must be [[rename-presets]] tables".to_owned()),
+        Some(_) => return Err(format!("{key} must be [[{key}]] tables")),
     }
     // Comments at the end of the file belong to its last table (the template's commented
     // `[shortcuts]` examples): they stay above the presets, which go after it.
@@ -109,10 +125,9 @@ pub fn with_rename_presets(text: &str, presets: &[crate::settings::RenamePreset]
         doc.set_trailing("");
     }
     let comments = end_with_one_line_break(&comments);
-    if !presets.is_empty() || !broken.is_empty() {
+    if !tables.is_empty() || !broken.is_empty() {
         let mut array = toml_edit::ArrayOfTables::new();
-        for preset in presets {
-            let table = crate::settings::preset_to_toml(preset);
+        for table in &tables {
             let text = toml::to_string(&table).map_err(|err| err.to_string())?;
             let parsed = text.parse::<toml_edit::DocumentMut>().map_err(|err| err.to_string())?;
             array.push(parsed.as_table().clone());
@@ -132,7 +147,7 @@ pub fn with_rename_presets(text: &str, presets: &[crate::settings::RenamePreset]
             let own = first.decor().prefix().and_then(|p| p.as_str()).unwrap_or("").to_owned();
             first.decor_mut().set_prefix(format!("{comments}\n{}", own.trim_start_matches(['\r', '\n'])));
         }
-        doc.insert("rename-presets", toml_edit::Item::ArrayOfTables(array));
+        doc.insert(key, toml_edit::Item::ArrayOfTables(array));
     } else if !comments.is_empty() {
         doc.set_trailing(comments);
     }
@@ -414,5 +429,50 @@ name = \"old\"
         let back = with_rename_presets(&out, &[]).unwrap();
         // toml_edit writes `\n` line breaks (the checkout may have `\r\n`).
         assert_eq!(back, template.replace("\r\n", "\n"));
+    }
+
+    #[test]
+    fn filters_are_written_keeping_the_rest() {
+        use crate::settings::{SavedFilter, Settings};
+        let filter = SavedFilter { name: "Resimler".into(), pattern: "*.jpg;*.png".into() };
+        let text = "# mine
+theme = \"nord\"
+
+[[filters]]
+name = \"old\"
+pattern = \"x\"
+
+[[filters]]
+name = \"broken\" # mine
+";
+        let out = with_filters(text, std::slice::from_ref(&filter)).unwrap();
+        assert!(out.contains("# mine") && out.contains("name = \"broken\" # mine"), "{out}");
+        assert!(!out.contains("\"old\""), "a valid one is replaced: {out}");
+        let mut warnings = Vec::new();
+        let settings = Settings::parse("settings.toml", &out, &mut warnings);
+        assert_eq!(settings.filters, [filter]);
+        assert_eq!(warnings.len(), 1, "the broken one still warns: {warnings:?}");
+    }
+
+    #[test]
+    fn filters_and_presets_together_leave_the_template_as_it_was() {
+        let template = include_str!("../templates/settings.toml");
+        let filter = crate::settings::SavedFilter { name: "Resimler".into(), pattern: "*.jpg".into() };
+        let with_both = with_rename_presets(&with_filters(template, &[filter]).unwrap(), &[tatil()]).unwrap();
+        let mut warnings = Vec::new();
+        let settings = crate::settings::Settings::parse("settings.toml", &with_both, &mut warnings);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!((settings.filters.len(), settings.rename_presets.len()), (1, 1));
+        // Removing both keeps every comment of the template (the examples move, they are not lost).
+        let back = with_rename_presets(&with_filters(&with_both, &[]).unwrap(), &[]).unwrap();
+        let settings = crate::settings::Settings::parse("settings.toml", &back, &mut warnings);
+        assert!(warnings.is_empty() && settings.filters.is_empty() && settings.rename_presets.is_empty(), "{back}");
+        for line in template.lines().filter(|l| l.starts_with('#')) {
+            assert!(
+                back.lines().any(|b| b == line),
+                "{line} lost:
+{back}"
+            );
+        }
     }
 }

@@ -1,0 +1,120 @@
+import { Theme } from "../theme.slint";
+import { TextField } from "text-field.slint";
+
+export struct TabPickRow {
+    title: string,
+    // "" for This PC.
+    path: string,
+    active: bool,
+}
+
+// The tab picker (tab_tools.rs): the open tabs over the window, filtered by what is typed in
+// the field. Up/Down, Enter and Esc reach Rust first (`key-event`); a click on a row picks it.
+export component TabPicker inherits Rectangle {
+    in property <bool> open;
+    in property <bool> dialog-open;
+    in-out property <string> query;
+    in property <[TabPickRow]> rows;
+    // The row Enter picks (shown selected).
+    in property <int> current;
+    // The field's text changed (typed, not set).
+    callback edited(string);
+    callback chosen(int);
+
+    property <length> row-height: Theme.row-height * 1.7;
+    // At most this many rows show; more scroll.
+    property <int> shown-rows: 10;
+
+    public function take-focus() {
+        field.focus-and-select();
+    }
+
+    changed open => {
+        if self.open && !root.dialog-open {
+            root.take-focus();
+        }
+    }
+
+    // Keeps the current row in sight.
+    changed current => {
+        if root.current * root.row-height < -list.content-y {
+            list.content-y = -root.current * root.row-height;
+        } else if (root.current + 1) * root.row-height > list.height - list.content-y {
+            list.content-y = list.height - (root.current + 1) * root.row-height;
+        }
+    }
+
+    background: Theme.background.with-alpha(0.6);
+
+    // Clicks outside the box go nowhere.
+    TouchArea { }
+
+    Rectangle {
+        width: min(480px, root.width - 40px);
+        height: content.preferred-height;
+        x: (root.width - self.width) / 2;
+        y: (root.height - self.height) / 4;
+        background: Theme.surface;
+        border-radius: Theme.radius * 1.5;
+        border-width: 1px;
+        border-color: Theme.border;
+        accessible-role: groupbox;
+        accessible-label: "Tabs";
+
+        content := VerticalLayout {
+            padding: Theme.spacing * 2;
+            spacing: Theme.spacing * 1.5;
+            field := TextField {
+                text <=> root.query;
+                edited(text) => { root.edited(text); }
+            }
+            if root.rows.length == 0: Text {
+                text: "No tabs match";
+                color: Theme.foreground-muted;
+                horizontal-alignment: center;
+            }
+            list := Flickable {
+                height: min(root.rows.length, root.shown-rows) * root.row-height;
+                content-height: root.rows.length * root.row-height;
+                interactive: false;
+                for row[i] in root.rows: Rectangle {
+                    y: i * root.row-height;
+                    width: parent.width;
+                    height: root.row-height;
+                    border-radius: Theme.radius;
+                    background: i == root.current ? Theme.selection : touch.has-hover ? Theme.hover : transparent;
+                    accessible-role: list-item;
+                    accessible-label: row.title;
+                    accessible-item-selectable: true;
+                    accessible-item-selected: i == root.current;
+                    accessible-action-default => { root.chosen(i); }
+                    VerticalLayout {
+                        padding-left: Theme.spacing * 1.5;
+                        padding-right: Theme.spacing * 1.5;
+                        alignment: center;
+                        Text {
+                            text: row.title;
+                            overflow: elide;
+                            font-weight: row.active ? 600 : 400;
+                            color: i == root.current ? Theme.selection-foreground : Theme.foreground;
+                        }
+                        if row.path != "": Text {
+                            text: row.path;
+                            overflow: elide;
+                            font-size: Theme.font-size * 0.85;
+                            color: i == root.current ? Theme.selection-foreground : Theme.foreground-muted;
+                        }
+                    }
+                    touch := TouchArea {
+                        clicked => { root.chosen(i); }
+                        // The wheel scrolls the list.
+                        scroll-event(event) => {
+                            list.content-y = clamp(list.content-y + event.delta-y, min(0px, list.height - list.content-height), 0px);
+                            accept
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

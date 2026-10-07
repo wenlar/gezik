@@ -19,6 +19,7 @@ use gezik_core::kind::{fallback_type_name, own_type_name};
 use gezik_core::layout::{Geometry, Move, Rect};
 use gezik_core::nav::ViewState;
 use gezik_core::ops::names::rename_selection;
+use gezik_core::pattern::Pattern;
 use gezik_core::selection::Selection;
 use gezik_core::sort::{SortDir, SortKey, SortSpec, sort_entries};
 use gezik_core::view::{
@@ -31,6 +32,7 @@ use slint::{ComponentHandle, ModelRc};
 
 use crate::media::{Media, Ready};
 use crate::{AppWindow, Theme};
+use listing::{filtered_listing, name_taken};
 use model::{ItemsModel, ViewData};
 
 /// How long after showing a listing (or a far jump) its scroll offset is applied again:
@@ -79,6 +81,37 @@ struct Inner {
     media: Media,
     /// A re-sort by type is scheduled (type names arrive one by one).
     resort_pending: Cell<bool>,
+    /// The filter bar (`None`: closed).
+    filter: RefCell<Option<FilterState>>,
+    /// The view was emptied (`clear`) since the last `show`: the next listing takes its filter
+    /// from the state it comes with, not from the bar.
+    cleared: Cell<bool>,
+    /// The selection before the last file operation: its folder and the selected names
+    /// (`restore_remembered`).
+    remembered: RefCell<Option<(PathBuf, Vec<String>)>>,
+}
+
+/// The filter bar's text, the pattern the list shows, and what is wrong with the text.
+#[derive(Debug)]
+struct FilterState {
+    text: String,
+    pattern: Pattern,
+    error: Option<String>,
+}
+
+impl FilterState {
+    /// `text` compiled; a text with an error keeps `before`'s pattern (the list does not
+    /// jump while a part is half typed).
+    fn new(text: &str, before: Option<&FilterState>) -> FilterState {
+        match Pattern::compile(text) {
+            Ok(pattern) => FilterState { text: text.to_owned(), pattern, error: None },
+            Err(error) => FilterState {
+                text: text.to_owned(),
+                pattern: before.map(|b| b.pattern.clone()).unwrap_or_default(),
+                error: Some(error),
+            },
+        }
+    }
 }
 
 thread_local! {
@@ -131,6 +164,9 @@ impl View {
             save_pending: Cell::new(false),
             columns: RefCell::new(default_columns()),
             show_hidden: Cell::new(!cfg!(target_os = "macos")),
+            filter: RefCell::new(None),
+            cleared: Cell::new(false),
+            remembered: RefCell::new(None),
         }));
         // Weak: the media lives inside the view.
         let weak = Rc::downgrade(&view.0);
@@ -186,9 +222,8 @@ impl View {
         });
     }
 
-    /// Asks for the system name of every type in `listing` (to sort by type).
-    fn request_type_names(&self, listing: &Listing) {
-        let Listing::Files(_, entries) = listing else { return };
+    /// Asks for the system name of every type in `entries` (to sort by type).
+    fn request_type_names(&self, entries: &[Entry]) {
         let mut seen = HashSet::new();
         for e in entries.iter() {
             let ext = e.extension().to_lowercase();
@@ -261,11 +296,44 @@ impl View {
         self.apply_layout();
         let listing = if self.0.show_hidden.get() { listing } else { listing.without_dotfiles() };
         let listing = self.sorted(listing, true);
+        // A reload of the folder on screen keeps the bar as it is now (the text may have
+        // changed while it loaded); so does a move to it (its breadcrumb or sidebar entry, its
+        // path typed again), which counts as a refresh. Otherwise the filter the place had (a
+        // tab switch). Only folders have one.
+        let cleared = self.0.cleared.replace(false);
+        let live = same_folder && !cleared;
+        let (full, listing, rows) = match listing {
+            Listing::Files(dir, full) if !dir.as_os_str().is_empty() => {
+                let filter = if live {
+                    self.0.filter.borrow_mut().take()
+                } else {
+                    state.filter.as_deref().map(|text| FilterState::new(text, None))
+                };
+                let (shown, rows) = match &filter {
+                    Some(filter) => filtered_listing(&dir, &full, &filter.pattern),
+                    None => (Listing::Files(dir, full.clone()), None),
+                };
+                *self.0.filter.borrow_mut() = filter;
+                (full, shown, rows)
+            }
+            // "This PC", or nothing (a folder that cannot be listed).
+            other => {
+                self.0.filter.borrow_mut().take();
+                let full = match &other {
+                    Listing::Files(_, full) => full.clone(),
+                    Listing::Drives(_) => Rc::default(),
+                };
+                (full, other, None)
+            }
+        };
         let selection = restore_selection(&listing, state);
         let count = listing.len();
+        let count_before = self.0.data.borrow().listing.len();
         {
             let mut data = self.0.data.borrow_mut();
             data.listing = listing;
+            data.full = full;
+            data.rows = rows;
             data.selection = selection;
             data.marquee_base = None;
             data.pending = Default::default();
@@ -287,9 +355,11 @@ impl View {
         self.0.model.notify.reset();
         let shown = self.0.shown.get() + 1;
         self.0.shown.set(shown);
-        *self.0.note.borrow_mut() = note;
+        let kept = self.0.note.borrow_mut().take();
+        *self.0.note.borrow_mut() = note_after_show(kept, note, live, count != count_before);
         let Some(window) = self.0.window.upgrade() else { return };
         self.sync_focus(&window);
+        self.sync_filter_bar(&window);
         window.set_list_scroll(state.scroll);
         if state.scroll != 0.0 && count > 0 {
             let (view, scroll) = (self.clone(), state.scroll);
@@ -322,8 +392,12 @@ impl View {
 
     /// Whether an entry other than `except` is called `name` (ignoring case where the file
     /// system does).
+    /// In a folder the entries the filter hides count too.
     pub fn has_other_named(&self, name: &str, except: usize) -> bool {
         let data = self.0.data.borrow();
+        if let Listing::Files(..) = data.listing {
+            return name_taken(&data.full, name, data.listing.name_at(except).unwrap_or_default());
+        }
         (0..data.listing.len()).filter(|&i| i != except).any(|i| {
             data.listing.name_at(i).is_some_and(|other| {
                 if cfg!(any(windows, target_os = "macos")) {
@@ -335,9 +409,13 @@ impl View {
         })
     }
 
-    /// The names of every entry shown (the folder's listing).
+    /// The names of every entry in the folder, the ones the filter hides too ("This PC": its
+    /// drives).
     pub fn all_names(&self) -> Vec<String> {
         let data = self.0.data.borrow();
+        if let Listing::Files(..) = data.listing {
+            return data.full.iter().map(|e| e.name.clone()).collect();
+        }
         (0..data.listing.len()).filter_map(|i| data.listing.name_at(i).map(str::to_owned)).collect()
     }
 
@@ -424,6 +502,8 @@ impl View {
         {
             let mut data = self.0.data.borrow_mut();
             data.listing = Listing::default();
+            data.full = Rc::default();
+            data.rows = None;
             data.selection = Selection::new(0);
             data.marquee_base = None;
             data.pending = Default::default();
@@ -431,9 +511,12 @@ impl View {
         self.0.model.notify.reset();
         self.0.shown.set(self.0.shown.get() + 1);
         self.0.note.borrow_mut().take();
+        self.0.filter.borrow_mut().take();
+        self.0.cleared.set(true);
         if let Some(window) = self.0.window.upgrade() {
             self.sync_focus(&window);
             window.set_list_scroll(0.0);
+            self.sync_filter_bar(&window);
         }
         self.notify_listeners();
     }
@@ -443,18 +526,115 @@ impl View {
         self.capture_capped(MAX_REMEMBERED)
     }
 
-    /// Like `capture`, but remembers every selected name (for a resort in place).
-    fn capture_all(&self) -> ViewState {
-        self.capture_capped(usize::MAX)
-    }
-
     fn capture_capped(&self, max: usize) -> ViewState {
         let data = self.0.data.borrow();
         let name = |i: usize| data.listing.name_at(i).map(str::to_owned);
         let selected =
             if data.selection.count() > max { Vec::new() } else { data.selection.iter().filter_map(name).collect() };
         let scroll = self.0.window.upgrade().map_or(0.0, |w| w.get_list_scroll());
-        ViewState { selected, focus: data.selection.focus().and_then(name), scroll }
+        ViewState { selected, focus: data.selection.focus().and_then(name), scroll, filter: self.filter_text() }
+    }
+
+    /// How many of `names` (entries of the folder shown) the filter hides.
+    pub fn hidden_by_filter(&self, names: &[String]) -> usize {
+        hidden_count(self.0.filter.borrow().as_ref().map(|f| &f.pattern), names)
+    }
+
+    /// The filter bar's text; `None` while it is closed.
+    pub fn filter_text(&self) -> Option<String> {
+        self.0.filter.borrow().as_ref().map(|f| f.text.clone())
+    }
+
+    /// Filters the folder by `text` as typed in the filter bar (opening it); `None` closes the
+    /// filter. A text with an error keeps the list as the last good pattern showed it. Nothing
+    /// in "This PC".
+    pub fn set_filter(&self, text: Option<&str>) {
+        let Some(window) = self.0.window.upgrade() else { return };
+        let dir = match &self.0.data.borrow().listing {
+            Listing::Files(dir, _) => dir.clone(),
+            Listing::Drives(_) => PathBuf::new(),
+        };
+        if dir.as_os_str().is_empty() {
+            // "This PC" and the empty listing: no filter.
+            self.0.filter.borrow_mut().take();
+            return self.sync_filter_bar(&window);
+        }
+        let old_pattern = self.0.filter.borrow().as_ref().map(|f| f.pattern.clone()).unwrap_or_default();
+        let next = text.map(|text| FilterState::new(text, self.0.filter.borrow().as_ref()));
+        let new_pattern = next.as_ref().map(|f| f.pattern.clone()).unwrap_or_default();
+        let closing = next.is_none();
+        *self.0.filter.borrow_mut() = next;
+        // The same entries show (the bar opens empty, a space is added, a part is half typed):
+        // the list, its selection and scroll stay.
+        if new_pattern != old_pattern {
+            // The indices change: a rename in progress cannot follow its entry.
+            if self.0.renaming.borrow().is_some() {
+                self.end_rename(false);
+            }
+            let full = self.0.data.borrow().full.clone();
+            let (shown, rows) = filtered_listing(&dir, &full, &new_pattern);
+            // What was selected and still shows stays selected, carried by position through
+            // the full list (no names: Ctrl+A in 100k entries, then typing, stays fast). Closing
+            // keeps the focused entry; a new pattern starts at the first entry it shows.
+            let selection = {
+                let data = self.0.data.borrow();
+                if closing {
+                    carry(&data.selection, data.rows.as_deref(), full.len(), None)
+                } else if data.selection.count() == 0 {
+                    Selection::new(shown.len()).focused_at(Some(0))
+                } else {
+                    carry(&data.selection, data.rows.as_deref(), full.len(), rows.as_deref()).focused_at(Some(0))
+                }
+            };
+            {
+                let mut data = self.0.data.borrow_mut();
+                data.listing = shown;
+                data.rows = rows;
+                data.selection = selection;
+                data.marquee_base = None;
+                data.pending = Default::default();
+            }
+            self.0.model.notify.reset();
+            // A delayed scroll restore of the listing before must not undo this.
+            self.0.shown.set(self.0.shown.get() + 1);
+            self.0.note.borrow_mut().take();
+            self.sync_focus(&window);
+            match self.focus() {
+                Some(focus) if closing => self.reveal(focus),
+                _ => window.set_list_scroll(0.0),
+            }
+            self.update_status();
+            self.notify_listeners();
+        }
+        self.sync_filter_bar(&window);
+    }
+
+    /// The filter bar as the filter is: open or closed, its text (only if it differs, so the
+    /// cursor does not jump while typing), the counter and the error.
+    fn sync_filter_bar(&self, window: &AppWindow) {
+        let (text, count, error) = {
+            let filter = self.0.filter.borrow();
+            let data = self.0.data.borrow();
+            match filter.as_ref() {
+                Some(f) => (
+                    Some(f.text.clone()),
+                    filter_count_text(data.listing.len(), data.full.len()),
+                    f.error.clone().unwrap_or_default(),
+                ),
+                None => (None, String::new(), String::new()),
+            }
+        };
+        // A closing bar takes the keyboard with it: the list gets it.
+        if text.is_none() && window.get_filter_focused() {
+            window.invoke_focus_list();
+        }
+        window.set_filter_open(text.is_some());
+        let text = text.unwrap_or_default();
+        if window.get_filter_text().as_str() != text {
+            window.set_filter_text(text.into());
+        }
+        window.set_filter_count(count.into());
+        window.set_filter_error(error.into());
     }
 
     pub fn focus(&self) -> Option<usize> {
@@ -557,6 +737,83 @@ impl View {
         self.after_selection(&changes);
     }
 
+    /// Selected entries become unselected and the others selected; the focus stays.
+    pub fn invert_selection(&self) {
+        let changes = invert_in(&mut self.0.data.borrow_mut().selection);
+        self.after_selection(&changes);
+    }
+
+    /// How many entries shown (the filter's hidden ones not) have names `pattern` matches.
+    pub fn count_matching(&self, pattern: &Pattern) -> usize {
+        count_matching_in(&self.0.data.borrow().listing, pattern)
+    }
+
+    /// Selects (`on`) or unselects the entries shown whose names `pattern` matches; the others
+    /// stay as they are.
+    pub fn select_matching(&self, pattern: &Pattern, on: bool) {
+        let changes = {
+            let mut data = self.0.data.borrow_mut();
+            let ViewData { listing, selection, .. } = &mut *data;
+            select_matching_in(listing, selection, pattern, on)
+        };
+        self.after_selection(&changes);
+    }
+
+    /// Adds every entry of the focused entry's type (its ending, or folders) to the
+    /// selection; nothing without a focus.
+    pub fn select_same_type(&self) {
+        let changes = {
+            let mut data = self.0.data.borrow_mut();
+            let ViewData { listing, selection, .. } = &mut *data;
+            let Some(focus) = selection.focus() else { return };
+            selection.set_where(true, |i| listing.is_same_type(focus, i))
+        };
+        self.after_selection(&changes);
+    }
+
+    /// Keeps the folder shown and its selected names, for `restore_remembered` (a file
+    /// operation is about to start). In "This PC", or with nothing selected, the last one
+    /// stays.
+    pub fn remember_selection(&self) {
+        let data = self.0.data.borrow();
+        let Some(folder) = data.listing.folder() else { return };
+        if data.selection.count() == 0 {
+            return;
+        }
+        let names = data.selection.iter().filter_map(|i| data.listing.name_at(i).map(str::to_owned)).collect();
+        *self.0.remembered.borrow_mut() = Some((folder.to_path_buf(), names));
+    }
+
+    /// `remember_selection`, for a job on `sources`: only if they are all in the folder shown
+    /// (a paste or a drop from elsewhere must not replace another folder's selection).
+    pub fn remember_selection_for(&self, sources: &[PathBuf]) {
+        let here = sources_in(self.0.data.borrow().listing.folder(), sources);
+        if here {
+            self.remember_selection();
+        }
+    }
+
+    /// Selects again what `remember_selection` kept, if its folder is shown: the names still
+    /// shown, focused on the first. Elsewhere, or if none of them shows any more (renamed,
+    /// deleted, filtered out), the selection stays as it is.
+    pub fn restore_remembered(&self) {
+        let changes = {
+            let remembered = self.0.remembered.borrow();
+            let Some((folder, names)) = remembered.as_ref() else { return };
+            let mut data = self.0.data.borrow_mut();
+            if !data.listing.folder().is_some_and(|f| gezik_core::ops::paths::same_path(f, folder)) {
+                return;
+            }
+            let ViewData { listing, selection, .. } = &mut *data;
+            let Some(changes) = restore_in(listing, selection, names) else { return };
+            changes
+        };
+        self.after_selection(&changes);
+        if let Some(focus) = self.focus() {
+            self.reveal(focus);
+        }
+    }
+
     /// Ctrl+Space.
     pub fn toggle_focus(&self) {
         let changes = self.0.data.borrow_mut().selection.toggle_focus();
@@ -647,14 +904,22 @@ impl View {
     }
 
     /// "Apply to all folders": this folder's view becomes the `[view]` default and every
-    /// folder's own view is forgotten.
+    /// folder's own view is forgotten, once the settings writer thread has written it into
+    /// settings.toml (a failure is said in the status bar, and nothing changes).
     pub fn apply_to_all(&self) {
         let view = self.0.current.get();
-        if let Some(store) = &self.0.store
-            && let Err(warning) = store.save_view_defaults(&view)
-        {
-            return self.set_note(warning.to_string());
-        }
+        let Some(store) = &self.0.store else { return self.applied_to_all(view) };
+        store.write_settings(gezik_config::settings_writer::SettingsChange::ViewDefaults(view), move |result| {
+            let _ = slint::invoke_from_event_loop(move || {
+                with_current(|this| match result {
+                    Ok(()) => this.applied_to_all(view),
+                    Err(warning) => this.set_note(warning.to_string()),
+                });
+            });
+        });
+    }
+
+    fn applied_to_all(&self, view: ViewSettings) {
         let mut defaults = self.0.defaults.get();
         defaults.view = view;
         self.0.defaults.set(defaults);
@@ -725,29 +990,52 @@ impl View {
     /// brings back anything that stayed).
     pub fn hide_names(&self, names: &[String]) {
         let hidden: HashSet<&str> = names.iter().map(String::as_str).collect();
-        let state = self.capture_all();
-        let listing = std::mem::take(&mut self.0.data.borrow_mut().listing);
-        let listing = match listing {
-            Listing::Files(dir, entries) => {
-                let kept: Vec<Entry> = entries.iter().filter(|e| !hidden.contains(e.name.as_str())).cloned().collect();
-                Listing::Files(dir, Rc::new(kept))
+        let scroll = self.0.window.upgrade().map_or(0.0, |w| w.get_list_scroll());
+        let (listing, full, old_rows, selection) = self.take_listing();
+        let (listing, full, rows, selection) = match listing {
+            Listing::Files(dir, _) => {
+                let kept: Vec<usize> = (0..full.len()).filter(|&i| !hidden.contains(full[i].name.as_str())).collect();
+                // The selection by position: into the full list, then what the filter shows.
+                let in_full = carry(&selection, old_rows.as_deref(), full.len(), Some(&kept));
+                let full = Rc::new(kept.iter().map(|&i| full[i].clone()).collect::<Vec<Entry>>());
+                let (shown, rows) = self.filtered(&dir, &full);
+                let selection = carry(&in_full, None, full.len(), rows.as_deref());
+                (shown, full, rows, selection)
             }
-            other => other,
+            other => (other, full, old_rows, selection),
         };
-        let selection = restore_selection(&listing, &state);
         {
             let mut data = self.0.data.borrow_mut();
             data.listing = listing;
+            data.full = full;
+            data.rows = rows;
             data.selection = selection;
         }
         self.0.model.notify.reset();
         if let Some(window) = self.0.window.upgrade() {
             self.sync_focus(&window);
-            window.set_list_scroll(state.scroll);
-            self.keep_scroll_after_reset(state.scroll);
+            window.set_list_scroll(scroll);
+            self.keep_scroll_after_reset(scroll);
+            self.sync_filter_bar(&window);
         }
         self.update_status();
         self.notify_listeners();
+    }
+
+    /// What the filter lets through of `full`, the entries of `dir`, and where they are in it.
+    fn filtered(&self, dir: &Path, full: &Rc<Vec<Entry>>) -> (Listing, Option<Vec<usize>>) {
+        match self.0.filter.borrow().as_ref() {
+            Some(filter) => filtered_listing(dir, full, &filter.pattern),
+            None => (Listing::Files(dir.to_path_buf(), full.clone()), None),
+        }
+    }
+
+    /// Takes the listing, the full list, the rows and the selection out of the view, to put
+    /// back changed.
+    fn take_listing(&self) -> (Listing, Rc<Vec<Entry>>, Option<Vec<usize>>, Selection) {
+        let mut data = self.0.data.borrow_mut();
+        let listing = std::mem::take(&mut data.listing);
+        (listing, std::mem::take(&mut data.full), data.rows.take(), std::mem::take(&mut data.selection))
     }
 
     /// Shows `text` in the status bar until the selection changes.
@@ -914,18 +1202,24 @@ impl View {
     /// `listing` in the current sort order. A fresh folder load is already sorted by name
     /// (`by_name`), so the default order costs nothing.
     fn sorted(&self, listing: Listing, by_name: bool) -> Listing {
-        let spec = self.0.current.get().sort;
-        if spec.key == SortKey::Type {
-            self.request_type_names(&listing);
-        }
         match listing {
-            Listing::Files(dir, entries) if !(by_name && spec == SortSpec::default()) => {
-                let mut entries = Rc::unwrap_or_clone(entries);
-                sort_entries(&mut entries, spec, |e| self.type_name_of(e));
-                Listing::Files(dir, Rc::new(entries))
+            Listing::Files(dir, entries) if !(by_name && self.sort() == SortSpec::default()) => {
+                Listing::Files(dir, self.sort_now(entries).0)
             }
             other => other,
         }
+    }
+
+    /// `entries` in the current sort order (copied only if shared), and where each came from
+    /// (`sort_entries`).
+    fn sort_now(&self, entries: Rc<Vec<Entry>>) -> (Rc<Vec<Entry>>, Vec<usize>) {
+        let spec = self.sort();
+        if spec.key == SortKey::Type {
+            self.request_type_names(&entries);
+        }
+        let mut entries = Rc::unwrap_or_clone(entries);
+        let order = sort_entries(&mut entries, spec, |e| self.type_name_of(e));
+        (Rc::new(entries), order)
     }
 
     /// The Type column's text for sorting: as the column shows it (`model::type_name_for`),
@@ -936,24 +1230,39 @@ impl View {
             .unwrap_or_else(|| fallback_type_name(&entry.name, entry.is_dir))
     }
 
-    /// Sorts the current listing again, keeping the selection by name; then scrolls the
-    /// focus into view (`reveal`) or stays at the same scroll position.
+    /// Sorts the current listing again, keeping the selection (by position, through the order
+    /// the sort gives); then scrolls the focus into view (`reveal`) or stays at the same scroll
+    /// position.
     fn resort(&self, reveal: bool) {
-        let state = self.capture_all();
-        let listing = std::mem::take(&mut self.0.data.borrow_mut().listing);
-        let listing = self.sorted(listing, false);
-        let selection = restore_selection(&listing, &state);
+        let scroll = self.0.window.upgrade().map_or(0.0, |w| w.get_list_scroll());
+        let (listing, full, old_rows, selection) = self.take_listing();
+        // The full list is sorted (no longer shared with the shown one, so not copied), then
+        // filtered again. The drives are not sorted.
+        let (listing, full, rows, selection) = match listing {
+            Listing::Files(dir, shown) => {
+                drop(shown);
+                let full_len = full.len();
+                let (full, order) = self.sort_now(full);
+                let in_full = carry(&selection, old_rows.as_deref(), full_len, Some(&order));
+                let (shown, rows) = self.filtered(&dir, &full);
+                let selection = carry(&in_full, None, full.len(), rows.as_deref());
+                (shown, full, rows, selection)
+            }
+            drives => (drives, full, old_rows, selection),
+        };
         {
             let mut data = self.0.data.borrow_mut();
             data.listing = listing;
+            data.full = full;
+            data.rows = rows;
             data.selection = selection;
         }
         self.0.model.notify.reset();
         if let Some(window) = self.0.window.upgrade() {
             self.sync_focus(&window);
             if !reveal {
-                window.set_list_scroll(state.scroll);
-                self.keep_scroll_after_reset(state.scroll);
+                window.set_list_scroll(scroll);
+                self.keep_scroll_after_reset(scroll);
             }
         }
         if reveal && let Some(focus) = self.focus() {
@@ -1081,6 +1390,81 @@ fn restore_selection(listing: &Listing, state: &ViewState) -> Selection {
     Selection::from_indices(listing.len(), indices, focus)
 }
 
+/// Every entry flips; the rows that changed (all of them).
+fn invert_in(selection: &mut Selection) -> Vec<Range<usize>> {
+    selection.invert()
+}
+
+/// How many entries of `listing` have names `pattern` matches. No allocation per name.
+fn count_matching_in(listing: &Listing, pattern: &Pattern) -> usize {
+    (0..listing.len()).filter(|&i| listing.name_at(i).is_some_and(|n| pattern.matches(n))).count()
+}
+
+/// Selects (`on`) or unselects the entries of `listing` whose names `pattern` matches; the
+/// rows that changed.
+fn select_matching_in(listing: &Listing, selection: &mut Selection, pattern: &Pattern, on: bool) -> Vec<Range<usize>> {
+    selection.set_where(on, |i| listing.name_at(i).is_some_and(|n| pattern.matches(n)))
+}
+
+/// Only `names` (those `listing` shows) selected, focused on the first; the rows that changed.
+/// `None`, the selection untouched, if none of them shows.
+fn restore_in(listing: &Listing, selection: &mut Selection, names: &[String]) -> Option<Vec<Range<usize>>> {
+    let indices = listing.indices_of(names);
+    let first = *indices.first()?;
+    Some(selection.replace(Selection::from_indices(listing.len(), indices, Some(first))))
+}
+
+/// `selection` of a list showing entries `old_rows` of a full list of `full_len` entries
+/// (`None`: all of it), carried to a list showing entries `new_rows` of it: by position,
+/// through a bitset of the full list, with no name compared. The focus follows its entry, or
+/// goes to the first selected one if it is gone.
+fn carry(selection: &Selection, old_rows: Option<&[usize]>, full_len: usize, new_rows: Option<&[usize]>) -> Selection {
+    let in_full = match old_rows {
+        Some(rows) => selection.spread(rows, full_len),
+        None => selection.clone(),
+    };
+    match new_rows {
+        Some(rows) => in_full.carried(rows),
+        None => in_full,
+    }
+}
+
+/// Whether every one of `sources` (at least one) is an entry of `folder`.
+fn sources_in(folder: Option<&Path>, sources: &[PathBuf]) -> bool {
+    let Some(folder) = folder else { return false };
+    !sources.is_empty()
+        && sources.iter().all(|s| s.parent().is_some_and(|parent| gezik_core::ops::paths::same_path(parent, folder)))
+}
+
+/// The status bar's note after a listing is shown: the new one if any. A reload of the folder
+/// on screen (the watcher, right after an operation) leaves the standing note ("2 items hidden
+/// by the filter", "Nothing to undo") only while the item count stays as it was, so a changed
+/// count is not hidden; any note also goes at the next selection change. Another folder or
+/// tab starts without one.
+fn note_after_show(standing: Option<String>, new: Option<String>, live: bool, count_changed: bool) -> Option<String> {
+    new.or(standing.filter(|_| live && !count_changed))
+}
+
+/// How many of `names` `pattern` hides (none without a filter). No allocation per name.
+fn hidden_count(pattern: Option<&Pattern>, names: &[String]) -> usize {
+    pattern.map_or(0, |pattern| names.iter().filter(|name| !pattern.matches(name)).count())
+}
+
+/// The status bar's note for new items (a paste, a drop, an extract) the filter hides.
+pub fn hidden_note(hidden: usize) -> Option<String> {
+    match hidden {
+        0 => None,
+        1 => Some("1 item hidden by the filter".to_owned()),
+        n => Some(format!("{n} items hidden by the filter")),
+    }
+}
+
+/// The filter bar's counter: shown of all, `1,234 / 100,000`.
+pub fn filter_count_text(shown: usize, total: usize) -> String {
+    use crate::preview::with_commas;
+    format!("{} / {}", with_commas(shown), with_commas(total))
+}
+
 /// The status bar: `120 items`, or `120 items · 3 selected (1.2 MB)`; the size counts the
 /// selected files (`None`: no files selected).
 pub fn status_text(count: usize, selected: usize, selected_size: Option<u64>) -> String {
@@ -1096,6 +1480,137 @@ pub fn status_text(count: usize, selected: usize, selected_size: Option<u64>) ->
 mod tests {
     use super::*;
     use listing::files;
+
+    #[test]
+    #[allow(clippy::single_range_in_vec_init, reason = "one changed range of entries")]
+    fn select_matching_adds_or_takes_away_only_the_shown_matches() {
+        let listing = files("/x", &["sub/", "a.jpg", "b.JPG", "c.png", "d.txt"]);
+        let jpg = Pattern::compile("*.jpg").unwrap();
+        assert_eq!(count_matching_in(&listing, &jpg), 2);
+        assert_eq!(count_matching_in(&listing, &Pattern::default()), 5, "empty: everything shown");
+        let mut selection = Selection::from_indices(5, [3], Some(3));
+        let rows = select_matching_in(&listing, &mut selection, &jpg, true);
+        assert_eq!(rows, [1..3], "only the rows that changed");
+        assert_eq!(selection.iter().collect::<Vec<_>>(), [1, 2, 3]);
+        assert_eq!(selection.focus(), Some(3), "the focus stays");
+        let rows = select_matching_in(&listing, &mut selection, &Pattern::compile("a*").unwrap(), false);
+        assert_eq!(rows, [1..2]);
+        assert_eq!(selection.iter().collect::<Vec<_>>(), [2, 3]);
+        assert!(select_matching_in(&listing, &mut selection, &jpg, true).len() == 1, "b.JPG was on already");
+    }
+
+    #[test]
+    #[allow(clippy::single_range_in_vec_init, reason = "one changed range of entries")]
+    fn invert_selection_flips_every_shown_entry() {
+        let mut selection = Selection::from_indices(4, [0, 2], Some(2));
+        assert_eq!(invert_in(&mut selection), [0..4]);
+        assert_eq!(selection.iter().collect::<Vec<_>>(), [1, 3]);
+        assert_eq!(selection.focus(), Some(2));
+        assert!(invert_in(&mut Selection::new(0)).is_empty(), "nothing shown");
+    }
+
+    #[test]
+    fn restoring_pushes_only_what_changed_and_keeps_the_selection_if_nothing_shows() {
+        let names: Vec<String> = (0..1000).map(|i| format!("f{i:04}")).collect();
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        let listing = files("/x", &refs);
+        let mut selection = Selection::from_indices(1000, [500], Some(500));
+        let rows = restore_in(&listing, &mut selection, &["f0010".into(), "f0011".into(), "gone".into()]);
+        assert_eq!(rows, Some(vec![10..12, 500..501]), "not the whole listing");
+        assert_eq!(selection.iter().collect::<Vec<_>>(), [10, 11]);
+        assert_eq!(selection.focus(), Some(10), "on the first");
+        let before = selection.clone();
+        assert_eq!(restore_in(&listing, &mut selection, &["renamed".into()]), None);
+        assert_eq!(selection, before, "none of them shows: unchanged");
+    }
+
+    /// `count_matching` runs on every key typed in the pattern box: Task 1's budget for the
+    /// matcher (15 ms for 100,000 names), as counting adds nothing per name. Measured 4-10 ms.
+    /// Run: `cargo test --release -p gezik count_matching -- --ignored`.
+    #[test]
+    #[ignore = "timing; run in release with --ignored"]
+    fn count_matching_a_hundred_thousand_names_within_budget() {
+        let names: Vec<String> = (0..100_000).map(|i| format!("IMG_{i:06} Tatil ş{}.jpg", i % 7)).collect();
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        let listing = files("/x", &refs);
+        for text in ["i", "img_0", "*.jpg;*.png", "tatil;!*ş3.jpg", "zzz"] {
+            let pattern = Pattern::compile(text).unwrap();
+            let started = std::time::Instant::now();
+            let n = count_matching_in(&listing, &pattern);
+            let took = started.elapsed();
+            assert!(took < Duration::from_millis(15), "{text}: {took:?} ({n} match)");
+        }
+    }
+
+    #[test]
+    fn a_bad_filter_keeps_the_last_good_pattern() {
+        let first = FilterState::new("*.jpg", None);
+        assert_eq!(first.error, None);
+        let bad = FilterState::new("*.jpg;!", Some(&first));
+        assert_eq!(bad.error.as_deref(), Some("Type a name after \"!\""));
+        assert_eq!(bad.pattern, first.pattern, "the list keeps showing the jpgs");
+        assert_eq!(bad.text, "*.jpg;!");
+        assert!(FilterState::new("!", None).pattern.is_empty(), "nothing good before: everything shows");
+    }
+
+    #[test]
+    fn new_items_the_filter_hides_are_counted() {
+        let names: Vec<String> = ["a.jpg", "b.txt", "C.JPG", "d.png"].map(String::from).into();
+        let jpg = Pattern::compile("*.jpg").unwrap();
+        assert_eq!(hidden_count(Some(&jpg), &names), 2);
+        assert_eq!(hidden_count(None, &names), 0, "no filter: nothing hidden");
+        assert_eq!(hidden_count(Some(&Pattern::default()), &names), 0, "an empty bar hides nothing");
+        assert_eq!(hidden_note(0), None);
+        assert_eq!(hidden_note(1).as_deref(), Some("1 item hidden by the filter"));
+        assert_eq!(hidden_note(3).as_deref(), Some("3 items hidden by the filter"));
+    }
+
+    #[test]
+    fn only_a_job_on_the_folder_shown_remembers_its_selection() {
+        let a = Path::new("/a");
+        let in_a = [PathBuf::from("/a/x.txt"), PathBuf::from("/a/sub")];
+        assert!(sources_in(Some(a), &in_a), "Ctrl+C, Delete, rename, convert: from here");
+        // Ctrl+C in /a, Ctrl+V in /b: the paste's sources are in /a, /b is shown.
+        assert!(!sources_in(Some(Path::new("/b")), &in_a), "a paste from elsewhere");
+        assert!(!sources_in(Some(a), &[PathBuf::from("/a/x.txt"), PathBuf::from("/c/y.txt")]), "partly elsewhere");
+        assert!(!sources_in(Some(a), &[PathBuf::from("/a/sub/deeper.txt")]), "in a subfolder");
+        assert!(!sources_in(Some(a), &[]), "new folder: no sources");
+        assert!(!sources_in(None, &in_a), "This PC");
+    }
+
+    #[test]
+    fn a_standing_note_survives_a_reload_only_while_the_count_stays() {
+        let note = || Some("Nothing to undo".to_owned());
+        assert_eq!(note_after_show(note(), None, true, false), note(), "a reload, same count");
+        assert_eq!(note_after_show(note(), None, true, true), None, "a reload that changed the count");
+        assert_eq!(note_after_show(note(), None, false, false), None, "another folder");
+        let hidden = Some("2 items hidden by the filter".to_owned());
+        assert_eq!(note_after_show(note(), hidden.clone(), true, true), hidden, "the job's own note");
+        assert_eq!(note_after_show(None, None, true, false), None);
+    }
+
+    #[test]
+    fn the_counter_reads_well() {
+        assert_eq!(filter_count_text(12, 340), "12 / 340");
+        assert_eq!(filter_count_text(1234, 100_000), "1,234 / 100,000");
+    }
+
+    #[test]
+    fn the_selection_is_carried_through_the_full_list_by_position() {
+        // Full: a.txt b.jpg c.txt d.jpg e.jpg; "*.jpg" shows rows [1, 3, 4]; b and e selected.
+        let shown = Selection::from_indices(3, [0, 2], Some(2));
+        // "d;e" shows [3, 4]: only e stays selected, and the focus follows it.
+        let next = carry(&shown, Some(&[1, 3, 4]), 5, Some(&[3, 4]));
+        assert_eq!((next.iter().collect::<Vec<_>>(), next.focus()), (vec![1], Some(1)));
+        // Closing shows the full list: b and e, focus on e.
+        let all = carry(&shown, Some(&[1, 3, 4]), 5, None);
+        assert_eq!((all.iter().collect::<Vec<_>>(), all.focus()), (vec![1, 4], Some(4)));
+        // Ctrl+A with no filter, then a filter: what it shows stays selected.
+        let mut everything = Selection::new(5);
+        everything.select_all();
+        assert_eq!(carry(&everything, None, 5, Some(&[1, 3, 4])).count(), 3);
+        assert_eq!(carry(&Selection::new(0), None, 0, Some(&[])).focus(), None);
+    }
 
     #[test]
     fn status_counts_items_and_selected_files() {
@@ -1117,7 +1632,7 @@ mod tests {
         let names: Vec<String> = (0..2000).map(|i| format!("f{i:04}")).collect();
         let refs: Vec<&str> = names.iter().map(String::as_str).collect();
         let listing = files("/x", &refs);
-        let state = ViewState { selected: names.clone(), focus: Some("f1500".into()), scroll: 0.0 };
+        let state = ViewState { selected: names.clone(), focus: Some("f1500".into()), scroll: 0.0, filter: None };
         let selection = restore_selection(&listing, &state);
         assert_eq!((selection.count(), selection.focus()), (2000, Some(1500)));
     }
@@ -1125,12 +1640,16 @@ mod tests {
     #[test]
     fn restore_selection_keeps_names_that_still_exist() {
         let listing = files("/x", &["a", "c", "d"]);
-        let state =
-            ViewState { selected: vec!["b".into(), "c".into(), "d".into()], focus: Some("b".into()), scroll: 0.0 };
+        let state = ViewState {
+            selected: vec!["b".into(), "c".into(), "d".into()],
+            focus: Some("b".into()),
+            scroll: 0.0,
+            filter: None,
+        };
         let selection = restore_selection(&listing, &state);
         assert_eq!(selection.iter().collect::<Vec<_>>(), [1, 2]);
         assert_eq!(selection.focus(), Some(1), "the focused entry is gone: first selected one");
-        let only_focus = ViewState { selected: vec![], focus: Some("d".into()), scroll: 0.0 };
+        let only_focus = ViewState { selected: vec![], focus: Some("d".into()), scroll: 0.0, filter: None };
         let selection = restore_selection(&listing, &only_focus);
         assert_eq!((selection.count(), selection.focus()), (0, Some(2)));
     }

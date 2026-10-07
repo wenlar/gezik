@@ -3,7 +3,9 @@
 # input: xdotool (XTEST) under Xvfb, wtype and the vpointer example under a headless sway.
 #   docker build -t gezik-linux scripts/linux
 #   docker run --rm -v "$PWD:/src" -v gezik-target:/target -v gezik-cargo:/usr/local/cargo/registry \
-#       -e CARGO_TARGET_DIR=/target gezik-linux bash scripts/linux/gui.sh [x11|wayland|popups|tabdrag|pdf|pdfnote|all]
+#       -e CARGO_TARGET_DIR=/target gezik-linux bash scripts/linux/gui.sh [x11|wayland|popups|tabdrag|pdf|pdfnote|filter|select|tabs|keyboard|all]
+#   (not in `all`, release builds: `filterperf` times the filter at 100,000 files, `memory [exe]`
+#   gives idle memory)
 # Needs the network (apt for 7-Zip, Gezik's own 7-Zip download). Screenshots go to
 # .superpowers/linux-shots/gui-*.png. Each check prints "ok" or "FAIL"; the exit code is the
 # number of failures. Coordinates are the window's (no window manager under Xvfb, so it is
@@ -566,6 +568,568 @@ PY
     grep -i "panicked" /tmp/gezik-gui-pdfnote.log && fail "pdf note: no panic" || pass "pdf note: no panic"
 }
 
+# 6a's filter bar: Ctrl+F, typing narrows the list (only what shows is acted on), an error
+# keeps the list, Esc closes it, the hidden files toggle and a tab switch keep it, a move to
+# another folder (and back) drops it, and "This PC" says it has none. Then `/`, the typing
+# mode ([keyboard] typing = "filter") and the saved filters of the ▾ menu: Save as… (a name
+# already there, in any case, is replaced after asking), kept in settings.toml over a
+# restart, chosen, deleted. X11, 900x600.
+filter() {
+    Xvfb :99 -screen 0 1600x900x24 >/dev/null 2>&1 &
+    local xvfb=$!
+    unset WAYLAND_DISPLAY
+    export DISPLAY=:99
+    sleep 1
+    . /src/scripts/linux/gui-lib.sh
+    rm -rf /tmp/f /tmp/cfg /root/.local/share/Trash && mkdir -p /tmp/f/sub /tmp/cfg
+    for n in a.jpg b.txt c.JPG d.png e.txt .h.jpg; do echo $n > /tmp/f/$n; done
+    GEZIK_CONFIG_DIR=/tmp/cfg $GEZIK /tmp/f >/tmp/gezik-gui-filter.log 2>&1 &
+    local gezik=$!
+    sleep 3
+    xdotool windowmove "$(win)" 0 0; xdotool windowsize "$(win)" 900 600; sleep 0.5
+    title() { xdotool getwindowname "$(win)"; }
+    trashed() { [ -f "$HOME/.local/share/Trash/files/$1" ]; }
+    shot filter-start
+    # Rows: sub 118, .h.jpg 144 (hidden files show on Linux), a.jpg 170 ...
+    click 255 118; key ctrl+f; sleep 0.3; shot filter-open
+    check "filter: Ctrl+F opens the bar (the rows move down)" '[ "$(px filter-open 255 122)" != "$(px filter-start 255 122)" ]'
+    typ jpg; shot filter-jpg           # 3 / 7: .h.jpg, a.jpg, c.JPG
+    key ctrl+h; sleep 1.5; shot filter-jpg-unhidden   # the reload keeps it: 2 / 6
+    key Down; key ctrl+a Delete; sleep 1.5; shot filter-trashed
+    check "filter: Ctrl+A and Delete trash only what the filter shows" \
+        'trashed a.jpg && trashed c.JPG && [ -f /tmp/f/b.txt ] && [ -f /tmp/f/.h.jpg ] && [ -f /tmp/f/d.png ]'
+    key ctrl+z; sleep 1.5
+    check "filter: Ctrl+Z brings them back" '[ -f /tmp/f/a.jpg ] && [ -f /tmp/f/c.JPG ]'
+    # A half-typed part: red line and text, the list stays as "jpg" showed it.
+    key ctrl+f; sleep 0.3; key End; typ ';!'; shot filter-error
+    key Escape; sleep 0.5; shot filter-closed
+    check "filter: Esc in the field closes the bar" '[ "$(px filter-closed 255 122)" = "$(px filter-start 255 122)" ] || [ "$(px filter-closed 255 122)" != "$(px filter-open 255 122)" ]'
+    # The list has the keyboard and shows everything again.
+    key ctrl+a; sleep 0.3; shot filter-all-selected
+    key Escape; sleep 0.3; shot filter-selection-cleared
+    # Esc on the list: first the filter, then the selection.
+    key ctrl+f; typ txt; key Down; key Escape; sleep 0.3; shot filter-esc-list
+    key ctrl+a Delete; sleep 1.5
+    check "filter: Esc on the list closes the filter (everything is acted on)" 'trashed a.jpg && trashed b.txt && trashed d.png'
+    key ctrl+z; sleep 1.5
+    # A tab switch keeps it.
+    key ctrl+f; typ txt; sleep 0.3
+    key ctrl+t; sleep 1; click 100 20; sleep 1; shot filter-tab-back
+    key ctrl+f Down; key ctrl+a Delete; sleep 1.5
+    check "filter: a tab switch keeps the filter" 'trashed b.txt && trashed e.txt && [ -f /tmp/f/a.jpg ]'
+    key ctrl+z; sleep 1.5
+    # Into a folder and back: no filter.
+    key ctrl+f ctrl+a; typ sub; key Down Return; sleep 1; shot filter-in-sub
+    check "filter: Enter opens the folder the filter shows" '[ "$(title)" = "sub — Gezik" ]'
+    key alt+Left; sleep 1; shot filter-back
+    key ctrl+a Delete; sleep 1.5
+    check "filter: back in the folder, no filter" 'trashed a.jpg && trashed b.txt'
+    key ctrl+z; sleep 1.5
+    # "This PC": no filter there.
+    key ctrl+l; typ /; key Return; sleep 1; key alt+Up; sleep 1.5
+    key ctrl+f; sleep 0.5; shot filter-this-pc
+    check "filter: no bar in This PC" '[ "$(px filter-this-pc 255 122)" != "$(px filter-open 255 122)" ]'
+
+    # `/` opens it, whatever the typing mode. Rows (no bar): sub 118, then the files.
+    key ctrl+l; typ /tmp/f; key Return; sleep 1.5; click 255 118; shot filter-slash-before
+    key slash; sleep 0.3; typ txt; shot filter-slash
+    check "filter: / opens the bar" '[ "$(px filter-slash 255 122)" != "$(px filter-slash-before 255 122)" ]'
+    key Down; key ctrl+a Delete; sleep 1.5
+    check "filter: / then txt: only the .txt files are acted on" \
+        'trashed b.txt && trashed e.txt && [ -f /tmp/f/a.jpg ] && [ -f /tmp/f/d.png ]'
+    key ctrl+z; sleep 1.5; key Escape; sleep 0.5
+    # "jump" (the default): a letter goes to a name, no bar.
+    typ c; sleep 0.5; shot filter-jump
+    check "filter: in jump mode a letter opens no bar" '[ "$(px filter-jump 255 122)" = "$(px filter-slash-before 255 122)" ] || [ "$(px filter-jump 255 122)" != "$(px filter-slash 255 122)" ]'
+    # typing = "filter": a letter opens the bar with it, the next ones go on in the field.
+    printf '[keyboard]\ntyping = "filter"\n' >/tmp/cfg/settings.toml; sleep 2
+    click 255 118; typ jp; sleep 0.5; shot filter-typed
+    check "filter: in filter mode a letter opens the bar" '[ "$(px filter-typed 255 122)" != "$(px filter-slash-before 255 122)" ]'
+    key Down; key ctrl+a Delete; sleep 1.5
+    check "filter: the typed letters filter (jp)" 'trashed a.jpg && trashed c.JPG && [ -f /tmp/f/b.txt ] && [ -f /tmp/f/d.png ]'
+    key ctrl+z; sleep 1.5
+    # Save as… (the first item with nothing saved): the bar's text under a name.
+    key ctrl+f ctrl+a; typ txt; sleep 0.3; shot filter-menu-before
+    click 879 96; sleep 0.8; shot filter-menu-empty
+    check "filter: the ▾ menu opens" '! cmp -s "$SHOTS/filter-menu-empty.png" "$SHOTS/filter-menu-before.png"'
+    click 800 131; sleep 0.8; typ Resimler; key Return; sleep 1.5
+    check "filter: Save as… writes [[filters]] to settings.toml" \
+        'grep -q "^\[\[filters\]\]" /tmp/cfg/settings.toml && grep -q "name = \"Resimler\"" /tmp/cfg/settings.toml && grep -q "pattern = \"txt\"" /tmp/cfg/settings.toml'
+    # The same name in another case: asked, Replace (the first button) replaces it.
+    key ctrl+f ctrl+a; typ jpg; sleep 0.3
+    click 879 96; sleep 0.8; shot filter-menu-one     # Resimler 131, Save as… 163, Delete 195
+    click 800 163; sleep 0.8; typ resimler; key Return; sleep 0.8; shot filter-replace
+    key Return; sleep 1.5
+    check "filter: a name already there (any case) is replaced after asking" \
+        '[ "$(grep -c "^\[\[filters\]\]" /tmp/cfg/settings.toml)" = 1 ] && grep -q "name = \"resimler\"" /tmp/cfg/settings.toml && grep -q "pattern = \"jpg\"" /tmp/cfg/settings.toml'
+    # Kept over a restart; chosen from the menu, it fills the bar and the list keeps the keyboard.
+    kill $gezik 2>/dev/null; wait $gezik 2>/dev/null
+    GEZIK_CONFIG_DIR=/tmp/cfg $GEZIK /tmp/f >>/tmp/gezik-gui-filter.log 2>&1 &
+    gezik=$!
+    sleep 3
+    xdotool windowmove "$(win)" 0 0; xdotool windowsize "$(win)" 900 600; sleep 0.5
+    click 255 118; key slash; sleep 0.3
+    click 879 96; sleep 0.8; shot filter-menu-restart
+    click 800 131; sleep 0.8; shot filter-chosen
+    key ctrl+a Delete; sleep 1.5
+    check "filter: the saved filter, chosen after a restart, filters (the list has the keyboard)" \
+        'trashed a.jpg && trashed c.JPG && [ -f /tmp/f/b.txt ] && [ -f /tmp/f/d.png ]'
+    key ctrl+z; sleep 1.5
+    # Delete "resimler".
+    click 879 96; sleep 0.8; click 800 195; sleep 1.5
+    check "filter: Delete takes it out of settings.toml" \
+        '! grep -q "^\[\[filters\]\]" /tmp/cfg/settings.toml && ! grep -q "resimler" /tmp/cfg/settings.toml'
+    click 879 96; sleep 0.8; shot filter-menu-deleted
+    check "filter: the menu no longer lists it" '! cmp -s "$SHOTS/filter-menu-deleted.png" "$SHOTS/filter-menu-restart.png"'
+    key Escape; sleep 0.3
+    # A new folder with the filter on: the filter closes, the name is edited in place.
+    key ctrl+f ctrl+a; typ '*.jpg'; key Down; sleep 0.3; shot filter-before-new-folder
+    key ctrl+shift+n; sleep 1.5; shot filter-new-folder
+    typ Yeni; key Return; sleep 1
+    check "filter: Ctrl+Shift+N closes the filter and names the folder in place"         '[ -d /tmp/f/Yeni ] && [ ! -e "/tmp/f/New folder" ]'
+    check "filter: the bar is closed after it" '[ "$(px filter-new-folder 255 122)" != "$(px filter-before-new-folder 255 122)" ]'
+    # A paste the filter hides: the filter stays, the status bar says so.
+    echo x > /tmp/f/sub/x.txt
+    key ctrl+l; typ /tmp/f/sub; key Return; sleep 1; click 255 118; key ctrl+c
+    key alt+Left; sleep 1
+    key ctrl+f; typ '*.jpg'; key Down ctrl+v; sleep 1.5; shot filter-paste-hidden
+    check "filter: a paste the filter hides still lands (the note: see the shot)" '[ -f /tmp/f/x.txt ]'
+    kill $gezik 2>/dev/null
+    kill $xvfb 2>/dev/null
+    wait 2>/dev/null
+    grep -i "panicked" /tmp/gezik-gui-filter.log && fail "filter: no panic" || pass "filter: no panic"
+}
+
+# 6a's selection tools: the pattern box (Ctrl+= and the keypad's -) with its live count,
+# select and deselect, invert (Ctrl+Shift+I), the same type (Alt+keypad +), none of them while
+# the path box or the filter bar has the keyboard, the selection back (keypad /) after a
+# delete, a copy in the folder and a Ctrl+C here pasted elsewhere, and
+# the last pattern kept in state.toml over a restart. What is selected is seen by Delete
+# (what lands in the trash), then Ctrl+Z. X11, 900x600.
+selection() {
+    Xvfb :99 -screen 0 1600x900x24 >/dev/null 2>&1 &
+    local xvfb=$!
+    unset WAYLAND_DISPLAY
+    export DISPLAY=:99
+    sleep 1
+    . /src/scripts/linux/gui-lib.sh
+    rm -rf /tmp/s /tmp/cfg /root/.local/share/Trash && mkdir -p /tmp/s/other /tmp/s/sub /tmp/cfg
+    for n in a.jpg b.JPG c.png d.txt e.txt; do echo $n > /tmp/s/$n; done
+    echo z > /tmp/s/sub/z.txt
+    GEZIK_CONFIG_DIR=/tmp/cfg $GEZIK /tmp/s >/tmp/gezik-gui-select.log 2>&1 &
+    local gezik=$!
+    sleep 3
+    xdotool windowmove "$(win)" 0 0; xdotool windowsize "$(win)" 900 600; sleep 0.5
+    trashed() { [ -f "$HOME/.local/share/Trash/files/$1" ]; }
+    here() { [ -f "/tmp/s/$1" ]; }
+    undo() { key ctrl+z; sleep 1.5; }
+    # The box, where the line under the field is.
+    box() { convert "$SHOTS/$1.png" -crop 460x260+220+60 +repage "$SHOTS/$1-box.png"; }
+    same_box() { box "$1"; box "$2"; cmp -s "$SHOTS/$1-box.png" "$SHOTS/$2-box.png"; }
+    # Rows: other 118, sub 144, a.jpg 170, b.JPG 196, c.png 222, d.txt 248, e.txt 274.
+    shot select-start
+
+    # The box: the count follows the text; an error is said.
+    click 255 170; key ctrl+equal; sleep 0.8; shot select-box-empty      # "7 items match"
+    typ '*.jpg'; sleep 0.3; shot select-box-jpg                          # "2 items match"
+    key ctrl+a; typ '*.gif'; sleep 0.3; shot select-box-none             # "No items match"
+    key ctrl+a; typ '!'; sleep 0.3; shot select-box-error                # red: Type a name after "!"
+    check "select: the box opens with a count" '! cmp -s "$SHOTS/select-box-empty.png" "$SHOTS/select-start.png"'
+    check "select: the count follows the text" '! same_box select-box-empty select-box-jpg && ! same_box select-box-jpg select-box-none'
+    check "select: a bad pattern is said under the field" '! same_box select-box-none select-box-error'
+    key ctrl+a; typ '*.jpg'; key Return; sleep 0.5; shot select-jpg
+    key Delete; sleep 1.5
+    check "select: Select adds the matching names (both cases)" \
+        'trashed a.jpg && trashed b.JPG && here c.png && here d.txt && here e.txt'
+    undo
+    # Keypad /: the selection before the delete comes back.
+    click 255 248; key KP_Divide; sleep 0.5; shot select-restored-delete
+    key Delete; sleep 1.5
+    check "select: keypad / brings back the selection of the last delete" \
+        'trashed a.jpg && trashed b.JPG && here d.txt'
+    undo
+
+    # Deselect: the keypad's -, the box starts with the last pattern.
+    click 255 222; key ctrl+a KP_Subtract; sleep 0.8; shot select-deselect-box
+    key Return; sleep 0.5
+    key Delete; sleep 1.5
+    check "select: Deselect (keypad -, the last pattern) leaves out the matches" \
+        'here a.jpg && here b.JPG && trashed c.png && trashed d.txt && trashed e.txt'
+    undo
+
+    # Invert.
+    click 255 222; key ctrl+shift+i; sleep 0.5; shot select-inverted
+    key Delete; sleep 1.5
+    check "select: Ctrl+Shift+I selects all but what was selected" \
+        'here c.png && trashed a.jpg && trashed b.JPG && trashed d.txt && trashed e.txt'
+    undo
+    # Only the folders again (the inverted delete restored them): rows as at the start.
+
+    # The same type.
+    click 255 170; key alt+KP_Add; sleep 0.5; shot select-same-type
+    key Delete; sleep 1.5
+    check "select: Alt+keypad + adds the focused entry's type" \
+        'trashed a.jpg && trashed b.JPG && here c.png && here d.txt'
+    undo
+    # A text field with the keyboard keeps Alt+keypad + (the path box, the filter bar: "jpg;"
+    # with or without a "+" typed after it shows the same).
+    click 255 248; key ctrl+l; sleep 0.3; key alt+KP_Add; sleep 0.3; key Escape; sleep 0.3
+    key Delete; sleep 1.5
+    check "select: Alt+keypad + does nothing while the path box has the keyboard"         'trashed d.txt && here e.txt'
+    undo
+    click 255 170; key ctrl+f; sleep 0.3; typ 'jpg;'; key alt+KP_Add; sleep 0.3; shot select-same-type-filter
+    key Down Delete; sleep 1.5
+    check "select: Alt+keypad + does nothing while the filter bar has the keyboard"         'trashed a.jpg && here b.JPG'
+    undo; key Escape; sleep 0.5
+
+    # The other selection keys wait too: Ctrl+Shift+I from the path box and the filter bar.
+    click 255 248; key ctrl+l; sleep 0.3; key ctrl+shift+i; sleep 0.3; key Escape; sleep 0.3
+    key Delete; sleep 1.5
+    check "select: Ctrl+Shift+I does nothing while the path box has the keyboard"         'trashed d.txt && here e.txt && here a.jpg'
+    undo
+    click 255 170; key ctrl+f; sleep 0.3; typ 'jpg;'; key ctrl+shift+i; sleep 0.3
+    key Down Delete; sleep 1.5
+    check "select: Ctrl+Shift+I does nothing while the filter bar has the keyboard"         'trashed a.jpg && here b.JPG'
+    undo; key Escape; sleep 0.5
+
+    # Ctrl+C here, Ctrl+V in sub with z.txt selected there (the paste must not remember sub's
+    # selection; then Ctrl+Z there, which must not count either), back, the selection cleared,
+    # keypad /: this folder's selection at the copy.
+    click 255 170; xdotool keydown ctrl; click 255 222; xdotool keyup ctrl
+    key ctrl+c; dclick 255 144; sleep 0.5; click 255 118; key ctrl+v; sleep 1.5
+    check "select: the copy into sub lands" '[ -f /tmp/s/sub/a.jpg ] && [ -f /tmp/s/sub/c.png ]'
+    key ctrl+z; sleep 1.5
+    check "select: Ctrl+Z takes it back" '[ ! -e /tmp/s/sub/a.jpg ] && [ ! -e /tmp/s/sub/c.png ]'
+    key alt+Left; sleep 1; key Escape KP_Divide; sleep 0.5; shot select-restored-cross
+    key Delete; sleep 1.5
+    check "select: keypad / brings back the selection copied from here and pasted elsewhere"         'trashed a.jpg && trashed c.png && here b.JPG && here d.txt && here e.txt'
+    undo
+
+    # After a copy: pasted into the same folder (the copies are new names), the selection
+    # cleared, keypad /.
+    click 255 170; xdotool keydown ctrl; click 255 222; xdotool keyup ctrl
+    key ctrl+c ctrl+v; sleep 1.5
+    check "select: the copy lands" '[ "$(ls /tmp/s | wc -l)" = 9 ]'
+    key Escape KP_Divide; sleep 0.5; shot select-restored-copy
+    key Delete; sleep 1.5
+    check "select: keypad / brings back the selection of the last copy"         'trashed a.jpg && trashed c.png && here e.txt && here b.JPG && [ "$(ls /tmp/s | wc -l)" = 7 ]'
+    undo
+    for f in /tmp/s/*; do case "$f" in /tmp/s/[a-e].*|/tmp/s/b.JPG|/tmp/s/other|/tmp/s/sub) ;; *) rm -rf "$f" ;; esac; done
+    sleep 1
+
+    # The last pattern, over a restart.
+    click 255 222; key Escape ctrl+equal; sleep 0.8; typ '*.txt;!e*'; key Return; sleep 2
+    kill $gezik 2>/dev/null; wait $gezik 2>/dev/null
+    check "select: state.toml keeps the last pattern" 'grep -q "last-pattern = \"\*.txt;!e\*\"" /tmp/cfg/state.toml'
+    GEZIK_CONFIG_DIR=/tmp/cfg $GEZIK /tmp/s >>/tmp/gezik-gui-select.log 2>&1 &
+    gezik=$!
+    sleep 3
+    xdotool windowmove "$(win)" 0 0; xdotool windowsize "$(win)" 900 600; sleep 0.5
+    click 255 222; key Escape KP_Add; sleep 0.8; shot select-box-restart
+    key Return; sleep 0.5; key Delete; sleep 1.5
+    check "select: after a restart the box starts with the last pattern" \
+        'trashed d.txt && here e.txt && here c.png && here a.jpg'
+    kill $gezik 2>/dev/null
+    kill $xvfb 2>/dev/null
+    wait 2>/dev/null
+    grep -i "panicked" /tmp/gezik-gui-select.log && fail "select: no panic" || pass "select: no panic"
+}
+
+# 6a's tabs: Ctrl+1..9, Ctrl+Shift+T (in its old place, with its history and its filter), the
+# lock (the tab's menu, its icon, Ctrl+W and middle-click say no, "Close other tabs" keeps it
+# and says so) and the tab picker (Ctrl+Shift+A: typing filters, Up/Down, Enter, Esc).
+# X11, 900x600: three tabs 220 px wide (centres 110, 330, 550), the bar at y 20.
+tabs() {
+    Xvfb :99 -screen 0 1600x900x24 >/dev/null 2>&1 &
+    local xvfb=$!
+    unset WAYLAND_DISPLAY
+    export DISPLAY=:99
+    sleep 1
+    . /src/scripts/linux/gui-lib.sh
+    rm -rf /tmp/tb /tmp/cfg /root/.local/share/Trash && mkdir -p /tmp/tb/one /tmp/tb/two/sub /tmp/tb/three /tmp/cfg
+    echo 1 > /tmp/tb/one/1.txt; echo 3 > /tmp/tb/three/3.txt
+    echo x > /tmp/tb/two/sub/x1.txt; echo y > /tmp/tb/two/sub/y1.txt
+    GEZIK_CONFIG_DIR=/tmp/cfg $GEZIK /tmp/tb/one >/tmp/gezik-gui-tabs.log 2>&1 &
+    local gezik=$!
+    sleep 3
+    xdotool windowmove "$(win)" 0 0; xdotool windowsize "$(win)" 900 600; sleep 0.5
+    title() { xdotool getwindowname "$(win)"; }
+    is() { [ "$(title)" = "$1 — Gezik" ]; }
+    trashed() { [ -f "$HOME/.local/share/Trash/files/$1" ]; }
+    # A part of a screenshot, to compare: crop NAME W H X Y.
+    crop() { convert "$SHOTS/$1.png" -crop "$2x$3+$4+$5" +repage "$SHOTS/$1-part.png"; }
+    same_part() { crop "$1" $3 $4 $5 $6; crop "$2" $3 $4 $5 $6; cmp -s "$SHOTS/$1-part.png" "$SHOTS/$2-part.png"; }
+    goto() { key ctrl+l; typ "$1"; key Return; sleep 1; }
+    click 255 300
+    key ctrl+t; sleep 1; goto /tmp/tb/two
+    key ctrl+t; sleep 1; goto /tmp/tb/three
+    shot tabs-three
+
+    # Ctrl+1..9.
+    key ctrl+1; sleep 0.8; check "tabs: Ctrl+1 shows the first tab" 'is one'
+    key ctrl+2; sleep 0.8; check "tabs: Ctrl+2 shows the second" 'is two'
+    key ctrl+9; sleep 0.8; check "tabs: Ctrl+9 shows the last" 'is three'
+    key ctrl+1; sleep 0.8; key ctrl+5; sleep 0.8
+    check "tabs: Ctrl+5 with three tabs does nothing" 'is one'
+
+    # The picker: typing filters, Enter switches; Up/Down move; Esc closes.
+    key ctrl+shift+a; sleep 0.8; shot tabs-picker
+    check "tabs: Ctrl+Shift+A opens the picker" '! same_part tabs-picker tabs-three 480 300 210 60'
+    typ thr; sleep 0.5; shot tabs-picker-thr
+    check "tabs: typing filters the picker" '! same_part tabs-picker-thr tabs-picker 480 300 210 60'
+    key Return; sleep 1; shot tabs-picked
+    check "tabs: Enter switches to the tab typed" 'is three'
+    check "tabs: the picker closes" '! same_part tabs-picked tabs-picker 480 300 210 60'
+    key ctrl+shift+a; sleep 0.8; key Up; key Return; sleep 1
+    check "tabs: Up then Enter picks the tab before" 'is two'
+    key ctrl+shift+a; sleep 0.8; key Down; key Escape; sleep 0.8; shot tabs-picker-esc
+    check "tabs: Esc closes the picker and switches nowhere" 'is two'
+    check "tabs: the picker is gone after Esc" '! same_part tabs-picker-esc tabs-picker 480 300 210 60'
+    key ctrl+shift+a; sleep 0.8; typ /tmp/tb/one; sleep 0.3; shot tabs-picker-path; key Return; sleep 1
+    check "tabs: the picker matches paths" 'is one'
+    key ctrl+shift+a; sleep 0.8; click 450 218; sleep 1
+    check "tabs: a click on a row picks it" 'is two'
+    # An exclusion holds for the path as well as the title: "two" and "three" have no
+    # "\tmp\tb\t" in their titles, but in their paths.
+    key ctrl+shift+a; sleep 0.8; typ '!/tmp/tb/t'; sleep 0.3; key Return; sleep 1
+    check "tabs: an exclusion in the picker hides by path too" 'is one'
+    # Enter with no rows keeps the picker open; Esc then closes it.
+    key ctrl+shift+a; sleep 0.8; typ zzz; sleep 0.3; key Return; sleep 0.5; shot tabs-picker-none
+    key Escape; sleep 0.5; shot tabs-picker-none-closed
+    check "tabs: Enter with no rows keeps the picker open" \
+        '! same_part tabs-picker-none tabs-picker-none-closed 480 300 210 60 && is one'
+    key ctrl+2; sleep 0.8
+
+    # Ctrl+Shift+T: tab two, into sub, filtered by x1, closed; back in its place with all that.
+    dclick 255 118; sleep 1
+    check "tabs: into sub" 'is sub'
+    key ctrl+f; typ x1; key Down; sleep 0.3; shot tabs-sub-filtered
+    key ctrl+w; sleep 1
+    check "tabs: Ctrl+W closed it (the next tab shows)" 'is three'
+    key ctrl+shift+t; sleep 1.5; shot tabs-reopened
+    check "tabs: Ctrl+Shift+T brings it back" 'is sub'
+    key ctrl+1; sleep 0.8; key ctrl+2; sleep 1
+    check "tabs: in its old place" 'is sub'
+    key ctrl+a Delete; sleep 1.5
+    check "tabs: with its filter (only x1.txt went)" 'trashed x1.txt && [ -f /tmp/tb/two/sub/y1.txt ]'
+    key ctrl+z; sleep 1.5
+    key alt+Left; sleep 1
+    check "tabs: with its history (Back goes to two)" 'is two'
+    key ctrl+shift+t; sleep 1
+    check "tabs: nothing more to reopen: nothing happens" 'is two'
+
+    # The lock, from the tab's menu: Duplicate, Lock tab, Close, Close other tabs.
+    key ctrl+1; sleep 0.8; shot tabs-unlocked
+    rclick 110 20; sleep 0.5; shot tabs-menu-unlocked
+    click 180 72; sleep 0.5; click 450 300; sleep 0.3; shot tabs-locked
+    check "tabs: a lock shows on the locked tab" '! same_part tabs-locked tabs-unlocked 220 36 0 2'
+    key ctrl+w; sleep 1; shot tabs-locked-ctrlw
+    check "tabs: Ctrl+W leaves a locked tab open" 'is one'
+    click 110 20 2; sleep 1
+    key ctrl+3; sleep 0.8
+    check "tabs: middle-click leaves it open too (still three tabs)" 'is three'
+    key ctrl+1; sleep 0.8
+    rclick 110 20; sleep 0.5; shot tabs-menu-locked
+    check "tabs: the locked tab's menu differs (Unlock tab, no Close)" '! same_part tabs-menu-locked tabs-menu-unlocked 300 200 100 30'
+    key Escape; sleep 0.5
+
+    # Close other tabs on the second tab (not the active one): the locked first tab stays.
+    rclick 330 20; sleep 0.5; shot tabs-menu-second
+    click 400 136; sleep 2; shot tabs-closed-others
+    key ctrl+1; sleep 0.8; check "tabs: the locked tab stayed" 'is one'
+    key ctrl+3; sleep 0.8; check "tabs: only two tabs are left" 'is one'
+    key ctrl+2; sleep 1.5; shot tabs-second-reloaded
+    check "tabs: the second tab is the one kept" 'is two'
+    check "tabs: the status bar said a locked tab stayed (see the shot)" \
+        '! same_part tabs-closed-others tabs-second-reloaded 450 30 0 565'
+
+    # Unlocked again: it closes.
+    key ctrl+1; sleep 0.8; rclick 110 20; sleep 0.5; click 180 72; sleep 0.5
+    key ctrl+w; sleep 1
+    check "tabs: unlocked, Ctrl+W closes it" 'is two'
+    kill $gezik 2>/dev/null
+    kill $xvfb 2>/dev/null
+    wait 2>/dev/null
+    grep -i "panicked" /tmp/gezik-gui-tabs.log && fail "tabs: no panic" || pass "tabs: no panic"
+}
+
+# 6a end to end, by keys only: the filter (Ctrl+F, `/`, Esc on the list and in the field,
+# Turkish İ), the pattern box (Ctrl+=, keypad + and -, Ctrl+Shift+I), the selection back
+# (keypad /), tabs by number, the view keys (Ctrl+Shift+1/2), reopening a closed tab with its
+# history, a lock bound in settings.toml, the tab picker and `typing = "filter"`. What is
+# selected is read from the clipboard after Ctrl+C (the names, in any order). X11, 900x600.
+keyboard() {
+    Xvfb :99 -screen 0 1600x900x24 >/dev/null 2>&1 &
+    local xvfb=$!
+    unset WAYLAND_DISPLAY
+    export DISPLAY=:99
+    sleep 1
+    . /src/scripts/linux/gui-lib.sh
+    rm -rf /tmp/k /tmp/cfg /root/.local/share/Trash && mkdir -p /tmp/k/Docs /tmp/cfg
+    for n in a.jpg b.JPG c.png d.txt İSTANBUL.txt; do echo "$n" > "/tmp/k/$n"; done
+    # Something in Docs, so that its grid differs from its list.
+    for n in 1 2 3; do echo $n > /tmp/k/Docs/note$n.txt; done
+    printf '[shortcuts]\ntoggle-tab-lock = "ctrl+shift+l"\n' >/tmp/cfg/settings.toml
+    start_k() {
+        GEZIK_CONFIG_DIR=/tmp/cfg $GEZIK /tmp/k >>/tmp/gezik-gui-keyboard.log 2>&1 &
+        gezik=$!
+        sleep 3
+        xdotool windowmove "$(win)" 0 0; xdotool windowsize "$(win)" 900 600; sleep 0.5
+    }
+    : >/tmp/gezik-gui-keyboard.log
+    local gezik
+    start_k
+    title() { xdotool getwindowname "$(win)"; }
+    is() { [ "$(title)" = "$1 — Gezik" ]; }
+    # The names Ctrl+C put on the clipboard, sorted, on one line.
+    copied() {
+        xclip -selection clipboard -t x-special/gnome-copied-files -o 2>/dev/null | tail -n +2 | python3 -c '
+import sys, os, urllib.parse
+names = [os.path.basename(urllib.parse.unquote(l.strip()[len("file://"):])) for l in sys.stdin if l.strip()]
+print(" ".join(sorted(names)))'
+    }
+    sorted() { printf '%s\n' "$@" | LC_ALL=C sort | paste -sd' '; }
+    copies() { key ctrl+c; sleep 0.4; [ "$(copied)" = "$(sorted "$@")" ]; }
+    # Rows (folders first): Docs 118, a.jpg 144, b.JPG 170, c.png 196, d.txt 222, İSTANBUL.txt 248.
+    click 255 144
+
+    # The filter.
+    key ctrl+f; typ jpg; key Down ctrl+a
+    check "keyboard: filter: only the shown items are selected" 'copies a.jpg b.JPG'
+    key Escape; sleep 0.5; key ctrl+a
+    check "keyboard: Esc on the list closes the filter (all six)" \
+        'copies Docs a.jpg b.JPG c.png d.txt İSTANBUL.txt'
+    key slash; typ istanbul; key Down ctrl+a
+    check "keyboard: / and istanbul show İSTANBUL.txt" 'copies İSTANBUL.txt'
+    key ctrl+f; sleep 0.3; key Escape; sleep 0.5; key ctrl+a
+    check "keyboard: Esc in the field closes it" 'copies Docs a.jpg b.JPG c.png d.txt İSTANBUL.txt'
+
+    # The pattern box, invert.
+    key Escape ctrl+equal; sleep 0.8; typ '*.png;*.txt'; key Return; sleep 0.5
+    check "keyboard: Ctrl+= selects by pattern" 'copies c.png d.txt İSTANBUL.txt'
+    key ctrl+shift+i; sleep 0.3
+    check "keyboard: Ctrl+Shift+I inverts" 'copies Docs a.jpg b.JPG'
+    key Escape; sleep 0.3; shot keyboard-no-box
+    key KP_Add; sleep 0.8; shot keyboard-box
+    check "keyboard: keypad + opens the box" '! cmp -s "$SHOTS/keyboard-box.png" "$SHOTS/keyboard-no-box.png"'
+    key ctrl+a; typ 'd*'; key Return; sleep 0.5
+    check "keyboard: keypad + selects d*" 'copies Docs d.txt'
+    key KP_Subtract; sleep 0.8; key ctrl+a; typ '*.txt'; key Return; sleep 0.5
+    check "keyboard: keypad - deselects *.txt" 'copies Docs'
+
+    # The selection back after a delete.
+    click 255 222; key Delete; sleep 1.5; key ctrl+z; sleep 2
+    key KP_Divide; sleep 0.5
+    check "keyboard: keypad / brings back the selection of the delete" 'copies d.txt'
+
+    # Tabs by number, the view keys.
+    key ctrl+t; sleep 1; key ctrl+l; typ /tmp/k/Docs; key Return; sleep 1
+    key ctrl+1; sleep 0.8; check "keyboard: Ctrl+1 shows the first tab" 'is k'
+    key ctrl+2; sleep 0.8; check "keyboard: Ctrl+2 shows the second" 'is Docs'
+    key ctrl+1 ctrl+9; sleep 0.8; check "keyboard: Ctrl+9 shows the last" 'is Docs'
+    click 255 300; shot keyboard-list
+    key ctrl+shift+2; sleep 0.8; shot keyboard-grid
+    check "keyboard: Ctrl+Shift+2 shows the grid" '! cmp -s "$SHOTS/keyboard-grid.png" "$SHOTS/keyboard-list.png"'
+    key ctrl+shift+1; sleep 0.8; shot keyboard-list-again
+    check "keyboard: Ctrl+Shift+1 the list again" '! cmp -s "$SHOTS/keyboard-list-again.png" "$SHOTS/keyboard-grid.png"'
+
+    # Close and reopen, with the history.
+    key ctrl+w; sleep 1; check "keyboard: Ctrl+W closes the Docs tab" 'is k'
+    key ctrl+shift+t; sleep 1.5; check "keyboard: Ctrl+Shift+T reopens it" 'is Docs'
+    key alt+Left; sleep 1; check "keyboard: with its history (Back leaves Docs)" '! is Docs'
+    key alt+Right; sleep 1
+
+    # The lock, bound in settings.toml.
+    key ctrl+shift+l; sleep 0.5; key ctrl+w; sleep 1
+    check "keyboard: locked tab stays" 'is Docs'
+    key ctrl+shift+l; sleep 0.5
+
+    # The tab picker.
+    key ctrl+1; sleep 0.8; key ctrl+shift+a; sleep 0.8; typ docs; key Return; sleep 1
+    check "keyboard: the tab picker goes to Docs" 'is Docs'
+
+    # typing = "filter".
+    kill $gezik 2>/dev/null; wait $gezik 2>/dev/null
+    printf '[shortcuts]\ntoggle-tab-lock = "ctrl+shift+l"\n\n[keyboard]\ntyping = "filter"\n' >/tmp/cfg/settings.toml
+    rm -f /tmp/cfg/state.toml
+    start_k
+    click 255 144; typ c.; key Down ctrl+a
+    check "keyboard: typing = filter: c. filters" 'copies c.png'
+    kill $gezik 2>/dev/null
+    kill $xvfb 2>/dev/null
+    wait 2>/dev/null
+    grep -i "panicked" /tmp/gezik-gui-keyboard.log && fail "keyboard: no panic" || pass "keyboard: no panic"
+}
+
+# Not in `all`. The filter in a folder of 100,000 files, release build: the process's CPU
+# time (all threads, /proc/<pid>/task/*/schedstat) from before each keystroke to 300 ms after
+# it, less the idle CPU of 300 ms with the bar open. Twice: nothing selected, then after
+# Ctrl+A. Esc (closing the bar) too. X11, 900x600.
+filterperf() {
+    cargo build --release -p gezik 2>&1 | tail -1
+    Xvfb :99 -screen 0 1600x900x24 >/dev/null 2>&1 &
+    local xvfb=$!
+    unset WAYLAND_DISPLAY
+    export DISPLAY=:99
+    sleep 1
+    . /src/scripts/linux/gui-lib.sh
+    local dir=/tmp/gezik-stress-100000
+    if [ "$(ls $dir 2>/dev/null | wc -l)" != 100000 ]; then
+        rm -rf $dir && mkdir -p $dir && (cd $dir && seq 0 99999 | sed 's/.*/file_&.txt/' | xargs touch)
+    fi
+    rm -rf /tmp/cfg && mkdir -p /tmp/cfg
+    GEZIK_CONFIG_DIR=/tmp/cfg /target/release/gezik $dir >/tmp/gezik-filterperf.log 2>&1 &
+    local gezik=$!
+    sleep 6
+    xdotool windowmove "$(win)" 0 0; xdotool windowsize "$(win)" 900 600; sleep 1
+    cpu() { cat /proc/$gezik/task/*/schedstat 2>/dev/null | awk '{s += $1} END {printf "%d", s / 1000}'; }   # µs
+    # The CPU of one key (xdotool key NAME) in ms, from before it to 300 ms after it.
+    one() { local c0 c1; c0=$(cpu); xdotool key "$1"; sleep 0.3; c1=$(cpu); echo $(( (c1 - c0) / 1000 )); }
+    stats() { sort -n | awk '{a[NR] = $1} END {printf "worst %d ms, median %d ms (%d)", a[NR], a[int((NR + 1) / 2)], NR}'; }
+    idle() { for _ in 1 2 3 4 5; do local c0 c1; c0=$(cpu); sleep 0.3; c1=$(cpu); echo $(( (c1 - c0) / 1000 )); done | stats; }
+    typed() { for k in f i l e underscore 1 2 3 4; do one $k; done | stats; }
+    xdotool windowfocus --sync "$(win)"; click 255 118
+    key ctrl+f; sleep 1
+    echo "idle with the bar open: $(idle)"
+    echo "file_1234, nothing selected: $(typed)"; shot filterperf-typed
+    echo "Esc, nothing selected: $(one Escape) ms"
+    sleep 1; key Escape ctrl+a; sleep 1; key ctrl+f; sleep 1
+    echo "file_1234 after Ctrl+A on 100,000: $(typed)"; shot filterperf-typed-all
+    echo "Esc after Ctrl+A: $(one Escape) ms"
+    kill $gezik 2>/dev/null
+    kill $xvfb 2>/dev/null
+    wait 2>/dev/null
+    grep -i "panicked" /tmp/gezik-filterperf.log && fail "filterperf: no panic" || pass "filterperf: no panic"
+}
+
+# Not in `all`. Idle memory of a release Gezik (EXE, default the branch's) on its home folder
+# with an empty config, 900x600, 3 s after it opened: RSS, its anonymous part and the private
+# (unshared) memory, the Linux side of Task Manager's figure. Five runs.
+memory() {
+    local exe=${1:-/target/release/gezik}
+    [ -x "$exe" ] || cargo build --release -p gezik 2>&1 | tail -1
+    Xvfb :99 -screen 0 1600x900x24 >/dev/null 2>&1 &
+    local xvfb=$!
+    unset WAYLAND_DISPLAY
+    export DISPLAY=:99
+    sleep 1
+    . /src/scripts/linux/gui-lib.sh
+    for run in 1 2 3 4 5; do
+        rm -rf /tmp/cfg && mkdir -p /tmp/cfg
+        GEZIK_CONFIG_DIR=/tmp/cfg "$exe" >/dev/null 2>&1 &
+        local pid=$!
+        sleep 2; xdotool windowsize "$(win)" 900 600; sleep 3
+        printf 'run %s: ' $run
+        awk '/^VmRSS|^RssAnon/ {printf "%s %.1f MiB, ", $1, $2 / 1024}' /proc/$pid/status
+        # AnonHugePages: with transparent huge pages on "always", a fresh mapping (a thread's
+        # arena) may be backed by a whole 2 MiB page now and then.
+        awk '/^Private/ {p += $2} /^AnonHugePages/ {h = $2} END {printf "Private %.1f MiB, AnonHugePages %.1f MiB\n", p / 1024, h / 1024}' /proc/$pid/smaps_rollup
+        kill $pid; wait $pid 2>/dev/null
+    done
+    kill $xvfb 2>/dev/null
+    wait 2>/dev/null
+}
+
 setup_7zip
 case "${1:-all}" in
     x11) x11 ;;
@@ -574,7 +1138,13 @@ case "${1:-all}" in
     tabdrag) tabdrag ;;
     pdf) pdfpopups; pdfnote ;;
     pdfnote) pdfnote ;;
-    *) x11; wayland; popups; tabdrag; pdfpopups; pdfnote ;;
+    filter) filter ;;
+    select) selection ;;
+    tabs) tabs ;;
+    keyboard) keyboard ;;
+    filterperf) filterperf ;;
+    memory) memory "${2:-}" ;;
+    *) x11; wayland; popups; tabdrag; pdfpopups; pdfnote; filter; selection; tabs; keyboard ;;
 esac
 echo "failures: $failures"
 exit $failures

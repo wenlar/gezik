@@ -23,6 +23,14 @@ use crate::{AppWindow, CrumbItem, TabItem};
 /// Address bar parts shown before older ones collapse into "…".
 const MAX_CRUMBS: usize = 4;
 
+/// The status line when a locked tab is asked to close.
+pub const LOCKED_TAB: &str = "This tab is locked";
+
+/// The status line when "close other tabs" left `n` locked tabs open.
+pub fn locked_kept_text(n: usize) -> String {
+    if n == 1 { "1 locked tab stays open".to_owned() } else { format!("{n} locked tabs stay open") }
+}
+
 /// How long letting go of a drive about to be removed may take before Windows tries it.
 const REMOVAL_GRACE: std::time::Duration = std::time::Duration::from_millis(150);
 /// After that, how often (and how many times) to look whether the drive went.
@@ -102,6 +110,17 @@ enum Mode {
     Show,
 }
 
+/// The view to show once a load is done: a move to another place starts without the filter.
+/// A move that lands on the folder already on screen (its breadcrumb or sidebar entry clicked,
+/// its path typed again) counts as a refresh and keeps the filter: `View::show` keeps the bar
+/// as it is for the same folder, whatever the state says.
+fn view_to_show(mode: &Mode, saved: &ViewState) -> ViewState {
+    match mode {
+        Mode::Show => saved.clone(),
+        Mode::Move(_) => ViewState { filter: None, ..saved.clone() },
+    }
+}
+
 /// Called when the active location is shown.
 type Listener = Rc<dyn Fn(&Location)>;
 
@@ -159,6 +178,7 @@ impl Navigator {
             selected: select.iter().cloned().collect(),
             focus: select,
             scroll: 0.0,
+            filter: None,
         });
         let tab_model = Rc::new(VecModel::default());
         window.set_tabs(ModelRc::from(tab_model.clone()));
@@ -283,6 +303,12 @@ impl Navigator {
     /// Shows the (possibly new) active tab. Until its listing is loaded the file list is
     /// empty, so no other tab's files appear under its address.
     pub fn after_tabs_changed(&self) {
+        self.after_tabs_changed_noted(None);
+    }
+
+    /// [`after_tabs_changed`](Self::after_tabs_changed); `note`, if any, shows in the status bar
+    /// once the tab's listing is back (instead of its item count).
+    fn after_tabs_changed_noted(&self, note: Option<String>) {
         let view = {
             let mut inner = self.0.borrow_mut();
             inner.cleared = true;
@@ -291,7 +317,7 @@ impl Navigator {
         // Not while borrowed: the view calls its selection listeners.
         view.clear();
         self.update_chrome();
-        self.load(self.active_location(), Mode::Show, None);
+        self.load(self.active_location(), Mode::Show, note);
     }
 
     /// Opens a tab at `location` right after the active one; `activate` switches to it.
@@ -334,6 +360,9 @@ impl Navigator {
     /// Closes tab `index`. Closing the last tab closes the window (state is saved as for
     /// any close request).
     pub fn close_tab(&self, index: usize) {
+        if self.0.borrow().tabs.is_locked(index) {
+            return self.status(LOCKED_TAB.to_owned());
+        }
         if index != self.0.borrow().tabs.active_index() {
             self.keep_active_tab(|tabs| tabs.close(index));
             return self.update_chrome();
@@ -349,6 +378,8 @@ impl Navigator {
                 }
             }
             Closed::Remaining => self.after_tabs_changed(),
+            // Caught above.
+            Closed::Locked => {}
         }
     }
 
@@ -383,14 +414,58 @@ impl Navigator {
         }
     }
 
+    /// Closes every tab but `index` and the locked ones. The status bar says how many locked
+    /// tabs stayed; when `index` was not active, only once its listing is back (the listing's
+    /// item count would replace it).
     pub fn close_other_tabs(&self, index: usize) {
+        let note = |locked: usize| (locked > 0).then(|| locked_kept_text(locked));
         if index == self.0.borrow().tabs.active_index() {
-            self.keep_active_tab(|tabs| tabs.close_others(index));
+            let locked = self.keep_active_tab(|tabs| tabs.close_others(index));
             self.update_chrome();
+            if let Some(note) = note(locked) {
+                self.status(note);
+            }
         } else if index < self.0.borrow().tabs.len() {
-            self.with_tabs(|tabs| tabs.close_others(index));
-            self.after_tabs_changed();
+            let locked = self.with_tabs(|tabs| tabs.close_others(index));
+            self.after_tabs_changed_noted(note(locked));
         }
+    }
+
+    /// Opens the last closed tab again where it was, with its history and its view (selection,
+    /// scroll, filter); nothing if no tab was closed.
+    pub fn reopen_tab(&self) {
+        if self.0.borrow().tabs.closed_count() == 0 {
+            return;
+        }
+        self.with_tabs(Tabs::reopen);
+        self.after_tabs_changed();
+    }
+
+    /// Locks tab `index` if it is unlocked, and the other way round.
+    pub fn toggle_tab_lock(&self, index: usize) {
+        self.keep_active_tab(|tabs| tabs.set_locked(index, !tabs.is_locked(index)));
+        self.update_chrome();
+    }
+
+    pub fn is_tab_locked(&self, index: usize) -> bool {
+        self.0.borrow().tabs.is_locked(index)
+    }
+
+    /// Every tab's title and path ("" for This PC), in tab order.
+    pub fn tab_list(&self) -> Vec<(String, String)> {
+        let inner = self.0.borrow();
+        inner
+            .tabs
+            .iter()
+            .map(|history| {
+                let location = history.location();
+                let path = match location {
+                    Location::Path(path) => path.display().to_string(),
+                    Location::Drives => String::new(),
+                };
+                (inner.places.title_for(location), path)
+            })
+            .collect()
     }
 
     pub fn duplicate_tab(&self, index: usize) {
@@ -635,7 +710,7 @@ impl Navigator {
                 inner.tabs.active_mut().apply_steps(steps);
             }
             inner.cleared = false;
-            (inner.view.clone(), inner.tabs.active().view().clone())
+            (inner.view.clone(), view_to_show(&mode, inner.tabs.active().view()))
         };
         self.watch_shown(&location);
         view.show(listing, &state, note);
@@ -737,12 +812,13 @@ impl Navigator {
             });
             window.set_title_text(format!("{} — Gezik", inner.places.title_for(&location)).into());
             let active = inner.tabs.active_index();
-            let tabs = inner
-                .tabs
-                .iter()
-                .enumerate()
-                .map(|(i, h)| TabItem { title: inner.places.title_for(h.location()).into(), active: i == active });
+            let tabs = inner.tabs.iter().enumerate().map(|(i, h)| TabItem {
+                title: inner.places.title_for(h.location()).into(),
+                active: i == active,
+                locked: inner.tabs.is_locked(i),
+            });
             sync_model(&inner.tab_model, tabs);
+            window.set_active_tab_locked(inner.tabs.is_locked(active));
             inner.on_changed.clone()
         };
         // Called with no borrow held, so listeners may use the navigator.
@@ -802,8 +878,17 @@ mod tests {
         ]
     }
 
+    #[test]
+    fn a_move_shows_the_place_without_its_filter_and_a_reload_keeps_it() {
+        let saved = ViewState { filter: Some("*.jpg".into()), ..ViewState::default() };
+        assert_eq!(view_to_show(&Mode::Show, &saved).filter.as_deref(), Some("*.jpg"), "reload, tab switch");
+        for mode in moves() {
+            assert_eq!(view_to_show(&mode, &saved).filter, None, "{mode:?}");
+        }
+    }
+
     fn tab(title: &str, active: bool) -> TabItem {
-        TabItem { title: title.into(), active }
+        TabItem { title: title.into(), active, locked: false }
     }
 
     fn titles(model: &VecModel<TabItem>) -> Vec<(String, bool)> {
@@ -941,5 +1026,11 @@ mod tests {
         for mode in moves() {
             assert!(listing_after_failure(&mode, &place).is_none(), "{mode:?}");
         }
+    }
+
+    #[test]
+    fn locked_tabs_are_counted_in_words() {
+        assert_eq!(locked_kept_text(1), "1 locked tab stays open");
+        assert_eq!(locked_kept_text(3), "3 locked tabs stay open");
     }
 }

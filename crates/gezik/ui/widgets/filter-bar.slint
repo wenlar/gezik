@@ -1,0 +1,91 @@
+import { Theme } from "../theme.slint";
+import { TextField } from "text-field.slint";
+import { ToolButton } from "button.slint";
+
+// The filter bar above the file list: a magnifier, the pattern being typed, how many entries
+// it lets through (or what is wrong with it) and the saved filters' button.
+export component FilterBar inherits Rectangle {
+    in-out property <string> text;
+    in property <string> count;
+    in property <string> error;
+    out property <bool> field-focused: field.has-focus;
+    callback edited(string);
+    // The saved filters' menu, placed like `show-menu`: at x, y or flipped to end at the other two.
+    callback menu(length, length, length, length);
+
+    // Focuses the field with the cursor at byte `at`.
+    public function focus-at(at: int) {
+        field.focus-at(at);
+    }
+
+    // Focuses the field with all of its text selected.
+    public function select-all() {
+        field.focus-and-select();
+    }
+
+    background: Theme.surface;
+    accessible-role: groupbox;
+    accessible-label: "Filter";
+
+    HorizontalLayout {
+        padding-left: Theme.spacing;
+        padding-right: Theme.spacing;
+        padding-top: 2px;
+        padding-bottom: 2px;
+        spacing: Theme.spacing;
+
+        // A magnifier, drawn (the software renderer has no font fallback).
+        Rectangle {
+            width: Theme.icon-size;
+            accessible-role: none;
+            Path {
+                width: Theme.icon-size;
+                height: Theme.icon-size;
+                viewbox-width: 16;
+                viewbox-height: 16;
+                commands: "M 11.5 6.5 A 5 5 0 1 1 1.5 6.5 A 5 5 0 1 1 11.5 6.5 M 10.2 10.2 L 14.5 14.5";
+                stroke: Theme.foreground-muted;
+                stroke-width: Theme.icon-size / 10;
+            }
+        }
+
+        Rectangle {
+            horizontal-stretch: 1;
+            field := TextField {
+                width: parent.width;
+                y: (parent.height - self.height) / 2;
+                text <=> root.text;
+                edited(t) => { root.edited(t); }
+            }
+            // A text that cannot be used: a red line under the field.
+            if root.error != "": Rectangle {
+                x: field.x + Theme.radius;
+                y: field.y + field.height - 1px;
+                width: field.width - 2 * Theme.radius;
+                height: 1px;
+                background: Theme.danger;
+            }
+        }
+
+        Text {
+            text: root.error != "" ? root.error : root.count;
+            color: root.error != "" ? Theme.danger : Theme.foreground-muted;
+            vertical-alignment: center;
+            max-width: 320px;
+            overflow: elide;
+        }
+
+        menu-button := ToolButton {
+            y: (parent.height - self.height) / 2;
+            text: "Saved filters";
+            icon: "M 4 6 L 8 10 L 12 6";
+            clicked => {
+                root.menu(
+                    self.absolute-position.x,
+                    self.absolute-position.y + self.height,
+                    self.absolute-position.x + self.width,
+                    self.absolute-position.y);
+            }
+        }
+    }
+}

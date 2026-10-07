@@ -54,6 +54,11 @@ ffmpeg = ""               # path to ffmpeg; empty = Gezik's download, then PATH
 download = true           # offer to download 7-Zip, ffmpeg and pdfium when needed
 seven-zip = ""            # path to 7-Zip; empty = Gezik's download, then PATH
 
+[keyboard]
+# What typing a letter on the file list does: "jump" goes to the first name starting with
+# what you typed; "filter" opens the filter (Ctrl+F, or / ) with it.
+typing = "jump"           # jump | filter
+
 [shortcuts]
 # Change any shortcut; "mod" is Cmd on macOS and Ctrl elsewhere; "" disables.
 # new-tab = "mod+t"
@@ -66,8 +71,8 @@ seven-zip = ""            # path to 7-Zip; empty = Gezik's download, then PATH
 # focus-path = "mod+l"
 # refresh = "f5"           # macOS: "mod+r"
 # select-all = "mod+a"
-# view-list = "mod+1"
-# view-grid = "mod+2"
+# view-list = "mod+shift+1"
+# view-grid = "mod+shift+2"
 # toggle-preview = "alt+p"
 # quick-look = "space"     # only while the file list has the focus
 # copy = "mod+c"
@@ -83,6 +88,17 @@ seven-zip = ""            # path to 7-Zip; empty = Gezik's download, then PATH
 # redo = "mod+y"           # macOS: "mod+shift+z"
 # batch-rename = ""        # rename with rules, even for one item
 # toggle-hidden = "ctrl+h" # show or hide names starting with a dot; macOS: "mod+shift+."
+# filter = "mod+f"         # also "/" on the file list (not changeable)
+# invert-selection = "mod+shift+i"
+# select-pattern = ["mod+=", "num+"]     # num+ is the keypad's +; a list gives several keys
+# deselect-pattern = ["mod+-", "num-"]
+# select-same-type = "alt+num+"
+# restore-selection = "num/"   # the selection before the last file operation
+# tab-1 = "mod+1"          # tab-2 … tab-8 likewise
+# tab-last = "mod+9"
+# reopen-tab = "mod+shift+t"
+# tab-picker = "mod+shift+a"
+# toggle-tab-lock = ""     # a locked tab does not close
 
 # Saved rule sets for batch rename (Rename… with two or more items selected). The rename
 # layer writes them with "Presets ▾ › Save current rules as…"; they can also be written here.
@@ -94,6 +110,13 @@ seven-zip = ""            # path to 7-Zip; empty = Gezik's download, then PATH
 #   { kind = "template", text = "{taken:%Y-%m-%d} {n:03}" },
 #   { kind = "case", mode = "lower" },
 # ]
+
+# Saved filters, listed by the filter bar's ▾ button ("Save as…" there writes them here).
+# The pattern is the filter's own: parts split by ";", * and ? as wildcards (a part without
+# them matches anywhere in the name), "!" in front leaves out.
+# [[filters]]
+# name = "Pictures"
+# pattern = "*.jpg;*.jpeg;*.png;*.heic;*.webp"
 
 # Your own commands, shown in the Convert layer under "Commands" and in the right-click
 # menu under "Commands >" (only for files that match "types"). No shell is used: "run" is a

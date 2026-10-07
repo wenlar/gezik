@@ -10,6 +10,9 @@ use crate::AppWindow;
 
 type Answer = Box<dyn FnOnce(Option<usize>)>;
 
+/// The line under a field, from its text: `(line, is_error)`.
+type Note = Rc<dyn Fn(&str) -> (String, bool)>;
+
 struct Question {
     title: String,
     message: String,
@@ -22,6 +25,8 @@ struct Question {
     secret: bool,
     /// The engine job asking it: it goes away when the job ends.
     job: Option<u64>,
+    /// Writes the line under the field as its text changes; `None`: no line.
+    note: Option<Note>,
     answer: Answer,
 }
 
@@ -32,6 +37,8 @@ struct Inner {
     open: RefCell<Option<Answer>>,
     /// The job asking the question on screen, and its Esc button.
     open_job: Cell<Option<(u64, usize)>>,
+    /// The line under the field of the question on screen.
+    open_note: RefCell<Option<Note>>,
 }
 
 #[derive(Clone)]
@@ -44,10 +51,15 @@ impl Dialogs {
             queue: RefCell::default(),
             open: RefCell::default(),
             open_job: Cell::new(None),
+            open_note: RefCell::new(None),
         }));
         window.on_dialog_chosen({
             let dialogs = dialogs.clone();
             move |index| dialogs.chosen(index)
+        });
+        window.on_dialog_edited({
+            let dialogs = dialogs.clone();
+            move |text| dialogs.edited(&text)
         });
         dialogs
     }
@@ -80,6 +92,7 @@ impl Dialogs {
             input: None,
             secret: false,
             job: None,
+            note: None,
             answer: Box::new(answer),
         });
     }
@@ -102,6 +115,7 @@ impl Dialogs {
             input: None,
             secret: false,
             job: Some(job),
+            note: None,
             answer: Box::new(answer),
         });
     }
@@ -134,7 +148,29 @@ impl Dialogs {
         buttons: &[&str],
         answer: impl FnOnce(Option<String>) + 'static,
     ) {
-        self.ask_input(title.into(), message.into(), (initial.into(), false), buttons, None, Box::new(answer));
+        self.ask_input(title.into(), message.into(), (initial.into(), false), buttons, (None, None), Box::new(answer));
+    }
+
+    /// Like `ask_text`, with a line under the field that `note` writes as the text changes:
+    /// `(line, is_error)`.
+    pub fn ask_text_noted(
+        &self,
+        title: impl Into<String>,
+        message: impl Into<String>,
+        initial: impl Into<String>,
+        buttons: &[&str],
+        note: impl Fn(&str) -> (String, bool) + 'static,
+        answer: impl FnOnce(Option<String>) + 'static,
+    ) {
+        let note: Note = Rc::new(note);
+        self.ask_input(
+            title.into(),
+            message.into(),
+            (initial.into(), false),
+            buttons,
+            (None, Some(note)),
+            Box::new(answer),
+        );
     }
 
     /// Like `ask_text` with an empty field that shows dots (a password), for engine job `job`
@@ -147,7 +183,14 @@ impl Dialogs {
         buttons: &[&str],
         answer: impl FnOnce(Option<String>) + 'static,
     ) {
-        self.ask_input(title.into(), message.into(), (String::new(), true), buttons, Some(job), Box::new(answer));
+        self.ask_input(
+            title.into(),
+            message.into(),
+            (String::new(), true),
+            buttons,
+            (Some(job), None),
+            Box::new(answer),
+        );
     }
 
     fn ask_input(
@@ -157,7 +200,8 @@ impl Dialogs {
         // The field's first text, and whether it holds a password.
         (initial, secret): (String, bool),
         buttons: &[&str],
-        job: Option<u64>,
+        // The engine job asking, and the line under the field.
+        (job, note): (Option<u64>, Option<Note>),
         answer: Box<dyn FnOnce(Option<String>)>,
     ) {
         let window = self.0.window.clone();
@@ -169,6 +213,7 @@ impl Dialogs {
             input: Some(initial),
             secret,
             job,
+            note,
             answer: Box::new(move |choice| {
                 let text = window.upgrade().map(|w| {
                     let text = w.get_dialog_input().to_string();
@@ -195,7 +240,12 @@ impl Dialogs {
                 window.set_dialog_input_secret(question.secret);
                 // Each question starts with its text hidden.
                 window.set_dialog_show_secret(false);
-                window.set_dialog_input(question.input.unwrap_or_default().into());
+                let input = question.input.unwrap_or_default();
+                let (note, error) = question.note.as_ref().map(|note| note(&input)).unwrap_or_default();
+                window.set_dialog_note(note.into());
+                window.set_dialog_note_error(error);
+                *self.0.open_note.borrow_mut() = question.note;
+                window.set_dialog_input(input.into());
                 let buttons: Vec<SharedString> = question.buttons.into_iter().map(Into::into).collect();
                 window.set_dialog_buttons(ModelRc::new(VecModel::from(buttons)));
                 *self.0.open.borrow_mut() = Some(question.answer);
@@ -209,9 +259,20 @@ impl Dialogs {
         }
     }
 
+    /// The field's text changed: the line under it follows.
+    fn edited(&self, text: &str) {
+        let Some(note) = self.0.open_note.borrow().clone() else { return };
+        let (line, error) = note(text);
+        if let Some(window) = self.0.window.upgrade() {
+            window.set_dialog_note(line.into());
+            window.set_dialog_note_error(error);
+        }
+    }
+
     fn chosen(&self, index: i32) {
         let answer = self.0.open.borrow_mut().take();
         self.0.open_job.set(None);
+        self.0.open_note.borrow_mut().take();
         if let Some(window) = self.0.window.upgrade() {
             window.set_dialog_open(false);
         }

@@ -31,6 +31,54 @@ impl Selection {
         s
     }
 
+    /// This selection moved to another list of the same entries whose entry `k` is entry
+    /// `from[k]` of this one (filtered, sorted again, or with entries taken out): what was
+    /// selected stays selected, and the focus (and anchor) follows its entry, or goes to the
+    /// first selected one if it is gone. Indices past this list are skipped. No name is
+    /// compared, and with nothing selected only the focus is looked for.
+    pub fn carried(&self, from: &[usize]) -> Selection {
+        let mut s = Selection::new(from.len());
+        let mut focus = None;
+        if self.count > 0 || self.focus.is_some() {
+            for (k, &i) in from.iter().enumerate() {
+                if self.count > 0 && self.is_selected(i) {
+                    s.set(k, true);
+                }
+                if self.focus == Some(i) {
+                    focus = Some(k);
+                }
+            }
+        }
+        s.focus = focus.or_else(|| s.iter().next());
+        s.anchor = s.focus;
+        s
+    }
+
+    /// This selection of a list whose entry `i` is entry `rows[i]` of a list of `len`
+    /// entries (a filtered list and the full one), as a selection of that list; focus and
+    /// anchor follow their entries.
+    pub fn spread(&self, rows: &[usize], len: usize) -> Selection {
+        let mut s = Selection::new(len);
+        for i in self.iter() {
+            if let Some(&row) = rows.get(i)
+                && row < len
+            {
+                s.set(row, true);
+            }
+        }
+        let map = |i: Option<usize>| i.and_then(|i| rows.get(i).copied()).filter(|&row| row < len);
+        s.focus = map(self.focus);
+        s.anchor = map(self.anchor);
+        s
+    }
+
+    /// The same selection with the focus and anchor on `focus` (ignored past the end).
+    pub fn focused_at(mut self, focus: Option<usize>) -> Selection {
+        self.focus = focus.filter(|&f| f < self.len);
+        self.anchor = self.focus;
+        self
+    }
+
     pub fn len(&self) -> usize {
         self.len
     }
@@ -124,6 +172,45 @@ impl Selection {
 
     pub fn select_all(&mut self) -> Vec<Range<usize>> {
         self.change(|s| s.fill(true))
+    }
+
+    /// Flips every entry; focus and anchor stay.
+    pub fn invert(&mut self) -> Vec<Range<usize>> {
+        self.change(|s| {
+            for word in &mut s.bits {
+                *word = !*word;
+            }
+            // Bits past the end stay clear.
+            if !s.len.is_multiple_of(64)
+                && let Some(last) = s.bits.last_mut()
+            {
+                *last &= (1u64 << (s.len % 64)) - 1;
+            }
+            s.count = s.len - s.count;
+        })
+    }
+
+    /// Selects (`on`) or unselects each entry `matches` says yes to; the others, focus and
+    /// anchor stay.
+    pub fn set_where(&mut self, on: bool, mut matches: impl FnMut(usize) -> bool) -> Vec<Range<usize>> {
+        self.change(|s| {
+            for i in 0..s.len {
+                if matches(i) {
+                    s.set(i, on);
+                }
+            }
+        })
+    }
+
+    /// Becomes `new` (selection, focus and anchor); returns only the rows whose selection or
+    /// focus changed (all of them if the length differs).
+    pub fn replace(&mut self, new: Selection) -> Vec<Range<usize>> {
+        if new.len != self.len {
+            let len = self.len.max(new.len);
+            *self = new;
+            return std::iter::once(0..len).filter(|r| !r.is_empty()).collect();
+        }
+        self.change(|s| *s = new)
     }
 
     /// Ctrl+arrow: moves the focus only.
@@ -274,6 +361,29 @@ mod tests {
     }
 
     #[test]
+    fn a_selection_is_carried_by_position_not_by_name() {
+        // Shown rows 0..4 are full entries [1, 3, 4, 7] of 9; rows 1 and 3 selected, focus 3.
+        let shown = Selection::from_indices(4, [1, 3], Some(3));
+        let full = shown.spread(&[1, 3, 4, 7], 9);
+        assert_eq!(selected(&full), [3, 7]);
+        assert_eq!((full.focus(), full.anchor()), (Some(7), Some(7)));
+        // A new filter shows full entries [0, 3, 5, 6, 7].
+        let next = full.carried(&[0, 3, 5, 6, 7]);
+        assert_eq!((next.len(), selected(&next)), (5, vec![1, 4]));
+        assert_eq!(next.focus(), Some(4), "the focus follows its entry");
+        // Its focused entry filtered out: the focus goes to the first selected one.
+        let gone = full.carried(&[3, 5]);
+        assert_eq!((selected(&gone), gone.focus()), (vec![0], Some(0)));
+        // A sort is a permutation: entry k now was entry from[k] before.
+        let sorted = full.carried(&[8, 7, 6, 5, 4, 3, 2, 1, 0]);
+        assert_eq!((selected(&sorted), sorted.focus()), (vec![1, 5], Some(1)));
+        let none = Selection::new(9).focused_at(Some(4)).carried(&[4, 5]);
+        assert_eq!((none.count(), none.focus()), (0, Some(0)), "nothing selected: only the focus");
+        assert_eq!(Selection::new(9).carried(&[1, 2]).focus(), None);
+        assert_eq!(Selection::new(3).focused_at(Some(5)).focus(), None, "past the end");
+    }
+
+    #[test]
     fn pressing_a_selected_entry_waits_for_the_release() {
         let mut s = Selection::new(5);
         s.select_only(0);
@@ -355,6 +465,45 @@ mod tests {
         s.extend_to(2, false);
         assert_eq!(selected(&s), [2]);
         assert_eq!(s.anchor(), Some(2));
+    }
+
+    #[test]
+    fn replacing_reports_only_the_rows_that_changed() {
+        let mut s = Selection::from_indices(200, [3, 4, 150], Some(3));
+        let rows = s.replace(Selection::from_indices(200, [4, 150, 151], Some(4)));
+        assert_eq!(rows, [3..5, 151..152], "3 off and its focus moved to 4; 151 on");
+        assert_eq!((s.count(), s.focus(), s.anchor()), (3, Some(4), Some(4)));
+        assert!(s.replace(s.clone()).is_empty(), "the same: nothing");
+        let rows = s.replace(Selection::from_indices(10, [1], None));
+        assert_eq!(rows, [0..200], "another length: everything");
+        assert_eq!(s.len(), 10);
+    }
+
+    #[test]
+    fn invert_flips_every_entry_and_reports_the_rows() {
+        let mut s = Selection::from_indices(130, [0, 1, 129], Some(1));
+        assert_eq!(s.invert(), [0..130]);
+        assert_eq!(s.count(), 127);
+        assert!(!s.is_selected(0) && s.is_selected(2) && !s.is_selected(129) && !s.is_selected(130));
+        assert_eq!((s.focus(), s.anchor()), (Some(1), Some(1)), "focus and anchor stay");
+        s.invert();
+        assert_eq!(selected(&s), [0, 1, 129]);
+        let mut full = Selection::new(128);
+        full.select_all();
+        full.invert();
+        assert_eq!(full.count(), 0);
+        assert!(Selection::new(0).invert().is_empty());
+    }
+
+    #[test]
+    fn set_where_adds_or_removes_only_the_matches() {
+        let mut s = Selection::from_indices(10, [1], Some(1));
+        assert_eq!(s.set_where(true, |i| i % 3 == 0), [0..1, 3..4, 6..7, 9..10]);
+        assert_eq!(selected(&s), [0, 1, 3, 6, 9]);
+        assert_eq!(s.set_where(false, |i| i < 4), [0..2, 3..4]);
+        assert_eq!(selected(&s), [6, 9]);
+        assert!(s.set_where(true, |i| i == 6).is_empty(), "already selected: nothing changes");
+        assert_eq!((s.focus(), s.count()), (Some(1), 2));
     }
 
     #[test]

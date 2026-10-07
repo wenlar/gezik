@@ -709,6 +709,7 @@ impl Archives {
                 })
             };
             let label = extract_label(&now);
+            self.0.ops.remember_for(&now);
             let id = self.0.ops.submit_chain(tasks, Some(label), Some(again), After::Select);
             self.0.jobs.borrow_mut().insert(id, Pending::Extract { archives: now, to: to.clone() });
         }
@@ -856,6 +857,7 @@ impl Archives {
     }
 
     fn submit_compress(&self, sources: Vec<PathBuf>, target: PathBuf, options: CompressOptions) {
+        self.0.ops.remember_for(&sources);
         let retry: Rc<dyn Fn() -> Box<dyn gezik_ops::Task>> =
             Rc::new(move || Box::new(CompressTask::new(sources.clone(), target.clone(), options.clone())));
         self.0.ops.submit(retry(), Some(retry), After::Select);
@@ -863,6 +865,7 @@ impl Archives {
 
     /// Adds `sources` to `archive` (`password`: the archive's, if known).
     pub fn add_to(&self, archive: PathBuf, sources: Vec<PathBuf>, password: Option<String>) {
+        self.0.ops.remember_for(&sources);
         let retry: Rc<dyn Fn() -> Box<dyn gezik_ops::Task>> =
             Rc::new(move || Box::new(AddToArchiveTask::new(archive.clone(), sources.clone(), password.clone())));
         self.0.ops.submit(retry(), Some(retry), After::Select);

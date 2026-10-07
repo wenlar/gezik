@@ -26,7 +26,7 @@ use slint::{ComponentHandle, ModelRc, VecModel};
 use crate::dialog::Dialogs;
 use crate::navigation::{Navigator, sync_model};
 use crate::sidebar::Sidebar;
-use crate::view::View;
+use crate::view::{View, hidden_note};
 use crate::{AppWindow, OpRow};
 
 /// A job shows in the panel only if it still runs after this long.
@@ -415,8 +415,15 @@ impl Operations {
         self.update();
     }
 
+    /// Keeps the selection shown for keypad / (`View::restore_remembered`) when a job is
+    /// about to run on `sources`, if they are all in the folder shown: a paste or a drop from
+    /// elsewhere, or a job for a folder left meanwhile, leaves what was remembered alone.
+    pub fn remember_for(&self, sources: &[PathBuf]) {
+        self.0.view.remember_selection_for(sources);
+    }
+
     /// Runs `task`; `retry` runs the same operation again from its row, `after` says what to
-    /// do with the results.
+    /// do with the results. The selection is not remembered here: see `remember_for`.
     pub fn submit(&self, task: Box<dyn Task>, retry: Option<Retry>, after: After) -> JobId {
         let title = task.title();
         let id = self.0.engine.submit(task);
@@ -462,6 +469,11 @@ impl Operations {
         }
         self.0.rename_when_shown.borrow_mut().take();
         if let Some(name) = path.file_name().map(|n| n.to_string_lossy().into_owned()) {
+            // A new folder or file is named in the whole folder: the filter (which would most
+            // likely hide "New folder") closes first.
+            if self.0.view.filter_text().is_some() {
+                crate::filter::with_current(crate::filter::Filter::close);
+            }
             self.0.view.begin_rename_by_name(&name);
         }
     }
@@ -508,13 +520,18 @@ impl Operations {
         }
     }
 
-    /// The saved rule sets, written to settings.toml.
+    /// The saved rule sets, written to settings.toml by the settings writer thread; a failure
+    /// is said in the status bar.
     pub fn save_rename_presets(&self, presets: &[gezik_config::settings::RenamePreset]) {
-        if let Some(store) = &self.0.store
-            && let Err(warning) = store.save_rename_presets(presets)
-        {
-            self.0.view.note(warning.to_string());
-        }
+        let Some(store) = &self.0.store else { return };
+        let change = gezik_config::settings_writer::SettingsChange::RenamePresets(presets.to_vec());
+        store.write_settings(change, |result| {
+            if let Err(warning) = result {
+                let _ = slint::invoke_from_event_loop(move || {
+                    crate::view::with_current(|view| view.note(warning.to_string()));
+                });
+            }
+        });
     }
 
     /// Asks for a text over the window; `f` gets it when Save is chosen.
@@ -578,6 +595,7 @@ impl Operations {
                     view.end_rename(refocus)
                 };
                 if let Some(path) = path {
+                    self.remember_for(std::slice::from_ref(&path));
                     // Going on to another entry: its refresh must not pull the selection away.
                     let after = if how == Commit::Tab { After::Nothing } else { After::Select };
                     self.submit(Box::new(gezik_ops::RenameTask::one(path, &name)), None, after);
@@ -642,6 +660,8 @@ impl Operations {
         if self.0.view.shows_drives() {
             return;
         }
+        // Pasted elsewhere, keypad / brings this selection back here.
+        self.0.view.remember_selection();
         self.copy_paths(self.0.view.selected_paths(), cut);
     }
 
@@ -691,6 +711,7 @@ impl Operations {
 
     /// Copies or moves `paths` into folder `dir` (a paste or a drop), as one undoable job.
     pub fn transfer(&self, paths: Vec<PathBuf>, dir: PathBuf, effect: Effect) {
+        self.remember_for(&paths);
         let retry: Retry = Rc::new(move || -> Box<dyn Task> {
             match effect {
                 Effect::Move => Box::new(MoveTask::into(paths.clone(), &dir)),
@@ -777,6 +798,8 @@ impl Operations {
     /// Hides the rows of `paths` in the folder shown; the folder, to reload when the job ends.
     fn hide(&self, paths: &[PathBuf]) -> Option<PathBuf> {
         let folder = self.0.view.folder()?;
+        // Before the names go: the job is submitted after this.
+        self.remember_for(paths);
         self.0.view.hide_names(&result_names(paths, &folder));
         Some(folder)
     }
@@ -822,6 +845,7 @@ impl Operations {
         if paths.is_empty() {
             return;
         }
+        self.remember_for(&paths);
         let retry: Retry = Rc::new(move || -> Box<dyn Task> { Box::new(CopyTask::duplicate(paths.clone())) });
         self.submit(retry(), Some(retry), After::Select);
     }
@@ -1003,11 +1027,18 @@ impl Operations {
         // Rows hidden for this job come back if it changed nothing (failed, cancelled, no trash).
         let mut dirs = report.changed_dirs.clone();
         dirs.extend(hidden_in);
-        let note = (report.skipped_changed > 0).then(|| {
+        let skipped = (report.skipped_changed > 0).then(|| {
             let n = report.skipped_changed;
             let what = if n == 1 { "1 item".to_owned() } else { format!("{n} items") };
             format!("{what} changed since; skipped")
         });
+        // New items here the filter hides (a paste, a drop, an extract): the filter stays, the
+        // status bar says so. A new folder's rename closes the filter instead.
+        let hidden = if after == After::Rename { None } else { hidden_note(self.0.view.hidden_by_filter(&select)) };
+        let note = match (skipped, hidden) {
+            (Some(a), Some(b)) => Some(format!("{a} · {b}")),
+            (a, b) => a.or(b),
+        };
         let reloading = self.0.nav.refresh_showing(&dirs, &select, note.clone());
         self.0.sidebar.refresh();
         if let (false, Some(note)) = (reloading, note) {

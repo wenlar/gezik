@@ -1,6 +1,7 @@
 // Hide the console window in release builds on Windows.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod actions;
 mod archives;
 mod batch_rename;
 mod conflicts;
@@ -8,6 +9,7 @@ mod context_menu;
 mod convert;
 mod dialog;
 mod drag;
+mod filter;
 mod folder_watch;
 mod frame_limit;
 mod keys;
@@ -21,8 +23,10 @@ mod places;
 mod popup;
 mod preview;
 mod quick_look;
+mod select_tools;
 mod sidebar;
 mod start;
+mod tab_tools;
 mod theme_bridge;
 mod view;
 mod watcher;
@@ -33,7 +37,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use gezik_config::Warning;
-use gezik_config::settings::{Settings, SidebarPosition};
+use gezik_config::settings::{Settings, SidebarPosition, Typing};
 use gezik_config::shortcuts::{Action, Chord, Key, Platform};
 use gezik_config::store::{self, ConfigFiles, ConfigStore, Loaded};
 use gezik_config::theme;
@@ -67,6 +71,7 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
     batch_rename::set_presets(loaded.settings.rename_presets.clone());
     archives::set_settings(loaded.settings.tools.clone(), loaded.settings.archives);
     convert::set_settings(loaded.settings.convert.clone(), loaded.settings.commands.clone());
+    filter::set_settings(loaded.settings.keyboard, loaded.settings.filters.clone());
     loaded
 }
 
@@ -127,6 +132,14 @@ fn handle_key(
         }
         return used;
     }
+    // The tab picker: Esc, Enter, Up and Down are its own, other keys go to its field.
+    if window.get_tp_open() {
+        let mut used = false;
+        if let Some(chord) = &chord {
+            tab_tools::with_current(|t| used = t.chord(chord));
+        }
+        return used;
+    }
     // The name field being edited has the keyboard (Enter, Esc, Tab are its own).
     if ops.end_unfocused_rename() {
         return false;
@@ -144,13 +157,37 @@ fn handle_key(
         }
     }
 
+    // The filter bar's field: Esc closes the filter, Down or Enter give the list the keyboard
+    // (the bar stays); other plain keys and the text editing shortcuts are the field's.
+    let filtering = window.get_filter_focused();
+    if filtering && let Some(chord) = &chord {
+        if !has_modifier && !chord.shift {
+            match chord.key {
+                Key::Escape => {
+                    filter::with_current(filter::Filter::close);
+                    return true;
+                }
+                Key::Down | Key::Enter => {
+                    window.invoke_focus_list();
+                    return true;
+                }
+                _ => {}
+            }
+        }
+        if !has_modifier || keys::is_text_edit(chord, Platform::current()) {
+            return false;
+        }
+    }
+
     if let Some(action) = chord.as_ref().and_then(keys::action_for) {
         // Space opens quick look only on the focused list and outside type-ahead; elsewhere
         // it is an ordinary key.
         let ordinary_key = action == Action::QuickLook
             && (!window.get_list_focused() || type_ahead.is_active(std::time::Instant::now()));
         if !ordinary_key {
-            if keys::acts_on_files(action) && (editing || (keys::needs_list(action) && !window.get_list_focused())) {
+            if keys::waits_for_text_fields(action)
+                && (editing || filtering || (keys::needs_list(action) && !window.get_list_focused()))
+            {
                 return false;
             }
             match action {
@@ -184,9 +221,34 @@ fn handle_key(
                 }
                 Action::Undo => ops.undo(),
                 Action::Redo => ops.redo(),
+                Action::Filter
+                | Action::InvertSelection
+                | Action::SelectPattern
+                | Action::DeselectPattern
+                | Action::SelectSameType
+                | Action::RestoreSelection
+                | Action::Tab1
+                | Action::Tab2
+                | Action::Tab3
+                | Action::Tab4
+                | Action::Tab5
+                | Action::Tab6
+                | Action::Tab7
+                | Action::Tab8
+                | Action::TabLast
+                | Action::ReopenTab
+                | Action::TabPicker
+                | Action::ToggleTabLock => {
+                    if action == Action::Filter && editing {
+                        window.set_path_editing(false);
+                    }
+                    if !actions::run(action, nav, view) {
+                        return false;
+                    }
+                }
             }
             // The typed text no longer fits once the location or tab changed.
-            if editing && action != Action::FocusPath {
+            if (editing || filtering) && !matches!(action, Action::FocusPath | Action::Filter) {
                 window.invoke_focus_list();
             }
             return true;
@@ -239,8 +301,13 @@ fn handle_key(
                     view.toggle_focus();
                     return true;
                 }
+                // The first Esc closes the filter, the next clears the selection.
                 Key::Escape if !primary && !chord.shift => {
-                    view.clear_selection();
+                    if view.filter_text().is_some() {
+                        filter::with_current(filter::Filter::close);
+                    } else {
+                        view.clear_selection();
+                    }
                     return true;
                 }
                 _ => {}
@@ -251,8 +318,19 @@ fn handle_key(
         return false;
     }
 
-    // Type-ahead. A typed character that matches nothing is still used up.
     let Some(c) = keys::typed_char(text) else { return false };
+    // `/` is in no name: it opens the filter whatever the typing mode (and on a layout where
+    // it needs Shift, as no shortcut could).
+    if c == '/' {
+        filter::with_current(filter::Filter::open);
+        return true;
+    }
+    // A space is no letter: it stays quick look's (or type-ahead's, as before).
+    if filter::typing() == Typing::Filter && c != ' ' && !view.shows_drives() {
+        filter::with_current(|f| f.typed(c));
+        return true;
+    }
+    // Type-ahead. A typed character that matches nothing is still used up.
     if let Some(i) = type_ahead.type_char(c, std::time::Instant::now(), |typed| view.find_prefix(typed)) {
         view.jump_to(i);
     }
@@ -408,6 +486,14 @@ fn main() -> Result<(), slint::PlatformError> {
     sidebar.install();
     sidebar.set_pinned(initial_settings.pinned);
     let dialogs = dialog::Dialogs::new(&window);
+    let _filter = filter::Filter::new(&window, view.clone(), dialogs.clone(), config.clone());
+    let _tab_tools = tab_tools::TabTools::new(&window, nav.clone());
+    let _select_tools = select_tools::SelectTools::new(
+        view.clone(),
+        dialogs.clone(),
+        config.clone(),
+        saved_state.selection.last_pattern.clone(),
+    );
     let engine_settings = gezik_ops::Settings {
         threads: initial_settings.files.copy_threads,
         pending_deletes: config.as_ref().map(|store| store.dir().join("pending-deletes")),
@@ -480,8 +566,10 @@ fn main() -> Result<(), slint::PlatformError> {
                     state.preview_width = Some(window.get_preview_width().round().clamp(200.0, 600.0) as u32);
                     state.operations_collapsed = ops.collapsed();
                 });
-                // Quitting: what the other parts changed lately is written too.
+                // Quitting: what the other parts changed lately is written too (a saved
+                // filter, a pin or a default just sent to settings.toml as well).
                 store.flush_state();
+                store.flush_settings();
                 view.flush_memory();
             }
             // Its window would otherwise keep the event loop (and the process) running.
@@ -620,6 +708,10 @@ fn main() -> Result<(), slint::PlatformError> {
     window.on_header_menu({
         let menus = menus.clone();
         move |x, y| menus.header(x, y)
+    });
+    window.on_filter_menu({
+        let menus = menus.clone();
+        move |left, bottom, right, top| menus.filter_menu(popup::Anchor::below(left, top, right, bottom))
     });
     window.on_view_menu({
         let menus = menus.clone();
@@ -786,8 +878,9 @@ fn main() -> Result<(), slint::PlatformError> {
             let Some(window) = weak.upgrade() else { return false };
             let m = event.modifiers;
             // Slint's `control` is ⌘ on macOS.
+            let physical = keys::take_pressed();
             let text = keys::shortcut_text(&event.text, m.control);
-            let chord = keys::chord_from_slint(&text, m.control, m.alt, m.shift, m.meta, Platform::current());
+            let chord = keys::chord_from_press(&text, physical, m.control, m.alt, m.shift, m.meta, Platform::current());
             let menu_key = keys::is_context_menu_key(&event.text, m.control, m.alt, m.shift, m.meta);
             // Esc while dragging files drops nothing.
             if chord.as_ref().is_some_and(|c| c.key == Key::Escape) && drags.escape() {
@@ -819,6 +912,16 @@ fn main() -> Result<(), slint::PlatformError> {
         let ops = ops.clone();
         let drags = drags.clone();
         window.window().on_winit_window_event(move |_, event| {
+            // The keypad's keys and Ctrl+Shift+digits, which Slint's text cannot tell apart
+            // (keys.rs `Physical`): noted before Slint hands the key to `key-event`.
+            if let winit::event::WindowEvent::KeyboardInput { event, .. } = event
+                && event.state == winit::event::ElementState::Pressed
+            {
+                keys::note_pressed(match event.physical_key {
+                    winit::keyboard::PhysicalKey::Code(code) => keys::physical_of(code),
+                    winit::keyboard::PhysicalKey::Unidentified(_) => keys::Physical::Other,
+                });
+            }
             if let winit::event::WindowEvent::Focused(true) = event {
                 ops.clipboard_check();
             }

@@ -5,6 +5,7 @@ pub mod batch_toml;
 pub mod paths;
 pub mod settings;
 pub mod settings_edit;
+pub mod settings_writer;
 pub mod shortcuts;
 mod state_store;
 pub mod store;

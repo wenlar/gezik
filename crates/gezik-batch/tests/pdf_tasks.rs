@@ -412,7 +412,14 @@ fn pages_done_before_a_pause_are_not_counted_twice() {
             _ => None,
         })
         .collect();
-    assert!(progress.iter().all(|p| p.items_done <= p.items_total && p.items_total <= 3), "{progress:?}");
+    // The progress reporter samples the job ten times a second, over the whole chain: a sample
+    // may fall in the place stage after the pages, whose 3 files moved out of staging are items
+    // of their own (3 of 6, with their bytes). The pages are counted with no bytes, so the
+    // samples without bytes are the page stage's: a try after the pause that counted its pages
+    // again would show more than 3 there for its whole run (3 slow pages).
+    assert!(progress.iter().all(|p| p.items_done <= p.items_total && p.items_total <= 6), "{progress:?}");
+    let pages: Vec<_> = progress.iter().filter(|p| p.bytes_total == 0).collect();
+    assert!(!pages.is_empty() && pages.iter().all(|p| p.items_total <= 3), "{progress:?}");
     assert_eq!(std::fs::read_to_string(d.join("s.pdf.log")).unwrap().lines().count(), 2);
     assert_eq!(names(&d), ["s - page 1.pdf", "s - page 2.pdf", "s - page 3.pdf", "s.pdf", "s.pdf.args", "s.pdf.log"]);
 }

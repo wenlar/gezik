@@ -1,6 +1,6 @@
 # Gezik on macOS: build and manual test
 
-Run 1 (2026-10-06, `feat/batch-ops-5c`) covered items 1-22. Its fixes are on master: the `fix/macos` branch, and the shared UI fixes from `fix/shared-ui`. Sub-projects 5c (convert, user commands, ffmpeg) and 5d (PDF, pdfium) have never run on a Mac.
+Run 1 (2026-10-06, `feat/batch-ops-5c`) covered items 1-22. Its fixes are on master: the `fix/macos` branch, and the shared UI fixes from `fix/shared-ui`. Sub-projects 5c (convert, user commands, ffmpeg), 5d (PDF, pdfium) and 6a (keyboard: filter, selection, tabs; items 47-51) have never run on a Mac.
 
 This file is for a person, or Claude Code on the Mac, testing the state after 5d. Write the results into `docs/superpowers/notes/macos-test-results.md`, in a new section **"Run 2 (after 5d)"** below Run 1. Don't change Run 1.
 - Give PASS, FAIL or NOT TESTED for every item.
@@ -280,6 +280,30 @@ Re-checks of the shared UI fixes (fix/shared-ui, on master)
     - Close and reopen the Convert layer on a PDF and on a picture. Each kind comes back with its own last choices; the range text does not come back.
     - Esc closes the layer and ⌘Enter starts it.
     - `state.toml` has `[convert]`.
+
+6a, keyboard (filter, selection, tabs; never run on a Mac)
+
+47. **Filter:**
+    - ⌘F opens a bar above the list with the field focused. `jpg` leaves only names with `jpg`, and the counter says shown / all ("2 / 8").
+    - ↓ gives the list the keyboard and the bar stays. Enter on a filtered folder opens it.
+    - Esc on the list closes the filter, and a second Esc clears the selection. Esc in the field closes it too.
+    - `/` on the list opens it as well.
+    - A tab switch keeps each tab's filter. Going to another folder (or Back) opens it without one.
+    - With a file named `İSTANBUL.txt`, `istanbul` finds it, and so does `ılık` for `ILIK.doc`.
+48. **Pattern box and selection keys:**
+    - ⌘= and ⌘- open "Select by pattern" / "Deselect by pattern", starting with the last pattern. "N items match" follows the text, and a bad pattern (`!` alone) is said in red.
+    - ⌘⇧I inverts the selection.
+    - With a numeric keypad (an external keyboard): keypad + / - open the box, and keypad / brings back the selection of the last delete (Delete, ⌘Z, keypad /). ⌥+keypad + on a `.jpg` adds every `.jpg`.
+    - In the menu bar, Edit ▸ Filter…, Select by Pattern…, Deselect by Pattern…, Invert Selection, Select Same Type and Restore Selection work with the mouse, and show ⌘F / ⌘= / ⌘- / ⌘⇧I. Window ▸ Reopen Closed Tab shows ⌘⇧T.
+    - On a layout where `=` needs Shift (Turkish Q), write down what ⌘= does, and whether `select-pattern = ["num+", "mod+shift+0"]` under `[shortcuts]` makes it work.
+49. **Tabs:**
+    - With four tabs, ⌘1…⌘4 switch, ⌘7 does nothing, and ⌘9 shows the last.
+    - ⌘⇧1 shows the list and ⌘⇧2 the grid, from the keys and from View ▸ as List / as Grid (which show ⌘⇧1 / ⌘⇧2). Also on Turkish Q.
+    - Go two folders deep in a tab, filter it, ⌘W, then ⌘⇧T: the tab comes back in its place with its filter, and ⌘[ goes to the folder before.
+    - ⌘⇧A opens the tab picker. Typing filters it, ↑/↓ and Enter switch, and Esc closes it.
+    - Right-click a tab, then Lock tab: a lock shows and the × goes. ⌘W leaves it open and the status bar says so. Unlock tab.
+50. **Typing mode:** add `[keyboard]` `typing = "filter"` to `/tmp/gezik-cfg/settings.toml`. Gezik picks it up live, and a letter on the list opens the filter with it. Back to `"jump"`, a letter jumps to a name again.
+51. **Saved filters:** ▾ in the bar, then Save as… "Resimler". `settings.toml` gets a `[[filters]]` entry. ▾ then Resimler fills the bar, and ▾, Delete "Resimler" removes it.
 
 Report anything else that looks wrong: layout, fonts, Retina scaling, ⌘ shortcuts that don't work, and the wording of the boxes.
 
