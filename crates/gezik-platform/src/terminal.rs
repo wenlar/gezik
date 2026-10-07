@@ -42,7 +42,43 @@ pub enum TerminalError {
     OnlyOnWindows,
     /// The UAC question was answered No.
     Cancelled,
+    /// A `[terminal] command` that runs through cmd (the word named: cmd, or a `.bat`/`.cmd`
+    /// file), for a folder whose name cmd would read as more than a name (`cmd_safe`).
+    UnsafeFolder(String),
     Failed(String),
+}
+
+impl std::fmt::Display for TerminalError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TerminalError::NotFound => write!(f, "No terminal was found"),
+            TerminalError::OnlyOnWindows => write!(f, "Opening a terminal as administrator is only on Windows"),
+            TerminalError::Cancelled => write!(f, "Cancelled"),
+            TerminalError::UnsafeFolder(program) => {
+                write!(f, "This folder's name can't be passed safely to {program}")
+            }
+            TerminalError::Failed(why) => write!(f, "{why}"),
+        }
+    }
+}
+
+/// The word of a command that runs through cmd.exe, if any: cmd itself, or a batch file
+/// (cmd runs those too). By file name, case aside.
+fn through_cmd<'w>(words: impl IntoIterator<Item = &'w str>) -> Option<String> {
+    words.into_iter().find_map(|word| {
+        let name = word.rsplit(['\\', '/']).next().unwrap_or(word);
+        let lower = name.to_ascii_lowercase();
+        (lower == "cmd" || lower == "cmd.exe" || lower.ends_with(".bat") || lower.ends_with(".cmd"))
+            .then(|| name.to_owned())
+    })
+}
+
+/// Whether cmd.exe takes `dir` for a name only. cmd's `/c` and `/k` strip quotes, so no
+/// quoting makes `&|<>^()` plain, `%VAR%` and (delayed expansion) `!VAR!` are expanded, and
+/// `"` ends a quote: such a folder could run a command of its name (elevated, as
+/// administrator). Refused rather than escaped (BatBadBut).
+fn cmd_safe(dir: &Path) -> bool {
+    !dir.to_string_lossy().chars().any(|c| c.is_control() || "%&|<>^\"()!".contains(c))
 }
 
 /// The environment `choose` decides by.
@@ -148,8 +184,8 @@ pub fn powershell_literal(text: &str) -> String {
 }
 
 /// `args` as one Windows command line, the way `CommandLineToArgvW` splits it back. An
-/// argument with a character cmd.exe gives a meaning (`&|<>^()`) is quoted too, for a
-/// `[terminal] command` that runs through cmd.
+/// argument with `&|<>^()` is quoted too. That does not make it safe for cmd.exe, whose `/c`
+/// and `/k` take quotes away: `choose` refuses such folders for a command through cmd.
 pub fn windows_command_line(args: &[String]) -> String {
     let mut out = String::new();
     for (i, arg) in args.iter().enumerate() {
@@ -200,6 +236,14 @@ pub fn choose(dir: &Path, admin: bool, lookup: &Lookup<'_>) -> Result<Launch, Te
         // Never handed to the Shell unfound: it would show its own "cannot find" dialog.
         if !(lookup.found)(&program.to_string_lossy()) {
             return Err(TerminalError::NotFound);
+        }
+        // `wt cmd /k …` runs through cmd as much as `cmd /k …` does: every word counts.
+        if lookup.os == Os::Windows
+            && !cmd_safe(dir)
+            && let Some(cmd) =
+                through_cmd(std::iter::once(&*program.to_string_lossy()).chain(command[1..].iter().map(String::as_str)))
+        {
+            return Err(TerminalError::UnsafeFolder(cmd));
         }
         return Ok(Launch { program, args, dir: dir.to_path_buf(), elevated: admin });
     }
@@ -658,6 +702,50 @@ mod tests {
             choose(Path::new("/w"), false, &lookup),
             Err(TerminalError::Failed("unknown placeholder {in}".to_owned()))
         );
+    }
+
+    #[test]
+    fn a_folder_cmd_would_reinterpret_is_refused_for_a_command_through_cmd() {
+        let all = |_: &str| true;
+        let pick = |words: &[&str], dir: &str| {
+            let command: Vec<String> = words.iter().map(|w| (*w).to_owned()).collect();
+            let mut lookup = look(Os::Windows, &all);
+            lookup.command = Some(&command);
+            choose(Path::new(dir), true, &lookup)
+        };
+        let unsafe_folder = |program: &str| Err(TerminalError::UnsafeFolder(program.to_owned()));
+        for dir in [r"C:\a&calc", r"C:\x%PATH%", r"C:\a^b", r#"C:\"q"#, r"C:\(x)", r"C:\a!b!", "C:\\tab\there"] {
+            assert_eq!(pick(&["cmd", "/k", "cd", "/d", "{dir}"], dir), unsafe_folder("cmd"), "{dir}");
+            assert_eq!(pick(&["term.cmd", "{dir}"], dir), unsafe_folder("term.cmd"), "{dir}");
+            assert_eq!(pick(&[r"C:\Tools\Term.BAT", "{dir}"], dir), unsafe_folder("Term.BAT"), "{dir}");
+            assert_eq!(pick(&[r"C:\Windows\System32\CMD.EXE", "/k"], dir), unsafe_folder("CMD.EXE"), "{dir}");
+            assert_eq!(pick(&["wt", "cmd", "/k", "cd", "{dir}"], dir), unsafe_folder("cmd"), "{dir}");
+        }
+        assert_eq!(
+            TerminalError::UnsafeFolder("term.cmd".to_owned()).to_string(),
+            "This folder's name can't be passed safely to term.cmd"
+        );
+        // A plain name (spaces, quotes, brackets, Turkish letters) passes.
+        let plain = r"C:\Users\a\İş [2] it's; ok";
+        let ok = pick(&["cmd", "/k", "cd", "/d", "{dir}"], plain).unwrap();
+        assert_eq!((program(&ok), args(&ok)[3].as_str()), ("cmd".to_owned(), plain));
+        assert!(pick(&["term.cmd", "{dir}"], plain).is_ok());
+        // Not through cmd: the folder is one literal argument, whatever its name.
+        let weird = r"C:\a&calc %PATH%";
+        let wez = pick(&["wezterm", "start", "--cwd", "{dir}"], weird).unwrap();
+        assert_eq!(args(&wez), ["start", "--cwd", weird]);
+        // Linux and macOS have no cmd: a `.cmd` there is just a name.
+        let command = vec!["term.cmd".to_owned(), "{dir}".to_owned()];
+        let mut lookup = look(Os::Linux, &all);
+        lookup.command = Some(&command);
+        assert!(choose(Path::new("/a&calc"), false, &lookup).is_ok());
+        // The built-in ones take it as one literal argument.
+        let wt = choose(Path::new(r"C:\a&calc"), true, &look(Os::Windows, &all)).unwrap();
+        assert_eq!((program(&wt), args(&wt)), ("wt.exe".to_owned(), vec!["-d".to_owned(), r"C:\a&calc".to_owned()]));
+        assert_eq!(windows_command_line(&args(&wt)), r#"-d "C:\a&calc""#);
+        let only_ps = |p: &str| p == "powershell";
+        let ps = choose(Path::new(r"C:\a&calc"), true, &look(Os::Windows, &only_ps)).unwrap();
+        assert_eq!(args(&ps)[2], r"Set-Location -LiteralPath 'C:\a&calc'");
     }
 
     #[test]

@@ -73,6 +73,7 @@ restore = true
 # The terminal "Open terminal" runs: a program and its arguments, {dir} is the folder ("{{"
 # and "}}" are braces). Unset: Gezik finds one (Windows Terminal, else PowerShell; Terminal on
 # macOS; $TERMINAL, x-terminal-emulator or a terminal it knows on Linux).
+# Through cmd or a .bat/.cmd file, a folder with % & | < > ^ " ( ) ! in its name is refused.
 # command = ["wezterm", "start", "--cwd", "{dir}"]
 
 [shortcuts]
