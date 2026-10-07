@@ -18,7 +18,7 @@ mod text;
 
 use std::path::PathBuf;
 
-pub use datetime::{format_datetime, local_date_parts};
+pub use datetime::{format_date, format_datetime, local_date_parts};
 pub use drives::{Drive, DriveKind, drive_signature, drives};
 pub use icons::{IconTarget, Rgba, icon, init_thread, type_name};
 pub use known::{KnownFolder, known_folders};
