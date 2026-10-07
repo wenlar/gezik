@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-use gezik_core::nav::{Closed, Location, Step, Tabs, ViewState, crumbs, nearest_existing};
+use gezik_core::nav::{Closed, Location, Session, Step, Tabs, ViewState, crumbs, nearest_existing};
 use gezik_core::ops::paths::same_path;
 use gezik_core::refresh::{QUIET, RefreshPace};
 use gezik_core::{Entry, list_dir};
@@ -131,6 +131,8 @@ fn is_visit(mode: &Mode, opened: bool, fallback: bool) -> bool {
 type Listener = Rc<dyn Fn(&Location)>;
 /// Called with each folder gone to.
 type VisitListener = Rc<dyn Fn(&Path)>;
+/// Told the tabs as the session keeps them.
+type SessionSink = Rc<dyn Fn(&Session)>;
 
 struct Inner {
     window: slint::Weak<AppWindow>,
@@ -165,6 +167,12 @@ struct Inner {
     visit_next_show: Option<u64>,
     /// The load (its generation) going to the nearest folder of one found gone: no visit.
     fallback: Option<u64>,
+    /// Told the tabs as the session keeps them when they change (main.rs: state.toml).
+    session_sink: Option<SessionSink>,
+    /// What the sink was told last (at first: what state.toml had).
+    session_sent: Session,
+    /// `[session] restore`: off, the sink is told an empty session (state.toml forgets it).
+    session_on: bool,
 }
 
 thread_local! {
@@ -183,10 +191,10 @@ pub fn with_current(f: impl FnOnce(&Navigator)) {
 pub struct Navigator(Rc<RefCell<Inner>>);
 
 impl Navigator {
-    /// The first tab opens at `first` with `select` selected; new tabs open at `start`.
-    /// Does not load anything: call [`install`](Self::install) next.
-    pub fn new(window: &AppWindow, view: View, first: Location, select: Option<String>, start: Location) -> Navigator {
-        let mut tabs = Tabs::new(first);
+    /// The tabs of `session` open, the one in front with `select` selected; new tabs open at
+    /// `start`. Does not load anything: call [`install`](Self::install) next.
+    pub fn new(window: &AppWindow, view: View, session: Session, select: Option<String>, start: Location) -> Navigator {
+        let mut tabs = Tabs::from_session(&session).unwrap_or_else(|| Tabs::new(start.clone()));
         tabs.active_mut().set_view(ViewState {
             selected: select.iter().cloned().collect(),
             focus: select,
@@ -217,6 +225,9 @@ impl Navigator {
             on_visited: Vec::new(),
             visit_next_show: None,
             fallback: None,
+            session_sink: None,
+            session_sent: Session::default(),
+            session_on: false,
         })))
     }
 
@@ -862,7 +873,48 @@ impl Navigator {
         for f in &listeners {
             f(&location);
         }
+        self.send_session();
     }
+
+    /// Tells `sink` the tabs whenever they change, while `restore` is on (spec 5.1); `saved`
+    /// is what state.toml has now, so an unchanged session is not written again.
+    pub fn keep_session(&self, saved: Session, restore: bool, sink: impl Fn(&Session) + 'static) {
+        {
+            let mut inner = self.0.borrow_mut();
+            inner.session_sink = Some(Rc::new(sink));
+            inner.session_sent = saved;
+            inner.session_on = restore;
+        }
+        self.send_session();
+    }
+
+    /// `[session] restore` changed (settings.toml was reloaded): written or forgotten now.
+    pub fn set_session_restore(&self, restore: bool) {
+        self.0.borrow_mut().session_on = restore;
+        self.send_session();
+    }
+
+    /// Tells the sink the session if it is not what it was told last.
+    fn send_session(&self) {
+        let (sink, session) = {
+            let mut inner = self.0.borrow_mut();
+            let Some(sink) = inner.session_sink.clone() else { return };
+            let Some(session) = session_to_send(inner.session_on, inner.tabs.session(), &inner.session_sent) else {
+                return;
+            };
+            inner.session_sent = session.clone();
+            (sink, session)
+        };
+        // With no borrow held: the sink may use the navigator.
+        sink(&session);
+    }
+}
+
+/// What state.toml should get, if anything: the tabs while restoring is on, else an empty
+/// session; `None` when that is what it was told last.
+fn session_to_send(on: bool, tabs: Session, sent: &Session) -> Option<Session> {
+    let wanted = if on { tabs } else { Session::default() };
+    (wanted != *sent).then_some(wanted)
 }
 
 /// Makes `model` hold `items`, changing only rows that differ. Replacing the model would
@@ -1087,5 +1139,17 @@ mod tests {
     fn locked_tabs_are_counted_in_words() {
         assert_eq!(locked_kept_text(1), "1 locked tab stays open");
         assert_eq!(locked_kept_text(3), "3 locked tabs stay open");
+    }
+
+    #[test]
+    fn the_session_is_sent_when_it_changed_and_emptied_when_off() {
+        use gezik_core::nav::SessionTab;
+        let one = Session::single(Location::Path(PathBuf::from("/a")));
+        assert_eq!(session_to_send(true, one.clone(), &Session::default()), Some(one.clone()));
+        assert_eq!(session_to_send(true, one.clone(), &one), None, "unchanged: not written again");
+        assert_eq!(session_to_send(false, one.clone(), &one), Some(Session::default()), "off: forgotten");
+        assert_eq!(session_to_send(false, one.clone(), &Session::default()), None, "off and empty: nothing to write");
+        let locked = Session { tabs: vec![SessionTab { location: Location::Drives, locked: true }], active: 0 };
+        assert!(session_to_send(true, locked, &one).is_some());
     }
 }

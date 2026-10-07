@@ -45,6 +45,7 @@ use gezik_config::shortcuts::{Action, Chord, Key, Platform};
 use gezik_config::store::{self, ConfigFiles, ConfigStore, Loaded};
 use gezik_config::theme;
 use gezik_core::layout::Move;
+use gezik_core::nav::Session;
 use start::StartPlan;
 
 slint::include_modules!();
@@ -60,6 +61,7 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
         eprintln!("gezik: {warning}");
     }
     window.set_notice(notice_text(&loaded.warnings).into());
+    navigation::with_current(|nav| nav.set_session_restore(loaded.settings.session.restore));
     window.set_sidebar_position(match loaded.settings.sidebar {
         SidebarPosition::Left => 0,
         SidebarPosition::Right => 1,
@@ -371,9 +373,14 @@ fn handle_key(
 /// Like [`apply_config`], and also resolves where the app opens. Start warnings (bad
 /// `start-folder`, missing command-line path) are added to `files` so the notice shows
 /// them (also after later re-resolves, until the files are read again).
-fn apply_config_and_start(window: &AppWindow, files: &mut ConfigFiles, cli: Option<PathBuf>) -> (Settings, StartPlan) {
+fn apply_config_and_start(
+    window: &AppWindow,
+    files: &mut ConfigFiles,
+    cli: Option<PathBuf>,
+    saved: Option<&Session>,
+) -> (Settings, StartPlan) {
     let loaded = apply_config(window, files);
-    let plan = resolve_start(&loaded.settings, cli);
+    let plan = resolve_start(&loaded.settings, cli, saved);
     if !plan.warnings.is_empty() {
         files.warnings.extend(plan.warnings.iter().cloned());
         apply_config(window, files);
@@ -382,7 +389,8 @@ fn apply_config_and_start(window: &AppWindow, files: &mut ConfigFiles, cli: Opti
 }
 
 /// [`start::plan_start`] against the real file system.
-fn resolve_start(settings: &Settings, cli: Option<PathBuf>) -> StartPlan {
+fn resolve_start(settings: &Settings, cli: Option<PathBuf>, saved: Option<&Session>) -> StartPlan {
+    let saved = saved.filter(|_| settings.session.restore);
     // Absolute, so the address bar parts and "up" work for `gezik .` too.
     let cli = cli.map(|path| std::path::absolute(&path).unwrap_or(path));
     let dirs = gezik_config::paths::KnownDirs::system();
@@ -392,6 +400,7 @@ fn resolve_start(settings: &Settings, cli: Option<PathBuf>) -> StartPlan {
         &path_box::home(),
         |text| dirs.expand_checked(text),
         start::path_kind,
+        saved,
     )
 }
 
@@ -443,8 +452,13 @@ fn main() -> Result<(), slint::PlatformError> {
     }
     // Something sensible is on screen even if the selected theme cannot be read.
     theme_bridge::apply(&window, &theme::builtin_dark());
-    let (initial_settings, plan) =
-        apply_config_and_start(&window, &mut files, std::env::args_os().nth(1).map(PathBuf::from));
+    let saved_state = config.as_ref().map(ConfigStore::load_state).unwrap_or_default();
+    let (initial_settings, plan) = apply_config_and_start(
+        &window,
+        &mut files,
+        std::env::args_os().nth(1).map(PathBuf::from),
+        Some(&saved_state.session),
+    );
 
     // Folder views; a broken views.toml starts over and says so in the status bar.
     let (memory, views_warning) = config.as_ref().map(ConfigStore::load_views).unwrap_or_default();
@@ -475,7 +489,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let _ = weak.upgrade_in_event_loop(move |window| {
                 let mut current = files.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                 *current = fresh;
-                let (_, plan) = apply_config_and_start(&window, &mut current, None);
+                let (_, plan) = apply_config_and_start(&window, &mut current, None, None);
                 navigation::with_current(|nav| nav.set_start(plan.start));
             });
         })
@@ -488,7 +502,6 @@ fn main() -> Result<(), slint::PlatformError> {
         .ok()
     });
     apply_config(&window, &files.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
-    let saved_state = config.as_ref().map(ConfigStore::load_state).unwrap_or_default();
     window_state::restore(&window, &saved_state);
     keep_on_screen(window.as_weak(), 0);
     let view = view::View::new(&window, memory, config.clone());
@@ -507,8 +520,17 @@ fn main() -> Result<(), slint::PlatformError> {
     window.set_preview_width(saved_state.preview_width.unwrap_or(280) as f32);
     let preview = preview::Preview::new(&window, view.clone());
     preview.set_pane_open(saved_state.preview_open);
-    let nav = navigation::Navigator::new(&window, view.clone(), plan.first, plan.select, plan.start);
+    let StartPlan { session, select, start, .. } = plan;
+    let nav = navigation::Navigator::new(&window, view.clone(), session, select, start);
     nav.install();
+    // The open tabs go to state.toml as they change (spec 5.1); its own thread writes them, so
+    // a crash or a kill leaves the last tabs too.
+    if let Some(store) = config.clone() {
+        nav.keep_session(saved_state.session.clone(), initial_settings.session.restore, move |session| {
+            let session = session.clone();
+            store.update_state(move |state| state.session = session);
+        });
+    }
     let _path_box = path_box::PathBox::new(&window, nav.clone(), config.clone(), saved_state.history.clone());
     // Captures no navigator (it is not `Send`): the result finds it on the UI thread.
     places::load_in_background(window.as_weak(), |part| navigation::with_current(|nav| nav.set_places(part)));
