@@ -4,9 +4,12 @@
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::Win32::Foundation::{HWND, LPARAM, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::ScreenToClient;
-use windows::Win32::UI::WindowsAndMessaging::{GetClientRect, GetCursorPos, PostMessageW, WM_MOUSEMOVE};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GA_ROOT, GetAncestor, GetClientRect, GetCursorPos, PostMessageW, WM_MOUSEMOVE, WindowFromPoint,
+};
 
-/// Tells `window` where the pointer is now, if it is over its client area, with a posted
+/// Tells `window` where the pointer is now, if it is over its client area and no other
+/// window covers it there (else Slint would show a hover that is not there), with a posted
 /// move. A native menu's modal loop takes the moves made while it is open, so winit (and
 /// Slint) still place the pointer where the menu was opened; the press that closed the menu
 /// by clicking elsewhere in the window, still waiting in the queue, would be taken there.
@@ -19,7 +22,10 @@ pub fn catch_up_pointer(window: &impl HasWindowHandle) {
     let mut client = RECT::default();
     // SAFETY: plain Win32 calls on Gezik's own window with valid out pointers.
     unsafe {
-        if GetCursorPos(&mut cursor).is_err() || !ScreenToClient(hwnd, &mut cursor).as_bool() {
+        if GetCursorPos(&mut cursor).is_err() || GetAncestor(WindowFromPoint(cursor), GA_ROOT) != hwnd {
+            return;
+        }
+        if !ScreenToClient(hwnd, &mut cursor).as_bool() {
             return;
         }
         if GetClientRect(hwnd, &mut client).is_err() || !inside(&client, cursor) {

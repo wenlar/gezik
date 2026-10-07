@@ -176,6 +176,17 @@ enum AtMenu {
     Cancel,
 }
 
+/// The phase `at` leaves behind (None: the phase stays). A cancelled drag ends in `Ended`,
+/// as with Esc: its button may still be down (a menu key pressed mid-drag, or Gezik's own
+/// menu on Linux, which takes no release), and that release must be no click.
+fn phase_after(at: &AtMenu) -> Option<Phase> {
+    match at {
+        AtMenu::Keep => None,
+        AtMenu::Forget => Some(Phase::Idle),
+        AtMenu::Cancel => Some(Phase::Ended),
+    }
+}
+
 fn at_menu(phase: &Phase) -> AtMenu {
     match phase {
         Phase::Idle | Phase::Offer(_) | Phase::Outside(_) => AtMenu::Keep,
@@ -361,17 +372,22 @@ impl Drags {
         true
     }
 
-    /// A context menu opened or closed: no press from before it goes on (`at_menu`).
+    /// A context menu opened or closed: no press from before it goes on (`at_menu`), and a
+    /// drag in the window ends as with Esc (`phase_after`).
+    ///
+    /// Unlike `cancel()`, which ends whatever Gezik's own press started because that press was
+    /// taken away, this leaves `Offer` and `Outside` alone: neither belongs to a press in the
+    /// window. Files from another program end when their source says so (`offer_left`,
+    /// `offer_dropped`), and a drag handed to the system ends in the system's drag loop
+    /// (`outside_ended`, or the release Gezik drives on X11); forgetting either here would
+    /// leave the source waiting for an answer, or the system's drag without its end.
     pub fn menu_shown(&self) {
         let at = at_menu(&self.0.phase.borrow());
-        match at {
-            AtMenu::Keep => return,
-            AtMenu::Cancel => {
-                self.finish(None);
-            }
-            AtMenu::Forget => {}
+        let Some(next) = phase_after(&at) else { return };
+        if at == AtMenu::Cancel {
+            self.finish(None);
         }
-        *self.0.phase.borrow_mut() = Phase::Idle;
+        *self.0.phase.borrow_mut() = next;
     }
 
     /// A left or right press on entry `index` at window position (`x`, `y`).
@@ -1091,6 +1107,14 @@ mod tests {
         assert_eq!(at_menu(&Phase::Ended), AtMenu::Forget);
         // A drag in the window ends without a drop.
         assert_eq!(at_menu(&Phase::Dragging(dragging())), AtMenu::Cancel);
+    }
+
+    #[test]
+    fn a_drag_a_menu_cancels_ends_like_esc() {
+        // Its button may still be down: the release that follows is no click.
+        assert!(matches!(phase_after(&AtMenu::Cancel), Some(Phase::Ended)));
+        assert!(matches!(phase_after(&AtMenu::Forget), Some(Phase::Idle)));
+        assert!(phase_after(&AtMenu::Keep).is_none());
     }
 
     #[test]
