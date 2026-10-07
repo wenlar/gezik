@@ -9,6 +9,7 @@ pub mod kind;
 pub mod layout;
 pub mod nav;
 pub mod ops;
+pub mod path_text;
 pub mod pattern;
 pub mod refresh;
 pub mod selection;

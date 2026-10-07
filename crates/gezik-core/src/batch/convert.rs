@@ -671,6 +671,37 @@ fn pieces(text: &str) -> Result<Vec<Result<String, &str>>, String> {
     Ok(out)
 }
 
+/// Checks the terminal's command (`[terminal] command`, spec 3.2): a program first, and
+/// `{dir}` the only placeholder (`{{` and `}}` are braces).
+pub fn check_dir_command(run: &[String]) -> Result<(), String> {
+    if run.first().is_none_or(|program| program.trim().is_empty()) {
+        return Err("the command has no program".to_owned());
+    }
+    for arg in run {
+        if let Some(field) = pieces(arg)?.into_iter().find_map(|piece| piece.err().filter(|field| *field != "dir")) {
+            return Err(format!("unknown placeholder {{{field}}}"));
+        }
+    }
+    Ok(())
+}
+
+/// The terminal's command with `{dir}` put in; each argument stays one argument.
+pub fn expand_dir_command(run: &[String], dir: &Path) -> Result<Vec<OsString>, String> {
+    check_dir_command(run)?;
+    run.iter()
+        .map(|arg| {
+            let mut expanded = OsString::new();
+            for piece in pieces(arg)? {
+                match piece {
+                    Ok(text) => expanded.push(text),
+                    Err(_) => expanded.push(dir),
+                }
+            }
+            Ok(expanded)
+        })
+        .collect()
+}
+
 /// Checks a command without a file: `run` not empty, placeholders known, `{out}` only with
 /// `output`, `output` a file name (no `/` or `\`, not `.` or `..`) with only `{name}` and
 /// `{ext}`, `parallel` 1-16.
@@ -868,6 +899,21 @@ pub fn command_applies(spec: &CommandSpec, name: &str, is_dir: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_terminal_command_takes_only_dir() {
+        let run = |args: &[&str]| args.iter().map(|a| (*a).to_owned()).collect::<Vec<String>>();
+        let dir = Path::new("/home/a/it's {x}");
+        assert_eq!(
+            expand_dir_command(&run(&["wezterm", "start", "--cwd={dir}", "{{dir}}"]), dir).unwrap(),
+            [OsString::from("wezterm"), "start".into(), "--cwd=/home/a/it's {x}".into(), "{dir}".into()]
+        );
+        assert_eq!(check_dir_command(&run(&["x", "{in}"])), Err("unknown placeholder {in}".to_owned()));
+        assert_eq!(check_dir_command(&run(&["x", "{foo}"])), Err("unknown placeholder {foo}".to_owned()));
+        assert!(check_dir_command(&run(&["x", "{dir"])).unwrap_err().contains("not closed"));
+        assert_eq!(check_dir_command(&[]), Err("the command has no program".to_owned()));
+        assert_eq!(check_dir_command(&run(&[" "])), Err("the command has no program".to_owned()));
+    }
 
     fn strings(list: &[OsString]) -> Vec<&str> {
         list.iter().map(|s| s.to_str().unwrap()).collect()
