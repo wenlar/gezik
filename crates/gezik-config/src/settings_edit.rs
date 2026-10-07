@@ -52,25 +52,47 @@ pub fn with_pinned(text: &str, pinned: &[PinEntry]) -> Result<String, String> {
 /// Returns `text` with `[view]`'s `mode`, `sort`, `sort-dir` and `grid-size` set from
 /// `view` ("Apply to all folders"); other `[view]` keys and the rest of the file stay.
 pub fn with_view_defaults(text: &str, view: &gezik_core::view::ViewSettings) -> Result<String, String> {
+    edit_view(
+        text,
+        vec![
+            ("mode", view.mode.as_str().into()),
+            ("sort", view.sort.key.as_str().into()),
+            ("sort-dir", view.sort.dir.as_str().into()),
+            ("grid-size", view.grid_size.as_str().into()),
+        ],
+    )
+}
+
+/// Returns `text` with `[view]`'s `option` set (the View menu, toggle-hidden; spec 7.2).
+pub fn with_view_option(text: &str, option: crate::settings::ViewOption) -> Result<String, String> {
+    use crate::settings::ViewOption;
+    let value: toml_edit::Value = match option {
+        ViewOption::HideExtensions(on)
+        | ViewOption::FoldersFirst(on)
+        | ViewOption::SingleClickOpen(on)
+        | ViewOption::ShowHidden(on)
+        | ViewOption::ShowSystem(on) => on.into(),
+        ViewOption::DateFormat(format) => format.as_str().into(),
+        ViewOption::SizeFormat(format) => format.as_str().into(),
+    };
+    edit_view(text, vec![(option.key(), value)])
+}
+
+/// Sets `entries` in `[view]` (adding the table and the missing keys), keeping each old value's
+/// decor so inline comments (`# list | grid`) survive.
+fn edit_view(text: &str, entries: Vec<(&str, toml_edit::Value)>) -> Result<String, String> {
     let mut doc = text.parse::<toml_edit::DocumentMut>().map_err(|err| err.to_string().trim().to_owned())?;
     if doc.get("view").is_none() {
         doc["view"] = toml_edit::table();
     }
     let Some(table) = doc["view"].as_table_like_mut() else { return Err("view must be a table".to_owned()) };
-    let entries = [
-        ("mode", view.mode.as_str()),
-        ("sort", view.sort.key.as_str()),
-        ("sort-dir", view.sort.dir.as_str()),
-        ("grid-size", view.grid_size.as_str()),
-    ];
-    for (key, text) in entries {
-        // Keep the old value's decor so inline comments (`# list | grid`) survive.
+    for (key, value) in entries {
         if let Some(old) = table.get_mut(key).and_then(|item| item.as_value_mut()) {
             let decor = old.decor().clone();
-            *old = toml_edit::Value::from(text);
+            *old = value;
             *old.decor_mut() = decor;
         } else {
-            table.insert(key, toml_edit::value(text));
+            table.insert(key, toml_edit::Item::Value(value));
         }
     }
     Ok(doc.to_string())
@@ -373,6 +395,48 @@ mod tests {
         assert_eq!(added.parse::<toml::Table>().unwrap()["view"]["mode"].as_str(), Some("grid"));
         assert!(with_view_defaults("view = 3\n", &view).is_err());
         assert!(with_view_defaults("theme = \n", &view).is_err());
+    }
+
+    #[test]
+    fn a_view_option_is_written_keeping_its_comment() {
+        use crate::settings::{Settings, ViewOption};
+        use gezik_core::view::DateFormat;
+        let template = include_str!("../templates/settings.toml");
+        let out = with_view_option(template, ViewOption::DateFormat(DateFormat::Relative)).unwrap();
+        let line = out.lines().find(|l| l.starts_with("date-format")).unwrap();
+        assert!(
+            line.starts_with("date-format = \"relative\"") && line.ends_with("# relative | short | iso | system"),
+            "{line}"
+        );
+        // show-hidden is a comment in the template: the key is added, the comment stays.
+        let out = with_view_option(template, ViewOption::ShowHidden(false)).unwrap();
+        assert!(out.contains("# show-hidden = true"), "{out}");
+        let settings = Settings::parse("settings.toml", &out, &mut Vec::new());
+        assert!(!settings.view.options.show_hidden);
+        assert_eq!(settings.view.view, gezik_core::view::ViewSettings::default(), "the rest of [view] stays");
+        let added = with_view_option(
+            "theme = \"auto\"
+",
+            ViewOption::HideExtensions(true),
+        )
+        .unwrap();
+        assert_eq!(added.parse::<toml::Table>().unwrap()["view"]["hide-extensions"].as_bool(), Some(true));
+        assert!(
+            with_view_option(
+                "view = 3
+",
+                ViewOption::HideExtensions(true)
+            )
+            .is_err()
+        );
+        assert!(
+            with_view_option(
+                "theme = 
+",
+                ViewOption::HideExtensions(true)
+            )
+            .is_err()
+        );
     }
 
     #[test]

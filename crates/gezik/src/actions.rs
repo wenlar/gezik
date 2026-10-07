@@ -79,7 +79,16 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         | Action::Undo
         | Action::Redo
         | Action::BatchRename
-        | Action::ToggleHidden => return false,
+        | Action::ToggleHidden
+        | Action::Pin1
+        | Action::Pin2
+        | Action::Pin3
+        | Action::Pin4
+        | Action::Pin5
+        | Action::Pin6
+        | Action::Pin7
+        | Action::Pin8
+        | Action::Pin9 => return false,
     }
     true
 }

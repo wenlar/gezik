@@ -267,7 +267,16 @@ fn handle_key(
                 | Action::OpenTerminal
                 | Action::OpenTerminalAdmin
                 | Action::CopyPath
-                | Action::SaveTabSet => {
+                | Action::SaveTabSet
+                | Action::Pin1
+                | Action::Pin2
+                | Action::Pin3
+                | Action::Pin4
+                | Action::Pin5
+                | Action::Pin6
+                | Action::Pin7
+                | Action::Pin8
+                | Action::Pin9 => {
                     if action == Action::Filter && editing {
                         window.set_path_editing(false);
                     }
