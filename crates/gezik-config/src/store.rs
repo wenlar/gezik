@@ -11,7 +11,8 @@ use crate::settings::{Density, Settings, State};
 use crate::settings_writer::{Done, SettingsChange, SettingsWriter};
 use crate::state_store::StateCell;
 use crate::theme::{ResolvedTheme, ThemeError, resolve_theme};
-use crate::views_file::{parse_views, views_to_toml};
+use crate::views_file::parse_views;
+use crate::views_writer::ViewsWriter;
 use gezik_core::view::ViewSettings;
 use gezik_core::view_memory::ViewMemory;
 
@@ -29,20 +30,22 @@ pub struct ConfigFiles {
     pub warnings: Vec<Warning>,
 }
 
-/// The config folder. Its clones share one `state.toml` in memory and its writer thread, and
-/// one `settings.toml` writer thread.
+/// The config folder. Its clones share one `state.toml` in memory and its writer thread, one
+/// `settings.toml` writer thread and one `views.toml` writer thread.
 #[derive(Debug, Clone)]
 pub struct ConfigStore {
     dir: PathBuf,
     state: Arc<StateCell>,
     settings: Arc<SettingsWriter>,
+    views: Arc<ViewsWriter>,
 }
 
 impl ConfigStore {
     pub fn new(dir: PathBuf) -> Self {
         let state = Arc::new(StateCell::new(dir.join("state.toml")));
         let settings = Arc::new(SettingsWriter::new(dir.clone()));
-        Self { dir, state, settings }
+        let views = Arc::new(ViewsWriter::new(dir.join("views.toml")));
+        Self { dir, state, settings, views }
     }
 
     /// The store in the standard per-user location, if the OS has one.
@@ -190,9 +193,22 @@ impl ConfigStore {
         }
     }
 
+    /// Writes the folder views now, on this thread.
     pub fn save_views(&self, memory: &ViewMemory) -> io::Result<()> {
-        std::fs::create_dir_all(&self.dir)?;
-        write_atomic(&self.views_path(), &views_to_toml(memory.folders()))
+        self.views.save(memory.folders())
+    }
+
+    /// Has the one `views.toml` writer thread write the folder views as they are now; a burst
+    /// of them is written once. The UI writes views only this way: it never waits for the
+    /// disk. A failed write is said on the error output.
+    pub fn write_views(&self, memory: &ViewMemory) {
+        self.views.send(memory.folders().to_vec());
+    }
+
+    /// Waits (up to 5 s) until the folder views handed over so far are written: before
+    /// quitting.
+    pub fn flush_views(&self) {
+        self.views.flush();
     }
 
     /// Whether a change to `path` should reload the config: `settings.toml` or a theme
@@ -471,6 +487,23 @@ mod tests {
         let (mut back, warning) = store.load_views();
         assert!(warning.is_none());
         assert_eq!(back.get("/pics").map(|v| v.mode), Some(ViewMode::Grid));
+    }
+
+    #[test]
+    fn views_handed_to_the_writer_are_on_disk_after_a_flush() {
+        use gezik_core::view::{ViewMode, ViewSettings};
+        let store = store("views-handed-over");
+        let mut memory = ViewMemory::default();
+        for i in 0..10 {
+            memory.set(&format!("/f{i}"), ViewSettings { mode: ViewMode::Grid, ..ViewSettings::default() });
+            store.write_views(&memory);
+        }
+        // As on quitting: a clone of the store (the window's) flushes what the view sent.
+        store.clone().flush_views();
+        let (mut back, warning) = store.load_views();
+        assert!(warning.is_none());
+        assert_eq!(back.folders().len(), 10);
+        assert_eq!(back.get("/f9").map(|v| v.mode), Some(ViewMode::Grid));
     }
 
     #[test]

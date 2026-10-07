@@ -58,15 +58,26 @@ pub fn command_line_limit(program: &str) -> usize {
     }
 }
 
-/// Makes a crash of this process a plain non-zero exit: on Windows no error reporting dialog
-/// and no "insert a disk" box (`SetErrorMode`, inherited by what it starts). For helper
-/// processes whose parent reports how they ended (the PDF worker). Elsewhere nothing to do.
+/// Makes a crash of this process a plain non-zero exit: on Windows no error reporting dialog,
+/// no "insert a disk" or "file not found" box (`SetErrorMode`, inherited by what it starts)
+/// and no "Abnormal program termination" box when C code in it calls `abort()`. For helper
+/// processes whose parent reports how they ended (the PDF worker) and test binaries, which
+/// must never stop on a dialog. Elsewhere nothing to do.
 pub fn quiet_crashes() {
     #[cfg(windows)]
     {
-        use windows::Win32::System::Diagnostics::Debug::{SEM_FAILCRITICALERRORS, SEM_NOGPFAULTERRORBOX, SetErrorMode};
+        use windows::Win32::System::Diagnostics::Debug::{
+            SEM_FAILCRITICALERRORS, SEM_NOGPFAULTERRORBOX, SEM_NOOPENFILEERRORBOX, SetErrorMode,
+        };
+        // The C runtime's (ucrt) switch for what `abort()` does besides ending the process.
+        unsafe extern "C" {
+            fn _set_abort_behavior(flags: u32, mask: u32) -> u32;
+        }
+        const WRITE_ABORT_MSG: u32 = 0x1;
+        const CALL_REPORTFAULT: u32 = 0x2;
         unsafe {
-            SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+            SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
+            _set_abort_behavior(0, WRITE_ABORT_MSG | CALL_REPORTFAULT);
         }
     }
 }

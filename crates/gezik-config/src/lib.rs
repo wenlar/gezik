@@ -11,6 +11,7 @@ mod state_store;
 pub mod store;
 pub mod theme;
 pub mod views_file;
+mod views_writer;
 
 mod color;
 mod warning;

@@ -594,7 +594,9 @@ fn main() -> Result<(), slint::PlatformError> {
                 // filter, a pin or a default just sent to settings.toml as well).
                 store.flush_state();
                 store.flush_settings();
+                // A view change still waiting for its timer is handed over, then written.
                 view.flush_memory();
+                store.flush_views();
             }
             // Its window would otherwise keep the event loop (and the process) running.
             preview.close_quick_look();

@@ -2,7 +2,9 @@
 # compile, match, carry the selection over), release build. With -Gui also the whole path in
 # release Gezik: opens the 100,000-file folder (made on first use, as stress.ps1 does), brings
 # it to the front, Ctrl+F, then types file_1234 letter by letter with SendKeys, reading the
-# process's CPU time before each keystroke and 300 ms after it; prints the worst and median
+# process's CPU time before each keystroke and 300 ms after it (counted in CPU cycles with
+# QueryProcessCycleTime and turned into ms with the TSC rate, measured at start: Windows hands
+# out the plain CPU time only in 15.6 ms steps); prints the worst and median
 # CPU ms per keystroke (less the idle CPU of 300 ms with the bar open), then the same after
 # Ctrl+A on all 100,000, and Esc (closing the bar) each time. Needs an unlocked desktop.
 # Windows only. Budget: 15 ms for the pure part, 30 ms per keystroke for the whole.
@@ -28,11 +30,33 @@ using System; using System.Runtime.InteropServices;
 public class GezikFilter {
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
   [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+  [DllImport("kernel32.dll")] public static extern bool QueryProcessCycleTime(IntPtr h, out ulong c);
+  [DllImport("kernel32.dll")] public static extern bool QueryThreadCycleTime(IntPtr h, out ulong c);
+  [DllImport("kernel32.dll")] public static extern IntPtr GetCurrentThread();
+  // TSC cycles per ms: spin this thread for 100 ms and count its cycles. A preemption only
+  // lowers the count, so the highest of five runs is the rate.
+  public static double CyclesPerMs() {
+    double best = 0;
+    for (int i = 0; i < 5; i++) {
+      ulong a, b;
+      var sw = System.Diagnostics.Stopwatch.StartNew();
+      QueryThreadCycleTime(GetCurrentThread(), out a);
+      while (sw.ElapsedTicks < System.Diagnostics.Stopwatch.Frequency / 10) {}
+      QueryThreadCycleTime(GetCurrentThread(), out b);
+      best = Math.Max(best, (b - a) / sw.Elapsed.TotalMilliseconds);
+    }
+    return best;
+  }
 }
 "@
 [GezikFilter]::SetProcessDPIAware() | Out-Null
 
-function Cpu($p) { $p.Refresh(); $p.TotalProcessorTime.TotalMilliseconds }
+$script:CyclesPerMs = [GezikFilter]::CyclesPerMs()
+function Cpu($p) {
+    $c = [uint64]0
+    if (-not [GezikFilter]::QueryProcessCycleTime($p.Handle, [ref]$c)) { throw "QueryProcessCycleTime failed" }
+    $c / $script:CyclesPerMs
+}
 # The CPU ms of one SendKeys string, from before it to 300 ms after it.
 function One($p, [string]$keys) {
     $c0 = Cpu $p

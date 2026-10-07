@@ -11,6 +11,10 @@ use zip::write::SimpleFileOptions;
 use zip::{AesMode, CompressionMethod, ZipWriter};
 
 fn dir(name: &str) -> PathBuf {
+    // Every test starts here: a crash or an abort in this binary (the Shell's code runs in it
+    // when undo trashes) must end it, never wait on a dialog.
+    static QUIET: std::sync::Once = std::sync::Once::new();
+    QUIET.call_once(gezik_platform::process::quiet_crashes);
     let d = std::env::temp_dir().join(format!("gezik-extract-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
@@ -59,8 +63,18 @@ fn extract(
     on: impl FnMut(&Engine, JobId, &Event) -> bool,
 ) -> (Report, Vec<Event>) {
     let label = extract_label(&archives);
+    let _turn = one_job_at_a_time();
     let job = engine.submit_chain(extract_chain(archives, to, seven_zip), Some(label));
     finish(engine, job, on)
+}
+
+/// Held from submitting a job until it ended: the tests' jobs run one at a time. Their undos
+/// and replaces trash, and the Shell runs third-party copy hooks in this process for each
+/// trash; WinSCP's DragExt64 aborted the binary (an "Abnormal program termination" box) when
+/// several trashed at once. Gezik itself trashes in parallel.
+fn one_job_at_a_time() -> std::sync::MutexGuard<'static, ()> {
+    static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    ONE.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Runs `job` to the end; `on` returns true when it handled an event itself. A pause (a
@@ -100,6 +114,7 @@ fn nothing(_: &Engine, _: JobId, _: &Event) -> bool {
 }
 
 fn undo(engine: &Engine) -> Report {
+    let _turn = one_job_at_a_time();
     let job = engine.undo().expect("something to undo");
     finish(engine, job, nothing).0
 }
