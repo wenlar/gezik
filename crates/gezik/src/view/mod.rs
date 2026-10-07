@@ -1221,7 +1221,7 @@ impl View {
             self.request_type_names(&entries);
         }
         let mut entries = Rc::unwrap_or_clone(entries);
-        let order = sort_entries(&mut entries, spec, |e| self.type_name_of(e));
+        let order = sort_entries(&mut entries, spec, true, |e| self.type_name_of(e));
         (Rc::new(entries), order)
     }
 

@@ -27,12 +27,31 @@ pub struct Entry {
     /// repeat the folder path for every file and dominate memory in large folders.
     pub name: String,
     pub is_dir: bool,
+    /// `Entry::HIDDEN` and `Entry::SYSTEM`: Windows' attributes (0 elsewhere). It sits in the
+    /// padding after `is_dir`, so an entry is no larger for it (spec 7.1).
+    pub flags: u8,
     pub size: u64,
     pub modified: Option<SystemTime>,
     pub created: Option<SystemTime>,
 }
 
 impl Entry {
+    /// The hidden attribute (Windows).
+    pub const HIDDEN: u8 = 1;
+    /// The system attribute (Windows).
+    pub const SYSTEM: u8 = 2;
+
+    /// Whether the list shows it: an item both hidden and system ("protected operating system
+    /// files": `desktop.ini`, `$RECYCLE.BIN`) only with `show_system`; a name starting with a
+    /// dot or a hidden one only with `show_hidden`; anything else always (spec 7.1).
+    pub fn is_shown(&self, show_hidden: bool, show_system: bool) -> bool {
+        let has = |bit: u8| self.flags & bit != 0;
+        if has(Entry::HIDDEN) && has(Entry::SYSTEM) {
+            return show_system;
+        }
+        show_hidden || !(self.name.starts_with('.') || has(Entry::HIDDEN))
+    }
+
     /// The extension without the dot (`"txt"`), or `""` for folders and names without one.
     /// A leading dot alone (`.gitignore`) is not an extension, as with `Path::extension`.
     pub fn extension(&self) -> &str {
@@ -46,7 +65,44 @@ impl Entry {
     }
 }
 
-/// Reads a directory and returns its entries sorted: folders first, then by natural name order (see `sort`).
+/// The name the list shows: without its extension when `hide_extension` asks for it (only for
+/// files, and never a leading dot alone or a trailing one: `.gitignore`, `x.` stay). Drawing
+/// only: everything else goes by the real name (spec 7.1).
+pub fn shown_name(name: &str, is_dir: bool, hide_extension: bool) -> &str {
+    if !hide_extension || is_dir {
+        return name;
+    }
+    match name.rfind('.') {
+        Some(i) if i > 0 && i + 1 < name.len() => &name[..i],
+        _ => name,
+    }
+}
+
+/// `Entry::HIDDEN` and `Entry::SYSTEM` from what the directory read already gave (no call of
+/// its own: Windows fills `file_attributes` from the directory listing).
+#[cfg(windows)]
+fn attribute_flags(meta: &std::fs::Metadata) -> u8 {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+    const FILE_ATTRIBUTE_SYSTEM: u32 = 0x4;
+    let attributes = meta.file_attributes();
+    let mut flags = 0;
+    if attributes & FILE_ATTRIBUTE_HIDDEN != 0 {
+        flags |= Entry::HIDDEN;
+    }
+    if attributes & FILE_ATTRIBUTE_SYSTEM != 0 {
+        flags |= Entry::SYSTEM;
+    }
+    flags
+}
+
+#[cfg(not(windows))]
+fn attribute_flags(_meta: &std::fs::Metadata) -> u8 {
+    0
+}
+
+/// Reads a directory and returns its entries sorted: folders first, then by natural name order
+/// (see `sort`); the view sorts again for other choices.
 /// Entries that cannot be read (e.g. permission denied) are skipped instead of
 /// failing the whole listing.
 pub fn list_dir(path: &Path) -> io::Result<Vec<Entry>> {
@@ -59,13 +115,14 @@ pub fn list_dir(path: &Path) -> io::Result<Vec<Entry>> {
             Some(Entry {
                 name: e.file_name().to_string_lossy().into_owned(),
                 is_dir,
+                flags: meta.as_ref().map_or(0, attribute_flags),
                 size: if is_dir { 0 } else { meta.as_ref().map_or(0, |m| m.len()) },
                 modified: meta.as_ref().and_then(|m| m.modified().ok()),
                 created: meta.as_ref().and_then(|m| m.created().ok()),
             })
         })
         .collect();
-    sort::sort_entries(&mut entries, sort::SortSpec::default(), |_| String::new());
+    sort::sort_entries(&mut entries, sort::SortSpec::default(), true, |_| String::new());
     entries.shrink_to_fit();
     Ok(entries)
 }
@@ -96,6 +153,81 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    fn flagged(name: &str, flags: u8) -> Entry {
+        Entry { name: name.to_owned(), is_dir: false, flags, size: 0, modified: None, created: None }
+    }
+
+    #[test]
+    fn the_flags_fit_in_the_padding_after_is_dir() {
+        // `Entry` before the flags: the byte must take no room of its own (spec 7.1).
+        #[allow(dead_code)]
+        struct Before {
+            name: String,
+            is_dir: bool,
+            size: u64,
+            modified: Option<SystemTime>,
+            created: Option<SystemTime>,
+        }
+        assert_eq!(std::mem::size_of::<Entry>(), std::mem::size_of::<Before>());
+    }
+
+    #[test]
+    fn hidden_and_system_items_follow_the_two_settings() {
+        let plain = flagged("a.txt", 0);
+        let dot = flagged(".git", 0);
+        let hidden = flagged("notes.txt", Entry::HIDDEN);
+        let system_only = flagged("pagefile.sys", Entry::SYSTEM);
+        let protected = flagged("desktop.ini", Entry::HIDDEN | Entry::SYSTEM);
+        for show_hidden in [false, true] {
+            for show_system in [false, true] {
+                assert!(plain.is_shown(show_hidden, show_system));
+                assert!(system_only.is_shown(show_hidden, show_system), "the system attribute alone hides nothing");
+                assert_eq!(dot.is_shown(show_hidden, show_system), show_hidden, "a dot name");
+                assert_eq!(hidden.is_shown(show_hidden, show_system), show_hidden, "the hidden attribute");
+                assert_eq!(protected.is_shown(show_hidden, show_system), show_system, "protected: show-system only");
+            }
+        }
+    }
+
+    #[test]
+    fn hiding_the_extension_keeps_folders_and_dot_names() {
+        assert_eq!(shown_name("rapor.pdf", false, true), "rapor");
+        assert_eq!(shown_name("a.tar.gz", false, true), "a.tar");
+        assert_eq!(shown_name(".gitignore", false, true), ".gitignore");
+        assert_eq!(shown_name("x.", false, true), "x.");
+        assert_eq!(shown_name("noext", false, true), "noext");
+        assert_eq!(shown_name("dir.d", true, true), "dir.d");
+        assert_eq!(shown_name("rapor.pdf", false, false), "rapor.pdf");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[allow(clippy::permissions_set_readonly_false)] // Windows only: it clears the attribute
+    fn windows_attributes_reach_the_entry() {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+        const FILE_ATTRIBUTE_SYSTEM: u32 = 0x4;
+        let dir = temp_dir("attributes");
+        let make = |name: &str, attributes: u32| {
+            fs::OpenOptions::new().write(true).create_new(true).attributes(attributes).open(dir.join(name)).unwrap();
+        };
+        make("plain.txt", 0);
+        make("hidden.txt", FILE_ATTRIBUTE_HIDDEN);
+        make("desktop.ini", FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM);
+        let entries = list_dir(&dir).unwrap();
+        let flags = |name: &str| entries.iter().find(|e| e.name == name).unwrap().flags;
+        assert_eq!(flags("plain.txt"), 0);
+        assert_eq!(flags("hidden.txt"), Entry::HIDDEN);
+        assert_eq!(flags("desktop.ini"), Entry::HIDDEN | Entry::SYSTEM);
+        // Read-only and system files cannot always be deleted plainly: clear the attributes.
+        for name in ["hidden.txt", "desktop.ini"] {
+            let mut permissions = fs::metadata(dir.join(name)).unwrap().permissions();
+            permissions.set_readonly(false);
+            let _ = fs::set_permissions(dir.join(name), permissions);
+        }
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -140,7 +272,14 @@ mod tests {
 
     #[test]
     fn extension_skips_folders_and_leading_dots() {
-        let e = |name: &str, is_dir| Entry { name: name.to_owned(), is_dir, size: 0, modified: None, created: None };
+        let e = |name: &str, is_dir| Entry {
+            name: name.to_owned(),
+            is_dir,
+            flags: 0,
+            size: 0,
+            modified: None,
+            created: None,
+        };
         assert_eq!(e("a.tar.gz", false).extension(), "gz");
         assert_eq!(e(".gitignore", false).extension(), "");
         assert_eq!(e("noext", false).extension(), "");

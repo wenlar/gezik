@@ -156,7 +156,14 @@ pub fn name_taken(entries: &[Entry], name: &str, except: &str) -> bool {
 pub(crate) fn files(dir: &str, names: &[&str]) -> Listing {
     let entries = names
         .iter()
-        .map(|n| Entry { name: (*n).to_owned(), is_dir: n.ends_with('/'), size: 10, modified: None, created: None })
+        .map(|n| Entry {
+            name: (*n).to_owned(),
+            is_dir: n.ends_with('/'),
+            flags: 0,
+            size: 10,
+            modified: None,
+            created: None,
+        })
         .collect();
     Listing::Files(PathBuf::from(dir), Rc::new(entries))
 }
