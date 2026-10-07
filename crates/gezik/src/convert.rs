@@ -26,7 +26,8 @@ use gezik_config::shortcuts::{Chord, Key, Platform as KeyPlatform};
 use gezik_config::store::ConfigStore;
 use gezik_core::batch::convert::{
     CommandSpec, Eol, ImageFormat, ImageOptions, Kind, Output, PRESETS, Preset, PresetWhat, Resize, TextOptions,
-    command_applies, image_inputs, media_inputs, needs_ffmpeg_to_read,
+    command_applies, command_line_len, expand_files_command, image_inputs, media_inputs, needs_ffmpeg_to_read,
+    too_many_text, uses_files,
 };
 use gezik_core::batch::pdf::{
     PageImage, PdfOp, RENDER_DPIS, Split, is_pdf, is_pdf_picture, ops_for, pictures_pdf_name,
@@ -37,11 +38,11 @@ use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::archives::{Need, resolve_folder};
 use crate::context_menu::{
-    COMMAND_FIRST, COMMAND_MAX, CONVERT, CONVERT_PRESET_FIRST, CONVERT_PRESET_MAX, ENCODING_FROM_FIRST, ENCODING_MAX,
-    ENCODING_TO_FIRST, HEADING, IMAGES_TO_PDF,
+    COMMAND_FIRST, COMMAND_GROUP, COMMAND_MAX, CONVERT, CONVERT_PRESET_FIRST, CONVERT_PRESET_MAX, ENCODING_FROM_FIRST,
+    ENCODING_MAX, ENCODING_TO_FIRST, HEADING, IMAGES_TO_PDF,
 };
 use crate::dialog::Dialogs;
-use crate::operations::{After, Operations, items_text};
+use crate::operations::{After, CANT_UNDO, Operations, items_text};
 use crate::pdf::{
     MARGINS, MAX_EVERY, PdfChoices, PdfiumFailed, SIZES, SplitChoice, after_pdfium_failed, choices_from, choices_text,
     extract_note, files_note, move_in_order, pdf_counts, pdf_inputs, pdfium_explained, pictures_note,
@@ -238,7 +239,8 @@ pub fn command_state(
     if taken.is_empty() {
         return CommandState::Hidden;
     }
-    if spec.output.is_none() && taken.iter().any(|(_, is_dir)| *is_dir) {
+    // A `{files}` command does not change the folders in place: it takes them as they are.
+    if spec.output.is_none() && !uses_files(spec) && taken.iter().any(|(_, is_dir)| *is_dir) {
         return CommandState::Off("changes items in place: not for folders".to_owned());
     }
     if found == Some(false) {
@@ -247,12 +249,92 @@ pub fn command_state(
     CommandState::Ready
 }
 
+/// The most characters of a command's or a group's name a menu shows.
+pub const MENU_NAME_MAX: usize = 60;
+
+/// `name` as a menu shows it: cut to [`MENU_NAME_MAX`] characters, ending in "…".
+pub fn shown_name(name: &str) -> String {
+    if name.chars().count() <= MENU_NAME_MAX {
+        return name.to_owned();
+    }
+    let mut out: String = name.chars().take(MENU_NAME_MAX - 1).collect();
+    out.push('…');
+    out
+}
+
 /// A command's menu title and whether it can be chosen.
 fn command_title(spec: &CommandSpec, state: &CommandState) -> (String, bool) {
+    let name = shown_name(&spec.name);
     match state {
-        CommandState::Off(tip) => (format!("{} — {tip}", spec.name), false),
-        _ => (spec.name.clone(), true),
+        CommandState::Off(tip) => (format!("{name} — {tip}"), false),
+        _ => (name, true),
     }
+}
+
+/// A line of a commands menu: a group's heading or a command (by its index).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Line<'a> {
+    Heading(&'a str),
+    Command(usize),
+}
+
+/// The commands `shown` (indices into `commands`) in menu order: those without a `menu`
+/// first, then each group under its heading, groups in the order they first appear.
+fn grouped<'a>(commands: &'a [CommandSpec], shown: &[usize]) -> Vec<Line<'a>> {
+    let mut lines: Vec<Line> =
+        shown.iter().filter(|i| commands[**i].menu.is_none()).map(|i| Line::Command(*i)).collect();
+    let mut groups: Vec<&str> = Vec::new();
+    for i in shown {
+        if let Some(group) = commands[*i].menu.as_deref()
+            && !groups.contains(&group)
+        {
+            groups.push(group);
+        }
+    }
+    for group in groups {
+        lines.push(Line::Heading(group));
+        lines.extend(shown.iter().filter(|i| commands[**i].menu.as_deref() == Some(group)).map(|i| Line::Command(*i)));
+    }
+    lines
+}
+
+/// Why `spec` runs on none of the items it was asked to (spec 7): by its endings, else
+/// because they are folders.
+pub fn not_for_text(spec: &CommandSpec) -> String {
+    let endings: Vec<String> = spec.types.iter().map(|t| format!(".{}", t.to_lowercase())).collect();
+    let list = match endings.as_slice() {
+        [] => return format!("{} does not run on folders", spec.name),
+        [only] => only.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    };
+    let what = if spec.folders { "files and folders" } else { "files" };
+    format!("{} runs on {list} {what} only", spec.name)
+}
+
+/// The question of a command with `ask = true`.
+pub fn ask_text(name: &str, count: usize) -> String {
+    if count == 1 {
+        format!("Run {name} on 1 item?")
+    } else {
+        format!("Run {name} on {} items?", crate::preview::with_commas(count))
+    }
+}
+
+/// The macOS menu bar's Commands menu: the commands with a key (spec 8.3), grouped as in
+/// "Commands ▸", each "<name>    <key>" by its index; headings greyed with id -1.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn bar_entries(commands: &[CommandSpec], key_of: impl Fn(usize) -> Option<String>) -> Vec<(i32, String, bool)> {
+    let shown: Vec<usize> = (0..commands.len()).filter(|i| key_of(*i).is_some()).collect();
+    grouped(commands, &shown)
+        .into_iter()
+        .map(|line| match line {
+            Line::Heading(group) => (-1, shown_name(group), false),
+            Line::Command(i) => {
+                let key = key_of(i).unwrap_or_default();
+                (i32::try_from(i).unwrap_or(-1), format!("{}    {key}", shown_name(&commands[i].name)), true)
+            }
+        })
+        .collect()
 }
 
 /// A menu's top items (id, title) and its "Commands ▸" items (id, title, enabled), if any.
@@ -261,15 +343,18 @@ pub type MenuItems = (Vec<(u32, String)>, Option<Vec<(u32, String, bool)>>);
 /// "Convert…" and the "Commands ▸" items for `items`, given the commands and how each shows.
 /// No "Convert…" when nothing can be converted or run; no submenu without commands to show.
 pub fn menu_entries(items: &[(PathBuf, bool)], commands: &[CommandSpec], states: &[CommandState]) -> MenuItems {
-    let sub: Vec<(u32, String, bool)> = commands
-        .iter()
-        .zip(states)
-        .enumerate()
+    let shown: Vec<usize> = (0..commands.len().min(states.len()))
         .take(COMMAND_MAX as usize)
-        .filter(|(_, (_, state))| **state != CommandState::Hidden)
-        .map(|(i, (spec, state))| {
-            let (title, enabled) = command_title(spec, state);
-            (COMMAND_FIRST + i as u32, title, enabled)
+        .filter(|i| states[*i] != CommandState::Hidden)
+        .collect();
+    let sub: Vec<(u32, String, bool)> = grouped(commands, &shown)
+        .into_iter()
+        .map(|line| match line {
+            Line::Heading(group) => (COMMAND_GROUP, shown_name(group), false),
+            Line::Command(i) => {
+                let (title, enabled) = command_title(&commands[i], &states[i]);
+                (COMMAND_FIRST + i as u32, title, enabled)
+            }
         })
         .collect();
     let convertible = items.iter().any(|(path, is_dir)| {
@@ -1130,7 +1215,28 @@ pub fn menu_items(rows: &[(PathBuf, bool)]) -> MenuItems {
 /// A command chosen from "Commands ▸" (by its index in the menu's list), run on `rows`.
 pub fn run_menu_command(index: usize, rows: Vec<(PathBuf, bool)>) {
     let Some(spec) = MENU_COMMANDS.with(|m| m.borrow().get(index).cloned()) else { return };
-    with_current(|convert| convert.run_command(spec, rows));
+    with_current(|convert| convert.run_asked(spec, rows));
+}
+
+/// A command run by its key or the macOS menu bar (`index` in `[[commands]]`) on `items`.
+pub fn run_by_index(index: usize, items: Vec<(PathBuf, bool)>) {
+    let Some(spec) = commands().get(index).cloned() else { return };
+    with_current(|convert| convert.run_checked(spec, items));
+}
+
+/// Whether `items` fit one command line of `spec` (a `{files}` command) here. One that
+/// cannot be made at all is left to the task, which says why.
+fn fits_one_run(spec: &CommandSpec, items: &[(PathBuf, bool)]) -> bool {
+    let Some((first, _)) = items.first() else { return true };
+    let dir = first.parent().unwrap_or(Path::new(""));
+    let files: Vec<PathBuf> = items.iter().map(|(path, _)| path.clone()).collect();
+    match expand_files_command(spec, dir, &files) {
+        Err(_) => true,
+        Ok(args) => {
+            command_line_len(&args, cfg!(windows))
+                <= gezik_platform::process::command_line_limit(&args[0].to_string_lossy())
+        }
+    }
 }
 
 /// Runs `f` with this UI thread's converter, if set up.
@@ -2068,7 +2174,49 @@ impl Convert {
         crate::archives::with_current(|archives| archives.offer_ffmpeg(need, hint, again, Some(id)));
     }
 
-    /// Runs a user command on the `items` it takes, as one job undone as one action.
+    /// Says `text` in the status bar until the selection changes.
+    fn note(&self, text: String) {
+        crate::view::with_current(|view| view.note(text));
+    }
+
+    /// A command asked for by its key: on the items it takes; when it takes none or cannot
+    /// run, the status bar says why (spec 7).
+    fn run_checked(&self, spec: CommandSpec, items: Vec<(PathBuf, bool)>) {
+        if items.is_empty() {
+            return self.note(format!("Select the items to run {} on", spec.name));
+        }
+        match command_state(&spec, &items, found_program(&program_of(&spec)), cfg!(windows)) {
+            CommandState::Hidden => self.note(not_for_text(&spec)),
+            CommandState::Off(tip) => self.note(format!("{} — {tip}", spec.name)),
+            CommandState::Ready => self.run_asked(spec, items),
+        }
+    }
+
+    /// Runs `spec` on the items it takes, asking first when it says so (`ask`). A `{files}`
+    /// run that does not fit one command line is refused before the question.
+    fn run_asked(&self, spec: CommandSpec, items: Vec<(PathBuf, bool)>) {
+        let taken: Vec<(PathBuf, bool)> =
+            items.into_iter().filter(|(path, is_dir)| command_applies(&spec, &name_of(path), *is_dir)).collect();
+        if taken.is_empty() {
+            return;
+        }
+        if uses_files(&spec) && !fits_one_run(&spec, &taken) {
+            return self.note(too_many_text(&spec.name));
+        }
+        if !spec.ask {
+            return self.run_command(spec, taken);
+        }
+        let this = self.clone();
+        let message = ask_text(&spec.name, taken.len());
+        self.0.dialogs.ask(spec.name.clone(), message, &["Run", "Cancel"], move |answer| {
+            if answer == Some(0) {
+                this.run_command(spec, taken);
+            }
+        });
+    }
+
+    /// Runs a user command on the `items` it takes, as one job undone as one action (a
+    /// `{files}` run: nothing to undo, which the panel says).
     fn run_command(&self, spec: CommandSpec, items: Vec<(PathBuf, bool)>) {
         let items: Vec<(PathBuf, bool)> =
             items.into_iter().filter(|(p, d)| command_applies(&spec, &name_of(p), *d)).collect();
@@ -2085,8 +2233,15 @@ impl Convert {
             })
         };
         self.0.ops.remember_for(&paths);
+        let once = uses_files(&spec);
         let task: Box<dyn gezik_ops::Task> = Box::new(CommandTask::new(items, spec));
-        self.0.ops.submit_chain(vec![task], Some(label), Some(again), After::Select);
+        if once {
+            // What it did is not known: nothing to undo (spec 7), and the panel says so.
+            let id = self.0.ops.submit_chain(vec![task], None, Some(again), After::Nothing);
+            self.0.ops.set_note(id, CANT_UNDO);
+        } else {
+            self.0.ops.submit_chain(vec![task], Some(label), Some(again), After::Select);
+        }
     }
 }
 
@@ -2119,6 +2274,9 @@ mod tests {
             types: types.iter().map(|s| (*s).to_owned()).collect(),
             folders,
             parallel: 1,
+            shortcut: None,
+            menu: None,
+            ask: false,
         }
     }
 
@@ -2519,5 +2677,90 @@ mod tests {
         assert!(background_from("#ffffff80").is_err() && background_from("white").is_err());
         assert_eq!(resize_choice(Resize::Height(600)), (3, "600".to_owned()));
         assert_eq!(background_text([255, 0, 16]), "#ff0010");
+    }
+
+    #[test]
+    fn commands_with_a_menu_name_are_grouped_under_it() {
+        let grouped = |name: &str, run: &[&str], group: &str| CommandSpec {
+            menu: Some(group.to_owned()),
+            ..spec(name, run, None, &[], true)
+        };
+        let commands = vec![
+            grouped("Zip", &["7z", "{files}"], "Archives"),
+            CommandSpec {
+                menu: Some("Images".into()),
+                ..spec("Small", &["m", "{in}", "{out}"], Some("{name}-s.{ext}"), &["jpg"], false)
+            },
+            spec("Plain", &["x", "{in}"], None, &[], false),
+            grouped("Tar", &["tar", "{files}"], "Archives"),
+        ];
+        let states = vec![CommandState::Ready; 4];
+        let (_, sub) = menu_entries(&[file("a.jpg")], &commands, &states);
+        let lines: Vec<(u32, String, bool)> = sub.unwrap();
+        assert_eq!(
+            lines,
+            [
+                (COMMAND_FIRST + 2, "Plain".to_owned(), true),
+                (COMMAND_GROUP, "Archives".to_owned(), false),
+                (COMMAND_FIRST, "Zip".to_owned(), true),
+                (COMMAND_FIRST + 3, "Tar".to_owned(), true),
+                (COMMAND_GROUP, "Images".to_owned(), false),
+                (COMMAND_FIRST + 1, "Small".to_owned(), true),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_files_command_is_not_greyed_for_folders() {
+        let zip = spec("Zip", &["7z", "a", "x.zip", "{files}"], None, &[], true);
+        assert_eq!(command_state(&zip, &[folder("site"), file("a.txt")], Some(true), false), CommandState::Ready);
+        let in_place = spec("Touch", &["touch", "{in}"], None, &[], true);
+        assert!(matches!(command_state(&in_place, &[folder("site")], Some(true), false), CommandState::Off(_)));
+    }
+
+    #[test]
+    fn why_a_command_does_not_run_and_what_it_asks() {
+        assert_eq!(
+            not_for_text(&spec("Small", &["x"], None, &["jpg", "PNG"], false)),
+            "Small runs on .jpg and .png files only"
+        );
+        assert_eq!(
+            not_for_text(&spec("Small", &["x"], None, &["jpg", "png", "gif"], false)),
+            "Small runs on .jpg, .png and .gif files only"
+        );
+        assert_eq!(
+            not_for_text(&spec("Small", &["x"], None, &["jpg"], true)),
+            "Small runs on .jpg files and folders only"
+        );
+        assert_eq!(not_for_text(&spec("Touch", &["x"], None, &[], false)), "Touch does not run on folders");
+        assert_eq!(ask_text("Zip", 1), "Run Zip on 1 item?");
+        assert_eq!(ask_text("Zip", 1234), "Run Zip on 1,234 items?");
+    }
+
+    #[test]
+    fn the_menu_bar_lists_the_commands_with_a_key() {
+        let zip = CommandSpec { menu: Some("Archives".into()), ..spec("Zip", &["7z", "{files}"], None, &[], true) };
+        let commands = vec![spec("A", &["x"], None, &[], false), zip, spec("B", &["x"], None, &[], false)];
+        let key = |i: usize| (i != 0).then(|| format!("⌃⌥{i}"));
+        assert_eq!(
+            bar_entries(&commands, key),
+            [(2, "B    ⌃⌥2".to_owned(), true), (-1, "Archives".to_owned(), false), (1, "Zip    ⌃⌥1".to_owned(), true)]
+        );
+    }
+
+    #[test]
+    fn very_long_command_and_group_names_are_cut_in_menus() {
+        let long = "x".repeat(200);
+        let shown = shown_name(&long);
+        assert_eq!(shown.chars().count(), MENU_NAME_MAX);
+        assert!(shown.ends_with('…') && shown.starts_with("xxx"));
+        assert_eq!(shown_name("Zip"), "Zip");
+        assert_eq!(shown_name(&"ş".repeat(MENU_NAME_MAX)), "ş".repeat(MENU_NAME_MAX), "counted in characters");
+        let commands = vec![CommandSpec { menu: Some(long.clone()), ..spec(&long, &["x", "{in}"], None, &[], false) }];
+        let (_, sub) = menu_entries(&[file("a.txt")], &commands, &[CommandState::Ready]);
+        let sub = sub.unwrap();
+        assert_eq!((sub[0].1.chars().count(), sub[1].1.chars().count()), (MENU_NAME_MAX, MENU_NAME_MAX));
+        let bar = bar_entries(&commands, |_| Some("F5".to_owned()));
+        assert_eq!(bar[1].1, format!("{shown}    F5"), "the key stays in view");
     }
 }

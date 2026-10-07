@@ -69,6 +69,9 @@ Note in the results any other line in the terminal.
 | Restore the last selection | keypad / |
 | Tabs | Ctrl+1…Ctrl+8, Ctrl+9 (the last), Ctrl+Shift+T (reopen a closed tab), Ctrl+Shift+A (tab picker) |
 | List / grid view | Ctrl+Shift+1 / Ctrl+Shift+2 |
+| Address bar suggestions | ↓ ↑ to choose, Tab or → to write the chosen one, Enter to go, Esc to close the list (a second Esc ends typing) |
+| Clear folder history | `clear-history` (no key by default) |
+| Command keys | `shortcut` in a `[[commands]]` entry (Ctrl, Alt or an F key is needed) |
 
 All of these are listed in `settings.toml` under `[shortcuts]`.
 
@@ -331,6 +334,38 @@ Keyboard (6a: filter, selection, tabs)
     - Ctrl+Shift+A opens the tab picker with the active tab selected. Typing filters it, Up/Down move, Enter switches and Esc closes.
 38. **Typing mode:** add `[keyboard]` `typing = "filter"` to `settings.toml` (picked up live). Typing a letter on the list opens the filter with it. Back to `"jump"`, a letter jumps to a name again.
 39. **Saved filters:** ▾ in the bar, Save as… "Resimler". `settings.toml` gets `[[filters]]`. ▾ then Resimler fills the bar. ▾, Delete "Resimler" takes it out.
+
+Keyboard (6b: path completion, folder history, command keys)
+40. **Path suggestions:** Ctrl+L, then type `/us`. After a short pause, a list under the field shows the matching sub-folders (`usr`), never files.
+    - ↓ marks a row and ↑ goes back up. Tab writes the marked row (or the first) with a `/` at the end, and the list shows its sub-folders. Enter on a marked row goes there; with none marked, where the text says. A click on a row goes there.
+    - Esc closes the list and typing goes on; a second Esc ends typing.
+    - `~/Desktop`, `$HOME/Downloads` and `${HOME}/Downloads` go there. `$GEZIK_NOPE/x` stays as typed and opens nothing; `~veli` is not expanded.
+    - On a mounted network share (NFS or SMB) that stops answering (unplug the network): typing stays smooth, the list is empty after about 1 s, and `ls /proc/$(pgrep -x gezik)/task | wc -l` doesn't grow with each key.
+41. **Suggestions on Wayland:** repeat 40 in a Wayland session. The list shows under the field and the keys work the same. (The container tried this on X11 only.)
+42. **Folder history:**
+    - Go to a few folders. Ctrl+L, then Backspace: the empty field lists "Recent" (the last 5) and "Frequent" (the most visited). Typing a part of a visited folder's name lists it under a "History" heading.
+    - Delete a visited folder in Nautilus/Dolphin, then open the empty list: it goes within 1 s. Write down the file system of the folder (`stat -f -c %T <folder>`): on btrfs, tmpfs or overlay the folder may stay listed (known, see the 6b notes).
+    - Bind `clear-history = "ctrl+shift+h"` under `[shortcuts]`. Ctrl+Shift+H empties the list, and the status bar says "Folder history cleared".
+    - `[history]` `remember = false`: `state.toml` loses its `[history]` and new visits are not kept.
+43. **Command keys.** Add to `settings.toml`:
+    ```toml
+    [[commands]]
+    name = "Zip together"
+    run = ["zip", "-r", "together.zip", "{files}"]
+    folders = true
+    shortcut = "ctrl+alt+z"
+    menu = "Archives"
+    ask = true
+
+    [[commands]]
+    name = "Clash"
+    run = ["true"]
+    shortcut = "ctrl+f"
+    ```
+    - Select some files and a folder, then Ctrl+Alt+Z: "Run Zip together on N items?". Cancel runs nothing; Run makes one `together.zip`, and the panel row says "Done · can't be undone".
+    - Right-click, then Commands ▸: a greyed "Archives" heading over "Zip together". The heading can't be chosen.
+    - The notice says `commands[2]: shortcut "ctrl+f" is already used by filter; the command has no key`, and Ctrl+F still opens the filter.
+    - Ctrl+Alt+Z in the path field does nothing. Note whether the desktop takes Ctrl+Alt+<letter> keys itself (GNOME and KDE bind some, such as Ctrl+Alt+T).
 
 ## Known gaps (not bugs)
 

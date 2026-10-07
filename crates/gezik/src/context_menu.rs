@@ -213,6 +213,8 @@ pub const FILTER_FIRST: u32 = 900;
 pub const FILTER_MAX: u32 = 30;
 pub const FILTER_SAVE: u32 = 930;
 pub const FILTER_DELETE_FIRST: u32 = 940;
+/// 970: a heading inside "Commands ▸" (`menu = "…"`), greyed, never chosen.
+pub const COMMAND_GROUP: u32 = 970;
 /// Group headings in a Slint menu: shown greyed, never chosen.
 pub const HEADING: u32 = 0;
 
@@ -1039,10 +1041,10 @@ pub fn native_menus() -> bool {
     cfg!(any(windows, target_os = "macos")) && std::env::var_os("SLINT_NO_MUDA").is_none()
 }
 
-/// A title for Gezik's own menus: on Windows they are native menus, which would take `&` as the
-/// access key mark, so it is doubled to show as itself.
-fn menu_title(title: &str) -> String {
-    if cfg!(windows) && native_menus() { title.replace('&', "&&") } else { title.to_owned() }
+/// A title for Gezik's own menus: on Windows and macOS they are native menus (muda), which
+/// take `&` as the access key mark (and drop it on macOS), so it is doubled to show as itself.
+pub fn menu_title(title: &str) -> String {
+    if native_menus() { title.replace('&', "&&") } else { title.to_owned() }
 }
 
 #[cfg(test)]
@@ -1061,7 +1063,7 @@ mod tests {
 
     #[test]
     fn an_ampersand_shows_as_itself() {
-        let shown = if cfg!(windows) { "Copy && keep" } else { "Copy & keep" };
+        let shown = if native_menus() { "Copy && keep" } else { "Copy & keep" };
         assert_eq!(menu_title("Copy & keep"), shown);
     }
 
@@ -1110,6 +1112,7 @@ mod tests {
             BATCH_RENAME,
             LOCK_TAB,
             UNLOCK_TAB,
+            COMMAND_GROUP,
         ];
         let ranges = [TOGGLE_COLUMN_FIRST..RESET_COLUMNS, CONFLICT_FIRST..CONFLICT_FIRST + 4];
         let archives = [EXTRACT_HERE, EXTRACT_TO_OWN, EXTRACT_TO, COMPRESS, COMPRESS_TO, ADD_TO_ARCHIVE];
@@ -1193,6 +1196,7 @@ mod tests {
             LOCK_TAB,
             UNLOCK_TAB,
             FILTER_SAVE,
+            COMMAND_GROUP,
         ];
         let mut ranges: Vec<std::ops::Range<u32>> = singles.iter().map(|id| *id..id + 1).collect();
         ranges.extend([

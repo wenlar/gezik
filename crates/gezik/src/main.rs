@@ -18,6 +18,7 @@ mod media;
 mod menu_bar;
 mod navigation;
 mod operations;
+mod path_box;
 mod pdf;
 mod places;
 mod popup;
@@ -66,12 +67,15 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
     sidebar::with_current(|sidebar| sidebar.set_pinned(loaded.settings.pinned.clone()));
     view::with_current(|view| view.set_defaults(loaded.settings.view));
     keys::set_shortcuts(loaded.settings.shortcuts.clone());
+    #[cfg(target_os = "macos")]
+    menu_bar::set_commands(window, &loaded.settings.commands);
     frame_limit::set_max_fps(loaded.settings.max_fps);
     operations::with_current(|ops| ops.set_files(loaded.settings.files));
     batch_rename::set_presets(loaded.settings.rename_presets.clone());
     archives::set_settings(loaded.settings.tools.clone(), loaded.settings.archives);
     convert::set_settings(loaded.settings.convert.clone(), loaded.settings.commands.clone());
     filter::set_settings(loaded.settings.keyboard, loaded.settings.filters.clone());
+    path_box::set_settings(loaded.settings.history);
     loaded
 }
 
@@ -147,6 +151,14 @@ fn handle_key(
     let editing = window.get_path_editing();
 
     if editing && let Some(chord) = &chord {
+        // The suggestion list's keys first: ↓ ↑ Tab → Enter Esc (spec 6.1).
+        if !has_modifier {
+            let mut used = false;
+            path_box::with_current(|p| used = p.chord(chord));
+            if used {
+                return true;
+            }
+        }
         if chord.key == Key::Escape && !has_modifier {
             window.invoke_focus_list();
             window.set_path_editing(false);
@@ -198,7 +210,10 @@ fn handle_key(
                 Action::Back => nav.back(),
                 Action::Forward => nav.forward(),
                 Action::Up => nav.up(),
-                Action::FocusPath => window.invoke_edit_path(),
+                Action::FocusPath => {
+                    path_box::with_current(path_box::PathBox::reset);
+                    window.invoke_edit_path()
+                }
                 Action::Refresh => nav.reload(),
                 Action::SelectAll => view.select_all(),
                 Action::ViewList => view.set_mode(gezik_core::view::ViewMode::List),
@@ -238,7 +253,8 @@ fn handle_key(
                 | Action::TabLast
                 | Action::ReopenTab
                 | Action::TabPicker
-                | Action::ToggleTabLock => {
+                | Action::ToggleTabLock
+                | Action::ClearHistory => {
                     if action == Action::Filter && editing {
                         window.set_path_editing(false);
                     }
@@ -253,6 +269,14 @@ fn handle_key(
             }
             return true;
         }
+    }
+    // A `[[commands]]` key: on the selection, only while the file list has the keyboard.
+    if let Some(index) = chord.as_ref().and_then(keys::command_for) {
+        if editing || filtering || !window.get_list_focused() {
+            return false;
+        }
+        actions::run_command(index, view);
+        return true;
     }
     if editing || !window.get_list_focused() {
         return false;
@@ -355,14 +379,13 @@ fn resolve_start(settings: &Settings, cli: Option<PathBuf>) -> StartPlan {
     // Absolute, so the address bar parts and "up" work for `gezik .` too.
     let cli = cli.map(|path| std::path::absolute(&path).unwrap_or(path));
     let dirs = gezik_config::paths::KnownDirs::system();
-    start::plan_start(&settings.start_folder, cli, &dirs_home(), |text| dirs.expand_checked(text), start::path_kind)
-}
-
-fn dirs_home() -> PathBuf {
-    std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
-        .map(PathBuf::from)
-        .or_else(|| std::env::current_dir().ok())
-        .unwrap_or_else(|| PathBuf::from("/"))
+    start::plan_start(
+        &settings.start_folder,
+        cli,
+        &path_box::home(),
+        |text| dirs.expand_checked(text),
+        start::path_kind,
+    )
 }
 
 /// The first warning, plus how many more there are.
@@ -479,6 +502,7 @@ fn main() -> Result<(), slint::PlatformError> {
     preview.set_pane_open(saved_state.preview_open);
     let nav = navigation::Navigator::new(&window, view.clone(), plan.first, plan.select, plan.start);
     nav.install();
+    let _path_box = path_box::PathBox::new(&window, nav.clone(), config.clone(), saved_state.history.clone());
     // Captures no navigator (it is not `Send`): the result finds it on the UI thread.
     places::load_in_background(window.as_weak(), |part| navigation::with_current(|nav| nav.set_places(part)));
 
@@ -878,15 +902,18 @@ fn main() -> Result<(), slint::PlatformError> {
             let Some(window) = weak.upgrade() else { return false };
             let m = event.modifiers;
             // Slint's `control` is ⌘ on macOS.
-            let physical = keys::take_pressed();
-            let text = keys::shortcut_text(&event.text, m.control);
-            let chord = keys::chord_from_press(&text, physical, m.control, m.alt, m.shift, m.meta, Platform::current());
-            let menu_key = keys::is_context_menu_key(&event.text, m.control, m.alt, m.shift, m.meta);
+            let press = keys::take_pressed();
+            // AltGr on a key it types nothing with is Ctrl+Alt (keys.rs `altgr_blank`).
+            let (control, alt) = press.modifiers(m.control, m.alt);
+            let text = keys::shortcut_text(&event.text, control);
+            let chord =
+                keys::chord_from_press(&text, press.physical, control, alt, m.shift, m.meta, Platform::current());
+            let menu_key = keys::is_context_menu_key(&event.text, control, alt, m.shift, m.meta);
             // Esc while dragging files drops nothing.
             if chord.as_ref().is_some_and(|c| c.key == Key::Escape) && drags.escape() {
                 return true;
             }
-            handle_key(
+            let used = handle_key(
                 &window,
                 &nav,
                 &view,
@@ -895,9 +922,10 @@ fn main() -> Result<(), slint::PlatformError> {
                 &mut type_ahead,
                 &event.text,
                 chord,
-                m.control || m.alt || m.meta,
+                control || alt || m.meta,
                 menu_key,
-            )
+            );
+            press.swallowed(used)
         }
     });
 
@@ -913,14 +941,13 @@ fn main() -> Result<(), slint::PlatformError> {
         let drags = drags.clone();
         window.window().on_winit_window_event(move |_, event| {
             // The keypad's keys and Ctrl+Shift+digits, which Slint's text cannot tell apart
-            // (keys.rs `Physical`): noted before Slint hands the key to `key-event`.
-            if let winit::event::WindowEvent::KeyboardInput { event, .. } = event
-                && event.state == winit::event::ElementState::Pressed
-            {
-                keys::note_pressed(match event.physical_key {
-                    winit::keyboard::PhysicalKey::Code(code) => keys::physical_of(code),
-                    winit::keyboard::PhysicalKey::Unidentified(_) => keys::Physical::Other,
-                });
+            // (keys.rs `Physical`), and AltGr on a key it types nothing with (keys.rs
+            // `altgr_blank`): noted before Slint hands the key to `key-event`.
+            if let winit::event::WindowEvent::KeyboardInput { event, .. } = event {
+                keys::note_key(event);
+            }
+            if let winit::event::WindowEvent::Focused(false) = event {
+                keys::forget_altgr();
             }
             if let winit::event::WindowEvent::Focused(true) = event {
                 ops.clipboard_check();

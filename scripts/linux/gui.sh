@@ -3,7 +3,7 @@
 # input: xdotool (XTEST) under Xvfb, wtype and the vpointer example under a headless sway.
 #   docker build -t gezik-linux scripts/linux
 #   docker run --rm -v "$PWD:/src" -v gezik-target:/target -v gezik-cargo:/usr/local/cargo/registry \
-#       -e CARGO_TARGET_DIR=/target gezik-linux bash scripts/linux/gui.sh [x11|wayland|popups|tabdrag|pdf|pdfnote|filter|select|tabs|keyboard|all]
+#       -e CARGO_TARGET_DIR=/target gezik-linux bash scripts/linux/gui.sh [x11|wayland|popups|tabdrag|pdf|pdfnote|filter|select|tabs|keyboard|commands|paths|history|all]
 #   (not in `all`, release builds: `filterperf` times the filter at 100,000 files, `memory [exe]`
 #   gives idle memory)
 # Needs the network (apt for 7-Zip, Gezik's own 7-Zip download). Screenshots go to
@@ -981,15 +981,6 @@ keyboard() {
     start_k
     title() { xdotool getwindowname "$(win)"; }
     is() { [ "$(title)" = "$1 — Gezik" ]; }
-    # The names Ctrl+C put on the clipboard, sorted, on one line.
-    copied() {
-        xclip -selection clipboard -t x-special/gnome-copied-files -o 2>/dev/null | tail -n +2 | python3 -c '
-import sys, os, urllib.parse
-names = [os.path.basename(urllib.parse.unquote(l.strip()[len("file://"):])) for l in sys.stdin if l.strip()]
-print(" ".join(sorted(names)))'
-    }
-    sorted() { printf '%s\n' "$@" | LC_ALL=C sort | paste -sd' '; }
-    copies() { key ctrl+c; sleep 0.4; [ "$(copied)" = "$(sorted "$@")" ]; }
     # Rows (folders first): Docs 118, a.jpg 144, b.JPG 170, c.png 196, d.txt 222, İSTANBUL.txt 248.
     click 255 144
 
@@ -1059,6 +1050,386 @@ print(" ".join(sorted(names)))'
     kill $xvfb 2>/dev/null
     wait 2>/dev/null
     grep -i "panicked" /tmp/gezik-gui-keyboard.log && fail "keyboard: no panic" || pass "keyboard: no panic"
+}
+
+# 6b's user commands in the window: a command run by its key on the selection (and on the
+# focused item, with the status bar saying why it does not run there), never in the address
+# bar; `ask` asks first (Esc: nothing runs; Enter: Run); a `{files}` run keeps its panel row,
+# "Done · can't be undone", runs in the items' folder and leaves nothing to undo; "Commands ▸"
+# lists a `menu` group under its greyed heading; a bare key as a command's shortcut, and one
+# an action has (Ctrl+F), are refused when settings.toml loads; a `{files}` run past the command
+# line limit does not start. X11, 900x600.
+commands() {
+    Xvfb :99 -screen 0 1600x900x24 >/dev/null 2>&1 &
+    local xvfb=$!
+    unset WAYLAND_DISPLAY
+    export DISPLAY=:99
+    sleep 1
+    . /src/scripts/linux/gui-lib.sh
+    rm -rf /tmp/cm /tmp/cm-* /tmp/cfg /root/.local/share/Trash && mkdir -p /tmp/cm/Sub /tmp/cfg
+    for n in a.txt b.txt c.jpg; do echo "$n" > "/tmp/cm/$n"; done
+    cat >/tmp/cfg/settings.toml <<'TOML'
+[[commands]]
+name = "Copy txt"
+run = ["cp", "{in}", "{out}"]
+output = "{name}-copy.{ext}"
+types = ["txt"]
+shortcut = "ctrl+alt+k"
+
+[[commands]]
+name = "List them"
+run = ["sh", "-c", "printf '%s\n' \"$@\" > /tmp/cm-listed; pwd > /tmp/cm-cwd", "sh", "{files}"]
+folders = true
+shortcut = "ctrl+alt+l"
+menu = "Tests"
+ask = true
+
+[[commands]]
+name = "Mark"
+run = ["sh", "-c", "echo \"$1\" >> /tmp/cm-marked", "sh", "{in}"]
+types = ["txt"]
+shortcut = "f9"
+menu = "Tests"
+
+[[commands]]
+name = "Bare"
+run = ["sh", "-c", "echo \"$1\" >> /tmp/cm-bare", "sh", "{in}"]
+shortcut = "x"
+
+[[commands]]
+name = "Clash"
+run = ["sh", "-c", "echo clash >> /tmp/cm-clash"]
+types = ["zzz"]
+shortcut = "ctrl+f"
+
+[[commands]]
+name = "Count"
+run = ["sh", "-c", "echo $# > /tmp/cm-count", "sh", "{files}"]
+folders = true
+shortcut = "ctrl+alt+m"
+menu = "Tests"
+TOML
+    : >/tmp/gezik-gui-commands.log
+    GEZIK_CONFIG_DIR=/tmp/cfg $GEZIK /tmp/cm >>/tmp/gezik-gui-commands.log 2>&1 &
+    local gezik=$!
+    sleep 3
+    xdotool windowmove "$(win)" 0 0; xdotool windowsize "$(win)" 900 600; sleep 0.5
+    shot commands-start
+    # Rows (folders first): Sub 118, a.txt 144, b.txt 170, c.jpg 196.
+    check "commands: a bare-key shortcut is refused when settings load" \
+        'grep -q "commands\[4\]: shortcut \"x\" needs Ctrl, Alt or Cmd (or an F key); the command has no key" /tmp/gezik-gui-commands.log'
+    check "commands: a key taken by an action is left out, with a warning" \
+        'grep -q "commands\[5\]: shortcut \"ctrl+f\" is already used by filter; the command has no key" /tmp/gezik-gui-commands.log'
+
+    # By its key, on the selection.
+    click 255 144; key shift+Down
+    key ctrl+alt+k; sleep 2
+    check "commands: Ctrl+Alt+K copies the two selected .txt" '[ -f /tmp/cm/a-copy.txt ] && [ -f /tmp/cm/b-copy.txt ]'
+    # A quick job that can be undone leaves no row behind.
+    sleep 5; shot commands-copied
+    check "commands: the copy leaves no panel row" 'awk "BEGIN { exit !($(dark commands-copied 860 24 10 545) < 0.001) }"'
+
+    # The bare key stays type-ahead's: x runs nothing.
+    key x; sleep 1.5
+    check "commands: the bare key x runs nothing" '[ ! -e /tmp/cm-bare ]'
+
+    # The focused item when nothing is selected: on c.jpg, Copy txt says why it does not run.
+    click 255 "$(row /tmp/cm c.jpg)"; key Escape; sleep 0.3; shot commands-before-note
+    key ctrl+alt+k; sleep 1; shot commands-not-for-jpg
+    check "commands: on c.jpg the status bar says why (see the shot)" \
+        '! cmp -s "$SHOTS/commands-before-note.png" "$SHOTS/commands-not-for-jpg.png"'
+    check "commands: nothing is made of c.jpg" '[ ! -e /tmp/cm/c-copy.jpg ] && [ "$(ls /tmp/cm | wc -l)" = 6 ]'
+
+    # Never in the address bar: F9 there types nothing and runs nothing; on the list it runs.
+    click 255 "$(row /tmp/cm a.txt)"; key ctrl+l; sleep 0.5; key F9; sleep 1.5
+    check "commands: F9 in the address bar runs nothing" '[ ! -e /tmp/cm-marked ]'
+    key Escape; sleep 0.5; click 255 "$(row /tmp/cm a.txt)"; key F9; sleep 2
+    check "commands: F9 on the list marks a.txt" '[ "$(wc -l < /tmp/cm-marked)" = 1 ]'
+
+    # `ask`: the question first; Esc runs nothing, Enter runs it.
+    key ctrl+a; sleep 0.3; shot commands-before-ask
+    key ctrl+alt+l; sleep 1; shot commands-ask
+    check "commands: Ctrl+Alt+L asks first" \
+        '! cmp -s "$SHOTS/commands-before-ask.png" "$SHOTS/commands-ask.png" && [ ! -e /tmp/cm-listed ]'
+    key Escape; sleep 1.5
+    check "commands: Esc cancels the run" '[ ! -e /tmp/cm-listed ]'
+    key ctrl+alt+l; sleep 1; key Return; sleep 1.5; shot commands-cant-undo
+    check "commands: Run runs it once on all six" '[ "$(wc -l < /tmp/cm-listed 2>/dev/null)" = 6 ]'
+    # A quick job, done before its row would come up: the note shows it anyway (for its
+    # "done for" time).
+    check "commands: the {files} run keeps its panel row (\"can't be undone\", see the shot)" \
+        'awk "BEGIN { exit !($(dark commands-cant-undo 860 24 10 545) > 0.01) }"'
+    check "commands: the {files} run is in the items' folder" '[ "$(cat /tmp/cm-cwd 2>/dev/null)" = /tmp/cm ]'
+    # Nothing to undo of it: the first Ctrl+Z undoes Mark (a run in place: a.txt was kept in
+    # the trash), the second the copies.
+    sleep 3; key Escape; click 255 "$(row /tmp/cm c.jpg)"; key ctrl+z; sleep 2; key ctrl+z; sleep 2
+    check "commands: the {files} run leaves nothing to undo (Ctrl+Z twice: Mark, then the copies)" \
+        '[ ! -e /tmp/cm/a-copy.txt ] && [ ! -e /tmp/cm/b-copy.txt ] && [ "$(wc -l < /tmp/cm-listed)" = 6 ]'
+
+    # "Commands ▸" on a.txt: Copy txt, then the greyed "Tests" heading over List them and Mark.
+    local y; y=$(row /tmp/cm a.txt)
+    sleep 3; key Escape; click 255 "$y"; rclick 260 $y; sleep 0.5; shot commands-menu
+    # Commands is the menu's 6th line; its submenu opens to the right.
+    local sub=$((y + 20 + 32 * 5))
+    xdotool mousemove 330 "$sub"; sleep 0.3; xdotool mousemove 400 "$sub"; sleep 1; shot commands-submenu
+    # Its lines: Copy txt, Bare, the "Tests" heading, List them, Mark. The heading is greyed:
+    # fewer dark pixels than Bare's line, whose name is as long.
+    check "commands: Commands > has the greyed \"Tests\" heading over its group (see the shot)"         'awk "BEGIN { exit !($(dark commands-submenu 60 16 490 $((sub + 64 - 8))) < $(dark commands-submenu 60 16 490 $((sub + 32 - 8)))) }"'
+    click 520 $((sub + 64)); sleep 1.5
+    check "commands: choosing the heading runs nothing" '[ "$(wc -l < /tmp/cm-marked)" = 1 ] && [ "$(wc -l < /tmp/cm-listed)" = 6 ]'
+    key Escape Escape; click 255 "$y"; rclick 260 "$y"; sleep 0.5
+    xdotool mousemove 330 "$sub"; sleep 0.3; xdotool mousemove 400 "$sub"; sleep 1
+    click 520 $((sub + 128)); sleep 2
+    check "commands: Mark, under the heading, runs from the menu" '[ "$(wc -l < /tmp/cm-marked)" = 2 ]'
+
+    # Ctrl+F stays the filter's: c.jpg alone is shown and selected; Clash never ran.
+    key Escape; click 255 "$(row /tmp/cm c.jpg)"; key ctrl+f; typ jpg; key Down ctrl+a
+    check "commands: Ctrl+F is still the filter's" 'copies c.jpg && [ ! -e /tmp/cm-clash ]'
+    key Escape Escape
+
+    # Past the command line limit (half of ARG_MAX), short of ARG_MAX itself: names of 210
+    # bytes making ~0.7 ARG_MAX, so a run let through would start. Count asks nothing.
+    local n=$(( $(getconf ARG_MAX) * 7 / 10 / 240 ))
+    mkdir -p /tmp/cm/many
+    python3 -c "import sys
+for i in range(int(sys.argv[1])): open('/tmp/cm/many/%s%06d.txt' % ('x' * 200, i), 'w').close()" "$n"
+    # (No Return here: on the list it would open the selected files.)
+    key ctrl+l; typ /tmp/cm/many; key Return; sleep 4; click 255 118; shot commands-before-too-many
+    key ctrl+a ctrl+alt+m; sleep 2; shot commands-too-many
+    check "commands: too many items for one command line ($n): nothing runs" '[ ! -e /tmp/cm-count ]'
+    check "commands: ...and the status bar says so (see the shot)" \
+        '! cmp -s "$SHOTS/commands-before-too-many.png" "$SHOTS/commands-too-many.png"'
+    # A few of them fit: Count runs on them.
+    key Escape; click 255 118; key shift+Down shift+Down ctrl+alt+m; sleep 2
+    check "commands: ...while three of them run" '[ "$(cat /tmp/cm-count 2>/dev/null)" = 3 ]'
+    kill $gezik 2>/dev/null
+    kill $xvfb 2>/dev/null
+    wait 2>/dev/null
+    grep -i "panicked" /tmp/gezik-gui-commands.log && fail "commands: no panic" || pass "commands: no panic"
+}
+
+# The address bar's suggestions (spec 6.1): they come after a pause in typing, ↓ ↑ Tab →
+# Enter Esc and a click work on them, `~` and `$HOME` are put in, and a folder that takes 8 s
+# to read (an LD_PRELOAD shim that sleeps in opendir, as a hung share would) neither freezes
+# the window nor is read twice. X11, 900x600.
+paths() {
+    Xvfb :99 -screen 0 1600x900x24 >/dev/null 2>&1 &
+    local xvfb=$!
+    unset WAYLAND_DISPLAY
+    export DISPLAY=:99
+    sleep 1
+    . /src/scripts/linux/gui-lib.sh
+    rm -rf /tmp/p /tmp/cfg /root/gzhome && mkdir -p /tmp/p/alpha/inner1 /tmp/p/alpha/inner2 /tmp/p/alpine \
+        /tmp/p/beta /tmp/p/slowdir/aaa /tmp/cfg /root/gzhome/deep
+    echo x > /tmp/p/alpha/file.txt
+    cat >/tmp/slow.c <<'C'
+#define _GNU_SOURCE
+#include <dirent.h>
+#include <dlfcn.h>
+#include <string.h>
+#include <unistd.h>
+DIR *opendir(const char *name) {
+    static DIR *(*real)(const char *);
+    if (!real) real = (DIR *(*)(const char *))dlsym(RTLD_NEXT, "opendir");
+    size_t n = strlen(name);
+    if ((n >= 8 && !strcmp(name + n - 8, "/slowdir")) || (n >= 9 && !strcmp(name + n - 9, "/slowdir/"))) sleep(8);
+    return real(name);
+}
+C
+    gcc -shared -fPIC -o /tmp/slow.so /tmp/slow.c -ldl || fail "paths: the slow shim builds"
+    : >/tmp/gezik-gui-paths.log
+    LD_PRELOAD=/tmp/slow.so GEZIK_CONFIG_DIR=/tmp/cfg $GEZIK /tmp/p >>/tmp/gezik-gui-paths.log 2>&1 &
+    local gezik=$!
+    sleep 3
+    xdotool windowmove "$(win)" 0 0; xdotool windowsize "$(win)" 900 600; sleep 0.5
+    title() { xdotool getwindowname "$(win)"; }
+    is() { [ "$(title)" = "$1 — Gezik" ]; }
+    # How many pixels differ in a box (W H X Y) of two screenshots.
+    differ() { compare -metric AE "$SHOTS/$1.png[$3x$4+$5+$6]" "$SHOTS/$2.png[$3x$4+$5+$6]" null: 2>&1 | cut -d' ' -f1; }
+    # The part under the address bar where the list opens; the address bar.
+    same_under() { [ "$(differ "$1" "$2" 400 150 200 80)" = 0 ]; }
+    same_bar() { [ "$(differ "$1" "$2" 500 24 200 44)" = 0 ]; }
+    readers() { grep -l gezik-complete /proc/$gezik/task/*/comm 2>/dev/null | wc -l; }
+    click 255 300; shot paths-crumbs
+    key ctrl+l; sleep 0.5; shot paths-editing
+
+    # Suggestions after a pause: /tmp/p/al lists alpha and alpine.
+    typ /tmp/p/al; sleep 0.5; shot paths-al
+    check "paths: suggestions appear after typing (see the shot)" '! same_under paths-editing paths-al'
+    # ↓ chooses alpha, Tab writes "/tmp/p/alpha/" and lists its folders; Enter (none chosen)
+    # goes where the text says.
+    key Down; shot paths-down
+    check "paths: ↓ marks a row" '! same_under paths-al paths-down'
+    key Tab; sleep 0.5; shot paths-tab
+    key Return; sleep 1
+    check "paths: ↓ Tab writes alpha/ and Enter goes there" 'is alpha'
+
+    # Tab with nothing chosen takes the first; ↓ ↓ Enter goes to the second row.
+    key ctrl+l; typ /tmp/p/alpha/in; sleep 0.5; key Down Down; shot paths-second; key Return; sleep 1
+    check "paths: ↓ ↓ Enter goes to the second suggestion" 'is inner2'
+    key ctrl+l; typ /tmp/p/b; sleep 0.5; key Tab; sleep 0.3; key Return; sleep 1
+    check "paths: Tab takes the first suggestion" 'is beta'
+    # A row chosen, then typing: Enter goes where the text now says, not to the row.
+    key ctrl+l; typ /tmp/p/al; sleep 0.5; key Down; typ pine; key Return; sleep 1
+    check "paths: typing after ↓ forgets the chosen row" 'is alpine'
+
+    # A click on a row goes there: the first row is under the field.
+    key ctrl+l; typ /tmp/p/alpi; sleep 0.5; shot paths-click
+    click 260 92; sleep 1
+    check "paths: a click on a suggestion goes there" 'is alpine'
+
+    # ~ and $HOME (HOME=/root): in the suggestions and when going.
+    key ctrl+l; typ '~/gz'; sleep 0.5; key Down Return; sleep 1
+    check "paths: ~/ completes in the home folder" 'is gzhome'
+    key ctrl+l; typ '~/gzhome/deep'; key Return; sleep 1
+    check "paths: Enter on ~/gzhome/deep goes there" 'is deep'
+    key ctrl+l; typ '$HOME/gzhome'; key Return; sleep 1
+    check "paths: Enter on \$HOME/gzhome goes there" 'is gzhome'
+    key ctrl+l; typ '${HOME}/gzhome/deep'; key Return; sleep 1
+    check "paths: \${NAME} too" 'is deep'
+    key ctrl+l; typ '$GEZIK_NOPE/x'; key Return; sleep 1
+    check "paths: an unknown variable stays (nothing opens)" 'is deep'
+    key Escape Escape; sleep 0.3
+
+    # Esc closes the list first (typing goes on), then ends typing.
+    key ctrl+l; sleep 0.5; shot paths-esc-before; typ /tmp/p/al; sleep 0.5; shot paths-esc-open
+    key Escape; sleep 0.3; shot paths-esc-1
+    check "paths: the first Esc closes the list" 'same_under paths-esc-before paths-esc-1'
+    typ pha; key Return; sleep 1; shot paths-alpha-crumbs
+    check "paths: ...and typing goes on" 'is alpha'
+    key ctrl+l; typ /tmp/p/b; sleep 0.5; key Escape Escape; sleep 0.3; shot paths-esc-2
+    check "paths: the second Esc ends typing (the parts are back)" 'is alpha && same_bar paths-alpha-crumbs paths-esc-2'
+
+    # A folder that takes 8 s to read: the window keeps working meanwhile.
+    key ctrl+l; typ /tmp/p/slowdir/; sleep 0.3
+    local t0=$SECONDS
+    typ a; sleep 0.3; typ a; sleep 0.3
+    check "paths: a folder being read is not read again" '[ "$(readers)" = 1 ]'
+    key Escape; key ctrl+l; typ /tmp/p/beta; key Return; sleep 0.5
+    check "paths: the window answers while a read hangs ($((SECONDS - t0)) s)" 'is beta && [ $((SECONDS - t0)) -lt 7 ]'
+    # The late result is kept for the next key of the same typing: once it is in, slowdir/a
+    # lists aaa at once. (A read from an earlier typing is dropped: the one above ends first.)
+    sleep $((t0 + 9 - SECONDS))
+    key ctrl+l; typ /tmp/p/slowdir/; sleep 9.5; shot paths-slow-late
+    typ a; sleep 0.5; key Tab; sleep 0.3; shot paths-slow-cached; key Return; sleep 1
+    check "paths: a late result serves the next key" 'is aaa'
+
+    kill $gezik 2>/dev/null
+    kill $xvfb 2>/dev/null
+    wait 2>/dev/null
+    grep -i "panicked" /tmp/gezik-gui-paths.log && fail "paths: no panic" || pass "paths: no panic"
+}
+
+# The folder history (spec 6.2): moves and foreground tabs are visits, reloads, tab switches
+# and background tabs are not; state.toml keeps them; an empty address lists Recent then
+# Frequent; typed text adds the history's matches under the folders; a folder gone from a
+# local disk is dropped (/tmp: overlay or tmpfs, local), one whose volume is not there is kept;
+# `[history] remember = false` forgets and stops recording; clear-history forgets. X11, 900x600.
+history() {
+    Xvfb :99 -screen 0 1600x900x24 >/dev/null 2>&1 &
+    local xvfb=$!
+    unset WAYLAND_DISPLAY
+    export DISPLAY=:99
+    sleep 1
+    . /src/scripts/linux/gui-lib.sh
+    local gone=/tmp/h/hgone
+    rm -rf /tmp/h /tmp/cfg /mnt/gezik-usb && mkdir -p /tmp/h/other/projeler /tmp/h/proj-b /tmp/cfg $gone
+    for d in bg d1 d2 d3 d4 music proj-a tabhome work; do mkdir -p /tmp/h/$d; done
+    cat >/tmp/cfg/settings.toml <<'TOML'
+start-folder = "/tmp/h/tabhome"
+
+[shortcuts]
+clear-history = "ctrl+shift+h"
+TOML
+    : >/tmp/gezik-gui-history.log
+    GEZIK_CONFIG_DIR=/tmp/cfg $GEZIK /tmp/h >>/tmp/gezik-gui-history.log 2>&1 &
+    local gezik=$!
+    sleep 3
+    xdotool windowmove "$(win)" 0 0; xdotool windowsize "$(win)" 900 600; sleep 0.5
+    title() { xdotool getwindowname "$(win)"; }
+    is() { [ "$(title)" = "$1 — Gezik" ]; }
+    differ() { compare -metric AE "$SHOTS/$1.png[$3x$4+$5+$6]" "$SHOTS/$2.png[$3x$4+$5+$6]" null: 2>&1 | cut -d' ' -f1; }
+    same_under() { [ "$(differ "$1" "$2" 400 150 200 80)" = 0 ]; }
+    # A folder's count in state.toml ("" when it is not there).
+    count_of() {
+        awk -v p="$1" '/^\[\[history\.folders\]\]/ { if (path == p) print c; path = ""; c = "" }
+            /^count = / { c = $3 } /^path = / { path = $3; gsub(/"/, "", path) }
+            END { if (path == p) print c }' /tmp/cfg/state.toml 2>/dev/null
+    }
+    folders() { cat /tmp/cfg/state.toml 2>/dev/null | grep -c '^\[\[history\.folders\]\]'; }
+    go() { key ctrl+l; typ "$1"; key Return; sleep 1; }
+    # Opens the empty address's list: NAME-open, then NAME-closed after Esc.
+    empty_list() { key ctrl+l BackSpace; sleep 0.6; shot "$1-open"; key Escape; sleep 0.3; shot "$1-closed"; }
+    click 255 300
+
+    # The start is no visit: the empty address lists nothing.
+    empty_list hist-none; key Escape
+    check "history: the start is no visit and the empty address lists nothing" \
+        'same_under hist-none-open hist-none-closed && [ "$(folders)" = 0 ]'
+
+    for d in work proj-a work music other/projeler work d1 d2 d3 d4; do go /tmp/h/$d; done
+    go $gone
+    key F5; sleep 1; key F5; sleep 1.5
+    check "history: the folders gone to are in state.toml ([[history.folders]])" \
+        '[ "$(count_of /tmp/h/work)" = 3 ] && [ "$(count_of /tmp/h/d4)" = 1 ] && [ "$(folders)" = 9 ]'
+    check "history: a reload is no visit" '[ "$(count_of $gone)" = 1 ]'
+    # A tab opened in front is a visit; one opened behind (middle click) and switching to it are not.
+    go /tmp/h; key ctrl+t; sleep 1.5
+    check "history: a tab opened in front is a visit" '[ "$(count_of /tmp/h/tabhome)" = 1 ]'
+    key ctrl+w; sleep 1; click 255 "$(row /tmp/h bg)" 2; sleep 1; key ctrl+Tab; sleep 1.5
+    check "history: a tab opened behind, and switching to it, are no visit" 'is bg && [ -z "$(count_of /tmp/h/bg)" ]'
+    key ctrl+w; sleep 1
+
+    # Recent: tabhome h hgone d4 d3; Frequent: work (3 visits), then d2 d1 projeler music proj-a.
+    empty_list hist-lists
+    check "history: the empty address lists Recent and Frequent (see the shot)" '! same_under hist-lists-open hist-lists-closed'
+    key Escape; key ctrl+l BackSpace; sleep 0.6; key Down Down Down Down Return; sleep 1
+    check "history: Recent's 4th row is d4" 'is d4'
+    key ctrl+l BackSpace; sleep 0.6; key Down Down Down Down Down Down Return; sleep 1
+    check "history: Frequent's first row is work" 'is work'
+
+    # A folder gone from a local disk goes from the list and from state.toml.
+    rm -rf $gone
+    key ctrl+l BackSpace; sleep 1.5; shot hist-gone; key Escape Escape; sleep 1.5
+    check "history: a folder gone from a local disk is dropped" '[ -z "$(count_of $gone)" ] && [ "$(count_of /tmp/h/work)" = 4 ]'
+
+    # A volume not there (its folder gone too, or a volume's own folder in /mnt) keeps its folders.
+    mkdir -p /tmp/h/vol/data /mnt/gezik-usb
+    go /tmp/h/vol/data; go /mnt/gezik-usb; go /tmp/h
+    rm -rf /tmp/h/vol /mnt/gezik-usb
+    key ctrl+l BackSpace; sleep 1.5; key Escape Escape; sleep 1.5
+    check "history: a folder whose volume is not there is kept"         '[ "$(count_of /tmp/h/vol/data)" = 1 ] && [ "$(count_of /mnt/gezik-usb)" = 1 ]'
+
+    # Typed text: proj-a and proj-b (sub-folders), then "History" with other/projeler.
+    go /tmp/h
+    key ctrl+l; typ proj; sleep 0.6; shot hist-typed; key Down Down Down Return; sleep 1
+    check "history: typing adds the history's matches under the folders" 'is projeler'
+
+    # remember = false: forgotten (state.toml too) and nothing recorded any more.
+    printf '[history]\nremember = false\n\n[shortcuts]\nclear-history = "ctrl+shift+h"\n' >/tmp/cfg/settings.toml
+    sleep 2.5
+    check "history: remember = false forgets the folders" '[ "$(folders)" = 0 ]'
+    go /tmp/h/work; go /tmp/h/music; sleep 1.5
+    empty_list hist-off
+    check "history: ...and records nothing more" '[ "$(folders)" = 0 ] && same_under hist-off-open hist-off-closed'
+    key Escape
+
+    # clear-history (Ctrl+Shift+H here): forgotten, the status bar says so.
+    printf '[shortcuts]\nclear-history = "ctrl+shift+h"\n' >/tmp/cfg/settings.toml
+    sleep 2.5
+    go /tmp/h/work; go /tmp/h/music; sleep 1.5
+    check "history: remembering again records" '[ "$(folders)" = 2 ]'
+    shot hist-before-clear; key ctrl+shift+h; sleep 1.5; shot hist-cleared
+    check "history: clear-history forgets the folders" '[ "$(folders)" = 0 ]'
+    check "history: ...and the status bar says so (see the shot)" '[ "$(differ hist-before-clear hist-cleared 900 30 0 570)" != 0 ]'
+    empty_list hist-after-clear
+    check "history: ...and the empty address lists nothing" 'same_under hist-after-clear-open hist-after-clear-closed'
+
+    kill $gezik 2>/dev/null
+    kill $xvfb 2>/dev/null
+    wait 2>/dev/null
+    rm -rf $gone
+    grep -i "panicked" /tmp/gezik-gui-history.log && fail "history: no panic" || pass "history: no panic"
 }
 
 # Not in `all`. The filter in a folder of 100,000 files, release build: the process's CPU
@@ -1142,9 +1513,12 @@ case "${1:-all}" in
     select) selection ;;
     tabs) tabs ;;
     keyboard) keyboard ;;
+    commands) commands ;;
+    paths) paths ;;
+    history) history ;;
     filterperf) filterperf ;;
     memory) memory "${2:-}" ;;
-    *) x11; wayland; popups; tabdrag; pdfpopups; pdfnote; filter; selection; tabs; keyboard ;;
+    *) x11; wayland; popups; tabdrag; pdfpopups; pdfnote; filter; selection; tabs; keyboard; commands; paths; history ;;
 esac
 echo "failures: $failures"
 exit $failures

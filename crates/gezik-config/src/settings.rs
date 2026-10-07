@@ -1,8 +1,9 @@
 //! `settings.toml` (portable, may be synced) and `state.toml` (this machine only).
 
 use crate::Warning;
-use crate::shortcuts::{Platform, Shortcuts};
+use crate::shortcuts::{KeyOwner, Platform, Shortcuts, fixed_owner, parse_chord};
 use gezik_core::batch::convert::{CommandSpec, check_command};
+use gezik_core::history::Visit;
 use gezik_core::ops::threads::{COPY_THREADS_RANGE, CopyThreads};
 use gezik_core::view::{
     ColumnKey, ColumnState, GridSize, IconMode, SortDir, SortKey, ViewMode, ViewSettings, normalize_columns,
@@ -142,6 +143,19 @@ pub struct KeyboardSettings {
     pub typing: Typing,
 }
 
+/// `[history]`: the folders the address bar remembers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HistorySettings {
+    /// Keep the folders opened (in state.toml); off also forgets them.
+    pub remember: bool,
+}
+
+impl Default for HistorySettings {
+    fn default() -> Self {
+        HistorySettings { remember: true }
+    }
+}
+
 /// A saved filter (`[[filters]]`): a name and a pattern of the filter's own language.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SavedFilter {
@@ -181,6 +195,7 @@ pub struct Settings {
     /// Saved rename rule sets.
     pub rename_presets: Vec<RenamePreset>,
     pub keyboard: KeyboardSettings,
+    pub history: HistorySettings,
     /// Saved filters; invalid ones are left out.
     pub filters: Vec<SavedFilter>,
     pub archives: ArchivesSettings,
@@ -209,6 +224,7 @@ impl Default for Settings {
             max_fps: 120,
             rename_presets: Vec::new(),
             keyboard: KeyboardSettings::default(),
+            history: HistorySettings::default(),
             filters: Vec::new(),
             archives: ArchivesSettings::default(),
             tools: ToolsSettings::default(),
@@ -375,6 +391,13 @@ impl Settings {
                 None => warnings.push(Warning::new(file, format!("keyboard: expected a table, got {value}"))),
             },
         }
+        match table.get("history") {
+            None => {}
+            Some(value) => match value.as_table() {
+                Some(history) => settings.history = parse_history(history, file, warnings),
+                None => warnings.push(Warning::new(file, format!("history: expected a table, got {value}"))),
+            },
+        }
         if let Some(value) = table.get("filters") {
             match value.as_array() {
                 None => warnings.push(Warning::new(file, format!("filters: expected [[filters]] tables, got {value}"))),
@@ -414,7 +437,10 @@ impl Settings {
                 Some(items) => {
                     for (i, item) in items.iter().enumerate() {
                         match parse_command(item) {
-                            Ok(command) => settings.commands.push(command),
+                            Ok(command) => {
+                                bind_command_key(&mut settings, &command, i + 1, file, warnings);
+                                settings.commands.push(command);
+                            }
                             Err(err) => warnings.push(Warning::new(file, format!("commands[{}]: {err}", i + 1))),
                         }
                     }
@@ -516,6 +542,17 @@ fn parse_keyboard(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) 
             Some("filter") => out.typing = Typing::Filter,
             _ => warnings
                 .push(Warning::new(file, format!("keyboard.typing: expected \"jump\" or \"filter\", got {value}"))),
+        }
+    }
+    out
+}
+
+fn parse_history(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> HistorySettings {
+    let mut out = HistorySettings::default();
+    if let Some(value) = table.get("remember") {
+        match value.as_bool() {
+            Some(on) => out.remember = on,
+            None => warnings.push(Warning::new(file, format!("history.remember: expected true or false, got {value}"))),
         }
     }
     out
@@ -641,7 +678,7 @@ fn parse_command(value: &toml::Value) -> Result<CommandSpec, String> {
     let table = value.as_table().ok_or_else(|| format!("expected a table, got {value}"))?;
     // A misspelt key would be passed over and widen what the command runs on (`type` for
     // `types`: every file): the command is left out instead.
-    const KEYS: [&str; 6] = ["name", "run", "output", "types", "folders", "parallel"];
+    const KEYS: [&str; 9] = ["name", "run", "output", "types", "folders", "parallel", "shortcut", "menu", "ask"];
     if let Some(key) = table.keys().find(|key| !KEYS.contains(&key.as_str())) {
         return Err(format!("unknown key \"{key}\" (known: {})", KEYS.join(", ")));
     }
@@ -690,9 +727,70 @@ fn parse_command(value: &toml::Value) -> Result<CommandSpec, String> {
             .filter(|n| (1..=16).contains(n))
             .ok_or_else(|| format!("parallel must be 1-16, got {v}"))?,
     };
-    let spec = CommandSpec { name: name.to_owned(), run, output, types, folders, parallel };
+    let shortcut = match table.get("shortcut") {
+        None => None,
+        Some(v) => Some(v.as_str().ok_or_else(|| format!("shortcut must be text, got {v}"))?.to_owned()),
+    };
+    let menu = match table.get("menu") {
+        None => None,
+        Some(v) => {
+            let menu = v.as_str().ok_or_else(|| format!("menu must be text, got {v}"))?.trim();
+            (!menu.is_empty()).then(|| menu.to_owned())
+        }
+    };
+    let ask = match table.get("ask") {
+        None => false,
+        Some(v) => v.as_bool().ok_or_else(|| format!("ask must be true or false, got {v}"))?,
+    };
+    let spec = CommandSpec { name: name.to_owned(), run, output, types, folders, parallel, shortcut, menu, ask };
     check_command(&spec)?;
     Ok(spec)
+}
+
+/// Gives `spec` (the `n`th `[[commands]]` entry, about to join `settings.commands`) its
+/// shortcut, or warns why it has none (spec 7: the command stays, its key is left out).
+fn bind_command_key(settings: &mut Settings, spec: &CommandSpec, n: usize, file: &str, warnings: &mut Vec<Warning>) {
+    let Some(text) = &spec.shortcut else { return };
+    let index = settings.commands.len();
+    let chord = match parse_chord(text, Platform::current()) {
+        Ok(Some(chord)) => chord,
+        Ok(None) => return,
+        Err(err) => {
+            warnings.push(Warning::new(file, format!("commands[{n}]: shortcut: {err}; the command has no key")));
+            return;
+        }
+    };
+    if !chord.leaves_typing_alone() {
+        warnings.push(Warning::new(
+            file,
+            format!("commands[{n}]: shortcut \"{text}\" needs Ctrl, Alt or Cmd (or an F key); the command has no key"),
+        ));
+        return;
+    }
+    let taken = match fixed_owner(&chord, Platform::current()) {
+        Some(owner) => Err(owner.to_owned()),
+        None => settings.shortcuts.bind_command(index, chord).map_err(|owner| match owner {
+            KeyOwner::Action(action) => action.name().to_owned(),
+            KeyOwner::Command(other) => format!("\"{}\"", settings.commands[other].name),
+        }),
+    };
+    if let Err(who) = taken {
+        warnings.push(Warning::new(
+            file,
+            format!("commands[{n}]: shortcut \"{text}\" is already used by {who}; the command has no key"),
+        ));
+    }
+}
+
+fn parse_visit(value: &toml::Value) -> Option<Visit> {
+    let table = value.as_table()?;
+    let path = table.get("path")?.as_str().filter(|path| !path.is_empty())?;
+    let count = match table.get("count") {
+        None => 1,
+        Some(count) => u32::try_from(count.as_integer()?).ok().filter(|n| *n > 0)?,
+    };
+    let last = table.get("last").and_then(|v| v.as_integer()).and_then(|n| u64::try_from(n).ok()).unwrap_or(0);
+    Some(Visit { path: std::path::PathBuf::from(path), count, last })
 }
 
 /// Size in logical pixels, position in physical pixels.
@@ -721,6 +819,8 @@ pub struct State {
     pub archive: ArchiveState,
     pub convert: ConvertState,
     pub selection: SelectionState,
+    /// The folders visited (`[history] folders`), for the address bar's lists.
+    pub history: Vec<Visit>,
 }
 
 impl State {
@@ -807,6 +907,13 @@ impl State {
                 .filter(|s| !s.is_empty())
                 .map(str::to_owned),
         };
+        let history = table
+            .get("history")
+            .and_then(|v| v.as_table())
+            .and_then(|t| t.get("folders"))
+            .and_then(|v| v.as_array())
+            .map(|items| items.iter().filter_map(parse_visit).collect())
+            .unwrap_or_default();
         State {
             window,
             sidebar_width,
@@ -818,6 +925,7 @@ impl State {
             archive,
             convert,
             selection,
+            history,
         }
     }
 
@@ -911,6 +1019,22 @@ impl State {
             let mut table = toml::Table::new();
             table.insert("last-pattern".into(), toml::Value::String(pattern.clone()));
             root.insert("selection".into(), toml::Value::Table(table));
+        }
+        if !self.history.is_empty() {
+            let folders = self
+                .history
+                .iter()
+                .map(|visit| {
+                    let mut table = toml::Table::new();
+                    table.insert("path".into(), toml::Value::String(visit.path.to_string_lossy().into_owned()));
+                    table.insert("count".into(), toml::Value::Integer(visit.count.into()));
+                    table.insert("last".into(), toml::Value::Integer(i64::try_from(visit.last).unwrap_or(i64::MAX)));
+                    toml::Value::Table(table)
+                })
+                .collect();
+            let mut history = toml::Table::new();
+            history.insert("folders".into(), toml::Value::Array(folders));
+            root.insert("history".into(), toml::Value::Table(history));
         }
         root.to_string()
     }
@@ -1282,6 +1406,7 @@ rules = []
         assert_eq!(settings.archives, ArchivesSettings::default());
         assert_eq!(settings.tools, ToolsSettings::default());
         assert_eq!(settings.keyboard, KeyboardSettings::default());
+        assert_eq!(settings.history, HistorySettings::default());
         assert!(settings.filters.is_empty());
     }
 
@@ -1412,6 +1537,9 @@ last-pattern = \"\"
                 types: vec!["jpg".to_owned(), "png".to_owned()],
                 folders: true,
                 parallel: 4,
+                shortcut: None,
+                menu: None,
+                ask: false,
             }
         );
         let min = &settings.commands[1];
@@ -1518,7 +1646,15 @@ last-pattern = \"\"
         let (settings, warnings) = parse(&examples);
         assert!(warnings.is_empty(), "{warnings:?}\n{examples}");
         let names: Vec<&str> = settings.commands.iter().map(|c| c.name.as_str()).collect();
-        assert_eq!(names, ["Resize to 50% (ImageMagick)", "Office to PDF (LibreOffice)", "E-book to EPUB (Calibre)"]);
+        assert_eq!(
+            names,
+            [
+                "Resize to 50% (ImageMagick)",
+                "Office to PDF (LibreOffice)",
+                "E-book to EPUB (Calibre)",
+                "Zip together (7-Zip)"
+            ]
+        );
     }
 
     #[test]
@@ -1546,5 +1682,174 @@ last-pattern = \"\"
         assert!(!State::default().to_toml().contains("convert"), "the default is not written");
         let broken = State::parse("[convert]\nimage = 3\nlast-output = 4\nlast-folder = \"\"\n");
         assert_eq!(broken.convert, ConvertState::default());
+    }
+
+    #[test]
+    fn commands_read_their_shortcut_group_and_question() {
+        let (settings, warnings) = parse(
+            "[[commands]]\nname = \"Zip\"\nrun = [\"7z\", \"a\", \"x.zip\", \"{files}\"]\nshortcut = \"ctrl+alt+z\"\n\
+             menu = \" Archives \"\nask = true\n\
+             [[commands]]\nname = \"Plain\"\nrun = [\"x\", \"{in}\"]\nmenu = \"\"\n",
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let zip = &settings.commands[0];
+        assert_eq!(
+            (zip.shortcut.as_deref(), zip.menu.as_deref(), zip.ask),
+            (Some("ctrl+alt+z"), Some("Archives"), true)
+        );
+        let plain = &settings.commands[1];
+        assert_eq!((plain.shortcut.as_deref(), plain.menu.as_deref(), plain.ask), (None, None, false));
+        let chord = parse_chord("ctrl+alt+z", Platform::current()).unwrap().unwrap();
+        assert_eq!(settings.shortcuts.command_for(&chord), Some(0));
+        assert_eq!(settings.shortcuts.command_chord(0), Some(chord));
+        assert_eq!(settings.shortcuts.command_chord(1), None);
+    }
+
+    #[test]
+    fn a_command_key_taken_by_an_action_or_an_earlier_command_is_left_out() {
+        let (settings, warnings) = parse(
+            "[shortcuts]\nrefresh = \"ctrl+alt+r\"\n\n\
+             [[commands]]\nname = \"A\"\nrun = [\"x\"]\nshortcut = \"mod+t\"\n\
+             [[commands]]\nname = \"B\"\nrun = [\"x\"]\nshortcut = \"ctrl+alt+r\"\n\
+             [[commands]]\nname = \"C\"\nrun = [\"x\"]\nshortcut = \"ctrl+alt+k\"\n\
+             [[commands]]\nname = \"D\"\nrun = [\"x\"]\nshortcut = \"CTRL+ALT+K\"\n\
+             [[commands]]\nname = \"E\"\nrun = [\"x\"]\nshortcut = \"ctrl+q+\"\n\
+             [[commands]]\nname = \"F\"\nrun = [\"x\"]\nshortcut = \"shift+f10\"\n",
+        );
+        assert_eq!(settings.commands.len(), 6, "every command stays, only its key goes");
+        let messages: Vec<&str> = warnings.iter().map(|w| w.message.as_str()).collect();
+        assert_eq!(
+            messages,
+            [
+                "commands[1]: shortcut \"mod+t\" is already used by new-tab; the command has no key",
+                "commands[2]: shortcut \"ctrl+alt+r\" is already used by refresh; the command has no key",
+                "commands[4]: shortcut \"CTRL+ALT+K\" is already used by \"C\"; the command has no key",
+                "commands[5]: shortcut: missing key after \"+\"; the command has no key",
+                "commands[6]: shortcut \"shift+f10\" is already used by the file list; the command has no key",
+            ]
+        );
+        let k = parse_chord("ctrl+alt+k", Platform::current()).unwrap().unwrap();
+        assert_eq!(settings.shortcuts.command_for(&k), Some(2));
+        let t = parse_chord("mod+t", Platform::current()).unwrap().unwrap();
+        assert_eq!(
+            settings.shortcuts.action_for(&t),
+            Some(crate::shortcuts::Action::NewTab),
+            "the action keeps its key"
+        );
+    }
+
+    #[test]
+    fn a_command_key_needs_a_modifier_or_an_f_key() {
+        // A bare key would take a letter from type-ahead and the filter: refused, with a warning.
+        let (settings, warnings) = parse(
+            "[[commands]]
+name = \"A\"
+run = [\"x\"]
+shortcut = \"f\"
+             [[commands]]
+name = \"B\"
+run = [\"x\"]
+shortcut = \"shift+b\"
+             [[commands]]
+name = \"C\"
+run = [\"x\"]
+shortcut = \"delete\"
+             [[commands]]
+name = \"D\"
+run = [\"x\"]
+shortcut = \"f7\"
+             [[commands]]
+name = \"E\"
+run = [\"x\"]
+shortcut = \"alt+e\"
+             [[commands]]
+name = \"F\"
+run = [\"x\"]
+shortcut = \"shift+f8\"
+",
+        );
+        assert_eq!(settings.commands.len(), 6, "every command stays, only its key goes");
+        let messages: Vec<&str> = warnings.iter().map(|w| w.message.as_str()).collect();
+        let refused = |n: usize, text: &str| {
+            format!("commands[{n}]: shortcut \"{text}\" needs Ctrl, Alt or Cmd (or an F key); the command has no key")
+        };
+        assert_eq!(messages, [refused(1, "f"), refused(2, "shift+b"), refused(3, "delete")]);
+        for (i, text) in [(0, "f"), (1, "shift+b"), (2, "delete")] {
+            let chord = parse_chord(text, Platform::current()).unwrap().unwrap();
+            assert_eq!(settings.shortcuts.command_for(&chord), None, "{text}");
+            assert_eq!(settings.shortcuts.command_chord(i), None, "{text}");
+        }
+        for (i, text) in [(3, "f7"), (4, "alt+e"), (5, "shift+f8")] {
+            let chord = parse_chord(text, Platform::current()).unwrap().unwrap();
+            assert_eq!(settings.shortcuts.command_for(&chord), Some(i), "{text}");
+        }
+    }
+
+    #[test]
+    fn bad_command_extras_leave_the_command_out() {
+        for (body, expected) in [
+            ("shortcut = 3", "shortcut must be text"),
+            ("menu = true", "menu must be text"),
+            ("ask = \"yes\"", "ask must be true or false"),
+            ("asks = true", "unknown key \"asks\""),
+        ] {
+            let (settings, warnings) = parse(&format!("[[commands]]\nname = \"A\"\nrun = [\"x\"]\n{body}\n"));
+            assert!(settings.commands.is_empty(), "{body}");
+            assert!(warnings[0].message.contains(expected), "{body}: {warnings:?}");
+        }
+        let (settings, warnings) = parse("[[commands]]\nname = \"A\"\nrun = [\"x\", \"{files}\", \"{in}\"]\n");
+        assert!(settings.commands.is_empty());
+        assert!(warnings[0].message.contains(gezik_core::batch::convert::FILES_ALONE), "{warnings:?}");
+    }
+
+    /// A `[[commands]]` entry written in 5c, before `shortcut`, `menu` and `ask`, still reads
+    /// as it did: no key, no group, no question.
+    #[test]
+    fn a_5c_command_without_the_new_keys_still_reads() {
+        let (settings, warnings) = parse(
+            "[[commands]]\nname = \"Resize to 50% (ImageMagick)\"\n\
+             run = [\"magick\", \"{in}\", \"-resize\", \"50%\", \"{out}\"]\noutput = \"{name}-small.{ext}\"\n\
+             types = [\"jpg\", \"jpeg\", \"png\"]\nparallel = 4\n",
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let command = &settings.commands[0];
+        assert_eq!((command.shortcut.as_deref(), command.menu.as_deref(), command.ask), (None, None, false));
+        assert_eq!((command.parallel, command.types.len()), (4, 3));
+        assert_eq!(settings.shortcuts.command_chord(0), None);
+        assert_eq!(settings.shortcuts, Shortcuts::default(), "no command key was added");
+    }
+
+    #[test]
+    fn history_settings_are_read() {
+        assert!(Settings::default().history.remember);
+        let (settings, warnings) = parse("[history]\nremember = false\n");
+        assert!(warnings.is_empty() && !settings.history.remember, "{warnings:?}");
+        let (settings, warnings) = parse("[history]\nremember = \"no\"\n");
+        assert!(settings.history.remember);
+        assert!(warnings[0].message.starts_with("history.remember: expected true or false"), "{warnings:?}");
+        let (_, warnings) = parse("history = 1\n");
+        assert!(warnings[0].message.starts_with("history: expected a table"), "{warnings:?}");
+    }
+
+    #[test]
+    fn folder_history_round_trips_in_state() {
+        use gezik_core::history::Visit;
+        let state = State {
+            history: vec![
+                Visit { path: "D:/Work".into(), count: 3, last: 1_800_000_000 },
+                Visit { path: "/srv/ş x".into(), count: 1, last: 0 },
+            ],
+            ..State::default()
+        };
+        assert_eq!(State::parse(&state.to_toml()), state);
+        assert!(!State::default().to_toml().contains("history"));
+        let broken = State::parse(
+            "[history]\nfolders = [{ path = \"/a\", count = 0 }, { count = 2 }, { path = \"\" }, \
+             { path = \"/b\", count = 2, last = -5 }, { path = \"/c\" }]\n",
+        );
+        assert_eq!(
+            broken.history,
+            [Visit { path: "/b".into(), count: 2, last: 0 }, Visit { path: "/c".into(), count: 1, last: 0 }]
+        );
     }
 }

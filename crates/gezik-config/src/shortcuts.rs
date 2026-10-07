@@ -73,6 +73,15 @@ pub struct Chord {
     pub key: Key,
 }
 
+impl Chord {
+    /// Whether the chord can be a `[[commands]]` key: with Ctrl, Alt or Cmd, or an F key. A
+    /// bare key (or Shift and a key) types: it would take letters from type-ahead and the
+    /// filter.
+    pub fn leaves_typing_alone(&self) -> bool {
+        self.ctrl || self.alt || self.meta || matches!(self.key, Key::F(_))
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Platform {
     Mac,
@@ -83,6 +92,31 @@ impl Platform {
     pub fn current() -> Platform {
         if cfg!(target_os = "macos") { Platform::Mac } else { Platform::Other }
     }
+}
+
+/// Who has `chord` outside the shortcut table, if anyone: the file list's own keys (the
+/// primary modifier on arrows, PgUp/PgDn, Home/End and Space; Shift+F10, the menu key) or, on
+/// macOS, the menu bar's (Quit, Hide, Hide Others, Minimize), which never reach the window.
+pub fn fixed_owner(chord: &Chord, platform: Platform) -> Option<&'static str> {
+    let (primary, other) = match platform {
+        Platform::Mac => (chord.meta, chord.ctrl),
+        Platform::Other => (chord.ctrl, chord.meta),
+    };
+    let plain = !other && !chord.alt;
+    let moves = matches!(
+        chord.key,
+        Key::Up | Key::Down | Key::Left | Key::Right | Key::PageUp | Key::PageDown | Key::Home | Key::End
+    );
+    let menu_key = chord.shift && !primary && chord.key == Key::F(10);
+    if plain && (moves || menu_key || (primary && !chord.shift && chord.key == Key::Space)) {
+        return Some("the file list");
+    }
+    let menu_bar = platform == Platform::Mac
+        && primary
+        && !other
+        && !chord.shift
+        && matches!((chord.alt, chord.key), (false, Key::Char('q' | 'h' | 'm')) | (true, Key::Char('h')));
+    menu_bar.then_some("the macOS menu bar")
 }
 
 /// Parses `"mod+shift+t"`. `""` means "no shortcut" (`Ok(None)`).
@@ -178,10 +212,12 @@ pub enum Action {
     ReopenTab,
     TabPicker,
     ToggleTabLock,
+    /// Forgets the folders the address bar remembers (6b).
+    ClearHistory,
 }
 
 impl Action {
-    pub const ALL: [Action; 45] = [
+    pub const ALL: [Action; 46] = [
         Action::NewTab,
         Action::CloseTab,
         Action::NextTab,
@@ -227,6 +263,7 @@ impl Action {
         Action::ReopenTab,
         Action::TabPicker,
         Action::ToggleTabLock,
+        Action::ClearHistory,
     ];
 
     pub fn name(self) -> &'static str {
@@ -276,6 +313,7 @@ impl Action {
             Action::ReopenTab => "reopen-tab",
             Action::TabPicker => "tab-picker",
             Action::ToggleTabLock => "toggle-tab-lock",
+            Action::ClearHistory => "clear-history",
         }
     }
 
@@ -362,13 +400,24 @@ impl Action {
             (Action::ReopenTab, _) => &["mod+shift+t"],
             (Action::TabPicker, _) => &["mod+shift+a"],
             (Action::ToggleTabLock, _) => &[],
+            (Action::ClearHistory, _) => &[],
         }
     }
+}
+
+/// What a key is bound to already.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyOwner {
+    Action(Action),
+    /// A `[[commands]]` entry, by its index among the valid ones.
+    Command(usize),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Shortcuts {
     bindings: Vec<(Chord, Action)>,
+    /// The keys of `[[commands]]` entries, by their index among the valid ones.
+    commands: Vec<(Chord, usize)>,
 }
 
 impl Default for Shortcuts {
@@ -471,7 +520,7 @@ impl Shortcuts {
                 ));
             }
         }
-        Shortcuts { bindings }
+        Shortcuts { bindings, commands: Vec::new() }
     }
 
     pub fn action_for(&self, chord: &Chord) -> Option<Action> {
@@ -481,6 +530,30 @@ impl Shortcuts {
     /// The chord bound to `action`, if any.
     pub fn chord_for(&self, action: Action) -> Option<Chord> {
         self.bindings.iter().find(|(_, a)| *a == action).map(|(c, _)| *c)
+    }
+
+    /// Binds `chord` to command `index` (its place among the valid `[[commands]]`), unless an
+    /// action (default or written) or an earlier command has it: then nothing changes and
+    /// the owner is returned.
+    pub fn bind_command(&mut self, index: usize, chord: Chord) -> Result<(), KeyOwner> {
+        if let Some(action) = self.action_for(&chord) {
+            return Err(KeyOwner::Action(action));
+        }
+        if let Some(other) = self.command_for(&chord) {
+            return Err(KeyOwner::Command(other));
+        }
+        self.commands.push((chord, index));
+        Ok(())
+    }
+
+    /// The command `chord` runs, by its index among the valid `[[commands]]`.
+    pub fn command_for(&self, chord: &Chord) -> Option<usize> {
+        self.commands.iter().find(|(c, _)| c == chord).map(|(_, i)| *i)
+    }
+
+    /// The key of command `index`, if it has one.
+    pub fn command_chord(&self, index: usize) -> Option<Chord> {
+        self.commands.iter().find(|(_, i)| *i == index).map(|(c, _)| *c)
     }
 }
 
@@ -501,6 +574,27 @@ mod tests {
         let c = chord("Shift+CTRL+T");
         assert_eq!(c, Chord { ctrl: true, alt: false, shift: true, meta: false, key: key('t') });
         assert_eq!(chord("ctrl+shift+t"), c);
+    }
+
+    #[test]
+    fn the_file_lists_own_keys_and_the_macos_menus_are_taken() {
+        let other = |text| fixed_owner(&chord(text), Platform::Other);
+        let mac = |text| fixed_owner(&parse_chord(text, Platform::Mac).unwrap().unwrap(), Platform::Mac);
+        for text in ["ctrl+down", "ctrl+shift+end", "ctrl+pageup", "ctrl+home", "ctrl+space", "shift+f10"] {
+            assert_eq!(other(text), Some("the file list"), "{text}");
+        }
+        for text in ["ctrl+alt+down", "alt+home", "ctrl+shift+space", "f10", "ctrl+f10", "ctrl+q", "ctrl+h"] {
+            assert_eq!(other(text), None, "{text}");
+        }
+        for text in ["mod+down", "mod+shift+left", "mod+space", "shift+f10"] {
+            assert_eq!(mac(text), Some("the file list"), "{text}");
+        }
+        for text in ["mod+q", "mod+h", "mod+alt+h", "mod+m"] {
+            assert_eq!(mac(text), Some("the macOS menu bar"), "{text}");
+        }
+        for text in ["ctrl+down", "mod+shift+q", "mod+alt+q", "ctrl+q"] {
+            assert_eq!(mac(text), None, "{text}");
+        }
     }
 
     #[test]
@@ -833,5 +927,27 @@ back = [\"ctrl+u\", \"ctrl+j\"]
         assert!(warnings[0].message.starts_with("shortcuts.back:"));
         // back lost its user binding and is disabled (not reverted to its default).
         assert_eq!(s.action_for(&chord("alt+left")), None);
+    }
+
+    #[test]
+    fn clear_history_has_a_name_and_no_key() {
+        assert_eq!(Action::from_name("clear-history"), Some(Action::ClearHistory));
+        assert_eq!(Shortcuts::defaults(Platform::Other).chord_for(Action::ClearHistory), None);
+        let (s, warnings) = build(
+            "[shortcuts]
+clear-history = \"ctrl+shift+h\"
+",
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(s.action_for(&chord("ctrl+shift+h")), Some(Action::ClearHistory));
+    }
+
+    #[test]
+    fn a_command_key_never_takes_an_action_key() {
+        let mut s = Shortcuts::defaults(Platform::Other);
+        assert_eq!(s.bind_command(0, chord("ctrl+f")), Err(KeyOwner::Action(Action::Filter)));
+        assert_eq!(s.bind_command(0, chord("ctrl+alt+x")), Ok(()));
+        assert_eq!(s.bind_command(1, chord("ctrl+alt+x")), Err(KeyOwner::Command(0)));
+        assert_eq!((s.command_for(&chord("ctrl+alt+x")), s.action_for(&chord("ctrl+alt+x"))), (Some(0), None));
     }
 }

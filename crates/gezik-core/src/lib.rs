@@ -2,7 +2,9 @@
 //! Nothing in here touches the UI, so it can be tested and reused freely.
 
 pub mod batch;
+pub mod complete;
 pub mod drag;
+pub mod history;
 pub mod kind;
 pub mod layout;
 pub mod nav;

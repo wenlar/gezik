@@ -5,14 +5,15 @@
 //! played (its text is the main key's): such an action, or one without a shortcut, is run here.
 
 use gezik_config::shortcuts::{Action, Chord, Key, Platform};
-use slint::ComponentHandle;
+use gezik_core::batch::convert::CommandSpec;
 use slint::platform::{Key as SlintKey, WindowEvent};
+use slint::{ComponentHandle, ModelRc, VecModel};
 
-use crate::AppWindow;
 use crate::keys;
 use crate::navigation::Navigator;
 use crate::operations::Operations;
 use crate::view::View;
+use crate::{AppWindow, MenuEntry};
 
 pub fn install(window: &AppWindow, view: View, nav: Navigator, ops: Operations) {
     window.set_native_menu_bar(true);
@@ -23,6 +24,9 @@ pub fn install(window: &AppWindow, view: View, nav: Navigator, ops: Operations) 
             "minimize" => window.window().set_minimized(true),
             "zoom" => window.window().set_maximized(!window.window().is_maximized()),
             name => {
+                if let Some(index) = name.strip_prefix("command:").and_then(|i| i.parse::<usize>().ok()) {
+                    return crate::actions::run_command(index, &view);
+                }
                 let Some(action) = Action::from_name(name) else { return };
                 match keys::chord_for(action).filter(|c| !matches!(c.key, Key::Num(_))) {
                     // After the menu is done with this item: playing the keys changes the
@@ -50,6 +54,18 @@ pub fn install(window: &AppWindow, view: View, nav: Navigator, ops: Operations) 
             }
         }
     });
+}
+
+/// The Commands menu: the commands that have a key, with the key in the title.
+pub fn set_commands(window: &AppWindow, commands: &[CommandSpec]) {
+    let entries = crate::convert::bar_entries(commands, |i| {
+        keys::command_chord(i).map(|chord| keys::chord_label(&chord, Platform::Mac))
+    });
+    let entries: Vec<MenuEntry> = entries
+        .into_iter()
+        .map(|(id, title, enabled)| MenuEntry { id, title: crate::context_menu::menu_title(&title).into(), enabled })
+        .collect();
+    window.set_bar_commands(ModelRc::new(VecModel::from(entries)));
 }
 
 /// Presses and releases `chord`'s keys in the window, as the keyboard would.

@@ -622,9 +622,18 @@ pub struct CommandSpec {
     pub folders: bool,
     /// 1-16 at a time.
     pub parallel: u8,
+    /// The key that runs it on the selection (`shortcut`, written as `[shortcuts]` writes
+    /// keys); the shortcut table checks it.
+    pub shortcut: Option<String>,
+    /// The heading it goes under in "Commands ▸" (`menu`).
+    pub menu: Option<String>,
+    /// Asks "Run … on N items?" before it runs (`ask`).
+    pub ask: bool,
 }
 
-const PLACEHOLDERS: [&str; 6] = ["in", "out", "dir", "name", "ext", "outdir"];
+const PLACEHOLDERS: [&str; 7] = ["in", "out", "dir", "name", "ext", "outdir", "files"];
+
+pub const FILES_ALONE: &str = "{files} can't be used with {in}, {name}, {ext}, {out} or output";
 
 /// Splits `text` into literal pieces and placeholders; `{{` and `}}` are literal braces.
 fn pieces(text: &str) -> Result<Vec<Result<String, &str>>, String> {
@@ -669,12 +678,26 @@ pub fn check_command(spec: &CommandSpec) -> Result<(), String> {
     if spec.run.first().is_none_or(|program| program.trim().is_empty()) {
         return Err("run has no program".to_owned());
     }
+    let files = uses_files(spec);
+    if spec.run.first().is_some_and(|program| pieces(program).is_ok_and(|p| p.contains(&Err("files")))) {
+        return Err("{files} can't be the program".to_owned());
+    }
     for arg in &spec.run {
-        for piece in pieces(arg)? {
-            if piece == Err("out") && spec.output.is_none() {
+        let pieces = pieces(arg)?;
+        if pieces.contains(&Err("files")) && pieces.len() != 1 {
+            return Err("{files} must be an argument of its own".to_owned());
+        }
+        for piece in &pieces {
+            if files && matches!(piece, Err("in" | "name" | "ext" | "out")) {
+                return Err(FILES_ALONE.to_owned());
+            }
+            if *piece == Err("out") && spec.output.is_none() {
                 return Err("{out} needs an output".to_owned());
             }
         }
+    }
+    if files && spec.output.is_some() {
+        return Err(FILES_ALONE.to_owned());
     }
     if let Some(output) = &spec.output {
         for piece in pieces(output)? {
@@ -729,6 +752,7 @@ pub fn expand_command(
                     Err("name") => expanded.push(name_of(input, is_dir)),
                     Err("ext") => expanded.push(ext_of(input, is_dir)),
                     Err("outdir") => expanded.push(outdir),
+                    Err("files") => return Err("{files} runs once on all the items".to_owned()),
                     Err(field) => unreachable!("pieces lets through only known placeholders, not {field}"),
                 }
             }
@@ -765,6 +789,64 @@ pub fn expand_output_name(template: &str, input: &Path, is_dir: bool) -> Result<
         return Err(format!("output \"{text}\" is not a file name"));
     }
     Ok(name)
+}
+
+/// Whether `spec` runs once on the whole selection (`{files}` in `run`).
+pub fn uses_files(spec: &CommandSpec) -> bool {
+    spec.run.iter().any(|arg| pieces(arg).is_ok_and(|pieces| pieces.contains(&Err("files"))))
+}
+
+/// The program and arguments for running `spec` (a `{files}` command) once on `files`
+/// (absolute) in their folder `dir`: `{files}` becomes one argument per file, `{dir}` and
+/// `{outdir}` are `dir`.
+pub fn expand_files_command(spec: &CommandSpec, dir: &Path, files: &[PathBuf]) -> Result<Vec<OsString>, String> {
+    if spec.run.is_empty() {
+        return Err("run has no program".to_owned());
+    }
+    if files.is_empty() {
+        return Err("no items to run on".to_owned());
+    }
+    let mut out = Vec::with_capacity(spec.run.len() + files.len());
+    for arg in &spec.run {
+        let pieces = pieces(arg)?;
+        if pieces == [Err("files")] {
+            out.extend(files.iter().map(|file| file.as_os_str().to_os_string()));
+            continue;
+        }
+        let mut expanded = OsString::new();
+        for piece in pieces {
+            match piece {
+                Ok(text) => expanded.push(text),
+                Err("dir" | "outdir") => expanded.push(dir),
+                Err(field) => return Err(format!("{{{field}}} can't be used with {{files}}")),
+            }
+        }
+        out.push(expanded);
+    }
+    Ok(out)
+}
+
+/// How long `args` are as one command line. On Windows in UTF-16 units as `CreateProcess`
+/// gets them: each argument quoted, with room for every quote and backslash in it to be
+/// escaped, one space between. Elsewhere in bytes as `ARG_MAX` counts them: each argument,
+/// its end and its pointer.
+pub fn command_line_len(args: &[OsString], windows: bool) -> usize {
+    args.iter()
+        .map(|arg| {
+            if windows {
+                let text = arg.to_string_lossy();
+                let escapes = text.chars().filter(|c| matches!(c, '"' | '\\')).count();
+                text.encode_utf16().count() + escapes + 3
+            } else {
+                arg.len() + 1 + std::mem::size_of::<usize>()
+            }
+        })
+        .sum()
+}
+
+/// The error of a `{files}` run whose items do not fit one command line (spec 7).
+pub fn too_many_text(name: &str) -> String {
+    format!("Too many items for one run of {name}")
 }
 
 /// Whether `spec` runs on an item named `name`: folders when `folders`, files when `types`
@@ -1176,6 +1258,9 @@ mod tests {
             types: types.iter().map(|s| s.to_string()).collect(),
             folders: false,
             parallel: 1,
+            shortcut: None,
+            menu: None,
+            ask: false,
         }
     }
 
@@ -1290,5 +1375,52 @@ mod tests {
         assert!(command_applies(&folders, "dir", true));
         let unicode = command(&["t"], None, &["ŞEY"]);
         assert!(command_applies(&unicode, "a.şey", false));
+    }
+
+    #[test]
+    fn files_go_in_as_one_argument_each() {
+        let mut spec = command(&["zip", "-q", "{dir}/all.zip", "{files}", "--", "x{{y}}"], None, &[]);
+        assert!(uses_files(&spec) && check_command(&spec).is_ok());
+        let dir = root().join("photos");
+        let files = [dir.join("a b&c;d.jpg"), dir.join("-rf"), dir.join("ş 'q'.png")];
+        let list = expand_files_command(&spec, &dir, &files).unwrap();
+        let mut zip = dir.as_os_str().to_os_string();
+        zip.push("/all.zip");
+        assert_eq!(list.len(), 8);
+        assert_eq!(list[2], zip);
+        let wanted: Vec<OsString> = files.iter().map(|f| f.as_os_str().to_os_string()).collect();
+        assert_eq!(&list[3..6], wanted.as_slice());
+        assert_eq!(list[7], "x{y}");
+        assert!(expand_files_command(&spec, &dir, &[]).is_err(), "an empty selection is no run");
+        spec.run = vec!["t".into(), "{in}".into()];
+        assert!(expand_files_command(&spec, &dir, &files).is_err());
+    }
+
+    #[test]
+    fn files_stands_alone() {
+        let check = |run: &[&str], output: Option<&str>| check_command(&command(run, output, &[]));
+        assert_eq!(check(&["t", "--in={files}"], None).unwrap_err(), "{files} must be an argument of its own");
+        for run in [&["t", "{files}", "{in}"][..], &["t", "{files}", "{name}.x"], &["t", "{ext}", "{files}"]] {
+            assert_eq!(check(run, None).unwrap_err(), FILES_ALONE, "{run:?}");
+        }
+        assert_eq!(check(&["t", "{files}"], Some("{name}.zip")).unwrap_err(), FILES_ALONE);
+        assert_eq!(check(&["t", "{files}", "{out}"], Some("x")).unwrap_err(), FILES_ALONE);
+        assert!(check(&["t", "{dir}", "{outdir}", "{files}"], None).is_ok());
+        assert_eq!(check(&["{files}", "x"], None).unwrap_err(), "{files} can't be the program");
+        let per_item = command(&["t", "{files}"], None, &[]);
+        assert!(expand_command(&per_item, &root().join("a"), false, None).is_err(), "never one item at a time");
+        assert!(!uses_files(&command(&["t", "{in}", "{{files}}"], None, &[])), "escaped braces are text");
+    }
+
+    #[test]
+    fn the_command_line_length_counts_what_the_system_counts() {
+        let args: Vec<OsString> = ["ab", "a\"b", "ş"].map(OsString::from).into();
+        // Windows: UTF-16 units, room for each quote and backslash to be escaped, two quotes and a space.
+        assert_eq!(command_line_len(&args, true), (2 + 3) + (3 + 1 + 3) + (1 + 3));
+        // Elsewhere: bytes, the end and a pointer each (ş is two bytes).
+        let p = std::mem::size_of::<usize>();
+        assert_eq!(command_line_len(&args, false), (2 + 1 + p) + (3 + 1 + p) + (2 + 1 + p));
+        assert_eq!(command_line_len(&[OsString::from("😀")], true), 2 + 3, "two UTF-16 units");
+        assert_eq!(too_many_text("Zip"), "Too many items for one run of Zip");
     }
 }

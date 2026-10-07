@@ -1,7 +1,7 @@
 # Alt Proje 6: Klavye Paketi — Tasarım
 
 - **Tarih:** 2026-10-07
-- **Durum:** Tasarım onaylandı (2026-10-07); 6a uygulandı
+- **Durum:** Tasarım onaylandı (2026-10-07); 6a, 6b uygulandı
 - **Kapsam:** Gezik yol haritasının 6. alt projesi (yeni sıra: `docs/superpowers/notes/2026-10-07-rakip-ozet.md` §2); tek spec, iki plan ve iki PR: **6a** süzgeç, seçim ve sekmeler; **6b** yol tamamlama, klasör geçmişi ve kullanıcı komutları
 - **Dayandığı:** `2026-10-04-gezinme-design.md` (sekmeler, geçmiş, adres çubuğu, harfle atlama), `2026-10-04-gorunum-design.md` (liste modeli, seçim, sıralama), `2026-10-03-ayarlar-ve-tema-design.md` (ayar dosyası, kısayol biçimi, canlı yeniden yükleme), `2026-10-05-toplu-islemler-design.md` §7 (`[[commands]]`)
 

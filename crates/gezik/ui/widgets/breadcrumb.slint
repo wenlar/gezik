@@ -27,6 +27,15 @@ export component Breadcrumb inherits Rectangle {
     accessible-role: groupbox;
     accessible-label: "Address";
 
+    // The field's text changed by typing (not when set).
+    callback edited(string);
+
+    // Puts `text` in the field with the cursor at byte `at` (a suggestion taken).
+    public function set-text(text: string, at: int) {
+        field.text = text;
+        field.focus-at(at);
+    }
+
     public function edit() {
         root.editing = true;
         field.text = root.path-text;
@@ -87,6 +96,7 @@ export component Breadcrumb inherits Rectangle {
         visible: root.editing;
         width: root.width;
         height: root.height;
+        edited(text) => { root.edited(text); }
         accepted(text) => {
             root.editing = false;
             root.accepted(text);

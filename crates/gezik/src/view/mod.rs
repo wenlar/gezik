@@ -972,6 +972,11 @@ impl View {
         self.0.show_hidden.set(!self.0.show_hidden.get());
     }
 
+    /// Whether hidden items are shown.
+    pub fn shows_hidden(&self) -> bool {
+        self.0.show_hidden.get()
+    }
+
     /// The folder shown; `None` for "This PC".
     pub fn folder(&self) -> Option<PathBuf> {
         self.0.data.borrow().listing.folder().map(Path::to_path_buf)
