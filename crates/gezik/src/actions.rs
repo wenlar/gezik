@@ -1,4 +1,4 @@
-//! The actions of the keyboard package (6a, 6b) and of 7a, run by their shortcuts (main.rs
+//! The actions of the keyboard package (6a, 6b) and of 7a and 7b, run by their shortcuts (main.rs
 //! `handle_key`) and on macOS by the menu bar when their chord cannot be played there (the
 //! keypad's) or there is none.
 
@@ -20,7 +20,7 @@ pub fn run_command(index: usize, view: &View) {
     crate::convert::run_by_index(index, items);
 }
 
-/// Runs `action` if it is one of 6a's, 6b's and 7a's; returns whether it ran.
+/// Runs `action` if it is one of 6a's, 6b's, 7a's and 7b's; returns whether it ran.
 pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
     match action {
         Action::Tab1
@@ -52,6 +52,24 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         Action::OpenTerminalAdmin => crate::terminal::open_for_view(view, true),
         Action::CopyPath => crate::copy_path::copy_selection(view),
         Action::SaveTabSet => crate::tab_sets::with_current(crate::tab_sets::TabSets::ask_save),
+        Action::Pin1
+        | Action::Pin2
+        | Action::Pin3
+        | Action::Pin4
+        | Action::Pin5
+        | Action::Pin6
+        | Action::Pin7
+        | Action::Pin8
+        | Action::Pin9 => {
+            // A number with no pin shown: nothing (spec 6.4).
+            let mut location = None;
+            if let Some(n) = action.pin_number() {
+                crate::sidebar::with_current(|sidebar| location = sidebar.pin_location(n - 1));
+            }
+            if let Some(location) = location {
+                nav.go(location);
+            }
+        }
         // Not theirs: `handle_key` and the menu bar run these themselves. Listed one by one so
         // that a new action is a compile error here until it is placed.
         Action::NewTab
@@ -79,16 +97,7 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         | Action::Duplicate
         | Action::Undo
         | Action::Redo
-        | Action::BatchRename
-        | Action::Pin1
-        | Action::Pin2
-        | Action::Pin3
-        | Action::Pin4
-        | Action::Pin5
-        | Action::Pin6
-        | Action::Pin7
-        | Action::Pin8
-        | Action::Pin9 => return false,
+        | Action::BatchRename => return false,
     }
     true
 }

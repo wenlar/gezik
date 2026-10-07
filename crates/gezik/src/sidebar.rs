@@ -45,6 +45,12 @@ pub fn same_path(a: &Path, b: &Path) -> bool {
                 .all(|(x, y)| same_text(&x.as_os_str().to_string_lossy(), &y.as_os_str().to_string_lossy())))
 }
 
+/// The alias an answer to Rename… gives: none for an empty one or the folder's own name.
+pub fn alias_for(answer: &str, folder_name: &str) -> Option<String> {
+    let answer = answer.trim();
+    (!answer.is_empty() && answer != folder_name).then(|| answer.to_owned())
+}
+
 /// A pinned entry that exists on this machine.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pin {
@@ -197,9 +203,8 @@ struct Inner {
     /// The pinned part as last drawn: its rows, the sidebar row of its first, the groups shown.
     lines: Vec<PinLine>,
     first_pin_row: Option<usize>,
-    // Task 9 uses this.
-    #[allow(dead_code)]
     groups: Vec<String>,
+    dialogs: crate::dialog::Dialogs,
 }
 
 thread_local! {
@@ -219,7 +224,12 @@ pub fn with_current(f: impl FnOnce(&Sidebar)) {
 pub struct Sidebar(Rc<RefCell<Inner>>);
 
 impl Sidebar {
-    pub fn new(window: &AppWindow, nav: Navigator, store: Option<ConfigStore>) -> Sidebar {
+    pub fn new(
+        window: &AppWindow,
+        nav: Navigator,
+        store: Option<ConfigStore>,
+        dialogs: crate::dialog::Dialogs,
+    ) -> Sidebar {
         let rows = Rc::new(VecModel::default());
         window.set_sidebar_rows(ModelRc::from(rows.clone()));
         let sidebar = Sidebar(Rc::new(RefCell::new(Inner {
@@ -236,6 +246,7 @@ impl Sidebar {
             lines: Vec::new(),
             first_pin_row: None,
             groups: Vec::new(),
+            dialogs,
         })));
         // Re-highlight on location changes, relabel after places reload. No I/O here: this
         // runs on every navigation.
@@ -393,18 +404,78 @@ impl Sidebar {
     }
 
     /// The groups shown, in order (a group heading's `index` is its place here).
-    // Task 9 uses this.
-    #[allow(dead_code)]
     pub fn shown_groups(&self) -> Vec<String> {
         self.0.borrow().groups.clone()
     }
 
     /// The group of the shown pin of `path`.
-    // Task 9 uses this.
-    #[allow(dead_code)]
     pub fn group_of(&self, path: &Path) -> Option<String> {
         let inner = self.0.borrow();
         inner.pins.visible.iter().find(|pin| same_path(&pin.path, path)).and_then(|pin| pin.entry.group.clone())
+    }
+
+    /// The shown pin of `path`: its path as settings.toml has it.
+    fn entry_of(&self, path: &Path) -> Option<String> {
+        let inner = self.0.borrow();
+        inner.pins.visible.iter().find(|pin| same_path(&pin.path, path)).map(|pin| pin.entry.path.clone())
+    }
+
+    /// Rename… on a pin: its alias (spec 6.3); empty, or the folder's own name, takes it away.
+    pub fn ask_alias(&self, path: &Path) {
+        let found = {
+            let inner = self.0.borrow();
+            inner.pins.visible.iter().find(|pin| same_path(&pin.path, path)).map(|pin| {
+                let folder = inner.nav.places().title_for(&Location::Path(pin.path.clone()));
+                (pin.entry.path.clone(), pin.entry.name.clone().unwrap_or_else(|| folder.clone()), folder)
+            })
+        };
+        let Some((entry, initial, folder)) = found else { return };
+        let (this, dialogs) = (self.clone(), self.0.borrow().dialogs.clone());
+        let message = "Name in the sidebar (empty: the folder's own):";
+        dialogs.ask_text("Rename", message, initial, &["Rename", "Cancel"], move |answer| {
+            let Some(answer) = answer else { return };
+            let name = alias_for(&answer, &folder);
+            this.edit(|list| pins::find(list, &entry).is_some_and(|i| pins::set_name(list, i, name.as_deref())));
+        });
+    }
+
+    /// Move to group ▸ New group…: asks for its name; a name a group has joins that group.
+    pub fn ask_new_group(&self, path: &Path) {
+        let Some(entry) = self.entry_of(path) else { return };
+        let (this, dialogs) = (self.clone(), self.0.borrow().dialogs.clone());
+        dialogs.ask_text("New group", "Name for the group:", "", &["Create", "Cancel"], move |answer| {
+            let Some(name) = answer.filter(|name| !name.trim().is_empty()) else { return };
+            this.edit(|list| pins::find(list, &entry).is_some_and(|i| pins::set_group(list, i, Some(&name))));
+        });
+    }
+
+    /// Move to group ▸ a group, or No group (`None`).
+    pub fn set_group(&self, path: &Path, group: Option<&str>) {
+        let Some(entry) = self.entry_of(path) else { return };
+        self.edit(|list| pins::find(list, &entry).is_some_and(|i| pins::set_group(list, i, group)));
+    }
+
+    pub fn move_group(&self, group: &str, up: bool) {
+        self.edit(|list| pins::move_group(list, group, up));
+    }
+
+    /// Rename group…: asks for the new name; a name another group has joins the two.
+    pub fn ask_group_name(&self, group: &str) {
+        let (this, dialogs, old) = (self.clone(), self.0.borrow().dialogs.clone(), group.to_owned());
+        dialogs.ask_text("Rename group", "Name for the group:", group, &["Rename", "Cancel"], move |answer| {
+            if let Some(name) = answer {
+                this.edit(|list| pins::rename_group(list, &old, &name));
+            }
+        });
+    }
+
+    pub fn ungroup(&self, group: &str) {
+        self.edit(|list| pins::ungroup(list, group));
+    }
+
+    /// Where `pin-N` goes: shown pin `n` (0-based), in the sidebar's order (spec 6.4).
+    pub fn pin_location(&self, n: usize) -> Option<Location> {
+        self.0.borrow().pins.visible.get(n).map(|pin| Location::Path(pin.path.clone()))
     }
 
     /// The pins' tips name their keys: the rows again once the shortcuts changed.
@@ -586,6 +657,13 @@ impl Sidebar {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_alias_is_dropped_when_empty_or_the_folders_own_name() {
+        assert_eq!(alias_for(" Gezik ", "gezik").as_deref(), Some("Gezik"));
+        assert_eq!(alias_for("   ", "gezik"), None);
+        assert_eq!(alias_for("gezik", "gezik"), None);
+    }
 
     fn plain(items: &[&str]) -> Vec<PinEntry> {
         items.iter().map(|s| PinEntry::plain(*s)).collect()

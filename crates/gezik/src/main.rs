@@ -566,10 +566,10 @@ fn main() -> Result<(), slint::PlatformError> {
     // Captures no navigator (it is not `Send`): the result finds it on the UI thread.
     places::load_in_background(window.as_weak(), |part| navigation::with_current(|nav| nav.set_places(part)));
 
-    let sidebar = sidebar::Sidebar::new(&window, nav.clone(), config.clone());
+    let dialogs = dialog::Dialogs::new(&window);
+    let sidebar = sidebar::Sidebar::new(&window, nav.clone(), config.clone(), dialogs.clone());
     sidebar.install();
     sidebar.set_pinned(initial_settings.pinned);
-    let dialogs = dialog::Dialogs::new(&window);
     let _tab_sets = tab_sets::TabSets::new(&window, nav.clone(), view.clone(), dialogs.clone(), config.clone());
     let _filter = filter::Filter::new(&window, view.clone(), dialogs.clone(), config.clone());
     let _tab_tools = tab_tools::TabTools::new(&window, nav.clone());

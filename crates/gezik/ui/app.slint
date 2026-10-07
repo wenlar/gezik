@@ -143,6 +143,16 @@ export component AppWindow inherits Window {
             MenuSeparator { }
             MenuItem { title: "Go to Folder…"; shortcut: root.menu-keys ? @keys(Control + L) : @keys(); activated => { root.menu-command("focus-path"); } }
             MenuSeparator { }
+            MenuItem { title: "Pinned 1"; shortcut: root.menu-keys ? @keys(Control + Alt + "1") : @keys(); activated => { root.menu-command("pin-1"); } }
+            MenuItem { title: "Pinned 2"; shortcut: root.menu-keys ? @keys(Control + Alt + "2") : @keys(); activated => { root.menu-command("pin-2"); } }
+            MenuItem { title: "Pinned 3"; shortcut: root.menu-keys ? @keys(Control + Alt + "3") : @keys(); activated => { root.menu-command("pin-3"); } }
+            MenuItem { title: "Pinned 4"; shortcut: root.menu-keys ? @keys(Control + Alt + "4") : @keys(); activated => { root.menu-command("pin-4"); } }
+            MenuItem { title: "Pinned 5"; shortcut: root.menu-keys ? @keys(Control + Alt + "5") : @keys(); activated => { root.menu-command("pin-5"); } }
+            MenuItem { title: "Pinned 6"; shortcut: root.menu-keys ? @keys(Control + Alt + "6") : @keys(); activated => { root.menu-command("pin-6"); } }
+            MenuItem { title: "Pinned 7"; shortcut: root.menu-keys ? @keys(Control + Alt + "7") : @keys(); activated => { root.menu-command("pin-7"); } }
+            MenuItem { title: "Pinned 8"; shortcut: root.menu-keys ? @keys(Control + Alt + "8") : @keys(); activated => { root.menu-command("pin-8"); } }
+            MenuItem { title: "Pinned 9"; shortcut: root.menu-keys ? @keys(Control + Alt + "9") : @keys(); activated => { root.menu-command("pin-9"); } }
+            MenuSeparator { }
             MenuItem { title: "Clear Folder History"; activated => { root.menu-command("clear-history"); } }
         }
         if root.bar-commands.length > 0: Menu {

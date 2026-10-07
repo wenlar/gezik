@@ -22,7 +22,7 @@ use crate::navigation::Navigator;
 use crate::operations::Operations;
 use crate::popup::Anchor;
 use crate::preview::Preview;
-use crate::sidebar::{SECTION_PINNED, Sidebar};
+use crate::sidebar::{SECTION_GROUP, SECTION_PINNED, Sidebar};
 use crate::view::View;
 use crate::{AppWindow, MenuEntry, MenuSub};
 
@@ -92,6 +92,9 @@ pub fn items(place: Place, native_shell: bool) -> Vec<(u32, &'static str)> {
             }
             if pinned_section && !last {
                 out.push((MOVE_DOWN, "Move down"));
+            }
+            if pinned_section {
+                out.push((RENAME_PIN, "Rename…"));
             }
         }
         Place::Tab { only_tab, locked } => {
@@ -233,6 +236,18 @@ pub const TAB_SET_OPEN_FIRST: u32 = 1100;
 pub const TAB_SET_REPLACE_FIRST: u32 = 1130;
 pub const TAB_SET_DELETE_FIRST: u32 = 1160;
 pub const TAB_SET_MAX: u32 = 30;
+/// 1200: Rename… (a pinned folder's alias). 1201: Move to group ▸ New group…; 1202: No group;
+/// 1210-1259: Move to group ▸ group N (the groups shown, by place). 1260-1263: a group
+/// heading's menu.
+pub const RENAME_PIN: u32 = 1200;
+pub const GROUP_NEW: u32 = 1201;
+pub const GROUP_NONE: u32 = 1202;
+pub const GROUP_MOVE_FIRST: u32 = 1210;
+pub const GROUP_MAX: u32 = 50;
+pub const GROUP_UP: u32 = 1260;
+pub const GROUP_DOWN: u32 = 1261;
+pub const GROUP_RENAME: u32 = 1262;
+pub const UNGROUP: u32 = 1263;
 /// 1300-1304: the View menu's options (Hide extensions, Folders first, Single-click to open,
 /// Show hidden items, Show system items); 1310-1313 Date format ▸ in `DateFormat::ALL` order;
 /// 1320-1321 Size format ▸ in `SizeFormat::ALL` order.
@@ -439,6 +454,37 @@ fn pin_toggle(pinned: bool) -> (u32, &'static str) {
     if pinned { (UNPIN, "Unpin from sidebar") } else { (PIN, "Pin to sidebar") }
 }
 
+/// "Move to group ▸" for a pin in group `own`: the groups shown but its own (by their place
+/// among them, up to `GROUP_MAX`), "New group…", and "No group" when it has one.
+pub fn group_items(groups: &[String], own: Option<&str>) -> Vec<(u32, String, bool)> {
+    let mut out: Vec<(u32, String, bool)> = groups
+        .iter()
+        .enumerate()
+        .take(GROUP_MAX as usize)
+        .filter(|(_, group)| own.is_none_or(|own| !gezik_config::pins::same_group(own, group)))
+        .map(|(i, group)| (GROUP_MOVE_FIRST + i as u32, group.clone(), true))
+        .collect();
+    out.push((GROUP_NEW, "New group…".to_owned(), true));
+    if own.is_some() {
+        out.push((GROUP_NONE, "No group".to_owned(), true));
+    }
+    out
+}
+
+/// A group heading's menu: move it (not past the first or the last), rename it, ungroup it.
+pub fn group_heading_items(first: bool, last: bool) -> Vec<(u32, &'static str)> {
+    let mut out = Vec::new();
+    if !first {
+        out.push((GROUP_UP, "Move group up"));
+    }
+    if !last {
+        out.push((GROUP_DOWN, "Move group down"));
+    }
+    out.push((GROUP_RENAME, "Rename group…"));
+    out.push((UNGROUP, "Ungroup"));
+    out
+}
+
 /// What a menu was opened for, captured when it opens. Items run later (the Slint menu
 /// stays open while other things happen), so nothing here is an index that could point
 /// elsewhere by then: rows and sidebar entries are kept by path, tabs by id.
@@ -447,6 +493,8 @@ enum Subject {
     Row(PathBuf),
     Rows(Vec<PathBuf>),
     SidebarEntry(PathBuf),
+    /// A group heading of the sidebar, by name.
+    PinGroup(String),
     /// A tab by id, and the tab set names its menu listed.
     Tab(u64, Vec<String>),
     /// Empty space in this folder.
@@ -502,6 +550,8 @@ pub struct Menus {
     subject: Rc<RefCell<Option<Subject>>>,
     /// The rows a row menu was opened for (path, is a folder), for its archive items.
     rows: Rc<RefCell<Vec<(PathBuf, bool)>>>,
+    /// The groups the last sidebar menu listed in Move to group ▸ (items are by place).
+    pin_groups: Rc<RefCell<Vec<String>>>,
     #[cfg_attr(not(windows), allow(dead_code))]
     native_menu: MenuGate,
 }
@@ -524,6 +574,7 @@ impl Menus {
             ops,
             subject: Rc::default(),
             rows: Rc::default(),
+            pin_groups: Rc::default(),
             native_menu: MenuGate::default(),
         };
         window.on_menu_closed(|| {
@@ -663,16 +714,39 @@ impl Menus {
         Submenu { title: "Copy path as".to_owned(), at, items: copy_path_items(cfg!(windows), unc) }
     }
 
-    /// Right-click on sidebar entry (`section`, `index`), at window position `x`, `y`.
+    /// Right-click on sidebar entry (`section`, `index`), at window position `x`, `y`; on a
+    /// group's heading, its menu.
     pub fn sidebar_entry(&self, section: i32, index: i32, x: f32, y: f32) {
+        if section == SECTION_GROUP {
+            return self.group_heading(index, x, y);
+        }
         let Some(Location::Path(path)) = self.sidebar.location_of(section, index) else { return };
         let pinned_section = section == SECTION_PINNED;
         let (first, last) = if pinned_section { self.sidebar.group_ends(&path) } else { (true, true) };
         let place = Place::Sidebar { pinned_section, pinned: self.sidebar.is_pinned(&path), first, last };
         let mut list = owned(items(place, cfg!(windows)));
+        let mut subs = Vec::new();
+        if pinned_section {
+            let groups = self.sidebar.shown_groups();
+            let own = self.sidebar.group_of(&path);
+            subs.push(Submenu {
+                title: "Move to group".to_owned(),
+                at: list.len(),
+                items: group_items(&groups, own.as_deref()),
+            });
+            *self.pin_groups.borrow_mut() = groups;
+        }
         list.extend(owned(terminal_items(cfg!(windows))));
-        let subs = vec![self.copy_path_sub(std::slice::from_ref(&path), list.len())];
+        subs.push(self.copy_path_sub(std::slice::from_ref(&path), list.len()));
         self.open(Subject::SidebarEntry(path.clone()), list, subs, MenuTarget::Item(path), x, y, None);
+    }
+
+    /// Right-click on the heading of group `index` (its place among the groups shown).
+    fn group_heading(&self, index: i32, x: f32, y: f32) {
+        let groups = self.sidebar.shown_groups();
+        let Some(i) = usize::try_from(index).ok().filter(|i| *i < groups.len()) else { return };
+        *self.subject.borrow_mut() = Some(Subject::PinGroup(groups[i].clone()));
+        self.open_slint(&group_heading_items(i == 0, i + 1 == groups.len()), Anchor::point(x, y));
     }
 
     /// Right-click on tab `index`, at window position `x`, `y`. Tabs get Gezik's own menu
@@ -1003,6 +1077,18 @@ impl Menus {
             (PIN, Subject::Row(path) | Subject::SidebarEntry(path)) => self.sidebar.pin(path),
             (UNPIN, Subject::Row(path) | Subject::SidebarEntry(path)) => self.sidebar.unpin_path(&path),
             (MOVE_UP | MOVE_DOWN, Subject::SidebarEntry(path)) => self.sidebar.move_in_group(&path, id == MOVE_UP),
+            (RENAME_PIN, Subject::SidebarEntry(path)) => self.sidebar.ask_alias(&path),
+            (GROUP_NEW, Subject::SidebarEntry(path)) => self.sidebar.ask_new_group(&path),
+            (GROUP_NONE, Subject::SidebarEntry(path)) => self.sidebar.set_group(&path, None),
+            (id, Subject::SidebarEntry(path)) if (GROUP_MOVE_FIRST..GROUP_MOVE_FIRST + GROUP_MAX).contains(&id) => {
+                let group = self.pin_groups.borrow().get((id - GROUP_MOVE_FIRST) as usize).cloned();
+                if let Some(group) = group {
+                    self.sidebar.set_group(&path, Some(&group));
+                }
+            }
+            (GROUP_UP | GROUP_DOWN, Subject::PinGroup(group)) => self.sidebar.move_group(&group, id == GROUP_UP),
+            (GROUP_RENAME, Subject::PinGroup(group)) => self.sidebar.ask_group_name(&group),
+            (UNGROUP, Subject::PinGroup(group)) => self.sidebar.ungroup(&group),
             (SAVE_TAB_SET, Subject::Tab(..)) => crate::tab_sets::with_current(crate::tab_sets::TabSets::ask_save),
             (id, Subject::Tab(_, names)) if crate::tab_sets::set_item(id).is_some() => {
                 crate::tab_sets::with_current(|sets| sets.chosen(id, &names));
@@ -1244,6 +1330,9 @@ fn from_submenu(id: u32) -> bool {
         || crate::tab_sets::set_item(id).is_some()
         || (DATE_FORMAT_FIRST..DATE_FORMAT_FIRST + DateFormat::ALL.len() as u32).contains(&id)
         || (SIZE_FORMAT_FIRST..SIZE_FORMAT_FIRST + SizeFormat::ALL.len() as u32).contains(&id)
+        || (GROUP_MOVE_FIRST..GROUP_MOVE_FIRST + GROUP_MAX).contains(&id)
+        || id == GROUP_NEW
+        || id == GROUP_NONE
 }
 
 /// Whether Slint shows its menus as the system's: on Windows and macOS (through muda),
@@ -1444,6 +1533,13 @@ mod tests {
             SINGLE_CLICK_OPEN,
             SHOW_HIDDEN,
             SHOW_SYSTEM,
+            RENAME_PIN,
+            GROUP_NEW,
+            GROUP_NONE,
+            GROUP_UP,
+            GROUP_DOWN,
+            GROUP_RENAME,
+            UNGROUP,
         ];
         let mut ranges: Vec<std::ops::Range<u32>> = singles.iter().map(|id| *id..id + 1).collect();
         ranges.extend([
@@ -1464,6 +1560,7 @@ mod tests {
             TAB_SET_DELETE_FIRST..TAB_SET_DELETE_FIRST + TAB_SET_MAX,
             DATE_FORMAT_FIRST..DATE_FORMAT_FIRST + DateFormat::ALL.len() as u32,
             SIZE_FORMAT_FIRST..SIZE_FORMAT_FIRST + SizeFormat::ALL.len() as u32,
+            GROUP_MOVE_FIRST..GROUP_MOVE_FIRST + GROUP_MAX,
         ]);
         for (i, a) in ranges.iter().enumerate() {
             assert!(a.start >= 1 && a.end <= GEZIK_IDS_END, "{a:?}: 1..4096 (0 is a heading, 4096 on the Shell's)");
@@ -1575,11 +1672,46 @@ mod tests {
     #[test]
     fn pinned_sidebar_rows_can_move_within_bounds() {
         let first = items(Place::Sidebar { pinned_section: true, pinned: true, first: true, last: false }, true);
-        assert_eq!(ids(first), [OPEN_IN_NEW_TAB, UNPIN, MOVE_DOWN]);
+        assert_eq!(ids(first), [OPEN_IN_NEW_TAB, UNPIN, MOVE_DOWN, RENAME_PIN]);
         let middle = items(Place::Sidebar { pinned_section: true, pinned: true, first: false, last: false }, true);
-        assert_eq!(ids(middle), [OPEN_IN_NEW_TAB, UNPIN, MOVE_UP, MOVE_DOWN]);
+        assert_eq!(ids(middle), [OPEN_IN_NEW_TAB, UNPIN, MOVE_UP, MOVE_DOWN, RENAME_PIN]);
         let folder = items(Place::Sidebar { pinned_section: false, pinned: false, first: false, last: false }, true);
         assert_eq!(ids(folder), [OPEN_IN_NEW_TAB, PIN]);
+    }
+
+    #[test]
+    fn move_to_group_lists_the_other_groups_new_and_none() {
+        let groups = vec!["Work".to_owned(), "Media".to_owned()];
+        let titles = |items: Vec<(u32, String, bool)>| items.into_iter().map(|(id, t, _)| (id, t)).collect::<Vec<_>>();
+        assert_eq!(
+            titles(group_items(&groups, None)),
+            [
+                (GROUP_MOVE_FIRST, "Work".to_owned()),
+                (GROUP_MOVE_FIRST + 1, "Media".to_owned()),
+                (GROUP_NEW, "New group…".to_owned())
+            ]
+        );
+        assert_eq!(
+            titles(group_items(&groups, Some("work"))),
+            [
+                (GROUP_MOVE_FIRST + 1, "Media".to_owned()),
+                (GROUP_NEW, "New group…".to_owned()),
+                (GROUP_NONE, "No group".to_owned())
+            ],
+            "its own group left out; the ids go by place"
+        );
+        let many: Vec<String> = (0..GROUP_MAX + 5).map(|i| format!("G{i}")).collect();
+        assert_eq!(group_items(&many, None).len(), GROUP_MAX as usize + 1);
+        assert!(from_submenu(GROUP_MOVE_FIRST + 3) && from_submenu(GROUP_NEW) && from_submenu(GROUP_NONE));
+        assert!(!from_submenu(RENAME_PIN));
+    }
+
+    #[test]
+    fn a_group_heading_moves_renames_and_ungroups() {
+        assert_eq!(ids(group_heading_items(true, false)), [GROUP_DOWN, GROUP_RENAME, UNGROUP]);
+        assert_eq!(ids(group_heading_items(false, true)), [GROUP_UP, GROUP_RENAME, UNGROUP]);
+        assert_eq!(ids(group_heading_items(false, false)), [GROUP_UP, GROUP_DOWN, GROUP_RENAME, UNGROUP]);
+        assert_eq!(ids(group_heading_items(true, true)), [GROUP_RENAME, UNGROUP]);
     }
 
     #[test]
