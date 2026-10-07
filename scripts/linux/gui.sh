@@ -3,7 +3,7 @@
 # input: xdotool (XTEST) under Xvfb, wtype and the vpointer example under a headless sway.
 #   docker build -t gezik-linux scripts/linux
 #   docker run --rm -v "$PWD:/src" -v gezik-target:/target -v gezik-cargo:/usr/local/cargo/registry \
-#       -e CARGO_TARGET_DIR=/target gezik-linux bash scripts/linux/gui.sh [x11|wayland|popups|tabdrag|pdf|pdfnote|filter|select|tabs|keyboard|commands|paths|history|terminal|copy-path|all]
+#       -e CARGO_TARGET_DIR=/target gezik-linux bash scripts/linux/gui.sh [x11|wayland|popups|tabdrag|pdf|pdfnote|filter|select|tabs|keyboard|commands|paths|history|terminal|copy-path|session|tabsets|all]
 #   (not in `all`, release builds: `filterperf` times the filter at 100,000 files, `memory [exe]`
 #   gives idle memory)
 # Needs the network (apt for 7-Zip, Gezik's own 7-Zip download). Screenshots go to
@@ -39,6 +39,7 @@ fresh_files() {
     echo inner > /tmp/t/Docs/inner.txt
     for i in 1 2 3; do echo $i > /tmp/t/Proj/photo$i.txt; done
     echo AAA > /tmp/t/Proj/a.txt; echo BBB > /tmp/t/Proj/b.txt
+    printf '[session]\nrestore = false\n' > /tmp/cfg/settings.toml
 }
 
 fresh_archives() {
@@ -297,6 +298,8 @@ walk(json.load(sys.stdin))'; }
     check "wayland: copy and paste" '[ -f /tmp/t/Docs/a.txt ] && [ -f /tmp/t/a.txt ]'
     wk -P Alt_L -k Up -p Alt_L; sleep 0.5
     check "wayland: Alt+Up goes up" '[ "$(wtitle)" = "t — Gezik" ]'
+    vclick 260 "$(wrow /tmp/t b.txt)"; wk -P Control_L -P Shift_L -k c -p Shift_L -p Control_L; sleep 0.5
+    check "wayland: Ctrl+Shift+C puts the path on the clipboard as text" '[ "$(wl-paste -n 2>/dev/null)" = /tmp/t/b.txt ]'
     vclick 260 "$(wrow /tmp/t c.txt)"; wk -k Delete; sleep 1.5
     check "wayland: Delete moves c.txt to the trash" '[ ! -f /tmp/t/c.txt ] && [ -f ~/.local/share/Trash/files/c.txt ]'
     ctrl z; sleep 1.5
@@ -340,7 +343,7 @@ walk(json.load(sys.stdin))'; }
     GEZIK_CONFIG_DIR=/tmp/cfg $GEZIK /tmp/a >>/tmp/gezik-gui-wl.log 2>&1 &
     gezik=$!
     sleep 3
-    extract_here() { vclick 260 "$(wrow /tmp/a "$1")"; wk -k Menu -s 800 -k Down -k Down -k Down -k Return; sleep 2; }
+    extract_here() { vclick 260 "$(wrow /tmp/a "$1")"; wk -k Menu -s 800 -k Down -k Down -k Down -k Down -k Down -k Return; sleep 2; }
     vclick 260 "$(wrow /tmp/a one.zip)"; wk -k Menu; sleep 0.5; wshot gui-wl-menu; wk -k Escape
     extract_here one.zip
     check "wayland: Extract here from the menu key" '[ "$(cat /tmp/a/one/inner/deep.txt 2>/dev/null)" = deep ]'
@@ -350,7 +353,7 @@ walk(json.load(sys.stdin))'; }
     rm -rf /tmp/a/multi; sleep 1.5
     # The password goes in with the keys that open the dialog (see wk).
     vclick 260 "$(wrow /tmp/a aes.zip)"
-    wk -k Menu -s 800 -k Down -k Down -k Down -k Return -s 1500 nope -s 500 -k Return -s 1500 secret -s 300 -k Return
+    wk -k Menu -s 800 -k Down -k Down -k Down -k Down -k Down -k Return -s 1500 nope -s 500 -k Return -s 1500 secret -s 300 -k Return
     sleep 2; wshot gui-wl-password-done
     check "wayland: AES zip: wrong, then right password" '[ "$(cat /tmp/a/m1.txt 2>/dev/null)" = m1 ]'
     rm -f /tmp/a/m1.txt; sleep 1.5
@@ -379,7 +382,10 @@ popups() {
     printf 'Привет
 ' > /tmp/p/cyr.txt
     for i in $(seq -w 1 30); do echo "line $i" > /tmp/p/f$i.txt; done
-    printf '[[commands]]
+    printf '[session]
+restore = false
+
+[[commands]]
 name = "Copy it"
 run = ["cp", "{in}", "{out}"]
 output = "{name}-copy.{ext}"
@@ -651,7 +657,7 @@ filter() {
     typ c; sleep 0.5; shot filter-jump
     check "filter: in jump mode a letter opens no bar" '[ "$(px filter-jump 255 122)" = "$(px filter-slash-before 255 122)" ] || [ "$(px filter-jump 255 122)" != "$(px filter-slash 255 122)" ]'
     # typing = "filter": a letter opens the bar with it, the next ones go on in the field.
-    printf '[keyboard]\ntyping = "filter"\n' >/tmp/cfg/settings.toml; sleep 2
+    printf '[session]\nrestore = false\n\n[keyboard]\ntyping = "filter"\n' >/tmp/cfg/settings.toml; sleep 2
     click 255 118; typ jp; sleep 0.5; shot filter-typed
     check "filter: in filter mode a letter opens the bar" '[ "$(px filter-typed 255 122)" != "$(px filter-slash-before 255 122)" ]'
     key Down; key ctrl+a Delete; sleep 1.5
@@ -978,7 +984,7 @@ keyboard() {
     for n in a.jpg b.JPG c.png d.txt İSTANBUL.txt; do echo "$n" > "/tmp/k/$n"; done
     # Something in Docs, so that its grid differs from its list.
     for n in 1 2 3; do echo $n > /tmp/k/Docs/note$n.txt; done
-    printf '[shortcuts]\ntoggle-tab-lock = "ctrl+shift+l"\n' >/tmp/cfg/settings.toml
+    printf '[session]\nrestore = false\n\n[shortcuts]\ntoggle-tab-lock = "ctrl+shift+l"\n' >/tmp/cfg/settings.toml
     start_k() {
         GEZIK_CONFIG_DIR=/tmp/cfg $GEZIK /tmp/k >>/tmp/gezik-gui-keyboard.log 2>&1 &
         gezik=$!
@@ -1050,7 +1056,7 @@ keyboard() {
 
     # typing = "filter".
     kill $gezik 2>/dev/null; wait $gezik 2>/dev/null
-    printf '[shortcuts]\ntoggle-tab-lock = "ctrl+shift+l"\n\n[keyboard]\ntyping = "filter"\n' >/tmp/cfg/settings.toml
+    printf '[session]\nrestore = false\n\n[shortcuts]\ntoggle-tab-lock = "ctrl+shift+l"\n\n[keyboard]\ntyping = "filter"\n' >/tmp/cfg/settings.toml
     rm -f /tmp/cfg/state.toml
     start_k
     click 255 144; typ c.; key Down ctrl+a
@@ -1078,6 +1084,9 @@ commands() {
     rm -rf /tmp/cm /tmp/cm-* /tmp/cfg /root/.local/share/Trash && mkdir -p /tmp/cm/Sub /tmp/cfg
     for n in a.txt b.txt c.jpg; do echo "$n" > "/tmp/cm/$n"; done
     cat >/tmp/cfg/settings.toml <<'TOML'
+[session]
+restore = false
+
 [[commands]]
 name = "Copy txt"
 run = ["cp", "{in}", "{out}"]
@@ -1349,6 +1358,9 @@ history() {
     cat >/tmp/cfg/settings.toml <<'TOML'
 start-folder = "/tmp/h/tabhome"
 
+[session]
+restore = false
+
 [shortcuts]
 clear-history = "ctrl+shift+h"
 TOML
@@ -1417,7 +1429,7 @@ TOML
     check "history: typing adds the history's matches under the folders" 'is projeler'
 
     # remember = false: forgotten (state.toml too) and nothing recorded any more.
-    printf '[history]\nremember = false\n\n[shortcuts]\nclear-history = "ctrl+shift+h"\n' >/tmp/cfg/settings.toml
+    printf '[session]\nrestore = false\n\n[history]\nremember = false\n\n[shortcuts]\nclear-history = "ctrl+shift+h"\n' >/tmp/cfg/settings.toml
     sleep 2.5
     check "history: remember = false forgets the folders" '[ "$(folders)" = 0 ]'
     go /tmp/h/work; go /tmp/h/music; sleep 1.5
@@ -1426,7 +1438,7 @@ TOML
     key Escape
 
     # clear-history (Ctrl+Shift+H here): forgotten, the status bar says so.
-    printf '[shortcuts]\nclear-history = "ctrl+shift+h"\n' >/tmp/cfg/settings.toml
+    printf '[session]\nrestore = false\n\n[shortcuts]\nclear-history = "ctrl+shift+h"\n' >/tmp/cfg/settings.toml
     sleep 2.5
     go /tmp/h/work; go /tmp/h/music; sleep 1.5
     check "history: remembering again records" '[ "$(folders)" = 2 ]'
@@ -1576,6 +1588,117 @@ copy_path() {
     grep -i "panicked" /tmp/gezik-gui-copypath.log && fail "copy-path: no panic" || pass "copy-path: no panic"
 }
 
+# 7a: the tabs of last time: written as they change (so a kill keeps them), back in order with
+# the one in front and the locks, a command-line folder after them, a gone folder falling
+# back, and restore = false.
+session() {
+    Xvfb :99 -screen 0 1600x900x24 >/dev/null 2>&1 &
+    local xvfb=$!
+    unset WAYLAND_DISPLAY
+    export DISPLAY=:99
+    sleep 1
+    . /src/scripts/linux/gui-lib.sh
+    rm -rf /tmp/se /tmp/cfg && mkdir -p /tmp/se/one /tmp/se/two /tmp/se/three /tmp/se/four /tmp/cfg
+    printf '[shortcuts]\ntoggle-tab-lock = "ctrl+shift+l"\n' > /tmp/cfg/settings.toml
+    : >/tmp/gezik-gui-session.log
+    local gezik=
+    run() {  # run [path]: (re)starts Gezik, on the path if one is given
+        [ -n "$gezik" ] && { kill $gezik 2>/dev/null; wait $gezik 2>/dev/null; }
+        GEZIK_CONFIG_DIR=/tmp/cfg $GEZIK "$@" >>/tmp/gezik-gui-session.log 2>&1 &
+        gezik=$!
+        sleep 3
+        xdotool windowmove "$(win)" 0 0; xdotool windowsize "$(win)" 900 600; sleep 0.5
+    }
+    title() { xdotool getwindowname "$(win)"; }
+    is() { [ "$(title)" = "$1 — Gezik" ]; }
+    goto() { key ctrl+l; typ "$1"; key Return; sleep 1; }
+    tabs_kept() { grep -c '^\[\[session.tabs\]\]' /tmp/cfg/state.toml 2>/dev/null; }
+
+    run /tmp/se/one
+    click 255 300
+    key ctrl+t; sleep 1; goto /tmp/se/two
+    key ctrl+t; sleep 1; goto /tmp/se/three
+    key ctrl+shift+l; sleep 0.5
+    key ctrl+2; sleep 2
+    check "session: the tabs go to state.toml as they change" '[ "$(tabs_kept)" = 3 ] && grep -qx "active = 1" /tmp/cfg/state.toml'
+    # Killed, not closed: what was written as the tabs changed comes back.
+    kill -9 $gezik; wait $gezik 2>/dev/null; gezik=
+    run
+    check "session: the tab in front comes back in front" 'is two'
+    key ctrl+1; sleep 1; check "session: the first tab is back" 'is one'
+    key ctrl+9; sleep 1; check "session: so is the last" 'is three'
+    key ctrl+w; sleep 1; check "session: and its lock" 'is three'
+    run /tmp/se/four
+    check "session: a folder on the command line opens after them, in front" 'is four'
+    key ctrl+3; sleep 1; check "session: the saved tabs come before it" 'is three'
+    key ctrl+2; sleep 2
+    kill $gezik; wait $gezik 2>/dev/null; gezik=
+    rm -rf /tmp/se/two
+    run
+    check "session: a folder gone since falls back to the nearest one there" 'is se'
+    printf 'start-folder = "/tmp/se/one"\n\n[shortcuts]\ntoggle-tab-lock = "ctrl+shift+l"\n\n[session]\nrestore = false\n' > /tmp/cfg/settings.toml
+    sleep 2
+    check "session: restore = false forgets the tabs" '! grep -q "session" /tmp/cfg/state.toml'
+    run
+    check "session: then one tab opens in start-folder" 'is one'
+    key ctrl+2; sleep 1; check "session: and only one" 'is one'
+    kill $gezik $xvfb 2>/dev/null
+    wait 2>/dev/null
+    grep -i "panicked" /tmp/gezik-gui-session.log && fail "session: no panic" || pass "session: no panic"
+}
+
+# 7a: tab sets from a tab's menu (Gezik's own): open after the tabs, replace keeping a locked
+# tab, save with a key, delete.
+tabsets() {
+    Xvfb :99 -screen 0 1600x900x24 >/dev/null 2>&1 &
+    local xvfb=$!
+    unset WAYLAND_DISPLAY
+    export DISPLAY=:99
+    sleep 1
+    . /src/scripts/linux/gui-lib.sh
+    rm -rf /tmp/ts /tmp/cfg && mkdir -p /tmp/ts/a /tmp/ts/b /tmp/ts/home /tmp/cfg
+    cat > /tmp/cfg/settings.toml <<'EOF'
+[session]
+restore = false
+
+[shortcuts]
+save-tab-set = "ctrl+alt+s"
+toggle-tab-lock = "ctrl+shift+l"
+
+[[tab-sets]]
+name = "Work"
+tabs = ["/tmp/ts/a", "/tmp/ts/b", "drives"]
+EOF
+    : >/tmp/gezik-gui-tabsets.log
+    GEZIK_CONFIG_DIR=/tmp/cfg $GEZIK /tmp/ts/home >>/tmp/gezik-gui-tabsets.log 2>&1 &
+    local gezik=$!
+    sleep 3
+    xdotool windowmove "$(win)" 0 0; xdotool windowsize "$(win)" 900 600; sleep 0.5
+    title() { xdotool getwindowname "$(win)"; }
+    is() { [ "$(title)" = "$1 — Gezik" ]; }
+    # A tab's menu (one tab): Duplicate, Lock tab, Close, Save tabs as…, Open tab set ▸ with
+    # Work, Replace tabs with "Work", Delete "Work". The first tab locked, with others:
+    # Duplicate, Unlock tab, Close other tabs, Save tabs as…, Open tab set ▸ (fifth line too).
+    tab_menu() { rclick 100 20; sleep 0.5; for _ in $(seq 1 "$1"); do key Down; done; key Right; for _ in $(seq 1 "$2"); do key Down; done; key Return; sleep 1.5; }
+    tab_menu 5 0
+    check "tabsets: Open tab set opens the set's first tab in front" 'is a'
+    key ctrl+9; sleep 1; check "tabsets: after the open tab, ending with This PC" 'is "This PC"'
+    key ctrl+1; sleep 1; check "tabsets: the open tab stays first" 'is home'
+    key ctrl+shift+l; sleep 0.5
+    tab_menu 5 1
+    check "tabsets: Replace tabs with keeps the locked tab" 'is a'
+    key ctrl+1; sleep 1; check "tabsets: the locked tab is first, the others went" 'is home'
+    key ctrl+4; sleep 1; check "tabsets: one locked tab and the set's three" 'is "This PC"'
+    key ctrl+alt+s; sleep 0.8; typ Mine; key Return; sleep 2
+    check "tabsets: Save tabs as… writes the open tabs" \
+        'grep -q "name = \"Mine\"" /tmp/cfg/settings.toml && grep -q "\"drives\"" /tmp/cfg/settings.toml'
+    tab_menu 5 4
+    check "tabsets: Delete removes a set" '! grep -q "name = \"Work\"" /tmp/cfg/settings.toml'
+    kill $gezik $xvfb 2>/dev/null
+    wait 2>/dev/null
+    grep -i "panicked" /tmp/gezik-gui-tabsets.log && fail "tabsets: no panic" || pass "tabsets: no panic"
+}
+
 # Not in `all`. The filter in a folder of 100,000 files, release build: the process's CPU
 # time (all threads, /proc/<pid>/task/*/schedstat) from before each keystroke to 300 ms after
 # it, less the idle CPU of 300 ms with the bar open. Twice: nothing selected, then after
@@ -1652,7 +1775,7 @@ scoped() {
     local rc=$?
     unset -f title wshot wk ctrl vclick wrow wtitle extract_here cyrillic trashed sel2 box same_box here undo is \
         crop same_part goto start_k differ same_under same_bar readers count_of folders go empty_list run line \
-        xterm_in text pq pick cpu one stats idle typed low_menu top2
+        xterm_in text pq pick cpu one stats idle typed low_menu top2 tabs_kept tab_menu
     return $rc
 }
 
@@ -1673,9 +1796,11 @@ case "${1:-all}" in
     history) scoped history ;;
     terminal) scoped terminal ;;
     copy-path) scoped copy_path ;;
+    session) scoped session ;;
+    tabsets) scoped tabsets ;;
     filterperf) filterperf ;;
     memory) memory "${2:-}" ;;
-    *) for m in x11 wayland popups tabdrag pdfpopups pdfnote filter selection tabs keyboard commands paths history terminal copy_path; do scoped "$m"; done ;;
+    *) for m in x11 wayland popups tabdrag pdfpopups pdfnote filter selection tabs keyboard commands paths history terminal copy_path session tabsets; do scoped "$m"; done ;;
 esac
 echo "failures: $failures"
 exit $failures
