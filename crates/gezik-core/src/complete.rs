@@ -23,7 +23,9 @@ pub fn split_typed(text: &str, windows: bool) -> (String, String) {
     match text.rfind(separators) {
         Some(i) => (text[..=i].to_owned(), text[i + 1..].to_owned()),
         // `X:name`: the drive's folder `X:` and the start of a name in it.
-        None if windows && text.len() > 2 && is_drive(&text[..2]) => (text[..2].to_owned(), text[2..].to_owned()),
+        None if windows && text.len() > 2 && text.get(..2).is_some_and(is_drive) => {
+            (text[..2].to_owned(), text[2..].to_owned())
+        }
         None => (String::new(), text.to_owned()),
     }
 }
@@ -95,6 +97,25 @@ mod tests {
         assert_eq!(split_typed("D:abc", true), pair("D:", "abc"));
         assert_eq!(split_typed("D:abc", false), pair("", "D:abc"));
         assert_eq!(split_typed(r"\\server\share\do", true), pair(r"\\server\share\", "do"));
+    }
+
+    #[test]
+    fn a_non_ascii_start_never_splits_inside_a_char() {
+        for windows in [false, true] {
+            for text in ["aş", "ş", "ğa", "é1", "İz", "😀", "a😀", "😀:x", "ş:", "ş/ğ", "C:ş", "C:😀"]
+            {
+                let (dir, name) = split_typed(text, windows);
+                assert_eq!(format!("{dir}{name}"), text, "{text:?}");
+            }
+        }
+        assert_eq!(split_typed("aş", true), pair("", "aş"));
+        assert_eq!(split_typed("ğa", true), pair("", "ğa"));
+        assert_eq!(split_typed("é1", true), pair("", "é1"));
+        assert_eq!(split_typed("😀", true), pair("", "😀"));
+        assert_eq!(split_typed("C:ş", true), pair("C:", "ş"));
+        assert_eq!(split_typed(r"C:\İş\ğ", true), pair(r"C:\İş\", "ğ"));
+        assert_eq!(split_typed("ş/ğ", false), pair("ş/", "ğ"));
+        assert_eq!(split_typed("a😀/b", false), pair("a😀/", "b"));
     }
 
     #[test]
