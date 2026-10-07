@@ -10,7 +10,7 @@ use gezik_config::Warning;
 use gezik_config::settings::ViewOption;
 use gezik_config::settings_writer::SettingsChange;
 use gezik_config::store::ConfigStore;
-use gezik_core::view::ViewOptions;
+use gezik_core::view::{DateFormat, SizeFormat, ViewOptions};
 use slint::ComponentHandle;
 
 use crate::AppWindow;
@@ -73,6 +73,7 @@ thread_local! {
 /// Once, at start, before the settings are first applied.
 pub fn install(window: &AppWindow, store: Option<ConfigStore>) {
     CONTEXT.with(|c| *c.borrow_mut() = Some((window.as_weak(), store)));
+    sync_window(current());
 }
 
 /// The options in effect.
@@ -126,6 +127,25 @@ fn show(options: ViewOptions) {
     if reload {
         crate::navigation::with_current(|nav| nav.reload());
     }
+    sync_window(options);
+}
+
+/// Puts the macOS menu bar's View marks as `options` are (elsewhere the window has the
+/// properties too, unused). Also after a choice that changed nothing: Slint flipped that
+/// item's mark itself.
+pub fn sync_window(options: ViewOptions) {
+    let window = CONTEXT.with(|c| c.borrow().as_ref().and_then(|(window, _)| window.upgrade()));
+    let Some(window) = window else { return };
+    window.set_view_hide_extensions(options.hide_extensions);
+    window.set_view_folders_first(options.folders_first);
+    window.set_view_single_click(options.single_click_open);
+    window.set_view_show_hidden(options.show_hidden);
+    window.set_view_date_relative(options.date_format == DateFormat::Relative);
+    window.set_view_date_short(options.date_format == DateFormat::Short);
+    window.set_view_date_iso(options.date_format == DateFormat::Iso);
+    window.set_view_date_system(options.date_format == DateFormat::System);
+    window.set_view_size_binary(options.size_format == SizeFormat::Binary);
+    window.set_view_size_decimal(options.size_format == SizeFormat::Decimal);
 }
 
 /// A size as `[view] size-format` writes it (the list, the status bar, the preview, the

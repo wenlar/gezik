@@ -57,6 +57,18 @@ export component AppWindow inherits Window {
     in property <bool> native-menu-bar;
     // Off while Rust plays an item's shortcut: Slint would take it for the item again.
     in property <bool> menu-keys: true;
+    // The View menu's marks on macOS (view_options.rs keeps them as the options are). Two-way:
+    // Slint flips a checkable item's mark itself when it is chosen.
+    in-out property <bool> view-hide-extensions;
+    in-out property <bool> view-folders-first;
+    in-out property <bool> view-single-click;
+    in-out property <bool> view-show-hidden;
+    in-out property <bool> view-date-relative;
+    in-out property <bool> view-date-short;
+    in-out property <bool> view-date-iso;
+    in-out property <bool> view-date-system;
+    in-out property <bool> view-size-binary;
+    in-out property <bool> view-size-decimal;
     // The Commands menu: the `[[commands]]` with a key (id: the command's index, -1 a heading).
     in property <[MenuEntry]> bar-commands;
     // The Window menu's "Open Tab Set": the tab sets to open, to replace the tabs with, to delete.
@@ -104,7 +116,22 @@ export component AppWindow inherits Window {
             MenuItem { title: "as Grid"; shortcut: root.menu-keys ? @keys(Control + Shift + "2") : @keys(); activated => { root.menu-command("view-grid"); } }
             MenuSeparator { }
             MenuItem { title: "Show Preview"; activated => { root.menu-command("toggle-preview"); } }
-            MenuItem { title: "Show Hidden Files"; shortcut: root.menu-keys ? @keys(Control + Shift + ".") : @keys(); activated => { root.menu-command("toggle-hidden"); } }
+            MenuItem { title: "Show Hidden Items"; checkable: true; checked <=> root.view-show-hidden; shortcut: root.menu-keys ? @keys(Control + Shift + ".") : @keys(); activated => { root.menu-command("toggle-hidden"); } }
+            MenuItem { title: "Hide Extensions"; checkable: true; checked <=> root.view-hide-extensions; activated => { root.menu-command("view-option:1300"); } }
+            MenuItem { title: "Folders First"; checkable: true; checked <=> root.view-folders-first; activated => { root.menu-command("view-option:1301"); } }
+            MenuItem { title: "Single-Click to Open"; checkable: true; checked <=> root.view-single-click; activated => { root.menu-command("view-option:1302"); } }
+            Menu {
+                title: "Date Format";
+                MenuItem { title: "Relative"; checkable: true; checked <=> root.view-date-relative; activated => { root.menu-command("view-option:1310"); } }
+                MenuItem { title: "Short"; checkable: true; checked <=> root.view-date-short; activated => { root.menu-command("view-option:1311"); } }
+                MenuItem { title: "ISO"; checkable: true; checked <=> root.view-date-iso; activated => { root.menu-command("view-option:1312"); } }
+                MenuItem { title: "System"; checkable: true; checked <=> root.view-date-system; activated => { root.menu-command("view-option:1313"); } }
+            }
+            Menu {
+                title: "Size Format";
+                MenuItem { title: "Binary (1 KB = 1024 bytes)"; checkable: true; checked <=> root.view-size-binary; activated => { root.menu-command("view-option:1320"); } }
+                MenuItem { title: "Decimal (1 kB = 1000 bytes)"; checkable: true; checked <=> root.view-size-decimal; activated => { root.menu-command("view-option:1321"); } }
+            }
             MenuSeparator { }
             MenuItem { title: "Refresh"; shortcut: root.menu-keys ? @keys(Control + R) : @keys(); activated => { root.menu-command("refresh"); } }
         }

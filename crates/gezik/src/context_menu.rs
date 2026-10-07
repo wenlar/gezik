@@ -7,10 +7,14 @@ use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+use gezik_config::settings::ViewOption;
 use gezik_core::drag::Effect;
 use gezik_core::nav::Location;
 use gezik_core::path_text::PathFormat;
-use gezik_core::view::{ColumnKey, ColumnState, GridSize, SortDir, SortKey, SortSpec, ViewMode, ViewSettings};
+use gezik_core::view::{
+    ColumnKey, ColumnState, DateFormat, GridSize, SizeFormat, SortDir, SortKey, SortSpec, ViewMode, ViewOptions,
+    ViewSettings,
+};
 use gezik_platform::MenuTarget;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
@@ -229,6 +233,16 @@ pub const TAB_SET_OPEN_FIRST: u32 = 1100;
 pub const TAB_SET_REPLACE_FIRST: u32 = 1130;
 pub const TAB_SET_DELETE_FIRST: u32 = 1160;
 pub const TAB_SET_MAX: u32 = 30;
+/// 1300-1304: the View menu's options (Hide extensions, Folders first, Single-click to open,
+/// Show hidden items, Show system items); 1310-1313 Date format ▸ in `DateFormat::ALL` order;
+/// 1320-1321 Size format ▸ in `SizeFormat::ALL` order.
+pub const HIDE_EXTENSIONS: u32 = 1300;
+pub const FOLDERS_FIRST: u32 = 1301;
+pub const SINGLE_CLICK_OPEN: u32 = 1302;
+pub const SHOW_HIDDEN: u32 = 1303;
+pub const SHOW_SYSTEM: u32 = 1304;
+pub const DATE_FORMAT_FIRST: u32 = 1310;
+pub const SIZE_FORMAT_FIRST: u32 = 1320;
 /// Group headings in a Slint menu: shown greyed, never chosen.
 pub const HEADING: u32 = 0;
 /// Gezik's menu ids are below this; the Explorer menu's start here (gezik_platform's
@@ -306,8 +320,10 @@ fn owned(items: Vec<(u32, &'static str)>) -> Vec<(u32, String)> {
     items.into_iter().map(|(id, title)| (id, title.to_owned())).collect()
 }
 
-/// The View menu; the current choices are marked with a bullet.
-pub fn view_items(view: ViewSettings, preview_open: bool) -> Vec<(u32, String)> {
+/// The View menu; the current choices are marked with a bullet. `options`: `[view]`'s options
+/// (spec 7.2), "Show system items" only on Windows; Date format ▸ and Size format ▸ go before
+/// "Apply to all folders" (`format_subs`).
+pub fn view_items(view: ViewSettings, preview_open: bool, options: ViewOptions, windows: bool) -> Vec<(u32, String)> {
     let mark = |on: bool, title: &str| format!("{}{title}", if on { "• " } else { "    " });
     let grid = view.mode == ViewMode::Grid;
     let mut out = vec![(VIEW_LIST, mark(!grid, "List")), (VIEW_GRID, mark(grid, "Grid"))];
@@ -329,9 +345,53 @@ pub fn view_items(view: ViewSettings, preview_open: bool) -> Vec<(u32, String)> 
     out.push((SORT_ASC, mark(view.sort.dir == SortDir::Asc, "Ascending")));
     out.push((SORT_DESC, mark(view.sort.dir == SortDir::Desc, "Descending")));
     out.push((PREVIEW_PANE, mark(preview_open, "Preview pane")));
+    out.push((HIDE_EXTENSIONS, mark(options.hide_extensions, "Hide extensions")));
+    out.push((FOLDERS_FIRST, mark(options.folders_first, "Folders first")));
+    out.push((SINGLE_CLICK_OPEN, mark(options.single_click_open, "Single-click to open")));
+    out.push((SHOW_HIDDEN, mark(options.show_hidden, "Show hidden items")));
+    if windows {
+        out.push((SHOW_SYSTEM, mark(options.show_system, "Show system items")));
+    }
     out.push((APPLY_TO_ALL, "Apply to all folders".to_owned()));
     out.push((RESET_FOLDER, "Reset this folder".to_owned()));
     out
+}
+
+/// Date format ▸ and Size format ▸ of the View menu, at place `at`, the current one marked.
+pub fn format_subs(options: ViewOptions, at: usize) -> Vec<Submenu> {
+    let mark = |on: bool, title: &str| format!("{}{title}", if on { "• " } else { "    " });
+    let dates = DateFormat::ALL
+        .iter()
+        .enumerate()
+        .map(|(i, f)| (DATE_FORMAT_FIRST + i as u32, mark(*f == options.date_format, f.label()), true))
+        .collect();
+    let sizes = SizeFormat::ALL
+        .iter()
+        .enumerate()
+        .map(|(i, f)| (SIZE_FORMAT_FIRST + i as u32, mark(*f == options.size_format, f.label()), true))
+        .collect();
+    vec![
+        Submenu { title: "Date format".to_owned(), at, items: dates },
+        Submenu { title: "Size format".to_owned(), at, items: sizes },
+    ]
+}
+
+/// What View menu item `id` changes, from `options` as they are now.
+pub fn view_option_for(id: u32, options: ViewOptions) -> Option<ViewOption> {
+    Some(match id {
+        HIDE_EXTENSIONS => ViewOption::HideExtensions(!options.hide_extensions),
+        FOLDERS_FIRST => ViewOption::FoldersFirst(!options.folders_first),
+        SINGLE_CLICK_OPEN => ViewOption::SingleClickOpen(!options.single_click_open),
+        SHOW_HIDDEN => ViewOption::ShowHidden(!options.show_hidden),
+        SHOW_SYSTEM => ViewOption::ShowSystem(!options.show_system),
+        id if (DATE_FORMAT_FIRST..DATE_FORMAT_FIRST + DateFormat::ALL.len() as u32).contains(&id) => {
+            ViewOption::DateFormat(DateFormat::ALL[(id - DATE_FORMAT_FIRST) as usize])
+        }
+        id if (SIZE_FORMAT_FIRST..SIZE_FORMAT_FIRST + SizeFormat::ALL.len() as u32).contains(&id) => {
+            ViewOption::SizeFormat(SizeFormat::ALL[(id - SIZE_FORMAT_FIRST) as usize])
+        }
+        _ => return None,
+    })
 }
 
 /// "Presets ▾": each saved set, Save, then a Delete item for each (up to `PRESET_MAX` each).
@@ -643,7 +703,11 @@ impl Menus {
     /// The View button's menu, under it.
     pub fn view_menu(&self, at: Anchor) {
         *self.subject.borrow_mut() = Some(Subject::View);
-        self.open_slint(&view_items(self.view.view_settings(), self.preview.is_pane_open()), at);
+        let options = crate::view_options::current();
+        let items = view_items(self.view.view_settings(), self.preview.is_pane_open(), options, cfg!(windows));
+        let place = items.iter().position(|(id, _)| *id == APPLY_TO_ALL).unwrap_or(items.len());
+        let entries: Vec<(u32, String, bool)> = items.into_iter().map(|(id, title)| (id, title, true)).collect();
+        self.open_slint_entries(&entries, format_subs(options, place), at);
     }
 
     /// `subs`: submenus among `items`. `at`: where the Windows menu opens (window position),
@@ -1028,6 +1092,11 @@ impl Menus {
             (PREVIEW_PANE, Subject::View) => self.preview.toggle_pane(),
             (APPLY_TO_ALL, Subject::View) => self.view.apply_to_all(),
             (RESET_FOLDER, Subject::View) => self.view.reset_folder(),
+            (id, Subject::View) => {
+                if let Some(option) = view_option_for(id, crate::view_options::current()) {
+                    crate::view_options::change(option);
+                }
+            }
             (CUT | COPY, Subject::Row(path)) => self.ops.copy_paths(vec![path], id == CUT),
             (CUT | COPY, Subject::Rows(paths)) => self.ops.copy_paths(paths, id == CUT),
             (PASTE_INTO, Subject::Row(path)) => self.ops.paste(Some(path), false),
@@ -1191,6 +1260,8 @@ fn from_submenu(id: u32) -> bool {
     (COMMAND_FIRST..COMMAND_FIRST + COMMAND_MAX).contains(&id)
         || (COPY_PATH_FIRST..COPY_PATH_FIRST + PathFormat::ALL.len() as u32).contains(&id)
         || crate::tab_sets::set_item(id).is_some()
+        || (DATE_FORMAT_FIRST..DATE_FORMAT_FIRST + 4).contains(&id)
+        || (SIZE_FORMAT_FIRST..SIZE_FORMAT_FIRST + 2).contains(&id)
 }
 
 /// Whether Slint shows its menus as the system's: on Windows and macOS (through muda),
@@ -1404,6 +1475,8 @@ mod tests {
             TAB_SET_OPEN_FIRST..TAB_SET_OPEN_FIRST + TAB_SET_MAX,
             TAB_SET_REPLACE_FIRST..TAB_SET_REPLACE_FIRST + TAB_SET_MAX,
             TAB_SET_DELETE_FIRST..TAB_SET_DELETE_FIRST + TAB_SET_MAX,
+            DATE_FORMAT_FIRST..DATE_FORMAT_FIRST + 4,
+            SIZE_FORMAT_FIRST..SIZE_FORMAT_FIRST + 2,
         ]);
         for (i, a) in ranges.iter().enumerate() {
             assert!(a.start >= 1 && a.end <= GEZIK_IDS_END, "{a:?}: 1..4096 (0 is a heading, 4096 on the Shell's)");
@@ -1582,8 +1655,8 @@ mod tests {
 
     #[test]
     fn view_menu_marks_the_current_choices() {
-        use gezik_core::view::{GridSize, SortDir, SortKey, SortSpec, ViewMode, ViewSettings};
-        let list = view_items(ViewSettings::default(), false);
+        use gezik_core::view::{GridSize, SortDir, SortKey, SortSpec, ViewMode, ViewOptions, ViewSettings};
+        let list = view_items(ViewSettings::default(), false, ViewOptions::default(), false);
         let ids: Vec<u32> = list.iter().map(|(id, _)| *id).collect();
         assert_eq!(
             ids,
@@ -1598,6 +1671,10 @@ mod tests {
                 SORT_ASC,
                 SORT_DESC,
                 PREVIEW_PANE,
+                HIDE_EXTENSIONS,
+                FOLDERS_FIRST,
+                SINGLE_CLICK_OPEN,
+                SHOW_HIDDEN,
                 APPLY_TO_ALL,
                 RESET_FOLDER
             ]
@@ -1608,12 +1685,69 @@ mod tests {
             sort: SortSpec { key: SortKey::Size, dir: SortDir::Desc },
             grid_size: GridSize::Large,
         };
-        let items = view_items(grid, false);
+        let items = view_items(grid, false, ViewOptions::default(), false);
         let marked: Vec<&str> =
             items.iter().filter(|(_, t)| t.starts_with("• ")).map(|(_, t)| t.trim_start_matches("• ")).collect();
-        assert_eq!(marked, ["Grid", "Large icons", "Sort by size", "Descending"]);
+        let mut expected = vec!["Grid", "Large icons", "Sort by size", "Descending", "Folders first"];
+        if !cfg!(target_os = "macos") {
+            expected.push("Show hidden items");
+        }
+        assert_eq!(marked, expected);
         assert!(
-            view_items(ViewSettings::default(), true).iter().any(|(id, t)| *id == PREVIEW_PANE && t.starts_with("• "))
+            view_items(ViewSettings::default(), true, ViewOptions::default(), false)
+                .iter()
+                .any(|(id, t)| *id == PREVIEW_PANE && t.starts_with("• "))
+        );
+    }
+
+    #[test]
+    fn view_menu_lists_the_options_and_their_marks() {
+        use gezik_core::view::{DateFormat, ViewOptions};
+        let options = ViewOptions { hide_extensions: true, ..ViewOptions::default() };
+        let items = view_items(ViewSettings::default(), false, options, true);
+        let ids: Vec<u32> = items.iter().map(|(id, _)| *id).collect();
+        assert_eq!(
+            &ids[10..],
+            [HIDE_EXTENSIONS, FOLDERS_FIRST, SINGLE_CLICK_OPEN, SHOW_HIDDEN, SHOW_SYSTEM, APPLY_TO_ALL, RESET_FOLDER]
+        );
+        assert!(items[10].1.starts_with("• ") && items[11].1.starts_with("• "), "extensions hidden, folders first");
+        assert!(!items[12].1.starts_with("• "));
+        assert_eq!(items[13].1.starts_with("• "), options.show_hidden);
+        let elsewhere: Vec<u32> =
+            view_items(ViewSettings::default(), false, options, false).iter().map(|(id, _)| *id).collect();
+        assert!(!elsewhere.contains(&SHOW_SYSTEM), "Show system items: Windows only");
+        let subs = format_subs(ViewOptions { date_format: DateFormat::Iso, ..options }, 15);
+        let places: Vec<(&str, usize)> = subs.iter().map(|s| (s.title.as_str(), s.at)).collect();
+        assert_eq!(places, [("Date format", 15), ("Size format", 15)]);
+        let dates: Vec<(u32, &str)> = subs[0].items.iter().map(|(id, t, _)| (*id, t.as_str())).collect();
+        assert_eq!(
+            dates,
+            [
+                (DATE_FORMAT_FIRST, "    Relative"),
+                (DATE_FORMAT_FIRST + 1, "    Short"),
+                (DATE_FORMAT_FIRST + 2, "• ISO"),
+                (DATE_FORMAT_FIRST + 3, "    System")
+            ]
+        );
+        assert_eq!(subs[1].items.len(), 2);
+    }
+
+    #[test]
+    fn view_menu_ids_say_which_option_changes() {
+        use gezik_config::settings::ViewOption;
+        use gezik_core::view::{DateFormat, SizeFormat, ViewOptions};
+        let options = ViewOptions::default();
+        assert_eq!(view_option_for(HIDE_EXTENSIONS, options), Some(ViewOption::HideExtensions(true)));
+        assert_eq!(view_option_for(FOLDERS_FIRST, options), Some(ViewOption::FoldersFirst(false)));
+        assert_eq!(view_option_for(SINGLE_CLICK_OPEN, options), Some(ViewOption::SingleClickOpen(true)));
+        assert_eq!(view_option_for(SHOW_HIDDEN, options), Some(ViewOption::ShowHidden(!options.show_hidden)));
+        assert_eq!(view_option_for(SHOW_SYSTEM, options), Some(ViewOption::ShowSystem(true)));
+        assert_eq!(view_option_for(DATE_FORMAT_FIRST, options), Some(ViewOption::DateFormat(DateFormat::Relative)));
+        assert_eq!(view_option_for(SIZE_FORMAT_FIRST + 1, options), Some(ViewOption::SizeFormat(SizeFormat::Decimal)));
+        assert_eq!(view_option_for(SIZE_FORMAT_FIRST + 2, options), None);
+        assert_eq!(view_option_for(VIEW_LIST, options), None);
+        assert!(
+            from_submenu(DATE_FORMAT_FIRST + 3) && from_submenu(SIZE_FORMAT_FIRST) && !from_submenu(HIDE_EXTENSIONS)
         );
     }
 }

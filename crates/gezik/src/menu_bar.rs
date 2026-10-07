@@ -31,6 +31,13 @@ pub fn install(window: &AppWindow, view: View, nav: Navigator, ops: Operations) 
                     let names = crate::tab_sets::names();
                     return crate::tab_sets::with_current(|sets| sets.chosen(id, &names));
                 }
+                if let Some(id) = name.strip_prefix("view-option:").and_then(|i| i.parse::<u32>().ok()) {
+                    let options = crate::view_options::current();
+                    if let Some(option) = crate::context_menu::view_option_for(id, options) {
+                        crate::view_options::change(option);
+                    }
+                    return crate::view_options::sync_window(crate::view_options::current());
+                }
                 let Some(action) = Action::from_name(name) else { return };
                 match keys::chord_for(action).filter(|c| !matches!(c.key, Key::Num(_))) {
                     // After the menu is done with this item: playing the keys changes the
