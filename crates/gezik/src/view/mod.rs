@@ -955,7 +955,6 @@ impl View {
 
     /// Whether `path` is a folder (or drive) row of the listing shown; found by looking, not
     /// by asking the disk.
-    #[cfg_attr(not(windows), allow(dead_code))]
     pub fn is_folder_row(&self, path: &Path) -> bool {
         match &self.0.data.borrow().listing {
             Listing::Files(dir, entries) => {

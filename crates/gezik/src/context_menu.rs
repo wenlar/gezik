@@ -4,11 +4,12 @@
 //! tabs (and everything on macOS/Linux) get a Slint menu.
 
 use std::cell::{Cell, RefCell};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use gezik_core::drag::Effect;
 use gezik_core::nav::Location;
+use gezik_core::path_text::PathFormat;
 use gezik_core::view::{ColumnKey, ColumnState, GridSize, SortDir, SortKey, SortSpec, ViewMode, ViewSettings};
 use gezik_platform::MenuTarget;
 use slint::{ComponentHandle, ModelRc, VecModel};
@@ -215,6 +216,11 @@ pub const FILTER_SAVE: u32 = 930;
 pub const FILTER_DELETE_FIRST: u32 = 940;
 /// 970: a heading inside "Commands ▸" (`menu = "…"`), greyed, never chosen.
 pub const COMMAND_GROUP: u32 = 970;
+/// 1000-1001: Open terminal here / as administrator. 1010-1016: Copy path as ▸, in
+/// `PathFormat::ALL` order.
+pub const OPEN_TERMINAL: u32 = 1000;
+pub const OPEN_TERMINAL_ADMIN: u32 = 1001;
+pub const COPY_PATH_FIRST: u32 = 1010;
 /// Group headings in a Slint menu: shown greyed, never chosen.
 pub const HEADING: u32 = 0;
 /// Gezik's menu ids are below this; the Explorer menu's start here (gezik_platform's
@@ -268,6 +274,26 @@ pub fn background_items(undo: Option<&str>, redo: Option<&str>, can_paste: bool)
 }
 
 /// `items` with owned labels, to add items whose labels are made at run time.
+/// "Open terminal here", and on Windows "Open terminal as administrator" under it.
+pub fn terminal_items(windows: bool) -> Vec<(u32, &'static str)> {
+    let mut out = vec![(OPEN_TERMINAL, "Open terminal here")];
+    if windows {
+        out.push((OPEN_TERMINAL_ADMIN, "Open terminal as administrator"));
+    }
+    out
+}
+
+/// "Copy path as ▸": the formats offered here (`PathFormat::offered`), each by its place in
+/// `PathFormat::ALL`.
+pub fn copy_path_items(windows: bool, unc: bool) -> Vec<(u32, String, bool)> {
+    PathFormat::ALL
+        .iter()
+        .enumerate()
+        .filter(|(_, kind)| kind.offered(windows, unc))
+        .map(|(i, kind)| (COPY_PATH_FIRST + i as u32, kind.label().to_owned(), true))
+        .collect()
+}
+
 fn owned(items: Vec<(u32, &'static str)>) -> Vec<(u32, String)> {
     items.into_iter().map(|(id, title)| (id, title.to_owned())).collect()
 }
@@ -471,7 +497,8 @@ impl Menus {
             let rows = self.view.selected_items();
             let paths: Vec<PathBuf> = rows.iter().map(|(path, _)| path.clone()).collect();
             let mut list = owned(items(Place::Rows, native));
-            let mut subs = Vec::new();
+            list.extend(owned(terminal_items(native)));
+            let mut subs = vec![self.copy_path_sub(&paths, list.len())];
             self.add_file_tools(&mut list, &mut subs, rows, native);
             list.extend(self.file_extras(false, false, native));
             if native && !self.view.shows_drives() {
@@ -482,7 +509,8 @@ impl Menus {
         let Some((path, is_dir)) = self.view.entry_path(i) else { return };
         let place = Place::Row { is_dir, pinned: is_dir && self.sidebar.is_pinned(&path) };
         let mut list = owned(items(place, native));
-        let mut subs = Vec::new();
+        list.extend(owned(terminal_items(native)));
+        let mut subs = vec![self.copy_path_sub(std::slice::from_ref(&path), list.len())];
         self.add_file_tools(&mut list, &mut subs, vec![(path.clone(), is_dir)], native);
         list.extend(self.file_extras(true, is_dir, native));
         self.open(Subject::Row(path.clone()), list, subs, MenuTarget::Item(path), x, y, at);
@@ -535,9 +563,17 @@ impl Menus {
     fn background_menu(&self, at: Option<(f32, f32)>, x: f32, y: f32) {
         let Location::Path(dir) = self.nav.active_location() else { return };
         self.ops.clipboard_check();
-        let list =
+        let mut list =
             background_items(self.ops.undo_label().as_deref(), self.ops.redo_label().as_deref(), self.ops.can_paste());
-        self.open(Subject::Background(dir.clone()), list, Vec::new(), MenuTarget::Background(dir), x, y, at);
+        list.extend(owned(terminal_items(cfg!(windows))));
+        let subs = vec![self.copy_path_sub(std::slice::from_ref(&dir), list.len())];
+        self.open(Subject::Background(dir.clone()), list, subs, MenuTarget::Background(dir), x, y, at);
+    }
+
+    /// "Copy path as ▸" for `paths`, at place `at` among the items.
+    fn copy_path_sub(&self, paths: &[PathBuf], at: usize) -> Submenu {
+        let unc = crate::copy_path::unc_offered(paths.first().map(PathBuf::as_path));
+        Submenu { title: "Copy path as".to_owned(), at, items: copy_path_items(cfg!(windows), unc) }
     }
 
     /// Right-click on sidebar entry (`section`, `index`), at window position `x`, `y`.
@@ -552,15 +588,10 @@ impl Menus {
             first: index == 0,
             last: index + 1 >= count,
         };
-        self.open(
-            Subject::SidebarEntry(path.clone()),
-            owned(items(place, cfg!(windows))),
-            Vec::new(),
-            MenuTarget::Item(path),
-            x,
-            y,
-            None,
-        );
+        let mut list = owned(items(place, cfg!(windows)));
+        list.extend(owned(terminal_items(cfg!(windows))));
+        let subs = vec![self.copy_path_sub(std::slice::from_ref(&path), list.len())];
+        self.open(Subject::SidebarEntry(path.clone()), list, subs, MenuTarget::Item(path), x, y, None);
     }
 
     /// Right-click on tab `index`, at window position `x`, `y`. Tabs get Gezik's own menu
@@ -970,6 +1001,28 @@ impl Menus {
             (NEW_FOLDER, Subject::Background(dir)) => self.ops.new_folder(Some(dir)),
             (NEW_FILE, Subject::Background(dir)) => self.ops.new_file(Some(dir)),
             (REFRESH, Subject::Background(_)) => self.nav.reload(),
+            (OPEN_TERMINAL | OPEN_TERMINAL_ADMIN, subject) => {
+                let dir = match subject {
+                    Subject::Row(path) if self.view.is_folder_row(&path) => Some(path),
+                    Subject::Row(path) => path.parent().map(Path::to_path_buf),
+                    Subject::Rows(_) => self.view.folder(),
+                    Subject::SidebarEntry(path) | Subject::Background(path) => Some(path),
+                    _ => None,
+                };
+                if let Some(dir) = dir {
+                    crate::terminal::open_in(dir, id == OPEN_TERMINAL_ADMIN);
+                }
+            }
+            (id, subject) if (COPY_PATH_FIRST..COPY_PATH_FIRST + PathFormat::ALL.len() as u32).contains(&id) => {
+                let paths = match subject {
+                    Subject::Row(path) | Subject::SidebarEntry(path) | Subject::Background(path) => vec![path],
+                    Subject::Rows(paths) => paths,
+                    _ => Vec::new(),
+                };
+                if let Some(kind) = PathFormat::ALL.get((id - COPY_PATH_FIRST) as usize) {
+                    crate::copy_path::copy(&self.view, &paths, *kind);
+                }
+            }
             _ => {}
         }
     }
@@ -1081,6 +1134,7 @@ fn menu_lines(before: Vec<MenuEntry>, subs: Vec<(String, Vec<MenuEntry>)>) -> Ve
 /// nowhere (it gives it to the parent menu, which is gone).
 fn from_submenu(id: u32) -> bool {
     (COMMAND_FIRST..COMMAND_FIRST + COMMAND_MAX).contains(&id)
+        || (COPY_PATH_FIRST..COPY_PATH_FIRST + PathFormat::ALL.len() as u32).contains(&id)
 }
 
 /// Whether Slint shows its menus as the system's: on Windows and macOS (through muda),
@@ -1273,6 +1327,8 @@ mod tests {
             UNLOCK_TAB,
             FILTER_SAVE,
             COMMAND_GROUP,
+            OPEN_TERMINAL,
+            OPEN_TERMINAL_ADMIN,
         ];
         let mut ranges: Vec<std::ops::Range<u32>> = singles.iter().map(|id| *id..id + 1).collect();
         ranges.extend([
@@ -1287,6 +1343,7 @@ mod tests {
             CONVERT_PRESET_FIRST..CONVERT_PRESET_FIRST + CONVERT_PRESET_MAX,
             FILTER_FIRST..FILTER_FIRST + FILTER_MAX,
             FILTER_DELETE_FIRST..FILTER_DELETE_FIRST + FILTER_MAX,
+            COPY_PATH_FIRST..COPY_PATH_FIRST + 7,
         ]);
         for (i, a) in ranges.iter().enumerate() {
             assert!(a.start >= 1 && a.end <= GEZIK_IDS_END, "{a:?}: 1..4096 (0 is a heading, 4096 on the Shell's)");
@@ -1301,6 +1358,21 @@ mod tests {
 
     fn ids(v: Vec<(u32, &str)>) -> Vec<u32> {
         v.into_iter().map(|(id, _)| id).collect()
+    }
+
+    #[test]
+    fn terminal_and_copy_path_items() {
+        assert_eq!(ids(terminal_items(false)), [OPEN_TERMINAL]);
+        assert_eq!(ids(terminal_items(true)), [OPEN_TERMINAL, OPEN_TERMINAL_ADMIN]);
+        let titles = |items: Vec<(u32, String, bool)>| items.into_iter().map(|(_, t, _)| t).collect::<Vec<_>>();
+        assert_eq!(
+            titles(copy_path_items(false, false)),
+            ["Full path", "Quoted", "Name", "Folder path", "file:// URL"]
+        );
+        let windows = copy_path_items(true, true);
+        assert_eq!(windows.len(), 7);
+        assert_eq!(windows[6], (COPY_PATH_FIRST + 6, "UNC path".to_owned(), true));
+        assert_eq!(copy_path_items(false, false)[2].0, COPY_PATH_FIRST + 3, "ids follow PathFormat::ALL, not the menu");
     }
 
     #[test]

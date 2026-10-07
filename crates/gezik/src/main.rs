@@ -7,6 +7,7 @@ mod batch_rename;
 mod conflicts;
 mod context_menu;
 mod convert;
+mod copy_path;
 mod dialog;
 mod drag;
 mod filter;
@@ -28,6 +29,7 @@ mod select_tools;
 mod sidebar;
 mod start;
 mod tab_tools;
+mod terminal;
 mod theme_bridge;
 mod view;
 mod watcher;
@@ -76,6 +78,7 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
     convert::set_settings(loaded.settings.convert.clone(), loaded.settings.commands.clone());
     filter::set_settings(loaded.settings.keyboard, loaded.settings.filters.clone());
     path_box::set_settings(loaded.settings.history);
+    terminal::set_settings(loaded.settings.terminal.command.clone());
     loaded
 }
 

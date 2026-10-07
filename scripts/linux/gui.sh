@@ -3,7 +3,7 @@
 # input: xdotool (XTEST) under Xvfb, wtype and the vpointer example under a headless sway.
 #   docker build -t gezik-linux scripts/linux
 #   docker run --rm -v "$PWD:/src" -v gezik-target:/target -v gezik-cargo:/usr/local/cargo/registry \
-#       -e CARGO_TARGET_DIR=/target gezik-linux bash scripts/linux/gui.sh [x11|wayland|popups|tabdrag|pdf|pdfnote|filter|select|tabs|keyboard|commands|paths|history|all]
+#       -e CARGO_TARGET_DIR=/target gezik-linux bash scripts/linux/gui.sh [x11|wayland|popups|tabdrag|pdf|pdfnote|filter|select|tabs|keyboard|commands|paths|history|terminal|copy-path|all]
 #   (not in `all`, release builds: `filterperf` times the filter at 100,000 files, `memory [exe]`
 #   gives idle memory)
 # Needs the network (apt for 7-Zip, Gezik's own 7-Zip download). Screenshots go to
@@ -389,8 +389,10 @@ output = "{name}-copy.{ext}"
     check "popups: near the bottom right the menu opens up and left"         '[ "$(px pop-menu-bottom-right 700 $((y - 40)))" != "$(px pop-start 700 $((y - 40)))" ] && [ "$(px pop-menu-bottom-right 830 300)" = "$(px pop-start 830 300)" ]'
     click 700 $((y - 1 - 6 - 32 - 16)); sleep 1.5
     check "popups: its lower items can be chosen (Move to Trash)" '[ ! -f /tmp/p/f17.txt ] && [ -f ~/.local/share/Trash/files/f17.txt ]'
-    # The Commands submenu (its 6th line) at the right edge opens to the left of the menu.
-    local sub=$((180 + 1 + 6 + 32 * 5 + 16))
+    # The Commands submenu at the right edge opens to the left of the menu. The menu (14 lines,
+    # with Open terminal here and Copy path as ▸) does not fit below y 180, so it ends at the
+    # window's bottom: Delete permanently at 573, Commands ▸ six lines above it.
+    local sub=$((573 - 32 * 6))
     rclick 820 180; sleep 0.5; xdotool mousemove 760 "$sub"; sleep 0.8
     shot pop-submenu-left
     check "popups: a submenu at the right edge opens to the left"         '[ "$(px pop-submenu-left 560 $sub)" != "$(px pop-start 560 $sub)" ]'
@@ -403,7 +405,7 @@ output = "{name}-copy.{ext}"
     check "popups: its item can be chosen (Save current rules as…)" 'grep -q "P1" /tmp/cfg/settings.toml'
     click 820 51; sleep 0.8; shot pop-presets-saved; key Escape; sleep 0.3; key Escape; sleep 0.5
     # The encodings (40) are taller than the window: the list fits in it and scrolls.
-    rclick 260 118; sleep 0.5; click 330 $((118 + 20 + 32 * 4)); sleep 1; shot pop-convert
+    rclick 260 118; sleep 0.5; click 330 $((118 + 20 + 32 * 6)); sleep 1; shot pop-convert
     click 301 221; sleep 0.8; shot pop-encodings
     check "popups: a list taller than the window stays inside it"         '[ "$(px pop-encodings 300 8)" != "$(px pop-convert 300 8)" ] && [ "$(px pop-encodings 300 592)" != "$(px pop-convert 300 592)" ]'
     xdotool mousemove 300 400; for _ in 1 2 3 4 5 6 7 8 9 10; do xdotool click 5; sleep 0.1; done; sleep 0.5
@@ -1169,8 +1171,10 @@ TOML
     # "Commands ▸" on a.txt: Copy txt, then the greyed "Tests" heading over List them and Mark.
     local y; y=$(row /tmp/cm a.txt)
     sleep 3; key Escape; click 255 "$y"; rclick 260 $y; sleep 0.5; shot commands-menu
-    # Commands is the menu's 6th line; its submenu opens to the right.
-    local sub=$((y + 20 + 32 * 5))
+    # Commands is the menu's 8th line (after Open terminal here and Copy path as ▸); the menu (14
+    # lines) does not fit below the row, so it ends at the window's bottom: Delete permanently
+    # at 573, Commands six lines above it. Its submenu opens to the right.
+    local sub=$((573 - 32 * 6))
     xdotool mousemove 330 "$sub"; sleep 0.3; xdotool mousemove 400 "$sub"; sleep 1; shot commands-submenu
     # Its lines: Copy txt, Bare, the "Tests" heading, List them, Mark. The heading is greyed:
     # fewer dark pixels than Bare's line, whose name is as long.
@@ -1432,6 +1436,139 @@ TOML
     grep -i "panicked" /tmp/gezik-gui-history.log && fail "history: no panic" || pass "history: no panic"
 }
 
+# 7a: "Open terminal" with Debian's x-terminal-emulator (xterm), $TERMINAL, a known terminal
+# (a fake kitty on PATH), [terminal] command, and none found; from the keys and the menus.
+terminal() {
+    Xvfb :99 -screen 0 1600x900x24 >/dev/null 2>&1 &
+    local xvfb=$!
+    unset WAYLAND_DISPLAY
+    export DISPLAY=:99
+    sleep 1
+    . /src/scripts/linux/gui-lib.sh
+    command -v xterm >/dev/null || { apt-get update -qq >/dev/null; DEBIAN_FRONTEND=noninteractive \
+        apt-get install -y -qq --no-install-recommends xterm >/dev/null 2>&1; }
+    rm -rf /tmp/te /tmp/cfg /tmp/fakebin /tmp/empty /tmp/term-*.txt
+    mkdir -p "/tmp/te/my dir" /tmp/te/Docs /tmp/cfg /tmp/fakebin /tmp/empty
+    echo x > /tmp/te/f.txt
+    # A fake terminal: writes the folder it ran in, then its arguments, one per line.
+    printf '#!/bin/sh\nprintf "%%s\\n" "$PWD" "$@" > /tmp/term-run.txt\n' > /tmp/fakebin/kitty
+    chmod +x /tmp/fakebin/kitty
+    printf '[session]\nrestore = false\n' > /tmp/cfg/settings.toml
+    : >/tmp/gezik-gui-terminal.log
+    local gezik=
+    run() {  # run [VAR=value…]: (re)starts Gezik on /tmp/te with that environment
+        [ -n "$gezik" ] && { kill $gezik 2>/dev/null; wait $gezik 2>/dev/null; }
+        rm -f /tmp/term-*.txt
+        env "$@" GEZIK_CONFIG_DIR=/tmp/cfg $GEZIK /tmp/te >>/tmp/gezik-gui-terminal.log 2>&1 &
+        gezik=$!
+        sleep 3
+        xdotool windowmove "$(win)" 0 0; xdotool windowsize "$(win)" 900 600; sleep 0.5
+    }
+    line() { sed -n "$1p" /tmp/term-run.txt 2>/dev/null; }
+    xterm_in() { local pid; pid=$(pgrep -n xterm) && [ "$(readlink /proc/$pid/cwd)" = "$1" ]; }
+
+    # Rows: Docs 118, my dir 144, f.txt 170.
+    run
+    click 255 144; key shift+F4; sleep 2
+    check "terminal: Shift+F4 opens x-terminal-emulator (xterm) in the focused folder" 'xterm_in "/tmp/te/my dir"'
+    pkill xterm; sleep 0.5
+    click 255 170; key ctrl+alt+t; sleep 2
+    check "terminal: Ctrl+Alt+T on a file opens in its folder" 'xterm_in /tmp/te'
+    kill $gezik; wait $gezik 2>/dev/null; gezik=; sleep 1
+    check "terminal: it stays open after Gezik ends" 'pgrep -x xterm >/dev/null'
+    pkill xterm
+
+    # kitty is not on PATH here (xterm is): only $TERMINAL reaches it. A known terminal named
+    # alone in $TERMINAL gets its folder flag too.
+    run TERMINAL=/tmp/fakebin/kitty
+    click 255 144; key shift+F4; sleep 1.5
+    check "terminal: \$TERMINAL comes first, in the folder" \
+        '[ "$(line 1)" = "/tmp/te/my dir" ] && [ "$(line 2)" = --directory ] && [ "$(line 3)" = "/tmp/te/my dir" ]'
+
+    run PATH=/tmp/fakebin
+    click 255 144; key shift+F4; sleep 1.5
+    check "terminal: a known terminal gets its folder flag" \
+        '[ "$(line 1)" = "/tmp/te/my dir" ] && [ "$(line 2)" = --directory ] && [ "$(line 3)" = "/tmp/te/my dir" ]'
+    menu /tmp/te Docs 2; sleep 1.5
+    check "terminal: Open terminal here in a folder's menu" '[ "$(line 3)" = /tmp/te/Docs ]'
+    # Empty space: the background menu (New folder, New file, Refresh, Open terminal here).
+    rclick 255 400; click 330 $((400 + 20 + 32 * 3)); sleep 1.5
+    check "terminal: Open terminal here on empty space: the folder shown" '[ "$(line 3)" = /tmp/te ]'
+
+    run PATH=/tmp/empty
+    click 255 144; key shift+F4; sleep 1.5; shot terminal-none
+    check "terminal: none found: nothing runs" '[ ! -e /tmp/term-run.txt ]'
+
+    cat > /tmp/cfg/settings.toml <<'EOF'
+[session]
+restore = false
+
+[terminal]
+command = ["/bin/sh", "-c", "pwd > /tmp/term-cwd.txt; printf '%s' \"$1\" > /tmp/term-arg.txt", "sh", "{dir} {{x}}"]
+EOF
+    sleep 2
+    click 255 144; key shift+F4; sleep 1.5
+    check "terminal: [terminal] command runs in the folder with {dir} put in" \
+        '[ "$(cat /tmp/term-cwd.txt 2>/dev/null)" = "/tmp/te/my dir" ] && [ "$(cat /tmp/term-arg.txt 2>/dev/null)" = "/tmp/te/my dir {x}" ]'
+    kill $gezik $xvfb 2>/dev/null
+    wait 2>/dev/null
+    grep -i "panicked" /tmp/gezik-gui-terminal.log && fail "terminal: no panic" || pass "terminal: no panic"
+}
+
+# 7a: Copy path (Ctrl+Shift+C and "Copy path as ▸" in Gezik's own menu) puts text on the X11
+# clipboard, and leaves the files Gezik cut alone.
+copy_path() {
+    Xvfb :99 -screen 0 1600x900x24 >/dev/null 2>&1 &
+    local xvfb=$!
+    unset WAYLAND_DISPLAY
+    export DISPLAY=:99
+    sleep 1
+    . /src/scripts/linux/gui-lib.sh
+    rm -rf /tmp/cp /tmp/cfg && mkdir -p /tmp/cp/Docs /tmp/cfg
+    echo a > "/tmp/cp/it's ş #1.txt"; echo b > /tmp/cp/b.txt
+    printf '[session]\nrestore = false\n' > /tmp/cfg/settings.toml
+    : >/tmp/gezik-gui-copypath.log
+    GEZIK_CONFIG_DIR=/tmp/cfg $GEZIK /tmp/cp >>/tmp/gezik-gui-copypath.log 2>&1 &
+    local gezik=$!
+    sleep 3
+    xdotool windowmove "$(win)" 0 0; xdotool windowsize "$(win)" 900 600; sleep 0.5
+    text() { xclip -selection clipboard -o -t UTF8_STRING 2>/dev/null; }
+    # POSIX single quotes, as Gezik writes them: ' becomes '\''.
+    pq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
+    local q="/tmp/cp/it's ş #1.txt"
+    # Rows: Docs 118, b.txt 144, it's ş #1.txt 170 (by name, ignoring case).
+
+    # The background menu by the menu key: New folder, New file, Refresh, Open terminal here,
+    # Copy path as ▸ (Full path first).
+    click 255 400; key Escape Menu; sleep 0.5; key Down Down Down Down Down Right Return; sleep 0.5
+    check "copy-path: the background menu copies the folder shown" '[ "$(text)" = /tmp/cp ]'
+    click 255 170; key ctrl+shift+c; sleep 0.5
+    check "copy-path: Ctrl+Shift+C copies the full path" '[ "$(text)" = "$q" ]'
+    check "copy-path: as text, not as files" \
+        'xclip -selection clipboard -o -t TARGETS | grep -qx UTF8_STRING && xclip -selection clipboard -o -t TARGETS | grep -qx STRING && ! xclip -selection clipboard -o -t TARGETS | grep -q uri-list'
+    xdotool keydown shift; click 255 144; xdotool keyup shift; key ctrl+shift+c; sleep 0.5
+    check "copy-path: several items one per line" '[ "$(text)" = "$(printf "%s\n%s" /tmp/cp/b.txt "$q")" ]'
+    key Escape; key ctrl+shift+c; sleep 0.5
+    check "copy-path: no selection: the folder shown" '[ "$(text)" = /tmp/cp ]'
+    # A file's menu by the menu key: Open, Open with default app, Open terminal here, Copy
+    # path as ▸ (Full path, Quoted, Name, Folder path, file:// URL).
+    pick() { click 255 170; key Menu; sleep 0.5; key Down Down Down Down Right; for _ in $(seq 1 "$1"); do key Down; done; key Return; sleep 0.5; }
+    pick 1
+    check "copy-path: Quoted for the shell" '[ "$(text)" = "$(pq "$q")" ]'
+    pick 2
+    check "copy-path: Name" '[ "$(text)" = "$(basename "$q")" ]'
+    pick 4
+    check "copy-path: file:// URL" '[ "$(text)" = "file:///tmp/cp/it%27s%20%C5%9F%20%231.txt" ]'
+    # Cut b.txt, then copy a path: the cut is over, Ctrl+V in Docs moves nothing.
+    click 255 144; key ctrl+x; sleep 0.5; click 255 170; key ctrl+shift+c; sleep 0.5
+    check "copy-path: the clipboard has no files then" '[ -z "$(copied)" ]'
+    dclick 255 118; key ctrl+v; sleep 1.5
+    check "copy-path: a later Ctrl+V moves nothing" '[ -f /tmp/cp/b.txt ] && [ ! -e /tmp/cp/Docs/b.txt ]'
+    kill $gezik $xvfb 2>/dev/null
+    wait 2>/dev/null
+    grep -i "panicked" /tmp/gezik-gui-copypath.log && fail "copy-path: no panic" || pass "copy-path: no panic"
+}
+
 # Not in `all`. The filter in a folder of 100,000 files, release build: the process's CPU
 # time (all threads, /proc/<pid>/task/*/schedstat) from before each keystroke to 300 ms after
 # it, less the idle CPU of 300 ms with the bar open. Twice: nothing selected, then after
@@ -1516,9 +1653,11 @@ case "${1:-all}" in
     commands) commands ;;
     paths) paths ;;
     history) history ;;
+    terminal) terminal ;;
+    copy-path) copy_path ;;
     filterperf) filterperf ;;
     memory) memory "${2:-}" ;;
-    *) x11; wayland; popups; tabdrag; pdfpopups; pdfnote; filter; selection; tabs; keyboard; commands; paths; history ;;
+    *) x11; wayland; popups; tabdrag; pdfpopups; pdfnote; filter; selection; tabs; keyboard; commands; paths; history; terminal; copy_path ;;
 esac
 echo "failures: $failures"
 exit $failures

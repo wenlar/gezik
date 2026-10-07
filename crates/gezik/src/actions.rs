@@ -1,5 +1,6 @@
-//! The keyboard package's actions (6a's and 6b's), run by their shortcuts (main.rs `handle_key`) and on
-//! macOS by the menu bar when their chord cannot be played there (the keypad's) or there is none.
+//! The actions of the keyboard package (6a, 6b) and of 7a, run by their shortcuts (main.rs
+//! `handle_key`) and on macOS by the menu bar when their chord cannot be played there (the
+//! keypad's) or there is none.
 
 use gezik_config::shortcuts::Action;
 
@@ -19,7 +20,7 @@ pub fn run_command(index: usize, view: &View) {
     crate::convert::run_by_index(index, items);
 }
 
-/// Runs `action` if it is one of 6a's and 6b's; returns whether it ran.
+/// Runs `action` if it is one of 6a's, 6b's and 7a's; returns whether it ran.
 pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
     match action {
         Action::Tab1
@@ -46,7 +47,10 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         Action::ToggleTabLock => nav.toggle_tab_lock(nav.active_index()),
         Action::TabPicker => crate::tab_tools::with_current(crate::tab_tools::TabTools::open),
         Action::ClearHistory => crate::path_box::with_current(|p| p.forget(true)),
-        // Not 6a's or 6b's: `handle_key` and the menu bar run these themselves. Listed one by one so
+        Action::OpenTerminal => crate::terminal::open_for_view(view, false),
+        Action::OpenTerminalAdmin => crate::terminal::open_for_view(view, true),
+        Action::CopyPath => crate::copy_path::copy_selection(view),
+        // Not theirs: `handle_key` and the menu bar run these themselves. Listed one by one so
         // that a new action is a compile error here until it is placed.
         Action::NewTab
         | Action::CloseTab
@@ -75,10 +79,7 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         | Action::Redo
         | Action::BatchRename
         | Action::ToggleHidden
-        // 7a's: Task 7 and Task 9 place these.
-        | Action::OpenTerminal
-        | Action::OpenTerminalAdmin
-        | Action::CopyPath
+        // 7a's: Task 9 places this.
         | Action::SaveTabSet => return false,
     }
     true

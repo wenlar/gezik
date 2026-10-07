@@ -473,8 +473,8 @@ pub fn acts_on_files(action: Action) -> bool {
     )
 }
 
-/// The selection's shortcuts (invert, by pattern, same type, restore): they act on the list,
-/// not on the text being typed (Alt+keypad + is a character on Windows).
+/// The selection's shortcuts (invert, by pattern, same type, restore) and copy-path: they act
+/// on the list, not on the text being typed (Alt+keypad + is a character on Windows).
 pub fn acts_on_selection(action: Action) -> bool {
     matches!(
         action,
@@ -483,6 +483,7 @@ pub fn acts_on_selection(action: Action) -> bool {
             | Action::DeselectPattern
             | Action::SelectSameType
             | Action::RestoreSelection
+            | Action::CopyPath
     )
 }
 
@@ -575,6 +576,7 @@ mod tests {
             Action::DeselectPattern,
             Action::SelectSameType,
             Action::RestoreSelection,
+            Action::CopyPath,
         ] {
             assert!(waits_for_text_fields(action), "{action:?}: the path box and the filter bar keep it");
             assert!(!needs_list(action), "{action:?}: the list need not have the keyboard otherwise");
@@ -767,6 +769,10 @@ mod tests {
         // Ctrl+Shift+T arrives as "T" with control and shift: not new-tab.
         let got = chord_from_slint("T", true, false, true, false, Platform::Other).unwrap();
         assert_eq!(defaults.action_for(&got), Some(Action::ReopenTab));
+        // open-terminal's second key; on Turkish Q, Ctrl+Alt+T (AltGr+T) types ₺: no shortcut
+        // there (known, spec 10.3), Shift+F4 is the one that always works.
+        assert_eq!(reach("ctrl+alt+t"), Some(Action::OpenTerminal));
+        assert_eq!(chord_from_slint("₺", true, true, false, false, Platform::Other), None);
     }
 
     #[test]
