@@ -531,6 +531,13 @@ pub fn trash(path: &Path) -> io::Result<Option<PathBuf>> {
             "names ending in a dot or space cannot go to the Recycle Bin",
         ));
     }
+    // One at a time in this process: the Shell loads the copy hooks other programs register
+    // (FileZilla's, WinSCP's…) into it for every folder, and not all of them bear being run
+    // on two threads at once (WinSCP's DragExt64 ended a test binary with an "Abnormal
+    // program termination" box while its tests trashed in parallel). Moving to the Recycle
+    // Bin is a rename on the same drive, so the wait is short.
+    static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     unsafe {
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         let operation: IFileOperation = CoCreateInstance(&FileOperation, None, CLSCTX_ALL).map_err(io_error)?;
