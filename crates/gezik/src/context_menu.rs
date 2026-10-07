@@ -101,6 +101,7 @@ pub fn items(place: Place, native_shell: bool) -> Vec<(u32, &'static str)> {
             if !only_tab {
                 out.push((CLOSE_OTHER_TABS, "Close other tabs"));
             }
+            out.push((SAVE_TAB_SET, "Save tabs as…"));
         }
     }
     out
@@ -221,6 +222,13 @@ pub const COMMAND_GROUP: u32 = 970;
 pub const OPEN_TERMINAL: u32 = 1000;
 pub const OPEN_TERMINAL_ADMIN: u32 = 1001;
 pub const COPY_PATH_FIRST: u32 = 1010;
+/// 1020: Save tabs as… (tab menu). 1100-1129: open tab set N; 1130-1159: replace the tabs with
+/// set N; 1160-1189: delete set N.
+pub const SAVE_TAB_SET: u32 = 1020;
+pub const TAB_SET_OPEN_FIRST: u32 = 1100;
+pub const TAB_SET_REPLACE_FIRST: u32 = 1130;
+pub const TAB_SET_DELETE_FIRST: u32 = 1160;
+pub const TAB_SET_MAX: u32 = 30;
 /// Group headings in a Slint menu: shown greyed, never chosen.
 pub const HEADING: u32 = 0;
 /// Gezik's menu ids are below this; the Explorer menu's start here (gezik_platform's
@@ -352,6 +360,21 @@ pub fn filter_items(names: &[String], can_save: bool) -> Vec<(u32, String, bool)
     list
 }
 
+/// "Open tab set ▸": each set (opened after the tabs), then "Replace tabs with" each, then
+/// "Delete" each (up to `TAB_SET_MAX` each), as the filter menu lists its own.
+pub fn tab_set_items(names: &[String]) -> Vec<(u32, String, bool)> {
+    let shown = names.iter().take(TAB_SET_MAX as usize).enumerate();
+    let mut list: Vec<(u32, String, bool)> =
+        shown.clone().map(|(i, name)| (TAB_SET_OPEN_FIRST + i as u32, name.clone(), true)).collect();
+    list.extend(
+        shown
+            .clone()
+            .map(|(i, name)| (TAB_SET_REPLACE_FIRST + i as u32, format!("Replace tabs with \"{name}\""), true)),
+    );
+    list.extend(shown.map(|(i, name)| (TAB_SET_DELETE_FIRST + i as u32, format!("Delete \"{name}\""), true)));
+    list
+}
+
 fn pin_toggle(pinned: bool) -> (u32, &'static str) {
     if pinned { (UNPIN, "Unpin from sidebar") } else { (PIN, "Pin to sidebar") }
 }
@@ -364,7 +387,8 @@ enum Subject {
     Row(PathBuf),
     Rows(Vec<PathBuf>),
     SidebarEntry(PathBuf),
-    Tab(u64),
+    /// A tab by id, and the tab set names its menu listed.
+    Tab(u64, Vec<String>),
     /// Empty space in this folder.
     Background(PathBuf),
     Header,
@@ -598,12 +622,16 @@ impl Menus {
     }
 
     /// Right-click on tab `index`, at window position `x`, `y`. Tabs get Gezik's own menu
-    /// everywhere.
+    /// everywhere, with "Open tab set ▸" when there are sets.
     pub fn tab(&self, index: usize, x: f32, y: f32) {
         let Some(id) = self.nav.tab_id(index) else { return };
         let place = Place::Tab { only_tab: self.nav.tab_count() == 1, locked: self.nav.is_tab_locked(index) };
-        *self.subject.borrow_mut() = Some(Subject::Tab(id));
-        self.open_slint(&items(place, false), Anchor::point(x, y));
+        let list: Vec<(u32, String, bool)> =
+            items(place, false).into_iter().map(|(id, title)| (id, title.to_owned(), true)).collect();
+        let names = crate::tab_sets::names();
+        let subs = vec![Submenu { title: "Open tab set".to_owned(), at: list.len(), items: tab_set_items(&names) }];
+        *self.subject.borrow_mut() = Some(Subject::Tab(id, names));
+        self.open_slint_entries(&list, subs, Anchor::point(x, y));
     }
 
     /// Right-click on the column header, at window position `x`, `y`.
@@ -929,22 +957,26 @@ impl Menus {
                     self.sidebar.move_pinned(i, i + 1);
                 }
             }
-            (DUPLICATE_TAB, Subject::Tab(id)) => {
+            (SAVE_TAB_SET, Subject::Tab(..)) => crate::tab_sets::with_current(crate::tab_sets::TabSets::ask_save),
+            (id, Subject::Tab(_, names)) if crate::tab_sets::set_item(id).is_some() => {
+                crate::tab_sets::with_current(|sets| sets.chosen(id, &names));
+            }
+            (DUPLICATE_TAB, Subject::Tab(id, _)) => {
                 if let Some(i) = self.nav.tab_index(id) {
                     self.nav.duplicate_tab(i);
                 }
             }
-            (CLOSE_TAB, Subject::Tab(id)) => {
+            (CLOSE_TAB, Subject::Tab(id, _)) => {
                 // After the menu is fully done: closing the last tab closes the window.
                 let nav = self.nav.clone();
                 slint::Timer::single_shot(std::time::Duration::ZERO, move || nav.close_tab_by_id(id));
             }
-            (LOCK_TAB | UNLOCK_TAB, Subject::Tab(id)) => {
+            (LOCK_TAB | UNLOCK_TAB, Subject::Tab(id, _)) => {
                 if let Some(i) = self.nav.tab_index(id) {
                     self.nav.toggle_tab_lock(i);
                 }
             }
-            (CLOSE_OTHER_TABS, Subject::Tab(id)) => {
+            (CLOSE_OTHER_TABS, Subject::Tab(id, _)) => {
                 if let Some(i) = self.nav.tab_index(id) {
                     self.nav.close_other_tabs(i);
                 }
@@ -1158,6 +1190,7 @@ fn menu_lines(before: Vec<MenuEntry>, subs: Vec<(String, Vec<MenuEntry>)>) -> Ve
 fn from_submenu(id: u32) -> bool {
     (COMMAND_FIRST..COMMAND_FIRST + COMMAND_MAX).contains(&id)
         || (COPY_PATH_FIRST..COPY_PATH_FIRST + PathFormat::ALL.len() as u32).contains(&id)
+        || crate::tab_sets::set_item(id).is_some()
 }
 
 /// Whether Slint shows its menus as the system's: on Windows and macOS (through muda),
@@ -1348,6 +1381,7 @@ mod tests {
             IMAGES_TO_PDF,
             LOCK_TAB,
             UNLOCK_TAB,
+            SAVE_TAB_SET,
             FILTER_SAVE,
             COMMAND_GROUP,
             OPEN_TERMINAL,
@@ -1367,6 +1401,9 @@ mod tests {
             FILTER_FIRST..FILTER_FIRST + FILTER_MAX,
             FILTER_DELETE_FIRST..FILTER_DELETE_FIRST + FILTER_MAX,
             COPY_PATH_FIRST..COPY_PATH_FIRST + 7,
+            TAB_SET_OPEN_FIRST..TAB_SET_OPEN_FIRST + TAB_SET_MAX,
+            TAB_SET_REPLACE_FIRST..TAB_SET_REPLACE_FIRST + TAB_SET_MAX,
+            TAB_SET_DELETE_FIRST..TAB_SET_DELETE_FIRST + TAB_SET_MAX,
         ]);
         for (i, a) in ranges.iter().enumerate() {
             assert!(a.start >= 1 && a.end <= GEZIK_IDS_END, "{a:?}: 1..4096 (0 is a heading, 4096 on the Shell's)");
@@ -1514,10 +1551,33 @@ mod tests {
     #[test]
     fn the_tab_menu_offers_the_lock_and_no_close_on_a_locked_tab() {
         let tab = |only_tab, locked| ids(items(Place::Tab { only_tab, locked }, false));
-        assert_eq!(tab(false, false), [DUPLICATE_TAB, LOCK_TAB, CLOSE_TAB, CLOSE_OTHER_TABS]);
-        assert_eq!(tab(true, false), [DUPLICATE_TAB, LOCK_TAB, CLOSE_TAB]);
-        assert_eq!(tab(false, true), [DUPLICATE_TAB, UNLOCK_TAB, CLOSE_OTHER_TABS]);
-        assert_eq!(tab(true, true), [DUPLICATE_TAB, UNLOCK_TAB]);
+        assert_eq!(tab(false, false), [DUPLICATE_TAB, LOCK_TAB, CLOSE_TAB, CLOSE_OTHER_TABS, SAVE_TAB_SET]);
+        assert_eq!(tab(true, false), [DUPLICATE_TAB, LOCK_TAB, CLOSE_TAB, SAVE_TAB_SET]);
+        assert_eq!(tab(false, true), [DUPLICATE_TAB, UNLOCK_TAB, CLOSE_OTHER_TABS, SAVE_TAB_SET]);
+        assert_eq!(tab(true, true), [DUPLICATE_TAB, UNLOCK_TAB, SAVE_TAB_SET]);
+    }
+
+    #[test]
+    fn the_tab_set_menu_opens_replaces_and_deletes() {
+        let names = vec!["Work".to_owned(), "Media".to_owned()];
+        let items = tab_set_items(&names);
+        let ids: Vec<u32> = items.iter().map(|(id, _, _)| *id).collect();
+        assert_eq!(
+            ids,
+            [
+                TAB_SET_OPEN_FIRST,
+                TAB_SET_OPEN_FIRST + 1,
+                TAB_SET_REPLACE_FIRST,
+                TAB_SET_REPLACE_FIRST + 1,
+                TAB_SET_DELETE_FIRST,
+                TAB_SET_DELETE_FIRST + 1
+            ]
+        );
+        assert_eq!(items[2].1, "Replace tabs with \"Work\"");
+        assert_eq!(items[5].1, "Delete \"Media\"");
+        assert!(tab_set_items(&[]).is_empty());
+        let many: Vec<String> = (0..TAB_SET_MAX + 3).map(|i| format!("S{i}")).collect();
+        assert_eq!(tab_set_items(&many).len(), 3 * TAB_SET_MAX as usize);
     }
 
     #[test]

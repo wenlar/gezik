@@ -59,6 +59,8 @@ export component AppWindow inherits Window {
     in property <bool> menu-keys: true;
     // The Commands menu: the `[[commands]]` with a key (id: the command's index, -1 a heading).
     in property <[MenuEntry]> bar-commands;
+    // The Window menu's "Open Tab Set": the tab sets to open, to replace the tabs with, to delete.
+    in property <[MenuEntry]> bar-tab-sets;
     callback menu-command(string);
     if root.native-menu-bar: MenuBar {
         Menu {
@@ -135,6 +137,16 @@ export component AppWindow inherits Window {
             MenuItem { title: "Reopen Closed Tab"; shortcut: root.menu-keys ? @keys(Control + Shift + T) : @keys(); activated => { root.menu-command("reopen-tab"); } }
             MenuItem { title: "Show All Tabs…"; shortcut: root.menu-keys ? @keys(Control + Shift + A) : @keys(); activated => { root.menu-command("tab-picker"); } }
             MenuItem { title: root.active-tab-locked ? "Unlock Tab" : "Lock Tab"; activated => { root.menu-command("toggle-tab-lock"); } }
+            MenuSeparator { }
+            MenuItem { title: "Save Tabs As…"; activated => { root.menu-command("save-tab-set"); } }
+            if root.bar-tab-sets.length > 0: Menu {
+                title: "Open Tab Set";
+                for entry in root.bar-tab-sets: MenuItem {
+                    title: entry.title;
+                    enabled: entry.enabled;
+                    activated => { root.menu-command("tab-set:" + entry.id); }
+                }
+            }
             MenuSeparator { }
             MenuItem { title: "Tab 1"; shortcut: root.menu-keys ? @keys(Control + "1") : @keys(); activated => { root.menu-command("tab-1"); } }
             MenuItem { title: "Tab 2"; shortcut: root.menu-keys ? @keys(Control + "2") : @keys(); activated => { root.menu-command("tab-2"); } }

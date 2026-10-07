@@ -50,6 +50,7 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         Action::OpenTerminal => crate::terminal::open_for_view(view, false),
         Action::OpenTerminalAdmin => crate::terminal::open_for_view(view, true),
         Action::CopyPath => crate::copy_path::copy_selection(view),
+        Action::SaveTabSet => crate::tab_sets::with_current(crate::tab_sets::TabSets::ask_save),
         // Not theirs: `handle_key` and the menu bar run these themselves. Listed one by one so
         // that a new action is a compile error here until it is placed.
         Action::NewTab
@@ -78,9 +79,7 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         | Action::Undo
         | Action::Redo
         | Action::BatchRename
-        | Action::ToggleHidden
-        // 7a's: Task 9 places this.
-        | Action::SaveTabSet => return false,
+        | Action::ToggleHidden => return false,
     }
     true
 }

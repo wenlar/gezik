@@ -459,6 +459,24 @@ impl Navigator {
         }
     }
 
+    /// Opens a tab set (spec 5.2): `locations` as tabs at the end, the first in front (a
+    /// visit); `replace` first closes the unlocked tabs, and the status bar then says how many
+    /// locked ones stayed. A folder gone on this computer falls back when it is shown.
+    pub fn open_tab_set(&self, locations: Vec<Location>, replace: bool) {
+        if locations.is_empty() {
+            return;
+        }
+        let locked = self.with_tabs(|tabs| tabs.open_set(locations, replace));
+        let front = self.tab_id(self.active_index());
+        self.0.borrow_mut().visit_next_show = front;
+        self.after_tabs_changed_noted((locked > 0).then(|| locked_kept_text(locked)));
+    }
+
+    /// Every tab's location, in tab order.
+    pub fn tab_locations(&self) -> Vec<Location> {
+        self.0.borrow().tabs.iter().map(|history| history.location().clone()).collect()
+    }
+
     /// Opens the last closed tab again where it was, with its history and its view (selection,
     /// scroll, filter); nothing if no tab was closed.
     pub fn reopen_tab(&self) {

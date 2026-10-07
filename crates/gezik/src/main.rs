@@ -28,6 +28,7 @@ mod quick_look;
 mod select_tools;
 mod sidebar;
 mod start;
+mod tab_sets;
 mod tab_tools;
 mod terminal;
 mod theme_bridge;
@@ -80,6 +81,9 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
     convert::set_settings(loaded.settings.convert.clone(), loaded.settings.commands.clone());
     filter::set_settings(loaded.settings.keyboard, loaded.settings.filters.clone());
     path_box::set_settings(loaded.settings.history);
+    tab_sets::set_settings(loaded.settings.tab_sets.clone());
+    #[cfg(target_os = "macos")]
+    menu_bar::set_tab_sets(window, &tab_sets::names());
     terminal::set_settings(loaded.settings.terminal.command.clone());
     loaded
 }
@@ -539,6 +543,7 @@ fn main() -> Result<(), slint::PlatformError> {
     sidebar.install();
     sidebar.set_pinned(initial_settings.pinned);
     let dialogs = dialog::Dialogs::new(&window);
+    let _tab_sets = tab_sets::TabSets::new(&window, nav.clone(), view.clone(), dialogs.clone(), config.clone());
     let _filter = filter::Filter::new(&window, view.clone(), dialogs.clone(), config.clone());
     let _tab_tools = tab_tools::TabTools::new(&window, nav.clone());
     let _select_tools = select_tools::SelectTools::new(

@@ -27,6 +27,10 @@ pub fn install(window: &AppWindow, view: View, nav: Navigator, ops: Operations) 
                 if let Some(index) = name.strip_prefix("command:").and_then(|i| i.parse::<usize>().ok()) {
                     return crate::actions::run_command(index, &view);
                 }
+                if let Some(id) = name.strip_prefix("tab-set:").and_then(|i| i.parse::<u32>().ok()) {
+                    let names = crate::tab_sets::names();
+                    return crate::tab_sets::with_current(|sets| sets.chosen(id, &names));
+                }
                 let Some(action) = Action::from_name(name) else { return };
                 match keys::chord_for(action).filter(|c| !matches!(c.key, Key::Num(_))) {
                     // After the menu is done with this item: playing the keys changes the
@@ -66,6 +70,19 @@ pub fn set_commands(window: &AppWindow, commands: &[CommandSpec]) {
         .map(|(id, title, enabled)| MenuEntry { id, title: crate::context_menu::menu_title(&title).into(), enabled })
         .collect();
     window.set_bar_commands(ModelRc::new(VecModel::from(entries)));
+}
+
+/// The Window menu's "Open Tab Set": the sets to open, to replace the tabs with, to delete.
+pub fn set_tab_sets(window: &AppWindow, names: &[String]) {
+    let entries: Vec<MenuEntry> = crate::context_menu::tab_set_items(names)
+        .into_iter()
+        .map(|(id, title, enabled)| MenuEntry {
+            id: i32::try_from(id).unwrap_or(-1),
+            title: crate::context_menu::menu_title(&title).into(),
+            enabled,
+        })
+        .collect();
+    window.set_bar_tab_sets(ModelRc::new(VecModel::from(entries)));
 }
 
 /// Presses and releases `chord`'s keys in the window, as the keyboard would.
