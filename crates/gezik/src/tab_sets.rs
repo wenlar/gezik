@@ -120,6 +120,11 @@ pub fn location_of(text: &str, dirs: &KnownDirs) -> Option<Location> {
     dirs.expand_checked(text).map(Location::Path)
 }
 
+/// The note for set `name` when none of its tabs can be opened here (unknown tokens, `..`).
+fn no_folders_text(name: &str) -> String {
+    format!("Tab set \"{name}\" has no folders to open")
+}
+
 /// What a tab set menu item does, by its id: open, replace the tabs with, or delete set N.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SetItem {
@@ -185,6 +190,9 @@ impl TabSets {
         let Some(i) = find(&sets, name) else { return };
         let dirs = KnownDirs::system();
         let locations: Vec<Location> = sets[i].tabs.iter().filter_map(|text| location_of(text, &dirs)).collect();
+        if locations.is_empty() {
+            return self.view.note(no_folders_text(&sets[i].name));
+        }
         self.nav.open_tab_set(locations, replace);
     }
 
@@ -260,6 +268,14 @@ mod tests {
 
     fn dirs() -> KnownDirs {
         KnownDirs::new(vec![("home", home()), ("downloads", home().join("İndirilenler"))])
+    }
+
+    #[test]
+    fn a_set_with_nothing_to_open_says_so() {
+        let dirs = dirs();
+        let broken = set("Work", &["../up", "{home}/a/../b"]);
+        assert!(broken.tabs.iter().all(|text| location_of(text, &dirs).is_none()));
+        assert_eq!(no_folders_text(&broken.name), "Tab set \"Work\" has no folders to open");
     }
 
     #[test]

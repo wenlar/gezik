@@ -494,6 +494,11 @@ impl super::Backend for X11 {
     }
 
     fn write_text(&self, text: &str) -> Result<(), ClipboardError> {
+        // `serve` hands it over in one request (no INCR): one too big would be refused there,
+        // after "Copied" was shown.
+        if text.len() + 64 >= self.0.conn.maximum_request_bytes() {
+            return Err(ClipboardError::Failed("the text is too long for the X11 clipboard".into()));
+        }
         self.own_clipboard(Owned { paths: Vec::new(), cut: false, text: Some(text.to_owned()) })
     }
 

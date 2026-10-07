@@ -1641,7 +1641,11 @@ session() {
     check "session: restore = false forgets the tabs" '! grep -q "session" /tmp/cfg/state.toml'
     run
     check "session: then one tab opens in start-folder" 'is one'
-    key ctrl+2; sleep 1; check "session: and only one" 'is one'
+    key ctrl+2; sleep 1; check "session: Ctrl+2 stays on it" 'is one'
+    # Turned back on, the open tabs are written at once: counted there, so exactly one.
+    printf 'start-folder = "/tmp/se/one"\n\n[shortcuts]\ntoggle-tab-lock = "ctrl+shift+l"\n' > /tmp/cfg/settings.toml
+    sleep 2
+    check "session: and only one tab is open" '[ "$(tabs_kept)" = 1 ] && grep -q "/tmp/se/one" /tmp/cfg/state.toml'
     kill $gezik $xvfb 2>/dev/null
     wait 2>/dev/null
     grep -i "panicked" /tmp/gezik-gui-session.log && fail "session: no panic" || pass "session: no panic"

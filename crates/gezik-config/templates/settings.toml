@@ -74,6 +74,9 @@ restore = true
 # and "}}" are braces). Unset: Gezik finds one (Windows Terminal, else PowerShell; Terminal on
 # macOS; $TERMINAL, x-terminal-emulator or a terminal it knows on Linux).
 # Through cmd or a .bat/.cmd file, a folder with % & | < > ^ " ( ) ! in its name is refused.
+# Give {dir} as an argument of its own (or a flag's value), never inside code for a shell
+# (["powershell", "-Command", "cd {dir}"], ["bash", "-c", "cd {dir}"], cmd /c): the folder's
+# name would run there as code, as administrator too.
 # command = ["wezterm", "start", "--cwd", "{dir}"]
 
 [shortcuts]

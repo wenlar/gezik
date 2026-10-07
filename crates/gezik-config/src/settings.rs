@@ -1830,6 +1830,14 @@ last-pattern = \"\"
     }
 
     #[test]
+    fn the_template_warns_against_dir_inside_shell_code() {
+        let template = include_str!("../templates/settings.toml");
+        let terminal = &template[template.find("[terminal]").expect("the template has a [terminal] table")..];
+        let block = &terminal[..terminal.find("\n\n").unwrap_or(terminal.len())];
+        assert!(block.contains("\"-Command\", \"cd {dir}\"") && block.contains("\"bash\", \"-c\""), "{block}");
+    }
+
+    #[test]
     fn the_template_command_examples_read_without_warnings_once_uncommented() {
         let template = include_str!("../templates/settings.toml");
         let start = template.find("# [[commands]]").expect("the template has command examples");
