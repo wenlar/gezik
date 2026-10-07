@@ -342,6 +342,7 @@ fn runnable(path: &Path) -> bool {
 fn real_name(name: &str) -> Option<String> {
     let dirs = std::env::var_os("PATH")?;
     std::env::split_paths(&dirs)
+        .filter(|dir| dir.is_absolute())
         .map(|dir| dir.join(name))
         .find(|path| runnable(path))
         .and_then(|path| std::fs::canonicalize(path).ok())
@@ -357,24 +358,6 @@ pub fn open(dir: &Path, admin: bool, command: Option<&[String]>) -> Result<(), T
         Err(err) => return Err(TerminalError::Failed(crate::fs::describe(&err))),
     }
     let os = Os::current();
-    // The program by its full path, found as `choose` checks it: the Shell would look in
-    // Gezik's own working folder first.
-    let resolved: Option<Vec<String>> = command.map(|command| {
-        let mut command = command.to_vec();
-        if let Some(program) = command.first_mut()
-            && !program.contains('{')
-        {
-            let pathext = std::env::var("PATHEXT").ok();
-            let path = std::env::var_os("PATH");
-            if let Some(full) = find_program(program, path.as_deref(), pathext.as_deref(), cfg!(windows))
-                .and_then(|full| full.into_os_string().into_string().ok())
-            {
-                *program = full;
-            }
-        }
-        command
-    });
-    let command = resolved.as_deref();
     // An elevated session does not see the drives this user mapped: their share instead.
     let unc = (admin && os == Os::Windows)
         .then(|| gezik_core::path_text::unc_path(&dir.to_string_lossy(), &crate::fs::mapped_remote))
@@ -391,7 +374,28 @@ pub fn open(dir: &Path, admin: bool, command: Option<&[String]>) -> Result<(), T
         found: &on_path,
         real_name: &real_name,
     };
-    start(&choose(dir, admin, &lookup)?)
+    let pathext = std::env::var("PATHEXT").ok();
+    let path = std::env::var_os("PATH");
+    start(&resolve(choose(dir, admin, &lookup)?, path.as_deref(), pathext.as_deref(), cfg!(windows))?)
+}
+
+/// `launch` with its program by its full path, found as `choose` checked it (absolute PATH
+/// folders only), or `NotFound`. Never a bare name: the Shell looks in the folder being opened
+/// (`lpDirectory`) before PATH, and on Unix a relative PATH entry would be taken from it too,
+/// so a `wt.exe` or `gnome-terminal` planted there would run (elevated, as administrator).
+fn resolve(
+    mut launch: Launch,
+    path: Option<&OsStr>,
+    pathext: Option<&str>,
+    windows: bool,
+) -> Result<Launch, TerminalError> {
+    let name = launch.program.to_string_lossy();
+    let full = find_program(&name, path, pathext, windows).ok_or(TerminalError::NotFound)?;
+    if !full.is_absolute() {
+        return Err(TerminalError::NotFound);
+    }
+    launch.program = full.into_os_string();
+    Ok(launch)
 }
 
 /// Through the Shell, as Explorer starts programs: a console program gets a console of its
@@ -777,6 +781,88 @@ mod tests {
         assert_eq!(find("", None, true), None);
         assert_eq!(find_program("term", None, None, true), None, "no PATH");
         let _ = std::fs::remove_dir_all(&bin);
+    }
+
+    /// Empty stand-ins for programs (executable on Unix), in a new folder under `root`.
+    fn plant(root: &Path, folder: &str, files: &[&str]) -> PathBuf {
+        let dir = root.join(folder);
+        std::fs::create_dir_all(&dir).unwrap();
+        for file in files {
+            std::fs::write(dir.join(file), "").unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(dir.join(file), std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+        }
+        dir
+    }
+
+    /// Lower case, so that the Windows rules find `wt.exe` on a case-sensitive file system too.
+    const PATHEXT: Option<&str> = Some(".com;.exe;.bat;.cmd");
+
+    /// `choose` and `resolve` as `open` runs them, with `path` for PATH.
+    fn resolved(os: Os, dir: &Path, admin: bool, path: &OsStr, windows: bool) -> Result<Launch, TerminalError> {
+        let found = |name: &str| find_program(name, Some(path), PATHEXT, windows).is_some();
+        resolve(choose(dir, admin, &look(os, &found))?, Some(path), PATHEXT, windows)
+    }
+
+    #[test]
+    fn a_terminal_planted_in_the_folder_is_never_the_one_started() {
+        let root = std::env::temp_dir().join(format!("gezik-plant-{}", std::process::id()));
+        let target = plant(&root, "downloads", &["wt.exe", "pwsh.exe", "powershell.exe", "gnome-terminal", "xterm"]);
+        let bin = plant(&root, "bin", &["wt.exe", "pwsh.exe", "gnome-terminal"]);
+        let elsewhere = std::env::join_paths([&bin]).unwrap();
+        for admin in [false, true] {
+            let wt = resolved(Os::Windows, &target, admin, &elsewhere, true).unwrap();
+            assert_eq!((wt.program.as_os_str(), wt.dir.as_path()), (bin.join("wt.exe").as_os_str(), target.as_path()));
+            assert!(!Path::new(&wt.program).starts_with(&target));
+        }
+        let ps = plant(&root, "ps", &["pwsh.exe"]);
+        let no_wt = std::env::join_paths([&ps]).unwrap();
+        let pwsh = resolved(Os::Windows, &target, true, &no_wt, true).unwrap();
+        assert_eq!(pwsh.program, ps.join("pwsh.exe").into_os_string());
+        let linux = resolved(Os::Linux, &target, false, &elsewhere, false).unwrap();
+        assert_eq!(linux.program, bin.join("gnome-terminal").into_os_string());
+        // Only in the folder, not on PATH: not found, as with no terminal at all.
+        let empty = std::env::join_paths([plant(&root, "empty", &[])]).unwrap();
+        assert_eq!(resolved(Os::Windows, &target, true, &empty, true), Err(TerminalError::NotFound));
+        assert_eq!(resolved(Os::Linux, &target, false, &empty, false), Err(TerminalError::NotFound));
+        // A bare name from anywhere (a custom command's) is resolved too, and a relative path refused.
+        let bare = Launch { program: "wt.exe".into(), args: vec![], dir: target.clone(), elevated: false };
+        assert_eq!(resolve(bare.clone(), Some(&empty), PATHEXT, true), Err(TerminalError::NotFound));
+        assert_eq!(
+            resolve(bare, Some(&elsewhere), PATHEXT, true).unwrap().program,
+            bin.join("wt.exe").into_os_string()
+        );
+        let relative = Launch { program: "downloads/wt.exe".into(), args: vec![], dir: root.clone(), elevated: false };
+        assert_eq!(resolve(relative, Some(&elsewhere), PATHEXT, true), Err(TerminalError::NotFound));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Removes a folder made in the working folder, even when the test fails.
+    struct Gone(PathBuf);
+    impl Drop for Gone {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn relative_path_entries_are_never_searched() {
+        // `.`, an empty entry or a relative folder would be taken from the folder being opened.
+        let name = format!("gezik-rel-{}", std::process::id());
+        let here = std::env::current_dir().unwrap();
+        let _gone = Gone(here.join(&name));
+        let target = plant(&here, &name, &["wt.exe", "gnome-terminal"]);
+        assert!(Path::new(&name).join("wt.exe").is_file(), "reachable through the relative entry");
+        let path = std::env::join_paths([Path::new(&name), Path::new("."), Path::new("")]).unwrap();
+        assert_eq!(find_program("wt", Some(&path), PATHEXT, true), None);
+        assert_eq!(find_program("gnome-terminal", Some(&path), PATHEXT, false), None);
+        assert_eq!(resolved(Os::Windows, &target, false, &path, true), Err(TerminalError::NotFound));
+        assert_eq!(resolved(Os::Linux, &target, false, &path, false), Err(TerminalError::NotFound));
+        let absolute = std::env::join_paths([&target]).unwrap();
+        assert_eq!(find_program("wt", Some(&absolute), PATHEXT, true), Some(target.join("wt.exe")));
     }
 
     #[test]
