@@ -1260,8 +1260,8 @@ fn from_submenu(id: u32) -> bool {
     (COMMAND_FIRST..COMMAND_FIRST + COMMAND_MAX).contains(&id)
         || (COPY_PATH_FIRST..COPY_PATH_FIRST + PathFormat::ALL.len() as u32).contains(&id)
         || crate::tab_sets::set_item(id).is_some()
-        || (DATE_FORMAT_FIRST..DATE_FORMAT_FIRST + 4).contains(&id)
-        || (SIZE_FORMAT_FIRST..SIZE_FORMAT_FIRST + 2).contains(&id)
+        || (DATE_FORMAT_FIRST..DATE_FORMAT_FIRST + DateFormat::ALL.len() as u32).contains(&id)
+        || (SIZE_FORMAT_FIRST..SIZE_FORMAT_FIRST + SizeFormat::ALL.len() as u32).contains(&id)
 }
 
 /// Whether Slint shows its menus as the system's: on Windows and macOS (through muda),
@@ -1457,6 +1457,11 @@ mod tests {
             COMMAND_GROUP,
             OPEN_TERMINAL,
             OPEN_TERMINAL_ADMIN,
+            HIDE_EXTENSIONS,
+            FOLDERS_FIRST,
+            SINGLE_CLICK_OPEN,
+            SHOW_HIDDEN,
+            SHOW_SYSTEM,
         ];
         let mut ranges: Vec<std::ops::Range<u32>> = singles.iter().map(|id| *id..id + 1).collect();
         ranges.extend([
@@ -1475,8 +1480,8 @@ mod tests {
             TAB_SET_OPEN_FIRST..TAB_SET_OPEN_FIRST + TAB_SET_MAX,
             TAB_SET_REPLACE_FIRST..TAB_SET_REPLACE_FIRST + TAB_SET_MAX,
             TAB_SET_DELETE_FIRST..TAB_SET_DELETE_FIRST + TAB_SET_MAX,
-            DATE_FORMAT_FIRST..DATE_FORMAT_FIRST + 4,
-            SIZE_FORMAT_FIRST..SIZE_FORMAT_FIRST + 2,
+            DATE_FORMAT_FIRST..DATE_FORMAT_FIRST + DateFormat::ALL.len() as u32,
+            SIZE_FORMAT_FIRST..SIZE_FORMAT_FIRST + SizeFormat::ALL.len() as u32,
         ]);
         for (i, a) in ranges.iter().enumerate() {
             assert!(a.start >= 1 && a.end <= GEZIK_IDS_END, "{a:?}: 1..4096 (0 is a heading, 4096 on the Shell's)");
