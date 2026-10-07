@@ -1,0 +1,56 @@
+    Finished `release` profile [optimized] target(s) in 10.77s
+made in 13.77938ms
+-rw-r--r-- 1 root root 4985151 Oct  7 03:51 /tmp/fake4k.png
+=== X11 (Xvfb + xclip)
+max request: 16777212 bytes
+TARGETS in 504.571µs: ["TARGETS", "image/png"]
+image/png (timeout 1s): 4.99 MB, 5 INCR pieces, 8.230894ms, Ok((3840, 2160))
+image/png (timeout 10s): 4.99 MB, 5 INCR pieces, 6.602608ms, Ok((3840, 2160))
+max request: 16777212 bytes
+TARGETS in 368.804µs: ["TARGETS", "UTF8_STRING"]
+UTF8_STRING: Some("Merhaba ğüşİı 日本 🙂\nikinci satır") in 383.707µs
+--- a 4K real-content PNG (ImageMagick 'rose' tiled + noise)
+-rw-r--r-- 1 root root 37816468 Oct  7 03:51 /tmp/plasma.png
+max request: 16777212 bytes
+TARGETS in 639.304µs: ["TARGETS", "image/png"]
+image/png (timeout 1s): 37.82 MB, 37 INCR pieces, 25.545277ms, Ok((3840, 2160))
+image/png (timeout 10s): 37.82 MB, 37 INCR pieces, 23.782491ms, Ok((3840, 2160))
+=== Wayland (headless sway + wl-copy)
+X connection to :99 broken (explicit kill or server shutdown).
+focused false selection true
+offered: ["image/png"]
+image/png: 4.99 MB in 4.546756ms, Ok((3840, 2160))
+focused false selection true
+offered: ["image/png"]
+image/png: 37.82 MB in 29.684765ms, Ok((3840, 2160))
+focused false selection true
+offered: ["text/plain", "text/plain;charset=utf-8", "TEXT", "STRING", "UTF8_STRING"]
+text/plain;charset=utf-8: "Merhaba ğüşİı 日本 🙂\nikinci satır" in 705.202µs
+UTF8_STRING: "Merhaba ğüşİı 日本 🙂\nikinci satır" in 421.487µs
+text/plain: "Merhaba ğüşİı 日本 🙂\nikinci satır" in 421.011µs
+=== Terminal
+lrwxrwxrwx 1 root root 13 Apr 17  2025 /etc/alternatives/x-terminal-emulator -> /usr/bin/foot
+lrwxrwxrwx 1 root root 37 Apr 17  2025 /usr/bin/x-terminal-emulator -> /etc/alternatives/x-terminal-emulator
+cd "/tmp/t/boşluk ş 日本" && "/usr/bin/x-terminal-emulator" "--working-directory=/tmp/t/boşluk ş 日本" (cwd Some("/tmp/t/boşluk ş 日本"))
+warn: main.c:437: 'C' is not a UTF-8 locale, falling back to 'C.UTF-8'
+warn: wayland.c:1734: compositor does not implement the XDG toplevel icon protocol
+still running after 3 s: Ok(false)
+  pwd seen by the shell: /tmp/t/boşluk ş 日本
+cd "/tmp/t/[köşeli] it\'s" && "/usr/bin/x-terminal-emulator" "--working-directory=/tmp/t/[köşeli] it's" (cwd Some("/tmp/t/[köşeli] it's"))
+warn: main.c:437: 'C' is not a UTF-8 locale, falling back to 'C.UTF-8'
+warn: wayland.c:1734: compositor does not implement the XDG toplevel icon protocol
+still running after 3 s: Ok(false)
+  pwd seen by the shell: /tmp/t/[köşeli] it's
+--- TERMINAL=foot / TERMINAL='foot --app-id x' / TERMINAL=nonexistent / empty PATH
+cd "/tmp" && "/usr/bin/foot" "--working-directory=/tmp" (cwd Some("/tmp"))
+cd "/tmp" && "/usr/bin/foot" "--app-id" "x" "--working-directory=/tmp" (cwd Some("/tmp"))
+cd "/tmp" && "/usr/bin/x-terminal-emulator" "--working-directory=/tmp" (cwd Some("/tmp"))
+no terminal found
+=== attrs
+wl_display_dispatch: Broken pipe
+/usr/lib: 32 entries, hidden 0, system 0, both 0
+  read_dir+metadata 16.744µs; + attributes 15.374µs; gezik_core::list_dir 22.48µs
+  e.g. []
+/tmp: 10 entries, hidden 0, system 0, both 0
+  read_dir+metadata 5.789µs; + attributes 5.668µs; gezik_core::list_dir 7.166µs
+  e.g. []

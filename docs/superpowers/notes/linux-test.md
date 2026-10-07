@@ -71,6 +71,8 @@ Note in the results any other line in the terminal.
 | List / grid view | Ctrl+Shift+1 / Ctrl+Shift+2 |
 | Address bar suggestions | ↓ ↑ to choose, Tab or → to write the chosen one, Enter to go, Esc to close the list (a second Esc ends typing) |
 | Clear folder history | `clear-history` (no key by default) |
+| Open terminal here | Shift+F4, Ctrl+Alt+T (GNOME/Ubuntu take Ctrl+Alt+T themselves) |
+| Copy path | Ctrl+Shift+C |
 | Command keys | `shortcut` in a `[[commands]]` entry (Ctrl, Alt or an F key is needed) |
 
 All of these are listed in `settings.toml` under `[shortcuts]`.
@@ -366,6 +368,17 @@ Keyboard (6b: path completion, folder history, command keys)
     - Right-click, then Commands ▸: a greyed "Archives" heading over "Zip together". The heading can't be chosen.
     - The notice says `commands[2]: shortcut "ctrl+f" is already used by filter; the command has no key`, and Ctrl+F still opens the filter.
     - Ctrl+Alt+Z in the path field does nothing. Note whether the desktop takes Ctrl+Alt+<letter> keys itself (GNOME and KDE bind some, such as Ctrl+Alt+T).
+
+44. **Open terminal** (`Shift+F4`; Ctrl+Alt+T too, but GNOME/Ubuntu take Ctrl+Alt+T for themselves: note which one wins).
+    - In a folder: the desktop's own terminal (GNOME: Ptyxis or Console; KDE: Konsole) opens in that folder, and comes to the front. Right-click a folder ▸ "Open terminal here", and empty space ▸ "Open terminal here" (the folder shown).
+    - `TERMINAL=xterm gezik` (or the terminal you like): that one comes first.
+    - `[terminal]` `command = ["xterm", "-e", "bash"]`-style entries: `{dir}` is put in, the command runs in the folder.
+    - Quit Gezik: the terminal stays.
+45. **Copy path** (Ctrl+Shift+C; "Copy path as ▸" in the right-click menu: Full path, Quoted, Name, Folder path, file:// URL).
+    - Select `it's ş #1.txt`, Ctrl+Shift+C, paste into bash: the path. "Quoted for the shell", pasted into bash: the same file (`ls <paste>`). "file:// URL", pasted into Firefox's address bar: opens the file.
+    - Several items: one per line. Nothing selected: the folder shown. On Wayland as well (note it).
+    - Cut a file (Ctrl+X), then copy a path: Ctrl+V in a folder moves nothing.
+46. **Session and tab sets.** Open three tabs, lock one, put another in front, close Gezik, open it again: the same tabs, the same one in front, the lock in place. `kill -9` it and open it again: the same. `gezik <folder>` opens that folder after the saved ones, in front. `[session]` `restore = false`: `state.toml` loses `[session]`. Right-click a tab ▸ "Save tabs as…" ▸ a name, "Open tab set ▸" opens it after the tabs, "Replace tabs with…" keeps a locked tab, "Delete…" removes it. With `save-tab-set` bound under `[shortcuts]`, the key does the same.
 
 ## Known gaps (not bugs)
 

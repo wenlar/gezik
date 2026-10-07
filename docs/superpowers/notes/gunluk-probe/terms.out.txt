@@ -1,0 +1,59 @@
+installed xterm
+installed xfce4-terminal
+installed mate-terminal
+installed lxterminal
+installed tilix
+installed terminator
+installed alacritty
+installed kitty
+installed konsole
+installed gnome-terminal
+installed qterminal
+installed terminology
+installed rxvt-unicode
+installed gnome-console
+installed ptyxis
+installed libgl1-mesa-dri
+installed dbus-x11
+ok   xterm  :: cd "/tmp/t/boşluk ş 日本" && "/usr/bin/xterm" (cwd Some("/tmp/t/boşluk ş 日本"))
+ok   xfce4-terminal  :: cd "/tmp/t/boşluk ş 日本" && "/usr/bin/xfce4-terminal" "--working-directory=/tmp/t/boşluk ş 日本" (cwd Some("/tmp/t/boşluk ş 日本"))
+ok   mate-terminal  :: cd "/tmp/t/boşluk ş 日本" && "/usr/bin/mate-terminal" "--working-directory=/tmp/t/boşluk ş 日本" (cwd Some("/tmp/t/boşluk ş 日本"))
+ok   lxterminal  :: cd "/tmp/t/boşluk ş 日本" && "/usr/bin/lxterminal" "--working-directory=/tmp/t/boşluk ş 日本" (cwd Some("/tmp/t/boşluk ş 日本"))
+ok   tilix  :: cd "/tmp/t/boşluk ş 日本" && "/usr/bin/tilix" "--working-directory=/tmp/t/boşluk ş 日本" (cwd Some("/tmp/t/boşluk ş 日本"))
+ok   terminator  :: cd "/tmp/t/boşluk ş 日本" && "/usr/bin/terminator" "--working-directory=/tmp/t/boşluk ş 日本" (cwd Some("/tmp/t/boşluk ş 日本"))
+ok   alacritty  :: cd "/tmp/t/boşluk ş 日本" && "/usr/bin/alacritty" "--working-directory" "/tmp/t/boşluk ş 日本" (cwd Some("/tmp/t/boşluk ş 日本"))
+ok   kitty  :: cd "/tmp/t/boşluk ş 日本" && "/usr/bin/kitty" "--directory" "/tmp/t/boşluk ş 日本" (cwd Some("/tmp/t/boşluk ş 日本"))
+ok   konsole  :: cd "/tmp/t/boşluk ş 日本" && "/usr/bin/konsole" "--workdir" "/tmp/t/boşluk ş 日本" (cwd Some("/tmp/t/boşluk ş 日本"))
+ok   gnome-terminal  :: cd "/tmp/t/boşluk ş 日本" && "/usr/bin/gnome-terminal" "--working-directory=/tmp/t/boşluk ş 日本" (cwd Some("/tmp/t/boşluk ş 日本"))
+ok   qterminal  :: cd "/tmp/t/boşluk ş 日本" && "/usr/bin/qterminal" "--workdir" "/tmp/t/boşluk ş 日本" (cwd Some("/tmp/t/boşluk ş 日本"))
+ok   terminology  :: cd "/tmp/t/boşluk ş 日本" && "/usr/bin/terminology" "--current-directory=/tmp/t/boşluk ş 日本" (cwd Some("/tmp/t/boşluk ş 日本"))
+ok   urxvt  :: cd "/tmp/t/boşluk ş 日本" && "/usr/bin/urxvt" "-cd" "/tmp/t/boşluk ş 日本" (cwd Some("/tmp/t/boşluk ş 日本"))
+ok   kgx  :: cd "/tmp/t/boşluk ş 日本" && "/usr/bin/kgx" "--working-directory" "/tmp/t/boşluk ş 日本" (cwd Some("/tmp/t/boşluk ş 日本"))
+FAIL ptyxis (got '') :: cd "/tmp/t/boşluk ş 日本" && "/usr/bin/ptyxis" "--working-directory" "/tmp/t/boşluk ş 日本" (cwd Some("/tmp/t/boşluk ş 日本"))
+--- flags alone (cwd /)
+ok   flag only: xfce4-terminal --working-directory=/tmp/t/boşluk ş 日本
+ok   flag only: mate-terminal --working-directory=/tmp/t/boşluk ş 日本
+ok   flag only: lxterminal --working-directory=/tmp/t/boşluk ş 日本
+ok   flag only: tilix --working-directory=/tmp/t/boşluk ş 日本
+ok   flag only: terminator --working-directory=/tmp/t/boşluk ş 日本
+ok   flag only: alacritty --working-directory /tmp/t/boşluk ş 日本
+ok   flag only: kitty --directory /tmp/t/boşluk ş 日本
+ok   flag only: konsole --workdir /tmp/t/boşluk ş 日本
+ok   flag only: gnome-terminal --working-directory=/tmp/t/boşluk ş 日本
+ok   flag only: qterminal --workdir /tmp/t/boşluk ş 日本
+ok   flag only: terminology --current-directory=/tmp/t/boşluk ş 日本
+ok   flag only: urxvt -cd /tmp/t/boşluk ş 日本
+ok   flag only: kgx --working-directory /tmp/t/boşluk ş 日本
+FAIL flag only: ptyxis --new-window --working-directory /tmp/t/boşluk ş 日本 (got '')
+--- help texts
+# kgx
+  --working-directory=DIRNAME     Set the working directory
+# ptyxis
+  -d, --working-directory=DIR         Use DIR for --tab, --tab-with-profile, --new-window, or -x
+# qterminal
+  -w,  --workdir <dir>      Start session with specified work directory
+# terminology
+ERR<5788>:eldbus ../src/lib/eldbus/eldbus_core.c:1062 _connection_get() Error connecting to bus of type 2. error name: org.freedesktop.DBus.Error.FileNotFound error message: Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory
+ERR<5788>:eldbus ../src/lib/eldbus/eldbus_core.c:1062 _connection_get() Error connecting to bus of type 2. error name: org.freedesktop.DBus.Error.FileNotFound error message: Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory
+ERR<5795>:eldbus ../src/lib/eldbus/eldbus_core.c:1062 _connection_get() Error connecting to bus of type 2. error name: org.freedesktop.DBus.Error.FileNotFound error message: Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory
+ERR<5795>:eldbus ../src/lib/eldbus/eldbus_core.c:1062 _connection_get() Error connecting to bus of type 2. error name: org.freedesktop.DBus.Error.FileNotFound error message: Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory

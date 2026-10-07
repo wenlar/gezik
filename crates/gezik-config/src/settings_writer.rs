@@ -1,5 +1,5 @@
 //! `settings.toml` written by one thread of its own: every change the UI makes to it (the
-//! saved filters, the pinned folders, the rename rule sets, the `[view]` defaults) goes
+//! saved filters, the tab sets, the pinned folders, the rename rule sets, the `[view]` defaults) goes
 //! through one queue, so the UI thread never touches the file, changes are written in the
 //! order they were made, and two of them never read, edit and write the file over each other.
 
@@ -14,8 +14,8 @@ use gezik_core::view::ViewSettings;
 
 use crate::Warning;
 use crate::paths::write_atomic;
-use crate::settings::{RenamePreset, SavedFilter};
-use crate::settings_edit::{with_filters, with_pinned, with_rename_presets, with_view_defaults};
+use crate::settings::{RenamePreset, SavedFilter, TabSet};
+use crate::settings_edit::{with_filters, with_pinned, with_rename_presets, with_tab_sets, with_view_defaults};
 use crate::store::{SETTINGS_TEMPLATE, read_text};
 
 /// How long a flush waits for the writer.
@@ -32,6 +32,8 @@ pub enum SettingsChange {
     RenamePresets(Vec<RenamePreset>),
     /// The saved filters (`[[filters]]`).
     Filters(Vec<SavedFilter>),
+    /// The tab sets (`[[tab-sets]]`).
+    TabSets(Vec<TabSet>),
 }
 
 impl SettingsChange {
@@ -41,6 +43,7 @@ impl SettingsChange {
             SettingsChange::ViewDefaults(view) => with_view_defaults(text, view),
             SettingsChange::RenamePresets(presets) => with_rename_presets(text, presets),
             SettingsChange::Filters(filters) => with_filters(text, filters),
+            SettingsChange::TabSets(sets) => with_tab_sets(text, sets),
         }
     }
 }

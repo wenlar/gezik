@@ -1,5 +1,6 @@
 //! The system clipboard, for files: copy or cut in Gezik and paste in Explorer or Finder, and
-//! the other way round. On Linux, X11's or Wayland's (see `linux`).
+//! the other way round; and text (paths copied as text, spec 4.2). On Linux, X11's or
+//! Wayland's (see `linux`).
 
 use std::fmt;
 use std::path::PathBuf;
@@ -27,7 +28,7 @@ impl fmt::Display for ClipboardError {
     }
 }
 
-pub use imp::{clear, read_files, sequence, write_files};
+pub use imp::{clear, read_files, sequence, write_files, write_text};
 
 /// `CF_HDROP` data: a DROPFILES header (wide names) and each path, NUL-terminated, then a NUL.
 #[cfg(windows)]
@@ -46,6 +47,12 @@ fn dropfiles(paths: &[PathBuf]) -> Vec<u8> {
     }
     out.extend_from_slice(&0u16.to_le_bytes());
     out
+}
+
+/// `CF_UNICODETEXT` data: UTF-16 with a closing NUL.
+#[cfg(windows)]
+fn unicode_text(text: &str) -> Vec<u8> {
+    text.encode_utf16().chain([0]).flat_map(u16::to_le_bytes).collect()
 }
 
 /// The paths in `CF_HDROP` data (the clipboard's, or a dropped data object's).
@@ -77,7 +84,7 @@ mod imp {
         RegisterClipboardFormatW, SetClipboardData,
     };
     use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock};
-    use windows::Win32::System::Ole::{CF_HDROP, DROPEFFECT_COPY, DROPEFFECT_MOVE};
+    use windows::Win32::System::Ole::{CF_HDROP, CF_UNICODETEXT, DROPEFFECT_COPY, DROPEFFECT_MOVE};
     use windows::Win32::UI::Shell::{CFSTR_PREFERREDDROPEFFECT, HDROP};
 
     use super::{ClipboardError, ClipboardFiles};
@@ -141,6 +148,13 @@ mod imp {
             return Err(err);
         }
         Ok(())
+    }
+
+    pub fn write_text(text: &str) -> Result<(), ClipboardError> {
+        let bytes = super::unicode_text(text);
+        let _open = Open::new()?;
+        unsafe { EmptyClipboard() }.map_err(failed)?;
+        put(u32::from(CF_UNICODETEXT.0), &bytes)
     }
 
     pub fn read_files() -> Result<Option<ClipboardFiles>, ClipboardError> {
@@ -221,6 +235,16 @@ mod imp {
         Ok(())
     }
 
+    pub fn write_text(text: &str) -> Result<(), ClipboardError> {
+        let pasteboard = NSPasteboard::generalPasteboard();
+        pasteboard.clearContents();
+        CUT_AT.set(None);
+        // NSPasteboardTypeString is an extern static.
+        let written =
+            unsafe { pasteboard.setString_forType(&NSString::from_str(text), objc2_app_kit::NSPasteboardTypeString) };
+        if written { Ok(()) } else { Err(ClipboardError::Failed("the pasteboard refused the text".into())) }
+    }
+
     pub fn read_files() -> Result<Option<ClipboardFiles>, ClipboardError> {
         let pasteboard = NSPasteboard::generalPasteboard();
         let classes = NSArray::from_slice(&[NSURL::class()]);
@@ -263,6 +287,10 @@ mod imp {
 
     pub fn write_files(paths: &[PathBuf], cut: bool) -> Result<(), ClipboardError> {
         backend().ok_or(ClipboardError::Unsupported)?.write_files(paths, cut)
+    }
+
+    pub fn write_text(text: &str) -> Result<(), ClipboardError> {
+        backend().ok_or(ClipboardError::Unsupported)?.write_text(text)
     }
 
     pub fn read_files() -> Result<Option<ClipboardFiles>, ClipboardError> {
@@ -308,5 +336,24 @@ mod tests {
         assert!(!read_files().unwrap().unwrap().cut);
         clear().unwrap();
         assert_eq!(read_files().unwrap(), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn unicode_text_is_utf16_with_a_nul() {
+        assert_eq!(unicode_text("aş"), [0x61, 0, 0x5F, 0x01, 0, 0]);
+    }
+
+    /// Uses the real clipboard: run by hand (`cargo test -p gezik-platform -- --ignored`).
+    #[cfg(any(windows, target_os = "macos"))]
+    #[test]
+    #[ignore = "replaces the user's clipboard"]
+    fn text_replaces_files_on_the_clipboard() {
+        write_files(&[std::env::temp_dir().join("a")], true).unwrap();
+        let before = sequence();
+        write_text("C:\\a b\\ş.txt").unwrap();
+        assert_ne!(sequence(), before);
+        assert_eq!(read_files().unwrap(), None, "no files once text is copied");
+        clear().unwrap();
     }
 }

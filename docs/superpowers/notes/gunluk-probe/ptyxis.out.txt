@@ -1,0 +1,4 @@
+    Finished `release` profile [optimized] target(s) in 0.45s
+cd "/tmp/t/boşluk ş 日本" && "/usr/bin/ptyxis" "--new-window" "--working-directory" "/tmp/t/boşluk ş 日本" (cwd Some("/tmp/t/boşluk ş 日本"))
+ptyxis via term, first instance: /tmp/t/boşluk ş 日本
+ptyxis via term, instance already running: /tmp/t/second

@@ -214,10 +214,18 @@ pub enum Action {
     ToggleTabLock,
     /// Forgets the folders the address bar remembers (6b).
     ClearHistory,
+    /// Opens a terminal in the focused folder, else the one shown (7a).
+    OpenTerminal,
+    /// The same as administrator (Windows only).
+    OpenTerminalAdmin,
+    /// Copies the selected items' full paths, else the folder's.
+    CopyPath,
+    /// Saves the open tabs as a tab set.
+    SaveTabSet,
 }
 
 impl Action {
-    pub const ALL: [Action; 46] = [
+    pub const ALL: [Action; 50] = [
         Action::NewTab,
         Action::CloseTab,
         Action::NextTab,
@@ -264,6 +272,10 @@ impl Action {
         Action::TabPicker,
         Action::ToggleTabLock,
         Action::ClearHistory,
+        Action::OpenTerminal,
+        Action::OpenTerminalAdmin,
+        Action::CopyPath,
+        Action::SaveTabSet,
     ];
 
     pub fn name(self) -> &'static str {
@@ -314,6 +326,10 @@ impl Action {
             Action::TabPicker => "tab-picker",
             Action::ToggleTabLock => "toggle-tab-lock",
             Action::ClearHistory => "clear-history",
+            Action::OpenTerminal => "open-terminal",
+            Action::OpenTerminalAdmin => "open-terminal-admin",
+            Action::CopyPath => "copy-path",
+            Action::SaveTabSet => "save-tab-set",
         }
     }
 
@@ -401,6 +417,14 @@ impl Action {
             (Action::TabPicker, _) => &["mod+shift+a"],
             (Action::ToggleTabLock, _) => &[],
             (Action::ClearHistory, _) => &[],
+            // Shift+F4 is Dolphin's; Ctrl+Alt+T second: AltGr types with it on some layouts
+            // (₺ on Turkish Q) and GNOME takes it system-wide (spec 10.3).
+            (Action::OpenTerminal, Platform::Mac) => &["mod+alt+t"],
+            (Action::OpenTerminal, Platform::Other) => &["shift+f4", "ctrl+alt+t"],
+            (Action::OpenTerminalAdmin, _) => &[],
+            (Action::CopyPath, Platform::Mac) => &["mod+alt+c"],
+            (Action::CopyPath, Platform::Other) => &["ctrl+shift+c"],
+            (Action::SaveTabSet, _) => &[],
         }
     }
 }
@@ -940,6 +964,31 @@ clear-history = \"ctrl+shift+h\"
         );
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(s.action_for(&chord("ctrl+shift+h")), Some(Action::ClearHistory));
+    }
+
+    #[test]
+    fn the_daily_actions_have_their_keys() {
+        let other = Shortcuts::defaults(Platform::Other);
+        assert_eq!(other.action_for(&chord("shift+f4")), Some(Action::OpenTerminal));
+        assert_eq!(other.action_for(&chord("ctrl+alt+t")), Some(Action::OpenTerminal));
+        assert_eq!(other.chord_for(Action::OpenTerminal), Some(chord("shift+f4")), "the one the menus show");
+        assert_eq!(other.action_for(&chord("ctrl+shift+c")), Some(Action::CopyPath));
+        assert_eq!(other.chord_for(Action::OpenTerminalAdmin), None);
+        assert_eq!(other.chord_for(Action::SaveTabSet), None);
+        let mac = Shortcuts::defaults(Platform::Mac);
+        let mac_chord = |t: &str| parse_chord(t, Platform::Mac).unwrap().unwrap();
+        assert_eq!(mac.action_for(&mac_chord("mod+alt+t")), Some(Action::OpenTerminal));
+        assert_eq!(mac.action_for(&mac_chord("mod+alt+c")), Some(Action::CopyPath));
+        for name in ["open-terminal", "open-terminal-admin", "copy-path", "save-tab-set"] {
+            assert!(Action::from_name(name).is_some(), "{name}");
+        }
+        for platform in [Platform::Mac, Platform::Other] {
+            let defaults = Shortcuts::defaults(platform);
+            for action in [Action::OpenTerminal, Action::CopyPath] {
+                let chord = defaults.chord_for(action).unwrap();
+                assert_eq!(fixed_owner(&chord, platform), None, "{}", action.name());
+            }
+        }
     }
 
     #[test]

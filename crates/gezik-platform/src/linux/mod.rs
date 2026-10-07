@@ -32,6 +32,12 @@ pub(crate) fn what_to_ask(offered: &[u32], gnome: u32, uri_list: u32, kde: u32) 
     }
 }
 
+/// `text` in Latin-1, for the X11 `STRING` target: other characters become `?`.
+#[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
+pub(crate) fn latin1(text: &str) -> Vec<u8> {
+    text.chars().map(|c| u8::try_from(u32::from(c)).unwrap_or(b'?')).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -44,6 +50,11 @@ mod tests {
         assert_eq!(what_to_ask(&[uris], gnome, uris, kde), Some(Ask { files: uris, kde_cut: false }));
         assert_eq!(what_to_ask(&[text], gnome, uris, kde), None);
         assert_eq!(what_to_ask(&[], gnome, uris, kde), None);
+    }
+
+    #[test]
+    fn latin1_keeps_what_it_can() {
+        assert_eq!(latin1("ça ş"), [0xE7, b'a', b' ', b'?']);
     }
 }
 
@@ -85,6 +96,7 @@ mod backend {
     /// A window system's clipboard and drag and drop. Called on the UI thread.
     pub(crate) trait Backend: Send + Sync {
         fn write_files(&self, paths: &[PathBuf], cut: bool) -> Result<(), ClipboardError>;
+        fn write_text(&self, text: &str) -> Result<(), ClipboardError>;
         fn read_files(&self) -> Result<Option<ClipboardFiles>, ClipboardError>;
         fn sequence(&self) -> u64;
         fn clear(&self) -> Result<(), ClipboardError>;

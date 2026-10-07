@@ -13,6 +13,7 @@ mod locale;
 mod picture;
 pub mod process;
 pub mod taskbar;
+pub mod terminal;
 mod text;
 
 use std::path::PathBuf;
@@ -91,7 +92,7 @@ pub use pointer::catch_up_pointer;
 #[cfg(windows)]
 pub use removal::{RemovalWatch, watch_removal};
 #[cfg(windows)]
-pub use shell_menu::{ShellSubmenu, show_shell_menu};
+pub use shell_menu::{FIRST_SHELL_ID, ShellSubmenu, show_shell_menu};
 
 /// Elsewhere a drive is not asked about before it goes: nothing to watch.
 #[cfg(not(windows))]

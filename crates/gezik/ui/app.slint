@@ -14,13 +14,13 @@ import { RenameBatch, RuleRow, RenamePreviewRow, RuleOptions } from "widgets/ren
 import { FileIcon } from "widgets/file-icon.slint";
 import { CompressLayer } from "widgets/compress.slint";
 import { ConvertLayer, ConvertView } from "widgets/convert.slint";
-import { PopupMenu, MenuEntry, MenuPlace } from "widgets/popup-menu.slint";
+import { PopupMenu, MenuEntry, MenuPlace, MenuSub } from "widgets/popup-menu.slint";
 import { TabPicker, TabPickRow } from "widgets/tab-picker.slint";
 import { PathSuggestions, PathRow } from "widgets/path-suggestions.slint";
 
 // Re-exported so Rust can set it with `window.global::<Theme>()` and build crumbs, tabs
 // and sidebar rows.
-export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, OpRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView, MenuEntry, MenuPlace, TabPickRow, PathRow }
+export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, OpRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView, MenuEntry, MenuPlace, MenuSub, TabPickRow, PathRow }
 
 // Where the drop targets are, in window coordinates (drag.rs reads it while files are
 // dragged; every field is computed when read).
@@ -59,12 +59,15 @@ export component AppWindow inherits Window {
     in property <bool> menu-keys: true;
     // The Commands menu: the `[[commands]]` with a key (id: the command's index, -1 a heading).
     in property <[MenuEntry]> bar-commands;
+    // The Window menu's "Open Tab Set": the tab sets to open, to replace the tabs with, to delete.
+    in property <[MenuEntry]> bar-tab-sets;
     callback menu-command(string);
     if root.native-menu-bar: MenuBar {
         Menu {
             title: "File";
             MenuItem { title: "New Tab"; shortcut: root.menu-keys ? @keys(Control + T) : @keys(); activated => { root.menu-command("new-tab"); } }
             MenuItem { title: "New Folder"; shortcut: root.menu-keys ? @keys(Control + Shift + N) : @keys(); activated => { root.menu-command("new-folder"); } }
+            MenuItem { title: "Open Terminal"; shortcut: root.menu-keys ? @keys(Control + Alt + T) : @keys(); activated => { root.menu-command("open-terminal"); } }
             MenuSeparator { }
             MenuItem { title: "Quick Look"; activated => { root.menu-command("quick-look"); } }
             MenuItem { title: "Rename"; activated => { root.menu-command("rename"); } }
@@ -83,6 +86,7 @@ export component AppWindow inherits Window {
             MenuSeparator { }
             MenuItem { title: "Cut"; shortcut: root.menu-keys ? @keys(Control + X) : @keys(); activated => { root.menu-command("cut"); } }
             MenuItem { title: "Copy"; shortcut: root.menu-keys ? @keys(Control + C) : @keys(); activated => { root.menu-command("copy"); } }
+            MenuItem { title: "Copy Path"; shortcut: root.menu-keys ? @keys(Control + Alt + C) : @keys(); activated => { root.menu-command("copy-path"); } }
             MenuItem { title: "Paste"; shortcut: root.menu-keys ? @keys(Control + V) : @keys(); activated => { root.menu-command("paste"); } }
             MenuItem { title: "Move Item Here"; shortcut: root.menu-keys ? @keys(Control + Alt + V) : @keys(); activated => { root.menu-command("paste-move"); } }
             MenuItem { title: "Select All"; shortcut: root.menu-keys ? @keys(Control + A) : @keys(); activated => { root.menu-command("select-all"); } }
@@ -133,6 +137,16 @@ export component AppWindow inherits Window {
             MenuItem { title: "Reopen Closed Tab"; shortcut: root.menu-keys ? @keys(Control + Shift + T) : @keys(); activated => { root.menu-command("reopen-tab"); } }
             MenuItem { title: "Show All Tabs…"; shortcut: root.menu-keys ? @keys(Control + Shift + A) : @keys(); activated => { root.menu-command("tab-picker"); } }
             MenuItem { title: root.active-tab-locked ? "Unlock Tab" : "Lock Tab"; activated => { root.menu-command("toggle-tab-lock"); } }
+            MenuSeparator { }
+            MenuItem { title: "Save Tabs As…"; activated => { root.menu-command("save-tab-set"); } }
+            if root.bar-tab-sets.length > 0: Menu {
+                title: "Open Tab Set";
+                for entry in root.bar-tab-sets: MenuItem {
+                    title: entry.title;
+                    enabled: entry.enabled;
+                    activated => { root.menu-command("tab-set:" + entry.id); }
+                }
+            }
             MenuSeparator { }
             MenuItem { title: "Tab 1"; shortcut: root.menu-keys ? @keys(Control + "1") : @keys(); activated => { root.menu-command("tab-1"); } }
             MenuItem { title: "Tab 2"; shortcut: root.menu-keys ? @keys(Control + "2") : @keys(); activated => { root.menu-command("tab-2"); } }
@@ -222,12 +236,10 @@ export component AppWindow inherits Window {
     // Dragged with the splitter (120–480px); saved in state.toml on close.
     in-out property <length> sidebar-width: 200px;
     // What the Slint context menu shows; set from Rust before `show-menu`: the items, then
-    // a submenu ("Commands", none when it has no entries), then more items.
+    // up to four submenus, each with the items after it.
     in property <[MenuEntry]> menu-entries;
-    in property <string> menu-sub-title;
-    in property <[MenuEntry]> menu-sub-entries;
-    in property <[MenuEntry]> menu-entries-after;
-    // The same for Gezik's own menu, in one list: the submenu's item has id -1.
+    in property <[MenuSub]> menu-subs;
+    // The same for Gezik's own menu, in one list: the submenus' items have ids -1…-4.
     in property <[MenuEntry]> menu-lines;
     // Whether Slint shows menus as the system's (Windows, macOS); else Gezik draws its own.
     in property <bool> native-menus;
@@ -657,15 +669,54 @@ export component AppWindow inherits Window {
                 enabled: entry.enabled;
                 activated => { root.menu-activated(entry.id); }
             }
-            if root.menu-sub-entries.length > 0: Menu {
-                title: root.menu-sub-title;
-                for entry in root.menu-sub-entries: MenuItem {
+            if root.menu-subs[0].entries.length > 0: Menu {
+                title: root.menu-subs[0].title;
+                for entry in root.menu-subs[0].entries: MenuItem {
                     title: entry.title;
                     enabled: entry.enabled;
                     activated => { root.menu-activated(entry.id); }
                 }
             }
-            for entry in root.menu-entries-after: MenuItem {
+            for entry in root.menu-subs[0].after: MenuItem {
+                title: entry.title;
+                enabled: entry.enabled;
+                activated => { root.menu-activated(entry.id); }
+            }
+            if root.menu-subs[1].entries.length > 0: Menu {
+                title: root.menu-subs[1].title;
+                for entry in root.menu-subs[1].entries: MenuItem {
+                    title: entry.title;
+                    enabled: entry.enabled;
+                    activated => { root.menu-activated(entry.id); }
+                }
+            }
+            for entry in root.menu-subs[1].after: MenuItem {
+                title: entry.title;
+                enabled: entry.enabled;
+                activated => { root.menu-activated(entry.id); }
+            }
+            if root.menu-subs[2].entries.length > 0: Menu {
+                title: root.menu-subs[2].title;
+                for entry in root.menu-subs[2].entries: MenuItem {
+                    title: entry.title;
+                    enabled: entry.enabled;
+                    activated => { root.menu-activated(entry.id); }
+                }
+            }
+            for entry in root.menu-subs[2].after: MenuItem {
+                title: entry.title;
+                enabled: entry.enabled;
+                activated => { root.menu-activated(entry.id); }
+            }
+            if root.menu-subs[3].entries.length > 0: Menu {
+                title: root.menu-subs[3].title;
+                for entry in root.menu-subs[3].entries: MenuItem {
+                    title: entry.title;
+                    enabled: entry.enabled;
+                    activated => { root.menu-activated(entry.id); }
+                }
+            }
+            for entry in root.menu-subs[3].after: MenuItem {
                 title: entry.title;
                 enabled: entry.enabled;
                 activated => { root.menu-activated(entry.id); }
@@ -1237,7 +1288,7 @@ export component AppWindow inherits Window {
         width: root.width;
         height: root.height;
         lines: root.menu-lines;
-        sub-lines: root.menu-sub-entries;
+        subs: root.menu-subs;
         place(x, y, fx, fy, w, h, aw, ah) => { return root.place-menu(x, y, fx, fy, w, h, aw, ah); }
         step(lines, from, down) => { return root.menu-step(lines, from, down); }
         activated(id) => { root.menu-activated(id); }

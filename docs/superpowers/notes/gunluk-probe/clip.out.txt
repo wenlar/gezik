@@ -1,0 +1,33 @@
+text round trip: Some("Merhaba ğüşİı 日本 🙂\r\nikinci satır")
+CF_TEXT only -> CF_UNICODETEXT: Some("plain ANSI")
+
+put CF_DIB 33.2 MB in 12.3829ms
+formats now (synthesized ones too): ["8", "2", "17"]
+CF_DIBV5 (synthesized) read 33.2 MB in 29.3742ms
+  V5 header: size 124 compression 0 masks r 0x0 g 0x0 b 0x0 a 0x0
+  decoded as is: alpha of first pixel = 255 (0 = invisible PNG without the fix)
+  read+decode CF_DIBV5 3840x2160 in 47.8653ms; alpha after fix 255
+  PNG Fast 4.99 MB in 18.032ms
+V5 BI_BITFIELDS alpha 0: new_without_file_header -> Err(IoError(Error { kind: UnexpectedEof, message: "failed to fill whole buffer" }))
+V5 BI_BITFIELDS alpha 0: decoded in 24.8544ms, pixel (r,g,b) [32, 36, 40], alpha before fix 0, fixed true
+V5 BI_BITFIELDS alpha 0 + 3 masks after header: new_without_file_header -> Ok("ok")
+V5 BI_BITFIELDS alpha 0 + 3 masks after header: decoded in 24.9412ms, pixel (r,g,b) [32, 36, 40], alpha before fix 0, fixed true
+DIB 40 + masks: new_without_file_header -> Ok("ok")
+DIB 40 + masks: decoded in 43.9492ms, pixel (r,g,b) [32, 36, 40], alpha before fix 255, fixed false
+
+with "PNG" on offer:
+  read "PNG" 4.99 MB in 2.9767ms, Ok((3840, 2160)) (written as is: no encode)
+
+fake 4K screenshot:
+  fake PNG Fast: 17.7875ms, 4.99 MB
+  fake PNG Default: 252.3975ms, 4.37 MB
+  fake PNG Best: 695.1826ms, 4.37 MB
+real desktop capture 2560x1440:
+  desktop PNG Fast: 19.4581ms, 4.74 MB
+  desktop PNG Default: 437.7992ms, 3.72 MB
+  desktop PNG Best: 1.1755287s, 3.66 MB
+  desktop tiled to 4K PNG Fast: 41.6403ms, 8.97 MB
+  desktop tiled to 4K PNG Default: 639.1385ms, 5.70 MB
+  desktop tiled to 4K PNG Best: 1.750232s, 5.57 MB
+
+clipboard text restored

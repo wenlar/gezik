@@ -340,6 +340,14 @@ Re-checks of the shared UI fixes (fix/shared-ui, on master)
     - ⌃⌥Z while the path field or the filter field has the keyboard does nothing.
 55. **No history:** add `[history]` `remember = false`. `state.toml` loses its `[history]`, and new visits are not kept. Take the line out again.
 
+### 7a, daily
+
+56. **Open terminal.** In a folder with a space in its name, ⌘⌥T (and File ▸ Open Terminal): Terminal.app opens a window in that folder. Right-click a folder ▸ "Open terminal here": the same, in that folder. Right-click empty space ▸ "Open terminal here": the folder shown. Quit Gezik: the Terminal window stays.
+57. **Copy path.** Select a file named `it's ş #1.txt` and press ⌘⌥C (and Edit ▸ Copy Path). Right-click ▸ "Copy path as ▸" ▸ Quoted: pasted into Terminal, the shell reads the same file (`'…'\''…'`). file:// URL: pasted into Safari's address bar, it opens the file. With nothing selected, ⌘⌥C copies the folder shown. Copy a file with ⌘C, then ⌘⌥C: ⌘V in another folder pastes nothing.
+58. **Session.** Open three tabs, lock one, put another in front, press ⌘Q, open Gezik again: the same tabs, the same one in front, the lock in place. Force quit, open again: the same. `open -a Gezik --args <folder>` (or `gezik <folder>` from Terminal) opens that folder in a new tab after the saved ones, in front. `[session]` `restore = false` in `settings.toml`: `state.toml` loses `[session]`, and one tab opens in `start-folder`.
+59. **Tab sets.** Window ▸ Save Tabs As…, name it "Work": `settings.toml` has `[[tab-sets]]`. Window ▸ Open Tab Set ▸ Work opens the set after the tabs, its first tab in front. With a tab locked, "Replace tabs with…" (in the tab's right-click menu) keeps it and says so. Note whether the Window menu shows "Open Tab Set" (and the sets) as expected, since it is an `if … : Menu` inside the menu bar.
+60. **Custom terminal.** `[terminal]` `command = ["open", "-a", "iTerm", "{dir}"]`: ⌘⌥T opens iTerm in the folder.
+
 Report anything else that looks wrong: layout, fonts, Retina scaling, ⌘ shortcuts that don't work, and the wording of the boxes.
 
 ## Known gaps (not bugs)

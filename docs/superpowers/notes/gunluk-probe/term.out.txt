@@ -1,0 +1,13 @@
+wt alias: exists()=true symlink_metadata=Ok(0) metadata=Ok(0)
+find_wt: Some("C:\\Users\\teoma\\AppData\\Local\\Microsoft\\WindowsApps\\wt.exe")
+wt -d "C:\\Users\\teoma\\AppData\\Local\\Temp\\probe7 term\\boşluk ve ş 日本": Ok(Some(0)) in 55.4352ms -> Some("C:\\Users\\teoma\\AppData\\Local\\Temp\\probe7 term\\boşluk ve ş 日本")
+wt -d "C:\\Users\\teoma\\AppData\\Local\\Temp\\probe7 term\\noktalı\\;virgül": Ok(Some(0)) in 42.6826ms -> Some("C:\\Users\\teoma\\AppData\\Local\\Temp\\probe7 term\\noktalı;virgül")
+wt -d "C:\\Users\\teoma\\AppData\\Local\\Temp\\probe7 term\\[köşeli] it's": Ok(Some(0)) in 43.9806ms -> Some("C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0")
+wt -d with a raw ';' -> None
+powershell (current_dir) "boşluk ve ş 日本": spawned true -> Some("C:\\Users\\teoma\\AppData\\Local\\Temp\\probe7 term\\boşluk ve ş 日本")
+powershell (current_dir) "noktalı;virgül": spawned true -> Some("C:\\Users\\teoma\\AppData\\Local\\Temp\\probe7 term\\noktalı;virgül")
+powershell (current_dir) "[köşeli] it's": spawned true -> Some("C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0")
+ShellExecuteW open powershell "boşluk ve ş 日本": Ok(()) -> Some("C:\\Users\\teoma\\AppData\\Local\\Temp\\probe7 term\\boşluk ve ş 日本")
+ShellExecuteW open powershell "noktalı;virgül": Ok(()) -> Some("C:\\Users\\teoma\\AppData\\Local\\Temp\\probe7 term\\noktalı;virgül")
+ShellExecuteW open powershell "[köşeli] it's": Ok(()) -> Some("C:\\Users\\teoma\\AppData\\Local\\Temp\\probe7 term\\[köşeli] it's")
+ShellExecuteW open wt.exe: Ok(()) -> Some("C:\\Users\\teoma\\AppData\\Local\\Temp\\probe7 term\\boşluk ve ş 日本")
