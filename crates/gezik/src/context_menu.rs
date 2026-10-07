@@ -273,7 +273,6 @@ pub fn background_items(undo: Option<&str>, redo: Option<&str>, can_paste: bool)
     out
 }
 
-/// `items` with owned labels, to add items whose labels are made at run time.
 /// "Open terminal here", and on Windows "Open terminal as administrator" under it.
 pub fn terminal_items(windows: bool) -> Vec<(u32, &'static str)> {
     let mut out = vec![(OPEN_TERMINAL, "Open terminal here")];
@@ -294,6 +293,7 @@ pub fn copy_path_items(windows: bool, unc: bool) -> Vec<(u32, String, bool)> {
         .collect()
 }
 
+/// `items` with owned labels, to add items whose labels are made at run time.
 fn owned(items: Vec<(u32, &'static str)>) -> Vec<(u32, String)> {
     items.into_iter().map(|(id, title)| (id, title.to_owned())).collect()
 }

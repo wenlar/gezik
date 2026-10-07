@@ -174,17 +174,21 @@ x11() {
     sleep 3
     xdotool windowmove "$(win)" 0 0; xdotool windowsize "$(win)" 1100 700; sleep 0.5
     shot gui-x11-archives
-    # Gezik's own menu: item 2 is "Extract here" on an archive.
-    menu /tmp/a one.zip 2; sleep 2
+    # The archive menu is 13 lines tall: from tg.tar.gz's row down it does not fit under the
+    # window and is held up, its top at y 203 whatever the row.
+    low_menu() { rclick 260 "$(row "$1" "$2")"; click 330 $((203 + 20 + 32 * $3)); }
+    # Gezik's own menu: item 4 is "Extract here" on an archive (after Open terminal here and
+    # Copy path as).
+    menu /tmp/a one.zip 4; sleep 2
     check "x11: Extract here, one root: one/ as it is" '[ "$(cat /tmp/a/one/inner/deep.txt 2>/dev/null)" = deep ] && [ ! -e /tmp/a/one/one ]'
     rm -rf /tmp/a/one; sleep 1.5
-    menu /tmp/a multi.zip 2; sleep 2
+    menu /tmp/a multi.zip 4; sleep 2
     check "x11: Extract here, several roots: into multi/" '[ -f /tmp/a/multi/m1.txt ] && [ -f /tmp/a/multi/m2.txt ] && [ ! -e /tmp/a/m1.txt ]'
     rm -rf /tmp/a/multi; sleep 1.5
-    menu /tmp/a tg.tar.gz 2; sleep 2
+    low_menu /tmp/a tg.tar.gz 4; sleep 2
     check "x11: Extract here, tar.gz" '[ "$(cat /tmp/a/one/hello.txt 2>/dev/null)" = hello ]'
     rm -rf /tmp/a/one; sleep 1.5
-    menu /tmp/a aes.zip 2; sleep 1.5
+    menu /tmp/a aes.zip 4; sleep 1.5
     shot gui-x11-password; typ nope; xdotool mousemove 0 0; sleep 0.5; shot gui-x11-password-typed
     # Something shows for what was typed; that it is dots is checked by eye in the shot.
     check "x11: the password field shows what is typed (as dots: see the shot)" \
@@ -199,21 +203,24 @@ x11() {
         click 260 "$y1"; xdotool keydown ctrl; click 260 "$y2"; xdotool keyup ctrl; rclick 260 "$y2"; sleep 0.3
         echo "$y2" > /tmp/y2
     }
-    # Compress… is item 1 on two files. The layer for a fresh config shows zip.
-    sel2; click 330 $(( $(cat /tmp/y2) + 52 )); sleep 1
+    # The two-file menu is 12 lines tall and is held up at the window's bottom: its top is the
+    # row's y, at most 299.
+    top2() { local y; y=$(cat /tmp/y2); echo $(( y > 299 ? 299 : y )); }
+    # Compress… is item 3 on two files. The layer for a fresh config shows zip.
+    sel2; click 330 $(( $(top2) + 116 )); sleep 1
     click 411 262; sleep 0.5        # 7z: the layer grows (password, split)
     click 596 159; key ctrl+a; typ sec.7z; click 442 315; typ pw7; click 329 352; sleep 0.3
     shot gui-x11-compress-7z
     click 826 463; sleep 2.5
     check "x11: Compress… 7z with a password and encrypted names" \
         '! $SEVEN l -pbad /tmp/a/sec.7z >/dev/null 2>&1 && $SEVEN t -ppw7 /tmp/a/sec.7z 2>&1 | grep -q "Everything is Ok"'
-    sleep 1; sel2; click 330 $(( $(cat /tmp/y2) + 52 )); sleep 1
+    sleep 1; sel2; click 330 $(( $(top2) + 116 )); sleep 1
     shot gui-x11-compress-again
     click 349 237; sleep 0.5        # back to zip
     click 596 184; key ctrl+a; typ zz.zip; sleep 0.3; shot gui-x11-compress-zip
     click 826 414; sleep 2
     check "x11: Compress… zip" '$SEVEN l /tmp/a/zz.zip 2>/dev/null | grep -q " 2 files"'
-    sleep 1; sel2; shot gui-x11-compress-to-menu; click 330 $(( $(cat /tmp/y2) + 84 )); sleep 2
+    sleep 1; sel2; shot gui-x11-compress-to-menu; click 330 $(( $(top2) + 148 )); sleep 2
     check "x11: Compress to \"a.zip\"" '$SEVEN l /tmp/a/a.zip 2>/dev/null | grep -q " 2 files"'
     # Drag z1.txt onto zz.zip: "Add to zz.zip", then Keep both for the name already there.
     sleep 1
@@ -226,7 +233,7 @@ x11() {
     click 638 281; sleep 2
     check "x11: drop onto a zip adds to it (Keep both)" '$SEVEN l /tmp/a/zz.zip | grep -q "z1 (2).txt"'
     # A .wim needs 7-Zip: Gezik offers its download, then goes on.
-    menu /tmp/a w.wim 2; sleep 1.5; shot gui-x11-needs-7zip
+    low_menu /tmp/a w.wim 4; sleep 1.5; shot gui-x11-needs-7zip
     click 437 291
     for _ in $(seq 1 60); do [ -f /tmp/a/w/m1.txt ] && break; sleep 1; done
     shot gui-x11-after-download
@@ -236,7 +243,7 @@ x11() {
     rm -rf /tmp/a/w; sleep 1.5
     # Dismiss finished operations so the next one is on the panel's last line.
     for _ in 1 2 3 4 5 6; do click 1078 656; done
-    menu /tmp/a big.zip 2; sleep 1.2; shot gui-x11-big-extract
+    menu /tmp/a big.zip 4; sleep 1.2; shot gui-x11-big-extract
     click 1078 656; sleep 4; shot gui-x11-big-cancelled
     check "x11: cancelling a big extract leaves nothing" \
         '[ ! -e /tmp/a/big ] && [ -z "$(find /tmp/a -maxdepth 1 -name ".gezik*")" ]'
@@ -493,15 +500,15 @@ pdfpopups() {
     sleep 3
     xdotool windowmove "$(win)" 0 0; xdotool windowsize "$(win)" 900 600; sleep 0.5
     shot pdf-start
-    # On a.png (y 118) the menu's 6th line is "Images to PDF…" (after Convert…).
+    # On a.png (y 118) the menu's 8th line is "Images to PDF…" (after Convert…).
     rclick 260 118; sleep 0.5; shot pdf-menu
-    click 330 $((118 + 20 + 32 * 5)); sleep 1.5; shot pdf-layer
+    click 330 $((118 + 20 + 32 * 7)); sleep 1.5; shot pdf-layer
     key ctrl+Return; sleep 2; shot pdf-made
     check "pdf popups: the right-click \"Images to PDF…\" makes a.pdf" '[ "$(head -c 5 /tmp/q/a.pdf 2>/dev/null)" = "%PDF-" ]'
-    # The preset menu: Convert… (5th line), then the Preset button (371, 164). Image's six
+    # The preset menu: Convert… (7th line), then the Preset button (371, 164). Image's six
     # choices, then the PDF group (a greyed heading, "Images to PDF").
     rm -f /tmp/q/a.pdf; sleep 1
-    rclick 260 118; sleep 0.5; click 330 $((118 + 20 + 32 * 4)); sleep 1.5; shot pdf-convert
+    rclick 260 118; sleep 0.5; click 330 $((118 + 20 + 32 * 6)); sleep 1.5; shot pdf-convert
     click "$PDF_PRESET_X" "$PDF_PRESET_Y"; sleep 0.8; shot pdf-presets
     check "pdf popups: the preset menu opens" '! cmp -s "$SHOTS/pdf-convert.png" "$SHOTS/pdf-presets.png"'
     # Another preset first (Convert to JPEG, 266), then back to the PDF group's line. The
@@ -551,9 +558,9 @@ PY
     sleep 3
     xdotool windowmove "$(win)" 0 0; xdotool windowsize "$(win)" 900 600; sleep 0.5
     shot pdfnote-start
-    # On huge.pdf (y 118) Convert… is the menu's 5th line; the layer opens on "PDF to images".
+    # On huge.pdf (y 118) Convert… is the menu's 7th line; the layer opens on "PDF to images".
     rclick 260 118; sleep 0.5; shot pdfnote-menu
-    click 330 $((118 + 20 + 32 * 4)); sleep 1.5; shot pdfnote-layer
+    click 330 $((118 + 20 + 32 * 6)); sleep 1.5; shot pdfnote-layer
     key ctrl+Return
     for _ in $(seq 60); do [ -f "/tmp/h/huge - page 1.jpg" ] && break; sleep 0.5; done
     # Past the row's "show after" and "done for" times: a row that stays has a note.
@@ -1638,26 +1645,37 @@ memory() {
     wait 2>/dev/null
 }
 
+# The modes define small helpers of their own inside; drop them when a mode is done so they
+# do not leak into the next one (or shadow a command).
+scoped() {
+    "$@"
+    local rc=$?
+    unset -f title wshot wk ctrl vclick wrow wtitle extract_here cyrillic trashed sel2 box same_box here undo is \
+        crop same_part goto start_k differ same_under same_bar readers count_of folders go empty_list run line \
+        xterm_in text pq pick cpu one stats idle typed low_menu top2
+    return $rc
+}
+
 setup_7zip
 case "${1:-all}" in
-    x11) x11 ;;
-    wayland) wayland ;;
-    popups) popups ;;
-    tabdrag) tabdrag ;;
-    pdf) pdfpopups; pdfnote ;;
-    pdfnote) pdfnote ;;
-    filter) filter ;;
-    select) selection ;;
-    tabs) tabs ;;
-    keyboard) keyboard ;;
-    commands) commands ;;
-    paths) paths ;;
-    history) history ;;
-    terminal) terminal ;;
-    copy-path) copy_path ;;
+    x11) scoped x11 ;;
+    wayland) scoped wayland ;;
+    popups) scoped popups ;;
+    tabdrag) scoped tabdrag ;;
+    pdf) scoped pdfpopups; scoped pdfnote ;;
+    pdfnote) scoped pdfnote ;;
+    filter) scoped filter ;;
+    select) scoped selection ;;
+    tabs) scoped tabs ;;
+    keyboard) scoped keyboard ;;
+    commands) scoped commands ;;
+    paths) scoped paths ;;
+    history) scoped history ;;
+    terminal) scoped terminal ;;
+    copy-path) scoped copy_path ;;
     filterperf) filterperf ;;
     memory) memory "${2:-}" ;;
-    *) x11; wayland; popups; tabdrag; pdfpopups; pdfnote; filter; selection; tabs; keyboard; commands; paths; history; terminal; copy_path ;;
+    *) for m in x11 wayland popups tabdrag pdfpopups pdfnote filter selection tabs keyboard commands paths history terminal copy_path; do scoped "$m"; done ;;
 esac
 echo "failures: $failures"
 exit $failures
