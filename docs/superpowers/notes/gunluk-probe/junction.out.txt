@@ -1,0 +1,25 @@
+elevated: false
+SeCreateSymbolicLinkPrivilege in token: Ok(false)
+junction created in 122.6µs
+read back: Ok(Junction("C:\Users\teoma\AppData\Local\Temp\probe7 junction Ğş 日本\hedef ç"))
+through it: Ok("içerik")
+symlink_metadata: is_symlink=true is_dir=false
+attrs 0x410 (0x400 = reparse point)
+removed in 125.8µs; link gone: true, target file kept: true
+gezik delete: link gone: true, target kept: true
+remove_dir_all(holder): target kept: true
+trash: ok Some("C:\$Recycle.Bin\S-1-5-21-...-1001\$RDKSLX6"); target kept: true
+refuse other target: Err(Custom { kind: Other, error: "not the junction made: Junction(\"C:\\Users\\teoma\\AppData\\Local\\Temp\\probe7 junction Ğş 日本\\başka\")" })
+refuse plain folder: Err(Os { code: 4390, kind: Uncategorized, message: "The file or directory is not a reparse point." })
+cross-volume: Ok(()); readable: Ok(0)
+missing target: Ok(())
+  exists() through it: false
+relative target: Err(Custom { kind: InvalidInput, error: "a junction needs an absolute local path" })
+file target: Ok(())
+  read_dir through it: Err(Os { code: 267, kind: NotADirectory, message: "The directory name is invalid." })
+UNC target: Err(Custom { kind: InvalidInput, error: "a junction needs an absolute local path" })
+  read_dir through it: Err(Os { code: 3, kind: NotFound, message: "The system cannot find the path specified." })
+long target (379 chars): Ok(()); readable: Ok(0)
+std symlink_dir: Err((Some(1314), "A required privilege is not held by the client. (os error 1314)"))
+std symlink_file: Err((Some(1314), "A required privilege is not held by the client. (os error 1314)"))
+can_symlink() trial: false

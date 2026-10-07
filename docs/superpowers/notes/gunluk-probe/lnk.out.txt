@@ -1,0 +1,17 @@
+long target length: 441 chars
+CoInitializeEx: HRESULT(0x00000000)
+create "belge ç 日本.txt - Kısayol.lnk" -> Ok(()) (23.1609ms)
+  resolve: Ok(()), find attrs: 0x20 (0x10 = folder)
+  read back: Ok(LinkInfo { target: "C:\\Users\\teoma\\AppData\\Local\\Temp\\probe7 lnk Ğüşİ 日本 🙂\\belge ç 日本.txt", working_dir: "C:\\Users\\teoma\\AppData\\Local\\Temp\\probe7 lnk Ğüşİ 日本 🙂", arguments: "", resolved: true })
+  same target: true
+create "hedef klasör ş - Kısayol.lnk" -> Ok(()) (3.587ms)
+  resolve: Ok(()), find attrs: 0x10 (0x10 = folder)
+  read back: Ok(LinkInfo { target: "C:\\Users\\teoma\\AppData\\Local\\Temp\\probe7 lnk Ğüşİ 日本 🙂\\hedef klasör ş", working_dir: "C:\\Users\\teoma\\AppData\\Local\\Temp\\probe7 lnk Ğüşİ 日本 🙂", arguments: "", resolved: true })
+  same target: true
+create "uzun.lnk" -> Err(Error { code: HRESULT(0x80004005), message: "Unspecified error" }) (21.3µs)
+create "yok.lnk" -> Ok(()) (2.2032ms)
+  resolve: Ok(()), find attrs: 0x0 (0x10 = folder)
+  read back: Ok(LinkInfo { target: "C:\\Users\\teoma\\AppData\\Local\\Temp\\probe7 lnk Ğüşİ 日本 🙂\\yok.txt", working_dir: "C:\\Users\\teoma\\AppData\\Local\\Temp\\probe7 lnk Ğüşİ 日本 🙂", arguments: "", resolved: true })
+  same target: true
+create "uzun-verbatim.lnk" -> Err(Error { code: HRESULT(0x80004005), message: "Unspecified error" }) (27.9µs)
+left in C:\Users\teoma\AppData\Local\Temp\probe7 lnk Ğüşİ 日本 🙂

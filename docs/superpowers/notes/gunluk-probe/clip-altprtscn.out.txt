@@ -1,0 +1,6 @@
+﻿formats: ["2", "8", "17"]
+  CF_DIB: header 40 bytes, 1379x1338, 32 bpp, compression 3, 7380460 bytes, alpha of first pixel before fix Some(255)
+  CF_DIBV5: header 124 bytes, 1379x1338, 32 bpp, compression 3, 7380544 bytes, alpha of first pixel before fix Some(255)
+  read+decode CF_DIBV5 1379x1338 in 13.1063ms; alpha after fix 255
+  PNG Fast 3.43 MB in 10.6898ms
+text: None

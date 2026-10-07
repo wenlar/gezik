@@ -1,0 +1,13 @@
+Explorer: show hidden items = true, show protected OS files = false
+C:\: 33 entries, hidden 12, system 8, both 8
+  read_dir+metadata 25.8µs; + attributes 25.6µs; gezik_core::list_dir 127.8µs
+  + GetFileAttributesW per entry 353.3µs
+  e.g. ["$Recycle.Bin [H][S]", "$Windows.~WS [H]", ".GamingRoot [H]", "Documents and Settings [H][S]", "DumpStack.log.tmp [H][S]", "hiberfil.sys [H][S]", "OneDriveTemp [H]", "pagefile.sys [H][S]"]
+C:\Windows\System32: 4960 entries, hidden 1, system 7, both 0
+  read_dir+metadata 1.3646ms; + attributes 1.3297ms; gezik_core::list_dir 4.6015ms
+  + GetFileAttributesW per entry 106.77ms
+  e.g. ["AppV[S]", "Configuration[S]", "dsc[S]", "F12[S]", "GroupPolicy [H]", "lxss[S]", "Microsoft[S]", "Nui[S]"]
+C:\Users\teoma: 78 entries, hidden 18, system 16, both 16
+  read_dir+metadata 62.7µs; + attributes 54.5µs; gezik_core::list_dir 383.7µs
+  + GetFileAttributesW per entry 1.5518ms
+  e.g. ["AppData [H]", "Application Data [H][S]", "Cookies [H][S]", "Local Settings [H][S]", "My Documents [H][S]", "NetHood [H][S]", "NTUSER.DAT [H]", "ntuser.dat.LOG1 [H][S]"]
