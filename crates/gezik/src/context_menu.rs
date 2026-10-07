@@ -408,6 +408,9 @@ impl Menus {
             rows: Rc::default(),
             native_menu: MenuGate::default(),
         };
+        window.on_menu_closed(|| {
+            crate::drag::with_current(|drags| drags.menu_shown());
+        });
         window.on_menu_activated({
             let menus = menus.clone();
             move |id| {
@@ -622,8 +625,10 @@ impl Menus {
             });
             // Gezik renames in place, only a single row of a folder listing (see run_verb).
             let can_rename = matches!(subject, Some(Subject::Row(_))) && !menus.view.shows_drives();
+            crate::drag::with_current(|drags| drags.menu_shown());
             let outcome = gezik_platform::show_shell_menu(&handle, &target, &items, sub, at, can_rename);
             release_stale_modifiers(&window);
+            after_native_menu(&window);
             drop(claim);
             match outcome {
                 Ok(gezik_platform::MenuOutcome::Gezik(id)) => {
@@ -689,7 +694,13 @@ impl Menus {
         if !window.get_native_menus() {
             window.set_menu_lines(ModelRc::new(VecModel::from(menu_lines(before, &title, inner_count, after))));
         }
+        crate::drag::with_current(|drags| drags.menu_shown());
         window.invoke_show_menu(anchor.x, anchor.y, anchor.flip_x, anchor.flip_y);
+        // A system menu (Windows, macOS) is closed again by now; Gezik's own tells
+        // `menu-closed`.
+        if window.get_native_menus() {
+            after_native_menu(&window);
+        }
     }
 
     /// One of the Convert layer's menus (convert.rs builds it): `items` (id, title, enabled)
@@ -990,6 +1001,18 @@ impl Menus {
             }
         }
     }
+}
+
+/// Catches up after a system menu closed: no press from before it goes on as a drag, and
+/// (Windows) the window learns where the pointer went while the menu's modal loop took its
+/// moves, so the press that closed the menu by clicking elsewhere lands there and not where
+/// the menu opened (from where its first move would start a drag).
+fn after_native_menu(window: &AppWindow) {
+    crate::drag::with_current(|drags| drags.menu_shown());
+    #[cfg(windows)]
+    gezik_platform::catch_up_pointer(&window.window().window_handle());
+    #[cfg(not(windows))]
+    let _ = window;
 }
 
 /// Tells Slint that the modifier keys not down now were released. The native menu's modal
