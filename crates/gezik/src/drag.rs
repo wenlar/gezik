@@ -124,6 +124,9 @@ struct Inner {
     /// pointer grab with it, so the pointer is followed from the window's own events.
     grab_lost: Cell<bool>,
     handed: Cell<Option<Handed>>,
+    /// When the last click that opened an entry (single-click-open) came up: the second click
+    /// of a double-click must not open again.
+    last_open: Cell<Option<std::time::Instant>>,
     /// Files winit reported dropped (an X11 source that ignores `XdndProxy`), gathered until
     /// the batch ends.
     dropped_files: RefCell<Vec<PathBuf>>,
@@ -195,6 +198,16 @@ fn at_menu(phase: &Phase) -> AtMenu {
     }
 }
 
+/// How soon after a click that opened an entry the next one is the second of a double-click.
+const DOUBLE_CLICK: Duration = Duration::from_millis(500);
+
+/// Whether a left release opens the entry with single-click-open: a plain press that did not
+/// become a drag or a rubber band, and not the second click of a double-click (`since`: the
+/// time since the last click that opened).
+fn opens_on_release(single_click_open: bool, plain_press: bool, dragged: bool, since: Option<Duration>) -> bool {
+    single_click_open && plain_press && !dragged && since.is_none_or(|since| since >= DOUBLE_CLICK)
+}
+
 /// The address bar parts' places Slint reported, kept only where the part still shows the
 /// label it had then (right after a navigation, the old places would point at new parts).
 fn current_spans(stored: &[(String, f32, f32)], labels: &[String]) -> Vec<(f32, f32)> {
@@ -243,6 +256,7 @@ impl Drags {
             outside: RefCell::default(),
             handoff_failed: Cell::new(false),
             grab_lost: Cell::new(false),
+            last_open: Cell::new(None),
             handed: Cell::new(None),
             dropped_files: RefCell::default(),
         }));
@@ -469,12 +483,21 @@ impl Drags {
                 *self.0.phase.borrow_mut() = offer;
                 false
             }
-            Phase::Armed { index, right: pressed_right, .. } => {
+            Phase::Armed { index, x: x0, y: y0, right: pressed_right, .. } => {
                 if !pressed_right && !right {
                     self.0.view.release(index, false);
+                    let moved = gezik_core::drag::past_threshold(x - x0, y - y0);
+                    let since = self.0.last_open.get().map(|at| at.elapsed());
                     // Single-click-open: a plain click (no Ctrl, Cmd or Shift) opens (spec 7.1);
                     // after the release is fully handled.
-                    if crate::view_options::current().single_click_open && self.0.view.take_plain_press(index) {
+                    let plain = self.0.view.take_plain_press(index);
+                    if opens_on_release(
+                        crate::view_options::current().single_click_open,
+                        plain,
+                        moved || self.0.view.marquee_active(),
+                        since,
+                    ) {
+                        self.0.last_open.set(Some(std::time::Instant::now()));
                         let (nav, view) = (self.0.nav.clone(), self.0.view.clone());
                         Timer::single_shot(Duration::ZERO, move || crate::open_entry(&nav, &view, index));
                     }
@@ -1061,6 +1084,17 @@ impl DropHandler for Outside {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_click_opens_once_and_not_after_a_drag() {
+        let long_ago = Some(Duration::from_secs(5));
+        assert!(opens_on_release(true, true, false, None));
+        assert!(opens_on_release(true, true, false, long_ago));
+        assert!(!opens_on_release(false, true, false, None), "the setting is off");
+        assert!(!opens_on_release(true, false, false, None), "Ctrl or Shift");
+        assert!(!opens_on_release(true, true, true, None), "a drag or a rubber band");
+        assert!(!opens_on_release(true, true, false, Some(Duration::from_millis(200))), "second click");
+    }
+
     use super::*;
 
     fn dragging() -> Dragging {

@@ -49,12 +49,12 @@ impl OptionsState {
         self.shown
     }
 
-    /// A write ended (`written`: the options it wrote). After the last one, what the file has
+    /// A write ended (`option`: what it wrote). After the last one, what the file has
     /// is shown: the same after a success, the values from before after a failure.
-    fn written(&mut self, ok: bool, written: ViewOptions) -> Option<ViewOptions> {
+    fn written(&mut self, ok: bool, option: ViewOption) -> Option<ViewOptions> {
         self.on_their_way = self.on_their_way.saturating_sub(1);
         if ok {
-            self.in_file = written;
+            option.apply(&mut self.in_file);
         }
         if self.on_their_way > 0 || self.shown == self.in_file {
             return None;
@@ -100,15 +100,15 @@ pub fn change(option: ViewOption) {
     let shown = STATE.with(|s| s.borrow_mut().change(option));
     show(shown);
     store.write_settings(SettingsChange::ViewOption(option), move |result| {
-        let _ = slint::invoke_from_event_loop(move || written(shown, result));
+        let _ = slint::invoke_from_event_loop(move || written(option, result));
     });
 }
 
-fn written(sent: ViewOptions, result: Result<(), Warning>) {
+fn written(option: ViewOption, result: Result<(), Warning>) {
     if let Err(warning) = &result {
         crate::view::with_current(|view| view.note(warning.to_string()));
     }
-    let back = STATE.with(|s| s.borrow_mut().written(result.is_ok(), sent));
+    let back = STATE.with(|s| s.borrow_mut().written(result.is_ok(), option));
     if let Some(options) = back {
         show(options);
     }
@@ -172,8 +172,12 @@ mod tests {
         assert!(second.hide_extensions && second.date_format == DateFormat::Iso);
         // The reload after the first write: the file has only that one yet.
         assert_eq!(state.read(first), None, "what is shown stays");
-        assert_eq!(state.written(true, first), None);
-        assert_eq!(state.written(true, second), None, "the last one: the file is what is shown");
+        assert_eq!(state.written(true, ViewOption::HideExtensions(true)), None);
+        assert_eq!(
+            state.written(true, ViewOption::DateFormat(DateFormat::Iso)),
+            None,
+            "the last one: the file is what is shown"
+        );
         assert_eq!(state.shown, second);
         assert_eq!(state.read(second), None, "its own reload changes nothing");
         let by_hand = ViewOptions { size_format: SizeFormat::Decimal, ..second };
@@ -186,7 +190,24 @@ mod tests {
         let before = state.shown;
         let changed = state.change(ViewOption::ShowHidden(!before.show_hidden));
         assert_ne!(changed, before);
-        assert_eq!(state.written(false, changed), Some(before), "back to what the file has");
+        assert_eq!(
+            state.written(false, ViewOption::ShowHidden(!before.show_hidden)),
+            Some(before),
+            "back to what the file has"
+        );
         assert_eq!(state.shown, before);
+    }
+
+    #[test]
+    fn a_failed_write_does_not_leave_its_value_in_the_file() {
+        let mut state = OptionsState::default();
+        let a = ViewOption::HideExtensions(true);
+        let b = ViewOption::FoldersFirst(false);
+        state.change(a);
+        state.change(b);
+        assert_eq!(state.written(false, a), None, "another write is still on its way");
+        let back = state.written(true, b).expect("what the file has is shown");
+        assert!(!back.hide_extensions, "A never reached the file");
+        assert!(!back.folders_first);
     }
 }

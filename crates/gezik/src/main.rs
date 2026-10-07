@@ -52,8 +52,6 @@ use start::StartPlan;
 
 slint::include_modules!();
 
-/// Resolves settings + theme from `files` and shows them. No I/O, so it runs on the UI
-/// thread at startup, after config files change and when the system theme flips.
 /// Opens entry `index` of the list (a double-click, or a click with single-click-open): an
 /// archive is extracted next to itself if `[archives] double-click` says so.
 fn open_entry(nav: &navigation::Navigator, view: &view::View, index: usize) {
@@ -69,6 +67,8 @@ fn open_entry(nav: &navigation::Navigator, view: &view::View, index: usize) {
     }
 }
 
+/// Resolves settings + theme from `files` and shows them. No I/O, so it runs on the UI
+/// thread at startup, after config files change and when the system theme flips.
 fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
     let loaded = store::resolve(files, window.get_system_dark());
     if let Some(theme) = &loaded.theme {

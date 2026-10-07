@@ -1542,7 +1542,8 @@ pub fn visible_lines(scroll: f32, height: f32, line_height: f32) -> std::ops::Ra
 /// Whether two `[view]` settings differ at most in `options` (those apply through
 /// `View::set_options`, which keeps the scroll).
 fn same_apart_from_options(a: &ViewDefaults, b: &ViewDefaults) -> bool {
-    a.view == b.view && a.icons == b.icons && a.thumbnails == b.thumbnails
+    let ViewDefaults { view, icons, thumbnails, options: _ } = *a;
+    view == b.view && icons == b.icons && thumbnails == b.thumbnails
 }
 
 /// The filter bar's counter: shown of all, `1,234 / 100,000`.
