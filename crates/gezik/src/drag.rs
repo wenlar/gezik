@@ -675,7 +675,7 @@ impl Drags {
                     })
                     .collect();
                 Some(SidebarArea {
-                    rect: Rect { x, y: g.view_y, width, height: g.view_height },
+                    rect: Rect { x, y: g.sidebar_y, width, height: g.sidebar_height },
                     scroll: g.sidebar_scroll,
                     pad: theme.get_spacing(),
                     row_height: theme.get_row_height(),
