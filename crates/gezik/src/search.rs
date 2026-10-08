@@ -206,19 +206,63 @@ enum Warmed {
     Cancelled,
 }
 
-/// A tab's last results (Karar 12).
+/// A tab's last results (Karar 12), and the jobs to check them for when they show again.
 struct Kept {
     spec: SearchSpec,
     results: Arc<ResultSet>,
     status: String,
+    changes: Vec<JobChange>,
 }
 
-/// The results on screen.
+/// The results on screen, and the jobs to check them for once they are.
 struct Showing {
     tab: Option<u64>,
     spec: SearchSpec,
     status: String,
     complete: bool,
+    changes: Vec<JobChange>,
+}
+
+/// Which results a tab shows: its tab and its search (a job's check is for these).
+pub type ResultsKey = (Option<u64>, SearchSpec);
+
+/// A job's effects to check results for (spec 4.7).
+#[derive(Debug, Clone)]
+pub struct JobChange {
+    pub dirs: Vec<PathBuf>,
+    pub paths: Vec<PathBuf>,
+    /// A rename: new names take the places of the old.
+    pub rename: bool,
+    /// Started from these results: what it made shows whether the search would find it or not.
+    pub own: bool,
+}
+
+/// Where a check's verdict goes.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Verdict {
+    Apply,
+    /// The tab keeps its results off screen: checked again when they show.
+    Queue,
+    Drop,
+}
+
+/// The results a check was for (`key`) against what is on screen and what its tab keeps.
+pub fn verdict_for(key: &ResultsKey, showing: Option<&ResultsKey>, kept: Option<&SearchSpec>) -> Verdict {
+    if showing == Some(key) {
+        Verdict::Apply
+    } else if kept == Some(&key.1) {
+        Verdict::Queue
+    } else {
+        Verdict::Drop
+    }
+}
+
+/// Whether a job that changed `dirs` and made `paths` may change results under `scope`
+/// (`None`: every drive).
+pub fn touches(scope: Option<&Path>, dirs: &[PathBuf], paths: &[PathBuf]) -> bool {
+    use gezik_core::ops::paths::is_within;
+    let Some(root) = scope else { return true };
+    dirs.iter().chain(paths).any(|path| is_within(path, root) || is_within(root, path))
 }
 
 struct Run {
@@ -599,13 +643,14 @@ impl Searches {
         if let Some(kept) = kept {
             *self.0.pending.borrow_mut() = None;
             *self.0.showing.borrow_mut() =
-                Some(Showing { tab, spec: kept.spec, status: kept.status.clone(), complete: true });
+                Some(Showing { tab, spec: kept.spec, status: kept.status, complete: true, changes: kept.changes });
             return Listing::Results(kept.results);
         }
         let root = spec.scope.folder().map(Path::to_path_buf).unwrap_or_default();
         let content = !spec.content.is_empty();
         *self.0.pending.borrow_mut() = Some(spec.clone());
-        *self.0.showing.borrow_mut() = Some(Showing { tab, spec, status: String::new(), complete: false });
+        *self.0.showing.borrow_mut() =
+            Some(Showing { tab, spec, status: String::new(), complete: false, changes: Vec::new() });
         Listing::Results(Arc::new(ResultSet::new(root, content)))
     }
 
@@ -616,8 +661,17 @@ impl Searches {
         match pending {
             Some(spec) => self.start(spec),
             None => {
-                let status = self.0.showing.borrow().as_ref().map(|s| s.status.clone());
+                let (status, changes) = match self.0.showing.borrow_mut().as_mut() {
+                    Some(s) => (Some(s.status.clone()), std::mem::take(&mut s.changes)),
+                    None => (None, Vec::new()),
+                };
                 self.0.view.set_results_status(status.filter(|s| !s.is_empty()));
+                // Jobs that ended while these results were kept (spec 4.7).
+                if let Some(key) = self.results_key() {
+                    for change in changes {
+                        self.check(key.clone(), change);
+                    }
+                }
             }
         }
     }
@@ -644,7 +698,87 @@ impl Searches {
             return;
         }
         if let (Some(tab), true, Some(results)) = (showing.tab, showing.complete, self.0.view.results()) {
-            self.0.kept.borrow_mut().insert(tab, Kept { spec: showing.spec, results, status: showing.status });
+            let kept = Kept { spec: showing.spec, results, status: showing.status, changes: showing.changes };
+            self.0.kept.borrow_mut().insert(tab, kept);
+        }
+    }
+
+    /// The results on screen, if any.
+    pub fn results_key(&self) -> Option<ResultsKey> {
+        if !self.0.view.shows_results() {
+            return None;
+        }
+        self.0.showing.borrow().as_ref().map(|s| (s.tab, s.spec.clone()))
+    }
+
+    /// A job ended (spec 4.7): the results on screen are checked now, a tab's kept results it
+    /// may have changed when they show again. `origin`: the results it was started from.
+    pub fn job_done(&self, origin: Option<&ResultsKey>, dirs: Vec<PathBuf>, paths: Vec<PathBuf>, rename: bool) {
+        let change =
+            |key: ResultsKey| JobChange { dirs: dirs.clone(), paths: paths.clone(), rename, own: origin == Some(&key) };
+        for (tab, kept) in self.0.kept.borrow_mut().iter_mut() {
+            if touches(kept.spec.scope.folder(), &dirs, &paths) {
+                kept.changes.push(change((Some(*tab), kept.spec.clone())));
+            }
+        }
+        if let Some(key) = self.results_key() {
+            self.check(key.clone(), change(key));
+        }
+    }
+
+    /// Checks on another thread what `change` did to the results on screen (`key`), then
+    /// shows it if they still are, or keeps it for their tab.
+    fn check(&self, key: ResultsKey, change: JobChange) {
+        let Some(probe) = self.0.view.results_probe(&change.dirs, &change.paths) else { return };
+        let (max_size, max_results) = {
+            let settings = self.0.settings.borrow();
+            (settings.content_max_size, settings.max_results)
+        };
+        let weak = self.0.window.clone();
+        let spawned = std::thread::Builder::new().name("gezik-results-check".into()).spawn(move || {
+            let (gone, mut added) = probe.verify();
+            if !change.own && !added.is_empty() {
+                // Not made from these results: only what this search would find.
+                match Query::compile(&key.1, &QueryOptions::local(max_size, max_results)) {
+                    Ok(query) => added.retain(|(path, e)| {
+                        query.passes(&e.name, e.is_dir, e.size, e.modified)
+                            && query.content().is_none_or(|content| {
+                                content.reads(&e.name, e.size)
+                                    && content
+                                        .find_in_file(path, &AtomicBool::new(false), &gezik_platform::decode_ansi)
+                                        .is_ok_and(|found| found.is_some())
+                            })
+                    }),
+                    Err(_) => added.clear(),
+                }
+            }
+            let _ = weak.upgrade_in_event_loop(move |_| {
+                with_current(|searches| searches.checked(key, change, gone, added));
+            });
+        });
+        if spawned.is_err() {
+            eprintln!("gezik: cannot check the search results");
+        }
+    }
+
+    fn checked(
+        &self,
+        key: ResultsKey,
+        change: JobChange,
+        gone: Vec<PathBuf>,
+        added: Vec<(PathBuf, gezik_core::Entry)>,
+    ) {
+        let showing = self.results_key();
+        let kept = key.0.and_then(|tab| self.0.kept.borrow().get(&tab).map(|k| k.spec.clone()));
+        match verdict_for(&key, showing.as_ref(), kept.as_ref()) {
+            Verdict::Apply => self.0.view.results_changed(&gone, added, change.rename),
+            Verdict::Queue => {
+                let mut kept = self.0.kept.borrow_mut();
+                if let Some(kept) = key.0.and_then(|tab| kept.get_mut(&tab)) {
+                    kept.changes.push(change);
+                }
+            }
+            Verdict::Drop => {}
         }
     }
 
@@ -1107,6 +1241,24 @@ mod tests {
         assert!(!this_build(&names, &older), "a cancelled read of the same scope answers late");
         assert!(this_build(&names, &newer));
         assert!(!this_build(&Names::None, &newer));
+    }
+
+    #[test]
+    fn a_check_lands_only_on_the_results_it_was_for() {
+        let spec = SearchSpec::new(Scope::Folder("/w".into()));
+        let other = SearchSpec::new(Scope::Folder("/v".into()));
+        let key = (Some(1), spec.clone());
+        assert_eq!(verdict_for(&key, Some(&key), None), Verdict::Apply);
+        assert_eq!(verdict_for(&key, Some(&(Some(2), spec.clone())), Some(&spec)), Verdict::Queue, "another tab shows");
+        assert_eq!(verdict_for(&key, None, Some(&spec)), Verdict::Queue, "a folder shows in its tab");
+        assert_eq!(verdict_for(&key, Some(&(Some(1), other.clone())), Some(&other)), Verdict::Drop, "another search");
+        assert_eq!(verdict_for(&key, None, None), Verdict::Drop, "nothing kept");
+        let dirs = [PathBuf::from("/w/a")];
+        assert!(touches(Some(Path::new("/w")), &dirs, &[]));
+        assert!(touches(Some(Path::new("/w/a/b")), &dirs, &[]), "the scope is inside the changed folder");
+        assert!(!touches(Some(Path::new("/v")), &dirs, &[PathBuf::from("/x/y")]));
+        assert!(touches(Some(Path::new("/v")), &[], &[PathBuf::from("/v/new")]));
+        assert!(touches(None, &dirs, &[]), "every drive");
     }
 
     #[test]

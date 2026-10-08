@@ -184,6 +184,26 @@ struct WithFolders {
     sequence: u64,
 }
 
+/// The names in `folder` that `results` are or are inside (a copy with folders made
+/// `a/b/x`: `a` is selected), each once.
+pub fn first_level_names(results: &[PathBuf], folder: &Path) -> Vec<String> {
+    let depth = folder.components().count();
+    let mut names: Vec<String> = Vec::new();
+    for path in results.iter().filter(|path| gezik_core::ops::paths::is_within(path, folder)) {
+        if let Some(name) = path.components().nth(depth).map(|c| c.as_os_str().to_string_lossy().into_owned())
+            && !names.contains(&name)
+        {
+            names.push(name);
+        }
+    }
+    names
+}
+
+/// A job that works on files and folders: in search results, these only.
+pub fn only_in_results(what: &str) -> String {
+    format!("{what} works in search results")
+}
+
 /// A drive or volume root (`C:`, `/`): it has no parent or no name.
 pub fn is_root(path: &Path) -> bool {
     path.parent().is_none() || path.file_name().is_none()
@@ -264,6 +284,8 @@ struct JobView {
     hidden_in: Option<PathBuf>,
     /// Search result rows hidden for the job (trash, delete): checked again when it ends.
     hidden_paths: Vec<PathBuf>,
+    /// The search results it was started from, if any (spec 4.7).
+    origin: Option<crate::search::ResultsKey>,
     /// Said after the detail in the panel ([`CANT_UNDO`]).
     note: Option<&'static str>,
 }
@@ -294,6 +316,7 @@ impl JobView {
             after: After::Nothing,
             hidden_in: None,
             hidden_paths: Vec::new(),
+            origin: None,
             note: None,
         }
     }
@@ -476,6 +499,7 @@ impl Operations {
         let title = task.title();
         let id = self.0.engine.submit(task);
         let mut job = JobView::new(id, title);
+        crate::search::with_current(|searches| job.origin = searches.results_key());
         job.retry = retry;
         job.after = after;
         self.0.jobs.borrow_mut().push(job);
@@ -495,6 +519,7 @@ impl Operations {
         let title = tasks.first().map(|task| task.title()).unwrap_or_default();
         let id = self.0.engine.submit_chain(tasks, label);
         let mut job = JobView::new(id, title);
+        crate::search::with_current(|searches| job.origin = searches.results_key());
         job.again = again;
         job.after = after;
         self.0.jobs.borrow_mut().push(job);
@@ -745,7 +770,7 @@ impl Operations {
     /// folders under the search's scope.
     pub fn copy_with_folders(&self, cut: bool) {
         if !self.0.view.shows_results() {
-            return self.0.view.note("Copy with folders works in search results".to_owned());
+            return self.0.view.note(only_in_results("Copy with folders"));
         }
         let items = self.0.view.selected_relative();
         if items.is_empty() {
@@ -788,6 +813,8 @@ impl Operations {
         let Some(dir) = into.or_else(|| self.0.view.folder()) else { return self.not_here() };
         // A copy with folders keeps them (spec 4.6).
         if let Some((items, cut)) = self.with_folders_to_paste() {
+            let sources: Vec<PathBuf> = items.iter().map(|(path, _)| path.clone()).collect();
+            self.remember_for(&sources);
             let moving = cut || force_move;
             let retry: Retry = Rc::new(move || -> Box<dyn Task> {
                 if moving {
@@ -1248,11 +1275,13 @@ impl Operations {
         let mut after = After::Nothing;
         let mut hidden_in = None;
         let mut hidden_paths = Vec::new();
+        let mut origin = None;
         let mut title = String::new();
         self.with_job(id, |job| {
             after = job.after;
             hidden_in = job.hidden_in.take();
             hidden_paths = std::mem::take(&mut job.hidden_paths);
+            origin = job.origin.take();
             title = job.title.clone();
             job.finish(report.clone());
         });
@@ -1272,7 +1301,7 @@ impl Operations {
         let after = if after == After::Select && self.0.view.renaming().is_some() { After::Nothing } else { after };
         let select = match (after, self.0.view.folder()) {
             (After::Nothing, _) | (_, None) => Vec::new(),
-            (_, Some(folder)) => result_names(&report.results, &folder),
+            (_, Some(folder)) => first_level_names(&report.results, &folder),
         };
         // Rows hidden for this job come back if it changed nothing (failed, cancelled, no trash).
         let mut dirs = report.changed_dirs.clone();
@@ -1290,12 +1319,13 @@ impl Operations {
             (a, b) => a.or(b),
         };
         let reloading = self.0.nav.refresh_showing(&dirs, &select, note.clone());
-        // Search results follow Gezik's own jobs (spec 4.7).
-        if self.0.view.shows_results() {
-            let mut paths = report.results.clone();
-            paths.extend(hidden_paths);
-            self.check_results(report.changed_dirs.clone(), paths);
-        }
+        // Search results follow Gezik's own jobs (spec 4.7), those kept by a tab too.
+        let mut paths = report.results.clone();
+        paths.extend(hidden_paths);
+        let rename = report.kind == gezik_ops::TaskKind::Rename;
+        crate::search::with_current(|searches| {
+            searches.job_done(origin.as_ref(), report.changed_dirs.clone(), paths, rename);
+        });
         self.0.sidebar.refresh();
         if let (false, Some(note)) = (reloading, note) {
             self.0.view.note(note);
@@ -1315,27 +1345,11 @@ impl Operations {
         crate::stack::with_current(|stack| stack.job_finished(id, &report));
     }
 
-    /// Checks on another thread what a job changed among the results, then shows it.
-    fn check_results(&self, dirs: Vec<PathBuf>, paths: Vec<PathBuf>) {
-        let Some(set) = self.0.view.results() else { return };
-        let weak = self.0.window.clone();
-        let spawned = std::thread::Builder::new().name("gezik-results-check".into()).spawn(move || {
-            let (gone, added) = gezik_search::results::verify(&set, &dirs, &paths);
-            drop(set);
-            let _ = weak.upgrade_in_event_loop(move |_| {
-                crate::view::with_current(|view| view.results_changed(&gone, added));
-            });
-        });
-        if spawned.is_err() {
-            eprintln!("gezik: cannot check the search results");
-        }
-    }
-
     /// `show-in-folder` (spec 4.6): the focused result's folder with it selected; Back comes
     /// back to the results.
     pub fn show_in_folder(&self, new_tab: bool) {
         if !self.0.view.shows_results() {
-            return self.0.view.note("Show in folder works in search results".to_owned());
+            return self.0.view.note(only_in_results("Show in folder"));
         }
         if let Some((path, _)) = self.0.view.focus().and_then(|i| self.0.view.entry_path(i)) {
             self.show_path_in_folder(&path, new_tab);
@@ -1757,6 +1771,14 @@ mod tests {
         assert!(is_root(Path::new("/")));
         assert!(!is_root(Path::new("/a")));
         assert!(!is_root(Path::new("/a/b.txt")));
+    }
+
+    #[test]
+    fn a_paste_with_folders_selects_what_it_made_here() {
+        let dir = PathBuf::from("/t");
+        let results =
+            [dir.join("a").join("b").join("x"), dir.join("a").join("y"), dir.join("z"), PathBuf::from("/o/q")];
+        assert_eq!(first_level_names(&results, &dir), ["a", "z"]);
     }
 
     #[test]

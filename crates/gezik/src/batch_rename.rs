@@ -681,7 +681,7 @@ impl BatchRename {
         let counter = self.0.opening.clone();
         let opening = counter.load(Ordering::Relaxed);
         let weak = self.0.window.clone();
-        let _ = std::thread::Builder::new().name("gezik-rename-folders".into()).spawn(move || {
+        let spawned = std::thread::Builder::new().name("gezik-rename-folders".into()).spawn(move || {
             let names: Vec<HashSet<String>> = folders
                 .iter()
                 .map(|folder| {
@@ -720,6 +720,10 @@ impl BatchRename {
                 });
             });
         });
+        if spawned.is_err() {
+            // The names on disk are not known: Rename goes ahead, the job says what clashes.
+            self.0.rules.borrow_mut().reading = false;
+        }
     }
 
     /// Reads the photo dates on another thread, once per opening; `{taken}` falls back to

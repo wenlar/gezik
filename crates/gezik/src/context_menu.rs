@@ -989,14 +989,16 @@ impl Menus {
     fn background_menu(&self, at: Option<(f32, f32)>, x: f32, y: f32) {
         // Search results have no folder: Undo, Redo and Refresh (spec 4.6).
         if self.view.shows_results() {
-            let mut list: Vec<(u32, String, bool)> = Vec::new();
-            if let Some(label) = self.ops.undo_label() {
-                list.push((UNDO, format!("Undo {label}"), true));
-            }
-            if let Some(label) = self.ops.redo_label() {
-                list.push((REDO, format!("Redo {label}"), true));
-            }
-            list.push((REFRESH, "Refresh".to_owned(), true));
+            let list: Vec<(u32, String, bool)> = background_items(
+                self.ops.undo_label().as_deref(),
+                self.ops.redo_label().as_deref(),
+                false,
+                None,
+                false,
+            )
+            .into_iter()
+            .map(|(id, title)| (id, title, true))
+            .collect();
             *self.subject.borrow_mut() = Some(Subject::Background(PathBuf::new()));
             return self.open_slint_entries(&list, Vec::new(), Anchor::point(x, y));
         }
@@ -1372,11 +1374,7 @@ impl Menus {
             (SHOW_IN_FOLDER | SHOW_IN_FOLDER_NEW_TAB, Subject::Row(path)) => {
                 self.ops.show_path_in_folder(&path, id == SHOW_IN_FOLDER_NEW_TAB);
             }
-            (SHOW_IN_FOLDER, Subject::Rows(paths)) => {
-                if let Some(path) = paths.first() {
-                    self.ops.show_path_in_folder(path, false);
-                }
-            }
+            (SHOW_IN_FOLDER, Subject::Rows(_)) => self.ops.show_in_folder(false),
             (COPY_WITH_FOLDERS | CUT_WITH_FOLDERS, Subject::Row(_) | Subject::Rows(_)) => {
                 self.ops.copy_with_folders(id == CUT_WITH_FOLDERS);
             }
