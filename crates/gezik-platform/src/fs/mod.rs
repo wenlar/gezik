@@ -191,6 +191,20 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn a_name_that_is_not_utf8_is_left_out() {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = test_dir("not-utf8");
+        // macOS refuses such a name itself.
+        if std::fs::write(dir.join(std::ffi::OsStr::from_bytes(b"a\xFF")), "").is_ok() {
+            std::fs::write(dir.join("a\u{FFFD}"), "").unwrap();
+            let items = read_dir_items(&dir, &|_, _| true).unwrap();
+            assert_eq!(items.into_iter().map(|i| i.name).collect::<Vec<_>>(), ["a\u{FFFD}"]);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn only_regular_files_are_opened_for_their_text() {
         let dir = test_dir("open-regular");
