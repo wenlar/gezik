@@ -32,7 +32,7 @@ impl Journal {
     /// Whether a line holds `source` and `target` as they are: Unicode, no tab or line break.
     /// Read back, another name could be paths of unrelated files, which recovery would delete.
     pub fn can_note(source: &Path, target: &Path) -> bool {
-        [source, target].iter().all(|path| path.to_str().is_some_and(|text| !text.contains(['\t', '\n', '\r'])))
+        crate::pending::can_hold(source) && crate::pending::can_hold(target)
     }
 
     /// `target` is about to be written as a copy of `source` (see `can_note`).

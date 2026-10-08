@@ -10,7 +10,7 @@ use gezik_platform::fs;
 
 use super::what;
 use crate::engine::lock;
-use crate::pending::{PendingDeletes, Restore, hidden_name};
+use crate::pending::{PendingDeletes, Restore, can_hold, hidden_name};
 use crate::task::{Outcome, PlanItem, Resources, RunCx, ScanSink, Stage, Task, TaskKind, Work};
 use crate::walk::{Step, facts_of, walk};
 
@@ -38,8 +38,11 @@ impl DeleteTask {
     fn hide(&self, roots: &[&Path]) -> Vec<PathBuf> {
         let originals = || roots.iter().map(|root| root.to_path_buf()).collect();
         let Some(pending) = self.pending.as_ref().filter(|_| !self.recovering) else { return originals() };
-        let hidden: Vec<Option<PathBuf>> =
-            roots.iter().map(|root| root.parent().map(|parent| parent.join(hidden_name()))).collect();
+        // A root in a folder a line cannot hold is deleted where it is.
+        let hidden: Vec<Option<PathBuf>> = roots
+            .iter()
+            .map(|root| root.parent().map(|parent| parent.join(hidden_name())).filter(|hidden| can_hold(hidden)))
+            .collect();
         // Noted first: a crash between the note and the rename leaves a path that does not
         // exist, which recovery drops; the other order could leave a folder hidden forever.
         let noted: Vec<&Path> = hidden.iter().flatten().map(PathBuf::as_path).collect();
