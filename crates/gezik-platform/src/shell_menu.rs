@@ -113,7 +113,7 @@ unsafe fn context_menu_for(hwnd: HWND, target: &MenuTarget) -> windows::core::Re
     match target {
         MenuTarget::Item(path) => unsafe { items_menu(hwnd, std::slice::from_ref(path)) },
         MenuTarget::Items(paths) => match shared_parent(paths) {
-            Some((parent, names)) => unsafe { children_menu(hwnd, parent, &names) },
+            Some((parent, names)) => unsafe { children_object(hwnd, parent, &names) },
             None => unsafe { items_menu(hwnd, paths) },
         },
         MenuTarget::Background(path) => unsafe { background_menu(hwnd, path) },
@@ -129,14 +129,9 @@ pub(crate) fn shared_parent(paths: &[PathBuf]) -> Option<(&Path, Vec<&std::ffi::
     Some((parent, names?))
 }
 
-/// The menu of the entries `names` in `folder`. The folder is bound once and each name is
-/// parsed relative to it, so a selection of 100 000 files opens quickly.
-unsafe fn children_menu(hwnd: HWND, folder: &Path, names: &[&std::ffi::OsStr]) -> windows::core::Result<IContextMenu> {
-    unsafe { children_object(hwnd, folder, names) }
-}
-
 /// The Shell's `T` (a menu, a data object) for the entries `names` in `folder`, as Explorer
-/// gets it for a selection.
+/// gets it for a selection. The folder is bound once and each name is parsed relative to it,
+/// so a selection of 100 000 files opens quickly.
 pub(crate) unsafe fn children_object<T: Interface>(
     hwnd: HWND,
     folder: &Path,
@@ -184,8 +179,12 @@ unsafe fn bind_folder(folder: &Path) -> windows::core::Result<IShellFolder> {
     bound
 }
 
-/// The menu of `paths` (one, or several from different folders), each parsed on its own.
+/// The menu of `paths` (one, or several drives), each parsed on its own. One menu is for
+/// one folder's entries: paths from different folders are refused.
 unsafe fn items_menu(hwnd: HWND, paths: &[PathBuf]) -> windows::core::Result<IContextMenu> {
+    if paths.iter().any(|path| path.parent() != paths[0].parent()) {
+        return Err(E_INVALIDARG.into());
+    }
     let mut pidls: Vec<*mut ITEMIDLIST> = Vec::with_capacity(paths.len());
     let parsed = paths.iter().try_for_each(|path| {
         let mut pidl: *mut ITEMIDLIST = std::ptr::null_mut();
@@ -522,6 +521,14 @@ mod tests {
         assert!(shared_parent(&[a, PathBuf::from(r"C:\y\c")]).is_none());
         assert!(shared_parent(&[PathBuf::from(r"C:\"), PathBuf::from(r"D:\")]).is_none());
         assert!(shared_parent(&[]).is_none());
+    }
+
+    #[test]
+    fn one_menu_is_never_made_for_several_folders() {
+        // The first one's folder with the others' names would act on other files.
+        let paths = [PathBuf::from(r"C:\x\a.txt"), PathBuf::from(r"C:\y\b.txt")];
+        let menu = unsafe { items_menu(HWND::default(), &paths) };
+        assert_eq!(menu.err().map(|e| e.code()), Some(E_INVALIDARG));
     }
 
     #[test]
