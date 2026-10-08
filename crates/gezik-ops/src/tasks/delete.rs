@@ -5,7 +5,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use gezik_core::ops::names::next_free;
+use gezik_core::ops::names::next_free_os;
 use gezik_platform::fs;
 
 use super::what;
@@ -69,10 +69,10 @@ pub(crate) fn restore_hidden(hidden: &Path, original: &Path, was_hidden: bool) -
     match fs::move_entry(hidden, original) {
         Ok(()) => back = original.to_path_buf(),
         Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
-            if let (Some(parent), Some(name)) = (original.parent(), original.file_name().and_then(|n| n.to_str())) {
+            if let (Some(parent), Some(name)) = (original.parent(), original.file_name()) {
                 let is_dir = std::fs::symlink_metadata(hidden).is_ok_and(|m| m.is_dir());
                 let free =
-                    next_free(name, is_dir, |candidate| std::fs::symlink_metadata(parent.join(candidate)).is_ok());
+                    next_free_os(name, is_dir, |candidate| std::fs::symlink_metadata(parent.join(candidate)).is_ok());
                 let target = parent.join(free);
                 if fs::move_entry(hidden, &target).is_ok() {
                     back = target;
