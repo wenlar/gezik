@@ -39,7 +39,14 @@ pub enum ClipboardImage {
     Png(Vec<u8>),
     /// A BMP file's bytes, made from Windows' `CF_DIBV5` / `CF_DIB`.
     Bmp(Vec<u8>),
+    /// A TIFF file's bytes, as macOS copies pictures; `png_bytes` converts it (so the UI
+    /// thread only reads).
+    #[cfg(target_os = "macos")]
+    Tiff(Vec<u8>),
 }
+
+/// The most memory decoding a clipboard picture may use.
+const MAX_DECODE_BYTES: u64 = 256 << 20;
 
 impl ClipboardImage {
     /// The picture as a PNG file's bytes.
@@ -47,7 +54,11 @@ impl ClipboardImage {
         match self {
             ClipboardImage::Png(bytes) => Ok(bytes.clone()),
             ClipboardImage::Bmp(bytes) => {
-                let picture = image::load_from_memory_with_format(bytes, image::ImageFormat::Bmp).map_err(|err| {
+                let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), image::ImageFormat::Bmp);
+                let mut limits = image::Limits::default();
+                limits.max_alloc = Some(MAX_DECODE_BYTES);
+                reader.limits(limits);
+                let picture = reader.decode().map_err(|err| {
                     std::io::Error::new(std::io::ErrorKind::InvalidData, format!("The picture cannot be read: {err}"))
                 })?;
                 let mut out = Vec::new();
@@ -56,8 +67,18 @@ impl ClipboardImage {
                     .map_err(std::io::Error::other)?;
                 Ok(out)
             }
+            #[cfg(target_os = "macos")]
+            ClipboardImage::Tiff(bytes) => imp::tiff_to_png(bytes).ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "The picture cannot be read: not a TIFF picture")
+            }),
         }
     }
+}
+
+/// Text read from the clipboard: without a leading byte order mark, None if nothing is left.
+pub(crate) fn clean_text(text: String) -> Option<String> {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+    (!text.is_empty()).then(|| text.to_owned())
 }
 
 /// A BMP file from clipboard DIB data (a BITMAPINFOHEADER or a later one, maybe color masks
@@ -70,8 +91,18 @@ pub(crate) fn bmp_from_dib(dib: &[u8]) -> Option<Vec<u8>> {
     if dib.len() < 40 || !(40..=dib.len()).contains(&header) {
         return None;
     }
+    let width = i32::from_le_bytes([dib[4], dib[5], dib[6], dib[7]]);
+    let height = i32::from_le_bytes([dib[8], dib[9], dib[10], dib[11]]);
     let bit_count = u16::from_le_bytes([dib[14], dib[15]]);
     let compression = u32_at(16)?;
+    // A header may declare a huge picture with next to no data: refuse before anyone allocates.
+    if width <= 0 || height == 0 {
+        return None;
+    }
+    let (width, rows) = (u64::from(width.unsigned_abs()), u64::from(height.unsigned_abs()));
+    if width.checked_mul(rows)? > MAX_DECODE_BYTES / 4 {
+        return None;
+    }
     let colors_used = usize::try_from(u32_at(32)?).ok()?;
     // BI_BITFIELDS (3) and BI_ALPHABITFIELDS (6) after a 40-byte header: the masks follow it
     // (later headers hold them inside).
@@ -90,6 +121,14 @@ pub(crate) fn bmp_from_dib(dib: &[u8]) -> Option<Vec<u8>> {
     let offset = 14 + header + masks + colors * 4;
     if offset > 14 + dib.len() {
         return None;
+    }
+    // Uncompressed pixels must all be there (rows are padded to 4 bytes).
+    if matches!(compression, 0 | 3 | 6) {
+        let stride = (width.checked_mul(u64::from(bit_count))?.checked_add(31)? / 32).checked_mul(4)?;
+        let wanted = stride.checked_mul(rows)?;
+        if wanted > u64::try_from(dib.len() + 14 - offset).ok()? {
+            return None;
+        }
     }
     let mut out = Vec::with_capacity(14 + dib.len());
     out.extend_from_slice(b"BM");
@@ -319,7 +358,7 @@ mod imp {
 
     pub fn read_text() -> Result<Option<String>, ClipboardError> {
         let _open = Open::new()?;
-        Ok(data(u32::from(CF_UNICODETEXT.0)).map(|bytes| super::text_from_unicode(&bytes)))
+        Ok(data(u32::from(CF_UNICODETEXT.0)).and_then(|bytes| super::clean_text(super::text_from_unicode(&bytes))))
     }
 
     pub fn sequence() -> u64 {
@@ -344,7 +383,7 @@ mod imp {
         NSBitmapImageFileType, NSBitmapImageRep, NSPasteboard, NSPasteboardTypeFileURL, NSPasteboardTypeString,
         NSPasteboardTypeTIFF, NSPasteboardWriting,
     };
-    use objc2_foundation::{NSArray, NSDictionary, NSString, NSURL};
+    use objc2_foundation::{NSArray, NSData, NSDictionary, NSString, NSURL};
 
     use super::{ClipboardError, ClipboardFiles, ClipboardImage, PasteKind};
 
@@ -417,21 +456,29 @@ mod imp {
         }
     }
 
-    /// `public.png` as it is; else the TIFF every picture copy carries, made PNG (spec 9.1).
+    /// `public.png` as it is; else the TIFF every picture copy carries (spec 9.1), converted
+    /// to PNG later, off the UI thread.
     pub fn read_image() -> Result<Option<ClipboardImage>, ClipboardError> {
         let pasteboard = NSPasteboard::generalPasteboard();
         if let Some(png) = pasteboard.dataForType(&NSString::from_str("public.png")) {
             return Ok(Some(ClipboardImage::Png(png.to_vec())));
         }
         let Some(tiff) = pasteboard.dataForType(unsafe { NSPasteboardTypeTIFF }) else { return Ok(None) };
-        let Some(rep) = NSBitmapImageRep::imageRepWithData(&tiff) else { return Ok(None) };
+        Ok(Some(ClipboardImage::Tiff(tiff.to_vec())))
+    }
+
+    /// A TIFF picture as PNG file bytes (run in the job that writes the file).
+    pub fn tiff_to_png(tiff: &[u8]) -> Option<Vec<u8>> {
+        let rep = NSBitmapImageRep::imageRepWithData(&NSData::with_bytes(tiff))?;
         let png = unsafe { rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &NSDictionary::new()) };
-        Ok(png.map(|data| ClipboardImage::Png(data.to_vec())))
+        png.map(|data| data.to_vec())
     }
 
     pub fn read_text() -> Result<Option<String>, ClipboardError> {
         let pasteboard = NSPasteboard::generalPasteboard();
-        Ok(pasteboard.stringForType(unsafe { NSPasteboardTypeString }).map(|text| text.to_string()))
+        Ok(pasteboard
+            .stringForType(unsafe { NSPasteboardTypeString })
+            .and_then(|text| super::clean_text(text.to_string())))
     }
 
     pub fn sequence() -> u64 {
@@ -523,6 +570,70 @@ mod tests {
         paletted.resize(40 + 256 * 4 + 4, 0);
         let bmp = bmp_from_dib(&paletted).unwrap();
         assert_eq!(u32::from_le_bytes(bmp[10..14].try_into().unwrap()), 14 + 40 + 1024);
+    }
+
+    /// A 2×2 picture of 32-bit pixels in storage order: red, green, then blue, white.
+    fn dib32(header: u32, height: i32, compression: u32) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&header.to_le_bytes());
+        out.extend_from_slice(&2i32.to_le_bytes());
+        out.extend_from_slice(&height.to_le_bytes());
+        out.extend_from_slice(&1u16.to_le_bytes());
+        out.extend_from_slice(&32u16.to_le_bytes());
+        out.extend_from_slice(&compression.to_le_bytes());
+        out.resize(header as usize, 0);
+        // BI_BITFIELDS: the masks follow a 40-byte header, a later one holds them itself.
+        let masks: [u32; 4] = [0x00FF_0000, 0x0000_FF00, 0x0000_00FF, 0xFF00_0000];
+        let at = if header == 40 { out.len() } else { 40 };
+        if compression == 3 || header > 40 {
+            let all: Vec<u8> = masks.iter().flat_map(|m| m.to_le_bytes()).collect();
+            let count = if header == 40 { 12 } else { 16 };
+            if header == 40 {
+                out.extend_from_slice(&all[..count]);
+            } else {
+                out[at..at + count].copy_from_slice(&all[..count]);
+            }
+        }
+        for bgra in [[0, 0, 255, 255], [0, 255, 0, 255], [255, 0, 0, 255], [255, 255, 255, 255]] {
+            out.extend_from_slice(&bgra);
+        }
+        out
+    }
+
+    fn top_left(dib: &[u8]) -> [u8; 3] {
+        let bmp = bmp_from_dib(dib).expect("a DIB");
+        let png = ClipboardImage::Bmp(bmp).png_bytes().unwrap();
+        image::load_from_memory_with_format(&png, image::ImageFormat::Png).unwrap().to_rgb8().get_pixel(0, 0).0
+    }
+
+    #[test]
+    fn dibs_of_every_header_kind_are_read() {
+        assert_eq!(top_left(&dib32(40, 2, 0)), [0, 0, 255], "bottom-up: the last stored row is on top");
+        assert_eq!(top_left(&dib32(40, -2, 0)), [255, 0, 0], "top-down: the first stored row is on top");
+        assert_eq!(top_left(&dib32(40, 2, 3)), [0, 0, 255], "BI_BITFIELDS with its masks after the header");
+        assert_eq!(top_left(&dib32(124, 2, 3)), [0, 0, 255], "a V5 header");
+        assert_eq!(top_left(&dib32(124, -2, 3)), [255, 0, 0], "a top-down V5");
+    }
+
+    #[test]
+    fn a_header_claiming_more_than_the_data_is_refused() {
+        let mut huge = dib();
+        huge[4..8].copy_from_slice(&100_000i32.to_le_bytes());
+        huge[8..12].copy_from_slice(&100_000i32.to_le_bytes());
+        assert_eq!(bmp_from_dib(&huge), None, "10 billion pixels in a few bytes");
+        let mut tall = dib();
+        tall[8..12].copy_from_slice(&5i32.to_le_bytes());
+        assert_eq!(bmp_from_dib(&tall), None, "five rows with one row of data");
+        for (width, height) in [(0i32, 1i32), (-2, 1), (2, 0)] {
+            let mut bad = dib();
+            bad[4..8].copy_from_slice(&width.to_le_bytes());
+            bad[8..12].copy_from_slice(&height.to_le_bytes());
+            assert_eq!(bmp_from_dib(&bad), None, "{width} x {height}");
+        }
+        let mut wrapping = dib();
+        wrapping[4..8].copy_from_slice(&i32::MIN.to_le_bytes());
+        wrapping[8..12].copy_from_slice(&i32::MIN.to_le_bytes());
+        assert_eq!(bmp_from_dib(&wrapping), None);
     }
 
     #[test]

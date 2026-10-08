@@ -115,6 +115,8 @@ struct Shared {
     /// A transfer under way on the UI thread, waiting for the event thread's events.
     waiting: Mutex<Option<Sender<Event>>>,
     sequence: AtomicU64,
+    /// The clipboard owner's offered names, with the `sequence` they were asked at.
+    offers: Mutex<Option<(u64, Vec<&'static str>)>>,
     wake: Arc<dyn Fn() + Send + Sync>,
 }
 
@@ -480,6 +482,7 @@ impl X11 {
             state: Mutex::default(),
             waiting: Mutex::new(None),
             sequence: AtomicU64::new(1),
+            offers: Mutex::new(None),
             wake,
         });
         let runner = shared.clone();
@@ -506,7 +509,21 @@ impl X11 {
 
 impl X11 {
     /// The clipboard owner's targets by name, those Gezik knows (the rest do not matter here).
+    /// Asked once per clipboard change (the XFixes `sequence`), an unanswered ask included: a
+    /// hung owner costs one wait, not one per call.
     fn offered_names(&self) -> Vec<&'static str> {
+        let s = &self.0;
+        let at = s.sequence.load(Ordering::SeqCst);
+        let cached = super::cached_offers(&s.offers.lock().unwrap_or_else(std::sync::PoisonError::into_inner), at);
+        if let Some(names) = cached {
+            return names;
+        }
+        let names = self.ask_offered_names();
+        *s.offers.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some((at, names.clone()));
+        names
+    }
+
+    fn ask_offered_names(&self) -> Vec<&'static str> {
         let s = &self.0;
         let a = &s.atoms;
         let Some(targets) = s.transfer(a.CLIPBOARD, a.TARGETS, CURRENT_TIME) else { return Vec::new() };
@@ -601,16 +618,19 @@ impl super::Backend for X11 {
     fn read_text(&self) -> Result<Option<String>, ClipboardError> {
         let s = &self.0;
         if s.owns(s.atoms.CLIPBOARD) {
-            return Ok(s.state().clipboard.as_ref().and_then(|o| o.text.clone()));
+            return Ok(s
+                .state()
+                .clipboard
+                .as_ref()
+                .and_then(|o| o.text.clone())
+                .and_then(crate::clipboard::clean_text));
         }
         let offered = self.offered_names();
         let Some(name) = super::text_type(&offered) else { return Ok(None) };
         let Some(bytes) = s.transfer(s.atoms.CLIPBOARD, self.text_atom(name), CURRENT_TIME) else { return Ok(None) };
-        Ok(Some(if name == "STRING" {
-            super::from_latin1(&bytes)
-        } else {
-            String::from_utf8_lossy(&bytes).into_owned()
-        }))
+        let text =
+            if name == "STRING" { super::from_latin1(&bytes) } else { String::from_utf8_lossy(&bytes).into_owned() };
+        Ok(crate::clipboard::clean_text(text))
     }
 
     fn sequence(&self) -> u64 {

@@ -33,8 +33,7 @@ const URI_LIST: &str = "text/uri-list";
 const GNOME_FILES: &str = "x-special/gnome-copied-files";
 const KDE_CUT: &str = "application/x-kde-cutselection";
 const TEXT: &str = "text/plain;charset=utf-8";
-/// The types text (copied paths) is offered as.
-const TEXT_TYPES: [&str; 5] = [TEXT, "text/plain", "UTF8_STRING", "TEXT", "STRING"];
+use super::TEXT_TYPES;
 
 /// How long reading from another program may take.
 const TRANSFER_TIMEOUT: Duration = Duration::from_secs(1);
@@ -699,15 +698,15 @@ impl super::Backend for Wayland {
     }
 
     fn read_text(&self) -> Result<Option<String>, ClipboardError> {
-        let Some((offer, types)) = self.selection() else { return Ok(self.own_text()) };
+        let Some((offer, types)) = self.selection() else {
+            return Ok(self.own_text().and_then(crate::clipboard::clean_text));
+        };
         let names: Vec<&str> = types.iter().map(String::as_str).collect();
         let Some(name) = super::text_type(&names) else { return Ok(None) };
         let Some(bytes) = self.0.receive(&offer, name) else { return Ok(None) };
-        Ok(Some(if name == "STRING" {
-            super::from_latin1(&bytes)
-        } else {
-            String::from_utf8_lossy(&bytes).into_owned()
-        }))
+        let text =
+            if name == "STRING" { super::from_latin1(&bytes) } else { String::from_utf8_lossy(&bytes).into_owned() };
+        Ok(crate::clipboard::clean_text(text))
     }
 
     fn sequence(&self) -> u64 {

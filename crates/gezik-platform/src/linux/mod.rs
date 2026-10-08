@@ -63,6 +63,12 @@ pub(crate) fn text_type<'a>(offered: &[&'a str]) -> Option<&'a str> {
     TEXT_TYPES.iter().find_map(|wanted| offered.iter().find(|o| **o == *wanted).copied())
 }
 
+/// The offers asked for at `at` (the clipboard's change counter), if that is the last ask.
+#[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
+pub(crate) fn cached_offers(cache: &Option<(u64, Vec<&'static str>)>, at: u64) -> Option<Vec<&'static str>> {
+    cache.as_ref().filter(|(asked_at, _)| *asked_at == at).map(|(_, names)| names.clone())
+}
+
 /// `STRING` (Latin-1) bytes as text.
 #[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
 pub(crate) fn from_latin1(bytes: &[u8]) -> String {
@@ -101,6 +107,15 @@ mod tests {
         assert_eq!(text_type(&["STRING", "text/plain"]), Some("text/plain"));
         assert_eq!(text_type(&["image/png"]), None);
         assert_eq!(from_latin1(&[0xE7, b'a']), "ça");
+    }
+
+    #[test]
+    fn offers_are_reused_until_the_clipboard_changes() {
+        let cache = Some((3, vec!["image/png"]));
+        assert_eq!(cached_offers(&cache, 3), Some(vec!["image/png"]));
+        assert_eq!(cached_offers(&cache, 4), None, "the clipboard changed");
+        assert_eq!(cached_offers(&Some((3, Vec::new())), 3), Some(Vec::new()), "no answer is kept too");
+        assert_eq!(cached_offers(&None, 3), None);
     }
 }
 
