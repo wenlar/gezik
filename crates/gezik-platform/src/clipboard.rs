@@ -60,17 +60,18 @@ impl ClipboardImage {
                 };
                 // The BMP decoder's own pixels, without image's general conversions; the png
                 // crate writes them as they are (a BMP decodes to RGB8 or RGBA8).
-                let mut decoder =
+                let decoder =
                     image::codecs::bmp::BmpDecoder::new(std::io::Cursor::new(bytes)).map_err(|e| unreadable(&e))?;
-                let mut limits = image::Limits::default();
-                limits.max_alloc = Some(MAX_DECODE_BYTES);
-                decoder.set_limits(limits).map_err(|e| unreadable(&e))?;
                 let (width, height) = decoder.dimensions();
                 let color = match decoder.color_type() {
                     image::ColorType::Rgb8 => png::ColorType::Rgb,
                     image::ColorType::Rgba8 => png::ColorType::Rgba,
                     other => return Err(unreadable(&format!("unexpected colour type {other:?}"))),
                 };
+                // The decoder does not enforce an allocation limit itself: check before allocating.
+                if decoder.total_bytes() > MAX_DECODE_BYTES {
+                    return Err(unreadable(&"the picture is too large"));
+                }
                 let mut data = vec![0; usize::try_from(decoder.total_bytes()).map_err(|e| unreadable(&e))?];
                 decoder.read_image(&mut data).map_err(|e| unreadable(&e))?;
                 let mut out = Vec::new();
@@ -738,6 +739,22 @@ mod tests {
         let (color, pixels) = decode(&dib32);
         assert_eq!(color, png::ColorType::Rgba);
         assert_eq!(pixels, [255, 0, 0, 128, 0, 255, 0, 255, 0, 0, 255, 64, 30, 20, 10, 0]);
+        // 32-bit BI_RGB: the alpha byte is 0 but unused, so the PNG is opaque RGB.
+        let mut plain32 = header(32, 2);
+        for bgra in [[255, 0, 0, 0], [0, 255, 0, 0], [0, 0, 255, 0], [10, 20, 30, 0]] {
+            plain32.extend_from_slice(&bgra);
+        }
+        let (color, pixels) = decode(&plain32);
+        assert_eq!(color, png::ColorType::Rgb);
+        assert_eq!(pixels, [255, 0, 0, 30, 20, 10, 0, 0, 255, 0, 255, 0]);
+        // 8-bit palettized: palette red, blue; rows padded to 4 bytes, bottom row first.
+        let mut dib8 = header(8, 2);
+        dib8[32..36].copy_from_slice(&2u32.to_le_bytes());
+        dib8.extend_from_slice(&[0, 0, 255, 0, 255, 0, 0, 0]);
+        dib8.extend_from_slice(&[1, 0, 0, 0, 0, 1, 0, 0]);
+        let (color, pixels) = decode(&dib8);
+        assert_eq!(color, png::ColorType::Rgb);
+        assert_eq!(pixels, [255, 0, 0, 0, 0, 255, 0, 0, 255, 255, 0, 0]);
     }
 
     #[test]
