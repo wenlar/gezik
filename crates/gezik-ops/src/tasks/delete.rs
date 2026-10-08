@@ -33,26 +33,37 @@ impl DeleteTask {
         DeleteTask { roots: paths, pending: Some(pending), recovering: true, hidden: Mutex::default() }
     }
 
-    /// Renames `root` to a hidden name next to it and notes it; the original if that fails.
-    fn hide(&self, root: &Path) -> PathBuf {
-        let (Some(pending), Some(parent)) = (&self.pending, root.parent()) else { return root.to_path_buf() };
-        if self.recovering {
-            return root.to_path_buf();
-        }
-        let hidden = parent.join(hidden_name());
+    /// Renames each root to a hidden name next to it, all noted in one write; where each is
+    /// now (the original where that fails).
+    fn hide(&self, roots: &[&Path]) -> Vec<PathBuf> {
+        let originals = || roots.iter().map(|root| root.to_path_buf()).collect();
+        let Some(pending) = self.pending.as_ref().filter(|_| !self.recovering) else { return originals() };
+        let hidden: Vec<Option<PathBuf>> =
+            roots.iter().map(|root| root.parent().map(|parent| parent.join(hidden_name()))).collect();
         // Noted first: a crash between the note and the rename leaves a path that does not
         // exist, which recovery drops; the other order could leave a folder hidden forever.
-        if pending.add(&hidden).is_err() {
-            return root.to_path_buf();
+        let noted: Vec<&Path> = hidden.iter().flatten().map(PathBuf::as_path).collect();
+        if pending.add_all(&noted).is_err() {
+            return originals();
         }
-        let was_hidden = fs::is_hidden_attr(root);
-        if fs::move_entry(root, &hidden).is_err() {
-            pending.remove(&hidden);
-            return root.to_path_buf();
-        }
-        let _ = fs::set_hidden(&hidden);
-        lock(&self.hidden).push((hidden.clone(), root.to_path_buf(), was_hidden));
-        hidden
+        let mut unused = Vec::new();
+        let paths = roots
+            .iter()
+            .zip(&hidden)
+            .map(|(root, hidden)| {
+                let Some(hidden) = hidden else { return root.to_path_buf() };
+                let was_hidden = fs::is_hidden_attr(root);
+                if fs::move_entry(root, hidden).is_err() {
+                    unused.push(hidden.as_path());
+                    return root.to_path_buf();
+                }
+                let _ = fs::set_hidden(hidden);
+                lock(&self.hidden).push((hidden.clone(), root.to_path_buf(), was_hidden));
+                hidden.clone()
+            })
+            .collect();
+        pending.remove_all(&unused);
+        paths
     }
 }
 
@@ -112,11 +123,15 @@ impl Task for DeleteTask {
     }
 
     fn plan(&self, sink: &mut dyn ScanSink) {
-        for (root, original) in self.roots.iter().enumerate() {
-            if super::refuse_root(sink, original, "delete") {
-                continue;
-            }
-            let path = self.hide(original);
+        let roots: Vec<(usize, &Path)> = self
+            .roots
+            .iter()
+            .enumerate()
+            .filter(|(_, original)| !super::refuse_root(sink, original, "delete"))
+            .map(|(root, original)| (root, original.as_path()))
+            .collect();
+        let paths = self.hide(&roots.iter().map(|&(_, original)| original).collect::<Vec<_>>());
+        for ((root, original), path) in roots.into_iter().zip(paths) {
             let meta = match std::fs::symlink_metadata(&path) {
                 Ok(meta) => meta,
                 Err(err) => {
@@ -160,13 +175,16 @@ impl Task for DeleteTask {
     fn done(&self, _cancelled: bool) {
         let Some(pending) = &self.pending else { return };
         if self.recovering {
-            for root in &self.roots {
-                if std::fs::symlink_metadata(root).is_err() {
-                    pending.remove(root);
-                }
-            }
+            let gone: Vec<&Path> = self
+                .roots
+                .iter()
+                .map(PathBuf::as_path)
+                .filter(|root| std::fs::symlink_metadata(root).is_err())
+                .collect();
+            pending.remove_all(&gone);
             return;
         }
+        let (mut gone, mut stuck) = (Vec::new(), Vec::new());
         for (hidden, original, was_hidden) in lock(&self.hidden).drain(..) {
             // Cancelled, or something inside could not be deleted: what is left goes back
             // under its own name, so nothing stays hidden and nothing is deleted later unasked.
@@ -178,11 +196,13 @@ impl Task for DeleteTask {
                 std::fs::symlink_metadata(&hidden).is_err() || restore_hidden(&hidden, &original, was_hidden)
             });
             if back {
-                pending.remove(&hidden);
+                gone.push(hidden);
             } else {
-                pending.add_restore(&Restore { hidden, original, was_hidden });
+                stuck.push(Restore { hidden, original, was_hidden });
             }
         }
+        pending.remove_all(&gone.iter().map(PathBuf::as_path).collect::<Vec<_>>());
+        pending.add_restores(&stuck);
     }
 }
 

@@ -64,22 +64,46 @@ impl PendingDeletes {
     }
 
     pub fn add(&self, path: &Path) -> io::Result<()> {
+        self.add_all(&[path])
+    }
+
+    /// [`Self::add`] for many at once, in one write.
+    pub fn add_all(&self, paths: &[&Path]) -> io::Result<()> {
         let _guard = lock(&self.guard);
         let mut list = self.read();
-        let line = PathBuf::from(format!("{DELETING}{}\t{}", std::process::id(), path.display()));
-        match list.iter().position(|noted| delete_of(noted).is_some_and(|(_, noted)| noted == path)) {
-            // Noted already: it keeps its place, under this process.
-            Some(at) => list[at] = line,
-            None => list.push(line),
+        let mut at: std::collections::HashMap<PathBuf, usize> = list
+            .iter()
+            .enumerate()
+            .filter_map(|(index, line)| delete_of(line).map(|(_, noted)| (noted, index)))
+            .collect();
+        for path in paths {
+            let line = PathBuf::from(format!("{DELETING}{}\t{}", std::process::id(), path.display()));
+            match at.get(*path) {
+                // Noted already: it keeps its place, under this process.
+                Some(&index) => list[index] = line,
+                None => {
+                    at.insert(path.to_path_buf(), list.len());
+                    list.push(line);
+                }
+            }
         }
         self.write(&list)
     }
 
     pub fn remove(&self, path: &Path) {
+        self.remove_all(&[path]);
+    }
+
+    /// [`Self::remove`] for many at once, in one write.
+    pub fn remove_all(&self, paths: &[&Path]) {
+        if paths.is_empty() {
+            return;
+        }
         let _guard = lock(&self.guard);
+        let paths: std::collections::HashSet<&Path> = paths.iter().copied().collect();
         let mut list = self.read();
         let before = list.len();
-        list.retain(|line| delete_of(line).is_none_or(|(_, noted)| noted != path));
+        list.retain(|line| delete_of(line).is_none_or(|(_, noted)| !paths.contains(noted.as_path())));
         if list.len() != before {
             let _ = self.write(&list);
         }
@@ -326,6 +350,19 @@ mod tests {
         assert_eq!(pending.load(), std::slice::from_ref(&b));
         pending.remove(&b);
         assert!(!dir.join("pending-deletes").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn many_are_added_and_removed_in_one_go() {
+        let dir = test_dir("pending-many");
+        let pending = PendingDeletes::new(dir.join("pending-deletes"));
+        let (a, b, c) = (dir.join(hidden_name()), dir.join(hidden_name()), dir.join(hidden_name()));
+        pending.add(&b).unwrap();
+        pending.add_all(&[&a, &b, &c, &a]).unwrap();
+        assert_eq!(pending.load(), [b.clone(), a.clone(), c.clone()], "each once, a noted one keeps its place");
+        pending.remove_all(&[&a, &c]);
+        assert_eq!(pending.load(), std::slice::from_ref(&b));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
