@@ -185,14 +185,7 @@ impl ResultSet {
     /// The folder text and the name `path` has here; `None` outside the scope.
     fn place_of(&self, path: &Path) -> Option<(String, String)> {
         let name = path.file_name()?.to_string_lossy().into_owned();
-        let parent = path.parent()?;
-        if self.root.as_os_str().is_empty() {
-            return Some((parent.display().to_string(), name));
-        }
-        let rest = parent.strip_prefix(&self.root).ok()?;
-        let folder =
-            rest.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join(MAIN_SEPARATOR_STR);
-        Some((folder, name))
+        Some((folder_text(&self.root, path)?, name))
     }
 
     /// Adds `path` (under the scope) as a new entry, no matching line; false outside it.
@@ -214,6 +207,43 @@ impl ResultSet {
         let (folder, name) = self.place_of(path)?;
         let parent = self.folders.iter().position(|f| **f == *folder)? as u32;
         (0..self.entries.len()).find(|&i| self.parent[i] == parent && self.entries[i].name == name)
+    }
+}
+
+/// The folder text `path`'s entry has under `root` (empty `root`: every drive, the whole
+/// parent); `None` outside it.
+pub fn folder_text(root: &Path, path: &Path) -> Option<String> {
+    let parent = path.parent()?;
+    if root.as_os_str().is_empty() {
+        return Some(parent.display().to_string());
+    }
+    let rest = parent.strip_prefix(root).ok()?;
+    Some(rest.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join(MAIN_SEPARATOR_STR))
+}
+
+impl ResultSet {
+    /// Results from whole paths (Everything's answer), each folder numbered once.
+    pub fn collect(
+        root: PathBuf,
+        content: bool,
+        items: impl IntoIterator<Item = (PathBuf, Entry, Option<Found>)>,
+    ) -> ResultSet {
+        let mut set = ResultSet::new(root, content);
+        let mut numbers: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+        for (path, entry, found) in items {
+            let Some(folder) = folder_text(&set.root, &path) else { continue };
+            let next = set.folders.len() as u32;
+            let parent = *numbers.entry(folder).or_insert_with_key(|folder| {
+                set.folders.push(folder.as_str().into());
+                next
+            });
+            set.entries.push(entry);
+            set.parent.push(parent);
+            if let Some(matches) = &mut set.matches {
+                matches.push(found);
+            }
+        }
+        set
     }
 }
 
@@ -299,6 +329,27 @@ mod tests {
         assert!(set.push(&PathBuf::from("/w").join("c").join("q.txt"), entry("q.txt")), "the folder is known now");
         assert!(!set.push(Path::new("/elsewhere/z.txt"), entry("z.txt")), "outside the scope");
         assert_eq!(set.index_of_path(&PathBuf::from("/w").join("x.txt")), Some(0));
+    }
+
+    #[test]
+    fn whole_paths_become_results() {
+        let root = PathBuf::from("/w");
+        let items = vec![
+            (root.join("a").join("x.txt"), entry("x.txt"), None),
+            (root.join("y.txt"), entry("y.txt"), Some((1, "line".into()))),
+            (root.join("a").join("z.txt"), entry("z.txt"), None),
+        ];
+        let set = ResultSet::collect(root.clone(), true, items);
+        assert_eq!(set.len(), 3);
+        assert_eq!(set.path_at(2), Some(root.join("a").join("z.txt")));
+        assert_eq!(set.folder(0), set.folder(2), "one folder, once");
+        assert_eq!(set.found(1).map(|f| f.0), Some(1));
+        assert_eq!(folder_text(&root, &root.join("a").join("b").join("q")), Some(format!("a{SEP}b")));
+        assert_eq!(
+            folder_text(Path::new(""), &PathBuf::from("/x").join("q")),
+            Some(PathBuf::from("/x").display().to_string())
+        );
+        assert_eq!(folder_text(&root, Path::new("/elsewhere/q")), None);
     }
 
     #[test]

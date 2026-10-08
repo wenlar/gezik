@@ -4,6 +4,7 @@ pub mod clipboard;
 mod datetime;
 pub mod dnd;
 mod drives;
+pub mod everything;
 pub mod fs;
 pub mod http;
 mod icons;

@@ -113,6 +113,12 @@ impl Visit for Matcher {
 /// on the collector's thread.
 pub fn start(walk: Walk, query: Query, sink: impl Fn(Event) + Send + 'static) -> Running {
     let running = Running::default();
+    start_with(walk, query, running.clone(), sink);
+    running
+}
+
+/// [`start`] under `running`'s flag (Everything fell back to the walk on the same search).
+pub fn start_with(walk: Walk, query: Query, running: Running, sink: impl Fn(Event) + Send + 'static) {
     let cancel = running.flag();
     let (sender, receiver) = mpsc::channel();
     let read = walk.read.clone();
@@ -126,7 +132,6 @@ pub fn start(walk: Walk, query: Query, sink: impl Fn(Event) + Send + 'static) ->
     let _ = std::thread::Builder::new().name("gezik-search-collect".into()).spawn(move || {
         collect(receiver, &cancel, max, &read, &sink);
     });
-    running
 }
 
 fn collect(
