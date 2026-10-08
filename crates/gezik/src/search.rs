@@ -188,7 +188,8 @@ enum Live {
 fn live_step(names: &Names, key: &CacheKey, asks: bool) -> Live {
     match names {
         Names::Ready(k, _) if k == key => Live::Now,
-        Names::NoCache(k, true) if k == key => if asks { Live::Now } else { Live::Enter },
+        Names::NoCache(k, true) if k == key && asks => Live::Now,
+        Names::NoCache(k, true) if k == key => Live::Enter,
         Names::Building(k, _) if k == key => Live::Wait,
         Names::TooLarge(k) if k == key => Live::Large,
         Names::NoCache(k, false) if k == key => Live::Never,
