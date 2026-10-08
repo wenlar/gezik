@@ -1,6 +1,7 @@
 //! Text in files (spec 3.3): which files are read, how their text is decoded, and their first
 //! matching line. Read in 256 KB chunks, cut at line ends; a line over 1 MB is cut there (a
-//! match across that cut can be missed: the documented limit). Stops at the first match.
+//! match across that cut can be missed: the documented limit; `^` and `$` also match at the
+//! cut points of such a line). Stops at the first match.
 
 use std::io::{self, Read};
 use std::path::Path;
@@ -53,7 +54,7 @@ impl ContentMatcher {
         cancel: &AtomicBool,
         ansi: &dyn Fn(&[u8]) -> Option<String>,
     ) -> io::Result<Option<Found>> {
-        self.find(std::fs::File::open(path)?, cancel, ansi)
+        self.find(std::fs::File::open(path)?.take(self.max_size), cancel, ansi)
     }
 
     /// The first line of `reader` that matches; `None` for none, binary data, or a cancelled
@@ -67,9 +68,8 @@ impl ContentMatcher {
         let mut buf = vec![0u8; CHUNK];
         let mut filled = read_full(&mut reader, &mut buf)?;
         let Some(detected) = text::detect(&buf[..filled]) else { return Ok(None) };
-        let decoder = match detected.encoding {
-            Encoding::Utf8 if utf8_so_far(&buf[detected.bom..filled]) => Decoder::Utf8,
-            Encoding::Utf8 => Decoder::Ansi,
+        let mut decoder = match detected.encoding {
+            Encoding::Utf8 => Decoder::Utf8,
             utf16 => Decoder::Utf16(utf16),
         };
         let mut lines = Lines { regex: &self.regex, number: 0, partial: String::new() };
@@ -141,18 +141,27 @@ fn read_full(reader: &mut impl Read, buf: &mut [u8]) -> io::Result<usize> {
     Ok(filled)
 }
 
-/// Whether `bytes` are UTF-8 (a character cut by the end allowed).
-fn utf8_so_far(bytes: &[u8]) -> bool {
-    match std::str::from_utf8(bytes) {
-        Ok(_) => true,
-        Err(err) => err.error_len().is_none(),
+/// How many bytes at the end of `data` start a UTF-8 character that the end cuts short.
+fn incomplete_tail(data: &[u8]) -> usize {
+    for i in 1..=data.len().min(3) {
+        let byte = data[data.len() - i];
+        match byte {
+            0x80..=0xBF => continue,
+            0xC0..=0xDF => return if i < 2 { i } else { 0 },
+            0xE0..=0xEF => return if i < 3 { i } else { 0 },
+            0xF0..=0xF7 => return if i < 4 { i } else { 0 },
+            _ => return 0,
+        }
     }
+    0
 }
 
 enum Decoder {
+    /// UTF-8 until a chunk holds bytes that are not (then [`Decoder::Ansi`]: the decision is
+    /// made per chunk, so a code-page file whose first 256 KB is ASCII is still read right).
     Utf8,
-    /// Not UTF-8 at the start: the user's code page (chunk by chunk; a multi-byte code page
-    /// can lose a character at a chunk's end).
+    /// The user's code page where the bytes are not UTF-8 (a multi-byte code page can lose a
+    /// character at a chunk's end).
     Ansi,
     Utf16(Encoding),
 }
@@ -160,19 +169,28 @@ enum Decoder {
 impl Decoder {
     /// Text of what `carry` kept and `bytes`, keeping back an end a chunk cut (part of a UTF-8
     /// character, an odd byte, half a surrogate pair) unless `last`.
-    fn decode(&self, carry: &mut Vec<u8>, bytes: &[u8], ansi: &dyn Fn(&[u8]) -> Option<String>, last: bool) -> String {
+    fn decode(
+        &mut self,
+        carry: &mut Vec<u8>,
+        bytes: &[u8],
+        ansi: &dyn Fn(&[u8]) -> Option<String>,
+        last: bool,
+    ) -> String {
         carry.extend_from_slice(bytes);
         let data = std::mem::take(carry);
         match self {
-            Decoder::Utf8 => {
-                let keep = match std::str::from_utf8(&data) {
-                    Err(err) if err.error_len().is_none() && !last => err.valid_up_to(),
-                    _ => data.len(),
-                };
+            Decoder::Utf8 | Decoder::Ansi => {
+                let keep = data.len() - if last { 0 } else { incomplete_tail(&data) };
                 carry.extend_from_slice(&data[keep..]);
-                String::from_utf8_lossy(&data[..keep]).into_owned()
+                let body = &data[..keep];
+                if matches!(self, Decoder::Utf8) {
+                    if std::str::from_utf8(body).is_ok() {
+                        return String::from_utf8_lossy(body).into_owned();
+                    }
+                    *self = Decoder::Ansi;
+                }
+                text::utf8_or_ansi(body, ansi)
             }
-            Decoder::Ansi => text::utf8_or_ansi(&data, ansi),
             Decoder::Utf16(encoding) => {
                 let mut end = data.len() & !1;
                 if !last && end >= 2 {
@@ -345,6 +363,24 @@ mod tests {
         assert!(find(&matcher("f.tura", false, false), b"fatura").is_none(), "plain text is no regex");
         assert!(find(&matcher("f.tura", true, false), b"FATURA").is_some(), "a regex ignores case");
         assert!(ContentMatcher::compile("(", true, false, 1).is_err());
+    }
+
+    #[test]
+    fn the_encoding_is_decided_per_chunk() {
+        // Windows-1254-like bytes (0xFD, 0xDE) after more than a chunk of ASCII.
+        let mut bytes = b"a".repeat(CHUNK + 10);
+        bytes.extend(b"\nSat\xFDr \xDEehir fatura\n");
+        let ansi = |b: &[u8]| Some(b.iter().map(|&c| if c >= 0x80 { '\u{131}' } else { c as char }).collect());
+        let found = matcher("fatura", false, false).find(&bytes[..], &AtomicBool::new(false), &ansi).unwrap();
+        assert_eq!(found.map(|f| f.0), Some(2));
+        // A UTF-8 character cut by the chunk's end, in ANSI mode: carried, none lost.
+        for cut in 1..3 {
+            let mut data = b"\xFD\n".to_vec();
+            data.extend(b"x".repeat(CHUNK - 2 - cut));
+            data.extend("€ fatura".as_bytes());
+            let found = matcher("€ fatura", false, false).find(&data[..], &AtomicBool::new(false), &ansi).unwrap();
+            assert_eq!(found.map(|f| f.0), Some(2), "cut {cut}");
+        }
     }
 
     #[test]

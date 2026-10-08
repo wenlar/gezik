@@ -35,10 +35,13 @@ impl NameMatcher {
     }
 }
 
-/// `regex`'s complaint in one line: `Not a regular expression: unclosed group`.
+/// `regex`'s complaint in one line (the build leaves out `\p{..}` classes: said so): `Not a regular expression: unclosed group`.
 pub fn regex_error(err: &regex::Error) -> String {
     match err {
         regex::Error::Syntax(text) => {
+            if text.contains("Unicode") && text.contains("not found") {
+                return r"Unicode classes like \p{..} are not supported".to_owned();
+            }
             let why = text.lines().last().unwrap_or_default().trim().trim_start_matches("error: ");
             format!("Not a regular expression: {why}")
         }
@@ -136,6 +139,17 @@ mod tests {
         assert_eq!(turkish_i(r"\x{69}\i"), r"\x{69}\i", "escapes");
         for source in ["(?i)x", "(?P<file>i)", r"\wi", "[a-i]+"] {
             assert!(regex::Regex::new(&turkish_i(source)).is_ok(), "{source}");
+        }
+    }
+
+    #[test]
+    fn unicode_classes_are_said_to_be_unsupported_or_work() {
+        // Cargo unifies regex's features across the build: with `unicode-gencat` and
+        // `unicode-script` on (the exe with RAR has them) these compile, else they say why.
+        for source in [r"\p{L}", r"\p{Latin}", r"\p{Lu}x"] {
+            if let Err(error) = NameMatcher::compile(source, true, false) {
+                assert_eq!(error, r"Unicode classes like \p{..} are not supported", "{source}");
+            }
         }
     }
 

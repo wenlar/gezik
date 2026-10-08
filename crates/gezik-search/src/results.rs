@@ -119,6 +119,8 @@ impl ResultSet {
     }
 
     pub fn append(&mut self, batch: Batch) {
+        debug_assert_eq!(batch.entries.len(), batch.parent.len());
+        debug_assert!(self.matches.is_none() || batch.matches.len() == batch.entries.len());
         self.folders.extend(batch.folders);
         self.entries.extend(batch.entries);
         self.parent.extend(batch.parent);
