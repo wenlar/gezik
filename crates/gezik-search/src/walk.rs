@@ -47,6 +47,19 @@ pub fn same_device(devices: &[u64], device: u64) -> bool {
     devices.is_empty() || device == 0 || devices.contains(&device)
 }
 
+/// The roots that are not inside another one (Unix "every drive": `/home` is walked from `/`,
+/// once); the same root twice is kept once.
+pub fn outermost(roots: Vec<PathBuf>) -> Vec<PathBuf> {
+    use gezik_core::ops::paths::{is_within, same_path};
+    let inside = |i: usize, root: &Path| {
+        roots
+            .iter()
+            .enumerate()
+            .any(|(j, other)| j != i && is_within(root, other) && (j < i || !same_path(root, other)))
+    };
+    roots.iter().enumerate().filter(|(i, root)| !inside(*i, root)).map(|(_, root)| root.clone()).collect()
+}
+
 /// macOS: `/System/Volumes/Data` is the second view of the files `/` shows (spec 3.4).
 pub fn walked_twice(path: &Path) -> bool {
     path == Path::new("/System/Volumes/Data")
@@ -75,6 +88,11 @@ pub trait Visit: Send + Sync {
     /// The items `rules` show of folder `dir`; `relative`: its path under the root (`""`: the
     /// root itself; every drive: the whole path).
     fn folder(&self, dir: &Path, relative: &str, items: Vec<DirItem>);
+    /// Whether the visitor wants no more folders (the name cache past its limit). The walk then
+    /// ends as on a cancel, but `WalkStats::cancelled` stays as the caller's flag says.
+    fn stopped(&self) -> bool {
+        false
+    }
 }
 
 pub struct Walk {
@@ -131,14 +149,20 @@ impl Shared {
         }
     }
 
-    /// The next folder to read; `None` once everything is read or the walk is cancelled.
+    /// Cancelled, or the visitor wants no more.
+    fn halted(&self) -> bool {
+        self.cancel.load(Ordering::Relaxed) || self.visit.stopped()
+    }
+
+    /// The next folder to read (depth first: the newest, so the queue stays short); `None`
+    /// once everything is read or the walk is cancelled.
     fn take(&self) -> Option<Job> {
         let mut queue = self.queue.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         loop {
-            if queue.done || self.cancel.load(Ordering::Relaxed) {
+            if queue.done || self.halted() {
                 return None;
             }
-            if let Some(job) = queue.pending.pop_front() {
+            if let Some(job) = queue.pending.pop_back() {
                 queue.busy += 1;
                 return Some(job);
             }
@@ -159,7 +183,7 @@ impl Shared {
     }
 
     fn work(&self, job: &Job) -> Vec<Job> {
-        if self.cancel.load(Ordering::Relaxed) {
+        if self.halted() {
             return Vec::new();
         }
         let visit = &self.visit;
@@ -170,7 +194,7 @@ impl Shared {
                 return Vec::new();
             }
         };
-        if self.cancel.load(Ordering::Relaxed) {
+        if self.halted() {
             return Vec::new();
         }
         self.read.fetch_add(1, Ordering::Relaxed);
@@ -231,7 +255,14 @@ pub fn run(walk: Walk, cancel: Arc<AtomicBool>, visit: Arc<dyn Visit>) -> WalkSt
         let spawned = std::thread::Builder::new().name("gezik-search".into()).spawn(move || {
             gezik_platform::priority::lower_this_thread();
             while let Some(job) = shared.take() {
-                let below = shared.work(&job);
+                // A panic in one folder (a visitor's bug) must not leave it busy forever.
+                let below = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| shared.work(&job))) {
+                    Ok(below) => below,
+                    Err(_) => {
+                        shared.problem(job.dir.clone(), "The search failed in this folder".to_owned());
+                        Vec::new()
+                    }
+                };
                 shared.finished(below);
             }
         });
@@ -243,8 +274,12 @@ pub fn run(walk: Walk, cancel: Arc<AtomicBool>, visit: Arc<dyn Visit>) -> WalkSt
     {
         let mut queue = shared.queue.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         // No thread to read anything: nothing would ever finish the queue.
-        queue.done |= started == 0;
-        while !(queue.done || queue.pending.is_empty() && queue.busy == 0) && !cancel.load(Ordering::Relaxed) {
+        if started == 0 {
+            queue.done = true;
+            let root = walk.roots.first().cloned().unwrap_or_default();
+            shared.problem(root, "Could not start the search".to_owned());
+        }
+        while !(queue.done || queue.pending.is_empty() && queue.busy == 0) && !shared.halted() {
             queue = shared.wake.wait_timeout(queue, WAKE).unwrap_or_else(std::sync::PoisonError::into_inner).0;
         }
         queue.done = true;
@@ -395,6 +430,77 @@ mod tests {
         assert!(walked_twice(Path::new("/System/Volumes/Data")));
         assert!(!walked_twice(Path::new("/System/Volumes")));
         assert!(!walked_twice(Path::new("/Users/a/System/Volumes/Data")));
+    }
+
+    #[test]
+    fn a_root_inside_another_is_walked_from_it() {
+        let paths = |list: &[&str]| list.iter().map(PathBuf::from).collect::<Vec<_>>();
+        assert_eq!(outermost(paths(&["/", "/home", "/mnt/data"])), paths(&["/"]), "Unix: every drive is under /");
+        assert_eq!(outermost(paths(&["/home", "/"])), paths(&["/"]));
+        assert_eq!(
+            outermost(paths(&["/a", "/a", "/ab"])),
+            paths(&["/a", "/ab"]),
+            "the same root once; /ab is not in /a"
+        );
+        if cfg!(windows) {
+            assert_eq!(outermost(paths(&[r"C:\", r"D:\"])), paths(&[r"C:\", r"D:\"]));
+        }
+    }
+
+    /// Panics in the folder named `boom`.
+    struct Panics;
+
+    impl Visit for Panics {
+        fn wants_meta(&self, _: &str, _: bool) -> bool {
+            true
+        }
+        fn folder(&self, dir: &Path, _: &str, _: Vec<DirItem>) {
+            assert!(dir.file_name().is_none_or(|name| name != "boom"), "a visitor's bug");
+        }
+    }
+
+    #[test]
+    fn a_panic_in_one_folder_ends_as_a_problem() {
+        let root = tree("panic");
+        write(&root.join("boom/x.txt"));
+        write(&root.join("fine/y.txt"));
+        let started = Instant::now();
+        let stats = run(Walk::new(vec![root.clone()], false, 2, rules(&[])), Arc::default(), Arc::new(Panics));
+        assert!(started.elapsed() < Duration::from_secs(5), "the walk ends");
+        assert_eq!(stats.problems.count, 1);
+        assert_eq!(stats.problems.first[0], (root.join("boom"), "The search failed in this folder".to_owned()));
+        assert!(!stats.cancelled);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Wants no more after the first folder.
+    #[derive(Default)]
+    struct StopsAtOnce(AtomicUsize);
+
+    impl Visit for StopsAtOnce {
+        fn wants_meta(&self, _: &str, _: bool) -> bool {
+            false
+        }
+        fn folder(&self, _: &Path, _: &str, _: Vec<DirItem>) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+        fn stopped(&self) -> bool {
+            self.0.load(Ordering::SeqCst) > 0
+        }
+    }
+
+    #[test]
+    fn a_visitor_can_stop_the_walk_without_cancelling_it() {
+        let root = tree("stop");
+        for i in 0..20 {
+            write(&root.join(format!("d{i}/x.txt")));
+        }
+        let visit = Arc::new(StopsAtOnce::default());
+        let cancel = Arc::new(AtomicBool::new(false));
+        let stats = run(Walk::new(vec![root.clone()], false, 1, rules(&[])), cancel.clone(), visit.clone());
+        assert_eq!(visit.0.load(Ordering::SeqCst), 1);
+        assert!(!stats.cancelled && !cancel.load(Ordering::SeqCst), "the caller's flag is not touched");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

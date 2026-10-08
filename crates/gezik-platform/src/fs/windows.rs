@@ -11,7 +11,8 @@ use windows::Win32::Foundation::{CloseHandle, FILETIME, HANDLE};
 use windows::Win32::Storage::FileSystem::{
     COPY_FILE_COPY_SYMLINK, COPY_FILE_FAIL_IF_EXISTS, COPY_FILE_NO_BUFFERING, COPYPROGRESSROUTINE_PROGRESS,
     CopyFileExW, CreateFileW, DELETE, DeleteFileW, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN,
-    FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_SYSTEM, FILE_DISPOSITION_FLAG_DELETE,
+    FILE_ATTRIBUTE_OFFLINE, FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS,
+    FILE_ATTRIBUTE_RECALL_ON_OPEN, FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_SYSTEM, FILE_DISPOSITION_FLAG_DELETE,
     FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE, FILE_DISPOSITION_FLAG_POSIX_SEMANTICS, FILE_DISPOSITION_INFO_EX,
     FILE_DISPOSITION_INFO_EX_FLAGS, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
     FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FIND_FIRST_EX_LARGE_FETCH,
@@ -645,10 +646,13 @@ pub fn read_dir_items(dir: &Path, _wants_meta: &dyn Fn(&str, bool) -> bool) -> i
                 flags |= gezik_core::Entry::SYSTEM;
             }
             let size = (u64::from(data.nFileSizeHigh) << 32) | u64::from(data.nFileSizeLow);
+            let is_link = is_link_tag(attributes, data.dwReserved0);
             items.push(super::DirItem {
                 name,
                 is_dir,
-                is_link: attributes & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0,
+                is_link,
+                is_file: !is_dir && !is_link,
+                offline: is_offline(attributes),
                 flags,
                 size: if is_dir { 0 } else { size },
                 modified: file_time(data.ftLastWriteTime),
@@ -658,15 +662,50 @@ pub fn read_dir_items(dir: &Path, _wants_meta: &dyn Fn(&str, bool) -> bool) -> i
             });
         }
         // SAFETY: `handle` is open; FindNextFileW fills `data` the same way.
-        if unsafe { FindNextFileW(handle, &mut data) }.is_err() {
-            break;
+        if let Err(err) = unsafe { FindNextFileW(handle, &mut data) } {
+            // SAFETY: opened above, closed once.
+            unsafe {
+                let _ = FindClose(handle);
+            }
+            const ERROR_NO_MORE_FILES: u32 = 18;
+            if err.code() == windows::core::HRESULT::from_win32(ERROR_NO_MORE_FILES) {
+                return Ok(items);
+            }
+            // A folder read only in part (a share that went away) counts as unread.
+            return Err(io_error(err));
         }
     }
-    // SAFETY: opened above, closed once.
-    unsafe {
-        let _ = FindClose(handle);
+}
+
+/// The name-surrogate bit of a reparse tag: the item stands for another place (a symbolic
+/// link, a junction, a mounted volume). Cloud placeholders, deduplicated files and container
+/// layers have tags without it and are real items.
+const TAG_NAME_SURROGATE: u32 = 0x2000_0000;
+
+/// Whether an item with these attributes and reparse tag (`dwReserved0` of the find data) is a
+/// link the walk never goes into or reads.
+pub(crate) fn is_link_tag(attributes: u32, tag: u32) -> bool {
+    attributes & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0 && tag & TAG_NAME_SURROGATE != 0
+}
+
+/// Whether reading the file would fetch its data from elsewhere first (OneDrive and other
+/// cloud placeholders, offline files).
+pub(crate) fn is_offline(attributes: u32) -> bool {
+    attributes & (FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS.0 | FILE_ATTRIBUTE_RECALL_ON_OPEN.0 | FILE_ATTRIBUTE_OFFLINE.0)
+        != 0
+}
+
+/// Opens `path` to read its text only if it is a regular file whose data is on this disk: not a
+/// link and not a cloud placeholder (whose read would download it), checked before opening.
+/// `Ok(None)` for the rest; the size comes with it.
+pub fn open_regular(path: &Path) -> io::Result<Option<(std::fs::File, u64)>> {
+    use std::os::windows::fs::MetadataExt;
+    let meta = std::fs::symlink_metadata(path)?;
+    if !meta.is_file() || is_offline(meta.file_attributes()) {
+        return Ok(None);
     }
-    Ok(items)
+    let file = std::fs::File::open(path)?;
+    Ok(Some((file, meta.len())))
 }
 
 /// A FILETIME (100 ns since 1601) as a time; `None` for zero.
@@ -801,5 +840,24 @@ mod tests {
         let facts = drive_facts(&std::env::temp_dir()).unwrap();
         assert!(facts.trash, "{facts:?}");
         assert_eq!(facts.id.len(), 8);
+    }
+
+    #[test]
+    fn only_name_surrogate_reparse_points_are_links() {
+        const REPARSE: u32 = 0x400;
+        assert!(is_link_tag(REPARSE, 0xA000_0003), "a junction or mounted volume");
+        assert!(is_link_tag(REPARSE | 0x10, 0xA000_000C), "a symbolic link");
+        assert!(!is_link_tag(REPARSE | 0x10, 0x9000_601A), "a OneDrive folder is gone into");
+        assert!(!is_link_tag(REPARSE, 0x8000_0013), "a deduplicated file");
+        assert!(!is_link_tag(REPARSE, 0x8000_0018), "a container (WCI) layer");
+        assert!(!is_link_tag(0x10, 0xA000_0003), "no reparse point: the tag field means nothing");
+    }
+
+    #[test]
+    fn cloud_placeholders_are_offline() {
+        assert!(is_offline(0x0040_0000), "recall on data access (OneDrive online-only)");
+        assert!(is_offline(0x0004_0000), "recall on open");
+        assert!(is_offline(0x1000), "offline");
+        assert!(!is_offline(0x20 | 0x400), "an archive bit and a reparse point alone");
     }
 }

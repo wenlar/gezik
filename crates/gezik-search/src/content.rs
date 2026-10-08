@@ -60,18 +60,33 @@ impl ContentMatcher {
         cancel: &AtomicBool,
         ansi: &dyn Fn(&[u8]) -> Option<String>,
     ) -> io::Result<Option<Found>> {
-        self.find(std::fs::File::open(path)?.take(self.max_size), cancel, ansi)
+        // Never a FIFO, device or link, never a cloud placeholder (spec 3.3).
+        let Some((file, size)) = gezik_platform::fs::open_regular(path)? else { return Ok(None) };
+        // A small file needs no 256 KB buffer.
+        let buffer = usize::try_from(size.saturating_add(1)).map_or(CHUNK, |size| size.min(CHUNK));
+        self.find_with(file.take(self.max_size), buffer, cancel, ansi)
     }
 
-    /// The first line of `reader` that matches; `None` for none, binary data, or a cancelled
-    /// search (looked at before every chunk).
+    /// The first line of `reader` that matches; `None` for none, binary data (a NUL byte in
+    /// 8-bit text, in any chunk), or a cancelled search (looked at before every chunk).
     pub fn find(
         &self,
-        mut reader: impl Read,
+        reader: impl Read,
         cancel: &AtomicBool,
         ansi: &dyn Fn(&[u8]) -> Option<String>,
     ) -> io::Result<Option<Found>> {
-        let mut buf = vec![0u8; CHUNK];
+        self.find_with(reader, CHUNK, cancel, ansi)
+    }
+
+    /// `find` reading `buffer` bytes at a time (at most `CHUNK`).
+    fn find_with(
+        &self,
+        mut reader: impl Read,
+        buffer: usize,
+        cancel: &AtomicBool,
+        ansi: &dyn Fn(&[u8]) -> Option<String>,
+    ) -> io::Result<Option<Found>> {
+        let mut buf = vec![0u8; buffer.clamp(1, CHUNK)];
         let mut filled = read_full(&mut reader, &mut buf)?;
         let Some(detected) = text::detect(&buf[..filled]) else { return Ok(None) };
         let mut decoder = match detected.encoding {
@@ -85,7 +100,12 @@ impl ContentMatcher {
             if cancel.load(Ordering::Relaxed) {
                 return Ok(None);
             }
-            let last = filled < CHUNK;
+            let last = filled < buf.len();
+            // Text in an 8-bit encoding has no NUL: a file that starts like text and holds one
+            // later (an archive, a library) is binary.
+            if !matches!(decoder, Decoder::Utf16(_)) && buf[from..filled].contains(&0) {
+                return Ok(None);
+            }
             let text = decoder.decode(&mut carry, &buf[from..filled], ansi, last);
             if let Some(found) = lines.feed(&text) {
                 return Ok(Some(found));
@@ -107,8 +127,19 @@ impl ContentMatcher {
     }
 }
 
+/// Build outputs and data files that start like text but are not (an `ar` archive's header).
+const BINARY_ENDINGS: [&str; 19] = [
+    "rlib", "rmeta", "o", "obj", "a", "lib", "pdb", "ilk", "pch", "idb", "exp", "so", "dylib", "class", "pyc", "wasm",
+    "db", "sqlite", "bin",
+];
+
 /// Kinds that hold no plain text, by their ending (CSV is text, unlike the other sheets).
 pub fn skipped_kind(name: &str) -> bool {
+    if let Some((_, ending)) = name.rsplit_once('.')
+        && BINARY_ENDINGS.iter().any(|binary| ending.eq_ignore_ascii_case(binary))
+    {
+        return true;
+    }
     match Kind::of(name, false) {
         Kind::Image
         | Kind::Video
@@ -410,6 +441,46 @@ mod tests {
             assert!(m.reads(name, 10), "{name}");
         }
         assert!(!m.reads("a.txt", 101), "over content-max-size");
+    }
+
+    #[test]
+    fn build_outputs_and_data_files_are_not_read() {
+        let m = ContentMatcher::compile("x", false, false, 100).unwrap();
+        for name in ["libx.rlib", "a.rmeta", "a.o", "A.PDB", "x.so", "c.class", "d.sqlite", "e.bin", "f.wasm", "g.lib"]
+        {
+            assert!(!m.reads(name, 10), "{name}");
+        }
+        assert!(m.reads("notes.bin.txt", 10) && m.reads("lib", 10));
+    }
+
+    #[test]
+    fn a_nul_in_a_later_chunk_makes_the_file_binary() {
+        let mut bytes = b"x\n".repeat(CHUNK / 2);
+        bytes.extend(b"\0 needle\n");
+        assert_eq!(find(&matcher("needle", false, false), &bytes), None);
+        let mut early = b"needle\n".to_vec();
+        early.extend(&bytes);
+        assert_eq!(find(&matcher("needle", false, false), &early).map(|f| f.0), Some(1), "found before the NUL");
+    }
+
+    #[test]
+    fn files_are_read_with_a_buffer_their_size() {
+        let dir = std::env::temp_dir().join(format!("gezik-content-file-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let m = matcher("fatura", false, false);
+        let cancel = AtomicBool::new(false);
+        std::fs::write(dir.join("small.txt"), "one\ntwo fatura").unwrap();
+        let found = m.find_in_file(&dir.join("small.txt"), &cancel, &none).unwrap();
+        assert_eq!(found.map(|f| f.0), Some(2));
+        let mut big = "x\n".repeat(CHUNK);
+        big.push_str("fatura\n");
+        std::fs::write(dir.join("big.txt"), &big).unwrap();
+        let found = m.find_in_file(&dir.join("big.txt"), &cancel, &none).unwrap();
+        assert_eq!(found.map(|f| f.0), Some(CHUNK as u32 + 1));
+        std::fs::write(dir.join("empty.txt"), "").unwrap();
+        assert_eq!(m.find_in_file(&dir.join("empty.txt"), &cancel, &none).unwrap(), None);
+        assert_eq!(m.find_in_file(&dir, &cancel, &none).unwrap(), None, "a folder is not read");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

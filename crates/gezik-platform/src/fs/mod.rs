@@ -18,12 +18,12 @@ pub use gezik_core::ops::threads::DiskKind;
 #[cfg(unix)]
 pub use unix::{
     clear_hidden, copy_file, delete, device_of, drive_facts, drive_root, free_space, is_hidden_attr, is_network,
-    mapped_remote, move_entry, read_dir_items, restore, set_hidden, trash,
+    mapped_remote, move_entry, open_regular, read_dir_items, restore, set_hidden, trash,
 };
 #[cfg(windows)]
 pub use windows::{
     clear_hidden, copy_file, delete, device_of, drive_facts, drive_root, free_space, is_hidden_attr, is_network,
-    mapped_remote, move_entry, read_dir_items, restore, set_hidden, trash,
+    mapped_remote, move_entry, open_regular, read_dir_items, restore, set_hidden, trash,
 };
 #[cfg(windows)]
 pub(crate) use windows::{io_error, verbatim};
@@ -33,8 +33,14 @@ pub(crate) use windows::{io_error, verbatim};
 pub struct DirItem {
     pub name: String,
     pub is_dir: bool,
-    /// A symbolic link, junction or other reparse point: never gone into.
+    /// A symbolic link or junction (Windows: a name-surrogate reparse point, so a cloud or
+    /// deduplicated folder is still gone into): never gone into, never read.
     pub is_link: bool,
+    /// A regular file: not a folder, link, FIFO, socket or device. Only these are read for text.
+    pub is_file: bool,
+    /// Windows: the data is not on this disk (a cloud placeholder, an offline file), so reading
+    /// it would download it. A content search leaves it unread.
+    pub offline: bool,
     /// `Entry::HIDDEN` and `Entry::SYSTEM` (Windows).
     pub flags: u8,
     pub size: u64,
@@ -122,6 +128,7 @@ mod tests {
         assert_eq!(items.iter().map(|i| i.name.as_str()).collect::<Vec<_>>(), ["a.txt", "sub"]);
         assert!(!items[0].is_dir && items[0].size == 5 && items[0].modified.is_some() && items[0].has_meta);
         assert!(items[1].is_dir && !items[1].is_link && items[1].size == 0);
+        assert!(items[0].is_file && !items[0].offline && !items[1].is_file);
         let listed = gezik_core::list_dir(&dir).unwrap();
         assert_eq!(
             listed.iter().find(|e| e.name == "a.txt").unwrap().modified,
@@ -129,6 +136,34 @@ mod tests {
             "as list_dir sees it"
         );
         assert!(read_dir_items(&dir.join("missing"), &|_, _| true).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn only_regular_files_are_opened_for_their_text() {
+        let dir = test_dir("open-regular");
+        std::fs::write(dir.join("a.txt"), "12345").unwrap();
+        let (_, size) = open_regular(&dir.join("a.txt")).unwrap().expect("a file");
+        assert_eq!(size, 5);
+        assert!(open_regular(&dir).unwrap().is_none(), "a folder");
+        assert!(open_regular(&dir.join("missing")).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_fifo_or_a_link_is_never_opened() {
+        let dir = test_dir("open-fifo");
+        let fifo = dir.join("pipe");
+        let c = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+        // SAFETY: a valid path string.
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        assert!(open_regular(&fifo).unwrap().is_none(), "opened without blocking, then refused");
+        std::fs::write(dir.join("a.txt"), "x").unwrap();
+        std::os::unix::fs::symlink(dir.join("a.txt"), dir.join("link")).unwrap();
+        assert!(open_regular(&dir.join("link")).unwrap().is_none(), "a link is not followed");
+        let items = read_dir_items(&dir, &|_, _| true).unwrap();
+        assert!(items.iter().filter(|i| i.is_file).map(|i| i.name.as_str()).eq(["a.txt"]));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

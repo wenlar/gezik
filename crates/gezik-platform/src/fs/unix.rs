@@ -446,6 +446,8 @@ pub fn read_dir_items(dir: &Path, wants_meta: &dyn Fn(&str, bool) -> bool) -> io
             name: entry.file_name().to_string_lossy().into_owned(),
             is_dir: kind.is_dir(),
             is_link: kind.is_symlink(),
+            is_file: kind.is_file(),
+            offline: false,
             flags: 0,
             size: 0,
             modified: None,
@@ -466,6 +468,19 @@ pub fn read_dir_items(dir: &Path, wants_meta: &dyn Fn(&str, bool) -> bool) -> io
         items.push(item);
     }
     Ok(items)
+}
+
+/// Opens `path` to read its text only if it is a regular file: never a FIFO, socket or device
+/// (opened without blocking, then checked) and never through a link. `Ok(None)` for the rest;
+/// the size comes with it.
+pub fn open_regular(path: &Path) -> io::Result<Option<(File, u64)>> {
+    let file = match OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW).open(path) {
+        Ok(file) => file,
+        Err(err) if err.raw_os_error() == Some(libc::ELOOP) => return Ok(None),
+        Err(err) => return Err(err),
+    };
+    let meta = file.metadata()?;
+    Ok(meta.is_file().then_some((file, meta.len())))
 }
 
 pub fn device_of(path: &Path) -> io::Result<u64> {

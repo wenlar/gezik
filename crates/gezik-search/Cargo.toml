@@ -8,5 +8,6 @@ license.workspace = true
 [dependencies]
 gezik-core.workspace = true
 gezik-platform.workspace = true
-# gezik-batch's regex features plus the Unicode classes (p{L}, p{Latin}), which the RAR build has anyway.
-regex = { version = "1", default-features = false, features = ["std", "unicode-case", "unicode-perl", "unicode-gencat", "unicode-script"] }
+# gezik-batch's regex features plus the Unicode classes (p{L}, p{Latin}) and the fast engines
+# ("perf": content search), which the RAR build (unrar-ng) already links into the app.
+regex = { version = "1", default-features = false, features = ["std", "perf", "unicode-case", "unicode-perl", "unicode-gencat", "unicode-script"] }

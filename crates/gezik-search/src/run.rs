@@ -91,7 +91,14 @@ impl Visit for Matcher {
             let line = match self.query.content() {
                 None => None,
                 Some(content) => {
-                    if self.cancel.load(Ordering::Relaxed) || !content.reads(&item.name, item.size) {
+                    // Only regular files whose data is here: never a FIFO, device or link, never a
+                    // cloud placeholder (reading it would download it).
+                    if self.cancel.load(Ordering::Relaxed)
+                        || !item.is_file
+                        || item.is_link
+                        || item.offline
+                        || !content.reads(&item.name, item.size)
+                    {
                         continue;
                     }
                     match content.find_in_file(&dir.join(&item.name), &self.cancel, &gezik_platform::decode_ansi) {
@@ -226,13 +233,17 @@ pub fn plan_walk(spec: &SearchSpec, skip: &[String], view_shown: (bool, bool)) -
     let skip: &[String] = if spec.skipped { &[] } else { skip };
     let mut devices: Vec<u64> = Vec::new();
     if cfg!(unix) {
+        // Every drive: each fixed drive's file system is allowed, and the drives mounted under
+        // another are walked from it, once (`outermost`).
         devices.extend(roots.iter().filter_map(|root| gezik_platform::fs::device_of(root).ok()));
         if cfg!(target_os = "macos")
+            && roots.iter().any(|root| root == Path::new("/"))
             && let Ok(data) = gezik_platform::fs::device_of(Path::new("/System/Volumes/Data"))
         {
             devices.push(data);
         }
     }
+    let roots = crate::walk::outermost(roots);
     Walk::new(roots, absolute, threads_for(network), WalkRules::new(shown, skip, devices))
 }
 
@@ -325,6 +336,25 @@ mod tests {
         assert_eq!(keys(&set), ["a.txt"], "a picture is not read");
         assert_eq!(set.found(0).map(|f| (f.0, f.1.to_string())), Some((2, "two fatura".to_owned())));
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn content_is_never_read_through_a_link_or_a_fifo() {
+        let root = tree("content-links");
+        let outside = tree("content-links-outside");
+        std::fs::write(outside.join("secret.txt"), "fatura").unwrap();
+        std::os::unix::fs::symlink(outside.join("secret.txt"), root.join("link.txt")).unwrap();
+        let made = std::process::Command::new("mkfifo").arg(root.join("pipe.txt")).status().unwrap();
+        assert!(made.success());
+        std::fs::write(root.join("real.txt"), "fatura").unwrap();
+        let mut spec = SearchSpec::new(Scope::Folder(root.clone()));
+        spec.content = "fatura".into();
+        let (set, summary, _) = search(&root, spec, 100);
+        assert_eq!(keys(&set), ["real.txt"], "the link and the FIFO are left unread, and nothing blocks");
+        assert!(!summary.cancelled);
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&outside);
     }
 
     #[test]
