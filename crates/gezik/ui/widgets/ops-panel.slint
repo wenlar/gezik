@@ -1,10 +1,13 @@
 import { Theme } from "../theme.slint";
-import { ListView } from "std-widgets.slint";
 import { ToolButton } from "button.slint";
 
-// One running (or just finished) operation, as Rust (operations.rs) builds it.
+// One row of the panel, as Rust (operations.rs) builds it: a running (or just finished)
+// operation on the Current tab, or a finished job of the History (op_history.rs), which has
+// a time.
 export struct OpRow {
     id: int,
+    // When a History job ended ("14:05"); empty on the Current tab.
+    time: string,
     title: string,
     detail: string,
     // 0–1; below 0 while the amount is not known (scanning).
@@ -16,28 +19,19 @@ export struct OpRow {
     can-start-now: bool,
     can-retry: bool,
     can-details: bool,
+    can-show: bool,
     finished: bool,
 }
 
-// One finished job in the History (op_history.rs).
-export struct HistoryRow {
-    id: int,
-    time: string,
-    title: string,
-    result: string,
-    failed: bool,
-    can-show: bool,
-    can-details: bool,
-}
-
-// A link-like text button for the panel.
+// A link-like text button for the panel; without width unless `shown`.
 component LinkButton inherits Rectangle {
     in property <string> text;
+    in property <bool> shown: true;
     // The chosen one of a row of tabs: bold, and said so to screen readers.
     in property <bool> checked;
     callback clicked();
 
-    width: label.preferred-width + Theme.spacing * 2;
+    width: root.shown ? label.preferred-width + Theme.spacing * 2 : 0px;
     border-radius: Theme.radius;
     background: touch.has-hover ? Theme.hover : transparent;
     accessible-role: button;
@@ -61,8 +55,9 @@ component LinkButton inherits Rectangle {
     }
 }
 
-// Running operations above the status bar: one line each with a bar, the progress text and
-// its buttons.
+// The operations panel above the status bar. Current: one line per operation with a bar, the
+// progress text and its buttons. History: the finished jobs, newest first. Both tabs use the
+// same rows; a button or the bar a row does not have takes no room and is not drawn.
 export component OpsPanel inherits Rectangle {
     in property <[OpRow]> rows;
     callback pause(int);
@@ -74,41 +69,81 @@ export component OpsPanel inherits Rectangle {
     callback dismiss(int);
     // 0 Current, 1 History.
     in property <int> tab;
-    in property <[HistoryRow]> history;
+    in property <[OpRow]> history;
     // The tabs show once there is a History to switch to.
     in property <bool> history-available;
     callback tab-chosen(int);
     callback history-show(int);
     callback history-details(int);
 
+    property <[OpRow]> shown: root.tab == 0 ? root.rows : root.history;
+    property <length> row-height: Theme.row-height + (root.tab == 0 ? 6px : 2px);
+    // At most 8 rows show; the wheel scrolls the rest.
+    property <length> list-height: min(root.shown.length, 8) * root.row-height;
+    property <length> scroll-min: min(0px, root.list-height - root.shown.length * root.row-height);
+    property <length> offset;
+    property <length> scrolled: clamp(root.offset, root.scroll-min, 0px);
+    changed tab => { root.offset = 0; }
+
+
     background: Theme.surface;
 
     VerticalLayout {
         padding-left: Theme.spacing + 4px;
         padding-right: Theme.spacing;
-        if root.history-available: HorizontalLayout {
-            height: Theme.row-height;
-            spacing: Theme.spacing;
+        Rectangle {
+            height: root.history-available ? Theme.row-height : 0px;
+            visible: root.history-available;
             accessible-role: tab-list;
-            for name[i] in ["Current", "History"]: LinkButton {
-                text: name;
-                checked: root.tab == i;
+            current := LinkButton {
+                x: 0;
+                text: "Current";
+                checked: root.tab == 0;
                 accessible-role: AccessibleRole.tab;
-                clicked => { root.tab-chosen(i); }
+                clicked => { root.tab-chosen(0); }
             }
-            Rectangle { horizontal-stretch: 1; }
+            LinkButton {
+                x: current.width + Theme.spacing;
+                text: "History";
+                checked: root.tab == 1;
+                accessible-role: AccessibleRole.tab;
+                clicked => { root.tab-chosen(1); }
+            }
         }
-        if root.tab == 0: VerticalLayout {
+        Text {
+            height: root.tab == 1 && root.history.length == 0 ? Theme.row-height + 2px : 0px;
+            visible: root.tab == 1 && root.history.length == 0;
+            text: "No operations yet";
+            vertical-alignment: center;
+            color: Theme.foreground-muted;
+            accessible-role: text;
+        }
+        Rectangle {
+            height: root.list-height;
+            clip: true;
             accessible-role: list;
-            accessible-label: "Operations";
-            for row in root.rows: Rectangle {
-                height: Theme.row-height + 6px;
-                accessible-role: list-item;
-                accessible-label: row.title;
-                accessible-description: row.detail;
+            accessible-label: root.tab == 0 ? "Operations" : "Operation history";
+            TouchArea {
+                scroll-event(event) => {
+                    root.offset = clamp(root.scrolled + event.delta-y, root.scroll-min, 0px);
+                    accept
+                }
+            }
+            VerticalLayout {
+                y: root.scrolled;
+                height: root.shown.length * root.row-height;
+                for row in root.shown: HorizontalLayout {
+                    height: root.row-height;
+                    accessible-role: list-item;
+                    accessible-label: row.title;
+                    accessible-description: row.detail;
 
-                HorizontalLayout {
-                    spacing: Theme.spacing * 2;
+                    Text {
+                        width: row.time == "" ? 0px : 64px + Theme.spacing * 2;
+                        text: row.time;
+                        vertical-alignment: center;
+                        color: Theme.foreground-muted;
+                    }
                     Text {
                         text: row.title;
                         horizontal-stretch: 1;
@@ -117,11 +152,15 @@ export component OpsPanel inherits Rectangle {
                         overflow: elide;
                         color: Theme.foreground;
                     }
-                    if !row.finished: VerticalLayout {
-                        alignment: center;
+                    // The bar with a gap on each side; only the gap once the job ended.
+                    Rectangle {
+                        width: row.finished ? Theme.spacing * 2 : 160px + Theme.spacing * 4;
                         Rectangle {
+                            x: Theme.spacing * 2;
+                            y: (parent.height - self.height) / 2;
                             width: 160px;
                             height: 6px;
+                            visible: !row.finished;
                             border-radius: 3px;
                             background: Theme.border;
                             accessible-role: progress-indicator;
@@ -138,34 +177,59 @@ export component OpsPanel inherits Rectangle {
                     }
                     Text {
                         text: row.detail;
-                        min-width: 160px;
+                        min-width: row.time == "" ? 160px : 0px;
                         vertical-alignment: center;
                         overflow: elide;
                         color: row.state == 5 ? Theme.danger : Theme.foreground-muted;
                     }
-                    if row.can-start-now: LinkButton {
+                    Rectangle { width: Theme.spacing; }
+                    LinkButton {
+                        text: "Show in folder";
+                        shown: row.can-show;
+                        visible: row.can-show;
+                        clicked => { root.history-show(row.id); }
+                    }
+                    LinkButton {
                         text: "Start now";
+                        shown: row.can-start-now;
+                        visible: row.can-start-now;
                         clicked => { root.start-now(row.id); }
                     }
-                    if row.can-details: LinkButton {
+                    LinkButton {
                         text: "Details";
-                        clicked => { root.details(row.id); }
+                        shown: row.can-details;
+                        visible: row.can-details;
+                        clicked => {
+                            if row.time == "" {
+                                root.details(row.id);
+                            } else {
+                                root.history-details(row.id);
+                            }
+                        }
                     }
-                    if row.can-retry: LinkButton {
+                    LinkButton {
                         text: "Retry";
+                        shown: row.can-retry;
+                        visible: row.can-retry;
                         clicked => { root.retry(row.id); }
                     }
-                    if row.can-pause: ToolButton {
-                        text: "Pause";
-                        icon: "M 5 3 L 5 13 M 11 3 L 11 13";
-                        clicked => { root.pause(row.id); }
-                    }
-                    if row.can-resume: ToolButton {
-                        text: "Resume";
-                        icon: "M 5 3 L 13 8 L 5 13 Z";
-                        clicked => { root.resume(row.id); }
-                    }
                     ToolButton {
+                        width: row.can-pause || row.can-resume ? self.height : 0px;
+                        visible: row.can-pause || row.can-resume;
+                        text: row.can-pause ? "Pause" : "Resume";
+                        icon: row.can-pause ? "M 5 3 L 5 13 M 11 3 L 11 13" : "M 5 3 L 13 8 L 5 13 Z";
+                        clicked => {
+                            if row.can-pause {
+                                root.pause(row.id);
+                            } else {
+                                root.resume(row.id);
+                            }
+                        }
+                    }
+                    // History rows have no Close.
+                    ToolButton {
+                        width: row.time == "" ? self.height : 0px;
+                        visible: row.time == "";
                         text: row.finished ? "Close" : "Cancel";
                         icon: "M 4 4 L 12 12 M 12 4 L 4 12";
                         clicked => {
@@ -178,31 +242,15 @@ export component OpsPanel inherits Rectangle {
                     }
                 }
             }
-        }
-        if root.tab == 1 && root.history.length == 0: Text {
-            height: Theme.row-height + 2px;
-            text: "No operations yet";
-            vertical-alignment: center;
-            color: Theme.foreground-muted;
-            accessible-role: text;
-        }
-        if root.tab == 1 && root.history.length > 0: ListView {
-            accessible-role: list;
-            accessible-label: "Operation history";
-            height: min(root.history.length, 8) * (Theme.row-height + 2px) + 2px;
-            for row in root.history: Rectangle {
-                height: Theme.row-height + 2px;
-                accessible-role: list-item;
-                accessible-label: row.title;
-                accessible-description: row.result;
-                HorizontalLayout {
-                    spacing: Theme.spacing * 2;
-                    Text { text: row.time; width: 64px; vertical-alignment: center; color: Theme.foreground-muted; }
-                    Text { text: row.title; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; color: Theme.foreground; }
-                    Text { text: row.result; vertical-alignment: center; color: row.failed ? Theme.danger : Theme.foreground-muted; }
-                    if row.can-show: LinkButton { text: "Show in folder"; clicked => { root.history-show(row.id); } }
-                    if row.can-details: LinkButton { text: "Details"; clicked => { root.history-details(row.id); } }
-                }
+            // Where the rows shown are, when there are more.
+            Rectangle {
+                x: parent.width - 3px;
+                y: -root.scrolled * root.list-height / (root.shown.length * root.row-height);
+                width: 3px;
+                height: root.list-height * 8 / max(root.shown.length, 8);
+                visible: root.shown.length > 8;
+                border-radius: 1.5px;
+                background: Theme.border;
             }
         }
     }

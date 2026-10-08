@@ -27,7 +27,7 @@ use crate::dialog::Dialogs;
 use crate::navigation::{Navigator, sync_model};
 use crate::sidebar::Sidebar;
 use crate::view::{View, hidden_note};
-use crate::{AppWindow, HistoryRow, OpRow};
+use crate::{AppWindow, OpRow};
 
 /// A job shows in the panel only if it still runs after this long.
 const SHOW_AFTER: Duration = Duration::from_secs(1);
@@ -306,6 +306,7 @@ impl JobView {
             can_retry: failed && (self.retry.is_some() || self.again.is_some()),
             can_details: failed || self.report.as_ref().is_some_and(|r| !r.cancelled && !r.skipped.is_empty()),
             finished,
+            ..OpRow::default()
         }
     }
 }
@@ -325,7 +326,7 @@ struct Inner {
     tab: Cell<i32>,
     /// Finished jobs, newest first (allocated on the first one).
     history: RefCell<crate::op_history::History>,
-    history_rows: Rc<VecModel<HistoryRow>>,
+    history_rows: Rc<VecModel<OpRow>>,
     taskbar: RefCell<Option<Taskbar>>,
     /// Jobs whose pause already has a question (several workers may report the same pause).
     asked: RefCell<HashSet<JobId>>,
@@ -1319,14 +1320,17 @@ impl Operations {
     fn sync_history(&self) {
         let Some(window) = self.0.window.upgrade() else { return };
         let history = self.0.history.borrow();
-        let rows = history.records().map(|record| HistoryRow {
+        // The Current tab's rows, with a time and without a bar or a Close.
+        let rows = history.records().map(|record| OpRow {
             id: i32::try_from(record.id).unwrap_or(i32::MAX),
             time: record.time.as_str().into(),
             title: record.title.as_str().into(),
-            result: record.result.as_str().into(),
-            failed: record.failed,
+            detail: record.result.as_str().into(),
+            state: if record.failed { RowState::Failed } else { RowState::Done } as i32,
             can_show: record.show.is_some(),
             can_details: record.details.is_some(),
+            finished: true,
+            ..OpRow::default()
         });
         sync_model(&self.0.history_rows, rows);
         window.set_history_available(true);

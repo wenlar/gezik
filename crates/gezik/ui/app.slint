@@ -7,7 +7,7 @@ import { Sidebar, SidebarRow } from "widgets/sidebar.slint";
 import { PreviewPane, PreviewInfo } from "widgets/preview-pane.slint";
 import { FileView, FileRow, ItemRow } from "widgets/file-view.slint";
 import { FilterBar } from "widgets/filter-bar.slint";
-import { OpsPanel, OpRow, HistoryRow } from "widgets/ops-panel.slint";
+import { OpsPanel, OpRow } from "widgets/ops-panel.slint";
 import { DropStack, StackRow } from "widgets/drop-stack.slint";
 import { Dialog } from "widgets/dialog.slint";
 import { ConflictList, ConflictRow } from "widgets/conflict-list.slint";
@@ -21,7 +21,7 @@ import { PathSuggestions, PathRow } from "widgets/path-suggestions.slint";
 
 // Re-exported so Rust can set it with `window.global::<Theme>()` and build crumbs, tabs
 // and sidebar rows.
-export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, OpRow, HistoryRow, StackRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView, MenuEntry, MenuPlace, MenuSub, TabPickRow, PathRow }
+export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, OpRow, StackRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView, MenuEntry, MenuPlace, MenuSub, TabPickRow, PathRow }
 
 // Where the drop targets are, in window coordinates (drag.rs reads it while files are
 // dragged; every field is computed when read).
@@ -377,7 +377,7 @@ export component AppWindow inherits Window {
     // The panel's tab (0 Current, 1 History), the History's rows, and whether the status
     // bar shows its History button (once a job ended this session).
     in property <int> ops-tab;
-    in property <[HistoryRow]> history-rows;
+    in property <[OpRow]> history-rows;
     in property <bool> history-available;
     callback ops-tab-chosen(int);
     callback history-show(int);
