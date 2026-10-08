@@ -263,6 +263,11 @@ pub enum Outcome {
         facts: Facts,
         from: Option<PathBuf>,
     },
+    /// A folder placed with what is in it in one step (extracted, a command's output): undo
+    /// takes it away whole. A folder `Created` empty goes only if it still holds no files.
+    Placed {
+        path: PathBuf,
+    },
     /// Renamed or moved in one step.
     Moved {
         from: PathBuf,
@@ -296,6 +301,7 @@ impl Outcome {
     pub fn result(&self) -> Option<&Path> {
         match self {
             Outcome::Created { path, .. }
+            | Outcome::Placed { path }
             | Outcome::Restored { original: path, .. }
             | Outcome::Moved { to: path, .. } => Some(path),
             Outcome::Several(outcomes) => outcomes.iter().find_map(Outcome::created),
@@ -306,7 +312,7 @@ impl Outcome {
     /// The first path made, looking inside `Several` too.
     fn created(&self) -> Option<&Path> {
         match self {
-            Outcome::Created { path, .. } => Some(path),
+            Outcome::Created { path, .. } | Outcome::Placed { path } => Some(path),
             Outcome::Several(outcomes) => outcomes.iter().find_map(Outcome::created),
             _ => None,
         }

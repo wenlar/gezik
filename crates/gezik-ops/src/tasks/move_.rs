@@ -230,6 +230,9 @@ impl Task for MoveTask {
                 self.make_parent(target)?;
                 fs::move_entry(source, target)?;
                 let facts = facts_after(target, item.facts.is_dir);
+                if self.placing && item.facts.is_dir {
+                    return Ok(Outcome::Placed { path: target.clone() });
+                }
                 if self.placing {
                     return Ok(self.made(source, target, facts));
                 }
@@ -498,6 +501,21 @@ mod tests {
         finish(&engine, engine.undo().unwrap(), no_conflicts);
         assert!(!dir.join("dst/x/a.txt").exists(), "the placed file went to the trash");
         assert_eq!(read(&dir.join("dst/x/b.txt")), "b", "what was there stays");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_folder_placed_whole_is_undone_whole() {
+        let dir = test_dir("move-placing-whole");
+        write(&dir.join("stage/x/a.txt"), "a");
+        std::fs::create_dir(dir.join("dst")).unwrap();
+        let engine = engine();
+        let task = MoveTask::placing(vec![(dir.join("stage/x"), dir.join("dst/x"))], TaskKind::Extract);
+        finish(&engine, engine.submit(Box::new(task)), no_conflicts);
+        assert_eq!(read(&dir.join("dst/x/a.txt")), "a");
+        let (report, _) = finish(&engine, engine.undo().unwrap(), no_conflicts);
+        assert!(report.failures.is_empty() && report.skipped_changed == 0, "{report:?}");
+        assert!(!dir.join("dst/x").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

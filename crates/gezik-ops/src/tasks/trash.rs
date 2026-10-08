@@ -1,9 +1,11 @@
 //! Moving to the trash (Recycle Bin).
 
+use std::collections::HashSet;
 use std::io;
 use std::path::{Path, PathBuf};
 
 use gezik_core::ops::conflict::Facts;
+use gezik_core::ops::paths::path_key;
 use gezik_platform::fs;
 
 use super::what;
@@ -18,8 +20,8 @@ pub struct TrashTask {
     /// An undo: on a drive without a trash, an empty folder or file is simply deleted.
     undoing: bool,
     /// Folders that go only if empty: what was moved into them came out first, and one that
-    /// changed since stayed in (spec 8.2); the folder then stays with it.
-    only_empty: Vec<PathBuf>,
+    /// changed since stayed in (spec 8.2); the folder then stays with it. By `path_key`.
+    only_empty: HashSet<Vec<String>>,
 }
 
 impl TrashTask {
@@ -27,18 +29,18 @@ impl TrashTask {
         TrashTask {
             items: paths.into_iter().map(|path| (path, None)).collect(),
             undoing: false,
-            only_empty: Vec::new(),
+            only_empty: HashSet::new(),
         }
     }
 
     /// Undo of a copy or of something new: items changed since are left alone.
     pub(crate) fn checked(items: Vec<(PathBuf, Option<Facts>)>) -> TrashTask {
-        TrashTask { items, undoing: true, only_empty: Vec::new() }
+        TrashTask { items, undoing: true, only_empty: HashSet::new() }
     }
 
     /// See `only_empty`.
     pub(crate) fn only_if_empty(mut self, dirs: Vec<PathBuf>) -> TrashTask {
-        self.only_empty = dirs;
+        self.only_empty = dirs.iter().map(|dir| path_key(dir)).collect();
         self
     }
 
@@ -122,7 +124,7 @@ impl Task for TrashTask {
         if !unchanged(path, expected) {
             return Err(changed_since());
         }
-        if self.only_empty.iter().any(|dir| gezik_core::ops::paths::same_path(dir, path)) && !holds_no_files(path) {
+        if self.only_empty.contains(&path_key(path)) && !holds_no_files(path) {
             return Err(changed_since());
         }
         // A name the trash cannot take (Windows: `x.`) is offered for a permanent delete like an

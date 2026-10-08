@@ -97,8 +97,10 @@ impl CommandTask {
         // With whatever the command left in it (the job removes it too, if this fails).
         let _ = std::fs::remove_dir_all(&staging);
         result?;
-        let made_dir = target.is_dir();
-        Ok(Outcome::Created { path: target.to_path_buf(), facts: facts_after(target, made_dir), from: None })
+        if target.is_dir() {
+            return Ok(Outcome::Placed { path: target.to_path_buf() });
+        }
+        Ok(Outcome::Created { path: target.to_path_buf(), facts: facts_after(target, false), from: None })
     }
 
     /// In place: the file goes to the trash first (as it is, under its own name, for undo) and
