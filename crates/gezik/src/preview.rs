@@ -256,8 +256,7 @@ pub fn describe(target: &Target, body: Option<Body>) -> PreviewInfo {
                 }
                 Some(Body::Folder { count, more }) => lines.push(match (count, more) {
                     (_, true) => format!("{}+ items", with_commas(MAX_COUNTED)),
-                    (1, false) => "1 item".to_owned(),
-                    (n, false) => format!("{n} items"),
+                    (n, false) => crate::stack::count_text(n),
                 }),
             }
             info.details = lines.join("\n").into();

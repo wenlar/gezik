@@ -72,7 +72,7 @@ impl ExtractTask {
                 return Ok(false);
             }
         }
-        let packed = std::fs::metadata(&self.archive).map_or(0, |meta| meta.len());
+        let packed = archive::packed_size(&self.archive);
         if bomb_suspect(total, packed) {
             let ratio = total / packed.max(1);
             let message = format!(

@@ -64,22 +64,49 @@ impl PendingDeletes {
     }
 
     pub fn add(&self, path: &Path) -> io::Result<()> {
+        self.add_all(&[path])
+    }
+
+    /// [`Self::add`] for many at once, in one write.
+    pub fn add_all(&self, paths: &[&Path]) -> io::Result<()> {
+        if !paths.iter().all(|path| can_hold(path)) {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "This path cannot be noted for a later delete"));
+        }
         let _guard = lock(&self.guard);
         let mut list = self.read();
-        let line = PathBuf::from(format!("{DELETING}{}\t{}", std::process::id(), path.display()));
-        match list.iter().position(|noted| delete_of(noted).is_some_and(|(_, noted)| noted == path)) {
-            // Noted already: it keeps its place, under this process.
-            Some(at) => list[at] = line,
-            None => list.push(line),
+        let mut at: std::collections::HashMap<PathBuf, usize> = list
+            .iter()
+            .enumerate()
+            .filter_map(|(index, line)| delete_of(line).map(|(_, noted)| (noted, index)))
+            .collect();
+        for path in paths {
+            let line = PathBuf::from(format!("{DELETING}{}\t{}", std::process::id(), path.display()));
+            match at.get(*path) {
+                // Noted already: it keeps its place, under this process.
+                Some(&index) => list[index] = line,
+                None => {
+                    at.insert(path.to_path_buf(), list.len());
+                    list.push(line);
+                }
+            }
         }
         self.write(&list)
     }
 
     pub fn remove(&self, path: &Path) {
+        self.remove_all(&[path]);
+    }
+
+    /// [`Self::remove`] for many at once, in one write.
+    pub fn remove_all(&self, paths: &[&Path]) {
+        if paths.is_empty() {
+            return;
+        }
         let _guard = lock(&self.guard);
+        let paths: std::collections::HashSet<&Path> = paths.iter().copied().collect();
         let mut list = self.read();
         let before = list.len();
-        list.retain(|line| delete_of(line).is_none_or(|(_, noted)| noted != path));
+        list.retain(|line| delete_of(line).is_none_or(|(_, noted)| !paths.contains(noted.as_path())));
         if list.len() != before {
             let _ = self.write(&list);
         }
@@ -91,8 +118,11 @@ impl PendingDeletes {
         self.add_restores(std::slice::from_ref(restore));
     }
 
-    /// [`Self::add_restore`] for many at once, in one write.
+    /// [`Self::add_restore`] for many at once, in one write. One whose paths a line cannot hold
+    /// is left out: what it set aside then stays under its temporary name, never deleted.
     pub fn add_restores(&self, restores: &[Restore]) {
+        let restores: Vec<&Restore> =
+            restores.iter().filter(|r| can_hold(&r.hidden) && can_hold(&r.original)).collect();
         if restores.is_empty() {
             return;
         }
@@ -140,7 +170,11 @@ impl PendingDeletes {
     }
 
     /// `folder` gets files named `prefix…` from process `pid` until the copy ends.
+    /// Not noted if a line cannot hold `folder`: a leftover keeps its temporary name.
     pub fn add_copies(&self, pid: u32, folder: &Path, prefix: &str) {
+        if !can_hold(folder) {
+            return;
+        }
         let _guard = lock(&self.guard);
         let mut list = self.read();
         let line = PathBuf::from(format!("{COPIES}{pid}\t{}\t{prefix}", folder.display()));
@@ -214,6 +248,12 @@ impl PendingDeletes {
         std::fs::write(&temp, text)?;
         std::fs::rename(&temp, &self.file)
     }
+}
+
+/// Whether a line holds `path` as it is: Unicode, no tab or line break. Read back, another
+/// path could split into lines naming other things, which the next start would act on.
+pub(crate) fn can_hold(path: &Path) -> bool {
+    path.to_str().is_some_and(|text| !text.contains(['\t', '\n', '\r']))
 }
 
 /// A restore line, if `line` is one that only renames a folder Gezik hid within its folder.
@@ -326,6 +366,37 @@ mod tests {
         assert_eq!(pending.load(), std::slice::from_ref(&b));
         pending.remove(&b);
         assert!(!dir.join("pending-deletes").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_path_a_line_cannot_hold_is_never_noted() {
+        let dir = test_dir("pending-unholdable");
+        let pending = PendingDeletes::new(dir.join("pending-deletes"));
+        // Split into lines, this folder would read back as a delete of another hidden folder.
+        let folder = PathBuf::from(format!("{}\n{}", dir.join("a").display(), dir.join(hidden_name()).display()));
+        pending.add_copies(1, &folder, &copy_prefix());
+        assert!(pending.add(&folder.join(hidden_name())).is_err());
+        pending.add_restores(&[Restore {
+            hidden: folder.join(hidden_name()),
+            original: folder.join("x"),
+            was_hidden: true,
+        }]);
+        assert!(pending.load().is_empty() && pending.copies().is_empty() && pending.restores().is_empty());
+        assert!(!dir.join("pending-deletes").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn many_are_added_and_removed_in_one_go() {
+        let dir = test_dir("pending-many");
+        let pending = PendingDeletes::new(dir.join("pending-deletes"));
+        let (a, b, c) = (dir.join(hidden_name()), dir.join(hidden_name()), dir.join(hidden_name()));
+        pending.add(&b).unwrap();
+        pending.add_all(&[&a, &b, &c, &a]).unwrap();
+        assert_eq!(pending.load(), [b.clone(), a.clone(), c.clone()], "each once, a noted one keeps its place");
+        pending.remove_all(&[&a, &c]);
+        assert_eq!(pending.load(), std::slice::from_ref(&b));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

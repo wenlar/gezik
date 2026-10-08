@@ -938,7 +938,9 @@ mod tests {
         }
         fn plan(&self, sink: &mut dyn crate::task::ScanSink) {
             let facts = gezik_core::ops::conflict::Facts { is_dir: false, size: 1, modified: None };
-            sink.item(crate::task::PlanItem::new(crate::task::Stage::Parallel, facts).target(&self.target).top(0));
+            sink.item(
+                crate::task::PlanItem::new(crate::task::Stage::Parallel, facts).target(&self.target).checked().top(0),
+            );
         }
         fn run(&self, _item: &crate::task::PlanItem, cx: &crate::task::RunCx<'_>) -> io::Result<crate::task::Outcome> {
             std::fs::write(&self.target, "part")?;
@@ -1057,6 +1059,56 @@ mod tests {
         assert!(!events.iter().any(|e| matches!(e, Event::Paused { .. })), "not paused for space");
         assert!(!dir.join("dst/big.bin").exists());
         assert_eq!(read(&dir.join("dst/small.bin")), "01234");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Pretends the drive of `dir` has no trash and holds files of at most `max_file` bytes.
+    fn no_trash_drive(engine: &Engine, dir: &Path, max_file: Option<u64>) {
+        let root = fs::drive_root(dir).unwrap();
+        let facts = fs::drive_facts(dir).unwrap();
+        lock(&engine.0.drives).insert(root, DriveFacts { trash: false, max_file, ..facts });
+    }
+
+    fn names(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> =
+            std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn replacing_with_a_file_too_big_for_the_drive_keeps_the_old_one() {
+        let dir = test_dir("too-big-replace");
+        write(&dir.join("src/big.bin"), "01234567890123456789");
+        write(&dir.join("dst/big.bin"), "old");
+        let engine = engine();
+        no_trash_drive(&engine, &dir, Some(10));
+        let job = engine.submit(Box::new(CopyTask::into(vec![dir.join("src/big.bin")], &dir.join("dst"))));
+        let (report, _) = finish(&engine, job, |c| vec![Decision::Replace; c.len()]);
+        assert!(report.failures[0].message.contains("too big for this drive"), "{:?}", report.failures);
+        assert_eq!(read(&dir.join("dst/big.bin")), "old");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn replace_without_a_trash_deletes_the_old_one_only_once_the_new_one_is_there() {
+        let dir = test_dir("replace-no-trash");
+        write(&dir.join("src/a.txt"), "new");
+        write(&dir.join("dst/a.txt"), "old");
+        let engine = engine();
+        no_trash_drive(&engine, &dir, None);
+        let job = engine.submit(Box::new(CopyTask::into(vec![dir.join("src/a.txt")], &dir.join("dst"))));
+        let (report, _) = finish(&engine, job, |c| vec![Decision::Replace; c.len()]);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert_eq!(read(&dir.join("dst/a.txt")), "new");
+        assert_eq!(names(&dir.join("dst")), ["a.txt"], "nothing left aside");
+        // An item that fails puts the old one back.
+        write(&dir.join("b.bin"), "old");
+        let job = engine.submit(Box::new(PartialTask { target: dir.join("b.bin"), fail: true }));
+        let (report, _) = finish(&engine, job, |c| vec![Decision::Replace; c.len()]);
+        assert_eq!(report.failures.len(), 1, "{:?}", report.failures);
+        assert_eq!(read(&dir.join("b.bin")), "old");
+        assert_eq!(names(&dir), ["b.bin", "dst", "src"]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

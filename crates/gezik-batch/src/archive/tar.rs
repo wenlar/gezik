@@ -75,10 +75,10 @@ pub(super) fn extract_tar(r: impl Read, dest: &Path, cx: &dyn ExtractCx) -> IoRe
         let result = match kind {
             EntryType::Directory => make_dir(&path).map(|()| true),
             EntryType::Regular | EntryType::Continuous => {
-                write_file(&mut entry, &path, Some(size), &meta, cx).map(|()| true)
+                write_file(&mut entry, dest, &path, Some(size), &meta, cx).map(|()| true)
             }
             // Holes are filled in as zeros, so the size is not the stored one.
-            EntryType::GNUSparse => write_file(&mut entry, &path, None, &meta, cx).map(|()| true),
+            EntryType::GNUSparse => write_file(&mut entry, dest, &path, None, &meta, cx).map(|()| true),
             EntryType::Symlink => link_target_of(link).and_then(|target| links.add(&name, path, target)),
             EntryType::Link => link_target_of(link).and_then(|target| copy_of(dest, &target, &path, &meta, cx)),
             _ => Err(Stop::Skip(IoError::new(std::io::ErrorKind::Unsupported, "not a file or folder; skipped"))),

@@ -237,8 +237,14 @@ fn zip_slip_entries_are_refused() {
     let stage = stage(&d);
     let cx = Cx::new(None);
     extract(&path, &stage, &cx).unwrap();
-    assert_eq!(cx.failed(), ["../evil.txt", "/abs.txt", "CON.txt"]);
-    assert_eq!(tree(&stage), files(&[("ok.txt", b"ok")]));
+    // A device name only on Windows.
+    if cfg!(windows) {
+        assert_eq!(cx.failed(), ["../evil.txt", "/abs.txt", "CON.txt"]);
+        assert_eq!(tree(&stage), files(&[("ok.txt", b"ok")]));
+    } else {
+        assert_eq!(cx.failed(), ["../evil.txt", "/abs.txt"]);
+        assert_eq!(tree(&stage), files(&[("CON.txt", b"device"), ("ok.txt", b"ok")]));
+    }
     assert!(!d.join("evil.txt").exists());
     assert!(!Path::new("/abs.txt").exists());
     let _ = std::fs::remove_dir_all(&d);
@@ -331,6 +337,46 @@ fn sevenz_data_encrypted_wrong_password_asks_again() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
+/// A damaged first entry looks like a wrong password; the same password again is right.
+#[test]
+fn sevenz_damaged_first_encrypted_entry_fails_once_the_password_repeats() {
+    let d = dir("7z-damaged");
+    let path = d.join("data.7z");
+    let (a, b) = (noise(200_000, 6), noise(1000, 7));
+    {
+        let mut w = ArchiveWriter::create(&path).unwrap();
+        w.set_content_methods(vec![AesEncoderOptions::new("pw".into()).into(), Lzma2Options::from_level(1).into()]);
+        w.set_encrypt_header(false);
+        w.push_archive_entry(sz_entry("a.bin"), Some(a.as_slice())).unwrap();
+        w.push_archive_entry(sz_entry("b.bin"), Some(b.as_slice())).unwrap();
+        w.finish().unwrap();
+    }
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes[32 + 100_000] ^= 0xFF;
+    std::fs::write(&path, bytes).unwrap();
+    struct Same(std::cell::Cell<u32>, std::cell::RefCell<Vec<String>>);
+    impl ExtractCx for Same {
+        fn add_bytes(&self, _: u64) {}
+        fn entry_done(&self) {}
+        fn stopped(&self) -> bool {
+            false
+        }
+        fn password(&self, _: bool) -> Option<String> {
+            self.0.set(self.0.get() + 1);
+            (self.0.get() < 5).then(|| "pw".to_string())
+        }
+        fn entry_failed(&self, name: &str, _: &std::io::Error) {
+            self.1.borrow_mut().push(name.to_owned());
+        }
+    }
+    let stage = stage(&d);
+    let cx = Same(0.into(), Default::default());
+    archive::open(&path).unwrap().extract(&stage, &cx).unwrap();
+    assert_eq!((cx.0.get(), cx.1.borrow().clone()), (2, vec!["a.bin".to_owned()]));
+    assert_eq!(tree(&stage), [("b.bin".to_string(), b)]);
+    let _ = std::fs::remove_dir_all(&d);
+}
+
 #[test]
 fn sevenz_volumes_open_from_any_part() {
     let d = dir("7z-vol");
@@ -350,6 +396,9 @@ fn sevenz_volumes_open_from_any_part() {
     extract(&d.join("v.7z.002"), &stage, &cx).unwrap();
     assert!(cx.failed().is_empty(), "{:?}", cx.failed());
     assert_eq!(tree(&stage), content);
+    // The bomb check weighs the whole set, whichever part was opened.
+    let all: u64 = (1..=3).map(|n| std::fs::metadata(d.join(format!("v.7z.00{n}"))).unwrap().len()).sum();
+    assert_eq!(archive::packed_size(&d.join("v.7z.003")), all);
 
     // A hole in the set: `.002` missing while `.003` is there.
     let middle = d.join("v.7z.002");
@@ -745,6 +794,41 @@ fn duplicate_names_the_last_one_wins() {
     extract(&path, &stage, &cx).unwrap();
     assert!(cx.failed().is_empty(), "{:?}", cx.failed());
     assert_eq!(tree(&stage), files(&[("one.txt", b"second")]));
+    std::fs::remove_dir_all(&d).unwrap();
+}
+
+/// On a case-insensitive disk `readme` would replace `README`: it is left out (a repack is
+/// then refused) instead.
+#[test]
+fn names_differing_only_in_case_do_not_replace_each_other() {
+    let d = dir("case");
+    let path = d.join("case.zip");
+    let mut zw = ZipWriter::new(std::fs::File::create(&path).unwrap());
+    zw.start_file("README", SimpleFileOptions::default()).unwrap();
+    zw.write_all(b"upper").unwrap();
+    zw.start_file("readme", SimpleFileOptions::default()).unwrap();
+    zw.write_all(b"lower").unwrap();
+    // The folder's case differs, the file's does not.
+    zw.start_file("Docs/a", SimpleFileOptions::default()).unwrap();
+    zw.write_all(b"upper").unwrap();
+    zw.start_file("docs/a", SimpleFileOptions::default()).unwrap();
+    zw.write_all(b"lower").unwrap();
+    zw.finish().unwrap();
+
+    let stage = stage(&d);
+    std::fs::write(stage.join("Probe"), b"").unwrap();
+    let insensitive = stage.join("PROBE").exists();
+    std::fs::remove_file(stage.join("Probe")).unwrap();
+    let cx = Cx::new(None);
+    extract(&path, &stage, &cx).unwrap();
+    if insensitive {
+        assert_eq!(cx.failed(), ["readme", "docs/a"]);
+        assert_eq!(tree(&stage), files(&[("Docs/a", b"upper"), ("README", b"upper")]));
+    } else {
+        assert!(cx.failed().is_empty(), "{:?}", cx.failed());
+        let all = [("Docs/a", &b"upper"[..]), ("README", b"upper"), ("docs/a", b"lower"), ("readme", b"lower")];
+        assert_eq!(tree(&stage), files(&all));
+    }
     std::fs::remove_dir_all(&d).unwrap();
 }
 
@@ -1340,5 +1424,46 @@ fn udf_and_rare_formats_need_seven_zip() {
         let err = archive::open(&d.join(name)).err().unwrap();
         assert_eq!(err.kind(), std::io::ErrorKind::Unsupported, "{name}");
     }
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+fn crc(bytes: &[u8]) -> [u8; 4] {
+    let mut crc = flate2::Crc::new();
+    crc.update(bytes);
+    crc.sum().to_le_bytes()
+}
+
+/// A few bytes asking for a 4 GiB dictionary allocate nothing: xz refuses, 7z goes to 7-Zip.
+#[test]
+fn a_huge_dictionary_is_not_allocated() {
+    let d = dir("dict");
+    // xz: stream header (CRC32 check), then a block header whose LZMA2 filter says 4 GiB.
+    let mut xz = b"\xFD7zXZ\0\0\x01".to_vec();
+    xz.extend(crc(b"\0\x01"));
+    let block = [0x02, 0x00, 0x21, 0x01, 40, 0, 0, 0];
+    xz.extend(block);
+    xz.extend(crc(&block));
+    xz.extend([0; 16]);
+    std::fs::write(d.join("a.xz"), xz).unwrap();
+    let cx = Cx::new(None);
+    let err = extract(&d.join("a.xz"), &stage(&d), &cx).err().unwrap();
+    assert!(err.to_string().contains("memory"), "{err}");
+
+    // 7z: one byte packed by LZMA2 with a 4 GiB dictionary, a plain header naming file `a`.
+    let header = [
+        0x01, 0x04, 0x06, 0x00, 0x01, 0x09, 0x01, 0x00, 0x07, 0x0B, 0x01, 0x00, 0x01, 0x21, 0x21, 0x01, 40, 0x0C, 0x01,
+        0x00, 0x08, 0x00, 0x00, 0x05, 0x01, 0x11, 0x05, 0x00, b'a', 0x00, 0x00, 0x00, 0x00, 0x00,
+    ];
+    let mut start = 1u64.to_le_bytes().to_vec();
+    start.extend((header.len() as u64).to_le_bytes());
+    start.extend(crc(&header));
+    let mut sz = b"7z\xBC\xAF\x27\x1C\0\x04".to_vec();
+    sz.extend(crc(&start));
+    sz.extend(start);
+    sz.push(0);
+    sz.extend(header);
+    std::fs::write(d.join("a.7z"), sz).unwrap();
+    let err = archive::open(&d.join("a.7z")).err().unwrap();
+    assert_eq!(err.to_string(), "7-Zip needed");
     let _ = std::fs::remove_dir_all(&d);
 }

@@ -76,7 +76,7 @@ impl ArchiveSource for ArSource {
                 attributes: None,
             };
             let size = header.size();
-            let result = write_file(&mut entry, &path, Some(size), &meta, cx).map(|()| true);
+            let result = write_file(&mut entry, dest, &path, Some(size), &meta, cx).map(|()| true);
             report_stream(&name, result, cx)?;
         }
         Ok(())

@@ -22,6 +22,7 @@ use gezik_platform::ChildProcess;
 use super::convert::{Swapped, needs_trash, swap_in};
 use super::{cancelled, file_name, what};
 use crate::convert::ffmpeg::stderr_tail;
+use crate::tools::executable;
 
 /// The plan item's note: an item to run on, an item the command does not take, and the one
 /// run of a `{files}` command on all the items it takes.
@@ -97,8 +98,10 @@ impl CommandTask {
         // With whatever the command left in it (the job removes it too, if this fails).
         let _ = std::fs::remove_dir_all(&staging);
         result?;
-        let made_dir = target.is_dir();
-        Ok(Outcome::Created { path: target.to_path_buf(), facts: facts_after(target, made_dir), from: None })
+        if target.is_dir() {
+            return Ok(Outcome::Placed { path: target.to_path_buf() });
+        }
+        Ok(Outcome::Created { path: target.to_path_buf(), facts: facts_after(target, false), from: None })
     }
 
     /// In place: the file goes to the trash first (as it is, under its own name, for undo) and
@@ -250,18 +253,6 @@ pub fn find_program(program: &OsStr) -> Option<PathBuf> {
     std::env::split_paths(&path_var)
         .filter(|dir| dir.is_absolute())
         .find_map(|dir| names.iter().map(|name| dir.join(name)).find(|path| executable(path)))
-}
-
-/// A file that may be run (on Unix: with an execute bit).
-fn executable(path: &Path) -> bool {
-    let Ok(meta) = std::fs::metadata(path) else { return false };
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        meta.is_file() && meta.permissions().mode() & 0o111 != 0
-    }
-    #[cfg(not(unix))]
-    meta.is_file()
 }
 
 impl Task for CommandTask {
