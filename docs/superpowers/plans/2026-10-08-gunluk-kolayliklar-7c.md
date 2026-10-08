@@ -2961,3 +2961,798 @@ fn link_kind(id: u32) -> LinkKind {
 - [ ] **Step 8: Commit** "Add New ▸ with templates, new folder with selection, paste as file, Create link ▸, and Explorer's Create shortcut to the menus".
 
 ---
+
+### Task 7: Bırakma yığını — `Hit::Stack`, `stack.rs`, `drop-stack.slint`, eylemler ve menüler
+
+**Files:**
+- Modify: `crates/gezik-core/src/drag.rs` (`Hit::Stack`, `Layout.stack`, `Action::AddToStack`), `crates/gezik/src/drag.rs` (yığına bırakma, şeritten sürükleme), `crates/gezik/src/operations.rs` (`transfer_job`, biten işin yığına haber verilmesi), `crates/gezik/src/context_menu.rs` (`TOGGLE_STACK`, `view_items`), `crates/gezik/src/actions.rs`, `crates/gezik/src/main.rs`, `crates/gezik/ui/app.slint`
+- Create: `crates/gezik/src/stack.rs`, `crates/gezik/ui/widgets/drop-stack.slint`
+
+**Interfaces:**
+- Consumes: Task 4'ün `Effect`, `Keys`, `Allowed::ALL`, `drop_menu`; Task 5'in `Action::{AddToStack, ToggleStack}`.
+- Produces:
+
+```rust
+// gezik_core::drag
+Hit::Stack;  Layout { …, pub stack: Option<Rect> };  Action::AddToStack   // label "Add to drop stack"
+// gezik::stack
+pub const STACK_MAX: usize = 1000;  pub const STACK_SHOWN: usize = 100;
+pub struct StackItem { pub path: PathBuf, pub is_dir: bool, pub gone: bool }  // Rust-side; Slint's is `StackRow`
+pub struct StackItems;   // add, remove, clear, items, usable, checked, moved
+pub struct Stack;        // the UI's
+pub fn with_current(f: impl FnOnce(&Stack));
+impl Stack {
+    pub fn new(window: &AppWindow, view: View, ops: Operations) -> Stack;
+    pub fn add(&self, items: Vec<(PathBuf, bool)>);
+    pub fn add_selection(&self);
+    pub fn toggle(&self);
+    pub fn is_open(&self) -> bool;
+    pub fn job_finished(&self, id: JobId, report: &Report);
+}
+// gezik::operations::Operations
+pub fn transfer_job(&self, paths: Vec<PathBuf>, dir: PathBuf, effect: Effect) -> JobId;   // `transfer` calls it
+// gezik::drag::Drags
+pub fn stack_down(&self, items: Vec<(PathBuf, bool)>, x: f32, y: f32);
+// gezik::context_menu
+pub const TOGGLE_STACK: u32 = 1408;
+pub fn view_items(view: ViewSettings, preview_open: bool, stack_open: bool, options: ViewOptions, windows: bool) -> Vec<(u32, String)>;
+```
+
+- [ ] **Step 1: Write the failing tests**
+
+`gezik-core/src/drag.rs` test modülünde `layout()` yardımcısı `stack: Some(Rect { x: 0.0, y: 600.0, width: 1000.0, height: 30.0 })` alır; ekle:
+
+```rust
+    #[test]
+    fn the_drop_stack_strip_takes_drops() {
+        let mut l = layout(list(0));
+        assert_eq!(hit(&l, 500.0, 610.0, false), Hit::Stack);
+        assert_eq!(hit(&l, 500.0, 590.0, false), Hit::Nothing, "between the list and the strip");
+        l.stack = None;
+        assert_eq!(hit(&l, 500.0, 610.0, false), Hit::Nothing, "a closed strip takes nothing");
+        assert_eq!(label(Action::AddToStack, Path::new("")), "Add to drop stack");
+    }
+```
+
+Yeni `crates/gezik/src/stack.rs`'in test modülü:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn p(name: &str) -> PathBuf {
+        PathBuf::from(if cfg!(windows) { format!(r"C:\s\{name}") } else { format!("/s/{name}") })
+    }
+
+    #[test]
+    fn the_stack_keeps_each_path_once_and_at_most_a_thousand() {
+        let mut s = StackItems::default();
+        assert_eq!(s.add([(p("a"), false), (p("b"), true), (p("a"), false)]), (2, 0));
+        if cfg!(windows) {
+            assert_eq!(s.add([(p("A"), false)]), (0, 0), "the case is ignored as Windows does");
+        }
+        let many = (0..1100).map(|i| (p(&format!("f{i}")), false));
+        assert_eq!(s.add(many), (STACK_MAX - 2, 1100 - (STACK_MAX - 2)));
+        assert_eq!(s.items().len(), STACK_MAX);
+        s.remove(0);
+        assert_eq!(s.items()[0].path, p("b"));
+        s.remove(5000);
+        s.clear();
+        assert!(s.items().is_empty());
+    }
+
+    #[test]
+    fn gone_items_are_left_out_and_failed_moves_stay() {
+        let mut s = StackItems::default();
+        s.add([(p("a"), false), (p("b"), false), (p("c"), false)]);
+        s.checked(&[(p("b"), None), (p("a"), Some(false)), (p("c"), Some(true))]);
+        assert!(s.items()[1].gone);
+        assert!(s.items()[2].is_dir, "the check tells folders apart");
+        assert_eq!(s.usable(), [p("a"), p("c")]);
+        s.moved(&[p("a"), p("c")], &[p("c").join("inner.txt")]);
+        let left: Vec<PathBuf> = s.items().iter().map(|i| i.path.clone()).collect();
+        assert_eq!(left, [p("b"), p("c")], "c had a failure inside: it stays; a went");
+        s.checked(&[(p("b"), Some(false))]);
+        assert!(!s.items()[0].gone, "back again");
+    }
+
+    #[test]
+    fn the_strip_says_how_many_and_how_many_more() {
+        assert_eq!(count_text(1), "1 item");
+        assert_eq!(count_text(12), "12 items");
+        assert_eq!(more_text(STACK_SHOWN), "");
+        assert_eq!(more_text(STACK_SHOWN + 900), "+900 more");
+    }
+}
+```
+
+`gezik/src/drag.rs` testine:
+
+```rust
+    #[test]
+    fn a_press_on_the_stack_is_forgotten_by_a_menu() {
+        let press = Phase::StackArmed { items: vec![(PathBuf::from("a.txt"), false)], x: 0.0, y: 0.0 };
+        assert_eq!(at_menu(&press), AtMenu::Forget);
+        assert_eq!(window_drives(true, &press), None);
+    }
+```
+
+`context_menu.rs`: `view_items(…)` çağrıları yeni imzayla (`stack_open` `preview_open`'dan sonra, testlerde `false`); `view_menu_marks_the_current_choices`'ın beklenen kimliklerinde `PREVIEW_PANE`'den sonra `TOGGLE_STACK`; `view_menu_lists_the_options_and_their_marks`'ta `&ids[10..]` → `&ids[11..]`, `items[10..13]` → `items[11..14]`; `format_subs(…, 15)` → `16`; ve:
+
+```rust
+    #[test]
+    fn the_view_menu_shows_and_hides_the_drop_stack() {
+        use gezik_core::view::{ViewOptions, ViewSettings};
+        let shown = view_items(ViewSettings::default(), false, true, ViewOptions::default(), false);
+        assert!(shown.contains(&(TOGGLE_STACK, "• Drop stack".to_owned())));
+        let hidden = view_items(ViewSettings::default(), false, false, ViewOptions::default(), false);
+        assert!(hidden.contains(&(TOGGLE_STACK, "    Drop stack".to_owned())));
+    }
+```
+
+`conversion_ids_meet_no_others`'ın `singles`'ına `TOGGLE_STACK`.
+
+- [ ] **Step 2: Run to see them fail.** `cargo test -j 8 -p gezik-core drag`, `cargo test -j 8 -p gezik stack drag context_menu` → derlenmez.
+
+- [ ] **Step 3: `gezik-core/src/drag.rs`.** `Layout`'a `/// The drop stack strip; None while it is closed. pub stack: Option<Rect>,`; `Hit`'e `/// The drop stack strip (spec 9.3). Stack,`; `Action`'a `/// Onto the drop stack: the paths are kept there. AddToStack,`; `label`'a `Action::AddToStack => "Add to drop stack".to_owned(),`. `hit`'te `crumbs` denetiminden sonra:
+
+```rust
+    if let Some(stack) = &layout.stack
+        && stack.contains(x, y)
+    {
+        return Hit::Stack;
+    }
+```
+
+- [ ] **Step 4: `drop-stack.slint`:**
+
+```slint
+import { Theme } from "../theme.slint";
+import { FileIcon } from "file-icon.slint";
+import { TextButton } from "text-button.slint";
+
+// One item of the drop stack (stack.rs): its name, `Kind` (gezik-core kind.rs), and whether
+// it is gone (drawn faded, left out of Copy here / Move here).
+export struct StackRow {
+    name: string,
+    kind: int,
+    gone: bool,
+}
+
+// The drop stack (spec 9.3): a strip above the status bar. Files dropped on it are kept;
+// Copy here / Move here take them to the folder shown. A press on an item drags it, a press on
+// the count drags them all.
+export component DropStack inherits Rectangle {
+    in property <[StackRow]> rows;
+    in property <string> count;
+    in property <string> more;
+    // A drop would land here.
+    in property <bool> highlight;
+    // A press on item `int` (-1: the count, all of them), at a window position.
+    callback down(int, length, length);
+    // The press moved (window position, Shift, Ctrl, Alt); it came up; it was taken away.
+    callback drag(length, length, bool, bool, bool);
+    callback up(length, length);
+    callback cancel();
+    callback hovered(int);
+    callback remove(int);
+    callback copy-here();
+    callback move-here();
+    callback clear();
+
+    height: Theme.row-height + 6px;
+    background: root.highlight ? Theme.drop-target : Theme.surface;
+    accessible-role: list;
+    accessible-label: "Drop stack";
+
+    // The pointer events of a press that may become a drag (`index`: what it drags).
+    component Grip inherits TouchArea {
+        in property <int> index;
+        callback down(int, length, length);
+        callback drag(length, length, bool, bool, bool);
+        callback up(length, length);
+        callback cancel();
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                root.down(self.index, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            }
+            if event.kind == PointerEventKind.move && self.pressed {
+                root.drag(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y,
+                    event.modifiers.shift, event.modifiers.control, event.modifiers.alt);
+            }
+            if event.kind == PointerEventKind.up && event.button == PointerEventButton.left {
+                root.up(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            }
+            if event.kind == PointerEventKind.cancel {
+                root.cancel();
+            }
+        }
+    }
+
+    HorizontalLayout {
+        padding-left: Theme.spacing + 4px;
+        padding-right: Theme.spacing;
+        spacing: Theme.spacing * 2;
+        Rectangle {
+            width: caption.preferred-width + Theme.spacing * 2;
+            accessible-role: button;
+            accessible-label: root.rows.length == 0 ? "Drop files here" : "Drag all " + root.count;
+            caption := Text {
+                x: Theme.spacing;
+                height: parent.height;
+                text: root.rows.length == 0 ? "Drop files here" : root.count;
+                vertical-alignment: center;
+                color: Theme.foreground-muted;
+            }
+            Grip {
+                index: -1;
+                enabled: root.rows.length > 0;
+                down(i, x, y) => { root.down(i, x, y); }
+                drag(x, y, s, c, a) => { root.drag(x, y, s, c, a); }
+                up(x, y) => { root.up(x, y); }
+                cancel => { root.cancel(); }
+            }
+        }
+        Flickable {
+            horizontal-stretch: 1;
+            viewport-width: chips.preferred-width;
+            chips := HorizontalLayout {
+                spacing: Theme.spacing;
+                for row[i] in root.rows: Rectangle {
+                    width: chip.preferred-width;
+                    border-radius: Theme.radius;
+                    background: grip.has-hover ? Theme.hover : transparent;
+                    accessible-role: list-item;
+                    accessible-label: row.name;
+                    chip := HorizontalLayout {
+                        padding-left: Theme.spacing;
+                        spacing: Theme.spacing;
+                        alignment: start;
+                        VerticalLayout {
+                            alignment: center;
+                            FileIcon { width: 16px; height: 16px; kind: row.kind; opacity: row.gone ? 0.4 : 1; }
+                        }
+                        Text {
+                            text: row.name;
+                            vertical-alignment: center;
+                            color: row.gone ? Theme.foreground-muted : Theme.foreground;
+                        }
+                        Rectangle {
+                            width: 18px;
+                            accessible-role: button;
+                            accessible-label: "Remove " + row.name;
+                            Text { text: "×"; horizontal-alignment: center; vertical-alignment: center; color: Theme.foreground-muted; }
+                            TouchArea { clicked => { root.remove(i); } }
+                        }
+                    }
+                    grip := Grip {
+                        width: parent.width - 18px;
+                        x: 0;
+                        index: i;
+                        changed has-hover => { root.hovered(self.has-hover ? i : -1); }
+                        down(i, x, y) => { root.down(i, x, y); }
+                        drag(x, y, s, c, a) => { root.drag(x, y, s, c, a); }
+                        up(x, y) => { root.up(x, y); }
+                        cancel => { root.cancel(); }
+                    }
+                }
+                if root.more != "": Text {
+                    text: root.more;
+                    vertical-alignment: center;
+                    color: Theme.foreground-muted;
+                }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            HorizontalLayout {
+                spacing: Theme.spacing;
+                TextButton { text: "Copy here"; clicked => { root.copy-here(); } }
+                TextButton { text: "Move here"; clicked => { root.move-here(); } }
+                TextButton { text: "Clear"; clicked => { root.clear(); } }
+            }
+        }
+    }
+}
+```
+
+(Slint bir bileşenin içinde bileşen tanımına izin vermez: `Grip` dosyada `DropStack`'ten **önce**, dışa aktarılmadan, `component Grip inherits TouchArea { … }` olarak yazılır; gövdesindeki `root` Grip'in kendisidir, yani yalnız kendi geri çağrılarını çağırır, yukarıdaki kod aynen geçerlidir.)
+
+- [ ] **Step 5: `app.slint`.** `import { DropStack, StackRow } from "widgets/drop-stack.slint";`, `export { …, StackRow }`. `DropGeometry`'ye `stack-y: length, stack-height: length,`; `drop-geometry`'ye (şerit durum çubuğunun hemen üstünde, onun 1px çizgisi ve yüksekliği kadar yukarıda):
+
+```slint
+        stack-y: root.stack-open ? root.height - Theme.row-height - 1px - (Theme.row-height + 6px) : 0px,
+        stack-height: root.stack-open ? Theme.row-height + 6px : 0px,
+```
+
+Özellikler (`ops-toggle`'ın yanına):
+
+```slint
+    // The drop stack (stack.rs): open, its first items, "12 items", "+900 more", and a drop
+    // landing on it.
+    in property <bool> stack-open;
+    in property <[StackRow]> stack-rows;
+    in property <string> stack-count;
+    in property <string> stack-more;
+    in property <bool> drop-stack;
+    callback stack-down(int, length, length);
+    callback stack-hovered(int);
+    callback stack-remove(int);
+    callback stack-copy();
+    callback stack-move();
+    callback stack-clear();
+```
+
+`OpsPanel`'in ardından, durum çubuğunun `Rectangle { height: 1px; … }` çizgisinden önce:
+
+```slint
+            if root.stack-open: Rectangle { height: 1px; background: Theme.border; }
+            if root.stack-open: DropStack {
+                rows: root.stack-rows;
+                count: root.stack-count;
+                more: root.stack-more;
+                highlight: root.drop-stack;
+                down(i, x, y) => { root.stack-down(i, x, y); }
+                drag(x, y, shift, ctrl, alt) => { root.item-drag(x, y, shift, ctrl, alt); }
+                up(x, y) => { root.item-up(-1, x, y, false); }
+                cancel => { root.item-cancel(); }
+                hovered(i) => { root.stack-hovered(i); }
+                remove(i) => { root.stack-remove(i); }
+                copy-here => { root.stack-copy(); }
+                move-here => { root.stack-move(); }
+                clear => { root.stack-clear(); }
+            }
+```
+
+(`stack-y` şeridin üstündeki 1px çizgiyi şeride saymaz; çizgiye bırakmak bir şey yapmaz. İlk elle denemede şeridin üstü ve altı `drop-stack` vurgusuyla doğrulanır.)
+
+macOS menü çubuğunda Edit'e `Copy Path`'ten sonra `MenuItem { title: "Add to Drop Stack"; shortcut: root.menu-keys ? @keys(Control + Shift + S) : @keys(); activated => { root.menu-command("add-to-stack"); } }`, View'a `Show Preview`'dan sonra `MenuItem { title: "Drop Stack"; activated => { root.menu-command("toggle-stack"); } }`.
+
+- [ ] **Step 6: `stack.rs`** (testleri Step 1'de), `main.rs`'e `mod stack;`:
+
+```rust
+//! The drop stack (spec 9.3): paths gathered from anywhere in a strip above the status bar,
+//! then copied or moved together into the folder shown. Kept for the session only, at most
+//! `STACK_MAX`; whether each still exists is checked off the UI thread.
+
+use std::cell::{Cell, RefCell};
+use std::path::PathBuf;
+use std::rc::Rc;
+
+use gezik_core::drag::Effect;
+use gezik_core::kind::Kind;
+use gezik_core::ops::paths::{is_within, same_path};
+use gezik_ops::{JobId, Report};
+use slint::{ComponentHandle, ModelRc, VecModel};
+
+use crate::operations::Operations;
+use crate::view::View;
+use crate::{AppWindow, StackRow};
+
+/// The most paths the stack keeps.
+pub const STACK_MAX: usize = 1000;
+/// The most items the strip draws (all of them are copied or moved).
+pub const STACK_SHOWN: usize = 100;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StackItem {
+    pub path: PathBuf,
+    pub is_dir: bool,
+    /// Not there when last checked: drawn faded, left out.
+    pub gone: bool,
+}
+
+/// The stack's paths, in the order added.
+#[derive(Debug, Default)]
+pub struct StackItems {
+    items: Vec<StackItem>,
+}
+
+impl StackItems {
+    /// Adds the paths not there yet, while there is room: (added, left out for room).
+    pub fn add(&mut self, paths: impl IntoIterator<Item = (PathBuf, bool)>) -> (usize, usize) {
+        let (mut added, mut full) = (0, 0);
+        for (path, is_dir) in paths {
+            if self.items.iter().any(|item| same_path(&item.path, &path)) {
+                continue;
+            }
+            if self.items.len() >= STACK_MAX {
+                full += 1;
+                continue;
+            }
+            self.items.push(StackItem { path, is_dir, gone: false });
+            added += 1;
+        }
+        (added, full)
+    }
+
+    pub fn remove(&mut self, index: usize) {
+        if index < self.items.len() {
+            self.items.remove(index);
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.items = Vec::new();
+    }
+
+    pub fn items(&self) -> &[StackItem] {
+        &self.items
+    }
+
+    /// The paths still there, for Copy here / Move here.
+    pub fn usable(&self) -> Vec<PathBuf> {
+        self.items.iter().filter(|item| !item.gone).map(|item| item.path.clone()).collect()
+    }
+
+    /// What a check found: per path, whether it is a folder, or `None` if it is gone.
+    pub fn checked(&mut self, found: &[(PathBuf, Option<bool>)]) {
+        for item in &mut self.items {
+            if let Some((_, state)) = found.iter().find(|(path, _)| same_path(path, &item.path)) {
+                item.gone = state.is_none();
+                if let Some(is_dir) = state {
+                    item.is_dir = *is_dir;
+                }
+            }
+        }
+    }
+
+    /// `moved` were moved away: they leave the stack, but for one that failed (or had a
+    /// failure inside it), which stays.
+    pub fn moved(&mut self, moved: &[PathBuf], failed: &[PathBuf]) {
+        self.items.retain(|item| {
+            let went = moved.iter().any(|path| same_path(path, &item.path));
+            !went || failed.iter().any(|failure| is_within(failure, &item.path))
+        });
+    }
+}
+
+/// "12 items".
+pub fn count_text(n: usize) -> String {
+    if n == 1 { "1 item".to_owned() } else { format!("{n} items") }
+}
+
+/// "+900 more" past what the strip draws; empty otherwise.
+pub fn more_text(n: usize) -> String {
+    if n > STACK_SHOWN { format!("+{} more", n - STACK_SHOWN) } else { String::new() }
+}
+
+/// Per path: whether it is a folder, `None` if it is not there. Reads the disk.
+fn check(paths: Vec<PathBuf>) -> Vec<(PathBuf, Option<bool>)> {
+    paths
+        .into_iter()
+        .map(|path| {
+            let state = std::fs::metadata(&path)
+                .map(|meta| meta.is_dir())
+                .ok()
+                .or_else(|| std::fs::symlink_metadata(&path).ok().map(|_| false));
+            (path, state)
+        })
+        .collect()
+}
+
+thread_local! {
+    static CURRENT: RefCell<Option<Stack>> = const { RefCell::new(None) };
+}
+
+/// Runs `f` with this UI thread's stack, if set up.
+pub fn with_current(f: impl FnOnce(&Stack)) {
+    if let Some(stack) = CURRENT.with(|c| c.borrow().clone()) {
+        f(&stack);
+    }
+}
+
+struct Inner {
+    window: slint::Weak<AppWindow>,
+    view: View,
+    ops: Operations,
+    items: RefCell<StackItems>,
+    open: Cell<bool>,
+    rows: Rc<VecModel<StackRow>>,
+    /// A Move here under way: its job and what it moves.
+    moving: RefCell<Option<(JobId, Vec<PathBuf>)>>,
+}
+
+#[derive(Clone)]
+pub struct Stack(Rc<Inner>);
+
+impl Stack {
+    pub fn new(window: &AppWindow, view: View, ops: Operations) -> Stack {
+        let rows = Rc::new(VecModel::default());
+        window.set_stack_rows(ModelRc::from(rows.clone()));
+        let stack = Stack(Rc::new(Inner {
+            window: window.as_weak(),
+            view,
+            ops,
+            items: RefCell::default(),
+            open: Cell::new(false),
+            rows,
+            moving: RefCell::default(),
+        }));
+        window.on_stack_down(|i, x, y| with_current(|stack| stack.down(i, x, y)));
+        window.on_stack_hovered(|i| with_current(|stack| stack.hovered(i)));
+        window.on_stack_remove(|i| {
+            with_current(|stack| {
+                if let Ok(i) = usize::try_from(i) {
+                    stack.0.items.borrow_mut().remove(i);
+                    stack.sync();
+                }
+            })
+        });
+        window.on_stack_copy(|| with_current(|stack| stack.send(Effect::Copy)));
+        window.on_stack_move(|| with_current(|stack| stack.send(Effect::Move)));
+        window.on_stack_clear(|| {
+            with_current(|stack| {
+                stack.0.items.borrow_mut().clear();
+                stack.sync();
+            })
+        });
+        CURRENT.with(|c| *c.borrow_mut() = Some(stack.clone()));
+        stack
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.0.open.get()
+    }
+
+    /// Adds `items` (path, is a folder as far as known); the strip opens. Says so when the
+    /// stack is full.
+    pub fn add(&self, items: Vec<(PathBuf, bool)>) {
+        let (added, full) = self.0.items.borrow_mut().add(items);
+        if full > 0 {
+            self.0.view.note(format!("The drop stack holds at most {STACK_MAX} items"));
+        }
+        if added > 0 {
+            self.0.open.set(true);
+            self.check();
+        }
+        self.sync();
+    }
+
+    /// `add-to-stack`: the selected items.
+    pub fn add_selection(&self) {
+        if self.0.view.shows_drives() {
+            return;
+        }
+        let items = self.0.view.selected_items();
+        if items.is_empty() {
+            return self.0.view.note("Select the items to add to the drop stack".to_owned());
+        }
+        self.add(items);
+    }
+
+    /// `toggle-stack`, View ▸ Drop stack.
+    pub fn toggle(&self) {
+        self.0.open.set(!self.0.open.get());
+        if self.0.open.get() {
+            self.check();
+        }
+        self.sync();
+    }
+
+    /// A job ended: a Move here takes what it moved off the stack; what is there may have
+    /// changed, so it is checked again.
+    pub fn job_finished(&self, id: JobId, report: &Report) {
+        let moving = self.0.moving.borrow_mut().take_if(|(job, _)| *job == id);
+        if let Some((_, moved)) = moving {
+            let failed: Vec<PathBuf> = report.failures.iter().map(|f| f.path.clone()).collect();
+            self.0.items.borrow_mut().moved(&moved, &failed);
+        }
+        if !self.0.items.borrow().items().is_empty() {
+            self.check();
+        }
+        self.sync();
+    }
+
+    /// Copy here / Move here: the paths still there, to the folder shown, as one job.
+    fn send(&self, effect: Effect) {
+        let Some(dir) = self.0.view.folder() else {
+            return self.0.view.note("Open a folder to copy or move the drop stack into".to_owned());
+        };
+        let paths = self.0.items.borrow().usable();
+        if paths.is_empty() {
+            return self.0.view.note("The drop stack has nothing to copy or move".to_owned());
+        }
+        let job = self.0.ops.transfer_job(paths.clone(), dir, effect);
+        if effect == Effect::Move {
+            *self.0.moving.borrow_mut() = Some((job, paths));
+        }
+    }
+
+    /// A press on item `index` (-1: all of them): Gezik's drag starts once it moves.
+    fn down(&self, index: i32, x: f32, y: f32) {
+        let items: Vec<(PathBuf, bool)> = {
+            let stack = self.0.items.borrow();
+            let pick = |item: &StackItem| (!item.gone).then(|| (item.path.clone(), item.is_dir));
+            match usize::try_from(index) {
+                Ok(i) => stack.items().get(i).and_then(pick).into_iter().collect(),
+                Err(_) => stack.items().iter().filter_map(pick).collect(),
+            }
+        };
+        if !items.is_empty() {
+            crate::drag::with_current(|drags| drags.stack_down(items, x, y));
+        }
+    }
+
+    /// The pointer rests on item `index`: its full path in the status bar.
+    fn hovered(&self, index: i32) {
+        let path = usize::try_from(index).ok().and_then(|i| self.0.items.borrow().items().get(i).map(|item| item.path.clone()));
+        if let Some(path) = path {
+            self.0.view.note(path.display().to_string());
+        }
+    }
+
+    /// Checks on a thread of its own which paths are still there.
+    fn check(&self) {
+        let paths: Vec<PathBuf> = self.0.items.borrow().items().iter().map(|item| item.path.clone()).collect();
+        let _ = std::thread::Builder::new().name("gezik-stack-check".into()).spawn(move || {
+            let found = check(paths);
+            let _ = slint::invoke_from_event_loop(move || {
+                with_current(|stack| {
+                    stack.0.items.borrow_mut().checked(&found);
+                    stack.sync();
+                })
+            });
+        });
+    }
+
+    /// The strip as the stack is now.
+    fn sync(&self) {
+        let Some(window) = self.0.window.upgrade() else { return };
+        let stack = self.0.items.borrow();
+        let rows = stack.items().iter().take(STACK_SHOWN).map(|item| {
+            let name = item.path.file_name().map_or_else(|| item.path.display().to_string(), |n| n.to_string_lossy().into_owned());
+            StackRow { kind: Kind::of(&name, item.is_dir).index(), name: name.into(), gone: item.gone }
+        });
+        crate::navigation::sync_model(&self.0.rows, rows);
+        window.set_stack_count(count_text(stack.items().len()).into());
+        window.set_stack_more(more_text(stack.items().len()).into());
+        window.set_stack_open(self.0.open.get());
+    }
+}
+```
+
+(`Option::take_if` kararlı; yoksa `if matches!(…) { take() }`.)
+
+- [ ] **Step 7: Bağlantılar.**
+
+`operations.rs`: `transfer`'in gövdesi `transfer_job`'a taşınır ve `JobId` döner; `transfer` `{ self.transfer_job(paths, dir, effect); }` olur (imzası değişmez). `finished`'in sonunda (`convert::with_current`'in yanına) `crate::stack::with_current(|stack| stack.job_finished(id, &report));`.
+
+`gezik/src/drag.rs`: `Dragging`'e `/// From the drop stack: the strip takes none of it back. from_stack: bool,` (bütün yazımlar `false`, şeritten başlayan `true`); `Phase`'e:
+
+```rust
+    /// A button went down on the drop stack's strip (an item, or all of them); a drag starts
+    /// once the pointer moves far enough.
+    StackArmed {
+        items: Vec<(PathBuf, bool)>,
+        x: f32,
+        y: f32,
+    },
+```
+
+`at_menu`: `Phase::Armed { .. } | Phase::StackArmed { .. } | Phase::Ended => AtMenu::Forget,`; `up`: `Phase::StackArmed { .. } => false,`. Ekle:
+
+```rust
+    /// A press on the drop stack's strip (`items`: what it drags).
+    pub fn stack_down(&self, items: Vec<(PathBuf, bool)>, x: f32, y: f32) {
+        *self.0.phase.borrow_mut() = Phase::StackArmed { items, x, y };
+    }
+```
+
+`moved`'ın başlangıç denetimi:
+
+```rust
+        enum Begin {
+            Entry(usize, bool),
+            Stack(Vec<(PathBuf, bool)>),
+        }
+        let begin = match &*self.0.phase.borrow() {
+            Phase::Armed { index, x: x0, y: y0, right, can_drag } => {
+                (*can_drag && drag::past_threshold(x - x0, y - y0)).then_some(Begin::Entry(*index, *right))
+            }
+            Phase::StackArmed { items, x: x0, y: y0 } => {
+                drag::past_threshold(x - x0, y - y0).then(|| Begin::Stack(items.clone()))
+            }
+            _ => None,
+        };
+        match begin {
+            Some(Begin::Entry(index, right)) => self.start(index, right, keys),
+            Some(Begin::Stack(items)) => self.start_with(items, None, false, keys, None, true),
+            None => {}
+        }
+```
+
+`start`'ın gövdesi `start_with`'e taşınır:
+
+```rust
+    /// The pointer went far enough from the press on entry `index`: drag the selection.
+    fn start(&self, index: usize, right: bool, keys: Keys) {
+        let items = self.0.view.selected_items();
+        let row = self.0.view.file_row(index);
+        self.start_with(items, row, right, keys, Some(index), false);
+    }
+
+    /// Drags `items` (path, is a folder); `row` gives the picture, else Gezik's own icon of the
+    /// first item.
+    fn start_with(
+        &self,
+        items: Vec<(PathBuf, bool)>,
+        row: Option<crate::FileRow>,
+        right: bool,
+        keys: Keys,
+        pressed: Option<usize>,
+        from_stack: bool,
+    ) {
+        if items.is_empty() {
+            *self.0.phase.borrow_mut() = Phase::Idle;
+            return;
+        }
+        let Some(window) = self.0.window.upgrade() else { return };
+        match row {
+            Some(row) => {
+                window.set_drag_icon(row.icon);
+                window.set_drag_has_icon(row.has_icon);
+                window.set_drag_kind(row.kind);
+            }
+            None => {
+                let (path, is_dir) = &items[0];
+                let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                window.set_drag_has_icon(false);
+                window.set_drag_kind(gezik_core::kind::Kind::of(&name, *is_dir).index());
+            }
+        }
+        window.set_drag_count(i32::try_from(items.len()).unwrap_or(i32::MAX));
+        window.set_drag_active(true);
+        self.0.handoff_failed.set(false);
+        self.0.grab_lost.set(false);
+        *self.0.phase.borrow_mut() = Phase::Dragging(Dragging {
+            all_dirs: items.iter().all(|(_, is_dir)| *is_dir),
+            sources: items.into_iter().map(|(path, _)| path).collect(),
+            right,
+            keys,
+            allowed: Allowed::ALL,
+            x: 0.0,
+            y: 0.0,
+            target: None,
+            pressed,
+            from_stack,
+        });
+    }
+```
+
+`layout`'ta `Layout { …, stack }`:
+
+```rust
+        let stack = (g.stack_height > 0.0)
+            .then(|| Rect { x: 0.0, y: g.stack_y, width: g.window_width, height: g.stack_height });
+```
+
+`resolve`'a `Hit::Stack if d.from_stack => return Target::none(hit),` ve `Hit::Stack => return Target { action: Some(Action::AddToStack), ..Target::none(hit) },`. `drop_on`'un başına (pinden sonra, sağ tuş dalından önce: sağ tuşla da yalnız eklenir):
+
+```rust
+        if target.action == Some(Action::AddToStack) {
+            let items = d.sources.into_iter().map(|path| (path, false)).collect();
+            crate::stack::with_current(|stack| stack.add(items));
+            // To a source program: nothing is moved, so it deletes nothing.
+            return Some(Effect::Copy);
+        }
+```
+
+`show`: `label` eşleşmesine `(Some(Action::AddToStack), _) => drag::label(Action::AddToStack, Path::new("")),` ve `window.set_drop_stack(target.hit == Hit::Stack && on);`. `offer_answer`'a:
+
+```rust
+            Phase::Offer(Dragging { target: Some(Target { action: Some(Action::AddToStack), .. }), .. }) => {
+                Answer { effect: Some(Effect::Copy), folder: Some("Drop stack".to_owned()) }
+            }
+```
+
+`context_menu.rs`: kimlik `/// 1408: View ▸ Drop stack. pub const TOGGLE_STACK: u32 = 1408;`; `view_items` `stack_open: bool`'u `preview_open`'dan sonra alır ve `PREVIEW_PANE`'den sonra `out.push((TOGGLE_STACK, mark(stack_open, "Drop stack")));`; `view_menu` `crate::stack` açıklığını geçirir (`let mut open = false; crate::stack::with_current(|s| open = s.is_open());`); `run`'da `(id, Subject::View)` genel kolundan **önce** `(TOGGLE_STACK, Subject::View) => crate::stack::with_current(crate::stack::Stack::toggle),`.
+
+`actions.rs`: `Action::AddToStack => crate::stack::with_current(crate::stack::Stack::add_selection),`, `Action::ToggleStack => crate::stack::with_current(crate::stack::Stack::toggle),` ("Not theirs"'ten çıkar). `main.rs`: `ops` kurulduktan sonra `let _stack = stack::Stack::new(&window, view.clone(), ops.clone());`.
+
+- [ ] **Step 8: Run.** `cargo test -j 8 -p gezik-core drag`, `cargo test -j 8 -p gezik stack drag context_menu` → PASS. Elle (Windows; kullanıcı uzakta değilse Task 9 listesine): Ctrl+Shift+S iki dosyayı ekler, şerit açılır; Explorer'dan şeride bırakılan dosya eklenir (Explorer'da kaynak yerinde); başka klasörde "Move here" → taşınır, yığından çıkar, Ctrl+Z geri getirir; silinen bir öğe soluk ve atlanır; şeritteki bir öğeyi listeye sürükleyince kopya/taşıma kuralı; View ▸ Drop stack kapatır. Dört komut.
+
+- [ ] **Step 9: Commit** "Gather files on a drop stack and copy or move them together".
+
+---
