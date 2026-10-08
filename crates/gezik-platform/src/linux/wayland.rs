@@ -26,7 +26,7 @@ use wayland_client::protocol::wl_surface::WlSurface;
 use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum, delegate_noop, event_created_child};
 
 use super::{UiEvent, uri};
-use crate::clipboard::{ClipboardError, ClipboardFiles};
+use crate::clipboard::{ClipboardError, ClipboardFiles, ClipboardImage, PasteKind};
 use crate::dnd::{Allowed, Answer, DragEnd, Effect, Keys, Offer, OutsideDrag};
 
 const URI_LIST: &str = "text/uri-list";
@@ -38,6 +38,8 @@ const TEXT_TYPES: [&str; 5] = [TEXT, "text/plain", "UTF8_STRING", "TEXT", "STRIN
 
 /// How long reading from another program may take.
 const TRANSFER_TIMEOUT: Duration = Duration::from_secs(1);
+/// A picture is bigger: it may take longer.
+const IMAGE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Which of the offered types Gezik reads files from, best first.
 pub(crate) fn preferred_mime(types: &[String]) -> Option<&'static str> {
@@ -166,11 +168,16 @@ impl Shared {
 
     /// Reads type `mime` of `offer` (blocking the UI thread at most a second).
     fn receive(&self, offer: &WlDataOffer, mime: &str) -> Option<Vec<u8>> {
+        self.receive_within(offer, mime, TRANSFER_TIMEOUT)
+    }
+
+    /// `receive` with its own time limit (a picture).
+    fn receive_within(&self, offer: &WlDataOffer, mime: &str, timeout: Duration) -> Option<Vec<u8>> {
         let (reader, writer) = pipe()?;
         offer.receive(mime.to_owned(), writer.as_fd());
         self.conn.flush().ok()?;
         drop(writer);
-        read_with_timeout(reader, TRANSFER_TIMEOUT)
+        read_with_timeout(reader, timeout)
     }
 
     fn create_source(&self, owned: Owned, types: &[&str]) -> Option<WlDataSource> {
@@ -601,6 +608,21 @@ impl Wayland {
 }
 
 impl Wayland {
+    /// The selection offer and its types, if the compositor told Gezik one.
+    fn selection(&self) -> Option<(WlDataOffer, Vec<String>)> {
+        let offer = self.0.inner().selection.clone()?;
+        let types = offer
+            .data::<OfferData>()
+            .map(|d| d.lock().unwrap_or_else(std::sync::PoisonError::into_inner).types.clone())
+            .unwrap_or_default();
+        Some((offer, types))
+    }
+
+    /// Gezik's own text on the clipboard (what is there when the compositor tells no offer).
+    fn own_text(&self) -> Option<String> {
+        self.0.inner().clipboard.as_ref().and_then(|(_, owned)| owned.text.clone())
+    }
+
     /// Puts `owned` on the clipboard, offered as `types`.
     fn own_clipboard(&self, owned: Owned, types: &[&str]) -> Result<(), ClipboardError> {
         let s = &self.0;
@@ -660,6 +682,32 @@ impl super::Backend for Wayland {
         }
         let cut = types.iter().any(|t| t == KDE_CUT) && s.receive(&offer, KDE_CUT).is_some_and(|v| v == b"1");
         Ok(Some(ClipboardFiles { paths, cut }))
+    }
+
+    fn paste_kind(&self) -> Option<PasteKind> {
+        let Some((_, types)) = self.selection() else { return self.own_text().map(|_| PasteKind::Text) };
+        let names: Vec<&str> = types.iter().map(String::as_str).collect();
+        super::paste_kind_of(&names)
+    }
+
+    fn read_image(&self) -> Result<Option<ClipboardImage>, ClipboardError> {
+        let Some((offer, types)) = self.selection() else { return Ok(None) };
+        if !types.iter().any(|t| t == "image/png") {
+            return Ok(None);
+        }
+        Ok(self.0.receive_within(&offer, "image/png", IMAGE_TIMEOUT).map(ClipboardImage::Png))
+    }
+
+    fn read_text(&self) -> Result<Option<String>, ClipboardError> {
+        let Some((offer, types)) = self.selection() else { return Ok(self.own_text()) };
+        let names: Vec<&str> = types.iter().map(String::as_str).collect();
+        let Some(name) = super::text_type(&names) else { return Ok(None) };
+        let Some(bytes) = self.0.receive(&offer, name) else { return Ok(None) };
+        Ok(Some(if name == "STRING" {
+            super::from_latin1(&bytes)
+        } else {
+            String::from_utf8_lossy(&bytes).into_owned()
+        }))
     }
 
     fn sequence(&self) -> u64 {

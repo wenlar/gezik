@@ -1,5 +1,5 @@
 //! The system clipboard, for files: copy or cut in Gezik and paste in Explorer or Finder, and
-//! the other way round; and text (paths copied as text, spec 4.2). On Linux, X11's or
+//! the other way round; text (paths copied as text, spec 4.2); and pictures and text read to paste as files (spec 9.1). On Linux, X11's or
 //! Wayland's (see `linux`).
 
 use std::fmt;
@@ -28,7 +28,85 @@ impl fmt::Display for ClipboardError {
     }
 }
 
-pub use imp::{clear, read_files, sequence, write_files, write_text};
+pub use gezik_core::templates::PasteKind;
+pub use imp::{clear, paste_kind, read_files, read_image, read_text, sequence, write_files, write_text};
+
+/// A picture on the clipboard, as it was read (the UI thread only reads; encoding happens in
+/// the job that writes the file).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClipboardImage {
+    /// A PNG file's bytes (Windows' "PNG" format, macOS, `image/png` on Linux).
+    Png(Vec<u8>),
+    /// A BMP file's bytes, made from Windows' `CF_DIBV5` / `CF_DIB`.
+    Bmp(Vec<u8>),
+}
+
+impl ClipboardImage {
+    /// The picture as a PNG file's bytes.
+    pub fn png_bytes(&self) -> std::io::Result<Vec<u8>> {
+        match self {
+            ClipboardImage::Png(bytes) => Ok(bytes.clone()),
+            ClipboardImage::Bmp(bytes) => {
+                let picture = image::load_from_memory_with_format(bytes, image::ImageFormat::Bmp).map_err(|err| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, format!("The picture cannot be read: {err}"))
+                })?;
+                let mut out = Vec::new();
+                picture
+                    .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+                    .map_err(std::io::Error::other)?;
+                Ok(out)
+            }
+        }
+    }
+}
+
+/// A BMP file from clipboard DIB data (a BITMAPINFOHEADER or a later one, maybe color masks
+/// and a color table, then the pixels): the 14-byte file header goes in front, saying where
+/// the pixels start. None for data too short to be a DIB.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn bmp_from_dib(dib: &[u8]) -> Option<Vec<u8>> {
+    let u32_at = |at: usize| dib.get(at..at + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
+    let header = usize::try_from(u32_at(0)?).ok()?;
+    if dib.len() < 40 || !(40..=dib.len()).contains(&header) {
+        return None;
+    }
+    let bit_count = u16::from_le_bytes([dib[14], dib[15]]);
+    let compression = u32_at(16)?;
+    let colors_used = usize::try_from(u32_at(32)?).ok()?;
+    // BI_BITFIELDS (3) and BI_ALPHABITFIELDS (6) after a 40-byte header: the masks follow it
+    // (later headers hold them inside).
+    let masks = match (header, compression) {
+        (40, 3) => 12,
+        (40, 6) => 16,
+        _ => 0,
+    };
+    let colors = if colors_used > 0 {
+        colors_used
+    } else if bit_count <= 8 {
+        1usize << bit_count
+    } else {
+        0
+    };
+    let offset = 14 + header + masks + colors * 4;
+    if offset > 14 + dib.len() {
+        return None;
+    }
+    let mut out = Vec::with_capacity(14 + dib.len());
+    out.extend_from_slice(b"BM");
+    out.extend_from_slice(&u32::try_from(14 + dib.len()).ok()?.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&u32::try_from(offset).ok()?.to_le_bytes());
+    out.extend_from_slice(dib);
+    Some(out)
+}
+
+/// `CF_UNICODETEXT` data as text: UTF-16 up to its NUL, line ends as they are.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn text_from_unicode(bytes: &[u8]) -> String {
+    let units: Vec<u16> =
+        bytes.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).take_while(|&unit| unit != 0).collect();
+    String::from_utf16_lossy(&units)
+}
 
 /// `CF_HDROP` data: a DROPFILES header (wide names) and each path, NUL-terminated, then a NUL.
 #[cfg(windows)]
@@ -80,14 +158,14 @@ mod imp {
 
     use windows::Win32::Foundation::{GlobalFree, HANDLE, HGLOBAL};
     use windows::Win32::System::DataExchange::{
-        CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber, OpenClipboard,
-        RegisterClipboardFormatW, SetClipboardData,
+        CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber, IsClipboardFormatAvailable,
+        OpenClipboard, RegisterClipboardFormatW, SetClipboardData,
     };
     use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock};
-    use windows::Win32::System::Ole::{CF_HDROP, CF_UNICODETEXT, DROPEFFECT_COPY, DROPEFFECT_MOVE};
+    use windows::Win32::System::Ole::{CF_DIB, CF_DIBV5, CF_HDROP, CF_UNICODETEXT, DROPEFFECT_COPY, DROPEFFECT_MOVE};
     use windows::Win32::UI::Shell::{CFSTR_PREFERREDDROPEFFECT, HDROP};
 
-    use super::{ClipboardError, ClipboardFiles};
+    use super::{ClipboardError, ClipboardFiles, ClipboardImage, PasteKind};
 
     fn failed(err: impl std::fmt::Display) -> ClipboardError {
         ClipboardError::Failed(err.to_string())
@@ -187,6 +265,63 @@ mod imp {
         }
     }
 
+    fn png_format() -> u32 {
+        unsafe { RegisterClipboardFormatW(windows::core::w!("PNG")) }
+    }
+
+    fn available(format: u32) -> bool {
+        unsafe { IsClipboardFormatAvailable(format) }.is_ok()
+    }
+
+    /// The bytes of clipboard memory `memory` (while the clipboard is open).
+    fn global_bytes(memory: HGLOBAL) -> Option<Vec<u8>> {
+        unsafe {
+            let size = GlobalSize(memory);
+            let source = GlobalLock(memory) as *const u8;
+            if source.is_null() {
+                return None;
+            }
+            let bytes = std::slice::from_raw_parts(source, size).to_vec();
+            let _ = GlobalUnlock(memory);
+            (!bytes.is_empty()).then_some(bytes)
+        }
+    }
+
+    fn data(format: u32) -> Option<Vec<u8>> {
+        let handle = unsafe { GetClipboardData(format) }.ok()?;
+        global_bytes(HGLOBAL(handle.0))
+    }
+
+    /// Formats only: the clipboard is not opened, no data is read.
+    pub fn paste_kind() -> Option<PasteKind> {
+        if available(u32::from(CF_HDROP.0)) {
+            return None;
+        }
+        if available(png_format()) || available(u32::from(CF_DIBV5.0)) || available(u32::from(CF_DIB.0)) {
+            return Some(PasteKind::Image);
+        }
+        available(u32::from(CF_UNICODETEXT.0)).then_some(PasteKind::Text)
+    }
+
+    /// PNG as it is, else the DIB (V5 first: it keeps the alpha) as a BMP file.
+    pub fn read_image() -> Result<Option<ClipboardImage>, ClipboardError> {
+        let _open = Open::new()?;
+        if let Some(png) = data(png_format()) {
+            return Ok(Some(ClipboardImage::Png(png)));
+        }
+        for format in [CF_DIBV5, CF_DIB] {
+            if let Some(bmp) = data(u32::from(format.0)).and_then(|dib| super::bmp_from_dib(&dib)) {
+                return Ok(Some(ClipboardImage::Bmp(bmp)));
+            }
+        }
+        Ok(None)
+    }
+
+    pub fn read_text() -> Result<Option<String>, ClipboardError> {
+        let _open = Open::new()?;
+        Ok(data(u32::from(CF_UNICODETEXT.0)).map(|bytes| super::text_from_unicode(&bytes)))
+    }
+
     pub fn sequence() -> u64 {
         u64::from(unsafe { GetClipboardSequenceNumber() })
     }
@@ -205,10 +340,13 @@ mod imp {
     use objc2::ClassType;
     use objc2::rc::Retained;
     use objc2::runtime::ProtocolObject;
-    use objc2_app_kit::{NSPasteboard, NSPasteboardWriting};
-    use objc2_foundation::{NSArray, NSString, NSURL};
+    use objc2_app_kit::{
+        NSBitmapImageFileType, NSBitmapImageRep, NSPasteboard, NSPasteboardTypeFileURL, NSPasteboardTypeString,
+        NSPasteboardTypeTIFF, NSPasteboardWriting,
+    };
+    use objc2_foundation::{NSArray, NSDictionary, NSString, NSURL};
 
-    use super::{ClipboardError, ClipboardFiles};
+    use super::{ClipboardError, ClipboardFiles, ClipboardImage, PasteKind};
 
     thread_local! {
         /// The pasteboard's change count when Gezik last cut: Finder has no "cut", so Gezik
@@ -265,6 +403,37 @@ mod imp {
         Ok(Some(ClipboardFiles { paths, cut }))
     }
 
+    /// The pasteboard's types: files first, then a picture, then text.
+    pub fn paste_kind() -> Option<PasteKind> {
+        let pasteboard = NSPasteboard::generalPasteboard();
+        let types = pasteboard.types()?;
+        let has = |wanted: &NSString| types.iter().any(|t| &*t == wanted);
+        if has(unsafe { NSPasteboardTypeFileURL }) {
+            None
+        } else if has(&NSString::from_str("public.png")) || has(unsafe { NSPasteboardTypeTIFF }) {
+            Some(PasteKind::Image)
+        } else {
+            has(unsafe { NSPasteboardTypeString }).then_some(PasteKind::Text)
+        }
+    }
+
+    /// `public.png` as it is; else the TIFF every picture copy carries, made PNG (spec 9.1).
+    pub fn read_image() -> Result<Option<ClipboardImage>, ClipboardError> {
+        let pasteboard = NSPasteboard::generalPasteboard();
+        if let Some(png) = pasteboard.dataForType(&NSString::from_str("public.png")) {
+            return Ok(Some(ClipboardImage::Png(png.to_vec())));
+        }
+        let Some(tiff) = pasteboard.dataForType(unsafe { NSPasteboardTypeTIFF }) else { return Ok(None) };
+        let Some(rep) = NSBitmapImageRep::imageRepWithData(&tiff) else { return Ok(None) };
+        let png = unsafe { rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &NSDictionary::new()) };
+        Ok(png.map(|data| ClipboardImage::Png(data.to_vec())))
+    }
+
+    pub fn read_text() -> Result<Option<String>, ClipboardError> {
+        let pasteboard = NSPasteboard::generalPasteboard();
+        Ok(pasteboard.stringForType(unsafe { NSPasteboardTypeString }).map(|text| text.to_string()))
+    }
+
     pub fn sequence() -> u64 {
         NSPasteboard::generalPasteboard().changeCount() as u64
     }
@@ -282,7 +451,7 @@ mod imp {
 mod imp {
     use std::path::PathBuf;
 
-    use super::{ClipboardError, ClipboardFiles};
+    use super::{ClipboardError, ClipboardFiles, ClipboardImage, PasteKind};
     use crate::linux::backend;
 
     pub fn write_files(paths: &[PathBuf], cut: bool) -> Result<(), ClipboardError> {
@@ -297,6 +466,18 @@ mod imp {
         backend().ok_or(ClipboardError::Unsupported)?.read_files()
     }
 
+    pub fn paste_kind() -> Option<PasteKind> {
+        backend()?.paste_kind()
+    }
+
+    pub fn read_image() -> Result<Option<ClipboardImage>, ClipboardError> {
+        backend().ok_or(ClipboardError::Unsupported)?.read_image()
+    }
+
+    pub fn read_text() -> Result<Option<String>, ClipboardError> {
+        backend().ok_or(ClipboardError::Unsupported)?.read_text()
+    }
+
     pub fn sequence() -> u64 {
         backend().map_or(0, |b| b.sequence())
     }
@@ -308,8 +489,89 @@ mod imp {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(any(windows, target_os = "macos"))]
     use super::*;
+
+    /// A 2×1 picture as clipboard DIB data: red then green, 24 bits, bottom-up.
+    fn dib() -> Vec<u8> {
+        let mut out = Vec::new();
+        for field in [40u32, 2, 1] {
+            out.extend_from_slice(&field.to_le_bytes()); // biSize, biWidth, biHeight
+        }
+        out.extend_from_slice(&1u16.to_le_bytes()); // biPlanes
+        out.extend_from_slice(&24u16.to_le_bytes()); // biBitCount
+        for field in [0u32, 8, 0, 0, 0, 0] {
+            out.extend_from_slice(&field.to_le_bytes()); // compression, size, ppm × 2, colors × 2
+        }
+        out.extend_from_slice(&[0, 0, 255, 0, 255, 0, 0, 0]); // BGR BGR, padded to 4 bytes
+        out
+    }
+
+    #[test]
+    fn a_dib_becomes_a_bmp_file() {
+        let bmp = bmp_from_dib(&dib()).unwrap();
+        assert_eq!(&bmp[..2], b"BM");
+        assert_eq!(u32::from_le_bytes(bmp[2..6].try_into().unwrap()) as usize, bmp.len());
+        assert_eq!(u32::from_le_bytes(bmp[10..14].try_into().unwrap()), 14 + 40, "the pixels follow the header");
+        let picture = image::load_from_memory_with_format(&bmp, image::ImageFormat::Bmp).unwrap().to_rgb8();
+        assert_eq!((picture.width(), picture.height()), (2, 1));
+        assert_eq!(picture.get_pixel(0, 0).0, [255, 0, 0]);
+        assert_eq!(picture.get_pixel(1, 0).0, [0, 255, 0]);
+        assert_eq!(bmp_from_dib(&dib()[..20]), None, "too short");
+        // 8 bits with no count given: a full 256-color table sits before the pixels.
+        let mut paletted = dib();
+        paletted[14..16].copy_from_slice(&8u16.to_le_bytes());
+        paletted.resize(40 + 256 * 4 + 4, 0);
+        let bmp = bmp_from_dib(&paletted).unwrap();
+        assert_eq!(u32::from_le_bytes(bmp[10..14].try_into().unwrap()), 14 + 40 + 1024);
+    }
+
+    #[test]
+    fn a_picture_is_written_as_png() {
+        let png = ClipboardImage::Bmp(bmp_from_dib(&dib()).unwrap()).png_bytes().unwrap();
+        let back = image::load_from_memory_with_format(&png, image::ImageFormat::Png).unwrap().to_rgb8();
+        assert_eq!(back.get_pixel(0, 0).0, [255, 0, 0]);
+        assert_eq!(ClipboardImage::Png(png.clone()).png_bytes().unwrap(), png, "PNG data as it came");
+        assert!(ClipboardImage::Bmp(b"BM nonsense".to_vec()).png_bytes().is_err());
+    }
+
+    #[test]
+    fn unicode_text_ends_at_its_nul() {
+        let bytes: Vec<u8> = "a ş
+b junk"
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect();
+        assert_eq!(
+            text_from_unicode(&bytes),
+            "a ş
+b",
+            "line ends kept as they are"
+        );
+    }
+
+    /// Uses the real clipboard: run by hand (`cargo test -p gezik-platform -- --ignored`).
+    #[cfg(any(windows, target_os = "macos"))]
+    #[test]
+    #[ignore = "replaces the user's clipboard"]
+    fn text_comes_back_as_text_to_paste() {
+        write_text(
+            "satır 1
+satır 2",
+        )
+        .unwrap();
+        assert_eq!(paste_kind(), Some(PasteKind::Text));
+        assert_eq!(
+            read_text().unwrap().as_deref(),
+            Some(
+                "satır 1
+satır 2"
+            )
+        );
+        write_files(&[std::env::temp_dir().join("a")], false).unwrap();
+        assert_eq!(paste_kind(), None, "files paste as files");
+        clear().unwrap();
+        assert_eq!(paste_kind(), None);
+    }
 
     #[cfg(windows)]
     #[test]

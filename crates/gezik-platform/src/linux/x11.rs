@@ -22,7 +22,7 @@ use x11rb::wrapper::ConnectionExt as _;
 use x11rb::{CURRENT_TIME, NONE};
 
 use super::{UiEvent, uri, xdnd};
-use crate::clipboard::{ClipboardError, ClipboardFiles};
+use crate::clipboard::{ClipboardError, ClipboardFiles, ClipboardImage, PasteKind};
 use crate::dnd::{Allowed, Answer, DragEnd, Effect, Keys, Offer, OutsideDrag};
 
 x11rb::atom_manager! {
@@ -33,6 +33,8 @@ x11rb::atom_manager! {
         UTF8_STRING,
         TEXT,
         TEXT_PLAIN: b"text/plain;charset=utf-8",
+        TEXT_PLAIN_ANY: b"text/plain",
+        IMAGE_PNG: b"image/png",
         URI_LIST: b"text/uri-list",
         GNOME_FILES: b"x-special/gnome-copied-files",
         KDE_CUT: b"application/x-kde-cutselection",
@@ -54,6 +56,8 @@ x11rb::atom_manager! {
 
 /// How long a transfer from another program may take before Gezik gives up on it.
 const TRANSFER_TIMEOUT: Duration = Duration::from_secs(1);
+/// A picture arrives in pieces (INCR) and may take longer.
+const IMAGE_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long a drop may wait for the target's `XdndFinished`.
 const FINISH_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -250,19 +254,31 @@ impl Shared {
 
     /// Asks the owner of `selection` for `target` and waits (on the UI thread) for the bytes.
     fn transfer(&self, selection: Atom, target: Atom, time: u32) -> Option<Vec<u8>> {
+        self.transfer_within(selection, target, time, TRANSFER_TIMEOUT)
+    }
+
+    /// `transfer` with its own time limit (a picture).
+    fn transfer_within(&self, selection: Atom, target: Atom, time: u32, timeout: Duration) -> Option<Vec<u8>> {
         let (tx, rx) = mpsc::channel();
         *self.waiting.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(tx);
-        let result = self.transfer_with(&rx, selection, target, time);
+        let result = self.transfer_with(&rx, selection, target, time, timeout);
         *self.waiting.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
         result
     }
 
-    fn transfer_with(&self, rx: &Receiver<Event>, selection: Atom, target: Atom, time: u32) -> Option<Vec<u8>> {
+    fn transfer_with(
+        &self,
+        rx: &Receiver<Event>,
+        selection: Atom,
+        target: Atom,
+        time: u32,
+        timeout: Duration,
+    ) -> Option<Vec<u8>> {
         let property = self.atoms.GEZIK_TRANSFER;
         self.conn.delete_property(self.window, property).ok()?;
         self.conn.convert_selection(self.window, selection, target, property, time).ok()?;
         self.conn.flush().ok()?;
-        let deadline = Instant::now() + TRANSFER_TIMEOUT;
+        let deadline = Instant::now() + timeout;
         let wait = |rx: &Receiver<Event>| rx.recv_timeout(deadline.saturating_duration_since(Instant::now())).ok();
         loop {
             match wait(rx)? {
@@ -488,6 +504,39 @@ impl X11 {
     }
 }
 
+impl X11 {
+    /// The clipboard owner's targets by name, those Gezik knows (the rest do not matter here).
+    fn offered_names(&self) -> Vec<&'static str> {
+        let s = &self.0;
+        let a = &s.atoms;
+        let Some(targets) = s.transfer(a.CLIPBOARD, a.TARGETS, CURRENT_TIME) else { return Vec::new() };
+        let offered: Vec<Atom> = targets.as_chunks::<4>().0.iter().map(|c| u32::from_ne_bytes(*c)).collect();
+        let known: [(Atom, &'static str); 8] = [
+            (a.URI_LIST, "text/uri-list"),
+            (a.GNOME_FILES, "x-special/gnome-copied-files"),
+            (a.IMAGE_PNG, "image/png"),
+            (a.UTF8_STRING, "UTF8_STRING"),
+            (a.TEXT_PLAIN, "text/plain;charset=utf-8"),
+            (a.TEXT_PLAIN_ANY, "text/plain"),
+            (a.TEXT, "TEXT"),
+            (AtomEnum::STRING.into(), "STRING"),
+        ];
+        known.iter().filter(|(atom, _)| offered.contains(atom)).map(|(_, name)| *name).collect()
+    }
+
+    /// The atom of text type `name` (one of `TEXT_TYPES`).
+    fn text_atom(&self, name: &str) -> Atom {
+        let a = &self.0.atoms;
+        match name {
+            "UTF8_STRING" => a.UTF8_STRING,
+            "text/plain;charset=utf-8" => a.TEXT_PLAIN,
+            "text/plain" => a.TEXT_PLAIN_ANY,
+            "TEXT" => a.TEXT,
+            _ => AtomEnum::STRING.into(),
+        }
+    }
+}
+
 impl super::Backend for X11 {
     fn write_files(&self, paths: &[PathBuf], cut: bool) -> Result<(), ClipboardError> {
         self.own_clipboard(Owned { paths: paths.to_vec(), cut, text: None })
@@ -529,6 +578,39 @@ impl super::Backend for X11 {
         }
         let cut = ask.kde_cut && s.transfer(a.CLIPBOARD, a.KDE_CUT, CURRENT_TIME).is_some_and(|v| v == b"1");
         Ok(Some(ClipboardFiles { paths, cut }))
+    }
+
+    fn paste_kind(&self) -> Option<PasteKind> {
+        let s = &self.0;
+        if s.owns(s.atoms.CLIPBOARD) {
+            // Gezik's own: copied paths are text, cut or copied files paste as files.
+            return s.state().clipboard.as_ref().and_then(|o| o.text.as_ref()).map(|_| PasteKind::Text);
+        }
+        super::paste_kind_of(&self.offered_names())
+    }
+
+    fn read_image(&self) -> Result<Option<ClipboardImage>, ClipboardError> {
+        let s = &self.0;
+        if s.owns(s.atoms.CLIPBOARD) || !self.offered_names().contains(&"image/png") {
+            return Ok(None);
+        }
+        let png = s.transfer_within(s.atoms.CLIPBOARD, s.atoms.IMAGE_PNG, CURRENT_TIME, IMAGE_TIMEOUT);
+        Ok(png.map(ClipboardImage::Png))
+    }
+
+    fn read_text(&self) -> Result<Option<String>, ClipboardError> {
+        let s = &self.0;
+        if s.owns(s.atoms.CLIPBOARD) {
+            return Ok(s.state().clipboard.as_ref().and_then(|o| o.text.clone()));
+        }
+        let offered = self.offered_names();
+        let Some(name) = super::text_type(&offered) else { return Ok(None) };
+        let Some(bytes) = s.transfer(s.atoms.CLIPBOARD, self.text_atom(name), CURRENT_TIME) else { return Ok(None) };
+        Ok(Some(if name == "STRING" {
+            super::from_latin1(&bytes)
+        } else {
+            String::from_utf8_lossy(&bytes).into_owned()
+        }))
     }
 
     fn sequence(&self) -> u64 {
