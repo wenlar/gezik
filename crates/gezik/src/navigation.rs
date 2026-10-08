@@ -611,8 +611,8 @@ impl Navigator {
         self.0.borrow().view.entry_path(index)
     }
 
-    pub fn open_row(&self, index: i32) {
-        let Some((path, is_dir)) = self.entry_path(index) else { return };
+    /// Opens the file with its default app, or goes into the folder.
+    pub fn open_item(&self, path: PathBuf, is_dir: bool) {
         if is_dir {
             self.go(Location::Path(path));
         } else if let Err(err) = open::that_detached(&path) {

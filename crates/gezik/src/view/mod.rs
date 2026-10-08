@@ -15,6 +15,7 @@ use std::time::Duration;
 
 use gezik_config::settings::ViewDefaults;
 use gezik_config::store::ConfigStore;
+use gezik_core::Entry;
 use gezik_core::kind::{fallback_type_name, own_type_name};
 use gezik_core::layout::{Geometry, Move, Rect};
 use gezik_core::nav::ViewState;
@@ -26,8 +27,8 @@ use gezik_core::view::{
     ColumnKey, ColumnState, GridSize, MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH, ViewMode, ViewSettings, default_columns,
     normalize_columns,
 };
+use gezik_core::view::{DateFormat, ViewOptions};
 use gezik_core::view_memory::ViewMemory;
-use gezik_core::{Entry, format_size};
 use slint::{ComponentHandle, ModelRc};
 
 use crate::media::{Media, Ready};
@@ -47,8 +48,12 @@ type Listener = Rc<dyn Fn()>;
 
 struct Inner {
     window: slint::Weak<AppWindow>,
-    /// Files whose names start with a dot are listed (macOS hides them, as Finder does).
-    show_hidden: Cell<bool>,
+    /// `[view]`'s options in effect (view_options.rs).
+    options: Cell<ViewOptions>,
+    /// Redraws the dates on screen every minute while they are relative.
+    minute: slint::Timer,
+    /// The entry the last left press without Ctrl (Cmd) or Shift was on (single-click-open).
+    plain_press: Cell<Option<usize>>,
     data: Rc<RefCell<ViewData>>,
     model: Rc<ItemsModel>,
     /// Bumped on every `show` and `clear`, so a delayed scroll restore of an older
@@ -163,7 +168,9 @@ impl View {
             folder: RefCell::new(None),
             save_pending: Cell::new(false),
             columns: RefCell::new(default_columns()),
-            show_hidden: Cell::new(!cfg!(target_os = "macos")),
+            options: Cell::new(ViewOptions::default()),
+            minute: slint::Timer::default(),
+            plain_press: Cell::new(None),
             filter: RefCell::new(None),
             cleared: Cell::new(false),
             remembered: RefCell::new(None),
@@ -184,7 +191,9 @@ impl View {
     /// `[view]` settings, at startup and whenever settings.toml changes. A folder without
     /// its own view follows the new defaults at once.
     pub fn set_defaults(&self, defaults: ViewDefaults) {
-        if self.0.defaults.replace(defaults) == defaults {
+        // `options` go through `set_options` (view_options.rs): a change of only them must not
+        // reset the model and lose the scroll.
+        if same_apart_from_options(&self.0.defaults.replace(defaults), &defaults) {
             return;
         }
         {
@@ -294,7 +303,8 @@ impl View {
             self.0.media.new_generation();
         }
         self.apply_layout();
-        let listing = if self.0.show_hidden.get() { listing } else { listing.without_dotfiles() };
+        let options = self.0.options.get();
+        let listing = listing.without_hidden(options.show_hidden, options.show_system);
         let listing = self.sorted(listing, true);
         // A reload of the folder on screen keeps the bar as it is now (the text may have
         // changed while it loaded); so does a move to it (its breadcrumb or sidebar entry, its
@@ -700,12 +710,72 @@ impl View {
     /// the range from the anchor (Ctrl+Shift adds that range). On an entry already selected
     /// (no Shift) that waits for the release, so the selection can be dragged.
     pub fn press(&self, index: usize, ctrl: bool, shift: bool) {
+        self.0.plain_press.set((!ctrl && !shift).then_some(index));
         let changes = {
             let mut data = self.0.data.borrow_mut();
             let ViewData { selection, pending, .. } = &mut *data;
             pending.press(selection, index, ctrl, shift)
         };
         self.after_selection(&changes);
+    }
+
+    /// Whether the last left press, plain (no Ctrl, Cmd or Shift), was on entry `index`: its
+    /// release opens it with single-click-open. Forgotten once asked.
+    pub fn take_plain_press(&self, index: usize) -> bool {
+        self.0.plain_press.take() == Some(index)
+    }
+
+    /// `[view]`'s options (view_options.rs). Returns whether the folder must be read again
+    /// (hidden or system items come or go); the rest applies here at once.
+    pub fn set_options(&self, options: ViewOptions) -> bool {
+        let old = self.0.options.replace(options);
+        if old == options {
+            return false;
+        }
+        self.0.data.borrow_mut().options = options;
+        self.follow_relative_dates(options.date_format == DateFormat::Relative);
+        if old.folders_first != options.folders_first {
+            self.resort(false);
+        } else if (old.hide_extensions, old.date_format, old.size_format)
+            != (options.hide_extensions, options.date_format, options.size_format)
+        {
+            let scroll = self.0.window.upgrade().map_or(0.0, |w| w.get_list_scroll());
+            self.0.model.notify.reset();
+            self.keep_scroll_after_reset(scroll);
+        }
+        self.update_status();
+        self.notify_listeners();
+        (old.show_hidden, old.show_system) != (options.show_hidden, options.show_system)
+    }
+
+    /// With relative dates the lines on screen are drawn again every minute ("5 min ago").
+    fn follow_relative_dates(&self, on: bool) {
+        if !on {
+            return self.0.minute.stop();
+        }
+        if self.0.minute.running() {
+            return;
+        }
+        let weak = Rc::downgrade(&self.0);
+        self.0.minute.start(slint::TimerMode::Repeated, Duration::from_secs(60), move || {
+            if let Some(inner) = weak.upgrade() {
+                View(inner).redraw_visible();
+            }
+        });
+    }
+
+    /// Draws again the lines on screen only (a minute passed).
+    fn redraw_visible(&self) {
+        let Some(window) = self.0.window.upgrade() else { return };
+        let line_height = match self.geometry() {
+            Geometry::List { row_height } => row_height,
+            Geometry::Grid { cell_height, .. } => cell_height,
+        };
+        let lines = visible_lines(window.get_list_scroll(), window.get_drop_geometry().list_height, line_height);
+        let per_row = self.0.model.per_row();
+        let len = self.0.data.borrow().listing.len();
+        let entries = (lines.start * per_row).min(len)..(lines.end * per_row).min(len);
+        self.0.model.entries_changed(std::slice::from_ref(&entries));
     }
 
     /// The left button came up over entry `index` after a press; `dragged`: it became a drag.
@@ -965,17 +1035,6 @@ impl View {
         }
     }
 
-    /// Shows the files whose names start with a dot if they were hidden, or hides them; the
-    /// folder must be listed again to take effect.
-    pub fn toggle_hidden(&self) {
-        self.0.show_hidden.set(!self.0.show_hidden.get());
-    }
-
-    /// Whether hidden items are shown.
-    pub fn shows_hidden(&self) -> bool {
-        self.0.show_hidden.get()
-    }
-
     /// The folder shown; `None` for "This PC".
     pub fn folder(&self) -> Option<PathBuf> {
         self.0.data.borrow().listing.folder().map(Path::to_path_buf)
@@ -1206,7 +1265,9 @@ impl View {
     /// (`by_name`), so the default order costs nothing.
     fn sorted(&self, listing: Listing, by_name: bool) -> Listing {
         match listing {
-            Listing::Files(dir, entries) if !(by_name && self.sort() == SortSpec::default()) => {
+            Listing::Files(dir, entries)
+                if !(by_name && self.sort() == SortSpec::default() && self.0.options.get().folders_first) =>
+            {
                 Listing::Files(dir, self.sort_now(entries).0)
             }
             other => other,
@@ -1221,7 +1282,7 @@ impl View {
             self.request_type_names(&entries);
         }
         let mut entries = Rc::unwrap_or_clone(entries);
-        let order = sort_entries(&mut entries, spec, |e| self.type_name_of(e));
+        let order = sort_entries(&mut entries, spec, self.0.options.get().folders_first, |e| self.type_name_of(e));
         (Rc::new(entries), order)
     }
 
@@ -1462,6 +1523,24 @@ pub fn hidden_note(hidden: usize) -> Option<String> {
     }
 }
 
+/// The lines on screen: from the one the list is scrolled to (`scroll` is zero or negative) to
+/// the last one any part of which shows.
+pub fn visible_lines(scroll: f32, height: f32, line_height: f32) -> std::ops::Range<usize> {
+    if line_height <= 0.0 {
+        return 0..0;
+    }
+    let first = (-scroll / line_height).floor().max(0.0) as usize;
+    let last = ((-scroll + height) / line_height).ceil().max(0.0) as usize;
+    first..last.max(first)
+}
+
+/// Whether two `[view]` settings differ at most in `options` (those apply through
+/// `View::set_options`, which keeps the scroll).
+fn same_apart_from_options(a: &ViewDefaults, b: &ViewDefaults) -> bool {
+    let ViewDefaults { view, icons, thumbnails, options: _ } = *a;
+    view == b.view && icons == b.icons && thumbnails == b.thumbnails
+}
+
 /// The filter bar's counter: shown of all, `1,234 / 100,000`.
 pub fn filter_count_text(shown: usize, total: usize) -> String {
     use crate::preview::with_commas;
@@ -1474,7 +1553,7 @@ pub fn status_text(count: usize, selected: usize, selected_size: Option<u64>) ->
     let items = if count == 1 { "1 item".to_owned() } else { format!("{count} items") };
     match (selected, selected_size) {
         (0, _) => items,
-        (n, Some(size)) => format!("{items} · {n} selected ({})", format_size(size)),
+        (n, Some(size)) => format!("{items} · {n} selected ({})", crate::view_options::size_text(size)),
         (n, None) => format!("{items} · {n} selected"),
     }
 }
@@ -1483,6 +1562,25 @@ pub fn status_text(count: usize, selected: usize, selected_size: Option<u64>) ->
 mod tests {
     use super::*;
     use listing::files;
+
+    #[test]
+    fn the_lines_on_screen_are_redrawn() {
+        assert_eq!(visible_lines(0.0, 260.0, 26.0), 0..10, "ten whole lines");
+        assert_eq!(visible_lines(-260.0, 260.0, 26.0), 10..20);
+        assert_eq!(visible_lines(0.0, 270.0, 26.0), 0..11, "and a part of the eleventh");
+        assert_eq!(visible_lines(-13.0, 26.0, 26.0), 0..2, "half of two lines");
+        assert_eq!(visible_lines(0.0, 100.0, 0.0), 0..0, "no line height: none");
+    }
+
+    #[test]
+    fn a_change_of_only_the_options_is_not_a_change_of_the_defaults() {
+        let before = ViewDefaults::default();
+        let mut after = before;
+        after.options.hide_extensions = !after.options.hide_extensions;
+        assert!(same_apart_from_options(&before, &after));
+        after.thumbnails = !after.thumbnails;
+        assert!(!same_apart_from_options(&before, &after));
+    }
 
     #[test]
     #[allow(clippy::single_range_in_vec_init, reason = "one changed range of entries")]

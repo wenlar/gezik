@@ -73,6 +73,7 @@ Note in the results any other line in the terminal.
 | Clear folder history | `clear-history` (no key by default) |
 | Open terminal here | Shift+F4, Ctrl+Alt+T (GNOME/Ubuntu take Ctrl+Alt+T themselves) |
 | Copy path | Ctrl+Shift+C |
+| Pinned folders 1-9 | Alt+1…Alt+9 (in the sidebar's order; note whether the desktop takes Alt+digit itself) |
 | Command keys | `shortcut` in a `[[commands]]` entry (Ctrl, Alt or an F key is needed) |
 
 All of these are listed in `settings.toml` under `[shortcuts]`.
@@ -379,6 +380,9 @@ Keyboard (6b: path completion, folder history, command keys)
     - Several items: one per line. Nothing selected: the folder shown. On Wayland as well (note it).
     - Cut a file (Ctrl+X), then copy a path: Ctrl+V in a folder moves nothing.
 46. **Session and tab sets.** Open three tabs, lock one, put another in front, close Gezik, open it again: the same tabs, the same one in front, the lock in place. `kill -9` it and open it again: the same. `gezik <folder>` opens that folder after the saved ones, in front. `[session]` `restore = false`: `state.toml` loses `[session]`. Right-click a tab ▸ "Save tabs as…" ▸ a name, "Open tab set ▸" opens it after the tabs, "Replace tabs with…" keeps a locked tab, "Delete…" removes it. With `save-tab-set` bound under `[shortcuts]`, the key does the same.
+47. **Pinned folders 1-9 and AltGr.** Pin three folders; Alt+1…Alt+3 go to them in the sidebar's order, also while typing in the path field; Alt+4 does nothing. Note whether GNOME/KDE take Alt+digit for themselves (switching workspaces or apps). With a layout that has AltGr (Turkish Q, German): AltGr+7 in the path field types `{` (or the layout's character) and goes to no pin. If the layout reports AltGr as plain Alt (some X11 setups do), AltGr+digit goes to a pin instead: note it, it is a known risk of the Alt+digit rule.
+48. **Pinned groups and their menus.** Write a list with an alias and two groups by hand (see `gui.sh pins`): headings as written, "PINNED" only above ungrouped pins. Right-click a heading: Move group up/down, Rename group…, Ungroup. Right-click a pin: Rename…, Move to group ▸ (other groups, New group…, No group). Drag a pin into another group: the line shows where it lands. Rest on a pin: a tip with the full path and "Alt+1".
+49. **View options.** Ctrl+H writes `show-hidden` in `settings.toml` and the View menu's "Show hidden items" follows. View ▸ Hide extensions, Folders first, Single-click to open, Date format ▸ Relative ("1 min ago"), Size format ▸ Decimal: a 1,500-byte file is `1.5 kB`, the same as GNOME Files' size. Change the `[view]` lines by hand: they apply at once.
 
 ## Known gaps (not bugs)
 

@@ -176,7 +176,7 @@ mod tests {
     }
 
     fn entry(name: &str) -> Entry {
-        Entry { name: name.to_owned(), is_dir: false, size: 0, modified: None, created: None }
+        Entry { name: name.to_owned(), is_dir: false, flags: 0, size: 0, modified: None, created: None }
     }
 
     #[test]

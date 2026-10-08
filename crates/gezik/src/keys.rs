@@ -33,7 +33,6 @@ pub fn command_chord(index: usize) -> Option<Chord> {
 }
 
 /// A chord as a menu shows it: ⌃⌥⇧⌘ and the key on macOS, "Ctrl+Alt+Shift+K" elsewhere.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn chord_label(chord: &Chord, platform: Platform) -> String {
     let key = match chord.key {
         Key::Char(c) => c.to_ascii_uppercase().to_string(),
@@ -264,8 +263,9 @@ pub fn physical_of(code: slint::winit_030::winit::keyboard::KeyCode) -> Physical
 
 /// The chord of a key press (see `chord_from_slint`), with what winit said the key was: the
 /// keypad's + - * / are `Key::Num`; Ctrl (⌘) on a digit key is that digit, with or without
-/// Shift, whatever the key types (`!` and `'` with Shift; `&`, `é` unshifted on AZERTY). Not
-/// with Alt: AltGr (Ctrl+Alt on Windows) types characters. Only a press that types something:
+/// Shift, whatever the key types (`!` and `'` with Shift; `&`, `é` unshifted on AZERTY); so is
+/// Alt alone off macOS and ⌘⌥ on macOS (`digit_chord`). Not Ctrl+Alt: AltGr (Ctrl+Alt on
+/// Windows) types characters. Only a press that types something:
 /// a modifier key goes by its text. Never one that types a Latin letter: no layout has those
 /// on the digit row, but a virtual keyboard's own keymap (wtype, an on-screen keyboard on
 /// Wayland) can put `c` on the 1 key's scan code.
@@ -287,15 +287,27 @@ pub fn chord_from_press(
         Physical::Numpad(c) if typed_char(text) == Some(c) => {
             Some(Chord { ctrl, alt, shift, meta: cmd, key: Key::Num(c) })
         }
-        Physical::Digit(d) if (ctrl || cmd) && !alt && typed_char(text).is_some_and(|c| !c.is_ascii_alphabetic()) => {
+        Physical::Digit(d)
+            if digit_chord(ctrl, alt, cmd, platform) && typed_char(text).is_some_and(|c| !c.is_ascii_alphabetic()) =>
+        {
             Some(Chord { ctrl, alt, shift, meta: cmd, key: Key::Char(d) })
         }
         _ => chord_from_slint(text, control, alt, shift, meta, platform),
     }
 }
 
+/// Whether a digit key with these modifiers is that digit whatever it types: Ctrl (⌘) without
+/// Alt (AltGr is Ctrl+Alt on Windows, and types); Alt alone (Shift may be held) on Windows and
+/// Linux; ⌘⌥ on macOS (the pinned folders, spec 10.3).
+fn digit_chord(ctrl: bool, alt: bool, cmd: bool, platform: Platform) -> bool {
+    ((ctrl || cmd) && !alt)
+        || match platform {
+            Platform::Other => alt && !ctrl && !cmd,
+            Platform::Mac => cmd && alt,
+        }
+}
+
 /// The chord bound to `action` now, if any.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn chord_for(action: Action) -> Option<Chord> {
     SHORTCUTS.with(|s| s.borrow().chord_for(action))
 }
@@ -737,6 +749,15 @@ mod tests {
                 Action::Tab7 => "ctrl+7",
                 Action::Tab8 => "ctrl+8",
                 Action::TabLast => "ctrl+9",
+                Action::Pin1 => "alt+1",
+                Action::Pin2 => "alt+2",
+                Action::Pin3 => "alt+3",
+                Action::Pin4 => "alt+4",
+                Action::Pin5 => "alt+5",
+                Action::Pin6 => "alt+6",
+                Action::Pin7 => "alt+7",
+                Action::Pin8 => "alt+8",
+                Action::Pin9 => "alt+9",
                 Action::ReopenTab => "ctrl+shift+t",
                 Action::TabPicker => "ctrl+shift+a",
                 Action::OpenTerminal => "shift+f4",
@@ -864,6 +885,30 @@ mod tests {
         // Letters that some layouts put on the digit row still count (Czech `ě`, Lithuanian `ą`).
         let czech = chord_from_press("ě", Physical::Digit('2'), true, false, false, false, Platform::Other);
         assert_eq!(czech.and_then(|c| defaults.action_for(&c)), Some(Action::Tab2));
+    }
+
+    #[test]
+    fn alt_and_a_digit_key_is_the_pin_on_every_layout() {
+        let defaults = Shortcuts::defaults(Platform::Other);
+        let alt = |text: &str, digit: char| {
+            chord_from_press(text, Physical::Digit(digit), false, true, false, false, Platform::Other)
+                .and_then(|c| defaults.action_for(&c))
+        };
+        assert_eq!(alt("1", '1'), Some(Action::Pin1), "US and Turkish Q");
+        assert_eq!(alt("&", '1'), Some(Action::Pin1), "AZERTY: the 1 key types &");
+        assert_eq!(alt("ç", '9'), Some(Action::Pin9));
+        // AltGr (Ctrl+Alt on Windows) still types: Turkish Q AltGr+7 is `{`.
+        assert_eq!(chord_from_press("{", Physical::Digit('7'), true, true, false, false, Platform::Other), None);
+        let ctrl = chord_from_press("1", Physical::Digit('1'), true, false, false, false, Platform::Other);
+        assert_eq!(ctrl.and_then(|c| defaults.action_for(&c)), Some(Action::Tab1));
+        // macOS: ⌘⌥ and the 1 key (⌥1 types ¡ on US, & on AZERTY).
+        let mac = Shortcuts::defaults(Platform::Mac);
+        for text in ["¡", "&", "1"] {
+            let got = chord_from_press(text, Physical::Digit('1'), true, true, false, false, Platform::Mac);
+            assert_eq!(got.and_then(|c| mac.action_for(&c)), Some(Action::Pin1), "{text}");
+        }
+        // ⌥ alone on macOS types a character: no shortcut.
+        assert_eq!(chord_from_press("¡", Physical::Digit('1'), false, true, false, false, Platform::Mac), None);
     }
 
     #[test]

@@ -1,13 +1,15 @@
 //! `settings.toml` (portable, may be synced) and `state.toml` (this machine only).
 
 use crate::Warning;
+use crate::pins::{PinEntry, find as find_pin, parse_pin};
 use crate::shortcuts::{KeyOwner, Platform, Shortcuts, fixed_owner, parse_chord};
 use gezik_core::batch::convert::{CommandSpec, check_command};
 use gezik_core::history::Visit;
 use gezik_core::nav::{Location, Session, SessionTab};
 use gezik_core::ops::threads::{COPY_THREADS_RANGE, CopyThreads};
 use gezik_core::view::{
-    ColumnKey, ColumnState, GridSize, IconMode, SortDir, SortKey, ViewMode, ViewSettings, normalize_columns,
+    ColumnKey, ColumnState, DateFormat, GridSize, IconMode, SizeFormat, SortDir, SortKey, ViewMode, ViewOptions,
+    ViewSettings, normalize_columns,
 };
 use std::path::PathBuf;
 
@@ -38,11 +40,18 @@ pub struct ViewDefaults {
     pub icons: IconMode,
     /// Pictures and videos show a thumbnail in the grid.
     pub thumbnails: bool,
+    /// The options that are the same in every folder (spec 7.1).
+    pub options: ViewOptions,
 }
 
 impl Default for ViewDefaults {
     fn default() -> Self {
-        ViewDefaults { view: ViewSettings::default(), icons: IconMode::System, thumbnails: true }
+        ViewDefaults {
+            view: ViewSettings::default(),
+            icons: IconMode::System,
+            thumbnails: true,
+            options: ViewOptions::default(),
+        }
     }
 }
 
@@ -214,8 +223,9 @@ pub struct Settings {
     pub density: Density,
     /// `"drives"`, or a path (with `{home}`-style tokens) to open new tabs in.
     pub start_folder: String,
-    /// Pinned folders as written (tokenized, `/` separators), in display order.
-    pub pinned: Vec<String>,
+    /// Pinned folders as written (tokenized, `/` separators), in the file's order (the sidebar shows
+    /// them grouped: `pins::normalize`).
+    pub pinned: Vec<PinEntry>,
     pub shortcuts: Shortcuts,
     pub view: ViewDefaults,
     pub files: FilesSettings,
@@ -354,14 +364,13 @@ impl Settings {
                 None => warnings.push(Warning::new(file, format!("pinned: expected a list of folders, got {value}"))),
                 Some(items) => {
                     for item in items {
-                        let Some(text) = item.as_str() else {
-                            warnings.push(Warning::new(file, format!("pinned: expected text, got {item}")));
-                            continue;
-                        };
-                        if crate::paths::has_parent_segment(text) {
-                            warnings.push(Warning::new(file, format!("pinned: \"{text}\" must not contain \"..\"")));
-                        } else if !settings.pinned.iter().any(|p| p == text) {
-                            settings.pinned.push(text.to_owned());
+                        match parse_pin(item) {
+                            Ok(pin) if find_pin(&settings.pinned, &pin.path).is_some() => warnings.push(Warning::new(
+                                file,
+                                format!("pinned: \"{}\" is pinned twice; the second is left out", pin.path),
+                            )),
+                            Ok(pin) => settings.pinned.push(pin),
+                            Err(err) => warnings.push(Warning::new(file, format!("pinned: {err}"))),
                         }
                     }
                 }
@@ -555,13 +564,84 @@ fn parse_view(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> V
     if let Some(icons) = view_choice(table, "icons", "\"system\" or \"gezik\"", IconMode::parse, file, warnings) {
         out.icons = icons;
     }
-    if let Some(value) = table.get("thumbnails") {
-        match value.as_bool() {
-            Some(on) => out.thumbnails = on,
-            None => warnings.push(Warning::new(file, format!("view.thumbnails: expected true or false, got {value}"))),
-        }
+    if let Some(on) = view_bool(table, "thumbnails", file, warnings) {
+        out.thumbnails = on;
+    }
+    let options = &mut out.options;
+    if let Some(on) = view_bool(table, "hide-extensions", file, warnings) {
+        options.hide_extensions = on;
+    }
+    if let Some(on) = view_bool(table, "folders-first", file, warnings) {
+        options.folders_first = on;
+    }
+    let dates = "\"relative\", \"short\", \"iso\" or \"system\"";
+    if let Some(format) = view_choice(table, "date-format", dates, DateFormat::parse, file, warnings) {
+        options.date_format = format;
+    }
+    let sizes = "\"binary\" or \"decimal\"";
+    if let Some(format) = view_choice(table, "size-format", sizes, SizeFormat::parse, file, warnings) {
+        options.size_format = format;
+    }
+    if let Some(on) = view_bool(table, "single-click-open", file, warnings) {
+        options.single_click_open = on;
+    }
+    if let Some(on) = view_bool(table, "show-hidden", file, warnings) {
+        options.show_hidden = on;
+    }
+    if let Some(on) = view_bool(table, "show-system", file, warnings) {
+        options.show_system = on;
     }
     out
+}
+
+/// `[view].key` as true or false: `None` if missing; a bad value also warns.
+fn view_bool(table: &toml::Table, key: &str, file: &str, warnings: &mut Vec<Warning>) -> Option<bool> {
+    let value = table.get(key)?;
+    let on = value.as_bool();
+    if on.is_none() {
+        warnings.push(Warning::new(file, format!("view.{key}: expected true or false, got {value}")));
+    }
+    on
+}
+
+/// One `[view]` option as the View menu (or toggle-hidden) sets it, written into settings.toml
+/// with `SettingsChange::ViewOption` (spec 7.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ViewOption {
+    HideExtensions(bool),
+    FoldersFirst(bool),
+    DateFormat(DateFormat),
+    SizeFormat(SizeFormat),
+    SingleClickOpen(bool),
+    ShowHidden(bool),
+    ShowSystem(bool),
+}
+
+impl ViewOption {
+    /// Its key in `[view]`.
+    pub fn key(self) -> &'static str {
+        match self {
+            ViewOption::HideExtensions(_) => "hide-extensions",
+            ViewOption::FoldersFirst(_) => "folders-first",
+            ViewOption::DateFormat(_) => "date-format",
+            ViewOption::SizeFormat(_) => "size-format",
+            ViewOption::SingleClickOpen(_) => "single-click-open",
+            ViewOption::ShowHidden(_) => "show-hidden",
+            ViewOption::ShowSystem(_) => "show-system",
+        }
+    }
+
+    pub fn apply(self, options: &mut ViewOptions) {
+        match self {
+            ViewOption::HideExtensions(on) => options.hide_extensions = on,
+            ViewOption::FoldersFirst(on) => options.folders_first = on,
+            ViewOption::DateFormat(format) => options.date_format = format,
+            ViewOption::SizeFormat(format) => options.size_format = format,
+            ViewOption::SingleClickOpen(on) => options.single_click_open = on,
+            ViewOption::ShowHidden(on) => options.show_hidden = on,
+            ViewOption::ShowSystem(on) => options.show_system = on,
+        }
+    }
 }
 
 /// `[view].key` read with `parse`: `None` if missing; a bad value also warns.
@@ -1236,6 +1316,7 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pins::{self, PinEntry};
 
     fn parse(text: &str) -> (Settings, Vec<Warning>) {
         let mut warnings = Vec::new();
@@ -1365,7 +1446,7 @@ pinned = [\"{documents}/Projects\", \"D:/Work\"]
         );
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(settings.start_folder, "drives");
-        assert_eq!(settings.pinned, ["{documents}/Projects", "D:/Work"]);
+        assert_eq!(pins::paths(&settings.pinned), ["{documents}/Projects", "D:/Work"]);
     }
 
     #[test]
@@ -1374,11 +1455,57 @@ pinned = [\"{documents}/Projects\", \"D:/Work\"]
             "pinned = [\"/a\", \"/a\", \"{home}/../etc\", 3]
 ",
         );
-        assert_eq!(settings.pinned, ["/a"]);
+        assert_eq!(pins::paths(&settings.pinned), ["/a"]);
         let messages: Vec<_> = warnings.iter().map(|w| w.message.as_str()).collect();
-        assert_eq!(messages.len(), 2, "{messages:?}");
+        assert_eq!(messages.len(), 3, "{messages:?}");
+        assert!(messages.iter().any(|m| m.contains("pinned twice")));
         assert!(messages.iter().any(|m| m.contains("..")));
         assert!(messages.iter().any(|m| m.contains("expected text")));
+    }
+
+    #[test]
+    fn pins_of_both_forms_are_read_and_bad_ones_warned() {
+        let (settings, warnings) = parse(
+            "pinned = [\n  \"{documents}/Projects\",\n  { path = \"D:/Work/gezik\", name = \" Gezik \", group = \"Work\" },\n  \
+             { path = \"//nas/foto\", group = \"Media\" },\n  { path = \"/x\", icon = \"star\" },\n  { name = \"no path\" },\n  \
+             \"\",\n  \"{home}/../etc\",\n  3,\n  \"{documents}/Projects\",\n  { path = \"/n\", name = 5 },\n]\n",
+        );
+        assert_eq!(
+            settings.pinned,
+            [
+                PinEntry::plain("{documents}/Projects"),
+                PinEntry { path: "D:/Work/gezik".into(), name: Some("Gezik".into()), group: Some("Work".into()) },
+                PinEntry { path: "//nas/foto".into(), name: None, group: Some("Media".into()) },
+            ]
+        );
+        let messages: Vec<&str> = warnings.iter().map(|w| w.message.as_str()).collect();
+        assert_eq!(messages.len(), 7, "{messages:?}");
+        assert!(messages[0].starts_with("pinned: unknown key \"icon\" in "), "{messages:?}");
+        assert!(messages[1].starts_with("pinned: path is missing in "), "{messages:?}");
+        assert_eq!(messages[2], "pinned: path is missing in \"\"");
+        assert_eq!(messages[3], "pinned: \"{home}/../etc\" must not contain \"..\"");
+        assert_eq!(messages[4], "pinned: expected text or { path, name, group }, got 3");
+        assert_eq!(messages[5], "pinned: \"{documents}/Projects\" is pinned twice; the second is left out");
+        assert_eq!(messages[6], "pinned: name must be text, got 5");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_pin_twice_in_other_case_is_one_on_windows() {
+        let (settings, warnings) = parse("pinned = [\"C:/Work\", \"c:/work\"]\n");
+        assert_eq!(pins::paths(&settings.pinned), ["C:/Work"]);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+    }
+
+    #[test]
+    fn the_template_pinned_example_reads_once_uncommented() {
+        let template = include_str!("../templates/settings.toml");
+        let line =
+            template.lines().find(|l| l.starts_with("# pinned = [")).expect("the template shows a pinned example");
+        let (settings, warnings) = parse(&format!("{}\n", &line[2..]));
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(settings.pinned.len(), 2);
+        assert_eq!(settings.pinned[1].group.as_deref(), Some("Work"));
     }
 
     #[test]
@@ -1387,7 +1514,7 @@ pinned = [\"{documents}/Projects\", \"D:/Work\"]
             "pinned = [\"Z:/not/on/this/machine\"]
 ",
         );
-        assert_eq!(settings.pinned, ["Z:/not/on/this/machine"]);
+        assert_eq!(pins::paths(&settings.pinned), ["Z:/not/on/this/machine"]);
     }
 
     #[test]
@@ -1604,6 +1731,81 @@ rules = []
         assert_eq!(settings.session, SessionSettings::default());
         assert_eq!(settings.terminal, TerminalSettings::default());
         assert!(settings.tab_sets.is_empty());
+        assert_eq!(settings.view, ViewDefaults::default());
+        assert!(settings.pinned.is_empty());
+    }
+
+    #[test]
+    fn view_options_are_read() {
+        use gezik_core::view::{DateFormat, SizeFormat, ViewOptions};
+        let (settings, warnings) = parse(
+            "[view]
+hide-extensions = true
+folders-first = false
+date-format = \"relative\"
+size-format = \"decimal\"
+single-click-open = true
+show-hidden = false
+show-system = true
+",
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            settings.view.options,
+            ViewOptions {
+                hide_extensions: true,
+                folders_first: false,
+                date_format: DateFormat::Relative,
+                size_format: SizeFormat::Decimal,
+                single_click_open: true,
+                show_hidden: false,
+                show_system: true,
+            }
+        );
+        assert_eq!(ViewDefaults::default().options, ViewOptions::default());
+    }
+
+    #[test]
+    fn bad_view_options_keep_defaults_with_warnings() {
+        let (settings, warnings) = parse(
+            "[view]
+date-format = \"weekday\"
+size-format = 1024
+hide-extensions = \"yes\"
+",
+        );
+        assert_eq!(settings.view.options, gezik_core::view::ViewOptions::default());
+        let messages: Vec<&str> = warnings.iter().map(|w| w.message.as_str()).collect();
+        assert_eq!(
+            messages,
+            [
+                "view.hide-extensions: expected true or false, got \"yes\"",
+                "view.date-format: expected \"relative\", \"short\", \"iso\" or \"system\", got \"weekday\"",
+                "view.size-format: expected \"binary\" or \"decimal\", got 1024",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_view_option_sets_its_own_field() {
+        use gezik_core::view::{DateFormat, SizeFormat, ViewOptions};
+        let mut options = ViewOptions::default();
+        for option in [
+            ViewOption::HideExtensions(true),
+            ViewOption::FoldersFirst(false),
+            ViewOption::DateFormat(DateFormat::Iso),
+            ViewOption::SizeFormat(SizeFormat::Decimal),
+            ViewOption::SingleClickOpen(true),
+            ViewOption::ShowHidden(false),
+            ViewOption::ShowSystem(true),
+        ] {
+            option.apply(&mut options);
+        }
+        assert!(options.hide_extensions && !options.folders_first && options.single_click_open);
+        assert!(!options.show_hidden && options.show_system);
+        assert_eq!((options.date_format, options.size_format), (DateFormat::Iso, SizeFormat::Decimal));
+        assert_eq!(ViewOption::SingleClickOpen(true).key(), "single-click-open");
+        assert_eq!(ViewOption::DateFormat(DateFormat::Iso).key(), "date-format");
     }
 
     #[test]
@@ -1815,8 +2017,8 @@ last-pattern = \"\"
         assert!(warnings.is_empty(), "{warnings:?}");
         let defaults = Shortcuts::defaults(Platform::Other);
         for action in crate::shortcuts::Action::ALL {
-            if action.tab_number().is_some_and(|n| n > 1) {
-                continue; // "tab-2 … tab-8 likewise"
+            if action.tab_number().is_some_and(|n| n > 1) || action.pin_number().is_some_and(|n| n > 1) {
+                continue; // "tab-2 … tab-8 and pin-2 … pin-9 likewise"
             }
             assert_eq!(shortcuts.chord_for(action), defaults.chord_for(action), "{}", action.name());
         }

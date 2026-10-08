@@ -11,8 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, SystemTime};
 
-use gezik_core::format_size;
-use gezik_platform::{IconTarget, Rgba, format_datetime};
+use gezik_platform::{IconTarget, Rgba};
 use slint::{ComponentHandle, Image, Rgba8Pixel, SharedPixelBuffer};
 
 use crate::view::View;
@@ -249,20 +248,23 @@ pub fn describe(target: &Target, body: Option<Body>) -> PreviewInfo {
         Target::Several { count, size } => PreviewInfo {
             kind: 5,
             title: format!("{count} items selected").into(),
-            details: size.map(|s| format!("Total size: {}", format_size(s))).unwrap_or_default().into(),
+            details: size
+                .map(|s| format!("Total size: {}", crate::view_options::size_text(s)))
+                .unwrap_or_default()
+                .into(),
             item_kind: 1,
             ..PreviewInfo::default()
         },
         Target::Entry { name, type_name, size, modified, created, kind, is_dir, .. } => {
             let mut lines = vec![type_name.clone()];
             if let Some(size) = size {
-                lines.push(format_size(*size));
+                lines.push(crate::view_options::size_text(*size));
             }
             if let Some(time) = modified {
-                lines.push(format!("Modified {}", format_datetime(*time)));
+                lines.push(format!("Modified {}", crate::view_options::date_text(*time)));
             }
             if let Some(time) = created {
-                lines.push(format!("Created {}", format_datetime(*time)));
+                lines.push(format!("Created {}", crate::view_options::date_text(*time)));
             }
             let mut info = PreviewInfo {
                 kind: if *is_dir { 4 } else { 3 },

@@ -28,12 +28,14 @@ pub struct ListArea {
     pub count: usize,
 }
 
-/// A sidebar row: a section title, a place, or the nth pinned folder.
+/// A sidebar row: a section title, a place, a pinned folder, or a heading in the pinned part
+/// ("PINNED" or a group's).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SideRow {
     Header,
+    PinHeader,
     Item,
-    Pinned(usize),
+    Pinned,
 }
 
 /// The sidebar: its area, scroll offset (zero or negative), the space above the first row,
@@ -88,7 +90,8 @@ pub enum Hit {
     Background,
     /// Sidebar row n (a place).
     Sidebar(usize),
-    /// Between pinned folders: pins at this position.
+    /// A line in the pinned part: pins above sidebar row n (in the group of the pin there, or of
+    /// the one before it; spec 6.2).
     PinAt(usize),
     Tab(usize),
     Crumb(usize),
@@ -136,13 +139,16 @@ fn sidebar_hit(side: &SidebarArea, y: f32, pin_zones: bool) -> Hit {
     let Some(row) = index_at(offset, side.row_height) else { return Hit::Nothing };
     match side.rows.get(row) {
         None | Some(SideRow::Header) => Hit::Nothing,
+        // On a heading: the first place of its group.
+        Some(SideRow::PinHeader) if pin_zones => Hit::PinAt(row + 1),
+        Some(SideRow::PinHeader) => Hit::Nothing,
         Some(SideRow::Item) => Hit::Sidebar(row),
-        Some(SideRow::Pinned(i)) => {
+        Some(SideRow::Pinned) => {
             let within = (offset - row as f32 * side.row_height) / side.row_height;
             if pin_zones && within < 0.25 {
-                Hit::PinAt(*i)
+                Hit::PinAt(row)
             } else if pin_zones && within > 0.75 {
-                Hit::PinAt(i + 1)
+                Hit::PinAt(row + 1)
             } else {
                 Hit::Sidebar(row)
             }
@@ -304,7 +310,15 @@ mod tests {
                 scroll: 0.0,
                 pad: 4.0,
                 row_height: 20.0,
-                rows: vec![SideRow::Header, SideRow::Item, SideRow::Header, SideRow::Pinned(0), SideRow::Pinned(1)],
+                rows: vec![
+                    SideRow::Header,
+                    SideRow::Item,
+                    SideRow::PinHeader,
+                    SideRow::Pinned,
+                    SideRow::Pinned,
+                    SideRow::PinHeader,
+                    SideRow::Pinned,
+                ],
             }),
             tabs: TabArea {
                 rect: Rect { x: 0.0, y: 0.0, width: 960.0, height: 30.0 },
@@ -353,15 +367,19 @@ mod tests {
     }
 
     #[test]
-    fn sidebar_items_headers_and_pin_zones() {
+    fn sidebar_items_headings_and_pin_lines() {
         let l = layout(list(0));
-        assert_eq!(hit(&l, 50.0, 100.0 + 4.0 + 10.0, true), Hit::Nothing, "header");
-        assert_eq!(hit(&l, 50.0, 100.0 + 4.0 + 30.0, true), Hit::Sidebar(1));
-        assert_eq!(hit(&l, 50.0, 100.0 + 4.0 + 61.0, true), Hit::PinAt(0), "top quarter of the first pin");
-        assert_eq!(hit(&l, 50.0, 100.0 + 4.0 + 70.0, true), Hit::Sidebar(3));
-        assert_eq!(hit(&l, 50.0, 100.0 + 4.0 + 99.0, true), Hit::PinAt(2), "bottom quarter of the last pin");
-        assert_eq!(hit(&l, 50.0, 100.0 + 4.0 + 61.0, false), Hit::Sidebar(3), "files dragged: no pin zones");
-        assert_eq!(hit(&l, 50.0, 100.0 + 4.0 + 150.0, true), Hit::Nothing, "below the rows");
+        let y = |offset: f32| 100.0 + 4.0 + offset;
+        assert_eq!(hit(&l, 50.0, y(10.0), true), Hit::Nothing, "a section title");
+        assert_eq!(hit(&l, 50.0, y(30.0), true), Hit::Sidebar(1));
+        assert_eq!(hit(&l, 50.0, y(50.0), true), Hit::PinAt(3), "on a heading of the pinned part: its first place");
+        assert_eq!(hit(&l, 50.0, y(50.0), false), Hit::Nothing, "files dragged: a heading takes nothing");
+        assert_eq!(hit(&l, 50.0, y(61.0), true), Hit::PinAt(3), "top quarter of a pin: the line above it");
+        assert_eq!(hit(&l, 50.0, y(70.0), true), Hit::Sidebar(3));
+        assert_eq!(hit(&l, 50.0, y(99.0), true), Hit::PinAt(5), "bottom quarter: the line below it");
+        assert_eq!(hit(&l, 50.0, y(110.0), true), Hit::PinAt(6), "the next group's heading");
+        assert_eq!(hit(&l, 50.0, y(61.0), false), Hit::Sidebar(3), "files dragged: no pin lines");
+        assert_eq!(hit(&l, 50.0, y(150.0), true), Hit::Nothing, "below the rows");
     }
 
     #[test]

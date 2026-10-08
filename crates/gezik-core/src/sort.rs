@@ -241,11 +241,17 @@ enum Primary {
     Type((u32, u32), String),
 }
 
-/// Sorts `entries` by `spec`: folders first (in either direction), then the column, then
-/// natural name order, then the exact name so the order is total. `type_name` gives the
-/// Type column's text; it is called once per entry, and only when sorting by type. Returns
-/// where each entry came from: entry `k` now was entry `order[k]` before.
-pub fn sort_entries(entries: &mut Vec<Entry>, spec: SortSpec, type_name: impl Fn(&Entry) -> String) -> Vec<usize> {
+/// Sorts `entries` by `spec`: folders first (in either direction) unless `folders_first` is off,
+/// then the column, then natural name order, then the exact name so the order is total.
+/// `type_name` gives the Type column's text; it is called once per entry, and only when
+/// sorting by type. Returns where each entry came from: entry `k` now was entry `order[k]`
+/// before.
+pub fn sort_entries(
+    entries: &mut Vec<Entry>,
+    spec: SortSpec,
+    folders_first: bool,
+    type_name: impl Fn(&Entry) -> String,
+) -> Vec<usize> {
     // All keys live in one buffer, so sorting 100k names allocates once, not 100k times.
     let mut buf: Vec<u32> = Vec::with_capacity(entries.iter().map(|e| e.name.len() + 4).sum());
     let mut push = |text: &str| {
@@ -271,7 +277,8 @@ pub fn sort_entries(entries: &mut Vec<Entry>, spec: SortSpec, type_name: impl Fn
     let mut order: Vec<usize> = (0..entries.len()).collect();
     order.sort_unstable_by(|&i, &j| {
         let (a, b) = (&entries[i], &entries[j]);
-        b.is_dir.cmp(&a.is_dir).then_with(|| {
+        let folders = if folders_first { b.is_dir.cmp(&a.is_dir) } else { Ordering::Equal };
+        folders.then_with(|| {
             let ((pa, na), (pb, nb)) = (&keys[i], &keys[j]);
             let primary = match (pa, pb) {
                 (Primary::Type(ta, xa), Primary::Type(tb, xb)) => span(*ta).cmp(span(*tb)).then_with(|| xa.cmp(xb)),
@@ -299,7 +306,7 @@ mod tests {
 
     fn entry(name: &str, is_dir: bool, size: u64, secs: Option<u64>) -> Entry {
         let time = secs.map(|s| SystemTime::UNIX_EPOCH + Duration::from_secs(s));
-        Entry { name: name.to_owned(), is_dir, size, modified: time, created: time }
+        Entry { name: name.to_owned(), is_dir, flags: 0, size, modified: time, created: time }
     }
 
     fn names(entries: &[Entry]) -> Vec<&str> {
@@ -366,10 +373,10 @@ mod tests {
         let mut v = vec![entry("b.txt", false, 0, None), entry("Zeta", true, 0, None), entry("a10", false, 0, None)];
         v.push(entry("a9", false, 0, None));
         v.push(entry("alpha", true, 0, None));
-        let order = sort_entries(&mut v, SortSpec::default(), |_| String::new());
+        let order = sort_entries(&mut v, SortSpec::default(), true, |_| String::new());
         assert_eq!(names(&v), ["alpha", "Zeta", "a9", "a10", "b.txt"]);
         assert_eq!(order, [4, 1, 3, 2, 0], "where each entry was before");
-        sort_entries(&mut v, SortSpec { key: SortKey::Name, dir: SortDir::Desc }, |_| String::new());
+        sort_entries(&mut v, SortSpec { key: SortKey::Name, dir: SortDir::Desc }, true, |_| String::new());
         assert_eq!(names(&v), ["Zeta", "alpha", "b.txt", "a10", "a9"]);
     }
 
@@ -377,11 +384,11 @@ mod tests {
     fn sorts_by_size_and_dates() {
         let mut v =
             vec![entry("big", false, 900, Some(1)), entry("small", false, 5, Some(3)), entry("none", false, 50, None)];
-        sort_entries(&mut v, SortSpec { key: SortKey::Size, dir: SortDir::Asc }, |_| String::new());
+        sort_entries(&mut v, SortSpec { key: SortKey::Size, dir: SortDir::Asc }, true, |_| String::new());
         assert_eq!(names(&v), ["small", "none", "big"]);
-        sort_entries(&mut v, SortSpec { key: SortKey::Modified, dir: SortDir::Asc }, |_| String::new());
+        sort_entries(&mut v, SortSpec { key: SortKey::Modified, dir: SortDir::Asc }, true, |_| String::new());
         assert_eq!(names(&v), ["none", "big", "small"], "unknown times first");
-        sort_entries(&mut v, SortSpec { key: SortKey::Created, dir: SortDir::Desc }, |_| String::new());
+        sort_entries(&mut v, SortSpec { key: SortKey::Created, dir: SortDir::Desc }, true, |_| String::new());
         assert_eq!(names(&v), ["small", "big", "none"]);
     }
 
@@ -394,14 +401,14 @@ mod tests {
             "png" | "jpg" => "Picture".to_owned(),
             _ => "Text".to_owned(),
         };
-        sort_entries(&mut v, SortSpec { key: SortKey::Type, dir: SortDir::Asc }, type_name);
+        sort_entries(&mut v, SortSpec { key: SortKey::Type, dir: SortDir::Asc }, true, type_name);
         assert_eq!(names(&v), ["a.jpg", "b.png", "c.PNG", "a.txt"]);
     }
 
     #[test]
     fn equal_keys_keep_a_total_order() {
         let mut v = vec![entry("same", false, 1, None), entry("Same", false, 1, None)];
-        sort_entries(&mut v, SortSpec { key: SortKey::Size, dir: SortDir::Asc }, |_| String::new());
+        sort_entries(&mut v, SortSpec { key: SortKey::Size, dir: SortDir::Asc }, true, |_| String::new());
         assert_eq!(names(&v), ["Same", "same"]);
     }
 
@@ -458,7 +465,7 @@ mod tests {
         let mut v =
             vec![entry("a.txt", false, 0, None), entry("b.txt", false, 0, None), entry("c.png", false, 0, None)];
         let type_name = |e: &Entry| if e.extension() == "png" { "Picture".to_owned() } else { "Text".to_owned() };
-        sort_entries(&mut v, SortSpec { key: SortKey::Type, dir: SortDir::Desc }, type_name);
+        sort_entries(&mut v, SortSpec { key: SortKey::Type, dir: SortDir::Desc }, true, type_name);
         assert_eq!(names(&v), ["b.txt", "a.txt", "c.png"]);
     }
     #[test]
@@ -471,6 +478,22 @@ mod tests {
         assert_eq!(SortDir::Asc.flipped(), SortDir::Desc);
     }
 
+    #[test]
+    fn folders_mix_with_files_when_not_first() {
+        let mut v = vec![
+            entry("b.txt", false, 3, None),
+            entry("Zeta", true, 0, None),
+            entry("alpha", true, 0, None),
+            entry("a9", false, 7, None),
+        ];
+        sort_entries(&mut v, SortSpec::default(), false, |_| String::new());
+        assert_eq!(names(&v), ["a9", "alpha", "b.txt", "Zeta"]);
+        sort_entries(&mut v, SortSpec { key: SortKey::Size, dir: SortDir::Desc }, false, |_| String::new());
+        assert_eq!(names(&v), ["a9", "b.txt", "Zeta", "alpha"], "a folder's size counts as 0");
+        sort_entries(&mut v, SortSpec::default(), true, |_| String::new());
+        assert_eq!(names(&v), ["alpha", "Zeta", "a9", "b.txt"], "folders first again");
+    }
+
     /// `cargo test -p gezik-core --release -- --ignored sorting_100k`
     #[test]
     #[ignore]
@@ -479,7 +502,7 @@ mod tests {
             .map(|i| entry(&format!("IMG_{:05} kopya şğı {}.jpg", (i * 7919) % 100_000, i), false, i, None))
             .collect();
         let start = std::time::Instant::now();
-        sort_entries(&mut v, SortSpec::default(), |_| String::new());
+        sort_entries(&mut v, SortSpec::default(), true, |_| String::new());
         let took = start.elapsed();
         eprintln!("sorted 100k in {took:?}");
         assert!(took.as_millis() <= 50, "took {took:?}");

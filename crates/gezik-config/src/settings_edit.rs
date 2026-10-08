@@ -1,60 +1,98 @@
-//! Edits `settings.toml` in place: only `pinned`, the `[view]` defaults or the saved tables change; the user's
+//! Edits `settings.toml` in place: only `pinned`, the `[view]` values or the saved tables change; the user's
 //! comments, key order and formatting stay as they were.
 
-/// Returns `text` with `pinned` set to `pinned`. Errors with the parser's message if the
-/// file is not valid TOML (the caller must then leave the file alone).
-pub fn with_pinned(text: &str, pinned: &[String]) -> Result<String, String> {
-    let mut doc = text.parse::<toml_edit::DocumentMut>().map_err(|err| err.to_string().trim().to_owned())?;
+use crate::pins::{PinEntry, parse_pin, pin_to_value};
 
-    // Check if pinned exists and validate it's an array
+/// Returns `text` with `pinned` set to `pinned`: plain text for a pin without alias and group,
+/// an inline table for the others. The entries already there that Gezik cannot read (an unknown
+/// key, no path, `..`) stay, after `pinned`. All plain: one line, as before 7b; with a table:
+/// one entry per line (spec 6.1). Errors with the parser's message if the file is not valid
+/// TOML (the caller must then leave the file alone).
+pub fn with_pinned(text: &str, pinned: &[PinEntry]) -> Result<String, String> {
+    let mut doc = text.parse::<toml_edit::DocumentMut>().map_err(|err| err.to_string().trim().to_owned())?;
     if let Some(existing) = doc.get("pinned")
         && !existing.is_array()
     {
         return Err("pinned must be a list".to_owned());
     }
-
-    // If pinned already exists as an array, clear it and add new elements to preserve decor
-    if let Some(item) = doc.get_mut("pinned") {
-        if let Some(array) = item.as_array_mut() {
-            array.clear();
-            for path in pinned {
-                array.push(path.as_str());
-            }
-        }
-    } else {
-        // Create new pinned array
-        let mut array = toml_edit::Array::new();
-        for path in pinned {
-            array.push(path.as_str());
-        }
-        doc["pinned"] = toml_edit::value(array);
+    let plain = text.parse::<toml::Table>().map_err(|err| err.to_string().trim().to_owned())?;
+    let unreadable: Vec<usize> = plain
+        .get("pinned")
+        .and_then(|value| value.as_array())
+        .map(|items| (0..items.len()).filter(|&i| parse_pin(&items[i]).is_err()).collect())
+        .unwrap_or_default();
+    let kept: Vec<toml_edit::Value> = doc
+        .get("pinned")
+        .and_then(|item| item.as_array())
+        .map(|array| unreadable.iter().filter_map(|&i| array.get(i).cloned()).collect())
+        .unwrap_or_default();
+    let mut values: Vec<toml_edit::Value> = pinned.iter().map(pin_to_value).collect();
+    values.extend(kept);
+    let one_per_line = values.iter().any(|value| !value.is_str());
+    if doc.get("pinned").is_none() {
+        doc["pinned"] = toml_edit::value(toml_edit::Array::new());
     }
-
+    let Some(array) = doc["pinned"].as_array_mut() else { return Err("pinned must be a list".to_owned()) };
+    array.clear();
+    for value in values {
+        array.push_formatted(value);
+    }
+    array.fmt();
+    if one_per_line {
+        for value in array.iter_mut() {
+            value.decor_mut().set_prefix("\n  ");
+            value.decor_mut().set_suffix("");
+        }
+        array.set_trailing("\n");
+        array.set_trailing_comma(true);
+    }
     Ok(doc.to_string())
 }
 
 /// Returns `text` with `[view]`'s `mode`, `sort`, `sort-dir` and `grid-size` set from
 /// `view` ("Apply to all folders"); other `[view]` keys and the rest of the file stay.
 pub fn with_view_defaults(text: &str, view: &gezik_core::view::ViewSettings) -> Result<String, String> {
+    edit_view(
+        text,
+        vec![
+            ("mode", view.mode.as_str().into()),
+            ("sort", view.sort.key.as_str().into()),
+            ("sort-dir", view.sort.dir.as_str().into()),
+            ("grid-size", view.grid_size.as_str().into()),
+        ],
+    )
+}
+
+/// Returns `text` with `[view]`'s `option` set (the View menu, toggle-hidden; spec 7.2).
+pub fn with_view_option(text: &str, option: crate::settings::ViewOption) -> Result<String, String> {
+    use crate::settings::ViewOption;
+    let value: toml_edit::Value = match option {
+        ViewOption::HideExtensions(on)
+        | ViewOption::FoldersFirst(on)
+        | ViewOption::SingleClickOpen(on)
+        | ViewOption::ShowHidden(on)
+        | ViewOption::ShowSystem(on) => on.into(),
+        ViewOption::DateFormat(format) => format.as_str().into(),
+        ViewOption::SizeFormat(format) => format.as_str().into(),
+    };
+    edit_view(text, vec![(option.key(), value)])
+}
+
+/// Sets `entries` in `[view]` (adding the table and the missing keys), keeping each old value's
+/// decor so inline comments (`# list | grid`) survive.
+fn edit_view(text: &str, entries: Vec<(&str, toml_edit::Value)>) -> Result<String, String> {
     let mut doc = text.parse::<toml_edit::DocumentMut>().map_err(|err| err.to_string().trim().to_owned())?;
     if doc.get("view").is_none() {
         doc["view"] = toml_edit::table();
     }
     let Some(table) = doc["view"].as_table_like_mut() else { return Err("view must be a table".to_owned()) };
-    let entries = [
-        ("mode", view.mode.as_str()),
-        ("sort", view.sort.key.as_str()),
-        ("sort-dir", view.sort.dir.as_str()),
-        ("grid-size", view.grid_size.as_str()),
-    ];
-    for (key, text) in entries {
-        // Keep the old value's decor so inline comments (`# list | grid`) survive.
+    for (key, value) in entries {
         if let Some(old) = table.get_mut(key).and_then(|item| item.as_value_mut()) {
             let decor = old.decor().clone();
-            *old = toml_edit::Value::from(text);
+            *old = value;
             *old.decor_mut() = decor;
         } else {
-            table.insert(key, toml_edit::value(text));
+            table.insert(key, toml_edit::Item::Value(value));
         }
     }
     Ok(doc.to_string())
@@ -210,8 +248,56 @@ fn place(table: &mut toml_edit::Table, next: &mut isize) {
 mod tests {
     use super::*;
 
-    fn pins(list: &[&str]) -> Vec<String> {
-        list.iter().map(|s| s.to_string()).collect()
+    fn pins(list: &[&str]) -> Vec<PinEntry> {
+        list.iter().map(|s| PinEntry::plain(*s)).collect()
+    }
+
+    #[test]
+    fn old_lists_are_written_as_they_were() {
+        let text = "# mine\npinned = [\"{documents}/Projects\", \"D:/Work\"]\n";
+        let out = with_pinned(text, &pins(&["{documents}/Projects", "D:/Work", "/new"])).unwrap();
+        assert_eq!(out, "# mine\npinned = [\"{documents}/Projects\", \"D:/Work\", \"/new\"]\n");
+    }
+
+    #[test]
+    fn aliases_and_groups_are_inline_tables_one_per_line() {
+        use crate::settings::Settings;
+        let list = [
+            PinEntry::plain("{documents}/Projects"),
+            PinEntry { path: "D:/Work/gezik".into(), name: Some("Gezik".into()), group: Some("Work".into()) },
+            PinEntry { path: "//nas/foto".into(), name: None, group: Some("Media".into()) },
+        ];
+        let out = with_pinned("pinned = []\n\n[layout]\nsidebar = \"left\"\n", &list).unwrap();
+        // The spec's example (6.1), as written.
+        assert!(
+            out.starts_with(
+                "pinned = [\n  \"{documents}/Projects\",\n  { path = \"D:/Work/gezik\", name = \"Gezik\", group = \"Work\" },\n  \
+                 { path = \"//nas/foto\", group = \"Media\" },\n]\n"
+            ),
+            "{out}"
+        );
+        let mut warnings = Vec::new();
+        assert_eq!(Settings::parse("settings.toml", &out, &mut warnings).pinned, list);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let back = with_pinned(&out, &pins(&["/a"])).unwrap();
+        assert!(back.starts_with("pinned = [\"/a\"]\n"), "no alias or group left: one line again: {back}");
+    }
+
+    #[test]
+    fn unreadable_pins_are_kept_after_ours() {
+        use crate::settings::Settings;
+        let text = "pinned = [\"/a\", { path = \"/b\", icon = \"star\" }, \"{home}/../x\", { name = \"no path\" }]\n";
+        let out = with_pinned(text, &pins(&["/c"])).unwrap();
+        let parsed = out.parse::<toml::Table>().unwrap();
+        let items = parsed["pinned"].as_array().unwrap();
+        assert_eq!(items.len(), 4, "{out}");
+        assert_eq!(items[0].as_str(), Some("/c"));
+        assert_eq!(items[1]["icon"].as_str(), Some("star"));
+        assert_eq!(items[2].as_str(), Some("{home}/../x"));
+        assert_eq!(items[3]["name"].as_str(), Some("no path"));
+        let mut warnings = Vec::new();
+        assert_eq!(Settings::parse("settings.toml", &out, &mut warnings).pinned, pins(&["/c"]));
+        assert_eq!(warnings.len(), 3, "the kept ones still warn: {warnings:?}");
     }
 
     #[test]
@@ -309,6 +395,48 @@ mod tests {
         assert_eq!(added.parse::<toml::Table>().unwrap()["view"]["mode"].as_str(), Some("grid"));
         assert!(with_view_defaults("view = 3\n", &view).is_err());
         assert!(with_view_defaults("theme = \n", &view).is_err());
+    }
+
+    #[test]
+    fn a_view_option_is_written_keeping_its_comment() {
+        use crate::settings::{Settings, ViewOption};
+        use gezik_core::view::DateFormat;
+        let template = include_str!("../templates/settings.toml");
+        let out = with_view_option(template, ViewOption::DateFormat(DateFormat::Relative)).unwrap();
+        let line = out.lines().find(|l| l.starts_with("date-format")).unwrap();
+        assert!(
+            line.starts_with("date-format = \"relative\"") && line.ends_with("# relative | short | iso | system"),
+            "{line}"
+        );
+        // show-hidden is a comment in the template: the key is added, the comment stays.
+        let out = with_view_option(template, ViewOption::ShowHidden(false)).unwrap();
+        assert!(out.contains("# show-hidden = true"), "{out}");
+        let settings = Settings::parse("settings.toml", &out, &mut Vec::new());
+        assert!(!settings.view.options.show_hidden);
+        assert_eq!(settings.view.view, gezik_core::view::ViewSettings::default(), "the rest of [view] stays");
+        let added = with_view_option(
+            "theme = \"auto\"
+",
+            ViewOption::HideExtensions(true),
+        )
+        .unwrap();
+        assert_eq!(added.parse::<toml::Table>().unwrap()["view"]["hide-extensions"].as_bool(), Some(true));
+        assert!(
+            with_view_option(
+                "view = 3
+",
+                ViewOption::HideExtensions(true)
+            )
+            .is_err()
+        );
+        assert!(
+            with_view_option(
+                "theme = 
+",
+                ViewOption::HideExtensions(true)
+            )
+            .is_err()
+        );
     }
 
     #[test]

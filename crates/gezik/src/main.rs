@@ -33,6 +33,7 @@ mod tab_tools;
 mod terminal;
 mod theme_bridge;
 mod view;
+mod view_options;
 mod watcher;
 mod window_state;
 
@@ -51,6 +52,25 @@ use start::StartPlan;
 
 slint::include_modules!();
 
+/// Opens entry `index` of the list (a double-click, or a click with single-click-open): an
+/// archive is extracted next to itself if `[archives] double-click` says so.
+fn open_entry(nav: &navigation::Navigator, view: &view::View, index: usize) {
+    if let Some((path, is_dir)) = view.entry_path(index) {
+        open_path(nav, path, is_dir);
+    }
+}
+
+/// Opens the entry at `path` as [`open_entry`] does, for a caller that fixed the entry earlier.
+fn open_path(nav: &navigation::Navigator, path: PathBuf, is_dir: bool) {
+    let archive = !is_dir
+        && path.file_name().is_some_and(|n| gezik_core::batch::archive::looks_like_archive(&n.to_string_lossy()));
+    if archive && archives::extracts_on_double_click() {
+        archives::with_current(|archives| archives.extract_here(vec![path]));
+    } else {
+        nav.open_item(path, is_dir);
+    }
+}
+
 /// Resolves settings + theme from `files` and shows them. No I/O, so it runs on the UI
 /// thread at startup, after config files change and when the system theme flips.
 fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
@@ -68,10 +88,15 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
         SidebarPosition::Right => 1,
         SidebarPosition::Hidden => 2,
     });
+    // A reload may hide or move the sidebar (or change its pins): no tip stays behind.
+    window.set_sidebar_tip("".into());
+    // The shortcuts first: the pins' tips name their keys.
+    keys::set_shortcuts(loaded.settings.shortcuts.clone());
     // Unchanged pins cost nothing (also after the reload that follows our own save).
     sidebar::with_current(|sidebar| sidebar.set_pinned(loaded.settings.pinned.clone()));
+    sidebar::with_current(sidebar::Sidebar::relabel);
     view::with_current(|view| view.set_defaults(loaded.settings.view));
-    keys::set_shortcuts(loaded.settings.shortcuts.clone());
+    view_options::set_from_file(loaded.settings.view.options);
     #[cfg(target_os = "macos")]
     menu_bar::set_commands(window, &loaded.settings.commands);
     frame_limit::set_max_fps(loaded.settings.max_fps);
@@ -239,10 +264,6 @@ fn handle_key(
                 Action::DeletePermanently => ops.trash(true),
                 Action::Duplicate => ops.duplicate(),
                 Action::BatchRename => ops.batch_rename(),
-                Action::ToggleHidden => {
-                    view.toggle_hidden();
-                    nav.reload();
-                }
                 Action::Undo => ops.undo(),
                 Action::Redo => ops.redo(),
                 Action::Filter
@@ -267,7 +288,17 @@ fn handle_key(
                 | Action::OpenTerminal
                 | Action::OpenTerminalAdmin
                 | Action::CopyPath
-                | Action::SaveTabSet => {
+                | Action::SaveTabSet
+                | Action::ToggleHidden
+                | Action::Pin1
+                | Action::Pin2
+                | Action::Pin3
+                | Action::Pin4
+                | Action::Pin5
+                | Action::Pin6
+                | Action::Pin7
+                | Action::Pin8
+                | Action::Pin9 => {
                     if action == Action::Filter && editing {
                         window.set_path_editing(false);
                     }
@@ -441,6 +472,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let window = AppWindow::new()?;
 
     let config = ConfigStore::system();
+    view_options::install(&window, config.clone());
     let init_error = config.as_ref().and_then(|store| store.ensure_initialized().err().map(|e| (store, e)));
     let mut files = config.as_ref().map(ConfigStore::read_files).unwrap_or_default();
     if let Some((store, err)) = init_error {
@@ -510,6 +542,7 @@ fn main() -> Result<(), slint::PlatformError> {
     keep_on_screen(window.as_weak(), 0);
     let view = view::View::new(&window, memory, config.clone());
     view.set_defaults(initial_settings.view);
+    view.set_options(view_options::current());
     view.set_columns(saved_state.columns.clone().unwrap_or_else(gezik_core::view::default_columns));
     window.set_mono_font(
         if cfg!(windows) {
@@ -539,10 +572,10 @@ fn main() -> Result<(), slint::PlatformError> {
     // Captures no navigator (it is not `Send`): the result finds it on the UI thread.
     places::load_in_background(window.as_weak(), |part| navigation::with_current(|nav| nav.set_places(part)));
 
-    let sidebar = sidebar::Sidebar::new(&window, nav.clone(), config.clone());
+    let dialogs = dialog::Dialogs::new(&window);
+    let sidebar = sidebar::Sidebar::new(&window, nav.clone(), config.clone(), dialogs.clone());
     sidebar.install();
     sidebar.set_pinned(initial_settings.pinned);
-    let dialogs = dialog::Dialogs::new(&window);
     let _tab_sets = tab_sets::TabSets::new(&window, nav.clone(), view.clone(), dialogs.clone(), config.clone());
     let _filter = filter::Filter::new(&window, view.clone(), dialogs.clone(), config.clone());
     let _tab_tools = tab_tools::TabTools::new(&window, nav.clone());
@@ -572,7 +605,7 @@ fn main() -> Result<(), slint::PlatformError> {
     #[cfg(target_os = "macos")]
     menu_bar::install(&window, view.clone(), nav.clone(), ops.clone());
     // Tools Gezik downloads (7-Zip) go to `<config dir>/tools/`, next to the pending deletes.
-    let archives =
+    let _archives =
         archives::Archives::new(&window, ops.clone(), dialogs.clone(), config.clone(), saved_state.archive.clone());
     let _convert = convert::Convert::new(&window, ops.clone(), dialogs, config.clone(), saved_state.convert.clone());
     window.on_op_pause({
@@ -672,11 +705,11 @@ fn main() -> Result<(), slint::PlatformError> {
             }
         }
     });
-    window.on_pinned_move({
+    window.on_pinned_drop({
         let sidebar = sidebar.clone();
-        move |from, to| {
-            if let (Ok(from), Ok(to)) = (usize::try_from(from), usize::try_from(to)) {
-                sidebar.move_pinned(from, to);
+        move |from, line| {
+            if let (Ok(from), Ok(line)) = (usize::try_from(from), usize::try_from(line)) {
+                sidebar.drop_pinned(from, line);
             }
         }
     });
@@ -829,19 +862,14 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
-    // Double-click; an archive is extracted there if `[archives] double-click` says so.
+    // Double-click; with single-click-open the click already opened it.
     window.on_open_row({
         let (nav, view) = (nav.clone(), view.clone());
         move |i| {
-            let archive = usize::try_from(i).ok().and_then(|i| view.entry_path(i)).filter(|(path, is_dir)| {
-                !is_dir
-                    && path
-                        .file_name()
-                        .is_some_and(|n| gezik_core::batch::archive::looks_like_archive(&n.to_string_lossy()))
-            });
-            match archive {
-                Some((path, _)) if archives::extracts_on_double_click() => archives.extract_here(vec![path]),
-                _ => nav.open_row(i),
+            if let Ok(index) = usize::try_from(i)
+                && !view_options::current().single_click_open
+            {
+                open_entry(&nav, &view, index);
             }
         }
     });

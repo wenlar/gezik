@@ -17,7 +17,8 @@ use gezik_core::selection::Selection;
 /// `entries` entries: 10 % folders, 20 % `rapor N.pdf`, the rest `IMG_000123 Tatil ş3.jpg`;
 /// folders first, as a listing has them.
 fn entries(count: usize) -> Vec<Entry> {
-    let entry = |name: String, is_dir: bool| Entry { name, is_dir, size: 1234, modified: None, created: None };
+    let entry =
+        |name: String, is_dir: bool| Entry { name, is_dir, flags: 0, size: 1234, modified: None, created: None };
     let folders = count / 10;
     let reports = count / 5;
     let mut out = Vec::with_capacity(count);

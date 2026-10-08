@@ -3,6 +3,7 @@
 
 pub mod batch_toml;
 pub mod paths;
+pub mod pins;
 pub mod settings;
 pub mod settings_edit;
 pub mod settings_writer;

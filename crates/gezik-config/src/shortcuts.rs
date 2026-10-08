@@ -222,10 +222,20 @@ pub enum Action {
     CopyPath,
     /// Saves the open tabs as a tab set.
     SaveTabSet,
+    /// Goes to the first pinned folder the sidebar shows (7b); `Pin2` … `Pin9` to the next ones.
+    Pin1,
+    Pin2,
+    Pin3,
+    Pin4,
+    Pin5,
+    Pin6,
+    Pin7,
+    Pin8,
+    Pin9,
 }
 
 impl Action {
-    pub const ALL: [Action; 50] = [
+    pub const ALL: [Action; 59] = [
         Action::NewTab,
         Action::CloseTab,
         Action::NextTab,
@@ -276,6 +286,15 @@ impl Action {
         Action::OpenTerminalAdmin,
         Action::CopyPath,
         Action::SaveTabSet,
+        Action::Pin1,
+        Action::Pin2,
+        Action::Pin3,
+        Action::Pin4,
+        Action::Pin5,
+        Action::Pin6,
+        Action::Pin7,
+        Action::Pin8,
+        Action::Pin9,
     ];
 
     pub fn name(self) -> &'static str {
@@ -330,7 +349,37 @@ impl Action {
             Action::OpenTerminalAdmin => "open-terminal-admin",
             Action::CopyPath => "copy-path",
             Action::SaveTabSet => "save-tab-set",
+            Action::Pin1 => "pin-1",
+            Action::Pin2 => "pin-2",
+            Action::Pin3 => "pin-3",
+            Action::Pin4 => "pin-4",
+            Action::Pin5 => "pin-5",
+            Action::Pin6 => "pin-6",
+            Action::Pin7 => "pin-7",
+            Action::Pin8 => "pin-8",
+            Action::Pin9 => "pin-9",
         }
+    }
+
+    /// The pinned folder a `pin-N` action goes to (1-based): `Pin1` → 1 … `Pin9` → 9.
+    pub fn pin_number(self) -> Option<usize> {
+        Some(match self {
+            Action::Pin1 => 1,
+            Action::Pin2 => 2,
+            Action::Pin3 => 3,
+            Action::Pin4 => 4,
+            Action::Pin5 => 5,
+            Action::Pin6 => 6,
+            Action::Pin7 => 7,
+            Action::Pin8 => 8,
+            Action::Pin9 => 9,
+            _ => return None,
+        })
+    }
+
+    /// `pin-number` (1-9).
+    pub fn pin(number: usize) -> Option<Action> {
+        Action::ALL.into_iter().find(|action| action.pin_number() == Some(number))
     }
 
     /// The tab a `tab-N` action shows (1-based): `Tab1` → 1 … `Tab8` → 8.
@@ -425,6 +474,26 @@ impl Action {
             (Action::CopyPath, Platform::Mac) => &["mod+alt+c"],
             (Action::CopyPath, Platform::Other) => &["ctrl+shift+c"],
             (Action::SaveTabSet, _) => &[],
+            // Alt+digit, not Ctrl+Alt+digit: Windows takes the left Ctrl+Alt for AltGr, which
+            // types with the digit keys on many layouts (Turkish Q: > £ # $ ½ { [ ]; spec 10.3).
+            (Action::Pin1, Platform::Mac) => &["mod+alt+1"],
+            (Action::Pin1, Platform::Other) => &["alt+1"],
+            (Action::Pin2, Platform::Mac) => &["mod+alt+2"],
+            (Action::Pin2, Platform::Other) => &["alt+2"],
+            (Action::Pin3, Platform::Mac) => &["mod+alt+3"],
+            (Action::Pin3, Platform::Other) => &["alt+3"],
+            (Action::Pin4, Platform::Mac) => &["mod+alt+4"],
+            (Action::Pin4, Platform::Other) => &["alt+4"],
+            (Action::Pin5, Platform::Mac) => &["mod+alt+5"],
+            (Action::Pin5, Platform::Other) => &["alt+5"],
+            (Action::Pin6, Platform::Mac) => &["mod+alt+6"],
+            (Action::Pin6, Platform::Other) => &["alt+6"],
+            (Action::Pin7, Platform::Mac) => &["mod+alt+7"],
+            (Action::Pin7, Platform::Other) => &["alt+7"],
+            (Action::Pin8, Platform::Mac) => &["mod+alt+8"],
+            (Action::Pin8, Platform::Other) => &["alt+8"],
+            (Action::Pin9, Platform::Mac) => &["mod+alt+9"],
+            (Action::Pin9, Platform::Other) => &["alt+9"],
         }
     }
 }
@@ -591,6 +660,29 @@ mod tests {
 
     fn key(c: char) -> Key {
         Key::Char(c)
+    }
+
+    #[test]
+    fn pins_have_alt_and_cmd_option_digits() {
+        let other = Shortcuts::defaults(Platform::Other);
+        let mac = Shortcuts::defaults(Platform::Mac);
+        let mac_chord = |t: &str| parse_chord(t, Platform::Mac).unwrap().unwrap();
+        for n in 1..=9 {
+            let action = Action::pin(n).unwrap();
+            assert_eq!(action.name(), format!("pin-{n}"));
+            assert_eq!(action.pin_number(), Some(n));
+            assert_eq!(Action::from_name(&format!("pin-{n}")), Some(action));
+            let alt = chord(&format!("alt+{n}"));
+            assert_eq!(other.chord_for(action), Some(alt));
+            assert_eq!(fixed_owner(&alt, Platform::Other), None);
+            let cmd_option = mac_chord(&format!("mod+alt+{n}"));
+            assert_eq!(mac.action_for(&cmd_option), Some(action));
+            assert_eq!(fixed_owner(&cmd_option, Platform::Mac), None);
+        }
+        assert_eq!((Action::pin(0), Action::pin(10)), (None, None));
+        assert_eq!(Action::ALL.len(), 59);
+        assert_eq!(other.action_for(&chord("ctrl+1")), Some(Action::Tab1), "Ctrl+1 is still tab 1");
+        assert_eq!(other.action_for(&chord("ctrl+alt+1")), None, "AltGr+1 types");
     }
 
     #[test]

@@ -50,7 +50,6 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use gezik_config::shortcuts::{Key, Platform};
-use gezik_core::format_size;
 use gezik_core::ops::conflict::{Facts, identical, source_newer};
 use gezik_core::selection::Selection;
 use gezik_ops::{ConflictItem, Engine, JobId};
@@ -196,8 +195,8 @@ impl Conflicts {
 
     /// What never changes while the list is open.
     fn static_row(item: &ConflictItem, base: &Path) -> ConflictRow {
-        let date = |f: Facts| f.modified.map(gezik_platform::format_datetime).unwrap_or_default();
-        let size = |f: Facts| if f.is_dir { String::new() } else { format_size(f.size) };
+        let date = |f: Facts| f.modified.map(crate::view_options::date_text).unwrap_or_default();
+        let size = |f: Facts| if f.is_dir { String::new() } else { crate::view_options::size_text(f.size) };
         ConflictRow {
             name: row_name(&item.target, base).into(),
             source_size: size(item.source_facts).into(),

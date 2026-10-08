@@ -1,7 +1,8 @@
 //! `settings.toml` written by one thread of its own: every change the UI makes to it (the
-//! saved filters, the tab sets, the pinned folders, the rename rule sets, the `[view]` defaults) goes
-//! through one queue, so the UI thread never touches the file, changes are written in the
-//! order they were made, and two of them never read, edit and write the file over each other.
+//! saved filters, the tab sets, the pinned folders, the rename rule sets, the `[view]`
+//! defaults, the view options) goes through one queue, so the UI thread never touches the
+//! file, changes are written in the order they were made, and two of them never read, edit
+//! and write the file over each other.
 
 use std::fmt;
 use std::io;
@@ -14,8 +15,11 @@ use gezik_core::view::ViewSettings;
 
 use crate::Warning;
 use crate::paths::write_atomic;
-use crate::settings::{RenamePreset, SavedFilter, TabSet};
-use crate::settings_edit::{with_filters, with_pinned, with_rename_presets, with_tab_sets, with_view_defaults};
+use crate::pins::PinEntry;
+use crate::settings::{RenamePreset, SavedFilter, TabSet, ViewOption};
+use crate::settings_edit::{
+    with_filters, with_pinned, with_rename_presets, with_tab_sets, with_view_defaults, with_view_option,
+};
 use crate::store::{SETTINGS_TEMPLATE, read_text};
 
 /// How long a flush waits for the writer.
@@ -24,10 +28,12 @@ const FLUSH_WAIT: Duration = Duration::from_secs(5);
 /// One change to `settings.toml`; everything else in the file (comments too) stays.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SettingsChange {
-    /// The pinned folders (`[sidebar] pinned`).
-    Pinned(Vec<String>),
+    /// The pinned folders (`pinned`).
+    Pinned(Vec<PinEntry>),
     /// The `[view]` defaults ("Apply to all folders").
     ViewDefaults(ViewSettings),
+    /// One `[view]` option (the View menu, toggle-hidden).
+    ViewOption(ViewOption),
     /// The saved rename rule sets.
     RenamePresets(Vec<RenamePreset>),
     /// The saved filters (`[[filters]]`).
@@ -41,6 +47,7 @@ impl SettingsChange {
         match self {
             SettingsChange::Pinned(pinned) => with_pinned(text, pinned),
             SettingsChange::ViewDefaults(view) => with_view_defaults(text, view),
+            SettingsChange::ViewOption(option) => with_view_option(text, *option),
             SettingsChange::RenamePresets(presets) => with_rename_presets(text, presets),
             SettingsChange::Filters(filters) => with_filters(text, filters),
             SettingsChange::TabSets(sets) => with_tab_sets(text, sets),
@@ -182,7 +189,7 @@ mod tests {
                 std::thread::spawn(move || {
                     for i in 0..20 {
                         let change = if n == 0 {
-                            SettingsChange::Pinned(vec![format!("/p{i}")])
+                            SettingsChange::Pinned(vec![PinEntry::plain(format!("/p{i}"))])
                         } else {
                             SettingsChange::Filters(vec![SavedFilter { name: format!("F{i}"), pattern: "x".into() }])
                         };
@@ -204,7 +211,7 @@ mod tests {
         assert_eq!(told.len(), 42, "every change is told its result");
         assert!(told.iter().all(Result::is_ok));
         let settings = read(&dir);
-        assert_eq!(settings.pinned, ["/p19"], "the last of each kind wins: none is lost");
+        assert_eq!(crate::pins::paths(&settings.pinned), ["/p19"], "the last of each kind wins: none is lost");
         assert_eq!(settings.filters, [SavedFilter { name: "F19".into(), pattern: "x".into() }]);
         assert_eq!(settings.view.view.mode, gezik_core::view::ViewMode::Grid);
         assert_eq!(settings.rename_presets, [preset]);
@@ -221,7 +228,7 @@ mod tests {
         std::fs::write(dir.join("settings.toml"), "[sidebar\n").unwrap();
         let writer = SettingsWriter::new(dir.clone());
         let (results, told) = mpsc::channel();
-        writer.send(SettingsChange::Pinned(vec!["/a".into()]), Box::new(move |r| results.send(r).unwrap()));
+        writer.send(SettingsChange::Pinned(vec![PinEntry::plain("/a")]), Box::new(move |r| results.send(r).unwrap()));
         let warning = told.recv_timeout(FLUSH_WAIT).unwrap().unwrap_err();
         assert!(warning.message.starts_with("Fix settings.toml first"), "{}", warning.message);
         assert_eq!(std::fs::read_to_string(dir.join("settings.toml")).unwrap(), "[sidebar\n");

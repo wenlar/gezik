@@ -7,10 +7,14 @@ use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+use gezik_config::settings::ViewOption;
 use gezik_core::drag::Effect;
 use gezik_core::nav::Location;
 use gezik_core::path_text::PathFormat;
-use gezik_core::view::{ColumnKey, ColumnState, GridSize, SortDir, SortKey, SortSpec, ViewMode, ViewSettings};
+use gezik_core::view::{
+    ColumnKey, ColumnState, DateFormat, GridSize, SizeFormat, SortDir, SortKey, SortSpec, ViewMode, ViewOptions,
+    ViewSettings,
+};
 use gezik_platform::MenuTarget;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
@@ -18,7 +22,7 @@ use crate::navigation::Navigator;
 use crate::operations::Operations;
 use crate::popup::Anchor;
 use crate::preview::Preview;
-use crate::sidebar::{SECTION_PINNED, Sidebar};
+use crate::sidebar::{SECTION_GROUP, SECTION_PINNED, Sidebar};
 use crate::view::View;
 use crate::{AppWindow, MenuEntry, MenuSub};
 
@@ -88,6 +92,9 @@ pub fn items(place: Place, native_shell: bool) -> Vec<(u32, &'static str)> {
             }
             if pinned_section && !last {
                 out.push((MOVE_DOWN, "Move down"));
+            }
+            if pinned_section {
+                out.push((RENAME_PIN, "Rename…"));
             }
         }
         Place::Tab { only_tab, locked } => {
@@ -229,6 +236,28 @@ pub const TAB_SET_OPEN_FIRST: u32 = 1100;
 pub const TAB_SET_REPLACE_FIRST: u32 = 1130;
 pub const TAB_SET_DELETE_FIRST: u32 = 1160;
 pub const TAB_SET_MAX: u32 = 30;
+/// 1200: Rename… (a pinned folder's alias). 1201: Move to group ▸ New group…; 1202: No group;
+/// 1210-1259: Move to group ▸ group N (the groups shown, by place). 1260-1263: a group
+/// heading's menu.
+pub const RENAME_PIN: u32 = 1200;
+pub const GROUP_NEW: u32 = 1201;
+pub const GROUP_NONE: u32 = 1202;
+pub const GROUP_MOVE_FIRST: u32 = 1210;
+pub const GROUP_MAX: u32 = 50;
+pub const GROUP_UP: u32 = 1260;
+pub const GROUP_DOWN: u32 = 1261;
+pub const GROUP_RENAME: u32 = 1262;
+pub const UNGROUP: u32 = 1263;
+/// 1300-1304: the View menu's options (Hide extensions, Folders first, Single-click to open,
+/// Show hidden items, Show system items); 1310-1313 Date format ▸ in `DateFormat::ALL` order;
+/// 1320-1321 Size format ▸ in `SizeFormat::ALL` order.
+pub const HIDE_EXTENSIONS: u32 = 1300;
+pub const FOLDERS_FIRST: u32 = 1301;
+pub const SINGLE_CLICK_OPEN: u32 = 1302;
+pub const SHOW_HIDDEN: u32 = 1303;
+pub const SHOW_SYSTEM: u32 = 1304;
+pub const DATE_FORMAT_FIRST: u32 = 1310;
+pub const SIZE_FORMAT_FIRST: u32 = 1320;
 /// Group headings in a Slint menu: shown greyed, never chosen.
 pub const HEADING: u32 = 0;
 /// Gezik's menu ids are below this; the Explorer menu's start here (gezik_platform's
@@ -306,8 +335,10 @@ fn owned(items: Vec<(u32, &'static str)>) -> Vec<(u32, String)> {
     items.into_iter().map(|(id, title)| (id, title.to_owned())).collect()
 }
 
-/// The View menu; the current choices are marked with a bullet.
-pub fn view_items(view: ViewSettings, preview_open: bool) -> Vec<(u32, String)> {
+/// The View menu; the current choices are marked with a bullet. `options`: `[view]`'s options
+/// (spec 7.2), "Show system items" only on Windows; Date format ▸ and Size format ▸ go before
+/// "Apply to all folders" (`format_subs`).
+pub fn view_items(view: ViewSettings, preview_open: bool, options: ViewOptions, windows: bool) -> Vec<(u32, String)> {
     let mark = |on: bool, title: &str| format!("{}{title}", if on { "• " } else { "    " });
     let grid = view.mode == ViewMode::Grid;
     let mut out = vec![(VIEW_LIST, mark(!grid, "List")), (VIEW_GRID, mark(grid, "Grid"))];
@@ -329,9 +360,53 @@ pub fn view_items(view: ViewSettings, preview_open: bool) -> Vec<(u32, String)> 
     out.push((SORT_ASC, mark(view.sort.dir == SortDir::Asc, "Ascending")));
     out.push((SORT_DESC, mark(view.sort.dir == SortDir::Desc, "Descending")));
     out.push((PREVIEW_PANE, mark(preview_open, "Preview pane")));
+    out.push((HIDE_EXTENSIONS, mark(options.hide_extensions, "Hide extensions")));
+    out.push((FOLDERS_FIRST, mark(options.folders_first, "Folders first")));
+    out.push((SINGLE_CLICK_OPEN, mark(options.single_click_open, "Single-click to open")));
+    out.push((SHOW_HIDDEN, mark(options.show_hidden, "Show hidden items")));
+    if windows {
+        out.push((SHOW_SYSTEM, mark(options.show_system, "Show system items")));
+    }
     out.push((APPLY_TO_ALL, "Apply to all folders".to_owned()));
     out.push((RESET_FOLDER, "Reset this folder".to_owned()));
     out
+}
+
+/// Date format ▸ and Size format ▸ of the View menu, at place `at`, the current one marked.
+pub fn format_subs(options: ViewOptions, at: usize) -> Vec<Submenu> {
+    let mark = |on: bool, title: &str| format!("{}{title}", if on { "• " } else { "    " });
+    let dates = DateFormat::ALL
+        .iter()
+        .enumerate()
+        .map(|(i, f)| (DATE_FORMAT_FIRST + i as u32, mark(*f == options.date_format, f.label()), true))
+        .collect();
+    let sizes = SizeFormat::ALL
+        .iter()
+        .enumerate()
+        .map(|(i, f)| (SIZE_FORMAT_FIRST + i as u32, mark(*f == options.size_format, f.label()), true))
+        .collect();
+    vec![
+        Submenu { title: "Date format".to_owned(), at, items: dates },
+        Submenu { title: "Size format".to_owned(), at, items: sizes },
+    ]
+}
+
+/// What View menu item `id` changes, from `options` as they are now.
+pub fn view_option_for(id: u32, options: ViewOptions) -> Option<ViewOption> {
+    Some(match id {
+        HIDE_EXTENSIONS => ViewOption::HideExtensions(!options.hide_extensions),
+        FOLDERS_FIRST => ViewOption::FoldersFirst(!options.folders_first),
+        SINGLE_CLICK_OPEN => ViewOption::SingleClickOpen(!options.single_click_open),
+        SHOW_HIDDEN => ViewOption::ShowHidden(!options.show_hidden),
+        SHOW_SYSTEM => ViewOption::ShowSystem(!options.show_system),
+        id if (DATE_FORMAT_FIRST..DATE_FORMAT_FIRST + DateFormat::ALL.len() as u32).contains(&id) => {
+            ViewOption::DateFormat(DateFormat::ALL[(id - DATE_FORMAT_FIRST) as usize])
+        }
+        id if (SIZE_FORMAT_FIRST..SIZE_FORMAT_FIRST + SizeFormat::ALL.len() as u32).contains(&id) => {
+            ViewOption::SizeFormat(SizeFormat::ALL[(id - SIZE_FORMAT_FIRST) as usize])
+        }
+        _ => return None,
+    })
 }
 
 /// "Presets ▾": each saved set, Save, then a Delete item for each (up to `PRESET_MAX` each).
@@ -379,6 +454,37 @@ fn pin_toggle(pinned: bool) -> (u32, &'static str) {
     if pinned { (UNPIN, "Unpin from sidebar") } else { (PIN, "Pin to sidebar") }
 }
 
+/// "Move to group ▸" for a pin in group `own`: the groups shown but its own (by their place
+/// among them, up to `GROUP_MAX`), "New group…", and "No group" when it has one.
+pub fn group_items(groups: &[String], own: Option<&str>) -> Vec<(u32, String, bool)> {
+    let mut out: Vec<(u32, String, bool)> = groups
+        .iter()
+        .enumerate()
+        .take(GROUP_MAX as usize)
+        .filter(|(_, group)| own.is_none_or(|own| !gezik_config::pins::same_group(own, group)))
+        .map(|(i, group)| (GROUP_MOVE_FIRST + i as u32, group.clone(), true))
+        .collect();
+    out.push((GROUP_NEW, "New group…".to_owned(), true));
+    if own.is_some() {
+        out.push((GROUP_NONE, "No group".to_owned(), true));
+    }
+    out
+}
+
+/// A group heading's menu: move it (not past the first or the last), rename it, ungroup it.
+pub fn group_heading_items(first: bool, last: bool) -> Vec<(u32, &'static str)> {
+    let mut out = Vec::new();
+    if !first {
+        out.push((GROUP_UP, "Move group up"));
+    }
+    if !last {
+        out.push((GROUP_DOWN, "Move group down"));
+    }
+    out.push((GROUP_RENAME, "Rename group…"));
+    out.push((UNGROUP, "Ungroup"));
+    out
+}
+
 /// What a menu was opened for, captured when it opens. Items run later (the Slint menu
 /// stays open while other things happen), so nothing here is an index that could point
 /// elsewhere by then: rows and sidebar entries are kept by path, tabs by id.
@@ -387,6 +493,8 @@ enum Subject {
     Row(PathBuf),
     Rows(Vec<PathBuf>),
     SidebarEntry(PathBuf),
+    /// A group heading of the sidebar, by name.
+    PinGroup(String),
     /// A tab by id, and the tab set names its menu listed.
     Tab(u64, Vec<String>),
     /// Empty space in this folder.
@@ -442,6 +550,8 @@ pub struct Menus {
     subject: Rc<RefCell<Option<Subject>>>,
     /// The rows a row menu was opened for (path, is a folder), for its archive items.
     rows: Rc<RefCell<Vec<(PathBuf, bool)>>>,
+    /// The groups the last sidebar menu listed in Move to group ▸ (items are by place).
+    pin_groups: Rc<RefCell<Vec<String>>>,
     #[cfg_attr(not(windows), allow(dead_code))]
     native_menu: MenuGate,
 }
@@ -464,6 +574,7 @@ impl Menus {
             ops,
             subject: Rc::default(),
             rows: Rc::default(),
+            pin_groups: Rc::default(),
             native_menu: MenuGate::default(),
         };
         window.on_menu_closed(|| {
@@ -603,22 +714,39 @@ impl Menus {
         Submenu { title: "Copy path as".to_owned(), at, items: copy_path_items(cfg!(windows), unc) }
     }
 
-    /// Right-click on sidebar entry (`section`, `index`), at window position `x`, `y`.
+    /// Right-click on sidebar entry (`section`, `index`), at window position `x`, `y`; on a
+    /// group's heading, its menu.
     pub fn sidebar_entry(&self, section: i32, index: i32, x: f32, y: f32) {
+        if section == SECTION_GROUP {
+            return self.group_heading(index, x, y);
+        }
         let Some(Location::Path(path)) = self.sidebar.location_of(section, index) else { return };
         let pinned_section = section == SECTION_PINNED;
-        let count = if pinned_section { self.sidebar.visible_pinned_count() } else { 0 };
-        let index = usize::try_from(index).unwrap_or(0);
-        let place = Place::Sidebar {
-            pinned_section,
-            pinned: self.sidebar.is_pinned(&path),
-            first: index == 0,
-            last: index + 1 >= count,
-        };
+        let (first, last) = if pinned_section { self.sidebar.group_ends(&path) } else { (true, true) };
+        let place = Place::Sidebar { pinned_section, pinned: self.sidebar.is_pinned(&path), first, last };
         let mut list = owned(items(place, cfg!(windows)));
+        let mut subs = Vec::new();
+        if pinned_section {
+            let groups = self.sidebar.shown_groups();
+            let own = self.sidebar.group_of(&path);
+            subs.push(Submenu {
+                title: "Move to group".to_owned(),
+                at: list.len(),
+                items: group_items(&groups, own.as_deref()),
+            });
+            *self.pin_groups.borrow_mut() = groups;
+        }
         list.extend(owned(terminal_items(cfg!(windows))));
-        let subs = vec![self.copy_path_sub(std::slice::from_ref(&path), list.len())];
+        subs.push(self.copy_path_sub(std::slice::from_ref(&path), list.len()));
         self.open(Subject::SidebarEntry(path.clone()), list, subs, MenuTarget::Item(path), x, y, None);
+    }
+
+    /// Right-click on the heading of group `index` (its place among the groups shown).
+    fn group_heading(&self, index: i32, x: f32, y: f32) {
+        let groups = self.sidebar.shown_groups();
+        let Some(i) = usize::try_from(index).ok().filter(|i| *i < groups.len()) else { return };
+        *self.subject.borrow_mut() = Some(Subject::PinGroup(groups[i].clone()));
+        self.open_slint(&group_heading_items(i == 0, i + 1 == groups.len()), Anchor::point(x, y));
     }
 
     /// Right-click on tab `index`, at window position `x`, `y`. Tabs get Gezik's own menu
@@ -643,7 +771,11 @@ impl Menus {
     /// The View button's menu, under it.
     pub fn view_menu(&self, at: Anchor) {
         *self.subject.borrow_mut() = Some(Subject::View);
-        self.open_slint(&view_items(self.view.view_settings(), self.preview.is_pane_open()), at);
+        let options = crate::view_options::current();
+        let items = view_items(self.view.view_settings(), self.preview.is_pane_open(), options, cfg!(windows));
+        let place = items.iter().position(|(id, _)| *id == APPLY_TO_ALL).unwrap_or(items.len());
+        let entries: Vec<(u32, String, bool)> = items.into_iter().map(|(id, title)| (id, title, true)).collect();
+        self.open_slint_entries(&entries, format_subs(options, place), at);
     }
 
     /// `subs`: submenus among `items`. `at`: where the Windows menu opens (window position),
@@ -944,19 +1076,19 @@ impl Menus {
             }
             (PIN, Subject::Row(path) | Subject::SidebarEntry(path)) => self.sidebar.pin(path),
             (UNPIN, Subject::Row(path) | Subject::SidebarEntry(path)) => self.sidebar.unpin_path(&path),
-            (MOVE_UP, Subject::SidebarEntry(path)) => {
-                if let Some(i) = self.sidebar.visible_pinned_index(&path)
-                    && i > 0
-                {
-                    self.sidebar.move_pinned(i, i - 1);
+            (MOVE_UP | MOVE_DOWN, Subject::SidebarEntry(path)) => self.sidebar.move_in_group(&path, id == MOVE_UP),
+            (RENAME_PIN, Subject::SidebarEntry(path)) => self.sidebar.ask_alias(&path),
+            (GROUP_NEW, Subject::SidebarEntry(path)) => self.sidebar.ask_new_group(&path),
+            (GROUP_NONE, Subject::SidebarEntry(path)) => self.sidebar.set_group(&path, None),
+            (id, Subject::SidebarEntry(path)) if (GROUP_MOVE_FIRST..GROUP_MOVE_FIRST + GROUP_MAX).contains(&id) => {
+                let group = self.pin_groups.borrow().get((id - GROUP_MOVE_FIRST) as usize).cloned();
+                if let Some(group) = group {
+                    self.sidebar.set_group(&path, Some(&group));
                 }
             }
-            (MOVE_DOWN, Subject::SidebarEntry(path)) => {
-                // `move_pinned` clamps, so the last entry stays put.
-                if let Some(i) = self.sidebar.visible_pinned_index(&path) {
-                    self.sidebar.move_pinned(i, i + 1);
-                }
-            }
+            (GROUP_UP | GROUP_DOWN, Subject::PinGroup(group)) => self.sidebar.move_group(&group, id == GROUP_UP),
+            (GROUP_RENAME, Subject::PinGroup(group)) => self.sidebar.ask_group_name(&group),
+            (UNGROUP, Subject::PinGroup(group)) => self.sidebar.ungroup(&group),
             (SAVE_TAB_SET, Subject::Tab(..)) => crate::tab_sets::with_current(crate::tab_sets::TabSets::ask_save),
             (id, Subject::Tab(_, names)) if crate::tab_sets::set_item(id).is_some() => {
                 crate::tab_sets::with_current(|sets| sets.chosen(id, &names));
@@ -1028,6 +1160,11 @@ impl Menus {
             (PREVIEW_PANE, Subject::View) => self.preview.toggle_pane(),
             (APPLY_TO_ALL, Subject::View) => self.view.apply_to_all(),
             (RESET_FOLDER, Subject::View) => self.view.reset_folder(),
+            (id, Subject::View) => {
+                if let Some(option) = view_option_for(id, crate::view_options::current()) {
+                    crate::view_options::change(option);
+                }
+            }
             (CUT | COPY, Subject::Row(path)) => self.ops.copy_paths(vec![path], id == CUT),
             (CUT | COPY, Subject::Rows(paths)) => self.ops.copy_paths(paths, id == CUT),
             (PASTE_INTO, Subject::Row(path)) => self.ops.paste(Some(path), false),
@@ -1191,6 +1328,11 @@ fn from_submenu(id: u32) -> bool {
     (COMMAND_FIRST..COMMAND_FIRST + COMMAND_MAX).contains(&id)
         || (COPY_PATH_FIRST..COPY_PATH_FIRST + PathFormat::ALL.len() as u32).contains(&id)
         || crate::tab_sets::set_item(id).is_some()
+        || (DATE_FORMAT_FIRST..DATE_FORMAT_FIRST + DateFormat::ALL.len() as u32).contains(&id)
+        || (SIZE_FORMAT_FIRST..SIZE_FORMAT_FIRST + SizeFormat::ALL.len() as u32).contains(&id)
+        || (GROUP_MOVE_FIRST..GROUP_MOVE_FIRST + GROUP_MAX).contains(&id)
+        || id == GROUP_NEW
+        || id == GROUP_NONE
 }
 
 /// Whether Slint shows its menus as the system's: on Windows and macOS (through muda),
@@ -1386,6 +1528,18 @@ mod tests {
             COMMAND_GROUP,
             OPEN_TERMINAL,
             OPEN_TERMINAL_ADMIN,
+            HIDE_EXTENSIONS,
+            FOLDERS_FIRST,
+            SINGLE_CLICK_OPEN,
+            SHOW_HIDDEN,
+            SHOW_SYSTEM,
+            RENAME_PIN,
+            GROUP_NEW,
+            GROUP_NONE,
+            GROUP_UP,
+            GROUP_DOWN,
+            GROUP_RENAME,
+            UNGROUP,
         ];
         let mut ranges: Vec<std::ops::Range<u32>> = singles.iter().map(|id| *id..id + 1).collect();
         ranges.extend([
@@ -1404,6 +1558,9 @@ mod tests {
             TAB_SET_OPEN_FIRST..TAB_SET_OPEN_FIRST + TAB_SET_MAX,
             TAB_SET_REPLACE_FIRST..TAB_SET_REPLACE_FIRST + TAB_SET_MAX,
             TAB_SET_DELETE_FIRST..TAB_SET_DELETE_FIRST + TAB_SET_MAX,
+            DATE_FORMAT_FIRST..DATE_FORMAT_FIRST + DateFormat::ALL.len() as u32,
+            SIZE_FORMAT_FIRST..SIZE_FORMAT_FIRST + SizeFormat::ALL.len() as u32,
+            GROUP_MOVE_FIRST..GROUP_MOVE_FIRST + GROUP_MAX,
         ]);
         for (i, a) in ranges.iter().enumerate() {
             assert!(a.start >= 1 && a.end <= GEZIK_IDS_END, "{a:?}: 1..4096 (0 is a heading, 4096 on the Shell's)");
@@ -1515,11 +1672,46 @@ mod tests {
     #[test]
     fn pinned_sidebar_rows_can_move_within_bounds() {
         let first = items(Place::Sidebar { pinned_section: true, pinned: true, first: true, last: false }, true);
-        assert_eq!(ids(first), [OPEN_IN_NEW_TAB, UNPIN, MOVE_DOWN]);
+        assert_eq!(ids(first), [OPEN_IN_NEW_TAB, UNPIN, MOVE_DOWN, RENAME_PIN]);
         let middle = items(Place::Sidebar { pinned_section: true, pinned: true, first: false, last: false }, true);
-        assert_eq!(ids(middle), [OPEN_IN_NEW_TAB, UNPIN, MOVE_UP, MOVE_DOWN]);
+        assert_eq!(ids(middle), [OPEN_IN_NEW_TAB, UNPIN, MOVE_UP, MOVE_DOWN, RENAME_PIN]);
         let folder = items(Place::Sidebar { pinned_section: false, pinned: false, first: false, last: false }, true);
         assert_eq!(ids(folder), [OPEN_IN_NEW_TAB, PIN]);
+    }
+
+    #[test]
+    fn move_to_group_lists_the_other_groups_new_and_none() {
+        let groups = vec!["Work".to_owned(), "Media".to_owned()];
+        let titles = |items: Vec<(u32, String, bool)>| items.into_iter().map(|(id, t, _)| (id, t)).collect::<Vec<_>>();
+        assert_eq!(
+            titles(group_items(&groups, None)),
+            [
+                (GROUP_MOVE_FIRST, "Work".to_owned()),
+                (GROUP_MOVE_FIRST + 1, "Media".to_owned()),
+                (GROUP_NEW, "New group…".to_owned())
+            ]
+        );
+        assert_eq!(
+            titles(group_items(&groups, Some("work"))),
+            [
+                (GROUP_MOVE_FIRST + 1, "Media".to_owned()),
+                (GROUP_NEW, "New group…".to_owned()),
+                (GROUP_NONE, "No group".to_owned())
+            ],
+            "its own group left out; the ids go by place"
+        );
+        let many: Vec<String> = (0..GROUP_MAX + 5).map(|i| format!("G{i}")).collect();
+        assert_eq!(group_items(&many, None).len(), GROUP_MAX as usize + 1);
+        assert!(from_submenu(GROUP_MOVE_FIRST + 3) && from_submenu(GROUP_NEW) && from_submenu(GROUP_NONE));
+        assert!(!from_submenu(RENAME_PIN));
+    }
+
+    #[test]
+    fn a_group_heading_moves_renames_and_ungroups() {
+        assert_eq!(ids(group_heading_items(true, false)), [GROUP_DOWN, GROUP_RENAME, UNGROUP]);
+        assert_eq!(ids(group_heading_items(false, true)), [GROUP_UP, GROUP_RENAME, UNGROUP]);
+        assert_eq!(ids(group_heading_items(false, false)), [GROUP_UP, GROUP_DOWN, GROUP_RENAME, UNGROUP]);
+        assert_eq!(ids(group_heading_items(true, true)), [GROUP_RENAME, UNGROUP]);
     }
 
     #[test]
@@ -1582,8 +1774,8 @@ mod tests {
 
     #[test]
     fn view_menu_marks_the_current_choices() {
-        use gezik_core::view::{GridSize, SortDir, SortKey, SortSpec, ViewMode, ViewSettings};
-        let list = view_items(ViewSettings::default(), false);
+        use gezik_core::view::{GridSize, SortDir, SortKey, SortSpec, ViewMode, ViewOptions, ViewSettings};
+        let list = view_items(ViewSettings::default(), false, ViewOptions::default(), false);
         let ids: Vec<u32> = list.iter().map(|(id, _)| *id).collect();
         assert_eq!(
             ids,
@@ -1598,6 +1790,10 @@ mod tests {
                 SORT_ASC,
                 SORT_DESC,
                 PREVIEW_PANE,
+                HIDE_EXTENSIONS,
+                FOLDERS_FIRST,
+                SINGLE_CLICK_OPEN,
+                SHOW_HIDDEN,
                 APPLY_TO_ALL,
                 RESET_FOLDER
             ]
@@ -1608,12 +1804,82 @@ mod tests {
             sort: SortSpec { key: SortKey::Size, dir: SortDir::Desc },
             grid_size: GridSize::Large,
         };
-        let items = view_items(grid, false);
+        let items = view_items(grid, false, ViewOptions::default(), false);
         let marked: Vec<&str> =
             items.iter().filter(|(_, t)| t.starts_with("• ")).map(|(_, t)| t.trim_start_matches("• ")).collect();
-        assert_eq!(marked, ["Grid", "Large icons", "Sort by size", "Descending"]);
+        let mut expected = vec!["Grid", "Large icons", "Sort by size", "Descending", "Folders first"];
+        if !cfg!(target_os = "macos") {
+            expected.push("Show hidden items");
+        }
+        assert_eq!(marked, expected);
         assert!(
-            view_items(ViewSettings::default(), true).iter().any(|(id, t)| *id == PREVIEW_PANE && t.starts_with("• "))
+            view_items(ViewSettings::default(), true, ViewOptions::default(), false)
+                .iter()
+                .any(|(id, t)| *id == PREVIEW_PANE && t.starts_with("• "))
+        );
+    }
+
+    #[test]
+    fn view_menu_lists_the_options_and_their_marks() {
+        use gezik_core::view::{DateFormat, ViewOptions};
+        let options = ViewOptions { hide_extensions: true, ..ViewOptions::default() };
+        let items = view_items(ViewSettings::default(), false, options, true);
+        let ids: Vec<u32> = items.iter().map(|(id, _)| *id).collect();
+        assert_eq!(
+            &ids[10..],
+            [HIDE_EXTENSIONS, FOLDERS_FIRST, SINGLE_CLICK_OPEN, SHOW_HIDDEN, SHOW_SYSTEM, APPLY_TO_ALL, RESET_FOLDER]
+        );
+        assert!(items[10].1.starts_with("• ") && items[11].1.starts_with("• "), "extensions hidden, folders first");
+        assert!(!items[12].1.starts_with("• "));
+        assert_eq!(items[13].1.starts_with("• "), options.show_hidden);
+        let elsewhere: Vec<u32> =
+            view_items(ViewSettings::default(), false, options, false).iter().map(|(id, _)| *id).collect();
+        assert!(!elsewhere.contains(&SHOW_SYSTEM), "Show system items: Windows only");
+        let subs = format_subs(ViewOptions { date_format: DateFormat::Iso, ..options }, 15);
+        let places: Vec<(&str, usize)> = subs.iter().map(|s| (s.title.as_str(), s.at)).collect();
+        assert_eq!(places, [("Date format", 15), ("Size format", 15)]);
+        let dates: Vec<(u32, &str)> = subs[0].items.iter().map(|(id, t, _)| (*id, t.as_str())).collect();
+        assert_eq!(
+            dates,
+            [
+                (DATE_FORMAT_FIRST, "    Relative"),
+                (DATE_FORMAT_FIRST + 1, "    Short"),
+                (DATE_FORMAT_FIRST + 2, "• ISO"),
+                (DATE_FORMAT_FIRST + 3, "    System")
+            ]
+        );
+        assert_eq!(subs[1].items.len(), 2);
+    }
+
+    #[test]
+    fn the_mac_menu_bar_names_the_formats_as_the_view_menu_does() {
+        use gezik_core::view::{DateFormat, SizeFormat};
+        let bar = include_str!("../ui/app.slint");
+        let dates = DateFormat::ALL.iter().enumerate().map(|(k, f)| (f.label(), DATE_FORMAT_FIRST + k as u32));
+        let sizes = SizeFormat::ALL.iter().enumerate().map(|(k, f)| (f.label(), SIZE_FORMAT_FIRST + k as u32));
+        for (label, id) in dates.chain(sizes) {
+            let title = format!("title: \"{label}\";");
+            let command = format!("\"view-option:{id}\"");
+            assert!(bar.lines().any(|line| line.contains(&title) && line.contains(&command)), "{label} ({id})");
+        }
+    }
+
+    #[test]
+    fn view_menu_ids_say_which_option_changes() {
+        use gezik_config::settings::ViewOption;
+        use gezik_core::view::{DateFormat, SizeFormat, ViewOptions};
+        let options = ViewOptions::default();
+        assert_eq!(view_option_for(HIDE_EXTENSIONS, options), Some(ViewOption::HideExtensions(true)));
+        assert_eq!(view_option_for(FOLDERS_FIRST, options), Some(ViewOption::FoldersFirst(false)));
+        assert_eq!(view_option_for(SINGLE_CLICK_OPEN, options), Some(ViewOption::SingleClickOpen(true)));
+        assert_eq!(view_option_for(SHOW_HIDDEN, options), Some(ViewOption::ShowHidden(!options.show_hidden)));
+        assert_eq!(view_option_for(SHOW_SYSTEM, options), Some(ViewOption::ShowSystem(true)));
+        assert_eq!(view_option_for(DATE_FORMAT_FIRST, options), Some(ViewOption::DateFormat(DateFormat::Relative)));
+        assert_eq!(view_option_for(SIZE_FORMAT_FIRST + 1, options), Some(ViewOption::SizeFormat(SizeFormat::Decimal)));
+        assert_eq!(view_option_for(SIZE_FORMAT_FIRST + 2, options), None);
+        assert_eq!(view_option_for(VIEW_LIST, options), None);
+        assert!(
+            from_submenu(DATE_FORMAT_FIRST + 3) && from_submenu(SIZE_FORMAT_FIRST) && !from_submenu(HIDE_EXTENSIONS)
         );
     }
 }

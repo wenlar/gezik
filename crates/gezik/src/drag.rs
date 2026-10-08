@@ -22,7 +22,7 @@ use slint::{ComponentHandle, Model, Timer, TimerMode};
 use crate::context_menu::Menus;
 use crate::navigation::Navigator;
 use crate::operations::Operations;
-use crate::sidebar::{SECTION_PINNED, Sidebar};
+use crate::sidebar::{SECTION_GROUP, SECTION_PINNED, Sidebar};
 use crate::view::View;
 use crate::{AppWindow, Theme};
 
@@ -124,6 +124,9 @@ struct Inner {
     /// pointer grab with it, so the pointer is followed from the window's own events.
     grab_lost: Cell<bool>,
     handed: Cell<Option<Handed>>,
+    /// When the last click that opened an entry (single-click-open) came up: the second click
+    /// of a double-click must not open again.
+    last_open: Cell<Option<std::time::Instant>>,
     /// Files winit reported dropped (an X11 source that ignores `XdndProxy`), gathered until
     /// the batch ends.
     dropped_files: RefCell<Vec<PathBuf>>,
@@ -195,6 +198,16 @@ fn at_menu(phase: &Phase) -> AtMenu {
     }
 }
 
+/// How soon after a click that opened an entry the next one is the second of a double-click.
+const DOUBLE_CLICK: Duration = Duration::from_millis(500);
+
+/// Whether a left release opens the entry with single-click-open: a plain press that did not
+/// become a drag or a rubber band, and not the second click of a double-click (`since`: the
+/// time since the last click that opened).
+fn opens_on_release(single_click_open: bool, plain_press: bool, dragged: bool, since: Option<Duration>) -> bool {
+    single_click_open && plain_press && !dragged && since.is_none_or(|since| since >= DOUBLE_CLICK)
+}
+
 /// The address bar parts' places Slint reported, kept only where the part still shows the
 /// label it had then (right after a navigation, the old places would point at new parts).
 fn current_spans(stored: &[(String, f32, f32)], labels: &[String]) -> Vec<(f32, f32)> {
@@ -243,6 +256,7 @@ impl Drags {
             outside: RefCell::default(),
             handoff_failed: Cell::new(false),
             grab_lost: Cell::new(false),
+            last_open: Cell::new(None),
             handed: Cell::new(None),
             dropped_files: RefCell::default(),
         }));
@@ -469,9 +483,31 @@ impl Drags {
                 *self.0.phase.borrow_mut() = offer;
                 false
             }
-            Phase::Armed { index, right: pressed_right, .. } => {
+            Phase::Armed { index, x: x0, y: y0, right: pressed_right, .. } => {
                 if !pressed_right && !right {
                     self.0.view.release(index, false);
+                    let moved = gezik_core::drag::past_threshold(x - x0, y - y0);
+                    let since = self.0.last_open.get().map(|at| at.elapsed());
+                    // Single-click-open: a plain click (no Ctrl, Cmd or Shift) opens (spec 7.1);
+                    // after the release is fully handled.
+                    let plain = self.0.view.take_plain_press(index);
+                    if opens_on_release(
+                        crate::view_options::current().single_click_open,
+                        plain,
+                        moved || self.0.view.marquee_active(),
+                        since,
+                    ) {
+                        self.0.last_open.set(Some(std::time::Instant::now()));
+                        let nav = self.0.nav.clone();
+                        // By path: a listing replaced before the timer fires must not open
+                        // another entry under the same index.
+                        let clicked = self.0.view.entry_path(index);
+                        Timer::single_shot(Duration::ZERO, move || {
+                            if let Some((path, is_dir)) = clicked {
+                                crate::open_path(&nav, path, is_dir);
+                            }
+                        });
+                    }
                 }
                 false
             }
@@ -567,9 +603,10 @@ impl Drags {
                 let rows = window
                     .get_sidebar_rows()
                     .iter()
-                    .map(|row| match (row.header, row.section, usize::try_from(row.index)) {
-                        (true, ..) => SideRow::Header,
-                        (false, SECTION_PINNED, Ok(i)) => SideRow::Pinned(i),
+                    .map(|row| match (row.header, row.section) {
+                        (true, SECTION_PINNED | SECTION_GROUP) => SideRow::PinHeader,
+                        (true, _) => SideRow::Header,
+                        (false, SECTION_PINNED) => SideRow::Pinned,
                         _ => SideRow::Item,
                     })
                     .collect();
@@ -665,9 +702,7 @@ impl Drags {
             _ => -1,
         });
         window.set_drop_pin_row(match target.hit {
-            Hit::PinAt(p) if on && window.get_sidebar_pinned_first_row() >= 0 => {
-                window.get_sidebar_pinned_first_row() + index(p)
-            }
+            Hit::PinAt(row) if on => index(row),
             _ => -1,
         });
         window.set_drop_tab(match target.hit {
@@ -811,8 +846,8 @@ impl Drags {
     }
 
     fn drop_on(&self, d: Dragging, target: Target) -> Option<Effect> {
-        if let (Hit::PinAt(position), Some(Action::Pin)) = (target.hit, target.action) {
-            self.0.sidebar.pin_at(&d.sources, position);
+        if let (Hit::PinAt(row), Some(Action::Pin)) = (target.hit, target.action) {
+            self.0.sidebar.pin_at_row(&d.sources, row);
             return None;
         }
         let dir = target.dir?;
@@ -1056,6 +1091,17 @@ impl DropHandler for Outside {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_click_opens_once_and_not_after_a_drag() {
+        let long_ago = Some(Duration::from_secs(5));
+        assert!(opens_on_release(true, true, false, None));
+        assert!(opens_on_release(true, true, false, long_ago));
+        assert!(!opens_on_release(false, true, false, None), "the setting is off");
+        assert!(!opens_on_release(true, false, false, None), "Ctrl or Shift");
+        assert!(!opens_on_release(true, true, true, None), "a drag or a rubber band");
+        assert!(!opens_on_release(true, true, false, Some(Duration::from_millis(200))), "second click");
+    }
 
     fn dragging() -> Dragging {
         Dragging {
