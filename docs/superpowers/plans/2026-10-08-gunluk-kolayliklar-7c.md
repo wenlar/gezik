@@ -1371,3 +1371,818 @@ impl Task for LinkTask {
 - [ ] **Step 7: Commit** "Make shortcuts, junctions and symbolic links as undoable jobs, and check that trashing a link leaves its target".
 
 ---
+
+### Task 3: `gezik-platform` — panodan resim ve metin okuma (üç sistem)
+
+**Files:**
+- Modify: `crates/gezik-platform/src/clipboard.rs` (`ClipboardImage`, `paste_kind`, `read_image`, `read_text`, `bmp_from_dib`, `text_from_unicode`; Windows, macOS ve Linux `imp`'leri), `crates/gezik-platform/src/linux/mod.rs` (saf `paste_kind_of`, `text_type`, `from_latin1`; `Backend`'e üç yöntem), `crates/gezik-platform/src/linux/x11.rs`, `crates/gezik-platform/src/linux/wayland.rs`, `crates/gezik-platform/Cargo.toml` (yalnız macOS: `objc2-foundation`'a `"NSData", "NSDictionary"`, `objc2-app-kit`'e `"NSBitmapImageRep", "NSImageRep"`)
+
+**Interfaces:**
+- Consumes: Task 2'nin `gezik_core::templates::PasteKind`.
+- Produces:
+
+```rust
+// gezik_platform::clipboard
+pub use gezik_core::templates::PasteKind;
+pub enum ClipboardImage { Png(Vec<u8>), Bmp(Vec<u8>) }
+impl ClipboardImage { pub fn png_bytes(&self) -> std::io::Result<Vec<u8>>; }
+/// What paste would write as a file: None while the clipboard holds files (they paste as
+/// files) or nothing usable. Looks at the formats only, reads no data.
+pub fn paste_kind() -> Option<PasteKind>;
+pub fn read_image() -> Result<Option<ClipboardImage>, ClipboardError>;
+pub fn read_text() -> Result<Option<String>, ClipboardError>;
+```
+
+- [ ] **Step 1: Write the failing tests**
+
+`clipboard.rs` test modülü: başındaki `#[cfg(any(windows, target_os = "macos"))] use super::*;` → `use super::*;`. Ekle:
+
+```rust
+    /// A 2×1 picture as clipboard DIB data: red then green, 24 bits, bottom-up.
+    fn dib() -> Vec<u8> {
+        let mut out = Vec::new();
+        for field in [40u32, 2, 1] {
+            out.extend_from_slice(&field.to_le_bytes()); // biSize, biWidth, biHeight
+        }
+        out.extend_from_slice(&1u16.to_le_bytes()); // biPlanes
+        out.extend_from_slice(&24u16.to_le_bytes()); // biBitCount
+        for field in [0u32, 8, 0, 0, 0, 0] {
+            out.extend_from_slice(&field.to_le_bytes()); // compression, size, ppm × 2, colors × 2
+        }
+        out.extend_from_slice(&[0, 0, 255, 0, 255, 0, 0, 0]); // BGR BGR, padded to 4 bytes
+        out
+    }
+
+    #[test]
+    fn a_dib_becomes_a_bmp_file() {
+        let bmp = bmp_from_dib(&dib()).unwrap();
+        assert_eq!(&bmp[..2], b"BM");
+        assert_eq!(u32::from_le_bytes(bmp[2..6].try_into().unwrap()) as usize, bmp.len());
+        assert_eq!(u32::from_le_bytes(bmp[10..14].try_into().unwrap()), 14 + 40, "the pixels follow the header");
+        let picture = image::load_from_memory_with_format(&bmp, image::ImageFormat::Bmp).unwrap().to_rgb8();
+        assert_eq!((picture.width(), picture.height()), (2, 1));
+        assert_eq!(picture.get_pixel(0, 0).0, [255, 0, 0]);
+        assert_eq!(picture.get_pixel(1, 0).0, [0, 255, 0]);
+        assert_eq!(bmp_from_dib(&dib()[..20]), None, "too short");
+        // 8 bits with no count given: a full 256-color table sits before the pixels.
+        let mut paletted = dib();
+        paletted[14..16].copy_from_slice(&8u16.to_le_bytes());
+        paletted.resize(40 + 256 * 4 + 4, 0);
+        let bmp = bmp_from_dib(&paletted).unwrap();
+        assert_eq!(u32::from_le_bytes(bmp[10..14].try_into().unwrap()), 14 + 40 + 1024);
+    }
+
+    #[test]
+    fn a_picture_is_written_as_png() {
+        let png = ClipboardImage::Bmp(bmp_from_dib(&dib()).unwrap()).png_bytes().unwrap();
+        let back = image::load_from_memory_with_format(&png, image::ImageFormat::Png).unwrap().to_rgb8();
+        assert_eq!(back.get_pixel(0, 0).0, [255, 0, 0]);
+        assert_eq!(ClipboardImage::Png(png.clone()).png_bytes().unwrap(), png, "PNG data as it came");
+        assert!(ClipboardImage::Bmp(b"BM nonsense".to_vec()).png_bytes().is_err());
+    }
+
+    #[test]
+    fn unicode_text_ends_at_its_nul() {
+        let bytes: Vec<u8> = "a ş\r\nb\0junk".encode_utf16().flat_map(u16::to_le_bytes).collect();
+        assert_eq!(text_from_unicode(&bytes), "a ş\r\nb", "line ends kept as they are");
+    }
+
+    /// Uses the real clipboard: run by hand (`cargo test -p gezik-platform -- --ignored`).
+    #[cfg(any(windows, target_os = "macos"))]
+    #[test]
+    #[ignore = "replaces the user's clipboard"]
+    fn text_comes_back_as_text_to_paste() {
+        write_text("satır 1\nsatır 2").unwrap();
+        assert_eq!(paste_kind(), Some(PasteKind::Text));
+        assert_eq!(read_text().unwrap().as_deref(), Some("satır 1\nsatır 2"));
+        write_files(&[std::env::temp_dir().join("a")], false).unwrap();
+        assert_eq!(paste_kind(), None, "files paste as files");
+        clear().unwrap();
+        assert_eq!(paste_kind(), None);
+    }
+```
+
+`linux/mod.rs` test modülüne (her sistemde koşar):
+
+```rust
+    #[test]
+    fn files_win_then_an_image_then_text() {
+        use gezik_core::templates::PasteKind;
+        // Gezik's own files also offer text; a browser's picture often comes with text too.
+        assert_eq!(paste_kind_of(&["TARGETS", "text/uri-list", "UTF8_STRING"]), None);
+        assert_eq!(paste_kind_of(&["x-special/gnome-copied-files", "image/png"]), None);
+        assert_eq!(paste_kind_of(&["text/html", "image/png", "UTF8_STRING"]), Some(PasteKind::Image));
+        assert_eq!(paste_kind_of(&["TEXT", "STRING"]), Some(PasteKind::Text));
+        assert_eq!(paste_kind_of(&["text/html"]), None, "nothing paste can write");
+        assert_eq!(text_type(&["STRING", "text/plain", "UTF8_STRING"]), Some("UTF8_STRING"));
+        assert_eq!(text_type(&["STRING", "text/plain"]), Some("text/plain"));
+        assert_eq!(text_type(&["image/png"]), None);
+        assert_eq!(from_latin1(&[0xE7, b'a']), "ça");
+    }
+```
+
+- [ ] **Step 2: Run to see them fail.** `cargo test -j 8 -p gezik-platform clipboard` ve `… linux` → derlenmez.
+
+- [ ] **Step 3: Implement the shared parts** (`clipboard.rs`, `imp`'lerin dışında; modül belgesine "…and pictures and text read to paste as files (spec 9.1)" eklenir):
+
+```rust
+pub use gezik_core::templates::PasteKind;
+pub use imp::{paste_kind, read_image, read_text};
+
+/// A picture on the clipboard, as it was read (the UI thread only reads; encoding happens in
+/// the job that writes the file).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClipboardImage {
+    /// A PNG file's bytes (Windows' "PNG" format, macOS, `image/png` on Linux).
+    Png(Vec<u8>),
+    /// A BMP file's bytes, made from Windows' `CF_DIBV5` / `CF_DIB`.
+    Bmp(Vec<u8>),
+}
+
+impl ClipboardImage {
+    /// The picture as a PNG file's bytes.
+    pub fn png_bytes(&self) -> std::io::Result<Vec<u8>> {
+        match self {
+            ClipboardImage::Png(bytes) => Ok(bytes.clone()),
+            ClipboardImage::Bmp(bytes) => {
+                let picture = image::load_from_memory_with_format(bytes, image::ImageFormat::Bmp).map_err(|err| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, format!("The picture cannot be read: {err}"))
+                })?;
+                let mut out = Vec::new();
+                picture
+                    .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+                    .map_err(std::io::Error::other)?;
+                Ok(out)
+            }
+        }
+    }
+}
+
+/// A BMP file from clipboard DIB data (a BITMAPINFOHEADER or a later one, maybe color masks
+/// and a color table, then the pixels): the 14-byte file header goes in front, saying where
+/// the pixels start. None for data too short to be a DIB.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn bmp_from_dib(dib: &[u8]) -> Option<Vec<u8>> {
+    let u32_at = |at: usize| dib.get(at..at + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
+    let header = usize::try_from(u32_at(0)?).ok()?;
+    if dib.len() < 40 || !(40..=dib.len()).contains(&header) {
+        return None;
+    }
+    let bit_count = u16::from_le_bytes([dib[14], dib[15]]);
+    let compression = u32_at(16)?;
+    let colors_used = usize::try_from(u32_at(32)?).ok()?;
+    // BI_BITFIELDS (3) and BI_ALPHABITFIELDS (6) after a 40-byte header: the masks follow it
+    // (later headers hold them inside).
+    let masks = match (header, compression) {
+        (40, 3) => 12,
+        (40, 6) => 16,
+        _ => 0,
+    };
+    let colors = if colors_used > 0 {
+        colors_used
+    } else if bit_count <= 8 {
+        1usize << bit_count
+    } else {
+        0
+    };
+    let offset = 14 + header + masks + colors * 4;
+    if offset > 14 + dib.len() {
+        return None;
+    }
+    let mut out = Vec::with_capacity(14 + dib.len());
+    out.extend_from_slice(b"BM");
+    out.extend_from_slice(&u32::try_from(14 + dib.len()).ok()?.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&u32::try_from(offset).ok()?.to_le_bytes());
+    out.extend_from_slice(dib);
+    Some(out)
+}
+
+/// `CF_UNICODETEXT` data as text: UTF-16 up to its NUL, line ends as they are.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn text_from_unicode(bytes: &[u8]) -> String {
+    let units: Vec<u16> =
+        bytes.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).take_while(|&unit| unit != 0).collect();
+    String::from_utf16_lossy(&units)
+}
+```
+
+- [ ] **Step 4: Windows `imp`'ine** (`use`'lara `IsClipboardFormatAvailable`, `CF_DIB`, `CF_DIBV5`; `use super::{ClipboardImage, PasteKind};`):
+
+```rust
+    fn png_format() -> u32 {
+        unsafe { RegisterClipboardFormatW(windows::core::w!("PNG")) }
+    }
+
+    fn available(format: u32) -> bool {
+        unsafe { IsClipboardFormatAvailable(format) }.is_ok()
+    }
+
+    /// The bytes of clipboard memory `memory` (while the clipboard is open).
+    fn global_bytes(memory: HGLOBAL) -> Option<Vec<u8>> {
+        unsafe {
+            let size = GlobalSize(memory);
+            let source = GlobalLock(memory) as *const u8;
+            if source.is_null() {
+                return None;
+            }
+            let bytes = std::slice::from_raw_parts(source, size).to_vec();
+            let _ = GlobalUnlock(memory);
+            (!bytes.is_empty()).then_some(bytes)
+        }
+    }
+
+    fn data(format: u32) -> Option<Vec<u8>> {
+        let handle = unsafe { GetClipboardData(format) }.ok()?;
+        global_bytes(HGLOBAL(handle.0))
+    }
+
+    /// Formats only: the clipboard is not opened, no data is read.
+    pub fn paste_kind() -> Option<PasteKind> {
+        if available(u32::from(CF_HDROP.0)) {
+            return None;
+        }
+        if available(png_format()) || available(u32::from(CF_DIBV5.0)) || available(u32::from(CF_DIB.0)) {
+            return Some(PasteKind::Image);
+        }
+        available(u32::from(CF_UNICODETEXT.0)).then_some(PasteKind::Text)
+    }
+
+    /// PNG as it is, else the DIB (V5 first: it keeps the alpha) as a BMP file.
+    pub fn read_image() -> Result<Option<ClipboardImage>, ClipboardError> {
+        let _open = Open::new()?;
+        if let Some(png) = data(png_format()) {
+            return Ok(Some(ClipboardImage::Png(png)));
+        }
+        for format in [CF_DIBV5, CF_DIB] {
+            if let Some(bmp) = data(u32::from(format.0)).and_then(|dib| super::bmp_from_dib(&dib)) {
+                return Ok(Some(ClipboardImage::Bmp(bmp)));
+            }
+        }
+        Ok(None)
+    }
+
+    pub fn read_text() -> Result<Option<String>, ClipboardError> {
+        let _open = Open::new()?;
+        Ok(data(u32::from(CF_UNICODETEXT.0)).map(|bytes| super::text_from_unicode(&bytes)))
+    }
+```
+
+- [ ] **Step 5: macOS `imp`'ine** (`Cargo.toml` özellikleri yukarıda):
+
+```rust
+    use objc2_app_kit::{
+        NSBitmapImageFileType, NSBitmapImageRep, NSPasteboardTypeFileURL, NSPasteboardTypeString, NSPasteboardTypeTIFF,
+    };
+    use objc2_foundation::NSDictionary;
+
+    use super::{ClipboardImage, PasteKind};
+
+    /// The pasteboard's types: files first, then a picture, then text.
+    pub fn paste_kind() -> Option<PasteKind> {
+        let pasteboard = NSPasteboard::generalPasteboard();
+        let types = pasteboard.types()?;
+        let has = |wanted: &NSString| types.iter().any(|t| &*t == wanted);
+        if has(unsafe { NSPasteboardTypeFileURL }) {
+            None
+        } else if has(&NSString::from_str("public.png")) || has(unsafe { NSPasteboardTypeTIFF }) {
+            Some(PasteKind::Image)
+        } else {
+            has(unsafe { NSPasteboardTypeString }).then_some(PasteKind::Text)
+        }
+    }
+
+    /// `public.png` as it is; else the TIFF every picture copy carries, made PNG (spec 9.1).
+    pub fn read_image() -> Result<Option<ClipboardImage>, ClipboardError> {
+        let pasteboard = NSPasteboard::generalPasteboard();
+        if let Some(png) = pasteboard.dataForType(&NSString::from_str("public.png")) {
+            return Ok(Some(ClipboardImage::Png(png.to_vec())));
+        }
+        let Some(tiff) = pasteboard.dataForType(unsafe { NSPasteboardTypeTIFF }) else { return Ok(None) };
+        let Some(rep) = NSBitmapImageRep::imageRepWithData(&tiff) else { return Ok(None) };
+        let png = unsafe { rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &NSDictionary::new()) };
+        Ok(png.map(|data| ClipboardImage::Png(data.to_vec())))
+    }
+
+    pub fn read_text() -> Result<Option<String>, ClipboardError> {
+        let pasteboard = NSPasteboard::generalPasteboard();
+        Ok(pasteboard.stringForType(unsafe { NSPasteboardTypeString }).map(|text| text.to_string()))
+    }
+```
+
+(Adlar son görevin `aarch64-apple-darwin` denetiminde doğrulanır; `objc2-app-kit` 0.3'teki imzaya uyulur — `unsafe` sınıf yöntemi, `types()`'ın dönüşü — davranış aynı kalır.)
+
+- [ ] **Step 6: Linux.** `linux/mod.rs`'e (her sistemde derlenen saf kısım, `what_to_ask`'ın yanına):
+
+```rust
+/// The text types Gezik reads, best first.
+pub(crate) const TEXT_TYPES: [&str; 5] = ["UTF8_STRING", "text/plain;charset=utf-8", "text/plain", "TEXT", "STRING"];
+
+/// What paste would write as a file, from the types (X11 targets, Wayland MIME types) the
+/// clipboard's owner offers: None while it offers files (they paste as files), else a PNG
+/// picture before text (a browser's picture often comes with text).
+#[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
+pub(crate) fn paste_kind_of(offered: &[&str]) -> Option<gezik_core::templates::PasteKind> {
+    use gezik_core::templates::PasteKind;
+    let has = |name: &str| offered.contains(&name);
+    if has("x-special/gnome-copied-files") || has("text/uri-list") {
+        None
+    } else if has("image/png") {
+        Some(PasteKind::Image)
+    } else {
+        text_type(offered).map(|_| PasteKind::Text)
+    }
+}
+
+/// The best text type among `offered`.
+#[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
+pub(crate) fn text_type<'a>(offered: &[&'a str]) -> Option<&'a str> {
+    TEXT_TYPES.iter().find_map(|wanted| offered.iter().find(|o| **o == *wanted).copied())
+}
+
+/// `STRING` (Latin-1) bytes as text.
+#[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
+pub(crate) fn from_latin1(bytes: &[u8]) -> String {
+    bytes.iter().map(|&b| char::from(b)).collect()
+}
+```
+
+`Backend` trait'ine (`use crate::clipboard::{ClipboardError, ClipboardFiles, ClipboardImage, PasteKind};`):
+
+```rust
+        /// What paste would write as a file (formats only).
+        fn paste_kind(&self) -> Option<PasteKind>;
+        fn read_image(&self) -> Result<Option<ClipboardImage>, ClipboardError>;
+        fn read_text(&self) -> Result<Option<String>, ClipboardError>;
+```
+
+`clipboard.rs`'in Linux `imp`'ine (`use super::{ClipboardImage, PasteKind};`):
+
+```rust
+    pub fn paste_kind() -> Option<PasteKind> {
+        backend()?.paste_kind()
+    }
+
+    pub fn read_image() -> Result<Option<ClipboardImage>, ClipboardError> {
+        backend().ok_or(ClipboardError::Unsupported)?.read_image()
+    }
+
+    pub fn read_text() -> Result<Option<String>, ClipboardError> {
+        backend().ok_or(ClipboardError::Unsupported)?.read_text()
+    }
+```
+
+**X11** (`x11.rs`): atom listesine `IMAGE_PNG: b"image/png",` ve `TEXT_PLAIN_ANY: b"text/plain",`; bir resim INCR ile parça parça gelir ve 1 sn yetmeyebilir: `const IMAGE_TIMEOUT: Duration = Duration::from_secs(5);`. `transfer` ikiye ayrılır (var olan çağrılar değişmez):
+
+```rust
+    fn transfer(&self, selection: Atom, target: Atom, time: u32) -> Option<Vec<u8>> {
+        self.transfer_within(selection, target, time, TRANSFER_TIMEOUT)
+    }
+
+    /// `transfer` with its own time limit (a picture).
+    fn transfer_within(&self, selection: Atom, target: Atom, time: u32, timeout: Duration) -> Option<Vec<u8>> {
+        let (tx, rx) = mpsc::channel();
+        *self.waiting.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(tx);
+        let result = self.transfer_with(&rx, selection, target, time, timeout);
+        *self.waiting.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+        result
+    }
+```
+
+`transfer_with` sonuna `timeout: Duration` alır ve `TRANSFER_TIMEOUT` yerine onu kullanır. `impl X11`'e:
+
+```rust
+    /// The clipboard owner's targets by name, those Gezik knows (the rest do not matter here).
+    fn offered_names(&self) -> Vec<&'static str> {
+        let s = &self.0;
+        let a = &s.atoms;
+        let Some(targets) = s.transfer(a.CLIPBOARD, a.TARGETS, CURRENT_TIME) else { return Vec::new() };
+        let offered: Vec<Atom> = targets.as_chunks::<4>().0.iter().map(|c| u32::from_ne_bytes(*c)).collect();
+        let known: [(Atom, &'static str); 8] = [
+            (a.URI_LIST, "text/uri-list"),
+            (a.GNOME_FILES, "x-special/gnome-copied-files"),
+            (a.IMAGE_PNG, "image/png"),
+            (a.UTF8_STRING, "UTF8_STRING"),
+            (a.TEXT_PLAIN, "text/plain;charset=utf-8"),
+            (a.TEXT_PLAIN_ANY, "text/plain"),
+            (a.TEXT, "TEXT"),
+            (AtomEnum::STRING.into(), "STRING"),
+        ];
+        known.iter().filter(|(atom, _)| offered.contains(atom)).map(|(_, name)| *name).collect()
+    }
+
+    /// The atom of text type `name` (one of `TEXT_TYPES`).
+    fn text_atom(&self, name: &str) -> Atom {
+        let a = &self.0.atoms;
+        match name {
+            "UTF8_STRING" => a.UTF8_STRING,
+            "text/plain;charset=utf-8" => a.TEXT_PLAIN,
+            "text/plain" => a.TEXT_PLAIN_ANY,
+            "TEXT" => a.TEXT,
+            _ => AtomEnum::STRING.into(),
+        }
+    }
+```
+
+`impl super::Backend for X11`'e:
+
+```rust
+    fn paste_kind(&self) -> Option<PasteKind> {
+        let s = &self.0;
+        if s.owns(s.atoms.CLIPBOARD) {
+            // Gezik's own: copied paths are text, cut or copied files paste as files.
+            return s.state().clipboard.as_ref().and_then(|o| o.text.as_ref()).map(|_| PasteKind::Text);
+        }
+        super::paste_kind_of(&self.offered_names())
+    }
+
+    fn read_image(&self) -> Result<Option<ClipboardImage>, ClipboardError> {
+        let s = &self.0;
+        if s.owns(s.atoms.CLIPBOARD) || !self.offered_names().contains(&"image/png") {
+            return Ok(None);
+        }
+        let png = s.transfer_within(s.atoms.CLIPBOARD, s.atoms.IMAGE_PNG, CURRENT_TIME, IMAGE_TIMEOUT);
+        Ok(png.map(ClipboardImage::Png))
+    }
+
+    fn read_text(&self) -> Result<Option<String>, ClipboardError> {
+        let s = &self.0;
+        if s.owns(s.atoms.CLIPBOARD) {
+            return Ok(s.state().clipboard.as_ref().and_then(|o| o.text.clone()));
+        }
+        let offered = self.offered_names();
+        let Some(name) = super::text_type(&offered) else { return Ok(None) };
+        let Some(bytes) = s.transfer(s.atoms.CLIPBOARD, self.text_atom(name), CURRENT_TIME) else { return Ok(None) };
+        Ok(Some(if name == "STRING" { super::from_latin1(&bytes) } else { String::from_utf8_lossy(&bytes).into_owned() }))
+    }
+```
+
+**Wayland** (`wayland.rs`): `const IMAGE_TIMEOUT: Duration = Duration::from_secs(5);`; `receive` ikiye ayrılır: `fn receive(&self, offer: &WlDataOffer, mime: &str) -> Option<Vec<u8>> { self.receive_within(offer, mime, TRANSFER_TIMEOUT) }` ve bugünkü gövdeyle `fn receive_within(&self, offer: &WlDataOffer, mime: &str, timeout: Duration) -> Option<Vec<u8>>` (`read_with_timeout(reader, timeout)`). `impl Wayland`'e:
+
+```rust
+    /// The selection offer and its types, if the compositor told Gezik one.
+    fn selection(&self) -> Option<(WlDataOffer, Vec<String>)> {
+        let offer = self.0.inner().selection.clone()?;
+        let types = offer
+            .data::<OfferData>()
+            .map(|d| d.lock().unwrap_or_else(std::sync::PoisonError::into_inner).types.clone())
+            .unwrap_or_default();
+        Some((offer, types))
+    }
+
+    /// Gezik's own text on the clipboard (what is there when the compositor tells no offer).
+    fn own_text(&self) -> Option<String> {
+        self.0.inner().clipboard.as_ref().and_then(|(_, owned)| owned.text.clone())
+    }
+```
+
+`impl super::Backend for Wayland`'e:
+
+```rust
+    fn paste_kind(&self) -> Option<PasteKind> {
+        let Some((_, types)) = self.selection() else { return self.own_text().map(|_| PasteKind::Text) };
+        let names: Vec<&str> = types.iter().map(String::as_str).collect();
+        super::paste_kind_of(&names)
+    }
+
+    fn read_image(&self) -> Result<Option<ClipboardImage>, ClipboardError> {
+        let Some((offer, types)) = self.selection() else { return Ok(None) };
+        if !types.iter().any(|t| t == "image/png") {
+            return Ok(None);
+        }
+        Ok(self.0.receive_within(&offer, "image/png", IMAGE_TIMEOUT).map(ClipboardImage::Png))
+    }
+
+    fn read_text(&self) -> Result<Option<String>, ClipboardError> {
+        let Some((offer, types)) = self.selection() else { return Ok(self.own_text()) };
+        let names: Vec<&str> = types.iter().map(String::as_str).collect();
+        let Some(name) = super::text_type(&names) else { return Ok(None) };
+        let Some(bytes) = self.0.receive(&offer, name) else { return Ok(None) };
+        Ok(Some(if name == "STRING" { super::from_latin1(&bytes) } else { String::from_utf8_lossy(&bytes).into_owned() }))
+    }
+```
+
+- [ ] **Step 7: Run.** `cargo test -j 8 -p gezik-platform` → PASS (Windows'ta `a_dib_becomes_a_bmp_file`, `a_picture_is_written_as_png`, `unicode_text_ends_at_its_nul`, `files_win_then_an_image_then_text`). Panoyu değiştiren `text_comes_back_as_text_to_paste` yalnız kullanıcı uzaktayken (`-- --ignored`), değilse Task 9'un bekleyen listesine. Dört komut.
+
+- [ ] **Step 8: Commit** "Read pictures and text from the clipboard on Windows, macOS, X11 and Wayland".
+
+---
+
+### Task 4: Bağlantı bırakma — `Effect::Link`, tuş kuralı, sistemlerin sürükle-bırakı, `Create link here`
+
+**Files:**
+- Modify: `crates/gezik-core/src/drag.rs`, `crates/gezik-platform/src/dnd/windows.rs`, `crates/gezik-platform/src/dnd/macos.rs`, `crates/gezik-platform/src/linux/x11.rs` (tuşlar, `XdndActionLink`, gelenin izinleri), `crates/gezik-platform/src/linux/wayland.rs` (`Allowed.link`), `crates/gezik/src/drag.rs`, `crates/gezik/src/operations.rs` (`transfer`'in `Link` kolu), `crates/gezik/src/context_menu.rs` (`CREATE_LINK_HERE`, `drop_menu`)
+
+**Interfaces:**
+- Consumes: Task 2'nin `LinkTask::into`, `LinkKind::for_drops`.
+- Produces:
+
+```rust
+// gezik_core::drag
+pub enum Effect { Copy, Move, Link }
+pub struct Keys { pub shift: bool, pub copy: bool, pub link: bool }
+pub struct Allowed { pub copy: bool, pub move_: bool, pub link: bool }
+impl Allowed { pub const ALL: Allowed; }          // BOTH kalkar
+pub enum DragOs { Windows, Mac, Linux }
+impl DragOs { pub fn current() -> DragOs; }
+pub fn keys_of(os: DragOs, shift: bool, ctrl: bool, alt: bool, command: bool) -> Keys;
+// gezik::context_menu
+pub const CREATE_LINK_HERE: u32 = 1407;
+impl Menus {
+    pub fn drop_menu(&self, paths: Vec<PathBuf>, dir: PathBuf, archive: Option<PathBuf>,
+                     can_copy: bool, can_move: bool, can_link: bool, x: f32, y: f32);
+}
+```
+
+- [ ] **Step 1: Write the failing tests** (`gezik-core/src/drag.rs` test modülü; var olan `Keys { shift, copy }` yazımları `Keys { shift: …, copy: …, ..Keys::default() }`, `Allowed::BOTH` → `Allowed::ALL`, `Allowed { copy, move_ }` → `Allowed { copy, move_, link: false }` olur):
+
+```rust
+    #[test]
+    fn link_keys_differ_by_system() {
+        // (shift, ctrl, alt, command)
+        let link = |os, k: (bool, bool, bool, bool)| keys_of(os, k.0, k.1, k.2, k.3).link;
+        assert!(link(DragOs::Windows, (false, false, true, false)), "Windows: Alt");
+        assert!(link(DragOs::Windows, (true, true, false, false)), "Windows: Ctrl+Shift");
+        assert!(!link(DragOs::Linux, (false, false, true, false)), "Linux: Alt-drags are the window manager's");
+        assert!(link(DragOs::Linux, (true, true, false, false)), "Linux: Ctrl+Shift");
+        assert!(link(DragOs::Mac, (false, false, true, true)), "macOS: Cmd+Option");
+        assert!(!link(DragOs::Mac, (false, false, true, false)), "macOS: Option alone copies");
+        assert_eq!(keys_of(DragOs::Mac, false, false, true, false), Keys { shift: false, copy: true, link: false });
+        assert_eq!(keys_of(DragOs::Windows, true, false, false, false), Keys { shift: true, copy: false, link: false });
+    }
+
+    #[test]
+    fn a_link_falls_back_when_the_source_forbids_it() {
+        let link = Keys { shift: true, copy: true, link: true };
+        assert_eq!(choose(link, true, Allowed::ALL), Some(Effect::Link));
+        let no_link = Allowed { link: false, ..Allowed::ALL };
+        assert_eq!(choose(link, true, no_link), Some(Effect::Move), "both keys: the drive rule");
+        assert_eq!(choose(link, false, no_link), Some(Effect::Copy));
+        assert_eq!(choose(Keys::default(), true, Allowed { copy: false, move_: false, link: true }), Some(Effect::Link));
+        let p = PathBuf::from(if cfg!(windows) { r"C:\w\a" } else { "/w/a" });
+        assert!(!refuse(std::slice::from_ref(&p), p.parent().unwrap(), Effect::Link), "a link next to it");
+        assert!(refuse(std::slice::from_ref(&p), &p.join("sub"), Effect::Link), "never inside itself");
+        assert_eq!(label(Action::Transfer(Effect::Link), &p), "Create link in a");
+    }
+```
+
+`gezik-platform/src/dnd/windows.rs` testine:
+
+```rust
+        assert_eq!(drop_reply(Some(Effect::Link)), (DROPEFFECT_LINK, None, None));
+        assert_eq!(to_dropeffect(Some(Effect::Link)), DROPEFFECT_LINK);
+        let d = description(Some(&Answer { effect: Some(Effect::Link), folder: Some("Belgeler".into()) }));
+        assert_eq!(d.r#type, DROPIMAGE_LINK);
+        assert_eq!(keys_of(MODIFIERKEYS_FLAGS(MK_ALT)), Keys { shift: false, copy: false, link: true });
+        assert_eq!(allowed_by(DROPEFFECT(DROPEFFECT_COPY.0 | DROPEFFECT_MOVE.0 | DROPEFFECT_LINK.0)), Allowed::ALL);
+```
+
+(Var olan `keys_of(MK_SHIFT | MK_CONTROL)` beklentisi `Keys { shift: true, copy: true, link: true }`, `allowed_by(DROPEFFECT_COPY)` beklentisi `Allowed { copy: true, move_: false, link: false }` olur.)
+
+`gezik/src/context_menu.rs` testlerinde: `conversion_ids_meet_no_others`'ın `singles`'ına ve `drop_menu_ids_are_their_own`'ın `for id in [COPY_HERE, MOVE_HERE, CANCEL_DROP, …]` listesine `CREATE_LINK_HERE`.
+
+- [ ] **Step 2: Run to see them fail.** `cargo test -j 8 -p gezik-core drag` → derlenmez.
+
+- [ ] **Step 3: Implement `gezik-core/src/drag.rs`** (eski `Effect`, `Keys`, `Allowed`, `choose` yerine):
+
+```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Effect {
+    Copy,
+    Move,
+    /// A link to each item in the folder (spec 9.2).
+    Link,
+}
+
+/// The keys held during a drag, by what they ask for: Shift moves, the copy key (Ctrl;
+/// Option on macOS) copies, the link keys (`keys_of`) link.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Keys {
+    pub shift: bool,
+    pub copy: bool,
+    pub link: bool,
+}
+
+/// Whose keys a drag reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DragOs {
+    Windows,
+    Mac,
+    Linux,
+}
+
+impl DragOs {
+    pub fn current() -> DragOs {
+        if cfg!(windows) {
+            DragOs::Windows
+        } else if cfg!(target_os = "macos") {
+            DragOs::Mac
+        } else {
+            DragOs::Linux
+        }
+    }
+}
+
+/// The keys held, read as each system's file manager reads them (spec 9.2): a link is Alt or
+/// Ctrl+Shift on Windows (Explorer), Ctrl+Shift on Linux (GTK and KDE; many window managers
+/// take Alt-drags), Cmd+Option on macOS (Finder; Option alone copies). `ctrl` is the Control
+/// key, `command` macOS's Command key.
+pub fn keys_of(os: DragOs, shift: bool, ctrl: bool, alt: bool, command: bool) -> Keys {
+    match os {
+        DragOs::Windows => Keys { shift, copy: ctrl, link: alt || (shift && ctrl) },
+        DragOs::Linux => Keys { shift, copy: ctrl, link: shift && ctrl },
+        DragOs::Mac => Keys { shift, copy: alt, link: alt && command },
+    }
+}
+
+/// What the drag's source lets the target do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Allowed {
+    pub copy: bool,
+    pub move_: bool,
+    pub link: bool,
+}
+
+impl Allowed {
+    pub const ALL: Allowed = Allowed { copy: true, move_: true, link: true };
+}
+
+/// The effect of a drop: the link keys link (if the source lets them); Shift moves, the copy
+/// key copies; otherwise (or with both) a move on the same drive and a copy to another.
+/// Limited to what the source allows (None: nothing is).
+pub fn choose(keys: Keys, same_drive: bool, allowed: Allowed) -> Option<Effect> {
+    if keys.link && allowed.link {
+        return Some(Effect::Link);
+    }
+    let wanted = match (keys.shift, keys.copy) {
+        (true, false) => Effect::Move,
+        (false, true) => Effect::Copy,
+        _ if same_drive => Effect::Move,
+        _ => Effect::Copy,
+    };
+    let allows = |effect| match effect {
+        Effect::Copy => allowed.copy,
+        Effect::Move => allowed.move_,
+        Effect::Link => allowed.link,
+    };
+    let other = if wanted == Effect::Copy { Effect::Move } else { Effect::Copy };
+    [wanted, other, Effect::Link].into_iter().find(|&effect| allows(effect))
+}
+```
+
+`label`'a `Action::Transfer(Effect::Link) => format!("Create link in {}", folder_name(folder)),`.
+
+- [ ] **Step 4: Sistemler.**
+
+`dnd/windows.rs` (`use`'a `DROPEFFECT_LINK`, `windows::Win32::System::Ole::MK_ALT` (bir `u32`), `DROPIMAGE_LINK`):
+
+```rust
+pub(crate) fn drop_reply(effect: Option<Effect>) -> (DROPEFFECT, Option<DROPEFFECT>, Option<DROPEFFECT>) {
+    match effect {
+        Some(Effect::Move) => (DROPEFFECT_NONE, Some(DROPEFFECT_NONE), Some(DROPEFFECT_MOVE)),
+        Some(Effect::Copy) => (DROPEFFECT_COPY, None, None),
+        Some(Effect::Link) => (DROPEFFECT_LINK, None, None),
+        None => (DROPEFFECT_NONE, None, None),
+    }
+}
+
+fn allowed_by(effects: DROPEFFECT) -> Allowed {
+    let has = |effect: DROPEFFECT| effects.0 & effect.0 != 0;
+    Allowed { copy: has(DROPEFFECT_COPY), move_: has(DROPEFFECT_MOVE), link: has(DROPEFFECT_LINK) }
+}
+
+fn keys_of(state: MODIFIERKEYS_FLAGS) -> Keys {
+    let held = |bit: u32| state.0 & bit != 0;
+    gezik_core::drag::keys_of(gezik_core::drag::DragOs::Windows, held(MK_SHIFT.0), held(MK_CONTROL.0), held(MK_ALT), false)
+}
+```
+
+`to_dropeffect`'e `Some(Effect::Link) => DROPEFFECT_LINK,`; `description`'a `Some(Effect::Link) => (DROPIMAGE_LINK, "Create link in %1"),`. Gezik'in dışarıya sürüklemesinin izinleri değişmez (sapma 11).
+
+`dnd/macos.rs`:
+
+```rust
+fn operation_for(effect: Option<Effect>) -> NSDragOperation {
+    match effect {
+        Some(Effect::Copy) => NSDragOperation::Copy,
+        Some(Effect::Move) => NSDragOperation::Generic,
+        Some(Effect::Link) => NSDragOperation::Link,
+        None => NSDragOperation::None,
+    }
+}
+
+fn allowed_by(mask: NSDragOperation) -> Allowed {
+    Allowed {
+        copy: mask.contains(NSDragOperation::Copy),
+        move_: mask.contains(NSDragOperation::Move) || mask.contains(NSDragOperation::Generic),
+        link: mask.contains(NSDragOperation::Link),
+    }
+}
+
+fn keys_now() -> Keys {
+    let flags = NSEvent::modifierFlags_class();
+    gezik_core::drag::keys_of(
+        gezik_core::drag::DragOs::Mac,
+        flags.contains(NSEventModifierFlags::Shift),
+        flags.contains(NSEventModifierFlags::Control),
+        flags.contains(NSEventModifierFlags::Option),
+        flags.contains(NSEventModifierFlags::Command),
+    )
+}
+```
+
+`linux/x11.rs`: atom listesine `XdndActionLink,`;
+
+```rust
+    fn keys(&self) -> Keys {
+        let mask = self.conn.query_pointer(self.root).ok().and_then(|c| c.reply().ok()).map(|r| r.mask);
+        let held = |bit: KeyButMask| mask.is_some_and(|mask| u16::from(mask) & u16::from(bit) != 0);
+        gezik_core::drag::keys_of(
+            gezik_core::drag::DragOs::Linux,
+            held(KeyButMask::SHIFT),
+            held(KeyButMask::CONTROL),
+            held(KeyButMask::MOD1),
+            false,
+        )
+    }
+```
+
+`action_atom`'a `Some(Effect::Link) => self.atoms.XdndActionLink,`; gelen sürüklemenin `Offer`'ında `Allowed::BOTH` → `Allowed::ALL`. Gezik'in dışarı sürüklemesi (`if keys.shift && !keys.copy { Move } else { Copy }`) değişmez.
+
+`linux/wayland.rs`: `Allowed { copy: actions.contains(DndAction::Copy), move_: actions.contains(DndAction::Move), link: false }` (protokolde bağlantı eylemi yok, sapma 11); `answer` değişmez.
+
+- [ ] **Step 5: Arayüz.** `gezik/src/drag.rs`:
+
+```rust
+/// The keys held, as this system's file manager reads them (`drag::keys_of`). Slint reports
+/// macOS's Command key as `control`.
+fn keys(shift: bool, ctrl: bool, alt: bool) -> Keys {
+    match drag::DragOs::current() {
+        drag::DragOs::Mac => drag::keys_of(drag::DragOs::Mac, shift, false, alt, ctrl),
+        os => drag::keys_of(os, shift, ctrl, alt, false),
+    }
+}
+```
+
+`Allowed::BOTH` → `Allowed::ALL` (üç yer; `Platform` içe aktarımı kullanılmıyorsa kalkar); `drop_on`'un sağ tuş dalı:
+
+```rust
+        if d.right {
+            let can = |effect| {
+                let allowed = match effect {
+                    Effect::Copy => d.allowed.copy,
+                    Effect::Move => d.allowed.move_,
+                    Effect::Link => d.allowed.link,
+                };
+                allowed && self.writable(&dir) && !drag::refuse(&d.sources, &dir, effect)
+            };
+            let (can_copy, can_move, can_link) = (can(Effect::Copy), can(Effect::Move), can(Effect::Link));
+            let archive = target.archive.filter(|_| target.action == Some(Action::AddToArchive));
+            self.0.menus.drop_menu(d.sources, dir, archive, can_copy, can_move, can_link, d.x, d.y);
+            return None;
+        }
+```
+
+Testlerdeki `Keys { shift: true, copy: false }` → `Keys { shift: true, ..Keys::default() }`.
+
+`operations.rs` (`use gezik_ops::LinkTask; use gezik_core::templates::LinkKind;`):
+
+```rust
+    /// Copies, moves or links `paths` into folder `dir` (a paste or a drop), as one undoable
+    /// job.
+    pub fn transfer(&self, paths: Vec<PathBuf>, dir: PathBuf, effect: Effect) {
+        self.remember_for(&paths);
+        let retry: Retry = Rc::new(move || -> Box<dyn Task> {
+            match effect {
+                Effect::Move => Box::new(MoveTask::into(paths.clone(), &dir)),
+                Effect::Copy => Box::new(CopyTask::into(paths.clone(), &dir)),
+                Effect::Link => Box::new(LinkTask::into(paths.clone(), &dir, LinkKind::for_drops())),
+            }
+        });
+        self.submit(retry(), Some(retry), After::Select);
+    }
+```
+
+`context_menu.rs`: kimlik (`SIZE_FORMAT_FIRST`'ten sonra, 7c bloğunu başlatır):
+
+```rust
+/// 7c's ids are 1400-1459 (spec 11.1). 1407: "Create link here" after a drag with the right
+/// button.
+pub const CREATE_LINK_HERE: u32 = 1407;
+```
+
+`drop_menu` `can_link: bool`'u `can_move`'dan sonra alır; `can_move` öğesinden sonra:
+
+```rust
+        if can_link {
+            list.push((CREATE_LINK_HERE, "Create link here"));
+        }
+```
+
+`run`'a `(CREATE_LINK_HERE, Subject::Drop(paths, dir, _)) => self.ops.transfer(paths, dir, Effect::Link),`.
+
+- [ ] **Step 6: Run.** `cargo test -j 8 -p gezik-core drag`, `cargo test -j 8 -p gezik-platform dnd`, `cargo test -j 8 -p gezik context_menu drag` → PASS. Elle (Windows, kullanıcı uzaktayken değilse Task 9 listesine): Explorer'dan bir dosyayı Alt ile Gezik'in listesine sürükle → imleç bağlantı, "Create link in …", bırakınca `… - Shortcut.lnk`, Ctrl+Z çöpe atar. Dört komut.
+
+- [ ] **Step 7: Commit** "Make links by dropping with each system's link keys and from the right-drag menu".
+
+---
