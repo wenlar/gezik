@@ -230,13 +230,21 @@ pub type ResultsKey = (Option<u64>, SearchSpec);
 #[derive(Debug, Clone)]
 pub struct JobChange {
     pub dirs: Vec<PathBuf>,
+    /// What jobs started elsewhere made: rows only if this search would find them.
     pub paths: Vec<PathBuf>,
+    /// What jobs started from these results made (or hid): rows whether the search would find
+    /// them or not.
+    pub own_paths: Vec<PathBuf>,
     /// What it moved or renamed (from, to), as it really went: rows follow these.
     pub moves: Vec<(PathBuf, PathBuf)>,
-    /// Started from these results: what it made shows whether the search would find it or not.
-    pub own: bool,
     /// How many jobs this is (`merge`).
     pub jobs: usize,
+}
+
+impl JobChange {
+    fn size(&self) -> usize {
+        self.dirs.len() + self.paths.len() + self.own_paths.len()
+    }
 }
 
 /// Most jobs a tab's kept results wait for, and most paths: past either they are searched
@@ -245,23 +253,36 @@ pub const MAX_QUEUED_JOBS: usize = 16;
 pub const MAX_QUEUED_PATHS: usize = 20_000;
 
 /// `change` added to what a tab's kept results wait for (`queued`): one check for all. The
-/// moves go (which way rows went across jobs is not known: their rows are looked at anew).
-/// `None`: too much to check, the search runs again.
+/// moves go (which way rows went across jobs is not known: their rows are looked at anew), as
+/// do a single job's past the limit. `None`: too much to check, the search runs again.
 pub fn merge(queued: Option<JobChange>, change: JobChange) -> Option<JobChange> {
-    let merged = match queued {
+    let mut merged = match queued {
         None => change,
         Some(mut queued) => {
             queued.dirs.extend(change.dirs);
             queued.dirs.sort();
             queued.dirs.dedup();
             queued.paths.extend(change.paths);
+            queued.own_paths.extend(change.own_paths);
             queued.moves.clear();
-            queued.own |= change.own;
             queued.jobs += change.jobs;
             queued
         }
     };
-    (merged.jobs <= MAX_QUEUED_JOBS && merged.dirs.len() + merged.paths.len() <= MAX_QUEUED_PATHS).then_some(merged)
+    if merged.size() + merged.moves.len() > MAX_QUEUED_PATHS {
+        merged.moves = Vec::new();
+    }
+    (merged.jobs <= MAX_QUEUED_JOBS && merged.size() <= MAX_QUEUED_PATHS).then_some(merged)
+}
+
+/// A path a check found, with what the disk says of it.
+pub type FoundPath = (PathBuf, gezik_core::Entry);
+
+/// `added` split into what `own` (paths of jobs started from the results) holds and the rest,
+/// which the search's criteria decide.
+pub fn split_own(added: Vec<FoundPath>, own: &[PathBuf]) -> (Vec<FoundPath>, Vec<FoundPath>) {
+    let own: std::collections::HashSet<&PathBuf> = own.iter().collect();
+    added.into_iter().partition(|(path, _)| own.contains(path))
 }
 
 /// Where a check's verdict goes.
@@ -745,12 +766,15 @@ impl Searches {
         paths: Vec<PathBuf>,
         moves: Vec<(PathBuf, PathBuf)>,
     ) {
-        let change = |key: &ResultsKey| JobChange {
-            dirs: dirs.clone(),
-            paths: paths.clone(),
-            moves: moves.clone(),
-            own: origin == Some(key),
-            jobs: 1,
+        let change = |key: &ResultsKey| {
+            let own = origin == Some(key);
+            JobChange {
+                dirs: dirs.clone(),
+                paths: if own { Vec::new() } else { paths.clone() },
+                own_paths: if own { paths.clone() } else { Vec::new() },
+                moves: moves.clone(),
+                jobs: 1,
+            }
         };
         let touched: Vec<ResultsKey> = self
             .0
@@ -786,18 +810,21 @@ impl Searches {
     /// Checks on another thread what `change` did to the results on screen (`key`), then
     /// shows it if they still are, or keeps it for their tab.
     fn check(&self, key: ResultsKey, change: JobChange) {
-        let Some(probe) = self.0.view.results_probe(&change.dirs, &change.paths) else { return };
+        let all: Vec<PathBuf> = change.own_paths.iter().chain(&change.paths).cloned().collect();
+        let Some(probe) = self.0.view.results_probe(&change.dirs, &all) else { return };
+        drop(all);
         let (max_size, max_results) = {
             let settings = self.0.settings.borrow();
             (settings.content_max_size, settings.max_results)
         };
         let weak = self.0.window.clone();
         let spawned = std::thread::Builder::new().name("gezik-results-check".into()).spawn(move || {
-            let (gone, mut added) = probe.verify();
-            if !change.own && !added.is_empty() {
+            let verified = probe.verify();
+            let (mut added, mut others) = split_own(verified.added, &change.own_paths);
+            if !others.is_empty() {
                 // Not made from these results: only what this search would find.
                 match Query::compile(&key.1, &QueryOptions::local(max_size, max_results)) {
-                    Ok(query) => added.retain(|(path, e)| {
+                    Ok(query) => others.retain(|(path, e)| {
                         query.passes(&e.name, e.is_dir, e.size, e.modified)
                             && query.content().is_none_or(|content| {
                                 content.reads(&e.name, e.size)
@@ -806,9 +833,13 @@ impl Searches {
                                         .is_ok_and(|found| found.is_some())
                             })
                     }),
-                    Err(_) => added.clear(),
+                    Err(_) => others.clear(),
                 }
             }
+            added.extend(others);
+            // Rows still there take what the disk has now.
+            added.extend(verified.rows);
+            let gone = verified.gone;
             let _ = weak.upgrade_in_event_loop(move |_| {
                 with_current(|searches| searches.checked(key, change, gone, added));
             });
@@ -1315,18 +1346,33 @@ mod tests {
 
     #[test]
     fn queued_checks_merge_into_one_and_have_a_limit() {
-        let job = |dir: &str, own: bool| JobChange {
-            dirs: vec![PathBuf::from(dir)],
-            paths: vec![PathBuf::from(dir).join("n")],
-            moves: vec![(PathBuf::from(dir).join("a"), PathBuf::from(dir).join("b"))],
-            own,
-            jobs: 1,
+        let job = |dir: &str, own: bool| {
+            let made = vec![PathBuf::from(dir).join("n")];
+            JobChange {
+                dirs: vec![PathBuf::from(dir)],
+                paths: if own { Vec::new() } else { made.clone() },
+                own_paths: if own { made } else { Vec::new() },
+                moves: vec![(PathBuf::from(dir).join("a"), PathBuf::from(dir).join("b"))],
+                jobs: 1,
+            }
         };
         let one = merge(None, job("/w/a", false)).unwrap();
         assert_eq!(one.moves.len(), 1, "one job keeps its moves");
         let two = merge(Some(one), job("/w/b", true)).unwrap();
-        assert_eq!((two.dirs.len(), two.paths.len(), two.jobs), (2, 2, 2));
-        assert!(two.moves.is_empty() && two.own);
+        assert_eq!((two.dirs.len(), two.paths.len(), two.own_paths.len(), two.jobs), (2, 1, 1, 2));
+        assert!(two.moves.is_empty());
+        // Only the other job's path meets the search's criteria.
+        let entry = |name: &str| gezik_core::Entry {
+            name: name.to_owned(),
+            is_dir: false,
+            flags: 0,
+            size: 0,
+            modified: None,
+            created: None,
+        };
+        let found = vec![(PathBuf::from("/w/a/n"), entry("n")), (PathBuf::from("/w/b/n"), entry("n"))];
+        let (own, others) = split_own(found, &two.own_paths);
+        assert_eq!((own[0].0.clone(), others[0].0.clone()), (PathBuf::from("/w/b/n"), PathBuf::from("/w/a/n")));
         let same = merge(Some(two), job("/w/a", false)).unwrap();
         assert_eq!(same.dirs.len(), 2, "a folder once");
         let mut queued = Some(same);
@@ -1337,6 +1383,11 @@ mod tests {
         assert!(merge(queued, job("/w/d", false)).is_none(), "past the limit: search again");
         let huge = JobChange { paths: vec![PathBuf::from("/w/x"); MAX_QUEUED_PATHS + 1], ..job("/w", false) };
         assert!(merge(None, huge).is_none());
+        // A large move: its moves go past the limit, the job's check stays.
+        let moves =
+            (0..MAX_QUEUED_PATHS).map(|i| (PathBuf::from(format!("/w/a{i}")), PathBuf::from(format!("/w/b{i}"))));
+        let large = merge(None, JobChange { moves: moves.collect(), ..job("/w", false) }).unwrap();
+        assert!(large.moves.is_empty() && large.paths.len() == 1);
     }
 
     #[test]

@@ -199,6 +199,13 @@ pub fn first_level_names(results: &[PathBuf], folder: &Path) -> Vec<String> {
     names
 }
 
+/// The moves of `moved` that brought one of `paths` (the job's results) where it is: a folder
+/// moved across drives records each file in it, which no row needs.
+pub fn relevant_moves(moved: &[(PathBuf, PathBuf)], paths: &[PathBuf]) -> Vec<(PathBuf, PathBuf)> {
+    let paths: HashSet<&PathBuf> = paths.iter().collect();
+    moved.iter().filter(|(_, to)| paths.contains(to)).cloned().collect()
+}
+
 /// A job that works on files and folders: in search results, these only.
 pub fn only_in_results(what: &str) -> String {
     format!("{what} works in search results")
@@ -1266,7 +1273,9 @@ impl Operations {
         });
     }
 
-    fn finished(&self, id: JobId, report: Report) {
+    fn finished(&self, id: JobId, mut report: Report) {
+        // Only the chosen items' moves are kept (a folder moved across drives lists every file).
+        report.moved = relevant_moves(&report.moved, &report.results);
         self.0.conflicts.close_if(id);
         // Its questions are moot now (answering one is harmless: nothing waits for it).
         self.0.dialogs.forget_job(id);
@@ -1771,6 +1780,15 @@ mod tests {
         assert!(is_root(Path::new("/")));
         assert!(!is_root(Path::new("/a")));
         assert!(!is_root(Path::new("/a/b.txt")));
+    }
+
+    #[test]
+    fn only_the_moves_of_the_chosen_items_follow_a_job() {
+        let dir = PathBuf::from("/d");
+        let mut moved: Vec<(PathBuf, PathBuf)> =
+            (0..10_000).map(|i| (PathBuf::from(format!("/s/f/{i}")), dir.join("f").join(i.to_string()))).collect();
+        moved.push((PathBuf::from("/s/f"), dir.join("f")));
+        assert_eq!(relevant_moves(&moved, &[dir.join("f")]), [(PathBuf::from("/s/f"), dir.join("f"))]);
     }
 
     #[test]

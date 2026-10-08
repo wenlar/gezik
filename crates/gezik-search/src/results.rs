@@ -261,8 +261,8 @@ impl ResultSet {
 }
 
 /// Where a job's path is in the results: its folder text (`None`: outside the scope), the
-/// folder's number (`None`: not here yet) and whether it is a row already.
-type Place = (Option<String>, Option<u32>, bool);
+/// folder's number (`None`: not here yet) and its row if it is one already.
+type Place = (Option<String>, Option<u32>, Option<usize>);
 
 /// The separator a folder text is split at (`/` too on Windows, as `relative_key` reads it).
 fn is_separator(c: char) -> bool {
@@ -292,7 +292,7 @@ impl ResultSet {
     /// For each of `paths`, its place here: one pass over the folders, one over the rows of the
     /// folders they are in (no search per path: thousands of them in 250,000 rows stay quick).
     fn places(&self, paths: &[PathBuf]) -> Vec<Place> {
-        use std::collections::{HashMap, HashSet};
+        use std::collections::HashMap;
         let texts: Vec<Option<String>> = paths.iter().map(|path| folder_text(&self.root, path)).collect();
         let mut numbers: HashMap<&str, u32> = texts.iter().flatten().map(|t| (t.as_str(), u32::MAX)).collect();
         if !numbers.is_empty() {
@@ -308,9 +308,9 @@ impl ResultSet {
                 *slot = true;
             }
         }
-        let present: HashSet<(u32, &str)> = (0..self.entries.len())
+        let present: HashMap<(u32, &str), usize> = (0..self.entries.len())
             .filter(|&i| touched[self.parent[i] as usize])
-            .map(|i| (self.parent[i], self.entries[i].name.as_str()))
+            .map(|i| ((self.parent[i], self.entries[i].name.as_str()), i))
             .collect();
         paths
             .iter()
@@ -318,14 +318,15 @@ impl ResultSet {
             .map(|(path, text)| {
                 let number = text.as_deref().and_then(|t| numbers.get(t)).copied().filter(|n| *n != u32::MAX);
                 let name = path.file_name().map(|n| n.to_string_lossy());
-                let row = number.zip(name).is_some_and(|(n, name)| present.contains(&(n, &*name)));
+                let row = number.zip(name).and_then(|(n, name)| present.get(&(n, &*name)).copied());
                 (text.clone(), number, row)
             })
             .collect()
     }
 
-    /// A job's effects (spec 4.7): rows at `gone` leave; each of `added` not already a row goes
-    /// at the end, or, if the job's `moves` (from, to) say which gone row it was, takes that
+    /// A job's effects (spec 4.7): rows at `gone` leave; each of `added` that is a row already
+    /// takes what the disk says now (a changed file loses its matching line); another goes at
+    /// the end, or, if the job's `moves` (from, to) say which gone row it was, takes that
     /// row's place, the rows inside a moved folder following it. Only real moves pair: a guess
     /// could make a row name another file. Returns where each row left (but the new ones at
     /// the end) was before.
@@ -354,7 +355,19 @@ impl ResultSet {
         let mut appended = Vec::new();
         let mut new_folders: HashMap<String, u32> = HashMap::new();
         for ((path, entry), (text, number, row)) in added.into_iter().zip(places) {
-            let Some(text) = text.filter(|_| !row) else { continue };
+            if let Some(row) = row {
+                let old = &self.entries[row];
+                let changed = (old.size, old.modified) != (entry.size, entry.modified);
+                if changed || (old.is_dir, old.flags, old.created) != (entry.is_dir, entry.flags, entry.created) {
+                    if changed && let Some(matches) = &mut self.matches {
+                        matches[row] = None;
+                    }
+                    self.entries[row] = entry;
+                    self.sorted = None;
+                }
+                continue;
+            }
+            let Some(text) = text else { continue };
             let was = came_from.get(path.as_path()).and_then(|from| gone_at.get(*from)).copied();
             let Some(row) = was.filter(|&row| !taken[row]) else {
                 appended.push((text, number, entry));
@@ -471,7 +484,7 @@ impl ResultSet {
         let paths = paths
             .into_iter()
             .zip(places)
-            .filter(|(_, (text, _, row))| text.is_some() && !row)
+            .filter(|(_, (text, _, row))| text.is_some() && row.is_none())
             .map(|(path, _)| path)
             .collect();
         Probe { root: self.root.clone(), folders, paths }
@@ -491,43 +504,60 @@ pub struct Probe {
 }
 
 impl Probe {
-    /// The rows gone from the disk, and the paths that are there with what the disk says of
-    /// them. Reads the disk: off the UI thread.
-    pub fn verify(self) -> (Vec<PathBuf>, Vec<(PathBuf, Entry)>) {
-        let there = |path: &Path| std::fs::symlink_metadata(path).is_ok();
-        let mut gone: Vec<PathBuf> = Vec::new();
+    /// The rows gone from the disk; the paths that are there with what the disk says of them;
+    /// and the rows of the changed folders that are still there, read again (a name swapped
+    /// with another's has its size and date). Reads the disk: off the UI thread.
+    pub fn verify(self) -> Verified {
+        let mut verified = Verified::default();
         for (folder, inside, names) in self.folders {
             let dir = if folder.is_empty() { self.root.clone() } else { self.root.join(&*folder) };
             let rows = names.iter().map(|name| dir.join(&**name));
             if !inside {
-                gone.extend(rows.filter(|path| !there(path)));
-            } else if !there(&dir) {
-                gone.extend(rows);
+                for path in rows {
+                    match read_entry(&path) {
+                        Some(entry) => verified.rows.push((path, entry)),
+                        None => verified.gone.push(path),
+                    }
+                }
+            } else if std::fs::symlink_metadata(&dir).is_err() {
+                verified.gone.extend(rows);
             }
         }
-        let added = self
-            .paths
-            .into_iter()
-            .filter_map(|path| {
-                let meta = std::fs::symlink_metadata(&path).ok()?;
-                let entry = Entry {
-                    name: path.file_name()?.to_string_lossy().into_owned(),
-                    is_dir: meta.is_dir(),
-                    flags: gezik_core::attribute_flags(&meta),
-                    size: if meta.is_file() { meta.len() } else { 0 },
-                    modified: meta.modified().ok(),
-                    created: meta.created().ok(),
-                };
-                Some((path, entry))
-            })
-            .collect();
-        (gone, added)
+        verified.added =
+            self.paths.into_iter().filter_map(|path| read_entry(&path).map(|entry| (path, entry))).collect();
+        verified
     }
 }
 
-/// What changed for the results after a job (spec 4.7): `set.probe(dirs, paths).verify()`.
+/// What a job's check found (`Probe::verify`).
+#[derive(Debug, Default)]
+pub struct Verified {
+    /// Rows gone from the disk.
+    pub gone: Vec<PathBuf>,
+    /// The job's paths that are there and not rows.
+    pub added: Vec<(PathBuf, Entry)>,
+    /// Rows of the changed folders still there, as the disk has them now.
+    pub rows: Vec<(PathBuf, Entry)>,
+}
+
+/// `path` as a list entry, from the disk; `None` if it is not there.
+fn read_entry(path: &Path) -> Option<Entry> {
+    let meta = std::fs::symlink_metadata(path).ok()?;
+    Some(Entry {
+        name: path.file_name()?.to_string_lossy().into_owned(),
+        is_dir: meta.is_dir(),
+        flags: gezik_core::attribute_flags(&meta),
+        size: if meta.is_file() { meta.len() } else { 0 },
+        modified: meta.modified().ok(),
+        created: meta.created().ok(),
+    })
+}
+
+/// What changed for the results after a job (spec 4.7): `set.probe(dirs, paths).verify()`,
+/// gone rows and added paths.
 pub fn verify(set: &ResultSet, dirs: &[PathBuf], paths: &[PathBuf]) -> (Vec<PathBuf>, Vec<(PathBuf, Entry)>) {
-    set.probe(dirs, paths).verify()
+    let verified = set.probe(dirs, paths).verify();
+    (verified.gone, verified.added)
 }
 
 /// The folder text `path`'s entry has under `root` (empty `root`: every drive, the whole
@@ -834,6 +864,28 @@ mod tests {
         let (gone, added) = verify(&guess, std::slice::from_ref(&root), &[root.join("r2"), root.join("r1")]);
         guess.apply_changes(&gone, added, &[]);
         assert_eq!((guess.len(), guess.path_at(0)), (2, Some(root.join("r2"))));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn rows_still_there_take_what_the_disk_says_now() {
+        let root = std::env::temp_dir().join(format!("gezik-fresh-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.txt"), "four").unwrap();
+        let mut set = ResultSet::new(root.clone(), true);
+        set.append(Batch {
+            folders: vec!["".into()],
+            entries: vec![entry("a.txt")],
+            parent: vec![0],
+            matches: vec![Some((1, "old line".into()))],
+        });
+        let verified = set.probe(std::slice::from_ref(&root), &[]).verify();
+        assert!(verified.gone.is_empty());
+        assert_eq!(verified.rows.len(), 1);
+        set.apply_changes(&verified.gone, verified.rows, &[]);
+        assert_eq!(set.entry(0).map(|e| e.size), Some(4), "the size the disk has");
+        assert_eq!(set.found(0), None, "the file changed: its line may be another");
         let _ = std::fs::remove_dir_all(&root);
     }
 
