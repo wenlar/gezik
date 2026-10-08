@@ -2,11 +2,12 @@
 //! what it trashed comes back; items moved into a folder the job made come out before it goes,
 //! and come back after it (spec 8.2). Nothing here knows the task kinds.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use gezik_core::ops::conflict::Facts;
-use gezik_core::ops::paths::{cover, is_within, same_path};
+use gezik_core::ops::paths::{cover, path_key};
 
 use crate::task::{Outcome, Task};
 use crate::tasks::{MoveTask, RenameTask, RestoreTask, TrashTask};
@@ -26,19 +27,31 @@ pub(crate) fn flatten<'a>(outcomes: &'a [Outcome], into: &mut Vec<&'a Outcome>) 
     }
 }
 
-/// Whether `path` is inside `dir` (not `dir` itself).
-fn inside(path: &Path, dir: &Path) -> bool {
-    is_within(path, dir) && !same_path(path, dir)
+/// The keys of every folder one of `paths` is inside: `path` is inside `dir` (not `dir` itself)
+/// for one of them if this holds `path_key(dir)`.
+fn around<'a>(paths: impl IntoIterator<Item = &'a Path>) -> HashSet<Vec<String>> {
+    let mut keys = HashSet::new();
+    for path in paths {
+        let key = path_key(path);
+        for len in 1..key.len() {
+            keys.insert(key[..len].to_vec());
+        }
+    }
+    keys
 }
 
 /// The tasks that undo `outcomes`, in order: trash what was made, move back what was moved,
 /// restore what was trashed (an item replaced by a copy comes back after the copy left).
 /// Items moved into a folder the job made come out before it goes (it goes only if empty);
-/// their redo brings the folder back before they go in again. Folders made on the way (copy or
-/// move with folders) go last, each only if it then holds no files: what went into them is
-/// undone item by item first, each with its own check, and a file put there since stays.
+/// their redo brings the folder back before they go in again. A folder made empty that nothing
+/// the job made went into (New folder) goes only if it still holds no files. Folders made on
+/// the way (copy or move with folders) go last, each only if it then holds no files: what went
+/// into them is undone item by item first, each with its own check, and a file put there since
+/// stays.
 pub(crate) fn build(outcomes: &[Outcome]) -> Vec<Arc<dyn Task>> {
     let mut made: Vec<(PathBuf, Option<Facts>)> = Vec::new();
+    // The folders among them that were made empty (filled, if at all, by the job's own items).
+    let mut made_dirs: HashSet<Vec<String>> = HashSet::new();
     let mut parents: Vec<PathBuf> = Vec::new();
     let mut restored_dirs: Vec<PathBuf> = Vec::new();
     let mut moved: Vec<(PathBuf, PathBuf, Option<Facts>)> = Vec::new();
@@ -47,10 +60,16 @@ pub(crate) fn build(outcomes: &[Outcome]) -> Vec<Arc<dyn Task>> {
     flatten(outcomes, &mut flat);
     for outcome in flat {
         match outcome {
-            Outcome::Created { path, facts, from: None } => made.push((path.clone(), expect(facts))),
+            Outcome::Created { path, facts, from: None } => {
+                if facts.is_dir {
+                    made_dirs.insert(path_key(path));
+                }
+                made.push((path.clone(), expect(facts)));
+            }
             Outcome::Created { path, facts, from: Some(from) } => {
                 moved.push((path.clone(), from.clone(), expect(facts)))
             }
+            Outcome::Placed { path } => made.push((path.clone(), None)),
             Outcome::Moved { from, to, facts } => moved.push((to.clone(), from.clone(), expect(facts))),
             Outcome::Trashed { original, trashed: at } => trashed.push((at.clone(), original.clone())),
             Outcome::Restored { original, facts } if facts.is_dir => restored_dirs.push(original.clone()),
@@ -61,28 +80,39 @@ pub(crate) fn build(outcomes: &[Outcome]) -> Vec<Arc<dyn Task>> {
     }
     // A folder brought back together with what was inside it (the redo of undoing a copy with
     // folders) is such a folder on the way again; a folder brought back alone goes whole.
-    for dir in &restored_dirs {
-        let holds =
-            made.iter().any(|(path, _)| inside(path, dir)) || restored_dirs.iter().any(|path| inside(path, dir));
-        if holds {
-            parents.push(dir.clone());
+    let holding = around(made.iter().map(|(path, _)| path.as_path()).chain(restored_dirs.iter().map(PathBuf::as_path)));
+    for dir in restored_dirs {
+        if holding.contains(&path_key(&dir)) {
+            parents.push(dir);
         } else {
-            made.push((dir.clone(), None));
+            made.push((dir, None));
         }
     }
     // Items moved into a folder the job made (New folder with selection): they come out
     // before it goes to the trash, else they would go with it, and it goes only if empty.
-    let holders: Vec<PathBuf> = made
-        .iter()
-        .filter(|(dir, _)| moved.iter().any(|(now, _, _)| inside(now, dir)))
-        .map(|(dir, _)| dir.clone())
-        .collect();
-    let moves_first = !holders.is_empty();
+    let moved_into = around(moved.iter().map(|(now, _, _)| now.as_path()));
+    let mut only_empty: Vec<PathBuf> =
+        made.iter().filter(|(dir, _)| moved_into.contains(&path_key(dir))).map(|(dir, _)| dir.clone()).collect();
+    let moves_first = !only_empty.is_empty();
     // The redo of that: the folder comes back from the trash before they go into it.
-    let restore_first = moved.iter().any(|(_, was, _)| trashed.iter().any(|(_, original)| inside(was, original)));
+    let trashed_keys: HashSet<Vec<String>> = trashed.iter().map(|(_, original)| path_key(original)).collect();
+    let restore_first = moved.iter().any(|(_, was, _)| {
+        let key = path_key(was);
+        (1..key.len()).any(|len| trashed_keys.contains(&key[..len]))
+    });
+    let made_into = around(made.iter().map(|(path, _)| path.as_path()));
     let made = cover(made, |(path, _)| path);
+    only_empty.extend(
+        made.iter()
+            .map(|(dir, _)| dir)
+            .filter(|dir| {
+                let key = path_key(dir);
+                made_dirs.contains(&key) && !made_into.contains(&key)
+            })
+            .cloned(),
+    );
     let mut trash: Option<Arc<dyn Task>> =
-        (!made.is_empty()).then(|| Arc::new(TrashTask::checked(made).only_if_empty(holders)) as Arc<dyn Task>);
+        (!made.is_empty()).then(|| Arc::new(TrashTask::checked(made).only_if_empty(only_empty)) as Arc<dyn Task>);
     let mut restore: Option<Arc<dyn Task>> =
         (!trashed.is_empty()).then(|| Arc::new(RestoreTask::new(trashed)) as Arc<dyn Task>);
     let moved = cover(moved, |(path, _, _)| path);

@@ -263,6 +263,11 @@ pub enum Outcome {
         facts: Facts,
         from: Option<PathBuf>,
     },
+    /// A folder placed with what is in it in one step (extracted, a command's output): undo
+    /// takes it away whole. A folder `Created` empty goes only if it still holds no files.
+    Placed {
+        path: PathBuf,
+    },
     /// Renamed or moved in one step.
     Moved {
         from: PathBuf,
@@ -296,6 +301,7 @@ impl Outcome {
     pub fn result(&self) -> Option<&Path> {
         match self {
             Outcome::Created { path, .. }
+            | Outcome::Placed { path }
             | Outcome::Restored { original: path, .. }
             | Outcome::Moved { to: path, .. } => Some(path),
             Outcome::Several(outcomes) => outcomes.iter().find_map(Outcome::created),
@@ -306,7 +312,7 @@ impl Outcome {
     /// The first path made, looking inside `Several` too.
     fn created(&self) -> Option<&Path> {
         match self {
-            Outcome::Created { path, .. } => Some(path),
+            Outcome::Created { path, .. } | Outcome::Placed { path } => Some(path),
             Outcome::Several(outcomes) => outcomes.iter().find_map(Outcome::created),
             _ => None,
         }
@@ -526,9 +532,10 @@ impl RunCx<'_> {
     /// Copies a file, counting its bytes and stopping when the job is cancelled. The system
     /// makes the copy its full size at once, so if Gezik is killed meanwhile the leftover must
     /// not pass for a finished file: a large one is copied under a temporary name and renamed
-    /// when complete, a small one is noted in the job's journal first (see `TempCopies`).
+    /// when complete, a small one is noted in the job's journal first (see `TempCopies`), unless
+    /// the journal cannot hold its names: it takes the temporary name too.
     pub fn copy_file(&self, from: &Path, to: &Path, size: u64) -> io::Result<()> {
-        let temp = if size >= TEMP_COPY_MIN { self.temp.next_to(to) } else { None };
+        let temp = if size >= TEMP_COPY_MIN || !Journal::can_note(from, to) { self.temp.next_to(to) } else { None };
         let Some(temp) = temp else {
             self.temp.journal.note(from, to);
             return self.copy_to(from, to, size);
@@ -708,6 +715,34 @@ mod tests {
         assert!(names(&dir.join("to")).is_empty());
         temp.done();
         assert!(pending.copies().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_small_copy_whose_name_the_journal_cannot_hold_takes_a_temporary_name() {
+        #[cfg(unix)]
+        let name = {
+            use std::os::unix::ffi::OsStringExt;
+            std::ffi::OsString::from_vec(b"r\xfcz.txt".to_vec())
+        };
+        #[cfg(windows)]
+        let name = {
+            use std::os::windows::ffi::OsStringExt;
+            std::ffi::OsString::from_wide(&[0x72, 0xD800, 0x2E, 0x74])
+        };
+        let dir = test_dir("temp-copy-name");
+        std::fs::create_dir(dir.join("to")).unwrap();
+        std::fs::write(dir.join("small.txt"), "x").unwrap();
+        let pending = std::sync::Arc::new(PendingDeletes::new(dir.join("pending-deletes")));
+        let temp = TempCopies::new(Some(pending.clone()));
+        let control = Control::default();
+        let no_bin = |_: &Path| false;
+        let cx = RunCx { control: &control, trash: &no_bin, added: Cell::new(0), temp: &temp, job: None };
+        cx.copy_file(&dir.join("small.txt"), &dir.join("to").join(&name), 1).unwrap();
+        assert_eq!(std::fs::read(dir.join("to").join(&name)).unwrap(), b"x");
+        assert_eq!(pending.copies().len(), 1, "its folder is noted for the temporary name");
+        assert!(!dir.join("copying").exists(), "no journal line");
+        temp.done();
         let _ = std::fs::remove_dir_all(&dir);
     }
 

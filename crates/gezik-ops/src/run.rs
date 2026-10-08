@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
 
 use gezik_core::ops::conflict::{ConflictKind, Decision, Facts, Resolution, default_decision, kind_of, resolve};
-use gezik_core::ops::names::next_free;
+use gezik_core::ops::names::next_free_os;
 use gezik_core::ops::paths::{DriveSet, is_within, same_path};
 use gezik_core::ops::threads::workers;
 use gezik_platform::fs;
@@ -109,7 +109,7 @@ struct Sink<'a> {
     held: Vec<Held>,
     /// Folders merged into existing ones, shown with the conflicts.
     merges: Vec<ConflictItem>,
-    /// Targets given a new name so far: what goes inside them follows.
+    /// Folders given a new name so far: what goes inside them follows.
     renames: Vec<(PathBuf, PathBuf)>,
     /// Held folders (target, index in `held`): what goes inside them waits with them.
     blocked: Vec<(PathBuf, usize)>,
@@ -222,9 +222,9 @@ impl Sink<'_> {
     /// A free `name (n)` next to `target`.
     fn free_target(&mut self, target: &Path, is_dir: bool) -> PathBuf {
         let parent = target.parent().unwrap_or(Path::new(""));
-        let name = target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let name = target.file_name().unwrap_or_default();
         let taken = &self.taken;
-        let free = next_free(&name, is_dir, |candidate| {
+        let free = next_free_os(name, is_dir, |candidate| {
             let path = parent.join(candidate);
             taken.contains(&path) || std::fs::symlink_metadata(&path).is_ok()
         });
@@ -253,7 +253,10 @@ impl Sink<'_> {
             Resolution::Rename => {
                 let Some(target) = item.target.clone() else { return true };
                 let free = self.free_target(&target, item.facts.is_dir);
-                self.renames.push((target, free.clone()));
+                // Only a folder has items following it inside.
+                if item.facts.is_dir {
+                    self.renames.push((target, free.clone()));
+                }
                 item.target = Some(free);
                 self.dispatch(item);
             }
@@ -299,16 +302,45 @@ fn onto_itself(item: &PlanItem) -> bool {
     same_path(source, target) || fs::same_entry(source, target) == Some(true)
 }
 
-/// Moves an existing target out of the way for "Replace": to the trash if its drive has one.
-fn replace_target(shared: &Shared, target: &Path) -> io::Result<Outcome> {
+/// Moves an existing target out of the way for "Replace": to the trash if its drive has one,
+/// else aside under a noted name (returned), deleted only once the item is done: a failed or
+/// cancelled item, or Gezik stopping meanwhile, puts it back.
+fn replace_target(shared: &Shared, job: &Job, cx: &RunCx<'_>, target: &Path) -> io::Result<Option<PathBuf>> {
     if shared.has_trash(target) {
-        return Ok(match fs::trash(target)? {
+        job.outcome(match fs::trash(target)? {
             Some(trashed) => Outcome::Trashed { original: target.to_path_buf(), trashed },
             None => Outcome::Deleted { path: target.to_path_buf() },
         });
+        return Ok(None);
     }
-    fs::delete(target)?;
-    Ok(Outcome::Deleted { path: target.to_path_buf() })
+    let aside = cx.aside_name(target);
+    cx.note_aside(&[(aside.clone(), target.to_path_buf())]);
+    if let Err(err) = fs::move_entry(target, &aside) {
+        cx.forget_aside(&[&aside]);
+        return Err(err);
+    }
+    Ok(Some(aside))
+}
+
+/// The item replacing `target` ended: its old one, set aside, is deleted if the item `done`,
+/// else put back. One that cannot be deleted is kept next to it under a free name.
+fn settle_aside(job: &Job, cx: &RunCx<'_>, aside: &Path, target: &Path, done: bool) {
+    if done {
+        match fs::delete(aside) {
+            Ok(()) => job.outcome(Outcome::Deleted { path: target.to_path_buf() }),
+            Err(err) => {
+                crate::tasks::restore_hidden(aside, target, true);
+                let message = format!("{}; the old one was kept next to it", fs::describe(&err));
+                job.fail(target, &io::Error::new(err.kind(), message));
+            }
+        }
+    } else {
+        crate::tasks::restore_hidden(aside, target, true);
+    }
+    // One that could not go back stays noted: the next start puts it back.
+    if std::fs::symlink_metadata(aside).is_err() {
+        cx.forget_aside(&[aside]);
+    }
 }
 
 /// Does one item, on a worker or the planning thread.
@@ -326,20 +358,9 @@ pub(crate) fn execute(shared: &Shared, job: &Job, task: &dyn Task, item: PlanIte
         }
         return;
     }
-    if item.replace
-        && let Some(target) = &item.target
-    {
-        match replace_target(shared, target) {
-            Ok(outcome) => job.outcome(outcome),
-            Err(err) => {
-                job.fail(target, &err);
-                control.item_done();
-                return;
-            }
-        }
-    }
     // A file the target drive cannot hold (FAT32 and 4 GB) would end as "disk full", which
-    // freeing space does not help: it fails at once with the real reason.
+    // freeing space does not help: it fails at once with the real reason, before a replaced
+    // target is touched.
     if !item.facts.is_dir
         && let Some(target) = &item.target
         && let Some(max) = shared.drive(target).and_then(|facts| facts.max_file)
@@ -360,10 +381,24 @@ pub(crate) fn execute(shared: &Shared, job: &Job, task: &dyn Task, item: PlanIte
     let has_trash = |path: &Path| shared.has_trash(path);
     let cx =
         RunCx { control, trash: &has_trash, added: std::cell::Cell::new(0), temp: &job.temp, job: Some((shared, job)) };
+    let mut aside = None;
+    if item.replace
+        && let Some(target) = &item.target
+    {
+        match replace_target(shared, job, &cx, target) {
+            Ok(set_aside) => aside = set_aside,
+            Err(err) => {
+                job.fail(target, &err);
+                control.item_done();
+                return;
+            }
+        }
+    }
     // A cancelled or failed item may have made or removed something (a partial copy): its
     // folders are reloaded like those of a finished one.
     let touch = || job.touch(item.source.as_deref().into_iter().chain(item.target.as_deref()), item.is_root);
-    loop {
+    // Some(whether it was done) once the item ended; None once the job stopped.
+    let ended = loop {
         match task.run(&item, &cx) {
             Ok(outcome) => {
                 control.succeeded();
@@ -374,11 +409,11 @@ pub(crate) fn execute(shared: &Shared, job: &Job, task: &dyn Task, item: PlanIte
                 }
                 touch();
                 job.outcome(outcome);
-                break;
+                break Some(true);
             }
             Err(err) if err.kind() == io::ErrorKind::Interrupted && control.cancelled() => {
                 touch();
-                return;
+                break None;
             }
             Err(err) if is_marker::<Restart>(&err) => {
                 // Paused while it ran a program, which was ended: once resumed, the item is
@@ -387,24 +422,24 @@ pub(crate) fn execute(shared: &Shared, job: &Job, task: &dyn Task, item: PlanIte
                 control.take_back_bytes(cx.added.replace(0));
                 if control.stopped() {
                     touch();
-                    return;
+                    break None;
                 }
             }
             Err(err) if fs::is_disk_full(&err) => {
                 shared.pause(job, PauseReason::DiskFull, item.target.clone());
                 if control.stopped() {
                     touch();
-                    return;
+                    break None;
                 }
                 // Resumed: try the same item again.
             }
             Err(err) if is_marker::<ChangedSince>(&err) => {
                 job.skipped_changed();
-                break;
+                break Some(false);
             }
             Err(err) if is_marker::<NoTrash>(&err) => {
                 job.no_trash(item.path());
-                break;
+                break Some(false);
             }
             Err(err) => {
                 touch();
@@ -414,9 +449,15 @@ pub(crate) fn execute(shared: &Shared, job: &Job, task: &dyn Task, item: PlanIte
                     shared.pause(job, PauseReason::ManyFailures, None);
                     let _ = control.stopped();
                 }
-                break;
+                break Some(false);
             }
         }
+    };
+    if let (Some(aside), Some(target)) = (&aside, &item.target) {
+        settle_aside(job, &cx, aside, target, ended == Some(true));
+    }
+    if ended.is_none() {
+        return;
     }
     if !item.counted {
         return;

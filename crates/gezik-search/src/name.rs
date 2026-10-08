@@ -28,11 +28,6 @@ impl NameMatcher {
             NameMatcher::Regex(regex) => regex.is_match(name),
         }
     }
-
-    /// Whether every name passes (an empty field).
-    pub fn lets_all_through(&self) -> bool {
-        matches!(self, NameMatcher::Pattern(pattern) if pattern.is_empty())
-    }
 }
 
 /// How big a typed regular expression may grow (1 MiB; the default is 10): it is compiled on
@@ -120,9 +115,6 @@ mod tests {
         assert!(!m("*.pdf;!*draft*", false, false, "rapor draft.pdf"));
         assert!(m("istanbul", false, true, "İSTANBUL.txt"), "a pattern always folds, match case or not");
         assert_eq!(NameMatcher::compile("!", false, false).unwrap_err(), "Type a name after \"!\"");
-        assert!(NameMatcher::compile("", false, false).unwrap().lets_all_through());
-        assert!(NameMatcher::compile("", true, false).unwrap().lets_all_through());
-        assert!(!NameMatcher::compile("x", false, false).unwrap().lets_all_through());
     }
 
     #[test]
