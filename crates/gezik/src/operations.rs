@@ -1315,11 +1315,8 @@ impl Operations {
         // Rows hidden for this job come back if it changed nothing (failed, cancelled, no trash).
         let mut dirs = report.changed_dirs.clone();
         dirs.extend(hidden_in);
-        let skipped = (report.skipped_changed > 0).then(|| {
-            let n = report.skipped_changed;
-            let what = if n == 1 { "1 item".to_owned() } else { format!("{n} items") };
-            format!("{what} changed since; skipped")
-        });
+        let skipped = (report.skipped_changed > 0)
+            .then(|| format!("{} changed since; skipped", crate::stack::count_text(report.skipped_changed)));
         // New items here the filter hides (a paste, a drop, an extract): the filter stays, the
         // status bar says so. A new folder's rename closes the filter instead.
         let hidden = if after == After::Rename { None } else { hidden_note(self.0.view.hidden_by_filter(&select)) };

@@ -8,12 +8,13 @@ use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Sender};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use gezik_core::view::ViewSettings;
 
 use crate::Warning;
+use crate::lock;
 use crate::paths::write_atomic;
 use crate::pins::PinEntry;
 use crate::settings::{RenamePreset, SavedFilter, TabSet, ViewOption};
@@ -76,10 +77,6 @@ impl fmt::Debug for SettingsWriter {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SettingsWriter").field("dir", &self.dir).finish_non_exhaustive()
     }
-}
-
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 impl SettingsWriter {

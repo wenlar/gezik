@@ -4,8 +4,9 @@
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 
+use gezik_config::lock;
 use gezik_core::ops::paths::same_path;
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
@@ -128,10 +129,6 @@ fn concerns(event: &Event, folder: &Path) -> bool {
             .paths
             .iter()
             .any(|path| path.parent().is_some_and(|parent| same_path(parent, folder)) || same_path(path, folder))
-}
-
-fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 #[cfg(test)]

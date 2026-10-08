@@ -6,9 +6,10 @@ use std::fmt;
 use std::io;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Sender};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
+use crate::lock;
 use crate::paths::write_atomic;
 use crate::settings::State;
 
@@ -29,10 +30,6 @@ impl fmt::Debug for StateCell {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("StateCell").field("path", &self.path).finish_non_exhaustive()
     }
-}
-
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// How long a flush waits for the writer.
