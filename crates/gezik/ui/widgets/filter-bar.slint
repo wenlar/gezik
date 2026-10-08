@@ -25,6 +25,12 @@ export component FilterBar inherits Rectangle {
     out property <bool> field-focused: field.has-focus || (root.search && root.content-open && root.content-focused);
     // The text-in-files field has the keyboard (it is made only while Content is on).
     property <bool> content-focused;
+    // The field goes with Content: its focus flag must not outlive it.
+    changed content-open => {
+        if !self.content-open {
+            self.content-focused = false;
+        }
+    }
     callback edited(string);
     callback content-edited(string);
     callback content-toggle();

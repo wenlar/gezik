@@ -212,6 +212,28 @@ struct Kept {
     results: Arc<ResultSet>,
     status: String,
     changes: Option<JobChange>,
+    /// When it was kept (`Inner::kept_count`): past `MAX_KEPT_ROWS` the oldest go first.
+    order: u64,
+}
+
+/// Most rows all tabs keep off screen together (~60 MB); past it the oldest kept results go
+/// and their tab searches again when it shows (spec 3.7 counts one tab's 250,000).
+pub const MAX_KEPT_ROWS: usize = 500_000;
+
+/// The tabs whose kept results go so that the rest fit in `cap` rows: the oldest first.
+/// `kept`: (tab, when it was kept, rows).
+pub fn over_cap(mut kept: Vec<(u64, u64, usize)>, cap: usize) -> Vec<u64> {
+    let mut total: usize = kept.iter().map(|k| k.2).sum();
+    kept.sort_by_key(|k| k.1);
+    let mut gone = Vec::new();
+    for (tab, _, rows) in kept {
+        if total <= cap {
+            break;
+        }
+        total -= rows;
+        gone.push(tab);
+    }
+    gone
 }
 
 /// The results on screen, and the jobs to check them for once they are.
@@ -348,6 +370,8 @@ struct Inner {
     pending: RefCell<Option<SearchSpec>>,
     showing: RefCell<Option<Showing>>,
     kept: RefCell<HashMap<u64, Kept>>,
+    /// Results kept so far (`Kept::order`).
+    kept_count: Cell<u64>,
     names: RefCell<Names>,
     /// A key was typed and the results follow once the cache is ready.
     live_waiting: Cell<bool>,
@@ -382,6 +406,7 @@ impl Searches {
             pending: RefCell::new(None),
             showing: RefCell::new(None),
             kept: RefCell::new(HashMap::new()),
+            kept_count: Cell::new(0),
             names: RefCell::new(Names::None),
             live_waiting: Cell::new(false),
             typing: slint::Timer::default(),
@@ -610,9 +635,11 @@ impl Searches {
         if new_tab {
             self.0.nav.open_tab(location, true);
         } else if current == location {
-            // The same search again: run anew (spec 4.7), from the name cache as it is.
-            self.0.fresh.set(true);
+            // The same search again: run anew (spec 4.7), from the name cache as it is. Set
+            // after `show_again` leaves the results (`leaving` clears it: a load overtaken by
+            // another place must not make a later one fresh).
             self.0.nav.show_again();
+            self.0.fresh.set(true);
         } else if live && matches!(current, Location::Search(_)) {
             self.0.replacing.set(true);
             self.0.nav.replace_location(location);
@@ -725,6 +752,7 @@ impl Searches {
     /// The navigator leaves what is on screen (another place, another tab, a reload): a
     /// running search stops (its later events are dropped); whole results stay with their tab.
     pub fn leaving(&self) {
+        self.0.fresh.set(false);
         let run = self.0.running.borrow_mut().take();
         if let Some(run) = run {
             run.handle.cancel();
@@ -744,8 +772,15 @@ impl Searches {
             return;
         }
         if let (Some(tab), true, Some(results)) = (showing.tab, showing.complete, self.0.view.results()) {
-            let kept = Kept { spec: showing.spec, results, status: showing.status, changes: showing.changes };
-            self.0.kept.borrow_mut().insert(tab, kept);
+            let order = self.0.kept_count.get() + 1;
+            self.0.kept_count.set(order);
+            let kept = Kept { spec: showing.spec, results, status: showing.status, changes: showing.changes, order };
+            let mut all = self.0.kept.borrow_mut();
+            all.insert(tab, kept);
+            let sizes = all.iter().map(|(tab, kept)| (*tab, kept.order, kept.results.len())).collect();
+            for tab in over_cap(sizes, MAX_KEPT_ROWS) {
+                all.remove(&tab);
+            }
         }
     }
 
@@ -787,6 +822,18 @@ impl Searches {
         for key in touched {
             self.queue(&key, change(&key));
         }
+        // The name cache holds the scope as it was read: a job of Gezik's in it (a trash, a
+        // rename, a copy into it) would let typing show the old names again. Read anew.
+        let stale = match &*self.0.names.borrow() {
+            Names::Ready(k, _) | Names::Building(k, _) => touches(k.scope.folder(), &dirs, &paths),
+            _ => false,
+        };
+        if stale {
+            self.drop_names();
+            if self.0.open.get() {
+                self.warm();
+            }
+        }
         if let Some(key) = self.results_key() {
             let change = change(&key);
             self.check(key, change);
@@ -810,6 +857,7 @@ impl Searches {
     /// Checks on another thread what `change` did to the results on screen (`key`), then
     /// shows it if they still are, or keeps it for their tab.
     fn check(&self, key: ResultsKey, change: JobChange) {
+        let Some(change) = self.after_the_search(change) else { return };
         let all: Vec<PathBuf> = change.own_paths.iter().chain(&change.paths).cloned().collect();
         let Some(probe) = self.0.view.results_probe(&change.dirs, &all) else { return };
         drop(all);
@@ -859,10 +907,28 @@ impl Searches {
         let showing = self.results_key();
         let kept = key.0.and_then(|tab| self.0.kept.borrow().get(&tab).map(|k| k.spec.clone()));
         match verdict_for(&key, showing.as_ref(), kept.as_ref()) {
+            // A search started since: checked again once it ends.
+            Verdict::Apply if self.0.running.borrow().is_some() => {
+                let _ = self.after_the_search(change);
+            }
             Verdict::Apply => self.0.view.results_changed(&gone, added, &change.moves),
             Verdict::Queue => self.queue(&key, change),
             Verdict::Drop => {}
         }
+    }
+
+    /// While the search on screen runs, a job's check waits for its end (`event`): the walk
+    /// may still find what the job made (a row twice), and its batches number their folders
+    /// after the ones it sent, which a check adding a folder would shift. `None`: it waits.
+    fn after_the_search(&self, change: JobChange) -> Option<JobChange> {
+        if self.0.running.borrow().is_none() {
+            return Some(change);
+        }
+        if let Some(showing) = self.0.showing.borrow_mut().as_mut() {
+            // Too much to wait for: the rows the search finds stay as they are.
+            showing.changes = merge(showing.changes.take(), change);
+        }
+        None
     }
 
     /// F5 on results (spec 4.7): the tab's results and the name cache are forgotten.
@@ -1003,12 +1069,20 @@ impl Searches {
                 self.0.running.borrow_mut().take();
                 self.0.view.set_searching(false);
                 self.0.view.set_results_status(Some(text.clone()));
-                if let Some(showing) = self.0.showing.borrow_mut().as_mut() {
-                    showing.status = text;
-                    showing.complete = !summary.cancelled;
-                }
+                let changes = match self.0.showing.borrow_mut().as_mut() {
+                    Some(showing) => {
+                        showing.status = text;
+                        showing.complete = !summary.cancelled;
+                        showing.changes.take()
+                    }
+                    None => None,
+                };
                 if let Some(window) = self.0.window.upgrade() {
                     window.set_search_running(false);
+                }
+                // Jobs that ended while it ran: one check now.
+                if let (Some(key), Some(change)) = (self.results_key(), changes) {
+                    self.check(key, change);
                 }
             }
         }
@@ -1085,9 +1159,12 @@ impl Searches {
         };
         let ready = matches!(names, Names::Ready(..) | Names::NoCache(_, true));
         *self.0.names.borrow_mut() = names;
+        // Whatever the read gave, the typing it waited for is answered now (too large, a
+        // network folder: Enter searches).
+        let waiting = self.0.live_waiting.replace(false);
         if ready {
             self.0.idle.start(slint::TimerMode::SingleShot, CACHE_IDLE, || with_current(Searches::drop_names));
-            if self.0.live_waiting.replace(false) && self.0.open.get() {
+            if waiting && self.0.open.get() {
                 self.follow_typing();
             }
         }
@@ -1388,6 +1465,16 @@ mod tests {
             (0..MAX_QUEUED_PATHS).map(|i| (PathBuf::from(format!("/w/a{i}")), PathBuf::from(format!("/w/b{i}"))));
         let large = merge(None, JobChange { moves: moves.collect(), ..job("/w", false) }).unwrap();
         assert!(large.moves.is_empty() && large.paths.len() == 1);
+    }
+
+    #[test]
+    fn kept_results_past_the_cap_go_oldest_first() {
+        assert!(over_cap(vec![(1, 1, 200_000), (2, 2, 250_000)], MAX_KEPT_ROWS).is_empty());
+        let kept = vec![(7, 3, 250_000), (1, 1, 200_000), (2, 2, 250_000)];
+        assert_eq!(over_cap(kept, MAX_KEPT_ROWS), [1], "the oldest goes, the rest fit");
+        let kept = vec![(1, 1, 10), (2, 2, 10), (3, 3, MAX_KEPT_ROWS)];
+        assert_eq!(over_cap(kept, MAX_KEPT_ROWS), [1, 2]);
+        assert!(over_cap(Vec::new(), MAX_KEPT_ROWS).is_empty());
     }
 
     #[test]

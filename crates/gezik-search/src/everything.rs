@@ -344,12 +344,17 @@ pub fn translate_at(spec: &SearchSpec, roots: &[PathBuf], now: SystemTime, utc_o
 
 /// `path` (Everything spells it as the disk does) under the first of `roots` it is in, with the
 /// root spelled as the scope is (`C:\WINDOWS` for `C:\Windows`): the walk's paths and folder
-/// texts start with the scope's spelling too. `None` outside every root.
+/// texts start with the scope's spelling too. `None` outside every root, and with anything but
+/// plain names after it (`..`, a drive, a root): the answer is not trusted, and a row must
+/// never name a file outside the scope.
 fn rebased(path: &Path, roots: &[PathBuf]) -> Option<PathBuf> {
     let root = roots.iter().find(|root| gezik_core::ops::paths::is_within(path, root))?;
     let depth = root.components().filter(|c| !matches!(c, Component::CurDir)).count();
     let mut out = root.clone();
-    out.extend(path.components().filter(|c| !matches!(c, Component::CurDir)).skip(depth));
+    for part in path.components().filter(|c| !matches!(c, Component::CurDir)).skip(depth) {
+        let Component::Normal(name) = part else { return None };
+        out.push(name);
+    }
     Some(out)
 }
 
@@ -1006,6 +1011,10 @@ mod tests {
         assert_eq!(rebased(&path(r"C:\Windowsx\a"), &roots), None);
         let drive = [PathBuf::from(r"D:\")];
         assert_eq!(rebased(&path(r"d:\a\b"), &drive), Some(path(r"D:\a\b")));
+        // A malformed or spoofed answer never becomes a row outside the scope.
+        assert_eq!(rebased(&path(r"C:\Windows\..\Users\x"), &roots), None);
+        assert_eq!(rebased(&path(r"C:\Windows\a\..\..\x"), &roots), None);
+        assert_eq!(rebased(&path(r"d:\a\..\..\b"), &drive), None);
     }
 
     #[cfg(windows)]

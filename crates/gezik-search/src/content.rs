@@ -22,6 +22,11 @@ const BEFORE: usize = 40;
 /// `[search] content-max-size`'s default.
 pub const DEFAULT_MAX_SIZE: u64 = 64 * 1024 * 1024;
 
+/// The read buffer for a file whose folder entry says `size`.
+fn buffer_for(size: u64) -> usize {
+    usize::try_from(size.saturating_add(1)).map_or(CHUNK, |size| size.clamp(4096, CHUNK))
+}
+
 #[derive(Debug, Clone)]
 pub struct ContentMatcher {
     regex: Regex,
@@ -38,7 +43,9 @@ impl ContentMatcher {
             (false, true) => regex::escape(text),
             (false, false) => format!("(?i){}", crate::name::turkish_i(&regex::escape(text))),
         };
-        let regex = RegexBuilder::new(&source).build().map_err(|err| crate::name::regex_error(&err))?;
+        let regex = crate::name::bounded(&mut RegexBuilder::new(&source))
+            .build()
+            .map_err(|err| crate::name::regex_error(&err))?;
         Ok(ContentMatcher { regex, max_size })
     }
 
@@ -62,9 +69,9 @@ impl ContentMatcher {
     ) -> io::Result<Option<Found>> {
         // Never a FIFO, device or link, never a cloud placeholder (spec 3.3).
         let Some((file, size)) = gezik_platform::fs::open_regular(path)? else { return Ok(None) };
-        // A small file needs no 256 KB buffer.
-        let buffer = usize::try_from(size.saturating_add(1)).map_or(CHUNK, |size| size.min(CHUNK));
-        self.find_with(file.take(self.max_size), buffer, cancel, ansi)
+        // A small file needs no 256 KB buffer; 4 KB at least, as the size a folder entry says
+        // may lag behind what the file holds (a log still being written can say 0).
+        self.find_with(file.take(self.max_size), buffer_for(size), cancel, ansi)
     }
 
     /// The first line of `reader` that matches; `None` for none, binary data (a NUL byte in
@@ -319,6 +326,13 @@ mod tests {
 
     fn utf16(text: &str, little: bool) -> Vec<u8> {
         text.encode_utf16().flat_map(|u| if little { u.to_le_bytes() } else { u.to_be_bytes() }).collect()
+    }
+
+    #[test]
+    fn a_file_said_to_be_empty_is_still_read_in_whole_blocks() {
+        assert_eq!(buffer_for(0), 4096, "a lagging size of 0 must not read a byte at a time");
+        assert_eq!(buffer_for(10_000), 10_001);
+        assert_eq!(buffer_for(u64::MAX), CHUNK);
     }
 
     #[test]

@@ -19,7 +19,7 @@ impl NameMatcher {
             return Pattern::compile(text).map(NameMatcher::Pattern);
         }
         let source = if match_case { text.to_owned() } else { format!("(?i){}", turkish_i(text)) };
-        RegexBuilder::new(&source).build().map(NameMatcher::Regex).map_err(|err| regex_error(&err))
+        bounded(&mut RegexBuilder::new(&source)).build().map(NameMatcher::Regex).map_err(|err| regex_error(&err))
     }
 
     pub fn matches(&self, name: &str) -> bool {
@@ -33,6 +33,13 @@ impl NameMatcher {
     pub fn lets_all_through(&self) -> bool {
         matches!(self, NameMatcher::Pattern(pattern) if pattern.is_empty())
     }
+}
+
+/// How big a typed regular expression may grow (1 MiB; the default is 10): it is compiled on
+/// the UI thread at every edit, so `\w{1000}` fails at once instead of stalling the field.
+/// Real patterns stay far below.
+pub fn bounded(builder: &mut RegexBuilder) -> &mut RegexBuilder {
+    builder.size_limit(1 << 20).dfa_size_limit(1 << 20)
 }
 
 /// `regex`'s complaint in one line (the build leaves out `\p{..}` classes: said so): `Not a regular expression: unclosed group`.
@@ -154,5 +161,15 @@ mod tests {
         let error = NameMatcher::compile("(", true, false).unwrap_err();
         assert!(error.starts_with("Not a regular expression: "), "{error}");
         assert!(!error.contains('\n'), "{error}");
+    }
+
+    #[test]
+    fn a_huge_regex_fails_with_the_friendly_error() {
+        let error = NameMatcher::compile(r"\w{1000}", true, false).unwrap_err();
+        assert_eq!(error, "The regular expression is too large");
+        let content = crate::content::ContentMatcher::compile(r"\w{1000}", true, true, 1).unwrap_err();
+        assert_eq!(content, "The regular expression is too large");
+        // Real patterns stay well below the limit.
+        assert!(m(r"^\w{3,12}[-_ ]\d{4}\.(pdf|docx?)$", true, false, "Rapor_2026.pdf"));
     }
 }

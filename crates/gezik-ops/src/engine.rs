@@ -386,9 +386,11 @@ impl Shared {
             }
         }
         let acc = std::mem::take(&mut *lock(&job.acc));
-        let moved = acc
-            .outcomes
-            .iter()
+        // A move that replaced its target is `Several` (the target trashed, then the move).
+        let mut flat = Vec::new();
+        crate::inverse::flatten(&acc.outcomes, &mut flat);
+        let moved = flat
+            .into_iter()
             .filter_map(|outcome| match outcome {
                 Outcome::Moved { from, to, .. } | Outcome::Created { path: to, from: Some(from), .. } => {
                     Some((from.clone(), to.clone()))
@@ -1162,6 +1164,19 @@ mod tests {
         let report = run(&engine, engine.undo().unwrap());
         assert!(report.failures.is_empty(), "{:?}", report.failures);
         assert_eq!(read(&dir.join("dst/a.txt")), "old");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_move_that_replaced_its_target_is_reported_as_moved() {
+        let dir = test_dir("move-replace-report");
+        write(&dir.join("src/a.txt"), "new");
+        write(&dir.join("dst/a.txt"), "old");
+        let engine = engine();
+        let job = engine.submit(Box::new(MoveTask::into(vec![dir.join("src/a.txt")], &dir.join("dst"))));
+        let (report, _) = finish(&engine, job, |c| vec![Decision::Replace; c.len()]);
+        assert_eq!(read(&dir.join("dst/a.txt")), "new");
+        assert_eq!(report.moved, [(dir.join("src/a.txt"), dir.join("dst/a.txt"))]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

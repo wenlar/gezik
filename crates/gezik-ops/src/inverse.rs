@@ -17,7 +17,7 @@ fn expect(facts: &Facts) -> Option<Facts> {
 }
 
 /// `outcomes` with every `Several` opened up, in order.
-fn flatten<'a>(outcomes: &'a [Outcome], into: &mut Vec<&'a Outcome>) {
+pub(crate) fn flatten<'a>(outcomes: &'a [Outcome], into: &mut Vec<&'a Outcome>) {
     for outcome in outcomes {
         match outcome {
             Outcome::Several(inner) => flatten(inner, into),
