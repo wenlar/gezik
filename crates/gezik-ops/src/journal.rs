@@ -29,9 +29,18 @@ impl Journal {
         Journal { path: dir.map(|dir| dir.join(format!("{}-{name}.log", std::process::id()))), file: Mutex::default() }
     }
 
-    /// `target` is about to be written as a copy of `source`.
+    /// Whether a line holds `source` and `target` as they are: Unicode, no tab or line break.
+    /// Read back, another name could be paths of unrelated files, which recovery would delete.
+    pub fn can_note(source: &Path, target: &Path) -> bool {
+        [source, target].iter().all(|path| path.to_str().is_some_and(|text| !text.contains(['\t', '\n', '\r'])))
+    }
+
+    /// `target` is about to be written as a copy of `source` (see `can_note`).
     pub fn note(&self, source: &Path, target: &Path) {
         let Some(path) = &self.path else { return };
+        if !Journal::can_note(source, target) {
+            return;
+        }
         let mut file = lock(&self.file);
         if file.is_none() {
             if let Some(dir) = path.parent() {
@@ -217,6 +226,18 @@ mod tests {
         assert_eq!(text.lines().count(), 2);
         journal.done();
         assert!(!path.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_name_a_line_cannot_hold_is_not_noted() {
+        let dir = test_dir("journal-names");
+        let journal = Journal::new(Some(dir.join("copying")), "abc");
+        journal.note(Path::new("/s/a\n/s/b\t/t/victim"), Path::new("/t/a\n/s/b\t/t/victim"));
+        journal.note(Path::new("/s/a\tb"), Path::new("/t/a\tb"));
+        journal.note(Path::new("/s/a\r"), Path::new("/t/a\r"));
+        assert!(!dir.join("copying").join(format!("{}-abc.log", std::process::id())).exists());
+        assert!(Journal::can_note(Path::new("/s/a b"), Path::new("/t/a b")));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
