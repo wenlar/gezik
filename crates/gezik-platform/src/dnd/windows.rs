@@ -18,15 +18,15 @@ use windows::Win32::System::Com::{
 use windows::Win32::System::DataExchange::RegisterClipboardFormatW;
 use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock};
 use windows::Win32::System::Ole::{
-    CF_HDROP, DROPEFFECT, DROPEFFECT_COPY, DROPEFFECT_MOVE, DROPEFFECT_NONE, IDropSource, IDropSource_Impl,
-    IDropTarget, IDropTarget_Impl, RegisterDragDrop, ReleaseStgMedium, RevokeDragDrop,
+    CF_HDROP, DROPEFFECT, DROPEFFECT_COPY, DROPEFFECT_LINK, DROPEFFECT_MOVE, DROPEFFECT_NONE, IDropSource,
+    IDropSource_Impl, IDropTarget, IDropTarget_Impl, MK_ALT, RegisterDragDrop, ReleaseStgMedium, RevokeDragDrop,
 };
 use windows::Win32::System::SystemServices::{MK_CONTROL, MK_LBUTTON, MK_RBUTTON, MK_SHIFT, MODIFIERKEYS_FLAGS};
 use windows::Win32::UI::Input::KeyboardAndMouse::SetCapture;
 use windows::Win32::UI::Shell::{
     CFSTR_DROPDESCRIPTION, CFSTR_LOGICALPERFORMEDDROPEFFECT, CFSTR_PERFORMEDDROPEFFECT, CLSID_DragDropHelper,
-    DROPDESCRIPTION, DROPIMAGE_COPY, DROPIMAGE_INVALID, DROPIMAGE_MOVE, DROPIMAGE_NONE, HDROP, IDropTargetHelper,
-    SHDoDragDrop,
+    DROPDESCRIPTION, DROPIMAGE_COPY, DROPIMAGE_INVALID, DROPIMAGE_LINK, DROPIMAGE_MOVE, DROPIMAGE_NONE, HDROP,
+    IDropTargetHelper, SHDoDragDrop,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GA_ROOT, GetAncestor, GetClientRect, GetCursorPos, PostMessageW, WM_LBUTTONUP, WM_RBUTTONUP, WindowFromPoint,
@@ -43,6 +43,7 @@ pub(crate) fn drop_reply(effect: Option<Effect>) -> (DROPEFFECT, Option<DROPEFFE
     match effect {
         Some(Effect::Move) => (DROPEFFECT_NONE, Some(DROPEFFECT_NONE), Some(DROPEFFECT_MOVE)),
         Some(Effect::Copy) => (DROPEFFECT_COPY, None, None),
+        Some(Effect::Link) => (DROPEFFECT_LINK, None, None),
         None => (DROPEFFECT_NONE, None, None),
     }
 }
@@ -51,6 +52,7 @@ fn to_dropeffect(effect: Option<Effect>) -> DROPEFFECT {
     match effect {
         Some(Effect::Move) => DROPEFFECT_MOVE,
         Some(Effect::Copy) => DROPEFFECT_COPY,
+        Some(Effect::Link) => DROPEFFECT_LINK,
         None => DROPEFFECT_NONE,
     }
 }
@@ -63,6 +65,7 @@ pub(crate) fn description(answer: Option<&Answer>) -> DROPDESCRIPTION {
     let (kind, message) = match answer.effect {
         Some(Effect::Move) => (DROPIMAGE_MOVE, "Move to %1"),
         Some(Effect::Copy) => (DROPIMAGE_COPY, "Copy to %1"),
+        Some(Effect::Link) => (DROPIMAGE_LINK, "Create link in %1"),
         None => (DROPIMAGE_NONE, ""),
     };
     out.r#type = kind;
@@ -85,11 +88,19 @@ fn wide(text: &str) -> [u16; 260] {
 }
 
 fn allowed_by(effects: DROPEFFECT) -> Allowed {
-    Allowed { copy: effects.0 & DROPEFFECT_COPY.0 != 0, move_: effects.0 & DROPEFFECT_MOVE.0 != 0 }
+    let has = |effect: DROPEFFECT| effects.0 & effect.0 != 0;
+    Allowed { copy: has(DROPEFFECT_COPY), move_: has(DROPEFFECT_MOVE), link: has(DROPEFFECT_LINK) }
 }
 
 fn keys_of(state: MODIFIERKEYS_FLAGS) -> Keys {
-    Keys { shift: state.0 & MK_SHIFT.0 != 0, copy: state.0 & MK_CONTROL.0 != 0 }
+    let held = |bit: u32| state.0 & bit != 0;
+    gezik_core::drag::keys_of(
+        gezik_core::drag::DragOs::Windows,
+        held(MK_SHIFT.0),
+        held(MK_CONTROL.0),
+        held(MK_ALT),
+        false,
+    )
 }
 
 fn format(id: u16) -> FORMATETC {
@@ -446,6 +457,8 @@ mod tests {
     fn move_drop_reports_an_optimized_move() {
         assert_eq!(drop_reply(Some(Effect::Move)), (DROPEFFECT_NONE, Some(DROPEFFECT_NONE), Some(DROPEFFECT_MOVE)));
         assert_eq!(drop_reply(Some(Effect::Copy)), (DROPEFFECT_COPY, None, None));
+        assert_eq!(drop_reply(Some(Effect::Link)), (DROPEFFECT_LINK, None, None));
+        assert_eq!(to_dropeffect(Some(Effect::Link)), DROPEFFECT_LINK);
         assert_eq!(drop_reply(None), (DROPEFFECT_NONE, None, None));
     }
 
@@ -459,6 +472,9 @@ mod tests {
         };
         let d = description(Some(&Answer { effect: Some(Effect::Move), folder: Some("Belgeler".into()) }));
         assert_eq!(parts(d), (DROPIMAGE_MOVE, "Move to %1".into(), "Belgeler".into()));
+        let d = description(Some(&Answer { effect: Some(Effect::Link), folder: Some("Belgeler".into()) }));
+        let kind = d.r#type;
+        assert_eq!(kind, DROPIMAGE_LINK);
         let refused = description(Some(&Answer { effect: None, folder: Some("x".into()) }));
         assert_eq!(parts(refused), (DROPIMAGE_NONE, String::new(), String::new()));
         assert_eq!(parts(description(None)).0, DROPIMAGE_INVALID);
@@ -468,8 +484,12 @@ mod tests {
 
     #[test]
     fn keys_and_allowed_effects_are_read() {
-        assert_eq!(keys_of(MODIFIERKEYS_FLAGS(MK_SHIFT.0 | MK_CONTROL.0)), Keys { shift: true, copy: true });
-        assert_eq!(allowed_by(DROPEFFECT_COPY), Allowed { copy: true, move_: false });
-        assert_eq!(allowed_by(DROPEFFECT(DROPEFFECT_COPY.0 | DROPEFFECT_MOVE.0)), Allowed::BOTH);
+        assert_eq!(
+            keys_of(MODIFIERKEYS_FLAGS(MK_SHIFT.0 | MK_CONTROL.0)),
+            Keys { shift: true, copy: true, link: true }
+        );
+        assert_eq!(keys_of(MODIFIERKEYS_FLAGS(MK_ALT)), Keys { shift: false, copy: false, link: true });
+        assert_eq!(allowed_by(DROPEFFECT_COPY), Allowed { copy: true, move_: false, link: false });
+        assert_eq!(allowed_by(DROPEFFECT(DROPEFFECT_COPY.0 | DROPEFFECT_MOVE.0 | DROPEFFECT_LINK.0)), Allowed::ALL);
     }
 }

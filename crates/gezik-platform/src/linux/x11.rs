@@ -22,7 +22,7 @@ use x11rb::wrapper::ConnectionExt as _;
 use x11rb::{CURRENT_TIME, NONE};
 
 use super::{UiEvent, uri, xdnd};
-use crate::clipboard::{ClipboardError, ClipboardFiles};
+use crate::clipboard::{ClipboardError, ClipboardFiles, ClipboardImage, PasteKind};
 use crate::dnd::{Allowed, Answer, DragEnd, Effect, Keys, Offer, OutsideDrag};
 
 x11rb::atom_manager! {
@@ -33,6 +33,8 @@ x11rb::atom_manager! {
         UTF8_STRING,
         TEXT,
         TEXT_PLAIN: b"text/plain;charset=utf-8",
+        TEXT_PLAIN_ANY: b"text/plain",
+        IMAGE_PNG: b"image/png",
         URI_LIST: b"text/uri-list",
         GNOME_FILES: b"x-special/gnome-copied-files",
         KDE_CUT: b"application/x-kde-cutselection",
@@ -49,11 +51,14 @@ x11rb::atom_manager! {
         XdndTypeList,
         XdndActionCopy,
         XdndActionMove,
+        XdndActionLink,
     }
 }
 
 /// How long a transfer from another program may take before Gezik gives up on it.
 const TRANSFER_TIMEOUT: Duration = Duration::from_secs(1);
+/// A picture arrives in pieces (INCR) and may take longer.
+const IMAGE_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long a drop may wait for the target's `XdndFinished`.
 const FINISH_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -111,6 +116,8 @@ struct Shared {
     /// A transfer under way on the UI thread, waiting for the event thread's events.
     waiting: Mutex<Option<Sender<Event>>>,
     sequence: AtomicU64,
+    /// The clipboard owner's offered names, with the `sequence` they were asked at.
+    offers: Mutex<Option<(u64, Vec<&'static str>)>>,
     wake: Arc<dyn Fn() + Send + Sync>,
 }
 
@@ -142,7 +149,13 @@ impl Shared {
     fn keys(&self) -> Keys {
         let mask = self.conn.query_pointer(self.root).ok().and_then(|c| c.reply().ok()).map(|r| r.mask);
         let held = |bit: KeyButMask| mask.is_some_and(|mask| u16::from(mask) & u16::from(bit) != 0);
-        Keys { shift: held(KeyButMask::SHIFT), copy: held(KeyButMask::CONTROL) }
+        gezik_core::drag::keys_of(
+            gezik_core::drag::DragOs::Linux,
+            held(KeyButMask::SHIFT),
+            held(KeyButMask::CONTROL),
+            held(KeyButMask::MOD1),
+            false,
+        )
     }
 
     /// Root (`x`, `y`) in winit's window, in physical pixels.
@@ -157,6 +170,7 @@ impl Shared {
         match effect {
             Some(Effect::Move) => self.atoms.XdndActionMove,
             Some(Effect::Copy) => self.atoms.XdndActionCopy,
+            Some(Effect::Link) => self.atoms.XdndActionLink,
             None => NONE,
         }
     }
@@ -250,19 +264,31 @@ impl Shared {
 
     /// Asks the owner of `selection` for `target` and waits (on the UI thread) for the bytes.
     fn transfer(&self, selection: Atom, target: Atom, time: u32) -> Option<Vec<u8>> {
+        self.transfer_within(selection, target, time, TRANSFER_TIMEOUT)
+    }
+
+    /// `transfer` with its own time limit (a picture).
+    fn transfer_within(&self, selection: Atom, target: Atom, time: u32, timeout: Duration) -> Option<Vec<u8>> {
         let (tx, rx) = mpsc::channel();
         *self.waiting.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(tx);
-        let result = self.transfer_with(&rx, selection, target, time);
+        let result = self.transfer_with(&rx, selection, target, time, timeout);
         *self.waiting.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
         result
     }
 
-    fn transfer_with(&self, rx: &Receiver<Event>, selection: Atom, target: Atom, time: u32) -> Option<Vec<u8>> {
+    fn transfer_with(
+        &self,
+        rx: &Receiver<Event>,
+        selection: Atom,
+        target: Atom,
+        time: u32,
+        timeout: Duration,
+    ) -> Option<Vec<u8>> {
         let property = self.atoms.GEZIK_TRANSFER;
         self.conn.delete_property(self.window, property).ok()?;
         self.conn.convert_selection(self.window, selection, target, property, time).ok()?;
         self.conn.flush().ok()?;
-        let deadline = Instant::now() + TRANSFER_TIMEOUT;
+        let deadline = Instant::now() + timeout;
         let wait = |rx: &Receiver<Event>| rx.recv_timeout(deadline.saturating_duration_since(Instant::now())).ok();
         loop {
             match wait(rx)? {
@@ -295,6 +321,9 @@ impl Shared {
                         .ok()?;
                     if piece.value.is_empty() {
                         return Some(data);
+                    }
+                    if data.len() + piece.value.len() > super::MAX_TRANSFER_BYTES {
+                        return None;
                     }
                     data.extend_from_slice(&piece.value);
                 }
@@ -464,6 +493,7 @@ impl X11 {
             state: Mutex::default(),
             waiting: Mutex::new(None),
             sequence: AtomicU64::new(1),
+            offers: Mutex::new(None),
             wake,
         });
         let runner = shared.clone();
@@ -484,6 +514,54 @@ impl X11 {
         } else {
             s.state().clipboard = None;
             Err(ClipboardError::Failed("cannot take the X11 clipboard".into()))
+        }
+    }
+}
+
+impl X11 {
+    /// The clipboard owner's targets by name, those Gezik knows (the rest do not matter here).
+    /// Asked once per clipboard change (the XFixes `sequence`), an unanswered ask included: a
+    /// hung owner costs one wait, not one per call.
+    fn offered_names(&self) -> Vec<&'static str> {
+        let s = &self.0;
+        let at = s.sequence.load(Ordering::SeqCst);
+        let cached = super::cached_offers(&s.offers.lock().unwrap_or_else(std::sync::PoisonError::into_inner), at);
+        if let Some(names) = cached {
+            return names;
+        }
+        let names = self.ask_offered_names();
+        *s.offers.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some((at, names.clone()));
+        names
+    }
+
+    fn ask_offered_names(&self) -> Vec<&'static str> {
+        let s = &self.0;
+        let a = &s.atoms;
+        let Some(targets) = s.transfer(a.CLIPBOARD, a.TARGETS, CURRENT_TIME) else { return Vec::new() };
+        let offered: Vec<Atom> = targets.as_chunks::<4>().0.iter().map(|c| u32::from_ne_bytes(*c)).collect();
+        let known: [(Atom, &'static str); 9] = [
+            (a.KDE_CUT, "application/x-kde-cutselection"),
+            (a.URI_LIST, "text/uri-list"),
+            (a.GNOME_FILES, "x-special/gnome-copied-files"),
+            (a.IMAGE_PNG, "image/png"),
+            (a.UTF8_STRING, "UTF8_STRING"),
+            (a.TEXT_PLAIN, "text/plain;charset=utf-8"),
+            (a.TEXT_PLAIN_ANY, "text/plain"),
+            (a.TEXT, "TEXT"),
+            (AtomEnum::STRING.into(), "STRING"),
+        ];
+        known.iter().filter(|(atom, _)| offered.contains(atom)).map(|(_, name)| *name).collect()
+    }
+
+    /// The atom of text type `name` (one of `TEXT_TYPES`).
+    fn text_atom(&self, name: &str) -> Atom {
+        let a = &self.0.atoms;
+        match name {
+            "UTF8_STRING" => a.UTF8_STRING,
+            "text/plain;charset=utf-8" => a.TEXT_PLAIN,
+            "text/plain" => a.TEXT_PLAIN_ANY,
+            "TEXT" => a.TEXT,
+            _ => AtomEnum::STRING.into(),
         }
     }
 }
@@ -512,12 +590,20 @@ impl super::Backend for X11 {
                 .filter(|o| o.text.is_none())
                 .map(|o| ClipboardFiles { paths: o.paths, cut: o.cut }));
         }
-        // The owner's formats first: a wait (at most a second) for each format asked for, so
-        // only what it offers is asked for.
-        let Some(targets) = s.transfer(s.atoms.CLIPBOARD, s.atoms.TARGETS, CURRENT_TIME) else { return Ok(None) };
-        let offered: Vec<Atom> = targets.as_chunks::<4>().0.iter().map(|c| u32::from_ne_bytes(*c)).collect();
+        // The owner's formats first, from the cached ask (once per clipboard change): a wait
+        // (at most a second) for each format asked for, so only what it offers is asked for.
+        let offered = self.offered_names();
         let a = &s.atoms;
-        let Some(ask) = super::what_to_ask(&offered, a.GNOME_FILES, a.URI_LIST, a.KDE_CUT) else { return Ok(None) };
+        let atoms: Vec<Atom> = offered
+            .iter()
+            .filter_map(|name| match *name {
+                "x-special/gnome-copied-files" => Some(a.GNOME_FILES),
+                "text/uri-list" => Some(a.URI_LIST),
+                "application/x-kde-cutselection" => Some(a.KDE_CUT),
+                _ => None,
+            })
+            .collect();
+        let Some(ask) = super::what_to_ask(&atoms, a.GNOME_FILES, a.URI_LIST, a.KDE_CUT) else { return Ok(None) };
         let Some(text) = s.transfer(a.CLIPBOARD, ask.files, CURRENT_TIME) else { return Ok(None) };
         let text = String::from_utf8_lossy(&text);
         if ask.files == a.GNOME_FILES {
@@ -529,6 +615,42 @@ impl super::Backend for X11 {
         }
         let cut = ask.kde_cut && s.transfer(a.CLIPBOARD, a.KDE_CUT, CURRENT_TIME).is_some_and(|v| v == b"1");
         Ok(Some(ClipboardFiles { paths, cut }))
+    }
+
+    fn paste_kind(&self) -> Option<PasteKind> {
+        let s = &self.0;
+        if s.owns(s.atoms.CLIPBOARD) {
+            // Gezik's own: copied paths are text, cut or copied files paste as files.
+            return s.state().clipboard.as_ref().and_then(|o| o.text.as_ref()).map(|_| PasteKind::Text);
+        }
+        super::paste_kind_of(&self.offered_names())
+    }
+
+    fn read_image(&self) -> Result<Option<ClipboardImage>, ClipboardError> {
+        let s = &self.0;
+        if s.owns(s.atoms.CLIPBOARD) || !self.offered_names().contains(&"image/png") {
+            return Ok(None);
+        }
+        let png = s.transfer_within(s.atoms.CLIPBOARD, s.atoms.IMAGE_PNG, CURRENT_TIME, IMAGE_TIMEOUT);
+        Ok(png.map(ClipboardImage::Png))
+    }
+
+    fn read_text(&self) -> Result<Option<String>, ClipboardError> {
+        let s = &self.0;
+        if s.owns(s.atoms.CLIPBOARD) {
+            return Ok(s
+                .state()
+                .clipboard
+                .as_ref()
+                .and_then(|o| o.text.clone())
+                .and_then(crate::clipboard::clean_text));
+        }
+        let offered = self.offered_names();
+        let Some(name) = super::text_type(&offered) else { return Ok(None) };
+        let Some(bytes) = s.transfer(s.atoms.CLIPBOARD, self.text_atom(name), CURRENT_TIME) else { return Ok(None) };
+        let text =
+            if name == "STRING" { super::from_latin1(&bytes) } else { String::from_utf8_lossy(&bytes).into_owned() };
+        Ok(crate::clipboard::clean_text(text))
     }
 
     fn sequence(&self) -> u64 {
@@ -613,7 +735,7 @@ impl X11 {
                 paths
             }
         };
-        Some(Offer { paths, allowed: Allowed::BOTH, right: false })
+        Some(Offer { paths, allowed: Allowed::ALL, right: false })
     }
 }
 

@@ -121,6 +121,16 @@ fn view_to_show(mode: &Mode, saved: &ViewState) -> ViewState {
     }
 }
 
+/// `state` with `names` selected and the first of them focused ("Show in folder"); `state`
+/// as it is when there are none.
+fn with_selection(mut state: ViewState, names: Option<Vec<String>>) -> ViewState {
+    if let Some(names) = names.filter(|names| !names.is_empty()) {
+        state.focus = names.first().cloned();
+        state.selected = names;
+    }
+    state
+}
+
 /// Whether a finished load is a visit (spec 6.2): a move, or the first show of a tab opened
 /// there; not a reload, a tab switch, or the `fallback` from a folder found gone.
 fn is_visit(mode: &Mode, opened: bool, fallback: bool) -> bool {
@@ -163,6 +173,9 @@ struct Inner {
     /// Told when the watched folder's drive is about to be removed (Windows), to let go of it.
     removal: Option<gezik_platform::RemovalWatch>,
     on_visited: Vec<VisitListener>,
+    /// Names to select once the next move is shown ("Show in folder"). Dropped when that
+    /// load fails or is overtaken, and by any other load the user starts.
+    select_next: Option<Vec<String>>,
     /// A tab was opened in front (its id): its first show is a visit.
     visit_next_show: Option<u64>,
     /// The load (its generation) going to the nearest folder of one found gone: no visit.
@@ -223,6 +236,7 @@ impl Navigator {
             refresh_timer: slint::Timer::default(),
             removal: None,
             on_visited: Vec::new(),
+            select_next: None,
             visit_next_show: None,
             fallback: None,
             session_sink: None,
@@ -532,6 +546,19 @@ impl Navigator {
         self.load(location.clone(), Mode::Move(vec![Step::Navigate(location)]), None);
     }
 
+    /// Goes to `dir` and selects `names` there ("Show in folder"); the folder shown is
+    /// reloaded with them selected.
+    pub fn go_selecting(&self, dir: PathBuf, names: Vec<String>) {
+        if matches!(self.active_location(), Location::Path(ref current) if same_path(current, &dir))
+            && self.refresh_showing(std::slice::from_ref(&dir), &names, None)
+        {
+            return;
+        }
+        self.go(Location::Path(dir));
+        // After the go, which drops any older names: these belong to the load it started.
+        self.0.borrow_mut().select_next = Some(names);
+    }
+
     pub fn back(&self) {
         self.queue(|_| Some(Step::Back));
     }
@@ -701,6 +728,9 @@ impl Navigator {
                 Mode::Show => None,
             };
             inner.user_load = loading_text.then_some(ticket);
+            if loading_text {
+                inner.select_next = None;
+            }
             // Any load of the watched folder covers its changes so far.
             if let Location::Path(path) = &location
                 && inner.watched.as_deref().is_some_and(|watched| same_path(watched, path))
@@ -724,11 +754,14 @@ impl Navigator {
     }
 
     fn finish_load(&self, location: Location, mode: Mode, result: LoadResult, note: Option<String>) {
+        let select_next;
         // This was the pending load (an overtaken one never gets here). A tab opened on a
         // folder that fails is no visit, nor is its next reload.
         let (opened, fallback) = {
             let mut inner = self.0.borrow_mut();
             let ticket = inner.pending.take().map(|(ticket, _)| ticket);
+            // Names for this load only: a failed one drops them too.
+            select_next = inner.select_next.take();
             inner.user_load = None;
             inner.pace.finished(Instant::now());
             let active = inner.tabs.id(inner.tabs.active_index());
@@ -763,7 +796,8 @@ impl Navigator {
                 inner.tabs.active_mut().apply_steps(steps);
             }
             inner.cleared = false;
-            (inner.view.clone(), view_to_show(&mode, inner.tabs.active().view()))
+            let state = with_selection(view_to_show(&mode, inner.tabs.active().view()), select_next);
+            (inner.view.clone(), state)
         };
         self.watch_shown(&location);
         view.show(listing, &state, note);
@@ -956,6 +990,17 @@ pub fn sync_model<T: Clone + PartialEq + 'static>(model: &VecModel<T>, items: im
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn show_in_folder_names_select_and_focus_the_first() {
+        let saved =
+            ViewState { selected: vec!["old".to_owned()], focus: Some("old".to_owned()), ..ViewState::default() };
+        let names = vec!["a".to_owned(), "b".to_owned()];
+        let shown = with_selection(saved.clone(), Some(names.clone()));
+        assert_eq!((shown.selected, shown.focus), (names, Some("a".to_owned())));
+        assert_eq!(with_selection(saved.clone(), None), saved, "no names: the saved view");
+        assert_eq!(with_selection(saved.clone(), Some(Vec::new())), saved, "empty names change nothing");
+    }
 
     /// A fresh folder under the system temp folder, removed on drop.
     struct TempDir(PathBuf);

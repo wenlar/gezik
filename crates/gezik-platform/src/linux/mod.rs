@@ -9,6 +9,10 @@ pub(crate) mod xdnd;
 #[cfg(all(unix, not(target_os = "macos")))]
 pub(crate) use backend::*;
 
+/// The most a clipboard transfer is read for: a picture (or anything) beyond it is dropped.
+#[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
+pub(crate) const MAX_TRANSFER_BYTES: usize = 256 * 1024 * 1024;
+
 /// What to ask a clipboard owner for, from the formats it offers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
@@ -38,6 +42,43 @@ pub(crate) fn latin1(text: &str) -> Vec<u8> {
     text.chars().map(|c| u8::try_from(u32::from(c)).unwrap_or(b'?')).collect()
 }
 
+/// The text types Gezik reads, best first.
+pub(crate) const TEXT_TYPES: [&str; 5] = ["UTF8_STRING", "text/plain;charset=utf-8", "text/plain", "TEXT", "STRING"];
+
+/// What paste would write as a file, from the types (X11 targets, Wayland MIME types) the
+/// clipboard's owner offers: None while it offers files (they paste as files), else a PNG
+/// picture before text (a browser's picture often comes with text).
+#[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
+pub(crate) fn paste_kind_of(offered: &[&str]) -> Option<gezik_core::templates::PasteKind> {
+    use gezik_core::templates::PasteKind;
+    let has = |name: &str| offered.contains(&name);
+    if has("x-special/gnome-copied-files") || has("text/uri-list") {
+        None
+    } else if has("image/png") {
+        Some(PasteKind::Image)
+    } else {
+        text_type(offered).map(|_| PasteKind::Text)
+    }
+}
+
+/// The best text type among `offered`.
+#[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
+pub(crate) fn text_type<'a>(offered: &[&'a str]) -> Option<&'a str> {
+    TEXT_TYPES.iter().find_map(|wanted| offered.iter().find(|o| **o == *wanted).copied())
+}
+
+/// The offers asked for at `at` (the clipboard's change counter), if that is the last ask.
+#[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
+pub(crate) fn cached_offers(cache: &Option<(u64, Vec<&'static str>)>, at: u64) -> Option<Vec<&'static str>> {
+    cache.as_ref().filter(|(asked_at, _)| *asked_at == at).map(|(_, names)| names.clone())
+}
+
+/// `STRING` (Latin-1) bytes as text.
+#[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
+pub(crate) fn from_latin1(bytes: &[u8]) -> String {
+    bytes.iter().map(|&b| char::from(b)).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -56,6 +97,30 @@ mod tests {
     fn latin1_keeps_what_it_can() {
         assert_eq!(latin1("ça ş"), [0xE7, b'a', b' ', b'?']);
     }
+
+    #[test]
+    fn files_win_then_an_image_then_text() {
+        use gezik_core::templates::PasteKind;
+        // Gezik's own files also offer text; a browser's picture often comes with text too.
+        assert_eq!(paste_kind_of(&["TARGETS", "text/uri-list", "UTF8_STRING"]), None);
+        assert_eq!(paste_kind_of(&["x-special/gnome-copied-files", "image/png"]), None);
+        assert_eq!(paste_kind_of(&["text/html", "image/png", "UTF8_STRING"]), Some(PasteKind::Image));
+        assert_eq!(paste_kind_of(&["TEXT", "STRING"]), Some(PasteKind::Text));
+        assert_eq!(paste_kind_of(&["text/html"]), None, "nothing paste can write");
+        assert_eq!(text_type(&["STRING", "text/plain", "UTF8_STRING"]), Some("UTF8_STRING"));
+        assert_eq!(text_type(&["STRING", "text/plain"]), Some("text/plain"));
+        assert_eq!(text_type(&["image/png"]), None);
+        assert_eq!(from_latin1(&[0xE7, b'a']), "ça");
+    }
+
+    #[test]
+    fn offers_are_reused_until_the_clipboard_changes() {
+        let cache = Some((3, vec!["image/png"]));
+        assert_eq!(cached_offers(&cache, 3), Some(vec!["image/png"]));
+        assert_eq!(cached_offers(&cache, 4), None, "the clipboard changed");
+        assert_eq!(cached_offers(&Some((3, Vec::new())), 3), Some(Vec::new()), "no answer is kept too");
+        assert_eq!(cached_offers(&None, 3), None);
+    }
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -70,7 +135,7 @@ mod backend {
 
     use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
 
-    use crate::clipboard::{ClipboardError, ClipboardFiles};
+    use crate::clipboard::{ClipboardError, ClipboardFiles, ClipboardImage, PasteKind};
     use crate::dnd::{Answer, DragEnd, Effect, Keys, Offer, OutsideDrag};
 
     /// What a backend's thread hands the UI thread. `offer` is read on the UI thread, where
@@ -98,6 +163,10 @@ mod backend {
         fn write_files(&self, paths: &[PathBuf], cut: bool) -> Result<(), ClipboardError>;
         fn write_text(&self, text: &str) -> Result<(), ClipboardError>;
         fn read_files(&self) -> Result<Option<ClipboardFiles>, ClipboardError>;
+        /// What paste would write as a file (formats only).
+        fn paste_kind(&self) -> Option<PasteKind>;
+        fn read_image(&self) -> Result<Option<ClipboardImage>, ClipboardError>;
+        fn read_text(&self) -> Result<Option<String>, ClipboardError>;
         fn sequence(&self) -> u64;
         fn clear(&self) -> Result<(), ClipboardError>;
         fn take_events(&self) -> Vec<UiEvent>;

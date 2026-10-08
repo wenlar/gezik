@@ -478,6 +478,7 @@ pub fn acts_on_files(action: Action) -> bool {
             | Action::DeletePermanently
             | Action::Rename
             | Action::NewFolder
+            | Action::NewFolderWithSelection
             | Action::Duplicate
             | Action::Undo
             | Action::Redo
@@ -496,6 +497,7 @@ pub fn acts_on_selection(action: Action) -> bool {
             | Action::SelectSameType
             | Action::RestoreSelection
             | Action::CopyPath
+            | Action::AddToStack
     )
 }
 
@@ -516,6 +518,8 @@ pub fn needs_list(action: Action) -> bool {
             | Action::Rename
             | Action::Duplicate
             | Action::BatchRename
+            | Action::NewFolderWithSelection
+            | Action::AddToStack
     )
 }
 
@@ -699,6 +703,15 @@ mod tests {
     }
 
     #[test]
+    fn the_7c_actions_wait_for_the_list() {
+        assert!(acts_on_files(Action::NewFolderWithSelection) && needs_list(Action::NewFolderWithSelection));
+        assert!(acts_on_selection(Action::AddToStack) && needs_list(Action::AddToStack));
+        assert!(!waits_for_text_fields(Action::ToggleStack) && !waits_for_text_fields(Action::ShowHistory));
+        // Ctrl+Alt+N types nothing with AltGr on US and Turkish Q: a shortcut (spec 10.3).
+        assert!(!altgr_types('n', true, true, true));
+    }
+
+    #[test]
     fn every_default_is_reachable_on_windows_and_linux() {
         use gezik_config::shortcuts::parse_chord;
         let defaults = Shortcuts::defaults(Platform::Other);
@@ -762,13 +775,17 @@ mod tests {
                 Action::TabPicker => "ctrl+shift+a",
                 Action::OpenTerminal => "shift+f4",
                 Action::CopyPath => "ctrl+shift+c",
+                Action::NewFolderWithSelection => "ctrl+alt+n",
+                Action::AddToStack => "ctrl+shift+s",
                 Action::PasteMove
                 | Action::Duplicate
                 | Action::BatchRename
                 | Action::ToggleTabLock
                 | Action::ClearHistory
                 | Action::OpenTerminalAdmin
-                | Action::SaveTabSet => continue,
+                | Action::SaveTabSet
+                | Action::ToggleStack
+                | Action::ShowHistory => continue,
             };
             assert_eq!(reach(text), Some(action), "{text}");
         }

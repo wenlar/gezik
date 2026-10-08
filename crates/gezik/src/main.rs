@@ -18,6 +18,7 @@ mod media;
 #[cfg(target_os = "macos")]
 mod menu_bar;
 mod navigation;
+mod op_history;
 mod operations;
 mod path_box;
 mod pdf;
@@ -27,9 +28,11 @@ mod preview;
 mod quick_look;
 mod select_tools;
 mod sidebar;
+mod stack;
 mod start;
 mod tab_sets;
 mod tab_tools;
+mod templates;
 mod terminal;
 mod theme_bridge;
 mod view;
@@ -298,7 +301,11 @@ fn handle_key(
                 | Action::Pin6
                 | Action::Pin7
                 | Action::Pin8
-                | Action::Pin9 => {
+                | Action::Pin9
+                | Action::NewFolderWithSelection
+                | Action::AddToStack
+                | Action::ToggleStack
+                | Action::ShowHistory => {
                     if action == Action::Filter && editing {
                         window.set_path_editing(false);
                     }
@@ -472,6 +479,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let window = AppWindow::new()?;
 
     let config = ConfigStore::system();
+    templates::set_dir(config.as_ref().map(ConfigStore::templates_dir));
     view_options::install(&window, config.clone());
     let init_error = config.as_ref().and_then(|store| store.ensure_initialized().err().map(|e| (store, e)));
     let mut files = config.as_ref().map(ConfigStore::read_files).unwrap_or_default();
@@ -519,16 +527,23 @@ fn main() -> Result<(), slint::PlatformError> {
         let reader = store.clone();
         let weak = window.as_weak();
         let files = files.clone();
-        watcher::watch_config(store, move || {
-            let fresh = reader.read_files();
-            let files = files.clone();
-            let _ = weak.upgrade_in_event_loop(move |window| {
-                let mut current = files.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                *current = fresh;
-                let (_, plan) = apply_config_and_start(&window, &mut current, None, None);
-                navigation::with_current(|nav| nav.set_start(plan.start));
-            });
-        })
+        watcher::watch_config(
+            store,
+            move || {
+                let fresh = reader.read_files();
+                let files = files.clone();
+                let _ = weak.upgrade_in_event_loop(move |window| {
+                    let mut current = files.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    *current = fresh;
+                    let (_, plan) = apply_config_and_start(&window, &mut current, None, None);
+                    navigation::with_current(|nav| nav.set_start(plan.start));
+                });
+            },
+            {
+                let dir = store.templates_dir();
+                move || templates::refresh(dir.clone())
+            },
+        )
         .map_err(|err| {
             eprintln!("gezik: cannot watch {}: {err}", store.dir().display());
             let warning = Warning::new("config", format!("cannot watch the config folder for changes: {err}"));
@@ -571,6 +586,8 @@ fn main() -> Result<(), slint::PlatformError> {
     let _path_box = path_box::PathBox::new(&window, nav.clone(), config.clone(), saved_state.history.clone());
     // Captures no navigator (it is not `Send`): the result finds it on the UI thread.
     places::load_in_background(window.as_weak(), |part| navigation::with_current(|nav| nav.set_places(part)));
+    // The templates of New ▸, read once the window is up.
+    slint::Timer::single_shot(std::time::Duration::from_millis(500), templates::load_in_background);
 
     let dialogs = dialog::Dialogs::new(&window);
     let sidebar = sidebar::Sidebar::new(&window, nav.clone(), config.clone(), dialogs.clone());
@@ -602,6 +619,7 @@ fn main() -> Result<(), slint::PlatformError> {
         saved_state.batch_rename.clone().unwrap_or_default(),
     );
     let _batch_rename = batch_rename::BatchRename::new(&window, ops.clone());
+    let _stack = stack::Stack::new(&window, view.clone(), ops.clone());
     #[cfg(target_os = "macos")]
     menu_bar::install(&window, view.clone(), nav.clone(), ops.clone());
     // Tools Gezik downloads (7-Zip) go to `<config dir>/tools/`, next to the pending deletes.
@@ -640,10 +658,32 @@ fn main() -> Result<(), slint::PlatformError> {
         let ops = ops.clone();
         move || ops.toggle_collapsed()
     });
+    window.on_ops_tab_chosen({
+        let ops = ops.clone();
+        move |tab| ops.choose_tab(tab)
+    });
+    window.on_history_show({
+        let ops = ops.clone();
+        move |id| ops.history_show(id)
+    });
+    window.on_history_details({
+        let ops = ops.clone();
+        move |id| ops.history_details(id)
+    });
+    window.on_history_toggle({
+        let ops = ops.clone();
+        move || ops.history_toggle()
+    });
     // Deletes cut short last time finish in the background once the window is up.
     slint::Timer::single_shot(std::time::Duration::from_millis(500), {
         let ops = ops.clone();
         move || ops.recover()
+    });
+    // Whether symbolic links can be made (Windows: Developer Mode), tried once in the
+    // background: Create link ▸ offers them from then on (spec 9.2).
+    slint::Timer::single_shot(std::time::Duration::from_millis(500), || {
+        let _ =
+            std::thread::Builder::new().name("gezik-symlink-probe".into()).spawn(gezik_platform::link::probe_symlinks);
     });
     let save_and_quit: Rc<dyn Fn()> = {
         let (weak, store, view, preview, ops) =

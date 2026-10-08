@@ -48,6 +48,7 @@ fn operation_for(effect: Option<Effect>) -> NSDragOperation {
     match effect {
         Some(Effect::Copy) => NSDragOperation::Copy,
         Some(Effect::Move) => NSDragOperation::Generic,
+        Some(Effect::Link) => NSDragOperation::Link,
         None => NSDragOperation::None,
     }
 }
@@ -56,12 +57,19 @@ fn allowed_by(mask: NSDragOperation) -> Allowed {
     Allowed {
         copy: mask.contains(NSDragOperation::Copy),
         move_: mask.contains(NSDragOperation::Move) || mask.contains(NSDragOperation::Generic),
+        link: mask.contains(NSDragOperation::Link),
     }
 }
 
 fn keys_now() -> Keys {
     let flags = NSEvent::modifierFlags_class();
-    Keys { shift: flags.contains(NSEventModifierFlags::Shift), copy: flags.contains(NSEventModifierFlags::Option) }
+    gezik_core::drag::keys_of(
+        gezik_core::drag::DragOs::Mac,
+        flags.contains(NSEventModifierFlags::Shift),
+        flags.contains(NSEventModifierFlags::Control),
+        flags.contains(NSEventModifierFlags::Option),
+        flags.contains(NSEventModifierFlags::Command),
+    )
 }
 
 /// The file paths a drag carries.

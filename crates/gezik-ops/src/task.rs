@@ -83,6 +83,10 @@ pub enum TaskKind {
     /// A PDF job (merge, split, extract, to pictures, pictures to PDF). PDF jobs bring their
     /// own Undo label; the verb is only a fallback.
     Pdf,
+    /// New folder with selection: a new folder and the items moved into it (spec 8.2).
+    NewFolderWith,
+    /// Shortcuts, junctions and symbolic links (spec 9.2).
+    Link,
 }
 
 impl TaskKind {
@@ -103,6 +107,8 @@ impl TaskKind {
             TaskKind::Convert => "Convert",
             TaskKind::Command => "Run command on",
             TaskKind::Pdf => "Make PDF from",
+            TaskKind::NewFolderWith => "New folder with",
+            TaskKind::Link => "Create link",
         }
     }
 
@@ -111,6 +117,8 @@ impl TaskKind {
         let verb = self.verb();
         match self {
             TaskKind::NewFolder | TaskKind::NewFile => verb.to_owned(),
+            TaskKind::Link if count <= 1 => verb.to_owned(),
+            TaskKind::Link => format!("Create {count} links"),
             TaskKind::Rename if count <= 1 => verb.to_owned(),
             _ if count == 1 => format!("{verb} 1 item"),
             _ => format!("{verb} {count} items"),
@@ -719,6 +727,10 @@ mod tests {
         assert_eq!(TaskKind::Convert.label(12), "Convert 12 items");
         assert_eq!(TaskKind::Command.label(1), "Run command on 1 item");
         assert_eq!(TaskKind::Pdf.label(3), "Make PDF from 3 items");
+        assert_eq!(TaskKind::NewFolderWith.label(3), "New folder with 3 items");
+        assert_eq!(TaskKind::NewFolderWith.label(1), "New folder with 1 item");
+        assert_eq!(TaskKind::Link.label(1), "Create link");
+        assert_eq!(TaskKind::Link.label(4), "Create 4 links");
     }
 
     #[test]

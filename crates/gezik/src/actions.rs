@@ -45,6 +45,9 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         Action::SelectPattern => crate::select_tools::with_current(|s| s.ask(true)),
         Action::DeselectPattern => crate::select_tools::with_current(|s| s.ask(false)),
         Action::ToggleHidden => crate::view_options::toggle_hidden(),
+        Action::AddToStack => crate::stack::with_current(crate::stack::Stack::add_selection),
+        Action::ToggleStack => crate::stack::with_current(crate::stack::Stack::toggle),
+        Action::ShowHistory => crate::operations::with_current(crate::operations::Operations::show_history),
         Action::ReopenTab => nav.reopen_tab(),
         Action::ToggleTabLock => nav.toggle_tab_lock(nav.active_index()),
         Action::TabPicker => crate::tab_tools::with_current(crate::tab_tools::TabTools::open),
@@ -53,6 +56,9 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         Action::OpenTerminalAdmin => crate::terminal::open_for_view(view, true),
         Action::CopyPath => crate::copy_path::copy_selection(view),
         Action::SaveTabSet => crate::tab_sets::with_current(crate::tab_sets::TabSets::ask_save),
+        Action::NewFolderWithSelection => {
+            crate::operations::with_current(crate::operations::Operations::new_folder_with_selection)
+        }
         Action::Pin1
         | Action::Pin2
         | Action::Pin3

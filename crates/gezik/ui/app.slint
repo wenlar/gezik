@@ -8,6 +8,7 @@ import { PreviewPane, PreviewInfo } from "widgets/preview-pane.slint";
 import { FileView, FileRow, ItemRow } from "widgets/file-view.slint";
 import { FilterBar } from "widgets/filter-bar.slint";
 import { OpsPanel, OpRow } from "widgets/ops-panel.slint";
+import { DropStack, StackRow } from "widgets/drop-stack.slint";
 import { Dialog } from "widgets/dialog.slint";
 import { ConflictList, ConflictRow } from "widgets/conflict-list.slint";
 import { RenameBatch, RuleRow, RenamePreviewRow, RuleOptions } from "widgets/rename-batch.slint";
@@ -20,7 +21,7 @@ import { PathSuggestions, PathRow } from "widgets/path-suggestions.slint";
 
 // Re-exported so Rust can set it with `window.global::<Theme>()` and build crumbs, tabs
 // and sidebar rows.
-export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, OpRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView, MenuEntry, MenuPlace, MenuSub, TabPickRow, PathRow }
+export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, OpRow, StackRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView, MenuEntry, MenuPlace, MenuSub, TabPickRow, PathRow }
 
 // Where the drop targets are, in window coordinates (drag.rs reads it while files are
 // dragged; every field is computed when read).
@@ -41,6 +42,8 @@ export struct DropGeometry {
     tab-height: length,
     address-y: length,
     address-height: length,
+    stack-y: length,
+    stack-height: length,
 }
 
 export component AppWindow inherits Window {
@@ -79,6 +82,7 @@ export component AppWindow inherits Window {
             title: "File";
             MenuItem { title: "New Tab"; shortcut: root.menu-keys ? @keys(Control + T) : @keys(); activated => { root.menu-command("new-tab"); } }
             MenuItem { title: "New Folder"; shortcut: root.menu-keys ? @keys(Control + Shift + N) : @keys(); activated => { root.menu-command("new-folder"); } }
+            MenuItem { title: "New Folder with Selection"; shortcut: root.menu-keys ? @keys(Control + Meta + N) : @keys(); activated => { root.menu-command("new-folder-with-selection"); } }
             MenuItem { title: "Open Terminal"; shortcut: root.menu-keys ? @keys(Control + Alt + T) : @keys(); activated => { root.menu-command("open-terminal"); } }
             MenuSeparator { }
             MenuItem { title: "Quick Look"; activated => { root.menu-command("quick-look"); } }
@@ -99,6 +103,7 @@ export component AppWindow inherits Window {
             MenuItem { title: "Cut"; shortcut: root.menu-keys ? @keys(Control + X) : @keys(); activated => { root.menu-command("cut"); } }
             MenuItem { title: "Copy"; shortcut: root.menu-keys ? @keys(Control + C) : @keys(); activated => { root.menu-command("copy"); } }
             MenuItem { title: "Copy Path"; shortcut: root.menu-keys ? @keys(Control + Alt + C) : @keys(); activated => { root.menu-command("copy-path"); } }
+            MenuItem { title: "Add to Drop Stack"; shortcut: root.menu-keys ? @keys(Control + Shift + S) : @keys(); activated => { root.menu-command("add-to-stack"); } }
             MenuItem { title: "Paste"; shortcut: root.menu-keys ? @keys(Control + V) : @keys(); activated => { root.menu-command("paste"); } }
             MenuItem { title: "Move Item Here"; shortcut: root.menu-keys ? @keys(Control + Alt + V) : @keys(); activated => { root.menu-command("paste-move"); } }
             MenuItem { title: "Select All"; shortcut: root.menu-keys ? @keys(Control + A) : @keys(); activated => { root.menu-command("select-all"); } }
@@ -116,6 +121,8 @@ export component AppWindow inherits Window {
             MenuItem { title: "as Grid"; shortcut: root.menu-keys ? @keys(Control + Shift + "2") : @keys(); activated => { root.menu-command("view-grid"); } }
             MenuSeparator { }
             MenuItem { title: "Show Preview"; activated => { root.menu-command("toggle-preview"); } }
+            MenuItem { title: "Drop Stack"; activated => { root.menu-command("toggle-stack"); } }
+            MenuItem { title: "Operation History"; activated => { root.menu-command("show-history"); } }
             MenuItem { title: "Show Hidden Items"; checkable: true; checked <=> root.view-show-hidden; shortcut: root.menu-keys ? @keys(Control + Shift + ".") : @keys(); activated => { root.menu-command("toggle-hidden"); } }
             MenuItem { title: "Hide Extensions"; checkable: true; checked <=> root.view-hide-extensions; activated => { root.menu-command("view-option:1300"); } }
             MenuItem { title: "Folders First"; checkable: true; checked <=> root.view-folders-first; activated => { root.menu-command("view-option:1301"); } }
@@ -367,6 +374,15 @@ export component AppWindow inherits Window {
     in property <bool> ops-panel-open;
     in property <string> ops-summary;
     in property <bool> ops-collapsed;
+    // The panel's tab (0 Current, 1 History), the History's rows, and whether the status
+    // bar shows its History button (once a job ended this session).
+    in property <int> ops-tab;
+    in property <[OpRow]> history-rows;
+    in property <bool> history-available;
+    callback ops-tab-chosen(int);
+    callback history-show(int);
+    callback history-details(int);
+    callback history-toggle();
     callback op-pause(int);
     callback op-resume(int);
     callback op-cancel(int);
@@ -375,6 +391,19 @@ export component AppWindow inherits Window {
     callback op-retry(int);
     callback op-dismiss(int);
     callback ops-toggle();
+    // The drop stack (stack.rs): open, its first items, "12 items", "+900 more", and a drop
+    // landing on it.
+    in property <bool> stack-open;
+    in property <[StackRow]> stack-rows;
+    in property <string> stack-count;
+    in property <string> stack-more;
+    in property <bool> drop-stack;
+    callback stack-down(int, length, length);
+    callback stack-hovered(int);
+    callback stack-remove(int);
+    callback stack-copy();
+    callback stack-move();
+    callback stack-clear();
     // The conflict list over the window (conflicts.rs).
     in property <bool> conflicts-open;
     in property <string> conflict-title;
@@ -597,6 +626,8 @@ export component AppWindow inherits Window {
         tab-height: tab-bar.height,
         address-y: address.absolute-position.y,
         address-height: address.height,
+        stack-y: root.stack-open ? root.height - Theme.row-height - 1px - (Theme.row-height + 6px) : 0px,
+        stack-height: root.stack-open ? Theme.row-height + 6px : 0px,
     };
 
     // Whether the file list has keyboard focus (and not the address bar or a button).
@@ -1014,6 +1045,12 @@ export component AppWindow inherits Window {
             if root.ops-panel-open: Rectangle { height: 1px; background: Theme.border; }
             if root.ops-panel-open: OpsPanel {
                 rows: root.op-rows;
+                tab: root.ops-tab;
+                history: root.history-rows;
+                history-available: root.history-available;
+                tab-chosen(i) => { root.ops-tab-chosen(i); }
+                history-show(i) => { root.history-show(i); }
+                history-details(i) => { root.history-details(i); }
                 pause(i) => { root.op-pause(i); }
                 resume(i) => { root.op-resume(i); }
                 cancel(i) => { root.op-cancel(i); }
@@ -1021,6 +1058,22 @@ export component AppWindow inherits Window {
                 details(i) => { root.op-details(i); }
                 retry(i) => { root.op-retry(i); }
                 dismiss(i) => { root.op-dismiss(i); }
+            }
+            if root.stack-open: Rectangle { height: 1px; background: Theme.border; }
+            if root.stack-open: DropStack {
+                rows: root.stack-rows;
+                count: root.stack-count;
+                more: root.stack-more;
+                highlight: root.drop-stack;
+                down(i, x, y) => { root.stack-down(i, x, y); }
+                drag(x, y, shift, ctrl, alt) => { root.item-drag(x, y, shift, ctrl, alt); }
+                up(x, y) => { root.item-up(-1, x, y, false); }
+                cancel => { root.item-cancel(); }
+                hovered(i) => { root.stack-hovered(i); }
+                remove(i) => { root.stack-remove(i); }
+                copy-here => { root.stack-copy(); }
+                move-here => { root.stack-move(); }
+                clear => { root.stack-clear(); }
             }
             Rectangle { height: 1px; background: Theme.border; }
             Rectangle {
@@ -1063,6 +1116,25 @@ export component AppWindow inherits Window {
                         summary-touch := TouchArea {
                             mouse-cursor: pointer;
                             clicked => { root.ops-toggle(); }
+                        }
+                    }
+                    if root.history-available: Rectangle {
+                        width: history-text.preferred-width + 8px;
+                        border-radius: Theme.radius;
+                        background: history-touch.has-hover ? Theme.hover : transparent;
+                        accessible-role: button;
+                        accessible-label: "History";
+                        accessible-action-default => { root.history-toggle(); }
+                        history-text := Text {
+                            x: 4px;
+                            height: parent.height;
+                            text: "History";
+                            vertical-alignment: center;
+                            color: Theme.foreground-muted;
+                        }
+                        history-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.history-toggle(); }
                         }
                     }
                     Text {

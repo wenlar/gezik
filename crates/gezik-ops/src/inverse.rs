@@ -1,11 +1,12 @@
 //! Undo, built from what a job did: what it made goes to the trash, what it moved goes back,
-//! what it trashed comes back. Nothing here knows the task kinds.
+//! what it trashed comes back; items moved into a folder the job made come out before it goes,
+//! and come back after it (spec 8.2). Nothing here knows the task kinds.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use gezik_core::ops::conflict::Facts;
-use gezik_core::ops::paths::cover;
+use gezik_core::ops::paths::{cover, is_within, same_path};
 
 use crate::task::{Outcome, Task};
 use crate::tasks::{MoveTask, RenameTask, RestoreTask, TrashTask};
@@ -25,8 +26,15 @@ fn flatten<'a>(outcomes: &'a [Outcome], into: &mut Vec<&'a Outcome>) {
     }
 }
 
+/// Whether `path` is inside `dir` (not `dir` itself).
+fn inside(path: &Path, dir: &Path) -> bool {
+    is_within(path, dir) && !same_path(path, dir)
+}
+
 /// The tasks that undo `outcomes`, in order: trash what was made, move back what was moved,
 /// restore what was trashed (an item replaced by a copy comes back after the copy left).
+/// Items moved into a folder the job made come out before it goes (it goes only if empty);
+/// their redo brings the folder back before they go in again.
 pub(crate) fn build(outcomes: &[Outcome]) -> Vec<Arc<dyn Task>> {
     let mut made: Vec<(PathBuf, Option<Facts>)> = Vec::new();
     let mut moved: Vec<(PathBuf, PathBuf, Option<Facts>)> = Vec::new();
@@ -45,24 +53,40 @@ pub(crate) fn build(outcomes: &[Outcome]) -> Vec<Arc<dyn Task>> {
             Outcome::Deleted { .. } | Outcome::Nothing | Outcome::Several(_) => {}
         }
     }
-    let mut tasks: Vec<Arc<dyn Task>> = Vec::new();
+    // Items moved into a folder the job made (New folder with selection): they come out
+    // before it goes to the trash, else they would go with it, and it goes only if empty.
+    let holders: Vec<PathBuf> = made
+        .iter()
+        .filter(|(dir, _)| moved.iter().any(|(now, _, _)| inside(now, dir)))
+        .map(|(dir, _)| dir.clone())
+        .collect();
+    let moves_first = !holders.is_empty();
+    // The redo of that: the folder comes back from the trash before they go into it.
+    let restore_first = moved.iter().any(|(_, was, _)| trashed.iter().any(|(_, original)| inside(was, original)));
     let made = cover(made, |(path, _)| path);
-    if !made.is_empty() {
-        tasks.push(Arc::new(TrashTask::checked(made)));
-    }
+    let mut trash: Option<Arc<dyn Task>> =
+        (!made.is_empty()).then(|| Arc::new(TrashTask::checked(made).only_if_empty(holders)) as Arc<dyn Task>);
+    let mut restore: Option<Arc<dyn Task>> =
+        (!trashed.is_empty()).then(|| Arc::new(RestoreTask::new(trashed)) as Arc<dyn Task>);
     let moved = cover(moved, |(path, _, _)| path);
     // Renames in one folder may swap names: they go back in an order that never collides.
     let (renamed, moved): (Vec<_>, Vec<_>) =
         moved.into_iter().partition(|(now, was, _)| now.parent().is_some() && now.parent() == was.parent());
+    let mut tasks: Vec<Arc<dyn Task>> = Vec::new();
+    if restore_first {
+        tasks.extend(restore.take());
+    }
+    if !moves_first {
+        tasks.extend(trash.take());
+    }
     if !renamed.is_empty() {
         tasks.push(Arc::new(RenameTask::back(renamed)));
     }
     if !moved.is_empty() {
         tasks.push(Arc::new(MoveTask::back(moved)));
     }
-    if !trashed.is_empty() {
-        tasks.push(Arc::new(RestoreTask::new(trashed)));
-    }
+    tasks.extend(trash);
+    tasks.extend(restore);
     tasks
 }
 
@@ -110,6 +134,43 @@ mod tests {
         ])];
         let kinds: Vec<TaskKind> = build(&outcomes).iter().map(|t| t.kind()).collect();
         assert_eq!(kinds, [TaskKind::Trash, TaskKind::Restore]);
+    }
+
+    fn folder() -> Facts {
+        Facts { is_dir: true, ..Facts::default() }
+    }
+
+    #[test]
+    fn items_moved_into_a_new_folder_come_out_before_it_goes() {
+        let outcomes = vec![
+            Outcome::Created { path: "/d/New folder".into(), facts: folder(), from: None },
+            Outcome::Moved { from: "/d/a.txt".into(), to: "/d/New folder/a.txt".into(), facts: file() },
+            Outcome::Moved { from: "/d/b".into(), to: "/d/New folder/b".into(), facts: folder() },
+        ];
+        let kinds: Vec<TaskKind> = build(&outcomes).iter().map(|t| t.kind()).collect();
+        assert_eq!(kinds, [TaskKind::Move, TaskKind::Trash], "back out first, then the empty folder");
+    }
+
+    #[test]
+    fn their_redo_brings_the_folder_back_before_they_go_in() {
+        let outcomes = vec![
+            Outcome::Moved { from: "/d/New folder/a.txt".into(), to: "/d/a.txt".into(), facts: file() },
+            Outcome::Trashed { original: "/d/New folder".into(), trashed: "/bin/1".into() },
+        ];
+        let kinds: Vec<TaskKind> = build(&outcomes).iter().map(|t| t.kind()).collect();
+        assert_eq!(kinds, [TaskKind::Restore, TaskKind::Move]);
+    }
+
+    #[test]
+    fn a_move_next_to_a_new_item_keeps_the_old_order() {
+        // The made item is the moved item's place itself, not a folder around it.
+        let outcomes = vec![
+            Outcome::Created { path: "/d/x".into(), facts: file(), from: None },
+            Outcome::Moved { from: "/a/x".into(), to: "/d/x".into(), facts: file() },
+            Outcome::Trashed { original: "/a/x".into(), trashed: "/bin/2".into() },
+        ];
+        let kinds: Vec<TaskKind> = build(&outcomes).iter().map(|t| t.kind()).collect();
+        assert_eq!(kinds, [TaskKind::Trash, TaskKind::Move, TaskKind::Restore]);
     }
 
     #[test]

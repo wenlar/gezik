@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
 
-use gezik_config::shortcuts::Platform;
 use gezik_core::drag::{
     self, Action, Allowed, CrumbArea, Effect, Hit, Keys, Layout, ListArea, SideRow, SidebarArea, TabArea,
 };
@@ -63,10 +62,19 @@ struct Dragging {
     target: Option<Target>,
     /// The entry whose press started it (that press waits for the release).
     pressed: Option<usize>,
+    /// From the drop stack: the strip takes none of it back.
+    from_stack: bool,
 }
 
 enum Phase {
     Idle,
+    /// A button went down on the drop stack's strip (an item, or all of them); a drag starts
+    /// once the pointer moves far enough.
+    StackArmed {
+        items: Vec<(PathBuf, bool)>,
+        x: f32,
+        y: f32,
+    },
     /// A button went down on an entry; a drag starts once the pointer moves far enough.
     Armed {
         index: usize,
@@ -141,9 +149,20 @@ pub fn with_current<R>(f: impl FnOnce(&Drags) -> R) -> Option<R> {
     CURRENT.with(|c| c.borrow().clone()).map(|drags| f(&drags))
 }
 
-/// The keys held: Shift moves; Ctrl copies (Option on macOS, as in Finder).
+/// Which of Copy, Move and Link the right-drag menu offers: what the source allows, in a
+/// writable folder, and not refused for these sources.
+fn menu_effects(allowed: Allowed, writable: bool, sources: &[PathBuf], dir: &Path) -> (bool, bool, bool) {
+    let can = |effect, ok: bool| ok && writable && !drag::refuse(sources, dir, effect);
+    (can(Effect::Copy, allowed.copy), can(Effect::Move, allowed.move_), can(Effect::Link, allowed.link))
+}
+
+/// The keys held, as this system's file manager reads them (`drag::keys_of`). Slint reports
+/// macOS's Command key as `control`.
 fn keys(shift: bool, ctrl: bool, alt: bool) -> Keys {
-    Keys { shift, copy: if Platform::current() == Platform::Mac { alt } else { ctrl } }
+    match drag::DragOs::current() {
+        drag::DragOs::Mac => drag::keys_of(drag::DragOs::Mac, shift, false, alt, ctrl),
+        os => drag::keys_of(os, shift, ctrl, alt, false),
+    }
 }
 
 /// Whether the window's own pointer events drive the drag in `phase`, and with which keys:
@@ -193,7 +212,7 @@ fn phase_after(at: &AtMenu) -> Option<Phase> {
 fn at_menu(phase: &Phase) -> AtMenu {
     match phase {
         Phase::Idle | Phase::Offer(_) | Phase::Outside(_) => AtMenu::Keep,
-        Phase::Armed { .. } | Phase::Ended => AtMenu::Forget,
+        Phase::Armed { .. } | Phase::StackArmed { .. } | Phase::Ended => AtMenu::Forget,
         Phase::Dragging(_) => AtMenu::Cancel,
     }
 }
@@ -338,11 +357,12 @@ impl Drags {
             all_dirs: false,
             right: false,
             keys: Keys::default(),
-            allowed: Allowed::BOTH,
+            allowed: Allowed::ALL,
             x: 0.0,
             y: 0.0,
             target: None,
             pressed: None,
+            from_stack: false,
         };
         if let Some(effect) = self.effect(&d, &dir) {
             self.0.ops.transfer(d.sources, dir, effect);
@@ -415,15 +435,29 @@ impl Drags {
         *self.0.phase.borrow_mut() = Phase::Armed { index, x, y, right, can_drag };
     }
 
+    /// A press on the drop stack's strip (`items`: what it drags).
+    pub fn stack_down(&self, items: Vec<(PathBuf, bool)>, x: f32, y: f32) {
+        *self.0.phase.borrow_mut() = Phase::StackArmed { items, x, y };
+    }
+
     fn moved(&self, x: f32, y: f32, keys: Keys) {
-        let start = match &*self.0.phase.borrow() {
+        enum Begin {
+            Entry(usize, bool),
+            Stack(Vec<(PathBuf, bool)>),
+        }
+        let begin = match &*self.0.phase.borrow() {
             Phase::Armed { index, x: x0, y: y0, right, can_drag } => {
-                (*can_drag && drag::past_threshold(x - x0, y - y0)).then_some((*index, *right))
+                (*can_drag && drag::past_threshold(x - x0, y - y0)).then_some(Begin::Entry(*index, *right))
+            }
+            Phase::StackArmed { items, x: x0, y: y0 } => {
+                drag::past_threshold(x - x0, y - y0).then(|| Begin::Stack(items.clone()))
             }
             _ => None,
         };
-        if let Some((index, right)) = start {
-            self.start(index, right, keys);
+        match begin {
+            Some(Begin::Entry(index, right)) => self.start(index, right, keys),
+            Some(Begin::Stack(items)) => self.start_with(items, None, false, keys, None, true),
+            None => {}
         }
         if matches!(*self.0.phase.borrow(), Phase::Outside(_)) {
             return self.moved_outside(x, y, keys);
@@ -446,15 +480,38 @@ impl Drags {
     /// The pointer went far enough from the press on entry `index`: drag the selection.
     fn start(&self, index: usize, right: bool, keys: Keys) {
         let items = self.0.view.selected_items();
+        let row = self.0.view.file_row(index);
+        self.start_with(items, row, right, keys, Some(index), false);
+    }
+
+    /// Drags `items` (path, is a folder); `row` gives the picture, else Gezik's own icon of the
+    /// first item.
+    fn start_with(
+        &self,
+        items: Vec<(PathBuf, bool)>,
+        row: Option<crate::FileRow>,
+        right: bool,
+        keys: Keys,
+        pressed: Option<usize>,
+        from_stack: bool,
+    ) {
         if items.is_empty() {
             *self.0.phase.borrow_mut() = Phase::Idle;
             return;
         }
         let Some(window) = self.0.window.upgrade() else { return };
-        if let Some(row) = self.0.view.file_row(index) {
-            window.set_drag_icon(row.icon);
-            window.set_drag_has_icon(row.has_icon);
-            window.set_drag_kind(row.kind);
+        match row {
+            Some(row) => {
+                window.set_drag_icon(row.icon);
+                window.set_drag_has_icon(row.has_icon);
+                window.set_drag_kind(row.kind);
+            }
+            None => {
+                let (path, is_dir) = &items[0];
+                let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                window.set_drag_has_icon(false);
+                window.set_drag_kind(gezik_core::kind::Kind::of(&name, *is_dir).index());
+            }
         }
         window.set_drag_count(i32::try_from(items.len()).unwrap_or(i32::MAX));
         window.set_drag_active(true);
@@ -465,11 +522,12 @@ impl Drags {
             sources: items.into_iter().map(|(path, _)| path).collect(),
             right,
             keys,
-            allowed: Allowed::BOTH,
+            allowed: Allowed::ALL,
             x: 0.0,
             y: 0.0,
             target: None,
-            pressed: Some(index),
+            pressed,
+            from_stack,
         });
     }
 
@@ -478,6 +536,7 @@ impl Drags {
         let phase = std::mem::replace(&mut *self.0.phase.borrow_mut(), Phase::Idle);
         match phase {
             Phase::Idle => false,
+            Phase::StackArmed { .. } => false,
             // An offer from outside is not ended by Gezik's own button events.
             offer @ Phase::Offer(_) => {
                 *self.0.phase.borrow_mut() = offer;
@@ -634,7 +693,13 @@ impl Drags {
         };
         let crumbs =
             CrumbArea { rect: Rect { x: 0.0, y: g.address_y, width: g.window_width, height: g.address_height }, spans };
-        Layout { width: g.window_width, height: g.window_height, list, sidebar, tabs, crumbs }
+        let stack = (g.stack_height > 0.0).then_some(Rect {
+            x: 0.0,
+            y: g.stack_y,
+            width: g.window_width,
+            height: g.stack_height,
+        });
+        Layout { width: g.window_width, height: g.window_height, list, sidebar, tabs, crumbs, stack }
     }
 
     /// What dropping `d` at `hit` would do.
@@ -659,6 +724,8 @@ impl Drags {
             Hit::Tab(i) => (hit, self.0.nav.tab_location(i).and_then(path_of)),
             Hit::Crumb(i) => (hit, self.0.nav.crumb_location(i).and_then(path_of)),
             Hit::PinAt(_) => return Target { action: Some(Action::Pin), ..Target::none(hit) },
+            Hit::Stack if d.from_stack => return Target::none(hit),
+            Hit::Stack => return Target { action: Some(Action::AddToStack), ..Target::none(hit) },
             Hit::Outside | Hit::Nothing => (hit, None),
         };
         let action = dir.as_deref().and_then(|dir| self.effect(d, dir)).map(Action::Transfer);
@@ -713,8 +780,10 @@ impl Drags {
             Hit::Crumb(i) if on => index(i),
             _ => -1,
         });
+        window.set_drop_stack(target.hit == Hit::Stack && on);
         let label = match (target.action, &target.dir) {
             (Some(Action::Pin), _) => drag::label(Action::Pin, Path::new("")),
+            (Some(Action::AddToStack), _) => drag::label(Action::AddToStack, Path::new("")),
             (Some(Action::AddToArchive), _) => {
                 drag::label(Action::AddToArchive, target.archive.as_deref().unwrap_or(Path::new("")))
             }
@@ -823,6 +892,9 @@ impl Drags {
                 target: Some(Target { action: Some(Action::AddToArchive), archive: Some(archive), .. }),
                 ..
             }) => Answer { effect: Some(Effect::Copy), folder: Some(drag::folder_name(archive)) },
+            Phase::Offer(Dragging { target: Some(Target { action: Some(Action::AddToStack), .. }), .. }) => {
+                Answer { effect: Some(Effect::Copy), folder: Some("Drop stack".to_owned()) }
+            }
             _ => Answer::default(),
         }
     }
@@ -850,18 +922,18 @@ impl Drags {
             self.0.sidebar.pin_at_row(&d.sources, row);
             return None;
         }
+        if target.action == Some(Action::AddToStack) {
+            let items = d.sources.into_iter().map(|path| (path, false)).collect();
+            crate::stack::with_current(|stack| stack.add(items));
+            // To a source program: nothing is moved, so it deletes nothing.
+            return Some(Effect::Copy);
+        }
         let dir = target.dir?;
         if d.right {
-            let can = |effect| {
-                let allowed = match effect {
-                    Effect::Copy => d.allowed.copy,
-                    Effect::Move => d.allowed.move_,
-                };
-                allowed && self.writable(&dir) && !drag::refuse(&d.sources, &dir, effect)
-            };
-            let (can_copy, can_move) = (can(Effect::Copy), can(Effect::Move));
+            let writable = self.writable(&dir);
+            let (can_copy, can_move, can_link) = menu_effects(d.allowed, writable, &d.sources, &dir);
             let archive = target.archive.filter(|_| target.action == Some(Action::AddToArchive));
-            self.0.menus.drop_menu(d.sources, dir, archive, can_copy, can_move, d.x, d.y);
+            self.0.menus.drop_menu(d.sources, dir, archive, can_copy, can_move, can_link, d.x, d.y);
             return None;
         }
         if let (Some(Action::AddToArchive), Some(archive)) = (target.action, target.archive) {
@@ -1041,6 +1113,7 @@ impl Drags {
                         y,
                         target: None,
                         pressed: None,
+                        from_stack: false,
                     })
                 }
                 // Gezik's own drag (or a press) is under way: not an offer from outside.
@@ -1108,18 +1181,31 @@ mod tests {
             sources: vec![PathBuf::from("a.txt")],
             all_dirs: false,
             right: false,
-            keys: Keys { shift: true, copy: false },
-            allowed: Allowed::BOTH,
+            keys: Keys { shift: true, ..Keys::default() },
+            allowed: Allowed::ALL,
             x: 0.0,
             y: 0.0,
             target: None,
             pressed: None,
+            from_stack: false,
         }
     }
 
     #[test]
+    fn the_right_drag_menu_offers_a_link_only_where_it_may() {
+        let a = PathBuf::from(if cfg!(windows) { r"C:\w\a" } else { "/w/a" });
+        let src = std::slice::from_ref(&a);
+        let dir = a.parent().unwrap();
+        assert_eq!(menu_effects(Allowed::ALL, true, src, dir), (true, false, true), "same folder: no move");
+        let no_link = Allowed { link: false, ..Allowed::ALL };
+        assert_eq!(menu_effects(no_link, true, src, dir), (true, false, false));
+        assert_eq!(menu_effects(Allowed::ALL, false, src, dir), (false, false, false), "read-only");
+        assert_eq!(menu_effects(Allowed::ALL, true, src, &a.join("sub")), (false, false, false), "inside itself");
+    }
+
+    #[test]
     fn after_a_tab_switch_the_window_drives_the_drag_inside_and_outside() {
-        let keys = Some(Keys { shift: true, copy: false });
+        let keys = Some(Keys { shift: true, ..Keys::default() });
         assert_eq!(window_drives(true, &Phase::Dragging(dragging())), keys);
         // Handed to the system after resting on a tab (X11 drives it from the window's events).
         assert_eq!(window_drives(true, &Phase::Outside(dragging())), keys);
@@ -1153,6 +1239,13 @@ mod tests {
         assert_eq!(at_menu(&Phase::Ended), AtMenu::Forget);
         // A drag in the window ends without a drop.
         assert_eq!(at_menu(&Phase::Dragging(dragging())), AtMenu::Cancel);
+    }
+
+    #[test]
+    fn a_press_on_the_stack_is_forgotten_by_a_menu() {
+        let press = Phase::StackArmed { items: vec![(PathBuf::from("a.txt"), false)], x: 0.0, y: 0.0 };
+        assert_eq!(at_menu(&press), AtMenu::Forget);
+        assert_eq!(window_drives(true, &press), None);
     }
 
     #[test]

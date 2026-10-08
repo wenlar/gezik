@@ -66,13 +66,26 @@ impl ConfigStore {
         self.dir.join("themes")
     }
 
-    /// Creates the folder layout and commented starter files on the true first run, when
+    /// The user's templates for New ▸ (spec 8.1).
+    pub fn templates_dir(&self) -> PathBuf {
+        self.dir.join("templates")
+    }
+
+    /// Whether `path` is the templates folder or in it: New ▸ reads the folder again (and
+    /// settings are not reloaded for it).
+    pub fn is_template_path(&self, path: &Path) -> bool {
+        path.strip_prefix(&self.dir)
+            .is_ok_and(|rest| rest.components().next().is_some_and(|first| first.as_os_str() == "templates"))
+    }
+
+    /// Creates the folder layout (and the templates folder) and commented starter files on the true first run, when
     /// the config folder does not exist yet. Later runs never recreate files the user
     /// deleted.
     pub fn ensure_initialized(&self) -> io::Result<()> {
         let first_run = !self.dir.exists();
         std::fs::create_dir_all(self.themes_dir())?;
         if first_run {
+            std::fs::create_dir_all(self.templates_dir())?;
             write_if_missing(&self.settings_path(), SETTINGS_TEMPLATE)?;
             write_if_missing(&self.themes_dir().join("example.toml"), THEME_TEMPLATE)?;
         }
@@ -297,6 +310,28 @@ mod tests {
         let path = store.dir().join(relative);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, text).unwrap();
+    }
+
+    #[test]
+    fn the_templates_folder_comes_with_the_first_run_only() {
+        let store = fresh_store("templates");
+        store.ensure_initialized().unwrap();
+        assert!(store.templates_dir().is_dir());
+        std::fs::remove_dir(store.templates_dir()).unwrap();
+        store.ensure_initialized().unwrap();
+        assert!(!store.templates_dir().exists(), "a deleted templates folder does not come back");
+    }
+
+    #[test]
+    fn recognizes_template_paths() {
+        let store = store("templates-watch");
+        let root = store.dir();
+        assert!(store.is_template_path(&root.join("templates")));
+        assert!(store.is_template_path(&root.join("templates").join("Report.docx")));
+        assert!(store.is_template_path(&root.join("templates").join("Project").join("a.txt")));
+        assert!(!store.is_template_path(&root.join("settings.toml")));
+        assert!(!store.is_template_path(&root.join("themes").join("templates")));
+        assert!(!store.is_config_file(&root.join("templates").join("x.toml")), "no settings reload for a template");
     }
 
     #[test]

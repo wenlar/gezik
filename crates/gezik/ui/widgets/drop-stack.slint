@@ -1,0 +1,160 @@
+import { Theme } from "../theme.slint";
+import { FileIcon } from "file-icon.slint";
+import { TextButton } from "text-button.slint";
+import { ToolButton } from "button.slint";
+
+// One item of the drop stack (stack.rs): its name, `Kind` (gezik-core kind.rs), and whether
+// it is gone (drawn faded, left out of Copy here / Move here).
+export struct StackRow {
+    name: string,
+    kind: int,
+    gone: bool,
+}
+
+// The pointer events of a press that may become a drag (`index`: what it drags).
+component Grip inherits TouchArea {
+    in property <int> index;
+    callback down(int, length, length);
+    callback drag(length, length, bool, bool, bool);
+    callback up(length, length);
+    callback cancel();
+    callback scrolled(length);
+    scroll-event(event) => {
+        root.scrolled(event.delta-x + event.delta-y);
+        accept
+    }
+    pointer-event(event) => {
+        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+            root.down(self.index, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+        }
+        if event.kind == PointerEventKind.move && self.pressed {
+            root.drag(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y,
+                event.modifiers.shift, event.modifiers.control, event.modifiers.alt);
+        }
+        if event.kind == PointerEventKind.up && event.button == PointerEventButton.left {
+            root.up(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+        }
+        if event.kind == PointerEventKind.cancel {
+            root.cancel();
+        }
+    }
+}
+
+// The drop stack (spec 9.3): a strip above the status bar. Files dropped on it are kept;
+// Copy here / Move here take them to the folder shown. A press on an item drags it, a press on
+// the count drags them all.
+export component DropStack inherits Rectangle {
+    in property <[StackRow]> rows;
+    in property <string> count;
+    in property <string> more;
+    // A drop would land here.
+    in property <bool> highlight;
+    // A press on item `int` (-1: the count, all of them), at a window position.
+    callback down(int, length, length);
+    // The press moved (window position, Shift, Ctrl, Alt); it came up; it was taken away.
+    callback drag(length, length, bool, bool, bool);
+    callback up(length, length);
+    callback cancel();
+    callback hovered(int);
+    callback remove(int);
+    callback copy-here();
+    callback move-here();
+    callback clear();
+
+    // How far the chips are scrolled to the left (≤ 0), kept within what they overflow.
+    property <length> offset;
+    property <length> scroll-min: min(0px, strip.width - chips.preferred-width);
+    property <length> scrolled: clamp(root.offset, root.scroll-min, 0px);
+
+    height: Theme.row-height + 6px;
+    background: root.highlight ? Theme.drop-target : Theme.surface;
+    accessible-role: list;
+    accessible-label: "Drop stack";
+
+    HorizontalLayout {
+        padding-left: Theme.spacing + 4px;
+        padding-right: Theme.spacing;
+        spacing: Theme.spacing;
+        Rectangle {
+            width: caption.preferred-width + Theme.spacing * 2;
+            accessible-role: button;
+            accessible-label: root.rows.length == 0 ? "Drop files here" : "Drag all " + root.count;
+            caption := Text {
+                x: Theme.spacing;
+                height: parent.height;
+                text: root.rows.length == 0 ? "Drop files here" : root.count;
+                vertical-alignment: center;
+                color: Theme.foreground-muted;
+            }
+            Grip {
+                index: -1;
+                enabled: root.rows.length > 0;
+                down(i, x, y) => { root.down(i, x, y); }
+                drag(x, y, s, c, a) => { root.drag(x, y, s, c, a); }
+                up(x, y) => { root.up(x, y); }
+                cancel => { root.cancel(); }
+            }
+        }
+        // The wheel scrolls the chips (also over empty space); they are not dragged by hand,
+        // for a press on a chip is a drag of the file.
+        strip := Rectangle {
+            horizontal-stretch: 1;
+            clip: true;
+            TouchArea {
+                scroll-event(event) => {
+                    root.offset = clamp(root.scrolled + event.delta-x + event.delta-y, root.scroll-min, 0px);
+                    accept
+                }
+            }
+            chips := HorizontalLayout {
+                x: root.scrolled;
+                width: self.preferred-width;
+                spacing: Theme.spacing;
+                for row[i] in root.rows: Rectangle {
+                    width: name.x + name.preferred-width + 20px;
+                    accessible-role: list-item;
+                    accessible-label: row.name;
+                    FileIcon {
+                        x: Theme.spacing;
+                        width: 16px;
+                        height: 16px;
+                        kind: row.kind;
+                        opacity: row.gone ? 0.4 : 1;
+                    }
+                    name := Text {
+                        x: Theme.spacing * 2 + 16px;
+                        text: row.name;
+                        color: row.gone ? Theme.foreground-muted : Theme.foreground;
+                    }
+                    Grip {
+                        x: 0;
+                        width: name.x + name.preferred-width;
+                        index: i;
+                        changed has-hover => { root.hovered(self.has-hover ? i : -1); }
+                        down(i, x, y) => { root.down(i, x, y); }
+                        drag(x, y, s, c, a) => { root.drag(x, y, s, c, a); }
+                        up(x, y) => { root.up(x, y); }
+                        cancel => { root.cancel(); }
+                        scrolled(d) => { root.offset = clamp(root.scrolled + d, root.scroll-min, 0px); }
+                    }
+                    ToolButton {
+                        x: parent.width - 20px;
+                        width: 20px;
+                        height: 20px;
+                        text: "Remove " + row.name;
+                        icon: "M 5 5 L 11 11 M 11 5 L 5 11";
+                        clicked => { root.remove(i); }
+                    }
+                }
+                Text {
+                    text: root.more;
+                    vertical-alignment: center;
+                    color: Theme.foreground-muted;
+                }
+            }
+        }
+        TextButton { text: "Copy here"; clicked => { root.copy-here(); } }
+        TextButton { text: "Move here"; clicked => { root.move-here(); } }
+        TextButton { text: "Clear"; clicked => { root.clear(); } }
+    }
+}

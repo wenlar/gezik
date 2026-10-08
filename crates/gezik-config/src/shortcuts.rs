@@ -232,10 +232,18 @@ pub enum Action {
     Pin7,
     Pin8,
     Pin9,
+    /// Moves the selected items into a new folder next to them (7c).
+    NewFolderWithSelection,
+    /// Puts the selected items on the drop stack.
+    AddToStack,
+    /// Shows or hides the drop stack.
+    ToggleStack,
+    /// Opens the operations panel on its History.
+    ShowHistory,
 }
 
 impl Action {
-    pub const ALL: [Action; 59] = [
+    pub const ALL: [Action; 63] = [
         Action::NewTab,
         Action::CloseTab,
         Action::NextTab,
@@ -295,6 +303,10 @@ impl Action {
         Action::Pin7,
         Action::Pin8,
         Action::Pin9,
+        Action::NewFolderWithSelection,
+        Action::AddToStack,
+        Action::ToggleStack,
+        Action::ShowHistory,
     ];
 
     pub fn name(self) -> &'static str {
@@ -358,6 +370,10 @@ impl Action {
             Action::Pin7 => "pin-7",
             Action::Pin8 => "pin-8",
             Action::Pin9 => "pin-9",
+            Action::NewFolderWithSelection => "new-folder-with-selection",
+            Action::AddToStack => "add-to-stack",
+            Action::ToggleStack => "toggle-stack",
+            Action::ShowHistory => "show-history",
         }
     }
 
@@ -494,6 +510,13 @@ impl Action {
             (Action::Pin8, Platform::Other) => &["alt+8"],
             (Action::Pin9, Platform::Mac) => &["mod+alt+9"],
             (Action::Pin9, Platform::Other) => &["alt+9"],
+            // Finder's ⌃⌘N; Ctrl+Alt+N may type with AltGr on a few layouts (Polish ń): the
+            // template's comment says so (spec 10.3).
+            (Action::NewFolderWithSelection, Platform::Mac) => &["mod+ctrl+n"],
+            (Action::NewFolderWithSelection, Platform::Other) => &["ctrl+alt+n"],
+            (Action::AddToStack, _) => &["mod+shift+s"],
+            (Action::ToggleStack, _) => &[],
+            (Action::ShowHistory, _) => &[],
         }
     }
 }
@@ -680,9 +703,32 @@ mod tests {
             assert_eq!(fixed_owner(&cmd_option, Platform::Mac), None);
         }
         assert_eq!((Action::pin(0), Action::pin(10)), (None, None));
-        assert_eq!(Action::ALL.len(), 59);
+        assert_eq!(Action::ALL.len(), 63);
         assert_eq!(other.action_for(&chord("ctrl+1")), Some(Action::Tab1), "Ctrl+1 is still tab 1");
         assert_eq!(other.action_for(&chord("ctrl+alt+1")), None, "AltGr+1 types");
+    }
+
+    #[test]
+    fn the_daily_7c_actions_have_their_keys() {
+        let other = Shortcuts::defaults(Platform::Other);
+        let mac = Shortcuts::defaults(Platform::Mac);
+        let mac_chord = |t: &str| parse_chord(t, Platform::Mac).unwrap().unwrap();
+        assert_eq!(other.action_for(&chord("ctrl+alt+n")), Some(Action::NewFolderWithSelection));
+        assert_eq!(mac.action_for(&mac_chord("mod+ctrl+n")), Some(Action::NewFolderWithSelection), "Finder's ⌃⌘N");
+        assert_eq!(other.action_for(&chord("ctrl+shift+s")), Some(Action::AddToStack));
+        assert_eq!(mac.action_for(&mac_chord("mod+shift+s")), Some(Action::AddToStack));
+        for action in [Action::ToggleStack, Action::ShowHistory] {
+            assert_eq!((other.chord_for(action), mac.chord_for(action)), (None, None), "{}", action.name());
+        }
+        for (text, platform) in [("ctrl+alt+n", Platform::Other), ("ctrl+shift+s", Platform::Other)] {
+            assert_eq!(fixed_owner(&parse_chord(text, platform).unwrap().unwrap(), platform), None, "{text}");
+        }
+        for (text, name) in [("mod+ctrl+n", "new-folder-with-selection"), ("mod+shift+s", "add-to-stack")] {
+            assert_eq!(fixed_owner(&mac_chord(text), Platform::Mac), None, "{name}");
+        }
+        for name in ["new-folder-with-selection", "add-to-stack", "toggle-stack", "show-history"] {
+            assert!(Action::from_name(name).is_some(), "{name}");
+        }
     }
 
     #[test]

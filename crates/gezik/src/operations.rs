@@ -14,9 +14,10 @@ use gezik_config::store::ConfigStore;
 use gezik_core::drag::Effect;
 use gezik_core::ops::paths::same_path;
 use gezik_core::ops::rate::{Rate, format_eta, format_rate};
+use gezik_core::templates::{LinkKind, PasteKind, Template, pasted_name};
 use gezik_ops::{
-    Answer, CopyTask, DeleteTask, Engine, Event, Failure, JobId, JobState, MoveTask, NewTask, PauseReason, Progress,
-    Question, Report, Settings, Task, TrashTask,
+    Answer, CopyTask, DeleteTask, Engine, Event, GroupTask, JobId, JobState, LinkTask, MoveTask, NewTask, PauseReason,
+    Progress, Question, Report, Settings, Task, TrashTask,
 };
 use gezik_platform::clipboard::{self, ClipboardError, ClipboardFiles};
 use gezik_platform::taskbar::{Taskbar, TaskbarState};
@@ -32,9 +33,6 @@ use crate::{AppWindow, OpRow};
 const SHOW_AFTER: Duration = Duration::from_secs(1);
 /// A finished row without problems stays this long.
 const DONE_FOR: Duration = Duration::from_secs(3);
-/// "Details" lists at most this many failures.
-const MAX_DETAILS: usize = 50;
-
 /// How a row looks; the numbers are `OpRow.state` in ops-panel.slint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowState {
@@ -308,6 +306,7 @@ impl JobView {
             can_retry: failed && (self.retry.is_some() || self.again.is_some()),
             can_details: failed || self.report.as_ref().is_some_and(|r| !r.cancelled && !r.skipped.is_empty()),
             finished,
+            ..OpRow::default()
         }
     }
 }
@@ -323,6 +322,11 @@ struct Inner {
     jobs: RefCell<Vec<JobView>>,
     files: Cell<FilesSettings>,
     collapsed: Cell<bool>,
+    /// The panel's tab: 0 Current, 1 History.
+    tab: Cell<i32>,
+    /// Finished jobs, newest first (allocated on the first one).
+    history: RefCell<crate::op_history::History>,
+    history_rows: Rc<VecModel<OpRow>>,
     taskbar: RefCell<Option<Taskbar>>,
     /// Jobs whose pause already has a question (several workers may report the same pause).
     asked: RefCell<HashSet<JobId>>,
@@ -375,6 +379,8 @@ impl Operations {
         let conflicts = crate::conflicts::Conflicts::new(window, engine.clone());
         let rows = Rc::new(VecModel::default());
         window.set_op_rows(ModelRc::from(rows.clone()));
+        let history_rows = Rc::new(VecModel::default());
+        window.set_history_rows(ModelRc::from(history_rows.clone()));
         let ops = Operations(Rc::new(Inner {
             window: window.as_weak(),
             engine,
@@ -386,6 +392,9 @@ impl Operations {
             jobs: RefCell::default(),
             files: Cell::new(files),
             collapsed: Cell::new(collapsed),
+            tab: Cell::new(0),
+            history: RefCell::default(),
+            history_rows,
             taskbar: RefCell::default(),
             asked: RefCell::default(),
             rename_when_shown: RefCell::default(),
@@ -718,7 +727,8 @@ impl Operations {
     /// moves copied ones too (macOS Cmd+Option+V).
     pub fn paste(&self, into: Option<PathBuf>, force_move: bool) {
         let Some(dir) = into.or_else(|| self.0.view.folder()) else { return };
-        let Some(ClipboardFiles { paths, cut }) = self.clipboard() else { return };
+        // No files: the picture or text as a new file (spec 9.1).
+        let Some(ClipboardFiles { paths, cut }) = self.clipboard() else { return self.paste_as_file(dir) };
         self.transfer(paths, dir, if cut || force_move { Effect::Move } else { Effect::Copy });
         if cut {
             // Pasted: cut items are no longer waiting anywhere (also Explorer's own).
@@ -730,16 +740,23 @@ impl Operations {
         }
     }
 
-    /// Copies or moves `paths` into folder `dir` (a paste or a drop), as one undoable job.
+    /// Copies, moves or links `paths` into folder `dir` (a paste or a drop), as one undoable
+    /// job.
     pub fn transfer(&self, paths: Vec<PathBuf>, dir: PathBuf, effect: Effect) {
+        self.transfer_job(paths, dir, effect);
+    }
+
+    /// Like `transfer`, giving the job (the drop stack follows a Move here by it).
+    pub fn transfer_job(&self, paths: Vec<PathBuf>, dir: PathBuf, effect: Effect) -> JobId {
         self.remember_for(&paths);
         let retry: Retry = Rc::new(move || -> Box<dyn Task> {
             match effect {
                 Effect::Move => Box::new(MoveTask::into(paths.clone(), &dir)),
                 Effect::Copy => Box::new(CopyTask::into(paths.clone(), &dir)),
+                Effect::Link => Box::new(LinkTask::into(paths.clone(), &dir, LinkKind::for_drops())),
             }
         });
-        self.submit(retry(), Some(retry), After::Select);
+        self.submit(retry(), Some(retry), After::Select)
     }
 
     /// The clipboard may have changed in another program: re-read what is cut there (when
@@ -868,6 +885,102 @@ impl Operations {
         }
         self.remember_for(&paths);
         let retry: Retry = Rc::new(move || -> Box<dyn Task> { Box::new(CopyTask::duplicate(paths.clone())) });
+        self.submit(retry(), Some(retry), After::Select);
+    }
+
+    /// An empty Markdown file in `dir`, renamed right away (spec 8.1).
+    pub fn new_markdown(&self, dir: PathBuf) {
+        self.submit(Box::new(NewTask::markdown(&dir)), None, After::Rename);
+    }
+
+    /// A copy of the user's `template` in `dir`, renamed right away (spec 8.1).
+    pub fn new_from_template(&self, dir: PathBuf, template: &Template) {
+        let Some(templates) = crate::templates::dir() else { return };
+        let (source, is_dir) = (templates.join(&template.name), template.is_dir);
+        let retry: Retry =
+            Rc::new(move || -> Box<dyn Task> { Box::new(CopyTask::template(source.clone(), &dir, is_dir)) });
+        self.submit(retry(), Some(retry), After::Rename);
+    }
+
+    /// `new-folder-with-selection`: the selected items into a new folder next to them.
+    pub fn new_folder_with_selection(&self) {
+        if self.0.view.shows_drives() {
+            return;
+        }
+        self.new_folder_with(self.0.view.selected_paths());
+    }
+
+    /// `paths` (those in the folder shown) moved into a new "New folder" there, as one job,
+    /// and the folder renamed right away (spec 8.2).
+    pub fn new_folder_with(&self, paths: Vec<PathBuf>) {
+        let Some(dir) = self.0.view.folder() else { return };
+        let paths: Vec<PathBuf> = self
+            .without_roots(paths, "move")
+            .into_iter()
+            .filter(|path| path.parent().is_some_and(|parent| same_path(parent, &dir)))
+            .collect();
+        if paths.is_empty() {
+            return self.0.view.note("Select the items to put in a new folder".to_owned());
+        }
+        self.remember_for(&paths);
+        let retry: Retry = Rc::new(move || -> Box<dyn Task> { Box::new(GroupTask::new(paths.clone(), &dir)) });
+        self.submit(retry(), Some(retry), After::Rename);
+    }
+
+    /// What paste would write as a file: nothing while there are files to paste (`can_paste`,
+    /// which the caller has asked already: one clipboard query per menu).
+    pub fn paste_as(&self, can_paste: bool) -> Option<PasteKind> {
+        if can_paste { None } else { clipboard::paste_kind() }
+    }
+
+    /// The clipboard's picture (before its text: a browser's picture often carries both) as a
+    /// new `Pasted image … .png` in `dir`, else its text as `Pasted text … .txt` (spec 9.1).
+    /// The data is read here; the picture is encoded in the job.
+    pub fn paste_as_file(&self, dir: PathBuf) {
+        let Some(at) = gezik_platform::local_date_parts(std::time::SystemTime::now()) else { return };
+        let failed = |err: ClipboardError| match err {
+            ClipboardError::Failed(why) => Some(format!("Cannot use the clipboard: {why}")),
+            ClipboardError::Unsupported => None,
+        };
+        // A picture that cannot be read does not end it: the text may still be there. What went
+        // wrong is told only when nothing was pasted.
+        let mut problem = None;
+        match clipboard::read_image() {
+            Ok(Some(image)) => {
+                let name = pasted_name(PasteKind::Image, &at);
+                self.submit(
+                    Box::new(NewTask::with_contents(&dir, &name, move || image.png_bytes())),
+                    None,
+                    After::Select,
+                );
+                return;
+            }
+            Ok(None) => {}
+            Err(err) => problem = failed(err),
+        }
+        match clipboard::read_text() {
+            Ok(Some(text)) if !text.is_empty() => {
+                let (name, bytes) = (pasted_name(PasteKind::Text, &at), text.into_bytes());
+                self.submit(
+                    Box::new(NewTask::with_contents(&dir, &name, move || Ok(bytes.clone()))),
+                    None,
+                    After::Select,
+                );
+                return;
+            }
+            Ok(_) => {}
+            Err(err) => problem = failed(err).or(problem),
+        }
+        self.0.view.note(problem.unwrap_or_else(|| "Nothing to paste".to_owned()));
+    }
+
+    /// A link of `kind` next to each of `paths` ("Create link ▸", Explorer's "Create shortcut").
+    pub fn create_links(&self, paths: Vec<PathBuf>, kind: LinkKind) {
+        let paths = self.without_roots(paths, "link to");
+        if paths.is_empty() {
+            return;
+        }
+        let retry: Retry = Rc::new(move || -> Box<dyn Task> { Box::new(LinkTask::beside(paths.clone(), kind)) });
         self.submit(retry(), Some(retry), After::Select);
     }
 
@@ -1027,11 +1140,18 @@ impl Operations {
         let problems = !report.cancelled && !report.failures.is_empty();
         let mut after = After::Nothing;
         let mut hidden_in = None;
+        let mut title = String::new();
         self.with_job(id, |job| {
             after = job.after;
             hidden_in = job.hidden_in.take();
+            title = job.title.clone();
             job.finish(report.clone());
         });
+        let time = gezik_platform::local_date_parts(std::time::SystemTime::now())
+            .map(|t| format!("{:02}:{:02}:{:02}", t.hour, t.minute, t.second))
+            .unwrap_or_default();
+        self.0.history.borrow_mut().push(time, title, &report);
+        self.sync_history();
         if problems {
             // Something failed: the panel opens by itself.
             self.0.collapsed.set(false);
@@ -1077,6 +1197,7 @@ impl Operations {
         // An archive that needs 7-Zip, a download that is done, a conversion that needs ffmpeg.
         crate::archives::with_current(|archives| archives.job_finished(id, &report));
         crate::convert::with_current(|convert| convert.job_finished(id, &report));
+        crate::stack::with_current(|stack| stack.job_finished(id, &report));
     }
 
     /// Items the trash cannot take (no trash on their drive, or a name it cannot take): delete
@@ -1139,7 +1260,9 @@ impl Operations {
         let failed_items: usize = shown.iter().filter_map(|j| j.report.as_ref()).map(|r| r.failures.len()).sum();
         window.set_ops_summary(summary_text(running.len(), overall, failed_items, rows.len()).into());
         window.set_ops_collapsed(self.0.collapsed.get());
-        window.set_ops_panel_open(!rows.is_empty() && !self.0.collapsed.get());
+        let history = self.0.tab.get() == 1;
+        window.set_ops_panel_open((!rows.is_empty() || history) && !self.0.collapsed.get());
+        window.set_ops_tab(self.0.tab.get());
         sync_model(&self.0.rows, rows.into_iter());
         let (state, done, total) = taskbar_progress(&states);
         let mut taskbar = self.0.taskbar.borrow_mut();
@@ -1193,6 +1316,50 @@ impl Operations {
         }
     }
 
+    /// The History's rows and the status bar's button.
+    fn sync_history(&self) {
+        let Some(window) = self.0.window.upgrade() else { return };
+        let history = self.0.history.borrow();
+        sync_model(&self.0.history_rows, history.records().map(history_row));
+        window.set_history_available(true);
+    }
+
+    /// `show-history`, View ▸ Operation history: the panel opens on its History.
+    pub fn show_history(&self) {
+        self.0.tab.set(1);
+        self.0.collapsed.set(false);
+        self.update();
+    }
+
+    /// The status bar's History button: opens the History, or closes it if it is shown.
+    pub fn history_toggle(&self) {
+        let shown = self.0.tab.get() == 1 && !self.0.collapsed.get();
+        self.0.tab.set(if shown { 0 } else { 1 });
+        self.0.collapsed.set(false);
+        self.update();
+    }
+
+    pub fn choose_tab(&self, tab: i32) {
+        self.0.tab.set(tab.clamp(0, 1));
+        self.update();
+    }
+
+    /// "Show in folder" of record `id`.
+    pub fn history_show(&self, id: i32) {
+        let show = u64::try_from(id).ok().and_then(|id| self.0.history.borrow().get(id).and_then(|r| r.show.clone()));
+        if let Some((dir, names)) = show {
+            self.0.nav.go_selecting(dir, names);
+        }
+    }
+
+    /// "Details" of record `id`: what failed or was skipped.
+    pub fn history_details(&self, id: i32) {
+        let record = u64::try_from(id).ok().and_then(|id| self.0.history.borrow().get(id).cloned());
+        if let Some(record) = record {
+            self.0.dialogs.ask(record.title, record.details.unwrap_or_default(), &["Close"], |_| {});
+        }
+    }
+
     /// The failures of a row, with Retry.
     pub fn details(&self, id: i32) {
         let id = Self::id(id);
@@ -1200,29 +1367,9 @@ impl Operations {
             let jobs = self.0.jobs.borrow();
             let Some(job) = jobs.iter().find(|j| j.id == id) else { return };
             let Some(report) = &job.report else { return };
-            let named = |f: &Failure| {
-                format!(
-                    "{}: {}",
-                    f.path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default(),
-                    crate::pdf::failure_shown(&f.message)
-                )
-            };
-            let mut lines: Vec<String> = report.failures.iter().take(MAX_DETAILS).map(named).collect();
-            // What was left out on purpose comes after, under its own heading.
-            let room = MAX_DETAILS.saturating_sub(lines.len());
-            if !report.skipped.is_empty() && room > 0 {
-                if !lines.is_empty() {
-                    lines.push(String::new());
-                }
-                lines.push("Skipped:".to_owned());
-                lines.extend(report.skipped.iter().take(room).map(named));
-            }
-            let all = report.failures.len() + report.skipped.len();
-            if all > MAX_DETAILS {
-                lines.push(format!("…and {} more", all - MAX_DETAILS));
-            }
+            let lines = crate::op_history::details_text(report).unwrap_or_default();
             let can_retry = !report.failures.is_empty() && (job.retry.is_some() || job.again.is_some());
-            (job.title.clone(), lines.join("\n"), can_retry)
+            (job.title.clone(), lines, can_retry)
         };
         let ops = self.clone();
         let buttons: &[&str] = if can_retry { &["Retry", "Close"] } else { &["Close"] };
@@ -1276,6 +1423,23 @@ fn no_trash_reason(paths: &[PathBuf], bin: &str) -> String {
     }
 }
 
+/// A History record as a panel row: the Current tab's row, marked as History (a time, no bar,
+/// no Close; its buttons act on the record).
+fn history_row(record: &crate::op_history::Record) -> OpRow {
+    OpRow {
+        id: i32::try_from(record.id).unwrap_or(i32::MAX),
+        history: true,
+        time: record.time.as_str().into(),
+        title: record.title.as_str().into(),
+        detail: record.result.as_str().into(),
+        state: if record.failed { RowState::Failed } else { RowState::Done } as i32,
+        can_show: record.show.is_some(),
+        can_details: record.details.is_some(),
+        finished: true,
+        ..OpRow::default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1293,6 +1457,20 @@ mod tests {
             );
             assert!(no_trash_reason(&[dotted, PathBuf::from(r"E:\a")], bin).starts_with("Some are"));
         }
+    }
+
+    #[test]
+    fn a_history_row_is_marked_as_history_even_without_a_time() {
+        // `finished` gives an empty time when the clock cannot be read: the row must still act
+        // on the History (no Close that would dismiss a running job with the same number).
+        let mut history = crate::op_history::History::default();
+        history.push(String::new(), "Copying 2 items".into(), &report(1, false));
+        let row = history_row(history.records().next().expect("a record"));
+        assert!(row.history);
+        assert!(row.time.is_empty());
+        assert!(row.finished);
+        assert_eq!(row.state, RowState::Failed as i32);
+        assert!(!row.can_pause && !row.can_resume && !row.can_start_now && !row.can_retry);
     }
 
     fn progress(state: JobState, items: (u64, u64), bytes: (u64, u64)) -> Progress {
