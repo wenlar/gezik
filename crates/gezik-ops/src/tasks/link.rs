@@ -112,16 +112,15 @@ impl Task for LinkTask {
             // A shortcut is a `.lnk` file even when it leads to a folder.
             let named_dir = meta.is_dir() && self.kind != LinkKind::Shortcut;
             let mut at = at.clone();
-            if !planned.insert(at.clone()) {
+            // Numbered against the names planned in this job and against the disk.
+            let taken = |path: &Path| planned.contains(path) || std::fs::symlink_metadata(path).is_ok();
+            if taken(&at) {
                 let parent = at.parent().map(Path::to_path_buf).unwrap_or_default();
                 let name = at.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                let free = next_free(&name, named_dir, |candidate| {
-                    planned.contains(&parent.join(candidate))
-                        || std::fs::symlink_metadata(parent.join(candidate)).is_ok()
-                });
+                let free = next_free(&name, named_dir, |candidate| taken(&parent.join(candidate)));
                 at = parent.join(free);
-                planned.insert(at.clone());
             }
+            planned.insert(at.clone());
             // The link is not sized (as `walk` sees links); a folder link is numbered as a
             // folder (`v1.2 (2)`), and a taken name gets a number without asking.
             let facts = Facts { is_dir: named_dir, ..Facts::default() };
@@ -237,6 +236,25 @@ mod tests {
         let (report, _) = finish(&engine, job, defaults);
         assert_eq!(report.failures.len(), 1);
         assert!(report.failures[0].message.contains("only point to a folder"), "{}", report.failures[0].message);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn same_named_sources_next_to_a_taken_name_get_two_numbers() {
+        let dir = test_dir("link-same-name-taken");
+        write(&dir.join("a/X/x.txt"), "x");
+        write(&dir.join("b/X/y.txt"), "y");
+        std::fs::create_dir_all(dir.join("links/Link to X")).unwrap();
+        let engine = engine();
+        let sources = vec![dir.join("a/X"), dir.join("b/X")];
+        let job = engine.submit(Box::new(LinkTask::into(sources, &dir.join("links"), any_kind())));
+        let (report, _) = finish(&engine, job, defaults);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert_eq!(read(&dir.join("links/Link to X (2)/x.txt")), "x");
+        assert_eq!(read(&dir.join("links/Link to X (3)/y.txt")), "y");
+        for name in ["Link to X (2)", "Link to X (3)"] {
+            gezik_platform::fs::delete(&dir.join("links").join(name)).unwrap();
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 

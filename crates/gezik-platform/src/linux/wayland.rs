@@ -289,7 +289,7 @@ fn pipe() -> Option<(OwnedFd, OwnedFd)> {
     Some(unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) })
 }
 
-/// All of `fd` until its writer closes it, or None after `timeout`.
+/// All of `fd` until its writer closes it, or None after `timeout` or beyond 256 MiB.
 pub(crate) fn read_with_timeout(fd: OwnedFd, timeout: Duration) -> Option<Vec<u8>> {
     use std::os::fd::AsRawFd;
     let deadline = Instant::now() + timeout;

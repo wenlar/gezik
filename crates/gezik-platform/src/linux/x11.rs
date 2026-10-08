@@ -322,6 +322,9 @@ impl Shared {
                     if piece.value.is_empty() {
                         return Some(data);
                     }
+                    if data.len() + piece.value.len() > super::MAX_TRANSFER_BYTES {
+                        return None;
+                    }
                     data.extend_from_slice(&piece.value);
                 }
                 _ => continue,
@@ -586,12 +589,20 @@ impl super::Backend for X11 {
                 .filter(|o| o.text.is_none())
                 .map(|o| ClipboardFiles { paths: o.paths, cut: o.cut }));
         }
-        // The owner's formats first: a wait (at most a second) for each format asked for, so
-        // only what it offers is asked for.
-        let Some(targets) = s.transfer(s.atoms.CLIPBOARD, s.atoms.TARGETS, CURRENT_TIME) else { return Ok(None) };
-        let offered: Vec<Atom> = targets.as_chunks::<4>().0.iter().map(|c| u32::from_ne_bytes(*c)).collect();
+        // The owner's formats first, from the cached ask (once per clipboard change): a wait
+        // (at most a second) for each format asked for, so only what it offers is asked for.
+        let offered = self.offered_names();
         let a = &s.atoms;
-        let Some(ask) = super::what_to_ask(&offered, a.GNOME_FILES, a.URI_LIST, a.KDE_CUT) else { return Ok(None) };
+        let atoms: Vec<Atom> = offered
+            .iter()
+            .filter_map(|name| match *name {
+                "x-special/gnome-copied-files" => Some(a.GNOME_FILES),
+                "text/uri-list" => Some(a.URI_LIST),
+                "application/x-kde-cutselection" => Some(a.KDE_CUT),
+                _ => None,
+            })
+            .collect();
+        let Some(ask) = super::what_to_ask(&atoms, a.GNOME_FILES, a.URI_LIST, a.KDE_CUT) else { return Ok(None) };
         let Some(text) = s.transfer(a.CLIPBOARD, ask.files, CURRENT_TIME) else { return Ok(None) };
         let text = String::from_utf8_lossy(&text);
         if ask.files == a.GNOME_FILES {

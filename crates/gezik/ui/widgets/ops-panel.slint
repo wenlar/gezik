@@ -179,7 +179,14 @@ export component OpsPanel inherits Rectangle {
                 }
             }
         }
-        if root.tab == 1: ListView {
+        if root.tab == 1 && root.history.length == 0: Text {
+            height: Theme.row-height + 2px;
+            text: "No operations yet";
+            vertical-alignment: center;
+            color: Theme.foreground-muted;
+            accessible-role: text;
+        }
+        if root.tab == 1 && root.history.length > 0: ListView {
             accessible-role: list;
             accessible-label: "Operation history";
             height: min(root.history.length, 8) * (Theme.row-height + 2px) + 2px;

@@ -118,7 +118,18 @@ pub(crate) fn bmp_from_dib(dib: &[u8]) -> Option<Vec<u8>> {
     } else {
         0
     };
-    let offset = 14 + header + masks + colors * 4;
+    let mut offset = 14 + header + masks + colors * 4;
+    // Windows' own V4/V5 DIBs may carry the BI_BITFIELDS masks again after the header: when
+    // the data is exactly header + masks + colors + all padded rows, the pixels start later.
+    if header > 40 && matches!(compression, 3 | 6) {
+        let trailing = if compression == 3 { 12 } else { 16 };
+        let stride = (width.checked_mul(u64::from(bit_count))?.checked_add(31)? / 32).checked_mul(4)?;
+        let full = stride.checked_mul(rows)?;
+        let exact = u64::try_from(header + trailing + colors * 4).ok()?.checked_add(full)?;
+        if exact == u64::try_from(dib.len()).ok()? {
+            offset += trailing;
+        }
+    }
     if offset > 14 + dib.len() {
         return None;
     }
@@ -606,6 +617,21 @@ mod tests {
         out
     }
 
+    #[test]
+    fn a_v5_dib_with_trailing_masks_starts_its_pixels_after_them() {
+        // Windows' CF_DIBV5: a 124-byte header, then 12 mask bytes again, then the pixels.
+        let plain = dib32(124, 2, 3);
+        let mut trailing = plain[..124].to_vec();
+        for mask in [0x00FF_0000u32, 0x0000_FF00, 0x0000_00FF] {
+            trailing.extend_from_slice(&mask.to_le_bytes());
+        }
+        trailing.extend_from_slice(&plain[124..]);
+        let bmp = bmp_from_dib(&trailing).unwrap();
+        assert_eq!(u32::from_le_bytes(bmp[10..14].try_into().unwrap()), 14 + 124 + 12);
+        assert_eq!(top_left(&trailing), [0, 0, 255], "the first pixel is at (0, 0), not shifted");
+        assert_eq!(top_left(&plain), [0, 0, 255], "without trailing masks as before");
+    }
+
     fn top_left(dib: &[u8]) -> [u8; 3] {
         let bmp = bmp_from_dib(dib).expect("a DIB");
         let png = ClipboardImage::Bmp(bmp).png_bytes().unwrap();
@@ -671,17 +697,8 @@ mod tests {
 
     #[test]
     fn unicode_text_ends_at_its_nul() {
-        let bytes: Vec<u8> = "a ş
-b junk"
-            .encode_utf16()
-            .flat_map(u16::to_le_bytes)
-            .collect();
-        assert_eq!(
-            text_from_unicode(&bytes),
-            "a ş
-b",
-            "line ends kept as they are"
-        );
+        let bytes: Vec<u8> = "a \u{15f}\r\nb\0junk".encode_utf16().flat_map(u16::to_le_bytes).collect();
+        assert_eq!(text_from_unicode(&bytes), "a \u{15f}\r\nb", "line ends kept as they are");
     }
 
     /// Uses the real clipboard: run by hand (`cargo test -p gezik-platform -- --ignored`).

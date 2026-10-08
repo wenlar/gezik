@@ -9,6 +9,10 @@ pub(crate) mod xdnd;
 #[cfg(all(unix, not(target_os = "macos")))]
 pub(crate) use backend::*;
 
+/// The most a clipboard transfer is read for: a picture (or anything) beyond it is dropped.
+#[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
+pub(crate) const MAX_TRANSFER_BYTES: usize = 256 * 1024 * 1024;
+
 /// What to ask a clipboard owner for, from the formats it offers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
