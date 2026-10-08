@@ -104,7 +104,13 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         | Action::Duplicate
         | Action::Undo
         | Action::Redo
-        | Action::BatchRename => return false,
+        | Action::BatchRename
+        // Task 7 and 8 place these.
+        | Action::Search
+        | Action::FlatView
+        | Action::ShowInFolder
+        | Action::CopyWithFolders
+        | Action::CutWithFolders => return false,
     }
     true
 }

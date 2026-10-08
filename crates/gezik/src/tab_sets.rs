@@ -108,6 +108,10 @@ pub fn text_of(location: &Location, dirs: &KnownDirs) -> String {
     match location {
         Location::Drives => "drives".to_owned(),
         Location::Path(path) => dirs.collapse(path).trim().to_owned(),
+        // A set keeps a place, not a search.
+        Location::Search(_) | Location::Flat(_) => {
+            location.folder().map_or_else(|| "drives".to_owned(), |path| dirs.collapse(path).trim().to_owned())
+        }
     }
 }
 

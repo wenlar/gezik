@@ -498,6 +498,9 @@ pub fn acts_on_selection(action: Action) -> bool {
             | Action::RestoreSelection
             | Action::CopyPath
             | Action::AddToStack
+            | Action::CopyWithFolders
+            | Action::CutWithFolders
+            | Action::ShowInFolder
     )
 }
 
@@ -520,6 +523,9 @@ pub fn needs_list(action: Action) -> bool {
             | Action::BatchRename
             | Action::NewFolderWithSelection
             | Action::AddToStack
+            | Action::CopyWithFolders
+            | Action::CutWithFolders
+            | Action::ShowInFolder
     )
 }
 
@@ -685,6 +691,7 @@ mod tests {
             Key::F(n) => (
                 text(match n {
                     2 => SlintKey::F2,
+                    3 => SlintKey::F3,
                     4 => SlintKey::F4,
                     5 => SlintKey::F5,
                     other => panic!("no default uses f{other}"),
@@ -777,6 +784,9 @@ mod tests {
                 Action::CopyPath => "ctrl+shift+c",
                 Action::NewFolderWithSelection => "ctrl+alt+n",
                 Action::AddToStack => "ctrl+shift+s",
+                Action::Search => "ctrl+shift+f",
+                Action::FlatView => "ctrl+b",
+                Action::ShowInFolder => "ctrl+shift+e",
                 Action::PasteMove
                 | Action::Duplicate
                 | Action::BatchRename
@@ -785,7 +795,9 @@ mod tests {
                 | Action::OpenTerminalAdmin
                 | Action::SaveTabSet
                 | Action::ToggleStack
-                | Action::ShowHistory => continue,
+                | Action::ShowHistory
+                | Action::CopyWithFolders
+                | Action::CutWithFolders => continue,
             };
             assert_eq!(reach(text), Some(action), "{text}");
         }
@@ -811,6 +823,7 @@ mod tests {
         // there (known, spec 10.3), Shift+F4 is the one that always works.
         assert_eq!(reach("ctrl+alt+t"), Some(Action::OpenTerminal));
         assert_eq!(chord_from_slint("₺", true, true, false, false, Platform::Other), None);
+        assert_eq!(reach("f3"), Some(Action::Search));
     }
 
     #[test]
@@ -1063,5 +1076,13 @@ mod tests {
         assert_eq!(chord_label(&m, Platform::Mac), "⇧⌘K");
         let num = parse_chord("num+", Platform::Other).unwrap().unwrap();
         assert_eq!(chord_label(&num, Platform::Other), "Num +");
+    }
+
+    #[test]
+    fn the_search_actions_wait_for_the_list_where_they_act_on_it() {
+        for action in [Action::CopyWithFolders, Action::CutWithFolders, Action::ShowInFolder] {
+            assert!(acts_on_selection(action) && needs_list(action), "{}", action.name());
+        }
+        assert!(!waits_for_text_fields(Action::Search) && !waits_for_text_fields(Action::FlatView));
     }
 }

@@ -3,6 +3,8 @@
 
 use std::path::{Component, Path, PathBuf};
 
+use crate::search::SearchSpec;
+
 /// The most back entries a tab keeps; older ones are dropped.
 pub const MAX_BACK: usize = 100;
 
@@ -11,10 +13,15 @@ pub enum Location {
     Path(PathBuf),
     /// The virtual "This PC" list of drives.
     Drives,
+    /// A search's results (spec 4.4): a step in the tab's history.
+    Search(Box<SearchSpec>),
+    /// Every file under a folder in one list (spec 5).
+    Flat(PathBuf),
 }
 
 impl Location {
-    /// A folder's parent; a filesystem root's parent is `Drives`; `Drives` has none.
+    /// A folder's parent; a filesystem root's parent is `Drives`; `Drives` has none. A search's
+    /// and a flat view's is the folder they look under (an every-drive search's: `Drives`).
     pub fn parent(&self) -> Option<Location> {
         match self {
             Location::Drives => None,
@@ -22,7 +29,26 @@ impl Location {
                 Some(parent) => Location::Path(parent.to_path_buf()),
                 None => Location::Drives,
             }),
+            Location::Search(spec) => Some(match spec.scope.folder() {
+                Some(folder) => Location::Path(folder.to_path_buf()),
+                None => Location::Drives,
+            }),
+            Location::Flat(folder) => Some(Location::Path(folder.clone())),
         }
+    }
+
+    /// The folder it shows or looks under; `None` for "This PC" and a search of every drive.
+    pub fn folder(&self) -> Option<&Path> {
+        match self {
+            Location::Path(path) | Location::Flat(path) => Some(path),
+            Location::Search(spec) => spec.scope.folder(),
+            Location::Drives => None,
+        }
+    }
+
+    /// A search's or the flat view's results.
+    pub fn is_results(&self) -> bool {
+        matches!(self, Location::Search(_) | Location::Flat(_))
     }
 }
 
@@ -473,6 +499,17 @@ pub const DRIVES_NAME: &str = if cfg!(target_os = "macos") { "Computer" } else {
 /// root. With more than `max_parts` path parts, the leading ones collapse into one "…"
 /// part that goes to the first hidden folder's parent... (see tests).
 pub fn crumbs(location: &Location, max_parts: usize) -> Vec<Crumb> {
+    // A search and the flat view: their folder's parts, then their own (spec 4.4, 5).
+    let last = match location {
+        Location::Search(spec) => Some(Crumb { label: spec.crumb(), location: location.clone() }),
+        Location::Flat(_) => Some(Crumb { label: "All files".to_owned(), location: location.clone() }),
+        Location::Path(_) | Location::Drives => None,
+    };
+    if let Some(last) = last {
+        let mut out = crumbs(&location.parent().unwrap_or(Location::Drives), max_parts);
+        out.push(last);
+        return out;
+    }
     let mut out = vec![Crumb { label: DRIVES_NAME.to_owned(), location: Location::Drives }];
     let Location::Path(path) = location else { return out };
 
@@ -514,6 +551,8 @@ pub fn nearest_existing(location: &Location, exists: impl Fn(&Path) -> bool) -> 
     loop {
         match &current {
             Location::Drives => return Location::Drives,
+            // A search checks itself when it loads.
+            Location::Search(_) | Location::Flat(_) => return current,
             Location::Path(path) if exists(path) => return current,
             Location::Path(_) => current = current.parent().unwrap_or(Location::Drives),
         }
@@ -1174,5 +1213,48 @@ mod tests {
         assert_eq!(expand_typed("$NOPE/x ${NOPE}", home, var, false), "$NOPE/x ${NOPE}");
         assert_eq!(expand_typed("a$ $1 ${HOME", home, var, false), "a$ $1 ${HOME");
         assert_eq!(expand_typed("%HOME%", home, var, false), "%HOME%", "no % on Unix");
+    }
+
+    // ---- Searches and the flat view ----
+
+    fn search_at(folder: &str, pattern: &str) -> Location {
+        let mut spec = crate::search::SearchSpec::new(crate::search::Scope::Folder(PathBuf::from(folder)));
+        spec.pattern = pattern.into();
+        Location::Search(Box::new(spec))
+    }
+
+    #[test]
+    fn a_search_leads_up_to_its_folder() {
+        assert_eq!(search_at("/w", "*.pdf").parent(), Some(p("/w")));
+        assert_eq!(Location::Flat("/w".into()).parent(), Some(p("/w")));
+        let everywhere = Location::Search(Box::new(crate::search::SearchSpec::new(crate::search::Scope::AllDrives)));
+        assert_eq!(everywhere.parent(), Some(Location::Drives));
+        assert_eq!(search_at("/w", "x").folder(), Some(Path::new("/w")));
+        assert_eq!(everywhere.folder(), None);
+        assert!(search_at("/w", "x").is_results() && Location::Flat("/w".into()).is_results());
+        assert!(!p("/w").is_results());
+    }
+
+    #[test]
+    fn a_search_is_a_step_in_the_history() {
+        let mut h = History::new(p("/w"));
+        assert!(h.navigate(search_at("/w", "*.pdf")));
+        assert!(!h.navigate(search_at("/w", "*.pdf")), "the same search again is no step");
+        assert!(h.navigate(search_at("/w", "*.doc")), "another one is");
+        assert!(h.back());
+        assert_eq!(h.location(), &search_at("/w", "*.pdf"));
+        assert!(h.back());
+        assert_eq!(h.location(), &p("/w"));
+    }
+
+    #[test]
+    fn a_search_ends_its_address_bar() {
+        let c = crumbs(&search_at("/home/a", "*.pdf"), 4);
+        assert_eq!(labels(&c), [DRIVES_NAME, "/", "home", "a", "Search \"*.pdf\""]);
+        assert_eq!(c[3].location, p("/home/a"));
+        let flat = crumbs(&Location::Flat("/home/a".into()), 4);
+        assert_eq!(labels(&flat).last(), Some(&"All files"));
+        assert_eq!(flat.last().unwrap().location, Location::Flat("/home/a".into()));
+        assert_eq!(nearest_existing(&Location::Flat("/gone".into()), |_| false), Location::Flat("/gone".into()));
     }
 }

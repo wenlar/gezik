@@ -243,7 +243,7 @@ fn current_spans(stored: &[(String, f32, f32)], labels: &[String]) -> Vec<(f32, 
 fn path_of(location: Location) -> Option<PathBuf> {
     match location {
         Location::Path(path) => Some(path),
-        Location::Drives => None,
+        Location::Drives | Location::Search(_) | Location::Flat(_) => None,
     }
 }
 

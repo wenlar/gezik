@@ -65,6 +65,10 @@ fn list(location: &Location, mode: &Mode) -> LoadResult {
             }
             Err(err) => LoadResult::Failed(err),
         },
+        // Task 7: a search or the flat view reads no folder (`search::Searches` runs it).
+        Location::Search(_) | Location::Flat(_) => {
+            LoadResult::Failed(std::io::Error::other("Searching is not ready yet"))
+        }
     }
 }
 
@@ -76,6 +80,7 @@ fn listing_after_failure(mode: &Mode, location: &Location) -> Option<Listing> {
     (*mode == Mode::Show).then(|| match location {
         Location::Path(path) => Listing::Files(path.clone(), Rc::default()),
         Location::Drives => Listing::Drives(Vec::new()),
+        Location::Search(_) | Location::Flat(_) => Listing::default(),
     })
 }
 
@@ -522,6 +527,10 @@ impl Navigator {
                 let path = match location {
                     Location::Path(path) => path.display().to_string(),
                     Location::Drives => String::new(),
+                    // Task 7 places these.
+                    Location::Search(_) | Location::Flat(_) => {
+                        location.folder().map(|p| p.display().to_string()).unwrap_or_default()
+                    }
                 };
                 (inner.places.title_for(location), path)
             })
@@ -678,9 +687,9 @@ impl Navigator {
         if text.is_empty() {
             return;
         }
-        let path = match self.active_location() {
-            Location::Path(base) => resolve_typed(&text, Some(&base)),
-            Location::Drives => resolve_typed(&text, None),
+        let path = match self.active_location().folder() {
+            Some(base) => resolve_typed(&text, Some(base)),
+            None => resolve_typed(&text, None),
         };
         self.go(Location::Path(path));
     }
@@ -772,6 +781,9 @@ impl Navigator {
         let shown = match &location {
             Location::Path(p) => p.display().to_string(),
             Location::Drives => gezik_core::nav::DRIVES_NAME.to_owned(),
+            Location::Search(_) | Location::Flat(_) => {
+                location.folder().map(|p| p.display().to_string()).unwrap_or_default()
+            }
         };
         let listing = match result {
             LoadResult::Files(path, entries) => Listing::Files(path, Rc::new(entries)),
@@ -820,9 +832,10 @@ impl Navigator {
 
     /// Watches the folder now on screen (none for This PC).
     fn watch_shown(&self, location: &Location) {
+        // Results are not watched (spec 4.7).
         let folder = match location {
             Location::Path(path) => Some(path.clone()),
-            Location::Drives => None,
+            Location::Drives | Location::Search(_) | Location::Flat(_) => None,
         };
         let mut inner = self.0.borrow_mut();
         let same = match (&folder, &inner.watched) {
@@ -909,6 +922,9 @@ impl Navigator {
             window.set_current_path(match &location {
                 Location::Path(p) => p.display().to_string().into(),
                 Location::Drives => "".into(),
+                Location::Search(_) | Location::Flat(_) => {
+                    location.folder().map(|p| p.display().to_string()).unwrap_or_default().into()
+                }
             });
             window.set_title_text(format!("{} — Gezik", inner.places.title_for(&location)).into());
             let active = inner.tabs.active_index();

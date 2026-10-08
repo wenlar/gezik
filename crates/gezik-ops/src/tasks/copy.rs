@@ -10,6 +10,9 @@ use super::what;
 use crate::task::{Outcome, PlanItem, Resources, RunCx, ScanSink, Stage, Task, TaskKind, Work, facts_after};
 use crate::walk::{Step, facts_of, walk};
 
+/// A folder on the way to a target, made before what goes into it (copy with folders).
+const MAKE_PARENT: u8 = 1;
+
 pub struct CopyTask {
     /// (source, target) per chosen item.
     pairs: Vec<(PathBuf, PathBuf)>,
@@ -19,6 +22,8 @@ pub struct CopyTask {
     dir: Option<PathBuf>,
     /// A template copied in (spec 8.1): its kind (New file, New folder); `None`: a copy.
     new: Option<TaskKind>,
+    /// Folders to make before the items (copy with folders, spec 4.6), shallowest first.
+    parents: Vec<PathBuf>,
 }
 
 impl CopyTask {
@@ -35,7 +40,16 @@ impl CopyTask {
                 (source, target)
             })
             .collect();
-        CopyTask { pairs, presets, dir: Some(dir.to_path_buf()), new: None }
+        CopyTask { pairs, presets, dir: Some(dir.to_path_buf()), new: None, parents: Vec::new() }
+    }
+
+    /// Copies each source to `dir` joined with its path under a search's scope, making the
+    /// folders on the way that are not there (spec 4.6): they count as made, so one undo takes
+    /// them away too. A name already there meets the conflict list.
+    pub fn with_folders(items: Vec<(PathBuf, PathBuf)>, dir: &Path) -> CopyTask {
+        let (pairs, parents) = super::relative_targets(items, dir);
+        let presets = vec![None; pairs.len()];
+        CopyTask { pairs, presets, dir: Some(dir.to_path_buf()), new: None, parents }
     }
 
     /// Copies each source next to itself as `name (2)`.
@@ -46,6 +60,7 @@ impl CopyTask {
             presets,
             dir: None,
             new: None,
+            parents: Vec::new(),
         }
     }
 
@@ -59,6 +74,7 @@ impl CopyTask {
             presets: vec![Some(Decision::KeepBoth)],
             dir: Some(dir.to_path_buf()),
             new: Some(kind),
+            parents: Vec::new(),
         }
     }
 
@@ -100,6 +116,18 @@ impl Task for CopyTask {
     }
 
     fn plan(&self, sink: &mut dyn ScanSink) {
+        // The folders on the way first: Before items run as they are planned.
+        for parent in &self.parents {
+            if std::fs::symlink_metadata(parent).is_err() {
+                let item = PlanItem::new(Stage::Before, Facts { is_dir: true, ..Facts::default() })
+                    .target(parent)
+                    .uncounted()
+                    .tag(MAKE_PARENT);
+                if !sink.item(item) {
+                    return;
+                }
+            }
+        }
         for (root, ((source, target), preset)) in self.pairs.iter().zip(&self.presets).enumerate() {
             if super::refuse_root(sink, source, "copy") {
                 continue;
@@ -128,6 +156,14 @@ impl Task for CopyTask {
     }
 
     fn run(&self, item: &PlanItem, cx: &RunCx<'_>) -> io::Result<Outcome> {
+        if item.tag == MAKE_PARENT {
+            let Some(target) = &item.target else { return Ok(Outcome::Nothing) };
+            return match std::fs::create_dir(target) {
+                Ok(()) => Ok(Outcome::Created { path: target.clone(), facts: facts_after(target, true), from: None }),
+                Err(err) if err.kind() == io::ErrorKind::AlreadyExists && target.is_dir() => Ok(Outcome::Nothing),
+                Err(err) => Err(err),
+            };
+        }
         let (Some(source), Some(target)) = (&item.source, &item.target) else { return Ok(Outcome::Nothing) };
         if item.facts.is_dir {
             return match std::fs::create_dir(target) {
@@ -366,6 +402,43 @@ mod tests {
         assert_eq!(read(&dir.join("here/Project (2)/README.md")), "r");
         assert_eq!(read(&dir.join("here/Project/old.txt")), "old");
         assert!(!dir.join("here/Project/README.md").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn copying_with_folders_makes_only_the_missing_folders_and_undo_takes_them() {
+        let dir = test_dir("copy-with-folders");
+        write(&dir.join("src/a/b/x.txt"), "x");
+        write(&dir.join("src/a/y.txt"), "y");
+        write(&dir.join("dst/a/keep.txt"), "k");
+        let items = vec![
+            (dir.join("src/a/b/x.txt"), PathBuf::from("a").join("b").join("x.txt")),
+            (dir.join("src/a/y.txt"), PathBuf::from("a").join("y.txt")),
+        ];
+        let engine = engine();
+        let task = CopyTask::with_folders(items.clone(), &dir.join("dst"));
+        let (report, _) = finish(&engine, engine.submit(Box::new(task)), no_conflicts);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert_eq!(read(&dir.join("dst/a/b/x.txt")), "x");
+        assert_eq!(read(&dir.join("dst/a/y.txt")), "y");
+        let dst = dir.join("dst");
+        // Files copy in parallel: the results come in the order they finish.
+        let mut results = report.results.clone();
+        results.sort();
+        assert_eq!(results, [dst.join("a").join("b").join("x.txt"), dst.join("a").join("y.txt")]);
+        let (undo, _) = finish(&engine, engine.undo().unwrap(), defaults);
+        assert!(undo.failures.is_empty(), "{:?}", undo.failures);
+        assert!(!dir.join("dst/a/b").exists(), "the folder it made went with the undo");
+        assert!(!dir.join("dst/a/y.txt").exists());
+        assert_eq!(read(&dir.join("dst/a/keep.txt")), "k", "the folder that was there stays");
+        // Twice into the same place: the same names meet in the conflict list.
+        finish(&engine, engine.submit(Box::new(CopyTask::with_folders(items.clone(), &dst))), no_conflicts);
+        let asked = std::cell::Cell::new(0);
+        finish(&engine, engine.submit(Box::new(CopyTask::with_folders(items, &dst))), |c| {
+            asked.set(c.len());
+            defaults(c)
+        });
+        assert_eq!(asked.get(), 2);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

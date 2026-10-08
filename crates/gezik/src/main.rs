@@ -305,7 +305,12 @@ fn handle_key(
                 | Action::NewFolderWithSelection
                 | Action::AddToStack
                 | Action::ToggleStack
-                | Action::ShowHistory => {
+                | Action::ShowHistory
+                | Action::Search
+                | Action::FlatView
+                | Action::ShowInFolder
+                | Action::CopyWithFolders
+                | Action::CutWithFolders => {
                     if action == Action::Filter && editing {
                         window.set_path_editing(false);
                     }

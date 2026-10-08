@@ -61,6 +61,13 @@ fn is_empty_dir(path: &Path) -> bool {
     std::fs::read_dir(path).is_ok_and(|mut entries| entries.next().is_none())
 }
 
+/// Nothing but folders (empty ones, however deep) inside: what a job made on the way to its
+/// moved items (move with folders) once they came out.
+fn holds_no_files(path: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(path) else { return false };
+    entries.flatten().all(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()) && holds_no_files(&entry.path()))
+}
+
 impl Task for TrashTask {
     fn kind(&self) -> TaskKind {
         TaskKind::Trash
@@ -101,7 +108,7 @@ impl Task for TrashTask {
         if !unchanged(path, expected) {
             return Err(changed_since());
         }
-        if self.only_empty.iter().any(|dir| gezik_core::ops::paths::same_path(dir, path)) && !is_empty_dir(path) {
+        if self.only_empty.iter().any(|dir| gezik_core::ops::paths::same_path(dir, path)) && !holds_no_files(path) {
             return Err(changed_since());
         }
         // A name the trash cannot take (Windows: `x.`) is offered for a permanent delete like an

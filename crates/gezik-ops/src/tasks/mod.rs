@@ -58,6 +58,27 @@ pub(crate) fn refuse_root(sink: &mut dyn crate::task::ScanSink, path: &Path, ver
     true
 }
 
+/// `dir` joined with each relative path (system separators: the Windows trash needs them for
+/// undo), and the folders on the way that `dir` holds (`dir` too), shallowest first, each once.
+pub(crate) fn relative_targets(items: Vec<(PathBuf, PathBuf)>, dir: &Path) -> (Vec<(PathBuf, PathBuf)>, Vec<PathBuf>) {
+    let mut parents = std::collections::BTreeSet::new();
+    let pairs = items
+        .into_iter()
+        .map(|(source, relative)| {
+            let target: PathBuf = dir.join(&relative).components().collect();
+            let mut folder = target.parent();
+            while let Some(f) = folder.filter(|f| gezik_core::ops::paths::is_within(f, dir)) {
+                parents.insert(f.to_path_buf());
+                folder = f.parent();
+            }
+            (source, target)
+        })
+        .collect();
+    let mut parents: Vec<PathBuf> = parents.into_iter().collect();
+    parents.sort_by_key(|p| p.components().count());
+    (pairs, parents)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
