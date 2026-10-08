@@ -1322,9 +1322,8 @@ impl Operations {
         // Search results follow Gezik's own jobs (spec 4.7), those kept by a tab too.
         let mut paths = report.results.clone();
         paths.extend(hidden_paths);
-        let rename = report.kind == gezik_ops::TaskKind::Rename;
         crate::search::with_current(|searches| {
-            searches.job_done(origin.as_ref(), report.changed_dirs.clone(), paths, rename);
+            searches.job_done(origin.as_ref(), report.changed_dirs.clone(), paths, report.moved.clone());
         });
         self.0.sidebar.refresh();
         if let (false, Some(note)) = (reloading, note) {
@@ -1654,6 +1653,7 @@ mod tests {
             no_trash: Vec::new(),
             results: Vec::new(),
             changed_dirs: Vec::new(),
+            moved: Vec::new(),
         }
     }
 

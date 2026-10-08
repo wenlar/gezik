@@ -135,6 +135,7 @@ mod tests {
             no_trash: Vec::new(),
             results: Vec::new(),
             changed_dirs: Vec::new(),
+            moved: Vec::new(),
         }
     }
 

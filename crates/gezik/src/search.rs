@@ -211,7 +211,7 @@ struct Kept {
     spec: SearchSpec,
     results: Arc<ResultSet>,
     status: String,
-    changes: Vec<JobChange>,
+    changes: Option<JobChange>,
 }
 
 /// The results on screen, and the jobs to check them for once they are.
@@ -220,7 +220,7 @@ struct Showing {
     spec: SearchSpec,
     status: String,
     complete: bool,
-    changes: Vec<JobChange>,
+    changes: Option<JobChange>,
 }
 
 /// Which results a tab shows: its tab and its search (a job's check is for these).
@@ -231,10 +231,37 @@ pub type ResultsKey = (Option<u64>, SearchSpec);
 pub struct JobChange {
     pub dirs: Vec<PathBuf>,
     pub paths: Vec<PathBuf>,
-    /// A rename: new names take the places of the old.
-    pub rename: bool,
+    /// What it moved or renamed (from, to), as it really went: rows follow these.
+    pub moves: Vec<(PathBuf, PathBuf)>,
     /// Started from these results: what it made shows whether the search would find it or not.
     pub own: bool,
+    /// How many jobs this is (`merge`).
+    pub jobs: usize,
+}
+
+/// Most jobs a tab's kept results wait for, and most paths: past either they are searched
+/// again when they show.
+pub const MAX_QUEUED_JOBS: usize = 16;
+pub const MAX_QUEUED_PATHS: usize = 20_000;
+
+/// `change` added to what a tab's kept results wait for (`queued`): one check for all. The
+/// moves go (which way rows went across jobs is not known: their rows are looked at anew).
+/// `None`: too much to check, the search runs again.
+pub fn merge(queued: Option<JobChange>, change: JobChange) -> Option<JobChange> {
+    let merged = match queued {
+        None => change,
+        Some(mut queued) => {
+            queued.dirs.extend(change.dirs);
+            queued.dirs.sort();
+            queued.dirs.dedup();
+            queued.paths.extend(change.paths);
+            queued.moves.clear();
+            queued.own |= change.own;
+            queued.jobs += change.jobs;
+            queued
+        }
+    };
+    (merged.jobs <= MAX_QUEUED_JOBS && merged.dirs.len() + merged.paths.len() <= MAX_QUEUED_PATHS).then_some(merged)
 }
 
 /// Where a check's verdict goes.
@@ -650,7 +677,7 @@ impl Searches {
         let content = !spec.content.is_empty();
         *self.0.pending.borrow_mut() = Some(spec.clone());
         *self.0.showing.borrow_mut() =
-            Some(Showing { tab, spec, status: String::new(), complete: false, changes: Vec::new() });
+            Some(Showing { tab, spec, status: String::new(), complete: false, changes: None });
         Listing::Results(Arc::new(ResultSet::new(root, content)))
     }
 
@@ -662,15 +689,13 @@ impl Searches {
             Some(spec) => self.start(spec),
             None => {
                 let (status, changes) = match self.0.showing.borrow_mut().as_mut() {
-                    Some(s) => (Some(s.status.clone()), std::mem::take(&mut s.changes)),
-                    None => (None, Vec::new()),
+                    Some(s) => (Some(s.status.clone()), s.changes.take()),
+                    None => (None, None),
                 };
                 self.0.view.set_results_status(status.filter(|s| !s.is_empty()));
-                // Jobs that ended while these results were kept (spec 4.7).
-                if let Some(key) = self.results_key() {
-                    for change in changes {
-                        self.check(key.clone(), change);
-                    }
+                // Jobs that ended while these results were kept (spec 4.7): one check.
+                if let (Some(key), Some(change)) = (self.results_key(), changes) {
+                    self.check(key, change);
                 }
             }
         }
@@ -713,16 +738,48 @@ impl Searches {
 
     /// A job ended (spec 4.7): the results on screen are checked now, a tab's kept results it
     /// may have changed when they show again. `origin`: the results it was started from.
-    pub fn job_done(&self, origin: Option<&ResultsKey>, dirs: Vec<PathBuf>, paths: Vec<PathBuf>, rename: bool) {
-        let change =
-            |key: ResultsKey| JobChange { dirs: dirs.clone(), paths: paths.clone(), rename, own: origin == Some(&key) };
-        for (tab, kept) in self.0.kept.borrow_mut().iter_mut() {
-            if touches(kept.spec.scope.folder(), &dirs, &paths) {
-                kept.changes.push(change((Some(*tab), kept.spec.clone())));
-            }
+    pub fn job_done(
+        &self,
+        origin: Option<&ResultsKey>,
+        dirs: Vec<PathBuf>,
+        paths: Vec<PathBuf>,
+        moves: Vec<(PathBuf, PathBuf)>,
+    ) {
+        let change = |key: &ResultsKey| JobChange {
+            dirs: dirs.clone(),
+            paths: paths.clone(),
+            moves: moves.clone(),
+            own: origin == Some(key),
+            jobs: 1,
+        };
+        let touched: Vec<ResultsKey> = self
+            .0
+            .kept
+            .borrow()
+            .iter()
+            .filter(|(_, kept)| touches(kept.spec.scope.folder(), &dirs, &paths))
+            .map(|(tab, kept)| (Some(*tab), kept.spec.clone()))
+            .collect();
+        for key in touched {
+            self.queue(&key, change(&key));
         }
         if let Some(key) = self.results_key() {
-            self.check(key.clone(), change(key));
+            let change = change(&key);
+            self.check(key, change);
+        }
+    }
+
+    /// Adds `change` to what `key`'s tab keeps its results for (`merge`); too much, and the
+    /// kept results go: the search runs again when the tab shows it.
+    fn queue(&self, key: &ResultsKey, change: JobChange) {
+        let Some(tab) = key.0 else { return };
+        let mut kept = self.0.kept.borrow_mut();
+        let Some(entry) = kept.get_mut(&tab).filter(|entry| entry.spec == key.1) else { return };
+        match merge(entry.changes.take(), change) {
+            Some(change) => entry.changes = Some(change),
+            None => {
+                kept.remove(&tab);
+            }
         }
     }
 
@@ -771,13 +828,8 @@ impl Searches {
         let showing = self.results_key();
         let kept = key.0.and_then(|tab| self.0.kept.borrow().get(&tab).map(|k| k.spec.clone()));
         match verdict_for(&key, showing.as_ref(), kept.as_ref()) {
-            Verdict::Apply => self.0.view.results_changed(&gone, added, change.rename),
-            Verdict::Queue => {
-                let mut kept = self.0.kept.borrow_mut();
-                if let Some(kept) = key.0.and_then(|tab| kept.get_mut(&tab)) {
-                    kept.changes.push(change);
-                }
-            }
+            Verdict::Apply => self.0.view.results_changed(&gone, added, &change.moves),
+            Verdict::Queue => self.queue(&key, change),
             Verdict::Drop => {}
         }
     }
@@ -1259,6 +1311,32 @@ mod tests {
         assert!(!touches(Some(Path::new("/v")), &dirs, &[PathBuf::from("/x/y")]));
         assert!(touches(Some(Path::new("/v")), &[], &[PathBuf::from("/v/new")]));
         assert!(touches(None, &dirs, &[]), "every drive");
+    }
+
+    #[test]
+    fn queued_checks_merge_into_one_and_have_a_limit() {
+        let job = |dir: &str, own: bool| JobChange {
+            dirs: vec![PathBuf::from(dir)],
+            paths: vec![PathBuf::from(dir).join("n")],
+            moves: vec![(PathBuf::from(dir).join("a"), PathBuf::from(dir).join("b"))],
+            own,
+            jobs: 1,
+        };
+        let one = merge(None, job("/w/a", false)).unwrap();
+        assert_eq!(one.moves.len(), 1, "one job keeps its moves");
+        let two = merge(Some(one), job("/w/b", true)).unwrap();
+        assert_eq!((two.dirs.len(), two.paths.len(), two.jobs), (2, 2, 2));
+        assert!(two.moves.is_empty() && two.own);
+        let same = merge(Some(two), job("/w/a", false)).unwrap();
+        assert_eq!(same.dirs.len(), 2, "a folder once");
+        let mut queued = Some(same);
+        for _ in 3..MAX_QUEUED_JOBS {
+            queued = merge(queued, job("/w/c", false));
+        }
+        assert_eq!(queued.as_ref().map(|q| q.jobs), Some(MAX_QUEUED_JOBS));
+        assert!(merge(queued, job("/w/d", false)).is_none(), "past the limit: search again");
+        let huge = JobChange { paths: vec![PathBuf::from("/w/x"); MAX_QUEUED_PATHS + 1], ..job("/w", false) };
+        assert!(merge(None, huge).is_none());
     }
 
     #[test]

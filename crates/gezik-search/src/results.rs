@@ -325,59 +325,67 @@ impl ResultSet {
     }
 
     /// A job's effects (spec 4.7): rows at `gone` leave; each of `added` not already a row goes
-    /// at the end, or, with `pair` (a rename), takes the place of a gone row of its folder; a
-    /// renamed folder's rows follow it. Returns where each row left (but the new ones at the
-    /// end) was before.
-    pub fn apply_changes(&mut self, gone: &[PathBuf], added: Vec<(PathBuf, Entry)>, pair: bool) -> Vec<usize> {
+    /// at the end, or, if the job's `moves` (from, to) say which gone row it was, takes that
+    /// row's place, the rows inside a moved folder following it. Only real moves pair: a guess
+    /// could make a row name another file. Returns where each row left (but the new ones at
+    /// the end) was before.
+    pub fn apply_changes(
+        &mut self,
+        gone: &[PathBuf],
+        added: Vec<(PathBuf, Entry)>,
+        moves: &[(PathBuf, PathBuf)],
+    ) -> Vec<usize> {
         use std::collections::{HashMap, HashSet};
         let gone_rows = self.rows_of(gone);
         let mut seen = HashSet::new();
         let added: Vec<(PathBuf, Entry)> = added.into_iter().filter(|(path, _)| seen.insert(path.clone())).collect();
         let paths: Vec<PathBuf> = added.iter().map(|(path, _)| path.clone()).collect();
         let places = self.places(&paths);
-        // By folder, the gone rows free to take (last first), and whether there were several.
-        let mut free: HashMap<u32, (Vec<usize>, bool)> = HashMap::new();
-        if pair {
-            for &row in gone_rows.iter().rev() {
-                free.entry(self.parent[row]).or_default().0.push(row);
-            }
-            for slot in free.values_mut() {
-                slot.1 = slot.0.len() > 1;
-            }
-        }
+        // Where each new path was (the job's own moves), and the gone rows by path.
+        let came_from: HashMap<&Path, &Path> = moves.iter().map(|(from, to)| (to.as_path(), from.as_path())).collect();
+        let gone_at: HashMap<PathBuf, usize> = if came_from.is_empty() {
+            HashMap::new()
+        } else {
+            gone_rows.iter().filter_map(|&row| Some((self.path_at(row)?, row))).collect()
+        };
         let mut taken = vec![false; self.entries.len()];
-        // Renamed folders: their old folder text, and the new one.
+        // Moved folders: their old folder text, and the new one.
         let mut renamed: HashMap<String, String> = HashMap::new();
         let mut appended = Vec::new();
         let mut new_folders: HashMap<String, u32> = HashMap::new();
-        for ((_, entry), (text, number, row)) in added.into_iter().zip(places) {
-            if row || text.is_none() {
+        for ((path, entry), (text, number, row)) in added.into_iter().zip(places) {
+            let Some(text) = text.filter(|_| !row) else { continue };
+            let was = came_from.get(path.as_path()).and_then(|from| gone_at.get(*from)).copied();
+            let Some(row) = was.filter(|&row| !taken[row]) else {
+                appended.push((text, number, entry));
                 continue;
-            }
-            match number.and_then(|n| free.get_mut(&n)).and_then(|(rows, several)| Some((rows.pop()?, *several))) {
-                Some((row, several)) => {
-                    // Several gone there: which old row this one was is not known, nor its line.
-                    if several && let Some(matches) = &mut self.matches {
-                        matches[row] = None;
-                    }
-                    let folder = &self.folders[self.parent[row] as usize];
-                    if entry.is_dir && self.entries[row].is_dir {
-                        renamed
-                            .insert(relative_key(folder, &self.entries[row].name), relative_key(folder, &entry.name));
-                    }
-                    self.entries[row] = entry;
-                    taken[row] = true;
-                    self.sorted = None;
+            };
+            let parent = match number.or_else(|| new_folders.get(&text).copied()) {
+                Some(parent) => parent,
+                None => {
+                    self.folders.push(text.as_str().into());
+                    let parent = (self.folders.len() - 1) as u32;
+                    new_folders.insert(text.clone(), parent);
+                    parent
                 }
-                None => appended.push((text, number, entry)),
+            };
+            if entry.is_dir && self.entries[row].is_dir {
+                let old = relative_key(&self.folders[self.parent[row] as usize], &self.entries[row].name);
+                renamed.insert(old, relative_key(&text, &entry.name));
             }
+            self.entries[row] = entry;
+            self.parent[row] = parent;
+            taken[row] = true;
+            self.sorted = None;
         }
-        // The rows inside a renamed folder stay, under its new name.
+        // The rows inside a moved folder stay, under its new path (the deepest moved folder a
+        // folder is in decides).
         let mut moved = vec![false; if renamed.is_empty() { 0 } else { self.folders.len() }];
         if !renamed.is_empty() {
             for (i, folder) in self.folders.iter_mut().enumerate() {
-                let ends = folder.match_indices(is_separator).map(|(at, _)| at).chain([folder.len()]);
-                let found = ends.filter_map(|end| Some((end, renamed.get(&folder[..end])?))).next();
+                let mut ends: Vec<usize> = folder.match_indices(is_separator).map(|(at, _)| at).collect();
+                ends.push(folder.len());
+                let found = ends.into_iter().rev().find_map(|end| Some((end, renamed.get(&folder[..end])?)));
                 if let Some((end, new)) = found {
                     *folder = format!("{new}{}", &folder[end..]).into();
                     moved[i] = true;
@@ -391,7 +399,6 @@ impl ResultSet {
         let kept: Vec<usize> = (0..self.entries.len()).filter(|i| removed.binary_search(i).is_err()).collect();
         self.remove(&removed);
         for (text, number, entry) in appended {
-            let Some(text) = text else { continue };
             let parent = match number.or_else(|| new_folders.get(&text).copied()) {
                 Some(parent) => parent,
                 None => {
@@ -408,7 +415,8 @@ impl ResultSet {
 
     /// What a job's check reads of the results (spec 4.7), taken on the UI thread: the rows of
     /// `dirs` (the job's changed folders), the folders inside them with their rows, and those
-    /// of `paths` (its results, the rows it hid) under the scope that are not rows.
+    /// of `paths` (its results, the rows it hid) under the scope that are not rows. Names
+    /// only: the paths are made on the check's thread.
     pub fn probe(&self, dirs: &[PathBuf], paths: &[PathBuf]) -> Probe {
         let texts: Vec<(String, bool)> = dirs
             .iter()
@@ -445,25 +453,17 @@ impl ResultSet {
             })
             .collect();
         let mut group = vec![usize::MAX; self.folders.len()];
-        let mut inside: Vec<(PathBuf, Vec<PathBuf>)> = Vec::new();
-        let mut rows = Vec::new();
+        let mut folders: Vec<(Box<str>, bool, Vec<Box<str>>)> = Vec::new();
         for i in 0..self.entries.len() {
             let parent = self.parent[i] as usize;
-            match state[parent] {
-                1 => rows.extend(self.path_at(i)),
-                2 => {
-                    if group[parent] == usize::MAX {
-                        let folder = &self.folders[parent];
-                        group[parent] = inside.len();
-                        inside.push((
-                            if folder.is_empty() { self.root.clone() } else { self.root.join(&**folder) },
-                            Vec::new(),
-                        ));
-                    }
-                    inside[group[parent]].1.extend(self.path_at(i));
-                }
-                _ => {}
+            if state[parent] == 0 {
+                continue;
             }
+            if group[parent] == usize::MAX {
+                group[parent] = folders.len();
+                folders.push((self.folders[parent].clone(), state[parent] == 2, Vec::new()));
+            }
+            folders[group[parent]].2.push(self.entries[i].name.as_str().into());
         }
         let mut seen = std::collections::HashSet::new();
         let paths: Vec<PathBuf> = paths.iter().filter(|path| seen.insert(*path)).cloned().collect();
@@ -474,7 +474,7 @@ impl ResultSet {
             .filter(|(_, (text, _, row))| text.is_some() && !row)
             .map(|(path, _)| path)
             .collect();
-        Probe { rows, inside, paths }
+        Probe { root: self.root.clone(), folders, paths }
     }
 }
 
@@ -482,10 +482,10 @@ impl ResultSet {
 /// disk is read.
 #[derive(Debug, Default)]
 pub struct Probe {
-    /// Rows in a changed folder itself: each one is looked at.
-    rows: Vec<PathBuf>,
-    /// Folders inside a changed one, with their rows: a folder gone takes them all.
-    inside: Vec<(PathBuf, Vec<PathBuf>)>,
+    root: PathBuf,
+    /// Changed folders (each row looked at) and folders inside one (`true`: gone, it takes all
+    /// its rows), by their text, with their rows' names.
+    folders: Vec<(Box<str>, bool, Vec<Box<str>>)>,
     /// The job's paths under the scope that are not rows.
     paths: Vec<PathBuf>,
 }
@@ -495,9 +495,13 @@ impl Probe {
     /// them. Reads the disk: off the UI thread.
     pub fn verify(self) -> (Vec<PathBuf>, Vec<(PathBuf, Entry)>) {
         let there = |path: &Path| std::fs::symlink_metadata(path).is_ok();
-        let mut gone: Vec<PathBuf> = self.rows.into_iter().filter(|path| !there(path)).collect();
-        for (folder, rows) in self.inside {
-            if !there(&folder) {
+        let mut gone: Vec<PathBuf> = Vec::new();
+        for (folder, inside, names) in self.folders {
+            let dir = if folder.is_empty() { self.root.clone() } else { self.root.join(&*folder) };
+            let rows = names.iter().map(|name| dir.join(&**name));
+            if !inside {
+                gone.extend(rows.filter(|path| !there(path)));
+            } else if !there(&dir) {
                 gone.extend(rows);
             }
         }
@@ -717,15 +721,15 @@ mod tests {
         let new = PathBuf::from("/w").join("renamed.txt");
         let came = PathBuf::from("/w").join("c").join("back.txt");
         let from = set.apply_changes(
-            &[old],
+            std::slice::from_ref(&old),
             vec![(new.clone(), entry("renamed.txt")), (came.clone(), entry("back.txt"))],
-            true,
+            &[(old.clone(), new.clone())],
         );
         assert_eq!(set.len(), 4);
         assert_eq!(set.path_at(0), Some(new), "the same folder's gone row takes the new name in place");
         assert_eq!(set.path_at(3), Some(came), "nothing gone there: at the end");
         assert_eq!(from, [0, 1, 2], "no row left; the selection follows by place");
-        let from = set.apply_changes(&[PathBuf::from("/w").join(format!("a{SEP}b")).join("y.txt")], Vec::new(), true);
+        let from = set.apply_changes(&[PathBuf::from("/w").join(format!("a{SEP}b")).join("y.txt")], Vec::new(), &[]);
         assert_eq!((set.len(), from), (3, vec![0, 2, 3]));
     }
 
@@ -759,15 +763,15 @@ mod tests {
     }
 
     #[test]
-    fn only_a_rename_pairs_and_copies_go_last() {
+    fn only_real_moves_pair_and_copies_go_last() {
         let mut set = sample();
         let new = PathBuf::from("/w").join("moved.txt");
         let from =
-            set.apply_changes(&[PathBuf::from("/w").join("x.txt")], vec![(new.clone(), entry("moved.txt"))], false);
+            set.apply_changes(&[PathBuf::from("/w").join("x.txt")], vec![(new.clone(), entry("moved.txt"))], &[]);
         assert_eq!(from, [1, 2]);
         assert_eq!(set.path_at(2), Some(new));
         let twice = vec![(PathBuf::from("/w").join("n"), entry("n")), (PathBuf::from("/w").join("n"), entry("n"))];
-        set.apply_changes(&[], twice, false);
+        set.apply_changes(&[], twice, &[]);
         assert_eq!(set.len(), 4, "a path given twice is one row");
     }
 
@@ -783,13 +787,54 @@ mod tests {
         });
         set.set_sorted_by(Some((SortSpec::default(), true)));
         let gone = [root.join("d"), root.join("d").join("in.txt"), root.join("d").join("e").join("deep.txt")];
-        let from = set.apply_changes(&gone, vec![(root.join("r"), folder_entry("r"))], true);
+        let from =
+            set.apply_changes(&gone, vec![(root.join("r"), folder_entry("r"))], &[(root.join("d"), root.join("r"))]);
         assert_eq!(from, [0, 1, 2, 3], "nothing left");
         assert_eq!(set.path_at(1), Some(root.join("r").join("in.txt")));
         assert_eq!(set.path_at(2), Some(root.join("r").join("e").join("deep.txt")));
         assert_eq!(set.path_at(3), Some(root.join("dd").join("other.txt")), "not a folder inside it");
         assert_eq!(set.found(1).map(|f| f.0), Some(1));
         assert_eq!(set.sorted_by(), None, "a name changed in place");
+    }
+
+    #[test]
+    fn folders_follow_their_real_moves_not_the_order_they_came_in() {
+        // Two folders renamed in one job, finished in the other order, each with a file of the
+        // same name inside: every row must name the file that really is there.
+        let root = std::env::temp_dir().join(format!("gezik-moves-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for (dir, text) in [("r1", "one"), ("r2", "two")] {
+            std::fs::create_dir_all(root.join(dir)).unwrap();
+            std::fs::write(root.join(dir).join("IMG_0001.jpg"), text).unwrap();
+        }
+        let mut set = ResultSet::new(root.clone(), false);
+        set.append(Batch {
+            folders: vec!["".into(), "d1".into(), "d2".into()],
+            entries: vec![folder_entry("d1"), folder_entry("d2"), entry("IMG_0001.jpg"), entry("IMG_0001.jpg")],
+            parent: vec![0, 0, 1, 2],
+            matches: vec![None; 4],
+        });
+        let (gone, added) = verify(&set, std::slice::from_ref(&root), &[root.join("r2"), root.join("r1")]);
+        assert_eq!(gone.len(), 4, "both folders and what is in them");
+        let moves = [(root.join("d2"), root.join("r2")), (root.join("d1"), root.join("r1"))];
+        set.apply_changes(&gone, added, &moves);
+        assert_eq!(set.len(), 4);
+        assert_eq!(set.path_at(0), Some(root.join("r1")));
+        assert_eq!(set.path_at(1), Some(root.join("r2")));
+        let read = |i| std::fs::read_to_string(set.path_at(i).unwrap()).unwrap();
+        assert_eq!((read(2), read(3)), ("one".to_owned(), "two".to_owned()));
+        // Without the moves nothing is guessed: the rows inside go, the folders come at the end.
+        let mut guess = ResultSet::new(root.clone(), false);
+        guess.append(Batch {
+            folders: vec!["".into(), "d1".into(), "d2".into()],
+            entries: vec![folder_entry("d1"), folder_entry("d2"), entry("IMG_0001.jpg"), entry("IMG_0001.jpg")],
+            parent: vec![0, 0, 1, 2],
+            matches: vec![None; 4],
+        });
+        let (gone, added) = verify(&guess, std::slice::from_ref(&root), &[root.join("r2"), root.join("r1")]);
+        guess.apply_changes(&gone, added, &[]);
+        assert_eq!((guess.len(), guess.path_at(0)), (2, Some(root.join("r2"))));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -825,8 +870,10 @@ mod tests {
         let gone: Vec<PathBuf> = (0..2000).map(|i| path(i, &format!("n{i}.txt"))).collect();
         let added: Vec<(PathBuf, Entry)> =
             (0..2000).map(|i| (path(i, &format!("r{i}.txt")), entry(&format!("r{i}.txt")))).collect();
+        let moves: Vec<(PathBuf, PathBuf)> =
+            (0..2000).map(|i| (path(i, &format!("n{i}.txt")), path(i, &format!("r{i}.txt")))).collect();
         let started = std::time::Instant::now();
-        let from = set.apply_changes(&gone, added, true);
+        let from = set.apply_changes(&gone, added, &moves);
         assert!(started.elapsed() < std::time::Duration::from_secs(2), "{:?}", started.elapsed());
         assert_eq!((set.len(), from.len()), (5000, 5000));
         assert!(set.key_at(0).is_some_and(|key| key.ends_with(".txt") && key.contains('r')));

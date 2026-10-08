@@ -110,6 +110,9 @@ pub struct Report {
     /// Where the chosen items are now (pasted, renamed, new), to select them.
     pub results: Vec<PathBuf>,
     pub changed_dirs: Vec<PathBuf>,
+    /// Items it moved or renamed (from, to), each as it really went: search results follow
+    /// them (spec 4.7).
+    pub moved: Vec<(PathBuf, PathBuf)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -383,6 +386,16 @@ impl Shared {
             }
         }
         let acc = std::mem::take(&mut *lock(&job.acc));
+        let moved = acc
+            .outcomes
+            .iter()
+            .filter_map(|outcome| match outcome {
+                Outcome::Moved { from, to, .. } | Outcome::Created { path: to, from: Some(from), .. } => {
+                    Some((from.clone(), to.clone()))
+                }
+                _ => None,
+            })
+            .collect();
         let inverse = crate::inverse::build(&acc.outcomes);
         let recorded = !inverse.is_empty();
         {
@@ -416,6 +429,7 @@ impl Shared {
             no_trash: acc.no_trash,
             results: acc.results,
             changed_dirs: acc.changed.into_iter().collect(),
+            moved,
         };
         job.done.store(true, Ordering::SeqCst);
         lock(&self.jobs).retain(|other| other.id != job.id);

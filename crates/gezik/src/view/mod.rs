@@ -1427,8 +1427,8 @@ impl View {
     }
 
     /// A job's effects on the results (spec 4.7): `gone` rows out, `added` ones in (with
-    /// `pair`, a rename, a renamed row in its place; others at the end; `ResultSet::apply_changes`).
-    pub fn results_changed(&self, gone: &[PathBuf], added: Vec<(PathBuf, Entry)>, pair: bool) {
+    /// the job's `moves`, a moved row in its place; others at the end; `ResultSet::apply_changes`).
+    pub fn results_changed(&self, gone: &[PathBuf], added: Vec<(PathBuf, Entry)>, moves: &[(PathBuf, PathBuf)]) {
         // Not a clone of the set: it would make the edit copy it.
         let Some(none_gone) = self.0.data.borrow().results.as_ref().map(|set| set.rows_of(gone).is_empty()) else {
             return;
@@ -1436,7 +1436,7 @@ impl View {
         if none_gone && added.is_empty() {
             return;
         }
-        self.edit_results(|set| set.apply_changes(gone, added, pair));
+        self.edit_results(|set| set.apply_changes(gone, added, moves));
     }
 
     /// The selected results (the focused one if none is) with their paths under the scope
