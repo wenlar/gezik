@@ -288,13 +288,13 @@ enum End {
 
 /// A RAR4 Unix link's target: RAR4 keeps it as the entry's data, which UnRAR only writes
 /// out as a link. On Unix it makes that link at a passing name no entry can have
-/// (`safe_join` refuses a trailing dot), where it is read back and removed. Windows skips
-/// links.
+/// (`safe_join` refuses control characters), where it is read back and removed. Windows
+/// skips links.
 fn rar4_link_target(header: OpenArchive<Process, CursorBeforeFile>, dest: &Path) -> (String, Next) {
     if cfg!(not(unix)) {
         return (String::new(), header.skip());
     }
-    let passing = dest.join("gezik-link.");
+    let passing = dest.join("gezik-link\u{1}");
     let _ = fs::remove_file(&passing);
     let next = header.extract_into(dest, &passing, |_| true);
     let target = fs::read_link(&passing).map(|t| t.to_string_lossy().into_owned()).unwrap_or_default();

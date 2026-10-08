@@ -237,8 +237,14 @@ fn zip_slip_entries_are_refused() {
     let stage = stage(&d);
     let cx = Cx::new(None);
     extract(&path, &stage, &cx).unwrap();
-    assert_eq!(cx.failed(), ["../evil.txt", "/abs.txt", "CON.txt"]);
-    assert_eq!(tree(&stage), files(&[("ok.txt", b"ok")]));
+    // A device name only on Windows.
+    if cfg!(windows) {
+        assert_eq!(cx.failed(), ["../evil.txt", "/abs.txt", "CON.txt"]);
+        assert_eq!(tree(&stage), files(&[("ok.txt", b"ok")]));
+    } else {
+        assert_eq!(cx.failed(), ["../evil.txt", "/abs.txt"]);
+        assert_eq!(tree(&stage), files(&[("CON.txt", b"device"), ("ok.txt", b"ok")]));
+    }
     assert!(!d.join("evil.txt").exists());
     assert!(!Path::new("/abs.txt").exists());
     let _ = std::fs::remove_dir_all(&d);
