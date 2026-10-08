@@ -2,6 +2,7 @@
 //! Gezik's own items inserted at the top.
 
 use std::cell::RefCell;
+use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -161,10 +162,18 @@ pub(crate) unsafe fn children_object<T: Interface>(
     object
 }
 
+/// The name handed to `SHParseDisplayName`: it rejects `/` separators (E_INVALIDARG), so
+/// they become backslashes (`D:/a` becomes `D:\a`, `//srv/share` becomes `\\srv\share`).
+pub(crate) fn parse_name(path: &Path) -> HSTRING {
+    let wide: Vec<u16> =
+        path.as_os_str().encode_wide().map(|c| if c == u16::from(b'/') { u16::from(b'\\') } else { c }).collect();
+    HSTRING::from_wide(&wide)
+}
+
 /// `folder` as a shell folder (the desktop for the namespace root).
 unsafe fn bind_folder(folder: &Path) -> windows::core::Result<IShellFolder> {
     let mut pidl: *mut ITEMIDLIST = std::ptr::null_mut();
-    unsafe { SHParseDisplayName(&HSTRING::from(folder.as_os_str()), None, &mut pidl, 0, None)? };
+    unsafe { SHParseDisplayName(&parse_name(folder), None, &mut pidl, 0, None)? };
     // The closure keeps `?` from skipping the CoTaskMemFree below.
     let bound = (|| unsafe {
         let desktop = SHGetDesktopFolder()?;
@@ -179,7 +188,7 @@ unsafe fn items_menu(hwnd: HWND, paths: &[PathBuf]) -> windows::core::Result<ICo
     let mut pidls: Vec<*mut ITEMIDLIST> = Vec::with_capacity(paths.len());
     let parsed = paths.iter().try_for_each(|path| {
         let mut pidl: *mut ITEMIDLIST = std::ptr::null_mut();
-        unsafe { SHParseDisplayName(&HSTRING::from(path.as_os_str()), None, &mut pidl, 0, None)? };
+        unsafe { SHParseDisplayName(&parse_name(path), None, &mut pidl, 0, None)? };
         pidls.push(pidl);
         Ok(())
     });
@@ -396,6 +405,22 @@ fn menu_verbs(target: &MenuTarget, can_rename: bool) -> windows::core::Result<Ve
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_names_use_backslashes() {
+        assert_eq!(parse_name(Path::new("D:/Work/x")).to_string(), r"D:\Work\x");
+        assert_eq!(parse_name(Path::new("//server/share/x")).to_string(), r"\\server\share\x");
+    }
+
+    #[test]
+    fn forward_slash_folders_parse() {
+        let dir = std::env::temp_dir().join(format!("gezik-fwd-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fwd = PathBuf::from(dir.to_string_lossy().replace('\\', "/"));
+        let result = count_items(&crate::MenuTarget::Item(fwd));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(result.unwrap() > 3);
+    }
 
     #[test]
     fn shell_menus_have_entries() {
