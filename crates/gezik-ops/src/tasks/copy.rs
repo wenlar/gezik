@@ -578,4 +578,75 @@ mod tests {
         assert_eq!(std::fs::read_dir(dst.join("a")).unwrap().count(), 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    /// Undo, redo, undo of a copy with folders, many times: the folders made on the way come
+    /// back before what was copied into them, and the last undo leaves nothing behind.
+    #[test]
+    fn undo_redo_undo_of_a_copy_with_folders_leaves_nothing() {
+        let dir = test_dir("copy-with-folders-redo");
+        write(&dir.join("src/a/b/x.txt"), "x");
+        write(&dir.join("src/a/b/y.txt"), "y");
+        write(&dir.join("src/a/z.txt"), "z");
+        let dst = dir.join("dst");
+        let items = vec![
+            (dir.join("src/a/b/x.txt"), PathBuf::from("a").join("b").join("x.txt")),
+            (dir.join("src/a/b/y.txt"), PathBuf::from("a").join("b").join("y.txt")),
+            (dir.join("src/a/z.txt"), PathBuf::from("a").join("z.txt")),
+        ];
+        let engine = engine();
+        for round in 0..25 {
+            let (report, _) =
+                finish(&engine, engine.submit(Box::new(CopyTask::with_folders(items.clone(), &dst))), no_conflicts);
+            assert!(report.failures.is_empty(), "{round}: {:?}", report.failures);
+            let (undo, _) = finish(&engine, engine.undo().unwrap(), no_conflicts);
+            assert!(undo.failures.is_empty(), "{round}: {:?}", undo.failures);
+            assert!(!dst.exists(), "{round}: the first undo");
+            let (redo, _) = finish(&engine, engine.redo().unwrap(), no_conflicts);
+            assert!(redo.failures.is_empty(), "{round}: {:?}", redo.failures);
+            assert_eq!(read(&dst.join("a/b/x.txt")), "x");
+            assert_eq!(read(&dst.join("a/z.txt")), "z");
+            let (undo, _) = finish(&engine, engine.undo().unwrap(), no_conflicts);
+            assert!(undo.failures.is_empty(), "{round}: {:?}", undo.failures);
+            assert_eq!(undo.skipped_changed, 0, "{round}");
+            assert!(!dst.exists(), "{round}: nothing is left behind");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The engine's guard knows the same file by what it is, not by how it is spelled.
+    #[cfg(windows)]
+    #[test]
+    fn the_engine_never_replaces_an_item_with_itself_spelled_otherwise() {
+        let dir = test_dir("copy-replace-itself-spelled");
+        write(&dir.join("f/x.txt"), "x");
+        let x = dir.join("f").join("x.txt");
+        let junction = dir.join("j");
+        let made = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(&junction)
+            .arg(dir.join("f"))
+            .output()
+            .unwrap();
+        assert!(made.status.success(), "{made:?}");
+        let prefixed = PathBuf::from(format!(r"\\?\{}", x.display()));
+        let engine = engine();
+        for target in [prefixed, junction.join("x.txt")] {
+            for preset in [Some(Decision::Replace), None] {
+                let task = CopyTask {
+                    pairs: vec![(x.clone(), target.clone())],
+                    presets: vec![preset],
+                    dir: Some(dir.clone()),
+                    new: None,
+                    parents: Vec::new(),
+                    refused: Vec::new(),
+                };
+                let (report, _) = finish(&engine, engine.submit(Box::new(task)), |c| vec![Decision::Replace; c.len()]);
+                assert!(report.failures.is_empty(), "{target:?}: {:?}", report.failures);
+                assert_eq!(read(&x), "x", "{target:?}: still in its place, not in the trash");
+            }
+        }
+        assert_eq!(std::fs::read_dir(dir.join("f")).unwrap().count(), 1, "nothing else was made");
+        std::fs::remove_dir(&junction).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

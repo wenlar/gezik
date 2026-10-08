@@ -16,10 +16,14 @@ use std::time::SystemTime;
 pub use describe::describe;
 pub use gezik_core::ops::threads::DiskKind;
 #[cfg(unix)]
+use unix::entry_id;
+#[cfg(unix)]
 pub use unix::{
     clear_hidden, copy_file, delete, device_of, drive_facts, drive_root, free_space, is_hidden_attr, is_network,
     mapped_remote, move_entry, open_regular, read_dir_items, restore, set_hidden, trash,
 };
+#[cfg(windows)]
+use windows::entry_id;
 #[cfg(windows)]
 pub use windows::{
     clear_hidden, copy_file, delete, device_of, drive_facts, drive_root, free_space, is_hidden_attr, is_network,
@@ -96,6 +100,15 @@ pub fn is_disk_full(err: &io::Error) -> bool {
     err.kind() == io::ErrorKind::StorageFull || err.raw_os_error().is_some_and(|code| DISK_FULL_CODES.contains(&code))
 }
 
+/// Whether `a` and `b` name the same entry on disk, however they are spelled (`\\?\`, short
+/// 8.3 names, a junction, a symbolic link or `subst` drive on the way, a mapped drive and its
+/// share): the same volume and file id (Windows), device and inode (Unix). The last part
+/// itself is not followed: a link and what it points to are two entries. `None` when either
+/// cannot be read (missing, no access, a file system without ids).
+pub fn same_entry(a: &Path, b: &Path) -> Option<bool> {
+    Some(entry_id(a).ok()? == entry_id(b).ok()?)
+}
+
 /// `path` or its nearest ancestor that exists.
 pub fn nearest_existing(path: &Path) -> Option<PathBuf> {
     path.ancestors().find(|p| std::fs::symlink_metadata(p).is_ok()).map(Path::to_path_buf)
@@ -117,6 +130,45 @@ pub(crate) fn test_dir(name: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn same_entry_sees_through_spellings() {
+        let dir = test_dir("same-entry");
+        std::fs::write(dir.join("x.txt"), "x").unwrap();
+        std::fs::write(dir.join("y.txt"), "y").unwrap();
+        std::fs::create_dir(dir.join("sub")).unwrap();
+        let x = dir.join("x.txt");
+        assert_eq!(same_entry(&x, &x), Some(true));
+        assert_eq!(same_entry(&x, &dir.join("sub").join("..").join("x.txt")), Some(true));
+        assert_eq!(same_entry(&x, &dir.join("y.txt")), Some(false));
+        assert_eq!(same_entry(&x, &dir.join("missing.txt")), None);
+        #[cfg(windows)]
+        {
+            let prefixed = PathBuf::from(format!(r"\\?\{}", x.display()));
+            assert_eq!(same_entry(&x, &prefixed), Some(true));
+            // A junction to the folder: another spelling of the same file.
+            let junction = dir.parent().unwrap().join(format!("gezik-fs-same-entry-j-{}", std::process::id()));
+            let _ = std::fs::remove_dir(&junction);
+            let made = std::process::Command::new("cmd")
+                .args(["/c", "mklink", "/J"])
+                .arg(&junction)
+                .arg(&dir)
+                .output()
+                .unwrap();
+            assert!(made.status.success(), "{made:?}");
+            assert_eq!(same_entry(&x, &junction.join("x.txt")), Some(true));
+            assert_eq!(same_entry(&dir.join("y.txt"), &junction.join("x.txt")), Some(false));
+            std::fs::remove_dir(&junction).unwrap();
+        }
+        #[cfg(unix)]
+        {
+            let link = dir.join("link");
+            std::os::unix::fs::symlink(&dir, &link).unwrap();
+            assert_eq!(same_entry(&x, &link.join("x.txt")), Some(true));
+            assert_eq!(same_entry(&dir, &link), Some(false), "the link itself is its own entry");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn folder_items_carry_what_the_read_gave() {

@@ -177,6 +177,31 @@ fn normalize_absolute(wide: &[u16]) -> Option<Vec<u16>> {
     Some(out)
 }
 
+/// The entry's volume serial and file index (the last part not followed, the folders on the
+/// way are), for `same_entry`.
+pub(super) fn entry_id(path: &Path) -> io::Result<(u32, u64)> {
+    use windows::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, FILE_READ_ATTRIBUTES, GetFileInformationByHandle,
+    };
+    let handle = unsafe {
+        CreateFileW(
+            &verbatim(path),
+            FILE_READ_ATTRIBUTES.0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            None,
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+            None,
+        )
+    }
+    .map_err(io_error)?;
+    let mut info = BY_HANDLE_FILE_INFORMATION::default();
+    let read = unsafe { GetFileInformationByHandle(handle, &mut info) };
+    let _ = unsafe { CloseHandle(handle) };
+    read.map_err(io_error)?;
+    Ok((info.dwVolumeSerialNumber, (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow)))
+}
+
 pub(crate) fn verbatim(path: &Path) -> HSTRING {
     let wide: Vec<u16> = path.as_os_str().encode_wide().collect();
     let wide = if let Some(normal) = normalize_absolute(&wide) {

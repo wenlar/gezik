@@ -8,6 +8,12 @@ use std::path::{Path, PathBuf};
 
 use super::{DiskKind, DriveFacts, cancelled, nearest_existing};
 
+/// The entry's device and inode (the last part not followed), for `same_entry`.
+pub(super) fn entry_id(path: &Path) -> io::Result<(u64, u64)> {
+    let meta = std::fs::symlink_metadata(path)?;
+    Ok((meta.dev(), meta.ino()))
+}
+
 pub fn copy_file(from: &Path, to: &Path, size: u64, progress: &mut dyn FnMut(u64) -> bool) -> io::Result<()> {
     let meta = std::fs::symlink_metadata(from)?;
     if meta.file_type().is_symlink() {

@@ -3,6 +3,7 @@
 use std::io;
 use std::path::PathBuf;
 
+use gezik_core::ops::paths::{is_within, same_path};
 use gezik_platform::fs;
 
 use super::what;
@@ -41,14 +42,20 @@ impl Task for RestoreTask {
     }
 
     fn plan(&self, sink: &mut dyn ScanSink) {
-        for (root, (trashed, original)) in self.pairs.iter().enumerate() {
+        // A folder that comes back with items inside it (a folder made on the way, and what was
+        // copied into it) comes back first, before any of them: restoring one of them makes
+        // the folders above it, and the folder itself then could not come back.
+        let mut order: Vec<usize> = (0..self.pairs.len()).collect();
+        order.sort_by_key(|&i| self.pairs[i].1.components().count());
+        let holds = |dir: &PathBuf| self.pairs.iter().any(|(_, other)| is_within(other, dir) && !same_path(other, dir));
+        for root in order {
+            let (trashed, original) = &self.pairs[root];
             match std::fs::symlink_metadata(trashed) {
                 Ok(meta) => {
-                    let item = PlanItem::new(Stage::Parallel, facts_of(&meta))
-                        .source(trashed)
-                        .target(original)
-                        .checked()
-                        .top(root);
+                    // Before items run as they are planned, outer ones first.
+                    let stage = if holds(original) { Stage::Before } else { Stage::Parallel };
+                    let item =
+                        PlanItem::new(stage, facts_of(&meta)).source(trashed).target(original).checked().top(root);
                     if !sink.item(item) {
                         return;
                     }
@@ -85,6 +92,34 @@ mod tests {
         assert_eq!(read(&original), "newer");
         assert_eq!(read(&dir.join("x (2).txt")), "old");
         assert_eq!(report.results, [dir.join("x (2).txt")]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_folder_comes_back_before_what_was_inside_it() {
+        let dir = test_dir("restore-order");
+        let bin = dir.join("bin");
+        write(&bin.join("1"), "x");
+        std::fs::create_dir_all(bin.join("2")).unwrap();
+        std::fs::create_dir_all(bin.join("3/b")).unwrap();
+        let dst = dir.join("dst");
+        let pairs = vec![
+            (bin.join("1"), dst.join("a/b/x.txt")),
+            (bin.join("2"), dst.join("a/b")),
+            (bin.join("3"), dst.join("a")),
+        ];
+        let mut sink = crate::testing::CollectSink::default();
+        RestoreTask::new(pairs.clone()).plan(&mut sink);
+        let planned: Vec<(PathBuf, Stage)> =
+            sink.items.iter().map(|item| (item.target.clone().unwrap(), item.stage)).collect();
+        assert_eq!(
+            planned,
+            [
+                (dst.join("a"), Stage::Before),
+                (dst.join("a/b"), Stage::Before),
+                (dst.join("a/b/x.txt"), Stage::Parallel)
+            ]
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

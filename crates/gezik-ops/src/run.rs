@@ -291,9 +291,12 @@ impl Sink<'_> {
     }
 }
 
-/// Whether `item`'s target is its own source (a copy pasted back where it came from).
+/// Whether `item`'s target is its own source (a copy pasted back where it came from), however
+/// the two are spelled: the same text, or the same entry on disk (`\\?\`, 8.3 names, a
+/// junction or link on the way, `subst`, a mapped drive and its share).
 fn onto_itself(item: &PlanItem) -> bool {
-    matches!((&item.source, &item.target), (Some(source), Some(target)) if same_path(source, target))
+    let (Some(source), Some(target)) = (&item.source, &item.target) else { return false };
+    same_path(source, target) || fs::same_entry(source, target) == Some(true)
 }
 
 /// Moves an existing target out of the way for "Replace": to the trash if its drive has one.
