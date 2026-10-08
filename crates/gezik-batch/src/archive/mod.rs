@@ -217,7 +217,7 @@ enum Stop {
     Note(IoError),
 }
 
-fn cancelled() -> IoError {
+pub(crate) fn cancelled() -> IoError {
     IoError::new(ErrorKind::Interrupted, "cancelled")
 }
 

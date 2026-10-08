@@ -17,6 +17,7 @@ mod images_pdf;
 mod pdf;
 mod place;
 
+use crate::archive::cancelled;
 use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -127,10 +128,6 @@ fn stem_of(archive: &Path) -> String {
 
 fn file_name(path: &Path) -> String {
     path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.display().to_string())
-}
-
-fn cancelled() -> io::Error {
-    io::Error::new(io::ErrorKind::Interrupted, "cancelled")
 }
 
 /// `rapor.pdf`, or `3 items`.
