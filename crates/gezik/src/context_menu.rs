@@ -115,6 +115,25 @@ pub fn items(place: Place, native_shell: bool) -> Vec<(u32, &'static str)> {
     out
 }
 
+/// 1550-1555: the results' header menu shows or hides the columns in `ColumnKey::RESULTS`
+/// order; 1556 resets them (sapma 7).
+pub const RESULT_COLUMN_FIRST: u32 = 1550;
+pub const RESULT_COLUMNS_RESET: u32 = 1556;
+
+/// The results' column header menu.
+pub fn result_header_items(columns: &[ColumnState]) -> Vec<(u32, String)> {
+    let mut out: Vec<(u32, String)> = ColumnKey::RESULTS
+        .iter()
+        .enumerate()
+        .map(|(i, key)| {
+            let shown = columns.iter().any(|c| c.key == *key && c.visible);
+            (RESULT_COLUMN_FIRST + i as u32, format!("{} {}", if shown { "Hide" } else { "Show" }, key.title()))
+        })
+        .collect();
+    out.push((RESULT_COLUMNS_RESET, "Reset columns".to_owned()));
+    out
+}
+
 /// Header menu: 20-23 show/hide the columns in `ColumnKey::ALL` order.
 pub const TOGGLE_COLUMN_FIRST: u32 = 20;
 pub const RESET_COLUMNS: u32 = 24;
@@ -908,7 +927,11 @@ impl Menus {
     /// Right-click on the column header, at window position `x`, `y`.
     pub fn header(&self, x: f32, y: f32) {
         *self.subject.borrow_mut() = Some(Subject::Header);
-        self.open_slint(&header_items(&self.view.columns()), Anchor::point(x, y));
+        if self.view.shows_results() {
+            self.open_slint(&result_header_items(&self.view.result_columns()), Anchor::point(x, y));
+        } else {
+            self.open_slint(&header_items(&self.view.columns()), Anchor::point(x, y));
+        }
     }
 
     /// The View button's menu, under it.
@@ -1297,6 +1320,10 @@ impl Menus {
                 }
             }
             (RESET_COLUMNS, Subject::Header) => self.view.reset_columns(),
+            (id, Subject::Header) if (RESULT_COLUMN_FIRST..RESULT_COLUMN_FIRST + 6).contains(&id) => {
+                self.view.toggle_column(ColumnKey::RESULTS[(id - RESULT_COLUMN_FIRST) as usize]);
+            }
+            (RESULT_COLUMNS_RESET, Subject::Header) => self.view.reset_columns(),
             (VIEW_LIST, Subject::View) => self.view.set_mode(ViewMode::List),
             (VIEW_GRID, Subject::View) => self.view.set_mode(ViewMode::Grid),
             (GRID_SMALL, Subject::View) => self.view.set_grid_size(GridSize::Small),
@@ -1534,6 +1561,16 @@ pub fn menu_title(title: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_results_header_menu_has_its_own_ids() {
+        let items = result_header_items(&gezik_core::view::default_result_columns());
+        let ids: Vec<u32> = items.iter().map(|(id, _)| *id).collect();
+        assert_eq!(ids, [1550, 1551, 1552, 1553, 1554, 1555, RESULT_COLUMNS_RESET]);
+        assert_eq!(items[0].1, "Hide Folder");
+        assert_eq!(items[3].1, "Show Created");
+        assert!(ids.iter().all(|id| (1500..1600).contains(id)), "8a's range");
+    }
 
     #[test]
     fn gezik_menus_list_the_submenus_among_the_items() {

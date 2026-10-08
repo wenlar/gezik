@@ -349,7 +349,9 @@ export component AppWindow inherits Window {
     in-out property <length> col-created;
     in-out property <length> col-type;
     in-out property <length> col-size;
-    // The sort column (0 Name, 1-4 Modified, Created, Type, Size) and direction.
+    in-out property <length> col-folder;
+    in-out property <length> col-match;
+    // The sort column (0 Name, 1-4 Modified, Created, Type, Size, 5 Folder, 6 Match) and direction.
     in property <int> sort-column;
     in property <bool> sort-desc;
     callback header-clicked(int);
@@ -955,6 +957,8 @@ export component AppWindow inherits Window {
                         rename-generation: root.rename-generation;
                         rename-has-focus <=> root.rename-field-focused;
                         col-size <=> root.col-size;
+                        col-folder <=> root.col-folder;
+                        col-match <=> root.col-match;
                         sort-column: root.sort-column;
                         sort-desc: root.sort-desc;
                         header-clicked(i) => { root.header-clicked(i); }

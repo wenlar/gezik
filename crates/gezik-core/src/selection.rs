@@ -79,6 +79,15 @@ impl Selection {
         self
     }
 
+    /// Rows added at the end (a search's next batch): unselected; the focus stays.
+    pub fn grow(&mut self, len: usize) {
+        if len <= self.len {
+            return;
+        }
+        self.bits.resize(len.div_ceil(64), 0);
+        self.len = len;
+    }
+
     pub fn len(&self) -> usize {
         self.len
     }
@@ -355,6 +364,18 @@ impl PendingPress {
 #[allow(clippy::single_range_in_vec_init)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn growing_adds_unselected_rows() {
+        let mut s = Selection::from_indices(3, [2], Some(2));
+        s.grow(130);
+        assert_eq!((s.len(), s.count(), s.focus()), (130, 1, Some(2)));
+        assert!(!s.is_selected(129));
+        s.select_all();
+        assert_eq!(s.count(), 130);
+        s.grow(10);
+        assert_eq!(s.len(), 130, "never shrinks");
+    }
 
     fn selected(s: &Selection) -> Vec<usize> {
         s.iter().collect()

@@ -159,6 +159,33 @@ impl ResultSet {
         }
     }
 
+    /// Adds rows `rows` of `from` (the whole set this one is a subset of, grown since), with the
+    /// folders it got meanwhile.
+    pub fn extend_rows(&mut self, from: &ResultSet, rows: &[usize]) {
+        if from.folders.len() > self.folders.len() {
+            self.folders.extend_from_slice(&from.folders[self.folders.len()..]);
+        }
+        for &i in rows {
+            let (Some(entry), Some(&parent)) = (from.entries.get(i), from.parent.get(i)) else { continue };
+            self.entries.push(entry.clone());
+            self.parent.push(parent);
+            if let Some(matches) = &mut self.matches {
+                matches.push(from.found(i).cloned());
+            }
+        }
+    }
+
+    /// Where `paths` are among the entries, ascending: by name first, then the whole path (no
+    /// path is built for an entry whose name is none of theirs).
+    pub fn rows_of(&self, paths: &[PathBuf]) -> Vec<usize> {
+        let names: std::collections::HashSet<&std::ffi::OsStr> = paths.iter().filter_map(|p| p.file_name()).collect();
+        let wanted: std::collections::HashSet<&Path> = paths.iter().map(PathBuf::as_path).collect();
+        (0..self.entries.len())
+            .filter(|&i| names.contains(std::ffi::OsStr::new(&self.entries[i].name)))
+            .filter(|&i| self.path_at(i).is_some_and(|path| wanted.contains(path.as_path())))
+            .collect()
+    }
+
     /// Takes entries `rows` (ascending) out.
     pub fn remove(&mut self, rows: &[usize]) {
         let mut gone = rows.iter().copied().peekable();
@@ -350,6 +377,31 @@ mod tests {
             Some(PathBuf::from("/x").display().to_string())
         );
         assert_eq!(folder_text(&root, Path::new("/elsewhere/q")), None);
+    }
+
+    #[test]
+    fn a_subset_takes_new_rows_and_folders() {
+        let mut full = sample();
+        let mut shown = full.subset(&[2]);
+        full.append(Batch {
+            folders: vec!["c".into()],
+            entries: vec![entry("n.txt")],
+            parent: vec![2],
+            matches: vec![Some((9, "n".into()))],
+        });
+        shown.extend_rows(&full, &[3]);
+        assert_eq!(shown.len(), 2);
+        assert_eq!(shown.key_at(1), Some(format!("c{SEP}n.txt")));
+        assert_eq!(shown.found(1).map(|f| f.0), Some(9));
+    }
+
+    #[test]
+    fn rows_are_found_by_their_paths() {
+        let set = sample();
+        let second = PathBuf::from("/w").join(format!("a{SEP}b")).join("x.txt");
+        assert_eq!(set.rows_of(std::slice::from_ref(&second)), [2], "not the other x.txt");
+        assert_eq!(set.rows_of(&[PathBuf::from("/w").join("x.txt"), second]), [0, 2]);
+        assert!(set.rows_of(&[PathBuf::from("/w/none")]).is_empty());
     }
 
     #[test]

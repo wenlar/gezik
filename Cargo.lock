@@ -1733,6 +1733,7 @@ dependencies = [
  "gezik-core",
  "gezik-ops",
  "gezik-platform",
+ "gezik-search",
  "i-slint-core",
  "image",
  "notify",

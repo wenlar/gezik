@@ -6,11 +6,13 @@ mod model;
 
 pub use listing::Listing;
 
+use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Duration;
 
 use gezik_config::settings::ViewDefaults;
@@ -29,11 +31,12 @@ use gezik_core::view::{
 };
 use gezik_core::view::{DateFormat, ViewOptions};
 use gezik_core::view_memory::ViewMemory;
+use gezik_search::results::{Batch, ResultSet};
 use slint::{ComponentHandle, ModelRc};
 
 use crate::media::{Media, Ready};
 use crate::{AppWindow, Theme};
-use listing::{filtered_listing, name_taken};
+use listing::{filtered_listing, filtered_results, name_taken};
 use model::{ItemsModel, ViewData};
 
 /// How long after showing a listing (or a far jump) its scroll offset is applied again:
@@ -43,6 +46,18 @@ pub const SCROLL_RESTORE_DELAY: Duration = Duration::from_millis(50);
 
 /// At most this many selected names are kept per history entry; beyond, only the focus.
 const MAX_REMEMBERED: usize = 1000;
+
+/// views.toml's key for the search results' and the flat view's view (spec 4.4).
+pub const RESULTS_KEY: &str = "<results>";
+
+/// The sort a click on header `column` gives (0 Name, 1-4, 5 Folder); Match (6) and anything
+/// else none.
+pub fn header_sort(column: i32) -> Option<SortKey> {
+    match column {
+        0 => Some(SortKey::Name),
+        i => ColumnKey::RESULTS.into_iter().find(|k| k.index() == i && *k != ColumnKey::Match).map(ColumnKey::sort_key),
+    }
+}
 
 type Listener = Rc<dyn Fn()>;
 
@@ -83,6 +98,14 @@ struct Inner {
     /// A `views.toml` write is scheduled.
     save_pending: Cell<bool>,
     columns: RefCell<Vec<ColumnState>>,
+    /// The search results' columns (sapma 6).
+    result_columns: RefCell<Vec<ColumnState>>,
+    /// The status bar while results show and nothing is selected ("Searching… 1,234 found").
+    results_status: RefCell<Option<String>>,
+    /// A search still adds batches: sorting waits for its end (sapma 4).
+    searching: Cell<bool>,
+    /// Bumped whenever the results change: a background sort of older results is dropped.
+    results_version: Cell<u64>,
     media: Media,
     /// A re-sort by type is scheduled (type names arrive one by one).
     resort_pending: Cell<bool>,
@@ -168,6 +191,10 @@ impl View {
             folder: RefCell::new(None),
             save_pending: Cell::new(false),
             columns: RefCell::new(default_columns()),
+            result_columns: RefCell::new(gezik_core::view::default_result_columns()),
+            results_status: RefCell::new(None),
+            searching: Cell::new(false),
+            results_version: Cell::new(0),
             options: Cell::new(ViewOptions::default()),
             minute: slint::Timer::default(),
             plain_press: Cell::new(None),
@@ -263,10 +290,7 @@ impl View {
             },
         };
         let Some((path, is_dir)) = data.listing.path_at(index) else { return Target::Nothing };
-        let entry = match &data.listing {
-            Listing::Files(_, entries) => entries.get(index),
-            Listing::Drives(_) => None,
-        };
+        let entry = data.listing.entry(index);
         Target::Entry {
             name: data.listing.name_at(index).unwrap_or_default().to_owned(),
             path,
@@ -287,7 +311,9 @@ impl View {
     /// Shows `listing` with the selection, focus and scroll `state` remembers. `note`, if
     /// any, replaces the item count in the status bar until the selection changes.
     pub fn show(&self, listing: Listing, state: &ViewState, note: Option<String>) {
-        let folder = listing.folder().map(|p| p.display().to_string());
+        let results = matches!(listing, Listing::Results(_));
+        let folder =
+            if results { Some(RESULTS_KEY.to_owned()) } else { listing.folder().map(|p| p.display().to_string()) };
         // Only a reload of the same folder keeps a rename.
         if self.0.renaming.borrow().is_some() && *self.0.rename_folder.borrow() != folder {
             self.end_rename(false);
@@ -296,7 +322,7 @@ impl View {
             folder.as_deref().and_then(|f| self.0.memory.borrow_mut().get(f)).unwrap_or(self.0.defaults.get().view);
         // A reload of the same folder (it changed on disk) keeps the icons and thumbnails asked
         // for: a folder that changes all the time would never get its slow thumbnails.
-        let same_folder = folder.is_some() && *self.0.folder.borrow() == folder;
+        let same_folder = !results && folder.is_some() && *self.0.folder.borrow() == folder;
         *self.0.folder.borrow_mut() = folder;
         self.0.current.set(settings);
         if !same_folder {
@@ -312,7 +338,7 @@ impl View {
         // tab switch). Only folders have one.
         let cleared = self.0.cleared.replace(false);
         let live = same_folder && !cleared;
-        let (full, listing, rows) = match listing {
+        let (full, listing, rows, results_set) = match listing {
             Listing::Files(dir, full) if !dir.as_os_str().is_empty() => {
                 let filter = if live {
                     self.0.filter.borrow_mut().take()
@@ -324,16 +350,25 @@ impl View {
                     None => (Listing::Files(dir, full.clone()), None),
                 };
                 *self.0.filter.borrow_mut() = filter;
-                (full, shown, rows)
+                (full, shown, rows, None)
+            }
+            Listing::Results(set) => {
+                let filter = state.filter.as_deref().map(|text| FilterState::new(text, None));
+                let (shown, rows) = match &filter {
+                    Some(filter) => filtered_results(&set, &filter.pattern),
+                    None => (Listing::Results(set.clone()), None),
+                };
+                *self.0.filter.borrow_mut() = filter;
+                (Rc::default(), shown, rows, Some(set))
             }
             // "This PC", or nothing (a folder that cannot be listed).
             other => {
                 self.0.filter.borrow_mut().take();
                 let full = match &other {
                     Listing::Files(_, full) => full.clone(),
-                    Listing::Drives(_) => Rc::default(),
+                    _ => Rc::default(),
                 };
-                (full, other, None)
+                (full, other, None, None)
             }
         };
         let selection = restore_selection(&listing, state);
@@ -344,10 +379,13 @@ impl View {
             data.listing = listing;
             data.full = full;
             data.rows = rows;
+            data.results = results_set;
             data.selection = selection;
             data.marquee_base = None;
             data.pending = Default::default();
         }
+        self.0.results_status.borrow_mut().take();
+        self.0.results_version.set(self.0.results_version.get() + 1);
         // A refresh must not break a rename: follow the entry, or give up if it is gone.
         let renamed = self.0.renaming.borrow().as_ref().map(|(_, name)| name.clone());
         if let Some(name) = renamed {
@@ -382,10 +420,14 @@ impl View {
             });
         }
         self.update_status();
+        self.sync_columns();
         self.notify_listeners();
         let shown = self.0.on_shown.borrow().clone();
         for f in &shown {
             f();
+        }
+        if results {
+            self.sort_results();
         }
     }
 
@@ -405,26 +447,37 @@ impl View {
     /// In a folder the entries the filter hides count too.
     pub fn has_other_named(&self, name: &str, except: usize) -> bool {
         let data = self.0.data.borrow();
-        if let Listing::Files(..) = data.listing {
-            return name_taken(&data.full, name, data.listing.name_at(except).unwrap_or_default());
+        let same = |other: &str| {
+            if cfg!(any(windows, target_os = "macos")) {
+                other.to_lowercase() == name.to_lowercase()
+            } else {
+                other == name
+            }
+        };
+        match &data.listing {
+            Listing::Files(..) => name_taken(&data.full, name, data.listing.name_at(except).unwrap_or_default()),
+            // Only the results in the same folder are known (spec 4.6): the engine says the rest.
+            Listing::Results(set) => {
+                let folder = set.folder(except);
+                (0..set.len())
+                    .filter(|&i| i != except && set.folder(i) == folder)
+                    .any(|i| set.entry(i).is_some_and(|e| same(&e.name)))
+            }
+            Listing::Drives(_) => {
+                (0..data.listing.len()).filter(|&i| i != except).any(|i| data.listing.name_at(i).is_some_and(same))
+            }
         }
-        (0..data.listing.len()).filter(|&i| i != except).any(|i| {
-            data.listing.name_at(i).is_some_and(|other| {
-                if cfg!(any(windows, target_os = "macos")) {
-                    other.to_lowercase() == name.to_lowercase()
-                } else {
-                    other == name
-                }
-            })
-        })
     }
 
     /// The names of every entry in the folder, the ones the filter hides too ("This PC": its
     /// drives).
     pub fn all_names(&self) -> Vec<String> {
         let data = self.0.data.borrow();
-        if let Listing::Files(..) = data.listing {
-            return data.full.iter().map(|e| e.name.clone()).collect();
+        match data.listing {
+            Listing::Files(..) => return data.full.iter().map(|e| e.name.clone()).collect(),
+            // Batch rename reads the folders itself in the results (Task 8).
+            Listing::Results(_) => return Vec::new(),
+            Listing::Drives(_) => {}
         }
         (0..data.listing.len()).filter_map(|i| data.listing.name_at(i).map(str::to_owned)).collect()
     }
@@ -433,7 +486,7 @@ impl View {
     pub fn begin_rename(&self, index: usize) -> bool {
         let (name, is_dir) = {
             let data = self.0.data.borrow();
-            if !matches!(data.listing, Listing::Files(..)) {
+            if !matches!(data.listing, Listing::Files(..) | Listing::Results(_)) {
                 return false;
             }
             let Some(name) = data.listing.name_at(index) else { return false };
@@ -514,6 +567,7 @@ impl View {
             data.listing = Listing::default();
             data.full = Rc::default();
             data.rows = None;
+            data.results = None;
             data.selection = Selection::new(0);
             data.marquee_base = None;
             data.pending = Default::default();
@@ -523,6 +577,8 @@ impl View {
         self.0.note.borrow_mut().take();
         self.0.filter.borrow_mut().take();
         self.0.cleared.set(true);
+        self.0.searching.set(false);
+        self.0.results_status.borrow_mut().take();
         if let Some(window) = self.0.window.upgrade() {
             self.sync_focus(&window);
             window.set_list_scroll(0.0);
@@ -538,7 +594,7 @@ impl View {
 
     fn capture_capped(&self, max: usize) -> ViewState {
         let data = self.0.data.borrow();
-        let name = |i: usize| data.listing.name_at(i).map(str::to_owned);
+        let name = |i: usize| data.listing.key_at(i).map(Cow::into_owned);
         let selected =
             if data.selection.count() > max { Vec::new() } else { data.selection.iter().filter_map(name).collect() };
         let scroll = self.0.window.upgrade().map_or(0.0, |w| w.get_list_scroll());
@@ -560,11 +616,12 @@ impl View {
     /// in "This PC".
     pub fn set_filter(&self, text: Option<&str>) {
         let Some(window) = self.0.window.upgrade() else { return };
+        let results = self.0.data.borrow().results.clone();
         let dir = match &self.0.data.borrow().listing {
             Listing::Files(dir, _) => dir.clone(),
-            Listing::Drives(_) => PathBuf::new(),
+            _ => PathBuf::new(),
         };
-        if dir.as_os_str().is_empty() {
+        if dir.as_os_str().is_empty() && results.is_none() {
             // "This PC" and the empty listing: no filter.
             self.0.filter.borrow_mut().take();
             return self.sync_filter_bar(&window);
@@ -582,18 +639,22 @@ impl View {
                 self.end_rename(false);
             }
             let full = self.0.data.borrow().full.clone();
-            let (shown, rows) = filtered_listing(&dir, &full, &new_pattern);
+            let full_len = results.as_ref().map_or(full.len(), |set| set.len());
+            let (shown, rows) = match &results {
+                Some(set) => filtered_results(set, &new_pattern),
+                None => filtered_listing(&dir, &full, &new_pattern),
+            };
             // What was selected and still shows stays selected, carried by position through
             // the full list (no names: Ctrl+A in 100k entries, then typing, stays fast). Closing
             // keeps the focused entry; a new pattern starts at the first entry it shows.
             let selection = {
                 let data = self.0.data.borrow();
                 if closing {
-                    carry(&data.selection, data.rows.as_deref(), full.len(), None)
+                    carry(&data.selection, data.rows.as_deref(), full_len, None)
                 } else if data.selection.count() == 0 {
                     Selection::new(shown.len()).focused_at(Some(0))
                 } else {
-                    carry(&data.selection, data.rows.as_deref(), full.len(), rows.as_deref()).focused_at(Some(0))
+                    carry(&data.selection, data.rows.as_deref(), full_len, rows.as_deref()).focused_at(Some(0))
                 }
             };
             {
@@ -628,7 +689,7 @@ impl View {
             match filter.as_ref() {
                 Some(f) => (
                     Some(f.text.clone()),
-                    filter_count_text(data.listing.len(), data.full.len()),
+                    filter_count_text(data.listing.len(), data.results.as_ref().map_or(data.full.len(), |s| s.len())),
                     f.error.clone().unwrap_or_default(),
                 ),
                 None => (None, String::new(), String::new()),
@@ -674,12 +735,14 @@ impl View {
     /// with their paths: what the listing knows of them, without asking the file system.
     pub fn selected_entries(&self) -> Vec<(PathBuf, Entry)> {
         let data = self.0.data.borrow();
-        let Listing::Files(dir, entries) = &data.listing else { return Vec::new() };
+        if matches!(data.listing, Listing::Drives(_)) {
+            return Vec::new();
+        }
         let mut indices: Vec<usize> = data.selection.iter().collect();
         if indices.is_empty() {
             indices.extend(data.selection.focus());
         }
-        indices.into_iter().filter_map(|i| entries.get(i)).map(|e| (dir.join(&e.name), e.clone())).collect()
+        indices.into_iter().filter_map(|i| Some((data.listing.path_at(i)?.0, data.listing.entry(i)?.clone()))).collect()
     }
 
     /// Entry `index` as the list draws it (its icon, for the dragged items).
@@ -977,6 +1040,9 @@ impl View {
     /// folder's own view is forgotten, once the settings writer thread has written it into
     /// settings.toml (a failure is said in the status bar, and nothing changes).
     pub fn apply_to_all(&self) {
+        if self.shows_results() {
+            return self.set_note("Open a folder to apply its view to all folders".to_owned());
+        }
         let view = self.0.current.get();
         let Some(store) = &self.0.store else { return self.applied_to_all(view) };
         store.write_settings(gezik_config::settings_writer::SettingsChange::ViewDefaults(view), move |result| {
@@ -1032,6 +1098,9 @@ impl View {
                     && entries.iter().any(|e| e.is_dir && path.file_name().is_some_and(|n| n == e.name.as_str()))
             }
             Listing::Drives(drives) => drives.iter().any(|d| d.path == path),
+            Listing::Results(set) => {
+                set.rows_of(&[path.to_path_buf()]).into_iter().any(|i| set.entry(i).is_some_and(|e| e.is_dir))
+            }
         }
     }
 
@@ -1040,13 +1109,231 @@ impl View {
         self.0.data.borrow().listing.folder().map(Path::to_path_buf)
     }
 
-    /// The names in this folder on the clipboard as cut (they look faded).
-    pub fn set_cut_names(&self, names: HashSet<String>) {
-        if self.0.data.borrow().cut == names {
+    /// The items on the clipboard as cut (they look faded): by name in a folder, by key in the results.
+    pub fn set_cut(&self, paths: &[PathBuf]) {
+        let keys: HashSet<String> = {
+            let data = self.0.data.borrow();
+            match (&data.listing, &data.results) {
+                (Listing::Results(_), Some(set)) => {
+                    set.rows_of(paths).into_iter().filter_map(|i| set.key_at(i)).collect()
+                }
+                (listing, _) => match listing.folder() {
+                    Some(folder) => crate::operations::result_names(paths, folder).into_iter().collect(),
+                    None => HashSet::new(),
+                },
+            }
+        };
+        if self.0.data.borrow().cut == keys {
             return;
         }
-        self.0.data.borrow_mut().cut = names;
+        self.0.data.borrow_mut().cut = keys;
         self.0.model.notify.reset();
+    }
+
+    /// A search or the flat view shows results.
+    pub fn shows_results(&self) -> bool {
+        self.0.data.borrow().results.is_some()
+    }
+
+    /// The results without the filter.
+    pub fn results(&self) -> Option<Arc<ResultSet>> {
+        self.0.data.borrow().results.clone()
+    }
+
+    /// A search's next batch (spec 4.3): rows added at the end, the filter applied to them; the
+    /// scroll, the selection and the focus stay.
+    #[allow(dead_code, reason = "the search bar and the result operations call it (Tasks 7-8)")]
+    pub fn append_results(&self, batch: Batch) {
+        if batch.is_empty() {
+            return;
+        }
+        let pattern = self.0.filter.borrow().as_ref().map(|f| f.pattern.clone()).unwrap_or_default();
+        let (before, after) = {
+            let mut data = self.0.data.borrow_mut();
+            let ViewData { listing, results, rows, selection, .. } = &mut *data;
+            let Some(full) = results.as_mut() else { return };
+            let before = listing.len();
+            let start = full.len();
+            // Unfiltered, the list shares the set: let go of it, so the append copies nothing.
+            if rows.is_none() {
+                *listing = Listing::default();
+            }
+            Arc::make_mut(full).append(batch);
+            match rows {
+                None => *listing = Listing::Results(full.clone()),
+                Some(rows) => {
+                    let added: Vec<usize> = (start..full.len())
+                        .filter(|&i| full.entry(i).is_some_and(|e| pattern.matches(&e.name)))
+                        .collect();
+                    if let Listing::Results(shown) = listing {
+                        Arc::make_mut(shown).extend_rows(full, &added);
+                    }
+                    rows.extend(added);
+                }
+            }
+            selection.grow(listing.len());
+            (before, listing.len())
+        };
+        self.0.results_version.set(self.0.results_version.get() + 1);
+        if after > before {
+            if self.0.model.per_row() == 1 {
+                self.0.model.notify.row_added(before, after - before);
+            } else {
+                let scroll = self.0.window.upgrade().map_or(0.0, |w| w.get_list_scroll());
+                self.0.model.notify.reset();
+                self.keep_scroll_after_reset(scroll);
+            }
+        }
+        if let Some(window) = self.0.window.upgrade() {
+            self.sync_filter_bar(&window);
+        }
+        self.update_status();
+    }
+
+    /// A search runs (`true`) or ended: at its end the results are sorted (sapma 4).
+    #[allow(dead_code, reason = "the search bar and the result operations call it (Tasks 7-8)")]
+    pub fn set_searching(&self, on: bool) {
+        let was = self.0.searching.replace(on);
+        if was && !on {
+            self.sort_results();
+        }
+    }
+
+    /// The status bar while results show and nothing is selected; `None`: the item count.
+    #[allow(dead_code, reason = "the search bar and the result operations call it (Tasks 7-8)")]
+    pub fn set_results_status(&self, text: Option<String>) {
+        *self.0.results_status.borrow_mut() = text;
+        self.update_status();
+    }
+
+    /// Sorts the results by the current sort on a background thread; the list takes the order
+    /// when it comes, if the results did not change meanwhile.
+    fn sort_results(&self) {
+        let Some(full) = self.results() else { return };
+        if self.0.searching.get() || full.len() < 2 {
+            return;
+        }
+        let version = self.0.results_version.get();
+        let (spec, folders_first) = (self.sort(), self.0.options.get().folders_first);
+        let weak = self.0.window.clone();
+        let spawned = std::thread::Builder::new().name("gezik-sort".into()).spawn(move || {
+            let order = gezik_core::sort::sort_order(
+                full.entries(),
+                spec,
+                folders_first,
+                |e| own_type_name(&e.name, e.is_dir).unwrap_or_else(|| fallback_type_name(&e.name, e.is_dir)),
+                &|i| full.folder(i).unwrap_or(""),
+            );
+            // Let go first: the UI thread then moves the set, no copy.
+            drop(full);
+            let _ = weak.upgrade_in_event_loop(move |_| with_current(|view| view.results_sorted(version, order)));
+        });
+        if spawned.is_err() {
+            eprintln!("gezik: cannot start the sort thread");
+        }
+    }
+
+    fn results_sorted(&self, version: u64, order: Vec<usize>) {
+        if self.0.results_version.get() != version {
+            return;
+        }
+        self.edit_results(move |set| {
+            set.apply_order(&order);
+            order
+        });
+    }
+
+    /// Changes the results with `edit`, which returns where each entry it leaves (but the new
+    /// ones at the end) came from; the filter, the selection (by position) and the scroll follow.
+    fn edit_results(&self, edit: impl FnOnce(&mut ResultSet) -> Vec<usize>) {
+        let scroll = self.0.window.upgrade().map_or(0.0, |w| w.get_list_scroll());
+        let (listing, files, old_rows, selection) = self.take_listing();
+        drop(listing);
+        let Some(mut full) = self.0.data.borrow_mut().results.take() else { return };
+        let full_len = full.len();
+        let from = edit(Arc::make_mut(&mut full));
+        let mut in_full = carry(&selection, old_rows.as_deref(), full_len, Some(&from));
+        in_full.grow(full.len());
+        let pattern = self.0.filter.borrow().as_ref().map(|f| f.pattern.clone()).unwrap_or_default();
+        let (shown, rows) = filtered_results(&full, &pattern);
+        let selection = carry(&in_full, None, full.len(), rows.as_deref());
+        {
+            let mut data = self.0.data.borrow_mut();
+            data.listing = shown;
+            data.full = files;
+            data.results = Some(full);
+            data.rows = rows;
+            data.selection = selection;
+        }
+        self.0.results_version.set(self.0.results_version.get() + 1);
+        self.0.model.notify.reset();
+        if let Some(window) = self.0.window.upgrade() {
+            self.sync_focus(&window);
+            window.set_list_scroll(scroll);
+            self.keep_scroll_after_reset(scroll);
+            self.sync_filter_bar(&window);
+        }
+        self.update_status();
+        self.notify_listeners();
+    }
+
+    /// Takes the rows of `paths` out at once (trashed or deleted: the check after the job
+    /// brings back what stayed, spec 4.7). In a folder, by their names there.
+    #[allow(dead_code, reason = "the search bar and the result operations call it (Tasks 7-8)")]
+    pub fn hide_paths(&self, paths: &[PathBuf]) {
+        let Some(set) = self.results() else {
+            if let Some(folder) = self.folder() {
+                self.hide_names(&crate::operations::result_names(paths, &folder));
+            }
+            return;
+        };
+        let gone = set.rows_of(paths);
+        if gone.is_empty() {
+            return;
+        }
+        self.edit_results(|set| {
+            let kept: Vec<usize> = (0..set.len()).filter(|i| gone.binary_search(i).is_err()).collect();
+            set.remove(&gone);
+            kept
+        });
+    }
+
+    /// A job's effects on the results (spec 4.7): `gone` rows out, `added` ones in at the end.
+    #[allow(dead_code, reason = "the search bar and the result operations call it (Tasks 7-8)")]
+    pub fn results_changed(&self, gone: &[PathBuf], added: Vec<(PathBuf, Entry)>) {
+        let Some(set) = self.results() else { return };
+        let rows = set.rows_of(gone);
+        if rows.is_empty() && added.is_empty() {
+            return;
+        }
+        self.edit_results(|set| {
+            let kept: Vec<usize> = (0..set.len()).filter(|i| rows.binary_search(i).is_err()).collect();
+            set.remove(&rows);
+            for (path, entry) in added {
+                if set.index_of_path(&path).is_none() {
+                    set.push(&path, entry);
+                }
+            }
+            kept
+        });
+    }
+
+    /// The selected results (the focused one if none is) with their paths under the scope
+    /// (every drive's search: under the drive's root), for "Copy with folders".
+    #[allow(dead_code, reason = "the search bar and the result operations call it (Tasks 7-8)")]
+    pub fn selected_relative(&self) -> Vec<(PathBuf, PathBuf)> {
+        let Some(set) = self.results() else { return Vec::new() };
+        self.selected_entries()
+            .into_iter()
+            .filter_map(|(path, _)| {
+                let relative = if set.root().as_os_str().is_empty() {
+                    path.components().skip_while(|c| !matches!(c, std::path::Component::Normal(_))).collect()
+                } else {
+                    path.strip_prefix(set.root()).ok()?.to_path_buf()
+                };
+                Some((path, relative))
+            })
+            .collect()
     }
 
     /// Takes `names` out of the listing at once (trashed or deleted: the reload after the job
@@ -1196,13 +1483,7 @@ impl View {
     /// A click on column header `column` (0 Name, 1-4 `ColumnKey::index`): sorts by it,
     /// ascending; again flips the direction.
     pub fn header_clicked(&self, column: i32) {
-        let key = match column {
-            0 => SortKey::Name,
-            i => match ColumnKey::ALL.into_iter().find(|k| k.index() == i) {
-                Some(k) => k.sort_key(),
-                None => return,
-            },
-        };
+        let Some(key) = header_sort(column) else { return };
         let current = self.sort();
         let dir = if current.key == key { current.dir.flipped() } else { SortDir::Asc };
         self.set_sort(SortSpec { key, dir });
@@ -1217,16 +1498,31 @@ impl View {
         self.sync_columns();
     }
 
+    pub fn result_columns(&self) -> Vec<ColumnState> {
+        self.0.result_columns.borrow().clone()
+    }
+
+    pub fn set_result_columns(&self, columns: Vec<ColumnState>) {
+        *self.0.result_columns.borrow_mut() = gezik_core::view::normalize_result_columns(&columns);
+        self.sync_columns();
+    }
+
+    /// The column list shown: the results' or a folder's.
+    fn active_columns(&self) -> &RefCell<Vec<ColumnState>> {
+        if self.shows_results() { &self.0.result_columns } else { &self.0.columns }
+    }
+
     /// A column edge was dragged: takes the widths from the window.
     pub fn columns_resized(&self) {
         let Some(window) = self.0.window.upgrade() else { return };
-        for column in self.0.columns.borrow_mut().iter_mut().filter(|c| c.visible) {
+        for column in self.active_columns().borrow_mut().iter_mut().filter(|c| c.visible) {
             let width = match column.key {
                 ColumnKey::Modified => window.get_col_modified(),
                 ColumnKey::Created => window.get_col_created(),
                 ColumnKey::Type => window.get_col_type(),
                 ColumnKey::Size => window.get_col_size(),
-                ColumnKey::Folder | ColumnKey::Match => continue,
+                ColumnKey::Folder => window.get_col_folder(),
+                ColumnKey::Match => window.get_col_match(),
             };
             column.width = (width.round().max(0.0) as u32).clamp(MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH);
         }
@@ -1234,25 +1530,34 @@ impl View {
     }
 
     pub fn toggle_column(&self, key: ColumnKey) {
-        if let Some(column) = self.0.columns.borrow_mut().iter_mut().find(|c| c.key == key) {
+        if let Some(column) = self.active_columns().borrow_mut().iter_mut().find(|c| c.key == key) {
             column.visible = !column.visible;
         }
         self.sync_columns();
     }
 
     pub fn reset_columns(&self) {
-        *self.0.columns.borrow_mut() = default_columns();
+        *self.active_columns().borrow_mut() =
+            if self.shows_results() { gezik_core::view::default_result_columns() } else { default_columns() };
         self.sync_columns();
     }
 
     fn sync_columns(&self) {
         let Some(window) = self.0.window.upgrade() else { return };
-        let columns = self.0.columns.borrow();
-        let width = |key: ColumnKey| columns.iter().find(|c| c.key == key && c.visible).map_or(0.0, |c| c.width as f32);
+        let matches = self.results().is_some_and(|set| set.has_matches());
+        let columns = self.active_columns().borrow();
+        let width = |key: ColumnKey| {
+            if key == ColumnKey::Match && !matches {
+                return 0.0;
+            }
+            columns.iter().find(|c| c.key == key && c.visible).map_or(0.0, |c| c.width as f32)
+        };
         window.set_col_modified(width(ColumnKey::Modified));
         window.set_col_created(width(ColumnKey::Created));
         window.set_col_type(width(ColumnKey::Type));
         window.set_col_size(width(ColumnKey::Size));
+        window.set_col_folder(width(ColumnKey::Folder));
+        window.set_col_match(width(ColumnKey::Match));
     }
 
     fn sync_header(&self) {
@@ -1307,6 +1612,9 @@ impl View {
     /// the sort gives); then scrolls the focus into view (`reveal`) or stays at the same scroll
     /// position.
     fn resort(&self, reveal: bool) {
+        if self.shows_results() {
+            return self.sort_results();
+        }
         let scroll = self.0.window.upgrade().map_or(0.0, |w| w.get_list_scroll());
         let (listing, full, old_rows, selection) = self.take_listing();
         // The full list is sorted (no longer shared with the shown one, so not copied), then
@@ -1411,6 +1719,12 @@ impl View {
         if let Some(note) = self.0.note.borrow().clone() {
             window.set_status(note.into());
             return;
+        }
+        let standing = self.0.results_status.borrow().clone();
+        if self.0.data.borrow().selection.count() == 0
+            && let Some(text) = standing
+        {
+            return window.set_status(text.into());
         }
         let data = self.0.data.borrow();
         let mut size = None;
@@ -1571,6 +1885,29 @@ pub fn status_text(count: usize, selected: usize, selected_size: Option<u64>) ->
 mod tests {
     use super::*;
     use listing::files;
+
+    #[test]
+    fn header_clicks_sort_by_folder_but_not_by_match() {
+        assert_eq!(header_sort(0), Some(SortKey::Name));
+        assert_eq!(header_sort(4), Some(SortKey::Size));
+        assert_eq!(header_sort(5), Some(SortKey::Folder));
+        assert_eq!(header_sort(6), None, "Match does not sort");
+        assert_eq!(header_sort(9), None);
+    }
+
+    #[test]
+    fn hiding_one_result_keeps_its_namesake() {
+        let Listing::Results(full) = listing::results(&[("a", "x.txt"), ("b", "x.txt")]) else { unreachable!() };
+        let gone = full.rows_of(&[PathBuf::from("/w").join("a").join("x.txt")]);
+        assert_eq!(gone, [0]);
+        let kept: Vec<usize> = (0..full.len()).filter(|i| !gone.contains(i)).collect();
+        let selection = carry(&Selection::from_indices(2, [0, 1], Some(1)), None, 2, Some(&kept));
+        assert_eq!(
+            (selection.iter().collect::<Vec<_>>(), selection.focus()),
+            (vec![0], Some(0)),
+            "b/x.txt is row 0 now"
+        );
+    }
 
     #[test]
     fn the_lines_on_screen_are_redrawn() {

@@ -564,6 +564,9 @@ fn main() -> Result<(), slint::PlatformError> {
     view.set_defaults(initial_settings.view);
     view.set_options(view_options::current());
     view.set_columns(saved_state.columns.clone().unwrap_or_else(gezik_core::view::default_columns));
+    view.set_result_columns(
+        saved_state.result_columns.clone().unwrap_or_else(gezik_core::view::default_result_columns),
+    );
     window.set_mono_font(
         if cfg!(windows) {
             "Consolas"
@@ -698,6 +701,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 store.update_state(|state| {
                     window_state::capture_into(&window, state);
                     state.columns = Some(view.columns());
+                    state.result_columns = Some(view.result_columns());
                     state.preview_open = preview.is_pane_open();
                     state.preview_width = Some(window.get_preview_width().round().clamp(200.0, 600.0) as u32);
                     state.operations_collapsed = ops.collapsed();

@@ -777,11 +777,7 @@ impl Operations {
 
     /// Fades the cut items of the folder shown.
     fn update_cut(&self) {
-        let names: HashSet<String> = match self.0.view.folder() {
-            Some(folder) => result_names(&self.0.cut.borrow(), &folder).into_iter().collect(),
-            None => HashSet::new(),
-        };
-        self.0.view.set_cut_names(names);
+        self.0.view.set_cut(&self.0.cut.borrow());
     }
 
     /// Delete / Shift+Delete on the selection.
