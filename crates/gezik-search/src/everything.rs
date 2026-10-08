@@ -6,7 +6,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -18,18 +17,14 @@ use gezik_platform::everything::{self as ipc, EverythingError};
 use crate::content::Found;
 use crate::query::Query;
 use crate::results::{Batch, ResultSet, folder_text};
-use crate::run::{BATCH_ITEMS, Event, Running, Summary, send_whole, start_with};
+use crate::run::{BATCH_ITEMS, Event, Summary, send_whole};
 use crate::walk::{Problems, Walk, WalkRules, threads_for};
 
 pub const SEARCH_MATCH_CASE: u32 = 0x0000_0001;
-pub const REQUEST_NAME: u32 = 0x0000_0001;
-pub const REQUEST_PATH: u32 = 0x0000_0002;
 pub const REQUEST_FULL_PATH_AND_NAME: u32 = 0x0000_0004;
-pub const REQUEST_EXTENSION: u32 = 0x0000_0008;
 pub const REQUEST_SIZE: u32 = 0x0000_0010;
 pub const REQUEST_DATE_CREATED: u32 = 0x0000_0020;
 pub const REQUEST_DATE_MODIFIED: u32 = 0x0000_0040;
-pub const REQUEST_DATE_ACCESSED: u32 = 0x0000_0080;
 pub const REQUEST_ATTRIBUTES: u32 = 0x0000_0100;
 pub const ITEM_FOLDER: u32 = 0x1;
 pub const SORT_NAME_ASCENDING: u32 = 1;
@@ -60,19 +55,8 @@ pub struct Item {
     pub attributes: Option<u32>,
 }
 
-/// An `EVERYTHING_IPC_QUERY2` with its search text, from the first item.
-pub fn encode_query2(
-    reply_window: u32,
-    reply_id: u32,
-    search: &str,
-    flags: u32,
-    max_results: u32,
-    request: u32,
-) -> Vec<u8> {
-    encode_query2_at(reply_window, reply_id, search, flags, 0, max_results, request)
-}
-
-/// [`encode_query2`] from item `offset` of the answer (sorted by name, so pages follow on).
+/// An `EVERYTHING_IPC_QUERY2` with its search text, from item `offset` of the answer (sorted
+/// by name, so pages follow on).
 pub fn encode_query2_at(
     reply_window: u32,
     reply_id: u32,
@@ -120,10 +104,13 @@ fn file_time(ticks: u64) -> Option<SystemTime> {
 }
 
 /// The items of an `EVERYTHING_IPC_LIST2` answer (the fields its `request_flags` says it holds,
-/// in bit order; past the attributes nothing is read).
+/// in bit order); an answer with fields [`REQUEST`] does not ask for is not read.
 pub fn decode_list2(bytes: &[u8]) -> Result<Vec<Item>, String> {
     let count = word(bytes, 4)? as usize;
     let request = word(bytes, 12)?;
+    if request & !REQUEST != 0 {
+        return Err("Everything's answer has fields Gezik did not ask for".to_owned());
+    }
     let mut items = Vec::with_capacity(count.min(bytes.len() / 8));
     for k in 0..count {
         let flags = word(bytes, 20 + k * 8)?;
@@ -136,20 +123,14 @@ pub fn decode_list2(bytes: &[u8]) -> Result<Vec<Item>, String> {
             modified: None,
             attributes: None,
         };
-        let (mut name, mut folder) = (String::new(), String::new());
         for bit in (0..9).map(|shift| 1u32 << shift) {
             if request & bit == 0 {
                 continue;
             }
             match bit {
-                REQUEST_NAME | REQUEST_PATH | REQUEST_FULL_PATH_AND_NAME | REQUEST_EXTENSION => {
+                REQUEST_FULL_PATH_AND_NAME => {
                     let (value, next) = text(bytes, at)?;
-                    match bit {
-                        REQUEST_NAME => name = value,
-                        REQUEST_PATH => folder = value,
-                        REQUEST_FULL_PATH_AND_NAME => item.path = value,
-                        _ => {}
-                    }
+                    item.path = value;
                     at = next;
                 }
                 REQUEST_SIZE => {
@@ -164,16 +145,12 @@ pub fn decode_list2(bytes: &[u8]) -> Result<Vec<Item>, String> {
                     item.modified = file_time(quad(bytes, at)?);
                     at += 8;
                 }
-                REQUEST_DATE_ACCESSED => at += 8,
                 REQUEST_ATTRIBUTES => {
                     item.attributes = Some(word(bytes, at)?);
                     at += 4;
                 }
                 _ => {}
             }
-        }
-        if item.path.is_empty() && !name.is_empty() {
-            item.path = if folder.is_empty() { name } else { format!("{}\\{name}", folder.trim_end_matches('\\')) };
         }
         items.push(item);
     }
@@ -311,9 +288,7 @@ pub fn translate_at(spec: &SearchSpec, roots: &[PathBuf], now: SystemTime, utc_o
     match spec.modified {
         DateRange::Any => {}
         DateRange::Today => parts.push(format!("dm:>={}", iso_day(today - 1))),
-        DateRange::ThisYear => {
-            parts.push(format!("dm:>={:04}-12-31", gezik_platform::civil_from_days(today).0 - 1))
-        }
+        DateRange::ThisYear => parts.push(format!("dm:>={:04}-12-31", gezik_platform::civil_from_days(today).0 - 1)),
         DateRange::LastDays(days) => {
             let from = (unix - i64::from(days) * 86_400 + utc_offset).div_euclid(86_400);
             parts.push(format!("dm:>={}", iso_day(from - 1)));
@@ -713,7 +688,10 @@ impl<'a> Reader<'a> {
                     })
                     .collect();
                 // A part that panicked keeps its place: its lines are none, not the next part's.
-                handles.into_iter().flat_map(|(len, handle)| handle.join().unwrap_or_else(|_| vec![None; len])).collect()
+                handles
+                    .into_iter()
+                    .flat_map(|(len, handle)| handle.join().unwrap_or_else(|_| vec![None; len]))
+                    .collect()
             });
             let mut batch = Batch::default();
             for ((path, entry), line) in chunk.iter().zip(lines) {
@@ -752,32 +730,6 @@ impl<'a> Reader<'a> {
             ..Summary::default()
         }));
     }
-}
-
-/// Starts `spec`: through Everything when it can answer (spec 3.6), else the walk, on the same
-/// flag. `on`: `[search] everything = "auto"`.
-pub fn start(
-    spec: SearchSpec,
-    walk: Walk,
-    query: Query,
-    on: bool,
-    sink: impl Fn(Event) + Send + Sync + 'static,
-) -> Running {
-    let running = Running::default();
-    let flag = running.flag();
-    let again = running.clone();
-    let _ = std::thread::Builder::new().name("gezik-search-everything".into()).spawn(move || {
-        let sink = Arc::new(sink);
-        match search(&spec, &walk, &query, on, &flag, &*sink) {
-            Ok(()) => {}
-            Err(Fallback::Cancelled) => sink(Event::Done(Summary { cancelled: true, ..Summary::default() })),
-            Err(_) => {
-                let sink = sink.clone();
-                start_with(walk, query, again, move |event| sink(event));
-            }
-        }
-    });
-    running
 }
 
 #[cfg(test)]
@@ -826,7 +778,7 @@ mod tests {
 
     #[test]
     fn a_query_is_seven_words_and_the_text() {
-        let bytes = encode_query2(0x1234, 77, "a b", SEARCH_MATCH_CASE, 500, REQUEST);
+        let bytes = encode_query2_at(0x1234, 77, "a b", SEARCH_MATCH_CASE, 0, 500, REQUEST);
         let word = |i: usize| u32::from_le_bytes(bytes[i * 4..i * 4 + 4].try_into().unwrap());
         let words: Vec<u32> = (0..7).map(word).collect();
         assert_eq!(words, [0x1234, 77, SEARCH_MATCH_CASE, 0, 500, REQUEST, SORT_NAME_ASCENDING]);
@@ -845,6 +797,8 @@ mod tests {
         assert_eq!(items[0].attributes, Some(0x22));
         assert!(decode_list2(&bytes[..bytes.len() - 3]).is_err(), "cut short");
         assert!(decode_list2(&[1, 2]).is_err());
+        let other = answer(&[(r"D:\Work\a.txt", false, 5)], REQUEST | 0x0000_0080);
+        assert!(decode_list2(&other).is_err(), "a field it does not read (the date accessed)");
     }
 
     fn spec(pattern: &str) -> SearchSpec {
@@ -1043,7 +997,7 @@ mod tests {
         let windows = std::env::var("WINDIR").unwrap_or_else(|_| r"C:\Windows".into());
         let search = format!("\"{windows}\\\" wfn:notepad.exe");
         let bytes = gezik_platform::everything::query(
-            &|window, id| encode_query2(window, id, &search, 0, 100, REQUEST),
+            &|window, id| encode_query2_at(window, id, &search, 0, 0, 100, REQUEST),
             &AtomicBool::new(false),
             Duration::from_secs(5),
         )

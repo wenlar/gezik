@@ -232,33 +232,6 @@ impl ResultSet {
             matches.retain(|_| (keep[index], index += 1).0);
         }
     }
-
-    /// The folder text and the name `path` has here; `None` outside the scope.
-    fn place_of(&self, path: &Path) -> Option<(String, String)> {
-        let name = path.file_name()?.to_string_lossy().into_owned();
-        Some((folder_text(&self.root, path)?, name))
-    }
-
-    /// Adds `path` (under the scope) as a new entry, no matching line; false outside it.
-    pub fn push(&mut self, path: &Path, entry: Entry) -> bool {
-        let Some((folder, _)) = self.place_of(path) else { return false };
-        let parent = match self.folders.iter().position(|f| **f == *folder) {
-            Some(i) => i,
-            None => {
-                self.folders.push(folder.into());
-                self.folders.len() - 1
-            }
-        };
-        self.push_entry(entry, parent as u32);
-        true
-    }
-
-    /// Where `path` is among the entries.
-    pub fn index_of_path(&self, path: &Path) -> Option<usize> {
-        let (folder, name) = self.place_of(path)?;
-        let parent = self.folders.iter().position(|f| **f == *folder)? as u32;
-        (0..self.entries.len()).find(|&i| self.parent[i] == parent && self.entries[i].name == name)
-    }
 }
 
 /// Whether two times are the same; at whole seconds when one has nothing finer (the name
@@ -475,9 +448,9 @@ impl ResultSet {
                 }
                 let inside = every
                     || changed.contains("")
-                    || folder.match_indices(is_separator).any(|(at, _)| {
-                        changed.contains(&folder[..at]) || changed.contains(&folder[..=at])
-                    });
+                    || folder
+                        .match_indices(is_separator)
+                        .any(|(at, _)| changed.contains(&folder[..at]) || changed.contains(&folder[..=at]));
                 if inside { 2 } else { 0 }
             })
             .collect();
@@ -571,13 +544,6 @@ fn read_entry(path: &Path) -> Option<Entry> {
     })
 }
 
-/// What changed for the results after a job (spec 4.7): `set.probe(dirs, paths).verify()`,
-/// gone rows and added paths.
-pub fn verify(set: &ResultSet, dirs: &[PathBuf], paths: &[PathBuf]) -> (Vec<PathBuf>, Vec<(PathBuf, Entry)>) {
-    let verified = set.probe(dirs, paths).verify();
-    (verified.gone, verified.added)
-}
-
 /// The folder text `path`'s entry has under `root` (empty `root`: every drive, the whole
 /// parent); `None` outside it.
 pub fn folder_text(root: &Path, path: &Path) -> Option<String> {
@@ -616,9 +582,46 @@ impl ResultSet {
 }
 
 #[cfg(test)]
+impl ResultSet {
+    /// The folder text and the name `path` has here; `None` outside the scope.
+    fn place_of(&self, path: &Path) -> Option<(String, String)> {
+        let name = path.file_name()?.to_string_lossy().into_owned();
+        Some((folder_text(&self.root, path)?, name))
+    }
+
+    /// Adds `path` (under the scope) as a new entry, no matching line; false outside it.
+    pub fn push(&mut self, path: &Path, entry: Entry) -> bool {
+        let Some((folder, _)) = self.place_of(path) else { return false };
+        let parent = match self.folders.iter().position(|f| **f == *folder) {
+            Some(i) => i,
+            None => {
+                self.folders.push(folder.into());
+                self.folders.len() - 1
+            }
+        };
+        self.push_entry(entry, parent as u32);
+        true
+    }
+
+    /// Where `path` is among the entries.
+    pub fn index_of_path(&self, path: &Path) -> Option<usize> {
+        let (folder, name) = self.place_of(path)?;
+        let parent = self.folders.iter().position(|f| **f == *folder)? as u32;
+        (0..self.entries.len()).find(|&i| self.parent[i] == parent && self.entries[i].name == name)
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::path::MAIN_SEPARATOR as SEP;
+
+    /// What changed for the results after a job (spec 4.7): `set.probe(dirs, paths).verify()`,
+    /// gone rows and added paths.
+    fn verify(set: &ResultSet, dirs: &[PathBuf], paths: &[PathBuf]) -> (Vec<PathBuf>, Vec<(PathBuf, Entry)>) {
+        let verified = set.probe(dirs, paths).verify();
+        (verified.gone, verified.added)
+    }
 
     fn entry(name: &str) -> Entry {
         Entry { name: name.to_owned(), is_dir: false, flags: 0, size: 1, modified: None, created: None }
