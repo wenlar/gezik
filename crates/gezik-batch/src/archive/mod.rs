@@ -233,10 +233,11 @@ fn damaged(error: IoError) -> IoError {
     IoError::new(ErrorKind::InvalidData, format!("the archive is damaged: {error}"))
 }
 
-/// Writes `r` into a new file at `path` (its folders made first) with progress, cancel and
-/// the size limit, then gives it `meta`. A file left unfinished is removed.
+/// Writes `r` into a new file at `path` (under `dest`, its folders made first) with progress,
+/// cancel and the size limit, then gives it `meta`. A file left unfinished is removed.
 fn write_file(
     r: &mut dyn Read,
+    dest: &Path,
     path: &Path,
     declared: Option<u64>,
     meta: &Meta,
@@ -245,7 +246,7 @@ fn write_file(
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(Stop::Skip)?;
     }
-    remove_earlier(path)?;
+    remove_earlier(dest, path)?;
     let mut file = File::create(path).map_err(Stop::Skip)?;
     let result = copy(r, &mut file, declared, cx);
     if result.is_ok()
@@ -263,21 +264,27 @@ fn write_file(
 }
 
 /// Removes a file an earlier entry of the same name wrote (the last one wins), read-only or
-/// hidden as it may be. A folder stays (the file then cannot be made). A file whose name
-/// differs only in case (one file on a case-insensitive disk) is kept and this entry left out.
-fn remove_earlier(path: &Path) -> Result<(), Stop> {
+/// hidden as it may be. A folder stays (the file then cannot be made). A file reached through
+/// a name that differs only in case under `dest` (`Docs/a` for `docs/a`: one file on a
+/// case-insensitive disk) is kept and this entry left out.
+fn remove_earlier(dest: &Path, path: &Path) -> Result<(), Stop> {
     let Ok(metadata) = path.symlink_metadata() else { return Ok(()) };
     if metadata.is_dir() {
         return Ok(());
     }
-    if let (Some(parent), Some(name)) = (path.parent(), path.file_name()) {
+    let mut at = path;
+    while at != dest
+        && let (Some(parent), Some(name)) = (at.parent(), at.file_name())
+        && parent.starts_with(dest)
+    {
         let exact = fs::read_dir(parent).map_err(Stop::Skip)?.flatten().any(|e| e.file_name() == name);
         if !exact {
             return Err(Stop::Note(IoError::new(
                 ErrorKind::AlreadyExists,
-                "a file of the same name in other case was already written",
+                "an item of the same name in other case was already written",
             )));
         }
+        at = parent;
     }
     #[cfg(windows)]
     {
@@ -480,7 +487,7 @@ fn copy_of(dest: &Path, target: &str, path: &Path, meta: &Meta, cx: &dyn Extract
     }
     let mut file = File::open(&source).map_err(Stop::Skip)?;
     let len = file.metadata().map_err(Stop::Skip)?.len();
-    write_file(&mut file, path, Some(len), meta, cx).map(|()| true)
+    write_file(&mut file, dest, path, Some(len), meta, cx).map(|()| true)
 }
 
 /// Seconds since 1970 as a time (before 1970 too); `None` past what the system can hold

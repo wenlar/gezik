@@ -119,7 +119,7 @@ fn entry(
     };
     match kind {
         0o040000 => make_dir(&path).map(|()| true),
-        0o100000 => write_file(data, &path, Some(header.size), &meta, cx).map(|()| true),
+        0o100000 => write_file(data, dest, &path, Some(header.size), &meta, cx).map(|()| true),
         // The data is the target.
         0o120000 => link_target(data).and_then(|target| links.add(&header.name, path, target)),
         _ => Err(Stop::Skip(IoError::new(ErrorKind::Unsupported, "not a file or folder; skipped"))),

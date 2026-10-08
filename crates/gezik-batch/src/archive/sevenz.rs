@@ -182,7 +182,7 @@ fn entry(e: &ArchiveEntry, r: &mut dyn Read, dest: &Path, links: &mut Links, cx:
         return links.add(e.name(), path, target);
     }
     let meta = Meta { modified, mode, attributes: attributes.map(dos_attributes) };
-    write_file(r, &path, Some(e.size()), &meta, cx).map(|()| true)
+    write_file(r, dest, &path, Some(e.size()), &meta, cx).map(|()| true)
 }
 
 /// `archive` if Gezik decodes every method of it, else "7-Zip needed": the job then hands

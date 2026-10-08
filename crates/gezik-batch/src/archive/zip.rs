@@ -119,7 +119,7 @@ impl ArchiveSource for ZipSource {
                 if info.is_symlink {
                     break link_target(&mut file).and_then(|target| links.add(&info.name, path.clone(), target));
                 }
-                let result = write_file(&mut file, &path, Some(info.size), &info.meta, cx).map(|()| true);
+                let result = write_file(&mut file, dest, &path, Some(info.size), &info.meta, cx).map(|()| true);
                 if info.weak && !confirmed && matches!(result, Err(Stop::Read(_))) {
                     if bad_with.is_none() || bad_with != self.password {
                         // The CRC caught a wrong password the check let through.

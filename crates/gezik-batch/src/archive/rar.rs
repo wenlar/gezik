@@ -156,7 +156,7 @@ impl RarSource {
                 Some(path) => {
                     let ready = match path.parent() {
                         Some(parent) => {
-                            fs::create_dir_all(parent).map_err(Stop::Skip).and_then(|()| remove_earlier(&path))
+                            fs::create_dir_all(parent).map_err(Stop::Skip).and_then(|()| remove_earlier(dest, &path))
                         }
                         None => Ok(()),
                     };

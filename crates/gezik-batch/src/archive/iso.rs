@@ -78,7 +78,7 @@ impl ArchiveSource for IsoSource {
                 match image.read_file_chunked::<{ super::BUF }>(&entry) {
                     Ok(iter) => {
                         let mut chunks = Chunks { iter, rest: Vec::new(), at: 0 };
-                        write_file(&mut chunks, &path, Some(entry.total_size()), &meta, cx).map(|()| true)
+                        write_file(&mut chunks, dest, &path, Some(entry.total_size()), &meta, cx).map(|()| true)
                     }
                     Err(e) => Err(Stop::Read(iso_error(e))),
                 }

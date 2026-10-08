@@ -808,6 +808,11 @@ fn names_differing_only_in_case_do_not_replace_each_other() {
     zw.write_all(b"upper").unwrap();
     zw.start_file("readme", SimpleFileOptions::default()).unwrap();
     zw.write_all(b"lower").unwrap();
+    // The folder's case differs, the file's does not.
+    zw.start_file("Docs/a", SimpleFileOptions::default()).unwrap();
+    zw.write_all(b"upper").unwrap();
+    zw.start_file("docs/a", SimpleFileOptions::default()).unwrap();
+    zw.write_all(b"lower").unwrap();
     zw.finish().unwrap();
 
     let stage = stage(&d);
@@ -817,11 +822,12 @@ fn names_differing_only_in_case_do_not_replace_each_other() {
     let cx = Cx::new(None);
     extract(&path, &stage, &cx).unwrap();
     if insensitive {
-        assert_eq!(cx.failed(), ["readme"]);
-        assert_eq!(tree(&stage), files(&[("README", b"upper")]));
+        assert_eq!(cx.failed(), ["readme", "docs/a"]);
+        assert_eq!(tree(&stage), files(&[("Docs/a", b"upper"), ("README", b"upper")]));
     } else {
         assert!(cx.failed().is_empty(), "{:?}", cx.failed());
-        assert_eq!(tree(&stage), files(&[("README", b"upper"), ("readme", b"lower")]));
+        let all = [("Docs/a", &b"upper"[..]), ("README", b"upper"), ("docs/a", b"lower"), ("readme", b"lower")];
+        assert_eq!(tree(&stage), files(&all));
     }
     std::fs::remove_dir_all(&d).unwrap();
 }

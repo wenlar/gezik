@@ -56,7 +56,7 @@ impl ArchiveSource for SingleSource {
             return Ok(());
         };
         let mut all = (&first[..len]).chain(&mut stream);
-        let result = write_file(&mut all, &path, None, &meta, cx).map(|()| true);
+        let result = write_file(&mut all, dest, &path, None, &meta, cx).map(|()| true);
         report_stream(&name, result, cx)
     }
 }
