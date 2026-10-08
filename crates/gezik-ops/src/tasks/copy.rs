@@ -124,17 +124,8 @@ impl Task for CopyTask {
 
     fn plan(&self, sink: &mut dyn ScanSink) {
         super::refuse_outside(sink, &self.refused);
-        // The folders on the way first: Before items run as they are planned.
-        for parent in &self.parents {
-            if std::fs::symlink_metadata(parent).is_err() {
-                let item = PlanItem::new(Stage::Before, Facts { is_dir: true, ..Facts::default() })
-                    .target(parent)
-                    .uncounted()
-                    .tag(MAKE_PARENT);
-                if !sink.item(item) {
-                    return;
-                }
-            }
+        if !super::plan_parents(sink, &self.parents, MAKE_PARENT) {
+            return;
         }
         for (root, ((source, target), preset)) in self.pairs.iter().zip(&self.presets).enumerate() {
             if super::refuse_root(sink, source, "copy") {
@@ -165,21 +156,16 @@ impl Task for CopyTask {
 
     fn run(&self, item: &PlanItem, cx: &RunCx<'_>) -> io::Result<Outcome> {
         if item.tag == MAKE_PARENT {
-            let Some(target) = &item.target else { return Ok(Outcome::Nothing) };
-            return match std::fs::create_dir(target) {
-                Ok(()) => Ok(Outcome::MadeParent { path: target.clone() }),
-                Err(err) if err.kind() == io::ErrorKind::AlreadyExists && target.is_dir() => Ok(Outcome::Nothing),
-                Err(err) => Err(err),
-            };
+            return super::make_parent_dir(item);
         }
         let (Some(source), Some(target)) = (&item.source, &item.target) else { return Ok(Outcome::Nothing) };
         if item.facts.is_dir {
-            return match std::fs::create_dir(target) {
-                Ok(()) => Ok(Outcome::Created { path: target.clone(), facts: facts_after(target, true), from: None }),
-                // Merged into a folder that was already there.
-                Err(err) if err.kind() == io::ErrorKind::AlreadyExists && target.is_dir() => Ok(Outcome::Nothing),
-                Err(err) => Err(err),
-            };
+            // Nothing when merged into a folder that was already there.
+            return Ok(if super::make_dir(target)? {
+                Outcome::Created { path: target.clone(), facts: facts_after(target, true), from: None }
+            } else {
+                Outcome::Nothing
+            });
         }
         cx.copy_file(source, target, item.facts.size)?;
         Ok(Outcome::Created { path: target.clone(), facts: facts_after(target, false), from: None })

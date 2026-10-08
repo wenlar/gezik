@@ -21,9 +21,13 @@ pub use rename::RenameTask;
 pub use restore::RestoreTask;
 pub use trash::{TrashTask, trash_path};
 
+use std::io;
 use std::path::{Path, PathBuf};
 
+use gezik_core::ops::conflict::Facts;
 use gezik_platform::fs;
+
+use crate::task::{Outcome, PlanItem, ScanSink, Stage};
 
 /// `rapor.pdf`, or `3 items`.
 pub(crate) fn what(paths: &[PathBuf]) -> String {
@@ -56,6 +60,34 @@ pub(crate) fn refuse_root(sink: &mut dyn crate::task::ScanSink, path: &Path, ver
     }
     sink.failed(path, std::io::Error::new(std::io::ErrorKind::InvalidInput, format!("Cannot {verb} a drive")));
     true
+}
+
+/// Makes the folder `path`; false if a folder is there already (merged into).
+pub(crate) fn make_dir(path: &Path) -> io::Result<bool> {
+    match std::fs::create_dir(path) {
+        Ok(()) => Ok(true),
+        Err(err) if err.kind() == io::ErrorKind::AlreadyExists && path.is_dir() => Ok(false),
+        Err(err) => Err(err),
+    }
+}
+
+/// Plans the folders on the way that are not there yet (copy or move with folders), tagged
+/// `tag`, first: Before items run as they are planned. False once the job is cancelled.
+pub(crate) fn plan_parents(sink: &mut dyn ScanSink, parents: &[PathBuf], tag: u8) -> bool {
+    parents.iter().filter(|parent| std::fs::symlink_metadata(parent).is_err()).all(|parent| {
+        sink.item(
+            PlanItem::new(Stage::Before, Facts { is_dir: true, ..Facts::default() })
+                .target(parent)
+                .uncounted()
+                .tag(tag),
+        )
+    })
+}
+
+/// Does an item of `plan_parents`.
+pub(crate) fn make_parent_dir(item: &PlanItem) -> io::Result<Outcome> {
+    let Some(target) = &item.target else { return Ok(Outcome::Nothing) };
+    Ok(if make_dir(target)? { Outcome::MadeParent { path: target.clone() } } else { Outcome::Nothing })
 }
 
 /// Where copy or move with folders puts its items (spec 4.6).

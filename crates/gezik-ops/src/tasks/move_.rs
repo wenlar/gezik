@@ -156,17 +156,8 @@ impl Task for MoveTask {
 
     fn plan(&self, sink: &mut dyn ScanSink) {
         super::refuse_outside(sink, &self.refused);
-        // The folders on the way first: Before items run as they are planned.
-        for parent in &self.parents {
-            if std::fs::symlink_metadata(parent).is_err() {
-                let item = PlanItem::new(Stage::Before, Facts { is_dir: true, ..Facts::default() })
-                    .target(parent)
-                    .uncounted()
-                    .tag(MAKE_PARENT);
-                if !sink.item(item) {
-                    return;
-                }
-            }
+        if !super::plan_parents(sink, &self.parents, MAKE_PARENT) {
+            return;
         }
         for (root, (source, target)) in self.pairs.iter().enumerate() {
             if super::refuse_root(sink, source, "move") {
@@ -201,12 +192,7 @@ impl Task for MoveTask {
 
     fn run(&self, item: &PlanItem, cx: &RunCx<'_>) -> io::Result<Outcome> {
         if item.tag == MAKE_PARENT {
-            let Some(target) = &item.target else { return Ok(Outcome::Nothing) };
-            return match std::fs::create_dir(target) {
-                Ok(()) => Ok(Outcome::MadeParent { path: target.clone() }),
-                Err(err) if err.kind() == io::ErrorKind::AlreadyExists && target.is_dir() => Ok(Outcome::Nothing),
-                Err(err) => Err(err),
-            };
+            return super::make_parent_dir(item);
         }
         let Some(source) = &item.source else { return Ok(Outcome::Nothing) };
         if item.tag == RMDIR {
@@ -282,11 +268,11 @@ impl Task for MoveTask {
             }
             MKDIR => {
                 self.make_parent(target)?;
-                match std::fs::create_dir(target) {
-                    Ok(()) => Ok(self.made(source, target, facts_after(target, true))),
-                    Err(err) if err.kind() == io::ErrorKind::AlreadyExists && target.is_dir() => Ok(Outcome::Nothing),
-                    Err(err) => Err(err),
-                }
+                Ok(if super::make_dir(target)? {
+                    self.made(source, target, facts_after(target, true))
+                } else {
+                    Outcome::Nothing
+                })
             }
             _ => Ok(Outcome::Nothing),
         }
