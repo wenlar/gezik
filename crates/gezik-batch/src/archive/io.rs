@@ -155,7 +155,8 @@ pub fn decoder<'a, R: BufRead + 'a>(codec: Codec, r: R) -> Box<dyn Read + 'a> {
         Codec::None => Box::new(r),
         Codec::Gz => Box::new(flate2::bufread::MultiGzDecoder::new(r)),
         Codec::Bz2 => Box::new(bzip2::bufread::MultiBzDecoder::new(r)),
-        Codec::Xz => Box::new(lzma_rust2::XzReader::new(r, true)),
+        // A tiny file may ask for a 4 GiB dictionary: 1.5 GiB (xz -9 needs 64 MiB) at most.
+        Codec::Xz => Box::new(lzma_rust2::XzReader::new_mem_limit(r, true, 1_572_864)),
         Codec::Zst => Box::new(ZstdReader::new(r)),
     }
 }

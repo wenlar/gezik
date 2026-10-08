@@ -204,8 +204,20 @@ fn decodable(archive: Archive) -> IoResult<Archive> {
             EncoderMethod::ID_BZIP2,
             EncoderMethod::ID_AES256_SHA256,
         ];
+        // A tiny archive may ask for a 4 GiB dictionary (allocated at once): past 1.5 GiB,
+        // 7-Zip with its own limits.
+        let props = coder.properties();
+        let memory = match id {
+            EncoderMethod::ID_LZMA | EncoderMethod::ID_PPMD => {
+                props.get(1..5).map_or(0, |p| u32::from_le_bytes([p[0], p[1], p[2], p[3]]).into())
+            }
+            EncoderMethod::ID_LZMA2 => props
+                .first()
+                .map_or(0, |&bits| if bits >= 40 { u64::MAX } else { (2 | u64::from(bits & 1)) << (bits / 2 + 11) }),
+            _ => 0,
+        };
         // A branch filter's start offset (rare) is not read by the crate.
-        method.contains(&id) || (filter.contains(&id) && coder.properties().is_empty())
+        memory <= 1_536 << 20 && (method.contains(&id) || (filter.contains(&id) && props.is_empty()))
     };
     if archive.blocks.iter().all(|block| block.coders.iter().all(known)) {
         Ok(archive)

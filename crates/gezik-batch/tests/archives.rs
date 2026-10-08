@@ -1371,3 +1371,44 @@ fn udf_and_rare_formats_need_seven_zip() {
     }
     let _ = std::fs::remove_dir_all(&d);
 }
+
+fn crc(bytes: &[u8]) -> [u8; 4] {
+    let mut crc = flate2::Crc::new();
+    crc.update(bytes);
+    crc.sum().to_le_bytes()
+}
+
+/// A few bytes asking for a 4 GiB dictionary allocate nothing: xz refuses, 7z goes to 7-Zip.
+#[test]
+fn a_huge_dictionary_is_not_allocated() {
+    let d = dir("dict");
+    // xz: stream header (CRC32 check), then a block header whose LZMA2 filter says 4 GiB.
+    let mut xz = b"\xFD7zXZ\0\0\x01".to_vec();
+    xz.extend(crc(b"\0\x01"));
+    let block = [0x02, 0x00, 0x21, 0x01, 40, 0, 0, 0];
+    xz.extend(block);
+    xz.extend(crc(&block));
+    xz.extend([0; 16]);
+    std::fs::write(d.join("a.xz"), xz).unwrap();
+    let cx = Cx::new(None);
+    let err = extract(&d.join("a.xz"), &stage(&d), &cx).err().unwrap();
+    assert!(err.to_string().contains("memory"), "{err}");
+
+    // 7z: one byte packed by LZMA2 with a 4 GiB dictionary, a plain header naming file `a`.
+    let header = [
+        0x01, 0x04, 0x06, 0x00, 0x01, 0x09, 0x01, 0x00, 0x07, 0x0B, 0x01, 0x00, 0x01, 0x21, 0x21, 0x01, 40, 0x0C, 0x01,
+        0x00, 0x08, 0x00, 0x00, 0x05, 0x01, 0x11, 0x05, 0x00, b'a', 0x00, 0x00, 0x00, 0x00, 0x00,
+    ];
+    let mut start = 1u64.to_le_bytes().to_vec();
+    start.extend((header.len() as u64).to_le_bytes());
+    start.extend(crc(&header));
+    let mut sz = b"7z\xBC\xAF\x27\x1C\0\x04".to_vec();
+    sz.extend(crc(&start));
+    sz.extend(start);
+    sz.push(0);
+    sz.extend(header);
+    std::fs::write(d.join("a.7z"), sz).unwrap();
+    let err = archive::open(&d.join("a.7z")).err().unwrap();
+    assert_eq!(err.to_string(), "7-Zip needed");
+    let _ = std::fs::remove_dir_all(&d);
+}
