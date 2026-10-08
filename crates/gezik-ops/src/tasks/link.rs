@@ -109,11 +109,13 @@ impl Task for LinkTask {
                 continue;
             }
             // Two sources of one name get their numbers here: nothing is on disk yet to meet.
+            // A shortcut is a `.lnk` file even when it leads to a folder.
+            let named_dir = meta.is_dir() && self.kind != LinkKind::Shortcut;
             let mut at = at.clone();
             if !planned.insert(at.clone()) {
                 let parent = at.parent().map(Path::to_path_buf).unwrap_or_default();
                 let name = at.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                let free = next_free(&name, meta.is_dir(), |candidate| {
+                let free = next_free(&name, named_dir, |candidate| {
                     planned.contains(&parent.join(candidate))
                         || std::fs::symlink_metadata(parent.join(candidate)).is_ok()
                 });
@@ -122,7 +124,7 @@ impl Task for LinkTask {
             }
             // The link is not sized (as `walk` sees links); a folder link is numbered as a
             // folder (`v1.2 (2)`), and a taken name gets a number without asking.
-            let facts = Facts { is_dir: meta.is_dir(), ..Facts::default() };
+            let facts = Facts { is_dir: named_dir, ..Facts::default() };
             let item = PlanItem::new(Stage::Parallel, facts)
                 .source(source)
                 .target(&at)
@@ -254,6 +256,32 @@ mod tests {
         for name in ["Link to v1.2", "Link to v1.2 (2)"] {
             gezik_platform::fs::delete(&dir.join("links").join(name)).unwrap();
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn shortcuts_to_folders_are_numbered_as_files() {
+        let dir = test_dir("link-shortcut-number");
+        write(&dir.join("Docs/a.txt"), "a");
+        let engine = engine();
+        for _ in 0..2 {
+            let job = engine.submit(Box::new(LinkTask::beside(vec![dir.join("Docs")], LinkKind::Shortcut)));
+            let (report, _) = finish(&engine, job, defaults);
+            assert!(report.failures.is_empty(), "{:?}", report.failures);
+        }
+        assert!(dir.join("Docs - Shortcut.lnk").exists());
+        assert!(dir.join("Docs - Shortcut (2).lnk").exists());
+        // Two sources of one name in one job go through the planner's numbering.
+        write(&dir.join("x/Docs/b.txt"), "b");
+        let job = engine.submit(Box::new(LinkTask::into(
+            vec![dir.join("Docs"), dir.join("x/Docs")],
+            &dir.join("x"),
+            LinkKind::Shortcut,
+        )));
+        let (report, _) = finish(&engine, job, defaults);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert!(dir.join("x/Docs - Shortcut (2).lnk").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
