@@ -16,20 +16,23 @@ export component FilterBar inherits Rectangle {
     in property <bool> search;
     in property <string> scope;
     in property <bool> content-open;
+    // Content was just turned on: the text-in-files field takes the keyboard as it is made.
+    in property <bool> content-focus;
     in-out property <string> content;
     in property <string> content-error;
     in property <string> filters: "Filters";
     in property <bool> running;
-    out property <bool> field-focused: field.has-focus || content-field.has-focus;
+    out property <bool> field-focused: field.has-focus || (root.search && root.content-open && root.content-focused);
+    // The text-in-files field has the keyboard (it is made only while Content is on).
+    property <bool> content-focused;
     callback edited(string);
     callback content-edited(string);
     callback content-toggle();
     // Search / Stop; in the filter bar, "Search subfolders".
     callback go();
-    // The ▾ menu (saved filters, or the search's), placed like `show-menu`.
-    callback menu(length, length, length, length);
-    callback scope-menu(length, length, length, length);
-    callback filters-menu(length, length, length, length);
+    // A menu under its button, placed like `show-menu`: 0 the ▾ menu (saved filters, or the
+    // search's), 1 the scope, 2 Filters.
+    callback menu(int, length, length, length, length);
 
     // Focuses the field with the cursor at byte `at`.
     public function focus-at(at: int) {
@@ -39,11 +42,6 @@ export component FilterBar inherits Rectangle {
     // Focuses the field with all of its text selected.
     public function select-all() {
         field.focus-and-select();
-    }
-
-    // Focuses the text-in-files field.
-    public function focus-content() {
-        content-field.focus-and-select();
     }
 
     background: Theme.surface;
@@ -77,7 +75,7 @@ export component FilterBar inherits Rectangle {
             text: root.scope;
             icon: "M 1 3 L 4 6 L 7 3";
             clicked => {
-                root.scope-menu(self.absolute-position.x, self.absolute-position.y + self.height,
+                root.menu(1, self.absolute-position.x, self.absolute-position.y + self.height,
                     self.absolute-position.x + self.width, self.absolute-position.y);
             }
         }
@@ -90,7 +88,8 @@ export component FilterBar inherits Rectangle {
                 text <=> root.text;
                 edited(t) => { root.edited(t); }
             }
-            if root.search && root.text == "": Text {
+            Text {
+                visible: root.search && root.text == "";
                 x: field.x + Theme.spacing + 2px;
                 height: parent.height;
                 text: "Name, e.g. *.pdf;!*draft*";
@@ -108,19 +107,23 @@ export component FilterBar inherits Rectangle {
             }
         }
 
-        // Text in files (spec 4.2): there only while Content is on; always made, so the
-        // keyboard can be given to it.
-        Rectangle {
-            horizontal-stretch: root.search && root.content-open ? 1 : 0;
-            max-width: root.search && root.content-open ? 100000px : 0px;
-            visible: root.search && root.content-open;
+        // Text in files (spec 4.2): made only while Content is on (the filter bar has none).
+        if root.search && root.content-open: Rectangle {
+            horizontal-stretch: 1;
             content-field := TextField {
                 width: parent.width;
                 y: (parent.height - self.height) / 2;
                 text <=> root.content;
                 edited(t) => { root.content-edited(t); }
+                changed has-focus => { root.content-focused = self.has-focus; }
+                init => {
+                    if root.content-focus {
+                        self.focus-and-select();
+                    }
+                }
             }
-            if root.content == "": Text {
+            Text {
+                visible: root.content == "";
                 x: content-field.x + Theme.spacing + 2px;
                 height: parent.height;
                 text: "Text in files";
@@ -144,28 +147,30 @@ export component FilterBar inherits Rectangle {
             clicked => { root.go(); }
         }
 
-        if root.search: TextButton {
-            y: (parent.height - self.height) / 2;
-            text: "Content";
-            checked: root.content-open;
-            clicked => { root.content-toggle(); }
-        }
-
-        if root.search: TextButton {
-            y: (parent.height - self.height) / 2;
-            text: root.filters;
-            icon: "M 1 3 L 4 6 L 7 3";
-            clicked => {
-                root.filters-menu(self.absolute-position.x, self.absolute-position.y + self.height,
-                    self.absolute-position.x + self.width, self.absolute-position.y);
+        // The search's own buttons: Content, Filters, Search / Stop.
+        if root.search: HorizontalLayout {
+            spacing: Theme.spacing;
+            TextButton {
+                y: (parent.height - self.height) / 2;
+                text: "Content";
+                checked: root.content-open;
+                clicked => { root.content-toggle(); }
             }
-        }
-
-        if root.search: TextButton {
-            y: (parent.height - self.height) / 2;
-            text: root.running ? "Stop" : "Search";
-            primary: !root.running;
-            clicked => { root.go(); }
+            TextButton {
+                y: (parent.height - self.height) / 2;
+                text: root.filters;
+                icon: "M 1 3 L 4 6 L 7 3";
+                clicked => {
+                    root.menu(2, self.absolute-position.x, self.absolute-position.y + self.height,
+                        self.absolute-position.x + self.width, self.absolute-position.y);
+                }
+            }
+            TextButton {
+                y: (parent.height - self.height) / 2;
+                text: root.running ? "Stop" : "Search";
+                primary: !root.running;
+                clicked => { root.go(); }
+            }
         }
 
         menu-button := ToolButton {
@@ -174,6 +179,7 @@ export component FilterBar inherits Rectangle {
             icon: "M 4 6 L 8 10 L 12 6";
             clicked => {
                 root.menu(
+                    0,
                     self.absolute-position.x,
                     self.absolute-position.y + self.height,
                     self.absolute-position.x + self.width,

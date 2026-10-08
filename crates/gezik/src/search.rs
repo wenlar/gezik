@@ -133,6 +133,17 @@ pub enum SearchMenu {
     More,
 }
 
+impl SearchMenu {
+    /// By the number the bar's `menu` callback gives: 1 the scope, 2 Filters, else ▾.
+    pub fn from_index(which: i32) -> SearchMenu {
+        match which {
+            1 => SearchMenu::Scope,
+            2 => SearchMenu::Filters,
+            _ => SearchMenu::More,
+        }
+    }
+}
+
 /// What the name cache is for: the scope and the rules it read with.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CacheKey {
@@ -149,6 +160,41 @@ enum Names {
     TooLarge(CacheKey),
     /// No cache: Everything answers names here (`true`), or a network folder (`false`).
     NoCache(CacheKey, bool),
+}
+
+/// What the bar's errors depend on: the name, the text in files and their options.
+type Checked = (String, bool, String, bool, bool);
+
+/// What a key typed in the name field does with the name cache in the state `names` for `key`.
+#[derive(Debug, PartialEq, Eq)]
+enum Live {
+    /// The cache (or Everything) answers: the results follow the typing.
+    Now,
+    /// The cache is being read: the results follow once it is.
+    Wait,
+    /// More than the cache holds: Enter searches.
+    Large,
+    /// A network folder: Enter searches.
+    Never,
+    /// No cache for this scope and these rules (none yet, dropped when idle, or another key):
+    /// read it, then follow.
+    Warm,
+}
+
+fn live_step(names: &Names, key: &CacheKey) -> Live {
+    match names {
+        Names::Ready(k, _) | Names::NoCache(k, true) if k == key => Live::Now,
+        Names::Building(k, _) if k == key => Live::Wait,
+        Names::TooLarge(k) if k == key => Live::Large,
+        Names::NoCache(k, false) if k == key => Live::Never,
+        _ => Live::Warm,
+    }
+}
+
+/// Whether `names` is still the cache read under `cancel` (a later read of the same scope has
+/// its own flag: an older one's answer must not end it).
+fn this_build(names: &Names, cancel: &Arc<AtomicBool>) -> bool {
+    matches!(names, Names::Building(_, own) if Arc::ptr_eq(own, cancel))
 }
 
 /// What reading the scope gave.
@@ -193,6 +239,14 @@ struct Inner {
     origin: RefCell<Option<PathBuf>>,
     /// The location the bar last followed: the chrome updates often, the bar only on a move.
     followed: RefCell<Option<Location>>,
+    /// The texts and options the bar's errors were worked out for, and the errors (the
+    /// matchers are compiled once per change, not once per use).
+    checked: RefCell<Option<(Checked, String, String)>>,
+    /// The next load of the search on screen runs it anew (Enter on the same search), not
+    /// from the tab's kept results; the name cache stays (only F5 reads it again).
+    fresh: Cell<bool>,
+    /// The location is being replaced by live typing: the results left are not kept.
+    replacing: Cell<bool>,
     open: Cell<bool>,
     content_open: Cell<bool>,
     running: RefCell<Option<Run>>,
@@ -226,6 +280,9 @@ impl Searches {
             sent: RefCell::new(None),
             origin: RefCell::new(None),
             followed: RefCell::new(None),
+            checked: RefCell::new(None),
+            fresh: Cell::new(false),
+            replacing: Cell::new(false),
             open: Cell::new(false),
             content_open: Cell::new(false),
             running: RefCell::new(None),
@@ -297,6 +354,9 @@ impl Searches {
 
     fn show_bar(&self, spec: SearchSpec, origin: Option<PathBuf>) {
         self.0.content_open.set(!spec.content.is_empty());
+        if let Some(window) = self.0.window.upgrade() {
+            window.set_search_content_focus(false);
+        }
         *self.0.draft.borrow_mut() = spec;
         *self.0.origin.borrow_mut() = origin;
         self.0.open.set(true);
@@ -306,7 +366,21 @@ impl Searches {
     fn close_bar(&self) {
         self.0.open.set(false);
         self.0.typing.stop();
+        self.0.live_waiting.set(false);
+        if matches!(&*self.0.names.borrow(), Names::Building(..)) {
+            self.drop_names();
+        }
         self.sync_bar();
+        self.release_cache_if_unused();
+    }
+
+    /// The name cache goes with the bar and the last results tab (spec 3.5).
+    fn release_cache_if_unused(&self) {
+        let nav = &self.0.nav;
+        let results = (0..nav.tab_count()).any(|i| nav.tab_location(i).is_some_and(|l| l.is_results()));
+        if !self.0.open.get() && !results && !matches!(&*self.0.names.borrow(), Names::None) {
+            self.drop_names();
+        }
     }
 
     /// The bar as the draft is.
@@ -327,12 +401,25 @@ impl Searches {
             n => format!("Filters ({n})").into(),
         });
         window.set_search_running(self.0.running.borrow().is_some());
-        let name_error = NameMatcher::compile(&draft.pattern, draft.name_regex, draft.match_case).err();
-        window.set_search_error(name_error.unwrap_or_default().into());
-        let content_error = (!draft.content.is_empty())
-            .then(|| ContentMatcher::compile(&draft.content, draft.content_regex, draft.match_case, 0).err())
-            .flatten();
-        window.set_search_content_error(content_error.unwrap_or_default().into());
+        let checked: Checked =
+            (draft.pattern.clone(), draft.name_regex, draft.content.clone(), draft.content_regex, draft.match_case);
+        let mut last = self.0.checked.borrow_mut();
+        if last.as_ref().is_none_or(|(c, _, _)| *c != checked) {
+            let name_error = NameMatcher::compile(&draft.pattern, draft.name_regex, draft.match_case).err();
+            let content_error = (!draft.content.is_empty())
+                .then(|| ContentMatcher::compile(&draft.content, draft.content_regex, draft.match_case, 0).err())
+                .flatten();
+            *last = Some((checked, name_error.unwrap_or_default(), content_error.unwrap_or_default()));
+        }
+        if let Some((_, name_error, content_error)) = last.as_ref() {
+            window.set_search_error(name_error.as_str().into());
+            window.set_search_content_error(content_error.as_str().into());
+        }
+    }
+
+    /// Whether the name field's text can be used (`sync_bar` worked it out).
+    fn name_ok(&self) -> bool {
+        self.0.checked.borrow().as_ref().is_none_or(|(_, name_error, _)| name_error.is_empty())
     }
 
     fn focus_later(&self) {
@@ -366,7 +453,8 @@ impl Searches {
         self.sync_bar();
         if let Some(window) = self.0.window.upgrade() {
             if open {
-                window.invoke_focus_search_content();
+                // The field is made as Content opens and takes the keyboard then.
+                window.set_search_content_focus(true);
             } else {
                 window.invoke_select_search_text();
             }
@@ -380,28 +468,22 @@ impl Searches {
         if !draft.content.is_empty() || !draft.is_query() {
             return;
         }
-        if NameMatcher::compile(&draft.pattern, draft.name_regex, draft.match_case).is_err() {
+        if !self.name_ok() {
             return;
         }
         let key = self.cache_key(&draft);
-        let at_once = match &*self.0.names.borrow() {
-            Names::Ready(k, _) | Names::NoCache(k, true) => *k == key,
-            Names::Building(k, _) => {
-                if *k == key {
-                    self.0.live_waiting.set(true);
-                }
-                false
+        let step = live_step(&self.0.names.borrow(), &key);
+        match step {
+            Live::Now => {
+                self.0.typing.start(slint::TimerMode::SingleShot, TYPING, || with_current(|s| s.run(false, true)))
             }
-            Names::TooLarge(k) => {
-                if *k == key {
-                    self.0.view.note("Large folder: press Enter to search".to_owned());
-                }
-                false
+            Live::Wait => self.0.live_waiting.set(true),
+            Live::Large => self.0.view.note("Large folder: press Enter to search".to_owned()),
+            Live::Never => {}
+            Live::Warm => {
+                self.0.live_waiting.set(true);
+                self.warm();
             }
-            Names::NoCache(_, false) | Names::None => false,
-        };
-        if at_once {
-            self.0.typing.start(slint::TimerMode::SingleShot, TYPING, || with_current(|s| s.run(false, true)));
         }
     }
 
@@ -436,9 +518,11 @@ impl Searches {
         if new_tab {
             self.0.nav.open_tab(location, true);
         } else if current == location {
-            // The same search again: run anew (spec 4.7, F5's way).
-            self.0.nav.reload();
+            // The same search again: run anew (spec 4.7), from the name cache as it is.
+            self.0.fresh.set(true);
+            self.0.nav.show_again();
         } else if live && matches!(current, Location::Search(_)) {
+            self.0.replacing.set(true);
             self.0.nav.replace_location(location);
         } else {
             self.0.nav.go(location);
@@ -506,9 +590,11 @@ impl Searches {
     /// starts in `shown`).
     pub fn listing_for(&self, location: &Location, tab: Option<u64>) -> Listing {
         let Some(spec) = spec_of(location) else { return Listing::default() };
+        let fresh = self.0.fresh.replace(false);
         let kept = tab.and_then(|tab| {
             let mut kept = self.0.kept.borrow_mut();
-            if kept.get(&tab).is_some_and(|k| k.spec == spec) { kept.remove(&tab) } else { None }
+            let usable = !fresh && kept.get(&tab).is_some_and(|k| k.spec == spec);
+            if usable || fresh { kept.remove(&tab).filter(|_| usable) } else { None }
         });
         if let Some(kept) = kept {
             *self.0.pending.borrow_mut() = None;
@@ -548,7 +634,15 @@ impl Searches {
                 window.set_search_running(false);
             }
         }
+        let replacing = self.0.replacing.replace(false);
         let Some(showing) = self.0.showing.borrow_mut().take() else { return };
+        if replacing {
+            // Typing refines the search in place: what it showed before is not coming back.
+            if let Some(tab) = showing.tab {
+                self.0.kept.borrow_mut().remove(&tab);
+            }
+            return;
+        }
         if let (Some(tab), true, Some(results)) = (showing.tab, showing.complete, self.0.view.results()) {
             self.0.kept.borrow_mut().insert(tab, Kept { spec: showing.spec, results, status: showing.status });
         }
@@ -579,6 +673,7 @@ impl Searches {
         let nav = &self.0.nav;
         let alive: Vec<u64> = (0..nav.tab_count()).filter_map(|i| nav.tab_id(i)).collect();
         self.0.kept.borrow_mut().retain(|tab, _| alive.contains(tab));
+        self.release_cache_if_unused();
         // The same place again (a tab renamed, locked, a reload): a bar closed with Esc stays closed.
         if self.0.followed.borrow().as_ref() == Some(location) {
             return;
@@ -586,10 +681,15 @@ impl Searches {
         *self.0.followed.borrow_mut() = Some(location.clone());
         match location {
             Location::Search(spec) => {
-                // The search the bar went to: what was typed since stays in it.
+                // The search the bar went to: what was typed since stays in it (once: Back and
+                // Forward later show their own search).
                 let own = self.0.sent.borrow().as_ref() == Some(&**spec);
+                if own {
+                    self.0.sent.borrow_mut().take();
+                }
                 if !self.0.open.get() || (!own && *self.0.draft.borrow() != **spec) {
                     self.show_bar((**spec).clone(), spec.scope.folder().map(Path::to_path_buf));
+                    self.warm();
                 }
             }
             Location::Flat(_) => {
@@ -733,6 +833,7 @@ impl Searches {
         };
         let shown = Searches::view_shown();
         let weak = self.0.window.clone();
+        let own = cancel.clone();
         let spawned = std::thread::Builder::new().name("gezik-search-cache".into()).spawn(move || {
             gezik_platform::priority::lower_this_thread();
             let walk = plan_walk(&spec, &skip, shown);
@@ -747,15 +848,15 @@ impl Searches {
                     CacheOutcome::Cancelled => Warmed::Cancelled,
                 }
             };
-            let _ = weak.upgrade_in_event_loop(move |_| with_current(|s| s.warmed(key, warmed)));
+            let _ = weak.upgrade_in_event_loop(move |_| with_current(|s| s.warmed(key, &own, warmed)));
         });
         if spawned.is_err() {
             *self.0.names.borrow_mut() = Names::None;
         }
     }
 
-    fn warmed(&self, key: CacheKey, warmed: Warmed) {
-        if !matches!(&*self.0.names.borrow(), Names::Building(k, _) if *k == key) {
+    fn warmed(&self, key: CacheKey, cancel: &Arc<AtomicBool>, warmed: Warmed) {
+        if !this_build(&self.0.names.borrow(), cancel) {
             return;
         }
         let names = match warmed {
@@ -849,8 +950,12 @@ impl Searches {
     fn criteria_changed(&self, rerun: bool) {
         self.sync_bar();
         self.warm();
-        let shows_search = matches!(self.0.nav.active_location(), Location::Search(_));
-        if rerun && shows_search && self.0.draft.borrow().is_query() {
+        // Only a change from the search on screen runs it again (a criterion chosen twice does not).
+        let changed = match self.0.nav.active_location() {
+            Location::Search(shown) => *shown != *self.0.draft.borrow(),
+            _ => false,
+        };
+        if rerun && changed && self.0.draft.borrow().is_query() {
             self.go(false);
         }
     }
@@ -972,6 +1077,43 @@ mod tests {
         assert_eq!(spec_of(&Location::Search(Box::new(spec.clone()))), Some(spec));
         assert_eq!(spec_of(&Location::Flat("/w".into())), Some(SearchSpec::flat_view("/w".into())));
         assert_eq!(spec_of(&Location::Path("/w".into())), None);
+    }
+
+    fn key(folder: &str) -> CacheKey {
+        CacheKey { scope: Scope::Folder(folder.into()), shown: None, skip: Vec::new() }
+    }
+
+    #[test]
+    fn typing_reads_the_cache_again_when_it_is_gone_or_for_other_rules() {
+        let here = key("/w");
+        assert_eq!(live_step(&Names::None, &here), Live::Warm, "dropped when idle: read again");
+        let cache = Arc::new(NameCache::default());
+        assert_eq!(live_step(&Names::Ready(here.clone(), cache.clone()), &here), Live::Now);
+        assert_eq!(live_step(&Names::Ready(key("/x"), cache), &here), Live::Warm, "another scope");
+        let hidden = CacheKey { shown: Some((true, true)), ..here.clone() };
+        assert_eq!(live_step(&Names::Ready(hidden.clone(), Arc::default()), &here), Live::Warm, "other rules");
+        let flag = Arc::new(AtomicBool::new(false));
+        assert_eq!(live_step(&Names::Building(here.clone(), flag.clone()), &here), Live::Wait);
+        assert_eq!(live_step(&Names::Building(hidden, flag), &here), Live::Warm);
+        assert_eq!(live_step(&Names::TooLarge(here.clone()), &here), Live::Large);
+        assert_eq!(live_step(&Names::NoCache(here.clone(), true), &here), Live::Now, "Everything");
+        assert_eq!(live_step(&Names::NoCache(here.clone(), false), &here), Live::Never, "network");
+    }
+
+    #[test]
+    fn only_the_newest_read_of_a_scope_ends_it() {
+        let (older, newer) = (Arc::new(AtomicBool::new(true)), Arc::new(AtomicBool::new(false)));
+        let names = Names::Building(key("/w"), newer.clone());
+        assert!(!this_build(&names, &older), "a cancelled read of the same scope answers late");
+        assert!(this_build(&names, &newer));
+        assert!(!this_build(&Names::None, &newer));
+    }
+
+    #[test]
+    fn the_bar_names_its_menus_by_number() {
+        assert_eq!(SearchMenu::from_index(1), SearchMenu::Scope);
+        assert_eq!(SearchMenu::from_index(2), SearchMenu::Filters);
+        assert_eq!(SearchMenu::from_index(0), SearchMenu::More);
     }
 
     #[test]

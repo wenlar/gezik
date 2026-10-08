@@ -625,6 +625,13 @@ impl Navigator {
         self.load(self.active_location(), Mode::Show, None);
     }
 
+    /// Shows the active tab's location again, read anew but with nothing forgotten (a search
+    /// run again with Enter keeps its name cache; F5 is `reload`).
+    pub fn show_again(&self) {
+        self.save_view();
+        self.load(self.active_location(), Mode::Show, None);
+    }
+
     /// Puts `location` where the tab is, without a step in its history (a search refined as
     /// one types, spec 4.3), and shows it.
     pub fn replace_location(&self, location: Location) {

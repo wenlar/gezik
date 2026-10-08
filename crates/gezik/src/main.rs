@@ -899,22 +899,11 @@ fn main() -> Result<(), slint::PlatformError> {
         let menus = menus.clone();
         move |left, bottom, right, top| menus.filter_menu(popup::Anchor::below(left, top, right, bottom))
     });
-    window.on_search_scope_menu({
+    window.on_search_menu({
         let menus = menus.clone();
-        move |left, bottom, right, top| {
-            menus.search_menu(search::SearchMenu::Scope, popup::Anchor::below(left, top, right, bottom))
-        }
-    });
-    window.on_search_filters_menu({
-        let menus = menus.clone();
-        move |left, bottom, right, top| {
-            menus.search_menu(search::SearchMenu::Filters, popup::Anchor::below(left, top, right, bottom))
-        }
-    });
-    window.on_search_more_menu({
-        let menus = menus.clone();
-        move |left, bottom, right, top| {
-            menus.search_menu(search::SearchMenu::More, popup::Anchor::below(left, top, right, bottom))
+        move |which, left, bottom, right, top| {
+            let which = search::SearchMenu::from_index(which);
+            menus.search_menu(which, popup::Anchor::below(left, top, right, bottom))
         }
     });
     window.on_view_menu({

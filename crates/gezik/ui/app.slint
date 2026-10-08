@@ -279,6 +279,8 @@ export component AppWindow inherits Window {
     in property <string> search-scope;
     in-out property <string> search-text;
     in property <bool> search-content-open;
+    // Content was just turned on: its field takes the keyboard as it is made.
+    in property <bool> search-content-focus;
     in-out property <string> search-content;
     in property <string> search-error;
     in property <string> search-content-error;
@@ -290,9 +292,8 @@ export component AppWindow inherits Window {
     callback search-content-edited(string);
     callback search-content-toggle();
     callback search-go();
-    callback search-scope-menu(length, length, length, length);
-    callback search-filters-menu(length, length, length, length);
-    callback search-more-menu(length, length, length, length);
+    // One of its menus (the bar's `menu`: 0 ▾, 1 the scope, 2 Filters), with its button's box.
+    callback search-menu(int, length, length, length, length);
     // The filter bar's "Search subfolders".
     callback filter-search();
     in property <[SidebarRow]> sidebar-rows;
@@ -684,22 +685,10 @@ export component AppWindow inherits Window {
         filter-bar.select-all();
     }
 
-    // Gives the keyboard to the search bar's name field, the cursor at byte `at`.
-    public function focus-search(at: int) {
-        root.end-path-editing-for-filter();
-        search-bar.focus-at(at);
-    }
-
-    // The same with its whole text selected.
+    // Gives the keyboard to the search bar's name field with its whole text selected.
     public function select-search-text() {
         root.end-path-editing-for-filter();
         search-bar.select-all();
-    }
-
-    // Gives the keyboard to the text-in-files field.
-    public function focus-search-content() {
-        root.end-path-editing-for-filter();
-        search-bar.focus-content();
     }
 
     // Typing in the address bar ends when the filter takes the keyboard.
@@ -969,6 +958,7 @@ export component AppWindow inherits Window {
                         error: root.search-error;
                         scope: root.search-scope;
                         content-open: root.search-content-open;
+                        content-focus: root.search-content-focus;
                         content <=> root.search-content;
                         content-error: root.search-content-error;
                         filters: root.search-filters;
@@ -977,20 +967,12 @@ export component AppWindow inherits Window {
                         content-edited(t) => { root.search-content-edited(t); }
                         content-toggle => { root.search-content-toggle(); }
                         go => { root.search-go(); }
-                        scope-menu(x, y, fx, fy) => {
+                        menu(which, x, y, fx, fy) => {
                             root.end-path-editing();
-                            root.search-scope-menu(x, y, fx, fy);
-                        }
-                        filters-menu(x, y, fx, fy) => {
-                            root.end-path-editing();
-                            root.search-filters-menu(x, y, fx, fy);
-                        }
-                        menu(x, y, fx, fy) => {
-                            root.end-path-editing();
-                            root.search-more-menu(x, y, fx, fy);
+                            root.search-menu(which, x, y, fx, fy);
                         }
                     }
-                    if root.search-open: Rectangle { height: 1px; background: Theme.border; }
+                    Rectangle { height: root.search-open ? 1px : 0px; visible: root.search-open; background: Theme.border; }
                     filter-bar := FilterBar {
                         height: root.filter-open ? Theme.row-height + 8px : 0px;
                         visible: root.filter-open;
@@ -999,7 +981,7 @@ export component AppWindow inherits Window {
                         error: root.filter-error;
                         edited(t) => { root.filter-edited(t); }
                         go => { root.filter-search(); }
-                        menu(x, y, fx, fy) => {
+                        menu(which, x, y, fx, fy) => {
                             root.end-path-editing();
                             root.filter-menu(x, y, fx, fy);
                         }

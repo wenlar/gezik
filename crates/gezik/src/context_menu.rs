@@ -1134,8 +1134,11 @@ impl Menus {
                 }
                 Ok(gezik_platform::MenuOutcome::SystemCommandRan) => {
                     // The command may have created, renamed or deleted anything, pinned
-                    // folders included.
-                    menus.nav.reload();
+                    // folders included. Results are not read again for it: that would run the
+                    // whole search and read its name cache anew (F5 does, spec 4.7).
+                    if !menus.nav.active_location().is_results() {
+                        menus.nav.reload();
+                    }
                     menus.sidebar.refresh();
                 }
                 Ok(gezik_platform::MenuOutcome::Verb(verb)) => menus.run_verb(verb, subject),
@@ -1675,7 +1678,7 @@ fn from_submenu(id: u32) -> bool {
         || id == GROUP_NONE
         || (TEMPLATE_FIRST..TEMPLATE_FIRST + TEMPLATE_MAX).contains(&id)
         || (MODIFIED_FIRST..=MODIFIED_BETWEEN).contains(&id)
-        || (KIND_FIRST..KIND_FIRST + 9).contains(&id)
+        || (KIND_FIRST..KIND_FIRST + gezik_core::search::KindFilter::ALL.len() as u32).contains(&id)
         || matches!(
             id,
             NEW_FOLDER | NEW_FILE | NEW_MARKDOWN | OPEN_TEMPLATES | LINK_SHORTCUT | LINK_JUNCTION | LINK_SYMLINK
