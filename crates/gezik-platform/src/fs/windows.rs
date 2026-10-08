@@ -680,8 +680,11 @@ pub fn read_dir_items(dir: &Path, _wants_meta: &dyn Fn(&str, bool) -> bool) -> i
     let mut items = Vec::new();
     loop {
         let end = data.cFileName.iter().position(|&c| c == 0).unwrap_or(data.cFileName.len());
-        let name = String::from_utf16_lossy(&data.cFileName[..end]);
-        if name != "." && name != ".." {
+        // A name with a lone surrogate is left out: a substituted one would act on another file.
+        if let Ok(name) = String::from_utf16(&data.cFileName[..end])
+            && name != "."
+            && name != ".."
+        {
             let attributes = data.dwFileAttributes;
             let is_dir = attributes & FILE_ATTRIBUTE_DIRECTORY.0 != 0;
             let mut flags = 0;
@@ -788,6 +791,19 @@ mod tests {
         // One it does not know still reads as a sentence, not a bare number.
         let unknown = io_error(windows::core::Error::from(HRESULT(0x8027_00FFu32 as i32)));
         assert!(super::super::describe(&unknown).starts_with("Windows could not do it"), "{unknown}");
+    }
+
+    #[test]
+    fn a_name_with_a_lone_surrogate_is_left_out() {
+        use std::os::windows::ffi::OsStringExt;
+        let dir = std::env::temp_dir().join(format!("gezik-platform-lone-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(std::ffi::OsString::from_wide(&[0x61, 0xD800])), "").unwrap();
+        std::fs::write(dir.join("a\u{FFFD}"), "").unwrap();
+        let names: Vec<String> = read_dir_items(&dir, &|_, _| true).unwrap().into_iter().map(|i| i.name).collect();
+        assert_eq!(names, ["a\u{FFFD}"]);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
