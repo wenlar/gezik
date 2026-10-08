@@ -17,6 +17,8 @@ pub struct CopyTask {
     presets: Vec<Option<Decision>>,
     /// Where they go, for the title; `None` for Duplicate.
     dir: Option<PathBuf>,
+    /// A template copied in (spec 8.1): its kind (New file, New folder); `None`: a copy.
+    new: Option<TaskKind>,
 }
 
 impl CopyTask {
@@ -33,13 +35,31 @@ impl CopyTask {
                 (source, target)
             })
             .collect();
-        CopyTask { pairs, presets, dir: Some(dir.to_path_buf()) }
+        CopyTask { pairs, presets, dir: Some(dir.to_path_buf()), new: None }
     }
 
     /// Copies each source next to itself as `name (2)`.
     pub fn duplicate(sources: Vec<PathBuf>) -> CopyTask {
         let presets = vec![Some(Decision::KeepBoth); sources.len()];
-        CopyTask { pairs: sources.into_iter().map(|source| (source.clone(), source)).collect(), presets, dir: None }
+        CopyTask {
+            pairs: sources.into_iter().map(|source| (source.clone(), source)).collect(),
+            presets,
+            dir: None,
+            new: None,
+        }
+    }
+
+    /// The user's template `source` copied into `dir` under its own name (a taken name gets a
+    /// number), undone as a new file or folder (spec 8.1).
+    pub fn template(source: PathBuf, dir: &Path, is_dir: bool) -> CopyTask {
+        let target = dir.join(source.file_name().unwrap_or_default());
+        let kind = if is_dir { TaskKind::NewFolder } else { TaskKind::NewFile };
+        CopyTask {
+            pairs: vec![(source, target)],
+            presets: vec![Some(Decision::KeepBoth)],
+            dir: Some(dir.to_path_buf()),
+            new: Some(kind),
+        }
     }
 
     fn sources(&self) -> Vec<PathBuf> {
@@ -54,10 +74,15 @@ fn into_itself(source: &Path, target: &Path, facts: Facts) -> bool {
 
 impl Task for CopyTask {
     fn kind(&self) -> TaskKind {
-        TaskKind::Copy
+        self.new.unwrap_or(TaskKind::Copy)
     }
 
     fn title(&self) -> String {
+        if self.new.is_some()
+            && let Some((_, target)) = self.pairs.first()
+        {
+            return format!("Creating {}", super::name(target));
+        }
         match &self.dir {
             Some(dir) => format!("Copying {} to {}", what(&self.sources()), dir.display()),
             None => format!("Duplicating {}", what(&self.sources())),
@@ -300,6 +325,29 @@ mod tests {
         finish(&engine, job, no_conflicts);
         assert_eq!(read(&dst.join("d/new.txt")), "new");
         assert_eq!(read(&dst.join("d/old.txt")), "old");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_template_is_copied_under_its_own_name_and_numbered() {
+        let dir = test_dir("copy-template");
+        write(&dir.join("templates/Report.docx"), "r");
+        write(&dir.join("templates/Project/src/main.rs"), "m");
+        std::fs::create_dir(dir.join("here")).unwrap();
+        let engine = engine();
+        for _ in 0..2 {
+            let task = CopyTask::template(dir.join("templates/Report.docx"), &dir.join("here"), false);
+            assert_eq!(task.title(), "Creating Report.docx");
+            finish(&engine, engine.submit(Box::new(task)), no_conflicts);
+        }
+        assert_eq!(read(&dir.join("here/Report.docx")), "r");
+        assert_eq!(read(&dir.join("here/Report (2).docx")), "r");
+        assert_eq!(engine.undo_label().as_deref(), Some("New file"));
+        let task = CopyTask::template(dir.join("templates/Project"), &dir.join("here"), true);
+        let (report, _) = finish(&engine, engine.submit(Box::new(task)), no_conflicts);
+        assert_eq!(report.results, [dir.join("here/Project")]);
+        assert_eq!(read(&dir.join("here/Project/src/main.rs")), "m");
+        assert_eq!(engine.undo_label().as_deref(), Some("New folder"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
