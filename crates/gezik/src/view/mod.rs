@@ -1399,7 +1399,6 @@ impl View {
 
     /// Takes the rows of `paths` out at once (trashed or deleted: the check after the job
     /// brings back what stayed, spec 4.7). In a folder, by their names there.
-    #[allow(dead_code, reason = "the search bar and the result operations call it (Tasks 7-8)")]
     pub fn hide_paths(&self, paths: &[PathBuf]) {
         // Not a clone of the set: it would make the edit copy it.
         let gone = self.0.data.borrow().results.as_ref().map(|set| set.rows_of(paths));
@@ -1422,29 +1421,21 @@ impl View {
         });
     }
 
-    /// A job's effects on the results (spec 4.7): `gone` rows out, `added` ones in at the end.
-    #[allow(dead_code, reason = "the search bar and the result operations call it (Tasks 7-8)")]
+    /// A job's effects on the results (spec 4.7): `gone` rows out, `added` ones in (a renamed
+    /// row in its place, others at the end; `ResultSet::apply_changes`).
     pub fn results_changed(&self, gone: &[PathBuf], added: Vec<(PathBuf, Entry)>) {
         // Not a clone of the set: it would make the edit copy it.
-        let Some(rows) = self.0.data.borrow().results.as_ref().map(|set| set.rows_of(gone)) else { return };
-        if rows.is_empty() && added.is_empty() {
+        let Some(none_gone) = self.0.data.borrow().results.as_ref().map(|set| set.rows_of(gone).is_empty()) else {
+            return;
+        };
+        if none_gone && added.is_empty() {
             return;
         }
-        self.edit_results(|set| {
-            let kept: Vec<usize> = (0..set.len()).filter(|i| rows.binary_search(i).is_err()).collect();
-            set.remove(&rows);
-            for (path, entry) in added {
-                if set.index_of_path(&path).is_none() {
-                    set.push(&path, entry);
-                }
-            }
-            kept
-        });
+        self.edit_results(|set| set.apply_changes(gone, added));
     }
 
     /// The selected results (the focused one if none is) with their paths under the scope
     /// (every drive's search: under the drive's root), for "Copy with folders".
-    #[allow(dead_code, reason = "the search bar and the result operations call it (Tasks 7-8)")]
     pub fn selected_relative(&self) -> Vec<(PathBuf, PathBuf)> {
         let Some(set) = self.results() else { return Vec::new() };
         self.selected_entries()

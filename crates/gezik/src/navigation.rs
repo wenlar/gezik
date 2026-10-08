@@ -575,6 +575,13 @@ impl Navigator {
         self.0.borrow_mut().select_next = Some(names);
     }
 
+    /// Opens a tab at `dir` in front with `names` selected ("Show in folder in new tab").
+    pub fn open_tab_selecting(&self, dir: PathBuf, names: Vec<String>) {
+        self.open_tab(Location::Path(dir), true);
+        // After the load it started, which drops any older names: these are for it.
+        self.0.borrow_mut().select_next = Some(names);
+    }
+
     pub fn back(&self) {
         self.queue(|_| Some(Step::Back));
     }

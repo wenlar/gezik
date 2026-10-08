@@ -121,6 +121,11 @@ pub fn items(place: Place, native_shell: bool) -> Vec<(u32, &'static str)> {
 /// not read); 1510-1519: its scope menu by place; 1520-1529: Filters ▸ Modified, sizes, Clear;
 /// 1530-1538: Filters ▸ Type in `KindFilter::ALL` order; 1540-1544: Filters' options.
 pub const SEARCH_HERE: u32 = 1500;
+/// 1501-1504: a search result's rows (spec 4.6, 9.4).
+pub const SHOW_IN_FOLDER: u32 = 1501;
+pub const SHOW_IN_FOLDER_NEW_TAB: u32 = 1502;
+pub const COPY_WITH_FOLDERS: u32 = 1503;
+pub const CUT_WITH_FOLDERS: u32 = 1504;
 pub const FLAT_VIEW: u32 = 1505;
 pub const SEARCH_NEW_TAB: u32 = 1506;
 pub const SEARCH_CLEAR: u32 = 1507;
@@ -422,6 +427,21 @@ pub struct Submenu {
     pub title: String,
     pub at: usize,
     pub items: Vec<(u32, String, bool)>,
+}
+
+/// What a search result's row menu adds.
+pub fn result_row_items() -> Vec<(u32, &'static str)> {
+    vec![
+        (SHOW_IN_FOLDER, "Show in folder"),
+        (SHOW_IN_FOLDER_NEW_TAB, "Show in folder in new tab"),
+        (COPY_WITH_FOLDERS, "Copy with folders"),
+        (CUT_WITH_FOLDERS, "Cut with folders"),
+    ]
+}
+
+/// Whether `paths` share one folder: Explorer's menu takes only that (`CDefFolderMenu`, spec 4.6).
+pub fn one_folder(paths: &[PathBuf]) -> bool {
+    paths.windows(2).all(|pair| pair[0].parent() == pair[1].parent())
 }
 
 /// Gezik's file items for rows on macOS and Linux; Windows has them in its own menu (and
@@ -855,19 +875,24 @@ impl Menus {
         if self.view.is_selected(i) && self.view.selection_count() > 1 {
             let rows = self.view.selected_items();
             let paths: Vec<PathBuf> = rows.iter().map(|(path, _)| path.clone()).collect();
+            let results = self.view.shows_results();
+            // Results from several folders get Gezik's own menu (spec 4.6).
+            let native = native && (!results || one_folder(&paths));
             let mut list = owned(items(Place::Rows, native));
             list.extend(owned(terminal_items(native)));
             let mut subs = vec![self.copy_path_sub(&paths, list.len())];
             self.add_links(&mut list, &mut subs, &rows, native);
             self.add_file_tools(&mut list, &mut subs, rows, native);
             list.extend(self.file_extras(false, false, native));
-            if !self.view.shows_drives() {
+            if results {
+                list.extend(owned(result_row_items()).into_iter().filter(|(id, _)| *id != SHOW_IN_FOLDER_NEW_TAB));
+            } else if !self.view.shows_drives() {
                 list.push((NEW_FOLDER_WITH_SELECTION, "New folder with selection".to_owned()));
             }
             if native && !self.view.shows_drives() {
                 list.push((BATCH_RENAME, format!("Rename {} items…", paths.len())));
             }
-            return self.open(Subject::Rows(paths.clone()), list, subs, MenuTarget::Items(paths), x, y, at);
+            return self.open_as(native, Subject::Rows(paths.clone()), list, subs, MenuTarget::Items(paths), x, y, at);
         }
         let Some((path, is_dir)) = self.view.entry_path(i) else { return };
         let place = Place::Row { is_dir, pinned: is_dir && self.sidebar.is_pinned(&path) };
@@ -883,6 +908,9 @@ impl Menus {
         self.add_links(&mut list, &mut subs, &[(path.clone(), is_dir)], native);
         self.add_file_tools(&mut list, &mut subs, vec![(path.clone(), is_dir)], native);
         list.extend(self.file_extras(true, is_dir, native));
+        if self.view.shows_results() {
+            list.extend(owned(result_row_items()));
+        }
         self.open(Subject::Row(path.clone()), list, subs, MenuTarget::Item(path), x, y, at);
     }
 
@@ -959,6 +987,19 @@ impl Menus {
     }
 
     fn background_menu(&self, at: Option<(f32, f32)>, x: f32, y: f32) {
+        // Search results have no folder: Undo, Redo and Refresh (spec 4.6).
+        if self.view.shows_results() {
+            let mut list: Vec<(u32, String, bool)> = Vec::new();
+            if let Some(label) = self.ops.undo_label() {
+                list.push((UNDO, format!("Undo {label}"), true));
+            }
+            if let Some(label) = self.ops.redo_label() {
+                list.push((REDO, format!("Redo {label}"), true));
+            }
+            list.push((REFRESH, "Refresh".to_owned(), true));
+            *self.subject.borrow_mut() = Some(Subject::Background(PathBuf::new()));
+            return self.open_slint_entries(&list, Vec::new(), Anchor::point(x, y));
+        }
         let Location::Path(dir) = self.nav.active_location() else { return };
         self.ops.clipboard_check();
         // One clipboard query each, shared by the menu and its Paste item.
@@ -1081,7 +1122,23 @@ impl Menus {
         y: f32,
         at: Option<(f32, f32)>,
     ) {
-        if cfg!(windows) {
+        self.open_as(cfg!(windows), subject, items, subs, target, x, y, at);
+    }
+
+    /// Like `open`; `native`: the Explorer menu (Windows), else Gezik's own.
+    #[allow(clippy::too_many_arguments, reason = "what the menu is for, what it shows, and where")]
+    fn open_as(
+        &self,
+        native: bool,
+        subject: Subject,
+        items: Vec<(u32, String)>,
+        subs: Vec<Submenu>,
+        target: MenuTarget,
+        x: f32,
+        y: f32,
+        at: Option<(f32, f32)>,
+    ) {
+        if native {
             self.open_native(Some(subject), target, items, subs, at);
         } else {
             *self.subject.borrow_mut() = Some(subject);
@@ -1311,6 +1368,17 @@ impl Menus {
             (id, Subject::Search) => crate::search::with_current(|s| s.menu_chosen(id)),
             (SEARCH_HERE, Subject::Background(dir) | Subject::SidebarEntry(dir) | Subject::Row(dir)) => {
                 crate::search::with_current(|s| s.open_in(dir));
+            }
+            (SHOW_IN_FOLDER | SHOW_IN_FOLDER_NEW_TAB, Subject::Row(path)) => {
+                self.ops.show_path_in_folder(&path, id == SHOW_IN_FOLDER_NEW_TAB);
+            }
+            (SHOW_IN_FOLDER, Subject::Rows(paths)) => {
+                if let Some(path) = paths.first() {
+                    self.ops.show_path_in_folder(path, false);
+                }
+            }
+            (COPY_WITH_FOLDERS | CUT_WITH_FOLDERS, Subject::Row(_) | Subject::Rows(_)) => {
+                self.ops.copy_with_folders(id == CUT_WITH_FOLDERS);
             }
             (FLAT_VIEW, Subject::View) => crate::search::with_current(crate::search::Searches::flat_view),
             // By name: settings.toml may have been reloaded since the menu opened.
@@ -1700,6 +1768,15 @@ pub fn menu_title(title: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn results_rows_offer_their_folder_and_copies_that_keep_folders() {
+        let ids: Vec<u32> = result_row_items().iter().map(|(id, _)| *id).collect();
+        assert_eq!(ids, [SHOW_IN_FOLDER, SHOW_IN_FOLDER_NEW_TAB, COPY_WITH_FOLDERS, CUT_WITH_FOLDERS]);
+        assert!(ids.iter().all(|id| (1500..1600).contains(id)));
+        assert!(one_folder(&[PathBuf::from("/w/a/x"), PathBuf::from("/w/a/y")]));
+        assert!(!one_folder(&[PathBuf::from("/w/a/x"), PathBuf::from("/w/b/y")]), "the Explorer menu takes one folder");
+    }
 
     #[test]
     fn the_results_header_menu_has_its_own_ids() {

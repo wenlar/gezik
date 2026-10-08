@@ -102,6 +102,8 @@ export component AppWindow inherits Window {
             MenuSeparator { }
             MenuItem { title: "Cut"; shortcut: root.menu-keys ? @keys(Control + X) : @keys(); activated => { root.menu-command("cut"); } }
             MenuItem { title: "Copy"; shortcut: root.menu-keys ? @keys(Control + C) : @keys(); activated => { root.menu-command("copy"); } }
+            MenuItem { title: "Copy with Folders"; activated => { root.menu-command("copy-with-folders"); } }
+            MenuItem { title: "Cut with Folders"; activated => { root.menu-command("cut-with-folders"); } }
             MenuItem { title: "Copy Path"; shortcut: root.menu-keys ? @keys(Control + Alt + C) : @keys(); activated => { root.menu-command("copy-path"); } }
             MenuItem { title: "Add to Drop Stack"; shortcut: root.menu-keys ? @keys(Control + Shift + S) : @keys(); activated => { root.menu-command("add-to-stack"); } }
             MenuItem { title: "Paste"; shortcut: root.menu-keys ? @keys(Control + V) : @keys(); activated => { root.menu-command("paste"); } }
@@ -149,6 +151,7 @@ export component AppWindow inherits Window {
             MenuItem { title: "Back"; shortcut: root.menu-keys ? @keys(Control + "[") : @keys(); activated => { root.menu-command("back"); } }
             MenuItem { title: "Forward"; shortcut: root.menu-keys ? @keys(Control + "]") : @keys(); activated => { root.menu-command("forward"); } }
             MenuItem { title: "Enclosing Folder"; shortcut: root.menu-keys ? @keys(Control + UpArrow) : @keys(); activated => { root.menu-command("up"); } }
+            MenuItem { title: "Show in Folder"; shortcut: root.menu-keys ? @keys(Control + Shift + E) : @keys(); activated => { root.menu-command("show-in-folder"); } }
             MenuSeparator { }
             MenuItem { title: "Go to Folder…"; shortcut: root.menu-keys ? @keys(Control + L) : @keys(); activated => { root.menu-command("focus-path"); } }
             MenuSeparator { }

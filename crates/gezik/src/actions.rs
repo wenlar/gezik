@@ -58,6 +58,9 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         Action::OpenTerminalAdmin => crate::terminal::open_for_view(view, true),
         Action::CopyPath => crate::copy_path::copy_selection(view),
         Action::SaveTabSet => crate::tab_sets::with_current(crate::tab_sets::TabSets::ask_save),
+        Action::ShowInFolder => crate::operations::with_current(|ops| ops.show_in_folder(false)),
+        Action::CopyWithFolders => crate::operations::with_current(|ops| ops.copy_with_folders(false)),
+        Action::CutWithFolders => crate::operations::with_current(|ops| ops.copy_with_folders(true)),
         Action::NewFolderWithSelection => {
             crate::operations::with_current(crate::operations::Operations::new_folder_with_selection)
         }
@@ -106,11 +109,7 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         | Action::Duplicate
         | Action::Undo
         | Action::Redo
-        | Action::BatchRename
-        // Task 8 places these.
-        | Action::ShowInFolder
-        | Action::CopyWithFolders
-        | Action::CutWithFolders => return false,
+        | Action::BatchRename => return false,
     }
     true
 }
