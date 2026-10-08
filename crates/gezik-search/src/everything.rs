@@ -714,7 +714,7 @@ impl<'a> Reader<'a> {
                 let handles: Vec<_> = chunk
                     .chunks(per)
                     .map(|part| {
-                        scope.spawn(move || {
+                        let handle = scope.spawn(move || {
                             gezik_platform::priority::lower_this_thread();
                             part.iter()
                                 .map(|(path, entry)| {
@@ -724,10 +724,12 @@ impl<'a> Reader<'a> {
                                     content.find_in_file(path, cancel, &gezik_platform::decode_ansi).ok().flatten()
                                 })
                                 .collect::<Vec<_>>()
-                        })
+                        });
+                        (part.len(), handle)
                     })
                     .collect();
-                handles.into_iter().flat_map(|handle| handle.join().unwrap_or_default()).collect()
+                // A part that panicked keeps its place: its lines are none, not the next part's.
+                handles.into_iter().flat_map(|(len, handle)| handle.join().unwrap_or_else(|_| vec![None; len])).collect()
             });
             let mut batch = Batch::default();
             for ((path, entry), line) in chunk.iter().zip(lines) {
