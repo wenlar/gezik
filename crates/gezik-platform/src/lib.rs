@@ -47,6 +47,8 @@ pub enum ShellVerb {
     Paste,
     Delete,
     Rename,
+    /// Explorer's "Create shortcut".
+    Link,
 }
 
 impl ShellVerb {
@@ -58,6 +60,7 @@ impl ShellVerb {
             b"paste" => Some(ShellVerb::Paste),
             b"delete" => Some(ShellVerb::Delete),
             b"rename" => Some(ShellVerb::Rename),
+            b"link" => Some(ShellVerb::Link),
             _ => None,
         }
     }
@@ -117,6 +120,7 @@ mod tests {
 
     #[test]
     fn explorer_verbs_gezik_does() {
+        assert_eq!(ShellVerb::from_name(b"link"), Some(ShellVerb::Link));
         assert_eq!(ShellVerb::from_name(b"delete"), Some(ShellVerb::Delete));
         assert_eq!(ShellVerb::from_name(b"Paste"), Some(ShellVerb::Paste));
         assert_eq!(ShellVerb::from_name(b"properties"), None);

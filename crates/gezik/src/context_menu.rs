@@ -11,6 +11,7 @@ use gezik_config::settings::ViewOption;
 use gezik_core::drag::Effect;
 use gezik_core::nav::Location;
 use gezik_core::path_text::PathFormat;
+use gezik_core::templates::{LinkKind, PasteKind, Template};
 use gezik_core::view::{
     ColumnKey, ColumnState, DateFormat, GridSize, SizeFormat, SortDir, SortKey, SortSpec, ViewMode, ViewOptions,
     ViewSettings,
@@ -261,6 +262,18 @@ pub const SIZE_FORMAT_FIRST: u32 = 1320;
 /// 7c's ids are 1400-1459 (spec 11.1). 1407: "Create link here" after a drag with the right
 /// button.
 pub const CREATE_LINK_HERE: u32 = 1407;
+/// 1400: New ▸ Markdown file; 1401: Open templates folder; 1402: New folder with selection;
+/// 1403: Paste image/text as file; 1404-1406: Create link ▸ Shortcut, Junction, Symbolic link
+/// (elsewhere the one "Create link" is 1406); 1410-1459: the user's templates by place.
+pub const NEW_MARKDOWN: u32 = 1400;
+pub const OPEN_TEMPLATES: u32 = 1401;
+pub const NEW_FOLDER_WITH_SELECTION: u32 = 1402;
+pub const PASTE_AS_FILE: u32 = 1403;
+pub const LINK_SHORTCUT: u32 = 1404;
+pub const LINK_JUNCTION: u32 = 1405;
+pub const LINK_SYMLINK: u32 = 1406;
+pub const TEMPLATE_FIRST: u32 = 1410;
+pub const TEMPLATE_MAX: u32 = gezik_core::templates::TEMPLATE_MAX as u32;
 /// Group headings in a Slint menu: shown greyed, never chosen.
 pub const HEADING: u32 = 0;
 /// Gezik's menu ids are below this; the Explorer menu's start here (gezik_platform's
@@ -295,8 +308,15 @@ pub fn file_items(single: bool, folder: bool, can_paste: bool) -> Vec<(u32, &'st
     out
 }
 
-/// The items for empty space in a folder: Undo/Redo say what they would do.
-pub fn background_items(undo: Option<&str>, redo: Option<&str>, can_paste: bool) -> Vec<(u32, String)> {
+/// The items for empty space in a folder: Undo/Redo say what they would do; Paste, or what
+/// paste would write as a file; New folder and New file on Windows (elsewhere in New ▸).
+pub fn background_items(
+    undo: Option<&str>,
+    redo: Option<&str>,
+    can_paste: bool,
+    paste_as: Option<PasteKind>,
+    windows: bool,
+) -> Vec<(u32, String)> {
     let mut out = Vec::new();
     if let Some(label) = undo {
         out.push((UNDO, format!("Undo {label}")));
@@ -304,13 +324,68 @@ pub fn background_items(undo: Option<&str>, redo: Option<&str>, can_paste: bool)
     if let Some(label) = redo {
         out.push((REDO, format!("Redo {label}")));
     }
-    if can_paste {
-        out.push((PASTE, "Paste".to_owned()));
+    match (can_paste, paste_as) {
+        (true, _) => out.push((PASTE, "Paste".to_owned())),
+        (false, Some(PasteKind::Image)) => out.push((PASTE_AS_FILE, "Paste image as file".to_owned())),
+        (false, Some(PasteKind::Text)) => out.push((PASTE_AS_FILE, "Paste text as file".to_owned())),
+        (false, None) => {}
     }
-    out.push((NEW_FOLDER, "New folder".to_owned()));
-    out.push((NEW_FILE, "New file".to_owned()));
+    if windows {
+        out.push((NEW_FOLDER, "New folder".to_owned()));
+        out.push((NEW_FILE, "New file".to_owned()));
+    }
     out.push((REFRESH, "Refresh".to_owned()));
     out
+}
+
+/// New ▸ (macOS, Linux: Folder, Text file, Markdown file) or New from template ▸ (Windows,
+/// where Explorer's New ▸ is in the same menu: Markdown file), then the user's templates,
+/// then Open templates folder; at place `at` (spec 8.1). No separator: submenus have none.
+pub fn new_sub(templates: &[Template], windows: bool, at: usize) -> Submenu {
+    let mut items = Vec::new();
+    if !windows {
+        items.push((NEW_FOLDER, "Folder".to_owned(), true));
+        items.push((NEW_FILE, "Text file".to_owned(), true));
+    }
+    items.push((NEW_MARKDOWN, "Markdown file".to_owned(), true));
+    items.extend(
+        templates
+            .iter()
+            .take(TEMPLATE_MAX as usize)
+            .enumerate()
+            .map(|(i, template)| (TEMPLATE_FIRST + i as u32, template.label.clone(), true)),
+    );
+    items.push((OPEN_TEMPLATES, "Open templates folder".to_owned(), true));
+    let title = if windows { "New from template" } else { "New" };
+    Submenu { title: title.to_owned(), at, items }
+}
+
+/// Create link ▸ on Windows (Shortcut; Junction for local folders; Symbolic link when it can
+/// be made), or the one "Create link" (a symbolic link) elsewhere (spec 9.2).
+pub fn link_items(windows: bool, junction: bool, symlink: bool) -> Vec<(u32, String, bool)> {
+    if !windows {
+        return vec![(LINK_SYMLINK, "Create link".to_owned(), true)];
+    }
+    let mut out = vec![(LINK_SHORTCUT, "Shortcut".to_owned(), true)];
+    if junction {
+        out.push((LINK_JUNCTION, "Junction".to_owned(), true));
+    }
+    if symlink {
+        out.push((LINK_SYMLINK, "Symbolic link".to_owned(), true));
+    }
+    out
+}
+
+/// Whether Junction is offered for `rows`: all folders, none on a share or on one of
+/// `network_drives` (mapped drives). The file system (NTFS) is checked by the job: the menu
+/// reads no disk.
+pub fn junction_offered(rows: &[(PathBuf, bool)], network_drives: &[PathBuf]) -> bool {
+    !rows.is_empty()
+        && rows.iter().all(|(path, is_dir)| {
+            *is_dir
+                && !path.to_string_lossy().starts_with(r"\\")
+                && !network_drives.iter().any(|drive| gezik_core::ops::paths::is_within(path, drive))
+        })
 }
 
 /// "Open terminal here", and on Windows "Open terminal as administrator" under it.
@@ -555,6 +630,8 @@ pub struct Menus {
     rows: Rc<RefCell<Vec<(PathBuf, bool)>>>,
     /// The groups the last sidebar menu listed in Move to group ▸ (items are by place).
     pin_groups: Rc<RefCell<Vec<String>>>,
+    /// The templates the last New ▸ listed (items are by place).
+    menu_templates: Rc<RefCell<Vec<Template>>>,
     #[cfg_attr(not(windows), allow(dead_code))]
     native_menu: MenuGate,
 }
@@ -578,6 +655,7 @@ impl Menus {
             subject: Rc::default(),
             rows: Rc::default(),
             pin_groups: Rc::default(),
+            menu_templates: Rc::default(),
             native_menu: MenuGate::default(),
         };
         window.on_menu_closed(|| {
@@ -640,8 +718,12 @@ impl Menus {
             let mut list = owned(items(Place::Rows, native));
             list.extend(owned(terminal_items(native)));
             let mut subs = vec![self.copy_path_sub(&paths, list.len())];
+            self.add_links(&mut list, &mut subs, &rows, native);
             self.add_file_tools(&mut list, &mut subs, rows, native);
             list.extend(self.file_extras(false, false, native));
+            if !self.view.shows_drives() {
+                list.push((NEW_FOLDER_WITH_SELECTION, "New folder with selection".to_owned()));
+            }
             if native && !self.view.shows_drives() {
                 list.push((BATCH_RENAME, format!("Rename {} items…", paths.len())));
             }
@@ -652,6 +734,7 @@ impl Menus {
         let mut list = owned(items(place, native));
         list.extend(owned(terminal_items(native)));
         let mut subs = vec![self.copy_path_sub(std::slice::from_ref(&path), list.len())];
+        self.add_links(&mut list, &mut subs, &[(path.clone(), is_dir)], native);
         self.add_file_tools(&mut list, &mut subs, vec![(path.clone(), is_dir)], native);
         list.extend(self.file_extras(true, is_dir, native));
         self.open(Subject::Row(path.clone()), list, subs, MenuTarget::Item(path), x, y, at);
@@ -701,13 +784,54 @@ impl Menus {
         }
     }
 
+    /// Create link ▸ (Windows) or Create link at the end of the items so far, for `rows`;
+    /// nothing for drives.
+    fn add_links(
+        &self,
+        list: &mut Vec<(u32, String)>,
+        subs: &mut Vec<Submenu>,
+        rows: &[(PathBuf, bool)],
+        native: bool,
+    ) {
+        if self.view.shows_drives() {
+            return;
+        }
+        let network: Vec<PathBuf> = self
+            .nav
+            .places()
+            .drives
+            .into_iter()
+            .filter(|drive| drive.kind == gezik_platform::DriveKind::Network)
+            .map(|drive| drive.path)
+            .collect();
+        let items = link_items(native, junction_offered(rows, &network), gezik_platform::link::symlinks_allowed());
+        if native {
+            subs.push(Submenu { title: "Create link".to_owned(), at: list.len(), items });
+        } else {
+            list.extend(items.into_iter().map(|(id, title, _)| (id, title)));
+        }
+    }
+
     fn background_menu(&self, at: Option<(f32, f32)>, x: f32, y: f32) {
         let Location::Path(dir) = self.nav.active_location() else { return };
         self.ops.clipboard_check();
-        let mut list =
-            background_items(self.ops.undo_label().as_deref(), self.ops.redo_label().as_deref(), self.ops.can_paste());
-        list.extend(owned(terminal_items(cfg!(windows))));
-        let subs = vec![self.copy_path_sub(std::slice::from_ref(&dir), list.len())];
+        // One clipboard query each, shared by the menu and its Paste item.
+        let can_paste = self.ops.can_paste();
+        let paste_as = self.ops.paste_as(can_paste);
+        let windows = cfg!(windows);
+        let mut list = background_items(
+            self.ops.undo_label().as_deref(),
+            self.ops.redo_label().as_deref(),
+            can_paste,
+            paste_as,
+            windows,
+        );
+        let templates = crate::templates::current();
+        let new_at = list.iter().position(|(id, _)| *id == REFRESH).unwrap_or(list.len());
+        let mut subs = vec![new_sub(&templates, windows, new_at)];
+        *self.menu_templates.borrow_mut() = templates;
+        list.extend(owned(terminal_items(windows)));
+        subs.push(self.copy_path_sub(std::slice::from_ref(&dir), list.len()));
         self.open(Subject::Background(dir.clone()), list, subs, MenuTarget::Background(dir), x, y, at);
     }
 
@@ -1188,6 +1312,22 @@ impl Menus {
             (PASTE, Subject::Background(dir)) => self.ops.paste(Some(dir), false),
             (NEW_FOLDER, Subject::Background(dir)) => self.ops.new_folder(Some(dir)),
             (NEW_FILE, Subject::Background(dir)) => self.ops.new_file(Some(dir)),
+            (NEW_MARKDOWN, Subject::Background(dir)) => self.ops.new_markdown(dir),
+            (OPEN_TEMPLATES, Subject::Background(_)) => crate::templates::open_folder(),
+            (id, Subject::Background(dir)) if (TEMPLATE_FIRST..TEMPLATE_FIRST + TEMPLATE_MAX).contains(&id) => {
+                let template = self.menu_templates.borrow().get((id - TEMPLATE_FIRST) as usize).cloned();
+                if let Some(template) = template {
+                    self.ops.new_from_template(dir, &template);
+                }
+            }
+            (PASTE_AS_FILE, Subject::Background(dir)) => self.ops.paste_as_file(dir),
+            (NEW_FOLDER_WITH_SELECTION, Subject::Rows(paths)) => self.ops.new_folder_with(paths),
+            (LINK_SHORTCUT | LINK_JUNCTION | LINK_SYMLINK, Subject::Row(path)) => {
+                self.ops.create_links(vec![path], link_kind(id))
+            }
+            (LINK_SHORTCUT | LINK_JUNCTION | LINK_SYMLINK, Subject::Rows(paths)) => {
+                self.ops.create_links(paths, link_kind(id))
+            }
             (REFRESH, Subject::Background(_)) => self.nav.reload(),
             (OPEN_TERMINAL | OPEN_TERMINAL_ADMIN, subject) => {
                 let dir = match subject {
@@ -1247,6 +1387,7 @@ impl Menus {
                     self.ops.trash_paths(paths, permanent);
                 }
             }
+            ShellVerb::Link => self.ops.create_links(paths, LinkKind::Shortcut),
             ShellVerb::Rename => {
                 if matches!(subject, Some(Subject::Row(_))) {
                     self.ops.rename_start();
@@ -1330,6 +1471,15 @@ fn menu_lines(before: Vec<MenuEntry>, subs: Vec<(String, Vec<MenuEntry>)>) -> Ve
     lines
 }
 
+/// The link a Create link item makes.
+fn link_kind(id: u32) -> LinkKind {
+    match id {
+        LINK_SHORTCUT => LinkKind::Shortcut,
+        LINK_JUNCTION => LinkKind::Junction,
+        _ => LinkKind::Symlink,
+    }
+}
+
 /// Whether `id` is an item of a submenu: once one is chosen, Slint leaves the keyboard
 /// nowhere (it gives it to the parent menu, which is gone).
 fn from_submenu(id: u32) -> bool {
@@ -1341,6 +1491,11 @@ fn from_submenu(id: u32) -> bool {
         || (GROUP_MOVE_FIRST..GROUP_MOVE_FIRST + GROUP_MAX).contains(&id)
         || id == GROUP_NEW
         || id == GROUP_NONE
+        || (TEMPLATE_FIRST..TEMPLATE_FIRST + TEMPLATE_MAX).contains(&id)
+        || matches!(
+            id,
+            NEW_FOLDER | NEW_FILE | NEW_MARKDOWN | OPEN_TEMPLATES | LINK_SHORTCUT | LINK_JUNCTION | LINK_SYMLINK
+        )
 }
 
 /// Whether Slint shows its menus as the system's: on Windows and macOS (through muda),
@@ -1530,6 +1685,13 @@ mod tests {
             MOVE_HERE,
             CANCEL_DROP,
             CREATE_LINK_HERE,
+            NEW_MARKDOWN,
+            OPEN_TEMPLATES,
+            NEW_FOLDER_WITH_SELECTION,
+            PASTE_AS_FILE,
+            LINK_SHORTCUT,
+            LINK_JUNCTION,
+            LINK_SYMLINK,
             PRESET_SAVE,
             EXTRACT_HERE,
             EXTRACT_TO_OWN,
@@ -1579,6 +1741,7 @@ mod tests {
             DATE_FORMAT_FIRST..DATE_FORMAT_FIRST + DateFormat::ALL.len() as u32,
             SIZE_FORMAT_FIRST..SIZE_FORMAT_FIRST + SizeFormat::ALL.len() as u32,
             GROUP_MOVE_FIRST..GROUP_MOVE_FIRST + GROUP_MAX,
+            TEMPLATE_FIRST..TEMPLATE_FIRST + TEMPLATE_MAX,
         ]);
         for (i, a) in ranges.iter().enumerate() {
             assert!(a.start >= 1 && a.end <= GEZIK_IDS_END, "{a:?}: 1..4096 (0 is a heading, 4096 on the Shell's)");
@@ -1647,12 +1810,77 @@ mod tests {
 
     #[test]
     fn background_items_say_what_undo_does() {
-        let items = background_items(Some("Copy 3 items"), None, true);
+        let items = background_items(Some("Copy 3 items"), None, true, None, true);
         assert_eq!(items[0], (UNDO, "Undo Copy 3 items".to_owned()));
         let ids: Vec<u32> = items.iter().map(|(id, _)| *id).collect();
         assert_eq!(ids, [UNDO, PASTE, NEW_FOLDER, NEW_FILE, REFRESH]);
-        let bare: Vec<u32> = background_items(None, None, false).iter().map(|(id, _)| *id).collect();
+        let bare: Vec<u32> = background_items(None, None, false, None, true).iter().map(|(id, _)| *id).collect();
         assert_eq!(bare, [NEW_FOLDER, NEW_FILE, REFRESH]);
+    }
+
+    #[test]
+    fn the_background_menu_says_what_paste_does() {
+        use gezik_core::templates::PasteKind;
+        let ids = |items: Vec<(u32, String)>| items.into_iter().map(|(id, _)| id).collect::<Vec<_>>();
+        assert_eq!(
+            ids(background_items(None, None, true, Some(PasteKind::Image), true)),
+            [PASTE, NEW_FOLDER, NEW_FILE, REFRESH],
+            "files paste as files"
+        );
+        assert_eq!(
+            background_items(None, None, false, Some(PasteKind::Image), false),
+            [(PASTE_AS_FILE, "Paste image as file".to_owned()), (REFRESH, "Refresh".to_owned())],
+            "macOS and Linux: New folder and New file are in New ▸"
+        );
+        assert_eq!(background_items(None, None, false, Some(PasteKind::Text), true)[0].1, "Paste text as file");
+    }
+
+    #[test]
+    fn new_lists_the_built_ins_the_templates_and_the_folder() {
+        let templates = gezik_core::templates::template_list([
+            ("Report.docx".to_owned(), false, false),
+            ("Project".to_owned(), true, false),
+        ]);
+        let titles = |sub: &Submenu| sub.items.iter().map(|(id, t, _)| (*id, t.clone())).collect::<Vec<_>>();
+        let elsewhere = new_sub(&templates, false, 3);
+        assert_eq!((elsewhere.title.as_str(), elsewhere.at), ("New", 3));
+        let expected: Vec<(u32, String)> = [
+            (NEW_FOLDER, "Folder"),
+            (NEW_FILE, "Text file"),
+            (NEW_MARKDOWN, "Markdown file"),
+            (TEMPLATE_FIRST, "Project"),
+            (TEMPLATE_FIRST + 1, "Report"),
+            (OPEN_TEMPLATES, "Open templates folder"),
+        ]
+        .iter()
+        .map(|(id, t)| (*id, (*t).to_owned()))
+        .collect();
+        assert_eq!(titles(&elsewhere), expected);
+        let windows = new_sub(&templates, true, 5);
+        assert_eq!(windows.title, "New from template", "Explorer's own New ▸ is in the same menu");
+        assert_eq!(titles(&windows)[0], (NEW_MARKDOWN, "Markdown file".to_owned()));
+        assert!(from_submenu(TEMPLATE_FIRST + 49) && from_submenu(NEW_MARKDOWN) && from_submenu(OPEN_TEMPLATES));
+        assert_eq!(TEMPLATE_MAX as usize, gezik_core::templates::TEMPLATE_MAX);
+    }
+
+    #[test]
+    fn link_items_follow_the_system_and_what_can_be_made() {
+        let ids = |v: Vec<(u32, String, bool)>| v.into_iter().map(|(id, _, _)| id).collect::<Vec<_>>();
+        assert_eq!(ids(link_items(true, true, true)), [LINK_SHORTCUT, LINK_JUNCTION, LINK_SYMLINK]);
+        assert_eq!(ids(link_items(true, false, false)), [LINK_SHORTCUT]);
+        assert_eq!(link_items(false, false, true), [(LINK_SYMLINK, "Create link".to_owned(), true)]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_junction_is_offered_for_local_folders_only() {
+        let row = |path: &str, is_dir| (PathBuf::from(path), is_dir);
+        let network = [PathBuf::from(r"Z:\")];
+        assert!(junction_offered(&[row(r"C:\a", true), row(r"C:\b", true)], &network));
+        assert!(!junction_offered(&[row(r"C:\a", true), row(r"C:\f.txt", false)], &network), "a file");
+        assert!(!junction_offered(&[row(r"\\srv\share\a", true)], &network), "a share");
+        assert!(!junction_offered(&[row(r"Z:\a", true)], &network), "a mapped drive");
+        assert!(!junction_offered(&[], &network));
     }
 
     #[cfg(windows)]

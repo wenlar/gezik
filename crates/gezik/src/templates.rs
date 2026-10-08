@@ -22,7 +22,6 @@ pub fn dir() -> Option<PathBuf> {
 }
 
 /// The templates as last read (at most `TEMPLATE_MAX`).
-#[allow(dead_code)] // Task 6 uses this.
 pub fn current() -> Vec<Template> {
     STATE.with(|state| state.borrow().1.clone())
 }
@@ -53,7 +52,6 @@ pub fn load_in_background() {
 
 /// "Open templates folder": made if it is not there (off the UI thread), then opened in a new
 /// tab of Gezik.
-#[allow(dead_code)] // Task 6 uses this.
 pub fn open_folder() {
     let Some(dir) = dir() else {
         crate::view::with_current(|view| view.note("No config folder for templates".to_owned()));

@@ -79,6 +79,7 @@ export component AppWindow inherits Window {
             title: "File";
             MenuItem { title: "New Tab"; shortcut: root.menu-keys ? @keys(Control + T) : @keys(); activated => { root.menu-command("new-tab"); } }
             MenuItem { title: "New Folder"; shortcut: root.menu-keys ? @keys(Control + Shift + N) : @keys(); activated => { root.menu-command("new-folder"); } }
+            MenuItem { title: "New Folder with Selection"; shortcut: root.menu-keys ? @keys(Control + Meta + N) : @keys(); activated => { root.menu-command("new-folder-with-selection"); } }
             MenuItem { title: "Open Terminal"; shortcut: root.menu-keys ? @keys(Control + Alt + T) : @keys(); activated => { root.menu-command("open-terminal"); } }
             MenuSeparator { }
             MenuItem { title: "Quick Look"; activated => { root.menu-command("quick-look"); } }

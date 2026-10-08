@@ -14,10 +14,10 @@ use gezik_config::store::ConfigStore;
 use gezik_core::drag::Effect;
 use gezik_core::ops::paths::same_path;
 use gezik_core::ops::rate::{Rate, format_eta, format_rate};
-use gezik_core::templates::LinkKind;
+use gezik_core::templates::{LinkKind, PasteKind, Template, pasted_name};
 use gezik_ops::{
-    Answer, CopyTask, DeleteTask, Engine, Event, Failure, JobId, JobState, LinkTask, MoveTask, NewTask, PauseReason,
-    Progress, Question, Report, Settings, Task, TrashTask,
+    Answer, CopyTask, DeleteTask, Engine, Event, Failure, GroupTask, JobId, JobState, LinkTask, MoveTask, NewTask,
+    PauseReason, Progress, Question, Report, Settings, Task, TrashTask,
 };
 use gezik_platform::clipboard::{self, ClipboardError, ClipboardFiles};
 use gezik_platform::taskbar::{Taskbar, TaskbarState};
@@ -719,7 +719,8 @@ impl Operations {
     /// moves copied ones too (macOS Cmd+Option+V).
     pub fn paste(&self, into: Option<PathBuf>, force_move: bool) {
         let Some(dir) = into.or_else(|| self.0.view.folder()) else { return };
-        let Some(ClipboardFiles { paths, cut }) = self.clipboard() else { return };
+        // No files: the picture or text as a new file (spec 9.1).
+        let Some(ClipboardFiles { paths, cut }) = self.clipboard() else { return self.paste_as_file(dir) };
         self.transfer(paths, dir, if cut || force_move { Effect::Move } else { Effect::Copy });
         if cut {
             // Pasted: cut items are no longer waiting anywhere (also Explorer's own).
@@ -871,6 +872,97 @@ impl Operations {
         }
         self.remember_for(&paths);
         let retry: Retry = Rc::new(move || -> Box<dyn Task> { Box::new(CopyTask::duplicate(paths.clone())) });
+        self.submit(retry(), Some(retry), After::Select);
+    }
+
+    /// An empty Markdown file in `dir`, renamed right away (spec 8.1).
+    pub fn new_markdown(&self, dir: PathBuf) {
+        self.submit(Box::new(NewTask::markdown(&dir)), None, After::Rename);
+    }
+
+    /// A copy of the user's `template` in `dir`, renamed right away (spec 8.1).
+    pub fn new_from_template(&self, dir: PathBuf, template: &Template) {
+        let Some(templates) = crate::templates::dir() else { return };
+        let (source, is_dir) = (templates.join(&template.name), template.is_dir);
+        let retry: Retry =
+            Rc::new(move || -> Box<dyn Task> { Box::new(CopyTask::template(source.clone(), &dir, is_dir)) });
+        self.submit(retry(), Some(retry), After::Rename);
+    }
+
+    /// `new-folder-with-selection`: the selected items into a new folder next to them.
+    pub fn new_folder_with_selection(&self) {
+        if self.0.view.shows_drives() {
+            return;
+        }
+        self.new_folder_with(self.0.view.selected_paths());
+    }
+
+    /// `paths` (those in the folder shown) moved into a new "New folder" there, as one job,
+    /// and the folder renamed right away (spec 8.2).
+    pub fn new_folder_with(&self, paths: Vec<PathBuf>) {
+        let Some(dir) = self.0.view.folder() else { return };
+        let paths: Vec<PathBuf> = self
+            .without_roots(paths, "move")
+            .into_iter()
+            .filter(|path| path.parent().is_some_and(|parent| same_path(parent, &dir)))
+            .collect();
+        if paths.is_empty() {
+            return self.0.view.note("Select the items to put in a new folder".to_owned());
+        }
+        self.remember_for(&paths);
+        let retry: Retry = Rc::new(move || -> Box<dyn Task> { Box::new(GroupTask::new(paths.clone(), &dir)) });
+        self.submit(retry(), Some(retry), After::Rename);
+    }
+
+    /// What paste would write as a file: nothing while there are files to paste (`can_paste`,
+    /// which the caller has asked already: one clipboard query per menu).
+    pub fn paste_as(&self, can_paste: bool) -> Option<PasteKind> {
+        if can_paste { None } else { clipboard::paste_kind() }
+    }
+
+    /// The clipboard's picture (before its text: a browser's picture often carries both) as a
+    /// new `Pasted image … .png` in `dir`, else its text as `Pasted text … .txt` (spec 9.1).
+    /// The data is read here; the picture is encoded in the job.
+    pub fn paste_as_file(&self, dir: PathBuf) {
+        let Some(at) = gezik_platform::local_date_parts(std::time::SystemTime::now()) else { return };
+        let failed = |err: ClipboardError| match err {
+            ClipboardError::Failed(why) => Some(format!("Cannot use the clipboard: {why}")),
+            ClipboardError::Unsupported => None,
+        };
+        match clipboard::read_image() {
+            Ok(Some(image)) => {
+                let name = pasted_name(PasteKind::Image, &at);
+                self.submit(
+                    Box::new(NewTask::with_contents(&dir, &name, move || image.png_bytes())),
+                    None,
+                    After::Select,
+                );
+                return;
+            }
+            Ok(None) => {}
+            Err(err) => return failed(err).into_iter().for_each(|text| self.0.view.note(text)),
+        }
+        match clipboard::read_text() {
+            Ok(Some(text)) if !text.is_empty() => {
+                let (name, bytes) = (pasted_name(PasteKind::Text, &at), text.into_bytes());
+                self.submit(
+                    Box::new(NewTask::with_contents(&dir, &name, move || Ok(bytes.clone()))),
+                    None,
+                    After::Select,
+                );
+            }
+            Ok(_) => {}
+            Err(err) => failed(err).into_iter().for_each(|text| self.0.view.note(text)),
+        }
+    }
+
+    /// A link of `kind` next to each of `paths` ("Create link ▸", Explorer's "Create shortcut").
+    pub fn create_links(&self, paths: Vec<PathBuf>, kind: LinkKind) {
+        let paths = self.without_roots(paths, "link to");
+        if paths.is_empty() {
+            return;
+        }
+        let retry: Retry = Rc::new(move || -> Box<dyn Task> { Box::new(LinkTask::beside(paths.clone(), kind)) });
         self.submit(retry(), Some(retry), After::Select);
     }
 

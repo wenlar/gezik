@@ -660,6 +660,12 @@ fn main() -> Result<(), slint::PlatformError> {
         let ops = ops.clone();
         move || ops.recover()
     });
+    // Whether symbolic links can be made (Windows: Developer Mode), tried once in the
+    // background: Create link ▸ offers them from then on (spec 9.2).
+    slint::Timer::single_shot(std::time::Duration::from_millis(500), || {
+        let _ =
+            std::thread::Builder::new().name("gezik-symlink-probe".into()).spawn(gezik_platform::link::probe_symlinks);
+    });
     let save_and_quit: Rc<dyn Fn()> = {
         let (weak, store, view, preview, ops) =
             (window.as_weak(), config.clone(), view.clone(), preview.clone(), ops.clone());
