@@ -68,7 +68,7 @@ impl Day {
     }
 
     /// Days since 1970-01-01.
-    fn number(self) -> i64 {
+    pub fn number(self) -> i64 {
         crate::view::day_number(&DateParts {
             year: self.year,
             month: self.month,

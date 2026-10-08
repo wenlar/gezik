@@ -212,28 +212,9 @@ fn name_term(body: &str) -> String {
     format!("wfn:{}", quote_if(&text))
 }
 
-/// Days since 1970-01-01 of a calendar date (proleptic Gregorian).
-fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
-    let year = if month <= 2 { year - 1 } else { year };
-    let era = year.div_euclid(400);
-    let yoe = year - era * 400;
-    let month = i64::from(month);
-    let doy = (153 * (if month > 2 { month - 3 } else { month + 9 }) + 2) / 5 + i64::from(day) - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe - 719_468
-}
-
 /// `days` since 1970-01-01 as `YYYY-MM-DD` (Everything reads ISO 8601 dates).
 fn iso_day(days: i64) -> String {
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + i64::from(month <= 2);
+    let (year, month, day) = gezik_platform::civil_from_days(days);
     format!("{year:04}-{month:02}-{day:02}")
 }
 
@@ -324,19 +305,22 @@ pub fn translate_at(spec: &SearchSpec, roots: &[PathBuf], now: SystemTime, utc_o
         Ok(since) => since.as_secs() as i64,
         Err(before) => -(before.duration().as_secs() as i64),
     };
+    // Gezik's today and this year have no end (a time just past midnight, a clock running
+    // late); Everything's `dm:today` and `dm:thisyear` do.
+    let today = (unix + utc_offset).div_euclid(86_400);
     match spec.modified {
         DateRange::Any => {}
-        // Everything's today and this year start at local midnight, as Gezik's do.
-        DateRange::Today => parts.push("dm:today".to_owned()),
-        DateRange::ThisYear => parts.push("dm:thisyear".to_owned()),
+        DateRange::Today => parts.push(format!("dm:>={}", iso_day(today - 1))),
+        DateRange::ThisYear => {
+            parts.push(format!("dm:>={:04}-12-31", gezik_platform::civil_from_days(today).0 - 1))
+        }
         DateRange::LastDays(days) => {
             let from = (unix - i64::from(days) * 86_400 + utc_offset).div_euclid(86_400);
             parts.push(format!("dm:>={}", iso_day(from - 1)));
         }
         DateRange::Between(a, b) => {
             let (first, last) = if a <= b { (a, b) } else { (b, a) };
-            let day = |d: gezik_core::search::Day| days_from_civil(i64::from(d.year), d.month.into(), d.day.into());
-            parts.push(format!("dm:>={} dm:<={}", iso_day(day(first) - 1), iso_day(day(last) + 1)));
+            parts.push(format!("dm:>={} dm:<={}", iso_day(first.number() - 1), iso_day(last.number() + 1)));
         }
     }
     Some((parts.join(" "), flags))
@@ -894,7 +878,7 @@ mod tests {
         s.kind = KindFilter::Folders;
         s.size.min = Some(500);
         s.modified = DateRange::Today;
-        assert_eq!(translate(&s, &roots()).unwrap().0, r#""D:\Work\" folder: size:>=500 dm:today"#);
+        assert!(translate(&s, &roots()).unwrap().0.starts_with(r#""D:\Work\" folder: size:>=500 dm:>="#));
         let flat = SearchSpec::flat_view(r"D:\Work".into());
         assert_eq!(translate(&flat, &roots()).unwrap().0, r#""D:\Work\" file:"#);
         let drives = [PathBuf::from(r"C:\"), PathBuf::from(r"D:\")];
@@ -903,26 +887,31 @@ mod tests {
         assert!(translate(&s, &roots()).unwrap().0.contains("dm:>="));
     }
 
+    fn day(text: &str) -> gezik_core::search::Day {
+        gezik_core::search::Day::parse(text).unwrap()
+    }
+
     /// 2026-10-08 12:00 UTC.
     fn noon() -> SystemTime {
-        SystemTime::UNIX_EPOCH + Duration::from_secs((days_from_civil(2026, 10, 8) * 86_400 + 43_200) as u64)
+        SystemTime::UNIX_EPOCH + Duration::from_secs((day("2026-10-08").number() * 86_400 + 43_200) as u64)
     }
 
     #[test]
     fn dates_go_a_day_wider_than_gezik_checks() {
-        assert_eq!(days_from_civil(1970, 1, 1), 0);
-        assert_eq!(iso_day(days_from_civil(2024, 2, 29)), "2024-02-29");
-        assert_eq!(iso_day(days_from_civil(2024, 3, 1) - 1), "2024-02-29");
+        assert_eq!(iso_day(day("2024-03-01").number() - 1), "2024-02-29");
         assert_eq!(iso_day(-1), "1969-12-31");
         let mut s = spec("");
         s.modified = DateRange::LastDays(7);
         // From 2026-10-01 15:00 local (UTC+3), a day before.
         assert_eq!(translate_at(&s, &roots(), noon(), 3 * 3600).unwrap().0, r#""D:\Work\" dm:>=2026-09-30"#);
-        let day = |text: &str| gezik_core::search::Day::parse(text).unwrap();
         s.modified = DateRange::Between(day("2026-06-30"), day("2026-01-01"));
         assert_eq!(translate_at(&s, &roots(), noon(), 0).unwrap().0, r#""D:\Work\" dm:>=2025-12-31 dm:<=2026-07-01"#);
+        // Today and this year have no end, as Gezik's: open-ended from the day before.
+        s.modified = DateRange::Today;
+        assert_eq!(translate_at(&s, &roots(), noon(), 0).unwrap().0, r#""D:\Work\" dm:>=2026-10-07"#);
+        assert_eq!(translate_at(&s, &roots(), noon(), 13 * 3600).unwrap().0, r#""D:\Work\" dm:>=2026-10-08"#);
         s.modified = DateRange::ThisYear;
-        assert_eq!(translate_at(&s, &roots(), noon(), 0).unwrap().0, r#""D:\Work\" dm:thisyear"#);
+        assert_eq!(translate_at(&s, &roots(), noon(), 0).unwrap().0, r#""D:\Work\" dm:>=2025-12-31"#);
     }
 
     #[test]
