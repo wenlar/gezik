@@ -1,4 +1,5 @@
 import { Theme } from "../theme.slint";
+import { ListView } from "std-widgets.slint";
 import { ToolButton } from "button.slint";
 
 // One running (or just finished) operation, as Rust (operations.rs) builds it.
@@ -16,6 +17,17 @@ export struct OpRow {
     can-retry: bool,
     can-details: bool,
     finished: bool,
+}
+
+// One finished job in the History (op_history.rs).
+export struct HistoryRow {
+    id: int,
+    time: string,
+    title: string,
+    result: string,
+    failed: bool,
+    can-show: bool,
+    can-details: bool,
 }
 
 // A link-like text button for the panel.
@@ -56,6 +68,12 @@ export component OpsPanel inherits Rectangle {
     callback details(int);
     callback retry(int);
     callback dismiss(int);
+    // 0 Current, 1 History.
+    in property <int> tab;
+    in property <[HistoryRow]> history;
+    callback tab-chosen(int);
+    callback history-show(int);
+    callback history-details(int);
 
     background: Theme.surface;
     accessible-role: list;
@@ -64,80 +82,110 @@ export component OpsPanel inherits Rectangle {
     VerticalLayout {
         padding-left: Theme.spacing + 4px;
         padding-right: Theme.spacing;
-        for row in root.rows: Rectangle {
-            height: Theme.row-height + 6px;
-            accessible-role: list-item;
-            accessible-label: row.title;
-            accessible-description: row.detail;
+        HorizontalLayout {
+            height: Theme.row-height;
+            spacing: Theme.spacing;
+            accessible-role: tab-list;
+            for name[i] in ["Current", "History"]: LinkButton {
+                text: (root.tab == i ? "• " : "") + name;
+                accessible-role: AccessibleRole.tab;
+                clicked => { root.tab-chosen(i); }
+            }
+            Rectangle { horizontal-stretch: 1; }
+        }
+        if root.tab == 0: VerticalLayout {
+            for row in root.rows: Rectangle {
+                height: Theme.row-height + 6px;
+                accessible-role: list-item;
+                accessible-label: row.title;
+                accessible-description: row.detail;
 
-            HorizontalLayout {
-                spacing: Theme.spacing * 2;
-                Text {
-                    text: row.title;
-                    horizontal-stretch: 1;
-                    min-width: 120px;
-                    vertical-alignment: center;
-                    overflow: elide;
-                    color: Theme.foreground;
-                }
-                if !row.finished: VerticalLayout {
-                    alignment: center;
-                    Rectangle {
-                        width: 160px;
-                        height: 6px;
-                        border-radius: 3px;
-                        background: Theme.border;
-                        accessible-role: progress-indicator;
-                        accessible-value: row.progress >= 0 ? round(row.progress * 100) + "%" : "";
+                HorizontalLayout {
+                    spacing: Theme.spacing * 2;
+                    Text {
+                        text: row.title;
+                        horizontal-stretch: 1;
+                        min-width: 120px;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        color: Theme.foreground;
+                    }
+                    if !row.finished: VerticalLayout {
+                        alignment: center;
                         Rectangle {
-                            x: 0;
-                            width: row.progress >= 0 ? parent.width * clamp(row.progress, 0, 1) : parent.width * 0.3;
-                            height: parent.height;
+                            width: 160px;
+                            height: 6px;
                             border-radius: 3px;
-                            background: row.state == 2 || row.state == 3 ? Theme.progress-paused
-                                : row.state == 5 ? Theme.progress-error : Theme.progress;
+                            background: Theme.border;
+                            accessible-role: progress-indicator;
+                            accessible-value: row.progress >= 0 ? round(row.progress * 100) + "%" : "";
+                            Rectangle {
+                                x: 0;
+                                width: row.progress >= 0 ? parent.width * clamp(row.progress, 0, 1) : parent.width * 0.3;
+                                height: parent.height;
+                                border-radius: 3px;
+                                background: row.state == 2 || row.state == 3 ? Theme.progress-paused
+                                    : row.state == 5 ? Theme.progress-error : Theme.progress;
+                            }
+                        }
+                    }
+                    Text {
+                        text: row.detail;
+                        min-width: 160px;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        color: row.state == 5 ? Theme.danger : Theme.foreground-muted;
+                    }
+                    if row.can-start-now: LinkButton {
+                        text: "Start now";
+                        clicked => { root.start-now(row.id); }
+                    }
+                    if row.can-details: LinkButton {
+                        text: "Details";
+                        clicked => { root.details(row.id); }
+                    }
+                    if row.can-retry: LinkButton {
+                        text: "Retry";
+                        clicked => { root.retry(row.id); }
+                    }
+                    if row.can-pause: ToolButton {
+                        text: "Pause";
+                        icon: "M 5 3 L 5 13 M 11 3 L 11 13";
+                        clicked => { root.pause(row.id); }
+                    }
+                    if row.can-resume: ToolButton {
+                        text: "Resume";
+                        icon: "M 5 3 L 13 8 L 5 13 Z";
+                        clicked => { root.resume(row.id); }
+                    }
+                    ToolButton {
+                        text: row.finished ? "Close" : "Cancel";
+                        icon: "M 4 4 L 12 12 M 12 4 L 4 12";
+                        clicked => {
+                            if row.finished {
+                                root.dismiss(row.id);
+                            } else {
+                                root.cancel(row.id);
+                            }
                         }
                     }
                 }
-                Text {
-                    text: row.detail;
-                    min-width: 160px;
-                    vertical-alignment: center;
-                    overflow: elide;
-                    color: row.state == 5 ? Theme.danger : Theme.foreground-muted;
-                }
-                if row.can-start-now: LinkButton {
-                    text: "Start now";
-                    clicked => { root.start-now(row.id); }
-                }
-                if row.can-details: LinkButton {
-                    text: "Details";
-                    clicked => { root.details(row.id); }
-                }
-                if row.can-retry: LinkButton {
-                    text: "Retry";
-                    clicked => { root.retry(row.id); }
-                }
-                if row.can-pause: ToolButton {
-                    text: "Pause";
-                    icon: "M 5 3 L 5 13 M 11 3 L 11 13";
-                    clicked => { root.pause(row.id); }
-                }
-                if row.can-resume: ToolButton {
-                    text: "Resume";
-                    icon: "M 5 3 L 13 8 L 5 13 Z";
-                    clicked => { root.resume(row.id); }
-                }
-                ToolButton {
-                    text: row.finished ? "Close" : "Cancel";
-                    icon: "M 4 4 L 12 12 M 12 4 L 4 12";
-                    clicked => {
-                        if row.finished {
-                            root.dismiss(row.id);
-                        } else {
-                            root.cancel(row.id);
-                        }
-                    }
+            }
+        }
+        if root.tab == 1: ListView {
+            height: min(root.history.length, 8) * (Theme.row-height + 2px) + 2px;
+            for row in root.history: Rectangle {
+                height: Theme.row-height + 2px;
+                accessible-role: list-item;
+                accessible-label: row.title;
+                accessible-description: row.result;
+                HorizontalLayout {
+                    spacing: Theme.spacing * 2;
+                    Text { text: row.time; width: 64px; vertical-alignment: center; color: Theme.foreground-muted; }
+                    Text { text: row.title; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; color: Theme.foreground; }
+                    Text { text: row.result; vertical-alignment: center; color: row.failed ? Theme.danger : Theme.foreground-muted; }
+                    if row.can-show: LinkButton { text: "Show in folder"; clicked => { root.history-show(row.id); } }
+                    if row.can-details: LinkButton { text: "Details"; clicked => { root.history-details(row.id); } }
                 }
             }
         }

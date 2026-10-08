@@ -16,8 +16,8 @@ use gezik_core::ops::paths::same_path;
 use gezik_core::ops::rate::{Rate, format_eta, format_rate};
 use gezik_core::templates::{LinkKind, PasteKind, Template, pasted_name};
 use gezik_ops::{
-    Answer, CopyTask, DeleteTask, Engine, Event, Failure, GroupTask, JobId, JobState, LinkTask, MoveTask, NewTask,
-    PauseReason, Progress, Question, Report, Settings, Task, TrashTask,
+    Answer, CopyTask, DeleteTask, Engine, Event, GroupTask, JobId, JobState, LinkTask, MoveTask, NewTask, PauseReason,
+    Progress, Question, Report, Settings, Task, TrashTask,
 };
 use gezik_platform::clipboard::{self, ClipboardError, ClipboardFiles};
 use gezik_platform::taskbar::{Taskbar, TaskbarState};
@@ -27,15 +27,12 @@ use crate::dialog::Dialogs;
 use crate::navigation::{Navigator, sync_model};
 use crate::sidebar::Sidebar;
 use crate::view::{View, hidden_note};
-use crate::{AppWindow, OpRow};
+use crate::{AppWindow, HistoryRow, OpRow};
 
 /// A job shows in the panel only if it still runs after this long.
 const SHOW_AFTER: Duration = Duration::from_secs(1);
 /// A finished row without problems stays this long.
 const DONE_FOR: Duration = Duration::from_secs(3);
-/// "Details" lists at most this many failures.
-const MAX_DETAILS: usize = 50;
-
 /// How a row looks; the numbers are `OpRow.state` in ops-panel.slint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowState {
@@ -324,6 +321,11 @@ struct Inner {
     jobs: RefCell<Vec<JobView>>,
     files: Cell<FilesSettings>,
     collapsed: Cell<bool>,
+    /// The panel's tab: 0 Current, 1 History.
+    tab: Cell<i32>,
+    /// Finished jobs, newest first (allocated on the first one).
+    history: RefCell<crate::op_history::History>,
+    history_rows: Rc<VecModel<HistoryRow>>,
     taskbar: RefCell<Option<Taskbar>>,
     /// Jobs whose pause already has a question (several workers may report the same pause).
     asked: RefCell<HashSet<JobId>>,
@@ -376,6 +378,8 @@ impl Operations {
         let conflicts = crate::conflicts::Conflicts::new(window, engine.clone());
         let rows = Rc::new(VecModel::default());
         window.set_op_rows(ModelRc::from(rows.clone()));
+        let history_rows = Rc::new(VecModel::default());
+        window.set_history_rows(ModelRc::from(history_rows.clone()));
         let ops = Operations(Rc::new(Inner {
             window: window.as_weak(),
             engine,
@@ -387,6 +391,9 @@ impl Operations {
             jobs: RefCell::default(),
             files: Cell::new(files),
             collapsed: Cell::new(collapsed),
+            tab: Cell::new(0),
+            history: RefCell::default(),
+            history_rows,
             taskbar: RefCell::default(),
             asked: RefCell::default(),
             rename_when_shown: RefCell::default(),
@@ -1127,11 +1134,18 @@ impl Operations {
         let problems = !report.cancelled && !report.failures.is_empty();
         let mut after = After::Nothing;
         let mut hidden_in = None;
+        let mut title = String::new();
         self.with_job(id, |job| {
             after = job.after;
             hidden_in = job.hidden_in.take();
+            title = job.title.clone();
             job.finish(report.clone());
         });
+        let time = gezik_platform::local_date_parts(std::time::SystemTime::now())
+            .map(|t| format!("{:02}:{:02}:{:02}", t.hour, t.minute, t.second))
+            .unwrap_or_default();
+        self.0.history.borrow_mut().push(time, title, &report);
+        self.sync_history();
         if problems {
             // Something failed: the panel opens by itself.
             self.0.collapsed.set(false);
@@ -1240,7 +1254,9 @@ impl Operations {
         let failed_items: usize = shown.iter().filter_map(|j| j.report.as_ref()).map(|r| r.failures.len()).sum();
         window.set_ops_summary(summary_text(running.len(), overall, failed_items, rows.len()).into());
         window.set_ops_collapsed(self.0.collapsed.get());
-        window.set_ops_panel_open(!rows.is_empty() && !self.0.collapsed.get());
+        let history = self.0.tab.get() == 1;
+        window.set_ops_panel_open((!rows.is_empty() || history) && !self.0.collapsed.get());
+        window.set_ops_tab(self.0.tab.get());
         sync_model(&self.0.rows, rows.into_iter());
         let (state, done, total) = taskbar_progress(&states);
         let mut taskbar = self.0.taskbar.borrow_mut();
@@ -1294,6 +1310,59 @@ impl Operations {
         }
     }
 
+    /// The History's rows and the status bar's button.
+    fn sync_history(&self) {
+        let Some(window) = self.0.window.upgrade() else { return };
+        let history = self.0.history.borrow();
+        let rows = history.records().map(|record| HistoryRow {
+            id: i32::try_from(record.id).unwrap_or(i32::MAX),
+            time: record.time.as_str().into(),
+            title: record.title.as_str().into(),
+            result: record.result.as_str().into(),
+            failed: record.failed,
+            can_show: record.show.is_some(),
+            can_details: record.details.is_some(),
+        });
+        sync_model(&self.0.history_rows, rows);
+        window.set_history_available(true);
+    }
+
+    /// `show-history`, View ▸ Operation history: the panel opens on its History.
+    pub fn show_history(&self) {
+        self.0.tab.set(1);
+        self.0.collapsed.set(false);
+        self.update();
+    }
+
+    /// The status bar's History button: opens the History, or closes it if it is shown.
+    pub fn history_toggle(&self) {
+        let shown = self.0.tab.get() == 1 && !self.0.collapsed.get();
+        self.0.tab.set(if shown { 0 } else { 1 });
+        self.0.collapsed.set(false);
+        self.update();
+    }
+
+    pub fn choose_tab(&self, tab: i32) {
+        self.0.tab.set(tab.clamp(0, 1));
+        self.update();
+    }
+
+    /// "Show in folder" of record `id`.
+    pub fn history_show(&self, id: i32) {
+        let show = u64::try_from(id).ok().and_then(|id| self.0.history.borrow().get(id).and_then(|r| r.show.clone()));
+        if let Some((dir, names)) = show {
+            self.0.nav.go_selecting(dir, names);
+        }
+    }
+
+    /// "Details" of record `id`: what failed or was skipped.
+    pub fn history_details(&self, id: i32) {
+        let record = u64::try_from(id).ok().and_then(|id| self.0.history.borrow().get(id).cloned());
+        if let Some(record) = record {
+            self.0.dialogs.ask(record.title, record.details.unwrap_or_default(), &["Close"], |_| {});
+        }
+    }
+
     /// The failures of a row, with Retry.
     pub fn details(&self, id: i32) {
         let id = Self::id(id);
@@ -1301,29 +1370,9 @@ impl Operations {
             let jobs = self.0.jobs.borrow();
             let Some(job) = jobs.iter().find(|j| j.id == id) else { return };
             let Some(report) = &job.report else { return };
-            let named = |f: &Failure| {
-                format!(
-                    "{}: {}",
-                    f.path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default(),
-                    crate::pdf::failure_shown(&f.message)
-                )
-            };
-            let mut lines: Vec<String> = report.failures.iter().take(MAX_DETAILS).map(named).collect();
-            // What was left out on purpose comes after, under its own heading.
-            let room = MAX_DETAILS.saturating_sub(lines.len());
-            if !report.skipped.is_empty() && room > 0 {
-                if !lines.is_empty() {
-                    lines.push(String::new());
-                }
-                lines.push("Skipped:".to_owned());
-                lines.extend(report.skipped.iter().take(room).map(named));
-            }
-            let all = report.failures.len() + report.skipped.len();
-            if all > MAX_DETAILS {
-                lines.push(format!("…and {} more", all - MAX_DETAILS));
-            }
+            let lines = crate::op_history::details_text(report).unwrap_or_default();
             let can_retry = !report.failures.is_empty() && (job.retry.is_some() || job.again.is_some());
-            (job.title.clone(), lines.join("\n"), can_retry)
+            (job.title.clone(), lines, can_retry)
         };
         let ops = self.clone();
         let buttons: &[&str] = if can_retry { &["Retry", "Close"] } else { &["Close"] };

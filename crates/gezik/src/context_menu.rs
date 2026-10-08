@@ -158,6 +158,8 @@ pub const SORT_DESC: u32 = 41;
 pub const PREVIEW_PANE: u32 = 42;
 /// 1408: View ▸ Drop stack.
 pub const TOGGLE_STACK: u32 = 1408;
+/// 1409: View ▸ Operation history.
+pub const SHOW_HISTORY: u32 = 1409;
 pub const APPLY_TO_ALL: u32 = 43;
 pub const RESET_FOLDER: u32 = 44;
 
@@ -447,6 +449,7 @@ pub fn view_items(
     out.push((SORT_DESC, mark(view.sort.dir == SortDir::Desc, "Descending")));
     out.push((PREVIEW_PANE, mark(preview_open, "Preview pane")));
     out.push((TOGGLE_STACK, mark(stack_open, "Drop stack")));
+    out.push((SHOW_HISTORY, "    Operation history".to_owned()));
     out.push((HIDE_EXTENSIONS, mark(options.hide_extensions, "Hide extensions")));
     out.push((FOLDERS_FIRST, mark(options.folders_first, "Folders first")));
     out.push((SINGLE_CLICK_OPEN, mark(options.single_click_open, "Single-click to open")));
@@ -1303,6 +1306,7 @@ impl Menus {
             (SORT_DESC, Subject::View) => self.view.set_sort(SortSpec { dir: SortDir::Desc, ..self.view.sort() }),
             (PREVIEW_PANE, Subject::View) => self.preview.toggle_pane(),
             (TOGGLE_STACK, Subject::View) => crate::stack::with_current(crate::stack::Stack::toggle),
+            (SHOW_HISTORY, Subject::View) => self.ops.show_history(),
             (APPLY_TO_ALL, Subject::View) => self.view.apply_to_all(),
             (RESET_FOLDER, Subject::View) => self.view.reset_folder(),
             (id, Subject::View) => {
@@ -1599,6 +1603,7 @@ mod tests {
             SORT_DESC,
             PREVIEW_PANE,
             TOGGLE_STACK,
+            SHOW_HISTORY,
             APPLY_TO_ALL,
             RESET_FOLDER,
             UNDO,
@@ -2051,6 +2056,7 @@ mod tests {
                 SORT_DESC,
                 PREVIEW_PANE,
                 TOGGLE_STACK,
+                SHOW_HISTORY,
                 HIDE_EXTENSIONS,
                 FOLDERS_FIRST,
                 SINGLE_CLICK_OPEN,
@@ -2096,18 +2102,18 @@ mod tests {
         let items = view_items(ViewSettings::default(), false, false, options, true);
         let ids: Vec<u32> = items.iter().map(|(id, _)| *id).collect();
         assert_eq!(
-            &ids[11..],
+            &ids[12..],
             [HIDE_EXTENSIONS, FOLDERS_FIRST, SINGLE_CLICK_OPEN, SHOW_HIDDEN, SHOW_SYSTEM, APPLY_TO_ALL, RESET_FOLDER]
         );
-        assert!(items[11].1.starts_with("• ") && items[12].1.starts_with("• "), "extensions hidden, folders first");
-        assert!(!items[13].1.starts_with("• "));
-        assert_eq!(items[14].1.starts_with("• "), options.show_hidden);
+        assert!(items[12].1.starts_with("• ") && items[13].1.starts_with("• "), "extensions hidden, folders first");
+        assert!(!items[14].1.starts_with("• "));
+        assert_eq!(items[15].1.starts_with("• "), options.show_hidden);
         let elsewhere: Vec<u32> =
             view_items(ViewSettings::default(), false, false, options, false).iter().map(|(id, _)| *id).collect();
         assert!(!elsewhere.contains(&SHOW_SYSTEM), "Show system items: Windows only");
-        let subs = format_subs(ViewOptions { date_format: DateFormat::Iso, ..options }, 16);
+        let subs = format_subs(ViewOptions { date_format: DateFormat::Iso, ..options }, 17);
         let places: Vec<(&str, usize)> = subs.iter().map(|s| (s.title.as_str(), s.at)).collect();
-        assert_eq!(places, [("Date format", 16), ("Size format", 16)]);
+        assert_eq!(places, [("Date format", 17), ("Size format", 17)]);
         let dates: Vec<(u32, &str)> = subs[0].items.iter().map(|(id, t, _)| (*id, t.as_str())).collect();
         assert_eq!(
             dates,

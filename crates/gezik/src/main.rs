@@ -18,6 +18,7 @@ mod media;
 #[cfg(target_os = "macos")]
 mod menu_bar;
 mod navigation;
+mod op_history;
 mod operations;
 mod path_box;
 mod pdf;
@@ -656,6 +657,22 @@ fn main() -> Result<(), slint::PlatformError> {
     window.on_ops_toggle({
         let ops = ops.clone();
         move || ops.toggle_collapsed()
+    });
+    window.on_ops_tab_chosen({
+        let ops = ops.clone();
+        move |tab| ops.choose_tab(tab)
+    });
+    window.on_history_show({
+        let ops = ops.clone();
+        move |id| ops.history_show(id)
+    });
+    window.on_history_details({
+        let ops = ops.clone();
+        move |id| ops.history_details(id)
+    });
+    window.on_history_toggle({
+        let ops = ops.clone();
+        move || ops.history_toggle()
     });
     // Deletes cut short last time finish in the background once the window is up.
     slint::Timer::single_shot(std::time::Duration::from_millis(500), {

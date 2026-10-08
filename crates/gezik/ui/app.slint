@@ -7,7 +7,7 @@ import { Sidebar, SidebarRow } from "widgets/sidebar.slint";
 import { PreviewPane, PreviewInfo } from "widgets/preview-pane.slint";
 import { FileView, FileRow, ItemRow } from "widgets/file-view.slint";
 import { FilterBar } from "widgets/filter-bar.slint";
-import { OpsPanel, OpRow } from "widgets/ops-panel.slint";
+import { OpsPanel, OpRow, HistoryRow } from "widgets/ops-panel.slint";
 import { DropStack, StackRow } from "widgets/drop-stack.slint";
 import { Dialog } from "widgets/dialog.slint";
 import { ConflictList, ConflictRow } from "widgets/conflict-list.slint";
@@ -21,7 +21,7 @@ import { PathSuggestions, PathRow } from "widgets/path-suggestions.slint";
 
 // Re-exported so Rust can set it with `window.global::<Theme>()` and build crumbs, tabs
 // and sidebar rows.
-export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, OpRow, StackRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView, MenuEntry, MenuPlace, MenuSub, TabPickRow, PathRow }
+export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, OpRow, HistoryRow, StackRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView, MenuEntry, MenuPlace, MenuSub, TabPickRow, PathRow }
 
 // Where the drop targets are, in window coordinates (drag.rs reads it while files are
 // dragged; every field is computed when read).
@@ -122,6 +122,7 @@ export component AppWindow inherits Window {
             MenuSeparator { }
             MenuItem { title: "Show Preview"; activated => { root.menu-command("toggle-preview"); } }
             MenuItem { title: "Drop Stack"; activated => { root.menu-command("toggle-stack"); } }
+            MenuItem { title: "Operation History"; activated => { root.menu-command("show-history"); } }
             MenuItem { title: "Show Hidden Items"; checkable: true; checked <=> root.view-show-hidden; shortcut: root.menu-keys ? @keys(Control + Shift + ".") : @keys(); activated => { root.menu-command("toggle-hidden"); } }
             MenuItem { title: "Hide Extensions"; checkable: true; checked <=> root.view-hide-extensions; activated => { root.menu-command("view-option:1300"); } }
             MenuItem { title: "Folders First"; checkable: true; checked <=> root.view-folders-first; activated => { root.menu-command("view-option:1301"); } }
@@ -373,6 +374,15 @@ export component AppWindow inherits Window {
     in property <bool> ops-panel-open;
     in property <string> ops-summary;
     in property <bool> ops-collapsed;
+    // The panel's tab (0 Current, 1 History), the History's rows, and whether the status
+    // bar shows its History button (once a job ended this session).
+    in property <int> ops-tab;
+    in property <[HistoryRow]> history-rows;
+    in property <bool> history-available;
+    callback ops-tab-chosen(int);
+    callback history-show(int);
+    callback history-details(int);
+    callback history-toggle();
     callback op-pause(int);
     callback op-resume(int);
     callback op-cancel(int);
@@ -1035,6 +1045,11 @@ export component AppWindow inherits Window {
             if root.ops-panel-open: Rectangle { height: 1px; background: Theme.border; }
             if root.ops-panel-open: OpsPanel {
                 rows: root.op-rows;
+                tab: root.ops-tab;
+                history: root.history-rows;
+                tab-chosen(i) => { root.ops-tab-chosen(i); }
+                history-show(i) => { root.history-show(i); }
+                history-details(i) => { root.history-details(i); }
                 pause(i) => { root.op-pause(i); }
                 resume(i) => { root.op-resume(i); }
                 cancel(i) => { root.op-cancel(i); }
@@ -1100,6 +1115,25 @@ export component AppWindow inherits Window {
                         summary-touch := TouchArea {
                             mouse-cursor: pointer;
                             clicked => { root.ops-toggle(); }
+                        }
+                    }
+                    if root.history-available: Rectangle {
+                        width: history-text.preferred-width + 8px;
+                        border-radius: Theme.radius;
+                        background: history-touch.has-hover ? Theme.hover : transparent;
+                        accessible-role: button;
+                        accessible-label: "History";
+                        accessible-action-default => { root.history-toggle(); }
+                        history-text := Text {
+                            x: 4px;
+                            height: parent.height;
+                            text: "History";
+                            vertical-alignment: center;
+                            color: Theme.foreground-muted;
+                        }
+                        history-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.history-toggle(); }
                         }
                     }
                     Text {

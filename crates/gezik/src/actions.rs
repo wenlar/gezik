@@ -47,6 +47,7 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         Action::ToggleHidden => crate::view_options::toggle_hidden(),
         Action::AddToStack => crate::stack::with_current(crate::stack::Stack::add_selection),
         Action::ToggleStack => crate::stack::with_current(crate::stack::Stack::toggle),
+        Action::ShowHistory => crate::operations::with_current(crate::operations::Operations::show_history),
         Action::ReopenTab => nav.reopen_tab(),
         Action::ToggleTabLock => nav.toggle_tab_lock(nav.active_index()),
         Action::TabPicker => crate::tab_tools::with_current(crate::tab_tools::TabTools::open),
@@ -103,9 +104,7 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         | Action::Duplicate
         | Action::Undo
         | Action::Redo
-        | Action::BatchRename
-        // A placeholder: Task 8 gives it its behaviour.
-        | Action::ShowHistory => return false,
+        | Action::BatchRename => return false,
     }
     true
 }
