@@ -14,6 +14,7 @@ pub mod pattern;
 pub mod refresh;
 pub mod selection;
 pub mod sort;
+pub mod templates;
 pub mod view;
 pub mod view_memory;
 

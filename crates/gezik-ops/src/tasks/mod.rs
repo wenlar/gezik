@@ -3,6 +3,7 @@
 mod copy;
 mod delete;
 mod group;
+mod link;
 mod move_;
 mod new;
 mod rename;
@@ -13,6 +14,7 @@ pub use copy::CopyTask;
 pub use delete::DeleteTask;
 pub(crate) use delete::restore_hidden;
 pub use group::GroupTask;
+pub use link::LinkTask;
 pub use move_::MoveTask;
 pub use new::NewTask;
 pub use rename::RenameTask;

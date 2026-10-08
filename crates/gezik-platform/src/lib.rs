@@ -8,6 +8,7 @@ pub mod fs;
 pub mod http;
 mod icons;
 mod known;
+pub mod link;
 mod linux;
 mod locale;
 mod picture;
