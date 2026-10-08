@@ -448,8 +448,10 @@ pub fn read_dir_items(dir: &Path, wants_meta: &dyn Fn(&str, bool) -> bool) -> io
     for entry in std::fs::read_dir(dir)? {
         let Ok(entry) = entry else { continue };
         let Ok(kind) = entry.file_type() else { continue };
+        // A name that is not UTF-8 is left out: a substituted one would act on another file.
+        let Ok(name) = entry.file_name().into_string() else { continue };
         let mut item = super::DirItem {
-            name: entry.file_name().to_string_lossy().into_owned(),
+            name,
             is_dir: kind.is_dir(),
             is_link: kind.is_symlink(),
             is_file: kind.is_file(),

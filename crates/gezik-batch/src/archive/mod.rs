@@ -110,6 +110,21 @@ pub fn open(path: &Path) -> IoResult<Box<dyn ArchiveSource + Send>> {
     })
 }
 
+/// The bytes of every volume of the set `path` is one of (`x.7z.001`…, `x.part1.rar`…), or
+/// of `path` alone.
+pub fn packed_size(path: &Path) -> u64 {
+    let len = |path: &Path| fs::metadata(path).map_or(0, |meta| meta.len());
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    match volume_set(&name) {
+        Some(set) => (1..)
+            .map(|n| path.with_file_name(volume_name(&set.base, set.kind, n)))
+            .take_while(|p| p.is_file())
+            .map(|p| len(&p))
+            .sum(),
+        None => len(path),
+    }
+}
+
 /// Whether Gezik itself can open it (false: 7-Zip is needed).
 pub fn supported(format: &Format) -> bool {
     // RAR needs the `rar` feature (UnRAR's C++).
@@ -202,7 +217,7 @@ enum Stop {
     Note(IoError),
 }
 
-fn cancelled() -> IoError {
+pub(crate) fn cancelled() -> IoError {
     IoError::new(ErrorKind::Interrupted, "cancelled")
 }
 
@@ -218,10 +233,11 @@ fn damaged(error: IoError) -> IoError {
     IoError::new(ErrorKind::InvalidData, format!("the archive is damaged: {error}"))
 }
 
-/// Writes `r` into a new file at `path` (its folders made first) with progress, cancel and
-/// the size limit, then gives it `meta`. A file left unfinished is removed.
+/// Writes `r` into a new file at `path` (under `dest`, its folders made first) with progress,
+/// cancel and the size limit, then gives it `meta`. A file left unfinished is removed.
 fn write_file(
     r: &mut dyn Read,
+    dest: &Path,
     path: &Path,
     declared: Option<u64>,
     meta: &Meta,
@@ -230,7 +246,7 @@ fn write_file(
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(Stop::Skip)?;
     }
-    remove_earlier(path).map_err(Stop::Skip)?;
+    remove_earlier(dest, path)?;
     let mut file = File::create(path).map_err(Stop::Skip)?;
     let result = copy(r, &mut file, declared, cx);
     if result.is_ok()
@@ -248,11 +264,27 @@ fn write_file(
 }
 
 /// Removes a file an earlier entry of the same name wrote (the last one wins), read-only or
-/// hidden as it may be. A folder stays (the file then cannot be made).
-fn remove_earlier(path: &Path) -> IoResult<()> {
+/// hidden as it may be. A folder stays (the file then cannot be made). A file reached through
+/// a name that differs only in case under `dest` (`Docs/a` for `docs/a`: one file on a
+/// case-insensitive disk) is kept and this entry left out.
+fn remove_earlier(dest: &Path, path: &Path) -> Result<(), Stop> {
     let Ok(metadata) = path.symlink_metadata() else { return Ok(()) };
     if metadata.is_dir() {
         return Ok(());
+    }
+    let mut at = path;
+    while at != dest
+        && let (Some(parent), Some(name)) = (at.parent(), at.file_name())
+        && parent.starts_with(dest)
+    {
+        let exact = fs::read_dir(parent).map_err(Stop::Skip)?.flatten().any(|e| e.file_name() == name);
+        if !exact {
+            return Err(Stop::Note(IoError::new(
+                ErrorKind::AlreadyExists,
+                "an item of the same name in other case was already written",
+            )));
+        }
+        at = parent;
     }
     #[cfg(windows)]
     {
@@ -261,10 +293,10 @@ fn remove_earlier(path: &Path) -> IoResult<()> {
         if permissions.readonly() {
             #[allow(clippy::permissions_set_readonly_false)]
             permissions.set_readonly(false);
-            fs::set_permissions(path, permissions)?;
+            fs::set_permissions(path, permissions).map_err(Stop::Skip)?;
         }
     }
-    fs::remove_file(path)
+    fs::remove_file(path).map_err(Stop::Skip)
 }
 
 /// Copies in 64 KB pieces, stopping when cancelled or past `declared * 1.1 + 1 MiB`; less
@@ -455,7 +487,7 @@ fn copy_of(dest: &Path, target: &str, path: &Path, meta: &Meta, cx: &dyn Extract
     }
     let mut file = File::open(&source).map_err(Stop::Skip)?;
     let len = file.metadata().map_err(Stop::Skip)?.len();
-    write_file(&mut file, path, Some(len), meta, cx).map(|()| true)
+    write_file(&mut file, dest, path, Some(len), meta, cx).map(|()| true)
 }
 
 /// Seconds since 1970 as a time (before 1970 too); `None` past what the system can hold

@@ -3,7 +3,7 @@
 
 use std::fs::File;
 use std::io::{self, BufRead, Read, Seek, SeekFrom, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use gezik_core::batch::archive::Codec;
 use ruzstd::decoding::errors::{FrameDecoderError, ReadFrameHeaderError};
@@ -29,22 +29,6 @@ impl MultiFileReader {
             start += len;
         }
         Ok(Self { files, pos: 0, total: start })
-    }
-
-    /// `base.001`, `base.002`… while they exist; only `first` if it does not end in `.001`.
-    pub fn volumes(first: &Path) -> Vec<PathBuf> {
-        let s = first.to_string_lossy();
-        let Some(stem) = s.strip_suffix(".001") else { return vec![first.to_path_buf()] };
-        (1..).map(|i| PathBuf::from(format!("{stem}.{i:03}"))).take_while(|p| p.exists()).collect()
-    }
-
-    /// The length of all volumes together.
-    pub fn len(&self) -> u64 {
-        self.total
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.total == 0
     }
 }
 
@@ -148,6 +132,20 @@ impl Seek for SplitWriter {
     }
 }
 
+/// Reads up to `buf.len()` bytes, fewer only at the end of the stream.
+pub(crate) fn read_full(src: &mut dyn Read, buf: &mut [u8]) -> io::Result<usize> {
+    let mut n = 0;
+    while n < buf.len() {
+        match src.read(&mut buf[n..]) {
+            Ok(0) => break,
+            Ok(k) => n += k,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(n)
+}
+
 /// `r` (a compressed stream) decoded by `codec`. Concatenated members (pigz, pbzip2, `cat
 /// a.gz b.gz`) decode in full.
 pub fn decoder<'a, R: BufRead + 'a>(codec: Codec, r: R) -> Box<dyn Read + 'a> {
@@ -155,7 +153,8 @@ pub fn decoder<'a, R: BufRead + 'a>(codec: Codec, r: R) -> Box<dyn Read + 'a> {
         Codec::None => Box::new(r),
         Codec::Gz => Box::new(flate2::bufread::MultiGzDecoder::new(r)),
         Codec::Bz2 => Box::new(bzip2::bufread::MultiBzDecoder::new(r)),
-        Codec::Xz => Box::new(lzma_rust2::XzReader::new(r, true)),
+        // A tiny file may ask for a 4 GiB dictionary: 1.5 GiB (xz -9 needs 64 MiB) at most.
+        Codec::Xz => Box::new(lzma_rust2::XzReader::new_mem_limit(r, true, 1_572_864)),
         Codec::Zst => Box::new(ZstdReader::new(r)),
     }
 }
@@ -234,9 +233,7 @@ mod tests {
                 p
             })
             .collect();
-        assert_eq!(MultiFileReader::volumes(&parts[0]), parts);
         let mut r = MultiFileReader::open(&parts).unwrap();
-        assert_eq!(r.len(), 2500);
         let mut all = Vec::new();
         r.read_to_end(&mut all).unwrap();
         assert_eq!(all, data);
@@ -282,7 +279,7 @@ mod tests {
         want[98..102].copy_from_slice(b"xyzw");
         want.extend([2u8; 60]);
         let mut back = Vec::new();
-        MultiFileReader::open(&MultiFileReader::volumes(&paths[0])).unwrap().read_to_end(&mut back).unwrap();
+        MultiFileReader::open(&paths).unwrap().read_to_end(&mut back).unwrap();
         assert_eq!(back, want);
         let _ = std::fs::remove_dir_all(&d);
     }

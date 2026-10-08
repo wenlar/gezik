@@ -8,6 +8,7 @@
 //! the pixel size updated; `strip_metadata` drops EXIF (location included) and XMP. Other
 //! formats carry no EXIF, and nothing written here carries XMP.
 
+use crate::archive::cancelled;
 use std::fmt;
 use std::fs::File;
 use std::io::{self, BufWriter, Read, Write};
@@ -97,10 +98,6 @@ fn icc_for(icc: Option<&[u8]>, grey: bool) -> Option<&[u8]> {
 
 fn is_grey(img: &DynamicImage) -> bool {
     matches!(img.color(), ColorType::L8 | ColorType::L16 | ColorType::La8 | ColorType::La16)
-}
-
-fn cancelled() -> io::Error {
-    io::Error::new(io::ErrorKind::Interrupted, "cancelled")
 }
 
 fn check(stop: &dyn Fn() -> bool) -> io::Result<()> {

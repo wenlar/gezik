@@ -11,7 +11,7 @@ use unrar_ng::error::{Code, UnrarError};
 use unrar_ng::{Archive, CursorBeforeFile, CursorBeforeHeader, OpenArchive, Process, Redirect};
 
 use super::{
-    ArchiveSource, Entry, ExtractCx, IoError, IoResult, Links, Meta, Volumes, apply_meta, cancelled, make_dir,
+    ArchiveSource, Entry, ExtractCx, IoError, IoResult, Links, Meta, Stop, Volumes, apply_meta, cancelled, make_dir,
     remove_earlier, report, unsafe_path,
 };
 
@@ -155,11 +155,13 @@ impl RarSource {
                 Some(_) if encrypted && !given => return End::Password { at },
                 Some(path) => {
                     let ready = match path.parent() {
-                        Some(parent) => fs::create_dir_all(parent).and_then(|()| remove_earlier(&path)),
+                        Some(parent) => {
+                            fs::create_dir_all(parent).map_err(Stop::Skip).and_then(|()| remove_earlier(dest, &path))
+                        }
                         None => Ok(()),
                     };
                     if let Err(e) = ready {
-                        cx.entry_failed(&name, &e);
+                        let _ = report(&name, Err(e), cx);
                         header.skip()
                     } else {
                         let progress = |n| {
@@ -234,6 +236,8 @@ impl ArchiveSource for RarSource {
         // Whether the password has opened an encrypted entry in full (RAR4 has no password
         // check, so before that bad data means a wrong password).
         let mut confirmed = false;
+        // The password bad data came with: coming so again, the entry is damaged.
+        let mut bad_with: Option<String> = None;
         let mut from = 0;
         while !self.skipped {
             match self.pass(from, dest, cx, &mut links, &mut confirmed) {
@@ -244,8 +248,13 @@ impl ArchiveSource for RarSource {
                     self.ask(cx, self.password.is_some());
                 }
                 End::Failed { at, name, error, encrypted } => {
-                    let wrong = needs_password(&error) || (error.code == Code::BadData && encrypted && !confirmed);
-                    if wrong {
+                    let maybe = error.code == Code::BadData && encrypted && !confirmed;
+                    if maybe && bad_with.is_some() && bad_with == self.password {
+                        confirmed = true;
+                    } else if needs_password(&error) || maybe {
+                        if maybe {
+                            bad_with.clone_from(&self.password);
+                        }
                         from = at;
                         self.ask(cx, self.password.is_some());
                         continue;
@@ -286,13 +295,13 @@ enum End {
 
 /// A RAR4 Unix link's target: RAR4 keeps it as the entry's data, which UnRAR only writes
 /// out as a link. On Unix it makes that link at a passing name no entry can have
-/// (`safe_join` refuses a trailing dot), where it is read back and removed. Windows skips
-/// links.
+/// (`safe_join` refuses control characters), where it is read back and removed. Windows
+/// skips links.
 fn rar4_link_target(header: OpenArchive<Process, CursorBeforeFile>, dest: &Path) -> (String, Next) {
     if cfg!(not(unix)) {
         return (String::new(), header.skip());
     }
-    let passing = dest.join("gezik-link.");
+    let passing = dest.join("gezik-link\u{1}");
     let _ = fs::remove_file(&passing);
     let next = header.extract_into(dest, &passing, |_| true);
     let target = fs::read_link(&passing).map(|t| t.to_string_lossy().into_owned()).unwrap_or_default();

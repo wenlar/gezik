@@ -231,7 +231,7 @@ fn exe(name: &str) -> OsString {
 }
 
 /// A file that may be run (on Unix: with an execute bit).
-fn executable(path: &Path) -> bool {
+pub(crate) fn executable(path: &Path) -> bool {
     let Ok(meta) = std::fs::metadata(path) else { return false };
     #[cfg(unix)]
     {

@@ -22,6 +22,7 @@ use gezik_platform::ChildProcess;
 use super::convert::{Swapped, needs_trash, swap_in};
 use super::{cancelled, file_name, what};
 use crate::convert::ffmpeg::stderr_tail;
+use crate::tools::executable;
 
 /// The plan item's note: an item to run on, an item the command does not take, and the one
 /// run of a `{files}` command on all the items it takes.
@@ -252,18 +253,6 @@ pub fn find_program(program: &OsStr) -> Option<PathBuf> {
     std::env::split_paths(&path_var)
         .filter(|dir| dir.is_absolute())
         .find_map(|dir| names.iter().map(|name| dir.join(name)).find(|path| executable(path)))
-}
-
-/// A file that may be run (on Unix: with an execute bit).
-fn executable(path: &Path) -> bool {
-    let Ok(meta) = std::fs::metadata(path) else { return false };
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        meta.is_file() && meta.permissions().mode() & 0o111 != 0
-    }
-    #[cfg(not(unix))]
-    meta.is_file()
 }
 
 impl Task for CommandTask {

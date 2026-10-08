@@ -7,8 +7,7 @@ use std::rc::Rc;
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::Win32::Foundation::{
-    DRAGDROP_S_CANCEL, DRAGDROP_S_DROP, DRAGDROP_S_USEDEFAULTCURSORS, GlobalFree, HWND, LPARAM, POINT, POINTL, RECT,
-    WPARAM,
+    DRAGDROP_S_CANCEL, DRAGDROP_S_DROP, DRAGDROP_S_USEDEFAULTCURSORS, GlobalFree, HWND, LPARAM, POINT, POINTL, WPARAM,
 };
 use windows::Win32::Graphics::Gdi::ScreenToClient;
 use windows::Win32::System::Com::{
@@ -16,7 +15,6 @@ use windows::Win32::System::Com::{
     TYMED_HGLOBAL,
 };
 use windows::Win32::System::DataExchange::RegisterClipboardFormatW;
-use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock};
 use windows::Win32::System::Ole::{
     CF_HDROP, DROPEFFECT, DROPEFFECT_COPY, DROPEFFECT_LINK, DROPEFFECT_MOVE, DROPEFFECT_NONE, IDropSource,
     IDropSource_Impl, IDropTarget, IDropTarget_Impl, MK_ALT, RegisterDragDrop, ReleaseStgMedium, RevokeDragDrop,
@@ -28,9 +26,7 @@ use windows::Win32::UI::Shell::{
     DROPDESCRIPTION, DROPIMAGE_COPY, DROPIMAGE_INVALID, DROPIMAGE_LINK, DROPIMAGE_MOVE, DROPIMAGE_NONE, HDROP,
     IDropTargetHelper, SHDoDragDrop,
 };
-use windows::Win32::UI::WindowsAndMessaging::{
-    GA_ROOT, GetAncestor, GetClientRect, GetCursorPos, PostMessageW, WM_LBUTTONUP, WM_RBUTTONUP, WindowFromPoint,
-};
+use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, PostMessageW, WM_LBUTTONUP, WM_RBUTTONUP};
 use windows_core::{BOOL, HRESULT, PCWSTR, Ref, implement};
 
 use super::{Allowed, Answer, DragEnd, DropHandler, Effect, Keys, Offer};
@@ -141,14 +137,7 @@ fn set_description(data: &IDataObject, description: &DROPDESCRIPTION) {
 fn set_bytes(data: &IDataObject, name: PCWSTR, bytes: &[u8]) {
     unsafe {
         let id = RegisterClipboardFormatW(name) as u16;
-        let Ok(memory) = GlobalAlloc(GMEM_MOVEABLE, bytes.len()) else { return };
-        let target = GlobalLock(memory) as *mut u8;
-        if target.is_null() {
-            let _ = GlobalFree(Some(memory));
-            return;
-        }
-        std::ptr::copy_nonoverlapping(bytes.as_ptr(), target, bytes.len());
-        let _ = GlobalUnlock(memory);
+        let Some(memory) = crate::clipboard::global_copy(bytes) else { return };
         let medium = STGMEDIUM {
             tymed: TYMED_HGLOBAL.0 as u32,
             u: STGMEDIUM_0 { hGlobal: memory },
@@ -324,30 +313,15 @@ impl Registration {
         unsafe {
             let _ = GetCursorPos(&mut cursor);
             let _ = ScreenToClient(self.hwnd, &mut cursor);
-            let lparam = ((cursor.y as u32 & 0xFFFF) << 16) | (cursor.x as u32 & 0xFFFF);
+            let lparam = crate::pointer::mouse_lparam(cursor.x, cursor.y);
             let message = if right { WM_RBUTTONUP } else { WM_LBUTTONUP };
-            let _ = PostMessageW(Some(self.hwnd), message, WPARAM(0), LPARAM(lparam as isize));
+            let _ = PostMessageW(Some(self.hwnd), message, WPARAM(0), LPARAM(lparam));
         }
         match (result, source.ended.get()) {
             (Err(err), _) => Err(err.to_string()),
             (Ok(_), Next::Drop) => Ok(DragEnd::Dropped),
             (Ok(_), _) => Ok(DragEnd::Cancelled),
         }
-    }
-}
-
-/// Whether the cursor is over Gezik's window `hwnd`, inside its client area.
-fn over_window(hwnd: HWND) -> bool {
-    unsafe {
-        let mut cursor = POINT::default();
-        if GetCursorPos(&mut cursor).is_err() || GetAncestor(WindowFromPoint(cursor), GA_ROOT) != hwnd {
-            return false;
-        }
-        let mut client = cursor;
-        let _ = ScreenToClient(hwnd, &mut client);
-        let mut rect = RECT::default();
-        let _ = GetClientRect(hwnd, &mut rect);
-        client.x >= rect.left && client.x < rect.right && client.y >= rect.top && client.y < rect.bottom
     }
 }
 
@@ -366,7 +340,7 @@ impl IDropSource_Impl for Source_Impl {
         let button = if self.0.right { MK_RBUTTON } else { MK_LBUTTON };
         let down = state.0 & button.0 != 0;
         // Asked only while the button is down: a release over the window drops on it.
-        let over = down && over_window(self.0.hwnd);
+        let over = down && crate::pointer::client_cursor(self.0.hwnd).is_some();
         let next = next_step(escape.as_bool(), down, over);
         self.0.ended.set(next);
         match next {

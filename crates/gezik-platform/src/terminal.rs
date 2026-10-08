@@ -66,11 +66,16 @@ impl std::fmt::Display for TerminalError {
 /// (cmd runs those too). By file name, case aside.
 fn through_cmd<'w>(words: impl IntoIterator<Item = &'w str>) -> Option<String> {
     words.into_iter().find_map(|word| {
-        let name = word.rsplit(['\\', '/']).next().unwrap_or(word);
+        let name = file_name(word);
         let lower = name.to_ascii_lowercase();
         (lower == "cmd" || lower == "cmd.exe" || lower.ends_with(".bat") || lower.ends_with(".cmd"))
             .then(|| name.to_owned())
     })
+}
+
+/// A command word's file name, `\` or `/` separated.
+fn file_name(word: &str) -> &str {
+    word.rsplit(['\\', '/']).next().unwrap_or(word)
 }
 
 /// Whether cmd.exe takes `dir` for a name only. cmd's `/c` and `/k` strip quotes, so no
@@ -231,7 +236,12 @@ pub fn choose(dir: &Path, admin: bool, lookup: &Lookup<'_>) -> Result<Launch, Te
         elevated: admin,
     };
     if let Some(command) = lookup.command {
-        let mut args = gezik_core::batch::convert::expand_dir_command(command, dir).map_err(TerminalError::Failed)?;
+        // Through Windows Terminal (`wt -p Ubuntu -d {dir}`) a `;` would start a command of its own.
+        let wt = lookup.os == Os::Windows
+            && command.iter().any(|word| ["wt", "wt.exe"].contains(&&*file_name(word).to_ascii_lowercase()));
+        let escaped = wt.then(|| PathBuf::from(wt_dir(&dir.to_string_lossy())));
+        let mut args = gezik_core::batch::convert::expand_dir_command(command, escaped.as_deref().unwrap_or(dir))
+            .map_err(TerminalError::Failed)?;
         let program = args.remove(0);
         // Never handed to the Shell unfound: it would show its own "cannot find" dialog.
         if !(lookup.found)(&program.to_string_lossy()) {
@@ -340,11 +350,8 @@ fn runnable(path: &Path) -> bool {
 
 /// The file name of the program `name` on PATH stands for, links followed.
 fn real_name(name: &str) -> Option<String> {
-    let dirs = std::env::var_os("PATH")?;
-    std::env::split_paths(&dirs)
-        .filter(|dir| dir.is_absolute())
-        .map(|dir| dir.join(name))
-        .find(|path| runnable(path))
+    // Only asked on Linux (`x-terminal-emulator`): no PATHEXT.
+    find_program(name, std::env::var_os("PATH").as_deref(), None, false)
         .and_then(|path| std::fs::canonicalize(path).ok())
         .and_then(|path| path.file_name().map(|n| n.to_string_lossy().into_owned()))
 }
@@ -393,6 +400,13 @@ fn resolve(
     let full = find_program(&name, path, pathext, windows).ok_or(TerminalError::NotFound)?;
     if !full.is_absolute() {
         return Err(TerminalError::NotFound);
+    }
+    // `term` may turn out to be `term.cmd`: through cmd as much as a name typed so.
+    if windows
+        && !cmd_safe(&launch.dir)
+        && let Some(cmd) = through_cmd([&*full.to_string_lossy()])
+    {
+        return Err(TerminalError::UnsafeFolder(cmd));
     }
     launch.program = full.into_os_string();
     Ok(launch)
@@ -738,6 +752,11 @@ mod tests {
         let weird = r"C:\a&calc %PATH%";
         let wez = pick(&["wezterm", "start", "--cwd", "{dir}"], weird).unwrap();
         assert_eq!(args(&wez), ["start", "--cwd", weird]);
+        // Windows Terminal takes `;` for its own: escaped as the built-in one does.
+        let wt = pick(&["wt", "-p", "Ubuntu", "-d", "{dir}"], r"C:\x; calc").unwrap();
+        assert_eq!((args(&wt)[3].as_str(), wt.dir.as_path()), (r"C:\x\; calc", Path::new(r"C:\x; calc")));
+        let full = pick(&[r"C:\Apps\WT.EXE", "-d", "{dir}"], r"C:\x;y").unwrap();
+        assert_eq!(args(&full)[1], r"C:\x\;y");
         // Linux and macOS have no cmd: a `.cmd` there is just a name.
         let command = vec!["term.cmd".to_owned(), "{dir}".to_owned()];
         let mut lookup = look(Os::Linux, &all);
@@ -837,6 +856,20 @@ mod tests {
         );
         let relative = Launch { program: "downloads/wt.exe".into(), args: vec![], dir: root.clone(), elevated: false };
         assert_eq!(resolve(relative, Some(&elsewhere), PATHEXT, true), Err(TerminalError::NotFound));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_name_found_as_a_batch_file_is_checked_as_one() {
+        let root = std::env::temp_dir().join(format!("gezik-batname-{}", std::process::id()));
+        let bin = plant(&root, "bin", &["term.cmd"]);
+        let path = std::env::join_paths([&bin]).unwrap();
+        let launch = |dir: &str| Launch { program: "term".into(), args: vec![], dir: dir.into(), elevated: false };
+        assert_eq!(
+            resolve(launch(r"C:\a&calc"), Some(&path), PATHEXT, true),
+            Err(TerminalError::UnsafeFolder("term.cmd".to_owned()))
+        );
+        assert_eq!(resolve(launch(r"C:\plain"), Some(&path), PATHEXT, true).unwrap().program, bin.join("term.cmd"));
         let _ = std::fs::remove_dir_all(&root);
     }
 
