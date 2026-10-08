@@ -396,6 +396,9 @@ fn sevenz_volumes_open_from_any_part() {
     extract(&d.join("v.7z.002"), &stage, &cx).unwrap();
     assert!(cx.failed().is_empty(), "{:?}", cx.failed());
     assert_eq!(tree(&stage), content);
+    // The bomb check weighs the whole set, whichever part was opened.
+    let all: u64 = (1..=3).map(|n| std::fs::metadata(d.join(format!("v.7z.00{n}"))).unwrap().len()).sum();
+    assert_eq!(archive::packed_size(&d.join("v.7z.003")), all);
 
     // A hole in the set: `.002` missing while `.003` is there.
     let middle = d.join("v.7z.002");

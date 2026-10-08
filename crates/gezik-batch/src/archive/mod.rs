@@ -110,6 +110,21 @@ pub fn open(path: &Path) -> IoResult<Box<dyn ArchiveSource + Send>> {
     })
 }
 
+/// The bytes of every volume of the set `path` is one of (`x.7z.001`…, `x.part1.rar`…), or
+/// of `path` alone.
+pub fn packed_size(path: &Path) -> u64 {
+    let len = |path: &Path| fs::metadata(path).map_or(0, |meta| meta.len());
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    match volume_set(&name) {
+        Some(set) => (1..)
+            .map(|n| path.with_file_name(volume_name(&set.base, set.kind, n)))
+            .take_while(|p| p.is_file())
+            .map(|p| len(&p))
+            .sum(),
+        None => len(path),
+    }
+}
+
 /// Whether Gezik itself can open it (false: 7-Zip is needed).
 pub fn supported(format: &Format) -> bool {
     // RAR needs the `rar` feature (UnRAR's C++).
