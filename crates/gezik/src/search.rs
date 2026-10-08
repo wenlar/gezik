@@ -174,6 +174,8 @@ enum Live {
     Wait,
     /// More than the cache holds: Enter searches.
     Large,
+    /// Everything answers here but not this name (it would walk at every pause): Enter searches.
+    Enter,
     /// A network folder: Enter searches.
     Never,
     /// No cache for this scope and these rules (none yet, dropped when idle, or another key):
@@ -181,9 +183,11 @@ enum Live {
     Warm,
 }
 
-fn live_step(names: &Names, key: &CacheKey) -> Live {
+/// `asks`: Everything can be asked for the name typed (`everything::translate`).
+fn live_step(names: &Names, key: &CacheKey, asks: bool) -> Live {
     match names {
-        Names::Ready(k, _) | Names::NoCache(k, true) if k == key => Live::Now,
+        Names::Ready(k, _) if k == key => Live::Now,
+        Names::NoCache(k, true) if k == key => if asks { Live::Now } else { Live::Enter },
         Names::Building(k, _) if k == key => Live::Wait,
         Names::TooLarge(k) if k == key => Live::Large,
         Names::NoCache(k, false) if k == key => Live::Never,
@@ -589,13 +593,17 @@ impl Searches {
             return;
         }
         let key = self.cache_key(&draft);
-        let step = live_step(&self.0.names.borrow(), &key);
+        // Only the name decides; any root stands in for every drive's.
+        let root = draft.scope.folder().unwrap_or(Path::new("/")).to_path_buf();
+        let asks = gezik_search::everything::translate(&draft, &[root]).is_some();
+        let step = live_step(&self.0.names.borrow(), &key, asks);
         match step {
             Live::Now => {
                 self.0.typing.start(slint::TimerMode::SingleShot, TYPING, || with_current(|s| s.run(false, true)))
             }
             Live::Wait => self.0.live_waiting.set(true),
             Live::Large => self.0.view.note("Large folder: press Enter to search".to_owned()),
+            Live::Enter => self.0.view.note("Press Enter to search".to_owned()),
             Live::Never => {}
             Live::Warm => {
                 self.0.live_waiting.set(true);
@@ -1380,18 +1388,20 @@ mod tests {
     #[test]
     fn typing_reads_the_cache_again_when_it_is_gone_or_for_other_rules() {
         let here = key("/w");
-        assert_eq!(live_step(&Names::None, &here), Live::Warm, "dropped when idle: read again");
+        assert_eq!(live_step(&Names::None, &here, true), Live::Warm, "dropped when idle: read again");
         let cache = Arc::new(NameCache::default());
-        assert_eq!(live_step(&Names::Ready(here.clone(), cache.clone()), &here), Live::Now);
-        assert_eq!(live_step(&Names::Ready(key("/x"), cache), &here), Live::Warm, "another scope");
+        assert_eq!(live_step(&Names::Ready(here.clone(), cache.clone()), &here, true), Live::Now);
+        assert_eq!(live_step(&Names::Ready(key("/x"), cache), &here, true), Live::Warm, "another scope");
         let hidden = CacheKey { shown: Some((true, true)), ..here.clone() };
-        assert_eq!(live_step(&Names::Ready(hidden.clone(), Arc::default()), &here), Live::Warm, "other rules");
+        assert_eq!(live_step(&Names::Ready(hidden.clone(), Arc::default()), &here, true), Live::Warm, "other rules");
         let flag = Arc::new(AtomicBool::new(false));
-        assert_eq!(live_step(&Names::Building(here.clone(), flag.clone()), &here), Live::Wait);
-        assert_eq!(live_step(&Names::Building(hidden, flag), &here), Live::Warm);
-        assert_eq!(live_step(&Names::TooLarge(here.clone()), &here), Live::Large);
-        assert_eq!(live_step(&Names::NoCache(here.clone(), true), &here), Live::Now, "Everything");
-        assert_eq!(live_step(&Names::NoCache(here.clone(), false), &here), Live::Never, "network");
+        assert_eq!(live_step(&Names::Building(here.clone(), flag.clone()), &here, true), Live::Wait);
+        assert_eq!(live_step(&Names::Building(hidden, flag), &here, true), Live::Warm);
+        assert_eq!(live_step(&Names::TooLarge(here.clone()), &here, true), Live::Large);
+        assert_eq!(live_step(&Names::NoCache(here.clone(), true), &here, true), Live::Now, "Everything");
+        let walks = live_step(&Names::NoCache(here.clone(), true), &here, false);
+        assert_eq!(walks, Live::Enter, "a name Everything cannot ask for would walk at every pause");
+        assert_eq!(live_step(&Names::NoCache(here.clone(), false), &here, true), Live::Never, "network");
     }
 
     #[test]
