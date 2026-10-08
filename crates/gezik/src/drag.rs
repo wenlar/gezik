@@ -1083,6 +1083,8 @@ impl DropHandler for Outside {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn a_click_opens_once_and_not_after_a_drag() {
         let long_ago = Some(Duration::from_secs(5));
@@ -1093,8 +1095,6 @@ mod tests {
         assert!(!opens_on_release(true, true, true, None), "a drag or a rubber band");
         assert!(!opens_on_release(true, true, false, Some(Duration::from_millis(200))), "second click");
     }
-
-    use super::*;
 
     fn dragging() -> Dragging {
         Dragging {

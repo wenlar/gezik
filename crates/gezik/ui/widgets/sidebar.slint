@@ -52,12 +52,27 @@ export component Sidebar inherits Rectangle {
         root.hover-row = -1;
         root.tip-text = "";
     }
-    // The row with a tip the pointer is on (-1: none).
+    // The row with a tip the pointer is on (-1: none). Another row starts the wait again.
     property <int> hover-row: -1;
+    changed hover-row => {
+        root.tip-text = "";
+        if root.hover-row >= 0 && root.drag-from < 0 {
+            tip-timer.start();
+            tip-timer.restart();
+        } else {
+            tip-timer.stop();
+        }
+    }
 
     background: Theme.surface;
     accessible-role: list;
     accessible-label: "Places";
+
+    // Takes the tip away (a press, the wheel); resting on the row again shows it.
+    function hide-tip() {
+        root.tip-text = "";
+        tip-timer.stop();
+    }
 
     function cancel-drag() {
         root.drag-blocked = true;
@@ -66,10 +81,12 @@ export component Sidebar inherits Rectangle {
     }
 
     // The tip shows once the pointer rests on a row for a moment.
-    Timer {
+    tip-timer := Timer {
         interval: 700ms;
-        running: root.hover-row >= 0 && root.tip-text == "" && root.drag-from < 0;
+        running: false;
         triggered => {
+            self.stop();
+            if root.hover-row < 0 || root.drag-from >= 0 { return; }
             root.tip-text = root.rows[root.hover-row].tip;
             root.tip-x = root.absolute-position.x + Theme.spacing * 3;
             root.tip-y = root.absolute-position.y + root.scroll + Theme.spacing + (root.hover-row + 1) * root.row-height + 2px;
@@ -78,6 +95,7 @@ export component Sidebar inherits Rectangle {
 
     // Scrolls by `delta` (the wheel), staying within the content.
     function scroll-by(delta: length) {
+        root.hide-tip();
         scroller.content-y = clamp(scroller.content-y + delta, min(0px, scroller.height - scroller.content-height), 0px);
     }
 
@@ -120,6 +138,9 @@ export component Sidebar inherits Rectangle {
             // A group's heading: its menu on a right-click.
             if row.header && row.section == 3: TouchArea {
                 pointer-event(event) => {
+                    if event.kind == PointerEventKind.down {
+                        root.hide-tip();
+                    }
                     if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {
                         root.menu(row.section, row.index, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
                     }
@@ -166,10 +187,12 @@ export component Sidebar inherits Rectangle {
                         root.tip-text = "";
                     }
                     pointer-event(event) => {
+                        if event.kind == PointerEventKind.down {
+                            root.hide-tip();
+                        }
                         if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
                             root.dragged = false;
                             root.drag-blocked = false;
-                            root.tip-text = "";
                         }
                         if event.kind == PointerEventKind.up && event.button == PointerEventButton.left && root.drag-from >= 0 {
                             // The line above or below itself: no move.
@@ -192,8 +215,11 @@ export component Sidebar inherits Rectangle {
                         if row.section == 1 && self.pressed && !root.drag-blocked && (root.dragged || abs(self.mouse-y - self.pressed-y) > 6px) {
                             root.dragged = true;
                             root.drag-from = i;
-                            // The line nearest the pointer, inside the pinned part.
-                            root.drag-line = clamp(round(i + self.mouse-y / root.row-height), root.pinned-first-row + 1, root.pinned-end-row);
+                            // The line nearest the pointer, inside the pinned part; on a group's
+                            // heading, the start of that group (as for folders dropped there).
+                            let under = floor(i + self.mouse-y / root.row-height);
+                            let line = under >= 0 && under < root.rows.length && root.rows[under].header ? under + 1 : round(i + self.mouse-y / root.row-height);
+                            root.drag-line = clamp(line, root.pinned-first-row + 1, root.pinned-end-row);
                         }
                     }
                     scroll-event(event) => {

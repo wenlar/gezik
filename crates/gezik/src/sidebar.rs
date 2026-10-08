@@ -455,8 +455,10 @@ impl Sidebar {
         self.edit(|list| pins::find(list, &entry).is_some_and(|i| pins::set_group(list, i, group)));
     }
 
+    /// Move group up/down: past groups with no pin shown, so the heading always moves.
     pub fn move_group(&self, group: &str, up: bool) {
-        self.edit(|list| pins::move_group(list, group, up));
+        let shown = self.shown_groups();
+        self.edit(|list| pins::move_group(list, group, up, &shown));
     }
 
     /// Rename group…: asks for the new name; a name another group has joins the two.

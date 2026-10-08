@@ -154,7 +154,7 @@ mod win {
                 PCWSTR::null(),
             )
         };
-        (n > 1).then(|| String::from_utf16_lossy(&date[..n as usize - 1]).to_string())
+        (n > 1).then(|| String::from_utf16_lossy(&date[..n as usize - 1]))
     }
 
     /// The system's time of `local`, without seconds.
@@ -170,7 +170,7 @@ mod win {
                 Some(&mut clock),
             )
         };
-        (m > 1).then(|| String::from_utf16_lossy(&clock[..m as usize - 1]).to_string())
+        (m > 1).then(|| String::from_utf16_lossy(&clock[..m as usize - 1]))
     }
 
     pub fn parts(time: SystemTime) -> Option<gezik_core::batch::date::DateParts> {

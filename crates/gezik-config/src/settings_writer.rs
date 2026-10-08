@@ -1,7 +1,8 @@
 //! `settings.toml` written by one thread of its own: every change the UI makes to it (the
-//! saved filters, the tab sets, the pinned folders, the rename rule sets, the `[view]` defaults, the view options) goes
-//! through one queue, so the UI thread never touches the file, changes are written in the
-//! order they were made, and two of them never read, edit and write the file over each other.
+//! saved filters, the tab sets, the pinned folders, the rename rule sets, the `[view]`
+//! defaults, the view options) goes through one queue, so the UI thread never touches the
+//! file, changes are written in the order they were made, and two of them never read, edit
+//! and write the file over each other.
 
 use std::fmt;
 use std::io;

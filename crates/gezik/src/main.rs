@@ -84,6 +84,8 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
         SidebarPosition::Right => 1,
         SidebarPosition::Hidden => 2,
     });
+    // A reload may hide or move the sidebar (or change its pins): no tip stays behind.
+    window.set_sidebar_tip("".into());
     // The shortcuts first: the pins' tips name their keys.
     keys::set_shortcuts(loaded.settings.shortcuts.clone());
     // Unchanged pins cost nothing (also after the reload that follows our own save).

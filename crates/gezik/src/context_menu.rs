@@ -1852,6 +1852,19 @@ mod tests {
     }
 
     #[test]
+    fn the_mac_menu_bar_names_the_formats_as_the_view_menu_does() {
+        use gezik_core::view::{DateFormat, SizeFormat};
+        let bar = include_str!("../ui/app.slint");
+        let dates = DateFormat::ALL.iter().enumerate().map(|(k, f)| (f.label(), DATE_FORMAT_FIRST + k as u32));
+        let sizes = SizeFormat::ALL.iter().enumerate().map(|(k, f)| (f.label(), SIZE_FORMAT_FIRST + k as u32));
+        for (label, id) in dates.chain(sizes) {
+            let title = format!("title: \"{label}\";");
+            let command = format!("\"view-option:{id}\"");
+            assert!(bar.lines().any(|line| line.contains(&title) && line.contains(&command)), "{label} ({id})");
+        }
+    }
+
+    #[test]
     fn view_menu_ids_say_which_option_changes() {
         use gezik_config::settings::ViewOption;
         use gezik_core::view::{DateFormat, SizeFormat, ViewOptions};

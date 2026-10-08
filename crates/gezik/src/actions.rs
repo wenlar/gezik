@@ -20,7 +20,8 @@ pub fn run_command(index: usize, view: &View) {
     crate::convert::run_by_index(index, items);
 }
 
-/// Runs `action` if it is one of 6a's, 6b's, 7a's and 7b's; returns whether it ran.
+/// Runs `action` if it is one of 6a's, 6b's, 7a's and 7b's; returns whether it ran (a pin
+/// number with no pin did not).
 pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
     match action {
         Action::Tab1
@@ -61,14 +62,14 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         | Action::Pin7
         | Action::Pin8
         | Action::Pin9 => {
-            // A number with no pin shown: nothing (spec 6.4).
+            // A number with no pin shown: nothing (spec 6.4), and the key stays unused, so it
+            // reaches the text box and the focus stays where it is.
             let mut location = None;
             if let Some(n) = action.pin_number() {
                 crate::sidebar::with_current(|sidebar| location = sidebar.pin_location(n - 1));
             }
-            if let Some(location) = location {
-                nav.go(location);
-            }
+            let Some(location) = location else { return false };
+            nav.go(location);
         }
         // Not theirs: `handle_key` and the menu bar run these themselves. Listed one by one so
         // that a new action is a compile error here until it is placed.

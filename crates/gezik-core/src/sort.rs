@@ -242,10 +242,10 @@ enum Primary {
 }
 
 /// Sorts `entries` by `spec`: folders first (in either direction) unless `folders_first` is off,
-/// then the column, then
-/// natural name order, then the exact name so the order is total. `type_name` gives the
-/// Type column's text; it is called once per entry, and only when sorting by type. Returns
-/// where each entry came from: entry `k` now was entry `order[k]` before.
+/// then the column, then natural name order, then the exact name so the order is total.
+/// `type_name` gives the Type column's text; it is called once per entry, and only when
+/// sorting by type. Returns where each entry came from: entry `k` now was entry `order[k]`
+/// before.
 pub fn sort_entries(
     entries: &mut Vec<Entry>,
     spec: SortSpec,

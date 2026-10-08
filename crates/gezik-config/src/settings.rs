@@ -1744,7 +1744,7 @@ hide-extensions = true
 folders-first = false
 date-format = \"relative\"
 size-format = \"decimal\"
-             single-click-open = true
+single-click-open = true
 show-hidden = false
 show-system = true
 ",

@@ -161,7 +161,9 @@ pub fn unpin(list: &mut Vec<PinEntry>, index: usize) -> bool {
 /// the list changed (a pin dropped on itself changes nothing).
 pub fn place(list: &mut Vec<PinEntry>, paths: Vec<String>, anchor: usize, after: bool) -> bool {
     let Some(target) = list.get(anchor).cloned() else { return false };
-    if paths.iter().any(|path| same_path_text(path, &target.path)) {
+    // The anchor among the dropped paths stays where it is; the others still move.
+    let paths: Vec<String> = paths.into_iter().filter(|path| !same_path_text(path, &target.path)).collect();
+    if paths.is_empty() {
         return false;
     }
     let before = list.clone();
@@ -213,13 +215,18 @@ pub fn set_name(list: &mut [PinEntry], index: usize, name: Option<&str>) -> bool
     }
 }
 
-/// Swaps `group`'s pins with the group before it (`up`) or after it.
-pub fn move_group(list: &mut Vec<PinEntry>, group: &str, up: bool) -> bool {
+/// Swaps `group`'s pins with the nearest group before it (`up`) or after it that is among
+/// `shown` (the groups the sidebar shows; a group whose pins are all elsewhere stays put).
+pub fn move_group(list: &mut Vec<PinEntry>, group: &str, up: bool, shown: &[String]) -> bool {
     let mut order = groups(list);
     let Some(i) = order.iter().position(|name| same_group(name, group)) else { return false };
-    let Some(j) = (if up { i.checked_sub(1) } else { Some(i + 1) }).filter(|j| *j < order.len()) else {
-        return false;
+    let is_shown = |name: &String| shown.iter().any(|s| same_group(s, name));
+    let j = if up {
+        order[..i].iter().rposition(is_shown)
+    } else {
+        order[i + 1..].iter().position(is_shown).map(|k| i + 1 + k)
     };
+    let Some(j) = j else { return false };
     order.swap(i, j);
     let all = std::mem::take(list);
     let mut out: Vec<PinEntry> = all.iter().filter(|pin| pin.group.is_none()).cloned().collect();
@@ -330,10 +337,11 @@ mod tests {
     fn groups_move_rename_and_dissolve() {
         let mut list =
             vec![entry("/a", None), entry("/w", Some("Work")), entry("/m", Some("Media")), entry("/p", Some("Photos"))];
-        assert!(move_group(&mut list, "media", true));
+        let all = groups(&list);
+        assert!(move_group(&mut list, "media", true, &all));
         assert_eq!(groups(&list), ["Media", "Work", "Photos"]);
-        assert!(!move_group(&mut list, "Media", true), "the first goes no higher");
-        assert!(!move_group(&mut list, "Photos", false), "the last no lower");
+        assert!(!move_group(&mut list, "Media", true, &all), "the first goes no higher");
+        assert!(!move_group(&mut list, "Photos", false, &all), "the last no lower");
         assert!(rename_group(&mut list, "Work", "Jobs"));
         assert_eq!(groups(&list), ["Media", "Jobs", "Photos"]);
         assert!(!rename_group(&mut list, "Jobs", "  "), "no empty name");
@@ -342,6 +350,26 @@ mod tests {
         assert!(ungroup(&mut list, "MEDIA"));
         assert_eq!(shown(&list), ["/a", "/m", "/p", "Jobs:/w"]);
         assert!(!ungroup(&mut list, "Nope"));
+    }
+
+    #[test]
+    fn a_group_moves_past_groups_not_shown() {
+        let mut list = vec![entry("/w", Some("Work")), entry("/gone", Some("Away")), entry("/m", Some("Media"))];
+        let shown: Vec<String> = vec!["Work".into(), "media".into()];
+        assert!(move_group(&mut list, "Work", false, &shown), "Away is not shown: Work swaps with Media");
+        assert_eq!(groups(&list), ["Media", "Away", "Work"]);
+        assert!(move_group(&mut list, "Work", true, &shown));
+        assert_eq!(groups(&list), ["Work", "Away", "Media"]);
+        assert!(!move_group(&mut list, "Media", false, &shown), "nothing shown after it");
+        assert!(!move_group(&mut list, "Work", true, &shown), "nothing shown before it");
+    }
+
+    #[test]
+    fn place_leaves_the_anchor_among_the_dropped() {
+        let mut list = plain(&["/a", "/b", "/c"]);
+        assert!(place(&mut list, vec!["/b".into(), "/c".into()], 1, false), "/c still moves");
+        assert_eq!(paths(&list), ["/a", "/c", "/b"]);
+        assert!(!place(&mut list, vec!["/b".into()], 2, false), "only the anchor: nothing");
     }
 
     #[test]
