@@ -8,5 +8,5 @@ license.workspace = true
 [dependencies]
 gezik-core.workspace = true
 gezik-platform.workspace = true
-# The same features as gezik-batch's regex: one copy of the crate in the exe, nothing new.
-regex = { version = "1", default-features = false, features = ["std", "unicode-case", "unicode-perl"] }
+# gezik-batch's regex features plus the Unicode classes (p{L}, p{Latin}), which the RAR build has anyway.
+regex = { version = "1", default-features = false, features = ["std", "unicode-case", "unicode-perl", "unicode-gencat", "unicode-script"] }

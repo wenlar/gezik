@@ -143,14 +143,10 @@ mod tests {
     }
 
     #[test]
-    fn unicode_classes_are_said_to_be_unsupported_or_work() {
-        // Cargo unifies regex's features across the build: with `unicode-gencat` and
-        // `unicode-script` on (the exe with RAR has them) these compile, else they say why.
-        for source in [r"\p{L}", r"\p{Latin}", r"\p{Lu}x"] {
-            if let Err(error) = NameMatcher::compile(source, true, false) {
-                assert_eq!(error, r"Unicode classes like \p{..} are not supported", "{source}");
-            }
-        }
+    fn unicode_classes_work() {
+        assert!(m(r"^\p{Lu}\p{Ll}+\.txt$", true, true, "Rapor.txt"));
+        assert!(m(r"^\p{Latin}+$", true, false, "şehir"));
+        assert!(!m(r"^\p{Latin}+$", true, false, "日本"));
     }
 
     #[test]
