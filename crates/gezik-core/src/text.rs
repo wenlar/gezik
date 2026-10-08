@@ -24,10 +24,15 @@ pub struct Detected {
     pub bom: usize,
 }
 
-/// The encoding of text starting with `start`; `None` for binary data.
+/// The encoding of text starting with `start`; `None` for binary data. A UTF-32 LE mark is read as
+/// UTF-16 LE; UTF-16 without a mark needs NUL bytes (non-Latin text has none) and 16 bytes or more,
+/// else it is not detected (by design).
 pub fn detect(start: &[u8]) -> Option<Detected> {
     let marked = |encoding, bom| Some(Detected { encoding, bom });
     if start.starts_with(b"\xEF\xBB\xBF") {
+        if start[3..start.len().min(PROBE)].contains(&0) {
+            return None;
+        }
         return marked(Encoding::Utf8, 3);
     }
     if start.starts_with(b"\xFF\xFE") {
@@ -127,6 +132,13 @@ mod tests {
         assert_eq!(detect(&be), Some(Detected { encoding: Encoding::Utf16Be, bom: 0 }));
         assert_eq!(decode(&le, none).as_deref(), Some("İstanbul ılık bir şehir"));
         assert_eq!(decode(&be, none).as_deref(), Some("İstanbul ılık bir şehir"));
+    }
+
+    #[test]
+    fn a_marked_start_with_nuls_is_binary() {
+        let program = b"\xEF\xBB\xBFMZ\x00\x01";
+        assert_eq!(detect(program), None);
+        assert_eq!(decode(program, none), None);
     }
 
     #[test]

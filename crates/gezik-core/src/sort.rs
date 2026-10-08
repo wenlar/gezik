@@ -307,7 +307,11 @@ pub fn sort_order<'a>(
                 (Primary::Folder(fa), Primary::Folder(fb)) => span(*fa).cmp(span(*fb)),
                 _ => pa.cmp(pb),
             };
-            let order = primary.then_with(|| span(*na).cmp(span(*nb))).then_with(|| a.name.cmp(&b.name));
+            let order = primary
+                .then_with(|| span(*na).cmp(span(*nb)))
+                .then_with(|| a.name.cmp(&b.name))
+                .then_with(|| folder(i).cmp(folder(j)))
+                .then_with(|| i.cmp(&j));
             if spec.dir == SortDir::Desc { order.reverse() } else { order }
         })
     });
@@ -555,6 +559,12 @@ mod tests {
         apply_order(&mut names, &order);
         assert_eq!(names, ["c.txt", "a.txt", "b.txt", "b.txt"]);
         assert_eq!(SortKey::parse("folder"), Some(SortKey::Folder));
+        let same = vec![entry("a.txt", false, 0, None), entry("a.txt", false, 0, None), entry("a.txt", false, 0, None)];
+        let dirs = ["sub2", "sub1", "sub3"];
+        let by_name =
+            |dir| sort_order(&same, SortSpec { key: SortKey::Name, dir }, true, |_| String::new(), &|i| dirs[i]);
+        assert_eq!(by_name(SortDir::Asc), [1, 0, 2], "equal names: by folder");
+        assert_eq!(by_name(SortDir::Desc), [2, 0, 1]);
         assert!(!SortKey::ALL.contains(&SortKey::Folder), "not a folder's sort");
     }
 }
