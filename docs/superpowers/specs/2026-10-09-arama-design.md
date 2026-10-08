@@ -1,7 +1,7 @@
 # Alt Proje 8: Arama — Tasarım
 
 - **Tarih:** 2026-10-09
-- **Durum:** Tasarım taslağı; kullanıcı onayı bekliyor
+- **Durum:** Tasarım onaylandı (2026-10-09); 8a planlandı
 - **Kapsam:** Gezik yol haritasının 8. alt projesi (`docs/superpowers/notes/2026-10-07-rakip-ozet.md` §2 "8 Arama": maddeler 2, 3, 27, 49, 51; §6'daki TC notları ve açık karar 7); tek spec, iki plan ve iki PR: **8a** özyinelemeli arama ve düz görünüm; **8b** klasör boyutu, komut paleti ve kayıtlı aramalar
 - **Dayandığı:** `2026-10-04-gorunum-design.md` (liste modeli, sütunlar, sıralama, `views.toml`), `2026-10-04-gezinme-design.md` (sekmeler, geçmiş, adres çubuğu), `2026-10-04-dosya-islemleri-design.md` (iş motoru, çakışma listesi, geri alma, pano), `2026-10-05-toplu-islemler-design.md` (toplu ad), `2026-10-07-klavye-paketi-design.md` (süzgeç ve desen dili, sekme seçici, eylem listesi, AltGr kuralı), `2026-10-08-gunluk-kolayliklar-design.md` (oturum, `[view]` gizli/sistem, menü kimlik aralıkları, 7c'nin eylemleri)
 - **7c ile ilişki:** 7c (`feat/daily-7c`) bu spec yazılırken birleşmemişti. 8, 7c'nin eklediklerini var sayar: 63 eylem (`new-folder-with-selection`, `add-to-stack`, `toggle-stack`, `show-history` dahil), menü kimlikleri 1000–1459 ve `GEZIK_IDS_END = 4096`, en çok dört alt menü (`MAX_SUBMENUS`). 8a'nın planı 7c birleştikten sonraki `master`'dan başlar.
