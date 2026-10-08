@@ -2,7 +2,7 @@
 //! last time (spec 5.1). Pure: the file system is reached only through the closures passed
 //! in, so every rule is tested here.
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use gezik_config::Warning;
 use gezik_core::nav::{Location, Session, SessionTab};
@@ -111,6 +111,23 @@ pub fn path_kind(path: &Path) -> PathKind {
         Ok(_) => PathKind::File,
         Err(_) => PathKind::Missing,
     }
+}
+
+/// `path` made absolute with `.` and `..` folded away by name: on Unix
+/// `std::path::absolute` keeps `..`, so `gezik ..` would open `/home/u/proj/..`.
+pub fn absolute(path: PathBuf) -> PathBuf {
+    let Ok(full) = std::path::absolute(&path) else { return path };
+    let mut out = PathBuf::new();
+    for component in full.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -250,5 +267,14 @@ mod tests {
         assert_eq!(plan.session, Session::single(p("/work")));
         let plain = plan_start("drives", None, &home(), expand, kind, None);
         assert_eq!(plain.session, Session::single(Location::Drives));
+    }
+
+    #[test]
+    fn a_command_line_path_folds_its_dots() {
+        let cwd = std::env::current_dir().unwrap();
+        assert_eq!(absolute(PathBuf::from("..")), cwd.parent().unwrap());
+        assert_eq!(absolute(PathBuf::from("./a/../b")), cwd.join("b"));
+        let root = absolute(PathBuf::from("/"));
+        assert_eq!(absolute(root.join("..")), root, "no higher than the root");
     }
 }
