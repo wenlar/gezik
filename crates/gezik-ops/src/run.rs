@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, mpsc};
 
 use gezik_core::ops::conflict::{ConflictKind, Decision, Facts, Resolution, default_decision, kind_of, resolve};
 use gezik_core::ops::names::next_free;
-use gezik_core::ops::paths::{DriveSet, is_within};
+use gezik_core::ops::paths::{DriveSet, is_within, same_path};
 use gezik_core::ops::threads::workers;
 use gezik_platform::fs;
 
@@ -235,7 +235,12 @@ impl Sink<'_> {
 
     /// Settles one conflict; returns whether the item was skipped.
     fn apply(&mut self, mut item: PlanItem, kind: ConflictKind, existing: Facts, decision: Decision) -> bool {
-        match resolve(decision, kind, item.facts, existing) {
+        let mut resolution = resolve(decision, kind, item.facts, existing);
+        if resolution == Resolution::Replace && onto_itself(&item) {
+            // Replacing an item with itself would trash the only one: it stays as it is.
+            resolution = Resolution::Skip;
+        }
+        match resolution {
             Resolution::Write => self.dispatch(item),
             Resolution::Replace => {
                 item.replace = true;
@@ -286,6 +291,11 @@ impl Sink<'_> {
     }
 }
 
+/// Whether `item`'s target is its own source (a copy pasted back where it came from).
+fn onto_itself(item: &PlanItem) -> bool {
+    matches!((&item.source, &item.target), (Some(source), Some(target)) if same_path(source, target))
+}
+
 /// Moves an existing target out of the way for "Replace": to the trash if its drive has one.
 fn replace_target(shared: &Shared, target: &Path) -> io::Result<Outcome> {
     if shared.has_trash(target) {
@@ -302,6 +312,15 @@ fn replace_target(shared: &Shared, target: &Path) -> io::Result<Outcome> {
 pub(crate) fn execute(shared: &Shared, job: &Job, task: &dyn Task, item: PlanItem) {
     let control = &job.control;
     if control.stopped() {
+        return;
+    }
+    if item.replace && onto_itself(&item) {
+        // `apply` never asks for this; should anything else, the source is not touched.
+        let err = io::Error::new(io::ErrorKind::InvalidInput, "Cannot replace an item with itself");
+        job.fail(item.path(), &err);
+        if item.counted {
+            control.item_done();
+        }
         return;
     }
     if item.replace

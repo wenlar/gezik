@@ -270,6 +270,11 @@ pub enum Outcome {
     Deleted {
         path: PathBuf,
     },
+    /// A folder made on the way to the items (copy or move with folders): undo takes it away
+    /// only if it then holds no files, after what went into it was undone (spec 8.2).
+    MadeParent {
+        path: PathBuf,
+    },
     /// Nothing changed (a folder that was already there).
     Nothing,
     /// One item did several of these (an archive replaced: the old one trashed, the new made).

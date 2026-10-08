@@ -677,8 +677,10 @@ fn parse_search(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) ->
 }
 
 /// A search as a table: a search tab in state.toml (spec 9.2) and, in 8b, `[[searches]]`. Only
-/// what differs from a new search is written.
+/// what differs from a new search is written. A flat view is `Location::Flat`, never a spec
+/// here: `flat` is not written (a flat spec would read back as a plain search).
 pub fn search_to_toml(spec: &SearchSpec) -> toml::Table {
+    debug_assert!(!spec.flat, "a flat view is saved as Location::Flat");
     let mut table = toml::Table::new();
     let text = |s: &str| toml::Value::String(s.to_owned());
     let folder = match &spec.scope {

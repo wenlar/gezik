@@ -34,9 +34,13 @@ fn inside(path: &Path, dir: &Path) -> bool {
 /// The tasks that undo `outcomes`, in order: trash what was made, move back what was moved,
 /// restore what was trashed (an item replaced by a copy comes back after the copy left).
 /// Items moved into a folder the job made come out before it goes (it goes only if empty);
-/// their redo brings the folder back before they go in again.
+/// their redo brings the folder back before they go in again. Folders made on the way (copy or
+/// move with folders) go last, each only if it then holds no files: what went into them is
+/// undone item by item first, each with its own check, and a file put there since stays.
 pub(crate) fn build(outcomes: &[Outcome]) -> Vec<Arc<dyn Task>> {
     let mut made: Vec<(PathBuf, Option<Facts>)> = Vec::new();
+    let mut parents: Vec<PathBuf> = Vec::new();
+    let mut restored_dirs: Vec<PathBuf> = Vec::new();
     let mut moved: Vec<(PathBuf, PathBuf, Option<Facts>)> = Vec::new();
     let mut trashed: Vec<(PathBuf, PathBuf)> = Vec::new();
     let mut flat = Vec::new();
@@ -49,8 +53,21 @@ pub(crate) fn build(outcomes: &[Outcome]) -> Vec<Arc<dyn Task>> {
             }
             Outcome::Moved { from, to, facts } => moved.push((to.clone(), from.clone(), expect(facts))),
             Outcome::Trashed { original, trashed: at } => trashed.push((at.clone(), original.clone())),
+            Outcome::Restored { original, facts } if facts.is_dir => restored_dirs.push(original.clone()),
             Outcome::Restored { original, facts } => made.push((original.clone(), expect(facts))),
+            Outcome::MadeParent { path } => parents.push(path.clone()),
             Outcome::Deleted { .. } | Outcome::Nothing | Outcome::Several(_) => {}
+        }
+    }
+    // A folder brought back together with what was inside it (the redo of undoing a copy with
+    // folders) is such a folder on the way again; a folder brought back alone goes whole.
+    for dir in &restored_dirs {
+        let holds =
+            made.iter().any(|(path, _)| inside(path, dir)) || restored_dirs.iter().any(|path| inside(path, dir));
+        if holds {
+            parents.push(dir.clone());
+        } else {
+            made.push((dir.clone(), None));
         }
     }
     // Items moved into a folder the job made (New folder with selection): they come out
@@ -86,6 +103,11 @@ pub(crate) fn build(outcomes: &[Outcome]) -> Vec<Arc<dyn Task>> {
         tasks.push(Arc::new(MoveTask::back(moved)));
     }
     tasks.extend(trash);
+    let parents = cover(parents, |path| path);
+    if !parents.is_empty() {
+        let items = parents.iter().map(|path| (path.clone(), None)).collect();
+        tasks.push(Arc::new(TrashTask::checked(items).only_if_empty(parents)));
+    }
     tasks.extend(restore);
     tasks
 }
@@ -171,6 +193,35 @@ mod tests {
         ];
         let kinds: Vec<TaskKind> = build(&outcomes).iter().map(|t| t.kind()).collect();
         assert_eq!(kinds, [TaskKind::Trash, TaskKind::Move, TaskKind::Restore]);
+    }
+
+    #[test]
+    fn folders_made_on_the_way_go_last_and_do_not_cover_what_went_in() {
+        let outcomes = vec![
+            Outcome::MadeParent { path: "/d/a".into() },
+            Outcome::MadeParent { path: "/d/a/b".into() },
+            Outcome::Created { path: "/d/a/b/x.txt".into(), facts: file(), from: None },
+            Outcome::Moved { from: "/s/y.txt".into(), to: "/d/a/y.txt".into(), facts: file() },
+        ];
+        let tasks = build(&outcomes);
+        let kinds: Vec<TaskKind> = tasks.iter().map(|t| t.kind()).collect();
+        assert_eq!(kinds, [TaskKind::Trash, TaskKind::Move, TaskKind::Trash]);
+        assert_eq!(tasks[0].count(), 1, "the copied file on its own, with its check");
+        assert_eq!(tasks[2].count(), 1, "the outermost folder made on the way");
+    }
+
+    #[test]
+    fn a_folder_restored_with_its_contents_is_a_folder_on_the_way_again() {
+        let outcomes = vec![
+            Outcome::Restored { original: "/d/a".into(), facts: folder() },
+            Outcome::Restored { original: "/d/a/x.txt".into(), facts: file() },
+            Outcome::Restored { original: "/e/alone".into(), facts: folder() },
+        ];
+        let tasks = build(&outcomes);
+        let kinds: Vec<TaskKind> = tasks.iter().map(|t| t.kind()).collect();
+        assert_eq!(kinds, [TaskKind::Trash, TaskKind::Trash]);
+        assert_eq!(tasks[0].count(), 2, "the file with its check and the folder that came back alone");
+        assert_eq!(tasks[1].count(), 1, "the holder, only if it holds no files");
     }
 
     #[test]
