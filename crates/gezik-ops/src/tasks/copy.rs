@@ -350,4 +350,22 @@ mod tests {
         assert_eq!(engine.undo_label().as_deref(), Some("New folder"));
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn a_numbered_folder_template_keeps_its_contents() {
+        let dir = test_dir("copy-template-numbered");
+        write(&dir.join("templates/Project/src/main.rs"), "m");
+        write(&dir.join("templates/Project/README.md"), "r");
+        write(&dir.join("here/Project/old.txt"), "old");
+        let engine = engine();
+        let task = CopyTask::template(dir.join("templates/Project"), &dir.join("here"), true);
+        let (report, _) = finish(&engine, engine.submit(Box::new(task)), no_conflicts);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert_eq!(report.results, [dir.join("here/Project (2)")]);
+        assert_eq!(read(&dir.join("here/Project (2)/src/main.rs")), "m");
+        assert_eq!(read(&dir.join("here/Project (2)/README.md")), "r");
+        assert_eq!(read(&dir.join("here/Project/old.txt")), "old");
+        assert!(!dir.join("here/Project/README.md").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

@@ -68,7 +68,8 @@ pub fn show_shell_menu(
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         let menu = context_menu_for(hwnd, target).map_err(|e| e.to_string())?;
         let hmenu = CreatePopupMenu().map_err(|e| e.to_string())?;
-        let result = track(hwnd, hmenu, &menu, extra, subs, at, can_rename).map_err(|e| e.to_string());
+        let drive = targets_a_drive(target);
+        let result = track(hwnd, hmenu, &menu, extra, subs, at, (can_rename, drive)).map_err(|e| e.to_string());
         let _ = DestroyMenu(hmenu);
         result
     }
@@ -214,7 +215,8 @@ unsafe fn track(
     extra: &[(u32, &str)],
     subs: &[ShellSubmenu<'_>],
     at: Option<(i32, i32)>,
-    can_rename: bool,
+    // `can_rename`, and whether a target is a drive (its "Create shortcut" stays Explorer's).
+    (can_rename, drive): (bool, bool),
 ) -> windows::core::Result<MenuOutcome> {
     unsafe {
         menu.QueryContextMenu(hmenu, 0, FIRST_SHELL_ID, LAST_SHELL_ID, query_flags(can_rename)).ok()?;
@@ -263,7 +265,9 @@ unsafe fn track(
             0 => MenuOutcome::Dismissed,
             id if id < FIRST_SHELL_ID => MenuOutcome::Gezik(id),
             id => {
-                if let Some(verb) = gezik_verb(menu, id - FIRST_SHELL_ID) {
+                if let Some(verb) = gezik_verb(menu, id - FIRST_SHELL_ID)
+                    && !(verb == ShellVerb::Link && drive)
+                {
                     return Ok(MenuOutcome::Verb(verb));
                 }
                 let info = CMINVOKECOMMANDINFO {
@@ -302,6 +306,17 @@ impl Drop for Subclass {
         if self.installed {
             let _ = unsafe { RemoveWindowSubclass(self.hwnd, Some(forward_menu_messages), SUBCLASS_ID) };
         }
+    }
+}
+
+/// Whether `target` is, or holds, a drive root. Gezik's shortcuts sit next to their item and a
+/// drive has no "next to": Explorer does "Create shortcut" there (on the Desktop).
+fn targets_a_drive(target: &MenuTarget) -> bool {
+    let is_root = |path: &Path| path.parent().is_none() || path.file_name().is_none();
+    match target {
+        MenuTarget::Item(path) => is_root(path),
+        MenuTarget::Items(paths) => paths.iter().any(|path| is_root(path)),
+        MenuTarget::Background(_) => false,
     }
 }
 
@@ -460,6 +475,15 @@ mod tests {
         assert!(items.unwrap() > 3);
         assert!(missing.is_err(), "a missing entry fails the menu");
         eprintln!("2000-item menu: {took:?}");
+    }
+
+    #[test]
+    fn a_drive_among_the_targets_leaves_the_shortcut_to_explorer() {
+        use crate::MenuTarget;
+        assert!(targets_a_drive(&MenuTarget::Item(PathBuf::from(r"C:\"))));
+        assert!(targets_a_drive(&MenuTarget::Items(vec![PathBuf::from(r"C:\Users"), PathBuf::from(r"D:\")])));
+        assert!(!targets_a_drive(&MenuTarget::Item(PathBuf::from(r"C:\Users"))));
+        assert!(!targets_a_drive(&MenuTarget::Items(vec![PathBuf::from(r"C:\a.txt"), PathBuf::from(r"C:\b")])));
     }
 
     #[test]

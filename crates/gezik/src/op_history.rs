@@ -117,10 +117,7 @@ pub fn details_text(report: &Report) -> Option<String> {
     if more > 0 {
         lines.push(format!("…and {more} more"));
     }
-    Some(lines.join(
-        "
-",
-    ))
+    Some(lines.join("\n"))
 }
 
 #[cfg(test)]

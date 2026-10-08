@@ -122,10 +122,12 @@ pub(crate) fn bmp_from_dib(dib: &[u8]) -> Option<Vec<u8>> {
     if offset > 14 + dib.len() {
         return None;
     }
-    // Uncompressed pixels must all be there (rows are padded to 4 bytes).
+    // Uncompressed pixels must all be there (rows are padded to 4 bytes; the last row may
+    // come without its padding).
     if matches!(compression, 0 | 3 | 6) {
         let stride = (width.checked_mul(u64::from(bit_count))?.checked_add(31)? / 32).checked_mul(4)?;
-        let wanted = stride.checked_mul(rows)?;
+        let row_bytes = width.checked_mul(u64::from(bit_count))?.checked_add(7)? / 8;
+        let wanted = stride.checked_mul(rows.checked_sub(1)?)?.checked_add(row_bytes)?;
         if wanted > u64::try_from(dib.len() + 14 - offset).ok()? {
             return None;
         }
@@ -469,9 +471,13 @@ mod imp {
 
     /// A TIFF picture as PNG file bytes (run in the job that writes the file).
     pub fn tiff_to_png(tiff: &[u8]) -> Option<Vec<u8>> {
-        let rep = NSBitmapImageRep::imageRepWithData(&NSData::with_bytes(tiff))?;
-        let png = unsafe { rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &NSDictionary::new()) };
-        png.map(|data| data.to_vec())
+        // Autoreleased objects of a job thread are freed here, not when the thread ends.
+        objc2::rc::autoreleasepool(|_| {
+            let rep = NSBitmapImageRep::imageRepWithData(&NSData::with_bytes(tiff))?;
+            let png =
+                unsafe { rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &NSDictionary::new()) };
+            png.map(|data| data.to_vec())
+        })
     }
 
     pub fn read_text() -> Result<Option<String>, ClipboardError> {
@@ -613,6 +619,24 @@ mod tests {
         assert_eq!(top_left(&dib32(40, 2, 3)), [0, 0, 255], "BI_BITFIELDS with its masks after the header");
         assert_eq!(top_left(&dib32(124, 2, 3)), [0, 0, 255], "a V5 header");
         assert_eq!(top_left(&dib32(124, -2, 3)), [255, 0, 0], "a top-down V5");
+    }
+
+    #[test]
+    fn a_last_row_without_its_padding_is_accepted() {
+        let mut short = dib();
+        short.truncate(short.len() - 2); // 6 bytes of pixels: no padding after the row
+        assert!(bmp_from_dib(&short).is_some());
+        short.pop();
+        assert_eq!(bmp_from_dib(&short), None, "a pixel is missing");
+        // Two rows of one 24-bit pixel each (3 bytes + 1 padding): the second may lack its padding.
+        let mut two = dib();
+        two[4..8].copy_from_slice(&1i32.to_le_bytes());
+        two[8..12].copy_from_slice(&2i32.to_le_bytes());
+        two.truncate(40);
+        two.extend_from_slice(&[1, 2, 3, 0, 4, 5, 6]);
+        assert!(bmp_from_dib(&two).is_some());
+        two.pop();
+        assert_eq!(bmp_from_dib(&two), None);
     }
 
     #[test]

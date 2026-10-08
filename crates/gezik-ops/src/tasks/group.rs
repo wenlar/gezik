@@ -3,6 +3,7 @@
 
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use gezik_core::ops::conflict::{Decision, Facts};
 use gezik_platform::fs;
@@ -19,12 +20,14 @@ const MOVE: u8 = 1;
 pub struct GroupTask {
     dir: PathBuf,
     items: Vec<PathBuf>,
+    /// Set when making the folder failed: nothing is sent into it.
+    make_failed: AtomicBool,
 }
 
 impl GroupTask {
     /// Moves `items` (in `dir`) into a new folder in `dir`.
     pub fn new(items: Vec<PathBuf>, dir: &Path) -> GroupTask {
-        GroupTask { dir: dir.to_path_buf(), items }
+        GroupTask { dir: dir.to_path_buf(), items, make_failed: AtomicBool::new(false) }
     }
 }
 
@@ -59,6 +62,11 @@ impl Task for GroupTask {
         if !sink.item(make) {
             return;
         }
+        // The folder is made by now (a Before item runs as it is planned). Without it every
+        // move would fail with a misleading "not found": the one real failure is enough.
+        if self.make_failed.load(Ordering::Relaxed) {
+            return;
+        }
         for item in &self.items {
             if super::refuse_root(sink, item, "move") {
                 continue;
@@ -86,7 +94,10 @@ impl Task for GroupTask {
         let Some(target) = &item.target else { return Ok(Outcome::Nothing) };
         match (item.tag, &item.source) {
             (MAKE, _) => {
-                std::fs::create_dir(target)?;
+                if let Err(err) = std::fs::create_dir(target) {
+                    self.make_failed.store(true, Ordering::Relaxed);
+                    return Err(err);
+                }
                 Ok(Outcome::Created { path: target.clone(), facts: facts_after(target, true), from: None })
             }
             // Same folder, same drive: one rename each.
@@ -129,6 +140,21 @@ mod tests {
         assert_eq!(read(&folder.join("a.txt")), "a");
         assert_eq!(read(&folder.join("b/c.txt")), "c");
         assert!(!dir.join("a.txt").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_folder_that_cannot_be_made_fails_once_and_moves_nothing() {
+        let dir = test_dir("group-nomake");
+        write(&dir.join("a.txt"), "a");
+        write(&dir.join("b.txt"), "b");
+        let engine = engine();
+        let missing = dir.join("gone");
+        let items = vec![dir.join("a.txt"), dir.join("b.txt")];
+        let (report, _) = finish(&engine, engine.submit(Box::new(GroupTask::new(items, &missing))), defaults);
+        assert_eq!(report.failures.len(), 1, "{:?}", report.failures);
+        assert_eq!(read(&dir.join("a.txt")), "a");
+        assert_eq!(read(&dir.join("b.txt")), "b");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

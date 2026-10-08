@@ -941,6 +941,9 @@ impl Operations {
             ClipboardError::Failed(why) => Some(format!("Cannot use the clipboard: {why}")),
             ClipboardError::Unsupported => None,
         };
+        // A picture that cannot be read does not end it: the text may still be there. What went
+        // wrong is told only when nothing was pasted.
+        let mut problem = None;
         match clipboard::read_image() {
             Ok(Some(image)) => {
                 let name = pasted_name(PasteKind::Image, &at);
@@ -952,7 +955,7 @@ impl Operations {
                 return;
             }
             Ok(None) => {}
-            Err(err) => return failed(err).into_iter().for_each(|text| self.0.view.note(text)),
+            Err(err) => problem = failed(err),
         }
         match clipboard::read_text() {
             Ok(Some(text)) if !text.is_empty() => {
@@ -962,10 +965,12 @@ impl Operations {
                     None,
                     After::Select,
                 );
+                return;
             }
             Ok(_) => {}
-            Err(err) => failed(err).into_iter().for_each(|text| self.0.view.note(text)),
+            Err(err) => problem = failed(err).or(problem),
         }
+        self.0.view.note(problem.unwrap_or_else(|| "Nothing to paste".to_owned()));
     }
 
     /// A link of `kind` next to each of `paths` ("Create link ▸", Explorer's "Create shortcut").

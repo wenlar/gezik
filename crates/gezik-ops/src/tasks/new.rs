@@ -137,19 +137,11 @@ mod tests {
         let dir = test_dir("new-contents");
         std::fs::write(dir.join("Pasted text.txt"), "taken").unwrap();
         let engine = engine();
-        let task = NewTask::with_contents(&dir, "Pasted text.txt", || {
-            Ok(b"line 1
-line 2"
-                .to_vec())
-        });
+        let task = NewTask::with_contents(&dir, "Pasted text.txt", || Ok(b"line 1\r\nline 2".to_vec()));
         let (report, _) = finish(&engine, engine.submit(Box::new(task)), defaults);
         assert!(report.failures.is_empty(), "{:?}", report.failures);
         assert_eq!(report.results, [dir.join("Pasted text (2).txt")]);
-        assert_eq!(
-            std::fs::read(dir.join("Pasted text (2).txt")).unwrap(),
-            b"line 1
-line 2"
-        );
+        assert_eq!(std::fs::read(dir.join("Pasted text (2).txt")).unwrap(), b"line 1\r\nline 2");
         assert_eq!(std::fs::read(dir.join("Pasted text.txt")).unwrap(), b"taken");
         let _ = std::fs::remove_dir_all(&dir);
     }
