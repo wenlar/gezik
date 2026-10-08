@@ -311,7 +311,12 @@ pub(crate) fn read_with_timeout(fd: OwnedFd, timeout: Duration) -> Option<Vec<u8
         }
         match file.read(&mut buffer) {
             Ok(0) => return Some(data),
-            Ok(n) => data.extend_from_slice(&buffer[..n]),
+            Ok(n) => {
+                data.extend_from_slice(&buffer[..n]);
+                if data.len() > super::MAX_TRANSFER_BYTES {
+                    return None;
+                }
+            }
             Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(_) => return None,
         }

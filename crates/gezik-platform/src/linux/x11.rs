@@ -539,7 +539,8 @@ impl X11 {
         let a = &s.atoms;
         let Some(targets) = s.transfer(a.CLIPBOARD, a.TARGETS, CURRENT_TIME) else { return Vec::new() };
         let offered: Vec<Atom> = targets.as_chunks::<4>().0.iter().map(|c| u32::from_ne_bytes(*c)).collect();
-        let known: [(Atom, &'static str); 8] = [
+        let known: [(Atom, &'static str); 9] = [
+            (a.KDE_CUT, "application/x-kde-cutselection"),
             (a.URI_LIST, "text/uri-list"),
             (a.GNOME_FILES, "x-special/gnome-copied-files"),
             (a.IMAGE_PNG, "image/png"),
