@@ -1,0 +1,25 @@
+name = "Nord"
+base = "dark"
+
+[colors]
+background           = "#2e3440"
+surface              = "#3b4252"
+foreground           = "#eceff4"
+foreground-muted     = "#9aa3b5"
+border               = "#434c5e"
+accent               = "#88c0d0"
+accent-foreground    = "#2e3440"
+selection            = "#434c5e"
+selection-foreground = "#eceff4"
+hover                = "#3b425280"
+folder-icon          = "#ebcb8b"
+file-icon            = "#9aa3ad"
+danger               = "#bf616a"
+
+[metrics]
+font-family = "Inter"
+font-size   = 13
+row-height  = 26
+icon-size   = 16
+radius      = 6
+spacing     = 6

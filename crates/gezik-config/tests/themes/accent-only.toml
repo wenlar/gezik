@@ -1,0 +1,5 @@
+base = "light"
+
+[colors]
+accent = "#b0158f"
+glow = "#ffffff"   # unknown: ignored without a warning

@@ -231,7 +231,7 @@ fn builtin(id: &str) -> PartialTheme {
 
 /// Resolves a theme by id (case-insensitive) from the user's theme files
 /// (`id → TOML text`, ids lowercase) and the built-ins, filling every value the theme
-/// leaves out from its `base` chain. A theme without `base` extends the built-in of the same id if there is one, else `dark`; a missing or cyclic base falls back to `dark`.
+/// leaves out from its `base` chain. Colors a user file leaves out but that follow from ones it sets are worked out by `theme_rules::RULES`. A theme without `base` extends the built-in of the same id if there is one, else `dark`; a missing or cyclic base falls back to `dark`.
 pub fn resolve_theme(
     id: &str,
     user_themes: &HashMap<String, String>,
@@ -242,11 +242,11 @@ pub fn resolve_theme(
     let first = parse_theme(&label(&id, source), text, warnings).ok_or(ThemeError::Invalid)?;
     let name = first.display_name.clone().unwrap_or_else(|| id.clone());
 
-    let mut chain = vec![first];
+    let mut chain = vec![(first, source)];
     let mut visited = vec![(id.clone(), source)];
     loop {
         let (current, current_source) = visited.last().cloned().expect("chain is never empty");
-        let base = chain.last().and_then(|theme| theme.base.clone());
+        let base = chain.last().and_then(|(theme, _)| theme.base.clone());
         // Built-ins define every value, so the chain ends at one without a base.
         if current_source == Source::Builtin && base.is_none() {
             break;
@@ -259,25 +259,30 @@ pub fn resolve_theme(
                 label(&current, current_source),
                 format!("base theme \"{base}\" not found or forms a cycle; using \"dark\" instead"),
             ));
-            chain.push(builtin("dark"));
+            chain.push((builtin("dark"), Source::Builtin));
             break;
         };
         match parse_theme(&label(&base, source), text, warnings) {
             Some(theme) => {
-                chain.push(theme);
+                chain.push((theme, source));
                 visited.push((base, source));
             }
             None => {
-                chain.push(builtin("dark"));
+                chain.push((builtin("dark"), Source::Builtin));
                 break;
             }
         }
     }
 
     let mut resolved = ResolvedTheme { id, name, colors: ThemeColors::default(), metrics: Metrics::default() };
-    for theme in chain.iter().rev() {
+    // Keys a user file sets: the rules leave them alone and work out what follows from them.
+    let mut written: Vec<&'static str> = Vec::new();
+    for (theme, source) in chain.iter().rev() {
         for (key, color) in &theme.colors {
             resolved.colors.set(key, *color);
+            if *source == Source::User && !written.contains(key) {
+                written.push(key);
+            }
         }
         if let Some(family) = &theme.font_family {
             resolved.metrics.font_family = family.clone();
@@ -286,6 +291,7 @@ pub fn resolve_theme(
             resolved.metrics.set(key, *value);
         }
     }
+    crate::theme_rules::derive(&mut resolved.colors, &written);
     Ok(resolved)
 }
 
@@ -679,5 +685,154 @@ accent = \"#ff00ff\"
         assert_eq!(tiny.compact().inset, 0.0);
         let flat = Metrics { inset: 0.0, ..metrics };
         assert_eq!(flat.compact().inset, 0.0);
+    }
+
+    fn colors_of(theme: &ResolvedTheme, expected: &[(&str, &str)]) {
+        for (key, value) in expected {
+            assert_eq!(theme.colors.get(key), hex(value), "{key}");
+        }
+    }
+
+    #[test]
+    fn builtins_resolve_to_exactly_their_files() {
+        for id in ["light", "dark", "classic-light", "classic-dark"] {
+            let theme = resolve_theme(id, &HashMap::new(), &mut Vec::new()).unwrap();
+            let (file, _) = parse(builtin_source(id).unwrap());
+            for (key, color) in file.unwrap().colors {
+                assert_eq!(theme.colors.get(key), color, "{id} {key}");
+            }
+        }
+    }
+
+    #[test]
+    fn an_accent_alone_recolors_what_follows_it() {
+        let themes = user(&[("magenta", "base = \"light\"\n[colors]\naccent = \"#b0158f\"\n")]);
+        let mut warnings = Vec::new();
+        let theme = resolve_theme("magenta", &themes, &mut warnings).unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        colors_of(
+            &theme,
+            &[
+                ("accent-foreground", "#ffffff"),
+                ("accent-hover", "#9b127e"),
+                ("accent-pressed", "#86106d"),
+                ("selection", "#f3dcee"),
+                ("focus-ring", "#b0158f"),
+                ("progress", "#b0158f"),
+                ("marquee", "#b0158f24"),
+                ("drop-target", "#b0158f33"),
+                // Neutrals stay the designer's.
+                ("chrome", "#e8e9ed"),
+                ("selection-inactive", "#ececed"),
+                ("border-strong", "#868b95"),
+                ("hover", "#0000000a"),
+            ],
+        );
+    }
+
+    #[test]
+    fn a_user_file_named_like_a_builtin_also_derives() {
+        let themes = user(&[("light", "[colors]\naccent = \"#b0158f\"\n")]);
+        let theme = resolve_theme("light", &themes, &mut Vec::new()).unwrap();
+        colors_of(&theme, &[("selection", "#f3dcee"), ("focus-ring", "#b0158f")]);
+    }
+
+    #[test]
+    fn a_background_alone_reworks_its_followers_in_a_chain() {
+        let themes = user(&[("paper", "base = \"light\"\n[colors]\nbackground = \"#fdf6e3\"\n")]);
+        let theme = resolve_theme("paper", &themes, &mut Vec::new()).unwrap();
+        colors_of(
+            &theme,
+            &[
+                ("chrome", "#e6e0cf"),
+                ("tab-inactive", "#e6e0cf"),
+                ("tab-active", "#fdf6e3"),
+                ("surface-raised", "#fdf6e3"),
+                ("input-background", "#fdf6e3"),
+                ("selection", "#f4dbc3"),
+                ("selection-inactive", "#ebe4d3"),
+                ("danger-background", "#f6e3d1"),
+                ("hover", "#0000000a"),
+                ("pressed", "#00000014"),
+                ("shadow", "#0000001f"),
+                ("overlay", "#14141859"),
+                // Not made from the background: the designer's values.
+                ("border-strong", "#868b95"),
+                ("accent-hover", "#ab390b"),
+                ("selection-foreground-muted", "#2d2f34"),
+            ],
+        );
+    }
+
+    #[test]
+    fn a_dark_theme_made_from_light_gets_dark_overlays() {
+        let themes =
+            user(&[("night", "base = \"light\"\n[colors]\nbackground = \"#202020\"\nforeground = \"#eeeeee\"\n")]);
+        let theme = resolve_theme("night", &themes, &mut Vec::new()).unwrap();
+        colors_of(
+            &theme,
+            &[
+                ("hover", "#ffffff0f"),
+                ("pressed", "#ffffff1c"),
+                ("shadow", "#00000070"),
+                ("overlay", "#0000008c"),
+                ("chrome", "#161616"),
+                ("tab-inactive", "#161616"),
+                ("tab-active", "#202020"),
+                ("surface-raised", "#2c2c2c"),
+                ("input-background", "#181818"),
+                ("selection", "#512a1a"),
+                ("selection-foreground", "#eeeeee"),
+                ("border-strong", "#e1e3e6"),
+                ("scrollbar", "#eeeeee38"),
+            ],
+        );
+    }
+
+    #[test]
+    fn the_dark_threshold_sits_at_a_fifth() {
+        let themes = user(&[
+            ("dim", "base = \"light\"\n[colors]\nbackground = \"#7b7b7b\"\n"),
+            ("pale", "base = \"light\"\n[colors]\nbackground = \"#7c7c7c\"\n"),
+        ]);
+        assert_eq!(resolve_theme("dim", &themes, &mut Vec::new()).unwrap().colors.hover, hex("#ffffff0f"));
+        assert_eq!(resolve_theme("pale", &themes, &mut Vec::new()).unwrap().colors.hover, hex("#0000000a"));
+    }
+
+    #[test]
+    fn a_written_value_always_wins() {
+        let themes = user(&[(
+            "mine",
+            "base = \"light\"\n[colors]\naccent = \"#b0158f\"\nselection = \"#123456\"\nchrome = \"#abcdef\"\nbackground = \"#fdf6e3\"\n",
+        )]);
+        let theme = resolve_theme("mine", &themes, &mut Vec::new()).unwrap();
+        colors_of(&theme, &[("selection", "#123456"), ("chrome", "#abcdef"), ("tab-inactive", "#abcdef")]);
+    }
+
+    #[test]
+    fn every_user_file_in_a_chain_counts_as_the_user() {
+        let themes = user(&[
+            ("a", "base = \"b\"\n[colors]\naccent = \"#0b7a69\"\n"),
+            ("b", "base = \"light\"\n[colors]\nbackground = \"#fdf6e3\"\n"),
+        ]);
+        let theme = resolve_theme("a", &themes, &mut Vec::new()).unwrap();
+        colors_of(
+            &theme,
+            &[("selection", "#d9e3d1"), ("chrome", "#e6e0cf"), ("tab-active", "#fdf6e3"), ("focus-ring", "#0b7a69")],
+        );
+        let themes = user(&[
+            ("a", "base = \"b\"\n[colors]\naccent = \"#0b7a69\"\n"),
+            ("b", "base = \"light\"\n[colors]\nselection = \"#123456\"\n"),
+        ]);
+        assert_eq!(resolve_theme("a", &themes, &mut Vec::new()).unwrap().colors.selection, hex("#123456"));
+    }
+
+    #[test]
+    fn base_can_be_a_classic_theme() {
+        let themes = user(&[("old", "base = \"classic-dark\"\n[colors]\naccent = \"#ff8f57\"\n")]);
+        let theme = resolve_theme("old", &themes, &mut Vec::new()).unwrap();
+        assert_eq!(theme.colors.background, hex("#1c1c1c"));
+        assert_eq!(theme.metrics.inset, 0.0);
+        assert_eq!(theme.colors.focus_ring, hex("#ff8f57"));
     }
 }
