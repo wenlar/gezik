@@ -177,11 +177,13 @@ fn normalize_absolute(wide: &[u16]) -> Option<Vec<u16>> {
     Some(out)
 }
 
-/// The entry's volume serial and file index (the last part not followed, the folders on the
-/// way are), for `same_entry`.
-pub(super) fn entry_id(path: &Path) -> io::Result<(u32, u64)> {
+/// The entry's volume serial and file id (the last part not followed, the folders on the way
+/// are), for `same_entry`: the 128-bit id (FileIdInfo, unique on ReFS too), else the 64-bit
+/// index where the file system knows no FileIdInfo (FAT). A serial or id of 0 is no id.
+pub(super) fn entry_id(path: &Path) -> io::Result<(u64, u128)> {
     use windows::Win32::Storage::FileSystem::{
-        BY_HANDLE_FILE_INFORMATION, FILE_READ_ATTRIBUTES, GetFileInformationByHandle,
+        BY_HANDLE_FILE_INFORMATION, FILE_ID_INFO, FILE_READ_ATTRIBUTES, FileIdInfo, GetFileInformationByHandle,
+        GetFileInformationByHandleEx,
     };
     let handle = unsafe {
         CreateFileW(
@@ -195,11 +197,30 @@ pub(super) fn entry_id(path: &Path) -> io::Result<(u32, u64)> {
         )
     }
     .map_err(io_error)?;
-    let mut info = BY_HANDLE_FILE_INFORMATION::default();
-    let read = unsafe { GetFileInformationByHandle(handle, &mut info) };
+    let read = || -> io::Result<(u64, u128)> {
+        let mut ex = FILE_ID_INFO::default();
+        let by_ex = unsafe {
+            GetFileInformationByHandleEx(
+                handle,
+                FileIdInfo,
+                &mut ex as *mut FILE_ID_INFO as *mut c_void,
+                size_of::<FILE_ID_INFO>() as u32,
+            )
+        };
+        if by_ex.is_ok() {
+            return Ok((ex.VolumeSerialNumber, u128::from_le_bytes(ex.FileId.Identifier)));
+        }
+        let mut info = BY_HANDLE_FILE_INFORMATION::default();
+        unsafe { GetFileInformationByHandle(handle, &mut info) }.map_err(io_error)?;
+        let index = (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow);
+        Ok((u64::from(info.dwVolumeSerialNumber), u128::from(index)))
+    };
+    let id = read();
     let _ = unsafe { CloseHandle(handle) };
-    read.map_err(io_error)?;
-    Ok((info.dwVolumeSerialNumber, (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow)))
+    match id? {
+        (0, _) | (_, 0) => Err(io::Error::new(io::ErrorKind::Unsupported, "no file id")),
+        id => Ok(id),
+    }
 }
 
 pub(crate) fn verbatim(path: &Path) -> HSTRING {

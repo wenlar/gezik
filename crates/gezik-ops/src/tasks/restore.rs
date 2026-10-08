@@ -3,7 +3,7 @@
 use std::io;
 use std::path::PathBuf;
 
-use gezik_core::ops::paths::{is_within, same_path};
+use gezik_core::ops::paths::path_key;
 use gezik_platform::fs;
 
 use super::what;
@@ -45,17 +45,24 @@ impl Task for RestoreTask {
         // A folder that comes back with items inside it (a folder made on the way, and what was
         // copied into it) comes back first, before any of them: restoring one of them makes
         // the folders above it, and the folder itself then could not come back.
+        // Each key once, and every folder above an original once: linear in the items (times
+        // their depth), as a trash undo may bring back many thousands.
+        let keys: Vec<Vec<String>> = self.pairs.iter().map(|(_, original)| path_key(original)).collect();
+        let above: std::collections::HashSet<&[String]> =
+            keys.iter().flat_map(|key| (1..key.len()).map(move |n| &key[..n])).collect();
         let mut order: Vec<usize> = (0..self.pairs.len()).collect();
-        order.sort_by_key(|&i| self.pairs[i].1.components().count());
-        let holds = |dir: &PathBuf| self.pairs.iter().any(|(_, other)| is_within(other, dir) && !same_path(other, dir));
+        order.sort_by_key(|&i| keys[i].len());
         for root in order {
             let (trashed, original) = &self.pairs[root];
+            let holder = above.contains(keys[root].as_slice());
             match std::fs::symlink_metadata(trashed) {
                 Ok(meta) => {
                     // Before items run as they are planned, outer ones first.
-                    let stage = if holds(original) { Stage::Before } else { Stage::Parallel };
+                    let stage = if holder { Stage::Before } else { Stage::Parallel };
                     let item =
                         PlanItem::new(stage, facts_of(&meta)).source(trashed).target(original).checked().top(root);
+                    // A folder there already is a conflict, as for any restore: never merged.
+                    let item = if holder { item.no_merge() } else { item };
                     if !sink.item(item) {
                         return;
                     }
@@ -120,6 +127,51 @@ mod tests {
                 (dst.join("a/b/x.txt"), Stage::Parallel)
             ]
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn many_items_plan_quickly() {
+        let dir = test_dir("restore-many");
+        let bin = dir.join("bin");
+        let dst = dir.join("dst");
+        std::fs::create_dir_all(&bin).unwrap();
+        let pairs: Vec<(PathBuf, PathBuf)> =
+            (0..5000).map(|i| (bin.join(format!("{i}")), dst.join(format!("{i}.txt")))).collect();
+        for (trashed, _) in &pairs {
+            write(trashed, "x");
+        }
+        let started = std::time::Instant::now();
+        let mut sink = crate::testing::CollectSink::default();
+        RestoreTask::new(pairs).plan(&mut sink);
+        let took = started.elapsed();
+        assert_eq!((sink.items.len(), sink.failed.len()), (5000, 0));
+        assert!(sink.items.iter().all(|item| item.stage == Stage::Parallel));
+        assert!(took < std::time::Duration::from_secs(5), "{took:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_folder_coming_back_onto_a_folder_asks() {
+        let dir = test_dir("restore-folder-taken");
+        let bin = dir.join("bin");
+        write(&bin.join("1"), "x");
+        std::fs::create_dir_all(bin.join("2")).unwrap();
+        let dst = dir.join("dst");
+        // Made again since: the folder must not merge silently and stay in the trash.
+        std::fs::create_dir_all(dst.join("a")).unwrap();
+        let pairs = vec![(bin.join("1"), dst.join("a/x.txt")), (bin.join("2"), dst.join("a"))];
+        let engine = engine();
+        let asked = std::cell::RefCell::new(Vec::new());
+        let (report, _) = finish(&engine, engine.submit(Box::new(RestoreTask::new(pairs))), |c| {
+            asked.borrow_mut().extend(c.iter().map(|c| c.target.clone()));
+            vec![Decision::KeepBoth; c.len()]
+        });
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert_eq!(*asked.borrow(), [dst.join("a")]);
+        assert!(dst.join("a (2)").is_dir(), "the folder came back beside it");
+        assert_eq!(read(&dst.join("a (2)/x.txt")), "x", "what was inside follows it");
+        assert!(!bin.join("2").exists() && !bin.join("1").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

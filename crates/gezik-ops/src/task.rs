@@ -175,6 +175,9 @@ pub struct PlanItem {
     pub(crate) replace: bool,
     /// Counts in the job's progress (a rename's step to a temporary name does not).
     pub(crate) counted: bool,
+    /// A `Before` folder meeting a folder merges into it without asking; `false`: it is a
+    /// conflict like any other (a folder coming back from the trash).
+    pub(crate) merges: bool,
 }
 
 impl PlanItem {
@@ -191,6 +194,7 @@ impl PlanItem {
             tag: 0,
             replace: false,
             counted: true,
+            merges: true,
         }
     }
 
@@ -229,6 +233,12 @@ impl PlanItem {
 
     pub fn tag(mut self, tag: u8) -> PlanItem {
         self.tag = tag;
+        self
+    }
+
+    /// A folder that never merges into one already there: see `merges`.
+    pub fn no_merge(mut self) -> PlanItem {
+        self.merges = false;
         self
     }
 
