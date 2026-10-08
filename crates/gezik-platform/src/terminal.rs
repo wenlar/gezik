@@ -350,11 +350,8 @@ fn runnable(path: &Path) -> bool {
 
 /// The file name of the program `name` on PATH stands for, links followed.
 fn real_name(name: &str) -> Option<String> {
-    let dirs = std::env::var_os("PATH")?;
-    std::env::split_paths(&dirs)
-        .filter(|dir| dir.is_absolute())
-        .map(|dir| dir.join(name))
-        .find(|path| runnable(path))
+    // Only asked on Linux (`x-terminal-emulator`): no PATHEXT.
+    find_program(name, std::env::var_os("PATH").as_deref(), None, false)
         .and_then(|path| std::fs::canonicalize(path).ok())
         .and_then(|path| path.file_name().map(|n| n.to_string_lossy().into_owned()))
 }
