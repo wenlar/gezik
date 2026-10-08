@@ -75,6 +75,8 @@ pub struct Layout {
     pub sidebar: Option<SidebarArea>,
     pub tabs: TabArea,
     pub crumbs: CrumbArea,
+    /// The drop stack strip; None while it is closed.
+    pub stack: Option<Rect>,
 }
 
 /// What is under the pointer.
@@ -95,6 +97,8 @@ pub enum Hit {
     PinAt(usize),
     Tab(usize),
     Crumb(usize),
+    /// The drop stack strip (spec 9.3).
+    Stack,
 }
 
 /// What is at window point (`x`, `y`). `pin_zones`: the edges of pinned rows pin (only
@@ -117,6 +121,11 @@ pub fn hit(layout: &Layout, x: f32, y: f32, pin_zones: bool) -> Hit {
             .iter()
             .position(|&(left, width)| x >= left && x < left + width)
             .map_or(Hit::Nothing, Hit::Crumb);
+    }
+    if let Some(stack) = &layout.stack
+        && stack.contains(x, y)
+    {
+        return Hit::Stack;
     }
     if let Some(side) = &layout.sidebar
         && side.rect.contains(x, y)
@@ -294,6 +303,8 @@ pub enum Action {
     Pin,
     /// Onto a zip, 7z or tar file: the files are added to it.
     AddToArchive,
+    /// Onto the drop stack: the paths are kept there.
+    AddToStack,
 }
 
 /// The text next to the dragged items; `folder` is the archive for `AddToArchive`.
@@ -304,6 +315,7 @@ pub fn label(action: Action, folder: &Path) -> String {
         Action::Transfer(Effect::Link) => format!("Create link in {}", folder_name(folder)),
         Action::Pin => "Pin to sidebar".to_owned(),
         Action::AddToArchive => format!("Add to {}", folder_name(folder)),
+        Action::AddToStack => "Add to drop stack".to_owned(),
     }
 }
 
@@ -370,7 +382,18 @@ mod tests {
                 rect: Rect { x: 300.0, y: 40.0, width: 500.0, height: 24.0 },
                 spans: vec![(300.0, 60.0), (372.0, 40.0)],
             },
+            stack: Some(Rect { x: 0.0, y: 600.0, width: 1000.0, height: 30.0 }),
         }
+    }
+
+    #[test]
+    fn the_drop_stack_strip_takes_drops() {
+        let mut l = layout(list(0));
+        assert_eq!(hit(&l, 500.0, 610.0, false), Hit::Stack);
+        assert_eq!(hit(&l, 500.0, 590.0, false), Hit::Nothing, "between the list and the strip");
+        l.stack = None;
+        assert_eq!(hit(&l, 500.0, 610.0, false), Hit::Nothing, "a closed strip takes nothing");
+        assert_eq!(label(Action::AddToStack, Path::new("")), "Add to drop stack");
     }
 
     #[test]

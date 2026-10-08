@@ -735,6 +735,11 @@ impl Operations {
     /// Copies, moves or links `paths` into folder `dir` (a paste or a drop), as one undoable
     /// job.
     pub fn transfer(&self, paths: Vec<PathBuf>, dir: PathBuf, effect: Effect) {
+        self.transfer_job(paths, dir, effect);
+    }
+
+    /// Like `transfer`, giving the job (the drop stack follows a Move here by it).
+    pub fn transfer_job(&self, paths: Vec<PathBuf>, dir: PathBuf, effect: Effect) -> JobId {
         self.remember_for(&paths);
         let retry: Retry = Rc::new(move || -> Box<dyn Task> {
             match effect {
@@ -743,7 +748,7 @@ impl Operations {
                 Effect::Link => Box::new(LinkTask::into(paths.clone(), &dir, LinkKind::for_drops())),
             }
         });
-        self.submit(retry(), Some(retry), After::Select);
+        self.submit(retry(), Some(retry), After::Select)
     }
 
     /// The clipboard may have changed in another program: re-read what is cut there (when
@@ -1172,6 +1177,7 @@ impl Operations {
         // An archive that needs 7-Zip, a download that is done, a conversion that needs ffmpeg.
         crate::archives::with_current(|archives| archives.job_finished(id, &report));
         crate::convert::with_current(|convert| convert.job_finished(id, &report));
+        crate::stack::with_current(|stack| stack.job_finished(id, &report));
     }
 
     /// Items the trash cannot take (no trash on their drive, or a name it cannot take): delete

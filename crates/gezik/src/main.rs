@@ -27,6 +27,7 @@ mod preview;
 mod quick_look;
 mod select_tools;
 mod sidebar;
+mod stack;
 mod start;
 mod tab_sets;
 mod tab_tools;
@@ -617,6 +618,7 @@ fn main() -> Result<(), slint::PlatformError> {
         saved_state.batch_rename.clone().unwrap_or_default(),
     );
     let _batch_rename = batch_rename::BatchRename::new(&window, ops.clone());
+    let _stack = stack::Stack::new(&window, view.clone(), ops.clone());
     #[cfg(target_os = "macos")]
     menu_bar::install(&window, view.clone(), nav.clone(), ops.clone());
     // Tools Gezik downloads (7-Zip) go to `<config dir>/tools/`, next to the pending deletes.

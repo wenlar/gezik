@@ -156,6 +156,8 @@ pub const SORT_BY_SIZE: u32 = 39;
 pub const SORT_ASC: u32 = 40;
 pub const SORT_DESC: u32 = 41;
 pub const PREVIEW_PANE: u32 = 42;
+/// 1408: View ▸ Drop stack.
+pub const TOGGLE_STACK: u32 = 1408;
 pub const APPLY_TO_ALL: u32 = 43;
 pub const RESET_FOLDER: u32 = 44;
 
@@ -416,7 +418,13 @@ fn owned(items: Vec<(u32, &'static str)>) -> Vec<(u32, String)> {
 /// The View menu; the current choices are marked with a bullet. `options`: `[view]`'s options
 /// (spec 7.2), "Show system items" only on Windows; Date format ▸ and Size format ▸ go before
 /// "Apply to all folders" (`format_subs`).
-pub fn view_items(view: ViewSettings, preview_open: bool, options: ViewOptions, windows: bool) -> Vec<(u32, String)> {
+pub fn view_items(
+    view: ViewSettings,
+    preview_open: bool,
+    stack_open: bool,
+    options: ViewOptions,
+    windows: bool,
+) -> Vec<(u32, String)> {
     let mark = |on: bool, title: &str| format!("{}{title}", if on { "• " } else { "    " });
     let grid = view.mode == ViewMode::Grid;
     let mut out = vec![(VIEW_LIST, mark(!grid, "List")), (VIEW_GRID, mark(grid, "Grid"))];
@@ -438,6 +446,7 @@ pub fn view_items(view: ViewSettings, preview_open: bool, options: ViewOptions, 
     out.push((SORT_ASC, mark(view.sort.dir == SortDir::Asc, "Ascending")));
     out.push((SORT_DESC, mark(view.sort.dir == SortDir::Desc, "Descending")));
     out.push((PREVIEW_PANE, mark(preview_open, "Preview pane")));
+    out.push((TOGGLE_STACK, mark(stack_open, "Drop stack")));
     out.push((HIDE_EXTENSIONS, mark(options.hide_extensions, "Hide extensions")));
     out.push((FOLDERS_FIRST, mark(options.folders_first, "Folders first")));
     out.push((SINGLE_CLICK_OPEN, mark(options.single_click_open, "Single-click to open")));
@@ -899,7 +908,10 @@ impl Menus {
     pub fn view_menu(&self, at: Anchor) {
         *self.subject.borrow_mut() = Some(Subject::View);
         let options = crate::view_options::current();
-        let items = view_items(self.view.view_settings(), self.preview.is_pane_open(), options, cfg!(windows));
+        let mut stack_open = false;
+        crate::stack::with_current(|stack| stack_open = stack.is_open());
+        let items =
+            view_items(self.view.view_settings(), self.preview.is_pane_open(), stack_open, options, cfg!(windows));
         let place = items.iter().position(|(id, _)| *id == APPLY_TO_ALL).unwrap_or(items.len());
         let entries: Vec<(u32, String, bool)> = items.into_iter().map(|(id, title)| (id, title, true)).collect();
         self.open_slint_entries(&entries, format_subs(options, place), at);
@@ -1290,6 +1302,7 @@ impl Menus {
             (SORT_ASC, Subject::View) => self.view.set_sort(SortSpec { dir: SortDir::Asc, ..self.view.sort() }),
             (SORT_DESC, Subject::View) => self.view.set_sort(SortSpec { dir: SortDir::Desc, ..self.view.sort() }),
             (PREVIEW_PANE, Subject::View) => self.preview.toggle_pane(),
+            (TOGGLE_STACK, Subject::View) => crate::stack::with_current(crate::stack::Stack::toggle),
             (APPLY_TO_ALL, Subject::View) => self.view.apply_to_all(),
             (RESET_FOLDER, Subject::View) => self.view.reset_folder(),
             (id, Subject::View) => {
@@ -1585,6 +1598,7 @@ mod tests {
             SORT_ASC,
             SORT_DESC,
             PREVIEW_PANE,
+            TOGGLE_STACK,
             APPLY_TO_ALL,
             RESET_FOLDER,
             UNDO,
@@ -2021,7 +2035,7 @@ mod tests {
     #[test]
     fn view_menu_marks_the_current_choices() {
         use gezik_core::view::{GridSize, SortDir, SortKey, SortSpec, ViewMode, ViewOptions, ViewSettings};
-        let list = view_items(ViewSettings::default(), false, ViewOptions::default(), false);
+        let list = view_items(ViewSettings::default(), false, false, ViewOptions::default(), false);
         let ids: Vec<u32> = list.iter().map(|(id, _)| *id).collect();
         assert_eq!(
             ids,
@@ -2036,6 +2050,7 @@ mod tests {
                 SORT_ASC,
                 SORT_DESC,
                 PREVIEW_PANE,
+                TOGGLE_STACK,
                 HIDE_EXTENSIONS,
                 FOLDERS_FIRST,
                 SINGLE_CLICK_OPEN,
@@ -2050,7 +2065,7 @@ mod tests {
             sort: SortSpec { key: SortKey::Size, dir: SortDir::Desc },
             grid_size: GridSize::Large,
         };
-        let items = view_items(grid, false, ViewOptions::default(), false);
+        let items = view_items(grid, false, false, ViewOptions::default(), false);
         let marked: Vec<&str> =
             items.iter().filter(|(_, t)| t.starts_with("• ")).map(|(_, t)| t.trim_start_matches("• ")).collect();
         let mut expected = vec!["Grid", "Large icons", "Sort by size", "Descending", "Folders first"];
@@ -2059,31 +2074,40 @@ mod tests {
         }
         assert_eq!(marked, expected);
         assert!(
-            view_items(ViewSettings::default(), true, ViewOptions::default(), false)
+            view_items(ViewSettings::default(), true, false, ViewOptions::default(), false)
                 .iter()
                 .any(|(id, t)| *id == PREVIEW_PANE && t.starts_with("• "))
         );
     }
 
     #[test]
+    fn the_view_menu_shows_and_hides_the_drop_stack() {
+        use gezik_core::view::{ViewOptions, ViewSettings};
+        let shown = view_items(ViewSettings::default(), false, true, ViewOptions::default(), false);
+        assert!(shown.contains(&(TOGGLE_STACK, "• Drop stack".to_owned())));
+        let hidden = view_items(ViewSettings::default(), false, false, ViewOptions::default(), false);
+        assert!(hidden.contains(&(TOGGLE_STACK, "    Drop stack".to_owned())));
+    }
+
+    #[test]
     fn view_menu_lists_the_options_and_their_marks() {
         use gezik_core::view::{DateFormat, ViewOptions};
         let options = ViewOptions { hide_extensions: true, ..ViewOptions::default() };
-        let items = view_items(ViewSettings::default(), false, options, true);
+        let items = view_items(ViewSettings::default(), false, false, options, true);
         let ids: Vec<u32> = items.iter().map(|(id, _)| *id).collect();
         assert_eq!(
-            &ids[10..],
+            &ids[11..],
             [HIDE_EXTENSIONS, FOLDERS_FIRST, SINGLE_CLICK_OPEN, SHOW_HIDDEN, SHOW_SYSTEM, APPLY_TO_ALL, RESET_FOLDER]
         );
-        assert!(items[10].1.starts_with("• ") && items[11].1.starts_with("• "), "extensions hidden, folders first");
-        assert!(!items[12].1.starts_with("• "));
-        assert_eq!(items[13].1.starts_with("• "), options.show_hidden);
+        assert!(items[11].1.starts_with("• ") && items[12].1.starts_with("• "), "extensions hidden, folders first");
+        assert!(!items[13].1.starts_with("• "));
+        assert_eq!(items[14].1.starts_with("• "), options.show_hidden);
         let elsewhere: Vec<u32> =
-            view_items(ViewSettings::default(), false, options, false).iter().map(|(id, _)| *id).collect();
+            view_items(ViewSettings::default(), false, false, options, false).iter().map(|(id, _)| *id).collect();
         assert!(!elsewhere.contains(&SHOW_SYSTEM), "Show system items: Windows only");
-        let subs = format_subs(ViewOptions { date_format: DateFormat::Iso, ..options }, 15);
+        let subs = format_subs(ViewOptions { date_format: DateFormat::Iso, ..options }, 16);
         let places: Vec<(&str, usize)> = subs.iter().map(|s| (s.title.as_str(), s.at)).collect();
-        assert_eq!(places, [("Date format", 15), ("Size format", 15)]);
+        assert_eq!(places, [("Date format", 16), ("Size format", 16)]);
         let dates: Vec<(u32, &str)> = subs[0].items.iter().map(|(id, t, _)| (*id, t.as_str())).collect();
         assert_eq!(
             dates,

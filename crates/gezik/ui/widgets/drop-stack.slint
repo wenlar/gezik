@@ -1,0 +1,147 @@
+import { Theme } from "../theme.slint";
+import { FileIcon } from "file-icon.slint";
+import { TextButton } from "text-button.slint";
+
+// One item of the drop stack (stack.rs): its name, `Kind` (gezik-core kind.rs), and whether
+// it is gone (drawn faded, left out of Copy here / Move here).
+export struct StackRow {
+    name: string,
+    kind: int,
+    gone: bool,
+}
+
+// The pointer events of a press that may become a drag (`index`: what it drags).
+component Grip inherits TouchArea {
+    in property <int> index;
+    callback down(int, length, length);
+    callback drag(length, length, bool, bool, bool);
+    callback up(length, length);
+    callback cancel();
+    pointer-event(event) => {
+        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+            root.down(self.index, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+        }
+        if event.kind == PointerEventKind.move && self.pressed {
+            root.drag(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y,
+                event.modifiers.shift, event.modifiers.control, event.modifiers.alt);
+        }
+        if event.kind == PointerEventKind.up && event.button == PointerEventButton.left {
+            root.up(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+        }
+        if event.kind == PointerEventKind.cancel {
+            root.cancel();
+        }
+    }
+}
+
+// The drop stack (spec 9.3): a strip above the status bar. Files dropped on it are kept;
+// Copy here / Move here take them to the folder shown. A press on an item drags it, a press on
+// the count drags them all.
+export component DropStack inherits Rectangle {
+    in property <[StackRow]> rows;
+    in property <string> count;
+    in property <string> more;
+    // A drop would land here.
+    in property <bool> highlight;
+    // A press on item `int` (-1: the count, all of them), at a window position.
+    callback down(int, length, length);
+    // The press moved (window position, Shift, Ctrl, Alt); it came up; it was taken away.
+    callback drag(length, length, bool, bool, bool);
+    callback up(length, length);
+    callback cancel();
+    callback hovered(int);
+    callback remove(int);
+    callback copy-here();
+    callback move-here();
+    callback clear();
+
+    height: Theme.row-height + 6px;
+    background: root.highlight ? Theme.drop-target : Theme.surface;
+    accessible-role: list;
+    accessible-label: "Drop stack";
+
+    HorizontalLayout {
+        padding-left: Theme.spacing + 4px;
+        padding-right: Theme.spacing;
+        spacing: Theme.spacing * 2;
+        Rectangle {
+            width: caption.preferred-width + Theme.spacing * 2;
+            accessible-role: button;
+            accessible-label: root.rows.length == 0 ? "Drop files here" : "Drag all " + root.count;
+            caption := Text {
+                x: Theme.spacing;
+                height: parent.height;
+                text: root.rows.length == 0 ? "Drop files here" : root.count;
+                vertical-alignment: center;
+                color: Theme.foreground-muted;
+            }
+            Grip {
+                index: -1;
+                enabled: root.rows.length > 0;
+                down(i, x, y) => { root.down(i, x, y); }
+                drag(x, y, s, c, a) => { root.drag(x, y, s, c, a); }
+                up(x, y) => { root.up(x, y); }
+                cancel => { root.cancel(); }
+            }
+        }
+        Flickable {
+            horizontal-stretch: 1;
+            content-width: chips.preferred-width;
+            chips := HorizontalLayout {
+                spacing: Theme.spacing;
+                for row[i] in root.rows: Rectangle {
+                    width: chip.preferred-width;
+                    border-radius: Theme.radius;
+                    background: grip.has-hover ? Theme.hover : transparent;
+                    accessible-role: list-item;
+                    accessible-label: row.name;
+                    chip := HorizontalLayout {
+                        padding-left: Theme.spacing;
+                        spacing: Theme.spacing;
+                        alignment: start;
+                        VerticalLayout {
+                            alignment: center;
+                            FileIcon { width: 16px; height: 16px; kind: row.kind; opacity: row.gone ? 0.4 : 1; }
+                        }
+                        Text {
+                            text: row.name;
+                            vertical-alignment: center;
+                            color: row.gone ? Theme.foreground-muted : Theme.foreground;
+                        }
+                        Rectangle {
+                            width: 18px;
+                            accessible-role: button;
+                            accessible-label: "Remove " + row.name;
+                            Text { text: "×"; horizontal-alignment: center; vertical-alignment: center; color: Theme.foreground-muted; }
+                            TouchArea { clicked => { root.remove(i); } }
+                        }
+                    }
+                    grip := Grip {
+                        width: parent.width - 18px;
+                        x: 0;
+                        index: i;
+                        changed has-hover => { root.hovered(self.has-hover ? i : -1); }
+                        down(i, x, y) => { root.down(i, x, y); }
+                        drag(x, y, s, c, a) => { root.drag(x, y, s, c, a); }
+                        up(x, y) => { root.up(x, y); }
+                        cancel => { root.cancel(); }
+                    }
+                }
+                if root.more != "": Text {
+                    text: root.more;
+                    vertical-alignment: center;
+                    color: Theme.foreground-muted;
+                }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            HorizontalLayout {
+                spacing: Theme.spacing;
+                TextButton { text: "Copy here"; clicked => { root.copy-here(); } }
+                TextButton { text: "Move here"; clicked => { root.move-here(); } }
+                TextButton { text: "Clear"; clicked => { root.clear(); } }
+            }
+        }
+    }
+}
