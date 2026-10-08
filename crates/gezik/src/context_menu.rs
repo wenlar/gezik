@@ -927,8 +927,8 @@ impl Menus {
         self.open_slint_entries(&items, Vec::new(), at);
     }
 
-    /// Copy here / Move here / Create link here / Cancel for files dropped with the right button on `dir`, at
-    /// window position `x`, `y`; only the effects that make sense there are offered.
+    /// Copy here / Move here / Create link here / Cancel for files dropped with the right
+    /// button on `dir`, at window position `x`, `y`; only the effects that make sense there are offered.
     /// `archive`: they were dropped on one, which "Add to archive" adds them to.
     #[allow(clippy::too_many_arguments, reason = "what was dropped where, and what it may do")]
     pub fn drop_menu(

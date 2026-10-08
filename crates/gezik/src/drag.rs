@@ -140,6 +140,13 @@ pub fn with_current<R>(f: impl FnOnce(&Drags) -> R) -> Option<R> {
     CURRENT.with(|c| c.borrow().clone()).map(|drags| f(&drags))
 }
 
+/// Which of Copy, Move and Link the right-drag menu offers: what the source allows, in a
+/// writable folder, and not refused for these sources.
+fn menu_effects(allowed: Allowed, writable: bool, sources: &[PathBuf], dir: &Path) -> (bool, bool, bool) {
+    let can = |effect, ok: bool| ok && writable && !drag::refuse(sources, dir, effect);
+    (can(Effect::Copy, allowed.copy), can(Effect::Move, allowed.move_), can(Effect::Link, allowed.link))
+}
+
 /// The keys held, as this system's file manager reads them (`drag::keys_of`). Slint reports
 /// macOS's Command key as `control`.
 fn keys(shift: bool, ctrl: bool, alt: bool) -> Keys {
@@ -855,15 +862,8 @@ impl Drags {
         }
         let dir = target.dir?;
         if d.right {
-            let can = |effect| {
-                let allowed = match effect {
-                    Effect::Copy => d.allowed.copy,
-                    Effect::Move => d.allowed.move_,
-                    Effect::Link => d.allowed.link,
-                };
-                allowed && self.writable(&dir) && !drag::refuse(&d.sources, &dir, effect)
-            };
-            let (can_copy, can_move, can_link) = (can(Effect::Copy), can(Effect::Move), can(Effect::Link));
+            let writable = self.writable(&dir);
+            let (can_copy, can_move, can_link) = menu_effects(d.allowed, writable, &d.sources, &dir);
             let archive = target.archive.filter(|_| target.action == Some(Action::AddToArchive));
             self.0.menus.drop_menu(d.sources, dir, archive, can_copy, can_move, can_link, d.x, d.y);
             return None;
@@ -1119,6 +1119,18 @@ mod tests {
             target: None,
             pressed: None,
         }
+    }
+
+    #[test]
+    fn the_right_drag_menu_offers_a_link_only_where_it_may() {
+        let a = PathBuf::from(if cfg!(windows) { r"C:\w\a" } else { "/w/a" });
+        let src = std::slice::from_ref(&a);
+        let dir = a.parent().unwrap();
+        assert_eq!(menu_effects(Allowed::ALL, true, src, dir), (true, false, true), "same folder: no move");
+        let no_link = Allowed { link: false, ..Allowed::ALL };
+        assert_eq!(menu_effects(no_link, true, src, dir), (true, false, false));
+        assert_eq!(menu_effects(Allowed::ALL, false, src, dir), (false, false, false), "read-only");
+        assert_eq!(menu_effects(Allowed::ALL, true, src, &a.join("sub")), (false, false, false), "inside itself");
     }
 
     #[test]

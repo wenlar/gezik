@@ -220,12 +220,12 @@ impl DragOs {
 }
 
 /// The keys held, read as each system's file manager reads them (spec 9.2): a link is Alt or
-/// Ctrl+Shift on Windows (Explorer), Ctrl+Shift on Linux (GTK and KDE; many window managers
+/// Ctrl+Shift on Windows (Explorer; AltGr arrives as Ctrl+Alt and links nothing), Ctrl+Shift on Linux (GTK and KDE; many window managers
 /// take Alt-drags), Cmd+Option on macOS (Finder; Option alone copies). `ctrl` is the Control
 /// key, `command` macOS's Command key.
 pub fn keys_of(os: DragOs, shift: bool, ctrl: bool, alt: bool, command: bool) -> Keys {
     match os {
-        DragOs::Windows => Keys { shift, copy: ctrl, link: alt || (shift && ctrl) },
+        DragOs::Windows => Keys { shift, copy: ctrl, link: (alt && !ctrl) || (shift && ctrl && !alt) },
         DragOs::Linux => Keys { shift, copy: ctrl, link: shift && ctrl },
         DragOs::Mac => Keys { shift, copy: alt, link: alt && command },
     }
@@ -481,6 +481,15 @@ mod tests {
         assert!(!link(DragOs::Mac, (false, false, true, false)), "macOS: Option alone copies");
         assert_eq!(keys_of(DragOs::Mac, false, false, true, false), Keys { shift: false, copy: true, link: false });
         assert_eq!(keys_of(DragOs::Windows, true, false, false, false), Keys { shift: true, copy: false, link: false });
+    }
+
+    #[test]
+    fn altgr_and_mixed_chords_never_link_on_windows() {
+        let k = |shift, ctrl, alt| keys_of(DragOs::Windows, shift, ctrl, alt, false);
+        assert_eq!(k(false, true, true), Keys { shift: false, copy: true, link: false }, "AltGr: the copy rule");
+        assert!(k(false, false, true).link, "Alt alone");
+        assert!(k(true, true, false).link, "Ctrl+Shift");
+        assert!(!k(true, true, true).link, "Ctrl+Shift+Alt");
     }
 
     #[test]
