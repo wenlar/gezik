@@ -82,6 +82,9 @@ struct Inner {
     on_selection: RefCell<Vec<Listener>>,
     /// The entry being renamed: its index and its name before.
     renaming: RefCell<Option<(usize, String)>>,
+    /// The renamed entry's key (`Listing::key_at`: its path under the scope in the results), to
+    /// find it again after a reload, a sort or a removal.
+    rename_key: RefCell<String>,
     /// The folder the rename belongs to (as remembered in `folder`).
     rename_folder: RefCell<Option<String>>,
     /// Bumped for each new rename, so a recreated field does not select the stem again.
@@ -106,6 +109,8 @@ struct Inner {
     searching: Cell<bool>,
     /// Bumped whenever the results change: a background sort of older results is dropped.
     results_version: Cell<u64>,
+    /// The background sorts of the results and the batches waiting for them.
+    sort_gate: RefCell<SortGate>,
     media: Media,
     /// A re-sort by type is scheduled (type names arrive one by one).
     resort_pending: Cell<bool>,
@@ -139,6 +144,77 @@ impl FilterState {
                 error: Some(error),
             },
         }
+    }
+}
+
+/// The background sorts of the results (sapma 4): which one is the newest, and the batches that
+/// wait while a sort thread holds the set (appending then would copy all of it on the UI
+/// thread).
+#[derive(Default)]
+struct SortGate {
+    /// Bumped by each sort started and whenever the sorts in flight no longer count.
+    generation: u64,
+    /// Sort threads that have not answered yet (each holds the set until it answers).
+    in_flight: usize,
+    pending: Vec<Batch>,
+}
+
+/// What to do with a finished sort's order.
+#[derive(Debug, PartialEq, Eq)]
+enum SortOutcome {
+    /// A newer sort was started, or the results were replaced: drop it.
+    Stale,
+    Apply,
+    /// The results changed while it ran: sort them again.
+    Redo,
+}
+
+impl SortGate {
+    /// A sort starts; its number.
+    fn start(&mut self) -> u64 {
+        self.generation += 1;
+        self.in_flight += 1;
+        self.generation
+    }
+
+    /// The sorts in flight no longer count (the results are in the order asked already).
+    fn cancel(&mut self) {
+        self.generation += 1;
+    }
+
+    /// Other results are shown: the sorts in flight are for the ones before, and so are the
+    /// batches that waited.
+    fn reset(&mut self) {
+        self.generation += 1;
+        self.pending.clear();
+    }
+
+    /// `batch` waits while a sort thread holds the set (`None`); else it comes back to be
+    /// appended now.
+    fn hold(&mut self, batch: Batch) -> Option<Batch> {
+        if self.in_flight > 0 {
+            self.pending.push(batch);
+            None
+        } else {
+            Some(batch)
+        }
+    }
+
+    /// Sort `generation` answered; `unchanged`: the results are as when it started.
+    fn finish(&mut self, generation: u64, unchanged: bool) -> SortOutcome {
+        self.in_flight = self.in_flight.saturating_sub(1);
+        if generation != self.generation {
+            SortOutcome::Stale
+        } else if unchanged {
+            SortOutcome::Apply
+        } else {
+            SortOutcome::Redo
+        }
+    }
+
+    /// The batches that waited, once no sort thread holds the set.
+    fn take_pending(&mut self) -> Vec<Batch> {
+        if self.in_flight > 0 { Vec::new() } else { std::mem::take(&mut self.pending) }
     }
 }
 
@@ -181,6 +257,7 @@ impl View {
             note: RefCell::new(None),
             on_selection: RefCell::new(Vec::new()),
             renaming: RefCell::new(None),
+            rename_key: RefCell::new(String::new()),
             rename_folder: RefCell::new(None),
             rename_generation: Cell::new(0),
             on_shown: RefCell::new(Vec::new()),
@@ -195,6 +272,7 @@ impl View {
             results_status: RefCell::new(None),
             searching: Cell::new(false),
             results_version: Cell::new(0),
+            sort_gate: RefCell::new(SortGate::default()),
             options: Cell::new(ViewOptions::default()),
             minute: slint::Timer::default(),
             plain_press: Cell::new(None),
@@ -386,20 +464,9 @@ impl View {
         }
         self.0.results_status.borrow_mut().take();
         self.0.results_version.set(self.0.results_version.get() + 1);
+        self.0.sort_gate.borrow_mut().reset();
         // A refresh must not break a rename: follow the entry, or give up if it is gone.
-        let renamed = self.0.renaming.borrow().as_ref().map(|(_, name)| name.clone());
-        if let Some(name) = renamed {
-            let index = self.0.data.borrow().listing.index_of(&name);
-            match index {
-                Some(index) => {
-                    *self.0.renaming.borrow_mut() = Some((index, name));
-                    if let Some(window) = self.0.window.upgrade() {
-                        window.set_renaming_index(i32::try_from(index).unwrap_or(-1));
-                    }
-                }
-                None => self.end_rename(false),
-            }
-        }
+        self.follow_rename();
         self.0.model.notify.reset();
         let shown = self.0.shown.get() + 1;
         self.0.shown.set(shown);
@@ -428,6 +495,21 @@ impl View {
         }
         if results {
             self.sort_results();
+        }
+    }
+
+    /// The entry being renamed after the rows changed: found again by its key, or the rename ends.
+    fn follow_rename(&self) {
+        let Some((_, name)) = self.0.renaming.borrow().clone() else { return };
+        let index = self.0.data.borrow().listing.index_of(&self.0.rename_key.borrow());
+        match index {
+            Some(index) => {
+                *self.0.renaming.borrow_mut() = Some((index, name));
+                if let Some(window) = self.0.window.upgrade() {
+                    window.set_renaming_index(i32::try_from(index).unwrap_or(-1));
+                }
+            }
+            None => self.end_rename(false),
         }
     }
 
@@ -490,6 +572,8 @@ impl View {
                 return false;
             }
             let Some(name) = data.listing.name_at(index) else { return false };
+            let Some(key) = data.listing.key_at(index) else { return false };
+            *self.0.rename_key.borrow_mut() = key.into_owned();
             (name.to_owned(), data.listing.is_dir(index))
         };
         let changes = self.0.data.borrow_mut().selection.select_only(index);
@@ -579,6 +663,7 @@ impl View {
         self.0.cleared.set(true);
         self.0.searching.set(false);
         self.0.results_status.borrow_mut().take();
+        self.0.sort_gate.borrow_mut().reset();
         if let Some(window) = self.0.window.upgrade() {
             self.sync_focus(&window);
             window.set_list_scroll(0.0);
@@ -1144,9 +1229,10 @@ impl View {
     /// scroll, the selection and the focus stay.
     #[allow(dead_code, reason = "the search bar and the result operations call it (Tasks 7-8)")]
     pub fn append_results(&self, batch: Batch) {
-        if batch.is_empty() {
+        if batch.is_empty() || !self.shows_results() {
             return;
         }
+        let Some(batch) = self.0.sort_gate.borrow_mut().hold(batch) else { return };
         let pattern = self.0.filter.borrow().as_ref().map(|f| f.pattern.clone()).unwrap_or_default();
         let (before, after) = {
             let mut data = self.0.data.borrow_mut();
@@ -1210,11 +1296,17 @@ impl View {
     /// when it comes, if the results did not change meanwhile.
     fn sort_results(&self) {
         let Some(full) = self.results() else { return };
-        if self.0.searching.get() || full.len() < 2 {
+        if self.0.searching.get() {
             return;
         }
-        let version = self.0.results_version.get();
         let (spec, folders_first) = (self.sort(), self.0.options.get().folders_first);
+        if full.len() < 2 || full.sorted_by() == Some((spec, folders_first)) {
+            // In this order already (a tab shown again, the sort clicked back): an older sort
+            // still running must not reorder it.
+            return self.0.sort_gate.borrow_mut().cancel();
+        }
+        let version = self.0.results_version.get();
+        let generation = self.0.sort_gate.borrow_mut().start();
         let weak = self.0.window.clone();
         let spawned = std::thread::Builder::new().name("gezik-sort".into()).spawn(move || {
             let order = gezik_core::sort::sort_order(
@@ -1226,25 +1318,46 @@ impl View {
             );
             // Let go first: the UI thread then moves the set, no copy.
             drop(full);
-            let _ = weak.upgrade_in_event_loop(move |_| with_current(|view| view.results_sorted(version, order)));
+            let sorted = (spec, folders_first);
+            let _ = weak.upgrade_in_event_loop(move |_| {
+                with_current(|view| view.results_sorted(generation, version, sorted, order));
+            });
         });
         if spawned.is_err() {
             eprintln!("gezik: cannot start the sort thread");
+            self.0.sort_gate.borrow_mut().finish(generation, false);
         }
     }
 
-    fn results_sorted(&self, version: u64, order: Vec<usize>) {
-        if self.0.results_version.get() != version {
-            return;
+    /// Sort `generation`'s `order` came: applied if it is the newest and the results did not
+    /// change meanwhile (then the focus is shown), sorted again if they did; then the batches
+    /// that waited are appended.
+    fn results_sorted(&self, generation: u64, version: u64, sorted: (SortSpec, bool), order: Vec<usize>) {
+        let unchanged = self.0.results_version.get() == version;
+        let outcome = self.0.sort_gate.borrow_mut().finish(generation, unchanged);
+        if outcome == SortOutcome::Apply {
+            self.edit_results(move |set| {
+                set.apply_order(&order);
+                set.set_sorted_by(Some(sorted));
+                order
+            });
+            if let Some(focus) = self.focus() {
+                self.reveal(focus);
+            }
         }
-        self.edit_results(move |set| {
-            set.apply_order(&order);
-            order
-        });
+        let pending = self.0.sort_gate.borrow_mut().take_pending();
+        for batch in pending {
+            self.append_results(batch);
+        }
+        if outcome == SortOutcome::Redo {
+            self.sort_results();
+        }
     }
 
     /// Changes the results with `edit`, which returns where each entry it leaves (but the new
-    /// ones at the end) came from; the filter, the selection (by position) and the scroll follow.
+    /// ones at the end) came from; the filter, the selection (by position), a rename and the
+    /// scroll follow. A removal while a sort thread still holds the set copies it once (rare:
+    /// a job's end during the sort after a search); the sort then runs again.
     fn edit_results(&self, edit: impl FnOnce(&mut ResultSet) -> Vec<usize>) {
         let scroll = self.0.window.upgrade().map_or(0.0, |w| w.get_list_scroll());
         let (listing, files, old_rows, selection) = self.take_listing();
@@ -1266,6 +1379,7 @@ impl View {
             data.selection = selection;
         }
         self.0.results_version.set(self.0.results_version.get() + 1);
+        self.follow_rename();
         self.0.model.notify.reset();
         if let Some(window) = self.0.window.upgrade() {
             self.sync_focus(&window);
@@ -1281,13 +1395,17 @@ impl View {
     /// brings back what stayed, spec 4.7). In a folder, by their names there.
     #[allow(dead_code, reason = "the search bar and the result operations call it (Tasks 7-8)")]
     pub fn hide_paths(&self, paths: &[PathBuf]) {
-        let Some(set) = self.results() else {
-            if let Some(folder) = self.folder() {
-                self.hide_names(&crate::operations::result_names(paths, &folder));
+        // Not a clone of the set: it would make the edit copy it.
+        let gone = self.0.data.borrow().results.as_ref().map(|set| set.rows_of(paths));
+        let gone = match gone {
+            Some(gone) => gone,
+            None => {
+                if let Some(folder) = self.folder() {
+                    self.hide_names(&crate::operations::result_names(paths, &folder));
+                }
+                return;
             }
-            return;
         };
-        let gone = set.rows_of(paths);
         if gone.is_empty() {
             return;
         }
@@ -1301,8 +1419,8 @@ impl View {
     /// A job's effects on the results (spec 4.7): `gone` rows out, `added` ones in at the end.
     #[allow(dead_code, reason = "the search bar and the result operations call it (Tasks 7-8)")]
     pub fn results_changed(&self, gone: &[PathBuf], added: Vec<(PathBuf, Entry)>) {
-        let Some(set) = self.results() else { return };
-        let rows = set.rows_of(gone);
+        // Not a clone of the set: it would make the edit copy it.
+        let Some(rows) = self.0.data.borrow().results.as_ref().map(|set| set.rows_of(gone)) else { return };
         if rows.is_empty() && added.is_empty() {
             return;
         }
@@ -1885,6 +2003,50 @@ pub fn status_text(count: usize, selected: usize, selected_size: Option<u64>) ->
 mod tests {
     use super::*;
     use listing::files;
+
+    fn one_result() -> Batch {
+        let entry = Entry { name: "n".into(), is_dir: false, flags: 0, size: 1, modified: None, created: None };
+        Batch { folders: vec!["".into()], entries: vec![entry], parent: vec![0], matches: vec![None] }
+    }
+
+    #[test]
+    fn only_the_newest_sort_counts_and_batches_wait_for_every_sort() {
+        let mut gate = SortGate::default();
+        let first = gate.start();
+        let second = gate.start();
+        assert!(gate.hold(one_result()).is_none(), "a sort holds the set: the batch waits");
+        assert_eq!(gate.finish(first, true), SortOutcome::Stale);
+        assert!(gate.take_pending().is_empty(), "the newer sort still holds the set");
+        assert_eq!(gate.finish(second, true), SortOutcome::Apply);
+        assert_eq!(gate.take_pending().len(), 1, "then the batch is appended");
+        assert!(gate.hold(one_result()).is_some(), "no sort: appended at once");
+    }
+
+    #[test]
+    fn a_sort_of_changed_or_replaced_results_does_not_apply() {
+        let mut gate = SortGate::default();
+        let started = gate.start();
+        assert_eq!(gate.finish(started, false), SortOutcome::Redo, "changed meanwhile: sort again");
+        let started = gate.start();
+        gate.cancel();
+        assert_eq!(gate.finish(started, true), SortOutcome::Stale, "the set was in order already");
+        let started = gate.start();
+        assert!(gate.hold(one_result()).is_none());
+        gate.reset();
+        assert!(gate.hold(one_result()).is_none(), "the old sort thread still holds a set");
+        assert_eq!(gate.finish(started, true), SortOutcome::Stale, "it sorted the results before");
+        assert_eq!(gate.take_pending().len(), 1, "only the batch of the new results");
+    }
+
+    #[test]
+    fn a_rename_in_the_results_follows_its_path() {
+        let before = listing::results(&[("a", "x.txt"), ("b", "x.txt")]);
+        let key = before.key_at(1).unwrap().into_owned();
+        assert_eq!(before.index_of(&key), Some(1));
+        let sorted = listing::results(&[("b", "x.txt"), ("a", "x.txt")]);
+        assert_eq!(sorted.index_of(&key), Some(0), "not the other x.txt");
+        assert_eq!(listing::results(&[("a", "x.txt")]).index_of(&key), None, "gone: the rename ends");
+    }
 
     #[test]
     fn header_clicks_sort_by_folder_but_not_by_match() {

@@ -5,6 +5,7 @@
 use std::path::{MAIN_SEPARATOR, MAIN_SEPARATOR_STR, Path, PathBuf};
 
 use gezik_core::Entry;
+use gezik_core::sort::SortSpec;
 
 use crate::content::Found;
 
@@ -34,6 +35,8 @@ pub struct ResultSet {
     parent: Vec<u32>,
     /// A content search's first matching line per entry; `None` without content.
     matches: Option<Vec<Option<Found>>>,
+    /// The sort (and folders-first) the entries are in; `None` once new ones came unsorted.
+    sorted: Option<(SortSpec, bool)>,
 }
 
 /// A result's key in the list (spec 3.7): its path under the scope.
@@ -56,6 +59,7 @@ impl ResultSet {
             entries: Vec::new(),
             parent: Vec::new(),
             matches: content.then(Vec::new),
+            sorted: None,
         }
     }
 
@@ -65,6 +69,7 @@ impl ResultSet {
     }
 
     pub(crate) fn push_entry(&mut self, entry: Entry, parent: u32) {
+        self.sorted = None;
         self.entries.push(entry);
         self.parent.push(parent);
         if let Some(matches) = &mut self.matches {
@@ -130,12 +135,25 @@ impl ResultSet {
     pub fn append(&mut self, batch: Batch) {
         debug_assert_eq!(batch.entries.len(), batch.parent.len());
         debug_assert!(self.matches.is_none() || batch.matches.len() == batch.entries.len());
+        if !batch.entries.is_empty() {
+            self.sorted = None;
+        }
         self.folders.extend(batch.folders);
         self.entries.extend(batch.entries);
         self.parent.extend(batch.parent);
         if let Some(matches) = &mut self.matches {
             matches.extend(batch.matches);
         }
+    }
+
+    /// The sort and folders-first the entries are in, if they are sorted (`set_sorted_by`) and
+    /// nothing came since.
+    pub fn sorted_by(&self) -> Option<(SortSpec, bool)> {
+        self.sorted
+    }
+
+    pub fn set_sorted_by(&mut self, sorted: Option<(SortSpec, bool)>) {
+        self.sorted = sorted;
     }
 
     /// Puts the entries in `order` (`gezik_core::sort::apply_order`): folders and matching lines
@@ -156,6 +174,7 @@ impl ResultSet {
             entries: rows.iter().filter_map(|&i| self.entries.get(i).cloned()).collect(),
             parent: rows.iter().filter_map(|&i| self.parent.get(i).copied()).collect(),
             matches: self.matches.as_ref().map(|m| rows.iter().filter_map(|&i| m.get(i).cloned()).collect()),
+            sorted: self.sorted,
         }
     }
 
@@ -172,6 +191,9 @@ impl ResultSet {
             if let Some(matches) = &mut self.matches {
                 matches.push(from.found(i).cloned());
             }
+        }
+        if !rows.is_empty() {
+            self.sorted = None;
         }
     }
 
@@ -402,6 +424,23 @@ mod tests {
         assert_eq!(set.rows_of(std::slice::from_ref(&second)), [2], "not the other x.txt");
         assert_eq!(set.rows_of(&[PathBuf::from("/w").join("x.txt"), second]), [0, 2]);
         assert!(set.rows_of(&[PathBuf::from("/w/none")]).is_empty());
+    }
+
+    #[test]
+    fn new_entries_make_the_set_unsorted() {
+        let mut set = sample();
+        let by_size = (SortSpec { key: gezik_core::sort::SortKey::Size, dir: gezik_core::sort::SortDir::Asc }, true);
+        set.set_sorted_by(Some(by_size));
+        assert_eq!(set.subset(&[0]).sorted_by(), Some(by_size), "a part keeps the order");
+        set.remove(&[0]);
+        assert_eq!(set.sorted_by(), Some(by_size), "a removal keeps it too");
+        set.append(Batch::default());
+        assert_eq!(set.sorted_by(), Some(by_size), "an empty batch adds nothing");
+        set.append(Batch { folders: vec![], entries: vec![entry("n")], parent: vec![0], matches: vec![None] });
+        assert_eq!(set.sorted_by(), None);
+        set.set_sorted_by(Some(by_size));
+        assert!(set.push(&PathBuf::from("/w").join("z"), entry("z")));
+        assert_eq!(set.sorted_by(), None);
     }
 
     #[test]
