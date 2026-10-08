@@ -24,7 +24,7 @@ export component Dialog inherits Rectangle {
     // The field's text changed (typed, not set).
     callback edited(string);
 
-    background: Theme.background.with-alpha(0.6);
+    background: Theme.overlay;
 
     // Clicks outside the box go nowhere.
     TouchArea { }
@@ -57,7 +57,7 @@ export component Dialog inherits Rectangle {
         height: content.preferred-height;
         x: (root.width - self.width) / 2;
         y: (root.height - self.height) / 3;
-        background: Theme.surface;
+        background: Theme.surface-raised;
         border-radius: Theme.radius * 1.5;
         border-width: 1px;
         border-color: Theme.border;

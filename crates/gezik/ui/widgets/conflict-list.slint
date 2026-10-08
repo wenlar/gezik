@@ -73,7 +73,7 @@ export component ConflictList inherits Rectangle {
         }
     }
 
-    background: Theme.background.with-alpha(0.6);
+    background: Theme.overlay;
 
     // Clicks outside the box go nowhere.
     TouchArea { }
@@ -92,7 +92,7 @@ export component ConflictList inherits Rectangle {
         y: 24px;
         width: root.width - 48px;
         height: root.height - 48px;
-        background: Theme.surface;
+        background: Theme.surface-raised;
         border-radius: Theme.radius * 1.5;
         border-width: 1px;
         border-color: Theme.border;

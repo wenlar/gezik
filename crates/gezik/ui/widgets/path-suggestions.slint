@@ -20,12 +20,12 @@ export component PathSuggestions inherits Rectangle {
 
     property <length> row-height: Theme.row-height;
     height: min(root.rows.length, 18) * root.row-height + Theme.spacing;
-    background: Theme.surface;
+    background: Theme.surface-raised;
     border-radius: Theme.radius;
     border-width: 1px;
     border-color: Theme.border;
     drop-shadow-blur: 8px;
-    drop-shadow-color: #00000040;
+    drop-shadow-color: Theme.shadow;
     accessible-role: list;
     accessible-label: "Suggestions";
 

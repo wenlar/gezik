@@ -829,7 +829,7 @@ export component AppWindow inherits Window {
                 }
             }
             Rectangle {
-                background: Theme.surface;
+                background: Theme.chrome;
                 HorizontalLayout {
                     padding: Theme.spacing;
                     spacing: Theme.spacing;
@@ -1078,7 +1078,7 @@ export component AppWindow inherits Window {
             Rectangle { height: 1px; background: Theme.border; }
             Rectangle {
                 height: Theme.row-height;
-                background: Theme.surface;
+                background: Theme.chrome;
                 HorizontalLayout {
                     padding-left: Theme.spacing + 4px;
                     padding-right: Theme.spacing + 4px;
@@ -1338,7 +1338,7 @@ export component AppWindow inherits Window {
             width: offer-text.preferred-width + Theme.spacing * 2;
             height: offer-text.preferred-height + Theme.spacing;
             border-radius: Theme.radius;
-            background: Theme.surface;
+            background: Theme.surface-raised;
             border-width: 1px;
             border-color: Theme.border;
             accessible-role: none;
@@ -1388,7 +1388,7 @@ export component AppWindow inherits Window {
                 width: label-text.preferred-width + Theme.spacing * 2;
                 height: label-text.preferred-height + Theme.spacing;
                 border-radius: Theme.radius;
-                background: Theme.surface;
+                background: Theme.surface-raised;
                 border-width: 1px;
                 border-color: Theme.border;
                 label-text := Text {
@@ -1405,7 +1405,7 @@ export component AppWindow inherits Window {
             y: min(root.sidebar-tip-y, root.height - self.height - 4px);
             width: tip-label.preferred-width + 12px;
             height: tip-label.preferred-height + 8px;
-            background: Theme.surface;
+            background: Theme.surface-raised;
             border-width: 1px;
             border-color: Theme.border;
             border-radius: Theme.radius;
