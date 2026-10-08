@@ -4,6 +4,8 @@
 //! Elsewhere every call says Everything is not running.
 
 #[cfg(not(windows))]
+use std::sync::atomic::AtomicBool;
+#[cfg(not(windows))]
 use std::time::Duration;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -12,6 +14,8 @@ pub enum EverythingError {
     /// Running, its database still loading.
     NotReady,
     NoAnswer,
+    /// The search was stopped while it waited.
+    Cancelled,
     Failed(String),
 }
 
@@ -27,14 +31,19 @@ pub fn ready(_timeout: Duration) -> Result<(), EverythingError> {
 }
 
 #[cfg(not(windows))]
-pub fn query(_build: &dyn Fn(u32, u32) -> Vec<u8>, _timeout: Duration) -> Result<Vec<u8>, EverythingError> {
+pub fn query(
+    _build: &dyn Fn(u32, u32) -> Vec<u8>,
+    _cancel: &AtomicBool,
+    _timeout: Duration,
+) -> Result<Vec<u8>, EverythingError> {
     Err(EverythingError::NotRunning)
 }
 
 #[cfg(windows)]
 mod windows_ipc {
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
     use std::ffi::c_void;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::{Duration, Instant};
 
     use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
@@ -58,7 +67,10 @@ mod windows_ipc {
     const SUBCLASS_ID: usize = 0x6576_7279;
 
     thread_local! {
+        /// The first answer to this thread's query; later ones are dropped.
         static REPLY: RefCell<Option<Vec<u8>>> = const { RefCell::new(None) };
+        /// The window this thread's query went to: only its answer is taken (`wParam`).
+        static ASKED: Cell<usize> = const { Cell::new(0) };
     }
 
     fn millis(time: Duration) -> u32 {
@@ -94,6 +106,15 @@ mod windows_ipc {
             return Err(EverythingError::NoAnswer);
         }
         if loaded == 0 { Err(EverythingError::NotReady) } else { Ok(()) }
+    }
+
+    /// Forgets the window asked when the query ends (a late answer is then dropped).
+    struct Asked;
+
+    impl Drop for Asked {
+        fn drop(&mut self) {
+            ASKED.set(0);
+        }
     }
 
     /// A message-only window of this thread that keeps Everything's answer.
@@ -151,10 +172,16 @@ mod windows_ipc {
         if msg == WM_COPYDATA && lparam.0 != 0 {
             // SAFETY: WM_COPYDATA's lParam is a COPYDATASTRUCT valid during the call.
             let data = unsafe { &*(lparam.0 as *const COPYDATASTRUCT) };
-            if data.dwData == REPLY_ID && !data.lpData.is_null() {
-                // SAFETY: `cbData` bytes at `lpData`, valid during the call.
-                let bytes = unsafe { std::slice::from_raw_parts(data.lpData as *const u8, data.cbData as usize) };
-                REPLY.with(|reply| *reply.borrow_mut() = Some(bytes.to_vec()));
+            if data.dwData == REPLY_ID && !data.lpData.is_null() && wparam.0 == ASKED.get() && ASKED.get() != 0 {
+                REPLY.with(|reply| {
+                    let mut reply = reply.borrow_mut();
+                    if reply.is_none() {
+                        // SAFETY: `cbData` bytes at `lpData`, valid during the call.
+                        let bytes =
+                            unsafe { std::slice::from_raw_parts(data.lpData as *const u8, data.cbData as usize) };
+                        *reply = Some(bytes.to_vec());
+                    }
+                });
                 return LRESULT(1);
             }
         }
@@ -163,8 +190,17 @@ mod windows_ipc {
     }
 
     /// Sends the query `build` makes (from our window and our answer's id) and waits up to
-    /// `timeout` for the answer, handling this thread's messages meanwhile.
-    pub fn query(build: &dyn Fn(u32, u32) -> Vec<u8>, timeout: Duration) -> Result<Vec<u8>, EverythingError> {
+    /// `timeout` for the answer, handling this thread's messages meanwhile; `cancel` is looked
+    /// at every 50 ms. Only an answer from the window asked (its `wParam`) counts, and only the
+    /// first.
+    pub fn query(
+        build: &dyn Fn(u32, u32) -> Vec<u8>,
+        cancel: &AtomicBool,
+        timeout: Duration,
+    ) -> Result<Vec<u8>, EverythingError> {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(EverythingError::Cancelled);
+        }
         let everything = find(&WINDOW_CLASSES).ok_or(EverythingError::NotRunning)?;
         let reply = ReplyWindow::new()?;
         // Window handles fit in 32 bits (Everything's QUERY2 takes a DWORD).
@@ -175,6 +211,8 @@ mod windows_ipc {
             lpData: data.as_ptr() as *mut c_void,
         };
         REPLY.with(|reply| reply.borrow_mut().take());
+        ASKED.set(everything.0 as usize);
+        let _asked = Asked;
         let started = Instant::now();
         // SAFETY: `copy` and `data` live through the call (WM_COPYDATA copies them over).
         let sent = unsafe {
@@ -203,6 +241,9 @@ mod windows_ipc {
             if let Some(bytes) = REPLY.with(|reply| reply.borrow_mut().take()) {
                 return Ok(bytes);
             }
+            if cancel.load(Ordering::Relaxed) {
+                return Err(EverythingError::Cancelled);
+            }
             let left = timeout.saturating_sub(started.elapsed());
             if left.is_zero() {
                 return Err(EverythingError::NoAnswer);
@@ -221,6 +262,20 @@ mod tests {
     #[test]
     fn an_unknown_window_class_is_not_running() {
         assert_eq!(super::windows_ipc::find(&["GEZIK_NO_SUCH_WINDOW_CLASS"]), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_stopped_search_asks_nothing() {
+        let stopped = std::sync::atomic::AtomicBool::new(true);
+        let asked = std::cell::Cell::new(false);
+        let build = |_, _| {
+            asked.set(true);
+            Vec::new()
+        };
+        let answer = super::query(&build, &stopped, std::time::Duration::from_secs(1));
+        assert_eq!(answer, Err(super::EverythingError::Cancelled));
+        assert!(!asked.get());
     }
 
     #[cfg(not(windows))]
