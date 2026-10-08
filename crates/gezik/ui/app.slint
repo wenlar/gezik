@@ -1472,6 +1472,11 @@ export component AppWindow inherits Window {
             border-color: Theme.border;
             border-radius: Theme.radius;
             accessible-role: none;
+            // Fades in as it opens (it is made by an `if`, so it starts hidden).
+            property <bool> shown;
+            init => { self.shown = true; }
+            opacity: self.shown ? 1 : 0;
+            animate opacity { duration: Theme.motion-popup; }
             tip-label := Text {
                 x: 6px;
                 y: 4px;

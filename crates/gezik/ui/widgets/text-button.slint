@@ -8,33 +8,52 @@ export component TextButton inherits Rectangle {
     // a menu arrow or a symbol the UI font may not have (the software renderer has no font
     // fallback).
     in property <string> icon;
+    // SVG path commands in a 16×16 box, drawn before the label (View ▾'s three lines).
+    in property <string> lead-icon;
     // What screen readers say; the text unless set (an icon-only button needs it).
     in property <string> label: root.text;
     in property <bool> primary;
     in property <bool> checked;
     callback clicked();
 
-    // The label and the icon, centered together.
+    // The lead glyph, the label and the icon, centered together.
     property <length> gap: root.text != "" && root.icon != "" ? Theme.spacing : 0px;
-    property <length> content-width: caption.preferred-width + (root.icon != "" ? root.gap + 8px : 0px);
+    property <length> lead: root.lead-icon != "" ? 16px + Theme.spacing : 0px;
+    property <length> content-width: root.lead + caption.preferred-width + (root.icon != "" ? root.gap + 8px : 0px);
 
     height: Theme.row-height + 4px;
     min-width: max(72px, root.content-width + Theme.spacing * 4);
     // Wider only when nothing else in the layout grows (the label used to size the button).
     horizontal-stretch: 0;
     border-radius: Theme.radius;
-    border-width: root.primary ? 0px : (scope.has-focus || root.checked ? 2px : 1px);
-    border-color: scope.has-focus || root.checked ? Theme.accent : Theme.border;
+    border-width: scope.has-focus || root.checked ? Theme.focus-width : root.primary ? 0px : 1px;
+    // The ring would vanish on the accent fill: there it takes the label's color.
+    border-color: scope.has-focus ? (root.primary ? Theme.accent-foreground : Theme.focus-ring) : root.checked ? Theme.accent : Theme.border;
     background: root.primary ? (touch.pressed ? Theme.accent-pressed : touch.has-hover ? Theme.accent-hover : Theme.accent) : (touch.has-hover ? Theme.hover : transparent);
+    // No `animate background` (ToolButton has one): here it cost ~6 KB of exe per button.
     forward-focus: scope;
     accessible-role: button;
     accessible-label: root.label;
     accessible-checked: root.checked;
     accessible-action-default => { root.clicked(); }
 
-    // Centered, moved left to make room for the icon.
+    if root.lead-icon != "": Path {
+        x: (parent.width - root.content-width) / 2;
+        y: (parent.height - 16px) / 2;
+        width: 16px;
+        height: 16px;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        commands: root.lead-icon;
+        stroke: root.primary ? Theme.accent-foreground : Theme.foreground;
+        stroke-width: 1.5px;
+        stroke-line-cap: round;
+        stroke-line-join: round;
+    }
+
+    // Centered, moved to make room for the lead glyph and the icon.
     caption := Text {
-        x: (caption.preferred-width - root.content-width) / 2;
+        x: root.lead + (caption.preferred-width - root.content-width) / 2;
         width: parent.width;
         height: parent.height;
         text: root.text;
@@ -44,14 +63,17 @@ export component TextButton inherits Rectangle {
     }
 
     if root.icon != "": Path {
-        x: (parent.width - root.content-width) / 2 + caption.preferred-width + root.gap;
+        x: (parent.width - root.content-width) / 2 + root.lead + caption.preferred-width + root.gap;
         y: (parent.height - 8px) / 2;
         width: 8px;
         height: 8px;
         viewbox-width: 8;
         viewbox-height: 8;
-        stroke: root.primary ? Theme.accent-foreground : Theme.foreground;
-        stroke-width: 1.5px;
+        // An arrow beside a label is muted; a lone symbol (Remove rule's ×) is not.
+        stroke: root.primary ? Theme.accent-foreground : root.text == "" ? Theme.foreground : Theme.foreground-muted;
+        stroke-width: 1.2px;
+        stroke-line-cap: round;
+        stroke-line-join: round;
         commands: root.icon;
     }
 
