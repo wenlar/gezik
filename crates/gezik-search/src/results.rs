@@ -293,23 +293,10 @@ fn is_separator(c: char) -> bool {
     c == '/' || c == MAIN_SEPARATOR
 }
 
-/// Whether folder text `folder` is `dir` (`Some(true)`) or inside it (`Some(false)`); case is
-/// ignored where the file system ignores it (ASCII only: no allocation per folder).
-fn within_text(folder: &str, dir: &str) -> Option<bool> {
-    const IGNORE_CASE: bool = cfg!(any(windows, target_os = "macos"));
-    let head = folder.as_bytes().get(..dir.len())?;
-    let same = if IGNORE_CASE { head.eq_ignore_ascii_case(dir.as_bytes()) } else { head == dir.as_bytes() };
-    if !same {
-        return None;
-    }
-    let rest = &folder[dir.len()..];
-    if rest.is_empty() {
-        Some(true)
-    } else if dir.is_empty() || dir.ends_with(is_separator) || rest.starts_with(is_separator) {
-        Some(false)
-    } else {
-        None
-    }
+/// A folder text as a lookup key: case is ignored where the file system ignores it (ASCII
+/// only, as the paths compare).
+fn folded(text: &str) -> String {
+    if cfg!(any(windows, target_os = "macos")) { text.to_ascii_lowercase() } else { text.to_owned() }
 }
 
 impl ResultSet {
@@ -473,20 +460,25 @@ impl ResultSet {
                 is_within(&self.root, dir).then(|| (String::new(), true))
             })
             .collect();
-        // Per folder: 0 untouched, 1 a changed folder itself, 2 inside one.
+        // Per folder: 0 untouched, 1 a changed folder itself, 2 inside one (a changed folder's
+        // text is the folder's up to or through one of its separators: one lookup each).
+        let every = texts.iter().any(|(_, above)| *above);
+        let changed: std::collections::HashSet<String> =
+            texts.iter().filter(|(_, above)| !above).map(|(dir, _)| folded(dir)).collect();
         let state: Vec<u8> = self
             .folders
             .iter()
             .map(|folder| {
-                let mut state = 0;
-                for (dir, above) in &texts {
-                    match within_text(folder, dir) {
-                        Some(true) if !above => return 1,
-                        Some(_) => state = 2,
-                        None => {}
-                    }
+                let folder = folded(folder);
+                if changed.contains(&folder) {
+                    return 1;
                 }
-                state
+                let inside = every
+                    || changed.contains("")
+                    || folder.match_indices(is_separator).any(|(at, _)| {
+                        changed.contains(&folder[..at]) || changed.contains(&folder[..=at])
+                    });
+                if inside { 2 } else { 0 }
             })
             .collect();
         let mut group = vec![usize::MAX; self.folders.len()];
@@ -983,6 +975,9 @@ mod tests {
         let (gone, added) = verify(&set, &[root.join("a")], &[]);
         assert_eq!(gone, [root.join("a").join("gone").join("deep").join("x.txt")], "ab is not inside a");
         assert!(added.is_empty());
+        if cfg!(any(windows, target_os = "macos")) {
+            assert_eq!(verify(&set, &[root.join("A")], &[]).0, gone, "case is ignored");
+        }
         let (gone, _) = verify(&set, std::slice::from_ref(&root), &[]);
         assert_eq!(gone.len(), 2, "the scope itself changed: ab is gone too");
         let _ = std::fs::remove_dir_all(&root);
