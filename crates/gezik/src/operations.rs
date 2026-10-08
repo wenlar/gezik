@@ -14,9 +14,10 @@ use gezik_config::store::ConfigStore;
 use gezik_core::drag::Effect;
 use gezik_core::ops::paths::same_path;
 use gezik_core::ops::rate::{Rate, format_eta, format_rate};
+use gezik_core::templates::LinkKind;
 use gezik_ops::{
-    Answer, CopyTask, DeleteTask, Engine, Event, Failure, JobId, JobState, MoveTask, NewTask, PauseReason, Progress,
-    Question, Report, Settings, Task, TrashTask,
+    Answer, CopyTask, DeleteTask, Engine, Event, Failure, JobId, JobState, LinkTask, MoveTask, NewTask, PauseReason,
+    Progress, Question, Report, Settings, Task, TrashTask,
 };
 use gezik_platform::clipboard::{self, ClipboardError, ClipboardFiles};
 use gezik_platform::taskbar::{Taskbar, TaskbarState};
@@ -730,13 +731,15 @@ impl Operations {
         }
     }
 
-    /// Copies or moves `paths` into folder `dir` (a paste or a drop), as one undoable job.
+    /// Copies, moves or links `paths` into folder `dir` (a paste or a drop), as one undoable
+    /// job.
     pub fn transfer(&self, paths: Vec<PathBuf>, dir: PathBuf, effect: Effect) {
         self.remember_for(&paths);
         let retry: Retry = Rc::new(move || -> Box<dyn Task> {
             match effect {
                 Effect::Move => Box::new(MoveTask::into(paths.clone(), &dir)),
                 Effect::Copy => Box::new(CopyTask::into(paths.clone(), &dir)),
+                Effect::Link => Box::new(LinkTask::into(paths.clone(), &dir, LinkKind::for_drops())),
             }
         });
         self.submit(retry(), Some(retry), After::Select);

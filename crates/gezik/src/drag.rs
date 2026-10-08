@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
 
-use gezik_config::shortcuts::Platform;
 use gezik_core::drag::{
     self, Action, Allowed, CrumbArea, Effect, Hit, Keys, Layout, ListArea, SideRow, SidebarArea, TabArea,
 };
@@ -141,9 +140,13 @@ pub fn with_current<R>(f: impl FnOnce(&Drags) -> R) -> Option<R> {
     CURRENT.with(|c| c.borrow().clone()).map(|drags| f(&drags))
 }
 
-/// The keys held: Shift moves; Ctrl copies (Option on macOS, as in Finder).
+/// The keys held, as this system's file manager reads them (`drag::keys_of`). Slint reports
+/// macOS's Command key as `control`.
 fn keys(shift: bool, ctrl: bool, alt: bool) -> Keys {
-    Keys { shift, copy: if Platform::current() == Platform::Mac { alt } else { ctrl } }
+    match drag::DragOs::current() {
+        drag::DragOs::Mac => drag::keys_of(drag::DragOs::Mac, shift, false, alt, ctrl),
+        os => drag::keys_of(os, shift, ctrl, alt, false),
+    }
 }
 
 /// Whether the window's own pointer events drive the drag in `phase`, and with which keys:
@@ -338,7 +341,7 @@ impl Drags {
             all_dirs: false,
             right: false,
             keys: Keys::default(),
-            allowed: Allowed::BOTH,
+            allowed: Allowed::ALL,
             x: 0.0,
             y: 0.0,
             target: None,
@@ -465,7 +468,7 @@ impl Drags {
             sources: items.into_iter().map(|(path, _)| path).collect(),
             right,
             keys,
-            allowed: Allowed::BOTH,
+            allowed: Allowed::ALL,
             x: 0.0,
             y: 0.0,
             target: None,
@@ -856,12 +859,13 @@ impl Drags {
                 let allowed = match effect {
                     Effect::Copy => d.allowed.copy,
                     Effect::Move => d.allowed.move_,
+                    Effect::Link => d.allowed.link,
                 };
                 allowed && self.writable(&dir) && !drag::refuse(&d.sources, &dir, effect)
             };
-            let (can_copy, can_move) = (can(Effect::Copy), can(Effect::Move));
+            let (can_copy, can_move, can_link) = (can(Effect::Copy), can(Effect::Move), can(Effect::Link));
             let archive = target.archive.filter(|_| target.action == Some(Action::AddToArchive));
-            self.0.menus.drop_menu(d.sources, dir, archive, can_copy, can_move, d.x, d.y);
+            self.0.menus.drop_menu(d.sources, dir, archive, can_copy, can_move, can_link, d.x, d.y);
             return None;
         }
         if let (Some(Action::AddToArchive), Some(archive)) = (target.action, target.archive) {
@@ -1108,8 +1112,8 @@ mod tests {
             sources: vec![PathBuf::from("a.txt")],
             all_dirs: false,
             right: false,
-            keys: Keys { shift: true, copy: false },
-            allowed: Allowed::BOTH,
+            keys: Keys { shift: true, ..Keys::default() },
+            allowed: Allowed::ALL,
             x: 0.0,
             y: 0.0,
             target: None,
@@ -1119,7 +1123,7 @@ mod tests {
 
     #[test]
     fn after_a_tab_switch_the_window_drives_the_drag_inside_and_outside() {
-        let keys = Some(Keys { shift: true, copy: false });
+        let keys = Some(Keys { shift: true, ..Keys::default() });
         assert_eq!(window_drives(true, &Phase::Dragging(dragging())), keys);
         // Handed to the system after resting on a tab (X11 drives it from the window's events).
         assert_eq!(window_drives(true, &Phase::Outside(dragging())), keys);

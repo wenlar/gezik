@@ -217,7 +217,8 @@ impl Shared {
         let allowed = {
             let info = info.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             let actions = info.source_actions;
-            Allowed { copy: actions.contains(DndAction::Copy), move_: actions.contains(DndAction::Move) }
+            // The protocol has no link action (spec deviation 11).
+            Allowed { copy: actions.contains(DndAction::Copy), move_: actions.contains(DndAction::Move), link: false }
         };
         let paths = match known {
             Some(paths) => paths,

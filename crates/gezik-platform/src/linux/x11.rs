@@ -51,6 +51,7 @@ x11rb::atom_manager! {
         XdndTypeList,
         XdndActionCopy,
         XdndActionMove,
+        XdndActionLink,
     }
 }
 
@@ -148,7 +149,13 @@ impl Shared {
     fn keys(&self) -> Keys {
         let mask = self.conn.query_pointer(self.root).ok().and_then(|c| c.reply().ok()).map(|r| r.mask);
         let held = |bit: KeyButMask| mask.is_some_and(|mask| u16::from(mask) & u16::from(bit) != 0);
-        Keys { shift: held(KeyButMask::SHIFT), copy: held(KeyButMask::CONTROL) }
+        gezik_core::drag::keys_of(
+            gezik_core::drag::DragOs::Linux,
+            held(KeyButMask::SHIFT),
+            held(KeyButMask::CONTROL),
+            held(KeyButMask::MOD1),
+            false,
+        )
     }
 
     /// Root (`x`, `y`) in winit's window, in physical pixels.
@@ -163,6 +170,7 @@ impl Shared {
         match effect {
             Some(Effect::Move) => self.atoms.XdndActionMove,
             Some(Effect::Copy) => self.atoms.XdndActionCopy,
+            Some(Effect::Link) => self.atoms.XdndActionLink,
             None => NONE,
         }
     }
@@ -715,7 +723,7 @@ impl X11 {
                 paths
             }
         };
-        Some(Offer { paths, allowed: Allowed::BOTH, right: false })
+        Some(Offer { paths, allowed: Allowed::ALL, right: false })
     }
 }
 

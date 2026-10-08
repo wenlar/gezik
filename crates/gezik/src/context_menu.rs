@@ -258,6 +258,9 @@ pub const SHOW_HIDDEN: u32 = 1303;
 pub const SHOW_SYSTEM: u32 = 1304;
 pub const DATE_FORMAT_FIRST: u32 = 1310;
 pub const SIZE_FORMAT_FIRST: u32 = 1320;
+/// 7c's ids are 1400-1459 (spec 11.1). 1407: "Create link here" after a drag with the right
+/// button.
+pub const CREATE_LINK_HERE: u32 = 1407;
 /// Group headings in a Slint menu: shown greyed, never chosen.
 pub const HEADING: u32 = 0;
 /// Gezik's menu ids are below this; the Explorer menu's start here (gezik_platform's
@@ -924,7 +927,7 @@ impl Menus {
         self.open_slint_entries(&items, Vec::new(), at);
     }
 
-    /// Copy here / Move here / Cancel for files dropped with the right button on `dir`, at
+    /// Copy here / Move here / Create link here / Cancel for files dropped with the right button on `dir`, at
     /// window position `x`, `y`; only the effects that make sense there are offered.
     /// `archive`: they were dropped on one, which "Add to archive" adds them to.
     #[allow(clippy::too_many_arguments, reason = "what was dropped where, and what it may do")]
@@ -935,6 +938,7 @@ impl Menus {
         archive: Option<PathBuf>,
         can_copy: bool,
         can_move: bool,
+        can_link: bool,
         x: f32,
         y: f32,
     ) {
@@ -947,6 +951,9 @@ impl Menus {
         }
         if can_move {
             list.push((MOVE_HERE, "Move here"));
+        }
+        if can_link {
+            list.push((CREATE_LINK_HERE, "Create link here"));
         }
         if list.is_empty() {
             return;
@@ -1043,6 +1050,7 @@ impl Menus {
             }
             (COPY_HERE, Subject::Drop(paths, dir, _)) => self.ops.transfer(paths, dir, Effect::Copy),
             (MOVE_HERE, Subject::Drop(paths, dir, _)) => self.ops.transfer(paths, dir, Effect::Move),
+            (CREATE_LINK_HERE, Subject::Drop(paths, dir, _)) => self.ops.transfer(paths, dir, Effect::Link),
             (ADD_TO_ARCHIVE, Subject::Drop(paths, _, Some(archive))) => {
                 crate::archives::with_current(|archives| archives.add_to(archive, paths, None));
             }
@@ -1444,7 +1452,16 @@ mod tests {
         ];
         let ranges = [TOGGLE_COLUMN_FIRST..RESET_COLUMNS, CONFLICT_FIRST..CONFLICT_FIRST + 4];
         let archives = [EXTRACT_HERE, EXTRACT_TO_OWN, EXTRACT_TO, COMPRESS, COMPRESS_TO, ADD_TO_ARCHIVE];
-        for id in [COPY_HERE, MOVE_HERE, CANCEL_DROP, ADD_RULE_FIRST, ADD_RULE_FIRST + 9, PRESET_FIRST, PRESET_SAVE] {
+        for id in [
+            COPY_HERE,
+            MOVE_HERE,
+            CREATE_LINK_HERE,
+            CANCEL_DROP,
+            ADD_RULE_FIRST,
+            ADD_RULE_FIRST + 9,
+            PRESET_FIRST,
+            PRESET_SAVE,
+        ] {
             assert!(!others.contains(&id) && !ranges.iter().any(|r| r.contains(&id)), "{id} is taken");
         }
         // The archive items are their own, distinct, and meet no other range.
@@ -1512,6 +1529,7 @@ mod tests {
             COPY_HERE,
             MOVE_HERE,
             CANCEL_DROP,
+            CREATE_LINK_HERE,
             PRESET_SAVE,
             EXTRACT_HERE,
             EXTRACT_TO_OWN,

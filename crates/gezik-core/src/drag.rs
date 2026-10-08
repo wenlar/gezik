@@ -186,13 +186,49 @@ fn list_hit(list: &ListArea, x: f32, y: f32) -> Hit {
 pub enum Effect {
     Copy,
     Move,
+    /// A link to each item in the folder (spec 9.2).
+    Link,
 }
 
-/// The keys held during a drag: Shift moves, the copy key (Ctrl; Option on macOS) copies.
+/// The keys held during a drag, by what they ask for: Shift moves, the copy key (Ctrl;
+/// Option on macOS) copies, the link keys (`keys_of`) link.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Keys {
     pub shift: bool,
     pub copy: bool,
+    pub link: bool,
+}
+
+/// Whose keys a drag reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DragOs {
+    Windows,
+    Mac,
+    Linux,
+}
+
+impl DragOs {
+    pub fn current() -> DragOs {
+        if cfg!(windows) {
+            DragOs::Windows
+        } else if cfg!(target_os = "macos") {
+            DragOs::Mac
+        } else {
+            DragOs::Linux
+        }
+    }
+}
+
+/// The keys held, read as each system's file manager reads them (spec 9.2): a link is Alt or
+/// Ctrl+Shift on Windows (Explorer), Ctrl+Shift on Linux (GTK and KDE; many window managers
+/// take Alt-drags), Cmd+Option on macOS (Finder; Option alone copies). `ctrl` is the Control
+/// key, `command` macOS's Command key.
+pub fn keys_of(os: DragOs, shift: bool, ctrl: bool, alt: bool, command: bool) -> Keys {
+    match os {
+        DragOs::Windows => Keys { shift, copy: ctrl, link: alt || (shift && ctrl) },
+        DragOs::Linux => Keys { shift, copy: ctrl, link: shift && ctrl },
+        DragOs::Mac => Keys { shift, copy: alt, link: alt && command },
+    }
 }
 
 /// What the drag's source lets the target do.
@@ -200,15 +236,20 @@ pub struct Keys {
 pub struct Allowed {
     pub copy: bool,
     pub move_: bool,
+    pub link: bool,
 }
 
 impl Allowed {
-    pub const BOTH: Allowed = Allowed { copy: true, move_: true };
+    pub const ALL: Allowed = Allowed { copy: true, move_: true, link: true };
 }
 
-/// The effect of a drop: Shift moves, the copy key copies; otherwise a move on the same
-/// drive and a copy to another. Limited to what the source allows (None: nothing is).
+/// The effect of a drop: the link keys link (if the source lets them); Shift moves, the copy
+/// key copies; otherwise (or with both) a move on the same drive and a copy to another.
+/// Limited to what the source allows (None: nothing is).
 pub fn choose(keys: Keys, same_drive: bool, allowed: Allowed) -> Option<Effect> {
+    if keys.link && allowed.link {
+        return Some(Effect::Link);
+    }
     let wanted = match (keys.shift, keys.copy) {
         (true, false) => Effect::Move,
         (false, true) => Effect::Copy,
@@ -218,12 +259,10 @@ pub fn choose(keys: Keys, same_drive: bool, allowed: Allowed) -> Option<Effect> 
     let allows = |effect| match effect {
         Effect::Copy => allowed.copy,
         Effect::Move => allowed.move_,
+        Effect::Link => allowed.link,
     };
-    let other = match wanted {
-        Effect::Copy => Effect::Move,
-        Effect::Move => Effect::Copy,
-    };
-    [wanted, other].into_iter().find(|&effect| allows(effect))
+    let other = if wanted == Effect::Copy { Effect::Move } else { Effect::Copy };
+    [wanted, other, Effect::Link].into_iter().find(|&effect| allows(effect))
 }
 
 /// Whether dropping `sources` into folder `target` must be refused: onto one of them, into
@@ -262,6 +301,7 @@ pub fn label(action: Action, folder: &Path) -> String {
     match action {
         Action::Transfer(Effect::Move) => format!("Move to {}", folder_name(folder)),
         Action::Transfer(Effect::Copy) => format!("Copy to {}", folder_name(folder)),
+        Action::Transfer(Effect::Link) => format!("Create link in {}", folder_name(folder)),
         Action::Pin => "Pin to sidebar".to_owned(),
         Action::AddToArchive => format!("Add to {}", folder_name(folder)),
     }
@@ -411,18 +451,53 @@ mod tests {
 
     #[test]
     fn effect_follows_the_drive_and_the_keys() {
-        let none = Keys { shift: false, copy: false };
-        assert_eq!(choose(none, true, Allowed::BOTH), Some(Effect::Move));
-        assert_eq!(choose(none, false, Allowed::BOTH), Some(Effect::Copy));
-        assert_eq!(choose(Keys { shift: true, copy: false }, false, Allowed::BOTH), Some(Effect::Move));
-        assert_eq!(choose(Keys { shift: false, copy: true }, true, Allowed::BOTH), Some(Effect::Copy));
-        assert_eq!(choose(Keys { shift: true, copy: true }, true, Allowed::BOTH), Some(Effect::Move), "both: default");
-        assert_eq!(choose(none, true, Allowed { copy: true, move_: false }), Some(Effect::Copy));
+        let none = Keys::default();
+        assert_eq!(choose(none, true, Allowed::ALL), Some(Effect::Move));
+        assert_eq!(choose(none, false, Allowed::ALL), Some(Effect::Copy));
+        assert_eq!(choose(Keys { shift: true, ..Keys::default() }, false, Allowed::ALL), Some(Effect::Move));
+        assert_eq!(choose(Keys { copy: true, ..Keys::default() }, true, Allowed::ALL), Some(Effect::Copy));
         assert_eq!(
-            choose(Keys { shift: false, copy: true }, true, Allowed { copy: false, move_: true }),
+            choose(Keys { shift: true, copy: true, link: false }, true, Allowed::ALL),
+            Some(Effect::Move),
+            "both: default"
+        );
+        assert_eq!(choose(none, true, Allowed { copy: true, move_: false, link: false }), Some(Effect::Copy));
+        assert_eq!(
+            choose(Keys { copy: true, ..Keys::default() }, true, Allowed { copy: false, move_: true, link: false }),
             Some(Effect::Move)
         );
-        assert_eq!(choose(none, true, Allowed { copy: false, move_: false }), None);
+        assert_eq!(choose(none, true, Allowed { copy: false, move_: false, link: false }), None);
+    }
+
+    #[test]
+    fn link_keys_differ_by_system() {
+        // (shift, ctrl, alt, command)
+        let link = |os, k: (bool, bool, bool, bool)| keys_of(os, k.0, k.1, k.2, k.3).link;
+        assert!(link(DragOs::Windows, (false, false, true, false)), "Windows: Alt");
+        assert!(link(DragOs::Windows, (true, true, false, false)), "Windows: Ctrl+Shift");
+        assert!(!link(DragOs::Linux, (false, false, true, false)), "Linux: Alt-drags are the window manager's");
+        assert!(link(DragOs::Linux, (true, true, false, false)), "Linux: Ctrl+Shift");
+        assert!(link(DragOs::Mac, (false, false, true, true)), "macOS: Cmd+Option");
+        assert!(!link(DragOs::Mac, (false, false, true, false)), "macOS: Option alone copies");
+        assert_eq!(keys_of(DragOs::Mac, false, false, true, false), Keys { shift: false, copy: true, link: false });
+        assert_eq!(keys_of(DragOs::Windows, true, false, false, false), Keys { shift: true, copy: false, link: false });
+    }
+
+    #[test]
+    fn a_link_falls_back_when_the_source_forbids_it() {
+        let link = Keys { shift: true, copy: true, link: true };
+        assert_eq!(choose(link, true, Allowed::ALL), Some(Effect::Link));
+        let no_link = Allowed { link: false, ..Allowed::ALL };
+        assert_eq!(choose(link, true, no_link), Some(Effect::Move), "both keys: the drive rule");
+        assert_eq!(choose(link, false, no_link), Some(Effect::Copy));
+        assert_eq!(
+            choose(Keys::default(), true, Allowed { copy: false, move_: false, link: true }),
+            Some(Effect::Link)
+        );
+        let p = PathBuf::from(if cfg!(windows) { r"C:\w\a" } else { "/w/a" });
+        assert!(!refuse(std::slice::from_ref(&p), p.parent().unwrap(), Effect::Link), "a link next to it");
+        assert!(refuse(std::slice::from_ref(&p), &p.join("sub"), Effect::Link), "never inside itself");
+        assert_eq!(label(Action::Transfer(Effect::Link), &p), "Create link in a");
     }
 
     #[test]
