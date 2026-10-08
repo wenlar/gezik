@@ -100,10 +100,19 @@ fn slash_path(path: &Path) -> String {
 }
 
 /// Writes `contents` to a temporary file next to `path`, then renames it into place, so
-/// readers and sync tools never see a half-written file.
+/// readers and sync tools never see a half-written file. A symlinked file (say, from a
+/// dotfiles repo) stays a link: its target is written.
 pub fn write_atomic(path: &Path, contents: &str) -> io::Result<()> {
+    let target;
+    let path = if path.symlink_metadata().is_ok_and(|meta| meta.file_type().is_symlink()) {
+        target = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        &target
+    } else {
+        path
+    };
     let name = path.file_name().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no file name"))?;
-    let tmp = path.with_file_name(format!(".{}.tmp", name.to_string_lossy()));
+    // The process id keeps two Gezik windows from writing into the same temp file.
+    let tmp = path.with_file_name(format!(".{}.{}.tmp", name.to_string_lossy(), std::process::id()));
     let mut file = std::fs::File::create(&tmp)?;
     file.write_all(contents.as_bytes())?;
     file.sync_all()?;
@@ -207,5 +216,23 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "second");
         let names: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name()).collect();
         assert_eq!(names, ["state.toml"]);
+    }
+
+    #[test]
+    fn write_atomic_keeps_a_symlinked_file_a_link() {
+        let dir = crate::test_dir("atomic-link");
+        let (target, link) = (dir.join("real.toml"), dir.join("settings.toml"));
+        std::fs::write(&target, "old").unwrap();
+        #[cfg(windows)]
+        let made = std::os::windows::fs::symlink_file(&target, &link);
+        #[cfg(unix)]
+        let made = std::os::unix::fs::symlink(&target, &link);
+        if made.is_err() {
+            eprintln!("symbolic links need Developer Mode here: skipped");
+            return;
+        }
+        write_atomic(&link, "new").unwrap();
+        assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "new");
     }
 }
