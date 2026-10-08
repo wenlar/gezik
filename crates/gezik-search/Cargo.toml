@@ -1,0 +1,12 @@
+[package]
+name = "gezik-search"
+description = "Searching folder trees for the Gezik file manager: the scanner, name and content matchers, Everything"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+gezik-core.workspace = true
+gezik-platform.workspace = true
+# The same features as gezik-batch's regex: one copy of the crate in the exe, nothing new.
+regex = { version = "1", default-features = false, features = ["std", "unicode-case", "unicode-perl"] }

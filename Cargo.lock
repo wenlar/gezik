@@ -1818,6 +1818,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "gezik-search"
+version = "0.1.0"
+dependencies = [
+ "gezik-core",
+ "gezik-platform",
+ "regex",
+]
+
+[[package]]
 name = "gif"
 version = "0.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
