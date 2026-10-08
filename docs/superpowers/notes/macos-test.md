@@ -348,6 +348,14 @@ Re-checks of the shared UI fixes (fix/shared-ui, on master)
 59. **Tab sets.** Window ▸ Save Tabs As…, name it "Work": `settings.toml` has `[[tab-sets]]`. Window ▸ Open Tab Set ▸ Work opens the set after the tabs, its first tab in front. With a tab locked, "Replace tabs with…" (in the tab's right-click menu) keeps it and says so. Note whether the Window menu shows "Open Tab Set" (and the sets) as expected, since it is an `if … : Menu` inside the menu bar.
 60. **Custom terminal.** `[terminal]` `command = ["open", "-a", "iTerm", "{dir}"]`: ⌘⌥T opens iTerm in the folder.
 
+### 7b, daily
+
+61. **Pinned groups.** Write by hand in `settings.toml`: `pinned = ["~/Documents", { path = "~/Downloads", name = "DL", group = "Work" }, { path = "~/Desktop", group = "Media" }, { path = "~/Pictures", group = "work" }]` (use your own full paths or `{documents}`-style tokens). The sidebar shows "PINNED", then "Work" (with DL and Pictures) and "Media", as written. Right-click a group heading: "Move group up/down", "Rename group…", "Ungroup", and each does what it says in the file. Drag a pin between two pins of another group: a line shows where, and it lands in that group. Right-click a pin ▸ "Rename…" (empty: the folder's own name again) and "Move to group ▸" (the other groups, "New group…", "No group").
+62. **Pins 1-9.** ⌘⌥1…⌘⌥9 go to the pins in the sidebar's order, and Go ▸ Pinned 1…9 too. Try it with the US, Turkish Q and French AZERTY layouts: note whether the menu's shortcut fires or the key goes to the window, and whether ⌘⌥ plus a digit types a character anywhere (path field) instead.
+63. **View menu.** View ▸ Hide Extensions, Folders First, Single-Click to Open, Show Hidden Items (⌘⇧.) are check marks; Date Format ▸ and Size Format ▸ have one checked choice each. Choosing one moves the check and writes `settings.toml` (`[view]`); change the file by hand and the checks follow. ⌘⇧. writes `show-hidden` and the "Show Hidden Items" check follows it.
+64. **View options.** Hide Extensions: names lose their extension (folders keep theirs; F2 shows the whole name). Folders First off: folders sort among the files. Date Format ▸ Relative: a file saved just now says "1 min ago", one from today "Today 14:05". Size Format ▸ Decimal: a 1,500-byte file is `1.5 kB` (the same as Finder's Get Info). Single-Click to Open: one click opens a folder, ⌘-click and ⇧-click only select.
+65. **Hidden by default.** With no `show-hidden` line, `.DS_Store` and other dot files are not shown (macOS default `show-hidden = false`), and the template in a new `settings.toml` has `# show-hidden = true …` as a comment.
+
 Report anything else that looks wrong: layout, fonts, Retina scaling, ⌘ shortcuts that don't work, and the wording of the boxes.
 
 ## Known gaps (not bugs)

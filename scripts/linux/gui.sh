@@ -3,7 +3,7 @@
 # input: xdotool (XTEST) under Xvfb, wtype and the vpointer example under a headless sway.
 #   docker build -t gezik-linux scripts/linux
 #   docker run --rm -v "$PWD:/src" -v gezik-target:/target -v gezik-cargo:/usr/local/cargo/registry \
-#       -e CARGO_TARGET_DIR=/target gezik-linux bash scripts/linux/gui.sh [x11|wayland|popups|tabdrag|pdf|pdfnote|filter|select|tabs|keyboard|commands|paths|history|terminal|copy-path|session|tabsets|all]
+#       -e CARGO_TARGET_DIR=/target gezik-linux bash scripts/linux/gui.sh [x11|wayland|popups|tabdrag|pdf|pdfnote|filter|select|tabs|keyboard|commands|paths|history|terminal|copy-path|session|tabsets|pins|view-options|all]
 #   (not in `all`, release builds: `filterperf` times the filter at 100,000 files, `memory [exe]`
 #   gives idle memory)
 # Needs the network (apt for 7-Zip, Gezik's own 7-Zip download). Screenshots go to
@@ -1703,6 +1703,200 @@ EOF
     grep -i "panicked" /tmp/gezik-gui-tabsets.log && fail "tabsets: no panic" || pass "tabsets: no panic"
 }
 
+# 7b: pinned folders in groups (spec 6): an old plain list stays plain, aliases and groups from
+# a hand-written list, Alt+1…9 in the sidebar's order, a group heading's menu, Rename… and Move
+# to group ▸ on a pin, a pin dragged into another group, folders dropped on a heading.
+pins() {
+    Xvfb :99 -screen 0 1600x900x24 >/dev/null 2>&1 &
+    local xvfb=$!
+    unset WAYLAND_DISPLAY
+    export DISPLAY=:99
+    sleep 1
+    . /src/scripts/linux/gui-lib.sh
+    rm -rf /tmp/pn /tmp/ph /tmp/cfg && mkdir -p /tmp/pn/one /tmp/pn/two /tmp/pn/three /tmp/pn/four /tmp/pn/five /tmp/ph /tmp/cfg
+    printf 'pinned = ["/tmp/pn/one", "/tmp/pn/two"]\n\n[session]\nrestore = false\n' > /tmp/cfg/settings.toml
+    : >/tmp/gezik-gui-pins.log
+    # An empty HOME: FOLDERS has Home only, so the sidebar's rows are where srow says.
+    HOME=/tmp/ph GEZIK_CONFIG_DIR=/tmp/cfg $GEZIK /tmp/pn >>/tmp/gezik-gui-pins.log 2>&1 &
+    local gezik=$!
+    sleep 3
+    xdotool windowmove "$(win)" 0 0; xdotool windowsize "$(win)" 900 600; sleep 0.5
+    shot pins-start
+    title() { xdotool getwindowname "$(win)"; }
+    is() { [ "$(title)" = "$1 — Gezik" ]; }
+    differ() { compare -metric AE "$SHOTS/$1.png[$3x$4+$5+$6]" "$SHOTS/$2.png[$3x$4+$5+$6]" null: 2>&1 | cut -d' ' -f1; }
+    # Sidebar row N (FOLDERS 0, Home 1, then the pinned part); item K of a sidebar row's menu.
+    srow() { echo $((98 + 26 * $1)); }
+    smenu() { local y; y=$(srow "$1"); rclick 60 "$y"; click 130 $((y + 20 + 32 * $2)); }
+    line_of() { grep -n -F "$1" /tmp/cfg/settings.toml | head -1 | cut -d: -f1; }
+
+    # List rows: five 118, four 144, one 170, three 196, two 222. A folder's menu: Open in new
+    # tab, Pin to sidebar, …
+    menu /tmp/pn three 1; sleep 1.5
+    check "pins: a list without aliases or groups stays one plain line" \
+        'grep -qx "pinned = \[\"/tmp/pn/one\", \"/tmp/pn/two\", \"/tmp/pn/three\"\]" /tmp/cfg/settings.toml'
+    click 255 400
+    key alt+3; sleep 1; check "pins: Alt+3 goes to the third pin" 'is three'
+    key alt+1; sleep 1; check "pins: Alt+1 to the first" 'is one'
+    key alt+5; sleep 1; check "pins: a number with no pin does nothing" 'is one'
+
+    # By hand: an alias, two groups (one spelled twice), a folder not on this machine.
+    cat > /tmp/cfg/settings.toml <<'EOF'
+pinned = [
+  "/tmp/pn/one",
+  { path = "/tmp/pn/two", name = "Second", group = "Work" },
+  { path = "/tmp/pn/four", group = "Media" },
+  { path = "/tmp/pn/three", group = "work" },
+  "/tmp/pn/gone",
+]
+
+[session]
+restore = false
+EOF
+    sleep 2; xdotool mousemove 500 400; sleep 0.3; shot pins-groups
+    # Rows: 2 PINNED, 3 one, 4 Work, 5 Second, 6 three, 7 Media, 8 four.
+    key alt+2; sleep 1; check "pins: a group's pins number together (Alt+2: Second)" 'is two'
+    key alt+3; sleep 1; check "pins: \"work\" is Work (Alt+3: three)" 'is three'
+    key alt+4; sleep 1; check "pins: then Media (Alt+4: four)" 'is four'
+    click 60 "$(srow 5)"; sleep 1; check "pins: the aliased row opens its folder" 'is two'
+    click 60 "$(srow 4)"; sleep 1; check "pins: a heading opens nothing" 'is two'
+    xdotool mousemove 60 "$(srow 3)"; sleep 1.5; shot pins-tip
+    check "pins: resting on a pin shows its tip" '[ "$(differ pins-groups pins-tip 300 60 0 200)" != 0 ]'
+    xdotool mousemove 500 400; sleep 0.3
+
+    # Work's heading (the first of two groups): Move group down, Rename group…, Ungroup.
+    smenu 4 0; sleep 1.5
+    check "pins: Move group down puts Media first" \
+        '[ "$(line_of "group = \"Media\"")" -lt "$(line_of "group = \"Work\"")" ]'
+    check "pins: a group is written in one spelling" '! grep -q "group = \"work\"" /tmp/cfg/settings.toml'
+    # Rows: 2 PINNED, 3 one, 4 Media, 5 four, 6 Work, 7 Second, 8 three.
+    key alt+2; sleep 1; check "pins: Alt+2 follows the new order" 'is four'
+    smenu 6 1; sleep 0.8; key ctrl+a; typ Jobs; key Return; sleep 1.5
+    check "pins: Rename group… renames all its pins" \
+        '[ "$(grep -c "group = \"Jobs\"" /tmp/cfg/settings.toml)" = 2 ] && ! grep -q Work /tmp/cfg/settings.toml'
+    # A pin's menu (one, the only one without a group): Open in new tab, Unpin from sidebar,
+    # Rename…, Move to group ▸, Open terminal here, Copy path as ▸.
+    smenu 3 2; sleep 0.8; key ctrl+a; typ Uno; key Return; sleep 1.5
+    check "pins: Rename… writes an alias as a table" 'grep -qF "{ path = \"/tmp/pn/one\", name = \"Uno\" }" /tmp/cfg/settings.toml'
+    smenu 3 2; sleep 0.8; key ctrl+a BackSpace Return; sleep 1.5
+    check "pins: an empty name takes the alias away" \
+        '! grep -q Uno /tmp/cfg/settings.toml && grep -qx "  \"/tmp/pn/one\"," /tmp/cfg/settings.toml'
+    # Move to group ▸ by the keys: Media, Jobs, New group….
+    rclick 60 "$(srow 3)"; sleep 0.5; key Down Down Down Down Right; sleep 0.5; key Return; sleep 1.5
+    check "pins: Move to group ▸ Media" 'grep -qF "{ path = \"/tmp/pn/one\", group = \"Media\" }" /tmp/cfg/settings.toml'
+    # No pin without a group is shown now, so no PINNED heading. Rows: 2 Media, 3 four, 4 one,
+    # 5 Jobs, 6 Second, 7 three.
+    key alt+2; sleep 1; check "pins: a pin moved into a group is its last" 'is one'
+    # three (row 7) to the line above one (row 4): into Media, between four and one.
+    xdotool mousemove 60 "$(srow 7)" mousedown 1; sleep 0.2
+    for y in 270 240 210 195 190; do xdotool mousemove 60 $y; sleep 0.15; done
+    xdotool mouseup 1; sleep 1.5
+    check "pins: a pin dragged into another group takes that group" \
+        'grep -qF "{ path = \"/tmp/pn/three\", group = \"Media\" }" /tmp/cfg/settings.toml'
+    key alt+2; sleep 1; check "pins: ...where it was dropped" 'is three'
+    # Rows: 2 Media, 3 four, 4 three, 5 one, 6 Jobs, 7 Second. The folder five from the list onto
+    # Jobs' heading: pinned first in Jobs. Alt+2 left the list in three: back to /tmp/pn first.
+    key alt+Up; sleep 1
+    xdotool mousemove 255 118 mousedown 1; sleep 0.2
+    for p in "200 150" "120 170" "60 230" "60 $(srow 6)"; do xdotool mousemove $p; sleep 0.2; done
+    shot pins-drop
+    xdotool mouseup 1; sleep 1.5
+    check "pins: folders dropped on a heading join that group" \
+        'grep -qF "{ path = \"/tmp/pn/five\", group = \"Jobs\" }" /tmp/cfg/settings.toml'
+    key alt+4; sleep 1; check "pins: ...at its start" 'is five'
+    check "pins: the pin not on this machine stays in the file" 'grep -qF "\"/tmp/pn/gone\"" /tmp/cfg/settings.toml'
+    kill $gezik $xvfb 2>/dev/null
+    wait 2>/dev/null
+    grep -i "panicked" /tmp/gezik-gui-pins.log && fail "pins: no panic" || pass "pins: no panic"
+}
+
+# 7b: the view options (spec 7): Ctrl+H writes show-hidden, the View menu the others; folders
+# among files, extensions hidden on screen only, dates and sizes in their formats
+# (screenshots), one click opens, a hand edit applies at once.
+view_options() {
+    Xvfb :99 -screen 0 1600x900x24 >/dev/null 2>&1 &
+    local xvfb=$!
+    unset WAYLAND_DISPLAY
+    export DISPLAY=:99
+    sleep 1
+    . /src/scripts/linux/gui-lib.sh
+    rm -rf /tmp/vo /tmp/cfg && mkdir -p /tmp/vo/Zeta /tmp/cfg
+    echo a > /tmp/vo/alpha.txt; head -c 1500 /dev/zero > /tmp/vo/big.bin; echo h > /tmp/vo/.hidden
+    echo n > /tmp/vo/new.txt; echo o > /tmp/vo/old.txt; touch -d '2020-01-02 03:04' /tmp/vo/old.txt
+    printf '[session]\nrestore = false\n' > /tmp/cfg/settings.toml
+    : >/tmp/gezik-gui-viewopts.log
+    GEZIK_CONFIG_DIR=/tmp/cfg $GEZIK /tmp/vo >>/tmp/gezik-gui-viewopts.log 2>&1 &
+    local gezik=$!
+    sleep 3
+    xdotool windowmove "$(win)" 0 0; xdotool windowsize "$(win)" 900 600; sleep 0.5
+    shot vo-start
+    title() { xdotool getwindowname "$(win)"; }
+    is() { [ "$(title)" = "$1 — Gezik" ]; }
+    differ() { compare -metric AE "$SHOTS/$1.png[$3x$4+$5+$6]" "$SHOTS/$2.png[$3x$4+$5+$6]" null: 2>&1 | cut -d' ' -f1; }
+    # The View button's menu (list mode), by the keys: List 0, Grid 1, five sorts, Ascending 7,
+    # Descending 8, Preview pane 9, Hide extensions 10, Folders first 11, Single-click to open
+    # 12, Show hidden items 13, Date format ▸ 14, Size format ▸ 15, Apply… 16, Reset… 17.
+    # view_pick N [keys…]: line N, then the keys (into a submenu), then Return. The View button
+    # is at the toolbar's right end (879, 57 in vo-start); its menu opens under the pointer,
+    # with Grid (line 1) current, so line N is N - 1 Downs away.
+    view_pick() {
+        local n=$1; shift
+        click 879 57; sleep 0.5
+        for _ in $(seq 2 "$n"); do key Down; done
+        for k in "$@"; do key "$k"; done
+        key Return; sleep 1.5
+    }
+
+    # Rows (folders first, dot names shown): Zeta 118, .hidden 144, alpha.txt 170, big.bin 196,
+    # new.txt 222, old.txt 248.
+    click 255 400
+    key ctrl+h; sleep 2
+    check "view-options: Ctrl+H writes show-hidden = false" 'grep -q "^show-hidden = false" /tmp/cfg/settings.toml'
+    check "view-options: ...and the dot names go" 'key ctrl+a; copies Zeta alpha.txt big.bin new.txt old.txt'
+    key ctrl+h; sleep 2
+    check "view-options: Ctrl+H again brings them back" \
+        'grep -q "^show-hidden = true" /tmp/cfg/settings.toml && key ctrl+a && copies .hidden Zeta alpha.txt big.bin new.txt old.txt'
+    key Escape
+    view_pick 11
+    check "view-options: Folders first in the View menu writes folders-first = false" \
+        'grep -q "^folders-first = false" /tmp/cfg/settings.toml'
+    # Mixed by name: .hidden 118, alpha.txt 144, big.bin 170, new.txt 196, old.txt 222, Zeta 248.
+    click 255 248
+    check "view-options: the folder sorts among the files" 'copies Zeta'
+    view_pick 11
+    check "view-options: ...and back" 'grep -q "^folders-first = true" /tmp/cfg/settings.toml'
+    key Escape; shot vo-names
+    view_pick 10; shot vo-noext
+    check "view-options: Hide extensions writes hide-extensions = true" 'grep -q "^hide-extensions = true" /tmp/cfg/settings.toml'
+    check "view-options: a file's name is drawn without its extension" '[ "$(differ vo-names vo-noext 200 26 230 157)" != 0 ]'
+    check "view-options: a folder's name stays" '[ "$(differ vo-names vo-noext 200 26 230 105)" = 0 ]'
+    click 255 170; key F2; sleep 0.5; key ctrl+a ctrl+c; sleep 0.3
+    check "view-options: renaming shows the whole name" '[ "$(xclip -selection clipboard -o 2>/dev/null)" = alpha.txt ]'
+    key Escape; sleep 0.5
+    key ctrl+f; typ txt; sleep 0.5; key Down ctrl+a
+    check "view-options: the filter goes by the real names" 'copies alpha.txt new.txt old.txt'
+    key Escape Escape; sleep 0.5; shot vo-system
+    view_pick 14 Right; shot vo-relative
+    check "view-options: Date format ▸ Relative writes it" 'grep -q "^date-format = \"relative\"" /tmp/cfg/settings.toml'
+    check "view-options: a file changed just now gets a relative date" '[ "$(differ vo-system vo-relative 640 26 230 209)" != 0 ]'
+    check "view-options: one from 2020 keeps the system's date" '[ "$(differ vo-system vo-relative 640 26 230 235)" = 0 ]'
+    view_pick 15 Right Down; shot vo-decimal
+    check "view-options: Size format ▸ Decimal writes it" 'grep -q "^size-format = \"decimal\"" /tmp/cfg/settings.toml'
+    check "view-options: 1,500 bytes are 1.5 kB now, not 1.5 KB" '[ "$(differ vo-relative vo-decimal 640 26 230 183)" != 0 ]'
+    view_pick 12
+    check "view-options: Single-click to open writes it" 'grep -q "^single-click-open = true" /tmp/cfg/settings.toml'
+    xdotool keydown ctrl; click 255 118; xdotool keyup ctrl; sleep 1
+    check "view-options: Ctrl+click only selects" 'is vo'
+    click 255 118; sleep 1.5
+    check "view-options: one click opens a folder" 'is Zeta'
+    printf '[session]\nrestore = false\n\n[view]\nsingle-click-open = false\n' > /tmp/cfg/settings.toml; sleep 2
+    key alt+Up; sleep 1; click 255 118; sleep 1
+    check "view-options: a hand edit applies at once (one click selects again)" 'is vo'
+    kill $gezik $xvfb 2>/dev/null
+    wait 2>/dev/null
+    grep -i "panicked" /tmp/gezik-gui-viewopts.log && fail "view-options: no panic" || pass "view-options: no panic"
+}
+
 # Not in `all`. The filter in a folder of 100,000 files, release build: the process's CPU
 # time (all threads, /proc/<pid>/task/*/schedstat) from before each keystroke to 300 ms after
 # it, less the idle CPU of 300 ms with the bar open. Twice: nothing selected, then after
@@ -1779,7 +1973,7 @@ scoped() {
     local rc=$?
     unset -f title wshot wk ctrl vclick wrow wtitle extract_here cyrillic trashed sel2 box same_box here undo is \
         crop same_part goto start_k differ same_under same_bar readers count_of folders go empty_list run line \
-        xterm_in text pq pick cpu one stats idle typed low_menu top2 tabs_kept tab_menu
+        xterm_in text pq pick cpu one stats idle typed low_menu top2 tabs_kept tab_menu srow smenu line_of view_pick
     return $rc
 }
 
@@ -1802,9 +1996,11 @@ case "${1:-all}" in
     copy-path) scoped copy_path ;;
     session) scoped session ;;
     tabsets) scoped tabsets ;;
+    pins) scoped pins ;;
+    view-options) scoped view_options ;;
     filterperf) filterperf ;;
     memory) memory "${2:-}" ;;
-    *) for m in x11 wayland popups tabdrag pdfpopups pdfnote filter selection tabs keyboard commands paths history terminal copy_path session tabsets; do scoped "$m"; done ;;
+    *) for m in x11 wayland popups tabdrag pdfpopups pdfnote filter selection tabs keyboard commands paths history terminal copy_path session tabsets pins view_options; do scoped "$m"; done ;;
 esac
 echo "failures: $failures"
 exit $failures
