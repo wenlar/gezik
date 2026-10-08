@@ -238,9 +238,9 @@ mod tests {
 
     #[test]
     fn classic_new_keys_follow_the_rules_from_the_old_values() {
-        // chrome is the old surface on purpose; success and warning have no rule.
-        const NEW: [&str; 15] = [
-            "surface-raised",
+        // chrome is the old surface on purpose, and surface-raised, input-background, shadow and
+        // overlay keep the old inline tones (see the next test); success and warning have no rule.
+        const NEW: [&str; 11] = [
             "border-strong",
             "accent-hover",
             "accent-pressed",
@@ -249,10 +249,7 @@ mod tests {
             "pressed",
             "tab-active",
             "tab-inactive",
-            "input-background",
             "danger-background",
-            "shadow",
-            "overlay",
             "scrollbar",
             "scrollbar-hover",
         ];
@@ -263,6 +260,24 @@ mod tests {
                 let rule = RULES.iter().find(|r| r.key == key).unwrap();
                 assert_eq!((rule.compute)(&theme.colors, dark), theme.colors.get(key), "{id} {key}");
             }
+        }
+    }
+
+    #[test]
+    fn classic_themes_keep_the_old_tones_on_popups_fields_and_layers() {
+        // The values the surfaces used before the new keys: popups on `surface`, fields on
+        // `background`, the layer as `background` at 60% and the fixed popup shadow.
+        for (id, popup, field, layer) in
+            [("classic-light", "#f3f3f3", "#fafafa", "#fafafa99"), ("classic-dark", "#202020", "#1c1c1c", "#1c1c1c99")]
+        {
+            let c = resolve_theme(id, &HashMap::new(), &mut Vec::new()).unwrap().colors;
+            assert_eq!(c.surface_raised, hex(popup), "{id} surface-raised");
+            assert_eq!(c.surface_raised, c.surface, "{id} surface-raised is the old surface");
+            assert_eq!(c.input_background, hex(field), "{id} input-background");
+            assert_eq!(c.input_background, c.background, "{id} input-background is the old background");
+            assert_eq!(c.overlay, hex(layer), "{id} overlay");
+            assert_eq!(c.overlay, with_alpha(c.background, 0.6), "{id} overlay is the old wash");
+            assert_eq!(c.shadow, hex("#00000040"), "{id} shadow");
         }
     }
 

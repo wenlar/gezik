@@ -127,8 +127,8 @@ Türetilen boyutlar tema anahtarı **değildir**; `Theme` global'inde hesaplanan
 | `input-background` | `surface-raised` / `mix(background, #000, 25%)` | surface-raised, background |
 | `border-strong` | `mix(border, foreground, 40%)` | border, foreground |
 | `accent-foreground` | beyaz, ya da `mix(accent, #000, 86%)`: `accent` ile hangisi daha kontrastlıysa (beyaz, `#101010`'a eşit ya da daha iyiyse) | accent |
-| `accent-hover` | `mix(accent, ink, 12%)` | accent |
-| `accent-pressed` | `mix(accent, ink, 24%)` | accent |
+| `accent-hover` | `mix(accent, ink, 12%)` | accent, background (açık/koyu) |
+| `accent-pressed` | `mix(accent, ink, 24%)` | accent, background (açık/koyu) |
 | `selection` | `mix(background, accent, 15% / 30%)` | background, accent |
 | `selection-foreground` | `= foreground` | foreground |
 | `selection-foreground-muted` | `mix(foreground, foreground-muted, 35%)` | foreground, foreground-muted |
@@ -136,8 +136,8 @@ Türetilen boyutlar tema anahtarı **değildir**; `Theme` global'inde hesaplanan
 | `hover` | `ink @ 4% / 6%` | background (karanlık mı) |
 | `pressed` | `ink @ 8% / 11%` | background |
 | `focus-ring`, `progress` | `= accent` | accent |
-| `marquee` | `accent @ 14% / 20%` | accent |
-| `drop-target` | `accent @ 20% / 28%` | accent |
+| `marquee` | `accent @ 14% / 20%` | accent, background (açık/koyu) |
+| `drop-target` | `accent @ 20% / 28%` | accent, background (açık/koyu) |
 | `tab-active` | `= background` | background |
 | `tab-inactive` | `= chrome` | chrome |
 | `danger-background` | `mix(background, danger, 9% / 16%)` | background, danger |

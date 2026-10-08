@@ -190,6 +190,11 @@ fn contrast_holds_in_every_theme_and_accent() {
             ("danger/danger-background", c.danger, c.danger_background, 4.5),
             ("accent-foreground/accent-hover", c.accent_foreground, c.accent_hover, 4.5),
             ("accent-foreground/accent-pressed", c.accent_foreground, c.accent_pressed, 4.5),
+            ("accent/surface", c.accent, c.surface, 4.5),
+            ("accent/surface-raised", c.accent, c.surface_raised, 4.5),
+            ("foreground-muted/surface-raised", c.foreground_muted, c.surface_raised, 4.5),
+            // Accent on the bars is an icon or an underline, not running text: 3:1.
+            ("accent/chrome", c.accent, c.chrome, 3.0),
             ("focus-ring/selection", c.focus_ring, c.selection, 3.0),
             ("focus-ring/background", c.focus_ring, c.background, 3.0),
             ("focus-ring/chrome", c.focus_ring, c.chrome, 3.0),
