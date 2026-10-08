@@ -1,6 +1,8 @@
 import { Palette } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { ToolButton } from "widgets/button.slint";
+import { TextButton } from "widgets/text-button.slint";
+import { Glyph } from "glyphs.slint";
 import { Breadcrumb, CrumbItem } from "widgets/breadcrumb.slint";
 import { TabBar, TabItem } from "widgets/tab-bar.slint";
 import { Sidebar, SidebarRow } from "widgets/sidebar.slint";
@@ -872,30 +874,42 @@ export component AppWindow inherits Window {
                 }
             }
             Rectangle {
+                height: Theme.toolbar-height;
                 background: Theme.chrome;
                 HorizontalLayout {
-                    padding: Theme.spacing;
+                    padding-left: Theme.inset + 4px;
+                    padding-right: Theme.inset + 4px;
+                    padding-top: (Theme.toolbar-height - Theme.control-height) / 2;
+                    padding-bottom: (Theme.toolbar-height - Theme.control-height) / 2;
                     spacing: Theme.spacing;
-                    ToolButton {
-                        text: "←";
-                        enabled: root.can-go-back;
-                        clicked => { root.go-back(); }
-                    }
-                    ToolButton {
-                        text: "→";
-                        enabled: root.can-go-forward;
-                        clicked => { root.go-forward(); }
-                    }
-                    ToolButton {
-                        text: "↑";
-                        enabled: root.can-go-up;
-                        clicked => { root.go-up(); }
-                    }
-                    ToolButton {
-                        text: "Refresh";
-                        // A circular arrow.
-                        icon: "M 13.5 8 A 5.5 5.5 0 1 1 11.9 4.1 M 12.2 1.2 L 12.2 4.4 L 9 4.4";
-                        clicked => { root.refresh(); }
+                    // Back, Forward, Up, Refresh: row-height squares in the control-high row.
+                    HorizontalLayout {
+                        spacing: 2px;
+                        padding-top: (Theme.control-height - Theme.row-height) / 2;
+                        padding-bottom: (Theme.control-height - Theme.row-height) / 2;
+                        ToolButton {
+                            text: "Back";
+                            icon: Glyph.back;
+                            enabled: root.can-go-back;
+                            clicked => { root.go-back(); }
+                        }
+                        ToolButton {
+                            text: "Forward";
+                            icon: Glyph.forward;
+                            enabled: root.can-go-forward;
+                            clicked => { root.go-forward(); }
+                        }
+                        ToolButton {
+                            text: "Up";
+                            icon: Glyph.up;
+                            enabled: root.can-go-up;
+                            clicked => { root.go-up(); }
+                        }
+                        ToolButton {
+                            text: "Refresh";
+                            icon: Glyph.refresh;
+                            clicked => { root.refresh(); }
+                        }
                     }
                     address := Breadcrumb {
                         crumbs: root.crumbs;
@@ -910,10 +924,11 @@ export component AppWindow inherits Window {
                             root.navigate(path);
                         }
                     }
-                    ToolButton {
+                    TextButton {
                         text: "View";
-                        // Four squares.
-                        icon: "M 2 2 L 7 2 L 7 7 L 2 7 Z M 9 2 L 14 2 L 14 7 L 9 7 Z M 2 9 L 7 9 L 7 14 L 2 14 Z M 9 9 L 14 9 L 14 14 L 9 14 Z";
+                        lead-icon: Glyph.view;
+                        icon: Glyph.chevron-down;
+                        height: Theme.control-height;
                         clicked => {
                             root.end-path-editing();
                             root.view-menu(self.absolute-position.x, self.absolute-position.y + self.height, self.absolute-position.x + self.width, self.absolute-position.y);
@@ -1167,11 +1182,12 @@ export component AppWindow inherits Window {
                 height: Theme.row-height;
                 background: Theme.chrome;
                 HorizontalLayout {
-                    padding-left: Theme.spacing + 4px;
-                    padding-right: Theme.spacing + 4px;
+                    padding-left: Theme.inset + 4px;
+                    padding-right: Theme.inset + 4px;
                     spacing: Theme.spacing * 2;
                     Text {
                         text: root.status;
+                        font-size: Theme.font-size-small;
                         vertical-alignment: center;
                         color: Theme.foreground-muted;
                     }
@@ -1179,6 +1195,7 @@ export component AppWindow inherits Window {
                         width: summary-text.preferred-width + 26px;
                         border-radius: Theme.radius;
                         background: summary-touch.has-hover ? Theme.hover : transparent;
+                        animate background { duration: Theme.motion-hover; }
                         accessible-role: button;
                         accessible-label: root.ops-summary;
                         accessible-action-default => { root.ops-toggle(); }
@@ -1186,6 +1203,7 @@ export component AppWindow inherits Window {
                             x: 4px;
                             height: parent.height;
                             text: root.ops-summary;
+                            font-size: Theme.font-size-small;
                             vertical-alignment: center;
                             color: Theme.foreground-muted;
                         }
@@ -1197,8 +1215,10 @@ export component AppWindow inherits Window {
                             viewbox-width: 8;
                             viewbox-height: 8;
                             stroke: Theme.foreground-muted;
-                            stroke-width: 1.5px;
-                            commands: root.ops-collapsed ? "M 1 5.5 L 4 2.5 L 7 5.5" : "M 1 2.5 L 4 5.5 L 7 2.5";
+                            stroke-width: 1.2px;
+                            stroke-line-cap: round;
+                            stroke-line-join: round;
+                            commands: root.ops-collapsed ? Glyph.chevron-up : Glyph.chevron-down;
                         }
                         summary-touch := TouchArea {
                             mouse-cursor: pointer;
@@ -1206,16 +1226,30 @@ export component AppWindow inherits Window {
                         }
                     }
                     if root.history-available: Rectangle {
-                        width: history-text.preferred-width + 8px;
+                        width: history-text.preferred-width + 26px;
                         border-radius: Theme.radius;
                         background: history-touch.has-hover ? Theme.hover : transparent;
+                        animate background { duration: Theme.motion-hover; }
                         accessible-role: button;
                         accessible-label: "History";
                         accessible-action-default => { root.history-toggle(); }
-                        history-text := Text {
+                        Path {
                             x: 4px;
+                            y: (parent.height - 12px) / 2;
+                            width: 12px;
+                            height: 12px;
+                            viewbox-width: 16;
+                            viewbox-height: 16;
+                            commands: Glyph.history;
+                            stroke: Theme.foreground-muted;
+                            stroke-width: 1.5px;
+                            stroke-line-cap: round;
+                        }
+                        history-text := Text {
+                            x: 22px;
                             height: parent.height;
                             text: "History";
+                            font-size: Theme.font-size-small;
                             vertical-alignment: center;
                             color: Theme.foreground-muted;
                         }
@@ -1226,6 +1260,7 @@ export component AppWindow inherits Window {
                     }
                     Text {
                         text: root.notice;
+                        font-size: Theme.font-size-small;
                         horizontal-stretch: 1;
                         horizontal-alignment: right;
                         vertical-alignment: center;
