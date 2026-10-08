@@ -535,13 +535,7 @@ impl View {
     /// In a folder the entries the filter hides count too.
     pub fn has_other_named(&self, name: &str, except: usize) -> bool {
         let data = self.0.data.borrow();
-        let same = |other: &str| {
-            if cfg!(any(windows, target_os = "macos")) {
-                other.to_lowercase() == name.to_lowercase()
-            } else {
-                other == name
-            }
-        };
+        let same = |other: &str| listing::same_name(other, name);
         match &data.listing {
             Listing::Files(..) => name_taken(&data.full, name, data.listing.name_at(except).unwrap_or_default()),
             // Only the results in the same folder are known (spec 4.6): the engine says the rest.
@@ -1991,7 +1985,7 @@ pub fn filter_count_text(shown: usize, total: usize) -> String {
 /// The status bar: `120 items`, or `120 items · 3 selected (1.2 MB)`; the size counts the
 /// selected files (`None`: no files selected).
 pub fn status_text(count: usize, selected: usize, selected_size: Option<u64>) -> String {
-    let items = if count == 1 { "1 item".to_owned() } else { format!("{count} items") };
+    let items = crate::stack::count_text(count);
     match (selected, selected_size) {
         (0, _) => items,
         (n, Some(size)) => format!("{items} · {n} selected ({})", crate::view_options::size_text(size)),

@@ -147,8 +147,9 @@ fn v7_tar_checksum_ok(block: &[u8]) -> bool {
 }
 
 /// `entry` (an untrusted name from inside an archive; `\` also separates) under `dest`, or
-/// `None` if it would escape or cannot be a portable name: `..`, roots, drive prefixes, UNC,
-/// `:` (Windows alternate streams), Windows device names, empty.
+/// `None` if it would escape or cannot be a name here: `..`, roots, drive prefixes, UNC,
+/// control characters, too long, empty; on Windows also `:` (alternate streams), device
+/// names and a trailing dot or space (Linux packages hold `Data::Dumper.3pm.gz`, `aux.c`).
 pub fn safe_join(dest: &Path, entry: &str) -> Option<PathBuf> {
     let normalized = entry.replace('\\', "/");
     let mut out = dest.to_path_buf();
@@ -157,15 +158,16 @@ pub fn safe_join(dest: &Path, entry: &str) -> Option<PathBuf> {
         match c {
             Component::Normal(part) => {
                 let part = part.to_str()?;
-                if part.contains(':') || part.chars().any(char::is_control) {
+                if part.chars().any(char::is_control) {
                     return None;
                 }
                 // Windows drops trailing dots and spaces, so `NUL.` is the NUL device and `.. ` is `..`.
-                if part.ends_with(['.', ' ']) {
+                if cfg!(windows) && (part.contains(':') || part.ends_with(['.', ' '])) {
                     return None;
                 }
+                let rules = if cfg!(windows) { NameRules::Windows } else { NameRules::Unix };
                 if let Err(NameError::Reserved(_) | NameError::TooLong | NameError::TrailingDotOrSpace) =
-                    names::validate_name(part, NameRules::Windows)
+                    names::validate_name(part, rules)
                 {
                     return None;
                 }
@@ -370,17 +372,15 @@ mod tests {
         assert_eq!(safe_join(dest, "a/b.txt"), Some(dest.join("a").join("b.txt")));
         assert_eq!(safe_join(dest, "a\\b.txt"), Some(dest.join("a").join("b.txt")));
         assert_eq!(safe_join(dest, "./a"), Some(dest.join("a")));
-        for bad in [
-            "../x",
-            "a/../../x",
-            "/etc/passwd",
-            "\\x",
+        for bad in ["../x", "a/../../x", "/etc/passwd", "\\x", "\\\\srv\\s\\x", "", "..", "a/\u{1}b"] {
+            assert_eq!(safe_join(dest, bad), None, "{bad}");
+        }
+        assert_eq!(safe_join(dest, &"x".repeat(300)), None);
+        // Only Windows takes these for streams, drives, devices or other names.
+        for windows in [
             "C:\\x",
             "C:x",
-            "\\\\srv\\s\\x",
             "a:stream",
-            "",
-            "..",
             "CON.",
             "NUL ",
             "aux.txt.",
@@ -390,13 +390,14 @@ mod tests {
             "a.",
             "COM1 ",
             "con.txt ",
-            "a/\u{1}b",
+            "CON",
+            "con.txt",
+            "a/NUL",
+            "LPT1.log",
+            "Data::Dumper.3pm.gz",
+            "linux/aux.c",
         ] {
-            assert_eq!(safe_join(dest, bad), None, "{bad}");
-        }
-        assert_eq!(safe_join(dest, &"x".repeat(300)), None);
-        for reserved in ["CON", "con.txt", "a/NUL", "LPT1.log"] {
-            assert_eq!(safe_join(dest, reserved), None, "{reserved}");
+            assert_eq!(safe_join(dest, windows).is_none(), cfg!(windows), "{windows}");
         }
     }
 

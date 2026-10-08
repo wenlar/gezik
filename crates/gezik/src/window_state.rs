@@ -16,6 +16,10 @@ pub fn restore(window: &AppWindow, state: &State) {
     if let (Some(x), Some(y)) = (saved.x, saved.y) {
         window.window().set_position(PhysicalPosition::new(x, y));
     }
+    // After the normal rect, so un-maximizing goes back to it.
+    if saved.maximized {
+        window.window().set_maximized(true);
+    }
 }
 
 /// Moves the window onto the primary monitor if its restored position is on a monitor
@@ -46,10 +50,17 @@ pub fn ensure_visible(window: &AppWindow) -> bool {
 
 /// Updates `state` from the window: the size (logical pixels) and position (physical
 /// pixels) only while the window is in its normal state (a minimized or maximized one has
-/// no meaningful normal rect), the sidebar width always.
+/// no meaningful normal rect), whether it is maximized unless minimized, the sidebar width
+/// always.
 pub fn capture_into(window: &AppWindow, state: &mut State) {
     let native = window.window();
-    if !native.is_minimized() && !native.is_maximized() {
+    if native.is_maximized() {
+        // shortcut: a window maximized before any normal rect was saved is not remembered
+        // maximized (no rect to restore to); fine unless users report it.
+        if let Some(saved) = &mut state.window {
+            saved.maximized = true;
+        }
+    } else if !native.is_minimized() {
         let size = native.size().to_logical(native.scale_factor());
         let position = native.position();
         state.window = Some(WindowState {
@@ -57,6 +68,7 @@ pub fn capture_into(window: &AppWindow, state: &mut State) {
             height: size.height.round() as u32,
             x: Some(position.x),
             y: Some(position.y),
+            maximized: false,
         });
     }
     state.sidebar_width = Some(window.get_sidebar_width().round().clamp(120.0, 480.0) as u32);

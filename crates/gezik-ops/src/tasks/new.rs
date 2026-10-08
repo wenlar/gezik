@@ -112,6 +112,20 @@ mod tests {
     }
 
     #[test]
+    fn undo_takes_a_new_folder_only_while_it_holds_no_files() {
+        let dir = test_dir("new-folder-undo");
+        let engine = engine();
+        finish(&engine, engine.submit(Box::new(NewTask::folder(&dir))), defaults);
+        finish(&engine, engine.undo().unwrap(), defaults);
+        assert!(!dir.join("New folder").exists(), "still empty: it goes");
+        finish(&engine, engine.submit(Box::new(NewTask::folder(&dir))), defaults);
+        std::fs::write(dir.join("New folder/saved.txt"), "kept").unwrap();
+        finish(&engine, engine.undo().unwrap(), defaults);
+        assert!(dir.join("New folder/saved.txt").exists(), "a file put in since keeps it");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn a_new_file_is_empty() {
         let dir = test_dir("new-file");
         let engine = engine();

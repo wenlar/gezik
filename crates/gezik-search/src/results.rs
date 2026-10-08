@@ -232,33 +232,6 @@ impl ResultSet {
             matches.retain(|_| (keep[index], index += 1).0);
         }
     }
-
-    /// The folder text and the name `path` has here; `None` outside the scope.
-    fn place_of(&self, path: &Path) -> Option<(String, String)> {
-        let name = path.file_name()?.to_string_lossy().into_owned();
-        Some((folder_text(&self.root, path)?, name))
-    }
-
-    /// Adds `path` (under the scope) as a new entry, no matching line; false outside it.
-    pub fn push(&mut self, path: &Path, entry: Entry) -> bool {
-        let Some((folder, _)) = self.place_of(path) else { return false };
-        let parent = match self.folders.iter().position(|f| **f == *folder) {
-            Some(i) => i,
-            None => {
-                self.folders.push(folder.into());
-                self.folders.len() - 1
-            }
-        };
-        self.push_entry(entry, parent as u32);
-        true
-    }
-
-    /// Where `path` is among the entries.
-    pub fn index_of_path(&self, path: &Path) -> Option<usize> {
-        let (folder, name) = self.place_of(path)?;
-        let parent = self.folders.iter().position(|f| **f == *folder)? as u32;
-        (0..self.entries.len()).find(|&i| self.parent[i] == parent && self.entries[i].name == name)
-    }
 }
 
 /// Whether two times are the same; at whole seconds when one has nothing finer (the name
@@ -293,23 +266,10 @@ fn is_separator(c: char) -> bool {
     c == '/' || c == MAIN_SEPARATOR
 }
 
-/// Whether folder text `folder` is `dir` (`Some(true)`) or inside it (`Some(false)`); case is
-/// ignored where the file system ignores it (ASCII only: no allocation per folder).
-fn within_text(folder: &str, dir: &str) -> Option<bool> {
-    const IGNORE_CASE: bool = cfg!(any(windows, target_os = "macos"));
-    let head = folder.as_bytes().get(..dir.len())?;
-    let same = if IGNORE_CASE { head.eq_ignore_ascii_case(dir.as_bytes()) } else { head == dir.as_bytes() };
-    if !same {
-        return None;
-    }
-    let rest = &folder[dir.len()..];
-    if rest.is_empty() {
-        Some(true)
-    } else if dir.is_empty() || dir.ends_with(is_separator) || rest.starts_with(is_separator) {
-        Some(false)
-    } else {
-        None
-    }
+/// A folder text as a lookup key: case is ignored where the file system ignores it (ASCII
+/// only, as the paths compare).
+fn folded(text: &str) -> String {
+    if cfg!(any(windows, target_os = "macos")) { text.to_ascii_lowercase() } else { text.to_owned() }
 }
 
 impl ResultSet {
@@ -473,20 +433,25 @@ impl ResultSet {
                 is_within(&self.root, dir).then(|| (String::new(), true))
             })
             .collect();
-        // Per folder: 0 untouched, 1 a changed folder itself, 2 inside one.
+        // Per folder: 0 untouched, 1 a changed folder itself, 2 inside one (a changed folder's
+        // text is the folder's up to or through one of its separators: one lookup each).
+        let every = texts.iter().any(|(_, above)| *above);
+        let changed: std::collections::HashSet<String> =
+            texts.iter().filter(|(_, above)| !above).map(|(dir, _)| folded(dir)).collect();
         let state: Vec<u8> = self
             .folders
             .iter()
             .map(|folder| {
-                let mut state = 0;
-                for (dir, above) in &texts {
-                    match within_text(folder, dir) {
-                        Some(true) if !above => return 1,
-                        Some(_) => state = 2,
-                        None => {}
-                    }
+                let folder = folded(folder);
+                if changed.contains(&folder) {
+                    return 1;
                 }
-                state
+                let inside = every
+                    || changed.contains("")
+                    || folder
+                        .match_indices(is_separator)
+                        .any(|(at, _)| changed.contains(&folder[..at]) || changed.contains(&folder[..=at]));
+                if inside { 2 } else { 0 }
             })
             .collect();
         let mut group = vec![usize::MAX; self.folders.len()];
@@ -579,13 +544,6 @@ fn read_entry(path: &Path) -> Option<Entry> {
     })
 }
 
-/// What changed for the results after a job (spec 4.7): `set.probe(dirs, paths).verify()`,
-/// gone rows and added paths.
-pub fn verify(set: &ResultSet, dirs: &[PathBuf], paths: &[PathBuf]) -> (Vec<PathBuf>, Vec<(PathBuf, Entry)>) {
-    let verified = set.probe(dirs, paths).verify();
-    (verified.gone, verified.added)
-}
-
 /// The folder text `path`'s entry has under `root` (empty `root`: every drive, the whole
 /// parent); `None` outside it.
 pub fn folder_text(root: &Path, path: &Path) -> Option<String> {
@@ -624,9 +582,46 @@ impl ResultSet {
 }
 
 #[cfg(test)]
+impl ResultSet {
+    /// The folder text and the name `path` has here; `None` outside the scope.
+    fn place_of(&self, path: &Path) -> Option<(String, String)> {
+        let name = path.file_name()?.to_string_lossy().into_owned();
+        Some((folder_text(&self.root, path)?, name))
+    }
+
+    /// Adds `path` (under the scope) as a new entry, no matching line; false outside it.
+    pub fn push(&mut self, path: &Path, entry: Entry) -> bool {
+        let Some((folder, _)) = self.place_of(path) else { return false };
+        let parent = match self.folders.iter().position(|f| **f == *folder) {
+            Some(i) => i,
+            None => {
+                self.folders.push(folder.into());
+                self.folders.len() - 1
+            }
+        };
+        self.push_entry(entry, parent as u32);
+        true
+    }
+
+    /// Where `path` is among the entries.
+    pub fn index_of_path(&self, path: &Path) -> Option<usize> {
+        let (folder, name) = self.place_of(path)?;
+        let parent = self.folders.iter().position(|f| **f == *folder)? as u32;
+        (0..self.entries.len()).find(|&i| self.parent[i] == parent && self.entries[i].name == name)
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::path::MAIN_SEPARATOR as SEP;
+
+    /// What changed for the results after a job (spec 4.7): `set.probe(dirs, paths).verify()`,
+    /// gone rows and added paths.
+    fn verify(set: &ResultSet, dirs: &[PathBuf], paths: &[PathBuf]) -> (Vec<PathBuf>, Vec<(PathBuf, Entry)>) {
+        let verified = set.probe(dirs, paths).verify();
+        (verified.gone, verified.added)
+    }
 
     fn entry(name: &str) -> Entry {
         Entry { name: name.to_owned(), is_dir: false, flags: 0, size: 1, modified: None, created: None }
@@ -983,6 +978,9 @@ mod tests {
         let (gone, added) = verify(&set, &[root.join("a")], &[]);
         assert_eq!(gone, [root.join("a").join("gone").join("deep").join("x.txt")], "ab is not inside a");
         assert!(added.is_empty());
+        if cfg!(any(windows, target_os = "macos")) {
+            assert_eq!(verify(&set, &[root.join("A")], &[]).0, gone, "case is ignored");
+        }
         let (gone, _) = verify(&set, std::slice::from_ref(&root), &[]);
         assert_eq!(gone.len(), 2, "the scope itself changed: ab is gone too");
         let _ = std::fs::remove_dir_all(&root);

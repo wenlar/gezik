@@ -221,6 +221,25 @@ pub(crate) fn hdrop_paths(drop: windows::Win32::UI::Shell::HDROP) -> Vec<PathBuf
     paths
 }
 
+/// `bytes` in new movable global memory, which the caller frees unless a new owner takes it;
+/// `None`: out of memory.
+#[cfg(windows)]
+pub(crate) fn global_copy(bytes: &[u8]) -> Option<windows::Win32::Foundation::HGLOBAL> {
+    use windows::Win32::Foundation::GlobalFree;
+    use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock};
+    unsafe {
+        let memory = GlobalAlloc(GMEM_MOVEABLE, bytes.len()).ok()?;
+        let target = GlobalLock(memory) as *mut u8;
+        if target.is_null() {
+            let _ = GlobalFree(Some(memory));
+            return None;
+        }
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), target, bytes.len());
+        let _ = GlobalUnlock(memory);
+        Some(memory)
+    }
+}
+
 #[cfg(windows)]
 mod imp {
     use std::path::PathBuf;
@@ -230,7 +249,7 @@ mod imp {
         CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber, IsClipboardFormatAvailable,
         OpenClipboard, RegisterClipboardFormatW, SetClipboardData,
     };
-    use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock};
+    use windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
     use windows::Win32::System::Ole::{CF_DIB, CF_DIBV5, CF_HDROP, CF_UNICODETEXT, DROPEFFECT_COPY, DROPEFFECT_MOVE};
     use windows::Win32::UI::Shell::{CFSTR_PREFERREDDROPEFFECT, HDROP};
 
@@ -263,14 +282,7 @@ mod imp {
 
     fn put(format: u32, bytes: &[u8]) -> Result<(), ClipboardError> {
         unsafe {
-            let memory = GlobalAlloc(GMEM_MOVEABLE, bytes.len()).map_err(failed)?;
-            let target = GlobalLock(memory) as *mut u8;
-            if target.is_null() {
-                let _ = GlobalFree(Some(memory));
-                return Err(failed("out of memory"));
-            }
-            std::ptr::copy_nonoverlapping(bytes.as_ptr(), target, bytes.len());
-            let _ = GlobalUnlock(memory);
+            let memory = super::global_copy(bytes).ok_or_else(|| failed("out of memory"))?;
             // The clipboard owns the memory once this succeeds.
             if let Err(err) = SetClipboardData(format, Some(HANDLE(memory.0))) {
                 let _ = GlobalFree(Some(memory));

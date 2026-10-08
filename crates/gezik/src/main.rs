@@ -481,7 +481,7 @@ fn apply_config_and_start(
 fn resolve_start(settings: &Settings, cli: Option<PathBuf>, saved: Option<&Session>) -> StartPlan {
     let saved = saved.filter(|_| settings.session.restore);
     // Absolute, so the address bar parts and "up" work for `gezik .` too.
-    let cli = cli.map(|path| std::path::absolute(&path).unwrap_or(path));
+    let cli = cli.map(start::absolute);
     let dirs = gezik_config::paths::KnownDirs::system();
     start::plan_start(
         &settings.start_folder,

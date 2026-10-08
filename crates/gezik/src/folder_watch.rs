@@ -4,8 +4,9 @@
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 
+use gezik_config::lock;
 use gezik_core::ops::paths::same_path;
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
@@ -40,8 +41,15 @@ impl FolderWatch {
         let shared = self.0.clone();
         let folder = folder.map(Path::to_path_buf);
         std::thread::spawn(move || {
-            // The old watch goes first (stopping it may wait on its folder).
-            let old = lock(&shared.watcher).take();
+            // The old watch goes first (stopping it may wait on its folder). A newer watch
+            // started meanwhile owns the slot: leave it (and the dropping) to that one.
+            let old = {
+                let mut slot = lock(&shared.watcher);
+                if shared.generation.load(Ordering::SeqCst) != generation {
+                    return;
+                }
+                slot.take()
+            };
             drop(old);
             let Some(folder) = folder else { return };
             if let Some(watcher) = start(&shared, generation, &folder) {
@@ -121,10 +129,6 @@ fn concerns(event: &Event, folder: &Path) -> bool {
             .paths
             .iter()
             .any(|path| path.parent().is_some_and(|parent| same_path(parent, folder)) || same_path(path, folder))
-}
-
-fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 #[cfg(test)]

@@ -1230,6 +1230,8 @@ pub struct WindowState {
     pub height: u32,
     pub x: Option<i32>,
     pub y: Option<i32>,
+    /// Opens maximized; the size and position above are then its normal (restored) rect.
+    pub maximized: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -1308,6 +1310,7 @@ impl State {
                 height: u32::try_from(int("height")?).ok().filter(|h| *h >= 150)?,
                 x: coord("x"),
                 y: coord("y"),
+                maximized: window.get("maximized").and_then(|v| v.as_bool()).unwrap_or(false),
             })
         });
         let sidebar_width = table
@@ -1401,6 +1404,9 @@ impl State {
             if let (Some(x), Some(y)) = (w.x, w.y) {
                 window.insert("x".into(), toml::Value::Integer(x.into()));
                 window.insert("y".into(), toml::Value::Integer(y.into()));
+            }
+            if w.maximized {
+                window.insert("maximized".into(), toml::Value::Boolean(true));
             }
             root.insert("window".into(), toml::Value::Table(window));
         }
@@ -1640,13 +1646,13 @@ reduce-motion = \"yes\"
     #[test]
     fn state_round_trips() {
         let state = State {
-            window: Some(WindowState { width: 1000, height: 700, x: Some(-50), y: Some(30) }),
+            window: Some(WindowState { width: 1000, height: 700, x: Some(-50), y: Some(30), maximized: true }),
             sidebar_width: None,
             ..State::default()
         };
         assert_eq!(State::parse(&state.to_toml()), state);
         let no_position = State {
-            window: Some(WindowState { width: 800, height: 600, x: None, y: None }),
+            window: Some(WindowState { width: 800, height: 600, x: None, y: None, maximized: false }),
             sidebar_width: None,
             ..State::default()
         };

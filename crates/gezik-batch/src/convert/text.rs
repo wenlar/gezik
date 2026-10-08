@@ -12,9 +12,11 @@
 //! valid in the source encoding, and characters the target cannot hold, fail the file with
 //! the line they are on; nothing is left at the output then.
 
+use crate::archive::cancelled;
+use crate::archive::io::read_full;
 use std::fmt;
 use std::fs::File;
-use std::io::{self, BufWriter, Read, Write};
+use std::io::{self, BufWriter, Write};
 use std::path::Path;
 
 use chardetng::{EncodingDetector, Iso2022JpDetection, Utf8Detection};
@@ -170,10 +172,6 @@ pub fn is_binary(err: &io::Error) -> bool {
     err.get_ref().is_some_and(|inner| inner.is::<LooksBinary>())
 }
 
-fn cancelled() -> io::Error {
-    io::Error::new(io::ErrorKind::Interrupted, "cancelled")
-}
-
 /// An encoding by label; "replacement" and "x-user-defined" are not taken.
 fn by_label(label: &str) -> io::Result<&'static Encoding> {
     Encoding::for_label(label.trim().as_bytes())
@@ -192,20 +190,6 @@ pub fn convert_text(input: &Path, output: &Path, options: &TextOptions, stop: &d
         let _ = std::fs::remove_file(output);
     }
     result
-}
-
-/// Reads up to `buf.len()` bytes, fewer only at the end of the file.
-fn read_full(src: &mut impl Read, buf: &mut [u8]) -> io::Result<usize> {
-    let mut n = 0;
-    while n < buf.len() {
-        match src.read(&mut buf[n..]) {
-            Ok(0) => break,
-            Ok(k) => n += k,
-            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
-            Err(e) => return Err(e),
-        }
-    }
-    Ok(n)
 }
 
 fn convert(input: &Path, output: &Path, options: &TextOptions, stop: &dyn Fn() -> bool) -> io::Result<()> {

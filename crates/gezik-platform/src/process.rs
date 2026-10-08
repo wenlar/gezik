@@ -364,7 +364,7 @@ impl ChildProcess {
     }
 
     /// The ids of the processes it is made of now (itself and what it started).
-    #[cfg(windows)]
+    #[cfg(all(windows, test))]
     pub fn process_ids(&self) -> Vec<u32> {
         self.job.process_ids()
     }
@@ -424,6 +424,7 @@ impl Job {
         let _ = unsafe { TerminateJobObject(self.0, 1) };
     }
 
+    #[cfg(test)]
     fn process_ids(&self) -> Vec<u32> {
         use windows::Win32::System::JobObjects::{
             JOBOBJECT_BASIC_PROCESS_ID_LIST, JobObjectBasicProcessIdList, QueryInformationJobObject,

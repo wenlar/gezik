@@ -19,6 +19,7 @@ use gezik_search::name::NameMatcher;
 use gezik_search::query::{Query, QueryError, QueryOptions};
 use gezik_search::results::ResultSet;
 use gezik_search::run::{Event, Running, Summary, plan_walk, send_whole, start_with};
+use gezik_search::walk::Walk;
 use slint::ComponentHandle;
 
 use crate::AppWindow;
@@ -174,6 +175,8 @@ enum Live {
     Wait,
     /// More than the cache holds: Enter searches.
     Large,
+    /// Everything answers here but not this name (it would walk at every pause): Enter searches.
+    Enter,
     /// A network folder: Enter searches.
     Never,
     /// No cache for this scope and these rules (none yet, dropped when idle, or another key):
@@ -181,9 +184,12 @@ enum Live {
     Warm,
 }
 
-fn live_step(names: &Names, key: &CacheKey) -> Live {
+/// `asks`: Everything can be asked for the name typed (`everything::translate`).
+fn live_step(names: &Names, key: &CacheKey, asks: bool) -> Live {
     match names {
-        Names::Ready(k, _) | Names::NoCache(k, true) if k == key => Live::Now,
+        Names::Ready(k, _) if k == key => Live::Now,
+        Names::NoCache(k, true) if k == key && asks => Live::Now,
+        Names::NoCache(k, true) if k == key => Live::Enter,
         Names::Building(k, _) if k == key => Live::Wait,
         Names::TooLarge(k) if k == key => Live::Large,
         Names::NoCache(k, false) if k == key => Live::Never,
@@ -305,6 +311,19 @@ pub type FoundPath = (PathBuf, gezik_core::Entry);
 pub fn split_own(added: Vec<FoundPath>, own: &[PathBuf]) -> (Vec<FoundPath>, Vec<FoundPath>) {
     let own: std::collections::HashSet<&PathBuf> = own.iter().collect();
     added.into_iter().partition(|(path, _)| own.contains(path))
+}
+
+/// Whether this search would find `found` (made by a job started elsewhere): its criteria,
+/// its text in files, and the walk's hidden and skip rules.
+fn search_finds(query: &Query, walk: &Walk, (path, e): &FoundPath) -> bool {
+    gezik_search::everything::kept(path, &walk.roots, e.flags, &walk.rules, &std::collections::HashSet::new())
+        && query.passes(&e.name, e.is_dir, e.size, e.modified)
+        && query.content().is_none_or(|content| {
+            content.reads(&e.name, e.size)
+                && content
+                    .find_in_file(path, &AtomicBool::new(false), &gezik_platform::decode_ansi)
+                    .is_ok_and(|found| found.is_some())
+        })
 }
 
 /// Where a check's verdict goes.
@@ -589,13 +608,17 @@ impl Searches {
             return;
         }
         let key = self.cache_key(&draft);
-        let step = live_step(&self.0.names.borrow(), &key);
+        // Only the name decides; any root stands in for every drive's.
+        let root = draft.scope.folder().unwrap_or(Path::new("/")).to_path_buf();
+        let asks = gezik_search::everything::translate(&draft, &[root]).is_some();
+        let step = live_step(&self.0.names.borrow(), &key, asks);
         match step {
             Live::Now => {
                 self.0.typing.start(slint::TimerMode::SingleShot, TYPING, || with_current(|s| s.run(false, true)))
             }
             Live::Wait => self.0.live_waiting.set(true),
             Live::Large => self.0.view.note("Large folder: press Enter to search".to_owned()),
+            Live::Enter => self.0.view.note("Press Enter to search".to_owned()),
             Live::Never => {}
             Live::Warm => {
                 self.0.live_waiting.set(true);
@@ -861,26 +884,23 @@ impl Searches {
         let all: Vec<PathBuf> = change.own_paths.iter().chain(&change.paths).cloned().collect();
         let Some(probe) = self.0.view.results_probe(&change.dirs, &all) else { return };
         drop(all);
-        let (max_size, max_results) = {
+        let (max_size, max_results, skip) = {
             let settings = self.0.settings.borrow();
-            (settings.content_max_size, settings.max_results)
+            (settings.content_max_size, settings.max_results, settings.skip.clone())
         };
+        let shown = Searches::view_shown();
         let weak = self.0.window.clone();
         let spawned = std::thread::Builder::new().name("gezik-results-check".into()).spawn(move || {
+            gezik_platform::priority::lower_this_thread();
             let verified = probe.verify();
             let (mut added, mut others) = split_own(verified.added, &change.own_paths);
             if !others.is_empty() {
                 // Not made from these results: only what this search would find.
                 match Query::compile(&key.1, &QueryOptions::local(max_size, max_results)) {
-                    Ok(query) => others.retain(|(path, e)| {
-                        query.passes(&e.name, e.is_dir, e.size, e.modified)
-                            && query.content().is_none_or(|content| {
-                                content.reads(&e.name, e.size)
-                                    && content
-                                        .find_in_file(path, &AtomicBool::new(false), &gezik_platform::decode_ansi)
-                                        .is_ok_and(|found| found.is_some())
-                            })
-                    }),
+                    Ok(query) => {
+                        let walk = plan_walk(&key.1, &skip, shown);
+                        others.retain(|found| search_finds(&query, &walk, found));
+                    }
                     Err(_) => others.clear(),
                 }
             }
@@ -1380,18 +1400,20 @@ mod tests {
     #[test]
     fn typing_reads_the_cache_again_when_it_is_gone_or_for_other_rules() {
         let here = key("/w");
-        assert_eq!(live_step(&Names::None, &here), Live::Warm, "dropped when idle: read again");
+        assert_eq!(live_step(&Names::None, &here, true), Live::Warm, "dropped when idle: read again");
         let cache = Arc::new(NameCache::default());
-        assert_eq!(live_step(&Names::Ready(here.clone(), cache.clone()), &here), Live::Now);
-        assert_eq!(live_step(&Names::Ready(key("/x"), cache), &here), Live::Warm, "another scope");
+        assert_eq!(live_step(&Names::Ready(here.clone(), cache.clone()), &here, true), Live::Now);
+        assert_eq!(live_step(&Names::Ready(key("/x"), cache), &here, true), Live::Warm, "another scope");
         let hidden = CacheKey { shown: Some((true, true)), ..here.clone() };
-        assert_eq!(live_step(&Names::Ready(hidden.clone(), Arc::default()), &here), Live::Warm, "other rules");
+        assert_eq!(live_step(&Names::Ready(hidden.clone(), Arc::default()), &here, true), Live::Warm, "other rules");
         let flag = Arc::new(AtomicBool::new(false));
-        assert_eq!(live_step(&Names::Building(here.clone(), flag.clone()), &here), Live::Wait);
-        assert_eq!(live_step(&Names::Building(hidden, flag), &here), Live::Warm);
-        assert_eq!(live_step(&Names::TooLarge(here.clone()), &here), Live::Large);
-        assert_eq!(live_step(&Names::NoCache(here.clone(), true), &here), Live::Now, "Everything");
-        assert_eq!(live_step(&Names::NoCache(here.clone(), false), &here), Live::Never, "network");
+        assert_eq!(live_step(&Names::Building(here.clone(), flag.clone()), &here, true), Live::Wait);
+        assert_eq!(live_step(&Names::Building(hidden, flag), &here, true), Live::Warm);
+        assert_eq!(live_step(&Names::TooLarge(here.clone()), &here, true), Live::Large);
+        assert_eq!(live_step(&Names::NoCache(here.clone(), true), &here, true), Live::Now, "Everything");
+        let walks = live_step(&Names::NoCache(here.clone(), true), &here, false);
+        assert_eq!(walks, Live::Enter, "a name Everything cannot ask for would walk at every pause");
+        assert_eq!(live_step(&Names::NoCache(here.clone(), false), &here, true), Live::Never, "network");
     }
 
     #[test]
@@ -1465,6 +1487,24 @@ mod tests {
             (0..MAX_QUEUED_PATHS).map(|i| (PathBuf::from(format!("/w/a{i}")), PathBuf::from(format!("/w/b{i}"))));
         let large = merge(None, JobChange { moves: moves.collect(), ..job("/w", false) }).unwrap();
         assert!(large.moves.is_empty() && large.paths.len() == 1);
+    }
+
+    #[test]
+    fn a_check_keeps_only_what_the_walk_would_find() {
+        let spec = SearchSpec { pattern: "*.txt".into(), ..SearchSpec::new(Scope::Folder("/w".into())) };
+        let query = Query::compile(&spec, &QueryOptions::local(0, 100)).unwrap();
+        let rules = gezik_search::walk::WalkRules::new(Some((false, false)), &["skipped".to_owned()], Vec::new());
+        let walk = Walk::new(vec![PathBuf::from("/w")], false, 1, rules);
+        let found = |path: &str, flags: u8| {
+            let path = PathBuf::from(path);
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            (path, gezik_core::Entry { name, is_dir: false, flags, size: 0, modified: None, created: None })
+        };
+        assert!(search_finds(&query, &walk, &found("/w/a/x.txt", 0)));
+        assert!(!search_finds(&query, &walk, &found("/w/a/x.pdf", 0)), "the criteria");
+        assert!(!search_finds(&query, &walk, &found("/w/.git/x.txt", 0)), "under a dot folder the view hides");
+        assert!(!search_finds(&query, &walk, &found("/w/skipped/x.txt", 0)), "under a skipped folder");
+        assert!(!search_finds(&query, &walk, &found("/w/x.txt", gezik_core::Entry::HIDDEN)), "hidden");
     }
 
     #[test]

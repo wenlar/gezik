@@ -94,10 +94,6 @@ impl Query {
     pub fn max_results(&self) -> usize {
         self.max_results
     }
-
-    pub fn flat(&self) -> bool {
-        self.flat
-    }
 }
 
 /// A folder item as a list entry.
@@ -149,7 +145,7 @@ mod tests {
     #[test]
     fn the_flat_view_and_content_take_files_only() {
         let q = Query::compile(&SearchSpec::flat_view("/w".into()), &options()).unwrap();
-        assert!(q.passes("a", false, 0, None) && !q.passes("a", true, 0, None) && q.flat());
+        assert!(q.passes("a", false, 0, None) && !q.passes("a", true, 0, None));
         let mut s = spec();
         s.content = "x".into();
         let q = Query::compile(&s, &options()).unwrap();

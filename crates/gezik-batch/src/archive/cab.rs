@@ -111,7 +111,7 @@ impl ArchiveSource for CabSource {
                 continue;
             }
             let result = match self.cabinet.read_file(&info.name) {
-                Ok(mut r) => write_file(&mut r, &path, Some(info.size), &info.meta, cx).map(|()| true),
+                Ok(mut r) => write_file(&mut r, dest, &path, Some(info.size), &info.meta, cx).map(|()| true),
                 Err(e) => Err(Stop::Read(e)),
             };
             report(&name, result, cx)?;

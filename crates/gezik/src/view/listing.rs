@@ -193,15 +193,17 @@ pub fn filtered_listing(dir: &Path, full: &Rc<Vec<Entry>>, pattern: &Pattern) ->
 /// Whether an entry of `entries` other than `except` is called `name` (ignoring case where
 /// the file system does).
 pub fn name_taken(entries: &[Entry], name: &str, except: &str) -> bool {
-    let fold = cfg!(any(windows, target_os = "macos"));
-    entries.iter().filter(|e| e.name != except).any(|e| {
-        if fold {
-            // Character by character: no allocation per entry.
-            e.name.chars().flat_map(char::to_lowercase).eq(name.chars().flat_map(char::to_lowercase))
-        } else {
-            e.name == name
-        }
-    })
+    entries.iter().filter(|e| e.name != except).any(|e| same_name(&e.name, name))
+}
+
+/// Whether `a` and `b` name the same entry (ignoring case where the file system does).
+pub fn same_name(a: &str, b: &str) -> bool {
+    if cfg!(any(windows, target_os = "macos")) {
+        // Character by character: no allocation per entry.
+        a.chars().flat_map(char::to_lowercase).eq(b.chars().flat_map(char::to_lowercase))
+    } else {
+        a == b
+    }
 }
 
 #[cfg(test)]

@@ -18,21 +18,26 @@ pub fn catch_up_pointer(window: &impl HasWindowHandle) {
     let Ok(handle) = window.window_handle() else { return };
     let RawWindowHandle::Win32(win32) = handle.as_raw() else { return };
     let hwnd = HWND(win32.hwnd.get() as *mut _);
+    let Some(cursor) = client_cursor(hwnd) else { return };
+    // SAFETY: a plain Win32 call on Gezik's own window.
+    let _ = unsafe { PostMessageW(Some(hwnd), WM_MOUSEMOVE, WPARAM(0), LPARAM(mouse_lparam(cursor.x, cursor.y))) };
+}
+
+/// The pointer in `hwnd`'s client coordinates, if it is over its client area and no other
+/// window covers it there.
+pub(crate) fn client_cursor(hwnd: HWND) -> Option<POINT> {
     let mut cursor = POINT::default();
     let mut client = RECT::default();
     // SAFETY: plain Win32 calls on Gezik's own window with valid out pointers.
     unsafe {
         if GetCursorPos(&mut cursor).is_err() || GetAncestor(WindowFromPoint(cursor), GA_ROOT) != hwnd {
-            return;
+            return None;
         }
-        if !ScreenToClient(hwnd, &mut cursor).as_bool() {
-            return;
+        if !ScreenToClient(hwnd, &mut cursor).as_bool() || GetClientRect(hwnd, &mut client).is_err() {
+            return None;
         }
-        if GetClientRect(hwnd, &mut client).is_err() || !inside(&client, cursor) {
-            return;
-        }
-        let _ = PostMessageW(Some(hwnd), WM_MOUSEMOVE, WPARAM(0), LPARAM(mouse_lparam(cursor.x, cursor.y)));
     }
+    inside(&client, cursor).then_some(cursor)
 }
 
 fn inside(rect: &RECT, at: POINT) -> bool {
@@ -40,7 +45,7 @@ fn inside(rect: &RECT, at: POINT) -> bool {
 }
 
 /// A mouse message's position: client x in the low word, y in the high one.
-fn mouse_lparam(x: i32, y: i32) -> isize {
+pub(crate) fn mouse_lparam(x: i32, y: i32) -> isize {
     (((y as u32 & 0xFFFF) << 16) | (x as u32 & 0xFFFF)) as isize
 }
 

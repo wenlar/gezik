@@ -21,6 +21,11 @@ mod warning;
 pub use color::Color;
 pub use warning::Warning;
 
+/// Locks `mutex`, going on with its data even if a thread panicked while holding it.
+pub fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// A fresh, empty folder for a test.
 #[cfg(test)]
 pub(crate) fn test_dir(name: &str) -> std::path::PathBuf {

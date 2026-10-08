@@ -6,7 +6,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -18,18 +17,14 @@ use gezik_platform::everything::{self as ipc, EverythingError};
 use crate::content::Found;
 use crate::query::Query;
 use crate::results::{Batch, ResultSet, folder_text};
-use crate::run::{BATCH_ITEMS, Event, Running, Summary, send_whole, start_with};
+use crate::run::{BATCH_ITEMS, Event, Summary, send_whole};
 use crate::walk::{Problems, Walk, WalkRules, threads_for};
 
 pub const SEARCH_MATCH_CASE: u32 = 0x0000_0001;
-pub const REQUEST_NAME: u32 = 0x0000_0001;
-pub const REQUEST_PATH: u32 = 0x0000_0002;
 pub const REQUEST_FULL_PATH_AND_NAME: u32 = 0x0000_0004;
-pub const REQUEST_EXTENSION: u32 = 0x0000_0008;
 pub const REQUEST_SIZE: u32 = 0x0000_0010;
 pub const REQUEST_DATE_CREATED: u32 = 0x0000_0020;
 pub const REQUEST_DATE_MODIFIED: u32 = 0x0000_0040;
-pub const REQUEST_DATE_ACCESSED: u32 = 0x0000_0080;
 pub const REQUEST_ATTRIBUTES: u32 = 0x0000_0100;
 pub const ITEM_FOLDER: u32 = 0x1;
 pub const SORT_NAME_ASCENDING: u32 = 1;
@@ -60,19 +55,8 @@ pub struct Item {
     pub attributes: Option<u32>,
 }
 
-/// An `EVERYTHING_IPC_QUERY2` with its search text, from the first item.
-pub fn encode_query2(
-    reply_window: u32,
-    reply_id: u32,
-    search: &str,
-    flags: u32,
-    max_results: u32,
-    request: u32,
-) -> Vec<u8> {
-    encode_query2_at(reply_window, reply_id, search, flags, 0, max_results, request)
-}
-
-/// [`encode_query2`] from item `offset` of the answer (sorted by name, so pages follow on).
+/// An `EVERYTHING_IPC_QUERY2` with its search text, from item `offset` of the answer (sorted
+/// by name, so pages follow on).
 pub fn encode_query2_at(
     reply_window: u32,
     reply_id: u32,
@@ -120,10 +104,13 @@ fn file_time(ticks: u64) -> Option<SystemTime> {
 }
 
 /// The items of an `EVERYTHING_IPC_LIST2` answer (the fields its `request_flags` says it holds,
-/// in bit order; past the attributes nothing is read).
+/// in bit order); an answer with fields [`REQUEST`] does not ask for is not read.
 pub fn decode_list2(bytes: &[u8]) -> Result<Vec<Item>, String> {
     let count = word(bytes, 4)? as usize;
     let request = word(bytes, 12)?;
+    if request & !REQUEST != 0 {
+        return Err("Everything's answer has fields Gezik did not ask for".to_owned());
+    }
     let mut items = Vec::with_capacity(count.min(bytes.len() / 8));
     for k in 0..count {
         let flags = word(bytes, 20 + k * 8)?;
@@ -136,20 +123,14 @@ pub fn decode_list2(bytes: &[u8]) -> Result<Vec<Item>, String> {
             modified: None,
             attributes: None,
         };
-        let (mut name, mut folder) = (String::new(), String::new());
         for bit in (0..9).map(|shift| 1u32 << shift) {
             if request & bit == 0 {
                 continue;
             }
             match bit {
-                REQUEST_NAME | REQUEST_PATH | REQUEST_FULL_PATH_AND_NAME | REQUEST_EXTENSION => {
+                REQUEST_FULL_PATH_AND_NAME => {
                     let (value, next) = text(bytes, at)?;
-                    match bit {
-                        REQUEST_NAME => name = value,
-                        REQUEST_PATH => folder = value,
-                        REQUEST_FULL_PATH_AND_NAME => item.path = value,
-                        _ => {}
-                    }
+                    item.path = value;
                     at = next;
                 }
                 REQUEST_SIZE => {
@@ -164,16 +145,12 @@ pub fn decode_list2(bytes: &[u8]) -> Result<Vec<Item>, String> {
                     item.modified = file_time(quad(bytes, at)?);
                     at += 8;
                 }
-                REQUEST_DATE_ACCESSED => at += 8,
                 REQUEST_ATTRIBUTES => {
                     item.attributes = Some(word(bytes, at)?);
                     at += 4;
                 }
                 _ => {}
             }
-        }
-        if item.path.is_empty() && !name.is_empty() {
-            item.path = if folder.is_empty() { name } else { format!("{}\\{name}", folder.trim_end_matches('\\')) };
         }
         items.push(item);
     }
@@ -212,28 +189,9 @@ fn name_term(body: &str) -> String {
     format!("wfn:{}", quote_if(&text))
 }
 
-/// Days since 1970-01-01 of a calendar date (proleptic Gregorian).
-fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
-    let year = if month <= 2 { year - 1 } else { year };
-    let era = year.div_euclid(400);
-    let yoe = year - era * 400;
-    let month = i64::from(month);
-    let doy = (153 * (if month > 2 { month - 3 } else { month + 9 }) + 2) / 5 + i64::from(day) - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe - 719_468
-}
-
 /// `days` since 1970-01-01 as `YYYY-MM-DD` (Everything reads ISO 8601 dates).
 fn iso_day(days: i64) -> String {
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + i64::from(month <= 2);
+    let (year, month, day) = gezik_platform::civil_from_days(days);
     format!("{year:04}-{month:02}-{day:02}")
 }
 
@@ -324,19 +282,20 @@ pub fn translate_at(spec: &SearchSpec, roots: &[PathBuf], now: SystemTime, utc_o
         Ok(since) => since.as_secs() as i64,
         Err(before) => -(before.duration().as_secs() as i64),
     };
+    // Gezik's today and this year have no end (a time just past midnight, a clock running
+    // late); Everything's `dm:today` and `dm:thisyear` do.
+    let today = (unix + utc_offset).div_euclid(86_400);
     match spec.modified {
         DateRange::Any => {}
-        // Everything's today and this year start at local midnight, as Gezik's do.
-        DateRange::Today => parts.push("dm:today".to_owned()),
-        DateRange::ThisYear => parts.push("dm:thisyear".to_owned()),
+        DateRange::Today => parts.push(format!("dm:>={}", iso_day(today - 1))),
+        DateRange::ThisYear => parts.push(format!("dm:>={:04}-12-31", gezik_platform::civil_from_days(today).0 - 1)),
         DateRange::LastDays(days) => {
             let from = (unix - i64::from(days) * 86_400 + utc_offset).div_euclid(86_400);
             parts.push(format!("dm:>={}", iso_day(from - 1)));
         }
         DateRange::Between(a, b) => {
             let (first, last) = if a <= b { (a, b) } else { (b, a) };
-            let day = |d: gezik_core::search::Day| days_from_civil(i64::from(d.year), d.month.into(), d.day.into());
-            parts.push(format!("dm:>={} dm:<={}", iso_day(day(first) - 1), iso_day(day(last) + 1)));
+            parts.push(format!("dm:>={} dm:<={}", iso_day(first.number() - 1), iso_day(last.number() + 1)));
         }
     }
     Some((parts.join(" "), flags))
@@ -714,7 +673,7 @@ impl<'a> Reader<'a> {
                 let handles: Vec<_> = chunk
                     .chunks(per)
                     .map(|part| {
-                        scope.spawn(move || {
+                        let handle = scope.spawn(move || {
                             gezik_platform::priority::lower_this_thread();
                             part.iter()
                                 .map(|(path, entry)| {
@@ -724,10 +683,15 @@ impl<'a> Reader<'a> {
                                     content.find_in_file(path, cancel, &gezik_platform::decode_ansi).ok().flatten()
                                 })
                                 .collect::<Vec<_>>()
-                        })
+                        });
+                        (part.len(), handle)
                     })
                     .collect();
-                handles.into_iter().flat_map(|handle| handle.join().unwrap_or_default()).collect()
+                // A part that panicked keeps its place: its lines are none, not the next part's.
+                handles
+                    .into_iter()
+                    .flat_map(|(len, handle)| handle.join().unwrap_or_else(|_| vec![None; len]))
+                    .collect()
             });
             let mut batch = Batch::default();
             for ((path, entry), line) in chunk.iter().zip(lines) {
@@ -766,32 +730,6 @@ impl<'a> Reader<'a> {
             ..Summary::default()
         }));
     }
-}
-
-/// Starts `spec`: through Everything when it can answer (spec 3.6), else the walk, on the same
-/// flag. `on`: `[search] everything = "auto"`.
-pub fn start(
-    spec: SearchSpec,
-    walk: Walk,
-    query: Query,
-    on: bool,
-    sink: impl Fn(Event) + Send + Sync + 'static,
-) -> Running {
-    let running = Running::default();
-    let flag = running.flag();
-    let again = running.clone();
-    let _ = std::thread::Builder::new().name("gezik-search-everything".into()).spawn(move || {
-        let sink = Arc::new(sink);
-        match search(&spec, &walk, &query, on, &flag, &*sink) {
-            Ok(()) => {}
-            Err(Fallback::Cancelled) => sink(Event::Done(Summary { cancelled: true, ..Summary::default() })),
-            Err(_) => {
-                let sink = sink.clone();
-                start_with(walk, query, again, move |event| sink(event));
-            }
-        }
-    });
-    running
 }
 
 #[cfg(test)]
@@ -840,7 +778,7 @@ mod tests {
 
     #[test]
     fn a_query_is_seven_words_and_the_text() {
-        let bytes = encode_query2(0x1234, 77, "a b", SEARCH_MATCH_CASE, 500, REQUEST);
+        let bytes = encode_query2_at(0x1234, 77, "a b", SEARCH_MATCH_CASE, 0, 500, REQUEST);
         let word = |i: usize| u32::from_le_bytes(bytes[i * 4..i * 4 + 4].try_into().unwrap());
         let words: Vec<u32> = (0..7).map(word).collect();
         assert_eq!(words, [0x1234, 77, SEARCH_MATCH_CASE, 0, 500, REQUEST, SORT_NAME_ASCENDING]);
@@ -859,6 +797,8 @@ mod tests {
         assert_eq!(items[0].attributes, Some(0x22));
         assert!(decode_list2(&bytes[..bytes.len() - 3]).is_err(), "cut short");
         assert!(decode_list2(&[1, 2]).is_err());
+        let other = answer(&[(r"D:\Work\a.txt", false, 5)], REQUEST | 0x0000_0080);
+        assert!(decode_list2(&other).is_err(), "a field it does not read (the date accessed)");
     }
 
     fn spec(pattern: &str) -> SearchSpec {
@@ -892,7 +832,7 @@ mod tests {
         s.kind = KindFilter::Folders;
         s.size.min = Some(500);
         s.modified = DateRange::Today;
-        assert_eq!(translate(&s, &roots()).unwrap().0, r#""D:\Work\" folder: size:>=500 dm:today"#);
+        assert!(translate(&s, &roots()).unwrap().0.starts_with(r#""D:\Work\" folder: size:>=500 dm:>="#));
         let flat = SearchSpec::flat_view(r"D:\Work".into());
         assert_eq!(translate(&flat, &roots()).unwrap().0, r#""D:\Work\" file:"#);
         let drives = [PathBuf::from(r"C:\"), PathBuf::from(r"D:\")];
@@ -901,26 +841,31 @@ mod tests {
         assert!(translate(&s, &roots()).unwrap().0.contains("dm:>="));
     }
 
+    fn day(text: &str) -> gezik_core::search::Day {
+        gezik_core::search::Day::parse(text).unwrap()
+    }
+
     /// 2026-10-08 12:00 UTC.
     fn noon() -> SystemTime {
-        SystemTime::UNIX_EPOCH + Duration::from_secs((days_from_civil(2026, 10, 8) * 86_400 + 43_200) as u64)
+        SystemTime::UNIX_EPOCH + Duration::from_secs((day("2026-10-08").number() * 86_400 + 43_200) as u64)
     }
 
     #[test]
     fn dates_go_a_day_wider_than_gezik_checks() {
-        assert_eq!(days_from_civil(1970, 1, 1), 0);
-        assert_eq!(iso_day(days_from_civil(2024, 2, 29)), "2024-02-29");
-        assert_eq!(iso_day(days_from_civil(2024, 3, 1) - 1), "2024-02-29");
+        assert_eq!(iso_day(day("2024-03-01").number() - 1), "2024-02-29");
         assert_eq!(iso_day(-1), "1969-12-31");
         let mut s = spec("");
         s.modified = DateRange::LastDays(7);
         // From 2026-10-01 15:00 local (UTC+3), a day before.
         assert_eq!(translate_at(&s, &roots(), noon(), 3 * 3600).unwrap().0, r#""D:\Work\" dm:>=2026-09-30"#);
-        let day = |text: &str| gezik_core::search::Day::parse(text).unwrap();
         s.modified = DateRange::Between(day("2026-06-30"), day("2026-01-01"));
         assert_eq!(translate_at(&s, &roots(), noon(), 0).unwrap().0, r#""D:\Work\" dm:>=2025-12-31 dm:<=2026-07-01"#);
+        // Today and this year have no end, as Gezik's: open-ended from the day before.
+        s.modified = DateRange::Today;
+        assert_eq!(translate_at(&s, &roots(), noon(), 0).unwrap().0, r#""D:\Work\" dm:>=2026-10-07"#);
+        assert_eq!(translate_at(&s, &roots(), noon(), 13 * 3600).unwrap().0, r#""D:\Work\" dm:>=2026-10-08"#);
         s.modified = DateRange::ThisYear;
-        assert_eq!(translate_at(&s, &roots(), noon(), 0).unwrap().0, r#""D:\Work\" dm:thisyear"#);
+        assert_eq!(translate_at(&s, &roots(), noon(), 0).unwrap().0, r#""D:\Work\" dm:>=2025-12-31"#);
     }
 
     #[test]
@@ -1052,7 +997,7 @@ mod tests {
         let windows = std::env::var("WINDIR").unwrap_or_else(|_| r"C:\Windows".into());
         let search = format!("\"{windows}\\\" wfn:notepad.exe");
         let bytes = gezik_platform::everything::query(
-            &|window, id| encode_query2(window, id, &search, 0, 100, REQUEST),
+            &|window, id| encode_query2_at(window, id, &search, 0, 0, 100, REQUEST),
             &AtomicBool::new(false),
             Duration::from_secs(5),
         )
