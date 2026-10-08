@@ -183,7 +183,7 @@ impl Filter {
 
     /// Whether a folder is on screen to filter; if not, the status bar says why.
     fn can_filter(&self) -> bool {
-        match unavailable_note(self.view.shows_drives(), self.view.folder().is_some()) {
+        match unavailable_note(self.view.shows_drives(), self.view.folder().is_some() || self.view.shows_results()) {
             Some(note) => {
                 self.view.note(note.to_owned());
                 false

@@ -493,10 +493,7 @@ impl PathBox {
         if shows_history(&typed, cfg!(windows)) {
             return self.show(self.history_list());
         }
-        let base = match self.0.nav.active_location() {
-            Location::Path(path) => Some(path),
-            Location::Drives => None,
-        };
+        let base = self.0.nav.active_location().folder().map(Path::to_path_buf);
         let Some((folder, prefix)) = completion_target(&expand(&typed), base.as_deref(), cfg!(windows)) else {
             return self.show(self.suggestions(Vec::new()));
         };

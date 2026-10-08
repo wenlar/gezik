@@ -37,8 +37,10 @@ pub struct Rules {
     pub include_extension: bool,
     /// Names typed by hand, by item.
     pub manual: HashMap<usize, String>,
-    /// Names in the folder that are not being renamed.
-    pub others: HashSet<String>,
+    /// Names in each item's folder that are not being renamed, by `Item::folder`.
+    pub others: Vec<HashSet<String>>,
+    /// The folders of search results are being read for `others`: no renaming yet.
+    pub reading: bool,
     pub lang: Lang,
     // Results, by display position.
     pub new: Vec<String>,
@@ -60,10 +62,16 @@ impl Rules {
                 new[position] = name.clone();
             }
         }
-        let others: HashSet<String> =
-            self.others.iter().map(|n| if IGNORE_CASE { n.to_lowercase() } else { n.clone() }).collect();
-        let existing =
-            |_: usize, name: &str| others.contains(&if IGNORE_CASE { name.to_lowercase() } else { name.to_owned() });
+        let others: Vec<HashSet<String>> = self
+            .others
+            .iter()
+            .map(|names| names.iter().map(|n| if IGNORE_CASE { n.to_lowercase() } else { n.clone() }).collect())
+            .collect();
+        let existing = |folder: usize, name: &str| {
+            others
+                .get(folder)
+                .is_some_and(|names| names.contains(&if IGNORE_CASE { name.to_lowercase() } else { name.to_owned() }))
+        };
         self.statuses = check(&items, &new, &existing, NameRules::current(), IGNORE_CASE);
         self.rule_errors = compiled.errors().to_vec();
         self.needs_taken = compiled.needs_taken();
@@ -126,13 +134,20 @@ impl Rules {
     }
 
     pub fn can_rename(&self) -> bool {
-        !self.waiting && self.changed() > 0 && self.blocked() == 0 && self.rule_errors.iter().all(Option::is_none)
+        !self.waiting
+            && !self.reading
+            && self.changed() > 0
+            && self.blocked() == 0
+            && self.rule_errors.iter().all(Option::is_none)
     }
 
     /// "1 duplicate name · 22 will change".
     pub fn footer(&self) -> String {
         let count = |want: fn(&Status) -> bool| self.statuses.iter().filter(|s| want(s)).count();
         let mut parts = Vec::new();
+        if self.reading {
+            parts.push("reading the folders…".to_owned());
+        }
         if self.waiting {
             parts.push("reading photo dates…".to_owned());
         }
@@ -485,12 +500,25 @@ impl BatchRename {
         self.0.open.get()
     }
 
-    /// Opens the layer for `items` (paths and whether each is a folder), in list order.
-    /// `others`: the folder's other names; `last`: the rules used last time.
-    pub fn open(&self, items: Vec<(PathBuf, Entry)>, others: Vec<String>, last: BatchRenameState) {
+    /// Opens the layer for `items` (paths and entries), in list order. `others`: the folder's
+    /// other names; `None` for search results, whose folders are read in the background (spec
+    /// 4.6: Rename waits for them). `last`: the rules used last time.
+    pub fn open(&self, items: Vec<(PathBuf, Entry)>, others: Option<Vec<String>>, last: BatchRenameState) {
         let Some(window) = self.0.window.upgrade() else { return };
         let selected: HashSet<String> = items.iter().map(|(_, e)| e.name.clone()).collect();
         let lang = Lang::from_code(&gezik_platform::language());
+        // Items are counted and checked per folder (search results come from many).
+        let mut folders: Vec<PathBuf> = Vec::new();
+        let mut folder_of = |path: &std::path::Path| {
+            let parent = path.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
+            match folders.iter().position(|f| *f == parent) {
+                Some(i) => i,
+                None => {
+                    folders.push(parent);
+                    folders.len() - 1
+                }
+            }
+        };
         // From the listing: the UI thread does not ask the file system.
         let list: Vec<Item> = items
             .iter()
@@ -502,7 +530,7 @@ impl BatchRename {
                     .and_then(|p| p.file_name())
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_default(),
-                folder: 0,
+                folder: folder_of(path),
                 size: if entry.is_dir { 0 } else { entry.size },
                 modified: entry.modified.and_then(gezik_platform::local_date_parts),
                 taken: None,
@@ -514,7 +542,11 @@ impl BatchRename {
                 order: (0..list.len()).collect(),
                 paths: items.into_iter().map(|(p, _)| p).collect(),
                 items: list,
-                others: others.into_iter().filter(|n| !selected.contains(n)).collect(),
+                others: match &others {
+                    Some(names) => vec![names.iter().filter(|n| !selected.contains(*n)).cloned().collect()],
+                    None => vec![HashSet::new(); folders.len()],
+                },
+                reading: others.is_none(),
                 include_extension: last.include_extension,
                 selected_rule: if last.rules.is_empty() { None } else { Some(0) },
                 rules: last.rules,
@@ -538,6 +570,9 @@ impl BatchRename {
         self.0.shown.borrow_mut().clear();
         window.set_rb_scroll(0.0);
         self.0.open.set(true);
+        if others.is_none() {
+            self.read_folders(folders);
+        }
         self.recompute();
         window.set_rb_open(true);
     }
@@ -639,6 +674,56 @@ impl BatchRename {
         window.set_rb_footer(r.footer().into());
         window.set_rb_can_rename(r.can_rename());
         window.set_rb_only_changed(only_changed);
+    }
+
+    /// Reads the names in each of `folders` on another thread (search results, spec 4.6).
+    fn read_folders(&self, folders: Vec<PathBuf>) {
+        let counter = self.0.opening.clone();
+        let opening = counter.load(Ordering::Relaxed);
+        let weak = self.0.window.clone();
+        let spawned = std::thread::Builder::new().name("gezik-rename-folders".into()).spawn(move || {
+            let names: Vec<HashSet<String>> = folders
+                .iter()
+                .map(|folder| {
+                    std::fs::read_dir(folder)
+                        .map(|entries| {
+                            entries
+                                .filter_map(Result::ok)
+                                .map(|e| e.file_name().to_string_lossy().into_owned())
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                })
+                .collect();
+            if counter.load(Ordering::Relaxed) != opening {
+                return;
+            }
+            let _ = weak.upgrade_in_event_loop(move |_| {
+                with_current(|layer| {
+                    if layer.0.opening.load(Ordering::Relaxed) != opening || !layer.is_open() {
+                        return;
+                    }
+                    {
+                        let mut r = layer.0.rules.borrow_mut();
+                        let selected: Vec<(usize, String)> =
+                            r.items.iter().map(|item| (item.folder, item.name.clone())).collect();
+                        let mut names = names;
+                        for (folder, name) in selected {
+                            if let Some(set) = names.get_mut(folder) {
+                                set.remove(&name);
+                            }
+                        }
+                        r.others = names;
+                        r.reading = false;
+                    }
+                    layer.recompute();
+                });
+            });
+        });
+        if spawned.is_err() {
+            // The names on disk are not known: Rename goes ahead, the job says what clashes.
+            self.0.rules.borrow_mut().reading = false;
+        }
     }
 
     /// Reads the photo dates on another thread, once per opening; `{taken}` falls back to
@@ -1018,9 +1103,24 @@ mod tests {
             order: (0..items.len()).collect(),
             items,
             paths,
-            others: others.iter().map(|s| s.to_string()).collect(),
+            others: vec![others.iter().map(|s| s.to_string()).collect()],
             ..Rules::default()
         }
+    }
+
+    #[test]
+    fn names_taken_count_in_each_items_own_folder() {
+        let mut m = model(&["a.txt", "c.txt"], &[]);
+        m.items[1].folder = 1;
+        m.others = vec![Default::default(), ["b.txt".to_owned()].into()];
+        m.manual.insert(0, "b.txt".to_owned());
+        m.manual.insert(1, "b.txt".to_owned());
+        m.recompute();
+        assert_eq!(m.statuses[0], Status::Changed, "b.txt is taken in the other folder only");
+        assert_eq!(m.statuses[1], Status::Exists);
+        m.reading = true;
+        assert!(!m.can_rename(), "the folders are still being read");
+        assert!(m.footer().starts_with("reading the folders"), "{}", m.footer());
     }
 
     #[test]

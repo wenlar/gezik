@@ -240,10 +240,20 @@ pub enum Action {
     ToggleStack,
     /// Opens the operations panel on its History.
     ShowHistory,
+    /// Opens the search bar on the folder shown (8a).
+    Search,
+    /// Every file under the folder in one list; again: back to the folder.
+    FlatView,
+    /// A search result's folder, with it selected.
+    ShowInFolder,
+    /// Copies the selected results keeping their folders under the search's scope.
+    CopyWithFolders,
+    /// The same as a move.
+    CutWithFolders,
 }
 
 impl Action {
-    pub const ALL: [Action; 63] = [
+    pub const ALL: [Action; 68] = [
         Action::NewTab,
         Action::CloseTab,
         Action::NextTab,
@@ -307,6 +317,11 @@ impl Action {
         Action::AddToStack,
         Action::ToggleStack,
         Action::ShowHistory,
+        Action::Search,
+        Action::FlatView,
+        Action::ShowInFolder,
+        Action::CopyWithFolders,
+        Action::CutWithFolders,
     ];
 
     pub fn name(self) -> &'static str {
@@ -374,6 +389,11 @@ impl Action {
             Action::AddToStack => "add-to-stack",
             Action::ToggleStack => "toggle-stack",
             Action::ShowHistory => "show-history",
+            Action::Search => "search",
+            Action::FlatView => "flat-view",
+            Action::ShowInFolder => "show-in-folder",
+            Action::CopyWithFolders => "copy-with-folders",
+            Action::CutWithFolders => "cut-with-folders",
         }
     }
 
@@ -517,6 +537,12 @@ impl Action {
             (Action::AddToStack, _) => &["mod+shift+s"],
             (Action::ToggleStack, _) => &[],
             (Action::ShowHistory, _) => &[],
+            // F3 is Mission Control's on macOS (spec 9.3).
+            (Action::Search, Platform::Mac) => &["mod+shift+f"],
+            (Action::Search, Platform::Other) => &["mod+shift+f", "f3"],
+            (Action::FlatView, _) => &["mod+b"],
+            (Action::ShowInFolder, _) => &["mod+shift+e"],
+            (Action::CopyWithFolders | Action::CutWithFolders, _) => &[],
         }
     }
 }
@@ -703,7 +729,7 @@ mod tests {
             assert_eq!(fixed_owner(&cmd_option, Platform::Mac), None);
         }
         assert_eq!((Action::pin(0), Action::pin(10)), (None, None));
-        assert_eq!(Action::ALL.len(), 63);
+        assert_eq!(Action::ALL.len(), 68);
         assert_eq!(other.action_for(&chord("ctrl+1")), Some(Action::Tab1), "Ctrl+1 is still tab 1");
         assert_eq!(other.action_for(&chord("ctrl+alt+1")), None, "AltGr+1 types");
     }
@@ -1136,5 +1162,30 @@ clear-history = \"ctrl+shift+h\"
         assert_eq!(s.bind_command(0, chord("ctrl+alt+x")), Ok(()));
         assert_eq!(s.bind_command(1, chord("ctrl+alt+x")), Err(KeyOwner::Command(0)));
         assert_eq!((s.command_for(&chord("ctrl+alt+x")), s.action_for(&chord("ctrl+alt+x"))), (Some(0), None));
+    }
+
+    #[test]
+    fn the_search_actions_have_their_keys() {
+        let other = Shortcuts::defaults(Platform::Other);
+        let mac = Shortcuts::defaults(Platform::Mac);
+        let mac_chord = |t: &str| parse_chord(t, Platform::Mac).unwrap().unwrap();
+        assert_eq!(other.action_for(&chord("ctrl+shift+f")), Some(Action::Search));
+        assert_eq!(other.action_for(&chord("f3")), Some(Action::Search));
+        assert_eq!(mac.action_for(&mac_chord("mod+shift+f")), Some(Action::Search));
+        assert_eq!(mac.action_for(&mac_chord("f3")), None, "F3 is macOS's (Mission Control)");
+        assert_eq!(other.action_for(&chord("ctrl+b")), Some(Action::FlatView));
+        assert_eq!(mac.action_for(&mac_chord("mod+b")), Some(Action::FlatView));
+        assert_eq!(other.action_for(&chord("ctrl+shift+e")), Some(Action::ShowInFolder));
+        assert_eq!(mac.action_for(&mac_chord("mod+shift+e")), Some(Action::ShowInFolder));
+        for action in [Action::CopyWithFolders, Action::CutWithFolders] {
+            assert_eq!((other.chord_for(action), mac.chord_for(action)), (None, None), "{}", action.name());
+        }
+        for text in ["ctrl+shift+f", "f3", "ctrl+b", "ctrl+shift+e"] {
+            assert_eq!(fixed_owner(&chord(text), Platform::Other), None, "{text}");
+        }
+        for name in ["search", "flat-view", "show-in-folder", "copy-with-folders", "cut-with-folders"] {
+            assert!(Action::from_name(name).is_some(), "{name}");
+        }
+        assert_eq!(Action::ALL.len(), 68);
     }
 }

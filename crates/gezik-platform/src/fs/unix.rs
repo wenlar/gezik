@@ -8,6 +8,12 @@ use std::path::{Path, PathBuf};
 
 use super::{DiskKind, DriveFacts, cancelled, nearest_existing};
 
+/// The entry's device and inode (the last part not followed), for `same_entry`.
+pub(super) fn entry_id(path: &Path) -> io::Result<(u64, u64)> {
+    let meta = std::fs::symlink_metadata(path)?;
+    Ok((meta.dev(), meta.ino()))
+}
+
 pub fn copy_file(from: &Path, to: &Path, size: u64, progress: &mut dyn FnMut(u64) -> bool) -> io::Result<()> {
     let meta = std::fs::symlink_metadata(from)?;
     if meta.file_type().is_symlink() {
@@ -431,6 +437,61 @@ pub fn restore(trashed: &Path, original: &Path) -> io::Result<()> {
 /// No drive letters here.
 pub fn mapped_remote(_letter: char) -> Option<String> {
     None
+}
+
+/// A folder's items: `read_dir` gives the name and the type (`d_type`); size and times come
+/// from `lstat` only for folders (their device, to stay on one file system) and for what
+/// `wants_meta` asks for (the names that match), spec 3.4.
+pub fn read_dir_items(dir: &Path, wants_meta: &dyn Fn(&str, bool) -> bool) -> io::Result<Vec<super::DirItem>> {
+    use std::os::unix::fs::MetadataExt;
+    let mut items = Vec::new();
+    for entry in std::fs::read_dir(dir)? {
+        let Ok(entry) = entry else { continue };
+        let Ok(kind) = entry.file_type() else { continue };
+        let mut item = super::DirItem {
+            name: entry.file_name().to_string_lossy().into_owned(),
+            is_dir: kind.is_dir(),
+            is_link: kind.is_symlink(),
+            is_file: kind.is_file(),
+            offline: false,
+            flags: 0,
+            size: 0,
+            modified: None,
+            created: None,
+            device: 0,
+            has_meta: false,
+        };
+        if item.is_dir || wants_meta(&item.name, item.is_dir) {
+            // `DirEntry::metadata` does not follow links (lstat).
+            if let Ok(meta) = entry.metadata() {
+                item.device = meta.dev();
+                item.size = if meta.is_file() { meta.len() } else { 0 };
+                item.modified = meta.modified().ok();
+                item.created = meta.created().ok();
+                item.has_meta = true;
+            }
+        }
+        items.push(item);
+    }
+    Ok(items)
+}
+
+/// Opens `path` to read its text only if it is a regular file: never a FIFO, socket or device
+/// (opened without blocking, then checked) and never through a link. `Ok(None)` for the rest;
+/// the size comes with it.
+pub fn open_regular(path: &Path) -> io::Result<Option<(File, u64)>> {
+    let file = match OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW).open(path) {
+        Ok(file) => file,
+        Err(err) if err.raw_os_error() == Some(libc::ELOOP) => return Ok(None),
+        Err(err) => return Err(err),
+    };
+    let meta = file.metadata()?;
+    Ok(meta.is_file().then_some((file, meta.len())))
+}
+
+pub fn device_of(path: &Path) -> io::Result<u64> {
+    use std::os::unix::fs::MetadataExt;
+    Ok(std::fs::symlink_metadata(path)?.dev())
 }
 
 #[cfg(test)]

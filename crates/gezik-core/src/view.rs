@@ -193,7 +193,7 @@ impl Default for ViewOptions {
 }
 
 /// Days since 1970-01-01 of a calendar date (Howard Hinnant's `days_from_civil`).
-fn day_number(date: &crate::batch::date::DateParts) -> i64 {
+pub(crate) fn day_number(date: &crate::batch::date::DateParts) -> i64 {
     let (month, day) = (i64::from(date.month), i64::from(date.day));
     let year = i64::from(date.year) - i64::from(month <= 2);
     let era = year.div_euclid(400);
@@ -234,17 +234,31 @@ pub struct ViewSettings {
 }
 
 /// The list's columns after Name (which is always shown and takes the remaining width),
-/// in display order.
+/// in display order. Folder and Match are the search results' own (spec 4.5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ColumnKey {
     Modified,
     Created,
     Type,
     Size,
+    /// The folder a result is in, under the search's scope.
+    Folder,
+    /// A content search's first matching line.
+    Match,
 }
 
 impl ColumnKey {
+    /// A folder's columns.
     pub const ALL: [ColumnKey; 4] = [ColumnKey::Modified, ColumnKey::Created, ColumnKey::Type, ColumnKey::Size];
+    /// The search results' and the flat view's columns, in display order.
+    pub const RESULTS: [ColumnKey; 6] = [
+        ColumnKey::Folder,
+        ColumnKey::Match,
+        ColumnKey::Modified,
+        ColumnKey::Created,
+        ColumnKey::Type,
+        ColumnKey::Size,
+    ];
 
     pub fn as_str(self) -> &'static str {
         match self {
@@ -252,11 +266,13 @@ impl ColumnKey {
             ColumnKey::Created => "created",
             ColumnKey::Type => "type",
             ColumnKey::Size => "size",
+            ColumnKey::Folder => "folder",
+            ColumnKey::Match => "match",
         }
     }
 
     pub fn parse(text: &str) -> Option<ColumnKey> {
-        ColumnKey::ALL.into_iter().find(|k| k.as_str() == text)
+        ColumnKey::RESULTS.into_iter().find(|k| k.as_str() == text)
     }
 
     pub fn title(self) -> &'static str {
@@ -265,25 +281,32 @@ impl ColumnKey {
             ColumnKey::Created => "Created",
             ColumnKey::Type => "Type",
             ColumnKey::Size => "Size",
+            ColumnKey::Folder => "Folder",
+            ColumnKey::Match => "Match",
         }
     }
 
+    /// The sort its header click gives; Match does not sort (the view ignores its click).
     pub fn sort_key(self) -> SortKey {
         match self {
             ColumnKey::Modified => SortKey::Modified,
             ColumnKey::Created => SortKey::Created,
             ColumnKey::Type => SortKey::Type,
             ColumnKey::Size => SortKey::Size,
+            ColumnKey::Folder => SortKey::Folder,
+            ColumnKey::Match => SortKey::Name,
         }
     }
 
-    /// The column's number in the UI: 0 is Name, then 1–4 in display order.
+    /// The column's number in the UI: 0 is Name, then 1–4 the folder columns, 5 Folder, 6 Match.
     pub fn index(self) -> i32 {
         match self {
             ColumnKey::Modified => 1,
             ColumnKey::Created => 2,
             ColumnKey::Type => 3,
             ColumnKey::Size => 4,
+            ColumnKey::Folder => 5,
+            ColumnKey::Match => 6,
         }
     }
 
@@ -292,6 +315,8 @@ impl ColumnKey {
             ColumnKey::Modified | ColumnKey::Created => 150,
             ColumnKey::Type => 140,
             ColumnKey::Size => 90,
+            ColumnKey::Folder => 220,
+            ColumnKey::Match => 320,
         }
     }
 }
@@ -328,6 +353,29 @@ pub fn normalize_columns(saved: &[ColumnState]) -> Vec<ColumnState> {
         .collect()
 }
 
+/// The search results' columns: Folder, Match, Modified and Size shown (spec 4.5).
+pub fn default_result_columns() -> Vec<ColumnState> {
+    ColumnKey::RESULTS
+        .into_iter()
+        .map(|key| ColumnState {
+            key,
+            visible: matches!(key, ColumnKey::Folder | ColumnKey::Match | ColumnKey::Modified | ColumnKey::Size),
+            width: key.default_width(),
+        })
+        .collect()
+}
+
+/// [`normalize_columns`] for the results' columns.
+pub fn normalize_result_columns(saved: &[ColumnState]) -> Vec<ColumnState> {
+    default_result_columns()
+        .into_iter()
+        .map(|default| match saved.iter().find(|c| c.key == default.key) {
+            Some(c) => ColumnState { width: c.width.clamp(MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH), ..*c },
+            None => default,
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -343,7 +391,7 @@ mod tests {
         for icons in [IconMode::System, IconMode::Gezik] {
             assert_eq!(IconMode::parse(icons.as_str()), Some(icons));
         }
-        for key in ColumnKey::ALL {
+        for key in ColumnKey::RESULTS {
             assert_eq!(ColumnKey::parse(key.as_str()), Some(key));
         }
         assert_eq!(ViewMode::parse("tiles"), None);
@@ -420,5 +468,23 @@ mod tests {
             ColumnState { key: ColumnKey::Size, visible: false, width: MIN_COLUMN_WIDTH },
             "first wins"
         );
+    }
+
+    #[test]
+    fn result_columns_have_folder_and_match() {
+        let columns = default_result_columns();
+        assert_eq!(columns.iter().map(|c| c.key).collect::<Vec<_>>(), ColumnKey::RESULTS);
+        let shown: Vec<ColumnKey> = columns.iter().filter(|c| c.visible).map(|c| c.key).collect();
+        assert_eq!(shown, [ColumnKey::Folder, ColumnKey::Match, ColumnKey::Modified, ColumnKey::Size]);
+        for key in ColumnKey::RESULTS {
+            assert_eq!(ColumnKey::parse(key.as_str()), Some(key));
+        }
+        assert_eq!((ColumnKey::Folder.index(), ColumnKey::Match.index()), (5, 6));
+        assert_eq!(ColumnKey::Folder.sort_key(), SortKey::Folder);
+        let saved = [ColumnState { key: ColumnKey::Folder, visible: false, width: 9 }];
+        let normal = normalize_result_columns(&saved);
+        assert_eq!(normal[0], ColumnState { key: ColumnKey::Folder, visible: false, width: MIN_COLUMN_WIDTH });
+        assert_eq!(normal.len(), 6);
+        assert_eq!(normalize_columns(&saved), default_columns(), "a folder list never gets them");
     }
 }

@@ -243,7 +243,7 @@ fn current_spans(stored: &[(String, f32, f32)], labels: &[String]) -> Vec<(f32, 
 fn path_of(location: Location) -> Option<PathBuf> {
     match location {
         Location::Path(path) => Some(path),
-        Location::Drives => None,
+        Location::Drives | Location::Search(_) | Location::Flat(_) => None,
     }
 }
 
@@ -351,7 +351,12 @@ impl Drags {
 
     fn take_dropped_files(&self) {
         let sources = std::mem::take(&mut *self.0.dropped_files.borrow_mut());
-        let Some(dir) = self.0.view.folder() else { return };
+        let Some(dir) = self.0.view.folder() else {
+            if self.0.view.shows_results() {
+                self.0.view.note(crate::operations::NOT_HERE.to_owned());
+            }
+            return;
+        };
         let d = Dragging {
             sources,
             all_dirs: false,
@@ -928,7 +933,13 @@ impl Drags {
             // To a source program: nothing is moved, so it deletes nothing.
             return Some(Effect::Copy);
         }
-        let dir = target.dir?;
+        let Some(dir) = target.dir else {
+            // Search results have no folder to drop into (spec 4.6).
+            if matches!(target.hit, Hit::Background) && self.0.view.shows_results() {
+                self.0.view.note(crate::operations::NOT_HERE.to_owned());
+            }
+            return None;
+        };
         if d.right {
             let writable = self.writable(&dir);
             let (can_copy, can_move, can_link) = menu_effects(d.allowed, writable, &d.sources, &dir);

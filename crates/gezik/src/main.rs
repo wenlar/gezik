@@ -26,6 +26,7 @@ mod places;
 mod popup;
 mod preview;
 mod quick_look;
+mod search;
 mod select_tools;
 mod sidebar;
 mod stack;
@@ -109,6 +110,7 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
     convert::set_settings(loaded.settings.convert.clone(), loaded.settings.commands.clone());
     filter::set_settings(loaded.settings.keyboard, loaded.settings.filters.clone());
     path_box::set_settings(loaded.settings.history);
+    search::with_current(|s| s.set_settings(loaded.settings.search.clone()));
     tab_sets::set_settings(loaded.settings.tab_sets.clone());
     #[cfg(target_os = "macos")]
     menu_bar::set_tab_sets(window, &tab_sets::names());
@@ -206,10 +208,45 @@ fn handle_key(
         }
     }
 
+    // The search bar's fields (spec 4.2): Esc stops or closes, Enter searches, Alt+Enter in a
+    // new tab, Down gives the list the keyboard; other plain keys are the field's.
+    let in_search = window.get_search_focused();
+    if in_search && let Some(chord) = &chord {
+        let plain = !has_modifier && !chord.shift;
+        let alt_only = chord.alt && !chord.ctrl && !chord.meta && !chord.shift;
+        match chord.key {
+            Key::Escape if plain => {
+                search::with_current(search::Searches::escape);
+                return true;
+            }
+            Key::Enter if plain => {
+                search::with_current(|s| s.go(false));
+                return true;
+            }
+            Key::Enter if alt_only => {
+                search::with_current(|s| s.go(true));
+                return true;
+            }
+            Key::Down if plain => {
+                window.invoke_focus_list();
+                return true;
+            }
+            _ => {}
+        }
+        if !has_modifier || keys::is_text_edit(chord, Platform::current()) {
+            return false;
+        }
+    }
+
     // The filter bar's field: Esc closes the filter, Down or Enter give the list the keyboard
     // (the bar stays); other plain keys and the text editing shortcuts are the field's.
     let filtering = window.get_filter_focused();
     if filtering && let Some(chord) = &chord {
+        // Shift+Enter: the filter's pattern searched in the subfolders (spec 4.1).
+        if chord.shift && !has_modifier && chord.key == Key::Enter {
+            search::with_current(search::Searches::filter_to_search);
+            return true;
+        }
         if !has_modifier && !chord.shift {
             match chord.key {
                 Key::Escape => {
@@ -235,7 +272,7 @@ fn handle_key(
             && (!window.get_list_focused() || type_ahead.is_active(std::time::Instant::now()));
         if !ordinary_key {
             if keys::waits_for_text_fields(action)
-                && (editing || filtering || (keys::needs_list(action) && !window.get_list_focused()))
+                && (editing || filtering || in_search || (keys::needs_list(action) && !window.get_list_focused()))
             {
                 return false;
             }
@@ -305,7 +342,12 @@ fn handle_key(
                 | Action::NewFolderWithSelection
                 | Action::AddToStack
                 | Action::ToggleStack
-                | Action::ShowHistory => {
+                | Action::ShowHistory
+                | Action::Search
+                | Action::FlatView
+                | Action::ShowInFolder
+                | Action::CopyWithFolders
+                | Action::CutWithFolders => {
                     if action == Action::Filter && editing {
                         window.set_path_editing(false);
                     }
@@ -315,7 +357,9 @@ fn handle_key(
                 }
             }
             // The typed text no longer fits once the location or tab changed.
-            if (editing || filtering) && !matches!(action, Action::FocusPath | Action::Filter) {
+            if (editing || filtering || in_search)
+                && !matches!(action, Action::FocusPath | Action::Filter | Action::Search)
+            {
                 window.invoke_focus_list();
             }
             return true;
@@ -323,7 +367,7 @@ fn handle_key(
     }
     // A `[[commands]]` key: on the selection, only while the file list has the keyboard.
     if let Some(index) = chord.as_ref().and_then(keys::command_for) {
-        if editing || filtering || !window.get_list_focused() {
+        if editing || filtering || in_search || !window.get_list_focused() {
             return false;
         }
         actions::run_command(index, view);
@@ -376,9 +420,11 @@ fn handle_key(
                     view.toggle_focus();
                     return true;
                 }
-                // The first Esc closes the filter, the next clears the selection.
+                // The first Esc stops a running search, then closes the filter, then clears the selection.
                 Key::Escape if !primary && !chord.shift => {
-                    if view.filter_text().is_some() {
+                    if search::running() {
+                        search::with_current(search::Searches::stop);
+                    } else if view.filter_text().is_some() {
                         filter::with_current(filter::Filter::close);
                     } else {
                         view.clear_selection();
@@ -559,6 +605,9 @@ fn main() -> Result<(), slint::PlatformError> {
     view.set_defaults(initial_settings.view);
     view.set_options(view_options::current());
     view.set_columns(saved_state.columns.clone().unwrap_or_else(gezik_core::view::default_columns));
+    view.set_result_columns(
+        saved_state.result_columns.clone().unwrap_or_else(gezik_core::view::default_result_columns),
+    );
     window.set_mono_font(
         if cfg!(windows) {
             "Consolas"
@@ -595,6 +644,9 @@ fn main() -> Result<(), slint::PlatformError> {
     sidebar.set_pinned(initial_settings.pinned);
     let _tab_sets = tab_sets::TabSets::new(&window, nav.clone(), view.clone(), dialogs.clone(), config.clone());
     let _filter = filter::Filter::new(&window, view.clone(), dialogs.clone(), config.clone());
+    let searches = search::Searches::new(&window, nav.clone(), view.clone(), dialogs.clone());
+    searches.set_settings(initial_settings.search.clone());
+    nav.on_changed(|location| search::with_current(|s| s.location_changed(location)));
     let _tab_tools = tab_tools::TabTools::new(&window, nav.clone());
     let _select_tools = select_tools::SelectTools::new(
         view.clone(),
@@ -693,6 +745,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 store.update_state(|state| {
                     window_state::capture_into(&window, state);
                     state.columns = Some(view.columns());
+                    state.result_columns = Some(view.result_columns());
                     state.preview_open = preview.is_pane_open();
                     state.preview_width = Some(window.get_preview_width().round().clamp(200.0, 600.0) as u32);
                     state.operations_collapsed = ops.collapsed();
@@ -845,6 +898,13 @@ fn main() -> Result<(), slint::PlatformError> {
     window.on_filter_menu({
         let menus = menus.clone();
         move |left, bottom, right, top| menus.filter_menu(popup::Anchor::below(left, top, right, bottom))
+    });
+    window.on_search_menu({
+        let menus = menus.clone();
+        move |which, left, bottom, right, top| {
+            let which = search::SearchMenu::from_index(which);
+            menus.search_menu(which, popup::Anchor::below(left, top, right, bottom))
+        }
     });
     window.on_view_menu({
         let menus = menus.clone();

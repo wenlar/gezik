@@ -48,6 +48,8 @@ enum LoadResult {
         fallback: Location,
     },
     Failed(std::io::Error),
+    /// A search or the flat view: nothing is read here (search.rs runs it once shown).
+    Results,
 }
 
 /// Lists `location`. Runs on a background thread.
@@ -65,6 +67,13 @@ fn list(location: &Location, mode: &Mode) -> LoadResult {
             }
             Err(err) => LoadResult::Failed(err),
         },
+        // A search or the flat view reads no folder here (`search::Searches` runs it).
+        Location::Search(spec) => match spec.scope.folder() {
+            Some(folder) if !folder.is_dir() => LoadResult::Failed(std::io::ErrorKind::NotFound.into()),
+            _ => LoadResult::Results,
+        },
+        Location::Flat(folder) if !folder.is_dir() => LoadResult::Failed(std::io::ErrorKind::NotFound.into()),
+        Location::Flat(_) => LoadResult::Results,
     }
 }
 
@@ -76,6 +85,7 @@ fn listing_after_failure(mode: &Mode, location: &Location) -> Option<Listing> {
     (*mode == Mode::Show).then(|| match location {
         Location::Path(path) => Listing::Files(path.clone(), Rc::default()),
         Location::Drives => Listing::Drives(Vec::new()),
+        Location::Search(_) | Location::Flat(_) => Listing::default(),
     })
 }
 
@@ -355,6 +365,8 @@ impl Navigator {
             inner.cleared = true;
             inner.view.clone()
         };
+        // A search running on screen stops; whole results stay with their tab.
+        crate::search::with_current(crate::search::Searches::leaving);
         // Not while borrowed: the view calls its selection listeners.
         view.clear();
         self.update_chrome();
@@ -522,6 +534,10 @@ impl Navigator {
                 let path = match location {
                     Location::Path(path) => path.display().to_string(),
                     Location::Drives => String::new(),
+                    // Task 7 places these.
+                    Location::Search(_) | Location::Flat(_) => {
+                        location.folder().map(|p| p.display().to_string()).unwrap_or_default()
+                    }
                 };
                 (inner.places.title_for(location), path)
             })
@@ -556,6 +572,13 @@ impl Navigator {
         }
         self.go(Location::Path(dir));
         // After the go, which drops any older names: these belong to the load it started.
+        self.0.borrow_mut().select_next = Some(names);
+    }
+
+    /// Opens a tab at `dir` in front with `names` selected ("Show in folder in new tab").
+    pub fn open_tab_selecting(&self, dir: PathBuf, names: Vec<String>) {
+        self.open_tab(Location::Path(dir), true);
+        // After the load it started, which drops any older names: these are for it.
         self.0.borrow_mut().select_next = Some(names);
     }
 
@@ -601,7 +624,27 @@ impl Navigator {
 
     pub fn reload(&self) {
         self.save_view();
+        // F5 on results runs the search again, with the name cache read anew (spec 4.7).
+        if self.active_location().is_results() {
+            let tab = self.tab_id(self.active_index());
+            crate::search::with_current(|s| s.forget(tab));
+        }
         self.load(self.active_location(), Mode::Show, None);
+    }
+
+    /// Shows the active tab's location again, read anew but with nothing forgotten (a search
+    /// run again with Enter keeps its name cache; F5 is `reload`).
+    pub fn show_again(&self) {
+        self.save_view();
+        self.load(self.active_location(), Mode::Show, None);
+    }
+
+    /// Puts `location` where the tab is, without a step in its history (a search refined as
+    /// one types, spec 4.3), and shows it.
+    pub fn replace_location(&self, location: Location) {
+        self.save_view();
+        self.keep_active_tab(|tabs| tabs.active_mut().replace(location.clone()));
+        self.load(location, Mode::Show, None);
     }
 
     /// Reloads the active tab if it shows one of `dirs` (a file operation changed them),
@@ -678,9 +721,9 @@ impl Navigator {
         if text.is_empty() {
             return;
         }
-        let path = match self.active_location() {
-            Location::Path(base) => resolve_typed(&text, Some(&base)),
-            Location::Drives => resolve_typed(&text, None),
+        let path = match self.active_location().folder() {
+            Some(base) => resolve_typed(&text, Some(base)),
+            None => resolve_typed(&text, None),
         };
         self.go(Location::Path(path));
     }
@@ -704,6 +747,8 @@ impl Navigator {
 
     /// Stores the active tab's selection and scroll before leaving it.
     fn save_view(&self) {
+        // Results on screen stay with their tab; a search running there stops (spec 4.4).
+        crate::search::with_current(crate::search::Searches::leaving);
         let mut inner = self.0.borrow_mut();
         if inner.cleared {
             return;
@@ -772,10 +817,18 @@ impl Navigator {
         let shown = match &location {
             Location::Path(p) => p.display().to_string(),
             Location::Drives => gezik_core::nav::DRIVES_NAME.to_owned(),
+            Location::Search(spec) => spec.title(),
+            Location::Flat(folder) => folder.display().to_string(),
         };
         let listing = match result {
             LoadResult::Files(path, entries) => Listing::Files(path, Rc::new(entries)),
             LoadResult::Drives(drives) => Listing::Drives(drives),
+            LoadResult::Results => {
+                let tab = self.tab_id(self.active_index());
+                let mut listing = Listing::default();
+                crate::search::with_current(|s| listing = s.listing_for(&location, tab));
+                listing
+            }
             LoadResult::Gone { fallback } => {
                 // The active tab's folder is gone: go to the nearest folder that still exists.
                 self.show_failed(&mode, &location, String::new());
@@ -802,6 +855,9 @@ impl Navigator {
         self.watch_shown(&location);
         view.show(listing, &state, note);
         self.update_chrome();
+        if location.is_results() {
+            crate::search::with_current(crate::search::Searches::shown);
+        }
         self.schedule_refresh();
         let visited = self.0.borrow().on_visited.clone();
         if is_visit(&mode, opened, fallback)
@@ -820,9 +876,10 @@ impl Navigator {
 
     /// Watches the folder now on screen (none for This PC).
     fn watch_shown(&self, location: &Location) {
+        // Results are not watched (spec 4.7).
         let folder = match location {
             Location::Path(path) => Some(path.clone()),
-            Location::Drives => None,
+            Location::Drives | Location::Search(_) | Location::Flat(_) => None,
         };
         let mut inner = self.0.borrow_mut();
         let same = match (&folder, &inner.watched) {
@@ -909,6 +966,9 @@ impl Navigator {
             window.set_current_path(match &location {
                 Location::Path(p) => p.display().to_string().into(),
                 Location::Drives => "".into(),
+                Location::Search(_) | Location::Flat(_) => {
+                    location.folder().map(|p| p.display().to_string()).unwrap_or_default().into()
+                }
             });
             window.set_title_text(format!("{} — Gezik", inner.places.title_for(&location)).into());
             let active = inner.tabs.active_index();

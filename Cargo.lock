@@ -1733,6 +1733,7 @@ dependencies = [
  "gezik-core",
  "gezik-ops",
  "gezik-platform",
+ "gezik-search",
  "i-slint-core",
  "image",
  "notify",
@@ -1815,6 +1816,15 @@ dependencies = [
  "windows",
  "windows-core",
  "x11rb",
+]
+
+[[package]]
+name = "gezik-search"
+version = "0.1.0"
+dependencies = [
+ "gezik-core",
+ "gezik-platform",
+ "regex",
 ]
 
 [[package]]

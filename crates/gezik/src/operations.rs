@@ -165,6 +165,52 @@ pub fn result_names(results: &[PathBuf], folder: &Path) -> Vec<String> {
         .collect()
 }
 
+/// The status bar when a job needs a folder and search results show (spec 4.6).
+pub const NOT_HERE: &str = "Not in search results: open a folder first";
+
+/// Whether "Copy/Cut with folders" still owns the clipboard: the change number it got (`saved`)
+/// is the clipboard's now, or, where there are none (0), the clipboard holds its paths.
+pub fn with_folders_pastes(saved: u64, now: u64, saved_paths: &[PathBuf], clipboard: Option<&[PathBuf]>) -> bool {
+    if saved != 0 || now != 0 {
+        return saved == now;
+    }
+    clipboard.is_some_and(|paths| paths == saved_paths)
+}
+
+/// "Copy/Cut with folders" (spec 4.6): the items with their paths under the scope.
+struct WithFolders {
+    items: Vec<(PathBuf, PathBuf)>,
+    cut: bool,
+    sequence: u64,
+}
+
+/// The names in `folder` that `results` are or are inside (a copy with folders made
+/// `a/b/x`: `a` is selected), each once.
+pub fn first_level_names(results: &[PathBuf], folder: &Path) -> Vec<String> {
+    let depth = folder.components().count();
+    let mut names: Vec<String> = Vec::new();
+    for path in results.iter().filter(|path| gezik_core::ops::paths::is_within(path, folder)) {
+        if let Some(name) = path.components().nth(depth).map(|c| c.as_os_str().to_string_lossy().into_owned())
+            && !names.contains(&name)
+        {
+            names.push(name);
+        }
+    }
+    names
+}
+
+/// The moves of `moved` that brought one of `paths` (the job's results) where it is: a folder
+/// moved across drives records each file in it, which no row needs.
+pub fn relevant_moves(moved: &[(PathBuf, PathBuf)], paths: &[PathBuf]) -> Vec<(PathBuf, PathBuf)> {
+    let paths: HashSet<&PathBuf> = paths.iter().collect();
+    moved.iter().filter(|(_, to)| paths.contains(to)).cloned().collect()
+}
+
+/// A job that works on files and folders: in search results, these only.
+pub fn only_in_results(what: &str) -> String {
+    format!("{what} works in search results")
+}
+
 /// A drive or volume root (`C:`, `/`): it has no parent or no name.
 pub fn is_root(path: &Path) -> bool {
     path.parent().is_none() || path.file_name().is_none()
@@ -243,6 +289,10 @@ struct JobView {
     after: After,
     /// The folder rows were hidden in (trash, delete): reloaded when the job ends, whatever it did.
     hidden_in: Option<PathBuf>,
+    /// Search result rows hidden for the job (trash, delete): checked again when it ends.
+    hidden_paths: Vec<PathBuf>,
+    /// The search results it was started from, if any (spec 4.7).
+    origin: Option<crate::search::ResultsKey>,
     /// Said after the detail in the panel ([`CANT_UNDO`]).
     note: Option<&'static str>,
 }
@@ -272,6 +322,8 @@ impl JobView {
             again: None,
             after: After::Nothing,
             hidden_in: None,
+            hidden_paths: Vec::new(),
+            origin: None,
             note: None,
         }
     }
@@ -338,6 +390,8 @@ struct Inner {
     /// when that was read.
     cut: RefCell<Vec<PathBuf>>,
     clip_sequence: Cell<u64>,
+    /// The last "Copy/Cut with folders", while it may own the clipboard.
+    with_folders: RefCell<Option<WithFolders>>,
     conflicts: crate::conflicts::Conflicts,
     /// Where state.toml is (none: nothing is saved).
     store: Option<ConfigStore>,
@@ -401,6 +455,7 @@ impl Operations {
             clip: RefCell::default(),
             cut: RefCell::default(),
             clip_sequence: Cell::new(0),
+            with_folders: RefCell::default(),
             conflicts,
             store,
             batch_last: RefCell::new(batch_last),
@@ -451,6 +506,7 @@ impl Operations {
         let title = task.title();
         let id = self.0.engine.submit(task);
         let mut job = JobView::new(id, title);
+        crate::search::with_current(|searches| job.origin = searches.results_key());
         job.retry = retry;
         job.after = after;
         self.0.jobs.borrow_mut().push(job);
@@ -470,6 +526,7 @@ impl Operations {
         let title = tasks.first().map(|task| task.title()).unwrap_or_default();
         let id = self.0.engine.submit_chain(tasks, label);
         let mut job = JobView::new(id, title);
+        crate::search::with_current(|searches| job.origin = searches.results_key());
         job.again = again;
         job.after = after;
         self.0.jobs.borrow_mut().push(job);
@@ -532,7 +589,8 @@ impl Operations {
         if items.is_empty() {
             return;
         }
-        let others = self.0.view.all_names();
+        // Search results: the layer reads each item's folder itself (spec 4.6).
+        let others = (!self.0.view.shows_results()).then(|| self.0.view.all_names());
         let last = self.0.batch_last.borrow().clone();
         crate::batch_rename::with_current(|layer| {
             // Already open (a menu over it): keep what is being edited.
@@ -680,8 +738,11 @@ impl Operations {
 
     /// A new folder in `dir` (else the folder shown), renamed right away.
     pub fn new_folder(&self, dir: Option<PathBuf>) {
-        if let Some(dir) = dir.or_else(|| self.0.view.folder()) {
-            self.submit(Box::new(NewTask::folder(&dir)), None, After::Rename);
+        match dir.or_else(|| self.0.view.folder()) {
+            Some(dir) => {
+                self.submit(Box::new(NewTask::folder(&dir)), None, After::Rename);
+            }
+            None => self.not_here(),
         }
     }
 
@@ -696,6 +757,7 @@ impl Operations {
     }
 
     pub fn copy_paths(&self, paths: Vec<PathBuf>, cut: bool) {
+        self.0.with_folders.borrow_mut().take();
         let paths = self.without_roots(paths, if cut { "cut" } else { "copy" });
         if paths.is_empty() {
             return;
@@ -708,6 +770,35 @@ impl Operations {
         *self.0.clip.borrow_mut() = Some(ClipboardFiles { paths, cut });
         self.0.clip_sequence.set(clipboard::sequence());
         self.update_cut();
+    }
+
+    /// `copy-with-folders` / `cut-with-folders` and the row menu (spec 4.6): the system's
+    /// clipboard gets the plain paths (pasted elsewhere they land flat); Gezik's paste keeps the
+    /// folders under the search's scope.
+    pub fn copy_with_folders(&self, cut: bool) {
+        if !self.0.view.shows_results() {
+            return self.0.view.note(only_in_results("Copy with folders"));
+        }
+        let items = self.0.view.selected_relative();
+        if items.is_empty() {
+            return;
+        }
+        let paths: Vec<PathBuf> = items.iter().map(|(path, _)| path.clone()).collect();
+        self.copy_paths(paths.clone(), cut);
+        // Only once the clipboard took them: else a paste would take these for what is there.
+        if self.0.clip.borrow().as_ref().is_some_and(|clip| clip.paths == paths) {
+            *self.0.with_folders.borrow_mut() = Some(WithFolders { items, cut, sequence: clipboard::sequence() });
+        }
+    }
+
+    /// The copy with folders a paste takes, if it still owns the clipboard.
+    fn with_folders_to_paste(&self) -> Option<(Vec<(PathBuf, PathBuf)>, bool)> {
+        let saved = self.0.with_folders.borrow();
+        let saved = saved.as_ref()?;
+        let paths: Vec<PathBuf> = saved.items.iter().map(|(path, _)| path.clone()).collect();
+        let clipboard = self.clipboard().map(|files| files.paths);
+        with_folders_pastes(saved.sequence, clipboard::sequence(), &paths, clipboard.as_deref())
+            .then(|| (saved.items.clone(), saved.cut))
     }
 
     /// What paste would take: the system clipboard, or Gezik's own where the system has none.
@@ -726,7 +817,30 @@ impl Operations {
     /// Ctrl+V: into `into` (a folder's menu) or the folder shown. Cut items move; `force_move`
     /// moves copied ones too (macOS Cmd+Option+V).
     pub fn paste(&self, into: Option<PathBuf>, force_move: bool) {
-        let Some(dir) = into.or_else(|| self.0.view.folder()) else { return };
+        let Some(dir) = into.or_else(|| self.0.view.folder()) else { return self.not_here() };
+        // A copy with folders keeps them (spec 4.6).
+        if let Some((items, cut)) = self.with_folders_to_paste() {
+            let sources: Vec<PathBuf> = items.iter().map(|(path, _)| path.clone()).collect();
+            self.remember_for(&sources);
+            let moving = cut || force_move;
+            let retry: Retry = Rc::new(move || -> Box<dyn Task> {
+                if moving {
+                    Box::new(MoveTask::with_folders(items.clone(), &dir))
+                } else {
+                    Box::new(CopyTask::with_folders(items.clone(), &dir))
+                }
+            });
+            self.submit(retry(), Some(retry), After::Select);
+            if cut {
+                let _ = clipboard::clear();
+                self.0.clip.borrow_mut().take();
+                self.0.cut.borrow_mut().clear();
+                self.0.with_folders.borrow_mut().take();
+                self.0.clip_sequence.set(clipboard::sequence());
+                self.update_cut();
+            }
+            return;
+        }
         // No files: the picture or text as a new file (spec 9.1).
         let Some(ClipboardFiles { paths, cut }) = self.clipboard() else { return self.paste_as_file(dir) };
         self.transfer(paths, dir, if cut || force_move { Effect::Move } else { Effect::Copy });
@@ -737,6 +851,13 @@ impl Operations {
             self.0.cut.borrow_mut().clear();
             self.0.clip_sequence.set(clipboard::sequence());
             self.update_cut();
+        }
+    }
+
+    /// Says why a job that needs a folder does nothing while search results show.
+    fn not_here(&self) {
+        if self.0.view.shows_results() {
+            self.0.view.note(NOT_HERE.to_owned());
         }
     }
 
@@ -777,11 +898,7 @@ impl Operations {
 
     /// Fades the cut items of the folder shown.
     fn update_cut(&self) {
-        let names: HashSet<String> = match self.0.view.folder() {
-            Some(folder) => result_names(&self.0.cut.borrow(), &folder).into_iter().collect(),
-            None => HashSet::new(),
-        };
-        self.0.view.set_cut_names(names);
+        self.0.view.set_cut(&self.0.cut.borrow());
     }
 
     /// Delete / Shift+Delete on the selection.
@@ -835,6 +952,12 @@ impl Operations {
 
     /// Hides the rows of `paths` in the folder shown; the folder, to reload when the job ends.
     fn hide(&self, paths: &[PathBuf]) -> Option<PathBuf> {
+        // Search results: their rows go at once; the check after the job brings back what stayed.
+        if self.0.view.shows_results() {
+            self.remember_for(paths);
+            self.0.view.hide_paths(paths);
+            return None;
+        }
         let folder = self.0.view.folder()?;
         // Before the names go: the job is submitted after this.
         self.remember_for(paths);
@@ -860,7 +983,13 @@ impl Operations {
             Rc::new(move || -> Box<dyn Task> { Box::new(TrashTask::new(paths.clone())) })
         };
         let id = self.submit(retry(), Some(retry), After::Nothing);
-        self.with_job(id, |job| job.hidden_in = hidden_in);
+        let results = self.0.view.shows_results();
+        self.with_job(id, |job| {
+            job.hidden_in = hidden_in;
+            if results {
+                job.hidden_paths = paths;
+            }
+        });
     }
 
     fn delete_now(&self, paths: Vec<PathBuf>) {
@@ -871,7 +1000,13 @@ impl Operations {
             Rc::new(move || -> Box<dyn Task> { Box::new(DeleteTask::new(paths.clone(), pending.clone())) })
         };
         let id = self.submit(retry(), Some(retry), After::Nothing);
-        self.with_job(id, |job| job.hidden_in = hidden_in);
+        let results = self.0.view.shows_results();
+        self.with_job(id, |job| {
+            job.hidden_in = hidden_in;
+            if results {
+                job.hidden_paths = paths;
+            }
+        });
     }
 
     /// A copy of each selected item next to it.
@@ -904,6 +1039,9 @@ impl Operations {
 
     /// `new-folder-with-selection`: the selected items into a new folder next to them.
     pub fn new_folder_with_selection(&self) {
+        if self.0.view.shows_results() {
+            return self.not_here();
+        }
         if self.0.view.shows_drives() {
             return;
         }
@@ -913,7 +1051,7 @@ impl Operations {
     /// `paths` (those in the folder shown) moved into a new "New folder" there, as one job,
     /// and the folder renamed right away (spec 8.2).
     pub fn new_folder_with(&self, paths: Vec<PathBuf>) {
-        let Some(dir) = self.0.view.folder() else { return };
+        let Some(dir) = self.0.view.folder() else { return self.not_here() };
         let paths: Vec<PathBuf> = self
             .without_roots(paths, "move")
             .into_iter()
@@ -985,8 +1123,11 @@ impl Operations {
     }
 
     pub fn new_file(&self, dir: Option<PathBuf>) {
-        if let Some(dir) = dir.or_else(|| self.0.view.folder()) {
-            self.submit(Box::new(NewTask::file(&dir)), None, After::Rename);
+        match dir.or_else(|| self.0.view.folder()) {
+            Some(dir) => {
+                self.submit(Box::new(NewTask::file(&dir)), None, After::Rename);
+            }
+            None => self.not_here(),
         }
     }
 
@@ -1132,7 +1273,9 @@ impl Operations {
         });
     }
 
-    fn finished(&self, id: JobId, report: Report) {
+    fn finished(&self, id: JobId, mut report: Report) {
+        // Only the chosen items' moves are kept (a folder moved across drives lists every file).
+        report.moved = relevant_moves(&report.moved, &report.results);
         self.0.conflicts.close_if(id);
         // Its questions are moot now (answering one is harmless: nothing waits for it).
         self.0.dialogs.forget_job(id);
@@ -1140,10 +1283,14 @@ impl Operations {
         let problems = !report.cancelled && !report.failures.is_empty();
         let mut after = After::Nothing;
         let mut hidden_in = None;
+        let mut hidden_paths = Vec::new();
+        let mut origin = None;
         let mut title = String::new();
         self.with_job(id, |job| {
             after = job.after;
             hidden_in = job.hidden_in.take();
+            hidden_paths = std::mem::take(&mut job.hidden_paths);
+            origin = job.origin.take();
             title = job.title.clone();
             job.finish(report.clone());
         });
@@ -1163,7 +1310,7 @@ impl Operations {
         let after = if after == After::Select && self.0.view.renaming().is_some() { After::Nothing } else { after };
         let select = match (after, self.0.view.folder()) {
             (After::Nothing, _) | (_, None) => Vec::new(),
-            (_, Some(folder)) => result_names(&report.results, &folder),
+            (_, Some(folder)) => first_level_names(&report.results, &folder),
         };
         // Rows hidden for this job come back if it changed nothing (failed, cancelled, no trash).
         let mut dirs = report.changed_dirs.clone();
@@ -1181,6 +1328,12 @@ impl Operations {
             (a, b) => a.or(b),
         };
         let reloading = self.0.nav.refresh_showing(&dirs, &select, note.clone());
+        // Search results follow Gezik's own jobs (spec 4.7), those kept by a tab too.
+        let mut paths = report.results.clone();
+        paths.extend(hidden_paths);
+        crate::search::with_current(|searches| {
+            searches.job_done(origin.as_ref(), report.changed_dirs.clone(), paths, report.moved.clone());
+        });
         self.0.sidebar.refresh();
         if let (false, Some(note)) = (reloading, note) {
             self.0.view.note(note);
@@ -1198,6 +1351,28 @@ impl Operations {
         crate::archives::with_current(|archives| archives.job_finished(id, &report));
         crate::convert::with_current(|convert| convert.job_finished(id, &report));
         crate::stack::with_current(|stack| stack.job_finished(id, &report));
+    }
+
+    /// `show-in-folder` (spec 4.6): the focused result's folder with it selected; Back comes
+    /// back to the results.
+    pub fn show_in_folder(&self, new_tab: bool) {
+        if !self.0.view.shows_results() {
+            return self.0.view.note(only_in_results("Show in folder"));
+        }
+        if let Some((path, _)) = self.0.view.focus().and_then(|i| self.0.view.entry_path(i)) {
+            self.show_path_in_folder(&path, new_tab);
+        }
+    }
+
+    /// `path`'s folder with it selected, here or in a new tab in front.
+    pub fn show_path_in_folder(&self, path: &Path, new_tab: bool) {
+        let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else { return };
+        let names = vec![name.to_string_lossy().into_owned()];
+        if new_tab {
+            self.0.nav.open_tab_selecting(dir.to_path_buf(), names);
+        } else {
+            self.0.nav.go_selecting(dir.to_path_buf(), names);
+        }
     }
 
     /// Items the trash cannot take (no trash on their drive, or a name it cannot take): delete
@@ -1487,6 +1662,7 @@ mod tests {
             no_trash: Vec::new(),
             results: Vec::new(),
             changed_dirs: Vec::new(),
+            moved: Vec::new(),
         }
     }
 
@@ -1604,6 +1780,34 @@ mod tests {
         assert!(is_root(Path::new("/")));
         assert!(!is_root(Path::new("/a")));
         assert!(!is_root(Path::new("/a/b.txt")));
+    }
+
+    #[test]
+    fn only_the_moves_of_the_chosen_items_follow_a_job() {
+        let dir = PathBuf::from("/d");
+        let mut moved: Vec<(PathBuf, PathBuf)> =
+            (0..10_000).map(|i| (PathBuf::from(format!("/s/f/{i}")), dir.join("f").join(i.to_string()))).collect();
+        moved.push((PathBuf::from("/s/f"), dir.join("f")));
+        assert_eq!(relevant_moves(&moved, &[dir.join("f")]), [(PathBuf::from("/s/f"), dir.join("f"))]);
+    }
+
+    #[test]
+    fn a_paste_with_folders_selects_what_it_made_here() {
+        let dir = PathBuf::from("/t");
+        let results =
+            [dir.join("a").join("b").join("x"), dir.join("a").join("y"), dir.join("z"), PathBuf::from("/o/q")];
+        assert_eq!(first_level_names(&results, &dir), ["a", "z"]);
+    }
+
+    #[test]
+    fn a_copy_with_folders_pastes_only_while_it_is_on_the_clipboard() {
+        let paths = [PathBuf::from("/w/a/x"), PathBuf::from("/w/b/y")];
+        assert!(with_folders_pastes(7, 7, &paths, None), "the same clipboard");
+        assert!(!with_folders_pastes(7, 8, &paths, Some(&paths)), "copied again since");
+        // No change numbers (Linux, Gezik's own clipboard): by what it holds.
+        assert!(with_folders_pastes(0, 0, &paths, Some(&paths)));
+        assert!(!with_folders_pastes(0, 0, &paths, Some(&paths[..1])));
+        assert!(!with_folders_pastes(0, 0, &paths, None));
     }
 
     #[test]

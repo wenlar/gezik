@@ -12,9 +12,11 @@ pub mod ops;
 pub mod path_text;
 pub mod pattern;
 pub mod refresh;
+pub mod search;
 pub mod selection;
 pub mod sort;
 pub mod templates;
+pub mod text;
 pub mod view;
 pub mod view_memory;
 
@@ -46,11 +48,7 @@ impl Entry {
     /// files": `desktop.ini`, `$RECYCLE.BIN`) only with `show_system`; a name starting with a
     /// dot or a hidden one only with `show_hidden`; anything else always (spec 7.1).
     pub fn is_shown(&self, show_hidden: bool, show_system: bool) -> bool {
-        let has = |bit: u8| self.flags & bit != 0;
-        if has(Entry::HIDDEN) && has(Entry::SYSTEM) {
-            return show_system;
-        }
-        show_hidden || !(self.name.starts_with('.') || has(Entry::HIDDEN))
+        is_shown_name(&self.name, self.flags, show_hidden, show_system)
     }
 
     /// The extension without the dot (`"txt"`), or `""` for folders and names without one.
@@ -64,6 +62,16 @@ impl Entry {
             _ => "",
         }
     }
+}
+
+/// [`Entry::is_shown`] for a name and its flags, without an `Entry` (the search's scanner
+/// decides on what a folder read gave).
+pub fn is_shown_name(name: &str, flags: u8, show_hidden: bool, show_system: bool) -> bool {
+    let has = |bit: u8| flags & bit != 0;
+    if has(Entry::HIDDEN) && has(Entry::SYSTEM) {
+        return show_system;
+    }
+    show_hidden || !(name.starts_with('.') || has(Entry::HIDDEN))
 }
 
 /// The name the list shows: without its extension when `hide_extension` asks for it (only for
@@ -309,5 +317,16 @@ mod tests {
         assert_eq!(e(".gitignore", false).extension(), "");
         assert_eq!(e("noext", false).extension(), "");
         assert_eq!(e("dir.d", true).extension(), "");
+    }
+
+    #[test]
+    fn a_name_and_its_flags_are_shown_as_an_entry_is() {
+        for (name, flags) in
+            [("a.txt", 0), (".git", 0), ("n.txt", Entry::HIDDEN), ("d.ini", Entry::HIDDEN | Entry::SYSTEM)]
+        {
+            for (hidden, system) in [(false, false), (true, false), (false, true), (true, true)] {
+                assert_eq!(is_shown_name(name, flags, hidden, system), flagged(name, flags).is_shown(hidden, system));
+            }
+        }
     }
 }

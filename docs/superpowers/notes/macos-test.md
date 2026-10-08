@@ -365,6 +365,15 @@ Re-checks of the shared UI fixes (fix/shared-ui, on master)
 70. **Drop stack.** ⌘⇧S and Edit ▸ Add to Drop Stack add the selection; the strip opens above the status bar; View ▸ Drop Stack shows and hides it. Drag files from Finder onto the strip (Finder keeps them). Go to another folder: "Copy here" copies them (one ⌘Z), "Move here" moves them and they leave the strip. Delete a stacked file in Finder: it fades and is left out. With many items, a two-finger swipe scrolls the strip. Drag an item from the strip to Finder or the Desktop. "Clear" empties it.
 71. **History.** After a few jobs (one failing: copy onto a locked file, one cancelled), View ▸ Operation History and the status bar's "History" open it: newest first, with time and result; "Show in folder" goes there with the results selected; "Details" lists what failed.
 
+### 8a, search
+
+72. **Search.** ⌘⇧F and Edit ▸ Find… open the search bar above the list ("in <folder> ▾", the name field, Content, Filters, Search). In your home folder type `*.pdf`: results come while you type (the name cache), in a tab titled "Search: *.pdf" whose address bar ends in `Search "*.pdf"`; Back returns to the folder, Forward to the results without searching again. Folder, Modified and Size columns; sort by Folder; ⌘F filters the results. The status bar says "N results in X s" and "Skipped N folders (search.skip)". "Content" ▸ a word from a few text files (one saved as UTF-16 by TextEdit) ▸ Return: those files, with the line in the Match column.
+73. **Privacy prompts.** A search in your home folder (first run of this build): macOS asks for Desktop, Documents and Downloads (TCC). Allow some and deny one: the denied folder and the `~/Library` folders macOS keeps to itself count as "N folders could not be read" in the status bar, and the bar's ▾ ▸ "N folders could not be read…" lists them. The search still ends, and no prompt comes twice in one run.
+74. **Whole drive.** Scope menu ▸ "Whole drive (/)" with a name that exists under `/Users`: `/Users` is searched (it lives on the Data volume), `/System/Volumes/Data` is not walked a second time (no file appears twice in the results), and other volumes (a USB stick, a disk image under `/Volumes`) are not walked. Esc stops a long search within a moment; there is no beach ball, and scrolling and switching tabs stay smooth while it runs.
+75. **Flat view.** ⌘B and View ▸ Flat View in a project folder: every file under it in one list (no folders), the Folder column; ⌘B again on a file goes to its folder with it selected. A symlink to a folder is a row and is not walked into.
+76. **Show in folder.** ⌘⇧E and Go ▸ Show in Folder on a result: its folder opens with the file selected; Back returns to the results. The row menu's "Show in folder in new tab" opens it in a new tab.
+77. **Results like a folder.** In the results: ⌘C, then ⌘V in another folder (flat). Right-click ▸ "Copy with folders" and ⌘V: the folders under the scope are made; one ⌘Z takes the copies and the made folders away. Move a result to the Trash (⌘⌫): it leaves the list; ⌘Z brings it back. Select three results from two folders ▸ the rename layer (`{n}`): numbered per folder; a name already in that folder says "already in the folder" on its row. Close and open Gezik with a search tab open: the tab comes back and searches again.
+
 Report anything else that looks wrong: layout, fonts, Retina scaling, ⌘ shortcuts that don't work, and the wording of the boxes.
 
 ## Known gaps (not bugs)
@@ -380,7 +389,7 @@ These are known differences from Finder and ForkLift (from the ForkLift comparis
   - Finder tags are not read or shown.
   - No Get Info window.
   - No iCloud Drive status, download or evict. What happens when a file that is only in the cloud is opened has not been tried; note it if you try.
-  - No search and no Spotlight.
+  - Search walks the disk itself: Spotlight is not used (no Spotlight index, no `kMDItem` queries, no Spotlight comments or contents of PDFs and Office files). Results and the flat view don't follow changes made in Finder until ⌘R or F5.
   - No Column (⌘3) or Gallery (⌘4) view, and no ⌘+/⌘- text size.
   - No eject and no Connect to Server (⌘K).
   - Gezik can't be the default file viewer.

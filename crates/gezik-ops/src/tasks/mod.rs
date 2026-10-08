@@ -58,6 +58,53 @@ pub(crate) fn refuse_root(sink: &mut dyn crate::task::ScanSink, path: &Path, ver
     true
 }
 
+/// Where copy or move with folders puts its items (spec 4.6).
+pub(crate) struct Relative {
+    /// (source, `dir` joined with its relative path) per item.
+    pub pairs: Vec<(PathBuf, PathBuf)>,
+    /// The folders on the way that `dir` holds (`dir` too), shallowest first, each once.
+    pub parents: Vec<PathBuf>,
+    /// Sources whose relative path would leave `dir` (absolute, a drive, `..`, empty).
+    pub refused: Vec<PathBuf>,
+}
+
+/// `dir` joined with each relative path (system separators: the Windows trash needs them for
+/// undo). An item inside another chosen item goes with it and is dropped; a relative path that
+/// is not plain names only (it could leave `dir`) is refused.
+pub(crate) fn relative_targets(items: Vec<(PathBuf, PathBuf)>, dir: &Path) -> Relative {
+    use std::path::Component;
+    let items = gezik_core::ops::paths::cover(items, |(source, _)| source);
+    let mut parents = std::collections::BTreeSet::new();
+    let mut pairs = Vec::new();
+    let mut refused = Vec::new();
+    for (source, relative) in items {
+        let plain = relative.components().next().is_some()
+            && relative.components().all(|part| matches!(part, Component::Normal(_)));
+        if !plain {
+            refused.push(source);
+            continue;
+        }
+        let target: PathBuf = dir.join(&relative).components().collect();
+        let mut folder = target.parent();
+        while let Some(f) = folder.filter(|f| gezik_core::ops::paths::is_within(f, dir)) {
+            parents.insert(f.to_path_buf());
+            folder = f.parent();
+        }
+        pairs.push((source, target));
+    }
+    let mut parents: Vec<PathBuf> = parents.into_iter().collect();
+    parents.sort_by_key(|p| p.components().count());
+    Relative { pairs, parents, refused }
+}
+
+/// Reports each of `refused` (see `Relative::refused`) as failed.
+pub(crate) fn refuse_outside(sink: &mut dyn crate::task::ScanSink, refused: &[PathBuf]) {
+    for source in refused {
+        let message = "Its path under the search's folder leaves the target folder";
+        sink.failed(source, std::io::Error::new(std::io::ErrorKind::InvalidInput, message));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -91,5 +138,27 @@ mod tests {
             refused(&RenameTask::one(root.clone(), "x"), &root);
         }
         assert!(!is_root(&std::env::temp_dir().join("x")));
+    }
+
+    #[test]
+    fn relative_targets_keep_to_the_folder_and_drop_items_inside_others() {
+        let dir = std::env::temp_dir().join("gezik-relative").join("dst");
+        let src = std::env::temp_dir().join("gezik-relative").join("src");
+        let items = vec![
+            (src.join("a/b/x.txt"), PathBuf::from("a").join("b").join("x.txt")),
+            (src.join("a"), PathBuf::from("a")),
+            (src.join("up.txt"), PathBuf::from("..").join("up.txt")),
+            (src.join("abs.txt"), src.join("abs.txt")),
+            (src.join("dot.txt"), PathBuf::from(".").join("dot.txt")),
+            (src.join("empty.txt"), PathBuf::new()),
+            (src.join("c.txt"), PathBuf::from("c.txt")),
+        ];
+        let Relative { pairs, parents, mut refused } = relative_targets(items, &dir);
+        assert_eq!(pairs, [(src.join("a"), dir.join("a")), (src.join("c.txt"), dir.join("c.txt"))]);
+        assert_eq!(parents, std::slice::from_ref(&dir));
+        refused.sort();
+        let mut expected = vec![src.join("up.txt"), src.join("abs.txt"), src.join("dot.txt"), src.join("empty.txt")];
+        expected.sort();
+        assert_eq!(refused, expected);
     }
 }
