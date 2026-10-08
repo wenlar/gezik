@@ -1,4 +1,5 @@
 import { Theme } from "../theme.slint";
+import { Glyph } from "../glyphs.slint";
 
 export struct TabItem {
     title: string,
@@ -19,8 +20,10 @@ export component TabBar inherits Rectangle {
     callback tab-menu(int, length, length);
 
     // Equal-width tabs that shrink as more are opened, down to a minimum; then the strip scrolls.
-    out property <length> tab-width: clamp((self.width - plus.width) / max(1, root.tabs.length), 90px, 220px);
-    // For drag.rs: the strip's scroll offset (content-x) and width.
+    out property <length> tab-width: clamp(strip.width / max(1, root.tabs.length), 90px, 220px);
+    // For drag.rs: where the strip starts (it is inset from the window's edge), its scroll
+    // offset (content-x) and width.
+    out property <length> strip-x: strip.x;
     out property <length> scroll: strip.content-x;
     out property <length> strip-width: strip.width;
     // While files are dragged: the tab they would drop on (-1: none).
@@ -36,7 +39,7 @@ export component TabBar inherits Rectangle {
     property <bool> drag-blocked;
     changed tab-count => { root.cancel-drag(); }
 
-    height: Theme.row-height + 10px;
+    height: Theme.tab-strip-height;
     background: Theme.chrome;
     accessible-role: tab-list;
 
@@ -62,6 +65,7 @@ export component TabBar inherits Rectangle {
 
     // The wheel scrolls the strip; tabs pass the wheel through to here.
     TouchArea {
+        x: strip.x;
         width: strip.width;
         scroll-event(event) => {
             root.scroll-by(event.delta-x + event.delta-y);
@@ -70,8 +74,8 @@ export component TabBar inherits Rectangle {
     }
 
     strip := Flickable {
-        x: 0;
-        width: root.width - plus.width;
+        x: Theme.inset;
+        width: root.width - plus.width - 2 * Theme.inset;
         height: root.height;
         content-height: self.height;
         content-width: max(self.width, root.tabs.length * root.tab-width);
@@ -103,13 +107,14 @@ export component TabBar inherits Rectangle {
 
             Rectangle {
                 x: 2px;
-                y: 4px;
+                y: (parent.height - self.height) / 2;
                 width: parent.width - 4px;
-                height: parent.height - 4px;
+                height: Theme.control-height;
                 border-radius: Theme.radius;
                 background: i == root.drop-tab ? Theme.drop-target : item.active ? Theme.tab-active : hovered ? Theme.hover : transparent;
-                border-width: i == root.drop-tab ? 1px : 0px;
-                border-color: Theme.accent;
+                animate background { duration: Theme.motion-hover; }
+                border-width: i == root.drop-tab || item.active ? 1px : 0px;
+                border-color: i == root.drop-tab ? Theme.accent : Theme.border;
 
                 touch := TouchArea {
                     clicked => {
@@ -156,11 +161,13 @@ export component TabBar inherits Rectangle {
                     spacing: 0;
                     VerticalLayout {
                         alignment: center;
-                        Rectangle {
-                            width: Theme.icon-size * 0.75;
-                            height: self.width;
-                            border-radius: 2px;
-                            background: Theme.icon-folder;
+                        Path {
+                            width: 12px;
+                            height: 12px;
+                            viewbox-width: 16;
+                            viewbox-height: 16;
+                            commands: Glyph.folder;
+                            fill: Theme.icon-folder;
                         }
                     }
                     Rectangle { width: Theme.spacing; }
@@ -168,26 +175,20 @@ export component TabBar inherits Rectangle {
                     if item.locked: VerticalLayout {
                         alignment: center;
                         Rectangle {
-                            width: 12px;
-                            height: 12px;
+                            width: 8px;
+                            height: 8px;
                             accessible-role: image;
                             accessible-label: "Locked";
                             Path {
                                 width: parent.width;
                                 height: parent.height;
-                                viewbox-width: 16;
-                                viewbox-height: 16;
-                                commands: "M 5 8 L 5 5 A 3 3 0 0 1 11 5 L 11 8";
-                                stroke: item.active ? Theme.foreground : Theme.foreground-muted;
-                                stroke-width: 1.5px;
-                            }
-                            Path {
-                                width: parent.width;
-                                height: parent.height;
-                                viewbox-width: 16;
-                                viewbox-height: 16;
-                                commands: "M 3 7.5 L 13 7.5 L 13 15 L 3 15 Z";
-                                fill: item.active ? Theme.foreground : Theme.foreground-muted;
+                                viewbox-width: 8;
+                                viewbox-height: 8;
+                                commands: Glyph.lock;
+                                stroke: Theme.foreground-muted;
+                                stroke-width: 1px;
+                                stroke-line-cap: round;
+                                stroke-line-join: round;
                             }
                         }
                     }
@@ -206,22 +207,24 @@ export component TabBar inherits Rectangle {
                         Rectangle {
                             x: parent.width - self.width;
                             y: (parent.height - self.height) / 2;
-                            width: Theme.icon-size + 4px;
+                            width: 20px;
                             height: self.width;
-                            border-radius: Theme.radius;
+                            border-radius: Theme.radius-small;
                             background: close-touch.has-hover ? Theme.hover : transparent;
+                            animate background { duration: Theme.motion-hover; }
                             accessible-role: button;
                             accessible-label: "Close " + item.title;
                             accessible-action-default => { root.close(i); }
                             // Drawn, not a "×" glyph: the software renderer has no font fallback.
                             Path {
-                                width: Theme.icon-size * 0.625;
-                                height: self.width;
-                                viewbox-width: 16;
-                                viewbox-height: 16;
-                                commands: "M 3 3 L 13 13 M 13 3 L 3 13";
+                                width: 8px;
+                                height: 8px;
+                                viewbox-width: 8;
+                                viewbox-height: 8;
+                                commands: Glyph.close;
                                 stroke: Theme.foreground-muted;
-                                stroke-width: Theme.icon-size / 10;
+                                stroke-width: 1.5px;
+                                stroke-line-cap: round;
                             }
                             close-touch := TouchArea {
                                 clicked => { root.close(i); }
@@ -238,6 +241,16 @@ export component TabBar inherits Rectangle {
                         }
                     }
                 }
+
+                // The active tab's accent bar.
+                if item.active: Rectangle {
+                    x: 12px;
+                    y: parent.height - 3px - self.height;
+                    width: parent.width - 24px;
+                    height: 2px;
+                    border-radius: 1px;
+                    background: Theme.accent;
+                }
             }
         }
 
@@ -245,15 +258,15 @@ export component TabBar inherits Rectangle {
         if root.drag-from >= 0: Rectangle {
             // Between two tabs; at either end, kept just inside the strip.
             x: clamp((root.drag-to > root.drag-from ? root.drag-to + 1 : root.drag-to) * root.tab-width - 1px, 0px, parent.width - self.width);
-            y: 4px;
+            y: (parent.height - Theme.control-height) / 2;
             width: 2px;
-            height: parent.height - 4px;
+            height: Theme.control-height;
             background: Theme.accent;
         }
     }
 
     plus := Rectangle {
-        x: strip.width;
+        x: strip.x + strip.width;
         width: root.height;
         height: root.height;
         accessible-role: button;
@@ -266,14 +279,16 @@ export component TabBar inherits Rectangle {
             height: parent.height - 8px;
             border-radius: Theme.radius;
             background: plus-touch.has-hover ? Theme.hover : transparent;
+            animate background { duration: Theme.motion-hover; }
             Path {
-                width: Theme.icon-size * 0.75;
-                height: self.width;
+                width: 16px;
+                height: 16px;
                 viewbox-width: 16;
                 viewbox-height: 16;
-                commands: "M 8 2 L 8 14 M 2 8 L 14 8";
-                stroke: Theme.foreground;
-                stroke-width: Theme.icon-size / 10;
+                commands: Glyph.plus;
+                stroke: Theme.foreground-muted;
+                stroke-width: 1.5px;
+                stroke-line-cap: round;
             }
             plus-touch := TouchArea {
                 clicked => { root.new-tab(); }

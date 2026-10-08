@@ -36,6 +36,8 @@ export struct DropGeometry {
     list-width: length,
     list-height: length,
     sidebar-scroll: length,
+    // The tab strip's left edge (it is inset).
+    tab-x: length,
     tab-scroll: length,
     tab-width: length,
     tab-strip-width: length,
@@ -650,6 +652,7 @@ export component AppWindow inherits Window {
         list-width: file-view.list-width,
         list-height: file-view.list-height,
         sidebar-scroll: root.sidebar-scroll,
+        tab-x: tab-bar.strip-x,
         tab-scroll: tab-bar.scroll,
         tab-width: tab-bar.tab-width,
         tab-strip-width: tab-bar.strip-width,

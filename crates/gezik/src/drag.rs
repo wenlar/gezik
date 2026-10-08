@@ -685,7 +685,7 @@ impl Drags {
             _ => None,
         };
         let tabs = TabArea {
-            rect: Rect { x: 0.0, y: 0.0, width: g.tab_strip_width, height: g.tab_height },
+            rect: Rect { x: g.tab_x, y: 0.0, width: g.tab_strip_width, height: g.tab_height },
             scroll: g.tab_scroll,
             tab_width: g.tab_width,
             count: window.get_tabs().row_count(),
