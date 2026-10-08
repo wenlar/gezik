@@ -431,7 +431,7 @@ mod tests {
         let store = store("state");
         assert_eq!(store.load_state(), State::default());
         let state = State {
-            window: Some(WindowState { width: 1000, height: 700, x: Some(10), y: Some(20) }),
+            window: Some(WindowState { width: 1000, height: 700, x: Some(10), y: Some(20), maximized: false }),
             sidebar_width: None,
             ..State::default()
         };
