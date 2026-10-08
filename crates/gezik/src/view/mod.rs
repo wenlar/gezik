@@ -1106,6 +1106,13 @@ impl View {
         self.set_note(text);
     }
 
+    /// Takes the status bar note away (the pointer left what it described).
+    pub fn clear_note(&self) {
+        if self.0.note.borrow_mut().take().is_some() {
+            self.update_status();
+        }
+    }
+
     /// Hands a change still waiting for its timer to the `views.toml` writer now (on close).
     pub fn flush_memory(&self) {
         if self.0.save_pending.get() {

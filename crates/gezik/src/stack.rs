@@ -3,12 +3,13 @@
 //! `STACK_MAX`; whether each still exists is checked off the UI thread.
 
 use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::rc::Rc;
 
 use gezik_core::drag::Effect;
 use gezik_core::kind::Kind;
-use gezik_core::ops::paths::{is_within, same_path};
+use gezik_core::ops::paths::{path_key, same_path};
 use gezik_ops::{JobId, Report};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
@@ -33,6 +34,8 @@ pub struct StackItem {
 #[derive(Debug, Default)]
 pub struct StackItems {
     items: Vec<StackItem>,
+    /// `path_key` of every item, for adding without comparing with each one.
+    keys: HashSet<Vec<String>>,
 }
 
 impl StackItems {
@@ -40,13 +43,15 @@ impl StackItems {
     pub fn add(&mut self, paths: impl IntoIterator<Item = (PathBuf, bool)>) -> (usize, usize) {
         let (mut added, mut full) = (0, 0);
         for (path, is_dir) in paths {
-            if self.items.iter().any(|item| same_path(&item.path, &path)) {
+            let key = path_key(&path);
+            if self.keys.contains(&key) {
                 continue;
             }
             if self.items.len() >= STACK_MAX {
                 full += 1;
                 continue;
             }
+            self.keys.insert(key);
             self.items.push(StackItem { path, is_dir, gone: false });
             added += 1;
         }
@@ -55,12 +60,14 @@ impl StackItems {
 
     pub fn remove(&mut self, index: usize) {
         if index < self.items.len() {
-            self.items.remove(index);
+            let item = self.items.remove(index);
+            self.keys.remove(&path_key(&item.path));
         }
     }
 
     pub fn clear(&mut self) {
         self.items = Vec::new();
+        self.keys = HashSet::new();
     }
 
     pub fn items(&self) -> &[StackItem] {
@@ -72,24 +79,42 @@ impl StackItems {
         self.items.iter().filter(|item| !item.gone).map(|item| item.path.clone()).collect()
     }
 
-    /// What a check found: per path, whether it is a folder, or `None` if it is gone.
+    /// What a check found: per path, whether it is a folder, or `None` if it is gone. The
+    /// results come in the order of the items asked about, so they are walked side by side;
+    /// only when the stack changed meanwhile are they looked up by key.
     pub fn checked(&mut self, found: &[(PathBuf, Option<bool>)]) {
-        for item in &mut self.items {
-            if let Some((_, state)) = found.iter().find(|(path, _)| same_path(path, &item.path)) {
+        let mut by_key: Option<HashMap<Vec<String>, Option<bool>>> = None;
+        for (i, item) in self.items.iter_mut().enumerate() {
+            let state = match found.get(i) {
+                Some((path, state)) if *path == item.path => Some(*state),
+                _ => by_key
+                    .get_or_insert_with(|| found.iter().map(|(path, state)| (path_key(path), *state)).collect())
+                    .get(&path_key(&item.path))
+                    .copied(),
+            };
+            if let Some(state) = state {
                 item.gone = state.is_none();
                 if let Some(is_dir) = state {
-                    item.is_dir = *is_dir;
+                    item.is_dir = is_dir;
                 }
             }
         }
     }
 
-    /// `moved` were moved away: they leave the stack, but for one that failed (or had a
-    /// failure inside it), which stays.
-    pub fn moved(&mut self, moved: &[PathBuf], failed: &[PathBuf]) {
+    /// A Move here ended and `found` is what the disk says of the paths it was to move: the
+    /// ones no longer there left the stack; the rest (skipped, cancelled, failed, or already
+    /// in the folder) stay.
+    pub fn left(&mut self, found: &[(PathBuf, Option<bool>)]) {
+        let gone: HashSet<Vec<String>> =
+            found.iter().filter(|(_, state)| state.is_none()).map(|(path, _)| path_key(path)).collect();
+        let keys = &mut self.keys;
         self.items.retain(|item| {
-            let went = moved.iter().any(|path| same_path(path, &item.path));
-            !went || failed.iter().any(|failure| is_within(failure, &item.path))
+            let key = path_key(&item.path);
+            let went = gone.contains(&key);
+            if went {
+                keys.remove(&key);
+            }
+            !went
         });
     }
 }
@@ -136,8 +161,10 @@ struct Inner {
     items: RefCell<StackItems>,
     open: Cell<bool>,
     rows: Rc<VecModel<StackRow>>,
-    /// A Move here under way: its job and what it moves.
-    moving: RefCell<Option<(JobId, Vec<PathBuf>)>>,
+    /// The Move here jobs under way: each job and what it moves.
+    moving: RefCell<Vec<(JobId, Vec<PathBuf>)>>,
+    /// Counts the checks started; the result of an older one is stale.
+    generation: Cell<u64>,
 }
 
 #[derive(Clone)]
@@ -155,6 +182,7 @@ impl Stack {
             open: Cell::new(false),
             rows,
             moving: RefCell::default(),
+            generation: Cell::new(0),
         }));
         window.on_stack_down(|i, x, y| with_current(|stack| stack.down(i, x, y)));
         window.on_stack_hovered(|i| with_current(|stack| stack.hovered(i)));
@@ -192,6 +220,10 @@ impl Stack {
         if added > 0 {
             self.0.open.set(true);
             self.check();
+        } else if full == 0 {
+            // All of it was on the stack already: show where.
+            self.0.open.set(true);
+            self.0.view.note("Already on the drop stack".to_owned());
         }
         self.sync();
     }
@@ -199,7 +231,7 @@ impl Stack {
     /// `add-to-stack`: the selected items.
     pub fn add_selection(&self) {
         if self.0.view.shows_drives() {
-            return;
+            return self.0.view.note("Open a folder to add items to the drop stack".to_owned());
         }
         let items = self.0.view.selected_items();
         if items.is_empty() {
@@ -219,16 +251,33 @@ impl Stack {
 
     /// A job ended: a Move here takes what it moved off the stack; what is there may have
     /// changed, so it is checked again.
-    pub fn job_finished(&self, id: JobId, report: &Report) {
-        let moving = self.0.moving.borrow_mut().take_if(|(job, _)| *job == id);
-        if let Some((_, moved)) = moving {
-            let failed: Vec<PathBuf> = report.failures.iter().map(|f| f.path.clone()).collect();
-            self.0.items.borrow_mut().moved(&moved, &failed);
+    pub fn job_finished(&self, id: JobId, _report: &Report) {
+        let moved = {
+            let mut moving = self.0.moving.borrow_mut();
+            moving.iter().position(|(job, _)| *job == id).map(|at| moving.remove(at).1)
+        };
+        match moved {
+            // What left is decided by the disk: a skipped, cancelled or failed item is still
+            // there and stays.
+            Some(paths) => {
+                let _ = std::thread::Builder::new().name("gezik-stack-check".into()).spawn(move || {
+                    let found = check(paths);
+                    let _ = slint::invoke_from_event_loop(move || {
+                        with_current(|stack| {
+                            stack.0.items.borrow_mut().left(&found);
+                            stack.sync();
+                            stack.check();
+                        })
+                    });
+                });
+            }
+            None => {
+                if !self.0.items.borrow().items().is_empty() {
+                    self.check();
+                }
+                self.sync();
+            }
         }
-        if !self.0.items.borrow().items().is_empty() {
-            self.check();
-        }
-        self.sync();
     }
 
     /// Copy here / Move here: the paths still there, to the folder shown, as one job.
@@ -236,13 +285,19 @@ impl Stack {
         let Some(dir) = self.0.view.folder() else {
             return self.0.view.note("Open a folder to copy or move the drop stack into".to_owned());
         };
-        let paths = self.0.items.borrow().usable();
-        if paths.is_empty() {
+        let usable = self.0.items.borrow().usable();
+        if usable.is_empty() {
             return self.0.view.note("The drop stack has nothing to copy or move".to_owned());
+        }
+        // Items already in this folder have nothing to do here.
+        let paths: Vec<PathBuf> =
+            usable.into_iter().filter(|path| !path.parent().is_some_and(|parent| same_path(parent, &dir))).collect();
+        if paths.is_empty() {
+            return self.0.view.note("Everything on the drop stack is already in this folder".to_owned());
         }
         let job = self.0.ops.transfer_job(paths.clone(), dir, effect);
         if effect == Effect::Move {
-            *self.0.moving.borrow_mut() = Some((job, paths));
+            self.0.moving.borrow_mut().push((job, paths));
         }
     }
 
@@ -266,20 +321,25 @@ impl Stack {
         let path = usize::try_from(index)
             .ok()
             .and_then(|i| self.0.items.borrow().items().get(i).map(|item| item.path.clone()));
-        if let Some(path) = path {
-            self.0.view.note(path.display().to_string());
+        match path {
+            Some(path) => self.0.view.note(path.display().to_string()),
+            None => self.0.view.clear_note(),
         }
     }
 
     /// Checks on a thread of its own which paths are still there.
     fn check(&self) {
+        let generation = self.0.generation.get() + 1;
+        self.0.generation.set(generation);
         let paths: Vec<PathBuf> = self.0.items.borrow().items().iter().map(|item| item.path.clone()).collect();
         let _ = std::thread::Builder::new().name("gezik-stack-check".into()).spawn(move || {
             let found = check(paths);
             let _ = slint::invoke_from_event_loop(move || {
                 with_current(|stack| {
-                    stack.0.items.borrow_mut().checked(&found);
-                    stack.sync();
+                    if stack.0.generation.get() == generation {
+                        stack.0.items.borrow_mut().checked(&found);
+                        stack.sync();
+                    }
                 })
             });
         });
@@ -329,18 +389,33 @@ mod tests {
     }
 
     #[test]
-    fn gone_items_are_left_out_and_failed_moves_stay() {
+    fn gone_items_are_left_out_and_unmoved_items_stay() {
         let mut s = StackItems::default();
         s.add([(p("a"), false), (p("b"), false), (p("c"), false)]);
         s.checked(&[(p("b"), None), (p("a"), Some(false)), (p("c"), Some(true))]);
         assert!(s.items()[1].gone);
         assert!(s.items()[2].is_dir, "the check tells folders apart");
         assert_eq!(s.usable(), [p("a"), p("c")]);
-        s.moved(&[p("a"), p("c")], &[p("c").join("inner.txt")]);
+        // The disk decides after a Move here: a was moved away; c was skipped (or cancelled,
+        // or already in the folder) and is still there.
+        s.left(&[(p("a"), None), (p("c"), Some(true))]);
         let left: Vec<PathBuf> = s.items().iter().map(|i| i.path.clone()).collect();
-        assert_eq!(left, [p("b"), p("c")], "c had a failure inside: it stays; a went");
+        assert_eq!(left, [p("b"), p("c")], "c is still there: it stays; a went");
+        assert_eq!(s.add([(p("a"), false)]), (1, 0), "a left the key set too");
         s.checked(&[(p("b"), Some(false))]);
         assert!(!s.items()[0].gone, "back again");
+    }
+
+    #[test]
+    fn a_check_that_comes_in_another_order_is_matched_by_path() {
+        let mut s = StackItems::default();
+        s.add([(p("a"), false), (p("b"), false)]);
+        s.remove(0);
+        s.checked(&[(p("a"), None), (p("b"), None)]);
+        assert_eq!(s.items().len(), 1);
+        assert!(s.items()[0].gone, "b is found though the stack changed under the check");
+        s.left(&[]);
+        assert_eq!(s.items().len(), 1, "nothing checked: nothing leaves");
     }
 
     #[test]

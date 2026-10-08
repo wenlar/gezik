@@ -17,6 +17,11 @@ component Grip inherits TouchArea {
     callback drag(length, length, bool, bool, bool);
     callback up(length, length);
     callback cancel();
+    callback scrolled(length);
+    scroll-event(event) => {
+        root.scrolled(event.delta-x + event.delta-y);
+        accept
+    }
     pointer-event(event) => {
         if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
             root.down(self.index, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
@@ -84,8 +89,18 @@ export component DropStack inherits Rectangle {
                 cancel => { root.cancel(); }
             }
         }
-        Flickable {
-            horizontal-stretch: 1;
+        Rectangle {
+          horizontal-stretch: 1;
+          // The wheel scrolls the chips (also over empty space); they are not dragged by hand,
+          // for a press on a chip is a drag of the file.
+          TouchArea {
+            scroll-event(event) => {
+                flick.content-x = clamp(flick.content-x + event.delta-x + event.delta-y, min(0px, flick.width - flick.content-width), 0px);
+                accept
+            }
+          }
+          flick := Flickable {
+            interactive: false;
             content-width: chips.preferred-width;
             chips := HorizontalLayout {
                 spacing: Theme.spacing;
@@ -125,6 +140,7 @@ export component DropStack inherits Rectangle {
                         drag(x, y, s, c, a) => { root.drag(x, y, s, c, a); }
                         up(x, y) => { root.up(x, y); }
                         cancel => { root.cancel(); }
+                        scrolled(d) => { flick.content-x = clamp(flick.content-x + d, min(0px, flick.width - flick.content-width), 0px); }
                     }
                 }
                 if root.more != "": Text {
@@ -133,6 +149,7 @@ export component DropStack inherits Rectangle {
                     color: Theme.foreground-muted;
                 }
             }
+          }
         }
         VerticalLayout {
             alignment: center;
