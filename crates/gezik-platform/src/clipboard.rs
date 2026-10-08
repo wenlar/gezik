@@ -54,16 +54,32 @@ impl ClipboardImage {
         match self {
             ClipboardImage::Png(bytes) => Ok(bytes.clone()),
             ClipboardImage::Bmp(bytes) => {
-                let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), image::ImageFormat::Bmp);
+                use image::ImageDecoder;
+                let unreadable = |err: &dyn std::fmt::Display| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, format!("The picture cannot be read: {err}"))
+                };
+                // The BMP decoder's own pixels, without image's general conversions; the png
+                // crate writes them as they are (a BMP decodes to RGB8 or RGBA8).
+                let mut decoder =
+                    image::codecs::bmp::BmpDecoder::new(std::io::Cursor::new(bytes)).map_err(|e| unreadable(&e))?;
                 let mut limits = image::Limits::default();
                 limits.max_alloc = Some(MAX_DECODE_BYTES);
-                reader.limits(limits);
-                let picture = reader.decode().map_err(|err| {
-                    std::io::Error::new(std::io::ErrorKind::InvalidData, format!("The picture cannot be read: {err}"))
-                })?;
+                decoder.set_limits(limits).map_err(|e| unreadable(&e))?;
+                let (width, height) = decoder.dimensions();
+                let color = match decoder.color_type() {
+                    image::ColorType::Rgb8 => png::ColorType::Rgb,
+                    image::ColorType::Rgba8 => png::ColorType::Rgba,
+                    other => return Err(unreadable(&format!("unexpected colour type {other:?}"))),
+                };
+                let mut data = vec![0; usize::try_from(decoder.total_bytes()).map_err(|e| unreadable(&e))?];
+                decoder.read_image(&mut data).map_err(|e| unreadable(&e))?;
                 let mut out = Vec::new();
-                picture
-                    .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+                let mut encoder = png::Encoder::new(&mut out, width, height);
+                encoder.set_color(color);
+                encoder.set_depth(png::BitDepth::Eight);
+                encoder
+                    .write_header()
+                    .and_then(|mut writer| writer.write_image_data(&data))
                     .map_err(std::io::Error::other)?;
                 Ok(out)
             }
@@ -684,6 +700,44 @@ mod tests {
         wrapping[4..8].copy_from_slice(&i32::MIN.to_le_bytes());
         wrapping[8..12].copy_from_slice(&i32::MIN.to_le_bytes());
         assert_eq!(bmp_from_dib(&wrapping), None);
+    }
+
+    #[test]
+    fn dibs_become_pngs_with_the_same_pixels() {
+        fn header(bits: u16, height: i32) -> Vec<u8> {
+            let mut h = Vec::new();
+            h.extend_from_slice(&40u32.to_le_bytes());
+            h.extend_from_slice(&2i32.to_le_bytes());
+            h.extend_from_slice(&height.to_le_bytes());
+            h.extend_from_slice(&1u16.to_le_bytes());
+            h.extend_from_slice(&bits.to_le_bytes());
+            h.extend_from_slice(&[0; 24]);
+            h
+        }
+        fn decode(dib: &[u8]) -> (png::ColorType, Vec<u8>) {
+            let png = ClipboardImage::Bmp(bmp_from_dib(dib).unwrap()).png_bytes().unwrap();
+            let mut reader = png::Decoder::new(std::io::Cursor::new(png)).read_info().unwrap();
+            let mut buf = vec![0; reader.output_buffer_size().unwrap()];
+            let info = reader.next_frame(&mut buf).unwrap();
+            buf.truncate(info.buffer_size());
+            (info.color_type, buf)
+        }
+        // 24-bit, bottom-up, 2x2: rows padded to 8 bytes; BGR in the file.
+        let mut dib24 = header(24, 2);
+        dib24.extend_from_slice(&[255, 0, 0, 0, 255, 0, 0, 0]); // bottom: blue, green
+        dib24.extend_from_slice(&[0, 0, 255, 255, 255, 255, 0, 0]); // top: red, white
+        let (color, pixels) = decode(&dib24);
+        assert_eq!(color, png::ColorType::Rgb);
+        assert_eq!(pixels, [255, 0, 0, 255, 255, 255, 0, 0, 255, 0, 255, 0]);
+        // 32-bit with alpha (a V4 header with ARGB masks), bottom-up: the last row in the file is on top.
+        let mut dib32 = dib32(108, 2, 3);
+        let at = dib32.len() - 16;
+        for (i, bgra) in [[255, 0, 0, 64], [10, 20, 30, 0], [0, 0, 255, 128], [0, 255, 0, 255]].iter().enumerate() {
+            dib32[at + i * 4..at + i * 4 + 4].copy_from_slice(bgra);
+        }
+        let (color, pixels) = decode(&dib32);
+        assert_eq!(color, png::ColorType::Rgba);
+        assert_eq!(pixels, [255, 0, 0, 128, 0, 255, 0, 255, 0, 0, 255, 64, 30, 20, 10, 0]);
     }
 
     #[test]

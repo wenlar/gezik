@@ -1807,6 +1807,7 @@ dependencies = [
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
+ "png",
  "raw-window-handle",
  "wayland-backend",
  "wayland-client",

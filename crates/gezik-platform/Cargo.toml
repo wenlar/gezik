@@ -11,6 +11,8 @@ dirs = "7"
 raw-window-handle = "0.6"
 # Only the formats Gezik previews itself; the system shows the rest.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
+# Encodes pasted pictures as PNG (already built for image).
+png = { version = "0.18", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
