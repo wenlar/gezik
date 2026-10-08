@@ -55,15 +55,19 @@ slint::include_modules!();
 /// Opens entry `index` of the list (a double-click, or a click with single-click-open): an
 /// archive is extracted next to itself if `[archives] double-click` says so.
 fn open_entry(nav: &navigation::Navigator, view: &view::View, index: usize) {
-    let archive = view.entry_path(index).filter(|(path, is_dir)| {
-        !is_dir
-            && path.file_name().is_some_and(|n| gezik_core::batch::archive::looks_like_archive(&n.to_string_lossy()))
-    });
-    match archive {
-        Some((path, _)) if archives::extracts_on_double_click() => {
-            archives::with_current(|archives| archives.extract_here(vec![path]));
-        }
-        _ => nav.open_row(i32::try_from(index).unwrap_or(-1)),
+    if let Some((path, is_dir)) = view.entry_path(index) {
+        open_path(nav, path, is_dir);
+    }
+}
+
+/// Opens the entry at `path` as [`open_entry`] does, for a caller that fixed the entry earlier.
+fn open_path(nav: &navigation::Navigator, path: PathBuf, is_dir: bool) {
+    let archive = !is_dir
+        && path.file_name().is_some_and(|n| gezik_core::batch::archive::looks_like_archive(&n.to_string_lossy()));
+    if archive && archives::extracts_on_double_click() {
+        archives::with_current(|archives| archives.extract_here(vec![path]));
+    } else {
+        nav.open_item(path, is_dir);
     }
 }
 

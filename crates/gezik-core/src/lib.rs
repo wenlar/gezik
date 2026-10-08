@@ -81,7 +81,7 @@ pub fn shown_name(name: &str, is_dir: bool, hide_extension: bool) -> &str {
 /// `Entry::HIDDEN` and `Entry::SYSTEM` from what the directory read already gave (no call of
 /// its own: Windows fills `file_attributes` from the directory listing).
 #[cfg(windows)]
-fn attribute_flags(meta: &std::fs::Metadata) -> u8 {
+pub fn attribute_flags(meta: &std::fs::Metadata) -> u8 {
     use std::os::windows::fs::MetadataExt;
     const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
     const FILE_ATTRIBUTE_SYSTEM: u32 = 0x4;
@@ -97,7 +97,7 @@ fn attribute_flags(meta: &std::fs::Metadata) -> u8 {
 }
 
 #[cfg(not(windows))]
-fn attribute_flags(_meta: &std::fs::Metadata) -> u8 {
+pub fn attribute_flags(_meta: &std::fs::Metadata) -> u8 {
     0
 }
 

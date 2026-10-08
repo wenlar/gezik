@@ -498,8 +498,15 @@ impl Drags {
                         since,
                     ) {
                         self.0.last_open.set(Some(std::time::Instant::now()));
-                        let (nav, view) = (self.0.nav.clone(), self.0.view.clone());
-                        Timer::single_shot(Duration::ZERO, move || crate::open_entry(&nav, &view, index));
+                        let nav = self.0.nav.clone();
+                        // By path: a listing replaced before the timer fires must not open
+                        // another entry under the same index.
+                        let clicked = self.0.view.entry_path(index);
+                        Timer::single_shot(Duration::ZERO, move || {
+                            if let Some((path, is_dir)) = clicked {
+                                crate::open_path(&nav, path, is_dir);
+                            }
+                        });
                     }
                 }
                 false

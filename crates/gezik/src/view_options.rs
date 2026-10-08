@@ -92,6 +92,12 @@ pub fn set_from_file(options: ViewOptions) {
 /// The View menu (or toggle-hidden) changes `option`: shown at once and written into
 /// settings.toml; a failure is said in the status bar and the file's values come back.
 pub fn change(option: ViewOption) {
+    // Already so: nothing to show, nothing to write.
+    let mut next = current();
+    option.apply(&mut next);
+    if next == current() {
+        return;
+    }
     let store = CONTEXT.with(|c| c.borrow().as_ref().and_then(|(_, store)| store.clone()));
     let Some(store) = store else {
         let shown = STATE.with(|s| s.borrow_mut().change_in_memory(option));

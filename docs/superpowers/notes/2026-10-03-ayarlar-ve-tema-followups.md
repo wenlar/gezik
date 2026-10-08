@@ -245,4 +245,6 @@ Alt proje 1 tamamlandıktan sonra bilerek ertelenen maddeler. Kaynak: görev inc
   - Bir grup yeniden adlandırılıp başka bir grupla birleşince yazılış yeni adın yazıldığı gibi olur (var olan grubun yazılışı değil).
   - Kenar çubuğunun ipuçları her gezinmede yeniden kuruluyor (önemsiz maliyet).
   - Satır → sabitleme eşlemesinin (`row - first_pin_row`) doğrudan testi yok (`gui.sh pins` uçtan uca kapsıyor).
-  - Defterden: dakikalık yeniden biçimleme `entries_changed` sıfırlamasını hesaba katmıyor; sıkıştırma penceresindeki boyut `size-format`'ı izlemiyor; `iso` biçimi tarih yokken boş döner; `shown_name` boşluklu uzantı; bir saatten kısa ama gece yarısını geçen göreli tarihin testi yok.
+  - Defterden: dakikalık yeniden biçimleme `entries_changed` sıfırlamasını hesaba katmıyor; `iso` biçimi tarih yokken boş döner; `shown_name` boşluklu uzantı; bir saatten kısa ama gece yarısını geçen göreli tarihin testi yok.
+
+- 7b son düzeltmeleri: adres çubuğu önerileri listenin gizli/sistem kuralını (`Entry::is_shown`) izliyor; zaten geçerli görünüm seçeneği seçilince settings.toml yazılmıyor; kenar çubuğu `pins::same_path_text`'i kullanıyor; tek tıkla açma, serbest bırakma anındaki girdinin yoluyla açıyor.

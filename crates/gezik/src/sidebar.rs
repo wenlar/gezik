@@ -28,13 +28,7 @@ const DRIVES_HEADER: &str = if cfg!(target_os = "macos") { "LOCATIONS" } else { 
 /// How often the (cheap) drive signature is checked.
 const DRIVE_POLL: Duration = Duration::from_secs(3);
 
-/// Whether two names are equal as the file system sees them: ignoring case (also of
-/// non-ASCII letters like Ç) on Windows, exactly elsewhere.
-fn same_text(a: &str, b: &str) -> bool {
-    a == b || (cfg!(windows) && a.to_lowercase() == b.to_lowercase())
-}
-
-/// Whether `a` and `b` name the same location (see [`same_text`]). Separators and
+/// Whether `a` and `b` name the same location (see [`pins::same_path_text`]). Separators and
 /// redundant `/` or `.` parts do not matter.
 pub fn same_path(a: &Path, b: &Path) -> bool {
     a == b
@@ -42,7 +36,7 @@ pub fn same_path(a: &Path, b: &Path) -> bool {
             && a.components().count() == b.components().count()
             && a.components()
                 .zip(b.components())
-                .all(|(x, y)| same_text(&x.as_os_str().to_string_lossy(), &y.as_os_str().to_string_lossy())))
+                .all(|(x, y)| pins::same_path_text(&x.as_os_str().to_string_lossy(), &y.as_os_str().to_string_lossy())))
 }
 
 /// The alias an answer to Rename… gives: none for an empty one or the folder's own name.

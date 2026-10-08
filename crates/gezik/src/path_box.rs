@@ -320,22 +320,20 @@ impl List {
     }
 }
 
+/// Whether a folder called `name` with the attribute `flags` is suggested: the list's own rule
+/// ([`gezik_core::Entry::is_shown`]), so the address bar and the list agree.
+fn suggested(name: &str, flags: u8, show_hidden: bool, show_system: bool) -> bool {
+    let entry =
+        gezik_core::Entry { name: name.to_owned(), is_dir: true, flags, size: 0, modified: None, created: None };
+    entry.is_shown(show_hidden, show_system)
+}
+
 /// The names of the folders in `dir` (links to folders too, not Gezik's temporary names),
-/// sorted as suggestions list them. On Windows, folders marked hidden or system only with
-/// `hidden` (hidden items shown). Touches the disk: only on a worker thread.
-#[cfg_attr(not(windows), allow(unused_variables))]
-pub fn list_subfolders(dir: &Path, hidden: bool) -> std::io::Result<Vec<String>> {
+/// sorted as suggestions list them, those the list would show with these options. Touches the
+/// disk: only on a worker thread.
+pub fn list_subfolders(dir: &Path, show_hidden: bool, show_system: bool) -> std::io::Result<Vec<String>> {
     let mut names = Vec::new();
     for entry in std::fs::read_dir(dir)?.flatten() {
-        // Free on Windows: the listing brought the attributes along.
-        #[cfg(windows)]
-        if !hidden {
-            use std::os::windows::fs::MetadataExt;
-            const HIDDEN_OR_SYSTEM: u32 = 0x2 | 0x4;
-            if entry.metadata().is_ok_and(|meta| meta.file_attributes() & HIDDEN_OR_SYSTEM != 0) {
-                continue;
-            }
-        }
         let is_dir = match entry.file_type() {
             Ok(kind) if kind.is_symlink() => entry.path().is_dir(),
             Ok(kind) => kind.is_dir(),
@@ -345,7 +343,11 @@ pub fn list_subfolders(dir: &Path, hidden: bool) -> std::io::Result<Vec<String>>
             && let Some(name) = entry.file_name().to_str()
             && !gezik_ops::pending::is_internal_name(name)
         {
-            names.push(name.to_owned());
+            // Free on Windows: the listing brought the attributes along.
+            let flags = entry.metadata().map_or(0, |meta| gezik_core::attribute_flags(&meta));
+            if suggested(name, flags, show_hidden, show_system) {
+                names.push(name.to_owned());
+            }
         }
     }
     sort_names(&mut names);
@@ -624,12 +626,11 @@ impl PathBox {
         let number = self.0.reads.get() + 1;
         self.0.reads.set(number);
         self.0.reading.borrow_mut().push((folder.clone(), generation));
-        let mut hidden = true;
-        crate::view::with_current(|view| hidden = view.shows_hidden());
+        let options = crate::view_options::current();
         let spawned = std::thread::Builder::new().name("gezik-complete".into()).spawn({
             let folder = folder.clone();
             move || {
-                let names = list_subfolders(&folder, hidden);
+                let names = list_subfolders(&folder, options.show_hidden, options.show_system);
                 let _ = slint::invoke_from_event_loop(move || {
                     with_current(|p| p.listed(generation, number, folder, names));
                 });
@@ -896,8 +897,8 @@ mod tests {
             std::fs::create_dir_all(dir.join(name)).unwrap();
         }
         std::fs::write(dir.join("c.txt"), "x").unwrap();
-        assert_eq!(list_subfolders(&dir, false).unwrap(), ["A", "b"]);
-        assert!(list_subfolders(&dir.join("missing"), true).is_err());
+        assert_eq!(list_subfolders(&dir, false, false).unwrap(), ["A", "b"]);
+        assert!(list_subfolders(&dir.join("missing"), true, true).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -910,9 +911,27 @@ mod tests {
             std::fs::create_dir_all(dir.join(name)).unwrap();
         }
         gezik_platform::fs::set_hidden(&dir.join("Hidden")).unwrap();
-        assert_eq!(list_subfolders(&dir, false).unwrap(), ["Shown"]);
-        assert_eq!(list_subfolders(&dir, true).unwrap(), ["Hidden", "Shown"]);
+        assert_eq!(list_subfolders(&dir, false, false).unwrap(), ["Shown"]);
+        assert_eq!(list_subfolders(&dir, true, false).unwrap(), ["Hidden", "Shown"]);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn suggestions_follow_the_lists_hidden_rule() {
+        use gezik_core::Entry;
+        let both = Entry::HIDDEN | Entry::SYSTEM;
+        // Protected (hidden and system): only with show-system.
+        assert!(!suggested("$RECYCLE.BIN", both, true, false));
+        assert!(suggested("$RECYCLE.BIN", both, false, true));
+        // System only: not dropped.
+        assert!(suggested("Sys", Entry::SYSTEM, false, false));
+        // Hidden: only with show-hidden.
+        assert!(!suggested("Hid", Entry::HIDDEN, false, true));
+        assert!(suggested("Hid", Entry::HIDDEN, true, false));
+        // A dot folder follows show-hidden on every OS.
+        assert!(!suggested(".git", 0, false, false));
+        assert!(suggested(".git", 0, true, false));
+        assert!(suggested("plain", 0, false, false));
     }
 
     const NOW: u64 = 1_800_000_000;
@@ -1008,7 +1027,7 @@ mod tests {
             std::fs::create_dir_all(dir.join(format!("Klasör {i:05}"))).unwrap();
         }
         let started = Instant::now();
-        let names = list_subfolders(&dir, true).unwrap();
+        let names = list_subfolders(&dir, true, true).unwrap();
         let read = started.elapsed();
         let rows = folder_rows(&dir, &names, "klasör 0999");
         let took = started.elapsed();
