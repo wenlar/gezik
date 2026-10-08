@@ -61,13 +61,19 @@ impl KnownDirs {
             path.extend(rest.split('/').filter(|part| !part.is_empty()));
             return path;
         }
-        PathBuf::from(text)
+        PathBuf::from(native_separators(text))
     }
 
     /// [`expand`](Self::expand), but rejects text with a `..` segment (returns `None`).
     pub fn expand_checked(&self, text: &str) -> Option<PathBuf> {
         (!has_parent_segment(text)).then(|| self.expand(text))
     }
+}
+
+/// Stored paths use `/`, but the Windows shell APIs need `\`: a literal `D:/a/b` becomes
+/// `D:\a\b` and `//srv/share/x` becomes `\\srv\share\x`. Other OSes keep the text.
+pub fn native_separators(text: &str) -> String {
+    if cfg!(windows) { text.replace('/', "\\") } else { text.to_owned() }
 }
 
 /// Whether a stored path tries to climb out of its folder with `..`.
@@ -115,6 +121,17 @@ mod tests {
             ("documents", PathBuf::from("/u/alice/OneDrive/Documents")),
             ("downloads", PathBuf::from("/u/alice/Downloads")),
         ])
+    }
+
+    #[test]
+    fn literal_paths_get_native_separators() {
+        if cfg!(windows) {
+            assert_eq!(native_separators("D:/Work/x"), r"D:\Work\x");
+            assert_eq!(native_separators("//server/share/x"), r"\\server\share\x");
+            assert_eq!(fake().expand("D:/Work/x").to_string_lossy(), r"D:\Work\x");
+        } else {
+            assert_eq!(native_separators("/srv/x"), "/srv/x");
+        }
     }
 
     #[test]
