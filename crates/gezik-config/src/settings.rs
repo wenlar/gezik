@@ -551,7 +551,9 @@ fn parse_view(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> V
         out.view.mode = mode;
     }
     let keys = "\"name\", \"modified\", \"created\", \"type\" or \"size\"";
-    if let Some(key) = view_choice(table, "sort", keys, SortKey::parse, file, warnings) {
+    // `folder` is the search results' own sort (views.toml keeps it under `<results>`).
+    let folder_key = |text: &str| SortKey::parse(text).filter(|key| *key != SortKey::Folder);
+    if let Some(key) = view_choice(table, "sort", keys, folder_key, file, warnings) {
         out.view.sort.key = key;
     }
     if let Some(dir) = view_choice(table, "sort-dir", "\"asc\" or \"desc\"", SortDir::parse, file, warnings) {
@@ -1322,6 +1324,14 @@ mod tests {
         let mut warnings = Vec::new();
         let settings = Settings::parse("settings.toml", text, &mut warnings);
         (settings, warnings)
+    }
+
+    #[test]
+    fn a_folder_cannot_be_sorted_by_folder() {
+        let (settings, warnings) = parse("[view]\nsort = \"folder\"\n");
+        assert_eq!(settings.view.view.sort.key, SortKey::Name);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].to_string().contains("view.sort"), "{}", warnings[0]);
     }
 
     #[test]

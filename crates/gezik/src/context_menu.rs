@@ -134,6 +134,10 @@ pub fn header_items(columns: &[ColumnState]) -> Vec<(u32, &'static str)> {
                 (ColumnKey::Type, false) => "Show Type",
                 (ColumnKey::Size, true) => "Hide Size",
                 (ColumnKey::Size, false) => "Show Size",
+                (ColumnKey::Folder, true) => "Hide Folder",
+                (ColumnKey::Folder, false) => "Show Folder",
+                (ColumnKey::Match, true) => "Hide Match",
+                (ColumnKey::Match, false) => "Show Match",
             };
             (id, title)
         })

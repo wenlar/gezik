@@ -1226,6 +1226,7 @@ impl View {
                 ColumnKey::Created => window.get_col_created(),
                 ColumnKey::Type => window.get_col_type(),
                 ColumnKey::Size => window.get_col_size(),
+                ColumnKey::Folder | ColumnKey::Match => continue,
             };
             column.width = (width.round().max(0.0) as u32).clamp(MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH);
         }
@@ -1263,6 +1264,7 @@ impl View {
             SortKey::Created => ColumnKey::Created.index(),
             SortKey::Type => ColumnKey::Type.index(),
             SortKey::Size => ColumnKey::Size.index(),
+            SortKey::Folder => ColumnKey::Folder.index(),
         };
         window.set_sort_column(column);
         window.set_sort_desc(spec.dir == SortDir::Desc);
