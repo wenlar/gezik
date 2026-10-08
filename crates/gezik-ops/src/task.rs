@@ -461,8 +461,8 @@ impl RunCx<'_> {
             let n = NEXT.fetch_add(1, Ordering::Relaxed);
             let path = parent.join(format!("{HIDDEN_PREFIX}x-{}-{n}", std::process::id()));
             // Noted first: a crash between the note and the folder leaves a path that does not
-            // exist, which recovery drops.
-            if let Some(pending) = self.pending() {
+            // exist, which recovery drops. A path no line can hold stays hidden after a crash.
+            if let Some(pending) = self.pending().filter(|_| crate::pending::can_hold(&path)) {
                 pending.add(&path)?;
             }
             match std::fs::create_dir(&path) {
