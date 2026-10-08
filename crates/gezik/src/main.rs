@@ -30,6 +30,7 @@ mod sidebar;
 mod start;
 mod tab_sets;
 mod tab_tools;
+mod templates;
 mod terminal;
 mod theme_bridge;
 mod view;
@@ -298,7 +299,11 @@ fn handle_key(
                 | Action::Pin6
                 | Action::Pin7
                 | Action::Pin8
-                | Action::Pin9 => {
+                | Action::Pin9
+                | Action::NewFolderWithSelection
+                | Action::AddToStack
+                | Action::ToggleStack
+                | Action::ShowHistory => {
                     if action == Action::Filter && editing {
                         window.set_path_editing(false);
                     }
@@ -472,6 +477,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let window = AppWindow::new()?;
 
     let config = ConfigStore::system();
+    templates::set_dir(config.as_ref().map(ConfigStore::templates_dir));
     view_options::install(&window, config.clone());
     let init_error = config.as_ref().and_then(|store| store.ensure_initialized().err().map(|e| (store, e)));
     let mut files = config.as_ref().map(ConfigStore::read_files).unwrap_or_default();
@@ -519,16 +525,23 @@ fn main() -> Result<(), slint::PlatformError> {
         let reader = store.clone();
         let weak = window.as_weak();
         let files = files.clone();
-        watcher::watch_config(store, move || {
-            let fresh = reader.read_files();
-            let files = files.clone();
-            let _ = weak.upgrade_in_event_loop(move |window| {
-                let mut current = files.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                *current = fresh;
-                let (_, plan) = apply_config_and_start(&window, &mut current, None, None);
-                navigation::with_current(|nav| nav.set_start(plan.start));
-            });
-        })
+        watcher::watch_config(
+            store,
+            move || {
+                let fresh = reader.read_files();
+                let files = files.clone();
+                let _ = weak.upgrade_in_event_loop(move |window| {
+                    let mut current = files.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    *current = fresh;
+                    let (_, plan) = apply_config_and_start(&window, &mut current, None, None);
+                    navigation::with_current(|nav| nav.set_start(plan.start));
+                });
+            },
+            {
+                let dir = store.templates_dir();
+                move || templates::refresh(dir.clone())
+            },
+        )
         .map_err(|err| {
             eprintln!("gezik: cannot watch {}: {err}", store.dir().display());
             let warning = Warning::new("config", format!("cannot watch the config folder for changes: {err}"));
@@ -571,6 +584,8 @@ fn main() -> Result<(), slint::PlatformError> {
     let _path_box = path_box::PathBox::new(&window, nav.clone(), config.clone(), saved_state.history.clone());
     // Captures no navigator (it is not `Send`): the result finds it on the UI thread.
     places::load_in_background(window.as_weak(), |part| navigation::with_current(|nav| nav.set_places(part)));
+    // The templates of New ▸, read once the window is up.
+    slint::Timer::single_shot(std::time::Duration::from_millis(500), templates::load_in_background);
 
     let dialogs = dialog::Dialogs::new(&window);
     let sidebar = sidebar::Sidebar::new(&window, nav.clone(), config.clone(), dialogs.clone());

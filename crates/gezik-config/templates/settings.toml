@@ -135,6 +135,10 @@ restore = true
 # copy-path = "ctrl+shift+c"   # the selected items' paths as text; macOS: "mod+alt+c"
 # save-tab-set = ""        # save the open tabs under a name
 # pin-1 = "alt+1"          # the first pinned folder; pin-2 … pin-9 likewise; macOS: "mod+alt+1"
+# new-folder-with-selection = "ctrl+alt+n"   # the selected items into a new folder; macOS: "mod+ctrl+n" (may type a letter with AltGr on some layouts: pick another key then)
+# add-to-stack = "mod+shift+s"   # the selected items onto the drop stack
+# toggle-stack = ""        # show or hide the drop stack
+# show-history = ""        # the operations panel's History
 
 # Saved rule sets for batch rename (Rename… with two or more items selected). The rename
 # layer writes them with "Presets ▾ › Save current rules as…"; they can also be written here.

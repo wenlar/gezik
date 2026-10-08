@@ -98,7 +98,12 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         | Action::Duplicate
         | Action::Undo
         | Action::Redo
-        | Action::BatchRename => return false,
+        | Action::BatchRename
+        // Placeholders: Tasks 6, 7 and 8 give these their behaviour.
+        | Action::NewFolderWithSelection
+        | Action::AddToStack
+        | Action::ToggleStack
+        | Action::ShowHistory => return false,
     }
     true
 }
