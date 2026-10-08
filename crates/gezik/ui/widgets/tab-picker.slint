@@ -56,7 +56,7 @@ export component TabPicker inherits Rectangle {
         }
     }
 
-    background: Theme.background.with-alpha(0.6);
+    background: Theme.overlay;
 
     // Clicks outside the box go nowhere.
     TouchArea { }
@@ -66,7 +66,7 @@ export component TabPicker inherits Rectangle {
         height: content.preferred-height;
         x: (root.width - self.width) / 2;
         y: (root.height - self.height) / 4;
-        background: Theme.surface;
+        background: Theme.surface-raised;
         border-radius: Theme.radius * 1.5;
         border-width: 1px;
         border-color: Theme.border;

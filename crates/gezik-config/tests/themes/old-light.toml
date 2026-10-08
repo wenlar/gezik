@@ -1,0 +1,36 @@
+name = "Light"
+
+[colors]
+background = "#fafafa"
+surface = "#f3f3f3"
+foreground = "#1b1b1b"
+foreground-muted = "#616161"
+border = "#d6d6d6"
+accent = "#005fb8"
+accent-foreground = "#ffffff"
+selection = "#cce4f7"
+selection-foreground = "#1b1b1b"
+hover = "#0000000d"
+icon-folder = "#d9a520"
+icon-image = "#1f9e83"
+icon-video = "#c94158"
+icon-audio = "#8a52c9"
+icon-archive = "#a8723c"
+icon-document = "#2f7fcf"
+icon-code = "#5f9c2e"
+icon-other = "#8a939c"
+focus-ring = "#005fb8"
+marquee = "#005fb826"
+danger = "#c42b1c"
+progress = "#005fb8"
+progress-paused = "#9d5d00"
+progress-error = "#c42b1c"
+drop-target = "#005fb833"
+
+[metrics]
+font-family = ""
+font-size = 13
+row-height = 26
+icon-size = 16
+radius = 6
+spacing = 6

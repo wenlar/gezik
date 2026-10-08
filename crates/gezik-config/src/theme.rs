@@ -3,125 +3,126 @@
 use crate::{Color, Warning};
 use std::collections::HashMap;
 
-/// Every color a theme can set, as written in `[colors]`.
-pub const COLOR_KEYS: [&str; 25] = [
-    "background",
-    "surface",
-    "foreground",
-    "foreground-muted",
-    "border",
-    "accent",
-    "accent-foreground",
-    "selection",
-    "selection-foreground",
-    "hover",
-    "icon-folder",
-    "icon-image",
-    "icon-video",
-    "icon-audio",
-    "icon-archive",
-    "icon-document",
-    "icon-code",
-    "icon-other",
-    "focus-ring",
-    "marquee",
-    "danger",
-    "progress",
-    "progress-paused",
-    "progress-error",
-    "drop-target",
-];
-
 /// Old color names still read, for themes written before the icon colors were split.
 /// The new name wins when a theme sets both.
 const COLOR_ALIASES: [(&str, &str); 2] = [("folder-icon", "icon-folder"), ("file-icon", "icon-other")];
 
 /// Numeric `[metrics]` keys with their allowed range (inclusive).
-pub const METRIC_RANGES: [(&str, f32, f32); 5] = [
+pub const METRIC_RANGES: [(&str, f32, f32); 6] = [
     ("font-size", 8.0, 32.0),
     ("row-height", 16.0, 64.0),
     ("icon-size", 12.0, 48.0),
     ("radius", 0.0, 16.0),
     ("spacing", 0.0, 24.0),
+    ("inset", 0.0, 16.0),
 ];
 
 const DARK: &str = include_str!("../themes/dark.toml");
 const LIGHT: &str = include_str!("../themes/light.toml");
+const CLASSIC_DARK: &str = include_str!("../themes/classic-dark.toml");
+const CLASSIC_LIGHT: &str = include_str!("../themes/classic-light.toml");
 
 pub(crate) fn builtin_source(id: &str) -> Option<&'static str> {
     match id {
         "dark" => Some(DARK),
         "light" => Some(LIGHT),
+        "classic-dark" => Some(CLASSIC_DARK),
+        "classic-light" => Some(CLASSIC_LIGHT),
         _ => None,
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct ThemeColors {
-    pub background: Color,
-    pub surface: Color,
-    pub foreground: Color,
-    pub foreground_muted: Color,
-    pub border: Color,
-    pub accent: Color,
-    pub accent_foreground: Color,
-    pub selection: Color,
-    pub selection_foreground: Color,
-    pub hover: Color,
-    pub icon_folder: Color,
-    pub icon_image: Color,
-    pub icon_video: Color,
-    pub icon_audio: Color,
-    pub icon_archive: Color,
-    pub icon_document: Color,
-    pub icon_code: Color,
-    pub icon_other: Color,
-    pub focus_ring: Color,
-    /// Fill of the rubber-band selection rectangle (usually translucent).
-    pub marquee: Color,
-    pub danger: Color,
-    /// Progress bars of running file operations.
-    pub progress: Color,
-    /// A paused operation (waiting for decisions, a full disk, the user).
-    pub progress_paused: Color,
-    pub progress_error: Color,
-    /// A folder, tab or place a dragged file would be dropped on.
-    pub drop_target: Color,
+/// One list makes the `[colors]` keys, the struct fields and their lookup, so they cannot
+/// drift apart.
+macro_rules! theme_colors {
+    ($($(#[$doc:meta])* $field:ident = $key:literal,)*) => {
+        /// Every color a theme can set, as written in `[colors]`.
+        pub const COLOR_KEYS: [&str; 43] = [$($key),*];
+
+        #[derive(Debug, Clone, Default, PartialEq)]
+        pub struct ThemeColors {
+            $($(#[$doc])* pub $field: Color,)*
+        }
+
+        impl ThemeColors {
+            /// `key` must be one of [`COLOR_KEYS`].
+            pub fn get(&self, key: &str) -> Color {
+                match key {
+                    $($key => self.$field,)*
+                    _ => unreachable!("not a color key: {key}"),
+                }
+            }
+
+            /// `key` must be one of [`COLOR_KEYS`].
+            pub(crate) fn set(&mut self, key: &str, color: Color) {
+                let slot = match key {
+                    $($key => &mut self.$field,)*
+                    _ => unreachable!("not a color key: {key}"),
+                };
+                *slot = color;
+            }
+        }
+    };
 }
 
-impl ThemeColors {
-    /// `key` must be one of [`COLOR_KEYS`].
-    pub(crate) fn set(&mut self, key: &str, color: Color) {
-        let slot = match key {
-            "background" => &mut self.background,
-            "surface" => &mut self.surface,
-            "foreground" => &mut self.foreground,
-            "foreground-muted" => &mut self.foreground_muted,
-            "border" => &mut self.border,
-            "accent" => &mut self.accent,
-            "accent-foreground" => &mut self.accent_foreground,
-            "selection" => &mut self.selection,
-            "selection-foreground" => &mut self.selection_foreground,
-            "hover" => &mut self.hover,
-            "icon-folder" => &mut self.icon_folder,
-            "icon-image" => &mut self.icon_image,
-            "icon-video" => &mut self.icon_video,
-            "icon-audio" => &mut self.icon_audio,
-            "icon-archive" => &mut self.icon_archive,
-            "icon-document" => &mut self.icon_document,
-            "icon-code" => &mut self.icon_code,
-            "icon-other" => &mut self.icon_other,
-            "focus-ring" => &mut self.focus_ring,
-            "marquee" => &mut self.marquee,
-            "danger" => &mut self.danger,
-            "progress" => &mut self.progress,
-            "progress-paused" => &mut self.progress_paused,
-            "progress-error" => &mut self.progress_error,
-            "drop-target" => &mut self.drop_target,
-            _ => unreachable!("not a color key: {key}"),
-        };
-        *slot = color;
-    }
+theme_colors! {
+    /// The file list (later: the content sheet), the active tab.
+    background = "background",
+    /// Panels: operations, preview, column header.
+    surface = "surface",
+    foreground = "foreground",
+    foreground_muted = "foreground-muted",
+    border = "border",
+    accent = "accent",
+    accent_foreground = "accent-foreground",
+    selection = "selection",
+    selection_foreground = "selection-foreground",
+    hover = "hover",
+    icon_folder = "icon-folder",
+    icon_image = "icon-image",
+    icon_video = "icon-video",
+    icon_audio = "icon-audio",
+    icon_archive = "icon-archive",
+    icon_document = "icon-document",
+    icon_code = "icon-code",
+    icon_other = "icon-other",
+    focus_ring = "focus-ring",
+    /// Fill of the rubber-band selection rectangle (usually translucent).
+    marquee = "marquee",
+    danger = "danger",
+    /// Progress bars of running file operations.
+    progress = "progress",
+    /// A paused operation (waiting for decisions, a full disk, the user).
+    progress_paused = "progress-paused",
+    progress_error = "progress-error",
+    /// A folder, tab or place a dragged file would be dropped on.
+    drop_target = "drop-target",
+    /// Menus, popups, layers.
+    surface_raised = "surface-raised",
+    /// Window, tab strip, toolbar, sidebar, status bar.
+    chrome = "chrome",
+    /// Edges of fields (at least 3:1).
+    border_strong = "border-strong",
+    accent_hover = "accent-hover",
+    accent_pressed = "accent-pressed",
+    /// Secondary columns on a selected row.
+    selection_foreground_muted = "selection-foreground-muted",
+    /// The selection of a list without the keyboard focus.
+    selection_inactive = "selection-inactive",
+    pressed = "pressed",
+    tab_active = "tab-active",
+    tab_inactive = "tab-inactive",
+    /// The address bar and text fields.
+    input_background = "input-background",
+    danger_background = "danger-background",
+    success = "success",
+    warning = "warning",
+    /// Under popups.
+    shadow = "shadow",
+    /// Behind modal layers.
+    overlay = "overlay",
+    scrollbar = "scrollbar",
+    scrollbar_hover = "scrollbar-hover",
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -133,6 +134,9 @@ pub struct Metrics {
     pub icon_size: f32,
     pub radius: f32,
     pub spacing: f32,
+    /// Gap between the chrome and the content sheet, and the rows' inset from its edge;
+    /// 0 = edge to edge, square corners.
+    pub inset: f32,
 }
 
 impl Metrics {
@@ -144,16 +148,19 @@ impl Metrics {
             "icon-size" => &mut self.icon_size,
             "radius" => &mut self.radius,
             "spacing" => &mut self.spacing,
+            "inset" => &mut self.inset,
             _ => unreachable!("not a metric key: {key}"),
         };
         *slot = value;
     }
 
-    /// Compact density: rows and spacing at 80%, never below the allowed minimum.
+    /// Compact density: rows, spacing and inset at 80% rounded down (the design's rule), rows
+    /// never below the allowed minimum; the radius stays.
     pub fn compact(&self) -> Metrics {
         Metrics {
-            row_height: (self.row_height * 0.8).round().max(16.0),
-            spacing: (self.spacing * 0.8).round(),
+            row_height: (self.row_height * 0.8).floor().max(16.0),
+            spacing: (self.spacing * 0.8).floor(),
+            inset: (self.inset * 0.8).floor(),
             ..self.clone()
         }
     }
@@ -225,7 +232,9 @@ fn builtin(id: &str) -> PartialTheme {
 
 /// Resolves a theme by id (case-insensitive) from the user's theme files
 /// (`id → TOML text`, ids lowercase) and the built-ins, filling every value the theme
-/// leaves out from its `base` chain. A theme without `base` extends the built-in of the same id if there is one, else `dark`; a missing or cyclic base falls back to `dark`.
+/// leaves out from its `base` chain. Colors a user file leaves out but that follow from ones
+/// it sets are worked out by `theme_rules::RULES`. A theme without `base` extends the built-in
+/// of the same id if there is one, else `dark`; a missing or cyclic base falls back to `dark`.
 pub fn resolve_theme(
     id: &str,
     user_themes: &HashMap<String, String>,
@@ -236,11 +245,11 @@ pub fn resolve_theme(
     let first = parse_theme(&label(&id, source), text, warnings).ok_or(ThemeError::Invalid)?;
     let name = first.display_name.clone().unwrap_or_else(|| id.clone());
 
-    let mut chain = vec![first];
+    let mut chain = vec![(first, source)];
     let mut visited = vec![(id.clone(), source)];
     loop {
         let (current, current_source) = visited.last().cloned().expect("chain is never empty");
-        let base = chain.last().and_then(|theme| theme.base.clone());
+        let base = chain.last().and_then(|(theme, _)| theme.base.clone());
         // Built-ins define every value, so the chain ends at one without a base.
         if current_source == Source::Builtin && base.is_none() {
             break;
@@ -253,25 +262,30 @@ pub fn resolve_theme(
                 label(&current, current_source),
                 format!("base theme \"{base}\" not found or forms a cycle; using \"dark\" instead"),
             ));
-            chain.push(builtin("dark"));
+            chain.push((builtin("dark"), Source::Builtin));
             break;
         };
         match parse_theme(&label(&base, source), text, warnings) {
             Some(theme) => {
-                chain.push(theme);
+                chain.push((theme, source));
                 visited.push((base, source));
             }
             None => {
-                chain.push(builtin("dark"));
+                chain.push((builtin("dark"), Source::Builtin));
                 break;
             }
         }
     }
 
     let mut resolved = ResolvedTheme { id, name, colors: ThemeColors::default(), metrics: Metrics::default() };
-    for theme in chain.iter().rev() {
+    // Keys a user file sets: the rules leave them alone and work out what follows from them.
+    let mut written: Vec<&'static str> = Vec::new();
+    for (theme, source) in chain.iter().rev() {
         for (key, color) in &theme.colors {
             resolved.colors.set(key, *color);
+            if *source == Source::User && !written.contains(key) {
+                written.push(key);
+            }
         }
         if let Some(family) = &theme.font_family {
             resolved.metrics.font_family = family.clone();
@@ -280,6 +294,7 @@ pub fn resolve_theme(
             resolved.metrics.set(key, *value);
         }
     }
+    crate::theme_rules::derive(&mut resolved.colors, &written);
     Ok(resolved)
 }
 
@@ -416,11 +431,12 @@ file-icon = \"blue\"
 
     #[test]
     fn builtin_themes_define_every_value() {
-        for id in ["dark", "light"] {
+        for id in ["dark", "light", "classic-dark", "classic-light"] {
             let (theme, warnings) = parse(builtin_source(id).unwrap());
             let theme = theme.unwrap();
             assert!(warnings.is_empty(), "{id}: {warnings:?}");
             assert_eq!(theme.colors.len(), COLOR_KEYS.len(), "{id}");
+            assert_eq!(COLOR_KEYS.len(), 43);
             assert_eq!(theme.numbers.len(), METRIC_RANGES.len(), "{id}");
             assert!(theme.font_family.is_some(), "{id}");
             assert!(theme.base.is_none(), "{id}");
@@ -491,7 +507,7 @@ file-icon = \"blue\"
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(theme.id, "dark");
         assert_eq!(theme.name, "Dark");
-        assert_eq!(theme.colors.background, hex("#1c1c1c"));
+        assert_eq!(theme.colors.background, hex("#1b1c20"));
         assert_eq!(theme.metrics.row_height, 26.0);
         assert_eq!(builtin_dark(), theme);
     }
@@ -502,7 +518,7 @@ file-icon = \"blue\"
         let theme = resolve_theme("nord", &themes, &mut Vec::new()).unwrap();
         assert_eq!(theme.name, "nord");
         assert_eq!(theme.colors.accent, hex("#88c0d0"));
-        assert_eq!(theme.colors.background, hex("#fafafa"));
+        assert_eq!(theme.colors.background, hex("#ffffff"));
         assert_eq!(theme.metrics.font_size, 13.0);
     }
 
@@ -510,7 +526,7 @@ file-icon = \"blue\"
     fn default_base_is_dark() {
         let themes = user(&[("mine", "[colors]\naccent = \"#ff0000\"\n")]);
         let theme = resolve_theme("mine", &themes, &mut Vec::new()).unwrap();
-        assert_eq!(theme.colors.background, hex("#1c1c1c"));
+        assert_eq!(theme.colors.background, hex("#1b1c20"));
     }
 
     #[test]
@@ -522,7 +538,7 @@ file-icon = \"blue\"
         let theme = resolve_theme("a", &themes, &mut Vec::new()).unwrap();
         assert_eq!(theme.colors.accent, hex("#aaaaaa"));
         assert_eq!(theme.colors.border, hex("#bbbbbb"));
-        assert_eq!(theme.colors.background, hex("#fafafa"));
+        assert_eq!(theme.colors.background, hex("#ffffff"));
     }
 
     #[test]
@@ -532,7 +548,7 @@ file-icon = \"blue\"
         let theme = resolve_theme("dark", &themes, &mut warnings).unwrap();
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(theme.colors.accent, hex("#ff00ff"));
-        assert_eq!(theme.colors.background, hex("#1c1c1c"));
+        assert_eq!(theme.colors.background, hex("#1b1c20"));
     }
 
     #[test]
@@ -547,7 +563,7 @@ accent = \"#ff00ff\"
         let theme = resolve_theme("light", &themes, &mut warnings).unwrap();
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(theme.colors.accent, hex("#ff00ff"));
-        assert_eq!(theme.colors.background, hex("#fafafa"));
+        assert_eq!(theme.colors.background, hex("#ffffff"));
     }
 
     #[test]
@@ -558,7 +574,7 @@ accent = \"#ff00ff\"
         let theme = resolve_theme("a", &themes, &mut warnings).unwrap();
         assert_eq!(theme.name, "A");
         assert_eq!(theme.colors.accent, hex("#aaaaaa"));
-        assert_eq!(theme.colors.background, hex("#1c1c1c"));
+        assert_eq!(theme.colors.background, hex("#1b1c20"));
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].file, "b.toml");
         assert!(warnings[0].message.contains("\"a\""), "{}", warnings[0].message);
@@ -569,7 +585,7 @@ accent = \"#ff00ff\"
         let themes = user(&[("a", "base = \"gone\"\n")]);
         let mut warnings = Vec::new();
         let theme = resolve_theme("a", &themes, &mut warnings).unwrap();
-        assert_eq!(theme.colors.background, hex("#1c1c1c"));
+        assert_eq!(theme.colors.background, hex("#1b1c20"));
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].message.contains("\"gone\""));
     }
@@ -579,7 +595,7 @@ accent = \"#ff00ff\"
         let themes = user(&[("a", "base = \"bad\"\n"), ("bad", "[colors\n")]);
         let mut warnings = Vec::new();
         let theme = resolve_theme("a", &themes, &mut warnings).unwrap();
-        assert_eq!(theme.colors.background, hex("#1c1c1c"));
+        assert_eq!(theme.colors.background, hex("#1b1c20"));
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].file, "bad.toml");
         assert_eq!(warnings[0].line, Some(1));
@@ -607,13 +623,219 @@ accent = \"#ff00ff\"
     }
 
     #[test]
-    fn compact_scales_rows_and_spacing_with_a_floor() {
+    fn builtin_names_and_insets() {
+        for (id, name, inset) in [
+            ("light", "Light", 6.0),
+            ("dark", "Dark", 6.0),
+            ("classic-light", "Classic Light", 0.0),
+            ("classic-dark", "Classic Dark", 0.0),
+        ] {
+            let theme = resolve_theme(id, &HashMap::new(), &mut Vec::new()).unwrap();
+            assert_eq!(theme.name, name);
+            assert_eq!(theme.metrics.inset, inset, "{id}");
+        }
+    }
+
+    #[test]
+    fn classic_themes_keep_the_old_colors() {
+        let old = include_str!("../tests/themes/old-light.toml");
+        let (old, _) = parse(old);
+        let classic = resolve_theme("classic-light", &HashMap::new(), &mut Vec::new()).unwrap();
+        for (key, color) in old.unwrap().colors {
+            assert_eq!(classic.colors.get(key), color, "{key}");
+        }
+        let (old, _) = parse(include_str!("../tests/themes/old-dark.toml"));
+        let classic = resolve_theme("classic-dark", &HashMap::new(), &mut Vec::new()).unwrap();
+        for (key, color) in old.unwrap().colors {
+            assert_eq!(classic.colors.get(key), color, "{key}");
+        }
+    }
+
+    #[test]
+    fn get_reads_what_set_wrote() {
+        let mut colors = ThemeColors::default();
+        for (i, key) in COLOR_KEYS.iter().enumerate() {
+            colors.set(key, Color { r: i as u8, g: 1, b: 2, a: 255 });
+        }
+        for (i, key) in COLOR_KEYS.iter().enumerate() {
+            assert_eq!(colors.get(key).r, i as u8, "{key}");
+        }
+    }
+
+    #[test]
+    fn inset_out_of_range_warns() {
+        let (theme, warnings) = parse("[metrics]\ninset = 20\n");
+        assert!(theme.unwrap().numbers.is_empty());
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].message.starts_with("metrics.inset:") && warnings[0].message.contains("0 to 16"));
+        let (_, warnings) = parse("[metrics]\ninset = \"wide\"\n");
+        assert!(warnings[0].message.starts_with("metrics.inset:"));
+        let themes = user(&[("mine", "[metrics]\ninset = 20\n")]);
+        assert_eq!(resolve_theme("mine", &themes, &mut Vec::new()).unwrap().metrics.inset, 6.0);
+    }
+
+    #[test]
+    fn compact_floors_rows_spacing_and_inset() {
         let metrics = builtin_dark().metrics;
         let compact = metrics.compact();
-        assert_eq!(compact.row_height, 21.0);
-        assert_eq!(compact.spacing, 5.0);
+        assert_eq!(compact.row_height, 20.0);
+        assert_eq!(compact.spacing, 4.0);
+        assert_eq!(compact.inset, 4.0);
+        assert_eq!(compact.radius, metrics.radius);
         assert_eq!(compact.font_size, metrics.font_size);
-        let tiny = Metrics { row_height: 16.0, ..metrics };
+        let tiny = Metrics { row_height: 16.0, inset: 1.0, ..metrics.clone() };
         assert_eq!(tiny.compact().row_height, 16.0);
+        assert_eq!(tiny.compact().inset, 0.0);
+        let flat = Metrics { inset: 0.0, ..metrics };
+        assert_eq!(flat.compact().inset, 0.0);
+    }
+
+    fn colors_of(theme: &ResolvedTheme, expected: &[(&str, &str)]) {
+        for (key, value) in expected {
+            assert_eq!(theme.colors.get(key), hex(value), "{key}");
+        }
+    }
+
+    #[test]
+    fn builtins_resolve_to_exactly_their_files() {
+        for id in ["light", "dark", "classic-light", "classic-dark"] {
+            let theme = resolve_theme(id, &HashMap::new(), &mut Vec::new()).unwrap();
+            let (file, _) = parse(builtin_source(id).unwrap());
+            for (key, color) in file.unwrap().colors {
+                assert_eq!(theme.colors.get(key), color, "{id} {key}");
+            }
+        }
+    }
+
+    #[test]
+    fn an_accent_alone_recolors_what_follows_it() {
+        let themes = user(&[("magenta", "base = \"light\"\n[colors]\naccent = \"#b0158f\"\n")]);
+        let mut warnings = Vec::new();
+        let theme = resolve_theme("magenta", &themes, &mut warnings).unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        colors_of(
+            &theme,
+            &[
+                ("accent-foreground", "#ffffff"),
+                ("accent-hover", "#9b127e"),
+                ("accent-pressed", "#86106d"),
+                ("selection", "#f3dcee"),
+                ("focus-ring", "#b0158f"),
+                ("progress", "#b0158f"),
+                ("marquee", "#b0158f24"),
+                ("drop-target", "#b0158f33"),
+                // Neutrals stay the designer's.
+                ("chrome", "#e8e9ed"),
+                ("selection-inactive", "#ececed"),
+                ("border-strong", "#868b95"),
+                ("hover", "#0000000a"),
+            ],
+        );
+    }
+
+    #[test]
+    fn a_user_file_named_like_a_builtin_also_derives() {
+        let themes = user(&[("light", "[colors]\naccent = \"#b0158f\"\n")]);
+        let theme = resolve_theme("light", &themes, &mut Vec::new()).unwrap();
+        colors_of(&theme, &[("selection", "#f3dcee"), ("focus-ring", "#b0158f")]);
+    }
+
+    #[test]
+    fn a_background_alone_reworks_its_followers_in_a_chain() {
+        let themes = user(&[("paper", "base = \"light\"\n[colors]\nbackground = \"#fdf6e3\"\n")]);
+        let theme = resolve_theme("paper", &themes, &mut Vec::new()).unwrap();
+        colors_of(
+            &theme,
+            &[
+                ("chrome", "#e6e0cf"),
+                ("tab-inactive", "#e6e0cf"),
+                ("tab-active", "#fdf6e3"),
+                ("surface-raised", "#fdf6e3"),
+                ("input-background", "#fdf6e3"),
+                ("selection", "#f4dbc3"),
+                ("selection-inactive", "#ebe4d3"),
+                ("danger-background", "#f6e3d1"),
+                ("hover", "#0000000a"),
+                ("pressed", "#00000014"),
+                ("shadow", "#0000001f"),
+                ("overlay", "#14141859"),
+                // Not made from the background: the designer's values.
+                ("border-strong", "#868b95"),
+                ("accent-hover", "#ab390b"),
+                ("selection-foreground-muted", "#2d2f34"),
+            ],
+        );
+    }
+
+    #[test]
+    fn a_dark_theme_made_from_light_gets_dark_overlays() {
+        let themes =
+            user(&[("night", "base = \"light\"\n[colors]\nbackground = \"#202020\"\nforeground = \"#eeeeee\"\n")]);
+        let theme = resolve_theme("night", &themes, &mut Vec::new()).unwrap();
+        colors_of(
+            &theme,
+            &[
+                ("hover", "#ffffff0f"),
+                ("pressed", "#ffffff1c"),
+                ("shadow", "#00000070"),
+                ("overlay", "#0000008c"),
+                ("chrome", "#161616"),
+                ("tab-inactive", "#161616"),
+                ("tab-active", "#202020"),
+                ("surface-raised", "#2c2c2c"),
+                ("input-background", "#181818"),
+                ("selection", "#512a1a"),
+                ("selection-foreground", "#eeeeee"),
+                ("border-strong", "#e1e3e6"),
+                ("scrollbar", "#eeeeee38"),
+            ],
+        );
+    }
+
+    #[test]
+    fn the_dark_threshold_sits_at_a_fifth() {
+        let themes = user(&[
+            ("dim", "base = \"light\"\n[colors]\nbackground = \"#7b7b7b\"\n"),
+            ("pale", "base = \"light\"\n[colors]\nbackground = \"#7c7c7c\"\n"),
+        ]);
+        assert_eq!(resolve_theme("dim", &themes, &mut Vec::new()).unwrap().colors.hover, hex("#ffffff0f"));
+        assert_eq!(resolve_theme("pale", &themes, &mut Vec::new()).unwrap().colors.hover, hex("#0000000a"));
+    }
+
+    #[test]
+    fn a_written_value_always_wins() {
+        let themes = user(&[(
+            "mine",
+            "base = \"light\"\n[colors]\naccent = \"#b0158f\"\nselection = \"#123456\"\nchrome = \"#abcdef\"\nbackground = \"#fdf6e3\"\n",
+        )]);
+        let theme = resolve_theme("mine", &themes, &mut Vec::new()).unwrap();
+        colors_of(&theme, &[("selection", "#123456"), ("chrome", "#abcdef"), ("tab-inactive", "#abcdef")]);
+    }
+
+    #[test]
+    fn every_user_file_in_a_chain_counts_as_the_user() {
+        let themes = user(&[
+            ("a", "base = \"b\"\n[colors]\naccent = \"#0b7a69\"\n"),
+            ("b", "base = \"light\"\n[colors]\nbackground = \"#fdf6e3\"\n"),
+        ]);
+        let theme = resolve_theme("a", &themes, &mut Vec::new()).unwrap();
+        colors_of(
+            &theme,
+            &[("selection", "#d9e3d1"), ("chrome", "#e6e0cf"), ("tab-active", "#fdf6e3"), ("focus-ring", "#0b7a69")],
+        );
+        let themes = user(&[
+            ("a", "base = \"b\"\n[colors]\naccent = \"#0b7a69\"\n"),
+            ("b", "base = \"light\"\n[colors]\nselection = \"#123456\"\n"),
+        ]);
+        assert_eq!(resolve_theme("a", &themes, &mut Vec::new()).unwrap().colors.selection, hex("#123456"));
+    }
+
+    #[test]
+    fn base_can_be_a_classic_theme() {
+        let themes = user(&[("old", "base = \"classic-dark\"\n[colors]\naccent = \"#ff8f57\"\n")]);
+        let theme = resolve_theme("old", &themes, &mut Vec::new()).unwrap();
+        assert_eq!(theme.colors.background, hex("#1c1c1c"));
+        assert_eq!(theme.metrics.inset, 0.0);
+        assert_eq!(theme.colors.focus_ring, hex("#ff8f57"));
     }
 }

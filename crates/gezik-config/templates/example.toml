@@ -1,22 +1,24 @@
 # Example theme. Copy this file, rename it (e.g. my-theme.toml) and select it in
 # settings.toml with:  theme = "my-theme"
 # Every value is optional: anything you leave out comes from the base theme.
+# Colors marked "from …" may be left out: Gezik works them out from the ones you set
+# (an accent alone also recolors the selection, focus ring, progress bars and so on).
 # Changes show up as soon as you save.
 
 name = "Example (Nord)"
-base = "dark"            # "dark", "light" or another theme's file name
+base = "dark"            # "dark", "light", "classic-dark", "classic-light" or another theme's file name
 
 [colors]                 # "#rrggbb" or "#rrggbbaa" (with transparency)
-background = "#2e3440"   # file list
-surface = "#3b4252"      # toolbar and status bar
+background = "#2e3440"   # file list, active tab
+surface = "#3b4252"      # panels: operations, preview
 foreground = "#eceff4"   # main text
 foreground-muted = "#9aa3b5"  # sizes and other secondary text
 border = "#434c5e"
 accent = "#88c0d0"       # focus ring
-accent-foreground = "#2e3440"
-selection = "#434c5e"
+accent-foreground = "#2e3440"  # from accent (white or dark, whichever reads better)
+selection = "#434c5e"    # from background and accent
 selection-foreground = "#eceff4"
-hover = "#4c566a80"
+hover = "#4c566a80"      # from background (light or dark)
 icon-folder = "#ebcb8b"  # Gezik's own icons (icons = "gezik"), and placeholders
 icon-image = "#a3be8c"
 icon-video = "#bf616a"
@@ -25,13 +27,31 @@ icon-archive = "#d08770"
 icon-document = "#81a1c1"
 icon-code = "#8fbcbb"
 icon-other = "#9aa3ad"
-focus-ring = "#88c0d0"   # the keyboard focus in the file list
-marquee = "#88c0d033"    # rubber-band selection
+focus-ring = "#88c0d0"   # the keyboard focus in the file list; from accent
+marquee = "#88c0d033"    # rubber-band selection; from accent (stronger on a dark background)
 danger = "#bf616a"       # warnings and destructive actions
-progress = "#88c0d0"     # running file operations
-progress-paused = "#ebcb8b"
-progress-error = "#bf616a"
-drop-target = "#88c0d040"   # where dragged files would land
+progress = "#88c0d0"     # running file operations; from accent
+progress-paused = "#ebcb8b"  # from warning
+progress-error = "#bf616a"   # from danger
+drop-target = "#88c0d040"    # where dragged files would land; from accent (stronger on a dark background)
+# chrome = "#20242d"             # window, tab strip, toolbar, sidebar, status bar; from background and foreground
+# surface-raised = "#393f4b"     # menus, popups, dialogs; from background and foreground
+# input-background = "#232730"   # address bar and text fields; from background
+# border-strong = "#878d9a"      # edges of fields; from border and foreground
+# accent-hover = "#96c8d6"       # main button under the mouse; from accent (lightened or darkened by whether the background is light or dark)
+# accent-pressed = "#a5cfdb"     # main button pressed; from accent (light or dark background)
+# selection-foreground-muted = "#cfd4de"  # dates and sizes on selected rows; from foreground and foreground-muted
+# selection-inactive = "#434954" # selection while the list has no focus; from background and foreground
+# pressed = "#ffffff1c"          # pressed buttons; from background (light or dark)
+# tab-active = "#2e3440"         # from background
+# tab-inactive = "#20242d"       # from chrome
+# danger-background = "#453b47"  # rows that failed; from background and danger
+# success = "#5ad27e"            # finished jobs
+# warning = "#f0b44c"
+# shadow = "#00000070"           # under popups; from background (light or dark)
+# overlay = "#0000008c"          # behind dialogs; from background (light or dark)
+# scrollbar = "#eceff438"        # from foreground
+# scrollbar-hover = "#eceff46b"  # from foreground
 
 [metrics]
 # font-family = "Inter"  # leave out or "" for the system font
@@ -40,3 +60,4 @@ row-height = 26          # 16-64
 icon-size = 16           # 12-48
 radius = 6               # 0-16
 spacing = 6              # 0-24
+inset = 6                # 0-16: gap around the file list and inside it (0: edge to edge, square corners)

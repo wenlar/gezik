@@ -37,7 +37,7 @@ export component TabBar inherits Rectangle {
     changed tab-count => { root.cancel-drag(); }
 
     height: Theme.row-height + 10px;
-    background: Theme.surface;
+    background: Theme.chrome;
     accessible-role: tab-list;
 
     function cancel-drag() {
@@ -107,7 +107,7 @@ export component TabBar inherits Rectangle {
                 width: parent.width - 4px;
                 height: parent.height - 4px;
                 border-radius: Theme.radius;
-                background: i == root.drop-tab ? Theme.drop-target : item.active ? Theme.background : hovered ? Theme.hover : transparent;
+                background: i == root.drop-tab ? Theme.drop-target : item.active ? Theme.tab-active : hovered ? Theme.hover : transparent;
                 border-width: i == root.drop-tab ? 1px : 0px;
                 border-color: Theme.accent;
 

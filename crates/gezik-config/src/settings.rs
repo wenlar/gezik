@@ -222,6 +222,8 @@ pub struct Settings {
     pub theme_dark: String,
     pub sidebar: SidebarPosition,
     pub density: Density,
+    /// No fades on hover and popups (`[layout] reduce-motion`).
+    pub reduce_motion: bool,
     /// `"drives"`, or a path (with `{home}`-style tokens) to open new tabs in.
     pub start_folder: String,
     /// Pinned folders as written (tokenized, `/` separators), in the file's order (the sidebar shows
@@ -261,6 +263,7 @@ impl Default for Settings {
             theme_dark: "dark".to_owned(),
             sidebar: SidebarPosition::Left,
             density: Density::Comfortable,
+            reduce_motion: false,
             start_folder: "{home}".to_owned(),
             pinned: Vec::new(),
             shortcuts: Shortcuts::default(),
@@ -338,6 +341,13 @@ impl Settings {
                     file,
                     format!("layout.density: expected \"compact\" or \"comfortable\", got \"{other}\""),
                 )),
+            }
+            if let Some(value) = layout.get("reduce-motion") {
+                match value.as_bool() {
+                    Some(on) => settings.reduce_motion = on,
+                    None => warnings
+                        .push(Warning::new(file, format!("layout.reduce-motion: expected true or false, got {value}"))),
+                }
             }
         }
 
@@ -1548,6 +1558,26 @@ mod tests {
         let (settings, warnings) = parse("");
         assert_eq!(settings, Settings::default());
         assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn reduce_motion_is_read_and_checked() {
+        let (settings, warnings) = parse(
+            "[layout]
+reduce-motion = true
+",
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(settings.reduce_motion);
+        let (settings, warnings) = parse(
+            "[layout]
+reduce-motion = \"yes\"
+",
+        );
+        assert!(!settings.reduce_motion);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].message.starts_with("layout.reduce-motion:"), "{}", warnings[0].message);
+        assert!(!Settings::default().reduce_motion);
     }
 
     #[test]

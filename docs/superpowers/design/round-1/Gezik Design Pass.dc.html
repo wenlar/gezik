@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<script src="gezik-tokens.js"></script>
+<style>body{margin:0;background:#d8d6d1}a{color:#1a1a1a}a:hover{color:#000}</style>
+</helmet>
+<section style="padding:64px;display:flex;flex-direction:column;gap:40px;font-family:'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;color:#1a1a1a;width:max-content">
+  <div style="display:flex;flex-direction:column;gap:8px;max-width:900px">
+    <div style="font-size:13px;color:#555">Turn 1 · tokens + main window</div>
+    <div style="font-size:40px;font-weight:600;letter-spacing:-0.01em">Gezik design pass: two directions</div>
+    <div style="font-size:16px;line-height:1.5;color:#333;text-wrap:pretty">Both directions keep the current layout, the system font, 26 px rows and the existing token names. They differ in how they build structure: <a href="#1a">1a</a> uses tone (a chrome layer around one content sheet), <a href="#1b">1b</a> uses hairlines on a single plane. Every colour shown is generated from the token table under each option, and the accent drives selection, focus, progress, marquee and drop target.</div>
+  </div>
+  <div style="display:flex;gap:64px;align-items:flex-start">
+    <sc-for list="{{ dirs }}" as="d" hint-placeholder-count="2">
+      <div id="{{ d.id }}" style="width:1280px;display:flex;flex-direction:column;gap:28px">
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <div style="display:flex;align-items:center;gap:12px">
+            <span style="background:#1a1a1a;color:#fff;font-size:14px;font-weight:600;padding:4px 10px;border-radius:4px">{{ d.id }}</span>
+            <span style="font-size:28px;font-weight:600">{{ d.name }}</span>
+            <span style="font-size:14px;color:#555">accent: {{ d.accent }}</span>
+          </div>
+          <div style="font-size:15px;line-height:1.5;color:#333;max-width:900px;text-wrap:pretty">{{ d.desc }}</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <sc-for list="{{ d.costs }}" as="k" hint-placeholder-count="3">
+              <span style="font-size:12px;padding:3px 8px;border-radius:4px;background:#fff;border:1px solid #bbb">{{ k }}</span>
+            </sc-for>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div style="font-size:13px;font-weight:600;color:#444">Dark · list · annotated</div>
+          <dc-import name="Gezik Window" dir="{{ d.key }}" theme="dark" view="list" pins="{{ pins }}" hint-size="1280px,800px"></dc-import>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 32px;background:#fff;border-radius:8px;padding:20px 24px">
+          <sc-for list="{{ d.legend }}" as="l" hint-placeholder-count="10">
+            <div style="display:flex;gap:10px;font-size:13px;line-height:1.45">
+              <span style="flex-shrink:0;width:20px;height:20px;border-radius:10px;background:#ffd400;border:1.5px solid #111;font-weight:700;font-size:10px;display:flex;align-items:center;justify-content:center;box-sizing:border-box">{{ l.n }}</span>
+              <div style="display:flex;flex-direction:column;gap:2px"><span style="font-weight:600">{{ l.t }}<span style="font-weight:400;color:#666">  ·  {{ l.cost }}</span></span><span style="color:#333;font-family:ui-monospace,Consolas,monospace;font-size:12px">{{ l.spec }}</span></div>
+            </div>
+          </sc-for>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div style="font-size:13px;font-weight:600;color:#444">Light · list</div>
+          <dc-import name="Gezik Window" dir="{{ d.key }}" theme="light" view="list" hint-size="1280px,800px"></dc-import>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div style="font-size:13px;font-weight:600;color:#444">Dark · grid</div>
+          <dc-import name="Gezik Window" dir="{{ d.key }}" theme="dark" view="grid" hint-size="1280px,800px"></dc-import>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div style="font-size:13px;font-weight:600;color:#444">Light · grid</div>
+          <dc-import name="Gezik Window" dir="{{ d.key }}" theme="light" view="grid" hint-size="1280px,800px"></dc-import>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div style="font-size:13px;font-weight:600;color:#444">Alternate accent proof · magenta, light (only <code>accent</code> changed)</div>
+          <dc-import name="Gezik Window" dir="{{ d.key }}" theme="light" accent="magenta" view="list" hint-size="1280px,800px"></dc-import>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div style="font-size:13px;font-weight:600;color:#444">Alternate accent proof · magenta, dark</div>
+          <dc-import name="Gezik Window" dir="{{ d.key }}" theme="dark" accent="magenta" view="list" hint-size="1280px,800px"></dc-import>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div style="font-size:13px;font-weight:600;color:#444">Compact density · dark (row-height 20, spacing 4)</div>
+          <dc-import name="Gezik Window" dir="{{ d.key }}" theme="dark" density="compact" view="list" hint-size="1280px,800px"></dc-import>
+        </div>
+        <div style="background:#fff;border-radius:8px;padding:24px;display:flex;flex-direction:column;gap:16px">
+          <div style="font-size:20px;font-weight:600">Colour tokens · {{ d.name }}</div>
+          <div style="font-size:13px;color:#555">NEW = proposed key with defaults; a theme that omits it gets the derived value. Rule = how it is computed from accent / neutrals, so a future accent picker sets one value.</div>
+          <div style="display:grid;grid-template-columns:200px 170px 170px 50px minmax(0,1fr);font-size:12.5px;border-top:1px solid #ddd">
+            <div style="padding:8px 6px;font-weight:600;border-bottom:1px solid #ddd">Token</div>
+            <div style="padding:8px 6px;font-weight:600;border-bottom:1px solid #ddd">Light</div>
+            <div style="padding:8px 6px;font-weight:600;border-bottom:1px solid #ddd">Dark</div>
+            <div style="padding:8px 6px;font-weight:600;border-bottom:1px solid #ddd"></div>
+            <div style="padding:8px 6px;font-weight:600;border-bottom:1px solid #ddd">Rule / use</div>
+            <sc-for list="{{ d.tokens }}" as="t" hint-placeholder-count="40">
+              <div style="padding:5px 6px;border-bottom:1px solid #eee;font-family:ui-monospace,Consolas,monospace">{{ t.k }}</div>
+              <div style="padding:5px 6px;border-bottom:1px solid #eee;display:flex;align-items:center;gap:8px;font-family:ui-monospace,Consolas,monospace"><span style="width:28px;height:16px;border-radius:3px;border:1px solid #0002;background:{{ t.l }}"></span>{{ t.l }}</div>
+              <div style="padding:5px 6px;border-bottom:1px solid #eee;display:flex;align-items:center;gap:8px;font-family:ui-monospace,Consolas,monospace"><span style="width:28px;height:16px;border-radius:3px;border:1px solid #0002;background:{{ t.d }}"></span>{{ t.d }}</div>
+              <div style="padding:5px 6px;border-bottom:1px solid #eee;font-size:10.5px;font-weight:700;color:#8a4b00">{{ t.isNew }}</div>
+              <div style="padding:5px 6px;border-bottom:1px solid #eee;color:#444">{{ t.rule }}</div>
+            </sc-for>
+          </div>
+          <div style="font-size:20px;font-weight:600;margin-top:12px">Contrast (WCAG ratio, computed)</div>
+          <div style="display:grid;grid-template-columns:300px 120px 120px 80px;font-size:12.5px;border-top:1px solid #ddd">
+            <div style="padding:8px 6px;font-weight:600;border-bottom:1px solid #ddd">Pair</div>
+            <div style="padding:8px 6px;font-weight:600;border-bottom:1px solid #ddd">Light</div>
+            <div style="padding:8px 6px;font-weight:600;border-bottom:1px solid #ddd">Dark</div>
+            <div style="padding:8px 6px;font-weight:600;border-bottom:1px solid #ddd">Min</div>
+            <sc-for list="{{ d.pairs }}" as="p" hint-placeholder-count="11">
+              <div style="padding:5px 6px;border-bottom:1px solid #eee;font-family:ui-monospace,Consolas,monospace">{{ p.n }}</div>
+              <div style="padding:5px 6px;border-bottom:1px solid #eee;color:{{ p.lc }};font-variant-numeric:tabular-nums">{{ p.l }}</div>
+              <div style="padding:5px 6px;border-bottom:1px solid #eee;color:{{ p.dc }};font-variant-numeric:tabular-nums">{{ p.d }}</div>
+              <div style="padding:5px 6px;border-bottom:1px solid #eee;color:#666">{{ p.min }}</div>
+            </sc-for>
+          </div>
+          <div style="font-size:20px;font-weight:600;margin-top:12px">Metrics and derived sizes</div>
+          <div style="display:grid;grid-template-columns:220px 120px minmax(0,1fr);font-size:12.5px;border-top:1px solid #ddd">
+            <sc-for list="{{ d.metrics }}" as="m" hint-placeholder-count="12">
+              <div style="padding:5px 6px;border-bottom:1px solid #eee;font-family:ui-monospace,Consolas,monospace">{{ m.k }}</div>
+              <div style="padding:5px 6px;border-bottom:1px solid #eee;font-variant-numeric:tabular-nums">{{ m.v }}</div>
+              <div style="padding:5px 6px;border-bottom:1px solid #eee;color:#444">{{ m.r }}</div>
+            </sc-for>
+          </div>
+          <div style="font-size:20px;font-weight:600;margin-top:12px">Theme files</div>
+          <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px">
+            <pre style="margin:0;padding:16px;background:#f3f2ef;border-radius:6px;font-size:11.5px;line-height:1.45;overflow:auto;font-family:ui-monospace,Consolas,monospace">{{ d.tomlLight }}</pre>
+            <pre style="margin:0;padding:16px;background:#f3f2ef;border-radius:6px;font-size:11.5px;line-height:1.45;overflow:auto;font-family:ui-monospace,Consolas,monospace">{{ d.tomlDark }}</pre>
+          </div>
+        </div>
+      </div>
+    </sc-for>
+  </div>
+  <div style="background:#fff;border-radius:8px;padding:28px;display:flex;flex-direction:column;gap:20px;max-width:2624px">
+    <div style="display:flex;flex-direction:column;gap:6px">
+      <div style="font-size:20px;font-weight:600">Glyph sheet (shared by both directions)</div>
+      <div style="font-size:13px;color:#555">Polylines and simple arcs only. 16×16 viewbox at stroke 1.5; 8×8 at stroke 1.2. Round caps and joins. Colour = foreground or foreground-muted. Fallback file icons: one filled path each, tinted with icon-*.  ·  Cheap</div>
+    </div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap">
+      <sc-for list="{{ glyphs }}" as="g" hint-placeholder-count="16">
+        <div style="width:132px;display:flex;flex-direction:column;gap:8px;padding:12px;border:1px solid #e3e1dc;border-radius:6px">
+          <div style="display:flex;align-items:center;gap:14px;color:#1a1a1a;height:48px">
+            <svg width="48" height="48" viewBox="{{ g.vb }}"><path d="{{ g.d }}" fill="{{ g.fill }}" stroke="{{ g.stroke }}" stroke-width="{{ g.sw }}" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+            <svg width="{{ g.sz }}" height="{{ g.sz }}" viewBox="{{ g.vb }}"><path d="{{ g.d }}" fill="{{ g.fill }}" stroke="{{ g.stroke }}" stroke-width="{{ g.sw }}" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+          </div>
+          <div style="font-size:12px;font-weight:600">{{ g.n }}</div>
+          <div style="font-size:10.5px;font-family:ui-monospace,Consolas,monospace;color:#555;word-break:break-all">{{ g.d }}</div>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+  <div style="background:#fff;border-radius:8px;padding:28px;display:flex;flex-direction:column;gap:10px;max-width:1280px;font-size:14px;line-height:1.55">
+    <div style="font-size:20px;font-weight:600">Component notes (this turn)</div>
+    <div>• <b>Tab</b> (<code>tab-bar.slint</code>): one Rectangle + icon Path + Text + close button + 2 px indicator Rectangle. In 1b the indicator is the same element moved to the bottom edge. Free/Cheap.</div>
+    <div>• <b>Row</b>: file list, sidebar, menu line, operations/drop-stack share one highlight recipe: <code>background</code> = selection | hover | transparent, plus an inset 2 px <code>focus-ring</code> border for the current item. No per-row shadow or gradient. Free.</div>
+    <div>• <b>Sheet</b> (1a only): one extra Rectangle with radius and border around list + header. Cheap.</div>
+    <div>• <b>Status bar segments</b> (1b only): 1 px Rectangles between cells, using <code>border</code>. Cheap.</div>
+    <div>• <b>Scrollbar</b>: replaces std-widgets' ListView bar with a 6 px thumb (<code>scrollbar</code> / <code>scrollbar-hover</code>), no track. Cheap; removes a source of system colours.</div>
+    <div>• <b>Section labels</b>: stored as literal uppercase strings (“PINNED”, “SABİTLENENLER”), never uppercased at runtime, so Turkish İ/ı stay correct.</div>
+    <div>• <b>Next turn</b>: popup menu + submenu, conflict dialog and layer frame, operations panel and drop stack, search bar + Filters popover, command palette, tooltip, preview pane, state sheets (hover/focus/disabled/drop target).</div>
+  </div>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;pins&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;}}">
+class Component extends DCLogic {
+  componentDidMount() {
+    if (!window.GezikTokens) this._t = setInterval(() => { if (window.GezikTokens) { clearInterval(this._t); this.forceUpdate(); } }, 30);
+  }
+  componentWillUnmount() { clearInterval(this._t); }
+  renderVals() {
+    const G = window.GezikTokens;
+    const pins = this.props.pins ?? true;
+    const META = {
+      a: {
+        id: '1a', key: 'a', name: 'Graphite', accent: 'Amber',
+        desc: 'Cool neutral chrome (tab strip, toolbar, sidebar, status bar) frames one content sheet with a hairline border and a slightly larger radius. The active tab is the only chrome element in the sheet colour, so it reads as part of it, with a short accent bar underneath. Selection is a tinted rounded fill inset by spacing.',
+        costs: ['Mostly Free (token values)', 'Cheap: sheet Rectangle, tab indicator', 'No Costly items'],
+        legend: [
+          ['1', 'Active tab', 'Cheap', 'bg tab-active · border border · bar 2px accent, inset 2×spacing · text foreground; inactive foreground-muted, hover bg hover'],
+          ['2', 'Breadcrumb / address', 'Free', 'bg input-background · border border · radius · h row+2 · last crumb foreground, others foreground-muted · sep chevron 8'],
+          ['3', 'Section label', 'Free', 'font-size×0.85 · weight 600 · foreground-muted · literal uppercase text'],
+          ['4', 'Selected pin', 'Free', 'bg selection · icon accent · inset spacing · radius'],
+          ['5', 'Column header', 'Free', 'bg background · h row · font-size×0.85 foreground-muted · sorted column foreground + chevron'],
+          ['6', 'Selected + current row', 'Free', 'bg selection · 2px inset focus-ring (current) · ring ≥3:1 vs selection'],
+          ['7', 'Hover row', 'Free', 'bg hover overlay · same radius as selection'],
+          ['8', 'Folder size cell', 'Cheap', '“…” computing · “≥ 340 MB” partial, italic · both foreground-muted'],
+          ['9', 'Content sheet', 'Cheap', 'bg background · border border · radius+2 · margin spacing from chrome'],
+          ['10', 'Status bar', 'Free', 'bg chrome · h row · font-size×0.85 · summary in foreground, rest foreground-muted']
+        ]
+      },
+      b: {
+        id: '1b', key: 'b', name: 'Ledger', accent: 'Teal',
+        desc: 'One warm plane for the whole window. Structure comes from 1 px hairlines: under the tab strip, under the toolbar, beside the sidebar, above the status bar, and between status cells. Tabs are flush cells divided by hairlines; the active one carries a full-width 2 px accent underline that covers the strip line. Selection is a full-bleed fill with a small radius, the densest of the two.',
+        costs: ['Mostly Free (token values)', 'Cheap: status bar dividers', 'No Costly items'],
+        legend: [
+          ['1', 'Active tab', 'Free', 'bg tab-active · 2px accent underline full width over strip border · cells divided by border'],
+          ['2', 'Breadcrumb / address', 'Free', 'no box until focused (then input-background + border-strong) · crumbs foreground-muted, last foreground'],
+          ['3', 'Section label', 'Free', 'font-size×0.85 · weight 600 · tracking 0.08em · foreground-muted · literal uppercase text'],
+          ['4', 'Selected pin', 'Free', 'bg selection · full bleed · icon accent'],
+          ['5', 'Column header', 'Free', 'bg surface · border bottom border · font-size×0.85 foreground-muted'],
+          ['6', 'Selected + current row', 'Free', 'bg selection · 2px inset focus-ring · radius 0 (rows touch)'],
+          ['7', 'Hover row', 'Free', 'bg hover overlay'],
+          ['8', 'Folder size cell', 'Cheap', '“…” computing · “≥ 340 MB” partial, italic · foreground-muted'],
+          ['9', 'Content area', 'Free', 'bg background · separated from sidebar by 1px border only'],
+          ['10', 'Status bar', 'Cheap', 'border-top border · cells divided by 1px border · font-size×0.85']
+        ]
+      }
+    };
+    if (!G) return { dirs: [], glyphs: [], pins };
+    const dirs = ['a', 'b'].map(k => {
+      const M = META[k];
+      const L = G.derive(k, 'light', k, 'comfortable'), D = G.derive(k, 'dark', k, 'comfortable');
+      const tokens = Object.keys(L.c).map(t => ({ k: t, l: L.c[t], d: D.c[t], isNew: G.NEW.includes(t) ? 'NEW' : '', rule: G.RULES[t] || '' }));
+      const pl = G.contrastPairs(L.c), pd = G.contrastPairs(D.c);
+      const pairs = pl.map((p, i) => ({ n: p.n, l: p.r + (p.ok ? ' ✓' : ' ✗'), d: pd[i].r + (pd[i].ok ? ' ✓' : ' ✗'), lc: p.ok ? '#1a6b30' : '#b42318', dc: pd[i].ok ? '#1a6b30' : '#b42318', min: p.min + ':1' }));
+      const m = L.m;
+      const metrics = [
+        { k: 'font-size', v: '13', r: 'base; caption = ×0.85 (11), heading = ×1.15 (15, weight 600)' },
+        { k: 'row-height', v: '26', r: 'rows, sidebar, header, status bar, buttons; compact ×0.8 → 20' },
+        { k: 'icon-size', v: '16', r: 'row icons; tab icon ×0.75; close / chevron glyph 8' },
+        { k: 'radius', v: String(m.radius), r: 'buttons, rows, fields, popups; radius-small = radius/2 (min 2) for chips, thumbnails, close button' },
+        { k: 'spacing', v: '6', r: 'base unit; row padding 10 ≈ spacing×1.5+1; compact ×0.8 → 4' },
+        { k: 'tab-strip height', v: String(m._tab), r: 'row-height + 10' },
+        { k: 'toolbar height', v: String(m._toolbar), r: 'row-height + 2×spacing + 4' },
+        { k: 'glyph stroke', v: '1.5 / 1.2', r: '16 px / 8 px glyphs' },
+        { k: 'focus ring', v: '2', r: 'inset border, focus-ring colour' },
+        { k: 'elevation 1', v: k === 'a' ? 'sheet' : 'hairline', r: k === 'a' ? 'tone (background on chrome) + border' : 'border only' },
+        { k: 'elevation 2', v: 'popup', r: 'surface-raised + border + one drop-shadow (shadow token, blur 12); popups and layers only' },
+        { k: 'motion', v: '90 / 140 ms', r: 'hover/selection colour fade / popup opacity; all removable by reduce-motion' }
+      ];
+      return Object.assign({}, M, {
+        legend: M.legend.map(l => ({ n: l[0], t: l[1], cost: l[2], spec: l[3] })),
+        tokens, pairs, metrics, tomlLight: G.toml(k, 'light'), tomlDark: G.toml(k, 'dark')
+      });
+    });
+    const s16 = { vb: '0 0 16 16', sz: 16, sw: 1.5, fill: 'none', stroke: 'currentColor' };
+    const s8 = { vb: '0 0 8 8', sz: 8, sw: 1.2, fill: 'none', stroke: 'currentColor' };
+    const glyphs = [
+      ['Back', 'M13 8H3.5M7.5 4 3.5 8l4 4', s16], ['Forward', 'M3 8h9.5M8.5 4l4 4-4 4', s16], ['Up', 'M8 13V3.5M4 7.5l4-4 4 4', s16],
+      ['Refresh', 'M12.5 8a4.5 4.5 0 1 1-1.3-3.2M12.5 2.5v2.8H9.7', s16], ['Plus', 'M8 3.5v9M3.5 8h9', s16], ['View', 'M2.5 3.5h11M2.5 8h11M2.5 12.5h11', s16],
+      ['Search', 'M7 11.5a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9ZM10.5 10.5l3 3', s16], ['History', 'M8 4.5V8l2.5 1.5M14 8A6 6 0 1 1 2 8a6 6 0 0 1 12 0Z', s16],
+      ['Pin', 'M6 2.5h4l-.5 4 2 2h-7l2-2ZM8 8.5V14', s16], ['Drive', 'M2.5 9.5h11v3.5h-11ZM3.5 9.5 5 3.5h6l1.5 6', s16],
+      ['Close', 'M1.5 1.5l5 5M6.5 1.5l-5 5', s8], ['Chevron down', 'M1.5 3 4 5.5 6.5 3', s8], ['Submenu ▸', 'M3 1.5 5.5 4 3 6.5', s8],
+      ['Check', 'M1.5 4.2 3.2 6 6.5 2', s8], ['Lock', 'M2 3.5V2.5a2 2 0 0 1 4 0v1M1.5 3.5h5v4h-5Z', s8],
+      ['Folder (fill)', 'M1.5 4a1 1 0 0 1 1-1h3.8l1.5 1.6h5.7a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1Z', { vb: '0 0 16 16', sz: 16, sw: 0, fill: '#c98a12', stroke: 'none' }],
+      ['Page (fill)', 'M3.5 1.5h6l3 3v10h-9Z', { vb: '0 0 16 16', sz: 16, sw: 0, fill: '#2d6fc0', stroke: 'none' }]
+    ].map(([n, d, s]) => Object.assign({ n, d }, s));
+    return { dirs, glyphs, pins };
+  }
+}
+</script>
+</body>
+</html>
