@@ -88,8 +88,12 @@ pub(crate) static RULES: [Rule; 26] = [
             if contrast(c.accent, WHITE) >= contrast(c.accent, NEAR_BLACK) { WHITE } else { mix(c.accent, BLACK, 0.86) }
         },
     },
-    Rule { key: "accent-hover", inputs: &["accent"], compute: |c, dark| mix(c.accent, ink(dark), 0.12) },
-    Rule { key: "accent-pressed", inputs: &["accent"], compute: |c, dark| mix(c.accent, ink(dark), 0.24) },
+    Rule { key: "accent-hover", inputs: &["background", "accent"], compute: |c, dark| mix(c.accent, ink(dark), 0.12) },
+    Rule {
+        key: "accent-pressed",
+        inputs: &["background", "accent"],
+        compute: |c, dark| mix(c.accent, ink(dark), 0.24),
+    },
     Rule {
         key: "selection",
         inputs: &["background", "accent"],
@@ -120,12 +124,12 @@ pub(crate) static RULES: [Rule; 26] = [
     Rule { key: "progress", inputs: &["accent"], compute: |c, _| c.accent },
     Rule {
         key: "marquee",
-        inputs: &["accent"],
+        inputs: &["background", "accent"],
         compute: |c, dark| with_alpha(c.accent, if dark { 0.20 } else { 0.14 }),
     },
     Rule {
         key: "drop-target",
-        inputs: &["accent"],
+        inputs: &["background", "accent"],
         compute: |c, dark| with_alpha(c.accent, if dark { 0.28 } else { 0.20 }),
     },
     Rule { key: "tab-active", inputs: &["background"], compute: |c, _| c.background },
@@ -285,5 +289,26 @@ mod tests {
         assert_eq!((rule.compute)(&c, false), WHITE);
         c.accent = hex("#ff8f57");
         assert_eq!((rule.compute)(&c, true), hex("#24140c"));
+    }
+
+    /// Changing a declared input of a rule changes what it makes (in the light or the dark
+    /// variant); changing any other key never does.
+    #[test]
+    fn rules_read_exactly_the_inputs_they_declare() {
+        let bases = ["light", "dark"].map(|id| resolve_theme(id, &HashMap::new(), &mut Vec::new()).unwrap().colors);
+        let samples = ["#ff0000", "#00ff00", "#0000ff", "#ffffff", "#000000", "#808080"].map(hex);
+        for rule in &RULES {
+            for key in COLOR_KEYS {
+                let changes = bases.iter().any(|base| {
+                    let before = (rule.compute)(base, is_dark(base.background));
+                    samples.iter().any(|sample| {
+                        let mut varied = base.clone();
+                        varied.set(key, *sample);
+                        (rule.compute)(&varied, is_dark(varied.background)) != before
+                    })
+                });
+                assert_eq!(changes, rule.inputs.contains(&key), "rule {} and key {key}", rule.key);
+            }
+        }
     }
 }

@@ -184,6 +184,12 @@ fn contrast_holds_in_every_theme_and_accent() {
             ("foreground/selection-inactive", c.foreground, c.selection_inactive, 4.5),
             ("accent-foreground/accent", c.accent_foreground, c.accent, 4.5),
             ("danger/background", c.danger, c.background, 4.5),
+            ("foreground/surface-raised", c.foreground, c.surface_raised, 4.5),
+            ("foreground/chrome", c.foreground, c.chrome, 4.5),
+            ("selection-foreground-muted/selection-inactive", c.selection_foreground_muted, c.selection_inactive, 4.5),
+            ("danger/danger-background", c.danger, c.danger_background, 4.5),
+            ("accent-foreground/accent-hover", c.accent_foreground, c.accent_hover, 4.5),
+            ("accent-foreground/accent-pressed", c.accent_foreground, c.accent_pressed, 4.5),
             ("focus-ring/selection", c.focus_ring, c.selection, 3.0),
             ("focus-ring/background", c.focus_ring, c.background, 3.0),
             ("focus-ring/chrome", c.focus_ring, c.chrome, 3.0),
@@ -194,4 +200,24 @@ fn contrast_holds_in_every_theme_and_accent() {
             assert!(ratio >= min, "{}: {name} is {ratio:.2}, needs {min}", t.id);
         }
     }
+}
+
+/// Every color the example theme shows commented out is what the rules make from the
+/// example's other colors (or, for success and warning, the base theme's own).
+#[test]
+fn the_example_comments_state_the_resolved_values() {
+    let text = include_str!("../templates/example.toml");
+    let example = load("example", text);
+    let mut seen = 0;
+    for line in text.lines().filter_map(|l| l.strip_prefix("# ")) {
+        let Some((key, rest)) = line.split_once(" = \"") else { continue };
+        let Some((value, _)) = rest.split_once('"') else { continue };
+        let key = key.trim();
+        if !COLOR_KEYS.contains(&key) {
+            continue;
+        }
+        assert_eq!(example.colors.get(key), hex(value), "example.toml: commented {key}");
+        seen += 1;
+    }
+    assert_eq!(seen, 18, "commented colors in example.toml");
 }

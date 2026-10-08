@@ -61,8 +61,8 @@ export global Theme {
     out property <length> font-size-small: round(font-size / 1px * 0.85) * 1px;
     out property <length> font-size-heading: round(font-size / 1px * 1.15) * 1px;
     out property <length> radius-small: max(2px, round(radius / 2px) * 1px);
-    out property <length> sheet-radius: inset > 0 ? radius + 2px : 0px;
-    out property <length> row-radius: inset > 0 ? radius : 0px;
+    out property <length> sheet-radius: inset > 0px ? radius + 2px : 0px;
+    out property <length> row-radius: inset > 0px ? radius : 0px;
     out property <length> tab-strip-height: row-height + 10px;
     out property <length> toolbar-height: row-height + 2 * spacing + 4px;
     out property <length> control-height: row-height + 2px;

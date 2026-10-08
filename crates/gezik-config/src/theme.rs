@@ -134,7 +134,8 @@ pub struct Metrics {
     pub icon_size: f32,
     pub radius: f32,
     pub spacing: f32,
-    /// Gap between the chrome and the content sheet, and the rows' inset from its edge; 0 = edge to edge, square corners.
+    /// Gap between the chrome and the content sheet, and the rows' inset from its edge;
+    /// 0 = edge to edge, square corners.
     pub inset: f32,
 }
 
@@ -231,7 +232,9 @@ fn builtin(id: &str) -> PartialTheme {
 
 /// Resolves a theme by id (case-insensitive) from the user's theme files
 /// (`id → TOML text`, ids lowercase) and the built-ins, filling every value the theme
-/// leaves out from its `base` chain. Colors a user file leaves out but that follow from ones it sets are worked out by `theme_rules::RULES`. A theme without `base` extends the built-in of the same id if there is one, else `dark`; a missing or cyclic base falls back to `dark`.
+/// leaves out from its `base` chain. Colors a user file leaves out but that follow from ones
+/// it sets are worked out by `theme_rules::RULES`. A theme without `base` extends the built-in
+/// of the same id if there is one, else `dark`; a missing or cyclic base falls back to `dark`.
 pub fn resolve_theme(
     id: &str,
     user_themes: &HashMap<String, String>,
