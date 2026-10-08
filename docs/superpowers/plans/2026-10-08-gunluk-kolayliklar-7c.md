@@ -3756,3 +3756,495 @@ impl Stack {
 - [ ] **Step 9: Commit** "Gather files on a drop stack and copy or move them together".
 
 ---
+
+### Task 8: İşlem günlüğü — `op_history.rs`, panelde `History` sekmesi, `show-history`
+
+**Files:**
+- Create: `crates/gezik/src/op_history.rs`
+- Modify: `crates/gezik/src/operations.rs` (kayıt, sekme, `show_history`, `history_show`, `history_details`; `details` ortak metni kullanır), `crates/gezik/src/navigation.rs` (`go_selecting`), `crates/gezik/ui/widgets/ops-panel.slint` (sekmeler, `HistoryRow`), `crates/gezik/ui/app.slint` (özellikler, durum çubuğunun `History` düğmesi, macOS View ▸ Operation History), `crates/gezik/src/context_menu.rs` (`SHOW_HISTORY`), `crates/gezik/src/actions.rs`, `crates/gezik/src/main.rs`
+
+**Interfaces:**
+- Consumes: Task 5'in `Action::ShowHistory`; Task 7'nin `view_items(view, preview_open, stack_open, options, windows)`.
+- Produces:
+
+```rust
+// gezik::op_history
+pub const HISTORY_MAX: usize = 200;  pub const SHOW_MAX: usize = 1000;  pub const MAX_DETAILS: usize = 50;
+pub struct Record { pub id: u64, pub time: String, pub title: String, pub result: String, pub failed: bool,
+                    pub show: Option<(PathBuf, Vec<String>)>, pub details: Option<String> }
+pub struct History;   // push(time, title, &Report) -> u64, records() (newest first), get(id)
+pub fn result_text(report: &Report) -> (String, bool);
+pub fn show_target(report: &Report) -> Option<(PathBuf, Vec<String>)>;
+pub fn details_text(report: &Report) -> Option<String>;
+// gezik::navigation::Navigator
+pub fn go_selecting(&self, dir: PathBuf, names: Vec<String>);
+// gezik::operations::Operations
+pub fn show_history(&self);
+// gezik::context_menu
+pub const SHOW_HISTORY: u32 = 1409;
+```
+
+- [ ] **Step 1: Write the failing tests** (yeni `op_history.rs`'in test modülü):
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gezik_ops::{Failure, TaskKind};
+
+    fn report() -> Report {
+        Report {
+            kind: TaskKind::Copy,
+            cancelled: false,
+            failures: Vec::new(),
+            skipped: Vec::new(),
+            skipped_changed: 0,
+            no_trash: Vec::new(),
+            results: Vec::new(),
+            changed_dirs: Vec::new(),
+        }
+    }
+
+    fn failures(n: usize) -> Vec<Failure> {
+        (0..n).map(|i| Failure { path: PathBuf::from(format!("f{i}.txt")), message: "It is open".to_owned() }).collect()
+    }
+
+    #[test]
+    fn results_read_as_the_spec_says() {
+        assert_eq!(result_text(&report()), ("Done".to_owned(), false));
+        assert_eq!(result_text(&Report { skipped: failures(2), ..report() }), ("Done · 2 skipped".to_owned(), false));
+        assert_eq!(result_text(&Report { failures: failures(3), ..report() }), ("3 failed".to_owned(), true));
+        assert_eq!(result_text(&Report { failures: failures(1), ..report() }), ("1 failed".to_owned(), true));
+        assert_eq!(result_text(&Report { cancelled: true, failures: failures(1), ..report() }), ("Cancelled".to_owned(), false));
+    }
+
+    #[test]
+    fn the_history_keeps_the_newest_two_hundred() {
+        let mut history = History::default();
+        let first = history.push("14:05:09".to_owned(), "1".to_owned(), &report());
+        for i in 2..=HISTORY_MAX + 5 {
+            history.push("14:05:09".to_owned(), i.to_string(), &report());
+        }
+        let titles: Vec<&str> = history.records().map(|r| r.title.as_str()).collect();
+        assert_eq!(titles.len(), HISTORY_MAX);
+        assert_eq!(titles[0], (HISTORY_MAX + 5).to_string(), "the newest on top");
+        assert!(history.get(first).is_none(), "the oldest went");
+    }
+
+    #[test]
+    fn show_in_folder_goes_to_the_first_results_folder() {
+        let (d, e) = (PathBuf::from("d"), PathBuf::from("e"));
+        let results = vec![d.join("a"), d.join("b"), e.join("c")];
+        assert_eq!(show_target(&Report { results, ..report() }), Some((d.clone(), vec!["a".to_owned(), "b".to_owned()])));
+        let changed = Report { changed_dirs: vec![e.clone()], ..report() };
+        assert_eq!(show_target(&changed), Some((e, Vec::new())), "no results: the first folder it changed");
+        assert_eq!(show_target(&report()), None);
+        let many = Report { results: (0..1500).map(|i| d.join(format!("f{i}"))).collect(), ..report() };
+        assert_eq!(show_target(&many).unwrap().1.len(), SHOW_MAX);
+    }
+
+    #[test]
+    fn details_list_at_most_fifty_lines() {
+        assert_eq!(details_text(&report()), None);
+        let text = details_text(&Report { failures: failures(60), ..report() }).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), MAX_DETAILS + 1);
+        assert_eq!(lines[0], "f0.txt: It is open");
+        assert_eq!(lines.last().copied(), Some("…and 10 more"));
+        let skipped = details_text(&Report { skipped: failures(1), ..report() }).unwrap();
+        assert_eq!(skipped, "Skipped:\nf0.txt: It is open");
+    }
+}
+```
+
+`context_menu.rs`: `conversion_ids_meet_no_others`'ın `singles`'ına `SHOW_HISTORY`; `view_menu_marks_the_current_choices`'ın beklenen kimliklerinde `TOGGLE_STACK`'ten sonra `SHOW_HISTORY` (ve `view_menu_lists_the_options_and_their_marks`'ta `&ids[11..]` → `&ids[12..]`, `items[11..14]` → `items[12..15]`, `format_subs(…, 16)` → `17`).
+
+- [ ] **Step 2: Run to see them fail.** `cargo test -j 8 -p gezik op_history context_menu` → derlenmez.
+
+- [ ] **Step 3: `op_history.rs`** (testleri Step 1'de), `main.rs`'e `mod op_history;`:
+
+```rust
+//! The operations panel's History (spec 9.4): each finished job (undo and redo too) as one
+//! record, newest first, at most `HISTORY_MAX`, in memory only.
+
+use std::collections::VecDeque;
+use std::path::PathBuf;
+
+use gezik_ops::{Failure, Report};
+
+/// The most records kept; the oldest goes first.
+pub const HISTORY_MAX: usize = 200;
+/// The most results "Show in folder" selects.
+pub const SHOW_MAX: usize = 1000;
+/// "Details" lists at most this many lines.
+pub const MAX_DETAILS: usize = 50;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Record {
+    pub id: u64,
+    /// When it ended: `14:05:09`.
+    pub time: String,
+    pub title: String,
+    pub result: String,
+    pub failed: bool,
+    /// Where "Show in folder" goes and what it selects there.
+    pub show: Option<(PathBuf, Vec<String>)>,
+    pub details: Option<String>,
+}
+
+#[derive(Debug, Default)]
+pub struct History {
+    records: VecDeque<Record>,
+    next: u64,
+}
+
+impl History {
+    /// Records a job that ended with `report`; its id.
+    pub fn push(&mut self, time: String, title: String, report: &Report) -> u64 {
+        self.next += 1;
+        let (result, failed) = result_text(report);
+        self.records.push_front(Record {
+            id: self.next,
+            time,
+            title,
+            result,
+            failed,
+            show: show_target(report),
+            details: details_text(report),
+        });
+        self.records.truncate(HISTORY_MAX);
+        self.next
+    }
+
+    /// Newest first.
+    pub fn records(&self) -> impl Iterator<Item = &Record> {
+        self.records.iter()
+    }
+
+    pub fn get(&self, id: u64) -> Option<&Record> {
+        self.records.iter().find(|record| record.id == id)
+    }
+}
+
+/// `Done`, `Done · 2 skipped`, `3 failed`, `Cancelled`; and whether it failed.
+pub fn result_text(report: &Report) -> (String, bool) {
+    if report.cancelled {
+        return ("Cancelled".to_owned(), false);
+    }
+    match (report.failures.len(), report.skipped.len()) {
+        (0, 0) => ("Done".to_owned(), false),
+        (0, skipped) => (format!("Done · {skipped} skipped"), false),
+        (failed, _) => (format!("{failed} failed"), true),
+    }
+}
+
+/// The folder of the first result and the results there (at most `SHOW_MAX`); with no
+/// results, the first folder the job changed.
+pub fn show_target(report: &Report) -> Option<(PathBuf, Vec<String>)> {
+    if let Some(dir) = report.results.first().and_then(|first| first.parent()) {
+        return Some((dir.to_path_buf(), crate::operations::result_names(&report.results, dir).into_iter().take(SHOW_MAX).collect()));
+    }
+    report.changed_dirs.first().map(|dir| (dir.clone(), Vec::new()))
+}
+
+/// The failures, then what was skipped under its own heading, at most `MAX_DETAILS` lines;
+/// None when there are neither.
+pub fn details_text(report: &Report) -> Option<String> {
+    if report.failures.is_empty() && report.skipped.is_empty() {
+        return None;
+    }
+    let named = |f: &Failure| {
+        format!(
+            "{}: {}",
+            f.path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default(),
+            crate::pdf::failure_shown(&f.message)
+        )
+    };
+    let mut lines: Vec<String> = report.failures.iter().take(MAX_DETAILS).map(named).collect();
+    let room = MAX_DETAILS.saturating_sub(lines.len());
+    if !report.skipped.is_empty() && room > 0 {
+        if !lines.is_empty() {
+            lines.push(String::new());
+        }
+        lines.push("Skipped:".to_owned());
+        lines.extend(report.skipped.iter().take(room.saturating_sub(1)).map(named));
+    }
+    let all = report.failures.len() + report.skipped.len();
+    if all > MAX_DETAILS {
+        lines.push(format!("…and {} more", all - MAX_DETAILS));
+    }
+    Some(lines.join("\n"))
+}
+```
+
+`operations.rs`'in `details`'i satırlarını `crate::op_history::details_text(report).unwrap_or_default()` ile kurar; `MAX_DETAILS` sabiti oradan kalkar (`op_history::MAX_DETAILS`). (Eski kodda "Skipped:" başlığı satır sayısına girmiyordu; ortak işlev başlığı sayar: en çok 50 satır, spec §9.4.)
+
+- [ ] **Step 4: `ops-panel.slint`.** Başa:
+
+```slint
+// One finished job in the History (op_history.rs).
+export struct HistoryRow {
+    id: int,
+    time: string,
+    title: string,
+    result: string,
+    failed: bool,
+    can-show: bool,
+    can-details: bool,
+}
+```
+
+`OpsPanel`'e `in property <int> tab;` (0 Current, 1 History), `in property <[HistoryRow]> history;`, `callback tab-chosen(int); callback history-show(int); callback history-details(int);`. `VerticalLayout`'un başına sekme satırı, `for row in root.rows` bloğu `if root.tab == 0: VerticalLayout { … }` içine, ardından:
+
+```slint
+        HorizontalLayout {
+            height: Theme.row-height;
+            spacing: Theme.spacing;
+            accessible-role: tab-list;
+            for name[i] in ["Current", "History"]: LinkButton {
+                text: (root.tab == i ? "• " : "") + name;
+                accessible-role: tab;
+                clicked => { root.tab-chosen(i); }
+            }
+            Rectangle { horizontal-stretch: 1; }
+        }
+        if root.tab == 1: ListView {
+            height: min(root.history.length, 8) * (Theme.row-height + 2px) + 2px;
+            for row in root.history: Rectangle {
+                height: Theme.row-height + 2px;
+                accessible-role: list-item;
+                accessible-label: row.title;
+                accessible-description: row.result;
+                HorizontalLayout {
+                    spacing: Theme.spacing * 2;
+                    Text { text: row.time; width: 64px; vertical-alignment: center; color: Theme.foreground-muted; }
+                    Text { text: row.title; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; color: Theme.foreground; }
+                    Text { text: row.result; vertical-alignment: center; color: row.failed ? Theme.danger : Theme.foreground-muted; }
+                    if row.can-show: LinkButton { text: "Show in folder"; clicked => { root.history-show(row.id); } }
+                    if row.can-details: LinkButton { text: "Details"; clicked => { root.history-details(row.id); } }
+                }
+            }
+        }
+```
+
+(`ListView` için `import { ListView } from "std-widgets.slint";`; boş günlükte yükseklik 2px, satır yok: başlık "History" seçili ve boş.)
+
+- [ ] **Step 5: `app.slint`.** `import { OpsPanel, OpRow, HistoryRow } …`, `export { …, HistoryRow }`. Özellikler:
+
+```slint
+    // The panel's tab (0 Current, 1 History), the History's rows, and whether the status
+    // bar shows its History button (once a job ended this session).
+    in property <int> ops-tab;
+    in property <[HistoryRow]> history-rows;
+    in property <bool> history-available;
+    callback ops-tab-chosen(int);
+    callback history-show(int);
+    callback history-details(int);
+    callback history-toggle();
+```
+
+`OpsPanel`'e `tab: root.ops-tab; history: root.history-rows; tab-chosen(i) => { root.ops-tab-chosen(i); } history-show(i) => { root.history-show(i); } history-details(i) => { root.history-details(i); }`. Durum çubuğunda `ops-summary` düğmesinden sonra:
+
+```slint
+                    if root.history-available: Rectangle {
+                        width: history-text.preferred-width + 8px;
+                        border-radius: Theme.radius;
+                        background: history-touch.has-hover ? Theme.hover : transparent;
+                        accessible-role: button;
+                        accessible-label: "History";
+                        accessible-action-default => { root.history-toggle(); }
+                        history-text := Text {
+                            x: 4px;
+                            height: parent.height;
+                            text: "History";
+                            vertical-alignment: center;
+                            color: Theme.foreground-muted;
+                        }
+                        history-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.history-toggle(); }
+                        }
+                    }
+```
+
+macOS View menüsüne `Drop Stack`'ten sonra `MenuItem { title: "Operation History"; activated => { root.menu-command("show-history"); } }`.
+
+- [ ] **Step 6: `navigation.rs`.** `Inner`'a `/// Names to select once the next move is shown ("Show in folder"). select_next: Option<Vec<String>>,` (`new`'de `None`). Ekle:
+
+```rust
+    /// Goes to `dir` and selects `names` there ("Show in folder"); the folder shown is
+    /// reloaded with them selected.
+    pub fn go_selecting(&self, dir: PathBuf, names: Vec<String>) {
+        if matches!(self.active_location(), Location::Path(ref current) if same_path(current, &dir))
+            && self.refresh_showing(std::slice::from_ref(&dir), &names, None)
+        {
+            return;
+        }
+        self.0.borrow_mut().select_next = Some(names);
+        self.go(Location::Path(dir));
+    }
+```
+
+`finish_load`'da görünüm durumu:
+
+```rust
+        let (view, state) = {
+            let mut inner = self.0.borrow_mut();
+            if let Mode::Move(steps) = &mode {
+                inner.tabs.active_mut().apply_steps(steps);
+            }
+            inner.cleared = false;
+            let mut state = view_to_show(&mode, inner.tabs.active().view());
+            if let Some(names) = inner.select_next.take().filter(|names| !names.is_empty()) {
+                state.focus = names.first().cloned();
+                state.selected = names;
+            }
+            (inner.view.clone(), state)
+        };
+```
+
+(`refresh_showing` boş `names` ile seçimi değiştirmez; yalnız yeniden yükler.)
+
+- [ ] **Step 7: `operations.rs`.** `Inner`'a `history: RefCell<crate::op_history::History>`, `tab: Cell<i32>`, `history_rows: Rc<VecModel<crate::HistoryRow>>` (`VecModel::default()` ayırmaz; `window.set_history_rows(…)` `new`'de). `finished`'in başında (`with_job`'dan sonra, `after`/`title` alınırken `title = job.title.clone()`):
+
+```rust
+        let time = gezik_platform::local_date_parts(std::time::SystemTime::now())
+            .map(|t| format!("{:02}:{:02}:{:02}", t.hour, t.minute, t.second))
+            .unwrap_or_default();
+        self.0.history.borrow_mut().push(time, title, &report);
+        self.sync_history();
+```
+
+Ekle:
+
+```rust
+    /// The History's rows and the status bar's button.
+    fn sync_history(&self) {
+        let Some(window) = self.0.window.upgrade() else { return };
+        let history = self.0.history.borrow();
+        let rows = history.records().map(|record| crate::HistoryRow {
+            id: i32::try_from(record.id).unwrap_or(i32::MAX),
+            time: record.time.as_str().into(),
+            title: record.title.as_str().into(),
+            result: record.result.as_str().into(),
+            failed: record.failed,
+            can_show: record.show.is_some(),
+            can_details: record.details.is_some(),
+        });
+        sync_model(&self.0.history_rows, rows);
+        window.set_history_available(true);
+    }
+
+    /// `show-history`, View ▸ Operation history: the panel opens on its History.
+    pub fn show_history(&self) {
+        self.0.tab.set(1);
+        self.0.collapsed.set(false);
+        self.update();
+    }
+
+    /// The status bar's History button: opens the History, or closes it if it is shown.
+    pub fn history_toggle(&self) {
+        let shown = self.0.tab.get() == 1 && !self.0.collapsed.get();
+        self.0.tab.set(if shown { 0 } else { 1 });
+        self.0.collapsed.set(false);
+        self.update();
+    }
+
+    pub fn choose_tab(&self, tab: i32) {
+        self.0.tab.set(tab.clamp(0, 1));
+        self.update();
+    }
+
+    /// "Show in folder" of record `id`.
+    pub fn history_show(&self, id: i32) {
+        let show = u64::try_from(id).ok().and_then(|id| self.0.history.borrow().get(id).and_then(|r| r.show.clone()));
+        if let Some((dir, names)) = show {
+            self.0.nav.go_selecting(dir, names);
+        }
+    }
+
+    /// "Details" of record `id`: what failed or was skipped.
+    pub fn history_details(&self, id: i32) {
+        let record = u64::try_from(id).ok().and_then(|id| self.0.history.borrow().get(id).cloned());
+        if let Some(record) = record {
+            self.0.dialogs.ask(record.title, record.details.unwrap_or_default(), &["Close"], |_| {});
+        }
+    }
+```
+
+`update`'te panelin açıklığı: `let history = self.0.tab.get() == 1;` ve `window.set_ops_panel_open((!rows.is_empty() || history) && !self.0.collapsed.get());`, `window.set_ops_tab(self.0.tab.get());`. (Current sekmesi boşken panel bugünkü gibi kapanır; History sekmesi boşken de açık kalır.)
+
+`main.rs`: `window.on_ops_tab_chosen`, `on_history_show`, `on_history_details`, `on_history_toggle` → `ops.choose_tab`, `ops.history_show`, `ops.history_details`, `ops.history_toggle` (var olan `on_op_*` kalıbıyla). `actions.rs`: `Action::ShowHistory => crate::operations::with_current(crate::operations::Operations::show_history),` ("Not theirs"'ten çıkar; artık listede 7c'den eylem kalmaz).
+
+`context_menu.rs`: `/// 1409: View ▸ Operation history. pub const SHOW_HISTORY: u32 = 1409;`; `view_items`'te `TOGGLE_STACK`'ten sonra `out.push((SHOW_HISTORY, "    Operation history".to_owned()));` (işaret sütunu hizası); `run`'da genel View kolundan önce `(SHOW_HISTORY, Subject::View) => self.ops.show_history(),`.
+
+- [ ] **Step 8: Run.** `cargo test -j 8 -p gezik op_history context_menu operations navigation` → PASS. Elle (Windows; kullanıcı uzakta değilse Task 9 listesine): bir kopya, bir başarısız taşıma (açık dosya), bir geri alma → durum çubuğunda "History" → üç kayıt, en yeni üstte, saatleriyle; "Show in folder" sonuçları seçer; başarısızda "Details". Panel kapalıyken View ▸ Operation history açar. Dört komut.
+
+- [ ] **Step 9: Commit** "Keep a history of the session's operations in the operations panel".
+
+---
+
+### Task 9: Ölçüm, çapraz denetimler, notlar, test listeleri, spec
+
+**Files:**
+- Modify: `docs/superpowers/notes/2026-10-03-ayarlar-ve-tema-followups.md` (yeni "Alt proje 7c … sonrası" bölümü), `docs/superpowers/notes/linux-test.md`, `docs/superpowers/notes/macos-test.md`, `docs/superpowers/specs/2026-10-08-gunluk-kolayliklar-design.md` (Durum)
+
+- [ ] **Step 1: Çapraz denetimler** (yalnız bu görevde): `cargo check -j 8 -p gezik --target aarch64-apple-darwin --no-default-features`, `cargo check -j 8 -p gezik-core -p gezik-platform -p gezik-ops --target x86_64-unknown-linux-gnu`, `cargo check -j 8 -p gezik-batch --no-default-features --target x86_64-unknown-linux-gnu`. Beklenen düzeltme yerleri: Task 3'ün macOS pano adları (`objc2-app-kit` 0.3 imzaları), X11/Wayland `Backend` yöntemleri, `link.rs`'in `#[cfg(unix)]` kolları. Her düzeltmeden sonra dört komut yeniden; uyarısız olunca devam.
+
+- [ ] **Step 2: Exe.** `cargo build --release -p gezik -j 8`; `stat -c %s target/release/gezik.exe`. Taban 22.665.216, **sınır 22.927.360 bayt** (Global Constraints). Aşılırsa görev görev dağılım ayrı bir çalışma ağacında (`git worktree add ../gezik-7c-measure <commit>`, kendi `target`'ı) ölçülür, notlara yazılır ve daraltma önerisiyle kullanıcıya sorulur (en olası büyükler: Task 7'nin Slint şeridi, Task 8'in sekmeleri ve `ListView`'i, Task 3'ün PNG kodlayıcı yolu).
+
+- [ ] **Step 3: Bellek ve açılış (Windows; yalnız kullanıcı uzaktayken, klavye düzenine dokunmadan):** master `056d860` ayrı çalışma ağacında (`git worktree add ../gezik-master-7c 056d860`, `cargo build --release -p gezik -j 8`); her ikisi için `scripts/perf/measure.ps1 -Runs 5 -Config <boş geçici klasör>` ikişer tur (bellek master'dan büyük değil, açılış ≤ ~60 ms). Kullanıcı bilgisayardaysa bu adım notlarda **bekliyor** olarak kaydedilir.
+
+- [ ] **Step 4: `linux-test.md`** (sıradaki numaralar 50-55, var olan biçimde, İngilizce):
+  - 50. **New ▸ and templates.** Right-click empty space: "New ▸" holds Folder, Text file, Markdown file, then the files and folders in `~/.config/gezik/templates/` (put `Report.odt` and a folder `Project/` with a file in it there; "Open templates folder" opens it in a new tab), then "Open templates folder". Each makes its item in the folder shown, numbered `(2)` when the name is taken, and starts renaming it; Ctrl+Z takes it away. Dot files in the folder are not listed.
+  - 51. **New folder with selection.** Select three files, Ctrl+Alt+N (and the right-click item "New folder with selection"): they are in "New folder", which is selected and being renamed. Ctrl+Z puts them back and the folder goes to the trash; Ctrl+Y (redo) moves them in again. Note whether the desktop takes Ctrl+Alt+N.
+  - 52. **Paste as file.** Copy a picture (a screenshot to the clipboard; an image in Firefox: "Copy Image") and press Ctrl+V on the list: `Pasted image <date> <time>.png` opens in an image viewer. Copy text in a text editor: right-click empty space says "Paste text as file", and Ctrl+V makes `Pasted text … .txt` with that text. Copy files in Nautilus/Dolphin: Ctrl+V pastes the files, not a text file. Repeat on X11 and on Wayland; a large picture (4K screenshot) too.
+  - 53. **Links.** Right-click a file ▸ "Create link": `Link to <name>` (a symbolic link, `ls -l`). Drag a file with Ctrl+Shift inside Gezik: a link in the target folder, the label says "Create link in …". Drag from Nautilus/Dolphin with Ctrl+Shift onto Gezik: X11 makes a link; Wayland copies (no link action in the protocol, a known gap). Right-drag ▸ "Create link here". Ctrl+Z on a link to a folder: the link goes to the trash, the folder's files stay.
+  - 54. **Drop stack.** Ctrl+Shift+S adds the selection; the strip opens above the status bar. Drag files from Nautilus/Dolphin onto it. Go to another folder: "Copy here" copies them (one Ctrl+Z), "Move here" moves them and they leave the strip. Delete one stacked file in a terminal: it fades and is left out. Drag an item from the strip to another app (it leaves the window). View ▸ Drop stack hides it.
+  - 55. **History.** After a few jobs (one failing), the status bar shows "History": each job with its time, newest first; "Show in folder" goes there with the results selected; "Details" lists what failed. View ▸ Operation history opens it while the panel is empty.
+  - "Known gaps"e: Wayland'da başka programdan bağlantı bırakma yok.
+
+- [ ] **Step 5: `macos-test.md`** "### 7c, daily" başlığıyla (66-71): (66) New ▸ şablonlarla (`~/Library/Application Support/…/templates/`), Finder'ın `.DS_Store`'u listelenmez; (67) ⌃⌘N ve File ▸ New Folder with Selection, Ctrl+Z/Ctrl+Y; (68) ekran görüntüsü panoya (⌃⇧⌘4) ve Safari'den "Copy Image" → ⌘V `Pasted image … .png`; metin → `Pasted text … .txt`; Finder'da kopyalanmış dosyalar dosya olarak; (69) satır menüsü "Create link" (symlink), ⌘⌥ ile sürükleme (Gezik içinde ve Finder'dan; imleç bağlantı oku), sağ sürüklemede "Create link here", bağlantıyı çöpe atmak hedefe dokunmaz; (70) ⌘⇧S ve Edit ▸ Add to Drop Stack, View ▸ Drop Stack, Copy here / Move here; (71) View ▸ Operation History, Show in folder, Details.
+
+- [ ] **Step 6: Notlar** (`2026-10-03-ayarlar-ve-tema-followups.md`, Türkçe, 7b bölümünün kalıbında): ölçümler (exe: taban, sınır, bayt ve MiB, toplam ölçüte kalan; bellek/açılış ya da "bekliyor"), sapmalar (1-17 ve ek netleştirmeler kısaca), junction testi **Dal A mı Dal B mi** ve neden, Geliştirici Modu'nun bu makinede kapalı olup symlink testlerinin atlandığı (açıksa koştuğu), denetimler (dört komutun ve üç çapraz denetimin sonucu, test sayıları), Windows ekran testleri (aşağıdaki liste: "bekliyor" ya da sonuçlar), denenemeyenler (macOS 66-71, Linux 50-55), açık kalan küçükler (incelemelerden).
+
+- [ ] **Step 7: Spec.** Durum satırı: "Tasarım onaylandı (2026-10-07); 7a, 7b ve 7c uygulandı".
+
+- [ ] **Step 8: Dört komut** son kez; **Commit** "Measure 7c and note what it does".
+
+---
+
+## Ek netleştirmeler (Task 3-8 yazılırken)
+
+18. **Yığın öğesinin ipucu:** Slint'te ipucu yok (7b'nin ipucu yalnız kenar çubuğunda); işaretçi bir yığın öğesinde durunca tam yolu durum çubuğu söyler (`stack-hovered`).
+19. **Yığın şeridinin yeri `drop-geometry`'de hesapla:** şerit bir `if` içinde (kapalıyken bellek tutmaz) olduğundan yeri pencere yüksekliğinden çıkarılır: durum çubuğu (`Theme.row-height`) + 1px çizgi + şerit (`Theme.row-height + 6px`). Düzen değişirse bu formül de değişmelidir (Task 7 Step 5'teki not).
+20. **`Operations::transfer_job`** `transfer`'in gövdesini taşır ve iş kimliğini döner (yığının taşıdıklarını iş bitince düşürmek için); `transfer`'in imzası değişmez.
+21. **Günlük ayrıntıları:** "Skipped:" başlığı da 50 satıra girer (eskiden girmiyordu; spec "en çok 50 satır"). Paneldeki "Details" de aynı ortak metni kullanır.
+22. **Günlük sonuç metni** spec'in kısa biçimidir (`Done · 2 skipped`, `3 failed`); işlem satırının kendi metni (`Done · 2 items skipped`, `3 items failed`) değişmez.
+
+---
+
+## Ekran testleri (Windows, alt planın sonunda; yalnız kullanıcı uzaktayken, klavye düzeni değiştirilmeden)
+
+**Durum: bekliyor.** `GEZIK_CONFIG_DIR` boş bir geçici klasör. Test verisi `%TEMP%\gezik-gui-7c\`: `one\` (içinde `a.txt`), `two\`, `a.txt`, `b.txt`, `big.png` (bir ekran görüntüsü), `locked.txt` (testte açık tutulur).
+
+1. Klasör boşluğu menüsü (Explorer menüsü, Gezik'in öğeleri üstte): "New folder", "New file", "New from template ▸" (Markdown file, Open templates folder) ve Explorer'ın kendi "New ▸"'u; "Markdown file" → `New document.md`, ad kutusu açık; ikincisi `New document (2).md`; Ctrl+Z çöpe atar.
+2. "Open templates folder" yeni sekmede `…\templates`'i açar; oraya `Report.docx` ve `Project\x.txt` konunca menüde (bir saniye içinde) "Project", "Report"; "Report" → `Report.docx` kopyası, ad kutusu açık; "Project" içiyle kopyalanır.
+3. İki dosya seçili sağ tık → "New folder with selection" → `New folder` seçili, adı düzenleniyor; Ctrl+Alt+N aynısı (ABD düzeninde); Ctrl+Z ikisini geri getirir, klasör çöpe; Ctrl+Y yine taşır. "New folder" zaten varken `New folder (2)`.
+4. Ekran Alıntısı Aracı ile panoya resim → sağ tık "Paste image as file" → `Pasted image <tarih> <saat>.png`, görüntüleyicide doğru; Notepad'den metin → "Paste text as file", Ctrl+V `Pasted text … .txt` (satır sonları CRLF); Explorer'da kopyalanmış dosyalar → Ctrl+V dosyaları yapıştırır. Tarayıcıdan "Copy image" (resim + HTML) → resim.
+5. Dosyaya sağ tık "Create link ▸ Shortcut" → `a.txt - Shortcut.lnk`, çift tık `a.txt`'yi açar; klasöre "Create link ▸ Junction" → `Link to one` içinde `a.txt`; Geliştirici Modu kapalıyken "Symbolic link" yok (açıksa var ve çalışır); Ctrl+Z bağlantıyı Geri Dönüşüm Kutusu'na atar, `one\a.txt` yerinde (Geri Dönüşüm Kutusu'ndaki junction'ı Explorer'dan açmayı denemeden).
+6. Explorer menüsünün "Create shortcut"u → `… - Shortcut.lnk` Gezik'in işi olarak (işlem panelinde/History'de görünür), Ctrl+Z geri alır.
+7. Gezik içinde Alt ile ve Ctrl+Shift ile sürükleme → etiket "Create link in two", bırakınca `.lnk`; Explorer'dan Alt ile Gezik'e → imleç bağlantı, "Create link in …"; sağ sürüklemede "Create link here".
+8. Ctrl+Shift+S → şerit; Explorer'dan şeride bırakılan dosya eklenir (Explorer'da kaynak yerinde kalır); yinelenen eklenmez; `two\`'de "Copy here" (tek Ctrl+Z), "Move here" → şeritten çıkarlar; `locked.txt` açıkken taşınmaz ve şeritte kalır; Explorer'dan silinen öğe soluklaşır; şeritten bir öğeyi listeye ve masaüstüne sürükleme; "Clear".
+9. History: durum çubuğunda düğme; kayıtlar en yeni üstte, saat, sonuç ("Done", "1 failed", "Cancelled"); "Show in folder" sonuçları seçer (başka klasördeyken de); "Details" başarısızları listeler; View ▸ Operation history panel boşken açar.
+10. Ulaşılabilirlik: Türkçe Q penceresinde (yalnız pencere düzeni zaten Türkçe Q ise; düzen **değiştirilmez**) Ctrl+Shift+S ve Ctrl+Alt+N; yoksa ABD'de denenir ve not düşülür.
+11. Exe (≤ 22.927.360), boşta bellek (master'dan büyük değil) ve açılış (≤ ~60 ms), Task 9'un sayılarıyla.
+
+---
+
+## Self-review
+
+- **Spec kapsamı:** §8.1 yerleşikler (Folder/Text file/Markdown file), `templates/` (uzantısız alfabetik etiket, noktalı/gizli atlanır, en çok 50, klasör şablonu içiyle), ilk çalıştırmada oluşturma ve silineni geri getirmeme, `Open templates folder`, `New ▸` (macOS/Linux) / `New from template ▸` (Windows), `CopyTask` (KeepBoth) / `NewTask` (`Markdown`), `After::Rename`, etiketler → Task 1 + 2 + 5 + 6 (sapma 1-5). §8.2 `new-folder-with-selection` (Ctrl+Alt+N, ⌃⌘N, satır menüsü), `GroupTask`, tek geri alma "New folder with 3 items", `inverse::build` kuralı → Task 1 + 5 + 6 (sapma 6, 7). §9.1 Ctrl+V'de resim > metin, adlar (`:` yok, `(2)`), UTF-8, menü etiketleri, Windows'ta Gezik öğesi, `read_image`/`read_text` üç sistem (PNG, `CF_DIBV5`/`CF_DIB` + BMP başlığı, TIFF → PNG, X11/Wayland hedefleri), yalnız biçim varlığı menüde, kodlama işte → Task 2 + 3 + 6 (sapma 8, 9). §9.2 `Create link ▸` / `Create link`, `.lnk` (`IShellLinkW`+`IPersistFile`, `Ad - Shortcut.lnk`), junction (`FSCTL_SET_REPARSE_POINT`, yerel NTFS), symlink izin denemesi, `Link to Ad`, Explorer `link` fiili, bırakma tuşları (üç sistem, dışarıdan gelenler), `Create link here`, `Effect::Link`, `LinkTask` (`Outcome::Created`, `symlink_metadata`), zorunlu çöp testi ve Dal B → Task 2 + 4 + 6 (sapma 10-12). §9.3 şerit, `toggle-stack`, View ▸ Drop stack, kendiliğinden açılma, sürükleyerek ve `add-to-stack` ile ekleme, yinelenmeme, simge + ad + ×, Copy here/Move here/Clear, soluk ve atlanan, taşınanın çıkması, şeritten sürükleme (pencere içi ve dışarı), yalnız yollar, 1000, `Hit::Stack` → Task 7 (sapma 13, 18-20). §9.4 Current/History sekmeleri, durum çubuğu düğmesi, `show-history`, kayıt alanları ve sonuç metinleri, Show in folder, Details (50 satır), en yeni üstte, 200 → Task 8 (sapma 14, 21, 22). §10 dört yeni eylem (63), varsayılanlar ve çakışmasızlık, şablon yorumları, macOS menü çubuğu (File: New Folder with Selection; Edit: Add to Drop Stack; View: Drop Stack, Operation History), ulaşılabilirlik testi → Task 5 + 6 + 7 + 8. §11 dosya yerleri (sapma: `op_history.rs`, arayüz `templates.rs`, kimlikler 1400-1459). §12 birim testleri (şablon/yapıştırma adları, `GroupTask` geri alma, bağlantı tersi, bağlantı tuşu kuralı, `Hit::Stack`, kısayollar), platform testleri (bağlantılar ve çöp, pano biçimleri, `.lnk` geri okuma), Linux/macOS listeleri (Docker yerine, kullanıcı kararı), Windows ekran listesi → Task 1-9. §13 performans (biçim varlığına bakma, kodlama işte, şablon listesi arka planda, symlink denemesi bir kez arka planda, yığın ve günlük ilk kullanımda, exe ve bellek) → Global Constraints + Task 9.
+- **Yer tutucu taraması:** Task 5 dört eylemi "Not theirs"e koyar; Task 6 (`NewFolderWithSelection`), Task 7 (`AddToStack`, `ToggleStack`), Task 8 (`ShowHistory`) doldurur (7b'nin Pin kalıbı). Task 2 Dal B koşulludur ve adımları yazılıdır. macOS ve Windows API imzalarında derleyiciye uyulacak noktalar (Task 2 Step 4, Task 3 Step 5) belirtilmiştir; davranış sabittir. Gövdesi yazılı olmayan test yok.
+- **Tip tutarlılığı:** Task 1 `GroupTask::new(Vec<PathBuf>, &Path)`, `NewTask::{markdown, with_contents}`, `CopyTask::template(PathBuf, &Path, bool)`, `TaskKind::{NewFolderWith, Link}`, `TrashTask::only_if_empty`. Task 2 `templates::{Template, TEMPLATE_MAX, template_label, template_list, PasteKind, pasted_name, LinkKind::{for_drops}, link_name}`, `link::{create, symlinks_allowed, probe_symlinks, junctions_supported, read_shortcut}`, `LinkTask::{into, beside}`. Task 3 `clipboard::{ClipboardImage::png_bytes, paste_kind, read_image, read_text}`. Task 4 `Effect::Link`, `Keys.link`, `Allowed::ALL`, `DragOs`, `keys_of`, `drop_menu(…, can_link, …)`, `CREATE_LINK_HERE`. Task 5 `Action::{NewFolderWithSelection, AddToStack, ToggleStack, ShowHistory}`, `ConfigStore::{templates_dir, is_template_path}`, `templates::{set_dir, dir, current, read, refresh, load_in_background, open_folder}`, `watch_config(store, on_change, on_templates)`. Task 6 kimlikler 1400-1406, 1410-1459, `background_items(…, paste_as, windows)`, `new_sub`, `link_items`, `junction_offered`, `Operations::{new_markdown, new_from_template, new_folder_with, new_folder_with_selection, paste_as, paste_as_file, create_links}`, `ShellVerb::Link`. Task 7 `Hit::Stack`, `Layout.stack`, `Action::AddToStack`, `stack::{STACK_MAX, STACK_SHOWN, StackItem, StackItems, Stack, with_current, count_text, more_text}`, `StackRow` (Slint), `Drags::stack_down`, `Phase::StackArmed`, `Dragging.from_stack`, `Operations::transfer_job`, `TOGGLE_STACK`, `view_items(view, preview_open, stack_open, options, windows)`. Task 8 `op_history::{History, Record, result_text, show_target, details_text, HISTORY_MAX, SHOW_MAX, MAX_DETAILS}`, `HistoryRow` (Slint), `Navigator::go_selecting`, `Operations::{show_history, history_toggle, choose_tab, history_show, history_details}`, `SHOW_HISTORY`. Task 8 `view_items`'e öğe ekler, imzayı değiştirmez.
+- **Review Focus:** 1 → Task 1 `a_selected_item_named_new_folder_goes_inside_the_numbered_one`, `an_item_changed_since_keeps_the_folder_out_of_the_trash`; 2 → Task 2 üç `trashing_a_…_leaves_its_folder` testi; 3 → Task 3 `files_win_then_an_image_then_text`, `a_dib_becomes_a_bmp_file`; 4 → Task 4 `link_keys_differ_by_system`, `a_link_falls_back_when_the_source_forbids_it`; 5 → Task 7 `the_stack_keeps_each_path_once_and_at_most_a_thousand`, `gone_items_are_left_out_and_failed_moves_stay`.
