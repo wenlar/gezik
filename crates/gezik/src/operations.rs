@@ -1320,19 +1320,7 @@ impl Operations {
     fn sync_history(&self) {
         let Some(window) = self.0.window.upgrade() else { return };
         let history = self.0.history.borrow();
-        // The Current tab's rows, with a time and without a bar or a Close.
-        let rows = history.records().map(|record| OpRow {
-            id: i32::try_from(record.id).unwrap_or(i32::MAX),
-            time: record.time.as_str().into(),
-            title: record.title.as_str().into(),
-            detail: record.result.as_str().into(),
-            state: if record.failed { RowState::Failed } else { RowState::Done } as i32,
-            can_show: record.show.is_some(),
-            can_details: record.details.is_some(),
-            finished: true,
-            ..OpRow::default()
-        });
-        sync_model(&self.0.history_rows, rows);
+        sync_model(&self.0.history_rows, history.records().map(history_row));
         window.set_history_available(true);
     }
 
@@ -1435,6 +1423,23 @@ fn no_trash_reason(paths: &[PathBuf], bin: &str) -> String {
     }
 }
 
+/// A History record as a panel row: the Current tab's row, marked as History (a time, no bar,
+/// no Close; its buttons act on the record).
+fn history_row(record: &crate::op_history::Record) -> OpRow {
+    OpRow {
+        id: i32::try_from(record.id).unwrap_or(i32::MAX),
+        history: true,
+        time: record.time.as_str().into(),
+        title: record.title.as_str().into(),
+        detail: record.result.as_str().into(),
+        state: if record.failed { RowState::Failed } else { RowState::Done } as i32,
+        can_show: record.show.is_some(),
+        can_details: record.details.is_some(),
+        finished: true,
+        ..OpRow::default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1452,6 +1457,20 @@ mod tests {
             );
             assert!(no_trash_reason(&[dotted, PathBuf::from(r"E:\a")], bin).starts_with("Some are"));
         }
+    }
+
+    #[test]
+    fn a_history_row_is_marked_as_history_even_without_a_time() {
+        // `finished` gives an empty time when the clock cannot be read: the row must still act
+        // on the History (no Close that would dismiss a running job with the same number).
+        let mut history = crate::op_history::History::default();
+        history.push(String::new(), "Copying 2 items".into(), &report(1, false));
+        let row = history_row(history.records().next().expect("a record"));
+        assert!(row.history);
+        assert!(row.time.is_empty());
+        assert!(row.finished);
+        assert_eq!(row.state, RowState::Failed as i32);
+        assert!(!row.can_pause && !row.can_resume && !row.can_start_now && !row.can_retry);
     }
 
     fn progress(state: JobState, items: (u64, u64), bytes: (u64, u64)) -> Progress {

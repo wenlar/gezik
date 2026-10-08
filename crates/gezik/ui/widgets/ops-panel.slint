@@ -6,6 +6,8 @@ import { ToolButton } from "button.slint";
 // a time.
 export struct OpRow {
     id: int,
+    // A History row: its buttons act on the History, and it has no bar and no Close.
+    history: bool,
     // When a History job ended ("14:05"); empty on the Current tab.
     time: string,
     title: string,
@@ -78,12 +80,18 @@ export component OpsPanel inherits Rectangle {
 
     property <[OpRow]> shown: root.tab == 0 ? root.rows : root.history;
     property <length> row-height: Theme.row-height + (root.tab == 0 ? 6px : 2px);
-    // At most 8 rows show; the wheel scrolls the rest.
+    // At most 8 rows show; the wheel scrolls the rest, and a button that gets the keyboard
+    // focus scrolls its row into view (Tab reaches rows a Flickable hides, not clipped ones).
     property <length> list-height: min(root.shown.length, 8) * root.row-height;
     property <length> scroll-min: min(0px, root.list-height - root.shown.length * root.row-height);
-    property <length> offset;
-    property <length> scrolled: clamp(root.offset, root.scroll-min, 0px);
-    changed tab => { root.offset = 0; }
+    changed tab => { rows-list.content-y = 0; }
+    // Fewer rows: the offset stays within them, so adding rows back does not jump.
+    changed scroll-min => { rows-list.content-y = clamp(rows-list.content-y, root.scroll-min, 0px); }
+
+    function reveal(index: int) {
+        rows-list.content-y = clamp(rows-list.content-y, root.list-height - (index + 1) * root.row-height,
+            -index * root.row-height);
+    }
 
 
     background: Theme.surface;
@@ -120,26 +128,26 @@ export component OpsPanel inherits Rectangle {
         }
         Rectangle {
             height: root.list-height;
-            clip: true;
             accessible-role: list;
             accessible-label: root.tab == 0 ? "Operations" : "Operation history";
             TouchArea {
                 scroll-event(event) => {
-                    root.offset = clamp(root.scrolled + event.delta-y, root.scroll-min, 0px);
+                    rows-list.content-y = clamp(rows-list.content-y + event.delta-y, root.scroll-min, 0px);
                     accept
                 }
             }
-            VerticalLayout {
-                y: root.scrolled;
-                height: root.shown.length * root.row-height;
-                for row in root.shown: HorizontalLayout {
+            rows-list := Flickable {
+              interactive: false;
+              content-height: root.shown.length * root.row-height;
+              VerticalLayout {
+                for row[index] in root.shown: HorizontalLayout {
                     height: root.row-height;
                     accessible-role: list-item;
                     accessible-label: row.title;
                     accessible-description: row.detail;
 
                     Text {
-                        width: row.time == "" ? 0px : 64px + Theme.spacing * 2;
+                        width: row.history ? 64px + Theme.spacing * 2 : 0px;
                         text: row.time;
                         vertical-alignment: center;
                         color: Theme.foreground-muted;
@@ -177,7 +185,7 @@ export component OpsPanel inherits Rectangle {
                     }
                     Text {
                         text: row.detail;
-                        min-width: row.time == "" ? 160px : 0px;
+                        min-width: row.history ? 0px : 160px;
                         vertical-alignment: center;
                         overflow: elide;
                         color: row.state == 5 ? Theme.danger : Theme.foreground-muted;
@@ -200,10 +208,10 @@ export component OpsPanel inherits Rectangle {
                         shown: row.can-details;
                         visible: row.can-details;
                         clicked => {
-                            if row.time == "" {
-                                root.details(row.id);
-                            } else {
+                            if row.history {
                                 root.history-details(row.id);
+                            } else {
+                                root.details(row.id);
                             }
                         }
                     }
@@ -216,6 +224,7 @@ export component OpsPanel inherits Rectangle {
                     ToolButton {
                         width: row.can-pause || row.can-resume ? self.height : 0px;
                         visible: row.can-pause || row.can-resume;
+                        changed focused => { if self.focused { root.reveal(index); } }
                         text: row.can-pause ? "Pause" : "Resume";
                         icon: row.can-pause ? "M 5 3 L 5 13 M 11 3 L 11 13" : "M 5 3 L 13 8 L 5 13 Z";
                         clicked => {
@@ -228,8 +237,9 @@ export component OpsPanel inherits Rectangle {
                     }
                     // History rows have no Close.
                     ToolButton {
-                        width: row.time == "" ? self.height : 0px;
-                        visible: row.time == "";
+                        width: row.history ? 0px : self.height;
+                        visible: !row.history;
+                        changed focused => { if self.focused { root.reveal(index); } }
                         text: row.finished ? "Close" : "Cancel";
                         icon: "M 4 4 L 12 12 M 12 4 L 4 12";
                         clicked => {
@@ -241,11 +251,12 @@ export component OpsPanel inherits Rectangle {
                         }
                     }
                 }
+              }
             }
             // Where the rows shown are, when there are more.
             Rectangle {
                 x: parent.width - 3px;
-                y: -root.scrolled * root.list-height / (root.shown.length * root.row-height);
+                y: -rows-list.content-y * root.list-height / max(1, root.shown.length) / root.row-height;
                 width: 3px;
                 height: root.list-height * 8 / max(root.shown.length, 8);
                 visible: root.shown.length > 8;

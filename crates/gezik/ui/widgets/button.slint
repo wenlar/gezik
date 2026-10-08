@@ -8,6 +8,8 @@ export component ToolButton inherits Rectangle {
     // may not have (the software renderer has no font fallback).
     in property <string> icon;
     in property <bool> enabled: true;
+    // It has the keyboard focus (a list can scroll it into view).
+    out property <bool> focused: scope.has-focus;
     callback clicked();
 
     height: Theme.row-height + 4px;
