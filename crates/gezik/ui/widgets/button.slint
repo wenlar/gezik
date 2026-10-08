@@ -23,6 +23,7 @@ export component ToolButton inherits Rectangle {
     accessible-enabled: root.enabled;
     accessible-action-default => { root.clicked(); }
     background: touch.has-hover && root.enabled ? Theme.hover : transparent;
+    animate background { duration: Theme.motion-hover; }
 
     if root.icon != "": Path {
         width: Theme.icon-size;

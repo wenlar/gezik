@@ -81,6 +81,7 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
     if let Some(theme) = &loaded.theme {
         theme_bridge::apply(window, theme);
     }
+    theme_bridge::set_reduce_motion(window, loaded.settings.reduce_motion);
     for warning in &loaded.warnings {
         eprintln!("gezik: {warning}");
     }

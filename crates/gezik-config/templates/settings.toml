@@ -27,6 +27,8 @@ pinned = []
 sidebar = "left"
 # compact | comfortable
 density = "comfortable"
+# true: no fades on hover and popups.
+reduce-motion = false
 
 [view]
 # How folders look. A folder you change keeps its own view; "Apply to all folders"

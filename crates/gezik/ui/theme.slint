@@ -26,6 +26,24 @@ export global Theme {
     in property <color> progress-paused;
     in property <color> progress-error;
     in property <color> drop-target;
+    in property <color> surface-raised;
+    in property <color> chrome;
+    in property <color> border-strong;
+    in property <color> accent-hover;
+    in property <color> accent-pressed;
+    in property <color> selection-foreground-muted;
+    in property <color> selection-inactive;
+    in property <color> pressed;
+    in property <color> tab-active;
+    in property <color> tab-inactive;
+    in property <color> input-background;
+    in property <color> danger-background;
+    in property <color> success;
+    in property <color> warning;
+    in property <color> shadow;
+    in property <color> overlay;
+    in property <color> scrollbar;
+    in property <color> scrollbar-hover;
 
     // Empty means the system font.
     in property <string> font-family;
@@ -34,4 +52,21 @@ export global Theme {
     in property <length> icon-size: 16px;
     in property <length> radius: 6px;
     in property <length> spacing: 6px;
+    // Gap around the content sheet and the rows' inset from its edge; 0 = edge to edge.
+    in property <length> inset: 6px;
+    // From settings.toml ([layout] reduce-motion), not from the theme.
+    in property <bool> reduce-motion;
+
+    // Worked out from the values above; not theme keys.
+    out property <length> font-size-small: round(font-size / 1px * 0.85) * 1px;
+    out property <length> font-size-heading: round(font-size / 1px * 1.15) * 1px;
+    out property <length> radius-small: max(2px, round(radius / 2px) * 1px);
+    out property <length> sheet-radius: inset > 0 ? radius + 2px : 0px;
+    out property <length> row-radius: inset > 0 ? radius : 0px;
+    out property <length> tab-strip-height: row-height + 10px;
+    out property <length> toolbar-height: row-height + 2 * spacing + 4px;
+    out property <length> control-height: row-height + 2px;
+    out property <length> focus-width: 2px;
+    out property <duration> motion-hover: reduce-motion ? 0ms : 90ms;
+    out property <duration> motion-popup: reduce-motion ? 0ms : 140ms;
 }

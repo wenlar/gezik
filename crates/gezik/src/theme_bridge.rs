@@ -70,6 +70,24 @@ pub fn apply_global(global: &Theme<'_>, theme: &ResolvedTheme) {
     global.set_progress_paused(color(c.progress_paused));
     global.set_progress_error(color(c.progress_error));
     global.set_drop_target(color(c.drop_target));
+    global.set_surface_raised(color(c.surface_raised));
+    global.set_chrome(color(c.chrome));
+    global.set_border_strong(color(c.border_strong));
+    global.set_accent_hover(color(c.accent_hover));
+    global.set_accent_pressed(color(c.accent_pressed));
+    global.set_selection_foreground_muted(color(c.selection_foreground_muted));
+    global.set_selection_inactive(color(c.selection_inactive));
+    global.set_pressed(color(c.pressed));
+    global.set_tab_active(color(c.tab_active));
+    global.set_tab_inactive(color(c.tab_inactive));
+    global.set_input_background(color(c.input_background));
+    global.set_danger_background(color(c.danger_background));
+    global.set_success(color(c.success));
+    global.set_warning(color(c.warning));
+    global.set_shadow(color(c.shadow));
+    global.set_overlay(color(c.overlay));
+    global.set_scrollbar(color(c.scrollbar));
+    global.set_scrollbar_hover(color(c.scrollbar_hover));
 
     let m = &theme.metrics;
     global.set_font_family(m.font_family.as_str().into());
@@ -78,4 +96,10 @@ pub fn apply_global(global: &Theme<'_>, theme: &ResolvedTheme) {
     global.set_icon_size(m.icon_size);
     global.set_radius(m.radius);
     global.set_spacing(m.spacing);
+    global.set_inset(m.inset);
+}
+
+/// `[layout] reduce-motion`: hover and popup fades take no time.
+pub fn set_reduce_motion(window: &AppWindow, on: bool) {
+    window.global::<Theme>().set_reduce_motion(on);
 }
