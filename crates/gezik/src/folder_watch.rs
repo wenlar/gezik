@@ -40,8 +40,15 @@ impl FolderWatch {
         let shared = self.0.clone();
         let folder = folder.map(Path::to_path_buf);
         std::thread::spawn(move || {
-            // The old watch goes first (stopping it may wait on its folder).
-            let old = lock(&shared.watcher).take();
+            // The old watch goes first (stopping it may wait on its folder). A newer watch
+            // started meanwhile owns the slot: leave it (and the dropping) to that one.
+            let old = {
+                let mut slot = lock(&shared.watcher);
+                if shared.generation.load(Ordering::SeqCst) != generation {
+                    return;
+                }
+                slot.take()
+            };
             drop(old);
             let Some(folder) = folder else { return };
             if let Some(watcher) = start(&shared, generation, &folder) {
