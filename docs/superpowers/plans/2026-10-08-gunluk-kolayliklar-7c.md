@@ -2186,3 +2186,778 @@ pub const CREATE_LINK_HERE: u32 = 1407;
 - [ ] **Step 7: Commit** "Make links by dropping with each system's link keys and from the right-drag menu".
 
 ---
+
+### Task 5: Eylemler ve tuşlar, `templates/` klasörü ve şablon listesi
+
+**Files:**
+- Modify: `crates/gezik-config/src/shortcuts.rs` (dört eylem, varsayılanlar, testler), `crates/gezik-config/templates/settings.toml` (`[shortcuts]` yorumları), `crates/gezik-config/src/store.rs` (`templates_dir`, `is_template_path`, ilk çalıştırmada `templates/`), `crates/gezik/src/keys.rs` (eylem grupları, ulaşılabilirlik testi), `crates/gezik/src/actions.rs` (dördü şimdilik "Not theirs"), `crates/gezik/src/main.rs` (`handle_key`'in eylem listesi, şablonların okunması, izleyici), `crates/gezik/src/watcher.rs` (`templates/` değişikliği ayrı haber)
+- Create: `crates/gezik/src/templates.rs`
+
+**Interfaces:**
+- Consumes: Task 2'nin `gezik_core::templates::{Template, template_list}`.
+- Produces:
+
+```rust
+// gezik_config::shortcuts
+Action::{NewFolderWithSelection, AddToStack, ToggleStack, ShowHistory}   // "new-folder-with-selection", "add-to-stack", "toggle-stack", "show-history"; Action::ALL.len() == 63
+// gezik_config::store::ConfigStore
+pub fn templates_dir(&self) -> PathBuf;
+pub fn is_template_path(&self, path: &Path) -> bool;
+// gezik::templates
+pub fn set_dir(dir: Option<PathBuf>);
+pub fn dir() -> Option<PathBuf>;
+pub fn current() -> Vec<Template>;
+pub fn read(dir: &Path) -> Vec<Template>;
+pub fn refresh(dir: PathBuf);            // any thread: reads, then keeps the list on the UI thread
+pub fn load_in_background();             // UI thread: `refresh` of `dir()` on a thread of its own
+pub fn open_folder();                    // makes the folder if needed (off the UI thread), opens it in a new tab
+// gezik::watcher
+pub fn watch_config(store: &ConfigStore, on_change: impl Fn() + Send + 'static,
+                    on_templates: impl Fn() + Send + 'static) -> notify::Result<RecommendedWatcher>;
+```
+
+- [ ] **Step 1: Write the failing tests**
+
+`shortcuts.rs` test modülüne (ve `pins_have_alt_and_cmd_option_digits`'teki `assert_eq!(Action::ALL.len(), 59);` → `63`):
+
+```rust
+    #[test]
+    fn the_daily_7c_actions_have_their_keys() {
+        let other = Shortcuts::defaults(Platform::Other);
+        let mac = Shortcuts::defaults(Platform::Mac);
+        let mac_chord = |t: &str| parse_chord(t, Platform::Mac).unwrap().unwrap();
+        assert_eq!(other.action_for(&chord("ctrl+alt+n")), Some(Action::NewFolderWithSelection));
+        assert_eq!(mac.action_for(&mac_chord("mod+ctrl+n")), Some(Action::NewFolderWithSelection), "Finder's ⌃⌘N");
+        assert_eq!(other.action_for(&chord("ctrl+shift+s")), Some(Action::AddToStack));
+        assert_eq!(mac.action_for(&mac_chord("mod+shift+s")), Some(Action::AddToStack));
+        for action in [Action::ToggleStack, Action::ShowHistory] {
+            assert_eq!((other.chord_for(action), mac.chord_for(action)), (None, None), "{}", action.name());
+        }
+        for (text, platform) in [("ctrl+alt+n", Platform::Other), ("ctrl+shift+s", Platform::Other)] {
+            assert_eq!(fixed_owner(&parse_chord(text, platform).unwrap().unwrap(), platform), None, "{text}");
+        }
+        for (text, name) in [
+            ("mod+ctrl+n", "new-folder-with-selection"),
+            ("mod+shift+s", "add-to-stack"),
+        ] {
+            assert_eq!(fixed_owner(&mac_chord(text), Platform::Mac), None, "{name}");
+        }
+        for name in ["new-folder-with-selection", "add-to-stack", "toggle-stack", "show-history"] {
+            assert!(Action::from_name(name).is_some(), "{name}");
+        }
+    }
+```
+
+`store.rs` test modülüne:
+
+```rust
+    #[test]
+    fn the_templates_folder_comes_with_the_first_run_only() {
+        let store = fresh_store("templates");
+        store.ensure_initialized().unwrap();
+        assert!(store.templates_dir().is_dir());
+        std::fs::remove_dir(store.templates_dir()).unwrap();
+        store.ensure_initialized().unwrap();
+        assert!(!store.templates_dir().exists(), "a deleted templates folder does not come back");
+    }
+
+    #[test]
+    fn recognizes_template_paths() {
+        let store = store("templates-watch");
+        let root = store.dir();
+        assert!(store.is_template_path(&root.join("templates")));
+        assert!(store.is_template_path(&root.join("templates").join("Report.docx")));
+        assert!(store.is_template_path(&root.join("templates").join("Project").join("a.txt")));
+        assert!(!store.is_template_path(&root.join("settings.toml")));
+        assert!(!store.is_template_path(&root.join("themes").join("templates")));
+        assert!(!store.is_config_file(&root.join("templates").join("x.toml")), "no settings reload for a template");
+    }
+```
+
+`keys.rs` `every_default_is_reachable_on_windows_and_linux`'un `match`'ine `Action::NewFolderWithSelection => "ctrl+alt+n",`, `Action::AddToStack => "ctrl+shift+s",`, `continue` listesine `| Action::ToggleStack | Action::ShowHistory`. Ayrıca:
+
+```rust
+    #[test]
+    fn the_7c_actions_wait_for_the_list() {
+        assert!(acts_on_files(Action::NewFolderWithSelection) && needs_list(Action::NewFolderWithSelection));
+        assert!(acts_on_selection(Action::AddToStack) && needs_list(Action::AddToStack));
+        assert!(!waits_for_text_fields(Action::ToggleStack) && !waits_for_text_fields(Action::ShowHistory));
+        // Ctrl+Alt+N types nothing with AltGr on US and Turkish Q: a shortcut (spec 10.3).
+        assert!(!altgr_types('n', true, true, true));
+    }
+```
+
+Yeni `crates/gezik/src/templates.rs`'in test modülü:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_folder_is_read_as_new_lists_it() {
+        let dir = std::env::temp_dir().join(format!("gezik-templates-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("Project/src")).unwrap();
+        std::fs::write(dir.join("Report.docx"), "r").unwrap();
+        std::fs::write(dir.join(".DS_Store"), "x").unwrap();
+        let list = read(&dir);
+        let shown: Vec<(&str, &str, bool)> = list.iter().map(|t| (t.name.as_str(), t.label.as_str(), t.is_dir)).collect();
+        assert_eq!(shown, [("Project", "Project", true), ("Report.docx", "Report", false)]);
+        assert!(read(&dir.join("missing")).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+```
+
+- [ ] **Step 2: Run to see them fail.** `cargo test -j 8 -p gezik-config` ve `cargo test -j 8 -p gezik keys templates` → derlenmez.
+
+- [ ] **Step 3: Implement `gezik-config`.**
+
+`shortcuts.rs`: `Action`'a `Pin9`'dan sonra:
+
+```rust
+    /// Moves the selected items into a new folder next to them (7c).
+    NewFolderWithSelection,
+    /// Puts the selected items on the drop stack.
+    AddToStack,
+    /// Shows or hides the drop stack.
+    ToggleStack,
+    /// Opens the operations panel on its History.
+    ShowHistory,
+```
+
+`ALL: [Action; 63]` (dördü sona), `name`'e `"new-folder-with-selection"`, `"add-to-stack"`, `"toggle-stack"`, `"show-history"`; `default_texts`'e:
+
+```rust
+            // Finder's ⌃⌘N; Ctrl+Alt+N may type with AltGr on a few layouts (Polish ń): the
+            // template's comment says so (spec 10.3).
+            (Action::NewFolderWithSelection, Platform::Mac) => &["mod+ctrl+n"],
+            (Action::NewFolderWithSelection, Platform::Other) => &["ctrl+alt+n"],
+            (Action::AddToStack, _) => &["mod+shift+s"],
+            (Action::ToggleStack, _) => &[],
+            (Action::ShowHistory, _) => &[],
+```
+
+`templates/settings.toml`'un `[shortcuts]` yorumlarının sonuna (`pin-1` satırından sonra):
+
+```toml
+# new-folder-with-selection = "ctrl+alt+n"   # the selected items into a new folder; macOS: "mod+ctrl+n" (may type a letter with AltGr on some layouts: pick another key then)
+# add-to-stack = "mod+shift+s"   # the selected items onto the drop stack
+# toggle-stack = ""        # show or hide the drop stack
+# show-history = ""        # the operations panel's History
+```
+
+(`the_template_lists_every_action_with_its_default`-türü var olan test (`settings.rs` ~2005) yorumları okuyup her eylemin varsayılanını karşılaştırır; satırlar oradaki biçimde `# ad = "…"` olmalı.)
+
+`store.rs`:
+
+```rust
+    /// The user's templates for New ▸ (spec 8.1).
+    pub fn templates_dir(&self) -> PathBuf {
+        self.dir.join("templates")
+    }
+
+    /// Whether `path` is the templates folder or in it: New ▸ reads the folder again (and
+    /// settings are not reloaded for it).
+    pub fn is_template_path(&self, path: &Path) -> bool {
+        path.strip_prefix(&self.dir)
+            .is_ok_and(|rest| rest.components().next().is_some_and(|first| first.as_os_str() == "templates"))
+    }
+```
+
+`ensure_initialized`'ın `if first_run` bloğuna `std::fs::create_dir_all(self.templates_dir())?;`, belgesine "…and the templates folder".
+
+- [ ] **Step 4: Implement the UI side.**
+
+`keys.rs`: `acts_on_files`'a `| Action::NewFolderWithSelection`, `acts_on_selection`'a `| Action::AddToStack`, `needs_list`'e `| Action::NewFolderWithSelection | Action::AddToStack`.
+
+`actions.rs`: dört eylem şimdilik "Not theirs" listesine (`| Action::NewFolderWithSelection | Action::AddToStack | Action::ToggleStack | Action::ShowHistory => return false,`); Task 6, 7, 8 doldurur. `main.rs` `handle_key`: dördü `actions::run`'a giden kolun listesine (`| Action::Pin9`'dan sonra).
+
+Yeni `templates.rs` (testi Step 1'de), `main.rs`'e `mod templates;`:
+
+```rust
+//! The user's templates (spec 8.1): `<config>/templates/`, read on a thread of its own after
+//! start and again whenever the folder changes (the UI thread reads no folder); New ▸ lists
+//! what is kept here.
+
+use std::cell::RefCell;
+use std::path::{Path, PathBuf};
+
+use gezik_core::nav::Location;
+use gezik_core::templates::{Template, template_list};
+
+thread_local! {
+    /// The templates folder (none without a config folder) and its list as last read.
+    static STATE: RefCell<(Option<PathBuf>, Vec<Template>)> = const { RefCell::new((None, Vec::new())) };
+}
+
+pub fn set_dir(dir: Option<PathBuf>) {
+    STATE.with(|state| state.borrow_mut().0 = dir);
+}
+
+pub fn dir() -> Option<PathBuf> {
+    STATE.with(|state| state.borrow().0.clone())
+}
+
+/// The templates as last read (at most `TEMPLATE_MAX`).
+pub fn current() -> Vec<Template> {
+    STATE.with(|state| state.borrow().1.clone())
+}
+
+/// The folder's entries as New ▸ lists them; none if it cannot be read. A link to a folder is
+/// a folder template; a name that is not Unicode is left out (it is copied by name).
+pub fn read(dir: &Path) -> Vec<Template> {
+    let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
+    template_list(entries.filter_map(Result::ok).filter_map(|entry| {
+        let path = entry.path();
+        let name = entry.file_name().into_string().ok()?;
+        let is_dir = std::fs::metadata(&path).is_ok_and(|meta| meta.is_dir());
+        Some((name, is_dir, gezik_platform::fs::is_hidden_attr(&path)))
+    }))
+}
+
+/// Reads `dir` (on the calling thread, never the UI's) and keeps the list on the UI thread.
+pub fn refresh(dir: PathBuf) {
+    let list = read(&dir);
+    let _ = slint::invoke_from_event_loop(move || STATE.with(|state| state.borrow_mut().1 = list));
+}
+
+/// `refresh` of the templates folder on a thread of its own.
+pub fn load_in_background() {
+    let Some(dir) = dir() else { return };
+    let _ = std::thread::Builder::new().name("gezik-templates".into()).spawn(move || refresh(dir));
+}
+
+/// "Open templates folder": made if it is not there (off the UI thread), then opened in a new
+/// tab of Gezik.
+pub fn open_folder() {
+    let Some(dir) = dir() else {
+        crate::view::with_current(|view| view.note("No config folder for templates".to_owned()));
+        return;
+    };
+    let _ = std::thread::Builder::new().name("gezik-templates".into()).spawn(move || {
+        let made = std::fs::create_dir_all(&dir);
+        let _ = slint::invoke_from_event_loop(move || match made {
+            Ok(()) => crate::navigation::with_current(|nav| nav.open_tab(Location::Path(dir), true)),
+            Err(err) => {
+                let why = gezik_platform::fs::describe(&err);
+                crate::view::with_current(|view| view.note(format!("Cannot make the templates folder: {why}")));
+            }
+        });
+    });
+}
+```
+
+(`crate::view::with_current` yoksa — `operations.rs` onu kullanıyor, var — aynı adla.)
+
+`watcher.rs`:
+
+```rust
+/// Calls `on_change` on a background thread once per burst of changes to `settings.toml` or a
+/// theme file, and `on_templates` once per burst in the templates folder. Keep the returned
+/// watcher alive while watching.
+pub fn watch_config(
+    store: &ConfigStore,
+    on_change: impl Fn() + Send + 'static,
+    on_templates: impl Fn() + Send + 'static,
+) -> notify::Result<RecommendedWatcher> {
+    let (tx, rx) = mpsc::channel::<notify::Result<notify::Event>>();
+    let mut watcher = notify::recommended_watcher(tx)?;
+    watcher.watch(store.dir(), RecursiveMode::Recursive)?;
+
+    let store = store.clone();
+    std::thread::spawn(move || {
+        // (settings or a theme, a template) a change touched.
+        let touched = |event: &notify::Result<notify::Event>| match event {
+            Ok(e) => (
+                e.paths.iter().any(|path| store.is_config_file(path)),
+                e.paths.iter().any(|path| store.is_template_path(path)),
+            ),
+            Err(_) => (false, false),
+        };
+        while let Ok(event) = rx.recv() {
+            let (mut config, mut templates) = touched(&event);
+            if !config && !templates {
+                continue;
+            }
+            // Gather the rest of the burst, then reload once.
+            while let Ok(event) = rx.recv_timeout(DEBOUNCE) {
+                let (c, t) = touched(&event);
+                config |= c;
+                templates |= t;
+            }
+            if config {
+                on_change();
+            }
+            if templates {
+                on_templates();
+            }
+        }
+    });
+    Ok(watcher)
+}
+```
+
+`main.rs`: `config` bulunduktan hemen sonra `templates::set_dir(config.as_ref().map(ConfigStore::templates_dir));`; `watch_config` çağrısına üçüncü argüman:
+
+```rust
+            {
+                let dir = store.templates_dir();
+                move || templates::refresh(dir.clone())
+            },
+```
+
+ve `places::load_in_background(…)` satırından sonra (açılışı bekletmez; okuma kendi iş parçacığında):
+
+```rust
+    // The templates of New ▸, read once the window is up.
+    slint::Timer::single_shot(std::time::Duration::from_millis(500), templates::load_in_background);
+```
+
+- [ ] **Step 5: Run.** `cargo test -j 8 -p gezik-config` (`defaults_cover_every_action`, şablon testi `[shortcuts]` yorumlarını varsayılanlarla karşılaştırır), `cargo test -j 8 -p gezik keys templates` → PASS. Dört komut.
+
+- [ ] **Step 6: Commit** "Name new-folder-with-selection, add-to-stack, toggle-stack and show-history, and keep the templates folder's list".
+
+---
+
+### Task 6: Menüler ve işler — `New ▸`, seçimle yeni klasör, panodan dosya, `Create link ▸`, Explorer'ın `link` fiili
+
+**Files:**
+- Modify: `crates/gezik/src/context_menu.rs` (kimlikler, `background_items`, `new_sub`, `link_items`, `junction_offered`, menülerin kurulması, `run`, `run_verb`, `from_submenu`, testler), `crates/gezik/src/operations.rs` (`new_markdown`, `new_from_template`, `new_folder_with`, `new_folder_with_selection`, `paste_as`, `paste_as_file`, `create_links`; `paste`'in dosyasız dalı), `crates/gezik/src/actions.rs` (`NewFolderWithSelection`), `crates/gezik/src/main.rs` (symlink denemesi), `crates/gezik/ui/app.slint` (macOS File ▸ New Folder with Selection), `crates/gezik-platform/src/lib.rs` (`ShellVerb::Link`)
+
+**Interfaces:**
+- Consumes: Task 1 (`GroupTask::new`, `NewTask::{markdown, with_contents}`, `CopyTask::template`), Task 2 (`LinkTask::beside`, `LinkKind`, `pasted_name`, `PasteKind`, `Template`, `TEMPLATE_MAX`, `link::{symlinks_allowed, probe_symlinks}`), Task 3 (`clipboard::{paste_kind, read_image, read_text, ClipboardImage}`), Task 5 (`templates::{current, dir, open_folder}`, `Action::NewFolderWithSelection`).
+- Produces:
+
+```rust
+// gezik::context_menu
+pub const NEW_MARKDOWN: u32 = 1400;  pub const OPEN_TEMPLATES: u32 = 1401;
+pub const NEW_FOLDER_WITH_SELECTION: u32 = 1402;  pub const PASTE_AS_FILE: u32 = 1403;
+pub const LINK_SHORTCUT: u32 = 1404;  pub const LINK_JUNCTION: u32 = 1405;  pub const LINK_SYMLINK: u32 = 1406;
+pub const TEMPLATE_FIRST: u32 = 1410; pub const TEMPLATE_MAX: u32 = 50;
+pub fn background_items(undo: Option<&str>, redo: Option<&str>, can_paste: bool, paste_as: Option<PasteKind>, windows: bool) -> Vec<(u32, String)>;
+pub fn new_sub(templates: &[Template], windows: bool, at: usize) -> Submenu;
+pub fn link_items(windows: bool, junction: bool, symlink: bool) -> Vec<(u32, String, bool)>;
+pub fn junction_offered(rows: &[(PathBuf, bool)], network_drives: &[PathBuf]) -> bool;
+// gezik::operations::Operations
+pub fn new_markdown(&self, dir: PathBuf);
+pub fn new_from_template(&self, dir: PathBuf, template: &Template);
+pub fn new_folder_with(&self, paths: Vec<PathBuf>);
+pub fn new_folder_with_selection(&self);
+pub fn paste_as(&self) -> Option<PasteKind>;      // what paste would write as a file (no files on the clipboard)
+pub fn paste_as_file(&self, dir: PathBuf);
+pub fn create_links(&self, paths: Vec<PathBuf>, kind: LinkKind);
+// gezik_platform
+ShellVerb::Link   // Explorer's "Create shortcut" (`link`)
+```
+
+- [ ] **Step 1: Write the failing tests**
+
+`gezik-platform/src/lib.rs` `explorer_verbs_gezik_does`'a: `assert_eq!(ShellVerb::from_name(b"link"), Some(ShellVerb::Link));`.
+
+`context_menu.rs` testlerinde: var olan `background_items_say_what_undo_does` yeni imzayla:
+
+```rust
+    #[test]
+    fn background_items_say_what_undo_does() {
+        let items = background_items(Some("Copy 3 items"), None, true, None, true);
+        assert_eq!(items[0], (UNDO, "Undo Copy 3 items".to_owned()));
+        let ids: Vec<u32> = items.iter().map(|(id, _)| *id).collect();
+        assert_eq!(ids, [UNDO, PASTE, NEW_FOLDER, NEW_FILE, REFRESH]);
+        let bare: Vec<u32> = background_items(None, None, false, None, true).iter().map(|(id, _)| *id).collect();
+        assert_eq!(bare, [NEW_FOLDER, NEW_FILE, REFRESH]);
+    }
+
+    #[test]
+    fn the_background_menu_says_what_paste_does() {
+        use gezik_core::templates::PasteKind;
+        let ids = |items: Vec<(u32, String)>| items.into_iter().map(|(id, _)| id).collect::<Vec<_>>();
+        assert_eq!(
+            ids(background_items(None, None, true, Some(PasteKind::Image), true)),
+            [PASTE, NEW_FOLDER, NEW_FILE, REFRESH],
+            "files paste as files"
+        );
+        assert_eq!(
+            background_items(None, None, false, Some(PasteKind::Image), false),
+            [(PASTE_AS_FILE, "Paste image as file".to_owned()), (REFRESH, "Refresh".to_owned())],
+            "macOS and Linux: New folder and New file are in New ▸"
+        );
+        assert_eq!(background_items(None, None, false, Some(PasteKind::Text), true)[0].1, "Paste text as file");
+    }
+
+    #[test]
+    fn new_lists_the_built_ins_the_templates_and_the_folder() {
+        let templates = gezik_core::templates::template_list([
+            ("Report.docx".to_owned(), false, false),
+            ("Project".to_owned(), true, false),
+        ]);
+        let titles = |sub: &Submenu| sub.items.iter().map(|(id, t, _)| (*id, t.clone())).collect::<Vec<_>>();
+        let elsewhere = new_sub(&templates, false, 3);
+        assert_eq!((elsewhere.title.as_str(), elsewhere.at), ("New", 3));
+        let expected: Vec<(u32, String)> = [
+            (NEW_FOLDER, "Folder"),
+            (NEW_FILE, "Text file"),
+            (NEW_MARKDOWN, "Markdown file"),
+            (TEMPLATE_FIRST, "Project"),
+            (TEMPLATE_FIRST + 1, "Report"),
+            (OPEN_TEMPLATES, "Open templates folder"),
+        ]
+        .iter()
+        .map(|(id, t)| (*id, (*t).to_owned()))
+        .collect();
+        assert_eq!(titles(&elsewhere), expected);
+        let windows = new_sub(&templates, true, 5);
+        assert_eq!(windows.title, "New from template", "Explorer's own New ▸ is in the same menu");
+        assert_eq!(titles(&windows)[0], (NEW_MARKDOWN, "Markdown file".to_owned()));
+        assert!(from_submenu(TEMPLATE_FIRST + 49) && from_submenu(NEW_MARKDOWN) && from_submenu(OPEN_TEMPLATES));
+        assert_eq!(TEMPLATE_MAX as usize, gezik_core::templates::TEMPLATE_MAX);
+    }
+
+    #[test]
+    fn link_items_follow_the_system_and_what_can_be_made() {
+        let ids = |v: Vec<(u32, String, bool)>| v.into_iter().map(|(id, _, _)| id).collect::<Vec<_>>();
+        assert_eq!(ids(link_items(true, true, true)), [LINK_SHORTCUT, LINK_JUNCTION, LINK_SYMLINK]);
+        assert_eq!(ids(link_items(true, false, false)), [LINK_SHORTCUT]);
+        assert_eq!(link_items(false, false, true), [(LINK_SYMLINK, "Create link".to_owned(), true)]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_junction_is_offered_for_local_folders_only() {
+        let row = |path: &str, is_dir| (PathBuf::from(path), is_dir);
+        let network = [PathBuf::from(r"Z:\")];
+        assert!(junction_offered(&[row(r"C:\a", true), row(r"C:\b", true)], &network));
+        assert!(!junction_offered(&[row(r"C:\a", true), row(r"C:\f.txt", false)], &network), "a file");
+        assert!(!junction_offered(&[row(r"\\srv\share\a", true)], &network), "a share");
+        assert!(!junction_offered(&[row(r"Z:\a", true)], &network), "a mapped drive");
+        assert!(!junction_offered(&[], &network));
+    }
+```
+
+`conversion_ids_meet_no_others`'ın `singles`'ına `NEW_MARKDOWN, OPEN_TEMPLATES, NEW_FOLDER_WITH_SELECTION, PASTE_AS_FILE, LINK_SHORTCUT, LINK_JUNCTION, LINK_SYMLINK`, `ranges`'ına `TEMPLATE_FIRST..TEMPLATE_FIRST + TEMPLATE_MAX`.
+
+- [ ] **Step 2: Run to see them fail.** `cargo test -j 8 -p gezik context_menu` ve `cargo test -j 8 -p gezik-platform explorer_verbs` → derlenmez.
+
+- [ ] **Step 3: `gezik-platform/src/lib.rs`.** `ShellVerb`'e `/// Explorer's "Create shortcut".` `Link,`; `from_name`'e `b"link" => Some(ShellVerb::Link),`.
+
+- [ ] **Step 4: `operations.rs`** (`use gezik_core::templates::{LinkKind, PasteKind, Template, pasted_name};`, `use gezik_ops::{GroupTask, LinkTask};`, `use gezik_platform::clipboard::ClipboardImage;` gerekirse):
+
+```rust
+    /// An empty Markdown file in `dir`, renamed right away (spec 8.1).
+    pub fn new_markdown(&self, dir: PathBuf) {
+        self.submit(Box::new(NewTask::markdown(&dir)), None, After::Rename);
+    }
+
+    /// A copy of the user's `template` in `dir`, renamed right away (spec 8.1).
+    pub fn new_from_template(&self, dir: PathBuf, template: &Template) {
+        let Some(templates) = crate::templates::dir() else { return };
+        let (source, is_dir) = (templates.join(&template.name), template.is_dir);
+        let retry: Retry = Rc::new(move || -> Box<dyn Task> { Box::new(CopyTask::template(source.clone(), &dir, is_dir)) });
+        self.submit(retry(), Some(retry), After::Rename);
+    }
+
+    /// `new-folder-with-selection`: the selected items into a new folder next to them.
+    pub fn new_folder_with_selection(&self) {
+        if self.0.view.shows_drives() {
+            return;
+        }
+        self.new_folder_with(self.0.view.selected_paths());
+    }
+
+    /// `paths` (in the folder shown) moved into a new "New folder" there, as one job, and the
+    /// folder renamed right away (spec 8.2).
+    pub fn new_folder_with(&self, paths: Vec<PathBuf>) {
+        let Some(dir) = self.0.view.folder() else { return };
+        let paths = self.without_roots(paths, "move");
+        if paths.is_empty() {
+            return self.0.view.note("Select the items to put in a new folder".to_owned());
+        }
+        self.remember_for(&paths);
+        let retry: Retry = Rc::new(move || -> Box<dyn Task> { Box::new(GroupTask::new(paths.clone(), &dir)) });
+        self.submit(retry(), Some(retry), After::Rename);
+    }
+
+    /// What paste would write as a file: nothing while there are files to paste.
+    pub fn paste_as(&self) -> Option<PasteKind> {
+        if self.can_paste() { None } else { clipboard::paste_kind() }
+    }
+
+    /// The clipboard's picture (before its text: a browser's picture often carries both) as a
+    /// new `Pasted image … .png` in `dir`, else its text as `Pasted text … .txt` (spec 9.1).
+    /// The data is read here; the picture is encoded in the job.
+    pub fn paste_as_file(&self, dir: PathBuf) {
+        let Some(at) = gezik_platform::local_date_parts(std::time::SystemTime::now()) else { return };
+        let failed = |err: ClipboardError| match err {
+            ClipboardError::Failed(why) => Some(format!("Cannot use the clipboard: {why}")),
+            ClipboardError::Unsupported => None,
+        };
+        match clipboard::read_image() {
+            Ok(Some(image)) => {
+                let name = pasted_name(PasteKind::Image, &at);
+                self.submit(Box::new(NewTask::with_contents(&dir, &name, move || image.png_bytes())), None, After::Select);
+                return;
+            }
+            Ok(None) => {}
+            Err(err) => return failed(err).into_iter().for_each(|text| self.0.view.note(text)),
+        }
+        match clipboard::read_text() {
+            Ok(Some(text)) if !text.is_empty() => {
+                let (name, bytes) = (pasted_name(PasteKind::Text, &at), text.into_bytes());
+                self.submit(Box::new(NewTask::with_contents(&dir, &name, move || Ok(bytes.clone()))), None, After::Select);
+            }
+            Ok(_) => {}
+            Err(err) => failed(err).into_iter().for_each(|text| self.0.view.note(text)),
+        }
+    }
+
+    /// A link of `kind` next to each of `paths` ("Create link ▸", Explorer's "Create shortcut").
+    pub fn create_links(&self, paths: Vec<PathBuf>, kind: LinkKind) {
+        let paths = self.without_roots(paths, "link to");
+        if paths.is_empty() {
+            return;
+        }
+        let retry: Retry = Rc::new(move || -> Box<dyn Task> { Box::new(LinkTask::beside(paths.clone(), kind)) });
+        self.submit(retry(), Some(retry), After::Select);
+    }
+```
+
+`paste`'te `let Some(ClipboardFiles { paths, cut }) = self.clipboard() else { return };` → `else { return self.paste_as_file(dir) };` (Ctrl+V, "Paste into folder"). Belgesine "…no files: the picture or text as a new file (spec 9.1)".
+
+- [ ] **Step 5: `context_menu.rs`.** Kimlikler (Task 4'ün `CREATE_LINK_HERE`'inin yanına):
+
+```rust
+/// 1400: New ▸ Markdown file; 1401: Open templates folder; 1402: New folder with selection;
+/// 1403: Paste image/text as file; 1404-1406: Create link ▸ Shortcut, Junction, Symbolic link
+/// (elsewhere the one "Create link" is 1406); 1410-1459: the user's templates by place.
+pub const NEW_MARKDOWN: u32 = 1400;
+pub const OPEN_TEMPLATES: u32 = 1401;
+pub const NEW_FOLDER_WITH_SELECTION: u32 = 1402;
+pub const PASTE_AS_FILE: u32 = 1403;
+pub const LINK_SHORTCUT: u32 = 1404;
+pub const LINK_JUNCTION: u32 = 1405;
+pub const LINK_SYMLINK: u32 = 1406;
+pub const TEMPLATE_FIRST: u32 = 1410;
+pub const TEMPLATE_MAX: u32 = gezik_core::templates::TEMPLATE_MAX as u32;
+```
+
+`background_items` yerine:
+
+```rust
+/// The items for empty space in a folder: Undo/Redo say what they would do; Paste, or what
+/// paste would write as a file; New folder and New file on Windows (elsewhere in New ▸).
+pub fn background_items(
+    undo: Option<&str>,
+    redo: Option<&str>,
+    can_paste: bool,
+    paste_as: Option<PasteKind>,
+    windows: bool,
+) -> Vec<(u32, String)> {
+    let mut out = Vec::new();
+    if let Some(label) = undo {
+        out.push((UNDO, format!("Undo {label}")));
+    }
+    if let Some(label) = redo {
+        out.push((REDO, format!("Redo {label}")));
+    }
+    match (can_paste, paste_as) {
+        (true, _) => out.push((PASTE, "Paste".to_owned())),
+        (false, Some(PasteKind::Image)) => out.push((PASTE_AS_FILE, "Paste image as file".to_owned())),
+        (false, Some(PasteKind::Text)) => out.push((PASTE_AS_FILE, "Paste text as file".to_owned())),
+        (false, None) => {}
+    }
+    if windows {
+        out.push((NEW_FOLDER, "New folder".to_owned()));
+        out.push((NEW_FILE, "New file".to_owned()));
+    }
+    out.push((REFRESH, "Refresh".to_owned()));
+    out
+}
+
+/// New ▸ (macOS, Linux: Folder, Text file, Markdown file) or New from template ▸ (Windows,
+/// where Explorer's New ▸ is in the same menu: Markdown file), then the user's templates,
+/// then Open templates folder; at place `at` (spec 8.1). No separator: submenus have none.
+pub fn new_sub(templates: &[Template], windows: bool, at: usize) -> Submenu {
+    let mut items = Vec::new();
+    if !windows {
+        items.push((NEW_FOLDER, "Folder".to_owned(), true));
+        items.push((NEW_FILE, "Text file".to_owned(), true));
+    }
+    items.push((NEW_MARKDOWN, "Markdown file".to_owned(), true));
+    items.extend(
+        templates
+            .iter()
+            .take(TEMPLATE_MAX as usize)
+            .enumerate()
+            .map(|(i, template)| (TEMPLATE_FIRST + i as u32, template.label.clone(), true)),
+    );
+    items.push((OPEN_TEMPLATES, "Open templates folder".to_owned(), true));
+    let title = if windows { "New from template" } else { "New" };
+    Submenu { title: title.to_owned(), at, items }
+}
+
+/// Create link ▸ on Windows (Shortcut; Junction for local folders; Symbolic link when it can
+/// be made), or the one "Create link" (a symbolic link) elsewhere (spec 9.2).
+pub fn link_items(windows: bool, junction: bool, symlink: bool) -> Vec<(u32, String, bool)> {
+    if !windows {
+        return vec![(LINK_SYMLINK, "Create link".to_owned(), true)];
+    }
+    let mut out = vec![(LINK_SHORTCUT, "Shortcut".to_owned(), true)];
+    if junction {
+        out.push((LINK_JUNCTION, "Junction".to_owned(), true));
+    }
+    if symlink {
+        out.push((LINK_SYMLINK, "Symbolic link".to_owned(), true));
+    }
+    out
+}
+
+/// Whether Junction is offered for `rows`: all folders, none on a share or on one of
+/// `network_drives` (mapped drives). The file system (NTFS) is checked by the job: the menu
+/// reads no disk.
+pub fn junction_offered(rows: &[(PathBuf, bool)], network_drives: &[PathBuf]) -> bool {
+    !rows.is_empty()
+        && rows.iter().all(|(path, is_dir)| {
+            *is_dir
+                && !path.to_string_lossy().starts_with(r"\\")
+                && !network_drives.iter().any(|drive| gezik_core::ops::paths::is_within(path, drive))
+        })
+}
+```
+
+`Menus`'a alan `menu_templates: Rc<RefCell<Vec<Template>>>` (belge: "The templates the last New ▸ listed (items are by place)"), `new`'de `Rc::default()`.
+
+`row_menu`, çoklu seçim dalı (`let mut subs = vec![self.copy_path_sub(&paths, list.len())];`'dan sonra, `add_file_tools`'tan önce):
+
+```rust
+            self.add_links(&mut list, &mut subs, &rows, native);
+```
+
+ve `list.extend(self.file_extras(false, false, native));`'den sonra:
+
+```rust
+            if !self.view.shows_drives() {
+                list.push((NEW_FOLDER_WITH_SELECTION, "New folder with selection".to_owned()));
+            }
+```
+
+(`rows`, `add_file_tools`'a taşınmadan önce `let rows = self.view.selected_items();` olarak zaten var; `add_links` ona referansla bakar, sonra `add_file_tools(…, rows, …)`.) Tek satır dalında `subs`'tan sonra `self.add_links(&mut list, &mut subs, &[(path.clone(), is_dir)], native);`. Ekle:
+
+```rust
+    /// Create link ▸ (Windows) or Create link at the end of the items so far, for `rows`;
+    /// nothing for drives.
+    fn add_links(&self, list: &mut Vec<(u32, String)>, subs: &mut Vec<Submenu>, rows: &[(PathBuf, bool)], native: bool) {
+        if self.view.shows_drives() {
+            return;
+        }
+        let network: Vec<PathBuf> = self
+            .nav
+            .places()
+            .drives
+            .into_iter()
+            .filter(|drive| drive.kind == gezik_platform::DriveKind::Network)
+            .map(|drive| drive.path)
+            .collect();
+        let items = link_items(native, junction_offered(rows, &network), gezik_platform::link::symlinks_allowed());
+        if native {
+            subs.push(Submenu { title: "Create link".to_owned(), at: list.len(), items });
+        } else {
+            list.extend(items.into_iter().map(|(id, title, _)| (id, title)));
+        }
+    }
+```
+
+`background_menu`:
+
+```rust
+    fn background_menu(&self, at: Option<(f32, f32)>, x: f32, y: f32) {
+        let Location::Path(dir) = self.nav.active_location() else { return };
+        self.ops.clipboard_check();
+        let can_paste = self.ops.can_paste();
+        let paste_as = if can_paste { None } else { gezik_platform::clipboard::paste_kind() };
+        let windows = cfg!(windows);
+        let mut list = background_items(
+            self.ops.undo_label().as_deref(),
+            self.ops.redo_label().as_deref(),
+            can_paste,
+            paste_as,
+            windows,
+        );
+        let templates = crate::templates::current();
+        let new_at = list.iter().position(|(id, _)| *id == REFRESH).unwrap_or(list.len());
+        let mut subs = vec![new_sub(&templates, windows, new_at)];
+        *self.menu_templates.borrow_mut() = templates;
+        list.extend(owned(terminal_items(windows)));
+        subs.push(self.copy_path_sub(std::slice::from_ref(&dir), list.len()));
+        self.open(Subject::Background(dir.clone()), list, subs, MenuTarget::Background(dir), x, y, at);
+    }
+```
+
+`run`'a (`(NEW_FILE, Subject::Background(dir)) …` satırının yanına):
+
+```rust
+            (NEW_MARKDOWN, Subject::Background(dir)) => self.ops.new_markdown(dir),
+            (OPEN_TEMPLATES, Subject::Background(_)) => crate::templates::open_folder(),
+            (id, Subject::Background(dir)) if (TEMPLATE_FIRST..TEMPLATE_FIRST + TEMPLATE_MAX).contains(&id) => {
+                let template = self.menu_templates.borrow().get((id - TEMPLATE_FIRST) as usize).cloned();
+                if let Some(template) = template {
+                    self.ops.new_from_template(dir, &template);
+                }
+            }
+            (PASTE_AS_FILE, Subject::Background(dir)) => self.ops.paste_as_file(dir),
+            (NEW_FOLDER_WITH_SELECTION, Subject::Rows(paths)) => self.ops.new_folder_with(paths),
+            (LINK_SHORTCUT | LINK_JUNCTION | LINK_SYMLINK, Subject::Row(path)) => {
+                self.ops.create_links(vec![path], link_kind(id))
+            }
+            (LINK_SHORTCUT | LINK_JUNCTION | LINK_SYMLINK, Subject::Rows(paths)) => {
+                self.ops.create_links(paths, link_kind(id))
+            }
+```
+
+ve modül düzeyinde:
+
+```rust
+/// The link a Create link item makes.
+fn link_kind(id: u32) -> LinkKind {
+    match id {
+        LINK_SHORTCUT => LinkKind::Shortcut,
+        LINK_JUNCTION => LinkKind::Junction,
+        _ => LinkKind::Symlink,
+    }
+}
+```
+
+`run_verb`'e `ShellVerb::Link => self.ops.create_links(paths, LinkKind::Shortcut),`. `from_submenu`'ya:
+
+```rust
+        || (TEMPLATE_FIRST..TEMPLATE_FIRST + TEMPLATE_MAX).contains(&id)
+        || matches!(id, NEW_FOLDER | NEW_FILE | NEW_MARKDOWN | OPEN_TEMPLATES | LINK_SHORTCUT | LINK_JUNCTION | LINK_SYMLINK)
+```
+
+(`use gezik_core::templates::{LinkKind, PasteKind, Template};`.)
+
+- [ ] **Step 6: Eylem, açılış, macOS.** `actions.rs`: `Action::NewFolderWithSelection => crate::operations::with_current(crate::operations::Operations::new_folder_with_selection),` ve onu "Not theirs" listesinden çıkar. `main.rs`'te `ops.recover()`'ı çağıran zamanlayıcının yanına:
+
+```rust
+    // Whether symbolic links can be made (Windows: Developer Mode), tried once in the
+    // background: Create link ▸ offers them from then on (spec 9.2).
+    slint::Timer::single_shot(std::time::Duration::from_millis(500), || {
+        let _ = std::thread::Builder::new()
+            .name("gezik-symlink-probe".into())
+            .spawn(gezik_platform::link::probe_symlinks);
+    });
+```
+
+`app.slint` macOS File menüsünde `New Folder`'ın altına:
+
+```slint
+            MenuItem { title: "New Folder with Selection"; shortcut: root.menu-keys ? @keys(Control + Meta + N) : @keys(); activated => { root.menu-command("new-folder-with-selection"); } }
+```
+
+(Slint macOS'ta ⌘'i `Control`, ⌃'yi `Meta` diye adlandırır; `menu_bar.rs` adı `Action::from_name` ile bulur ve tuşu çalar, değişiklik gerekmez.)
+
+- [ ] **Step 7: Run.** `cargo test -j 8 -p gezik context_menu operations`, `cargo test -j 8 -p gezik-platform` → PASS. Elle (Windows; kullanıcı uzakta değilse Task 9'un bekleyen listesine): `GEZIK_CONFIG_DIR` boş bir geçici klasör, `cargo run -j 8 -p gezik` → klasör boşluğuna sağ tık: "New from template ▸ Markdown file" → `New document.md`, ad kutusu açık; `templates/`'e `Report.docx` konunca (Open templates folder) menüde "Report"; iki dosya seç → "New folder with selection" → klasör seçili ve adı düzenleniyor, Ctrl+Z ikisini geri getirir; Ekran Alıntısı Aracı ile kopyalanmış görüntüde Ctrl+V → `Pasted image … .png`; bir klasöre sağ tık "Create link ▸ Junction" → `Link to …`; Explorer menüsündeki "Create shortcut" → `… - Shortcut.lnk`, Ctrl+Z çöpe atar. Dört komut.
+
+- [ ] **Step 8: Commit** "Add New ▸ with templates, new folder with selection, paste as file, Create link ▸, and Explorer's Create shortcut to the menus".
+
+---
