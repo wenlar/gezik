@@ -175,6 +175,9 @@ pub struct PlanItem {
     pub(crate) replace: bool,
     /// Counts in the job's progress (a rename's step to a temporary name does not).
     pub(crate) counted: bool,
+    /// A `Before` folder meeting a folder merges into it without asking; `false`: it is a
+    /// conflict like any other (a folder coming back from the trash).
+    pub(crate) merges: bool,
 }
 
 impl PlanItem {
@@ -191,6 +194,7 @@ impl PlanItem {
             tag: 0,
             replace: false,
             counted: true,
+            merges: true,
         }
     }
 
@@ -232,6 +236,12 @@ impl PlanItem {
         self
     }
 
+    /// A folder that never merges into one already there: see `merges`.
+    pub fn no_merge(mut self) -> PlanItem {
+        self.merges = false;
+        self
+    }
+
     /// Left out of the job's progress: a step on the way, not an item of its own.
     pub fn uncounted(mut self) -> PlanItem {
         self.counted = false;
@@ -268,6 +278,11 @@ pub enum Outcome {
         facts: Facts,
     },
     Deleted {
+        path: PathBuf,
+    },
+    /// A folder made on the way to the items (copy or move with folders): undo takes it away
+    /// only if it then holds no files, after what went into it was undone (spec 8.2).
+    MadeParent {
         path: PathBuf,
     },
     /// Nothing changed (a folder that was already there).

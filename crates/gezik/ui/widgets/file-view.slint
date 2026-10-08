@@ -21,6 +21,9 @@ export struct FileRow {
     focused: bool,
     // On the clipboard as cut: drawn faded until it is pasted.
     cut: bool,
+    // A search result's folder under the scope, and a content search's line ("12: …").
+    folder: string,
+    found: string,
 }
 
 // One line of the view: one entry in the list, a row of cells in the grid.
@@ -128,7 +131,9 @@ export component FileView inherits Rectangle {
     in-out property <length> col-created;
     in-out property <length> col-type;
     in-out property <length> col-size;
-    // The sort column (0 Name, 1 Modified, 2 Created, 3 Type, 4 Size) and direction.
+    in-out property <length> col-folder;
+    in-out property <length> col-match;
+    // The sort column (0 Name, 1-4 Modified, Created, Type, Size, 5 Folder) and direction.
     in property <int> sort-column;
     in property <bool> sort-desc;
     // The entry being renamed (-1: none): its name shows as a text field.
@@ -217,12 +222,13 @@ export component FileView inherits Rectangle {
     property <length> gap: Theme.spacing + 2px;
     property <length> side: Theme.spacing + 4px;
     property <int> shown-columns: (root.col-modified > 0 ? 1 : 0) + (root.col-created > 0 ? 1 : 0)
-        + (root.col-type > 0 ? 1 : 0) + (root.col-size > 0 ? 1 : 0);
+        + (root.col-type > 0 ? 1 : 0) + (root.col-size > 0 ? 1 : 0) + (root.col-folder > 0 ? 1 : 0)
+        + (root.col-match > 0 ? 1 : 0);
 
     // Right edge of the Name column: a drag that starts right of it, on a row, selects with
     // a rectangle; from the name it is kept for dragging files (sub-project 4).
     property <length> name-end: max(root.side + 150px, list.visible-width - root.side - root.col-modified - root.col-created - root.col-type
-        - root.col-size - root.gap * root.shown-columns);
+        - root.col-size - root.col-folder - root.col-match - root.gap * root.shown-columns);
 
     property <bool> marquee-active;
     property <bool> marquee-additive;
@@ -340,6 +346,26 @@ export component FileView inherits Rectangle {
                 descending: root.sort-desc;
                 clicked => { root.header-clicked(0); }
                 menu(x, y) => { root.header-menu(x, y); }
+            }
+            if root.col-folder > 0: HeaderCell {
+                gap-before: root.gap;
+                width: root.col-folder;
+                text: "Folder";
+                sorted: root.sort-column == 5;
+                descending: root.sort-desc;
+                clicked => { root.header-clicked(5); }
+                menu(x, y) => { root.header-menu(x, y); }
+                resize(w) => { root.col-folder = clamp(w, 50px, 600px); }
+                resize-done => { root.columns-resized(); }
+            }
+            if root.col-match > 0: HeaderCell {
+                gap-before: root.gap;
+                width: root.col-match;
+                text: "Match";
+                clicked => { root.header-clicked(6); }
+                menu(x, y) => { root.header-menu(x, y); }
+                resize(w) => { root.col-match = clamp(w, 50px, 600px); }
+                resize-done => { root.columns-resized(); }
             }
             if root.col-modified > 0: HeaderCell {
                 gap-before: root.gap;
@@ -573,6 +599,20 @@ export component FileView inherits Rectangle {
                             applied <=> root.rename-applied;
                             focused <=> root.rename-has-focus;
                         }
+                    }
+                    if root.col-folder > 0: Text {
+                        width: root.col-folder;
+                        text: entry.file.folder;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        color: entry.muted-color;
+                    }
+                    if root.col-match > 0: Text {
+                        width: root.col-match;
+                        text: entry.file.found;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        color: entry.text-color;
                     }
                     if root.col-modified > 0: Text {
                         width: root.col-modified;

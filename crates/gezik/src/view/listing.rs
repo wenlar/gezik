@@ -1,17 +1,22 @@
-//! What the active tab shows: a folder's entries or the drives ("This PC").
+//! What the active tab shows: a folder's entries, the drives ("This PC") or a search's results.
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 
 use gezik_core::Entry;
 use gezik_core::kind::Kind;
 use gezik_core::pattern::{Pattern, matching_rows};
 use gezik_platform::Drive;
+use gezik_search::results::ResultSet;
 
 pub enum Listing {
     Files(PathBuf, Rc<Vec<Entry>>),
     Drives(Vec<Drive>),
+    /// A search's or the flat view's results (spec 3.7): no folder of its own.
+    Results(Arc<ResultSet>),
 }
 
 impl Default for Listing {
@@ -25,28 +30,65 @@ impl Listing {
         match self {
             Listing::Files(_, entries) => entries.len(),
             Listing::Drives(drives) => drives.len(),
+            Listing::Results(set) => set.len(),
+        }
+    }
+
+    /// Entry `index` of a folder or of the results (none for drives).
+    pub fn entry(&self, index: usize) -> Option<&Entry> {
+        match self {
+            Listing::Files(_, entries) => entries.get(index),
+            Listing::Results(set) => set.entry(index),
+            Listing::Drives(_) => None,
         }
     }
 
     pub fn name_at(&self, index: usize) -> Option<&str> {
         match self {
-            Listing::Files(_, entries) => entries.get(index).map(|e| e.name.as_str()),
             Listing::Drives(drives) => drives.get(index).map(|d| d.label.as_str()),
+            _ => self.entry(index).map(|e| e.name.as_str()),
         }
     }
 
-    pub fn index_of(&self, name: &str) -> Option<usize> {
-        (0..self.len()).find(|&i| self.name_at(i) == Some(name))
+    /// What the history keeps of a row: its name, or in the results its path under the scope
+    /// (names repeat there, spec 3.7).
+    pub fn key_at(&self, index: usize) -> Option<Cow<'_, str>> {
+        match self {
+            Listing::Results(set) => set.key_at(index).map(Cow::Owned),
+            _ => self.name_at(index).map(Cow::Borrowed),
+        }
     }
 
-    /// Where each of `names` is, ascending; names not found are skipped. One pass, so
-    /// restoring thousands of selected names stays fast in a large folder.
-    pub fn indices_of(&self, names: &[String]) -> Vec<usize> {
-        if names.is_empty() {
+    /// The row whose key is `key`.
+    pub fn index_of(&self, key: &str) -> Option<usize> {
+        match self {
+            Listing::Results(set) => {
+                let name = key.rsplit(std::path::MAIN_SEPARATOR).next().unwrap_or(key);
+                (0..set.len()).find(|&i| self.name_at(i) == Some(name) && set.key_at(i).as_deref() == Some(key))
+            }
+            _ => (0..self.len()).find(|&i| self.name_at(i) == Some(key)),
+        }
+    }
+
+    /// Where each of `keys` is, ascending; keys not found are skipped. One pass, so restoring
+    /// thousands of selected names stays fast in a large folder; in the results a key is built
+    /// only for a row whose name is one of theirs.
+    pub fn indices_of(&self, keys: &[String]) -> Vec<usize> {
+        if keys.is_empty() {
             return Vec::new();
         }
-        let wanted: HashSet<&str> = names.iter().map(String::as_str).collect();
-        (0..self.len()).filter(|&i| self.name_at(i).is_some_and(|n| wanted.contains(n))).collect()
+        let wanted: HashSet<&str> = keys.iter().map(String::as_str).collect();
+        match self {
+            Listing::Results(set) => {
+                let names: HashSet<&str> =
+                    keys.iter().map(|k| k.rsplit(std::path::MAIN_SEPARATOR).next().unwrap_or(k)).collect();
+                (0..set.len())
+                    .filter(|&i| self.name_at(i).is_some_and(|n| names.contains(n)))
+                    .filter(|&i| set.key_at(i).is_some_and(|k| wanted.contains(k.as_str())))
+                    .collect()
+            }
+            _ => (0..self.len()).filter(|&i| self.name_at(i).is_some_and(|n| wanted.contains(n))).collect(),
+        }
     }
 
     /// The first entry whose name starts with `typed` (lowercase), ignoring case; no
@@ -60,10 +102,11 @@ impl Listing {
         match self {
             Listing::Files(dir, entries) => entries.get(index).map(|e| (dir.join(&e.name), e.is_dir)),
             Listing::Drives(drives) => drives.get(index).map(|d| (d.path.clone(), true)),
+            Listing::Results(set) => set.path_at(index).zip(set.entry(index).map(|e| e.is_dir)),
         }
     }
 
-    /// The folder listed; `None` for the drives and the empty listing.
+    /// The folder listed; `None` for the drives, the results and the empty listing.
     pub fn folder(&self) -> Option<&Path> {
         match self {
             Listing::Files(dir, _) if !dir.as_os_str().is_empty() => Some(dir),
@@ -73,22 +116,19 @@ impl Listing {
 
     pub fn is_dir(&self, index: usize) -> bool {
         match self {
-            Listing::Files(_, entries) => entries.get(index).is_some_and(|e| e.is_dir),
             Listing::Drives(_) => true,
+            _ => self.entry(index).is_some_and(|e| e.is_dir),
         }
     }
 
     /// A file's size; 0 for folders and drives.
     pub fn file_size(&self, index: usize) -> u64 {
-        match self {
-            Listing::Files(_, entries) => entries.get(index).filter(|e| !e.is_dir).map_or(0, |e| e.size),
-            Listing::Drives(_) => 0,
-        }
+        self.entry(index).filter(|e| !e.is_dir).map_or(0, |e| e.size)
     }
 
     /// Without what `[view]` hides: dot names and hidden items unless `show_hidden`, protected
     /// system items unless `show_system` (`Entry::is_shown`). Shares the entries when nothing
-    /// is left out.
+    /// is left out. The results stay as they are: the scanner followed the rule.
     pub fn without_hidden(self, show_hidden: bool, show_system: bool) -> Listing {
         match self {
             Listing::Files(dir, entries) if entries.iter().any(|e| !e.is_shown(show_hidden, show_system)) => {
@@ -102,30 +142,40 @@ impl Listing {
     /// Whether entries `a` and `b` are of one type: both folders, or files with the same
     /// ending (ignoring case; no ending is a type too). Drives are all one type.
     pub fn is_same_type(&self, a: usize, b: usize) -> bool {
-        match self {
-            Listing::Files(_, entries) => match (entries.get(a), entries.get(b)) {
-                (Some(a), Some(b)) => match (a.is_dir, b.is_dir) {
-                    (true, true) => true,
-                    // Character by character: no allocation per entry.
-                    (false, false) => a
-                        .extension()
-                        .chars()
-                        .flat_map(char::to_lowercase)
-                        .eq(b.extension().chars().flat_map(char::to_lowercase)),
-                    _ => false,
-                },
+        if let Listing::Drives(drives) = self {
+            return a < drives.len() && b < drives.len();
+        }
+        match (self.entry(a), self.entry(b)) {
+            (Some(a), Some(b)) => match (a.is_dir, b.is_dir) {
+                (true, true) => true,
+                // Character by character: no allocation per entry.
+                (false, false) => a
+                    .extension()
+                    .chars()
+                    .flat_map(char::to_lowercase)
+                    .eq(b.extension().chars().flat_map(char::to_lowercase)),
                 _ => false,
             },
-            Listing::Drives(drives) => a < drives.len() && b < drives.len(),
+            _ => false,
         }
     }
 
     pub fn kind(&self, index: usize) -> Kind {
         match self {
-            Listing::Files(_, entries) => entries.get(index).map_or(Kind::File, |e| Kind::of(&e.name, e.is_dir)),
             Listing::Drives(_) => Kind::Folder,
+            _ => self.entry(index).map_or(Kind::File, |e| Kind::of(&e.name, e.is_dir)),
         }
     }
+}
+
+/// The results `pattern` lets through of `full`, and where each is in it: the same set (no
+/// copy, `None`) for an empty pattern ("search within results", spec 4.5).
+pub fn filtered_results(full: &Arc<ResultSet>, pattern: &Pattern) -> (Listing, Option<Vec<usize>>) {
+    if pattern.is_empty() {
+        return (Listing::Results(full.clone()), None);
+    }
+    let rows = matching_rows(full.entries(), pattern);
+    (Listing::Results(Arc::new(full.subset(&rows))), Some(rows))
 }
 
 /// The listing of `dir` showing what `pattern` lets through of `full`, and where each of its
@@ -171,8 +221,67 @@ pub(crate) fn files(dir: &str, names: &[&str]) -> Listing {
 }
 
 #[cfg(test)]
+pub(crate) fn results(rows: &[(&str, &str)]) -> Listing {
+    use gezik_search::results::{Batch, ResultSet};
+    let mut folders: Vec<&str> = Vec::new();
+    let mut batch = Batch::default();
+    for (folder, name) in rows {
+        let parent = match folders.iter().position(|f| f == folder) {
+            Some(i) => i,
+            None => {
+                folders.push(folder);
+                batch.folders.push((*folder).into());
+                folders.len() - 1
+            }
+        };
+        batch.entries.push(Entry {
+            name: (*name).to_owned(),
+            is_dir: name.ends_with('/'),
+            flags: 0,
+            size: 10,
+            modified: None,
+            created: None,
+        });
+        batch.parent.push(parent as u32);
+        batch.matches.push(None);
+    }
+    let mut set = ResultSet::new(PathBuf::from("/w"), false);
+    set.append(batch);
+    Listing::Results(Arc::new(set))
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn two_results_with_one_name_keep_their_own_selection() {
+        let sep = std::path::MAIN_SEPARATOR;
+        let listing = results(&[("a", "x.txt"), ("b", "x.txt"), ("", "y.txt")]);
+        let second = format!("b{sep}x.txt");
+        assert_eq!(listing.key_at(1).as_deref(), Some(second.as_str()));
+        assert_eq!(listing.key_at(2).as_deref(), Some("y.txt"));
+        assert_eq!(listing.index_of(&second), Some(1));
+        assert_eq!(
+            listing.indices_of(&[second.clone(), "y.txt".into(), "x.txt".into()]),
+            [1, 2],
+            "a bare name is no key here"
+        );
+        assert_eq!(listing.name_at(1), Some("x.txt"));
+        assert_eq!(listing.path_at(1), Some((PathBuf::from("/w").join("b").join("x.txt"), false)));
+        assert_eq!(listing.folder(), None, "no folder: nothing goes \"here\"");
+        assert_eq!(listing.find_prefix("y"), Some(2), "type-ahead goes by the name");
+        assert!(listing.is_same_type(0, 1));
+    }
+
+    #[test]
+    fn filtered_results_share_the_set_without_a_pattern() {
+        let Listing::Results(full) = results(&[("a", "x.jpg"), ("b", "y.txt")]) else { unreachable!() };
+        let (all, rows) = filtered_results(&full, &Pattern::default());
+        assert!(matches!(&all, Listing::Results(set) if Arc::ptr_eq(set, &full)) && rows.is_none());
+        let (jpgs, rows) = filtered_results(&full, &Pattern::compile("*.jpg").unwrap());
+        assert_eq!((jpgs.len(), rows), (1, Some(vec![0])));
+    }
 
     #[test]
     fn a_filtered_listing_shares_the_entries_without_a_pattern() {

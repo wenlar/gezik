@@ -110,6 +110,9 @@ pub struct Report {
     /// Where the chosen items are now (pasted, renamed, new), to select them.
     pub results: Vec<PathBuf>,
     pub changed_dirs: Vec<PathBuf>,
+    /// Items it moved or renamed (from, to), each as it really went: search results follow
+    /// them (spec 4.7).
+    pub moved: Vec<(PathBuf, PathBuf)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -383,6 +386,18 @@ impl Shared {
             }
         }
         let acc = std::mem::take(&mut *lock(&job.acc));
+        // A move that replaced its target is `Several` (the target trashed, then the move).
+        let mut flat = Vec::new();
+        crate::inverse::flatten(&acc.outcomes, &mut flat);
+        let moved = flat
+            .into_iter()
+            .filter_map(|outcome| match outcome {
+                Outcome::Moved { from, to, .. } | Outcome::Created { path: to, from: Some(from), .. } => {
+                    Some((from.clone(), to.clone()))
+                }
+                _ => None,
+            })
+            .collect();
         let inverse = crate::inverse::build(&acc.outcomes);
         let recorded = !inverse.is_empty();
         {
@@ -416,6 +431,7 @@ impl Shared {
             no_trash: acc.no_trash,
             results: acc.results,
             changed_dirs: acc.changed.into_iter().collect(),
+            moved,
         };
         job.done.store(true, Ordering::SeqCst);
         lock(&self.jobs).retain(|other| other.id != job.id);
@@ -1148,6 +1164,19 @@ mod tests {
         let report = run(&engine, engine.undo().unwrap());
         assert!(report.failures.is_empty(), "{:?}", report.failures);
         assert_eq!(read(&dir.join("dst/a.txt")), "old");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_move_that_replaced_its_target_is_reported_as_moved() {
+        let dir = test_dir("move-replace-report");
+        write(&dir.join("src/a.txt"), "new");
+        write(&dir.join("dst/a.txt"), "old");
+        let engine = engine();
+        let job = engine.submit(Box::new(MoveTask::into(vec![dir.join("src/a.txt")], &dir.join("dst"))));
+        let (report, _) = finish(&engine, job, |c| vec![Decision::Replace; c.len()]);
+        assert_eq!(read(&dir.join("dst/a.txt")), "new");
+        assert_eq!(report.moved, [(dir.join("src/a.txt"), dir.join("dst/a.txt"))]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

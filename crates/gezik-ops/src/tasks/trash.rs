@@ -61,6 +61,27 @@ fn is_empty_dir(path: &Path) -> bool {
     std::fs::read_dir(path).is_ok_and(|mut entries| entries.next().is_none())
 }
 
+/// How deep `holds_no_files` looks; anything deeper counts as holding files (the folder stays).
+const MAX_EMPTY_DEPTH: usize = 64;
+
+/// Nothing but folders (empty ones, up to `MAX_EMPTY_DEPTH` deep) inside: what a job made on
+/// the way to its items (copy or move with folders) once they were undone. An empty folder
+/// someone made inside it since goes with it; a file, a link or anything unreadable keeps it.
+fn holds_no_files(path: &Path) -> bool {
+    fn within(path: &Path, depth: usize) -> bool {
+        if depth > MAX_EMPTY_DEPTH {
+            return false;
+        }
+        let Ok(entries) = std::fs::read_dir(path) else { return false };
+        entries.into_iter().all(|entry| {
+            entry.is_ok_and(|entry| {
+                entry.file_type().is_ok_and(|kind| kind.is_dir()) && within(&entry.path(), depth + 1)
+            })
+        })
+    }
+    within(path, 0)
+}
+
 impl Task for TrashTask {
     fn kind(&self) -> TaskKind {
         TaskKind::Trash
@@ -101,7 +122,7 @@ impl Task for TrashTask {
         if !unchanged(path, expected) {
             return Err(changed_since());
         }
-        if self.only_empty.iter().any(|dir| gezik_core::ops::paths::same_path(dir, path)) && !is_empty_dir(path) {
+        if self.only_empty.iter().any(|dir| gezik_core::ops::paths::same_path(dir, path)) && !holds_no_files(path) {
             return Err(changed_since());
         }
         // A name the trash cannot take (Windows: `x.`) is offered for a permanent delete like an

@@ -1,0 +1,13 @@
+[package]
+name = "gezik-search"
+description = "Searching folder trees for the Gezik file manager: the scanner, name and content matchers, Everything"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+gezik-core.workspace = true
+gezik-platform.workspace = true
+# gezik-batch's regex features plus the Unicode classes (p{L}, p{Latin}) and the fast engines
+# ("perf": content search), which the RAR build (unrar-ng) already links into the app.
+regex = { version = "1", default-features = false, features = ["std", "perf", "unicode-case", "unicode-perl", "unicode-gencat", "unicode-script"] }

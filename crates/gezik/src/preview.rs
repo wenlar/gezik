@@ -19,8 +19,6 @@ use crate::{AppWindow, PreviewInfo};
 
 /// How much of a text file is shown.
 pub const TEXT_BYTES: usize = 64 * 1024;
-/// A NUL byte in this much of the start makes a file binary, not text.
-pub const BINARY_PROBE: usize = 8 * 1024;
 /// A folder's entries are counted up to this many.
 pub const MAX_COUNTED: usize = 10_000;
 
@@ -176,7 +174,7 @@ fn start_worker(window: slint::Weak<AppWindow>, current: Arc<AtomicU64>) -> Arc<
 }
 
 /// The start of a text file (at most [`TEXT_BYTES`]); `None` for binary files (a NUL in
-/// the first [`BINARY_PROBE`] bytes) and unreadable ones.
+/// the first [`gezik_core::text::PROBE`] bytes) and unreadable ones.
 pub fn read_text(path: &Path) -> Option<String> {
     let file = std::fs::File::open(path).ok()?;
     let mut bytes = Vec::with_capacity(TEXT_BYTES);
@@ -184,41 +182,10 @@ pub fn read_text(path: &Path) -> Option<String> {
     decode_text(&bytes)
 }
 
-/// Text from the start of a file: UTF-16 or UTF-8 by their byte order mark, else UTF-8
-/// if it is valid, else the user's ANSI code page (lossy UTF-8 where there is none).
-/// `None` for binary data (a NUL in the first [`BINARY_PROBE`] bytes, after any UTF-16 mark).
+/// Text from the start of a file (`gezik_core::text`: byte order marks, UTF-16 without one,
+/// UTF-8, the user's ANSI code page); `None` for binary data.
 fn decode_text(bytes: &[u8]) -> Option<String> {
-    if let Some(rest) = bytes.strip_prefix(b"\xFF\xFE") {
-        return Some(utf16(rest, u16::from_le_bytes));
-    }
-    if let Some(rest) = bytes.strip_prefix(b"\xFE\xFF") {
-        return Some(utf16(rest, u16::from_be_bytes));
-    }
-    if bytes[..bytes.len().min(BINARY_PROBE)].contains(&0) {
-        return None;
-    }
-    let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
-    match std::str::from_utf8(bytes) {
-        Ok(text) => Some(text.to_owned()),
-        // Valid UTF-8 cut mid-character by the read limit.
-        Err(err) if err.error_len().is_none() => {
-            Some(String::from_utf8_lossy(&bytes[..err.valid_up_to()]).into_owned())
-        }
-        Err(_) => {
-            Some(gezik_platform::decode_ansi(bytes).unwrap_or_else(|| String::from_utf8_lossy(bytes).into_owned()))
-        }
-    }
-}
-
-/// UTF-16 code units from byte pairs; an odd last byte (cut by the read limit) is dropped.
-fn utf16(bytes: &[u8], unit: fn([u8; 2]) -> u16) -> String {
-    let (pairs, _) = bytes.as_chunks::<2>();
-    let mut units: Vec<u16> = pairs.iter().map(|&pair| unit(pair)).collect();
-    // Half a surrogate pair cut by the read limit.
-    if units.last().is_some_and(|u| (0xD800..0xDC00).contains(u)) {
-        units.pop();
-    }
-    String::from_utf16_lossy(&units)
+    gezik_core::text::decode(bytes, gezik_platform::decode_ansi)
 }
 
 /// How many entries a folder has, up to [`MAX_COUNTED`]; `true` if there are more.
@@ -674,5 +641,11 @@ mod tests {
         assert_eq!(folder.kind, 4);
         assert!(folder.details.ends_with("10,000+ items"), "{}", folder.details);
         assert_eq!(describe(&Target::Nothing, None).kind, 0);
+    }
+
+    #[test]
+    fn utf16_without_a_mark_shows_as_text() {
+        let bytes: Vec<u8> = "Satır bir\r\nSatır iki".encode_utf16().flat_map(u16::to_le_bytes).collect();
+        assert_eq!(decode_text(&bytes).as_deref(), Some("Satır bir\r\nSatır iki"));
     }
 }

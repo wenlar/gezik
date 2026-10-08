@@ -14,9 +14,12 @@ pub enum SortKey {
     Created,
     Type,
     Size,
+    /// The search results' own sort (a result's folder), not a folder's.
+    Folder,
 }
 
 impl SortKey {
+    /// A folder's sort keys; `Folder` is the search results' own.
     pub const ALL: [SortKey; 5] = [SortKey::Name, SortKey::Modified, SortKey::Created, SortKey::Type, SortKey::Size];
 
     pub fn as_str(self) -> &'static str {
@@ -26,11 +29,13 @@ impl SortKey {
             SortKey::Created => "created",
             SortKey::Type => "type",
             SortKey::Size => "size",
+            SortKey::Folder => "folder",
         }
     }
 
+    /// `ALL` and `Folder` (the search results' own sort, spec 4.5).
     pub fn parse(text: &str) -> Option<SortKey> {
-        SortKey::ALL.into_iter().find(|k| k.as_str() == text)
+        SortKey::ALL.into_iter().chain([SortKey::Folder]).find(|k| k.as_str() == text)
     }
 }
 
@@ -239,18 +244,33 @@ enum Primary {
     Size(u64),
     // Type name key (a span of the key buffer), then the lowercase extension.
     Type((u32, u32), String),
+    // A result's folder (a span of the key buffer).
+    Folder((u32, u32)),
 }
 
-/// Sorts `entries` by `spec`: folders first (in either direction) unless `folders_first` is off,
-/// then the column, then natural name order, then the exact name so the order is total.
-/// `type_name` gives the Type column's text; it is called once per entry, and only when
-/// sorting by type. Returns where each entry came from: entry `k` now was entry `order[k]`
-/// before.
+/// Sorts `entries` by `spec` (see [`sort_order`]). Returns where each entry came from: entry
+/// `k` now was entry `order[k]` before.
 pub fn sort_entries(
     entries: &mut Vec<Entry>,
     spec: SortSpec,
     folders_first: bool,
     type_name: impl Fn(&Entry) -> String,
+) -> Vec<usize> {
+    let order = sort_order(entries, spec, folders_first, type_name, &|_| "");
+    apply_order(entries, &order);
+    order
+}
+
+/// The order `entries` sort in by `spec`, without moving them: folders first (in either
+/// direction) unless `folders_first` is off, then the column, then natural name order, then
+/// the exact name so the order is total. `type_name` gives the Type column's text (called once
+/// per entry, only when sorting by type); `folder` the folder of entry `i` (only by Folder).
+pub fn sort_order<'a>(
+    entries: &[Entry],
+    spec: SortSpec,
+    folders_first: bool,
+    type_name: impl Fn(&Entry) -> String,
+    folder: &dyn Fn(usize) -> &'a str,
 ) -> Vec<usize> {
     // All keys live in one buffer, so sorting 100k names allocates once, not 100k times.
     let mut buf: Vec<u32> = Vec::with_capacity(entries.iter().map(|e| e.name.len() + 4).sum());
@@ -261,13 +281,15 @@ pub fn sort_entries(
     };
     let keys: Vec<(Primary, (u32, u32))> = entries
         .iter()
-        .map(|e| {
+        .enumerate()
+        .map(|(i, e)| {
             let primary = match spec.key {
                 SortKey::Name => Primary::None,
                 SortKey::Modified => Primary::Time(e.modified),
                 SortKey::Created => Primary::Time(e.created),
                 SortKey::Size => Primary::Size(if e.is_dir { 0 } else { e.size }),
                 SortKey::Type => Primary::Type(push(&type_name(e)), e.extension().to_lowercase()),
+                SortKey::Folder => Primary::Folder(push(folder(i))),
             };
             (primary, push(&e.name))
         })
@@ -282,15 +304,25 @@ pub fn sort_entries(
             let ((pa, na), (pb, nb)) = (&keys[i], &keys[j]);
             let primary = match (pa, pb) {
                 (Primary::Type(ta, xa), Primary::Type(tb, xb)) => span(*ta).cmp(span(*tb)).then_with(|| xa.cmp(xb)),
+                (Primary::Folder(fa), Primary::Folder(fb)) => span(*fa).cmp(span(*fb)),
                 _ => pa.cmp(pb),
             };
-            let order = primary.then_with(|| span(*na).cmp(span(*nb))).then_with(|| a.name.cmp(&b.name));
+            let order = primary
+                .then_with(|| span(*na).cmp(span(*nb)))
+                .then_with(|| a.name.cmp(&b.name))
+                .then_with(|| folder(i).cmp(folder(j)))
+                .then_with(|| i.cmp(&j));
             if spec.dir == SortDir::Desc { order.reverse() } else { order }
         })
     });
-    let mut slots: Vec<Option<Entry>> = entries.drain(..).map(Some).collect();
-    entries.extend(order.iter().filter_map(|&i| slots[i].take()));
     order
+}
+
+/// Puts `items` in `order` (item `k` becomes the one that was at `order[k]`); `order` holds
+/// every index once.
+pub fn apply_order<T>(items: &mut Vec<T>, order: &[usize]) {
+    let mut slots: Vec<Option<T>> = items.drain(..).map(Some).collect();
+    items.extend(order.iter().filter_map(|&i| slots[i].take()));
 }
 
 #[cfg(test)]
@@ -506,5 +538,33 @@ mod tests {
         let took = start.elapsed();
         eprintln!("sorted 100k in {took:?}");
         assert!(took.as_millis() <= 50, "took {took:?}");
+    }
+
+    #[test]
+    fn folders_sort_naturally_then_by_name() {
+        let entries = vec![
+            entry("b.txt", false, 0, None),
+            entry("a.txt", false, 0, None),
+            entry("c.txt", false, 0, None),
+            entry("b.txt", false, 0, None),
+        ];
+        let folders = ["sub10", "sub2", "", "sub2"];
+        let spec = SortSpec { key: SortKey::Folder, dir: SortDir::Asc };
+        let order = sort_order(&entries, spec, true, |_| String::new(), &|i| folders[i]);
+        assert_eq!(order, [2, 1, 3, 0], "root first, sub2 (a, b) before sub10");
+        let desc =
+            sort_order(&entries, SortSpec { dir: SortDir::Desc, ..spec }, true, |_| String::new(), &|i| folders[i]);
+        assert_eq!(desc, [0, 3, 1, 2]);
+        let mut names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+        apply_order(&mut names, &order);
+        assert_eq!(names, ["c.txt", "a.txt", "b.txt", "b.txt"]);
+        assert_eq!(SortKey::parse("folder"), Some(SortKey::Folder));
+        let same = vec![entry("a.txt", false, 0, None), entry("a.txt", false, 0, None), entry("a.txt", false, 0, None)];
+        let dirs = ["sub2", "sub1", "sub3"];
+        let by_name =
+            |dir| sort_order(&same, SortSpec { key: SortKey::Name, dir }, true, |_| String::new(), &|i| dirs[i]);
+        assert_eq!(by_name(SortDir::Asc), [1, 0, 2], "equal names: by folder");
+        assert_eq!(by_name(SortDir::Desc), [2, 0, 1]);
+        assert!(!SortKey::ALL.contains(&SortKey::Folder), "not a folder's sort");
     }
 }

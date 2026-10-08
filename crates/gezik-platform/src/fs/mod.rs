@@ -11,21 +11,50 @@ mod windows;
 
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 pub use describe::describe;
 pub use gezik_core::ops::threads::DiskKind;
 #[cfg(unix)]
+use unix::entry_id;
+#[cfg(unix)]
 pub use unix::{
-    clear_hidden, copy_file, delete, drive_facts, drive_root, free_space, is_hidden_attr, is_network, mapped_remote,
-    move_entry, restore, set_hidden, trash,
+    clear_hidden, copy_file, delete, device_of, drive_facts, drive_root, free_space, is_hidden_attr, is_network,
+    mapped_remote, move_entry, open_regular, read_dir_items, restore, set_hidden, trash,
 };
 #[cfg(windows)]
+use windows::entry_id;
+#[cfg(windows)]
 pub use windows::{
-    clear_hidden, copy_file, delete, drive_facts, drive_root, free_space, is_hidden_attr, is_network, mapped_remote,
-    move_entry, restore, set_hidden, trash,
+    clear_hidden, copy_file, delete, device_of, drive_facts, drive_root, free_space, is_hidden_attr, is_network,
+    mapped_remote, move_entry, open_regular, read_dir_items, restore, set_hidden, trash,
 };
 #[cfg(windows)]
 pub(crate) use windows::{io_error, verbatim};
+
+/// One item of a folder as the search reads it, with what the read itself gave (spec 3.4).
+#[derive(Debug, Clone)]
+pub struct DirItem {
+    pub name: String,
+    pub is_dir: bool,
+    /// A symbolic link or junction (Windows: a name-surrogate reparse point, so a cloud or
+    /// deduplicated folder is still gone into): never gone into, never read.
+    pub is_link: bool,
+    /// A regular file: not a folder, link, FIFO, socket or device. Only these are read for text.
+    pub is_file: bool,
+    /// Windows: the data is not on this disk (a cloud placeholder, an offline file), so reading
+    /// it would download it. A content search leaves it unread.
+    pub offline: bool,
+    /// `Entry::HIDDEN` and `Entry::SYSTEM` (Windows).
+    pub flags: u8,
+    pub size: u64,
+    pub modified: Option<SystemTime>,
+    pub created: Option<SystemTime>,
+    /// Unix: the folder's device (`st_dev`), to stay on one file system; 0 where unknown.
+    pub device: u64,
+    /// Size and times are filled (Unix reads them only for what was asked).
+    pub has_meta: bool,
+}
 
 /// What the engine needs to know about the drive a path is on.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,6 +100,15 @@ pub fn is_disk_full(err: &io::Error) -> bool {
     err.kind() == io::ErrorKind::StorageFull || err.raw_os_error().is_some_and(|code| DISK_FULL_CODES.contains(&code))
 }
 
+/// Whether `a` and `b` name the same entry on disk, however they are spelled (`\\?\`, short
+/// 8.3 names, a junction, a symbolic link or `subst` drive on the way, a mapped drive and its
+/// share): the same volume and file id (Windows), device and inode (Unix). The last part
+/// itself is not followed: a link and what it points to are two entries. `None` when either
+/// cannot be read (missing, no access, a file system without ids).
+pub fn same_entry(a: &Path, b: &Path) -> Option<bool> {
+    Some(entry_id(a).ok()? == entry_id(b).ok()?)
+}
+
 /// `path` or its nearest ancestor that exists.
 pub fn nearest_existing(path: &Path) -> Option<PathBuf> {
     path.ancestors().find(|p| std::fs::symlink_metadata(p).is_ok()).map(Path::to_path_buf)
@@ -92,6 +130,121 @@ pub(crate) fn test_dir(name: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn same_entry_sees_through_spellings() {
+        let dir = test_dir("same-entry");
+        std::fs::write(dir.join("x.txt"), "x").unwrap();
+        std::fs::write(dir.join("y.txt"), "y").unwrap();
+        std::fs::create_dir(dir.join("sub")).unwrap();
+        let x = dir.join("x.txt");
+        assert_eq!(same_entry(&x, &x), Some(true));
+        assert_eq!(same_entry(&x, &dir.join("sub").join("..").join("x.txt")), Some(true));
+        assert_eq!(same_entry(&x, &dir.join("y.txt")), Some(false));
+        assert_eq!(same_entry(&x, &dir.join("missing.txt")), None);
+        #[cfg(windows)]
+        {
+            let prefixed = PathBuf::from(format!(r"\\?\{}", x.display()));
+            assert_eq!(same_entry(&x, &prefixed), Some(true));
+            // A junction to the folder: another spelling of the same file.
+            let junction = dir.parent().unwrap().join(format!("gezik-fs-same-entry-j-{}", std::process::id()));
+            let _ = std::fs::remove_dir(&junction);
+            let made = std::process::Command::new("cmd")
+                .args(["/c", "mklink", "/J"])
+                .arg(&junction)
+                .arg(&dir)
+                .output()
+                .unwrap();
+            assert!(made.status.success(), "{made:?}");
+            assert_eq!(same_entry(&x, &junction.join("x.txt")), Some(true));
+            assert_eq!(same_entry(&dir.join("y.txt"), &junction.join("x.txt")), Some(false));
+            std::fs::remove_dir(&junction).unwrap();
+        }
+        #[cfg(unix)]
+        {
+            let link = dir.join("link");
+            std::os::unix::fs::symlink(&dir, &link).unwrap();
+            assert_eq!(same_entry(&x, &link.join("x.txt")), Some(true));
+            assert_eq!(same_entry(&dir, &link), Some(false), "the link itself is its own entry");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn folder_items_carry_what_the_read_gave() {
+        let dir = test_dir("items");
+        std::fs::write(dir.join("a.txt"), "12345").unwrap();
+        std::fs::create_dir(dir.join("sub")).unwrap();
+        let mut items = read_dir_items(&dir, &|_, _| true).unwrap();
+        items.sort_by(|a, b| a.name.cmp(&b.name));
+        assert_eq!(items.iter().map(|i| i.name.as_str()).collect::<Vec<_>>(), ["a.txt", "sub"]);
+        assert!(!items[0].is_dir && items[0].size == 5 && items[0].modified.is_some() && items[0].has_meta);
+        assert!(items[1].is_dir && !items[1].is_link && items[1].size == 0);
+        assert!(items[0].is_file && !items[0].offline && !items[1].is_file);
+        let listed = gezik_core::list_dir(&dir).unwrap();
+        assert_eq!(
+            listed.iter().find(|e| e.name == "a.txt").unwrap().modified,
+            items[0].modified,
+            "as list_dir sees it"
+        );
+        assert!(read_dir_items(&dir.join("missing"), &|_, _| true).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn only_regular_files_are_opened_for_their_text() {
+        let dir = test_dir("open-regular");
+        std::fs::write(dir.join("a.txt"), "12345").unwrap();
+        let (_, size) = open_regular(&dir.join("a.txt")).unwrap().expect("a file");
+        assert_eq!(size, 5);
+        assert!(open_regular(&dir).unwrap().is_none(), "a folder");
+        assert!(open_regular(&dir.join("missing")).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_fifo_or_a_link_is_never_opened() {
+        let dir = test_dir("open-fifo");
+        let fifo = dir.join("pipe");
+        let c = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+        // SAFETY: a valid path string.
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        assert!(open_regular(&fifo).unwrap().is_none(), "opened without blocking, then refused");
+        std::fs::write(dir.join("a.txt"), "x").unwrap();
+        std::os::unix::fs::symlink(dir.join("a.txt"), dir.join("link")).unwrap();
+        assert!(open_regular(&dir.join("link")).unwrap().is_none(), "a link is not followed");
+        let items = read_dir_items(&dir, &|_, _| true).unwrap();
+        assert!(items.iter().filter(|i| i.is_file).map(|i| i.name.as_str()).eq(["a.txt"]));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_reads_meta_only_when_asked() {
+        let dir = test_dir("items-lazy");
+        std::fs::write(dir.join("a.txt"), "12345").unwrap();
+        std::fs::create_dir(dir.join("sub")).unwrap();
+        let items = read_dir_items(&dir, &|_, _| false).unwrap();
+        let file = items.iter().find(|i| i.name == "a.txt").unwrap();
+        assert!(!file.has_meta && file.size == 0, "no lstat for a file nobody wants");
+        let folder = items.iter().find(|i| i.name == "sub").unwrap();
+        assert!(folder.has_meta && folder.device == device_of(&dir).unwrap(), "folders always: their device");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_junction_is_a_link_folder() {
+        use gezik_core::templates::LinkKind;
+        let dir = test_dir("items-junction");
+        std::fs::create_dir(dir.join("target")).unwrap();
+        crate::link::create(LinkKind::Junction, &dir.join("target"), &dir.join("j"), true).unwrap();
+        let items = read_dir_items(&dir, &|_, _| true).unwrap();
+        let j = items.iter().find(|i| i.name == "j").unwrap();
+        assert!(j.is_dir && j.is_link);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn fat_holds_files_up_to_4_gb_and_the_others_have_no_limit_that_matters() {

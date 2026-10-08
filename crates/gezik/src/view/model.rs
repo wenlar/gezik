@@ -23,9 +23,12 @@ pub struct ViewData {
     /// The folder's entries without the hidden files, sorted, before the filter; empty for
     /// "This PC" and the empty listing.
     pub full: Rc<Vec<gezik_core::Entry>>,
-    /// Where each entry of `listing` is in `full` while the filter shows a part of it;
-    /// `None` when `listing` is `full` (or the drives).
+    /// Where each entry of `listing` is in `full` (in `results` for the results) while the
+    /// filter shows a part of it; `None` when `listing` is all of it (or the drives).
     pub rows: Option<Vec<usize>>,
+    /// The search results without the filter (`listing` shows what it lets through); `None`
+    /// for a folder.
+    pub results: Option<std::sync::Arc<gezik_search::results::ResultSet>>,
     pub selection: Selection,
     /// The selection when a rubber-band drag started (Ctrl) or nothing; `None` when no drag.
     pub marquee_base: Option<Selection>,
@@ -38,7 +41,7 @@ pub struct ViewData {
     pub thumbnails: bool,
     /// The icon size to ask for, in physical pixels.
     pub icon_px: u32,
-    /// Names in this folder on the clipboard as cut: they look faded.
+    /// Names in this folder (keys in the results) on the clipboard as cut: they look faded.
     pub cut: std::collections::HashSet<String>,
     /// `[view]`'s options in effect (view_options.rs).
     pub options: gezik_core::view::ViewOptions,
@@ -112,10 +115,7 @@ impl Model for ItemsModel {
 pub fn file_row(data: &ViewData, i: usize) -> FileRow {
     let listing = &data.listing;
     let is_dir = listing.is_dir(i);
-    let entry = match listing {
-        Listing::Files(_, entries) => entries.get(i),
-        Listing::Drives(_) => None,
-    };
+    let entry = listing.entry(i);
     let options = data.options;
     let now = std::time::SystemTime::now();
     let date = |time: Option<std::time::SystemTime>| {
@@ -123,14 +123,22 @@ pub fn file_row(data: &ViewData, i: usize) -> FileRow {
     };
     let icon = picture_for(data, i);
     let name = listing.name_at(i).unwrap_or_default();
-    let hide = options.hide_extensions && matches!(listing, Listing::Files(..));
+    let entries = !matches!(listing, Listing::Drives(_));
+    let (folder, found) = match listing {
+        Listing::Results(set) => (
+            set.folder(i).unwrap_or_default().into(),
+            set.found(i).map(|(line, text)| format!("{line}: {text}")).unwrap_or_default().into(),
+        ),
+        _ => (slint::SharedString::default(), slint::SharedString::default()),
+    };
     FileRow {
-        name: gezik_core::shown_name(name, is_dir, hide).into(),
+        name: gezik_core::shown_name(name, is_dir, options.hide_extensions && entries).into(),
         is_dir,
         kind: listing.kind(i).index(),
-        size: match listing {
-            Listing::Files(..) if !is_dir => format_size_in(listing.file_size(i), options.size_format).into(),
-            _ => "".into(),
+        size: if entries && !is_dir {
+            format_size_in(listing.file_size(i), options.size_format).into()
+        } else {
+            "".into()
         },
         modified: date(entry.and_then(|e| e.modified)).into(),
         created: date(entry.and_then(|e| e.created)).into(),
@@ -139,21 +147,23 @@ pub fn file_row(data: &ViewData, i: usize) -> FileRow {
         icon: icon.unwrap_or_default(),
         selected: data.selection.is_selected(i),
         focused: data.selection.focus() == Some(i),
-        cut: matches!(listing, Listing::Files(..)) && listing.name_at(i).is_some_and(|name| data.cut.contains(name)),
+        cut: entries && listing.key_at(i).is_some_and(|key| data.cut.contains(&*key)),
+        folder,
+        found,
     }
 }
 
 /// The Type column: Gezik's own name for a split archive's part, else the system's name once
 /// known, until then `PNG File`.
 pub fn type_name_for(data: &ViewData, i: usize) -> String {
-    match &data.listing {
-        Listing::Files(_, entries) => match entries.get(i) {
-            Some(e) => own_type_name(&e.name, e.is_dir)
-                .or_else(|| data.media.type_name(&e.extension().to_lowercase(), e.is_dir, Some(i)))
-                .unwrap_or_else(|| fallback_type_name(&e.name, e.is_dir)),
-            None => String::new(),
-        },
-        Listing::Drives(_) => "Drive".to_owned(),
+    if let Listing::Drives(_) = data.listing {
+        return "Drive".to_owned();
+    }
+    match data.listing.entry(i) {
+        Some(e) => own_type_name(&e.name, e.is_dir)
+            .or_else(|| data.media.type_name(&e.extension().to_lowercase(), e.is_dir, Some(i)))
+            .unwrap_or_else(|| fallback_type_name(&e.name, e.is_dir)),
+        None => String::new(),
     }
 }
 
@@ -161,12 +171,12 @@ pub fn type_name_for(data: &ViewData, i: usize) -> String {
 fn picture_for(data: &ViewData, i: usize) -> Option<slint::Image> {
     if data.mode == ViewMode::Grid
         && data.thumbnails
-        && let Listing::Files(dir, entries) = &data.listing
-        && let Some(e) = entries.get(i)
+        && let Some(e) = data.listing.entry(i)
         && !e.is_dir
         && (cfg!(windows) || gezik_platform::can_decode(e.extension()))
+        && let Some((path, _)) = data.listing.path_at(i)
     {
-        let key = MediaKey::Thumbnail { path: dir.join(&e.name), modified: e.modified, px: data.icon_px };
+        let key = MediaKey::Thumbnail { path, modified: e.modified, px: data.icon_px };
         if let Some(picture) = data.media.picture(key, i) {
             return Some(picture);
         }
@@ -183,12 +193,12 @@ fn icon_for(data: &ViewData, i: usize) -> Option<slint::Image> {
     let px = data.icon_px;
     let key = match &data.listing {
         Listing::Drives(drives) => MediaKey::PathIcon { path: drives.get(i)?.path.clone(), px },
-        Listing::Files(dir, entries) => {
-            let e = entries.get(i)?;
+        listing => {
+            let e = listing.entry(i)?;
             if e.is_dir {
-                MediaKey::FolderIcon { path: dir.join(&e.name), px }
+                MediaKey::FolderIcon { path: listing.path_at(i)?.0, px }
             } else if has_own_icon(&e.name) {
-                MediaKey::PathIcon { path: dir.join(&e.name), px }
+                MediaKey::PathIcon { path: listing.path_at(i)?.0, px }
             } else {
                 MediaKey::ExtIcon { ext: e.extension().to_lowercase(), px }
             }
@@ -228,6 +238,19 @@ pub fn notify_plan(rows: &[Range<usize>], per_row: usize) -> Plan {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn result_rows_show_their_folder() {
+        let data = ViewData {
+            listing: super::super::listing::results(&[("sub", "a.txt"), ("", "b.txt")]),
+            media: Media::idle(),
+            ..Default::default()
+        };
+        let (a, b) = (file_row(&data, 0), file_row(&data, 1));
+        assert_eq!((a.name.as_str(), a.folder.as_str(), a.size.as_str()), ("a.txt", "sub", "10 B"));
+        assert_eq!(b.folder.as_str(), "", "the scope itself");
+        assert_eq!(a.found.as_str(), "", "no content search");
+    }
 
     #[test]
     fn rows_follow_the_view_options() {

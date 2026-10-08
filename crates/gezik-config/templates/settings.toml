@@ -91,6 +91,13 @@ restore = true
 # name would run there as code, as administrator too.
 # command = ["wezterm", "start", "--cwd", "{dir}"]
 
+[search]
+# Windows: ask Everything (voidtools) for names when it runs; "off": Gezik's own scanner always.
+everything = "auto"        # auto | off
+skip = [".git", "node_modules"]   # folders a search does not go into (by name)
+max-results = 250000       # 1000-2000000; a search stops there
+content-max-size = "64 MB" # larger files are not read for text
+
 [shortcuts]
 # Change any shortcut; "mod" is Cmd on macOS and Ctrl elsewhere; "" disables.
 # new-tab = "mod+t"
@@ -141,6 +148,11 @@ restore = true
 # add-to-stack = "mod+shift+s"   # the selected items onto the drop stack
 # toggle-stack = ""        # show or hide the drop stack
 # show-history = ""        # the operations panel's History
+# search = ["mod+shift+f", "f3"]   # search under the folder shown; macOS: "mod+shift+f" (F3 is the system's)
+# flat-view = "mod+b"      # every file under the folder in one list; again: back to the folder
+# show-in-folder = "mod+shift+e"   # a search result's folder, with it selected
+# copy-with-folders = ""   # copy search results keeping their folders
+# cut-with-folders = ""    # the same as a move
 
 # Saved rule sets for batch rename (Rename… with two or more items selected). The rename
 # layer writes them with "Presets ▾ › Save current rules as…"; they can also be written here.

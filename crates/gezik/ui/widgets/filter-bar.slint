@@ -1,17 +1,44 @@
 import { Theme } from "../theme.slint";
 import { TextField } from "text-field.slint";
 import { ToolButton } from "button.slint";
+import { TextButton } from "text-button.slint";
 
 // The filter bar above the file list: a magnifier, the pattern being typed, how many entries
-// it lets through (or what is wrong with it) and the saved filters' button.
+// it lets through (or what is wrong with it), "Search subfolders" and the saved filters'
+// button. With `search` it is the search bar (search.rs, spec 4.2): where it looks, the name
+// field, the text-in-files field, Content, Filters, Search / Stop and its ▾ menu. One
+// component for both keeps the exe small (sapma 1).
 export component FilterBar inherits Rectangle {
     in-out property <string> text;
     in property <string> count;
     in property <string> error;
-    out property <bool> field-focused: field.has-focus;
+    // The search bar's parts.
+    in property <bool> search;
+    in property <string> scope;
+    in property <bool> content-open;
+    // Content was just turned on: the text-in-files field takes the keyboard as it is made.
+    in property <bool> content-focus;
+    in-out property <string> content;
+    in property <string> content-error;
+    in property <string> filters: "Filters";
+    in property <bool> running;
+    out property <bool> field-focused: field.has-focus || (root.search && root.content-open && root.content-focused);
+    // The text-in-files field has the keyboard (it is made only while Content is on).
+    property <bool> content-focused;
+    // The field goes with Content: its focus flag must not outlive it.
+    changed content-open => {
+        if !self.content-open {
+            self.content-focused = false;
+        }
+    }
     callback edited(string);
-    // The saved filters' menu, placed like `show-menu`: at x, y or flipped to end at the other two.
-    callback menu(length, length, length, length);
+    callback content-edited(string);
+    callback content-toggle();
+    // Search / Stop; in the filter bar, "Search subfolders".
+    callback go();
+    // A menu under its button, placed like `show-menu`: 0 the ▾ menu (saved filters, or the
+    // search's), 1 the scope, 2 Filters.
+    callback menu(int, length, length, length, length);
 
     // Focuses the field with the cursor at byte `at`.
     public function focus-at(at: int) {
@@ -25,7 +52,7 @@ export component FilterBar inherits Rectangle {
 
     background: Theme.chrome;
     accessible-role: groupbox;
-    accessible-label: "Filter";
+    accessible-label: root.search ? "Search" : "Filter";
 
     HorizontalLayout {
         padding-left: Theme.spacing;
@@ -49,6 +76,16 @@ export component FilterBar inherits Rectangle {
             }
         }
 
+        if root.search: TextButton {
+            y: (parent.height - self.height) / 2;
+            text: root.scope;
+            icon: "M 1 3 L 4 6 L 7 3";
+            clicked => {
+                root.menu(1, self.absolute-position.x, self.absolute-position.y + self.height,
+                    self.absolute-position.x + self.width, self.absolute-position.y);
+            }
+        }
+
         Rectangle {
             horizontal-stretch: 1;
             field := TextField {
@@ -56,6 +93,15 @@ export component FilterBar inherits Rectangle {
                 y: (parent.height - self.height) / 2;
                 text <=> root.text;
                 edited(t) => { root.edited(t); }
+            }
+            Text {
+                visible: root.search && root.text == "";
+                x: field.x + Theme.spacing + 2px;
+                height: parent.height;
+                text: "Name, e.g. *.pdf;!*draft*";
+                color: Theme.foreground-muted;
+                vertical-alignment: center;
+                accessible-role: none;
             }
             // A text that cannot be used: a red line under the field.
             if root.error != "": Rectangle {
@@ -67,20 +113,79 @@ export component FilterBar inherits Rectangle {
             }
         }
 
+        // Text in files (spec 4.2): made only while Content is on (the filter bar has none).
+        if root.search && root.content-open: Rectangle {
+            horizontal-stretch: 1;
+            content-field := TextField {
+                width: parent.width;
+                y: (parent.height - self.height) / 2;
+                text <=> root.content;
+                edited(t) => { root.content-edited(t); }
+                changed has-focus => { root.content-focused = self.has-focus; }
+                init => {
+                    if root.content-focus {
+                        self.focus-and-select();
+                    }
+                }
+            }
+            Text {
+                visible: root.content == "";
+                x: content-field.x + Theme.spacing + 2px;
+                height: parent.height;
+                text: "Text in files";
+                color: Theme.foreground-muted;
+                vertical-alignment: center;
+                accessible-role: none;
+            }
+        }
+
         Text {
-            text: root.error != "" ? root.error : root.count;
-            color: root.error != "" ? Theme.danger : Theme.foreground-muted;
+            text: root.error != "" ? root.error : root.content-error != "" ? root.content-error : root.count;
+            color: root.error != "" || root.content-error != "" ? Theme.danger : Theme.foreground-muted;
             vertical-alignment: center;
             max-width: 320px;
             overflow: elide;
         }
 
+        if !root.search && root.text != "": TextButton {
+            y: (parent.height - self.height) / 2;
+            text: "Search subfolders";
+            clicked => { root.go(); }
+        }
+
+        // The search's own buttons: Content, Filters, Search / Stop.
+        if root.search: HorizontalLayout {
+            spacing: Theme.spacing;
+            TextButton {
+                y: (parent.height - self.height) / 2;
+                text: "Content";
+                checked: root.content-open;
+                clicked => { root.content-toggle(); }
+            }
+            TextButton {
+                y: (parent.height - self.height) / 2;
+                text: root.filters;
+                icon: "M 1 3 L 4 6 L 7 3";
+                clicked => {
+                    root.menu(2, self.absolute-position.x, self.absolute-position.y + self.height,
+                        self.absolute-position.x + self.width, self.absolute-position.y);
+                }
+            }
+            TextButton {
+                y: (parent.height - self.height) / 2;
+                text: root.running ? "Stop" : "Search";
+                primary: !root.running;
+                clicked => { root.go(); }
+            }
+        }
+
         menu-button := ToolButton {
             y: (parent.height - self.height) / 2;
-            text: "Saved filters";
+            text: root.search ? "More" : "Saved filters";
             icon: "M 4 6 L 8 10 L 12 6";
             clicked => {
                 root.menu(
+                    0,
                     self.absolute-position.x,
                     self.absolute-position.y + self.height,
                     self.absolute-position.x + self.width,

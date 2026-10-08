@@ -19,7 +19,10 @@ pub fn parse_views(text: &str) -> Result<Vec<FolderView>, String> {
                 view: ViewSettings {
                     mode: text("mode").and_then(ViewMode::parse).unwrap_or(defaults.mode),
                     sort: SortSpec {
-                        key: text("sort").and_then(SortKey::parse).unwrap_or(defaults.sort.key),
+                        key: text("sort")
+                            .and_then(SortKey::parse)
+                            .filter(|key| *key != SortKey::Folder)
+                            .unwrap_or(defaults.sort.key),
                         dir: text("sort-dir").and_then(SortDir::parse).unwrap_or(defaults.sort.dir),
                     },
                     grid_size: text("grid-size").and_then(GridSize::parse).unwrap_or(defaults.grid_size),

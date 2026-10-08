@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/gezik-core", "crates/gezik-config", "crates/gezik-platform", "crates/gezik-ops", "crates/gezik-batch", "crates/gezik"]
+members = ["crates/gezik-core", "crates/gezik-config", "crates/gezik-platform", "crates/gezik-ops", "crates/gezik-batch", "crates/gezik-search", "crates/gezik"]
 exclude = ["vendor"]
 
 [workspace.package]
@@ -15,6 +15,7 @@ gezik-platform = { path = "crates/gezik-platform" }
 gezik-ops = { path = "crates/gezik-ops" }
 # Without RAR unless asked for (gezik forwards its own `rar` feature).
 gezik-batch = { path = "crates/gezik-batch", default-features = false }
+gezik-search = { path = "crates/gezik-search" }
 
 [profile.release]
 opt-level = 3

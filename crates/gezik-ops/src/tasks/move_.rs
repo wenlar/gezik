@@ -21,6 +21,8 @@ const CASE: u8 = 1;
 const COPY_DELETE: u8 = 2;
 const MKDIR: u8 = 3;
 const RMDIR: u8 = 4;
+/// A folder on the way to a target, made before what goes into it (move with folders).
+const MAKE_PARENT: u8 = 5;
 
 pub struct MoveTask {
     /// (where it is, where it goes) per chosen item.
@@ -35,11 +37,35 @@ pub struct MoveTask {
     kind: TaskKind,
     /// Tests only: plan as if the target were on another drive.
     cross: bool,
+    /// Folders to make before the items (move with folders, spec 4.6), shallowest first.
+    parents: Vec<PathBuf>,
+    /// Move with folders: items whose relative path would leave the target folder.
+    refused: Vec<PathBuf>,
 }
 
 impl MoveTask {
     fn with(pairs: Vec<(PathBuf, PathBuf)>, expect: Vec<Option<Facts>>, back: bool) -> MoveTask {
-        MoveTask { pairs, expect, back, placing: false, kind: TaskKind::Move, cross: false }
+        MoveTask {
+            pairs,
+            expect,
+            back,
+            placing: false,
+            kind: TaskKind::Move,
+            cross: false,
+            parents: Vec::new(),
+            refused: Vec::new(),
+        }
+    }
+
+    /// Moves each source to `dir` joined with its path under a search's scope (spec 4.6), making
+    /// the folders on the way; undo moves them back first, then trashes the folders it made
+    /// (only if they then hold no files: `inverse::build`). An item that would land on itself
+    /// (moved back into the search's folder) stays where it is.
+    pub fn with_folders(items: Vec<(PathBuf, PathBuf)>, dir: &Path) -> MoveTask {
+        let super::Relative { mut pairs, parents, refused } = super::relative_targets(items, dir);
+        pairs.retain(|(source, target)| !same_path(source, target));
+        let expect = vec![None; pairs.len()];
+        MoveTask { parents, refused, ..MoveTask::with(pairs, expect, false) }
     }
 
     pub fn into(sources: Vec<PathBuf>, dir: &Path) -> MoveTask {
@@ -129,6 +155,19 @@ impl Task for MoveTask {
     }
 
     fn plan(&self, sink: &mut dyn ScanSink) {
+        super::refuse_outside(sink, &self.refused);
+        // The folders on the way first: Before items run as they are planned.
+        for parent in &self.parents {
+            if std::fs::symlink_metadata(parent).is_err() {
+                let item = PlanItem::new(Stage::Before, Facts { is_dir: true, ..Facts::default() })
+                    .target(parent)
+                    .uncounted()
+                    .tag(MAKE_PARENT);
+                if !sink.item(item) {
+                    return;
+                }
+            }
+        }
         for (root, (source, target)) in self.pairs.iter().enumerate() {
             if super::refuse_root(sink, source, "move") {
                 continue;
@@ -161,6 +200,14 @@ impl Task for MoveTask {
     }
 
     fn run(&self, item: &PlanItem, cx: &RunCx<'_>) -> io::Result<Outcome> {
+        if item.tag == MAKE_PARENT {
+            let Some(target) = &item.target else { return Ok(Outcome::Nothing) };
+            return match std::fs::create_dir(target) {
+                Ok(()) => Ok(Outcome::MadeParent { path: target.clone() }),
+                Err(err) if err.kind() == io::ErrorKind::AlreadyExists && target.is_dir() => Ok(Outcome::Nothing),
+                Err(err) => Err(err),
+            };
+        }
         let Some(source) = &item.source else { return Ok(Outcome::Nothing) };
         if item.tag == RMDIR {
             // Nothing was made at the target (held, skipped or failed): the folder stays.
@@ -465,6 +512,63 @@ mod tests {
         assert!(report.failures.is_empty(), "{:?}", report.failures);
         assert_eq!(read(&dir.join("dst/d/a.txt")), "old");
         assert_eq!(read(&dir.join("src/d/a.txt")), "new", "skipped: still where it was");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn moving_with_folders_comes_back_whole_on_undo() {
+        let dir = test_dir("move-with-folders");
+        write(&dir.join("src/a/b/x.txt"), "x");
+        let engine = engine();
+        let items = vec![(dir.join("src/a/b/x.txt"), PathBuf::from("a").join("b").join("x.txt"))];
+        let (report, _) =
+            finish(&engine, engine.submit(Box::new(MoveTask::with_folders(items, &dir.join("dst")))), defaults);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert_eq!(read(&dir.join("dst/a/b/x.txt")), "x");
+        assert!(!dir.join("src/a/b/x.txt").exists());
+        let (undo, _) = finish(&engine, engine.undo().unwrap(), defaults);
+        assert!(undo.failures.is_empty(), "{:?}", undo.failures);
+        assert_eq!(read(&dir.join("src/a/b/x.txt")), "x");
+        assert!(!dir.join("dst").exists(), "the folders made for it are gone, dst too (it was not there)");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn moving_with_folders_onto_itself_does_nothing() {
+        let dir = test_dir("move-with-folders-onto-itself");
+        write(&dir.join("a/x.txt"), "x");
+        let engine = engine();
+        let items = vec![(dir.join("a/x.txt"), PathBuf::from("a").join("x.txt"))];
+        let task = MoveTask::with_folders(items, &dir);
+        assert_eq!(task.count(), 0);
+        let (report, _) = finish(&engine, engine.submit(Box::new(task)), no_conflicts);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert_eq!(read(&dir.join("a/x.txt")), "x");
+        assert_eq!(std::fs::read_dir(dir.join("a")).unwrap().count(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn undoing_a_move_with_folders_keeps_a_made_folder_that_holds_a_file_since() {
+        let dir = test_dir("move-with-folders-failed");
+        write(&dir.join("src/a/x.txt"), "x");
+        let dst = dir.join("dst");
+        std::fs::create_dir(&dst).unwrap();
+        // `gone.txt` vanished after it was found: its folder is made, nothing goes into it.
+        let items = vec![
+            (dir.join("src/a/x.txt"), PathBuf::from("a").join("x.txt")),
+            (dir.join("src/c/gone.txt"), PathBuf::from("c").join("gone.txt")),
+        ];
+        let engine = engine();
+        let (report, _) = finish(&engine, engine.submit(Box::new(MoveTask::with_folders(items, &dst))), defaults);
+        assert_eq!(report.failures.len(), 1, "{:?}", report.failures);
+        assert!(dst.join("c").is_dir());
+        write(&dst.join("c/user.txt"), "mine");
+        let (undo, _) = finish(&engine, engine.undo().unwrap(), defaults);
+        assert!(undo.failures.is_empty(), "{:?}", undo.failures);
+        assert_eq!(read(&dir.join("src/a/x.txt")), "x", "the moved file came back");
+        assert!(!dst.join("a").exists(), "the made folder left empty went");
+        assert_eq!(read(&dst.join("c/user.txt")), "mine", "a file put there since stays");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

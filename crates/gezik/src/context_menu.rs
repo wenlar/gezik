@@ -11,6 +11,7 @@ use gezik_config::settings::ViewOption;
 use gezik_core::drag::Effect;
 use gezik_core::nav::Location;
 use gezik_core::path_text::PathFormat;
+use gezik_core::search::{DateRange, Scope, SearchSpec};
 use gezik_core::templates::{LinkKind, PasteKind, Template};
 use gezik_core::view::{
     ColumnKey, ColumnState, DateFormat, GridSize, SizeFormat, SortDir, SortKey, SortSpec, ViewMode, ViewOptions,
@@ -115,6 +116,132 @@ pub fn items(place: Place, native_shell: bool) -> Vec<(u32, &'static str)> {
     out
 }
 
+/// 8a's ids are 1500-1599 (spec 9.4). 1500: Search in this folder… / Search in "name"…; 1505:
+/// View ▸ Flat view; 1506-1508: the search bar's ▾ (in a new tab, Clear, the folders it could
+/// not read); 1510-1519: its scope menu by place; 1520-1529: Filters ▸ Modified, sizes, Clear;
+/// 1530-1538: Filters ▸ Type in `KindFilter::ALL` order; 1540-1544: Filters' options.
+pub const SEARCH_HERE: u32 = 1500;
+/// 1501-1504: a search result's rows (spec 4.6, 9.4).
+pub const SHOW_IN_FOLDER: u32 = 1501;
+pub const SHOW_IN_FOLDER_NEW_TAB: u32 = 1502;
+pub const COPY_WITH_FOLDERS: u32 = 1503;
+pub const CUT_WITH_FOLDERS: u32 = 1504;
+pub const FLAT_VIEW: u32 = 1505;
+pub const SEARCH_NEW_TAB: u32 = 1506;
+pub const SEARCH_CLEAR: u32 = 1507;
+pub const SEARCH_PROBLEMS: u32 = 1508;
+pub const SCOPE_FIRST: u32 = 1510;
+pub const SCOPE_MAX: u32 = 10;
+pub const MODIFIED_FIRST: u32 = 1520;
+pub const SIZE_MIN: u32 = 1526;
+pub const SIZE_MAX: u32 = 1527;
+pub const MODIFIED_BETWEEN: u32 = 1528;
+pub const FILTERS_CLEAR: u32 = 1529;
+pub const KIND_FIRST: u32 = 1530;
+pub const OPTION_FIRST: u32 = 1540;
+
+/// The Modified presets, by id from `MODIFIED_FIRST`.
+const MODIFIED_PRESETS: [DateRange; 5] =
+    [DateRange::Any, DateRange::Today, DateRange::LastDays(7), DateRange::LastDays(30), DateRange::ThisYear];
+
+/// The date a Modified item sets; `None` for "Between…" (asked in a box) and other ids.
+pub fn modified_for(id: u32) -> Option<DateRange> {
+    MODIFIED_PRESETS.get(id.checked_sub(MODIFIED_FIRST)? as usize).copied()
+}
+
+fn marked(on: bool, title: &str) -> String {
+    format!("{}{title}", if on { "• " } else { "    " })
+}
+
+/// The search bar's Filters menu (sapma 2): the sizes, the options, Clear; Modified ▸ and Type ▸.
+pub fn search_filter_items(spec: &SearchSpec) -> (Vec<(u32, String, bool)>, Vec<Submenu>) {
+    let size =
+        |bound: Option<u64>| bound.map(|b| format!(" ({})", gezik_core::search::size_text(b))).unwrap_or_default();
+    let mut items = vec![
+        (SIZE_MIN, format!("Size at least…{}", size(spec.size.min)), true),
+        (SIZE_MAX, format!("Size at most…{}", size(spec.size.max)), true),
+    ];
+    let options = [
+        spec.name_regex,
+        spec.content_regex,
+        spec.match_case,
+        spec.hidden == gezik_core::search::HiddenRule::Include,
+        spec.skipped,
+    ];
+    let titles = [
+        "Name is a regular expression",
+        "Content is a regular expression",
+        "Match case",
+        "Include hidden items",
+        "Include skipped folders",
+    ];
+    for (i, (on, title)) in options.into_iter().zip(titles).enumerate() {
+        items.push((OPTION_FIRST + i as u32, marked(on, title), true));
+    }
+    items.push((FILTERS_CLEAR, "Clear filters".to_owned(), spec.filter_count() > 0));
+    let mut modified: Vec<(u32, String, bool)> = MODIFIED_PRESETS
+        .iter()
+        .enumerate()
+        .map(|(i, range)| (MODIFIED_FIRST + i as u32, marked(spec.modified == *range, &range.label()), true))
+        .collect();
+    let between = match spec.modified {
+        DateRange::Between(..) => marked(true, &spec.modified.label()),
+        _ => marked(false, "Between…"),
+    };
+    modified.push((MODIFIED_BETWEEN, between, true));
+    let kinds = gezik_core::search::KindFilter::ALL
+        .iter()
+        .enumerate()
+        .map(|(i, kind)| (KIND_FIRST + i as u32, marked(spec.kind == *kind, kind.label()), true))
+        .collect();
+    let subs = vec![
+        Submenu { title: "Modified".to_owned(), at: 0, items: modified },
+        Submenu { title: "Type".to_owned(), at: 0, items: kinds },
+    ];
+    (items, subs)
+}
+
+/// The search bar's ▾ menu (spec 4.2): in a new tab, Clear, and the folders the last search
+/// could not read (with how many).
+pub fn search_more_items(problems: usize) -> Vec<(u32, String, bool)> {
+    let mut items =
+        vec![(SEARCH_NEW_TAB, "Search in new tab".to_owned(), true), (SEARCH_CLEAR, "Clear".to_owned(), true)];
+    if problems > 0 {
+        let what = if problems == 1 { "1 folder".to_owned() } else { format!("{problems} folders") };
+        items.push((SEARCH_PROBLEMS, format!("{what} could not be read…"), true));
+    }
+    items
+}
+
+/// The scope menu (spec 4.1): `choices` by place, the current one marked.
+pub fn search_scope_items(choices: &[(Scope, String)], current: &Scope) -> Vec<(u32, String, bool)> {
+    choices
+        .iter()
+        .take(SCOPE_MAX as usize)
+        .enumerate()
+        .map(|(i, (scope, label))| (SCOPE_FIRST + i as u32, marked(scope == current, label), true))
+        .collect()
+}
+
+/// 1550-1555: the results' header menu shows or hides the columns in `ColumnKey::RESULTS`
+/// order; 1556 resets them (sapma 7).
+pub const RESULT_COLUMN_FIRST: u32 = 1550;
+pub const RESULT_COLUMNS_RESET: u32 = 1556;
+
+/// The results' column header menu.
+pub fn result_header_items(columns: &[ColumnState]) -> Vec<(u32, String)> {
+    let mut out: Vec<(u32, String)> = ColumnKey::RESULTS
+        .iter()
+        .enumerate()
+        .map(|(i, key)| {
+            let shown = columns.iter().any(|c| c.key == *key && c.visible);
+            (RESULT_COLUMN_FIRST + i as u32, format!("{} {}", if shown { "Hide" } else { "Show" }, key.title()))
+        })
+        .collect();
+    out.push((RESULT_COLUMNS_RESET, "Reset columns".to_owned()));
+    out
+}
+
 /// Header menu: 20-23 show/hide the columns in `ColumnKey::ALL` order.
 pub const TOGGLE_COLUMN_FIRST: u32 = 20;
 pub const RESET_COLUMNS: u32 = 24;
@@ -134,6 +261,10 @@ pub fn header_items(columns: &[ColumnState]) -> Vec<(u32, &'static str)> {
                 (ColumnKey::Type, false) => "Show Type",
                 (ColumnKey::Size, true) => "Hide Size",
                 (ColumnKey::Size, false) => "Show Size",
+                (ColumnKey::Folder, true) => "Hide Folder",
+                (ColumnKey::Folder, false) => "Show Folder",
+                (ColumnKey::Match, true) => "Hide Match",
+                (ColumnKey::Match, false) => "Show Match",
             };
             (id, title)
         })
@@ -296,6 +427,21 @@ pub struct Submenu {
     pub title: String,
     pub at: usize,
     pub items: Vec<(u32, String, bool)>,
+}
+
+/// What a search result's row menu adds.
+pub fn result_row_items() -> Vec<(u32, &'static str)> {
+    vec![
+        (SHOW_IN_FOLDER, "Show in folder"),
+        (SHOW_IN_FOLDER_NEW_TAB, "Show in folder in new tab"),
+        (COPY_WITH_FOLDERS, "Copy with folders"),
+        (CUT_WITH_FOLDERS, "Cut with folders"),
+    ]
+}
+
+/// Whether `paths` share one folder: Explorer's menu takes only that (`CDefFolderMenu`, spec 4.6).
+pub fn one_folder(paths: &[PathBuf]) -> bool {
+    paths.windows(2).all(|pair| pair[0].parent() == pair[1].parent())
 }
 
 /// Gezik's file items for rows on macOS and Linux; Windows has them in its own menu (and
@@ -601,6 +747,8 @@ enum Subject {
     Convert,
     /// The filter bar's ▾ menu, with the saved filters' names shown (items are by index).
     Filter(Vec<String>),
+    /// The search bar's menus (items by id; the scope menu's by place in `search::Searches`).
+    Search,
 }
 
 /// Lets one native menu be pending or open at a time, so two right-clicks in quick
@@ -727,28 +875,42 @@ impl Menus {
         if self.view.is_selected(i) && self.view.selection_count() > 1 {
             let rows = self.view.selected_items();
             let paths: Vec<PathBuf> = rows.iter().map(|(path, _)| path.clone()).collect();
+            let results = self.view.shows_results();
+            // Results from several folders get Gezik's own menu (spec 4.6).
+            let native = native && (!results || one_folder(&paths));
             let mut list = owned(items(Place::Rows, native));
             list.extend(owned(terminal_items(native)));
             let mut subs = vec![self.copy_path_sub(&paths, list.len())];
             self.add_links(&mut list, &mut subs, &rows, native);
             self.add_file_tools(&mut list, &mut subs, rows, native);
             list.extend(self.file_extras(false, false, native));
-            if !self.view.shows_drives() {
+            if results {
+                list.extend(owned(result_row_items()).into_iter().filter(|(id, _)| *id != SHOW_IN_FOLDER_NEW_TAB));
+            } else if !self.view.shows_drives() {
                 list.push((NEW_FOLDER_WITH_SELECTION, "New folder with selection".to_owned()));
             }
             if native && !self.view.shows_drives() {
                 list.push((BATCH_RENAME, format!("Rename {} items…", paths.len())));
             }
-            return self.open(Subject::Rows(paths.clone()), list, subs, MenuTarget::Items(paths), x, y, at);
+            return self.open_as(native, Subject::Rows(paths.clone()), list, subs, MenuTarget::Items(paths), x, y, at);
         }
         let Some((path, is_dir)) = self.view.entry_path(i) else { return };
         let place = Place::Row { is_dir, pinned: is_dir && self.sidebar.is_pinned(&path) };
         let mut list = owned(items(place, native));
+        if is_dir {
+            list.push((
+                SEARCH_HERE,
+                format!("Search in \"{}\"…", crate::operations::items_text(std::slice::from_ref(&path))),
+            ));
+        }
         list.extend(owned(terminal_items(native)));
         let mut subs = vec![self.copy_path_sub(std::slice::from_ref(&path), list.len())];
         self.add_links(&mut list, &mut subs, &[(path.clone(), is_dir)], native);
         self.add_file_tools(&mut list, &mut subs, vec![(path.clone(), is_dir)], native);
         list.extend(self.file_extras(true, is_dir, native));
+        if self.view.shows_results() {
+            list.extend(owned(result_row_items()));
+        }
         self.open(Subject::Row(path.clone()), list, subs, MenuTarget::Item(path), x, y, at);
     }
 
@@ -825,6 +987,21 @@ impl Menus {
     }
 
     fn background_menu(&self, at: Option<(f32, f32)>, x: f32, y: f32) {
+        // Search results have no folder: Undo, Redo and Refresh (spec 4.6).
+        if self.view.shows_results() {
+            let list: Vec<(u32, String, bool)> = background_items(
+                self.ops.undo_label().as_deref(),
+                self.ops.redo_label().as_deref(),
+                false,
+                None,
+                false,
+            )
+            .into_iter()
+            .map(|(id, title)| (id, title, true))
+            .collect();
+            *self.subject.borrow_mut() = Some(Subject::Background(PathBuf::new()));
+            return self.open_slint_entries(&list, Vec::new(), Anchor::point(x, y));
+        }
         let Location::Path(dir) = self.nav.active_location() else { return };
         self.ops.clipboard_check();
         // One clipboard query each, shared by the menu and its Paste item.
@@ -842,6 +1019,7 @@ impl Menus {
         let new_at = list.iter().position(|(id, _)| *id == REFRESH).unwrap_or(list.len());
         let mut subs = vec![new_sub(&templates, windows, new_at)];
         *self.menu_templates.borrow_mut() = templates;
+        list.push((SEARCH_HERE, "Search in this folder…".to_owned()));
         list.extend(owned(terminal_items(windows)));
         subs.push(self.copy_path_sub(std::slice::from_ref(&dir), list.len()));
         self.open(Subject::Background(dir.clone()), list, subs, MenuTarget::Background(dir), x, y, at);
@@ -875,6 +1053,7 @@ impl Menus {
             });
             *self.pin_groups.borrow_mut() = groups;
         }
+        list.push((SEARCH_HERE, "Search in this folder…".to_owned()));
         list.extend(owned(terminal_items(cfg!(windows))));
         subs.push(self.copy_path_sub(std::slice::from_ref(&path), list.len()));
         self.open(Subject::SidebarEntry(path.clone()), list, subs, MenuTarget::Item(path), x, y, None);
@@ -904,7 +1083,11 @@ impl Menus {
     /// Right-click on the column header, at window position `x`, `y`.
     pub fn header(&self, x: f32, y: f32) {
         *self.subject.borrow_mut() = Some(Subject::Header);
-        self.open_slint(&header_items(&self.view.columns()), Anchor::point(x, y));
+        if self.view.shows_results() {
+            self.open_slint(&result_header_items(&self.view.result_columns()), Anchor::point(x, y));
+        } else {
+            self.open_slint(&header_items(&self.view.columns()), Anchor::point(x, y));
+        }
     }
 
     /// The View button's menu, under it.
@@ -916,8 +1099,16 @@ impl Menus {
         let items =
             view_items(self.view.view_settings(), self.preview.is_pane_open(), stack_open, options, cfg!(windows));
         let place = items.iter().position(|(id, _)| *id == APPLY_TO_ALL).unwrap_or(items.len());
-        let entries: Vec<(u32, String, bool)> = items.into_iter().map(|(id, title)| (id, title, true)).collect();
-        self.open_slint_entries(&entries, format_subs(options, place), at);
+        let mut entries: Vec<(u32, String, bool)> = items.into_iter().map(|(id, title)| (id, title, true)).collect();
+        // Flat view (spec 5): marked in it, off in This PC.
+        let location = self.nav.active_location();
+        let flat = matches!(location, Location::Flat(_));
+        let at_flat = entries.iter().position(|(id, _, _)| *id == PREVIEW_PANE).unwrap_or(entries.len());
+        entries.insert(
+            at_flat,
+            (FLAT_VIEW, format!("{}Flat view", if flat { "• " } else { "    " }), location.folder().is_some()),
+        );
+        self.open_slint_entries(&entries, format_subs(options, place + 1), at);
     }
 
     /// `subs`: submenus among `items`. `at`: where the Windows menu opens (window position),
@@ -933,7 +1124,23 @@ impl Menus {
         y: f32,
         at: Option<(f32, f32)>,
     ) {
-        if cfg!(windows) {
+        self.open_as(cfg!(windows), subject, items, subs, target, x, y, at);
+    }
+
+    /// Like `open`; `native`: the Explorer menu (Windows), else Gezik's own.
+    #[allow(clippy::too_many_arguments, reason = "what the menu is for, what it shows, and where")]
+    fn open_as(
+        &self,
+        native: bool,
+        subject: Subject,
+        items: Vec<(u32, String)>,
+        subs: Vec<Submenu>,
+        target: MenuTarget,
+        x: f32,
+        y: f32,
+        at: Option<(f32, f32)>,
+    ) {
+        if native {
             self.open_native(Some(subject), target, items, subs, at);
         } else {
             *self.subject.borrow_mut() = Some(subject);
@@ -986,8 +1193,11 @@ impl Menus {
                 }
                 Ok(gezik_platform::MenuOutcome::SystemCommandRan) => {
                     // The command may have created, renamed or deleted anything, pinned
-                    // folders included.
-                    menus.nav.reload();
+                    // folders included. Results are not read again for it: that would run the
+                    // whole search and read its name cache anew (F5 does, spec 4.7).
+                    if !menus.nav.active_location().is_results() {
+                        menus.nav.reload();
+                    }
                     menus.sidebar.refresh();
                 }
                 Ok(gezik_platform::MenuOutcome::Verb(verb)) => menus.run_verb(verb, subject),
@@ -1147,8 +1357,28 @@ impl Menus {
         self.open_slint_entries(&items, Vec::new(), at);
     }
 
+    /// One of the search bar's menus, under its button.
+    pub fn search_menu(&self, which: crate::search::SearchMenu, at: Anchor) {
+        let mut built = (Vec::new(), Vec::new());
+        crate::search::with_current(|s| built = s.menu(which));
+        *self.subject.borrow_mut() = Some(Subject::Search);
+        self.open_slint_entries(&built.0, built.1, at);
+    }
+
     fn run(&self, id: u32, subject: Subject) {
         match (id, subject) {
+            (id, Subject::Search) => crate::search::with_current(|s| s.menu_chosen(id)),
+            (SEARCH_HERE, Subject::Background(dir) | Subject::SidebarEntry(dir) | Subject::Row(dir)) => {
+                crate::search::with_current(|s| s.open_in(dir));
+            }
+            (SHOW_IN_FOLDER | SHOW_IN_FOLDER_NEW_TAB, Subject::Row(path)) => {
+                self.ops.show_path_in_folder(&path, id == SHOW_IN_FOLDER_NEW_TAB);
+            }
+            (SHOW_IN_FOLDER, Subject::Rows(_)) => self.ops.show_in_folder(false),
+            (COPY_WITH_FOLDERS | CUT_WITH_FOLDERS, Subject::Row(_) | Subject::Rows(_)) => {
+                self.ops.copy_with_folders(id == CUT_WITH_FOLDERS);
+            }
+            (FLAT_VIEW, Subject::View) => crate::search::with_current(crate::search::Searches::flat_view),
             // By name: settings.toml may have been reloaded since the menu opened.
             (id, Subject::Filter(names)) if (FILTER_FIRST..FILTER_FIRST + FILTER_MAX).contains(&id) => {
                 if let Some(name) = names.get((id - FILTER_FIRST) as usize) {
@@ -1293,6 +1523,10 @@ impl Menus {
                 }
             }
             (RESET_COLUMNS, Subject::Header) => self.view.reset_columns(),
+            (id, Subject::Header) if (RESULT_COLUMN_FIRST..RESULT_COLUMN_FIRST + 6).contains(&id) => {
+                self.view.toggle_column(ColumnKey::RESULTS[(id - RESULT_COLUMN_FIRST) as usize]);
+            }
+            (RESULT_COLUMNS_RESET, Subject::Header) => self.view.reset_columns(),
             (VIEW_LIST, Subject::View) => self.view.set_mode(ViewMode::List),
             (VIEW_GRID, Subject::View) => self.view.set_mode(ViewMode::Grid),
             (GRID_SMALL, Subject::View) => self.view.set_grid_size(GridSize::Small),
@@ -1509,6 +1743,8 @@ fn from_submenu(id: u32) -> bool {
         || id == GROUP_NEW
         || id == GROUP_NONE
         || (TEMPLATE_FIRST..TEMPLATE_FIRST + TEMPLATE_MAX).contains(&id)
+        || (MODIFIED_FIRST..=MODIFIED_BETWEEN).contains(&id)
+        || (KIND_FIRST..KIND_FIRST + gezik_core::search::KindFilter::ALL.len() as u32).contains(&id)
         || matches!(
             id,
             NEW_FOLDER | NEW_FILE | NEW_MARKDOWN | OPEN_TEMPLATES | LINK_SHORTCUT | LINK_JUNCTION | LINK_SYMLINK
@@ -1530,6 +1766,25 @@ pub fn menu_title(title: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn results_rows_offer_their_folder_and_copies_that_keep_folders() {
+        let ids: Vec<u32> = result_row_items().iter().map(|(id, _)| *id).collect();
+        assert_eq!(ids, [SHOW_IN_FOLDER, SHOW_IN_FOLDER_NEW_TAB, COPY_WITH_FOLDERS, CUT_WITH_FOLDERS]);
+        assert!(ids.iter().all(|id| (1500..1600).contains(id)));
+        assert!(one_folder(&[PathBuf::from("/w/a/x"), PathBuf::from("/w/a/y")]));
+        assert!(!one_folder(&[PathBuf::from("/w/a/x"), PathBuf::from("/w/b/y")]), "the Explorer menu takes one folder");
+    }
+
+    #[test]
+    fn the_results_header_menu_has_its_own_ids() {
+        let items = result_header_items(&gezik_core::view::default_result_columns());
+        let ids: Vec<u32> = items.iter().map(|(id, _)| *id).collect();
+        assert_eq!(ids, [1550, 1551, 1552, 1553, 1554, 1555, RESULT_COLUMNS_RESET]);
+        assert_eq!(items[0].1, "Hide Folder");
+        assert_eq!(items[3].1, "Show Created");
+        assert!(ids.iter().all(|id| (1500..1600).contains(id)), "8a's range");
+    }
 
     #[test]
     fn gezik_menus_list_the_submenus_among_the_items() {
@@ -2157,5 +2412,40 @@ mod tests {
         assert!(
             from_submenu(DATE_FORMAT_FIRST + 3) && from_submenu(SIZE_FORMAT_FIRST) && !from_submenu(HIDE_EXTENSIONS)
         );
+    }
+
+    #[test]
+    fn the_search_menus_mark_what_is_chosen_and_stay_in_their_range() {
+        use gezik_core::search::{DateRange, KindFilter, Scope, SearchSpec};
+        let mut spec = SearchSpec::new(Scope::Folder("/w".into()));
+        spec.modified = DateRange::LastDays(7);
+        spec.kind = KindFilter::Videos;
+        spec.match_case = true;
+        spec.size.min = Some(500 * 1024 * 1024);
+        let (items, subs) = search_filter_items(&spec);
+        assert!(items.iter().any(|(id, title, _)| *id == SIZE_MIN && title == "Size at least… (500 MB)"));
+        assert!(items.iter().any(|(id, title, _)| *id == OPTION_FIRST + 2 && title.starts_with("• Match case")));
+        assert!(items.iter().any(|(id, _, on)| *id == FILTERS_CLEAR && *on));
+        let modified = subs.iter().find(|s| s.title == "Modified").unwrap();
+        assert!(
+            modified.items.iter().any(|(id, title, _)| *id == MODIFIED_FIRST + 2 && title.starts_with("• Last 7 days"))
+        );
+        let kinds = subs.iter().find(|s| s.title == "Type").unwrap();
+        assert_eq!(kinds.items.len(), 9);
+        assert!(kinds.items[4].1.starts_with("• Videos"));
+        let ids: Vec<u32> = items
+            .iter()
+            .map(|i| i.0)
+            .chain(subs.iter().flat_map(|s| s.items.iter().map(|i| i.0)))
+            .chain(search_more_items(3).iter().map(|i| i.0))
+            .collect();
+        assert!(ids.iter().all(|id| (1500..1600).contains(id)), "{ids:?}");
+        assert!(search_more_items(0).iter().all(|(id, _, _)| *id != SEARCH_PROBLEMS));
+        assert_eq!(modified_for(MODIFIED_FIRST + 3), Some(DateRange::LastDays(30)));
+        assert_eq!(modified_for(MODIFIED_BETWEEN), None, "asked for in a box");
+        let choices =
+            vec![(Scope::Folder("/w".into()), "This folder (w)".to_owned()), (Scope::AllDrives, "This PC".to_owned())];
+        let scope = search_scope_items(&choices, &Scope::AllDrives);
+        assert_eq!(scope[1], (SCOPE_FIRST + 1, "• This PC".to_owned(), true));
     }
 }

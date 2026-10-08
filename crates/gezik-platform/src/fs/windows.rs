@@ -7,17 +7,20 @@ use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use windows::Win32::Foundation::{CloseHandle, HANDLE};
+use windows::Win32::Foundation::{CloseHandle, FILETIME, HANDLE};
 use windows::Win32::Storage::FileSystem::{
     COPY_FILE_COPY_SYMLINK, COPY_FILE_FAIL_IF_EXISTS, COPY_FILE_NO_BUFFERING, COPYPROGRESSROUTINE_PROGRESS,
     CopyFileExW, CreateFileW, DELETE, DeleteFileW, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN,
-    FILE_ATTRIBUTE_READONLY, FILE_DISPOSITION_FLAG_DELETE, FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE,
-    FILE_DISPOSITION_FLAG_POSIX_SEMANTICS, FILE_DISPOSITION_INFO_EX, FILE_DISPOSITION_INFO_EX_FLAGS,
-    FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_DELETE,
-    FILE_SHARE_READ, FILE_SHARE_WRITE, FileDispositionInfoEx, GetDiskFreeSpaceExW, GetDriveTypeW, GetFileAttributesW,
-    GetVolumeInformationW, GetVolumePathNameW, INVALID_FILE_ATTRIBUTES, LPPROGRESS_ROUTINE_CALLBACK_REASON,
-    MOVE_FILE_FLAGS, MoveFileExW, OPEN_EXISTING, PROGRESS_CANCEL, PROGRESS_CONTINUE, RemoveDirectoryW,
-    SetFileAttributesW, SetFileInformationByHandle,
+    FILE_ATTRIBUTE_OFFLINE, FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS,
+    FILE_ATTRIBUTE_RECALL_ON_OPEN, FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_SYSTEM, FILE_DISPOSITION_FLAG_DELETE,
+    FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE, FILE_DISPOSITION_FLAG_POSIX_SEMANTICS, FILE_DISPOSITION_INFO_EX,
+    FILE_DISPOSITION_INFO_EX_FLAGS, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+    FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FIND_FIRST_EX_LARGE_FETCH,
+    FileDispositionInfoEx, FindClose, FindExInfoBasic, FindExSearchNameMatch, FindFirstFileExW, FindNextFileW,
+    GetDiskFreeSpaceExW, GetDriveTypeW, GetFileAttributesW, GetVolumeInformationW, GetVolumePathNameW,
+    INVALID_FILE_ATTRIBUTES, LPPROGRESS_ROUTINE_CALLBACK_REASON, MOVE_FILE_FLAGS, MoveFileExW, OPEN_EXISTING,
+    PROGRESS_CANCEL, PROGRESS_CONTINUE, RemoveDirectoryW, SetFileAttributesW, SetFileInformationByHandle,
+    WIN32_FIND_DATAW,
 };
 use windows::Win32::System::IO::DeviceIoControl;
 use windows::Win32::System::Ioctl::{
@@ -172,6 +175,52 @@ fn normalize_absolute(wide: &[u16]) -> Option<Vec<u16>> {
         out.push(sep);
     }
     Some(out)
+}
+
+/// The entry's volume serial and file id (the last part not followed, the folders on the way
+/// are), for `same_entry`: the 128-bit id (FileIdInfo, unique on ReFS too), else the 64-bit
+/// index where the file system knows no FileIdInfo (FAT). A serial or id of 0 is no id.
+pub(super) fn entry_id(path: &Path) -> io::Result<(u64, u128)> {
+    use windows::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, FILE_ID_INFO, FILE_READ_ATTRIBUTES, FileIdInfo, GetFileInformationByHandle,
+        GetFileInformationByHandleEx,
+    };
+    let handle = unsafe {
+        CreateFileW(
+            &verbatim(path),
+            FILE_READ_ATTRIBUTES.0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            None,
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+            None,
+        )
+    }
+    .map_err(io_error)?;
+    let read = || -> io::Result<(u64, u128)> {
+        let mut ex = FILE_ID_INFO::default();
+        let by_ex = unsafe {
+            GetFileInformationByHandleEx(
+                handle,
+                FileIdInfo,
+                &mut ex as *mut FILE_ID_INFO as *mut c_void,
+                size_of::<FILE_ID_INFO>() as u32,
+            )
+        };
+        if by_ex.is_ok() {
+            return Ok((ex.VolumeSerialNumber, u128::from_le_bytes(ex.FileId.Identifier)));
+        }
+        let mut info = BY_HANDLE_FILE_INFORMATION::default();
+        unsafe { GetFileInformationByHandle(handle, &mut info) }.map_err(io_error)?;
+        let index = (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow);
+        Ok((u64::from(info.dwVolumeSerialNumber), u128::from(index)))
+    };
+    let id = read();
+    let _ = unsafe { CloseHandle(handle) };
+    match id? {
+        (0, _) | (_, 0) => Err(io::Error::new(io::ErrorKind::Unsupported, "no file id")),
+        id => Ok(id),
+    }
 }
 
 pub(crate) fn verbatim(path: &Path) -> HSTRING {
@@ -604,6 +653,124 @@ pub fn mapped_remote(letter: char) -> Option<String> {
     (end > 0).then(|| String::from_utf16_lossy(&buffer[..end]))
 }
 
+/// A folder's items in one pass (`FindFirstFileExW` with the basic info and large fetches): name,
+/// attributes, size and times come with each, no call per item (spec 3.4). `wants_meta` is not
+/// needed here.
+pub fn read_dir_items(dir: &Path, _wants_meta: &dyn Fn(&str, bool) -> bool) -> io::Result<Vec<super::DirItem>> {
+    const ERROR_FILE_NOT_FOUND: u32 = 2;
+    let pattern = verbatim(&dir.join("*"));
+    let mut data = WIN32_FIND_DATAW::default();
+    // SAFETY: `data` is a WIN32_FIND_DATAW, as FindExInfoBasic fills.
+    let found = unsafe {
+        FindFirstFileExW(
+            &pattern,
+            FindExInfoBasic,
+            (&mut data as *mut WIN32_FIND_DATAW).cast::<c_void>(),
+            FindExSearchNameMatch,
+            None,
+            FIND_FIRST_EX_LARGE_FETCH,
+        )
+    };
+    let handle = match found {
+        Ok(handle) => handle,
+        // A root with nothing in it (a fresh drive) has no `.` either.
+        Err(err) if err.code() == windows::core::HRESULT::from_win32(ERROR_FILE_NOT_FOUND) => return Ok(Vec::new()),
+        Err(err) => return Err(io_error(err)),
+    };
+    let mut items = Vec::new();
+    loop {
+        let end = data.cFileName.iter().position(|&c| c == 0).unwrap_or(data.cFileName.len());
+        let name = String::from_utf16_lossy(&data.cFileName[..end]);
+        if name != "." && name != ".." {
+            let attributes = data.dwFileAttributes;
+            let is_dir = attributes & FILE_ATTRIBUTE_DIRECTORY.0 != 0;
+            let mut flags = 0;
+            if attributes & FILE_ATTRIBUTE_HIDDEN.0 != 0 {
+                flags |= gezik_core::Entry::HIDDEN;
+            }
+            if attributes & FILE_ATTRIBUTE_SYSTEM.0 != 0 {
+                flags |= gezik_core::Entry::SYSTEM;
+            }
+            let size = (u64::from(data.nFileSizeHigh) << 32) | u64::from(data.nFileSizeLow);
+            let is_link = is_link_tag(attributes, data.dwReserved0);
+            items.push(super::DirItem {
+                name,
+                is_dir,
+                is_link,
+                is_file: !is_dir && !is_link,
+                offline: is_offline(attributes),
+                flags,
+                size: if is_dir { 0 } else { size },
+                modified: file_time(data.ftLastWriteTime),
+                created: file_time(data.ftCreationTime),
+                device: 0,
+                has_meta: true,
+            });
+        }
+        // SAFETY: `handle` is open; FindNextFileW fills `data` the same way.
+        if let Err(err) = unsafe { FindNextFileW(handle, &mut data) } {
+            // SAFETY: opened above, closed once.
+            unsafe {
+                let _ = FindClose(handle);
+            }
+            const ERROR_NO_MORE_FILES: u32 = 18;
+            if err.code() == windows::core::HRESULT::from_win32(ERROR_NO_MORE_FILES) {
+                return Ok(items);
+            }
+            // A folder read only in part (a share that went away) counts as unread.
+            return Err(io_error(err));
+        }
+    }
+}
+
+/// The name-surrogate bit of a reparse tag: the item stands for another place (a symbolic
+/// link, a junction, a mounted volume). Cloud placeholders, deduplicated files and container
+/// layers have tags without it and are real items.
+const TAG_NAME_SURROGATE: u32 = 0x2000_0000;
+
+/// Whether an item with these attributes and reparse tag (`dwReserved0` of the find data) is a
+/// link the walk never goes into or reads.
+pub(crate) fn is_link_tag(attributes: u32, tag: u32) -> bool {
+    attributes & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0 && tag & TAG_NAME_SURROGATE != 0
+}
+
+/// Whether reading the file would fetch its data from elsewhere first (OneDrive and other
+/// cloud placeholders, offline files).
+pub(crate) fn is_offline(attributes: u32) -> bool {
+    attributes & (FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS.0 | FILE_ATTRIBUTE_RECALL_ON_OPEN.0 | FILE_ATTRIBUTE_OFFLINE.0)
+        != 0
+}
+
+/// Opens `path` to read its text only if it is a regular file whose data is on this disk: not a
+/// link and not a cloud placeholder (whose read would download it), checked before opening.
+/// `Ok(None)` for the rest; the size comes with it.
+pub fn open_regular(path: &Path) -> io::Result<Option<(std::fs::File, u64)>> {
+    use std::os::windows::fs::MetadataExt;
+    let meta = std::fs::symlink_metadata(path)?;
+    if !meta.is_file() || is_offline(meta.file_attributes()) {
+        return Ok(None);
+    }
+    let file = std::fs::File::open(path)?;
+    Ok(Some((file, meta.len())))
+}
+
+/// A FILETIME (100 ns since 1601) as a time; `None` for zero.
+pub(crate) fn file_time(time: FILETIME) -> Option<std::time::SystemTime> {
+    let ticks = (u64::from(time.dwHighDateTime) << 32) | u64::from(time.dwLowDateTime);
+    // 1601-01-01 to 1970-01-01 in 100 ns ticks.
+    const UNIX_EPOCH_TICKS: u64 = 116_444_736_000_000_000;
+    if ticks == 0 {
+        return None;
+    }
+    let since = std::time::Duration::from_nanos((ticks.abs_diff(UNIX_EPOCH_TICKS)).saturating_mul(100));
+    Some(if ticks >= UNIX_EPOCH_TICKS { std::time::UNIX_EPOCH + since } else { std::time::UNIX_EPOCH - since })
+}
+
+/// Windows needs no device rule (a mounted volume is a reparse point, never gone into).
+pub fn device_of(_path: &Path) -> io::Result<u64> {
+    Ok(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -719,5 +886,24 @@ mod tests {
         let facts = drive_facts(&std::env::temp_dir()).unwrap();
         assert!(facts.trash, "{facts:?}");
         assert_eq!(facts.id.len(), 8);
+    }
+
+    #[test]
+    fn only_name_surrogate_reparse_points_are_links() {
+        const REPARSE: u32 = 0x400;
+        assert!(is_link_tag(REPARSE, 0xA000_0003), "a junction or mounted volume");
+        assert!(is_link_tag(REPARSE | 0x10, 0xA000_000C), "a symbolic link");
+        assert!(!is_link_tag(REPARSE | 0x10, 0x9000_601A), "a OneDrive folder is gone into");
+        assert!(!is_link_tag(REPARSE, 0x8000_0013), "a deduplicated file");
+        assert!(!is_link_tag(REPARSE, 0x8000_0018), "a container (WCI) layer");
+        assert!(!is_link_tag(0x10, 0xA000_0003), "no reparse point: the tag field means nothing");
+    }
+
+    #[test]
+    fn cloud_placeholders_are_offline() {
+        assert!(is_offline(0x0040_0000), "recall on data access (OneDrive online-only)");
+        assert!(is_offline(0x0004_0000), "recall on open");
+        assert!(is_offline(0x1000), "offline");
+        assert!(!is_offline(0x20 | 0x400), "an archive bit and a reparse point alone");
     }
 }

@@ -7,6 +7,7 @@ use gezik_core::batch::convert::{CommandSpec, check_command};
 use gezik_core::history::Visit;
 use gezik_core::nav::{Location, Session, SessionTab};
 use gezik_core::ops::threads::{COPY_THREADS_RANGE, CopyThreads};
+use gezik_core::search::{DateRange, HiddenRule, KindFilter, Scope, SearchSpec, parse_size, size_text};
 use gezik_core::view::{
     ColumnKey, ColumnState, DateFormat, GridSize, IconMode, SizeFormat, SortDir, SortKey, ViewMode, ViewOptions,
     ViewSettings, normalize_columns,
@@ -239,6 +240,7 @@ pub struct Settings {
     pub history: HistorySettings,
     pub session: SessionSettings,
     pub terminal: TerminalSettings,
+    pub search: SearchSettings,
     /// Tab sets (`[[tab-sets]]`); invalid ones are left out.
     pub tab_sets: Vec<TabSet>,
     /// Saved filters; invalid ones are left out.
@@ -273,6 +275,7 @@ impl Default for Settings {
             history: HistorySettings::default(),
             session: SessionSettings::default(),
             terminal: TerminalSettings::default(),
+            search: SearchSettings::default(),
             tab_sets: Vec::new(),
             filters: Vec::new(),
             archives: ArchivesSettings::default(),
@@ -453,6 +456,13 @@ impl Settings {
                 None => warnings.push(Warning::new(file, format!("history: expected a table, got {value}"))),
             },
         }
+        match table.get("search") {
+            None => {}
+            Some(value) => match value.as_table() {
+                Some(search) => settings.search = parse_search(search, file, warnings),
+                None => warnings.push(Warning::new(file, format!("search: expected a table, got {value}"))),
+            },
+        }
         match table.get("session") {
             None => {}
             Some(value) => match value.as_table() {
@@ -561,7 +571,9 @@ fn parse_view(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> V
         out.view.mode = mode;
     }
     let keys = "\"name\", \"modified\", \"created\", \"type\" or \"size\"";
-    if let Some(key) = view_choice(table, "sort", keys, SortKey::parse, file, warnings) {
+    // `folder` is the search results' own sort (views.toml keeps it under `<results>`).
+    let folder_key = |text: &str| SortKey::parse(text).filter(|key| *key != SortKey::Folder);
+    if let Some(key) = view_choice(table, "sort", keys, folder_key, file, warnings) {
         out.view.sort.key = key;
     }
     if let Some(dir) = view_choice(table, "sort-dir", "\"asc\" or \"desc\"", SortDir::parse, file, warnings) {
@@ -612,6 +624,198 @@ fn view_bool(table: &toml::Table, key: &str, file: &str, warnings: &mut Vec<Warn
         warnings.push(Warning::new(file, format!("view.{key}: expected true or false, got {value}")));
     }
     on
+}
+
+/// `[search]` (spec 9.1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SearchSettings {
+    /// Windows: ask Everything for names when it runs (`"auto"`); `false` (`"off"`): never.
+    pub everything: bool,
+    /// Folder names a search does not go into.
+    pub skip: Vec<String>,
+    pub max_results: usize,
+    /// Larger files are not read for text.
+    pub content_max_size: u64,
+}
+
+impl Default for SearchSettings {
+    fn default() -> Self {
+        SearchSettings {
+            everything: true,
+            skip: vec![".git".to_owned(), "node_modules".to_owned()],
+            max_results: 250_000,
+            content_max_size: 64 * 1024 * 1024,
+        }
+    }
+}
+
+/// Allowed `max-results` numbers.
+pub const MAX_RESULTS_RANGE: std::ops::RangeInclusive<usize> = 1_000..=2_000_000;
+
+fn parse_search(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> SearchSettings {
+    let mut out = SearchSettings::default();
+    let mut warn = |text: String| warnings.push(Warning::new(file, text));
+    if let Some(value) = table.get("everything") {
+        match value.as_str() {
+            Some("auto") => out.everything = true,
+            Some("off") => out.everything = false,
+            _ => warn(format!("search.everything: expected \"auto\" or \"off\", got {value}")),
+        }
+    }
+    if let Some(value) = table.get("skip") {
+        let names: Option<Vec<String>> =
+            value.as_array().and_then(|items| items.iter().map(|i| i.as_str().map(|s| s.trim().to_owned())).collect());
+        match names {
+            Some(names) if names.iter().all(|n| !n.is_empty() && !n.contains(['/', '\\'])) => out.skip = names,
+            _ => warn(format!("search.skip: expected a list of folder names, got {value}")),
+        }
+    }
+    if let Some(value) = table.get("max-results") {
+        match value.as_integer().and_then(|n| usize::try_from(n).ok()).filter(|n| MAX_RESULTS_RANGE.contains(n)) {
+            Some(n) => out.max_results = n,
+            None => warn(format!("search.max-results: expected a number from 1000 to 2000000, got {value}")),
+        }
+    }
+    if let Some(value) = table.get("content-max-size") {
+        match value.as_str().map(parse_size) {
+            Some(Ok(bytes)) => out.content_max_size = bytes,
+            Some(Err(err)) => warn(format!("search.content-max-size: {err}")),
+            None => warn(format!("search.content-max-size: expected a size like \"500 MB\", got {value}")),
+        }
+    }
+    out
+}
+
+/// A search as a table: a search tab in state.toml (spec 9.2) and, in 8b, `[[searches]]`. Only
+/// what differs from a new search is written. A flat view is `Location::Flat`, never a spec
+/// here: `flat` is not written (a flat spec would read back as a plain search).
+pub fn search_to_toml(spec: &SearchSpec) -> toml::Table {
+    debug_assert!(!spec.flat, "a flat view is saved as Location::Flat");
+    let mut table = toml::Table::new();
+    let text = |s: &str| toml::Value::String(s.to_owned());
+    let folder = match &spec.scope {
+        Scope::Folder(path) => text(&path.to_string_lossy()),
+        Scope::AllDrives => text("drives"),
+    };
+    table.insert("folder".into(), folder);
+    if !spec.pattern.is_empty() {
+        table.insert("pattern".into(), text(&spec.pattern));
+    }
+    if !spec.content.is_empty() {
+        table.insert("content".into(), text(&spec.content));
+    }
+    for (key, on) in [
+        ("name-regex", spec.name_regex),
+        ("content-regex", spec.content_regex),
+        ("match-case", spec.match_case),
+        ("hidden", spec.hidden == HiddenRule::Include),
+        ("skipped", spec.skipped),
+    ] {
+        if on {
+            table.insert(key.into(), toml::Value::Boolean(true));
+        }
+    }
+    if let Some(min) = spec.size.min {
+        table.insert("size-min".into(), text(&size_text(min)));
+    }
+    if let Some(max) = spec.size.max {
+        table.insert("size-max".into(), text(&size_text(max)));
+    }
+    if spec.modified != DateRange::Any {
+        table.insert("modified".into(), text(&spec.modified.text()));
+    }
+    if spec.kind != KindFilter::Any {
+        table.insert("type".into(), text(spec.kind.as_str()));
+    }
+    table
+}
+
+/// A search from its table; the first bad key says why. `folder` is a full path or "drives";
+/// other keys (a saved search's `name`) are the caller's.
+pub fn search_from_toml(table: &toml::Table) -> Result<SearchSpec, String> {
+    let text = |key: &str| -> Result<Option<&str>, String> {
+        match table.get(key) {
+            None => Ok(None),
+            Some(value) => value.as_str().map(Some).ok_or_else(|| format!("{key}: expected text, got {value}")),
+        }
+    };
+    let flag = |key: &str| -> Result<bool, String> {
+        match table.get(key) {
+            None => Ok(false),
+            Some(value) => value.as_bool().ok_or_else(|| format!("{key}: expected true or false, got {value}")),
+        }
+    };
+    let scope = match text("folder")? {
+        None => return Err("folder is missing".to_owned()),
+        Some("drives") => Scope::AllDrives,
+        Some(path) => {
+            let path = PathBuf::from(path);
+            if !path.is_absolute() {
+                return Err(format!("folder: \"{}\" is not a full path", path.display()));
+            }
+            Scope::Folder(path)
+        }
+    };
+    let mut spec = SearchSpec::new(scope);
+    spec.pattern = text("pattern")?.unwrap_or_default().to_owned();
+    spec.content = text("content")?.unwrap_or_default().to_owned();
+    spec.name_regex = flag("name-regex")?;
+    spec.content_regex = flag("content-regex")?;
+    spec.match_case = flag("match-case")?;
+    spec.hidden = if flag("hidden")? { HiddenRule::Include } else { HiddenRule::FollowView };
+    spec.skipped = flag("skipped")?;
+    if let Some(size) = text("size-min")? {
+        spec.size.min = Some(parse_size(size).map_err(|err| format!("size-min: {err}"))?);
+    }
+    if let Some(size) = text("size-max")? {
+        spec.size.max = Some(parse_size(size).map_err(|err| format!("size-max: {err}"))?);
+    }
+    if let Some(modified) = text("modified")? {
+        spec.modified = DateRange::parse(modified).map_err(|err| format!("modified: {err}"))?;
+    }
+    if let Some(kind) = text("type")? {
+        spec.kind = KindFilter::parse(kind).ok_or_else(|| {
+            format!(
+                "type: expected files, folders, pictures, videos, audio, documents, archives or code, got \"{kind}\""
+            )
+        })?;
+    }
+    Ok(spec)
+}
+
+/// `[[columns]]`-shaped items, made complete by `normalize`.
+fn columns_of(
+    value: Option<&toml::Value>,
+    normalize: fn(&[ColumnState]) -> Vec<ColumnState>,
+) -> Option<Vec<ColumnState>> {
+    let items = value?.as_array()?;
+    let saved: Vec<ColumnState> = items
+        .iter()
+        .filter_map(|item| {
+            let item = item.as_table()?;
+            Some(ColumnState {
+                key: ColumnKey::parse(item.get("key")?.as_str()?)?,
+                visible: item.get("visible").and_then(|v| v.as_bool()).unwrap_or(true),
+                width: u32::try_from(item.get("width")?.as_integer()?).ok()?,
+            })
+        })
+        .collect();
+    Some(normalize(&saved))
+}
+
+fn columns_toml(columns: &[ColumnState]) -> toml::Value {
+    toml::Value::Array(
+        columns
+            .iter()
+            .map(|c| {
+                let mut column = toml::Table::new();
+                column.insert("key".into(), toml::Value::String(c.key.as_str().into()));
+                column.insert("visible".into(), toml::Value::Boolean(c.visible));
+                column.insert("width".into(), toml::Value::Integer(c.width.into()));
+                toml::Value::Table(column)
+            })
+            .collect(),
+    )
 }
 
 /// One `[view]` option as the View menu (or toggle-hidden) sets it, written into settings.toml
@@ -1035,6 +1239,8 @@ pub struct State {
     pub sidebar_width: Option<u32>,
     /// The list's columns; `None` until first saved (the defaults are used then).
     pub columns: Option<Vec<ColumnState>>,
+    /// The search results' columns (apart from the folders'); `None` until first saved.
+    pub result_columns: Option<Vec<ColumnState>>,
     pub preview_open: bool,
     /// Preview pane width in logical pixels (200–600).
     pub preview_width: Option<u32>,
@@ -1063,6 +1269,17 @@ fn session_state(value: Option<&toml::Value>) -> Session {
         let Some(tab) = item.as_table() else { continue };
         let location = if tab.get("drives").and_then(|v| v.as_bool()) == Some(true) {
             Location::Drives
+        } else if let Some(search) = tab.get("search").and_then(|v| v.as_table()) {
+            // One written wrong is left out; an older Gezik leaves these tabs out (spec 9.2).
+            match search_from_toml(search) {
+                Ok(spec) => Location::Search(Box::new(spec)),
+                Err(_) => continue,
+            }
+        } else if let Some(flat) = tab.get("flat").and_then(|v| v.as_str()).map(PathBuf::from) {
+            if !flat.is_absolute() {
+                continue;
+            }
+            Location::Flat(flat)
         } else {
             match tab.get("path").and_then(|v| v.as_str()).map(PathBuf::from) {
                 Some(path) if path.is_absolute() => Location::Path(path),
@@ -1100,20 +1317,8 @@ impl State {
             .and_then(|v| v.as_integer())
             .and_then(|w| u32::try_from(w).ok())
             .filter(|w| (120..=480).contains(w));
-        let columns = table.get("columns").and_then(|v| v.as_array()).map(|items| {
-            let saved: Vec<ColumnState> = items
-                .iter()
-                .filter_map(|item| {
-                    let item = item.as_table()?;
-                    Some(ColumnState {
-                        key: ColumnKey::parse(item.get("key")?.as_str()?)?,
-                        visible: item.get("visible").and_then(|v| v.as_bool()).unwrap_or(true),
-                        width: u32::try_from(item.get("width")?.as_integer()?).ok()?,
-                    })
-                })
-                .collect();
-            normalize_columns(&saved)
-        });
+        let columns = columns_of(table.get("columns"), normalize_columns);
+        let result_columns = columns_of(table.get("result-columns"), gezik_core::view::normalize_result_columns);
         let preview = table.get("preview").and_then(|v| v.as_table());
         let preview_open = preview.and_then(|p| p.get("open")).and_then(|v| v.as_bool()).unwrap_or(false);
         let preview_width = preview
@@ -1174,6 +1379,7 @@ impl State {
             window,
             sidebar_width,
             columns,
+            result_columns,
             preview_open,
             preview_width,
             operations_collapsed,
@@ -1204,17 +1410,10 @@ impl State {
             root.insert("sidebar".into(), toml::Value::Table(sidebar));
         }
         if let Some(columns) = &self.columns {
-            let items = columns
-                .iter()
-                .map(|c| {
-                    let mut column = toml::Table::new();
-                    column.insert("key".into(), toml::Value::String(c.key.as_str().into()));
-                    column.insert("visible".into(), toml::Value::Boolean(c.visible));
-                    column.insert("width".into(), toml::Value::Integer(c.width.into()));
-                    toml::Value::Table(column)
-                })
-                .collect();
-            root.insert("columns".into(), toml::Value::Array(items));
+            root.insert("columns".into(), columns_toml(columns));
+        }
+        if let Some(columns) = &self.result_columns {
+            root.insert("result-columns".into(), columns_toml(columns));
         }
         if self.preview_open || self.preview_width.is_some() {
             let mut preview = toml::Table::new();
@@ -1307,6 +1506,12 @@ impl State {
                         Location::Drives => {
                             table.insert("drives".into(), toml::Value::Boolean(true));
                         }
+                        Location::Search(spec) => {
+                            table.insert("search".into(), toml::Value::Table(search_to_toml(spec)));
+                        }
+                        Location::Flat(path) => {
+                            table.insert("flat".into(), toml::Value::String(path.to_string_lossy().into_owned()));
+                        }
                     }
                     if tab.locked {
                         table.insert("locked".into(), toml::Value::Boolean(true));
@@ -1332,6 +1537,14 @@ mod tests {
         let mut warnings = Vec::new();
         let settings = Settings::parse("settings.toml", text, &mut warnings);
         (settings, warnings)
+    }
+
+    #[test]
+    fn a_folder_cannot_be_sorted_by_folder() {
+        let (settings, warnings) = parse("[view]\nsort = \"folder\"\n");
+        assert_eq!(settings.view.view.sort.key, SortKey::Name);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].to_string().contains("view.sort"), "{}", warnings[0]);
     }
 
     #[test]
@@ -2423,5 +2636,100 @@ shortcut = \"shift+f8\"
         assert!(state.preview_open);
         assert_eq!(state.history.len(), 1);
         assert!(state.session.is_empty());
+    }
+
+    #[test]
+    fn search_settings_read_with_their_defaults_and_warnings() {
+        let (settings, warnings) = parse(
+            "[search]\neverything = \"off\"\nskip = [\".git\", \"target\"]\nmax-results = 5000\ncontent-max-size = \"10 MB\"\n",
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            settings.search,
+            SearchSettings {
+                everything: false,
+                skip: vec![".git".into(), "target".into()],
+                max_results: 5000,
+                content_max_size: 10 * 1024 * 1024
+            }
+        );
+        let (bad, warnings) =
+            parse("[search]\neverything = \"yes\"\nskip = [\"a/b\"]\nmax-results = 10\ncontent-max-size = \"lots\"\n");
+        assert_eq!(bad.search, SearchSettings::default());
+        let texts: Vec<String> = warnings.iter().map(|w| w.to_string()).collect();
+        assert_eq!(texts.len(), 4, "{texts:?}");
+        assert!(texts[0].contains("search.everything: expected \"auto\" or \"off\""), "{}", texts[0]);
+        assert!(texts[1].contains("search.skip: expected a list of folder names"), "{}", texts[1]);
+        assert!(texts[2].contains("search.max-results: expected a number from 1000 to 2000000"), "{}", texts[2]);
+        assert!(texts[3].contains("search.content-max-size: expected a size like"), "{}", texts[3]);
+        let defaults = SearchSettings::default();
+        assert!(
+            defaults.everything && defaults.max_results == 250_000 && defaults.content_max_size == 64 * 1024 * 1024
+        );
+        assert_eq!(defaults.skip, [".git", "node_modules"]);
+    }
+
+    #[test]
+    fn a_search_round_trips_through_its_table() {
+        use gezik_core::search::{DateRange, Day, HiddenRule, KindFilter, Scope, SearchSpec};
+        let mut spec = SearchSpec::new(Scope::Folder(std::env::temp_dir().join("Work")));
+        spec.pattern = "*.pdf".into();
+        spec.content = "fatura".into();
+        spec.match_case = true;
+        spec.size.min = Some(500 * 1024 * 1024);
+        spec.modified = DateRange::Between(Day { year: 2026, month: 1, day: 1 }, Day { year: 2026, month: 6, day: 30 });
+        spec.kind = KindFilter::Videos;
+        spec.hidden = HiddenRule::Include;
+        spec.skipped = true;
+        let table = search_to_toml(&spec);
+        assert_eq!(table.get("size-min").and_then(|v| v.as_str()), Some("500 MB"));
+        assert_eq!(table.get("type").and_then(|v| v.as_str()), Some("videos"));
+        assert_eq!(search_from_toml(&table), Ok(spec));
+        let drives = SearchSpec::new(Scope::AllDrives);
+        assert_eq!(search_to_toml(&drives).get("folder").and_then(|v| v.as_str()), Some("drives"));
+        assert_eq!(search_from_toml(&search_to_toml(&drives)), Ok(drives));
+        let bad: toml::Table = "folder = \"relative\"".parse().unwrap();
+        assert!(search_from_toml(&bad).unwrap_err().contains("not a full path"));
+        let bad: toml::Table = "folder = \"drives\"\nmodified = \"soon\"".parse().unwrap();
+        assert!(search_from_toml(&bad).unwrap_err().starts_with("modified: "));
+        assert_eq!(search_from_toml(&toml::Table::new()).unwrap_err(), "folder is missing");
+    }
+
+    #[test]
+    fn search_and_flat_tabs_come_back_and_bad_ones_are_left_out() {
+        use gezik_core::nav::{Location, Session, SessionTab};
+        use gezik_core::search::{Scope, SearchSpec};
+        let folder = std::env::temp_dir().join("Work");
+        let mut spec = SearchSpec::new(Scope::Folder(folder.clone()));
+        spec.pattern = "*.pdf".into();
+        let state = State {
+            session: Session {
+                tabs: vec![
+                    SessionTab { location: Location::Search(Box::new(spec)), locked: false },
+                    SessionTab { location: Location::Flat(folder.clone()), locked: true },
+                ],
+                active: 1,
+            },
+            ..State::default()
+        };
+        assert_eq!(State::parse(&state.to_toml()).session, state.session);
+        let shown = folder.display().to_string();
+        let text = format!(
+            "[session]\nactive = 2\n\n[[session.tabs]]\nsearch = {{ folder = \"x\" }}\n\n[[session.tabs]]\npath = {shown:?}\n\n[[session.tabs]]\nflat = {shown:?}\n"
+        );
+        let session = State::parse(&text).session;
+        assert_eq!(session.tabs.len(), 2, "a search without a full path is left out");
+        assert_eq!(session.active, 1);
+        assert_eq!(session.tabs[1].location, Location::Flat(folder));
+    }
+
+    #[test]
+    fn result_columns_are_kept_apart_from_the_folders() {
+        let mut columns = gezik_core::view::default_result_columns();
+        columns[0].width = 333;
+        let state = State { result_columns: Some(columns.clone()), ..State::default() };
+        let back = State::parse(&state.to_toml());
+        assert_eq!(back.result_columns, Some(columns));
+        assert_eq!(back.columns, None);
     }
 }

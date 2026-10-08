@@ -32,7 +32,14 @@ impl Places {
 
     /// Tab title for a location: the OS name of known folders and drives, else the folder name.
     pub fn title_for(&self, location: &Location) -> String {
-        let Location::Path(path) = location else { return gezik_core::nav::DRIVES_NAME.to_owned() };
+        let path = match location {
+            Location::Path(path) => path,
+            Location::Drives => return gezik_core::nav::DRIVES_NAME.to_owned(),
+            Location::Search(spec) => return spec.title(),
+            Location::Flat(folder) => {
+                return format!("{} (all files)", self.title_for(&Location::Path(folder.clone())));
+            }
+        };
         if let Some(folder) = self.known.iter().find(|f| f.path == *path) {
             return folder.name.clone();
         }
@@ -84,6 +91,7 @@ mod tests {
         assert_eq!(places.title_for(&Location::Path("/mnt/x".into())), "Data");
         assert_eq!(places.title_for(&Location::Path("/u/a/Projects".into())), "Projects");
         assert_eq!(places.title_for(&Location::Drives), gezik_core::nav::DRIVES_NAME);
+        assert_eq!(places.title_for(&Location::Flat("/u/a/Docs".into())), "Belgeler (all files)");
     }
 
     #[test]
