@@ -42,6 +42,12 @@ impl ContentMatcher {
         Ok(ContentMatcher { regex, max_size })
     }
 
+    /// Whether it matches an empty text (`a*`, `^`): such a pattern says nothing about what a
+    /// file holds, so a search takes it as no content criterion.
+    pub fn matches_empty(&self) -> bool {
+        self.regex.is_match("")
+    }
+
     /// Whether a file is read at all: not over the size limit, not a kind that holds no plain
     /// text (by its name: nothing is opened to know).
     pub fn reads(&self, name: &str, size: u64) -> bool {

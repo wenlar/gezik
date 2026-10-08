@@ -11,21 +11,40 @@ mod windows;
 
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 pub use describe::describe;
 pub use gezik_core::ops::threads::DiskKind;
 #[cfg(unix)]
 pub use unix::{
-    clear_hidden, copy_file, delete, drive_facts, drive_root, free_space, is_hidden_attr, is_network, mapped_remote,
-    move_entry, restore, set_hidden, trash,
+    clear_hidden, copy_file, delete, device_of, drive_facts, drive_root, free_space, is_hidden_attr, is_network,
+    mapped_remote, move_entry, read_dir_items, restore, set_hidden, trash,
 };
 #[cfg(windows)]
 pub use windows::{
-    clear_hidden, copy_file, delete, drive_facts, drive_root, free_space, is_hidden_attr, is_network, mapped_remote,
-    move_entry, restore, set_hidden, trash,
+    clear_hidden, copy_file, delete, device_of, drive_facts, drive_root, free_space, is_hidden_attr, is_network,
+    mapped_remote, move_entry, read_dir_items, restore, set_hidden, trash,
 };
 #[cfg(windows)]
 pub(crate) use windows::{io_error, verbatim};
+
+/// One item of a folder as the search reads it, with what the read itself gave (spec 3.4).
+#[derive(Debug, Clone)]
+pub struct DirItem {
+    pub name: String,
+    pub is_dir: bool,
+    /// A symbolic link, junction or other reparse point: never gone into.
+    pub is_link: bool,
+    /// `Entry::HIDDEN` and `Entry::SYSTEM` (Windows).
+    pub flags: u8,
+    pub size: u64,
+    pub modified: Option<SystemTime>,
+    pub created: Option<SystemTime>,
+    /// Unix: the folder's device (`st_dev`), to stay on one file system; 0 where unknown.
+    pub device: u64,
+    /// Size and times are filled (Unix reads them only for what was asked).
+    pub has_meta: bool,
+}
 
 /// What the engine needs to know about the drive a path is on.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,6 +111,53 @@ pub(crate) fn test_dir(name: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn folder_items_carry_what_the_read_gave() {
+        let dir = test_dir("items");
+        std::fs::write(dir.join("a.txt"), "12345").unwrap();
+        std::fs::create_dir(dir.join("sub")).unwrap();
+        let mut items = read_dir_items(&dir, &|_, _| true).unwrap();
+        items.sort_by(|a, b| a.name.cmp(&b.name));
+        assert_eq!(items.iter().map(|i| i.name.as_str()).collect::<Vec<_>>(), ["a.txt", "sub"]);
+        assert!(!items[0].is_dir && items[0].size == 5 && items[0].modified.is_some() && items[0].has_meta);
+        assert!(items[1].is_dir && !items[1].is_link && items[1].size == 0);
+        let listed = gezik_core::list_dir(&dir).unwrap();
+        assert_eq!(
+            listed.iter().find(|e| e.name == "a.txt").unwrap().modified,
+            items[0].modified,
+            "as list_dir sees it"
+        );
+        assert!(read_dir_items(&dir.join("missing"), &|_, _| true).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_reads_meta_only_when_asked() {
+        let dir = test_dir("items-lazy");
+        std::fs::write(dir.join("a.txt"), "12345").unwrap();
+        std::fs::create_dir(dir.join("sub")).unwrap();
+        let items = read_dir_items(&dir, &|_, _| false).unwrap();
+        let file = items.iter().find(|i| i.name == "a.txt").unwrap();
+        assert!(!file.has_meta && file.size == 0, "no lstat for a file nobody wants");
+        let folder = items.iter().find(|i| i.name == "sub").unwrap();
+        assert!(folder.has_meta && folder.device == device_of(&dir).unwrap(), "folders always: their device");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_junction_is_a_link_folder() {
+        use gezik_core::templates::LinkKind;
+        let dir = test_dir("items-junction");
+        std::fs::create_dir(dir.join("target")).unwrap();
+        crate::link::create(LinkKind::Junction, &dir.join("target"), &dir.join("j"), true).unwrap();
+        let items = read_dir_items(&dir, &|_, _| true).unwrap();
+        let j = items.iter().find(|i| i.name == "j").unwrap();
+        assert!(j.is_dir && j.is_link);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn fat_holds_files_up_to_4_gb_and_the_others_have_no_limit_that_matters() {

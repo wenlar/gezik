@@ -12,6 +12,7 @@ pub mod link;
 mod linux;
 mod locale;
 mod picture;
+pub mod priority;
 pub mod process;
 pub mod taskbar;
 pub mod terminal;

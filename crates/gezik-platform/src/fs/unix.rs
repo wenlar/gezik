@@ -433,6 +433,46 @@ pub fn mapped_remote(_letter: char) -> Option<String> {
     None
 }
 
+/// A folder's items: `read_dir` gives the name and the type (`d_type`); size and times come
+/// from `lstat` only for folders (their device, to stay on one file system) and for what
+/// `wants_meta` asks for (the names that match), spec 3.4.
+pub fn read_dir_items(dir: &Path, wants_meta: &dyn Fn(&str, bool) -> bool) -> io::Result<Vec<super::DirItem>> {
+    use std::os::unix::fs::MetadataExt;
+    let mut items = Vec::new();
+    for entry in std::fs::read_dir(dir)? {
+        let Ok(entry) = entry else { continue };
+        let Ok(kind) = entry.file_type() else { continue };
+        let mut item = super::DirItem {
+            name: entry.file_name().to_string_lossy().into_owned(),
+            is_dir: kind.is_dir(),
+            is_link: kind.is_symlink(),
+            flags: 0,
+            size: 0,
+            modified: None,
+            created: None,
+            device: 0,
+            has_meta: false,
+        };
+        if item.is_dir || wants_meta(&item.name, item.is_dir) {
+            // `DirEntry::metadata` does not follow links (lstat).
+            if let Ok(meta) = entry.metadata() {
+                item.device = meta.dev();
+                item.size = if meta.is_file() { meta.len() } else { 0 };
+                item.modified = meta.modified().ok();
+                item.created = meta.created().ok();
+                item.has_meta = true;
+            }
+        }
+        items.push(item);
+    }
+    Ok(items)
+}
+
+pub fn device_of(path: &Path) -> io::Result<u64> {
+    use std::os::unix::fs::MetadataExt;
+    Ok(std::fs::symlink_metadata(path)?.dev())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

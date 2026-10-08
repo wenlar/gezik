@@ -7,17 +7,19 @@ use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use windows::Win32::Foundation::{CloseHandle, HANDLE};
+use windows::Win32::Foundation::{CloseHandle, FILETIME, HANDLE};
 use windows::Win32::Storage::FileSystem::{
     COPY_FILE_COPY_SYMLINK, COPY_FILE_FAIL_IF_EXISTS, COPY_FILE_NO_BUFFERING, COPYPROGRESSROUTINE_PROGRESS,
     CopyFileExW, CreateFileW, DELETE, DeleteFileW, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN,
-    FILE_ATTRIBUTE_READONLY, FILE_DISPOSITION_FLAG_DELETE, FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE,
-    FILE_DISPOSITION_FLAG_POSIX_SEMANTICS, FILE_DISPOSITION_INFO_EX, FILE_DISPOSITION_INFO_EX_FLAGS,
-    FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_DELETE,
-    FILE_SHARE_READ, FILE_SHARE_WRITE, FileDispositionInfoEx, GetDiskFreeSpaceExW, GetDriveTypeW, GetFileAttributesW,
-    GetVolumeInformationW, GetVolumePathNameW, INVALID_FILE_ATTRIBUTES, LPPROGRESS_ROUTINE_CALLBACK_REASON,
-    MOVE_FILE_FLAGS, MoveFileExW, OPEN_EXISTING, PROGRESS_CANCEL, PROGRESS_CONTINUE, RemoveDirectoryW,
-    SetFileAttributesW, SetFileInformationByHandle,
+    FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_SYSTEM, FILE_DISPOSITION_FLAG_DELETE,
+    FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE, FILE_DISPOSITION_FLAG_POSIX_SEMANTICS, FILE_DISPOSITION_INFO_EX,
+    FILE_DISPOSITION_INFO_EX_FLAGS, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+    FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FIND_FIRST_EX_LARGE_FETCH,
+    FileDispositionInfoEx, FindClose, FindExInfoBasic, FindExSearchNameMatch, FindFirstFileExW, FindNextFileW,
+    GetDiskFreeSpaceExW, GetDriveTypeW, GetFileAttributesW, GetVolumeInformationW, GetVolumePathNameW,
+    INVALID_FILE_ATTRIBUTES, LPPROGRESS_ROUTINE_CALLBACK_REASON, MOVE_FILE_FLAGS, MoveFileExW, OPEN_EXISTING,
+    PROGRESS_CANCEL, PROGRESS_CONTINUE, RemoveDirectoryW, SetFileAttributesW, SetFileInformationByHandle,
+    WIN32_FIND_DATAW,
 };
 use windows::Win32::System::IO::DeviceIoControl;
 use windows::Win32::System::Ioctl::{
@@ -602,6 +604,86 @@ pub fn mapped_remote(letter: char) -> Option<String> {
     }
     let end = buffer.iter().position(|&c| c == 0).unwrap_or(buffer.len());
     (end > 0).then(|| String::from_utf16_lossy(&buffer[..end]))
+}
+
+/// A folder's items in one pass (`FindFirstFileExW` with the basic info and large fetches): name,
+/// attributes, size and times come with each, no call per item (spec 3.4). `wants_meta` is not
+/// needed here.
+pub fn read_dir_items(dir: &Path, _wants_meta: &dyn Fn(&str, bool) -> bool) -> io::Result<Vec<super::DirItem>> {
+    const ERROR_FILE_NOT_FOUND: u32 = 2;
+    let pattern = verbatim(&dir.join("*"));
+    let mut data = WIN32_FIND_DATAW::default();
+    // SAFETY: `data` is a WIN32_FIND_DATAW, as FindExInfoBasic fills.
+    let found = unsafe {
+        FindFirstFileExW(
+            &pattern,
+            FindExInfoBasic,
+            (&mut data as *mut WIN32_FIND_DATAW).cast::<c_void>(),
+            FindExSearchNameMatch,
+            None,
+            FIND_FIRST_EX_LARGE_FETCH,
+        )
+    };
+    let handle = match found {
+        Ok(handle) => handle,
+        // A root with nothing in it (a fresh drive) has no `.` either.
+        Err(err) if err.code() == windows::core::HRESULT::from_win32(ERROR_FILE_NOT_FOUND) => return Ok(Vec::new()),
+        Err(err) => return Err(io_error(err)),
+    };
+    let mut items = Vec::new();
+    loop {
+        let end = data.cFileName.iter().position(|&c| c == 0).unwrap_or(data.cFileName.len());
+        let name = String::from_utf16_lossy(&data.cFileName[..end]);
+        if name != "." && name != ".." {
+            let attributes = data.dwFileAttributes;
+            let is_dir = attributes & FILE_ATTRIBUTE_DIRECTORY.0 != 0;
+            let mut flags = 0;
+            if attributes & FILE_ATTRIBUTE_HIDDEN.0 != 0 {
+                flags |= gezik_core::Entry::HIDDEN;
+            }
+            if attributes & FILE_ATTRIBUTE_SYSTEM.0 != 0 {
+                flags |= gezik_core::Entry::SYSTEM;
+            }
+            let size = (u64::from(data.nFileSizeHigh) << 32) | u64::from(data.nFileSizeLow);
+            items.push(super::DirItem {
+                name,
+                is_dir,
+                is_link: attributes & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0,
+                flags,
+                size: if is_dir { 0 } else { size },
+                modified: file_time(data.ftLastWriteTime),
+                created: file_time(data.ftCreationTime),
+                device: 0,
+                has_meta: true,
+            });
+        }
+        // SAFETY: `handle` is open; FindNextFileW fills `data` the same way.
+        if unsafe { FindNextFileW(handle, &mut data) }.is_err() {
+            break;
+        }
+    }
+    // SAFETY: opened above, closed once.
+    unsafe {
+        let _ = FindClose(handle);
+    }
+    Ok(items)
+}
+
+/// A FILETIME (100 ns since 1601) as a time; `None` for zero.
+pub(crate) fn file_time(time: FILETIME) -> Option<std::time::SystemTime> {
+    let ticks = (u64::from(time.dwHighDateTime) << 32) | u64::from(time.dwLowDateTime);
+    // 1601-01-01 to 1970-01-01 in 100 ns ticks.
+    const UNIX_EPOCH_TICKS: u64 = 116_444_736_000_000_000;
+    if ticks == 0 {
+        return None;
+    }
+    let since = std::time::Duration::from_nanos((ticks.abs_diff(UNIX_EPOCH_TICKS)).saturating_mul(100));
+    Some(if ticks >= UNIX_EPOCH_TICKS { std::time::UNIX_EPOCH + since } else { std::time::UNIX_EPOCH - since })
+}
+
+/// Windows needs no device rule (a mounted volume is a reparse point, never gone into).
+pub fn device_of(_path: &Path) -> io::Result<u64> {
+    Ok(0)
 }
 
 #[cfg(test)]

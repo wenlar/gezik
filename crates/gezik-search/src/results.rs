@@ -60,8 +60,6 @@ impl ResultSet {
     }
 
     /// Empty results that will use these folders (the name cache's), no matching lines.
-    // Used by the name cache (a later task).
-    #[allow(dead_code)]
     pub(crate) fn with_folders(root: PathBuf, folders: Vec<Box<str>>) -> ResultSet {
         ResultSet { folders, ..ResultSet::new(root, false) }
     }
@@ -71,6 +69,17 @@ impl ResultSet {
         self.parent.push(parent);
         if let Some(matches) = &mut self.matches {
             matches.push(None);
+        }
+    }
+
+    /// All of it as one batch (a cache selection or an Everything answer, spec 4.3).
+    pub fn into_batch(self) -> Batch {
+        let count = self.entries.len();
+        Batch {
+            folders: self.folders,
+            entries: self.entries,
+            parent: self.parent,
+            matches: self.matches.unwrap_or_else(|| vec![None; count]),
         }
     }
 
