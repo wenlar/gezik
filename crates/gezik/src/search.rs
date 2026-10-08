@@ -1,0 +1,986 @@
+//! The search bar and the flat view (spec 4, 5): the bar opened on the folder shown, its
+//! fields and menus, a search as a step in the tab's history (`Location::Search`), its batches
+//! into the results list, the name cache (spec 3.5), and each tab's last results (Karar 12).
+
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
+
+use gezik_config::settings::SearchSettings;
+use gezik_core::nav::{DRIVES_NAME, Location};
+use gezik_core::search::{DateRange, HiddenRule, KindFilter, Scope, SearchSpec, parse_size, size_text};
+use gezik_search::cache::{CACHE_LIMIT, CacheOutcome, NameCache};
+use gezik_search::content::ContentMatcher;
+use gezik_search::name::NameMatcher;
+use gezik_search::query::{Query, QueryError, QueryOptions};
+use gezik_search::results::ResultSet;
+use gezik_search::run::{Event, Running, Summary, plan_walk, send_whole, start_with};
+use slint::ComponentHandle;
+
+use crate::AppWindow;
+use crate::context_menu::{self as ids, Submenu};
+use crate::dialog::Dialogs;
+use crate::navigation::Navigator;
+use crate::preview::with_commas;
+use crate::view::{Listing, View};
+
+/// Quiet time after a key before the results follow what is typed (spec 3.5, sapma 15).
+const TYPING: Duration = Duration::from_millis(150);
+/// An unused name cache goes after this long (spec 3.5).
+const CACHE_IDLE: Duration = Duration::from_secs(120);
+
+thread_local! {
+    static CURRENT: RefCell<Option<Searches>> = const { RefCell::new(None) };
+}
+
+/// Runs `f` with this UI thread's searches, if set up.
+pub fn with_current(f: impl FnOnce(&Searches)) {
+    if let Some(searches) = CURRENT.with(|c| c.borrow().clone()) {
+        f(&searches);
+    }
+}
+
+/// Whether a search runs (Esc on the list stops it first).
+pub fn running() -> bool {
+    CURRENT.with(|c| c.borrow().as_ref().is_some_and(|s| s.0.running.borrow().is_some()))
+}
+
+/// The status bar while a search runs: `Searching… 12,345 found · 48,210 folders`.
+pub fn progress_text(found: usize, folders: usize) -> String {
+    match folders {
+        0 => format!("Searching… {} found", with_commas(found)),
+        n => format!("Searching… {} found · {} folders", with_commas(found), with_commas(n)),
+    }
+}
+
+/// The status bar once it ended (spec 4.3).
+pub fn done_text(summary: &Summary) -> String {
+    let found = with_commas(summary.found);
+    let results = if summary.found == 1 { "result" } else { "results" };
+    let mut text = if summary.limit_reached {
+        format!("Stopped at {found} results. Narrow the search.")
+    } else if summary.cancelled {
+        format!("Stopped · {found} {results}")
+    } else {
+        format!("{found} {results} in {:.1} s", summary.elapsed.as_secs_f64())
+    };
+    if summary.everything {
+        text.push_str(" via Everything");
+    }
+    match summary.skipped {
+        0 => {}
+        1 => text.push_str(" · Skipped 1 folder (search.skip)"),
+        n => text.push_str(&format!(" · Skipped {} folders (search.skip)", with_commas(n))),
+    }
+    match summary.problems.count {
+        0 => {}
+        1 => text.push_str(" · 1 folder could not be read"),
+        n => text.push_str(&format!(" · {} folders could not be read", with_commas(n))),
+    }
+    text
+}
+
+fn name_of(path: &Path) -> String {
+    path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.display().to_string())
+}
+
+/// The scope menu's choices (spec 4.1): the folder the bar opened on, up to five folders above
+/// it, its whole drive, This PC.
+pub fn scope_choices(origin: Option<&Path>) -> Vec<(Scope, String)> {
+    let mut out = Vec::new();
+    if let Some(folder) = origin {
+        out.push((Scope::Folder(folder.to_path_buf()), format!("This folder ({})", name_of(folder))));
+        let root = folder.ancestors().last().unwrap_or(folder);
+        for above in folder.ancestors().skip(1).filter(|p| p.parent().is_some()).take(5) {
+            out.push((Scope::Folder(above.to_path_buf()), name_of(above)));
+        }
+        if root != folder {
+            let drive = root.display().to_string();
+            let drive = if drive.len() > 1 { drive.trim_end_matches(['\\', '/']).to_owned() } else { drive };
+            out.push((Scope::Folder(root.to_path_buf()), format!("Whole drive ({drive})")));
+        }
+    }
+    out.push((Scope::AllDrives, DRIVES_NAME.to_owned()));
+    out
+}
+
+/// The scope button's text: `in Work`, `in This PC`.
+pub fn scope_label(scope: &Scope) -> String {
+    match scope {
+        Scope::Folder(folder) => format!("in {}", name_of(folder)),
+        Scope::AllDrives => format!("in {DRIVES_NAME}"),
+    }
+}
+
+/// The search a location shows: its own, or the flat view's.
+pub fn spec_of(location: &Location) -> Option<SearchSpec> {
+    match location {
+        Location::Search(spec) => Some((**spec).clone()),
+        Location::Flat(folder) => Some(SearchSpec::flat_view(folder.clone())),
+        Location::Path(_) | Location::Drives => None,
+    }
+}
+
+/// The search bar's menus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchMenu {
+    Scope,
+    Filters,
+    More,
+}
+
+/// What the name cache is for: the scope and the rules it read with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CacheKey {
+    scope: Scope,
+    shown: Option<(bool, bool)>,
+    skip: Vec<String>,
+}
+
+enum Names {
+    None,
+    Building(CacheKey, Arc<AtomicBool>),
+    Ready(CacheKey, Arc<NameCache>),
+    /// More than the cache holds: each Enter walks (spec 3.5).
+    TooLarge(CacheKey),
+    /// No cache: Everything answers names here (`true`), or a network folder (`false`).
+    NoCache(CacheKey, bool),
+}
+
+/// What reading the scope gave.
+enum Warmed {
+    Ready(Arc<NameCache>),
+    TooLarge,
+    Everything,
+    Network,
+    Cancelled,
+}
+
+/// A tab's last results (Karar 12).
+struct Kept {
+    spec: SearchSpec,
+    results: Arc<ResultSet>,
+    status: String,
+}
+
+/// The results on screen.
+struct Showing {
+    tab: Option<u64>,
+    spec: SearchSpec,
+    status: String,
+    complete: bool,
+}
+
+struct Run {
+    handle: Running,
+}
+
+struct Inner {
+    window: slint::Weak<AppWindow>,
+    nav: Navigator,
+    view: View,
+    dialogs: Dialogs,
+    settings: RefCell<SearchSettings>,
+    /// The search the bar holds (its texts are the window's fields).
+    draft: RefCell<SearchSpec>,
+    /// The search the bar last went to: its location coming back keeps what was typed since.
+    sent: RefCell<Option<SearchSpec>>,
+    /// The folder the bar opened on ("This folder").
+    origin: RefCell<Option<PathBuf>>,
+    /// The location the bar last followed: the chrome updates often, the bar only on a move.
+    followed: RefCell<Option<Location>>,
+    open: Cell<bool>,
+    content_open: Cell<bool>,
+    running: RefCell<Option<Run>>,
+    /// Bumped by each search started and by leaving one: older events are dropped.
+    generation: Cell<u64>,
+    /// The search a load showed fresh results for: it starts once they are on screen.
+    pending: RefCell<Option<SearchSpec>>,
+    showing: RefCell<Option<Showing>>,
+    kept: RefCell<HashMap<u64, Kept>>,
+    names: RefCell<Names>,
+    /// A key was typed and the results follow once the cache is ready.
+    live_waiting: Cell<bool>,
+    typing: slint::Timer,
+    idle: slint::Timer,
+    scopes: RefCell<Vec<Scope>>,
+    problems: RefCell<Vec<(PathBuf, String)>>,
+}
+
+#[derive(Clone)]
+pub struct Searches(Rc<Inner>);
+
+impl Searches {
+    pub fn new(window: &AppWindow, nav: Navigator, view: View, dialogs: Dialogs) -> Searches {
+        let searches = Searches(Rc::new(Inner {
+            window: window.as_weak(),
+            nav,
+            view,
+            dialogs,
+            settings: RefCell::new(SearchSettings::default()),
+            draft: RefCell::new(SearchSpec::new(Scope::AllDrives)),
+            sent: RefCell::new(None),
+            origin: RefCell::new(None),
+            followed: RefCell::new(None),
+            open: Cell::new(false),
+            content_open: Cell::new(false),
+            running: RefCell::new(None),
+            generation: Cell::new(0),
+            pending: RefCell::new(None),
+            showing: RefCell::new(None),
+            kept: RefCell::new(HashMap::new()),
+            names: RefCell::new(Names::None),
+            live_waiting: Cell::new(false),
+            typing: slint::Timer::default(),
+            idle: slint::Timer::default(),
+            scopes: RefCell::new(Vec::new()),
+            problems: RefCell::new(Vec::new()),
+        }));
+        window.on_search_edited(|text| with_current(|s| s.edited(&text)));
+        window.on_search_content_edited(|text| with_current(|s| s.content_edited(&text)));
+        window.on_search_content_toggle(|| with_current(Searches::content_toggle));
+        window.on_search_go(|| with_current(Searches::button));
+        window.on_filter_search(|| with_current(Searches::filter_to_search));
+        CURRENT.with(|c| *c.borrow_mut() = Some(searches.clone()));
+        searches
+    }
+
+    /// `[search]` (every resolve).
+    pub fn set_settings(&self, settings: SearchSettings) {
+        *self.0.settings.borrow_mut() = settings;
+    }
+
+    fn view_shown() -> (bool, bool) {
+        let options = crate::view_options::current();
+        (options.show_hidden, options.show_system)
+    }
+
+    fn cache_key(&self, spec: &SearchSpec) -> CacheKey {
+        CacheKey {
+            scope: spec.scope.clone(),
+            shown: (spec.hidden == HiddenRule::FollowView).then(Searches::view_shown),
+            skip: if spec.skipped { Vec::new() } else { self.0.settings.borrow().skip.clone() },
+        }
+    }
+
+    // ---- The bar ----
+
+    /// `search` (Ctrl+Shift+F, F3): the bar on the folder shown (This PC: every drive); on an
+    /// open bar, its name field with the text selected.
+    pub fn open(&self) {
+        let Some(window) = self.0.window.upgrade() else { return };
+        if self.0.open.get() {
+            window.invoke_select_search_text();
+            return;
+        }
+        let location = self.0.nav.active_location();
+        let spec = match &location {
+            Location::Search(spec) => (**spec).clone(),
+            Location::Path(folder) | Location::Flat(folder) => SearchSpec::new(Scope::Folder(folder.clone())),
+            Location::Drives => SearchSpec::new(Scope::AllDrives),
+        };
+        self.show_bar(spec, location.folder().map(Path::to_path_buf));
+        self.focus_later();
+        self.warm();
+    }
+
+    /// "Search in this folder…": the bar on `folder`, empty.
+    pub fn open_in(&self, folder: PathBuf) {
+        self.show_bar(SearchSpec::new(Scope::Folder(folder.clone())), Some(folder));
+        self.focus_later();
+        self.warm();
+    }
+
+    fn show_bar(&self, spec: SearchSpec, origin: Option<PathBuf>) {
+        self.0.content_open.set(!spec.content.is_empty());
+        *self.0.draft.borrow_mut() = spec;
+        *self.0.origin.borrow_mut() = origin;
+        self.0.open.set(true);
+        self.sync_bar();
+    }
+
+    fn close_bar(&self) {
+        self.0.open.set(false);
+        self.0.typing.stop();
+        self.sync_bar();
+    }
+
+    /// The bar as the draft is.
+    fn sync_bar(&self) {
+        let Some(window) = self.0.window.upgrade() else { return };
+        let draft = self.0.draft.borrow();
+        window.set_search_open(self.0.open.get());
+        window.set_search_scope(scope_label(&draft.scope).into());
+        if window.get_search_text().as_str() != draft.pattern {
+            window.set_search_text(draft.pattern.as_str().into());
+        }
+        if window.get_search_content().as_str() != draft.content {
+            window.set_search_content(draft.content.as_str().into());
+        }
+        window.set_search_content_open(self.0.content_open.get());
+        window.set_search_filters(match draft.filter_count() {
+            0 => "Filters".into(),
+            n => format!("Filters ({n})").into(),
+        });
+        window.set_search_running(self.0.running.borrow().is_some());
+        let name_error = NameMatcher::compile(&draft.pattern, draft.name_regex, draft.match_case).err();
+        window.set_search_error(name_error.unwrap_or_default().into());
+        let content_error = (!draft.content.is_empty())
+            .then(|| ContentMatcher::compile(&draft.content, draft.content_regex, draft.match_case, 0).err())
+            .flatten();
+        window.set_search_content_error(content_error.unwrap_or_default().into());
+    }
+
+    fn focus_later(&self) {
+        let weak = self.0.window.clone();
+        slint::Timer::single_shot(Duration::ZERO, move || {
+            if let Some(window) = weak.upgrade()
+                && window.get_search_open()
+            {
+                window.invoke_select_search_text();
+            }
+        });
+    }
+
+    fn edited(&self, text: &str) {
+        self.0.draft.borrow_mut().pattern = text.to_owned();
+        self.sync_bar();
+        self.follow_typing();
+    }
+
+    fn content_edited(&self, text: &str) {
+        self.0.draft.borrow_mut().content = text.to_owned();
+        self.sync_bar();
+    }
+
+    fn content_toggle(&self) {
+        let open = !self.0.content_open.get();
+        self.0.content_open.set(open);
+        if !open {
+            self.0.draft.borrow_mut().content.clear();
+        }
+        self.sync_bar();
+        if let Some(window) = self.0.window.upgrade() {
+            if open {
+                window.invoke_focus_search_content();
+            } else {
+                window.invoke_select_search_text();
+            }
+        }
+    }
+
+    /// Names, sizes, dates and types follow the typing (150 ms) when the cache or Everything
+    /// can answer at once; text in files and a scope too large for the cache wait for Enter.
+    fn follow_typing(&self) {
+        let draft = self.0.draft.borrow().clone();
+        if !draft.content.is_empty() || !draft.is_query() {
+            return;
+        }
+        if NameMatcher::compile(&draft.pattern, draft.name_regex, draft.match_case).is_err() {
+            return;
+        }
+        let key = self.cache_key(&draft);
+        let at_once = match &*self.0.names.borrow() {
+            Names::Ready(k, _) | Names::NoCache(k, true) => *k == key,
+            Names::Building(k, _) => {
+                if *k == key {
+                    self.0.live_waiting.set(true);
+                }
+                false
+            }
+            Names::TooLarge(k) => {
+                if *k == key {
+                    self.0.view.note("Large folder: press Enter to search".to_owned());
+                }
+                false
+            }
+            Names::NoCache(_, false) | Names::None => false,
+        };
+        if at_once {
+            self.0.typing.start(slint::TimerMode::SingleShot, TYPING, || with_current(|s| s.run(false, true)));
+        }
+    }
+
+    /// Enter in a field; Alt+Enter: in a new tab (Karar 2).
+    pub fn go(&self, new_tab: bool) {
+        self.0.typing.stop();
+        self.run(new_tab, false);
+    }
+
+    /// Search / Stop.
+    fn button(&self) {
+        if self.0.running.borrow().is_some() {
+            self.stop();
+        } else {
+            self.go(false);
+        }
+    }
+
+    fn run(&self, new_tab: bool, live: bool) {
+        let spec = self.0.draft.borrow().clone();
+        if !spec.is_query() {
+            return self.0.view.note("Type something to search".to_owned());
+        }
+        if let Some(window) = self.0.window.upgrade()
+            && (!window.get_search_error().is_empty() || !window.get_search_content_error().is_empty())
+        {
+            return;
+        }
+        *self.0.sent.borrow_mut() = Some(spec.clone());
+        let location = Location::Search(Box::new(spec));
+        let current = self.0.nav.active_location();
+        if new_tab {
+            self.0.nav.open_tab(location, true);
+        } else if current == location {
+            // The same search again: run anew (spec 4.7, F5's way).
+            self.0.nav.reload();
+        } else if live && matches!(current, Location::Search(_)) {
+            self.0.nav.replace_location(location);
+        } else {
+            self.0.nav.go(location);
+        }
+    }
+
+    /// Stop: the walk ends; its results so far stay, the status bar says so.
+    pub fn stop(&self) {
+        if let Some(run) = self.0.running.borrow().as_ref() {
+            run.handle.cancel();
+        }
+    }
+
+    /// Esc in the bar: stops a running search, else closes the bar (the results stay) and
+    /// gives the list the keyboard.
+    pub fn escape(&self) {
+        if self.0.running.borrow().is_some() {
+            return self.stop();
+        }
+        self.close_bar();
+        if let Some(window) = self.0.window.upgrade() {
+            window.invoke_focus_list();
+        }
+    }
+
+    /// The filter bar's Shift+Enter or "Search subfolders" (spec 4.1): its text as the name.
+    pub fn filter_to_search(&self) {
+        let Some(pattern) = self.0.view.filter_text().filter(|t| !t.trim().is_empty()) else { return };
+        let location = self.0.nav.active_location();
+        let Some(folder) = location.folder().map(Path::to_path_buf) else { return };
+        crate::filter::with_current(crate::filter::Filter::close);
+        let mut spec = SearchSpec::new(Scope::Folder(folder.clone()));
+        spec.pattern = pattern;
+        self.show_bar(spec, Some(folder));
+        self.go(false);
+    }
+
+    /// `flat-view` (Ctrl+B, spec 5): every file under the folder; again, back to the folder
+    /// with the focused file selected in its own folder.
+    pub fn flat_view(&self) {
+        match self.0.nav.active_location() {
+            Location::Flat(folder) => {
+                let focused = self.0.view.focus().and_then(|i| self.0.view.entry_path(i));
+                match focused {
+                    Some((path, false)) => match (path.parent(), path.file_name()) {
+                        (Some(parent), Some(name)) => {
+                            self.0.nav.go_selecting(parent.to_path_buf(), vec![name.to_string_lossy().into_owned()])
+                        }
+                        _ => self.0.nav.go(Location::Path(folder)),
+                    },
+                    _ => self.0.nav.go(Location::Path(folder)),
+                }
+            }
+            location => match location.folder() {
+                Some(folder) => self.0.nav.go(Location::Flat(folder.to_path_buf())),
+                None => self.0.view.note("Flat view works in folders".to_owned()),
+            },
+        }
+    }
+
+    // ---- Loading a search ----
+
+    /// The listing a load of `location` shows (the navigator, for `LoadResult::Results`): the
+    /// tab's last results if they are this search's and whole, else empty ones (the search
+    /// starts in `shown`).
+    pub fn listing_for(&self, location: &Location, tab: Option<u64>) -> Listing {
+        let Some(spec) = spec_of(location) else { return Listing::default() };
+        let kept = tab.and_then(|tab| {
+            let mut kept = self.0.kept.borrow_mut();
+            if kept.get(&tab).is_some_and(|k| k.spec == spec) { kept.remove(&tab) } else { None }
+        });
+        if let Some(kept) = kept {
+            *self.0.pending.borrow_mut() = None;
+            *self.0.showing.borrow_mut() =
+                Some(Showing { tab, spec: kept.spec, status: kept.status.clone(), complete: true });
+            return Listing::Results(kept.results);
+        }
+        let root = spec.scope.folder().map(Path::to_path_buf).unwrap_or_default();
+        let content = !spec.content.is_empty();
+        *self.0.pending.borrow_mut() = Some(spec.clone());
+        *self.0.showing.borrow_mut() = Some(Showing { tab, spec, status: String::new(), complete: false });
+        Listing::Results(Arc::new(ResultSet::new(root, content)))
+    }
+
+    /// The results `listing_for` gave are on screen: a fresh search starts; kept ones get their
+    /// status back.
+    pub fn shown(&self) {
+        let pending = self.0.pending.borrow_mut().take();
+        match pending {
+            Some(spec) => self.start(spec),
+            None => {
+                let status = self.0.showing.borrow().as_ref().map(|s| s.status.clone());
+                self.0.view.set_results_status(status.filter(|s| !s.is_empty()));
+            }
+        }
+    }
+
+    /// The navigator leaves what is on screen (another place, another tab, a reload): a
+    /// running search stops (its later events are dropped); whole results stay with their tab.
+    pub fn leaving(&self) {
+        let run = self.0.running.borrow_mut().take();
+        if let Some(run) = run {
+            run.handle.cancel();
+            self.0.generation.set(self.0.generation.get() + 1);
+            self.0.view.set_searching(false);
+            if let Some(window) = self.0.window.upgrade() {
+                window.set_search_running(false);
+            }
+        }
+        let Some(showing) = self.0.showing.borrow_mut().take() else { return };
+        if let (Some(tab), true, Some(results)) = (showing.tab, showing.complete, self.0.view.results()) {
+            self.0.kept.borrow_mut().insert(tab, Kept { spec: showing.spec, results, status: showing.status });
+        }
+    }
+
+    /// F5 on results (spec 4.7): the tab's results and the name cache are forgotten.
+    pub fn forget(&self, tab: Option<u64>) {
+        if let Some(tab) = tab {
+            self.0.kept.borrow_mut().remove(&tab);
+        }
+        self.drop_names();
+        if self.0.open.get() {
+            self.warm();
+        }
+    }
+
+    fn drop_names(&self) {
+        if let Names::Building(_, cancel) = &*self.0.names.borrow() {
+            cancel.store(true, Ordering::SeqCst);
+        }
+        *self.0.names.borrow_mut() = Names::None;
+        self.0.idle.stop();
+    }
+
+    /// A tab, its location or the tabs changed (`Navigator::on_changed`): the bar follows a
+    /// search's location; it closes on a folder other than its own; closed tabs' results go.
+    pub fn location_changed(&self, location: &Location) {
+        let nav = &self.0.nav;
+        let alive: Vec<u64> = (0..nav.tab_count()).filter_map(|i| nav.tab_id(i)).collect();
+        self.0.kept.borrow_mut().retain(|tab, _| alive.contains(tab));
+        // The same place again (a tab renamed, locked, a reload): a bar closed with Esc stays closed.
+        if self.0.followed.borrow().as_ref() == Some(location) {
+            return;
+        }
+        *self.0.followed.borrow_mut() = Some(location.clone());
+        match location {
+            Location::Search(spec) => {
+                // The search the bar went to: what was typed since stays in it.
+                let own = self.0.sent.borrow().as_ref() == Some(&**spec);
+                if !self.0.open.get() || (!own && *self.0.draft.borrow() != **spec) {
+                    self.show_bar((**spec).clone(), spec.scope.folder().map(Path::to_path_buf));
+                }
+            }
+            Location::Flat(_) => {
+                if self.0.open.get() {
+                    self.close_bar();
+                }
+            }
+            other => {
+                let elsewhere = self.0.origin.borrow().as_deref() != other.folder();
+                if self.0.open.get() && elsewhere {
+                    self.close_bar();
+                }
+            }
+        }
+    }
+
+    // ---- Running ----
+
+    fn start(&self, spec: SearchSpec) {
+        let old = self.0.running.borrow_mut().take();
+        if let Some(old) = old {
+            old.handle.cancel();
+        }
+        let generation = self.0.generation.get() + 1;
+        self.0.generation.set(generation);
+        if !spec.is_query() {
+            return self.0.view.set_results_status(Some("Type something to search".to_owned()));
+        }
+        let settings = self.0.settings.borrow().clone();
+        let options = QueryOptions::local(settings.content_max_size, settings.max_results);
+        let query = match Query::compile(&spec, &options) {
+            Ok(query) => query,
+            Err(QueryError::Name(why) | QueryError::Content(why)) => {
+                return self.0.view.set_results_status(Some(why));
+            }
+        };
+        self.0.view.set_searching(true);
+        self.0.view.set_results_status(Some(progress_text(0, 0)));
+        let running = Running::default();
+        *self.0.running.borrow_mut() = Some(Run { handle: running.clone() });
+        if let Some(window) = self.0.window.upgrade() {
+            window.set_search_running(true);
+        }
+        let sink = self.sink(generation);
+        let started = Instant::now();
+        let cache = spec.content.is_empty().then(|| self.ready_cache(&spec)).flatten();
+        let flag = running.flag();
+        let (shown, skip, on) = (Searches::view_shown(), settings.skip.clone(), settings.everything);
+        let spawned = std::thread::Builder::new().name("gezik-search-start".into()).spawn(move || {
+            if let Some(cache) = cache {
+                match cache.select(&query, &flag) {
+                    Some((set, full)) => send_whole(set, full, started, false, &sink),
+                    None => sink(Event::Done(Summary { cancelled: true, ..Summary::default() })),
+                }
+                return;
+            }
+            let walk = plan_walk(&spec, &skip, shown);
+            match gezik_search::everything::search(&spec, &walk, &query, on, &flag, &sink) {
+                Ok(()) => {}
+                Err(gezik_search::everything::Fallback::Cancelled) => {
+                    sink(Event::Done(Summary { cancelled: true, ..Summary::default() }))
+                }
+                Err(_) => start_with(walk, query, running, sink),
+            }
+        });
+        if spawned.is_err() {
+            self.0.running.borrow_mut().take();
+            self.0.view.set_searching(false);
+            self.0.view.set_results_status(Some("Cannot start the search".to_owned()));
+            if let Some(window) = self.0.window.upgrade() {
+                window.set_search_running(false);
+            }
+        }
+    }
+
+    /// Events of search `generation`, brought to the UI thread.
+    fn sink(&self, generation: u64) -> impl Fn(Event) + Send + Sync + Clone + 'static {
+        let weak = self.0.window.clone();
+        move |event| {
+            let _ = weak.upgrade_in_event_loop(move |_| with_current(|s| s.event(generation, event)));
+        }
+    }
+
+    fn event(&self, generation: u64, event: Event) {
+        if generation != self.0.generation.get() {
+            return;
+        }
+        match event {
+            Event::Batch(batch) => self.0.view.append_results(batch),
+            Event::Progress { found, folders } => self.0.view.set_results_status(Some(progress_text(found, folders))),
+            Event::Done(summary) => {
+                let text = done_text(&summary);
+                *self.0.problems.borrow_mut() = summary.problems.first.clone();
+                self.0.running.borrow_mut().take();
+                self.0.view.set_searching(false);
+                self.0.view.set_results_status(Some(text.clone()));
+                if let Some(showing) = self.0.showing.borrow_mut().as_mut() {
+                    showing.status = text;
+                    showing.complete = !summary.cancelled;
+                }
+                if let Some(window) = self.0.window.upgrade() {
+                    window.set_search_running(false);
+                }
+            }
+        }
+    }
+
+    // ---- The name cache ----
+
+    /// The cache for `spec`, if it is read and holds what `spec` asks for; its idle time starts over.
+    fn ready_cache(&self, spec: &SearchSpec) -> Option<Arc<NameCache>> {
+        let key = self.cache_key(spec);
+        let cache = match &*self.0.names.borrow() {
+            Names::Ready(k, cache) if *k == key => Some(cache.clone()),
+            _ => None,
+        };
+        if cache.is_some() {
+            self.0.idle.start(slint::TimerMode::SingleShot, CACHE_IDLE, || with_current(Searches::drop_names));
+        }
+        cache
+    }
+
+    /// Reads the draft's scope into the cache in the background, unless that is under way or
+    /// done; Everything or a network folder keeps none (spec 3.5).
+    fn warm(&self) {
+        let spec = self.0.draft.borrow().clone();
+        let key = self.cache_key(&spec);
+        let same = match &*self.0.names.borrow() {
+            Names::Building(k, _) | Names::Ready(k, _) | Names::TooLarge(k) | Names::NoCache(k, _) => *k == key,
+            Names::None => false,
+        };
+        if same {
+            return;
+        }
+        self.drop_names();
+        let cancel = Arc::new(AtomicBool::new(false));
+        *self.0.names.borrow_mut() = Names::Building(key.clone(), cancel.clone());
+        let (skip, on) = {
+            let settings = self.0.settings.borrow();
+            (settings.skip.clone(), settings.everything)
+        };
+        let shown = Searches::view_shown();
+        let weak = self.0.window.clone();
+        let spawned = std::thread::Builder::new().name("gezik-search-cache".into()).spawn(move || {
+            gezik_platform::priority::lower_this_thread();
+            let walk = plan_walk(&spec, &skip, shown);
+            let warmed = if gezik_search::everything::usable(&walk.roots, on) {
+                Warmed::Everything
+            } else if walk.roots.iter().any(|root| gezik_platform::fs::is_network(root).unwrap_or(false)) {
+                Warmed::Network
+            } else {
+                match gezik_search::cache::build(walk, cancel, CACHE_LIMIT).0 {
+                    CacheOutcome::Ready(cache) => Warmed::Ready(cache),
+                    CacheOutcome::TooLarge => Warmed::TooLarge,
+                    CacheOutcome::Cancelled => Warmed::Cancelled,
+                }
+            };
+            let _ = weak.upgrade_in_event_loop(move |_| with_current(|s| s.warmed(key, warmed)));
+        });
+        if spawned.is_err() {
+            *self.0.names.borrow_mut() = Names::None;
+        }
+    }
+
+    fn warmed(&self, key: CacheKey, warmed: Warmed) {
+        if !matches!(&*self.0.names.borrow(), Names::Building(k, _) if *k == key) {
+            return;
+        }
+        let names = match warmed {
+            Warmed::Ready(cache) => Names::Ready(key, cache),
+            Warmed::TooLarge => Names::TooLarge(key),
+            Warmed::Everything => Names::NoCache(key, true),
+            Warmed::Network => Names::NoCache(key, false),
+            Warmed::Cancelled => Names::None,
+        };
+        let ready = matches!(names, Names::Ready(..) | Names::NoCache(_, true));
+        *self.0.names.borrow_mut() = names;
+        if ready {
+            self.0.idle.start(slint::TimerMode::SingleShot, CACHE_IDLE, || with_current(Searches::drop_names));
+            if self.0.live_waiting.replace(false) && self.0.open.get() {
+                self.follow_typing();
+            }
+        }
+    }
+
+    // ---- Menus ----
+
+    /// The items of one of the bar's menus (the scope menu's places are kept for its answer).
+    pub fn menu(&self, which: SearchMenu) -> (Vec<(u32, String, bool)>, Vec<Submenu>) {
+        let draft = self.0.draft.borrow().clone();
+        match which {
+            SearchMenu::Scope => {
+                let choices = scope_choices(self.0.origin.borrow().as_deref());
+                let items = ids::search_scope_items(&choices, &draft.scope);
+                *self.0.scopes.borrow_mut() = choices.into_iter().map(|(scope, _)| scope).collect();
+                (items, Vec::new())
+            }
+            SearchMenu::Filters => ids::search_filter_items(&draft),
+            SearchMenu::More => (ids::search_more_items(self.0.problems.borrow().len()), Vec::new()),
+        }
+    }
+
+    /// A search menu item; a criterion changed on results already shown runs the search again.
+    pub fn menu_chosen(&self, id: u32) {
+        match id {
+            ids::SEARCH_NEW_TAB => return self.go(true),
+            ids::SEARCH_PROBLEMS => return self.show_problems(),
+            ids::SIZE_MIN | ids::SIZE_MAX | ids::MODIFIED_BETWEEN => return self.ask_criterion(id),
+            _ => {}
+        }
+        let mut rerun = true;
+        {
+            let mut draft = self.0.draft.borrow_mut();
+            match id {
+                ids::SEARCH_CLEAR => {
+                    let scope = draft.scope.clone();
+                    *draft = SearchSpec::new(scope);
+                    self.0.content_open.set(false);
+                    rerun = false;
+                }
+                ids::FILTERS_CLEAR => {
+                    let (scope, pattern, content) = (draft.scope.clone(), draft.pattern.clone(), draft.content.clone());
+                    *draft = SearchSpec { pattern, content, ..SearchSpec::new(scope) };
+                }
+                id if (ids::SCOPE_FIRST..ids::SCOPE_FIRST + ids::SCOPE_MAX).contains(&id) => {
+                    let Some(scope) = self.0.scopes.borrow().get((id - ids::SCOPE_FIRST) as usize).cloned() else {
+                        return;
+                    };
+                    draft.scope = scope;
+                }
+                id if (ids::MODIFIED_FIRST..ids::SIZE_MIN).contains(&id) => {
+                    if let Some(range) = ids::modified_for(id) {
+                        draft.modified = range;
+                    }
+                }
+                id if (ids::KIND_FIRST..ids::KIND_FIRST + KindFilter::ALL.len() as u32).contains(&id) => {
+                    draft.kind = KindFilter::ALL[(id - ids::KIND_FIRST) as usize];
+                }
+                id if (ids::OPTION_FIRST..ids::OPTION_FIRST + 5).contains(&id) => match id - ids::OPTION_FIRST {
+                    0 => draft.name_regex = !draft.name_regex,
+                    1 => draft.content_regex = !draft.content_regex,
+                    2 => draft.match_case = !draft.match_case,
+                    3 => {
+                        draft.hidden = match draft.hidden {
+                            HiddenRule::FollowView => HiddenRule::Include,
+                            HiddenRule::Include => HiddenRule::FollowView,
+                        }
+                    }
+                    _ => draft.skipped = !draft.skipped,
+                },
+                _ => return,
+            }
+        }
+        self.criteria_changed(rerun);
+    }
+
+    fn criteria_changed(&self, rerun: bool) {
+        self.sync_bar();
+        self.warm();
+        let shows_search = matches!(self.0.nav.active_location(), Location::Search(_));
+        if rerun && shows_search && self.0.draft.borrow().is_query() {
+            self.go(false);
+        }
+    }
+
+    /// Size at least / at most and Modified between, asked in the question box with a note
+    /// under the field (sapma 2).
+    fn ask_criterion(&self, id: u32) {
+        let draft = self.0.draft.borrow().clone();
+        let between = id == ids::MODIFIED_BETWEEN;
+        let (title, message, initial) = match id {
+            ids::SIZE_MIN => {
+                ("Size at least", "Smallest size, like 500 MB (empty: any):", draft.size.min.map(size_text))
+            }
+            ids::SIZE_MAX => ("Size at most", "Largest size, like 4 GB (empty: any):", draft.size.max.map(size_text)),
+            _ => (
+                "Modified between",
+                "Two days, like 2026-01-01..2026-06-30:",
+                matches!(draft.modified, DateRange::Between(..)).then(|| draft.modified.text()),
+            ),
+        };
+        let check = move |text: &str| -> Result<(), String> {
+            let text = text.trim();
+            if text.is_empty() {
+                return Ok(());
+            }
+            if between {
+                match DateRange::parse(text)? {
+                    DateRange::Between(..) => Ok(()),
+                    _ => Err("Two days, like 2026-01-01..2026-06-30".to_owned()),
+                }
+            } else {
+                parse_size(text).map(|_| ())
+            }
+        };
+        let searches = self.clone();
+        self.0.dialogs.ask_text_noted(
+            title,
+            message,
+            initial.unwrap_or_default(),
+            &["OK", "Cancel"],
+            move |text| match check(text) {
+                Ok(()) => (String::new(), false),
+                Err(why) => (why, true),
+            },
+            move |text| {
+                let Some(text) = text.map(|t| t.trim().to_owned()) else { return };
+                if check(&text).is_err() {
+                    return;
+                }
+                {
+                    let mut draft = searches.0.draft.borrow_mut();
+                    match id {
+                        ids::SIZE_MIN => draft.size.min = parse_size(&text).ok(),
+                        ids::SIZE_MAX => draft.size.max = parse_size(&text).ok(),
+                        _ => draft.modified = DateRange::parse(&text).unwrap_or(DateRange::Any),
+                    }
+                }
+                searches.criteria_changed(true);
+            },
+        );
+    }
+
+    /// The folders the last search could not read, with why (the first 50).
+    fn show_problems(&self) {
+        let lines: Vec<String> =
+            self.0.problems.borrow().iter().map(|(path, why)| format!("{}: {why}", path.display())).collect();
+        self.0.dialogs.ask("Folders that could not be read", lines.join("\n"), &["Close"], |_| {});
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gezik_search::walk::Problems;
+
+    #[test]
+    fn the_status_bar_says_how_far_and_how_it_ended() {
+        assert_eq!(progress_text(12_345, 48_210), "Searching… 12,345 found · 48,210 folders");
+        assert_eq!(progress_text(3, 0), "Searching… 3 found");
+        let mut done = Summary { found: 1234, elapsed: Duration::from_millis(2400), ..Summary::default() };
+        assert_eq!(done_text(&done), "1,234 results in 2.4 s");
+        done.everything = true;
+        done.skipped = 14;
+        done.problems = Problems { count: 3, first: Vec::new() };
+        assert_eq!(
+            done_text(&done),
+            "1,234 results in 2.4 s via Everything · Skipped 14 folders (search.skip) · 3 folders could not be read"
+        );
+        let limit = Summary { found: 250_000, limit_reached: true, ..Summary::default() };
+        assert_eq!(done_text(&limit), "Stopped at 250,000 results. Narrow the search.");
+        let stopped = Summary { found: 1, cancelled: true, ..Summary::default() };
+        assert_eq!(done_text(&stopped), "Stopped · 1 result");
+        let one = Summary { found: 1, skipped: 1, elapsed: Duration::from_millis(50), ..Summary::default() };
+        assert_eq!(done_text(&one), "1 result in 0.1 s · Skipped 1 folder (search.skip)");
+    }
+
+    #[test]
+    fn the_scope_menu_climbs_to_the_drive_and_this_pc() {
+        let folder = std::env::temp_dir().join("a").join("b");
+        let choices = scope_choices(Some(&folder));
+        assert_eq!(choices[0], (Scope::Folder(folder.clone()), "This folder (b)".to_owned()));
+        assert_eq!(choices[1].0, Scope::Folder(folder.parent().unwrap().to_path_buf()));
+        let root = folder.ancestors().last().unwrap().to_path_buf();
+        let drive = choices.iter().rev().nth(1).unwrap();
+        assert_eq!(drive.0, Scope::Folder(root));
+        assert!(drive.1.starts_with("Whole drive ("), "{}", drive.1);
+        assert_eq!(choices.last().unwrap(), &(Scope::AllDrives, gezik_core::nav::DRIVES_NAME.to_owned()));
+        let parents = choices.len() - 3;
+        assert!(parents <= 5, "at most five folders above");
+        assert_eq!(scope_choices(None), [(Scope::AllDrives, gezik_core::nav::DRIVES_NAME.to_owned())]);
+        assert_eq!(scope_label(&Scope::Folder(folder)), "in b");
+        assert_eq!(scope_label(&Scope::AllDrives), format!("in {}", gezik_core::nav::DRIVES_NAME));
+    }
+
+    #[test]
+    fn a_location_carries_its_search() {
+        let mut spec = SearchSpec::new(Scope::Folder("/w".into()));
+        spec.pattern = "x".into();
+        assert_eq!(spec_of(&Location::Search(Box::new(spec.clone()))), Some(spec));
+        assert_eq!(spec_of(&Location::Flat("/w".into())), Some(SearchSpec::flat_view("/w".into())));
+        assert_eq!(spec_of(&Location::Path("/w".into())), None);
+    }
+
+    #[test]
+    fn deep_folders_offer_five_folders_above() {
+        let mut folder = std::env::temp_dir();
+        for part in ["1", "2", "3", "4", "5", "6", "7"] {
+            folder.push(part);
+        }
+        let choices = scope_choices(Some(&folder));
+        assert_eq!(choices.len(), 1 + 5 + 2, "this folder, five above, the drive, This PC");
+    }
+}

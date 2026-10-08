@@ -94,6 +94,11 @@ impl History {
     pub fn set_view(&mut self, view: ViewState) {
         self.current.view = view;
     }
+    /// Changes where the current entry is, without a step (a search refined as one types,
+    /// spec 4.3); its view starts over.
+    pub fn replace(&mut self, location: Location) {
+        self.current = HistoryEntry { location, view: ViewState::default() };
+    }
     pub fn can_go_back(&self) -> bool {
         !self.back.is_empty()
     }
@@ -1256,5 +1261,17 @@ mod tests {
         assert_eq!(labels(&flat).last(), Some(&"All files"));
         assert_eq!(flat.last().unwrap().location, Location::Flat("/home/a".into()));
         assert_eq!(nearest_existing(&Location::Flat("/gone".into()), |_| false), Location::Flat("/gone".into()));
+    }
+
+    #[test]
+    fn a_refined_search_replaces_its_place_without_a_step() {
+        let mut h = History::new(p("/w"));
+        h.navigate(search_at("/w", "r"));
+        h.set_view(view("x", -5.0));
+        h.replace(search_at("/w", "ra"));
+        assert_eq!(h.location(), &search_at("/w", "ra"));
+        assert_eq!(h.view(), &ViewState::default(), "a new list: no old selection");
+        assert!(h.back());
+        assert_eq!(h.location(), &p("/w"), "one step back is the folder");
     }
 }

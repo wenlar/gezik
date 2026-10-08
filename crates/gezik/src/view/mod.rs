@@ -159,6 +159,12 @@ struct SortGate {
     pending: Vec<Batch>,
 }
 
+/// Whether the results are sorted again after a sort answered with `outcome` and the batches
+/// that waited were appended (`drained`: some were).
+fn sorts_again(outcome: &SortOutcome, drained: bool) -> bool {
+    *outcome == SortOutcome::Redo || drained
+}
+
 /// What to do with a finished sort's order.
 #[derive(Debug, PartialEq, Eq)]
 enum SortOutcome {
@@ -1227,7 +1233,6 @@ impl View {
 
     /// A search's next batch (spec 4.3): rows added at the end, the filter applied to them; the
     /// scroll, the selection and the focus stay.
-    #[allow(dead_code, reason = "the search bar and the result operations call it (Tasks 7-8)")]
     pub fn append_results(&self, batch: Batch) {
         if batch.is_empty() || !self.shows_results() {
             return;
@@ -1277,7 +1282,6 @@ impl View {
     }
 
     /// A search runs (`true`) or ended: at its end the results are sorted (sapma 4).
-    #[allow(dead_code, reason = "the search bar and the result operations call it (Tasks 7-8)")]
     pub fn set_searching(&self, on: bool) {
         let was = self.0.searching.replace(on);
         if was && !on {
@@ -1286,7 +1290,6 @@ impl View {
     }
 
     /// The status bar while results show and nothing is selected; `None`: the item count.
-    #[allow(dead_code, reason = "the search bar and the result operations call it (Tasks 7-8)")]
     pub fn set_results_status(&self, text: Option<String>) {
         *self.0.results_status.borrow_mut() = text;
         self.update_status();
@@ -1346,10 +1349,13 @@ impl View {
             }
         }
         let pending = self.0.sort_gate.borrow_mut().take_pending();
+        let drained = !pending.is_empty();
         for batch in pending {
             self.append_results(batch);
         }
-        if outcome == SortOutcome::Redo {
+        // Batches that waited past the last sort (a search that ended before it answered)
+        // must not stay an unsorted tail; while a search runs this waits for its end.
+        if sorts_again(&outcome, drained) {
             self.sort_results();
         }
     }
@@ -2261,5 +2267,24 @@ mod tests {
         let only_focus = ViewState { selected: vec![], focus: Some("d".into()), scroll: 0.0, filter: None };
         let selection = restore_selection(&listing, &only_focus);
         assert_eq!((selection.count(), selection.focus()), (0, Some(2)));
+    }
+
+    #[test]
+    fn batches_that_waited_past_the_last_sort_are_sorted_in() {
+        // A sort starts while no search runs (results shown again); then a search starts, its
+        // batches wait for that sort, and the search ends before the sort answers.
+        let mut gate = SortGate::default();
+        let first = gate.start();
+        assert!(gate.hold(one_result()).is_none(), "the sort holds the set: the batch waits");
+        assert!(gate.hold(one_result()).is_none());
+        // The end of the search finds nothing new to sort (the batches wait): no sort starts.
+        gate.cancel();
+        let outcome = gate.finish(first, true);
+        assert_eq!(outcome, SortOutcome::Stale);
+        let drained = gate.take_pending();
+        assert_eq!(drained.len(), 2, "the batches go in once the sort answered");
+        assert!(sorts_again(&outcome, !drained.is_empty()), "and the results are sorted again");
+        assert!(!sorts_again(&SortOutcome::Apply, false), "nothing waited: the order stands");
+        assert!(sorts_again(&SortOutcome::Redo, false));
     }
 }

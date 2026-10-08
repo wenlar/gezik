@@ -474,6 +474,12 @@ impl From<EverythingError> for Fallback {
     }
 }
 
+/// Whether Everything answers names for `roots` now: on, local fixed drives, running with its
+/// database (spec 3.5: then no name cache is kept). Asks Everything: off the UI thread.
+pub fn usable(roots: &[PathBuf], on: bool) -> bool {
+    on && fixed(roots) && ipc::ready(QUICK).is_ok()
+}
+
 /// Whether every root is on a local fixed drive (Windows only).
 fn fixed(roots: &[PathBuf]) -> bool {
     if !cfg!(windows) || roots.is_empty() {
@@ -1178,5 +1184,13 @@ mod tests {
         let stopped = AtomicBool::new(true);
         assert_eq!(search(&spec, &walk, &query, true, &stopped, &|_| {}), Err(Fallback::Cancelled));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn everything_is_never_usable_when_off_or_elsewhere() {
+        assert!(!usable(&roots(), false));
+        if !cfg!(windows) {
+            assert!(!usable(&roots(), true));
+        }
     }
 }

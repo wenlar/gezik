@@ -108,6 +108,7 @@ export component AppWindow inherits Window {
             MenuItem { title: "Move Item Here"; shortcut: root.menu-keys ? @keys(Control + Alt + V) : @keys(); activated => { root.menu-command("paste-move"); } }
             MenuItem { title: "Select All"; shortcut: root.menu-keys ? @keys(Control + A) : @keys(); activated => { root.menu-command("select-all"); } }
             MenuSeparator { }
+            MenuItem { title: "Find…"; shortcut: root.menu-keys ? @keys(Control + Shift + F) : @keys(); activated => { root.menu-command("search"); } }
             MenuItem { title: "Filter…"; shortcut: root.menu-keys ? @keys(Control + F) : @keys(); activated => { root.menu-command("filter"); } }
             MenuItem { title: "Invert Selection"; shortcut: root.menu-keys ? @keys(Control + Shift + I) : @keys(); activated => { root.menu-command("invert-selection"); } }
             MenuItem { title: "Select by Pattern…"; shortcut: root.menu-keys ? @keys(Control + "=") : @keys(); activated => { root.menu-command("select-pattern"); } }
@@ -120,6 +121,7 @@ export component AppWindow inherits Window {
             MenuItem { title: "as List"; shortcut: root.menu-keys ? @keys(Control + Shift + "1") : @keys(); activated => { root.menu-command("view-list"); } }
             MenuItem { title: "as Grid"; shortcut: root.menu-keys ? @keys(Control + Shift + "2") : @keys(); activated => { root.menu-command("view-grid"); } }
             MenuSeparator { }
+            MenuItem { title: "Flat View"; shortcut: root.menu-keys ? @keys(Control + B) : @keys(); activated => { root.menu-command("flat-view"); } }
             MenuItem { title: "Show Preview"; activated => { root.menu-command("toggle-preview"); } }
             MenuItem { title: "Drop Stack"; activated => { root.menu-command("toggle-stack"); } }
             MenuItem { title: "Operation History"; activated => { root.menu-command("show-history"); } }
@@ -271,6 +273,28 @@ export component AppWindow inherits Window {
     callback filter-edited(string);
     // The saved filters' button, with its box (as `view-menu`).
     callback filter-menu(length, length, length, length);
+    // The search bar (search.rs, spec 4.2): open, where it looks, its fields, Filters' count,
+    // whether a search runs, what is wrong with a field.
+    in property <bool> search-open;
+    in property <string> search-scope;
+    in-out property <string> search-text;
+    in property <bool> search-content-open;
+    in-out property <string> search-content;
+    in property <string> search-error;
+    in property <string> search-content-error;
+    in property <string> search-filters: "Filters";
+    in property <bool> search-running;
+    // One of the search bar's fields has the keyboard.
+    out property <bool> search-focused: search-bar.field-focused;
+    callback search-edited(string);
+    callback search-content-edited(string);
+    callback search-content-toggle();
+    callback search-go();
+    callback search-scope-menu(length, length, length, length);
+    callback search-filters-menu(length, length, length, length);
+    callback search-more-menu(length, length, length, length);
+    // The filter bar's "Search subfolders".
+    callback filter-search();
     in property <[SidebarRow]> sidebar-rows;
     // Position in `sidebar-rows` of the pinned part's first row (a heading; -1 if none), and the
     // row after its last pin.
@@ -645,7 +669,7 @@ export component AppWindow inherits Window {
     // back when the window is activated again.
     changed path-editing => {
         root.path-editing-changed();
-        if !self.path-editing && !keys.has-focus && !filter-bar.field-focused { keys.focus(); }
+        if !self.path-editing && !keys.has-focus && !filter-bar.field-focused && !search-bar.field-focused { keys.focus(); }
     }
 
     // Gives the keyboard to the filter bar's field, the cursor at byte `at`.
@@ -658,6 +682,24 @@ export component AppWindow inherits Window {
     public function select-filter-text() {
         root.end-path-editing-for-filter();
         filter-bar.select-all();
+    }
+
+    // Gives the keyboard to the search bar's name field, the cursor at byte `at`.
+    public function focus-search(at: int) {
+        root.end-path-editing-for-filter();
+        search-bar.focus-at(at);
+    }
+
+    // The same with its whole text selected.
+    public function select-search-text() {
+        root.end-path-editing-for-filter();
+        search-bar.select-all();
+    }
+
+    // Gives the keyboard to the text-in-files field.
+    public function focus-search-content() {
+        root.end-path-editing-for-filter();
+        search-bar.focus-content();
     }
 
     // Typing in the address bar ends when the filter takes the keyboard.
@@ -919,6 +961,36 @@ export component AppWindow inherits Window {
                 }
                 VerticalLayout {
                     horizontal-stretch: 1;
+                    search-bar := FilterBar {
+                        search: true;
+                        height: root.search-open ? Theme.row-height + 8px : 0px;
+                        visible: root.search-open;
+                        text <=> root.search-text;
+                        error: root.search-error;
+                        scope: root.search-scope;
+                        content-open: root.search-content-open;
+                        content <=> root.search-content;
+                        content-error: root.search-content-error;
+                        filters: root.search-filters;
+                        running: root.search-running;
+                        edited(t) => { root.search-edited(t); }
+                        content-edited(t) => { root.search-content-edited(t); }
+                        content-toggle => { root.search-content-toggle(); }
+                        go => { root.search-go(); }
+                        scope-menu(x, y, fx, fy) => {
+                            root.end-path-editing();
+                            root.search-scope-menu(x, y, fx, fy);
+                        }
+                        filters-menu(x, y, fx, fy) => {
+                            root.end-path-editing();
+                            root.search-filters-menu(x, y, fx, fy);
+                        }
+                        menu(x, y, fx, fy) => {
+                            root.end-path-editing();
+                            root.search-more-menu(x, y, fx, fy);
+                        }
+                    }
+                    if root.search-open: Rectangle { height: 1px; background: Theme.border; }
                     filter-bar := FilterBar {
                         height: root.filter-open ? Theme.row-height + 8px : 0px;
                         visible: root.filter-open;
@@ -926,6 +998,7 @@ export component AppWindow inherits Window {
                         count: root.filter-count;
                         error: root.filter-error;
                         edited(t) => { root.filter-edited(t); }
+                        go => { root.filter-search(); }
                         menu(x, y, fx, fy) => {
                             root.end-path-editing();
                             root.filter-menu(x, y, fx, fy);

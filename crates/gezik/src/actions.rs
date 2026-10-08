@@ -20,7 +20,7 @@ pub fn run_command(index: usize, view: &View) {
     crate::convert::run_by_index(index, items);
 }
 
-/// Runs `action` if it is one of 6a's, 6b's, 7a's and 7b's; returns whether it ran (a pin
+/// Runs `action` if it is one of 6a's, 6b's, 7a's, 7b's and 8a's; returns whether it ran (a pin
 /// number with no pin did not).
 pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
     match action {
@@ -49,6 +49,8 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         Action::ToggleStack => crate::stack::with_current(crate::stack::Stack::toggle),
         Action::ShowHistory => crate::operations::with_current(crate::operations::Operations::show_history),
         Action::ReopenTab => nav.reopen_tab(),
+        Action::Search => crate::search::with_current(crate::search::Searches::open),
+        Action::FlatView => crate::search::with_current(crate::search::Searches::flat_view),
         Action::ToggleTabLock => nav.toggle_tab_lock(nav.active_index()),
         Action::TabPicker => crate::tab_tools::with_current(crate::tab_tools::TabTools::open),
         Action::ClearHistory => crate::path_box::with_current(|p| p.forget(true)),
@@ -105,9 +107,7 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         | Action::Undo
         | Action::Redo
         | Action::BatchRename
-        // Task 7 and 8 place these.
-        | Action::Search
-        | Action::FlatView
+        // Task 8 places these.
         | Action::ShowInFolder
         | Action::CopyWithFolders
         | Action::CutWithFolders => return false,
