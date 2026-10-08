@@ -230,7 +230,7 @@ fn write_file(
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(Stop::Skip)?;
     }
-    remove_earlier(path).map_err(Stop::Skip)?;
+    remove_earlier(path)?;
     let mut file = File::create(path).map_err(Stop::Skip)?;
     let result = copy(r, &mut file, declared, cx);
     if result.is_ok()
@@ -248,11 +248,21 @@ fn write_file(
 }
 
 /// Removes a file an earlier entry of the same name wrote (the last one wins), read-only or
-/// hidden as it may be. A folder stays (the file then cannot be made).
-fn remove_earlier(path: &Path) -> IoResult<()> {
+/// hidden as it may be. A folder stays (the file then cannot be made). A file whose name
+/// differs only in case (one file on a case-insensitive disk) is kept and this entry left out.
+fn remove_earlier(path: &Path) -> Result<(), Stop> {
     let Ok(metadata) = path.symlink_metadata() else { return Ok(()) };
     if metadata.is_dir() {
         return Ok(());
+    }
+    if let (Some(parent), Some(name)) = (path.parent(), path.file_name()) {
+        let exact = fs::read_dir(parent).map_err(Stop::Skip)?.flatten().any(|e| e.file_name() == name);
+        if !exact {
+            return Err(Stop::Note(IoError::new(
+                ErrorKind::AlreadyExists,
+                "a file of the same name in other case was already written",
+            )));
+        }
     }
     #[cfg(windows)]
     {
@@ -261,10 +271,10 @@ fn remove_earlier(path: &Path) -> IoResult<()> {
         if permissions.readonly() {
             #[allow(clippy::permissions_set_readonly_false)]
             permissions.set_readonly(false);
-            fs::set_permissions(path, permissions)?;
+            fs::set_permissions(path, permissions).map_err(Stop::Skip)?;
         }
     }
-    fs::remove_file(path)
+    fs::remove_file(path).map_err(Stop::Skip)
 }
 
 /// Copies in 64 KB pieces, stopping when cancelled or past `declared * 1.1 + 1 MiB`; less

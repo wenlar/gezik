@@ -11,7 +11,7 @@ use unrar_ng::error::{Code, UnrarError};
 use unrar_ng::{Archive, CursorBeforeFile, CursorBeforeHeader, OpenArchive, Process, Redirect};
 
 use super::{
-    ArchiveSource, Entry, ExtractCx, IoError, IoResult, Links, Meta, Volumes, apply_meta, cancelled, make_dir,
+    ArchiveSource, Entry, ExtractCx, IoError, IoResult, Links, Meta, Stop, Volumes, apply_meta, cancelled, make_dir,
     remove_earlier, report, unsafe_path,
 };
 
@@ -155,11 +155,13 @@ impl RarSource {
                 Some(_) if encrypted && !given => return End::Password { at },
                 Some(path) => {
                     let ready = match path.parent() {
-                        Some(parent) => fs::create_dir_all(parent).and_then(|()| remove_earlier(&path)),
+                        Some(parent) => {
+                            fs::create_dir_all(parent).map_err(Stop::Skip).and_then(|()| remove_earlier(&path))
+                        }
                         None => Ok(()),
                     };
                     if let Err(e) = ready {
-                        cx.entry_failed(&name, &e);
+                        let _ = report(&name, Err(e), cx);
                         header.skip()
                     } else {
                         let progress = |n| {

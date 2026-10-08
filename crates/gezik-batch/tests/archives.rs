@@ -748,6 +748,35 @@ fn duplicate_names_the_last_one_wins() {
     std::fs::remove_dir_all(&d).unwrap();
 }
 
+/// On a case-insensitive disk `readme` would replace `README`: it is left out (a repack is
+/// then refused) instead.
+#[test]
+fn names_differing_only_in_case_do_not_replace_each_other() {
+    let d = dir("case");
+    let path = d.join("case.zip");
+    let mut zw = ZipWriter::new(std::fs::File::create(&path).unwrap());
+    zw.start_file("README", SimpleFileOptions::default()).unwrap();
+    zw.write_all(b"upper").unwrap();
+    zw.start_file("readme", SimpleFileOptions::default()).unwrap();
+    zw.write_all(b"lower").unwrap();
+    zw.finish().unwrap();
+
+    let stage = stage(&d);
+    std::fs::write(stage.join("Probe"), b"").unwrap();
+    let insensitive = stage.join("PROBE").exists();
+    std::fs::remove_file(stage.join("Probe")).unwrap();
+    let cx = Cx::new(None);
+    extract(&path, &stage, &cx).unwrap();
+    if insensitive {
+        assert_eq!(cx.failed(), ["readme"]);
+        assert_eq!(tree(&stage), files(&[("README", b"upper")]));
+    } else {
+        assert!(cx.failed().is_empty(), "{:?}", cx.failed());
+        assert_eq!(tree(&stage), files(&[("README", b"upper"), ("readme", b"lower")]));
+    }
+    std::fs::remove_dir_all(&d).unwrap();
+}
+
 /// Cancels after 1 MiB of a 5 MB entry: `Interrupted`, and nothing half written stays.
 fn assert_cancels(path: &Path, d: &Path) {
     let stage = stage(d);
