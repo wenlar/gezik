@@ -5,6 +5,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use gezik_core::ops::conflict::{Decision, Facts};
+use gezik_core::ops::names::next_free;
 use gezik_core::templates::{LinkKind, link_name};
 use gezik_platform::link;
 
@@ -79,9 +80,7 @@ impl Task for LinkTask {
     }
 
     fn plan(&self, sink: &mut dyn ScanSink) {
-        // Junctions need a local NTFS drive: asked once, for where the first link goes.
-        let junctions = self.kind != LinkKind::Junction
-            || self.pairs.first().and_then(|(_, at)| at.parent()).is_some_and(link::junctions_supported);
+        let mut planned = std::collections::HashSet::new();
         for (root, (source, at)) in self.pairs.iter().enumerate() {
             if super::refuse_root(sink, source, "link to") {
                 continue;
@@ -94,20 +93,39 @@ impl Task for LinkTask {
                     continue;
                 }
             };
+            // A junction needs a folder on a local NTFS drive, and its link on one too: asked
+            // per item, for both places.
             let refused = match self.kind {
                 LinkKind::Junction if !meta.is_dir() => Some("A junction can only point to a folder"),
-                LinkKind::Junction if !junctions => Some("Junctions need a local NTFS drive"),
+                LinkKind::Junction
+                    if !(link::junctions_supported(source) && at.parent().is_some_and(link::junctions_supported)) =>
+                {
+                    Some("Junctions need a local NTFS drive")
+                }
                 _ => None,
             };
             if let Some(why) = refused {
                 sink.failed(source, io::Error::new(io::ErrorKind::InvalidInput, why));
                 continue;
             }
-            // The link itself is neither a folder nor sized (as `walk` sees links); a taken
-            // name gets a number without asking.
-            let item = PlanItem::new(Stage::Parallel, Facts::default())
+            // Two sources of one name get their numbers here: nothing is on disk yet to meet.
+            let mut at = at.clone();
+            if !planned.insert(at.clone()) {
+                let parent = at.parent().map(Path::to_path_buf).unwrap_or_default();
+                let name = at.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                let free = next_free(&name, meta.is_dir(), |candidate| {
+                    planned.contains(&parent.join(candidate))
+                        || std::fs::symlink_metadata(parent.join(candidate)).is_ok()
+                });
+                at = parent.join(free);
+                planned.insert(at.clone());
+            }
+            // The link is not sized (as `walk` sees links); a folder link is numbered as a
+            // folder (`v1.2 (2)`), and a taken name gets a number without asking.
+            let facts = Facts { is_dir: meta.is_dir(), ..Facts::default() };
+            let item = PlanItem::new(Stage::Parallel, facts)
                 .source(source)
-                .target(at)
+                .target(&at)
                 .checked()
                 .top(root)
                 .preset(Some(Decision::KeepBoth))
@@ -217,6 +235,25 @@ mod tests {
         let (report, _) = finish(&engine, job, defaults);
         assert_eq!(report.failures.len(), 1);
         assert!(report.failures[0].message.contains("only point to a folder"), "{}", report.failures[0].message);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn same_named_sources_and_dotted_folders_are_numbered() {
+        let dir = test_dir("link-same-name");
+        write(&dir.join("a/v1.2/x.txt"), "x");
+        write(&dir.join("b/v1.2/y.txt"), "y");
+        std::fs::create_dir(dir.join("links")).unwrap();
+        let engine = engine();
+        let sources = vec![dir.join("a/v1.2"), dir.join("b/v1.2")];
+        let job = engine.submit(Box::new(LinkTask::into(sources, &dir.join("links"), any_kind())));
+        let (report, _) = finish(&engine, job, defaults);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert_eq!(read(&dir.join("links/Link to v1.2/x.txt")), "x");
+        assert_eq!(read(&dir.join("links/Link to v1.2 (2)/y.txt")), "y");
+        for name in ["Link to v1.2", "Link to v1.2 (2)"] {
+            gezik_platform::fs::delete(&dir.join("links").join(name)).unwrap();
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

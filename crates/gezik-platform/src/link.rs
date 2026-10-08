@@ -132,7 +132,13 @@ mod imp {
                 link.SetWorkingDirectory(&HSTRING::from(dir.as_os_str())).map_err(io_error)?;
             }
             let file: IPersistFile = link.cast().map_err(io_error)?;
-            file.Save(&HSTRING::from(at.as_os_str()), true).map_err(io_error)
+            // `Save` replaces what is there: claim the name first, so a taken one fails.
+            std::fs::OpenOptions::new().write(true).create_new(true).open(at)?;
+            let saved = file.Save(&HSTRING::from(at.as_os_str()), true).map_err(io_error);
+            if saved.is_err() {
+                let _ = std::fs::remove_file(at);
+            }
+            saved
         }
     }
 
@@ -256,6 +262,18 @@ mod tests {
         let lnk = dir.join("target - Shortcut.lnk");
         create(LinkKind::Shortcut, &dir.join("target"), &lnk, true).unwrap();
         assert_eq!(read_shortcut(&lnk).unwrap(), dir.join("target"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_shortcut_never_replaces_a_file() {
+        let dir = dir("shortcut-taken");
+        let lnk = dir.join("target - Shortcut.lnk");
+        std::fs::write(&lnk, "mine").unwrap();
+        let err = create(LinkKind::Shortcut, &dir.join("target"), &lnk, true).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read_to_string(&lnk).unwrap(), "mine");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
