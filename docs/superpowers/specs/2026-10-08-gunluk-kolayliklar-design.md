@@ -1,7 +1,7 @@
 # Alt Proje 7: Günlük Kolaylıklar — Tasarım
 
 - **Tarih:** 2026-10-08
-- **Durum:** Tasarım onaylandı (2026-10-07); 7a ve 7b uygulandı
+- **Durum:** Tasarım onaylandı (2026-10-07); 7a, 7b ve 7c uygulandı
 - **Kapsam:** Gezik yol haritasının 7. alt projesi (`docs/superpowers/notes/2026-10-07-rakip-ozet.md` §2: maddeler 7, 8, 11, 15, 16, 19, 42, 46, 47, 48, 55); tek spec, üç plan ve üç PR: **7a** terminal, yolu kopyala, oturum ve sekme setleri; **7b** sabitlenen klasör grupları ve görünüm seçenekleri; **7c** şablonlar, panodan dosya, bağlantılar, bırakma yığını ve işlem günlüğü
 - **Dayandığı:** `2026-10-04-gezinme-design.md` (sekmeler, kenar çubuğu, sağ tık menüsü, açılış), `2026-10-04-gorunum-design.md` (liste modeli, sıralama, `[view]`), `2026-10-04-dosya-islemleri-design.md` (iş motoru, geri alma, pano, sürükle-bırak), `2026-10-03-ayarlar-ve-tema-design.md` (ayar dosyası, `{home}` belirteçleri, kısayol biçimi), `2026-10-07-klavye-paketi-design.md` (eylem listesi, AltGr kuralı, kilitli sekmeler, `state.toml` yazıcısı)
 
