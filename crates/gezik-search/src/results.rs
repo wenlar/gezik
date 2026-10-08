@@ -265,14 +265,13 @@ impl ResultSet {
     /// Returns where each row left (but the new ones at the end) was before.
     pub fn apply_changes(&mut self, gone: &[PathBuf], added: Vec<(PathBuf, Entry)>) -> Vec<usize> {
         let gone_rows = self.rows_of(gone);
-        let mut free: std::collections::HashMap<u32, std::collections::VecDeque<usize>> =
-            std::collections::HashMap::new();
-        for &row in &gone_rows {
-            free.entry(self.parent[row]).or_default().push_back(row);
+        // By folder, the gone rows still free, last first (Vecs, not maps: a smaller exe).
+        let mut free: Vec<Vec<usize>> = vec![Vec::new(); self.folders.len()];
+        for &row in gone_rows.iter().rev() {
+            free[self.parent[row] as usize].push(row);
         }
-        let crowded: std::collections::HashSet<u32> =
-            free.iter().filter(|(_, rows)| rows.len() > 1).map(|(parent, _)| *parent).collect();
-        let mut taken = std::collections::HashSet::new();
+        let crowded: Vec<bool> = free.iter().map(|rows| rows.len() > 1).collect();
+        let mut taken = Vec::new();
         let mut appended = Vec::new();
         for (path, entry) in added {
             if self.index_of_path(&path).is_some() {
@@ -280,17 +279,17 @@ impl ResultSet {
             }
             let parent =
                 folder_text(&self.root, &path).and_then(|folder| self.folders.iter().position(|f| **f == *folder));
-            match parent.and_then(|p| free.get_mut(&(p as u32))).and_then(|rows| rows.pop_front()) {
+            match parent.and_then(|p| free[p].pop()) {
                 Some(row) => {
                     // Several gone there: which old row this one was is not known, nor is its
                     // matching line.
-                    if crowded.contains(&self.parent[row])
+                    if crowded[self.parent[row] as usize]
                         && let Some(matches) = &mut self.matches
                     {
                         matches[row] = None;
                     }
                     self.entries[row] = entry;
-                    taken.insert(row);
+                    taken.push(row);
                 }
                 None => appended.push((path, entry)),
             }
@@ -311,18 +310,16 @@ impl ResultSet {
 /// thread.
 pub fn verify(set: &ResultSet, dirs: &[PathBuf], paths: &[PathBuf]) -> (Vec<PathBuf>, Vec<(PathBuf, Entry)>) {
     use gezik_core::ops::paths::same_path;
-    let changed: std::collections::HashSet<u32> = set
+    let changed: Vec<bool> = set
         .folders
         .iter()
-        .enumerate()
-        .filter(|(_, folder)| {
-            let path = if folder.is_empty() { set.root.clone() } else { set.root.join(&***folder) };
+        .map(|folder| {
+            let path = if folder.is_empty() { set.root.clone() } else { set.root.join(&**folder) };
             dirs.iter().any(|dir| same_path(dir, &path))
         })
-        .map(|(i, _)| i as u32)
         .collect();
     let gone = (0..set.len())
-        .filter(|&i| changed.contains(&set.parent[i]))
+        .filter(|&i| changed[set.parent[i] as usize])
         .filter_map(|i| set.path_at(i))
         .filter(|path| std::fs::symlink_metadata(path).is_err())
         .collect();
