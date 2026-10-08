@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
 
 use gezik_core::ops::conflict::{ConflictKind, Decision, Facts, Resolution, default_decision, kind_of, resolve};
-use gezik_core::ops::names::next_free;
+use gezik_core::ops::names::next_free_os;
 use gezik_core::ops::paths::{DriveSet, is_within, same_path};
 use gezik_core::ops::threads::workers;
 use gezik_platform::fs;
@@ -109,7 +109,7 @@ struct Sink<'a> {
     held: Vec<Held>,
     /// Folders merged into existing ones, shown with the conflicts.
     merges: Vec<ConflictItem>,
-    /// Targets given a new name so far: what goes inside them follows.
+    /// Folders given a new name so far: what goes inside them follows.
     renames: Vec<(PathBuf, PathBuf)>,
     /// Held folders (target, index in `held`): what goes inside them waits with them.
     blocked: Vec<(PathBuf, usize)>,
@@ -222,9 +222,9 @@ impl Sink<'_> {
     /// A free `name (n)` next to `target`.
     fn free_target(&mut self, target: &Path, is_dir: bool) -> PathBuf {
         let parent = target.parent().unwrap_or(Path::new(""));
-        let name = target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let name = target.file_name().unwrap_or_default();
         let taken = &self.taken;
-        let free = next_free(&name, is_dir, |candidate| {
+        let free = next_free_os(name, is_dir, |candidate| {
             let path = parent.join(candidate);
             taken.contains(&path) || std::fs::symlink_metadata(&path).is_ok()
         });
@@ -253,7 +253,10 @@ impl Sink<'_> {
             Resolution::Rename => {
                 let Some(target) = item.target.clone() else { return true };
                 let free = self.free_target(&target, item.facts.is_dir);
-                self.renames.push((target, free.clone()));
+                // Only a folder has items following it inside.
+                if item.facts.is_dir {
+                    self.renames.push((target, free.clone()));
+                }
                 item.target = Some(free);
                 self.dispatch(item);
             }

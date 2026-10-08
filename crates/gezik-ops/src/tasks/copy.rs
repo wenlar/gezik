@@ -309,6 +309,34 @@ mod tests {
     }
 
     #[test]
+    fn keep_both_keeps_a_name_that_is_not_unicode() {
+        #[cfg(unix)]
+        let (name, numbered) = {
+            use std::os::unix::ffi::OsStringExt;
+            (
+                std::ffi::OsString::from_vec(b"r\xfcz.txt".to_vec()),
+                std::ffi::OsString::from_vec(b"r\xfcz (2).txt".to_vec()),
+            )
+        };
+        #[cfg(windows)]
+        let (name, numbered) = {
+            use std::os::windows::ffi::OsStringExt;
+            let wide = |tail: &str| {
+                std::ffi::OsString::from_wide(
+                    &[0x72, 0xD800].into_iter().chain(tail.encode_utf16()).collect::<Vec<u16>>(),
+                )
+            };
+            (wide(".txt"), wide(" (2).txt"))
+        };
+        let dir = test_dir("copy-keep-both-bytes");
+        write(&dir.join(&name), "x");
+        let engine = engine();
+        finish(&engine, engine.submit(Box::new(CopyTask::into(vec![dir.join(&name)], &dir))), no_conflicts);
+        assert_eq!(read(&dir.join(&numbered)), "x");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn replace_writes_the_new_file() {
         let dir = test_dir("copy-replace");
         let (src, dst) = (dir.join("src"), dir.join("dst"));
