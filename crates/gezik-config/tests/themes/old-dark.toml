@@ -1,0 +1,36 @@
+name = "Dark"
+
+[colors]
+background = "#1c1c1c"
+surface = "#202020"
+foreground = "#ffffff"
+foreground-muted = "#a0a0a0"
+border = "#3a3a3a"
+accent = "#60cdff"
+accent-foreground = "#000000"
+selection = "#2d4f6b"
+selection-foreground = "#ffffff"
+hover = "#ffffff14"
+icon-folder = "#e8b33f"
+icon-image = "#4cc2a5"
+icon-video = "#e0667a"
+icon-audio = "#b07de8"
+icon-archive = "#c9925a"
+icon-document = "#5aa7e8"
+icon-code = "#8fc65a"
+icon-other = "#9aa3ad"
+focus-ring = "#60cdff"
+marquee = "#60cdff33"
+danger = "#ff6b6b"
+progress = "#60cdff"
+progress-paused = "#e8b33f"
+progress-error = "#ff6b6b"
+drop-target = "#60cdff40"
+
+[metrics]
+font-family = ""
+font-size = 13
+row-height = 26
+icon-size = 16
+radius = 6
+spacing = 6

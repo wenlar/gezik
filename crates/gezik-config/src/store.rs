@@ -423,7 +423,8 @@ mod tests {
         let store = store("density");
         write(&store, "settings.toml", "[layout]\ndensity = \"compact\"\n");
         let theme = resolve(&store.read_files(), true).theme.unwrap();
-        assert_eq!(theme.metrics.row_height, 21.0);
+        assert_eq!(theme.metrics.row_height, 20.0);
+        assert_eq!(theme.metrics.inset, 4.0);
     }
 
     #[test]
