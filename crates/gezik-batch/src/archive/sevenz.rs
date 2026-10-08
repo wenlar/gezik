@@ -101,6 +101,8 @@ impl ArchiveSource for SevenZSource {
         // Entries handled in a pass a wrong password ended; the next pass skips them.
         let mut done = 0usize;
         let mut retry = false;
+        // The password a pass ended with as maybe wrong: ending so again, the entry is damaged.
+        let mut bad_with: Option<String> = None;
         let mut links = Links::default();
         loop {
             if any_encrypted && (self.password.is_none() || retry) {
@@ -110,6 +112,7 @@ impl ArchiveSource for SevenZSource {
                 };
                 self.password = Some(password);
             }
+            confirmed |= bad_with.is_some() && bad_with == self.password;
             let password = self.password.as_deref().map_or_else(Password::empty, Password::new);
             let mut reader = ArchiveReader::from_archive(archive.clone(), self.volumes.reader()?, password);
             let mut seen = 0usize;
@@ -151,7 +154,10 @@ impl ArchiveSource for SevenZSource {
                 Ok(()) => break,
                 Err(_) if stop.is_some() => return Err(stop.unwrap_or_else(cancelled)),
                 Err(SzError::PasswordRequired) if any_encrypted => retry = self.password.is_some(),
-                Err(SzError::MaybeBadPassword(_)) if !confirmed => retry = true,
+                Err(SzError::MaybeBadPassword(_)) if !confirmed => {
+                    retry = true;
+                    bad_with.clone_from(&self.password);
+                }
                 Err(e) => return Err(sz_error(e)),
             }
         }

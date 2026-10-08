@@ -91,6 +91,8 @@ impl ArchiveSource for ZipSource {
                 continue;
             }
             let mut retry = false;
+            // The password the CRC failed with: failing again with it, the entry is damaged.
+            let mut bad_with: Option<String> = None;
             let result = loop {
                 if info.encrypted && (self.password.is_none() || retry) {
                     match cx.password(retry) {
@@ -119,9 +121,13 @@ impl ArchiveSource for ZipSource {
                 }
                 let result = write_file(&mut file, &path, Some(info.size), &info.meta, cx).map(|()| true);
                 if info.weak && !confirmed && matches!(result, Err(Stop::Read(_))) {
-                    // The CRC caught a wrong password the check let through.
-                    retry = true;
-                    continue;
+                    if bad_with.is_none() || bad_with != self.password {
+                        // The CRC caught a wrong password the check let through.
+                        bad_with.clone_from(&self.password);
+                        retry = true;
+                        continue;
+                    }
+                    confirmed = true;
                 }
                 confirmed |= info.encrypted && result.is_ok();
                 break result;

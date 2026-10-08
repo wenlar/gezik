@@ -337,6 +337,46 @@ fn sevenz_data_encrypted_wrong_password_asks_again() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
+/// A damaged first entry looks like a wrong password; the same password again is right.
+#[test]
+fn sevenz_damaged_first_encrypted_entry_fails_once_the_password_repeats() {
+    let d = dir("7z-damaged");
+    let path = d.join("data.7z");
+    let (a, b) = (noise(200_000, 6), noise(1000, 7));
+    {
+        let mut w = ArchiveWriter::create(&path).unwrap();
+        w.set_content_methods(vec![AesEncoderOptions::new("pw".into()).into(), Lzma2Options::from_level(1).into()]);
+        w.set_encrypt_header(false);
+        w.push_archive_entry(sz_entry("a.bin"), Some(a.as_slice())).unwrap();
+        w.push_archive_entry(sz_entry("b.bin"), Some(b.as_slice())).unwrap();
+        w.finish().unwrap();
+    }
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes[32 + 100_000] ^= 0xFF;
+    std::fs::write(&path, bytes).unwrap();
+    struct Same(std::cell::Cell<u32>, std::cell::RefCell<Vec<String>>);
+    impl ExtractCx for Same {
+        fn add_bytes(&self, _: u64) {}
+        fn entry_done(&self) {}
+        fn stopped(&self) -> bool {
+            false
+        }
+        fn password(&self, _: bool) -> Option<String> {
+            self.0.set(self.0.get() + 1);
+            (self.0.get() < 5).then(|| "pw".to_string())
+        }
+        fn entry_failed(&self, name: &str, _: &std::io::Error) {
+            self.1.borrow_mut().push(name.to_owned());
+        }
+    }
+    let stage = stage(&d);
+    let cx = Same(0.into(), Default::default());
+    archive::open(&path).unwrap().extract(&stage, &cx).unwrap();
+    assert_eq!((cx.0.get(), cx.1.borrow().clone()), (2, vec!["a.bin".to_owned()]));
+    assert_eq!(tree(&stage), [("b.bin".to_string(), b)]);
+    let _ = std::fs::remove_dir_all(&d);
+}
+
 #[test]
 fn sevenz_volumes_open_from_any_part() {
     let d = dir("7z-vol");

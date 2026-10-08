@@ -236,6 +236,8 @@ impl ArchiveSource for RarSource {
         // Whether the password has opened an encrypted entry in full (RAR4 has no password
         // check, so before that bad data means a wrong password).
         let mut confirmed = false;
+        // The password bad data came with: coming so again, the entry is damaged.
+        let mut bad_with: Option<String> = None;
         let mut from = 0;
         while !self.skipped {
             match self.pass(from, dest, cx, &mut links, &mut confirmed) {
@@ -246,8 +248,13 @@ impl ArchiveSource for RarSource {
                     self.ask(cx, self.password.is_some());
                 }
                 End::Failed { at, name, error, encrypted } => {
-                    let wrong = needs_password(&error) || (error.code == Code::BadData && encrypted && !confirmed);
-                    if wrong {
+                    let maybe = error.code == Code::BadData && encrypted && !confirmed;
+                    if maybe && bad_with.is_some() && bad_with == self.password {
+                        confirmed = true;
+                    } else if needs_password(&error) || maybe {
+                        if maybe {
+                            bad_with.clone_from(&self.password);
+                        }
                         from = at;
                         self.ask(cx, self.password.is_some());
                         continue;
