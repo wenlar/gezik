@@ -141,6 +141,10 @@ fn apply_failure(cleared: &mut bool, mode: &Mode, location: &Location) -> Option
 /// on screen) if there is one, else from the working folder; on Windows `..` parts are
 /// resolved too, so the address bar parts stay right.
 pub(crate) fn resolve_typed(text: &str, base: Option<&Path>) -> PathBuf {
+    // `std::path::absolute` mangles a bare `\server`; it lists its shares as typed.
+    if cfg!(windows) && gezik_core::path_text::server_only(text).is_some() {
+        return PathBuf::from(text);
+    }
     let path = PathBuf::from(text);
     let path = match base {
         Some(base) if path.is_relative() => base.join(path),
