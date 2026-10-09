@@ -120,6 +120,7 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
     operations::with_current(|ops| ops.set_files(loaded.settings.files));
     batch_rename::set_presets(loaded.settings.rename_presets.clone());
     archives::set_settings(loaded.settings.tools.clone(), loaded.settings.archives);
+    preview::set_quick_look(loaded.settings.system.quick_look);
     convert::set_settings(loaded.settings.convert.clone(), loaded.settings.commands.clone());
     filter::set_settings(loaded.settings.keyboard, loaded.settings.filters.clone());
     path_box::set_settings(loaded.settings.history);

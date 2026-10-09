@@ -67,6 +67,11 @@ ffmpeg = ""               # path to ffmpeg; empty = Gezik's download, then PATH
 download = true           # offer to download 7-Zip, ffmpeg and pdfium when needed
 seven-zip = ""            # path to 7-Zip; empty = Gezik's download, then PATH
 
+[system]
+# macOS: Space opens the system Quick Look panel ("system") or Gezik's own window ("gezik").
+# Windows and Linux always use Gezik's own.
+quick-look = "system"     # system | gezik
+
 [keyboard]
 # What typing a letter on the file list does: "jump" goes to the first name starting with
 # what you typed; "filter" opens the filter (Ctrl+F, or / ) with it.

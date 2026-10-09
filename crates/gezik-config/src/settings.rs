@@ -117,6 +117,23 @@ pub struct ArchivesSettings {
     pub double_click: DoubleClick,
 }
 
+/// What Space shows on macOS (`[system] quick-look`, spec 9 §4.5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum QuickLookMode {
+    /// The system's Quick Look panel.
+    #[default]
+    System,
+    /// Gezik's own quick look window (always so on Windows and Linux).
+    Gezik,
+}
+
+/// `[system]` (spec 9 §13.1): how Gezik meets the system. 9a2 has the Quick Look panel (9b1
+/// adds `single_instance` to this same struct).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SystemSettings {
+    pub quick_look: QuickLookMode,
+}
+
 /// The Compress layer's last choices and the last "Extract to…" folder (state.toml
 /// `[archive]`). Never a password.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -317,6 +334,7 @@ pub struct Settings {
     pub archives: ArchivesSettings,
     pub tools: ToolsSettings,
     pub convert: ConvertSettings,
+    pub system: SystemSettings,
     /// User commands (`[[commands]]`); invalid ones are left out.
     pub commands: Vec<CommandSpec>,
 }
@@ -352,6 +370,7 @@ impl Default for Settings {
             archives: ArchivesSettings::default(),
             tools: ToolsSettings::default(),
             convert: ConvertSettings::default(),
+            system: SystemSettings::default(),
             commands: Vec::new(),
         }
     }
@@ -496,6 +515,13 @@ impl Settings {
             Some(value) => match value.as_table() {
                 Some(archives) => settings.archives = parse_archives(archives, file, warnings),
                 None => warnings.push(Warning::new(file, format!("archives: expected a table, got {value}"))),
+            },
+        }
+        match table.get("system") {
+            None => {}
+            Some(value) => match value.as_table() {
+                Some(system) => settings.system = parse_system(system, file, warnings),
+                None => warnings.push(Warning::new(file, format!("system: expected a table, got {value}"))),
             },
         }
         match table.get("tools") {
@@ -1189,6 +1215,19 @@ fn parse_archives(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) 
                 file,
                 format!("archives.double-click: expected \"system\" or \"extract-here\", got {value}"),
             )),
+        }
+    }
+    out
+}
+
+fn parse_system(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> SystemSettings {
+    let mut out = SystemSettings::default();
+    if let Some(value) = table.get("quick-look") {
+        match value.as_str() {
+            Some("system") => out.quick_look = QuickLookMode::System,
+            Some("gezik") => out.quick_look = QuickLookMode::Gezik,
+            _ => warnings
+                .push(Warning::new(file, format!("system.quick-look: expected \"system\" or \"gezik\", got {value}"))),
         }
     }
     out
@@ -2135,10 +2174,35 @@ rules = []
     }
 
     #[test]
+    fn reads_the_system_section() {
+        assert_eq!(Settings::default().system.quick_look, QuickLookMode::System);
+        let (settings, warnings) = parse(
+            "[system]
+quick-look = \"gezik\"
+",
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(settings.system.quick_look, QuickLookMode::Gezik);
+        let (settings, warnings) = parse(
+            "[system]
+quick-look = \"finder\"
+",
+        );
+        assert_eq!(settings.system.quick_look, QuickLookMode::System, "a bad value keeps the default");
+        assert_eq!(warnings[0].message, "system.quick-look: expected \"system\" or \"gezik\", got \"finder\"");
+        let (_, warnings) = parse(
+            "system = 3
+",
+        );
+        assert_eq!(warnings[0].message, "system: expected a table, got 3");
+    }
+
+    #[test]
     fn the_template_reads_with_the_defaults() {
         let (settings, warnings) = parse(include_str!("../templates/settings.toml"));
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(settings.archives, ArchivesSettings::default());
+        assert_eq!(settings.system, SystemSettings::default());
         assert_eq!(settings.tools, ToolsSettings::default());
         assert_eq!(settings.keyboard, KeyboardSettings::default());
         assert_eq!(settings.history, HistorySettings::default());

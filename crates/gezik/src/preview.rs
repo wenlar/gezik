@@ -302,6 +302,27 @@ pub fn with_current<R>(f: impl FnOnce(&Preview) -> R) -> Option<R> {
 /// How long the selection must stay before its preview loads (arrow keys held down).
 const DELAY: Duration = Duration::from_millis(100);
 
+thread_local! {
+    /// Space opens the system's Quick Look panel (macOS, `[system] quick-look = "system"`).
+    static SYSTEM_PANEL: Cell<bool> = const { Cell::new(false) };
+}
+
+/// settings.toml changed: `[system] quick-look`. Only macOS has the system's panel.
+pub fn set_quick_look(mode: gezik_config::settings::QuickLookMode) {
+    let system = cfg!(target_os = "macos") && mode == gezik_config::settings::QuickLookMode::System;
+    SYSTEM_PANEL.with(|s| s.set(system));
+}
+
+/// The panel's items: the selection (at the focused one's place), else the focused item.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn panel_items(selected: Vec<PathBuf>, focused: Option<PathBuf>) -> (Vec<PathBuf>, usize) {
+    if selected.is_empty() {
+        return (focused.into_iter().collect(), 0);
+    }
+    let index = focused.and_then(|f| selected.iter().position(|p| *p == f)).unwrap_or(0);
+    (selected, index)
+}
+
 struct Inner {
     window: slint::Weak<AppWindow>,
     view: View,
@@ -365,6 +386,11 @@ impl Preview {
 
     /// The selection changed: loads its preview once it stays for a moment.
     pub fn schedule(&self) {
+        #[cfg(target_os = "macos")]
+        if SYSTEM_PANEL.with(Cell::get) && gezik_platform::ql_panel::is_open() {
+            let (items, index) = self.panel_view();
+            gezik_platform::ql_panel::update(&items, index);
+        }
         if !self.active() {
             return;
         }
@@ -416,8 +442,41 @@ impl Preview {
         self.0.quick_look.borrow().is_some()
     }
 
+    /// The selection and focus as the system panel shows them.
+    #[cfg(target_os = "macos")]
+    fn panel_view(&self) -> (Vec<PathBuf>, usize) {
+        let view = &self.0.view;
+        let selected = view.selected_items().into_iter().map(|(path, _)| path).collect();
+        panel_items(selected, view.focus().and_then(|i| view.entry_path(i)).map(|(path, _)| path))
+    }
+
+    /// Space with the system panel (macOS): closes it, or opens it on the selection. `false`
+    /// when it did not open: Gezik's own window is shown instead.
+    #[cfg(target_os = "macos")]
+    fn toggle_system_panel(&self) -> bool {
+        if gezik_platform::ql_panel::is_open() {
+            gezik_platform::ql_panel::close();
+            return true;
+        }
+        let (items, index) = self.panel_view();
+        if items.is_empty() {
+            return true;
+        }
+        let Some(window) = self.0.window.upgrade() else { return true };
+        let on_move = Box::new(|to| with_current(|p| p.0.view.key_move(to, false, false, 1)).unwrap_or(false));
+        let shown = gezik_platform::ql_panel::show(&window.window().window_handle(), &items, index, on_move);
+        if !shown {
+            window.set_status("The system Quick Look panel did not open; Gezik's own is shown".into());
+        }
+        shown
+    }
+
     /// Space on the list: opens quick look, or closes it.
     pub fn toggle_quick_look(&self) {
+        #[cfg(target_os = "macos")]
+        if SYSTEM_PANEL.with(Cell::get) && !self.quick_look_open() && self.toggle_system_panel() {
+            return;
+        }
         if self.quick_look_open() {
             return self.close_quick_look();
         }
@@ -506,6 +565,15 @@ impl Preview {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn panel_items_are_the_selection_or_the_focus() {
+        let p = |s: &str| PathBuf::from(s);
+        assert_eq!(panel_items(vec![p("/a"), p("/b"), p("/c")], Some(p("/b"))), (vec![p("/a"), p("/b"), p("/c")], 1));
+        assert_eq!(panel_items(vec![p("/a"), p("/b")], Some(p("/z"))), (vec![p("/a"), p("/b")], 0), "focus outside");
+        assert_eq!(panel_items(Vec::new(), Some(p("/f"))), (vec![p("/f")], 0));
+        assert_eq!(panel_items(Vec::new(), None), (Vec::new(), 0));
+    }
 
     fn temp(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("gezik-preview-{name}-{}", std::process::id()));
