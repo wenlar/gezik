@@ -683,7 +683,8 @@ export component AppWindow inherits Window {
     // back when the window is activated again.
     changed path-editing => {
         root.path-editing-changed();
-        if !self.path-editing && !keys.has-focus && !filter-bar.field-focused && !search-bar.field-focused { keys.focus(); }
+        // Shift+Tab out of the field lands on Refresh: it keeps the keyboard.
+        if !self.path-editing && !keys.has-focus && !filter-bar.field-focused && !search-bar.field-focused && !refresh-button.focused { keys.focus(); }
     }
 
     // Gives the keyboard to the filter bar's field, the cursor at byte `at`.
@@ -906,7 +907,7 @@ export component AppWindow inherits Window {
                             enabled: root.can-go-up;
                             clicked => { root.go-up(); }
                         }
-                        ToolButton {
+                        refresh-button := ToolButton {
                             text: "Refresh";
                             icon: Glyph.refresh;
                             clicked => { root.refresh(); }
