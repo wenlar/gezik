@@ -251,6 +251,8 @@ fn perform(
         | Action::PutBack
         | Action::EmptyTrash
         | Action::SystemIntegration
+        | Action::KeepOffline
+        | Action::FreeUpSpace
         | Action::NewWindow
         | Action::MakeAlias
         | Action::ShowPackageContents

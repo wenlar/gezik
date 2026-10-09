@@ -149,7 +149,9 @@ impl Palette {
             let skip = matches!(action, Action::CommandPalette | Action::QuickOpen)
                 || (action == Action::OpenTerminalAdmin && !cfg!(windows))
                 || (matches!(action, Action::MakeAlias | Action::ShowPackageContents | Action::Share)
-                    && !cfg!(target_os = "macos"));
+                    && !cfg!(target_os = "macos"))
+                || (matches!(action, Action::KeepOffline | Action::FreeUpSpace)
+                    && !cfg!(any(windows, target_os = "macos")));
             if !skip {
                 add(
                     Kind::Action,

@@ -441,6 +441,9 @@ pub const TEMPLATE_MAX: u32 = gezik_core::templates::TEMPLATE_MAX as u32;
 pub const PUT_BACK: u32 = 1801;
 pub const TRASH_DELETE: u32 = 1802;
 pub const EMPTY_TRASH: u32 = 1803;
+/// Keep on this device / Free up space (spec 13.3): only Gezik's own menus draw them.
+pub const KEEP_OFFLINE: u32 = 1860;
+pub const FREE_UP: u32 = 1861;
 /// 1881: the View menu's last item (spec 13.3).
 pub const SYSTEM_INTEGRATION: u32 = 1881;
 
@@ -829,6 +832,15 @@ pub fn info_item(native: bool, mac: bool) -> Option<(u32, String)> {
     (!native).then(|| (GET_INFO, if mac { "Get Info" } else { "Properties" }.to_owned()))
 }
 
+/// The cloud items of a row menu: in Gezik's menu (macOS) under a cloud root. Windows shows
+/// Explorer's menu, where the cloud app has its own; Linux has no commands.
+pub fn cloud_items(under_root: bool, native: bool, mac: bool) -> Vec<(u32, String)> {
+    if !under_root || native || !mac {
+        return Vec::new();
+    }
+    vec![(KEEP_OFFLINE, "Download Now".to_owned()), (FREE_UP, "Remove Download".to_owned())]
+}
+
 /// What a menu was opened for, captured when it opens. Items run later (the Slint menu
 /// stays open while other things happen), so nothing here is an index that could point
 /// elsewhere by then: rows and sidebar entries are kept by path, tabs by id.
@@ -1014,6 +1026,8 @@ impl Menus {
             self.add_links(&mut list, &mut subs, &rows, native);
             self.add_file_tools(&mut list, &mut subs, rows, native);
             list.extend(self.file_extras(false, false, native));
+            let in_cloud = paths.iter().all(|p| crate::cloud::root_of(p).is_some());
+            list.extend(cloud_items(in_cloud, native, cfg!(target_os = "macos")));
             list.extend(info_item(native, cfg!(target_os = "macos")));
             self.add_finder_items(&mut list, &mut subs, services);
             if results {
@@ -1047,6 +1061,7 @@ impl Menus {
         self.add_links(&mut list, &mut subs, &[(path.clone(), is_dir)], native);
         self.add_file_tools(&mut list, &mut subs, vec![(path.clone(), is_dir)], native);
         list.extend(self.file_extras(true, is_dir, native));
+        list.extend(cloud_items(crate::cloud::root_of(&path).is_some(), native, cfg!(target_os = "macos")));
         list.extend(info_item(native, cfg!(target_os = "macos")));
         self.add_finder_items(&mut list, &mut subs, services);
         if self.view.shows_results() {
@@ -1660,6 +1675,10 @@ impl Menus {
             (id, Subject::Convert) => crate::convert::with_current(|convert| convert.menu_chosen(id)),
             (GET_INFO, Subject::Row(path)) => crate::info::with_current(|info| info.show_for(vec![path])),
             (GET_INFO, Subject::Rows(paths)) => crate::info::with_current(|info| info.show_for(paths)),
+            (KEEP_OFFLINE, Subject::Row(path)) => crate::cloud::run(vec![path], true, &self.view),
+            (KEEP_OFFLINE, Subject::Rows(paths)) => crate::cloud::run(paths, true, &self.view),
+            (FREE_UP, Subject::Row(path)) => crate::cloud::run(vec![path], false, &self.view),
+            (FREE_UP, Subject::Rows(paths)) => crate::cloud::run(paths, false, &self.view),
             (id, Subject::Info) => crate::info::with_current(|info| info.menu_chosen(id)),
             (CONVERT, Subject::Row(_) | Subject::Rows(_)) => {
                 let rows = std::mem::take(&mut *self.rows.borrow_mut());
@@ -2054,6 +2073,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn cloud_items_only_in_gezik_menus_under_a_root() {
+        assert_eq!(
+            cloud_items(true, false, true),
+            [(KEEP_OFFLINE, "Download Now".to_owned()), (FREE_UP, "Remove Download".to_owned())]
+        );
+        assert!(cloud_items(true, true, false).is_empty(), "Windows: the cloud app's own items are in Explorer's menu");
+        assert!(cloud_items(false, false, true).is_empty(), "outside a cloud folder");
+        assert!(cloud_items(true, false, false).is_empty(), "Linux: no commands");
+        assert_eq!((KEEP_OFFLINE, FREE_UP), (1860, 1861));
+    }
+
+    #[test]
     fn results_rows_offer_their_folder_and_copies_that_keep_folders() {
         let ids: Vec<u32> = result_row_items().iter().map(|(id, _)| *id).collect();
         assert_eq!(ids, [SHOW_IN_FOLDER, SHOW_IN_FOLDER_NEW_TAB, COPY_WITH_FOLDERS, CUT_WITH_FOLDERS]);
@@ -2188,6 +2219,8 @@ mod tests {
             QUICK_ACTION_FIRST,
             QUICK_ACTION_FIRST + QUICK_ACTION_MAX - 1,
             GET_INFO,
+            KEEP_OFFLINE,
+            FREE_UP,
             INFO_GROUP_FIRST,
             INFO_GROUP_FIRST + INFO_GROUP_MAX - 1,
             ADD_RULE_FIRST,
@@ -2206,7 +2239,10 @@ mod tests {
         }
         // The preset ranges meet nothing else, nor each other, and stay below the Shell's ids.
         let presets = [PRESET_FIRST..PRESET_FIRST + PRESET_MAX, PRESET_DELETE_FIRST..PRESET_DELETE_FIRST + PRESET_MAX];
-        let singles = others.iter().chain(&[COPY_HERE, MOVE_HERE, CANCEL_DROP, PRESET_SAVE]).chain(&archives);
+        let singles = others
+            .iter()
+            .chain(&[COPY_HERE, MOVE_HERE, CANCEL_DROP, PRESET_SAVE, KEEP_OFFLINE, FREE_UP])
+            .chain(&archives);
         for id in singles.copied().chain(ADD_RULE_FIRST..ADD_RULE_FIRST + 10).chain(CONFLICT_FIRST..CONFLICT_FIRST + 4)
         {
             assert!(!presets.iter().any(|r| r.contains(&id)), "{id} is in a preset range");
@@ -2353,6 +2389,8 @@ mod tests {
             QUICK_ACTION_FIRST,
             QUICK_ACTION_FIRST + QUICK_ACTION_MAX - 1,
             GET_INFO,
+            KEEP_OFFLINE,
+            FREE_UP,
             INFO_GROUP_FIRST,
             INFO_GROUP_FIRST + INFO_GROUP_MAX - 1,
             PRESET_SAVE,
