@@ -16,6 +16,7 @@ mod locale;
 mod picture;
 pub mod priority;
 pub mod process;
+pub mod system;
 pub mod taskbar;
 pub mod terminal;
 mod text;
