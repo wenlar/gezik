@@ -1,6 +1,12 @@
 //! Linux (and other X11/Wayland systems): the system clipboard and drag and drop, over one
 //! backend per window system, chosen by the kind of window winit made.
 
+#[cfg(any(all(unix, not(target_os = "macos")), test))]
+#[allow(dead_code)] // shortcut: the socket half is unused until Task 6 starts serve(); drop then
+pub mod dbus;
+#[cfg(any(all(unix, not(target_os = "macos")), test))]
+#[allow(dead_code)] // shortcut: the socket half is unused until Task 6 starts serve(); drop then
+pub mod file_manager1;
 #[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
 pub(crate) mod uri;
 #[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
