@@ -395,20 +395,20 @@ Each of these was kept to macOS where the logic allowed:
 | 44 | Encrypted PDF | PASS |
 | 45 | No worker left behind | PASS |
 | 46 | Last choices and keys | PASS (one note) |
-| 47 | Filter | NOT TESTED |
-| 48 | Pattern box and selection keys | NOT TESTED |
-| 49 | Tabs | NOT TESTED |
-| 50 | Typing mode | NOT TESTED |
-| 51 | Saved filters | NOT TESTED |
-| 52 | Path suggestions | NOT TESTED |
-| 53 | Folder history | NOT TESTED |
-| 54 | Command keys | NOT TESTED |
-| 55 | No history | NOT TESTED |
-| 56 | Open terminal | NOT TESTED |
-| 57 | Copy path | NOT TESTED |
-| 58 | Session | NOT TESTED |
-| 59 | Tab sets | NOT TESTED |
-| 60 | Custom terminal | NOT TESTED |
+| 47 | Filter | PASS (Enter renames on macOS; / is ⇧7 on Turkish) |
+| 48 | Pattern box and selection keys | PASS (⌘= needs a custom key on Turkish Q) |
+| 49 | Tabs | PASS |
+| 50 | Typing mode | PASS |
+| 51 | Saved filters | PASS (one note) |
+| 52 | Path suggestions | PASS (network-share part not tested) |
+| 53 | Folder history | PASS (one note) |
+| 54 | Command keys | **FAIL** ({files} gives absolute paths, so the zip holds /private/tmp/…) |
+| 55 | No history | PASS |
+| 56 | Open terminal | PASS |
+| 57 | Copy path | PASS (one note: ⌘V after ⌘⌥C makes a text file, from 7c) |
+| 58 | Session | PASS |
+| 59 | Tab sets | PASS |
+| 60 | Custom terminal | PASS (no iTerm here; a stand-in command was used) |
 | 61 | Pinned groups | NOT TESTED |
 | 62 | Pins 1-9 | NOT TESTED |
 | 63 | View menu | NOT TESTED |
@@ -853,3 +853,97 @@ In `pdf-test/` (copies of `belge-b.pdf` (5 pages), `buyuk-240.pdf` and `sifreli.
 - The range text does not come back: the Ranges and Pages fields are empty each time (seen in 43 and 44), and `state.toml` has no range.
 - Esc closes the layer and ⌘Enter starts it (used throughout 35-45).
 - **Note:** the output choice is shared, not per kind (`last-output`): "Replace originals" chosen for `degistir.jpg` in 35 was still chosen when the layer next opened on `tr1254.txt` in 36. That is easy to miss for a choice that sends originals to the Trash.
+
+#### 47. Filter: PASS
+In `filtre/` (8 items: `İSTANBUL.txt`, `ILIK.doc`, `a.jpg`, `b.jpg`, `c.png`, `d.txt`, `e.md`, `jpg-klasor/`).
+- ⌘F opens a bar above the list with the field focused. `jpg` leaves `jpg-klasor`, `a.jpg`, `b.jpg`, and the counter says "3 / 8". There is also a "Search subfolders" button and a ▾ menu.
+- ↓ gives the list the keyboard and the bar stays. **Enter on the filtered folder starts a rename** (macOS's Enter = rename, as item 3 asks), so it does not open. ⌘↓ opens it (`jpg-klasor`, without a filter there). Back returns to `filtre` without the filter.
+- Esc on the list closes the filter. A second Esc leaves only the focus outline (selection cleared). Esc in the field closes the bar too.
+- `/` on the list opens the filter: on Turkish-QWERTY-PC `/` is ⇧7 (the key at the ANSI `/` place types `.` and does nothing here).
+- Each tab keeps its own filter: `png` in the `filtre` tab (1 / 8) and `il` in the `dil` tab (2 / 3) were both still there after switching back and forth.
+- `istanbul` finds `İSTANBUL.txt` (1 / 8), and `ılık` finds `ILIK.doc` (1 / 8). Matching folds both ways: `il` also matches `BILgi.txt`, which strict Turkish casing (`BIL` → `bıl`) would not. That is friendly for a filter.
+
+#### 48. Pattern box and selection keys: PASS
+- Edit ▸ Select by Pattern… (chosen through Accessibility) opens "Select by pattern" with "8 items match" for an empty field. `*.jpg` says "2 items match", and Return selects `a.jpg`, `b.jpg`. A bad pattern `!` says "Type a name after \"!\"" in red. The box reopens with the last pattern (`*.jpg`, selected).
+- ⌘⇧I inverts the selection (6 of 8 selected).
+- The Edit menu shows Filter… ⌘F, Select by Pattern… ⌘=, Deselect by Pattern… ⌘-, Invert Selection ⌘⇧I, Select Same Type and Restore Selection (no keys). Window ▸ Reopen Closed Tab shows ⌘⇧T (AX key equivalents).
+- **Turkish-QWERTY-PC:** `=` is ⇧0, and ⌘⇧0 does nothing by default. ⌘ + the key that types `-` (right of 0) opens "Deselect by pattern". With `select-pattern = ["num+", "mod+shift+0"]` under `[shortcuts]`, ⌘⇧0 opens Select by pattern (picked up live, with the config under `/private/tmp`).
+- Not tested: the numeric keypad keys (keypad +, -, /, ⌥+keypad +); there is no external keyboard with a keypad here.
+
+#### 49. Tabs: PASS
+Window title was used to tell the tab in front.
+- With four tabs (filtre, tmp, klasör A, dil), ⌘1…⌘4 switch to each. ⌘7 does nothing, and ⌘9 shows the last tab (from tab 1 too).
+- ⌘⇧2 shows the grid and ⌘⇧1 the list. View ▸ as Grid / as List carry ⌘⇧2 / ⌘⇧1 (AX key equivalents). The digit keys are the same on Turkish Q.
+- New tab (⌘T, opened next to the current one), `klasör A` then `alt` (two folders deep), filter `b` (1 / 1), then ⌘W: the tab closes. ⌘⇧T: it comes back in its place, still filtered (`b`, 1 / 1). ⌘[ goes back to `klasör A`.
+- ⌘⇧A opens the tab picker (name + path for each tab, the current one marked). Typing `di` leaves `dil`, Return switches to it, and Esc closes the picker.
+- Right-click a tab ▸ Lock tab: a lock shows before the name and the × goes. ⌘W leaves it open, and the status bar says "This tab is locked". The locked tab's menu is Duplicate / Unlock tab / Close other tabs / Save tabs as… (no Close). Unlock tab brings the × back.
+- "Close other tabs" on the locked tab (chosen by mistake) closed the other four. ⌘⇧T four times brought them all back, in order.
+
+#### 50. Typing mode: PASS
+`[keyboard] typing = "filter"` was picked up live: `j` on the list opened the filter with `j` in it (3 / 8). Back to `"jump"` (live), `d` jumped to `d.txt`.
+
+#### 51. Saved filters: PASS
+- The bar's ▾ ▸ Save as… opens "Save filter — Name for this filter:". `Resimler` for the pattern `jpg` wrote `[[filters]] name = "Resimler" pattern = "jpg"` to `settings.toml`.
+- With the field empty, ▾ lists Resimler, Save as… (grey) and Delete "Resimler". Resimler fills the bar with `jpg` (3 / 8). Delete "Resimler" took it out of `settings.toml`.
+- **Note:** the ▾ menu is a native menu that opens with no item highlighted. A Return right after it opens does not pick the only item (Save as…). Instead it goes back to the filter field, and the text typed next replaced the filter (`Resimler` became the filter). ↓ then Return picks it. This matches how native NSMenus behave, but the filter field getting the keystrokes is surprising.
+
+#### 52. Path suggestions: PASS
+- ⌘L, `/Us`: after a short pause, a list under the field shows `Users` and `usr` (folders only, case-insensitive) and a "History" heading with `macbookpro  /Users`.
+- ↓ marks `Users`, and Tab writes `/Users/` and shows its sub-folders (`macbookpro`, `Shared`).
+- Esc closes the list and the text stays in the field. A second Esc ends typing and the path parts come back.
+- `~/Desktop`, `$HOME/Downloads` and `${HOME}/Music` go to those folders.
+- `$GEZIK_NOPE/x` stays as it is: the status bar says "Cannot open /Users/macbookpro/Music/$GEZIK_NOPE/x: It no longer exists", and nothing opens. `~veli` is not expanded (nothing opens). The message's "It no longer exists" is odd for a path that never existed.
+- Typing was smooth while the list showed. The network-share case was not tested: no share is mounted here.
+
+#### 53. Folder history: PASS
+- ⌘L, then deleting the text: the empty field lists "Recent" (the last 5, newest first, with each folder's parent) and "Frequent".
+- `kla` lists a "History" heading with the visited `klasör A`, `alt` and `jpg-klasor`. (`ala` matches nothing: the match is on the start of the name.)
+- A visited folder deleted outside Gezik (`silinecek`, `rmdir`) was gone from the Recent list when it was opened about 1 s later.
+- Go ▸ Clear Folder History: the status bar says "Folder history cleared", and `state.toml` has no `[history]` any more.
+- **Note:** the same folder reached through `/tmp/…` and `/private/tmp/…` is kept twice (`klasör A  /tmp/gezik-test` and `klasör A  /private/tmp/gezik-test`, `alt` twice). Paths are not canonicalized before they are counted. It is the same `/tmp` link as A and the reload finding.
+
+#### 54. Command keys: FAIL
+The two commands from the checklist were added live (config under `/private/tmp`).
+- The notice in the status bar says `settings.toml: commands[7]: shortcut "mod+f" is already used by filter; the command has no key`, and ⌘F still opens the filter.
+- Select all (`a.txt`, `b.txt`, folder `alt`), ⌃⌥Z: "Zip together — Run Zip together on 3 items?" with Run / Cancel. Cancel runs nothing. Run makes one `together.zip`, and the panel row says "Running Zip together on 3 items — Done · can't be undone". ⌘Z does not remove it.
+- **But `unzip -l together.zip` lists `private/tmp/gezik-test/ziptest/a.txt`, `…/b.txt`, `…/alt/c.txt`.** `{files}` expands to absolute paths, so `zip -r` stores the whole path. In Finder or 7-Zip the archive opens as `private/tmp/gezik-test/ziptest/…`. The command runs in the folder (the zip landed there), so passing names relative to it (`a.txt`, `alt`) would give the expected archive. The checklist's own example hits this.
+- The menu bar has a **Commands** menu: a grey "Archives" heading and "Zip together    ⌃⌥Z" (the key is part of the title, not a key equivalent). Choosing it asks the same question ("on 1 item" with one row selected).
+- Right-click ▸ Commands ▸: Thumbnail, Missing program (grey), Slow copy, Clash, then a grey "Archives" heading over Zip together. The heading can't be chosen.
+- ⌃⌥Z while the path field or the filter field has the keyboard runs nothing. It types `z` into the field instead.
+
+#### 55. No history: PASS
+`[history] remember = false` was picked up live: `state.toml`'s `[[history.folders]]` entries (2 after a visit) were gone within 2.5 s. A visit to another folder afterwards added none. The line was set back to `true`.
+
+#### 56. Open terminal: PASS
+Folder `bosluklu klasör` (a space and a Turkish letter in the name). Each time, `pwd` in the new Terminal window said `/tmp/gezik-test/bosluklu klasör`.
+- ⌘⌥T: Terminal.app opens a new window in that folder.
+- File ▸ Open Terminal: the same.
+- Right-click the folder's row ▸ "Open terminal here" (from its parent): the same folder.
+- Right-click empty space ▸ "Open terminal here": the folder shown.
+- ⌘Q in Gezik: the Terminal window stayed open (window count unchanged), and Gezik exited without a crash report.
+
+#### 57. Copy path: PASS
+File `it's ş #1.txt` in `yol/`.
+- ⌘⌥C (Edit ▸ Copy Path carries ⌘⌥C) copies `/private/tmp/gezik-test/yol/it's ş #1.txt`.
+- Right-click ▸ Copy path as ▸ (Full path / Quoted / Name / Folder path / file:// URL):
+  - Quoted gives `'/private/tmp/gezik-test/yol/it'\''s ş #1.txt'`, and the shell reads it as the same file (`ls` found it).
+  - file:// URL gives `file:///private/tmp/gezik-test/yol/it%27s%20%C5%9F%20%231.txt`, which decodes to the file (checked with Python rather than Safari).
+- With nothing selected, ⌘⌥C copies the folder shown (`/private/tmp/gezik-test/yol`).
+- ⌘C on the file, then ⌘⌥C, then ⌘V in another folder: no file was copied. **But 7c's paste-as-file made `Pasted text 2026-10-10 02.08.52.txt`** holding the path, because the clipboard now holds text. The checklist expects "pastes nothing". Both features work as each was designed, but together they surprise: a copied path pastes as a text file.
+
+#### 58. Session: PASS
+Six tabs (bosluklu klasör, tmp, klasör A (locked), klasör A, dil, bosluklu klasör), `dil` in front.
+- ⌘Q, then Gezik started again with no folder argument: the same six tabs, `dil` in front, and the lock on the third.
+- `tmp` put in front, then `kill -9`, then started again: the same tabs with `tmp` in front. The session survives a forced quit.
+- `gezik <folder>` (`/private/tmp/gezik-test/yol`) on a cold start opened the saved tabs plus a new tab for that folder after them, in front.
+- `[session] restore = false` (live): `state.toml` lost its `[session]`. After ⌘Q and a start, one tab opened in `start-folder` (`{home}`, "Home").
+- Side note: a duplicate key in `settings.toml` (a second `restore` line, my own mistake) was reported on stderr as `settings.toml line 85: duplicate key` (three times), and the whole file seemed ignored: the old session came back. The status bar showed nothing. Telling the user in the window (as for the commands' notices) would help.
+
+#### 59. Tab sets: PASS
+- Window ▸ Save Tabs As… opens "Save tabs — Name for these tabs:". `Work` wrote `[[tab-sets]] name = "Work" tabs = ["/private/tmp/gezik-test/dil", "/private/tmp/gezik-test/filtre"]`.
+- The Window menu shows "Open Tab Set" (after Save Tabs As…) once a set exists, with Work / Replace tabs with "Work" / Delete "Work" (read through Accessibility). So the `if … : Menu` inside the menu bar works on macOS.
+- Window ▸ Open Tab Set ▸ Work opened the set's two tabs after the open ones, with its first tab (`dil`) in front.
+- With tab 1 locked, a tab's right-click ▸ Open tab set ▸ Replace tabs with "Work": the locked tab stayed, the others were replaced by the set's two, and the status bar said "1 locked tab stays open".
+
+#### 60. Custom terminal: PASS
+iTerm is not installed. `[terminal] command = ["/usr/bin/touch", "/tmp/claude-501/custom-term.txt", "{dir}/.term-was-here"]` was used as a stand-in. Picked up live, ⌘⌥T in the `dil` tab ran it: both files were made, and the second one in `/private/tmp/gezik-test/dil`. So the setting is used and `{dir}` is the folder shown. Terminal.app did not open.
