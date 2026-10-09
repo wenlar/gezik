@@ -169,34 +169,89 @@ fn in_a_bin(root: &Path, info: Option<&Path>) -> bool {
     plain(root) && bin_on_a_volume && record
 }
 
+/// This user's bins as `fs::trash` finds them: the home trash, the uid, and whether a folder is
+/// the top of a mount (a volume's bin sits there).
+#[cfg(unix)]
+struct Bins {
+    home: Option<PathBuf>,
+    uid: String,
+    // Volume bins on macOS sit under /Volumes, no mount check needed.
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    is_mount_top: fn(&Path) -> bool,
+}
+
+#[cfg(unix)]
+impl Bins {
+    fn here() -> Bins {
+        // SAFETY: getuid cannot fail.
+        let uid = unsafe { libc::getuid() }.to_string();
+        #[cfg(target_os = "macos")]
+        let home = dirs::home_dir().map(|home| home.join(".Trash"));
+        #[cfg(not(target_os = "macos"))]
+        let home = std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+            .or_else(|| dirs::home_dir().map(|home| home.join(".local/share")))
+            .map(|data| data.join("Trash"));
+        Bins { home, uid, is_mount_top }
+    }
+}
+
+/// Whether `dir` is where a file system is mounted: `/`, or on another device than its parent.
+#[cfg(unix)]
+fn is_mount_top(dir: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let Some(up) = dir.parent() else { return true };
+    match (std::fs::symlink_metadata(dir), std::fs::metadata(up)) {
+        (Ok(dir), Ok(up)) => dir.is_dir() && dir.dev() != up.dev(),
+        _ => false,
+    }
+}
+
 /// Whether `root` sits directly in a bin's payload folder and `info` (if any) is its record in
-/// that bin: `…/Trash/files/x` (the home trash), `<top>/.Trash-<uid>/files/x` or
-/// `<top>/.Trash/<uid>/files/x`, with `…/info/x.trashinfo`.
+/// that bin: `$XDG_DATA_HOME/Trash/files/x` (the home trash), `<mount>/.Trash-<uid>/files/x` or
+/// `<mount>/.Trash/<uid>/files/x`, with `…/info/x.trashinfo`.
 #[cfg(all(unix, not(target_os = "macos")))]
 fn in_a_bin(root: &Path, info: Option<&Path>) -> bool {
+    in_these_bins(root, info, &Bins::here())
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn in_these_bins(root: &Path, info: Option<&Path>, bins: &Bins) -> bool {
     let Some(name) = name_of(root) else { return false };
     let Some(trash) = root.parent().filter(|files| name_of(files) == Some("files")).and_then(Path::parent) else {
         return false;
     };
-    let is_trash = name_of(trash).is_some_and(|n| {
-        n == "Trash"
-            || n.strip_prefix(".Trash-").is_some_and(|uid| !uid.is_empty() && uid.bytes().all(|b| b.is_ascii_digit()))
-            || (!n.is_empty()
-                && n.bytes().all(|b| b.is_ascii_digit())
-                && trash.parent().and_then(name_of) == Some(".Trash"))
-    });
+    let top = if name_of(trash).and_then(|n| n.strip_prefix(".Trash-")) == Some(bins.uid.as_str()) {
+        trash.parent()
+    } else if name_of(trash) == Some(bins.uid.as_str()) {
+        trash.parent().filter(|shared| name_of(shared) == Some(".Trash")).and_then(Path::parent)
+    } else {
+        None
+    };
+    let is_bin = bins.home.as_deref() == Some(trash) || top.is_some_and(bins.is_mount_top);
     let record = info.is_none_or(|info| info == trash.join("info").join(format!("{name}.trashinfo")));
-    plain(root) && is_trash && record
+    plain(root) && is_bin && record
 }
 
-/// Whether `root` sits directly in a bin: `~/.Trash/x` or `<volume>/.Trashes/<uid>/x`. The bins
-/// keep no record per item here.
+/// Whether `root` sits directly in a bin: `~/.Trash/x` or `/Volumes/<volume>/.Trashes/<uid>/x`.
+/// The bins keep no record per item here.
 #[cfg(target_os = "macos")]
 fn in_a_bin(root: &Path, info: Option<&Path>) -> bool {
+    in_these_bins(root, info, &Bins::here())
+}
+
+#[cfg(target_os = "macos")]
+fn in_these_bins(root: &Path, info: Option<&Path>, bins: &Bins) -> bool {
     let Some(bin) = root.parent().filter(|_| name_of(root).is_some()) else { return false };
-    let is_bin = name_of(bin) == Some(".Trash")
-        || (name_of(bin).is_some_and(|uid| !uid.is_empty() && uid.bytes().all(|b| b.is_ascii_digit()))
-            && bin.parent().and_then(name_of) == Some(".Trashes"));
+    let on_a_volume = name_of(bin) == Some(bins.uid.as_str())
+        && bin
+            .parent()
+            .filter(|trashes| name_of(trashes) == Some(".Trashes"))
+            .and_then(Path::parent)
+            .and_then(Path::parent)
+            == Some(Path::new("/Volumes"));
+    let is_bin = bins.home.as_deref() == Some(bin) || on_a_volume;
     plain(root) && is_bin && info.is_none()
 }
 
@@ -703,14 +758,24 @@ mod tests {
     #[cfg(all(unix, not(target_os = "macos")))]
     #[test]
     fn only_items_in_a_bin_with_their_own_record_count() {
-        let ok = |root: &str, info: Option<&str>| in_a_bin(Path::new(root), info.map(Path::new));
+        let bins = Bins {
+            home: Some(PathBuf::from("/home/u/.local/share/Trash")),
+            uid: "1000".into(),
+            is_mount_top: |dir| dir == Path::new("/mnt") || dir == Path::new("/"),
+        };
+        let ok = |root: &str, info: Option<&str>| in_these_bins(Path::new(root), info.map(Path::new), &bins);
         let home = "/home/u/.local/share/Trash";
         assert!(ok(&format!("{home}/files/a"), Some(&format!("{home}/info/a.trashinfo"))));
         assert!(ok("/mnt/.Trash-1000/files/a", Some("/mnt/.Trash-1000/info/a.trashinfo")));
         assert!(ok("/mnt/.Trash/1000/files/a", None));
+        assert!(ok("/.Trash-1000/files/a", None));
         assert!(!ok(&format!("{home}/files/a"), Some(&format!("{home}/info/b.trashinfo"))));
         assert!(!ok(&format!("{home}/files/a"), Some("/home/u/a.trashinfo")));
+        assert!(!ok("/home/u/Documents/Trash/files/report.odt", None), "a folder named Trash is no bin");
         assert!(!ok("/home/u/files/a", None));
+        assert!(!ok("/mnt/.Trash-1001/files/a", None), "another user's bin");
+        assert!(!ok("/mnt/.Trash/1001/files/a", None), "another user's bin");
+        assert!(!ok("/mnt/sub/.Trash-1000/files/a", None), "not at a mount's top");
         assert!(!ok("/mnt/.Trash-x/files/a", None));
         assert!(!ok(&format!("{home}/files/a/b"), None), "inside an item");
         assert!(!ok(&format!("{home}/files/../files/a"), None));
@@ -719,10 +784,15 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn only_items_in_a_bin_count() {
-        let ok = |root: &str, info: Option<&str>| in_a_bin(Path::new(root), info.map(Path::new));
+        let bins = Bins { home: Some(PathBuf::from("/Users/u/.Trash")), uid: "501".into(), is_mount_top: |_| false };
+        let ok = |root: &str, info: Option<&str>| in_these_bins(Path::new(root), info.map(Path::new), &bins);
         assert!(ok("/Users/u/.Trash/a", None));
         assert!(ok("/Volumes/X/.Trashes/501/a", None));
         assert!(!ok("/Users/u/.Trash/a", Some("/Users/u/.Trash/.DS_Store")), "no record to take along here");
+        assert!(!ok("/proj/.Trash/x", None), "a folder named .Trash is no bin");
+        assert!(!ok("/Users/v/.Trash/x", None), "another user's home");
+        assert!(!ok("/Volumes/X/.Trashes/502/a", None), "another user's bin");
+        assert!(!ok("/Volumes/X/sub/.Trashes/501/a", None), "not at a volume's top");
         assert!(!ok("/Users/u/a", None));
         assert!(!ok("/Users/u/.Trash/a/b", None), "inside an item");
     }

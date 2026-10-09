@@ -1792,8 +1792,10 @@ version = "0.1.0"
 name = "gezik-ops"
 version = "0.1.0"
 dependencies = [
+ "dirs",
  "gezik-core",
  "gezik-platform",
+ "libc",
 ]
 
 [[package]]

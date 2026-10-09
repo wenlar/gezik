@@ -8,3 +8,8 @@ license.workspace = true
 [dependencies]
 gezik-core.workspace = true
 gezik-platform.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+# The uid and home that name this user's bins (a delete from the trash checks its items).
+libc = "0.2"
+dirs = "7"
