@@ -1,7 +1,7 @@
 //! Copies a resolved theme into the Slint `Theme` global.
 //!
-//! Slint's own `Palette` is read-only and is left to follow the system light/dark mode;
-//! only std-widgets we still use (the ListView scrollbar) take their colors from it.
+//! Slint's own `Palette` is read-only and is left to follow the system light/dark mode.
+//! Gezik draws its own scroll bars, so no std widget takes its colors from it any more.
 
 use std::cell::RefCell;
 

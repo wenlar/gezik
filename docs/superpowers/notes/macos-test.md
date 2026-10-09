@@ -374,6 +374,12 @@ Re-checks of the shared UI fixes (fix/shared-ui, on master)
 76. **Show in folder.** ⌘⇧E and Go ▸ Show in Folder on a result: its folder opens with the file selected; Back returns to the results. The row menu's "Show in folder in new tab" opens it in a new tab.
 77. **Results like a folder.** In the results: ⌘C, then ⌘V in another folder (flat). Right-click ▸ "Copy with folders" and ⌘V: the folders under the scope are made; one ⌘Z takes the copies and the made folders away. Move a result to the Trash (⌘⌫): it leaves the list; ⌘Z brings it back. Select three results from two folders ▸ the rename layer (`{n}`): numbered per folder; a name already in that folder says "already in the folder" on its row. Close and open Gezik with a search tab open: the tab comes back and searches again.
 
+### Design round 1 (Graphite)
+
+78. **Themes.** The four built-in themes (`light`, `dark`, `classic-light`, `classic-dark`) and `auto` following the system's light/dark switch (System Settings ▸ Appearance); `reduce-motion = true` stops the hover and popup fades; `density = "compact"`; the classic themes are flat (rows edge to edge, no rounded sheet).
+79. **Drawing at 200 %.** On a Retina screen: 1 px lines and the sheet's rounded corner are crisp; the 11 px small text (column header, status bar, sidebar section labels) is readable in the font the system picks; the glyphs (Refresh and History arcs, the dot on Drive), the sidebar icons, the LOCATIONS section; View ▾ and a long popup menu.
+80. **Thin scroll bar.** In a folder with thousands of files: a 6 px bar, no track, the theme's color (never the system's), darker on hover and drag, at least 24 px tall; dragging it follows the pointer to both ends; a click above or below scrolls a page; touchpad two-finger scrolling stays smooth (natural direction as the system setting says); the sidebar, a long popup menu, the conflict list and the rename layer have the same bar.
+
 Report anything else that looks wrong: layout, fonts, Retina scaling, ⌘ shortcuts that don't work, and the wording of the boxes.
 
 ## Known gaps (not bugs)

@@ -1,5 +1,6 @@
 import { Theme } from "../theme.slint";
 import { Glyph } from "../glyphs.slint";
+import { ScrollBar } from "scrollbar.slint";
 
 export struct SidebarRow {
     header: bool,
@@ -281,5 +282,12 @@ export component Sidebar inherits Rectangle {
             height: 2px;
             background: Theme.accent;
         }
+    }
+    ScrollBar {
+        x: root.width - self.width;
+        height: root.height;
+        value <=> scroller.content-y;
+        maximum: scroller.content-height - scroller.height;
+        page-size: scroller.height;
     }
 }

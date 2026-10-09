@@ -1,0 +1,90 @@
+import { Theme } from "../theme.slint";
+
+// The design's thin bar: a 6px thumb 3px in from the edge, over a 10px grip area; no track,
+// never hides itself, not drawn when everything fits. Vertical only (no list scrolls sideways).
+export component ScrollBar inherits TouchArea {
+    // The scroll offset (content-y): zero or negative.
+    in-out property <length> value;
+    // How far it scrolls: content height minus visible height.
+    in property <length> maximum;
+    in property <length> page-size;
+    property <length> track: self.height - 6px;
+    property <length> thumb-height: min(self.track, max(24px, self.track * (self.page-size / max(1px, self.maximum + self.page-size))));
+    property <length> thumb-y: 3px + (self.track - self.thumb-height) * (-self.value / max(1px, self.maximum));
+    property <length> pressed-value;
+    property <bool> dragging;
+
+    width: 10px;
+    visible: self.maximum > 0;
+
+    // On the thumb a press starts a drag; above or below it, it scrolls one page.
+    pointer-event(event) => {
+        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+            self.dragging = self.mouse-y >= self.thumb-y && self.mouse-y < self.thumb-y + self.thumb-height;
+            if self.dragging {
+                self.pressed-value = self.value;
+            } else if self.mouse-y < self.thumb-y {
+                self.value = min(0px, self.value + self.page-size);
+            } else {
+                self.value = max(-self.maximum, self.value - self.page-size);
+            }
+        }
+        if event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel {
+            self.dragging = false;
+        }
+    }
+    moved => {
+        if self.dragging {
+            self.value = clamp(self.pressed-value - (self.mouse-y - self.pressed-y) * (self.maximum / max(1px, self.track - self.thumb-height)),
+                -self.maximum, 0px);
+        }
+    }
+
+    Rectangle {
+        x: 1px;
+        y: root.thumb-y;
+        width: 6px;
+        height: root.thumb-height;
+        border-radius: 3px;
+        background: root.has-hover || root.dragging ? Theme.scrollbar-hover : Theme.scrollbar;
+    }
+}
+
+// Stands in for std-widgets' ScrollView (same property names), so their scroll code and
+// system-colored bars stay out of the exe.
+export component ScrollView {
+    out property <length> visible-width <=> flick.width;
+    out property <length> visible-height <=> flick.height;
+    in-out property <length> content-width <=> flick.content-width;
+    in-out property <length> content-height <=> flick.content-height;
+    in-out property <length> content-x <=> flick.content-x;
+    in-out property <length> content-y <=> flick.content-y;
+
+    min-width: 50px;
+    min-height: 50px;
+    preferred-width: 100%;
+    preferred-height: 100%;
+    horizontal-stretch: 1;
+    vertical-stretch: 1;
+
+    flick := Flickable {
+        width: parent.width;
+        height: parent.height;
+        // Dragging in a list moves files or draws a marquee; it never pans.
+        mouse-drag-pan-enabled: false;
+        @children
+    }
+    ScrollBar {
+        x: parent.width - self.width;
+        height: parent.height;
+        value <=> flick.content-y;
+        maximum: flick.content-height - flick.height;
+        page-size: flick.height;
+    }
+}
+
+// The compiler gives a component named ListView with these five length properties the same
+// row recycling as std's (only the rows on screen exist).
+export component ListView inherits ScrollView {
+    accessible-role: list;
+}
