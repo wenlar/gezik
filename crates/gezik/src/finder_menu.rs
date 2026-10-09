@@ -51,9 +51,11 @@ fn fetch_with(late: &Late, items: Vec<PathBuf>, wait: Duration, compute: fn(&[Pa
     receive.recv_timeout(wait).ok()
 }
 
-/// Whether Open With ▸ is offered for `rows`: on macOS, all files or packages.
+/// Whether Open With ▸ is offered for `rows`: on macOS, up to `MAX_ITEMS` files or packages
+/// (beyond, the list would be one item's, yet every row would open with the app).
 pub fn offers_open_with(rows: &[(PathBuf, bool)], mac: bool) -> bool {
     mac && !rows.is_empty()
+        && rows.len() <= gezik_platform::open_with::MAX_ITEMS
         && rows.iter().all(|(path, is_dir)| {
             !is_dir || path.file_name().is_some_and(|n| gezik_core::kind::is_package_name(&n.to_string_lossy()))
         })
@@ -147,6 +149,9 @@ mod tests {
         assert!(!offers_open_with(&[file.clone(), folder], true), "a plain folder opens in Gezik");
         assert!(!offers_open_with(std::slice::from_ref(&file), false), "not off macOS");
         assert!(!offers_open_with(&[], true));
+        let many = vec![file.clone(); gezik_platform::open_with::MAX_ITEMS];
+        assert!(offers_open_with(&many, true), "50 rows are asked together");
+        assert!(!offers_open_with(&[many, vec![file]].concat(), true), "not for more rows than are asked");
     }
 
     #[test]

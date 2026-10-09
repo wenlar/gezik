@@ -1695,9 +1695,15 @@ impl Menus {
                     Subject::Rows(paths) => paths,
                     _ => Vec::new(),
                 };
-                let app =
-                    self.menu_apps.borrow().get(id.wrapping_sub(OPEN_WITH_FIRST) as usize).map(|a| a.path.clone());
-                crate::finder_menu::open_with(&self.window, paths, (id != OPEN_WITH_OTHER).then_some(app).flatten());
+                let app = match id {
+                    OPEN_WITH_OTHER => None,
+                    // An app id the last menu did not list: nothing (never the Other… panel).
+                    _ => match self.menu_apps.borrow().get((id - OPEN_WITH_FIRST) as usize) {
+                        Some(app) => Some(app.path.clone()),
+                        None => return,
+                    },
+                };
+                crate::finder_menu::open_with(&self.window, paths, app);
             }
             (REFRESH, Subject::Background(_)) => self.nav.reload(),
             (OPEN_TERMINAL | OPEN_TERMINAL_ADMIN, subject) => {
