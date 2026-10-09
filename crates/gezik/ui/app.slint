@@ -87,6 +87,7 @@ export component AppWindow inherits Window {
     if root.native-menu-bar: MenuBar {
         Menu {
             title: "File";
+            MenuItem { title: "New Window"; shortcut: root.menu-keys ? @keys(Control + N) : @keys(); activated => { root.menu-command("new-window"); } }
             MenuItem { title: "New Tab"; shortcut: root.menu-keys ? @keys(Control + T) : @keys(); activated => { root.menu-command("new-tab"); } }
             MenuItem { title: "New Folder"; shortcut: root.menu-keys ? @keys(Control + Shift + N) : @keys(); activated => { root.menu-command("new-folder"); } }
             MenuItem { title: "New Folder with Selection"; shortcut: root.menu-keys ? @keys(Control + Meta + N) : @keys(); activated => { root.menu-command("new-folder-with-selection"); } }

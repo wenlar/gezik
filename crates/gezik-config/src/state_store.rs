@@ -24,6 +24,8 @@ pub(crate) struct StateCell {
     writing: Mutex<()>,
     /// Wakes the writer thread, once it was started.
     writer: Mutex<Option<Sender<Wake>>>,
+    /// Set by [`StateCell::keep_unwritten`]: nothing more is written.
+    read_only: std::sync::atomic::AtomicBool,
 }
 
 impl fmt::Debug for StateCell {
@@ -37,7 +39,13 @@ const FLUSH_WAIT: Duration = Duration::from_secs(5);
 
 impl StateCell {
     pub fn new(path: PathBuf) -> StateCell {
-        StateCell { path, memory: Mutex::new(None), writing: Mutex::new(()), writer: Mutex::new(None) }
+        StateCell {
+            path,
+            memory: Mutex::new(None),
+            writing: Mutex::new(()),
+            writer: Mutex::new(None),
+            read_only: Default::default(),
+        }
     }
 
     /// The state: read from the file the first time (at start), from memory after that.
@@ -78,8 +86,17 @@ impl StateCell {
         let _ = written.recv_timeout(FLUSH_WAIT);
     }
 
+    /// From now on nothing is written: a `--new-window` Gezik (spec 5.3) must not put the
+    /// tabs it read at start over those of the window that keeps them.
+    pub fn keep_unwritten(&self) {
+        self.read_only.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
     /// Writes what is in memory now.
     fn write(&self) -> io::Result<()> {
+        if self.read_only.load(std::sync::atomic::Ordering::Relaxed) {
+            return Ok(());
+        }
         let _turn = lock(&self.writing);
         let Some(state) = lock(&self.memory).clone() else { return Ok(()) };
         write_atomic(&self.path, &state.to_toml())
@@ -175,5 +192,19 @@ mod tests {
         let names: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name()).collect();
         assert_eq!(names, ["state.toml"], "no temporary file is left");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_store_kept_unwritten_never_writes() {
+        let dir = crate::test_dir("state-unwritten");
+        let path = dir.join("state.toml");
+        std::fs::write(&path, "[preview]\nopen = true\n").unwrap();
+        let cell = Arc::new(StateCell::new(path.clone()));
+        cell.keep_unwritten();
+        cell.update(|state| state.preview_open = false);
+        cell.flush();
+        cell.save(&State::default()).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "[preview]\nopen = true\n");
+        assert!(!cell.get().preview_open, "memory still follows");
     }
 }

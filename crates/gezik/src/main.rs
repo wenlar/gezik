@@ -4,6 +4,7 @@
 mod actions;
 mod archives;
 mod batch_rename;
+mod cli;
 mod conflicts;
 mod context_menu;
 mod convert;
@@ -32,6 +33,7 @@ mod saved_searches;
 mod search;
 mod select_tools;
 mod sidebar;
+mod single_instance;
 mod stack;
 mod start;
 mod tab_sets;
@@ -55,6 +57,7 @@ use gezik_config::store::{self, ConfigFiles, ConfigStore, Loaded};
 use gezik_config::theme;
 use gezik_core::layout::Move;
 use gezik_core::nav::Session;
+use gezik_platform::instance;
 use start::StartPlan;
 
 slint::include_modules!();
@@ -228,6 +231,7 @@ fn perform(
         | Action::CutWithFolders
         | Action::CalculateFolderSizes
         | Action::SaveSearch
+        | Action::NewWindow
         | Action::MakeAlias
         | Action::ShowPackageContents => return actions::run(action, nav, view),
     }
@@ -500,11 +504,12 @@ fn handle_key(
 fn apply_config_and_start(
     window: &AppWindow,
     files: &mut ConfigFiles,
-    cli: Option<PathBuf>,
+    cli: &[cli::Target],
+    new_tab: bool,
     saved: Option<&Session>,
 ) -> (Settings, StartPlan) {
     let loaded = apply_config(window, files);
-    let plan = resolve_start(&loaded.settings, cli, saved);
+    let plan = resolve_start(&loaded.settings, cli, new_tab, saved);
     if !plan.warnings.is_empty() {
         files.warnings.extend(plan.warnings.iter().cloned());
         apply_config(window, files);
@@ -513,14 +518,13 @@ fn apply_config_and_start(
 }
 
 /// [`start::plan_start`] against the real file system.
-fn resolve_start(settings: &Settings, cli: Option<PathBuf>, saved: Option<&Session>) -> StartPlan {
+fn resolve_start(settings: &Settings, cli: &[cli::Target], new_tab: bool, saved: Option<&Session>) -> StartPlan {
     let saved = saved.filter(|_| settings.session.restore);
-    // Absolute, so the address bar parts and "up" work for `gezik .` too.
-    let cli = cli.map(start::absolute);
     let dirs = gezik_config::paths::KnownDirs::system();
     start::plan_start(
         &settings.start_folder,
         cli,
+        new_tab,
         &path_box::home(),
         |text| dirs.expand_checked(text),
         start::path_kind,
@@ -555,6 +559,37 @@ fn main() -> Result<(), slint::PlatformError> {
     if std::env::args_os().nth(1).is_some_and(|arg| arg == gezik_batch::pdf::client::WORKER_ARG) {
         std::process::exit(gezik_batch::pdf::worker::main());
     }
+    // The command line (spec 5.1), before Slint and the settings: --help and --version only print.
+    let mut cli = cli::parse(std::env::args_os().skip(1), cfg!(windows));
+    if cli.help || cli.version {
+        // The Windows release build has no console of its own: print to the caller's.
+        instance::attach_console();
+        if cli.version {
+            println!("gezik {}", env!("CARGO_PKG_VERSION"));
+        } else {
+            print!("{}", cli::HELP);
+        }
+        return Ok(());
+    }
+    for warning in &cli.warnings {
+        eprintln!("gezik: {warning}");
+    }
+    cli.make_absolute();
+    // A running Gezik takes the paths (spec 5.2): tried before any window or settings, so a
+    // second call costs only the attempt. --new-window never hands over and never listens.
+    let key = instance::key(gezik_config::paths::config_dir().as_deref());
+    let request = cli.request();
+    // A window that could not hand over is a second window as --new-window's is (spec 5.3):
+    // two windows writing the same tabs to state.toml would lose one's.
+    let mut secondary = cli.new_window;
+    if !secondary {
+        match instance::send(&key, &request, instance::SEND_TIMEOUT) {
+            instance::Sent::Delivered => return Ok(()),
+            instance::Sent::NoInstance => {}
+            // Hung, refusing or someone else's: a window of its own, the channel left alone.
+            instance::Sent::Failed => secondary = true,
+        }
+    }
     // Gezik has its own tabs: no window tabs of macOS (nor their items in the View menu).
     #[cfg(target_os = "macos")]
     gezik_platform::app::no_window_tabs();
@@ -576,15 +611,39 @@ fn main() -> Result<(), slint::PlatformError> {
         eprintln!("gezik: no config folder available; using defaults");
         files.warnings.push(Warning::new("config", "no config folder available; using default settings"));
     }
+    files.warnings.extend(cli.warnings.iter().map(|w| Warning::new("command line", w.clone())));
     // Something sensible is on screen even if the selected theme cannot be read.
     theme_bridge::apply(&window, &theme::builtin_dark());
     let saved_state = config.as_ref().map(ConfigStore::load_state).unwrap_or_default();
-    let (initial_settings, plan) = apply_config_and_start(
-        &window,
-        &mut files,
-        std::env::args_os().nth(1).map(PathBuf::from),
-        Some(&saved_state.session),
-    );
+    // As apply_config_and_start, split so the channel is claimed before the session is chosen.
+    let initial_settings = apply_config(&window, &files).settings;
+    let listener = if !secondary && initial_settings.system.single_instance {
+        match instance::claim(&key) {
+            instance::Claim::Listening(listener) => Some(listener),
+            // Another Gezik started at the same moment and took it: it gets the paths.
+            instance::Claim::Taken => {
+                if instance::send(&key, &request, instance::SEND_TIMEOUT) == instance::Sent::Delivered {
+                    return Ok(());
+                }
+                secondary = true;
+                None
+            }
+            instance::Claim::Off => None,
+        }
+    } else {
+        None
+    };
+    // A second window keeps the first one's tabs: it neither restores nor records them, and
+    // writes no state nor folder views.
+    if secondary && let Some(store) = &config {
+        store.keep_state_unwritten();
+    }
+    let plan =
+        resolve_start(&initial_settings, &cli.targets, cli.new_tab, (!secondary).then_some(&saved_state.session));
+    if !plan.warnings.is_empty() {
+        files.warnings.extend(plan.warnings.iter().cloned());
+        apply_config(&window, &files);
+    }
 
     // Folder views; a broken views.toml starts over and says so in the status bar.
     let (memory, views_warning) = config.as_ref().map(ConfigStore::load_views).unwrap_or_default();
@@ -617,7 +676,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 let _ = weak.upgrade_in_event_loop(move |window| {
                     let mut current = files.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                     *current = fresh;
-                    let (_, plan) = apply_config_and_start(&window, &mut current, None, None);
+                    let (_, plan) = apply_config_and_start(&window, &mut current, &[], false, None);
                     navigation::with_current(|nav| nav.set_start(plan.start));
                 });
             },
@@ -635,7 +694,7 @@ fn main() -> Result<(), slint::PlatformError> {
         .ok()
     });
     apply_config(&window, &files.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
-    window_state::restore(&window, &saved_state);
+    window_state::restore(&window, &saved_state, if secondary { 32 } else { 0 });
     keep_on_screen(window.as_weak(), 0);
     let view = view::View::new(&window, memory, config.clone());
     view.set_defaults(initial_settings.view);
@@ -664,7 +723,7 @@ fn main() -> Result<(), slint::PlatformError> {
     nav.install();
     // The open tabs go to state.toml as they change (spec 5.1); its own thread writes them, so
     // a crash or a kill leaves the last tabs too.
-    if let Some(store) = config.clone() {
+    if !secondary && let Some(store) = config.clone() {
         nav.keep_session(saved_state.session.clone(), initial_settings.session.restore, move |session| {
             let session = session.clone();
             store.update_state(move |state| state.session = session);
@@ -1234,5 +1293,9 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     }
 
+    // The window and tabs are up; calls that came before this wait in the channel.
+    if let Some(listener) = listener {
+        single_instance::serve(listener, window.as_weak());
+    }
     window.run()
 }

@@ -409,6 +409,19 @@ Keyboard (6b: path completion, folder history, command keys)
 67. **Palette and Quick Open.** Ctrl+Shift+P opens the picker with `>` and the caret after it; Ctrl+P lists places first, Alt+Enter opens in a new tab, the last line `Search for "x" in <folder>` starts a search. On X11 and on Wayland: the field takes the keyboard at once (type without clicking), Esc gives it back to the list. Note whether the desktop takes Ctrl+P or Ctrl+Shift+P.
 68. **Saved searches.** The search bar's ▾ ▸ Save search…; the sidebar's SEARCHES section runs it (click, middle-click for a new tab, right-click ▸ Rename… / Delete); `~/.config/gezik/settings.toml` has the `[[searches]]` entry.
 
+### 9b1, command line and single instance
+
+Do 70-73 once on X11 and once on Wayland.
+
+69. **Tests first.** In the clone: `cargo test -p gezik-platform instance`. These tests (socket, stale socket, hung and huge callers, peer uid) only compiled on Windows; they never ran on Linux before.
+70. **Hand-over.** With Gezik open, from a terminal: `gezik ~/Documents` opens in the same window (if a Documents tab is open, it switches to it) and the terminal gets its prompt back at once. `gezik ~/Documents/x.pdf` opens the folder with `x.pdf` selected; no PDF viewer starts.
+71. **Bring to front.** Minimize Gezik, then `gezik ~`. On X11 the window should come back and to the front. On Wayland the activation token is carried but not applied yet: note whether the window comes to the front or only asks for attention (**to be confirmed**). This non-Windows arm has not run anywhere yet.
+72. **Help, version, new window.** `gezik --help` and `gezik --version` print to the terminal. `gezik --new-window ~` opens a second window, 32 px offset; Ctrl+N does the same. Close the first window, then the second; open Gezik again: the first window's tabs come back.
+73. **Hung or crashed Gezik.** `kill -STOP <pid>`, then `gezik ~`: its own window opens after about 2 s; `kill -CONT <pid>`. `kill -9 <pid>`, then `gezik ~`: a new first Gezik; `gezik /tmp` then goes to it.
+74. **Socket folder.** `ls -l $XDG_RUNTIME_DIR/gezik-*` shows an `srw-------` socket and an `-rw-------` lock. `env -u XDG_RUNTIME_DIR gezik ~` (with no Gezik running) creates `/tmp/gezik-$UID` with mode 0700. With `chmod 755 /tmp/gezik-$UID` (and no `XDG_RUNTIME_DIR`), single instance is off: every call opens its own window.
+75. **Other users.** `sudo -u <other> env DISPLAY=$DISPLAY gezik /tmp` never reaches your Gezik: it opens its own window (or fails to), but no tab opens in yours.
+76. **Off.** `[system] single-instance = false` in settings.toml, restart Gezik: every call opens its own window.
+
 ## Known gaps (not bugs)
 
 - **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (F5 works it out again). Search results and the flat view show no folder sizes.

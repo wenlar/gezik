@@ -99,9 +99,15 @@ skip = [".git", "node_modules"]   # folders a search does not go into (by name)
 max-results = 250000       # 1000-2000000; a search stops there
 content-max-size = "64 MB" # larger files are not read for text
 
+[system]
+# A second `gezik` (a folder from the command line, a script, another app) opens in the
+# running window instead of a new one; `gezik --new-window` still opens one. Read at start.
+single-instance = true
+
 [shortcuts]
 # Change any shortcut; "mod" is Cmd on macOS and Ctrl elsewhere; "" disables.
 # new-tab = "mod+t"
+# new-window = "mod+n"     # a separate Gezik window (a new process) at the folder shown
 # close-tab = "mod+w"
 # next-tab = "ctrl+tab"
 # prev-tab = "ctrl+shift+tab"
