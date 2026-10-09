@@ -83,8 +83,8 @@ impl Default for SortSpec {
     }
 }
 
-// Key tokens. A name becomes one flat `Vec<u32>` so building and comparing a key costs a
-// single allocation. Parts follow each other; a text part is its letter weights plus
+// Key tokens. A name becomes a sequence of `u32` tokens, made as they are compared (no
+// key is stored). Parts follow each other; a text part is its letter weights plus
 // `END`, a number part is `NUMBER`, its digit count, its digits and its leading-zero count.
 // The tokens are chosen so that comparing keys token by token gives natural order:
 // - `END` is lowest, so a shorter text sorts first (`a` < `a!`) and `a1` < `ab`;
@@ -97,49 +97,108 @@ const END: u32 = 0;
 const NUMBER: u32 = 1;
 const TEXT_BASE: u32 = 2;
 
-/// What [`natural_cmp`] compares, computed once per name when sorting many.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct NaturalKey(Vec<u32>);
-
-pub fn natural_key(name: &str) -> NaturalKey {
-    let mut key = Vec::with_capacity(name.len() + 4);
-    push_key(&mut key, name);
-    NaturalKey(key)
+/// A name's key tokens one at a time, so a sort can compare names without storing keys.
+fn tokens(name: &str) -> Tokens<'_> {
+    Tokens { name, i: 0, part: Part::Between }
 }
 
-fn push_key(key: &mut Vec<u32>, name: &str) {
-    let bytes = name.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i].is_ascii_digit() {
-            let start = i;
-            while i < bytes.len() && bytes[i].is_ascii_digit() {
-                i += 1;
+struct Tokens<'a> {
+    name: &'a str,
+    // Where the next part starts (or the text part goes on).
+    i: usize,
+    part: Part,
+}
+
+enum Part {
+    Between,
+    Text,
+    // A digit run: its digits from `next` up to `end` (no leading zeros), then `zeros`;
+    // `count` until the digit count is out.
+    Number { count: bool, next: usize, end: usize, zeros: usize },
+}
+
+impl Iterator for Tokens<'_> {
+    type Item = u32;
+
+    fn next(&mut self) -> Option<u32> {
+        let bytes = self.name.as_bytes();
+        match self.part {
+            Part::Between if self.i >= bytes.len() => None,
+            Part::Between if bytes[self.i].is_ascii_digit() => {
+                let start = self.i;
+                while self.i < bytes.len() && bytes[self.i].is_ascii_digit() {
+                    self.i += 1;
+                }
+                let run = &bytes[start..self.i];
+                let zeros = run.iter().position(|&b| b != b'0').unwrap_or(run.len() - 1);
+                self.part = Part::Number { count: true, next: start + zeros, end: self.i, zeros };
+                Some(NUMBER)
             }
-            let run = &bytes[start..i];
-            let first = run.iter().position(|&b| b != b'0').unwrap_or(run.len() - 1);
-            let digits = &run[first..];
-            key.push(NUMBER);
-            key.push(u32::try_from(digits.len()).unwrap_or(u32::MAX));
-            key.extend(digits.iter().map(|&b| u32::from(b - b'0')));
-            key.push(u32::try_from(first).unwrap_or(u32::MAX));
-        } else {
-            // Digits are ASCII, so they never occur inside a multi-byte character and
-            // `i` stays on a character boundary.
-            let rest = &name[i..];
-            for c in rest.chars().take_while(|c| !c.is_ascii_digit()) {
-                key.push(weight(c) + TEXT_BASE);
-                i += c.len_utf8();
+            Part::Between | Part::Text => {
+                // Digits are ASCII, so they never occur inside a multi-byte character and
+                // `i` stays on a character boundary.
+                match self.name[self.i..].chars().next().filter(|c| !c.is_ascii_digit()) {
+                    Some(c) => {
+                        self.part = Part::Text;
+                        self.i += c.len_utf8();
+                        Some(weight(c) + TEXT_BASE)
+                    }
+                    None => {
+                        self.part = Part::Between;
+                        Some(END)
+                    }
+                }
             }
-            key.push(END);
+            Part::Number { ref mut count, ref mut next, end, zeros } => {
+                if *count {
+                    *count = false;
+                    Some(u32::try_from(end - *next).unwrap_or(u32::MAX))
+                } else if *next < end {
+                    *next += 1;
+                    Some(u32::from(bytes[*next - 1] - b'0'))
+                } else {
+                    self.part = Part::Between;
+                    Some(u32::try_from(zeros).unwrap_or(u32::MAX))
+                }
+            }
         }
     }
+}
+
+/// Compares two names' keys token by token (natural order, case ignored).
+fn key_cmp(a: &str, b: &str) -> Ordering {
+    // The bytes both names start with give the same tokens, unless they end inside a
+    // character or a digit run (`file12` and `file13`): start at the last place both agree.
+    let mut i = a.bytes().zip(b.bytes()).take_while(|(x, y)| x == y).count();
+    while !a.is_char_boundary(i) {
+        i -= 1;
+    }
+    while i > 0 && a.as_bytes()[i - 1].is_ascii_digit() {
+        i -= 1;
+    }
+    let (x, y) = (a.as_bytes(), b.as_bytes());
+    let digit = |s: &[u8]| s.get(i).is_some_and(u8::is_ascii_digit);
+    if digit(x) && digit(y) {
+        // Two numbers here (the usual place names differ): their tokens compared without
+        // making them, then the rest.
+        fn run(s: &[u8], i: usize) -> (&[u8], usize, usize) {
+            let end = i + s[i..].iter().take_while(|b| b.is_ascii_digit()).count();
+            let zeros = s[i..end].iter().position(|&b| b != b'0').unwrap_or(end - i - 1);
+            (&s[i + zeros..end], zeros, end)
+        }
+        let ((da, za, ea), (db, zb, eb)) = (run(x, i), run(y, i));
+        let rest = |name, i| Tokens { name, i, part: Part::Between };
+        return da.len().cmp(&db.len()).then(da.cmp(db)).then(za.cmp(&zb)).then_with(|| rest(a, ea).cmp(rest(b, eb)));
+    }
+    // After a character (not a digit) both are inside a text part.
+    let from = |name| Tokens { name, i, part: if i == 0 { Part::Between } else { Part::Text } };
+    from(a).cmp(from(b))
 }
 
 /// Natural order, ignoring case; names equal that way are ordered by their exact text, so
 /// the order is total and the same on every run.
 pub fn natural_cmp(a: &str, b: &str) -> Ordering {
-    natural_key(a).cmp(&natural_key(b)).then_with(|| a.cmp(b))
+    key_cmp(a, b).then_with(|| a.cmp(b))
 }
 
 /// Letters of the Turkish alphabet (and the English ones it lacks) come after all
@@ -237,16 +296,14 @@ fn alphabet_position(c: char) -> Option<(u32, u32)> {
     })
 }
 
-/// The column value an entry sorts by, before its name.
+/// The column value an entry sorts by, before its name (not kept for Name and Folder: those
+/// compare the row's own text when the sort asks).
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Primary {
-    None,
     Time(Option<SystemTime>),
     Size(u64),
     // Type name key, then the lowercase extension (spans of the key buffer: no string a row).
     Type((u32, u32), (u32, u32)),
-    // A result's folder (a span of the key buffer).
-    Folder((u32, u32)),
 }
 
 /// Sorts `entries` by `spec` (see [`sort_order`]). Returns where each entry came from: entry
@@ -285,7 +342,7 @@ pub fn sort_order<'a>(
 }
 
 /// [`sort_order`] for `len` rows kept some other way (the search results' compact rows):
-/// `entry` gives row `i` (called once per row), `name` its name (when two names tie).
+/// `entry` gives row `i` (called once per row), `name` its name (whenever two rows compare).
 pub fn sort_rows<'e, 'a>(
     len: usize,
     entry: &dyn Fn(usize) -> Cow<'e, Entry>,
@@ -295,47 +352,42 @@ pub fn sort_rows<'e, 'a>(
     type_name: impl Fn(&Entry) -> String,
     folder: &dyn Fn(usize) -> &'a str,
 ) -> Vec<usize> {
-    // All keys live in one buffer, so sorting 100k names allocates once, not 100k times. Its
-    // exact size for the names: a guess too small doubles it (32 MB more at 250,000 rows).
-    let mut scratch = Vec::new();
-    let names: usize = (0..len)
-        .map(|i| {
-            scratch.clear();
-            push_key(&mut scratch, name(i));
-            scratch.len()
-        })
-        .sum();
-    let mut buf: Vec<u32> = Vec::with_capacity(names);
+    // Names and folders are compared token by token from their text, not from stored keys:
+    // keys took ~4 B a character and 32 B a row (21 MB at 250,000 results); the compares cost
+    // a little time.
+    // The Type column's keys live in one buffer (its texts are short and few per row).
+    let mut buf: Vec<u32> = Vec::new();
     // `raw`: the code points as they are (they compare as the text's bytes did).
     let mut push = |text: &str, raw: bool| {
         let start = buf.len() as u32;
         if raw {
             buf.extend(text.chars().map(u32::from));
         } else {
-            push_key(&mut buf, text);
+            buf.extend(tokens(text));
         }
         (start, buf.len() as u32)
     };
     // Folders whose size is on their way go last in either direction (spec 6.3).
     let last = |e: &Entry| spec.key == SortKey::Size && e.size_pending();
-    // Per row: whether it is a folder and goes last (the comparison needs no entry).
+    let keyed = !matches!(spec.key, SortKey::Name | SortKey::Folder);
+    // Per row: whether it is a folder and goes last (the comparison needs no entry), and the
+    // column's value when it is not the row's text.
     let mut kinds: Vec<(bool, bool)> = Vec::with_capacity(len);
-    let keys: Vec<(Primary, (u32, u32))> = (0..len)
-        .map(|i| {
-            let e = entry(i);
-            kinds.push((e.is_dir, last(&e)));
-            let primary = match spec.key {
-                SortKey::Name => Primary::None,
-                SortKey::Modified => Primary::Time(e.modified),
-                SortKey::Created => Primary::Time(e.created),
-                // A file's size, a folder's worked-out total; a folder without one as 0 (as before).
-                SortKey::Size => Primary::Size(e.known_size().unwrap_or(0)),
-                SortKey::Type => Primary::Type(push(&type_name(&e), false), push(&e.extension().to_lowercase(), true)),
-                SortKey::Folder => Primary::Folder(push(folder(i), false)),
-            };
-            (primary, push(&e.name, false))
-        })
-        .collect();
+    let mut keys: Vec<Primary> = Vec::with_capacity(if keyed { len } else { 0 });
+    for i in 0..len {
+        let e = entry(i);
+        kinds.push((e.is_dir, last(&e)));
+        keys.extend(match spec.key {
+            SortKey::Name | SortKey::Folder => None,
+            SortKey::Modified => Some(Primary::Time(e.modified)),
+            SortKey::Created => Some(Primary::Time(e.created)),
+            // A file's size, a folder's worked-out total; a folder without one as 0 (as before).
+            SortKey::Size => Some(Primary::Size(e.known_size().unwrap_or(0))),
+            SortKey::Type => {
+                Some(Primary::Type(push(&type_name(&e), false), push(&e.extension().to_lowercase(), true)))
+            }
+        });
+    }
     let span = |(start, end): (u32, u32)| &buf[start as usize..end as usize];
     // Sorting indices moves 8 bytes per swap instead of a whole `Entry`.
     let mut order: Vec<usize> = (0..len).collect();
@@ -343,16 +395,18 @@ pub fn sort_rows<'e, 'a>(
         let ((a_dir, a_last), (b_dir, b_last)) = (kinds[i], kinds[j]);
         let folders = if folders_first { b_dir.cmp(&a_dir) } else { Ordering::Equal };
         folders.then_with(|| a_last.cmp(&b_last)).then_with(|| {
-            let ((pa, na), (pb, nb)) = (&keys[i], &keys[j]);
-            let primary = match (pa, pb) {
-                (Primary::Type(ta, xa), Primary::Type(tb, xb)) => {
-                    span(*ta).cmp(span(*tb)).then_with(|| span(*xa).cmp(span(*xb)))
-                }
-                (Primary::Folder(fa), Primary::Folder(fb)) => span(*fa).cmp(span(*fb)),
-                _ => pa.cmp(pb),
+            let primary = match spec.key {
+                SortKey::Name => Ordering::Equal,
+                SortKey::Folder => key_cmp(folder(i), folder(j)),
+                _ => match (&keys[i], &keys[j]) {
+                    (Primary::Type(ta, xa), Primary::Type(tb, xb)) => {
+                        span(*ta).cmp(span(*tb)).then_with(|| span(*xa).cmp(span(*xb)))
+                    }
+                    (pa, pb) => pa.cmp(pb),
+                },
             };
             let order = primary
-                .then_with(|| span(*na).cmp(span(*nb)))
+                .then_with(|| key_cmp(name(i), name(j)))
                 .then_with(|| name(i).cmp(name(j)))
                 .then_with(|| folder(i).cmp(folder(j)))
                 .then_with(|| i.cmp(&j));
@@ -663,6 +717,104 @@ mod tests {
         assert_eq!(by_name(SortDir::Asc), [1, 0, 2], "equal names: by folder");
         assert_eq!(by_name(SortDir::Desc), [2, 0, 1]);
         assert!(!SortKey::ALL.contains(&SortKey::Folder), "not a folder's sort");
+    }
+
+    /// The key builder sorts used before tokens were made lazily (the reference they match).
+    fn stored_key(name: &str) -> Vec<u32> {
+        let (bytes, mut key, mut i) = (name.as_bytes(), Vec::new(), 0);
+        while i < bytes.len() {
+            if bytes[i].is_ascii_digit() {
+                let start = i;
+                while i < bytes.len() && bytes[i].is_ascii_digit() {
+                    i += 1;
+                }
+                let run = &bytes[start..i];
+                let first = run.iter().position(|&b| b != b'0').unwrap_or(run.len() - 1);
+                key.push(NUMBER);
+                key.push(u32::try_from(run.len() - first).unwrap());
+                key.extend(run[first..].iter().map(|&b| u32::from(b - b'0')));
+                key.push(u32::try_from(first).unwrap());
+            } else {
+                for c in name[i..].chars().take_while(|c| !c.is_ascii_digit()) {
+                    key.push(weight(c) + TEXT_BASE);
+                    i += c.len_utf8();
+                }
+                key.push(END);
+            }
+        }
+        key
+    }
+
+    const MIXED: [&str; 31] = [
+        "",
+        "0",
+        "00",
+        "007",
+        "7",
+        "a",
+        "A",
+        "a1",
+        "a01",
+        "a!",
+        "ab",
+        "file10",
+        "File2",
+        "file2.txt",
+        "ılık",
+        "Irmak",
+        "İnek",
+        "inek",
+        "şeker",
+        "Şeker",
+        "çay10b",
+        "Çay9",
+        "x340282366920938463463374607431768211456y",
+        "яблоко",
+        "çay10a",
+        "çay1",
+        "file10.txt",
+        "file_12.dat",
+        "file_13.dat",
+        "file_123.dat",
+        "ılık2",
+    ];
+
+    #[test]
+    fn lazy_tokens_match_the_stored_keys() {
+        for name in MIXED {
+            assert_eq!(tokens(name).collect::<Vec<_>>(), stored_key(name), "{name:?}");
+        }
+        for a in MIXED {
+            for b in MIXED {
+                assert_eq!(key_cmp(a, b), stored_key(a).cmp(&stored_key(b)), "{a:?} {b:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn rows_sort_by_lazy_names_and_folders() {
+        let entries: Vec<Entry> = MIXED.iter().map(|n| entry(n, false, 0, None)).collect();
+        let folders: Vec<&str> = MIXED.iter().rev().copied().collect();
+        // The old keys' order: the column (none for Name), the name's key, then the exact texts.
+        let want = |primary: &dyn Fn(usize) -> Vec<u32>| {
+            let mut v: Vec<usize> = (0..MIXED.len()).collect();
+            v.sort_by(|&i, &j| {
+                (primary(i), stored_key(MIXED[i]), MIXED[i], folders[i]).cmp(&(
+                    primary(j),
+                    stored_key(MIXED[j]),
+                    MIXED[j],
+                    folders[j],
+                ))
+            });
+            v
+        };
+        let by_name = sort_order(&entries, SortSpec::default(), true, |_| String::new(), &|i| folders[i]);
+        assert_eq!(by_name, want(&|_| Vec::new()), "Turkish letters, numbers, case ties");
+        let spec = SortSpec { key: SortKey::Folder, dir: SortDir::Desc };
+        let by_folder = sort_order(&entries, spec, true, |_| String::new(), &|i| folders[i]);
+        let mut desc = want(&|i| stored_key(folders[i]));
+        desc.reverse();
+        assert_eq!(by_folder, desc);
     }
 
     #[test]
