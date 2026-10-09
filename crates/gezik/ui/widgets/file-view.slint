@@ -162,9 +162,12 @@ export component FileView inherits Rectangle {
         && (floor(root.renaming-index / root.per-row) + 1) * root.item-height > -root.scroll
         && floor(root.renaming-index / root.per-row) * root.item-height < -root.scroll + list.visible-height;
     out property <length> cell-width: max(root.picture-size + 24px, 96px);
+    // The grid's first column starts here: the cells are inset from the sheet's edge
+    // (`Geometry::Grid.left` in gezik-core layout.rs).
+    out property <length> grid-left: Theme.inset;
     out property <length> cell-height: root.picture-size + 24px + Theme.font-size * 2.8;
     // Grid cells per line.
-    out property <int> grid-columns: max(1, floor(list.visible-width / root.cell-width));
+    out property <int> grid-columns: max(1, floor((list.visible-width - 2 * root.grid-left) / root.cell-width));
     out property <length> item-height: root.mode == 0 ? Theme.row-height : root.cell-height;
     // How many lines PgUp/PgDn move: one screen, less one line.
     out property <int> page-rows: max(1, floor(list.visible-height / self.item-height) - 1);
@@ -225,9 +228,10 @@ export component FileView inherits Rectangle {
     // The selection shows in full while the view or its rename field has the keyboard, and
     // in the inactive color otherwise.
     property <bool> active: root.has-focus || root.rename-has-focus;
-    // The gap above and below the visible list (the rows' inset leaves room for it); none
+    // The gap above and below the visible list (the rows' inset leaves room for it); the
+    // grid's is its inset (Theme.inset + the cells' 4px above the first line); none
     // in the classic themes.
-    property <length> list-pad: root.mode == 0 ? min(Theme.inset, 2px) : 0px;
+    property <length> list-pad: root.mode == 0 ? min(Theme.inset, 2px) : Theme.inset;
     property <length> header-height: root.mode == 0 ? Theme.row-height : 0px;
     property <length> gap: Theme.spacing + 2px;
     property <length> side: Theme.spacing + 4px;
@@ -325,7 +329,7 @@ export component FileView inherits Rectangle {
         if root.mode == 0 {
             return list.absolute-position.x + Theme.spacing * 6;
         }
-        return list.absolute-position.x + mod(index, root.per-row) * root.cell-width + root.cell-width / 2;
+        return list.absolute-position.x + root.grid-left + mod(index, root.per-row) * root.cell-width + root.cell-width / 2;
     }
 
     public function menu-y(index: int) -> length {
@@ -678,7 +682,7 @@ export component FileView inherits Rectangle {
                     if c < item.cells.length: tile := Rectangle {
                         property <FileRow> cell: item.cells[c];
                         property <int> index: item.first + c;
-                        x: c * root.cell-width;
+                        x: root.grid-left + c * root.cell-width;
                         y: 0;
                         width: root.cell-width;
                         height: root.cell-height;
@@ -694,8 +698,10 @@ export component FileView inherits Rectangle {
                             width: parent.width - 8px;
                             height: parent.height - 8px;
                             border-radius: Theme.radius;
-                            background: root.drop-entry == tile.index ? Theme.drop-target : tile.cell.selected ? Theme.selection : tile-touch.has-hover && !root.drag-active ? Theme.hover : transparent;
-                            border-width: root.drop-entry == tile.index || (tile.cell.focused && root.has-focus) ? 1px : 0px;
+                            background: root.drop-entry == tile.index ? Theme.drop-target
+                                : tile.cell.selected ? (root.active ? Theme.selection : Theme.selection-inactive)
+                                : tile-touch.has-hover && !root.drag-active ? Theme.hover : transparent;
+                            border-width: root.drop-entry == tile.index ? 1px : tile.cell.focused && root.has-focus ? Theme.focus-width : 0px;
                             border-color: root.drop-entry == tile.index ? Theme.accent : Theme.focus-ring;
                         }
 
@@ -820,7 +826,7 @@ export component FileView inherits Rectangle {
     // Why the typed name cannot be used, just under the entry.
     if root.rename-error != "" && root.renaming-index >= 0: Rectangle {
         property <int> line: floor(root.renaming-index / root.per-row);
-        x: list.x + (root.mode == 0 ? Theme.inset + root.side + Theme.icon-size + root.gap : mod(root.renaming-index, root.per-row) * root.cell-width + 8px);
+        x: list.x + (root.mode == 0 ? Theme.inset + root.side + Theme.icon-size + root.gap : root.grid-left + mod(root.renaming-index, root.per-row) * root.cell-width + 8px);
         y: list.y + root.scroll + (self.line + 1) * root.item-height;
         width: error-text.preferred-width + Theme.spacing * 2;
         height: error-text.preferred-height + Theme.spacing;

@@ -1772,6 +1772,7 @@ impl View {
                 cell_width: window.get_cell_width(),
                 cell_height: window.get_cell_height(),
                 columns: self.0.model.per_row(),
+                left: window.get_grid_left(),
             }
         } else {
             Geometry::List { row_height: window.get_item_height() }
