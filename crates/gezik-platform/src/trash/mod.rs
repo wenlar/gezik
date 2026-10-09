@@ -112,23 +112,35 @@ pub fn changed() {
 
 /// Refuses to put `trashed` back at `original` when a folder on the way there is a link or a
 /// junction (or cannot be looked at), so a link planted on a shared volume cannot send an item
-/// elsewhere. The way is checked from the root of the volume the bin is on; a place off that
-/// volume (the home trash holds items from all of its device, and macOS's `/var` is a link
-/// itself) from the root of its own volume. Call it right before the move.
+/// elsewhere. Unix: a place in the user's home is checked from the home folder, so the system's
+/// links above it (Silverblue's `/home`, macOS's `/var`) do not block it. Elsewhere the way is
+/// checked from the root of the volume the bin is on; a place off that volume (the home trash
+/// holds items from all of its device) from the root of its own volume. Call it right before
+/// the move.
 pub(crate) fn check_way_back(trashed: &Path, original: &Path) -> io::Result<()> {
-    let root = trashed
-        .parent()
-        .and_then(crate::fs::drive_root)
-        .filter(|root| original.starts_with(root))
+    #[cfg(unix)]
+    let home =
+        dirs::home_dir().and_then(|home| home_root(original, &home, std::fs::canonicalize(&home).ok().as_deref()));
+    #[cfg(not(unix))]
+    let home = None;
+    let root = home
+        .or_else(|| trashed.parent().and_then(crate::fs::drive_root).filter(|root| original.starts_with(root)))
         .or_else(|| crate::fs::drive_root(original))
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no drive for this place"))?;
     match format::symlinked_folder(&root, original) {
         None => Ok(()),
         Some(link) => Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
-            format!("{} is a link: the item is not put back through it", link.display()),
+            format!("{} is a link: put the item back by hand", link.display()),
         )),
     }
+}
+
+/// The home folder `original` is under, as written (`home`) or resolved (`canonical`, e.g.
+/// `/var/home/u` for `/home/u`): where the way back is checked from.
+#[cfg_attr(windows, allow(dead_code))]
+fn home_root(original: &Path, home: &Path, canonical: Option<&Path>) -> Option<PathBuf> {
+    [Some(home), canonical].into_iter().flatten().find(|home| original.starts_with(home)).map(Path::to_path_buf)
 }
 
 /// Reads `bin` into `out`: only items whose entry and record are both there (Finder's: every
@@ -479,6 +491,26 @@ mod tests {
                 std::process::Command::new("cmd").args(["/C", "mklink", "/J"]).arg(link).arg(to).output().unwrap();
             assert!(made.status.success(), "{made:?}");
         }
+    }
+
+    #[test]
+    fn the_way_back_into_home_starts_at_home() {
+        let (home, real) = (Path::new("/home/u"), Path::new("/var/home/u"));
+        let root = |original: &str| home_root(Path::new(original), home, Some(real));
+        assert_eq!(root("/home/u/x"), Some(home.to_path_buf()), "as written");
+        assert_eq!(root("/var/home/u/x"), Some(real.to_path_buf()), "resolved");
+        assert_eq!(root("/home/uu/x"), None, "another user's home");
+        assert_eq!(root("/tmp/x"), None, "outside home: the volume's root");
+        let mac = Path::new("/Users/u");
+        assert_eq!(home_root(Path::new("/Users/u/Documents/a"), mac, Some(mac)), Some(mac.to_path_buf()));
+        // A link planted inside home is still refused from there.
+        let dir = bin_dir("home-root");
+        std::fs::create_dir_all(dir.join("elsewhere")).unwrap();
+        link_folder(&dir.join("elsewhere"), &dir.join("planted"));
+        let through = dir.join("planted").join("a.txt");
+        let root = home_root(&through, &dir, None).unwrap();
+        assert_eq!(format::symlinked_folder(&root, &through), Some(dir.join("planted")));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
