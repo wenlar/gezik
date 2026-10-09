@@ -120,6 +120,13 @@ pub fn with_tab_sets(text: &str, sets: &[crate::settings::TabSet]) -> Result<Str
     with_tables(text, "tab-sets", tables, |item| crate::settings::parse_tab_set(item).is_ok())
 }
 
+/// Returns `text` with `[[searches]]` replaced by `searches`; the entries that do not read as a
+/// saved search stay as written (see `with_rename_presets`).
+pub fn with_searches(text: &str, searches: &[crate::settings::SavedSearch]) -> Result<String, String> {
+    let tables = searches.iter().map(crate::settings::saved_search_to_toml).collect();
+    with_tables(text, "searches", tables, |item| crate::settings::parse_saved_search(item).is_ok())
+}
+
 /// Replaces the `[[key]]` tables that `valid` accepts with `tables`; the entries it rejects
 /// are written back unchanged after them.
 fn with_tables(
@@ -630,5 +637,22 @@ name = \"broken\" # mine
         for line in template.lines().filter(|l| l.starts_with('#')) {
             assert!(back.lines().any(|b| b == line), "{line} lost:\n{back}");
         }
+    }
+
+    #[test]
+    fn hand_written_searches_survive_a_save() {
+        let text = "# my searches\n[[searches]]\nname = \"Old\"\nfolder = \"{home}\"\npattern = \"*.log\"\n\n\
+                    [[searches]]\nname = \"Broken\"\nfolder = \"{home}\"\nsize-min = \"lots\"\n";
+        let mut spec = gezik_core::search::SearchSpec::new(gezik_core::search::Scope::AllDrives);
+        spec.pattern = "*.mp4".into();
+        let new = crate::settings::SavedSearch { name: "Videos".into(), folder: "{here}".into(), spec };
+        let out = with_searches(text, &[new]).unwrap();
+        assert!(out.contains("name = \"Videos\""), "{out}");
+        assert!(
+            out.contains("name = \"Broken\"") && out.contains("size-min = \"lots\""),
+            "a bad entry stays as written: {out}"
+        );
+        assert!(!out.contains("name = \"Old\""), "a good one is replaced by the list: {out}");
+        assert!(out.contains("# my searches"), "{out}");
     }
 }

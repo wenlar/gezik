@@ -250,10 +250,18 @@ pub enum Action {
     CopyWithFolders,
     /// The same as a move.
     CutWithFolders,
+    /// The command palette: actions, commands and view options (8b).
+    CommandPalette,
+    /// Quick open: places first, then the rest.
+    QuickOpen,
+    /// Works out the sizes of the selected folders, or of every folder shown.
+    CalculateFolderSizes,
+    /// Saves the search bar's search under a name (`[[searches]]`).
+    SaveSearch,
 }
 
 impl Action {
-    pub const ALL: [Action; 68] = [
+    pub const ALL: [Action; 72] = [
         Action::NewTab,
         Action::CloseTab,
         Action::NextTab,
@@ -322,6 +330,10 @@ impl Action {
         Action::ShowInFolder,
         Action::CopyWithFolders,
         Action::CutWithFolders,
+        Action::CommandPalette,
+        Action::QuickOpen,
+        Action::CalculateFolderSizes,
+        Action::SaveSearch,
     ];
 
     pub fn name(self) -> &'static str {
@@ -394,6 +406,88 @@ impl Action {
             Action::ShowInFolder => "show-in-folder",
             Action::CopyWithFolders => "copy-with-folders",
             Action::CutWithFolders => "cut-with-folders",
+            Action::CommandPalette => "command-palette",
+            Action::QuickOpen => "quick-open",
+            Action::CalculateFolderSizes => "calculate-folder-sizes",
+            Action::SaveSearch => "save-search",
+        }
+    }
+
+    /// Its title: the macOS menu bar's item and the command palette's line.
+    pub fn title(self) -> &'static str {
+        match self {
+            Action::NewTab => "New Tab",
+            Action::CloseTab => "Close Tab",
+            Action::NextTab => "Show Next Tab",
+            Action::PrevTab => "Show Previous Tab",
+            Action::Back => "Back",
+            Action::Forward => "Forward",
+            Action::Up => "Enclosing Folder",
+            Action::FocusPath => "Go to Folder…",
+            Action::Refresh => "Refresh",
+            Action::SelectAll => "Select All",
+            Action::ViewList => "View as List",
+            Action::ViewGrid => "View as Grid",
+            Action::TogglePreview => "Show Preview",
+            Action::QuickLook => "Quick Look",
+            Action::Copy => "Copy",
+            Action::Cut => "Cut",
+            Action::Paste => "Paste",
+            Action::PasteMove => "Move Item Here",
+            Action::Trash => "Move to Trash",
+            Action::DeletePermanently => "Delete Immediately…",
+            Action::Rename => "Rename",
+            Action::NewFolder => "New Folder",
+            Action::Duplicate => "Duplicate",
+            Action::Undo => "Undo",
+            Action::Redo => "Redo",
+            Action::BatchRename => "Rename Items…",
+            Action::ToggleHidden => "Show Hidden Items",
+            Action::Filter => "Filter…",
+            Action::InvertSelection => "Invert Selection",
+            Action::SelectPattern => "Select by Pattern…",
+            Action::DeselectPattern => "Deselect by Pattern…",
+            Action::SelectSameType => "Select Same Type",
+            Action::RestoreSelection => "Restore Selection",
+            Action::Tab1 => "Tab 1",
+            Action::Tab2 => "Tab 2",
+            Action::Tab3 => "Tab 3",
+            Action::Tab4 => "Tab 4",
+            Action::Tab5 => "Tab 5",
+            Action::Tab6 => "Tab 6",
+            Action::Tab7 => "Tab 7",
+            Action::Tab8 => "Tab 8",
+            Action::TabLast => "Last Tab",
+            Action::ReopenTab => "Reopen Closed Tab",
+            Action::TabPicker => "Show All Tabs…",
+            Action::ToggleTabLock => "Lock or Unlock Tab",
+            Action::ClearHistory => "Clear Folder History",
+            Action::OpenTerminal => "Open Terminal",
+            Action::OpenTerminalAdmin => "Open Terminal as Administrator",
+            Action::CopyPath => "Copy Path",
+            Action::SaveTabSet => "Save Tabs As…",
+            Action::Pin1 => "Pinned 1",
+            Action::Pin2 => "Pinned 2",
+            Action::Pin3 => "Pinned 3",
+            Action::Pin4 => "Pinned 4",
+            Action::Pin5 => "Pinned 5",
+            Action::Pin6 => "Pinned 6",
+            Action::Pin7 => "Pinned 7",
+            Action::Pin8 => "Pinned 8",
+            Action::Pin9 => "Pinned 9",
+            Action::NewFolderWithSelection => "New Folder with Selection",
+            Action::AddToStack => "Add to Drop Stack",
+            Action::ToggleStack => "Drop Stack",
+            Action::ShowHistory => "Operation History",
+            Action::Search => "Find…",
+            Action::FlatView => "Flat View",
+            Action::ShowInFolder => "Show in Folder",
+            Action::CopyWithFolders => "Copy with Folders",
+            Action::CutWithFolders => "Cut with Folders",
+            Action::CommandPalette => "Command Palette…",
+            Action::QuickOpen => "Quick Open…",
+            Action::CalculateFolderSizes => "Calculate Folder Sizes",
+            Action::SaveSearch => "Save Search…",
         }
     }
 
@@ -543,6 +637,9 @@ impl Action {
             (Action::FlatView, _) => &["mod+b"],
             (Action::ShowInFolder, _) => &["mod+shift+e"],
             (Action::CopyWithFolders | Action::CutWithFolders, _) => &[],
+            (Action::CommandPalette, _) => &["mod+shift+p"],
+            (Action::QuickOpen, _) => &["mod+p"],
+            (Action::CalculateFolderSizes | Action::SaveSearch, _) => &[],
         }
     }
 }
@@ -729,7 +826,7 @@ mod tests {
             assert_eq!(fixed_owner(&cmd_option, Platform::Mac), None);
         }
         assert_eq!((Action::pin(0), Action::pin(10)), (None, None));
-        assert_eq!(Action::ALL.len(), 68);
+        assert_eq!(Action::ALL.len(), 72);
         assert_eq!(other.action_for(&chord("ctrl+1")), Some(Action::Tab1), "Ctrl+1 is still tab 1");
         assert_eq!(other.action_for(&chord("ctrl+alt+1")), None, "AltGr+1 types");
     }
@@ -1186,6 +1283,40 @@ clear-history = \"ctrl+shift+h\"
         for name in ["search", "flat-view", "show-in-folder", "copy-with-folders", "cut-with-folders"] {
             assert!(Action::from_name(name).is_some(), "{name}");
         }
-        assert_eq!(Action::ALL.len(), 68);
+        assert_eq!(Action::ALL.len(), 72);
+    }
+
+    #[test]
+    fn the_8b_actions_have_their_keys() {
+        let other = Shortcuts::defaults(Platform::Other);
+        let mac = Shortcuts::defaults(Platform::Mac);
+        let mac_chord = |t: &str| parse_chord(t, Platform::Mac).unwrap().unwrap();
+        assert_eq!(other.action_for(&chord("ctrl+shift+p")), Some(Action::CommandPalette));
+        assert_eq!(other.action_for(&chord("ctrl+p")), Some(Action::QuickOpen));
+        assert_eq!(mac.action_for(&mac_chord("mod+shift+p")), Some(Action::CommandPalette));
+        assert_eq!(mac.action_for(&mac_chord("mod+p")), Some(Action::QuickOpen));
+        for action in [Action::CalculateFolderSizes, Action::SaveSearch] {
+            assert_eq!((other.chord_for(action), mac.chord_for(action)), (None, None), "{}", action.name());
+        }
+        for text in ["ctrl+shift+p", "ctrl+p"] {
+            assert_eq!(fixed_owner(&chord(text), Platform::Other), None, "{text}");
+        }
+        assert_eq!(fixed_owner(&mac_chord("mod+p"), Platform::Mac), None);
+        for name in ["command-palette", "quick-open", "calculate-folder-sizes", "save-search"] {
+            assert!(Action::from_name(name).is_some(), "{name}");
+        }
+        assert_eq!(Action::ALL.len(), 72);
+    }
+
+    #[test]
+    fn every_action_has_a_title() {
+        let mut seen = std::collections::HashSet::new();
+        for action in Action::ALL {
+            let title = action.title();
+            assert!(!title.is_empty() && title.chars().next().unwrap().is_uppercase(), "{}", action.name());
+            assert!(seen.insert(title), "\"{title}\" twice");
+        }
+        assert_eq!(Action::Search.title(), "Find…");
+        assert_eq!(Action::CommandPalette.title(), "Command Palette…");
     }
 }

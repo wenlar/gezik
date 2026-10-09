@@ -109,7 +109,11 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         | Action::Duplicate
         | Action::Undo
         | Action::Redo
-        | Action::BatchRename => return false,
+        | Action::BatchRename
+        | Action::CommandPalette
+        | Action::QuickOpen
+        | Action::CalculateFolderSizes
+        | Action::SaveSearch => return false,
     }
     true
 }

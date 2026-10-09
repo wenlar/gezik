@@ -202,6 +202,72 @@ pub struct SavedFilter {
     pub pattern: String,
 }
 
+/// A saved search (`[[searches]]`, spec 8): its name, its folder as written (`{here}`: the place
+/// shown when it runs; `drives`: This PC; else a path, tokens like `{home}` allowed) and the
+/// search, whose scope the one who runs it sets (`Scope::AllDrives` until then).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SavedSearch {
+    pub name: String,
+    pub folder: String,
+    pub spec: SearchSpec,
+}
+
+pub const SEARCHES_MAX: usize = 30;
+/// A saved search's folder that is the place shown when it runs.
+pub const HERE: &str = "{here}";
+const SEARCH_KEYS: [&str; 13] = [
+    "name",
+    "folder",
+    "pattern",
+    "content",
+    "name-regex",
+    "content-regex",
+    "match-case",
+    "size-min",
+    "size-max",
+    "modified",
+    "type",
+    "hidden",
+    "skipped",
+];
+
+/// One `[[searches]]` entry; the error is why it is left out (sapma 17: whether the folder is a
+/// full path on this computer is seen when it runs).
+pub(crate) fn parse_saved_search(value: &toml::Value) -> Result<SavedSearch, String> {
+    let table = value.as_table().ok_or_else(|| format!("expected a table, got {value}"))?;
+    let name =
+        table.get("name").and_then(|v| v.as_str()).map(str::trim).filter(|n| !n.is_empty()).ok_or("name is missing")?;
+    let folder = table
+        .get("folder")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|f| !f.is_empty())
+        .ok_or("folder is missing")?;
+    if crate::paths::has_parent_segment(folder) {
+        return Err(format!("folder: \"{folder}\" must not contain \"..\""));
+    }
+    if let Some(key) = table.keys().find(|key| !SEARCH_KEYS.contains(&key.as_str())) {
+        return Err(format!("unknown key \"{key}\""));
+    }
+    // The rest reads as a search tab does; "drives" stands in for the folder until it runs.
+    let mut rest = table.clone();
+    rest.remove("name");
+    rest.insert("folder".into(), toml::Value::String("drives".into()));
+    let spec = search_from_toml(&rest)?;
+    Ok(SavedSearch { name: name.to_owned(), folder: folder.to_owned(), spec })
+}
+
+/// `search` as its `[[searches]]` table: name, folder, then what differs from a new search.
+pub fn saved_search_to_toml(search: &SavedSearch) -> toml::Table {
+    let mut table = toml::Table::new();
+    table.insert("name".into(), toml::Value::String(search.name.clone()));
+    for (key, value) in search_to_toml(&search.spec) {
+        let value = if key == "folder" { toml::Value::String(search.folder.clone()) } else { value };
+        table.insert(key, value);
+    }
+    table
+}
+
 /// The last pattern of "Select by pattern" (state.toml `[selection]`).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SelectionState {
@@ -231,6 +297,7 @@ pub struct Settings {
     pub pinned: Vec<PinEntry>,
     pub shortcuts: Shortcuts,
     pub view: ViewDefaults,
+    pub folder_sizes: FolderSizeMode,
     pub files: FilesSettings,
     /// Most frames drawn per second (`MAX_FPS_RANGE`); 0 = as many as the display shows.
     pub max_fps: u32,
@@ -245,6 +312,8 @@ pub struct Settings {
     pub tab_sets: Vec<TabSet>,
     /// Saved filters; invalid ones are left out.
     pub filters: Vec<SavedFilter>,
+    /// Saved searches (`[[searches]]`); invalid ones are left out, at most `SEARCHES_MAX`.
+    pub searches: Vec<SavedSearch>,
     pub archives: ArchivesSettings,
     pub tools: ToolsSettings,
     pub convert: ConvertSettings,
@@ -268,6 +337,7 @@ impl Default for Settings {
             pinned: Vec::new(),
             shortcuts: Shortcuts::default(),
             view: ViewDefaults::default(),
+            folder_sizes: FolderSizeMode::Local,
             files: FilesSettings::default(),
             max_fps: 120,
             rename_presets: Vec::new(),
@@ -278,6 +348,7 @@ impl Default for Settings {
             search: SearchSettings::default(),
             tab_sets: Vec::new(),
             filters: Vec::new(),
+            searches: Vec::new(),
             archives: ArchivesSettings::default(),
             tools: ToolsSettings::default(),
             convert: ConvertSettings::default(),
@@ -401,7 +472,15 @@ impl Settings {
         match table.get("view") {
             None => {}
             Some(value) => match value.as_table() {
-                Some(view) => settings.view = parse_view(view, file, warnings),
+                Some(view) => {
+                    settings.view = parse_view(view, file, warnings);
+                    let options = "\"off\", \"local\" or \"all\"";
+                    if let Some(mode) =
+                        view_choice(view, "folder-sizes", options, FolderSizeMode::parse, file, warnings)
+                    {
+                        settings.folder_sizes = mode;
+                    }
+                }
                 None => warnings.push(Warning::new(file, format!("view: expected a table, got {value}"))),
             },
         }
@@ -496,6 +575,41 @@ impl Settings {
                             }
                             Ok(filter) => settings.filters.push(filter),
                             Err(err) => warnings.push(Warning::new(file, format!("filters[{}]: {err}", i + 1))),
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(value) = table.get("searches") {
+            match value.as_array() {
+                None => {
+                    warnings.push(Warning::new(file, format!("searches: expected [[searches]] tables, got {value}")))
+                }
+                Some(items) => {
+                    for (i, item) in items.iter().enumerate() {
+                        match parse_saved_search(item) {
+                            Ok(_) if settings.searches.len() == SEARCHES_MAX => {
+                                warnings.push(Warning::new(
+                                    file,
+                                    format!(
+                                        "searches[{}]: at most {SEARCHES_MAX} saved searches; this one is left out",
+                                        i + 1
+                                    ),
+                                ));
+                            }
+                            // Names are told apart ignoring case, as the filters' are.
+                            Ok(search) if settings.searches.iter().any(|s| same_filter_name(&s.name, &search.name)) => {
+                                warnings.push(Warning::new(
+                                    file,
+                                    format!(
+                                        "searches[{}]: \"{}\" is already used; this one is left out",
+                                        i + 1,
+                                        search.name
+                                    ),
+                                ));
+                            }
+                            Ok(search) => settings.searches.push(search),
+                            Err(err) => warnings.push(Warning::new(file, format!("searches[{}]: {err}", i + 1))),
                         }
                     }
                 }
@@ -624,6 +738,28 @@ fn view_bool(table: &toml::Table, key: &str, file: &str, warnings: &mut Vec<Warn
         warnings.push(Warning::new(file, format!("view.{key}: expected true or false, got {value}")));
     }
     on
+}
+
+/// `[view] folder-sizes` (spec 6.1): where the folders of the folder shown get their size by
+/// themselves; `calculate-folder-sizes` works everywhere.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FolderSizeMode {
+    Off,
+    /// Local fixed and removable drives, not network folders.
+    #[default]
+    Local,
+    All,
+}
+
+impl FolderSizeMode {
+    pub fn parse(text: &str) -> Option<FolderSizeMode> {
+        match text {
+            "off" => Some(FolderSizeMode::Off),
+            "local" => Some(FolderSizeMode::Local),
+            "all" => Some(FolderSizeMode::All),
+            _ => None,
+        }
+    }
 }
 
 /// `[search]` (spec 9.1).
@@ -1257,6 +1393,8 @@ pub struct State {
     pub history: Vec<Visit>,
     /// The tabs of last time (`[session]`), opened at start if `[session] restore`.
     pub session: Session,
+    /// The palette's items used last, newest first (spec 7.3).
+    pub palette_recent: Vec<String>,
 }
 
 /// state.toml's `[session]` (spec 5.1): the tabs in order and the one in front. An entry
@@ -1378,6 +1516,21 @@ impl State {
             .and_then(|v| v.as_array())
             .map(|items| items.iter().filter_map(parse_visit).collect())
             .unwrap_or_default();
+        let palette_recent = table
+            .get("palette")
+            .and_then(|v| v.as_table())
+            .and_then(|p| p.get("recent"))
+            .and_then(|v| v.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .take(gezik_core::palette::RECENT_MAX)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default();
         State {
             window,
             sidebar_width,
@@ -1392,6 +1545,7 @@ impl State {
             selection,
             history,
             session: session_state(table.get("session")),
+            palette_recent,
         }
     }
 
@@ -1497,6 +1651,18 @@ impl State {
             let mut history = toml::Table::new();
             history.insert("folders".into(), toml::Value::Array(folders));
             root.insert("history".into(), toml::Value::Table(history));
+        }
+        if !self.palette_recent.is_empty() {
+            let recent = self
+                .palette_recent
+                .iter()
+                .take(gezik_core::palette::RECENT_MAX)
+                .cloned()
+                .map(toml::Value::String)
+                .collect();
+            let mut palette = toml::Table::new();
+            palette.insert("recent".into(), toml::Value::Array(recent));
+            root.insert("palette".into(), toml::Value::Table(palette));
         }
         if !self.session.is_empty() {
             let tabs = self
@@ -2603,6 +2769,113 @@ shortcut = \"shift+f8\"
         );
         assert_eq!(gone.session.active, 0, "the active entry was left out: the first");
         assert_eq!(State::parse("[session]\nactive = -2\n").session, Session::default());
+    }
+
+    #[test]
+    fn folder_sizes_are_read_and_bad_values_warned() {
+        let (settings, warnings) = parse("[view]\nfolder-sizes = \"all\"\n");
+        assert_eq!((settings.folder_sizes, warnings.len()), (FolderSizeMode::All, 0));
+        assert_eq!(Settings::default().folder_sizes, FolderSizeMode::Local);
+        let (settings, warnings) = parse("[view]\nfolder-sizes = \"yes\"\n");
+        assert_eq!(settings.folder_sizes, FolderSizeMode::Local);
+        assert_eq!(warnings[0].message, "view.folder-sizes: expected \"off\", \"local\" or \"all\", got \"yes\"");
+    }
+
+    #[test]
+    fn saved_searches_are_read() {
+        let text = r#"
+            [[searches]]
+            name = "Large videos"
+            folder = "{home}"
+            pattern = "*.mp4;*.mkv"
+            size-min = "500 MB"
+            modified = "30d"
+            type = "videos"
+
+            [[searches]]
+            name = "Invoices here"
+            folder = "{here}"
+            content = "fatura"
+        "#;
+        let (settings, warnings) = parse(text);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let videos = &settings.searches[0];
+        assert_eq!((videos.name.as_str(), videos.folder.as_str()), ("Large videos", "{home}"));
+        assert_eq!(videos.spec.pattern, "*.mp4;*.mkv");
+        assert_eq!(videos.spec.size.min, Some(500 * 1024 * 1024));
+        assert_eq!(videos.spec.modified, DateRange::LastDays(30));
+        assert_eq!(videos.spec.kind, KindFilter::Videos);
+        assert_eq!(
+            (settings.searches[1].folder.as_str(), settings.searches[1].spec.content.as_str()),
+            (HERE, "fatura")
+        );
+    }
+
+    #[test]
+    fn bad_saved_searches_are_warned_and_left_out() {
+        let mut text = String::from(
+            "[[searches]]\nfolder = \"{home}\"\n\
+             [[searches]]\nname = \"a\"\n\
+             [[searches]]\nname = \"b\"\nfolder = \"{home}/../x\"\n\
+             [[searches]]\nname = \"c\"\nfolder = \"{home}\"\nsize-min = \"lots\"\n\
+             [[searches]]\nname = \"d\"\nfolder = \"{home}\"\ncolour = \"red\"\n\
+             [[searches]]\nname = \"E\"\nfolder = \"drives\"\n\
+             [[searches]]\nname = \"e\"\nfolder = \"{home}\"\n",
+        );
+        for i in 0..30 {
+            text.push_str(&format!("[[searches]]\nname = \"n{i}\"\nfolder = \"{{here}}\"\n"));
+        }
+        let (settings, warnings) = parse(&text);
+        let messages: Vec<&str> = warnings.iter().map(|w| w.message.as_str()).collect();
+        assert_eq!(
+            &messages[..6],
+            [
+                "searches[1]: name is missing",
+                "searches[2]: folder is missing",
+                "searches[3]: folder: \"{home}/../x\" must not contain \"..\"",
+                "searches[4]: size-min: expected a size like \"500 MB\", got \"lots\"",
+                "searches[5]: unknown key \"colour\"",
+                "searches[7]: \"e\" is already used; this one is left out",
+            ]
+        );
+        assert_eq!(messages[6], "searches[37]: at most 30 saved searches; this one is left out");
+        assert_eq!(settings.searches.len(), SEARCHES_MAX);
+    }
+
+    #[test]
+    fn a_saved_search_writes_back_as_it_reads() {
+        let mut spec = SearchSpec::new(Scope::AllDrives);
+        spec.pattern = "*.pdf".into();
+        spec.content = "fatura".into();
+        spec.modified = DateRange::LastDays(7);
+        let search = SavedSearch { name: "Faturalar".into(), folder: "{documents}/Muhasebe".into(), spec };
+        let table = saved_search_to_toml(&search);
+        let keys: Vec<&str> = table.keys().map(String::as_str).collect();
+        assert_eq!(keys, ["name", "folder", "pattern", "content", "modified"], "name and folder first");
+        assert_eq!(parse_saved_search(&toml::Value::Table(table)).unwrap(), search);
+    }
+
+    #[test]
+    fn the_palette_remembers_twenty() {
+        let state = State { palette_recent: (0..25).map(|i| format!("action:{i}")).collect(), ..State::default() };
+        let back = State::parse(&state.to_toml());
+        assert_eq!(back.palette_recent.len(), 20);
+        assert_eq!(back.palette_recent[0], "action:0");
+        assert!(State::parse("[palette]\nrecent = [1, \"tab:2\"]\n").palette_recent == ["tab:2"]);
+    }
+
+    #[test]
+    fn the_template_saved_search_example_reads_once_uncommented() {
+        let template = include_str!("../templates/settings.toml");
+        let start = template.find("# [[searches]]").expect("the template has a saved search example");
+        let example: String = template[start..]
+            .lines()
+            .take_while(|line| line.starts_with('#'))
+            .map(|line| format!("{}\n", line.strip_prefix("# ").unwrap_or(line)))
+            .collect();
+        let (settings, warnings) = parse(&example);
+        assert!(warnings.is_empty(), "{warnings:?}\n{example}");
+        assert_eq!(settings.searches.len(), 1);
     }
 
     #[test]

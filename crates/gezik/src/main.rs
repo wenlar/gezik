@@ -348,7 +348,11 @@ fn handle_key(
                 | Action::FlatView
                 | Action::ShowInFolder
                 | Action::CopyWithFolders
-                | Action::CutWithFolders => {
+                | Action::CutWithFolders
+                | Action::CommandPalette
+                | Action::QuickOpen
+                | Action::CalculateFolderSizes
+                | Action::SaveSearch => {
                     if action == Action::Filter && editing {
                         window.set_path_editing(false);
                     }
