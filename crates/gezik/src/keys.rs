@@ -787,6 +787,8 @@ mod tests {
                 Action::Search => "ctrl+shift+f",
                 Action::FlatView => "ctrl+b",
                 Action::ShowInFolder => "ctrl+shift+e",
+                Action::CommandPalette => "ctrl+shift+p",
+                Action::QuickOpen => "ctrl+p",
                 Action::PasteMove
                 | Action::Duplicate
                 | Action::BatchRename
@@ -797,7 +799,9 @@ mod tests {
                 | Action::ToggleStack
                 | Action::ShowHistory
                 | Action::CopyWithFolders
-                | Action::CutWithFolders => continue,
+                | Action::CutWithFolders
+                | Action::CalculateFolderSizes
+                | Action::SaveSearch => continue,
             };
             assert_eq!(reach(text), Some(action), "{text}");
         }

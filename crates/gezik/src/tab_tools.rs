@@ -9,7 +9,7 @@ use gezik_core::pattern::Pattern;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::navigation::Navigator;
-use crate::{AppWindow, TabPickRow};
+use crate::{AppWindow, PickRow};
 
 thread_local! {
     /// The tab picker of this (UI) thread, for the actions and the keys.
@@ -42,7 +42,7 @@ pub fn picker_rows(tabs: &[(String, String)], query: &str) -> Vec<usize> {
 }
 
 /// Whether a question, the conflict list or another layer is open over the window.
-fn over_another_layer(window: &AppWindow) -> bool {
+pub(crate) fn over_another_layer(window: &AppWindow) -> bool {
     window.get_dialog_open()
         || window.get_conflicts_open()
         || window.get_rb_open()
@@ -70,7 +70,7 @@ struct Inner {
     rows: RefCell<Vec<usize>>,
     /// The shown row Enter picks.
     current: Cell<usize>,
-    model: Rc<VecModel<TabPickRow>>,
+    model: Rc<VecModel<PickRow>>,
 }
 
 #[derive(Clone)]
@@ -88,13 +88,22 @@ impl TabTools {
             current: Cell::new(0),
             model,
         }));
-        window.on_tp_edited(|query| with_current(|t| t.edited(&query)));
+        // The palette shares the box (palette.rs).
+        window.on_tp_edited(|query| {
+            if crate::palette::is_open() {
+                crate::palette::with_current(|p| p.edited(&query));
+            } else {
+                with_current(|t| t.edited(&query));
+            }
+        });
         window.on_tp_chosen(|row| {
+            let Ok(row) = usize::try_from(row) else { return };
+            if crate::palette::is_open() {
+                return crate::palette::with_current(|p| p.chosen(row));
+            }
             with_current(|t| {
-                if let Ok(row) = usize::try_from(row) {
-                    t.0.current.set(row);
-                    t.choose();
-                }
+                t.0.current.set(row);
+                t.choose();
             });
         });
         CURRENT.with(|c| *c.borrow_mut() = Some(tools.clone()));
@@ -113,6 +122,9 @@ impl TabTools {
         let all = picker_rows(&self.0.tabs.borrow(), "");
         *self.0.rows.borrow_mut() = all;
         self.0.current.set(self.0.nav.active_index());
+        window.set_tp_rows(ModelRc::from(self.0.model.clone()));
+        window.set_tp_label("Tabs".into());
+        window.set_tp_empty("No tabs match".into());
         window.set_tp_query("".into());
         self.show(&window);
         window.set_tp_open(true);
@@ -175,14 +187,14 @@ impl TabTools {
     fn show(&self, window: &AppWindow) {
         let active = self.0.nav.active_index();
         let tabs = self.0.tabs.borrow();
-        let rows: Vec<TabPickRow> = self
+        let rows: Vec<PickRow> = self
             .0
             .rows
             .borrow()
             .iter()
             .map(|&i| {
                 let (title, path) = &tabs[i];
-                TabPickRow { title: title.into(), path: path.into(), active: i == active }
+                PickRow { title: title.into(), detail: path.into(), tag: "".into(), keys: "".into(), bold: i == active }
             })
             .collect();
         self.0.model.set_vec(rows);

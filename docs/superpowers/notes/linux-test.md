@@ -396,8 +396,22 @@ Keyboard (6b: path completion, folder history, command keys)
 60. **Flat view.** Ctrl+B in a project folder: every file under it in one list (no folders), the Folder column; Ctrl+B again on a file goes to its folder with it selected. View ▸ Show hidden items rebuilds it. A symlink to a folder (`ln -s ~/Documents ~/gezik-test/docs-link`) is a row and is not walked into; a symlink loop (`ln -s . ~/gezik-test/loop`) does not hang it.
 61. **Results like a folder.** In the results: Copy, then Ctrl+V in another folder (flat); right-click ▸ "Copy with folders" and paste: the folders under the scope are made; one Ctrl+Z takes the copies and the made folders away. Delete a result (Trash): it leaves the list; Ctrl+Z brings it back. F2 renames in place. Rename two results from different folders with the rename layer. "Show in folder" (Ctrl+Shift+E) goes to the file's folder with it selected. Close and open Gezik with a search tab open: the tab comes back and searches again. On X11 and on Wayland: the bar's fields take the keyboard, Esc gives it back to the list, and nothing else about the window changed (drag and drop, clipboard, the theme).
 
+### Design round 1 (Graphite)
+
+62. **Themes.** The four built-in themes (`light`, `dark`, `classic-light`, `classic-dark`) and `auto` following the desktop's light/dark switch (GNOME and KDE); `reduce-motion = true` stops the hover and popup fades; `density = "compact"`; the classic themes are flat (rows edge to edge, no rounded sheet).
+63. **Drawing at 200 %.** On a HiDPI screen: 1 px lines and the sheet's rounded corner are crisp; the 11 px small text (column header, status bar, sidebar section labels) is readable in the font the system picks; the glyphs (Refresh and History arcs, the dot on Drive), the sidebar icons; View ▾ and a long popup menu.
+64. **Thin scroll bar.** In a folder with thousands of files: a 6 px bar, no track, the theme's color (never the system's), darker on hover and drag, at least 24 px tall; dragging it follows the pointer to both ends; a click above or below scrolls a page; touchpad two-finger scrolling stays smooth; the sidebar, a long popup menu, the conflict list and the rename layer have the same bar.
+
+### 8b, folder sizes, command palette, saved searches
+
+65. **Folder sizes.** In your home folder the Size column fills in for folders (`…` while worked out, then a size; the ones on screen first). A folder you may not read (`chmod 000`) inside one makes it `≥ …`, and the preview says "Some folders could not be read". A folder with a symlink loop (`ln -s . loop`) gets a size that ends (the link is not followed). Under `/` the walk does not go into other mounted disks (`/media`, `/run/media`, `/proc`). Sort by Size: `…` folders stay last, the focused row stays in place.
+66. **Network.** On an NFS or SMB mount with `folder-sizes = "local"` (the default): no folder sizes. Row menu ▸ Calculate folder sizes (and View ▸ Calculate folder sizes): they are worked out, one thread at a time (a local copy at the same time hardly slows down).
+67. **Palette and Quick Open.** Ctrl+Shift+P opens the picker with `>` and the caret after it; Ctrl+P lists places first, Alt+Enter opens in a new tab, the last line `Search for "x" in <folder>` starts a search. On X11 and on Wayland: the field takes the keyboard at once (type without clicking), Esc gives it back to the list. Note whether the desktop takes Ctrl+P or Ctrl+Shift+P.
+68. **Saved searches.** The search bar's ▾ ▸ Save search…; the sidebar's SEARCHES section runs it (click, middle-click for a new tab, right-click ▸ Rename… / Delete); `~/.config/gezik/settings.toml` has the `[[searches]]` entry.
+
 ## Known gaps (not bugs)
 
+- **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (F5 works it out again). Search results and the flat view show no folder sizes.
 - **Search (8a):**
   - Search results and the flat view don't follow changes made outside Gezik until F5 (Gezik's own jobs do update them).
   - Content search always reads the disk (no index); the Folder and Match columns are only in result lists.

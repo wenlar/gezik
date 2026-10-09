@@ -732,10 +732,77 @@ impl<'a> Reader<'a> {
     }
 }
 
+/// Everything's search for the folders right in `folder` (sapma 16).
+pub fn folder_size_query(folder: &Path) -> String {
+    format!("folder: parent:{}", quote(&folder.display().to_string()))
+}
+
+/// The answer's folders by name with their sizes; `NotIndexed` when one has no size
+/// ("Index folder sizes" is off) or there is none.
+pub fn sizes_of(items: Vec<Item>) -> Result<Vec<(String, u64)>, Fallback> {
+    if items.is_empty() {
+        return Err(Fallback::NotIndexed);
+    }
+    items
+        .into_iter()
+        .filter(|item| item.is_dir)
+        .map(|item| {
+            let name = Path::new(&item.path).file_name().ok_or(Fallback::NotIndexed)?.to_string_lossy().into_owned();
+            Ok((name, item.size.ok_or(Fallback::NotIndexed)?))
+        })
+        .collect()
+}
+
+/// The sizes of the folders right in `folder` from Everything (spec 6.2): only on a local
+/// fixed drive, with Everything running and keeping folder sizes; `Err` (the walk adds them up
+/// then) otherwise. Asks Everything: off the UI thread.
+pub fn folder_sizes(folder: &Path, on: bool, cancel: &AtomicBool) -> Result<Vec<(String, u64)>, Fallback> {
+    if !on {
+        return Err(Fallback::Off);
+    }
+    if !fixed(std::slice::from_ref(&folder.to_path_buf())) {
+        return Err(Fallback::NotFixed);
+    }
+    ipc::ready(QUICK)?;
+    let asker = Asker { cancel, deadline: Some(Instant::now() + DEADLINE) };
+    let items =
+        asker.ask(&folder_size_query(folder), 0, (0, PAGE), REQUEST_FULL_PATH_AND_NAME | REQUEST_SIZE, ANSWER)?;
+    // A full page may not be all of them: the walk adds them up instead.
+    if items.len() >= PAGE as usize {
+        return Err(Fallback::NotIndexed);
+    }
+    sizes_of(items)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use gezik_core::search::{DateRange, KindFilter, Scope, SearchSpec};
+
+    #[test]
+    fn folder_sizes_are_asked_for_the_folders_right_in_it() {
+        assert_eq!(folder_size_query(Path::new(r"C:\Work")), r#"folder: parent:"C:\Work""#);
+    }
+
+    fn folder_item(path: &str, size: Option<u64>) -> Item {
+        Item { path: path.into(), is_dir: true, size, created: None, modified: None, attributes: None }
+    }
+
+    #[test]
+    fn folder_sizes_need_every_folder_sized() {
+        let items = vec![folder_item(r"C:\Work\a", Some(10)), folder_item(r"C:\Work\b", Some(0))];
+        assert_eq!(sizes_of(items), Ok(vec![("a".to_owned(), 10), ("b".to_owned(), 0)]));
+        let one_unsized = vec![folder_item(r"C:\Work\a", Some(10)), folder_item(r"C:\Work\b", None)];
+        assert_eq!(sizes_of(one_unsized), Err(Fallback::NotIndexed), "Everything does not keep folder sizes");
+        assert_eq!(sizes_of(Vec::new()), Err(Fallback::NotIndexed));
+    }
+
+    #[test]
+    #[ignore = "needs Everything running with folder sizes indexed"]
+    fn everything_gives_folder_sizes() {
+        let sizes = folder_sizes(Path::new(r"C:\Windows"), true, &AtomicBool::new(false)).unwrap();
+        assert!(sizes.iter().any(|(name, size)| name.eq_ignore_ascii_case("System32") && *size > 0));
+    }
 
     /// A LIST2 answer as Everything builds it, for `items` (path, is a folder, size).
     fn answer(items: &[(&str, bool, u64)], request: u32) -> Vec<u8> {

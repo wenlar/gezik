@@ -21,6 +21,7 @@ pub const SECTION_FOLDERS: i32 = 0;
 pub const SECTION_PINNED: i32 = 1;
 pub const SECTION_DRIVES: i32 = 2;
 pub const SECTION_GROUP: i32 = 3;
+pub const SECTION_SEARCHES: i32 = 4;
 
 /// `SidebarRow.icon`: the glyph sidebar.slint draws on a place (0: none, on headings).
 const ICON_HOME: i32 = 1;
@@ -28,6 +29,7 @@ const ICON_FOLDER: i32 = 2;
 const ICON_PIN: i32 = 3;
 const ICON_ALIAS: i32 = 4;
 const ICON_DRIVE: i32 = 5;
+const ICON_SEARCH: i32 = 6;
 
 /// A known folder's icon: the house for the home folder, which `known_folders` puts first
 /// and names "Home" (when it exists).
@@ -231,6 +233,22 @@ pub fn with_current(f: impl FnOnce(&Sidebar)) {
 pub struct Sidebar(Rc<RefCell<Inner>>);
 
 impl Sidebar {
+    /// The pinned folders shown with their labels (the palette's Pinned).
+    pub fn pinned_places(&self) -> Vec<(String, PathBuf)> {
+        let inner = self.0.borrow();
+        let places = inner.nav.places();
+        inner
+            .pins
+            .visible
+            .iter()
+            .map(|pin| {
+                let label =
+                    pin.entry.name.clone().unwrap_or_else(|| places.title_for(&Location::Path(pin.path.clone())));
+                (label, pin.path.clone())
+            })
+            .collect()
+    }
+
     pub fn new(
         window: &AppWindow,
         nav: Navigator,
@@ -589,6 +607,11 @@ impl Sidebar {
         }
     }
 
+    /// The saved searches changed: SEARCHES follows.
+    pub fn searches_changed(&self) {
+        self.update_rows();
+    }
+
     /// Rebuilds the rows: sections, labels, the pinned part's headings and tips, and the
     /// highlight of the exact current location. No file system access.
     fn update_rows(&self) {
@@ -661,6 +684,19 @@ impl Sidebar {
                 });
             }
             let end = first.map(|_| rows.len());
+            let searches = crate::saved_searches::names();
+            if !searches.is_empty() {
+                rows.push(header("SEARCHES", SECTION_SEARCHES, -1));
+                rows.extend(searches.iter().enumerate().map(|(i, name)| SidebarRow {
+                    header: false,
+                    label: name.as_str().into(),
+                    section: SECTION_SEARCHES,
+                    index: index(i),
+                    active: false,
+                    tip: "".into(),
+                    icon: ICON_SEARCH,
+                }));
+            }
             rows.push(header(DRIVES_HEADER, SECTION_DRIVES, -1));
             rows.extend(
                 places.drives.iter().enumerate().map(|(i, d)| item(&d.label, SECTION_DRIVES, i, &d.path, ICON_DRIVE)),

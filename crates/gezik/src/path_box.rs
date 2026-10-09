@@ -410,6 +410,11 @@ fn slint_row(row: &Row) -> PathRow {
 }
 
 impl PathBox {
+    /// The folders visited last, newest first (the palette's Recent).
+    pub fn recent(&self, n: usize) -> Vec<PathBuf> {
+        self.0.history.borrow().recent(n).into_iter().map(|visit| visit.path.clone()).collect()
+    }
+
     pub fn new(window: &AppWindow, nav: Navigator, store: Option<ConfigStore>, saved: Vec<Visit>) -> PathBox {
         let history = if remember() {
             FolderHistory::from_visits(saved, now())

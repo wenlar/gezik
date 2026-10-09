@@ -103,55 +103,94 @@ fn edit_view(text: &str, entries: Vec<(&str, toml_edit::Value)>) -> Result<Strin
 /// written back unchanged after `presets`.
 pub fn with_rename_presets(text: &str, presets: &[crate::settings::RenamePreset]) -> Result<String, String> {
     let tables = presets.iter().map(crate::settings::preset_to_toml).collect();
-    with_tables(text, "rename-presets", tables, |item| crate::settings::parse_preset(item).is_ok())
+    with_tables(text, "rename-presets", tables, |item| {
+        crate::settings::parse_preset(item).ok().map(|p| crate::settings::preset_to_toml(&p))
+    })
 }
 
 /// Returns `text` with `[[filters]]` replaced by `filters`; the rest stays, and so do the
 /// entries that do not read as a filter (see `with_rename_presets`).
 pub fn with_filters(text: &str, filters: &[crate::settings::SavedFilter]) -> Result<String, String> {
     let tables = filters.iter().map(crate::settings::filter_to_toml).collect();
-    with_tables(text, "filters", tables, |item| crate::settings::parse_filter(item).is_ok())
+    let mut name = read_once(usize::MAX);
+    with_tables(text, "filters", tables, move |item| {
+        let filter = crate::settings::parse_filter(item).ok()?;
+        name(filter.name.clone()).then(|| crate::settings::filter_to_toml(&filter))
+    })
 }
 
 /// Returns `text` with `[[tab-sets]]` replaced by `sets`; the rest stays, and so do the
 /// entries that do not read as a tab set (see `with_rename_presets`).
 pub fn with_tab_sets(text: &str, sets: &[crate::settings::TabSet]) -> Result<String, String> {
     let tables = sets.iter().map(crate::settings::tab_set_to_toml).collect();
-    with_tables(text, "tab-sets", tables, |item| crate::settings::parse_tab_set(item).is_ok())
+    let mut name = read_once(usize::MAX);
+    with_tables(text, "tab-sets", tables, move |item| {
+        let set = crate::settings::parse_tab_set(item).ok()?;
+        name(set.name.clone()).then(|| crate::settings::tab_set_to_toml(&set))
+    })
 }
 
-/// Replaces the `[[key]]` tables that `valid` accepts with `tables`; the entries it rejects
-/// are written back unchanged after them.
+/// Returns `text` with `[[searches]]` replaced by `searches`; the entries that do not read as a
+/// saved search stay as written (see `with_rename_presets`).
+pub fn with_searches(text: &str, searches: &[crate::settings::SavedSearch]) -> Result<String, String> {
+    let tables = searches.iter().map(crate::settings::saved_search_to_toml).collect();
+    let mut name = read_once(crate::settings::SEARCHES_MAX);
+    with_tables(text, "searches", tables, move |item| {
+        let search = crate::settings::parse_saved_search(item).ok()?;
+        name(search.name.clone()).then(|| crate::settings::saved_search_to_toml(&search))
+    })
+}
+
+/// Whether a readable entry named `name` is one `Settings::parse` keeps: among the first `max`,
+/// its name not already used (ignoring case). The others stay as written, like broken ones.
+fn read_once(max: usize) -> impl FnMut(String) -> bool {
+    let mut seen: Vec<String> = Vec::new();
+    move |name| {
+        let name = name.to_lowercase();
+        let kept = seen.len() < max && !seen.contains(&name);
+        if kept {
+            seen.push(name);
+        }
+        kept
+    }
+}
+
+/// Replaces the `[[key]]` tables that `valid` accepts (asked once per entry, in order; it gives
+/// the entry as Gezik writes it) with `tables`; the entries it rejects are written back
+/// unchanged after them. A table equal to an entry already there is that entry as written: its
+/// comments and layout stay.
 fn with_tables(
     text: &str,
     key: &str,
     tables: Vec<toml::Table>,
-    valid: impl Fn(&toml::Value) -> bool,
+    mut valid: impl FnMut(&toml::Value) -> Option<toml::Table>,
 ) -> Result<String, String> {
     let mut doc = text.parse::<toml_edit::DocumentMut>().map_err(|err| err.to_string().trim().to_owned())?;
     let plain = text.parse::<toml::Table>().map_err(|err| err.to_string().trim().to_owned())?;
     // Whether each existing entry is valid, by the same rules as `Settings::parse`.
-    let valid: Vec<bool> =
-        plain.get(key).and_then(|v| v.as_array()).map(|items| items.iter().map(&valid).collect()).unwrap_or_default();
+    let valid: Vec<Option<toml::Table>> = plain
+        .get(key)
+        .and_then(|v| v.as_array())
+        .map(|items| items.iter().map(&mut valid).collect())
+        .unwrap_or_default();
     let mut broken: Vec<toml_edit::Table> = Vec::new();
-    // Comments above the presets that are replaced: the end of the table before them (see below).
+    // The valid entries as Gezik writes them, with the entry as written.
+    let mut written: Vec<(toml::Table, toml_edit::Table)> = Vec::new();
+    // Comments above the entries that are replaced: the end of the table before them (see below).
     let mut comments = String::new();
     match doc.remove(key) {
         None => {}
         Some(toml_edit::Item::ArrayOfTables(array)) => {
             for (i, table) in array.into_iter().enumerate() {
-                if !valid.get(i).copied().unwrap_or(false) {
-                    broken.push(table);
-                } else if let Some(prefix) = table.decor().prefix().and_then(|p| p.as_str())
-                    && prefix.contains('#')
-                {
-                    comments.push_str(prefix);
+                match valid.get(i).cloned().flatten() {
+                    None => broken.push(table),
+                    Some(normal) => written.push((normal, table)),
                 }
             }
         }
         Some(toml_edit::Item::Value(toml_edit::Value::Array(array))) => {
             for (i, value) in array.into_iter().enumerate() {
-                if valid.get(i).copied().unwrap_or(false) {
+                if valid.get(i).is_some_and(Option::is_some) {
                     continue;
                 }
                 match value {
@@ -161,6 +200,19 @@ fn with_tables(
             }
         }
         Some(_) => return Err(format!("{key} must be [[{key}]] tables")),
+    }
+    // Each table equal to an entry already there is that entry as written.
+    let kept: Vec<Option<toml_edit::Table>> = tables
+        .iter()
+        .map(|table| written.iter().position(|(normal, _)| normal == table).map(|at| written.remove(at).1))
+        .collect();
+    // The comments above the entries that go (or change) stay, above the first table.
+    for (_, table) in &written {
+        if let Some(prefix) = table.decor().prefix().and_then(|p| p.as_str())
+            && prefix.contains('#')
+        {
+            comments.push_str(prefix);
+        }
     }
     // Comments at the end of the file belong to its last table (the template's commented
     // `[shortcuts]` examples): they stay above the presets, which go after it.
@@ -172,7 +224,11 @@ fn with_tables(
     let comments = end_with_one_line_break(&comments);
     if !tables.is_empty() || !broken.is_empty() {
         let mut array = toml_edit::ArrayOfTables::new();
-        for table in &tables {
+        for (table, kept) in tables.iter().zip(kept) {
+            if let Some(kept) = kept {
+                array.push(kept);
+                continue;
+            }
             let text = toml::to_string(&table).map_err(|err| err.to_string())?;
             let parsed = text.parse::<toml_edit::DocumentMut>().map_err(|err| err.to_string())?;
             array.push(parsed.as_table().clone());
@@ -630,5 +686,87 @@ name = \"broken\" # mine
         for line in template.lines().filter(|l| l.starts_with('#')) {
             assert!(back.lines().any(|b| b == line), "{line} lost:\n{back}");
         }
+    }
+
+    #[test]
+    fn hand_written_searches_survive_a_save() {
+        let text = "# my searches\n[[searches]]\nname = \"Old\"\nfolder = \"{home}\"\npattern = \"*.log\"\n\n\
+                    [[searches]]\nname = \"Broken\"\nfolder = \"{home}\"\nsize-min = \"lots\"\n";
+        let mut spec = gezik_core::search::SearchSpec::new(gezik_core::search::Scope::AllDrives);
+        spec.pattern = "*.mp4".into();
+        let new = crate::settings::SavedSearch { name: "Videos".into(), folder: "{here}".into(), spec };
+        let out = with_searches(text, &[new]).unwrap();
+        assert!(out.contains("name = \"Videos\""), "{out}");
+        assert!(
+            out.contains("name = \"Broken\"") && out.contains("size-min = \"lots\""),
+            "a bad entry stays as written: {out}"
+        );
+        assert!(!out.contains("name = \"Old\""), "a good one is replaced by the list: {out}");
+        assert!(out.contains("# my searches"), "{out}");
+    }
+
+    #[test]
+    fn an_unchanged_entry_keeps_its_comments() {
+        use crate::settings::Settings;
+        let text = "[[searches]]
+name = \"Rust files\"   # keep this comment
+folder = \"{home}\"
+pattern = \"*.rs\"
+
+                    [[searches]]
+name = \"Logs\" # changes
+folder = \"{home}\"
+pattern = \"*.log\"
+";
+        let mut read = Settings::parse("settings.toml", text, &mut Vec::new()).searches;
+        read[1].spec.pattern = "*.txt".into();
+        let out = with_searches(text, &read).unwrap();
+        assert!(
+            out.contains(
+                "name = \"Rust files\"   # keep this comment
+"
+            ),
+            "{out}"
+        );
+        assert!(out.contains("pattern = \"*.txt\"") && !out.contains("*.log"), "{out}");
+        assert_eq!(Settings::parse("settings.toml", &out, &mut Vec::new()).searches, read);
+        let tatil = [tatil()];
+        let hand = with_rename_presets("", &tatil).unwrap().replace("name = \"Tatil\"", "name = \"Tatil\" # mine");
+        assert!(with_rename_presets(&hand, &tatil).unwrap().contains("# mine"), "presets too");
+    }
+
+    #[test]
+    fn entries_the_settings_leave_out_survive_a_save() {
+        use crate::settings::{SEARCHES_MAX, SavedFilter, Settings};
+        let mut text = String::new();
+        for i in 0..=SEARCHES_MAX {
+            text.push_str(&format!(
+                "[[searches]]
+name = \"n{i}\"
+folder = \"{{here}}\"
+"
+            ));
+        }
+        text.push_str(
+            "[[searches]]
+name = \"N0\"
+folder = \"drives\"
+",
+        );
+        let mut warnings = Vec::new();
+        let read = Settings::parse("settings.toml", &text, &mut warnings).searches;
+        let out = with_searches(&text, &read[1..]).unwrap();
+        assert!(!out.contains("name = \"n0\""), "a read one is replaced by the list: {out}");
+        let over = format!("name = \"n{SEARCHES_MAX}\"");
+        assert!(out.contains(&over) && out.contains("name = \"N0\""), "the 31st and the copy stay: {out}");
+        let text = "[[filters]]
+name = \"a\"
+pattern = \"x\"
+[[filters]]
+name = \"A\"
+pattern = \"y\"
+";
+        let out = with_filters(text, &[SavedFilter { name: "b".into(), pattern: "z".into() }]).unwrap();
+        assert!(!out.contains("\"a\"") && out.contains("name = \"A\""), "the copy stays: {out}");
     }
 }

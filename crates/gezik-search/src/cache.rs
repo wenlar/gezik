@@ -19,7 +19,8 @@ use crate::walk::{Visit, Walk, WalkStats};
 
 pub const CACHE_LIMIT: usize = 500_000;
 
-const IS_DIR: u8 = 4;
+// Above `Entry`'s flag bits (`HIDDEN`, `SYSTEM`, `SIZE_FLAGS`), so it cannot collide with them.
+const IS_DIR: u8 = 128;
 /// No time (`u32` seconds since 1970; earlier times are kept as 1970, later than 2106 as 2106).
 const NO_TIME: u32 = u32::MAX;
 /// A folder record that is a whole path (`paths`) rather than an item.

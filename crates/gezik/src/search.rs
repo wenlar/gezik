@@ -408,6 +408,8 @@ struct Inner {
     idle: slint::Timer,
     scopes: RefCell<Vec<Scope>>,
     problems: RefCell<Vec<(PathBuf, String)>>,
+    /// The saved searches the ▾ menu listed, by place.
+    menu_names: RefCell<Vec<String>>,
 }
 
 #[derive(Clone)]
@@ -442,6 +444,7 @@ impl Searches {
             idle: slint::Timer::default(),
             scopes: RefCell::new(Vec::new()),
             problems: RefCell::new(Vec::new()),
+            menu_names: RefCell::new(Vec::new()),
         }));
         window.on_search_edited(|text| with_current(|s| s.edited(&text)));
         window.on_search_content_edited(|text| with_current(|s| s.content_edited(&text)));
@@ -491,6 +494,20 @@ impl Searches {
         self.show_bar(spec, location.folder().map(Path::to_path_buf));
         self.focus_later();
         self.warm();
+    }
+
+    /// The palette's "Search for …" (spec 7.2): `text` as the name, under the place shown.
+    pub fn search_for(&self, text: &str) {
+        let location = self.0.nav.active_location();
+        let scope = match &location {
+            Location::Search(spec) => spec.scope.clone(),
+            Location::Path(folder) | Location::Flat(folder) => Scope::Folder(folder.clone()),
+            Location::Drives => Scope::AllDrives,
+        };
+        let spec = SearchSpec { pattern: text.to_owned(), ..SearchSpec::new(scope) };
+        self.show_bar(spec, location.folder().map(Path::to_path_buf));
+        self.sync_bar();
+        self.go(false);
     }
 
     /// "Search in this folder…": the bar on `folder`, empty.
@@ -582,13 +599,20 @@ impl Searches {
     }
 
     fn edited(&self, text: &str) {
-        self.0.draft.borrow_mut().pattern = text.to_owned();
+        let mut draft = self.0.draft.borrow_mut();
+        draft.pattern = text.to_owned();
+        // A saved search changed is no longer it: its tab is titled by the name typed.
+        draft.name = None;
+        drop(draft);
         self.sync_bar();
         self.follow_typing();
     }
 
     fn content_edited(&self, text: &str) {
-        self.0.draft.borrow_mut().content = text.to_owned();
+        let mut draft = self.0.draft.borrow_mut();
+        draft.content = text.to_owned();
+        draft.name = None;
+        drop(draft);
         self.sync_bar();
     }
 
@@ -596,7 +620,9 @@ impl Searches {
         let open = !self.0.content_open.get();
         self.0.content_open.set(open);
         if !open {
-            self.0.draft.borrow_mut().content.clear();
+            let mut draft = self.0.draft.borrow_mut();
+            draft.content.clear();
+            draft.name = None;
         }
         self.sync_bar();
         if let Some(window) = self.0.window.upgrade() {
@@ -680,6 +706,36 @@ impl Searches {
             self.0.nav.replace_location(location);
         } else {
             self.0.nav.go(location);
+        }
+    }
+
+    /// A saved search (spec 8): the bar shows it, the results come in the active tab or a new
+    /// one, the tab titled by its name.
+    pub fn run_saved(&self, spec: SearchSpec, new_tab: bool) {
+        let origin = spec.scope.folder().map(Path::to_path_buf);
+        self.show_bar(spec.clone(), origin);
+        *self.0.sent.borrow_mut() = Some(spec.clone());
+        let location = Location::Search(Box::new(spec));
+        if new_tab {
+            self.0.nav.open_tab(location, true);
+        } else if self.0.nav.active_location() == location {
+            self.0.nav.show_again();
+            self.0.fresh.set(true);
+        } else {
+            self.0.nav.go(location);
+        }
+    }
+
+    /// `save-search` and the ▾ menu's "Save search…": the bar's search, else the results'.
+    pub fn save_current(&self) {
+        let spec = if self.0.open.get() {
+            Some(self.0.draft.borrow().clone())
+        } else {
+            spec_of(&self.0.nav.active_location()).filter(|spec| !spec.flat)
+        };
+        match spec.filter(SearchSpec::is_query) {
+            Some(spec) => crate::saved_searches::with_current(|s| s.ask_save(spec)),
+            None => self.0.view.note("Open a search to save it".to_owned()),
         }
     }
 
@@ -779,6 +835,17 @@ impl Searches {
                 if let (Some(key), Some(change)) = (self.results_key(), changes) {
                     self.check(key, change);
                 }
+            }
+        }
+    }
+
+    /// The saved search `old` is now called `new` (the tabs too): the results shown and kept
+    /// for it stay theirs.
+    pub fn rename_saved(&self, old: &str, new: &str) {
+        let (mut showing, mut kept) = (self.0.showing.borrow_mut(), self.0.kept.borrow_mut());
+        for spec in kept.values_mut().map(|k| &mut k.spec).chain(showing.as_mut().map(|s| &mut s.spec)) {
+            if spec.name.as_deref() == Some(old) {
+                spec.name = Some(new.to_owned());
             }
         }
     }
@@ -1229,7 +1296,12 @@ impl Searches {
                 (items, Vec::new())
             }
             SearchMenu::Filters => ids::search_filter_items(&draft),
-            SearchMenu::More => (ids::search_more_items(self.0.problems.borrow().len()), Vec::new()),
+            SearchMenu::More => {
+                let names = crate::saved_searches::names();
+                let items = ids::search_more_items(self.0.problems.borrow().len(), &names, draft.is_query());
+                *self.0.menu_names.borrow_mut() = names;
+                (items, Vec::new())
+            }
         }
     }
 
@@ -1239,6 +1311,17 @@ impl Searches {
             ids::SEARCH_NEW_TAB => return self.go(true),
             ids::SEARCH_PROBLEMS => return self.show_problems(),
             ids::SIZE_MIN | ids::SIZE_MAX | ids::MODIFIED_BETWEEN => return self.ask_criterion(id),
+            ids::SAVE_SEARCH => return self.save_current(),
+            id if (ids::SAVED_SEARCH_FIRST..ids::SAVED_SEARCH_DELETE_FIRST + ids::SAVED_SEARCH_MAX).contains(&id) => {
+                // By name: settings.toml may have been read again since the menu opened.
+                let delete = id >= ids::SAVED_SEARCH_DELETE_FIRST;
+                let first = if delete { ids::SAVED_SEARCH_DELETE_FIRST } else { ids::SAVED_SEARCH_FIRST };
+                let name = self.0.menu_names.borrow().get((id - first) as usize).cloned();
+                if let Some(name) = name {
+                    crate::saved_searches::with_current(|s| if delete { s.delete(&name) } else { s.run(&name, false) });
+                }
+                return;
+            }
             _ => {}
         }
         let mut rerun = true;
@@ -1283,6 +1366,7 @@ impl Searches {
                 },
                 _ => return,
             }
+            draft.name = None;
         }
         self.criteria_changed(rerun);
     }
@@ -1352,6 +1436,7 @@ impl Searches {
                         ids::SIZE_MAX => draft.size.max = parse_size(&text).ok(),
                         _ => draft.modified = DateRange::parse(&text).unwrap_or(DateRange::Any),
                     }
+                    draft.name = None;
                 }
                 searches.criteria_changed(true);
             },

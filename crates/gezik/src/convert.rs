@@ -1169,6 +1169,11 @@ pub fn set_settings(convert: ConvertSettings, commands: Vec<CommandSpec>) {
     look_up_programs();
 }
 
+/// The [[commands]] names, by index (the palette).
+pub fn command_names() -> Vec<String> {
+    commands().iter().map(|c| c.name.clone()).collect()
+}
+
 fn commands() -> Vec<CommandSpec> {
     SETTINGS.with(|s| s.borrow().1.clone())
 }

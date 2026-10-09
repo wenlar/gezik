@@ -201,15 +201,19 @@ pub fn search_filter_items(spec: &SearchSpec) -> (Vec<(u32, String, bool)>, Vec<
     (items, subs)
 }
 
-/// The search bar's ▾ menu (spec 4.2): in a new tab, Clear, and the folders the last search
-/// could not read (with how many).
-pub fn search_more_items(problems: usize) -> Vec<(u32, String, bool)> {
+/// The search bar's ▾ menu (spec 4.2, 8): in a new tab, Clear, the folders the last search
+/// could not read, "Save search…", the saved searches, then a Delete item for each (sapma 20).
+pub fn search_more_items(problems: usize, saved: &[String], can_save: bool) -> Vec<(u32, String, bool)> {
     let mut items =
         vec![(SEARCH_NEW_TAB, "Search in new tab".to_owned(), true), (SEARCH_CLEAR, "Clear".to_owned(), true)];
     if problems > 0 {
         let what = if problems == 1 { "1 folder".to_owned() } else { format!("{problems} folders") };
         items.push((SEARCH_PROBLEMS, format!("{what} could not be read…"), true));
     }
+    items.push((SAVE_SEARCH, "Save search…".to_owned(), can_save));
+    let shown = saved.iter().take(SAVED_SEARCH_MAX as usize).enumerate();
+    items.extend(shown.clone().map(|(i, name)| (SAVED_SEARCH_FIRST + i as u32, name.clone(), true)));
+    items.extend(shown.map(|(i, name)| (SAVED_SEARCH_DELETE_FIRST + i as u32, format!("Delete \"{name}\""), true)));
     items
 }
 
@@ -227,6 +231,17 @@ pub fn search_scope_items(choices: &[(Scope, String)], current: &Scope) -> Vec<(
 /// order; 1556 resets them (sapma 7).
 pub const RESULT_COLUMN_FIRST: u32 = 1550;
 pub const RESULT_COLUMNS_RESET: u32 = 1556;
+/// 8b (spec 9.4): 1600-1699.
+pub const CALC_FOLDER_SIZES: u32 = 1600;
+pub const SAVE_SEARCH: u32 = 1601;
+/// A saved search's sidebar menu.
+pub const RUN_SEARCH_NEW_TAB: u32 = 1602;
+pub const RENAME_SEARCH: u32 = 1603;
+pub const DELETE_SEARCH: u32 = 1604;
+/// 1610-1639: the ▾ menu runs saved search N; 1640-1669: deletes it.
+pub const SAVED_SEARCH_FIRST: u32 = 1610;
+pub const SAVED_SEARCH_DELETE_FIRST: u32 = 1640;
+pub const SAVED_SEARCH_MAX: u32 = 30;
 
 /// The results' column header menu.
 pub fn result_header_items(columns: &[ColumnState]) -> Vec<(u32, String)> {
@@ -749,6 +764,8 @@ enum Subject {
     Filter(Vec<String>),
     /// The search bar's menus (items by id; the scope menu's by place in `search::Searches`).
     Search,
+    /// A saved search in the sidebar, by name.
+    SavedSearch(String),
 }
 
 /// Lets one native menu be pending or open at a time, so two right-clicks in quick
@@ -902,6 +919,9 @@ impl Menus {
                 SEARCH_HERE,
                 format!("Search in \"{}\"…", crate::operations::items_text(std::slice::from_ref(&path))),
             ));
+            if matches!(self.nav.active_location(), Location::Path(_)) {
+                list.push((CALC_FOLDER_SIZES, "Calculate folder sizes".to_owned()));
+            }
         }
         list.extend(owned(terminal_items(native)));
         let mut subs = vec![self.copy_path_sub(std::slice::from_ref(&path), list.len())];
@@ -1037,6 +1057,13 @@ impl Menus {
         if section == SECTION_GROUP {
             return self.group_heading(index, x, y);
         }
+        if section == crate::sidebar::SECTION_SEARCHES {
+            let names = crate::saved_searches::names();
+            let Some(name) = usize::try_from(index).ok().and_then(|i| names.get(i).cloned()) else { return };
+            *self.subject.borrow_mut() = Some(Subject::SavedSearch(name));
+            let list = [(RUN_SEARCH_NEW_TAB, "Run in new tab"), (RENAME_SEARCH, "Rename…"), (DELETE_SEARCH, "Delete")];
+            return self.open_slint(&list, Anchor::point(x, y));
+        }
         let Some(Location::Path(path)) = self.sidebar.location_of(section, index) else { return };
         let pinned_section = section == SECTION_PINNED;
         let (first, last) = if pinned_section { self.sidebar.group_ends(&path) } else { (true, true) };
@@ -1108,6 +1135,11 @@ impl Menus {
             at_flat,
             (FLAT_VIEW, format!("{}Flat view", if flat { "• " } else { "    " }), location.folder().is_some()),
         );
+        // After "Apply to all folders" (the formats' place stays): only in a folder.
+        if matches!(location, Location::Path(_)) {
+            let at_calc = entries.iter().position(|(id, _, _)| *id == RESET_FOLDER).unwrap_or(entries.len());
+            entries.insert(at_calc, (CALC_FOLDER_SIZES, "    Calculate folder sizes".to_owned(), true));
+        }
         self.open_slint_entries(&entries, format_subs(options, place + 1), at);
     }
 
@@ -1368,6 +1400,11 @@ impl Menus {
     fn run(&self, id: u32, subject: Subject) {
         match (id, subject) {
             (id, Subject::Search) => crate::search::with_current(|s| s.menu_chosen(id)),
+            (RUN_SEARCH_NEW_TAB, Subject::SavedSearch(name)) => {
+                crate::saved_searches::with_current(|s| s.run(&name, true));
+            }
+            (RENAME_SEARCH, Subject::SavedSearch(name)) => crate::saved_searches::with_current(|s| s.ask_rename(&name)),
+            (DELETE_SEARCH, Subject::SavedSearch(name)) => crate::saved_searches::with_current(|s| s.delete(&name)),
             (SEARCH_HERE, Subject::Background(dir) | Subject::SidebarEntry(dir) | Subject::Row(dir)) => {
                 crate::search::with_current(|s| s.open_in(dir));
             }
@@ -1543,6 +1580,7 @@ impl Menus {
             (SHOW_HISTORY, Subject::View) => self.ops.show_history(),
             (APPLY_TO_ALL, Subject::View) => self.view.apply_to_all(),
             (RESET_FOLDER, Subject::View) => self.view.reset_folder(),
+            (CALC_FOLDER_SIZES, _) => crate::folder_sizes::with_current(crate::folder_sizes::FolderSizes::calculate),
             (id, Subject::View) => {
                 if let Some(option) = view_option_for(id, crate::view_options::current()) {
                     crate::view_options::change(option);
@@ -1994,6 +2032,11 @@ mod tests {
             GROUP_DOWN,
             GROUP_RENAME,
             UNGROUP,
+            CALC_FOLDER_SIZES,
+            SAVE_SEARCH,
+            RUN_SEARCH_NEW_TAB,
+            RENAME_SEARCH,
+            DELETE_SEARCH,
         ];
         let mut ranges: Vec<std::ops::Range<u32>> = singles.iter().map(|id| *id..id + 1).collect();
         ranges.extend([
@@ -2016,6 +2059,8 @@ mod tests {
             SIZE_FORMAT_FIRST..SIZE_FORMAT_FIRST + SizeFormat::ALL.len() as u32,
             GROUP_MOVE_FIRST..GROUP_MOVE_FIRST + GROUP_MAX,
             TEMPLATE_FIRST..TEMPLATE_FIRST + TEMPLATE_MAX,
+            SAVED_SEARCH_FIRST..SAVED_SEARCH_FIRST + SAVED_SEARCH_MAX,
+            SAVED_SEARCH_DELETE_FIRST..SAVED_SEARCH_DELETE_FIRST + SAVED_SEARCH_MAX,
         ]);
         for (i, a) in ranges.iter().enumerate() {
             assert!(a.start >= 1 && a.end <= GEZIK_IDS_END, "{a:?}: 1..4096 (0 is a heading, 4096 on the Shell's)");
@@ -2437,10 +2482,10 @@ mod tests {
             .iter()
             .map(|i| i.0)
             .chain(subs.iter().flat_map(|s| s.items.iter().map(|i| i.0)))
-            .chain(search_more_items(3).iter().map(|i| i.0))
+            .chain(search_more_items(3, &[], true).iter().map(|i| i.0).filter(|id| *id != SAVE_SEARCH))
             .collect();
         assert!(ids.iter().all(|id| (1500..1600).contains(id)), "{ids:?}");
-        assert!(search_more_items(0).iter().all(|(id, _, _)| *id != SEARCH_PROBLEMS));
+        assert!(search_more_items(0, &[], true).iter().all(|(id, _, _)| *id != SEARCH_PROBLEMS));
         assert_eq!(modified_for(MODIFIED_FIRST + 3), Some(DateRange::LastDays(30)));
         assert_eq!(modified_for(MODIFIED_BETWEEN), None, "asked for in a box");
         let choices =

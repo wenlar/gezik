@@ -374,6 +374,19 @@ Re-checks of the shared UI fixes (fix/shared-ui, on master)
 76. **Show in folder.** ⌘⇧E and Go ▸ Show in Folder on a result: its folder opens with the file selected; Back returns to the results. The row menu's "Show in folder in new tab" opens it in a new tab.
 77. **Results like a folder.** In the results: ⌘C, then ⌘V in another folder (flat). Right-click ▸ "Copy with folders" and ⌘V: the folders under the scope are made; one ⌘Z takes the copies and the made folders away. Move a result to the Trash (⌘⌫): it leaves the list; ⌘Z brings it back. Select three results from two folders ▸ the rename layer (`{n}`): numbered per folder; a name already in that folder says "already in the folder" on its row. Close and open Gezik with a search tab open: the tab comes back and searches again.
 
+### Design round 1 (Graphite)
+
+78. **Themes.** The four built-in themes (`light`, `dark`, `classic-light`, `classic-dark`) and `auto` following the system's light/dark switch (System Settings ▸ Appearance); `reduce-motion = true` stops the hover and popup fades; `density = "compact"`; the classic themes are flat (rows edge to edge, no rounded sheet).
+79. **Drawing at 200 %.** On a Retina screen: 1 px lines and the sheet's rounded corner are crisp; the 11 px small text (column header, status bar, sidebar section labels) is readable in the font the system picks; the glyphs (Refresh and History arcs, the dot on Drive), the sidebar icons, the LOCATIONS section; View ▾ and a long popup menu.
+80. **Thin scroll bar.** In a folder with thousands of files: a 6 px bar, no track, the theme's color (never the system's), darker on hover and drag, at least 24 px tall; dragging it follows the pointer to both ends; a click above or below scrolls a page; touchpad two-finger scrolling stays smooth (natural direction as the system setting says); the sidebar, a long popup menu, the conflict list and the rename layer have the same bar.
+
+### 8b, folder sizes, command palette, saved searches
+
+81. **Folder sizes.** In your home folder the Size column fills in for folders: `…` while a folder is worked out, the ones on screen first, then a size. Folders macOS asks about (Desktop, Documents, Downloads: TCC) and the parts of `~/Library` it keeps to itself show `≥ …` when they could not be read in full; the preview says "Some folders could not be read". A folder's preview shows its size and `N files, M folders`; three folders selected: the status bar sums them, with `+` while one is still `…`. Sort by Size (both ways): the `…` folders stay last, the list sorts again at most once a second, and the focused row stays where it is on screen. A symlink to a folder has no size. View ▸ Calculate Folder Sizes (and the folder row's menu) works on a network share with `folder-sizes = "local"`; with `folder-sizes = "off"` no folder gets a size. Leaving a big folder (`/System`) at once stops the walk: no beach ball, coming back shows the sizes that were done.
+82. **Command palette.** ⌘⇧P opens the picker with `>` and the caret after it; typing keeps the `>` (`copy` lists Copy, Copy Path, Copy with Folders…, shortcuts on the right). Return runs the command, Esc closes it and the list has the keyboard back. Deleting the `>` turns it into Quick Open.
+83. **Quick Open.** ⌘P lists places first (pinned, recent folders, tabs, tab sets, saved searches and filters); typing `down` finds Downloads; Alt+Return opens it in a new tab; the last line `Search for "x" in <folder>` starts a search. Go ▸ Quick Open… and Go ▸ Command Palette… do the same as the keys.
+84. **Saved searches.** Search for something, then the bar's ▾ ▸ Save search…: a name, then "Save with this folder" or "Save for any folder ({here})". `~/Library/Application Support/gezik/settings.toml` gets a `[[searches]]` entry; comments written there by hand stay. The sidebar's SEARCHES section lists it (magnifier icon): a click runs it, the tab is titled with its name, right-click ▸ Run in new tab / Rename… / Delete. A `{here}` search run in another folder searches there.
+
 Report anything else that looks wrong: layout, fonts, Retina scaling, ⌘ shortcuts that don't work, and the wording of the boxes.
 
 ## Known gaps (not bugs)
@@ -385,6 +398,7 @@ These are known differences from Finder and ForkLift (from the ForkLift comparis
 - **Quick Look and context menu:**
   - Quick Look is Gezik's own window, with no QL plugins, video, PDF or Office preview.
   - The right-click menu is Gezik's own: no "Open With ▸" list, Share/AirDrop, Services, Quick Actions, "Show in Finder" or "Get Info".
+- **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (⌘R or F5 works it out again). Search results and the flat view show no folder sizes.
 - **Missing features:**
   - Finder tags are not read or shown.
   - No Get Info window.
