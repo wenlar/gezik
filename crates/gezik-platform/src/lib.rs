@@ -12,6 +12,8 @@ mod known;
 pub mod link;
 mod linux;
 mod locale;
+#[cfg(target_os = "macos")]
+mod mac;
 mod picture;
 pub mod priority;
 pub mod process;
@@ -23,7 +25,7 @@ use std::path::PathBuf;
 
 pub use datetime::{civil_from_days, format_date, format_datetime, local_date_parts};
 pub use drives::{Drive, DriveKind, drive_signature, drives};
-pub use icons::{IconTarget, Rgba, icon, init_thread, type_name};
+pub use icons::{IconTarget, Rgba, folder_has_own_icon, icon, init_thread, type_name};
 pub use known::{KnownFolder, known_folders};
 pub use locale::language;
 pub use picture::{Decoded, MAX_DECODE_BYTES, MAX_DECODE_SIDE, can_decode, decode_image, thumbnail};

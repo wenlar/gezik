@@ -5,7 +5,7 @@ use std::cell::{Cell, RefCell};
 use std::ops::Range;
 use std::rc::Rc;
 
-use gezik_core::kind::{fallback_type_name, has_own_icon, own_type_name};
+use gezik_core::kind::{IconLookup, fallback_type_name, icon_lookup, own_type_name};
 use gezik_core::selection::{PendingPress, Selection};
 use gezik_core::view::{IconMode, SizeFormat, ViewMode};
 use gezik_core::{Entry, format_size_in};
@@ -204,12 +204,10 @@ fn icon_for(data: &ViewData, i: usize) -> Option<slint::Image> {
         Listing::Drives(drives) => MediaKey::PathIcon { path: drives.get(i)?.path.clone(), px },
         listing => {
             let e = listing.entry(i)?;
-            if e.is_dir {
-                MediaKey::FolderIcon { path: listing.path_at(i)?.0, px }
-            } else if has_own_icon(&e.name) {
-                MediaKey::PathIcon { path: listing.path_at(i)?.0, px }
-            } else {
-                MediaKey::ExtIcon { ext: e.extension().to_lowercase(), px }
+            match icon_lookup(&e.name, e.is_dir, cfg!(target_os = "macos")) {
+                IconLookup::Folder => MediaKey::FolderIcon { path: listing.path_at(i)?.0, px },
+                IconLookup::Path => MediaKey::PathIcon { path: listing.path_at(i)?.0, px },
+                IconLookup::Type => MediaKey::ExtIcon { ext: e.extension().to_lowercase(), px },
             }
         }
     };

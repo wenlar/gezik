@@ -41,7 +41,8 @@ pub enum MediaKey {
     GenericFolder {
         px: u32,
     },
-    /// A folder whose icon may be customized (`desktop.ini`); the worker checks.
+    /// A folder whose icon may be its own (`desktop.ini`; on macOS a custom icon or a volume's
+    /// root); the worker checks.
     FolderIcon {
         path: PathBuf,
         px: u32,
@@ -95,7 +96,7 @@ fn run(key: &MediaKey) -> Outcome {
         MediaKey::ExtIcon { ext, px } => picture(gezik_platform::icon(&IconTarget::Extension(ext.clone()), *px)),
         MediaKey::GenericFolder { px } => picture(gezik_platform::icon(&IconTarget::Folder, *px)),
         MediaKey::FolderIcon { path, px } => {
-            if path.join("desktop.ini").is_file() {
+            if gezik_platform::folder_has_own_icon(path) {
                 picture(gezik_platform::icon(&IconTarget::Path(path.clone()), *px))
             } else {
                 Outcome::PlainFolder
