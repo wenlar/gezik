@@ -609,6 +609,8 @@ export component AppWindow inherits Window {
     callback info-octal-accepted();
     callback info-group-menu(length, length, length, length);
     callback info-enclosed();
+    callback info-app-menu(length, length, length, length);
+    callback info-change-all();
     callback info-close();
 
     // The tab picker (tab_tools.rs): the tabs the query lets through, the row Enter picks.
@@ -1452,6 +1454,8 @@ export component AppWindow inherits Window {
             octal-accepted => { root.info-octal-accepted(); }
             group-menu(x, y, r, t) => { root.info-group-menu(x, y, r, t); }
             enclosed => { root.info-enclosed(); }
+            app-menu(x, y, r, t) => { root.info-app-menu(x, y, r, t); }
+            change-all => { root.info-change-all(); }
             close => { root.info-close(); }
         }
         if root.conflicts-open: ConflictList {

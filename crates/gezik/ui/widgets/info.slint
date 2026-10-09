@@ -22,6 +22,8 @@ export struct InfoView {
     show-flags: bool,
     hidden: int,
     locked: int,
+    // macOS, one file: the app that opens it ("" hides the row).
+    app: string,
     // One folder: "Apply to enclosed items…".
     enclosed: bool,
     // What the last change did ("Requires administrator: 2 items not changed"), red if `error`.
@@ -59,6 +61,8 @@ export component InfoLayer inherits Rectangle {
     callback octal-accepted();
     callback group-menu(length, length, length, length);
     callback enclosed();
+    callback app-menu(length, length, length, length);
+    callback change-all();
     callback close();
 
     property <string> menu-arrow: "M 1 2.5 L 4 5.5 L 7 2.5";
@@ -199,6 +203,18 @@ export component InfoLayer inherits Rectangle {
                         wrap: word-wrap;
                         horizontal-stretch: 1;
                         color: Theme.foreground-muted;
+                    }
+                }
+                if root.view.app != "": Labeled {
+                    label: "Open with";
+                    TextButton {
+                        text: root.view.app;
+                        icon: root.menu-arrow;
+                        clicked => { root.app-menu(self.absolute-position.x, self.absolute-position.y + self.height, self.absolute-position.x + self.width, self.absolute-position.y); }
+                    }
+                    TextButton {
+                        text: "Change All…";
+                        clicked => { root.change-all(); }
                     }
                 }
                 if root.view.enclosed: HorizontalLayout {

@@ -14,9 +14,10 @@ use gezik_config::shortcuts::{Chord, Key};
 use gezik_core::attrs::{self, Attrs, Change, Entry, HIDDEN, LOCKED, PERM_BITS, Wanted};
 use gezik_core::kind::{fallback_type_name, own_type_name};
 use gezik_ops::{JobId, NEEDS_ADMIN, Report, SetAttributesTask};
+use gezik_platform::open_with::AppChoice;
 use slint::ComponentHandle;
 
-use crate::context_menu::{INFO_GROUP_FIRST, INFO_GROUP_MAX};
+use crate::context_menu::{INFO_GROUP_FIRST, INFO_GROUP_MAX, OPEN_WITH_FIRST, OPEN_WITH_MAX, OPEN_WITH_OTHER};
 use crate::dialog::Dialogs;
 use crate::operations::{After, Operations};
 use crate::stack::count_text;
@@ -65,6 +66,8 @@ struct Loaded {
     times: [Option<SystemTime>; 3],
     /// Read when the window opens, not on a reload.
     names: Option<Names>,
+    /// macOS, one file: the apps that open it.
+    apps: Vec<AppChoice>,
 }
 
 fn load(paths: &[PathBuf], names: bool) -> Loaded {
@@ -82,7 +85,14 @@ fn load(paths: &[PathBuf], names: bool) -> Loaded {
         groups: gezik_platform::attrs::groups(),
         mine: gezik_platform::attrs::my_groups(),
     });
-    Loaded { unreadable: paths.len() - items.len(), items, acl, times, names }
+    // macOS: the apps for one file (or package); the row is not there for folders and links.
+    let apps = match items.as_slice() {
+        [(path, e)] if !e.is_link && (!e.is_dir || gezik_core::kind::is_package_name(&path.to_string_lossy())) => {
+            gezik_platform::open_with::apps(std::slice::from_ref(path))
+        }
+        _ => Vec::new(),
+    };
+    Loaded { unreadable: paths.len() - items.len(), items, acl, times, names, apps }
 }
 
 struct State {
@@ -93,6 +103,7 @@ struct State {
     names: Names,
     acl: bool,
     times: [Option<SystemTime>; 3],
+    apps: Vec<AppChoice>,
     size: String,
     note: (String, bool),
     /// This window's jobs and what each was to change.
@@ -144,6 +155,8 @@ impl Info {
         window.on_info_octal_accepted(move || t.octal_accepted());
         let t = self.clone();
         window.on_info_enclosed(move || t.ask_enclosed());
+        let t = self.clone();
+        window.on_info_change_all(move || t.ask_change_all());
         let t = self.clone();
         window.on_info_close(move || t.close());
     }
@@ -201,6 +214,7 @@ impl Info {
                 state.items = loaded.items;
                 state.acl = loaded.acl;
                 state.times = loaded.times;
+                state.apps = loaded.apps;
             }
             return self.show(true);
         };
@@ -213,6 +227,7 @@ impl Info {
             names,
             acl: loaded.acl,
             times: loaded.times,
+            apps: loaded.apps,
             size: "Size: calculating…".to_owned(),
             note: unreadable_note(loaded.unreadable),
             jobs: Vec::new(),
@@ -252,6 +267,7 @@ impl Info {
             show_flags: cfg!(target_os = "macos"),
             hidden: attrs::flag_state(&all, HIDDEN).index(),
             locked: attrs::flag_state(&all, LOCKED).index(),
+            app: default_app(&state.apps).into(),
             enclosed: matches!(state.items.as_slice(), [(_, e)] if e.is_dir && !e.is_link),
             note: state.note.0.as_str().into(),
             error: state.note.1,
@@ -344,7 +360,87 @@ impl Info {
         state.as_ref().map(|s| group_items(&s.names.mine, &s.names.groups)).unwrap_or_default()
     }
 
+    /// Open with ▾ (macOS, one file).
+    pub fn app_menu(&self) -> Vec<(u32, String, bool)> {
+        self.0.state.borrow().as_ref().map(|s| app_items(&s.apps)).unwrap_or_default()
+    }
+
+    /// The one file the "Open with" row is for.
+    fn app_file(&self) -> Option<PathBuf> {
+        match self.0.state.borrow().as_ref()?.items.as_slice() {
+            [(path, _)] => Some(path.clone()),
+            _ => None,
+        }
+    }
+
+    /// This file opens with `app` from now on; the row shows it at once.
+    fn set_app(&self, app: PathBuf) {
+        let Some(file) = self.app_file() else { return };
+        let failed = |why: String| {
+            let _ = slint::invoke_from_event_loop(move || {
+                with_current(|info| info.set_note(format!("Cannot change the app: {why}"), true));
+            });
+        };
+        match gezik_platform::open_with::set_default_for_file(&app, &file, failed) {
+            Ok(()) => {
+                if let Some(state) = self.0.state.borrow_mut().as_mut() {
+                    for choice in &mut state.apps {
+                        choice.default = choice.path == app;
+                    }
+                }
+                self.show(false);
+            }
+            Err(why) => self.set_note(format!("Cannot change the app: {why}"), true),
+        }
+    }
+
+    /// "Change All…": asks, naming the type and the app; only "Change All" changes the default
+    /// for every file of this type (for this user, everywhere).
+    fn ask_change_all(&self) {
+        let app = self.0.state.borrow().as_ref().and_then(|s| s.apps.iter().find(|a| a.default).cloned());
+        let (Some(file), Some(app)) = (self.app_file(), app) else {
+            return self.set_note("Choose an app first".to_owned(), true);
+        };
+        let name = crate::operations::items_text(std::slice::from_ref(&file));
+        let kind = own_type_name(&name, false).unwrap_or_else(|| fallback_type_name(&name, false));
+        let info = self.clone();
+        self.0.dialogs.ask(
+            "Change All?",
+            format!(
+                "Open every \"{kind}\" document (like \"{name}\") with {}? This changes it for all your \
+                 files of this type, in every app.",
+                app.name
+            ),
+            &["Change All", "Cancel"],
+            move |choice| {
+                if choice == Some(0) {
+                    let (note, error) = match gezik_platform::open_with::set_default_for_type(&app.path, &file) {
+                        Ok(()) => (format!("\"{kind}\" documents open with {} now", app.name), false),
+                        Err(why) => (format!("Cannot change the app: {why}"), true),
+                    };
+                    info.set_note(note, error);
+                }
+            },
+        );
+    }
+
     pub fn menu_chosen(&self, id: u32) {
+        if id == OPEN_WITH_OTHER {
+            // After the menu is gone: the panel is modal.
+            let info = self.clone();
+            return slint::Timer::single_shot(std::time::Duration::ZERO, move || {
+                if let Some(app) = gezik_platform::open_with::choose_app() {
+                    info.set_app(app);
+                }
+            });
+        }
+        if (OPEN_WITH_FIRST..OPEN_WITH_FIRST + OPEN_WITH_MAX).contains(&id) {
+            let app = self.0.state.borrow().as_ref().and_then(|s| s.apps.get((id - OPEN_WITH_FIRST) as usize).cloned());
+            if let Some(app) = app {
+                self.set_app(app.path);
+            }
+            return;
+        }
         if !(INFO_GROUP_FIRST..INFO_GROUP_FIRST + INFO_GROUP_MAX).contains(&id) {
             return;
         }
@@ -490,6 +586,20 @@ fn group_items(mine: &[u32], groups: &[(String, u32)]) -> Vec<(u32, String, bool
         .collect()
 }
 
+/// Open with ▾: the apps, the default marked, then Other… (as Open With ▸).
+fn app_items(apps: &[AppChoice]) -> Vec<(u32, String, bool)> {
+    crate::context_menu::open_with_sub(Some(apps), 0).items
+}
+
+/// The row's button: the default app, "Not set" without one, "" (no row) without apps.
+fn default_app(apps: &[AppChoice]) -> String {
+    match apps.iter().find(|a| a.default) {
+        Some(app) => app.name.clone(),
+        None if apps.is_empty() => String::new(),
+        None => "Not set".to_owned(),
+    }
+}
+
 /// The items of a job the system refused without administrator rights.
 fn denied(wanted: &[Wanted], report: &Report) -> Vec<Wanted> {
     wanted
@@ -585,6 +695,23 @@ mod tests {
         states[0] = attrs::Tri::On;
         states[8] = attrs::Tri::Mixed;
         assert_eq!(perm_digits(states), 1 + 2 * 3i32.pow(8), "box 0 the lowest digit");
+    }
+
+    #[test]
+    fn the_app_menu_lists_the_apps_then_other() {
+        let app = |name: &str, default| AppChoice { path: format!("/A/{name}.app").into(), name: name.into(), default };
+        let apps = [app("Preview", true), app("Safari", false)];
+        assert_eq!(
+            app_items(&apps),
+            [
+                (OPEN_WITH_FIRST, "Preview (default)".to_owned(), true),
+                (OPEN_WITH_FIRST + 1, "Safari".to_owned(), true),
+                (OPEN_WITH_OTHER, "Other…".to_owned(), true)
+            ]
+        );
+        assert_eq!(default_app(&apps), "Preview");
+        assert_eq!(default_app(&[app("Safari", false)]), "Not set");
+        assert_eq!(default_app(&[]), "");
     }
 
     #[test]

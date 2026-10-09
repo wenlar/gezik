@@ -1032,6 +1032,14 @@ fn main() -> Result<(), slint::PlatformError> {
             menus.convert_menu(items, popup::Anchor::below(left, top, right, bottom));
         }
     });
+    window.on_info_app_menu({
+        let menus = menus.clone();
+        move |left, bottom, right, top| {
+            let mut items = Vec::new();
+            info::with_current(|info| items = info.app_menu());
+            menus.info_menu(items, popup::Anchor::below(left, top, right, bottom));
+        }
+    });
     window.on_info_group_menu({
         let menus = menus.clone();
         move |left, bottom, right, top| {
