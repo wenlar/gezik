@@ -7,6 +7,7 @@ pub mod cloud_pin;
 mod datetime;
 pub mod dnd;
 mod drives;
+pub mod eject;
 pub mod everything;
 pub mod finder;
 pub mod fs;
