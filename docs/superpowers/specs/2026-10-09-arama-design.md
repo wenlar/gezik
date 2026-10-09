@@ -38,7 +38,7 @@ Tek ilke: **tarayıcı, süzme ve sonuç listesi ortaktır.** Arama, düz görü
 
 ### Önceki spec'lerle ilişki
 
-- **Görünüm spec'i:** "Klasör boyutu hesaplanmaz, Boyut sütunu klasörde boş" kuralı 8b ile `[view] folder-sizes`'a bağlanır (§6). Varsayılan değerle yerel klasörlerde boyut görünür.
+- **Görünüm spec'i:** "Klasör boyutu hesaplanmaz, Boyut sütunu klasörde boş" kuralı 8b ile `[view] folder-sizes`'a bağlanır (§6). Varsayılan `"off"`: boyut yalnız istenince (`Calculate folder sizes`) hesaplanır (kullanıcı kararı 2026-10-10, hafiflik).
 - **Klavye paketi spec'i §3:** süzgeç Ctrl+F'de kalır; arama ayrı bir eylemdir (Karar 1). Süzgeç çubuğu sonuç listesinde de çalışır ("sonuçlar içinde arama").
 - **Gezinme spec'i:** `Location` iki yeni tür alır (`Search`, `Flat`); geçmiş, sekme ve oturum bunları taşır (§4.4, §9.2).
 
@@ -221,7 +221,7 @@ Liste alanının üstünde, süzgeç çubuğunun yerinde tek satır (süzgeç ç
 
 ### 6.1 Ne zaman hesaplanır (Karar 15)
 
-- `[view] folder-sizes = "local"` (varsayılan): gösterilen klasörün alt klasörleri yerel sabit ve çıkarılabilir sürücülerde kendiliğinden hesaplanır; ağda hesaplanmaz. `"all"` ağda da hesaplar; `"off"` hiç hesaplamaz (bugünkü gibi).
+- `[view] folder-sizes = "off"` varsayılandır (kullanıcı kararı 2026-10-10: açılışta ev klasörünü boyutlamak ~7-15 sn CPU ve +0,8 MB boşta bellek tutuyordu; hafiflik ilkesi). `"local"`: gösterilen klasörün alt klasörleri yerel sabit ve çıkarılabilir sürücülerde kendiliğinden hesaplanır; ağda hesaplanmaz. `"all"` ağda da hesaplar; `"off"` hiç hesaplamaz (bugünkü gibi).
 - Eylem `calculate-folder-sizes` (varsayılan tuş yok; satır menüsünde ve Görünüm menüsünde `Calculate folder sizes`) ayardan bağımsız olarak seçili klasörlerin, seçim yoksa gösterilen klasördeki bütün klasörlerin boyutunu hesaplar.
 - Önce ekranda görünen satırlar, sonra diğerleri; 2 iş parçacığı (ağda 1), düşük öncelik (§3.4). Klasörden çıkınca bekleyenler iptal edilir, bitenler önbellekte kalır.
 
@@ -313,7 +313,7 @@ max-results = 250000
 content-max-size = "64 MB" # larger files are not read for text
 
 [view]
-folder-sizes = "local"     # off | local (not on network folders) | all
+folder-sizes = "off"       # off (only when asked) | local (not on network folders) | all
 
 # [[searches]] — see section 8
 ```

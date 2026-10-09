@@ -38,7 +38,7 @@ sort = "name"          # name | modified | created | type | size
 sort-dir = "asc"       # asc | desc
 grid-size = "medium"   # small | medium | large
 icons = "system"       # system | gezik (Gezik's own icons, colored by the theme)
-folder-sizes = "local"    # sizes of the folders shown: off | local (not on network folders) | all
+folder-sizes = "off"      # sizes of the folders shown: off (only when asked) | local (not on network folders) | all
 thumbnails = true      # pictures and videos show a preview in the grid
 # The same in every folder; the View menu changes these here too.
 hide-extensions = false   # show names without their extension
