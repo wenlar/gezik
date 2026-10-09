@@ -34,11 +34,12 @@ impl Listing {
         }
     }
 
-    /// Entry `index` of a folder or of the results (none for drives).
-    pub fn entry(&self, index: usize) -> Option<&Entry> {
+    /// Entry `index` of a folder or of the results (none for drives); a result's is made from
+    /// its compact row, so loops over many rows use `name_at` and `is_dir`.
+    pub fn entry(&self, index: usize) -> Option<Cow<'_, Entry>> {
         match self {
-            Listing::Files(_, entries) => entries.get(index),
-            Listing::Results(set) => set.entry(index),
+            Listing::Files(_, entries) => entries.get(index).map(Cow::Borrowed),
+            Listing::Results(set) => set.entry(index).map(Cow::Owned),
             Listing::Drives(_) => None,
         }
     }
@@ -46,7 +47,8 @@ impl Listing {
     pub fn name_at(&self, index: usize) -> Option<&str> {
         match self {
             Listing::Drives(drives) => drives.get(index).map(|d| d.label.as_str()),
-            _ => self.entry(index).map(|e| e.name.as_str()),
+            Listing::Files(_, entries) => entries.get(index).map(|e| e.name.as_str()),
+            Listing::Results(set) => set.name(index),
         }
     }
 
@@ -102,7 +104,7 @@ impl Listing {
         match self {
             Listing::Files(dir, entries) => entries.get(index).map(|e| (dir.join(&e.name), e.is_dir)),
             Listing::Drives(drives) => drives.get(index).map(|d| (d.path.clone(), true)),
-            Listing::Results(set) => set.path_at(index).zip(set.entry(index).map(|e| e.is_dir)),
+            Listing::Results(set) => set.path_at(index).map(|path| (path, set.is_dir(index))),
         }
     }
 
@@ -117,7 +119,8 @@ impl Listing {
     pub fn is_dir(&self, index: usize) -> bool {
         match self {
             Listing::Drives(_) => true,
-            _ => self.entry(index).is_some_and(|e| e.is_dir),
+            Listing::Files(_, entries) => entries.get(index).is_some_and(|e| e.is_dir),
+            Listing::Results(set) => set.is_dir(index),
         }
     }
 
@@ -169,7 +172,7 @@ pub fn filtered_results(full: &Arc<ResultSet>, pattern: &Pattern) -> (Listing, O
     if pattern.is_empty() {
         return (Listing::Results(full.clone()), None);
     }
-    let rows = matching_rows(full.entries(), pattern);
+    let rows: Vec<usize> = (0..full.len()).filter(|&i| full.name(i).is_some_and(|n| pattern.matches(n))).collect();
     (Listing::Results(Arc::new(full.subset(&rows))), Some(rows))
 }
 
