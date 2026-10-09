@@ -1,5 +1,6 @@
 //! The file operations the engine runs.
 
+mod attrs;
 mod copy;
 mod delete;
 mod group;
@@ -10,6 +11,7 @@ mod rename;
 mod restore;
 mod trash;
 
+pub use attrs::{NEEDS_ADMIN, SetAttributesTask};
 pub use copy::CopyTask;
 pub use delete::DeleteTask;
 pub(crate) use delete::restore_hidden;

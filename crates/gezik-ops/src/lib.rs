@@ -21,5 +21,6 @@ pub use task::{
     TaskKind, Work, changed_since, facts_after, is_restart, no_trash, restart, unchanged,
 };
 pub use tasks::{
-    CopyTask, DeleteTask, GroupTask, LinkTask, MoveTask, NewTask, RenameTask, RestoreTask, TrashTask, trash_path,
+    CopyTask, DeleteTask, GroupTask, LinkTask, MoveTask, NEEDS_ADMIN, NewTask, RenameTask, RestoreTask,
+    SetAttributesTask, TrashTask, trash_path,
 };

@@ -1,16 +1,18 @@
 //! Undo, built from what a job did: what it made goes to the trash, what it moved goes back,
 //! what it trashed comes back; items moved into a folder the job made come out before it goes,
-//! and come back after it (spec 8.2). Nothing here knows the task kinds.
+//! and come back after it (spec 8.2); attributes go back to what they were. Nothing here knows
+//! the task kinds.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use gezik_core::attrs::Wanted;
 use gezik_core::ops::conflict::Facts;
 use gezik_core::ops::paths::{cover, path_key};
 
 use crate::task::{Outcome, Task};
-use crate::tasks::{MoveTask, RenameTask, RestoreTask, TrashTask};
+use crate::tasks::{MoveTask, RenameTask, RestoreTask, SetAttributesTask, TrashTask};
 
 /// Files are checked before undo touches them; folders are not (they change as files land).
 fn expect(facts: &Facts) -> Option<Facts> {
@@ -56,6 +58,7 @@ pub(crate) fn build(outcomes: &[Outcome]) -> Vec<Arc<dyn Task>> {
     let mut restored_dirs: Vec<PathBuf> = Vec::new();
     let mut moved: Vec<(PathBuf, PathBuf, Option<Facts>)> = Vec::new();
     let mut trashed: Vec<(PathBuf, PathBuf)> = Vec::new();
+    let mut attrs: Vec<Wanted> = Vec::new();
     let mut flat = Vec::new();
     flatten(outcomes, &mut flat);
     for outcome in flat {
@@ -75,6 +78,9 @@ pub(crate) fn build(outcomes: &[Outcome]) -> Vec<Arc<dyn Task>> {
             Outcome::Restored { original, facts } if facts.is_dir => restored_dirs.push(original.clone()),
             Outcome::Restored { original, facts } => made.push((original.clone(), expect(facts))),
             Outcome::MadeParent { path } => parents.push(path.clone()),
+            Outcome::AttributesChanged { path, id, before, after } => {
+                attrs.push(Wanted { path: path.clone(), id: *id, from: *after, to: *before })
+            }
             Outcome::Deleted { .. } | Outcome::Nothing | Outcome::Several(_) => {}
         }
     }
@@ -139,6 +145,10 @@ pub(crate) fn build(outcomes: &[Outcome]) -> Vec<Arc<dyn Task>> {
         tasks.push(Arc::new(TrashTask::checked(items).only_if_empty(parents)));
     }
     tasks.extend(restore);
+    // A job of its own: no other outcome comes with it.
+    if !attrs.is_empty() {
+        tasks.push(Arc::new(SetAttributesTask::new(attrs)));
+    }
     tasks
 }
 
