@@ -2,6 +2,7 @@
 //! order) and the column sort keys. Every OS sorts the same, so a synced folder looks the
 //! same everywhere.
 
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::time::SystemTime;
 
@@ -272,14 +273,35 @@ pub fn sort_order<'a>(
     type_name: impl Fn(&Entry) -> String,
     folder: &dyn Fn(usize) -> &'a str,
 ) -> Vec<usize> {
+    sort_rows(
+        entries.len(),
+        &|i| Cow::Borrowed(&entries[i]),
+        &|i| &entries[i].name,
+        spec,
+        folders_first,
+        type_name,
+        folder,
+    )
+}
+
+/// [`sort_order`] for `len` rows kept some other way (the search results' compact rows):
+/// `entry` gives row `i` (called once per row), `name` its name (when two names tie).
+pub fn sort_rows<'e, 'a>(
+    len: usize,
+    entry: &dyn Fn(usize) -> Cow<'e, Entry>,
+    name: &dyn Fn(usize) -> &'e str,
+    spec: SortSpec,
+    folders_first: bool,
+    type_name: impl Fn(&Entry) -> String,
+    folder: &dyn Fn(usize) -> &'a str,
+) -> Vec<usize> {
     // All keys live in one buffer, so sorting 100k names allocates once, not 100k times. Its
     // exact size for the names: a guess too small doubles it (32 MB more at 250,000 rows).
     let mut scratch = Vec::new();
-    let names: usize = entries
-        .iter()
-        .map(|e| {
+    let names: usize = (0..len)
+        .map(|i| {
             scratch.clear();
-            push_key(&mut scratch, &e.name);
+            push_key(&mut scratch, name(i));
             scratch.len()
         })
         .sum();
@@ -294,31 +316,33 @@ pub fn sort_order<'a>(
         }
         (start, buf.len() as u32)
     };
-    let keys: Vec<(Primary, (u32, u32))> = entries
-        .iter()
-        .enumerate()
-        .map(|(i, e)| {
+    // Folders whose size is on their way go last in either direction (spec 6.3).
+    let last = |e: &Entry| spec.key == SortKey::Size && e.size_pending();
+    // Per row: whether it is a folder and goes last (the comparison needs no entry).
+    let mut kinds: Vec<(bool, bool)> = Vec::with_capacity(len);
+    let keys: Vec<(Primary, (u32, u32))> = (0..len)
+        .map(|i| {
+            let e = entry(i);
+            kinds.push((e.is_dir, last(&e)));
             let primary = match spec.key {
                 SortKey::Name => Primary::None,
                 SortKey::Modified => Primary::Time(e.modified),
                 SortKey::Created => Primary::Time(e.created),
                 // A file's size, a folder's worked-out total; a folder without one as 0 (as before).
                 SortKey::Size => Primary::Size(e.known_size().unwrap_or(0)),
-                SortKey::Type => Primary::Type(push(&type_name(e), false), push(&e.extension().to_lowercase(), true)),
+                SortKey::Type => Primary::Type(push(&type_name(&e), false), push(&e.extension().to_lowercase(), true)),
                 SortKey::Folder => Primary::Folder(push(folder(i), false)),
             };
             (primary, push(&e.name, false))
         })
         .collect();
     let span = |(start, end): (u32, u32)| &buf[start as usize..end as usize];
-    // Folders whose size is on their way go last in either direction (spec 6.3).
-    let last = |e: &Entry| spec.key == SortKey::Size && e.size_pending();
     // Sorting indices moves 8 bytes per swap instead of a whole `Entry`.
-    let mut order: Vec<usize> = (0..entries.len()).collect();
+    let mut order: Vec<usize> = (0..len).collect();
     order.sort_unstable_by(|&i, &j| {
-        let (a, b) = (&entries[i], &entries[j]);
-        let folders = if folders_first { b.is_dir.cmp(&a.is_dir) } else { Ordering::Equal };
-        folders.then_with(|| last(a).cmp(&last(b))).then_with(|| {
+        let ((a_dir, a_last), (b_dir, b_last)) = (kinds[i], kinds[j]);
+        let folders = if folders_first { b_dir.cmp(&a_dir) } else { Ordering::Equal };
+        folders.then_with(|| a_last.cmp(&b_last)).then_with(|| {
             let ((pa, na), (pb, nb)) = (&keys[i], &keys[j]);
             let primary = match (pa, pb) {
                 (Primary::Type(ta, xa), Primary::Type(tb, xb)) => {
@@ -329,7 +353,7 @@ pub fn sort_order<'a>(
             };
             let order = primary
                 .then_with(|| span(*na).cmp(span(*nb)))
-                .then_with(|| a.name.cmp(&b.name))
+                .then_with(|| name(i).cmp(name(j)))
                 .then_with(|| folder(i).cmp(folder(j)))
                 .then_with(|| i.cmp(&j));
             if spec.dir == SortDir::Desc { order.reverse() } else { order }

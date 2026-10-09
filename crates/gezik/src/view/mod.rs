@@ -373,6 +373,7 @@ impl View {
         };
         let Some((path, is_dir)) = data.listing.path_at(index) else { return Target::Nothing };
         let entry = data.listing.entry(index);
+        let entry = entry.as_deref();
         let counts = if is_dir { crate::folder_sizes::counts(&path) } else { None };
         Target::Entry {
             name: data.listing.name_at(index).unwrap_or_default().to_owned(),
@@ -544,7 +545,7 @@ impl View {
                 let folder = set.folder(except);
                 (0..set.len())
                     .filter(|&i| i != except && set.folder(i) == folder)
-                    .any(|i| set.entry(i).is_some_and(|e| same(&e.name)))
+                    .any(|i| set.name(i).is_some_and(same))
             }
             Listing::Drives(_) => {
                 (0..data.listing.len()).filter(|&i| i != except).any(|i| data.listing.name_at(i).is_some_and(same))
@@ -828,7 +829,10 @@ impl View {
         if indices.is_empty() {
             indices.extend(data.selection.focus());
         }
-        indices.into_iter().filter_map(|i| Some((data.listing.path_at(i)?.0, data.listing.entry(i)?.clone()))).collect()
+        indices
+            .into_iter()
+            .filter_map(|i| Some((data.listing.path_at(i)?.0, data.listing.entry(i)?.into_owned())))
+            .collect()
     }
 
     /// Entry `index` as the list draws it (its icon, for the dragged items).
@@ -1333,9 +1337,7 @@ impl View {
                     && entries.iter().any(|e| e.is_dir && path.file_name().is_some_and(|n| n == e.name.as_str()))
             }
             Listing::Drives(drives) => drives.iter().any(|d| d.path == path),
-            Listing::Results(set) => {
-                set.rows_of(&[path.to_path_buf()]).into_iter().any(|i| set.entry(i).is_some_and(|e| e.is_dir))
-            }
+            Listing::Results(set) => set.rows_of(&[path.to_path_buf()]).into_iter().any(|i| set.is_dir(i)),
         }
     }
 
@@ -1397,9 +1399,8 @@ impl View {
             match rows {
                 None => *listing = Listing::Results(full.clone()),
                 Some(rows) => {
-                    let added: Vec<usize> = (start..full.len())
-                        .filter(|&i| full.entry(i).is_some_and(|e| pattern.matches(&e.name)))
-                        .collect();
+                    let added: Vec<usize> =
+                        (start..full.len()).filter(|&i| full.name(i).is_some_and(|n| pattern.matches(n))).collect();
                     if let Listing::Results(shown) = listing {
                         Arc::make_mut(shown).extend_rows(full, &added);
                     }
@@ -1456,13 +1457,9 @@ impl View {
         let generation = self.0.sort_gate.borrow_mut().start();
         let weak = self.0.window.clone();
         let spawned = std::thread::Builder::new().name("gezik-sort".into()).spawn(move || {
-            let order = gezik_core::sort::sort_order(
-                full.entries(),
-                spec,
-                folders_first,
-                |e| own_type_name(&e.name, e.is_dir).unwrap_or_else(|| fallback_type_name(&e.name, e.is_dir)),
-                &|i| full.folder(i).unwrap_or(""),
-            );
+            let order = full.sort_order(spec, folders_first, |e| {
+                own_type_name(&e.name, e.is_dir).unwrap_or_else(|| fallback_type_name(&e.name, e.is_dir))
+            });
             // Let go first: the UI thread then moves the set, no copy.
             drop(full);
             let sorted = (spec, folders_first);

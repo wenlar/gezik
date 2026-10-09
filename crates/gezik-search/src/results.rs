@@ -3,7 +3,7 @@
 //! scanner sends them in batches; the list, its filter and the background sort share them.
 
 use std::path::{MAIN_SEPARATOR, MAIN_SEPARATOR_STR, Path, PathBuf};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use gezik_core::Entry;
 use gezik_core::ops::paths::is_within;
@@ -32,13 +32,129 @@ pub struct ResultSet {
     root: PathBuf,
     /// Folders under `root` (`""`: `root` itself), each once.
     folders: Vec<Box<str>>,
-    entries: Vec<Entry>,
+    entries: Rows,
     /// `entries[i]`'s place in `folders`.
     parent: Vec<u32>,
     /// A content search's first matching line per entry; `None` without content.
     matches: Option<Vec<Option<Found>>>,
     /// The sort (and folders-first) the entries are in; `None` once new ones came unsorted.
     sorted: Option<(SortSpec, bool)>,
+}
+
+// Above `Entry`'s flag bits (`HIDDEN`, `SYSTEM`, `SIZE_FLAGS`), as in the name cache.
+const IS_DIR: u8 = 128;
+/// No time.
+const NO_TIME: i64 = i64::MIN;
+/// A time's unit: Windows keeps 100 ns ticks (so every time there fits exactly), others ns.
+const TICK: u128 = if cfg!(windows) { 100 } else { 1 };
+
+/// One row, compact (spec 1, 3.7): its name a span of `Rows::names`, its length and flags
+/// (`Entry`'s and `IS_DIR`) in `meta` (`len << 8 | flags`), size and times (`TICK`s since 1970).
+#[derive(Debug, Clone, Copy)]
+struct Row {
+    name: u32,
+    meta: u32,
+    size: u64,
+    modified: i64,
+    created: i64,
+}
+
+/// The rows of a result set: 32 bytes each and their names in one string, instead of an
+/// `Entry` (64 bytes) and its own allocated name. A name replaced or removed stays in
+/// `names` until the set is dropped (a job's few edits; a filter's subset starts afresh).
+#[derive(Debug, Clone, Default)]
+struct Rows {
+    names: String,
+    rows: Vec<Row>,
+}
+
+fn ticks(time: Option<SystemTime>) -> i64 {
+    let count = |d: Duration| i64::try_from(d.as_nanos() / TICK).unwrap_or(i64::MAX);
+    match time.map(|t| t.duration_since(SystemTime::UNIX_EPOCH)) {
+        None => NO_TIME,
+        Some(Ok(after)) => count(after),
+        // shortcut: times beyond ±292 years of 1970 clamp (Unix ns only; Windows' FILETIME fits).
+        Some(Err(before)) => (-count(before.duration())).max(NO_TIME + 1),
+    }
+}
+
+fn time(ticks: i64) -> Option<SystemTime> {
+    if ticks == NO_TIME {
+        return None;
+    }
+    let per_sec = (1_000_000_000 / TICK) as u64;
+    let abs = ticks.unsigned_abs();
+    let d = Duration::new(abs / per_sec, ((abs % per_sec) as u128 * TICK) as u32);
+    if ticks >= 0 { SystemTime::UNIX_EPOCH.checked_add(d) } else { SystemTime::UNIX_EPOCH.checked_sub(d) }
+}
+
+impl Rows {
+    fn len(&self) -> usize {
+        self.rows.len()
+    }
+
+    fn row(&self, entry: &Entry) -> Row {
+        // File names are at most 255 UTF-16 units (≤ 1,020 bytes): far below 2^24.
+        debug_assert!(entry.name.len() < 1 << 24);
+        let start = u32::try_from(self.names.len()).expect("result names under 4 GB");
+        Row {
+            name: start,
+            meta: (entry.name.len() as u32) << 8 | u32::from(entry.flags | if entry.is_dir { IS_DIR } else { 0 }),
+            size: entry.size,
+            modified: ticks(entry.modified),
+            created: ticks(entry.created),
+        }
+    }
+
+    fn push(&mut self, entry: &Entry) {
+        let row = self.row(entry);
+        self.names.push_str(&entry.name);
+        self.rows.push(row);
+    }
+
+    fn set(&mut self, i: usize, entry: &Entry) {
+        let mut row = self.row(entry);
+        // An unchanged name (a size or time refresh) keeps its bytes: the arena grows only on renames.
+        if self.name(i) == entry.name {
+            row.name = self.rows[i].name;
+        } else {
+            self.names.push_str(&entry.name);
+        }
+        self.rows[i] = row;
+    }
+
+    /// Row `i` of `from`, its name copied.
+    fn push_from(&mut self, from: &Rows, i: usize) {
+        let mut row = from.rows[i];
+        row.name = u32::try_from(self.names.len()).expect("result names under 4 GB");
+        self.names.push_str(from.name(i));
+        self.rows.push(row);
+    }
+
+    fn name(&self, i: usize) -> &str {
+        let row = &self.rows[i];
+        &self.names[row.name as usize..row.name as usize + (row.meta >> 8) as usize]
+    }
+
+    fn is_dir(&self, i: usize) -> bool {
+        self.rows[i].meta as u8 & IS_DIR != 0
+    }
+
+    fn get(&self, i: usize) -> Entry {
+        let row = &self.rows[i];
+        Entry {
+            name: self.name(i).to_owned(),
+            is_dir: self.is_dir(i),
+            flags: row.meta as u8 & !IS_DIR,
+            size: row.size,
+            modified: time(row.modified),
+            created: time(row.created),
+        }
+    }
+
+    fn heap_bytes(&self) -> usize {
+        self.rows.capacity() * std::mem::size_of::<Row>() + self.names.capacity()
+    }
 }
 
 /// A result's key in the list (spec 3.7): its path under the scope.
@@ -58,7 +174,7 @@ impl ResultSet {
         ResultSet {
             root,
             folders: Vec::new(),
-            entries: Vec::new(),
+            entries: Rows::default(),
             parent: Vec::new(),
             matches: content.then(Vec::new),
             sorted: None,
@@ -72,7 +188,7 @@ impl ResultSet {
 
     pub(crate) fn push_entry(&mut self, entry: Entry, parent: u32) {
         self.sorted = None;
-        self.entries.push(entry);
+        self.entries.push(&entry);
         self.parent.push(parent);
         if let Some(matches) = &mut self.matches {
             matches.push(None);
@@ -83,8 +199,8 @@ impl ResultSet {
     pub fn into_batch(self) -> Batch {
         let count = self.entries.len();
         Batch {
+            entries: (0..count).map(|i| self.entries.get(i)).collect(),
             folders: self.folders,
-            entries: self.entries,
             parent: self.parent,
             matches: self.matches.unwrap_or_else(|| vec![None; count]),
         }
@@ -99,15 +215,39 @@ impl ResultSet {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.entries.len() == 0
     }
 
-    pub fn entries(&self) -> &[Entry] {
-        &self.entries
+    /// Entry `i`, made from its compact row (its name allocated): for a row at a time.
+    pub fn entry(&self, i: usize) -> Option<Entry> {
+        (i < self.len()).then(|| self.entries.get(i))
     }
 
-    pub fn entry(&self, i: usize) -> Option<&Entry> {
-        self.entries.get(i)
+    /// Entry `i`'s name, without making the entry.
+    pub fn name(&self, i: usize) -> Option<&str> {
+        (i < self.len()).then(|| self.entries.name(i))
+    }
+
+    pub fn is_dir(&self, i: usize) -> bool {
+        i < self.len() && self.entries.is_dir(i)
+    }
+
+    /// About how much memory the rows hold (their folders and matching lines aside).
+    pub fn heap_bytes(&self) -> usize {
+        self.entries.heap_bytes() + self.parent.capacity() * std::mem::size_of::<u32>()
+    }
+
+    /// The order the rows sort in (`gezik_core::sort::sort_rows`); `type_name` as there.
+    pub fn sort_order(&self, spec: SortSpec, folders_first: bool, type_name: impl Fn(&Entry) -> String) -> Vec<usize> {
+        gezik_core::sort::sort_rows(
+            self.len(),
+            &|i| std::borrow::Cow::Owned(self.entries.get(i)),
+            &|i| self.entries.name(i),
+            spec,
+            folders_first,
+            type_name,
+            &|i| self.folder(i).unwrap_or(""),
+        )
     }
 
     /// The folder of entry `i` as the Folder column shows it.
@@ -126,12 +266,12 @@ impl ResultSet {
     }
 
     pub fn path_at(&self, i: usize) -> Option<PathBuf> {
-        let (folder, entry) = (self.folder(i)?, self.entries.get(i)?);
-        Some(if folder.is_empty() { self.root.join(&entry.name) } else { self.root.join(folder).join(&entry.name) })
+        let (folder, name) = (self.folder(i)?, self.name(i)?);
+        Some(if folder.is_empty() { self.root.join(name) } else { self.root.join(folder).join(name) })
     }
 
     pub fn key_at(&self, i: usize) -> Option<String> {
-        Some(relative_key(self.folder(i)?, &self.entries.get(i)?.name))
+        Some(relative_key(self.folder(i)?, self.name(i)?))
     }
 
     pub fn append(&mut self, batch: Batch) {
@@ -141,7 +281,9 @@ impl ResultSet {
             self.sorted = None;
         }
         self.folders.extend(batch.folders);
-        self.entries.extend(batch.entries);
+        for entry in &batch.entries {
+            self.entries.push(entry);
+        }
         self.parent.extend(batch.parent);
         if let Some(matches) = &mut self.matches {
             matches.extend(batch.matches);
@@ -161,7 +303,7 @@ impl ResultSet {
     /// Puts the entries in `order` (`gezik_core::sort::apply_order`): folders and matching lines
     /// go with them.
     pub fn apply_order(&mut self, order: &[usize]) {
-        gezik_core::sort::apply_order(&mut self.entries, order);
+        gezik_core::sort::apply_order(&mut self.entries.rows, order);
         gezik_core::sort::apply_order(&mut self.parent, order);
         if let Some(matches) = &mut self.matches {
             gezik_core::sort::apply_order(matches, order);
@@ -170,11 +312,16 @@ impl ResultSet {
 
     /// Entries `rows` (the filter's), with all the folders.
     pub fn subset(&self, rows: &[usize]) -> ResultSet {
+        let rows: Vec<usize> = rows.iter().copied().filter(|&i| i < self.len()).collect();
+        let mut entries = Rows::default();
+        for &i in &rows {
+            entries.push_from(&self.entries, i);
+        }
         ResultSet {
             root: self.root.clone(),
             folders: self.folders.clone(),
-            entries: rows.iter().filter_map(|&i| self.entries.get(i).cloned()).collect(),
-            parent: rows.iter().filter_map(|&i| self.parent.get(i).copied()).collect(),
+            entries,
+            parent: rows.iter().map(|&i| self.parent[i]).collect(),
             matches: self.matches.as_ref().map(|m| rows.iter().filter_map(|&i| m.get(i).cloned()).collect()),
             sorted: self.sorted,
         }
@@ -187,8 +334,8 @@ impl ResultSet {
             self.folders.extend_from_slice(&from.folders[self.folders.len()..]);
         }
         for &i in rows {
-            let (Some(entry), Some(&parent)) = (from.entries.get(i), from.parent.get(i)) else { continue };
-            self.entries.push(entry.clone());
+            let Some(&parent) = from.parent.get(i).filter(|_| i < from.len()) else { continue };
+            self.entries.push_from(&from.entries, i);
             self.parent.push(parent);
             if let Some(matches) = &mut self.matches {
                 matches.push(from.found(i).cloned());
@@ -205,7 +352,7 @@ impl ResultSet {
         let names: std::collections::HashSet<&std::ffi::OsStr> = paths.iter().filter_map(|p| p.file_name()).collect();
         let wanted: std::collections::HashSet<&Path> = paths.iter().map(PathBuf::as_path).collect();
         (0..self.entries.len())
-            .filter(|&i| names.contains(std::ffi::OsStr::new(&self.entries[i].name)))
+            .filter(|&i| names.contains(std::ffi::OsStr::new(self.entries.name(i))))
             .filter(|&i| self.path_at(i).is_some_and(|path| wanted.contains(path.as_path())))
             .collect()
     }
@@ -224,7 +371,7 @@ impl ResultSet {
             })
             .collect();
         let mut index = 0;
-        self.entries.retain(|_| (keep[index], index += 1).0);
+        self.entries.rows.retain(|_| (keep[index], index += 1).0);
         index = 0;
         self.parent.retain(|_| (keep[index], index += 1).0);
         if let Some(matches) = &mut self.matches {
@@ -294,7 +441,7 @@ impl ResultSet {
         }
         let present: HashMap<(u32, &str), usize> = (0..self.entries.len())
             .filter(|&i| touched[self.parent[i] as usize])
-            .map(|i| ((self.parent[i], self.entries[i].name.as_str()), i))
+            .map(|i| ((self.parent[i], self.entries.name(i)), i))
             .collect();
         paths
             .iter()
@@ -340,13 +487,13 @@ impl ResultSet {
         let mut new_folders: HashMap<String, u32> = HashMap::new();
         for ((path, entry), (text, number, row)) in added.into_iter().zip(places) {
             if let Some(row) = row {
-                let old = &self.entries[row];
+                let old = self.entries.get(row);
                 let changed = old.size != entry.size || !same_time(old.modified, entry.modified);
-                if changed || !same_facts(old, &entry) {
+                if changed || !same_facts(&old, &entry) {
                     if changed && let Some(matches) = &mut self.matches {
                         matches[row] = None;
                     }
-                    self.entries[row] = entry;
+                    self.entries.set(row, &entry);
                     self.sorted = None;
                 }
                 continue;
@@ -366,11 +513,11 @@ impl ResultSet {
                     parent
                 }
             };
-            if entry.is_dir && self.entries[row].is_dir {
-                let old = relative_key(&self.folders[self.parent[row] as usize], &self.entries[row].name);
+            if entry.is_dir && self.entries.is_dir(row) {
+                let old = relative_key(&self.folders[self.parent[row] as usize], self.entries.name(row));
                 renamed.insert(old, relative_key(&text, &entry.name));
             }
-            self.entries[row] = entry;
+            self.entries.set(row, &entry);
             self.parent[row] = parent;
             taken[row] = true;
             self.sorted = None;
@@ -465,7 +612,7 @@ impl ResultSet {
                 group[parent] = folders.len();
                 folders.push((self.folders[parent].clone(), state[parent] == 2, Vec::new()));
             }
-            folders[group[parent]].2.push(self.entries[i].clone());
+            folders[group[parent]].2.push(self.entries.get(i));
         }
         let mut seen = std::collections::HashSet::new();
         let paths: Vec<PathBuf> = paths.iter().filter(|path| seen.insert(*path)).cloned().collect();
@@ -571,7 +718,7 @@ impl ResultSet {
                 set.folders.push(folder.as_str().into());
                 next
             });
-            set.entries.push(entry);
+            set.entries.push(&entry);
             set.parent.push(parent);
             if let Some(matches) = &mut set.matches {
                 matches.push(found);
@@ -607,7 +754,7 @@ impl ResultSet {
     pub fn index_of_path(&self, path: &Path) -> Option<usize> {
         let (folder, name) = self.place_of(path)?;
         let parent = self.folders.iter().position(|f| **f == *folder)? as u32;
-        (0..self.entries.len()).find(|&i| self.parent[i] == parent && self.entries[i].name == name)
+        (0..self.entries.len()).find(|&i| self.parent[i] == parent && self.entries.name(i) == name)
     }
 }
 
@@ -1017,15 +1164,79 @@ mod tests {
         assert_eq!((set.len(), from.len()), (5000, 5000));
         assert!(set.key_at(0).is_some_and(|key| key.ends_with(".txt") && key.contains('r')));
         assert_eq!(set.index_of_path(&path(4999, "n4999.txt")), Some(4999));
-        let names: std::collections::HashSet<String> = set.entries().iter().map(|e| e.name.clone()).collect();
-        assert!((0..2000).all(|i| names.contains(&format!("r{i}.txt"))) && names.len() == 5000);
+        let names: std::collections::HashSet<&str> = (0..set.len()).filter_map(|i| set.name(i)).collect();
+        assert!((0..2000).all(|i| names.contains(format!("r{i}.txt").as_str())) && names.len() == 5000);
     }
 
     #[test]
-    fn an_entry_is_no_larger_than_the_spec_counts() {
-        // Spec 3.7: ~72 bytes on 64-bit, plus 4 for its folder.
-        if cfg!(target_pointer_width = "64") {
-            assert!(std::mem::size_of::<Entry>() <= 72, "{}", std::mem::size_of::<Entry>());
+    fn a_row_is_32_bytes() {
+        // Spec 1, 3.7: with its folder number and its name's bytes, ~36 B + the name a row.
+        assert_eq!(std::mem::size_of::<Row>(), 32);
+    }
+
+    #[test]
+    fn the_rows_sort_as_their_entries_would() {
+        let set = sample();
+        let entries: Vec<Entry> = (0..set.len()).filter_map(|i| set.entry(i)).collect();
+        for key in [gezik_core::sort::SortKey::Name, gezik_core::sort::SortKey::Folder] {
+            for dir in [gezik_core::sort::SortDir::Asc, gezik_core::sort::SortDir::Desc] {
+                let spec = SortSpec { key, dir };
+                let folder = |i: usize| set.folder(i).unwrap_or("");
+                let expected = gezik_core::sort::sort_order(&entries, spec, true, |_| String::new(), &folder);
+                assert_eq!(set.sort_order(spec, true, |_| String::new()), expected);
+            }
         }
+    }
+
+    #[test]
+    fn rows_give_back_the_entries_they_were_made_of() {
+        let at = |secs: i64, nanos: u32| {
+            let d = std::time::Duration::new(secs.unsigned_abs(), nanos);
+            Some(if secs >= 0 { SystemTime::UNIX_EPOCH + d } else { SystemTime::UNIX_EPOCH - d })
+        };
+        let make = |name: &str, is_dir, flags, size, modified, created| Entry {
+            name: name.to_owned(),
+            is_dir,
+            flags,
+            size,
+            modified,
+            created,
+        };
+        let long = "uzun ad ".repeat(30) + "ş.txt";
+        let entries = vec![
+            make("İstanbul ılık ğüşöç.txt", false, 0, 7, at(1_700_000_000, 123_456_700), None),
+            make(&long, false, Entry::HIDDEN | Entry::SYSTEM, u64::MAX, None, at(0, 0)),
+            make(
+                "klasör",
+                true,
+                Entry::SIZED | Entry::SIZE_PARTIAL | Entry::SIZE_STALE,
+                1 << 40,
+                at(-1_900_000_000, 100),
+                at(4_000_000_000, 999_999_900),
+            ),
+            make("bekleyen", true, Entry::SIZE_PENDING, 0, at(1, 0), at(1, 0)),
+            make("", false, 0, 0, None, None),
+        ];
+        let mut rows = Rows::default();
+        for e in &entries {
+            rows.push(e);
+        }
+        let facts = |e: &Entry| (e.name.clone(), e.is_dir, e.flags, e.size, e.modified, e.created);
+        for (i, e) in entries.iter().enumerate() {
+            assert_eq!(facts(&rows.get(i)), facts(e));
+            assert_eq!((rows.name(i), rows.is_dir(i)), (e.name.as_str(), e.is_dir));
+        }
+        let mut copy = Rows::default();
+        copy.push_from(&rows, 2);
+        rows.set(0, &entries[3]);
+        assert_eq!(facts(&copy.get(0)), facts(&entries[2]));
+        assert_eq!(facts(&rows.get(0)), facts(&entries[3]), "a replaced row");
+        assert_eq!(facts(&rows.get(1)), facts(&entries[1]), "the next keeps its name");
+        let used = rows.names.len();
+        let mut refreshed = entries[1].clone();
+        refreshed.size = refreshed.size.wrapping_sub(1);
+        rows.set(1, &refreshed);
+        assert_eq!((facts(&rows.get(1)), rows.names.len()), (facts(&refreshed), used), "same name: no new bytes");
+        assert_eq!(time(ticks(None)), None);
     }
 }

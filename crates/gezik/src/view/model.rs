@@ -116,6 +116,7 @@ pub fn file_row(data: &ViewData, i: usize) -> FileRow {
     let listing = &data.listing;
     let is_dir = listing.is_dir(i);
     let entry = listing.entry(i);
+    let entry = entry.as_deref();
     let options = data.options;
     let now = std::time::SystemTime::now();
     let date = |time: Option<std::time::SystemTime>| {
