@@ -409,17 +409,17 @@ Each of these was kept to macOS where the logic allowed:
 | 58 | Session | PASS |
 | 59 | Tab sets | PASS |
 | 60 | Custom terminal | PASS (no iTerm here; a stand-in command was used) |
-| 61 | Pinned groups | NOT TESTED |
-| 62 | Pins 1-9 | NOT TESTED |
-| 63 | View menu | NOT TESTED |
-| 64 | View options | NOT TESTED |
-| 65 | Hidden by default | NOT TESTED |
-| 66 | New ▸ and templates | NOT TESTED |
-| 67 | New folder with selection | NOT TESTED |
-| 68 | Paste as file | NOT TESTED |
-| 69 | Links | NOT TESTED |
-| 70 | Drop stack | NOT TESTED |
-| 71 | History | NOT TESTED |
+| 61 | Pinned groups | PASS |
+| 62 | Pins 1-9 | PASS (Turkish Q only) |
+| 63 | View menu | PASS |
+| 64 | View options | PASS |
+| 65 | Hidden by default | PASS |
+| 66 | New ▸ and templates | PASS (templates folder follows GEZIK_CONFIG_DIR) |
+| 67 | New folder with selection | PASS (row menu item not reached) |
+| 68 | Paste as file | PASS (Safari image not tried) |
+| 69 | Links | PASS (Finder ⌘⌥ drag and right-drag not tried) |
+| 70 | Drop stack | PASS (Finder drags and scrolling not tried) |
+| 71 | History | PASS (one note: "identical" by size and time) |
 | 72 | Search | NOT TESTED |
 | 73 | Privacy prompts | NOT TESTED |
 | 74 | Whole drive | NOT TESTED |
@@ -947,3 +947,82 @@ Six tabs (bosluklu klasör, tmp, klasör A (locked), klasör A, dil, bosluklu kl
 
 #### 60. Custom terminal: PASS
 iTerm is not installed. `[terminal] command = ["/usr/bin/touch", "/tmp/claude-501/custom-term.txt", "{dir}/.term-was-here"]` was used as a stand-in. Picked up live, ⌘⌥T in the `dil` tab ran it: both files were made, and the second one in `/private/tmp/gezik-test/dil`. So the setting is used and `{dir}` is the folder shown. Terminal.app did not open.
+
+#### 61. Pinned groups: PASS
+Written by hand: `pinned = ["{documents}", { path = "{downloads}", name = "DL", group = "Work" }, { path = "{desktop}", group = "Media" }, { path = "{pictures}", group = "work" }]`.
+- Live, the sidebar shows PINNED: Documents, then "Work" (DL, Pictures) and "Media" (Desktop), as written. `work` joined `Work` (case-insensitive).
+- Right-click a group heading: the first group offers "Move group down / Rename group… / Ungroup", the last "Rename group… / Ungroup" (no move past the ends).
+  - Move group down put Media before Work, and the file was rewritten as a multi-line list with `group = "Work"` normalized.
+  - Ungroup on Media dropped the `group` keys of its pins.
+- Right-click a pin: Open in new tab / Unpin from sidebar / Move up/down / Rename… / Move to group ▸ / Search in this folder… / Open terminal here / Copy path as ▸.
+  - Rename… set `name = "İş"` on Desktop. Rename… with an empty name removed the `name`, so the folder's own name came back.
+  - Move to group ▸ offers the other groups, "New group…" and "No group". Media moved DL there.
+- Dragging Pictures (Work) to between Desktop and DL (Media): a line shows where it goes. The pin landed in Media at that place, and the Work group, now empty, went away.
+
+#### 62. Pins 1-9: PASS
+Pins in order: Documents, Desktop, Pictures, DL (Downloads).
+- On Turkish-QWERTY-PC, ⌘⌥1…⌘⌥4 go to them in the sidebar's order (the window title was checked each time). ⌘⌥5 with only four pins does nothing.
+- Go ▸ Pinned 3 goes to Pictures, and Go ▸ Pinned 1 carries the key equivalent ⌘⌥1 (AX modifiers 2 = option + command).
+- With the path field focused, ⌘⌥1 fired the menu's shortcut (went to Documents) and typed nothing into the field.
+- Not tested: the US and French AZERTY layouts. The input source was not switched on this Mac.
+
+#### 63. View menu: PASS
+Read through Accessibility (`AXMenuItemMarkChar`):
+- View ▸ Hide Extensions, Folders First, Single-Click to Open and Show Hidden Items are check-mark items. Date Format ▸ (Relative / Short / ISO / System) and Size Format ▸ (Binary / Decimal) each have exactly one checked choice (System, Binary at first).
+- Choosing Hide Extensions and Date Format ▸ Relative moved the checks and wrote `hide-extensions = true` and `date-format = "relative"` under `[view]`.
+- Editing the file by hand (`folders-first = false`, `size-format = "decimal"`): the checks followed within 2.5 s.
+- ⌘⇧. (on Turkish-QWERTY-PC the key that types `.`) wrote `show-hidden = true` and checked Show Hidden Items, and again wrote `false`.
+
+#### 64. View options: PASS
+In `gorunum/`:
+- Hide Extensions: names lose their extension (`bin1500`, `bugun`, `yeni`). The folder `klasor.v2` keeps its own. Enter/F2 shows the whole name (`bugun.txt`, with the stem selected).
+- Folders First off: `a-klasor` and `klasor.v2` sort among the files.
+- Date Format ▸ Relative: files written a minute before say "1 min ago", one from 00:30 today "Today 00:30", and an older one "2026-01-01 12:00".
+- Size Format ▸ Decimal: a 1,500-byte file is `1.5 kB`.
+- Single-Click to Open: one click on `a-klasor` opened it. ⌘-click and ⇧-click only selected (⇧-click selected a range), with no folder opened.
+- All four were set back afterwards.
+
+#### 65. Hidden by default: PASS
+Seen at the start of the run (item 30): with a fresh `settings.toml` that has no `show-hidden` line, `.DS_Store` and `.gizli` were not shown. The new file's template has `# show-hidden = true      # dot names and Windows' hidden items; default true (macOS: false)` as a comment. A `show-hidden = false` line was only written after the first ⇧⌘..
+
+#### 66. New ▸ and templates: PASS
+- Right-click empty space ▸ New ▸: Folder, Text file, Markdown file, then the templates, then "Open templates folder".
+- "Open templates folder" opened `/private/tmp/gezik-cfg/templates/` in a new Gezik tab and created it. It is under `GEZIK_CONFIG_DIR`, as the other settings are (`~/Library/Application Support/gezik/templates/` without it).
+- `Report.pages` (a file), `Project/` with `README.md`, and a `.DS_Store` were put there. Within a second, New ▸ listed "Project" and "Report" (no extension, alphabetical), and `.DS_Store` was not listed.
+- In the folder shown, Project made `Project/` with its `README.md`, with the name being edited. A second Project made `Project (2)`. Report made `Report.pages`.
+- ⌘Z took the last one (`Report.pages`) away.
+
+#### 67. New folder with selection: PASS
+- Three files, ⌃⌘N: they moved into `New folder`, which is selected and being renamed. File ▸ New Folder with Selection carries ⌃⌘N.
+- ⌘Z put the three back and the folder went (to the Trash). ⇧⌘Z moved them in again.
+- With `New folder` already there, File ▸ New Folder with Selection on `t1.txt` + `t2.txt` made `New folder (2)`.
+- The right-click item was not reached: type-select "New folder w" in the row menu didn't pick it, and a stray copy of the menu stayed drawn on screen until Esc and a click. This looks like the synthetic input; the menu bar path worked.
+
+#### 68. Paste as file: PASS
+In `yapistir/`:
+- A screenshot to the clipboard (`screencapture -c`, 400×300 pt): ⌘V on the list made `Pasted image 2026-10-10 02.17.31.png`, 800×600 px (Retina size) and the same 176,644 bytes as the clipboard's PNG flavour. It appeared in about a second, with no beach ball.
+- Text on the clipboard (`ılık İstanbul metni`): right-click empty space shows "Paste text as file", and ⌘V made `Pasted text 2026-10-10 02.17.43.txt` (UTF-8, the same text).
+- A file copied in Finder (⌘C on `liste.txt`, clipboard: furl + text + icon): ⌘V pasted the file `liste.txt`, not a text file. The `«class furl»` wins over the text and icon flavours.
+- Not tried: Safari ▸ Copy Image.
+
+#### 69. Links: PASS
+In `link/`:
+- Right-click a file ▸ "Create link": `Link to dosya.txt -> /private/tmp/gezik-test/link/dosya.txt`, a symbolic link (`ls -l` shows `l`), not an alias. The same on a folder: `Link to hedef`. The folder link lists as "Folder" and the file link as "Plain Text Document", 38 B (the link's own size).
+- Drag inside Gezik with ⌘⌥ held onto `kutu`: the label says "Create link in kutu", and dropping made `kutu/Link to Link to hedef` (a link to the dragged link; the row order had shifted after `kutu` was made).
+- ⌘Z on that link, and again on `Link to hedef` (a link to a folder): each link went away, and `hedef/` and its `ic.txt` stayed.
+- Not tried: a ⌘⌥ drag from Finder, and a right-drag ▸ "Create link here" (the drop menu doesn't take synthetic clicks, see 26). Finder's arrow badge was not checked.
+
+#### 70. Drop stack: PASS
+- ⌘⇧S with three files selected adds them, and the strip opens above the status bar ("3 items", each with ×, then Copy here / Move here / Clear).
+- `y3.txt` deleted in Terminal: it fades in the strip within a few seconds.
+- "Copy here" in the same folder: "Everything on the drop stack is already in this folder".
+- In another folder: Copy here copied `y1.txt` and `y2.txt` and left the faded `y3.txt` out. One ⌘Z removed both copies. Move here moved them, and they left the strip (only the faded `y3.txt` stayed). Clear emptied it ("Drop files here").
+- Edit ▸ Add to Drop Stack adds the selection (on an item already there: "Already on the drop stack"). View ▸ Drop Stack hides and shows the strip.
+- Not tried: dragging from Finder onto the strip, dragging out of it, and a two-finger swipe with many items.
+
+#### 71. History: PASS
+- View ▸ Operation History (and the status bar's History) opens the History tab of the operations panel: newest first, each with its time, a title ("Moving 2 items to …", "Undoing Copy 2 items", "Creating a link to hedef") and a result.
+- A copy onto a locked file (`chflags uchg`, then Replace): the entry says "1 failed" with Details. Details says `kilit.txt: "kilit.txt" couldn't be moved to the trash because you don't have permission to access it`, and the file kept its old content.
+- "Show in folder" on "Moving 2 items to …/yigin/hedef" opened `hedef` with `y1.txt` and `y2.txt` selected.
+- The list holds this run of Gezik only (it started at 02:08). The cancelled jobs from 38/45 were in an earlier process.
+- **Note:** before that copy, the conflict list marked `kilit.txt` as "identical" and offered "Hide identical (1)", but the two files differ (`yeni` vs `eski`). They only have the same size (5 B) and the same modification second. Calling that "identical" (and defaulting to Skip) can hide a real change; size + time alone should not be called identical.
