@@ -57,8 +57,8 @@ pub fn install(window: &AppWindow, view: View, nav: Navigator, ops: Operations) 
                     // the keypad's.
                     None if crate::actions::run(action, &nav, &view) => {}
                     None => {
-                        if let Action::BatchRename = action {
-                            ops.batch_rename()
+                        if action == Action::BatchRename {
+                            ops.batch_rename();
                         }
                     }
                 }

@@ -259,6 +259,9 @@ pub fn allowed(action: Action) -> bool {
         | Action::Search
         | Action::FlatView
         | Action::ShowInFolder
+        | Action::MakeAlias
+        | Action::ShowPackageContents
+        | Action::Share
         | Action::CopyWithFolders
         | Action::CutWithFolders
         | Action::CalculateFolderSizes

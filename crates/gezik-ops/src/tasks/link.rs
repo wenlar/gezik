@@ -5,8 +5,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use gezik_core::ops::conflict::{Decision, Facts};
-use gezik_core::ops::names::next_free;
-use gezik_core::templates::{LinkKind, link_name};
+use gezik_core::templates::{LinkKind, free_link_name, link_name};
 use gezik_platform::link;
 
 use super::what;
@@ -109,15 +108,15 @@ impl Task for LinkTask {
                 continue;
             }
             // Two sources of one name get their numbers here: nothing is on disk yet to meet.
-            // A shortcut is a `.lnk` file even when it leads to a folder.
-            let named_dir = meta.is_dir() && self.kind != LinkKind::Shortcut;
+            // A shortcut and an alias are files even when they lead to a folder.
+            let named_dir = meta.is_dir() && !matches!(self.kind, LinkKind::Shortcut | LinkKind::Alias);
             let mut at = at.clone();
             // Numbered against the names planned in this job and against the disk.
             let taken = |path: &Path| planned.contains(path) || std::fs::symlink_metadata(path).is_ok();
             if taken(&at) {
                 let parent = at.parent().map(Path::to_path_buf).unwrap_or_default();
                 let name = at.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                let free = next_free(&name, named_dir, |candidate| taken(&parent.join(candidate)));
+                let free = free_link_name(&name, self.kind, meta.is_dir(), |candidate| taken(&parent.join(candidate)));
                 at = parent.join(free);
             }
             planned.insert(at.clone());

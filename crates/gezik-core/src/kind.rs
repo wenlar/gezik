@@ -68,6 +68,65 @@ pub fn has_own_icon(name: &str) -> bool {
     )
 }
 
+/// Folder endings macOS treats as one item: apps, plug-ins and document packages. Gezik opens
+/// such a folder as a file there once the system agrees (`gezik_platform::finder::is_package`).
+const PACKAGE_ENDINGS: &[&str] = &[
+    "app",
+    "appex",
+    "bundle",
+    "component",
+    "framework",
+    "kext",
+    "mdimporter",
+    "plugin",
+    "prefpane",
+    "qlgenerator",
+    "saver",
+    "xpc",
+    "pkg",
+    "mpkg",
+    "rtfd",
+    "photoslibrary",
+    "musiclibrary",
+    "imovielibrary",
+    "fcpbundle",
+    "logicx",
+    "band",
+    "key",
+    "pages",
+    "numbers",
+    "xcodeproj",
+    "xcworkspace",
+    "playground",
+    "scptd",
+    "wdgt",
+    "download",
+];
+
+/// Whether a folder named `name` may be a macOS package (an app, a Pages document …).
+pub fn is_package_name(name: &str) -> bool {
+    PACKAGE_ENDINGS.contains(&extension_lowercase(name).as_str())
+}
+
+/// How an entry's system icon is looked up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IconLookup {
+    /// By the extension: one icon for every file of the type.
+    Type,
+    /// A folder: the generic folder icon unless the folder has its own.
+    Folder,
+    /// By the item's own path: programs and shortcuts; on macOS packages.
+    Path,
+}
+
+/// How the system icon of `name` is looked up (`mac`: on macOS).
+pub fn icon_lookup(name: &str, is_dir: bool, mac: bool) -> IconLookup {
+    if is_dir {
+        return if mac && is_package_name(name) { IconLookup::Path } else { IconLookup::Folder };
+    }
+    if !mac && has_own_icon(name) { IconLookup::Path } else { IconLookup::Type }
+}
+
 /// The Type column until (or unless) the system names the type: `PNG File`, `WIM archive`.
 /// On macOS, Finder's words: the system names nearly every type there. A split archive's
 /// part is named by `own_type_name` first, everywhere.
@@ -158,6 +217,32 @@ mod tests {
         assert!(has_own_icon("Gezik.lnk"));
         assert!(!has_own_icon("notes.txt"));
         assert!(!has_own_icon("exe"));
+    }
+
+    #[test]
+    fn packages_are_known_by_their_ending() {
+        for name in
+            ["Safari.app", "Rapor.PAGES", "Sunum.key", "Proje.xcodeproj", "Fotoğraflar.photoslibrary", "x.bundle"]
+        {
+            assert!(is_package_name(name), "{name}");
+        }
+        for name in ["Documents", "notes.txt", "app", ".app", "x.zip"] {
+            assert!(!is_package_name(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn icons_are_looked_up_by_type_folder_or_path() {
+        // Windows and Linux: as before (programs and shortcuts by path, every folder as a folder).
+        assert_eq!(icon_lookup("notes.txt", false, false), IconLookup::Type);
+        assert_eq!(icon_lookup("setup.exe", false, false), IconLookup::Path);
+        assert_eq!(icon_lookup("Docs", true, false), IconLookup::Folder);
+        assert_eq!(icon_lookup("Safari.app", true, false), IconLookup::Folder, "no packages off macOS");
+        // macOS: a package by its path, files by their type (no `.exe`-style own icons there).
+        assert_eq!(icon_lookup("Safari.app", true, true), IconLookup::Path);
+        assert_eq!(icon_lookup("Docs", true, true), IconLookup::Folder);
+        assert_eq!(icon_lookup("setup.exe", false, true), IconLookup::Type);
+        assert_eq!(icon_lookup("Rapor.pages", false, true), IconLookup::Type, "a one-file Pages document");
     }
 
     #[cfg(not(target_os = "macos"))]

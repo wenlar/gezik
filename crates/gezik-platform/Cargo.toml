@@ -81,6 +81,7 @@ objc2-foundation = { version = "0.3", features = [
     "NSURLRequest",
     "NSURLResponse",
     "NSURLSession",
+    "NSValue",
     "block2",
 ] }
 objc2-app-kit = { version = "0.3", features = [
@@ -90,11 +91,46 @@ objc2-app-kit = { version = "0.3", features = [
     "NSDraggingItem",
     "NSDraggingSession",
     "NSEvent",
+    "NSGraphicsContext",
     "NSImage",
     "NSImageRep",
+    "NSMenu",
+    "NSOpenPanel",
+    "NSPanel",
     "NSPasteboard",
     "NSResponder",
+    "NSRunningApplication",
+    "NSSavePanel",
+    "NSSharingService",
     "NSView",
     "NSWindow",
     "NSWorkspace",
+    "objc2-core-graphics",
+] }
+# NSImage and Quick Look pictures drawn into RGBA (the versions objc2-app-kit 0.3 brings).
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFCGTypes"] }
+objc2-core-graphics = { version = "0.3", default-features = false, features = [
+    "std",
+    "CGBitmapContext",
+    "CGColorSpace",
+    "CGContext",
+    "CGImage",
+] }
+# Finder's thumbnails (PDF, HEIC, video, Pages …); only the generator and its request.
+objc2-quick-look-thumbnailing = { version = "0.3", default-features = false, features = [
+    "std",
+    "bitflags",
+    "block2",
+    "objc2-core-foundation",
+    "objc2-core-graphics",
+    "QLThumbnailGenerationRequest",
+    "QLThumbnailGenerator",
+    "QLThumbnailRepresentation",
+] }
+# The system's Quick Look panel (Space, spec 9 §4.5); only the panel and its item protocol.
+objc2-quick-look-ui = { version = "0.3", default-features = false, features = [
+    "std",
+    "objc2-app-kit",
+    "QLPreviewItem",
+    "QLPreviewPanel",
 ] }

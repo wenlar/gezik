@@ -8,11 +8,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-use gezik_core::nav::{Closed, Location, Session, Step, Tabs, ViewState, crumbs, nearest_existing};
+use gezik_core::kind::is_package_name;
+use gezik_core::nav::{Closed, Crumb, Location, Session, Step, Tabs, ViewState, crumbs, nearest_existing};
 use gezik_core::ops::paths::same_path;
 use gezik_core::refresh::{QUIET, RefreshPace};
 use gezik_core::{Entry, list_dir};
 use gezik_platform::Drive;
+use gezik_platform::finder::AliasTarget;
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
 use crate::folder_watch::FolderWatch;
@@ -126,6 +128,64 @@ pub(crate) fn resolve_typed(text: &str, base: Option<&Path>) -> PathBuf {
         _ => path,
     };
     std::path::absolute(&path).unwrap_or(path)
+}
+
+/// What opening an item does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Opening {
+    /// Into this folder.
+    Go(PathBuf),
+    /// With its app: a file, or on macOS a package (an app, a Pages document).
+    Launch(PathBuf),
+    /// An alias whose original is gone.
+    MissingAlias(PathBuf),
+}
+
+/// What opening `path` does (spec 9 §4.2): a folder is gone into unless its name and then the
+/// system say it is a package; a file is opened, an alias leads where it points. `is_package`
+/// and `resolve` read the disk (`gezik_platform::finder`, which does nothing off macOS).
+pub fn opening(
+    path: PathBuf,
+    is_dir: bool,
+    is_package: impl Fn(&Path) -> bool,
+    resolve: impl Fn(&Path) -> AliasTarget,
+) -> Opening {
+    if is_dir {
+        return folder_opening(path, &is_package);
+    }
+    match resolve(&path) {
+        AliasTarget::NotAlias => Opening::Launch(path),
+        // An alias to an app is launched like the app.
+        AliasTarget::Target { path: target, is_dir: true } => folder_opening(target, &is_package),
+        AliasTarget::Target { path: target, is_dir: false } => Opening::Launch(target),
+        AliasTarget::Missing => Opening::MissingAlias(path),
+    }
+}
+
+/// A folder is gone into unless its name and then the system say it is a package.
+fn folder_opening(path: PathBuf, is_package: &impl Fn(&Path) -> bool) -> Opening {
+    let package = path.file_name().is_some_and(|n| is_package_name(&n.to_string_lossy())) && is_package(&path);
+    if package { Opening::Launch(path) } else { Opening::Go(path) }
+}
+
+/// [`opening`] with the system's answers.
+fn system_opening(path: PathBuf, is_dir: bool) -> Opening {
+    opening(path, is_dir, gezik_platform::finder::is_package, gezik_platform::finder::resolve_alias)
+}
+
+/// The address bar's labels: a folder's part says what Finder calls it where that differs
+/// (`name_of`: `gezik_platform::finder::finder_name`, nothing off macOS); "…" and the drives
+/// keep theirs.
+fn crumb_labels(crumbs: &[Crumb], name_of: impl Fn(&Path) -> Option<String>) -> Vec<String> {
+    crumbs
+        .iter()
+        .map(|crumb| match &crumb.location {
+            Location::Path(path) if path.file_name().is_some_and(|n| n.to_string_lossy() == crumb.label) => {
+                name_of(path).unwrap_or_else(|| crumb.label.clone())
+            }
+            _ => crumb.label.clone(),
+        })
+        .collect()
 }
 
 /// How a successful load updates the history.
@@ -733,11 +793,18 @@ impl Navigator {
         self.0.borrow().view.entry_path(index)
     }
 
-    /// Opens the file with its default app, or goes into the folder.
+    /// Opens the file with its default app, or goes into the folder; on macOS a package opens
+    /// as a file and an alias leads to its original.
     pub fn open_item(&self, path: PathBuf, is_dir: bool) {
-        if is_dir {
-            self.go(Location::Path(path));
-        } else if let Err(err) = open::that_detached(&path) {
+        match system_opening(path, is_dir) {
+            Opening::Go(folder) => self.go(Location::Path(folder)),
+            Opening::Launch(path) => self.launch(&path),
+            Opening::MissingAlias(alias) => crate::operations::with_current(|ops| ops.missing_alias(alias)),
+        }
+    }
+
+    fn launch(&self, path: &Path) {
+        if let Err(err) = open::that_detached(path) {
             self.status(format!("Cannot open {}: {}", path.display(), gezik_platform::fs::describe(&err)));
         }
     }
@@ -755,17 +822,21 @@ impl Navigator {
         }
         // Too many files: nothing is opened, nor is the folder entered (it would hide the
         // message). Folders do not count towards the limit.
-        let files = items.iter().filter(|(_, is_dir)| !is_dir).map(|(path, _)| path).collect();
-        let files = match crate::view::limit_open(files) {
-            Ok(files) => files,
-            Err(message) => return self.status(message),
-        };
-        for path in files {
-            if let Err(err) = open::that_detached(path) {
-                self.status(format!("Cannot open {}: {}", path.display(), gezik_platform::fs::describe(&err)));
+        let files: Vec<&PathBuf> = items.iter().filter(|(_, is_dir)| !is_dir).map(|(path, _)| path).collect();
+        if let Err(message) = crate::view::limit_open(files) {
+            return self.status(message);
+        }
+        let mut folder = None;
+        for (path, is_dir) in items {
+            match system_opening(path, is_dir) {
+                Opening::Launch(path) => self.launch(&path),
+                Opening::Go(path) => {
+                    folder.get_or_insert(path);
+                }
+                Opening::MissingAlias(alias) => crate::operations::with_current(|ops| ops.missing_alias(alias)),
             }
         }
-        if let Some((folder, _)) = items.into_iter().find(|(_, is_dir)| *is_dir) {
+        if let Some(folder) = folder {
             self.go(Location::Path(folder));
         }
     }
@@ -1038,8 +1109,11 @@ impl Navigator {
             window.set_can_go_back(history.can_go_back());
             window.set_can_go_forward(history.can_go_forward());
             window.set_can_go_up(location.parent().is_some());
-            let parts: Vec<CrumbItem> =
-                crumbs(&location, MAX_CRUMBS).into_iter().map(|c| CrumbItem { label: c.label.into() }).collect();
+            let parts = crumbs(&location, MAX_CRUMBS);
+            let parts: Vec<CrumbItem> = crumb_labels(&parts, gezik_platform::finder::finder_name)
+                .into_iter()
+                .map(|label| CrumbItem { label: label.into() })
+                .collect();
             window.set_crumbs(ModelRc::new(VecModel::from(parts)));
             window.set_current_path(match &location {
                 Location::Path(p) => p.display().to_string().into(),
@@ -1128,6 +1202,54 @@ pub fn sync_model<T: Clone + PartialEq + 'static>(model: &VecModel<T>, items: im
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn opening_follows_packages_and_aliases() {
+        let p = PathBuf::from;
+        let never = |_: &Path| false;
+        let plain = |_: &Path| AliasTarget::NotAlias;
+        let not_asked = |_: &Path| -> AliasTarget { panic!("a folder is not resolved as an alias") };
+        assert_eq!(opening(p("/a/Docs"), true, never, not_asked), Opening::Go(p("/a/Docs")));
+        assert_eq!(opening(p("/A/Safari.app"), true, |_: &Path| true, not_asked), Opening::Launch(p("/A/Safari.app")));
+        assert_eq!(
+            opening(p("/A/x.app"), true, never, not_asked),
+            Opening::Go(p("/A/x.app")),
+            "the system says folder"
+        );
+        let never_asked = |_: &Path| -> bool { panic!("a plain folder name needs no package check") };
+        assert_eq!(opening(p("/a/Work"), true, never_asked, not_asked), Opening::Go(p("/a/Work")));
+        assert_eq!(opening(p("/a/r.pdf"), false, never, plain), Opening::Launch(p("/a/r.pdf")));
+        let to_dir = |_: &Path| AliasTarget::Target { path: p("/b/Docs"), is_dir: true };
+        assert_eq!(opening(p("/a/Docs alias"), false, never, to_dir), Opening::Go(p("/b/Docs")));
+        let to_file = |_: &Path| AliasTarget::Target { path: p("/b/r.pdf"), is_dir: false };
+        assert_eq!(opening(p("/a/r.pdf alias"), false, never, to_file), Opening::Launch(p("/b/r.pdf")));
+        let to_app = |_: &Path| AliasTarget::Target { path: p("/A/Safari.app"), is_dir: true };
+        let app = |path: &Path| path == Path::new("/A/Safari.app");
+        assert_eq!(opening(p("/a/Safari alias"), false, app, to_app), Opening::Launch(p("/A/Safari.app")));
+        let gone = |_: &Path| AliasTarget::Missing;
+        assert_eq!(opening(p("/a/gone alias"), false, never, gone), Opening::MissingAlias(p("/a/gone alias")));
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn opening_changes_nothing_off_macos() {
+        let (is_package, resolve) = (gezik_platform::finder::is_package, gezik_platform::finder::resolve_alias);
+        let app = PathBuf::from("/x/Tool.app");
+        assert_eq!(opening(app.clone(), true, is_package, resolve), Opening::Go(app));
+        let file = PathBuf::from("/x/setup.exe");
+        assert_eq!(opening(file.clone(), false, is_package, resolve), Opening::Launch(file));
+    }
+
+    #[test]
+    fn crumbs_say_finders_names_only_for_their_folders() {
+        let location = Location::Path(PathBuf::from("/Users/u/Documents/a"));
+        let parts = crumbs(&location, 2); // the drives, "…" (/Users/u), Documents, a
+        let documents = Path::new("/Users/u/Documents");
+        let labels = crumb_labels(&parts, |path| (path == documents).then(|| "Belgeler".to_owned()));
+        assert_eq!(labels, [gezik_core::nav::DRIVES_NAME, "…", "Belgeler", "a"]);
+        let labels = crumb_labels(&parts, |_| Some("X".to_owned()));
+        assert_eq!(labels, [gezik_core::nav::DRIVES_NAME, "…", "X", "X"], "the drives and \"…\" keep theirs");
+    }
 
     #[test]
     fn show_in_folder_names_select_and_focus_the_first() {

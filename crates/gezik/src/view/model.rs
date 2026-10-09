@@ -5,7 +5,7 @@ use std::cell::{Cell, RefCell};
 use std::ops::Range;
 use std::rc::Rc;
 
-use gezik_core::kind::{fallback_type_name, has_own_icon, own_type_name};
+use gezik_core::kind::{IconLookup, fallback_type_name, icon_lookup, own_type_name};
 use gezik_core::selection::{PendingPress, Selection};
 use gezik_core::view::{IconMode, SizeFormat, ViewMode};
 use gezik_core::{Entry, format_size_in};
@@ -125,6 +125,11 @@ pub fn file_row(data: &ViewData, i: usize) -> FileRow {
     let icon = picture_for(data, i);
     let name = listing.shown_name_at(i).unwrap_or_default();
     let entries = !matches!(listing, Listing::Drives(_));
+    // macOS: Finder's name for a folder right under the home folder or `/` (spec 9 §4.2);
+    // sorting, filtering and renaming keep the real one.
+    let finder = (cfg!(target_os = "macos") && is_dir && entries)
+        .then(|| listing.path_at(i).and_then(|(path, _)| gezik_platform::finder::finder_name(&path)))
+        .flatten();
     let (folder, found) = match listing {
         Listing::Results(set) => (
             set.shown_folder(i).unwrap_or_default().into(),
@@ -133,7 +138,10 @@ pub fn file_row(data: &ViewData, i: usize) -> FileRow {
         _ => (slint::SharedString::default(), slint::SharedString::default()),
     };
     FileRow {
-        name: gezik_core::shown_name(name, is_dir, options.hide_extensions && entries).into(),
+        name: finder
+            .as_deref()
+            .unwrap_or_else(|| gezik_core::shown_name(name, is_dir, options.hide_extensions && entries))
+            .into(),
         is_dir,
         kind: listing.kind(i).index(),
         size: entry.filter(|_| entries).map(|e| size_cell(e, options.size_format)).unwrap_or_default().into(),
@@ -176,13 +184,14 @@ pub fn type_name_for(data: &ViewData, i: usize) -> String {
     }
 }
 
-/// In the grid with thumbnails on, a file's thumbnail once loaded (its icon until then).
+/// In the grid with thumbnails on, a file's thumbnail once loaded (its icon until then): the
+/// system's on Windows and macOS, Gezik's own formats elsewhere.
 fn picture_for(data: &ViewData, i: usize) -> Option<slint::Image> {
     if data.mode == ViewMode::Grid
         && data.thumbnails
         && let Some(e) = data.listing.entry(i)
         && !e.is_dir
-        && (cfg!(windows) || gezik_platform::can_decode(e.extension()))
+        && (cfg!(any(windows, target_os = "macos")) || gezik_platform::can_decode(e.extension()))
         && let Some((path, _)) = data.listing.path_at(i)
     {
         let key = MediaKey::Thumbnail { path, modified: e.modified, px: data.icon_px };
@@ -204,12 +213,10 @@ fn icon_for(data: &ViewData, i: usize) -> Option<slint::Image> {
         Listing::Drives(drives) => MediaKey::PathIcon { path: drives.get(i)?.path.clone(), px },
         listing => {
             let e = listing.entry(i)?;
-            if e.is_dir {
-                MediaKey::FolderIcon { path: listing.path_at(i)?.0, px }
-            } else if has_own_icon(&e.name) {
-                MediaKey::PathIcon { path: listing.path_at(i)?.0, px }
-            } else {
-                MediaKey::ExtIcon { ext: e.extension().to_lowercase(), px }
+            match icon_lookup(&e.name, e.is_dir, cfg!(target_os = "macos")) {
+                IconLookup::Folder => MediaKey::FolderIcon { path: listing.path_at(i)?.0, px },
+                IconLookup::Path => MediaKey::PathIcon { path: listing.path_at(i)?.0, px },
+                IconLookup::Type => MediaKey::ExtIcon { ext: e.extension().to_lowercase(), px },
             }
         }
     };

@@ -5,6 +5,7 @@ mod datetime;
 pub mod dnd;
 mod drives;
 pub mod everything;
+pub mod finder;
 pub mod fs;
 pub mod http;
 mod icons;
@@ -13,9 +14,14 @@ mod known;
 pub mod link;
 mod linux;
 mod locale;
+#[cfg(target_os = "macos")]
+mod mac;
+pub mod open_with;
 mod picture;
 pub mod priority;
 pub mod process;
+pub mod ql_panel;
+pub mod services;
 pub mod system;
 pub mod taskbar;
 pub mod terminal;
@@ -26,10 +32,12 @@ use std::path::PathBuf;
 
 pub use datetime::{civil_from_days, format_date, format_datetime, local_date_parts};
 pub use drives::{Drive, DriveKind, drive_signature, drives};
-pub use icons::{IconTarget, Rgba, icon, init_thread, type_name};
+pub use icons::{IconTarget, Rgba, folder_has_own_icon, icon, init_thread, type_name};
 pub use known::{KnownFolder, known_folders};
 pub use locale::language;
-pub use picture::{Decoded, MAX_DECODE_BYTES, MAX_DECODE_SIDE, can_decode, decode_image, thumbnail};
+pub use picture::{
+    Decoded, MAX_DECODE_BYTES, MAX_DECODE_SIDE, can_decode, decode_image, only_in_cloud, thumbnail, thumbnail_while,
+};
 pub use process::{ChildProcess, Lines, process_alive};
 pub use text::decode_ansi;
 
