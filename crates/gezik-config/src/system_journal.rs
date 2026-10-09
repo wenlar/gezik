@@ -8,7 +8,7 @@
 use std::fmt;
 use std::fs::File;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use gezik_core::system_change::{Change, Kind, RegType, Value};
 use toml_edit::{ArrayOfTables, DocumentMut, InlineTable, Item, Table, value};
@@ -136,7 +136,7 @@ pub fn to_text(journal: &Journal) -> String {
         table["feature"] = value(change.feature.as_str());
         table["kind"] = value(change.kind.name());
         table["where"] = value(change.place.as_str());
-        if matches!(change.kind, Kind::RegistryValue | Kind::PathEntry) {
+        if matches!(change.kind, Kind::RegistryValue | Kind::PathEntry | Kind::Mimeapps) {
             table["name"] = value(change.name.as_str());
         }
         if !change.entry.is_empty() {
@@ -184,6 +184,10 @@ impl JournalFile {
         self.dir.join(FILE)
     }
 
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
     /// One `metadata` call: whether there is a journal at all.
     pub fn exists(&self) -> bool {
         self.path().symlink_metadata().is_ok()
@@ -220,6 +224,11 @@ pub struct Locked {
 impl Locked {
     pub fn journal(&self) -> &Journal {
         &self.journal
+    }
+
+    /// The folder the journal is in.
+    pub fn dir(&self) -> &Path {
+        self.path.parent().unwrap_or(&self.path)
     }
 
     /// Write-ahead (spec 11.1): `change` is written with `done = false`, then `make` runs,
@@ -300,6 +309,21 @@ mod tests {
                     before: Value::Reg { ty: RegType::ExpandSz, data: r"%USERPROFILE%\x;;".into() },
                     after: Value::Reg { ty: RegType::ExpandSz, data: r"%USERPROFILE%\x;;C:\G\bin".into() },
                     done: false,
+                    ..base.clone()
+                },
+                Change {
+                    kind: Kind::Mimeapps,
+                    place: "/h/.config/mimeapps.list".into(),
+                    name: "inode/directory".into(),
+                    before: Value::Text("org.gnome.Nautilus.desktop;".into()),
+                    after: Value::Text("gezik.desktop;".into()),
+                    ..base.clone()
+                },
+                Change {
+                    kind: Kind::MacDefault,
+                    place: "public.folder".into(),
+                    before: Value::Text("com.apple.finder".into()),
+                    after: Value::Text("com.wenlar.gezik".into()),
                     ..base.clone()
                 },
                 Change {

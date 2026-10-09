@@ -20,7 +20,7 @@ use crate::navigation::{self, Navigator};
 /// tabs, never run.
 pub fn serve(listener: Listener, window: slint::Weak<AppWindow>) {
     listener.serve(move |request| {
-        let new_tab = request.new_tab;
+        let (new_tab, trash) = (request.new_tab, request.trash);
         let window = window.clone();
         carry_out(
             Instant::now() + CARRY_OUT_TIMEOUT,
@@ -30,7 +30,7 @@ pub fn serve(listener: Listener, window: slint::Weak<AppWindow>) {
                 window
                     .upgrade_in_event_loop(move |window| {
                         if turn.begin() {
-                            navigation::with_current(|nav| apply(nav, opens, missing, new_tab));
+                            navigation::with_current(|nav| apply(nav, opens, missing, new_tab, trash));
                             bring_to_front(&window);
                             turn.done();
                         }
@@ -95,12 +95,13 @@ impl Turn {
 
 /// Opens what another call asked for (spec 5.2, decision 2): each folder in the tab already
 /// showing it (unless `new_tab`), else in a new tab, with its names selected; a bare call
-/// opens the start folder the same way. Missing paths are said in the status bar.
-pub fn apply(nav: &Navigator, opens: Vec<Open>, missing: Vec<PathBuf>, new_tab: bool) {
+/// opens the start folder the same way; `trash` opens the trash after the paths. Missing paths
+/// are said in the status bar.
+pub fn apply(nav: &Navigator, opens: Vec<Open>, missing: Vec<PathBuf>, new_tab: bool, trash: bool) {
     let existing = |location: &Location| {
         if new_tab { None } else { cli::tab_for(&nav.tab_locations(), nav.active_index(), location) }
     };
-    if opens.is_empty() && missing.is_empty() {
+    if opens.is_empty() && missing.is_empty() && !trash {
         let start = nav.start();
         match existing(&start) {
             Some(index) => nav.activate_tab(index),
@@ -125,6 +126,92 @@ pub fn apply(nav: &Navigator, opens: Vec<Open>, missing: Vec<PathBuf>, new_tab: 
         let names: Vec<String> = missing.iter().map(|path| path.display().to_string()).collect();
         crate::view::with_current(|view| view.note(format!("{}: not found", names.join(", "))));
     }
+    if trash {
+        match existing(&Location::Trash) {
+            Some(index) => nav.activate_tab(index),
+            None => nav.open_tab(Location::Trash, true),
+        }
+    }
+}
+
+/// Opens `request` in this Gezik as if another `gezik` had sent it: FileManager1's calls and
+/// macOS's open event. Paths are looked at on a thread, opened on the UI thread.
+#[cfg_attr(windows, allow(dead_code))]
+pub fn open_here(window: slint::Weak<AppWindow>, request: gezik_platform::instance::Request) {
+    std::thread::spawn(move || {
+        let (opens, missing) = cli::group(&request.targets, crate::start::path_kind);
+        let _ = window.upgrade_in_event_loop(move |window| {
+            navigation::with_current(|nav| apply(nav, opens, missing, request.new_tab, request.trash));
+            bring_to_front(&window);
+        });
+    });
+}
+
+thread_local! {
+    static WINDOW: std::cell::RefCell<Option<slint::Weak<AppWindow>>> = const { std::cell::RefCell::new(None) };
+    /// Linux: another file manager holds FileManager1 (decision 18; the panel says so).
+    static FM1_TAKEN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Linux: FileManager1 is wanted (started and not stopped since); a start under way
+    /// that finds it unwanted lets the name go at once.
+    static FM1_WANTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+thread_local! {
+    /// The FileManager1 name while Gezik holds it.
+    static FILE_MANAGER1: std::cell::RefCell<Option<gezik_platform::file_manager1::Owner>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// The window FileManager1's calls open into; set once by main.
+pub fn set_window(window: slint::Weak<AppWindow>) {
+    WINDOW.with(|w| *w.borrow_mut() = Some(window));
+}
+
+/// Answers "Show in folder" from now on, if no other file manager does (Linux, UI thread).
+/// Taking the name waits on the bus, so it is done on a thread.
+pub fn start_file_manager1() {
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        use gezik_platform::file_manager1::{Show, serve};
+        let Some(window) = WINDOW.with(|w| w.borrow().clone()) else { return };
+        if FM1_WANTED.replace(true) {
+            return;
+        }
+        std::thread::spawn(move || {
+            let opener = window.clone();
+            let result = serve(move |call| {
+                let select = call.show != Show::Folders;
+                let targets = call.paths.into_iter().map(|path| cli::Target { path, select }).collect();
+                let request = gezik_platform::instance::Request { targets, trash: call.trash, ..Default::default() };
+                open_here(opener.clone(), request);
+            });
+            let _ = slint::invoke_from_event_loop(move || match result {
+                Ok(owner) if FM1_WANTED.get() => {
+                    FM1_TAKEN.set(false);
+                    FILE_MANAGER1.with(|f| *f.borrow_mut() = Some(owner));
+                }
+                Ok(_) => {}
+                Err(why) => {
+                    eprintln!("gezik: FileManager1: {why}");
+                    FM1_TAKEN.set(why.kind() == std::io::ErrorKind::AlreadyExists);
+                    FM1_WANTED.set(false);
+                }
+            });
+        });
+    }
+}
+
+/// Restore: the connection closes and the name goes.
+pub fn stop_file_manager1() {
+    FM1_WANTED.set(false);
+    FM1_TAKEN.set(false);
+    #[cfg(all(unix, not(target_os = "macos")))]
+    FILE_MANAGER1.with(|f| f.borrow_mut().take());
+}
+
+pub fn file_manager1_taken() -> bool {
+    FM1_TAKEN.get()
 }
 
 /// Restores and raises the window (spec 5.2): on Windows with the leave the caller gave; on

@@ -6,6 +6,7 @@ pub(crate) mod finder;
 pub(crate) mod icons;
 mod image;
 pub(crate) mod info;
+pub mod open_urls;
 pub(crate) mod open_with;
 pub(crate) mod ql_panel;
 pub(crate) mod services;

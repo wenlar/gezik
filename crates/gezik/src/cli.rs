@@ -37,6 +37,12 @@ pub struct Cli {
     pub version: bool,
     /// `--unregister`: undo the system changes and exit (spec 11.4); never handed to a running Gezik.
     pub unregister: bool,
+    /// `--shell TARGET` (Windows' folder verb and Win+E, spec 6.1): mapped by [`shell_target`].
+    pub shell: Option<String>,
+    /// `--dbus`: started by the session bus for FileManager1 (spec 6.4).
+    pub dbus: bool,
+    /// Open the Recycle Bin / Trash (from `--shell`; spec 6.1).
+    pub trash: bool,
     /// Unknown options and the like: on the console, and in the status bar of a Gezik that
     /// opens; never a reason not to open.
     pub warnings: Vec<String>,
@@ -62,6 +68,10 @@ pub fn parse(args: impl IntoIterator<Item = OsString>, windows: bool) -> Cli {
             "--help" | "-h" => cli.help = true,
             "--version" | "-V" => cli.version = true,
             "--unregister" => cli.unregister = true,
+            "--shell" => cli.shell = Some(args.next().and_then(|a| a.into_string().ok()).unwrap_or_default()),
+            "--dbus" => cli.dbus = true,
+            // macOS before 10.9 passed the process serial number to apps opened by Finder.
+            other if other.starts_with("-psn_") => {}
             "--select" => match args.next() {
                 Some(path) => push(&mut cli, path, true, windows),
                 None => cli.warnings.push("--select needs a path".to_owned()),
@@ -111,7 +121,7 @@ impl Cli {
             .iter()
             .filter_map(|t| Some(Target { path: hand_over_path(&t.path, cfg!(windows))?, select: t.select }))
             .collect();
-        Request { new_tab: self.new_tab, targets, activation_token }
+        Request { new_tab: self.new_tab, targets, activation_token, trash: self.trash }
     }
 }
 
@@ -136,6 +146,79 @@ fn hand_over_path(path: &Path, windows: bool) -> Option<PathBuf> {
     let drive = rest.as_bytes();
     (drive.len() >= 3 && drive[0].is_ascii_alphabetic() && drive[1] == b':' && drive[2] == b'\\')
         .then(|| PathBuf::from(rest))
+}
+
+/// Where a `--shell` target goes (spec 6.1's table).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Shell {
+    Open(Target),
+    Trash,
+    StartFolder,
+    /// A place only Explorer shows (spec 6.3).
+    Explorer,
+}
+
+const RECYCLE_BIN: &str = "::{645ff040-5081-101b-9f08-00aa002f954e}";
+/// This PC, Home, Quick access: Gezik's start folder (spec 6.1).
+const START_PLACES: [&str; 3] = [
+    "::{20d04fe0-3aea-1069-a2d8-08002b30309d}",
+    "::{f874310e-b6b7-47dc-bc84-b9e6b38f5903}",
+    "::{679f85cb-0220-4080-b29b-5540cc05aab6}",
+];
+
+/// Maps what the shell passed (`%1`, or "" for Win+E). CLSIDs without case; `shell:` names
+/// other than the Recycle Bin are left to Explorer (the shell resolves known folders to paths
+/// before it gets here). A file opens its folder only if Gezik can open it as an archive.
+/// Any app may start `gezik --shell X`: X is only looked at here, never run.
+pub fn shell_target(text: &str, kind: impl Fn(&Path) -> PathKind) -> Shell {
+    // `"C:\"` arrives as `C:"` (see `parse`).
+    let text = text.trim().trim_end_matches('"');
+    if text.is_empty() {
+        return Shell::StartFolder;
+    }
+    let lower = text.to_lowercase();
+    let name = lower.strip_prefix("shell:").unwrap_or(&lower);
+    if name == RECYCLE_BIN || name.starts_with(&format!("{RECYCLE_BIN}\\")) || name == "recyclebinfolder" {
+        return Shell::Trash;
+    }
+    if START_PLACES.contains(&name) {
+        return Shell::StartFolder;
+    }
+    let path = match text.as_bytes() {
+        [letter, b':'] if letter.is_ascii_alphabetic() => format!("{text}\\"),
+        _ => text.to_owned(),
+    };
+    // shortcut: a bare `\\server` goes to Explorer until 9b6 lists its shares.
+    if !plain_path(&path) {
+        return Shell::Explorer;
+    }
+    let path = PathBuf::from(path);
+    match kind(&path) {
+        PathKind::Dir => Shell::Open(Target { path, select: false }),
+        PathKind::File
+            if path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| gezik_core::kind::Kind::of(n, false) == gezik_core::kind::Kind::Archive) =>
+        {
+            Shell::Open(Target { path, select: true })
+        }
+        _ => Shell::Explorer,
+    }
+}
+
+/// `X:\…`, or `\\server\share…`; no device path, no bare server, nothing relative.
+fn plain_path(text: &str) -> bool {
+    match text.as_bytes() {
+        [letter, b':', b'\\', ..] => letter.is_ascii_alphabetic(),
+        [b'\\', b'\\', rest @ ..] => {
+            let mut parts = std::str::from_utf8(rest).unwrap_or("").split('\\');
+            let server = parts.next().unwrap_or("");
+            let share = parts.next().unwrap_or("");
+            !server.is_empty() && server != "?" && server != "." && !share.is_empty()
+        }
+        _ => false,
+    }
 }
 
 /// A tab to show: a folder, and names to select in it.
@@ -201,6 +284,57 @@ mod tests {
 
     fn t(path: &str, select: bool) -> Target {
         Target { path: PathBuf::from(path), select }
+    }
+
+    #[test]
+    fn shell_targets_map_as_the_table_says() {
+        let kind = |p: &Path| match p.to_str().unwrap_or("") {
+            r"C:\" | r"D:\Work" | r"\\srv\share\x" => PathKind::Dir,
+            r"D:\a.zip" | r"D:\Docs.library-ms" | r"D:\a.txt" => PathKind::File,
+            _ => PathKind::Missing,
+        };
+        let open = |p: &str, select: bool| Shell::Open(Target { path: PathBuf::from(p), select });
+        let cases = [
+            ("", Shell::StartFolder),
+            (r#"C:""#, open(r"C:\", false)),
+            ("C:", open(r"C:\", false)),
+            (r"D:\Work", open(r"D:\Work", false)),
+            (r"\\srv\share\x", open(r"\\srv\share\x", false)),
+            ("::{645FF040-5081-101B-9F08-00AA002F954E}", Shell::Trash),
+            ("::{645ff040-5081-101b-9f08-00aa002f954e}", Shell::Trash),
+            (r"::{645FF040-5081-101B-9F08-00AA002F954E}\x", Shell::Trash),
+            ("shell:RecycleBinFolder", Shell::Trash),
+            ("shell:::{20D04FE0-3AEA-1069-A2D8-08002B30309D}", Shell::StartFolder),
+            ("::{20D04FE0-3AEA-1069-A2D8-08002B30309D}", Shell::StartFolder),
+            ("::{F874310E-B6B7-47DC-BC84-B9E6B38F5903}", Shell::StartFolder),
+            ("::{679F85CB-0220-4080-B29B-5540CC05AAB6}", Shell::StartFolder),
+            (r"::{20D04FE0-3AEA-1069-A2D8-08002B30309D}\::{F02C1A0D-BE21-4350-88B0-7367FC96EF3C}", Shell::Explorer),
+            ("::{26EE0668-A00A-44D7-9371-BEB064C98683}", Shell::Explorer),
+            (r"\\srv", Shell::Explorer),
+            (r"\\srv\", Shell::Explorer),
+            (r"\\?\C:\x", Shell::Explorer),
+            (r"D:\a.zip", open(r"D:\a.zip", true)),
+            (r"D:\Docs.library-ms", Shell::Explorer),
+            (r"D:\a.txt", Shell::Explorer),
+            (r"D:\gone", Shell::Explorer),
+            ("shell:Downloads", Shell::Explorer),
+            ("relative", Shell::Explorer),
+        ];
+        for (text, want) in cases {
+            assert_eq!(shell_target(text, kind), want, "{text}");
+        }
+    }
+
+    #[test]
+    fn hidden_flags_parse() {
+        let cli = parse(args(&["--shell", r"D:\x"]), true);
+        assert_eq!(cli.shell.as_deref(), Some(r"D:\x"));
+        assert!(cli.targets.is_empty() && cli.warnings.is_empty());
+        assert_eq!(parse(args(&["--shell"]), true).shell.as_deref(), Some(""));
+        assert!(parse(args(&["--dbus"]), false).dbus);
+        assert!(parse(args(&["-psn_0_12345"]), false).warnings.is_empty(), "macOS launch argument");
+        assert!(!HELP.contains("--shell") && !HELP.contains("--dbus"));
+        assert!(Cli { trash: true, ..Cli::default() }.request().trash, "the trash is handed over");
     }
 
     #[test]

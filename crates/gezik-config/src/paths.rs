@@ -103,6 +103,11 @@ fn slash_path(path: &Path) -> String {
 /// readers and sync tools never see a half-written file. A symlinked file (say, from a
 /// dotfiles repo) stays a link: its target is written.
 pub fn write_atomic(path: &Path, contents: &str) -> io::Result<()> {
+    write_atomic_bytes(path, contents.as_bytes())
+}
+
+/// [`write_atomic`] for bytes (a UTF-16 .reg file).
+pub fn write_atomic_bytes(path: &Path, contents: &[u8]) -> io::Result<()> {
     let target;
     let path = if path.symlink_metadata().is_ok_and(|meta| meta.file_type().is_symlink()) {
         target = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
@@ -114,7 +119,7 @@ pub fn write_atomic(path: &Path, contents: &str) -> io::Result<()> {
     // The process id keeps two Gezik windows from writing into the same temp file.
     let tmp = path.with_file_name(format!(".{}.{}.tmp", name.to_string_lossy(), std::process::id()));
     let mut file = std::fs::File::create(&tmp)?;
-    file.write_all(contents.as_bytes())?;
+    file.write_all(contents)?;
     file.sync_all()?;
     drop(file);
     std::fs::rename(&tmp, path)
