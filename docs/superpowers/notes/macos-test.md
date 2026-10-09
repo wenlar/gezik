@@ -2,6 +2,14 @@
 
 Run 1 (2026-10-06, `feat/batch-ops-5c`) covered items 1-22. Its fixes are on master: the `fix/macos` branch, and the shared UI fixes from `fix/shared-ui`. Sub-projects 5c (convert, user commands, ffmpeg), 5d (PDF, pdfium) and 6a (keyboard: filter, selection, tabs; items 47-51) have never run on a Mac.
 
+Part 9a1 (system icons, Quick Look thumbnails, Finder names, aliases, packages; items 85-93) has never run on a Mac. Run it on `feat/system-9a1` (after the merge: `master`) and write a new section **"Run: 9a1"** in `macos-test-results.md`. Start with the probe, one command that tries every system call 9a1 relies on and prints PASS/FAIL per line (item 85):
+
+```sh
+cargo run --release -p gezik-platform --example mac_probe -- ~/Desktop/some.pdf ~/Pictures/photo.heic ~/Movies/clip.mov ~/Documents/report.pages
+```
+
+Paste its whole output into the results, then run `cargo test -p gezik-platform` (its macOS-only tests for icons, Finder names and aliases run only there).
+
 This file is for a person, or Claude Code on the Mac, testing the state after 5d. Write the results into `docs/superpowers/notes/macos-test-results.md`, in a new section **"Run 2 (after 5d)"** below Run 1. Don't change Run 1.
 - Give PASS, FAIL or NOT TESTED for every item.
 - For a FAIL, give the steps, what you expected, what happened, and a screenshot path. Don't commit screenshots.
@@ -15,6 +23,7 @@ xcode-select --install            # C/C++ compiler (UnRAR is C++); skip if alrea
 curl https://sh.rustup.rs -sSf | sh   # Rust; then open a new terminal
 git clone git@github.com:wenlar/gezik.git && cd gezik   # or: git fetch in the existing clone
 git checkout feat/batch-ops-5d    # until it is merged; after that: git checkout master && git pull
+                                  # part 9a1: git checkout feat/system-9a1 (until it is merged)
 git log -1 --oneline              # write this SHA into the results
 cargo build --release -p gezik
 rm -rf /tmp/gezik-cfg && mkdir -p /tmp/gezik-cfg /tmp/gezik-test
@@ -387,14 +396,26 @@ Re-checks of the shared UI fixes (fix/shared-ui, on master)
 83. **Quick Open.** ⌘P lists places first (pinned, recent folders, tabs, tab sets, saved searches and filters); typing `down` finds Downloads; Alt+Return opens it in a new tab; the last line `Search for "x" in <folder>` starts a search. Go ▸ Quick Open… and Go ▸ Command Palette… do the same as the keys.
 84. **Saved searches.** Search for something, then the bar's ▾ ▸ Save search…: a name, then "Save with this folder" or "Save for any folder ({here})". `~/Library/Application Support/gezik/settings.toml` gets a `[[searches]]` entry; comments written there by hand stay. The sidebar's SEARCHES section lists it (magnifier icon): a click runs it, the tab is titled with its name, right-click ▸ Run in new tab / Rename… / Delete. A `{here}` search run in another folder searches there.
 
+### 9a1, system icons, thumbnails, Finder names, aliases, packages
+
+85. **Probe.** `cargo run --release -p gezik-platform --example mac_probe -- ~/Desktop/some.pdf ~/Pictures/photo.heic ~/Movies/clip.mov ~/Documents/report.pages` (any files of these types; add a file that is only in iCloud and a symlink to it if you have one). Paste the whole output into the results. Every line is PASS (NONE is fine for a type Quick Look has no thumbnail for; an iCloud-only file says SKIP); "4 workers at once" must not crash (if it does, or icons come back blank on a worker, NSWorkspace icons have to be serialised); "cancel after 5 ms" says none for a PDF or video. Note the `folder_has_own_icon` times. Then open the folder it names in Finder: "a.txt alias" (now broken), "folder alias" and "Safari alias" show the alias arrow, "folder alias" opens the folder in Finder. Delete the folder. Also run `cargo test -p gezik-platform` and report failures.
+86. **System icons.** With `icons = "system"` (the default): `/Applications` in the list and the grid shows each app's own icon; `~` shows Desktop, Documents, Downloads with Finder's special folder icons; `/` shows Applications, Library, System, Users as Finder does; a folder with a custom icon (Finder ▸ Get Info ▸ paste an image on the icon) shows it; a mounted disk image under `/Volumes` shows its volume icon; `.pdf`, `.txt`, `.zip`, `.md` and a file with no extension have Finder's document icons. Icons are the right way up, have clean transparent edges (no dark fringe) and are crisp at 200 %. `icons = "gezik"` brings Gezik's own icons back at once.
+87. **Speed and memory.** A folder with 1,000 files of mixed types: the list draws without a visible pause (≤ 150 ms), fast scrolling is as smooth as with `icons = "gezik"`. Scroll `/Applications` in the grid at the largest size: Activity Monitor's memory for gezik stays within ~40 MB of what it was before (the icon and thumbnail caches are bounded). Nothing uses CPU once scrolling stops. A folder with 200 subfolders on a network share (SMB) lists without a pause: each folder is checked for its own icon; note if it is slow.
+88. **Quick Look thumbnails.** Grid view with `thumbnails = true`: a PDF shows its first page, a HEIC photo, a MOV a frame, a Pages/Keynote/Numbers file its first page, a PSD (if any) its picture, a `.txt` its text; PNG/JPEG still come at once (Gezik's own); none is upside down. The preview panel shows the same for a PDF and a MOV. Scroll a folder of 500 PDFs fast to the end: the ones on screen come first. Leave a folder of big videos while thumbnails load: CPU drops within a moment; go back: the thumbnails that were cancelled come now (no blank tiles). iCloud Drive with "Optimize Mac Storage": a file that is only in iCloud (cloud icon in Finder) gets no thumbnail and no preview (its icon only) and is **not** downloaded (Finder still shows the cloud icon afterwards); the same for a symbolic link to such a file in another folder.
+89. **Finder names.** Put Türkçe first in System Settings ▸ General ▸ Language & Region, log out and in (or restart), then start Gezik: the sidebar says Masaüstü, Belgeler, İndirilenler…; `~` lists Belgeler, Masaüstü, Müzik…; `/` lists Uygulamalar, Kullanıcılar, Sistem, Kitaplık; the address bar's parts and the tab title say Kullanıcılar › <you> › Belgeler; ⌘L shows the real path `/Users/<you>/Documents`. Sort by name: Documents sorts under D. Type "Doc" in the filter: Belgeler is found. F2/Enter on Belgeler edits "Documents" (the real name; Esc, don't rename it). Files in `~` keep their extensions. A pinned `~/Documents` keeps its own label. Put English back first afterwards.
+90. **Opening aliases.** In Finder make aliases (⌃⌘A) of a file, a folder, a folder on another volume and `/Applications/Safari.app`. In Gezik double-click and Enter: the folder alias goes into the original folder (Back returns); the file alias opens the original in its app; the Safari alias starts Safari (Gezik does not go into Safari.app). Delete the original file, open the alias: "The original item can't be found" with Delete Alias (the alias goes to the Trash at once, with no second question; ⌘Z brings it back) and OK (nothing happens). A symbolic link to a file still opens the file; a broken one asks the same question. A symbolic link to a folder is entered as before.
+91. **Make Alias.** ⌃⌘A, File ▸ Make Alias and right-click ▸ Make Alias (before "Create link") on a file, a folder and three items: `<name> alias` next to each (`rapor.pdf alias`), selected. Finder shows the arrow badge and opens them. Again on the same file: `rapor.pdf alias (2)`; the first alias is untouched. ⌘Z moves the aliases to the Trash; the originals are untouched. Move the original elsewhere in Finder: the alias still opens it.
+92. **Packages.** In `/Applications` double-click Safari.app: Safari starts, Gezik does not go in; Enter does the same. Right-click Safari.app ▸ Show Package Contents (right after Open) and File ▸ Show Package Contents: Gezik goes into `Safari.app` (Contents). A Keynote/Pages document that is a folder (`.key`/`.pages` package, e.g. from an older version, or `.rtfd` from TextEdit) opens in its app. A plain folder you name `x.app` (`mkdir /tmp/gezik-test/x.app`) is entered on double-click. The command palette lists Make Alias and Show Package Contents.
+93. **Exe size.** `ls -l target/release/gezik` before (on `master`) and after (on `feat/system-9a1`), both `cargo build --release -p gezik`: write both numbers; the difference should be under 256 KB plus the Quick Look and CoreGraphics bindings.
+
 Report anything else that looks wrong: layout, fonts, Retina scaling, ⌘ shortcuts that don't work, and the wording of the boxes.
 
 ## Known gaps (not bugs)
 
 These are known differences from Finder and ForkLift (from the ForkLift comparison, §3). Don't report them as failures. A note is welcome if one hurts more than expected.
 - **Icons and thumbnails:**
-  - No system icons: every item has Gezik's own icon.
-  - Thumbnails come from Gezik's own decoders (5 formats), with no Quick Look thumbnails (PDF, video, PSD, Office).
+  - Alias rows show Finder's "Document" type and the generic document icon, not "Alias" with the arrow badge (Gezik reads no extra file data while listing).
+  - Pinned folders keep their own labels; only the sidebar's known folders, the address bar, tab titles and the rows under `~` and `/` use Finder's localized names.
 - **Quick Look and context menu:**
   - Quick Look is Gezik's own window, with no QL plugins, video, PDF or Office preview.
   - The right-click menu is Gezik's own: no "Open With ▸" list, Share/AirDrop, Services, Quick Actions, "Show in Finder" or "Get Info".
