@@ -4,6 +4,7 @@
 //! means the item's place is unknown (Put Back asks), never a guess.
 
 use std::collections::HashMap;
+use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 /// What a `$I` file says of its `$R` entry.
@@ -42,25 +43,43 @@ pub(crate) fn parse_windows_info(bytes: &[u8]) -> Option<WindowsInfo> {
     (!path.is_empty()).then_some(WindowsInfo { size, deleted, path })
 }
 
-/// `path` if Put Back may take an item there: `X:\…` or `\\server\share\…`, every part a plain
-/// name (not empty, no `:` stream, `/` or NUL, no trailing `.` or space, which Windows strips:
-/// so no `.` or `..` either); never a device path (`\\?\`, `\\.\`).
-pub(crate) fn windows_original(path: &str) -> Option<String> {
-    let plain = |part: &str| !part.is_empty() && !part.ends_with(['.', ' ']) && !part.contains([':', '/', '\0']);
+/// `path` if Put Back may take an item there: on the bin's own volume (`bin_volume`: `X:` or
+/// `\\server\share`, compared without case; a `$I` naming another drive or a stranger's share is
+/// refused), as `X:\…` or `\\server\share\…`, every part a `windows_plain` name. Never a device
+/// path (`\\?\`, `\\.\`).
+pub(crate) fn windows_original(path: &str, bin_volume: &str) -> Option<String> {
     let b = path.as_bytes();
-    let rest = if b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'\\' {
-        &path[3..]
+    let (volume, rest) = if b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'\\' {
+        (&path[..2], &path[3..])
     } else {
         let unc = path.strip_prefix(r"\\")?;
         let mut parts = unc.splitn(3, '\\');
         let (server, share, rest) = (parts.next()?, parts.next()?, parts.next()?);
-        // `\\.\` already fails `plain` (a trailing dot).
-        if !plain(server) || server == "?" || !plain(share) {
+        // `?` and a trailing `.` fail `windows_plain`, so `\\?\` and `\\.\` do too.
+        if !windows_plain(server) || !windows_plain(share) {
             return None;
         }
-        rest
+        (&path[..2 + server.len() + 1 + share.len()], rest)
     };
-    (!rest.is_empty() && rest.split('\\').all(plain)).then(|| path.to_owned())
+    let same_volume = volume.eq_ignore_ascii_case(bin_volume.trim_end_matches('\\'));
+    (same_volume && !rest.is_empty() && rest.split('\\').all(windows_plain)).then(|| path.to_owned())
+}
+
+/// A name Windows keeps as written and that is a file, not a device: not empty, none of
+/// `<>:"/\|?*` (`:` would be a stream) or control characters, no trailing `.` or space (Windows
+/// strips them, so `.. ` would climb; `.` and `..` end in a dot too), and not a device name
+/// (`CON`, `NUL.txt`, `com1`…: the part before the first dot, trailing spaces aside).
+fn windows_plain(part: &str) -> bool {
+    let stem = part.split('.').next().unwrap_or_default().trim_end_matches(' ').to_ascii_uppercase();
+    let numbered = stem
+        .strip_prefix("COM")
+        .or_else(|| stem.strip_prefix("LPT"))
+        .is_some_and(|n| ["1", "2", "3", "4", "5", "6", "7", "8", "9", "\u{b9}", "\u{b2}", "\u{b3}"].contains(&n));
+    let device = numbered || ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"].contains(&stem.as_str());
+    !part.is_empty()
+        && !part.ends_with(['.', ' '])
+        && !part.chars().any(|c| c < ' ' || "<>:\"/\\|?*".contains(c))
+        && !device
 }
 
 /// A FILETIME (100 ns ticks since 1601) as a time; `None` before 1970.
@@ -126,19 +145,44 @@ fn valid_parts([year, month, day, hour, minute, second]: [i64; 6]) -> bool {
         && (0..61).contains(&second)
 }
 
-/// Where Put Back takes an item a `.trashinfo` says was at `path`: absolute as it is; relative
-/// to `topdir` in a volume's own trash (the home trash keeps absolute paths). Every part a
-/// plain name, the last one too.
+/// Where Put Back takes an item a `.trashinfo` says was at `path`. The home trash (`topdir`
+/// `None`) keeps absolute paths; a volume's own trash keeps paths relative to its `topdir` and
+/// may only send items back onto that volume, so an absolute path there is refused (a stick's
+/// `.Trash-1000` must not plant a file in the home folder). Every part a plain name.
 pub(crate) fn freedesktop_original(path: &str, topdir: Option<&str>) -> Option<String> {
     let plain = |part: &str| !part.is_empty() && part != "." && part != ".." && !part.contains('\0');
-    match path.strip_prefix('/') {
-        Some(rest) => rest.split('/').all(plain).then(|| path.to_owned()),
-        None => path
-            .split('/')
-            .all(plain)
-            .then(|| topdir.map(|top| format!("{}/{path}", top.trim_end_matches('/'))))
-            .flatten(),
+    match (path.strip_prefix('/'), topdir) {
+        (Some(rest), None) => rest.split('/').all(plain).then(|| path.to_owned()),
+        (None, Some(top)) => path.split('/').all(plain).then(|| format!("{}/{path}", top.trim_end_matches('/'))),
+        _ => None,
     }
+}
+
+/// The first folder on the way from `root` (not itself) to `target` (not itself) that is a
+/// symlink or a junction, or cannot be looked at; `target` itself when it is not below `root`.
+/// `None`: Put Back may move the item there. Put Back calls it right before the move, with the
+/// volume (or home) the bin belongs to as `root`, so a link planted on the way cannot send an
+/// item elsewhere. Folders not there yet are fine (Put Back makes them).
+/// shortcut: a check, then the move (a local attacker can still race it); move through opened
+/// folder handles (`openat`, `O_NOFOLLOW`) if that matters.
+pub(crate) fn symlinked_folder(root: &Path, target: &Path) -> Option<PathBuf> {
+    let Some(below) = target
+        .strip_prefix(root)
+        .ok()
+        .filter(|below| below.components().all(|part| matches!(part, Component::Normal(_))))
+    else {
+        return Some(target.to_owned());
+    };
+    let mut folder = root.to_path_buf();
+    for part in below.parent()?.components() {
+        folder.push(part);
+        match std::fs::symlink_metadata(&folder) {
+            Ok(meta) if !meta.file_type().is_symlink() && meta.is_dir() => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+            _ => return Some(folder),
+        }
+    }
+    None
 }
 
 /// A local time (`parse_trashinfo`'s date) as a time.
@@ -304,7 +348,9 @@ fn record(node: &[u8], mut at: usize, records: &mut HashMap<String, PutBack>) ->
     Some(at + len)
 }
 
-/// Where Put Back takes an item Finder says was in `folder` (relative to `volume`) as `name`.
+/// Where Put Back takes an item Finder says was in `folder` (relative to `volume`, the volume
+/// whose Trash held it) as `name`. It stays on that volume: every part a plain name, and on the
+/// startup volume (`/`) never into `/Volumes`, where the other volumes are mounted.
 pub(crate) fn mac_original(volume: &str, folder: &str, name: &str) -> Option<String> {
     let plain = |part: &str| !part.is_empty() && part != "." && part != ".." && !part.contains(['/', '\0']);
     let folder = folder.trim_matches('/');
@@ -312,6 +358,10 @@ pub(crate) fn mac_original(volume: &str, folder: &str, name: &str) -> Option<Str
         return None;
     }
     let volume = volume.trim_end_matches('/');
+    let first = folder.split('/').next().filter(|part| !part.is_empty()).unwrap_or(name);
+    if volume.is_empty() && first.eq_ignore_ascii_case("Volumes") {
+        return None;
+    }
     Some(if folder.is_empty() { format!("{volume}/{name}") } else { format!("{volume}/{folder}/{name}") })
 }
 
@@ -400,8 +450,14 @@ mod tests {
 
     #[test]
     fn windows_places_gezik_may_restore_to() {
-        for good in [r"C:\a.txt", r"d:\Work\x y\z", r"\\server\share\a.txt", r"\\s\p\a\b"] {
-            assert_eq!(windows_original(good).as_deref(), Some(good), "{good}");
+        for (bin, good) in [
+            ("C:", r"C:\a.txt"),
+            (r"D:\", r"d:\Work\x y\z"),
+            (r"\\server\share", r"\\server\share\a.txt"),
+            (r"\\S\P\", r"\\s\p\a\b"),
+            ("C:", r"C:\console\COM0\LPT10\conx.txt\nul_"),
+        ] {
+            assert_eq!(windows_original(good, bin).as_deref(), Some(good), "{good}");
         }
     }
 
@@ -427,7 +483,44 @@ mod tests {
             r"\\se/rver\share\a",
             r"\\server\sh:are\a",
         ] {
-            assert_eq!(windows_original(bad), None, "{bad}");
+            assert_eq!(windows_original(bad, "C:"), None, "{bad}");
+            assert_eq!(windows_original(bad, r"\\server\share"), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn windows_places_on_another_volume_are_refused() {
+        // A `$I` in D:'s bin may only send its item back to D:.
+        assert_eq!(windows_original(r"C:\Users\u\Startup\a.exe", "D:"), None);
+        assert_eq!(windows_original(r"\\evil\share\a.txt", "C:"), None, "no NTLM to a stranger");
+        assert_eq!(windows_original(r"\\server\other\a.txt", r"\\server\share"), None);
+        assert_eq!(windows_original(r"\\server\share2\a", r"\\server\share"), None);
+        assert_eq!(windows_original(r"C:\a.txt", r"\\server\share"), None);
+        assert_eq!(windows_original(r"C:\a.txt", ""), None);
+    }
+
+    #[test]
+    fn windows_devices_and_odd_characters_are_refused() {
+        for bad in [
+            r"C:\CON",
+            r"C:\a\nul.txt",
+            r"C:\a\Aux .tar.gz",
+            r"C:\prn\b",
+            r"C:\com1",
+            r"C:\LPT9.log",
+            "C:\\com\u{b9}",
+            "C:\\lpt\u{b3}.x",
+            r"C:\conin$",
+            r"C:\a<b",
+            r"C:\a>b",
+            "C:\\a\"b",
+            r"C:\a|b",
+            r"C:\a?b",
+            r"C:\a*b",
+            "C:\\a\u{1}b",
+            "C:\\a\tb",
+        ] {
+            assert_eq!(windows_original(bad, "C:"), None, "{bad:?}");
         }
     }
 
@@ -450,7 +543,17 @@ mod tests {
         assert_eq!(freedesktop_original("/home/u/a.txt", None).as_deref(), Some("/home/u/a.txt"));
         assert_eq!(freedesktop_original("docs/a.txt", Some("/media/usb")).as_deref(), Some("/media/usb/docs/a.txt"));
         assert_eq!(freedesktop_original("docs/a.txt", Some("/media/usb/")).as_deref(), Some("/media/usb/docs/a.txt"));
-        assert_eq!(freedesktop_original("/media/usb/a", Some("/media/usb")).as_deref(), Some("/media/usb/a"));
+    }
+
+    #[test]
+    fn a_volume_trash_keeps_its_items_on_its_volume() {
+        // A USB stick's `.Trash-1000` must not send an item into the home folder.
+        assert_eq!(freedesktop_original("/home/u/.config/autostart/x.desktop", Some("/media/usb")), None);
+        assert_eq!(
+            freedesktop_original("/media/usb/a", Some("/media/usb")),
+            None,
+            "volume trashes store relative paths"
+        );
     }
 
     #[test]
@@ -458,6 +561,7 @@ mod tests {
         assert_eq!(freedesktop_original("docs/a.txt", None), None, "the home trash keeps absolute paths");
         for bad in ["../etc/passwd", "/home/u/../../etc/x", "/a/./b", "", "/", "/a/b/", "/a\0b"] {
             assert_eq!(freedesktop_original(bad, Some("/media/usb")), None, "{bad:?}");
+            assert_eq!(freedesktop_original(bad, None), None, "{bad:?}");
         }
     }
 
@@ -573,5 +677,36 @@ mod tests {
         {
             assert_eq!(mac_original("/", folder, name), None, "{folder} {name}");
         }
+    }
+
+    #[test]
+    fn mac_places_stay_on_the_trash_volume() {
+        // The startup volume's Trash must not send an item onto a mounted volume.
+        for folder in ["Volumes/USB/x/", "volumes/USB/", "/Volumes/USB/", "Volumes/"] {
+            assert_eq!(mac_original("/", folder, "a"), None, "{folder}");
+        }
+        assert_eq!(mac_original("/", "", "Volumes"), None, "the mount folder itself");
+        assert_eq!(mac_original("/", "Users/u/Volumes/", "a").as_deref(), Some("/Users/u/Volumes/a"));
+        assert_eq!(mac_original("/Volumes/USB", "Volumes/", "a").as_deref(), Some("/Volumes/USB/Volumes/a"));
+    }
+
+    #[test]
+    fn symlinked_folders_on_the_way_are_found() {
+        let dir = std::env::temp_dir().join(format!("gezik-trash-links-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("real/sub")).unwrap();
+        let target = dir.join("real/sub/missing/a.txt");
+        assert_eq!(symlinked_folder(&dir, &target), None, "plain and missing folders are fine");
+        assert_eq!(
+            symlinked_folder(&dir.join("real"), &dir.join("elsewhere/a")),
+            Some(dir.join("elsewhere/a")),
+            "outside root"
+        );
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(dir.join("real"), dir.join("link")).unwrap();
+            assert_eq!(symlinked_folder(&dir, &dir.join("link/sub/a.txt")), Some(dir.join("link")));
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
