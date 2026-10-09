@@ -19,6 +19,7 @@ pub mod process;
 pub mod taskbar;
 pub mod terminal;
 mod text;
+pub mod trash;
 
 use std::path::PathBuf;
 
