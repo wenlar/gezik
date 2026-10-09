@@ -59,10 +59,10 @@ pub fn thumbnail(path: &Path, px: u32) -> Option<Rgba> {
 /// Look request; elsewhere nothing waits, and `wanted` is not asked.
 pub fn thumbnail_while(path: &Path, px: u32, wanted: &dyn Fn() -> bool) -> Option<Rgba> {
     let in_cloud = only_in_cloud(path);
-    // Windows asks the shell first: the cloud app hands over its own thumbnail without the
-    // data (spec 9 §7.3); Gezik's decoder and Quick Look would read the file.
+    // Windows asks the shell first; for a cloud file only its cache (the cloud app's own
+    // thumbnail), never a handler that would read the data (spec 9 §7.3).
     #[cfg(windows)]
-    if let Some(image) = win::thumbnail(path, px) {
+    if let Some(image) = win::thumbnail(path, px, in_cloud) {
         return Some(image);
     }
     if in_cloud {
@@ -114,20 +114,28 @@ mod win {
     use windows::Win32::Foundation::SIZE;
     use windows::Win32::Graphics::Gdi::DeleteObject;
     use windows::Win32::System::Com::IBindCtx;
-    use windows::Win32::UI::Shell::{IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_THUMBNAILONLY};
+    use windows::Win32::UI::Shell::{
+        IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF, SIIGBF_INCACHEONLY, SIIGBF_THUMBNAILONLY,
+    };
     use windows::core::HSTRING;
 
     use crate::Rgba;
 
-    /// The shell's thumbnail (its cache, or the type's thumbnail handler); `None` if the
-    /// type has no thumbnails.
-    pub fn thumbnail(path: &Path, px: u32) -> Option<Rgba> {
+    /// What the shell may do: a cloud file's thumbnail only from the cache, since the type's
+    /// handler would read (download) the data.
+    pub(super) fn image_flags(in_cloud: bool) -> SIIGBF {
+        if in_cloud { SIIGBF_THUMBNAILONLY | SIIGBF_INCACHEONLY } else { SIIGBF_THUMBNAILONLY }
+    }
+
+    /// The shell's thumbnail (its cache, or the type's thumbnail handler unless `in_cloud`);
+    /// `None` if there is none.
+    pub fn thumbnail(path: &Path, px: u32, in_cloud: bool) -> Option<Rgba> {
         let side = px.clamp(1, 1024) as i32;
         // SAFETY: the bitmap is ours to delete once converted.
         unsafe {
             let factory: IShellItemImageFactory =
                 SHCreateItemFromParsingName(&HSTRING::from(path.as_os_str()), None::<&IBindCtx>).ok()?;
-            let bitmap = factory.GetImage(SIZE { cx: side, cy: side }, SIIGBF_THUMBNAILONLY).ok()?;
+            let bitmap = factory.GetImage(SIZE { cx: side, cy: side }, image_flags(in_cloud)).ok()?;
             let image = crate::icons::win::bitmap_to_rgba(bitmap);
             let _ = DeleteObject(bitmap.into());
             let mut image = image?;
@@ -143,6 +151,14 @@ mod win {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn a_cloud_file_gets_only_a_cached_thumbnail() {
+        use windows::Win32::UI::Shell::{SIIGBF_INCACHEONLY, SIIGBF_THUMBNAILONLY};
+        assert_eq!(win::image_flags(true), SIIGBF_THUMBNAILONLY | SIIGBF_INCACHEONLY);
+        assert_eq!(win::image_flags(false), SIIGBF_THUMBNAILONLY, "a local file may use the handler");
+    }
 
     #[test]
     fn only_in_cloud_reads_no_data() {
