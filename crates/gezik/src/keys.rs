@@ -806,6 +806,7 @@ mod tests {
                 Action::CommandPalette => "ctrl+shift+p",
                 Action::QuickOpen => "ctrl+p",
                 Action::GetInfo => "alt+enter",
+                Action::ConnectToServer => "ctrl+k",
                 Action::PasteMove
                 | Action::MakeAlias
                 | Action::ShowPackageContents
@@ -827,7 +828,8 @@ mod tests {
                 | Action::EmptyTrash
                 | Action::SystemIntegration
                 | Action::KeepOffline
-                | Action::FreeUpSpace => continue,
+                | Action::FreeUpSpace
+                | Action::Eject => continue,
             };
             assert_eq!(reach(text), Some(action), "{text}");
         }

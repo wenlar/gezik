@@ -34,7 +34,7 @@ pub(crate) fn parse_mounts(text: &str) -> Vec<PathBuf> {
 }
 
 #[cfg_attr(windows, allow(dead_code))]
-fn unescape_mount(field: &str) -> String {
+pub(crate) fn unescape_mount(field: &str) -> String {
     let bytes = field.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
@@ -142,7 +142,7 @@ pub fn drives() -> Vec<Drive> {
     if !mounts.iter().any(|m| m == std::path::Path::new("/")) {
         mounts.insert(0, PathBuf::from("/"));
     }
-    mounts
+    let mut drives: Vec<Drive> = mounts
         .into_iter()
         .map(|path| {
             let removable = path.starts_with("/media") || path.starts_with("/run/media");
@@ -153,7 +153,26 @@ pub fn drives() -> Vec<Drive> {
             };
             Drive { path, label, kind: if removable { DriveKind::Removable } else { DriveKind::Fixed } }
         })
-        .collect()
+        .collect();
+    // gvfs's SMB mounts (Gezik's `gio mount` or the desktop's), as network drives. The drive
+    // signature does not see them: Gezik reads the drives again after its own connect and
+    // disconnect. shortcut: one mounted elsewhere shows at the next drive change or start.
+    if let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR") {
+        let gvfs = std::path::Path::new(&runtime).join("gvfs");
+        for entry in std::fs::read_dir(gvfs).into_iter().flatten().flatten() {
+            if let Some(label) = gvfs_smb_label(&entry.file_name().to_string_lossy()) {
+                drives.push(Drive { path: entry.path(), label, kind: DriveKind::Network });
+            }
+        }
+    }
+    drives
+}
+
+/// `foto on nas` for a gvfs SMB mount's folder name (spec 9 §7.4: Disconnect needs a row).
+#[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+pub(crate) fn gvfs_smb_label(name: &str) -> Option<String> {
+    let (server, share) = crate::network::gvfs_smb_fields(name)?;
+    Some(format!("{share} on {server}"))
 }
 
 #[cfg(not(windows))]
@@ -211,6 +230,17 @@ mod tests {
         let text = "/dev/x /mnt/a\\777b ext4 rw 0 0
 ";
         assert_eq!(parse_mounts(text), [PathBuf::from(r"/mnt/a\777b")]);
+    }
+
+    #[test]
+    fn gvfs_smb_mounts_are_labelled() {
+        assert_eq!(gvfs_smb_label("smb-share:server=nas,share=foto").as_deref(), Some("foto on nas"));
+        assert_eq!(
+            gvfs_smb_label("smb-share:server=nas,share=My%20Share,user=teo").as_deref(),
+            Some("My Share on nas")
+        );
+        assert_eq!(gvfs_smb_label("sftp:host=x"), None);
+        assert_eq!(gvfs_smb_label("google-drive:host=gmail.com"), None);
     }
 
     #[test]

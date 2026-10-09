@@ -337,22 +337,29 @@ impl Sidebar {
     fn start_drive_polling(&self) {
         let weak = Rc::downgrade(&self.0);
         self.0.borrow().poll.start(slint::TimerMode::Repeated, DRIVE_POLL, move || {
-            let Some(inner) = weak.upgrade() else { return };
-            let signature = gezik_platform::drive_signature();
-            let (changed, window) = {
-                let mut inner = inner.borrow_mut();
-                let changed = signature != inner.drive_signature;
-                inner.drive_signature = signature;
-                (changed, inner.window.clone())
-            };
-            if changed {
-                // A pinned folder may have appeared or gone with the drive.
-                Sidebar(inner).refresh();
-                crate::places::load_in_background(window, |part| {
-                    crate::navigation::with_current(|nav| nav.set_places(part));
-                });
+            if let Some(inner) = weak.upgrade() {
+                Sidebar(inner).check_drives(false);
             }
         });
+    }
+
+    /// Reads the drives again if their signature changed, or always with `force` (after Gezik
+    /// connected or ejected one: a macOS or gvfs network mount may not change the signature).
+    pub fn check_drives(&self, force: bool) {
+        let signature = gezik_platform::drive_signature();
+        let (changed, window) = {
+            let mut inner = self.0.borrow_mut();
+            let changed = force || signature != inner.drive_signature;
+            inner.drive_signature = signature;
+            (changed, inner.window.clone())
+        };
+        if changed {
+            // A pinned folder may have appeared or gone with the drive.
+            self.refresh();
+            crate::places::load_in_background(window, |part| {
+                crate::navigation::with_current(|nav| nav.set_places(part));
+            });
+        }
     }
 
     /// Sets the pinned entries as written in settings.toml (at start and on every settings

@@ -1,6 +1,6 @@
 # Gezik on macOS: build and manual test
 
-Run 1 (2026-10-06, `feat/batch-ops-5c`) covered items 1-22; its fixes are on master. Everything since (items 23-146: 5c, 5d, 6a, 7a-7c, 8a-8b, the design rounds and step 9 parts 9a1-9a3, 9b1-9b5) has never run on a Mac.
+Run 1 (2026-10-06, `feat/batch-ops-5c`) covered items 1-22; its fixes are on master. Everything since (items 23-152: 5c, 5d, 6a, 7a-7c, 8a-8b, the design rounds and step 9 parts 9a1-9a3, 9b1-9b6) has never run on a Mac.
 
 **Run 2 is one run on `master`** (all of these are merged). Write it as a new section **"Run 2 (master)"** in `macos-test-results.md`, below Run 1, and don't change Run 1. Where an item compares two branches (exe size items 93, 100, 109), just write today's `ls -l target/release/gezik`.
 
@@ -488,6 +488,17 @@ Write the results to `macos-test-results.md` ("Run: 9b4"). Use a Terminal for th
 145. **Gezik moved.** Make default from a bundle, quit, move the `.app` to another folder and open it from there: about 2 s after start a `Gezik moved` box asks `Repair` / `Later`; after `Repair`, `open ~/Documents` opens in Gezik again. Before the repair the panel row says `Update`, which does the same. With no `system-changes.toml` Gezik starts as fast as before (the check is one file lookup).
 146. **Restore and `--unregister`.** `Restore` (panel or palette): `public.folder` goes back to Finder (probe section 7), `defaults read -g NSFileViewer` says it does not exist, `~/Applications/Gezik.app` is gone, `open ~/Documents` opens Finder. Make default again, quit Gezik, `gezik --unregister`: the same, one line per change, `echo $?` gives 0. Make default again, delete `system-changes.toml`, `gezik --unregister`: the sweep takes back what points at this Gezik.
 
+### 9b6, eject and Connect to Server
+
+Write the results to `macos-test-results.md` ("Run: 9b6"). You need a `.dmg` (any) or a USB stick, and an SMB share (a NAS, or a folder shared from another Mac or a Windows PC, with a user and password).
+
+147. **Tests and probes first.** In the clone: `cargo test -p gezik-platform network`, `cargo test -p gezik-platform eject`, `cargo run -p gezik-platform --example eject_probe` (each volume and the Eject it is offered; `/` gets `None`), `cargo run -p gezik-platform --example network_probe -- 'smb://nas/Foto Arşivi'`; paste the output. The NetFS (`NetFSMountURLSync`) and `NSWorkspace` arms only compiled on Windows; they never ran on a Mac.
+148. **Eject a USB stick or disk image.** Mount a `.dmg` (double-click) and open one folder in it in a tab and another folder in a second tab. Sidebar volume row ▸ right-click ▸ `Eject`: both tabs go to This PC, the volume leaves Finder too, the status says `… can be removed`. Back (⌘[) in one tab asks for the volume's folder: the volume is gone, This PC stays. The same with ⌘E (while showing a folder of the volume) and with File ▸ Eject.
+149. **In use.** Keep a file of the volume open in TextEdit, ⌘E: the status says `The drive is in use. Close the files on it and try again.` (or macOS's own text: write it down); after TextEdit closes, ⌘E works. On the startup disk (a folder under `/`) ⌘E: `This drive cannot be ejected`.
+150. **Connect to Server.** ⌘K (Go ▸ Connect to Server…): under the field, while typing, `Opens smb://nas/foto` or an error (`\\nas` → `Add the share: smb://server/share`, `smb://a:b@nas/x` → `Leave the password out…`). `Connect` to an SMB share: macOS's login window comes up (Finder does not open), once connected Gezik shows `/Volumes/<share>` and the volume is in the sidebar. The same address again while connected: it goes there again (the EEXIST path; if not, write it down). Cancel: `Not connected`. A wrong server: after a few seconds `Cannot connect to …`, and Gezik responds meanwhile.
+151. **Recent.** Quit and reopen Gezik: the ⌘K field opens with the last address; right-click empty space in This PC: `Connect to Server…` and `Connect to smb://…` items; clicking one connects at once. `~/Library/Application Support/gezik/state.toml` (or your config folder) has no password and no user name in `[servers] recent`.
+152. **Disconnect.** The connected share's sidebar row ▸ `Disconnect` (or ⌘E while showing it): the volume goes away and its tabs go back to This PC.
+
 Report anything else that looks wrong: layout, fonts, Retina scaling, ⌘ shortcuts that don't work, and the wording of the boxes.
 
 ## Known gaps (not bugs)
@@ -508,7 +519,6 @@ These are known differences from Finder and ForkLift (from the ForkLift comparis
   - No iCloud Drive status, download or evict. What happens when a file that is only in the cloud is opened has not been tried; note it if you try.
   - Search walks the disk itself: Spotlight is not used (no Spotlight index, no `kMDItem` queries, no Spotlight comments or contents of PDFs and Office files). Results and the flat view don't follow changes made in Finder until ⌘R or F5.
   - No Column (⌘3) or Gallery (⌘4) view, and no ⌘+/⌘- text size.
-  - No eject and no Connect to Server (⌘K).
   - Gezik can't be the default file viewer.
 - **App bundle and menus:**
   - No `.app`, signing or notarization. The app menu items read "About/Hide/Quit gezik".

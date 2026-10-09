@@ -476,6 +476,16 @@ Do 103-109 on GNOME and on KDE, under X11 and Wayland. `Restore` (or `gezik --un
 108. **Restore and `--unregister`.** `Restore`: `sha256sum ~/.config/mimeapps.list` is the same as before 103 (or the file is gone if Gezik made it), `gezik.desktop` and the `.service` are gone, `busctl --user list | grep FileManager1` no longer shows Gezik. Make default again, quit, `gezik --unregister`: the same, `echo $?` gives 0.
 109. **Idle.** With Gezik not the default, `busctl --user list` shows no connection of Gezik's (no D-Bus while off).
 
+### 9b6, eject and Connect to Server
+
+You need a USB stick and an SMB share (a NAS, or a folder shared from another machine; one guest share and one with a user and password if you can).
+
+110. **Build and tests first.** The app crate's 9b6 code (Connect to Server, the user name and password questions, Eject in Gezik's menus) never compiled for Linux. In the clone: `cargo build --release -p gezik`, `cargo clippy -p gezik --all-targets -- -D warnings`, `cargo test -p gezik-platform network`, `cargo test -p gezik-platform eject`, `cargo run -p gezik-platform --example eject_probe`; paste the output. The gio and udisksctl arms ran only against a fake runner on Windows.
+111. **Eject with gio.** A folder on a USB stick open in two tabs, sidebar ▸ `Eject` (or palette ▸ Eject): the tabs go to This PC, the stick leaves the desktop too, the status says `… can be removed`. With a file on the stick open in `less`: `The drive is in use…`. The `/` or `/mnt/x` row has no `Eject`.
+112. **Eject without gio.** Start Gezik with gio hidden from `PATH` (a `PATH` without gio's folder, or a machine without gio; write down how): the `udisksctl unmount` + `power-off` route works; with no `udisksctl` either, `Ejecting needs gio or udisksctl`.
+113. **Connect to Server.** Ctrl+K, `smb://nas/foto`: a guest share opens at once; on a share with a password Gezik first asks the user name (`$USER` suggested), then the password (dots), the gvfs folder opens, the sidebar shows `foto on nas`. **Question order (deviation 9):** check that gio's user / domain / password order is right (if not, write what gio asked). `ps aux | grep gio` while connecting shows no password. Without gio: `Connecting to servers needs gvfs (the gio command).`
+114. **Disconnect.** `foto on nas` ▸ `Disconnect`: the gvfs mount goes away (`gio mount -l`), its tabs go to This PC. A share mounted from the file manager (outside Gezik) shows in DRIVES only after the next drive change or a restart (known).
+
 ## Known gaps (not bugs)
 
 - **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (F5 works it out again). Search results and the flat view show no folder sizes.
