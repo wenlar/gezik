@@ -3,8 +3,22 @@
 //! a private folder). This file holds the message, the channel's key and the checks, pure and
 //! tested on every system.
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, mpsc};
+use std::thread;
+use std::time::Duration;
+
+#[cfg(unix)]
+mod unix;
+#[cfg(unix)]
+use unix as imp;
+#[cfg(windows)]
+mod windows;
+#[cfg(windows)]
+use windows as imp;
+#[cfg(windows)]
+pub use windows::bring_to_front;
 
 /// The message's version: a Gezik that speaks another one is not answered (its caller opens
 /// a window of its own).
@@ -162,6 +176,102 @@ pub(crate) fn socket_paths(dir: &Path, key: &str) -> Option<(PathBuf, PathBuf)> 
     (socket.as_os_str().len() <= MAX_SOCKET_PATH).then(|| (socket, dir.join(format!("gezik-{key}.lock"))))
 }
 
+/// How long a second `gezik` waits for the running one before it opens a window of its own.
+pub const SEND_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long the running Gezik's call thread waits for its window to carry a request out.
+pub const CARRY_OUT_TIMEOUT: Duration = Duration::from_millis(1500);
+
+/// How handing a request over went.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sent {
+    /// The running Gezik did it.
+    Delivered,
+    /// No Gezik listens for this key: this one may become the first.
+    NoInstance,
+    /// One is there but did not answer in time, refused, or is not this user's: open a window
+    /// of its own and leave the channel alone.
+    Failed,
+}
+
+/// Whether this Gezik became the one others hand their paths to.
+pub enum Claim {
+    Listening(Listener),
+    /// Another Gezik has the channel (it started at the same moment).
+    Taken,
+    /// No channel on this system now (no private folder, an error): single instance off.
+    Off,
+}
+
+/// The channel, taken; [`Listener::serve`] starts answering.
+pub struct Listener(imp::Listener);
+
+/// Hands `request` to the Gezik listening for `key` and waits for its answer, at most
+/// `timeout`: the talking is on a thread of its own, left behind if the other side hangs.
+pub fn send(key: &str, request: &Request, timeout: Duration) -> Sent {
+    let (key, message) = (key.to_owned(), encode(request));
+    let (done, result) = mpsc::channel();
+    let talking = thread::Builder::new().name("gezik-instance-send".into()).spawn(move || {
+        let _ = done.send(talk(&key, &message, timeout));
+    });
+    if talking.is_err() {
+        return Sent::Failed;
+    }
+    result.recv_timeout(timeout).unwrap_or(Sent::Failed)
+}
+
+fn talk(key: &str, message: &[u8], timeout: Duration) -> Sent {
+    let mut stream = match imp::connect(key, timeout) {
+        Ok(Some(stream)) => stream,
+        Ok(None) => return Sent::NoInstance,
+        Err(_) => return Sent::Failed,
+    };
+    if stream.write_all(message).is_err() {
+        return Sent::Failed;
+    }
+    let mut answer = [0; REPLY_LEN];
+    match stream.read_exact(&mut answer) {
+        Ok(()) if reply_ok(&answer).is_some() => Sent::Delivered,
+        _ => Sent::Failed,
+    }
+}
+
+/// Takes the channel for `key`, if no other Gezik has it.
+pub fn claim(key: &str) -> Claim {
+    imp::claim(key)
+}
+
+impl Listener {
+    /// Starts the thread that waits for other `gezik` calls (no CPU while none come). Each
+    /// call is read on a thread of its own and checked; `on_request` runs there and says
+    /// whether the request was carried out: only then is the caller told so, else it opens
+    /// its own window. Nothing that comes in is ever run.
+    pub fn serve(self, on_request: impl Fn(Request) -> bool + Send + Sync + 'static) {
+        let on_request: Arc<dyn Fn(Request) -> bool + Send + Sync> = Arc::new(on_request);
+        self.0.serve(move |stream| answer(stream, &*on_request));
+    }
+}
+
+/// One call: read, check, carry out, answer. A bad message is closed unanswered.
+fn answer(stream: &mut (impl Read + Write), on_request: &(dyn Fn(Request) -> bool + Send + Sync)) {
+    let Ok(body) = read_message(stream) else { return };
+    let Ok(request) = decode(&body) else { return };
+    if on_request(request) {
+        let _ = stream.write_all(&reply(std::process::id()));
+        let _ = stream.flush();
+    }
+}
+
+/// Lets `--help` and `--version` reach the console Gezik was started from: the Windows
+/// release build has none of its own (spec 5.1). Elsewhere nothing to do.
+pub fn attach_console() {
+    #[cfg(windows)]
+    // SAFETY: no pointers; failing (no parent console) only leaves the output unseen.
+    unsafe {
+        let _ =
+            ::windows::Win32::System::Console::AttachConsole(::windows::Win32::System::Console::ATTACH_PARENT_PROCESS);
+    }
+}
+
 struct Reader<'a>(&'a [u8]);
 
 impl<'a> Reader<'a> {
@@ -238,6 +348,114 @@ mod tests {
     use std::io::Cursor;
 
     use super::*;
+
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    fn test_key(name: &str) -> String {
+        format!("t{}{name}", std::process::id())
+    }
+
+    fn listening(key: &str) -> Listener {
+        match claim(key) {
+            Claim::Listening(listener) => listener,
+            Claim::Taken => panic!("{key}: taken"),
+            Claim::Off => panic!("{key}: no channel on this system"),
+        }
+    }
+
+    #[test]
+    fn a_request_reaches_the_listener_and_is_answered() {
+        let key = test_key("reach");
+        let (got, received) = mpsc::channel();
+        listening(&key).serve(move |request| got.send(request).is_ok());
+        assert!(matches!(send(&key, &request(), SEND_TIMEOUT), Sent::Delivered));
+        assert_eq!(received.recv_timeout(Duration::from_secs(1)), Ok(request()));
+    }
+
+    #[test]
+    fn many_calls_one_after_another() {
+        let key = test_key("many");
+        listening(&key).serve(|_| true);
+        for i in 0..20 {
+            assert!(matches!(send(&key, &Request::default(), SEND_TIMEOUT), Sent::Delivered), "call {i}");
+        }
+    }
+
+    #[test]
+    fn nothing_listening_is_no_instance() {
+        assert!(matches!(send(&test_key("none"), &request(), SEND_TIMEOUT), Sent::NoInstance));
+    }
+
+    #[test]
+    fn a_second_claim_finds_the_channel_taken() {
+        let key = test_key("taken");
+        let _first = listening(&key);
+        assert!(matches!(claim(&key), Claim::Taken));
+    }
+
+    #[test]
+    fn a_refused_request_gets_no_answer() {
+        let key = test_key("refused");
+        listening(&key).serve(|_| false);
+        let started = Instant::now();
+        assert!(matches!(send(&key, &request(), SEND_TIMEOUT), Sent::Failed));
+        assert!(started.elapsed() < Duration::from_secs(1), "closed at once, not waited out");
+    }
+
+    #[test]
+    fn a_hung_listener_is_given_up_in_time() {
+        let key = test_key("hung");
+        listening(&key).serve(|_| {
+            std::thread::sleep(Duration::from_secs(3));
+            true
+        });
+        let started = Instant::now();
+        assert!(matches!(send(&key, &request(), Duration::from_millis(300)), Sent::Failed));
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn a_huge_message_is_closed_unanswered() {
+        use std::io::{Read, Write};
+        let key = test_key("huge");
+        let (got, received) = mpsc::channel();
+        listening(&key).serve(move |request| got.send(request).is_ok());
+        let mut stream = imp::connect(&key, SEND_TIMEOUT).unwrap().expect("listening");
+        let mut head = vec![VERSION];
+        head.extend_from_slice(&(2 * MAX_MESSAGE as u32).to_le_bytes());
+        stream.write_all(&head).unwrap();
+        let mut answer = Vec::new();
+        let _ = stream.read_to_end(&mut answer);
+        assert!(answer.is_empty());
+        assert!(received.recv_timeout(Duration::from_millis(200)).is_err(), "never handed on");
+    }
+
+    #[test]
+    fn a_silent_caller_is_cut_off() {
+        use std::io::Read;
+        let key = test_key("silent");
+        let (got, received) = mpsc::channel();
+        listening(&key).serve(move |request| got.send(request).is_ok());
+        let mut stream = imp::connect(&key, Duration::from_secs(10)).unwrap().expect("listening");
+        let started = Instant::now();
+        let mut answer = Vec::new();
+        let _ = stream.read_to_end(&mut answer);
+        assert!(answer.is_empty());
+        assert!(started.elapsed() < SEND_TIMEOUT * 2, "closed after the listener's own timeout");
+        assert!(received.try_recv().is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_crashed_gezik_socket_is_replaced() {
+        let key = test_key("stale");
+        let (socket, _) = unix::paths(&key).expect("a private folder");
+        drop(std::os::unix::net::UnixListener::bind(&socket).unwrap()); // its file stays, nobody listens
+        assert!(matches!(send(&key, &request(), SEND_TIMEOUT), Sent::NoInstance));
+        listening(&key).serve(|_| true);
+        assert!(matches!(send(&key, &request(), SEND_TIMEOUT), Sent::Delivered));
+    }
 
     fn abs(name: &str) -> PathBuf {
         if cfg!(windows) { PathBuf::from(format!(r"C:\{name}")) } else { PathBuf::from(format!("/{name}")) }
