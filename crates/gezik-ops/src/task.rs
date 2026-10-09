@@ -89,6 +89,9 @@ pub enum TaskKind {
     Link,
     /// Permissions, owner, group, flags (the Info window, spec 9 §4.4).
     Attributes,
+    /// Keep on this device / Free up space (spec 9 §7.3).
+    KeepOnDevice,
+    FreeUpSpace,
 }
 
 impl TaskKind {
@@ -112,6 +115,8 @@ impl TaskKind {
             TaskKind::NewFolderWith => "New folder with",
             TaskKind::Link => "Create link",
             TaskKind::Attributes => "Change attributes of",
+            TaskKind::KeepOnDevice => "Keep on this device",
+            TaskKind::FreeUpSpace => "Free up space of",
         }
     }
 
@@ -123,6 +128,8 @@ impl TaskKind {
             TaskKind::Link if count <= 1 => verb.to_owned(),
             TaskKind::Link => format!("Create {count} links"),
             TaskKind::Rename if count <= 1 => verb.to_owned(),
+            TaskKind::KeepOnDevice if count == 1 => "Keep 1 item on this device".to_owned(),
+            TaskKind::KeepOnDevice => format!("Keep {count} items on this device"),
             _ if count == 1 => format!("{verb} 1 item"),
             _ => format!("{verb} {count} items"),
         }
@@ -793,6 +800,9 @@ mod tests {
         assert_eq!(TaskKind::Link.label(1), "Create link");
         assert_eq!(TaskKind::Link.label(4), "Create 4 links");
         assert_eq!(TaskKind::Attributes.label(3), "Change attributes of 3 items");
+        assert_eq!(TaskKind::KeepOnDevice.label(2), "Keep 2 items on this device");
+        assert_eq!(TaskKind::KeepOnDevice.label(1), "Keep 1 item on this device");
+        assert_eq!(TaskKind::FreeUpSpace.label(2), "Free up space of 2 items");
     }
 
     #[test]

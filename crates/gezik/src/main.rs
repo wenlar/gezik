@@ -5,6 +5,7 @@ mod actions;
 mod archives;
 mod batch_rename;
 mod cli;
+mod cloud;
 mod conflicts;
 mod context_menu;
 mod convert;
@@ -122,6 +123,7 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
     // Unchanged pins cost nothing (also after the reload that follows our own save).
     sidebar::with_current(|sidebar| sidebar.set_pinned(loaded.settings.pinned.clone()));
     sidebar::with_current(sidebar::Sidebar::relabel);
+    sidebar::with_current(|s| s.set_show_cloud(loaded.settings.sidebar_cloud));
     view::with_current(|view| view.set_defaults(loaded.settings.view));
     view_options::set_from_file(loaded.settings.view.options);
     #[cfg(target_os = "macos")]
@@ -249,6 +251,8 @@ fn perform(
         | Action::PutBack
         | Action::EmptyTrash
         | Action::SystemIntegration
+        | Action::KeepOffline
+        | Action::FreeUpSpace
         | Action::NewWindow
         | Action::MakeAlias
         | Action::ShowPackageContents
@@ -844,6 +848,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let sidebar = sidebar::Sidebar::new(&window, nav.clone(), config.clone(), dialogs.clone());
     sidebar.install();
     sidebar.set_pinned(initial_settings.pinned);
+    sidebar.set_show_cloud(initial_settings.sidebar_cloud);
     let _tab_sets = tab_sets::TabSets::new(&window, nav.clone(), view.clone(), dialogs.clone(), config.clone());
     let _saved_searches =
         saved_searches::SavedSearches::new(&window, nav.clone(), view.clone(), dialogs.clone(), config.clone());

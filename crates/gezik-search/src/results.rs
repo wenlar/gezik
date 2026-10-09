@@ -56,15 +56,16 @@ pub struct ResultSet {
     labels: Option<Vec<TrashLabel>>,
 }
 
-// Above `Entry`'s flag bits (`HIDDEN`, `SYSTEM`, `SIZE_FLAGS`), as in the name cache.
-const IS_DIR: u8 = 128;
+// Above `Entry`'s eight flag bits, below the name's length.
+const IS_DIR: u32 = 1 << 8;
+const LEN_SHIFT: u32 = 9;
 /// No time.
 const NO_TIME: i64 = i64::MIN;
 /// A time's unit: Windows keeps 100 ns ticks (so every time there fits exactly), others ns.
 const TICK: u128 = if cfg!(windows) { 100 } else { 1 };
 
 /// One row, compact (spec 1, 3.7): its name a span of `Rows::names`, its length and flags
-/// (`Entry`'s and `IS_DIR`) in `meta` (`len << 8 | flags`), size and times (`TICK`s since 1970).
+/// (`Entry`'s and `IS_DIR`) in `meta` (`len << 9 | is_dir << 8 | flags`), size and times (`TICK`s since 1970).
 #[derive(Debug, Clone, Copy)]
 struct Row {
     name: u32,
@@ -109,12 +110,14 @@ impl Rows {
     }
 
     fn row(&self, entry: &Entry) -> Row {
-        // File names are at most 255 UTF-16 units (≤ 1,020 bytes): far below 2^24.
-        debug_assert!(entry.name.len() < 1 << 24);
+        // File names are at most 255 UTF-16 units (≤ 1,020 bytes): far below 2^23.
+        debug_assert!(entry.name.len() < 1 << (32 - LEN_SHIFT));
         let start = u32::try_from(self.names.len()).expect("result names under 4 GB");
         Row {
             name: start,
-            meta: (entry.name.len() as u32) << 8 | u32::from(entry.flags | if entry.is_dir { IS_DIR } else { 0 }),
+            meta: (entry.name.len() as u32) << LEN_SHIFT
+                | if entry.is_dir { IS_DIR } else { 0 }
+                | u32::from(entry.flags),
             size: entry.size,
             modified: ticks(entry.modified),
             created: ticks(entry.created),
@@ -148,11 +151,11 @@ impl Rows {
 
     fn name(&self, i: usize) -> &str {
         let row = &self.rows[i];
-        &self.names[row.name as usize..row.name as usize + (row.meta >> 8) as usize]
+        &self.names[row.name as usize..row.name as usize + (row.meta >> LEN_SHIFT) as usize]
     }
 
     fn is_dir(&self, i: usize) -> bool {
-        self.rows[i].meta as u8 & IS_DIR != 0
+        self.rows[i].meta & IS_DIR != 0
     }
 
     fn get(&self, i: usize) -> Entry {
@@ -160,7 +163,7 @@ impl Rows {
         Entry {
             name: self.name(i).to_owned(),
             is_dir: self.is_dir(i),
-            flags: row.meta as u8 & !IS_DIR,
+            flags: row.meta as u8,
             size: row.size,
             modified: time(row.modified),
             created: time(row.created),
@@ -1242,6 +1245,22 @@ mod tests {
     fn a_row_is_32_bytes() {
         // Spec 1, 3.7: with its folder number and its name's bytes, ~36 B + the name a row.
         assert_eq!(std::mem::size_of::<Row>(), 32);
+    }
+
+    #[test]
+    fn every_flag_bit_and_the_name_come_back_from_a_row() {
+        let mut rows = Rows::default();
+        let long = "é".repeat(510);
+        let cloud = Entry::CLOUD_ONLY | Entry::PINNED;
+        let cases = [("a", false, u8::MAX), (long.as_str(), true, cloud), ("c", true, 0), ("d", false, cloud)];
+        for (name, is_dir, flags) in cases {
+            rows.push(&Entry { name: name.into(), is_dir, flags, size: 1, modified: None, created: None });
+        }
+        for (i, (name, is_dir, flags)) in cases.into_iter().enumerate() {
+            let entry = rows.get(i);
+            assert_eq!((entry.name.as_str(), entry.is_dir, entry.flags), (name, is_dir, flags));
+            assert_eq!(rows.is_dir(i), is_dir);
+        }
     }
 
     #[test]

@@ -3,9 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-/// The `st_flags` bit of a file whose data is only in the cloud (iCloud, File Provider):
-/// reading it downloads it.
-pub const SF_DATALESS: u32 = 0x4000_0000;
+pub use gezik_core::SF_DATALESS;
 
 /// What opening a file that may be an alias leads to.
 #[derive(Debug, Clone, PartialEq, Eq)]

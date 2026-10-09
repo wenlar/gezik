@@ -99,6 +99,8 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         Action::NewWindow => open_new_window(nav, view),
         Action::ShowTrash => nav.go(gezik_core::nav::Location::Trash),
         Action::PutBack => crate::trash_view::put_back(view),
+        Action::KeepOffline => crate::cloud::keep_selection(view),
+        Action::FreeUpSpace => crate::cloud::free_up_selection(view),
         Action::EmptyTrash => crate::trash_view::empty(),
         Action::SystemIntegration => crate::integration::with_current(crate::integration::Integration::open),
         // Not theirs: `handle_key` and the menu bar run these themselves. Listed one by one so

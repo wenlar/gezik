@@ -2,6 +2,8 @@
 
 pub mod attrs;
 pub mod clipboard;
+pub mod cloud;
+pub mod cloud_pin;
 mod datetime;
 pub mod dnd;
 mod drives;

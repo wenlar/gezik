@@ -111,7 +111,9 @@ pub fn load_while(target: &Target, px: u32, wanted: &dyn Fn() -> bool) -> Body {
     }
     let mut picture = gezik_platform::thumbnail_while(path, px, wanted);
     if picture.is_none() && wanted() {
-        picture = gezik_platform::icon(&IconTarget::Path(path.clone()), px);
+        // A cloud-only file's own icon would be read from its data: its type's icon instead.
+        let target = if local { IconTarget::Path(path.clone()) } else { IconTarget::Extension(ext) };
+        picture = gezik_platform::icon(&target, px);
     }
     match picture.and_then(buffer) {
         Some(picture) => Body::Picture(picture, None),

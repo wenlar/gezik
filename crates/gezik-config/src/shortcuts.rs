@@ -273,12 +273,16 @@ pub enum Action {
     EmptyTrash,
     /// The System Integration panel (9b3): gezik on the command line, the changes made, Undo all.
     SystemIntegration,
+    /// Cloud folders: the chosen items always kept on this device (macOS: Download Now) (9b5).
+    KeepOffline,
+    /// Cloud folders: the chosen synced items back to online-only (macOS: Remove Download).
+    FreeUpSpace,
     /// The selection's Info window (macOS, Linux); Windows: the system's Properties (9a3).
     GetInfo,
 }
 
 impl Action {
-    pub const ALL: [Action; 81] = [
+    pub const ALL: [Action; 83] = [
         Action::NewTab,
         Action::NewWindow,
         Action::CloseTab,
@@ -359,6 +363,8 @@ impl Action {
         Action::PutBack,
         Action::EmptyTrash,
         Action::SystemIntegration,
+        Action::KeepOffline,
+        Action::FreeUpSpace,
         Action::GetInfo,
     ];
 
@@ -444,6 +450,8 @@ impl Action {
             Action::PutBack => "put-back",
             Action::EmptyTrash => "empty-trash",
             Action::SystemIntegration => "system-integration",
+            Action::KeepOffline => "always-keep-offline",
+            Action::FreeUpSpace => "free-up-space",
             Action::GetInfo => "get-info",
         }
     }
@@ -531,6 +539,20 @@ impl Action {
             Action::PutBack => "Put Back",
             Action::EmptyTrash => "Empty Trash…",
             Action::SystemIntegration => "System Integration…",
+            Action::KeepOffline => {
+                if cfg!(target_os = "macos") {
+                    "Download Now"
+                } else {
+                    "Always Keep on This Device"
+                }
+            }
+            Action::FreeUpSpace => {
+                if cfg!(target_os = "macos") {
+                    "Remove Download"
+                } else {
+                    "Free Up Space"
+                }
+            }
             Action::GetInfo => "Get Info",
         }
     }
@@ -688,7 +710,14 @@ impl Action {
             (Action::MakeAlias, Platform::Mac) => &["mod+ctrl+a"],
             (Action::MakeAlias, Platform::Other) | (Action::ShowPackageContents, _) | (Action::Share, _) => &[],
             (Action::EmptyTrash, Platform::Mac) => &["mod+shift+backspace"],
-            (Action::ShowTrash | Action::PutBack | Action::SystemIntegration, _)
+            (
+                Action::ShowTrash
+                | Action::PutBack
+                | Action::SystemIntegration
+                | Action::KeepOffline
+                | Action::FreeUpSpace,
+                _,
+            )
             | (Action::EmptyTrash, Platform::Other) => &[],
             (Action::GetInfo, Platform::Mac) => &["mod+i"],
             (Action::GetInfo, Platform::Other) => &["alt+enter"],
@@ -878,7 +907,7 @@ mod tests {
             assert_eq!(fixed_owner(&cmd_option, Platform::Mac), None);
         }
         assert_eq!((Action::pin(0), Action::pin(10)), (None, None));
-        assert_eq!(Action::ALL.len(), 81);
+        assert_eq!(Action::ALL.len(), 83);
         assert_eq!(other.action_for(&chord("ctrl+1")), Some(Action::Tab1), "Ctrl+1 is still tab 1");
         assert_eq!(other.action_for(&chord("ctrl+alt+1")), None, "AltGr+1 types");
     }
@@ -1336,7 +1365,7 @@ clear-history = \"ctrl+shift+h\"
         for name in ["search", "flat-view", "show-in-folder", "copy-with-folders", "cut-with-folders"] {
             assert!(Action::from_name(name).is_some(), "{name}");
         }
-        assert_eq!(Action::ALL.len(), 81);
+        assert_eq!(Action::ALL.len(), 83);
     }
 
     #[test]
@@ -1358,7 +1387,7 @@ clear-history = \"ctrl+shift+h\"
         for name in ["command-palette", "quick-open", "calculate-folder-sizes", "save-search"] {
             assert!(Action::from_name(name).is_some(), "{name}");
         }
-        assert_eq!(Action::ALL.len(), 81);
+        assert_eq!(Action::ALL.len(), 83);
     }
 
     #[test]
@@ -1378,7 +1407,7 @@ clear-history = \"ctrl+shift+h\"
         }
         assert_eq!(Action::MakeAlias.title(), "Make Alias");
         assert_eq!(Action::ShowPackageContents.title(), "Show Package Contents");
-        assert_eq!(Action::ALL.len(), 81);
+        assert_eq!(Action::ALL.len(), 83);
     }
 
     #[test]
@@ -1388,7 +1417,7 @@ clear-history = \"ctrl+shift+h\"
         }
         assert_eq!(Action::from_name("share"), Some(Action::Share));
         assert_eq!(Action::Share.title(), "Share…");
-        assert_eq!(Action::ALL.len(), 81);
+        assert_eq!(Action::ALL.len(), 83);
     }
 
     #[test]
@@ -1402,7 +1431,7 @@ clear-history = \"ctrl+shift+h\"
         assert_eq!(fixed_owner(&chord("mod+i", Platform::Mac), Platform::Mac), None);
         assert_eq!(Action::from_name("get-info"), Some(Action::GetInfo));
         assert_eq!(Action::GetInfo.title(), "Get Info");
-        assert_eq!(Action::ALL.len(), 81);
+        assert_eq!(Action::ALL.len(), 83);
     }
 
     #[test]
@@ -1419,6 +1448,19 @@ clear-history = \"ctrl+shift+h\"
             assert_eq!(other.chord_for(action), None, "{action:?}: no default key on Windows and Linux");
         }
         assert_eq!((mac.chord_for(Action::ShowTrash), mac.chord_for(Action::PutBack)), (None, None));
+    }
+
+    #[test]
+    fn the_cloud_actions_have_names_and_no_keys() {
+        assert_eq!(Action::from_name("always-keep-offline"), Some(Action::KeepOffline));
+        assert_eq!(Action::from_name("free-up-space"), Some(Action::FreeUpSpace));
+        let mac = cfg!(target_os = "macos");
+        assert_eq!(Action::KeepOffline.title(), if mac { "Download Now" } else { "Always Keep on This Device" });
+        assert_eq!(Action::FreeUpSpace.title(), if mac { "Remove Download" } else { "Free Up Space" });
+        for platform in [Platform::Mac, Platform::Other] {
+            let keys = Shortcuts::defaults(platform);
+            assert_eq!((keys.chord_for(Action::KeepOffline), keys.chord_for(Action::FreeUpSpace)), (None, None));
+        }
     }
 
     #[test]

@@ -24,6 +24,9 @@ export struct FileRow {
     focused: bool,
     // On the clipboard as cut: drawn faded until it is pasted.
     cut: bool,
+    // Under a cloud root (spec 9 §7.3): 1 only in the cloud, 2 on this device, 3 always on
+    // this device; 0 elsewhere.
+    cloud: int,
     // A search result's folder under the scope, and a content search's line ("12: …").
     folder: string,
     found: string,
@@ -597,6 +600,7 @@ export component FileView inherits Rectangle {
                                 height: Theme.icon-size;
                                 opacity: entry.file.cut ? 0.5 : 1;
                                 kind: entry.file.kind;
+                                cloud: entry.file.cloud;
                                 picture: entry.file.icon;
                                 has-picture: entry.file.has-icon;
                             }
@@ -717,6 +721,7 @@ export component FileView inherits Rectangle {
                             height: root.picture-size;
                             opacity: tile.cell.cut ? 0.5 : 1;
                             kind: tile.cell.kind;
+                            cloud: tile.cell.cloud;
                             picture: tile.cell.icon;
                             has-picture: tile.cell.has-icon;
                         }

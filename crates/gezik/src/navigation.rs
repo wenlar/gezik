@@ -402,8 +402,13 @@ impl Navigator {
         self.0.borrow().places.clone()
     }
 
-    /// Takes in known folders or drives (whichever `part` carries) and retitles.
+    /// Takes in known folders, drives or cloud roots (whichever `part` carries) and retitles.
     pub fn set_places(&self, part: PlacesPart) {
+        if let PlacesPart::Cloud(roots) = &part {
+            crate::cloud::set_roots(roots.clone());
+            let view = self.0.borrow().view.clone();
+            view.cloud_roots_changed();
+        }
         self.0.borrow_mut().places.apply(part);
         self.update_chrome();
     }

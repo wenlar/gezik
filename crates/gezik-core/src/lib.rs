@@ -33,8 +33,8 @@ pub struct Entry {
     /// repeat the folder path for every file and dominate memory in large folders.
     pub name: String,
     pub is_dir: bool,
-    /// `Entry::HIDDEN` and `Entry::SYSTEM`: Windows' attributes (0 elsewhere). It sits in the
-    /// padding after `is_dir`, so an entry is no larger for it (spec 7.1).
+    /// `Entry::HIDDEN` and `Entry::SYSTEM` (Windows' attributes), the size bits and the cloud
+    /// bits. It sits in the padding after `is_dir`, so an entry is no larger for it (spec 7.1).
     pub flags: u8,
     pub size: u64,
     pub modified: Option<SystemTime>,
@@ -56,6 +56,17 @@ impl Entry {
     pub const SIZE_PENDING: u8 = 16;
     pub const SIZE_STALE: u8 = 32;
     pub const SIZE_FLAGS: u8 = Entry::SIZED | Entry::SIZE_PARTIAL | Entry::SIZE_PENDING | Entry::SIZE_STALE;
+
+    /// Cloud state (spec 9 §7.3), from the folder read itself (no call of its own), in the two
+    /// bits left free: the data is only in the cloud (Windows: recall on access or open,
+    /// offline; macOS: dataless), or it is kept on this device for good (Windows: pinned).
+    pub const CLOUD_ONLY: u8 = 64;
+    pub const PINNED: u8 = 128;
+
+    /// What a row under a cloud root shows.
+    pub fn cloud_state(&self) -> CloudState {
+        cloud_state(self.flags)
+    }
 
     /// The size the Size column and the sums use: a file's; a folder's worked-out total, else none.
     pub fn known_size(&self) -> Option<u64> {
@@ -110,25 +121,74 @@ pub fn shown_name(name: &str, is_dir: bool, hide_extension: bool) -> &str {
     }
 }
 
-/// `Entry::HIDDEN` and `Entry::SYSTEM` from what the directory read already gave (no call of
-/// its own: Windows fills `file_attributes` from the directory listing).
-#[cfg(windows)]
-pub fn attribute_flags(meta: &std::fs::Metadata) -> u8 {
-    use std::os::windows::fs::MetadataExt;
-    const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
-    const FILE_ATTRIBUTE_SYSTEM: u32 = 0x4;
-    let attributes = meta.file_attributes();
+/// What a row under a cloud root shows (spec 9 §7.3); the number is file-icon.slint's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloudState {
+    OnlyInCloud = 1,
+    Local = 2,
+    AlwaysLocal = 3,
+}
+
+/// Pinned while the data is still on its way counts as in the cloud: it is not here yet.
+pub fn cloud_state(flags: u8) -> CloudState {
+    if flags & Entry::CLOUD_ONLY != 0 {
+        CloudState::OnlyInCloud
+    } else if flags & Entry::PINNED != 0 {
+        CloudState::AlwaysLocal
+    } else {
+        CloudState::Local
+    }
+}
+
+/// The macOS `st_flags` bit of a file whose data is only in the cloud (iCloud, File
+/// Provider): reading it downloads it.
+pub const SF_DATALESS: u32 = 0x4000_0000;
+
+/// `Entry` flags from Windows file attributes as the folder read gives them: hidden, system
+/// and the cloud bits.
+pub fn windows_flags(attributes: u32) -> u8 {
+    const HIDDEN: u32 = 0x2;
+    const SYSTEM: u32 = 0x4;
+    const OFFLINE: u32 = 0x1000;
+    const RECALL_ON_OPEN: u32 = 0x4_0000;
+    const PINNED: u32 = 0x8_0000;
+    const RECALL_ON_DATA_ACCESS: u32 = 0x40_0000;
     let mut flags = 0;
-    if attributes & FILE_ATTRIBUTE_HIDDEN != 0 {
+    if attributes & HIDDEN != 0 {
         flags |= Entry::HIDDEN;
     }
-    if attributes & FILE_ATTRIBUTE_SYSTEM != 0 {
+    if attributes & SYSTEM != 0 {
         flags |= Entry::SYSTEM;
+    }
+    if attributes & (OFFLINE | RECALL_ON_OPEN | RECALL_ON_DATA_ACCESS) != 0 {
+        flags |= Entry::CLOUD_ONLY;
+    }
+    if attributes & PINNED != 0 {
+        flags |= Entry::PINNED;
     }
     flags
 }
 
-#[cfg(not(windows))]
+/// `Entry` flags from macOS `st_flags`: only the cloud bit (hidden goes by the dot name).
+pub fn mac_flags(st_flags: u32) -> u8 {
+    if st_flags & SF_DATALESS != 0 { Entry::CLOUD_ONLY } else { 0 }
+}
+
+/// `Entry` flags from what the directory read already gave (no call of its own: Windows fills
+/// `file_attributes` from the listing, macOS `st_flags` from the `lstat` the listing does).
+#[cfg(windows)]
+pub fn attribute_flags(meta: &std::fs::Metadata) -> u8 {
+    use std::os::windows::fs::MetadataExt;
+    windows_flags(meta.file_attributes())
+}
+
+#[cfg(target_os = "macos")]
+pub fn attribute_flags(meta: &std::fs::Metadata) -> u8 {
+    use std::os::macos::fs::MetadataExt;
+    mac_flags(meta.st_flags())
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn attribute_flags(_meta: &std::fs::Metadata) -> u8 {
     0
 }
@@ -221,6 +281,39 @@ mod tests {
             "the size bits leave hidden alone"
         );
         assert_eq!(Entry::SIZE_FLAGS & (Entry::HIDDEN | Entry::SYSTEM), 0);
+    }
+
+    #[test]
+    fn cloud_bits_come_from_the_attributes() {
+        assert_eq!(windows_flags(0x40_0000), Entry::CLOUD_ONLY, "recall on data access (OneDrive online-only)");
+        assert_eq!(windows_flags(0x4_0000), Entry::CLOUD_ONLY, "recall on open");
+        assert_eq!(windows_flags(0x1000), Entry::CLOUD_ONLY, "offline");
+        assert_eq!(windows_flags(0x8_0000), Entry::PINNED, "always keep on this device");
+        assert_eq!(
+            windows_flags(0x10_0000 | 0x20 | 0x400),
+            0,
+            "unpinned, archive, a placeholder's reparse bit: still here"
+        );
+        assert_eq!(windows_flags(0x2 | 0x4 | 0x8_0000), Entry::HIDDEN | Entry::SYSTEM | Entry::PINNED);
+        assert_eq!(mac_flags(SF_DATALESS), Entry::CLOUD_ONLY);
+        assert_eq!(mac_flags(0x8000 | 0x20), 0, "hidden and other flags are not cloud bits");
+    }
+
+    #[test]
+    fn a_pinned_item_still_on_its_way_shows_as_in_the_cloud() {
+        assert_eq!(cloud_state(0), CloudState::Local);
+        assert_eq!(cloud_state(Entry::CLOUD_ONLY), CloudState::OnlyInCloud);
+        assert_eq!(cloud_state(Entry::PINNED), CloudState::AlwaysLocal);
+        assert_eq!(cloud_state(Entry::PINNED | Entry::CLOUD_ONLY), CloudState::OnlyInCloud);
+        assert_eq!(cloud_state(Entry::HIDDEN | Entry::SIZED), CloudState::Local);
+        assert_eq!(CloudState::AlwaysLocal as i32, 3, "the number file-icon.slint draws");
+    }
+
+    #[test]
+    fn the_cloud_bits_meet_no_other_flag() {
+        let others = Entry::HIDDEN | Entry::SYSTEM | Entry::SIZE_FLAGS;
+        assert_eq!((Entry::CLOUD_ONLY | Entry::PINNED) & others, 0);
+        assert_ne!(Entry::CLOUD_ONLY, Entry::PINNED);
     }
 
     #[test]

@@ -19,15 +19,13 @@ use crate::walk::{Visit, Walk, WalkStats};
 
 pub const CACHE_LIMIT: usize = 500_000;
 
-// Above `Entry`'s flag bits (`HIDDEN`, `SYSTEM`, `SIZE_FLAGS`), so it cannot collide with them.
-const IS_DIR: u8 = 128;
 /// No time (`u32` seconds since 1970; earlier times are kept as 1970, later than 2106 as 2106).
 const NO_TIME: u32 = u32::MAX;
 /// A folder record that is a whole path (`paths`) rather than an item.
 const WHOLE_PATH: u32 = 1 << 31;
 
-/// One item: its name (a span of `names`), its folder, its flags (`Entry`'s and `IS_DIR`),
-/// size and times (whole seconds).
+/// One item: its name (a span of `names`), its folder, whether it is a folder, its `Entry`
+/// flags (all eight bits are `Entry`'s), size and times (whole seconds).
 #[derive(Debug, Clone, Copy)]
 struct Item {
     name: u32,
@@ -36,6 +34,7 @@ struct Item {
     modified: u32,
     created: u32,
     len: u16,
+    is_dir: bool,
     flags: u8,
 }
 
@@ -117,7 +116,7 @@ impl NameCache {
             if i % 4096 == 0 && cancel.load(Ordering::Relaxed) {
                 return None;
             }
-            let (name, is_dir) = (self.name(item), item.flags & IS_DIR != 0);
+            let (name, is_dir) = (self.name(item), item.is_dir);
             if !query.passes(name, is_dir, item.size, time(item.modified)) {
                 continue;
             }
@@ -136,7 +135,7 @@ impl NameCache {
             let entry = Entry {
                 name: name.to_owned(),
                 is_dir,
-                flags: item.flags & !IS_DIR,
+                flags: item.flags,
                 size: item.size,
                 modified: time(item.modified),
                 created: time(item.created),
@@ -210,7 +209,8 @@ impl Visit for Builder {
                 modified: secs(item.modified),
                 created: secs(item.created),
                 len,
-                flags: item.flags | if item.is_dir { IS_DIR } else { 0 },
+                is_dir: item.is_dir,
+                flags: item.flags,
             });
         }
     }
@@ -357,5 +357,31 @@ mod tests {
     fn an_item_is_small() {
         // Spec 3.5: ~28 bytes and the name, 500,000 items ≤ 35 MB.
         assert!(std::mem::size_of::<Item>() <= 32, "{}", std::mem::size_of::<Item>());
+    }
+
+    #[test]
+    fn every_flag_bit_comes_back_from_the_cache() {
+        let builder = Builder { building: Mutex::default(), limit: 10, over: AtomicBool::new(false) };
+        let item = |name: &str, is_dir: bool, flags: u8| DirItem {
+            name: name.into(),
+            is_dir,
+            is_link: false,
+            is_file: !is_dir,
+            offline: false,
+            flags,
+            size: 0,
+            modified: None,
+            created: None,
+            device: 0,
+            has_meta: true,
+        };
+        let all = u8::MAX;
+        let cloud = Entry::CLOUD_ONLY | Entry::PINNED;
+        builder.folder(Path::new(""), "", vec![item("a", false, all), item("b", true, cloud), item("c", false, 0)]);
+        let cache = builder.building.into_inner().unwrap().cache;
+        let (set, _) = cache.select(&query(Path::new(""), ""), &AtomicBool::new(false)).unwrap();
+        let got: Vec<(String, bool, u8)> =
+            (0..set.len()).filter_map(|i| set.entry(i)).map(|e| (e.name, e.is_dir, e.flags)).collect();
+        assert_eq!(got, [("a".into(), false, all), ("b".into(), true, cloud), ("c".into(), false, 0)]);
     }
 }
