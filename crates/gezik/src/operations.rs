@@ -1165,6 +1165,37 @@ impl Operations {
         self.0.view.note(problem.unwrap_or_else(|| "Nothing to paste".to_owned()));
     }
 
+    /// An alias whose original is gone (spec 9 §4.2): Finder's question; Delete Alias moves it
+    /// to the Trash (Ctrl+Z brings it back) without asking a second time.
+    pub fn missing_alias(&self, alias: PathBuf) {
+        let name = alias.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let ops = self.clone();
+        self.0.dialogs.ask(
+            "The original item can't be found",
+            format!("The alias \"{name}\" can't be opened."),
+            &["Delete Alias", "OK"],
+            move |chosen| {
+                if chosen == Some(0) {
+                    ops.trash_now(vec![alias]);
+                }
+            },
+        );
+    }
+
+    /// Make Alias (⌃⌘A): an alias of each selected item (the focused one when none), next to it.
+    /// macOS only: elsewhere there are no aliases to make.
+    pub fn make_alias_of_selection(&self) {
+        let view = &self.0.view;
+        if !cfg!(target_os = "macos") || view.shows_drives() {
+            return;
+        }
+        let mut items = view.selected_items();
+        if items.is_empty() {
+            items.extend(view.focus().and_then(|i| view.entry_path(i)));
+        }
+        self.create_links(items.into_iter().map(|(path, _)| path).collect(), LinkKind::Alias);
+    }
+
     /// A link of `kind` next to each of `paths` ("Create link ▸", Explorer's "Create shortcut").
     pub fn create_links(&self, paths: Vec<PathBuf>, kind: LinkKind) {
         let paths = self.without_roots(paths, "link to");

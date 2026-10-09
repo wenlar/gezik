@@ -63,6 +63,8 @@ pub enum LinkKind {
     /// A Windows junction: a folder that leads to another folder.
     Junction,
     Symlink,
+    /// A Finder alias (macOS): a bookmark file that follows its original when it moves.
+    Alias,
 }
 
 impl LinkKind {
@@ -74,12 +76,21 @@ impl LinkKind {
 }
 
 /// A link's name for an item named `name`: `rapor.pdf - Shortcut.lnk` (Explorer),
-/// `Link to rapor.pdf` (Nautilus; the extension stays at the end).
+/// `Link to rapor.pdf` (Nautilus; the extension stays at the end), `rapor.pdf alias` (Finder).
 pub fn link_name(name: &str, kind: LinkKind) -> String {
     match kind {
         LinkKind::Shortcut => format!("{name} - Shortcut.lnk"),
         LinkKind::Junction | LinkKind::Symlink => format!("Link to {name}"),
+        LinkKind::Alias => format!("{name} alias"),
     }
+}
+
+/// A free name for a link when `name` is taken in its folder: a folder's link (not a shortcut)
+/// and an alias are numbered at the end (`Docs (2)`, `rapor.pdf alias (2)`), a file's link and
+/// a shortcut before the extension (`Link to a (2).txt`).
+pub fn free_link_name(name: &str, kind: LinkKind, target_is_dir: bool, taken: impl Fn(&str) -> bool) -> String {
+    let at_end = kind == LinkKind::Alias || (target_is_dir && kind != LinkKind::Shortcut);
+    crate::ops::names::next_free(name, at_end, taken)
 }
 
 #[cfg(test)]
@@ -134,5 +145,19 @@ mod tests {
         assert_eq!(numbered("rapor.pdf - Shortcut.lnk", false, 2), "rapor.pdf - Shortcut (2).lnk");
         let expected = if cfg!(windows) { LinkKind::Shortcut } else { LinkKind::Symlink };
         assert_eq!(LinkKind::for_drops(), expected);
+    }
+
+    #[test]
+    fn alias_names_are_numbered_at_the_end() {
+        assert_eq!(link_name("rapor.pdf", LinkKind::Alias), "rapor.pdf alias");
+        assert_eq!(link_name("Docs", LinkKind::Alias), "Docs alias");
+        let none = |_: &str| false;
+        assert_eq!(free_link_name("rapor.pdf alias", LinkKind::Alias, false, none), "rapor.pdf alias (2)");
+        let taken = |name: &str| name == "Docs alias (2)";
+        assert_eq!(free_link_name("Docs alias", LinkKind::Alias, true, taken), "Docs alias (3)");
+        // The others as before: a folder's link at the end, a file's link and a shortcut before the extension.
+        assert_eq!(free_link_name("Link to Docs", LinkKind::Symlink, true, none), "Link to Docs (2)");
+        assert_eq!(free_link_name("Link to a.txt", LinkKind::Symlink, false, none), "Link to a (2).txt");
+        assert_eq!(free_link_name("a.txt - Shortcut.lnk", LinkKind::Shortcut, true, none), "a.txt - Shortcut (2).lnk");
     }
 }

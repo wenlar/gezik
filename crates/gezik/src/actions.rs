@@ -3,6 +3,7 @@
 //! keypad's) or there is none.
 
 use gezik_config::shortcuts::Action;
+use gezik_core::nav::Location;
 
 use crate::navigation::Navigator;
 use crate::view::View;
@@ -66,6 +67,13 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         Action::CutWithFolders => crate::operations::with_current(|ops| ops.copy_with_folders(true)),
         Action::CalculateFolderSizes => crate::folder_sizes::with_current(crate::folder_sizes::FolderSizes::calculate),
         Action::SaveSearch => crate::search::with_current(crate::search::Searches::save_current),
+        Action::MakeAlias => crate::operations::with_current(crate::operations::Operations::make_alias_of_selection),
+        Action::ShowPackageContents => {
+            // The selected (or focused) folder, even a package; a file: nothing.
+            let item = view.single_selected().or_else(|| view.focus()).and_then(|i| view.entry_path(i));
+            let Some((folder, true)) = item else { return false };
+            nav.go(Location::Path(folder));
+        }
         Action::NewFolderWithSelection => {
             crate::operations::with_current(crate::operations::Operations::new_folder_with_selection)
         }
@@ -107,6 +115,7 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         | Action::ViewGrid
         | Action::TogglePreview
         | Action::QuickLook
+        | Action::Share
         | Action::Copy
         | Action::Cut
         | Action::Paste

@@ -117,6 +117,16 @@ pub struct ArchivesSettings {
     pub double_click: DoubleClick,
 }
 
+/// What Space shows on macOS (`[system] quick-look`, spec 9 §4.5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum QuickLookMode {
+    /// The system's Quick Look panel.
+    #[default]
+    System,
+    /// Gezik's own quick look window (always so on Windows and Linux).
+    Gezik,
+}
+
 /// The Compress layer's last choices and the last "Extract to…" folder (state.toml
 /// `[archive]`). Never a password.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -180,17 +190,18 @@ impl Default for SessionSettings {
     }
 }
 
-/// `[system]` (spec 13.1): how Gezik meets the system. 9b1 has the single instance; the
-/// tray, the hotkey, start at login and Quick Look come with their parts.
+/// `[system]` (spec 13.1): how Gezik meets the system: the single instance (9b1) and what
+/// Space shows on macOS (9a2); the tray, the hotkey and start at login come with their parts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SystemSettings {
     /// A second `gezik` opens in the running window (spec 5.2). Read at start only.
     pub single_instance: bool,
+    pub quick_look: QuickLookMode,
 }
 
 impl Default for SystemSettings {
     fn default() -> Self {
-        SystemSettings { single_instance: true }
+        SystemSettings { single_instance: true, quick_look: QuickLookMode::default() }
     }
 }
 
@@ -1105,6 +1116,14 @@ fn parse_system(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) ->
             Some(on) => out.single_instance = on,
             None => warnings
                 .push(Warning::new(file, format!("system.single-instance: expected true or false, got {value}"))),
+        }
+    }
+    if let Some(value) = table.get("quick-look") {
+        match value.as_str() {
+            Some("system") => out.quick_look = QuickLookMode::System,
+            Some("gezik") => out.quick_look = QuickLookMode::Gezik,
+            _ => warnings
+                .push(Warning::new(file, format!("system.quick-look: expected \"system\" or \"gezik\", got {value}"))),
         }
     }
     out
@@ -2175,10 +2194,35 @@ rules = []
     }
 
     #[test]
+    fn reads_the_system_section() {
+        assert_eq!(Settings::default().system.quick_look, QuickLookMode::System);
+        let (settings, warnings) = parse(
+            "[system]
+quick-look = \"gezik\"
+",
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(settings.system.quick_look, QuickLookMode::Gezik);
+        let (settings, warnings) = parse(
+            "[system]
+quick-look = \"finder\"
+",
+        );
+        assert_eq!(settings.system.quick_look, QuickLookMode::System, "a bad value keeps the default");
+        assert_eq!(warnings[0].message, "system.quick-look: expected \"system\" or \"gezik\", got \"finder\"");
+        let (_, warnings) = parse(
+            "system = 3
+",
+        );
+        assert_eq!(warnings[0].message, "system: expected a table, got 3");
+    }
+
+    #[test]
     fn the_template_reads_with_the_defaults() {
         let (settings, warnings) = parse(include_str!("../templates/settings.toml"));
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(settings.archives, ArchivesSettings::default());
+        assert_eq!(settings.system, SystemSettings::default());
         assert_eq!(settings.tools, ToolsSettings::default());
         assert_eq!(settings.keyboard, KeyboardSettings::default());
         assert_eq!(settings.history, HistorySettings::default());

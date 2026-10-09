@@ -51,7 +51,13 @@ pub(crate) fn display_name(path: &std::path::Path) -> Option<String> {
     }
 }
 
-#[cfg(not(windows))]
+/// macOS: Finder's name ("Belgeler" for Documents in Turkish).
+#[cfg(target_os = "macos")]
+pub(crate) fn display_name(path: &std::path::Path) -> Option<String> {
+    crate::mac::finder::display_name(path)
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
 pub(crate) fn display_name(path: &std::path::Path) -> Option<String> {
     path.file_name().map(|n| n.to_string_lossy().into_owned())
 }
