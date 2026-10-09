@@ -229,14 +229,36 @@ pub fn allowed(change: &Change, places: &Places, os: Os) -> bool {
     })
 }
 
-/// The checks of every write (`SystemAccess::set`): an allowed place and a value Gezik writes.
-fn check_write(change: &Change, now: &Value, value: &Value, places: &Places, os: Os) -> io::Result<()> {
+/// The checks of every write (`SystemAccess::set`): an allowed place and a value Gezik writes;
+/// `access` reads what is beside it.
+fn check_write(
+    change: &Change,
+    now: &Value,
+    value: &Value,
+    places: &Places,
+    os: Os,
+    access: &dyn Access,
+) -> io::Result<()> {
     if !allowed(change, places, os) {
         return Err(io::Error::new(io::ErrorKind::PermissionDenied, "not a place Gezik writes; left as is"));
     }
     // The journal's values are not trusted either: only what Gezik itself would write.
     if !value_allowed(change, now, value) {
         return Err(io::Error::new(io::ErrorKind::PermissionDenied, "not a value Gezik writes; left as is"));
+    }
+    // An empty DelegateExecute goes only beside Gezik's own Win+E command: a program that took
+    // Win+E since (the Files app) needs the same value next to its command.
+    if change.kind == Kind::RegistryValue
+        && *value == Value::Absent
+        && change.name.eq_ignore_ascii_case("DelegateExecute")
+    {
+        let command = Change { name: String::new(), ..change.clone() };
+        let ours = matches!(access.current(&command), Ok(Value::Reg { ty: RegType::Sz, data })
+            if registry_value_allowed(&change.place, "", &data));
+        if !ours {
+            // AlreadyExists: the undo reports it as left as is.
+            return Err(io::Error::new(io::ErrorKind::AlreadyExists, "Win+E's command beside it is not Gezik's"));
+        }
     }
     Ok(())
 }
@@ -287,7 +309,7 @@ impl Access for SystemAccess {
     }
 
     fn set(&self, change: &Change, value: &Value) -> io::Result<()> {
-        check_write(change, &self.current(change)?, value, &self.places, Os::HERE)?;
+        check_write(change, &self.current(change)?, value, &self.places, Os::HERE, self)?;
         match change.kind {
             Kind::RegistryValue | Kind::PathEntry | Kind::RegistryKey => {
                 registry_set(&self.key(&change.place)?, change.kind, &change.name, value)
@@ -1694,7 +1716,7 @@ mod tests {
             self.0.current(c)
         }
         fn set(&self, c: &Change, value: &Value) -> io::Result<()> {
-            check_write(c, &self.0.current(c)?, value, &self.1, Os::Windows)?;
+            check_write(c, &self.0.current(c)?, value, &self.1, Os::Windows, self.0)?;
             self.0.set(c, value)
         }
     }
@@ -1808,6 +1830,23 @@ mod tests {
     }
 
     #[test]
+    fn a_win_e_taken_since_keeps_its_delegate_execute() {
+        let fake = Fake::default();
+        let checked = Checked(&fake, win_places());
+        let file = journal("win-e-taken-since");
+        apply_all(&mut file.lock().unwrap(), &checked, win_default_targets(), EXE).unwrap();
+        // The Files app takes Win+E after Make default.
+        let launcher =
+            Value::Reg { ty: RegType::ExpandSz, data: r#""%LOCALAPPDATA%\Files\Files.App.Launcher.exe""#.into() };
+        fake.put(Kind::RegistryValue, WIN_E_CMD, "", launcher.clone());
+        let undone = undo_matching(&mut file.lock().unwrap(), &checked, |c| c.feature == FEATURE_DEFAULT);
+        assert_eq!(fake.get(Kind::RegistryValue, WIN_E_CMD, "DelegateExecute"), Some(reg("")), "{:?}", undone.lines);
+        assert_eq!(fake.get(Kind::RegistryValue, WIN_E_CMD, ""), Some(launcher));
+        assert!(undone.lines.iter().any(|l| l.starts_with("left as is") && l.contains("DelegateExecute")));
+        assert!(fake.get(Kind::RegistryValue, DIR_SHELL, "").is_none(), "the rest taken back");
+    }
+
+    #[test]
     fn another_default_verb_comes_back() {
         let fake = Fake::default();
         fake.put(Kind::RegistryValue, DIR_SHELL, "", reg("openinxyplorer"));
@@ -1886,6 +1925,13 @@ mod tests {
         assert!(text.contains("[HKEY_CURRENT_USER\\Software\\Classes\\Directory\\shell]\r\n@=-"), "{text}");
         assert!(text.contains("[-HKEY_CURRENT_USER\\Software\\Classes\\Directory\\shell\\gezik]"));
         assert!(!text.contains("exefile") && !text.contains("evil"), "{text}");
+        for whole in
+            ["Directory]", "Drive]", "Folder]", "Directory\\shell]", "Drive\\shell]", "Folder\\shell]", "CLSID"]
+        {
+            assert!(!text.contains(&format!("[-HKEY_CURRENT_USER\\Software\\Classes\\{whole}")), "{whole}: {text}");
+        }
+        assert_eq!(text.matches("[-").count(), 3, "only the three gezik verb keys: {text}");
+        assert!(text.contains("; Win+E: the next lines take back Gezik's Win+E command"), "{text}");
         undo_matching(&mut file.lock().unwrap(), &fake, |c| c.feature == FEATURE_DEFAULT);
         write_restore_reg(&file.lock().unwrap(), Os::Windows).unwrap();
         assert!(!reg_path.exists(), "no default entries: no file");

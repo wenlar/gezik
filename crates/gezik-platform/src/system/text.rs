@@ -91,6 +91,7 @@ fn restorable_key(place: &str) -> bool {
 /// place, a broken name, a value type it does not know) becomes a comment with no journal text.
 pub fn restore_reg(changes: &[Change]) -> String {
     const SKIPPED: &str = "; skipped a change this file cannot undo safely.\r\n";
+    const WIN_E: &str = "; Win+E: the next lines take back Gezik's Win+E command; if another program answers Win+E now, delete them first.\r\n";
     let key = |place: &str| format!(r"HKEY_CURRENT_USER\{}", &place[r"HKCU\".len()..]);
     let mut out = String::from("Windows Registry Editor Version 5.00\r\n\r\n");
     for change in changes.iter().rev() {
@@ -107,10 +108,22 @@ pub fn restore_reg(changes: &[Change]) -> String {
                         continue;
                     }
                 };
+                if change.place.to_lowercase().ends_with(r"\opennewwindow\command") {
+                    out.push_str(WIN_E);
+                }
                 out.push_str(&format!("[{}]\r\n{name}={value}\r\n\r\n", key(&change.place)));
             }
             (Kind::RegistryKey, Value::Absent) if restorable_key(&change.place) => {
-                out.push_str(&format!("[-{}]\r\n\r\n", key(&change.place)));
+                let place = change.place.to_lowercase();
+                // `[-key]` deletes a whole tree: only Gezik's own verb key; its subkeys go with it.
+                if place.ends_with(r"\shell\gezik") {
+                    out.push_str(&format!("[-{}]\r\n\r\n", key(&change.place)));
+                } else if !place.contains(r"\shell\gezik\") {
+                    out.push_str(&format!(
+                        "; Gezik also made {}; delete it by hand if it is empty.\r\n",
+                        key(&change.place)
+                    ));
+                }
             }
             (Kind::File | Kind::Folder, Value::Absent) if reg_safe(&change.place) => {
                 out.push_str(&format!("; Gezik also made {}; delete it by hand if you like.\r\n", change.place));
@@ -343,7 +356,7 @@ mod tests {
             ),
             change(
                 Kind::RegistryValue,
-                r"HKCU\Software\Classes\CLSID\{x}\command",
+                r"HKCU\Software\Classes\CLSID\{x}\shell\opennewwindow\command",
                 "DelegateExecute",
                 Value::Absent,
                 sz(""),
@@ -361,7 +374,8 @@ mod tests {
         let expected = "Windows Registry Editor Version 5.00\r\n\r\n\
             [HKEY_CURRENT_USER\\Software\\Classes\\Drive\\shell]\r\n@=hex(2):61,00,00,00\r\n\r\n\
             [HKEY_CURRENT_USER\\Software\\Classes\\Directory\\shell]\r\n@=\"o\\\"p\\\\n\"\r\n\r\n\
-            [HKEY_CURRENT_USER\\Software\\Classes\\CLSID\\{x}\\command]\r\n\"DelegateExecute\"=-\r\n\r\n\
+            ; Win+E: the next lines take back Gezik's Win+E command; if another program answers Win+E now, delete them first.\r\n\
+            [HKEY_CURRENT_USER\\Software\\Classes\\CLSID\\{x}\\shell\\opennewwindow\\command]\r\n\"DelegateExecute\"=-\r\n\r\n\
             [-HKEY_CURRENT_USER\\Software\\Classes\\Directory\\shell\\gezik]\r\n\r\n\
             ; Gezik also made C:\\L\\Gezik\\x.txt; delete it by hand if you like.\r\n";
         assert_eq!(text, expected);
