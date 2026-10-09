@@ -113,8 +113,13 @@ impl Rows {
     }
 
     fn set(&mut self, i: usize, entry: &Entry) {
-        let row = self.row(entry);
-        self.names.push_str(&entry.name);
+        let mut row = self.row(entry);
+        // An unchanged name (a size or time refresh) keeps its bytes: the arena grows only on renames.
+        if self.name(i) == entry.name {
+            row.name = self.rows[i].name;
+        } else {
+            self.names.push_str(&entry.name);
+        }
         self.rows[i] = row;
     }
 
@@ -1227,6 +1232,11 @@ mod tests {
         assert_eq!(facts(&copy.get(0)), facts(&entries[2]));
         assert_eq!(facts(&rows.get(0)), facts(&entries[3]), "a replaced row");
         assert_eq!(facts(&rows.get(1)), facts(&entries[1]), "the next keeps its name");
+        let used = rows.names.len();
+        let mut refreshed = entries[1].clone();
+        refreshed.size = refreshed.size.wrapping_sub(1);
+        rows.set(1, &refreshed);
+        assert_eq!((facts(&rows.get(1)), rows.names.len()), (facts(&refreshed), used), "same name: no new bytes");
         assert_eq!(time(ticks(None)), None);
     }
 }
