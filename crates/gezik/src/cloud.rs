@@ -22,11 +22,6 @@ pub fn set_roots(roots: Vec<CloudRoot>) {
     STATE.with(|s| *s.borrow_mut() = State { roots, last: None });
 }
 
-#[allow(dead_code)] // shortcut: Tasks 4-5 (badges, keep / free up) call it; drop the allow then.
-pub fn roots() -> Vec<CloudRoot> {
-    STATE.with(|s| s.borrow().roots.clone())
-}
-
 pub fn root_of(path: &Path) -> Option<CloudRoot> {
     STATE.with(|s| gezik_platform::cloud::root_of(&s.borrow().roots, path).cloned())
 }
