@@ -242,8 +242,8 @@ enum Primary {
     None,
     Time(Option<SystemTime>),
     Size(u64),
-    // Type name key (a span of the key buffer), then the lowercase extension.
-    Type((u32, u32), String),
+    // Type name key, then the lowercase extension (spans of the key buffer: no string a row).
+    Type((u32, u32), (u32, u32)),
     // A result's folder (a span of the key buffer).
     Folder((u32, u32)),
 }
@@ -251,7 +251,7 @@ enum Primary {
 /// Sorts `entries` by `spec` (see [`sort_order`]). Returns where each entry came from: entry
 /// `k` now was entry `order[k]` before.
 pub fn sort_entries(
-    entries: &mut Vec<Entry>,
+    entries: &mut [Entry],
     spec: SortSpec,
     folders_first: bool,
     type_name: impl Fn(&Entry) -> String,
@@ -272,11 +272,26 @@ pub fn sort_order<'a>(
     type_name: impl Fn(&Entry) -> String,
     folder: &dyn Fn(usize) -> &'a str,
 ) -> Vec<usize> {
-    // All keys live in one buffer, so sorting 100k names allocates once, not 100k times.
-    let mut buf: Vec<u32> = Vec::with_capacity(entries.iter().map(|e| e.name.len() + 4).sum());
-    let mut push = |text: &str| {
+    // All keys live in one buffer, so sorting 100k names allocates once, not 100k times. Its
+    // exact size for the names: a guess too small doubles it (32 MB more at 250,000 rows).
+    let mut scratch = Vec::new();
+    let names: usize = entries
+        .iter()
+        .map(|e| {
+            scratch.clear();
+            push_key(&mut scratch, &e.name);
+            scratch.len()
+        })
+        .sum();
+    let mut buf: Vec<u32> = Vec::with_capacity(names);
+    // `raw`: the code points as they are (they compare as the text's bytes did).
+    let mut push = |text: &str, raw: bool| {
         let start = buf.len() as u32;
-        push_key(&mut buf, text);
+        if raw {
+            buf.extend(text.chars().map(u32::from));
+        } else {
+            push_key(&mut buf, text);
+        }
         (start, buf.len() as u32)
     };
     let keys: Vec<(Primary, (u32, u32))> = entries
@@ -288,10 +303,10 @@ pub fn sort_order<'a>(
                 SortKey::Modified => Primary::Time(e.modified),
                 SortKey::Created => Primary::Time(e.created),
                 SortKey::Size => Primary::Size(if e.is_dir { 0 } else { e.size }),
-                SortKey::Type => Primary::Type(push(&type_name(e)), e.extension().to_lowercase()),
-                SortKey::Folder => Primary::Folder(push(folder(i))),
+                SortKey::Type => Primary::Type(push(&type_name(e), false), push(&e.extension().to_lowercase(), true)),
+                SortKey::Folder => Primary::Folder(push(folder(i), false)),
             };
-            (primary, push(&e.name))
+            (primary, push(&e.name, false))
         })
         .collect();
     let span = |(start, end): (u32, u32)| &buf[start as usize..end as usize];
@@ -303,7 +318,9 @@ pub fn sort_order<'a>(
         folders.then_with(|| {
             let ((pa, na), (pb, nb)) = (&keys[i], &keys[j]);
             let primary = match (pa, pb) {
-                (Primary::Type(ta, xa), Primary::Type(tb, xb)) => span(*ta).cmp(span(*tb)).then_with(|| xa.cmp(xb)),
+                (Primary::Type(ta, xa), Primary::Type(tb, xb)) => {
+                    span(*ta).cmp(span(*tb)).then_with(|| span(*xa).cmp(span(*xb)))
+                }
                 (Primary::Folder(fa), Primary::Folder(fb)) => span(*fa).cmp(span(*fb)),
                 _ => pa.cmp(pb),
             };
@@ -320,9 +337,23 @@ pub fn sort_order<'a>(
 
 /// Puts `items` in `order` (item `k` becomes the one that was at `order[k]`); `order` holds
 /// every index once.
-pub fn apply_order<T>(items: &mut Vec<T>, order: &[usize]) {
-    let mut slots: Vec<Option<T>> = items.drain(..).map(Some).collect();
-    items.extend(order.iter().filter_map(|&i| slots[i].take()));
+pub fn apply_order<T>(items: &mut [T], order: &[usize]) {
+    debug_assert_eq!(order.len(), items.len());
+    // Follows each cycle with swaps: a flag per item, not a second copy of the items (250,000
+    // results would need 16 MB more for a moment).
+    let mut done = vec![false; order.len()];
+    for start in 0..order.len() {
+        let mut at = start;
+        while !done[at] {
+            done[at] = true;
+            let from = order[at];
+            if from == start {
+                break;
+            }
+            items.swap(at, from);
+            at = from;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -566,5 +597,18 @@ mod tests {
         assert_eq!(by_name(SortDir::Asc), [1, 0, 2], "equal names: by folder");
         assert_eq!(by_name(SortDir::Desc), [2, 0, 1]);
         assert!(!SortKey::ALL.contains(&SortKey::Folder), "not a folder's sort");
+    }
+
+    #[test]
+    fn apply_order_moves_each_item_to_its_place() {
+        // Cycles of several lengths, fixed points and a reversal.
+        for order in
+            [vec![], vec![0], vec![2, 0, 1], vec![1, 0, 3, 2, 4], vec![5, 4, 3, 2, 1, 0], vec![3, 0, 4, 1, 2, 5]]
+        {
+            let mut items: Vec<String> = (0..order.len()).map(|i| format!("item {i}")).collect();
+            let want: Vec<String> = order.iter().map(|&i| items[i].clone()).collect();
+            apply_order(&mut items, &order);
+            assert_eq!(items, want, "order {order:?}");
+        }
     }
 }
