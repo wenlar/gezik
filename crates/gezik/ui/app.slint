@@ -170,6 +170,7 @@ export component AppWindow inherits Window {
             MenuItem { title: "Enclosing Folder"; shortcut: root.menu-keys ? @keys(Control + UpArrow) : @keys(); activated => { root.menu-command("up"); } }
             MenuItem { title: "Show in Folder"; shortcut: root.menu-keys ? @keys(Control + Shift + E) : @keys(); activated => { root.menu-command("show-in-folder"); } }
             MenuItem { title: "Show Trash"; activated => { root.menu-command("show-trash"); } }
+            MenuItem { title: "Connect to Server…"; shortcut: root.menu-keys ? @keys(Control + K) : @keys(); activated => { root.menu-command("connect-to-server"); } }
             MenuSeparator { }
             MenuItem { title: "Go to Folder…"; shortcut: root.menu-keys ? @keys(Control + L) : @keys(); activated => { root.menu-command("focus-path"); } }
             MenuItem { title: "Quick Open…"; shortcut: root.menu-keys ? @keys(Control + P) : @keys(); activated => { root.menu-command("quick-open"); } }

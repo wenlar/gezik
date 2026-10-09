@@ -242,7 +242,8 @@ pub fn allowed(action: Action) -> bool {
         | Action::ShowTrash
         | Action::PutBack
         | Action::EmptyTrash
-        | Action::SystemIntegration => true,
+        | Action::SystemIntegration
+        | Action::ConnectToServer => true,
         Action::Rename
         | Action::NewFolder
         | Action::Copy

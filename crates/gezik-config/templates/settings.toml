@@ -182,6 +182,7 @@ cloud = true
 # always-keep-offline = ""   # cloud folders: always keep the chosen items on this device (macOS: Download Now)
 # free-up-space = ""         # cloud folders: free up the chosen synced items' space (macOS: Remove Download)
 # get-info = "alt+enter"       # Get Info (Windows: the system's Properties); macOS: "mod+i"
+# connect-to-server = "mod+k"  # Connect to Server: a share by its address (\\server\share, smb://server/share)
 
 # Saved rule sets for batch rename (Rename… with two or more items selected). The rename
 # layer writes them with "Presets ▾ › Save current rules as…"; they can also be written here.

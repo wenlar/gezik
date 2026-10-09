@@ -7,6 +7,7 @@ mod batch_rename;
 mod cli;
 mod cloud;
 mod conflicts;
+mod connect;
 mod context_menu;
 mod convert;
 mod copy_path;
@@ -256,7 +257,8 @@ fn perform(
         | Action::NewWindow
         | Action::MakeAlias
         | Action::ShowPackageContents
-        | Action::GetInfo => return actions::run(action, nav, view),
+        | Action::GetInfo
+        | Action::ConnectToServer => return actions::run(action, nav, view),
     }
     true
 }
@@ -809,6 +811,7 @@ fn main() -> Result<(), slint::PlatformError> {
         config.clone(),
         saved_state.batch_rename.clone().unwrap_or_default(),
     );
+    connect::install(config.clone(), saved_state.servers_recent.clone());
     let _palette = palette::Palette::new(
         &window,
         nav.clone(),

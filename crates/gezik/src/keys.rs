@@ -806,6 +806,7 @@ mod tests {
                 Action::CommandPalette => "ctrl+shift+p",
                 Action::QuickOpen => "ctrl+p",
                 Action::GetInfo => "alt+enter",
+                Action::ConnectToServer => "ctrl+k",
                 Action::PasteMove
                 | Action::MakeAlias
                 | Action::ShowPackageContents

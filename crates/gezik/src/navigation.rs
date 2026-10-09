@@ -70,6 +70,12 @@ fn list(location: &Location, mode: &Mode) -> LoadResult {
     }
     match location {
         Location::Drives => LoadResult::Drives(gezik_platform::drives()),
+        // `\\server` (Windows): its disk shares as folders (spec 9 §7.4). The name came from
+        // the user; nothing is discovered.
+        Location::Path(path) if let Some(server) = server_of(path) => match gezik_platform::network::shares(&server) {
+            Ok(names) => LoadResult::Files(path.clone(), names.into_iter().map(share_entry).collect()),
+            Err(err) => LoadResult::Failed(err),
+        },
         Location::Path(path) => match list_dir(path) {
             Ok(mut entries) => {
                 // What a copy or delete is still working on under a temporary name.
@@ -95,6 +101,19 @@ fn list(location: &Location, mode: &Mode) -> LoadResult {
         Location::Flat(_) => LoadResult::Results,
         Location::Trash => LoadResult::Trash(crate::trash_view::load()),
     }
+}
+
+/// The server of a bare `\\server` path (Windows), whose shares are its listing.
+fn server_of(path: &Path) -> Option<String> {
+    if !cfg!(windows) {
+        return None;
+    }
+    gezik_core::path_text::server_only(&path.to_string_lossy()).map(str::to_owned)
+}
+
+/// A share as a folder row of its server's listing.
+fn share_entry(name: String) -> Entry {
+    Entry { name, is_dir: true, flags: 0, size: 0, modified: None, created: None }
 }
 
 /// The listing to show after a load of `location` failed. A failed `Show` leaves the tab at
@@ -870,6 +889,11 @@ impl Navigator {
         crumbs(&self.active_location(), MAX_CRUMBS).into_iter().nth(index).map(|crumb| crumb.location)
     }
 
+    /// The window that owns a system prompt (Windows' login window, Explorer's eject).
+    pub fn owner(&self) -> isize {
+        self.0.borrow().window.upgrade().map_or(0, |w| gezik_platform::network::owner_of(&w.window().window_handle()))
+    }
+
     pub fn status(&self, text: String) {
         if let Some(window) = self.0.borrow().window.upgrade() {
             window.set_status(text.into());
@@ -1026,9 +1050,10 @@ impl Navigator {
     fn watch_shown(&self, location: &Location) {
         // Results are not watched (spec 4.7).
         let folder = match location {
-            Location::Path(path) => Some(path.clone()),
-            // The trash's bins are watched by `trash_view` while it shows.
-            Location::Drives | Location::Search(_) | Location::Flat(_) | Location::Trash => None,
+            Location::Path(path) if server_of(path).is_none() => Some(path.clone()),
+            // The trash's bins are watched by `trash_view` while it shows; a server's shares
+            // are not watched.
+            Location::Path(_) | Location::Drives | Location::Search(_) | Location::Flat(_) | Location::Trash => None,
         };
         if *location != Location::Trash {
             crate::trash_view::left();
@@ -1207,6 +1232,14 @@ pub fn sync_model<T: Clone + PartialEq + 'static>(model: &VecModel<T>, items: im
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_bare_server_is_listed_by_its_shares_on_windows_only() {
+        assert_eq!(server_of(Path::new(r"\\nas")).as_deref(), if cfg!(windows) { Some("nas") } else { None });
+        assert_eq!(server_of(Path::new(r"\\nas\foto")), None);
+        let entry = share_entry("foto".to_owned());
+        assert!(entry.is_dir && entry.name == "foto" && entry.size == 0);
+    }
 
     #[test]
     fn opening_follows_packages_and_aliases() {
