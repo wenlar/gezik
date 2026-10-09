@@ -16,6 +16,7 @@ mod finder_menu;
 mod folder_sizes;
 mod folder_watch;
 mod frame_limit;
+mod integration;
 mod keys;
 mod media;
 #[cfg(target_os = "macos")]
@@ -37,6 +38,7 @@ mod sidebar;
 mod single_instance;
 mod stack;
 mod start;
+mod system_changes;
 mod tab_sets;
 mod tab_tools;
 mod templates;
@@ -245,6 +247,7 @@ fn perform(
         | Action::ShowTrash
         | Action::PutBack
         | Action::EmptyTrash
+        | Action::SystemIntegration
         | Action::NewWindow
         | Action::MakeAlias
         | Action::ShowPackageContents => return actions::run(action, nav, view),
@@ -303,7 +306,9 @@ fn handle_key(
     if window.get_tp_open() {
         let mut used = false;
         if let Some(chord) = &chord {
-            if palette::is_open() {
+            if integration::is_open() {
+                integration::with_current(|i| used = i.chord(chord));
+            } else if palette::is_open() {
                 palette::with_current(|p| used = p.chord(chord));
             } else {
                 tab_tools::with_current(|t| used = t.chord(chord));
@@ -585,6 +590,11 @@ fn main() -> Result<(), slint::PlatformError> {
         }
         return Ok(());
     }
+    // Undo the system changes and exit (spec 11.4): never handed to a running Gezik, no window.
+    if cli.unregister {
+        instance::attach_console();
+        std::process::exit(system_changes::unregister_cli());
+    }
     for warning in &cli.warnings {
         eprintln!("gezik: {warning}");
     }
@@ -761,6 +771,7 @@ fn main() -> Result<(), slint::PlatformError> {
     searches.set_settings(initial_settings.search.clone());
     nav.on_changed(|location| search::with_current(|s| s.location_changed(location)));
     let _tab_tools = tab_tools::TabTools::new(&window, nav.clone());
+    let _integration = integration::Integration::new(&window);
     let _select_tools = select_tools::SelectTools::new(
         view.clone(),
         dialogs.clone(),

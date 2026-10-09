@@ -20,6 +20,9 @@ Usage: gezik [OPTIONS] [PATH...]
   --new-tab         always a new tab (default: reuse a tab already showing that folder)
   --new-window      a separate Gezik window (a new process), not the running one
   --select PATH     open PATH's folder with PATH selected (may repeat)
+  --unregister      undo every system change Gezik made (see system-changes.toml), then exit;
+                    exit code 0: all undone, 1: some left as they were, 2: an error
+                    (in cmd: start /wait gezik --unregister)
   --version, --help
 ";
 
@@ -32,6 +35,8 @@ pub struct Cli {
     pub new_window: bool,
     pub help: bool,
     pub version: bool,
+    /// `--unregister`: undo the system changes and exit (spec 11.4); never handed to a running Gezik.
+    pub unregister: bool,
     /// Unknown options and the like: on the console, and in the status bar of a Gezik that
     /// opens; never a reason not to open.
     pub warnings: Vec<String>,
@@ -56,6 +61,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>, windows: bool) -> Cli {
             "--new-window" => cli.new_window = true,
             "--help" | "-h" => cli.help = true,
             "--version" | "-V" => cli.version = true,
+            "--unregister" => cli.unregister = true,
             "--select" => match args.next() {
                 Some(path) => push(&mut cli, path, true, windows),
                 None => cli.warnings.push("--select needs a path".to_owned()),
@@ -195,6 +201,13 @@ mod tests {
 
     fn t(path: &str, select: bool) -> Target {
         Target { path: PathBuf::from(path), select }
+    }
+
+    #[test]
+    fn unregister_is_a_flag_of_its_own() {
+        let cli = parse(args(&["--unregister"]), true);
+        assert!(cli.unregister && cli.targets.is_empty() && cli.warnings.is_empty());
+        assert!(HELP.contains("--unregister"));
     }
 
     #[test]

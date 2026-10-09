@@ -435,6 +435,19 @@ Do 78-84 on GNOME (Nautilus) and on KDE (Dolphin).
 83. **Live.** With the trash open, trash a file in Nautilus/Dolphin: it shows within about 1 s. Go to another folder, then trash another file: Gezik reads nothing (`strace -f -e trace=openat -p $(pidof gezik)` shows no `Trash` path).
 84. **Refused.** In the trash: Ctrl+C, Ctrl+X, Ctrl+V, Ctrl+Shift+N, Ctrl+D, F2 and a `[[commands]]` key do nothing and the status bar says `Not available in the Trash`; Enter/double-click opens nothing, with a note; rows can't be dragged out.
 
+### 9b3, the command line and --unregister
+
+Do 86-92 on GNOME and on KDE.
+
+85. **Tests first.** In the clone: `cargo test -p gezik-platform system` and `cargo test -p gezik system_changes`. The Unix arms (`replace_symlink` refusing a file or a foreign link, the sweep by exe name) only compiled on Windows; they never ran on Linux.
+86. **Panel.** Palette ▸ `System Integration…` and View ▸ `System Integration…` (last item): a box with three rows (`Command line (PATH)` Off/Add, `Changes made: 0`, `Undo all system changes`). Esc closes it; typing in the field does nothing; Up/Down and click work.
+87. **Add, no `~/.local/bin`.** Move `~/.local/bin` away first if you have one. `Add gezik to PATH` asks first and names every place it writes. After it: `~/.local` and `~/.local/bin` exist with mode 0755, `ls -la ~/.local/bin` shows the `gezik` link pointing at the real binary. If `~/.local/bin` is not in Gezik's own `PATH`, the hint box shows `export PATH="$HOME/.local/bin:$PATH"` and `Copy` puts it on the clipboard. When `~/.local/bin` is already on `PATH` (most distributions' `~/.profile` adds it once it exists; log out and in) the hint does not show. A new terminal's `gezik .` opens the folder in the running Gezik.
+88. **Someone else's file, dotfiles.** Remove gezik from PATH, then `echo hi > ~/.local/bin/gezik` and Add again: the file is untouched and the panel says `<place> was not made by Gezik; left alone` (Off, no button); the same with `ln -s /usr/bin/true ~/.local/bin/gezik`. Clean up. Then make `~/.local/bin` itself a link (`mv ~/.local/bin ~/dots-bin; ln -s ~/dots-bin ~/.local/bin`): Add works (the `gezik` link lands in `~/dots-bin`), and Remove and `--unregister` take the `gezik` link back but never touch the `~/.local/bin` link.
+89. **Gezik moved, odd path.** Copy the build to `~/Uygulamalar/gé zik/gezik` and run it from there: the panel says `Gezik's exe moved; gezik still starts <old path>` with `Update`; after Update, `ls -la ~/.local/bin/gezik` shows the new path (Turkish letters and the space intact) and `gezik .` starts it.
+90. **`--unregister`.** `gezik --unregister` prints one line per change and `echo $?` gives 0. The link is gone; `~/.local/bin` and `~/.local` are removed if Gezik made them and they are empty. With another file in `~/.local/bin`: the folder stays, `left (not empty)`, exit 1. A second run: `No system-changes.toml: …`, `Nothing of Gezik's was found.` (0).
+91. **No journal.** Add, delete `~/.config/gezik/system-changes.toml`, then `gezik --unregister`: only the link that points at this Gezik is swept; `~/.local/bin` stays. Write `version = 9` into a fresh `system-changes.toml`: the panel says `Fix or delete system-changes.toml first`, Add fails, `--unregister` exits 2 and the file is unchanged.
+92. **Two at once.** With Gezik open and gezik added, run `gezik --unregister` from a terminal: the report is complete; opening the panel again shows Off.
+
 ## Known gaps (not bugs)
 
 - **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (F5 works it out again). Search results and the flat view show no folder sizes.

@@ -10,6 +10,7 @@ pub mod settings_writer;
 pub mod shortcuts;
 mod state_store;
 pub mod store;
+pub mod system_journal;
 pub mod theme;
 pub mod theme_rules;
 pub mod views_file;

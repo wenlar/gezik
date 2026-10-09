@@ -816,7 +816,8 @@ mod tests {
                 | Action::SaveSearch
                 | Action::ShowTrash
                 | Action::PutBack
-                | Action::EmptyTrash => continue,
+                | Action::EmptyTrash
+                | Action::SystemIntegration => continue,
             };
             assert_eq!(reach(text), Some(action), "{text}");
         }

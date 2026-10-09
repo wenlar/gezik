@@ -159,6 +159,7 @@ export component AppWindow inherits Window {
             }
             MenuSeparator { }
             MenuItem { title: "Refresh"; shortcut: root.menu-keys ? @keys(Control + R) : @keys(); activated => { root.menu-command("refresh"); } }
+            MenuItem { title: "System Integration…"; activated => { root.menu-command("system-integration"); } }
         }
         Menu {
             title: "Go";
