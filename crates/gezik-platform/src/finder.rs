@@ -89,6 +89,18 @@ pub fn is_package(path: &Path) -> bool {
     }
 }
 
+/// Makes a Finder alias at `at` to `target` (a bookmark file, as Finder's Make Alias). Never
+/// replaces a file already at `at`. macOS only.
+pub fn make_alias(target: &Path, at: &Path) -> std::io::Result<()> {
+    #[cfg(target_os = "macos")]
+    return crate::mac::finder::make_alias(target, at);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (target, at);
+        Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "Aliases are made on macOS only"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,5 +123,9 @@ mod tests {
         assert_eq!(finder_name(path), None);
         assert_eq!(resolve_alias(path), AliasTarget::NotAlias);
         assert!(!is_package(Path::new("/Applications/Safari.app")));
+        let dir = std::env::temp_dir();
+        let at = dir.join(format!("gezik-no-alias-{}", std::process::id()));
+        assert_eq!(make_alias(&dir, &at).unwrap_err().kind(), std::io::ErrorKind::Unsupported);
+        assert!(!at.exists());
     }
 }

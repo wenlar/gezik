@@ -47,6 +47,7 @@ pub fn create(kind: LinkKind, target: &Path, at: &Path, target_is_dir: bool) -> 
         LinkKind::Symlink => symlink(&target, at, target_is_dir),
         LinkKind::Shortcut => imp::shortcut(&target, at),
         LinkKind::Junction => imp::junction(&target, at),
+        LinkKind::Alias => crate::finder::make_alias(&target, at),
     }
 }
 

@@ -1,12 +1,13 @@
 //! macOS: Finder's names for folders, aliases and packages (spec 9 §4.2).
 
+use std::io;
 use std::path::{Path, PathBuf};
 
 use objc2::rc::{Retained, autoreleasepool};
 use objc2::runtime::AnyObject;
 use objc2_foundation::{
-    NSFileManager, NSNumber, NSString, NSURL, NSURLBookmarkResolutionOptions, NSURLIsAliasFileKey, NSURLIsPackageKey,
-    NSURLResourceKey,
+    NSFileManager, NSNumber, NSString, NSURL, NSURLBookmarkCreationOptions, NSURLBookmarkResolutionOptions,
+    NSURLIsAliasFileKey, NSURLIsPackageKey, NSURLResourceKey,
 };
 
 use crate::finder::AliasTarget;
@@ -56,6 +57,27 @@ pub fn resolve_alias(path: &Path) -> AliasTarget {
     })
 }
 
+pub fn make_alias(target: &Path, at: &Path) -> io::Result<()> {
+    let (Some(target_text), Some(at_text)) = (target.to_str(), at.to_str()) else {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "The name is not valid UTF-8"));
+    };
+    // The name is claimed first: the bookmark write replaces whatever is at `at`.
+    std::fs::OpenOptions::new().write(true).create_new(true).open(at)?;
+    let written = autoreleasepool(|_| {
+        let options = NSURLBookmarkCreationOptions::SuitableForBookmarkFile;
+        let target_url = NSURL::fileURLWithPath(&NSString::from_str(target_text));
+        let at_url = NSURL::fileURLWithPath(&NSString::from_str(at_text));
+        target_url
+            .bookmarkDataWithOptions_includingResourceValuesForKeys_relativeToURL_error(options, None, None)
+            .and_then(|data| NSURL::writeBookmarkData_toURL_options_error(&data, &at_url, options.bits()))
+            .map_err(|error| error.localizedDescription().to_string())
+    });
+    written.map_err(|error| {
+        let _ = std::fs::remove_file(at);
+        io::Error::other(error)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -74,6 +96,15 @@ mod tests {
         assert_eq!(resolve_alias(&dir.join("a.txt")), AliasTarget::NotAlias);
         assert!(matches!(resolve_alias(&dir.join("link")), AliasTarget::Target { is_dir: false, .. }));
         assert_eq!(resolve_alias(&dir.join("broken")), AliasTarget::Missing);
+        let alias = dir.join("a.txt alias");
+        make_alias(&dir.join("a.txt"), &alias).unwrap();
+        let original = dir.join("a.txt").canonicalize().unwrap();
+        assert!(matches!(resolve_alias(&alias), AliasTarget::Target { path, is_dir: false } if path == original));
+        let before = std::fs::read(&alias).unwrap();
+        assert_eq!(make_alias(&dir.join("a.txt"), &alias).unwrap_err().kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read(&alias).unwrap(), before, "the alias is not replaced");
+        std::fs::remove_file(dir.join("a.txt")).unwrap();
+        assert_eq!(resolve_alias(&alias), AliasTarget::Missing);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
