@@ -4,6 +4,11 @@
 mod describe;
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) mod freedesktop;
+pub mod secure;
+#[cfg(unix)]
+mod secure_unix;
+#[cfg(windows)]
+mod secure_windows;
 #[cfg(unix)]
 mod unix;
 #[cfg(windows)]
