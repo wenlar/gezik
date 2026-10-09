@@ -220,23 +220,23 @@ fn main() {
                 let shut = Change::flag(LOCKED, true).apply(Change::flag(HIDDEN, true).apply(a));
                 check(
                     "hide and lock",
-                    attrs::write(&file, a, shut).is_ok()
+                    attrs::write(&file, entry.id, a, shut).is_ok()
                         && attrs::read(&file).is_ok_and(|e| e.attrs.flags == HIDDEN | LOCKED),
                 );
                 let chmod = Change::bit(0o020, true).apply(shut);
-                check("a locked file's permissions are refused", attrs::write(&file, shut, chmod).is_err());
+                check("a locked file's permissions are refused", attrs::write(&file, entry.id, shut, chmod).is_err());
                 let open = Change::flag(LOCKED, false).apply(chmod);
                 check(
                     "unlock and chmod in one write",
-                    attrs::write(&file, shut, open).is_ok()
+                    attrs::write(&file, entry.id, shut, open).is_ok()
                         && attrs::read(&file)
                             .is_ok_and(|e| e.attrs.mode & PERMS == (a.mode | 0o020) & PERMS && e.attrs.flags == HIDDEN),
                 );
-                check("unhide", attrs::write(&file, open, Change::flag(HIDDEN, false).apply(open)).is_ok());
+                check("unhide", attrs::write(&file, entry.id, open, Change::flag(HIDDEN, false).apply(open)).is_ok());
                 if let Ok(l) = attrs::read(&link) {
                     check(
                         "a link's permissions are refused",
-                        attrs::write(&link, l.attrs, Change::bit(0o002, true).apply(l.attrs)).is_err(),
+                        attrs::write(&link, l.id, l.attrs, Change::bit(0o002, true).apply(l.attrs)).is_err(),
                     );
                     check(
                         "what the link leads to is untouched",
@@ -245,7 +245,7 @@ fn main() {
                     if let Some(gid) = mine.first() {
                         check(
                             "a link's own group (lchown)",
-                            attrs::write(&link, l.attrs, Change::group(*gid).apply(l.attrs)).is_ok(),
+                            attrs::write(&link, l.id, l.attrs, Change::group(*gid).apply(l.attrs)).is_ok(),
                         );
                     }
                 }
@@ -258,7 +258,7 @@ fn main() {
                     let forced = gezik_core::attrs::Attrs { gid: !*gid, ..s.attrs };
                     check(
                         "setuid kept across a group change",
-                        attrs::write(&suid, forced, to).is_ok()
+                        attrs::write(&suid, s.id, forced, to).is_ok()
                             && attrs::read(&suid).is_ok_and(|e| e.attrs.mode == 0o4755),
                     );
                 }

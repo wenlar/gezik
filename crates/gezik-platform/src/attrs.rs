@@ -5,10 +5,63 @@
 use std::io;
 use std::path::Path;
 
-use gezik_core::attrs::{Attrs, Entry};
+use gezik_core::attrs::{Attrs, Entry, Identity};
 
 #[cfg(unix)]
 pub use unix::{groups, has_acl, my_groups, read, users, write};
+
+/// The system calls of one write, on one item (a test's fake elsewhere).
+#[cfg(any(unix, test))]
+trait Steps {
+    /// Hidden and Locked become `flags`; every other flag stays.
+    fn set_flags(&mut self, flags: u32) -> io::Result<()>;
+    fn chown(&mut self, uid: Option<u32>, gid: Option<u32>) -> io::Result<()>;
+    /// The permission and special bits now.
+    fn mode(&mut self) -> io::Result<u32>;
+    fn chmod(&mut self, mode: u32) -> io::Result<()>;
+}
+
+/// Writes what differs between `from` and `to`: an unlock first, then owner and group, then
+/// permissions, then a lock. chown clears setuid and setgid, so the mode is checked after it
+/// and the special bits the item `had` (and `to` keeps) are put back; none is added. `had` is
+/// None for a link: its mode is never written. If a step after an unlock fails, the item is
+/// locked again.
+#[cfg(any(unix, test))]
+fn apply(steps: &mut impl Steps, had: Option<u32>, from: Attrs, to: Attrs) -> io::Result<()> {
+    use gezik_core::attrs::{PERMS, SPECIAL, flags_first};
+    let unlock_first = flags_first(from, to);
+    if unlock_first {
+        steps.set_flags(to.flags)?;
+    }
+    let mut rest = || -> io::Result<()> {
+        let uid = (from.uid != to.uid).then_some(to.uid);
+        let gid = (from.gid != to.gid).then_some(to.gid);
+        if uid.is_some() || gid.is_some() {
+            steps.chown(uid, gid)?;
+        }
+        if let Some(had) = had {
+            let mode = (had & to.mode & SPECIAL) | (to.mode & PERMS);
+            if steps.mode()? != mode {
+                steps.chmod(mode)?;
+                if steps.mode()? != mode {
+                    // chmod by someone outside the item's group drops setgid without an error.
+                    return Err(io::Error::other("The system turned setuid or setgid off"));
+                }
+            }
+        }
+        Ok(())
+    };
+    if let Err(err) = rest() {
+        if unlock_first {
+            let _ = steps.set_flags(from.flags);
+        }
+        return Err(err);
+    }
+    if !unlock_first && from.flags != to.flags {
+        steps.set_flags(to.flags)?;
+    }
+    Ok(())
+}
 
 #[cfg(not(unix))]
 fn unsupported() -> io::Error {
@@ -19,7 +72,7 @@ pub fn read(_path: &Path) -> io::Result<Entry> {
     Err(unsupported())
 }
 #[cfg(not(unix))]
-pub fn write(_path: &Path, _from: Attrs, _to: Attrs) -> io::Result<()> {
+pub fn write(_path: &Path, _id: Identity, _from: Attrs, _to: Attrs) -> io::Result<()> {
     Err(unsupported())
 }
 #[cfg(not(unix))]
@@ -46,7 +99,7 @@ mod unix {
     use std::os::unix::fs::MetadataExt;
     use std::sync::Mutex;
 
-    use gezik_core::attrs::{HIDDEN, Identity, LOCKED, PERMS, SPECIAL, flags_first};
+    use gezik_core::attrs::{HIDDEN, LOCKED, PERMS};
 
     use super::*;
 
@@ -86,42 +139,46 @@ mod unix {
         })
     }
 
-    /// Writes what differs between `from` and `to`, never through a link: an unlock first, then
-    /// owner and group with `lchown`, then permissions with `fchmodat(AT_SYMLINK_NOFOLLOW)` (a
-    /// link's are refused), then a lock. chown clears setuid and setgid, so the mode is checked
-    /// after it and the special bits the item had (and `to` keeps) are put back; none is added.
-    pub fn write(path: &Path, from: Attrs, to: Attrs) -> io::Result<()> {
+    /// Writes what differs between `from` and `to` (see `apply`) if `path` is still `id`,
+    /// never through a link: owner and group with `lchown`, permissions with
+    /// `fchmodat(AT_SYMLINK_NOFOLLOW)` (a link's are refused), flags with `lchflags`.
+    pub fn write(path: &Path, id: Identity, from: Attrs, to: Attrs) -> io::Result<()> {
         let meta = std::fs::symlink_metadata(path)?;
+        if (Identity { dev: meta.dev(), ino: meta.ino() }) != id {
+            return Err(io::Error::new(io::ErrorKind::NotFound, "Another file is there now"));
+        }
         let is_link = meta.file_type().is_symlink();
         if is_link && from.mode & PERMS != to.mode & PERMS {
             return Err(io::Error::new(io::ErrorKind::Unsupported, "A link's permissions cannot be changed"));
         }
         let c = c_path(path)?;
-        let flags_now = own_flags(&meta);
-        let unlock_first = flags_first(from, to);
-        if unlock_first {
-            set_flags(&c, flags_now, to.flags)?;
+        let mut steps = Sys { path, c: &c, flags_now: own_flags(&meta) };
+        super::apply(&mut steps, (!is_link).then_some(meta.mode() & 0o7000), from, to)
+    }
+
+    struct Sys<'a> {
+        path: &'a Path,
+        c: &'a CStr,
+        /// Every flag as it was (only Hidden and Locked change).
+        flags_now: u32,
+    }
+
+    impl super::Steps for Sys<'_> {
+        fn set_flags(&mut self, flags: u32) -> io::Result<()> {
+            set_flags(self.c, self.flags_now, flags)
         }
-        let uid = (from.uid != to.uid).then_some(to.uid);
-        let gid = (from.gid != to.gid).then_some(to.gid);
-        if uid.is_some() || gid.is_some() {
-            std::os::unix::fs::lchown(path, uid, gid)?;
+
+        fn chown(&mut self, uid: Option<u32>, gid: Option<u32>) -> io::Result<()> {
+            std::os::unix::fs::lchown(self.path, uid, gid)
         }
-        if !is_link {
-            let mode = (meta.mode() & to.mode & SPECIAL) | (to.mode & PERMS);
-            let now = || std::fs::symlink_metadata(path).map(|m| m.mode() & 0o7777);
-            if now()? != mode {
-                set_mode(path, &c, mode)?;
-                if now()? != mode {
-                    // chmod by someone outside the item's group drops setgid without an error.
-                    return Err(io::Error::other("The system turned setuid or setgid off"));
-                }
-            }
+
+        fn mode(&mut self) -> io::Result<u32> {
+            Ok(std::fs::symlink_metadata(self.path)?.mode() & 0o7777)
         }
-        if !unlock_first && from.flags != to.flags {
-            set_flags(&c, flags_now, to.flags)?;
+
+        fn chmod(&mut self, mode: u32) -> io::Result<()> {
+            set_mode(self.path, self.c, mode)
         }
-        Ok(())
     }
 
     fn set_mode(path: &Path, c: &CStr, mode: u32) -> io::Result<()> {
@@ -254,6 +311,96 @@ mod unix {
     }
 }
 
+#[cfg(test)]
+mod step_tests {
+    use gezik_core::attrs::{Change, LOCKED};
+
+    use super::*;
+
+    /// One item's attributes in memory; `refuse` names the step that fails.
+    struct Fake {
+        attrs: Attrs,
+        refuse: &'static str,
+        /// What chmod really sets (`mode & keep`): the system dropping a bit.
+        keep: u32,
+    }
+
+    impl Fake {
+        fn step(&self, name: &str) -> io::Result<()> {
+            if self.refuse == name { Err(io::ErrorKind::PermissionDenied.into()) } else { Ok(()) }
+        }
+    }
+
+    impl Steps for Fake {
+        fn set_flags(&mut self, flags: u32) -> io::Result<()> {
+            self.step("flags")?;
+            self.attrs.flags = flags;
+            Ok(())
+        }
+
+        fn chown(&mut self, uid: Option<u32>, gid: Option<u32>) -> io::Result<()> {
+            self.step("chown")?;
+            self.attrs.uid = uid.unwrap_or(self.attrs.uid);
+            self.attrs.gid = gid.unwrap_or(self.attrs.gid);
+            self.attrs.mode &= !0o6000; // as the kernel does
+            Ok(())
+        }
+
+        fn mode(&mut self) -> io::Result<u32> {
+            Ok(self.attrs.mode)
+        }
+
+        fn chmod(&mut self, mode: u32) -> io::Result<()> {
+            self.step("chmod")?;
+            self.attrs.mode = mode & self.keep;
+            Ok(())
+        }
+    }
+
+    fn fake(mode: u32, flags: u32, refuse: &'static str) -> Fake {
+        Fake { attrs: Attrs { mode, uid: 501, gid: 20, flags }, refuse, keep: 0o7777 }
+    }
+
+    #[test]
+    fn chown_comes_first_and_setuid_is_put_back_never_added() {
+        for (mode, after) in [(0o4755, 0o4750), (0o0755, 0o0750)] {
+            let mut f = fake(mode, 0, "");
+            let from = f.attrs;
+            let to = Change::mode(0o750).apply(Change::group(30).apply(from));
+            apply(&mut f, Some(mode & 0o7000), from, to).unwrap();
+            assert_eq!(f.attrs, Attrs { mode: after, gid: 30, ..f.attrs });
+        }
+    }
+
+    #[test]
+    fn a_failure_after_an_unlock_locks_it_again() {
+        for refuse in ["chown", "chmod"] {
+            let mut f = fake(0o644, LOCKED, refuse);
+            let from = f.attrs;
+            let to = Change::flag(LOCKED, false).apply(Change::mode(0o600).apply(Change::owner(0).apply(from)));
+            assert!(apply(&mut f, Some(0), from, to).is_err());
+            assert_eq!(f.attrs.flags, LOCKED, "{refuse}");
+        }
+    }
+
+    #[test]
+    fn setgid_dropped_by_the_system_is_an_error_and_relocks() {
+        let mut f = Fake { keep: !0o2000, ..fake(0o2755, LOCKED, "") };
+        let from = f.attrs;
+        let to = Change::flag(LOCKED, false).apply(Change::group(30).apply(from));
+        assert!(apply(&mut f, Some(0o2000), from, to).is_err());
+        assert_eq!((f.attrs.gid, f.attrs.flags), (30, LOCKED), "the group changed; the lock is back");
+    }
+
+    #[test]
+    fn a_link_mode_is_never_written() {
+        let mut f = fake(0o777, 0, "chmod");
+        let from = f.attrs;
+        apply(&mut f, None, from, Change::group(30).apply(from)).unwrap();
+        assert_eq!(f.attrs.gid, 30);
+    }
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use gezik_core::attrs::{Change, PERMS};
@@ -272,14 +419,16 @@ mod tests {
         std::os::unix::fs::symlink(&file, &link).unwrap();
         let before = read(&file).unwrap();
         assert_eq!(before.attrs.mode & PERMS, 0o644);
-        write(&file, before.attrs, Change::bit(0o020, true).apply(before.attrs)).unwrap();
+        write(&file, before.id, before.attrs, Change::bit(0o020, true).apply(before.attrs)).unwrap();
         assert_eq!(read(&file).unwrap().attrs.mode & PERMS, 0o664);
+        let other = Identity { ino: before.id.ino + 1, ..before.id };
+        assert!(write(&file, other, before.attrs, before.attrs).is_err(), "another file is there now");
         let l = read(&link).unwrap();
         assert!(l.is_link);
-        assert!(write(&link, l.attrs, Change::bit(0o002, true).apply(l.attrs)).is_err(), "a link's permissions");
+        assert!(write(&link, l.id, l.attrs, Change::bit(0o002, true).apply(l.attrs)).is_err(), "a link's permissions");
         assert_eq!(read(&file).unwrap().attrs.mode & PERMS, 0o664, "what it leads to is untouched");
         let gid = my_groups()[0];
-        write(&link, l.attrs, Change::group(gid).apply(l.attrs)).unwrap();
+        write(&link, l.id, l.attrs, Change::group(gid).apply(l.attrs)).unwrap();
         assert_eq!(read(&link).unwrap().attrs.gid, gid, "the link's own group");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -296,10 +445,10 @@ mod tests {
         // SAFETY: no arguments.
         let gid = unsafe { libc::getegid() };
         for (file, mode) in [(&suid, 0o4750), (&plain, 0o750)] {
-            let a = read(file).unwrap().attrs;
+            let Entry { id, attrs: a, .. } = read(file).unwrap();
             let to = Change::mode(0o750).apply(Change::group(gid).apply(a));
             // A `from` group that differs makes it call lchown even if the group stays the same.
-            write(file, Attrs { gid: !gid, ..a }, to).unwrap();
+            write(file, id, Attrs { gid: !gid, ..a }, to).unwrap();
             assert_eq!(read(file).unwrap().attrs.mode, mode, "{}", file.display());
         }
         let _ = std::fs::remove_dir_all(&dir);
@@ -321,12 +470,12 @@ mod tests {
         let dir = test_dir("attrs-locked");
         let file = dir.join("f");
         std::fs::write(&file, "x").unwrap();
-        let a = read(&file).unwrap().attrs;
+        let Entry { id, attrs: a, .. } = read(&file).unwrap();
         let locked = Change::flag(LOCKED, true).apply(a);
-        write(&file, a, locked).unwrap();
-        assert!(write(&file, locked, Change::bit(0o020, true).apply(locked)).is_err(), "locked: no chmod");
+        write(&file, id, a, locked).unwrap();
+        assert!(write(&file, id, locked, Change::bit(0o020, true).apply(locked)).is_err(), "locked: no chmod");
         let both = Change::flag(LOCKED, false).apply(Change::bit(0o020, true).apply(locked));
-        write(&file, locked, both).unwrap();
+        write(&file, id, locked, both).unwrap();
         assert_eq!(read(&file).unwrap().attrs, both);
         let _ = std::fs::remove_dir_all(&dir);
     }

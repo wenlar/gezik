@@ -25,7 +25,8 @@ const ENCLOSED: u8 = 1;
 /// Reads and writes items: the system, or a test's memory.
 pub(crate) trait AttrIo: Send + Sync {
     fn read(&self, path: &Path) -> io::Result<Entry>;
-    fn write(&self, path: &Path, from: Attrs, to: Attrs) -> io::Result<()>;
+    /// Writes `to` over `from` if `path` is still `id`.
+    fn write(&self, path: &Path, id: Identity, from: Attrs, to: Attrs) -> io::Result<()>;
 }
 
 struct SystemIo;
@@ -35,8 +36,8 @@ impl AttrIo for SystemIo {
         gezik_platform::attrs::read(path)
     }
 
-    fn write(&self, path: &Path, from: Attrs, to: Attrs) -> io::Result<()> {
-        gezik_platform::attrs::write(path, from, to)
+    fn write(&self, path: &Path, id: Identity, from: Attrs, to: Attrs) -> io::Result<()> {
+        gezik_platform::attrs::write(path, id, from, to)
     }
 }
 
@@ -141,7 +142,7 @@ impl Task for SetAttributesTask {
         });
     }
 
-    fn run(&self, item: &PlanItem, _cx: &RunCx<'_>) -> io::Result<Outcome> {
+    fn run(&self, item: &PlanItem, cx: &RunCx<'_>) -> io::Result<Outcome> {
         let Some(path) = &item.source else { return Ok(Outcome::Nothing) };
         let now = self.io.read(path)?;
         let (from, to) = if item.tag == ENCLOSED {
@@ -161,8 +162,17 @@ impl Task for SetAttributesTask {
         if from == to {
             return Ok(Outcome::Nothing);
         }
-        self.io.write(path, from, to).map_err(refused)?;
-        Ok(Outcome::AttributesChanged { path: path.clone(), id: now.id, before: from, after: to })
+        let changed = |after| Outcome::AttributesChanged { path: path.clone(), id: now.id, before: from, after };
+        let Err(err) = self.io.write(path, now.id, from, to) else { return Ok(changed(to)) };
+        // A write that failed halfway (the owner changed, the permissions not) stays undoable.
+        match self.io.read(path) {
+            Ok(after) if after.id != now.id => Err(changed_since()),
+            Ok(after) if after.attrs != from => {
+                cx.fail(path, &refused(err));
+                Ok(changed(after.attrs))
+            }
+            _ => Err(refused(err)),
+        }
     }
 }
 
@@ -183,6 +193,10 @@ mod tests {
     struct Fake {
         entries: Mutex<HashMap<PathBuf, Entry>>,
         denied: Mutex<HashSet<PathBuf>>,
+        /// Paths whose write changes only the owner and group, then fails.
+        halfway: Mutex<HashSet<PathBuf>>,
+        /// Paths an editor saves over just before the write.
+        swapped: Mutex<HashSet<PathBuf>>,
     }
 
     impl Fake {
@@ -210,11 +224,23 @@ mod tests {
             }))
         }
 
-        fn write(&self, path: &Path, _from: Attrs, to: Attrs) -> io::Result<()> {
+        fn write(&self, path: &Path, id: Identity, _from: Attrs, to: Attrs) -> io::Result<()> {
             if self.denied.lock().unwrap().contains(path) {
                 return Err(io::ErrorKind::PermissionDenied.into());
             }
-            self.entries.lock().unwrap().get_mut(path).ok_or(io::ErrorKind::NotFound)?.attrs = to;
+            let mut entries = self.entries.lock().unwrap();
+            let entry = entries.get_mut(path).ok_or(io::ErrorKind::NotFound)?;
+            if self.swapped.lock().unwrap().contains(path) {
+                entry.id.ino += 1000;
+            }
+            if entry.id != id {
+                return Err(io::ErrorKind::NotFound.into());
+            }
+            if self.halfway.lock().unwrap().contains(path) {
+                (entry.attrs.uid, entry.attrs.gid) = (to.uid, to.gid);
+                return Err(io::Error::other("The system turned setuid or setgid off"));
+            }
+            entry.attrs = to;
             Ok(())
         }
     }
@@ -275,6 +301,36 @@ mod tests {
         assert_eq!(report.failures.len(), 1);
         assert_eq!((&report.failures[0].path, report.failures[0].message.as_str()), (&paths[0], NEEDS_ADMIN));
         assert_eq!((fake.entry(&paths[0]).attrs.uid, fake.entry(&paths[1]).attrs.uid), (501, 0));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_write_that_failed_halfway_is_reported_and_undoable() {
+        let (dir, paths) = files("attrs-halfway", &["a.txt"]);
+        let fake = Arc::new(Fake::default());
+        let items = shown(&fake, &paths);
+        fake.halfway.lock().unwrap().insert(paths[0].clone());
+        let engine = engine();
+        let task = SetAttributesTask::new(wanted(&items, Change { uid: Some(0), ..Change::mode(0o600) }));
+        let (report, _) = finish(&engine, engine.submit(Box::new(task.with_io(fake.clone()))), defaults);
+        assert_eq!(report.failures.len(), 1, "the failure is reported");
+        assert_eq!(
+            engine.undo_label().as_deref(),
+            Some("Change attributes of 1 item"),
+            "and the owner change can be undone"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_file_saved_over_just_before_the_write_is_left_alone() {
+        let (dir, paths) = files("attrs-swapped", &["a.txt"]);
+        let fake = Arc::new(Fake::default());
+        let items = shown(&fake, &paths);
+        fake.swapped.lock().unwrap().insert(paths[0].clone());
+        let report = run(&fake, SetAttributesTask::new(wanted(&items, Change::bit(0o020, true))));
+        assert_eq!((report.skipped_changed, report.failures.len()), (1, 0));
+        assert_eq!(fake.entry(&paths[0]).attrs.mode, 0o644);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
