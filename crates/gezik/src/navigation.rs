@@ -50,6 +50,7 @@ enum LoadResult {
     Failed(std::io::Error),
     /// A search or the flat view: nothing is read here (search.rs runs it once shown).
     Results,
+    Trash(crate::trash_view::Loaded),
 }
 
 /// Lists `location`. Runs on a background thread.
@@ -79,6 +80,7 @@ fn list(location: &Location, mode: &Mode) -> LoadResult {
         },
         Location::Flat(folder) if !folder.is_dir() => LoadResult::Failed(std::io::ErrorKind::NotFound.into()),
         Location::Flat(_) => LoadResult::Results,
+        Location::Trash => LoadResult::Trash(crate::trash_view::load()),
     }
 }
 
@@ -90,7 +92,7 @@ fn listing_after_failure(mode: &Mode, location: &Location) -> Option<Listing> {
     (*mode == Mode::Show).then(|| match location {
         Location::Path(path) => Listing::Files(path.clone(), Rc::default()),
         Location::Drives => Listing::Drives(Vec::new()),
-        Location::Search(_) | Location::Flat(_) => Listing::default(),
+        Location::Search(_) | Location::Flat(_) | Location::Trash => Listing::default(),
     })
 }
 
@@ -546,7 +548,7 @@ impl Navigator {
                 let location = history.location();
                 let path = match location {
                     Location::Path(path) => path.display().to_string(),
-                    Location::Drives => String::new(),
+                    Location::Drives | Location::Trash => String::new(),
                     // Task 7 places these.
                     Location::Search(_) | Location::Flat(_) => {
                         location.folder().map(|p| p.display().to_string()).unwrap_or_default()
@@ -670,6 +672,12 @@ impl Navigator {
     /// reload started; none does while a load the user started is under way (it would
     /// overtake it).
     pub fn refresh_showing(&self, dirs: &[PathBuf], select: &[String], note: Option<String>) -> bool {
+        // The trash is read anew after Gezik's jobs: its rows only ever come from a full read
+        // (`ResultSet::append_trash`), never from a job's changes.
+        if self.active_location() == Location::Trash {
+            crate::trash_view::changed();
+            return false;
+        }
         let Location::Path(current) = self.active_location() else { return false };
         {
             let inner = self.0.borrow();
@@ -689,6 +697,23 @@ impl Navigator {
         }
         self.load_with(Location::Path(current), Mode::Show, note, false);
         true
+    }
+
+    /// Reads the trash again without "Loading…", if it is on screen; later while the user
+    /// loads something or drags a selection rectangle.
+    pub fn refresh_trash(&self) {
+        if self.active_location() != Location::Trash {
+            return;
+        }
+        let busy = {
+            let inner = self.0.borrow();
+            inner.user_load.is_some() || inner.view.marquee_active()
+        };
+        if busy {
+            return crate::trash_view::changed();
+        }
+        self.save_view();
+        self.load_with(Location::Trash, Mode::Show, None, false);
     }
 
     /// Path of entry `index` and whether it is a folder (drives count as folders).
@@ -814,7 +839,7 @@ impl Navigator {
         });
     }
 
-    fn finish_load(&self, location: Location, mode: Mode, result: LoadResult, note: Option<String>) {
+    fn finish_load(&self, location: Location, mode: Mode, result: LoadResult, mut note: Option<String>) {
         let select_next;
         // This was the pending load (an overtaken one never gets here). A tab opened on a
         // folder that fails is no visit, nor is its next reload.
@@ -833,6 +858,7 @@ impl Navigator {
         let shown = match &location {
             Location::Path(p) => p.display().to_string(),
             Location::Drives => gezik_core::nav::DRIVES_NAME.to_owned(),
+            Location::Trash => gezik_core::nav::TRASH_NAME.to_owned(),
             Location::Search(spec) => spec.title(),
             Location::Flat(folder) => folder.display().to_string(),
         };
@@ -842,6 +868,10 @@ impl Navigator {
                 Listing::Files(path, Rc::new(entries))
             }
             LoadResult::Drives(drives) => Listing::Drives(drives),
+            LoadResult::Trash(loaded) => {
+                note = crate::trash_view::shown(&loaded.bins, loaded.denied).or(note);
+                Listing::Results(Arc::new(loaded.set))
+            }
             LoadResult::Results => {
                 let tab = self.tab_id(self.active_index());
                 let mut listing = Listing::default();
@@ -899,8 +929,12 @@ impl Navigator {
         // Results are not watched (spec 4.7).
         let folder = match location {
             Location::Path(path) => Some(path.clone()),
-            Location::Drives | Location::Search(_) | Location::Flat(_) => None,
+            // The trash's bins are watched by `trash_view` while it shows.
+            Location::Drives | Location::Search(_) | Location::Flat(_) | Location::Trash => None,
         };
+        if *location != Location::Trash {
+            crate::trash_view::left();
+        }
         let mut inner = self.0.borrow_mut();
         let same = match (&folder, &inner.watched) {
             (Some(a), Some(b)) => same_path(a, b),
@@ -987,7 +1021,7 @@ impl Navigator {
             window.set_crumbs(ModelRc::new(VecModel::from(parts)));
             window.set_current_path(match &location {
                 Location::Path(p) => p.display().to_string().into(),
-                Location::Drives => "".into(),
+                Location::Drives | Location::Trash => "".into(),
                 Location::Search(_) | Location::Flat(_) => {
                     location.folder().map(|p| p.display().to_string()).unwrap_or_default().into()
                 }

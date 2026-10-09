@@ -22,6 +22,8 @@ pub const SECTION_PINNED: i32 = 1;
 pub const SECTION_DRIVES: i32 = 2;
 pub const SECTION_GROUP: i32 = 3;
 pub const SECTION_SEARCHES: i32 = 4;
+/// The trash's one row, under the drives (spec 7.1).
+pub const SECTION_TRASH: i32 = 5;
 
 /// `SidebarRow.icon`: the glyph sidebar.slint draws on a place (0: none, on headings).
 const ICON_HOME: i32 = 1;
@@ -30,6 +32,7 @@ const ICON_PIN: i32 = 3;
 const ICON_ALIAS: i32 = 4;
 const ICON_DRIVE: i32 = 5;
 const ICON_SEARCH: i32 = 6;
+const ICON_TRASH: i32 = 7;
 
 /// A known folder's icon: the house for the home folder, which `known_folders` puts first
 /// and names "Home" (when it exists).
@@ -580,6 +583,7 @@ impl Sidebar {
             SECTION_FOLDERS => places.known.get(index).map(|f| Location::Path(f.path.clone())),
             SECTION_PINNED => inner.pins.visible.get(index).map(|pin| Location::Path(pin.path.clone())),
             SECTION_DRIVES => places.drives.get(index).map(|d| Location::Path(d.path.clone())),
+            SECTION_TRASH => (index == 0).then_some(Location::Trash),
             _ => None,
         }
     }
@@ -701,6 +705,15 @@ impl Sidebar {
             rows.extend(
                 places.drives.iter().enumerate().map(|(i, d)| item(&d.label, SECTION_DRIVES, i, &d.path, ICON_DRIVE)),
             );
+            rows.push(SidebarRow {
+                header: false,
+                label: gezik_core::nav::TRASH_NAME.into(),
+                section: SECTION_TRASH,
+                index: 0,
+                active: current == Location::Trash,
+                tip: "".into(),
+                icon: ICON_TRASH,
+            });
 
             let as_row = |row: Option<usize>| row.map_or(-1, index);
             window.set_sidebar_pinned_first_row(as_row(first));

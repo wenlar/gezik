@@ -1444,6 +1444,8 @@ fn session_state(value: Option<&toml::Value>) -> Session {
         let Some(tab) = item.as_table() else { continue };
         let location = if tab.get("drives").and_then(|v| v.as_bool()) == Some(true) {
             Location::Drives
+        } else if tab.get("trash").and_then(|v| v.as_bool()) == Some(true) {
+            Location::Trash
         } else if let Some(search) = tab.get("search").and_then(|v| v.as_table()) {
             // One written wrong is left out; an older Gezik leaves these tabs out (spec 9.2).
             match search_from_toml(search) {
@@ -1712,6 +1714,9 @@ impl State {
                         }
                         Location::Drives => {
                             table.insert("drives".into(), toml::Value::Boolean(true));
+                        }
+                        Location::Trash => {
+                            table.insert("trash".into(), toml::Value::Boolean(true));
                         }
                         Location::Search(spec) => {
                             table.insert("search".into(), toml::Value::Table(search_to_toml(spec)));
@@ -3035,6 +3040,18 @@ shortcut = \"shift+f8\"
         assert_eq!(session.tabs.len(), 2, "a search without a full path is left out");
         assert_eq!(session.active, 1);
         assert_eq!(session.tabs[1].location, Location::Flat(folder));
+    }
+
+    #[test]
+    fn a_trash_tab_is_saved_and_read_back() {
+        use gezik_core::nav::{Location, Session, SessionTab};
+        let state = State {
+            session: Session { tabs: vec![SessionTab { location: Location::Trash, locked: false }], active: 0 },
+            ..State::default()
+        };
+        let text = state.to_toml();
+        assert!(text.contains("trash = true"), "{text}");
+        assert_eq!(State::parse(&text).session.tabs[0].location, Location::Trash);
     }
 
     #[test]

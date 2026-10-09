@@ -141,9 +141,24 @@ pub(crate) fn read_bin(bin: &Bin, out: &mut Vec<TrashItem>) -> io::Result<()> {
     }
 }
 
+/// At most `max` bytes of record `path`, which must be a plain file: a FIFO or a device
+/// planted in a bin would block the read or never end, a link would lead elsewhere.
 fn read_small(path: &Path, max: u64) -> io::Result<Vec<u8>> {
+    let not_a_file = || io::Error::new(io::ErrorKind::InvalidData, "a record is a plain file");
+    if !std::fs::symlink_metadata(path)?.is_file() {
+        return Err(not_a_file());
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    // Swapped for a FIFO or a link since the check: the open neither waits nor follows.
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, libc::O_NONBLOCK | libc::O_NOFOLLOW);
+    let file = options.open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(not_a_file());
+    }
     let mut bytes = Vec::new();
-    std::fs::File::open(path)?.take(max).read_to_end(&mut bytes)?;
+    file.take(max).read_to_end(&mut bytes)?;
     Ok(bytes)
 }
 
@@ -267,7 +282,7 @@ pub(crate) fn shared_trash_ok(is_dir: bool, is_link: bool, mode: u32) -> bool {
 }
 
 /// A trash folder of this user's own: a real folder this user owns.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+#[cfg_attr(windows, allow(dead_code))]
 pub(crate) fn own_trash_ok(is_dir: bool, is_link: bool, owner: u32, me: u32) -> bool {
     is_dir && !is_link && owner == me
 }
@@ -278,6 +293,26 @@ mod tests {
 
     fn bin_dir(name: &str) -> PathBuf {
         crate::fs::test_dir(&format!("trash-{name}"))
+    }
+
+    #[test]
+    fn only_a_plain_file_is_read_as_a_record() {
+        let dir = bin_dir("plain");
+        std::fs::write(dir.join("ok"), "abc").unwrap();
+        assert_eq!(read_small(&dir.join("ok"), 2).unwrap(), b"ab");
+        std::fs::create_dir(dir.join("folder")).unwrap();
+        assert!(read_small(&dir.join("folder"), 2).is_err());
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            let fifo = dir.join("fifo");
+            let c = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
+            // SAFETY: a valid C string; the FIFO is this test's own.
+            assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+            assert!(read_small(&fifo, 2).is_err(), "no wait for a writer");
+            std::os::unix::fs::symlink(dir.join("ok"), dir.join("link")).unwrap();
+            assert!(read_small(&dir.join("link"), 2).is_err());
+        }
     }
 
     #[cfg(windows)]

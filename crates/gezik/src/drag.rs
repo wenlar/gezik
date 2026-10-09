@@ -243,7 +243,7 @@ fn current_spans(stored: &[(String, f32, f32)], labels: &[String]) -> Vec<(f32, 
 fn path_of(location: Location) -> Option<PathBuf> {
     match location {
         Location::Path(path) => Some(path),
-        Location::Drives | Location::Search(_) | Location::Flat(_) => None,
+        Location::Drives | Location::Search(_) | Location::Flat(_) | Location::Trash => None,
     }
 }
 
@@ -436,7 +436,7 @@ impl Drags {
             self.0.view.prepare_menu(index);
         }
         // Drives (This PC) are not files to move.
-        let can_drag = can_drag && !self.0.view.shows_drives();
+        let can_drag = can_drag && !self.0.view.shows_drives() && !self.0.view.shows_trash();
         *self.0.phase.borrow_mut() = Phase::Armed { index, x, y, right, can_drag };
     }
 
@@ -710,6 +710,8 @@ impl Drags {
     /// What dropping `d` at `hit` would do.
     fn resolve(&self, window: &AppWindow, hit: Hit, d: &Dragging) -> Target {
         let (hit, dir) = match hit {
+            // Nothing goes into the bins but by a delete.
+            Hit::Entry(_) if self.0.view.shows_trash() => (Hit::Background, None),
             Hit::Entry(i) => match self.0.view.entry_path(i) {
                 Some((path, true)) => (hit, Some(path)),
                 // A zip, 7z or tar file (not one of those dragged): the files are added to it.

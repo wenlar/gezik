@@ -480,6 +480,10 @@ impl Operations {
         self.0.engine.set_threads(files.copy_threads);
     }
 
+    pub fn dialogs(&self) -> &Dialogs {
+        &self.0.dialogs
+    }
+
     pub fn conflicts(&self) -> &crate::conflicts::Conflicts {
         &self.0.conflicts
     }

@@ -41,6 +41,7 @@ mod tab_tools;
 mod templates;
 mod terminal;
 mod theme_bridge;
+mod trash_view;
 mod view;
 mod view_options;
 mod watcher;

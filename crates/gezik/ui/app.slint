@@ -391,6 +391,8 @@ export component AppWindow inherits Window {
     in-out property <length> col-size;
     in-out property <length> col-folder;
     in-out property <length> col-match;
+    // The trash is shown (its column headers say so).
+    in property <bool> trash-shown;
     // The sort column (0 Name, 1-4 Modified, Created, Type, Size, 5 Folder, 6 Match) and direction.
     in property <int> sort-column;
     in property <bool> sort-desc;
@@ -1033,6 +1035,7 @@ export component AppWindow inherits Window {
                             items: root.items;
                             mode: root.view-mode;
                             picture-size: root.grid-size;
+                            trash: root.trash-shown;
                             grid-columns-changed(n) => { root.grid-columns-changed(n); }
                             zoom(bigger) => { root.zoom(bigger); }
                             has-focus: keys.has-focus;

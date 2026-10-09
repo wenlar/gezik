@@ -107,6 +107,7 @@ fn remove(sets: &mut Vec<TabSet>, name: &str) -> bool {
 pub fn text_of(location: &Location, dirs: &KnownDirs) -> String {
     match location {
         Location::Drives => "drives".to_owned(),
+        Location::Trash => "trash".to_owned(),
         Location::Path(path) => dirs.collapse(path).trim().to_owned(),
         // A set keeps a place, not a search.
         Location::Search(_) | Location::Flat(_) => {
@@ -120,6 +121,9 @@ pub fn location_of(text: &str, dirs: &KnownDirs) -> Option<Location> {
     let text = text.trim();
     if text.eq_ignore_ascii_case("drives") {
         return Some(Location::Drives);
+    }
+    if text.eq_ignore_ascii_case("trash") {
+        return Some(Location::Trash);
     }
     dirs.expand_checked(text).map(Location::Path)
 }
@@ -290,6 +294,8 @@ mod tests {
         assert_eq!(text_of(&Location::Drives, &dirs), "drives");
         assert_eq!(location_of("{downloads}", &dirs), Some(Location::Path(downloads)));
         assert_eq!(location_of(" Drives ", &dirs), Some(Location::Drives));
+        assert_eq!(text_of(&Location::Trash, &dirs), "trash");
+        assert_eq!(location_of(" Trash ", &dirs), Some(Location::Trash));
         assert_eq!(location_of("{home}/../x", &dirs), None);
     }
 

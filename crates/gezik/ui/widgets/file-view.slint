@@ -139,6 +139,8 @@ export component FileView inherits Rectangle {
     in-out property <length> col-size;
     in-out property <length> col-folder;
     in-out property <length> col-match;
+    // The trash is shown: Folder and Modified are where items were and when they were deleted.
+    in property <bool> trash;
     // The sort column (0 Name, 1-4 Modified, Created, Type, Size, 5 Folder) and direction.
     in property <int> sort-column;
     in property <bool> sort-desc;
@@ -366,7 +368,7 @@ export component FileView inherits Rectangle {
             if root.col-folder > 0: HeaderCell {
                 gap-before: root.gap;
                 width: root.col-folder;
-                text: "Folder";
+                text: root.trash ? "Original location" : "Folder";
                 sorted: root.sort-column == 5;
                 descending: root.sort-desc;
                 clicked => { root.header-clicked(5); }
@@ -386,7 +388,7 @@ export component FileView inherits Rectangle {
             if root.col-modified > 0: HeaderCell {
                 gap-before: root.gap;
                 width: root.col-modified;
-                text: "Modified";
+                text: root.trash ? "Date deleted" : "Modified";
                 sorted: root.sort-column == 1;
                 descending: root.sort-desc;
                 clicked => { root.header-clicked(1); }

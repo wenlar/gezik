@@ -17,9 +17,21 @@ pub(super) fn bins() -> Vec<Bin> {
         .into_iter()
         .collect();
     for drive in crate::drives().into_iter().filter(|d| d.path != Path::new("/")) {
-        bins.push(Bin::Mac { dir: drive.path.join(".Trashes").join(me().to_string()), volume: drive.path });
+        let dir = drive.path.join(".Trashes").join(me().to_string());
+        // Only a real folder of this user's: anyone can make one on a shared volume.
+        if own_bin(&dir) {
+            bins.push(Bin::Mac { dir, volume: drive.path });
+        }
     }
     bins
+}
+
+/// `dir` is a real folder (not a link) this user owns.
+#[cfg(target_os = "macos")]
+fn own_bin(dir: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::symlink_metadata(dir)
+        .is_ok_and(|meta| super::own_trash_ok(meta.is_dir(), meta.file_type().is_symlink(), meta.uid(), me()))
 }
 
 #[cfg(not(target_os = "macos"))]
