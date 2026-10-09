@@ -337,7 +337,7 @@ impl Default for Settings {
             pinned: Vec::new(),
             shortcuts: Shortcuts::default(),
             view: ViewDefaults::default(),
-            folder_sizes: FolderSizeMode::Local,
+            folder_sizes: FolderSizeMode::Off,
             files: FilesSettings::default(),
             max_fps: 120,
             rename_presets: Vec::new(),
@@ -2775,9 +2775,9 @@ shortcut = \"shift+f8\"
     fn folder_sizes_are_read_and_bad_values_warned() {
         let (settings, warnings) = parse("[view]\nfolder-sizes = \"all\"\n");
         assert_eq!((settings.folder_sizes, warnings.len()), (FolderSizeMode::All, 0));
-        assert_eq!(Settings::default().folder_sizes, FolderSizeMode::Local);
+        assert_eq!(Settings::default().folder_sizes, FolderSizeMode::Off);
         let (settings, warnings) = parse("[view]\nfolder-sizes = \"yes\"\n");
-        assert_eq!(settings.folder_sizes, FolderSizeMode::Local);
+        assert_eq!(settings.folder_sizes, FolderSizeMode::Off);
         assert_eq!(warnings[0].message, "view.folder-sizes: expected \"off\", \"local\" or \"all\", got \"yes\"");
     }
 
