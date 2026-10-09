@@ -125,6 +125,10 @@ pub fn plan_start(
 
 /// [`PathKind`] from the real file system.
 pub fn path_kind(path: &Path) -> PathKind {
+    // A bare `\\server` has no metadata; Windows lists its shares there (9b6).
+    if cfg!(windows) && gezik_core::path_text::server_only(&path.to_string_lossy()).is_some() {
+        return PathKind::Dir;
+    }
     match std::fs::metadata(path) {
         Ok(meta) if meta.is_dir() => PathKind::Dir,
         Ok(_) => PathKind::File,
@@ -135,6 +139,10 @@ pub fn path_kind(path: &Path) -> PathKind {
 /// `path` made absolute with `.` and `..` folded away by name: on Unix
 /// `std::path::absolute` keeps `..`, so `gezik ..` would open `/home/u/proj/..`.
 pub fn absolute(path: PathBuf) -> PathBuf {
+    // A bare `\\server` is absolute already; Windows would garble it.
+    if cfg!(windows) && gezik_core::path_text::server_only(&path.to_string_lossy()).is_some() {
+        return path;
+    }
     let Ok(full) = std::path::absolute(&path) else { return path };
     let mut out = PathBuf::new();
     for component in full.components() {
@@ -379,5 +387,17 @@ mod tests {
         assert_eq!(absolute(PathBuf::from("./a/../b")), cwd.join("b"));
         let root = absolute(PathBuf::from("/"));
         assert_eq!(absolute(root.join("..")), root, "no higher than the root");
+    }
+
+    /// `gezik --shell \\server` (Explorer's folder verb): a bare server stays one through
+    /// `make_absolute` and opens as a folder, asked of no network.
+    #[cfg(windows)]
+    #[test]
+    fn a_bare_server_opens_as_a_folder() {
+        for text in [r"\\no-such-host-9b6", r"\\no-such-host-9b6\"] {
+            let path = absolute(PathBuf::from(text));
+            assert_eq!(gezik_core::path_text::server_only(&path.to_string_lossy()), Some("no-such-host-9b6"), "{text}");
+            assert_eq!(path_kind(&path), PathKind::Dir, "{text}");
+        }
     }
 }
