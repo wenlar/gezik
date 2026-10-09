@@ -30,16 +30,32 @@ pub struct WalkRules {
     /// Empty: no rule.
     pub devices: Vec<u64>,
     pub max_depth: usize,
+    /// Whether a folder whose data is not on this disk (a cloud placeholder, an offline folder:
+    /// `DirItem::offline`) is gone into. Listing it may fetch it from the cloud: folder sizes
+    /// leave it (spec 6, sapma 13); a search goes in, as in 8a.
+    pub enter_offline: bool,
 }
 
 impl WalkRules {
     pub fn new(shown: Option<(bool, bool)>, skip: &[String], devices: Vec<u64>) -> WalkRules {
-        WalkRules { shown, skip: skip.iter().map(|name| fold_text(name)).collect(), devices, max_depth: MAX_DEPTH }
+        WalkRules {
+            shown,
+            skip: skip.iter().map(|name| fold_text(name)).collect(),
+            devices,
+            max_depth: MAX_DEPTH,
+            enter_offline: true,
+        }
     }
 
     fn skips(&self, name: &str) -> bool {
         !self.skip.is_empty() && self.skip.contains(&fold_text(name))
     }
+}
+
+/// Whether the walk goes into `item`: a folder that is no link (spec 3.4), and no cloud
+/// folder unless `rules` allow it.
+pub fn goes_into(item: &DirItem, rules: &WalkRules) -> bool {
+    item.is_dir && !item.is_link && (rules.enter_offline || !item.offline)
 }
 
 /// Whether a folder on `device` is on the scope's file system. With a rule (Unix), an unknown
@@ -208,7 +224,7 @@ impl Shared {
             {
                 continue;
             }
-            if item.is_dir && !item.is_link {
+            if goes_into(&item, rules) {
                 let path = job.dir.join(&item.name);
                 if rules.skips(&item.name) {
                     self.skipped.fetch_add(1, Ordering::Relaxed);
@@ -341,6 +357,33 @@ mod tests {
     fn rules(skip: &[&str]) -> WalkRules {
         let skip: Vec<String> = skip.iter().map(|s| (*s).to_owned()).collect();
         WalkRules::new(Some((true, false)), &skip, Vec::new())
+    }
+
+    fn item(is_dir: bool, is_link: bool, offline: bool) -> DirItem {
+        DirItem {
+            name: "x".into(),
+            is_dir,
+            is_link,
+            is_file: !is_dir && !is_link,
+            offline,
+            flags: 0,
+            size: 0,
+            modified: None,
+            created: None,
+            device: 0,
+            has_meta: true,
+        }
+    }
+
+    #[test]
+    fn a_cloud_folder_is_not_gone_into() {
+        let mut rules = rules(&[]);
+        assert!(goes_into(&item(true, false, false), &rules));
+        assert!(goes_into(&item(true, false, true), &rules), "a search goes into it, as in 8a");
+        rules.enter_offline = false;
+        assert!(!goes_into(&item(true, false, true), &rules), "folder sizes never fill a cloud folder");
+        assert!(!goes_into(&item(true, true, false), &rules), "never a link");
+        assert!(!goes_into(&item(false, false, false), &rules));
     }
 
     #[test]
