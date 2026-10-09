@@ -422,6 +422,19 @@ Do 70-73 once on X11 and once on Wayland.
 75. **Other users.** `sudo -u <other> env DISPLAY=$DISPLAY gezik /tmp` never reaches your Gezik: it opens its own window (or fails to), but no tab opens in yours.
 76. **Off.** `[system] single-instance = false` in settings.toml, restart Gezik: every call opens its own window.
 
+### 9b2, the Trash
+
+Do 78-84 on GNOME (Nautilus) and on KDE (Dolphin).
+
+77. **Tests first.** In the clone: `cargo test -p gezik-platform trash`, `cargo test -p gezik-platform fs`, `cargo test -p gezik-ops delete` and `cargo test -p gezik-ops restore`. The Unix path rules only compiled on Windows and never ran: `freedesktop_original` (absolute `Path=` only in the home trash, relative only in a volume trash, `..` refused), `shared_trash_ok`/`own_trash_ok`, `only_items_in_a_bin_with_their_own_record_count` (only `files/x` with its own `info/x.trashinfo` may be deleted for good), `put_back_never_goes_through_a_link` with a symlink, `only_a_plain_file_is_read_as_a_record` and `a_fifo_or_a_link_is_never_opened` with a FIFO, the `.trashinfo` removal tests. Then `cargo test --release -p gezik-platform ten_thousand -- --ignored` (10,000 items in under 1 s).
+78. **One list.** Trash a file in the home folder and one on a USB stick (ext4, and a FAT stick mounted for your user) with Nautilus/Dolphin. The sidebar's Trash (under the drives) shows both: the home trash (`~/.local/share/Trash`) and the stick's `.Trash-$(id -u)`, each with its own name, Original location and Date deleted. Turkish and spaced names (`çğış ad.txt`, stored as `%C3%A7…%20ad.txt` in `Path=`) show decoded.
+79. **Put Back.** The item goes back to its folder; `info/<name>.trashinfo` is gone and `files/<name>` is gone; the desktop's Trash no longer shows it. Folder deleted meanwhile: made again. A file of the same name there: the conflict list (Keep both `a (2).txt`; Replace puts the existing one in the trash). Ctrl+Z puts it back in the trash. An item whose `.trashinfo` you broke by hand (`Path=` removed) shows a blank place and Put Back asks for a folder.
+80. **Delete for good and Empty.** Delete and Shift+Delete in the trash ask `Delete N items permanently?` / `This cannot be undone.`. `Empty Trash…` (background menu, sidebar row menu, palette) asks `Empty the Trash?` with the count. After it, `files/` and `info/` of every bin are empty and no orphan `.trashinfo` is left. Cancel an empty with a big folder: what is left is still in the desktop's Trash, each with its `.trashinfo`.
+81. **Bin rules.** On a stick: `sudo mkdir -m 1777 /media/$USER/usb/.Trash; mkdir /media/$USER/usb/.Trash/$(id -u)` and trash a file there by hand (a `files/x` plus `info/x.trashinfo`): it is listed. `sudo chmod -t /media/$USER/usb/.Trash` (no sticky bit): that `.Trash/$UID` is no longer read. Remove `.Trash-$UID` and `ln -s /tmp /media/$USER/usb/.Trash-$(id -u)`: it is not read. Clean up both afterwards.
+82. **Other home trash.** `XDG_DATA_HOME=/tmp/x gezik` with a `/tmp/x/Trash/files` + `info` made by hand: its Trash shows that bin, not `~/.local/share/Trash`.
+83. **Live.** With the trash open, trash a file in Nautilus/Dolphin: it shows within about 1 s. Go to another folder, then trash another file: Gezik reads nothing (`strace -f -e trace=openat -p $(pidof gezik)` shows no `Trash` path).
+84. **Refused.** In the trash: Ctrl+C, Ctrl+X, Ctrl+V, Ctrl+Shift+N, Ctrl+D, F2 and a `[[commands]]` key do nothing and the status bar says `Not available in the Trash`; Enter/double-click opens nothing, with a note; rows can't be dragged out.
+
 ## Known gaps (not bugs)
 
 - **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (F5 works it out again). Search results and the flat view show no folder sizes.
@@ -441,7 +454,7 @@ Do 70-73 once on X11 and once on Wayland.
 - **Drag and drop on Wayland:**
   - Drops from other apps don't see the modifier keys.
   - Gezik always reports "copy" to the source and does a move itself, so the cursor may say copy.
-- **Trash:** only the home trash and `.Trash-<uid>`. The admin trash `$topdir/.Trash/<uid>` isn't used.
+- **Trash:** Delete puts items only in the home trash and `.Trash-<uid>`; the admin trash `$topdir/.Trash/<uid>` is listed (9b2) but never written to. Items can't be dragged or cut out of the trash (Put Back does it), and files can't be dropped onto it.
 - **Theme:** with no xdg-desktop-portal, `auto` stays light.
 - **No .desktop file, icon or MIME integration:** it is a bare binary.
 - Folders dropped from outside can't be pinned by dragging.
