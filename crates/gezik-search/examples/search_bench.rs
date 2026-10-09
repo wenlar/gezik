@@ -57,18 +57,20 @@ fn main() {
     let mut spec = SearchSpec::new(Scope::Folder(root.clone()));
     spec.pattern = pattern;
     let found = timed("name", &root, &spec);
-    let bytes = found.len() * (std::mem::size_of::<gezik_core::Entry>() + 4 + 24);
-    println!("name: about {} KB of results", bytes / 1024);
+    println!("name: {} KB of results", found.heap_bytes() / 1024);
     let mut content = SearchSpec::new(Scope::Folder(root.join("text")));
     content.content = text;
     timed("content", &root, &content);
     let mut flat = timed("flat", &root, &SearchSpec::flat_view(root.clone()));
-    println!("flat: {} results", flat.len());
+    println!(
+        "flat: {} results, {} KB, {} B a row",
+        flat.len(),
+        flat.heap_bytes() / 1024,
+        flat.heap_bytes() / flat.len().max(1)
+    );
     // The list sorts the results when the search ends (by name here, as it opens).
     let started = Instant::now();
-    let order = gezik_core::sort::sort_order(flat.entries(), SortSpec::default(), true, |_| String::new(), &|i| {
-        flat.folder(i).unwrap_or("")
-    });
+    let order = flat.sort_order(SortSpec::default(), true, |_| String::new());
     flat.apply_order(&order);
     println!("sort: {:?}", started.elapsed());
     memory("sort");
