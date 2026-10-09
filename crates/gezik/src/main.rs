@@ -757,19 +757,29 @@ fn main() -> Result<(), slint::PlatformError> {
     };
     #[cfg(target_os = "macos")]
     if taken {
-        // Decision 16: no window; LaunchServices' folders go to the running Gezik, then this
-        // one ends. No folders within two seconds: the running Gezik just comes forward.
-        let sent = key.clone();
+        // Decision 16: no window yet; LaunchServices' folders (none within two seconds: the
+        // running Gezik just comes forward) go to the running Gezik, and this one ends.
+        let got: std::rc::Rc<std::cell::RefCell<Vec<std::path::PathBuf>>> = std::rc::Rc::default();
+        let keep = got.clone();
         gezik_platform::open_urls::install(Box::new(move |paths| {
-            let targets = paths.into_iter().map(|path| cli::Target { path, select: false }).collect();
-            let _ = instance::send(&sent, &instance::Request { targets, ..Default::default() }, instance::SEND_TIMEOUT);
+            *keep.borrow_mut() = paths;
             let _ = slint::quit_event_loop();
         }));
-        slint::Timer::single_shot(std::time::Duration::from_secs(2), move || {
-            let _ = instance::send(&key, &instance::Request::default(), instance::SEND_TIMEOUT);
+        let wait = slint::Timer::default();
+        wait.start(slint::TimerMode::SingleShot, std::time::Duration::from_secs(2), || {
             let _ = slint::quit_event_loop();
         });
-        return slint::run_event_loop_until_quit();
+        slint::run_event_loop_until_quit()?;
+        drop(wait);
+        let targets: Vec<cli::Target> =
+            got.take().into_iter().map(|path| cli::Target { path, select: false }).collect();
+        let handed = instance::Request { targets: targets.clone(), ..Default::default() };
+        if instance::send(&key, &handed, instance::SEND_TIMEOUT) == instance::Sent::Delivered {
+            return Ok(());
+        }
+        // It went away (or hangs) meanwhile: a window of its own, as Claim::Taken's other arm.
+        cli.targets = targets;
+        secondary = true;
     }
     let _ = taken;
     // A second window keeps the first one's tabs: it neither restores nor records them, and

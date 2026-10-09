@@ -19,7 +19,10 @@ thread_local! {
 
 extern "C-unwind" fn open_urls(_this: &AnyObject, _sel: Sel, _app: &AnyObject, urls: &NSArray<NSURL>) {
     let paths: Vec<PathBuf> = (0..urls.count())
-        .filter_map(|i| urls.objectAtIndex(i).path())
+        .map(|i| urls.objectAtIndex(i))
+        // Only files: an http or custom-scheme URL is never opened as a folder.
+        .filter(|url| url.isFileURL())
+        .filter_map(|url| url.path())
         .map(|path| PathBuf::from(path.to_string()))
         .collect();
     ON_OPEN.with(|f| {
@@ -37,19 +40,24 @@ pub fn install(on_open: OnOpen) {
         return;
     }
     let Some(mtm) = MainThreadMarker::new() else { return };
-    let Some(delegate) = NSApplication::sharedApplication(mtm).delegate() else { return };
+    let app = NSApplication::sharedApplication(mtm);
+    let Some(delegate) = app.delegate() else { return };
     // SAFETY: the delegate is alive (retained here); every Objective-C object has a class.
     let class: &AnyClass = unsafe { &*Retained::as_ptr(&delegate).cast::<AnyObject>() }.class();
     type OpenUrls = extern "C-unwind" fn(&AnyObject, Sel, &AnyObject, &NSArray<NSURL>);
     // SAFETY: the function matches `application:openURLs:` (void; self, _cmd, NSApplication,
     // NSArray) and its type encoding.
-    unsafe {
+    let added = unsafe {
         let imp = std::mem::transmute::<*const (), Imp>(open_urls as OpenUrls as *const ());
         objc2::ffi::class_addMethod(
             class as *const AnyClass as *mut AnyClass,
             sel!(application:openURLs:),
             imp,
             c"v@:@@".as_ptr(),
-        );
+        )
+    };
+    if added.as_bool() {
+        // AppKit caches which optional methods a delegate answers when it is set: set it again.
+        app.setDelegate(Some(&delegate));
     }
 }
