@@ -23,6 +23,8 @@ pub mod priority;
 pub mod process;
 pub mod ql_panel;
 pub mod services;
+#[cfg(windows)]
+pub mod shell_fallback;
 pub mod system;
 pub mod taskbar;
 pub mod terminal;

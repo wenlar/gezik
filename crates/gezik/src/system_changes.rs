@@ -13,6 +13,9 @@ use gezik_core::system_change::{self as sc, Access, Change, Kind, Outcome, RegTy
 use gezik_platform::system::Places;
 
 pub const FEATURE_PATH: &str = "path";
+/// Gezik as the default file manager (9b4).
+#[cfg_attr(not(windows), allow(dead_code, reason = "Task 5 of 9b4 uses it on every system"))]
+pub const FEATURE_DEFAULT: &str = "default-file-manager";
 /// `gezik.cmd` (decision 3): no path in it, so no code page can break it; `start` finds
 /// gezik.exe through App Paths, which holds the exe's path as Unicode. `""` is start's
 /// window title; `%*` the arguments as the shell gave them. `start` looks for `gezik.exe`
@@ -574,10 +577,15 @@ pub fn add_now() -> Result<(), String> {
 
 /// Remove gezik from PATH: Gezik's PATH changes undone.
 pub fn remove_now() -> Result<Vec<String>, String> {
+    undo_feature_now(FEATURE_PATH)
+}
+
+/// Undoes one feature's changes (the Restore button, the loop question).
+pub fn undo_feature_now(feature: &str) -> Result<Vec<String>, String> {
     let file = journal_file().ok_or("there is no config folder")?;
     let access = SystemAccess::new();
     let mut locked = file.lock().map_err(|e| e.to_string())?;
-    let undone = undo_matching(&mut locked, &access, |c| c.feature == FEATURE_PATH);
+    let undone = undo_matching(&mut locked, &access, |c| c.feature == feature);
     drop(locked);
     if undone.path_changed {
         gezik_platform::system::environment_changed();

@@ -538,7 +538,7 @@ fn apply_config_and_start(
     saved: Option<&Session>,
 ) -> (Settings, StartPlan) {
     let loaded = apply_config(window, files);
-    let plan = resolve_start(&loaded.settings, cli, new_tab, saved);
+    let plan = resolve_start(&loaded.settings, cli, new_tab, false, saved);
     if !plan.warnings.is_empty() {
         files.warnings.extend(plan.warnings.iter().cloned());
         apply_config(window, files);
@@ -547,18 +547,59 @@ fn apply_config_and_start(
 }
 
 /// [`start::plan_start`] against the real file system.
-fn resolve_start(settings: &Settings, cli: &[cli::Target], new_tab: bool, saved: Option<&Session>) -> StartPlan {
+fn resolve_start(
+    settings: &Settings,
+    cli: &[cli::Target],
+    new_tab: bool,
+    trash: bool,
+    saved: Option<&Session>,
+) -> StartPlan {
     let saved = saved.filter(|_| settings.session.restore);
     let dirs = gezik_config::paths::KnownDirs::system();
     start::plan_start(
         &settings.start_folder,
         cli,
         new_tab,
+        trash,
         &path_box::home(),
         |text| dirs.expand_checked(text),
         start::path_kind,
         saved,
     )
+}
+
+/// Hands `target` to Explorer once (decisions 2, 3); a second round within 10 s asks to give
+/// folders back to Explorer instead. The exit code.
+#[cfg(windows)]
+fn explorer_fallback(target: &str) -> i32 {
+    use gezik_platform::shell_fallback as fb;
+    let guard = std::env::temp_dir().join(fb::GUARD_FILE);
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let last = std::fs::read_to_string(&guard).unwrap_or_default();
+    if fb::seen_recently(&last, target, now) {
+        if fb::ask_restore(
+            "Only Explorer can show this place, and it sent it back to Gezik.
+
+Restore Explorer as the default file manager?",
+        ) {
+            // shortcut: Task 5 renames this to restore_default_now and gives it its own body.
+            return i32::from(system_changes::undo_feature_now(system_changes::FEATURE_DEFAULT).is_err());
+        }
+        return 1;
+    }
+    let _ = std::fs::write(&guard, fb::record(target, now));
+    match fb::open_in_explorer(target) {
+        Ok(()) => 0,
+        Err(err) => {
+            eprintln!("gezik: --shell {target:?}: {err}");
+            1
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn explorer_fallback(_: &str) -> i32 {
+    1
 }
 
 /// The first warning, plus how many more there are.
@@ -608,6 +649,22 @@ fn main() -> Result<(), slint::PlatformError> {
     for warning in &cli.warnings {
         eprintln!("gezik: {warning}");
     }
+    if cfg!(windows) && cli.dbus {
+        eprintln!("gezik: --dbus is for Linux (ignored)");
+    }
+    if !cfg!(windows) && cli.shell.is_some() {
+        eprintln!("gezik: --shell is for Windows (ignored)");
+    }
+    // Windows' folder verb and Win+E (spec 6.1): a place only Explorer shows never opens a window.
+    let shell = cli.shell.take().filter(|_| cfg!(windows));
+    if let Some(target) = &shell {
+        match cli::shell_target(target, start::path_kind) {
+            cli::Shell::Explorer => std::process::exit(explorer_fallback(target)),
+            cli::Shell::Open(t) => cli.targets = vec![t],
+            cli::Shell::Trash => cli.trash = true,
+            cli::Shell::StartFolder => {}
+        }
+    }
     cli.make_absolute();
     // A running Gezik takes the paths (spec 5.2): tried before any window or settings, so a
     // second call costs only the attempt. --new-window never hands over and never listens.
@@ -620,6 +677,10 @@ fn main() -> Result<(), slint::PlatformError> {
         match instance::send(&key, &request, instance::SEND_TIMEOUT) {
             instance::Sent::Delivered => return Ok(()),
             instance::Sent::NoInstance => {}
+            // A hung Gezik (spec 5.2): what the shell asked for still opens somewhere.
+            instance::Sent::Failed if shell.is_some() => {
+                std::process::exit(explorer_fallback(shell.as_deref().unwrap_or_default()))
+            }
             // Hung, refusing or someone else's: a window of its own, the channel left alone.
             instance::Sent::Failed => secondary = true,
         }
@@ -627,7 +688,16 @@ fn main() -> Result<(), slint::PlatformError> {
     // Gezik has its own tabs: no window tabs of macOS (nor their items in the View menu).
     #[cfg(target_os = "macos")]
     gezik_platform::app::no_window_tabs();
-    let window = AppWindow::new()?;
+    let window = match AppWindow::new() {
+        Ok(window) => window,
+        Err(err) => {
+            // Spec 6.3: a folder asked for by the shell still opens somewhere.
+            if let Some(target) = &shell {
+                explorer_fallback(target);
+            }
+            return Err(err);
+        }
+    };
 
     let config = ConfigStore::system();
     templates::set_dir(config.as_ref().map(ConfigStore::templates_dir));
@@ -672,8 +742,13 @@ fn main() -> Result<(), slint::PlatformError> {
     if secondary && let Some(store) = &config {
         store.keep_state_unwritten();
     }
-    let plan =
-        resolve_start(&initial_settings, &cli.targets, cli.new_tab, (!secondary).then_some(&saved_state.session));
+    let plan = resolve_start(
+        &initial_settings,
+        &cli.targets,
+        cli.new_tab,
+        cli.trash,
+        (!secondary).then_some(&saved_state.session),
+    );
     if !plan.warnings.is_empty() {
         files.warnings.extend(plan.warnings.iter().cloned());
         apply_config(&window, &files);
