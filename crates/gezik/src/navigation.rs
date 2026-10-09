@@ -65,6 +65,11 @@ fn list(location: &Location, mode: &Mode) -> LoadResult {
             Err(err) if *mode == Mode::Show && err.kind() == std::io::ErrorKind::NotFound => {
                 LoadResult::Gone { fallback: nearest_existing(location, |p| p.is_dir()) }
             }
+            // The folder itself is not there (Windows says "path not found", which `describe`
+            // puts as the folder an item is in): "It no longer exists".
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                LoadResult::Failed(std::io::ErrorKind::NotFound.into())
+            }
             Err(err) => LoadResult::Failed(err),
         },
         // A search or the flat view reads no folder here (`search::Searches` runs it).
@@ -1191,7 +1196,7 @@ mod tests {
         let missing = Location::Path(tmp.0.join("nope"));
         for mode in moves() {
             match list(&missing, &mode) {
-                LoadResult::Failed(err) => assert_eq!(err.kind(), std::io::ErrorKind::NotFound),
+                LoadResult::Failed(err) => assert_eq!(gezik_platform::fs::describe(&err), "It no longer exists"),
                 other => panic!("unexpected {other:?} for {mode:?}"),
             }
         }
