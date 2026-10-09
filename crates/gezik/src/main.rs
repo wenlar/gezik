@@ -73,6 +73,9 @@ fn open_entry(nav: &navigation::Navigator, view: &view::View, index: usize) {
 
 /// Opens the entry at `path` as [`open_entry`] does, for a caller that fixed the entry earlier.
 fn open_path(nav: &navigation::Navigator, path: PathBuf, is_dir: bool) {
+    if nav.active_location() == gezik_core::nav::Location::Trash {
+        return nav.status(trash_view::open_note());
+    }
     let archive = !is_dir
         && path.file_name().is_some_and(|n| gezik_core::batch::archive::looks_like_archive(&n.to_string_lossy()));
     if archive && archives::extracts_on_double_click() {
@@ -156,6 +159,10 @@ fn perform(
     preview: &preview::Preview,
     ops: &operations::Operations,
 ) -> bool {
+    // The trash (spec 7.1): Delete is for good there, and what is not on its list does not run.
+    if trash_view::instead(action, view) {
+        return true;
+    }
     match action {
         Action::NewTab => nav.open_tab(nav.start(), true),
         Action::CloseTab => close_tab_later(nav, nav.active_index()),
@@ -232,6 +239,9 @@ fn perform(
         | Action::CutWithFolders
         | Action::CalculateFolderSizes
         | Action::SaveSearch
+        | Action::ShowTrash
+        | Action::PutBack
+        | Action::EmptyTrash
         | Action::NewWindow => return actions::run(action, nav, view),
     }
     true

@@ -735,6 +735,9 @@ impl Navigator {
     /// selected folder; with nothing selected, the focused entry.
     pub fn open_selected(&self) {
         let view = self.0.borrow().view.clone();
+        if view.shows_trash() {
+            return self.status(crate::trash_view::open_note());
+        }
         let mut items = view.selected_items();
         if items.is_empty() {
             items.extend(view.focus().and_then(|i| view.entry_path(i)));
@@ -780,7 +783,7 @@ impl Navigator {
         crumbs(&self.active_location(), MAX_CRUMBS).into_iter().nth(index).map(|crumb| crumb.location)
     }
 
-    fn status(&self, text: String) {
+    pub fn status(&self, text: String) {
         if let Some(window) = self.0.borrow().window.upgrade() {
             window.set_status(text.into());
         }

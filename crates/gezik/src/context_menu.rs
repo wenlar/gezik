@@ -424,6 +424,21 @@ pub const LINK_JUNCTION: u32 = 1405;
 pub const LINK_SYMLINK: u32 = 1406;
 pub const TEMPLATE_FIRST: u32 = 1410;
 pub const TEMPLATE_MAX: u32 = gezik_core::templates::TEMPLATE_MAX as u32;
+/// 9b's ids are 1800-1899 (1800 kept for a "Show Trash" item). The trash's rows and background.
+pub const PUT_BACK: u32 = 1801;
+pub const TRASH_DELETE: u32 = 1802;
+pub const EMPTY_TRASH: u32 = 1803;
+
+/// A trash row's menu: only what the trash does (no Explorer menu, nothing that acts on a
+/// `$R…` name).
+pub fn trash_row_items() -> [(u32, &'static str); 2] {
+    [(PUT_BACK, "Put Back"), (TRASH_DELETE, "Delete Permanently…")]
+}
+
+/// "Empty Recycle Bin…" on Windows, "Empty Trash…" elsewhere.
+fn empty_title() -> String {
+    format!("Empty {}…", gezik_core::nav::TRASH_NAME)
+}
 /// Group headings in a Slint menu: shown greyed, never chosen.
 pub const HEADING: u32 = 0;
 /// Gezik's menu ids are below this; the Explorer menu's start here (gezik_platform's
@@ -886,6 +901,10 @@ impl Menus {
 
     fn row_menu(&self, index: i32, x: f32, y: f32, at_position: bool) {
         let Ok(i) = usize::try_from(index) else { return };
+        if self.view.shows_trash() {
+            *self.subject.borrow_mut() = Some(Subject::Background(PathBuf::new()));
+            return self.open_slint(&trash_row_items(), Anchor::point(x, y));
+        }
         let at = at_position.then_some((x, y));
         let native = cfg!(windows);
         self.ops.clipboard_check();
@@ -1019,6 +1038,10 @@ impl Menus {
             .into_iter()
             .map(|(id, title)| (id, title, true))
             .collect();
+            let mut list = list;
+            if self.view.shows_trash() {
+                list.push((EMPTY_TRASH, empty_title(), true));
+            }
             *self.subject.borrow_mut() = Some(Subject::Background(PathBuf::new()));
             return self.open_slint_entries(&list, Vec::new(), Anchor::point(x, y));
         }
@@ -1063,6 +1086,10 @@ impl Menus {
             *self.subject.borrow_mut() = Some(Subject::SavedSearch(name));
             let list = [(RUN_SEARCH_NEW_TAB, "Run in new tab"), (RENAME_SEARCH, "Rename…"), (DELETE_SEARCH, "Delete")];
             return self.open_slint(&list, Anchor::point(x, y));
+        }
+        if section == crate::sidebar::SECTION_TRASH {
+            *self.subject.borrow_mut() = Some(Subject::Background(PathBuf::new()));
+            return self.open_slint(&[(EMPTY_TRASH, empty_title())], Anchor::point(x, y));
         }
         let Some(Location::Path(path)) = self.sidebar.location_of(section, index) else { return };
         let pinned_section = section == SECTION_PINNED;
@@ -1400,6 +1427,9 @@ impl Menus {
     fn run(&self, id: u32, subject: Subject) {
         match (id, subject) {
             (id, Subject::Search) => crate::search::with_current(|s| s.menu_chosen(id)),
+            (PUT_BACK, _) => crate::trash_view::put_back(&self.view),
+            (TRASH_DELETE, _) => crate::trash_view::delete_selection(&self.view),
+            (EMPTY_TRASH, _) => crate::trash_view::empty(),
             (RUN_SEARCH_NEW_TAB, Subject::SavedSearch(name)) => {
                 crate::saved_searches::with_current(|s| s.run(&name, true));
             }
@@ -1863,6 +1893,12 @@ mod tests {
     }
 
     #[test]
+    fn trash_rows_offer_only_put_back_and_delete_for_good() {
+        assert_eq!(trash_row_items().map(|(id, _)| id), [PUT_BACK, TRASH_DELETE]);
+        assert!(empty_title().starts_with("Empty ") && empty_title().ends_with('…'));
+    }
+
+    #[test]
     fn an_ampersand_shows_as_itself() {
         let shown = if native_menus() { "Copy && keep" } else { "Copy & keep" };
         assert_eq!(menu_title("Copy & keep"), shown);
@@ -2037,6 +2073,9 @@ mod tests {
             RUN_SEARCH_NEW_TAB,
             RENAME_SEARCH,
             DELETE_SEARCH,
+            PUT_BACK,
+            TRASH_DELETE,
+            EMPTY_TRASH,
         ];
         let mut ranges: Vec<std::ops::Range<u32>> = singles.iter().map(|id| *id..id + 1).collect();
         ranges.extend([

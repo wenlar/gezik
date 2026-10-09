@@ -1386,8 +1386,6 @@ impl View {
         self.0.data.borrow().results.as_ref().is_some_and(|set| set.is_trash())
     }
 
-    // Task 5 (Put Back, Delete Permanently) reads it.
-    #[allow(dead_code)]
     /// The selected trash rows (the focused one if none is): each entry in its bin, with what
     /// it was. Empty unless the trash is shown.
     pub fn selected_trash(&self) -> Vec<(PathBuf, TrashLabel)> {

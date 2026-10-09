@@ -259,10 +259,16 @@ pub enum Action {
     CalculateFolderSizes,
     /// Saves the search bar's search under a name (`[[searches]]`).
     SaveSearch,
+    /// The Recycle Bin / Trash: every bin of this user in one list (9b2).
+    ShowTrash,
+    /// In the trash: the selected items back where they were.
+    PutBack,
+    /// Deletes everything in the trash for good (asks first).
+    EmptyTrash,
 }
 
 impl Action {
-    pub const ALL: [Action; 73] = [
+    pub const ALL: [Action; 76] = [
         Action::NewTab,
         Action::NewWindow,
         Action::CloseTab,
@@ -336,6 +342,9 @@ impl Action {
         Action::QuickOpen,
         Action::CalculateFolderSizes,
         Action::SaveSearch,
+        Action::ShowTrash,
+        Action::PutBack,
+        Action::EmptyTrash,
     ];
 
     pub fn name(self) -> &'static str {
@@ -413,6 +422,9 @@ impl Action {
             Action::QuickOpen => "quick-open",
             Action::CalculateFolderSizes => "calculate-folder-sizes",
             Action::SaveSearch => "save-search",
+            Action::ShowTrash => "show-trash",
+            Action::PutBack => "put-back",
+            Action::EmptyTrash => "empty-trash",
         }
     }
 
@@ -492,6 +504,9 @@ impl Action {
             Action::QuickOpen => "Quick Open…",
             Action::CalculateFolderSizes => "Calculate Folder Sizes",
             Action::SaveSearch => "Save Search…",
+            Action::ShowTrash => "Show Trash",
+            Action::PutBack => "Put Back",
+            Action::EmptyTrash => "Empty Trash…",
         }
     }
 
@@ -645,6 +660,8 @@ impl Action {
             (Action::CommandPalette, _) => &["mod+shift+p"],
             (Action::QuickOpen, _) => &["mod+p"],
             (Action::CalculateFolderSizes | Action::SaveSearch, _) => &[],
+            (Action::EmptyTrash, Platform::Mac) => &["mod+shift+backspace"],
+            (Action::ShowTrash | Action::PutBack, _) | (Action::EmptyTrash, Platform::Other) => &[],
         }
     }
 }
@@ -831,7 +848,7 @@ mod tests {
             assert_eq!(fixed_owner(&cmd_option, Platform::Mac), None);
         }
         assert_eq!((Action::pin(0), Action::pin(10)), (None, None));
-        assert_eq!(Action::ALL.len(), 73);
+        assert_eq!(Action::ALL.len(), 76);
         assert_eq!(other.action_for(&chord("ctrl+1")), Some(Action::Tab1), "Ctrl+1 is still tab 1");
         assert_eq!(other.action_for(&chord("ctrl+alt+1")), None, "AltGr+1 types");
     }
@@ -1289,7 +1306,7 @@ clear-history = \"ctrl+shift+h\"
         for name in ["search", "flat-view", "show-in-folder", "copy-with-folders", "cut-with-folders"] {
             assert!(Action::from_name(name).is_some(), "{name}");
         }
-        assert_eq!(Action::ALL.len(), 73);
+        assert_eq!(Action::ALL.len(), 76);
     }
 
     #[test]
@@ -1311,7 +1328,23 @@ clear-history = \"ctrl+shift+h\"
         for name in ["command-palette", "quick-open", "calculate-folder-sizes", "save-search"] {
             assert!(Action::from_name(name).is_some(), "{name}");
         }
-        assert_eq!(Action::ALL.len(), 73);
+        assert_eq!(Action::ALL.len(), 76);
+    }
+
+    #[test]
+    fn trash_actions_and_their_keys() {
+        assert_eq!(Action::from_name("show-trash"), Some(Action::ShowTrash));
+        assert_eq!(Action::from_name("put-back"), Some(Action::PutBack));
+        assert_eq!(Action::from_name("empty-trash"), Some(Action::EmptyTrash));
+        let mac = Shortcuts::defaults(Platform::Mac);
+        let mac_chord = |t: &str| parse_chord(t, Platform::Mac).unwrap().unwrap();
+        assert_eq!(mac.action_for(&mac_chord("mod+shift+backspace")), Some(Action::EmptyTrash));
+        assert_eq!(fixed_owner(&mac_chord("mod+shift+backspace"), Platform::Mac), None);
+        let other = Shortcuts::defaults(Platform::Other);
+        for action in [Action::ShowTrash, Action::PutBack, Action::EmptyTrash] {
+            assert_eq!(other.chord_for(action), None, "{action:?}: no default key on Windows and Linux");
+        }
+        assert_eq!((mac.chord_for(Action::ShowTrash), mac.chord_for(Action::PutBack)), (None, None));
     }
 
     #[test]

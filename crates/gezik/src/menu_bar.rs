@@ -39,6 +39,9 @@ pub fn install(window: &AppWindow, view: View, nav: Navigator, ops: Operations) 
                     return crate::view_options::sync_window(crate::view_options::current());
                 }
                 let Some(action) = Action::from_name(name) else { return };
+                if crate::trash_view::instead(action, &view) {
+                    return;
+                }
                 match keys::chord_for(action).filter(|c| !matches!(c.key, Key::Num(_))) {
                     // After the menu is done with this item: playing the keys changes the
                     // menu's shortcuts, which Slint must not rebuild while it activates one.
