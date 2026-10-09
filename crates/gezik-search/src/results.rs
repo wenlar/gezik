@@ -208,8 +208,10 @@ impl ResultSet {
 
     /// The trash's rows and their labels, one each.
     pub fn append_trash(&mut self, batch: Batch, labels: Vec<TrashLabel>) {
-        debug_assert_eq!(batch.entries.len(), labels.len());
-        self.append(batch);
+        // Real asserts: a label out of step would show one item under another's name.
+        assert!(self.is_trash(), "trash rows go in a trash set");
+        assert_eq!(batch.entries.len(), labels.len(), "one label per trash row");
+        self.append_rows(batch);
         self.labels.get_or_insert_with(Vec::new).extend(labels);
     }
 
@@ -233,6 +235,7 @@ impl ResultSet {
     }
 
     pub(crate) fn push_entry(&mut self, entry: Entry, parent: u32) {
+        assert!(!self.is_trash(), "a trash row needs its label");
         self.sorted = None;
         self.entries.push(&entry);
         self.parent.push(parent);
@@ -321,6 +324,11 @@ impl ResultSet {
     }
 
     pub fn append(&mut self, batch: Batch) {
+        assert!(!self.is_trash(), "trash rows come with their labels (append_trash)");
+        self.append_rows(batch);
+    }
+
+    fn append_rows(&mut self, batch: Batch) {
         debug_assert_eq!(batch.entries.len(), batch.parent.len());
         debug_assert!(self.matches.is_none() || batch.matches.len() == batch.entries.len());
         if !batch.entries.is_empty() {
@@ -373,7 +381,10 @@ impl ResultSet {
             parent: rows.iter().map(|&i| self.parent[i]).collect(),
             matches: self.matches.as_ref().map(|m| rows.iter().filter_map(|&i| m.get(i).cloned()).collect()),
             sorted: self.sorted,
-            labels: self.labels.as_ref().map(|l| rows.iter().filter_map(|&i| l.get(i).cloned()).collect()),
+            labels: self
+                .labels
+                .as_ref()
+                .map(|l| rows.iter().map(|&i| l.get(i).expect("a trash row has its label").clone()).collect()),
         }
     }
 
@@ -390,10 +401,8 @@ impl ResultSet {
             if let Some(matches) = &mut self.matches {
                 matches.push(from.found(i).cloned());
             }
-            if let Some(labels) = &mut self.labels
-                && let Some(label) = from.label(i)
-            {
-                labels.push(label.clone());
+            if let Some(labels) = &mut self.labels {
+                labels.push(from.label(i).expect("a trash row has its label").clone());
             }
         }
         if !rows.is_empty() {
@@ -527,6 +536,8 @@ impl ResultSet {
         moves: &[(PathBuf, PathBuf)],
     ) -> Vec<usize> {
         use std::collections::{HashMap, HashSet};
+        // The trash is read again after a job instead: new rows would have no label.
+        assert!(!self.is_trash(), "the trash reloads after a job");
         let gone_rows = self.rows_of(gone);
         let mut seen = HashSet::new();
         let added: Vec<(PathBuf, Entry)> = added.into_iter().filter(|(path, _)| seen.insert(path.clone())).collect();
@@ -1357,5 +1368,44 @@ mod tests {
         set.remove(&[0]);
         assert_eq!((set.len(), set.shown_name(0)), (2, Some("a.txt")));
         assert_eq!(set.label(5), None);
+    }
+
+    fn bare(names: &[&str]) -> Batch {
+        Batch {
+            folders: vec!["/bin".into()],
+            entries: names.iter().map(|n| entry(n)).collect(),
+            parent: vec![0; names.len()],
+            matches: Vec::new(),
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "come with their labels")]
+    fn trash_rows_without_labels_are_refused() {
+        trash_set().append(bare(&["$R9.txt"]));
+    }
+
+    #[test]
+    #[should_panic(expected = "one label per trash row")]
+    fn a_missing_label_is_refused() {
+        trash_set().append_trash(bare(&["$R8.txt", "$R9.txt"]), vec![label("a", "/w")]);
+    }
+
+    #[test]
+    #[should_panic(expected = "trash rows go in a trash set")]
+    fn labels_do_not_go_into_a_search() {
+        ResultSet::default().append_trash(bare(&["$R9.txt"]), vec![label("a", "/w")]);
+    }
+
+    #[test]
+    #[should_panic(expected = "needs its label")]
+    fn a_pushed_row_needs_a_label_in_the_trash() {
+        trash_set().push_entry(entry("$R9.txt"), 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "reloads after a job")]
+    fn the_trash_does_not_take_job_changes() {
+        trash_set().apply_changes(&[], Vec::new(), &[]);
     }
 }
