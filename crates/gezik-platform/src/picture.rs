@@ -58,12 +58,15 @@ pub fn thumbnail(path: &Path, px: u32) -> Option<Rgba> {
 /// [`thumbnail`], given up once `wanted` says it is no longer needed: macOS cancels the Quick
 /// Look request; elsewhere nothing waits, and `wanted` is not asked.
 pub fn thumbnail_while(path: &Path, px: u32, wanted: &dyn Fn() -> bool) -> Option<Rgba> {
-    if only_in_cloud(path) {
-        return None;
-    }
+    let in_cloud = only_in_cloud(path);
+    // Windows asks the shell first: the cloud app hands over its own thumbnail without the
+    // data (spec 9 §7.3); Gezik's decoder and Quick Look would read the file.
     #[cfg(windows)]
     if let Some(image) = win::thumbnail(path, px) {
         return Some(image);
+    }
+    if in_cloud {
+        return None;
     }
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or_default();
     if can_decode(ext) {
@@ -78,19 +81,11 @@ pub fn thumbnail_while(path: &Path, px: u32, wanted: &dyn Fn() -> bool) -> Optio
     }
 }
 
-/// Whether the file's data is only in the cloud (macOS: iCloud, File Provider), so reading it
-/// would download it (spec 9 §4.5). Follows a link; reads no data. Always `false` elsewhere.
+/// Whether the file's data is only in the cloud (Windows placeholders, iCloud, File
+/// Provider), so reading it would download it (spec 9 §4.5, §7.3). Follows a link; reads no
+/// data. Always `false` on Linux.
 pub fn only_in_cloud(path: &Path) -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        use std::os::macos::fs::MetadataExt;
-        std::fs::metadata(path).is_ok_and(|meta| meta.st_flags() & crate::finder::SF_DATALESS != 0)
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = path;
-        false
-    }
+    std::fs::metadata(path).is_ok_and(|meta| gezik_core::attribute_flags(&meta) & gezik_core::Entry::CLOUD_ONLY != 0)
 }
 
 /// Waits for the answer on `receive` while `wanted` says so, at most `limit`, asking `wanted`
@@ -148,6 +143,17 @@ mod win {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_in_cloud_reads_no_data() {
+        let dir = std::env::temp_dir().join(format!("gezik-cloud-local-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("here.txt");
+        std::fs::write(&file, "x").unwrap();
+        assert!(!only_in_cloud(&file), "a plain local file");
+        assert!(!only_in_cloud(&dir.join("missing")), "nothing there");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn waiting_ends_with_the_answer_or_when_no_longer_wanted() {
