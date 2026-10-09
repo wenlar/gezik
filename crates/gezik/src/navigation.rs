@@ -51,10 +51,21 @@ enum LoadResult {
     /// A search or the flat view: nothing is read here (search.rs runs it once shown).
     Results,
     Trash(crate::trash_view::Loaded),
+    /// A folder in a bin: shown as the trash instead, never as a plain folder.
+    InBin,
 }
 
 /// Lists `location`. Runs on a background thread.
 fn list(location: &Location, mode: &Mode) -> LoadResult {
+    // Every way to a folder (typed, history, pins, tab sets, a session, a new tab) ends here.
+    let folder = match location {
+        Location::Path(path) | Location::Flat(path) => Some(path.as_path()),
+        Location::Search(spec) => spec.scope.folder(),
+        Location::Drives | Location::Trash => None,
+    };
+    if folder.is_some_and(gezik_ops::in_a_bin_folder) {
+        return LoadResult::InBin;
+    }
     match location {
         Location::Drives => LoadResult::Drives(gezik_platform::drives()),
         Location::Path(path) => match list_dir(path) {
@@ -886,6 +897,14 @@ impl Navigator {
                 self.show_failed(&mode, &location, String::new());
                 let step = Step::Navigate(fallback.clone());
                 self.load(fallback, Mode::Move(vec![step]), Some(format!("{shown} no longer exists")));
+                let mut inner = self.0.borrow_mut();
+                inner.fallback = inner.pending.as_ref().map(|(ticket, _)| *ticket);
+                return;
+            }
+            LoadResult::InBin => {
+                self.show_failed(&mode, &location, String::new());
+                let step = Step::Navigate(Location::Trash);
+                self.load(Location::Trash, Mode::Move(vec![step]), Some(crate::trash_view::open_note()));
                 let mut inner = self.0.borrow_mut();
                 inner.fallback = inner.pending.as_ref().map(|(ticket, _)| *ticket);
                 return;

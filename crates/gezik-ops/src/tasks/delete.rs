@@ -158,7 +158,8 @@ fn in_a_bin(root: &Path, info: Option<&Path>) -> bool {
         n.get(..2).filter(|p| p.eq_ignore_ascii_case(prefix)).map(|_| n[2..].to_owned()).filter(|r| !r.is_empty())
     };
     let Some(rest) = name_of(root).and_then(|n| after(n, "$R")) else { return false };
-    let Some(sid) = root.parent().filter(|sid| name_of(sid).is_some_and(|n| n.starts_with("S-"))) else { return false };
+    let sid_name = |n: &str| n.get(..2).is_some_and(|p| p.eq_ignore_ascii_case("S-"));
+    let Some(sid) = root.parent().filter(|sid| name_of(sid).is_some_and(sid_name)) else { return false };
     let bin_on_a_volume = sid.parent().is_some_and(|bin| {
         name_of(bin).is_some_and(|n| n.eq_ignore_ascii_case("$Recycle.Bin"))
             && bin.parent().is_some_and(|v| v.parent().is_none())
@@ -253,6 +254,42 @@ fn in_these_bins(root: &Path, info: Option<&Path>, bins: &Bins) -> bool {
             == Some(Path::new("/Volumes"));
     let is_bin = bins.home.as_deref() == Some(bin) || on_a_volume;
     plain(root) && is_bin && info.is_none()
+}
+
+/// Whether `path` is one of this user's bins, a bin's payload folder, or anything in them, by
+/// the rule `from_trash` uses: what the file list must not open as a plain folder (its actions
+/// would act on bin entries without their records). Looked at as written (`..` taken out) and
+/// as it really is (links followed), when it exists.
+pub fn in_a_bin_folder(path: &Path) -> bool {
+    #[cfg(unix)]
+    let bins = Bins::here();
+    #[cfg(unix)]
+    let in_bin = |p: &Path| in_these_bins(p, None, &bins);
+    #[cfg(windows)]
+    let in_bin = |p: &Path| in_a_bin(p, None);
+    inside_a_bin(path, &in_bin)
+}
+
+/// `in_a_bin_folder` with the bin rule given: `path` or a folder above it is an item in a bin
+/// (`in_bin`), a payload folder (an item could be in it), or a bin (a payload folder could be).
+fn inside_a_bin(path: &Path, in_bin: &dyn Fn(&Path) -> bool) -> bool {
+    // An item's name and a payload folder's, as the rules take them.
+    let (item, payload) = if cfg!(windows) { ("$R0", "S-0") } else { ("x", "files") };
+    let mut written = PathBuf::new();
+    for part in path.components() {
+        match part {
+            std::path::Component::ParentDir => {
+                written.pop();
+            }
+            std::path::Component::CurDir => {}
+            part => written.push(part),
+        }
+    }
+    let real = std::fs::canonicalize(path).ok();
+    [Some(written), real]
+        .into_iter()
+        .flatten()
+        .any(|path| path.ancestors().any(|a| in_bin(a) || in_bin(&a.join(item)) || in_bin(&a.join(payload).join(item))))
 }
 
 /// How often putting a hidden folder back is tried before it is left for the next start
@@ -779,6 +816,62 @@ mod tests {
         assert!(!ok("/mnt/.Trash-x/files/a", None));
         assert!(!ok(&format!("{home}/files/a/b"), None), "inside an item");
         assert!(!ok(&format!("{home}/files/../files/a"), None));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_bin_and_all_in_it_is_no_plain_folder() {
+        let inside = |p: &str| inside_a_bin(Path::new(p), &|r| in_a_bin(r, None));
+        for yes in [
+            r"Q:\$Recycle.Bin",
+            r"Q:\$recycle.bin\s-1-5-21-1",
+            r"Q:\$Recycle.Bin\S-1-5-21-1\$RAB12.txt",
+            r"Q:\$Recycle.Bin\S-1-5-21-1\$RAB12\deeper\x",
+            r"Q:\Users\..\$Recycle.Bin\S-1-5-21-1\$R1",
+            r"Q:\$Recycle.Bin\.\S-1-5-21-1",
+        ] {
+            assert!(inside(yes), "{yes}");
+        }
+        for no in [r"Q:\\", r"Q:\Users\u", r"Q:\$Recycle.Bin\S-1-5-21-1\..\..\Users", r"Q:\work\$Recycle.Bin\S-1\$R1"] {
+            assert!(!inside(no), "{no}");
+        }
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
+    fn a_bin_and_all_in_it_is_no_plain_folder() {
+        let bins = Bins {
+            home: Some(PathBuf::from("/home/u/.local/share/Trash")),
+            uid: "1000".into(),
+            is_mount_top: |dir| dir == Path::new("/mnt"),
+        };
+        let inside = |p: &str| inside_a_bin(Path::new(p), &|r| in_these_bins(r, None, &bins));
+        for yes in [
+            "/home/u/.local/share/Trash",
+            "/home/u/.local/share/Trash/files",
+            "/home/u/.local/share/Trash/files/a/b",
+            "/mnt/.Trash-1000/files/a",
+            "/mnt/.Trash/1000",
+            "/home/u/x/../.local/share/Trash/files",
+        ] {
+            assert!(inside(yes), "{yes}");
+        }
+        for no in ["/home/u", "/mnt", "/mnt/.Trash-1001/files/a", "/proj/.Trash-1000/files", "/home/u/.local/share"] {
+            assert!(!inside(no), "{no}");
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_bin_and_all_in_it_is_no_plain_folder() {
+        let bins = Bins { home: Some(PathBuf::from("/Users/u/.Trash")), uid: "501".into(), is_mount_top: |_| false };
+        let inside = |p: &str| inside_a_bin(Path::new(p), &|r| in_these_bins(r, None, &bins));
+        for yes in ["/Users/u/.Trash", "/Users/u/.Trash/a/b", "/Volumes/X/.Trashes/501/a"] {
+            assert!(inside(yes), "{yes}");
+        }
+        for no in ["/Users/u", "/Volumes/X/.Trashes/502/a", "/proj/.Trash/x"] {
+            assert!(!inside(no), "{no}");
+        }
     }
 
     #[cfg(target_os = "macos")]

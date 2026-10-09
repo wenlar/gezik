@@ -1160,7 +1160,10 @@ fn main() -> Result<(), slint::PlatformError> {
     window.on_row_middle_clicked({
         let nav = nav.clone();
         move |i| {
-            if let Some((path, true)) = nav.entry_path(i) {
+            // A folder in the trash is a bin entry: not opened (spec 7.1).
+            if let Some((path, true)) =
+                nav.entry_path(i).filter(|_| nav.active_location() != gezik_core::nav::Location::Trash)
+            {
                 nav.open_tab(gezik_core::nav::Location::Path(path), false);
             }
         }
