@@ -968,6 +968,8 @@ pub fn default_state(made: &[(Change, Value)], exe: &str, taken: Option<String>)
     };
     let still = |(c, now): &&(Change, Value)| match c.kind {
         Kind::Folder | Kind::RegistryKey => *now != Value::Absent,
+        // The mimeapps.list Gezik made holds its key (and maybe others) afterwards: there is enough.
+        Kind::File if c.place.ends_with("mimeapps.list") => *now != Value::Absent,
         _ => *now == c.after,
     };
     if !made.iter().any(|(c, _)| switch(c)) || !made.iter().all(still) {
@@ -1995,6 +1997,32 @@ mod tests {
         assert_eq!(default_state(&half, EXE, None), DefaultState::Changed, "stopped before the switch");
         assert_eq!(default_state(&[], EXE, Some("x".into())), DefaultState::Taken { why: "x".into() });
         assert_eq!(default_state(&[], EXE, None), DefaultState::Off);
+    }
+
+    #[test]
+    fn a_mimeapps_list_gezik_made_and_then_edited_is_still_on() {
+        let places = Places {
+            data_home: Some("/home/u/.local/share".into()),
+            config_home: Some("/home/u/.config".into()),
+            ..Places::default()
+        };
+        let exe = "/home/u/apps/gezik";
+        let targets = default_targets(&places, exe, Os::Linux, Some(&|_: &Path| None)).unwrap();
+        let list = targets.iter().find(|t| t.kind == Kind::File && t.place.ends_with("/mimeapps.list")).unwrap();
+        // What the file holds after Make default: Gezik's empty list, then its key added.
+        let text = t::mimeapps_set(t::MIMEAPPS_EMPTY, "inode/directory", Some("gezik.desktop;"));
+        let now = |c: &Change| {
+            if c.place == list.place && c.kind == Kind::File { Value::Text(text.clone()) } else { c.after.clone() }
+        };
+        let made: Vec<(Change, Value)> = targets.iter().map(|c| (Change { done: true, ..c.clone() }, now(c))).collect();
+        assert_eq!(default_state(&made, exe, None), DefaultState::On);
+        let gone: Vec<(Change, Value)> = made
+            .iter()
+            .map(|(c, v)| {
+                (c.clone(), if c.kind == Kind::File && c.place == list.place { Value::Absent } else { v.clone() })
+            })
+            .collect();
+        assert_eq!(default_state(&gone, exe, None), DefaultState::Changed, "the list taken away");
     }
 
     #[test]
