@@ -174,6 +174,7 @@ quick-look = "system"     # system | gezik
 # put-back = ""            # in the trash: the selected items back where they were
 # empty-trash = ""         # delete everything in the trash for good (asks first); macOS: mod+shift+backspace
 # system-integration = ""   # the System Integration panel: gezik on the command line, the changes Gezik made, Undo all
+# get-info = "alt+enter"       # Get Info (Windows: the system's Properties); macOS: "mod+i"
 
 # Saved rule sets for batch rename (Rename… with two or more items selected). The rename
 # layer writes them with "Presets ▾ › Save current rules as…"; they can also be written here.

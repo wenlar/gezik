@@ -17,13 +17,14 @@ import { RenameBatch, RuleRow, RenamePreviewRow, RuleOptions } from "widgets/ren
 import { FileIcon } from "widgets/file-icon.slint";
 import { CompressLayer } from "widgets/compress.slint";
 import { ConvertLayer, ConvertView } from "widgets/convert.slint";
+import { InfoLayer, InfoView } from "widgets/info.slint";
 import { PopupMenu, MenuEntry, MenuPlace, MenuSub } from "widgets/popup-menu.slint";
 import { Picker, PickRow } from "widgets/picker.slint";
 import { PathSuggestions, PathRow } from "widgets/path-suggestions.slint";
 
 // Re-exported so Rust can set it with `window.global::<Theme>()` and build crumbs, tabs
 // and sidebar rows.
-export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, OpRow, StackRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView, MenuEntry, MenuPlace, MenuSub, PickRow, PathRow }
+export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, OpRow, StackRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView, InfoView, MenuEntry, MenuPlace, MenuSub, PickRow, PathRow }
 
 // Where the drop targets are, in window coordinates (drag.rs reads it while files are
 // dragged; every field is computed when read).
@@ -93,6 +94,7 @@ export component AppWindow inherits Window {
             MenuItem { title: "New Folder with Selection"; shortcut: root.menu-keys ? @keys(Control + Meta + N) : @keys(); activated => { root.menu-command("new-folder-with-selection"); } }
             MenuItem { title: "Open Terminal"; shortcut: root.menu-keys ? @keys(Control + Alt + T) : @keys(); activated => { root.menu-command("open-terminal"); } }
             MenuSeparator { }
+            MenuItem { title: "Get Info"; shortcut: root.menu-keys ? @keys(Control + I) : @keys(); activated => { root.menu-command("get-info"); } }
             MenuItem { title: "Quick Look"; activated => { root.menu-command("quick-look"); } }
             MenuItem { title: "Rename"; activated => { root.menu-command("rename"); } }
             MenuItem { title: "Rename Items…"; activated => { root.menu-command("batch-rename"); } }
@@ -600,6 +602,23 @@ export component AppWindow inherits Window {
     callback cv-pdf-set(string, int);
     callback cv-pdf-reorder(int, int);
     pure callback cv-pdf-drop-row(length, length, int) -> int;
+    // The Info window (info.rs, spec 9 §4.4).
+    in property <bool> info-open;
+    property <int> info-focus-seq;
+    in property <InfoView> info-view;
+    in-out property <string> info-owner;
+    in-out property <string> info-group;
+    in-out property <string> info-octal;
+    callback info-toggle-bit(int);
+    callback info-toggle-flag(int);
+    callback info-owner-accepted();
+    callback info-group-accepted();
+    callback info-octal-accepted();
+    callback info-group-menu(length, length, length, length);
+    callback info-enclosed();
+    callback info-app-menu(length, length, length, length);
+    callback info-change-all();
+    callback info-close();
 
     // The tab picker (tab_tools.rs): the tabs the query lets through, the row Enter picks.
     in property <bool> tp-open;
@@ -737,6 +756,8 @@ export component AppWindow inherits Window {
             root.cp-focus-seq += 1;
         } else if root.cv-open {
             root.cv-focus-seq += 1;
+        } else if root.info-open {
+            root.info-focus-seq += 1;
         } else if root.tp-open {
             root.tp-focus-seq += 1;
         } else {
@@ -1421,6 +1442,29 @@ export component AppWindow inherits Window {
             current: root.tp-current;
             edited(text) => { root.tp-edited(text); }
             chosen(i) => { root.tp-chosen(i); }
+        }
+        if root.info-open: InfoLayer {
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.height;
+            open: root.info-open;
+            focus-request: root.info-focus-seq;
+            dialog-open: root.dialog-open || root.conflicts-open;
+            view: root.info-view;
+            owner <=> root.info-owner;
+            group <=> root.info-group;
+            octal <=> root.info-octal;
+            toggle-bit(i) => { root.info-toggle-bit(i); }
+            toggle-flag(i) => { root.info-toggle-flag(i); }
+            owner-accepted => { root.info-owner-accepted(); }
+            group-accepted => { root.info-group-accepted(); }
+            octal-accepted => { root.info-octal-accepted(); }
+            group-menu(x, y, r, t) => { root.info-group-menu(x, y, r, t); }
+            enclosed => { root.info-enclosed(); }
+            app-menu(x, y, r, t) => { root.info-app-menu(x, y, r, t); }
+            change-all => { root.info-change-all(); }
+            close => { root.info-close(); }
         }
         if root.conflicts-open: ConflictList {
             x: 0;

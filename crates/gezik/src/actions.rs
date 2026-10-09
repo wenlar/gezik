@@ -68,6 +68,7 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         Action::CalculateFolderSizes => crate::folder_sizes::with_current(crate::folder_sizes::FolderSizes::calculate),
         Action::SaveSearch => crate::search::with_current(crate::search::Searches::save_current),
         Action::MakeAlias => crate::operations::with_current(crate::operations::Operations::make_alias_of_selection),
+        Action::GetInfo => crate::info::get_info(view),
         Action::ShowPackageContents => {
             // The selected (or focused) folder, even a package; a file: nothing.
             let item = view.single_selected().or_else(|| view.focus()).and_then(|i| view.entry_path(i));

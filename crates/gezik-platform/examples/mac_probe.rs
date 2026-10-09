@@ -1,4 +1,4 @@
-//! macOS: tries the system calls parts 9a1 and 9a2 rely on (spec 9 §4.1-§4.5) through Gezik's
+//! macOS: tries the system calls parts 9a1, 9a2 and 9a3 rely on (spec 9 §4.1-§4.5) through Gezik's
 //! own code, and prints what they did. On a Mac:
 //! `cargo run --release -p gezik-platform --example mac_probe -- [--service "<Quick Action>"] [paths…]`
 //! and paste the whole output into docs/superpowers/notes/macos-test-results.md.
@@ -201,6 +201,76 @@ fn main() {
         None => println!(
             "(make a Quick Action in Automator or Shortcuts that takes files, then rerun with --service \"<its name>\")"
         ),
+    }
+    println!("== 6. Get Info: attributes without following links, names, ACLs (spec 4.4) ==");
+    {
+        use gezik_core::attrs::{Change, HIDDEN, LOCKED, PERMS};
+        use gezik_platform::attrs;
+        let check = |label: &str, ok: bool| println!("{} {label}", if ok { "PASS" } else { "FAIL" });
+        let start = Instant::now();
+        let (users, groups, mine) = (attrs::users(), attrs::groups(), attrs::my_groups());
+        println!("{} users, {} groups, mine {mine:?} in {:.1} ms", users.len(), groups.len(), ms(start));
+        let file = dir.join("info-test.txt");
+        std::fs::write(&file, "gezik").ok();
+        let link = dir.join("info-link");
+        let _ = std::os::unix::fs::symlink(&file, &link);
+        match attrs::read(&file) {
+            Ok(entry) => {
+                let a = entry.attrs;
+                let shut = Change::flag(LOCKED, true).apply(Change::flag(HIDDEN, true).apply(a));
+                check(
+                    "hide and lock",
+                    attrs::write(&file, entry.id, a, shut).is_ok()
+                        && attrs::read(&file).is_ok_and(|e| e.attrs.flags == HIDDEN | LOCKED),
+                );
+                let chmod = Change::bit(0o020, true).apply(shut);
+                check("a locked file's permissions are refused", attrs::write(&file, entry.id, shut, chmod).is_err());
+                let open = Change::flag(LOCKED, false).apply(chmod);
+                check(
+                    "unlock and chmod in one write",
+                    attrs::write(&file, entry.id, shut, open).is_ok()
+                        && attrs::read(&file)
+                            .is_ok_and(|e| e.attrs.mode & PERMS == (a.mode | 0o020) & PERMS && e.attrs.flags == HIDDEN),
+                );
+                check("unhide", attrs::write(&file, entry.id, open, Change::flag(HIDDEN, false).apply(open)).is_ok());
+                if let Ok(l) = attrs::read(&link) {
+                    check(
+                        "a link's permissions are refused",
+                        attrs::write(&link, l.id, l.attrs, Change::bit(0o002, true).apply(l.attrs)).is_err(),
+                    );
+                    check(
+                        "what the link leads to is untouched",
+                        attrs::read(&file).is_ok_and(|e| e.attrs.mode & 0o002 == 0),
+                    );
+                    if let Some(gid) = mine.first() {
+                        check(
+                            "a link's own group (lchown)",
+                            attrs::write(&link, l.id, l.attrs, Change::group(*gid).apply(l.attrs)).is_ok(),
+                        );
+                    }
+                }
+                // chown clears setuid: the write puts it back and adds none.
+                let suid = dir.join("info-suid");
+                std::fs::write(&suid, "x").ok();
+                let _ = std::process::Command::new("/bin/chmod").arg("4755").arg(&suid).status();
+                if let (Ok(s), Some(gid)) = (attrs::read(&suid), mine.first()) {
+                    let to = Change::group(*gid).apply(s.attrs);
+                    let forced = gezik_core::attrs::Attrs { gid: !*gid, ..s.attrs };
+                    check(
+                        "setuid kept across a group change",
+                        attrs::write(&suid, s.id, forced, to).is_ok()
+                            && attrs::read(&suid).is_ok_and(|e| e.attrs.mode == 0o4755),
+                    );
+                }
+                check("no ACL at first", !attrs::has_acl(&file));
+                let acl = |args: &[&str]| {
+                    std::process::Command::new("/bin/chmod").args(args).arg(&file).status().is_ok_and(|s| s.success())
+                };
+                check("an access control entry is seen", acl(&["+a", "everyone deny delete"]) && attrs::has_acl(&file));
+                acl(&["-N"]);
+            }
+            Err(err) => println!("FAIL read {}: {err}", file.display()),
+        }
     }
     println!("(leave {} for Finder: its aliases should show the arrow badge; delete it afterwards)", dir.display());
 }

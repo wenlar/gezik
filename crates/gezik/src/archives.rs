@@ -453,13 +453,13 @@ fn stem_of(archive: &Path) -> String {
 }
 
 /// "Size: 340 MB in 12 files".
-fn size_text(files: u64, bytes: u64) -> String {
+pub(crate) fn size_text(files: u64, bytes: u64) -> String {
     let files = if files == 1 { "1 file".to_owned() } else { format!("{files} files") };
     format!("Size: {} in {files}", crate::view_options::size_text(bytes))
 }
 
 /// The files under `paths` and their size; stops early once `stop` says so.
-fn total_size(paths: &[PathBuf], stop: impl Fn() -> bool) -> (u64, u64) {
+pub(crate) fn total_size(paths: &[PathBuf], stop: impl Fn() -> bool) -> (u64, u64) {
     let (mut files, mut bytes) = (0u64, 0u64);
     let mut todo: Vec<PathBuf> = paths.to_vec();
     while let Some(path) = todo.pop() {

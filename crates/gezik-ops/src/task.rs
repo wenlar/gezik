@@ -87,6 +87,8 @@ pub enum TaskKind {
     NewFolderWith,
     /// Shortcuts, junctions and symbolic links (spec 9.2).
     Link,
+    /// Permissions, owner, group, flags (the Info window, spec 9 §4.4).
+    Attributes,
 }
 
 impl TaskKind {
@@ -109,6 +111,7 @@ impl TaskKind {
             TaskKind::Pdf => "Make PDF from",
             TaskKind::NewFolderWith => "New folder with",
             TaskKind::Link => "Create link",
+            TaskKind::Attributes => "Change attributes of",
         }
     }
 
@@ -289,6 +292,14 @@ pub enum Outcome {
     /// only if it then holds no files, after what went into it was undone (spec 8.2).
     MadeParent {
         path: PathBuf,
+    },
+    /// Permissions, owner, group or flags changed: undo writes `before` back if the item is
+    /// still `id` and still `after`.
+    AttributesChanged {
+        path: PathBuf,
+        id: gezik_core::attrs::Identity,
+        before: gezik_core::attrs::Attrs,
+        after: gezik_core::attrs::Attrs,
     },
     /// Nothing changed (a folder that was already there).
     Nothing,
@@ -781,6 +792,7 @@ mod tests {
         assert_eq!(TaskKind::NewFolderWith.label(1), "New folder with 1 item");
         assert_eq!(TaskKind::Link.label(1), "Create link");
         assert_eq!(TaskKind::Link.label(4), "Create 4 links");
+        assert_eq!(TaskKind::Attributes.label(3), "Change attributes of 3 items");
     }
 
     #[test]

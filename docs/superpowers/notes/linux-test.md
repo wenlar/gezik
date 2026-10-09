@@ -448,6 +448,13 @@ Do 86-92 on GNOME and on KDE.
 91. **No journal.** Add, delete `~/.config/gezik/system-changes.toml`, then `gezik --unregister`: only the link that points at this Gezik is swept; `~/.local/bin` stays. Write `version = 9` into a fresh `system-changes.toml`: the panel says `Fix or delete system-changes.toml first`, Add fails, `--unregister` exits 2 and the file is unchanged.
 92. **Two at once.** With Gezik open and gezik added, run `gezik --unregister` from a terminal: the report is complete; opening the panel again shows Off.
 
+### 9a3, the Info window
+
+93. **Opening.** Alt+Enter on a file (the list has the keyboard), right-click ▸ Properties, and the command palette's "Get Info": the panel on the right with Kind, Size, Where, Modified, Last opened (Created only on file systems that keep it: ext4, btrfs, xfs). No Hidden/Locked row, no Open with row. Alt+Enter in the search bar's field still searches in a new tab. Esc and Done close it.
+94. **Permissions, owner, group.** As macOS items 103-104 with `ls -l`: ticking boxes, Octal 600, 4755 refused, Group ▾ lists your groups, a group you are not in and owner `root` say "Requires administrator: 1 item not changed". A setuid file you own (`chmod 4755`) keeps `rws` after a group change. A file replaced from another terminal while the window is open is not changed ("changed since"). A setgid folder (`chmod g+s`) shows "Special: setgid (not changed here)". `setfacl -m u:nobody:r <file>` (if `acl` is installed): the access control note shows.
+95. **Apply to enclosed items.** As macOS item 106 (with a symlink inside pointing outside): the link and its target are untouched, the script stays runnable, Cancel in the operations panel stops a big one, Ctrl+Z puts every item back.
+96. **Links.** Get Info on a symlink: permission boxes greyed; Group ▾ changes the link's own group (`ls -l` on it), `stat -L` shows the target's group unchanged. Write down the glibc version (`ldd --version | head -1`): below 2.32 permission changes use the fallback. Also run `cargo test -p gezik-platform attrs` and `cargo test -p gezik-ops attrs` and report failures.
+
 ## Known gaps (not bugs)
 
 - **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (F5 works it out again). Search results and the flat view show no folder sizes.

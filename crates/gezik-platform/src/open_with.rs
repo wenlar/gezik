@@ -89,6 +89,44 @@ pub fn choose_app() -> Option<PathBuf> {
     None
 }
 
+/// Opens `file` (only it) with `app` from now on (the Info window). `on_error` is called later,
+/// on another thread, if the system refused.
+pub fn set_default_for_file(
+    app: &Path,
+    file: &Path,
+    on_error: impl FnOnce(String) + Send + 'static,
+) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    return crate::mac::info::set_for_file(app, file, Box::new(on_error));
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, file, on_error);
+        Err("This is on macOS only".to_owned())
+    }
+}
+
+/// `file`'s type identifier ("com.adobe.pdf"); None off macOS.
+pub fn type_of(file: &Path) -> Option<String> {
+    #[cfg(target_os = "macos")]
+    return crate::mac::services::type_of(file);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = file;
+        None
+    }
+}
+
+/// Opens every file of type `uti` (from `type_of`) with `app` ("Change All…").
+pub fn set_default_for_type(app: &Path, uti: &str) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    return crate::mac::info::set_for_type(app, uti);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, uti);
+        Err("This is on macOS only".to_owned())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

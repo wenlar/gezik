@@ -1,5 +1,6 @@
 //! Platform-specific code for Gezik: drives, known folders, native menus, icons, thumbnails and dates. Everything else in the app is platform-independent.
 
+pub mod attrs;
 pub mod clipboard;
 mod datetime;
 pub mod dnd;
@@ -99,6 +100,8 @@ mod keyboard;
 #[cfg(windows)]
 mod pointer;
 #[cfg(windows)]
+mod properties;
+#[cfg(windows)]
 mod removal;
 #[cfg(windows)]
 mod shell_menu;
@@ -107,9 +110,17 @@ pub use keyboard::{ModifierKeys, modifier_keys_down};
 #[cfg(windows)]
 pub use pointer::catch_up_pointer;
 #[cfg(windows)]
+pub use properties::show_properties;
+#[cfg(windows)]
 pub use removal::{RemovalWatch, watch_removal};
 #[cfg(windows)]
 pub use shell_menu::{FIRST_SHELL_ID, ShellSubmenu, show_shell_menu};
+
+/// The system's Properties window: Windows only (macOS and Linux have Gezik's Info window).
+#[cfg(not(windows))]
+pub fn show_properties(_window: &impl raw_window_handle::HasWindowHandle, _paths: &[PathBuf]) -> Result<(), String> {
+    Err("The system's Properties window is on Windows only".to_owned())
+}
 
 /// Elsewhere a drive is not asked about before it goes: nothing to watch.
 #[cfg(not(windows))]

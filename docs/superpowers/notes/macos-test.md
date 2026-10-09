@@ -12,6 +12,8 @@ Paste its whole output into the results, then run `cargo test -p gezik-platform`
 
 Part 9a2 (Open With, Share, Quick Actions, the system Quick Look panel; items 94-100) has never run on a Mac. Run it on `feat/system-9a2` (after the merge: `master`) and write a new section **"Run: 9a2"** in `macos-test-results.md`. Start with the probe (item 94), then run `cargo test -p gezik-platform` (its macOS-only tests `text_files_open_in_textedit` and `types_and_conformance` run only there). Items 94-100 follow 9a1's numbers; part 9b1 also numbers its items from 85 on its own branch, so the branch merged second renumbers.
 
+Part 9a3 (the Info window; items 101-109) has never run on a Mac. Run it on `feat/system-9a3` (after the merge: `master`) and write a new section **"Run: 9a3"** in `macos-test-results.md`. Start with the probe (item 101). Items 101-109 follow 9a2's numbers; parts 9b1, 9b2 and 9b3 number their items on their own branches, so the branch merged later renumbers.
+
 This file is for a person, or Claude Code on the Mac, testing the state after 5d. Write the results into `docs/superpowers/notes/macos-test-results.md`, in a new section **"Run 2 (after 5d)"** below Run 1. Don't change Run 1.
 - Give PASS, FAIL or NOT TESTED for every item.
 - For a FAIL, give the steps, what you expected, what happened, and a screenshot path. Don't commit screenshots.
@@ -27,6 +29,7 @@ git clone git@github.com:wenlar/gezik.git && cd gezik   # or: git fetch in the e
 git checkout feat/batch-ops-5d    # until it is merged; after that: git checkout master && git pull
                                   # part 9a1: git checkout feat/system-9a1 (until it is merged)
                                   # part 9a2: git checkout feat/system-9a2 (until it is merged)
+                                  # part 9a3: git checkout feat/system-9a3 (until it is merged)
 git log -1 --oneline              # write this SHA into the results
 cargo build --release -p gezik
 rm -rf /tmp/gezik-cfg && mkdir -p /tmp/gezik-cfg /tmp/gezik-test
@@ -421,6 +424,18 @@ Re-checks of the shared UI fixes (fix/shared-ui, on master)
 99. **Unchanged.** The row menu still has Make Alias, Create link, Copy path as ▸, Commands ▸ (when set up), and all four submenus show together on a file with commands. Right-clicking feels as quick as before; Activity Monitor shows no extra gezik thread after the menu closes.
 100. **Exe size.** `ls -l target/release/gezik` on `feat/system-9a1` and on `feat/system-9a2`, both `cargo build --release -p gezik`: write both numbers; the difference should be under 256 KB plus the Quick Look UI bindings.
 
+### 9a3, the Info window
+
+101. **Probe.** `cargo run --release -p gezik-platform --example mac_probe` and paste the output. Section 6: every line PASS (it includes "setuid kept across a group change" and the locked-file and link checks); note the users/groups line (count and time; above 200 ms the window opens slowly). Also run `cargo test -p gezik-platform attrs` and `cargo test -p gezik-ops attrs` and report failures (their Mac/Linux-only tests: a link is not followed, setuid survives a group change, a locked file is unlocked first, a real chmod is undone through the job engine).
+102. **Opening.** Select a PDF, press ⌘I: a panel on the right with "rapor.pdf Info", Kind, Size, Where, Created, Modified, Last opened. File ▸ Get Info and right-click ▸ Get Info (after "Delete permanently") do the same. On a folder the size says "calculating…" then a size. Three items: "3 items", "Where" their folder (or "several folders"), boxes that differ show a dash. Esc and Done close it; the list has the keyboard again.
+103. **Permissions.** Tick Group ▸ Write: `ls -l` in Terminal shows `rw-rw-r--` at once; close the window, ⌘Z: back to `rw-r--r--`. Type 600 in Octal and Return: `rw-------`. Type 4755: "Setuid, setgid and sticky can't be changed here", nothing changes. Three files with different permissions: a dashed box turns on for all when clicked. With the window open, `chmod 777 <file>` in Terminal, then tick a box: the note says "1 item changed since; shown as it is now" and the boxes show 777; tick again: it works. With the window open, replace the file in Terminal (`cp other.pdf x && mv x rapor.pdf`), then tick a box: the new file is not changed (the note says "changed since").
+104. **Owner and group.** Group ▾ lists your groups (staff, everyone, admin …); choose admin: `ls -l` shows it. A setuid file you own (`chmod 4755 f`): change its group to admin: `ls -l` still shows `rws`. Type `wheel` (if you are not in it) and Return: the note "Requires administrator: 1 item not changed" in red, the operations panel lists the item with "Requires administrator". Owner: type `root`, Return: the same note. Type `nobody-at-all`: "No user is named …", nothing runs.
+105. **Hidden and Locked.** Tick Hidden: Finder no longer shows the file (Gezik still does: a known gap). Tick Locked: Finder shows the lock; the permission boxes, Octal, Owner and Group are greyed; untick Locked: they work again. ⌘Z after closing undoes each, in order. A locked file you try to give a group you are not in (refused): it is locked again afterwards (`ls -lO` shows `uchg`).
+106. **Apply to enclosed items.** A folder with two files, a script (`chmod +x`), a subfolder and a symlink to a file outside it; set the folder to 750 and group staff, then "Apply to enclosed items…": the question; Cancel does nothing. Apply: `ls -lR` shows the files `rw-r-----`, the script `rwxr-x---`, the subfolder `rwxr-x---`, the symlink and the file it leads to unchanged, the folder itself unchanged. ⌘Z puts every item back. On a big folder (a copy of ~/Library/Caches) the operations panel shows progress and Cancel stops it; ⌘Z puts back the ones it did.
+107. **Open with.** One PDF: "Open with: Preview ▾"; choose TextEdit: Finder's Get Info for that file says TextEdit, another PDF still opens in Preview. "Change All…" ▸ Change All: every PDF opens in TextEdit (write down whether macOS asked anything, and the macOS version: the call behind it is deprecated). Cancel and Esc change nothing. Put Preview back the same way. "Other…" opens the app panel. A folder, a link and several items have no "Open with" row; an `.app` has one. A file with no default app says "Not set".
+108. **Links and ACLs.** Get Info on a symlink: Kind "Symbolic link", the permission boxes greyed; Group ▾ ▸ another group changes the link's own group (`ls -l` on the link), not the file's (`ls -lL`). `chmod +a "everyone deny delete" <file>`: Get Info says "This item has access control entries…".
+109. **Exe size.** `ls -l target/release/gezik` on `feat/system-9a2` and on `feat/system-9a3`, both `cargo build --release -p gezik`: write both numbers; the difference should be under 256 KB.
+
 ### 9b1, command line and single instance
 
 110. **Tests first.** In the clone: `cargo test -p gezik-platform instance`. These tests (socket, stale socket, hung and huge callers, peer uid) only compiled on Windows; they never ran on a Mac before.
@@ -466,7 +481,9 @@ These are known differences from Finder and ForkLift (from the ForkLift comparis
 - **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (⌘R or F5 works it out again). Search results and the flat view show no folder sizes.
 - **Missing features:**
   - Finder tags are not read or shown.
-  - No Get Info window.
+  - Gezik's own list does not hide items marked Hidden in Get Info (it hides by a leading dot only); Finder does.
+  - Get Info has no "Change as administrator…" yet (part 9b7): changes the system refuses only say "Requires administrator".
+  - Get Info shows no icon in its General part.
   - No iCloud Drive status, download or evict. What happens when a file that is only in the cloud is opened has not been tried; note it if you try.
   - Search walks the disk itself: Spotlight is not used (no Spotlight index, no `kMDItem` queries, no Spotlight comments or contents of PDFs and Office files). Results and the flat view don't follow changes made in Finder until ⌘R or F5.
   - No Column (⌘3) or Gallery (⌘4) view, and no ⌘+/⌘- text size.

@@ -16,6 +16,7 @@ mod finder_menu;
 mod folder_sizes;
 mod folder_watch;
 mod frame_limit;
+mod info;
 mod integration;
 mod keys;
 mod media;
@@ -250,7 +251,8 @@ fn perform(
         | Action::SystemIntegration
         | Action::NewWindow
         | Action::MakeAlias
-        | Action::ShowPackageContents => return actions::run(action, nav, view),
+        | Action::ShowPackageContents
+        | Action::GetInfo => return actions::run(action, nav, view),
     }
     true
 }
@@ -299,6 +301,14 @@ fn handle_key(
         let mut used = false;
         if let Some(chord) = &chord {
             convert::with_current(|layer| used = layer.chord(chord));
+        }
+        return used;
+    }
+    // The Info window: Esc wherever its focus is, other keys to its fields.
+    if window.get_info_open() {
+        let mut used = false;
+        if let Some(chord) = &chord {
+            info::with_current(|info| used = info.chord(chord));
         }
         return used;
     }
@@ -817,7 +827,9 @@ fn main() -> Result<(), slint::PlatformError> {
     // Tools Gezik downloads (7-Zip) go to `<config dir>/tools/`, next to the pending deletes.
     let _archives =
         archives::Archives::new(&window, ops.clone(), dialogs.clone(), config.clone(), saved_state.archive.clone());
-    let _convert = convert::Convert::new(&window, ops.clone(), dialogs, config.clone(), saved_state.convert.clone());
+    let _info = info::Info::new(&window, ops.clone(), dialogs.clone());
+    let _convert =
+        convert::Convert::new(&window, ops.clone(), dialogs.clone(), config.clone(), saved_state.convert.clone());
     window.on_op_pause({
         let ops = ops.clone();
         move |id| ops.pause(id)
@@ -1099,6 +1111,22 @@ fn main() -> Result<(), slint::PlatformError> {
             let mut items = Vec::new();
             convert::with_current(|convert| items = convert.encoding_menu(false));
             menus.convert_menu(items, popup::Anchor::below(left, top, right, bottom));
+        }
+    });
+    window.on_info_app_menu({
+        let menus = menus.clone();
+        move |left, bottom, right, top| {
+            let mut items = Vec::new();
+            info::with_current(|info| items = info.app_menu());
+            menus.info_menu(items, popup::Anchor::below(left, top, right, bottom));
+        }
+    });
+    window.on_info_group_menu({
+        let menus = menus.clone();
+        move |left, bottom, right, top| {
+            let mut items = Vec::new();
+            info::with_current(|info| items = info.group_menu());
+            menus.info_menu(items, popup::Anchor::below(left, top, right, bottom));
         }
     });
     // Slint passes indexes as `i32`: a negative one does nothing.

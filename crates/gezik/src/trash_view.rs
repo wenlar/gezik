@@ -259,6 +259,7 @@ pub fn allowed(action: Action) -> bool {
         | Action::Search
         | Action::FlatView
         | Action::ShowInFolder
+        | Action::GetInfo
         | Action::MakeAlias
         | Action::ShowPackageContents
         | Action::Share

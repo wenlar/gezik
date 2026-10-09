@@ -505,6 +505,7 @@ pub fn acts_on_selection(action: Action) -> bool {
             | Action::ShowPackageContents
             | Action::Share
             | Action::PutBack
+            | Action::GetInfo
     )
 }
 
@@ -534,6 +535,7 @@ pub fn needs_list(action: Action) -> bool {
             | Action::ShowPackageContents
             | Action::Share
             | Action::PutBack
+            | Action::GetInfo
     )
 }
 
@@ -711,6 +713,7 @@ mod tests {
             Key::Right => (text(SlintKey::RightArrow), Physical::Other),
             Key::Up => (text(SlintKey::UpArrow), Physical::Other),
             Key::Tab => ("\t".to_owned(), Physical::Other),
+            Key::Enter => (text(SlintKey::Return), Physical::Other),
             Key::Space => (" ".to_owned(), Physical::Other),
             other => panic!("no default uses {other:?}"),
         };
@@ -798,6 +801,7 @@ mod tests {
                 Action::ShowInFolder => "ctrl+shift+e",
                 Action::CommandPalette => "ctrl+shift+p",
                 Action::QuickOpen => "ctrl+p",
+                Action::GetInfo => "alt+enter",
                 Action::PasteMove
                 | Action::MakeAlias
                 | Action::ShowPackageContents

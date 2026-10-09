@@ -1,0 +1,246 @@
+import { Theme } from "../theme.slint";
+import { TextButton } from "text-button.slint";
+import { TextField } from "text-field.slint";
+import { Check } from "check.slint";
+
+// What the Info window shows (info.rs fills it).
+export struct InfoView {
+    title: string,
+    // Kind, size, where and dates, a line each.
+    general: string,
+    // Read, write, execute of the owner, the group, everyone: 0 off, 1 on, 2 mixed, box `i` in
+    // base-3 digit `i` (an int, not a model: a new model type costs exe size).
+    perms: int,
+    // Off for links and locked items.
+    perms-enabled: bool,
+    // Owner and group: off for locked items.
+    ids-enabled: bool,
+    // "Special: setuid (not changed here)" and the access control entries note, a line each
+    // (one text beside Octal, not a conditional one more: exe size); "" for none.
+    special: string,
+    // macOS: Hidden and Locked, 0 off, 1 on, 2 mixed.
+    show-flags: bool,
+    hidden: int,
+    locked: int,
+    // macOS, one file: the app that opens it ("" hides the row).
+    app: string,
+    // One folder: "Apply to enclosed items…".
+    enclosed: bool,
+    // What the last change did ("Requires administrator: 2 items not changed"), red if `error`.
+    note: string,
+    error: bool,
+}
+
+component Labeled inherits HorizontalLayout {
+    in property <string> label;
+    spacing: Theme.spacing;
+    Text {
+        text: root.label;
+        width: 80px;
+        vertical-alignment: center;
+        color: Theme.foreground-muted;
+    }
+    @children
+}
+
+// The Info window (info.rs, spec 9 §4.4): over the window's right side. A change applies at
+// once; Enter applies a field. Esc closes wherever the focus is (main.rs routes it).
+export component InfoLayer inherits Rectangle {
+    in property <bool> open;
+    in property <bool> dialog-open;
+    in property <int> focus-request;
+    in property <InfoView> view;
+    in-out property <string> owner;
+    in-out property <string> group;
+    in-out property <string> octal;
+    callback toggle-bit(int);
+    // 0 Hidden, 1 Locked.
+    callback toggle-flag(int);
+    callback owner-accepted();
+    callback group-accepted();
+    callback octal-accepted();
+    callback group-menu(length, length, length, length);
+    callback enclosed();
+    callback app-menu(length, length, length, length);
+    callback change-all();
+    callback close();
+
+    property <string> menu-arrow: "M 1 2.5 L 4 5.5 L 7 2.5";
+
+    // Built when it opens (an `if` in app.slint): it takes the keyboard then, and again
+    // each time `focus-request` changes (the window's `focus-list`).
+    init => {
+        if root.open && !root.dialog-open {
+            root.take-focus();
+        }
+    }
+    changed focus-request => {
+        if !root.dialog-open {
+            root.take-focus();
+        }
+    }
+
+    public function take-focus() {
+        done.focus();
+    }
+
+    background: Theme.overlay;
+    // Clicks outside the panel go nowhere.
+    TouchArea { }
+
+    Rectangle {
+        width: min(400px, root.width - 40px);
+        height: root.height;
+        x: root.width - self.width;
+        background: Theme.surface-raised;
+        border-width: 1px;
+        border-color: Theme.border;
+        accessible-role: groupbox;
+        accessible-label: root.view.title;
+
+        Flickable {
+            content-height: content.preferred-height;
+            content := VerticalLayout {
+                padding: Theme.spacing * 3;
+                spacing: Theme.spacing * 1.5;
+                alignment: start;
+                Text {
+                    text: root.view.title;
+                    font-weight: 600;
+                    overflow: elide;
+                    color: Theme.foreground;
+                }
+                Text {
+                    text: root.view.general;
+                    wrap: word-wrap;
+                    color: Theme.foreground-muted;
+                }
+                Text {
+                    text: "Sharing & Permissions";
+                    font-weight: 600;
+                    color: Theme.foreground;
+                }
+                Labeled {
+                    label: "Owner";
+                    TextField {
+                        text <=> root.owner;
+                        enabled: root.view.ids-enabled;
+                        accepted => { root.owner-accepted(); }
+                    }
+                }
+                Labeled {
+                    label: "Group";
+                    TextField {
+                        text <=> root.group;
+                        enabled: root.view.ids-enabled;
+                        accepted => { root.group-accepted(); }
+                    }
+                    TextButton {
+                        icon: root.menu-arrow;
+                        label: "Your groups";
+                        clicked => { root.group-menu(self.absolute-position.x, self.absolute-position.y + self.height, self.absolute-position.x + self.width, self.absolute-position.y); }
+                    }
+                }
+                // Owner, group, everyone × read, write, execute, then macOS' Hidden and Locked: one
+                // repeated box placed by hand (each repeater or written-out Check costs exe size).
+                Rectangle {
+                    height: (root.view.show-flags ? 4 : 3) * Theme.row-height;
+                    Text {
+                        y: 0;
+                        width: 80px;
+                        height: Theme.row-height;
+                        text: "Owner";
+                        vertical-alignment: center;
+                        color: Theme.foreground-muted;
+                    }
+                    Text {
+                        y: 1 * Theme.row-height;
+                        width: 80px;
+                        height: Theme.row-height;
+                        text: "Group";
+                        vertical-alignment: center;
+                        color: Theme.foreground-muted;
+                    }
+                    Text {
+                        y: 2 * Theme.row-height;
+                        width: 80px;
+                        height: Theme.row-height;
+                        text: "Everyone";
+                        vertical-alignment: center;
+                        color: Theme.foreground-muted;
+                    }
+                    for label[i] in root.view.show-flags
+                        ? ["Read", "Write", "Execute", "Read", "Write", "Execute", "Read", "Write", "Execute", "Hidden", "Locked"]
+                        : ["Read", "Write", "Execute", "Read", "Write", "Execute", "Read", "Write", "Execute"]: Check {
+                        property <int> state: i < 9 ? mod(floor(root.view.perms / pow(3, i)), 3) : i == 9 ? root.view.hidden : root.view.locked;
+                        x: 80px + Theme.spacing * 2 + mod(i, 3) * 84px - (i < 9 ? 0 : 80px + Theme.spacing * 2);
+                        y: floor(i / 3) * Theme.row-height;
+                        width: 84px;
+                        text: label;
+                        checked: self.state == 1;
+                        mixed: self.state == 2;
+                        enabled: i < 9 ? root.view.perms-enabled : true;
+                        toggled => {
+                            if i < 9 {
+                                root.toggle-bit(i);
+                            } else {
+                                root.toggle-flag(i - 9);
+                            }
+                        }
+                    }
+                }
+                Labeled {
+                    label: "Octal";
+                    TextField {
+                        width: 72px;
+                        text <=> root.octal;
+                        enabled: root.view.perms-enabled;
+                        accepted => { root.octal-accepted(); }
+                    }
+                    Text {
+                        text: root.view.special;
+                        vertical-alignment: center;
+                        wrap: word-wrap;
+                        horizontal-stretch: 1;
+                        color: Theme.foreground-muted;
+                    }
+                }
+                if root.view.app != "": Labeled {
+                    label: "Open with";
+                    TextButton {
+                        text: root.view.app;
+                        icon: root.menu-arrow;
+                        clicked => { root.app-menu(self.absolute-position.x, self.absolute-position.y + self.height, self.absolute-position.x + self.width, self.absolute-position.y); }
+                    }
+                    TextButton {
+                        text: "Change All…";
+                        clicked => { root.change-all(); }
+                    }
+                }
+                if root.view.enclosed: HorizontalLayout {
+                    alignment: start;
+                    TextButton {
+                        text: "Apply to enclosed items…";
+                        clicked => { root.enclosed(); }
+                    }
+                }
+                // What the last change did, beside Done: no conditional (exe size), no empty line.
+                HorizontalLayout {
+                    spacing: Theme.spacing * 2;
+                    Text {
+                        text: root.view.note;
+                        wrap: word-wrap;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                        color: root.view.error ? Theme.danger : Theme.foreground-muted;
+                    }
+                    done := TextButton {
+                        text: "Done";
+                        primary: true;
+                        clicked => { root.close(); }
+                    }
+                }
+            }
+        }
+    }
+}
