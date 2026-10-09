@@ -93,8 +93,38 @@ pub fn open_recent(index: usize) {
 
 fn start(text: &str, letter: Option<char>) {
     match network::parse_address(text, cfg!(windows)) {
-        Ok(address) => run(address, letter, None),
+        Ok(address) => {
+            let letter = letter_for(&address, letter);
+            run(address, letter, None)
+        }
         Err(why) => status(why.to_owned()),
+    }
+}
+
+/// A bare `\\server` is not mapped to a letter: it is connected and its shares listed.
+fn letter_for(address: &ServerAddress, letter: Option<char>) -> Option<char> {
+    letter.filter(|_| !address.share.is_empty())
+}
+
+/// Hands the worker's result to `post` when dropped, and a failure if there is none (the
+/// worker panicked or never ran), so `finish` always runs and `BUSY` never sticks.
+struct Reply<F: FnOnce(Result<PathBuf, ConnectError>)> {
+    post: Option<F>,
+    result: Option<Result<PathBuf, ConnectError>>,
+}
+
+impl<F: FnOnce(Result<PathBuf, ConnectError>)> Reply<F> {
+    /// Takes `self` whole: a closure that only set the field would capture the field alone.
+    fn send(mut self, result: Result<PathBuf, ConnectError>) {
+        self.result = Some(result);
+    }
+}
+
+impl<F: FnOnce(Result<PathBuf, ConnectError>)> Drop for Reply<F> {
+    fn drop(&mut self) {
+        if let Some(post) = self.post.take() {
+            post(self.result.take().unwrap_or_else(|| Err(ConnectError::Failed("Connection failed".to_owned()))));
+        }
     }
 }
 
@@ -107,12 +137,21 @@ fn run(address: ServerAddress, letter: Option<char>, login: Option<Login>) {
     status(format!("Connecting to {shown}…"));
     let mut owner = 0;
     crate::navigation::with_current(|nav| owner = nav.owner());
-    std::thread::spawn(move || {
+    let target = address.clone();
+    // shortcut: if the event loop is gone, `finish` cannot run; the app is closing then.
+    let reply = Reply {
+        post: Some(move |result| {
+            let _ = slint::invoke_from_event_loop(move || finish(address, shown, result));
+        }),
+        result: None,
+    };
+    // A thread that cannot start drops `reply` (and the login) at once: `finish` still runs.
+    let _ = std::thread::Builder::new().spawn(move || {
         let how = Connect { letter, owner, login };
-        let result = network::connect(&address, &how);
+        let result = network::connect(&target, &how);
         // The password goes now, not when the answer is shown.
         drop(how);
-        let _ = slint::invoke_from_event_loop(move || finish(address, shown, result));
+        reply.send(result);
     });
 }
 
@@ -192,6 +231,34 @@ mod tests {
         assert_eq!(buttons(true, Some('Z')), ["Connect", "Map to Z:", "Cancel"]);
         assert_eq!(buttons(true, None), ["Connect", "Cancel"]);
         assert_eq!(buttons(false, Some('Z')), ["Connect", "Cancel"]);
+    }
+
+    #[test]
+    fn a_bare_server_is_not_mapped() {
+        let bare = network::parse_address(r"\\nas", true).unwrap();
+        let share = network::parse_address(r"\\nas\foto", true).unwrap();
+        assert_eq!(letter_for(&bare, Some('Z')), None);
+        assert_eq!(letter_for(&share, Some('Z')), Some('Z'));
+        assert_eq!(letter_for(&share, None), None);
+    }
+
+    #[test]
+    fn a_worker_that_panics_still_answers() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let reply = Reply { post: Some(move |r| tx.send(r).unwrap()), result: None };
+        let worker = std::thread::spawn(move || {
+            if reply.post.is_some() {
+                panic!("the connection broke");
+            }
+            reply.send(Ok(PathBuf::new()));
+        });
+        assert!(worker.join().is_err());
+        assert_eq!(rx.recv().unwrap(), Err(ConnectError::Failed("Connection failed".to_owned())));
+        let (tx, rx) = std::sync::mpsc::channel();
+        // The way `run` hands it over: moved into a thread, sent from there.
+        let reply = Reply { post: Some(move |r| tx.send(r).unwrap()), result: None };
+        std::thread::spawn(move || reply.send(Ok(PathBuf::from("Z:\\")))).join().unwrap();
+        assert_eq!(rx.recv().unwrap(), Ok(PathBuf::from("Z:\\")));
     }
 
     #[test]
