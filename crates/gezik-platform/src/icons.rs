@@ -41,7 +41,7 @@ pub fn type_name(ext: &str, is_dir: bool) -> Option<String> {
 
 /// The system's icon for `target`, at most `px` wide: smaller sizes come as the system has
 /// them (the UI scales them), bigger ones are shrunk to `px`. `None` where there are no
-/// system icons: macOS and Linux use Gezik's own icons for now.
+/// system icons: Linux uses Gezik's own icons for now.
 pub fn icon(target: &IconTarget, px: u32) -> Option<Rgba> {
     imp::icon(target, px)
 }
@@ -108,6 +108,49 @@ pub(crate) fn shrink_to(image: Rgba, px: u32) -> Rgba {
     Rgba { width: w, height: h, pixels: small.into_raw() }
 }
 
+/// Premultiplied RGBA (CoreGraphics' bitmap contexts) made straight, in place.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn unpremultiply(pixels: &mut [u8]) {
+    for pixel in pixels.as_chunks_mut::<4>().0 {
+        let a = u16::from(pixel[3]);
+        if a == 0 || a == 255 {
+            continue;
+        }
+        for c in &mut pixel[..3] {
+            *c = ((u16::from(*c) * 255 + a / 2) / a).min(255) as u8;
+        }
+    }
+}
+
+/// The size of a `width`×`height` picture fit into `px`×`px`, keeping its aspect and never
+/// bigger than it is; `None` for an empty picture.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn fit_within(width: usize, height: usize, px: u32) -> Option<(u32, u32)> {
+    if width == 0 || height == 0 {
+        return None;
+    }
+    let scale = (f64::from(px.max(1)) / width.max(height) as f64).min(1.0);
+    let side = |n: usize| ((n as f64 * scale).round() as u32).max(1);
+    Some((side(width), side(height)))
+}
+
+/// Whether Finder's `com.apple.FinderInfo` says the item has a custom icon (`kHasCustomIcon`
+/// in the big-endian finderFlags at bytes 8-9, for files and folders alike).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn finder_info_custom_icon(info: &[u8]) -> bool {
+    info.get(8..10).is_some_and(|flags| u16::from_be_bytes([flags[0], flags[1]]) & 0x0400 != 0)
+}
+
+/// Whether the folder `path` may have an icon of its own, to be looked up by path: Windows
+/// (and Linux, where it changes nothing yet) a `desktop.ini`; macOS a custom icon or a
+/// volume's root. Reads the disk: worker threads only.
+pub fn folder_has_own_icon(path: &std::path::Path) -> bool {
+    #[cfg(target_os = "macos")]
+    return crate::mac::icons::folder_has_own_icon(path);
+    #[cfg(not(target_os = "macos"))]
+    path.join("desktop.ini").is_file()
+}
+
 #[cfg(windows)]
 use win as imp;
 
@@ -115,6 +158,12 @@ use win as imp;
 mod imp {
     use super::{IconTarget, Rgba};
 
+    #[cfg(target_os = "macos")]
+    pub fn icon(target: &IconTarget, px: u32) -> Option<Rgba> {
+        crate::mac::icons::icon(target, px)
+    }
+
+    #[cfg(not(target_os = "macos"))]
     pub fn icon(_target: &IconTarget, _px: u32) -> Option<Rgba> {
         None
     }
@@ -534,5 +583,40 @@ mod size_tests {
         assert_eq!((wide.width, wide.height), (50, 25));
         let fits = shrink_to(canvas(48, 48, 48), 96);
         assert_eq!((fits.width, fits.height), (48, 48), "never enlarged");
+    }
+
+    #[test]
+    fn premultiplied_pixels_come_back_straight() {
+        let mut pixels = vec![128, 64, 0, 128, 10, 20, 30, 255, 0, 0, 0, 0, 1, 1, 1, 1];
+        unpremultiply(&mut pixels);
+        assert_eq!(&pixels[..4], &[255, 128, 0, 128], "half covered: colors doubled");
+        assert_eq!(&pixels[4..8], &[10, 20, 30, 255], "opaque: as it is");
+        assert_eq!(&pixels[8..12], &[0, 0, 0, 0], "transparent: as it is");
+        assert_eq!(&pixels[12..], &[255, 255, 255, 1], "never above 255");
+        let mut odd = vec![5, 5];
+        unpremultiply(&mut odd);
+        assert_eq!(odd, [5, 5], "a partial pixel is left alone");
+    }
+
+    #[test]
+    fn pictures_fit_without_growing() {
+        assert_eq!(fit_within(512, 512, 64), Some((64, 64)));
+        assert_eq!(fit_within(200, 100, 50), Some((50, 25)));
+        assert_eq!(fit_within(32, 32, 64), Some((32, 32)), "never enlarged");
+        assert_eq!(fit_within(1000, 1, 64), Some((64, 1)), "at least one pixel");
+        assert_eq!(fit_within(0, 5, 64), None);
+        assert_eq!(fit_within(5, 5, 0), Some((1, 1)));
+    }
+
+    #[test]
+    fn finders_custom_icon_flag_is_read() {
+        let mut info = [0u8; 32];
+        assert!(!finder_info_custom_icon(&info));
+        info[8] = 0x04; // finderFlags (big-endian) at 8..10: kHasCustomIcon 0x0400
+        assert!(finder_info_custom_icon(&info));
+        info[8] = 0x00;
+        info[9] = 0x04; // 0x0004: another flag
+        assert!(!finder_info_custom_icon(&info));
+        assert!(!finder_info_custom_icon(&[0x04; 9]), "too short");
     }
 }

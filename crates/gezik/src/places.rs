@@ -46,7 +46,7 @@ impl Places {
         if let Some(drive) = self.drives.iter().find(|d| d.path == *path) {
             return drive.label.clone();
         }
-        file_name_or_path(path)
+        gezik_platform::finder::finder_name(path).unwrap_or_else(|| file_name_or_path(path))
     }
 }
 

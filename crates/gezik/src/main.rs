@@ -231,7 +231,9 @@ fn perform(
         | Action::CutWithFolders
         | Action::CalculateFolderSizes
         | Action::SaveSearch
-        | Action::NewWindow => return actions::run(action, nav, view),
+        | Action::NewWindow
+        | Action::MakeAlias
+        | Action::ShowPackageContents => return actions::run(action, nav, view),
     }
     true
 }

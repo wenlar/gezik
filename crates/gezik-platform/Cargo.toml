@@ -80,6 +80,7 @@ objc2-foundation = { version = "0.3", features = [
     "NSURLRequest",
     "NSURLResponse",
     "NSURLSession",
+    "NSValue",
     "block2",
 ] }
 objc2-app-kit = { version = "0.3", features = [
@@ -89,6 +90,7 @@ objc2-app-kit = { version = "0.3", features = [
     "NSDraggingItem",
     "NSDraggingSession",
     "NSEvent",
+    "NSGraphicsContext",
     "NSImage",
     "NSImageRep",
     "NSPasteboard",
@@ -96,4 +98,25 @@ objc2-app-kit = { version = "0.3", features = [
     "NSView",
     "NSWindow",
     "NSWorkspace",
+    "objc2-core-graphics",
+] }
+# NSImage and Quick Look pictures drawn into RGBA (the versions objc2-app-kit 0.3 brings).
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFCGTypes"] }
+objc2-core-graphics = { version = "0.3", default-features = false, features = [
+    "std",
+    "CGBitmapContext",
+    "CGColorSpace",
+    "CGContext",
+    "CGImage",
+] }
+# Finder's thumbnails (PDF, HEIC, video, Pages …); only the generator and its request.
+objc2-quick-look-thumbnailing = { version = "0.3", default-features = false, features = [
+    "std",
+    "bitflags",
+    "block2",
+    "objc2-core-foundation",
+    "objc2-core-graphics",
+    "QLThumbnailGenerationRequest",
+    "QLThumbnailGenerator",
+    "QLThumbnailRepresentation",
 ] }
