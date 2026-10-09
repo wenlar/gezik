@@ -428,6 +428,8 @@ pub const TEMPLATE_MAX: u32 = gezik_core::templates::TEMPLATE_MAX as u32;
 pub const PUT_BACK: u32 = 1801;
 pub const TRASH_DELETE: u32 = 1802;
 pub const EMPTY_TRASH: u32 = 1803;
+/// 1881: the View menu's last item (spec 13.3).
+pub const SYSTEM_INTEGRATION: u32 = 1881;
 
 /// A trash row's menu: only what the trash does (no Explorer menu, nothing that acts on a
 /// `$R…` name).
@@ -635,6 +637,7 @@ pub fn view_items(
     }
     out.push((APPLY_TO_ALL, "Apply to all folders".to_owned()));
     out.push((RESET_FOLDER, "Reset this folder".to_owned()));
+    out.push((SYSTEM_INTEGRATION, "    System Integration…".to_owned()));
     out
 }
 
@@ -1610,6 +1613,9 @@ impl Menus {
             (SHOW_HISTORY, Subject::View) => self.ops.show_history(),
             (APPLY_TO_ALL, Subject::View) => self.view.apply_to_all(),
             (RESET_FOLDER, Subject::View) => self.view.reset_folder(),
+            (SYSTEM_INTEGRATION, Subject::View) => {
+                crate::integration::with_current(crate::integration::Integration::open)
+            }
             (CALC_FOLDER_SIZES, _) => crate::folder_sizes::with_current(crate::folder_sizes::FolderSizes::calculate),
             (id, Subject::View) => {
                 if let Some(option) = view_option_for(id, crate::view_options::current()) {
@@ -1935,6 +1941,7 @@ mod tests {
             SHOW_HISTORY,
             APPLY_TO_ALL,
             RESET_FOLDER,
+            SYSTEM_INTEGRATION,
             UNDO,
             REDO,
             PASTE,
@@ -2015,6 +2022,7 @@ mod tests {
             PREVIEW_PANE,
             APPLY_TO_ALL,
             RESET_FOLDER,
+            SYSTEM_INTEGRATION,
             UNDO,
             REDO,
             PASTE,
@@ -2401,10 +2409,12 @@ mod tests {
                 SINGLE_CLICK_OPEN,
                 SHOW_HIDDEN,
                 APPLY_TO_ALL,
-                RESET_FOLDER
+                RESET_FOLDER,
+                SYSTEM_INTEGRATION
             ]
         );
         assert!(list[0].1.starts_with("• ") && !list[1].1.starts_with("• "));
+        assert_eq!(list.last().map(|(id, _)| *id), Some(SYSTEM_INTEGRATION));
         let grid = ViewSettings {
             mode: ViewMode::Grid,
             sort: SortSpec { key: SortKey::Size, dir: SortDir::Desc },
@@ -2442,7 +2452,16 @@ mod tests {
         let ids: Vec<u32> = items.iter().map(|(id, _)| *id).collect();
         assert_eq!(
             &ids[12..],
-            [HIDE_EXTENSIONS, FOLDERS_FIRST, SINGLE_CLICK_OPEN, SHOW_HIDDEN, SHOW_SYSTEM, APPLY_TO_ALL, RESET_FOLDER]
+            [
+                HIDE_EXTENSIONS,
+                FOLDERS_FIRST,
+                SINGLE_CLICK_OPEN,
+                SHOW_HIDDEN,
+                SHOW_SYSTEM,
+                APPLY_TO_ALL,
+                RESET_FOLDER,
+                SYSTEM_INTEGRATION
+            ]
         );
         assert!(items[12].1.starts_with("• ") && items[13].1.starts_with("• "), "extensions hidden, folders first");
         assert!(!items[14].1.starts_with("• "));

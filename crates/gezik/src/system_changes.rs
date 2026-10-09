@@ -4,8 +4,6 @@
 //! No UI here (integration.rs is the panel). Runs off the UI thread: the registry, files
 //! and a broadcast that may wait for hung windows. What the panel showed is never acted on:
 //! every write and every undo reads what is there now, under the journal's lock.
-// shortcut: the panel's calls (read_snapshot, add_now, …) have no caller until Task 5; drop this then.
-#![allow(dead_code)]
 
 use std::io;
 use std::path::{Path, PathBuf};

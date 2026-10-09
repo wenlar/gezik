@@ -90,6 +90,9 @@ impl TabTools {
         }));
         // The palette shares the box (palette.rs).
         window.on_tp_edited(|query| {
+            if crate::integration::is_open() {
+                return;
+            }
             if crate::palette::is_open() {
                 crate::palette::with_current(|p| p.edited(&query));
             } else {
@@ -98,6 +101,9 @@ impl TabTools {
         });
         window.on_tp_chosen(|row| {
             let Ok(row) = usize::try_from(row) else { return };
+            if crate::integration::is_open() {
+                return crate::integration::with_current(|i| i.chosen(row));
+            }
             if crate::palette::is_open() {
                 return crate::palette::with_current(|p| p.chosen(row));
             }

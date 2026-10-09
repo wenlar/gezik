@@ -65,6 +65,8 @@ pub enum Target {
     TabSet(String),
     Filter(String),
     SavedSearch(String),
+    /// A System Integration command (spec 3.2).
+    System(crate::integration::Command),
 }
 
 struct Inner {
@@ -158,6 +160,10 @@ impl Palette {
         }
         for name in crate::convert::command_names() {
             add(Kind::Command, name.clone(), name.clone(), String::new(), Target::Command(name));
+        }
+        for command in crate::integration::Command::ALL {
+            let title = command.title().to_owned();
+            add(Kind::Command, title.clone(), title, String::new(), Target::System(command));
         }
         let options = crate::view_options::current();
         let on = |on: bool| if on { "On" } else { "Off" }.to_owned();
@@ -309,6 +315,7 @@ impl Palette {
             Target::TabSet(name) => crate::tab_sets::with_current(|sets| sets.open(&name, false)),
             Target::Filter(name) => crate::filter::with_current(|filter| filter.apply_saved(&name)),
             Target::SavedSearch(name) => crate::saved_searches::with_current(|s| s.run(&name, new_tab)),
+            Target::System(command) => crate::integration::run(command),
         }
     }
 

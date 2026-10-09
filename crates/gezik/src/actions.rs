@@ -91,6 +91,7 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         Action::ShowTrash => nav.go(gezik_core::nav::Location::Trash),
         Action::PutBack => crate::trash_view::put_back(view),
         Action::EmptyTrash => crate::trash_view::empty(),
+        Action::SystemIntegration => crate::integration::with_current(crate::integration::Integration::open),
         // Not theirs: `handle_key` and the menu bar run these themselves. Listed one by one so
         // that a new action is a compile error here until it is placed.
         Action::NewTab

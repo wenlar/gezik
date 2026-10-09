@@ -265,10 +265,12 @@ pub enum Action {
     PutBack,
     /// Deletes everything in the trash for good (asks first).
     EmptyTrash,
+    /// The System Integration panel (9b3): gezik on the command line, the changes made, Undo all.
+    SystemIntegration,
 }
 
 impl Action {
-    pub const ALL: [Action; 76] = [
+    pub const ALL: [Action; 77] = [
         Action::NewTab,
         Action::NewWindow,
         Action::CloseTab,
@@ -345,6 +347,7 @@ impl Action {
         Action::ShowTrash,
         Action::PutBack,
         Action::EmptyTrash,
+        Action::SystemIntegration,
     ];
 
     pub fn name(self) -> &'static str {
@@ -425,6 +428,7 @@ impl Action {
             Action::ShowTrash => "show-trash",
             Action::PutBack => "put-back",
             Action::EmptyTrash => "empty-trash",
+            Action::SystemIntegration => "system-integration",
         }
     }
 
@@ -507,6 +511,7 @@ impl Action {
             Action::ShowTrash => "Show Trash",
             Action::PutBack => "Put Back",
             Action::EmptyTrash => "Empty Trash…",
+            Action::SystemIntegration => "System Integration…",
         }
     }
 
@@ -661,7 +666,8 @@ impl Action {
             (Action::QuickOpen, _) => &["mod+p"],
             (Action::CalculateFolderSizes | Action::SaveSearch, _) => &[],
             (Action::EmptyTrash, Platform::Mac) => &["mod+shift+backspace"],
-            (Action::ShowTrash | Action::PutBack, _) | (Action::EmptyTrash, Platform::Other) => &[],
+            (Action::ShowTrash | Action::PutBack | Action::SystemIntegration, _)
+            | (Action::EmptyTrash, Platform::Other) => &[],
         }
     }
 }
@@ -848,7 +854,7 @@ mod tests {
             assert_eq!(fixed_owner(&cmd_option, Platform::Mac), None);
         }
         assert_eq!((Action::pin(0), Action::pin(10)), (None, None));
-        assert_eq!(Action::ALL.len(), 76);
+        assert_eq!(Action::ALL.len(), 77);
         assert_eq!(other.action_for(&chord("ctrl+1")), Some(Action::Tab1), "Ctrl+1 is still tab 1");
         assert_eq!(other.action_for(&chord("ctrl+alt+1")), None, "AltGr+1 types");
     }
@@ -1306,7 +1312,7 @@ clear-history = \"ctrl+shift+h\"
         for name in ["search", "flat-view", "show-in-folder", "copy-with-folders", "cut-with-folders"] {
             assert!(Action::from_name(name).is_some(), "{name}");
         }
-        assert_eq!(Action::ALL.len(), 76);
+        assert_eq!(Action::ALL.len(), 77);
     }
 
     #[test]
@@ -1328,7 +1334,7 @@ clear-history = \"ctrl+shift+h\"
         for name in ["command-palette", "quick-open", "calculate-folder-sizes", "save-search"] {
             assert!(Action::from_name(name).is_some(), "{name}");
         }
-        assert_eq!(Action::ALL.len(), 76);
+        assert_eq!(Action::ALL.len(), 77);
     }
 
     #[test]
@@ -1345,6 +1351,15 @@ clear-history = \"ctrl+shift+h\"
             assert_eq!(other.chord_for(action), None, "{action:?}: no default key on Windows and Linux");
         }
         assert_eq!((mac.chord_for(Action::ShowTrash), mac.chord_for(Action::PutBack)), (None, None));
+    }
+
+    #[test]
+    fn system_integration_has_no_default_key() {
+        assert_eq!(Action::from_name("system-integration"), Some(Action::SystemIntegration));
+        assert_eq!(Action::SystemIntegration.title(), "System Integration…");
+        for platform in [Platform::Mac, Platform::Other] {
+            assert_eq!(Shortcuts::defaults(platform).chord_for(Action::SystemIntegration), None);
+        }
     }
 
     #[test]

@@ -241,7 +241,8 @@ pub fn allowed(action: Action) -> bool {
         | Action::SaveTabSet
         | Action::ShowTrash
         | Action::PutBack
-        | Action::EmptyTrash => true,
+        | Action::EmptyTrash
+        | Action::SystemIntegration => true,
         Action::Rename
         | Action::NewFolder
         | Action::Copy
