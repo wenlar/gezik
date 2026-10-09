@@ -18,12 +18,12 @@ import { FileIcon } from "widgets/file-icon.slint";
 import { CompressLayer } from "widgets/compress.slint";
 import { ConvertLayer, ConvertView } from "widgets/convert.slint";
 import { PopupMenu, MenuEntry, MenuPlace, MenuSub } from "widgets/popup-menu.slint";
-import { TabPicker, TabPickRow } from "widgets/tab-picker.slint";
+import { Picker, PickRow } from "widgets/picker.slint";
 import { PathSuggestions, PathRow } from "widgets/path-suggestions.slint";
 
 // Re-exported so Rust can set it with `window.global::<Theme>()` and build crumbs, tabs
 // and sidebar rows.
-export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, OpRow, StackRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView, MenuEntry, MenuPlace, MenuSub, TabPickRow, PathRow }
+export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, OpRow, StackRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView, MenuEntry, MenuPlace, MenuSub, PickRow, PathRow }
 
 // Where the drop targets are, in window coordinates (drag.rs reads it while files are
 // dragged; every field is computed when read).
@@ -161,6 +161,8 @@ export component AppWindow inherits Window {
             MenuItem { title: "Show in Folder"; shortcut: root.menu-keys ? @keys(Control + Shift + E) : @keys(); activated => { root.menu-command("show-in-folder"); } }
             MenuSeparator { }
             MenuItem { title: "Go to Folder…"; shortcut: root.menu-keys ? @keys(Control + L) : @keys(); activated => { root.menu-command("focus-path"); } }
+            MenuItem { title: "Quick Open…"; shortcut: root.menu-keys ? @keys(Control + P) : @keys(); activated => { root.menu-command("quick-open"); } }
+            MenuItem { title: "Command Palette…"; shortcut: root.menu-keys ? @keys(Control + Shift + P) : @keys(); activated => { root.menu-command("command-palette"); } }
             MenuSeparator { }
             MenuItem { title: "Pinned 1"; shortcut: root.menu-keys ? @keys(Control + Alt + "1") : @keys(); activated => { root.menu-command("pin-1"); } }
             MenuItem { title: "Pinned 2"; shortcut: root.menu-keys ? @keys(Control + Alt + "2") : @keys(); activated => { root.menu-command("pin-2"); } }
@@ -592,7 +594,9 @@ export component AppWindow inherits Window {
     in property <bool> tp-open;
     property <int> tp-focus-seq;
     in-out property <string> tp-query;
-    in property <[TabPickRow]> tp-rows;
+    in property <[PickRow]> tp-rows;
+    in property <string> tp-label: "Tabs";
+    in property <string> tp-empty: "No tabs match";
     in property <int> tp-current;
     callback tp-edited(string);
     callback tp-chosen(int);
@@ -1389,7 +1393,7 @@ export component AppWindow inherits Window {
             pdf-reorder(from, to) => { root.cv-pdf-reorder(from, to); }
             pdf-drop-row(y, h, count) => { return root.cv-pdf-drop-row(y, h, count); }
         }
-        if root.tp-open: TabPicker {
+        if root.tp-open: Picker {
             x: 0;
             y: 0;
             width: root.width;
@@ -1399,6 +1403,8 @@ export component AppWindow inherits Window {
             dialog-open: root.dialog-open || root.conflicts-open;
             query <=> root.tp-query;
             rows: root.tp-rows;
+            label: root.tp-label;
+            empty-text: root.tp-empty;
             current: root.tp-current;
             edited(text) => { root.tp-edited(text); }
             chosen(i) => { root.tp-chosen(i); }

@@ -20,6 +20,7 @@ mod menu_bar;
 mod navigation;
 mod op_history;
 mod operations;
+mod palette;
 mod path_box;
 mod pdf;
 mod places;
@@ -129,6 +130,96 @@ fn close_tab_later(nav: &navigation::Navigator, index: usize) {
     }
 }
 
+/// Runs `action` as its key would (the key handler and the palette, sapma 5); false when it did
+/// nothing (a pin number with no pin), so the key goes on to the text box.
+fn perform(
+    action: Action,
+    window: &AppWindow,
+    nav: &navigation::Navigator,
+    view: &view::View,
+    preview: &preview::Preview,
+    ops: &operations::Operations,
+) -> bool {
+    match action {
+        Action::NewTab => nav.open_tab(nav.start(), true),
+        Action::CloseTab => close_tab_later(nav, nav.active_index()),
+        Action::NextTab => nav.next_tab(),
+        Action::PrevTab => nav.prev_tab(),
+        Action::Back => nav.back(),
+        Action::Forward => nav.forward(),
+        Action::Up => nav.up(),
+        Action::FocusPath => {
+            path_box::with_current(path_box::PathBox::reset);
+            window.invoke_edit_path()
+        }
+        Action::Refresh => nav.reload(),
+        Action::SelectAll => view.select_all(),
+        Action::ViewList => view.set_mode(gezik_core::view::ViewMode::List),
+        Action::ViewGrid => view.set_mode(gezik_core::view::ViewMode::Grid),
+        Action::TogglePreview => preview.toggle_pane(),
+        Action::QuickLook => preview.toggle_quick_look(),
+        Action::Rename => ops.rename_start(),
+        Action::NewFolder => ops.new_folder(None),
+        Action::Copy => ops.copy(false),
+        Action::Cut => ops.copy(true),
+        Action::Paste => ops.paste(None, false),
+        Action::PasteMove => ops.paste(None, true),
+        Action::Trash => ops.trash(false),
+        Action::DeletePermanently => ops.trash(true),
+        Action::Duplicate => ops.duplicate(),
+        Action::BatchRename => ops.batch_rename(),
+        Action::Undo => ops.undo(),
+        Action::Redo => ops.redo(),
+        Action::CommandPalette => palette::with_current(|p| p.open(true)),
+        Action::QuickOpen => palette::with_current(|p| p.open(false)),
+        Action::Filter
+        | Action::InvertSelection
+        | Action::SelectPattern
+        | Action::DeselectPattern
+        | Action::SelectSameType
+        | Action::RestoreSelection
+        | Action::Tab1
+        | Action::Tab2
+        | Action::Tab3
+        | Action::Tab4
+        | Action::Tab5
+        | Action::Tab6
+        | Action::Tab7
+        | Action::Tab8
+        | Action::TabLast
+        | Action::ReopenTab
+        | Action::TabPicker
+        | Action::ToggleTabLock
+        | Action::ClearHistory
+        | Action::OpenTerminal
+        | Action::OpenTerminalAdmin
+        | Action::CopyPath
+        | Action::SaveTabSet
+        | Action::ToggleHidden
+        | Action::Pin1
+        | Action::Pin2
+        | Action::Pin3
+        | Action::Pin4
+        | Action::Pin5
+        | Action::Pin6
+        | Action::Pin7
+        | Action::Pin8
+        | Action::Pin9
+        | Action::NewFolderWithSelection
+        | Action::AddToStack
+        | Action::ToggleStack
+        | Action::ShowHistory
+        | Action::Search
+        | Action::FlatView
+        | Action::ShowInFolder
+        | Action::CopyWithFolders
+        | Action::CutWithFolders
+        | Action::CalculateFolderSizes
+        | Action::SaveSearch => return actions::run(action, nav, view),
+    }
+    true
+}
+
 /// Handles a key press before the focused item sees it; returns whether it was used.
 /// Shortcuts work everywhere; with the address bar in typing mode, unmodified keys and
 /// the text editing shortcuts stay with the text box. The list keys (arrows, PgUp/PgDn,
@@ -176,11 +267,15 @@ fn handle_key(
         }
         return used;
     }
-    // The tab picker: Esc, Enter, Up and Down are its own, other keys go to its field.
+    // The tab picker or the palette: Esc, Enter, Up and Down are theirs, other keys go to the field.
     if window.get_tp_open() {
         let mut used = false;
         if let Some(chord) = &chord {
-            tab_tools::with_current(|t| used = t.chord(chord));
+            if palette::is_open() {
+                palette::with_current(|p| used = p.chord(chord));
+            } else {
+                tab_tools::with_current(|t| used = t.chord(chord));
+            }
         }
         return used;
     }
@@ -277,89 +372,11 @@ fn handle_key(
             {
                 return false;
             }
-            match action {
-                Action::NewTab => nav.open_tab(nav.start(), true),
-                Action::CloseTab => close_tab_later(nav, nav.active_index()),
-                Action::NextTab => nav.next_tab(),
-                Action::PrevTab => nav.prev_tab(),
-                Action::Back => nav.back(),
-                Action::Forward => nav.forward(),
-                Action::Up => nav.up(),
-                Action::FocusPath => {
-                    path_box::with_current(path_box::PathBox::reset);
-                    window.invoke_edit_path()
-                }
-                Action::Refresh => nav.reload(),
-                Action::SelectAll => view.select_all(),
-                Action::ViewList => view.set_mode(gezik_core::view::ViewMode::List),
-                Action::ViewGrid => view.set_mode(gezik_core::view::ViewMode::Grid),
-                Action::TogglePreview => preview.toggle_pane(),
-                Action::QuickLook => preview.toggle_quick_look(),
-                Action::Rename => ops.rename_start(),
-                Action::NewFolder => ops.new_folder(None),
-                Action::Copy => ops.copy(false),
-                Action::Cut => ops.copy(true),
-                Action::Paste => ops.paste(None, false),
-                Action::PasteMove => ops.paste(None, true),
-                Action::Trash => ops.trash(false),
-                Action::DeletePermanently => ops.trash(true),
-                Action::Duplicate => ops.duplicate(),
-                Action::BatchRename => ops.batch_rename(),
-                Action::Undo => ops.undo(),
-                Action::Redo => ops.redo(),
-                Action::Filter
-                | Action::InvertSelection
-                | Action::SelectPattern
-                | Action::DeselectPattern
-                | Action::SelectSameType
-                | Action::RestoreSelection
-                | Action::Tab1
-                | Action::Tab2
-                | Action::Tab3
-                | Action::Tab4
-                | Action::Tab5
-                | Action::Tab6
-                | Action::Tab7
-                | Action::Tab8
-                | Action::TabLast
-                | Action::ReopenTab
-                | Action::TabPicker
-                | Action::ToggleTabLock
-                | Action::ClearHistory
-                | Action::OpenTerminal
-                | Action::OpenTerminalAdmin
-                | Action::CopyPath
-                | Action::SaveTabSet
-                | Action::ToggleHidden
-                | Action::Pin1
-                | Action::Pin2
-                | Action::Pin3
-                | Action::Pin4
-                | Action::Pin5
-                | Action::Pin6
-                | Action::Pin7
-                | Action::Pin8
-                | Action::Pin9
-                | Action::NewFolderWithSelection
-                | Action::AddToStack
-                | Action::ToggleStack
-                | Action::ShowHistory
-                | Action::Search
-                | Action::FlatView
-                | Action::ShowInFolder
-                | Action::CopyWithFolders
-                | Action::CutWithFolders
-                | Action::CommandPalette
-                | Action::QuickOpen
-                | Action::CalculateFolderSizes
-                | Action::SaveSearch => {
-                    if action == Action::Filter && editing {
-                        window.set_path_editing(false);
-                    }
-                    if !actions::run(action, nav, view) {
-                        return false;
-                    }
-                }
+            if action == Action::Filter && editing {
+                window.set_path_editing(false);
+            }
+            if !perform(action, window, nav, view, preview, ops) {
+                return false;
             }
             // The typed text no longer fits once the location or tab changed.
             if (editing || filtering || in_search)
@@ -674,6 +691,22 @@ fn main() -> Result<(), slint::PlatformError> {
         saved_state.operations_collapsed,
         config.clone(),
         saved_state.batch_rename.clone().unwrap_or_default(),
+    );
+    let _palette = palette::Palette::new(
+        &window,
+        nav.clone(),
+        view.clone(),
+        config.clone(),
+        saved_state.palette_recent.clone(),
+        {
+            let (weak, nav, view, preview, ops) =
+                (window.as_weak(), nav.clone(), view.clone(), preview.clone(), ops.clone());
+            move |action| {
+                if let Some(window) = weak.upgrade() {
+                    perform(action, &window, &nav, &view, &preview, &ops);
+                }
+            }
+        },
     );
     let _batch_rename = batch_rename::BatchRename::new(&window, ops.clone());
     let _stack = stack::Stack::new(&window, view.clone(), ops.clone());

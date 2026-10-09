@@ -1,20 +1,24 @@
 import { Theme } from "../theme.slint";
 import { TextField } from "text-field.slint";
 
-export struct TabPickRow {
+// A line of the tab picker or the palette: the title (bold for the active tab), a dim line under it (a path, a pattern), at the right the kind and the key.
+export struct PickRow {
     title: string,
-    // "" for This PC.
-    path: string,
-    active: bool,
+    detail: string,
+    tag: string,
+    keys: string,
+    bold: bool,
 }
 
-// The tab picker (tab_tools.rs): the open tabs over the window, filtered by what is typed in
-// the field. Up/Down, Enter and Esc reach Rust first (`key-event`); a click on a row picks it.
-export component TabPicker inherits Rectangle {
+// The tab picker (tab_tools.rs) and the command palette / quick open (palette.rs): the lines
+// over the window, filtered by what is typed in the field. Up/Down, Enter and Esc reach Rust first (`key-event`); a click on a row picks it.
+export component Picker inherits Rectangle {
     in property <bool> open;
     in property <bool> dialog-open;
     in-out property <string> query;
-    in property <[TabPickRow]> rows;
+    in property <[PickRow]> rows;
+    in property <string> label: "Tabs";
+    in property <string> empty-text: "No tabs match";
     // The row Enter picks (shown selected).
     in property <int> current;
     in property <int> focus-request;
@@ -27,7 +31,12 @@ export component TabPicker inherits Rectangle {
     property <int> shown-rows: 10;
 
     public function take-focus() {
-        field.focus-and-select();
+        // The command palette opens on ">": the caret after it, so typing keeps it (sapma 2).
+        if root.query == ">" {
+            field.focus-at(1);
+        } else {
+            field.focus-and-select();
+        }
     }
 
     // Built when it opens (an `if` in app.slint): it takes the keyboard then, and again
@@ -71,7 +80,7 @@ export component TabPicker inherits Rectangle {
         border-width: 1px;
         border-color: Theme.border;
         accessible-role: groupbox;
-        accessible-label: "Tabs";
+        accessible-label: root.label;
 
         content := VerticalLayout {
             padding: Theme.spacing * 2;
@@ -81,7 +90,7 @@ export component TabPicker inherits Rectangle {
                 edited(text) => { root.edited(text); }
             }
             if root.rows.length == 0: Text {
-                text: "No tabs match";
+                text: root.empty-text;
                 color: Theme.foreground-muted;
                 horizontal-alignment: center;
             }
@@ -100,19 +109,29 @@ export component TabPicker inherits Rectangle {
                     accessible-item-selectable: true;
                     accessible-item-selected: i == root.current;
                     accessible-action-default => { root.chosen(i); }
-                    VerticalLayout {
+                    HorizontalLayout {
                         padding-left: Theme.spacing * 1.5;
                         padding-right: Theme.spacing * 1.5;
-                        alignment: center;
-                        Text {
-                            text: row.title;
-                            overflow: elide;
-                            font-weight: row.active ? 600 : 400;
-                            color: i == root.current ? Theme.selection-foreground : Theme.foreground;
+                        spacing: Theme.spacing;
+                        VerticalLayout {
+                            alignment: center;
+                            Text {
+                                text: row.title;
+                                overflow: elide;
+                                font-weight: row.bold ? 600 : 400;
+                                color: i == root.current ? Theme.selection-foreground : Theme.foreground;
+                            }
+                            if row.detail != "": Text {
+                                text: row.detail;
+                                overflow: elide;
+                                font-size: Theme.font-size * 0.85;
+                                color: i == root.current ? Theme.selection-foreground : Theme.foreground-muted;
+                            }
                         }
-                        if row.path != "": Text {
-                            text: row.path;
-                            overflow: elide;
+                        if row.tag != "" || row.keys != "": Text {
+                            horizontal-stretch: 0;
+                            vertical-alignment: center;
+                            text: row.keys == "" ? row.tag : row.tag + "   " + row.keys;
                             font-size: Theme.font-size * 0.85;
                             color: i == root.current ? Theme.selection-foreground : Theme.foreground-muted;
                         }

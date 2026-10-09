@@ -481,6 +481,20 @@ impl Searches {
         self.warm();
     }
 
+    /// The palette's "Search for …" (spec 7.2): `text` as the name, under the place shown.
+    pub fn search_for(&self, text: &str) {
+        let location = self.0.nav.active_location();
+        let scope = match &location {
+            Location::Search(spec) => spec.scope.clone(),
+            Location::Path(folder) | Location::Flat(folder) => Scope::Folder(folder.clone()),
+            Location::Drives => Scope::AllDrives,
+        };
+        let spec = SearchSpec { pattern: text.to_owned(), ..SearchSpec::new(scope) };
+        self.show_bar(spec, location.folder().map(Path::to_path_buf));
+        self.sync_bar();
+        self.go(false);
+    }
+
     /// "Search in this folder…": the bar on `folder`, empty.
     pub fn open_in(&self, folder: PathBuf) {
         self.show_bar(SearchSpec::new(Scope::Folder(folder.clone())), Some(folder));

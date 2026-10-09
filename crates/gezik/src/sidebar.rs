@@ -231,6 +231,22 @@ pub fn with_current(f: impl FnOnce(&Sidebar)) {
 pub struct Sidebar(Rc<RefCell<Inner>>);
 
 impl Sidebar {
+    /// The pinned folders shown with their labels (the palette's Pinned).
+    pub fn pinned_places(&self) -> Vec<(String, PathBuf)> {
+        let inner = self.0.borrow();
+        let places = inner.nav.places();
+        inner
+            .pins
+            .visible
+            .iter()
+            .map(|pin| {
+                let label =
+                    pin.entry.name.clone().unwrap_or_else(|| places.title_for(&Location::Path(pin.path.clone())));
+                (label, pin.path.clone())
+            })
+            .collect()
+    }
+
     pub fn new(
         window: &AppWindow,
         nav: Navigator,
