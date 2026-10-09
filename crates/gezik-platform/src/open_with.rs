@@ -105,13 +105,24 @@ pub fn set_default_for_file(
     }
 }
 
-/// Opens every file of `file`'s type with `app` ("Change All…").
-pub fn set_default_for_type(app: &Path, file: &Path) -> Result<(), String> {
+/// `file`'s type identifier ("com.adobe.pdf"); None off macOS.
+pub fn type_of(file: &Path) -> Option<String> {
     #[cfg(target_os = "macos")]
-    return crate::mac::info::set_for_type(app, file);
+    return crate::mac::services::type_of(file);
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = (app, file);
+        let _ = file;
+        None
+    }
+}
+
+/// Opens every file of type `uti` (from `type_of`) with `app` ("Change All…").
+pub fn set_default_for_type(app: &Path, uti: &str) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    return crate::mac::info::set_for_type(app, uti);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, uti);
         Err("This is on macOS only".to_owned())
     }
 }

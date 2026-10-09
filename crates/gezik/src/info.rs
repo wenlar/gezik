@@ -401,21 +401,27 @@ impl Info {
         let (Some(file), Some(app)) = (self.app_file(), app) else {
             return self.set_note("Choose an app first".to_owned(), true);
         };
+        // The type is read once: the one asked about is the one changed.
+        let Some(uti) = gezik_platform::open_with::type_of(&file).filter(|t| !t.is_empty() && !t.starts_with("dyn."))
+        else {
+            return self.set_note("This file's type is not known to the system".to_owned(), true);
+        };
         let name = crate::operations::items_text(std::slice::from_ref(&file));
         let kind = own_type_name(&name, false).unwrap_or_else(|| fallback_type_name(&name, false));
+        let kind = format!("{kind} ({uti})");
         let info = self.clone();
         self.0.dialogs.ask(
             "Change All?",
             format!(
-                "Open every \"{kind}\" document (like \"{name}\") with {}? This changes it for all your \
-                 files of this type, in every app.",
+                "Open every {kind} file, like \"{name}\", with {}? This changes it for all your files of \
+                 this type, in every app.",
                 app.name
             ),
             &["Change All", "Cancel"],
             move |choice| {
                 if choice == Some(0) {
-                    let (note, error) = match gezik_platform::open_with::set_default_for_type(&app.path, &file) {
-                        Ok(()) => (format!("\"{kind}\" documents open with {} now", app.name), false),
+                    let (note, error) = match gezik_platform::open_with::set_default_for_type(&app.path, &uti) {
+                        Ok(()) => (format!("{kind} files open with {} now", app.name), false),
                         Err(why) => (format!("Cannot change the app: {why}"), true),
                     };
                     info.set_note(note, error);

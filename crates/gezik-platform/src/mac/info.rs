@@ -48,14 +48,13 @@ pub fn set_for_file(app: &Path, file: &Path, on_error: Box<dyn FnOnce(String) + 
     })
 }
 
-/// Opens every file of `file`'s type with `app` ("Change All…").
-pub fn set_for_type(app: &Path, file: &Path) -> Result<(), String> {
-    let kind = crate::mac::services::type_of(file).ok_or("Its type is not known")?;
+/// Opens every file of type `uti` with `app` ("Change All…").
+pub fn set_for_type(app: &Path, uti: &str) -> Result<(), String> {
     autoreleasepool(|_| {
         let app_url = url_of(app)?;
         let bundle = NSBundle::bundleWithURL(&app_url).ok_or("It is not an app")?;
-        let id = bundle.bundleIdentifier().ok_or("The app has no bundle identifier")?;
-        let kind = NSString::from_str(&kind);
+        let id = bundle.bundleIdentifier().filter(|id| !id.is_empty()).ok_or("The app has no bundle identifier")?;
+        let kind = NSString::from_str(uti);
         // SAFETY: NSString is toll-free bridged to CFString; both live through the call.
         let status = unsafe {
             LSSetDefaultRoleHandlerForContentType(
