@@ -8,12 +8,12 @@ pub use listing::Listing;
 
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use gezik_config::settings::ViewDefaults;
 use gezik_config::store::ConfigStore;
@@ -22,6 +22,7 @@ use gezik_core::kind::{fallback_type_name, own_type_name};
 use gezik_core::layout::{Geometry, Move, Rect};
 use gezik_core::nav::ViewState;
 use gezik_core::ops::names::rename_selection;
+use gezik_core::ops::paths::same_path;
 use gezik_core::pattern::Pattern;
 use gezik_core::selection::Selection;
 use gezik_core::sort::{SortDir, SortKey, SortSpec, sort_entries};
@@ -360,11 +361,8 @@ impl View {
         let data = self.0.data.borrow();
         let count = data.selection.count();
         if count > 1 {
-            let mut size = None;
-            for i in data.selection.iter().filter(|i| !data.listing.is_dir(*i)) {
-                *size.get_or_insert(0) += data.listing.file_size(i);
-            }
-            return Target::Several { count, size };
+            let (size, more) = selection_size(&data.listing, data.selection.iter());
+            return Target::Several { count, size, more };
         }
         let index = match data.selection.focus() {
             Some(f) if data.selection.is_selected(f) => f,
@@ -380,7 +378,9 @@ impl View {
             path,
             is_dir,
             type_name: model::type_name_for(&data, index),
-            size: (entry.is_some() && !is_dir).then(|| data.listing.file_size(index)),
+            size: entry.and_then(Entry::known_size),
+            partial: entry.is_some_and(|e| e.is_dir && e.flags & Entry::SIZE_PARTIAL != 0),
+            counts: None,
             modified: entry.and_then(|e| e.modified),
             created: entry.and_then(|e| e.created),
             kind: data.listing.kind(index).index(),
@@ -914,18 +914,168 @@ impl View {
 
     /// Draws again the lines on screen only (a minute passed).
     fn redraw_visible(&self) {
-        let Some(window) = self.0.window.upgrade() else { return };
-        let line_height = match self.geometry() {
-            Geometry::List { row_height } => row_height,
-            Geometry::Grid { cell_height, .. } => cell_height,
-        };
-        let lines = visible_lines(window.get_list_scroll(), window.get_drop_geometry().list_height, line_height);
-        let per_row = self.0.model.per_row();
-        let len = self.0.data.borrow().listing.len();
-        let entries = (lines.start * per_row).min(len)..(lines.end * per_row).min(len);
+        let entries = self.visible_entries();
         self.0.model.entries_changed(std::slice::from_ref(&entries));
     }
 
+    /// The entries on the lines on screen.
+    fn visible_entries(&self) -> Range<usize> {
+        let Some(window) = self.0.window.upgrade() else { return 0..0 };
+        let lines = visible_lines(window.get_list_scroll(), window.get_drop_geometry().list_height, self.line_height());
+        let per_row = self.0.model.per_row();
+        let len = self.0.data.borrow().listing.len();
+        (lines.start * per_row).min(len)..(lines.end * per_row).min(len)
+    }
+
+    /// A line's height: a row in the list, a cell in the grid.
+    fn line_height(&self) -> f32 {
+        match self.geometry() {
+            Geometry::List { row_height } => row_height,
+            Geometry::Grid { cell_height, .. } => cell_height,
+        }
+    }
+}
+
+/// Folders by name, each with its modified time.
+pub type FolderTimes = Vec<(String, Option<SystemTime>)>;
+
+// The folder sizes (spec 6.2-6.3), for the walk Task 5 wires up.
+#[allow(dead_code, reason = "Task 5 calls these; drop this then")]
+impl View {
+    /// The folder shown, if a folder.
+    fn shown_folder(&self) -> Option<PathBuf> {
+        match &self.0.data.borrow().listing {
+            Listing::Files(dir, _) if !dir.as_os_str().is_empty() => Some(dir.clone()),
+            _ => None,
+        }
+    }
+
+    /// Changes the folder's entries with `edit` (true: it changed that one), keeping the order,
+    /// the filter's rows and the selection; redraws the lines on screen. Whether any changed.
+    fn edit_folder_entries(&self, mut edit: impl FnMut(&mut Entry) -> bool) -> bool {
+        let (listing, mut full, rows, selection) = self.take_listing();
+        let Listing::Files(dir, shown) = listing else {
+            let mut data = self.0.data.borrow_mut();
+            (data.listing, data.full, data.rows, data.selection) = (listing, full, rows, selection);
+            return false;
+        };
+        // The shown list shares the full one when nothing is filtered: drop it so it is not copied.
+        drop(shown);
+        let mut changed = false;
+        for entry in Rc::make_mut(&mut full).iter_mut() {
+            changed |= edit(entry);
+        }
+        let (shown, rows) = self.filtered(&dir, &full);
+        {
+            let mut data = self.0.data.borrow_mut();
+            (data.listing, data.full, data.rows, data.selection) = (shown, full, rows, selection);
+        }
+        if changed {
+            self.redraw_visible();
+            self.update_status();
+            self.notify_listeners();
+        }
+        changed
+    }
+
+    /// Worked-out sizes for the folder `folder` (dropped if another is shown now): `updates`
+    /// by name, with the size bits each folder gets (spec 6.2). Whether any row changed.
+    pub fn set_folder_sizes(&self, folder: &Path, updates: &[(String, u64, u8)]) -> bool {
+        if updates.is_empty() || !sizes_belong(self.shown_folder().as_deref(), folder) {
+            return false;
+        }
+        let by_name: HashMap<&str, (u64, u8)> = updates.iter().map(|(n, b, f)| (n.as_str(), (*b, *f))).collect();
+        self.edit_folder_entries(|entry| {
+            let Some(&(bytes, flags)) = entry.is_dir.then(|| by_name.get(entry.name.as_str())).flatten() else {
+                return false;
+            };
+            entry.flags = (entry.flags & !Entry::SIZE_FLAGS) | flags;
+            if flags & Entry::SIZED != 0 {
+                entry.size = bytes;
+            }
+            true
+        })
+    }
+
+    /// `calculate-folder-sizes`: the folders `names` (all when `None`) get their size worked
+    /// out: unsized ones go pending, sized ones old (shown faint until the new size comes).
+    pub fn mark_size_pending(&self, names: Option<&[String]>) -> bool {
+        self.edit_folder_entries(|entry| {
+            if !entry.is_dir || names.is_some_and(|names| !names.contains(&entry.name)) {
+                return false;
+            }
+            entry.flags |= if entry.flags & Entry::SIZED != 0 { Entry::SIZE_STALE } else { Entry::SIZE_PENDING };
+            true
+        })
+    }
+
+    /// The folder shown and its folders whose size is on its way (pending or old), those on
+    /// screen first, each with its modified time (the cache's stamp, sapma 10).
+    pub fn folders_to_size(&self) -> Option<(PathBuf, FolderTimes)> {
+        let dir = self.shown_folder()?;
+        let wanted = |e: &Entry| e.is_dir && e.flags & (Entry::SIZE_PENDING | Entry::SIZE_STALE) != 0;
+        let visible = self.visible_entries();
+        let data = self.0.data.borrow();
+        let mut out: FolderTimes = visible
+            .filter_map(|i| data.listing.entry(i))
+            .filter(|e| wanted(e))
+            .map(|e| (e.name.clone(), e.modified))
+            .collect();
+        let first: HashSet<String> = out.iter().map(|(name, _)| name.clone()).collect();
+        out.extend(
+            data.full.iter().filter(|e| wanted(e) && !first.contains(&e.name)).map(|e| (e.name.clone(), e.modified)),
+        );
+        Some((dir, out))
+    }
+
+    /// The selected folders' names (the shown folder's rows).
+    pub fn selected_folder_names(&self) -> Vec<String> {
+        let data = self.0.data.borrow();
+        data.selection
+            .iter()
+            .filter_map(|i| data.listing.entry(i))
+            .filter(|e| e.is_dir)
+            .map(|e| e.name.clone())
+            .collect()
+    }
+
+    pub fn sorted_by_size(&self) -> bool {
+        self.sort().key == SortKey::Size
+    }
+
+    /// The folder's entries before the filter.
+    pub fn len_full(&self) -> usize {
+        self.0.data.borrow().full.len()
+    }
+
+    /// A rubber band, a press waiting for its release or a drag is on (the list must not move
+    /// under it).
+    pub fn list_busy(&self) -> bool {
+        self.marquee_active()
+            || self.0.data.borrow().pending != gezik_core::selection::PendingPress::default()
+            || crate::drag::with_current(|d| d.is_active()).unwrap_or(false)
+    }
+
+    pub fn list_scroll(&self) -> f32 {
+        self.0.window.upgrade().map_or(0.0, |w| w.get_list_scroll())
+    }
+
+    /// Sorts again (sizes came in), the focused row staying where it is on screen (spec 6.3).
+    pub fn resort_in_place(&self) {
+        let Some(window) = self.0.window.upgrade() else { return };
+        let (before, scroll) = (self.focus(), window.get_list_scroll());
+        self.resort(false);
+        let (Some(old), Some(new)) = (before, self.focus()) else { return };
+        let per_row = self.0.model.per_row();
+        let target = keep_on_screen(scroll, old / per_row, new / per_row, self.line_height());
+        // `resort` asked for the old offset after its reset: this one replaces that ask.
+        self.0.revealed.set(self.0.revealed.get() + 1);
+        window.set_list_scroll(target);
+        self.keep_scroll_after_reset(target);
+    }
+}
+
+impl View {
     /// The left button came up over entry `index` after a press; `dragged`: it became a drag.
     pub fn release(&self, index: usize, dragged: bool) {
         let changes = {
@@ -1019,7 +1169,7 @@ impl View {
             let remembered = self.0.remembered.borrow();
             let Some((folder, names)) = remembered.as_ref() else { return };
             let mut data = self.0.data.borrow_mut();
-            if !data.listing.folder().is_some_and(|f| gezik_core::ops::paths::same_path(f, folder)) {
+            if !data.listing.folder().is_some_and(|f| same_path(f, folder)) {
                 return;
             }
             let ViewData { listing, selection, .. } = &mut *data;
@@ -1179,7 +1329,7 @@ impl View {
     pub fn is_folder_row(&self, path: &Path) -> bool {
         match &self.0.data.borrow().listing {
             Listing::Files(dir, entries) => {
-                path.parent().is_some_and(|parent| gezik_core::ops::paths::same_path(parent, dir))
+                path.parent().is_some_and(|parent| same_path(parent, dir))
                     && entries.iter().any(|e| e.is_dir && path.file_name().is_some_and(|n| n == e.name.as_str()))
             }
             Listing::Drives(drives) => drives.iter().any(|d| d.path == path),
@@ -1840,11 +1990,8 @@ impl View {
             return window.set_status(text.into());
         }
         let data = self.0.data.borrow();
-        let mut size = None;
-        for i in data.selection.iter().filter(|i| !data.listing.is_dir(*i)) {
-            *size.get_or_insert(0) += data.listing.file_size(i);
-        }
-        window.set_status(status_text(data.listing.len(), data.selection.count(), size).into());
+        let (size, more) = selection_size(&data.listing, data.selection.iter());
+        window.set_status(status_text(data.listing.len(), data.selection.count(), size, more).into());
     }
 
     /// Scrolls entry `index` fully into view. After a far jump (End, type-ahead) Slint's
@@ -1932,8 +2079,7 @@ fn carry(selection: &Selection, old_rows: Option<&[usize]>, full_len: usize, new
 /// Whether every one of `sources` (at least one) is an entry of `folder`.
 fn sources_in(folder: Option<&Path>, sources: &[PathBuf]) -> bool {
     let Some(folder) = folder else { return false };
-    !sources.is_empty()
-        && sources.iter().all(|s| s.parent().is_some_and(|parent| gezik_core::ops::paths::same_path(parent, folder)))
+    !sources.is_empty() && sources.iter().all(|s| s.parent().is_some_and(|parent| same_path(parent, folder)))
 }
 
 /// The status bar's note after a listing is shown: the new one if any. A reload of the folder
@@ -1984,20 +2130,83 @@ pub fn filter_count_text(shown: usize, total: usize) -> String {
 }
 
 /// The status bar: `120 items`, or `120 items · 3 selected (1.2 MB)`; the size counts the
-/// selected files (`None`: no files selected).
-pub fn status_text(count: usize, selected: usize, selected_size: Option<u64>) -> String {
+/// selected files and sized folders (`None`: nothing with a size), `+` when `more` is coming.
+pub fn status_text(count: usize, selected: usize, selected_size: Option<u64>, more: bool) -> String {
     let items = crate::stack::count_text(count);
     match (selected, selected_size) {
         (0, _) => items,
-        (n, Some(size)) => format!("{items} · {n} selected ({})", crate::view_options::size_text(size)),
+        (n, Some(size)) => {
+            format!("{items} · {n} selected ({}{})", crate::view_options::size_text(size), if more { "+" } else { "" })
+        }
         (n, None) => format!("{items} · {n} selected"),
     }
+}
+
+/// The known sizes of the `selected` entries added up (files, and folders once worked out), and
+/// whether a selected folder's is on its way or partial (`1.2 GB+`); `None`: nothing with a size.
+pub fn selection_size(listing: &Listing, selected: impl Iterator<Item = usize>) -> (Option<u64>, bool) {
+    let (mut size, mut more) = (None, false);
+    for entry in selected.filter_map(|i| listing.entry(i)) {
+        if let Some(bytes) = entry.known_size() {
+            *size.get_or_insert(0) += bytes;
+        }
+        more |= entry.is_dir && (entry.size_pending() || entry.flags & Entry::SIZE_PARTIAL != 0);
+    }
+    (size, more)
+}
+
+/// The list offset that keeps a line where it was on screen after it moved from `old_line` to
+/// `new_line` (`scroll` is zero or negative).
+pub fn keep_on_screen(scroll: f32, old_line: usize, new_line: usize, line_height: f32) -> f32 {
+    (scroll - (new_line as f32 - old_line as f32) * line_height).min(0.0)
+}
+
+/// Whether sizes worked out for `folder` belong to the folder `shown` now.
+pub fn sizes_belong(shown: Option<&Path>, folder: &Path) -> bool {
+    shown.is_some_and(|shown| same_path(shown, folder))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use listing::files;
+
+    #[test]
+    fn the_selection_sums_known_folder_sizes_and_says_when_more_is_coming() {
+        let entries = vec![
+            Entry { name: "a".into(), is_dir: true, flags: Entry::SIZED, size: 100, modified: None, created: None },
+            Entry {
+                name: "b".into(),
+                is_dir: true,
+                flags: Entry::SIZE_PENDING,
+                size: 0,
+                modified: None,
+                created: None,
+            },
+            Entry { name: "c".into(), is_dir: true, flags: 0, size: 4096, modified: None, created: None },
+            Entry { name: "f".into(), is_dir: false, flags: 0, size: 10, modified: None, created: None },
+        ];
+        let listing = Listing::Files("/w".into(), Rc::new(entries));
+        assert_eq!(selection_size(&listing, [0, 3].into_iter()), (Some(110), false));
+        assert_eq!(selection_size(&listing, [0, 1].into_iter()), (Some(100), true), "b is on its way");
+        assert_eq!(selection_size(&listing, [2].into_iter()), (None, false), "folder-sizes off: as before");
+        assert_eq!(status_text(4, 2, Some(1536), true), "4 items · 2 selected (1.5 KB+)");
+        assert_eq!(status_text(4, 2, Some(1536), false), "4 items · 2 selected (1.5 KB)");
+    }
+
+    #[test]
+    fn the_focused_row_keeps_its_place_on_screen() {
+        assert_eq!(keep_on_screen(-260.0, 12, 30, 26.0), -728.0, "moved 18 lines down: the list follows");
+        assert_eq!(keep_on_screen(-260.0, 30, 12, 26.0), 0.0, "never above the top");
+        assert_eq!(keep_on_screen(-260.0, 12, 12, 26.0), -260.0);
+    }
+
+    #[test]
+    fn sizes_for_another_folder_are_dropped() {
+        assert!(sizes_belong(Some(Path::new("/w/a")), Path::new("/w/a")));
+        assert!(!sizes_belong(Some(Path::new("/w/b")), Path::new("/w/a")), "a folder of the same name elsewhere");
+        assert!(!sizes_belong(None, Path::new("/w/a")), "results or This PC now");
+    }
 
     fn one_result() -> Batch {
         let entry = Entry { name: "n".into(), is_dir: false, flags: 0, size: 1, modified: None, created: None };
@@ -2218,10 +2427,10 @@ mod tests {
 
     #[test]
     fn status_counts_items_and_selected_files() {
-        assert_eq!(status_text(0, 0, None), "0 items");
-        assert_eq!(status_text(1, 0, None), "1 item");
-        assert_eq!(status_text(120, 3, Some(1536)), "120 items · 3 selected (1.5 KB)");
-        assert_eq!(status_text(5, 2, None), "5 items · 2 selected");
+        assert_eq!(status_text(0, 0, None, false), "0 items");
+        assert_eq!(status_text(1, 0, None, false), "1 item");
+        assert_eq!(status_text(120, 3, Some(1536), false), "120 items · 3 selected (1.5 KB)");
+        assert_eq!(status_text(5, 2, None, false), "5 items · 2 selected");
     }
 
     #[test]
