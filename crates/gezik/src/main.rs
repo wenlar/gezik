@@ -542,7 +542,7 @@ fn apply_config_and_start(
     saved: Option<&Session>,
 ) -> (Settings, StartPlan) {
     let loaded = apply_config(window, files);
-    let plan = resolve_start(&loaded.settings, cli, new_tab, saved);
+    let plan = resolve_start(&loaded.settings, cli, new_tab, false, saved);
     if !plan.warnings.is_empty() {
         files.warnings.extend(plan.warnings.iter().cloned());
         apply_config(window, files);
@@ -551,18 +551,55 @@ fn apply_config_and_start(
 }
 
 /// [`start::plan_start`] against the real file system.
-fn resolve_start(settings: &Settings, cli: &[cli::Target], new_tab: bool, saved: Option<&Session>) -> StartPlan {
+fn resolve_start(
+    settings: &Settings,
+    cli: &[cli::Target],
+    new_tab: bool,
+    trash: bool,
+    saved: Option<&Session>,
+) -> StartPlan {
     let saved = saved.filter(|_| settings.session.restore);
     let dirs = gezik_config::paths::KnownDirs::system();
     start::plan_start(
         &settings.start_folder,
         cli,
         new_tab,
+        trash,
         &path_box::home(),
         |text| dirs.expand_checked(text),
         start::path_kind,
         saved,
     )
+}
+
+/// Hands `target` to Explorer (decisions 2, 3), unless fallbacks come so fast that Gezik and
+/// Explorer are sending places back and forth: then it stops and offers once to give folders
+/// back to Explorer. The exit code.
+#[cfg(windows)]
+fn explorer_fallback(target: &str) -> i32 {
+    use gezik_platform::shell_fallback as fb;
+    let file = std::env::temp_dir().join(fb::GUARD_FILE);
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let (record, guard) = fb::guard(&std::fs::read_to_string(&file).unwrap_or_default(), now);
+    let _ = std::fs::write(&file, record);
+    let question = "Only Explorer can show these places, and it keeps sending them back to Gezik.\n\n\
+                    Restore Explorer as the default file manager?";
+    match guard {
+        fb::Guard::Go => match fb::open_in_explorer(target) {
+            Ok(()) => 0,
+            Err(err) => {
+                eprintln!("gezik: --shell {target:?}: {err}");
+                1
+            }
+        },
+        fb::Guard::Ask if fb::ask_restore(question) => i32::from(system_changes::restore_default_now().is_err()),
+        fb::Guard::Ask | fb::Guard::Stop => 1,
+    }
+}
+
+#[cfg(not(windows))]
+fn explorer_fallback(_: &str) -> i32 {
+    1
 }
 
 /// The first warning, plus how many more there are.
@@ -612,6 +649,22 @@ fn main() -> Result<(), slint::PlatformError> {
     for warning in &cli.warnings {
         eprintln!("gezik: {warning}");
     }
+    if cfg!(windows) && cli.dbus {
+        eprintln!("gezik: --dbus is for Linux (ignored)");
+    }
+    if !cfg!(windows) && cli.shell.is_some() {
+        eprintln!("gezik: --shell is for Windows (ignored)");
+    }
+    // Windows' folder verb and Win+E (spec 6.1): a place only Explorer shows never opens a window.
+    let shell = cli.shell.take().filter(|_| cfg!(windows));
+    if let Some(target) = &shell {
+        match cli::shell_target(target, start::path_kind) {
+            cli::Shell::Explorer => std::process::exit(explorer_fallback(target)),
+            cli::Shell::Open(t) => cli.targets = vec![t],
+            cli::Shell::Trash => cli.trash = true,
+            cli::Shell::StartFolder => {}
+        }
+    }
     cli.make_absolute();
     // A running Gezik takes the paths (spec 5.2): tried before any window or settings, so a
     // second call costs only the attempt. --new-window never hands over and never listens.
@@ -620,10 +673,24 @@ fn main() -> Result<(), slint::PlatformError> {
     // A window that could not hand over is a second window as --new-window's is (spec 5.3):
     // two windows writing the same tabs to state.toml would lose one's.
     let mut secondary = cli.new_window;
-    if !secondary {
+    // Started by the bus for FileManager1 (decision 18): the channel decides, nothing is sent.
+    let dbus = cli.dbus && cfg!(all(unix, not(target_os = "macos")));
+    // Decision 16: LaunchServices starts the bundle bare and hands the folders over by event
+    // after start; sending a bare request first would bring a running Gezik forward for nothing.
+    let bundle_launch = cfg!(target_os = "macos")
+        && cli.targets.is_empty()
+        && !cli.new_window
+        && gezik_platform::system::exe()
+            .ok()
+            .is_some_and(|e| e.to_str().is_some_and(|s| s.ends_with(".app/Contents/MacOS/gezik")));
+    if !secondary && !dbus && !bundle_launch {
         match instance::send(&key, &request, instance::SEND_TIMEOUT) {
             instance::Sent::Delivered => return Ok(()),
             instance::Sent::NoInstance => {}
+            // A hung Gezik (spec 5.2): what the shell asked for still opens somewhere.
+            instance::Sent::Failed if shell.is_some() => {
+                std::process::exit(explorer_fallback(shell.as_deref().unwrap_or_default()))
+            }
             // Hung, refusing or someone else's: a window of its own, the channel left alone.
             instance::Sent::Failed => secondary = true,
         }
@@ -631,7 +698,16 @@ fn main() -> Result<(), slint::PlatformError> {
     // Gezik has its own tabs: no window tabs of macOS (nor their items in the View menu).
     #[cfg(target_os = "macos")]
     gezik_platform::app::no_window_tabs();
-    let window = AppWindow::new()?;
+    let window = match AppWindow::new() {
+        Ok(window) => window,
+        Err(err) => {
+            // Spec 6.3: a folder asked for by the shell still opens somewhere.
+            if let Some(target) = &shell {
+                explorer_fallback(target);
+            }
+            return Err(err);
+        }
+    };
 
     let config = ConfigStore::system();
     templates::set_dir(config.as_ref().map(ConfigStore::templates_dir));
@@ -655,9 +731,17 @@ fn main() -> Result<(), slint::PlatformError> {
     let saved_state = config.as_ref().map(ConfigStore::load_state).unwrap_or_default();
     // As apply_config_and_start, split so the channel is claimed before the session is chosen.
     let initial_settings = apply_config(&window, &files).settings;
+    let mut taken = false;
     let listener = if !secondary && initial_settings.system.single_instance {
         match instance::claim(&key) {
             instance::Claim::Listening(listener) => Some(listener),
+            // The running Gezik holds FileManager1 already (decision 18).
+            instance::Claim::Taken if dbus => return Ok(()),
+            // The folders come by event, later: handed on below.
+            instance::Claim::Taken if bundle_launch => {
+                taken = true;
+                None
+            }
             // Another Gezik started at the same moment and took it: it gets the paths.
             instance::Claim::Taken => {
                 if instance::send(&key, &request, instance::SEND_TIMEOUT) == instance::Sent::Delivered {
@@ -671,13 +755,45 @@ fn main() -> Result<(), slint::PlatformError> {
     } else {
         None
     };
+    #[cfg(target_os = "macos")]
+    if taken {
+        // Decision 16: no window yet; LaunchServices' folders (none within two seconds: the
+        // running Gezik just comes forward) go to the running Gezik, and this one ends.
+        let got: std::rc::Rc<std::cell::RefCell<Vec<std::path::PathBuf>>> = std::rc::Rc::default();
+        let keep = got.clone();
+        gezik_platform::open_urls::install(Box::new(move |paths| {
+            *keep.borrow_mut() = paths;
+            let _ = slint::quit_event_loop();
+        }));
+        let wait = slint::Timer::default();
+        wait.start(slint::TimerMode::SingleShot, std::time::Duration::from_secs(2), || {
+            let _ = slint::quit_event_loop();
+        });
+        slint::run_event_loop_until_quit()?;
+        drop(wait);
+        let targets: Vec<cli::Target> =
+            got.take().into_iter().map(|path| cli::Target { path, select: false }).collect();
+        let handed = instance::Request { targets: targets.clone(), ..Default::default() };
+        if instance::send(&key, &handed, instance::SEND_TIMEOUT) == instance::Sent::Delivered {
+            return Ok(());
+        }
+        // It went away (or hangs) meanwhile: a window of its own, as Claim::Taken's other arm.
+        cli.targets = targets;
+        secondary = true;
+    }
+    let _ = taken;
     // A second window keeps the first one's tabs: it neither restores nor records them, and
     // writes no state nor folder views.
     if secondary && let Some(store) = &config {
         store.keep_state_unwritten();
     }
-    let plan =
-        resolve_start(&initial_settings, &cli.targets, cli.new_tab, (!secondary).then_some(&saved_state.session));
+    let plan = resolve_start(
+        &initial_settings,
+        &cli.targets,
+        cli.new_tab,
+        cli.trash,
+        (!secondary).then_some(&saved_state.session),
+    );
     if !plan.warnings.is_empty() {
         files.warnings.extend(plan.warnings.iter().cloned());
         apply_config(&window, &files);
@@ -1355,8 +1471,36 @@ fn main() -> Result<(), slint::PlatformError> {
     }
 
     // The window and tabs are up; calls that came before this wait in the channel.
+    single_instance::set_window(window.as_weak());
+    #[cfg(target_os = "macos")]
+    {
+        let weak = window.as_weak();
+        gezik_platform::open_urls::install(Box::new(move |paths| {
+            let targets = paths.into_iter().map(|path| cli::Target { path, select: false }).collect();
+            single_instance::open_here(weak.clone(), instance::Request { targets, ..Default::default() });
+        }));
+    }
     if let Some(listener) = listener {
         single_instance::serve(listener, window.as_weak());
+        if dbus {
+            single_instance::start_file_manager1();
+        }
+    }
+    if !secondary {
+        // Decision 13: once, two seconds after start; with no journal, one stat and nothing more.
+        slint::Timer::single_shot(std::time::Duration::from_secs(2), || {
+            std::thread::spawn(|| {
+                let (note, file_manager1) = system_changes::idle_check();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(note) = note {
+                        integration::offer_repair(note);
+                    }
+                    if file_manager1 {
+                        single_instance::start_file_manager1();
+                    }
+                });
+            });
+        });
     }
     window.run()
 }

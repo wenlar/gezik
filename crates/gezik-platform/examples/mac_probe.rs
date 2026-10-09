@@ -272,5 +272,49 @@ fn main() {
             Err(err) => println!("FAIL read {}: {err}", file.display()),
         }
     }
+    println!("== 7. Default file manager: the folder handler, NSFileViewer, the app delegate (9b4) ==");
+    {
+        use std::ffi::c_void;
+
+        use objc2::rc::{Retained, autoreleasepool};
+        use objc2::runtime::{AnyObject, NSObject};
+        use objc2_foundation::NSString;
+
+        #[link(name = "CoreServices", kind = "framework")]
+        unsafe extern "C" {
+            fn LSCopyDefaultRoleHandlerForContentType(content_type: *const c_void, role: u32) -> *const c_void;
+        }
+        #[link(name = "CoreFoundation", kind = "framework")]
+        unsafe extern "C" {
+            static kCFPreferencesAnyApplication: *const c_void;
+            fn CFPreferencesCopyAppValue(key: *const c_void, app: *const c_void) -> *const c_void;
+        }
+        fn take_string(raw: *const c_void) -> Option<String> {
+            // SAFETY: a +1 CF object or null; NSObject is toll-free bridged; taken over once.
+            let object = unsafe { Retained::from_raw(raw as *mut NSObject) }?;
+            object.downcast::<NSString>().ok().map(|s| s.to_string())
+        }
+        autoreleasepool(|_| {
+            let kind = NSString::from_str("public.folder");
+            // SAFETY: the NSString lives across the call (read only, nothing is written).
+            let handler = take_string(unsafe {
+                LSCopyDefaultRoleHandlerForContentType(Retained::as_ptr(&kind).cast(), 0xFFFF_FFFF)
+            });
+            println!("public.folder handler: {handler:?}");
+            let key = NSString::from_str("NSFileViewer");
+            // SAFETY: the key lives across the call; the domain is a constant.
+            let viewer = take_string(unsafe {
+                CFPreferencesCopyAppValue(Retained::as_ptr(&key).cast(), kCFPreferencesAnyApplication)
+            });
+            println!("NSFileViewer (global): {viewer:?}");
+            let mtm = objc2::MainThreadMarker::new().expect("main thread");
+            let app = objc2_app_kit::NSApplication::sharedApplication(mtm);
+            let class = app.delegate().map(|d| {
+                let object: &AnyObject = (*d).as_ref();
+                object.class().name().to_string_lossy().into_owned()
+            });
+            println!("NSApp delegate class (before winit): {class:?}");
+        });
+    }
     println!("(leave {} for Finder: its aliases should show the arrow badge; delete it afterwards)", dir.display());
 }
