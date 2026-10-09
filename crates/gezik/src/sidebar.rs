@@ -140,7 +140,6 @@ pub fn pin_tip(path: &Path, key: Option<&str>) -> String {
     }
 }
 
-/// The shown pin next to shown pin `n` (before it with `up`) if it is in the same group.
 /// The CLOUD section's rows: a heading and one row per root; nothing without a root or when
 /// turned off (`[sidebar] cloud`).
 pub fn cloud_rows(roots: &[gezik_platform::cloud::CloudRoot], on: bool) -> Vec<SidebarRow> {
@@ -172,6 +171,7 @@ pub fn cloud_rows(roots: &[gezik_platform::cloud::CloudRoot], on: bool) -> Vec<S
     rows
 }
 
+/// The shown pin next to shown pin `n` (before it with `up`) if it is in the same group.
 fn group_neighbour(visible: &[Pin], n: usize, up: bool) -> Option<usize> {
     let m = if up { n.checked_sub(1)? } else { n + 1 };
     let (this, other) = (visible.get(n)?, visible.get(m)?);

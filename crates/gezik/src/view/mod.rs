@@ -926,6 +926,13 @@ impl View {
         });
     }
 
+    /// The cloud roots arrived or changed (they load after the first folder may be shown):
+    /// the lines on screen and the status bar take their cloud state again. No disk read.
+    pub fn cloud_roots_changed(&self) {
+        self.redraw_visible();
+        self.update_status();
+    }
+
     /// Draws again the lines on screen only (a minute passed).
     fn redraw_visible(&self) {
         let entries = self.visible_entries();
