@@ -1,6 +1,5 @@
 //! macOS: Quick Look thumbnails (PDF, HEIC, video, Pages, PSD …), as Finder shows them.
 
-use std::os::macos::fs::MetadataExt;
 use std::path::Path;
 use std::sync::mpsc::sync_channel;
 use std::time::Duration;
@@ -16,7 +15,6 @@ use objc2_quick_look_thumbnailing::{
 };
 
 use crate::Rgba;
-use crate::finder::SF_DATALESS;
 
 /// The longest one thumbnail may take (a long video's); then it is cancelled.
 const LIMIT: Duration = Duration::from_secs(10);
@@ -24,10 +22,7 @@ const LIMIT: Duration = Duration::from_secs(10);
 const STEP: Duration = Duration::from_millis(50);
 
 pub fn thumbnail(path: &Path, px: u32, wanted: &dyn Fn() -> bool) -> Option<Rgba> {
-    // Only in the cloud: Quick Look would download it (spec 9 §4.5).
-    if std::fs::symlink_metadata(path).ok()?.st_flags() & SF_DATALESS != 0 {
-        return None;
-    }
+    // `picture::thumbnail_while` has already skipped files only in the cloud.
     let text = path.to_str()?;
     autoreleasepool(|_| {
         let url = NSURL::fileURLWithPath(&NSString::from_str(text));

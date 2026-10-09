@@ -90,8 +90,11 @@ pub fn load_while(target: &Target, px: u32, wanted: &dyn Fn() -> bool) -> Body {
         let (count, more) = count_entries(path);
         return Body::Folder { count, more };
     }
+    // Reading a file only in iCloud would download it: its icon only.
+    let local = !gezik_platform::only_in_cloud(path);
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or_default().to_lowercase();
-    if gezik_platform::can_decode(&ext)
+    if local
+        && gezik_platform::can_decode(&ext)
         && let Ok(decoded) = gezik_platform::decode_image(path, px)
         && let Some(picture) = buffer(decoded.image)
     {
@@ -100,7 +103,7 @@ pub fn load_while(target: &Target, px: u32, wanted: &dyn Fn() -> bool) -> Body {
     if !wanted() {
         return Body::None;
     }
-    if let Some(text) = read_text(path) {
+    if local && let Some(text) = read_text(path) {
         return Body::Text(text);
     }
     if !wanted() {

@@ -58,6 +58,9 @@ pub fn thumbnail(path: &Path, px: u32) -> Option<Rgba> {
 /// [`thumbnail`], given up once `wanted` says it is no longer needed: macOS cancels the Quick
 /// Look request; elsewhere nothing waits, and `wanted` is not asked.
 pub fn thumbnail_while(path: &Path, px: u32, wanted: &dyn Fn() -> bool) -> Option<Rgba> {
+    if only_in_cloud(path) {
+        return None;
+    }
     #[cfg(windows)]
     if let Some(image) = win::thumbnail(path, px) {
         return Some(image);
@@ -72,6 +75,21 @@ pub fn thumbnail_while(path: &Path, px: u32, wanted: &dyn Fn() -> bool) -> Optio
     {
         let _ = wanted;
         None
+    }
+}
+
+/// Whether the file's data is only in the cloud (macOS: iCloud, File Provider), so reading it
+/// would download it (spec 9 §4.5). Follows a link; reads no data. Always `false` elsewhere.
+pub fn only_in_cloud(path: &Path) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::macos::fs::MetadataExt;
+        std::fs::metadata(path).is_ok_and(|meta| meta.st_flags() & crate::finder::SF_DATALESS != 0)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = path;
+        false
     }
 }
 

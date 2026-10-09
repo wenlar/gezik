@@ -391,7 +391,7 @@ impl Media {
     }
 
     /// A worker's result, on the UI thread. Results of an older generation only fill the
-    /// caches.
+    /// caches, and not with a miss.
     pub fn finish(&self, generation: u64, key: MediaKey, outcome: Outcome) {
         let current = generation == self.generation();
         if current {
@@ -420,7 +420,10 @@ impl Media {
                 Ready::Picture
             }
             (_, _) => {
-                self.store(key.clone(), None, MISSING_COST);
+                // An older generation's miss may be a cancelled Quick Look request: ask again.
+                if current {
+                    self.store(key.clone(), None, MISSING_COST);
+                }
                 Ready::Picture
             }
         };
@@ -518,6 +521,17 @@ mod tests {
         media.finish(old, icon("png"), pixels());
         assert!(seen.borrow().is_empty(), "the old listing's entries are not redrawn");
         assert!(media.picture(icon("png"), 1).is_some(), "but the icon is kept");
+    }
+
+    #[test]
+    fn an_older_generations_miss_is_asked_again() {
+        let media = Media::idle();
+        let old = media.generation();
+        media.picture(icon("zzz"), 0);
+        media.new_generation();
+        media.finish(old, icon("zzz"), Outcome::Nothing);
+        assert!(media.picture(icon("zzz"), 0).is_none());
+        assert!(media.0.pending.borrow().contains(&icon("zzz")), "requested again, not remembered as missing");
     }
 
     #[test]
