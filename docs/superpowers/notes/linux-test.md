@@ -455,6 +455,13 @@ Do 86-92 on GNOME and on KDE.
 95. **Apply to enclosed items.** As macOS item 106 (with a symlink inside pointing outside): the link and its target are untouched, the script stays runnable, Cancel in the operations panel stops a big one, Ctrl+Z puts every item back.
 96. **Links.** Get Info on a symlink: permission boxes greyed; Group ▾ changes the link's own group (`ls -l` on it), `stat -L` shows the target's group unchanged. Write down the glibc version (`ldd --version | head -1`): below 2.32 permission changes use the fallback. Also run `cargo test -p gezik-platform attrs` and `cargo test -p gezik-ops attrs` and report failures.
 
+### 9b5, cloud drives
+
+97. **Probe first.** `cargo test -p gezik-platform cloud` and `cargo run -p gezik-platform --example cloud_probe`; paste the output. The Linux readers (`/proc/mounts`, gvfs names) only compiled on Windows.
+98. **Sidebar.** With `~/Dropbox` and `~/OneDrive` (make empty folders if you have none), an rclone mount `rclone mount gdrive: ~/Drive\ Boşluk` and GNOME Online Accounts' Google Drive: the `CLOUD` heading after the pinned items lists them; the rclone one shows `Drive Boşluk` (the space and Turkish letters intact); the GNOME one shows `Google Drive` with `user@gmail.com` in its tip. A click goes there. `[sidebar] cloud = false`: the heading goes away.
+99. **No state, no commands.** Rows in those folders have no badge and the status bar says no cloud words. The palette has no `Always Keep on This Device` / `Free Up Space`, and the row menu has no cloud items.
+100. **Unmount.** `fusermount -u ~/Drive\ Boşluk`, then plug a USB stick in or out (the drive change reloads the places): the rclone row goes away; nothing crashes.
+
 ## Known gaps (not bugs)
 
 - **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (F5 works it out again). Search results and the flat view show no folder sizes.

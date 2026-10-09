@@ -467,6 +467,19 @@ Write the results to `macos-test-results.md`. Use a Terminal for the commands; `
 128. **`--unregister`.** Quit Gezik (or not: it must work either way). `gezik --unregister` prints one line per change and `echo $?` gives 0. The link is gone; `~/.local/bin` and `~/.local` are removed if Gezik made them and they are empty. Put another file in `~/.local/bin` before: the folder stays, its line says `left (not empty)` and `echo $?` gives 1. A second run says `No system-changes.toml: …` and `Nothing of Gezik's was found.` (0).
 129. **No journal.** Add, delete `~/Library/Application Support/gezik/system-changes.toml` (or the `GEZIK_CONFIG_DIR` one), then `gezik --unregister`: only the link that points at this Gezik is swept; `~/.local/bin` stays. Write `version = 9` into a fresh `system-changes.toml`: the panel says `Fix or delete system-changes.toml first`, Add fails, `gezik --unregister` exits 2 and the file is unchanged.
 
+### 9b5, cloud drives
+
+Write the results to `macos-test-results.md` ("Run: 9b5"). Have iCloud Drive on, and OneDrive or Google Drive (File Provider) if you use them.
+
+130. **Tests and probe first.** In the clone: `cargo test -p gezik-platform cloud`, then `cargo run -p gezik-platform --example cloud_probe -- ~/Library/Mobile\ Documents/com~apple~CloudDocs ~/Library/CloudStorage/*` and paste the output (the roots it finds, and each path's state). The macOS arms (`st_flags` → `SF_DATALESS`, the `CloudStorage` reader, the `NSFileManager` calls) only compiled on Windows; they never ran on a Mac.
+131. **Sidebar.** A `CLOUD` heading right after the pinned items (before SEARCHES), with iCloud Drive, OneDrive, Google Drive (if installed) by their names; two OneDrive accounts show as `OneDrive (Personal)` / `OneDrive (…)`. Resting the pointer on a row shows the account and the path; a click goes there. `[sidebar] cloud = false` in settings.toml: the heading goes away (live), the row badges stay.
+132. **State badges.** In iCloud Drive, a file that is only in the cloud: a small cloud on its icon's corner; selected alone, the status bar ends with `· Online only`. The preview panel and the grid's thumbnail start no download (Finder still shows the cloud icon on it). A downloaded file: a hollow check, `Available on this device`. Outside the cloud folders: no badge, no words.
+133. **Download Now / Remove Download.** Right-click a cloud-only file ▸ `Download Now`: the job panel shows it, the file downloads, the badge turns into the check (the folder watcher; if it doesn't, note whether reloading the folder does it). On an uploaded file ▸ `Remove Download`: it goes back to the cloud badge. On a folder ▸ `Remove Download`: does it work, or do you get the note `Not known to be synced yet; left on this device`? (Deviation 2: write down which.) The palette has both commands too.
+134. **Data safety.** Turn Wi-Fi off, edit a file in iCloud Drive, then `Remove Download`: the file stays, the job panel says `Not known to be synced yet; left on this device` (a note, not a failure). Turn Wi-Fi on, wait for the upload, try again: it is removed.
+135. **OneDrive / Google Drive.** Items 132-134 in `~/Library/CloudStorage/OneDrive-…` and `GoogleDrive-…`: do `startDownloading…` / `evict…` work there, and is the "uploaded" key given (if not, `Remove Download` is always the note: write it down).
+136. **Links.** A symlink inside iCloud Drive that points elsewhere: `Download Now` and `Remove Download` both say `A link; left as it is` and the target is untouched. A selection with one item outside the cloud folders: `Not in a cloud folder`, no job.
+137. **Late roots.** Quit Gezik with an iCloud Drive folder as the last tab; open it again: the badges show without moving to another folder (the roots arrive after the folder).
+
 Report anything else that looks wrong: layout, fonts, Retina scaling, ⌘ shortcuts that don't work, and the wording of the boxes.
 
 ## Known gaps (not bugs)
