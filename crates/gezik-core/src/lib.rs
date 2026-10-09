@@ -9,6 +9,7 @@ pub mod kind;
 pub mod layout;
 pub mod nav;
 pub mod ops;
+pub mod palette;
 pub mod path_text;
 pub mod pattern;
 pub mod refresh;
@@ -43,6 +44,26 @@ impl Entry {
     pub const HIDDEN: u8 = 1;
     /// The system attribute (Windows).
     pub const SYSTEM: u8 = 2;
+
+    /// Folder sizes (8b, spec 6), in the bits `HIDDEN` and `SYSTEM` leave free: `size` holds the
+    /// folder's total (`SIZED`); part of it could not be read (`SIZE_PARTIAL`, shown `≥`); it is
+    /// on its way (`SIZE_PENDING`, shown `…`, last when sorting by size); it is older than five
+    /// minutes and on its way again (`SIZE_STALE`, drawn faint). Only the view sets them.
+    pub const SIZED: u8 = 4;
+    pub const SIZE_PARTIAL: u8 = 8;
+    pub const SIZE_PENDING: u8 = 16;
+    pub const SIZE_STALE: u8 = 32;
+    pub const SIZE_FLAGS: u8 = Entry::SIZED | Entry::SIZE_PARTIAL | Entry::SIZE_PENDING | Entry::SIZE_STALE;
+
+    /// The size the Size column and the sums use: a file's; a folder's worked-out total, else none.
+    pub fn known_size(&self) -> Option<u64> {
+        (!self.is_dir || self.flags & Entry::SIZED != 0).then_some(self.size)
+    }
+
+    /// A folder whose size is on its way and not known yet: `…`, last when sorting by size.
+    pub fn size_pending(&self) -> bool {
+        self.is_dir && self.flags & (Entry::SIZED | Entry::SIZE_PENDING) == Entry::SIZE_PENDING
+    }
 
     /// Whether the list shows it: an item both hidden and system ("protected operating system
     /// files": `desktop.ini`, `$RECYCLE.BIN`) only with `show_system`; a name starting with a
@@ -174,6 +195,30 @@ mod tests {
 
     fn flagged(name: &str, flags: u8) -> Entry {
         Entry { name: name.to_owned(), is_dir: false, flags, size: 0, modified: None, created: None }
+    }
+
+    fn sized_dir(flags: u8, size: u64) -> Entry {
+        Entry { name: "d".into(), is_dir: true, flags, size, modified: None, created: None }
+    }
+
+    #[test]
+    fn a_folder_has_a_size_only_once_worked_out() {
+        let file = Entry { name: "f".into(), is_dir: false, flags: 0, size: 7, modified: None, created: None };
+        assert_eq!(file.known_size(), Some(7));
+        assert_eq!(sized_dir(0, 4096).known_size(), None, "a folder's own record size is no size");
+        assert_eq!(sized_dir(Entry::SIZED, 500).known_size(), Some(500));
+        assert_eq!(sized_dir(Entry::SIZED | Entry::SIZE_PARTIAL, 500).known_size(), Some(500));
+        assert!(sized_dir(Entry::SIZE_PENDING, 0).size_pending());
+        assert!(
+            !sized_dir(Entry::SIZED | Entry::SIZE_STALE, 9).size_pending(),
+            "an old size is shown while it is redone"
+        );
+        assert!(!sized_dir(0, 0).size_pending());
+        assert!(
+            sized_dir(Entry::HIDDEN | Entry::SIZE_PENDING, 0).is_shown(true, false),
+            "the size bits leave hidden alone"
+        );
+        assert_eq!(Entry::SIZE_FLAGS & (Entry::HIDDEN | Entry::SYSTEM), 0);
     }
 
     #[test]

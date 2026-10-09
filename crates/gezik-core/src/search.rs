@@ -328,6 +328,8 @@ pub struct SearchSpec {
     pub skipped: bool,
     /// The flat view: every file under the scope, no folders.
     pub flat: bool,
+    /// A saved search's name (spec 8): the tab's title. Never written to state.toml (spec 9.2).
+    pub name: Option<String>,
 }
 
 impl SearchSpec {
@@ -345,6 +347,7 @@ impl SearchSpec {
             hidden: HiddenRule::FollowView,
             skipped: false,
             flat: false,
+            name: None,
         }
     }
 
@@ -383,6 +386,9 @@ impl SearchSpec {
 
     /// The tab title: `Search: *.pdf`, `Search: "fatura"` (the text in files first).
     pub fn title(&self) -> String {
+        if let Some(name) = &self.name {
+            return name.clone();
+        }
         if !self.content.is_empty() {
             format!("Search: \"{}\"", self.content)
         } else if self.pattern.trim().is_empty() {
@@ -576,6 +582,15 @@ mod tests {
         assert!(spec.is_query(), "a size alone searches");
         assert!(SearchSpec::flat_view("/w".into()).is_query());
         assert!(SearchSpec::flat_view("/w".into()).flat);
+    }
+
+    #[test]
+    fn a_saved_search_is_titled_by_its_name() {
+        let mut spec = SearchSpec::new(Scope::AllDrives);
+        spec.pattern = "*.mp4".into();
+        spec.name = Some("Large videos".into());
+        assert_eq!(spec.title(), "Large videos");
+        assert_eq!(spec.crumb(), "Search \"*.mp4\"");
     }
 
     #[test]
