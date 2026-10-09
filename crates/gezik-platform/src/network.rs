@@ -13,6 +13,7 @@ pub const NOT_ADDRESS: &str = "Not a server address";
 pub const NEEDS_GIO: &str = "Connecting to servers needs gvfs (the gio command).";
 pub const WRONG_LOGIN: &str = "The user name or password was not accepted";
 pub const NOT_FOUND: &str = "The server or share was not found";
+pub const LINE_BREAK: &str = "The user name and password cannot hold a line break";
 
 /// Most shares a server's answer may list (it is the server's text, spec 9 §10.6).
 const MAX_SHARES: usize = 4096;
@@ -48,11 +49,13 @@ impl ServerAddress {
 
     /// The whole address as an `smb://` URL, each part percent-encoded.
     pub fn smb_url(&self) -> String {
-        let user = if self.user.is_empty() { String::new() } else { format!("{}@", encode(&self.user)) };
-        let mut text = format!("smb://{user}{}", encode(&self.server));
+        // The user's `:` and `@` encoded: written back they never read as a password or host.
+        let user = if self.user.is_empty() { String::new() } else { format!("{}@", encode(&self.user, b"")) };
+        // The server keeps `:` (a port); it has no `@` (refused).
+        let mut text = format!("smb://{user}{}", encode(&self.server, b":"));
         for part in std::iter::once(&self.share).filter(|s| !s.is_empty()).chain(&self.rest) {
             text.push('/');
-            text.push_str(&encode(part));
+            text.push_str(&encode(part, b":@"));
         }
         text
     }
@@ -83,6 +86,8 @@ pub fn parse_address(text: &str, windows: bool) -> Result<ServerAddress, &'stati
         let rest = &text[6..];
         let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
         let (user, server) = authority.rsplit_once('@').unwrap_or(("", authority));
+        // Decoded first: `ali%3Agizli` is a password too.
+        let user = decode(user)?;
         if user.contains(':') {
             return Err(PASSWORD);
         }
@@ -90,7 +95,7 @@ pub fn parse_address(text: &str, windows: bool) -> Result<ServerAddress, &'stati
         for part in path.split('/').filter(|p| !p.is_empty()) {
             parts.push(decode(part)?);
         }
-        (decode(user)?, parts)
+        (user, parts)
     } else {
         let body = text.trim_start_matches(['\\', '/']);
         // Two leading separators or none: `\\nas\foto`, `//nas/foto`, `nas/foto`.
@@ -108,6 +113,8 @@ pub fn parse_address(text: &str, windows: bool) -> Result<ServerAddress, &'stati
     let bad_server = server.is_empty()
         || server == "?"
         || server.chars().any(char::is_whitespace)
+        // `\\evil@nas`, `smb://nas%40x`: a login hidden in the server.
+        || server.contains('@')
         // `C:\x` is a path, not a server.
         || (server.contains(':') && !url)
         || bad(&server);
@@ -139,11 +146,11 @@ fn decode(part: &str) -> Result<String, &'static str> {
     String::from_utf8(out).map_err(|_| NOT_ADDRESS)
 }
 
-/// Everything but the URL's plain characters as `%XX` (spaces, non-ASCII letters).
-fn encode(part: &str) -> String {
+/// Everything but the URL's plain characters (and `keep`) as `%XX` (spaces, non-ASCII letters).
+fn encode(part: &str, keep: &[u8]) -> String {
     let mut out = String::with_capacity(part.len());
     for &b in part.as_bytes() {
-        if b.is_ascii_alphanumeric() || b"-._~!$&'()*+,;=:@".contains(&b) {
+        if b.is_ascii_alphanumeric() || b"-._~!$&'()*+,;=".contains(&b) || keep.contains(&b) {
             out.push(char::from(b));
         } else {
             out.push_str(&format!("%{b:02X}"));
@@ -276,6 +283,10 @@ pub fn linux_connect(
     gvfs: &Path,
     names: &dyn Fn() -> Vec<String>,
 ) -> Result<PathBuf, ConnectError> {
+    // gio reads one answer per line: a line break would answer its next question.
+    if login.is_some_and(|l| [&l.user, &l.domain, &l.password].iter().any(|f| f.contains(['\n', '\r', '\0']))) {
+        return Err(ConnectError::Failed(LINE_BREAK.into()));
+    }
     let url = address.smb_url();
     let mut answers = login.map(gio_answers).unwrap_or_default();
     let result = run(&["gio", "mount", url.as_str()], &answers);
@@ -529,6 +540,22 @@ mod tests {
     fn a_password_in_the_address_is_refused() {
         assert_eq!(w("smb://ali:gizli@nas/foto"), Err(PASSWORD));
         assert_eq!(parse_address("smb://ali:@nas/foto", false), Err(PASSWORD));
+        assert_eq!(w("smb://ali%3Agizli@nas/foto"), Err(PASSWORD), "an encoded colon too");
+        assert_eq!(w(r"\\evil@nas\share"), Err(NOT_ADDRESS), "no user hidden in a server");
+        assert_eq!(w("smb://nas%40evil/share"), Err(NOT_ADDRESS));
+        assert_eq!(w("smb://a%3Ab%40c/share"), Err(NOT_ADDRESS));
+    }
+
+    #[test]
+    fn user_and_server_cannot_turn_into_a_login() {
+        // A user name with `@` (ali@corp) is kept, but written back encoded.
+        let a = parse_address("smb://ali%40corp@nas/foto", false).unwrap();
+        assert_eq!((a.user.as_str(), a.smb_url().as_str()), ("ali@corp", "smb://ali%40corp@nas/foto"));
+        assert_eq!(parse_address(&a.smb_url(), false).unwrap(), a);
+        let port = parse_address("smb://nas:445/foto", false).unwrap();
+        assert_eq!(port.smb_url(), "smb://nas:445/foto", "a port stays a port");
+        let path = parse_address("smb://nas/foto/a:b@c", false).unwrap();
+        assert_eq!(path.smb_url(), "smb://nas/foto/a:b@c");
     }
 
     #[test]
@@ -655,6 +682,22 @@ mod tests {
         assert_eq!(log[0], ("gio mount smb://nas/foto/2024".to_owned(), String::new()));
         assert_eq!(log[1].1, "teo\n\ns3cret\n");
         assert!(log.iter().all(|(args, _)| !args.contains("s3cret")), "never on the command line");
+    }
+
+    #[test]
+    fn a_login_with_a_line_break_is_refused() {
+        let address = parse_address("smb://nas/foto", false).unwrap();
+        let log = RefCell::new(Vec::new());
+        let none = || Vec::new();
+        for (user, domain, password) in
+            [("teo\nx", "", "pw"), ("teo", "W\r", "pw"), ("teo", "", "p\nw"), ("teo", "", "p\0w")]
+        {
+            let login = Login { user: user.into(), domain: domain.into(), password: password.into() };
+            let done = Ran { ok: true, ..Ran::default() };
+            let got = linux_connect(&address, Some(&login), &mut fake(&log, done), Path::new("/g"), &none);
+            assert_eq!(got, Err(ConnectError::Failed(LINE_BREAK.into())), "{user:?} {domain:?} {password:?}");
+        }
+        assert!(log.borrow().is_empty(), "gio never ran");
     }
 
     #[test]

@@ -50,6 +50,13 @@ pub struct Ran {
 /// what Gezik looks for in them stays the same), and waits. Blocking: background threads only.
 /// `input` never goes on the command line: it may hold a password (spec 9 §10.5).
 pub fn run_with_input(args: &[&str], input: &str) -> io::Result<Ran> {
+    run_until(args, input, HELPER_LIMIT)
+}
+
+/// How long a helper may take (a server that never answers): it is then stopped.
+const HELPER_LIMIT: Duration = Duration::from_secs(60);
+
+fn run_until(args: &[&str], input: &str, limit: Duration) -> io::Result<Ran> {
     let (program, rest) = args.split_first().ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
     let mut child = Command::new(program)
         .args(rest)
@@ -58,16 +65,38 @@ pub fn run_with_input(args: &[&str], input: &str) -> io::Result<Ran> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
+    // Read on other threads, so a chatty helper never stops on a full pipe.
+    fn read_all(pipe: Option<impl Read + Send + 'static>) -> Option<JoinHandle<Vec<u8>>> {
+        pipe.map(|mut pipe| {
+            std::thread::spawn(move || {
+                let mut bytes = Vec::new();
+                let _ = pipe.read_to_end(&mut bytes);
+                bytes
+            })
+        })
+    }
+    let stdout = read_all(child.stdout.take());
+    let stderr = read_all(child.stderr.take());
     if let Some(mut stdin) = child.stdin.take() {
-        // A helper that asks nothing closes its end: that is not an error.
+        // A helper that asks nothing closes its end: that is not an error. Dropped: closed.
         let _ = stdin.write_all(input.as_bytes());
     }
-    let out = child.wait_with_output()?;
-    Ok(Ran {
-        ok: out.status.success(),
-        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
-    })
+    let started = std::time::Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if started.elapsed() > limit {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(io::ErrorKind::TimedOut.into());
+        }
+        std::thread::sleep(POLL);
+    };
+    let text = |thread: Option<JoinHandle<Vec<u8>>>| {
+        String::from_utf8_lossy(&thread.and_then(|t| t.join().ok()).unwrap_or_default()).into_owned()
+    };
+    Ok(Ran { ok: status.success(), stdout: text(stdout), stderr: text(stderr) })
 }
 
 /// The longest command line Gezik starts a program with, kept short of the system's limit:
@@ -634,6 +663,17 @@ mod tests {
         assert_eq!(ran, Ran { ok: true, stdout: "teo\n\nsecret\n".into(), stderr: String::new() });
         let failed = run_with_input(&["sh", "-c", "echo no >&2; exit 3"], "").unwrap();
         assert!(!failed.ok && failed.stderr == "no\n");
+    }
+
+    #[test]
+    fn a_helper_that_hangs_is_stopped() {
+        let args: &[&str] = if cfg!(windows) { &["ping", "-n", "30", "127.0.0.1"] } else { &["sleep", "30"] };
+        let started = Instant::now();
+        let err = run_until(args, "", Duration::from_millis(300)).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+        assert!(started.elapsed() < Duration::from_secs(5));
+        let quick: &[&str] = if cfg!(windows) { &["cmd", "/c", "echo hi"] } else { &["echo", "hi"] };
+        assert_eq!(run_until(quick, "", Duration::from_secs(10)).unwrap().stdout.trim(), "hi");
     }
 
     #[test]
