@@ -713,6 +713,12 @@ impl PathBox {
             PathKey::Open => {
                 self.0.debounce.stop();
                 self.update();
+                // Tab with nothing to complete (and no folder still being read) moves the
+                // focus on, out of the field.
+                let none = first_folder(&self.0.list.borrow().rows).is_none();
+                if chord.key == Key::Tab && none && self.0.wanted.borrow().is_none() {
+                    return false;
+                }
             }
             PathKey::Move(down) => {
                 let next = step(&self.0.list.borrow().rows, current, down);
