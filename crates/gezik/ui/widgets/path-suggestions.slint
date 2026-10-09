@@ -28,6 +28,11 @@ export component PathSuggestions inherits Rectangle {
     drop-shadow-color: Theme.shadow;
     accessible-role: list;
     accessible-label: "Suggestions";
+    // Fades in as it opens (it is made by an `if`, so it starts hidden).
+    property <bool> shown;
+    init => { root.shown = true; }
+    opacity: root.shown ? 1 : 0;
+    animate opacity { duration: Theme.motion-popup; }
 
     // Clicks between rows reach nothing under the list.
     TouchArea { }

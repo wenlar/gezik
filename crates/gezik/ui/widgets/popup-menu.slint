@@ -307,6 +307,8 @@ export component PopupMenu inherits Rectangle {
     }
 
     main := MenuBox {
+        opacity: root.open ? 1 : 0;
+        animate opacity { duration: Theme.motion-popup; }
         x: root.main-place.x;
         y: root.main-place.y;
         width: root.main-place.width;
@@ -330,6 +332,8 @@ export component PopupMenu inherits Rectangle {
 
     sub := MenuBox {
         visible: root.sub-open;
+        opacity: root.sub-open ? 1 : 0;
+        animate opacity { duration: Theme.motion-popup; }
         x: root.sub-place.x;
         y: root.sub-place.y;
         width: root.sub-place.width;

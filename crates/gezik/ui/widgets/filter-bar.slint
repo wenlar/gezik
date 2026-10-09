@@ -2,6 +2,7 @@ import { Theme } from "../theme.slint";
 import { TextField } from "text-field.slint";
 import { ToolButton } from "button.slint";
 import { TextButton } from "text-button.slint";
+import { Glyph } from "../glyphs.slint";
 
 // The filter bar above the file list: a magnifier, the pattern being typed, how many entries
 // it lets through (or what is wrong with it), "Search subfolders" and the saved filters'
@@ -79,7 +80,7 @@ export component FilterBar inherits Rectangle {
         if root.search: TextButton {
             y: (parent.height - self.height) / 2;
             text: root.scope;
-            icon: "M 1 3 L 4 6 L 7 3";
+            icon: Glyph.chevron-down;
             clicked => {
                 root.menu(1, self.absolute-position.x, self.absolute-position.y + self.height,
                     self.absolute-position.x + self.width, self.absolute-position.y);
@@ -165,7 +166,7 @@ export component FilterBar inherits Rectangle {
             TextButton {
                 y: (parent.height - self.height) / 2;
                 text: root.filters;
-                icon: "M 1 3 L 4 6 L 7 3";
+                icon: Glyph.chevron-down;
                 clicked => {
                     root.menu(2, self.absolute-position.x, self.absolute-position.y + self.height,
                         self.absolute-position.x + self.width, self.absolute-position.y);

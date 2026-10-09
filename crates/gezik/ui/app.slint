@@ -1,6 +1,8 @@
 import { Palette } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { ToolButton } from "widgets/button.slint";
+import { TextButton } from "widgets/text-button.slint";
+import { Glyph } from "glyphs.slint";
 import { Breadcrumb, CrumbItem } from "widgets/breadcrumb.slint";
 import { TabBar, TabItem } from "widgets/tab-bar.slint";
 import { Sidebar, SidebarRow } from "widgets/sidebar.slint";
@@ -28,14 +30,19 @@ export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, O
 export struct DropGeometry {
     window-width: length,
     window-height: length,
-    // The file view, and the visible list inside it (below the column header).
+    // The file view (it fills the sheet), and the visible list inside it (below the column header).
     view-x: length,
     view-y: length,
-    view-height: length,
     list-top: length,
     list-width: length,
     list-height: length,
+    // The sidebar's top and height: the main row's, from under the toolbar to the sheet's
+    // bottom (the filter and search bars sit above the sheet, beside the sidebar).
+    sidebar-y: length,
+    sidebar-height: length,
     sidebar-scroll: length,
+    // The tab strip's left edge (it is inset).
+    tab-x: length,
     tab-scroll: length,
     tab-width: length,
     tab-strip-width: length,
@@ -52,7 +59,7 @@ export component AppWindow inherits Window {
     title: root.title-text;
     preferred-width: 900px;
     preferred-height: 600px;
-    background: Theme.background;
+    background: Theme.chrome;
 
     // macOS: the menu bar at the top of the screen (set from Rust there only; elsewhere there
     // is none). An item names the action whose shortcut it stands for; Rust plays that
@@ -645,18 +652,20 @@ export component AppWindow inherits Window {
         window-height: root.height,
         view-x: file-view.absolute-position.x,
         view-y: file-view.absolute-position.y,
-        view-height: file-view.height,
+        sidebar-y: search-bar.absolute-position.y,
+        sidebar-height: file-view.absolute-position.y + file-view.height - search-bar.absolute-position.y,
         list-top: file-view.list-top,
         list-width: file-view.list-width,
         list-height: file-view.list-height,
         sidebar-scroll: root.sidebar-scroll,
+        tab-x: tab-bar.strip-x,
         tab-scroll: tab-bar.scroll,
         tab-width: tab-bar.tab-width,
         tab-strip-width: tab-bar.strip-width,
         tab-height: tab-bar.height,
         address-y: address.absolute-position.y,
         address-height: address.height,
-        stack-y: root.stack-open ? root.height - Theme.row-height - 1px - (Theme.row-height + 6px) : 0px,
+        stack-y: root.stack-open ? root.height - Theme.row-height - (Theme.row-height + 6px) : 0px,
         stack-height: root.stack-open ? Theme.row-height + 6px : 0px,
     };
 
@@ -865,30 +874,42 @@ export component AppWindow inherits Window {
                 }
             }
             Rectangle {
+                height: Theme.toolbar-height;
                 background: Theme.chrome;
                 HorizontalLayout {
-                    padding: Theme.spacing;
+                    padding-left: Theme.inset + 4px;
+                    padding-right: Theme.inset + 4px;
+                    padding-top: (Theme.toolbar-height - Theme.control-height) / 2;
+                    padding-bottom: (Theme.toolbar-height - Theme.control-height) / 2;
                     spacing: Theme.spacing;
-                    ToolButton {
-                        text: "←";
-                        enabled: root.can-go-back;
-                        clicked => { root.go-back(); }
-                    }
-                    ToolButton {
-                        text: "→";
-                        enabled: root.can-go-forward;
-                        clicked => { root.go-forward(); }
-                    }
-                    ToolButton {
-                        text: "↑";
-                        enabled: root.can-go-up;
-                        clicked => { root.go-up(); }
-                    }
-                    ToolButton {
-                        text: "Refresh";
-                        // A circular arrow.
-                        icon: "M 13.5 8 A 5.5 5.5 0 1 1 11.9 4.1 M 12.2 1.2 L 12.2 4.4 L 9 4.4";
-                        clicked => { root.refresh(); }
+                    // Back, Forward, Up, Refresh: row-height squares in the control-high row.
+                    HorizontalLayout {
+                        spacing: 2px;
+                        padding-top: (Theme.control-height - Theme.row-height) / 2;
+                        padding-bottom: (Theme.control-height - Theme.row-height) / 2;
+                        ToolButton {
+                            text: "Back";
+                            icon: Glyph.back;
+                            enabled: root.can-go-back;
+                            clicked => { root.go-back(); }
+                        }
+                        ToolButton {
+                            text: "Forward";
+                            icon: Glyph.forward;
+                            enabled: root.can-go-forward;
+                            clicked => { root.go-forward(); }
+                        }
+                        ToolButton {
+                            text: "Up";
+                            icon: Glyph.up;
+                            enabled: root.can-go-up;
+                            clicked => { root.go-up(); }
+                        }
+                        ToolButton {
+                            text: "Refresh";
+                            icon: Glyph.refresh;
+                            clicked => { root.refresh(); }
+                        }
                     }
                     address := Breadcrumb {
                         crumbs: root.crumbs;
@@ -903,10 +924,11 @@ export component AppWindow inherits Window {
                             root.navigate(path);
                         }
                     }
-                    ToolButton {
+                    TextButton {
                         text: "View";
-                        // Four squares.
-                        icon: "M 2 2 L 7 2 L 7 7 L 2 7 Z M 9 2 L 14 2 L 14 7 L 9 7 Z M 2 9 L 7 9 L 7 14 L 2 14 Z M 9 9 L 14 9 L 14 14 L 9 14 Z";
+                        lead-icon: Glyph.view;
+                        icon: Glyph.chevron-down;
+                        height: Theme.control-height;
                         clicked => {
                             root.end-path-editing();
                             root.view-menu(self.absolute-position.x, self.absolute-position.y + self.height, self.absolute-position.x + self.width, self.absolute-position.y);
@@ -914,9 +936,13 @@ export component AppWindow inherits Window {
                     }
                 }
             }
-            Rectangle { height: 1px; background: Theme.border; }
 
             HorizontalLayout {
+                // The sheets' gap from the chrome: below them, and on the side away from the
+                // sidebar (on its side the splitter is the gap). None in the classic themes.
+                padding-left: root.sidebar-position == 0 ? 0px : Theme.inset;
+                padding-right: root.sidebar-position == 1 ? 0px : Theme.inset;
+                padding-bottom: Theme.inset;
                 if root.sidebar-position == 0: Sidebar {
                     width: root.sidebar-width;
                     rows: root.sidebar-rows;
@@ -936,14 +962,14 @@ export component AppWindow inherits Window {
                     }
                     pinned-drop(a, b) => { root.pinned-drop(a, b); }
                 }
-                // A 1px line, grabbable over 5px.
+                // Grabbable over 5px; the line shows only while hovered or dragged.
                 if root.sidebar-position == 0: Rectangle {
                     width: 5px;
                     accessible-role: none;
                     Rectangle {
                         x: (parent.width - self.width) / 2;
                         width: 1px;
-                        background: splitter-left.has-hover || splitter-left.pressed ? Theme.accent : Theme.border;
+                        background: splitter-left.has-hover || splitter-left.pressed ? Theme.accent : transparent;
                     }
                     splitter-left := TouchArea {
                         mouse-cursor: col-resize;
@@ -975,7 +1001,6 @@ export component AppWindow inherits Window {
                             root.search-menu(which, x, y, fx, fy);
                         }
                     }
-                    Rectangle { height: root.search-open ? 1px : 0px; visible: root.search-open; background: Theme.border; }
                     filter-bar := FilterBar {
                         height: root.filter-open ? Theme.row-height + 8px : 0px;
                         visible: root.filter-open;
@@ -989,73 +1014,86 @@ export component AppWindow inherits Window {
                             root.filter-menu(x, y, fx, fy);
                         }
                     }
-                    if root.filter-open: Rectangle { height: 1px; background: Theme.border; }
-                    file-view := FileView {
-                        horizontal-stretch: 1;
-                        items: root.items;
-                        mode: root.view-mode;
-                        picture-size: root.grid-size;
-                        grid-columns-changed(n) => { root.grid-columns-changed(n); }
-                        zoom(bigger) => { root.zoom(bigger); }
-                        has-focus: keys.has-focus;
-                        scroll <=> root.list-scroll;
-                        focus-requested => { keys.focus(); }
-                        col-modified <=> root.col-modified;
-                        col-created <=> root.col-created;
-                        col-type <=> root.col-type;
-                        renaming-index: root.renaming-index;
-                        rename-text <=> root.rename-text;
-                        rename-select: root.rename-select;
-                        rename-error: root.rename-error;
-                        rename-accepted(t) => { root.rename-accepted(t); }
-                        rename-cancelled => { root.rename-cancelled(); }
-                        rename-tab(t, back) => { root.rename-tab(t, back); }
-                        rename-edited(t) => { root.rename-edited(t); }
-                        rename-blurred(t, g) => { root.rename-blurred(t, g); }
-                        rename-generation: root.rename-generation;
-                        rename-has-focus <=> root.rename-field-focused;
-                        col-size <=> root.col-size;
-                        col-folder <=> root.col-folder;
-                        col-match <=> root.col-match;
-                        sort-column: root.sort-column;
-                        sort-desc: root.sort-desc;
-                        header-clicked(i) => { root.header-clicked(i); }
-                        header-menu(x, y) => {
-                            root.end-path-editing();
-                            root.header-menu(x, y);
+                    // The sheet: the column header and the list or grid on the content color. Its
+                    // frame is drawn over them; they are not clipped to its corners (spec 13.7).
+                    Rectangle {
+                        background: Theme.background;
+                        border-radius: Theme.sheet-radius;
+                        file-view := FileView {
+                            width: parent.width;
+                            height: parent.height;
+                            items: root.items;
+                            mode: root.view-mode;
+                            picture-size: root.grid-size;
+                            grid-columns-changed(n) => { root.grid-columns-changed(n); }
+                            zoom(bigger) => { root.zoom(bigger); }
+                            has-focus: keys.has-focus;
+                            scroll <=> root.list-scroll;
+                            focus-requested => { keys.focus(); }
+                            col-modified <=> root.col-modified;
+                            col-created <=> root.col-created;
+                            col-type <=> root.col-type;
+                            renaming-index: root.renaming-index;
+                            rename-text <=> root.rename-text;
+                            rename-select: root.rename-select;
+                            rename-error: root.rename-error;
+                            rename-accepted(t) => { root.rename-accepted(t); }
+                            rename-cancelled => { root.rename-cancelled(); }
+                            rename-tab(t, back) => { root.rename-tab(t, back); }
+                            rename-edited(t) => { root.rename-edited(t); }
+                            rename-blurred(t, g) => { root.rename-blurred(t, g); }
+                            rename-generation: root.rename-generation;
+                            rename-has-focus <=> root.rename-field-focused;
+                            col-size <=> root.col-size;
+                            col-folder <=> root.col-folder;
+                            col-match <=> root.col-match;
+                            sort-column: root.sort-column;
+                            sort-desc: root.sort-desc;
+                            header-clicked(i) => { root.header-clicked(i); }
+                            header-menu(x, y) => {
+                                root.end-path-editing();
+                                root.header-menu(x, y);
+                            }
+                            columns-resized => { root.columns-resized(); }
+                            item-pressed(i, ctrl, shift) => { root.item-pressed(i, ctrl, shift); }
+                            item-down(i, x, y, right, can-drag) => { root.item-down(i, x, y, right, can-drag); }
+                            item-drag(x, y, shift, ctrl, alt) => { root.item-drag(x, y, shift, ctrl, alt); }
+                            item-up(i, x, y, right) => { return root.item-up(i, x, y, right); }
+                            item-cancel => { root.item-cancel(); }
+                            drag-active: root.drag-active;
+                            drag-forbidden: root.drag-forbidden;
+                            drop-entry: root.drop-entry;
+                            item-double-clicked(i) => { root.open-row(i); }
+                            item-middle-clicked(i) => { root.row-middle-clicked(i); }
+                            item-menu(i, x, y) => {
+                                root.end-path-editing();
+                                root.row-menu(i, x, y);
+                            }
+                            background-pressed(ctrl) => { root.background-pressed(ctrl); }
+                            marquee(x, y, w, h, additive) => { root.marquee(x, y, w, h, additive); }
+                            marquee-done => { root.marquee-done(); }
+                            background-menu(x, y) => {
+                                root.end-path-editing();
+                                root.background-menu(x, y);
+                            }
                         }
-                        columns-resized => { root.columns-resized(); }
-                        item-pressed(i, ctrl, shift) => { root.item-pressed(i, ctrl, shift); }
-                        item-down(i, x, y, right, can-drag) => { root.item-down(i, x, y, right, can-drag); }
-                        item-drag(x, y, shift, ctrl, alt) => { root.item-drag(x, y, shift, ctrl, alt); }
-                        item-up(i, x, y, right) => { return root.item-up(i, x, y, right); }
-                        item-cancel => { root.item-cancel(); }
-                        drag-active: root.drag-active;
-                        drag-forbidden: root.drag-forbidden;
-                        drop-entry: root.drop-entry;
-                        item-double-clicked(i) => { root.open-row(i); }
-                        item-middle-clicked(i) => { root.row-middle-clicked(i); }
-                        item-menu(i, x, y) => {
-                            root.end-path-editing();
-                            root.row-menu(i, x, y);
-                        }
-                        background-pressed(ctrl) => { root.background-pressed(ctrl); }
-                        marquee(x, y, w, h, additive) => { root.marquee(x, y, w, h, additive); }
-                        marquee-done => { root.marquee-done(); }
-                        background-menu(x, y) => {
-                            root.end-path-editing();
-                            root.background-menu(x, y);
+                        Rectangle {
+                            width: parent.width;
+                            height: parent.height;
+                            border-width: 1px;
+                            border-color: Theme.border;
+                            border-radius: Theme.sheet-radius;
                         }
                     }
                 }
-                // A 1px line, grabbable over 5px.
+                // Grabbable over 5px; the line shows only while hovered or dragged.
                 if root.preview-open: Rectangle {
                     width: 5px;
                     accessible-role: none;
                     Rectangle {
                         x: (parent.width - self.width) / 2;
                         width: 1px;
-                        background: preview-splitter.has-hover || preview-splitter.pressed ? Theme.accent : Theme.border;
+                        background: preview-splitter.has-hover || preview-splitter.pressed ? Theme.accent : transparent;
                     }
                     preview-splitter := TouchArea {
                         mouse-cursor: col-resize;
@@ -1067,15 +1105,20 @@ export component AppWindow inherits Window {
                     width: root.preview-width;
                     info: root.preview;
                     mono-font: root.mono-font;
+                    // Its own sheet, like the list's.
+                    background: Theme.background;
+                    border-radius: Theme.sheet-radius;
+                    border-width: 1px;
+                    border-color: Theme.border;
                 }
-                // A 1px line, grabbable over 5px.
+                // Grabbable over 5px; the line shows only while hovered or dragged.
                 if root.sidebar-position == 1: Rectangle {
                     width: 5px;
                     accessible-role: none;
                     Rectangle {
                         x: (parent.width - self.width) / 2;
                         width: 1px;
-                        background: splitter-right.has-hover || splitter-right.pressed ? Theme.accent : Theme.border;
+                        background: splitter-right.has-hover || splitter-right.pressed ? Theme.accent : transparent;
                     }
                     splitter-right := TouchArea {
                         mouse-cursor: col-resize;
@@ -1104,7 +1147,6 @@ export component AppWindow inherits Window {
                 }
             }
 
-            if root.ops-panel-open: Rectangle { height: 1px; background: Theme.border; }
             if root.ops-panel-open: OpsPanel {
                 rows: root.op-rows;
                 tab: root.ops-tab;
@@ -1121,7 +1163,6 @@ export component AppWindow inherits Window {
                 retry(i) => { root.op-retry(i); }
                 dismiss(i) => { root.op-dismiss(i); }
             }
-            if root.stack-open: Rectangle { height: 1px; background: Theme.border; }
             if root.stack-open: DropStack {
                 rows: root.stack-rows;
                 count: root.stack-count;
@@ -1137,16 +1178,16 @@ export component AppWindow inherits Window {
                 move-here => { root.stack-move(); }
                 clear => { root.stack-clear(); }
             }
-            Rectangle { height: 1px; background: Theme.border; }
             Rectangle {
                 height: Theme.row-height;
                 background: Theme.chrome;
                 HorizontalLayout {
-                    padding-left: Theme.spacing + 4px;
-                    padding-right: Theme.spacing + 4px;
+                    padding-left: Theme.inset + 4px;
+                    padding-right: Theme.inset + 4px;
                     spacing: Theme.spacing * 2;
                     Text {
                         text: root.status;
+                        font-size: Theme.font-size-small;
                         vertical-alignment: center;
                         color: Theme.foreground-muted;
                     }
@@ -1154,6 +1195,7 @@ export component AppWindow inherits Window {
                         width: summary-text.preferred-width + 26px;
                         border-radius: Theme.radius;
                         background: summary-touch.has-hover ? Theme.hover : transparent;
+                        animate background { duration: Theme.motion-hover; }
                         accessible-role: button;
                         accessible-label: root.ops-summary;
                         accessible-action-default => { root.ops-toggle(); }
@@ -1161,6 +1203,7 @@ export component AppWindow inherits Window {
                             x: 4px;
                             height: parent.height;
                             text: root.ops-summary;
+                            font-size: Theme.font-size-small;
                             vertical-alignment: center;
                             color: Theme.foreground-muted;
                         }
@@ -1172,8 +1215,10 @@ export component AppWindow inherits Window {
                             viewbox-width: 8;
                             viewbox-height: 8;
                             stroke: Theme.foreground-muted;
-                            stroke-width: 1.5px;
-                            commands: root.ops-collapsed ? "M 1 5.5 L 4 2.5 L 7 5.5" : "M 1 2.5 L 4 5.5 L 7 2.5";
+                            stroke-width: 1.2px;
+                            stroke-line-cap: round;
+                            stroke-line-join: round;
+                            commands: root.ops-collapsed ? Glyph.chevron-up : Glyph.chevron-down;
                         }
                         summary-touch := TouchArea {
                             mouse-cursor: pointer;
@@ -1181,16 +1226,30 @@ export component AppWindow inherits Window {
                         }
                     }
                     if root.history-available: Rectangle {
-                        width: history-text.preferred-width + 8px;
+                        width: history-text.preferred-width + 26px;
                         border-radius: Theme.radius;
                         background: history-touch.has-hover ? Theme.hover : transparent;
+                        animate background { duration: Theme.motion-hover; }
                         accessible-role: button;
                         accessible-label: "History";
                         accessible-action-default => { root.history-toggle(); }
-                        history-text := Text {
+                        Path {
                             x: 4px;
+                            y: (parent.height - 12px) / 2;
+                            width: 12px;
+                            height: 12px;
+                            viewbox-width: 16;
+                            viewbox-height: 16;
+                            commands: Glyph.history;
+                            stroke: Theme.foreground-muted;
+                            stroke-width: 1.5px;
+                            stroke-line-cap: round;
+                        }
+                        history-text := Text {
+                            x: 22px;
                             height: parent.height;
                             text: "History";
+                            font-size: Theme.font-size-small;
                             vertical-alignment: center;
                             color: Theme.foreground-muted;
                         }
@@ -1201,6 +1260,7 @@ export component AppWindow inherits Window {
                     }
                     Text {
                         text: root.notice;
+                        font-size: Theme.font-size-small;
                         horizontal-stretch: 1;
                         horizontal-alignment: right;
                         vertical-alignment: center;
@@ -1472,6 +1532,11 @@ export component AppWindow inherits Window {
             border-color: Theme.border;
             border-radius: Theme.radius;
             accessible-role: none;
+            // Fades in as it opens (it is made by an `if`, so it starts hidden).
+            property <bool> shown;
+            init => { self.shown = true; }
+            opacity: self.shown ? 1 : 0;
+            animate opacity { duration: Theme.motion-popup; }
             tip-label := Text {
                 x: 6px;
                 y: 4px;

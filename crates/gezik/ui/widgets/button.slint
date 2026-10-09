@@ -12,11 +12,11 @@ export component ToolButton inherits Rectangle {
     out property <bool> focused: scope.has-focus;
     callback clicked();
 
-    height: Theme.row-height + 4px;
+    height: Theme.row-height;
     width: self.height;
     border-radius: Theme.radius;
-    border-width: scope.has-focus ? 2px : 0px;
-    border-color: Theme.accent;
+    border-width: scope.has-focus ? Theme.focus-width : 0px;
+    border-color: Theme.focus-ring;
     forward-focus: scope;
     accessible-role: button;
     accessible-label: root.text;
@@ -32,8 +32,10 @@ export component ToolButton inherits Rectangle {
         viewbox-height: 16;
         commands: root.icon;
         stroke: Theme.foreground;
-        stroke-width: Theme.icon-size / 10;
-        opacity: root.enabled ? 1 : 0.35;
+        stroke-width: 1.5px;
+        stroke-line-cap: round;
+        stroke-line-join: round;
+        opacity: root.enabled ? 1 : 0.38;
     }
 
     if root.icon == "": Text {
@@ -41,7 +43,7 @@ export component ToolButton inherits Rectangle {
         height: parent.height;
         text: root.text;
         color: Theme.foreground;
-        opacity: root.enabled ? 1 : 0.35;
+        opacity: root.enabled ? 1 : 0.38;
         horizontal-alignment: center;
         vertical-alignment: center;
     }
