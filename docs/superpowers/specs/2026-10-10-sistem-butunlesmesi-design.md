@@ -1,7 +1,7 @@
 # Alt Proje 9: Sistem bütünleşmesi — Tasarım
 
 - **Tarih:** 2026-10-10
-- **Durum:** Taslak; §17'deki ayrıntı kararları kullanıcı onayı bekliyor
+- **Durum:** Onaylandı (kullanıcı 2026-10-10: §17'nin 33 kararı onaylı; "Klasörde göster" yönlendirmesi 9b11 olarak kapsama alındı; 9a ve 9b paralel yürür)
 - **Kapsam:** Gezik yol haritasının 9. alt projesi (`docs/superpowers/notes/2026-10-07-rakip-ozet.md` §2 "9 Sistem bütünleşmesi": maddeler 6, 14, 22, 26, 33, 34, 37, 38, 39, 43, 45). Tek spec, iki bölüm: **9a** macOS yerelliği (3 PR), **9b** geri kalan her şey (10 PR). Parça listesi §14'te.
 - **Dayandığı:** `2026-10-04-dosya-islemleri-design.md` (iş motoru, çakışma listesi, geri alma, çöp), `2026-10-04-gezinme-design.md` (`Location`, sekmeler, kenar çubuğu), `2026-10-04-gorunum-design.md` (sütunlar, simgeler, küçük resimler), `2026-10-08-gunluk-kolayliklar-design.md` (terminal `runas`, bağlantılar, oturum, menü kimlik aralıkları), `2026-10-09-arama-design.md` (palet, `Location::Search`, menü kimlikleri 1500–1699, `Action` 72)
 - **Taban:** `master` 5f950fc (8b, D4 ve ekran düzeltmeleri birleşmiş). Exe 23,6 MB, boşta bellek 7,2–7,3 MB.
@@ -28,7 +28,7 @@ Gezik'i kullanan biri Explorer'a ve Finder'a hiç ihtiyaç duymasın: klasörler
 ### Kapsam dışı (bilerek)
 
 - **Explorer/Finder'ın içine girmek:** DLL enjeksiyonu, kanca, Finder eklentisi (Finder Sync), kabuk değiştirme (`Winlogon\Shell`). Masaüstü ve görev çubuğu Explorer'da, Dock ve masaüstü Finder'da kalır.
-- **`SHOpenFolderAndSelectItems` ve `explorer.exe /select,…` çağrıları:** Chrome'un "Klasörde göster"i, VS Code'un "Reveal in File Explorer"ı gibi bu yolu kullanan uygulamalar Explorer'ı açmaya devam eder. Bunu yönlendirmenin tek yolu Explorer'a kanca atmaktır (Directory Opus böyle yapar); güvenlik ve kararlılık yüzünden yapılmaz. Belgede sınır olarak yazılır.
+- ~~`SHOpenFolderAndSelectItems` ve `explorer.exe /select,…` çağrıları~~: kullanıcı kararıyla kapsama alındı (9b11). Yoklamayla başlanır; Explorer'a kanca atmadan güvenli bir yol (ör. `explorer.exe`'nin `/select` çağrısını karşılayan, yalnız HKCU'ya yazılan ve geri alınabilen bir yönlendirme) bulunamazsa parça düşer ve sınır olarak kalır.
 - Ağ keşfi (Ağ komşuları, Bonjour taraması, WS-Discovery); SMB dışı protokoller (SFTP, WebDAV, FTP: 18. adım).
 - Explorer bağlam menüsüne "Gezik'te aç" eklemek, `gezik://` protokolü, bildirimler.
 - Etiketler, Finder yorumları (12. adım); zaman damgası düzenleme ve ACL düzenleme (§17 karar 4).
@@ -531,8 +531,9 @@ Hatalı değerler bugünkü kalıpla uyarır (`system.hotkey: "ctrl+alt+e" uses 
 | **9b8** | Sanal dosya bırakma, Windows + macOS (§8.1) | — |
 | **9b9** | Tepsi, genel kısayol, girişte başlama, `--background` (§9) | 9b1, 9b3, 9b4 (Linux D-Bus) |
 | **9b10** | Linux simge teması, küçük resim önbelleği, Birlikte aç (§8.5) | 9a2 (menü yolu), 9b4 (`mimeapps` yazıcısı) |
+| **9b11** | "Klasörde göster" (`SHOpenFolderAndSelectItems`, `explorer /select`) çağrılarını Gezik'e yönlendirme; önce yoklama, kanca yok, HKCU, geri alınabilir; güvenli yol yoksa düşer | 9b4 |
 
-Sıra tablodaki gibidir. 9a'nın ve 9b'nin her parçasında macOS → Windows → Linux sırasıyla yazılır; bir sistemde yoklama başarısız olursa o parçanın o sistemdeki kısmı "doğrulanacak" notuyla bir sonraki parçaya kayar ve PR açıklamasında yazılır.
+Sıra tablodaki gibidir; kullanıcı kararıyla 9a ve 9b paralel yürür (9a derlenir ve macOS testi kullanıcının MacBook'unda yapılır; bu sırada Windows'ta denenebilen 9b parçaları ilerler). 9a'nın ve 9b'nin her parçasında macOS → Windows → Linux sırasıyla yazılır; bir sistemde yoklama başarısız olursa o parçanın o sistemdeki kısmı "doğrulanacak" notuyla bir sonraki parçaya kayar ve PR açıklamasında yazılır.
 
 ## 15. Kod yapısı
 
@@ -604,7 +605,7 @@ Her madde önerilen seçimdir; ayraçta seçenek. Onaylanmayan madde plandan ön
 3. **Windows'ta Get Info:** Gezik paneli yok; Alt+Enter sistemin Özellikler penceresini açar (izinler, öznitelikler, güvenlik zaten orada). (Seçenek: Windows'ta da Gezik paneli.)
 4. **Bilgi penceresinin sınırı:** izin, sahip, grup, gizli, kilitli ve "Birlikte aç" düzenlenir; zaman damgası ve ACL düzenlenmez (ACL varlığı gösterilir); setuid/setgid gösterilir ama değiştirilemez; değişiklik anında uygulanır, Ctrl+Z geri alır.
 5. **Windows varsayılanlık mekanizması:** `Directory`, `Drive`, `Folder` altında `shell\gezik` + varsayılan fiil, Win+E için CLSID `{52205fd8-…}`; komut `--shell "%1"`; sanal klasör eşlemesi §6.1'deki tablo, geri kalanı Explorer'a.
-6. **Yönlendirilemeyenler:** `SHOpenFolderAndSelectItems` ve `explorer /select` çağrıları Explorer'da kalır (kanca yok); belgede sınır.
+6. **"Klasörde göster" yönlendirmesi:** kullanıcı kararıyla 9b11 (yoklamalı; kanca yok, güvenli yol yoksa düşer).
 7. **Güvenlik ağı:** Explorer'a en çok bir geri düşüş (döngü koruması), `--shell` ile başlayıp pencere kuramayan Gezik hedefi Explorer'a verir, `restore-explorer.reg` her zaman güncel, exe taşındı uyarısı, geçici klasördeki exe için soru.
 8. **macOS varsayılanlık:** gerekirse `~/Applications/Gezik.app` (exe'ye sembolik bağlantı; olmazsa kopya), `public.folder` varsayılan uygulaması ve `NSFileViewer`; Finder değiştirilmez.
 9. **Tek örnek:** Windows adlandırılmış boru, Unix soketi; anahtar kullanıcı + yapılandırma klasörü; yeni pencere yeni süreçtir, çok pencereli tek süreç yok.
