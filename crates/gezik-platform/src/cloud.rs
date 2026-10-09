@@ -32,6 +32,15 @@ pub fn root_of<'a>(roots: &'a [CloudRoot], path: &Path) -> Option<&'a CloudRoot>
     roots.iter().find(|root| starts_with(path, &root.path))
 }
 
+/// Whether macOS folder `dir` is inside iCloud Drive or a File Provider folder, where an item
+/// can be dataless (its data only in the cloud). A plain text test: no call of its own.
+/// shortcut: only the usual places count (`~/Library/Mobile Documents`, `~/Library/CloudStorage`);
+/// a File Provider folder elsewhere is not detected. Upgrade by asking `roots` once per walk.
+pub fn in_mac_cloud_folder(dir: &Path) -> bool {
+    let dir = dir.to_string_lossy();
+    ["/Library/Mobile Documents/", "/Library/CloudStorage/"].iter().any(|part| dir.contains(part))
+}
+
 fn starts_with(path: &Path, root: &Path) -> bool {
     let mut parts = path.components();
     root.components().all(|r| parts.next().is_some_and(|p| same_part(p, r)))
@@ -370,6 +379,15 @@ mod tests {
         let c = root("/c", "Dropbox");
         let labels: Vec<String> = tidy(vec![a, b, c]).into_iter().map(|r| r.label).collect();
         assert_eq!(labels, ["Dropbox", "OneDrive (Contoso)", "OneDrive (Personal)"]);
+    }
+
+    #[test]
+    fn mac_cloud_folders_are_found_by_their_place() {
+        assert!(in_mac_cloud_folder(Path::new("/Users/u/Library/Mobile Documents/com~apple~CloudDocs")));
+        assert!(in_mac_cloud_folder(Path::new("/Users/u/Library/CloudStorage/OneDrive-Personal/a")));
+        assert!(!in_mac_cloud_folder(Path::new("/Users/u/Library/CloudStorage")), "the list of drives itself");
+        assert!(!in_mac_cloud_folder(Path::new("/Users/u/Documents")));
+        assert!(!in_mac_cloud_folder(Path::new("/Users/u/Library/CloudStorageX/a")));
     }
 
     #[test]

@@ -479,6 +479,7 @@ Write the results to `macos-test-results.md` ("Run: 9b5"). Have iCloud Drive on,
 135. **OneDrive / Google Drive.** Items 132-134 in `~/Library/CloudStorage/OneDrive-…` and `GoogleDrive-…`: do `startDownloading…` / `evict…` work there, and is the "uploaded" key given (if not, `Remove Download` is always the note: write it down).
 136. **Links.** A symlink inside iCloud Drive that points elsewhere: `Download Now` and `Remove Download` both say `A link; left as it is` and the target is untouched. A selection with one item outside the cloud folders: `Not in a cloud folder`, no job.
 137. **Late roots.** Quit Gezik with an iCloud Drive folder as the last tab; open it again: the badges show without moving to another folder (the roots arrive after the folder).
+138. **Search reads no cloud-only file.** In iCloud Drive, a text file `gezik-cloud.txt` containing `zebra42` that is only in the cloud (right-click ▸ `Remove Download`, the cloud badge shows), and a cloud-only folder if you have one. Search for `zebra42` with content search from iCloud Drive: the file is not found and stays in the cloud (the badge and Finder's cloud icon remain; no download in the Finder sidebar's progress); a cloud-only folder is not gone into. Folder size (the Size column of iCloud Drive's parent) starts no download either. After `Download Now` the same search finds it.
 
 Report anything else that looks wrong: layout, fonts, Retina scaling, ⌘ shortcuts that don't work, and the wording of the boxes.
 
