@@ -99,6 +99,7 @@ export component AppWindow inherits Window {
             MenuItem { title: "Duplicate"; shortcut: root.menu-keys ? @keys(Control + D) : @keys(); activated => { root.menu-command("duplicate"); } }
             MenuItem { title: "Make Alias"; shortcut: root.menu-keys ? @keys(Control + Meta + A) : @keys(); activated => { root.menu-command("make-alias"); } }
             MenuItem { title: "Show Package Contents"; activated => { root.menu-command("show-package-contents"); } }
+            MenuItem { title: "Share…"; activated => { root.menu-command("share"); } }
             MenuSeparator { }
             MenuItem { title: "Move to Trash"; shortcut: root.menu-keys ? @keys(Control + Backspace) : @keys(); activated => { root.menu-command("trash"); } }
             MenuItem { title: "Delete Immediately…"; shortcut: root.menu-keys ? @keys(Control + Alt + Backspace) : @keys(); activated => { root.menu-command("delete-permanently"); } }

@@ -103,6 +103,9 @@ content-max-size = "64 MB" # larger files are not read for text
 # A second `gezik` (a folder from the command line, a script, another app) opens in the
 # running window instead of a new one; `gezik --new-window` still opens one. Read at start.
 single-instance = true
+# macOS: Space opens the system Quick Look panel ("system") or Gezik's own window ("gezik").
+# Windows and Linux always use Gezik's own.
+quick-look = "system"     # system | gezik
 
 [shortcuts]
 # Change any shortcut; "mod" is Cmd on macOS and Ctrl elsewhere; "" disables.
@@ -166,6 +169,7 @@ single-instance = true
 # save-search = ""         # the search bar's search, under a name ([[searches]])
 # make-alias = ""          # macOS: "mod+ctrl+a" (a Finder alias of the selected items)
 # show-package-contents = ""   # macOS: go into an app or another package as a folder
+# share = ""                   # macOS: Finder's Share… for the selected items
 
 # Saved rule sets for batch rename (Rename… with two or more items selected). The rename
 # layer writes them with "Presets ▾ › Save current rules as…"; they can also be written here.

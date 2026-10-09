@@ -12,6 +12,7 @@ mod copy_path;
 mod dialog;
 mod drag;
 mod filter;
+mod finder_menu;
 mod folder_sizes;
 mod folder_watch;
 mod frame_limit;
@@ -122,6 +123,7 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
     operations::with_current(|ops| ops.set_files(loaded.settings.files));
     batch_rename::set_presets(loaded.settings.rename_presets.clone());
     archives::set_settings(loaded.settings.tools.clone(), loaded.settings.archives);
+    preview::set_quick_look(loaded.settings.system.quick_look);
     convert::set_settings(loaded.settings.convert.clone(), loaded.settings.commands.clone());
     filter::set_settings(loaded.settings.keyboard, loaded.settings.filters.clone());
     path_box::set_settings(loaded.settings.history);
@@ -173,6 +175,7 @@ fn perform(
         Action::ViewGrid => view.set_mode(gezik_core::view::ViewMode::Grid),
         Action::TogglePreview => preview.toggle_pane(),
         Action::QuickLook => preview.toggle_quick_look(),
+        Action::Share => finder_menu::share_selection(window, view),
         Action::Rename => ops.rename_start(),
         Action::NewFolder => ops.new_folder(None),
         Action::Copy => ops.copy(false),

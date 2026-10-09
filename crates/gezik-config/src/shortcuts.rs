@@ -263,10 +263,12 @@ pub enum Action {
     MakeAlias,
     /// Goes into the selected folder even when it is a package (an app's contents).
     ShowPackageContents,
+    /// macOS: Finder's Share… for the selection (AirDrop, Mail, Messages …) (9a2).
+    Share,
 }
 
 impl Action {
-    pub const ALL: [Action; 75] = [
+    pub const ALL: [Action; 76] = [
         Action::NewTab,
         Action::NewWindow,
         Action::CloseTab,
@@ -342,6 +344,7 @@ impl Action {
         Action::SaveSearch,
         Action::MakeAlias,
         Action::ShowPackageContents,
+        Action::Share,
     ];
 
     pub fn name(self) -> &'static str {
@@ -421,6 +424,7 @@ impl Action {
             Action::SaveSearch => "save-search",
             Action::MakeAlias => "make-alias",
             Action::ShowPackageContents => "show-package-contents",
+            Action::Share => "share",
         }
     }
 
@@ -502,6 +506,7 @@ impl Action {
             Action::SaveSearch => "Save Search…",
             Action::MakeAlias => "Make Alias",
             Action::ShowPackageContents => "Show Package Contents",
+            Action::Share => "Share…",
         }
     }
 
@@ -656,7 +661,7 @@ impl Action {
             (Action::QuickOpen, _) => &["mod+p"],
             (Action::CalculateFolderSizes | Action::SaveSearch, _) => &[],
             (Action::MakeAlias, Platform::Mac) => &["mod+ctrl+a"],
-            (Action::MakeAlias, Platform::Other) | (Action::ShowPackageContents, _) => &[],
+            (Action::MakeAlias, Platform::Other) | (Action::ShowPackageContents, _) | (Action::Share, _) => &[],
         }
     }
 }
@@ -843,7 +848,7 @@ mod tests {
             assert_eq!(fixed_owner(&cmd_option, Platform::Mac), None);
         }
         assert_eq!((Action::pin(0), Action::pin(10)), (None, None));
-        assert_eq!(Action::ALL.len(), 75);
+        assert_eq!(Action::ALL.len(), 76);
         assert_eq!(other.action_for(&chord("ctrl+1")), Some(Action::Tab1), "Ctrl+1 is still tab 1");
         assert_eq!(other.action_for(&chord("ctrl+alt+1")), None, "AltGr+1 types");
     }
@@ -1301,7 +1306,7 @@ clear-history = \"ctrl+shift+h\"
         for name in ["search", "flat-view", "show-in-folder", "copy-with-folders", "cut-with-folders"] {
             assert!(Action::from_name(name).is_some(), "{name}");
         }
-        assert_eq!(Action::ALL.len(), 75);
+        assert_eq!(Action::ALL.len(), 76);
     }
 
     #[test]
@@ -1323,7 +1328,7 @@ clear-history = \"ctrl+shift+h\"
         for name in ["command-palette", "quick-open", "calculate-folder-sizes", "save-search"] {
             assert!(Action::from_name(name).is_some(), "{name}");
         }
-        assert_eq!(Action::ALL.len(), 75);
+        assert_eq!(Action::ALL.len(), 76);
     }
 
     #[test]
@@ -1343,7 +1348,17 @@ clear-history = \"ctrl+shift+h\"
         }
         assert_eq!(Action::MakeAlias.title(), "Make Alias");
         assert_eq!(Action::ShowPackageContents.title(), "Show Package Contents");
-        assert_eq!(Action::ALL.len(), 75);
+        assert_eq!(Action::ALL.len(), 76);
+    }
+
+    #[test]
+    fn the_9a2_actions_have_their_keys() {
+        for platform in [Platform::Other, Platform::Mac] {
+            assert_eq!(Shortcuts::defaults(platform).chord_for(Action::Share), None, "no key (spec 13.2)");
+        }
+        assert_eq!(Action::from_name("share"), Some(Action::Share));
+        assert_eq!(Action::Share.title(), "Share…");
+        assert_eq!(Action::ALL.len(), 76);
     }
 
     #[test]

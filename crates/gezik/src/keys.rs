@@ -503,6 +503,7 @@ pub fn acts_on_selection(action: Action) -> bool {
             | Action::ShowInFolder
             | Action::MakeAlias
             | Action::ShowPackageContents
+            | Action::Share
     )
 }
 
@@ -530,6 +531,7 @@ pub fn needs_list(action: Action) -> bool {
             | Action::ShowInFolder
             | Action::MakeAlias
             | Action::ShowPackageContents
+            | Action::Share
     )
 }
 
@@ -797,6 +799,7 @@ mod tests {
                 Action::PasteMove
                 | Action::MakeAlias
                 | Action::ShowPackageContents
+                | Action::Share
                 | Action::Duplicate
                 | Action::BatchRename
                 | Action::ToggleTabLock

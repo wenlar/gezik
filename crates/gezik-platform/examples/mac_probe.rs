@@ -1,6 +1,6 @@
-//! macOS: tries the system calls part 9a1 relies on (spec 9 §4.1, §4.2, §4.5) through Gezik's
+//! macOS: tries the system calls parts 9a1 and 9a2 rely on (spec 9 §4.1-§4.5) through Gezik's
 //! own code, and prints what they did. On a Mac:
-//! `cargo run --release -p gezik-platform --example mac_probe -- [paths…]`
+//! `cargo run --release -p gezik-platform --example mac_probe -- [--service "<Quick Action>"] [paths…]`
 //! and paste the whole output into docs/superpowers/notes/macos-test-results.md.
 
 #[cfg(not(target_os = "macos"))]
@@ -23,7 +23,13 @@ fn main() {
         start.elapsed().as_secs_f64() * 1000.0
     }
     let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
-    let mut paths: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
+    let mut args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    let service = args.iter().position(|a| a == "--service").map(|i| {
+        let title = args.get(i + 1).map(|t| t.to_string_lossy().into_owned()).unwrap_or_default();
+        args.drain(i..(i + 2).min(args.len()));
+        title
+    });
+    let mut paths: Vec<PathBuf> = args.into_iter().map(PathBuf::from).collect();
     if paths.is_empty() {
         paths = vec![
             "/Applications/Safari.app".into(),
@@ -128,5 +134,73 @@ fn main() {
     std::fs::remove_file(dir.join("a.txt")).ok();
     let gone = finder::resolve_alias(&dir.join("a.txt alias"));
     println!("{} original gone: {gone:?}", if gone == AliasTarget::Missing { "PASS" } else { "FAIL" });
+    println!("== 4. Open With: LaunchServices on the main thread and a worker (spec 4.3) ==");
+    use gezik_platform::open_with;
+    let files: Vec<PathBuf> = paths.iter().filter(|p| p.is_file() || finder::is_package(p)).cloned().collect();
+    for path in &files {
+        let start = Instant::now();
+        let main = open_with::apps(std::slice::from_ref(path));
+        let main_ms = ms(start);
+        let worker_path = path.clone();
+        let start = Instant::now();
+        let worker = std::thread::spawn(move || open_with::apps(&[worker_path])).join().unwrap_or_default();
+        let verdict = if !main.is_empty() && main == worker { "PASS" } else { "FAIL" };
+        let names: Vec<String> =
+            main.iter().map(|a| if a.default { format!("{} (default)", a.name) } else { a.name.clone() }).collect();
+        println!(
+            "{verdict} {}: {main_ms:.1} ms main, {:.1} ms worker: {}",
+            path.display(),
+            ms(start),
+            names.join(", ")
+        );
+    }
+    if files.len() > 1 {
+        let start = Instant::now();
+        let shared = open_with::apps(&files);
+        println!("apps for all {} files: {} in {:.1} ms", files.len(), shared.len(), ms(start));
+        let fifty: Vec<PathBuf> = files.iter().cycle().take(open_with::MAX_ITEMS).cloned().collect();
+        let start = Instant::now();
+        let count = open_with::apps(&fifty).len();
+        println!("50 items (the menu waits 50 ms): {count} apps in {:.1} ms", ms(start));
+    } else {
+        println!("(give two or more files, e.g. a .txt and a .pdf, to try Open With for several items)");
+    }
+    println!("== 5. Quick Actions: installed bundles, types, running one (spec 4.3, decision 26) ==");
+    use gezik_platform::services;
+    for path in &paths {
+        let start = Instant::now();
+        let offered: Vec<String> =
+            services::for_items(std::slice::from_ref(path)).into_iter().map(|s| s.title).collect();
+        println!("{}: {} in {:.1} ms: {}", path.display(), offered.len(), ms(start), offered.join(", "));
+    }
+    let start = Instant::now();
+    match std::process::Command::new("/System/Library/CoreServices/pbs").arg("-dump_pboard").output() {
+        Ok(out) => {
+            let text = String::from_utf8_lossy(&out.stdout);
+            println!(
+                "pbs -dump_pboard: {} bytes, {} NSSendFileTypes, {} NSMenuItem in {:.0} ms (all services, apps' too)",
+                text.len(),
+                text.matches("NSSendFileTypes").count(),
+                text.matches("NSMenuItem").count(),
+                ms(start)
+            );
+        }
+        Err(err) => println!("pbs -dump_pboard: not run ({err})"),
+    }
+    match service {
+        Some(title) => {
+            let file = dir.join("service-test.txt");
+            std::fs::write(&file, "gezik").ok();
+            let ran = services::perform(&title, std::slice::from_ref(&file));
+            println!(
+                "{} perform \"{title}\" on {}: {ran:?} (check that it did its work)",
+                if ran.is_ok() { "PASS" } else { "FAIL" },
+                file.display()
+            );
+        }
+        None => println!(
+            "(make a Quick Action in Automator or Shortcuts that takes files, then rerun with --service \"<its name>\")"
+        ),
+    }
     println!("(leave {} for Finder: its aliases should show the arrow badge; delete it afterwards)", dir.display());
 }

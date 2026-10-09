@@ -101,9 +101,49 @@ pub fn make_alias(target: &Path, at: &Path) -> std::io::Result<()> {
     }
 }
 
+/// A point in Gezik's window (logical pixels from its top left) in its view's own terms.
+pub fn view_point(at: (f64, f64), height: f64, flipped: bool) -> (f64, f64) {
+    (at.0, if flipped { at.1 } else { height - at.1 })
+}
+
+/// Where Share's picker points when no click gave a place: the pointer when it is over the
+/// view, else the view's middle.
+pub fn anchor(pointer: Option<(f64, f64)>, size: (f64, f64)) -> (f64, f64) {
+    match pointer {
+        Some((x, y)) if (0.0..size.0).contains(&x) && (0.0..size.1).contains(&y) => (x, y),
+        _ => (size.0 / 2.0, size.1 / 2.0),
+    }
+}
+
+/// Finder's Share… for `paths`: the system's picker (AirDrop, Mail, Messages, Notes…) at `at`
+/// (window position, logical pixels), else at the pointer. Main thread; macOS only.
+pub fn share(
+    window: &impl raw_window_handle::HasWindowHandle,
+    paths: &[PathBuf],
+    at: Option<(f64, f64)>,
+) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    return crate::mac::share::share(window, paths, at);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (window, paths, at);
+        Err("Sharing is on macOS only".to_owned())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn share_points_are_in_the_views_own_terms() {
+        assert_eq!(view_point((10.0, 30.0), 400.0, false), (10.0, 370.0), "AppKit's y grows upwards");
+        assert_eq!(view_point((10.0, 30.0), 400.0, true), (10.0, 30.0));
+        assert_eq!(anchor(Some((5.0, 6.0)), (100.0, 80.0)), (5.0, 6.0));
+        assert_eq!(anchor(Some((-1.0, 6.0)), (100.0, 80.0)), (50.0, 40.0), "outside: the middle");
+        assert_eq!(anchor(Some((5.0, 80.0)), (100.0, 80.0)), (50.0, 40.0));
+        assert_eq!(anchor(None, (100.0, 80.0)), (50.0, 40.0));
+    }
 
     #[test]
     fn finder_names_are_asked_for_only_under_home_and_root() {

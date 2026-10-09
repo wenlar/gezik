@@ -10,6 +10,8 @@ cargo run --release -p gezik-platform --example mac_probe -- ~/Desktop/some.pdf 
 
 Paste its whole output into the results, then run `cargo test -p gezik-platform` (its macOS-only tests for icons, Finder names and aliases run only there).
 
+Part 9a2 (Open With, Share, Quick Actions, the system Quick Look panel; items 94-100) has never run on a Mac. Run it on `feat/system-9a2` (after the merge: `master`) and write a new section **"Run: 9a2"** in `macos-test-results.md`. Start with the probe (item 94), then run `cargo test -p gezik-platform` (its macOS-only tests `text_files_open_in_textedit` and `types_and_conformance` run only there). Items 94-100 follow 9a1's numbers; part 9b1 also numbers its items from 85 on its own branch, so the branch merged second renumbers.
+
 This file is for a person, or Claude Code on the Mac, testing the state after 5d. Write the results into `docs/superpowers/notes/macos-test-results.md`, in a new section **"Run 2 (after 5d)"** below Run 1. Don't change Run 1.
 - Give PASS, FAIL or NOT TESTED for every item.
 - For a FAIL, give the steps, what you expected, what happened, and a screenshot path. Don't commit screenshots.
@@ -24,6 +26,7 @@ curl https://sh.rustup.rs -sSf | sh   # Rust; then open a new terminal
 git clone git@github.com:wenlar/gezik.git && cd gezik   # or: git fetch in the existing clone
 git checkout feat/batch-ops-5d    # until it is merged; after that: git checkout master && git pull
                                   # part 9a1: git checkout feat/system-9a1 (until it is merged)
+                                  # part 9a2: git checkout feat/system-9a2 (until it is merged)
 git log -1 --oneline              # write this SHA into the results
 cargo build --release -p gezik
 rm -rf /tmp/gezik-cfg && mkdir -p /tmp/gezik-cfg /tmp/gezik-test
@@ -408,6 +411,16 @@ Re-checks of the shared UI fixes (fix/shared-ui, on master)
 92. **Packages.** In `/Applications` double-click Safari.app: Safari starts, Gezik does not go in; Enter does the same. Right-click Safari.app ▸ Show Package Contents (right after Open) and File ▸ Show Package Contents: Gezik goes into `Safari.app` (Contents). A Keynote/Pages document that is a folder (`.key`/`.pages` package, e.g. from an older version, or `.rtfd` from TextEdit) opens in its app. A plain folder you name `x.app` (`mkdir /tmp/gezik-test/x.app`) is entered on double-click. The command palette lists Make Alias and Show Package Contents.
 93. **Exe size.** `ls -l target/release/gezik` before (on `master`) and after (on `feat/system-9a1`), both `cargo build --release -p gezik`: write both numbers; the difference should be under 256 KB plus the Quick Look and CoreGraphics bindings.
 
+### 9a2, Open With, Share, Quick Actions, Quick Look panel
+
+94. **Probe.** Make a Quick Action in Automator (File ▸ New ▸ Quick Action, "Workflow receives current files or folders in Finder", one "Reveal Finder Items" action, save as "Gezik Test"), then `cargo run --release -p gezik-platform --example mac_probe -- --service "Gezik Test" ~/Desktop/some.txt ~/Desktop/some.pdf ~/Pictures/photo.jpg /Applications/Safari.app`. Paste the whole output into the results. Section 4: every line PASS, each file lists its default app first, and note the "50 items" time (above 50 ms means the menu shows "Loading…" for 50 items). Section 5: the `.txt` offers "Gezik Test"; note the `pbs -dump_pboard` line; `perform "Gezik Test"` is PASS and a Finder window shows the test file.
+95. **Open With.** Right-click a `.txt`: "Open With ▸" right after "Open with default app", TextEdit first with "(default)", other apps by name, then "Other…". Choose one: the file opens in it. Select a `.txt` and a `.md`: only apps that open both; select a `.txt` and a `.png`: TextEdit is not offered. "Other…" opens a panel in /Applications where only apps can be chosen; Cancel does nothing; choosing one opens the file in it. Right-click Safari.app and a `.pages` package: "Open With ▸" after "Show Package Contents". A plain folder and This PC rows have no "Open With". Select 60 files: the list is the focused one's, and choosing an app sends all 60 to it at once (not one window per file). If "Loading…" ever shows, right-click the same items again: the apps are there.
+96. **Share.** Right-click a file ▸ "Share…": the system's share menu (AirDrop, Mail, Messages, Notes …) opens where you clicked; Mail gets the file as an attachment. Select three files ▸ Share… ▸ Mail: all three. File ▸ Share… and the command palette's "Share…" open it at the pointer (or the window's middle when the pointer is outside). Write whether the menu appeared every time (Apple says it should be opened on a mouse press). The menu stays up until you choose or click away (it is not closed at once) and closes cleanly.
+97. **Quick Actions.** Right-click the `.txt`: "Quick Actions ▸" after "Share…" lists "Gezik Test"; choosing it reveals the file in Finder. An image-only Quick Action (Automator: "receives current image files") shows for a `.jpg` and not for a `.txt` or a folder; a mixed selection shows only actions every item fits. Also try a Quick Action that runs for a few seconds (Automator: "Run Shell Script" with `sleep 3; open "$@"`): it still gets the files (Gezik frees its pasteboard right after asking for the service; if a slow action gets nothing, write it down). Select more than 50 rows: no "Quick Actions" item. With no file-taking Quick Action installed, no "Quick Actions" item.
+98. **Quick Look panel.** With `[system] quick-look = "system"` (the default): select a PDF, press Space: the system's Quick Look panel (as in Finder) shows it; Space again closes it. With the panel open, ↓/↑ in a list (or ←/→ in the grid) move Gezik's selection and the panel follows; select three files and press Space: the panel shows "1 of 3" and its own arrows page among them; Esc and the panel's close button close it, then Space opens it again. After the panel closes, the keyboard is Gezik's again (arrows move the selection at once, no extra click). A video plays, a folder shows its icon. `quick-look = "gezik"` brings Gezik's own window back at once. If the panel never opens, the status bar says so and Gezik's window opens: write it down (the default then becomes "gezik").
+99. **Unchanged.** The row menu still has Make Alias, Create link, Copy path as ▸, Commands ▸ (when set up), and all four submenus show together on a file with commands. Right-clicking feels as quick as before; Activity Monitor shows no extra gezik thread after the menu closes.
+100. **Exe size.** `ls -l target/release/gezik` on `feat/system-9a1` and on `feat/system-9a2`, both `cargo build --release -p gezik`: write both numbers; the difference should be under 256 KB plus the Quick Look UI bindings.
+
 ### 9b1, command line and single instance
 
 110. **Tests first.** In the clone: `cargo test -p gezik-platform instance`. These tests (socket, stale socket, hung and huge callers, peer uid) only compiled on Windows; they never ran on a Mac before.
@@ -425,9 +438,9 @@ These are known differences from Finder and ForkLift (from the ForkLift comparis
 - **Icons and thumbnails:**
   - Alias rows show Finder's "Document" type and the generic document icon, not "Alias" with the arrow badge (Gezik reads no extra file data while listing).
   - Pinned folders keep their own labels; only the sidebar's known folders, the address bar, tab titles and the rows under `~` and `/` use Finder's localized names.
-- **Quick Look and context menu:**
-  - Quick Look is Gezik's own window, with no QL plugins, video, PDF or Office preview.
-  - The right-click menu is Gezik's own: no "Open With ▸" list, Share/AirDrop, Services, Quick Actions, "Show in Finder" or "Get Info".
+- **Context menu:**
+  - Open With ▸ lists app names without their icons.
+  - Quick Actions ▸ lists only Quick Actions and Services installed as bundles in ~/Library/Services and /Library/Services; services that apps provide (e.g. Terminal's "New Terminal at Folder") and the system's Markup/Rotate/Create PDF are not listed, and one turned off in System Settings still shows.
 - **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (⌘R or F5 works it out again). Search results and the flat view show no folder sizes.
 - **Missing features:**
   - Finder tags are not read or shown.
