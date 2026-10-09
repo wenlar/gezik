@@ -1,8 +1,9 @@
-//! Known folders and drives, loaded off the UI thread, plus display titles for locations.
+//! Known folders, drives and cloud roots, loaded off the UI thread, plus display titles for locations.
 
 use std::path::Path;
 
 use gezik_core::nav::Location;
+use gezik_platform::cloud::CloudRoot;
 use gezik_platform::{Drive, KnownFolder};
 
 use crate::AppWindow;
@@ -11,6 +12,7 @@ use crate::AppWindow;
 pub struct Places {
     pub known: Vec<KnownFolder>,
     pub drives: Vec<Drive>,
+    pub cloud: Vec<CloudRoot>,
 }
 
 /// One half of [`Places`]: known folders and drives arrive separately, so a slow drive
@@ -19,6 +21,8 @@ pub struct Places {
 pub enum PlacesPart {
     Known(Vec<KnownFolder>),
     Drives(Vec<Drive>),
+    /// A third part: the cloud roots (spec 9 §7.2).
+    Cloud(Vec<CloudRoot>),
 }
 
 impl Places {
@@ -27,6 +31,7 @@ impl Places {
         match part {
             PlacesPart::Known(known) => self.known = known,
             PlacesPart::Drives(drives) => self.drives = drives,
+            PlacesPart::Cloud(cloud) => self.cloud = cloud,
         }
     }
 
@@ -47,6 +52,9 @@ impl Places {
         if let Some(drive) = self.drives.iter().find(|d| d.path == *path) {
             return drive.label.clone();
         }
+        if let Some(root) = self.cloud.iter().find(|r| r.path == *path) {
+            return root.label.clone();
+        }
         gezik_platform::finder::finder_name(path).unwrap_or_else(|| file_name_or_path(path))
     }
 }
@@ -55,11 +63,12 @@ fn file_name_or_path(path: &Path) -> String {
     path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.display().to_string())
 }
 
-/// Reads known folders and drives on two background threads, then calls `on_ready` on the
+/// Reads known folders, drives and cloud roots on three background threads, then calls `on_ready` on the
 /// UI thread once for each, as soon as it is ready.
 pub fn load_in_background(window: slint::Weak<AppWindow>, on_ready: impl Fn(PlacesPart) + Clone + Send + 'static) {
     spawn_part(window.clone(), on_ready.clone(), || PlacesPart::Known(gezik_platform::known_folders()));
-    spawn_part(window, on_ready, || PlacesPart::Drives(gezik_platform::drives()));
+    spawn_part(window.clone(), on_ready.clone(), || PlacesPart::Drives(gezik_platform::drives()));
+    spawn_part(window, on_ready, || PlacesPart::Cloud(gezik_platform::cloud::roots()));
 }
 
 fn spawn_part(
@@ -87,6 +96,7 @@ mod tests {
                 label: "Data".into(),
                 kind: gezik_platform::DriveKind::Fixed,
             }],
+            cloud: Vec::new(),
         };
         assert_eq!(places.title_for(&Location::Path("/u/a/Docs".into())), "Belgeler");
         assert_eq!(places.title_for(&Location::Path("/mnt/x".into())), "Data");
@@ -113,5 +123,20 @@ mod tests {
         places.apply(PlacesPart::Drives(Vec::new()));
         assert_eq!(places.known, [folder]);
         assert!(places.drives.is_empty());
+    }
+
+    #[test]
+    fn a_cloud_root_is_titled_by_its_label() {
+        let root = gezik_platform::cloud::CloudRoot {
+            path: PathBuf::from("/u/OneDrive"),
+            label: "OneDrive (Personal)".into(),
+            account: "Personal".into(),
+        };
+        let mut places = Places::default();
+        places.apply(PlacesPart::Cloud(vec![root]));
+        assert_eq!(places.title_for(&Location::Path("/u/OneDrive".into())), "OneDrive (Personal)");
+        assert_eq!(places.title_for(&Location::Path("/u/OneDrive/x".into())), "x", "only the root itself");
+        places.apply(PlacesPart::Drives(Vec::new()));
+        assert_eq!(places.cloud.len(), 1, "the drives' reload keeps the cloud roots");
     }
 }

@@ -446,6 +446,9 @@ pub fn mapped_remote(_letter: char) -> Option<String> {
 /// `wants_meta` asks for (the names that match), spec 3.4.
 pub fn read_dir_items(dir: &Path, wants_meta: &dyn Fn(&str, bool) -> bool) -> io::Result<Vec<super::DirItem>> {
     use std::os::unix::fs::MetadataExt;
+    // In a macOS cloud folder every item is `lstat`ed for its dataless bit (a read would
+    // download it); elsewhere nothing extra is read.
+    let cloud = cfg!(target_os = "macos") && crate::cloud::in_mac_cloud_folder(dir);
     let mut items = Vec::new();
     for entry in std::fs::read_dir(dir)? {
         let Ok(entry) = entry else { continue };
@@ -465,9 +468,13 @@ pub fn read_dir_items(dir: &Path, wants_meta: &dyn Fn(&str, bool) -> bool) -> io
             device: 0,
             has_meta: false,
         };
-        if item.is_dir || wants_meta(&item.name, item.is_dir) {
+        if cloud || item.is_dir || wants_meta(&item.name, item.is_dir) {
             // `DirEntry::metadata` does not follow links (lstat).
             if let Ok(meta) = entry.metadata() {
+                if cloud {
+                    item.flags = gezik_core::attribute_flags(&meta);
+                    item.offline = item.flags & gezik_core::Entry::CLOUD_ONLY != 0;
+                }
                 item.device = meta.dev();
                 item.size = if meta.is_file() { meta.len() } else { 0 };
                 item.modified = meta.modified().ok();
@@ -482,8 +489,16 @@ pub fn read_dir_items(dir: &Path, wants_meta: &dyn Fn(&str, bool) -> bool) -> io
 
 /// Opens `path` to read its text only if it is a regular file: never a FIFO, socket or device
 /// (opened without blocking, then checked) and never through a link. `Ok(None)` for the rest;
-/// the size comes with it.
+/// the size comes with it. On macOS a dataless (cloud-only) file is `None` too.
 pub fn open_regular(path: &Path) -> io::Result<Option<(File, u64)>> {
+    // A dataless (cloud-only) file is not opened: reading it would download it.
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::macos::fs::MetadataExt;
+        if std::fs::symlink_metadata(path)?.st_flags() & gezik_core::SF_DATALESS != 0 {
+            return Ok(None);
+        }
+    }
     let file = match OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW).open(path) {
         Ok(file) => file,
         Err(err) if err.raw_os_error() == Some(libc::ELOOP) => return Ok(None),

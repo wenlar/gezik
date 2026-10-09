@@ -505,6 +505,8 @@ pub fn acts_on_selection(action: Action) -> bool {
             | Action::ShowPackageContents
             | Action::Share
             | Action::PutBack
+            | Action::KeepOffline
+            | Action::FreeUpSpace
             | Action::GetInfo
     )
 }
@@ -535,6 +537,8 @@ pub fn needs_list(action: Action) -> bool {
             | Action::ShowPackageContents
             | Action::Share
             | Action::PutBack
+            | Action::KeepOffline
+            | Action::FreeUpSpace
             | Action::GetInfo
     )
 }
@@ -821,7 +825,9 @@ mod tests {
                 | Action::ShowTrash
                 | Action::PutBack
                 | Action::EmptyTrash
-                | Action::SystemIntegration => continue,
+                | Action::SystemIntegration
+                | Action::KeepOffline
+                | Action::FreeUpSpace => continue,
             };
             assert_eq!(reach(text), Some(action), "{text}");
         }

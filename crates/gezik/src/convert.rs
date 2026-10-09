@@ -1480,7 +1480,11 @@ impl Convert {
             };
             let mut counts: Vec<(&'static str, usize)> = Vec::new();
             if wants_text {
-                let texts = items.iter().filter(|(p, d)| !d && looks_text(&name_of(p))).take(DETECT_MAX);
+                // A cloud-only file is not read: that would download it.
+                let texts = items
+                    .iter()
+                    .filter(|(p, d)| !d && looks_text(&name_of(p)) && !gezik_platform::only_in_cloud(p))
+                    .take(DETECT_MAX);
                 for (path, _) in texts {
                     if current.load(Ordering::SeqCst) != opening {
                         return;

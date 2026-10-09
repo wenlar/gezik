@@ -58,12 +58,15 @@ pub fn thumbnail(path: &Path, px: u32) -> Option<Rgba> {
 /// [`thumbnail`], given up once `wanted` says it is no longer needed: macOS cancels the Quick
 /// Look request; elsewhere nothing waits, and `wanted` is not asked.
 pub fn thumbnail_while(path: &Path, px: u32, wanted: &dyn Fn() -> bool) -> Option<Rgba> {
-    if only_in_cloud(path) {
-        return None;
-    }
+    let in_cloud = only_in_cloud(path);
+    // Windows asks the shell first; for a cloud file only its cache (the cloud app's own
+    // thumbnail), never a handler that would read the data (spec 9 §7.3).
     #[cfg(windows)]
-    if let Some(image) = win::thumbnail(path, px) {
+    if let Some(image) = win::thumbnail(path, px, in_cloud) {
         return Some(image);
+    }
+    if in_cloud {
+        return None;
     }
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or_default();
     if can_decode(ext) {
@@ -78,19 +81,11 @@ pub fn thumbnail_while(path: &Path, px: u32, wanted: &dyn Fn() -> bool) -> Optio
     }
 }
 
-/// Whether the file's data is only in the cloud (macOS: iCloud, File Provider), so reading it
-/// would download it (spec 9 §4.5). Follows a link; reads no data. Always `false` elsewhere.
+/// Whether the file's data is only in the cloud (Windows placeholders, iCloud, File
+/// Provider), so reading it would download it (spec 9 §4.5, §7.3). Follows a link; reads no
+/// data. Always `false` on Linux.
 pub fn only_in_cloud(path: &Path) -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        use std::os::macos::fs::MetadataExt;
-        std::fs::metadata(path).is_ok_and(|meta| meta.st_flags() & crate::finder::SF_DATALESS != 0)
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = path;
-        false
-    }
+    std::fs::metadata(path).is_ok_and(|meta| gezik_core::attribute_flags(&meta) & gezik_core::Entry::CLOUD_ONLY != 0)
 }
 
 /// Waits for the answer on `receive` while `wanted` says so, at most `limit`, asking `wanted`
@@ -119,20 +114,28 @@ mod win {
     use windows::Win32::Foundation::SIZE;
     use windows::Win32::Graphics::Gdi::DeleteObject;
     use windows::Win32::System::Com::IBindCtx;
-    use windows::Win32::UI::Shell::{IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_THUMBNAILONLY};
+    use windows::Win32::UI::Shell::{
+        IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF, SIIGBF_INCACHEONLY, SIIGBF_THUMBNAILONLY,
+    };
     use windows::core::HSTRING;
 
     use crate::Rgba;
 
-    /// The shell's thumbnail (its cache, or the type's thumbnail handler); `None` if the
-    /// type has no thumbnails.
-    pub fn thumbnail(path: &Path, px: u32) -> Option<Rgba> {
+    /// What the shell may do: a cloud file's thumbnail only from the cache, since the type's
+    /// handler would read (download) the data.
+    pub(super) fn image_flags(in_cloud: bool) -> SIIGBF {
+        if in_cloud { SIIGBF_THUMBNAILONLY | SIIGBF_INCACHEONLY } else { SIIGBF_THUMBNAILONLY }
+    }
+
+    /// The shell's thumbnail (its cache, or the type's thumbnail handler unless `in_cloud`);
+    /// `None` if there is none.
+    pub fn thumbnail(path: &Path, px: u32, in_cloud: bool) -> Option<Rgba> {
         let side = px.clamp(1, 1024) as i32;
         // SAFETY: the bitmap is ours to delete once converted.
         unsafe {
             let factory: IShellItemImageFactory =
                 SHCreateItemFromParsingName(&HSTRING::from(path.as_os_str()), None::<&IBindCtx>).ok()?;
-            let bitmap = factory.GetImage(SIZE { cx: side, cy: side }, SIIGBF_THUMBNAILONLY).ok()?;
+            let bitmap = factory.GetImage(SIZE { cx: side, cy: side }, image_flags(in_cloud)).ok()?;
             let image = crate::icons::win::bitmap_to_rgba(bitmap);
             let _ = DeleteObject(bitmap.into());
             let mut image = image?;
@@ -148,6 +151,25 @@ mod win {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn a_cloud_file_gets_only_a_cached_thumbnail() {
+        use windows::Win32::UI::Shell::{SIIGBF_INCACHEONLY, SIIGBF_THUMBNAILONLY};
+        assert_eq!(win::image_flags(true), SIIGBF_THUMBNAILONLY | SIIGBF_INCACHEONLY);
+        assert_eq!(win::image_flags(false), SIIGBF_THUMBNAILONLY, "a local file may use the handler");
+    }
+
+    #[test]
+    fn only_in_cloud_reads_no_data() {
+        let dir = std::env::temp_dir().join(format!("gezik-cloud-local-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("here.txt");
+        std::fs::write(&file, "x").unwrap();
+        assert!(!only_in_cloud(&file), "a plain local file");
+        assert!(!only_in_cloud(&dir.join("missing")), "nothing there");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn waiting_ends_with_the_answer_or_when_no_longer_wanted() {

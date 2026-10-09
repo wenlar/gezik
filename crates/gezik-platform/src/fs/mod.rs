@@ -44,10 +44,13 @@ pub struct DirItem {
     pub is_link: bool,
     /// A regular file: not a folder, link, FIFO, socket or device. Only these are read for text.
     pub is_file: bool,
-    /// Windows: the data is not on this disk (a cloud placeholder, an offline file), so reading
-    /// it would download it. A content search leaves it unread.
+    /// Windows and macOS: the data is not on this disk (a cloud placeholder, an offline file, a
+    /// dataless iCloud / File Provider item), so reading it would download it. A content search
+    /// leaves it unread and a walk does not go into such a folder. macOS checks only inside the
+    /// usual cloud folders (`cloud::in_mac_cloud_folder`).
     pub offline: bool,
-    /// `Entry::HIDDEN` and `Entry::SYSTEM` (Windows).
+    /// `Entry::HIDDEN`, `Entry::SYSTEM` (Windows) and the cloud bits (Windows; macOS in its cloud
+    /// folders).
     pub flags: u8,
     pub size: u64,
     pub modified: Option<SystemTime>,

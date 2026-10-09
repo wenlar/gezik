@@ -11,8 +11,7 @@ use windows::Win32::Foundation::{CloseHandle, FILETIME, HANDLE};
 use windows::Win32::Storage::FileSystem::{
     COPY_FILE_COPY_SYMLINK, COPY_FILE_FAIL_IF_EXISTS, COPY_FILE_NO_BUFFERING, COPYPROGRESSROUTINE_PROGRESS,
     CopyFileExW, CreateFileW, DELETE, DeleteFileW, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN,
-    FILE_ATTRIBUTE_OFFLINE, FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS,
-    FILE_ATTRIBUTE_RECALL_ON_OPEN, FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_SYSTEM, FILE_DISPOSITION_FLAG_DELETE,
+    FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_DISPOSITION_FLAG_DELETE,
     FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE, FILE_DISPOSITION_FLAG_POSIX_SEMANTICS, FILE_DISPOSITION_INFO_EX,
     FILE_DISPOSITION_INFO_EX_FLAGS, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
     FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FIND_FIRST_EX_LARGE_FETCH,
@@ -683,13 +682,6 @@ pub fn read_dir_items(dir: &Path, _wants_meta: &dyn Fn(&str, bool) -> bool) -> i
         {
             let attributes = data.dwFileAttributes;
             let is_dir = attributes & FILE_ATTRIBUTE_DIRECTORY.0 != 0;
-            let mut flags = 0;
-            if attributes & FILE_ATTRIBUTE_HIDDEN.0 != 0 {
-                flags |= gezik_core::Entry::HIDDEN;
-            }
-            if attributes & FILE_ATTRIBUTE_SYSTEM.0 != 0 {
-                flags |= gezik_core::Entry::SYSTEM;
-            }
             let size = (u64::from(data.nFileSizeHigh) << 32) | u64::from(data.nFileSizeLow);
             let is_link = is_link_tag(attributes, data.dwReserved0);
             items.push(super::DirItem {
@@ -698,7 +690,7 @@ pub fn read_dir_items(dir: &Path, _wants_meta: &dyn Fn(&str, bool) -> bool) -> i
                 is_link,
                 is_file: !is_dir && !is_link,
                 offline: is_offline(attributes),
-                flags,
+                flags: gezik_core::windows_flags(attributes),
                 size: if is_dir { 0 } else { size },
                 modified: file_time(data.ftLastWriteTime),
                 created: file_time(data.ftCreationTime),
@@ -736,8 +728,7 @@ pub(crate) fn is_link_tag(attributes: u32, tag: u32) -> bool {
 /// Whether reading the file would fetch its data from elsewhere first (OneDrive and other
 /// cloud placeholders, offline files).
 pub(crate) fn is_offline(attributes: u32) -> bool {
-    attributes & (FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS.0 | FILE_ATTRIBUTE_RECALL_ON_OPEN.0 | FILE_ATTRIBUTE_OFFLINE.0)
-        != 0
+    gezik_core::windows_flags(attributes) & gezik_core::Entry::CLOUD_ONLY != 0
 }
 
 /// Opens `path` to read its text only if it is a regular file whose data is on this disk: not a

@@ -154,9 +154,20 @@ pub fn file_row(data: &ViewData, i: usize) -> FileRow {
         selected: data.selection.is_selected(i),
         focused: data.selection.focus() == Some(i),
         cut: entries && listing.key_at(i).is_some_and(|key| data.cut.contains(&*key)),
+        cloud: cloud_state_at(data, i).map_or(0, |s| s as i32),
         folder,
         found,
     }
+}
+
+/// The cloud state of entry `i` when its folder is under a cloud root (spec 9 §7.3): from the
+/// flags the folder read gave, no call of its own. Folder listings only.
+pub fn cloud_state_at(data: &ViewData, i: usize) -> Option<gezik_core::CloudState> {
+    let Listing::Files(dir, entries) = &data.listing else { return None };
+    if !crate::cloud::shows_state(dir) {
+        return None;
+    }
+    entries.get(i).map(Entry::cloud_state)
 }
 
 /// A row's Size text: a file's size; a folder's total once known (`≥` when part of it could not
@@ -213,7 +224,7 @@ fn icon_for(data: &ViewData, i: usize) -> Option<slint::Image> {
         Listing::Drives(drives) => MediaKey::PathIcon { path: drives.get(i)?.path.clone(), px },
         listing => {
             let e = listing.entry(i)?;
-            match icon_lookup(&e.name, e.is_dir, cfg!(target_os = "macos")) {
+            match lookup_for(&e, cfg!(target_os = "macos")) {
                 IconLookup::Folder => MediaKey::FolderIcon { path: listing.path_at(i)?.0, px },
                 IconLookup::Path => MediaKey::PathIcon { path: listing.path_at(i)?.0, px },
                 IconLookup::Type => MediaKey::ExtIcon { ext: e.extension().to_lowercase(), px },
@@ -221,6 +232,21 @@ fn icon_for(data: &ViewData, i: usize) -> Option<slint::Image> {
         }
     };
     data.media.picture(key, i)
+}
+
+/// How entry `e`'s system icon is looked up: a cloud-only item never by its own path, since
+/// the shell would read (download) it for its icon.
+fn lookup_for(e: &Entry, mac: bool) -> IconLookup {
+    match icon_lookup(&e.name, e.is_dir, mac) {
+        IconLookup::Path if e.flags & Entry::CLOUD_ONLY != 0 => {
+            if e.is_dir {
+                IconLookup::Folder
+            } else {
+                IconLookup::Type
+            }
+        }
+        lookup => lookup,
+    }
 }
 
 /// More changed lines than this redraw the whole view at once (Ctrl+A in a huge folder)
@@ -270,6 +296,61 @@ mod tests {
             "1.5 KB",
             "old: drawn faint"
         );
+    }
+
+    #[test]
+    fn a_cloud_only_item_is_never_looked_up_by_its_path() {
+        let file = |name: &str, flags: u8| Entry {
+            name: name.into(),
+            is_dir: false,
+            flags,
+            size: 1,
+            modified: None,
+            created: None,
+        };
+        assert_eq!(lookup_for(&file("setup.exe", 0), false), IconLookup::Path);
+        assert_eq!(lookup_for(&file("setup.exe", Entry::CLOUD_ONLY), false), IconLookup::Type);
+        assert_eq!(lookup_for(&file("a.lnk", Entry::CLOUD_ONLY | Entry::PINNED), false), IconLookup::Type);
+        let package = Entry { is_dir: true, ..file("Pages.app", Entry::CLOUD_ONLY) };
+        assert_eq!(lookup_for(&package, true), IconLookup::Folder);
+    }
+
+    #[test]
+    fn the_state_is_drawn_only_under_a_root() {
+        let base = if cfg!(windows) { r"C:\u\OneDrive" } else { "/u/OneDrive" };
+        crate::cloud::set_roots(vec![gezik_platform::cloud::CloudRoot {
+            path: base.into(),
+            label: "OneDrive".into(),
+            account: String::new(),
+        }]);
+        let file = |name: &str, flags: u8| Entry {
+            name: name.into(),
+            is_dir: false,
+            flags,
+            size: 1,
+            modified: None,
+            created: None,
+        };
+        let mut entries = vec![file("a", Entry::CLOUD_ONLY), file("b", 0), file("c", Entry::PINNED)];
+        let inside = ViewData {
+            listing: Listing::Files(PathBuf::from(base).join("Docs"), Rc::new(entries.clone())),
+            media: Media::idle(),
+            ..ViewData::default()
+        };
+        let states: Vec<i32> = (0..3).map(|i| file_row(&inside, i).cloud).collect();
+        if cfg!(any(windows, target_os = "macos")) {
+            assert_eq!(states, [1, 2, 3]);
+        } else {
+            assert_eq!(states, [0, 0, 0], "Linux: no state");
+        }
+        entries[1].flags = Entry::CLOUD_ONLY; // an offline file outside any cloud folder
+        let outside = ViewData {
+            listing: Listing::Files(PathBuf::from("/elsewhere"), Rc::new(entries)),
+            media: Media::idle(),
+            ..ViewData::default()
+        };
+        assert!((0..3).all(|i| file_row(&outside, i).cloud == 0), "no badge outside a root");
+        crate::cloud::set_roots(Vec::new());
     }
 
     #[test]

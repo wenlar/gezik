@@ -24,6 +24,8 @@ pub const SECTION_GROUP: i32 = 3;
 pub const SECTION_SEARCHES: i32 = 4;
 /// The trash's one row, under the drives (spec 7.1).
 pub const SECTION_TRASH: i32 = 5;
+/// The cloud roots (spec 9 §7.2), after the pinned part.
+pub const SECTION_CLOUD: i32 = 6;
 
 /// `SidebarRow.icon`: the glyph sidebar.slint draws on a place (0: none, on headings).
 const ICON_HOME: i32 = 1;
@@ -33,6 +35,7 @@ const ICON_ALIAS: i32 = 4;
 const ICON_DRIVE: i32 = 5;
 const ICON_SEARCH: i32 = 6;
 const ICON_TRASH: i32 = 7;
+const ICON_CLOUD: i32 = 8;
 
 /// A known folder's icon: the house for the home folder, which `known_folders` puts first
 /// and names "Home" (when it exists).
@@ -137,6 +140,37 @@ pub fn pin_tip(path: &Path, key: Option<&str>) -> String {
     }
 }
 
+/// The CLOUD section's rows: a heading and one row per root; nothing without a root or when
+/// turned off (`[sidebar] cloud`).
+pub fn cloud_rows(roots: &[gezik_platform::cloud::CloudRoot], on: bool) -> Vec<SidebarRow> {
+    if !on || roots.is_empty() {
+        return Vec::new();
+    }
+    let mut rows = vec![SidebarRow {
+        header: true,
+        label: "CLOUD".into(),
+        section: SECTION_CLOUD,
+        index: -1,
+        active: false,
+        tip: "".into(),
+        icon: 0,
+    }];
+    rows.extend(roots.iter().enumerate().map(|(i, root)| {
+        let path = root.path.display().to_string();
+        let tip = if root.account.is_empty() { path } else { format!("{}\n{path}", root.account) };
+        SidebarRow {
+            header: false,
+            label: root.label.as_str().into(),
+            section: SECTION_CLOUD,
+            index: i32::try_from(i).unwrap_or(i32::MAX),
+            active: false,
+            tip: tip.into(),
+            icon: ICON_CLOUD,
+        }
+    }));
+    rows
+}
+
 /// The shown pin next to shown pin `n` (before it with `up`) if it is in the same group.
 fn group_neighbour(visible: &[Pin], n: usize, up: bool) -> Option<usize> {
     let m = if up { n.checked_sub(1)? } else { n + 1 };
@@ -217,6 +251,8 @@ struct Inner {
     first_pin_row: Option<usize>,
     groups: Vec<String>,
     dialogs: crate::dialog::Dialogs,
+    /// `[sidebar] cloud`.
+    show_cloud: bool,
 }
 
 thread_local! {
@@ -275,6 +311,7 @@ impl Sidebar {
             first_pin_row: None,
             groups: Vec::new(),
             dialogs,
+            show_cloud: true,
         })));
         // Re-highlight on location changes, relabel after places reload. No I/O here: this
         // runs on every navigation.
@@ -584,6 +621,7 @@ impl Sidebar {
             SECTION_PINNED => inner.pins.visible.get(index).map(|pin| Location::Path(pin.path.clone())),
             SECTION_DRIVES => places.drives.get(index).map(|d| Location::Path(d.path.clone())),
             SECTION_TRASH => (index == 0).then_some(Location::Trash),
+            SECTION_CLOUD => places.cloud.get(index).map(|r| Location::Path(r.path.clone())),
             _ => None,
         }
     }
@@ -607,6 +645,14 @@ impl Sidebar {
     fn finish_check(&self, ticket: u64, visible: Vec<Pin>) {
         let applied = self.0.borrow_mut().pins.finish_check(ticket, visible);
         if applied {
+            self.update_rows();
+        }
+    }
+
+    /// `[sidebar] cloud` (at start and on every settings reload).
+    pub fn set_show_cloud(&self, on: bool) {
+        let changed = std::mem::replace(&mut self.0.borrow_mut().show_cloud, on) != on;
+        if changed {
             self.update_rows();
         }
     }
@@ -688,6 +734,11 @@ impl Sidebar {
                 });
             }
             let end = first.map(|_| rows.len());
+            let mut cloud = cloud_rows(&places.cloud, inner.show_cloud);
+            for row in cloud.iter_mut().filter(|r| !r.header) {
+                row.active = places.cloud.get(row.index as usize).is_some_and(|root| is_current(&root.path));
+            }
+            rows.extend(cloud);
             let searches = crate::saved_searches::names();
             if !searches.is_empty() {
                 rows.push(header("SEARCHES", SECTION_SEARCHES, -1));
@@ -737,6 +788,22 @@ mod tests {
         assert_eq!(known_icon(0, "Home"), ICON_HOME);
         assert_eq!(known_icon(0, "Desktop"), ICON_FOLDER, "no home folder on this machine");
         assert_eq!(known_icon(3, "Home"), ICON_FOLDER);
+    }
+
+    #[test]
+    fn cloud_rows_come_under_their_heading_or_not_at_all() {
+        let roots = [gezik_platform::cloud::CloudRoot {
+            path: PathBuf::from("/u/OneDrive"),
+            label: "OneDrive".into(),
+            account: "Personal".into(),
+        }];
+        assert!(cloud_rows(&[], true).is_empty(), "no root: no heading");
+        assert!(cloud_rows(&roots, false).is_empty(), "turned off");
+        let rows = cloud_rows(&roots, true);
+        assert_eq!(rows.len(), 2);
+        assert!(rows[0].header && rows[0].label == "CLOUD" && rows[0].section == SECTION_CLOUD);
+        assert_eq!((rows[1].label.as_str(), rows[1].index, rows[1].icon), ("OneDrive", 0, ICON_CLOUD));
+        assert_eq!(rows[1].tip.as_str(), format!("Personal\n{}", Path::new("/u/OneDrive").display()).as_str());
     }
 
     #[test]
