@@ -8,6 +8,7 @@ use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use gezik_core::search::{Scope, SearchSpec};
+use gezik_core::sort::SortSpec;
 use gezik_search::cache::{CACHE_LIMIT, CacheOutcome, build};
 use gezik_search::query::{Query, QueryOptions};
 use gezik_search::results::ResultSet;
@@ -41,6 +42,7 @@ fn timed(label: &str, root: &Path, spec: &SearchSpec) -> ResultSet {
                     summary.folders,
                     summary.limit_reached
                 );
+                memory(label);
                 return set;
             }
         }
@@ -60,8 +62,16 @@ fn main() {
     let mut content = SearchSpec::new(Scope::Folder(root.join("text")));
     content.content = text;
     timed("content", &root, &content);
-    let flat = timed("flat", &root, &SearchSpec::flat_view(root.clone()));
+    let mut flat = timed("flat", &root, &SearchSpec::flat_view(root.clone()));
     println!("flat: {} results", flat.len());
+    // The list sorts the results when the search ends (by name here, as it opens).
+    let started = Instant::now();
+    let order = gezik_core::sort::sort_order(flat.entries(), SortSpec::default(), true, |_| String::new(), &|i| {
+        flat.folder(i).unwrap_or("")
+    });
+    flat.apply_order(&order);
+    println!("sort: {:?}", started.elapsed());
+    memory("sort");
     let walk = plan_walk(&SearchSpec::flat_view(root.join("half")), &[], (true, false));
     let started = Instant::now();
     match build(walk, Arc::default(), CACHE_LIMIT).0 {
@@ -73,8 +83,35 @@ fn main() {
             let started = Instant::now();
             let (set, _) = cache.select(&query, &AtomicBool::new(false)).expect("not cancelled");
             println!("cache select: {} in {:?}", set.len(), started.elapsed());
+            memory("cache");
         }
         CacheOutcome::TooLarge => println!("cache: too large"),
         CacheOutcome::Cancelled => println!("cache: cancelled"),
     }
 }
+
+/// This process's working set and its peak so far (Windows; nothing elsewhere).
+#[cfg(windows)]
+fn memory(label: &str) {
+    #[repr(C)]
+    #[derive(Default)]
+    struct Counters {
+        cb: u32,
+        page_fault_count: u32,
+        peak_working_set_size: usize,
+        working_set_size: usize,
+        rest: [usize; 6],
+    }
+    unsafe extern "system" {
+        fn GetCurrentProcess() -> isize;
+        fn K32GetProcessMemoryInfo(process: isize, counters: *mut Counters, cb: u32) -> i32;
+    }
+    let mut c = Counters { cb: size_of::<Counters>() as u32, ..Default::default() };
+    // SAFETY: a valid pseudo handle and a counters struct of the size given.
+    unsafe { K32GetProcessMemoryInfo(GetCurrentProcess(), &mut c, c.cb) };
+    let mib = |b: usize| b as f64 / 1_048_576.0;
+    println!("{label}: working set {:.1} MB, peak {:.1} MB", mib(c.working_set_size), mib(c.peak_working_set_size));
+}
+
+#[cfg(not(windows))]
+fn memory(_: &str) {}
