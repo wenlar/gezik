@@ -47,7 +47,8 @@ fn cached_finder_name(path: &Path) -> Option<String> {
     thread_local! {
         static NAMES: RefCell<HashMap<PathBuf, Option<String>>> = RefCell::default();
     }
-    if !shows_finder_name(path, dirs::home_dir().as_deref()) {
+    static HOME: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    if !shows_finder_name(path, HOME.get_or_init(dirs::home_dir).as_deref()) {
         return None;
     }
     if let Some(known) = NAMES.with(|names| names.borrow().get(path).cloned()) {

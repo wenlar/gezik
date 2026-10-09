@@ -138,15 +138,21 @@ pub fn opening(
     resolve: impl Fn(&Path) -> AliasTarget,
 ) -> Opening {
     if is_dir {
-        let package = path.file_name().is_some_and(|n| is_package_name(&n.to_string_lossy())) && is_package(&path);
-        return if package { Opening::Launch(path) } else { Opening::Go(path) };
+        return folder_opening(path, &is_package);
     }
     match resolve(&path) {
         AliasTarget::NotAlias => Opening::Launch(path),
-        AliasTarget::Target { path: target, is_dir: true } => Opening::Go(target),
+        // An alias to an app is launched like the app.
+        AliasTarget::Target { path: target, is_dir: true } => folder_opening(target, &is_package),
         AliasTarget::Target { path: target, is_dir: false } => Opening::Launch(target),
         AliasTarget::Missing => Opening::MissingAlias(path),
     }
+}
+
+/// A folder is gone into unless its name and then the system say it is a package.
+fn folder_opening(path: PathBuf, is_package: &impl Fn(&Path) -> bool) -> Opening {
+    let package = path.file_name().is_some_and(|n| is_package_name(&n.to_string_lossy())) && is_package(&path);
+    if package { Opening::Launch(path) } else { Opening::Go(path) }
 }
 
 /// [`opening`] with the system's answers.
@@ -1161,6 +1167,9 @@ mod tests {
         assert_eq!(opening(p("/a/Docs alias"), false, never, to_dir), Opening::Go(p("/b/Docs")));
         let to_file = |_: &Path| AliasTarget::Target { path: p("/b/r.pdf"), is_dir: false };
         assert_eq!(opening(p("/a/r.pdf alias"), false, never, to_file), Opening::Launch(p("/b/r.pdf")));
+        let to_app = |_: &Path| AliasTarget::Target { path: p("/A/Safari.app"), is_dir: true };
+        let app = |path: &Path| path == Path::new("/A/Safari.app");
+        assert_eq!(opening(p("/a/Safari alias"), false, app, to_app), Opening::Launch(p("/A/Safari.app")));
         let gone = |_: &Path| AliasTarget::Missing;
         assert_eq!(opening(p("/a/gone alias"), false, never, gone), Opening::MissingAlias(p("/a/gone alias")));
     }
