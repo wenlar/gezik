@@ -6,6 +6,7 @@ use std::fs::{File, OpenOptions};
 use std::io;
 use std::os::windows::fs::OpenOptionsExt;
 use std::os::windows::io::{AsRawHandle, FromRawHandle};
+use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::Duration;
@@ -37,7 +38,7 @@ use ::windows::Win32::UI::WindowsAndMessaging::{
 use ::windows::core::{HSTRING, PWSTR};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
-use super::{Claim, SEND_TIMEOUT};
+use super::{CallSlot, Claim, SEND_TIMEOUT};
 
 pub(super) struct Listener {
     /// The instance waiting for the next call.
@@ -194,6 +195,7 @@ fn is_users(pid: u32, sid: &str) -> bool {
 impl Listener {
     pub(super) fn serve(self, answer: impl Fn(&mut File) + Send + Sync + 'static) {
         let answer = Arc::new(answer);
+        let calls = Arc::new(AtomicUsize::new(0));
         let _ = thread::Builder::new().name("gezik-instance".into()).spawn(move || {
             let Listener { mut pipe, name, sid } = self;
             loop {
@@ -212,12 +214,16 @@ impl Listener {
                 // The next instance first, so the name never goes away while this call is answered.
                 let Ok(next) = create(&name, &sid, false) else { return };
                 let mut call = std::mem::replace(&mut pipe, next);
+                // Too many calls at once: this one is closed unanswered.
+                let Some(slot) = CallSlot::take(&calls) else { continue };
                 let answer = answer.clone();
                 let (done, finished) = mpsc::channel::<()>();
                 let Ok(worker) = thread::Builder::new().name("gezik-instance-call".into()).spawn(move || {
                     answer(&mut call);
                     // Waits until the caller has read the answer (FlushFileBuffers).
                     let _ = call.sync_all();
+                    drop(call);
+                    drop(slot);
                     drop(done);
                 }) else {
                     continue;

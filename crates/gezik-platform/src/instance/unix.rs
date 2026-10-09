@@ -2,16 +2,17 @@
 //! can enter (spec 5.2), its taking ordered by a lock file, the peer's user checked both ways.
 
 use std::fs::{self, File, OpenOptions};
-use std::io;
+use std::io::{self, Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use super::{Claim, SEND_TIMEOUT, dir_is_private, socket_paths};
+use super::{CallSlot, Claim, SEND_TIMEOUT, dir_is_private, socket_paths};
 
 pub(super) struct Listener {
     socket: UnixListener,
@@ -113,23 +114,58 @@ pub(super) fn claim(key: &str) -> Claim {
     Claim::Listening(super::Listener(Listener { socket: listener, lock }))
 }
 
+/// A call whose reads all end by one deadline: a caller trickling bytes cannot hold its thread.
+pub(super) struct Call {
+    stream: UnixStream,
+    until: Instant,
+}
+
+impl Read for Call {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let left = self.until.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(io::ErrorKind::TimedOut.into());
+        }
+        self.stream.set_read_timeout(Some(left))?;
+        self.stream.read(buf)
+    }
+}
+
+impl Write for Call {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.stream.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.stream.flush()
+    }
+}
+
 impl Listener {
-    pub(super) fn serve(self, answer: impl Fn(&mut UnixStream) + Send + Sync + 'static) {
+    pub(super) fn serve(self, answer: impl Fn(&mut Call) + Send + Sync + 'static) {
         let answer = Arc::new(answer);
         let me = me();
+        let calls = Arc::new(AtomicUsize::new(0));
         let _ = thread::Builder::new().name("gezik-instance".into()).spawn(move || {
             let Listener { socket, lock: _lock } = self;
             for stream in socket.incoming() {
-                let Ok(mut stream) = stream else { continue };
-                // Someone else's process: closed unanswered.
+                let Ok(stream) = stream else {
+                    // Out of descriptors, say: no spinning while it lasts.
+                    thread::sleep(Duration::from_millis(50));
+                    continue;
+                };
+                // Someone else's process, or too many calls at once: closed unanswered.
                 if peer_uid(&stream) != Some(me) {
                     continue;
                 }
-                // A silent or hung caller cannot hold its call thread for long.
-                let _ = stream.set_read_timeout(Some(SEND_TIMEOUT));
+                let Some(slot) = CallSlot::take(&calls) else { continue };
                 let _ = stream.set_write_timeout(Some(SEND_TIMEOUT));
+                let mut call = Call { stream, until: Instant::now() + SEND_TIMEOUT };
                 let answer = answer.clone();
-                let _ = thread::Builder::new().name("gezik-instance-call".into()).spawn(move || answer(&mut stream));
+                let _ = thread::Builder::new().name("gezik-instance-call".into()).spawn(move || {
+                    answer(&mut call);
+                    drop(slot);
+                });
             }
         });
     }

@@ -5,6 +5,8 @@
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering::SeqCst;
 use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::Duration;
@@ -261,6 +263,25 @@ fn answer(stream: &mut (impl Read + Write), on_request: &(dyn Fn(Request) -> boo
     }
 }
 
+/// The most calls answered at once: a flood of callers cannot pile up threads and buffers.
+const MAX_CALLS: usize = 16;
+
+/// A call's place among the `MAX_CALLS`, taken by the listener thread and freed on drop.
+struct CallSlot(Arc<AtomicUsize>);
+
+impl CallSlot {
+    fn take(calls: &Arc<AtomicUsize>) -> Option<CallSlot> {
+        calls.try_update(SeqCst, SeqCst, |n| (n < MAX_CALLS).then_some(n + 1)).ok()?;
+        Some(CallSlot(calls.clone()))
+    }
+}
+
+impl Drop for CallSlot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, SeqCst);
+    }
+}
+
 /// Lets `--help` and `--version` reach the console Gezik was started from: the Windows
 /// release build has none of its own (spec 5.1). Elsewhere nothing to do.
 pub fn attach_console() {
@@ -444,6 +465,41 @@ mod tests {
         assert!(answer.is_empty());
         assert!(started.elapsed() < SEND_TIMEOUT * 2, "closed after the listener's own timeout");
         assert!(received.try_recv().is_err());
+    }
+
+    #[test]
+    fn calls_past_the_cap_are_closed_at_once() {
+        use std::io::Read;
+        let key = test_key("cap");
+        listening(&key).serve(|_| true);
+        let _silent: Vec<_> =
+            (0..MAX_CALLS).map(|_| imp::connect(&key, SEND_TIMEOUT).unwrap().expect("listening")).collect();
+        let mut over = imp::connect(&key, Duration::from_secs(10)).unwrap().expect("listening");
+        let started = Instant::now();
+        let mut answer = Vec::new();
+        let _ = over.read_to_end(&mut answer);
+        assert!(answer.is_empty());
+        assert!(started.elapsed() < Duration::from_secs(1), "not held until the others time out");
+    }
+
+    #[test]
+    fn a_trickling_caller_is_cut_off_by_one_deadline() {
+        use std::io::{Read, Write};
+        let key = test_key("trickle");
+        let (got, received) = mpsc::channel();
+        listening(&key).serve(move |request| got.send(request).is_ok());
+        let mut stream = imp::connect(&key, Duration::from_secs(10)).unwrap().expect("listening");
+        // Each gap is well under the timeout, the whole message well over it.
+        for byte in encode(&Request::default()) {
+            if stream.write_all(&[byte]).is_err() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(400));
+        }
+        let mut answer = Vec::new();
+        let _ = stream.read_to_end(&mut answer);
+        assert!(answer.is_empty());
+        assert!(received.try_recv().is_err(), "never handed on");
     }
 
     #[cfg(unix)]
