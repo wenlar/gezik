@@ -17,7 +17,8 @@ use gezik_platform::system::Places;
 pub const FEATURE_PATH: &str = "path";
 /// `gezik.cmd` (decision 3): no path in it, so no code page can break it; `start` finds
 /// gezik.exe through App Paths, which holds the exe's path as Unicode. `""` is start's
-/// window title; `%*` the arguments as the shell gave them.
+/// window title; `%*` the arguments as the shell gave them. `start` looks for `gezik.exe`
+/// as typing `gezik` in cmd does (the current folder first): no new planting risk.
 pub const SHIM: &str = "@echo off\r\nrem Made by Gezik for the gezik command; gezik --unregister removes it.\r\nstart \"\" gezik.exe %*\r\n";
 /// What to add to a shell profile on macOS and Linux (spec 8.2: Gezik does not edit them).
 pub const PATH_LINE: &str = r#"export PATH="$HOME/.local/bin:$PATH""#;
@@ -130,12 +131,43 @@ impl Access for SystemAccess {
 
     fn set(&self, change: &Change, value: &Value) -> io::Result<()> {
         self.check(change)?;
+        // The journal's values are not trusted either: only what Gezik itself would write.
+        if !value_allowed(change, &self.current(change)?, value) {
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "not a value Gezik writes; left as is"));
+        }
         match change.kind {
             Kind::RegistryValue | Kind::PathEntry | Kind::RegistryKey => {
                 registry_set(&self.key(&change.place)?, change.kind, &change.name, value)
             }
             Kind::File | Kind::Symlink | Kind::Folder => file_set(change, value),
         }
+    }
+}
+
+/// Whether putting `value` where `now` is, is a write Gezik makes (decision 8): the shim,
+/// a link to a `gezik`, an App Paths value naming `gezik.exe`, PATH with only Gezik's entry
+/// added or taken out (the value deleted only when Gezik's entry is all there is).
+fn value_allowed(change: &Change, now: &Value, value: &Value) -> bool {
+    let entry = change.entry.as_str();
+    match (change.kind, value) {
+        (Kind::PathEntry, _) if entry.is_empty() => false,
+        (Kind::PathEntry, Value::Absent) => matches!(now, Value::Reg { data, .. } if data == entry),
+        (_, Value::Absent) | (Kind::Folder | Kind::RegistryKey, Value::Present) => true,
+        (Kind::File, Value::Text(text)) => text == SHIM,
+        // Links are macOS and Linux only: absolute is a leading `/`.
+        (Kind::Symlink, Value::Link(to)) => to.starts_with('/') && to.rsplit('/').next() == Some("gezik"),
+        (Kind::RegistryValue, Value::Reg { ty: RegType::Sz, data }) => names_gezik_exe(data),
+        (Kind::PathEntry, Value::Reg { ty, data }) => match now {
+            Value::Absent => data == entry,
+            Value::Reg { ty: now_ty, data: list } => {
+                ty == now_ty
+                    && (sc::with_entry(list, entry, expand).as_deref() == Some(data)
+                        || sc::without_entry(list, entry).as_deref() == Some(data)
+                        || sc::with_entry(data, entry, str::to_owned).as_deref() == Some(list))
+            }
+            _ => false,
+        },
+        _ => false,
     }
 }
 
@@ -269,10 +301,13 @@ pub fn apply(locked: &mut Locked, access: &dyn Access, targets: Vec<Change>, exe
         if now == after {
             continue;
         }
-        if matches!(target.kind, Kind::File | Kind::Symlink)
-            && now != Value::Absent
-            && !made_by_gezik(locked, &target, &now)
-        {
+        let foreign = match target.kind {
+            Kind::File | Kind::Symlink => !made_by_gezik(locked, &target, &now),
+            // Only a gezik.exe is ever written back here by an undo.
+            Kind::RegistryValue => !value_allowed(&target, &now, &now),
+            _ => false,
+        };
+        if now != Value::Absent && foreign {
             return Err(format!("{} is there and was not made by Gezik; it is left alone", target.place));
         }
         let kind = target.kind;
@@ -352,9 +387,7 @@ pub fn sweep_changes(access: &dyn Access, places: &Places, exe: &Path, windows: 
                 Some(rest) => Value::Reg { ty: *ty, data: rest },
                 None => continue,
             },
-            (Kind::Symlink, Value::Link(to)) if gezik_link(Path::new(&target.place), Path::new(to), exe) => {
-                Value::Absent
-            }
+            (Kind::Symlink, Value::Link(to)) if gezik_link(Path::new(to), exe) => Value::Absent,
             _ => continue,
         };
         out.push(Change { before, after: now, done: true, ..target });
@@ -367,13 +400,10 @@ fn names_gezik_exe(data: &str) -> bool {
     data.trim_matches('"').rsplit(['\\', '/']).next().is_some_and(|name| name.eq_ignore_ascii_case("gezik.exe"))
 }
 
-/// A link to this Gezik, or to a `gezik` that is gone (the exe moved).
-fn gezik_link(link: &Path, to: &Path, exe: &Path) -> bool {
-    let to = match link.parent() {
-        Some(dir) if to.is_relative() => dir.join(to),
-        _ => to.to_path_buf(),
-    };
-    to == exe || (!to.exists() && to.file_name().is_some_and(|name| name == "gezik"))
+/// A link to this Gezik, or to a Gezik exe of this name that is gone (the exe moved).
+/// Gezik writes absolute targets only.
+fn gezik_link(to: &Path, exe: &Path) -> bool {
+    to == exe || (to.is_absolute() && !to.exists() && exe.file_name().is_some() && to.file_name() == exe.file_name())
 }
 
 /// `--unregister`'s result (spec 11.4).
@@ -393,14 +423,13 @@ pub fn unregister(
     exe: &Path,
     windows: bool,
 ) -> Report {
-    let undone = match file.filter(|f| f.exists()) {
-        Some(file) => match file.lock() {
-            Err(err) => {
-                return Report { lines: vec![format!("{err}; nothing was changed")], code: 2, path_changed: false };
-            }
-            Ok(mut locked) if !locked.journal().changes.is_empty() => undo_matching(&mut locked, access, |_| true),
-            Ok(_) => sweep(access, places, exe, windows),
-        },
+    // The lock also for the sweep: no other Gezik adds to PATH meanwhile.
+    let undone = match file.map(JournalFile::lock) {
+        Some(Err(err)) => {
+            return Report { lines: vec![format!("{err}; nothing was changed")], code: 2, path_changed: false };
+        }
+        Some(Ok(mut locked)) if !locked.journal().changes.is_empty() => undo_matching(&mut locked, access, |_| true),
+        Some(Ok(_locked)) => sweep(access, places, exe, windows),
         None => sweep(access, places, exe, windows),
     };
     Report { code: sc::exit_code(&undone.outcomes), lines: undone.lines, path_changed: undone.path_changed }
@@ -845,6 +874,97 @@ mod tests {
         assert_eq!(report.code, 2);
         assert!(report.lines[0].contains("not a place Gezik writes"), "{:?}", report.lines);
         assert!(file.exists(), "kept: a failure stays");
+    }
+
+    #[test]
+    fn only_values_gezik_writes_are_written() {
+        let all = path_targets(&win_places(), r"C:\T\gezik.exe", true).unwrap();
+        let (file, value, path) = (&all[2], &all[5], &all[6]);
+        let ok = |c: &Change, now: Value, to: Value| value_allowed(c, &now, &to);
+        assert!(ok(file, Value::Absent, Value::Text(SHIM.into())) && ok(file, Value::Text(SHIM.into()), Value::Absent));
+        assert!(!ok(file, Value::Text(SHIM.into()), Value::Text("@echo planted".into())));
+        assert!(
+            ok(value, Value::Absent, reg(r"C:\T\gezik.exe")) && ok(value, reg(r#""D:\Old\Gezik.exe""#), Value::Absent)
+        );
+        assert!(!ok(value, Value::Absent, reg(r"C:\evil.exe")));
+        let expand_sz = Value::Reg { ty: RegType::ExpandSz, data: r"C:\T\gezik.exe".into() };
+        assert!(!ok(value, Value::Absent, expand_sz), "Sz only");
+        let user = format!(r"C:\a;{BIN};C:\b");
+        assert!(ok(path, reg(r"C:\a;"), reg(&format!(r"C:\a;{BIN}"))), "add");
+        assert!(ok(path, reg(&format!(r"C:\a;{BIN}")), reg(r"C:\a;")), "back byte for byte");
+        assert!(ok(path, reg(&user), reg(r"C:\a;C:\b")), "Gezik's entry out");
+        assert!(ok(path, Value::Absent, reg(BIN)) && ok(path, reg(BIN), Value::Absent));
+        assert!(!ok(path, reg(&user), Value::Absent), "the user's PATH is never deleted");
+        assert!(!ok(path, reg(&user), reg(r"C:\evil")), "nor written as the journal says");
+        assert!(
+            !ok(path, reg(r"C:\a"), Value::Reg { ty: RegType::ExpandSz, data: format!(r"C:\a;{BIN}") }),
+            "type kept"
+        );
+        let link = &path_targets(&Places { home: Some("/h".into()), local_app_data: None }, "", false).unwrap()[2];
+        assert!(ok(link, Value::Absent, Value::Link("/opt/gezik/gezik".into())));
+        assert!(
+            !ok(link, Value::Absent, Value::Link("/tmp/evil".into()))
+                && !ok(link, Value::Absent, Value::Link("gezik".into()))
+        );
+    }
+
+    /// A journal whose values were edited: nothing but Gezik's own values is written.
+    #[cfg(windows)]
+    #[test]
+    fn a_tampered_value_is_not_written() {
+        use gezik_platform::system::windows as reg;
+        let root = format!(r"Software\GezikTest-{}-tampered", std::process::id());
+        let app = format!(r"{root}\Software\Microsoft\Windows\CurrentVersion\App Paths\gezik.exe");
+        let env = format!(r"{root}\Environment");
+        // Every level under the test key only (never HKCU\Software itself).
+        let mut level = root.clone();
+        let mut made = vec![root.clone()];
+        for part in app[root.len() + 1..].split('\\') {
+            level = format!(r"{level}\{part}");
+            made.push(level.clone());
+        }
+        made.push(env.clone());
+        for key in &made {
+            reg::create_key(key).unwrap();
+        }
+        let user_path = r"C:\mine;C:\also";
+        reg::write_value(&env, "Path", RegType::Sz, user_path).unwrap();
+        reg::write_value(&app, "", RegType::Sz, r"C:\T\gezik.exe").unwrap();
+        let temp = std::env::temp_dir().join(format!("gezik-system-values-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp);
+        std::fs::create_dir_all(temp.join(r"Gezik\bin")).unwrap();
+        let cmd = temp.join(r"Gezik\bin\gezik.cmd");
+        std::fs::write(&cmd, SHIM).unwrap();
+        let places = Places { home: None, local_app_data: Some(temp.clone()) };
+        let access = SystemAccess { places: places.clone(), registry_root: root.clone() };
+        let file = JournalFile::new(temp.join("config"));
+        let targets = path_targets(&places, r"C:\T\gezik.exe", true).unwrap();
+        let tampered = [
+            Change { before: Value::Absent, after: reg(user_path), done: true, ..targets[6].clone() },
+            Change { before: reg(r"C:\evil"), after: reg(user_path), done: true, ..targets[6].clone() },
+            Change {
+                before: Value::Text("@echo planted".into()),
+                after: Value::Text(SHIM.into()),
+                done: true,
+                ..targets[2].clone()
+            },
+            Change { before: reg(r"C:\evil.exe"), after: reg(r"C:\T\gezik.exe"), done: true, ..targets[5].clone() },
+        ];
+        for change in tampered {
+            file.lock().unwrap().record(change, "x", |_| Ok(())).unwrap();
+        }
+        let report = unregister(Some(&file), &access, &places, Path::new("x"), true);
+        assert_eq!(report.code, 2, "{:?}", report.lines);
+        assert!(report.lines.iter().all(|l| l.contains("not a value Gezik writes")), "{:?}", report.lines);
+        assert_eq!(reg::read_value(&env, "Path").unwrap(), Some((RegType::Sz, user_path.to_owned())));
+        assert_eq!(reg::read_value(&app, "").unwrap(), Some((RegType::Sz, r"C:\T\gezik.exe".to_owned())));
+        assert_eq!(std::fs::read_to_string(&cmd).unwrap(), SHIM);
+        reg::delete_value(&env, "Path").unwrap();
+        reg::delete_value(&app, "").unwrap();
+        for key in made.iter().rev() {
+            reg::delete_empty_key(key).unwrap();
+        }
+        std::fs::remove_dir_all(&temp).unwrap();
     }
 
     #[test]
