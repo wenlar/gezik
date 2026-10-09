@@ -27,18 +27,43 @@ impl EjectWay {
 }
 
 /// What Gezik offers for a drive: never the system disk; a network drive is disconnected;
-/// Windows asks the Shell to eject any other (it refuses an internal disk itself); macOS
+/// removable media and optical drives are ejected; a fixed one on Windows only when it is
+/// `external` (USB, FireWire, card: the Shell has no `eject` for an internal disk); macOS
 /// ejects every volume; Linux removable media only (`/mnt` and `/` stay).
-pub fn way_for(kind: &DriveKind, system: bool, windows: bool, mac: bool) -> Option<EjectWay> {
+pub fn way_for(kind: &DriveKind, system: bool, external: bool, windows: bool, mac: bool) -> Option<EjectWay> {
     if system {
         return None;
     }
     match kind {
         DriveKind::Network => Some(EjectWay::Disconnect),
-        _ if windows || mac => Some(EjectWay::Eject),
         DriveKind::Removable | DriveKind::Optical => Some(EjectWay::Eject),
+        DriveKind::Fixed if mac || (windows && external) => Some(EjectWay::Eject),
         DriveKind::Fixed => None,
     }
+}
+
+/// `way_for` for this system's `drive` (Windows asks a fixed drive's bus: one small query).
+pub fn offer(drive: &Drive) -> Option<EjectWay> {
+    #[cfg(windows)]
+    let external = drive.kind == DriveKind::Fixed && win::external(&drive.path);
+    #[cfg(not(windows))]
+    let external = false;
+    way_for(&drive.kind, is_system(drive), external, cfg!(windows), cfg!(target_os = "macos"))
+}
+
+/// Whether a disk on `bus` (`STORAGE_BUS_TYPE`) can be unplugged: USB, 1394, SD, MMC, or
+/// one the system calls removable media.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn external_bus(bus: i32, removable_media: bool) -> bool {
+    removable_media || matches!(bus, 4 | 7 | 12 | 13)
+}
+
+/// Whether an ejected Windows drive has gone: its letter left, or (a card reader keeps its
+/// letter) its volume answers ERROR_NOT_READY (no media).
+#[cfg_attr(not(windows), allow(dead_code))]
+fn ejected(letter_present: bool, volume_error: Option<u32>) -> bool {
+    const ERROR_NOT_READY: u32 = 21;
+    !letter_present || volume_error == Some(ERROR_NOT_READY)
 }
 
 /// Whether `drive` is the one the system runs from (`%SystemDrive%\`, `/`).
@@ -164,11 +189,67 @@ pub fn linux_eject(
 
 #[cfg(windows)]
 mod win {
-    use super::{CANNOT, IN_USE, windows_error_text};
+    use super::{CANNOT, IN_USE, ejected, external_bus, windows_error_text};
     use crate::{Drive, DriveKind};
-    use windows::Win32::Foundation::{HWND, NO_ERROR};
+    use std::ffi::c_void;
+    use std::path::Path;
+    use windows::Win32::Foundation::{CloseHandle, HWND, NO_ERROR, WIN32_ERROR};
     use windows::Win32::NetworkManagement::WNet::{CONNECT_UPDATE_PROFILE, WNetCancelConnection2W};
+    use windows::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE, GetVolumeInformationW, OPEN_EXISTING,
+    };
+    use windows::Win32::System::IO::DeviceIoControl;
+    use windows::Win32::System::Ioctl::{
+        IOCTL_STORAGE_QUERY_PROPERTY, PropertyStandardQuery, STORAGE_DEVICE_DESCRIPTOR, STORAGE_PROPERTY_QUERY,
+        StorageDeviceProperty,
+    };
     use windows::core::HSTRING;
+
+    /// Whether the disk under `root` (`E:\`) sits on a bus it can be unplugged from.
+    pub fn external(root: &Path) -> bool {
+        let text = root.to_string_lossy();
+        let Some(letter) = text.chars().next().filter(char::is_ascii_alphabetic) else { return false };
+        // No access rights needed: the query only reads properties.
+        let opened = unsafe {
+            CreateFileW(
+                &HSTRING::from(format!(r"\\.\{letter}:")),
+                0,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                None,
+                OPEN_EXISTING,
+                FILE_FLAGS_AND_ATTRIBUTES(0),
+                None,
+            )
+        };
+        let Ok(handle) = opened else { return false };
+        let query = STORAGE_PROPERTY_QUERY {
+            PropertyId: StorageDeviceProperty,
+            QueryType: PropertyStandardQuery,
+            AdditionalParameters: [0],
+        };
+        // The descriptor is followed by its strings; room for them keeps the call from failing.
+        let mut answer = [0u64; 128];
+        let mut returned = 0u32;
+        let asked = unsafe {
+            DeviceIoControl(
+                handle,
+                IOCTL_STORAGE_QUERY_PROPERTY,
+                Some(&query as *const STORAGE_PROPERTY_QUERY as *const c_void),
+                size_of::<STORAGE_PROPERTY_QUERY>() as u32,
+                Some(answer.as_mut_ptr().cast()),
+                size_of_val(&answer) as u32,
+                Some(&mut returned),
+                None,
+            )
+        };
+        let _ = unsafe { CloseHandle(handle) };
+        if asked.is_err() || (returned as usize) < size_of::<STORAGE_DEVICE_DESCRIPTOR>() {
+            return false;
+        }
+        // SAFETY: the buffer is 8-byte aligned and holds a whole descriptor (checked above).
+        let descriptor = unsafe { &*answer.as_ptr().cast::<STORAGE_DEVICE_DESCRIPTOR>() };
+        external_bus(descriptor.BusType.0, descriptor.RemovableMedia)
+    }
 
     pub fn eject(drive: &Drive, owner: isize) -> Result<(), String> {
         let text = drive.path.to_string_lossy();
@@ -184,10 +265,17 @@ mod win {
         if drive.kind == DriveKind::Optical {
             return Ok(());
         }
-        // The Shell answers before the device has gone: its letter going says it went.
+        // The Shell answers before the device has gone: its letter or its media going says so.
         let bit = 1u32 << (letter.to_ascii_uppercase() as u8 - b'A');
+        let root = HSTRING::from(format!("{letter}:\\"));
         for _ in 0..30 {
-            if crate::drive_signature() as u32 & bit == 0 {
+            let present = crate::drive_signature() as u32 & bit != 0;
+            let error = present
+                .then(|| unsafe { GetVolumeInformationW(&root, None, None, None, None, None) }.err())
+                .flatten()
+                .and_then(|err| WIN32_ERROR::from_error(&err))
+                .map(|code| code.0);
+            if ejected(present, error) {
                 return Ok(());
             }
             std::thread::sleep(std::time::Duration::from_millis(100));
@@ -231,18 +319,35 @@ mod tests {
     #[test]
     fn what_each_drive_offers() {
         use DriveKind::*;
-        // (kind, system disk, windows, mac)
-        assert_eq!(way_for(&Removable, false, true, false), Some(EjectWay::Eject));
-        assert_eq!(way_for(&Fixed, false, true, false), Some(EjectWay::Eject), "Windows: the Shell says if it can");
-        assert_eq!(way_for(&Fixed, true, true, false), None, "never the system disk");
-        assert_eq!(way_for(&Network, false, true, false), Some(EjectWay::Disconnect));
-        assert_eq!(way_for(&Optical, false, true, false), Some(EjectWay::Eject));
-        assert_eq!(way_for(&Fixed, false, false, true), Some(EjectWay::Eject), "macOS: every volume but /");
-        assert_eq!(way_for(&Fixed, true, false, true), None);
-        assert_eq!(way_for(&Removable, false, false, false), Some(EjectWay::Eject));
-        assert_eq!(way_for(&Fixed, false, false, false), None, "Linux: /mnt stays");
-        assert_eq!(way_for(&Network, false, false, false), Some(EjectWay::Disconnect), "gvfs");
+        // (kind, system disk, external, windows, mac)
+        assert_eq!(way_for(&Removable, false, false, true, false), Some(EjectWay::Eject));
+        assert_eq!(way_for(&Fixed, false, true, true, false), Some(EjectWay::Eject), "Windows: a USB disk");
+        assert_eq!(way_for(&Fixed, false, false, true, false), None, "Windows: an internal disk has no eject");
+        assert_eq!(way_for(&Fixed, true, true, true, false), None, "never the system disk");
+        assert_eq!(way_for(&Network, false, false, true, false), Some(EjectWay::Disconnect));
+        assert_eq!(way_for(&Optical, false, false, true, false), Some(EjectWay::Eject));
+        assert_eq!(way_for(&Fixed, false, false, false, true), Some(EjectWay::Eject), "macOS: every volume but /");
+        assert_eq!(way_for(&Fixed, true, false, false, true), None);
+        assert_eq!(way_for(&Removable, false, false, false, false), Some(EjectWay::Eject));
+        assert_eq!(way_for(&Fixed, false, false, false, false), None, "Linux: /mnt stays");
+        assert_eq!(way_for(&Network, false, false, false, false), Some(EjectWay::Disconnect), "gvfs");
         assert_eq!((EjectWay::Eject.title(), EjectWay::Disconnect.title()), ("Eject", "Disconnect"));
+    }
+
+    #[test]
+    fn external_buses_and_gone_drives() {
+        // USB, 1394, SD, MMC; SATA (11), NVMe (17), SAS (10) stay inside.
+        for bus in [7, 4, 12, 13] {
+            assert!(external_bus(bus, false), "{bus}");
+        }
+        for bus in [11, 17, 10, 0] {
+            assert!(!external_bus(bus, false), "{bus}");
+        }
+        assert!(external_bus(11, true), "removable media");
+        assert!(ejected(false, None), "the letter went");
+        assert!(ejected(true, Some(21)), "a card reader keeps its letter, the media went");
+        assert!(!ejected(true, None), "still there");
+        assert!(!ejected(true, Some(5)), "another error is not gone");
     }
 
     #[test]

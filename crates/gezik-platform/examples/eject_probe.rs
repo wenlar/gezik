@@ -6,7 +6,7 @@ use gezik_platform::eject;
 
 fn main() {
     for drive in gezik_platform::drives() {
-        let way = eject::way_for(&drive.kind, eject::is_system(&drive), cfg!(windows), cfg!(target_os = "macos"));
+        let way = eject::offer(&drive);
         println!("{} {:?} {:?} -> {:?}", drive.path.display(), drive.label, drive.kind, way.map(|w| w.title()));
         #[cfg(windows)]
         println!("  verbs: {:?}", eject::shell_verbs(&drive.path));
