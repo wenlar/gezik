@@ -95,14 +95,41 @@ impl Cli {
     }
 
     /// What is handed to a running Gezik.
-    // Used by the single instance, Task 4.
     pub fn request(&self) -> Request {
         // shortcut: the token is carried but not used yet (winit 0.30 cannot activate an
         // existing window with a token from elsewhere); use it once winit can.
         let activation_token =
             if cfg!(all(unix, not(target_os = "macos"))) { std::env::var("XDG_ACTIVATION_TOKEN").ok() } else { None };
-        Request { new_tab: self.new_tab, targets: self.targets.clone(), activation_token }
+        let targets = self
+            .targets
+            .iter()
+            .filter_map(|t| Some(Target { path: hand_over_path(&t.path, cfg!(windows))?, select: t.select }))
+            .collect();
+        Request { new_tab: self.new_tab, targets, activation_token }
     }
+}
+
+/// `path` as the running Gezik takes it. On Windows it refuses a whole request holding a
+/// device path (`\\?\`, `\\.\`, `\??\`), so `\\?\C:\x` goes as `C:\x`, `\\?\UNC\s\x` as
+/// `\\s\x`, and other device paths are left out.
+fn hand_over_path(path: &Path, windows: bool) -> Option<PathBuf> {
+    if !windows {
+        return Some(path.to_path_buf());
+    }
+    let start: String = path.to_string_lossy().chars().take(4).map(|c| if c == '/' { '\\' } else { c }).collect();
+    if ![r"\\.\", r"\\?\", r"\??\"].contains(&start.as_str()) {
+        return Some(path.to_path_buf());
+    }
+    let rest = path.to_str()?.get(4..)?;
+    if start == r"\\.\" {
+        return None;
+    }
+    if rest.get(..4).is_some_and(|unc| unc.eq_ignore_ascii_case(r"UNC\")) {
+        return Some(PathBuf::from(format!(r"\\{}", &rest[4..])));
+    }
+    let drive = rest.as_bytes();
+    (drive.len() >= 3 && drive[0].is_ascii_alphabetic() && drive[1] == b':' && drive[2] == b'\\')
+        .then(|| PathBuf::from(rest))
 }
 
 /// A tab to show: a folder, and names to select in it.
@@ -168,6 +195,20 @@ mod tests {
 
     fn t(path: &str, select: bool) -> Target {
         Target { path: PathBuf::from(path), select }
+    }
+
+    #[test]
+    fn device_paths_are_handed_over_plain_or_left_out() {
+        let over = |p: &str| hand_over_path(Path::new(p), true).map(|p| p.to_string_lossy().into_owned());
+        assert_eq!(over(r"\\?\C:\x\y").as_deref(), Some(r"C:\x\y"));
+        assert_eq!(over(r"\??\D:\").as_deref(), Some(r"D:\"));
+        assert_eq!(over(r"\\?\UNC\server\share\x").as_deref(), Some(r"\\server\share\x"));
+        assert_eq!(over(r"C:\plain").as_deref(), Some(r"C:\plain"));
+        assert_eq!(over(r"\\server\share").as_deref(), Some(r"\\server\share"));
+        for gone in [r"\\.\PhysicalDrive0", r"//./pipe/x", r"\\?\Volume{0}\", r"\\?\"] {
+            assert_eq!(over(gone), None, "{gone}");
+        }
+        assert_eq!(hand_over_path(Path::new(r"\\?\C:\x"), false), Some(PathBuf::from(r"\\?\C:\x")));
     }
 
     #[test]

@@ -2,7 +2,11 @@
 //! open here, in the tab already showing them or in new tabs, and the window comes forward.
 
 use std::path::PathBuf;
-use std::sync::mpsc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
+use std::sync::mpsc::{self, Sender};
+use std::thread;
+use std::time::Instant;
 
 use gezik_core::nav::Location;
 use gezik_platform::instance::{CARRY_OUT_TIMEOUT, Listener};
@@ -16,18 +20,77 @@ use crate::navigation::{self, Navigator};
 /// tabs, never run.
 pub fn serve(listener: Listener, window: slint::Weak<AppWindow>) {
     listener.serve(move |request| {
-        // On this call's own thread: looking at the paths may be slow (a network folder).
-        let (opens, missing) = cli::group(&request.targets, crate::start::path_kind);
         let new_tab = request.new_tab;
-        let (done, carried_out) = mpsc::channel();
-        let queued = window.upgrade_in_event_loop(move |window| {
-            navigation::with_current(|nav| apply(nav, opens, missing, new_tab));
-            bring_to_front(&window);
-            let _ = done.send(());
-        });
-        // A window that does not get to it is as good as gone: the caller opens its own.
-        queued.is_ok() && carried_out.recv_timeout(CARRY_OUT_TIMEOUT).is_ok()
+        let window = window.clone();
+        carry_out(
+            Instant::now() + CARRY_OUT_TIMEOUT,
+            // Looking at the paths may be slow (a network folder): not on the UI thread.
+            move || cli::group(&request.targets, crate::start::path_kind),
+            move |(opens, missing), turn| {
+                window
+                    .upgrade_in_event_loop(move |window| {
+                        if turn.begin() {
+                            navigation::with_current(|nav| apply(nav, opens, missing, new_tab));
+                            bring_to_front(&window);
+                            turn.done();
+                        }
+                    })
+                    .is_ok()
+            },
+        )
     });
+}
+
+/// Carries a request out by `deadline` or not at all: a caller told "not done" opens its
+/// own window, so the same paths must not open here later too. `look` prepares it on a
+/// thread of its own; `queue` hands it on with a [`Turn`], whose work goes ahead only if
+/// it begins before the deadline.
+fn carry_out<T: Send + 'static>(
+    deadline: Instant,
+    look: impl FnOnce() -> T + Send + 'static,
+    queue: impl FnOnce(T, Turn) -> bool,
+) -> bool {
+    let left = || deadline.saturating_duration_since(Instant::now());
+    let (sent, looked) = mpsc::channel();
+    let looking = thread::Builder::new().name("gezik-instance-look".into()).spawn(move || {
+        let _ = sent.send(look());
+    });
+    // shortcut: a look stuck on a dead server keeps its thread until the system gives up;
+    // only this user's calls get here, at most 16 at once.
+    let Ok(found) = looking.map_err(drop).and_then(|_| looked.recv_timeout(left()).map_err(drop)) else {
+        return false;
+    };
+    let (done, carried_out) = mpsc::channel();
+    let gate = Arc::new(AtomicBool::new(false));
+    if !queue(found, Turn { gate: gate.clone(), done }) {
+        return false;
+    }
+    if carried_out.recv_timeout(left()).is_ok() {
+        return true;
+    }
+    if !gate.swap(true, SeqCst) {
+        // Not begun: it never will.
+        return false;
+    }
+    // Begun just in time: it ends soon (the UI thread is running it).
+    carried_out.recv().is_ok()
+}
+
+/// The right to carry one request out, unless the caller gave up first.
+struct Turn {
+    gate: Arc<AtomicBool>,
+    done: Sender<()>,
+}
+
+impl Turn {
+    /// Whether the work may go ahead; false once the deadline has passed.
+    fn begin(&self) -> bool {
+        !self.gate.swap(true, SeqCst)
+    }
+
+    fn done(self) {
+        let _ = self.done.send(());
+    }
 }
 
 /// Opens what another call asked for (spec 5.2, decision 2): each folder in the tab already
@@ -76,5 +139,86 @@ fn bring_to_front(window: &AppWindow) {
             native.set_minimized(false);
             native.focus_window();
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::AtomicUsize;
+    use std::time::Duration;
+
+    use super::*;
+
+    fn soon() -> Instant {
+        Instant::now() + Duration::from_millis(300)
+    }
+
+    #[test]
+    fn work_done_in_time_is_said_done() {
+        let ran = Arc::new(AtomicUsize::new(0));
+        let r = ran.clone();
+        let answer = carry_out(
+            soon(),
+            || 7,
+            move |n, turn| {
+                thread::spawn(move || {
+                    if turn.begin() {
+                        r.fetch_add(n, SeqCst);
+                        turn.done();
+                    }
+                });
+                true
+            },
+        );
+        assert!(answer);
+        assert_eq!(ran.load(SeqCst), 7);
+    }
+
+    #[test]
+    fn a_slow_look_queues_nothing() {
+        let queued = Arc::new(AtomicBool::new(false));
+        let q = queued.clone();
+        let answer = carry_out(
+            soon(),
+            || thread::sleep(Duration::from_millis(800)),
+            move |(), _| {
+                q.store(true, SeqCst);
+                true
+            },
+        );
+        assert!(!answer);
+        thread::sleep(Duration::from_millis(700));
+        assert!(!queued.load(SeqCst), "nothing is queued after the caller was told no");
+    }
+
+    #[test]
+    fn work_that_begins_late_never_runs() {
+        let (began, begun) = mpsc::channel();
+        let answer = carry_out(
+            soon(),
+            || (),
+            move |(), turn| {
+                thread::spawn(move || {
+                    thread::sleep(Duration::from_millis(600));
+                    let _ = began.send(turn.begin());
+                });
+                true
+            },
+        );
+        assert!(!answer);
+        assert_eq!(begun.recv().ok(), Some(false), "the late work is refused its turn");
+    }
+
+    #[test]
+    fn work_dropped_unrun_is_not_done() {
+        assert!(!carry_out(
+            soon(),
+            || (),
+            |(), turn| {
+                drop(turn);
+                true
+            }
+        ));
+        assert!(!carry_out(soon(), || (), |(), _| false));
     }
 }
