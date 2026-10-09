@@ -5,15 +5,15 @@ import { ScrollBar } from "scrollbar.slint";
 export struct SidebarRow {
     header: bool,
     label: string,
-    // 0 folders, 1 pinned, 2 drives; a heading of the pinned part is 1 ("PINNED") or 3 (a
+    // 0 folders, 1 pinned, 2 drives, 4 saved searches; a heading of the pinned part is 1 ("PINNED") or 3 (a
     // group's, `index` its place among the groups shown).
     section: int,
     index: int,
     active: bool,
     // Shown when the pointer rests on the row: a pinned folder's full path and its key.
     tip: string,
-    // A place's glyph (sidebar.rs): 1 home, 2 folder, 3 pin, 4 pin with an alias, 5 drive;
-    // 0 on headings.
+    // A place's glyph (sidebar.rs): 1 home, 2 folder, 3 pin, 4 pin with an alias, 5 drive,
+    // 6 saved search; 0 on headings.
     icon: int,
 }
 
@@ -192,7 +192,7 @@ export component Sidebar inherits Rectangle {
                     viewbox-width: 16;
                     viewbox-height: 16;
                     commands: row.icon == 1 ? Glyph.home : row.icon == 3 ? Glyph.pin : row.icon == 4 ? Glyph.alias
-                        : row.icon == 5 ? Glyph.drive : Glyph.folder-line;
+                        : row.icon == 5 ? Glyph.drive : row.icon == 6 ? Glyph.search : Glyph.folder-line;
                     stroke: row.active ? Theme.accent : Theme.foreground-muted;
                     stroke-width: 1.3px;
                     stroke-line-cap: round;

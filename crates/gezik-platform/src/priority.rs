@@ -1,5 +1,6 @@
 //! Lower priority for the search's own threads (spec 3.4): copies, the list and typing come
-//! first. Best effort: a refusal changes nothing else.
+//! first; and what such work freed handed back to the system. Best effort: a refusal changes
+//! nothing else.
 
 /// Lowers the calling thread's CPU and disk priority.
 pub fn lower_this_thread() {
@@ -38,8 +39,39 @@ pub fn lower_this_thread() {
     }
 }
 
+/// Hands the memory a large piece of work freed back to the system (Windows keeps the heap's
+/// freed pages otherwise: a folder sizes run on the home folder left ~3 MB, spec 12). Call it
+/// when the work has ended; elsewhere nothing to do.
+pub fn give_back_memory() {
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::Memory::{HeapOptimizeResources, HeapSetInformation};
+        /// HEAP_OPTIMIZE_RESOURCES_INFORMATION (not in the `windows` crate).
+        #[repr(C)]
+        struct Optimize {
+            version: u32,
+            flags: u32,
+        }
+        let info = Optimize { version: 1, flags: 0 };
+        // SAFETY: no heap handle (every heap of this process) and the structure of the size given.
+        unsafe {
+            let _ = HeapSetInformation(
+                None,
+                HeapOptimizeResources,
+                Some((&info as *const Optimize).cast()),
+                size_of::<Optimize>(),
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn memory_can_be_given_back() {
+        super::give_back_memory();
+    }
+
     #[test]
     fn a_thread_can_lower_itself() {
         std::thread::spawn(super::lower_this_thread).join().unwrap();

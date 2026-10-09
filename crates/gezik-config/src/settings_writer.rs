@@ -17,9 +17,9 @@ use crate::Warning;
 use crate::lock;
 use crate::paths::write_atomic;
 use crate::pins::PinEntry;
-use crate::settings::{RenamePreset, SavedFilter, TabSet, ViewOption};
+use crate::settings::{RenamePreset, SavedFilter, SavedSearch, TabSet, ViewOption};
 use crate::settings_edit::{
-    with_filters, with_pinned, with_rename_presets, with_tab_sets, with_view_defaults, with_view_option,
+    with_filters, with_pinned, with_rename_presets, with_searches, with_tab_sets, with_view_defaults, with_view_option,
 };
 use crate::store::{SETTINGS_TEMPLATE, read_text};
 
@@ -41,6 +41,8 @@ pub enum SettingsChange {
     Filters(Vec<SavedFilter>),
     /// The tab sets (`[[tab-sets]]`).
     TabSets(Vec<TabSet>),
+    /// The saved searches (`[[searches]]`).
+    Searches(Vec<SavedSearch>),
 }
 
 impl SettingsChange {
@@ -52,6 +54,7 @@ impl SettingsChange {
             SettingsChange::RenamePresets(presets) => with_rename_presets(text, presets),
             SettingsChange::Filters(filters) => with_filters(text, filters),
             SettingsChange::TabSets(sets) => with_tab_sets(text, sets),
+            SettingsChange::Searches(searches) => with_searches(text, searches),
         }
     }
 }

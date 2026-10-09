@@ -38,6 +38,7 @@ sort = "name"          # name | modified | created | type | size
 sort-dir = "asc"       # asc | desc
 grid-size = "medium"   # small | medium | large
 icons = "system"       # system | gezik (Gezik's own icons, colored by the theme)
+folder-sizes = "local"    # sizes of the folders shown: off | local (not on network folders) | all
 thumbnails = true      # pictures and videos show a preview in the grid
 # The same in every folder; the View menu changes these here too.
 hide-extensions = false   # show names without their extension
@@ -153,10 +154,14 @@ content-max-size = "64 MB" # larger files are not read for text
 # show-in-folder = "mod+shift+e"   # a search result's folder, with it selected
 # copy-with-folders = ""   # copy search results keeping their folders
 # cut-with-folders = ""    # the same as a move
+# command-palette = "mod+shift+p"   # every action, command and view option by name
+# quick-open = "mod+p"     # pinned and recent folders, tabs, tab sets, saved searches; ">" for commands
+# calculate-folder-sizes = ""   # the selected folders' sizes (all shown if none), on any drive
+# save-search = ""         # the search bar's search, under a name ([[searches]])
 
 # Saved rule sets for batch rename (Rename… with two or more items selected). The rename
 # layer writes them with "Presets ▾ › Save current rules as…"; they can also be written here.
-# Saving or deleting a set there rewrites the saved sets (comments inside them are not kept).
+# Saving or deleting a set there rewrites the saved sets (comments inside a set that changed are not kept).
 # [[rename-presets]]
 # name = "Holiday photos"
 # include-extension = false
@@ -177,6 +182,21 @@ content-max-size = "64 MB" # larger files are not read for text
 # [[tab-sets]]
 # name = "Release"
 # tabs = ["{documents}/Projects", "{downloads}", "drives"]
+
+# Saved searches, run from the search bar's ▾ menu, the palette (Ctrl+P) and the sidebar's
+# SEARCHES ("Save search…" in the ▾ menu writes them here). folder is a path, "{here}" (the
+# folder shown when it runs) or "drives" (This PC); tokens like {home} work on every OS. The other
+# keys are the search bar's: pattern (the filter's language), content (text in files),
+# name-regex, content-regex, match-case, hidden, skipped (true or false), size-min, size-max
+# ("500 MB"), modified (today | 7d | 30d | year | 2026-01-01..2026-06-30) and type (files |
+# folders | pictures | videos | audio | documents | archives | code). At most 30.
+# [[searches]]
+# name = "Large videos"
+# folder = "{home}"
+# pattern = "*.mp4;*.mkv"
+# size-min = "500 MB"
+# modified = "30d"
+# type = "videos"
 
 # Your own commands, shown in the Convert layer under "Commands" and in the right-click
 # menu under "Commands >" (only for files that match "types"). No shell is used: "run" is a

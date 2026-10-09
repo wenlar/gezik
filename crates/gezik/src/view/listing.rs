@@ -121,11 +121,6 @@ impl Listing {
         }
     }
 
-    /// A file's size; 0 for folders and drives.
-    pub fn file_size(&self, index: usize) -> u64 {
-        self.entry(index).filter(|e| !e.is_dir).map_or(0, |e| e.size)
-    }
-
     /// Without what `[view]` hides: dot names and hidden items unless `show_hidden`, protected
     /// system items unless `show_system` (`Entry::is_shown`). Shares the entries when nothing
     /// is left out. The results stay as they are: the scanner followed the rule.
@@ -357,11 +352,10 @@ mod tests {
     }
 
     #[test]
-    fn paths_sizes_and_folders() {
+    fn paths_and_folders() {
         let listing = files("/x", &["sub/", "f.txt"]);
         assert_eq!(listing.path_at(1), Some((PathBuf::from("/x").join("f.txt"), false)));
         assert!(listing.is_dir(0) && !listing.is_dir(1));
-        assert_eq!((listing.file_size(0), listing.file_size(1)), (0, 10));
         assert_eq!(listing.folder(), Some(Path::new("/x")));
         assert_eq!(Listing::default().folder(), None);
         assert_eq!(listing.kind(1), Kind::Text);

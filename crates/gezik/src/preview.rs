@@ -31,8 +31,12 @@ pub enum Target {
         is_dir: bool,
         name: String,
         type_name: String,
-        /// Files only.
+        /// A file's; a folder's once worked out.
         size: Option<u64>,
+        /// A folder's total was only partly read.
+        partial: bool,
+        /// A folder's files and folders, once its size is worked out (spec 6.2).
+        counts: Option<(u64, u64)>,
         modified: Option<SystemTime>,
         created: Option<SystemTime>,
         /// `Kind` index, for the fallback icon.
@@ -40,8 +44,10 @@ pub enum Target {
     },
     Several {
         count: usize,
-        /// Of the selected files; `None` if only folders are selected.
+        /// Of the selected files and sized folders; `None` if nothing selected has a size.
         size: Option<u64>,
+        /// A selected folder's size is still on its way, or partial.
+        more: bool,
     },
 }
 
@@ -73,11 +79,14 @@ pub fn load(target: &Target, px: u32) -> Body {
 /// before each slow step once `wanted` says the result is no longer needed. Runs on a
 /// worker thread; never panics on bad files.
 pub fn load_while(target: &Target, px: u32, wanted: &dyn Fn() -> bool) -> Body {
-    let Target::Entry { path, is_dir, .. } = target else { return Body::None };
+    let Target::Entry { path, is_dir, counts, .. } = target else { return Body::None };
     if !wanted() {
         return Body::None;
     }
     if *is_dir {
+        if counts.is_some() {
+            return Body::None;
+        }
         let (count, more) = count_entries(path);
         return Body::Folder { count, more };
     }
@@ -212,20 +221,31 @@ pub fn with_commas(n: usize) -> String {
 pub fn describe(target: &Target, body: Option<Body>) -> PreviewInfo {
     match target {
         Target::Nothing => PreviewInfo::default(),
-        Target::Several { count, size } => PreviewInfo {
+        Target::Several { count, size, more } => PreviewInfo {
             kind: 5,
             title: format!("{count} items selected").into(),
             details: size
-                .map(|s| format!("Total size: {}", crate::view_options::size_text(s)))
+                .map(|s| format!("Total size: {}{}", crate::view_options::size_text(s), if *more { "+" } else { "" }))
                 .unwrap_or_default()
                 .into(),
             item_kind: 1,
             ..PreviewInfo::default()
         },
-        Target::Entry { name, type_name, size, modified, created, kind, is_dir, .. } => {
+        Target::Entry { name, type_name, size, partial, counts, modified, created, kind, is_dir, .. } => {
             let mut lines = vec![type_name.clone()];
             if let Some(size) = size {
-                lines.push(crate::view_options::size_text(*size));
+                let prefix = if *partial { "≥ " } else { "" };
+                lines.push(format!("{prefix}{}", crate::view_options::size_text(*size)));
+            }
+            if let Some((files, folders)) = counts {
+                let n = |v: u64, one: &str| match v {
+                    1 => format!("1 {one}"),
+                    v => format!("{} {one}s", with_commas(usize::try_from(v).unwrap_or(usize::MAX))),
+                };
+                lines.push(format!("{}, {}", n(*files, "file"), n(*folders, "folder")));
+            }
+            if *partial {
+                lines.push("Some folders could not be read".to_owned());
             }
             if let Some(time) = modified {
                 lines.push(format!("Modified {}", crate::view_options::date_text(*time)));
@@ -498,6 +518,8 @@ mod tests {
             is_dir,
             type_name: "Thing".into(),
             size: (!is_dir).then_some(2048),
+            partial: false,
+            counts: None,
             modified: None,
             created: None,
             kind: 1,
@@ -621,7 +643,7 @@ mod tests {
 
     #[test]
     fn describes_entries_and_selections() {
-        let several = describe(&Target::Several { count: 3, size: Some(1536) }, None);
+        let several = describe(&Target::Several { count: 3, size: Some(1536), more: false }, None);
         assert_eq!(
             (several.kind, several.title.as_str(), several.details.as_str()),
             (5, "3 items selected", "Total size: 1.5 KB")
@@ -640,6 +662,43 @@ mod tests {
         assert_eq!(folder.kind, 4);
         assert!(folder.details.ends_with("10,000+ items"), "{}", folder.details);
         assert_eq!(describe(&Target::Nothing, None).kind, 0);
+    }
+
+    #[test]
+    fn a_sized_folder_shows_its_size_and_counts() {
+        let target = Target::Entry {
+            path: "/w/d".into(),
+            is_dir: true,
+            name: "d".into(),
+            type_name: "Folder".into(),
+            size: Some(2048),
+            partial: true,
+            counts: Some((1234, 5)),
+            modified: None,
+            created: None,
+            kind: 4,
+        };
+        let info = describe(&target, Some(Body::None));
+        assert_eq!(
+            info.details.as_str(),
+            "Folder
+≥ 2.0 KB
+1,234 files, 5 folders
+Some folders could not be read"
+        );
+        assert!(matches!(load(&target, 64), Body::None), "no count of its own once the size is known");
+        let mut one = target.clone();
+        if let Target::Entry { counts, partial, .. } = &mut one {
+            (*counts, *partial) = (Some((1, 1)), false);
+        }
+        assert_eq!(
+            describe(&one, Some(Body::None)).details.as_str(),
+            "Folder
+2.0 KB
+1 file, 1 folder"
+        );
+        let several = describe(&Target::Several { count: 2, size: Some(1536), more: true }, None);
+        assert_eq!(several.details.as_str(), "Total size: 1.5 KB+");
     }
 
     #[test]

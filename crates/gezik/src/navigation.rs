@@ -65,6 +65,11 @@ fn list(location: &Location, mode: &Mode) -> LoadResult {
             Err(err) if *mode == Mode::Show && err.kind() == std::io::ErrorKind::NotFound => {
                 LoadResult::Gone { fallback: nearest_existing(location, |p| p.is_dir()) }
             }
+            // The folder itself is not there (Windows says "path not found", which `describe`
+            // puts as the folder an item is in): "It no longer exists".
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                LoadResult::Failed(std::io::ErrorKind::NotFound.into())
+            }
             Err(err) => LoadResult::Failed(err),
         },
         // A search or the flat view reads no folder here (`search::Searches` runs it).
@@ -373,6 +378,14 @@ impl Navigator {
         self.load(self.active_location(), Mode::Show, note);
     }
 
+    /// The saved search `old` is now called `new`: the tabs showing it are titled so.
+    pub fn rename_search(&self, old: &str, new: &str) {
+        if self.keep_active_tab(|tabs| tabs.rename_search(old, new)) {
+            crate::search::with_current(|s| s.rename_saved(old, new));
+            self.update_chrome();
+        }
+    }
+
     /// Opens a tab at `location` right after the active one; `activate` switches to it.
     pub fn open_tab(&self, location: Location, activate: bool) {
         if activate {
@@ -624,6 +637,9 @@ impl Navigator {
 
     pub fn reload(&self) {
         self.save_view();
+        if let Location::Path(folder) = self.active_location() {
+            crate::folder_sizes::with_current(|f| f.forget_children(&folder));
+        }
         // F5 on results runs the search again, with the name cache read anew (spec 4.7).
         if self.active_location().is_results() {
             let tab = self.tab_id(self.active_index());
@@ -821,7 +837,10 @@ impl Navigator {
             Location::Flat(folder) => folder.display().to_string(),
         };
         let listing = match result {
-            LoadResult::Files(path, entries) => Listing::Files(path, Rc::new(entries)),
+            LoadResult::Files(path, mut entries) => {
+                crate::folder_sizes::with_current(|f| f.apply_known(&path, &mut entries));
+                Listing::Files(path, Rc::new(entries))
+            }
             LoadResult::Drives(drives) => Listing::Drives(drives),
             LoadResult::Results => {
                 let tab = self.tab_id(self.active_index());
@@ -854,6 +873,7 @@ impl Navigator {
         };
         self.watch_shown(&location);
         view.show(listing, &state, note);
+        crate::folder_sizes::with_current(|f| f.shown(&location));
         self.update_chrome();
         if location.is_results() {
             crate::search::with_current(crate::search::Searches::shown);
@@ -947,6 +967,8 @@ impl Navigator {
         };
         let Some(empty) = empty else { return self.status(message) };
         view.show(empty, &state, Some(message));
+        // Whatever was being added up is not on screen any more.
+        crate::folder_sizes::with_current(|f| f.shown(location));
         self.update_chrome();
     }
 
@@ -1174,7 +1196,7 @@ mod tests {
         let missing = Location::Path(tmp.0.join("nope"));
         for mode in moves() {
             match list(&missing, &mode) {
-                LoadResult::Failed(err) => assert_eq!(err.kind(), std::io::ErrorKind::NotFound),
+                LoadResult::Failed(err) => assert_eq!(gezik_platform::fs::describe(&err), "It no longer exists"),
                 other => panic!("unexpected {other:?} for {mode:?}"),
             }
         }

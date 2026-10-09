@@ -9,4 +9,5 @@ pub mod name;
 pub mod query;
 pub mod results;
 pub mod run;
+pub mod size;
 pub mod walk;

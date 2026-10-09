@@ -5,10 +5,10 @@ use std::cell::{Cell, RefCell};
 use std::ops::Range;
 use std::rc::Rc;
 
-use gezik_core::format_size_in;
 use gezik_core::kind::{fallback_type_name, has_own_icon, own_type_name};
 use gezik_core::selection::{PendingPress, Selection};
-use gezik_core::view::{IconMode, ViewMode};
+use gezik_core::view::{IconMode, SizeFormat, ViewMode};
+use gezik_core::{Entry, format_size_in};
 use slint::{Model, ModelNotify, ModelRc, ModelTracker, VecModel};
 
 use super::listing::Listing;
@@ -135,11 +135,8 @@ pub fn file_row(data: &ViewData, i: usize) -> FileRow {
         name: gezik_core::shown_name(name, is_dir, options.hide_extensions && entries).into(),
         is_dir,
         kind: listing.kind(i).index(),
-        size: if entries && !is_dir {
-            format_size_in(listing.file_size(i), options.size_format).into()
-        } else {
-            "".into()
-        },
+        size: entry.filter(|_| entries).map(|e| size_cell(e, options.size_format)).unwrap_or_default().into(),
+        size_stale: entries && entry.is_some_and(|e| e.is_dir && e.flags & Entry::SIZE_STALE != 0),
         modified: date(entry.and_then(|e| e.modified)).into(),
         created: date(entry.and_then(|e| e.created)).into(),
         type_name: type_name_for(data, i).into(),
@@ -150,6 +147,17 @@ pub fn file_row(data: &ViewData, i: usize) -> FileRow {
         cut: entries && listing.key_at(i).is_some_and(|key| data.cut.contains(&*key)),
         folder,
         found,
+    }
+}
+
+/// A row's Size text: a file's size; a folder's total once known (`≥` when part of it could not
+/// be read), `…` while it is on its way, else nothing (spec 6.2).
+pub fn size_cell(e: &Entry, format: SizeFormat) -> String {
+    match e.known_size() {
+        Some(bytes) if e.is_dir && e.flags & Entry::SIZE_PARTIAL != 0 => format!("≥ {}", format_size_in(bytes, format)),
+        Some(bytes) => format_size_in(bytes, format),
+        None if e.size_pending() => "…".to_owned(),
+        None => String::new(),
     }
 }
 
@@ -238,6 +246,21 @@ pub fn notify_plan(rows: &[Range<usize>], per_row: usize) -> Plan {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_folders_size_cell_says_what_is_known() {
+        let folder =
+            |flags: u8, size: u64| Entry { name: "d".into(), is_dir: true, flags, size, modified: None, created: None };
+        assert_eq!(size_cell(&folder(0, 4096), SizeFormat::Binary), "", "not sized: blank, as before");
+        assert_eq!(size_cell(&folder(Entry::SIZE_PENDING, 0), SizeFormat::Binary), "…");
+        assert_eq!(size_cell(&folder(Entry::SIZED, 1536), SizeFormat::Binary), "1.5 KB");
+        assert_eq!(size_cell(&folder(Entry::SIZED | Entry::SIZE_PARTIAL, 1536), SizeFormat::Binary), "≥ 1.5 KB");
+        assert_eq!(
+            size_cell(&folder(Entry::SIZED | Entry::SIZE_STALE, 1536), SizeFormat::Binary),
+            "1.5 KB",
+            "old: drawn faint"
+        );
+    }
 
     #[test]
     fn result_rows_show_their_folder() {

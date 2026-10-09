@@ -287,7 +287,8 @@ pub fn sort_order<'a>(
                 SortKey::Name => Primary::None,
                 SortKey::Modified => Primary::Time(e.modified),
                 SortKey::Created => Primary::Time(e.created),
-                SortKey::Size => Primary::Size(if e.is_dir { 0 } else { e.size }),
+                // A file's size, a folder's worked-out total; a folder without one as 0 (as before).
+                SortKey::Size => Primary::Size(e.known_size().unwrap_or(0)),
                 SortKey::Type => Primary::Type(push(&type_name(e)), e.extension().to_lowercase()),
                 SortKey::Folder => Primary::Folder(push(folder(i))),
             };
@@ -295,12 +296,14 @@ pub fn sort_order<'a>(
         })
         .collect();
     let span = |(start, end): (u32, u32)| &buf[start as usize..end as usize];
+    // Folders whose size is on their way go last in either direction (spec 6.3).
+    let last = |e: &Entry| spec.key == SortKey::Size && e.size_pending();
     // Sorting indices moves 8 bytes per swap instead of a whole `Entry`.
     let mut order: Vec<usize> = (0..entries.len()).collect();
     order.sort_unstable_by(|&i, &j| {
         let (a, b) = (&entries[i], &entries[j]);
         let folders = if folders_first { b.is_dir.cmp(&a.is_dir) } else { Ordering::Equal };
-        folders.then_with(|| {
+        folders.then_with(|| last(a).cmp(&last(b))).then_with(|| {
             let ((pa, na), (pb, nb)) = (&keys[i], &keys[j]);
             let primary = match (pa, pb) {
                 (Primary::Type(ta, xa), Primary::Type(tb, xb)) => span(*ta).cmp(span(*tb)).then_with(|| xa.cmp(xb)),
@@ -329,6 +332,45 @@ pub fn apply_order<T>(items: &mut Vec<T>, order: &[usize]) {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    fn size_order(entries: &[Entry], dir: SortDir, folders_first: bool) -> Vec<String> {
+        let spec = SortSpec { key: SortKey::Size, dir };
+        sort_order(entries, spec, folders_first, |_| String::new(), &|_| "")
+            .into_iter()
+            .map(|i| entries[i].name.clone())
+            .collect()
+    }
+
+    fn folder(name: &str, size: u64, flags: u8) -> Entry {
+        Entry { name: name.into(), is_dir: true, flags, size, modified: None, created: None }
+    }
+
+    fn sized_file(name: &str, size: u64) -> Entry {
+        Entry { name: name.into(), is_dir: false, flags: 0, size, modified: None, created: None }
+    }
+
+    #[test]
+    fn folders_without_a_size_yet_sort_last_both_ways() {
+        let entries = vec![
+            folder("pending", 0, Entry::SIZE_PENDING),
+            folder("big", 500, Entry::SIZED),
+            folder("small", 5, Entry::SIZED),
+            folder("old", 50, Entry::SIZED | Entry::SIZE_STALE),
+            sized_file("f", 60),
+        ];
+        assert_eq!(size_order(&entries, SortDir::Asc, true), ["small", "old", "big", "pending", "f"]);
+        assert_eq!(size_order(&entries, SortDir::Desc, true), ["big", "old", "small", "pending", "f"]);
+        assert_eq!(size_order(&entries, SortDir::Asc, false), ["small", "old", "f", "big", "pending"]);
+        assert_eq!(size_order(&entries, SortDir::Desc, false), ["big", "f", "old", "small", "pending"]);
+    }
+
+    #[test]
+    fn folders_gezik_does_not_size_sort_as_before() {
+        // folder-sizes = "off", results, a folder's own record size (4096 on Unix): as 0.
+        let entries = vec![sized_file("f", 1), folder("d", 4096, 0)];
+        assert_eq!(size_order(&entries, SortDir::Asc, false), ["d", "f"]);
+        assert_eq!(size_order(&entries, SortDir::Desc, false), ["f", "d"]);
+    }
 
     fn sorted(names: &[&str]) -> Vec<String> {
         let mut v: Vec<String> = names.iter().map(|s| s.to_string()).collect();

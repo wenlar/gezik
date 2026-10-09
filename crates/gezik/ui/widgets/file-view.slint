@@ -11,6 +11,8 @@ export struct FileRow {
     // `Kind` in gezik-core kind.rs: Gezik's icon and its color.
     kind: int,
     size: string,
+    // A folder's size older than five minutes, being worked out again: drawn faint.
+    size-stale: bool,
     modified: string,
     created: string,
     type-name: string,
@@ -658,6 +660,7 @@ export component FileView inherits Rectangle {
                     if root.col-size > 0: Text {
                         width: root.col-size;
                         text: entry.file.size;
+                        opacity: entry.file.size-stale ? 0.55 : 1;
                         horizontal-alignment: right;
                         vertical-alignment: center;
                         overflow: elide;
