@@ -5,3 +5,4 @@
 pub(crate) mod finder;
 pub(crate) mod icons;
 mod image;
+pub(crate) mod thumbs;

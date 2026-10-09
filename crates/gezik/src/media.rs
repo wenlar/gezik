@@ -4,7 +4,8 @@
 //! (fast), one for thumbnails (a video's can take seconds). Requests are made while Slint builds a line on screen. The newest
 //! are served first and only the newest [`MAX_QUEUED`] are kept, so lines scrolled past
 //! long ago are dropped. Showing another folder starts a new generation: older requests
-//! are dropped and their results only fill the caches.
+//! are dropped and their results only fill the caches. On macOS a running Quick Look
+//! request is cancelled when another listing is shown.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -87,7 +88,7 @@ fn buffer(rgba: Rgba) -> Option<SharedPixelBuffer<Rgba8Pixel>> {
 }
 
 /// Runs on a worker thread.
-fn run(key: &MediaKey) -> Outcome {
+fn run(key: &MediaKey, wanted: &dyn Fn() -> bool) -> Outcome {
     let picture = |rgba: Option<Rgba>| rgba.and_then(buffer).map_or(Outcome::Nothing, Outcome::Picture);
     match key {
         MediaKey::TypeName { ext, is_dir } => {
@@ -103,7 +104,7 @@ fn run(key: &MediaKey) -> Outcome {
             }
         }
         MediaKey::PathIcon { path, px } => picture(gezik_platform::icon(&IconTarget::Path(path.clone()), *px)),
-        MediaKey::Thumbnail { path, px, .. } => picture(gezik_platform::thumbnail(path, *px)),
+        MediaKey::Thumbnail { path, px, .. } => picture(gezik_platform::thumbnail_while(path, *px, wanted)),
     }
 }
 
@@ -377,7 +378,8 @@ impl Media {
                 if generation != current.load(Ordering::SeqCst) {
                     continue;
                 }
-                let outcome = run(&key);
+                // Only this generation's request is waited for: another folder drops a Quick Look request.
+                let outcome = run(&key, &|| generation == current.load(Ordering::SeqCst));
                 let _ = slint::invoke_from_event_loop(move || {
                     with_current(|media| media.finish(generation, key, outcome));
                 });

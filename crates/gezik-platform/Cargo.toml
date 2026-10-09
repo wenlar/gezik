@@ -106,3 +106,14 @@ objc2-core-graphics = { version = "0.3", default-features = false, features = [
     "CGContext",
     "CGImage",
 ] }
+# Finder's thumbnails (PDF, HEIC, video, Pages …); only the generator and its request.
+objc2-quick-look-thumbnailing = { version = "0.3", default-features = false, features = [
+    "std",
+    "bitflags",
+    "block2",
+    "objc2-core-foundation",
+    "objc2-core-graphics",
+    "QLThumbnailGenerationRequest",
+    "QLThumbnailGenerator",
+    "QLThumbnailRepresentation",
+] }

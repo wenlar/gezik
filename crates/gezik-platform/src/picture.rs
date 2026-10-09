@@ -1,5 +1,6 @@
 //! Pictures: Gezik's own decoder (previews, and thumbnails where the system has none) and
-//! the system's thumbnails. May block: call from a worker thread that ran `init_thread`.
+//! the system's thumbnails (Windows' shell, macOS' Quick Look). May block: call from a
+//! worker thread that ran `init_thread`.
 
 use std::path::Path;
 
@@ -48,18 +49,49 @@ pub fn decode_image(path: &Path, max_px: u32) -> Result<Decoded, String> {
     Ok(Decoded { image: Rgba { width: rgba.width(), height: rgba.height(), pixels: rgba.into_raw() }, width, height })
 }
 
-/// A thumbnail at most `px` on its longer side: the system's (Windows), else Gezik's own
-/// for the formats it decodes. `None` if there is none.
+/// A thumbnail at most `px` on its longer side: the system's (Windows), else Gezik's own for
+/// the formats it decodes, else Quick Look's (macOS). `None` if there is none.
 pub fn thumbnail(path: &Path, px: u32) -> Option<Rgba> {
+    thumbnail_while(path, px, &|| true)
+}
+
+/// [`thumbnail`], given up once `wanted` says it is no longer needed: macOS cancels the Quick
+/// Look request; elsewhere nothing waits, and `wanted` is not asked.
+pub fn thumbnail_while(path: &Path, px: u32, wanted: &dyn Fn() -> bool) -> Option<Rgba> {
     #[cfg(windows)]
     if let Some(image) = win::thumbnail(path, px) {
         return Some(image);
     }
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or_default();
-    if !can_decode(ext) {
-        return None;
+    if can_decode(ext) {
+        return decode_image(path, px).ok().map(|d| d.image);
     }
-    decode_image(path, px).ok().map(|d| d.image)
+    #[cfg(target_os = "macos")]
+    return crate::mac::thumbs::thumbnail(path, px, wanted);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = wanted;
+        None
+    }
+}
+
+/// Waits for the answer on `receive` while `wanted` says so, at most `limit`, asking `wanted`
+/// every `step`. `None` when it gave up or the sender went away: the caller cancels.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn wait_while<T>(
+    receive: &std::sync::mpsc::Receiver<T>,
+    wanted: &dyn Fn() -> bool,
+    limit: std::time::Duration,
+    step: std::time::Duration,
+) -> Option<T> {
+    let deadline = std::time::Instant::now() + limit;
+    loop {
+        match receive.recv_timeout(step) {
+            Ok(answer) => return Some(answer),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) if wanted() && std::time::Instant::now() < deadline => {}
+            Err(_) => return None,
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -98,6 +130,25 @@ mod win {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn waiting_ends_with_the_answer_or_when_no_longer_wanted() {
+        use std::time::{Duration, Instant};
+        let step = Duration::from_millis(10);
+        let (send, receive) = std::sync::mpsc::sync_channel::<i32>(1);
+        send.send(5).unwrap();
+        assert_eq!(wait_while(&receive, &|| true, Duration::from_secs(5), step), Some(5));
+        let start = Instant::now();
+        assert_eq!(wait_while(&receive, &|| false, Duration::from_secs(5), step), None, "no longer wanted");
+        assert!(start.elapsed() < Duration::from_secs(1), "gives up at the first look");
+        let start = Instant::now();
+        assert_eq!(wait_while(&receive, &|| true, Duration::from_millis(50), step), None, "the limit");
+        assert!(start.elapsed() >= Duration::from_millis(50));
+        drop(send);
+        let start = Instant::now();
+        assert_eq!(wait_while(&receive, &|| true, Duration::from_secs(5), step), None, "the sender went away");
+        assert!(start.elapsed() < Duration::from_secs(1));
+    }
 
     fn temp(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("gezik-picture-{name}-{}", std::process::id()));

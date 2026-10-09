@@ -106,7 +106,7 @@ pub fn load_while(target: &Target, px: u32, wanted: &dyn Fn() -> bool) -> Body {
     if !wanted() {
         return Body::None;
     }
-    let mut picture = gezik_platform::thumbnail(path, px);
+    let mut picture = gezik_platform::thumbnail_while(path, px, wanted);
     if picture.is_none() && wanted() {
         picture = gezik_platform::icon(&IconTarget::Path(path.clone()), px);
     }
