@@ -166,6 +166,7 @@ content-max-size = "64 MB" # larger files are not read for text
 # make-alias = ""          # macOS: "mod+ctrl+a" (a Finder alias of the selected items)
 # show-package-contents = ""   # macOS: go into an app or another package as a folder
 # share = ""                   # macOS: Finder's Share… for the selected items
+# get-info = "alt+enter"       # Get Info (Windows: the system's Properties); macOS: "mod+i"
 
 # Saved rule sets for batch rename (Rename… with two or more items selected). The rename
 # layer writes them with "Presets ▾ › Save current rules as…"; they can also be written here.

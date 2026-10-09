@@ -4,6 +4,8 @@ import { Theme } from "../theme.slint";
 export component Check inherits Rectangle {
     in property <string> text;
     in property <bool> checked;
+    // Some of the items it stands for have it, some not (Get Info over several items): a dash.
+    in property <bool> mixed;
     in property <bool> enabled: true;
     callback toggled();
     height: Theme.row-height;
@@ -21,8 +23,8 @@ export component Check inherits Rectangle {
         height: 14px;
         border-radius: 3px;
         border-width: 1px;
-        border-color: root.checked ? Theme.accent : Theme.control-border;
-        background: root.checked ? Theme.accent : transparent;
+        border-color: root.checked || root.mixed ? Theme.accent : Theme.control-border;
+        background: root.checked || root.mixed ? Theme.accent : transparent;
         if root.checked: Path {
             width: 14px;
             height: 14px;
@@ -31,6 +33,13 @@ export component Check inherits Rectangle {
             stroke: Theme.accent-foreground;
             stroke-width: 2px;
             commands: "M 3 7 L 6 10 L 11 4";
+        }
+        if root.mixed && !root.checked: Rectangle {
+            x: 3px;
+            y: 6px;
+            width: 8px;
+            height: 2px;
+            background: Theme.accent-foreground;
         }
     }
     label := Text {

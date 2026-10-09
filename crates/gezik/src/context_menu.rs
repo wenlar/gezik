@@ -424,7 +424,7 @@ pub const LINK_JUNCTION: u32 = 1405;
 pub const LINK_SYMLINK: u32 = 1406;
 pub const TEMPLATE_FIRST: u32 = 1410;
 /// 9a's ids are 1700-1799 (spec 9 §13.3); 9a1 has these two; 9a2: Open With ▸ by place, Other…,
-/// Share… 1741, Quick Actions ▸ 1750-1779 by place.
+/// Share… 1741, Quick Actions ▸ 1750-1779 by place; 9a3: Get Info 1742, the Info window's Group ▾ 1780-1795.
 pub const MAKE_ALIAS: u32 = 1743;
 pub const SHOW_PACKAGE: u32 = 1744;
 pub const OPEN_WITH_FIRST: u32 = 1700;
@@ -433,6 +433,9 @@ pub const OPEN_WITH_OTHER: u32 = 1740;
 pub const SHARE: u32 = 1741;
 pub const QUICK_ACTION_FIRST: u32 = 1750;
 pub const QUICK_ACTION_MAX: u32 = gezik_platform::services::MAX_SERVICES as u32;
+pub const GET_INFO: u32 = 1742;
+pub const INFO_GROUP_FIRST: u32 = 1780;
+pub const INFO_GROUP_MAX: u32 = 16;
 pub const TEMPLATE_MAX: u32 = gezik_core::templates::TEMPLATE_MAX as u32;
 /// Group headings in a Slint menu: shown greyed, never chosen.
 pub const HEADING: u32 = 0;
@@ -802,6 +805,12 @@ pub fn group_heading_items(first: bool, last: bool) -> Vec<(u32, &'static str)> 
     out
 }
 
+/// Get Info in the menus Gezik draws (macOS "Get Info", elsewhere "Properties"); none in
+/// Explorer's own, which has Properties.
+pub fn info_item(native: bool, mac: bool) -> Option<(u32, String)> {
+    (!native).then(|| (GET_INFO, if mac { "Get Info" } else { "Properties" }.to_owned()))
+}
+
 /// What a menu was opened for, captured when it opens. Items run later (the Slint menu
 /// stays open while other things happen), so nothing here is an index that could point
 /// elsewhere by then: rows and sidebar entries are kept by path, tabs by id.
@@ -826,6 +835,8 @@ enum Subject {
     BatchRename(Vec<String>),
     /// The Convert layer's menus (presets, encodings).
     Convert,
+    /// The Info window's ▾ menus (items by id).
+    Info,
     /// The filter bar's ▾ menu, with the saved filters' names shown (items are by index).
     Filter(Vec<String>),
     /// The search bar's menus (items by id; the scope menu's by place in `search::Searches`).
@@ -981,6 +992,7 @@ impl Menus {
             self.add_links(&mut list, &mut subs, &rows, native);
             self.add_file_tools(&mut list, &mut subs, rows, native);
             list.extend(self.file_extras(false, false, native));
+            list.extend(info_item(native, cfg!(target_os = "macos")));
             self.add_finder_items(&mut list, &mut subs, services);
             if results {
                 list.extend(owned(result_row_items()).into_iter().filter(|(id, _)| *id != SHOW_IN_FOLDER_NEW_TAB));
@@ -1013,6 +1025,7 @@ impl Menus {
         self.add_links(&mut list, &mut subs, &[(path.clone(), is_dir)], native);
         self.add_file_tools(&mut list, &mut subs, vec![(path.clone(), is_dir)], native);
         list.extend(self.file_extras(true, is_dir, native));
+        list.extend(info_item(native, cfg!(target_os = "macos")));
         self.add_finder_items(&mut list, &mut subs, services);
         if self.view.shows_results() {
             list.extend(owned(result_row_items()));
@@ -1453,6 +1466,12 @@ impl Menus {
         self.open_slint_entries(&items, Vec::new(), at);
     }
 
+    /// One of the Info window's ▾ menus (info.rs builds it): `items` under its button.
+    pub fn info_menu(&self, items: Vec<(u32, String, bool)>, at: Anchor) {
+        *self.subject.borrow_mut() = Some(Subject::Info);
+        self.open_slint_entries(&items, Vec::new(), at);
+    }
+
     /// Copy here / Move here / Create link here / Cancel for files dropped with the right
     /// button on `dir`, at window position `x`, `y`; only the effects that make sense there are offered.
     /// `archive`: they were dropped on one, which "Add to archive" adds them to.
@@ -1606,6 +1625,9 @@ impl Menus {
                 crate::archives::with_current(|archives| archives.add_to(archive, paths, None));
             }
             (id, Subject::Convert) => crate::convert::with_current(|convert| convert.menu_chosen(id)),
+            (GET_INFO, Subject::Row(path)) => crate::info::with_current(|info| info.show_for(vec![path])),
+            (GET_INFO, Subject::Rows(paths)) => crate::info::with_current(|info| info.show_for(paths)),
+            (id, Subject::Info) => crate::info::with_current(|info| info.menu_chosen(id)),
             (CONVERT, Subject::Row(_) | Subject::Rows(_)) => {
                 let rows = std::mem::take(&mut *self.rows.borrow_mut());
                 crate::convert::with_current(|convert| convert.open(rows));
@@ -2122,6 +2144,9 @@ mod tests {
             SHARE,
             QUICK_ACTION_FIRST,
             QUICK_ACTION_FIRST + QUICK_ACTION_MAX - 1,
+            GET_INFO,
+            INFO_GROUP_FIRST,
+            INFO_GROUP_FIRST + INFO_GROUP_MAX - 1,
             ADD_RULE_FIRST,
             ADD_RULE_FIRST + 9,
             PRESET_FIRST,
@@ -2201,6 +2226,17 @@ mod tests {
     }
 
     #[test]
+    fn the_9a3_ids_stay_in_their_range() {
+        assert_eq!(GET_INFO, 1742);
+        for id in [INFO_GROUP_FIRST, INFO_GROUP_FIRST + INFO_GROUP_MAX - 1] {
+            assert!((1780..1796).contains(&id), "{id}");
+        }
+        assert_eq!(info_item(true, false), None, "Explorer's menu has Properties");
+        assert_eq!(info_item(false, true), Some((GET_INFO, "Get Info".to_owned())));
+        assert_eq!(info_item(false, false), Some((GET_INFO, "Properties".to_owned())));
+    }
+
+    #[test]
     fn a_macos_row_keeps_all_four_submenus() {
         let list: Vec<(u32, String)> = (0..10).map(|i| (i + 100, String::new())).collect();
         let sub = |title: &str, at: usize| Submenu { title: title.into(), at, items: vec![(1, String::new(), true)] };
@@ -2272,6 +2308,9 @@ mod tests {
             SHARE,
             QUICK_ACTION_FIRST,
             QUICK_ACTION_FIRST + QUICK_ACTION_MAX - 1,
+            GET_INFO,
+            INFO_GROUP_FIRST,
+            INFO_GROUP_FIRST + INFO_GROUP_MAX - 1,
             PRESET_SAVE,
             EXTRACT_HERE,
             EXTRACT_TO_OWN,
