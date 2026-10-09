@@ -1,6 +1,7 @@
 //! The file operations the engine runs.
 
 mod attrs;
+mod cloud;
 mod copy;
 mod delete;
 mod group;
@@ -12,6 +13,7 @@ mod restore;
 mod trash;
 
 pub use attrs::{NEEDS_ADMIN, SetAttributesTask};
+pub use cloud::CloudPinTask;
 pub use copy::CopyTask;
 pub(crate) use delete::restore_hidden;
 pub use delete::{DeleteTask, in_a_bin_folder};
