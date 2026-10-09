@@ -21,16 +21,68 @@ pub struct DeleteTask {
     recovering: bool,
     /// For each root this delete hid: (hidden, original, whether it was hidden to begin with).
     hidden: Mutex<Vec<(PathBuf, PathBuf, bool)>>,
+    /// For a delete from the trash: each root's record in its bin (`$I`, `.trashinfo`), deleted
+    /// once the root is gone (index by index with `roots`; empty otherwise).
+    infos: Vec<Option<PathBuf>>,
 }
 
 impl DeleteTask {
     pub fn new(paths: Vec<PathBuf>, pending: Option<Arc<PendingDeletes>>) -> DeleteTask {
-        DeleteTask { roots: paths, pending, recovering: false, hidden: Mutex::default() }
+        DeleteTask { roots: paths, pending, recovering: false, hidden: Mutex::default(), infos: Vec::new() }
     }
 
     /// Finishes deleting folders an earlier delete hid.
     pub(crate) fn recover(paths: Vec<PathBuf>, pending: Arc<PendingDeletes>) -> DeleteTask {
-        DeleteTask { roots: paths, pending: Some(pending), recovering: true, hidden: Mutex::default() }
+        DeleteTask {
+            roots: paths,
+            pending: Some(pending),
+            recovering: true,
+            hidden: Mutex::default(),
+            infos: Vec::new(),
+        }
+    }
+
+    /// Deletes items in the trash for good, each with its record (`items`: the entry in the
+    /// bin, its record if the bin keeps one). No undo: nothing goes anywhere it could come back from.
+    pub fn from_trash(items: Vec<(PathBuf, Option<PathBuf>)>, pending: Option<Arc<PendingDeletes>>) -> DeleteTask {
+        let (roots, infos) = items.into_iter().unzip();
+        DeleteTask { roots, infos, ..DeleteTask::new(Vec::new(), pending) }
+    }
+
+    /// Puts back what a cancelled or failed delete hid; the originals that could not go back
+    /// now (the next start puts them back).
+    fn put_back_hidden(&self) -> Vec<PathBuf> {
+        let Some(pending) = &self.pending else { return Vec::new() };
+        if self.recovering {
+            let gone: Vec<&Path> = self
+                .roots
+                .iter()
+                .map(PathBuf::as_path)
+                .filter(|root| std::fs::symlink_metadata(root).is_err())
+                .collect();
+            pending.remove_all(&gone);
+            return Vec::new();
+        }
+        let (mut gone, mut stuck) = (Vec::new(), Vec::new());
+        for (hidden, original, was_hidden) in lock(&self.hidden).drain(..) {
+            // Cancelled, or something inside could not be deleted: what is left goes back
+            // under its own name, so nothing stays hidden and nothing is deleted later unasked.
+            // If it cannot go back now, the next start puts it back.
+            let back = (0..RESTORE_TRIES).any(|attempt| {
+                if attempt > 0 {
+                    std::thread::sleep(RESTORE_WAIT);
+                }
+                std::fs::symlink_metadata(&hidden).is_err() || restore_hidden(&hidden, &original, was_hidden)
+            });
+            if back {
+                gone.push(hidden);
+            } else {
+                stuck.push(Restore { hidden, original, was_hidden });
+            }
+        }
+        pending.remove_all(&gone.iter().map(PathBuf::as_path).collect::<Vec<_>>());
+        pending.add_restores(&stuck);
+        stuck.into_iter().map(|r| r.original).collect()
     }
 
     /// Renames each root to a hidden name next to it, all noted in one write; where each is
@@ -176,36 +228,18 @@ impl Task for DeleteTask {
     }
 
     fn done(&self, _cancelled: bool) {
-        let Some(pending) = &self.pending else { return };
-        if self.recovering {
-            let gone: Vec<&Path> = self
-                .roots
-                .iter()
-                .map(PathBuf::as_path)
-                .filter(|root| std::fs::symlink_metadata(root).is_err())
-                .collect();
-            pending.remove_all(&gone);
-            return;
-        }
-        let (mut gone, mut stuck) = (Vec::new(), Vec::new());
-        for (hidden, original, was_hidden) in lock(&self.hidden).drain(..) {
-            // Cancelled, or something inside could not be deleted: what is left goes back
-            // under its own name, so nothing stays hidden and nothing is deleted later unasked.
-            // If it cannot go back now, the next start puts it back.
-            let back = (0..RESTORE_TRIES).any(|attempt| {
-                if attempt > 0 {
-                    std::thread::sleep(RESTORE_WAIT);
-                }
-                std::fs::symlink_metadata(&hidden).is_err() || restore_hidden(&hidden, &original, was_hidden)
-            });
-            if back {
-                gone.push(hidden);
-            } else {
-                stuck.push(Restore { hidden, original, was_hidden });
+        let stuck = self.put_back_hidden();
+        // A root that is gone takes its record along; one still there (cancelled, something
+        // inside could not go) or waiting to be put back at the next start keeps it, so the
+        // trash still lists it.
+        for (root, info) in self.roots.iter().zip(&self.infos) {
+            if let Some(info) = info
+                && std::fs::symlink_metadata(root).is_err()
+                && !stuck.contains(root)
+            {
+                let _ = std::fs::remove_file(info);
             }
         }
-        pending.remove_all(&gone.iter().map(PathBuf::as_path).collect::<Vec<_>>());
-        pending.add_restores(&stuck);
     }
 }
 
@@ -469,6 +503,73 @@ mod tests {
         let engine = engine_with_pending(&dir);
         assert_eq!(engine.recover_deletes(), None);
         assert_eq!(std::fs::read_to_string(dir.join("Documents/important.txt")).unwrap(), "keep");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn deleting_from_the_trash_takes_the_record_along() {
+        let dir = test_dir("delete-trash");
+        let (entry, record) = (dir.join("$R1.txt"), dir.join("$I1.txt"));
+        write(&entry, "x");
+        write(&record, "record");
+        let engine = crate::testing::engine();
+        let task = DeleteTask::from_trash(vec![(entry.clone(), Some(record.clone()))], None);
+        let (report, _) = finish(&engine, engine.submit(Box::new(task)), defaults);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert!(!entry.exists() && !record.exists(), "no orphan record");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_deleted_folder_takes_its_record_along() {
+        let dir = test_dir("delete-trash-folder");
+        let (entry, record) = (dir.join("files/d"), dir.join("info/d.trashinfo"));
+        write(&entry.join("a/b.txt"), "b");
+        write(&record, "[Trash Info]\n");
+        let engine = engine_with_pending(&dir);
+        let task = DeleteTask::from_trash(vec![(entry.clone(), Some(record.clone()))], engine.pending_deletes());
+        let (report, _) = finish(&engine, engine.submit(Box::new(task)), defaults);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert!(!entry.exists() && !record.exists());
+        assert!(names(&dir.join("files")).is_empty(), "nothing hidden is left behind");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_root_still_there_keeps_its_record() {
+        // Cancelled before it ran, or something inside could not go: the item stays in the
+        // trash, and so does what makes the trash list it.
+        let dir = test_dir("delete-trash-kept");
+        let (entry, record) = (dir.join("$R2.txt"), dir.join("$I2.txt"));
+        write(&entry, "x");
+        write(&record, "record");
+        DeleteTask::from_trash(vec![(entry.clone(), Some(record.clone()))], None).done(true);
+        assert!(entry.exists() && record.exists());
+        let (gone, gone_record) = (dir.join("$R3.txt"), dir.join("$I3.txt"));
+        write(&gone_record, "record");
+        DeleteTask::from_trash(vec![(gone, Some(gone_record.clone()))], None).done(false);
+        assert!(!gone_record.exists(), "its entry is gone: the record goes");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Hidden for the delete, then held so it cannot go back now: it goes back at the next
+    /// start, so its record must stay.
+    #[cfg(windows)]
+    #[test]
+    fn a_folder_waiting_to_go_back_keeps_its_record() {
+        let dir = test_dir("delete-trash-held");
+        let (entry, record) = (dir.join("$R4"), dir.join("$I4"));
+        write(&entry.join("a.txt"), "a");
+        write(&record, "record");
+        let pending = Arc::new(PendingDeletes::new(dir.join("pending-deletes")));
+        let task = DeleteTask::from_trash(vec![(entry.clone(), Some(record.clone()))], Some(pending.clone()));
+        task.plan(&mut CollectSink::default());
+        let hidden = pending.load().pop().unwrap();
+        let held = std::fs::File::open(hidden.join("a.txt")).unwrap();
+        task.done(true);
+        drop(held);
+        assert!(!entry.exists() && record.exists(), "the record waits for its entry");
+        assert_eq!(pending.restores().len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
