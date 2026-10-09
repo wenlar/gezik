@@ -673,7 +673,17 @@ fn main() -> Result<(), slint::PlatformError> {
     // A window that could not hand over is a second window as --new-window's is (spec 5.3):
     // two windows writing the same tabs to state.toml would lose one's.
     let mut secondary = cli.new_window;
-    if !secondary {
+    // Started by the bus for FileManager1 (decision 18): the channel decides, nothing is sent.
+    let dbus = cli.dbus && cfg!(all(unix, not(target_os = "macos")));
+    // Decision 16: LaunchServices starts the bundle bare and hands the folders over by event
+    // after start; sending a bare request first would bring a running Gezik forward for nothing.
+    let bundle_launch = cfg!(target_os = "macos")
+        && cli.targets.is_empty()
+        && !cli.new_window
+        && gezik_platform::system::exe()
+            .ok()
+            .is_some_and(|e| e.to_str().is_some_and(|s| s.ends_with(".app/Contents/MacOS/gezik")));
+    if !secondary && !dbus && !bundle_launch {
         match instance::send(&key, &request, instance::SEND_TIMEOUT) {
             instance::Sent::Delivered => return Ok(()),
             instance::Sent::NoInstance => {}
@@ -721,9 +731,17 @@ fn main() -> Result<(), slint::PlatformError> {
     let saved_state = config.as_ref().map(ConfigStore::load_state).unwrap_or_default();
     // As apply_config_and_start, split so the channel is claimed before the session is chosen.
     let initial_settings = apply_config(&window, &files).settings;
+    let mut taken = false;
     let listener = if !secondary && initial_settings.system.single_instance {
         match instance::claim(&key) {
             instance::Claim::Listening(listener) => Some(listener),
+            // The running Gezik holds FileManager1 already (decision 18).
+            instance::Claim::Taken if dbus => return Ok(()),
+            // The folders come by event, later: handed on below.
+            instance::Claim::Taken if bundle_launch => {
+                taken = true;
+                None
+            }
             // Another Gezik started at the same moment and took it: it gets the paths.
             instance::Claim::Taken => {
                 if instance::send(&key, &request, instance::SEND_TIMEOUT) == instance::Sent::Delivered {
@@ -737,6 +755,23 @@ fn main() -> Result<(), slint::PlatformError> {
     } else {
         None
     };
+    #[cfg(target_os = "macos")]
+    if taken {
+        // Decision 16: no window; LaunchServices' folders go to the running Gezik, then this
+        // one ends. No folders within two seconds: the running Gezik just comes forward.
+        let sent = key.clone();
+        gezik_platform::open_urls::install(Box::new(move |paths| {
+            let targets = paths.into_iter().map(|path| cli::Target { path, select: false }).collect();
+            let _ = instance::send(&sent, &instance::Request { targets, ..Default::default() }, instance::SEND_TIMEOUT);
+            let _ = slint::quit_event_loop();
+        }));
+        slint::Timer::single_shot(std::time::Duration::from_secs(2), move || {
+            let _ = instance::send(&key, &instance::Request::default(), instance::SEND_TIMEOUT);
+            let _ = slint::quit_event_loop();
+        });
+        return slint::run_event_loop_until_quit();
+    }
+    let _ = taken;
     // A second window keeps the first one's tabs: it neither restores nor records them, and
     // writes no state nor folder views.
     if secondary && let Some(store) = &config {
@@ -1426,8 +1461,36 @@ fn main() -> Result<(), slint::PlatformError> {
     }
 
     // The window and tabs are up; calls that came before this wait in the channel.
+    single_instance::set_window(window.as_weak());
+    #[cfg(target_os = "macos")]
+    {
+        let weak = window.as_weak();
+        gezik_platform::open_urls::install(Box::new(move |paths| {
+            let targets = paths.into_iter().map(|path| cli::Target { path, select: false }).collect();
+            single_instance::open_here(weak.clone(), instance::Request { targets, ..Default::default() });
+        }));
+    }
     if let Some(listener) = listener {
         single_instance::serve(listener, window.as_weak());
+        if dbus {
+            single_instance::start_file_manager1();
+        }
+    }
+    if !secondary {
+        // Decision 13: once, two seconds after start; with no journal, one stat and nothing more.
+        slint::Timer::single_shot(std::time::Duration::from_secs(2), || {
+            std::thread::spawn(|| {
+                let (note, file_manager1) = system_changes::idle_check();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(note) = note {
+                        integration::offer_repair(note);
+                    }
+                    if file_manager1 {
+                        single_instance::start_file_manager1();
+                    }
+                });
+            });
+        });
     }
     window.run()
 }

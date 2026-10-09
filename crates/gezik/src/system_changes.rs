@@ -926,7 +926,6 @@ pub fn path_state(made: &[(Change, Value)], exe: &str, taken: Option<String>, wi
 
 /// The default file manager row (spec 3.2).
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code, reason = "the panel row (Task 6 of 9b4) reads the fields")]
 pub enum DefaultState {
     Off,
     On,
@@ -985,10 +984,11 @@ pub fn default_state(made: &[(Change, Value)], exe: &str, taken: Option<String>)
 #[derive(Debug, Clone)]
 pub struct Snapshot {
     pub path: PathState,
-    #[allow(dead_code, reason = "the panel row (Task 6 of 9b4) reads it")]
     pub default: DefaultState,
     pub changes: Result<Vec<Change>, String>,
     pub journal: PathBuf,
+    /// Linux: another file manager holds FileManager1 (set by the panel on the UI thread).
+    pub dbus_taken: bool,
 }
 
 pub fn snapshot(file: Option<&JournalFile>, access: &dyn Access, places: &Places, exe: &str, os: Os) -> Snapshot {
@@ -1022,6 +1022,7 @@ pub fn snapshot(file: Option<&JournalFile>, access: &dyn Access, places: &Places
         default: default_state(&made_default, exe, refused),
         changes,
         journal: file.map(JournalFile::path).unwrap_or_default(),
+        dbus_taken: false,
     }
 }
 
@@ -1084,7 +1085,6 @@ pub fn repair_now() -> Result<Vec<String>, String> {
 
 /// Make default (spec 6): every target read first, the recovery file written from what is
 /// about to be made, then the targets, then the system told.
-#[allow(dead_code, reason = "the panel and the palette (Task 6 of 9b4) call it")]
 pub fn make_default_now() -> Result<(), String> {
     let file = journal_file().ok_or("there is no config folder to keep system-changes.toml in")?;
     let access = SystemAccess::new();
@@ -1105,7 +1105,6 @@ pub fn make_default_now() -> Result<(), String> {
     result.map(drop)
 }
 
-#[allow(dead_code, reason = "make_default_now's; the panel (Task 6 of 9b4) calls it")]
 fn after_default_change(exe: &str) {
     gezik_platform::system::associations_changed();
     if Os::HERE == Os::Mac {
@@ -1131,7 +1130,6 @@ pub fn restore_default_now() -> Result<Vec<String>, String> {
 }
 
 /// Repair and Update: Gezik's default changes undone, then made again for this exe.
-#[allow(dead_code, reason = "the panel and the moved check (Task 6 of 9b4) call it")]
 pub fn repair_default_now() -> Result<Vec<String>, String> {
     let mut lines = restore_default_now()?;
     make_default_now()?;
@@ -1171,7 +1169,6 @@ pub fn risky_place(exe: &Path, downloads: Option<&Path>, temp: &Path, removable:
 }
 
 /// The first paragraph of Make default's question, if Gezik's exe is somewhere it may leave.
-#[allow(dead_code, reason = "Make default's question (Task 6 of 9b4) shows it")]
 pub fn risky_note() -> Option<String> {
     let exe = gezik_platform::system::exe().ok()?;
     let downloads = gezik_platform::system::places().downloads;
@@ -1190,7 +1187,6 @@ pub fn risky_note() -> Option<String> {
 
 /// Two seconds after start (decision 13): the Repair question's text if a registration points
 /// at another exe, and whether Linux should answer as FileManager1. With no journal: one stat.
-#[allow(dead_code, reason = "the start-up check (Task 6 of 9b4) calls it")]
 pub fn idle_check() -> (Option<String>, bool) {
     let Some(file) = journal_file() else { return (None, false) };
     if !file.exists() {
