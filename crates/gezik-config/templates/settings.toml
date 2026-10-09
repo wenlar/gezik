@@ -67,11 +67,6 @@ ffmpeg = ""               # path to ffmpeg; empty = Gezik's download, then PATH
 download = true           # offer to download 7-Zip, ffmpeg and pdfium when needed
 seven-zip = ""            # path to 7-Zip; empty = Gezik's download, then PATH
 
-[system]
-# macOS: Space opens the system Quick Look panel ("system") or Gezik's own window ("gezik").
-# Windows and Linux always use Gezik's own.
-quick-look = "system"     # system | gezik
-
 [keyboard]
 # What typing a letter on the file list does: "jump" goes to the first name starting with
 # what you typed; "filter" opens the filter (Ctrl+F, or / ) with it.
@@ -104,9 +99,18 @@ skip = [".git", "node_modules"]   # folders a search does not go into (by name)
 max-results = 250000       # 1000-2000000; a search stops there
 content-max-size = "64 MB" # larger files are not read for text
 
+[system]
+# A second `gezik` (a folder from the command line, a script, another app) opens in the
+# running window instead of a new one; `gezik --new-window` still opens one. Read at start.
+single-instance = true
+# macOS: Space opens the system Quick Look panel ("system") or Gezik's own window ("gezik").
+# Windows and Linux always use Gezik's own.
+quick-look = "system"     # system | gezik
+
 [shortcuts]
 # Change any shortcut; "mod" is Cmd on macOS and Ctrl elsewhere; "" disables.
 # new-tab = "mod+t"
+# new-window = "mod+n"     # a separate Gezik window (a new process) at the folder shown
 # close-tab = "mod+w"
 # next-tab = "ctrl+tab"
 # prev-tab = "ctrl+shift+tab"
@@ -166,6 +170,10 @@ content-max-size = "64 MB" # larger files are not read for text
 # make-alias = ""          # macOS: "mod+ctrl+a" (a Finder alias of the selected items)
 # show-package-contents = ""   # macOS: go into an app or another package as a folder
 # share = ""                   # macOS: Finder's Share… for the selected items
+# show-trash = ""          # the Recycle Bin / Trash: every bin in one list
+# put-back = ""            # in the trash: the selected items back where they were
+# empty-trash = ""         # delete everything in the trash for good (asks first); macOS: mod+shift+backspace
+# system-integration = ""   # the System Integration panel: gezik on the command line, the changes Gezik made, Undo all
 # get-info = "alt+enter"       # Get Info (Windows: the system's Properties); macOS: "mod+i"
 
 # Saved rule sets for batch rename (Rename… with two or more items selected). The rename

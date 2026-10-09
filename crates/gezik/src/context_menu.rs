@@ -437,6 +437,23 @@ pub const GET_INFO: u32 = 1742;
 pub const INFO_GROUP_FIRST: u32 = 1780;
 pub const INFO_GROUP_MAX: u32 = 16;
 pub const TEMPLATE_MAX: u32 = gezik_core::templates::TEMPLATE_MAX as u32;
+/// 9b's ids are 1800-1899 (1800 kept for a "Show Trash" item). The trash's rows and background.
+pub const PUT_BACK: u32 = 1801;
+pub const TRASH_DELETE: u32 = 1802;
+pub const EMPTY_TRASH: u32 = 1803;
+/// 1881: the View menu's last item (spec 13.3).
+pub const SYSTEM_INTEGRATION: u32 = 1881;
+
+/// A trash row's menu: only what the trash does (no Explorer menu, nothing that acts on a
+/// `$R…` name).
+pub fn trash_row_items() -> [(u32, &'static str); 2] {
+    [(PUT_BACK, "Put Back"), (TRASH_DELETE, "Delete Permanently…")]
+}
+
+/// "Empty Recycle Bin…" on Windows, "Empty Trash…" elsewhere.
+fn empty_title() -> String {
+    format!("Empty {}…", gezik_core::nav::TRASH_NAME)
+}
 /// Group headings in a Slint menu: shown greyed, never chosen.
 pub const HEADING: u32 = 0;
 /// Gezik's menu ids are below this; the Explorer menu's start here (gezik_platform's
@@ -689,6 +706,7 @@ pub fn view_items(
     }
     out.push((APPLY_TO_ALL, "Apply to all folders".to_owned()));
     out.push((RESET_FOLDER, "Reset this folder".to_owned()));
+    out.push((SYSTEM_INTEGRATION, "    System Integration…".to_owned()));
     out
 }
 
@@ -975,6 +993,10 @@ impl Menus {
 
     fn row_menu(&self, index: i32, x: f32, y: f32, at_position: bool) {
         let Ok(i) = usize::try_from(index) else { return };
+        if self.view.shows_trash() {
+            *self.subject.borrow_mut() = Some(Subject::Background(PathBuf::new()));
+            return self.open_slint(&trash_row_items(), Anchor::point(x, y));
+        }
         let at = at_position.then_some((x, y));
         let native = cfg!(windows);
         self.menu_at.set((x, y));
@@ -1177,6 +1199,10 @@ impl Menus {
             .into_iter()
             .map(|(id, title)| (id, title, true))
             .collect();
+            let mut list = list;
+            if self.view.shows_trash() {
+                list.push((EMPTY_TRASH, empty_title(), true));
+            }
             *self.subject.borrow_mut() = Some(Subject::Background(PathBuf::new()));
             return self.open_slint_entries(&list, Vec::new(), Anchor::point(x, y));
         }
@@ -1221,6 +1247,10 @@ impl Menus {
             *self.subject.borrow_mut() = Some(Subject::SavedSearch(name));
             let list = [(RUN_SEARCH_NEW_TAB, "Run in new tab"), (RENAME_SEARCH, "Rename…"), (DELETE_SEARCH, "Delete")];
             return self.open_slint(&list, Anchor::point(x, y));
+        }
+        if section == crate::sidebar::SECTION_TRASH {
+            *self.subject.borrow_mut() = Some(Subject::Background(PathBuf::new()));
+            return self.open_slint(&[(EMPTY_TRASH, empty_title())], Anchor::point(x, y));
         }
         let Some(Location::Path(path)) = self.sidebar.location_of(section, index) else { return };
         let pinned_section = section == SECTION_PINNED;
@@ -1564,6 +1594,9 @@ impl Menus {
     fn run(&self, id: u32, subject: Subject) {
         match (id, subject) {
             (id, Subject::Search) => crate::search::with_current(|s| s.menu_chosen(id)),
+            (PUT_BACK, _) => crate::trash_view::put_back(&self.view),
+            (TRASH_DELETE, _) => crate::trash_view::delete_selection(&self.view),
+            (EMPTY_TRASH, _) => crate::trash_view::empty(),
             (RUN_SEARCH_NEW_TAB, Subject::SavedSearch(name)) => {
                 crate::saved_searches::with_current(|s| s.run(&name, true));
             }
@@ -1747,6 +1780,9 @@ impl Menus {
             (SHOW_HISTORY, Subject::View) => self.ops.show_history(),
             (APPLY_TO_ALL, Subject::View) => self.view.apply_to_all(),
             (RESET_FOLDER, Subject::View) => self.view.reset_folder(),
+            (SYSTEM_INTEGRATION, Subject::View) => {
+                crate::integration::with_current(crate::integration::Integration::open)
+            }
             (CALC_FOLDER_SIZES, _) => crate::folder_sizes::with_current(crate::folder_sizes::FolderSizes::calculate),
             (id, Subject::View) => {
                 if let Some(option) = view_option_for(id, crate::view_options::current()) {
@@ -2075,6 +2111,12 @@ mod tests {
     }
 
     #[test]
+    fn trash_rows_offer_only_put_back_and_delete_for_good() {
+        assert_eq!(trash_row_items().map(|(id, _)| id), [PUT_BACK, TRASH_DELETE]);
+        assert!(empty_title().starts_with("Empty ") && empty_title().ends_with('…'));
+    }
+
+    #[test]
     fn an_ampersand_shows_as_itself() {
         let shown = if native_menus() { "Copy && keep" } else { "Copy & keep" };
         assert_eq!(menu_title("Copy & keep"), shown);
@@ -2111,6 +2153,7 @@ mod tests {
             SHOW_HISTORY,
             APPLY_TO_ALL,
             RESET_FOLDER,
+            SYSTEM_INTEGRATION,
             UNDO,
             REDO,
             PASTE,
@@ -2275,6 +2318,7 @@ mod tests {
             PREVIEW_PANE,
             APPLY_TO_ALL,
             RESET_FOLDER,
+            SYSTEM_INTEGRATION,
             UNDO,
             REDO,
             PASTE,
@@ -2344,6 +2388,9 @@ mod tests {
             RUN_SEARCH_NEW_TAB,
             RENAME_SEARCH,
             DELETE_SEARCH,
+            PUT_BACK,
+            TRASH_DELETE,
+            EMPTY_TRASH,
         ];
         let mut ranges: Vec<std::ops::Range<u32>> = singles.iter().map(|id| *id..id + 1).collect();
         ranges.extend([
@@ -2681,10 +2728,12 @@ mod tests {
                 SINGLE_CLICK_OPEN,
                 SHOW_HIDDEN,
                 APPLY_TO_ALL,
-                RESET_FOLDER
+                RESET_FOLDER,
+                SYSTEM_INTEGRATION
             ]
         );
         assert!(list[0].1.starts_with("• ") && !list[1].1.starts_with("• "));
+        assert_eq!(list.last().map(|(id, _)| *id), Some(SYSTEM_INTEGRATION));
         let grid = ViewSettings {
             mode: ViewMode::Grid,
             sort: SortSpec { key: SortKey::Size, dir: SortDir::Desc },
@@ -2722,7 +2771,16 @@ mod tests {
         let ids: Vec<u32> = items.iter().map(|(id, _)| *id).collect();
         assert_eq!(
             &ids[12..],
-            [HIDE_EXTENSIONS, FOLDERS_FIRST, SINGLE_CLICK_OPEN, SHOW_HIDDEN, SHOW_SYSTEM, APPLY_TO_ALL, RESET_FOLDER]
+            [
+                HIDE_EXTENSIONS,
+                FOLDERS_FIRST,
+                SINGLE_CLICK_OPEN,
+                SHOW_HIDDEN,
+                SHOW_SYSTEM,
+                APPLY_TO_ALL,
+                RESET_FOLDER,
+                SYSTEM_INTEGRATION
+            ]
         );
         assert!(items[12].1.starts_with("• ") && items[13].1.starts_with("• "), "extensions hidden, folders first");
         assert!(!items[14].1.starts_with("• "));

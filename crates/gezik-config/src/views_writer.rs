@@ -5,6 +5,7 @@
 use std::fmt;
 use std::io;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -29,6 +30,8 @@ pub(crate) struct ViewsWriter {
     writing: Mutex<()>,
     /// Wakes the writer thread, once it was started.
     writer: Mutex<Option<Sender<Wake>>>,
+    /// Set by [`ViewsWriter::keep_unwritten`]: nothing more is written.
+    read_only: AtomicBool,
 }
 
 impl fmt::Debug for ViewsWriter {
@@ -39,22 +42,39 @@ impl fmt::Debug for ViewsWriter {
 
 impl ViewsWriter {
     pub fn new(path: PathBuf) -> ViewsWriter {
-        ViewsWriter { path, pending: Mutex::new(None), writing: Mutex::new(()), writer: Mutex::new(None) }
+        ViewsWriter {
+            path,
+            pending: Mutex::new(None),
+            writing: Mutex::new(()),
+            writer: Mutex::new(None),
+            read_only: AtomicBool::new(false),
+        }
     }
 
     /// Has the writer thread write `folders` soon (a newer hand-over replaces one not written
     /// yet).
     pub fn send(self: &Arc<Self>, folders: Vec<FolderView>) {
+        if self.read_only.load(Ordering::Relaxed) {
+            return;
+        }
         *lock(&self.pending) = Some(folders);
         self.wake(None);
     }
 
     /// Writes `folders` now, on this thread.
     pub fn save(&self, folders: &[FolderView]) -> io::Result<()> {
+        if self.read_only.load(Ordering::Relaxed) {
+            return Ok(());
+        }
         let _turn = lock(&self.writing);
         // What was waiting is older than this.
         lock(&self.pending).take();
         write(&self.path, folders)
+    }
+
+    /// From now on `views.toml` is left as it is (a second window's, spec 5.3).
+    pub fn keep_unwritten(&self) {
+        self.read_only.store(true, Ordering::Relaxed);
     }
 
     /// Waits (up to 5 s) until everything handed over so far is written.

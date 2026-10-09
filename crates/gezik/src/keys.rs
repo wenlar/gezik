@@ -504,6 +504,7 @@ pub fn acts_on_selection(action: Action) -> bool {
             | Action::MakeAlias
             | Action::ShowPackageContents
             | Action::Share
+            | Action::PutBack
             | Action::GetInfo
     )
 }
@@ -533,6 +534,7 @@ pub fn needs_list(action: Action) -> bool {
             | Action::MakeAlias
             | Action::ShowPackageContents
             | Action::Share
+            | Action::PutBack
             | Action::GetInfo
     )
 }
@@ -740,6 +742,7 @@ mod tests {
         for action in Action::ALL {
             let text = match action {
                 Action::NewTab => "ctrl+t",
+                Action::NewWindow => "ctrl+n",
                 Action::CloseTab => "ctrl+w",
                 Action::NextTab => "ctrl+tab",
                 Action::PrevTab => "ctrl+shift+tab",
@@ -814,7 +817,11 @@ mod tests {
                 | Action::CopyWithFolders
                 | Action::CutWithFolders
                 | Action::CalculateFolderSizes
-                | Action::SaveSearch => continue,
+                | Action::SaveSearch
+                | Action::ShowTrash
+                | Action::PutBack
+                | Action::EmptyTrash
+                | Action::SystemIntegration => continue,
             };
             assert_eq!(reach(text), Some(action), "{text}");
         }

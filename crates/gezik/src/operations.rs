@@ -17,7 +17,7 @@ use gezik_core::ops::rate::{Rate, format_eta, format_rate};
 use gezik_core::templates::{LinkKind, PasteKind, Template, pasted_name};
 use gezik_ops::{
     Answer, CopyTask, DeleteTask, Engine, Event, GroupTask, JobId, JobState, LinkTask, MoveTask, NewTask, PauseReason,
-    Progress, Question, Report, Settings, Task, TrashTask,
+    Progress, Question, Report, RestoreTask, Settings, Task, TrashTask,
 };
 use gezik_platform::clipboard::{self, ClipboardError, ClipboardFiles};
 use gezik_platform::taskbar::{Taskbar, TaskbarState};
@@ -272,7 +272,7 @@ pub enum After {
     Nothing,
 }
 
-type Retry = Rc<dyn Fn() -> Box<dyn Task>>;
+pub(crate) type Retry = Rc<dyn Fn() -> Box<dyn Task>>;
 /// Runs a failed operation again however it was started (a chain of tasks).
 type Again = Rc<dyn Fn()>;
 
@@ -295,6 +295,8 @@ struct JobView {
     origin: Option<crate::search::ResultsKey>,
     /// Said after the detail in the panel ([`CANT_UNDO`]).
     note: Option<&'static str>,
+    /// Works in the bins (Put Back, delete from the trash): the system hears when it ends.
+    bins: bool,
 }
 
 /// The note of a `{files}` run in the panel (spec 7).
@@ -325,6 +327,7 @@ impl JobView {
             hidden_paths: Vec::new(),
             origin: None,
             note: None,
+            bins: false,
         }
     }
 
@@ -480,6 +483,10 @@ impl Operations {
         self.0.engine.set_threads(files.copy_threads);
     }
 
+    pub fn dialogs(&self) -> &Dialogs {
+        &self.0.dialogs
+    }
+
     pub fn conflicts(&self) -> &crate::conflicts::Conflicts {
         &self.0.conflicts
     }
@@ -567,6 +574,9 @@ impl Operations {
 
     /// F2: renames the selected entry in place, or opens batch rename for two or more.
     pub fn rename_start(&self) {
+        if self.refused_in_trash() {
+            return;
+        }
         if self.0.view.shows_drives() {
             return;
         }
@@ -582,6 +592,9 @@ impl Operations {
 
     /// The batch rename layer for the selection (also for one item: the batch-rename shortcut).
     pub fn batch_rename(&self) {
+        if self.refused_in_trash() {
+            return;
+        }
         if self.0.view.shows_drives() {
             return;
         }
@@ -748,6 +761,9 @@ impl Operations {
 
     /// Ctrl+C / Ctrl+X on the selection.
     pub fn copy(&self, cut: bool) {
+        if self.refused_in_trash() {
+            return;
+        }
         if self.0.view.shows_drives() {
             return;
         }
@@ -776,6 +792,9 @@ impl Operations {
     /// clipboard gets the plain paths (pasted elsewhere they land flat); Gezik's paste keeps the
     /// folders under the search's scope.
     pub fn copy_with_folders(&self, cut: bool) {
+        if self.refused_in_trash() {
+            return;
+        }
         if !self.0.view.shows_results() {
             return self.0.view.note(only_in_results("Copy with folders"));
         }
@@ -906,6 +925,9 @@ impl Operations {
         if self.0.view.shows_drives() {
             return;
         }
+        if self.0.view.shows_trash() {
+            return crate::trash_view::delete_selection(&self.0.view);
+        }
         self.trash_paths(self.0.view.selected_paths(), permanent);
     }
 
@@ -976,29 +998,36 @@ impl Operations {
         kept
     }
 
+    /// Says so and returns true while the trash is shown: what acts on the selection by its
+    /// names (copy, rename, …) would act on `$R…` entries there (spec 7.1).
+    fn refused_in_trash(&self) -> bool {
+        let refused = self.0.view.shows_trash();
+        if refused {
+            self.0.view.note(crate::trash_view::not_here());
+        }
+        refused
+    }
+
     fn trash_now(&self, paths: Vec<PathBuf>) {
-        let hidden_in = self.hide(&paths);
         let retry: Retry = {
             let paths = paths.clone();
             Rc::new(move || -> Box<dyn Task> { Box::new(TrashTask::new(paths.clone())) })
         };
-        let id = self.submit(retry(), Some(retry), After::Nothing);
-        let results = self.0.view.shows_results();
-        self.with_job(id, |job| {
-            job.hidden_in = hidden_in;
-            if results {
-                job.hidden_paths = paths;
-            }
-        });
+        self.run_hiding(paths, retry);
     }
 
     fn delete_now(&self, paths: Vec<PathBuf>) {
-        let hidden_in = self.hide(&paths);
         let pending = self.0.engine.pending_deletes();
         let retry: Retry = {
             let paths = paths.clone();
             Rc::new(move || -> Box<dyn Task> { Box::new(DeleteTask::new(paths.clone(), pending.clone())) })
         };
+        self.run_hiding(paths, retry);
+    }
+
+    /// Runs `retry`'s task; the rows of `paths` go at once and come back if it changes nothing.
+    pub fn run_hiding(&self, paths: Vec<PathBuf>, retry: Retry) -> JobId {
+        let hidden_in = self.hide(&paths);
         let id = self.submit(retry(), Some(retry), After::Nothing);
         let results = self.0.view.shows_results();
         self.with_job(id, |job| {
@@ -1007,10 +1036,34 @@ impl Operations {
                 job.hidden_paths = paths;
             }
         });
+        id
+    }
+
+    /// Put Back (spec 7.1): each (entry in the bin, where it goes). A name taken there is a
+    /// conflict (never replaced unasked); a missing folder is made again.
+    pub fn restore_from_trash(&self, pairs: Vec<(PathBuf, PathBuf)>) {
+        let paths = pairs.iter().map(|(trashed, _)| trashed.clone()).collect();
+        let retry: Retry = Rc::new(move || -> Box<dyn Task> { Box::new(RestoreTask::new(pairs.clone())) });
+        let id = self.run_hiding(paths, retry);
+        self.with_job(id, |job| job.bins = true);
+    }
+
+    /// Deletes items in the trash for good, each with its record (`items`: entry, record). The
+    /// only way Gezik deletes from a bin: `DeleteTask::from_trash` refuses anything else.
+    pub fn delete_from_trash(&self, items: Vec<(PathBuf, Option<PathBuf>)>) {
+        let paths = items.iter().map(|(trashed, _)| trashed.clone()).collect();
+        let pending = self.0.engine.pending_deletes();
+        let retry: Retry =
+            Rc::new(move || -> Box<dyn Task> { Box::new(DeleteTask::from_trash(items.clone(), pending.clone())) });
+        let id = self.run_hiding(paths, retry);
+        self.with_job(id, |job| job.bins = true);
     }
 
     /// A copy of each selected item next to it.
     pub fn duplicate(&self) {
+        if self.refused_in_trash() {
+            return;
+        }
         if self.0.view.shows_drives() {
             return;
         }
@@ -1317,8 +1370,10 @@ impl Operations {
         let mut hidden_paths = Vec::new();
         let mut origin = None;
         let mut title = String::new();
+        let mut bins = false;
         self.with_job(id, |job| {
             after = job.after;
+            bins = job.bins;
             hidden_in = job.hidden_in.take();
             hidden_paths = std::mem::take(&mut job.hidden_paths);
             origin = job.origin.take();
@@ -1329,6 +1384,10 @@ impl Operations {
             .map(|t| format!("{:02}:{:02}:{:02}", t.hour, t.minute, t.second))
             .unwrap_or_default();
         self.0.history.borrow_mut().push(time, title, &report);
+        if bins {
+            // Windows redraws the Recycle Bin's icon.
+            gezik_platform::trash::changed();
+        }
         self.sync_history();
         if problems {
             // Something failed: the panel opens by itself.

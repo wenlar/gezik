@@ -32,7 +32,7 @@ use gezik_core::view::{
 };
 use gezik_core::view::{DateFormat, ViewOptions};
 use gezik_core::view_memory::ViewMemory;
-use gezik_search::results::{Batch, ResultSet};
+use gezik_search::results::{Batch, ResultSet, TrashLabel};
 use slint::{ComponentHandle, ModelRc};
 
 use crate::media::{Media, Ready};
@@ -50,6 +50,9 @@ const MAX_REMEMBERED: usize = 1000;
 
 /// views.toml's key for the search results' and the flat view's view (spec 4.4).
 pub const RESULTS_KEY: &str = "<results>";
+
+/// views.toml's key for the trash's view (spec 7.1).
+pub const TRASH_KEY: &str = "<trash>";
 
 /// The sort a click on header `column` gives (0 Name, 1-4, 5 Folder); Match (6) and anything
 /// else none.
@@ -398,8 +401,10 @@ impl View {
     /// any, replaces the item count in the status bar until the selection changes.
     pub fn show(&self, listing: Listing, state: &ViewState, note: Option<String>) {
         let results = matches!(listing, Listing::Results(_));
-        let folder =
-            if results { Some(RESULTS_KEY.to_owned()) } else { listing.folder().map(|p| p.display().to_string()) };
+        let folder = match &listing {
+            Listing::Results(set) => Some(if set.is_trash() { TRASH_KEY } else { RESULTS_KEY }.to_owned()),
+            _ => listing.folder().map(|p| p.display().to_string()),
+        };
         // Only a reload of the same folder keeps a rename.
         if self.0.renaming.borrow().is_some() && *self.0.rename_folder.borrow() != folder {
             self.end_rename(false);
@@ -568,6 +573,10 @@ impl View {
 
     /// Turns entry `index`'s name into a text field (files and folders only, not drives).
     pub fn begin_rename(&self, index: usize) -> bool {
+        // A trash row is renamed by putting it back.
+        if self.shows_trash() {
+            return false;
+        }
         let (name, is_dir) = {
             let data = self.0.data.borrow();
             if !matches!(data.listing, Listing::Files(..) | Listing::Results(_)) {
@@ -1372,6 +1381,23 @@ impl View {
         self.0.data.borrow().results.is_some()
     }
 
+    /// The trash is shown (its rows are entries in the bins).
+    pub fn shows_trash(&self) -> bool {
+        self.0.data.borrow().results.as_ref().is_some_and(|set| set.is_trash())
+    }
+
+    /// The selected trash rows (the focused one if none is): each entry in its bin, with what
+    /// it was. Empty unless the trash is shown.
+    pub fn selected_trash(&self) -> Vec<(PathBuf, TrashLabel)> {
+        let data = self.0.data.borrow();
+        let Listing::Results(set) = &data.listing else { return Vec::new() };
+        let mut indices: Vec<usize> = data.selection.iter().collect();
+        if indices.is_empty() {
+            indices.extend(data.selection.focus());
+        }
+        indices.into_iter().filter_map(|i| Some((set.path_at(i)?, set.label(i)?.clone()))).collect()
+    }
+
     /// The results without the filter.
     pub fn results(&self) -> Option<Arc<ResultSet>> {
         self.0.data.borrow().results.clone()
@@ -1817,6 +1843,7 @@ impl View {
         window.set_col_size(width(ColumnKey::Size));
         window.set_col_folder(width(ColumnKey::Folder));
         window.set_col_match(width(ColumnKey::Match));
+        window.set_trash_shown(self.shows_trash());
     }
 
     fn sync_header(&self) {

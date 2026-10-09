@@ -17,6 +17,8 @@ pub enum Location {
     Search(Box<SearchSpec>),
     /// Every file under a folder in one list (spec 5).
     Flat(PathBuf),
+    /// Every bin of this user in one list (spec 7.1).
+    Trash,
 }
 
 impl Location {
@@ -25,6 +27,7 @@ impl Location {
     pub fn parent(&self) -> Option<Location> {
         match self {
             Location::Drives => None,
+            Location::Trash => Some(Location::Drives),
             Location::Path(path) => Some(match path.parent() {
                 Some(parent) => Location::Path(parent.to_path_buf()),
                 None => Location::Drives,
@@ -42,7 +45,7 @@ impl Location {
         match self {
             Location::Path(path) | Location::Flat(path) => Some(path),
             Location::Search(spec) => spec.scope.folder(),
-            Location::Drives => None,
+            Location::Drives | Location::Trash => None,
         }
     }
 
@@ -517,6 +520,9 @@ pub struct Crumb {
 /// Finder's "Computer" (Go ▸ Computer lists the volumes too).
 pub const DRIVES_NAME: &str = if cfg!(target_os = "macos") { "Computer" } else { "This PC" };
 
+/// The trash's name: Explorer's "Recycle Bin", Finder's and the freedesktop desktops' "Trash".
+pub const TRASH_NAME: &str = if cfg!(windows) { "Recycle Bin" } else { "Trash" };
+
 /// The address bar parts for `location`: always the drives (`DRIVES_NAME`) first, then the path from its
 /// root. With more than `max_parts` path parts, the leading ones collapse into one "…"
 /// part that goes to the first hidden folder's parent... (see tests).
@@ -525,6 +531,7 @@ pub fn crumbs(location: &Location, max_parts: usize) -> Vec<Crumb> {
     let last = match location {
         Location::Search(spec) => Some(Crumb { label: spec.crumb(), location: location.clone() }),
         Location::Flat(_) => Some(Crumb { label: "All files".to_owned(), location: location.clone() }),
+        Location::Trash => Some(Crumb { label: TRASH_NAME.to_owned(), location: location.clone() }),
         Location::Path(_) | Location::Drives => None,
     };
     if let Some(last) = last {
@@ -574,7 +581,7 @@ pub fn nearest_existing(location: &Location, exists: impl Fn(&Path) -> bool) -> 
         match &current {
             Location::Drives => return Location::Drives,
             // A search checks itself when it loads.
-            Location::Search(_) | Location::Flat(_) => return current,
+            Location::Search(_) | Location::Flat(_) | Location::Trash => return current,
             Location::Path(path) if exists(path) => return current,
             Location::Path(_) => current = current.parent().unwrap_or(Location::Drives),
         }
@@ -1299,6 +1306,15 @@ mod tests {
         assert_eq!(labels(&flat).last(), Some(&"All files"));
         assert_eq!(flat.last().unwrap().location, Location::Flat("/home/a".into()));
         assert_eq!(nearest_existing(&Location::Flat("/gone".into()), |_| false), Location::Flat("/gone".into()));
+    }
+
+    #[test]
+    fn the_trash_sits_under_this_pc() {
+        assert_eq!(Location::Trash.parent(), Some(Location::Drives));
+        assert_eq!(Location::Trash.folder(), None);
+        assert!(!Location::Trash.is_results());
+        assert_eq!(labels(&crumbs(&Location::Trash, 4)), [DRIVES_NAME, TRASH_NAME]);
+        assert_eq!(nearest_existing(&Location::Trash, |_| false), Location::Trash);
     }
 
     #[test]

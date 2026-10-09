@@ -35,6 +35,7 @@ impl Places {
         let path = match location {
             Location::Path(path) => path,
             Location::Drives => return gezik_core::nav::DRIVES_NAME.to_owned(),
+            Location::Trash => return gezik_core::nav::TRASH_NAME.to_owned(),
             Location::Search(spec) => return spec.title(),
             Location::Flat(folder) => {
                 return format!("{} (all files)", self.title_for(&Location::Path(folder.clone())));

@@ -163,6 +163,13 @@ impl Info {
 
     /// Get Info on `paths`: Windows' Properties, else this window.
     pub fn show_for(&self, paths: Vec<PathBuf>) {
+        // A bin's items are put back or deleted, never edited in place (9b2 decision 7).
+        if paths.iter().any(|p| gezik_ops::in_a_bin_folder(p)) {
+            if let Some(window) = self.0.window.upgrade() {
+                window.set_status(crate::trash_view::not_here().into());
+            }
+            return;
+        }
         if !cfg!(windows) {
             return self.open(paths);
         }

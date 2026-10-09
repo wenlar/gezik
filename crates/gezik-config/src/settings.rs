@@ -127,13 +127,6 @@ pub enum QuickLookMode {
     Gezik,
 }
 
-/// `[system]` (spec 9 §13.1): how Gezik meets the system. 9a2 has the Quick Look panel (9b1
-/// adds `single_instance` to this same struct).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct SystemSettings {
-    pub quick_look: QuickLookMode,
-}
-
 /// The Compress layer's last choices and the last "Extract to…" folder (state.toml
 /// `[archive]`). Never a password.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -194,6 +187,21 @@ pub struct SessionSettings {
 impl Default for SessionSettings {
     fn default() -> Self {
         SessionSettings { restore: true }
+    }
+}
+
+/// `[system]` (spec 13.1): how Gezik meets the system: the single instance (9b1) and what
+/// Space shows on macOS (9a2); the tray, the hotkey and start at login come with their parts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SystemSettings {
+    /// A second `gezik` opens in the running window (spec 5.2). Read at start only.
+    pub single_instance: bool,
+    pub quick_look: QuickLookMode,
+}
+
+impl Default for SystemSettings {
+    fn default() -> Self {
+        SystemSettings { single_instance: true, quick_look: QuickLookMode::default() }
     }
 }
 
@@ -323,6 +331,7 @@ pub struct Settings {
     pub keyboard: KeyboardSettings,
     pub history: HistorySettings,
     pub session: SessionSettings,
+    pub system: SystemSettings,
     pub terminal: TerminalSettings,
     pub search: SearchSettings,
     /// Tab sets (`[[tab-sets]]`); invalid ones are left out.
@@ -334,7 +343,6 @@ pub struct Settings {
     pub archives: ArchivesSettings,
     pub tools: ToolsSettings,
     pub convert: ConvertSettings,
-    pub system: SystemSettings,
     /// User commands (`[[commands]]`); invalid ones are left out.
     pub commands: Vec<CommandSpec>,
 }
@@ -362,6 +370,7 @@ impl Default for Settings {
             keyboard: KeyboardSettings::default(),
             history: HistorySettings::default(),
             session: SessionSettings::default(),
+            system: SystemSettings::default(),
             terminal: TerminalSettings::default(),
             search: SearchSettings::default(),
             tab_sets: Vec::new(),
@@ -370,7 +379,6 @@ impl Default for Settings {
             archives: ArchivesSettings::default(),
             tools: ToolsSettings::default(),
             convert: ConvertSettings::default(),
-            system: SystemSettings::default(),
             commands: Vec::new(),
         }
     }
@@ -517,13 +525,6 @@ impl Settings {
                 None => warnings.push(Warning::new(file, format!("archives: expected a table, got {value}"))),
             },
         }
-        match table.get("system") {
-            None => {}
-            Some(value) => match value.as_table() {
-                Some(system) => settings.system = parse_system(system, file, warnings),
-                None => warnings.push(Warning::new(file, format!("system: expected a table, got {value}"))),
-            },
-        }
         match table.get("tools") {
             None => {}
             Some(value) => match value.as_table() {
@@ -573,6 +574,13 @@ impl Settings {
             Some(value) => match value.as_table() {
                 Some(session) => settings.session = parse_session(session, file, warnings),
                 None => warnings.push(Warning::new(file, format!("session: expected a table, got {value}"))),
+            },
+        }
+        match table.get("system") {
+            None => {}
+            Some(value) => match value.as_table() {
+                Some(system) => settings.system = parse_system(system, file, warnings),
+                None => warnings.push(Warning::new(file, format!("system: expected a table, got {value}"))),
             },
         }
         match table.get("terminal") {
@@ -1101,6 +1109,26 @@ fn parse_session(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -
     out
 }
 
+fn parse_system(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> SystemSettings {
+    let mut out = SystemSettings::default();
+    if let Some(value) = table.get("single-instance") {
+        match value.as_bool() {
+            Some(on) => out.single_instance = on,
+            None => warnings
+                .push(Warning::new(file, format!("system.single-instance: expected true or false, got {value}"))),
+        }
+    }
+    if let Some(value) = table.get("quick-look") {
+        match value.as_str() {
+            Some("system") => out.quick_look = QuickLookMode::System,
+            Some("gezik") => out.quick_look = QuickLookMode::Gezik,
+            _ => warnings
+                .push(Warning::new(file, format!("system.quick-look: expected \"system\" or \"gezik\", got {value}"))),
+        }
+    }
+    out
+}
+
 /// `[terminal] command`: a list of text with `{dir}` the only placeholder; an empty list is
 /// none (Gezik finds a terminal).
 fn parse_terminal(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> TerminalSettings {
@@ -1215,19 +1243,6 @@ fn parse_archives(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) 
                 file,
                 format!("archives.double-click: expected \"system\" or \"extract-here\", got {value}"),
             )),
-        }
-    }
-    out
-}
-
-fn parse_system(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> SystemSettings {
-    let mut out = SystemSettings::default();
-    if let Some(value) = table.get("quick-look") {
-        match value.as_str() {
-            Some("system") => out.quick_look = QuickLookMode::System,
-            Some("gezik") => out.quick_look = QuickLookMode::Gezik,
-            _ => warnings
-                .push(Warning::new(file, format!("system.quick-look: expected \"system\" or \"gezik\", got {value}"))),
         }
     }
     out
@@ -1448,6 +1463,8 @@ fn session_state(value: Option<&toml::Value>) -> Session {
         let Some(tab) = item.as_table() else { continue };
         let location = if tab.get("drives").and_then(|v| v.as_bool()) == Some(true) {
             Location::Drives
+        } else if tab.get("trash").and_then(|v| v.as_bool()) == Some(true) {
+            Location::Trash
         } else if let Some(search) = tab.get("search").and_then(|v| v.as_table()) {
             // One written wrong is left out; an older Gezik leaves these tabs out (spec 9.2).
             match search_from_toml(search) {
@@ -1716,6 +1733,9 @@ impl State {
                         }
                         Location::Drives => {
                             table.insert("drives".into(), toml::Value::Boolean(true));
+                        }
+                        Location::Trash => {
+                            table.insert("trash".into(), toml::Value::Boolean(true));
                         }
                         Location::Search(spec) => {
                             table.insert("search".into(), toml::Value::Table(search_to_toml(spec)));
@@ -3067,6 +3087,18 @@ shortcut = \"shift+f8\"
     }
 
     #[test]
+    fn a_trash_tab_is_saved_and_read_back() {
+        use gezik_core::nav::{Location, Session, SessionTab};
+        let state = State {
+            session: Session { tabs: vec![SessionTab { location: Location::Trash, locked: false }], active: 0 },
+            ..State::default()
+        };
+        let text = state.to_toml();
+        assert!(text.contains("trash = true"), "{text}");
+        assert_eq!(State::parse(&text).session.tabs[0].location, Location::Trash);
+    }
+
+    #[test]
     fn result_columns_are_kept_apart_from_the_folders() {
         let mut columns = gezik_core::view::default_result_columns();
         columns[0].width = 333;
@@ -3074,5 +3106,18 @@ shortcut = \"shift+f8\"
         let back = State::parse(&state.to_toml());
         assert_eq!(back.result_columns, Some(columns));
         assert_eq!(back.columns, None);
+    }
+
+    #[test]
+    fn single_instance_is_on_unless_turned_off() {
+        assert!(Settings::default().system.single_instance);
+        let (settings, warnings) = parse("[system]\nsingle-instance = false\n");
+        assert!(!settings.system.single_instance);
+        assert!(warnings.is_empty());
+        let (settings, warnings) = parse("[system]\nsingle-instance = \"no\"\n");
+        assert!(settings.system.single_instance, "a bad value keeps the default");
+        assert_eq!(warnings[0].message, "system.single-instance: expected true or false, got \"no\"");
+        let (_, warnings) = parse("system = 3\n");
+        assert_eq!(warnings[0].message, "system: expected a table, got 3");
     }
 }

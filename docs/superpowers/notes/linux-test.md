@@ -409,12 +409,51 @@ Keyboard (6b: path completion, folder history, command keys)
 67. **Palette and Quick Open.** Ctrl+Shift+P opens the picker with `>` and the caret after it; Ctrl+P lists places first, Alt+Enter opens in a new tab, the last line `Search for "x" in <folder>` starts a search. On X11 and on Wayland: the field takes the keyboard at once (type without clicking), Esc gives it back to the list. Note whether the desktop takes Ctrl+P or Ctrl+Shift+P.
 68. **Saved searches.** The search bar's ▾ ▸ Save search…; the sidebar's SEARCHES section runs it (click, middle-click for a new tab, right-click ▸ Rename… / Delete); `~/.config/gezik/settings.toml` has the `[[searches]]` entry.
 
+### 9b1, command line and single instance
+
+Do 70-73 once on X11 and once on Wayland.
+
+69. **Tests first.** In the clone: `cargo test -p gezik-platform instance`. These tests (socket, stale socket, hung and huge callers, peer uid) only compiled on Windows; they never ran on Linux before.
+70. **Hand-over.** With Gezik open, from a terminal: `gezik ~/Documents` opens in the same window (if a Documents tab is open, it switches to it) and the terminal gets its prompt back at once. `gezik ~/Documents/x.pdf` opens the folder with `x.pdf` selected; no PDF viewer starts.
+71. **Bring to front.** Minimize Gezik, then `gezik ~`. On X11 the window should come back and to the front. On Wayland the activation token is carried but not applied yet: note whether the window comes to the front or only asks for attention (**to be confirmed**). This non-Windows arm has not run anywhere yet.
+72. **Help, version, new window.** `gezik --help` and `gezik --version` print to the terminal. `gezik --new-window ~` opens a second window, 32 px offset; Ctrl+N does the same. Close the first window, then the second; open Gezik again: the first window's tabs come back.
+73. **Hung or crashed Gezik.** `kill -STOP <pid>`, then `gezik ~`: its own window opens after about 2 s; `kill -CONT <pid>`. `kill -9 <pid>`, then `gezik ~`: a new first Gezik; `gezik /tmp` then goes to it.
+74. **Socket folder.** `ls -l $XDG_RUNTIME_DIR/gezik-*` shows an `srw-------` socket and an `-rw-------` lock. `env -u XDG_RUNTIME_DIR gezik ~` (with no Gezik running) creates `/tmp/gezik-$UID` with mode 0700. With `chmod 755 /tmp/gezik-$UID` (and no `XDG_RUNTIME_DIR`), single instance is off: every call opens its own window.
+75. **Other users.** `sudo -u <other> env DISPLAY=$DISPLAY gezik /tmp` never reaches your Gezik: it opens its own window (or fails to), but no tab opens in yours.
+76. **Off.** `[system] single-instance = false` in settings.toml, restart Gezik: every call opens its own window.
+
+### 9b2, the Trash
+
+Do 78-84 on GNOME (Nautilus) and on KDE (Dolphin).
+
+77. **Tests first.** In the clone: `cargo test -p gezik-platform trash`, `cargo test -p gezik-platform fs`, `cargo test -p gezik-ops delete` and `cargo test -p gezik-ops restore`. The Unix path rules only compiled on Windows and never ran: `freedesktop_original` (absolute `Path=` only in the home trash, relative only in a volume trash, `..` refused), `shared_trash_ok`/`own_trash_ok`, `only_items_in_a_bin_with_their_own_record_count` (only `files/x` with its own `info/x.trashinfo` may be deleted for good), `put_back_never_goes_through_a_link` with a symlink, `only_a_plain_file_is_read_as_a_record` and `a_fifo_or_a_link_is_never_opened` with a FIFO, the `.trashinfo` removal tests. Then `cargo test --release -p gezik-platform ten_thousand -- --ignored` (10,000 items in under 1 s).
+78. **One list.** Trash a file in the home folder and one on a USB stick (ext4, and a FAT stick mounted for your user) with Nautilus/Dolphin. The sidebar's Trash (under the drives) shows both: the home trash (`~/.local/share/Trash`) and the stick's `.Trash-$(id -u)`, each with its own name, Original location and Date deleted. Turkish and spaced names (`çğış ad.txt`, stored as `%C3%A7…%20ad.txt` in `Path=`) show decoded.
+79. **Put Back.** The item goes back to its folder; `info/<name>.trashinfo` is gone and `files/<name>` is gone; the desktop's Trash no longer shows it. Folder deleted meanwhile: made again. A file of the same name there: the conflict list (Keep both `a (2).txt`; Replace puts the existing one in the trash). Ctrl+Z puts it back in the trash. An item whose `.trashinfo` you broke by hand (`Path=` removed) shows a blank place and Put Back asks for a folder.
+80. **Delete for good and Empty.** Delete and Shift+Delete in the trash ask `Delete N items permanently?` / `This cannot be undone.`. `Empty Trash…` (background menu, sidebar row menu, palette) asks `Empty the Trash?` with the count. After it, `files/` and `info/` of every bin are empty and no orphan `.trashinfo` is left. Cancel an empty with a big folder: what is left is still in the desktop's Trash, each with its `.trashinfo`.
+81. **Bin rules.** On a stick: `sudo mkdir -m 1777 /media/$USER/usb/.Trash; mkdir /media/$USER/usb/.Trash/$(id -u)` and trash a file there by hand (a `files/x` plus `info/x.trashinfo`): it is listed. `sudo chmod -t /media/$USER/usb/.Trash` (no sticky bit): that `.Trash/$UID` is no longer read. Remove `.Trash-$UID` and `ln -s /tmp /media/$USER/usb/.Trash-$(id -u)`: it is not read. Clean up both afterwards.
+82. **Other home trash.** `XDG_DATA_HOME=/tmp/x gezik` with a `/tmp/x/Trash/files` + `info` made by hand: its Trash shows that bin, not `~/.local/share/Trash`.
+83. **Live.** With the trash open, trash a file in Nautilus/Dolphin: it shows within about 1 s. Go to another folder, then trash another file: Gezik reads nothing (`strace -f -e trace=openat -p $(pidof gezik)` shows no `Trash` path).
+84. **Refused.** In the trash: Ctrl+C, Ctrl+X, Ctrl+V, Ctrl+Shift+N, Ctrl+D, F2 and a `[[commands]]` key do nothing and the status bar says `Not available in the Trash`; Enter/double-click opens nothing, with a note; rows can't be dragged out.
+
+### 9b3, the command line and --unregister
+
+Do 86-92 on GNOME and on KDE.
+
+85. **Tests first.** In the clone: `cargo test -p gezik-platform system` and `cargo test -p gezik system_changes`. The Unix arms (`replace_symlink` refusing a file or a foreign link, the sweep by exe name) only compiled on Windows; they never ran on Linux.
+86. **Panel.** Palette ▸ `System Integration…` and View ▸ `System Integration…` (last item): a box with three rows (`Command line (PATH)` Off/Add, `Changes made: 0`, `Undo all system changes`). Esc closes it; typing in the field does nothing; Up/Down and click work.
+87. **Add, no `~/.local/bin`.** Move `~/.local/bin` away first if you have one. `Add gezik to PATH` asks first and names every place it writes. After it: `~/.local` and `~/.local/bin` exist with mode 0755, `ls -la ~/.local/bin` shows the `gezik` link pointing at the real binary. If `~/.local/bin` is not in Gezik's own `PATH`, the hint box shows `export PATH="$HOME/.local/bin:$PATH"` and `Copy` puts it on the clipboard. When `~/.local/bin` is already on `PATH` (most distributions' `~/.profile` adds it once it exists; log out and in) the hint does not show. A new terminal's `gezik .` opens the folder in the running Gezik.
+88. **Someone else's file, dotfiles.** Remove gezik from PATH, then `echo hi > ~/.local/bin/gezik` and Add again: the file is untouched and the panel says `<place> was not made by Gezik; left alone` (Off, no button); the same with `ln -s /usr/bin/true ~/.local/bin/gezik`. Clean up. Then make `~/.local/bin` itself a link (`mv ~/.local/bin ~/dots-bin; ln -s ~/dots-bin ~/.local/bin`): Add works (the `gezik` link lands in `~/dots-bin`), and Remove and `--unregister` take the `gezik` link back but never touch the `~/.local/bin` link.
+89. **Gezik moved, odd path.** Copy the build to `~/Uygulamalar/gé zik/gezik` and run it from there: the panel says `Gezik's exe moved; gezik still starts <old path>` with `Update`; after Update, `ls -la ~/.local/bin/gezik` shows the new path (Turkish letters and the space intact) and `gezik .` starts it.
+90. **`--unregister`.** `gezik --unregister` prints one line per change and `echo $?` gives 0. The link is gone; `~/.local/bin` and `~/.local` are removed if Gezik made them and they are empty. With another file in `~/.local/bin`: the folder stays, `left (not empty)`, exit 1. A second run: `No system-changes.toml: …`, `Nothing of Gezik's was found.` (0).
+91. **No journal.** Add, delete `~/.config/gezik/system-changes.toml`, then `gezik --unregister`: only the link that points at this Gezik is swept; `~/.local/bin` stays. Write `version = 9` into a fresh `system-changes.toml`: the panel says `Fix or delete system-changes.toml first`, Add fails, `--unregister` exits 2 and the file is unchanged.
+92. **Two at once.** With Gezik open and gezik added, run `gezik --unregister` from a terminal: the report is complete; opening the panel again shows Off.
+
 ### 9a3, the Info window
 
-69. **Opening.** Alt+Enter on a file (the list has the keyboard), right-click ▸ Properties, and the command palette's "Get Info": the panel on the right with Kind, Size, Where, Modified, Last opened (Created only on file systems that keep it: ext4, btrfs, xfs). No Hidden/Locked row, no Open with row. Alt+Enter in the search bar's field still searches in a new tab. Esc and Done close it.
-70. **Permissions, owner, group.** As macOS items 103-104 with `ls -l`: ticking boxes, Octal 600, 4755 refused, Group ▾ lists your groups, a group you are not in and owner `root` say "Requires administrator: 1 item not changed". A setuid file you own (`chmod 4755`) keeps `rws` after a group change. A file replaced from another terminal while the window is open is not changed ("changed since"). A setgid folder (`chmod g+s`) shows "Special: setgid (not changed here)". `setfacl -m u:nobody:r <file>` (if `acl` is installed): the access control note shows.
-71. **Apply to enclosed items.** As macOS item 106 (with a symlink inside pointing outside): the link and its target are untouched, the script stays runnable, Cancel in the operations panel stops a big one, Ctrl+Z puts every item back.
-72. **Links.** Get Info on a symlink: permission boxes greyed; Group ▾ changes the link's own group (`ls -l` on it), `stat -L` shows the target's group unchanged. Write down the glibc version (`ldd --version | head -1`): below 2.32 permission changes use the fallback. Also run `cargo test -p gezik-platform attrs` and `cargo test -p gezik-ops attrs` and report failures.
+93. **Opening.** Alt+Enter on a file (the list has the keyboard), right-click ▸ Properties, and the command palette's "Get Info": the panel on the right with Kind, Size, Where, Modified, Last opened (Created only on file systems that keep it: ext4, btrfs, xfs). No Hidden/Locked row, no Open with row. Alt+Enter in the search bar's field still searches in a new tab. Esc and Done close it.
+94. **Permissions, owner, group.** As macOS items 103-104 with `ls -l`: ticking boxes, Octal 600, 4755 refused, Group ▾ lists your groups, a group you are not in and owner `root` say "Requires administrator: 1 item not changed". A setuid file you own (`chmod 4755`) keeps `rws` after a group change. A file replaced from another terminal while the window is open is not changed ("changed since"). A setgid folder (`chmod g+s`) shows "Special: setgid (not changed here)". `setfacl -m u:nobody:r <file>` (if `acl` is installed): the access control note shows.
+95. **Apply to enclosed items.** As macOS item 106 (with a symlink inside pointing outside): the link and its target are untouched, the script stays runnable, Cancel in the operations panel stops a big one, Ctrl+Z puts every item back.
+96. **Links.** Get Info on a symlink: permission boxes greyed; Group ▾ changes the link's own group (`ls -l` on it), `stat -L` shows the target's group unchanged. Write down the glibc version (`ldd --version | head -1`): below 2.32 permission changes use the fallback. Also run `cargo test -p gezik-platform attrs` and `cargo test -p gezik-ops attrs` and report failures.
 
 ## Known gaps (not bugs)
 
@@ -435,7 +474,7 @@ Keyboard (6b: path completion, folder history, command keys)
 - **Drag and drop on Wayland:**
   - Drops from other apps don't see the modifier keys.
   - Gezik always reports "copy" to the source and does a move itself, so the cursor may say copy.
-- **Trash:** only the home trash and `.Trash-<uid>`. The admin trash `$topdir/.Trash/<uid>` isn't used.
+- **Trash:** Delete puts items only in the home trash and `.Trash-<uid>`; the admin trash `$topdir/.Trash/<uid>` is listed (9b2) but never written to. Items can't be dragged or cut out of the trash (Put Back does it), and files can't be dropped onto it.
 - **Theme:** with no xdg-desktop-portal, `auto` stays light.
 - **No .desktop file, icon or MIME integration:** it is a bare binary.
 - Folders dropped from outside can't be pinned by dragging.

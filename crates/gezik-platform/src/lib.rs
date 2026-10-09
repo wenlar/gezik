@@ -10,6 +10,7 @@ pub mod finder;
 pub mod fs;
 pub mod http;
 mod icons;
+pub mod instance;
 mod known;
 pub mod link;
 mod linux;
@@ -22,9 +23,11 @@ pub mod priority;
 pub mod process;
 pub mod ql_panel;
 pub mod services;
+pub mod system;
 pub mod taskbar;
 pub mod terminal;
 mod text;
+pub mod trash;
 
 use std::path::PathBuf;
 

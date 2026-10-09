@@ -123,7 +123,7 @@ pub fn file_row(data: &ViewData, i: usize) -> FileRow {
         time.map(|time| gezik_platform::format_date(time, options.date_format, now)).unwrap_or_default()
     };
     let icon = picture_for(data, i);
-    let name = listing.name_at(i).unwrap_or_default();
+    let name = listing.shown_name_at(i).unwrap_or_default();
     let entries = !matches!(listing, Listing::Drives(_));
     // macOS: Finder's name for a folder right under the home folder or `/` (spec 9 §4.2);
     // sorting, filtering and renaming keep the real one.
@@ -132,7 +132,7 @@ pub fn file_row(data: &ViewData, i: usize) -> FileRow {
         .flatten();
     let (folder, found) = match listing {
         Listing::Results(set) => (
-            set.folder(i).unwrap_or_default().into(),
+            set.shown_folder(i).unwrap_or_default().into(),
             set.found(i).map(|(line, text)| format!("{line}: {text}")).unwrap_or_default().into(),
         ),
         _ => (slint::SharedString::default(), slint::SharedString::default()),
@@ -254,6 +254,8 @@ pub fn notify_plan(rows: &[Range<usize>], per_row: usize) -> Plan {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+    use std::sync::Arc;
 
     #[test]
     fn a_folders_size_cell_says_what_is_known() {
@@ -268,6 +270,22 @@ mod tests {
             "1.5 KB",
             "old: drawn faint"
         );
+    }
+
+    #[test]
+    fn trash_rows_show_the_name_and_place_they_had() {
+        let set = crate::trash_view::to_set(vec![gezik_platform::trash::TrashItem {
+            trashed: PathBuf::from("/bin").join("$RAB.txt"),
+            info: None,
+            name: "a.txt".into(),
+            original: Some(PathBuf::from("/w").join("a.txt")),
+            deleted: None,
+            is_dir: false,
+            size: 10,
+        }]);
+        let data = ViewData { listing: Listing::Results(Arc::new(set)), media: Media::idle(), ..Default::default() };
+        let row = file_row(&data, 0);
+        assert_eq!((row.name.as_str(), row.folder.as_str()), ("a.txt", "/w"));
     }
 
     #[test]

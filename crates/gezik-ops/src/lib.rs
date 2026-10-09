@@ -22,5 +22,5 @@ pub use task::{
 };
 pub use tasks::{
     CopyTask, DeleteTask, GroupTask, LinkTask, MoveTask, NEEDS_ADMIN, NewTask, RenameTask, RestoreTask,
-    SetAttributesTask, TrashTask, trash_path,
+    SetAttributesTask, TrashTask, in_a_bin_folder, trash_path,
 };

@@ -13,8 +13,8 @@ mod trash;
 
 pub use attrs::{NEEDS_ADMIN, SetAttributesTask};
 pub use copy::CopyTask;
-pub use delete::DeleteTask;
 pub(crate) use delete::restore_hidden;
+pub use delete::{DeleteTask, in_a_bin_folder};
 pub use group::GroupTask;
 pub use link::LinkTask;
 pub use move_::MoveTask;
