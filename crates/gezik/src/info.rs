@@ -463,6 +463,9 @@ impl Info {
             Some([(path, e)]) if e.is_dir && !e.is_link => (path.clone(), e.id, e.attrs),
             _ => return,
         };
+        if let Some(why) = enclosed_refusal(folder.2.mode) {
+            return self.set_note(why, true);
+        }
         let name = crate::operations::items_text(std::slice::from_ref(&folder.0));
         let info = self.clone();
         self.0.dialogs.ask(
@@ -568,6 +571,13 @@ fn special_text(special: &str, acl: bool) -> String {
         lines.push("This item has access control entries; they are not shown or changed here".to_owned());
     }
     lines.join("\n")
+}
+
+/// Why "Apply to enclosed items" is refused for a folder `mode`: subfolders without the owner's
+/// read, write and execute could not be gone into to change (or undo) what is inside them.
+fn enclosed_refusal(mode: u32) -> Option<String> {
+    (mode & 0o700 != 0o700)
+        .then(|| "Apply to enclosed items needs the owner's Read, Write and Execute on this folder".to_owned())
 }
 
 /// The nine boxes as one int for info.slint: box `i` is base-3 digit `i`.
@@ -718,6 +728,15 @@ mod tests {
         assert_eq!(default_app(&apps), "Preview");
         assert_eq!(default_app(&[app("Safari", false)]), "Not set");
         assert_eq!(default_app(&[]), "");
+    }
+
+    #[test]
+    fn enclosed_items_need_the_owners_rwx() {
+        assert_eq!(enclosed_refusal(0o755), None);
+        assert_eq!(enclosed_refusal(0o2700), None, "special bits do not matter");
+        for mode in [0o600, 0o500, 0o300, 0o077] {
+            assert!(enclosed_refusal(mode).is_some(), "{mode:o}");
+        }
     }
 
     #[test]
