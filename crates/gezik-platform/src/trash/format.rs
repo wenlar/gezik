@@ -366,7 +366,7 @@ pub(crate) fn mac_original(volume: &str, folder: &str, name: &str) -> Option<Str
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     fn info_v2(size: u64, filetime: u64, path: &str) -> Vec<u8> {
@@ -577,7 +577,7 @@ mod tests {
     /// A `.DS_Store` as Finder lays it out: the header, the root block (block addresses, padded
     /// to 256, and the table of contents naming `DSDB`), the master block, and one node with
     /// `records` (`p`: the node's own pointer, 0 for a leaf).
-    fn ds_store(records: &[(&str, &[u8; 4], &str)], p: u32) -> Vec<u8> {
+    pub(crate) fn ds_store(records: &[(&str, &[u8; 4], &str)], p: u32) -> Vec<u8> {
         let be = |v: u32| v.to_be_bytes();
         let utf16 = |s: &str| -> Vec<u8> { s.encode_utf16().flat_map(u16::to_be_bytes).collect() };
         let mut node = Vec::new();

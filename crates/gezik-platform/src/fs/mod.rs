@@ -17,6 +17,8 @@ pub use describe::describe;
 pub use gezik_core::ops::threads::DiskKind;
 #[cfg(unix)]
 use unix::entry_id;
+#[cfg(target_os = "linux")]
+pub(crate) use unix::home_trash;
 #[cfg(unix)]
 pub use unix::{
     clear_hidden, copy_file, delete, device_of, drive_facts, drive_root, free_space, is_hidden_attr, is_network,

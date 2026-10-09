@@ -613,22 +613,18 @@ pub fn trash(path: &Path) -> io::Result<Option<PathBuf>> {
     }
 }
 
-/// Moves `trashed` (`…\$Recycle.Bin\…\$Rxxxxxx.ext`) back to `original`.
+/// Moves `trashed` (`…\$Recycle.Bin\…\$Rxxxxxx.ext`) back to `original`, never through a
+/// junction or link on the way (`trash::check_way_back`).
 pub fn restore(trashed: &Path, original: &Path) -> io::Result<()> {
+    crate::trash::check_way_back(trashed, original)?;
     if let Some(parent) = original.parent() {
         std::fs::create_dir_all(parent)?;
     }
+    crate::trash::check_way_back(trashed, original)?;
     move_entry(trashed, original)?;
-    // Next to the entry, `$Ixxxxxx.ext` records where it came from; without its entry the
-    // Recycle Bin would list a broken item.
-    let in_bin = trashed
-        .ancestors()
-        .any(|dir| dir.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.eq_ignore_ascii_case("$Recycle.Bin")));
-    if in_bin
-        && let (Some(dir), Some(name)) = (trashed.parent(), trashed.file_name().and_then(|n| n.to_str()))
-        && let Some(rest) = name.strip_prefix("$R")
-    {
-        let _ = std::fs::remove_file(dir.join(format!("$I{rest}")));
+    // The bin's record goes with it (without its entry it would list a broken item).
+    if let Some(info) = crate::trash::info_file(trashed) {
+        let _ = std::fs::remove_file(info);
     }
     Ok(())
 }

@@ -381,15 +381,20 @@ pub fn trash(path: &Path) -> io::Result<Option<PathBuf>> {
     Ok(Some(target))
 }
 
-/// The home trash if `path` is on the same device, else `.Trash-<uid>` at its mount point.
+/// `$XDG_DATA_HOME/Trash` (an absolute `XDG_DATA_HOME` only), else `~/.local/share/Trash`.
 #[cfg(target_os = "linux")]
-fn trash_dir_for(path: &Path, dev: u64) -> io::Result<PathBuf> {
-    let data_home = std::env::var_os("XDG_DATA_HOME")
+pub(crate) fn home_trash() -> Option<PathBuf> {
+    std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
         .or_else(|| dirs::home_dir().map(|home| home.join(".local/share")))
-        .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
-    let home_trash = data_home.join("Trash");
+        .map(|data| data.join("Trash"))
+}
+
+/// The home trash if `path` is on the same device, else `.Trash-<uid>` at its mount point.
+#[cfg(target_os = "linux")]
+fn trash_dir_for(path: &Path, dev: u64) -> io::Result<PathBuf> {
+    let home_trash = home_trash().ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
     let home_dev = nearest_existing(&home_trash).and_then(|p| std::fs::metadata(p).ok()).map(|m| m.dev());
     if home_dev == Some(dev) {
         return Ok(home_trash);
@@ -415,21 +420,18 @@ fn local_now() -> String {
     super::freedesktop::format_date(tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec)
 }
 
+/// Moves `trashed` back to `original`, never through a link on the way (`trash::check_way_back`).
 pub fn restore(trashed: &Path, original: &Path) -> io::Result<()> {
+    crate::trash::check_way_back(trashed, original)?;
     if let Some(parent) = original.parent() {
         std::fs::create_dir_all(parent)?;
     }
+    crate::trash::check_way_back(trashed, original)?;
     // Never replaces: an existing `original` is AlreadyExists.
     move_entry(trashed, original)?;
-    // freedesktop: drop `info/NAME.trashinfo` next to `files/NAME`.
-    if cfg!(target_os = "linux")
-        && let (Some(files), Some(name)) = (trashed.parent(), trashed.file_name())
-        && files.file_name() == Some(std::ffi::OsStr::new("files"))
-        && let Some(root) = files.parent()
-    {
-        let mut info = name.to_os_string();
-        info.push(".trashinfo");
-        let _ = std::fs::remove_file(root.join("info").join(info));
+    // The bin's record goes with it (without its entry it would list a broken item).
+    if let Some(info) = crate::trash::info_file(trashed) {
+        let _ = std::fs::remove_file(info);
     }
     Ok(())
 }
