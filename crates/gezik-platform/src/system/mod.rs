@@ -6,6 +6,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
+pub mod text;
 #[cfg(unix)]
 mod unix;
 #[cfg(windows)]

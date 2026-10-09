@@ -124,6 +124,8 @@ impl Access for SystemAccess {
                 registry_current(&self.key(&change.place)?, change.kind, &change.name)
             }
             Kind::File | Kind::Symlink | Kind::Folder => file_current(Path::new(&change.place), change.kind),
+            // Not yet a place Gezik writes: `check` already refused it.
+            Kind::MacDefault | Kind::MacPref | Kind::Mimeapps => Err(io::ErrorKind::Unsupported.into()),
         }
     }
 
@@ -138,6 +140,7 @@ impl Access for SystemAccess {
                 registry_set(&self.key(&change.place)?, change.kind, &change.name, value)
             }
             Kind::File | Kind::Symlink | Kind::Folder => file_set(change, value),
+            Kind::MacDefault | Kind::MacPref | Kind::Mimeapps => Err(io::ErrorKind::Unsupported.into()),
         }
     }
 }

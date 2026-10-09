@@ -136,7 +136,7 @@ pub fn to_text(journal: &Journal) -> String {
         table["feature"] = value(change.feature.as_str());
         table["kind"] = value(change.kind.name());
         table["where"] = value(change.place.as_str());
-        if matches!(change.kind, Kind::RegistryValue | Kind::PathEntry) {
+        if matches!(change.kind, Kind::RegistryValue | Kind::PathEntry | Kind::Mimeapps) {
             table["name"] = value(change.name.as_str());
         }
         if !change.entry.is_empty() {
@@ -300,6 +300,21 @@ mod tests {
                     before: Value::Reg { ty: RegType::ExpandSz, data: r"%USERPROFILE%\x;;".into() },
                     after: Value::Reg { ty: RegType::ExpandSz, data: r"%USERPROFILE%\x;;C:\G\bin".into() },
                     done: false,
+                    ..base.clone()
+                },
+                Change {
+                    kind: Kind::Mimeapps,
+                    place: "/h/.config/mimeapps.list".into(),
+                    name: "inode/directory".into(),
+                    before: Value::Text("org.gnome.Nautilus.desktop;".into()),
+                    after: Value::Text("gezik.desktop;".into()),
+                    ..base.clone()
+                },
+                Change {
+                    kind: Kind::MacDefault,
+                    place: "public.folder".into(),
+                    before: Value::Text("com.apple.finder".into()),
+                    after: Value::Text("com.wenlar.gezik".into()),
                     ..base.clone()
                 },
                 Change {

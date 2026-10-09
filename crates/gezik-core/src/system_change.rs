@@ -19,11 +19,26 @@ pub enum Kind {
     Symlink,
     /// A folder Gezik made: taken away again only if empty.
     Folder,
+    /// macOS: the default app for a content type (`place` = `public.folder`), a bundle id.
+    MacDefault,
+    /// macOS: a key of the global preferences domain (`place` = `NSFileViewer`), a bundle id.
+    MacPref,
+    /// Linux: one key of a `mimeapps.list` (`place` = the file, `name` = the MIME type).
+    Mimeapps,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 6] =
-        [Kind::RegistryValue, Kind::RegistryKey, Kind::PathEntry, Kind::File, Kind::Symlink, Kind::Folder];
+    pub const ALL: [Kind; 9] = [
+        Kind::RegistryValue,
+        Kind::RegistryKey,
+        Kind::PathEntry,
+        Kind::File,
+        Kind::Symlink,
+        Kind::Folder,
+        Kind::MacDefault,
+        Kind::MacPref,
+        Kind::Mimeapps,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -33,6 +48,9 @@ impl Kind {
             Kind::File => "file",
             Kind::Symlink => "symlink",
             Kind::Folder => "folder",
+            Kind::MacDefault => "macos-default",
+            Kind::MacPref => "macos-pref",
+            Kind::Mimeapps => "mimeapps",
         }
     }
 
@@ -209,6 +227,7 @@ pub fn what(change: &Change) -> String {
             let name = if change.name.is_empty() { "(Default)" } else { &change.name };
             format!(r"{}\{name}", change.place)
         }
+        Kind::Mimeapps => format!("{} [{}]", change.place, change.name),
         _ => change.place.clone(),
     }
 }
@@ -448,6 +467,27 @@ mod tests {
         let list = list.trim_end_matches(';');
         let added = with_entry(list, r"C:\G\bin", |s| s.to_owned()).unwrap();
         assert_eq!(without_entry(&added, r"C:\G\bin").as_deref(), Some(list));
+    }
+
+    #[test]
+    fn every_kind_has_a_name_that_reads_back() {
+        for kind in Kind::ALL {
+            assert_eq!(Kind::from_name(kind.name()), Some(kind));
+        }
+        assert_eq!(Kind::from_name("macos-default"), Some(Kind::MacDefault));
+        assert_eq!(Kind::from_name("macos-pref"), Some(Kind::MacPref));
+        assert_eq!(Kind::from_name("mimeapps"), Some(Kind::Mimeapps));
+        let pick = Change {
+            feature: "default-file-manager".into(),
+            kind: Kind::Mimeapps,
+            place: "/h/.config/mimeapps.list".into(),
+            name: "inode/directory".into(),
+            entry: String::new(),
+            before: Value::Absent,
+            after: Value::Text("gezik.desktop;".into()),
+            done: true,
+        };
+        assert_eq!(what(&pick), "/h/.config/mimeapps.list [inode/directory]");
     }
 
     #[test]
