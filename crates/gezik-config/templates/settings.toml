@@ -107,6 +107,11 @@ single-instance = true
 # Windows and Linux always use Gezik's own.
 quick-look = "system"     # system | gezik
 
+[sidebar]
+# OneDrive, iCloud Drive, Dropbox, Google Drive … under CLOUD, found by Gezik. Rows in these
+# folders show whether a file is only in the cloud either way.
+cloud = true
+
 [shortcuts]
 # Change any shortcut; "mod" is Cmd on macOS and Ctrl elsewhere; "" disables.
 # new-tab = "mod+t"

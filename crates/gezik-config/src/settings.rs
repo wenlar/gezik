@@ -332,6 +332,8 @@ pub struct Settings {
     pub history: HistorySettings,
     pub session: SessionSettings,
     pub system: SystemSettings,
+    /// `[sidebar] cloud`: the CLOUD section (spec 13.1); roots are found either way.
+    pub sidebar_cloud: bool,
     pub terminal: TerminalSettings,
     pub search: SearchSettings,
     /// Tab sets (`[[tab-sets]]`); invalid ones are left out.
@@ -371,6 +373,7 @@ impl Default for Settings {
             history: HistorySettings::default(),
             session: SessionSettings::default(),
             system: SystemSettings::default(),
+            sidebar_cloud: true,
             terminal: TerminalSettings::default(),
             search: SearchSettings::default(),
             tab_sets: Vec::new(),
@@ -581,6 +584,23 @@ impl Settings {
             Some(value) => match value.as_table() {
                 Some(system) => settings.system = parse_system(system, file, warnings),
                 None => warnings.push(Warning::new(file, format!("system: expected a table, got {value}"))),
+            },
+        }
+        match table.get("sidebar") {
+            None => {}
+            Some(value) => match value.as_table() {
+                Some(sidebar) => {
+                    if let Some(value) = sidebar.get("cloud") {
+                        match value.as_bool() {
+                            Some(on) => settings.sidebar_cloud = on,
+                            None => warnings.push(Warning::new(
+                                file,
+                                format!("sidebar.cloud: expected true or false, got {value}"),
+                            )),
+                        }
+                    }
+                }
+                None => warnings.push(Warning::new(file, format!("sidebar: expected a table, got {value}"))),
             },
         }
         match table.get("terminal") {
@@ -1776,6 +1796,19 @@ mod tests {
         assert_eq!(settings.view.view.sort.key, SortKey::Name);
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].to_string().contains("view.sort"), "{}", warnings[0]);
+    }
+
+    #[test]
+    fn the_cloud_section_is_on_unless_turned_off() {
+        assert!(Settings::default().sidebar_cloud);
+        let (settings, warnings) = parse("[sidebar]\ncloud = false\n");
+        assert!(!settings.sidebar_cloud);
+        assert!(warnings.is_empty());
+        let (settings, warnings) = parse("[sidebar]\ncloud = \"no\"\n");
+        assert!(settings.sidebar_cloud, "a bad value keeps the default");
+        assert_eq!(warnings[0].message, "sidebar.cloud: expected true or false, got \"no\"");
+        let (_, warnings) = parse("sidebar = 3\n");
+        assert_eq!(warnings[0].message, "sidebar: expected a table, got 3");
     }
 
     #[test]
