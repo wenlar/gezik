@@ -568,32 +568,31 @@ fn resolve_start(
     )
 }
 
-/// Hands `target` to Explorer once (decisions 2, 3); a second round within 10 s asks to give
-/// folders back to Explorer instead. The exit code.
+/// Hands `target` to Explorer (decisions 2, 3), unless fallbacks come so fast that Gezik and
+/// Explorer are sending places back and forth: then it stops and offers once to give folders
+/// back to Explorer. The exit code.
 #[cfg(windows)]
 fn explorer_fallback(target: &str) -> i32 {
     use gezik_platform::shell_fallback as fb;
-    let guard = std::env::temp_dir().join(fb::GUARD_FILE);
+    let file = std::env::temp_dir().join(fb::GUARD_FILE);
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-    let last = std::fs::read_to_string(&guard).unwrap_or_default();
-    if fb::seen_recently(&last, target, now) {
-        if fb::ask_restore(
-            "Only Explorer can show this place, and it sent it back to Gezik.
-
-Restore Explorer as the default file manager?",
-        ) {
-            // shortcut: Task 5 renames this to restore_default_now and gives it its own body.
-            return i32::from(system_changes::undo_feature_now(system_changes::FEATURE_DEFAULT).is_err());
+    let (record, guard) = fb::guard(&std::fs::read_to_string(&file).unwrap_or_default(), now);
+    let _ = std::fs::write(&file, record);
+    let question = "Only Explorer can show these places, and it keeps sending them back to Gezik.\n\n\
+                    Restore Explorer as the default file manager?";
+    match guard {
+        fb::Guard::Go => match fb::open_in_explorer(target) {
+            Ok(()) => 0,
+            Err(err) => {
+                eprintln!("gezik: --shell {target:?}: {err}");
+                1
+            }
+        },
+        // shortcut: Task 5 renames this to restore_default_now and gives it its own body.
+        fb::Guard::Ask if fb::ask_restore(question) => {
+            i32::from(system_changes::undo_feature_now(system_changes::FEATURE_DEFAULT).is_err())
         }
-        return 1;
-    }
-    let _ = std::fs::write(&guard, fb::record(target, now));
-    match fb::open_in_explorer(target) {
-        Ok(()) => 0,
-        Err(err) => {
-            eprintln!("gezik: --shell {target:?}: {err}");
-            1
-        }
+        fb::Guard::Ask | fb::Guard::Stop => 1,
     }
 }
 
