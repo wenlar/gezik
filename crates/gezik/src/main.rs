@@ -11,6 +11,7 @@ mod copy_path;
 mod dialog;
 mod drag;
 mod filter;
+mod finder_menu;
 mod folder_sizes;
 mod folder_watch;
 mod frame_limit;

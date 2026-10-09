@@ -423,9 +423,12 @@ pub const LINK_SHORTCUT: u32 = 1404;
 pub const LINK_JUNCTION: u32 = 1405;
 pub const LINK_SYMLINK: u32 = 1406;
 pub const TEMPLATE_FIRST: u32 = 1410;
-/// 9a's ids are 1700-1799 (spec 9 §13.3); 9a1 has these two.
+/// 9a's ids are 1700-1799 (spec 9 §13.3); 9a1 has these two; 9a2: Open With ▸ by place, Other….
 pub const MAKE_ALIAS: u32 = 1743;
 pub const SHOW_PACKAGE: u32 = 1744;
+pub const OPEN_WITH_FIRST: u32 = 1700;
+pub const OPEN_WITH_MAX: u32 = gezik_platform::open_with::MAX_APPS as u32;
+pub const OPEN_WITH_OTHER: u32 = 1740;
 pub const TEMPLATE_MAX: u32 = gezik_core::templates::TEMPLATE_MAX as u32;
 /// Group headings in a Slint menu: shown greyed, never chosen.
 pub const HEADING: u32 = 0;
@@ -556,6 +559,25 @@ pub fn package_item(path: &Path, is_dir: bool, mac: bool) -> Option<(u32, String
     let package =
         mac && is_dir && path.file_name().is_some_and(|n| gezik_core::kind::is_package_name(&n.to_string_lossy()));
     package.then(|| (SHOW_PACKAGE, "Show Package Contents".to_owned()))
+}
+
+/// Open With ▸ (macOS): `apps` by place, or a greyed Loading… while they are not known, then
+/// Other…; at place `at`.
+pub fn open_with_sub(apps: Option<&[gezik_platform::open_with::AppChoice]>, at: usize) -> Submenu {
+    let mut items: Vec<(u32, String, bool)> = match apps {
+        None => vec![(HEADING, "Loading…".to_owned(), false)],
+        Some(apps) => apps
+            .iter()
+            .take(OPEN_WITH_MAX as usize)
+            .enumerate()
+            .map(|(i, app)| {
+                let title = if app.default { format!("{} (default)", app.name) } else { app.name.clone() };
+                (OPEN_WITH_FIRST + i as u32, title, true)
+            })
+            .collect(),
+    };
+    items.push((OPEN_WITH_OTHER, "Other…".to_owned(), true));
+    Submenu { title: "Open With".to_owned(), at, items }
 }
 
 /// Whether Junction is offered for `rows`: all folders, none on a share or on one of
@@ -826,6 +848,10 @@ pub struct Menus {
     pin_groups: Rc<RefCell<Vec<String>>>,
     /// The templates the last New ▸ listed (items are by place).
     menu_templates: Rc<RefCell<Vec<Template>>>,
+    /// The apps the last Open With ▸ listed (items are by place).
+    menu_apps: Rc<RefCell<Vec<gezik_platform::open_with::AppChoice>>>,
+    /// An Open With list that came after its menu had opened (macOS).
+    late: crate::finder_menu::Late,
     #[cfg_attr(not(windows), allow(dead_code))]
     native_menu: MenuGate,
 }
@@ -850,6 +876,8 @@ impl Menus {
             rows: Rc::default(),
             pin_groups: Rc::default(),
             menu_templates: Rc::default(),
+            menu_apps: Rc::default(),
+            late: crate::finder_menu::Late::default(),
             native_menu: MenuGate::default(),
         };
         window.on_menu_closed(|| {
@@ -915,6 +943,7 @@ impl Menus {
             let mut list = owned(items(Place::Rows, native));
             list.extend(owned(terminal_items(native)));
             let mut subs = vec![self.copy_path_sub(&paths, list.len())];
+            self.add_open_with(&list, &mut subs, &rows);
             self.add_links(&mut list, &mut subs, &rows, native);
             self.add_file_tools(&mut list, &mut subs, rows, native);
             list.extend(self.file_extras(false, false, native));
@@ -945,6 +974,7 @@ impl Menus {
         }
         list.extend(owned(terminal_items(native)));
         let mut subs = vec![self.copy_path_sub(std::slice::from_ref(&path), list.len())];
+        self.add_open_with(&list, &mut subs, &[(path.clone(), is_dir)]);
         self.add_links(&mut list, &mut subs, &[(path.clone(), is_dir)], native);
         self.add_file_tools(&mut list, &mut subs, vec![(path.clone(), is_dir)], native);
         list.extend(self.file_extras(true, is_dir, native));
@@ -996,6 +1026,20 @@ impl Menus {
         } else {
             owned(file_items(single, folder, self.ops.can_paste()))
         }
+    }
+
+    /// Open With ▸ for `rows` on macOS (not for drives): asked now, at most `WAIT`.
+    fn add_open_with(&self, list: &[(u32, String)], subs: &mut Vec<Submenu>, rows: &[(PathBuf, bool)]) {
+        if self.view.shows_drives() || !crate::finder_menu::offers_open_with(rows, cfg!(target_os = "macos")) {
+            return;
+        }
+        let selected: Vec<PathBuf> = rows.iter().map(|(path, _)| path.clone()).collect();
+        let focused = self.view.focus().and_then(|i| self.view.entry_path(i)).map(|(path, _)| path);
+        let items = gezik_platform::open_with::asked_items(&selected, focused.as_deref());
+        let extras = crate::finder_menu::fetch(&self.late, items);
+        let apps = extras.map(|e| e.apps);
+        subs.push(open_with_sub(apps.as_deref(), crate::finder_menu::open_with_place(list)));
+        *self.menu_apps.borrow_mut() = apps.unwrap_or_default();
     }
 
     /// Create link ▸ (Windows) or Create link at the end of the items so far, for `rows`;
@@ -1643,6 +1687,18 @@ impl Menus {
                 self.ops.create_links(paths, link_kind(id))
             }
             (SHOW_PACKAGE, Subject::Row(path)) => self.nav.go(Location::Path(path)),
+            (id, subject @ (Subject::Row(_) | Subject::Rows(_)))
+                if (OPEN_WITH_FIRST..OPEN_WITH_FIRST + OPEN_WITH_MAX).contains(&id) || id == OPEN_WITH_OTHER =>
+            {
+                let paths = match subject {
+                    Subject::Row(path) => vec![path],
+                    Subject::Rows(paths) => paths,
+                    _ => Vec::new(),
+                };
+                let app =
+                    self.menu_apps.borrow().get(id.wrapping_sub(OPEN_WITH_FIRST) as usize).map(|a| a.path.clone());
+                crate::finder_menu::open_with(&self.window, paths, (id != OPEN_WITH_OTHER).then_some(app).flatten());
+            }
             (REFRESH, Subject::Background(_)) => self.nav.reload(),
             (OPEN_TERMINAL | OPEN_TERMINAL_ADMIN, subject) => {
                 let dir = match subject {
@@ -1808,6 +1864,8 @@ fn from_submenu(id: u32) -> bool {
         || id == GROUP_NEW
         || id == GROUP_NONE
         || (TEMPLATE_FIRST..TEMPLATE_FIRST + TEMPLATE_MAX).contains(&id)
+        || (OPEN_WITH_FIRST..OPEN_WITH_FIRST + OPEN_WITH_MAX).contains(&id)
+        || id == OPEN_WITH_OTHER
         || (MODIFIED_FIRST..=MODIFIED_BETWEEN).contains(&id)
         || (KIND_FIRST..KIND_FIRST + gezik_core::search::KindFilter::ALL.len() as u32).contains(&id)
         || matches!(
@@ -1953,6 +2011,9 @@ mod tests {
             CANCEL_DROP,
             MAKE_ALIAS,
             SHOW_PACKAGE,
+            OPEN_WITH_FIRST,
+            OPEN_WITH_FIRST + OPEN_WITH_MAX - 1,
+            OPEN_WITH_OTHER,
             ADD_RULE_FIRST,
             ADD_RULE_FIRST + 9,
             PRESET_FIRST,
@@ -1976,6 +2037,40 @@ mod tests {
         }
         assert!(presets[0].end <= PRESET_DELETE_FIRST && presets[1].end < GEZIK_IDS_END);
         assert!(archives.iter().all(|id| (presets[1].end..GEZIK_IDS_END).contains(id)), "below the Shell's ids");
+    }
+
+    #[test]
+    fn open_with_lists_apps_then_other() {
+        use gezik_platform::open_with::AppChoice;
+        let apps = [
+            AppChoice { path: "/A/Preview.app".into(), name: "Preview".into(), default: true },
+            AppChoice { path: "/A/Safari.app".into(), name: "Safari".into(), default: false },
+        ];
+        let sub = open_with_sub(Some(&apps), 2);
+        assert_eq!((sub.title.as_str(), sub.at), ("Open With", 2));
+        assert_eq!(
+            sub.items,
+            [
+                (OPEN_WITH_FIRST, "Preview (default)".to_owned(), true),
+                (OPEN_WITH_FIRST + 1, "Safari".to_owned(), true),
+                (OPEN_WITH_OTHER, "Other…".to_owned(), true),
+            ]
+        );
+        assert_eq!(open_with_sub(Some(&[]), 0).items, [(OPEN_WITH_OTHER, "Other…".to_owned(), true)]);
+        assert_eq!(
+            open_with_sub(None, 0).items,
+            [(HEADING, "Loading…".to_owned(), false), (OPEN_WITH_OTHER, "Other…".to_owned(), true)]
+        );
+        assert!(from_submenu(OPEN_WITH_FIRST + 39) && from_submenu(OPEN_WITH_OTHER));
+    }
+
+    #[test]
+    fn the_9a2_ids_stay_in_their_range() {
+        assert_eq!(OPEN_WITH_MAX as usize, gezik_platform::open_with::MAX_APPS);
+        const { assert!(OPEN_WITH_FIRST >= 1700 && OPEN_WITH_FIRST + OPEN_WITH_MAX <= OPEN_WITH_OTHER) };
+        for id in [OPEN_WITH_FIRST, OPEN_WITH_FIRST + OPEN_WITH_MAX - 1, OPEN_WITH_OTHER] {
+            assert!((1700..1800).contains(&id) && ![1742, MAKE_ALIAS, SHOW_PACKAGE].contains(&id), "{id}");
+        }
     }
 
     #[test]
@@ -2035,6 +2130,9 @@ mod tests {
             LINK_SYMLINK,
             MAKE_ALIAS,
             SHOW_PACKAGE,
+            OPEN_WITH_FIRST,
+            OPEN_WITH_FIRST + OPEN_WITH_MAX - 1,
+            OPEN_WITH_OTHER,
             PRESET_SAVE,
             EXTRACT_HERE,
             EXTRACT_TO_OWN,
