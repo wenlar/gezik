@@ -47,6 +47,11 @@ pub(super) struct Listener {
     sid: String,
 }
 
+/// This user's SID as text (the Recycle Bin's folder name on each drive).
+pub(crate) fn user_sid() -> Option<String> {
+    identity().map(|(sid, _)| sid)
+}
+
 /// This process's user (its SID as text) and session.
 fn identity() -> Option<(String, u32)> {
     let mut token = HANDLE::default();

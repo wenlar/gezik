@@ -170,6 +170,9 @@ quick-look = "system"     # system | gezik
 # make-alias = ""          # macOS: "mod+ctrl+a" (a Finder alias of the selected items)
 # show-package-contents = ""   # macOS: go into an app or another package as a folder
 # share = ""                   # macOS: Finder's Share… for the selected items
+# show-trash = ""          # the Recycle Bin / Trash: every bin in one list
+# put-back = ""            # in the trash: the selected items back where they were
+# empty-trash = ""         # delete everything in the trash for good (asks first); macOS: mod+shift+backspace
 
 # Saved rule sets for batch rename (Rename… with two or more items selected). The rename
 # layer writes them with "Presets ▾ › Save current rules as…"; they can also be written here.

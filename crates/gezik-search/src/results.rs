@@ -26,6 +26,19 @@ impl Batch {
     }
 }
 
+/// What a row in the trash was (spec 7.1): the row itself is the entry in the bin.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrashLabel {
+    /// Its name before it was deleted.
+    pub name: Box<str>,
+    /// Where it was (the Original location column); empty when unknown.
+    pub folder: Box<str>,
+    /// Where Put Back takes it; `None` when unknown.
+    pub original: Option<PathBuf>,
+    /// The bin's record of it that goes with it.
+    pub info: Option<PathBuf>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ResultSet {
     /// The scope folder; empty for every drive (the folders are then whole paths).
@@ -39,6 +52,8 @@ pub struct ResultSet {
     matches: Option<Vec<Option<Found>>>,
     /// The sort (and folders-first) the entries are in; `None` once new ones came unsorted.
     sorted: Option<(SortSpec, bool)>,
+    /// The trash's rows' labels (`ResultSet::trash`); `None` for a search.
+    labels: Option<Vec<TrashLabel>>,
 }
 
 // Above `Entry`'s flag bits (`HIDDEN`, `SYSTEM`, `SIZE_FLAGS`), as in the name cache.
@@ -178,7 +193,40 @@ impl ResultSet {
             parent: Vec::new(),
             matches: content.then(Vec::new),
             sorted: None,
+            labels: None,
         }
+    }
+
+    /// The trash's rows (spec 7.1): every bin, so no scope (folders are whole paths).
+    pub fn trash() -> ResultSet {
+        ResultSet { labels: Some(Vec::new()), ..ResultSet::default() }
+    }
+
+    pub fn is_trash(&self) -> bool {
+        self.labels.is_some()
+    }
+
+    /// The trash's rows and their labels, one each.
+    pub fn append_trash(&mut self, batch: Batch, labels: Vec<TrashLabel>) {
+        // Real asserts: a label out of step would show one item under another's name.
+        assert!(self.is_trash(), "trash rows go in a trash set");
+        assert_eq!(batch.entries.len(), labels.len(), "one label per trash row");
+        self.append_rows(batch);
+        self.labels.get_or_insert_with(Vec::new).extend(labels);
+    }
+
+    pub fn label(&self, i: usize) -> Option<&TrashLabel> {
+        self.labels.as_ref()?.get(i)
+    }
+
+    /// Row `i`'s name as shown: in the trash the name it had, else its own.
+    pub fn shown_name(&self, i: usize) -> Option<&str> {
+        self.label(i).map(|l| &*l.name).or_else(|| self.name(i))
+    }
+
+    /// Row `i`'s Folder column: in the trash where it was, else its folder.
+    pub fn shown_folder(&self, i: usize) -> Option<&str> {
+        self.label(i).map(|l| &*l.folder).or_else(|| self.folder(i))
     }
 
     /// Empty results that will use these folders (the name cache's), no matching lines.
@@ -187,6 +235,7 @@ impl ResultSet {
     }
 
     pub(crate) fn push_entry(&mut self, entry: Entry, parent: u32) {
+        assert!(!self.is_trash(), "a trash row needs its label");
         self.sorted = None;
         self.entries.push(&entry);
         self.parent.push(parent);
@@ -242,11 +291,11 @@ impl ResultSet {
         gezik_core::sort::sort_rows(
             self.len(),
             &|i| std::borrow::Cow::Owned(self.entries.get(i)),
-            &|i| self.entries.name(i),
+            &|i| self.shown_name(i).unwrap_or(""),
             spec,
             folders_first,
             type_name,
-            &|i| self.folder(i).unwrap_or(""),
+            &|i| self.shown_folder(i).unwrap_or(""),
         )
     }
 
@@ -275,6 +324,11 @@ impl ResultSet {
     }
 
     pub fn append(&mut self, batch: Batch) {
+        assert!(!self.is_trash(), "trash rows come with their labels (append_trash)");
+        self.append_rows(batch);
+    }
+
+    fn append_rows(&mut self, batch: Batch) {
         debug_assert_eq!(batch.entries.len(), batch.parent.len());
         debug_assert!(self.matches.is_none() || batch.matches.len() == batch.entries.len());
         if !batch.entries.is_empty() {
@@ -308,6 +362,9 @@ impl ResultSet {
         if let Some(matches) = &mut self.matches {
             gezik_core::sort::apply_order(matches, order);
         }
+        if let Some(labels) = &mut self.labels {
+            gezik_core::sort::apply_order(labels, order);
+        }
     }
 
     /// Entries `rows` (the filter's), with all the folders.
@@ -324,6 +381,10 @@ impl ResultSet {
             parent: rows.iter().map(|&i| self.parent[i]).collect(),
             matches: self.matches.as_ref().map(|m| rows.iter().filter_map(|&i| m.get(i).cloned()).collect()),
             sorted: self.sorted,
+            labels: self
+                .labels
+                .as_ref()
+                .map(|l| rows.iter().map(|&i| l.get(i).expect("a trash row has its label").clone()).collect()),
         }
     }
 
@@ -339,6 +400,9 @@ impl ResultSet {
             self.parent.push(parent);
             if let Some(matches) = &mut self.matches {
                 matches.push(from.found(i).cloned());
+            }
+            if let Some(labels) = &mut self.labels {
+                labels.push(from.label(i).expect("a trash row has its label").clone());
             }
         }
         if !rows.is_empty() {
@@ -377,6 +441,10 @@ impl ResultSet {
         if let Some(matches) = &mut self.matches {
             index = 0;
             matches.retain(|_| (keep[index], index += 1).0);
+        }
+        if let Some(labels) = &mut self.labels {
+            index = 0;
+            labels.retain(|_| (keep[index], index += 1).0);
         }
     }
 }
@@ -468,6 +536,8 @@ impl ResultSet {
         moves: &[(PathBuf, PathBuf)],
     ) -> Vec<usize> {
         use std::collections::{HashMap, HashSet};
+        // The trash is read again after a job instead: new rows would have no label.
+        assert!(!self.is_trash(), "the trash reloads after a job");
         let gone_rows = self.rows_of(gone);
         let mut seen = HashSet::new();
         let added: Vec<(PathBuf, Entry)> = added.into_iter().filter(|(path, _)| seen.insert(path.clone())).collect();
@@ -1238,5 +1308,104 @@ mod tests {
         rows.set(1, &refreshed);
         assert_eq!((facts(&rows.get(1)), rows.names.len()), (facts(&refreshed), used), "same name: no new bytes");
         assert_eq!(time(ticks(None)), None);
+    }
+
+    fn label(name: &str, folder: &str) -> TrashLabel {
+        TrashLabel {
+            name: name.into(),
+            folder: folder.into(),
+            original: Some(PathBuf::from(folder).join(name)),
+            info: None,
+        }
+    }
+
+    fn trash_set() -> ResultSet {
+        let mut set = ResultSet::trash();
+        let bin = if cfg!(windows) { r"C:\$Recycle.Bin\S-1" } else { "/home/u/.local/share/Trash/files" };
+        set.append_trash(
+            Batch {
+                folders: vec![bin.into()],
+                entries: vec![entry("$R1.txt"), entry("$R2.txt"), entry("$R3.txt")],
+                parent: vec![0, 0, 0],
+                matches: Vec::new(),
+            },
+            vec![label("b.txt", "/w"), label("a.txt", "/w"), label("a.txt", "/w")],
+        );
+        set
+    }
+
+    #[test]
+    fn trash_rows_show_what_they_were() {
+        let set = trash_set();
+        assert!(set.is_trash() && !ResultSet::default().is_trash());
+        assert_eq!((set.shown_name(0), set.shown_folder(0)), (Some("b.txt"), Some("/w")));
+        assert_eq!(set.name(0), Some("$R1.txt"), "the row is the entry in the bin");
+        assert!(set.path_at(0).unwrap().ends_with("$R1.txt"));
+        assert_eq!(set.label(1).unwrap().original, Some(PathBuf::from("/w").join("a.txt")));
+    }
+
+    #[test]
+    fn trash_rows_with_one_name_keep_their_own_keys() {
+        let set = trash_set();
+        assert_eq!((set.shown_name(1), set.shown_name(2)), (Some("a.txt"), Some("a.txt")));
+        assert_ne!(set.key_at(1), set.key_at(2));
+        assert_eq!(set.rows_of(&[set.path_at(2).unwrap()]), [2]);
+    }
+
+    #[test]
+    fn labels_follow_sort_subset_and_removal() {
+        let mut set = trash_set();
+        let order = set.sort_order(SortSpec::default(), false, |_| String::new());
+        assert_eq!(order, [1, 2, 0], "by the names they had, not $R…");
+        set.apply_order(&order);
+        assert_eq!(set.shown_name(0), Some("a.txt"));
+        assert_eq!(set.name(2), Some("$R1.txt"), "the label moved with its row");
+        let part = set.subset(&[2]);
+        assert_eq!((part.shown_name(0), part.name(0)), (Some("b.txt"), Some("$R1.txt")));
+        let mut grown = set.subset(&[]);
+        grown.extend_rows(&set, &[2]);
+        assert_eq!(grown.shown_name(0), Some("b.txt"));
+        set.remove(&[0]);
+        assert_eq!((set.len(), set.shown_name(0)), (2, Some("a.txt")));
+        assert_eq!(set.label(5), None);
+    }
+
+    fn bare(names: &[&str]) -> Batch {
+        Batch {
+            folders: vec!["/bin".into()],
+            entries: names.iter().map(|n| entry(n)).collect(),
+            parent: vec![0; names.len()],
+            matches: Vec::new(),
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "come with their labels")]
+    fn trash_rows_without_labels_are_refused() {
+        trash_set().append(bare(&["$R9.txt"]));
+    }
+
+    #[test]
+    #[should_panic(expected = "one label per trash row")]
+    fn a_missing_label_is_refused() {
+        trash_set().append_trash(bare(&["$R8.txt", "$R9.txt"]), vec![label("a", "/w")]);
+    }
+
+    #[test]
+    #[should_panic(expected = "trash rows go in a trash set")]
+    fn labels_do_not_go_into_a_search() {
+        ResultSet::default().append_trash(bare(&["$R9.txt"]), vec![label("a", "/w")]);
+    }
+
+    #[test]
+    #[should_panic(expected = "needs its label")]
+    fn a_pushed_row_needs_a_label_in_the_trash() {
+        trash_set().push_entry(entry("$R9.txt"), 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "reloads after a job")]
+    fn the_trash_does_not_take_job_changes() {
+        trash_set().apply_changes(&[], Vec::new(), &[]);
     }
 }

@@ -185,4 +185,20 @@ mod tests {
         assert!(!bin.join("2").exists() && !bin.join("1").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn a_missing_folder_is_made_again() {
+        let dir = test_dir("restore-missing-folder");
+        let original = dir.join("gone").join("deeper").join("x.txt");
+        write(&original, "x");
+        let trashed = fs::trash(&original).unwrap().unwrap();
+        std::fs::remove_dir_all(dir.join("gone")).unwrap();
+        let engine = engine();
+        let job = engine.submit(Box::new(RestoreTask::new(vec![(trashed.clone(), original.clone())])));
+        let (report, _) = finish(&engine, job, |c| vec![Decision::KeepBoth; c.len()]);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert_eq!(read(&original), "x");
+        assert!(std::fs::symlink_metadata(&trashed).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

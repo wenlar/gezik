@@ -131,7 +131,7 @@ pub fn spec_of(location: &Location) -> Option<SearchSpec> {
     match location {
         Location::Search(spec) => Some((**spec).clone()),
         Location::Flat(folder) => Some(SearchSpec::flat_view(folder.clone())),
-        Location::Path(_) | Location::Drives => None,
+        Location::Path(_) | Location::Drives | Location::Trash => None,
     }
 }
 
@@ -489,7 +489,7 @@ impl Searches {
         let spec = match &location {
             Location::Search(spec) => (**spec).clone(),
             Location::Path(folder) | Location::Flat(folder) => SearchSpec::new(Scope::Folder(folder.clone())),
-            Location::Drives => SearchSpec::new(Scope::AllDrives),
+            Location::Drives | Location::Trash => SearchSpec::new(Scope::AllDrives),
         };
         self.show_bar(spec, location.folder().map(Path::to_path_buf));
         self.focus_later();
@@ -502,7 +502,7 @@ impl Searches {
         let scope = match &location {
             Location::Search(spec) => spec.scope.clone(),
             Location::Path(folder) | Location::Flat(folder) => Scope::Folder(folder.clone()),
-            Location::Drives => Scope::AllDrives,
+            Location::Drives | Location::Trash => Scope::AllDrives,
         };
         let spec = SearchSpec { pattern: text.to_owned(), ..SearchSpec::new(scope) };
         self.show_bar(spec, location.folder().map(Path::to_path_buf));

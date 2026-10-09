@@ -21,6 +21,8 @@ mod windows;
 use windows as imp;
 #[cfg(windows)]
 pub use windows::bring_to_front;
+#[cfg(windows)]
+pub(crate) use windows::user_sid;
 
 /// The message's version: a Gezik that speaks another one is not answered (its caller opens
 /// a window of its own).

@@ -14,6 +14,9 @@ pub fn run_command(index: usize, view: &View) {
     if view.shows_drives() {
         return view.note("Commands run on files and folders".to_owned());
     }
+    if view.shows_trash() {
+        return view.note(crate::trash_view::not_here());
+    }
     let mut items = view.selected_items();
     if items.is_empty() {
         items.extend(view.focus().and_then(|i| view.entry_path(i)));
@@ -93,6 +96,9 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
             nav.go(location);
         }
         Action::NewWindow => open_new_window(nav, view),
+        Action::ShowTrash => nav.go(gezik_core::nav::Location::Trash),
+        Action::PutBack => crate::trash_view::put_back(view),
+        Action::EmptyTrash => crate::trash_view::empty(),
         // Not theirs: `handle_key` and the menu bar run these themselves. Listed one by one so
         // that a new action is a compile error here until it is placed.
         Action::NewTab

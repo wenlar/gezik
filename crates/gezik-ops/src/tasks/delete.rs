@@ -21,16 +21,84 @@ pub struct DeleteTask {
     recovering: bool,
     /// For each root this delete hid: (hidden, original, whether it was hidden to begin with).
     hidden: Mutex<Vec<(PathBuf, PathBuf, bool)>>,
+    /// For a delete from the trash: each root's record in its bin (`$I`, `.trashinfo`), deleted
+    /// once the root is gone (index by index with `roots`; empty otherwise).
+    infos: Vec<Option<PathBuf>>,
+    /// For a delete from the trash: the roots that are not items in a bin. Any refuses the
+    /// whole delete (nothing is deleted, no record removed).
+    refused: Vec<PathBuf>,
 }
 
 impl DeleteTask {
     pub fn new(paths: Vec<PathBuf>, pending: Option<Arc<PendingDeletes>>) -> DeleteTask {
-        DeleteTask { roots: paths, pending, recovering: false, hidden: Mutex::default() }
+        DeleteTask {
+            roots: paths,
+            pending,
+            recovering: false,
+            hidden: Mutex::default(),
+            infos: Vec::new(),
+            refused: Vec::new(),
+        }
     }
 
     /// Finishes deleting folders an earlier delete hid.
     pub(crate) fn recover(paths: Vec<PathBuf>, pending: Arc<PendingDeletes>) -> DeleteTask {
-        DeleteTask { roots: paths, pending: Some(pending), recovering: true, hidden: Mutex::default() }
+        DeleteTask {
+            roots: paths,
+            pending: Some(pending),
+            recovering: true,
+            hidden: Mutex::default(),
+            infos: Vec::new(),
+            refused: Vec::new(),
+        }
+    }
+
+    /// Deletes items in the trash for good, each with its record (`items`: the entry in the
+    /// bin, its record if the bin keeps one). No undo: nothing goes anywhere it could come back from.
+    pub fn from_trash(items: Vec<(PathBuf, Option<PathBuf>)>, pending: Option<Arc<PendingDeletes>>) -> DeleteTask {
+        let refused = items
+            .iter()
+            .filter(|(root, info)| !in_a_bin(root, info.as_deref()))
+            .map(|(root, _)| root.clone())
+            .collect();
+        let (roots, infos) = items.into_iter().unzip();
+        DeleteTask { roots, infos, refused, ..DeleteTask::new(Vec::new(), pending) }
+    }
+
+    /// Puts back what a cancelled or failed delete hid; the originals that could not go back
+    /// now (the next start puts them back).
+    fn put_back_hidden(&self) -> Vec<PathBuf> {
+        let Some(pending) = &self.pending else { return Vec::new() };
+        if self.recovering {
+            let gone: Vec<&Path> = self
+                .roots
+                .iter()
+                .map(PathBuf::as_path)
+                .filter(|root| std::fs::symlink_metadata(root).is_err())
+                .collect();
+            pending.remove_all(&gone);
+            return Vec::new();
+        }
+        let (mut gone, mut stuck) = (Vec::new(), Vec::new());
+        for (hidden, original, was_hidden) in lock(&self.hidden).drain(..) {
+            // Cancelled, or something inside could not be deleted: what is left goes back
+            // under its own name, so nothing stays hidden and nothing is deleted later unasked.
+            // If it cannot go back now, the next start puts it back.
+            let back = (0..RESTORE_TRIES).any(|attempt| {
+                if attempt > 0 {
+                    std::thread::sleep(RESTORE_WAIT);
+                }
+                std::fs::symlink_metadata(&hidden).is_err() || restore_hidden(&hidden, &original, was_hidden)
+            });
+            if back {
+                gone.push(hidden);
+            } else {
+                stuck.push(Restore { hidden, original, was_hidden });
+            }
+        }
+        pending.remove_all(&gone.iter().map(PathBuf::as_path).collect::<Vec<_>>());
+        pending.add_restores(&stuck);
+        stuck.into_iter().map(|r| r.original).collect()
     }
 
     /// Renames each root to a hidden name next to it, all noted in one write; where each is
@@ -68,6 +136,160 @@ impl DeleteTask {
         pending.remove_all(&unused);
         paths
     }
+}
+
+/// Whether every part of `path` is a plain name under its root (no `.` or `..`).
+fn plain(path: &Path) -> bool {
+    use std::path::Component;
+    path.is_absolute()
+        && path.components().all(|c| matches!(c, Component::Prefix(_) | Component::RootDir | Component::Normal(_)))
+}
+
+fn name_of(path: &Path) -> Option<&str> {
+    path.file_name()?.to_str()
+}
+
+/// Whether `root` sits directly in a bin's payload folder and `info` (if any) is its record in
+/// that bin: `X:\$Recycle.Bin\<SID>\$R…` with `$I…`.
+#[cfg(windows)]
+fn in_a_bin(root: &Path, info: Option<&Path>) -> bool {
+    // `get`: a name may start with a letter of more than one byte.
+    let after = |n: &str, prefix: &str| {
+        n.get(..2).filter(|p| p.eq_ignore_ascii_case(prefix)).map(|_| n[2..].to_owned()).filter(|r| !r.is_empty())
+    };
+    let Some(rest) = name_of(root).and_then(|n| after(n, "$R")) else { return false };
+    let sid_name = |n: &str| n.get(..2).is_some_and(|p| p.eq_ignore_ascii_case("S-"));
+    let Some(sid) = root.parent().filter(|sid| name_of(sid).is_some_and(sid_name)) else { return false };
+    let bin_on_a_volume = sid.parent().is_some_and(|bin| {
+        name_of(bin).is_some_and(|n| n.eq_ignore_ascii_case("$Recycle.Bin"))
+            && bin.parent().is_some_and(|v| v.parent().is_none())
+    });
+    let record = info.is_none_or(|info| {
+        info.parent() == Some(sid) && name_of(info).and_then(|n| after(n, "$I")) == Some(rest.clone())
+    });
+    plain(root) && bin_on_a_volume && record
+}
+
+/// This user's bins as `fs::trash` finds them: the home trash, the uid, and whether a folder is
+/// the top of a mount (a volume's bin sits there).
+#[cfg(unix)]
+struct Bins {
+    home: Option<PathBuf>,
+    uid: String,
+    // Volume bins on macOS sit under /Volumes, no mount check needed.
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    is_mount_top: fn(&Path) -> bool,
+}
+
+#[cfg(unix)]
+impl Bins {
+    fn here() -> Bins {
+        // SAFETY: getuid cannot fail.
+        let uid = unsafe { libc::getuid() }.to_string();
+        #[cfg(target_os = "macos")]
+        let home = dirs::home_dir().map(|home| home.join(".Trash"));
+        #[cfg(not(target_os = "macos"))]
+        let home = std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+            .or_else(|| dirs::home_dir().map(|home| home.join(".local/share")))
+            .map(|data| data.join("Trash"));
+        Bins { home, uid, is_mount_top }
+    }
+}
+
+/// Whether `dir` is where a file system is mounted: `/`, or on another device than its parent.
+#[cfg(unix)]
+fn is_mount_top(dir: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let Some(up) = dir.parent() else { return true };
+    match (std::fs::symlink_metadata(dir), std::fs::metadata(up)) {
+        (Ok(dir), Ok(up)) => dir.is_dir() && dir.dev() != up.dev(),
+        _ => false,
+    }
+}
+
+/// Whether `root` sits directly in a bin's payload folder and `info` (if any) is its record in
+/// that bin: `$XDG_DATA_HOME/Trash/files/x` (the home trash), `<mount>/.Trash-<uid>/files/x` or
+/// `<mount>/.Trash/<uid>/files/x`, with `…/info/x.trashinfo`.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn in_a_bin(root: &Path, info: Option<&Path>) -> bool {
+    in_these_bins(root, info, &Bins::here())
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn in_these_bins(root: &Path, info: Option<&Path>, bins: &Bins) -> bool {
+    let Some(name) = name_of(root) else { return false };
+    let Some(trash) = root.parent().filter(|files| name_of(files) == Some("files")).and_then(Path::parent) else {
+        return false;
+    };
+    let top = if name_of(trash).and_then(|n| n.strip_prefix(".Trash-")) == Some(bins.uid.as_str()) {
+        trash.parent()
+    } else if name_of(trash) == Some(bins.uid.as_str()) {
+        trash.parent().filter(|shared| name_of(shared) == Some(".Trash")).and_then(Path::parent)
+    } else {
+        None
+    };
+    let is_bin = bins.home.as_deref() == Some(trash) || top.is_some_and(bins.is_mount_top);
+    let record = info.is_none_or(|info| info == trash.join("info").join(format!("{name}.trashinfo")));
+    plain(root) && is_bin && record
+}
+
+/// Whether `root` sits directly in a bin: `~/.Trash/x` or `/Volumes/<volume>/.Trashes/<uid>/x`.
+/// The bins keep no record per item here.
+#[cfg(target_os = "macos")]
+fn in_a_bin(root: &Path, info: Option<&Path>) -> bool {
+    in_these_bins(root, info, &Bins::here())
+}
+
+#[cfg(target_os = "macos")]
+fn in_these_bins(root: &Path, info: Option<&Path>, bins: &Bins) -> bool {
+    let Some(bin) = root.parent().filter(|_| name_of(root).is_some()) else { return false };
+    let on_a_volume = name_of(bin) == Some(bins.uid.as_str())
+        && bin
+            .parent()
+            .filter(|trashes| name_of(trashes) == Some(".Trashes"))
+            .and_then(Path::parent)
+            .and_then(Path::parent)
+            == Some(Path::new("/Volumes"));
+    let is_bin = bins.home.as_deref() == Some(bin) || on_a_volume;
+    plain(root) && is_bin && info.is_none()
+}
+
+/// Whether `path` is one of this user's bins, a bin's payload folder, or anything in them, by
+/// the rule `from_trash` uses: what the file list must not open as a plain folder (its actions
+/// would act on bin entries without their records). Looked at as written (`..` taken out) and
+/// as it really is (links followed), when it exists.
+pub fn in_a_bin_folder(path: &Path) -> bool {
+    #[cfg(unix)]
+    let bins = Bins::here();
+    #[cfg(unix)]
+    let in_bin = |p: &Path| in_these_bins(p, None, &bins);
+    #[cfg(windows)]
+    let in_bin = |p: &Path| in_a_bin(p, None);
+    inside_a_bin(path, &in_bin)
+}
+
+/// `in_a_bin_folder` with the bin rule given: `path` or a folder above it is an item in a bin
+/// (`in_bin`), a payload folder (an item could be in it), or a bin (a payload folder could be).
+fn inside_a_bin(path: &Path, in_bin: &dyn Fn(&Path) -> bool) -> bool {
+    // An item's name and a payload folder's, as the rules take them.
+    let (item, payload) = if cfg!(windows) { ("$R0", "S-0") } else { ("x", "files") };
+    let mut written = PathBuf::new();
+    for part in path.components() {
+        match part {
+            std::path::Component::ParentDir => {
+                written.pop();
+            }
+            std::path::Component::CurDir => {}
+            part => written.push(part),
+        }
+    }
+    let real = std::fs::canonicalize(path).ok();
+    [Some(written), real]
+        .into_iter()
+        .flatten()
+        .any(|path| path.ancestors().any(|a| in_bin(a) || in_bin(&a.join(item)) || in_bin(&a.join(payload).join(item))))
 }
 
 /// How often putting a hidden folder back is tried before it is left for the next start
@@ -126,6 +348,12 @@ impl Task for DeleteTask {
     }
 
     fn plan(&self, sink: &mut dyn ScanSink) {
+        if !self.refused.is_empty() {
+            for root in &self.refused {
+                sink.failed(root, io::Error::new(io::ErrorKind::InvalidInput, "Not an item in the trash"));
+            }
+            return;
+        }
         let roots: Vec<(usize, &Path)> = self
             .roots
             .iter()
@@ -176,36 +404,21 @@ impl Task for DeleteTask {
     }
 
     fn done(&self, _cancelled: bool) {
-        let Some(pending) = &self.pending else { return };
-        if self.recovering {
-            let gone: Vec<&Path> = self
-                .roots
-                .iter()
-                .map(PathBuf::as_path)
-                .filter(|root| std::fs::symlink_metadata(root).is_err())
-                .collect();
-            pending.remove_all(&gone);
+        let stuck = self.put_back_hidden();
+        if !self.refused.is_empty() {
             return;
         }
-        let (mut gone, mut stuck) = (Vec::new(), Vec::new());
-        for (hidden, original, was_hidden) in lock(&self.hidden).drain(..) {
-            // Cancelled, or something inside could not be deleted: what is left goes back
-            // under its own name, so nothing stays hidden and nothing is deleted later unasked.
-            // If it cannot go back now, the next start puts it back.
-            let back = (0..RESTORE_TRIES).any(|attempt| {
-                if attempt > 0 {
-                    std::thread::sleep(RESTORE_WAIT);
-                }
-                std::fs::symlink_metadata(&hidden).is_err() || restore_hidden(&hidden, &original, was_hidden)
-            });
-            if back {
-                gone.push(hidden);
-            } else {
-                stuck.push(Restore { hidden, original, was_hidden });
+        // A root that is gone takes its record along; one still there (cancelled, something
+        // inside could not go) or waiting to be put back at the next start keeps it, so the
+        // trash still lists it.
+        for (root, info) in self.roots.iter().zip(&self.infos) {
+            if let Some(info) = info
+                && std::fs::symlink_metadata(root).is_err_and(|err| err.kind() == io::ErrorKind::NotFound)
+                && !stuck.contains(root)
+            {
+                let _ = std::fs::remove_file(info);
             }
         }
-        pending.remove_all(&gone.iter().map(PathBuf::as_path).collect::<Vec<_>>());
-        pending.add_restores(&stuck);
     }
 }
 
@@ -469,6 +682,235 @@ mod tests {
         let engine = engine_with_pending(&dir);
         assert_eq!(engine.recover_deletes(), None);
         assert_eq!(std::fs::read_to_string(dir.join("Documents/important.txt")).unwrap(), "keep");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Moves `path` (the test's own) to the real trash: its entry there and the bin's record.
+    fn trashed(path: &Path) -> (PathBuf, Option<PathBuf>) {
+        let entry = fs::trash(path).unwrap().expect("the temp folder has a trash");
+        let name = entry.file_name().unwrap().to_str().unwrap().to_owned();
+        let record = if cfg!(windows) {
+            Some(entry.with_file_name(format!("$I{}", &name[2..])))
+        } else if cfg!(target_os = "macos") {
+            None
+        } else {
+            Some(entry.parent().unwrap().parent().unwrap().join("info").join(format!("{name}.trashinfo")))
+        };
+        (entry, record)
+    }
+
+    fn exists(path: &Option<PathBuf>) -> bool {
+        path.as_ref().is_some_and(|p| p.exists())
+    }
+
+    fn delete_for_good(engine: &Engine, items: Vec<(PathBuf, Option<PathBuf>)>) -> crate::engine::Report {
+        let task = DeleteTask::from_trash(items, engine.pending_deletes());
+        finish(engine, engine.submit(Box::new(task)), defaults).0
+    }
+
+    #[test]
+    fn deleting_from_the_trash_takes_the_record_along() {
+        let dir = test_dir("delete-trash");
+        write(&dir.join("x.txt"), "x");
+        let (entry, record) = trashed(&dir.join("x.txt"));
+        assert!(cfg!(target_os = "macos") || exists(&record), "the bin keeps a record");
+        let report = delete_for_good(&crate::testing::engine(), vec![(entry.clone(), record.clone())]);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert!(!entry.exists() && !exists(&record), "no orphan record");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_deleted_folder_takes_its_record_along() {
+        let dir = test_dir("delete-trash-folder");
+        write(&dir.join("d/a/b.txt"), "b");
+        let (entry, record) = trashed(&dir.join("d"));
+        let report = delete_for_good(&engine_with_pending(&dir), vec![(entry.clone(), record.clone())]);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert!(!entry.exists() && !exists(&record));
+        // Other tests share the bin: what this delete hid is in its own note.
+        assert!(!dir.join("pending-deletes").exists(), "nothing hidden is left behind");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_root_still_there_keeps_its_record() {
+        // Cancelled before it ran, or something inside could not go: the item stays in the
+        // trash, and so does what makes the trash list it.
+        let dir = test_dir("delete-trash-kept");
+        write(&dir.join("kept.txt"), "x");
+        write(&dir.join("gone.txt"), "x");
+        let kept = trashed(&dir.join("kept.txt"));
+        DeleteTask::from_trash(vec![kept.clone()], None).done(true);
+        assert!(kept.0.exists() && (cfg!(target_os = "macos") || exists(&kept.1)));
+        let gone = trashed(&dir.join("gone.txt"));
+        std::fs::remove_file(&gone.0).unwrap();
+        DeleteTask::from_trash(vec![gone.clone()], None).done(false);
+        assert!(!exists(&gone.1), "its entry is gone: the record goes");
+        assert!(delete_for_good(&crate::testing::engine(), vec![kept]).failures.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn what_is_not_in_a_bin_is_refused_and_left_alone() {
+        let dir = test_dir("delete-trash-refused");
+        let (file, record) = (dir.join("$R5.txt"), dir.join("$I5.txt"));
+        write(&file, "x");
+        write(&record, "not a record");
+        write(&dir.join("in-bin.txt"), "x");
+        let in_bin = trashed(&dir.join("in-bin.txt"));
+        let engine = crate::testing::engine();
+        let report = delete_for_good(&engine, vec![in_bin.clone(), (file.clone(), Some(record.clone()))]);
+        assert_eq!(report.failures.len(), 1, "{:?}", report.failures);
+        assert!(file.exists() && record.exists(), "a normal file is never deleted for good from here");
+        assert!(in_bin.0.exists(), "one stranger refuses the whole delete");
+        // An entry already gone does not take a file outside the bin along as its "record".
+        DeleteTask::from_trash(vec![(dir.join("gone"), Some(record.clone()))], None).done(false);
+        assert!(record.exists());
+        assert!(delete_for_good(&engine, vec![in_bin]).failures.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn only_items_in_a_volume_bin_with_their_own_record_count() {
+        let sid = r"C:\$Recycle.Bin\S-1-5-21-7";
+        let ok = |root: &str, info: Option<&str>| in_a_bin(Path::new(root), info.map(Path::new));
+        assert!(ok(&format!(r"{sid}\$RAB12.txt"), Some(&format!(r"{sid}\$IAB12.txt"))));
+        assert!(ok(&format!(r"{sid}\$rab12.txt"), Some(&format!(r"{sid}\$iab12.txt"))));
+        assert!(ok(&format!(r"{sid}\$RAB12"), None));
+        assert!(!ok(&format!(r"{sid}\$RAB12.txt"), Some(&format!(r"{sid}\$IXX.txt"))), "another item's record");
+        assert!(!ok(&format!(r"{sid}\$RAB12.txt"), Some(r"C:\work\$IAB12.txt")), "a record elsewhere");
+        assert!(!ok(&format!(r"{sid}\$RAB12.txt"), Some(&format!(r"{sid}\desktop.ini"))));
+        assert!(!ok(r"C:\work\$R1.txt", None), "not in a bin");
+        assert!(!ok(r"C:\work\$Recycle.Bin\S-1\$R1.txt", None), "a bin not at a volume's top");
+        assert!(!ok(&format!(r"{sid}\$RAB12\inner.txt"), None), "inside an item, not an item");
+        assert!(!ok(&format!(r"{sid}\desktop.ini"), None));
+        assert!(!ok(&format!(r"{sid}\$R"), None));
+        assert!(!ok(&format!(r"{sid}\$ş"), None), "a name of wide letters does not panic");
+        assert!(!ok(&format!(r"{sid}\..\..\Windows"), None));
+        assert!(!ok(r"$Recycle.Bin\S-1\$R1", None), "relative");
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
+    fn only_items_in_a_bin_with_their_own_record_count() {
+        let bins = Bins {
+            home: Some(PathBuf::from("/home/u/.local/share/Trash")),
+            uid: "1000".into(),
+            is_mount_top: |dir| dir == Path::new("/mnt") || dir == Path::new("/"),
+        };
+        let ok = |root: &str, info: Option<&str>| in_these_bins(Path::new(root), info.map(Path::new), &bins);
+        let home = "/home/u/.local/share/Trash";
+        assert!(ok(&format!("{home}/files/a"), Some(&format!("{home}/info/a.trashinfo"))));
+        assert!(ok("/mnt/.Trash-1000/files/a", Some("/mnt/.Trash-1000/info/a.trashinfo")));
+        assert!(ok("/mnt/.Trash/1000/files/a", None));
+        assert!(ok("/.Trash-1000/files/a", None));
+        assert!(!ok(&format!("{home}/files/a"), Some(&format!("{home}/info/b.trashinfo"))));
+        assert!(!ok(&format!("{home}/files/a"), Some("/home/u/a.trashinfo")));
+        assert!(!ok("/home/u/Documents/Trash/files/report.odt", None), "a folder named Trash is no bin");
+        assert!(!ok("/home/u/files/a", None));
+        assert!(!ok("/mnt/.Trash-1001/files/a", None), "another user's bin");
+        assert!(!ok("/mnt/.Trash/1001/files/a", None), "another user's bin");
+        assert!(!ok("/mnt/sub/.Trash-1000/files/a", None), "not at a mount's top");
+        assert!(!ok("/mnt/.Trash-x/files/a", None));
+        assert!(!ok(&format!("{home}/files/a/b"), None), "inside an item");
+        assert!(!ok(&format!("{home}/files/../files/a"), None));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_bin_and_all_in_it_is_no_plain_folder() {
+        let inside = |p: &str| inside_a_bin(Path::new(p), &|r| in_a_bin(r, None));
+        for yes in [
+            r"Q:\$Recycle.Bin",
+            r"Q:\$recycle.bin\s-1-5-21-1",
+            r"Q:\$Recycle.Bin\S-1-5-21-1\$RAB12.txt",
+            r"Q:\$Recycle.Bin\S-1-5-21-1\$RAB12\deeper\x",
+            r"Q:\Users\..\$Recycle.Bin\S-1-5-21-1\$R1",
+            r"Q:\$Recycle.Bin\.\S-1-5-21-1",
+        ] {
+            assert!(inside(yes), "{yes}");
+        }
+        for no in [r"Q:\\", r"Q:\Users\u", r"Q:\$Recycle.Bin\S-1-5-21-1\..\..\Users", r"Q:\work\$Recycle.Bin\S-1\$R1"] {
+            assert!(!inside(no), "{no}");
+        }
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
+    fn a_bin_and_all_in_it_is_no_plain_folder() {
+        let bins = Bins {
+            home: Some(PathBuf::from("/home/u/.local/share/Trash")),
+            uid: "1000".into(),
+            is_mount_top: |dir| dir == Path::new("/mnt"),
+        };
+        let inside = |p: &str| inside_a_bin(Path::new(p), &|r| in_these_bins(r, None, &bins));
+        for yes in [
+            "/home/u/.local/share/Trash",
+            "/home/u/.local/share/Trash/files",
+            "/home/u/.local/share/Trash/files/a/b",
+            "/mnt/.Trash-1000/files/a",
+            "/mnt/.Trash/1000",
+            "/home/u/x/../.local/share/Trash/files",
+        ] {
+            assert!(inside(yes), "{yes}");
+        }
+        for no in ["/home/u", "/mnt", "/mnt/.Trash-1001/files/a", "/proj/.Trash-1000/files", "/home/u/.local/share"] {
+            assert!(!inside(no), "{no}");
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_bin_and_all_in_it_is_no_plain_folder() {
+        let bins = Bins { home: Some(PathBuf::from("/Users/u/.Trash")), uid: "501".into(), is_mount_top: |_| false };
+        let inside = |p: &str| inside_a_bin(Path::new(p), &|r| in_these_bins(r, None, &bins));
+        for yes in ["/Users/u/.Trash", "/Users/u/.Trash/a/b", "/Volumes/X/.Trashes/501/a"] {
+            assert!(inside(yes), "{yes}");
+        }
+        for no in ["/Users/u", "/Volumes/X/.Trashes/502/a", "/proj/.Trash/x"] {
+            assert!(!inside(no), "{no}");
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn only_items_in_a_bin_count() {
+        let bins = Bins { home: Some(PathBuf::from("/Users/u/.Trash")), uid: "501".into(), is_mount_top: |_| false };
+        let ok = |root: &str, info: Option<&str>| in_these_bins(Path::new(root), info.map(Path::new), &bins);
+        assert!(ok("/Users/u/.Trash/a", None));
+        assert!(ok("/Volumes/X/.Trashes/501/a", None));
+        assert!(!ok("/Users/u/.Trash/a", Some("/Users/u/.Trash/.DS_Store")), "no record to take along here");
+        assert!(!ok("/proj/.Trash/x", None), "a folder named .Trash is no bin");
+        assert!(!ok("/Users/v/.Trash/x", None), "another user's home");
+        assert!(!ok("/Volumes/X/.Trashes/502/a", None), "another user's bin");
+        assert!(!ok("/Volumes/X/sub/.Trashes/501/a", None), "not at a volume's top");
+        assert!(!ok("/Users/u/a", None));
+        assert!(!ok("/Users/u/.Trash/a/b", None), "inside an item");
+    }
+
+    /// Hidden for the delete, then held so it cannot go back now: it goes back at the next
+    /// start, so its record must stay.
+    #[cfg(windows)]
+    #[test]
+    fn a_folder_waiting_to_go_back_keeps_its_record() {
+        let dir = test_dir("delete-trash-held");
+        write(&dir.join("held/a.txt"), "a");
+        let (entry, record) = trashed(&dir.join("held"));
+        let pending = Arc::new(PendingDeletes::new(dir.join("pending-deletes")));
+        let task = DeleteTask::from_trash(vec![(entry.clone(), record.clone())], Some(pending.clone()));
+        task.plan(&mut CollectSink::default());
+        let hidden = pending.load().pop().unwrap();
+        let held = std::fs::File::open(hidden.join("a.txt")).unwrap();
+        task.done(true);
+        drop(held);
+        assert!(!entry.exists() && exists(&record), "the record waits for its entry");
+        assert_eq!(pending.restores().len(), 1);
+        let engine = engine_with_pending(&dir);
+        assert_eq!(engine.recover_deletes(), None);
+        assert!(entry.exists(), "back at the next start");
+        assert!(delete_for_good(&engine, vec![(entry, record)]).failures.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

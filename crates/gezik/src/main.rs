@@ -42,6 +42,7 @@ mod tab_tools;
 mod templates;
 mod terminal;
 mod theme_bridge;
+mod trash_view;
 mod view;
 mod view_options;
 mod watcher;
@@ -73,6 +74,9 @@ fn open_entry(nav: &navigation::Navigator, view: &view::View, index: usize) {
 
 /// Opens the entry at `path` as [`open_entry`] does, for a caller that fixed the entry earlier.
 fn open_path(nav: &navigation::Navigator, path: PathBuf, is_dir: bool) {
+    if nav.active_location() == gezik_core::nav::Location::Trash {
+        return nav.status(trash_view::open_note());
+    }
     let archive = !is_dir
         && path.file_name().is_some_and(|n| gezik_core::batch::archive::looks_like_archive(&n.to_string_lossy()));
     if archive && archives::extracts_on_double_click() {
@@ -157,6 +161,10 @@ fn perform(
     preview: &preview::Preview,
     ops: &operations::Operations,
 ) -> bool {
+    // The trash (spec 7.1): Delete is for good there, and what is not on its list does not run.
+    if trash_view::instead(action, view) {
+        return true;
+    }
     match action {
         Action::NewTab => nav.open_tab(nav.start(), true),
         Action::CloseTab => close_tab_later(nav, nav.active_index()),
@@ -234,6 +242,9 @@ fn perform(
         | Action::CutWithFolders
         | Action::CalculateFolderSizes
         | Action::SaveSearch
+        | Action::ShowTrash
+        | Action::PutBack
+        | Action::EmptyTrash
         | Action::NewWindow
         | Action::MakeAlias
         | Action::ShowPackageContents => return actions::run(action, nav, view),
@@ -1154,7 +1165,10 @@ fn main() -> Result<(), slint::PlatformError> {
     window.on_row_middle_clicked({
         let nav = nav.clone();
         move |i| {
-            if let Some((path, true)) = nav.entry_path(i) {
+            // A folder in the trash is a bin entry: not opened (spec 7.1).
+            if let Some((path, true)) =
+                nav.entry_path(i).filter(|_| nav.active_location() != gezik_core::nav::Location::Trash)
+            {
                 nav.open_tab(gezik_core::nav::Location::Path(path), false);
             }
         }

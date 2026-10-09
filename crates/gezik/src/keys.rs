@@ -504,6 +504,7 @@ pub fn acts_on_selection(action: Action) -> bool {
             | Action::MakeAlias
             | Action::ShowPackageContents
             | Action::Share
+            | Action::PutBack
     )
 }
 
@@ -532,6 +533,7 @@ pub fn needs_list(action: Action) -> bool {
             | Action::MakeAlias
             | Action::ShowPackageContents
             | Action::Share
+            | Action::PutBack
     )
 }
 
@@ -811,7 +813,10 @@ mod tests {
                 | Action::CopyWithFolders
                 | Action::CutWithFolders
                 | Action::CalculateFolderSizes
-                | Action::SaveSearch => continue,
+                | Action::SaveSearch
+                | Action::ShowTrash
+                | Action::PutBack
+                | Action::EmptyTrash => continue,
             };
             assert_eq!(reach(text), Some(action), "{text}");
         }

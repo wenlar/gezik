@@ -265,10 +265,16 @@ pub enum Action {
     ShowPackageContents,
     /// macOS: Finder's Share… for the selection (AirDrop, Mail, Messages …) (9a2).
     Share,
+    /// The Recycle Bin / Trash: every bin of this user in one list (9b2).
+    ShowTrash,
+    /// In the trash: the selected items back where they were.
+    PutBack,
+    /// Deletes everything in the trash for good (asks first).
+    EmptyTrash,
 }
 
 impl Action {
-    pub const ALL: [Action; 76] = [
+    pub const ALL: [Action; 79] = [
         Action::NewTab,
         Action::NewWindow,
         Action::CloseTab,
@@ -345,6 +351,9 @@ impl Action {
         Action::MakeAlias,
         Action::ShowPackageContents,
         Action::Share,
+        Action::ShowTrash,
+        Action::PutBack,
+        Action::EmptyTrash,
     ];
 
     pub fn name(self) -> &'static str {
@@ -425,6 +434,9 @@ impl Action {
             Action::MakeAlias => "make-alias",
             Action::ShowPackageContents => "show-package-contents",
             Action::Share => "share",
+            Action::ShowTrash => "show-trash",
+            Action::PutBack => "put-back",
+            Action::EmptyTrash => "empty-trash",
         }
     }
 
@@ -507,6 +519,9 @@ impl Action {
             Action::MakeAlias => "Make Alias",
             Action::ShowPackageContents => "Show Package Contents",
             Action::Share => "Share…",
+            Action::ShowTrash => "Show Trash",
+            Action::PutBack => "Put Back",
+            Action::EmptyTrash => "Empty Trash…",
         }
     }
 
@@ -662,6 +677,8 @@ impl Action {
             (Action::CalculateFolderSizes | Action::SaveSearch, _) => &[],
             (Action::MakeAlias, Platform::Mac) => &["mod+ctrl+a"],
             (Action::MakeAlias, Platform::Other) | (Action::ShowPackageContents, _) | (Action::Share, _) => &[],
+            (Action::EmptyTrash, Platform::Mac) => &["mod+shift+backspace"],
+            (Action::ShowTrash | Action::PutBack, _) | (Action::EmptyTrash, Platform::Other) => &[],
         }
     }
 }
@@ -848,7 +865,7 @@ mod tests {
             assert_eq!(fixed_owner(&cmd_option, Platform::Mac), None);
         }
         assert_eq!((Action::pin(0), Action::pin(10)), (None, None));
-        assert_eq!(Action::ALL.len(), 76);
+        assert_eq!(Action::ALL.len(), 79);
         assert_eq!(other.action_for(&chord("ctrl+1")), Some(Action::Tab1), "Ctrl+1 is still tab 1");
         assert_eq!(other.action_for(&chord("ctrl+alt+1")), None, "AltGr+1 types");
     }
@@ -1306,7 +1323,7 @@ clear-history = \"ctrl+shift+h\"
         for name in ["search", "flat-view", "show-in-folder", "copy-with-folders", "cut-with-folders"] {
             assert!(Action::from_name(name).is_some(), "{name}");
         }
-        assert_eq!(Action::ALL.len(), 76);
+        assert_eq!(Action::ALL.len(), 79);
     }
 
     #[test]
@@ -1328,7 +1345,7 @@ clear-history = \"ctrl+shift+h\"
         for name in ["command-palette", "quick-open", "calculate-folder-sizes", "save-search"] {
             assert!(Action::from_name(name).is_some(), "{name}");
         }
-        assert_eq!(Action::ALL.len(), 76);
+        assert_eq!(Action::ALL.len(), 79);
     }
 
     #[test]
@@ -1348,7 +1365,7 @@ clear-history = \"ctrl+shift+h\"
         }
         assert_eq!(Action::MakeAlias.title(), "Make Alias");
         assert_eq!(Action::ShowPackageContents.title(), "Show Package Contents");
-        assert_eq!(Action::ALL.len(), 76);
+        assert_eq!(Action::ALL.len(), 79);
     }
 
     #[test]
@@ -1358,7 +1375,23 @@ clear-history = \"ctrl+shift+h\"
         }
         assert_eq!(Action::from_name("share"), Some(Action::Share));
         assert_eq!(Action::Share.title(), "Share…");
-        assert_eq!(Action::ALL.len(), 76);
+        assert_eq!(Action::ALL.len(), 79);
+    }
+
+    #[test]
+    fn trash_actions_and_their_keys() {
+        assert_eq!(Action::from_name("show-trash"), Some(Action::ShowTrash));
+        assert_eq!(Action::from_name("put-back"), Some(Action::PutBack));
+        assert_eq!(Action::from_name("empty-trash"), Some(Action::EmptyTrash));
+        let mac = Shortcuts::defaults(Platform::Mac);
+        let mac_chord = |t: &str| parse_chord(t, Platform::Mac).unwrap().unwrap();
+        assert_eq!(mac.action_for(&mac_chord("mod+shift+backspace")), Some(Action::EmptyTrash));
+        assert_eq!(fixed_owner(&mac_chord("mod+shift+backspace"), Platform::Mac), None);
+        let other = Shortcuts::defaults(Platform::Other);
+        for action in [Action::ShowTrash, Action::PutBack, Action::EmptyTrash] {
+            assert_eq!(other.chord_for(action), None, "{action:?}: no default key on Windows and Linux");
+        }
+        assert_eq!((mac.chord_for(Action::ShowTrash), mac.chord_for(Action::PutBack)), (None, None));
     }
 
     #[test]

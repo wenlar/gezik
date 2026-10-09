@@ -52,6 +52,14 @@ impl Listing {
         }
     }
 
+    /// The name a row shows: a trash row's is the name the item had, not its entry's in the bin.
+    pub fn shown_name_at(&self, index: usize) -> Option<&str> {
+        match self {
+            Listing::Results(set) => set.shown_name(index),
+            _ => self.name_at(index),
+        }
+    }
+
     /// What the history keeps of a row: its name, or in the results its path under the scope
     /// (names repeat there, spec 3.7).
     pub fn key_at(&self, index: usize) -> Option<Cow<'_, str>> {
@@ -96,7 +104,7 @@ impl Listing {
     /// The first entry whose name starts with `typed` (lowercase), ignoring case; no
     /// allocation per entry, so it stays fast in a folder of 100k files.
     pub fn find_prefix(&self, typed: &str) -> Option<usize> {
-        (0..self.len()).find(|&i| self.name_at(i).is_some_and(|n| crate::keys::starts_with_lowercase(n, typed)))
+        (0..self.len()).find(|&i| self.shown_name_at(i).is_some_and(|n| crate::keys::starts_with_lowercase(n, typed)))
     }
 
     /// Path of entry `index` and whether it is a folder (drives count as folders).
@@ -172,7 +180,8 @@ pub fn filtered_results(full: &Arc<ResultSet>, pattern: &Pattern) -> (Listing, O
     if pattern.is_empty() {
         return (Listing::Results(full.clone()), None);
     }
-    let rows: Vec<usize> = (0..full.len()).filter(|&i| full.name(i).is_some_and(|n| pattern.matches(n))).collect();
+    let rows: Vec<usize> =
+        (0..full.len()).filter(|&i| full.shown_name(i).is_some_and(|n| pattern.matches(n))).collect();
     (Listing::Results(Arc::new(full.subset(&rows))), Some(rows))
 }
 
@@ -272,6 +281,25 @@ mod tests {
         assert_eq!(listing.folder(), None, "no folder: nothing goes \"here\"");
         assert_eq!(listing.find_prefix("y"), Some(2), "type-ahead goes by the name");
         assert!(listing.is_same_type(0, 1));
+    }
+
+    #[test]
+    fn trash_rows_are_found_by_the_name_they_had() {
+        let set = crate::trash_view::to_set(vec![gezik_platform::trash::TrashItem {
+            trashed: PathBuf::from("/bin").join("$RAB.txt"),
+            info: None,
+            name: "a.txt".into(),
+            original: Some(PathBuf::from("/w").join("a.txt")),
+            deleted: None,
+            is_dir: false,
+            size: 10,
+        }]);
+        let full = Arc::new(set);
+        let listing = Listing::Results(full.clone());
+        assert_eq!(listing.find_prefix("a"), Some(0));
+        assert_eq!(listing.find_prefix("$"), None);
+        let (shown, _) = filtered_results(&full, &Pattern::compile("a.*").unwrap());
+        assert_eq!(shown.len(), 1, "the filter goes by the shown name too");
     }
 
     #[test]

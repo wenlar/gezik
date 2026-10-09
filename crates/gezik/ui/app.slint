@@ -101,6 +101,8 @@ export component AppWindow inherits Window {
             MenuItem { title: "Show Package Contents"; activated => { root.menu-command("show-package-contents"); } }
             MenuItem { title: "Share…"; activated => { root.menu-command("share"); } }
             MenuSeparator { }
+            MenuItem { title: "Put Back"; activated => { root.menu-command("put-back"); } }
+            MenuItem { title: "Empty Trash…"; shortcut: root.menu-keys ? @keys(Control + Shift + Backspace) : @keys(); activated => { root.menu-command("empty-trash"); } }
             MenuItem { title: "Move to Trash"; shortcut: root.menu-keys ? @keys(Control + Backspace) : @keys(); activated => { root.menu-command("trash"); } }
             MenuItem { title: "Delete Immediately…"; shortcut: root.menu-keys ? @keys(Control + Alt + Backspace) : @keys(); activated => { root.menu-command("delete-permanently"); } }
             MenuSeparator { }
@@ -164,6 +166,7 @@ export component AppWindow inherits Window {
             MenuItem { title: "Forward"; shortcut: root.menu-keys ? @keys(Control + "]") : @keys(); activated => { root.menu-command("forward"); } }
             MenuItem { title: "Enclosing Folder"; shortcut: root.menu-keys ? @keys(Control + UpArrow) : @keys(); activated => { root.menu-command("up"); } }
             MenuItem { title: "Show in Folder"; shortcut: root.menu-keys ? @keys(Control + Shift + E) : @keys(); activated => { root.menu-command("show-in-folder"); } }
+            MenuItem { title: "Show Trash"; activated => { root.menu-command("show-trash"); } }
             MenuSeparator { }
             MenuItem { title: "Go to Folder…"; shortcut: root.menu-keys ? @keys(Control + L) : @keys(); activated => { root.menu-command("focus-path"); } }
             MenuItem { title: "Quick Open…"; shortcut: root.menu-keys ? @keys(Control + P) : @keys(); activated => { root.menu-command("quick-open"); } }
@@ -394,6 +397,8 @@ export component AppWindow inherits Window {
     in-out property <length> col-size;
     in-out property <length> col-folder;
     in-out property <length> col-match;
+    // The trash is shown (its column headers say so).
+    in property <bool> trash-shown;
     // The sort column (0 Name, 1-4 Modified, Created, Type, Size, 5 Folder, 6 Match) and direction.
     in property <int> sort-column;
     in property <bool> sort-desc;
@@ -1036,6 +1041,7 @@ export component AppWindow inherits Window {
                             items: root.items;
                             mode: root.view-mode;
                             picture-size: root.grid-size;
+                            trash: root.trash-shown;
                             grid-columns-changed(n) => { root.grid-columns-changed(n); }
                             zoom(bigger) => { root.zoom(bigger); }
                             has-focus: keys.has-focus;

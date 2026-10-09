@@ -14,6 +14,24 @@ pub(crate) fn encode_path(path: &[u8]) -> String {
     out
 }
 
+/// A `Path=` value back to its bytes; `None` for a `%` not followed by two hex digits.
+pub(crate) fn decode_path(text: &str) -> Option<Vec<u8>> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let hex = bytes.get(i + 1..i + 3).filter(|h| h.iter().all(u8::is_ascii_hexdigit))?;
+            out.push(u8::from_str_radix(std::str::from_utf8(hex).ok()?, 16).ok()?);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    Some(out)
+}
+
 /// The `.trashinfo` file for `path` (absolute) deleted at `deleted_at` (local time,
 /// `YYYY-MM-DDThh:mm:ss`).
 pub(crate) fn info_text(path: &[u8], deleted_at: &str) -> String {
@@ -47,6 +65,16 @@ mod tests {
     fn paths_are_percent_encoded() {
         assert_eq!(encode_path(b"/home/a/My File.txt"), "/home/a/My%20File.txt");
         assert_eq!(encode_path("/home/a/şarkı".as_bytes()), "/home/a/%C5%9Fark%C4%B1");
+    }
+
+    #[test]
+    fn paths_decode_back() {
+        let encoded = encode_path("/home/a/şarkı %.txt".as_bytes());
+        assert_eq!(decode_path(&encoded).unwrap(), "/home/a/şarkı %.txt".as_bytes());
+        assert_eq!(decode_path("/a%2Fb").unwrap(), b"/a/b");
+        for bad in ["/a%", "/a%2", "/a%zz", "/a%+1"] {
+            assert_eq!(decode_path(bad), None, "{bad}");
+        }
     }
 
     #[test]

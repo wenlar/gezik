@@ -192,7 +192,8 @@ export component Sidebar inherits Rectangle {
                     viewbox-width: 16;
                     viewbox-height: 16;
                     commands: row.icon == 1 ? Glyph.home : row.icon == 3 ? Glyph.pin : row.icon == 4 ? Glyph.alias
-                        : row.icon == 5 ? Glyph.drive : row.icon == 6 ? Glyph.search : Glyph.folder-line;
+                        : row.icon == 5 ? Glyph.drive : row.icon == 6 ? Glyph.search : row.icon == 7 ? Glyph.trash
+                        : Glyph.folder-line;
                     stroke: row.active ? Theme.accent : Theme.foreground-muted;
                     stroke-width: 1.3px;
                     stroke-line-cap: round;
