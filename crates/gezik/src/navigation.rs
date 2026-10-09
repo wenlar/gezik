@@ -281,11 +281,11 @@ pub struct Navigator(Rc<RefCell<Inner>>);
 impl Navigator {
     /// The tabs of `session` open, the one in front with `select` selected; new tabs open at
     /// `start`. Does not load anything: call [`install`](Self::install) next.
-    pub fn new(window: &AppWindow, view: View, session: Session, select: Option<String>, start: Location) -> Navigator {
+    pub fn new(window: &AppWindow, view: View, session: Session, select: Vec<String>, start: Location) -> Navigator {
         let mut tabs = Tabs::from_session(&session).unwrap_or_else(|| Tabs::new(start.clone()));
         tabs.active_mut().set_view(ViewState {
-            selected: select.iter().cloned().collect(),
-            focus: select,
+            selected: select.clone(),
+            focus: select.first().cloned(),
             scroll: 0.0,
             filter: None,
         });

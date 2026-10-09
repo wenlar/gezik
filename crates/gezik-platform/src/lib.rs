@@ -9,6 +9,7 @@ pub mod finder;
 pub mod fs;
 pub mod http;
 mod icons;
+pub mod instance;
 mod known;
 pub mod link;
 mod linux;

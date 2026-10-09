@@ -7,6 +7,8 @@ use std::path::{Component, Path, PathBuf};
 use gezik_config::Warning;
 use gezik_core::nav::{Location, Session, SessionTab};
 
+use crate::cli::{Target, group, tab_for};
+
 /// What a path on disk is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PathKind {
@@ -21,8 +23,8 @@ pub enum PathKind {
 pub struct StartPlan {
     /// The tabs to open: the saved session, or one tab.
     pub session: Session,
-    /// Entry to select in the tab in front (a file given on the command line).
-    pub select: Option<String>,
+    /// Names to select in the tab in front (files given on the command line).
+    pub select: Vec<String>,
     /// The `start-folder` setting, resolved: where new tabs open. Never the command line.
     pub start: Location,
     pub warnings: Vec<Warning>,
@@ -58,13 +60,15 @@ pub fn resolve_start_folder(
 }
 
 /// The saved tabs (`saved`, when `[session] restore` is on and there are any) come back as
-/// they were, and a command-line path opens after them, in front; without them, the
-/// command-line path wins as before: a folder opens as is, a file opens its folder with the
-/// file selected, a missing path warns. The saved tabs are not looked at on disk (a gone
-/// folder falls back when it is shown). The setting is always resolved, for new tabs.
+/// they were; each command-line target then goes to the tab already showing its folder
+/// (unless `new_tab`) or to a new tab at the end, and the last one is in front (spec 5.1,
+/// decision 2). Without saved tabs the targets replace the start tab. A file opens its folder
+/// with it selected; only the tab in front gets its selection. Missing paths warn. The saved
+/// tabs are not looked at on disk. The setting is always resolved, for new tabs.
 pub fn plan_start(
     setting: &str,
-    cli: Option<PathBuf>,
+    targets: &[Target],
+    new_tab: bool,
     home: &Path,
     expand: impl Fn(&str) -> Option<PathBuf>,
     kind: impl Fn(&Path) -> PathKind,
@@ -75,32 +79,33 @@ pub fn plan_start(
     let from_session = restored.is_some();
     let mut plan = StartPlan {
         session: restored.unwrap_or_else(|| Session::single(start.clone())),
-        select: None,
+        select: Vec::new(),
         start,
         warnings: warning.into_iter().collect(),
     };
-    let Some(path) = cli else { return plan };
-    let (location, select) = match kind(&path) {
-        PathKind::Dir => (Location::Path(path), None),
-        PathKind::File => match (path.parent().filter(|p| !p.as_os_str().is_empty()), path.file_name()) {
-            (Some(parent), Some(name)) => {
-                (Location::Path(parent.to_path_buf()), Some(name.to_string_lossy().into_owned()))
-            }
-            _ => return plan,
-        },
-        PathKind::Missing => {
-            let opening = if from_session { "opening the last tabs" } else { "opening start-folder" };
-            plan.warnings.push(Warning::new("command line", format!("{}: not found; {opening}", path.display())));
-            return plan;
-        }
-    };
-    if from_session {
-        plan.session.tabs.push(SessionTab { location, locked: false });
-        plan.session.active = plan.session.tabs.len() - 1;
-    } else {
-        plan.session = Session::single(location);
+    let (opens, missing) = group(targets, &kind);
+    let opening = if from_session { "opening the last tabs" } else { "opening start-folder" };
+    for path in missing {
+        plan.warnings.push(Warning::new("command line", format!("{}: not found; {opening}", path.display())));
     }
-    plan.select = select;
+    let Some(last) = opens.last() else { return plan };
+    plan.select = last.select.clone();
+    // shortcut: only the tab in front gets its names selected; others with files lose
+    // theirs (several folders with files at start is rare).
+    if !from_session {
+        plan.session.tabs.clear();
+    }
+    for open in opens {
+        let location = Location::Path(open.dir);
+        let shown: Vec<Location> = plan.session.tabs.iter().map(|tab| tab.location.clone()).collect();
+        match tab_for(&shown, plan.session.active, &location).filter(|_| !new_tab) {
+            Some(index) => plan.session.active = index,
+            None => {
+                plan.session.tabs.push(SessionTab { location, locked: false });
+                plan.session.active = plan.session.tabs.len() - 1;
+            }
+        }
+    }
     plan
 }
 
@@ -155,7 +160,12 @@ mod tests {
     }
 
     fn plan(setting: &str, cli: Option<&str>) -> StartPlan {
-        plan_start(setting, cli.map(PathBuf::from), &home(), expand, kind, None)
+        let targets: Vec<Target> = cli.map(|p| Target { path: PathBuf::from(p), select: false }).into_iter().collect();
+        plan_start(setting, &targets, false, &home(), expand, kind, None)
+    }
+
+    fn targets(paths: &[&str]) -> Vec<Target> {
+        paths.iter().map(|p| Target { path: PathBuf::from(p), select: false }).collect()
     }
 
     fn p(path: &str) -> Location {
@@ -165,7 +175,10 @@ mod tests {
     #[test]
     fn setting_without_command_line() {
         let docs = plan("{home}/Docs", None);
-        assert_eq!((docs.first().clone(), docs.start, docs.select), (p("/home/u/Docs"), p("/home/u/Docs"), None));
+        assert_eq!(
+            (docs.first().clone(), docs.start, docs.select),
+            (p("/home/u/Docs"), p("/home/u/Docs"), Vec::<String>::new())
+        );
         assert!(docs.warnings.is_empty());
 
         let drives = plan("  Drives ", None);
@@ -186,7 +199,10 @@ mod tests {
     #[test]
     fn command_line_folder_wins_but_new_tabs_use_the_setting() {
         let plan = plan("drives", Some("/work/sub"));
-        assert_eq!((plan.first().clone(), plan.start, plan.select), (p("/work/sub"), Location::Drives, None));
+        assert_eq!(
+            (plan.first().clone(), plan.start, plan.select),
+            (p("/work/sub"), Location::Drives, Vec::<String>::new())
+        );
         assert!(plan.warnings.is_empty());
     }
 
@@ -194,14 +210,17 @@ mod tests {
     fn command_line_file_opens_its_folder_selected() {
         let plan = plan("{home}", Some("/work/notes.txt"));
         assert_eq!(plan.first().clone(), p("/work"));
-        assert_eq!(plan.select.as_deref(), Some("notes.txt"));
+        assert_eq!(plan.select, ["notes.txt"]);
         assert_eq!(plan.start, p("/home/u"));
     }
 
     #[test]
     fn missing_command_line_path_warns_and_opens_the_setting() {
         let plan = plan("drives", Some("/gone"));
-        assert_eq!((plan.first().clone(), plan.start, plan.select), (Location::Drives, Location::Drives, None));
+        assert_eq!(
+            (plan.first().clone(), plan.start, plan.select),
+            (Location::Drives, Location::Drives, Vec::<String>::new())
+        );
         assert_eq!(plan.warnings.len(), 1);
         assert_eq!(plan.warnings[0].file, "command line");
         assert!(plan.warnings[0].message.ends_with("not found; opening start-folder"));
@@ -227,24 +246,24 @@ mod tests {
 
     #[test]
     fn the_saved_tabs_come_back_and_new_tabs_still_open_in_the_setting() {
-        let plan = plan_start("{home}/Docs", None, &home(), expand, kind, Some(&saved()));
+        let plan = plan_start("{home}/Docs", &[], false, &home(), expand, kind, Some(&saved()));
         assert_eq!(plan.session, saved());
         assert_eq!(
             (plan.first().clone(), plan.start.clone(), plan.select.clone()),
-            (Location::Drives, p("/home/u/Docs"), None)
+            (Location::Drives, p("/home/u/Docs"), Vec::new())
         );
         assert!(plan.warnings.is_empty());
     }
 
     #[test]
     fn a_command_line_path_joins_the_saved_tabs_at_the_end() {
-        let folder = plan_start("{home}", Some(PathBuf::from("/work/sub")), &home(), expand, kind, Some(&saved()));
+        let folder = plan_start("{home}", &targets(&["/work/sub"]), false, &home(), expand, kind, Some(&saved()));
         assert_eq!(folder.session.tabs.len(), 3);
         assert_eq!((folder.session.active, folder.first().clone()), (2, p("/work/sub")));
         assert!(folder.session.tabs[0].locked, "the saved locks stay");
-        let file = plan_start("{home}", Some(PathBuf::from("/work/notes.txt")), &home(), expand, kind, Some(&saved()));
-        assert_eq!((file.first().clone(), file.select.as_deref()), (p("/work"), Some("notes.txt")));
-        let gone = plan_start("{home}", Some(PathBuf::from("/nowhere")), &home(), expand, kind, Some(&saved()));
+        let file = plan_start("{home}", &targets(&["/work/notes.txt"]), false, &home(), expand, kind, Some(&saved()));
+        assert_eq!((file.first().clone(), file.select.clone()), (p("/work"), vec!["notes.txt".to_owned()]));
+        let gone = plan_start("{home}", &targets(&["/nowhere"]), false, &home(), expand, kind, Some(&saved()));
         assert_eq!(gone.session, saved(), "the session still comes");
         assert!(gone.warnings[0].message.ends_with("not found; opening the last tabs"), "{:?}", gone.warnings);
     }
@@ -256,17 +275,63 @@ mod tests {
             asked.borrow_mut().push(path.to_path_buf());
             kind(path)
         };
-        let plan = plan_start("{home}", None, &home(), expand, counting, Some(&saved()));
+        let plan = plan_start("{home}", &[], false, &home(), expand, counting, Some(&saved()));
         assert_eq!(plan.session, saved());
         assert_eq!(*asked.borrow(), [PathBuf::from("/home/u")], "only start-folder is looked at");
     }
 
     #[test]
     fn an_empty_session_is_todays_start() {
-        let plan = plan_start("drives", Some(PathBuf::from("/work")), &home(), expand, kind, Some(&Session::default()));
+        let plan = plan_start("drives", &targets(&["/work"]), false, &home(), expand, kind, Some(&Session::default()));
         assert_eq!(plan.session, Session::single(p("/work")));
-        let plain = plan_start("drives", None, &home(), expand, kind, None);
+        let plain = plan_start("drives", &[], false, &home(), expand, kind, None);
         assert_eq!(plain.session, Session::single(Location::Drives));
+    }
+
+    #[test]
+    fn several_paths_open_a_tab_each_the_last_in_front() {
+        let plan =
+            plan_start("drives", &targets(&["/work", "/work/sub", "/home/u"]), false, &home(), expand, kind, None);
+        let shown: Vec<_> = plan.session.tabs.iter().map(|t| t.location.clone()).collect();
+        assert_eq!(shown, [p("/work"), p("/work/sub"), p("/home/u")]);
+        assert_eq!(plan.session.active, 2);
+        assert_eq!(plan.start, Location::Drives, "new tabs still open in the setting");
+    }
+
+    #[test]
+    fn a_saved_tab_showing_the_folder_is_reused_at_start() {
+        let saved = Session {
+            tabs: vec![
+                SessionTab { location: p("/work"), locked: false },
+                SessionTab { location: p("/home/u"), locked: false },
+            ],
+            active: 1,
+        };
+        let plan = plan_start("{home}", &targets(&["/work"]), false, &home(), expand, kind, Some(&saved));
+        assert_eq!(plan.session.tabs.len(), 2, "no second /work tab");
+        assert_eq!(plan.session.active, 0);
+        let file = plan_start("{home}", &targets(&["/work/notes.txt"]), false, &home(), expand, kind, Some(&saved));
+        assert_eq!((file.session.tabs.len(), file.session.active), (2, 0));
+        assert_eq!(file.select, ["notes.txt"]);
+    }
+
+    #[test]
+    fn new_tab_always_adds() {
+        let saved = Session { tabs: vec![SessionTab { location: p("/work"), locked: false }], active: 0 };
+        let plan = plan_start("{home}", &targets(&["/work"]), true, &home(), expand, kind, Some(&saved));
+        assert_eq!((plan.session.tabs.len(), plan.session.active), (2, 1));
+    }
+
+    #[test]
+    fn only_missing_paths_leave_the_start_as_it_was() {
+        let plan = plan_start("drives", &targets(&["/gone", "/nowhere"]), false, &home(), expand, kind, None);
+        assert_eq!(plan.session, Session::single(Location::Drives));
+        assert_eq!(plan.warnings.len(), 2);
+        assert!(
+            plan.warnings
+                .iter()
+                .all(|w| w.file == "command line" && w.message.ends_with("not found; opening start-folder"))
+        );
     }
 
     #[test]

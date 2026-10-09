@@ -7,14 +7,15 @@ use slint::{ComponentHandle, LogicalSize, PhysicalPosition};
 use crate::AppWindow;
 
 /// Applies the saved size, position and sidebar width. Call before the window is shown.
-pub fn restore(window: &AppWindow, state: &State) {
+/// `offset` moves a second window off the first (spec 5.3).
+pub fn restore(window: &AppWindow, state: &State, offset: i32) {
     if let Some(width) = state.sidebar_width {
         window.set_sidebar_width(width as f32);
     }
     let Some(saved) = state.window else { return };
     window.window().set_size(LogicalSize::new(saved.width as f32, saved.height as f32));
     if let (Some(x), Some(y)) = (saved.x, saved.y) {
-        window.window().set_position(PhysicalPosition::new(x, y));
+        window.window().set_position(PhysicalPosition::new(x + offset, y + offset));
     }
     // After the normal rect, so un-maximizing goes back to it.
     if saved.maximized {

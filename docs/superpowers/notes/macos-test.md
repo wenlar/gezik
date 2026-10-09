@@ -421,6 +421,15 @@ Re-checks of the shared UI fixes (fix/shared-ui, on master)
 99. **Unchanged.** The row menu still has Make Alias, Create link, Copy path as ▸, Commands ▸ (when set up), and all four submenus show together on a file with commands. Right-clicking feels as quick as before; Activity Monitor shows no extra gezik thread after the menu closes.
 100. **Exe size.** `ls -l target/release/gezik` on `feat/system-9a1` and on `feat/system-9a2`, both `cargo build --release -p gezik`: write both numbers; the difference should be under 256 KB plus the Quick Look UI bindings.
 
+### 9b1, command line and single instance
+
+110. **Tests first.** In the clone: `cargo test -p gezik-platform instance`. These tests (socket, stale socket, hung and huge callers, peer uid) only compiled on Windows; they never ran on a Mac before.
+111. **Hand-over.** With Gezik open, from Terminal: `/path/to/gezik ~/Documents` opens in the same window (if a Documents tab is open, it switches to it), the window comes to the front, and Terminal gets its prompt back at once. `gezik ~/Documents/x.pdf` opens the folder with `x.pdf` selected; Preview does not open.
+112. **Help, version, new window.** `gezik --help` and `gezik --version` print to Terminal. `gezik --new-window ~` opens a second window, 32 px offset (note it if the Dock shows a second icon). ⌘N and File ▸ New Window do the same. Close the first window, then the second; open Gezik again: the first window's tabs come back.
+113. **Hung or crashed Gezik.** `kill -STOP <pid>`, then `gezik ~`: its own window opens after about 2 s; `kill -CONT <pid>`. `kill -9 <pid>`, then `gezik ~`: a new first Gezik; `gezik /tmp` then goes to it. `ls -l "$TMPDIR"gezik-*` shows an `srw-------` socket and an `-rw-------` lock.
+114. **Off.** `[system] single-instance = false` in settings.toml, restart Gezik: every call opens its own window.
+115. **Bring to front.** The macOS arm of bringing the window forward (winit `set_minimized(false)` + `focus_window`) was not run or even compiled with tests on Windows: check that a minimized Gezik comes back and comes to the front, and note it if only the Dock icon bounces.
+
 Report anything else that looks wrong: layout, fonts, Retina scaling, ⌘ shortcuts that don't work, and the wording of the boxes.
 
 ## Known gaps (not bugs)

@@ -139,6 +139,14 @@ impl ConfigStore {
         self.state.update(change);
     }
 
+    /// `state.toml` and `views.toml` are no longer written by this Gezik (a second window's,
+    /// spec 5.3): its old copy must not overwrite the first window's. `settings.toml` is
+    /// still written: its writer merges each change into the file.
+    pub fn keep_state_unwritten(&self) {
+        self.state.keep_unwritten();
+        self.views.keep_unwritten();
+    }
+
     /// Waits (up to 5 s) until every change of the state is written: before quitting.
     pub fn flush_state(&self) {
         self.state.flush();
@@ -546,6 +554,27 @@ mod tests {
         assert!(warning.is_none());
         assert_eq!(back.folders().len(), 10);
         assert_eq!(back.get("/f9").map(|v| v.mode), Some(ViewMode::Grid));
+    }
+
+    #[test]
+    fn a_store_kept_unwritten_writes_no_state_nor_views() {
+        use gezik_core::view::ViewSettings;
+        let store = store("views-unwritten");
+        write(&store, "views.toml", "");
+        write(&store, "state.toml", "");
+        store.clone().keep_state_unwritten();
+        let mut memory = ViewMemory::default();
+        memory.set("/pics", ViewSettings::default());
+        store.write_views(&memory);
+        store.flush_views();
+        store.save_views(&memory).unwrap();
+        store.update_state(|state| state.preview_open = true);
+        store.flush_state();
+        assert_eq!(std::fs::read_to_string(store.dir().join("views.toml")).unwrap(), "");
+        assert_eq!(std::fs::read_to_string(store.dir().join("state.toml")).unwrap(), "");
+        // settings.toml is still written (merged), as for the first window.
+        store.save_pinned(&[PinEntry::plain("/a")]).unwrap();
+        assert!(std::fs::read_to_string(store.dir().join("settings.toml")).unwrap().contains("/a"));
     }
 
     #[test]

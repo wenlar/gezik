@@ -737,6 +737,7 @@ mod tests {
         for action in Action::ALL {
             let text = match action {
                 Action::NewTab => "ctrl+t",
+                Action::NewWindow => "ctrl+n",
                 Action::CloseTab => "ctrl+w",
                 Action::NextTab => "ctrl+tab",
                 Action::PrevTab => "ctrl+shift+tab",
