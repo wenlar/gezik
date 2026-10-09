@@ -426,13 +426,13 @@ Each of these was kept to macOS where the logic allowed:
 | 75 | Flat view | PASS (one note: the folder link shows as a 0 B file) |
 | 76 | Show in folder | PASS |
 | 77 | Results like a folder | PASS (one note) |
-| 78 | Themes | NOT TESTED |
-| 79 | Drawing at 200 % | NOT TESTED |
-| 80 | Thin scroll bar | NOT TESTED |
-| 81 | Folder sizes | NOT TESTED |
-| 82 | Command palette | NOT TESTED |
-| 83 | Quick Open | NOT TESTED |
-| 84 | Saved searches | NOT TESTED |
+| 78 | Themes | PASS (reduce-motion fades not judged) |
+| 79 | Drawing at 200 % | PASS |
+| 80 | Thin scroll bar | PASS (trackpad feel not judged) |
+| 81 | Folder sizes | PASS (sizes are logical, not on disk; network share not tried) |
+| 82 | Command palette | PASS |
+| 83 | Quick Open | PASS |
+| 84 | Saved searches | PASS (saved to GEZIK_CONFIG_DIR's settings.toml) |
 | 85 | Probe | **FAIL** (probe: "cancel after 5 ms" still gave a PDF thumbnail; workspace tests fail, see below) |
 | 86 | System icons | NOT TESTED |
 | 87 | Speed and memory | NOT TESTED |
@@ -1065,3 +1065,50 @@ Search `*.rs` in `proje/` (`main.rs` in `src`, `lib.rs` in `src/alt`).
 - Two results from two folders ▸ Enter ▸ rename layer with Number 001 at end and "Per folder" on: `main 001.rs` and `lib 001.rs` (numbered per folder; off: 001 and 002). With `src/main 001.rs` already there, that row is marked in red with a warning icon, and the layer says "1 name already in the folder · 1 will change · fix the marked rows".
 - Gezik quit and started with the search tab in front: the tab came back ("Search: *.rs") and searched again, now listing `x.rs` made in the meantime (3 results).
 - **Note:** the results don't follow changes made outside Gezik (known), and pressing Return in the unchanged name field didn't search again either. `x.rs`, made after the search, only appeared after the restart. The bar has no visible way to run the same search again except changing the text.
+
+#### 78. Themes: PASS
+- `theme = "light"`, `"dark"`, `"classic-light"`, `"classic-dark"` each applied live (2.5 s after saving). The classic themes are flat: the list goes edge to edge with no rounded sheet, and they use a blue accent (Search button, tab underline) where light/dark use orange.
+- `auto`: with System Settings' appearance switched (System Events `dark mode` false, then true again), Gezik went light and back to dark within 2 s.
+- `density = "compact"`: rows go from 26 to 20 pt, and the sidebar and bars tighten.
+- `reduce-motion = true` was set with no error, but hover and popup fades can't be judged from screenshots.
+
+#### 79. Drawing at 200 %: PASS
+Captured at native 2× pixels (`screencapture -R` on the Retina display): the 1 px lines (tab and button borders, the list sheet's edge) are crisp single device pixels, and the sheet's rounded corner is smooth. The 11 px text (column header "Name", status bar "3 results in 0.0 s", sidebar labels FOLDERS, PINNED, LOCATIONS) is sharp and readable in the system font. The Refresh arc, the History clock, the sidebar icons (house, folders, pins, cloud, drives, trash) and the View ▾ menu are crisp. Long popup menus were seen in 31.
+
+#### 80. Thin scroll bar: PASS
+In `1000-dosya/` (1,000 rows):
+- A thin bar (6 pt, 12 device pixels), no track, grey in the dark theme (not the system's overlay bar). Its thumb is at least 24 pt tall even for 1,000 rows. On hover it is slightly darker.
+- Dragging the thumb with the mouse went to the very end (the last rows shown, thumb at the bottom) and back to the very top.
+- A click below the thumb scrolled one page down.
+- Wheel scrolling (synthetic, 20 × 3 lines) moved the list smoothly.
+- The sidebar has the same bar (visible when the operations panel shrinks it). The conflict list and the rename layer were not scrolled. Trackpad smoothness and natural direction need a real hand.
+
+#### 81. Folder sizes: PASS
+With `folder-sizes = "local"` (picked up live):
+- In `/private/tmp/gezik-test` the Size column filled in for every folder within 3 s (`pdf-test` 1.7 MB, `pdf-resim` 652.9 KB, `1000-dosya` 0 B). In the home folder all folders had sizes within a few seconds. `Library` shows `≥ 146.2 GB` (parts macOS keeps to itself could not be read). The others are plain (Downloads 17.8 GB, Pictures 19.2 GB …).
+- Sizes are the files' logical sizes (`klasör A` 16 B, where `du` says 24 KB on disk). That matches Finder's "size", not "on disk".
+- Three folders selected: the status bar sums them ("3 selected (2.5 MB)").
+- The preview for a folder shows its size and `N files, M folders` (`pdf-test`: 1.7 MB, 13 files, 0 folders). With the preview open, the Size column is hidden for lack of room.
+- Sort by Size works both ways; the `…` state was too short to watch here.
+- A symlink to a folder (`proje/dil-link`) shows no folder size.
+- `/System`, then Back at once: gezik's CPU was 0 % 3 s later. Coming back showed the sizes that were done (Applications 1.2 GB, iOSSupport 555.8 MB) and `…` for the rest, which then went on.
+- Not tried: a network share, View ▸ Calculate Folder Sizes with `"off"`, and the "Some folders could not be read" line in the preview. Set back to `"off"` afterwards.
+
+#### 82. Command palette: PASS
+- ⌘⇧P opens the picker with `>` and the caret after it, listing actions with their kind and shortcut (Back ⌘[, Close Tab ⌘W, Copy ⌘C, Copy Path ⌥⌘C, Cut ⌘X …).
+- Typing keeps the `>`: `copy` lists Copy, Copy Path, Copy with Folders, and also the user command "Slow copy (sleep)" (kind "Command").
+- `>copy path` + Return ran Copy Path (the clipboard got the focused row's path). Esc closes the palette and the list has the keyboard back (↓ moved the selection).
+- Deleting the `>` turns it into Quick Open: the empty field lists Copy Path first (as recent), then the pinned places.
+
+#### 83. Quick Open: PASS
+- ⌘P lists places (Recent, Pinned, tabs, …). `down` finds Downloads (Recent) first, then "Download Now" and "Remove Download" (actions), DL (Pinned), and the last line `Search for "down" in macbookpro`.
+- Alt+Return on Downloads opened it in a new tab, next to the current one.
+- `zzqx` leaves only `Search for "zzqx" in sonuc-hedef`, and Return started that search (tab "Search: zzqx").
+- Go ▸ Quick Open… (⌘P) and Go ▸ Command Palette… (⌘⇧P) carry the keys and do the same.
+
+#### 84. Saved searches: PASS
+- Search `*.rs` in `proje/`, then the bar's ▾ ▸ Save search…: "Name for this search:" `Rust`, then "Save \"Rust\" with /private/tmp/gezik-test/proje, or for the folder shown when it runs?" with Save with this folder / Save for any folder ({here}) / Cancel.
+- "Save for any folder" wrote `[[searches]] name = "Rust" folder = "{here}" pattern = "*.rs"` to `/private/tmp/gezik-cfg/settings.toml` (`GEZIK_CONFIG_DIR`'s, not `~/Library/…`). A comment added by hand just before (`# kendi notum: kalsin`) stayed.
+- The sidebar has a SEARCHES section (after CLOUD) with "Rust" and a magnifier icon.
+- In `pdf-test/`, a click on Rust ran it there: the tab is titled "Rust", and the scope is "in pdf-test" (`{here}`), with no results (no .rs files there).
+- Right-click on it: Run in new tab / Rename… / Delete.
