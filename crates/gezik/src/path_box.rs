@@ -720,9 +720,11 @@ impl PathBox {
             }
             PathKey::Accept => {
                 let chosen = current.or_else(|| first_folder(&self.0.list.borrow().rows));
-                if let Some(path) = chosen.and_then(|i| self.path_of(i)) {
-                    self.accept(&path);
-                }
+                let Some(path) = chosen.and_then(|i| self.path_of(i)) else {
+                    // Nothing left to complete: Tab moves the focus on, out of the field.
+                    return false;
+                };
+                self.accept(&path);
             }
             PathKey::Go => {
                 if let Some(path) = current.and_then(|i| self.path_of(i)) {
