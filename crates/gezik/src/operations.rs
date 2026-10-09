@@ -1112,6 +1112,23 @@ impl Operations {
         self.0.view.note(problem.unwrap_or_else(|| "Nothing to paste".to_owned()));
     }
 
+    /// An alias whose original is gone (spec 9 §4.2): Finder's question; Delete Alias moves it
+    /// to the Trash (Ctrl+Z brings it back) without asking a second time.
+    pub fn missing_alias(&self, alias: PathBuf) {
+        let name = alias.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let ops = self.clone();
+        self.0.dialogs.ask(
+            "The original item can't be found",
+            format!("The alias \"{name}\" can't be opened."),
+            &["Delete Alias", "OK"],
+            move |chosen| {
+                if chosen == Some(0) {
+                    ops.trash_now(vec![alias]);
+                }
+            },
+        );
+    }
+
     /// A link of `kind` next to each of `paths` ("Create link ▸", Explorer's "Create shortcut").
     pub fn create_links(&self, paths: Vec<PathBuf>, kind: LinkKind) {
         let paths = self.without_roots(paths, "link to");

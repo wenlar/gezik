@@ -77,6 +77,7 @@ objc2-foundation = { version = "0.3", features = [
     "NSURLRequest",
     "NSURLResponse",
     "NSURLSession",
+    "NSValue",
     "block2",
 ] }
 objc2-app-kit = { version = "0.3", features = [

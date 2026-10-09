@@ -2,5 +2,6 @@
 //! is here; what can be decided without the system lives in `icons.rs`, `picture.rs` and
 //! `finder.rs`, tested on every system.
 
+pub(crate) mod finder;
 pub(crate) mod icons;
 mod image;

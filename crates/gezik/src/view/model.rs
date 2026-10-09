@@ -125,6 +125,11 @@ pub fn file_row(data: &ViewData, i: usize) -> FileRow {
     let icon = picture_for(data, i);
     let name = listing.name_at(i).unwrap_or_default();
     let entries = !matches!(listing, Listing::Drives(_));
+    // macOS: Finder's name for a folder right under the home folder or `/` (spec 9 §4.2);
+    // sorting, filtering and renaming keep the real one.
+    let finder = (cfg!(target_os = "macos") && is_dir && entries)
+        .then(|| listing.path_at(i).and_then(|(path, _)| gezik_platform::finder::finder_name(&path)))
+        .flatten();
     let (folder, found) = match listing {
         Listing::Results(set) => (
             set.folder(i).unwrap_or_default().into(),
@@ -133,7 +138,10 @@ pub fn file_row(data: &ViewData, i: usize) -> FileRow {
         _ => (slint::SharedString::default(), slint::SharedString::default()),
     };
     FileRow {
-        name: gezik_core::shown_name(name, is_dir, options.hide_extensions && entries).into(),
+        name: finder
+            .as_deref()
+            .unwrap_or_else(|| gezik_core::shown_name(name, is_dir, options.hide_extensions && entries))
+            .into(),
         is_dir,
         kind: listing.kind(i).index(),
         size: entry.filter(|_| entries).map(|e| size_cell(e, options.size_format)).unwrap_or_default().into(),
