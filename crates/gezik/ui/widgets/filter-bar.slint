@@ -126,6 +126,9 @@ export component FilterBar inherits Rectangle {
                 init => {
                     if root.content-focus {
                         self.focus-and-select();
+                        // `changed has-focus` does not fire for focus taken in `init`: without
+                        // this the window's keys (Enter, Ctrl+A) went to the list.
+                        root.content-focused = self.has-focus;
                     }
                 }
             }
