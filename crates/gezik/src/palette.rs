@@ -64,7 +64,6 @@ pub enum Target {
     Tab(usize),
     TabSet(String),
     Filter(String),
-    #[allow(dead_code, reason = "the saved searches come with Task 7")]
     SavedSearch(String),
 }
 
@@ -138,7 +137,7 @@ impl Palette {
         window.invoke_focus_list();
     }
 
-    /// Every item and what it does (spec 7.2). Task 7 adds the saved searches.
+    /// Every item and what it does (spec 7.2).
     pub fn add_items(&self, items: &mut Vec<Item>, targets: &mut Vec<Target>) {
         let mut add = |kind: Kind, id: String, title: String, detail: String, target: Target| {
             items.push(Item { kind, id, title, detail });
@@ -209,6 +208,15 @@ impl Palette {
                 filter.name.clone(),
                 filter.pattern,
                 Target::Filter(filter.name),
+            );
+        }
+        for saved in crate::saved_searches::saved() {
+            add(
+                Kind::SavedSearch,
+                saved.name.clone(),
+                saved.name.clone(),
+                saved.folder,
+                Target::SavedSearch(saved.name),
             );
         }
     }
@@ -300,8 +308,7 @@ impl Palette {
             Target::Tab(index) => nav.activate_tab(index),
             Target::TabSet(name) => crate::tab_sets::with_current(|sets| sets.open(&name, false)),
             Target::Filter(name) => crate::filter::with_current(|filter| filter.apply_saved(&name)),
-            // Task 7.
-            Target::SavedSearch(_) => {}
+            Target::SavedSearch(name) => crate::saved_searches::with_current(|s| s.run(&name, new_tab)),
         }
     }
 

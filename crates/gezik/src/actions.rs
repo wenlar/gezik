@@ -62,6 +62,7 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         Action::CopyWithFolders => crate::operations::with_current(|ops| ops.copy_with_folders(false)),
         Action::CutWithFolders => crate::operations::with_current(|ops| ops.copy_with_folders(true)),
         Action::CalculateFolderSizes => crate::folder_sizes::with_current(crate::folder_sizes::FolderSizes::calculate),
+        Action::SaveSearch => crate::search::with_current(crate::search::Searches::save_current),
         Action::NewFolderWithSelection => {
             crate::operations::with_current(crate::operations::Operations::new_folder_with_selection)
         }
@@ -112,8 +113,7 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         | Action::Redo
         | Action::BatchRename
         | Action::CommandPalette
-        | Action::QuickOpen
-        | Action::SaveSearch => return false,
+        | Action::QuickOpen => return false,
     }
     true
 }

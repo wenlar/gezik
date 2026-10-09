@@ -28,6 +28,7 @@ mod places;
 mod popup;
 mod preview;
 mod quick_look;
+mod saved_searches;
 mod search;
 mod select_tools;
 mod sidebar;
@@ -79,6 +80,14 @@ fn open_path(nav: &navigation::Navigator, path: PathBuf, is_dir: bool) {
 
 /// Resolves settings + theme from `files` and shows them. No I/O, so it runs on the UI
 /// thread at startup, after config files change and when the system theme flips.
+/// A click on the sidebar's saved search `index` (middle click: in a new tab).
+fn run_saved_search(index: i32, new_tab: bool) {
+    let names = saved_searches::names();
+    if let Some(name) = usize::try_from(index).ok().and_then(|i| names.get(i)) {
+        saved_searches::with_current(|s| s.run(name, new_tab));
+    }
+}
+
 fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
     let loaded = store::resolve(files, window.get_system_dark());
     if let Some(theme) = &loaded.theme {
@@ -116,6 +125,7 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
     search::with_current(|s| s.set_settings(loaded.settings.search.clone()));
     folder_sizes::with_current(|f| f.set_settings(loaded.settings.folder_sizes, loaded.settings.search.everything));
     tab_sets::set_settings(loaded.settings.tab_sets.clone());
+    saved_searches::set_settings(loaded.settings.searches.clone());
     #[cfg(target_os = "macos")]
     menu_bar::set_tab_sets(window, &tab_sets::names());
     terminal::set_settings(loaded.settings.terminal.command.clone());
@@ -669,6 +679,8 @@ fn main() -> Result<(), slint::PlatformError> {
     sidebar.install();
     sidebar.set_pinned(initial_settings.pinned);
     let _tab_sets = tab_sets::TabSets::new(&window, nav.clone(), view.clone(), dialogs.clone(), config.clone());
+    let _saved_searches =
+        saved_searches::SavedSearches::new(&window, nav.clone(), view.clone(), dialogs.clone(), config.clone());
     let _filter = filter::Filter::new(&window, view.clone(), dialogs.clone(), config.clone());
     let searches = search::Searches::new(&window, nav.clone(), view.clone(), dialogs.clone());
     searches.set_settings(initial_settings.search.clone());
@@ -827,6 +839,9 @@ fn main() -> Result<(), slint::PlatformError> {
     window.on_sidebar_clicked({
         let (nav, sidebar) = (nav.clone(), sidebar.clone());
         move |section, index| {
+            if section == sidebar::SECTION_SEARCHES {
+                return run_saved_search(index, false);
+            }
             if let Some(location) = sidebar.location_of(section, index) {
                 nav.go(location);
             }
@@ -835,6 +850,9 @@ fn main() -> Result<(), slint::PlatformError> {
     window.on_sidebar_middle_clicked({
         let (nav, sidebar) = (nav.clone(), sidebar.clone());
         move |section, index| {
+            if section == sidebar::SECTION_SEARCHES {
+                return run_saved_search(index, true);
+            }
             if let Some(location) = sidebar.location_of(section, index) {
                 nav.open_tab(location, false);
             }

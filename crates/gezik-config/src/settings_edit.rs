@@ -110,36 +110,58 @@ pub fn with_rename_presets(text: &str, presets: &[crate::settings::RenamePreset]
 /// entries that do not read as a filter (see `with_rename_presets`).
 pub fn with_filters(text: &str, filters: &[crate::settings::SavedFilter]) -> Result<String, String> {
     let tables = filters.iter().map(crate::settings::filter_to_toml).collect();
-    with_tables(text, "filters", tables, |item| crate::settings::parse_filter(item).is_ok())
+    let mut name = read_once(usize::MAX);
+    with_tables(text, "filters", tables, move |item| crate::settings::parse_filter(item).is_ok_and(|f| name(f.name)))
 }
 
 /// Returns `text` with `[[tab-sets]]` replaced by `sets`; the rest stays, and so do the
 /// entries that do not read as a tab set (see `with_rename_presets`).
 pub fn with_tab_sets(text: &str, sets: &[crate::settings::TabSet]) -> Result<String, String> {
     let tables = sets.iter().map(crate::settings::tab_set_to_toml).collect();
-    with_tables(text, "tab-sets", tables, |item| crate::settings::parse_tab_set(item).is_ok())
+    let mut name = read_once(usize::MAX);
+    with_tables(text, "tab-sets", tables, move |item| crate::settings::parse_tab_set(item).is_ok_and(|s| name(s.name)))
 }
 
 /// Returns `text` with `[[searches]]` replaced by `searches`; the entries that do not read as a
 /// saved search stay as written (see `with_rename_presets`).
 pub fn with_searches(text: &str, searches: &[crate::settings::SavedSearch]) -> Result<String, String> {
     let tables = searches.iter().map(crate::settings::saved_search_to_toml).collect();
-    with_tables(text, "searches", tables, |item| crate::settings::parse_saved_search(item).is_ok())
+    let mut name = read_once(crate::settings::SEARCHES_MAX);
+    with_tables(text, "searches", tables, move |item| {
+        crate::settings::parse_saved_search(item).is_ok_and(|s| name(s.name))
+    })
 }
 
-/// Replaces the `[[key]]` tables that `valid` accepts with `tables`; the entries it rejects
-/// are written back unchanged after them.
+/// Whether a readable entry named `name` is one `Settings::parse` keeps: among the first `max`,
+/// its name not already used (ignoring case). The others stay as written, like broken ones.
+fn read_once(max: usize) -> impl FnMut(String) -> bool {
+    let mut seen: Vec<String> = Vec::new();
+    move |name| {
+        let name = name.to_lowercase();
+        let kept = seen.len() < max && !seen.contains(&name);
+        if kept {
+            seen.push(name);
+        }
+        kept
+    }
+}
+
+/// Replaces the `[[key]]` tables that `valid` accepts (asked once per entry, in order) with
+/// `tables`; the entries it rejects are written back unchanged after them.
 fn with_tables(
     text: &str,
     key: &str,
     tables: Vec<toml::Table>,
-    valid: impl Fn(&toml::Value) -> bool,
+    mut valid: impl FnMut(&toml::Value) -> bool,
 ) -> Result<String, String> {
     let mut doc = text.parse::<toml_edit::DocumentMut>().map_err(|err| err.to_string().trim().to_owned())?;
     let plain = text.parse::<toml::Table>().map_err(|err| err.to_string().trim().to_owned())?;
     // Whether each existing entry is valid, by the same rules as `Settings::parse`.
-    let valid: Vec<bool> =
-        plain.get(key).and_then(|v| v.as_array()).map(|items| items.iter().map(&valid).collect()).unwrap_or_default();
+    let valid: Vec<bool> = plain
+        .get(key)
+        .and_then(|v| v.as_array())
+        .map(|items| items.iter().map(&mut valid).collect())
+        .unwrap_or_default();
     let mut broken: Vec<toml_edit::Table> = Vec::new();
     // Comments above the presets that are replaced: the end of the table before them (see below).
     let mut comments = String::new();
@@ -654,5 +676,40 @@ name = \"broken\" # mine
         );
         assert!(!out.contains("name = \"Old\""), "a good one is replaced by the list: {out}");
         assert!(out.contains("# my searches"), "{out}");
+    }
+
+    #[test]
+    fn entries_the_settings_leave_out_survive_a_save() {
+        use crate::settings::{SEARCHES_MAX, SavedFilter, Settings};
+        let mut text = String::new();
+        for i in 0..=SEARCHES_MAX {
+            text.push_str(&format!(
+                "[[searches]]
+name = \"n{i}\"
+folder = \"{{here}}\"
+"
+            ));
+        }
+        text.push_str(
+            "[[searches]]
+name = \"N0\"
+folder = \"drives\"
+",
+        );
+        let mut warnings = Vec::new();
+        let read = Settings::parse("settings.toml", &text, &mut warnings).searches;
+        let out = with_searches(&text, &read[1..]).unwrap();
+        assert!(!out.contains("name = \"n0\""), "a read one is replaced by the list: {out}");
+        let over = format!("name = \"n{SEARCHES_MAX}\"");
+        assert!(out.contains(&over) && out.contains("name = \"N0\""), "the 31st and the copy stay: {out}");
+        let text = "[[filters]]
+name = \"a\"
+pattern = \"x\"
+[[filters]]
+name = \"A\"
+pattern = \"y\"
+";
+        let out = with_filters(text, &[SavedFilter { name: "b".into(), pattern: "z".into() }]).unwrap();
+        assert!(!out.contains("\"a\"") && out.contains("name = \"A\""), "the copy stays: {out}");
     }
 }
