@@ -437,11 +437,26 @@ pub const GET_INFO: u32 = 1742;
 pub const INFO_GROUP_FIRST: u32 = 1780;
 pub const INFO_GROUP_MAX: u32 = 16;
 pub const TEMPLATE_MAX: u32 = gezik_core::templates::TEMPLATE_MAX as u32;
-/// 9b's ids are 1800-1899 (1800 kept for a "Show Trash" item; 1812: Connect to Server…;
-/// 1820-1829: recent servers). The trash's rows and background.
+/// 9b's ids are 1800-1899 (1800 kept for a "Show Trash" item; 1810/1811: Eject, Disconnect;
+/// 1812: Connect to Server…; 1820-1829: recent servers). The trash's rows and background.
 pub const PUT_BACK: u32 = 1801;
 pub const TRASH_DELETE: u32 = 1802;
 pub const EMPTY_TRASH: u32 = 1803;
+/// Eject / Disconnect on a drive row (spec 13.3).
+pub const EJECT: u32 = 1810;
+pub const DISCONNECT: u32 = 1811;
+
+/// Eject or Disconnect in Gezik's own drive menus (macOS, Linux). Windows shows Explorer's
+/// menu, which has them; its eject runs through Gezik (`ShellVerb::Eject`).
+pub fn drive_items(way: Option<gezik_platform::eject::EjectWay>, native: bool) -> Vec<(u32, String)> {
+    use gezik_platform::eject::EjectWay;
+    match (way, native) {
+        (_, true) | (None, _) => Vec::new(),
+        (Some(EjectWay::Eject), false) => vec![(EJECT, "Eject".to_owned())],
+        (Some(EjectWay::Disconnect), false) => vec![(DISCONNECT, "Disconnect".to_owned())],
+    }
+}
+
 /// Connect to Server… on This PC's empty space, then the last ten addresses (spec 13.3).
 pub const CONNECT_SERVER: u32 = 1812;
 pub const RECENT_SERVER_FIRST: u32 = 1820;
@@ -1080,6 +1095,10 @@ impl Menus {
         self.add_file_tools(&mut list, &mut subs, vec![(path.clone(), is_dir)], native);
         list.extend(self.file_extras(true, is_dir, native));
         list.extend(cloud_items(crate::cloud::root_of(&path).is_some(), native, cfg!(target_os = "macos")));
+        // Not asked on Windows: Explorer's menu has Eject, and asking a fixed drive's bus costs a query.
+        if self.view.shows_drives() && !native {
+            list.extend(drive_items(crate::eject::way_at(&path), native));
+        }
         list.extend(info_item(native, cfg!(target_os = "macos")));
         self.add_finder_items(&mut list, &mut subs, services);
         if self.view.shows_results() {
@@ -1305,6 +1324,9 @@ impl Menus {
                 items: group_items(&groups, own.as_deref()),
             });
             *self.pin_groups.borrow_mut() = groups;
+        }
+        if section == crate::sidebar::SECTION_DRIVES && !cfg!(windows) {
+            list.extend(drive_items(crate::eject::way_at(&path), false));
         }
         list.push((SEARCH_HERE, "Search in this folder…".to_owned()));
         list.extend(owned(terminal_items(cfg!(windows))));
@@ -1636,6 +1658,7 @@ impl Menus {
             (TRASH_DELETE, _) => crate::trash_view::delete_selection(&self.view),
             (EMPTY_TRASH, _) => crate::trash_view::empty(),
             (CONNECT_SERVER, _) => crate::connect::open(),
+            (EJECT | DISCONNECT, Subject::Row(path) | Subject::SidebarEntry(path)) => crate::eject::eject_path(&path),
             (id, _) if (RECENT_SERVER_FIRST..RECENT_SERVER_FIRST + RECENT_SERVER_MAX).contains(&id) => {
                 crate::connect::open_recent((id - RECENT_SERVER_FIRST) as usize)
             }
@@ -1972,6 +1995,11 @@ impl Menus {
                     self.ops.rename_start();
                 }
             }
+            ShellVerb::Eject => match paths.first() {
+                // Only a drive's own menu: a row elsewhere never ejects the drive it is on.
+                Some(root) if crate::eject::way_at(root).is_some() => crate::eject::eject_path(root),
+                _ => self.nav.status(gezik_platform::eject::CANNOT.to_owned()),
+            },
         }
     }
 }
@@ -2352,6 +2380,16 @@ mod tests {
     }
 
     #[test]
+    fn drive_rows_offer_eject_or_disconnect_in_gezik_menus() {
+        use gezik_platform::eject::EjectWay;
+        assert_eq!(drive_items(Some(EjectWay::Eject), false), [(EJECT, "Eject".to_owned())]);
+        assert_eq!(drive_items(Some(EjectWay::Disconnect), false), [(DISCONNECT, "Disconnect".to_owned())]);
+        assert!(drive_items(Some(EjectWay::Eject), true).is_empty(), "Windows: Explorer's menu has them");
+        assert!(drive_items(None, false).is_empty(), "the system disk");
+        assert_eq!((EJECT, DISCONNECT), (1810, 1811));
+    }
+
+    #[test]
     fn this_pc_offers_connect_and_the_recent_servers() {
         let recent: Vec<String> = (0..12).map(|i| format!(r"\\nas\s{i}")).collect();
         let items = drives_background_items(&recent);
@@ -2469,6 +2507,8 @@ mod tests {
             TRASH_DELETE,
             EMPTY_TRASH,
             CONNECT_SERVER,
+            EJECT,
+            DISCONNECT,
         ];
         let mut ranges: Vec<std::ops::Range<u32>> = singles.iter().map(|id| *id..id + 1).collect();
         ranges.extend([

@@ -104,6 +104,7 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         Action::EmptyTrash => crate::trash_view::empty(),
         Action::SystemIntegration => crate::integration::with_current(crate::integration::Integration::open),
         Action::ConnectToServer => crate::connect::open(),
+        Action::Eject => crate::eject::eject_selection(view, nav),
         // Not theirs: `handle_key` and the menu bar run these themselves. Listed one by one so
         // that a new action is a compile error here until it is placed.
         Action::NewTab

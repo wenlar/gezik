@@ -13,6 +13,7 @@ mod convert;
 mod copy_path;
 mod dialog;
 mod drag;
+mod eject;
 mod filter;
 mod finder_menu;
 mod folder_sizes;
@@ -258,7 +259,8 @@ fn perform(
         | Action::MakeAlias
         | Action::ShowPackageContents
         | Action::GetInfo
-        | Action::ConnectToServer => return actions::run(action, nav, view),
+        | Action::ConnectToServer
+        | Action::Eject => return actions::run(action, nav, view),
     }
     true
 }

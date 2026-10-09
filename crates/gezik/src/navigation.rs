@@ -1079,6 +1079,28 @@ impl Navigator {
         }
     }
 
+    /// Lets go of everything on the drive at `root` before it is ejected (spec 9 §7.4): every
+    /// tab there goes to This PC (Back returns), and the watch and removal watch of a folder
+    /// there end now, not once This PC is listed. shortcut: a search walk or thumbnail still
+    /// running on the drive is not waited for; the system then says it is in use.
+    pub fn leave_drive(&self, root: &Path) {
+        self.save_view();
+        let active = {
+            let mut inner = self.0.borrow_mut();
+            if inner.watched.as_deref().is_some_and(|w| gezik_core::ops::paths::is_within(w, root)) {
+                inner.watch.stop_now();
+                inner.refresh_timer.stop();
+                inner.removal = None;
+                inner.watched = None;
+            }
+            inner.tabs.leave(root)
+        };
+        if active {
+            self.load(Location::Drives, Mode::Show, None);
+        }
+        self.update_chrome();
+    }
+
     /// The watched folder's drive is about to be removed: let go of it now. Then see, for a
     /// while, whether it went (the list moves to the nearest folder still there) or stayed
     /// (watched again).

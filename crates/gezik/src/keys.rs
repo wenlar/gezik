@@ -828,7 +828,8 @@ mod tests {
                 | Action::EmptyTrash
                 | Action::SystemIntegration
                 | Action::KeepOffline
-                | Action::FreeUpSpace => continue,
+                | Action::FreeUpSpace
+                | Action::Eject => continue,
             };
             assert_eq!(reach(text), Some(action), "{text}");
         }
