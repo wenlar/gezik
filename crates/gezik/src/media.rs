@@ -420,8 +420,10 @@ impl Media {
                 Ready::Picture
             }
             (_, _) => {
-                // An older generation's miss may be a cancelled Quick Look request: ask again.
-                if current {
+                // An older generation's miss may be a cancelled Quick Look request, and an
+                // iCloud-only file keeps its mtime once downloaded: both are asked again.
+                let in_cloud = matches!(&key, MediaKey::Thumbnail { path, .. } if gezik_platform::only_in_cloud(path));
+                if current && !in_cloud {
                     self.store(key.clone(), None, MISSING_COST);
                 }
                 Ready::Picture
