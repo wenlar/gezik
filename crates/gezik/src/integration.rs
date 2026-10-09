@@ -331,7 +331,7 @@ fn confirm(action: RowAction) {
         let exe = gezik_platform::system::exe().unwrap_or_default();
         let add = exe.to_str().and_then(|e| changes::path_targets(&access.places, e, cfg!(windows)));
         let sweep = if action == RowAction::Run(Command::UndoAll) {
-            changes::sweep_changes(&access, &access.places, &exe, cfg!(windows))
+            changes::sweep_changes(&access, &access.places, &exe, changes::Os::HERE)
         } else {
             Vec::new()
         };
@@ -436,6 +436,7 @@ mod tests {
         };
         Snapshot {
             path,
+            default: changes::DefaultState::Off,
             changes: changes.map(|n| vec![change; n]).map_err(str::to_owned),
             journal: PathBuf::from("/c/system-changes.toml"),
         }
@@ -471,7 +472,7 @@ mod tests {
 
     #[test]
     fn the_question_names_what_is_written() {
-        let places = Places { home: None, local_app_data: Some(PathBuf::from(r"C:\L")) };
+        let places = Places { local_app_data: Some(PathBuf::from(r"C:\L")), ..Places::default() };
         let add = changes::path_targets(&places, r"C:\G\gezik.exe", true).unwrap();
         let add_to_path = RowAction::Run(Command::AddToPath);
         let text = confirmation(add_to_path, &snap(PathState::Off, Ok(0)), Some(&add), &[]).unwrap();

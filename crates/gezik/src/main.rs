@@ -588,10 +588,7 @@ fn explorer_fallback(target: &str) -> i32 {
                 1
             }
         },
-        // shortcut: Task 5 renames this to restore_default_now and gives it its own body.
-        fb::Guard::Ask if fb::ask_restore(question) => {
-            i32::from(system_changes::undo_feature_now(system_changes::FEATURE_DEFAULT).is_err())
-        }
+        fb::Guard::Ask if fb::ask_restore(question) => i32::from(system_changes::restore_default_now().is_err()),
         fb::Guard::Ask | fb::Guard::Stop => 1,
     }
 }

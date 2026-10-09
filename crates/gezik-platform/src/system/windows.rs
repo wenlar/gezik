@@ -223,6 +223,20 @@ pub(super) fn environment_changed() {
     }
 }
 
+pub(super) fn associations_changed() {
+    use ::windows::Win32::UI::Shell::{SHCNE_ASSOCCHANGED, SHCNF_IDLIST, SHChangeNotify};
+    // SAFETY: no items with this event.
+    unsafe { SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, None, None) };
+}
+
+pub(super) fn is_removable(path: &std::path::Path) -> bool {
+    use ::windows::Win32::Storage::FileSystem::GetDriveTypeW;
+    let Some(root) = path.ancestors().last().and_then(|r| r.to_str()) else { return false };
+    let root = wide(&format!("{}\\", root.trim_end_matches('\\')));
+    // SAFETY: `root` ends with NUL. 2 = DRIVE_REMOVABLE.
+    unsafe { GetDriveTypeW(PCWSTR(root.as_ptr())) == 2 }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

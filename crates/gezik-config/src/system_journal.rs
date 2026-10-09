@@ -8,7 +8,7 @@
 use std::fmt;
 use std::fs::File;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use gezik_core::system_change::{Change, Kind, RegType, Value};
 use toml_edit::{ArrayOfTables, DocumentMut, InlineTable, Item, Table, value};
@@ -184,6 +184,10 @@ impl JournalFile {
         self.dir.join(FILE)
     }
 
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
     /// One `metadata` call: whether there is a journal at all.
     pub fn exists(&self) -> bool {
         self.path().symlink_metadata().is_ok()
@@ -220,6 +224,11 @@ pub struct Locked {
 impl Locked {
     pub fn journal(&self) -> &Journal {
         &self.journal
+    }
+
+    /// The folder the journal is in.
+    pub fn dir(&self) -> &Path {
+        self.path.parent().unwrap_or(&self.path)
     }
 
     /// Write-ahead (spec 11.1): `change` is written with `done = false`, then `make` runs,

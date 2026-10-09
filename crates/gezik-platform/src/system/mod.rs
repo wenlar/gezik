@@ -6,6 +6,8 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
+#[cfg(target_os = "macos")]
+pub mod macos;
 pub mod text;
 #[cfg(unix)]
 mod unix;
@@ -21,10 +23,49 @@ pub struct Places {
     pub home: Option<PathBuf>,
     /// Windows: `%LOCALAPPDATA%`.
     pub local_app_data: Option<PathBuf>,
+    /// Linux: `$XDG_DATA_HOME`, `$XDG_CONFIG_HOME` by dirs' rules.
+    pub data_home: Option<PathBuf>,
+    pub config_home: Option<PathBuf>,
+    /// Linux: `$XDG_CURRENT_DESKTOP`'s parts, lower case.
+    pub desktops: Vec<String>,
+    /// The user's Downloads folder (the risky place note, 9b4 decision 14).
+    pub downloads: Option<PathBuf>,
 }
 
 pub fn places() -> Places {
-    Places { home: dirs::home_dir(), local_app_data: if cfg!(windows) { dirs::data_local_dir() } else { None } }
+    let linux = cfg!(all(unix, not(target_os = "macos")));
+    Places {
+        home: dirs::home_dir(),
+        local_app_data: if cfg!(windows) { dirs::data_local_dir() } else { None },
+        data_home: if linux { dirs::data_dir() } else { None },
+        config_home: if linux { dirs::config_dir() } else { None },
+        desktops: std::env::var("XDG_CURRENT_DESKTOP")
+            .map(|d| d.split(':').filter(|p| !p.is_empty()).map(str::to_lowercase).collect())
+            .unwrap_or_default(),
+        downloads: dirs::download_dir(),
+    }
+}
+
+/// Tells Explorer that verbs changed (Windows, `SHChangeNotify(SHCNE_ASSOCCHANGED)`).
+pub fn associations_changed() {
+    #[cfg(windows)]
+    windows::associations_changed();
+}
+
+/// Whether `path` is on a removable drive (Windows); elsewhere by place (spec 6.3).
+pub fn is_removable(path: &Path) -> bool {
+    #[cfg(windows)]
+    return windows::is_removable(path);
+    #[cfg(not(windows))]
+    path.to_str().is_some_and(|p| ["/Volumes/", "/media/", "/run/media/"].iter().any(|r| p.starts_with(r)))
+}
+
+/// macOS: tells LaunchServices about an app bundle (`LSRegisterURL`); elsewhere nothing.
+pub fn register_app(app: &Path) {
+    #[cfg(target_os = "macos")]
+    macos::register_app(app);
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
 }
 
 /// This Gezik's exe; on macOS and Linux the real file (a link Gezik makes points to it).
