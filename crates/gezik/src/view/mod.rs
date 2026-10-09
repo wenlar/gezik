@@ -2015,7 +2015,10 @@ impl View {
         }
         let data = self.0.data.borrow();
         let (size, more) = selection_size(&data.listing, data.selection.iter());
-        window.set_status(status_text(data.listing.len(), data.selection.count(), size, more).into());
+        let one = (data.selection.count() == 1).then(|| data.selection.iter().next()).flatten();
+        let state = one.and_then(|i| model::cloud_state_at(&data, i));
+        let text = with_cloud_words(status_text(data.listing.len(), data.selection.count(), size, more), state);
+        window.set_status(text.into());
     }
 
     /// Scrolls entry `index` fully into view. After a far jump (End, type-ahead) Slint's
@@ -2153,6 +2156,23 @@ pub fn filter_count_text(shown: usize, total: usize) -> String {
     format!("{} / {}", with_commas(shown), with_commas(total))
 }
 
+/// The words for a cloud state in the status bar (Explorer's).
+pub fn cloud_words(state: gezik_core::CloudState) -> &'static str {
+    match state {
+        gezik_core::CloudState::OnlyInCloud => "Online only",
+        gezik_core::CloudState::Local => "Available on this device",
+        gezik_core::CloudState::AlwaysLocal => "Always available on this device",
+    }
+}
+
+/// `status` with the one selected item's cloud state after it, if it has one.
+pub fn with_cloud_words(status: String, state: Option<gezik_core::CloudState>) -> String {
+    match state {
+        Some(state) => format!("{status} · {}", cloud_words(state)),
+        None => status,
+    }
+}
+
 /// The status bar: `120 items`, or `120 items · 3 selected (1.2 MB)`; the size counts the
 /// selected files and sized folders (`None`: nothing with a size), `+` when `more` is coming.
 pub fn status_text(count: usize, selected: usize, selected_size: Option<u64>, more: bool) -> String {
@@ -2194,6 +2214,19 @@ pub fn sizes_belong(shown: Option<&Path>, folder: &Path) -> bool {
 mod tests {
     use super::*;
     use listing::files;
+
+    #[test]
+    fn one_selected_cloud_item_says_its_state() {
+        use gezik_core::CloudState;
+        assert_eq!(cloud_words(CloudState::OnlyInCloud), "Online only");
+        assert_eq!(cloud_words(CloudState::Local), "Available on this device");
+        assert_eq!(cloud_words(CloudState::AlwaysLocal), "Always available on this device");
+        assert_eq!(
+            with_cloud_words("4 items · 1 selected (1.5 KB)".into(), Some(CloudState::OnlyInCloud)),
+            "4 items · 1 selected (1.5 KB) · Online only"
+        );
+        assert_eq!(with_cloud_words("4 items".into(), None), "4 items");
+    }
 
     #[test]
     fn the_selection_sums_known_folder_sizes_and_says_when_more_is_coming() {

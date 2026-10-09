@@ -154,9 +154,20 @@ pub fn file_row(data: &ViewData, i: usize) -> FileRow {
         selected: data.selection.is_selected(i),
         focused: data.selection.focus() == Some(i),
         cut: entries && listing.key_at(i).is_some_and(|key| data.cut.contains(&*key)),
+        cloud: cloud_state_at(data, i).map_or(0, |s| s as i32),
         folder,
         found,
     }
+}
+
+/// The cloud state of entry `i` when its folder is under a cloud root (spec 9 §7.3): from the
+/// flags the folder read gave, no call of its own. Folder listings only.
+pub fn cloud_state_at(data: &ViewData, i: usize) -> Option<gezik_core::CloudState> {
+    let Listing::Files(dir, entries) = &data.listing else { return None };
+    if !crate::cloud::shows_state(dir) {
+        return None;
+    }
+    entries.get(i).map(Entry::cloud_state)
 }
 
 /// A row's Size text: a file's size; a folder's total once known (`≥` when part of it could not
@@ -270,6 +281,44 @@ mod tests {
             "1.5 KB",
             "old: drawn faint"
         );
+    }
+
+    #[test]
+    fn the_state_is_drawn_only_under_a_root() {
+        let base = if cfg!(windows) { r"C:\u\OneDrive" } else { "/u/OneDrive" };
+        crate::cloud::set_roots(vec![gezik_platform::cloud::CloudRoot {
+            path: base.into(),
+            label: "OneDrive".into(),
+            account: String::new(),
+        }]);
+        let file = |name: &str, flags: u8| Entry {
+            name: name.into(),
+            is_dir: false,
+            flags,
+            size: 1,
+            modified: None,
+            created: None,
+        };
+        let mut entries = vec![file("a", Entry::CLOUD_ONLY), file("b", 0), file("c", Entry::PINNED)];
+        let inside = ViewData {
+            listing: Listing::Files(PathBuf::from(base).join("Docs"), Rc::new(entries.clone())),
+            media: Media::idle(),
+            ..ViewData::default()
+        };
+        let states: Vec<i32> = (0..3).map(|i| file_row(&inside, i).cloud).collect();
+        if cfg!(any(windows, target_os = "macos")) {
+            assert_eq!(states, [1, 2, 3]);
+        } else {
+            assert_eq!(states, [0, 0, 0], "Linux: no state");
+        }
+        entries[1].flags = Entry::CLOUD_ONLY; // an offline file outside any cloud folder
+        let outside = ViewData {
+            listing: Listing::Files(PathBuf::from("/elsewhere"), Rc::new(entries)),
+            media: Media::idle(),
+            ..ViewData::default()
+        };
+        assert!((0..3).all(|i| file_row(&outside, i).cloud == 0), "no badge outside a root");
+        crate::cloud::set_roots(Vec::new());
     }
 
     #[test]

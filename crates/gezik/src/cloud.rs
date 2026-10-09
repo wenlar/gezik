@@ -34,7 +34,6 @@ pub fn root_of(path: &Path) -> Option<CloudRoot> {
 
 /// Whether rows of folder `dir` show their cloud state: under a root, and not on Linux (no
 /// state there, spec 17 decision 19).
-#[allow(dead_code)] // shortcut: Tasks 4-5 (badges, keep / free up) call it; drop the allow then.
 pub fn shows_state(dir: &Path) -> bool {
     if cfg!(not(any(windows, target_os = "macos"))) {
         return false;

@@ -7,6 +7,8 @@ export component FileIcon inherits Rectangle {
     in property <int> kind;
     in property <image> picture;
     in property <bool> has-picture;
+    // The cloud badge (spec 9 §7.3): 1 a cloud, 2 an outlined tick, 3 a filled tick; 0 none.
+    in property <int> cloud;
     accessible-role: none;
 
     pure function kind-color(kind: int) -> color {
@@ -35,5 +37,27 @@ export component FileIcon inherits Rectangle {
         viewbox-height: 16;
         fill: root.kind-color(root.kind);
         commands: root.kind == 0 ? Glyph.folder : Glyph.page;
+    }
+
+    // One element only where a badge is drawn: rows elsewhere cost nothing.
+    if root.cloud != 0: Rectangle {
+        width: max(9px, root.width * 0.45);
+        height: self.width;
+        x: root.width - self.width * 0.8;
+        y: root.height - self.height * 0.8;
+        border-radius: self.width / 2;
+        background: root.cloud == 3 ? Theme.success : Theme.background;
+        Path {
+            width: parent.width * 0.78;
+            height: self.width;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            viewbox-width: root.cloud == 1 ? 16 : 8;
+            viewbox-height: root.cloud == 1 ? 16 : 8;
+            commands: root.cloud == 1 ? Glyph.cloud : Glyph.check;
+            fill: transparent;
+            stroke: root.cloud == 1 ? Theme.foreground-muted : root.cloud == 3 ? Theme.background : Theme.success;
+            stroke-width: 1.2px;
+        }
     }
 }
