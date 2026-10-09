@@ -396,6 +396,12 @@ Keyboard (6b: path completion, folder history, command keys)
 60. **Flat view.** Ctrl+B in a project folder: every file under it in one list (no folders), the Folder column; Ctrl+B again on a file goes to its folder with it selected. View ▸ Show hidden items rebuilds it. A symlink to a folder (`ln -s ~/Documents ~/gezik-test/docs-link`) is a row and is not walked into; a symlink loop (`ln -s . ~/gezik-test/loop`) does not hang it.
 61. **Results like a folder.** In the results: Copy, then Ctrl+V in another folder (flat); right-click ▸ "Copy with folders" and paste: the folders under the scope are made; one Ctrl+Z takes the copies and the made folders away. Delete a result (Trash): it leaves the list; Ctrl+Z brings it back. F2 renames in place. Rename two results from different folders with the rename layer. "Show in folder" (Ctrl+Shift+E) goes to the file's folder with it selected. Close and open Gezik with a search tab open: the tab comes back and searches again. On X11 and on Wayland: the bar's fields take the keyboard, Esc gives it back to the list, and nothing else about the window changed (drag and drop, clipboard, the theme).
 
+### Design round 1 (Graphite)
+
+62. **Themes.** The four built-in themes (`light`, `dark`, `classic-light`, `classic-dark`) and `auto` following the desktop's light/dark switch (GNOME and KDE); `reduce-motion = true` stops the hover and popup fades; `density = "compact"`; the classic themes are flat (rows edge to edge, no rounded sheet).
+63. **Drawing at 200 %.** On a HiDPI screen: 1 px lines and the sheet's rounded corner are crisp; the 11 px small text (column header, status bar, sidebar section labels) is readable in the font the system picks; the glyphs (Refresh and History arcs, the dot on Drive), the sidebar icons; View ▾ and a long popup menu.
+64. **Thin scroll bar.** In a folder with thousands of files: a 6 px bar, no track, the theme's color (never the system's), darker on hover and drag, at least 24 px tall; dragging it follows the pointer to both ends; a click above or below scrolls a page; touchpad two-finger scrolling stays smooth; the sidebar, a long popup menu, the conflict list and the rename layer have the same bar.
+
 ## Known gaps (not bugs)
 
 - **Search (8a):**
