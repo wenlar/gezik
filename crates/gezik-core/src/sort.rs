@@ -745,8 +745,14 @@ mod tests {
         key
     }
 
-    const MIXED: [&str; 31] = [
+    const MIXED: [&str; 37] = [
         "",
+        "a9",
+        "a10",
+        "x1.5",
+        "x1.50",
+        "çx",
+        "öx",
         "0",
         "00",
         "007",
