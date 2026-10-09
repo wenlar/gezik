@@ -50,6 +50,16 @@ pub fn in_path_env(dir: &Path) -> bool {
     std::env::split_paths(&path).any(|d| d == dir || (real.is_some() && d.canonicalize().ok() == real))
 }
 
+/// Whether a link may be put at a place holding `found` (`None` nothing, `Some(None)` not a
+/// link, `Some(Some(t))` a link to `t`): only an empty place, or Gezik's own link to `expect`.
+#[cfg(any(unix, test))]
+fn may_replace(found: Option<Option<&Path>>, expect: Option<&Path>) -> bool {
+    match found {
+        None => true,
+        Some(target) => target.is_some() && target == expect,
+    }
+}
+
 /// Tells running programs that the user's environment changed (Windows; a new terminal
 /// then sees the new PATH). Hung windows are skipped after 2 s. Elsewhere nothing.
 pub fn environment_changed() {
@@ -60,6 +70,18 @@ pub fn environment_changed() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_an_empty_place_or_our_own_link_is_replaced() {
+        let ours = Path::new("/old/gezik");
+        assert!(may_replace(None, None));
+        assert!(may_replace(None, Some(ours)));
+        assert!(may_replace(Some(Some(ours)), Some(ours)));
+        assert!(!may_replace(Some(Some(ours)), None), "a link we did not expect");
+        assert!(!may_replace(Some(Some(Path::new("/other/gezik"))), Some(ours)), "someone else's link");
+        assert!(!may_replace(Some(None), Some(ours)), "a file or folder of the user's");
+        assert!(!may_replace(Some(None), None));
+    }
 
     #[test]
     fn a_folder_in_path_is_found() {
