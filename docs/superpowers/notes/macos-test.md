@@ -1,20 +1,17 @@
 # Gezik on macOS: build and manual test
 
-Run 1 (2026-10-06, `feat/batch-ops-5c`) covered items 1-22. Its fixes are on master: the `fix/macos` branch, and the shared UI fixes from `fix/shared-ui`. Sub-projects 5c (convert, user commands, ffmpeg), 5d (PDF, pdfium) and 6a (keyboard: filter, selection, tabs; items 47-51) have never run on a Mac.
+Run 1 (2026-10-06, `feat/batch-ops-5c`) covered items 1-22; its fixes are on master. Everything since (items 23-146: 5c, 5d, 6a, 7a-7c, 8a-8b, the design rounds and step 9 parts 9a1-9a3, 9b1-9b5) has never run on a Mac.
 
-Part 9a1 (system icons, Quick Look thumbnails, Finder names, aliases, packages; items 85-93) has never run on a Mac. Run it on `feat/system-9a1` (after the merge: `master`) and write a new section **"Run: 9a1"** in `macos-test-results.md`. Start with the probe, one command that tries every system call 9a1 relies on and prints PASS/FAIL per line (item 85):
+**Run 2 is one run on `master`** (all of these are merged). Write it as a new section **"Run 2 (master)"** in `macos-test-results.md`, below Run 1, and don't change Run 1. Where an item compares two branches (exe size items 93, 100, 109), just write today's `ls -l target/release/gezik`.
 
-```sh
-cargo run --release -p gezik-platform --example mac_probe -- ~/Desktop/some.pdf ~/Pictures/photo.heic ~/Movies/clip.mov ~/Documents/report.pages
-```
+Suggested order, so the cheap checks find build or API problems first:
+1. Build, `cargo test --workspace` (macOS-only tests run only there), then every probe the items name (`mac_probe`, `cloud_probe`, ...) with their whole output pasted into the results.
+2. Command-line items (9b1, 9b3: `--help`, `--unregister`, single instance) from Terminal.
+3. Window items, part by part, in the checklist's order.
 
-Paste its whole output into the results, then run `cargo test -p gezik-platform` (its macOS-only tests for icons, Finder names and aliases run only there).
+If Claude Code runs this on the Mac, it does steps 1-2 itself and walks the person through step 3 item by item (it can't click in Gezik's window).
 
-Part 9a2 (Open With, Share, Quick Actions, the system Quick Look panel; items 94-100) has never run on a Mac. Run it on `feat/system-9a2` (after the merge: `master`) and write a new section **"Run: 9a2"** in `macos-test-results.md`. Start with the probe (item 94), then run `cargo test -p gezik-platform` (its macOS-only tests `text_files_open_in_textedit` and `types_and_conformance` run only there). Items 94-100 follow 9a1's numbers; part 9b1 also numbers its items from 85 on its own branch, so the branch merged second renumbers.
-
-Part 9a3 (the Info window; items 101-109) has never run on a Mac. Run it on `feat/system-9a3` (after the merge: `master`) and write a new section **"Run: 9a3"** in `macos-test-results.md`. Start with the probe (item 101). Items 101-109 follow 9a2's numbers; parts 9b1, 9b2 and 9b3 number their items on their own branches, so the branch merged later renumbers.
-
-This file is for a person, or Claude Code on the Mac, testing the state after 5d. Write the results into `docs/superpowers/notes/macos-test-results.md`, in a new section **"Run 2 (after 5d)"** below Run 1. Don't change Run 1.
+This file is for a person, or Claude Code on the Mac. Write the results into `docs/superpowers/notes/macos-test-results.md`.
 - Give PASS, FAIL or NOT TESTED for every item.
 - For a FAIL, give the steps, what you expected, what happened, and a screenshot path. Don't commit screenshots.
 - Start the section with the date, the branch and short SHA, the machine, the macOS version and the keyboard layout.
@@ -26,10 +23,7 @@ This file is for a person, or Claude Code on the Mac, testing the state after 5d
 xcode-select --install            # C/C++ compiler (UnRAR is C++); skip if already installed
 curl https://sh.rustup.rs -sSf | sh   # Rust; then open a new terminal
 git clone git@github.com:wenlar/gezik.git && cd gezik   # or: git fetch in the existing clone
-git checkout feat/batch-ops-5d    # until it is merged; after that: git checkout master && git pull
-                                  # part 9a1: git checkout feat/system-9a1 (until it is merged)
-                                  # part 9a2: git checkout feat/system-9a2 (until it is merged)
-                                  # part 9a3: git checkout feat/system-9a3 (until it is merged)
+git checkout master && git pull
 git log -1 --oneline              # write this SHA into the results
 cargo build --release -p gezik
 rm -rf /tmp/gezik-cfg && mkdir -p /tmp/gezik-cfg /tmp/gezik-test
@@ -531,4 +525,4 @@ These are known differences from Finder and ForkLift (from the ForkLift comparis
 
 ## When you are done
 
-Commit the results (and any fixes) in English, with no `Co-Authored-By` or Claude lines, and push to the branch you tested (`feat/batch-ops-5d`, or a new `fix/macos-2` from master for fixes).
+Commit the results (and any fixes) in English, with no `Co-Authored-By` or Claude lines, on a new branch `test/macos-run2` from master (fixes on `fix/macos-2`), push it and open a PR.
