@@ -183,7 +183,8 @@ fn clean(text: &str, rule: &CleanRule) -> String {
 /// Each item's new name, in order: `items` in the order the layer shows them.
 pub fn new_names(items: &[Item], compiled: &Compiled, include_extension: bool, lang: Lang) -> Vec<String> {
     let mut seen: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
-    // `{n}` in templates counts like the first Number rule, else from 1.
+    // `{n}` in templates counts like the first Number rule, else from 1 in each folder
+    // (search results span folders; spec 2026-10-09-arama §batch rename).
     let first_number = compiled.ready.iter().find_map(|r| match r {
         Ready::Number(rule) => Some(rule),
         _ => None,
@@ -199,7 +200,7 @@ pub fn new_names(items: &[Item], compiled: &Compiled, include_extension: bool, l
             let counter_of = |rule: &NumberRule| rule.start.saturating_add(rule.step.saturating_mul(position(rule)));
             let counter = match ready {
                 Ready::Number(rule) => counter_of(rule),
-                _ => first_number.map_or(1 + index as i64, counter_of),
+                _ => first_number.map_or(1 + in_folder as i64, counter_of),
             };
             let cx = Context { item, counter };
             name = apply(ready, &name, item.is_dir, include_extension, lang, &cx);
@@ -389,6 +390,14 @@ mod tests {
         let rule = NumberRule { per_folder: true, digits: 1, separator: "".into(), ..NumberRule::default() };
         let compiled = compile(&[RuleEntry::new(Rule::Number(rule))]);
         assert_eq!(new_names(&list, &compiled, false, Lang::Other), ["a1", "b2", "c1"]);
+    }
+
+    #[test]
+    fn template_numbers_without_a_number_rule_restart_per_folder() {
+        let mut list = items(&["a", "b", "c"]);
+        list[1].folder = 1;
+        let compiled = compile(&[RuleEntry::new(Rule::Template("doc {n}".into()))]);
+        assert_eq!(new_names(&list, &compiled, false, Lang::Other), ["doc 1", "doc 1", "doc 2"]);
     }
 
     #[test]

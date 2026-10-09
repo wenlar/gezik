@@ -17,7 +17,7 @@ export component DisablableButton inherits Rectangle {
     horizontal-stretch: 0;
     border-radius: Theme.radius;
     border-width: root.primary ? 0px : (scope.has-focus || root.checked ? 2px : 1px);
-    border-color: scope.has-focus || root.checked ? Theme.accent : Theme.border;
+    border-color: scope.has-focus || root.checked ? Theme.accent : Theme.control-border;
     // Off: no hover or pressed tone.
     background: root.primary ? (root.enabled && touch.pressed ? Theme.accent-pressed : root.enabled && touch.has-hover ? Theme.accent-hover : Theme.accent) : (root.enabled && touch.has-hover ? Theme.hover : transparent);
     forward-focus: scope;

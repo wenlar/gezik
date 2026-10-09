@@ -28,7 +28,7 @@ export component TextButton inherits Rectangle {
     border-radius: Theme.radius;
     border-width: scope.has-focus || root.checked ? Theme.focus-width : root.primary ? 0px : 1px;
     // The ring would vanish on the accent fill: there it takes the label's color.
-    border-color: scope.has-focus ? (root.primary ? Theme.accent-foreground : Theme.focus-ring) : root.checked ? Theme.accent : Theme.border;
+    border-color: scope.has-focus ? (root.primary ? Theme.accent-foreground : Theme.focus-ring) : root.checked ? Theme.accent : Theme.control-border;
     background: root.primary ? (touch.pressed ? Theme.accent-pressed : touch.has-hover ? Theme.accent-hover : Theme.accent) : (touch.has-hover ? Theme.hover : transparent);
     // No `animate background` (ToolButton has one): here it cost ~6 KB of exe per button.
     forward-focus: scope;

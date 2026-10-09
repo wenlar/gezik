@@ -58,6 +58,15 @@ pub fn progress_text(found: usize, folders: usize) -> String {
     }
 }
 
+/// Puts `len` rows in `summary`'s count; whether that changed it.
+fn recounted(summary: &mut Summary, len: usize) -> bool {
+    if summary.found == len || summary.limit_reached {
+        return false;
+    }
+    summary.found = len;
+    true
+}
+
 /// The status bar once it ended (spec 4.3).
 pub fn done_text(summary: &Summary) -> String {
     let found = with_commas(summary.found);
@@ -216,7 +225,7 @@ enum Warmed {
 struct Kept {
     spec: SearchSpec,
     results: Arc<ResultSet>,
-    status: String,
+    summary: Option<Summary>,
     changes: Option<JobChange>,
     /// When it was kept (`Inner::kept_count`): past `MAX_KEPT_ROWS` the oldest go first.
     order: u64,
@@ -246,7 +255,8 @@ pub fn over_cap(mut kept: Vec<(u64, u64, usize)>, cap: usize) -> Vec<u64> {
 struct Showing {
     tab: Option<u64>,
     spec: SearchSpec,
-    status: String,
+    /// How it ended (the status bar); `None` while it runs.
+    summary: Option<Summary>,
     complete: bool,
     changes: Option<JobChange>,
 }
@@ -441,6 +451,8 @@ impl Searches {
         window.on_search_content_toggle(|| with_current(Searches::content_toggle));
         window.on_search_go(|| with_current(Searches::button));
         window.on_filter_search(|| with_current(Searches::filter_to_search));
+        // Called after every edit of the results too (a delete, a job's check).
+        searches.0.view.on_selection_changed(|| with_current(Searches::recount));
         CURRENT.with(|c| *c.borrow_mut() = Some(searches.clone()));
         searches
     }
@@ -797,14 +809,13 @@ impl Searches {
         if let Some(kept) = kept {
             *self.0.pending.borrow_mut() = None;
             *self.0.showing.borrow_mut() =
-                Some(Showing { tab, spec: kept.spec, status: kept.status, complete: true, changes: kept.changes });
+                Some(Showing { tab, spec: kept.spec, summary: kept.summary, complete: true, changes: kept.changes });
             return Listing::Results(kept.results);
         }
         let root = spec.scope.folder().map(Path::to_path_buf).unwrap_or_default();
         let content = !spec.content.is_empty();
         *self.0.pending.borrow_mut() = Some(spec.clone());
-        *self.0.showing.borrow_mut() =
-            Some(Showing { tab, spec, status: String::new(), complete: false, changes: None });
+        *self.0.showing.borrow_mut() = Some(Showing { tab, spec, summary: None, complete: false, changes: None });
         Listing::Results(Arc::new(ResultSet::new(root, content)))
     }
 
@@ -816,10 +827,10 @@ impl Searches {
             Some(spec) => self.start(spec),
             None => {
                 let (status, changes) = match self.0.showing.borrow_mut().as_mut() {
-                    Some(s) => (Some(s.status.clone()), s.changes.take()),
+                    Some(s) => (s.summary.as_ref().map(done_text), s.changes.take()),
                     None => (None, None),
                 };
-                self.0.view.set_results_status(status.filter(|s| !s.is_empty()));
+                self.0.view.set_results_status(status);
                 // Jobs that ended while these results were kept (spec 4.7): one check.
                 if let (Some(key), Some(change)) = (self.results_key(), changes) {
                     self.check(key, change);
@@ -864,7 +875,7 @@ impl Searches {
         if let (Some(tab), true, Some(results)) = (showing.tab, showing.complete, self.0.view.results()) {
             let order = self.0.kept_count.get() + 1;
             self.0.kept_count.set(order);
-            let kept = Kept { spec: showing.spec, results, status: showing.status, changes: showing.changes, order };
+            let kept = Kept { spec: showing.spec, results, summary: showing.summary, changes: showing.changes, order };
             let mut all = self.0.kept.borrow_mut();
             all.insert(tab, kept);
             let sizes = all.iter().map(|(tab, kept)| (*tab, kept.order, kept.results.len())).collect();
@@ -1002,6 +1013,21 @@ impl Searches {
             Verdict::Queue => self.queue(&key, change),
             Verdict::Drop => {}
         }
+    }
+
+    /// Rows taken out or added after the search ended: the status bar's count follows them
+    /// ("Stopped at N results" names the limit and stays).
+    fn recount(&self) {
+        let Some(len) = self.0.view.results().map(|set| set.len()) else { return };
+        let text = {
+            let mut showing = self.0.showing.borrow_mut();
+            let Some(summary) = showing.as_mut().and_then(|s| s.summary.as_mut()) else { return };
+            if !recounted(summary, len) {
+                return;
+            }
+            done_text(summary)
+        };
+        self.0.view.set_results_status(Some(text));
     }
 
     /// While the search on screen runs, a job's check waits for its end (`event`): the walk
@@ -1155,11 +1181,11 @@ impl Searches {
                 *self.0.problems.borrow_mut() = summary.problems.first.clone();
                 self.0.running.borrow_mut().take();
                 self.0.view.set_searching(false);
-                self.0.view.set_results_status(Some(text.clone()));
+                self.0.view.set_results_status(Some(text));
                 let changes = match self.0.showing.borrow_mut().as_mut() {
                     Some(showing) => {
-                        showing.status = text;
                         showing.complete = !summary.cancelled;
+                        showing.summary = Some(summary);
                         showing.changes.take()
                     }
                     None => None,
@@ -1449,6 +1475,16 @@ mod tests {
         assert_eq!(done_text(&stopped), "Stopped · 1 result");
         let one = Summary { found: 1, skipped: 1, elapsed: Duration::from_millis(50), ..Summary::default() };
         assert_eq!(done_text(&one), "1 result in 0.1 s · Skipped 1 folder (search.skip)");
+    }
+
+    #[test]
+    fn a_delete_in_the_results_recounts_them() {
+        let mut done = Summary { found: 2, elapsed: Duration::from_millis(50), ..Summary::default() };
+        assert!(!recounted(&mut done, 2));
+        assert!(recounted(&mut done, 1));
+        assert_eq!(done_text(&done), "1 result in 0.1 s");
+        let mut limit = Summary { found: 250_000, limit_reached: true, ..Summary::default() };
+        assert!(!recounted(&mut limit, 249_999), "the limit is not a count");
     }
 
     #[test]

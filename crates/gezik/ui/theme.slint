@@ -67,6 +67,9 @@ export global Theme {
     out property <length> toolbar-height: row-height + 2 * spacing + 4px;
     out property <length> control-height: row-height + 2px;
     out property <length> focus-width: 2px;
+    // Outlines of buttons and check boxes (non-text, >= 3:1 on layers); the classic themes
+    // (no inset) keep their old faint `border`.
+    out property <color> control-border: inset > 0px ? border-strong : border;
     out property <duration> motion-hover: reduce-motion ? 0ms : 90ms;
     out property <duration> motion-popup: reduce-motion ? 0ms : 140ms;
 }

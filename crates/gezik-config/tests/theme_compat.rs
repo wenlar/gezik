@@ -199,6 +199,8 @@ fn contrast_holds_in_every_theme_and_accent() {
             ("focus-ring/background", c.focus_ring, c.background, 3.0),
             ("focus-ring/chrome", c.focus_ring, c.chrome, 3.0),
             ("border-strong/input-background", c.border_strong, c.input_background, 3.0),
+            // Button and check box outlines in dialogs (`control-border`).
+            ("border-strong/surface-raised", c.border_strong, c.surface_raised, 3.0),
         ];
         for (name, a, b, min) in pairs {
             let ratio = contrast(flatten(a, c.background), flatten(b, c.background));

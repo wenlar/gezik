@@ -48,6 +48,16 @@ export component Breadcrumb inherits Rectangle {
         TouchArea {
             clicked => { root.edit(); }
         }
+        // Puts the address in the Tab order (the field is hidden, so Tab skipped it): reached
+        // by Tab or Shift+Tab, it switches to typing like Ctrl+L.
+        FocusScope {
+            focus-on-click: false;
+            focus-gained(reason) => {
+                if reason == FocusReason.tab-navigation {
+                    root.edit();
+                }
+            }
+        }
         HorizontalLayout {
             padding-left: Theme.spacing;
             padding-right: Theme.spacing;

@@ -59,7 +59,7 @@ Bugünkü 25 anahtarın hepsi kalır (ad değişmez, kaldırılan yok). 18 yeni 
 | `foreground` | `#16171a` | `#ecedf0` | |
 | `foreground-muted` | `#575b65` | `#9ca0aa` | |
 | `border` | `#d9dbe1` | `#2e3036` | levha kenarı, ayraçlar |
-| `border-strong` *(yeni)* | `#868b95` | `#6c707a` | alan kenarı (≥ 3:1), odaklı adres alanı |
+| `border-strong` *(yeni)* | `#868b95` | `#6e727c` | alan kenarı (≥ 3:1), odaklı adres alanı; düğme ve onay kutusu kenarı (`control-border`, klasik temalarda `border`; koyuda `surface-raised` üstünde ≥ 3:1 için `#6c707a`'dan) |
 | `accent` | `#c2410c` | `#ff8f57` | |
 | `accent-foreground` | `#ffffff` | `#24140c` | |
 | `accent-hover` *(yeni)* | `#ab390b` | `#ff9c6b` | birincil düğme hover |
