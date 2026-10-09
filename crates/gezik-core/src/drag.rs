@@ -173,8 +173,8 @@ fn list_hit(list: &ListArea, x: f32, y: f32) -> Hit {
     let Some(line) = index_at(content_y, list.geometry.row_height()) else { return Hit::Background };
     let index = match list.geometry {
         Geometry::List { .. } => Some(line),
-        Geometry::Grid { cell_width, cell_height, columns } => {
-            let local_x = x - list.rect.x;
+        Geometry::Grid { cell_width, cell_height, columns, left } => {
+            let local_x = x - list.rect.x - left;
             index_at(local_x, cell_width).filter(|&column| column < columns.max(1)).and_then(|column| {
                 let (in_x, in_y) = (local_x - column as f32 * cell_width, content_y - line as f32 * cell_height);
                 let inside = in_x >= CELL_INSET
@@ -420,13 +420,31 @@ mod tests {
 
     #[test]
     fn grid_gaps_and_empty_cells_are_the_background() {
-        let a = ListArea { geometry: Geometry::Grid { cell_width: 100.0, cell_height: 120.0, columns: 5 }, ..list(7) };
+        let a = ListArea {
+            geometry: Geometry::Grid { cell_width: 100.0, cell_height: 120.0, columns: 5, left: 0.0 },
+            ..list(7)
+        };
         let l = layout(a);
         assert_eq!(hit(&l, 250.0, 150.0, false), Hit::Entry(0));
         assert_eq!(hit(&l, 202.0, 150.0, false), Hit::Background, "inside the 4px inset");
         assert_eq!(hit(&l, 350.0, 250.0, false), Hit::Entry(6), "second line, second column");
         assert_eq!(hit(&l, 650.0, 250.0, false), Hit::Background, "no 10th cell");
         assert_eq!(hit(&l, 760.0, 150.0, false), Hit::Background, "right of the last column");
+    }
+
+    #[test]
+    fn an_inset_grid_hits_from_its_left_edge() {
+        let a = ListArea {
+            geometry: Geometry::Grid { cell_width: 100.0, cell_height: 120.0, columns: 5, left: 6.0 },
+            ..list(7)
+        };
+        let l = layout(a);
+        assert_eq!(hit(&l, 203.0, 150.0, false), Hit::Background, "the gap left of the first column");
+        assert_eq!(hit(&l, 208.0, 150.0, false), Hit::Background, "inside the first cell's 4px inset");
+        assert_eq!(hit(&l, 211.0, 150.0, false), Hit::Entry(0));
+        assert_eq!(hit(&l, 300.0, 150.0, false), Hit::Entry(0));
+        assert_eq!(hit(&l, 303.0, 150.0, false), Hit::Background, "the first cell's right inset");
+        assert_eq!(hit(&l, 311.0, 150.0, false), Hit::Entry(1));
     }
 
     #[test]

@@ -22,6 +22,19 @@ pub const SECTION_PINNED: i32 = 1;
 pub const SECTION_DRIVES: i32 = 2;
 pub const SECTION_GROUP: i32 = 3;
 
+/// `SidebarRow.icon`: the glyph sidebar.slint draws on a place (0: none, on headings).
+const ICON_HOME: i32 = 1;
+const ICON_FOLDER: i32 = 2;
+const ICON_PIN: i32 = 3;
+const ICON_ALIAS: i32 = 4;
+const ICON_DRIVE: i32 = 5;
+
+/// A known folder's icon: the house for the home folder, which `known_folders` puts first
+/// and names "Home" (when it exists).
+fn known_icon(index: usize, name: &str) -> i32 {
+    if index == 0 && name == "Home" { ICON_HOME } else { ICON_FOLDER }
+}
+
 /// The drives' section title: Finder calls it "Locations".
 const DRIVES_HEADER: &str = if cfg!(target_os = "macos") { "LOCATIONS" } else { "DRIVES" };
 
@@ -593,18 +606,26 @@ impl Sidebar {
                 index: i,
                 active: false,
                 tip: "".into(),
+                icon: 0,
             };
-            let item = |label: &str, section, i, path: &Path| SidebarRow {
+            let item = |label: &str, section, i, path: &Path, icon: i32| SidebarRow {
                 header: false,
                 label: label.into(),
                 section,
                 index: index(i),
                 active: is_current(path),
                 tip: "".into(),
+                icon,
             };
 
             let mut rows = vec![header("FOLDERS", SECTION_FOLDERS, -1)];
-            rows.extend(places.known.iter().enumerate().map(|(i, f)| item(&f.name, SECTION_FOLDERS, i, &f.path)));
+            rows.extend(
+                places
+                    .known
+                    .iter()
+                    .enumerate()
+                    .map(|(i, f)| item(&f.name, SECTION_FOLDERS, i, &f.path, known_icon(i, &f.name))),
+            );
             let visible = &inner.pins.visible;
             let lines = pin_lines(visible);
             let first = (!lines.is_empty()).then_some(rows.len());
@@ -628,14 +649,22 @@ impl Sidebar {
                             .map(|chord| crate::keys::chord_label(&chord, Platform::current()));
                         SidebarRow {
                             tip: pin_tip(&pin.path, key.as_deref()).into(),
-                            ..item(&label, SECTION_PINNED, *n, &pin.path)
+                            ..item(
+                                &label,
+                                SECTION_PINNED,
+                                *n,
+                                &pin.path,
+                                if pin.entry.name.is_some() { ICON_ALIAS } else { ICON_PIN },
+                            )
                         }
                     }
                 });
             }
             let end = first.map(|_| rows.len());
             rows.push(header(DRIVES_HEADER, SECTION_DRIVES, -1));
-            rows.extend(places.drives.iter().enumerate().map(|(i, d)| item(&d.label, SECTION_DRIVES, i, &d.path)));
+            rows.extend(
+                places.drives.iter().enumerate().map(|(i, d)| item(&d.label, SECTION_DRIVES, i, &d.path, ICON_DRIVE)),
+            );
 
             let as_row = |row: Option<usize>| row.map_or(-1, index);
             window.set_sidebar_pinned_first_row(as_row(first));
@@ -653,6 +682,13 @@ impl Sidebar {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_first_known_folder_called_home_gets_the_house() {
+        assert_eq!(known_icon(0, "Home"), ICON_HOME);
+        assert_eq!(known_icon(0, "Desktop"), ICON_FOLDER, "no home folder on this machine");
+        assert_eq!(known_icon(3, "Home"), ICON_FOLDER);
+    }
 
     #[test]
     fn an_alias_is_dropped_when_empty_or_the_folders_own_name() {

@@ -2,6 +2,7 @@ import { ListView } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
 import { FileIcon } from "file-icon.slint";
 import { RenameField } from "rename-field.slint";
+import { Glyph } from "../glyphs.slint";
 
 // One entry, as Rust (view/model.rs) builds it for the entries on screen.
 export struct FileRow {
@@ -74,7 +75,8 @@ component HeaderCell inherits Rectangle {
             text: root.text;
             vertical-alignment: center;
             overflow: elide;
-            color: Theme.foreground-muted;
+            font-size: Theme.font-size-small;
+            color: root.sorted ? Theme.foreground : Theme.foreground-muted;
         }
         if root.sorted: VerticalLayout {
             alignment: center;
@@ -83,9 +85,11 @@ component HeaderCell inherits Rectangle {
                 height: 8px;
                 viewbox-width: 8;
                 viewbox-height: 8;
-                stroke: Theme.foreground-muted;
-                stroke-width: 1.5px;
-                commands: root.descending ? "M 1 2.5 L 4 5.5 L 7 2.5" : "M 1 5.5 L 4 2.5 L 7 5.5";
+                stroke: Theme.foreground;
+                stroke-width: 1.2px;
+                stroke-line-cap: round;
+                stroke-line-join: round;
+                commands: root.descending ? Glyph.chevron-down : Glyph.chevron-up;
             }
         }
     }
@@ -158,9 +162,12 @@ export component FileView inherits Rectangle {
         && (floor(root.renaming-index / root.per-row) + 1) * root.item-height > -root.scroll
         && floor(root.renaming-index / root.per-row) * root.item-height < -root.scroll + list.visible-height;
     out property <length> cell-width: max(root.picture-size + 24px, 96px);
+    // The grid's first column starts here: the cells are inset from the sheet's edge
+    // (`Geometry::Grid.left` in gezik-core layout.rs).
+    out property <length> grid-left: Theme.inset;
     out property <length> cell-height: root.picture-size + 24px + Theme.font-size * 2.8;
     // Grid cells per line.
-    out property <int> grid-columns: max(1, floor(list.visible-width / root.cell-width));
+    out property <int> grid-columns: max(1, floor((list.visible-width - 2 * root.grid-left) / root.cell-width));
     out property <length> item-height: root.mode == 0 ? Theme.row-height : root.cell-height;
     // How many lines PgUp/PgDn move: one screen, less one line.
     out property <int> page-rows: max(1, floor(list.visible-height / self.item-height) - 1);
@@ -182,8 +189,8 @@ export component FileView inherits Rectangle {
     in property <bool> drag-active;
     in property <bool> drag-forbidden;
     in property <int> drop-entry: -1;
-    // Where the entries are, for drag.rs: the header's height and the visible list.
-    out property <length> list-top: root.header-height;
+    // Where the entries are, for drag.rs: the visible list's top (under the header and its gap) and size.
+    out property <length> list-top: root.header-height + root.list-pad;
     out property <length> list-width: list.visible-width;
     out property <length> list-height: list.visible-height;
     callback item-double-clicked(int);
@@ -218,6 +225,13 @@ export component FileView inherits Rectangle {
     }
 
     property <int> per-row: root.mode == 0 ? 1 : root.grid-columns;
+    // The selection shows in full while the view or its rename field has the keyboard, and
+    // in the inactive color otherwise.
+    property <bool> active: root.has-focus || root.rename-has-focus;
+    // The gap above and below the visible list (the rows' inset leaves room for it); the
+    // grid's is its inset (Theme.inset + the cells' 4px above the first line); none
+    // in the classic themes.
+    property <length> list-pad: root.mode == 0 ? min(Theme.inset, 2px) : Theme.inset;
     property <length> header-height: root.mode == 0 ? Theme.row-height : 0px;
     property <length> gap: Theme.spacing + 2px;
     property <length> side: Theme.spacing + 4px;
@@ -225,10 +239,11 @@ export component FileView inherits Rectangle {
         + (root.col-type > 0 ? 1 : 0) + (root.col-size > 0 ? 1 : 0) + (root.col-folder > 0 ? 1 : 0)
         + (root.col-match > 0 ? 1 : 0);
 
-    // Right edge of the Name column: a drag that starts right of it, on a row, selects with
-    // a rectangle; from the name it is kept for dragging files (sub-project 4).
-    property <length> name-end: max(root.side + 150px, list.visible-width - root.side - root.col-modified - root.col-created - root.col-type
-        - root.col-size - root.col-folder - root.col-match - root.gap * root.shown-columns);
+    // Right edge of the Name column, in a row's own coordinates (rows are inset from the
+    // list's edges): a drag that starts right of it, on a row, selects with a rectangle; from
+    // the name it is kept for dragging files (sub-project 4).
+    property <length> name-end: max(root.side + 150px, list.visible-width - 2 * Theme.inset - root.side - root.col-modified - root.col-created
+        - root.col-type - root.col-size - root.col-folder - root.col-match - root.gap * root.shown-columns);
 
     property <bool> marquee-active;
     property <bool> marquee-additive;
@@ -314,7 +329,7 @@ export component FileView inherits Rectangle {
         if root.mode == 0 {
             return list.absolute-position.x + Theme.spacing * 6;
         }
-        return list.absolute-position.x + mod(index, root.per-row) * root.cell-width + root.cell-width / 2;
+        return list.absolute-position.x + root.grid-left + mod(index, root.per-row) * root.cell-width + root.cell-width / 2;
     }
 
     public function menu-y(index: int) -> length {
@@ -332,8 +347,8 @@ export component FileView inherits Rectangle {
         height: root.header-height;
 
         HorizontalLayout {
-            padding-left: root.side;
-            padding-right: root.side;
+            padding-left: Theme.inset + root.side;
+            padding-right: Theme.inset + root.side;
             spacing: root.gap;
             HeaderCell {
                 horizontal-stretch: 1;
@@ -475,9 +490,9 @@ export component FileView inherits Rectangle {
     // ListView only instantiates the lines on screen, so huge folders stay cheap.
     list := ListView {
         x: 0;
-        y: root.header-height;
+        y: root.header-height + root.list-pad;
         width: root.width;
-        height: root.height - root.header-height;
+        height: root.height - root.header-height - 2 * root.list-pad;
         content-y <=> root.scroll;
         for item in root.items: line := Rectangle {
             height: root.item-height;
@@ -487,8 +502,14 @@ export component FileView inherits Rectangle {
                 property <FileRow> file: item.cells[0];
                 property <int> index: item.first;
                 property <color> text-color: self.file.selected ? Theme.selection-foreground : Theme.foreground;
-                property <color> muted-color: self.file.selected ? Theme.selection-foreground : Theme.foreground-muted;
-                background: root.drop-entry == self.index ? Theme.drop-target : self.file.selected ? Theme.selection : touch.has-hover && !root.drag-active ? Theme.hover : transparent;
+                property <color> muted-color: self.file.selected ? Theme.selection-foreground-muted : Theme.foreground-muted;
+                // Inset from the list's edges and rounded (both 0 in the classic themes).
+                x: Theme.inset;
+                width: parent.width - 2 * Theme.inset;
+                border-radius: Theme.row-radius;
+                background: root.drop-entry == self.index ? Theme.drop-target
+                    : self.file.selected ? (root.active ? Theme.selection : Theme.selection-inactive)
+                    : touch.has-hover && !root.drag-active ? Theme.hover : transparent;
                 border-width: root.drop-entry == self.index ? 1px : 0px;
                 border-color: Theme.accent;
                 accessible-role: list-item;
@@ -543,16 +564,16 @@ export component FileView inherits Rectangle {
                             self.left-down = false;
                         }
                         if !self.pressed || event.kind == PointerEventKind.up {
-                            root.marquee-pointer(event.kind, self.mouse-x, line.y + root.scroll + self.mouse-y);
+                            root.marquee-pointer(event.kind, entry.x + self.mouse-x, line.y + root.scroll + self.mouse-y);
                         }
                     }
                     moved => {
                         if self.left-down && !root.marquee-active && self.pressed-x > root.name-end
                             && (abs(self.mouse-x - self.pressed-x) > 4px || abs(self.mouse-y - self.pressed-y) > 4px) {
-                            root.begin-marquee(self.pressed-x, line.y + root.scroll + self.pressed-y, self.ctrl);
+                            root.begin-marquee(entry.x + self.pressed-x, line.y + root.scroll + self.pressed-y, self.ctrl);
                         }
                         if root.marquee-active {
-                            root.track-marquee(self.mouse-x, line.y + root.scroll + self.mouse-y);
+                            root.track-marquee(entry.x + self.mouse-x, line.y + root.scroll + self.mouse-y);
                         }
                     }
                 }
@@ -645,7 +666,8 @@ export component FileView inherits Rectangle {
                 }
 
                 if entry.file.focused && root.has-focus: Rectangle {
-                    border-width: 1px;
+                    border-width: Theme.focus-width;
+                    border-radius: Theme.row-radius;
                     border-color: Theme.focus-ring;
                 }
             }
@@ -660,7 +682,7 @@ export component FileView inherits Rectangle {
                     if c < item.cells.length: tile := Rectangle {
                         property <FileRow> cell: item.cells[c];
                         property <int> index: item.first + c;
-                        x: c * root.cell-width;
+                        x: root.grid-left + c * root.cell-width;
                         y: 0;
                         width: root.cell-width;
                         height: root.cell-height;
@@ -676,8 +698,10 @@ export component FileView inherits Rectangle {
                             width: parent.width - 8px;
                             height: parent.height - 8px;
                             border-radius: Theme.radius;
-                            background: root.drop-entry == tile.index ? Theme.drop-target : tile.cell.selected ? Theme.selection : tile-touch.has-hover && !root.drag-active ? Theme.hover : transparent;
-                            border-width: root.drop-entry == tile.index || (tile.cell.focused && root.has-focus) ? 1px : 0px;
+                            background: root.drop-entry == tile.index ? Theme.drop-target
+                                : tile.cell.selected ? (root.active ? Theme.selection : Theme.selection-inactive)
+                                : tile-touch.has-hover && !root.drag-active ? Theme.hover : transparent;
+                            border-width: root.drop-entry == tile.index ? 1px : tile.cell.focused && root.has-focus ? Theme.focus-width : 0px;
                             border-color: root.drop-entry == tile.index ? Theme.accent : Theme.focus-ring;
                         }
 
@@ -802,7 +826,7 @@ export component FileView inherits Rectangle {
     // Why the typed name cannot be used, just under the entry.
     if root.rename-error != "" && root.renaming-index >= 0: Rectangle {
         property <int> line: floor(root.renaming-index / root.per-row);
-        x: list.x + (root.mode == 0 ? root.side + Theme.icon-size + root.gap : mod(root.renaming-index, root.per-row) * root.cell-width + 8px);
+        x: list.x + (root.mode == 0 ? Theme.inset + root.side + Theme.icon-size + root.gap : root.grid-left + mod(root.renaming-index, root.per-row) * root.cell-width + 8px);
         y: list.y + root.scroll + (self.line + 1) * root.item-height;
         width: error-text.preferred-width + Theme.spacing * 2;
         height: error-text.preferred-height + Theme.spacing;

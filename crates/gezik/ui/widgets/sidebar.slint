@@ -1,4 +1,5 @@
 import { Theme } from "../theme.slint";
+import { Glyph } from "../glyphs.slint";
 
 export struct SidebarRow {
     header: bool,
@@ -10,6 +11,9 @@ export struct SidebarRow {
     active: bool,
     // Shown when the pointer rests on the row: a pinned folder's full path and its key.
     tip: string,
+    // A place's glyph (sidebar.rs): 1 home, 2 folder, 3 pin, 4 pin with an alias, 5 drive;
+    // 0 on headings.
+    icon: int,
 }
 
 // Sections of places. Pinned rows (section 1) can be dragged, into another group too; a
@@ -118,21 +122,36 @@ export component Sidebar inherits Rectangle {
         changed height => { root.scroll-by(0px); }
 
         for row[i] in root.rows: Rectangle {
-            x: Theme.spacing;
+            x: Theme.inset;
             y: Theme.spacing + i * root.row-height;
-            width: parent.width - Theme.spacing * 2;
+            width: parent.width - Theme.inset * 2;
             height: root.row-height;
 
+            // A section's label (FOLDERS, PINNED, DRIVES) sits at the bottom of its row; a
+            // group's heading has a chevron before it.
             if row.header: Text {
-                x: Theme.spacing;
-                width: parent.width - Theme.spacing * 2;
-                height: parent.height;
+                x: row.section == 3 ? 18px : Theme.spacing + 4px;
+                width: parent.width - self.x - Theme.spacing;
+                height: row.section == 3 ? parent.height : parent.height - 3px;
                 text: row.label;
                 overflow: elide;
-                vertical-alignment: center;
-                font-size: Theme.font-size * 0.85;
-                font-weight: 600;
+                vertical-alignment: row.section == 3 ? center : bottom;
+                font-size: Theme.font-size-small;
+                font-weight: row.section == 3 ? 400 : 600;
                 color: Theme.foreground-muted;
+            }
+            if row.header && row.section == 3: Path {
+                x: 6px;
+                y: (parent.height - 8px) / 2;
+                width: 8px;
+                height: 8px;
+                viewbox-width: 8;
+                viewbox-height: 8;
+                commands: Glyph.chevron-down;
+                stroke: Theme.foreground-muted;
+                stroke-width: 1.2px;
+                stroke-line-cap: round;
+                stroke-line-join: round;
             }
 
             // A group's heading: its menu on a right-click.
@@ -154,7 +173,7 @@ export component Sidebar inherits Rectangle {
             if !row.header: Rectangle {
                 width: parent.width;
                 height: parent.height;
-                border-radius: Theme.radius;
+                border-radius: Theme.row-radius;
                 background: i == root.drop-row ? Theme.drop-target : row.active ? Theme.selection : touch.has-hover ? Theme.hover : transparent;
                 border-width: i == root.drop-row ? 1px : 0px;
                 border-color: Theme.accent;
@@ -164,8 +183,23 @@ export component Sidebar inherits Rectangle {
                 accessible-item-selected: row.active;
                 accessible-action-default => { root.clicked(row.section, row.index); }
 
+                Path {
+                    x: Theme.spacing + 4px;
+                    y: (parent.height - 16px) / 2;
+                    width: 16px;
+                    height: 16px;
+                    viewbox-width: 16;
+                    viewbox-height: 16;
+                    commands: row.icon == 1 ? Glyph.home : row.icon == 3 ? Glyph.pin : row.icon == 4 ? Glyph.alias
+                        : row.icon == 5 ? Glyph.drive : Glyph.folder-line;
+                    stroke: row.active ? Theme.accent : Theme.foreground-muted;
+                    stroke-width: 1.3px;
+                    stroke-line-cap: round;
+                    stroke-line-join: round;
+                }
+
                 Text {
-                    x: Theme.spacing * 3;
+                    x: Theme.spacing + 4px + 16px + 8px;
                     width: parent.width - self.x - Theme.spacing;
                     height: parent.height;
                     text: row.label;
@@ -232,18 +266,18 @@ export component Sidebar inherits Rectangle {
 
         // Dragged folders would be pinned here.
         if root.pin-line >= 0: Rectangle {
-            x: Theme.spacing;
+            x: Theme.inset;
             y: Theme.spacing + root.pin-line * root.row-height - 1px;
-            width: parent.width - Theme.spacing * 2;
+            width: parent.width - Theme.inset * 2;
             height: 2px;
             background: Theme.accent;
         }
 
         // A pinned row being dragged goes here.
         if root.drag-from >= 0 && root.pinned-first-row >= 0: Rectangle {
-            x: Theme.spacing;
+            x: Theme.inset;
             y: Theme.spacing + root.drag-line * root.row-height - 1px;
-            width: parent.width - Theme.spacing * 2;
+            width: parent.width - Theme.inset * 2;
             height: 2px;
             background: Theme.accent;
         }

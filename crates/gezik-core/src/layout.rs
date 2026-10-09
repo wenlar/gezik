@@ -6,8 +6,16 @@ use std::ops::Range;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Geometry {
-    List { row_height: f32 },
-    Grid { cell_width: f32, cell_height: f32, columns: usize },
+    List {
+        row_height: f32,
+    },
+    /// `left`: where the first column starts, in the list's coordinates (the grid is inset).
+    Grid {
+        cell_width: f32,
+        cell_height: f32,
+        columns: usize,
+        left: f32,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -46,7 +54,7 @@ impl Geometry {
     /// A grid as wide as `width`: as many whole cells per row as fit, at least one.
     pub fn grid(width: f32, cell_width: f32, cell_height: f32) -> Geometry {
         let columns = if cell_width > 0.0 { (width / cell_width).floor().max(1.0) as usize } else { 1 };
-        Geometry::Grid { cell_width, cell_height, columns }
+        Geometry::Grid { cell_width, cell_height, columns, left: 0.0 }
     }
 
     /// Entries per row: 1 in the list.
@@ -89,13 +97,14 @@ impl Geometry {
         match *self {
             #[allow(clippy::single_range_in_vec_init)]
             Geometry::List { .. } => vec![first_row..(last_row + 1).min(count)],
-            Geometry::Grid { cell_width, columns, .. } => {
+            Geometry::Grid { cell_width, columns, left, .. } => {
                 let columns = columns.max(1);
-                let right = rect.x + rect.width;
-                if right <= 0.0 || rect.x >= columns as f32 * cell_width || cell_width <= 0.0 {
+                // From the first column's edge (the grid is inset from the list's).
+                let (x, right) = (rect.x - left, rect.x + rect.width - left);
+                if right <= 0.0 || x >= columns as f32 * cell_width || cell_width <= 0.0 {
                     return Vec::new();
                 }
-                let c0 = (rect.x.max(0.0) / cell_width).floor() as usize;
+                let c0 = (x.max(0.0) / cell_width).floor() as usize;
                 let c1 = ((right / cell_width).ceil() as usize).saturating_sub(1).min(columns - 1);
                 (first_row..=last_row)
                     .filter_map(|r| {
@@ -149,7 +158,7 @@ mod tests {
     const LIST: Geometry = Geometry::List { row_height: 26.0 };
 
     fn grid(columns: usize) -> Geometry {
-        Geometry::Grid { cell_width: 100.0, cell_height: 120.0, columns }
+        Geometry::Grid { cell_width: 100.0, cell_height: 120.0, columns, left: 0.0 }
     }
 
     #[test]
@@ -168,6 +177,18 @@ mod tests {
         assert_eq!(LIST.items_in_rect(Rect { x: 0.0, y: -50.0, width: 1.0, height: 40.0 }, 10), []);
         assert_eq!(LIST.items_in_rect(Rect { x: 0.0, y: -50.0, width: 1.0, height: 60.0 }, 10), [0..1]);
         assert_eq!(LIST.items_in_rect(Rect { x: 0.0, y: 0.0, width: 1.0, height: 9999.0 }, 3), [0..3]);
+    }
+
+    #[test]
+    fn an_inset_grid_starts_at_its_left_edge() {
+        let g = Geometry::Grid { cell_width: 100.0, cell_height: 120.0, columns: 4, left: 6.0 };
+        // In the gap left of the first column: nothing.
+        assert_eq!(g.items_in_rect(Rect::from_points(0.0, 10.0, 5.0, 20.0), 100), []);
+        // Just inside the first column, and across into the second (it starts at 106).
+        assert_eq!(g.items_in_rect(Rect::from_points(6.0, 10.0, 7.0, 20.0), 100), [0..1]);
+        assert_eq!(g.items_in_rect(Rect::from_points(100.0, 10.0, 107.0, 20.0), 100), [0..2]);
+        // Right of the last column (it ends at 406): nothing.
+        assert_eq!(g.items_in_rect(Rect::from_points(407.0, 0.0, 450.0, 50.0), 100), []);
     }
 
     #[test]
