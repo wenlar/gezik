@@ -108,6 +108,7 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         | Action::ViewGrid
         | Action::TogglePreview
         | Action::QuickLook
+        | Action::Share
         | Action::Copy
         | Action::Cut
         | Action::Paste

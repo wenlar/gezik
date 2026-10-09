@@ -146,7 +146,8 @@ impl Palette {
         for action in Action::ALL {
             let skip = matches!(action, Action::CommandPalette | Action::QuickOpen)
                 || (action == Action::OpenTerminalAdmin && !cfg!(windows))
-                || (matches!(action, Action::MakeAlias | Action::ShowPackageContents) && !cfg!(target_os = "macos"));
+                || (matches!(action, Action::MakeAlias | Action::ShowPackageContents | Action::Share)
+                    && !cfg!(target_os = "macos"));
             if !skip {
                 add(
                     Kind::Action,

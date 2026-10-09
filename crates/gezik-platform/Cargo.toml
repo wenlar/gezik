@@ -97,6 +97,7 @@ objc2-app-kit = { version = "0.3", features = [
     "NSResponder",
     "NSRunningApplication",
     "NSSavePanel",
+    "NSSharingService",
     "NSView",
     "NSWindow",
     "NSWorkspace",

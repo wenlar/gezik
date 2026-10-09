@@ -171,6 +171,7 @@ fn perform(
         Action::ViewGrid => view.set_mode(gezik_core::view::ViewMode::Grid),
         Action::TogglePreview => preview.toggle_pane(),
         Action::QuickLook => preview.toggle_quick_look(),
+        Action::Share => finder_menu::share_selection(window, view),
         Action::Rename => ops.rename_start(),
         Action::NewFolder => ops.new_folder(None),
         Action::Copy => ops.copy(false),

@@ -1,5 +1,5 @@
-//! macOS row menu extras (spec 9 §4.3): Open With ▸ (Task 2: Share…, Quick Actions ▸). What
-//! they list is asked when the menu opens, on a short-lived thread, never ahead of it.
+//! macOS row menu extras (spec 9 §4.3): Open With ▸, Share…, Quick Actions ▸. What they list
+//! is asked when the menu opens, on a short-lived thread, never ahead of it.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -13,6 +13,7 @@ use crate::context_menu::{OPEN, OPEN_DEFAULT, SHOW_PACKAGE};
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Extras {
     pub apps: Vec<AppChoice>,
+    pub services: Vec<gezik_platform::services::Service>,
 }
 
 /// A list that came after its menu had opened, kept for the same items' next menu.
@@ -22,7 +23,7 @@ pub type Late = Arc<Mutex<Option<(Vec<PathBuf>, Extras)>>>;
 pub const WAIT: Duration = Duration::from_millis(50);
 
 fn compute(items: &[PathBuf]) -> Extras {
-    Extras { apps: gezik_platform::open_with::apps(items) }
+    Extras { apps: gezik_platform::open_with::apps(items), services: gezik_platform::services::for_items(items) }
 }
 
 /// The extras for `items`, or `None` ("Loading…") when they take longer than `WAIT`.
@@ -38,7 +39,7 @@ fn fetch_with(late: &Late, items: Vec<PathBuf>, wait: Duration, compute: fn(&[Pa
     }
     let (send, receive) = std::sync::mpsc::channel();
     let keep = late.clone();
-    let spawned = std::thread::Builder::new().name("gezik-open-with".into()).spawn(move || {
+    let spawned = std::thread::Builder::new().name("gezik-finder-menu".into()).spawn(move || {
         let extras = compute(&items);
         // The menu stopped waiting: kept for the same items' next menu (one list only).
         if let Err(unsent) = send.send(extras)
@@ -86,6 +87,29 @@ pub fn open_with(window: &slint::Weak<crate::AppWindow>, paths: Vec<PathBuf>, ap
             window.set_status(why.into());
         }
     });
+}
+
+/// Share… for `paths` at window position `at` (a right-click), else at the pointer.
+pub fn share(window: &crate::AppWindow, paths: Vec<PathBuf>, at: Option<(f32, f32)>) {
+    use slint::ComponentHandle;
+    let at = at.map(|(x, y)| (f64::from(x), f64::from(y)));
+    if let Err(why) = gezik_platform::finder::share(&window.window().window_handle(), &paths, at) {
+        window.set_status(format!("Cannot share: {why}").into());
+    }
+}
+
+/// The `share` action: the selection, or the focused item. macOS only (hidden elsewhere).
+pub fn share_selection(window: &crate::AppWindow, view: &crate::view::View) {
+    if !cfg!(target_os = "macos") || view.shows_drives() {
+        return;
+    }
+    let mut items: Vec<PathBuf> = view.selected_items().into_iter().map(|(path, _)| path).collect();
+    if items.is_empty() {
+        items.extend(view.focus().and_then(|i| view.entry_path(i)).map(|(path, _)| path));
+    }
+    if !items.is_empty() {
+        share(window, items, None);
+    }
 }
 
 #[cfg(test)]

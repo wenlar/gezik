@@ -19,6 +19,7 @@ pub mod open_with;
 mod picture;
 pub mod priority;
 pub mod process;
+pub mod services;
 pub mod taskbar;
 pub mod terminal;
 mod text;

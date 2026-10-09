@@ -6,4 +6,6 @@ pub(crate) mod finder;
 pub(crate) mod icons;
 mod image;
 pub(crate) mod open_with;
+pub(crate) mod services;
+pub(crate) mod share;
 pub(crate) mod thumbs;

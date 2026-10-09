@@ -423,12 +423,16 @@ pub const LINK_SHORTCUT: u32 = 1404;
 pub const LINK_JUNCTION: u32 = 1405;
 pub const LINK_SYMLINK: u32 = 1406;
 pub const TEMPLATE_FIRST: u32 = 1410;
-/// 9a's ids are 1700-1799 (spec 9 §13.3); 9a1 has these two; 9a2: Open With ▸ by place, Other….
+/// 9a's ids are 1700-1799 (spec 9 §13.3); 9a1 has these two; 9a2: Open With ▸ by place, Other…,
+/// Share… 1741, Quick Actions ▸ 1750-1779 by place.
 pub const MAKE_ALIAS: u32 = 1743;
 pub const SHOW_PACKAGE: u32 = 1744;
 pub const OPEN_WITH_FIRST: u32 = 1700;
 pub const OPEN_WITH_MAX: u32 = gezik_platform::open_with::MAX_APPS as u32;
 pub const OPEN_WITH_OTHER: u32 = 1740;
+pub const SHARE: u32 = 1741;
+pub const QUICK_ACTION_FIRST: u32 = 1750;
+pub const QUICK_ACTION_MAX: u32 = gezik_platform::services::MAX_SERVICES as u32;
 pub const TEMPLATE_MAX: u32 = gezik_core::templates::TEMPLATE_MAX as u32;
 /// Group headings in a Slint menu: shown greyed, never chosen.
 pub const HEADING: u32 = 0;
@@ -578,6 +582,29 @@ pub fn open_with_sub(apps: Option<&[gezik_platform::open_with::AppChoice]>, at: 
     };
     items.push((OPEN_WITH_OTHER, "Other…".to_owned(), true));
     Submenu { title: "Open With".to_owned(), at, items }
+}
+
+/// Share… and Quick Actions ▸ (macOS) for rows, the submenu right after Share… (`at` is where
+/// Share… goes); nothing off macOS, no submenu while the services are not known or none fits.
+pub fn finder_items(
+    services: Option<&[gezik_platform::services::Service]>,
+    mac: bool,
+    at: usize,
+) -> (Vec<(u32, String)>, Option<Submenu>) {
+    if !mac {
+        return (Vec::new(), None);
+    }
+    let sub = services.filter(|s| !s.is_empty()).map(|services| Submenu {
+        title: "Quick Actions".to_owned(),
+        at: at + 1,
+        items: services
+            .iter()
+            .take(QUICK_ACTION_MAX as usize)
+            .enumerate()
+            .map(|(i, s)| (QUICK_ACTION_FIRST + i as u32, s.title.clone(), true))
+            .collect(),
+    });
+    (vec![(SHARE, "Share…".to_owned())], sub)
 }
 
 /// Whether Junction is offered for `rows`: all folders, none on a share or on one of
@@ -850,6 +877,10 @@ pub struct Menus {
     menu_templates: Rc<RefCell<Vec<Template>>>,
     /// The apps the last Open With ▸ listed (items are by place).
     menu_apps: Rc<RefCell<Vec<gezik_platform::open_with::AppChoice>>>,
+    /// The Quick Actions the last row menu listed (items are by place).
+    menu_services: Rc<RefCell<Vec<gezik_platform::services::Service>>>,
+    /// Where the last row menu was opened (window position), for Share…'s picker.
+    menu_at: Rc<Cell<(f32, f32)>>,
     /// An Open With list that came after its menu had opened (macOS).
     late: crate::finder_menu::Late,
     #[cfg_attr(not(windows), allow(dead_code))]
@@ -877,6 +908,8 @@ impl Menus {
             pin_groups: Rc::default(),
             menu_templates: Rc::default(),
             menu_apps: Rc::default(),
+            menu_services: Rc::default(),
+            menu_at: Rc::default(),
             late: crate::finder_menu::Late::default(),
             native_menu: MenuGate::default(),
         };
@@ -933,6 +966,7 @@ impl Menus {
         let Ok(i) = usize::try_from(index) else { return };
         let at = at_position.then_some((x, y));
         let native = cfg!(windows);
+        self.menu_at.set((x, y));
         self.ops.clipboard_check();
         if self.view.is_selected(i) && self.view.selection_count() > 1 {
             let rows = self.view.selected_items();
@@ -943,10 +977,11 @@ impl Menus {
             let mut list = owned(items(Place::Rows, native));
             list.extend(owned(terminal_items(native)));
             let mut subs = vec![self.copy_path_sub(&paths, list.len())];
-            self.add_open_with(&list, &mut subs, &rows);
+            let services = self.add_finder_extras(&list, &mut subs, &rows);
             self.add_links(&mut list, &mut subs, &rows, native);
             self.add_file_tools(&mut list, &mut subs, rows, native);
             list.extend(self.file_extras(false, false, native));
+            self.add_finder_items(&mut list, &mut subs, services);
             if results {
                 list.extend(owned(result_row_items()).into_iter().filter(|(id, _)| *id != SHOW_IN_FOLDER_NEW_TAB));
             } else if !self.view.shows_drives() {
@@ -974,10 +1009,11 @@ impl Menus {
         }
         list.extend(owned(terminal_items(native)));
         let mut subs = vec![self.copy_path_sub(std::slice::from_ref(&path), list.len())];
-        self.add_open_with(&list, &mut subs, &[(path.clone(), is_dir)]);
+        let services = self.add_finder_extras(&list, &mut subs, &[(path.clone(), is_dir)]);
         self.add_links(&mut list, &mut subs, &[(path.clone(), is_dir)], native);
         self.add_file_tools(&mut list, &mut subs, vec![(path.clone(), is_dir)], native);
         list.extend(self.file_extras(true, is_dir, native));
+        self.add_finder_items(&mut list, &mut subs, services);
         if self.view.shows_results() {
             list.extend(owned(result_row_items()));
         }
@@ -1028,18 +1064,58 @@ impl Menus {
         }
     }
 
-    /// Open With ▸ for `rows` on macOS (not for drives): asked now, at most `WAIT`.
-    fn add_open_with(&self, list: &[(u32, String)], subs: &mut Vec<Submenu>, rows: &[(PathBuf, bool)]) {
-        if self.view.shows_drives() || !crate::finder_menu::offers_open_with(rows, cfg!(target_os = "macos")) {
+    /// macOS: asks Open With's apps and the Quick Actions for `rows` (at most `WAIT`), adds
+    /// Open With ▸ after the Open items; Share… and Quick Actions ▸ come with `add_finder_items`.
+    /// Asked for exactly the rows the menu acts on, so never for more than `MAX_ITEMS`.
+    fn add_finder_extras(
+        &self,
+        list: &[(u32, String)],
+        subs: &mut Vec<Submenu>,
+        rows: &[(PathBuf, bool)],
+    ) -> Option<Vec<gezik_platform::services::Service>> {
+        self.menu_apps.borrow_mut().clear();
+        self.menu_services.borrow_mut().clear();
+        if !cfg!(target_os = "macos")
+            || self.view.shows_drives()
+            || rows.is_empty()
+            || rows.len() > gezik_platform::open_with::MAX_ITEMS
+        {
+            return None;
+        }
+        let items: Vec<PathBuf> = rows.iter().map(|(path, _)| path.clone()).collect();
+        let extras = crate::finder_menu::fetch(&self.late, items);
+        if crate::finder_menu::offers_open_with(rows, true) {
+            let apps = extras.as_ref().map(|e| e.apps.as_slice());
+            subs.push(open_with_sub(apps, crate::finder_menu::open_with_place(list)));
+            *self.menu_apps.borrow_mut() = extras.as_ref().map(|e| e.apps.clone()).unwrap_or_default();
+        }
+        extras.map(|e| e.services)
+    }
+
+    /// Share… and Quick Actions ▸ at the end of `list` (macOS rows, not drives).
+    fn add_finder_items(
+        &self,
+        list: &mut Vec<(u32, String)>,
+        subs: &mut Vec<Submenu>,
+        services: Option<Vec<gezik_platform::services::Service>>,
+    ) {
+        if self.view.shows_drives() {
             return;
         }
-        let selected: Vec<PathBuf> = rows.iter().map(|(path, _)| path.clone()).collect();
-        let focused = self.view.focus().and_then(|i| self.view.entry_path(i)).map(|(path, _)| path);
-        let items = gezik_platform::open_with::asked_items(&selected, focused.as_deref());
-        let extras = crate::finder_menu::fetch(&self.late, items);
-        let apps = extras.map(|e| e.apps);
-        subs.push(open_with_sub(apps.as_deref(), crate::finder_menu::open_with_place(list)));
-        *self.menu_apps.borrow_mut() = apps.unwrap_or_default();
+        let (items, sub) = finder_items(services.as_deref(), cfg!(target_os = "macos"), list.len());
+        list.extend(items);
+        subs.extend(sub);
+        *self.menu_services.borrow_mut() = services.unwrap_or_default();
+    }
+
+    /// Share… from a row menu, at the right-click's place once the menu is done.
+    fn share(&self, paths: Vec<PathBuf>) {
+        let (window, at) = (self.window.clone(), self.menu_at.get());
+        slint::Timer::single_shot(std::time::Duration::ZERO, move || {
+            if let Some(window) = window.upgrade() {
+                crate::finder_menu::share(&window, paths, Some(at));
+            }
+        });
     }
 
     /// Create link ▸ (Windows) or Create link at the end of the items so far, for `rows`;
@@ -1705,6 +1781,28 @@ impl Menus {
                 };
                 crate::finder_menu::open_with(&self.window, paths, app);
             }
+            (SHARE, Subject::Row(path)) => self.share(vec![path]),
+            (SHARE, Subject::Rows(paths)) => self.share(paths),
+            (id, subject @ (Subject::Row(_) | Subject::Rows(_)))
+                if (QUICK_ACTION_FIRST..QUICK_ACTION_FIRST + QUICK_ACTION_MAX).contains(&id) =>
+            {
+                let paths = match subject {
+                    Subject::Row(path) => vec![path],
+                    Subject::Rows(paths) => paths,
+                    _ => Vec::new(),
+                };
+                // Only a Quick Action the last menu listed, on the items it was listed for.
+                let Some(title) =
+                    self.menu_services.borrow().get((id - QUICK_ACTION_FIRST) as usize).map(|s| s.title.clone())
+                else {
+                    return;
+                };
+                if let Err(why) = gezik_platform::services::perform(&title, &paths)
+                    && let Some(window) = self.window.upgrade()
+                {
+                    window.set_status(format!("Cannot run {title}: {why}").into());
+                }
+            }
             (REFRESH, Subject::Background(_)) => self.nav.reload(),
             (OPEN_TERMINAL | OPEN_TERMINAL_ADMIN, subject) => {
                 let dir = match subject {
@@ -1872,6 +1970,7 @@ fn from_submenu(id: u32) -> bool {
         || (TEMPLATE_FIRST..TEMPLATE_FIRST + TEMPLATE_MAX).contains(&id)
         || (OPEN_WITH_FIRST..OPEN_WITH_FIRST + OPEN_WITH_MAX).contains(&id)
         || id == OPEN_WITH_OTHER
+        || (QUICK_ACTION_FIRST..QUICK_ACTION_FIRST + QUICK_ACTION_MAX).contains(&id)
         || (MODIFIED_FIRST..=MODIFIED_BETWEEN).contains(&id)
         || (KIND_FIRST..KIND_FIRST + gezik_core::search::KindFilter::ALL.len() as u32).contains(&id)
         || matches!(
@@ -2020,6 +2119,9 @@ mod tests {
             OPEN_WITH_FIRST,
             OPEN_WITH_FIRST + OPEN_WITH_MAX - 1,
             OPEN_WITH_OTHER,
+            SHARE,
+            QUICK_ACTION_FIRST,
+            QUICK_ACTION_FIRST + QUICK_ACTION_MAX - 1,
             ADD_RULE_FIRST,
             ADD_RULE_FIRST + 9,
             PRESET_FIRST,
@@ -2077,6 +2179,34 @@ mod tests {
         for id in [OPEN_WITH_FIRST, OPEN_WITH_FIRST + OPEN_WITH_MAX - 1, OPEN_WITH_OTHER] {
             assert!((1700..1800).contains(&id) && ![1742, MAKE_ALIAS, SHOW_PACKAGE].contains(&id), "{id}");
         }
+    }
+
+    #[test]
+    fn finder_items_are_macos_only() {
+        use gezik_platform::services::Service;
+        let services = [Service { title: "Resize Images".into(), file_types: vec!["public.image".into()] }];
+        let (items, sub) = finder_items(Some(&services), true, 7);
+        assert_eq!(items, [(SHARE, "Share…".to_owned())]);
+        let sub = sub.unwrap();
+        assert_eq!((sub.title.as_str(), sub.at), ("Quick Actions", 8), "after Share…");
+        assert_eq!(sub.items, [(QUICK_ACTION_FIRST, "Resize Images".to_owned(), true)]);
+        assert!(finder_items(Some(&[]), true, 0).1.is_none(), "no Quick Actions: no submenu");
+        assert!(finder_items(None, true, 0).1.is_none(), "not known in time: none");
+        assert_eq!(finder_items(Some(&services), false, 0), (Vec::new(), None), "off macOS: nothing");
+        assert!(from_submenu(QUICK_ACTION_FIRST + 29) && !from_submenu(SHARE));
+        assert_eq!(QUICK_ACTION_MAX as usize, gezik_platform::services::MAX_SERVICES);
+        for id in [SHARE, QUICK_ACTION_FIRST, QUICK_ACTION_FIRST + QUICK_ACTION_MAX - 1] {
+            assert!((1700..1780).contains(&id) && ![1742, MAKE_ALIAS, SHOW_PACKAGE, OPEN_WITH_OTHER].contains(&id));
+        }
+    }
+
+    #[test]
+    fn a_macos_row_keeps_all_four_submenus() {
+        let list: Vec<(u32, String)> = (0..10).map(|i| (i + 100, String::new())).collect();
+        let sub = |title: &str, at: usize| Submenu { title: title.into(), at, items: vec![(1, String::new(), true)] };
+        let subs = [sub("Open With", 2), sub("Copy path as", 4), sub("Commands", 6), sub("Quick Actions", 10)];
+        let (_, parts) = split_menu(&list, &subs);
+        assert_eq!(parts.len(), MAX_SUBMENUS, "none is dropped");
     }
 
     #[test]
@@ -2139,6 +2269,9 @@ mod tests {
             OPEN_WITH_FIRST,
             OPEN_WITH_FIRST + OPEN_WITH_MAX - 1,
             OPEN_WITH_OTHER,
+            SHARE,
+            QUICK_ACTION_FIRST,
+            QUICK_ACTION_FIRST + QUICK_ACTION_MAX - 1,
             PRESET_SAVE,
             EXTRACT_HERE,
             EXTRACT_TO_OWN,
