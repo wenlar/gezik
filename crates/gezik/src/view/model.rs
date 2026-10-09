@@ -224,7 +224,7 @@ fn icon_for(data: &ViewData, i: usize) -> Option<slint::Image> {
         Listing::Drives(drives) => MediaKey::PathIcon { path: drives.get(i)?.path.clone(), px },
         listing => {
             let e = listing.entry(i)?;
-            match icon_lookup(&e.name, e.is_dir, cfg!(target_os = "macos")) {
+            match lookup_for(&e, cfg!(target_os = "macos")) {
                 IconLookup::Folder => MediaKey::FolderIcon { path: listing.path_at(i)?.0, px },
                 IconLookup::Path => MediaKey::PathIcon { path: listing.path_at(i)?.0, px },
                 IconLookup::Type => MediaKey::ExtIcon { ext: e.extension().to_lowercase(), px },
@@ -232,6 +232,21 @@ fn icon_for(data: &ViewData, i: usize) -> Option<slint::Image> {
         }
     };
     data.media.picture(key, i)
+}
+
+/// How entry `e`'s system icon is looked up: a cloud-only item never by its own path, since
+/// the shell would read (download) it for its icon.
+fn lookup_for(e: &Entry, mac: bool) -> IconLookup {
+    match icon_lookup(&e.name, e.is_dir, mac) {
+        IconLookup::Path if e.flags & Entry::CLOUD_ONLY != 0 => {
+            if e.is_dir {
+                IconLookup::Folder
+            } else {
+                IconLookup::Type
+            }
+        }
+        lookup => lookup,
+    }
 }
 
 /// More changed lines than this redraw the whole view at once (Ctrl+A in a huge folder)
@@ -281,6 +296,23 @@ mod tests {
             "1.5 KB",
             "old: drawn faint"
         );
+    }
+
+    #[test]
+    fn a_cloud_only_item_is_never_looked_up_by_its_path() {
+        let file = |name: &str, flags: u8| Entry {
+            name: name.into(),
+            is_dir: false,
+            flags,
+            size: 1,
+            modified: None,
+            created: None,
+        };
+        assert_eq!(lookup_for(&file("setup.exe", 0), false), IconLookup::Path);
+        assert_eq!(lookup_for(&file("setup.exe", Entry::CLOUD_ONLY), false), IconLookup::Type);
+        assert_eq!(lookup_for(&file("a.lnk", Entry::CLOUD_ONLY | Entry::PINNED), false), IconLookup::Type);
+        let package = Entry { is_dir: true, ..file("Pages.app", Entry::CLOUD_ONLY) };
+        assert_eq!(lookup_for(&package, true), IconLookup::Folder);
     }
 
     #[test]
