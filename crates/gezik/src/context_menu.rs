@@ -423,6 +423,9 @@ pub const LINK_SHORTCUT: u32 = 1404;
 pub const LINK_JUNCTION: u32 = 1405;
 pub const LINK_SYMLINK: u32 = 1406;
 pub const TEMPLATE_FIRST: u32 = 1410;
+/// 9a's ids are 1700-1799 (spec 9 §13.3); 9a1 has these two.
+pub const MAKE_ALIAS: u32 = 1743;
+pub const SHOW_PACKAGE: u32 = 1744;
 pub const TEMPLATE_MAX: u32 = gezik_core::templates::TEMPLATE_MAX as u32;
 /// Group headings in a Slint menu: shown greyed, never chosen.
 pub const HEADING: u32 = 0;
@@ -526,10 +529,16 @@ pub fn new_sub(templates: &[Template], windows: bool, at: usize) -> Submenu {
 }
 
 /// Create link ▸ on Windows (Shortcut; Junction for local folders; Symbolic link when it can
-/// be made), or the one "Create link" (a symbolic link) elsewhere (spec 9.2).
-pub fn link_items(windows: bool, junction: bool, symlink: bool) -> Vec<(u32, String, bool)> {
+/// be made); elsewhere the one "Create link" (a symbolic link, spec 9.2), after Make Alias on
+/// macOS.
+pub fn link_items(windows: bool, mac: bool, junction: bool, symlink: bool) -> Vec<(u32, String, bool)> {
     if !windows {
-        return vec![(LINK_SYMLINK, "Create link".to_owned(), true)];
+        let mut out = Vec::new();
+        if mac {
+            out.push((MAKE_ALIAS, "Make Alias".to_owned(), true));
+        }
+        out.push((LINK_SYMLINK, "Create link".to_owned(), true));
+        return out;
     }
     let mut out = vec![(LINK_SHORTCUT, "Shortcut".to_owned(), true)];
     if junction {
@@ -539,6 +548,14 @@ pub fn link_items(windows: bool, junction: bool, symlink: bool) -> Vec<(u32, Str
         out.push((LINK_SYMLINK, "Symbolic link".to_owned(), true));
     }
     out
+}
+
+/// Show Package Contents for a package's row on macOS: by the name alone (a menu does not
+/// read the disk).
+pub fn package_item(path: &Path, is_dir: bool, mac: bool) -> Option<(u32, String)> {
+    let package =
+        mac && is_dir && path.file_name().is_some_and(|n| gezik_core::kind::is_package_name(&n.to_string_lossy()));
+    package.then(|| (SHOW_PACKAGE, "Show Package Contents".to_owned()))
 }
 
 /// Whether Junction is offered for `rows`: all folders, none on a share or on one of
@@ -914,6 +931,9 @@ impl Menus {
         let Some((path, is_dir)) = self.view.entry_path(i) else { return };
         let place = Place::Row { is_dir, pinned: is_dir && self.sidebar.is_pinned(&path) };
         let mut list = owned(items(place, native));
+        if let Some(item) = package_item(&path, is_dir, cfg!(target_os = "macos")) {
+            list.insert(list.len().min(1), item); // after Open, as in Finder
+        }
         if is_dir {
             list.push((
                 SEARCH_HERE,
@@ -998,7 +1018,12 @@ impl Menus {
             .filter(|drive| drive.kind == gezik_platform::DriveKind::Network)
             .map(|drive| drive.path)
             .collect();
-        let items = link_items(native, junction_offered(rows, &network), gezik_platform::link::symlinks_allowed());
+        let items = link_items(
+            native,
+            cfg!(target_os = "macos"),
+            junction_offered(rows, &network),
+            gezik_platform::link::symlinks_allowed(),
+        );
         if native {
             subs.push(Submenu { title: "Create link".to_owned(), at: list.len(), items });
         } else {
@@ -1611,12 +1636,13 @@ impl Menus {
             }
             (PASTE_AS_FILE, Subject::Background(dir)) => self.ops.paste_as_file(dir),
             (NEW_FOLDER_WITH_SELECTION, Subject::Rows(paths)) => self.ops.new_folder_with(paths),
-            (LINK_SHORTCUT | LINK_JUNCTION | LINK_SYMLINK, Subject::Row(path)) => {
+            (LINK_SHORTCUT | LINK_JUNCTION | LINK_SYMLINK | MAKE_ALIAS, Subject::Row(path)) => {
                 self.ops.create_links(vec![path], link_kind(id))
             }
-            (LINK_SHORTCUT | LINK_JUNCTION | LINK_SYMLINK, Subject::Rows(paths)) => {
+            (LINK_SHORTCUT | LINK_JUNCTION | LINK_SYMLINK | MAKE_ALIAS, Subject::Rows(paths)) => {
                 self.ops.create_links(paths, link_kind(id))
             }
+            (SHOW_PACKAGE, Subject::Row(path)) => self.nav.go(Location::Path(path)),
             (REFRESH, Subject::Background(_)) => self.nav.reload(),
             (OPEN_TERMINAL | OPEN_TERMINAL_ADMIN, subject) => {
                 let dir = match subject {
@@ -1765,6 +1791,7 @@ fn link_kind(id: u32) -> LinkKind {
     match id {
         LINK_SHORTCUT => LinkKind::Shortcut,
         LINK_JUNCTION => LinkKind::Junction,
+        MAKE_ALIAS => LinkKind::Alias,
         _ => LinkKind::Symlink,
     }
 }
@@ -1924,6 +1951,8 @@ mod tests {
             MOVE_HERE,
             CREATE_LINK_HERE,
             CANCEL_DROP,
+            MAKE_ALIAS,
+            SHOW_PACKAGE,
             ADD_RULE_FIRST,
             ADD_RULE_FIRST + 9,
             PRESET_FIRST,
@@ -2004,6 +2033,8 @@ mod tests {
             LINK_SHORTCUT,
             LINK_JUNCTION,
             LINK_SYMLINK,
+            MAKE_ALIAS,
+            SHOW_PACKAGE,
             PRESET_SAVE,
             EXTRACT_HERE,
             EXTRACT_TO_OWN,
@@ -2185,9 +2216,21 @@ mod tests {
     #[test]
     fn link_items_follow_the_system_and_what_can_be_made() {
         let ids = |v: Vec<(u32, String, bool)>| v.into_iter().map(|(id, _, _)| id).collect::<Vec<_>>();
-        assert_eq!(ids(link_items(true, true, true)), [LINK_SHORTCUT, LINK_JUNCTION, LINK_SYMLINK]);
-        assert_eq!(ids(link_items(true, false, false)), [LINK_SHORTCUT]);
-        assert_eq!(link_items(false, false, true), [(LINK_SYMLINK, "Create link".to_owned(), true)]);
+        assert_eq!(ids(link_items(true, false, true, true)), [LINK_SHORTCUT, LINK_JUNCTION, LINK_SYMLINK]);
+        assert_eq!(ids(link_items(true, false, false, false)), [LINK_SHORTCUT]);
+        assert_eq!(link_items(false, false, false, true), [(LINK_SYMLINK, "Create link".to_owned(), true)]);
+    }
+
+    #[test]
+    fn macos_rows_offer_aliases_and_package_contents() {
+        let ids = |v: Vec<(u32, String, bool)>| v.into_iter().map(|(id, _, _)| id).collect::<Vec<_>>();
+        assert_eq!(ids(link_items(false, true, false, true)), [MAKE_ALIAS, LINK_SYMLINK], "macOS: Make Alias first");
+        let app = Path::new("/Applications/Safari.app");
+        assert_eq!(package_item(app, true, true), Some((SHOW_PACKAGE, "Show Package Contents".to_owned())));
+        assert_eq!(package_item(app, true, false), None, "not off macOS");
+        assert_eq!(package_item(Path::new("/x/Docs"), true, true), None);
+        assert_eq!(package_item(Path::new("/x/Rapor.pages"), false, true), None, "a one-file document");
+        assert_eq!(link_kind(MAKE_ALIAS), LinkKind::Alias);
     }
 
     #[cfg(windows)]

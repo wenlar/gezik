@@ -227,7 +227,9 @@ fn perform(
         | Action::CopyWithFolders
         | Action::CutWithFolders
         | Action::CalculateFolderSizes
-        | Action::SaveSearch => return actions::run(action, nav, view),
+        | Action::SaveSearch
+        | Action::MakeAlias
+        | Action::ShowPackageContents => return actions::run(action, nav, view),
     }
     true
 }

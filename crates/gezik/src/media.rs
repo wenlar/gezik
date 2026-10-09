@@ -4,7 +4,8 @@
 //! (fast), one for thumbnails (a video's can take seconds). Requests are made while Slint builds a line on screen. The newest
 //! are served first and only the newest [`MAX_QUEUED`] are kept, so lines scrolled past
 //! long ago are dropped. Showing another folder starts a new generation: older requests
-//! are dropped and their results only fill the caches.
+//! are dropped and their results only fill the caches. On macOS a running Quick Look
+//! request is cancelled when another listing is shown.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -41,7 +42,8 @@ pub enum MediaKey {
     GenericFolder {
         px: u32,
     },
-    /// A folder whose icon may be customized (`desktop.ini`); the worker checks.
+    /// A folder whose icon may be its own (`desktop.ini`; on macOS a custom icon or a volume's
+    /// root); the worker checks.
     FolderIcon {
         path: PathBuf,
         px: u32,
@@ -86,7 +88,7 @@ fn buffer(rgba: Rgba) -> Option<SharedPixelBuffer<Rgba8Pixel>> {
 }
 
 /// Runs on a worker thread.
-fn run(key: &MediaKey) -> Outcome {
+fn run(key: &MediaKey, wanted: &dyn Fn() -> bool) -> Outcome {
     let picture = |rgba: Option<Rgba>| rgba.and_then(buffer).map_or(Outcome::Nothing, Outcome::Picture);
     match key {
         MediaKey::TypeName { ext, is_dir } => {
@@ -95,14 +97,14 @@ fn run(key: &MediaKey) -> Outcome {
         MediaKey::ExtIcon { ext, px } => picture(gezik_platform::icon(&IconTarget::Extension(ext.clone()), *px)),
         MediaKey::GenericFolder { px } => picture(gezik_platform::icon(&IconTarget::Folder, *px)),
         MediaKey::FolderIcon { path, px } => {
-            if path.join("desktop.ini").is_file() {
+            if gezik_platform::folder_has_own_icon(path) {
                 picture(gezik_platform::icon(&IconTarget::Path(path.clone()), *px))
             } else {
                 Outcome::PlainFolder
             }
         }
         MediaKey::PathIcon { path, px } => picture(gezik_platform::icon(&IconTarget::Path(path.clone()), *px)),
-        MediaKey::Thumbnail { path, px, .. } => picture(gezik_platform::thumbnail(path, *px)),
+        MediaKey::Thumbnail { path, px, .. } => picture(gezik_platform::thumbnail_while(path, *px, wanted)),
     }
 }
 
@@ -376,7 +378,8 @@ impl Media {
                 if generation != current.load(Ordering::SeqCst) {
                     continue;
                 }
-                let outcome = run(&key);
+                // Only this generation's request is waited for: another folder drops a Quick Look request.
+                let outcome = run(&key, &|| generation == current.load(Ordering::SeqCst));
                 let _ = slint::invoke_from_event_loop(move || {
                     with_current(|media| media.finish(generation, key, outcome));
                 });
@@ -388,7 +391,7 @@ impl Media {
     }
 
     /// A worker's result, on the UI thread. Results of an older generation only fill the
-    /// caches.
+    /// caches, and not with a miss.
     pub fn finish(&self, generation: u64, key: MediaKey, outcome: Outcome) {
         let current = generation == self.generation();
         if current {
@@ -417,7 +420,12 @@ impl Media {
                 Ready::Picture
             }
             (_, _) => {
-                self.store(key.clone(), None, MISSING_COST);
+                // An older generation's miss may be a cancelled Quick Look request, and an
+                // iCloud-only file keeps its mtime once downloaded: both are asked again.
+                let in_cloud = matches!(&key, MediaKey::Thumbnail { path, .. } if gezik_platform::only_in_cloud(path));
+                if current && !in_cloud {
+                    self.store(key.clone(), None, MISSING_COST);
+                }
                 Ready::Picture
             }
         };
@@ -515,6 +523,17 @@ mod tests {
         media.finish(old, icon("png"), pixels());
         assert!(seen.borrow().is_empty(), "the old listing's entries are not redrawn");
         assert!(media.picture(icon("png"), 1).is_some(), "but the icon is kept");
+    }
+
+    #[test]
+    fn an_older_generations_miss_is_asked_again() {
+        let media = Media::idle();
+        let old = media.generation();
+        media.picture(icon("zzz"), 0);
+        media.new_generation();
+        media.finish(old, icon("zzz"), Outcome::Nothing);
+        assert!(media.picture(icon("zzz"), 0).is_none());
+        assert!(media.0.pending.borrow().contains(&icon("zzz")), "requested again, not remembered as missing");
     }
 
     #[test]

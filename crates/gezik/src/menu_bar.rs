@@ -53,10 +53,11 @@ pub fn install(window: &AppWindow, view: View, nav: Navigator, ops: Operations) 
                     // No shortcut (none by default, or turned off in settings.toml), or only
                     // the keypad's.
                     None if crate::actions::run(action, &nav, &view) => {}
-                    None => match action {
-                        Action::BatchRename => ops.batch_rename(),
-                        _ => {}
-                    },
+                    None => {
+                        if action == Action::BatchRename {
+                            ops.batch_rename();
+                        }
+                    }
                 }
             }
         }

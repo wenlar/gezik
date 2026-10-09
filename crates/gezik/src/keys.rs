@@ -501,6 +501,8 @@ pub fn acts_on_selection(action: Action) -> bool {
             | Action::CopyWithFolders
             | Action::CutWithFolders
             | Action::ShowInFolder
+            | Action::MakeAlias
+            | Action::ShowPackageContents
     )
 }
 
@@ -526,6 +528,8 @@ pub fn needs_list(action: Action) -> bool {
             | Action::CopyWithFolders
             | Action::CutWithFolders
             | Action::ShowInFolder
+            | Action::MakeAlias
+            | Action::ShowPackageContents
     )
 }
 
@@ -790,6 +794,8 @@ mod tests {
                 Action::CommandPalette => "ctrl+shift+p",
                 Action::QuickOpen => "ctrl+p",
                 Action::PasteMove
+                | Action::MakeAlias
+                | Action::ShowPackageContents
                 | Action::Duplicate
                 | Action::BatchRename
                 | Action::ToggleTabLock
