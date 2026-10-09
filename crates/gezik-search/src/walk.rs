@@ -204,7 +204,7 @@ impl Shared {
             return Vec::new();
         }
         let visit = &self.visit;
-        let items = match read_dir_items(&job.dir, &|name, is_dir| visit.wants_meta(name, is_dir)) {
+        let mut items = match read_dir_items(&job.dir, &|name, is_dir| visit.wants_meta(name, is_dir)) {
             Ok(items) => items,
             Err(err) => {
                 self.problem(job.dir.clone(), describe(&err));
@@ -216,15 +216,15 @@ impl Shared {
         }
         self.read.fetch_add(1, Ordering::Relaxed);
         let rules = &self.rules;
-        let mut shown = Vec::with_capacity(items.len());
         let mut below = Vec::new();
-        for item in items {
+        // In place: a second list would double the memory of a folder of 100,000 files.
+        items.retain(|item| {
             if let Some((hidden, system)) = rules.shown
                 && !gezik_core::is_shown_name(&item.name, item.flags, hidden, system)
             {
-                continue;
+                return false;
             }
-            if goes_into(&item, rules) {
+            if goes_into(item, rules) {
                 let path = job.dir.join(&item.name);
                 if rules.skips(&item.name) {
                     self.skipped.fetch_add(1, Ordering::Relaxed);
@@ -237,9 +237,9 @@ impl Shared {
                     below.push(Job { dir: path, relative, depth: job.depth + 1 });
                 }
             }
-            shown.push(item);
-        }
-        self.visit.folder(&job.dir, &job.relative, shown);
+            true
+        });
+        self.visit.folder(&job.dir, &job.relative, items);
         below
     }
 }

@@ -239,6 +239,8 @@ impl FolderSizes {
             work(run, folder, names, mode, everything, explicit, &cancel, &|arrival| {
                 let _ = window.upgrade_in_event_loop(move |_| with_current(|s| s.arrived(arrival)));
             });
+            // What the walk read and freed (up to ~30 MB on a home folder) goes back (spec 12).
+            gezik_platform::priority::give_back_memory();
         });
         if spawned.is_err() {
             self.0.running.borrow_mut().take();
