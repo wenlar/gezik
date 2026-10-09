@@ -36,6 +36,7 @@ mod sidebar;
 mod single_instance;
 mod stack;
 mod start;
+mod system_changes;
 mod tab_sets;
 mod tab_tools;
 mod templates;
@@ -579,6 +580,11 @@ fn main() -> Result<(), slint::PlatformError> {
             print!("{}", cli::HELP);
         }
         return Ok(());
+    }
+    // Undo the system changes and exit (spec 11.4): never handed to a running Gezik, no window.
+    if cli.unregister {
+        instance::attach_console();
+        std::process::exit(system_changes::unregister_cli());
     }
     for warning in &cli.warnings {
         eprintln!("gezik: {warning}");

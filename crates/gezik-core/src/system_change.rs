@@ -145,6 +145,8 @@ fn undo_one(change: &Change, access: &dyn Access) -> Outcome {
     let put = |value: &Value, done: Outcome| match access.set(change, value) {
         Ok(()) => done,
         Err(err) if err.kind() == io::ErrorKind::DirectoryNotEmpty => Outcome::NotEmpty,
+        // Something not Gezik's took the place meanwhile (a link Gezik will not replace).
+        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => Outcome::LeftAsIs,
         Err(err) => Outcome::Failed(err.to_string()),
     };
     if now == change.after {
@@ -160,7 +162,8 @@ fn undo_one(change: &Change, access: &dyn Access) -> Outcome {
                 Some(rest) => put(&Value::Reg { ty: *ty, data: rest }, Outcome::EntryRemoved),
                 None => Outcome::WasBefore,
             },
-            _ => Outcome::WasBefore,
+            // The value is gone or not text since: not Gezik's to touch.
+            _ => Outcome::LeftAsIs,
         };
     }
     Outcome::LeftAsIs
@@ -505,6 +508,24 @@ mod tests {
             fake.values.borrow().get(&key(&ours)),
             Some(&Value::Reg { ty: RegType::ExpandSz, data: r"D:\first;%A%\x;;E:\last;".into() })
         );
+    }
+
+    #[test]
+    fn a_path_gone_or_taken_is_left_as_is() {
+        let fake = Fake::default();
+        let ours = path_change(reg("a"), reg(r"a;C:\G\bin"));
+        assert_eq!(undo(std::slice::from_ref(&ours), &fake), [Outcome::LeftAsIs], "Path deleted since");
+        struct Taken;
+        impl Access for Taken {
+            fn current(&self, _: &Change) -> io::Result<Value> {
+                Ok(Value::Link("/opt/gezik".into()))
+            }
+            fn set(&self, _: &Change, _: &Value) -> io::Result<()> {
+                Err(io::Error::new(io::ErrorKind::AlreadyExists, "not Gezik's link"))
+            }
+        }
+        let link = change(Kind::Symlink, "/h/.local/bin/gezik", Value::Absent, Value::Link("/opt/gezik".into()));
+        assert_eq!(undo(&[link], &Taken), [Outcome::LeftAsIs]);
     }
 
     #[test]
