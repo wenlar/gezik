@@ -1,5 +1,6 @@
 import { Theme } from "../theme.slint";
 import { ToolButton } from "button.slint";
+import { ScrollBar } from "scrollbar.slint";
 
 // One row of the panel, as Rust (operations.rs) builds it: a running (or just finished)
 // operation on the Current tab, or a finished job of the History (op_history.rs), which has
@@ -253,15 +254,13 @@ export component OpsPanel inherits Rectangle {
                 }
               }
             }
-            // Where the rows shown are, when there are more.
-            Rectangle {
-                x: parent.width - 3px;
-                y: -rows-list.content-y * root.list-height / max(1, root.shown.length) / root.row-height;
-                width: 3px;
-                height: root.list-height * 8 / max(root.shown.length, 8);
-                visible: root.shown.length > 8;
-                border-radius: 1.5px;
-                background: Theme.border;
+            // Where the rows shown are, when there are more than eight.
+            ScrollBar {
+                x: parent.width - self.width;
+                height: root.list-height;
+                value <=> rows-list.content-y;
+                maximum: -root.scroll-min;
+                page-size: root.list-height;
             }
         }
     }
