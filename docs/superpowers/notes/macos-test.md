@@ -387,6 +387,15 @@ Re-checks of the shared UI fixes (fix/shared-ui, on master)
 83. **Quick Open.** ⌘P lists places first (pinned, recent folders, tabs, tab sets, saved searches and filters); typing `down` finds Downloads; Alt+Return opens it in a new tab; the last line `Search for "x" in <folder>` starts a search. Go ▸ Quick Open… and Go ▸ Command Palette… do the same as the keys.
 84. **Saved searches.** Search for something, then the bar's ▾ ▸ Save search…: a name, then "Save with this folder" or "Save for any folder ({here})". `~/Library/Application Support/gezik/settings.toml` gets a `[[searches]]` entry; comments written there by hand stay. The sidebar's SEARCHES section lists it (magnifier icon): a click runs it, the tab is titled with its name, right-click ▸ Run in new tab / Rename… / Delete. A `{here}` search run in another folder searches there.
 
+### 9b1, command line and single instance
+
+85. **Tests first.** In the clone: `cargo test -p gezik-platform instance`. These tests (socket, stale socket, hung and huge callers, peer uid) only compiled on Windows; they never ran on a Mac before.
+86. **Hand-over.** With Gezik open, from Terminal: `/path/to/gezik ~/Documents` opens in the same window (if a Documents tab is open, it switches to it), the window comes to the front, and Terminal gets its prompt back at once. `gezik ~/Documents/x.pdf` opens the folder with `x.pdf` selected; Preview does not open.
+87. **Help, version, new window.** `gezik --help` and `gezik --version` print to Terminal. `gezik --new-window ~` opens a second window, 32 px offset (note it if the Dock shows a second icon). ⌘N and File ▸ New Window do the same. Close the first window, then the second; open Gezik again: the first window's tabs come back.
+88. **Hung or crashed Gezik.** `kill -STOP <pid>`, then `gezik ~`: its own window opens after about 2 s; `kill -CONT <pid>`. `kill -9 <pid>`, then `gezik ~`: a new first Gezik; `gezik /tmp` then goes to it. `ls -l "$TMPDIR"gezik-*` shows an `srw-------` socket and an `-rw-------` lock.
+89. **Off.** `[system] single-instance = false` in settings.toml, restart Gezik: every call opens its own window.
+90. **Bring to front.** The macOS arm of bringing the window forward (winit `set_minimized(false)` + `focus_window`) was not run or even compiled with tests on Windows: check that a minimized Gezik comes back and comes to the front, and note it if only the Dock icon bounces.
+
 Report anything else that looks wrong: layout, fonts, Retina scaling, ⌘ shortcuts that don't work, and the wording of the boxes.
 
 ## Known gaps (not bugs)
