@@ -46,18 +46,27 @@ pub fn dispatch(m: &Message) -> (Option<Call>, Option<Message>) {
     if m.kind != MsgKind::Call {
         return (None, None);
     }
+    if m.path.as_deref() != Some(PATH) {
+        return (None, answer(m, Some(("org.freedesktop.DBus.Error.UnknownObject", "no such object")), Vec::new()));
+    }
     match (m.interface.as_deref(), m.member.as_deref()) {
         (Some("org.freedesktop.DBus.Introspectable"), Some("Introspect")) => {
             (None, answer(m, None, vec![Value::Str(INTROSPECTION.into())]))
         }
         (Some("org.freedesktop.DBus.Peer"), Some("Ping")) => (None, answer(m, None, Vec::new())),
         (Some(INTERFACE), Some(member @ ("ShowFolders" | "ShowItems" | "ShowItemProperties"))) => {
-            let [Value::Array(_, uris), Value::Str(_)] = m.body.as_slice() else {
+            let [Value::Array(elem, uris), Value::Str(_)] = m.body.as_slice() else {
                 return (
                     None,
                     answer(m, Some(("org.freedesktop.DBus.Error.InvalidArgs", "expected (as, s)")), Vec::new()),
                 );
             };
+            if elem != "s" {
+                return (
+                    None,
+                    answer(m, Some(("org.freedesktop.DBus.Error.InvalidArgs", "expected (as, s)")), Vec::new()),
+                );
+            }
             let show = match member {
                 "ShowFolders" => Show::Folders,
                 "ShowItems" => Show::Items,
@@ -68,7 +77,10 @@ pub fn dispatch(m: &Message) -> (Option<Call>, Option<Message>) {
                 let Value::Str(uri) = uri else { continue };
                 if uri.starts_with("trash:") {
                     call.trash = true;
-                } else if let Some(path) = crate::linux::uri::path_from_uri(uri) {
+                } else if let Some(path) = crate::linux::uri::path_from_uri(uri)
+                    // A NUL (from %00) cannot be in a real path.
+                    && !path.as_os_str().as_encoded_bytes().contains(&0)
+                {
                     call.paths.push(path);
                 }
             }
@@ -94,6 +106,7 @@ impl Drop for Owner {
 
 /// Takes the name (DO_NOT_QUEUE: if another file manager has it, `AlreadyExists`) and answers
 /// calls on a thread of its own (no CPU while idle). A broken message closes the connection.
+/// Blocks up to a few seconds on a hung bus: call it off the UI thread.
 #[cfg(all(unix, not(target_os = "macos")))]
 pub fn serve(on_call: impl Fn(Call) + Send + 'static) -> std::io::Result<Owner> {
     use crate::linux::dbus::Bus;
@@ -106,6 +119,7 @@ pub fn serve(on_call: impl Fn(Call) + Send + 'static) -> std::io::Result<Owner> 
         body: vec![Value::Str(NAME.into()), Value::U32(4)],
         ..Message::default()
     })?;
+    bus.stream.set_read_timeout(None)?;
     // 1 primary owner, 4 already the owner.
     if !matches!(reply.body.first(), Some(Value::U32(1 | 4))) {
         return Err(std::io::Error::new(
@@ -114,7 +128,11 @@ pub fn serve(on_call: impl Fn(Call) + Send + 'static) -> std::io::Result<Owner> 
         ));
     }
     let owner = Owner(bus.stream.try_clone()?);
+    let guard = Owner(bus.stream.try_clone()?);
     std::thread::Builder::new().name("gezik-filemanager1".into()).spawn(move || {
+        // Shuts the socket down on any exit, a panic in on_call too: the Owner's clone would
+        // otherwise keep the name with nobody answering.
+        let _guard = guard;
         while let Ok(message) = bus.read() {
             let (call, reply) = dispatch(&message);
             if let Some(reply) = reply
@@ -126,8 +144,6 @@ pub fn serve(on_call: impl Fn(Call) + Send + 'static) -> std::io::Result<Owner> 
                 on_call(call);
             }
         }
-        // The Owner's clone would keep the name with nobody answering.
-        let _ = bus.stream.shutdown(std::net::Shutdown::Both);
     })?;
     Ok(owner)
 }
@@ -190,5 +206,26 @@ mod tests {
         let many: Vec<String> = (0..2000).map(|i| format!("file:///x{i}")).collect();
         let refs: Vec<&str> = many.iter().map(String::as_str).collect();
         assert_eq!(dispatch(&call("ShowFolders", &refs)).0.unwrap().paths.len(), 1000);
+    }
+
+    #[test]
+    fn only_our_object_and_string_arrays_are_served() {
+        let elsewhere = Message { path: Some("/".into()), ..call("ShowFolders", &["file:///x"]) };
+        let (none, reply) = dispatch(&elsewhere);
+        assert!(none.is_none());
+        assert_eq!(reply.unwrap().error_name.as_deref(), Some("org.freedesktop.DBus.Error.UnknownObject"));
+        let paths = Message {
+            body: vec![Value::Array("o".into(), vec![Value::Path("/x".into())]), Value::Str(String::new())],
+            ..call("ShowFolders", &[])
+        };
+        let (none, reply) = dispatch(&paths);
+        assert!(none.is_none());
+        assert_eq!(reply.unwrap().error_name.as_deref(), Some("org.freedesktop.DBus.Error.InvalidArgs"));
+    }
+
+    #[test]
+    fn a_nul_in_a_path_is_skipped() {
+        let (call_, _) = dispatch(&call("ShowItems", &["file:///a%00b", "file:///ok"]));
+        assert_eq!(call_.unwrap().paths, vec![PathBuf::from("/ok")]);
     }
 }

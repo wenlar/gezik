@@ -6,6 +6,8 @@
 pub const MAX_MESSAGE: usize = 1 << 20;
 /// Arrays, structs and variants together.
 const MAX_DEPTH: usize = 32;
+/// Items in one array: bounds what a 1 MB message can make Gezik allocate.
+const MAX_ITEMS: usize = 65_536;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -380,6 +382,9 @@ impl<'a> Reader<'a> {
                 let end = self.pos.checked_add(len).ok_or(Bad("truncated"))?;
                 let mut items = Vec::new();
                 while self.pos < end {
+                    if items.len() == MAX_ITEMS {
+                        return Err(Bad("too many array items"));
+                    }
                     items.push(self.value(elem, depth + 1)?);
                 }
                 if self.pos != end {
@@ -530,7 +535,8 @@ mod conn {
 
     impl Bus {
         /// The session bus: `DBUS_SESSION_BUS_ADDRESS`, else `$XDG_RUNTIME_DIR/bus`; EXTERNAL
-        /// auth with this uid; Hello.
+        /// auth with this uid; Hello. Reads and writes time out after 2 s until the caller
+        /// clears that.
         pub fn session() -> io::Result<Bus> {
             let addr = std::env::var("DBUS_SESSION_BUS_ADDRESS")
                 .ok()
@@ -549,6 +555,9 @@ mod conn {
                 #[cfg(not(any(target_os = "linux", target_os = "android")))]
                 Addr::Abstract(_) => return Err(io::Error::new(io::ErrorKind::Unsupported, "abstract sockets")),
             };
+            // A hung bus must not hold the caller; serve() clears this once it owns its name.
+            stream.set_read_timeout(Some(std::time::Duration::from_secs(2)))?;
+            stream.set_write_timeout(Some(std::time::Duration::from_secs(2)))?;
             // SAFETY: getuid cannot fail.
             let uid = unsafe { libc::getuid() }.to_string();
             let hex: String = uid.bytes().map(|b| format!("{b:02x}")).collect();
@@ -745,6 +754,13 @@ mod tests {
         assert!(split_type(&deep).is_err());
         assert!(encode(&Message { body: vec![Value::Array("{sv}x".into(), vec![])], ..hello() }).is_err());
         assert!(encode(&Message { body: vec![Value::Array(String::new(), vec![])], ..hello() }).is_err());
+    }
+
+    #[test]
+    fn arrays_have_at_most_65536_items() {
+        let bytes = |n: usize| Message { body: vec![Value::Array("y".into(), vec![Value::Byte(0); n])], ..hello() };
+        assert!(decode(&encode(&bytes(MAX_ITEMS)).unwrap()).is_ok());
+        assert_eq!(decode(&encode(&bytes(MAX_ITEMS + 1)).unwrap()), Err(Bad("too many array items")));
     }
 
     #[test]
