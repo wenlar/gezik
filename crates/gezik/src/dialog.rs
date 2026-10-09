@@ -193,6 +193,47 @@ impl Dialogs {
         );
     }
 
+    /// Like `ask_text_noted`, but every button except the last (Esc) answers, with its index
+    /// and the text (Connect / Map to Z: / Cancel).
+    pub fn ask_text_choice(
+        &self,
+        title: impl Into<String>,
+        message: impl Into<String>,
+        initial: impl Into<String>,
+        buttons: &[&str],
+        note: impl Fn(&str) -> (String, bool) + 'static,
+        answer: impl FnOnce(Option<(usize, String)>) + 'static,
+    ) {
+        let window = self.0.window.clone();
+        let escape = buttons.len().saturating_sub(1);
+        self.push(Question {
+            title: title.into(),
+            message: message.into(),
+            buttons: buttons.iter().map(|b| (*b).to_owned()).collect(),
+            escape,
+            input: Some(initial.into()),
+            secret: false,
+            job: None,
+            note: Some(Rc::new(note)),
+            answer: Box::new(move |choice| {
+                let text = window.upgrade().map(|w| w.get_dialog_input().to_string());
+                answer(choice.filter(|&c| c != escape).zip(text));
+            }),
+        });
+    }
+
+    /// A password field with no engine job (Connect to Server on Linux); the window keeps no
+    /// copy once answered.
+    pub fn ask_secret(
+        &self,
+        title: impl Into<String>,
+        message: impl Into<String>,
+        buttons: &[&str],
+        answer: impl FnOnce(Option<String>) + 'static,
+    ) {
+        self.ask_input(title.into(), message.into(), (String::new(), true), buttons, (None, None), Box::new(answer));
+    }
+
     fn ask_input(
         &self,
         title: String,

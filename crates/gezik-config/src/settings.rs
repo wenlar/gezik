@@ -1444,6 +1444,9 @@ pub struct WindowState {
     pub maximized: bool,
 }
 
+/// Connect to Server's addresses kept in state.toml `[servers] recent` (spec 9 §7.4); never a password.
+pub const SERVERS_MAX: usize = 10;
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct State {
     pub window: Option<WindowState>,
@@ -1469,6 +1472,8 @@ pub struct State {
     pub session: Session,
     /// The palette's items used last, newest first (spec 7.3).
     pub palette_recent: Vec<String>,
+    /// Connect to Server's addresses, newest first (`[servers] recent`).
+    pub servers_recent: Vec<String>,
 }
 
 /// state.toml's `[session]` (spec 5.1): the tabs in order and the one in front. An entry
@@ -1592,21 +1597,25 @@ impl State {
             .and_then(|v| v.as_array())
             .map(|items| items.iter().filter_map(parse_visit).collect())
             .unwrap_or_default();
-        let palette_recent = table
-            .get("palette")
-            .and_then(|v| v.as_table())
-            .and_then(|p| p.get("recent"))
-            .and_then(|v| v.as_array())
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|v| v.as_str())
-                    .filter(|s| !s.is_empty())
-                    .take(gezik_core::palette::RECENT_MAX)
-                    .map(str::to_owned)
-                    .collect()
-            })
-            .unwrap_or_default();
+        let recent = |section: &str, max: usize| -> Vec<String> {
+            table
+                .get(section)
+                .and_then(|v| v.as_table())
+                .and_then(|p| p.get("recent"))
+                .and_then(|v| v.as_array())
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                        .take(max)
+                        .map(str::to_owned)
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let palette_recent = recent("palette", gezik_core::palette::RECENT_MAX);
+        let servers_recent = recent("servers", SERVERS_MAX);
         State {
             window,
             sidebar_width,
@@ -1622,6 +1631,7 @@ impl State {
             history,
             session: session_state(table.get("session")),
             palette_recent,
+            servers_recent,
         }
     }
 
@@ -1739,6 +1749,12 @@ impl State {
             let mut palette = toml::Table::new();
             palette.insert("recent".into(), toml::Value::Array(recent));
             root.insert("palette".into(), toml::Value::Table(palette));
+        }
+        if !self.servers_recent.is_empty() {
+            let recent = self.servers_recent.iter().take(SERVERS_MAX).cloned().map(toml::Value::String).collect();
+            let mut servers = toml::Table::new();
+            servers.insert("recent".into(), toml::Value::Array(recent));
+            root.insert("servers".into(), toml::Value::Table(servers));
         }
         if !self.session.is_empty() {
             let tabs = self
@@ -2979,6 +2995,18 @@ shortcut = \"shift+f8\"
         assert_eq!(back.palette_recent.len(), 20);
         assert_eq!(back.palette_recent[0], "action:0");
         assert!(State::parse("[palette]\nrecent = [1, \"tab:2\"]\n").palette_recent == ["tab:2"]);
+    }
+
+    #[test]
+    fn the_servers_list_keeps_ten() {
+        let state = State { servers_recent: (0..12).map(|i| format!(r"\\nas\s{i}")).collect(), ..State::default() };
+        let text = state.to_toml();
+        assert!(text.contains("[servers]"));
+        let back = State::parse(&text);
+        assert_eq!(back.servers_recent.len(), SERVERS_MAX);
+        assert_eq!(back.servers_recent[0], r"\\nas\s0");
+        assert_eq!(State::parse("[servers]\nrecent = [1, \"\", \"smb://nas/a\"]\n").servers_recent, ["smb://nas/a"]);
+        assert!(!State::default().to_toml().contains("[servers]"), "nothing written while empty");
     }
 
     #[test]

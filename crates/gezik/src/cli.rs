@@ -188,8 +188,8 @@ pub fn shell_target(text: &str, kind: impl Fn(&Path) -> PathKind) -> Shell {
         [letter, b':'] if letter.is_ascii_alphabetic() => format!("{text}\\"),
         _ => text.to_owned(),
     };
-    // shortcut: a bare `\\server` goes to Explorer until 9b6 lists its shares.
-    if !plain_path(&path) {
+    // A bare `\\server` opens too: Gezik lists its shares (9b6).
+    if !plain_path(&path) && gezik_core::path_text::server_only(&path).is_none() {
         return Shell::Explorer;
     }
     let path = PathBuf::from(path);
@@ -289,7 +289,7 @@ mod tests {
     #[test]
     fn shell_targets_map_as_the_table_says() {
         let kind = |p: &Path| match p.to_str().unwrap_or("") {
-            r"C:\" | r"D:\Work" | r"\\srv\share\x" => PathKind::Dir,
+            r"C:\" | r"D:\Work" | r"\\srv\share\x" | r"\\srv" | r"\\srv\" => PathKind::Dir,
             r"D:\a.zip" | r"D:\Docs.library-ms" | r"D:\a.txt" => PathKind::File,
             _ => PathKind::Missing,
         };
@@ -310,8 +310,9 @@ mod tests {
             ("::{679F85CB-0220-4080-B29B-5540CC05AAB6}", Shell::StartFolder),
             (r"::{20D04FE0-3AEA-1069-A2D8-08002B30309D}\::{F02C1A0D-BE21-4350-88B0-7367FC96EF3C}", Shell::Explorer),
             ("::{26EE0668-A00A-44D7-9371-BEB064C98683}", Shell::Explorer),
-            (r"\\srv", Shell::Explorer),
-            (r"\\srv\", Shell::Explorer),
+            (r"\\srv", open(r"\\srv", false)),
+            (r"\\srv\", open(r"\\srv\", false)),
+            (r"\\?", Shell::Explorer),
             (r"\\?\C:\x", Shell::Explorer),
             (r"D:\a.zip", open(r"D:\a.zip", true)),
             (r"D:\Docs.library-ms", Shell::Explorer),

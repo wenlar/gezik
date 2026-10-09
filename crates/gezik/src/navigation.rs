@@ -70,6 +70,12 @@ fn list(location: &Location, mode: &Mode) -> LoadResult {
     }
     match location {
         Location::Drives => LoadResult::Drives(gezik_platform::drives()),
+        // `\\server` (Windows): its disk shares as folders (spec 9 §7.4). The name came from
+        // the user; nothing is discovered.
+        Location::Path(path) if let Some(server) = server_of(path) => match gezik_platform::network::shares(&server) {
+            Ok(names) => LoadResult::Files(path.clone(), names.into_iter().map(share_entry).collect()),
+            Err(err) => LoadResult::Failed(err),
+        },
         Location::Path(path) => match list_dir(path) {
             Ok(mut entries) => {
                 // What a copy or delete is still working on under a temporary name.
@@ -97,6 +103,19 @@ fn list(location: &Location, mode: &Mode) -> LoadResult {
     }
 }
 
+/// The server of a bare `\\server` path (Windows), whose shares are its listing.
+fn server_of(path: &Path) -> Option<String> {
+    if !cfg!(windows) {
+        return None;
+    }
+    gezik_core::path_text::server_only(&path.to_string_lossy()).map(str::to_owned)
+}
+
+/// A share as a folder row of its server's listing.
+fn share_entry(name: String) -> Entry {
+    Entry { name, is_dir: true, flags: 0, size: 0, modified: None, created: None }
+}
+
 /// The listing to show after a load of `location` failed. A failed `Show` leaves the tab at
 /// a location whose contents are unknown, so nothing listed for another folder (or tab) may
 /// stay on screen: it shows an empty listing for `location`. A failed move (navigate, back,
@@ -122,6 +141,10 @@ fn apply_failure(cleared: &mut bool, mode: &Mode, location: &Location) -> Option
 /// on screen) if there is one, else from the working folder; on Windows `..` parts are
 /// resolved too, so the address bar parts stay right.
 pub(crate) fn resolve_typed(text: &str, base: Option<&Path>) -> PathBuf {
+    // `std::path::absolute` mangles a bare `\server`; it lists its shares as typed.
+    if cfg!(windows) && gezik_core::path_text::server_only(text).is_some() {
+        return PathBuf::from(text);
+    }
     let path = PathBuf::from(text);
     let path = match base {
         Some(base) if path.is_relative() => base.join(path),
@@ -870,6 +893,11 @@ impl Navigator {
         crumbs(&self.active_location(), MAX_CRUMBS).into_iter().nth(index).map(|crumb| crumb.location)
     }
 
+    /// The window that owns a system prompt (Windows' login window, Explorer's eject).
+    pub fn owner(&self) -> isize {
+        self.0.borrow().window.upgrade().map_or(0, |w| gezik_platform::network::owner_of(&w.window().window_handle()))
+    }
+
     pub fn status(&self, text: String) {
         if let Some(window) = self.0.borrow().window.upgrade() {
             window.set_status(text.into());
@@ -1026,9 +1054,10 @@ impl Navigator {
     fn watch_shown(&self, location: &Location) {
         // Results are not watched (spec 4.7).
         let folder = match location {
-            Location::Path(path) => Some(path.clone()),
-            // The trash's bins are watched by `trash_view` while it shows.
-            Location::Drives | Location::Search(_) | Location::Flat(_) | Location::Trash => None,
+            Location::Path(path) if server_of(path).is_none() => Some(path.clone()),
+            // The trash's bins are watched by `trash_view` while it shows; a server's shares
+            // are not watched.
+            Location::Path(_) | Location::Drives | Location::Search(_) | Location::Flat(_) | Location::Trash => None,
         };
         if *location != Location::Trash {
             crate::trash_view::left();
@@ -1052,6 +1081,28 @@ impl Navigator {
             inner.pace.reset();
             inner.refresh_timer.stop();
         }
+    }
+
+    /// Lets go of everything on the drive at `root` before it is ejected (spec 9 §7.4): every
+    /// tab there goes to This PC (Back returns), and the watch and removal watch of a folder
+    /// there end now, not once This PC is listed. shortcut: a search walk or thumbnail still
+    /// running on the drive is not waited for; the system then says it is in use.
+    pub fn leave_drive(&self, root: &Path) {
+        self.save_view();
+        let active = {
+            let mut inner = self.0.borrow_mut();
+            if inner.watched.as_deref().is_some_and(|w| gezik_core::ops::paths::is_within(w, root)) {
+                inner.watch.stop_now();
+                inner.refresh_timer.stop();
+                inner.removal = None;
+                inner.watched = None;
+            }
+            inner.tabs.leave(root)
+        };
+        if active {
+            self.load(Location::Drives, Mode::Show, None);
+        }
+        self.update_chrome();
     }
 
     /// The watched folder's drive is about to be removed: let go of it now. Then see, for a
@@ -1207,6 +1258,14 @@ pub fn sync_model<T: Clone + PartialEq + 'static>(model: &VecModel<T>, items: im
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_bare_server_is_listed_by_its_shares_on_windows_only() {
+        assert_eq!(server_of(Path::new(r"\\nas")).as_deref(), if cfg!(windows) { Some("nas") } else { None });
+        assert_eq!(server_of(Path::new(r"\\nas\foto")), None);
+        let entry = share_entry("foto".to_owned());
+        assert!(entry.is_dir && entry.name == "foto" && entry.size == 0);
+    }
 
     #[test]
     fn opening_follows_packages_and_aliases() {

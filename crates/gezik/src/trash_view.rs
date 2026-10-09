@@ -242,8 +242,11 @@ pub fn allowed(action: Action) -> bool {
         | Action::ShowTrash
         | Action::PutBack
         | Action::EmptyTrash
-        | Action::SystemIntegration => true,
-        Action::Rename
+        | Action::SystemIntegration
+        | Action::ConnectToServer => true,
+        // No drive to eject in the trash.
+        Action::Eject
+        | Action::Rename
         | Action::NewFolder
         | Action::Copy
         | Action::Cut
