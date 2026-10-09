@@ -162,6 +162,7 @@ pub fn parse_chord(text: &str, platform: Platform) -> Result<Option<Chord>, Stri
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Action {
     NewTab,
+    NewWindow,
     CloseTab,
     NextTab,
     PrevTab,
@@ -261,8 +262,9 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Action; 72] = [
+    pub const ALL: [Action; 73] = [
         Action::NewTab,
+        Action::NewWindow,
         Action::CloseTab,
         Action::NextTab,
         Action::PrevTab,
@@ -339,6 +341,7 @@ impl Action {
     pub fn name(self) -> &'static str {
         match self {
             Action::NewTab => "new-tab",
+            Action::NewWindow => "new-window",
             Action::CloseTab => "close-tab",
             Action::NextTab => "next-tab",
             Action::PrevTab => "prev-tab",
@@ -417,6 +420,7 @@ impl Action {
     pub fn title(self) -> &'static str {
         match self {
             Action::NewTab => "New Tab",
+            Action::NewWindow => "New Window",
             Action::CloseTab => "Close Tab",
             Action::NextTab => "Show Next Tab",
             Action::PrevTab => "Show Previous Tab",
@@ -536,6 +540,7 @@ impl Action {
     fn default_texts(self, platform: Platform) -> &'static [&'static str] {
         match (self, platform) {
             (Action::NewTab, _) => &["mod+t"],
+            (Action::NewWindow, _) => &["mod+n"],
             (Action::CloseTab, _) => &["mod+w"],
             (Action::NextTab, _) => &["ctrl+tab"],
             (Action::PrevTab, _) => &["ctrl+shift+tab"],
@@ -826,7 +831,7 @@ mod tests {
             assert_eq!(fixed_owner(&cmd_option, Platform::Mac), None);
         }
         assert_eq!((Action::pin(0), Action::pin(10)), (None, None));
-        assert_eq!(Action::ALL.len(), 72);
+        assert_eq!(Action::ALL.len(), 73);
         assert_eq!(other.action_for(&chord("ctrl+1")), Some(Action::Tab1), "Ctrl+1 is still tab 1");
         assert_eq!(other.action_for(&chord("ctrl+alt+1")), None, "AltGr+1 types");
     }
@@ -1028,6 +1033,7 @@ duplicate = \"ctrl+d\"
         assert_eq!(
             messages,
             [
+                "shortcuts: the default \"mod+n\" of new-window is used by new-tab; new-window is disabled (give new-tab another key to use it)",
                 "shortcuts: the default \"mod+1\" of tab-1 is used by view-list; tab-1 is disabled (give view-list another key to use it)",
                 "shortcuts: the default \"mod+2\" of tab-2 is used by view-grid; tab-2 is disabled (give view-grid another key to use it)",
             ]
@@ -1166,9 +1172,9 @@ back = [\"ctrl+u\", \"ctrl+j\"]
 
     #[test]
     fn user_binding_replaces_default() {
-        let (s, warnings) = build("[shortcuts]\nnew-tab = \"ctrl+n\"\n");
+        let (s, warnings) = build("[shortcuts]\nnew-tab = \"ctrl+shift+y\"\n");
         assert!(warnings.is_empty(), "{warnings:?}");
-        assert_eq!(s.action_for(&chord("ctrl+n")), Some(Action::NewTab));
+        assert_eq!(s.action_for(&chord("ctrl+shift+y")), Some(Action::NewTab));
         assert_eq!(s.action_for(&chord("ctrl+t")), None);
     }
 
@@ -1283,7 +1289,7 @@ clear-history = \"ctrl+shift+h\"
         for name in ["search", "flat-view", "show-in-folder", "copy-with-folders", "cut-with-folders"] {
             assert!(Action::from_name(name).is_some(), "{name}");
         }
-        assert_eq!(Action::ALL.len(), 72);
+        assert_eq!(Action::ALL.len(), 73);
     }
 
     #[test]
@@ -1305,7 +1311,7 @@ clear-history = \"ctrl+shift+h\"
         for name in ["command-palette", "quick-open", "calculate-folder-sizes", "save-search"] {
             assert!(Action::from_name(name).is_some(), "{name}");
         }
-        assert_eq!(Action::ALL.len(), 72);
+        assert_eq!(Action::ALL.len(), 73);
     }
 
     #[test]

@@ -180,6 +180,20 @@ impl Default for SessionSettings {
     }
 }
 
+/// `[system]` (spec 13.1): how Gezik meets the system. 9b1 has the single instance; the
+/// tray, the hotkey, start at login and Quick Look come with their parts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SystemSettings {
+    /// A second `gezik` opens in the running window (spec 5.2). Read at start only.
+    pub single_instance: bool,
+}
+
+impl Default for SystemSettings {
+    fn default() -> Self {
+        SystemSettings { single_instance: true }
+    }
+}
+
 /// `[terminal]`: the command "Open terminal" runs instead of the one Gezik finds.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TerminalSettings {
@@ -306,6 +320,7 @@ pub struct Settings {
     pub keyboard: KeyboardSettings,
     pub history: HistorySettings,
     pub session: SessionSettings,
+    pub system: SystemSettings,
     pub terminal: TerminalSettings,
     pub search: SearchSettings,
     /// Tab sets (`[[tab-sets]]`); invalid ones are left out.
@@ -344,6 +359,7 @@ impl Default for Settings {
             keyboard: KeyboardSettings::default(),
             history: HistorySettings::default(),
             session: SessionSettings::default(),
+            system: SystemSettings::default(),
             terminal: TerminalSettings::default(),
             search: SearchSettings::default(),
             tab_sets: Vec::new(),
@@ -547,6 +563,13 @@ impl Settings {
             Some(value) => match value.as_table() {
                 Some(session) => settings.session = parse_session(session, file, warnings),
                 None => warnings.push(Warning::new(file, format!("session: expected a table, got {value}"))),
+            },
+        }
+        match table.get("system") {
+            None => {}
+            Some(value) => match value.as_table() {
+                Some(system) => settings.system = parse_system(system, file, warnings),
+                None => warnings.push(Warning::new(file, format!("system: expected a table, got {value}"))),
             },
         }
         match table.get("terminal") {
@@ -1070,6 +1093,18 @@ fn parse_session(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -
         match value.as_bool() {
             Some(on) => out.restore = on,
             None => warnings.push(Warning::new(file, format!("session.restore: expected true or false, got {value}"))),
+        }
+    }
+    out
+}
+
+fn parse_system(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> SystemSettings {
+    let mut out = SystemSettings::default();
+    if let Some(value) = table.get("single-instance") {
+        match value.as_bool() {
+            Some(on) => out.single_instance = on,
+            None => warnings
+                .push(Warning::new(file, format!("system.single-instance: expected true or false, got {value}"))),
         }
     }
     out
@@ -3010,5 +3045,18 @@ shortcut = \"shift+f8\"
         let back = State::parse(&state.to_toml());
         assert_eq!(back.result_columns, Some(columns));
         assert_eq!(back.columns, None);
+    }
+
+    #[test]
+    fn single_instance_is_on_unless_turned_off() {
+        assert!(Settings::default().system.single_instance);
+        let (settings, warnings) = parse("[system]\nsingle-instance = false\n");
+        assert!(!settings.system.single_instance);
+        assert!(warnings.is_empty());
+        let (settings, warnings) = parse("[system]\nsingle-instance = \"no\"\n");
+        assert!(settings.system.single_instance, "a bad value keeps the default");
+        assert_eq!(warnings[0].message, "system.single-instance: expected true or false, got \"no\"");
+        let (_, warnings) = parse("system = 3\n");
+        assert_eq!(warnings[0].message, "system: expected a table, got 3");
     }
 }

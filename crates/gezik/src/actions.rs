@@ -84,6 +84,7 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
             let Some(location) = location else { return false };
             nav.go(location);
         }
+        Action::NewWindow => open_new_window(nav, view),
         // Not theirs: `handle_key` and the menu bar run these themselves. Listed one by one so
         // that a new action is a compile error here until it is placed.
         Action::NewTab
@@ -116,4 +117,28 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         | Action::QuickOpen => return false,
     }
     true
+}
+
+/// `new-window` (spec 5.3): this Gezik again as a process of its own, at the folder shown
+/// (the start folder for This PC, a search or a flat view). One process has one window.
+fn open_new_window(nav: &Navigator, view: &View) {
+    let exe = match std::env::current_exe() {
+        Ok(exe) => exe,
+        Err(err) => return view.note(format!("Cannot open a new window: {}", gezik_platform::fs::describe(&err))),
+    };
+    let mut command = std::process::Command::new(exe);
+    command.arg("--new-window").stdin(std::process::Stdio::null());
+    if let gezik_core::nav::Location::Path(dir) = nav.active_location() {
+        command.arg("--").arg(dir);
+    }
+    match command.spawn() {
+        // Waited for on a thread of its own, so its exit leaves no zombie behind.
+        #[cfg(unix)]
+        Ok(mut child) => {
+            let _ = std::thread::Builder::new().name("gezik-window".into()).spawn(move || child.wait());
+        }
+        #[cfg(not(unix))]
+        Ok(_) => {}
+        Err(err) => view.note(format!("Cannot open a new window: {}", gezik_platform::fs::describe(&err))),
+    }
 }

@@ -139,6 +139,11 @@ impl ConfigStore {
         self.state.update(change);
     }
 
+    /// `state.toml` is no longer written by this Gezik (a second window's, spec 5.3).
+    pub fn keep_state_unwritten(&self) {
+        self.state.keep_unwritten();
+    }
+
     /// Waits (up to 5 s) until every change of the state is written: before quitting.
     pub fn flush_state(&self) {
         self.state.flush();

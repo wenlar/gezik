@@ -4,6 +4,7 @@
 mod actions;
 mod archives;
 mod batch_rename;
+mod cli;
 mod conflicts;
 mod context_menu;
 mod convert;
@@ -227,7 +228,8 @@ fn perform(
         | Action::CopyWithFolders
         | Action::CutWithFolders
         | Action::CalculateFolderSizes
-        | Action::SaveSearch => return actions::run(action, nav, view),
+        | Action::SaveSearch
+        | Action::NewWindow => return actions::run(action, nav, view),
     }
     true
 }
@@ -498,11 +500,12 @@ fn handle_key(
 fn apply_config_and_start(
     window: &AppWindow,
     files: &mut ConfigFiles,
-    cli: Option<PathBuf>,
+    cli: &[cli::Target],
+    new_tab: bool,
     saved: Option<&Session>,
 ) -> (Settings, StartPlan) {
     let loaded = apply_config(window, files);
-    let plan = resolve_start(&loaded.settings, cli, saved);
+    let plan = resolve_start(&loaded.settings, cli, new_tab, saved);
     if !plan.warnings.is_empty() {
         files.warnings.extend(plan.warnings.iter().cloned());
         apply_config(window, files);
@@ -511,14 +514,13 @@ fn apply_config_and_start(
 }
 
 /// [`start::plan_start`] against the real file system.
-fn resolve_start(settings: &Settings, cli: Option<PathBuf>, saved: Option<&Session>) -> StartPlan {
+fn resolve_start(settings: &Settings, cli: &[cli::Target], new_tab: bool, saved: Option<&Session>) -> StartPlan {
     let saved = saved.filter(|_| settings.session.restore);
-    // Absolute, so the address bar parts and "up" work for `gezik .` too.
-    let cli = cli.map(start::absolute);
     let dirs = gezik_config::paths::KnownDirs::system();
     start::plan_start(
         &settings.start_folder,
         cli,
+        new_tab,
         &path_box::home(),
         |text| dirs.expand_checked(text),
         start::path_kind,
@@ -553,6 +555,20 @@ fn main() -> Result<(), slint::PlatformError> {
     if std::env::args_os().nth(1).is_some_and(|arg| arg == gezik_batch::pdf::client::WORKER_ARG) {
         std::process::exit(gezik_batch::pdf::worker::main());
     }
+    // The command line (spec 5.1), before Slint and the settings: --help and --version only print.
+    let mut cli = cli::parse(std::env::args_os().skip(1), cfg!(windows));
+    if cli.help || cli.version {
+        if cli.version {
+            println!("gezik {}", env!("CARGO_PKG_VERSION"));
+        } else {
+            print!("{}", cli::HELP);
+        }
+        return Ok(());
+    }
+    for warning in &cli.warnings {
+        eprintln!("gezik: {warning}");
+    }
+    cli.make_absolute();
     // Gezik has its own tabs: no window tabs of macOS (nor their items in the View menu).
     #[cfg(target_os = "macos")]
     gezik_platform::app::no_window_tabs();
@@ -574,15 +590,12 @@ fn main() -> Result<(), slint::PlatformError> {
         eprintln!("gezik: no config folder available; using defaults");
         files.warnings.push(Warning::new("config", "no config folder available; using default settings"));
     }
+    files.warnings.extend(cli.warnings.iter().map(|w| Warning::new("command line", w.clone())));
     // Something sensible is on screen even if the selected theme cannot be read.
     theme_bridge::apply(&window, &theme::builtin_dark());
     let saved_state = config.as_ref().map(ConfigStore::load_state).unwrap_or_default();
-    let (initial_settings, plan) = apply_config_and_start(
-        &window,
-        &mut files,
-        std::env::args_os().nth(1).map(PathBuf::from),
-        Some(&saved_state.session),
-    );
+    let (initial_settings, plan) =
+        apply_config_and_start(&window, &mut files, &cli.targets, cli.new_tab, Some(&saved_state.session));
 
     // Folder views; a broken views.toml starts over and says so in the status bar.
     let (memory, views_warning) = config.as_ref().map(ConfigStore::load_views).unwrap_or_default();
@@ -615,7 +628,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 let _ = weak.upgrade_in_event_loop(move |window| {
                     let mut current = files.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                     *current = fresh;
-                    let (_, plan) = apply_config_and_start(&window, &mut current, None, None);
+                    let (_, plan) = apply_config_and_start(&window, &mut current, &[], false, None);
                     navigation::with_current(|nav| nav.set_start(plan.start));
                 });
             },
