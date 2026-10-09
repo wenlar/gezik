@@ -21,6 +21,7 @@ pub fn shell_command(exe: &str, arg: &str) -> String {
 
 /// The exe in `data` if `data` is exactly [`shell_command`]'s text for `arg` and the exe is an
 /// absolute `…\gezik.exe` (any case): nothing added, nothing missing, no other program.
+/// Callers must also require the value to be REG_SZ (an EXPAND_SZ would expand `%…%`).
 pub fn command_exe<'a>(data: &'a str, arg: &str) -> Option<&'a str> {
     let tail = format!(r#"" --shell "{arg}""#);
     let exe = data.strip_prefix('"')?.strip_suffix(tail.as_str())?;
@@ -71,26 +72,50 @@ fn reg_hex(n: u8, data: &str) -> String {
     format!("hex({n}):{}", bytes.join(","))
 }
 
+/// Text that cannot break a .reg line or section: no control characters, no `[` or `]`.
+fn reg_safe(text: &str) -> bool {
+    !text.chars().any(|c| c.is_control() || c == '[' || c == ']')
+}
+
+/// A key the restore file may name: under `HKCU\Software\Classes\` (where the default file
+/// manager's changes are) and [`reg_safe`]. The caller also keeps only Gezik's allowed places.
+fn restorable_key(place: &str) -> bool {
+    const ROOT: &str = r"HKCU\Software\Classes\";
+    place.get(..ROOT.len()).is_some_and(|root| root.eq_ignore_ascii_case(ROOT))
+        && place.len() > ROOT.len()
+        && reg_safe(place)
+}
+
 /// `restore-explorer.reg` (decision 12): the default file manager's changes undone, newest
-/// first, as regedit imports them without Gezik.
+/// first, as regedit imports them without Gezik. A change it cannot write safely (another
+/// place, a broken name, a value type it does not know) becomes a comment with no journal text.
 pub fn restore_reg(changes: &[Change]) -> String {
-    let key = |place: &str| place.replacen(r"HKCU\", r"HKEY_CURRENT_USER\", 1);
+    const SKIPPED: &str = "; skipped a change this file cannot undo safely.\r\n";
+    let key = |place: &str| format!(r"HKEY_CURRENT_USER\{}", &place[r"HKCU\".len()..]);
     let mut out = String::from("Windows Registry Editor Version 5.00\r\n\r\n");
     for change in changes.iter().rev() {
         match (change.kind, &change.before) {
-            (Kind::RegistryValue, before) => {
+            (Kind::RegistryValue, before) if restorable_key(&change.place) && reg_safe(&change.name) => {
                 let name = if change.name.is_empty() { "@".to_owned() } else { reg_string(&change.name) };
                 let value = match before {
                     Value::Reg { ty: RegType::Sz, data } => reg_string(data),
                     Value::Reg { ty: RegType::ExpandSz, data } => reg_hex(2, data),
-                    _ => "-".to_owned(),
+                    Value::Absent => "-".to_owned(),
+                    // A DWORD or anything else of someone's: never deleted from here.
+                    _ => {
+                        out.push_str(SKIPPED);
+                        continue;
+                    }
                 };
                 out.push_str(&format!("[{}]\r\n{name}={value}\r\n\r\n", key(&change.place)));
             }
-            (Kind::RegistryKey, Value::Absent) => out.push_str(&format!("[-{}]\r\n\r\n", key(&change.place))),
-            (Kind::File | Kind::Folder, Value::Absent) => {
+            (Kind::RegistryKey, Value::Absent) if restorable_key(&change.place) => {
+                out.push_str(&format!("[-{}]\r\n\r\n", key(&change.place)));
+            }
+            (Kind::File | Kind::Folder, Value::Absent) if reg_safe(&change.place) => {
                 out.push_str(&format!("; Gezik also made {}; delete it by hand if you like.\r\n", change.place));
             }
+            (Kind::RegistryValue | Kind::RegistryKey | Kind::File | Kind::Folder, _) => out.push_str(SKIPPED),
             _ => {}
         }
     }
@@ -135,7 +160,7 @@ fn exec_unquote(text: &str) -> Option<(String, String)> {
 pub fn desktop_entry(exe: &str) -> String {
     format!(
         "[Desktop Entry]\nType=Application\nName=Gezik\nComment=File manager\nExec={} %U\nIcon=system-file-manager\nTerminal=false\nCategories=System;FileTools;FileManager;\nMimeType=inode/directory;\nDBusActivatable=false\n",
-        exec_quote(exe)
+        exec_quote(exe).replace('%', "%%")
     )
 }
 
@@ -143,6 +168,7 @@ pub fn desktop_entry(exe: &str) -> String {
 pub fn desktop_exe(text: &str) -> Option<String> {
     let line = text.lines().find_map(|l| l.strip_prefix("Exec="))?;
     let (exe, rest) = exec_unquote(line)?;
+    let exe = exe.replace("%%", "%");
     (rest == " %U" && desktop_entry(&exe) == text).then_some(exe)
 }
 
@@ -346,9 +372,41 @@ mod tests {
     #[test]
     fn restore_reg_keeps_a_foreign_line_break_inside_its_value() {
         let before = Value::Reg { ty: RegType::Sz, data: "x\r\n[HKEY_CURRENT_USER\\Evil]".into() };
-        let text = restore_reg(&[change(Kind::RegistryValue, r"HKCU\K", "", before, Value::Absent)]);
+        let place = r"HKCU\Software\Classes\Directory\shell";
+        let text = restore_reg(&[change(Kind::RegistryValue, place, "", before, Value::Absent)]);
         assert!(!text.contains("[HKEY_CURRENT_USER\\Evil]"), "{text}");
         assert!(text.contains("@=hex(1):78,00,0d,00,0a,00,"), "{text}");
+    }
+
+    #[test]
+    fn restore_reg_writes_nothing_from_a_tampered_journal() {
+        let sz = |d: &str| Value::Reg { ty: RegType::Sz, data: d.into() };
+        let classes = r"HKCU\Software\Classes\Directory\shell";
+        let evil = "x]\r\n[HKEY_LOCAL_MACHINE\\Evil]";
+        let changes = [
+            change(Kind::RegistryValue, r"HKLM\Software\Classes\Directory\shell", "", sz("x"), sz("gezik")),
+            change(Kind::RegistryKey, r"HKLM\Software\Evil", "", Value::Absent, Value::Present),
+            change(Kind::RegistryKey, r"HKCU\Environment", "", Value::Absent, Value::Present),
+            change(Kind::RegistryValue, r"HKCU\Software\Classes\", "", sz("x"), sz("gezik")),
+            change(Kind::RegistryValue, &format!(r"HKCU\Software\Classes\{evil}"), "", sz("x"), sz("gezik")),
+            change(Kind::RegistryKey, &format!(r"HKCU\Software\Classes\{evil}"), "", Value::Absent, Value::Present),
+            change(Kind::RegistryValue, classes, evil, Value::Absent, sz("gezik")),
+            change(Kind::RegistryValue, classes, "a\tb", Value::Absent, sz("gezik")),
+            change(Kind::RegistryValue, classes, "", Value::Other, sz("gezik")),
+            change(Kind::File, &format!(r"C:\{evil}"), "", Value::Absent, Value::Text("x".into())),
+        ];
+        let text = restore_reg(&changes);
+        let skipped = "; skipped a change this file cannot undo safely.\r\n";
+        assert_eq!(text, format!("Windows Registry Editor Version 5.00\r\n\r\n{}", skipped.repeat(changes.len())));
+    }
+
+    #[test]
+    fn desktop_exec_doubles_a_percent_sign() {
+        let exe = "/home/u/100% sure/gezik";
+        let entry = desktop_entry(exe);
+        assert!(entry.contains("Exec=\"/home/u/100%% sure/gezik\" %U\n"), "{entry}");
+        assert_eq!(desktop_exe(&entry).as_deref(), Some(exe));
+        assert_eq!(desktop_exe(&entry.replace("100%%", "100%")), None);
     }
 
     #[test]
