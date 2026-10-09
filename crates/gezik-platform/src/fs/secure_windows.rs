@@ -285,16 +285,19 @@ pub(crate) fn move_to(from: &Path, to: &Path, replace: bool, guard: &Guard) -> i
 }
 
 pub(crate) fn copy(from: &Path, to: &Path, replace: bool) -> io::Result<()> {
-    parent(to)?;
-    let made = matches!(std::fs::symlink_metadata(to), Err(err) if err.kind() == io::ErrorKind::NotFound);
-    let result = copy_item(from, to, replace, 0);
+    // Only a folder this copy made itself is taken back (a file it made is disposed of through
+    // its handle in `copy_item`): a name someone else took in the meantime makes the make fail,
+    // and what they put there stays.
+    let mut made = false;
+    let result = copy_item(from, to, replace, 0, &mut made);
     if result.is_err() && made {
         let _ = delete(to, &Guard::none());
     }
     result
 }
 
-fn copy_item(from: &Path, to: &Path, replace: bool, depth: usize) -> io::Result<()> {
+/// `made`: set once this call made the folder `to` itself.
+fn copy_item(from: &Path, to: &Path, replace: bool, depth: usize, made: &mut bool) -> io::Result<()> {
     let (_from_folder, source) = item(from, GENERIC_READ.0 | LOOK)?;
     let found = info(&source)?;
     if is_link(&found) {
@@ -315,13 +318,15 @@ fn copy_item(from: &Path, to: &Path, replace: bool, depth: usize) -> io::Result<
             }
             // SAFETY: the path lives through the call.
             Err(err) if err.kind() == io::ErrorKind::NotFound => {
-                unsafe { CreateDirectoryW(&verbatim(to), None) }.map_err(io_error)?
+                // Fails if the name was taken since: then it is not ours.
+                unsafe { CreateDirectoryW(&verbatim(to), None) }.map_err(io_error)?;
+                *made = true;
             }
             Err(err) => return Err(err),
         }
         for entry in std::fs::read_dir(from)? {
             let name = entry?.file_name();
-            copy_item(&from.join(&name), &to.join(&name), replace, depth + 1)?;
+            copy_item(&from.join(&name), &to.join(&name), replace, depth + 1, &mut false)?;
         }
         return Ok(());
     }

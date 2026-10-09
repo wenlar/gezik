@@ -245,8 +245,10 @@ pub(crate) fn move_to(from: &Path, to: &Path, replace: bool, guard: &Guard) -> i
 pub(crate) fn copy(from: &Path, to: &Path, replace: bool) -> io::Result<()> {
     let (src_dir, src_name) = parent_of(from)?;
     let (dst_dir, dst_name) = parent_of(to)?;
-    let made = matches!(stat_at(dst_dir.as_raw_fd(), &dst_name), Err(err) if err.kind() == io::ErrorKind::NotFound);
-    let result = copy_at(src_dir.as_raw_fd(), &src_name, dst_dir.as_raw_fd(), &dst_name, replace, 0);
+    // Only a folder this copy made itself is taken back: a name someone else took in the
+    // meantime makes the make fail, and what they put there stays.
+    let mut made = false;
+    let result = copy_at(src_dir.as_raw_fd(), &src_name, dst_dir.as_raw_fd(), &dst_name, replace, 0, &mut made);
     if result.is_err() && made {
         let parent = fstat(dst_dir.as_raw_fd())?;
         let _ = remove(dst_dir.as_raw_fd(), &dst_name, &parent, &Guard::none(), 0);
@@ -254,7 +256,17 @@ pub(crate) fn copy(from: &Path, to: &Path, replace: bool) -> io::Result<()> {
     result
 }
 
-fn copy_at(src: RawFd, name: &CStr, dst: RawFd, to: &CStr, replace: bool, depth: usize) -> io::Result<()> {
+/// `made`: set once this call made the folder `to` itself (a file or link it made and could not
+/// finish is removed right here).
+fn copy_at(
+    src: RawFd,
+    name: &CStr,
+    dst: RawFd,
+    to: &CStr,
+    replace: bool,
+    depth: usize,
+    made: &mut bool,
+) -> io::Result<()> {
     let st = stat_at(src, name)?;
     match kind(&st) {
         libc::S_IFLNK => {
@@ -273,18 +285,25 @@ fn copy_at(src: RawFd, name: &CStr, dst: RawFd, to: &CStr, replace: bool, depth:
             place(dst, to, replace, |at| {
                 let flags = libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC;
                 let out = File::from(open_at(dst, at, flags)?);
-                std::io::copy(&mut &from, &mut &out)?;
-                // Never setuid or setgid on a copy (spec §10.5).
-                cvt(unsafe { libc::fchmod(out.as_raw_fd(), st.st_mode & 0o777) })?;
-                let times = [
-                    libc::timespec { tv_sec: st.st_atime, tv_nsec: st.st_atime_nsec as _ },
-                    libc::timespec { tv_sec: st.st_mtime, tv_nsec: st.st_mtime_nsec as _ },
-                ];
-                // SAFETY: two timespecs, as futimens wants.
-                let _ = unsafe { libc::futimens(out.as_raw_fd(), times.as_ptr()) };
-                #[cfg(target_os = "macos")]
-                xattrs(&from, &out);
-                Ok(())
+                let filled = (|| {
+                    std::io::copy(&mut &from, &mut &out)?;
+                    // Never setuid or setgid on a copy (spec §10.5).
+                    cvt(unsafe { libc::fchmod(out.as_raw_fd(), st.st_mode & 0o777) })?;
+                    let times = [
+                        libc::timespec { tv_sec: st.st_atime, tv_nsec: st.st_atime_nsec as _ },
+                        libc::timespec { tv_sec: st.st_mtime, tv_nsec: st.st_mtime_nsec as _ },
+                    ];
+                    // SAFETY: two timespecs, as futimens wants.
+                    let _ = unsafe { libc::futimens(out.as_raw_fd(), times.as_ptr()) };
+                    #[cfg(target_os = "macos")]
+                    xattrs(&from, &out);
+                    Ok(())
+                })();
+                if filled.is_err() {
+                    // SAFETY: a valid C string; O_EXCL made this name ours.
+                    unsafe { libc::unlinkat(dst, at.as_ptr(), 0) };
+                }
+                filled
             })
         }
         libc::S_IFDIR => {
@@ -295,20 +314,22 @@ fn copy_at(src: RawFd, name: &CStr, dst: RawFd, to: &CStr, replace: bool, depth:
             if id(&fstat(from.as_raw_fd())?) != id(&st) {
                 return Err(refused(CHANGED));
             }
-            let made = match stat_at(dst, to) {
+            let mine = match stat_at(dst, to) {
                 Ok(there) if kind(&there) == libc::S_IFDIR => false,
                 Ok(_) => return Err(io::ErrorKind::AlreadyExists.into()),
                 Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                    // Fails if the name was taken since: then it is not ours.
                     cvt(unsafe { libc::mkdirat(dst, to.as_ptr(), 0o700) })?;
+                    *made = true;
                     true
                 }
                 Err(err) => return Err(err),
             };
             let out = open_at(dst, to, DIR).map_err(on_the_way)?;
             for child in names(&from)? {
-                copy_at(from.as_raw_fd(), &child, out.as_raw_fd(), &child, replace, depth + 1)?;
+                copy_at(from.as_raw_fd(), &child, out.as_raw_fd(), &child, replace, depth + 1, &mut false)?;
             }
-            if made {
+            if mine {
                 // The folder's own permissions last (0700 kept it Gezik's while it filled); sticky
                 // stays, setuid and setgid do not.
                 cvt(unsafe { libc::fchmod(out.as_raw_fd(), st.st_mode & 0o1777) })?;
@@ -327,7 +348,9 @@ fn place(dir: RawFd, to: &CStr, replace: bool, make: impl FnOnce(&CStr) -> io::R
     }
     replaceable(dir, to)?;
     let temp = CString::new(format!(".gezik-{}", random_name())).map_err(|_| refused(CHANGED))?;
-    let done = make(&temp).and_then(|()| rename_at(dir, &temp, dir, to, true));
+    // `make` cleans up after itself; once it made the temporary name, that name is ours.
+    make(&temp)?;
+    let done = rename_at(dir, &temp, dir, to, true);
     if done.is_err() {
         // SAFETY: a valid C string; only the temporary name goes.
         unsafe { libc::unlinkat(dir, temp.as_ptr(), 0) };

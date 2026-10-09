@@ -343,6 +343,22 @@ mod tests {
         let err = copy(&dir.join("src"), &dir.join("dst"), false).unwrap_err();
         assert!([LINK_COPY, SPECIAL].contains(&err.to_string().as_str()), "{err}");
         assert!(!dir.join("dst").exists(), "the half-made copy is gone");
+
+        // A name someone else took (before the copy, or between a look and the make, which is
+        // the same to the copy now: it never looks first) is never taken back.
+        write(&dir.join("dst"), "theirs");
+        assert_eq!(copy(&dir.join("src"), &dir.join("dst"), false).unwrap_err().kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(
+            copy(&dir.join("src").join("a.txt"), &dir.join("dst"), false).unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(fs::read_to_string(dir.join("dst")).unwrap(), "theirs");
+        fs::remove_file(dir.join("dst")).unwrap();
+        fs::create_dir(dir.join("dst")).unwrap();
+        write(&dir.join("dst").join("theirs.txt"), "theirs");
+        let err = copy(&dir.join("src"), &dir.join("dst"), false).unwrap_err();
+        assert!([LINK_COPY, SPECIAL].contains(&err.to_string().as_str()), "{err}");
+        assert_eq!(fs::read_to_string(dir.join("dst").join("theirs.txt")).unwrap(), "theirs", "their folder stays");
         let _ = fs::remove_dir_all(&dir);
     }
 
