@@ -373,6 +373,14 @@ impl Navigator {
         self.load(self.active_location(), Mode::Show, note);
     }
 
+    /// The saved search `old` is now called `new`: the tabs showing it are titled so.
+    pub fn rename_search(&self, old: &str, new: &str) {
+        if self.keep_active_tab(|tabs| tabs.rename_search(old, new)) {
+            crate::search::with_current(|s| s.rename_saved(old, new));
+            self.update_chrome();
+        }
+    }
+
     /// Opens a tab at `location` right after the active one; `activate` switches to it.
     pub fn open_tab(&self, location: Location, activate: bool) {
         if activate {

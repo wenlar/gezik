@@ -163,7 +163,10 @@ impl SavedSearches {
             let mut list = latest();
             let entry = SavedSearch { name: name.clone(), folder, spec };
             match list.iter().position(|s| same_name(&s.name, &name)) {
-                Some(i) => list[i] = entry,
+                Some(i) => {
+                    let old = std::mem::replace(&mut list[i], entry).name;
+                    this.0.nav.rename_search(&old, &name);
+                }
                 None => list.push(entry),
             }
             this.write(list);
@@ -180,6 +183,7 @@ impl SavedSearches {
                 return this.0.view.note(format!("A search called \"{new}\" already exists"));
             }
             if let Some(search) = list.iter_mut().find(|s| s.name == old) {
+                this.0.nav.rename_search(&old, &new);
                 search.name = new;
                 this.write(list);
             }

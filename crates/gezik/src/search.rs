@@ -828,6 +828,17 @@ impl Searches {
         }
     }
 
+    /// The saved search `old` is now called `new` (the tabs too): the results shown and kept
+    /// for it stay theirs.
+    pub fn rename_saved(&self, old: &str, new: &str) {
+        let (mut showing, mut kept) = (self.0.showing.borrow_mut(), self.0.kept.borrow_mut());
+        for spec in kept.values_mut().map(|k| &mut k.spec).chain(showing.as_mut().map(|s| &mut s.spec)) {
+            if spec.name.as_deref() == Some(old) {
+                spec.name = Some(new.to_owned());
+            }
+        }
+    }
+
     /// The navigator leaves what is on screen (another place, another tab, a reload): a
     /// running search stops (its later events are dropped); whole results stay with their tab.
     pub fn leaving(&self) {

@@ -439,6 +439,23 @@ impl Tabs {
             self.locked.push(id);
         }
     }
+    /// The saved search `old` is now called `new` (renamed, or replaced under another spelling):
+    /// the tabs showing it, and their back and forward steps, take the new title. Whether any did.
+    pub fn rename_search(&mut self, old: &str, new: &str) -> bool {
+        let mut changed = false;
+        for history in &mut self.tabs {
+            let current = std::iter::once(&mut history.current);
+            for entry in history.back.iter_mut().chain(current).chain(history.forward.iter_mut()) {
+                if let Location::Search(spec) = &mut entry.location
+                    && spec.name.as_deref() == Some(old)
+                {
+                    spec.name = Some(new.to_owned());
+                    changed = true;
+                }
+            }
+        }
+        changed
+    }
     /// Copies tab `index` (with its history) right after it. Returns the copy's index.
     pub fn duplicate(&mut self, index: usize) -> usize {
         let Some(copy) = self.tabs.get(index).cloned() else { return self.active };
@@ -1221,6 +1238,27 @@ mod tests {
     }
 
     // ---- Searches and the flat view ----
+
+    #[test]
+    fn a_renamed_saved_search_retitles_its_tabs() {
+        let named = |name: &str| match search_at("/w", "*.rs") {
+            Location::Search(mut spec) => {
+                spec.name = Some(name.into());
+                Location::Search(spec)
+            }
+            other => other,
+        };
+        let mut tabs = Tabs::new(named("Rust files"));
+        tabs.active_mut().navigate(Location::Path("/w".into()));
+        tabs.open(named("Rust files"), false);
+        tabs.open(named("Other"), false);
+        assert!(tabs.rename_search("Rust files", "rust FILES"));
+        let shown: Vec<&Location> = tabs.iter().map(History::location).collect();
+        assert_eq!(shown, [&Location::Path("/w".into()), &named("Other"), &named("rust FILES")]);
+        assert!(tabs.active_mut().back(), "the step back too");
+        assert_eq!(tabs.active().location(), &named("rust FILES"));
+        assert!(!tabs.rename_search("Gone", "x"));
+    }
 
     fn search_at(folder: &str, pattern: &str) -> Location {
         let mut spec = crate::search::SearchSpec::new(crate::search::Scope::Folder(PathBuf::from(folder)));
