@@ -11,6 +11,7 @@ mod copy_path;
 mod dialog;
 mod drag;
 mod filter;
+mod folder_sizes;
 mod folder_watch;
 mod frame_limit;
 mod keys;
@@ -113,6 +114,7 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
     filter::set_settings(loaded.settings.keyboard, loaded.settings.filters.clone());
     path_box::set_settings(loaded.settings.history);
     search::with_current(|s| s.set_settings(loaded.settings.search.clone()));
+    folder_sizes::with_current(|f| f.set_settings(loaded.settings.folder_sizes, loaded.settings.search.everything));
     tab_sets::set_settings(loaded.settings.tab_sets.clone());
     #[cfg(target_os = "macos")]
     menu_bar::set_tab_sets(window, &tab_sets::names());
@@ -641,6 +643,8 @@ fn main() -> Result<(), slint::PlatformError> {
         .into(),
     );
     window.set_preview_width(saved_state.preview_width.unwrap_or(280) as f32);
+    folder_sizes::FolderSizes::new(&window, view.clone())
+        .set_settings(initial_settings.folder_sizes, initial_settings.search.everything);
     let preview = preview::Preview::new(&window, view.clone());
     preview.set_pane_open(saved_state.preview_open);
     let StartPlan { session, select, start, .. } = plan;

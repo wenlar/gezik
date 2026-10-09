@@ -227,6 +227,8 @@ pub fn search_scope_items(choices: &[(Scope, String)], current: &Scope) -> Vec<(
 /// order; 1556 resets them (sapma 7).
 pub const RESULT_COLUMN_FIRST: u32 = 1550;
 pub const RESULT_COLUMNS_RESET: u32 = 1556;
+/// 8b (spec 9.4): 1600-1699.
+pub const CALC_FOLDER_SIZES: u32 = 1600;
 
 /// The results' column header menu.
 pub fn result_header_items(columns: &[ColumnState]) -> Vec<(u32, String)> {
@@ -902,6 +904,9 @@ impl Menus {
                 SEARCH_HERE,
                 format!("Search in \"{}\"…", crate::operations::items_text(std::slice::from_ref(&path))),
             ));
+            if matches!(self.nav.active_location(), Location::Path(_)) {
+                list.push((CALC_FOLDER_SIZES, "Calculate folder sizes".to_owned()));
+            }
         }
         list.extend(owned(terminal_items(native)));
         let mut subs = vec![self.copy_path_sub(std::slice::from_ref(&path), list.len())];
@@ -1108,6 +1113,11 @@ impl Menus {
             at_flat,
             (FLAT_VIEW, format!("{}Flat view", if flat { "• " } else { "    " }), location.folder().is_some()),
         );
+        // After "Apply to all folders" (the formats' place stays): only in a folder.
+        if matches!(location, Location::Path(_)) {
+            let at_calc = entries.iter().position(|(id, _, _)| *id == RESET_FOLDER).unwrap_or(entries.len());
+            entries.insert(at_calc, (CALC_FOLDER_SIZES, "    Calculate folder sizes".to_owned(), true));
+        }
         self.open_slint_entries(&entries, format_subs(options, place + 1), at);
     }
 
@@ -1543,6 +1553,7 @@ impl Menus {
             (SHOW_HISTORY, Subject::View) => self.ops.show_history(),
             (APPLY_TO_ALL, Subject::View) => self.view.apply_to_all(),
             (RESET_FOLDER, Subject::View) => self.view.reset_folder(),
+            (CALC_FOLDER_SIZES, _) => crate::folder_sizes::with_current(crate::folder_sizes::FolderSizes::calculate),
             (id, Subject::View) => {
                 if let Some(option) = view_option_for(id, crate::view_options::current()) {
                     crate::view_options::change(option);
@@ -1994,6 +2005,7 @@ mod tests {
             GROUP_DOWN,
             GROUP_RENAME,
             UNGROUP,
+            CALC_FOLDER_SIZES,
         ];
         let mut ranges: Vec<std::ops::Range<u32>> = singles.iter().map(|id| *id..id + 1).collect();
         ranges.extend([

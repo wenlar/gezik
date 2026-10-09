@@ -624,6 +624,9 @@ impl Navigator {
 
     pub fn reload(&self) {
         self.save_view();
+        if let Location::Path(folder) = self.active_location() {
+            crate::folder_sizes::with_current(|f| f.forget_children(&folder));
+        }
         // F5 on results runs the search again, with the name cache read anew (spec 4.7).
         if self.active_location().is_results() {
             let tab = self.tab_id(self.active_index());
@@ -821,7 +824,10 @@ impl Navigator {
             Location::Flat(folder) => folder.display().to_string(),
         };
         let listing = match result {
-            LoadResult::Files(path, entries) => Listing::Files(path, Rc::new(entries)),
+            LoadResult::Files(path, mut entries) => {
+                crate::folder_sizes::with_current(|f| f.apply_known(&path, &mut entries));
+                Listing::Files(path, Rc::new(entries))
+            }
             LoadResult::Drives(drives) => Listing::Drives(drives),
             LoadResult::Results => {
                 let tab = self.tab_id(self.active_index());
@@ -854,6 +860,7 @@ impl Navigator {
         };
         self.watch_shown(&location);
         view.show(listing, &state, note);
+        crate::folder_sizes::with_current(|f| f.shown(&location));
         self.update_chrome();
         if location.is_results() {
             crate::search::with_current(crate::search::Searches::shown);
@@ -947,6 +954,8 @@ impl Navigator {
         };
         let Some(empty) = empty else { return self.status(message) };
         view.show(empty, &state, Some(message));
+        // Whatever was being added up is not on screen any more.
+        crate::folder_sizes::with_current(|f| f.shown(location));
         self.update_chrome();
     }
 

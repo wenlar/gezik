@@ -373,6 +373,7 @@ impl View {
         };
         let Some((path, is_dir)) = data.listing.path_at(index) else { return Target::Nothing };
         let entry = data.listing.entry(index);
+        let counts = if is_dir { crate::folder_sizes::counts(&path) } else { None };
         Target::Entry {
             name: data.listing.name_at(index).unwrap_or_default().to_owned(),
             path,
@@ -380,7 +381,7 @@ impl View {
             type_name: model::type_name_for(&data, index),
             size: entry.and_then(Entry::known_size),
             partial: entry.is_some_and(|e| e.is_dir && e.flags & Entry::SIZE_PARTIAL != 0),
-            counts: None,
+            counts,
             modified: entry.and_then(|e| e.modified),
             created: entry.and_then(|e| e.created),
             kind: data.listing.kind(index).index(),
@@ -940,7 +941,6 @@ impl View {
 pub type FolderTimes = Vec<(String, Option<SystemTime>)>;
 
 // The folder sizes (spec 6.2-6.3), for the walk Task 5 wires up.
-#[allow(dead_code, reason = "Task 5 calls these; drop this then")]
 impl View {
     /// The folder shown, if a folder.
     fn shown_folder(&self) -> Option<PathBuf> {

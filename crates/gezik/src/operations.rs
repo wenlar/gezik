@@ -1313,6 +1313,11 @@ impl Operations {
             (_, Some(folder)) => first_level_names(&report.results, &folder),
         };
         // Rows hidden for this job come back if it changed nothing (failed, cancelled, no trash).
+        // Folder sizes above anything the job touched are out of date (a move's sources too).
+        let mut touched = report.changed_dirs.clone();
+        touched.extend(report.results.iter().cloned());
+        touched.extend(report.moved.iter().map(|(from, _)| from.clone()));
+        crate::folder_sizes::with_current(|f| f.forget(&touched));
         let mut dirs = report.changed_dirs.clone();
         dirs.extend(hidden_in);
         let skipped = (report.skipped_changed > 0)
