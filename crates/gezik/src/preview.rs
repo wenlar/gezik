@@ -238,8 +238,11 @@ pub fn describe(target: &Target, body: Option<Body>) -> PreviewInfo {
                 lines.push(format!("{prefix}{}", crate::view_options::size_text(*size)));
             }
             if let Some((files, folders)) = counts {
-                let n = |v: u64| with_commas(usize::try_from(v).unwrap_or(usize::MAX));
-                lines.push(format!("{} files, {} folders", n(*files), n(*folders)));
+                let n = |v: u64, one: &str| match v {
+                    1 => format!("1 {one}"),
+                    v => format!("{} {one}s", with_commas(usize::try_from(v).unwrap_or(usize::MAX))),
+                };
+                lines.push(format!("{}, {}", n(*files, "file"), n(*folders, "folder")));
             }
             if *partial {
                 lines.push("Some folders could not be read".to_owned());
@@ -684,6 +687,16 @@ mod tests {
 Some folders could not be read"
         );
         assert!(matches!(load(&target, 64), Body::None), "no count of its own once the size is known");
+        let mut one = target.clone();
+        if let Target::Entry { counts, partial, .. } = &mut one {
+            (*counts, *partial) = (Some((1, 1)), false);
+        }
+        assert_eq!(
+            describe(&one, Some(Body::None)).details.as_str(),
+            "Folder
+2.0 KB
+1 file, 1 folder"
+        );
         let several = describe(&Target::Several { count: 2, size: Some(1536), more: true }, None);
         assert_eq!(several.details.as_str(), "Total size: 1.5 KB+");
     }
