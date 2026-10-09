@@ -405,7 +405,11 @@ mod tests {
 
     #[test]
     fn nothing_listening_is_no_instance() {
+        let started = std::time::Instant::now();
         assert!(matches!(send(&test_key("none"), &request(), SEND_TIMEOUT), Sent::NoInstance));
+        // Every first start pays this probe: it must not wait for anything.
+        let took = started.elapsed();
+        assert!(took < Duration::from_millis(200), "the probe took {took:?}");
     }
 
     #[test]

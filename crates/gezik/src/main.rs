@@ -33,6 +33,7 @@ mod saved_searches;
 mod search;
 mod select_tools;
 mod sidebar;
+mod single_instance;
 mod stack;
 mod start;
 mod tab_sets;
@@ -56,6 +57,7 @@ use gezik_config::store::{self, ConfigFiles, ConfigStore, Loaded};
 use gezik_config::theme;
 use gezik_core::layout::Move;
 use gezik_core::nav::Session;
+use gezik_platform::instance;
 use start::StartPlan;
 
 slint::include_modules!();
@@ -558,6 +560,8 @@ fn main() -> Result<(), slint::PlatformError> {
     // The command line (spec 5.1), before Slint and the settings: --help and --version only print.
     let mut cli = cli::parse(std::env::args_os().skip(1), cfg!(windows));
     if cli.help || cli.version {
+        // The Windows release build has no console of its own: print to the caller's.
+        instance::attach_console();
         if cli.version {
             println!("gezik {}", env!("CARGO_PKG_VERSION"));
         } else {
@@ -569,12 +573,32 @@ fn main() -> Result<(), slint::PlatformError> {
         eprintln!("gezik: {warning}");
     }
     cli.make_absolute();
+    // A running Gezik takes the paths (spec 5.2): tried before any window or settings, so a
+    // second call costs only the attempt. --new-window never hands over and never listens.
+    let key = instance::key(gezik_config::paths::config_dir().as_deref());
+    let request = cli.request();
+    let mut may_listen = !cli.new_window;
+    if may_listen {
+        match instance::send(&key, &request, instance::SEND_TIMEOUT) {
+            instance::Sent::Delivered => return Ok(()),
+            instance::Sent::NoInstance => {}
+            // Hung, refusing or someone else's: a window of its own, the channel left alone.
+            instance::Sent::Failed => may_listen = false,
+        }
+    }
     // Gezik has its own tabs: no window tabs of macOS (nor their items in the View menu).
     #[cfg(target_os = "macos")]
     gezik_platform::app::no_window_tabs();
     let window = AppWindow::new()?;
 
     let config = ConfigStore::system();
+    // A second window (spec 5.3) keeps the first one's tabs: it neither restores nor records
+    // them, and writes no state nor folder views.
+    if cli.new_window
+        && let Some(store) = &config
+    {
+        store.keep_state_unwritten();
+    }
     templates::set_dir(config.as_ref().map(ConfigStore::templates_dir));
     view_options::install(&window, config.clone());
     let init_error = config.as_ref().and_then(|store| store.ensure_initialized().err().map(|e| (store, e)));
@@ -594,8 +618,28 @@ fn main() -> Result<(), slint::PlatformError> {
     // Something sensible is on screen even if the selected theme cannot be read.
     theme_bridge::apply(&window, &theme::builtin_dark());
     let saved_state = config.as_ref().map(ConfigStore::load_state).unwrap_or_default();
-    let (initial_settings, plan) =
-        apply_config_and_start(&window, &mut files, &cli.targets, cli.new_tab, Some(&saved_state.session));
+    let (initial_settings, plan) = apply_config_and_start(
+        &window,
+        &mut files,
+        &cli.targets,
+        cli.new_tab,
+        (!cli.new_window).then_some(&saved_state.session),
+    );
+    let listener = if may_listen && initial_settings.system.single_instance {
+        match instance::claim(&key) {
+            instance::Claim::Listening(listener) => Some(listener),
+            // Another Gezik started at the same moment and took it: it gets the paths.
+            instance::Claim::Taken => {
+                if instance::send(&key, &request, instance::SEND_TIMEOUT) == instance::Sent::Delivered {
+                    return Ok(());
+                }
+                None
+            }
+            instance::Claim::Off => None,
+        }
+    } else {
+        None
+    };
 
     // Folder views; a broken views.toml starts over and says so in the status bar.
     let (memory, views_warning) = config.as_ref().map(ConfigStore::load_views).unwrap_or_default();
@@ -646,7 +690,7 @@ fn main() -> Result<(), slint::PlatformError> {
         .ok()
     });
     apply_config(&window, &files.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
-    window_state::restore(&window, &saved_state);
+    window_state::restore(&window, &saved_state, if cli.new_window { 32 } else { 0 });
     keep_on_screen(window.as_weak(), 0);
     let view = view::View::new(&window, memory, config.clone());
     view.set_defaults(initial_settings.view);
@@ -675,7 +719,9 @@ fn main() -> Result<(), slint::PlatformError> {
     nav.install();
     // The open tabs go to state.toml as they change (spec 5.1); its own thread writes them, so
     // a crash or a kill leaves the last tabs too.
-    if let Some(store) = config.clone() {
+    if !cli.new_window
+        && let Some(store) = config.clone()
+    {
         nav.keep_session(saved_state.session.clone(), initial_settings.session.restore, move |session| {
             let session = session.clone();
             store.update_state(move |state| state.session = session);
@@ -1245,5 +1291,9 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     }
 
+    // The window and tabs are up; calls that came before this wait in the channel.
+    if let Some(listener) = listener {
+        single_instance::serve(listener, window.as_weak());
+    }
     window.run()
 }

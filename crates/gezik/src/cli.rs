@@ -29,7 +29,6 @@ pub struct Cli {
     pub targets: Vec<Target>,
     pub new_tab: bool,
     // Used by the single instance, Task 4.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub new_window: bool,
     pub help: bool,
     pub version: bool,
@@ -97,7 +96,6 @@ impl Cli {
 
     /// What is handed to a running Gezik.
     // Used by the single instance, Task 4.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub fn request(&self) -> Request {
         // shortcut: the token is carried but not used yet (winit 0.30 cannot activate an
         // existing window with a token from elsewhere); use it once winit can.
