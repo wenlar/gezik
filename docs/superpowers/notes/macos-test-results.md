@@ -389,12 +389,12 @@ Each of these was kept to macOS where the logic allowed:
 | 38 | Audio and video | **FAIL** (MP3/M4A from a silent .mov fail with a raw ffmpeg error) |
 | 39 | Pause and resume | PASS (user-command part in 40) |
 | 40 | User commands | PASS (one note: menu clicks in Commands ▸) |
-| 41 | Images to PDF | NOT TESTED |
-| 42 | pdfium download (does the dylib load?) | NOT TESTED |
-| 43 | Split, extract, to images | NOT TESTED |
-| 44 | Encrypted PDF | NOT TESTED |
-| 45 | No worker left behind | NOT TESTED |
-| 46 | Last choices and keys | NOT TESTED |
+| 41 | Images to PDF | PASS |
+| 42 | pdfium download (does the dylib load?) | PASS (one test fails on a non-UTF-8 name, as B) |
+| 43 | Split, extract, to images | PASS (one note) |
+| 44 | Encrypted PDF | PASS |
+| 45 | No worker left behind | PASS |
+| 46 | Last choices and keys | PASS (one note) |
 | 47 | Filter | NOT TESTED |
 | 48 | Pattern box and selection keys | NOT TESTED |
 | 49 | Tabs | NOT TESTED |
@@ -804,3 +804,52 @@ The four commands from the checklist and a fifth one, "Slow copy (sleep)" (`sh -
 - A command with a misspelt key (`runn`) is left out, and the status bar says `settings.toml: commands[6]: unknown key "runn" (known: name, run, output, types, folders, parallel, shortcut, menu, ask)`.
 - Pause/resume of a user command (from 39): pausing "Slow copy" ended `sh` and `sleep` within 2 s and removed its staging folder. Resume ran it again from the start, and `notlar-slow.txt` (`merhaba`) appeared after 20 s.
 - Note: in the native Commands ▸ submenu, a synthetic mouse click on an item closed nothing and ran nothing (the menu stayed open), while choosing it with the keyboard worked. This is like item 26's drop menu. Check with a real mouse.
+
+#### 41. Images to PDF: PASS
+In `pdf-resim/` (copies of `portre-o6.jpg` with orientation 6, `foto1.jpg`, `foto2.jpg`, `seffaf.png` with alpha, and `foto-heic.heic`): select all ▸ right-click ▸ "Images to PDF…".
+- The HEIC is left out with the note "1 item skipped: not a picture Gezik reads itself". 4 pages are listed.
+- Dragging `seffaf.png` from 4th to 1st in the Page order list works (the list renumbers). A4 and margin Small, then ⌘Enter.
+- `pdf-resim.pdf` (318,692 bytes, 4 pages, not encrypted), rendered with CoreGraphics: the pages are in the dragged order (seffaf, foto1, foto2, portre). The three landscape pictures sit on landscape A4 (841×595 pt), and the portrait one on portrait A4 (595×841 pt), upright, the same as Preview shows the JPEG. The small margin is there.
+- The PNG keeps its transparency in the PDF (no white fill), unlike the JPEG conversion in 35.
+
+#### 42. pdfium download (does the dylib load?): PASS
+- `belge-a.pdf` + `belge-b.pdf` ▸ Convert… ▸ Merge PDFs (the layer lists the merge order and says "Bookmarks, forms and document info are not kept. An encrypted PDF gives an unencrypted copy."). ⌘Enter opened "pdfium needed — PDF tools need pdfium (~2.3 MB, free)." with Download / Where does it come from? / Cancel.
+- Download: `tools/pdfium-8086/` has `libpdfium.dylib` (7,339,520 bytes), `LICENSE`, `licenses/` (17 files) and `SOURCE.txt`. The merge went on by itself: `belge-a (merged).pdf` has 8 pages (3 + 5), not encrypted. Gezik selects the result in the list. It does **not** open it in Preview (PDFs open in Adobe Acrobat on this Mac anyway).
+- dylib: `file`: `Mach-O 64-bit dynamically linked shared library arm64`. `xattr -l`: nothing. `codesign -dv`: `flags=0x20002(adhoc,linker-signed)`, `Signature=adhoc`, `TeamIdentifier=not set`. `spctl -a -vv -t open --context context:primary-signature`: `rejected`.
+- **Quarantine test:** with `com.apple.quarantine` on the dylib, ⌘Q, Gezik started again, and Split PDF ▸ Each page on `belge-b.pdf`: the dylib loaded (5 files, `belge-b - page 1.pdf` … `page 5.pdf`, no error, no prompt). After `xattr -d` it loads as before.
+- `codesign -dv --verbose=4 target/release/gezik`: `Identifier=gezik-1c86a0f1bd2c8619`, `flags=0x20002(adhoc,linker-signed)`, `Signature=adhoc`, `TeamIdentifier=not set`, no hardened runtime. So library validation does not apply to this build. A signed, notarized `Gezik.app` with the hardened runtime would refuse this ad-hoc-signed dylib unless it has `com.apple.security.cs.disable-library-validation`, or the dylib is re-signed with the same team. This is still open.
+- `GEZIK_TEST_PDFIUM=…/libpdfium.dylib cargo test -p gezik-batch --test pdf_worker --test pdf_tasks`: `pdf_tasks` 17 passed. `pdf_worker` 10 passed, 1 failed: `odd_names_open_and_name_their_outputs` fails with `Illegal byte sequence (os error 92)` when it makes its non-UTF-8 file name (APFS, as B above).
+
+#### 43. Split, extract, to images: PASS
+In `pdf-test/` (copies of `belge-b.pdf` (5 pages), `buyuk-240.pdf` and `sifreli.pdf`), in `/private/tmp`.
+- Split PDF ▸ Each page says "Makes 5 files" and made `belge-b - page 1.pdf` … `page 5.pdf` (in 42).
+- Ranges `1-2, 5`: "Makes 2 files", and the outputs are `belge-b - pages 1-2.pdf` (2 pages) and `belge-b - page 5.pdf` (1 page).
+- A range past the end (`1-2, 9`) says "Page 9 is past the end (5 pages)" in red while typing, before starting.
+- Extract pages has no output-name field: the name comes from the source. With a source named `çıktı ğüşö.pdf`, Extract pages `2-3` ("Makes 1 PDF of 2 pages") made `çıktı ğüşö - pages 2-3.pdf` with 2 pages, so a Turkish name works.
+- PDF to images, PNG 150 dpi: 5 files `belge-b - page N.png`, 1240×1754 px (A4 at 150 dpi), and the text is sharp. JPEG 72 dpi: 5 files, 595×842 px.
+- Running the PNG job again opens the conflict list ("5 conflicts · Saving belge-b.pdf as PNG pictures"). ⌘Z after the JPEG job removed all 5 JPEGs in one step and left the PNGs.
+- **Note:** Split ▸ Ranges with the Ranges field **empty** started at once and made `çıktı ğüşö - pages 1-5.pdf`, a copy of the whole file. Empty should probably keep Convert disabled, or say "type the ranges".
+- The layer reopens with the last preset that was run for that kind (Split ▸ Ranges after a split, Extract after an extract).
+
+#### 44. Encrypted PDF: PASS
+`sifreli.pdf` (4 pages, written by CoreGraphics with user password `gezik`).
+- The layer can't count its pages: Split says "Page count unknown (encrypted PDF)", and with two items "Makes 5 files, more from 1 encrypted PDF".
+- Split ▸ Each page: the box "Password — sifreli.pdf is encrypted. Password:" appears, and the operations row says "Waiting for your decisions". The field shows dots (`••••••`), and Show reveals `yanlis`.
+- A wrong password asks again: "Wrong password. Try again:". `gezik` works: 4 files `sifreli - page 1.pdf` … `page 4.pdf`, each 1 page and **not encrypted** (CoreGraphics `isEncrypted` false). The layer had said so ("An encrypted PDF gives an unencrypted copy.").
+- Merge `belge-b.pdf` + `sifreli.pdf`, then Skip at the password: the row says "Done · 1 item skipped", Details says "sifreli.pdf: no password given; nothing was merged", and no merged file was written.
+
+#### 45. No worker left behind: PASS
+- After every PDF job above (merge, split, extract, PDF to images, the password cases), `pgrep -fl -- --pdf-worker` was empty.
+- "PDF to images" PNG 300 dpi on the 240-page PDF finished in about 3 s (240 PNGs of ~178 KB), too fast to pause, so a 2,000-page PDF (`dev-2000.pdf`, CoreGraphics) was used: "Makes 2,000 pictures".
+- While it runs, one `gezik --pdf-worker` process does the work, and the pages land in a hidden staging folder (`.gezik-deleting-x-<pid>-<n>`), not in the folder.
+- Pause at ~3 %: the row says "Paused", the worker is gone within 2 s, and the staging folder stays (with its finished pages). Resume: a new worker starts ("8 %"). Cancel: within 3 s no worker is left, no `dev-2000 - page …` file is in the folder, and the staging folder and any `.gezik-*` folder are gone.
+- `lsof -p $(pgrep -x gezik) | grep -i pdfium` is empty before and after: the library is only loaded in the worker.
+- Gezik's RSS (`ps -o rss=`): 127,680 KB before the PDF jobs, 129,280 KB after the 240-page job and its undo, 129,360 KB after the 2,000-page cancel.
+- A 240-page undo (⌘Z) removed all 240 PNGs at once.
+
+#### 46. Last choices and keys: PASS
+- `state.toml` has `[convert]` with `last-preset`, `image`, `text`, `media`, `pdf` and `last-output` lines, for example `pdf = "op=to-images split=each every=10 dpi=300 image=png size=a4 margin=small"` and `image = "preset=to-webp format=webp quality=85 …"`.
+- Opened again on `foto1.jpg` after PDF jobs, the layer comes back with the picture's last choice (Convert to WebP, WebP, Rotate by EXIF on). On `belge-b.pdf` it comes back with the PDF's (PDF to images, PNG, 300 dpi). Each kind keeps its own.
+- The range text does not come back: the Ranges and Pages fields are empty each time (seen in 43 and 44), and `state.toml` has no range.
+- Esc closes the layer and ⌘Enter starts it (used throughout 35-45).
+- **Note:** the output choice is shared, not per kind (`last-output`): "Replace originals" chosen for `degistir.jpg` in 35 was still chosen when the layer next opened on `tr1254.txt` in 36. That is easy to miss for a choice that sends originals to the Trash.
