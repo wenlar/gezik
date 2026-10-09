@@ -420,12 +420,12 @@ Each of these was kept to macOS where the logic allowed:
 | 69 | Links | PASS (Finder ⌘⌥ drag and right-drag not tried) |
 | 70 | Drop stack | PASS (Finder drags and scrolling not tried) |
 | 71 | History | PASS (one note: "identical" by size and time) |
-| 72 | Search | NOT TESTED |
-| 73 | Privacy prompts | NOT TESTED |
-| 74 | Whole drive | NOT TESTED |
-| 75 | Flat view | NOT TESTED |
-| 76 | Show in folder | NOT TESTED |
-| 77 | Results like a folder | NOT TESTED |
+| 72 | Search | PASS ("results while you type" needs Enter in a large folder) |
+| 73 | Privacy prompts | PASS (prompts answered by the maintainer) |
+| 74 | Whole drive | PASS (smoothness while running not measured) |
+| 75 | Flat view | PASS (one note: the folder link shows as a 0 B file) |
+| 76 | Show in folder | PASS |
+| 77 | Results like a folder | PASS (one note) |
 | 78 | Themes | NOT TESTED |
 | 79 | Drawing at 200 % | NOT TESTED |
 | 80 | Thin scroll bar | NOT TESTED |
@@ -1026,3 +1026,42 @@ In `link/`:
 - "Show in folder" on "Moving 2 items to …/yigin/hedef" opened `hedef` with `y1.txt` and `y2.txt` selected.
 - The list holds this run of Gezik only (it started at 02:08). The cancelled jobs from 38/45 were in an earlier process.
 - **Note:** before that copy, the conflict list marked `kilit.txt` as "identical" and offered "Hide identical (1)", but the two files differ (`yeni` vs `eski`). They only have the same size (5 B) and the same modification second. Calling that "identical" (and defaulting to Skip) can hide a real change; size + time alone should not be called identical.
+
+#### 72. Search: PASS
+- ⌘⇧F (and Edit ▸ Find…, which carries ⌘⇧F) opens the search bar above the list: "in <folder> ▾", the name field ("Name, e.g. *.pdf;!*draft*"), Content, Filters ▾, Search.
+- In the home folder, typing `*.pdf` gave no live results: the status bar said "Large folder: press Enter to search". After Return, a tab titled "Search: *.pdf", whose address bar ends in `Search "*.pdf"`, had 114 results with Name, Folder, Modified and Size columns. The status bar said "114 results in 4.9 s · Skipped 6,207 folders (search.skip) · 143 folders could not be read". (The file names are personal and not listed here.)
+- ⌘[ went back to Home, and ⌘] went forward to the results without searching again.
+- Content: in `icerik/`, "zebra42" with Content on, then Return, found `u8.txt` ("2: burada zebra42 var") and `u16.txt` (UTF-16 BE with BOM, "2: zebra42 utf16") and not `none.txt`: "2 results in 0.0 s", with the line in the Match column.
+- Before the first home search, macOS asked "Terminal would like to access your Photo Library" (Gezik runs under Terminal). The maintainer allowed the prompts.
+
+#### 73. Privacy prompts: PASS
+- The first home search of this build ran after macOS's prompts were answered by the maintainer (all allowed). The prompt seen was "Terminal would like to access your Photo Library". It came when the home folder was opened with the search bar, before any search, so listing or showing `~/Pictures` set it off. Desktop/Documents/Downloads prompts may have been answered in Run 1 already. A denied folder was not tried.
+- The `~/Library` folders macOS keeps to itself count as "N folders could not be read" in the status bar (143 the first time, 146 the second). The bar's ▾ ▸ "50 folders could not be read…" lists them (`~/Library/DoNotDisturb`, `StatusKit`, `Cookies`, `Caches/com.apple.Safari`, … "Access denied"). The menu's 50 vs the status bar's 146 suggests the list is capped at 50 without saying so.
+- The search still ends, and no prompt came twice in the run.
+
+#### 74. Whole drive: PASS
+A unique file `gezik-wd-9137.txt` was put in `/Users/Shared` and on the GezikHedef disk image (`/Volumes/GezikHedef`).
+- Scope menu: This folder / Users / Whole drive (/) / Computer. "Whole drive (/)" with `gezik-wd-9137*`: exactly 1 result, `Users/Shared/gezik-wd-9137.txt`, "1 result in 13.5 s · Skipped 6,229 folders (search.skip) · 435 folders could not be read". `/Users` was searched (it is on the Data volume), the file did not appear a second time through `/System/Volumes/Data`, and the copy on `/Volumes/GezikHedef` was not found (other volumes are not walked).
+- (Scope "Users" found the same file in 6.7 s.)
+- Esc 2 s into a whole-drive search stopped it at once: "Stopped · 0 results …", and gezik's CPU was 2 % 0.6 s later. No beach ball was seen. Scrolling and switching tabs during a long search were not measured.
+
+#### 75. Flat view: PASS
+`proje/` with `Cargo.toml`, `src/main.rs`, `src/alt/lib.rs`, `docs/oku.md` and `dil-link` → `/tmp/gezik-test/dil`.
+- ⌘B: the tab becomes "proje (all files)", the address bar ends in "All files", and the list holds every file under it (no folders) with a Folder column (`src/alt`, `src`, `docs`): "5 results in 0.0 s".
+- ⌘B again on `lib.rs` went to `src/alt` with `lib.rs` selected. View ▸ Flat View does the same as ⌘B.
+- The symlink to a folder is one row and is not walked into (`dil`'s three files are not listed). **But it shows as `dil-link`, 0 B, with no type and a document icon**, not as a folder link.
+
+#### 76. Show in folder: PASS
+Search `*.rs` in `proje/` (2 results, Folder column `src`, `src/alt`).
+- ⌘⇧E on `lib.rs` opened `src/alt` with `lib.rs` selected. ⌘[ returned to the results. Go ▸ Show in Folder (it carries ⌘⇧E) did the same.
+- The row menu's "Show in folder in new tab" on `main.rs` opened `src` in a new tab next to the search tab, which stayed.
+- (A click on the column header by mistake turned the sort to Name ↓; the results resort at once.)
+
+#### 77. Results like a folder: PASS
+Search `*.rs` in `proje/` (`main.rs` in `src`, `lib.rs` in `src/alt`).
+- ⌘A, ⌘C in the results, then ⌘V in `sonuc-hedef/`: `main.rs` and `lib.rs` side by side (flat).
+- Right-click ▸ "Copy with folders", then ⌘V: `src/main.rs` and `src/alt/lib.rs` with the folders made under the scope. One ⌘Z took the copies and the made folders away (the target folder was empty again).
+- ⌘⌫ on `lib.rs` in the results: it left the list and the disk. ⌘Z brought it back to `src/alt` and into the list. (This is under `/private/tmp`, so bug A doesn't apply.)
+- Two results from two folders ▸ Enter ▸ rename layer with Number 001 at end and "Per folder" on: `main 001.rs` and `lib 001.rs` (numbered per folder; off: 001 and 002). With `src/main 001.rs` already there, that row is marked in red with a warning icon, and the layer says "1 name already in the folder · 1 will change · fix the marked rows".
+- Gezik quit and started with the search tab in front: the tab came back ("Search: *.rs") and searched again, now listing `x.rs` made in the meantime (3 results).
+- **Note:** the results don't follow changes made outside Gezik (known), and pressing Return in the unchanged name field didn't search again either. `x.rs`, made after the search, only appeared after the restart. The bar has no visible way to run the same search again except changing the text.
