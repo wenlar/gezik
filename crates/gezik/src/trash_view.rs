@@ -56,7 +56,8 @@ pub fn to_set(items: Vec<TrashItem>) -> ResultSet {
         batch.entries.push(Entry {
             name: entry_name.to_owned(),
             is_dir: item.is_dir,
-            flags: 0,
+            // A folder's whole size is in its `$I` record on Windows; elsewhere it is not known.
+            flags: if item.is_dir && cfg!(windows) { Entry::SIZED } else { 0 },
             size: item.size,
             modified: item.deleted,
             created: None,
@@ -500,6 +501,13 @@ mod tests {
         assert_eq!(set.label(1).unwrap().original, None, "unknown stays unknown");
         assert_eq!(set.entry(0).unwrap().modified, Some(SystemTime::UNIX_EPOCH), "Date deleted");
         assert_eq!(set.label(1).unwrap().info, Some(PathBuf::from("/bin2").join("$R2.info")));
+    }
+
+    #[test]
+    fn a_binned_folder_shows_its_recorded_size_on_windows() {
+        let set = to_set(vec![TrashItem { is_dir: true, size: 4, ..item("/bin", "$R1", "f", None) }]);
+        let expected = if cfg!(windows) { Some(4) } else { None };
+        assert_eq!(set.entry(0).unwrap().known_size(), expected, "the $I record holds the folder's total");
     }
 
     #[test]

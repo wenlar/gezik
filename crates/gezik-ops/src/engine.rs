@@ -832,6 +832,39 @@ mod tests {
     }
 
     #[test]
+    fn items_bound_where_an_earlier_one_goes_run_last_in_their_order() {
+        let dir = test_dir("same-target-order");
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let mut task = FakeTask::new("f", 3, &log);
+        task.targets = vec![dir.join("x.txt"); 3];
+        let engine = engine();
+        let job = engine.submit(Box::new(task));
+        let (report, _) = finish(&engine, job, |c| vec![Decision::KeepBoth; c.len()]);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        let started: Vec<String> = lock(&log).iter().filter(|l| l.starts_with("f+")).cloned().collect();
+        // The later one runs last: chosen to replace, it is the one left.
+        assert_eq!(started, ["f+0", "f+1", "f+2"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn keep_both_passes_over_a_name_another_item_is_bound_for() {
+        let dir = test_dir("same-target-next");
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let mut task = FakeTask::new("f", 3, &log);
+        // Nothing is written: only the plan knows the third item takes "x (2).txt".
+        task.targets = vec![dir.join("x.txt"), dir.join("x.txt"), dir.join("x (2).txt")];
+        let engine = engine();
+        let job = engine.submit(Box::new(task));
+        let (report, _) = finish(&engine, job, |c| vec![Decision::KeepBoth; c.len()]);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        let mut went: Vec<String> = lock(&log).iter().filter(|l| l.contains('@')).cloned().collect();
+        went.sort();
+        assert_eq!(went, ["0@x.txt", "1@x (3).txt", "2@x (2).txt"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn a_chain_is_one_job_and_one_undo() {
         let dir = test_dir("chain");
         write(&dir.join("a.txt"), "a");

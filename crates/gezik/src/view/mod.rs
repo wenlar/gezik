@@ -379,7 +379,7 @@ impl View {
         let entry = entry.as_deref();
         let counts = if is_dir { crate::folder_sizes::counts(&path) } else { None };
         Target::Entry {
-            name: data.listing.name_at(index).unwrap_or_default().to_owned(),
+            name: data.listing.shown_name_at(index).unwrap_or_default().to_owned(),
             path,
             is_dir,
             type_name: model::type_name_for(&data, index),

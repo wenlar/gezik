@@ -33,8 +33,22 @@ fn flag(url: &NSURL, key: &NSURLResourceKey) -> bool {
 }
 
 pub fn is_package(path: &Path) -> bool {
+    // A link to a bundle is one too: on macOS 26 `/Applications/Safari.app` is a link into
+    // the system's cryptex, and NSURL asks the link itself.
+    let real = match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => match std::fs::canonicalize(path) {
+            Ok(real) => real,
+            Err(_) => return false,
+        },
+        _ => path.to_path_buf(),
+    };
+    // LaunchServices calls any folder named `*.app` an app; one with no `Contents` (a folder
+    // someone named so) can only be gone into.
+    if real.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("app")) && !real.join("Contents").is_dir() {
+        return false;
+    }
     // SAFETY: an extern static of Foundation.
-    autoreleasepool(|_| url_of(path).is_some_and(|url| flag(&url, unsafe { NSURLIsPackageKey })))
+    autoreleasepool(|_| url_of(&real).is_some_and(|url| flag(&url, unsafe { NSURLIsPackageKey })))
 }
 
 pub fn resolve_alias(path: &Path) -> AliasTarget {
@@ -90,6 +104,10 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("gezik-finder-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir(dir.join("plain.app")).unwrap();
+        assert!(!is_package(&dir.join("plain.app")), "a folder named .app with no Contents");
+        std::os::unix::fs::symlink("/System/Applications/Calculator.app", dir.join("calc.app")).unwrap();
+        assert!(is_package(&dir.join("calc.app")), "a link to an app");
         std::fs::write(dir.join("a.txt"), "a").unwrap();
         std::os::unix::fs::symlink(dir.join("a.txt"), dir.join("link")).unwrap();
         std::os::unix::fs::symlink(dir.join("gone"), dir.join("broken")).unwrap();

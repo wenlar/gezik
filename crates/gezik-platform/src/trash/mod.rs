@@ -173,6 +173,7 @@ pub fn purge_at_thread_end(dir: &Path) {
 /// holds items from all of its device) from the root of its own volume. Call it right before
 /// the move.
 pub(crate) fn check_way_back(trashed: &Path, original: &Path) -> io::Result<()> {
+    let original = &crate::fs::through_system_links(original);
     #[cfg(unix)]
     let home =
         dirs::home_dir().and_then(|home| home_root(original, &home, std::fs::canonicalize(&home).ok().as_deref()));
