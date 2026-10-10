@@ -1240,3 +1240,11 @@ Alt proje 1 tamamlandıktan sonra bilerek ertelenen maddeler. Kaynak: görev inc
 - **`Reset to rule N` / soluk `View rule N applies` — PASS** (madde 1, 4, 6, 7, 9).
 - **Kural sütunlarıyla aç/kapa, sıfırlama, genişlik sürükleme — PASS** (madde 2).
 - **Gruplu kurallar (10d) — PASS** (`Downloads-like` tarih grupları; madde 2, 8).
+
+## Adım 10, alt parça 10a-1 (Bölme tekilleri `Pane`'de) sonrası
+
+- Ölçüm (sürüm, Windows, 2026-10-10, taban `fa0082f`, sonra `de4e9ec`, ayrı derlemeler, taze yapılandırma klasörü): exe **25.080.832 → 25.090.560 bayt** (+9.728). `measure.ps1 -Runs 5` iki tur: boşta **7,3 → 7,3 MB**, açılış 125/36 → 120/33 ms. `stress.ps1` (100.000 dosya): yükleme sonrası 17,7 → 17,8 MB, kaydırma CPU'su 234 → 234 ms. `tabs.ps1` (PostMessage, sekme sayısı doğrulanmıyor) dört tur 1 sekmede 7,4–10,7 MB arası oynuyor, taban ve sonra iç içe: fark yok.
+- Sapmalar: `WindowCtx`/`windows::with_focused` 10g'ye kaldı (1); `active_id()` ilk çağıranıyla 10b'de eklenir. Bölmenin sonuç yolundaki modüller arası çağrılar (`finish_load` → `folder_sizes`/`search`) `with_active`; 10b'de iki bölmede `with_id` olmalı.
+- Kurulum sırası: altı yapı bugünkü sırada kurulur, sonra `panes::install`, sonra `nav.install()` (yalnız ilk yüklemeyi başlatır). Kurulum sırasındaki eşzamanlı çağrılar denetlendi: hepsi önce de etkisizdi.
+- İnceleme: bulgu yok. Kalan risk: çıkışta iş parçacığı yerel `PANES`'in bırakılma sırası eski altı tekilden farklı (aynı türden risk); `Pane` kendisi testte kurulamıyor, kayıt mantığı jenerik `with_picked` ile sınanıyor.
+- Linux derlemesi bu makinede denetlenemiyor (fontconfig); dönüştürülen çağrıların hiçbiri Linux'a özgü bölgede değil.
