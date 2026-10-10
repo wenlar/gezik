@@ -371,6 +371,8 @@ fn odd_names_open_and_name_their_outputs() {
     let d = dir("names");
     // Windows forbids `"` in names; everything else is the same.
     let shown = if cfg!(windows) { "rapor ş 'a'; $ & ğüİ 😀" } else { "rapor ş \"a\"; $ & ğüİ 😀" };
+    // A name that is not Unicode joins it where the system allows one (not on macOS).
+    #[cfg_attr(target_os = "macos", allow(unused_mut))]
     let mut stems: Vec<OsString> = vec![shown.into()];
     #[cfg(windows)]
     {

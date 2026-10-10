@@ -784,6 +784,7 @@ mod tests {
         assert_eq!(folder_size_query(Path::new(r"C:\Work")), r#"folder: parent:"C:\Work""#);
     }
 
+    #[cfg(windows)]
     fn folder_item(path: &str, size: Option<u64>) -> Item {
         Item { path: path.into(), is_dir: true, size, created: None, modified: None, attributes: None }
     }
