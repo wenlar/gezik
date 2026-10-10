@@ -187,6 +187,43 @@ mod tests {
     }
 
     #[test]
+    fn two_items_from_one_place_ask_about_the_second() {
+        let dir = test_dir("restore-same-name");
+        let bin = dir.join("bin");
+        write(&bin.join("$R1.txt"), "first");
+        write(&bin.join("$R2.txt"), "second");
+        let original = dir.join("dst").join("x.txt");
+        let pairs = vec![(bin.join("$R1.txt"), original.clone()), (bin.join("$R2.txt"), original.clone())];
+        let engine = engine();
+        let asked = std::cell::RefCell::new(Vec::new());
+        let (report, _) = finish(&engine, engine.submit(Box::new(RestoreTask::new(pairs))), |c| {
+            asked.borrow_mut().extend(c.iter().map(|c| c.target.clone()));
+            vec![Decision::KeepBoth; c.len()]
+        });
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert_eq!(*asked.borrow(), std::slice::from_ref(&original));
+        assert_eq!(read(&original), "first");
+        assert_eq!(read(&dir.join("dst").join("x (2).txt")), "second");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_failure_names_the_original_not_the_bin_entry() {
+        let dir = test_dir("restore-fail-name");
+        let bin = dir.join("bin");
+        write(&bin.join("$R1.txt"), "x");
+        // A file where its folder should be: it cannot come back.
+        write(&dir.join("dst"), "a file");
+        let original = dir.join("dst").join("x.txt");
+        let engine = engine();
+        let job = engine.submit(Box::new(RestoreTask::new(vec![(bin.join("$R1.txt"), original.clone())])));
+        let (report, _) = finish(&engine, job, |c| vec![Decision::KeepBoth; c.len()]);
+        let failed: Vec<&std::path::Path> = report.failures.iter().map(|f| f.path.as_path()).collect();
+        assert_eq!(failed, [original.as_path()]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn a_missing_folder_is_made_again() {
         let dir = test_dir("restore-missing-folder");
         let original = dir.join("gone").join("deeper").join("x.txt");

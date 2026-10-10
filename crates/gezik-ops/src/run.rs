@@ -1,18 +1,20 @@
 //! Running a job: wait for the drives, plan, settle conflicts, do the items.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
 
 use gezik_core::ops::conflict::{ConflictKind, Decision, Facts, Resolution, default_decision, kind_of, resolve};
 use gezik_core::ops::names::next_free_os;
-use gezik_core::ops::paths::{DriveSet, is_within, same_path};
+use gezik_core::ops::paths::{DriveSet, is_within, path_key, same_path};
 use gezik_core::ops::threads::workers;
 use gezik_platform::fs;
 
 use crate::engine::{ConflictItem, Event, Job, PauseReason, Shared, lock};
-use crate::task::{ChangedSince, NoTrash, Outcome, PlanItem, Restart, RunCx, ScanSink, Stage, Task, Work, is_marker};
+use crate::task::{
+    ChangedSince, NoTrash, Outcome, PlanItem, Restart, RunCx, ScanSink, Stage, Task, TaskKind, Work, is_marker,
+};
 use crate::walk::facts_of;
 
 /// After this many failures in a row the job pauses and asks.
@@ -73,6 +75,7 @@ fn run_task(shared: &Shared, job: &Job, task: &dyn Task, kinds: &[gezik_core::op
             renames: Vec::new(),
             blocked: Vec::new(),
             taken: HashSet::new(),
+            queued: HashMap::new(),
         };
         task.plan(&mut sink);
         control.scanning.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -115,6 +118,9 @@ struct Sink<'a> {
     blocked: Vec<(PathBuf, usize)>,
     /// Names this task chose that may not exist on disk yet.
     taken: HashSet<PathBuf>,
+    /// Checked targets of items queued to run side by side, not on disk yet when planned: a
+    /// later item of this task bound for one of them is a conflict (two restored `x.txt`).
+    queued: HashMap<Vec<String>, Facts>,
 }
 
 fn conflict(item: &PlanItem, target: &Path, kind: ConflictKind, existing: Facts, decision: Decision) -> ConflictItem {
@@ -176,6 +182,32 @@ impl ScanSink for Sink<'_> {
                 children: Vec::new(),
             });
             return true;
+        }
+        if item.check_target
+            && item.stage == Stage::Parallel
+            && let Some(target) = item.target.clone()
+        {
+            let key = path_key(&target);
+            if let Some(&earlier) = self.queued.get(&key) {
+                let kind = match kind_of(item.facts, earlier) {
+                    ConflictKind::Folder => ConflictKind::Mismatch,
+                    kind => kind,
+                };
+                // Runs once the earlier one is done (never beside it): `Replace` then finds it.
+                item.stage = Stage::After;
+                if let Some(decision) = item.preset {
+                    self.apply(item, kind, earlier, decision);
+                    return true;
+                }
+                let decision = default_decision(kind, item.facts, earlier);
+                self.held.push(Held {
+                    conflict: conflict(&item, &target, kind, earlier, decision),
+                    item,
+                    children: Vec::new(),
+                });
+                return true;
+            }
+            self.queued.insert(key, item.facts);
         }
         self.dispatch(item);
         true
@@ -343,6 +375,14 @@ fn settle_aside(job: &Job, cx: &RunCx<'_>, aside: &Path, target: &Path, done: bo
     }
 }
 
+/// The path a failure names: a restored item's place, never its entry's name in the bin (`$R…`).
+fn failed_at<'a>(task: &dyn Task, item: &'a PlanItem) -> &'a Path {
+    match (task.kind(), &item.target) {
+        (TaskKind::Restore, Some(target)) => target,
+        _ => item.path(),
+    }
+}
+
 /// Does one item, on a worker or the planning thread.
 pub(crate) fn execute(shared: &Shared, job: &Job, task: &dyn Task, item: PlanItem) {
     let control = &job.control;
@@ -352,7 +392,7 @@ pub(crate) fn execute(shared: &Shared, job: &Job, task: &dyn Task, item: PlanIte
     if item.replace && onto_itself(&item) {
         // `apply` never asks for this; should anything else, the source is not touched.
         let err = io::Error::new(io::ErrorKind::InvalidInput, "Cannot replace an item with itself");
-        job.fail(item.path(), &err);
+        job.fail(failed_at(task, &item), &err);
         if item.counted {
             control.item_done();
         }
@@ -371,7 +411,7 @@ pub(crate) fn execute(shared: &Shared, job: &Job, task: &dyn Task, item: PlanIte
             io::ErrorKind::FileTooLarge,
             format!("It is too big for this drive (files there can be at most {gb} GB)"),
         );
-        job.fail(item.path(), &err);
+        job.fail(failed_at(task, &item), &err);
         if item.counted {
             control.item_done();
             control.add_bytes(item.facts.size);
@@ -443,7 +483,7 @@ pub(crate) fn execute(shared: &Shared, job: &Job, task: &dyn Task, item: PlanIte
             }
             Err(err) => {
                 touch();
-                job.fail(item.path(), &err);
+                job.fail(failed_at(task, &item), &err);
                 if control.failed_once() >= MAX_FAILURES_IN_ROW {
                     control.succeeded();
                     shared.pause(job, PauseReason::ManyFailures, None);
