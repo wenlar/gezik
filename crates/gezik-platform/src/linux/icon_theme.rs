@@ -225,7 +225,8 @@ pub fn load_chain(
         let roots: Vec<PathBuf> = bases.iter().map(|base| base.join(&theme)).filter(|root| exists(root)).collect();
         let Some(text) = roots.iter().find_map(|root| read(&root.join("index.theme"))) else { continue };
         let index = parse_index(&text);
-        stack.extend(index.inherits.iter().rev().cloned());
+        // hicolor waits at the bottom of the stack: listed early, it still comes last.
+        stack.extend(index.inherits.iter().rev().filter(|t| *t != "hicolor").cloned());
         themes.push((roots, index));
     }
     Chain { themes, pixmaps }
@@ -377,15 +378,18 @@ mod live {
     use crate::Rgba;
     use crate::linux::mime;
 
+    /// How long `gsettings` may take to name the theme.
+    const GSETTINGS_LIMIT: std::time::Duration = std::time::Duration::from_secs(2);
+
     /// The user's theme name (deviation 8), asked once.
     fn user_theme(xdg: &Xdg) -> String {
         let read = |p: PathBuf| mime::read_small(&p, mime::MAX_LIST_BYTES);
         let named = match source_for(&xdg.desktops) {
             ThemeSource::Kde => Some(from_kdeglobals(read(xdg.config_home.join("kdeglobals")).as_deref())),
-            // shortcut: a hung dconf stalls the icon thread (not the UI) up to the helper limit
-            // (60 s), once. Upgrade to a shorter limit if that is ever seen.
+            // Asked inside the chain's OnceLock: a hung session bus must not stall every icon
+            // thread for long. Past the limit, settings.ini and then Adwaita decide.
             ThemeSource::Gsettings(schema) => {
-                crate::process::run_with_input(&["gsettings", "get", schema, "icon-theme"], "")
+                crate::process::run_until(&["gsettings", "get", schema, "icon-theme"], "", GSETTINGS_LIMIT)
                     .ok()
                     .filter(|ran| ran.ok)
                     .and_then(|ran| from_gsettings(&ran.stdout))
@@ -540,14 +544,21 @@ mod tests {
             ("/usr/share/icons/Papirus/index.theme", "[Icon Theme]\nInherits=Mine,breeze\n"),
             ("/usr/share/icons/Adwaita/index.theme", "[Icon Theme]\nInherits=hicolor\n"),
             ("/usr/share/icons/hicolor/index.theme", "[Icon Theme]\n"),
+            ("/usr/share/icons/Early/index.theme", "[Icon Theme]\nInherits=hicolor,Adwaita\n"),
         ]
         .into_iter()
         .collect();
         let read = |p: &Path| texts.get(p.to_string_lossy().replace('\\', "/").as_str()).map(|t| (*t).to_owned());
         let exists = |p: &Path| {
             let p = p.to_string_lossy().replace('\\', "/");
-            ["/h/.icons/Mine", "/usr/share/icons/Papirus", "/usr/share/icons/Adwaita", "/usr/share/icons/hicolor"]
-                .contains(&p.as_str())
+            [
+                "/h/.icons/Mine",
+                "/usr/share/icons/Papirus",
+                "/usr/share/icons/Adwaita",
+                "/usr/share/icons/hicolor",
+                "/usr/share/icons/Early",
+            ]
+            .contains(&p.as_str())
         };
         let bases = [PathBuf::from("/h/.icons"), PathBuf::from("/usr/share/icons")];
         let chain = load_chain("Mine", &bases, Vec::new(), &read, &exists);
@@ -561,6 +572,16 @@ mod tests {
             load_chain("../etc", &bases, Vec::new(), &read, &exists).themes.len(),
             1,
             "a bad name: only hicolor"
+        );
+        let early: Vec<String> = load_chain("Early", &bases, Vec::new(), &read, &exists)
+            .themes
+            .iter()
+            .map(|(r, _)| r[0].to_string_lossy().replace('\\', "/"))
+            .collect();
+        assert_eq!(
+            early,
+            ["/usr/share/icons/Early", "/usr/share/icons/Adwaita", "/usr/share/icons/hicolor"],
+            "hicolor listed first still comes last"
         );
     }
 
