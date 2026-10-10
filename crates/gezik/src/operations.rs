@@ -745,6 +745,25 @@ impl Operations {
         false
     }
 
+    /// Enter (`keep`) or Esc while a rename is open but its field is off screen: the typed
+    /// name is kept, or the old one. Returns whether there was such a rename.
+    pub fn off_screen_rename_key(&self, keep: bool) -> bool {
+        if self.0.window.upgrade().is_none() || self.0.view.renaming().is_none() {
+            return false;
+        }
+        let mirror = crate::panes::mirror(self.0.view.pane_id());
+        if mirror.focus.borrow().rename {
+            return false;
+        }
+        if keep {
+            let typed = mirror.rename_text.borrow().to_string();
+            self.commit_rename(&typed, Commit::Enter);
+        } else {
+            self.rename_cancelled();
+        }
+        true
+    }
+
     pub fn rename_cancelled(&self) {
         self.0.view.end_rename(true);
     }

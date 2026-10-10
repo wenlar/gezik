@@ -361,6 +361,17 @@ fn handle_key(
         }
         return used;
     }
+    // The name field scrolled off screen gave the list the keyboard: Enter and Esc are still
+    // the rename's (file-view.slint `rename-focused`).
+    if let Some(chord) = &chord
+        && !has_modifier
+        && !chord.shift
+        && matches!(chord.key, Key::Enter | Key::Escape)
+        && window.get_list_focused()
+        && ops.off_screen_rename_key(chord.key == Key::Enter)
+    {
+        return true;
+    }
     // The name field being edited has the keyboard (Enter, Esc, Tab are its own).
     if ops.end_unfocused_rename() {
         return false;
