@@ -565,6 +565,17 @@ Numbers stay as they are when branches merge: if this range meets one merged ear
 184. **Sync browsing.** As macOS 238 with Ctrl, Alt+Up for Up and Alt+Left for Back, except the case: "Docs" on the left and "docs" on the right do **not** match on Linux (`Sync browsing off: no folder "Docs" in …`).
 185. **Swap, same folder, tab sets, second launch.** As macOS 239–242 with Ctrl+U for ⌃⌘U and the View button menu (`Sync browsing`, `Swap panes`, `Same folder in other pane`, greyed with one pane).
 
+### 10e, Miller columns
+
+Numbers stay as they are when branches merge (see 10b). 10e starts at 190 as its plan decided. GNOME and KDE, X11 and Wayland.
+
+190. **Tests first.** As macOS 250; paste.
+191. **Mode and keys.** Ctrl+Shift+3 in a folder (and the View button's menu ▸ Columns): one column with the folder; Ctrl+1 / Ctrl+2 leave the columns (check the US and the Turkish Q layouts: Ctrl+Shift+3 works on both). `~/.config/gezik/views.toml` says `mode = "columns"`.
+192. **Arrows, history, mouse, preview.** As macOS 252–255 with Alt+Up for ⌘↑, Alt+Left/Right for ⌘[ / ⌘], Shift+wheel for the sideways swipe, Alt+P for the window's preview.
+193. **Drag and drop.** As macOS 256 (Ctrl copies, Shift moves); drag from the desktop's file manager onto a column's empty space and onto a folder row of another column: it goes there. On Wayland too.
+194. **Menus.** As macOS 257 with Gezik's own menu; middle-click a folder row in another column: a new tab.
+195. **Fallback, two panes, memory.** As macOS 258–259 with F3 for two panes (memory: `ps -o rss= -p $(pgrep -x gezik)`; the deep chain under `/tmp/gezik-deep`).
+
 ## Known gaps (not bugs)
 
 - **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (F5 works it out again). Search results and the flat view show no folder sizes.

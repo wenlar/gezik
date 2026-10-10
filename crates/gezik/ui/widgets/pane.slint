@@ -119,6 +119,11 @@ export struct PaneGeometry {
     grid-columns: int,
     // How many rows PgUp/PgDn move: one screen, less one row.
     page-rows: int,
+    // The Miller columns' sheet (its top is the file view's) and sideways offset.
+    columns-left: length,
+    columns-width: length,
+    columns-height: length,
+    columns-scroll: length,
 }
 
 // Which of the pane's text fields has the keyboard.
@@ -149,6 +154,8 @@ export component PaneView inherits Rectangle {
     in property <bool> drag-active;
     in property <bool> drag-forbidden;
     in property <int> drop-entry: -1;
+    // The Miller column `drop-entry` is in (-1: the file view).
+    in property <int> drop-column: -1;
     in property <int> drop-tab: -1;
     in property <int> drop-crumb: -1;
     in property <int> tab-insert: -1;
@@ -232,9 +239,13 @@ export component PaneView inherits Rectangle {
     callback background-menu(int, length, length);
     callback marquee(int, length, length, length, length, bool);
     callback marquee-done(int);
-    // A press on row `int` of Miller column `int` (not the focused one), with its offset; the
-    // columns on screen (first, past the last).
-    callback column-clicked(int, int, int, length);
+    // Miller columns (column-view.slint), each with the pane first: a left or right press, a
+    // right-click's menu (of the row pressed or the column's folder), a middle-click, a
+    // column scrolled, the columns on screen (first, past the last).
+    callback column-pressed(int, int, int, length, length, length, bool);
+    callback column-menu(int, bool, length, length);
+    callback column-middle(int, int, int);
+    callback column-scrolled(int, int, length);
     callback columns-shown(int, int, int);
 
     // What lives here and Rust only hears of (callbacks above) or asks for (`data` requests).
@@ -319,6 +330,10 @@ export component PaneView inherits Rectangle {
         grid-left: file-view.grid-left,
         grid-columns: file-view.grid-columns,
         page-rows: file-view.page-rows,
+        columns-left: clip.absolute-position.x,
+        columns-width: clip.width,
+        columns-height: clip.height,
+        columns-scroll: root.columns-x,
     };
     property <PaneFocus> fields: {
         filter: filter-bar.field-focused,
@@ -641,15 +656,28 @@ export component PaneView inherits Rectangle {
                         mono-font: root.mono-font;
                         column-width <=> root.column-width;
                         scroll-x <=> root.columns-x;
-                        clicked(column, row, scroll) => {
+                        drag-active: root.drag-active;
+                        drag-forbidden: root.drag-forbidden;
+                        drop-column: root.drop-column;
+                        drop-row: root.drop-entry;
+                        pressed(column, row, scroll, x, y, right) => {
                             root.end-path-editing();
                             root.focus-requested(root.index);
-                            root.column-clicked(root.index, column, row, scroll);
+                            root.column-pressed(root.index, column, row, scroll, x, y, right);
                         }
+                        dragged(x, y, shift, ctrl, alt) => { root.item-drag(x, y, shift, ctrl, alt); }
+                        cancelled => { root.item-cancel(); }
+                        released(x, y, right) => { return root.item-up(-1, x, y, right); }
+                        menu(row, x, y) => {
+                            root.end-path-editing();
+                            root.column-menu(root.index, row, x, y);
+                        }
+                        middle-clicked(column, row) => { root.column-middle(root.index, column, row); }
+                        scrolled(column, y) => { root.column-scrolled(root.index, column, y); }
                         shown(first, end) => { root.columns-shown(root.index, first, end); }
                     }
                     // Clips the file view to the sheet while it is a column scrolled partly away.
-                    Rectangle {
+                    clip := Rectangle {
                         clip: root.view-mode == 2;
                         file-view := FileView {
                             x: root.view-mode == 2 ? root.columns-x + root.column-focus * (root.column-width + 1px) : 0px;
@@ -706,7 +734,7 @@ export component PaneView inherits Rectangle {
                             item-cancel => { root.item-cancel(); }
                             drag-active: root.drag-active;
                             drag-forbidden: root.drag-forbidden;
-                            drop-entry: root.drop-entry;
+                            drop-entry: root.drop-column < 0 ? root.drop-entry : -1;
                             item-double-clicked(i) => { root.open-row(root.index, i); }
                             item-middle-clicked(i) => { root.row-middle-clicked(root.index, i); }
                             item-menu(i, x, y) => {

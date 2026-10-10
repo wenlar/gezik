@@ -25,8 +25,24 @@ export component ColumnView inherits Rectangle {
     in-out property <length> column-width;
     // The sideways scroll offset (content-x: zero or negative).
     in-out property <length> scroll-x;
-    // A press on row `int` of column `int` (not the focused one), with that column's offset.
-    callback clicked(int, int, length);
+    in property <bool> drag-active;
+    in property <bool> drag-forbidden;
+    // The drop target: row `drop-row` of column `drop-column`.
+    in property <int> drop-column: -1;
+    in property <int> drop-row: -1;
+    // A left or right press (`bool`: right) in column `int` (not the focused one) on row `int`
+    // (-1: its empty space), with that column's offset, at a window point.
+    callback pressed(int, int, length, length, length, bool);
+    // The pointer moved with a button down (shift, ctrl, alt); the press was taken away.
+    callback dragged(length, length, bool, bool, bool);
+    callback cancelled();
+    // The button came up at a window point (`bool`: right): whether a drag used it.
+    callback released(length, length, bool) -> bool;
+    // A right-click no drag used: the menu of the row (`bool`) or the column's folder.
+    callback menu(bool, length, length);
+    callback middle-clicked(int, int);
+    // Column `int` scrolled to `length`.
+    callback scrolled(int, length);
     // The columns on screen: the first and one past the last that fits (more than there are,
     // so a column added there counts as shown at once).
     callback shown(int, int);
@@ -71,29 +87,64 @@ export component ColumnView inherits Rectangle {
             width: root.column-width;
             height: root.height;
 
-            if i != root.focused && column.rows.length > 0: list := ListView {
+            // Behind the rows (the list passes presses through): presses, drags, menus on a row
+            // or on the column's empty space. Pressed, it keeps the pointer while its column
+            // takes the focus and the file view is laid over it.
+            touch := TouchArea {
+                y: list.y;
+                height: list.height;
+                property <int> at-row: self.mouse-y < list.content-y + column.rows.length * Theme.row-height ? floor((self.mouse-y - list.content-y) / Theme.row-height) : -1;
+                property <bool> button-down;
+                property <bool> on-row;
+                mouse-cursor: root.drag-active && root.drag-forbidden ? MouseCursor.not-allowed : MouseCursor.default;
+                pointer-event(event) => {
+                    let px = self.absolute-position.x + self.mouse-x;
+                    let py = self.absolute-position.y + self.mouse-y;
+                    let right = event.button == PointerEventButton.right;
+                    if event.kind == PointerEventKind.down && (event.button == PointerEventButton.left || right) {
+                        self.button-down = true;
+                        self.on-row = self.at-row >= 0;
+                        root.pressed(i, self.at-row, list.content-y, px, py, right);
+                    }
+                    if event.kind == PointerEventKind.move && (self.button-down || root.drag-active) {
+                        root.dragged(px, py, event.modifiers.shift, event.modifiers.control, event.modifiers.alt);
+                    }
+                    if event.kind == PointerEventKind.cancel && self.button-down {
+                        self.button-down = false;
+                        root.cancelled();
+                    }
+                    if event.kind == PointerEventKind.up && event.button == PointerEventButton.middle && self.at-row >= 0 {
+                        root.middle-clicked(i, self.at-row);
+                    }
+                    if event.kind == PointerEventKind.up && self.button-down && (event.button == PointerEventButton.left || right) {
+                        self.button-down = false;
+                        if !((self.on-row || root.drag-active) && root.released(px, py, right)) && right {
+                            root.menu(self.on-row, px, py);
+                        }
+                    }
+                }
+            }
+
+            list := ListView {
                 y: root.pad;
                 height: parent.height - 2 * root.pad;
                 content-y: column.scroll;
+                changed content-y => { root.scrolled(i, self.content-y); }
                 for item in column.rows: row := Rectangle {
                     property <FileRow> file: item.cells[0];
+                    property <bool> drop: root.drop-column == i && root.drop-row == item.first;
                     height: Theme.row-height;
                     Rectangle {
                         x: Theme.inset;
                         width: parent.width - 2 * Theme.inset;
                         border-radius: Theme.row-radius;
-                        background: row.file.selected ? Theme.selection-inactive : touch.has-hover ? Theme.hover : transparent;
+                        background: row.drop ? Theme.drop-target : row.file.selected ? Theme.selection-inactive : touch.has-hover && !root.drag-active && touch.at-row == item.first ? Theme.hover : transparent;
+                        border-width: row.drop ? 1px : 0px;
+                        border-color: Theme.accent;
                         accessible-role: list-item;
                         accessible-label: row.file.name;
                         accessible-item-selectable: true;
                         accessible-item-selected: row.file.selected;
-                        touch := TouchArea {
-                            pointer-event(event) => {
-                                if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
-                                    root.clicked(i, item.first, list.content-y);
-                                }
-                            }
-                        }
                         HorizontalLayout {
                             padding-left: Theme.spacing + 4px;
                             padding-right: Theme.spacing + 4px;

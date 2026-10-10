@@ -392,10 +392,13 @@ export component AppWindow inherits Window {
     // The preview splitter was released.
     callback preview-resized();
     // Every pane's Miller column width (spec 10 §7.1), dragged at a column's edge (120-600px)
-    // and saved in state.toml on close; a press in a column that is not the focused one (pane,
-    // column, row, its scroll offset); the columns a pane shows (pane, first, past the last).
+    // and saved in state.toml on close; a column's press, menu, middle-click and scroll
+    // (PaneView's `column-*`); the columns a pane shows (pane, first, past the last).
     in-out property <length> column-width: 220px;
-    callback column-clicked(int, int, int, length);
+    callback column-pressed(int, int, int, length, length, length, bool);
+    callback column-menu(int, bool, length, length);
+    callback column-middle(int, int, int);
+    callback column-scrolled(int, int, length);
     callback columns-shown(int, int, int);
     // A Slint context menu item was chosen (its `MenuEntry.id`).
     callback menu-activated(int);
@@ -687,9 +690,11 @@ export component AppWindow inherits Window {
     // What dropping files from another program here would do, next to the system's drag
     // image (macOS, whose image has no such text; empty: nothing to say).
     in property <string> offer-label;
-    // The drop target, highlighted (-1: none): an entry, a sidebar row (and the row a pin
-    // line is drawn above), a tab, an address bar part.
+    // The drop target, highlighted (-1: none): an entry (in Miller column `drop-column`, -1: in
+    // the file view), a sidebar row (and the row a pin line is drawn above), a tab, an address
+    // bar part.
     in property <int> drop-entry: -1;
+    in property <int> drop-column: -1;
     in property <int> drop-sidebar-row: -1;
     in property <int> drop-pin-row: -1;
     in property <int> drop-tab: -1;
@@ -904,6 +909,7 @@ export component AppWindow inherits Window {
                             drag-active: root.drag-active;
                             drag-forbidden: root.drag-forbidden;
                             drop-entry: i == root.drop-pane ? root.drop-entry : -1;
+                            drop-column: i == root.drop-pane ? root.drop-column : -1;
                             drop-tab: i == root.drop-pane ? root.drop-tab : -1;
                             drop-crumb: i == root.drop-pane ? root.drop-crumb : -1;
                             tab-insert: i == root.drop-pane ? root.tab-insert : -1;
@@ -980,7 +986,10 @@ export component AppWindow inherits Window {
                             preview: root.preview;
                             mono-font: root.mono-font;
                             column-width <=> root.column-width;
-                            column-clicked(p, c, r, y) => { root.column-clicked(p, c, r, y); }
+                            column-pressed(p, c, r, s, x, y, right) => { root.column-pressed(p, c, r, s, x, y, right); }
+                            column-menu(p, row, x, y) => { root.column-menu(p, row, x, y); }
+                            column-middle(p, c, r) => { root.column-middle(p, c, r); }
+                            column-scrolled(p, c, y) => { root.column-scrolled(p, c, y); }
                             columns-shown(p, first, end) => { root.columns-shown(p, first, end); }
 
                             // The row under the toolbar; the pane lays its bars and sheet over `sheet-place`.

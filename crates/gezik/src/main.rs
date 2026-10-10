@@ -1569,22 +1569,48 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
     // Slint passes indexes as `i32`: a negative one does nothing.
-    window.on_tab_menu(move |pane, i, x, y| {
-        if let (Some(_), Ok(i)) = (pick(pane), usize::try_from(i)) {
-            menus.tab(i, x, y);
+    window.on_tab_menu({
+        let menus = menus.clone();
+        move |pane, i, x, y| {
+            if let (Some(_), Ok(i)) = (pick(pane), usize::try_from(i)) {
+                menus.tab(i, x, y);
+            }
         }
     });
 
     // Double-click; with single-click-open the click already opened it.
-    // Miller columns (spec 10 §7): a press in a column beside the focused one, the columns on screen.
-    window.on_column_clicked({
-        let ops = ops.clone();
-        move |pane, column, row, scroll| {
+    // Miller columns (spec 10 §7): a press in a column beside the focused one takes it there
+    // first, so the press, drag and menu that follow are the focused column's (as a pane is
+    // made active first, 10b); a middle-click, a scroll, the columns on screen.
+    window.on_column_pressed({
+        let (ops, drags) = (ops.clone(), drags.clone());
+        move |pane, column, row, scroll, x, y, right| {
             ops.end_unfocused_rename();
-            if let Some(p) = pick(pane) {
-                p.view.column_clicked(column, row, scroll);
+            if let Some(index) = pick(pane).and_then(|p| p.view.column_clicked(column, row, scroll)) {
+                drags.down(index, x, y, right, true);
             }
         }
+    });
+    window.on_column_menu(move |pane, row, x, y| {
+        let Some(p) = pick(pane) else { return };
+        match p.view.single_selected().filter(|_| row) {
+            Some(index) => menus.row(i32::try_from(index).unwrap_or(-1), x, y),
+            None => {
+                p.view.clear_selection();
+                menus.background(x, y);
+            }
+        }
+    });
+    window.on_column_middle(|pane, column, row| {
+        let Some(p) = pick(pane) else { return };
+        if let (Ok(column), Ok(row)) = (usize::try_from(column), usize::try_from(row))
+            && let Some((path, true)) = p.view.column_entry(column, row)
+        {
+            p.nav.open_tab(gezik_core::nav::Location::Path(path), false);
+        }
+    });
+    window.on_column_scrolled(|pane, column, scroll| {
+        panes::with_row(pane, |p| p.view.column_scrolled(column, scroll));
     });
     window.on_columns_shown(|pane, first, end| {
         panes::with_row(pane, |p| p.view.columns_on_screen(first, end));

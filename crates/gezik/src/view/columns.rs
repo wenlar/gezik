@@ -344,22 +344,69 @@ impl View {
     }
 
     /// A press on `row` of `column`, not the focused one, scrolled to `scroll`: that column
-    /// takes the focus with the row selected; a folder opens its column.
-    pub fn column_clicked(&self, column: i32, row: i32, scroll: f32) {
-        let (Ok(column), Ok(row)) = (usize::try_from(column), usize::try_from(row)) else { return };
-        let Some(path) = self.column_path() else { return };
-        let Some(folder) = path.columns().get(column).filter(|_| column != path.focus()).map(|c| c.folder.clone())
-        else {
-            return;
+    /// takes the focus with the row selected (a folder opens its column), or with nothing
+    /// selected for its empty space (`row` < 0). The row's place in the view, once it shows.
+    pub fn column_clicked(&self, column: i32, row: i32, scroll: f32) -> Option<usize> {
+        let column = usize::try_from(column).ok()?;
+        let path = self.column_path()?;
+        if column == path.focus() || column >= path.columns().len() {
+            return None;
+        }
+        let Ok(row) = usize::try_from(row) else {
+            self.column_move(move |path| path.select(column, None, false), None, Some(scroll), false);
+            return None;
         };
-        let entry = {
-            let columns = self.0.miller.borrow();
-            let list = columns.lists.iter().find(|list| list.folder == folder);
-            list.and_then(List::entries).and_then(|entries| entries.get(row).map(|e| (e.name.clone(), e.is_dir)))
-        };
-        let Some((name, is_dir)) = entry else { return };
+        let (name, is_dir) =
+            self.column_entry_at(column, row, |entries| (entries[row].name.clone(), entries[row].is_dir))?;
         let select = name.clone();
         self.column_move(move |path| path.select(column, Some(select), is_dir), Some(name), Some(scroll), false);
+        self.single_selected()
+    }
+
+    /// What `f` makes of the listing of `column` (not the focused one), if it has `row`.
+    fn column_entry_at<R>(&self, column: usize, row: usize, f: impl FnOnce(&[Entry]) -> R) -> Option<R> {
+        let folder = self.column_path()?.columns().get(column)?.folder.clone();
+        let columns = self.0.miller.borrow();
+        let entries = columns.lists.iter().find(|list| list.folder == folder)?.entries()?;
+        (row < entries.len()).then(|| f(&entries))
+    }
+
+    /// Entry `row` of `column` (not the focused one) and whether it is a folder: a drop
+    /// target, a middle-click.
+    pub fn column_entry(&self, column: usize, row: usize) -> Option<(PathBuf, bool)> {
+        let folder = self.column_folder(column)?;
+        self.column_entry_at(column, row, |entries| (folder.join(&entries[row].name), entries[row].is_dir))
+    }
+
+    /// The folder `column` shows.
+    pub fn column_folder(&self, column: usize) -> Option<PathBuf> {
+        Some(self.column_path()?.columns().get(column)?.folder.clone())
+    }
+
+    /// Each column's scroll offset and the rows it shows (none: the focused one, those not on
+    /// screen or not read), for drops.
+    pub fn column_rows(&self) -> Vec<(f32, usize)> {
+        let Some(path) = self.column_path() else { return Vec::new() };
+        let columns = self.0.miller.borrow();
+        let rows = |i: usize, folder: &Path| {
+            let list = columns.lists.iter().find(|list| list.folder == folder)?;
+            let count = list.entries().filter(|_| i != path.focus() && columns.visible.contains(&i))?.len();
+            Some((list.scroll, count))
+        };
+        path.columns().iter().enumerate().map(|(i, c)| rows(i, &c.folder).unwrap_or_default()).collect()
+    }
+
+    /// `column` was scrolled to `scroll` (while it shows its rows).
+    pub fn column_scrolled(&self, column: i32, scroll: f32) {
+        let Ok(column) = usize::try_from(column) else { return };
+        let Some(folder) = self.column_folder(column) else { return };
+        let mut columns = self.0.miller.borrow_mut();
+        if !columns.visible.contains(&column) {
+            return;
+        }
+        if let Some(list) = columns.lists.iter_mut().find(|list| list.folder == folder && list.shown.is_some()) {
+            list.scroll = scroll;
+        }
     }
 
     /// Moves the focus as `change` does to the path: the column left keeps the view's rows;
@@ -845,6 +892,34 @@ mod tests {
         show(super::super::listing::files("/w", &[]));
         assert!(!view.columns_on(), "the list was chosen");
         assert_eq!(view.view_settings().group, GroupBy::None, "/w has the defaults");
+    }
+
+    #[test]
+    fn a_column_beside_the_focus_gives_drops_its_rows_and_folder() {
+        use gezik_core::view_rules::Place;
+        let view = View::new(
+            crate::panes::next_id(),
+            slint::Weak::default(),
+            crate::media::Media::idle(),
+            Default::default(),
+            None,
+        );
+        view.show(super::super::listing::files("/a", &["b/", "c.txt"]), &ViewState::default(), None, Place::default());
+        assert!(view.show_columns(&Location::Path(p("/a"))));
+        view.press(0, false, false);
+        assert_eq!(view.column_folder(1), Some(p("/a/b")), "b opened its column");
+        assert_eq!(view.column_entry(1, 0), None, "not read yet");
+        let Listing::Files(_, entries) = super::super::listing::files("/a/b", &["d/", "e.txt"]) else { unreachable!() };
+        let list = view.make_list(Path::new("/a/b"), entries);
+        view.0.miller.borrow_mut().put(list);
+        assert_eq!(view.column_rows(), [(0.0, 0), (0.0, 0)], "off screen: no rows");
+        view.0.miller.borrow_mut().visible = 0..3;
+        view.column_scrolled(1, -20.0);
+        assert_eq!(view.column_rows(), [(0.0, 0), (-20.0, 2)], "the focused column is the list");
+        assert_eq!(view.column_entry(1, 0), Some((p("/a/b").join("d"), true)));
+        assert_eq!(view.column_entry(1, 1), Some((p("/a/b").join("e.txt"), false)));
+        assert_eq!(view.column_entry(1, 2), None);
+        assert_eq!(view.column_clicked(0, 0, 0.0), None, "the focused column is the view's");
     }
 
     #[test]

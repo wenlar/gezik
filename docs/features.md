@@ -127,6 +127,12 @@ typing = "jump"           # jump: letters go to a name | filter: letters open th
 - The address bar (Ctrl+L) completes folder names and lists **Recent** and **Frequent**
   folders.
 - **Pinned folders** can have an alias and a group; Alt+1…9 (⌘⌥1…9 on macOS) go to the first nine.
+- **Columns view** (Ctrl+Shift+3, ⌃⌘3 on macOS, or View ▸ Columns) shows folders side by side
+  as Miller columns: ↑↓ move in a column, → goes into the selected folder, ← goes back. The
+  focused column's folder is the tab's location; moving between columns adds no Back step. A
+  selected file is previewed in a last column (unless the preview pane is open). Drag files
+  onto any column's rows or empty space; drag a column's edge to set every column's width.
+  Search results, the flat view, the Trash and This PC show the list instead.
 - **Open terminal** (Shift+F4 or Ctrl+Alt+T, ⌘⌥T on macOS) opens one in the folder; on
   Windows also as administrator. **Copy path** (Ctrl+Shift+C, ⌘⌥C on macOS) copies the
   selected paths; **Copy path as ▸** has quoted, forward slashes, name, folder, `file://` and

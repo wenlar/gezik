@@ -70,12 +70,27 @@ pub struct CrumbArea {
     pub spans: Vec<(f32, f32)>,
 }
 
+/// Miller columns (spec 10 §7.1): the sheet they scroll sideways in, its offset (content-x,
+/// zero or negative), the column width (a 1px line follows each), where the rows start, how
+/// high they are, and each column's (scroll offset, rows). The focused column is the list.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ColumnsArea {
+    pub rect: Rect,
+    pub scroll: f32,
+    pub width: f32,
+    pub top: f32,
+    pub row_height: f32,
+    pub columns: Vec<(f32, usize)>,
+}
+
 /// A pane's parts a drop can land on (spec 10 §4.6).
 #[derive(Debug, Clone, PartialEq)]
 pub struct PaneArea {
     pub list: ListArea,
     pub tabs: TabArea,
     pub crumbs: CrumbArea,
+    /// While the pane shows Miller columns; the list is then the focused column, inside them.
+    pub columns: Option<ColumnsArea>,
 }
 
 /// Where everything a drop can land on is.
@@ -109,6 +124,9 @@ pub enum Hit {
     PinAt(usize),
     Tab(usize, usize),
     Crumb(usize, usize),
+    /// Miller column n of a pane (not the focused one, which is its list): row i, or its empty
+    /// space (None): its folder.
+    Column(usize, usize, Option<usize>),
     /// The drop stack strip (spec 9.3).
     Stack,
 }
@@ -117,7 +135,11 @@ impl Hit {
     /// The pane it is in, if any.
     pub fn pane(self) -> Option<usize> {
         match self {
-            Hit::Entry(pane, _) | Hit::Background(pane) | Hit::Tab(pane, _) | Hit::Crumb(pane, _) => Some(pane),
+            Hit::Entry(pane, _)
+            | Hit::Background(pane)
+            | Hit::Tab(pane, _)
+            | Hit::Crumb(pane, _)
+            | Hit::Column(pane, _, _) => Some(pane),
             _ => None,
         }
     }
@@ -157,11 +179,25 @@ pub fn hit(layout: &Layout, x: f32, y: f32, pin_zones: bool) -> Hit {
         return sidebar_hit(side, y, pin_zones);
     }
     for (pane, area) in layout.panes.iter().enumerate() {
-        if area.list.rect.contains(x, y) {
-            return list_hit(&area.list, pane, x, y);
+        match &area.columns {
+            // The focused column scrolled partly out of the sheet is cut off there.
+            Some(columns) if !columns.rect.contains(x, y) => {}
+            Some(columns) if !area.list.rect.contains(x, y) => return columns_hit(columns, pane, x, y),
+            _ if area.list.rect.contains(x, y) => return list_hit(&area.list, pane, x, y),
+            _ => {}
         }
     }
     Hit::Nothing
+}
+
+/// Past the last column (the preview) nothing can be dropped.
+fn columns_hit(area: &ColumnsArea, pane: usize, x: f32, y: f32) -> Hit {
+    let column = index_at(x - area.rect.x - area.scroll, area.width + 1.0);
+    let Some((column, &(scroll, rows))) = column.and_then(|i| Some((i, area.columns.get(i)?))) else {
+        return Hit::Nothing;
+    };
+    let row = index_at(y - area.rect.y - area.top - scroll, area.row_height).filter(|&i| i < rows);
+    Hit::Column(pane, column, row)
 }
 
 /// Where a tab dragged out of pane `from` would go at (`x`, `y`): another pane under the
@@ -429,6 +465,7 @@ mod tests {
                     rect: Rect { x: 300.0, y: 40.0, width: 500.0, height: 24.0 },
                     spans: vec![(300.0, 60.0), (372.0, 40.0)],
                 },
+                columns: None,
             }],
             sidebar: Some(SidebarArea {
                 rect: Rect { x: 0.0, y: 100.0, width: 195.0, height: 400.0 },
@@ -604,6 +641,30 @@ mod tests {
         assert_eq!(Hit::Entry(1, 3).pane(), Some(1));
         assert_eq!(Hit::Sidebar(1).pane(), None);
         assert_eq!(Hit::Stack.pane(), None);
+    }
+
+    #[test]
+    fn miller_columns_take_drops_on_their_rows_and_empty_space() {
+        let mut l = layout(list(3));
+        // Columns 100 wide from x 200, scrolled 50 left; the focused one (1) is the list.
+        l.panes[0].list.rect = Rect { x: 251.0, y: 100.0, width: 100.0, height: 400.0 };
+        l.panes[0].columns = Some(ColumnsArea {
+            rect: Rect { x: 200.0, y: 100.0, width: 600.0, height: 400.0 },
+            scroll: -50.0,
+            width: 100.0,
+            top: 2.0,
+            row_height: 20.0,
+            columns: vec![(-40.0, 10), (0.0, 0), (0.0, 2)],
+        });
+        assert_eq!(hit(&l, 210.0, 103.0, false), Hit::Column(0, 0, Some(2)), "scrolled down two rows");
+        assert_eq!(hit(&l, 210.0, 400.0, false), Hit::Column(0, 0, None), "below its rows");
+        assert_eq!(hit(&l, 300.0, 145.0, false), Hit::Entry(0, 2), "the focused column");
+        assert_eq!(hit(&l, 360.0, 105.0, false), Hit::Column(0, 2, Some(0)));
+        assert_eq!(hit(&l, 360.0, 150.0, false), Hit::Column(0, 2, None));
+        assert_eq!(hit(&l, 460.0, 105.0, false), Hit::Nothing, "the preview");
+        // The focused column scrolled under the sidebar's edge: cut off at the sheet.
+        l.panes[0].list.rect.x = 190.0;
+        assert_eq!(hit(&l, 197.0, 105.0, false), Hit::Nothing);
     }
 
     #[test]
