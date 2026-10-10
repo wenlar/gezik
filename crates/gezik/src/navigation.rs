@@ -105,6 +105,15 @@ fn list(location: &Location, mode: &Mode) -> LoadResult {
     }
 }
 
+/// A Miller column's folder (view/columns.rs), read as the folder on screen is; `None` when it
+/// cannot be listed. Runs on a background thread.
+pub(crate) fn read_folder(path: &Path) -> Option<Vec<Entry>> {
+    match list(&Location::Path(path.to_path_buf()), &Mode::Move(Vec::new())) {
+        LoadResult::Files(_, entries) => Some(entries),
+        _ => None,
+    }
+}
+
 /// The server of a bare `\\server` path (Windows), whose shares are its listing.
 pub(crate) fn server_of(path: &Path) -> Option<String> {
     if !cfg!(windows) {
@@ -829,9 +838,46 @@ impl Navigator {
         quiet && self.pending_steps().is_empty()
     }
 
+    /// In the Miller columns (spec 10 §7.1) a column but the first goes back to the one on its
+    /// left, as ←; the first makes the root's parent the root, the old root selected in it.
     pub fn up(&self) {
+        let view = self.0.borrow().view.clone();
+        if view.column_leave() {
+            return;
+        }
+        let root = view.column_up_root();
         if self.queue(|base| base.parent().map(Step::Navigate)) {
             crate::dual::stepped(self.id());
+            // After the load it started, which drops any older names.
+            self.0.borrow_mut().select_next = root.map(|name| vec![name]);
+        }
+    }
+
+    /// A move between Miller columns (spec 10 §7.1): the current history entry becomes the
+    /// focused column's folder (no step), shown at once from `listing` (the column's, empty
+    /// while it is read) with `state`, then read again quietly. A relative step for sync
+    /// browsing (spec 10 §4.7: ← counts as Up).
+    pub fn column_move(&self, path: &gezik_core::columns::ColumnPath, listing: Listing, state: ViewState) {
+        self.save_view();
+        let location = Location::Path(path.location().to_path_buf());
+        let (view, place) = {
+            let mut inner = self.0.borrow_mut();
+            let history = inner.tabs.active_mut();
+            gezik_core::columns::record(history, path);
+            history.set_view(state.clone());
+            let place = inner.view.rule_place(&location, &inner.places);
+            (inner.view.clone(), place)
+        };
+        // A column not read yet loads as the user's load: it lands with `state` (a quiet re-read
+        // would keep what the empty listing shows).
+        let unread = listing.len() == 0;
+        view.show(listing, &state, None, place);
+        crate::dual::stepped(self.id());
+        self.update_chrome();
+        if unread {
+            self.load(location, Mode::Show, None);
+        } else {
+            self.reread(location);
         }
     }
 
@@ -899,6 +945,9 @@ impl Navigator {
     /// reload started; none does while a load the user started is under way (it would
     /// overtake it).
     pub fn refresh_showing(&self, dirs: &[PathBuf], select: &[String], note: Option<String>) -> bool {
+        // The Miller columns beside the focused one that show them are read again too.
+        let view = self.0.borrow().view.clone();
+        view.columns_touched(dirs);
         // The trash is read anew after Gezik's jobs: its rows only ever come from a full read
         // (`ResultSet::append_trash`), never from a job's changes.
         if self.active_location() == Location::Trash {
@@ -952,7 +1001,10 @@ impl Navigator {
     /// Opens the file with its default app, or goes into the folder; on macOS a package opens
     /// as a file and an alias leads to its original.
     pub fn open_item(&self, path: PathBuf, is_dir: bool) {
+        let view = self.0.borrow().view.clone();
         match system_opening(path, is_dir) {
+            // In the Miller columns the selected folder's column takes the focus, as →.
+            Opening::Go(folder) if view.column_enter(&folder) => {}
             Opening::Go(folder) => {
                 self.go(Location::Path(folder));
                 crate::dual::stepped(self.id());
@@ -995,7 +1047,9 @@ impl Navigator {
                 Opening::MissingAlias(alias) => crate::operations::with_current(|ops| ops.missing_alias(alias)),
             }
         }
-        if let Some(folder) = folder {
+        if let Some(folder) = folder
+            && !view.column_enter(&folder)
+        {
             self.go(Location::Path(folder));
             crate::dual::stepped(self.id());
         }
@@ -1178,6 +1232,9 @@ impl Navigator {
             if let Mode::Move(steps) = &mode {
                 inner.tabs.active_mut().apply_steps(steps);
             }
+            // Before it shows: a move in the history starts the Miller columns over there.
+            let tab = inner.tabs.id(inner.tabs.active_index());
+            inner.view.columns_land(&location, tab, matches!(mode, Mode::Move(_)));
             let reread = inner.reread.take() == Some(inner.generation.load(Ordering::SeqCst)) && !inner.cleared;
             inner.cleared = false;
             let shown = if reread { inner.view.capture() } else { view_to_show(&mode, inner.tabs.active().view()) };
@@ -1324,12 +1381,14 @@ impl Navigator {
     /// Shows `message` for a failed load; see [`apply_failure`].
     fn show_failed(&self, mode: &Mode, location: &Location, message: String) {
         crate::dual::stepped(None);
-        let (empty, view, state) = {
+        let (empty, view, state, tab) = {
             let mut inner = self.0.borrow_mut();
             let empty = apply_failure(&mut inner.cleared, mode, location);
-            (empty, inner.view.clone(), inner.tabs.active().view().clone())
+            let tab = inner.tabs.id(inner.tabs.active_index());
+            (empty, inner.view.clone(), inner.tabs.active().view().clone(), tab)
         };
         let Some(empty) = empty else { return self.status(message) };
+        view.columns_land(location, tab, false);
         view.show(empty, &state, Some(message), Place::default());
         // Whatever was being added up is not on screen any more.
         crate::panes::with_id(self.id(), |p| p.folder_sizes.shown(location));

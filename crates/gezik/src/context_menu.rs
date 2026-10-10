@@ -487,6 +487,8 @@ pub const GROUP_BY_DATE: u32 = 2002;
 pub const GROUP_BY_SIZE: u32 = 2003;
 pub const COLLAPSE_GROUPS: u32 = 2010;
 pub const EXPAND_GROUPS: u32 = 2011;
+/// View ▸ Columns (spec 10 §10.3, 10e).
+pub const VIEW_COLUMNS: u32 = 2040;
 /// View ▸ "Reset to rule N" (spec 10 §8.2, §10.3): the folder forgets its own view, rule N applies.
 pub const RESET_TO_RULE: u32 = 2041;
 /// View ▸ "View rule N applies", greyed: which rule set the folder's view.
@@ -734,7 +736,11 @@ pub fn view_items(
 ) -> Vec<(u32, String)> {
     let mark = |on: bool, title: &str| format!("{}{title}", if on { "• " } else { "    " });
     let grid = view.mode == ViewMode::Grid;
-    let mut out = vec![(VIEW_LIST, mark(!grid, "List")), (VIEW_GRID, mark(grid, "Grid"))];
+    let mut out = vec![
+        (VIEW_LIST, mark(view.mode == ViewMode::List, "List")),
+        (VIEW_GRID, mark(grid, "Grid")),
+        (VIEW_COLUMNS, mark(view.mode == ViewMode::Columns, "Columns")),
+    ];
     if grid {
         out.push((GRID_SMALL, mark(view.grid_size == GridSize::Small, "Small icons")));
         out.push((GRID_MEDIUM, mark(view.grid_size == GridSize::Medium, "Medium icons")));
@@ -1961,6 +1967,12 @@ impl Menus {
             (RESULT_COLUMNS_RESET, Subject::Header) => crate::panes::active_view().reset_columns(),
             (VIEW_LIST, Subject::View) => crate::panes::active_view().set_mode(ViewMode::List),
             (VIEW_GRID, Subject::View) => crate::panes::active_view().set_mode(ViewMode::Grid),
+            (VIEW_COLUMNS, Subject::View) => {
+                let nav = crate::panes::active_nav();
+                if !crate::panes::active_view().show_columns(&nav.active_location()) {
+                    nav.note(crate::view::LIST_ONLY.to_owned());
+                }
+            }
             (GRID_SMALL, Subject::View) => crate::panes::active_view().set_grid_size(GridSize::Small),
             (GRID_MEDIUM, Subject::View) => crate::panes::active_view().set_grid_size(GridSize::Medium),
             (GRID_LARGE, Subject::View) => crate::panes::active_view().set_grid_size(GridSize::Large),
@@ -2361,6 +2373,7 @@ mod tests {
             RESET_COLUMNS,
             VIEW_LIST,
             VIEW_GRID,
+            VIEW_COLUMNS,
             GRID_SMALL,
             GRID_MEDIUM,
             GRID_LARGE,
@@ -2675,6 +2688,7 @@ mod tests {
             DISCONNECT,
             COLLAPSE_GROUPS,
             EXPAND_GROUPS,
+            VIEW_COLUMNS,
             RESET_TO_RULE,
             VIEW_RULE_APPLIES,
             MOVE_TAB_OTHER,
@@ -3032,6 +3046,7 @@ mod tests {
             [
                 VIEW_LIST,
                 VIEW_GRID,
+                VIEW_COLUMNS,
                 SORT_BY_NAME,
                 SORT_BY_MODIFIED,
                 SORT_BY_CREATED,
@@ -3052,7 +3067,14 @@ mod tests {
                 REVEAL_IN_TREE
             ]
         );
-        assert!(list[0].1.starts_with("• ") && !list[1].1.starts_with("• "));
+        assert!(list[0].1.starts_with("• ") && !list[1].1.starts_with("• ") && !list[2].1.starts_with("• "));
+        let columns = ViewSettings { mode: ViewMode::Columns, ..ViewSettings::default() };
+        let columns = view_items(columns, false, false, ViewOptions::default(), false);
+        assert_eq!(
+            columns[..3].iter().map(|(_, t)| t.as_str()).collect::<Vec<_>>(),
+            ["    List", "    Grid", "• Columns"]
+        );
+        assert_eq!(VIEW_COLUMNS, 2040, "spec 10 §10.3");
         assert_eq!(list.last().map(|(id, _)| *id), Some(REVEAL_IN_TREE));
         let grid = ViewSettings {
             mode: ViewMode::Grid,
@@ -3102,7 +3124,7 @@ mod tests {
         let items = view_items(ViewSettings::default(), false, false, options, true);
         let ids: Vec<u32> = items.iter().map(|(id, _)| *id).collect();
         assert_eq!(
-            &ids[12..],
+            &ids[13..],
             [
                 HIDE_EXTENSIONS,
                 FOLDERS_FIRST,
@@ -3115,9 +3137,9 @@ mod tests {
                 REVEAL_IN_TREE
             ]
         );
-        assert!(items[12].1.starts_with("• ") && items[13].1.starts_with("• "), "extensions hidden, folders first");
-        assert!(!items[14].1.starts_with("• "));
-        assert_eq!(items[15].1.starts_with("• "), options.show_hidden);
+        assert!(items[13].1.starts_with("• ") && items[14].1.starts_with("• "), "extensions hidden, folders first");
+        assert!(!items[15].1.starts_with("• "));
+        assert_eq!(items[16].1.starts_with("• "), options.show_hidden);
         let elsewhere: Vec<u32> =
             view_items(ViewSettings::default(), false, false, options, false).iter().map(|(id, _)| *id).collect();
         assert!(!elsewhere.contains(&SHOW_SYSTEM), "Show system items: Windows only");

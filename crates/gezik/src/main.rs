@@ -179,6 +179,9 @@ fn close_tab_later(nav: &navigation::Navigator, index: usize) {
     }
 }
 
+/// A Miller column's width by default (spec 10 §7.1; state.toml `[panes] column-width`).
+const COLUMN_WIDTH: u32 = 220;
+
 /// The pane on row `row` (a Slint callback's), made the active one: a click or an action in a
 /// pane picks it (spec 10 §4.3).
 fn pick(row: i32) -> Option<panes::Pane> {
@@ -216,6 +219,11 @@ fn perform(
         Action::SelectAll => view.select_all(),
         Action::ViewList => view.set_mode(gezik_core::view::ViewMode::List),
         Action::ViewGrid => view.set_mode(gezik_core::view::ViewMode::Grid),
+        Action::ViewColumns => {
+            if !view.show_columns(&nav.active_location()) {
+                nav.note(view::LIST_ONLY.to_owned());
+            }
+        }
         Action::TogglePreview => preview.toggle_pane(),
         Action::QuickLook => preview.toggle_quick_look(),
         Action::Share => finder_menu::share_selection(window, view),
@@ -540,6 +548,14 @@ fn handle_key(
             // On macOS Enter renames, so opening is Cmd+Down (as in Finder).
             if platform == Platform::Mac && primary && !chord.shift && chord.key == Key::Down {
                 nav.open_selected();
+                return true;
+            }
+            // Miller columns (spec 10 §7.1): → into the selected folder, ← back to the left.
+            if !primary
+                && !chord.shift
+                && matches!(chord.key, Key::Left | Key::Right)
+                && view.column_key(chord.key == Key::Right)
+            {
                 return true;
             }
             let mv = match chord.key {
@@ -1017,6 +1033,7 @@ fn main() -> Result<(), slint::PlatformError> {
         .into(),
     );
     window.set_preview_width(saved_state.preview_width.unwrap_or(280) as f32);
+    window.set_column_width(saved_state.column_width.unwrap_or(COLUMN_WIDTH) as f32);
     let folder_sizes = folder_sizes::FolderSizes::new(pane_id, window.as_weak(), view.clone());
     folder_sizes.set_settings(initial_settings.folder_sizes, initial_settings.search.everything);
     let preview = preview::Preview::new(&window);
@@ -1185,6 +1202,8 @@ fn main() -> Result<(), slint::PlatformError> {
                     state.result_columns = Some(view.result_columns());
                     state.preview_open = preview.is_pane_open();
                     state.preview_width = Some(window.get_preview_width().round().clamp(200.0, 600.0) as u32);
+                    let column = window.get_column_width().round().clamp(120.0, 600.0) as u32;
+                    state.column_width = (column != COLUMN_WIDTH).then_some(column);
                     state.operations_collapsed = ops.collapsed();
                 });
                 dual::save();
@@ -1550,13 +1569,52 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
     // Slint passes indexes as `i32`: a negative one does nothing.
-    window.on_tab_menu(move |pane, i, x, y| {
-        if let (Some(_), Ok(i)) = (pick(pane), usize::try_from(i)) {
-            menus.tab(i, x, y);
+    window.on_tab_menu({
+        let menus = menus.clone();
+        move |pane, i, x, y| {
+            if let (Some(_), Ok(i)) = (pick(pane), usize::try_from(i)) {
+                menus.tab(i, x, y);
+            }
         }
     });
 
     // Double-click; with single-click-open the click already opened it.
+    // Miller columns (spec 10 §7): a press in a column beside the focused one takes it there
+    // first, so the press, drag and menu that follow are the focused column's (as a pane is
+    // made active first, 10b); a middle-click, a scroll, the columns on screen.
+    window.on_column_pressed({
+        let (ops, drags) = (ops.clone(), drags.clone());
+        move |pane, column, row, scroll, x, y, right| {
+            ops.end_unfocused_rename();
+            if let Some(index) = pick(pane).and_then(|p| p.view.column_clicked(column, row, scroll)) {
+                drags.down(index, x, y, right, true);
+            }
+        }
+    });
+    window.on_column_menu(move |pane, row, x, y| {
+        let Some(p) = pick(pane) else { return };
+        match p.view.single_selected().filter(|_| row) {
+            Some(index) => menus.row(i32::try_from(index).unwrap_or(-1), x, y),
+            None => {
+                p.view.clear_selection();
+                menus.background(x, y);
+            }
+        }
+    });
+    window.on_column_middle(|pane, column, row| {
+        let Some(p) = pick(pane) else { return };
+        if let (Ok(column), Ok(row)) = (usize::try_from(column), usize::try_from(row))
+            && let Some((path, true)) = p.view.column_entry(column, row)
+        {
+            p.nav.open_tab(gezik_core::nav::Location::Path(path), false);
+        }
+    });
+    window.on_column_scrolled(|pane, column, scroll| {
+        panes::with_row(pane, |p| p.view.column_scrolled(column, scroll));
+    });
+    window.on_columns_shown(|pane, first, end| {
+        panes::with_row(pane, |p| p.view.columns_on_screen(first, end));
+    });
     window.on_open_row(|pane, i| {
         if let Some(p) = pick(pane)
             && let Ok(index) = usize::try_from(i)
@@ -1707,12 +1765,30 @@ fn main() -> Result<(), slint::PlatformError> {
         let pointer = std::cell::Cell::new((0.0f32, 0.0f32));
         let ops = ops.clone();
         let drags = drags.clone();
-        window.window().on_winit_window_event(move |_, event| {
+        let modifiers = std::cell::Cell::new(winit::keyboard::ModifiersState::empty());
+        window.window().on_winit_window_event(move |slint_window, event| {
+            if let winit::event::WindowEvent::ModifiersChanged(m) = event {
+                modifiers.set(m.state());
+            }
             // The keypad's keys and Ctrl+Shift+digits, which Slint's text cannot tell apart
             // (keys.rs `Physical`), and AltGr on a key it types nothing with (keys.rs
             // `altgr_blank`): noted before Slint hands the key to `key-event`.
             if let winit::event::WindowEvent::KeyboardInput { event, .. } = event {
                 keys::note_key(event);
+                let m = modifiers.get();
+                let dead = event.state == winit::event::ElementState::Pressed
+                    && matches!(event.logical_key, winit::keyboard::Key::Dead(_));
+                if let Some(digit) = keys::dead_digit(
+                    keys::physical_of_event(event),
+                    dead,
+                    m.control_key() || m.super_key(),
+                    m.alt_key(),
+                ) {
+                    let text = slint::SharedString::from(digit.to_string());
+                    slint_window.dispatch_event(slint::platform::WindowEvent::KeyPressed { text: text.clone() });
+                    slint_window.dispatch_event(slint::platform::WindowEvent::KeyReleased { text });
+                    return EventResult::PreventDefault;
+                }
             }
             if let winit::event::WindowEvent::Focused(false) = event {
                 keys::forget_altgr();

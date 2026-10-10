@@ -598,6 +598,21 @@ Numbers stay as they are when branches merge: if this range meets one merged ear
 241. **Tab sets.** With two panes, Save tabs as… (tab menu): `settings.toml` gets `right = [...]` in that `[[tab-sets]]`. Close the second pane, open the set: the second pane opens with those tabs, the left gets its own. A set without `right` opens in the active pane as before.
 242. **Second launch.** With two panes and the right one active, `open -a` / `gezik <folder>` from Terminal: the folder opens in the right pane (an existing tab on it in that pane is reused).
 
+### 10e, Miller columns
+
+Numbers stay as they are when branches merge (see 10b). 10e starts at 250 as its plan decided. Compare with Finder's column view (⌘3 there) side by side. Results go to `macos-test-results.md`.
+
+250. **Tests first.** `cargo test -p gezik-core columns`, `cargo test -p gezik-core drag`, `cargo test -p gezik view::columns`, `cargo test -p gezik-config state`; paste the output.
+251. **Mode and keys.** ⌃⌘3 in a folder (and View ▸ as Columns in the menu bar, whose item shows ⌃⌘3): one column with the folder; ⇧⌘3 still takes a screenshot, ⌘3 still goes to tab 3. ⌘1 / ⌘2 (list, grid) leave the columns. `~/Library/Application Support/gezik/views.toml` says `mode = "columns"` for that folder.
+252. **Arrows.** ↑↓ / Home / End / fn+↑↓ move in the focused column and the column to the right follows at once (no slide). → goes into the selected folder (its first item selected), ← goes back (the folder stays selected on the left, deeper columns close); ← in the first column does nothing. Return on a file opens it; on a folder it goes into its column.
+253. **Location and history.** The address bar, window title and status bar say the focused column's folder; moving between columns adds no ⌘[ step (⌘[ after several → leaves the columns' folder at once). The address bar, the sidebar, ⌘[ / ⌘] start the columns over at that folder; ⌘↑ from the first column makes the parent the first column with the old one selected.
+254. **Mouse.** Click a row in another column: that column takes the focus with the row selected; double-click a file there opens it. Drag a column's edge: every column takes the width (120–600); after a restart it is back (`state.toml` `[panes] column-width`). Two-finger swipe sideways scrolls the columns.
+255. **Preview column.** Select a picture, a text file and a PDF: the last column previews it (as Finder's); a folder has none; with the window's preview open (View ▸ Preview) there is no preview column.
+256. **Drag and drop.** Drag a file from a column that is not the focused one onto a folder row of another column, onto another column's empty space (its folder), onto the other pane and onto the sidebar: same volume moves, another copies, ⌥ copies; the target row lights up while dragged over; ⌘Z undoes; the column dropped into shows the file at once. Drag from Finder onto a column's empty space: into that column's folder.
+257. **Menus.** Right-click (two-finger click) a row in another column: that column takes the focus, the row is selected and its menu opens (Open, Copy, Move to Trash…; act on it: Rename, ⌘C / ⌘V, ⌘⌫ work there). Right-click a column's empty space: the folder's menu (New Folder lands in that column). With a mouse, middle-click a folder row in another column: it opens in a new tab.
+258. **Falls back to the list.** In search results (⌘F), the Trash (open only), a flat view and the computer root, ⌃⌘3 shows the list and the status bar says `Columns show folders only: the list is shown here`; back in a folder the columns return. Grouping set in a folder does not show in columns and comes back with ⌘1.
+259. **Two panes, memory.** ⌃⌘P with columns in both panes: only the active pane has a preview column; sync browsing follows → and ←. Open a folder 30 levels deep (`mkdir -p /tmp/gezik-deep/$(seq -s/ 1 30)`) in columns and go → to the bottom: Activity Monitor's memory grows only a little (write the number at the start and at the bottom; spec: the listings shown + 0.5 MB); go back ← to the top: it falls back. With columns never chosen the memory is as the 10b build's.
+
 ## Known gaps (not bugs)
 
 These are known differences from Finder and ForkLift (from the ForkLift comparison, §3). Don't report them as failures. A note is welcome if one hurts more than expected.

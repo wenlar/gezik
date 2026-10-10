@@ -1,9 +1,11 @@
 //! The file view: what the active tab shows, the selection, and how both reach Slint.
 //! Navigation hands it each loaded listing and takes the selection back as a `ViewState`.
 
+mod columns;
 mod listing;
 mod model;
 
+pub use columns::LIST_ONLY;
 pub use listing::Listing;
 
 use std::borrow::Cow;
@@ -146,6 +148,11 @@ struct Inner {
     place: RefCell<Place>,
     /// The columns the applied rule shows (`None`: the list's own).
     rule_columns: Cell<Option<Columns>>,
+    /// Miller columns (spec 10 §7): the tab's column path and the other columns' listings.
+    miller: RefCell<columns::Columns>,
+    /// The shown folder's own mode, before the columns or the list forced another (what a
+    /// change of its sort or picture size keeps in views.toml).
+    own_mode: Cell<ViewMode>,
 }
 
 /// The filter bar's text, the pattern the list shows, and what is wrong with the text.
@@ -325,6 +332,8 @@ impl View {
             applied: Cell::new(None),
             place: RefCell::new(Place::default()),
             rule_columns: Cell::new(None),
+            miller: RefCell::default(),
+            own_mode: Cell::new(defaults.view.mode),
         }));
         // Weak: the media client lives inside the view.
         let weak = Rc::downgrade(&view.0);
@@ -373,18 +382,18 @@ impl View {
         let own = self.0.folder.borrow().as_deref().is_some_and(|f| self.0.memory.borrow().contains(f));
         if !own {
             let view = self.0.rules.borrow().view(self.0.applied.get(), defaults.view);
-            self.switch_to(view);
+            self.switch_to(self.keep_columns(view));
         }
         // Icons or thumbnails may have changed even if the view did not.
         self.0.model.notify.reset();
+        self.columns_relist();
     }
 
     fn media_ready(&self, entries: &[usize], ready: Ready) {
         let mut rows: Vec<Range<usize>> = entries.iter().map(|&i| i..i + 1).collect();
         rows.sort_by_key(|r| r.start);
         self.0.model.entries_changed(&rows);
-        if ready == Ready::TypeName && (self.sort().key == SortKey::Type || self.0.current.get().group == GroupBy::Type)
-        {
+        if ready == Ready::TypeName && (self.sort().key == SortKey::Type || self.group_by() == GroupBy::Type) {
             self.resort_soon();
         }
     }
@@ -483,7 +492,15 @@ impl View {
             _ => None,
         };
         let kept = same_folder.then(|| self.0.applied.get());
-        let (settings, rule) = decide(own, kept, &self.0.rules.borrow(), &place, entries, self.0.defaults.get().view);
+        let (mut settings, rule) =
+            decide(own, kept, &self.0.rules.borrow(), &place, entries, self.0.defaults.get().view);
+        self.0.own_mode.set(settings.mode);
+        // A tab in columns stays in them for every folder; elsewhere the list (spec 10 §7).
+        settings.mode = match self.columns_for(listing.folder(), settings.mode == ViewMode::Columns) {
+            true => ViewMode::Columns,
+            false if settings.mode == ViewMode::Columns => ViewMode::List,
+            false => settings.mode,
+        };
         self.0.applied.set(rule);
         if !same_folder {
             self.0.rule_columns.set(self.0.rules.borrow().columns(rule));
@@ -572,6 +589,7 @@ impl View {
         }
         self.update_status();
         self.sync_columns();
+        self.columns_sync();
         self.notify_listeners();
         let shown = self.0.on_shown.borrow().clone();
         for f in &shown {
@@ -988,6 +1006,7 @@ impl View {
         }
         self.update_status();
         self.notify_listeners();
+        self.columns_relist();
         (old.show_hidden, old.show_system) != (options.show_hidden, options.show_system)
     }
 
@@ -1170,7 +1189,7 @@ impl View {
 
     /// The order depends on folder sizes: sorted or grouped by size.
     pub fn sorted_by_size(&self) -> bool {
-        self.sort().key == SortKey::Size || self.0.current.get().group == GroupBy::Size
+        self.sort().key == SortKey::Size || self.group_by() == GroupBy::Size
     }
 
     /// The folder's entries before the filter.
@@ -1425,6 +1444,15 @@ impl View {
         self.change_view(|v| v.mode = mode);
     }
 
+    /// `view-columns`: Miller columns in a folder; search results, a flat view, the trash and
+    /// This PC have no chain of folders and take the list (spec 10 §7.3): false, and the caller
+    /// says [`LIST_ONLY`] (`Navigator::note`, so a load landing does not take it away).
+    pub fn show_columns(&self, location: &gezik_core::nav::Location) -> bool {
+        let shows = gezik_core::columns::shows(location);
+        self.set_mode(if shows { ViewMode::Columns } else { ViewMode::List });
+        shows
+    }
+
     pub fn set_grid_size(&self, size: GridSize) {
         self.change_view(|v| v.grid_size = size);
     }
@@ -1525,7 +1553,7 @@ impl View {
             (rules.view(rule, self.0.defaults.get().view), rules.columns(rule))
         };
         self.0.rule_columns.set(columns);
-        self.switch_to(view);
+        self.switch_to(self.keep_columns(view));
         self.sync_columns();
     }
 
@@ -1946,7 +1974,12 @@ impl View {
         }
         let folder = self.0.folder.borrow().clone();
         if let Some(folder) = folder {
-            self.0.memory.borrow_mut().set(&folder, view);
+            // A mode forced by the columns (or the list where they cannot show) is not the folder's.
+            if view.mode != self.0.current.get().mode {
+                self.0.own_mode.set(view.mode);
+            }
+            let own = ViewSettings { mode: self.0.own_mode.get(), ..view };
+            self.0.memory.borrow_mut().set(&folder, own);
             self.save_memory_soon();
             // Its own view now: the rule is done with this folder (spec 10 §8.2).
             self.0.applied.set(None);
@@ -1955,7 +1988,13 @@ impl View {
     }
 
     /// Shows the current listing with `view`.
-    fn switch_to(&self, view: ViewSettings) {
+    fn switch_to(&self, mut view: ViewSettings) {
+        // Columns show a folder only (spec 10 §7.3); another mode leaves them.
+        if view.mode != ViewMode::Columns {
+            self.columns_off();
+        } else if !self.columns_for(self.shown_folder().as_deref(), true) {
+            view.mode = ViewMode::List;
+        }
         let old = self.0.current.replace(view);
         if view.mode != old.mode || view.grid_size != old.grid_size {
             self.0.media.new_generation();
@@ -1968,10 +2007,19 @@ impl View {
         if view.group != old.group {
             self.0.collapsed.borrow_mut().clear();
         }
-        if view.sort != old.sort || view.group != old.group {
+        if view.sort != old.sort || grouped_by(&view) != grouped_by(&old) {
             self.sync_header();
             self.resort(true);
         }
+        if view.mode != old.mode {
+            self.columns_sync();
+            self.notify_listeners();
+        }
+    }
+
+    /// How the rows are grouped: not in the columns (spec 10 §7.3, the setting is kept).
+    fn group_by(&self) -> GroupBy {
+        grouped_by(&self.0.current.get())
     }
 
     /// Mode, picture size and entries per line, from the current view.
@@ -1981,7 +2029,11 @@ impl View {
         let grid = view.mode == ViewMode::Grid;
         let picture = view.grid_size.px() as f32;
         crate::panes::edit(self.0.id, |d| {
-            d.view_mode = if grid { 1 } else { 0 };
+            d.view_mode = match view.mode {
+                ViewMode::List => 0,
+                ViewMode::Grid => 1,
+                ViewMode::Columns => 2,
+            };
             d.grid_size = picture;
         });
         let logical = if grid { picture } else { window.global::<Theme>().get_icon_size() };
@@ -2152,7 +2204,7 @@ impl View {
                 if !(by_name
                     && self.sort() == SortSpec::default()
                     && self.0.options.get().folders_first
-                    && self.0.current.get().group == GroupBy::None) =>
+                    && self.group_by() == GroupBy::None) =>
             {
                 Listing::Files(dir, self.sort_now(entries).0)
             }
@@ -2163,19 +2215,18 @@ impl View {
     /// `entries` in the current sort order (copied only if shared), and where each came from
     /// (`sort_entries`).
     fn sort_now(&self, entries: Rc<Vec<Entry>>) -> (Rc<Vec<Entry>>, Vec<usize>) {
-        let view = self.0.current.get();
-        if view.sort.key == SortKey::Type || view.group == GroupBy::Type {
+        let (view, by) = (self.0.current.get(), self.group_by());
+        if view.sort.key == SortKey::Type || by == GroupBy::Type {
             self.request_type_names(&entries);
         }
         let folders_first = self.0.options.get().folders_first;
         let mut entries = Rc::unwrap_or_clone(entries);
         let type_name = |e: &Entry| self.type_name_of(e);
-        let order = if view.group == GroupBy::None {
+        let order = if by == GroupBy::None {
             sort_entries_grouped(&mut entries, view.sort, folders_first, type_name, None)
         } else {
             let dates = self.fresh_dates();
-            let grouping =
-                Grouping { by: view.group, spec: view.sort, folders_first, dates: &dates, type_name: &type_name };
+            let grouping = Grouping { by, spec: view.sort, folders_first, dates: &dates, type_name: &type_name };
             sort_entries_grouped(&mut entries, view.sort, folders_first, type_name, Some(&grouping))
         };
         (Rc::new(entries), order)
@@ -2253,7 +2304,7 @@ impl View {
     /// group, those closed in this folder closed; rows in closed groups leave the selection. No
     /// file system call. Not grouped, "This PC", or results not yet sorted this way: none.
     fn regroup(&self) {
-        let by = self.0.current.get().group;
+        let by = self.group_by();
         let (spans, keys) = {
             let data = self.0.data.borrow();
             let in_order = match &data.listing {
@@ -2438,6 +2489,7 @@ impl View {
     }
 
     fn notify_listeners(&self) {
+        self.columns_follow();
         let listeners = self.0.on_selection.borrow().clone();
         for f in &listeners {
             f();
@@ -2501,6 +2553,11 @@ impl View {
             }
         });
     }
+}
+
+/// How `view` groups the rows: not in the columns (spec 10 §7.3, the setting is kept).
+fn grouped_by(view: &ViewSettings) -> GroupBy {
+    if view.mode == ViewMode::Columns { GroupBy::None } else { view.group }
 }
 
 /// The view a folder shows and the rule that set it (spec 10 §8.2): its own view (views.toml),

@@ -53,7 +53,7 @@ The `[view]` section of `settings.toml` sets how folders look by default:
 
 ```toml
 [view]
-mode = "list"             # list | grid
+mode = "list"             # list | grid | columns
 sort = "name"             # name | modified | created | type | size
 sort-dir = "asc"          # asc | desc
 grid-size = "medium"      # small | medium | large

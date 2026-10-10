@@ -19,10 +19,11 @@ import { PopupMenu, MenuEntry, MenuPlace, MenuSub } from "widgets/popup-menu.sli
 import { Picker, PickRow } from "widgets/picker.slint";
 import { PathSuggestions, PathRow } from "widgets/path-suggestions.slint";
 import { PaneView, PaneData, PaneGeometry, PaneFocus } from "widgets/pane.slint";
+import { ColumnItem } from "widgets/column-view.slint";
 
 // Re-exported so Rust can set it with `window.global::<Theme>()` and build crumbs, tabs
 // and sidebar rows.
-export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, OpRow, StackRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView, InfoView, MenuEntry, MenuPlace, MenuSub, PickRow, PathRow, PaneData, PaneGeometry, PaneFocus }
+export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, OpRow, StackRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView, InfoView, MenuEntry, MenuPlace, MenuSub, PickRow, PathRow, PaneData, PaneGeometry, PaneFocus, ColumnItem }
 
 // Where the window's drop targets are, in window coordinates (drag.rs reads it while files
 // are dragged; every field is computed when read). The pane's are in its `PaneGeometry`.
@@ -123,6 +124,7 @@ export component AppWindow inherits Window {
             title: "View";
             MenuItem { title: "as List"; shortcut: root.menu-keys ? @keys(Control + Shift + "1") : @keys(); activated => { root.menu-command("view-list"); } }
             MenuItem { title: "as Grid"; shortcut: root.menu-keys ? @keys(Control + Shift + "2") : @keys(); activated => { root.menu-command("view-grid"); } }
+            MenuItem { title: "as Columns"; shortcut: root.menu-keys ? @keys(Control + Meta + "3") : @keys(); activated => { root.menu-command("view-columns"); } }
             Menu {
                 title: "Group By";
                 MenuItem { title: "None"; activated => { root.menu-command("group-none"); } }
@@ -389,6 +391,15 @@ export component AppWindow inherits Window {
     in property <string> mono-font;
     // The preview splitter was released.
     callback preview-resized();
+    // Every pane's Miller column width (spec 10 §7.1), dragged at a column's edge (120-600px)
+    // and saved in state.toml on close; a column's press, menu, middle-click and scroll
+    // (PaneView's `column-*`); the columns a pane shows (pane, first, past the last).
+    in-out property <length> column-width: 220px;
+    callback column-pressed(int, int, int, length, length, length, bool);
+    callback column-menu(int, bool, length, length);
+    callback column-middle(int, int, int);
+    callback column-scrolled(int, int, length);
+    callback columns-shown(int, int, int);
     // A Slint context menu item was chosen (its `MenuEntry.id`).
     callback menu-activated(int);
     // Gezik's own menu closed (chosen, Esc or a press outside it).
@@ -679,9 +690,11 @@ export component AppWindow inherits Window {
     // What dropping files from another program here would do, next to the system's drag
     // image (macOS, whose image has no such text; empty: nothing to say).
     in property <string> offer-label;
-    // The drop target, highlighted (-1: none): an entry, a sidebar row (and the row a pin
-    // line is drawn above), a tab, an address bar part.
+    // The drop target, highlighted (-1: none): an entry (in Miller column `drop-column`, -1: in
+    // the file view), a sidebar row (and the row a pin line is drawn above), a tab, an address
+    // bar part.
     in property <int> drop-entry: -1;
+    in property <int> drop-column: -1;
     in property <int> drop-sidebar-row: -1;
     in property <int> drop-pin-row: -1;
     in property <int> drop-tab: -1;
@@ -896,6 +909,7 @@ export component AppWindow inherits Window {
                             drag-active: root.drag-active;
                             drag-forbidden: root.drag-forbidden;
                             drop-entry: i == root.drop-pane ? root.drop-entry : -1;
+                            drop-column: i == root.drop-pane ? root.drop-column : -1;
                             drop-tab: i == root.drop-pane ? root.drop-tab : -1;
                             drop-crumb: i == root.drop-pane ? root.drop-crumb : -1;
                             tab-insert: i == root.drop-pane ? root.tab-insert : -1;
@@ -968,6 +982,15 @@ export component AppWindow inherits Window {
                             background-menu(p, x, y) => { root.background-menu(p, x, y); }
                             marquee(p, x, y, w, h, additive) => { root.marquee(p, x, y, w, h, additive); }
                             marquee-done(p) => { root.marquee-done(p); }
+                            preview-open: root.preview-open;
+                            preview: root.preview;
+                            mono-font: root.mono-font;
+                            column-width <=> root.column-width;
+                            column-pressed(p, c, r, s, x, y, right) => { root.column-pressed(p, c, r, s, x, y, right); }
+                            column-menu(p, row, x, y) => { root.column-menu(p, row, x, y); }
+                            column-middle(p, c, r) => { root.column-middle(p, c, r); }
+                            column-scrolled(p, c, y) => { root.column-scrolled(p, c, y); }
+                            columns-shown(p, first, end) => { root.columns-shown(p, first, end); }
 
                             // The row under the toolbar; the pane lays its bars and sheet over `sheet-place`.
                             HorizontalLayout {

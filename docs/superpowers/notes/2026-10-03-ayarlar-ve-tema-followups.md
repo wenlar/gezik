@@ -1584,3 +1584,208 @@ FAIL 6 gibi (bilerek bırakıldı): +0,8–1,0 MB, tutamaklar +0.
 
 1. **Shift+Tab hangi bölmeden olursa olsun sağ bölmenin araç çubuğuna gidiyor.** Sol etkin, sol listede satır seçili, Shift+Tab → sağ `View`, sonra sağ adres (sağ etkin oluyor), Refresh, Up, Back, ancak 6. adımda sol `View`, 7. adımda sol adres. `fix1.exe`'de de aynı (yeni değil); ilk koşunun "Shift+Tab o bölmenin View düğmesine gidiyor" notu yalnız sağ bölme için doğruymuş. Tab ise listede bölme değiştiriyor (beklenen).
 2. **240 px bölmede arama alanı 16 px.** Ctrl+E ile açılan ad alanı (`in L ▾` ile `Content` arasında) 16 px genişliğinde; yer tutucu da yazılan metin de görünmüyor. 390 px'te ~45 px, yine yer tutucu görünmüyor. Üst üste binme düzeldi ama dar bölmede arama pratikte görmeden yazmak demek.
+
+## Adım 10, alt parça 10e (Miller sütunları) sonrası
+
+- Yapı: `gezik-core/src/columns.rs` saf sütun yolu (`ColumnPath`: seçme, → gir, ← çık, yukarı, `keeps` ile görünen sütunlar + odaktaki sütunun ilk 8 atası, `record` ile geçmiş). `ViewMode::Columns` üçüncü görünüm kipi; eylem `view-columns` (Ctrl+Shift+3, macOS ⌃⌘3), View menüsü ve palette; `Action::ALL` 101. Odaktaki sütun bölmenin kendi `View`/`FileView`'ıdır (kip 2); öbür sütunlar hafif `ItemsModel` listeleri (`ui/widgets/column-view.slint`, `view/columns.rs`), 100 ms gecikmeli okunur, bırakılınca medya istekleri iptal edilir. Son sütunda önizleme. Sürükle-bırak `Hit::Column(pane, column, row)`; sağ tık, orta tık ve "New folder" odak dışı sütunlarda da çalışır. `[panes] column-width` (120–600); `views.toml` klasörün kendi kipini yazar.
+- Ölçüm (sürüm, Windows, 2026-10-10; taban 10b): exe **25.451.520 → 25.661.440 bayt** (+209.920, bütçe 262.144). `measure.ps1`: açılış 41/37 → 32/46 ms, bellek 9,2/9,3 → 9,3/9,3 MB. `stress.ps1` 100k gürültü içinde. Boşta CPU sütunlarda 0/0 ms, yeniden çizim döngüsü yok. Sütun seçilmeden boşta bellek farkı 0.
+- Spec §12'nin sütun bellek ölçütü harfiyen tutmadı: `columns.ps1` 30 derinde +2,0–3,5 MB, ←×30 sonra +1,8–2,3 MB kalıyor; döngüde büyümüyor, tutamaklar sabit. Liste kipinde aynı 30 derin gezinme de TABAN'da +1–2 MB tutuyor, yani çoğu sütunlara özgü değil (10b §4.2 gibi ayırıcı tutması); sütunlara özgü ek kabaca +0,5–1,5 MB. Öneri: ölçütü "liste kipindeki aynı gezinmeye göre ≤ +0,5 MB ve döngü başına büyüme yok" diye yeniden yazmak (kullanıcı kararı bekliyor).
+- Bilinen sınırlar: eşli gezinmede öbür bölme sütun adımlarını kök değişimi olarak yapıyor (öbür bölmenin sütun yolu tek sütuna iniyor); Windows'ta Backspace yukarı gitmiyor (10b'deki gibi, Alt+Up çalışıyor); View menüsünde List/Grid/Columns yanında kısayol yazmıyor.
+- İncelemelerde ve ekran testlerinde bulunup düzeltilen: inceleme düzeltmeleri (`6af919b`); tekerlekle kaydırılmış sütun başka içerikle dönünce çizilen kaydırma ile Rust'ın kaydırması ayrılıyor, bırakma yanlış satıra gidiyordu (kaydırma artık bağlanmıyor, atanıyor; `55a3155`); Türkçe Q'da Ctrl+Shift+3 çalışmıyordu, çünkü Shift+3 ölü tuş ve Slint ölü tuşları iletmiyor (winit kancası Ctrl'li ölü rakamı rakam olarak veriyor; `305ba2a`).
+- macOS denetim listesi 250–259, Linux 190–195 bekliyor.
+
+## Windows ekran testleri: 10e (2026-10-10 21:51-22:48, ajan)
+
+- Derlemeler kopyalandı, yeniden derlenmedi (oturumun `scratchpad\m10e\` klasöründen `%TEMP%\gezik-gui-10e\bin\`'e):
+  - TABAN `base.exe` (10b sonu, 25.451.520 B).
+  - SONRA `after.exe` = `task3-fix.exe` (`55a3155`, 25.660.416 B; TABAN'a göre +208.896, 10e bütçesinden 53.248 B kaldı).
+  - `t3.exe` = `task3.exe` (`85cf160`, 25.658.880 B). Yalnız ilk piksel eşliği koşusu ve tekerlek/çizilen satır maddesi (aşağıda madde 22b) bununla koşuldu.
+  - Not: koşu başlarken kopyalanan `task3-fix.exe` `task3.exe` ile aynı hash'e sahipti. Asıl düzeltme dosyası 21:52'de geldi. Ondan sonraki her şey `55a3155` ile koşuldu, piksel eşliği de onunla yinelendi.
+- Yöntem 10b ile aynı: Win32 `keybd_event`/`mouse_event` + `SendInput` (`KEYEVENTF_UNICODE` ile yazı) + UI Automation + `PrintWindow` (`PW_RENDERFULLCONTENT`) piksel karşılaştırması (alfa dışında birebir). Betikler `m10bf`'ten türetildi (`scratchpad\m10eg\`).
+- Pencere yerleşimi: birincil ekran (DISPLAY2, 0,0 2560×1440); öbür ekran (2560,0'dan sağa) kullanıcının. Tek bölme 1280×800 @ 40,40, iki bölme 1600×900 @ 40,40. Ölçüm betiklerinde pencere yeri `state.toml` `[window] x = 40, y = 40` ile verildi. Her imleç noktası birincil ekranın içinde mi diye denetlendi.
+- Güvenlik denetimleri (kullanıcı öbür ekrandayken):
+  - Her tuş/tıklama/tekerlekten önce ön plan penceresinin bu koşuda başlatılan bir Gezik PID'i olduğu, tıklamada noktanın altındaki pencerenin de öyle olduğu denetlendi. Değilse girdi gönderilmeden en çok 2 dk beklendi (3 s'de bir yoklama).
+  - `GetLastInputInfo` benim girdim dışında bir girdi gösterdiğinde, kullanıcı 5 s boşta kalana kadar beklendi. 4 kez bekledi (21:51-21:57, hepsi kendiliğinden sürdü), hiçbir maddeden vazgeçilmedi.
+  - Denetim iki kez betiği durdurdu (UIA'dan boş gelen öğe yüzünden 0,0 noktası). Tıklama gönderilmedi.
+  - Bir kez sürükleme betiği sol tuş basılıyken hata verdi. Tuş hemen bırakıldı (Gezik o anda kapalıydı). Sonra `Drag` her durumda tuşu bırakacak biçimde düzeltildi.
+  - Başka pencereye girdi gitmedi.
+- Her oturumda taze `GEZIK_CONFIG_DIR` = `%TEMP%\gezik-gui-10e\cfg\<ad>` kullanıldı. İki derlemede de `state.toml`'a `[hints] f3-moved = true` yazıldı (TABAN da 10b olduğu için).
+- Veri `%TEMP%\gezik-gui-10e\data`:
+  - `px` ve `dual` (10b'den kopya).
+  - `col`: `Alpha\A1\deep\deeper`, `Beta` 300 dosya, `Gamma`, `Pics` (gerçek `pic.png` + `note.txt`), `many`/`many2` 60'ar klasör, `drop\in1..3 + src1..5`, `wheel\P|Q` 60'ar klasör, `wsrc`.
+  - `chain\L01..L12`, `stress-100000`, `perf-columns` (30 düzey).
+- Kurallar:
+  - Kabuğa dosya açtırılmadı: Enter/çift tık yalnız klasörde, dosyada açma denenmedi.
+  - Kayıt defterine yazılmadı. Geri Dönüşüm Kutusu'na bir şey atılmadı: çöp yalnız **görüntülendi**, silme yalnız yapıştırılmış bir kopyada `Shift+Delete` ("Delete Immediately") ile yapıldı. Kopyalar betikle silindi, taşımalar Ctrl+Z ile geri alındı.
+  - Explorer'a/başka uygulamaya girdi yok.
+- Klavye düzeni değiştirilmedi: başta ve sonda `Get-WinUserLanguageList` = `en-US=0409:0000041F` (ABD dili + Türkçe Q klavye).
+- Ekran görüntüleri `%TEMP%\gezik-gui-10e\shots\` (165 dosya; ön ek madde/betik harfi).
+
+### Sonuçlar
+
+1. **Liste/ızgara piksel eşliği — PASS.**
+   - Tek bölme, `px`, TABAN ↔ SONRA (`55a3155`): düz liste, ızgara, süzgeç, arama çubuğu (ikisinde de Ctrl+E), ad değiştirme kutusu (270 ms arayla 3 kare), sağ kenar çubuğu + önizleme, gizli kenar çubuğu: **hepsi birebir** (`P-*`). `t3` ile de birebir (`P-t3-*`).
+   - İki bölme (F3, seçim, Tab, sağda ızgara): birebir (`P2-*`).
+   - Liste satırında bırakma vurgusu (`Beta` üzerinde `Move to Beta`): birebir (`P3-*-drophl`).
+   - Pencere en küçüğü: `MoveWindow` 200×150 ikisinde de kabul; kenardan sürüklemede ikisi de 617 px.
+   - Boşta bellek, sütunlar hiç seçilmeden: aşağıda Ölçümler (fark yok).
+2. **Sütun kipine geçiş — View menüsü ve palet PASS; Ctrl+Shift+3 FAIL (FAIL 1).**
+   - View ▸ `Columns`: tek sütun, dosya görünümü içinde; bir klasör seçilince sağında sütunu açılıyor. `views.toml`'da o klasör için `mode = "columns"`.
+   - Palet (Ctrl+Shift+P, `columns` → `View as Columns`) aynısını yapıyor.
+   - Ctrl+Shift+3 Türkçe Q'da hiçbir şey yapmıyor. ABD düzeni denenmedi (düzen değiştirilmez).
+3. **↑↓ / Home / End / PgUp / PgDn — PASS.**
+   - Odaktaki sütunda çalışıyorlar, sağdaki sütun seçimi izliyor (↓: `Beta` → sağda `b001…`; End: `r10.txt` → önizleme sütunu).
+   - Canlandırma yok: yana kaydıran bir →'dan sonra 25 ms arayla 8 kare çekildi. İlk ikisi son kareden 1.404 px farklı (yeni sütunun dolması), üçüncüden (≈50 ms) sonrası son kareyle birebir; kayan bir geçiş yok.
+4. **→ / ← — PASS.**
+   - → seçili klasöre giriyor, ilk öğe seçili.
+   - ← geri dönüyor: soldaki klasör seçili kalıyor, sağındaki sütun duruyor ama seçimsiz, daha derindekiler kapanıyor.
+   - Kökte ← bir şey yapmıyor. Dosyada → bir şey yapmıyor.
+5. **Konum ve geçmiş — PASS.** Başlık, adres, durum satırı odaktaki sütunun klasörünü söylüyor. Sütunlar arası adımlar Back'e adım eklemiyor: `data` → adresle `col` → →→ → Back: doğrudan `data` (sütunlardan bir kerede çıktı), Forward: `A1` (kayıtlı girdi), sütunlar orada yeniden kuruldu.
+6. **Adres çubuğu / Back / Forward kökü değiştiriyor — PASS.** Adresle `A1`, `L11`: kök orası. Odaktaki klasörün kendisine adresle gitmek (`Alpha` odaktayken `…\Alpha`): kök `Alpha` oldu, tek sütun. Kenar çubuğuna (kullanıcı klasörleri) gidilmedi.
+7. **Up — PASS (Backspace notu).**
+   - Alt+Up ve Up düğmesi ilk sütun dışındaki bir sütundan ← gibi çalışıyor.
+   - İlk sütundan: üst klasör kök oluyor, eski kök seçili, sağdaki sütunlar duruyor (`data` kök, `[col]` seçili, `Alpha`, `A1` sütunları yerinde).
+   - Backspace Windows'ta yukarı gitmiyor (10b notundaki gibi; sütunlarda da bir şey yapmıyor).
+8. **Fare tıklamaları — PASS.**
+   - Başka sütunda satıra tık: o sütun odak alıyor, satır seçili.
+   - Ata sütunda tık (`Beta`): derin sütunlar kapanıyor.
+   - Sütunun boşluğuna tık: o sütun odakta, seçim yok, derindekiler kapanıyor (iki ayrı sütunda denendi).
+   - Başka sütunda dosyaya çift tık **denenmedi** (kabuğa dosya açtırmama kuralı).
+9. **Enter / çift tık klasörde — PASS.** Odaktaki `Alpha`'ya Enter ve odak dışı sütunda `Gamma`'ya çift tık: kök değişmeden sütununa girdi. Dosyada Enter **denenmedi** (aynı kural).
+10. **Harfle atlama, süzgeç, çoklu seçim — PASS.**
+    - `a05` odaktaki sütunda `a05.txt`'ye gitti.
+    - Ctrl+F `a0`: yalnız odaktaki sütun süzüldü (9 öğe), Esc geri getirdi. `/` süzgeci açtı.
+    - Ctrl+A: 13 seçili, sağda sütun açılmadı. Shift+↓×2: `A1,A2,A3`, sağda sütun yok.
+11. **Önizleme sütunu — PASS.**
+    - `note.txt`: metin. `pic.png`: resim + ad, tür, boyut, tarihler, `200 × 120 pixels`. Klasörde yok.
+    - Alt+P açıkken sütun yok (önizleme bölmede), kapanınca geri geliyor (`B-prev-*`).
+    - Not: satır menüsü açıkken önizleme sütunu bir an `…Select a file to preview` gösteriyor. Menü kapanınca doğru içerik geliyor, geçici.
+12. **Sütun genişliği — PASS.** Kenar +100 px sürüklendi: bütün sütunlar 320 oldu, `state.toml` `[panes] column-width = 320`; yeniden açılışta genişlik geri geldi.
+13. **Yana kaydırma ve üzerine gelme — PASS.**
+    - 12 düzeyli zincirde Shift+tekerlek iki yöne, yatay tekerlek (`MOUSEEVENTF_HWHEEL`) iki yöne çalışıyor, uçlarda duruyor.
+    - Ekrandan çıkan sol sütunlar geri kaydırınca satırlarıyla geldi.
+    - Odak dışı sütunların satırlarında üzerine gelme vurgusu var (odaktaki gibi ~5.200 px'lik satır bandı). Gerçek bir fare hareketi gerekiyor: yalnız `SetCursorPos` vurguyu tetiklemiyor (test aracı notu, kullanıcıyı etkilemez).
+14. **Klasör olmayan yerler — PASS.** Her yerde View ▸ Columns ile denendi: arama sonuçları (Ctrl+E `f2`), düz görünüm, This PC, çöp (yalnız görüntülendi; tıklamanın hemen ardından, yüklenirken seçildi). Her yerde liste kaldı ve durum satırı `Columns show folders only: the list is shown here` dedi; söz 3 s sonra da yerinde. Klasöre Back ile dönünce sütunlar geri geldi.
+15. **Gruplama — PASS.** `[view] group = "type"`: listede `File folder (6)` / `Text Document (10)` grupları var, sütunlarda yok, List seçilince geri geliyor (`C3-montage`).
+16. **İki bölme — PASS (bir gözlem).**
+    - Sol ve sağ bölmede sütunlar çalışıyor.
+    - Önizleme sütunu yalnız etkin bölmede: ikisinde de dosya seçiliyken yalnız etkin bölme gösteriyor, Tab ile yer değiştiriyor.
+    - Tek izleyici: etkin olmayan sağ bölmenin klasörüne dışarıdan dosya eklendi; 2 s sonra `33 items`, Tab ile `34 items`.
+    - Eşli gezinme: View ▸ Sync browsing açıkken solda → `Docs` → sağ `docs`, ← ikisi `L`/`R`, →→ ikisi `deep`, ←← ikisi geri; "went apart" sözü yok.
+    - Gözlem 1'e bakın. Etkin olmayan bölmenin soluklaşması ayrıca ölçülmedi.
+17. **İşler — PASS.**
+    - Odaktaki sütunda Ctrl+C → `in1`'e gir → Ctrl+V: göründü.
+    - Yan sütun yenileniyor: `drop` odakta, `in1` seçili (sağında `in1` sütunu). `src1.txt` `in1` satırına sürüklenince yan sütun 0,3 s'de `src1.txt`'yi gösterdi; Ctrl+Z sonrası boşaldı.
+18. **F2, kes/kopyala/yapıştır, sil, bağlam menüsü — PASS.**
+    - F2 ile `src2.txt` → `src2x.txt` → geri.
+    - Ctrl+X `src3` → `in2` Ctrl+V taşıdı, Ctrl+Z geri taşıdı.
+    - Menü tuşu satır menüsünü açtı.
+    - `Shift+Delete` `Delete src1.txt permanently?` diye yapıştırılan kopyayı sordu ve yalnız onu sildi. Delete (çöpe) **denenmedi**.
+19. **Sekmeler — PASS.** Ctrl+T + `px`: liste. Ctrl+Tab: ilk sekme sütunlarıyla, yol yerinde. İkinci sekme yine liste.
+20. **Odak dışı sütundan sürükleme — PASS.** `drop` seçili (sağında odak dışı `drop` sütunu). Oradan `src1.txt` sürüklenince o sütun odak aldı, dosya seçildi, hayalet ve `Move to Gamma` ipucu çıktı. Sürüklerken Esc iptal etti, bırakınca iş yapılmadı.
+21. **Bırakma hedefleri — PASS.**
+    - Başka sütunun klasör satırı (`Gamma` vurgulandı) ve başka sütunun boşluğu (o sütunun klasörü `col`): aynı sürücüde taşıdı. Ctrl kopyaladı (kopya betikle silindi), Shift taşıdı, Ctrl+Z geri aldı.
+    - Kaynak sütun hemen güncellendi (7 öğe).
+    - Bir sekmeye (orta tıkla açılan `A2` sekmesi): `A2`'ye taşıdı, sekme açıldı, Ctrl+Z geri aldı.
+    - Öbür bölmenin listesine (soldaki odak dışı sütundan sağdaki `Gamma` listesine): taşıdı, sağ bölme etkin oldu, Ctrl+Z geri aldı.
+    - Sağ bölmenin listesinden soldaki sütunlara: madde 22b.
+    - Kenar çubuğuna bırakma **denenmedi** (hedefler kullanıcının klasörleri).
+22. **Dosya satırına, önizlemeye, kaydırılmış sütuna bırakma — PASS (`55a3155`); `t3`'te FAIL 2.**
+    - (a) Başka sütundaki `r05.txt` satırına bırakma: o sütunun klasörüne (`col`) taşıdı. Önizleme sütunu üzerinde: imleç `no` (`IDC_NO`), bırakınca iş yok.
+    - (b) Tekerlekle kaydırılmış sütun. İki bölme: solda `wheel` sütunlarda, sağda `wsrc` (kaynak). Sol odak dışı sütun:
+
+      | Adım | `t3` (`85cf160`) | `55a3155` |
+      |---|---|---|
+      | `P` tekerlekle 5 çentik kaydırılmış, bırakma | doğru satır | doğru satır (`g21` → `g21`) |
+      | Seçim `Q`'ya geçince sütun başa dönüyor | doğru satır | doğru satır (`h10` → `h10`) |
+      | Tekerlek ×4, sonra → End ←: çizilen | `h00..h28` | `h31..h59` (Rust'taki sona yakın kaydırma) |
+      | Üzerine gelme | — | `h40`'ta |
+      | Çizilen satıra bırakma | `h11`'e bırakılan `w3.txt` **`h42`'ye düştü**, vurgu `h13`'te | `h42` → `h42` |
+
+    - `t3` sonucu iki kez yinelendi. Dosyalar betikle geri taşındı.
+23. **Odak dışı sütundan sağ sürükleme — PASS.** `Copy here / Move here / Create link here / Cancel` menüsü (180×94). Esc ile iş yapılmadı.
+24. **Explorer'dan bırakma — denenmedi** (başka uygulamaya girdi yok kuralı).
+25. **Odak dışı sütunda sağ tık — PASS.**
+    - Satır (`a03.txt`): sütun odak aldı, satır seçildi, Windows menüsü ilk tıkta açıldı (265×674). Menüdeki `Rename` Gezik'in ad kutusunu açtı, `a03x.txt` yapıldı (sonra geri).
+    - Odak dışı sütunun boşluğu (`Gamma`): klasör menüsü (`New folder, New file, New from template, Refresh, …`, 262×372). `New folder` → ad kutusu → `nf1` `Gamma`'da (o sütunda) oluştu, betikle silindi.
+    - Not: geçmişte bir iş varken bu menünün ilk maddesi `Undo …` oluyor (benim konum hatam; `Undoing Rename — 1 item failed`, çünkü dosyayı betikle zaten geri adlandırmıştım; zararsız).
+26. **Orta tık — PASS.** Odak dışı sütunda klasör `A2`: yeni sekme (`[col, A2]`), etkin sekme değişmedi. Dosyada (`a04.txt`): bir şey olmadı.
+27. **Bellek — `measure.ps1` / `stress.ps1` PASS; `columns.ps1` ölçütü FAIL 3 (ayrıntı Ölçümler'de).**
+
+### FAIL 1: Türkçe Q klavyede Ctrl+Shift+3 sütun kipini açmıyor
+
+- Yeniden üretme: klavye `en-US` dili + Türkçe Q (`0409:0000041F`), taze ayar, `after.exe …\data\col`, Ctrl+Shift+3 → hiçbir şey olmuyor (başlık sütunu duruyor, durum satırı değişmiyor). İkinci basış da aynı.
+- Aynı oturumda Ctrl+Shift+2 ızgarayı, Ctrl+Shift+1 listeyi açıyor. View menüsü ve palet sütunları açıyor.
+- Muhtemel neden (kaynaktan): Türkçe Q'da Shift+3 ölü tuş `^`. `keys::chord_from_press` rakam tuşunda akoru yalnız `typed_char(text)` bir karakter verdiğinde kuruyor; ölü tuş metin vermediği için akor oluşmuyor. Ctrl+Shift+2 (Shift+2 = `'`, ölü değil) bu yüzden çalışıyor. Ölü tuşlu rakamlar fiziksel tuşa (`Physical::Digit`) göre metinsiz de akor saymalı.
+- Kullanıcı etkisi: bakımcının kendi düzeninde varsayılan kısayol çalışmıyor. Denetim listesi "US ve Türkçe Q'da çalışır" diyor.
+- Düzeltme `305ba2a`: Slint ölü tuşları hiç iletmiyor (`text` boş kalınca olayı atıyor). winit kancası Ctrl (⌘) basılıyken, Alt'sız gelen ölü bir rakam tuşunu (`keys::dead_digit`) Slint'e o rakam olarak veriyor. Yeniden test (denetleyici, `dead.exe`, aynı düzen, `tX2.ps1`): Ctrl+Shift+3 sütunlara geçiyor (başlık yok, 4 liste), ikinci basış sütunlarda bırakıyor, Ctrl+Shift+2 ızgara, Ctrl+Shift+1 liste. **PASS.** Exe 25.661.440 B (+1.024).
+
+### FAIL 2: tekerlekle kaydırılmış sütun, başka içerik gelince yanlış satıra bırakıyor (yalnız `t3`/`85cf160`; `55a3155`'te düzeldi)
+
+- Yeniden üretme (`t3.exe`):
+  1. 1600×900, `col\wheel` sütunlarda (sol), F3, sağda `col\wsrc`, sol etkin.
+  2. Home (`P` seçili) → ↓ (`Q`, sağında 60 klasörlük `Q` sütunu).
+  3. `Q` sütununu tekerlekle 4 çentik aşağı kaydır.
+  4. → (Q'ya gir), End (`h59`), ← (sütun yine odak dışı).
+  5. Sütun `h00..h28` çiziliyor, ama Rust sona yakın bir kaydırmayla hesaplıyor. Sağdaki `w3.txt` çizilen `h11` satırına sürüklenince vurgu `h13`'te, dosya **`h42`'ye** taşınıyor.
+- `55a3155`: sütun `h31..h59` çiziliyor; üzerine gelme, vurgu ve bırakma çizilen satırda. **PASS.**
+
+### FAIL 3 (ölçüt): 30 derinlikte sütun belleği hedefin üstünde, geri dönünce de kalıyor
+
+- `columns.ps1` (`55a3155`, 3 koşu; kopya, aşağıda): başlangıç 9,4 / 9,6 / 9,4 MB.
+  - 30 derin: +2,3 / +2,0 / +3,5 MB. Hedef: gösterilen sütunların listeleri (burada 20'şer dosyalık birkaç sütun, KB düzeyi) + 0,5 MB.
+  - ←×30 sonra: +1,8 / +1,9 / +2,3 MB. Hedef: gürültü içinde.
+- Döngülü sürüm (aynı süreçte 3 kez →×30 / ←×30):
+  - Geri dönüş +1,5 → +2,1 → +2,2 MB: büyümüyor, ~+2 MB'ta duruyor. Tutamaklar 391 → 386 (sızıntı yok).
+  - 29 adım (son sütun klasörde, önizleme yok) de aynı: +1,7 / +1,6 / +2,3. Yani önizleme değil.
+- Karşılaştırma, **liste kipinde** aynı 30 derin gezinme (Home+Enter, Alt+Up; 3 döngü, iki koşu):
+
+  | Derleme | Geri dönüş (döngü 1 → 3) |
+  |---|---|
+  | TABAN | +0,8 → +1,3 MB ve +1,7 → +2,3 MB |
+  | SONRA | +1,6 → +2,1 MB ve +1,2 → +1,7 MB |
+
+  Yani geri dönüşteki ~+2 MB'ın çoğu sütunlara özgü değil, düz gezinmede de olan tutma (ayırıcı/geçmiş). İki derleme arasında liste kipinde fark gürültü içinde. Sütunlara özgü ek kabaca 30 derinde +0,5–1,5 MB.
+- Spec §12'nin sütun ölçütü harfiyen karşılanmıyor. 10b FAIL 6 gibi ayırıcı tutması görünüyor. Karar gerek (ölçütü "liste kipi gezinmesine göre" mi tanımlamalı, yoksa sütun listeleri/`ItemsModel`'ler mi bırakılmalı).
+
+### Gözlemler (FAIL değil, karar için)
+
+1. **Eşli gezinmede öbür bölme sütunlarda adımları kök değişimi olarak yapıyor.** Sol solda → `Docs`: sağ bölme `R` sütununu kaybediyor, tek sütun `docs` kalıyor (adres `…\R\docs`). ← ile sağ `R` kök olarak dönüyor. Eşleme doğru izliyor, "went apart" yok. Ama öbür bölmede sütun yolu korunmuyor; Finder gibi bir sütun adımı beklenebilir (`E-sync-right.png`).
+2. View menüsünde `List / Grid / Columns` yanında kısayol yazmıyor (TABAN'da da List/Grid için yok).
+
+### Ölçümler
+
+| Ölçüm | TABAN (10b) | SONRA (`55a3155`) |
+|---|---|---|
+| exe | 25.451.520 B | 25.660.416 B (+208.896; bütçe 262.144) |
+| `measure.ps1` (5 koşu, 2 tur): açılış | 41 / 37 ms | 32 / 46 ms |
+| `measure.ps1`: Görev Yöneticisi belleği | 9,2 / 9,3 MB | 9,3 / 9,3 MB |
+| `col` liste kipinde açılış belleği (girdisiz, 3 koşu) | 9,34 / 9,67 / 9,75 MB | 9,72 / 9,44 / 9,61 MB |
+| `stress.ps1` 100.000 dosya, yükleme sonrası | 18,9 / 18,9 MB | 18,9 / 19,0 MB |
+| `stress.ps1` kaydırma sonrası | 19,3 / 19,1 MB | 19,2 / 19,5 MB |
+| `stress.ps1` kaydırma CPU'su (60 tekerlek) | 313 / 297 ms (2,61 / 2,64 s) | 313 / 344 ms (2,71 / 2,66 s) |
+| Boşta CPU, liste, `col`, 10 s, iki tur | 0 / 0 ms | 0 / 16 ms |
+| Boşta CPU, **sütunlar** (`col\Pics`, `pic.png` önizleme sütununda), 10 s, iki tur | — | **0 / 0 ms** |
+
+- Her boşta ölçümde 500 ms arayla iki kare birebir (yeniden çizim döngüsü yok). Sütunlarda özel bellek 15,3 MB, 409 tutamak; listede 12,2 MB.
+- `measure.ps1` özgün haliyle `-Config` ile koşuldu. Ayar klasöründe `[window]` (40,40) ve `[hints] f3-moved = true` var; Gezik kullanıcının Home klasöründe açılıyor, yalnız listeler.
+
+`columns.ps1` (SONRA, 3 koşu; özel çalışma kümesi):
+
+| | koşu 1 | koşu 2 | koşu 3 |
+|---|---|---|---|
+| başlangıç | 9,4 MB | 9,6 MB | 9,4 MB |
+| 30 derin | 11,7 (+2,3) | 11,7 (+2,0) | 12,9 (+3,5) |
+| ←×30 sonra | 11,2 (+1,8) | 11,5 (+1,9) | 11,7 (+2,3) |
+
+- Betik notları. Kaynak değişmedi; kopyalar `scratchpad\m10eg\`:
+  - `columns-copy.ps1`: veri ve ayar `gezik-gui-10e` altında, pencere yeri `state.toml`'dan. Her tuştan önce ön plan + kullanıcı girdisi denetimi (`FgOk`), sonra özgün `GetForegroundWindow` denetimi ve `SendKeys`.
+  - `columns-cycles.ps1` / `list-cycles.ps1`: aynı, 3 döngü.
+  - `stress-copy.ps1`: her tekerlekten önce ön plan + imleç altı PID denetimi; `-Dir` 10e verisi; pencere birincil ekranda.
+
+### Temizlik
+
+- Başlattığım bütün Gezik süreçleri kapandı: kayıtlı 63 PID'in hiçbiri çalışmıyor, başka `base`/`after`/`t3`/`gezik` süreci yok. `measure.ps1`'in süreçlerini kendisi kapattı.
+- Veri eski haline döndü (`drop` 8 öğe, `in1..3` boş, `Gamma` 3, `Alpha` ve `A2` özgün, `wsrc` 4, `wheel` dosyasız). `cfg\`, `shots\` (165 dosya), `bin\` duruyor.
+- Geri Dönüşüm Kutusu'na bir şey gitmedi (yalnız görüntülendi). Kayıt defterine yazılmadı, kaynak değişmedi, commit yok.
+- `Get-WinUserLanguageList` sonda yine `en-US=0409:0000041F`.

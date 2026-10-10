@@ -200,6 +200,7 @@ pub fn allowed(action: Action) -> bool {
         | Action::SelectAll
         | Action::ViewList
         | Action::ViewGrid
+        | Action::ViewColumns
         | Action::TogglePreview
         | Action::QuickLook
         | Action::Trash

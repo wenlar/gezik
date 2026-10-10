@@ -9,7 +9,8 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gezik_core::drag::{
-    self, Action, Allowed, CrumbArea, Effect, Hit, Keys, Layout, ListArea, PaneArea, SideRow, SidebarArea, TabArea,
+    self, Action, Allowed, ColumnsArea, CrumbArea, Effect, Hit, Keys, Layout, ListArea, PaneArea, SideRow, SidebarArea,
+    TabArea,
 };
 use gezik_core::layout::Rect;
 use gezik_core::nav::Location;
@@ -460,7 +461,7 @@ impl Drags {
     }
 
     /// A left or right press on entry `index` at window position (`x`, `y`).
-    fn down(&self, index: usize, x: f32, y: f32, right: bool, can_drag: bool) {
+    pub fn down(&self, index: usize, x: f32, y: f32, right: bool, can_drag: bool) {
         if right {
             // The menu or the drag is for this entry: select it first if it is not.
             crate::panes::active_view().prepare_menu(index);
@@ -689,7 +690,8 @@ impl Drags {
     fn layout(&self, window: &AppWindow) -> Layout {
         let g = window.get_drop_geometry();
         let theme = window.global::<Theme>();
-        let panes = crate::panes::all().iter().enumerate().map(|(place, pane)| self.pane_area(pane, place)).collect();
+        let panes =
+            crate::panes::all().iter().enumerate().map(|(place, pane)| self.pane_area(window, pane, place)).collect();
         let sidebar = match window.get_sidebar_position() {
             position @ (0 | 1) => {
                 let width = window.get_sidebar_width();
@@ -720,7 +722,7 @@ impl Drags {
     }
 
     /// Where the parts of `pane` (at `place`) are.
-    fn pane_area(&self, pane: &crate::panes::Pane, place: usize) -> PaneArea {
+    fn pane_area(&self, window: &AppWindow, pane: &crate::panes::Pane, place: usize) -> PaneArea {
         let mirror = crate::panes::mirror(pane.id);
         let p = mirror.geometry.borrow().clone();
         let data = crate::panes::data(pane.id).unwrap_or_default();
@@ -747,7 +749,19 @@ impl Drags {
             rect: Rect { x: p.address_x, y: p.address_y, width: p.address_width, height: p.address_height },
             spans,
         };
-        PaneArea { list, tabs, crumbs }
+        let columns = pane.view.columns_on().then(|| {
+            let theme = window.global::<Theme>();
+            ColumnsArea {
+                rect: Rect { x: p.columns_left, y: p.view_y, width: p.columns_width, height: p.columns_height },
+                scroll: p.columns_scroll,
+                width: window.get_column_width(),
+                // column-view.slint's `pad`.
+                top: theme.get_inset().min(2.0),
+                row_height: theme.get_row_height(),
+                columns: pane.view.column_rows(),
+            }
+        });
+        PaneArea { list, tabs, crumbs, columns }
     }
 
     /// What dropping `d` at `hit` would do.
@@ -771,6 +785,11 @@ impl Drags {
                 _ => (Hit::Background(p), pane.view.folder()),
             },
             (Hit::Background(_), Some(pane)) => (hit, pane.view.folder()),
+            // A Miller column's folder, or one in it.
+            (Hit::Column(p, c, row), Some(pane)) => match row.and_then(|i| pane.view.column_entry(c, i)) {
+                Some((path, true)) => (hit, Some(path)),
+                _ => (Hit::Column(p, c, None), pane.view.column_folder(c)),
+            },
             (Hit::Sidebar(row), _) => {
                 let place = window.get_sidebar_rows().row_data(row);
                 (hit, place.and_then(|r| self.0.sidebar.location_of(r.section, r.index)).and_then(path_of))
@@ -824,10 +843,13 @@ impl Drags {
     fn show(&self, window: &AppWindow, x: f32, y: f32, target: &Target, ghost: bool) {
         let on = target.action.is_some();
         window.set_drop_pane(target.hit.pane().map_or(-1, index));
-        window.set_drop_entry(match target.hit {
-            Hit::Entry(_, i) if on => index(i),
-            _ => -1,
-        });
+        let (column, entry) = match target.hit {
+            Hit::Entry(_, i) if on => (-1, index(i)),
+            Hit::Column(_, c, Some(i)) if on => (index(c), index(i)),
+            _ => (-1, -1),
+        };
+        window.set_drop_column(column);
+        window.set_drop_entry(entry);
         window.set_drop_sidebar_row(match target.hit {
             Hit::Sidebar(row) if on => index(row),
             _ => -1,
@@ -1250,7 +1272,10 @@ impl Drags {
 /// Whether items with no file behind them may land at `hit`: into a folder only (not the drop
 /// stack, not pinned; an archive's entry means its folder).
 fn virtual_allows(hit: Hit) -> bool {
-    matches!(hit, Hit::Entry(..) | Hit::Background(_) | Hit::Sidebar(_) | Hit::Tab(..) | Hit::Crumb(..))
+    matches!(
+        hit,
+        Hit::Entry(..) | Hit::Background(_) | Hit::Column(..) | Hit::Sidebar(_) | Hit::Tab(..) | Hit::Crumb(..)
+    )
 }
 
 /// The pane (its place) whose list is under (`x`, `y`), and that list.
@@ -1314,7 +1339,14 @@ mod tests {
 
     #[test]
     fn virtual_items_go_only_into_folders() {
-        for hit in [Hit::Entry(0, 0), Hit::Background(1), Hit::Sidebar(2), Hit::Tab(1, 1), Hit::Crumb(0, 0)] {
+        for hit in [
+            Hit::Entry(0, 0),
+            Hit::Background(1),
+            Hit::Column(0, 1, None),
+            Hit::Sidebar(2),
+            Hit::Tab(1, 1),
+            Hit::Crumb(0, 0),
+        ] {
             assert!(virtual_allows(hit), "{hit:?}");
         }
         for hit in [Hit::Stack, Hit::PinAt(1), Hit::Outside, Hit::Nothing] {

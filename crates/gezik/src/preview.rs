@@ -375,9 +375,14 @@ impl Preview {
         self.set_pane_open(!self.is_pane_open());
     }
 
-    /// Whether anything shows the preview.
+    /// Whether anything shows the preview: the pane, quick look, or the last Miller column of
+    /// the active pane (a file is selected there, spec 10 §7.1).
     fn active(&self) -> bool {
-        self.0.pane_open.get() || self.quick_look_open()
+        self.0.pane_open.get() || self.quick_look_open() || self.column()
+    }
+
+    fn column(&self) -> bool {
+        crate::panes::with_active(|p| p.view.column_file()).unwrap_or(false)
     }
 
     /// The selection changed: loads its preview once it stays for a moment.
@@ -388,6 +393,10 @@ impl Preview {
             gezik_platform::ql_panel::update(&items, index);
         }
         if !self.active() {
+            // The preview column closed (a folder selected, the list chosen): its picture goes.
+            if *self.0.info.borrow() != PreviewInfo::default() {
+                self.release();
+            }
             return;
         }
         self.0.timer.start(slint::TimerMode::SingleShot, DELAY, || {
@@ -420,7 +429,13 @@ impl Preview {
     fn picture_px(&self) -> u32 {
         let Some(window) = self.0.window.upgrade() else { return 256 };
         let quick = self.0.quick_look.borrow().as_ref().map_or(0.0, |q| q.width());
-        let logical = if self.0.pane_open.get() { window.get_preview_width().max(quick) } else { quick };
+        let logical = if self.0.pane_open.get() {
+            window.get_preview_width().max(quick)
+        } else if self.column() {
+            window.get_column_width().max(quick)
+        } else {
+            quick
+        };
         (logical * window.window().scale_factor()).round().clamp(64.0, 1024.0) as u32
     }
 

@@ -781,7 +781,8 @@ impl Settings {
 
 fn parse_view(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> ViewDefaults {
     let mut out = ViewDefaults::default();
-    if let Some(mode) = view_choice(table, "mode", "\"list\" or \"grid\"", ViewMode::parse, file, warnings) {
+    if let Some(mode) = view_choice(table, "mode", "\"list\", \"grid\" or \"columns\"", ViewMode::parse, file, warnings)
+    {
         out.view.mode = mode;
     }
     let keys = "\"name\", \"modified\", \"created\", \"type\" or \"size\"";
@@ -1559,6 +1560,9 @@ pub struct State {
     pub sync: bool,
     /// The left pane's share of the two panes' width in thousandths (`[panes] split`, 0.2–0.8).
     pub pane_split: Option<u16>,
+    /// The Miller columns' width (`[panes] column-width`, 120–600 px; spec 10 §7.1), when not the
+    /// default.
+    pub column_width: Option<u32>,
     /// The palette's items used last, newest first (spec 7.3).
     pub palette_recent: Vec<String>,
     /// Connect to Server's addresses, newest first (`[servers] recent`).
@@ -1744,6 +1748,13 @@ impl State {
                 .and_then(|v| v.as_float())
                 .filter(|f| (0.2..=0.8).contains(f))
                 .map(|f| (f * 1000.0).round() as u16),
+            column_width: table
+                .get("panes")
+                .and_then(|v| v.as_table())
+                .and_then(|t| t.get("column-width"))
+                .and_then(|v| v.as_integer())
+                .and_then(|w| u32::try_from(w).ok())
+                .filter(|w| (120..=600).contains(w)),
             palette_recent,
             servers_recent,
             f3_moved: hint("f3-moved").and_then(|v| v.as_bool()).unwrap_or(false),
@@ -1907,9 +1918,14 @@ impl State {
             }
             root.insert("hints".into(), toml::Value::Table(hints));
         }
+        let mut panes = toml::Table::new();
         if let Some(split) = self.pane_split {
-            let mut panes = toml::Table::new();
             panes.insert("split".into(), toml::Value::Float(f64::from(split) / 1000.0));
+        }
+        if let Some(width) = self.column_width {
+            panes.insert("column-width".into(), toml::Value::Integer(width.into()));
+        }
+        if !panes.is_empty() {
             root.insert("panes".into(), toml::Value::Table(panes));
         }
         root.to_string()
@@ -3070,10 +3086,12 @@ shortcut = \"shift+f8\"
             active_pane: 1,
             sync: true,
             pane_split: Some(350),
+            column_width: Some(260),
             ..State::default()
         };
         let text = state.to_toml();
         assert!(text.contains("right-tabs") && text.contains("split = 0.35") && text.contains("sync = true"), "{text}");
+        assert!(text.contains("column-width = 260"), "{text}");
         assert_eq!(State::parse(&text), state);
         // Closed, the right tabs are still kept.
         let closed = State { dual: false, active_pane: 0, sync: false, pane_split: None, ..state };
@@ -3121,6 +3139,25 @@ split = 0.9
 ",
         );
         assert!(!bad.dual && bad.active_pane == 0 && !bad.sync && bad.pane_split.is_none());
+        assert_eq!(
+            State::parse(
+                "[panes]
+column-width = 90
+"
+            )
+            .column_width,
+            None,
+            "too narrow"
+        );
+        assert_eq!(
+            State::parse(
+                "[panes]
+column-width = 300
+"
+            )
+            .column_width,
+            Some(300)
+        );
         assert_eq!(
             State::parse(
                 "[panes]

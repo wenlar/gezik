@@ -33,7 +33,7 @@ reduce-motion = false
 [view]
 # How folders look. A folder you change keeps its own view; "Apply to all folders"
 # in the View menu writes mode, sort, sort-dir, grid-size and group here.
-mode = "list"          # list | grid
+mode = "list"          # list | grid | columns
 sort = "name"          # name | modified | created | type | size
 sort-dir = "asc"       # asc | desc
 grid-size = "medium"   # small | medium | large
@@ -146,6 +146,7 @@ confirm = true
 # select-all = "mod+a"
 # view-list = "mod+shift+1"
 # view-grid = "mod+shift+2"
+# view-columns = "ctrl+shift+3"   # Miller columns (the list in search, flat view, trash); macOS: "mod+ctrl+3"
 # toggle-preview = "alt+p"
 # quick-look = "space"     # only while the file list has the focus
 # copy = "mod+c"
