@@ -957,7 +957,12 @@ fn main() -> Result<(), slint::PlatformError> {
     });
     // The pane's parts carry its id; it is installed once they all exist.
     let pane_id = panes::next_id();
-    let view = view::View::new(pane_id, &window, memory, config.clone());
+    // One media and one folder view memory for the process; each view holds a client of the
+    // media and the same memory (spec 10 §3.3).
+    let media = media::Media::new();
+    media.install();
+    let memory = Rc::new(std::cell::RefCell::new(memory));
+    let view = view::View::new(pane_id, &window, media.client(), memory, config.clone());
     view.set_defaults(initial_settings.view);
     // No folder shows yet: its place comes with the first one.
     view.set_rules(view::compile_rules(&initial_settings.view_rules), Default::default);

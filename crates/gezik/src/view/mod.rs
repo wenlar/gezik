@@ -68,6 +68,11 @@ pub fn header_sort(column: i32) -> Option<SortKey> {
 
 type Listener = Rc<dyn Fn()>;
 
+thread_local! {
+    /// A `views.toml` write is scheduled: one for the process, whichever view asked.
+    static SAVE_PENDING: Cell<bool> = const { Cell::new(false) };
+}
+
 struct Inner {
     id: PaneId,
     window: slint::Weak<AppWindow>,
@@ -102,12 +107,11 @@ struct Inner {
     defaults: Cell<ViewDefaults>,
     /// The shown folder's view: its own if it has one, else the defaults.
     current: Cell<ViewSettings>,
-    memory: RefCell<ViewMemory>,
+    /// The process's folder views, shared by every view (spec 10 §3.3).
+    memory: Rc<RefCell<ViewMemory>>,
     store: Option<ConfigStore>,
     /// The shown folder as remembered in `memory`; `None` for "This PC".
     folder: RefCell<Option<String>>,
-    /// A `views.toml` write is scheduled.
-    save_pending: Cell<bool>,
     columns: RefCell<Vec<ColumnState>>,
     /// The search results' columns (sapma 6).
     result_columns: RefCell<Vec<ColumnState>>,
@@ -248,9 +252,13 @@ impl SortGate {
 pub struct View(Rc<Inner>);
 
 impl View {
-    pub fn new(id: PaneId, window: &AppWindow, memory: ViewMemory, store: Option<ConfigStore>) -> View {
-        let media = Media::new();
-        media.install();
+    pub fn new(
+        id: PaneId,
+        window: &AppWindow,
+        media: Media,
+        memory: Rc<RefCell<ViewMemory>>,
+        store: Option<ConfigStore>,
+    ) -> View {
         let defaults = ViewDefaults::default();
         let data = Rc::new(RefCell::new(ViewData {
             media: media.clone(),
@@ -278,10 +286,9 @@ impl View {
             on_shown: RefCell::new(Vec::new()),
             defaults: Cell::new(defaults),
             current: Cell::new(defaults.view),
-            memory: RefCell::new(memory),
+            memory,
             store,
             folder: RefCell::new(None),
-            save_pending: Cell::new(false),
             columns: RefCell::new(default_columns()),
             result_columns: RefCell::new(gezik_core::view::default_result_columns()),
             results_status: RefCell::new(None),
@@ -301,7 +308,7 @@ impl View {
             place: RefCell::new(Place::default()),
             rule_columns: Cell::new(None),
         }));
-        // Weak: the media lives inside the view.
+        // Weak: the media client lives inside the view.
         let weak = Rc::downgrade(&view.0);
         media.on_ready(move |entries, ready| {
             if let Some(inner) = weak.upgrade() {
@@ -1845,7 +1852,7 @@ impl View {
 
     /// Hands a change still waiting for its timer to the `views.toml` writer now (on close).
     pub fn flush_memory(&self) {
-        if self.0.save_pending.get() {
+        if SAVE_PENDING.with(Cell::get) {
             self.save_memory_now();
         }
     }
@@ -1907,7 +1914,7 @@ impl View {
 
     /// Writes `views.toml` a moment after the last change, so a burst of changes is one write.
     fn save_memory_soon(&self) {
-        if self.0.store.is_none() || self.0.save_pending.replace(true) {
+        if self.0.store.is_none() || SAVE_PENDING.with(|p| p.replace(true)) {
             return;
         }
         let view = self.clone();
@@ -1916,7 +1923,7 @@ impl View {
 
     /// Hands the folder views to the store's `views.toml` writer thread.
     fn save_memory_now(&self) {
-        self.0.save_pending.set(false);
+        SAVE_PENDING.with(|p| p.set(false));
         if let Some(store) = &self.0.store {
             store.write_views(&self.0.memory.borrow());
         }
