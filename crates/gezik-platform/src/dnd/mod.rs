@@ -2,13 +2,57 @@
 //! takes files dropped on the window from outside, and hands a drag that leaves the window
 //! to the system.
 
-use std::path::PathBuf;
+use std::io;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
 pub use gezik_core::drag::{Allowed, Effect, Keys};
+
+/// An item another program offers with no file behind it: an e-mail attachment, a picture in
+/// a browser, a file in a zip view, a macOS file promise. Its name comes from that program and
+/// is untrusted (`gezik_core::drop_names`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VirtualEntry {
+    /// `Ekler\a.txt`: a folder and a file in it (Windows); `Ekler/a.txt` elsewhere.
+    pub name: String,
+    pub is_dir: bool,
+    /// What the program says it holds; only for progress (what is written is counted).
+    pub size: Option<u64>,
+    /// The program could not give it (a promise that failed): why.
+    pub failed: Option<String>,
+}
+
+/// Where dropped virtual items are read from, by the job writing them (any thread).
+pub trait VirtualSource: Send + Sync {
+    /// The items, a folder before what is in it. May wait for them (macOS: until the
+    /// promised files arrive); `stop` says the job was cancelled.
+    fn entries(&self, stop: &dyn Fn() -> bool) -> io::Result<Vec<VirtualEntry>>;
+    /// Writes file item `index` (of `entries`) to `to`, a new file; `progress` gets the bytes
+    /// written so far and stops it by returning false. Returns the bytes written.
+    fn write(&self, index: usize, to: &Path, progress: &mut dyn FnMut(u64) -> bool) -> io::Result<u64>;
+}
+
+/// The items of a virtual drop, held for the job that writes them. Equal only to itself (the
+/// same source).
+#[derive(Clone)]
+pub struct VirtualFiles(pub Arc<dyn VirtualSource>);
+
+impl std::fmt::Debug for VirtualFiles {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("VirtualFiles")
+    }
+}
+
+impl PartialEq for VirtualFiles {
+    fn eq(&self, other: &VirtualFiles) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for VirtualFiles {}
 
 /// What is being dragged over Gezik's window from outside.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,6 +61,10 @@ pub struct Offer {
     pub allowed: Allowed,
     /// The right button is held: a menu follows the drop.
     pub right: bool,
+    /// No file paths, but this many items with no file behind them (always copied).
+    pub virtual_count: usize,
+    /// Those items, set at the drop (the platform holds them for the job from then on).
+    pub virtual_files: Option<VirtualFiles>,
 }
 
 /// What a drop at the pointer would do.
