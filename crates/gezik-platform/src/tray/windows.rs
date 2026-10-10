@@ -14,7 +14,7 @@ use windows::Win32::UI::Shell::{
     SIID_FOLDER, SetWindowSubclass, Shell_NotifyIconW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CreatePopupMenu, CreateWindowExW, DestroyIcon, DestroyMenu, DestroyWindow, DispatchMessageW,
+    AppendMenuW, CreatePopupMenu, CreateWindowExW, DestroyIcon, DestroyMenu, DestroyWindow, DispatchMessageW, EndMenu,
     GetMessageW, HICON, MF_SEPARATOR, MF_STRING, MSG, PostMessageW, PostQuitMessage, RegisterWindowMessageW,
     SetForegroundWindow, TPM_BOTTOMALIGN, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage,
     WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLOSE, WM_DESTROY, WM_NULL,
@@ -25,6 +25,8 @@ use crate::tray::{Click, MenuLine, OnEvent, OnReady, TIP, TrayError, TrayEvent, 
 
 /// The icon's callback message.
 const CALLBACK: u32 = WM_APP + 1;
+/// Ends an open menu (Drop posts it before WM_CLOSE, so the thread is not held in TrackPopupMenu).
+const END_MENU: u32 = WM_APP + 2;
 const SUBCLASS_ID: usize = 1;
 
 /// What the window's messages need; lives on the tray thread for as long as the window.
@@ -56,6 +58,15 @@ pub fn start(pins: Vec<String>, on_event: OnEvent, on_ready: OnReady) -> Tray {
 }
 
 impl Tray {
+    /// Tests: a left click without a mouse (the icon's callback, NIN_SELECT).
+    #[cfg(test)]
+    pub fn post_click(&self) {
+        // SAFETY: a plain message to our window.
+        unsafe {
+            let _ = PostMessageW(Some(HWND(self.hwnd.load(SeqCst) as *mut _)), CALLBACK, WPARAM(0), LPARAM(0x400));
+        }
+    }
+
     pub fn set_pins(&self, pins: Vec<String>) {
         if let Ok(mut labels) = self.pins.lock() {
             *labels = pins;
@@ -185,6 +196,13 @@ unsafe extern "system" fn messages(
         add_icon(hwnd, shared.icon);
         return LRESULT(0);
     }
+    if msg == END_MENU {
+        // SAFETY: ends the menu of this thread, if one is open.
+        unsafe {
+            let _ = EndMenu();
+        }
+        return LRESULT(0);
+    }
     if msg == WM_DESTROY {
         let data = icon_data(hwnd, shared.icon);
         // SAFETY: our icon; the thread's loop ends with the WM_QUIT this posts.
@@ -232,10 +250,13 @@ impl Drop for Tray {
         if hwnd != 0 {
             // SAFETY: a plain message to our window (fails harmlessly if it is gone).
             unsafe {
-                let _ = PostMessageW(Some(HWND(hwnd as *mut _)), WM_CLOSE, WPARAM(0), LPARAM(0));
+                let window = Some(HWND(hwnd as *mut _));
+                let _ = PostMessageW(window, END_MENU, WPARAM(0), LPARAM(0));
+                let _ = PostMessageW(window, WM_CLOSE, WPARAM(0), LPARAM(0));
             }
         }
-        if let Some(thread) = self.thread.take() {
+        // Dropped on its own thread (inside on_event): it ends by itself after WM_CLOSE.
+        if let Some(thread) = self.thread.take().filter(|t| t.thread().id() != std::thread::current().id()) {
             let _ = thread.join();
         }
     }

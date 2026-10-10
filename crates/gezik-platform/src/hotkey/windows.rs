@@ -87,7 +87,8 @@ impl Drop for Hotkey {
                 let _ = PostThreadMessageW(id, WM_QUIT, WPARAM(0), LPARAM(0));
             }
         }
-        if let Some(thread) = self.thread.take() {
+        // Dropped on its own thread (inside on_press): it ends by itself after WM_QUIT.
+        if let Some(thread) = self.thread.take().filter(|t| t.thread().id() != std::thread::current().id()) {
             let _ = thread.join();
         }
     }

@@ -37,6 +37,8 @@ pub enum HotkeyError {
     Failed(String),
 }
 
+/// Don't drop the handle inside the callback; hop to the UI thread first (dropping it there
+/// still releases the key, but without waiting for its thread).
 pub type OnPress = Box<dyn Fn() + Send + Sync>;
 pub type OnReady = Box<dyn FnOnce(Result<(), HotkeyError>) + Send>;
 
@@ -193,9 +195,8 @@ mod tests {
 #[cfg(all(test, windows))]
 mod windows_tests {
     use super::*;
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
-    use std::sync::mpsc;
+    use std::sync::{Arc, Mutex, mpsc};
     use std::time::{Duration, Instant};
 
     /// An odd chord nobody uses; held only for this test and released at its end. The only
@@ -235,8 +236,34 @@ mod windows_tests {
         assert_eq!(presses.load(SeqCst), 1);
         // Dropping joins the thread (a hang here fails the test) and releases the chord.
         drop(first);
-        let (third, after) = ready(Arc::new(AtomicUsize::new(0)));
-        assert_eq!(after, Ok(()), "dropped: released");
-        drop(third);
+        // Dropped from inside its own press: no deadlock, and the chord is released.
+        let slot: Arc<Mutex<Option<Hotkey>>> = Arc::new(Mutex::new(None));
+        let (gone, went) = mpsc::channel();
+        let (tell, told) = mpsc::channel();
+        let held = slot.clone();
+        let third = register(
+            odd(),
+            Box::new(move || {
+                drop(held.lock().ok().and_then(|mut hotkey| hotkey.take()));
+                let _ = gone.send(());
+            }),
+            Box::new(move |result| {
+                let _ = tell.send(result);
+            }),
+        );
+        assert_eq!(told.recv_timeout(Duration::from_secs(5)).expect("no answer"), Ok(()), "dropped: released");
+        *slot.lock().unwrap() = Some(third);
+        slot.lock().unwrap().as_ref().unwrap().0.post_press();
+        went.recv_timeout(Duration::from_secs(5)).expect("the self-drop hung");
+        // Not joined: the thread unregisters a moment later.
+        let until = Instant::now() + Duration::from_secs(2);
+        loop {
+            let (fourth, after) = ready(Arc::new(AtomicUsize::new(0)));
+            if after == Ok(()) || Instant::now() > until {
+                assert_eq!(after, Ok(()), "self-dropped: released");
+                drop(fourth);
+                break;
+            }
+        }
     }
 }

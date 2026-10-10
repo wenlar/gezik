@@ -27,6 +27,8 @@ pub enum TrayError {
     Failed(String),
 }
 
+/// Don't drop the handle inside the callback; hop to the UI thread first (dropping it there
+/// still ends the icon, but without waiting for its thread).
 pub type OnEvent = Box<dyn Fn(TrayEvent) + Send + Sync>;
 pub type OnReady = Box<dyn FnOnce(Result<(), TrayError>) + Send>;
 
@@ -164,6 +166,7 @@ mod tests {
 #[cfg(all(test, windows))]
 mod windows_tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
 
     /// Puts a real icon in the notification area for two seconds (run by hand: `--ignored`).
     #[test]
@@ -180,5 +183,25 @@ mod windows_tests {
         assert_eq!(told.recv_timeout(std::time::Duration::from_secs(5)).unwrap(), Ok(()));
         std::thread::sleep(std::time::Duration::from_secs(2));
         drop(tray);
+
+        // Dropped from inside its own event (a posted fake click): no deadlock.
+        let slot: Arc<Mutex<Option<Tray>>> = Arc::new(Mutex::new(None));
+        let (gone, went) = std::sync::mpsc::channel();
+        let (tell, told) = std::sync::mpsc::channel();
+        let held = slot.clone();
+        let tray = start(
+            Vec::new(),
+            Box::new(move |_| {
+                drop(held.lock().ok().and_then(|mut tray| tray.take()));
+                let _ = gone.send(());
+            }),
+            Box::new(move |result| {
+                let _ = tell.send(result);
+            }),
+        );
+        assert_eq!(told.recv_timeout(std::time::Duration::from_secs(5)).unwrap(), Ok(()));
+        *slot.lock().unwrap() = Some(tray);
+        slot.lock().unwrap().as_ref().unwrap().0.post_click();
+        went.recv_timeout(std::time::Duration::from_secs(5)).expect("the self-drop hung");
     }
 }
