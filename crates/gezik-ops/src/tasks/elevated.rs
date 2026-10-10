@@ -20,6 +20,10 @@ pub trait Elevator: Send + Sync {
 pub const NOT_AVAILABLE: &str = "Administrator operations are not available here";
 pub const CANCELLED: &str = "Not done: the administrator prompt was cancelled";
 pub const NOT_SO: &str = "The administrator helper said it was done, but it is not";
+/// The app's note for `Report::unchecked`.
+pub const UNCHECKED: &str = "Done as administrator; Gezik could not check it";
+/// Whether names that differ only in case are the same name here (Windows and macOS by default).
+const CASE_BLIND: bool = cfg!(any(windows, target_os = "macos"));
 /// Reply lines read at most (the helper writes one per operation and one more).
 const MAX_REPLIES: usize = 100_000;
 
@@ -35,7 +39,8 @@ impl ElevatedTask {
 
 /// What Gezik sees at a path without rights.
 enum Look {
-    There(std::fs::Metadata),
+    /// There; whether it is a folder.
+    There(bool),
     Gone,
     /// No way to look (no rights there).
     Unknown,
@@ -43,8 +48,27 @@ enum Look {
 
 fn look(path: &Path) -> Look {
     match std::fs::symlink_metadata(path) {
-        Ok(meta) => Look::There(meta),
+        Ok(meta) => Look::There(meta.is_dir()),
         Err(err) if err.kind() == io::ErrorKind::NotFound => Look::Gone,
+        Err(_) => listed(path),
+    }
+}
+
+/// The item looked up in its folder's list, when the item itself cannot be looked at.
+// shortcut: reads the whole folder per item; fine for a list that fits one command line.
+fn listed(path: &Path) -> Look {
+    let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else { return Look::Unknown };
+    let Ok(mut entries) = std::fs::read_dir(parent) else { return Look::Unknown };
+    let fold = |text: &std::ffi::OsStr| {
+        let text = text.to_string_lossy();
+        if CASE_BLIND { text.to_lowercase() } else { text.into_owned() }
+    };
+    let wanted = fold(name);
+    let Some(entry) = entries.find(|entry| entry.as_ref().is_ok_and(|entry| fold(&entry.file_name()) == wanted)) else {
+        return Look::Gone;
+    };
+    match entry.and_then(|entry| entry.file_type()) {
+        Ok(kind) => Look::There(kind.is_dir()),
         Err(_) => Look::Unknown,
     }
 }
@@ -64,9 +88,10 @@ fn before(op: &Op) -> Before {
     }
 }
 
-/// A rename that changes only the case: on a case-blind disk the old name still "exists".
-fn same_name(a: &Path, b: &Path) -> bool {
-    a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase()
+/// A rename that changes only the case: on a case-blind disk (`case_blind`) the old name still
+/// "exists". Elsewhere the old name must be gone like any other.
+fn same_name(a: &Path, b: &Path, case_blind: bool) -> bool {
+    case_blind && a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase()
 }
 
 /// Whether the disk shows `op` done: `Some(true)`, `Some(false)`, or `None`: Gezik cannot look.
@@ -80,14 +105,14 @@ fn shows_done(op: &Op) -> Option<bool> {
     let attrs = |path: &Path| gezik_platform::attrs::read(path).ok().map(|entry| entry.attrs);
     match op {
         Op::Copy { to, .. } => there(to),
-        Op::Move { from, to, .. } => Some(there(to)? && (same_name(from, to) || gone(from)?)),
+        Op::Move { from, to, .. } => Some(there(to)? && (same_name(from, to, CASE_BLIND) || gone(from)?)),
         Op::Delete(path) | Op::Rmdir(path) => gone(path),
         Op::Rename { path, name } => {
             let new = path.with_file_name(name);
-            Some(there(&new)? && (same_name(path, &new) || gone(path)?))
+            Some(there(&new)? && (same_name(path, &new, CASE_BLIND) || gone(path)?))
         }
         Op::Mkdir(path) => match look(path) {
-            Look::There(meta) => Some(meta.is_dir()),
+            Look::There(is_dir) => Some(is_dir),
             Look::Gone => Some(false),
             Look::Unknown => None,
         },
@@ -163,9 +188,9 @@ impl Task for ElevatedTask {
                 Answer::Done => match shows_done(op) {
                     Some(true) => undo.extend(undo_for(op, before).map(|undo| Outcome::AsAdmin { undo })),
                     Some(false) => failed(NOT_SO),
-                    // Gezik cannot look there without rights: the helper's word stands, but no
-                    // undo is built on it.
-                    None => {}
+                    // Gezik cannot look there without rights: the helper's word stands, noted as
+                    // unchecked, and no undo is built on it.
+                    None => cx.unchecked(op.path()),
                 },
                 Answer::Failed(message) | Answer::NotRun(message) => failed(&message),
             }
@@ -344,6 +369,28 @@ mod tests {
         assert_eq!(std::fs::read_to_string(dir.join("b.txt")).unwrap(), "new");
         assert_eq!(engine.undo_label(), None, "the old b.txt is gone for good: no undo pretends otherwise");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn what_gezik_cannot_look_at_is_noted_not_believed() {
+        let dir = test_dir("elevated-unchecked");
+        // A name no system takes: the item cannot be looked at; its folder can, or cannot.
+        let hidden = dir.join("a\0b").join("d");
+        let listed = dir.join("x\0");
+        let ops = [Op::Mkdir(hidden.clone()), Op::Mkdir(listed.clone())];
+        let (engine, report) = run(Some(Fake::new(false, &["ok 0", "ok 1", "done"], Ok(()))), &ops);
+        assert_eq!(report.unchecked, [hidden], "done by the helper's word, not checked");
+        assert_eq!(messages(&report), [(listed, NOT_SO.to_owned())], "its folder's list shows it is not there");
+        assert_eq!(engine.undo_label(), None, "no undo built on what was not seen");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn case_only_renames_follow_the_systems_rule() {
+        let (a, b) = (Path::new("/d/ReadMe.md"), Path::new("/d/README.md"));
+        assert!(same_name(a, b, true));
+        assert!(!same_name(a, b, false), "Linux: two names, the old one must be gone");
+        assert!(!same_name(a, Path::new("/d/other"), true));
     }
 
     #[test]

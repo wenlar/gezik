@@ -485,6 +485,13 @@ impl RunCx<'_> {
         }
     }
 
+    /// `path` was done by the administrator helper, but Gezik cannot look there to check it.
+    pub(crate) fn unchecked(&self, path: &Path) {
+        if let Some((_, job)) = self.job {
+            job.unchecked(path);
+        }
+    }
+
     /// How administrator operations run here, if the engine was given a way.
     pub(crate) fn elevator(&self) -> Option<std::sync::Arc<dyn crate::tasks::Elevator>> {
         self.job.and_then(|(shared, _)| lock(&shared.elevator).clone())

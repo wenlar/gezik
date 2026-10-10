@@ -35,6 +35,15 @@ pub(crate) struct Record {
     inverse: Vec<Arc<dyn Task>>,
 }
 
+/// Whether the system refused `error` for lack of rights, however it was wrapped: Windows'
+/// "privilege not held" has no kind of its own in std.
+pub(crate) fn is_denied(error: &io::Error) -> bool {
+    const PRIVILEGE_NOT_HELD: i32 = 1314;
+    error.kind() == io::ErrorKind::PermissionDenied
+        || (cfg!(windows) && error.raw_os_error() == Some(PRIVILEGE_NOT_HELD))
+        || error.get_ref().and_then(|inner| inner.downcast_ref::<io::Error>()).is_some_and(is_denied)
+}
+
 /// Whether undoing (or redoing) through `inverse` needs the administrator's prompt.
 fn needs_admin(inverse: &[Arc<dyn Task>]) -> bool {
     inverse.iter().any(|task| task.kind() == TaskKind::Elevated)
@@ -114,6 +123,9 @@ pub struct Report {
     pub skipped_changed: usize,
     /// Items not trashed because their drive has no trash: the UI offers to delete them.
     pub no_trash: Vec<PathBuf>,
+    /// Done by the administrator helper, but Gezik has no rights to look there: the app notes
+    /// each with `UNCHECKED` (neither a failure nor checked, so no undo).
+    pub unchecked: Vec<PathBuf>,
     /// Where the chosen items are now (pasted, renamed, new), to select them.
     pub results: Vec<PathBuf>,
     pub changed_dirs: Vec<PathBuf>,
@@ -184,6 +196,7 @@ pub(crate) struct Acc {
     pub skipped: Vec<Failure>,
     pub skipped_changed: usize,
     pub no_trash: Vec<PathBuf>,
+    pub unchecked: Vec<PathBuf>,
     pub results: Vec<PathBuf>,
     pub changed: BTreeSet<PathBuf>,
     /// Changed folders not yet sent in a `Changed` event.
@@ -221,7 +234,7 @@ impl Job {
     }
 
     pub fn fail(&self, path: &Path, error: &io::Error) {
-        let denied = error.kind() == io::ErrorKind::PermissionDenied;
+        let denied = is_denied(error);
         lock(&self.acc).failures.push(Failure { path: path.to_path_buf(), message: fs::describe(error), denied });
     }
 
@@ -235,6 +248,10 @@ impl Job {
 
     pub fn no_trash(&self, path: &Path) {
         lock(&self.acc).no_trash.push(path.to_path_buf());
+    }
+
+    pub fn unchecked(&self, path: &Path) {
+        lock(&self.acc).unchecked.push(path.to_path_buf());
     }
 
     pub fn result(&self, path: PathBuf) {
@@ -449,6 +466,7 @@ impl Shared {
             skipped: acc.skipped,
             skipped_changed: acc.skipped_changed,
             no_trash: acc.no_trash,
+            unchecked: acc.unchecked,
             results: acc.results,
             changed_dirs: acc.changed.into_iter().collect(),
             moved,
@@ -982,6 +1000,21 @@ mod tests {
         fn as_admin(&self, denied: &[PathBuf]) -> Vec<gezik_core::elevated::Op> {
             denied.iter().map(|path| gezik_core::elevated::Op::Delete(path.clone())).collect()
         }
+    }
+
+    #[test]
+    fn refusals_are_known_however_they_come() {
+        assert!(is_denied(&io::ErrorKind::PermissionDenied.into()));
+        assert!(is_denied(&io::Error::other(io::Error::from(io::ErrorKind::PermissionDenied))), "wrapped");
+        assert_eq!(is_denied(&io::Error::from_raw_os_error(1314)), cfg!(windows), "privilege not held");
+        #[cfg(windows)]
+        assert!(is_denied(&io::Error::from_raw_os_error(5)));
+        #[cfg(unix)]
+        assert!(
+            is_denied(&io::Error::from_raw_os_error(libc::EACCES))
+                && is_denied(&io::Error::from_raw_os_error(libc::EPERM))
+        );
+        assert!(!is_denied(&io::ErrorKind::NotFound.into()) && !is_denied(&io::Error::other("no")));
     }
 
     #[test]

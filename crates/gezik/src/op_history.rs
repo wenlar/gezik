@@ -133,6 +133,7 @@ mod tests {
             skipped: Vec::new(),
             skipped_changed: 0,
             no_trash: Vec::new(),
+            unchecked: Vec::new(),
             results: Vec::new(),
             changed_dirs: Vec::new(),
             moved: Vec::new(),

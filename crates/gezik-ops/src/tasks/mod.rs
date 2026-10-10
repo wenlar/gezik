@@ -18,7 +18,7 @@ pub use cloud::CloudPinTask;
 pub use copy::CopyTask;
 pub(crate) use delete::restore_hidden;
 pub use delete::{DeleteTask, in_a_bin_folder};
-pub use elevated::{CANCELLED, ElevatedTask, Elevator, NOT_AVAILABLE, NOT_SO};
+pub use elevated::{CANCELLED, ElevatedTask, Elevator, NOT_AVAILABLE, NOT_SO, UNCHECKED};
 pub use group::GroupTask;
 pub use link::LinkTask;
 pub use move_::MoveTask;

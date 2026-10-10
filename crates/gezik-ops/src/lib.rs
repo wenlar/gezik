@@ -22,5 +22,6 @@ pub use task::{
 };
 pub use tasks::{
     CANCELLED, CloudPinTask, CopyTask, DeleteTask, ElevatedTask, Elevator, GroupTask, LinkTask, MoveTask, NEEDS_ADMIN,
-    NOT_AVAILABLE, NOT_SO, NewTask, RenameTask, RestoreTask, SetAttributesTask, TrashTask, in_a_bin_folder, trash_path,
+    NOT_AVAILABLE, NOT_SO, NewTask, RenameTask, RestoreTask, SetAttributesTask, TrashTask, UNCHECKED, in_a_bin_folder,
+    trash_path,
 };
