@@ -233,13 +233,32 @@ fn copy_out(
 ) -> io::Result<()> {
     let target_name = CString::new(to.as_os_str().as_bytes())?;
     if unsafe { libc::fclonefileat(source.as_raw_fd(), libc::AT_FDCWD, target_name.as_ptr(), 0) } == 0 {
-        if progress(size) {
+        // The clone keeps the source's mode: no set-id or sticky bits from another program.
+        let plain = unsafe {
+            libc::fchmodat(
+                libc::AT_FDCWD,
+                target_name.as_ptr(),
+                (mode & 0o777) as libc::mode_t,
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        } == 0;
+        let done = if !plain {
+            Err(io::Error::last_os_error())
+        } else if progress(size) {
             return Ok(());
-        }
+        } else {
+            Err(crate::fs::cancelled())
+        };
         let _ = std::fs::remove_file(to);
-        return Err(crate::fs::cancelled());
+        return done;
     }
     // Another volume (`$TMPDIR` is on the system's), or one that cannot clone.
+    copy_plain(source, to, mode, progress)
+}
+
+/// Copies `source` into `to`, a new file, with its extended attributes: a download's quarantine
+/// mark must survive, or Gatekeeper would not ask before it is opened.
+fn copy_plain(source: &mut File, to: &Path, mode: u32, progress: &mut dyn FnMut(u64) -> bool) -> io::Result<()> {
     let mut target = OpenOptions::new().write(true).create_new(true).mode(mode & 0o777).open(to)?;
     let mut buffer = vec![0u8; 1 << 20];
     let mut done = 0u64;
@@ -257,6 +276,13 @@ fn copy_out(
             break Err(crate::fs::cancelled());
         }
     };
+    let copied = copied.and_then(|()| {
+        // Only the source's attributes: none are added to a file that had none.
+        let attributes = unsafe {
+            libc::fcopyfile(source.as_raw_fd(), target.as_raw_fd(), std::ptr::null_mut(), libc::COPYFILE_XATTR)
+        };
+        if attributes == 0 { Ok(()) } else { Err(io::Error::last_os_error()) }
+    });
     if copied.is_err() {
         drop(target);
         let _ = std::fs::remove_file(to);
@@ -362,5 +388,26 @@ mod tests {
         drop(promised);
         assert!(!dir.exists(), "the folder goes with the source");
         let _ = std::fs::remove_file(&out);
+    }
+
+    #[test]
+    fn a_plain_copy_keeps_the_quarantine_mark() {
+        let from = std::env::temp_dir().join(format!("gezik-drop-q-{}", std::process::id()));
+        let to = from.with_extension("out");
+        let _ = std::fs::remove_file(&to);
+        std::fs::write(&from, b"abc").unwrap();
+        let (name, mark) = (c"com.apple.quarantine", b"0081;00000000;Safari;");
+        let path = CString::new(from.as_os_str().as_bytes()).unwrap();
+        let set = unsafe { libc::setxattr(path.as_ptr(), name.as_ptr(), mark.as_ptr().cast(), mark.len(), 0, 0) };
+        assert_eq!(set, 0, "{}", io::Error::last_os_error());
+        let mut source = open(&from, 0).unwrap();
+        copy_plain(&mut source, &to, 0o644, &mut |_| true).unwrap();
+        assert_eq!(std::fs::read(&to).unwrap(), b"abc");
+        let mut got = [0u8; 64];
+        let path = CString::new(to.as_os_str().as_bytes()).unwrap();
+        let n = unsafe { libc::getxattr(path.as_ptr(), name.as_ptr(), got.as_mut_ptr().cast(), got.len(), 0, 0) };
+        assert_eq!(got.get(..n.max(0) as usize), Some(&mark[..]), "the mark came along");
+        let _ = std::fs::remove_file(&from);
+        let _ = std::fs::remove_file(&to);
     }
 }
