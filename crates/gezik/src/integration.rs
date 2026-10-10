@@ -415,10 +415,16 @@ pub fn confirmation_with(
                 "Gezik puts these back as they were, newest first, each only if it is still what Gezik wrote:\n\n{lines}"
             ))
         }
-        RowAction::RepairLogin => Ok(format!(
-            "Gezik takes back its start at login entry and makes it again for this Gezik:\n\n{}",
-            login_lines()
-        )),
+        RowAction::RepairLogin => {
+            let Some(targets) = login_add else {
+                return Err("Gezik cannot tell its own path or the user's folders; nothing was changed.".into());
+            };
+            Ok(format!(
+                "Gezik takes back its start at login entry, newest first, each only if it is still what Gezik wrote:\n\n{}\n\nThen, for this Gezik, it writes these, each noted in {FILE} before it is made:\n\n{}",
+                login_lines(),
+                bullets(targets.iter().map(will_write))
+            ))
+        }
         // Settings never ask (`run`, `choose`); spelled out so the match stays exhaustive.
         RowAction::Run(Command::TrayOn | Command::TrayOff | Command::HotkeyOn | Command::HotkeyOff) => {
             Err(String::new())
@@ -567,6 +573,10 @@ pub fn run(command: Command) {
 }
 
 fn setting(command: Command) {
+    // Deviation 11: only the first Gezik keeps them; a second window writes nothing.
+    if !crate::resident::status().primary {
+        return crate::view::with_current(|v| v.note("Kept by the first Gezik window".into()));
+    }
     match command {
         Command::TrayOn => crate::resident::turn_on_tray(),
         Command::TrayOff => crate::resident::turn_off_tray(),
@@ -1059,11 +1069,11 @@ mod tests {
         made.done = true;
         let listed = Snapshot { changes: Ok(vec![made]), login: changes::LoginState::On, ..off };
         assert!(confirmation(off_action, &listed, None, &[]).unwrap().contains(r"Run\Gezik"));
-        assert!(
-            confirmation_with(RowAction::RepairLogin, &listed, None, &[], None, None, Some(&add))
-                .unwrap()
-                .contains(r"Run\Gezik")
-        );
+        let other = changes::login_targets(&places, r"D:\New\gezik.exe", changes::Os::Windows).unwrap();
+        let repair = confirmation_with(RowAction::RepairLogin, &listed, None, &[], None, None, Some(&other)).unwrap();
+        assert!(repair.contains(r"Run\Gezik"), "what is taken back: {repair}");
+        assert!(repair.contains(r#"""D:\New\gezik.exe" --background"#), "what is written: {repair}");
+        assert!(confirmation_with(RowAction::RepairLogin, &listed, None, &[], None, None, None).is_err());
     }
 
     #[test]

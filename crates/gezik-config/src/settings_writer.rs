@@ -186,6 +186,20 @@ mod tests {
     }
 
     #[test]
+    fn system_values_round_trip_and_keep_comments() {
+        let text = "# mine\n[system]\n# keep\nsingle-instance = true\n";
+        let on = SettingsChange::System(SystemValue::Tray(true)).apply(text).unwrap();
+        let on = SettingsChange::System(SystemValue::Hotkey("win+shift+e".into())).apply(&on).unwrap();
+        assert!(on.contains("# mine") && on.contains("# keep"), "{on}");
+        let mut warnings = Vec::new();
+        let settings = Settings::parse("settings.toml", &on, &mut warnings);
+        assert!(warnings.is_empty() && settings.system.tray && settings.system.hotkey.is_some(), "{on}");
+        let off = SettingsChange::System(SystemValue::Hotkey(String::new())).apply(&on).unwrap();
+        let settings = Settings::parse("settings.toml", &off, &mut warnings);
+        assert!(warnings.is_empty() && settings.system.hotkey.is_none() && settings.system.tray, "{off}");
+    }
+
+    #[test]
     fn changes_of_every_kind_close_together_are_all_written_in_order() {
         let dir = crate::test_dir("settings-writer");
         std::fs::write(dir.join("settings.toml"), "# mine\n[sidebar]\npinned = []\n").unwrap();

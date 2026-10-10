@@ -555,13 +555,15 @@ fn write(value: SystemValue) {
 // shortcut: a settings reload read before the panel's write lands may undo the change for a
 // moment (the next reload, after the write, puts it back); fix if a screen test shows it.
 pub fn turn_on_tray() {
-    if with(|s| s.system.tray) {
+    // On but missing or failed (Linux without a StatusNotifier host): Turn on tries again.
+    if with(|s| s.system.tray && !s.tray_missing && !s.tray_failed) {
         return note("The tray icon is on already".to_owned());
     }
     with(|s| {
         s.system.tray = true;
         s.tray_asked = true;
         s.tray_failed = false;
+        s.tray_missing = false;
     });
     write(SystemValue::Tray(true));
     sync();
@@ -605,6 +607,19 @@ pub fn shutdown() {
 mod tests {
     use super::*;
     use gezik_config::shortcuts::{Key, Platform, parse_hotkey};
+
+    #[test]
+    fn turning_on_a_missing_tray_tries_again() {
+        with(|s| {
+            s.system.tray = true;
+            s.tray_missing = true;
+            s.tray_failed = true;
+        });
+        turn_on_tray();
+        let (failed, missing, asked) = with(|s| (s.tray_failed, s.tray_missing, s.tray_asked));
+        assert!(!failed && !missing && asked, "sync may start it again");
+        with(|s| *s = State::default());
+    }
 
     fn chord(text: &str) -> Chord {
         parse_hotkey(text, Platform::Other).unwrap().unwrap()
