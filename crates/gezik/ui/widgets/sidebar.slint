@@ -51,6 +51,13 @@ export component Sidebar inherits Rectangle {
     in-out property <string> tip-text;
     in-out property <length> tip-x;
     in-out property <length> tip-y;
+    // The keyboard's row (-1: none), drawn while the sidebar has the keyboard.
+    in property <int> cursor: -1;
+    // Whether the sidebar has the keyboard; a change of `focus-seq` gives it the keyboard.
+    // Tab and Shift+Tab reach it too; a click does not take the keyboard (sapma 12).
+    in-out property <bool> focused;
+    in property <int> focus-seq;
+    changed focus-seq => { scope.focus(); }
 
     property <length> row-height: Theme.row-height;
     // How far a tree row's arrow, icon and name move in per level.
@@ -113,182 +120,192 @@ export component Sidebar inherits Rectangle {
         }
     }
 
-    list := ListView {
-        y: Theme.spacing;
+    // Keys reach main.rs `handle_key` through the window's capture; the tree is what has the
+    // keyboard, so a screen reader names it.
+    scope := FocusScope {
         width: root.width;
-        height: root.height - Theme.spacing * 2;
-        content-y <=> root.scroll;
+        height: root.height;
+        focus-on-click: false;
+        focus-changed-event => { root.focused = self.has-focus; }
         accessible-role: tree;
         accessible-label: "Places";
 
-        for row[i] in root.rows: Rectangle {
-            height: root.row-height;
-            property <length> indent: row.depth * root.step;
+        list := ListView {
+            y: Theme.spacing;
+            width: root.width;
+            height: root.height - Theme.spacing * 2;
+            content-y <=> root.scroll;
 
-            // A section's label (FOLDERS, PINNED, DRIVES) sits at the bottom of its row; a
-            // group's heading has a chevron before it.
-            if row.header: Text {
-                x: Theme.inset + (row.section == 3 ? 18px : Theme.spacing + 4px);
-                width: parent.width - self.x - Theme.inset - Theme.spacing;
-                height: row.section == 3 ? parent.height : parent.height - 3px;
-                text: row.label;
-                overflow: elide;
-                vertical-alignment: row.section == 3 ? center : bottom;
-                font-size: Theme.font-size-small;
-                font-weight: row.section == 3 ? 400 : 600;
-                color: Theme.foreground-muted;
-            }
-            if row.header && row.section == 3: Path {
-                x: Theme.inset + 6px;
-                y: (parent.height - 8px) / 2;
-                width: 8px;
-                height: 8px;
-                viewbox-width: 8;
-                viewbox-height: 8;
-                commands: Glyph.chevron-down;
-                stroke: Theme.foreground-muted;
-                stroke-width: 1.2px;
-                stroke-line-cap: round;
-                stroke-line-join: round;
-            }
+            for row[i] in root.rows: Rectangle {
+                height: root.row-height;
+                property <length> indent: row.depth * root.step;
 
-            // A group's heading: its menu on a right-click.
-            if row.header && row.section == 3: TouchArea {
-                pointer-event(event) => {
-                    if event.kind == PointerEventKind.down {
-                        root.hide-tip();
-                    }
-                    if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {
-                        root.menu(row.section, row.index, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
-                    }
+                // A section's label (FOLDERS, PINNED, DRIVES) sits at the bottom of its row; a
+                // group's heading has a chevron before it.
+                if row.header: Text {
+                    x: Theme.inset + (row.section == 3 ? 18px : Theme.spacing + 4px);
+                    width: parent.width - self.x - Theme.inset - Theme.spacing;
+                    height: row.section == 3 ? parent.height : parent.height - 3px;
+                    text: row.label;
+                    overflow: elide;
+                    vertical-alignment: row.section == 3 ? center : bottom;
+                    font-size: Theme.font-size-small;
+                    font-weight: row.section == 3 ? 400 : 600;
+                    color: Theme.foreground-muted;
                 }
-            }
-
-            if !row.header: Rectangle {
-                x: Theme.inset;
-                width: parent.width - Theme.inset * 2;
-                height: parent.height;
-                border-radius: Theme.row-radius;
-                background: i == root.drop-row ? Theme.drop-target : row.active ? Theme.selection : touch.has-hover ? Theme.hover : transparent;
-                border-width: i == root.drop-row ? 1px : 0px;
-                border-color: Theme.accent;
-                accessible-role: list-item;
-                accessible-label: row.label;
-                accessible-description: row.depth > 0 ? "Level \{row.depth + 1}" : "";
-                accessible-item-selectable: true;
-                accessible-item-selected: row.active;
-                accessible-item-index: i;
-                accessible-expandable: row.arrow == 1 || row.arrow == 2;
-                accessible-expanded: row.arrow == 2;
-                accessible-action-default => { root.clicked(row.section, row.index); }
-                accessible-action-expand => { root.toggled(i); }
-
-                if row.icon != 0: Path {
-                    x: Theme.spacing + 16px + indent;
-                    y: (parent.height - 16px) / 2;
-                    width: 16px;
-                    height: 16px;
-                    viewbox-width: 16;
-                    viewbox-height: 16;
-                    commands: row.icon == 1 ? Glyph.home : row.icon == 3 ? Glyph.pin : row.icon == 4 ? Glyph.alias
-                        : row.icon == 5 ? Glyph.drive : row.icon == 6 ? Glyph.search : row.icon == 7 ? Glyph.trash
-                        : row.icon == 8 ? Glyph.cloud
-                        : Glyph.folder-line;
-                    stroke: row.active ? Theme.accent : Theme.foreground-muted;
-                    stroke-width: 1.3px;
+                if row.header && row.section == 3: Path {
+                    x: Theme.inset + 6px;
+                    y: (parent.height - 8px) / 2;
+                    width: 8px;
+                    height: 8px;
+                    viewbox-width: 8;
+                    viewbox-height: 8;
+                    commands: Glyph.chevron-down;
+                    stroke: Theme.foreground-muted;
+                    stroke-width: 1.2px;
                     stroke-line-cap: round;
                     stroke-line-join: round;
                 }
 
-                Text {
-                    x: Theme.spacing + 16px + indent + 16px + 8px;
-                    width: max(0px, parent.width - self.x - Theme.spacing);
-                    height: parent.height;
-                    text: row.label;
-                    overflow: elide;
-                    vertical-alignment: center;
-                    color: row.active ? Theme.selection-foreground : row.section == 8 ? Theme.foreground-muted : Theme.foreground;
-                }
-
-                touch := TouchArea {
-                    clicked => {
-                        if !root.dragged { root.clicked(row.section, row.index); }
-                    }
-                    changed has-hover => {
-                        if self.has-hover && row.tip != "" {
-                            root.hover-row = i;
-                        } else if root.hover-row == i {
-                            root.hover-row = -1;
-                        }
-                        root.tip-text = "";
-                    }
+                // A group's heading: its menu on a right-click.
+                if row.header && row.section == 3: TouchArea {
                     pointer-event(event) => {
                         if event.kind == PointerEventKind.down {
                             root.hide-tip();
-                        }
-                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
-                            root.dragged = false;
-                            root.drag-blocked = false;
-                        }
-                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.left && root.drag-from >= 0 {
-                            // The line above or below itself: no move.
-                            if root.drag-line != root.drag-from && root.drag-line != root.drag-from + 1 {
-                                root.pinned-drop(root.drag-from, root.drag-line);
-                            }
-                            root.cancel-drag();
-                        }
-                        if event.kind == PointerEventKind.cancel {
-                            root.cancel-drag();
-                        }
-                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.middle {
-                            root.middle-clicked(row.section, row.index);
                         }
                         if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {
                             root.menu(row.section, row.index, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
                         }
                     }
-                    moved => {
-                        if row.section == 1 && self.pressed && !root.drag-blocked && (root.dragged || abs(self.mouse-y - self.pressed-y) > 6px) {
-                            root.dragged = true;
-                            root.drag-from = i;
-                            // The line nearest the pointer, inside the pinned part; on a group's
-                            // heading, the start of that group (as for folders dropped there).
-                            let under = floor(i + self.mouse-y / root.row-height);
-                            let line = under >= 0 && under < root.rows.length && root.rows[under].header ? under + 1 : round(i + self.mouse-y / root.row-height);
-                            root.drag-line = clamp(line, root.pinned-first-row + 1, root.pinned-end-row);
-                        }
-                    }
                 }
 
-                // The arrow (spec 10 §5.1), over the row: opens or closes the branch, goes nowhere.
-                if row.arrow != 0: arrow := TouchArea {
-                    x: Theme.spacing + indent;
-                    width: 16px;
-                    clicked => {
-                        root.hide-tip();
-                        root.toggled(i);
-                    }
-                    if row.arrow != 3: Path {
-                        x: 4px;
-                        y: (parent.height - 8px) / 2;
-                        width: 8px;
-                        height: 8px;
-                        viewbox-width: 8;
-                        viewbox-height: 8;
-                        commands: row.arrow == 2 ? Glyph.chevron-down : Glyph.chevron-right;
-                        stroke: arrow.has-hover ? Theme.foreground : Theme.foreground-muted;
-                        stroke-width: 1.2px;
+                if !row.header: Rectangle {
+                    x: Theme.inset;
+                    width: parent.width - Theme.inset * 2;
+                    height: parent.height;
+                    border-radius: Theme.row-radius;
+                    background: i == root.drop-row ? Theme.drop-target : row.active ? Theme.selection : touch.has-hover ? Theme.hover : transparent;
+                    border-width: i == root.drop-row ? 1px : root.focused && i == root.cursor ? Theme.focus-width : 0px;
+                    border-color: Theme.accent;
+                    accessible-role: list-item;
+                    accessible-label: row.label;
+                    accessible-description: row.depth > 0 ? "Level \{row.depth + 1}" : "";
+                    accessible-item-selectable: true;
+                    // While the tree has the keyboard, its row is the one a screen reader follows.
+                    accessible-item-selected: root.focused ? i == root.cursor : row.active;
+                    accessible-item-index: i;
+                    accessible-expandable: row.arrow == 1 || row.arrow == 2;
+                    accessible-expanded: row.arrow == 2;
+                    accessible-action-default => { root.clicked(row.section, row.index); }
+                    accessible-action-expand => { root.toggled(i); }
+
+                    if row.icon != 0: Path {
+                        x: Theme.spacing + 16px + indent;
+                        y: (parent.height - 16px) / 2;
+                        width: 16px;
+                        height: 16px;
+                        viewbox-width: 16;
+                        viewbox-height: 16;
+                        commands: row.icon == 1 ? Glyph.home : row.icon == 3 ? Glyph.pin : row.icon == 4 ? Glyph.alias
+                            : row.icon == 5 ? Glyph.drive : row.icon == 6 ? Glyph.search : row.icon == 7 ? Glyph.trash
+                            : row.icon == 8 ? Glyph.cloud
+                            : Glyph.folder-line;
+                        stroke: row.active ? Theme.accent : Theme.foreground-muted;
+                        stroke-width: 1.3px;
                         stroke-line-cap: round;
                         stroke-line-join: round;
                     }
-                    // Its read on its way: a still sign (no animation, so no frame each tick).
-                    if row.arrow == 3: Text {
-                        x: 2px;
-                        width: parent.width - 2px;
+
+                    Text {
+                        x: Theme.spacing + 16px + indent + 16px + 8px;
+                        width: max(0px, parent.width - self.x - Theme.spacing);
                         height: parent.height;
-                        text: "…";
+                        text: row.label;
+                        overflow: elide;
                         vertical-alignment: center;
-                        color: Theme.foreground-muted;
+                        color: row.active ? Theme.selection-foreground : row.section == 8 ? Theme.foreground-muted : Theme.foreground;
+                    }
+
+                    touch := TouchArea {
+                        clicked => {
+                            if !root.dragged { root.clicked(row.section, row.index); }
+                        }
+                        changed has-hover => {
+                            if self.has-hover && row.tip != "" {
+                                root.hover-row = i;
+                            } else if root.hover-row == i {
+                                root.hover-row = -1;
+                            }
+                            root.tip-text = "";
+                        }
+                        pointer-event(event) => {
+                            if event.kind == PointerEventKind.down {
+                                root.hide-tip();
+                            }
+                            if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                                root.dragged = false;
+                                root.drag-blocked = false;
+                            }
+                            if event.kind == PointerEventKind.up && event.button == PointerEventButton.left && root.drag-from >= 0 {
+                                // The line above or below itself: no move.
+                                if root.drag-line != root.drag-from && root.drag-line != root.drag-from + 1 {
+                                    root.pinned-drop(root.drag-from, root.drag-line);
+                                }
+                                root.cancel-drag();
+                            }
+                            if event.kind == PointerEventKind.cancel {
+                                root.cancel-drag();
+                            }
+                            if event.kind == PointerEventKind.up && event.button == PointerEventButton.middle {
+                                root.middle-clicked(row.section, row.index);
+                            }
+                            if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {
+                                root.menu(row.section, row.index, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                            }
+                        }
+                        moved => {
+                            if row.section == 1 && self.pressed && !root.drag-blocked && (root.dragged || abs(self.mouse-y - self.pressed-y) > 6px) {
+                                root.dragged = true;
+                                root.drag-from = i;
+                                // The line nearest the pointer, inside the pinned part; on a group's
+                                // heading, the start of that group (as for folders dropped there).
+                                let under = floor(i + self.mouse-y / root.row-height);
+                                let line = under >= 0 && under < root.rows.length && root.rows[under].header ? under + 1 : round(i + self.mouse-y / root.row-height);
+                                root.drag-line = clamp(line, root.pinned-first-row + 1, root.pinned-end-row);
+                            }
+                        }
+                    }
+
+                    // The arrow (spec 10 §5.1), over the row: opens or closes the branch, goes nowhere.
+                    if row.arrow != 0: arrow := TouchArea {
+                        x: Theme.spacing + indent;
+                        width: 16px;
+                        clicked => {
+                            root.hide-tip();
+                            root.toggled(i);
+                        }
+                        if row.arrow != 3: Path {
+                            x: 4px;
+                            y: (parent.height - 8px) / 2;
+                            width: 8px;
+                            height: 8px;
+                            viewbox-width: 8;
+                            viewbox-height: 8;
+                            commands: row.arrow == 2 ? Glyph.chevron-down : Glyph.chevron-right;
+                            stroke: arrow.has-hover ? Theme.foreground : Theme.foreground-muted;
+                            stroke-width: 1.2px;
+                            stroke-line-cap: round;
+                            stroke-line-join: round;
+                        }
+                        // Its read on its way: a still sign (no animation, so no frame each tick).
+                        if row.arrow == 3: Text {
+                            x: 2px;
+                            width: parent.width - 2px;
+                            height: parent.height;
+                            text: "…";
+                            vertical-alignment: center;
+                            color: Theme.foreground-muted;
+                        }
                     }
                 }
             }

@@ -428,6 +428,21 @@ fn handle_key(
         }
     }
 
+    // The sidebar tree has the keyboard (spec 10 §5.1): its keys first; shortcuts go on below,
+    // the list's own (Delete, F2 …) do not, the list not having the keyboard.
+    if window.get_sidebar_focused()
+        && !window.get_list_focused()
+        && !editing
+        && !filtering
+        && !in_search
+        && let Some(chord) = &chord
+    {
+        let mut used = false;
+        sidebar::with_current(|s| used = s.key(chord, text, has_modifier, menu_key));
+        if used {
+            return true;
+        }
+    }
     if let Some(action) = chord.as_ref().and_then(keys::action_for) {
         // Space opens quick look only on the focused list and outside type-ahead; elsewhere
         // it is an ordinary key.

@@ -8,6 +8,7 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+use gezik_config::shortcuts::{Chord, Key};
 use gezik_core::tree::{self, NodeId, RootKey, Tree};
 use slint::{Model, ModelNotify, ModelTracker};
 
@@ -83,6 +84,41 @@ impl Shown {
             Line::Tree(tree::Line::Node(id)) => Some(node_row(id, self.tree.node(id)?, self.current.as_deref())),
             Line::Tree(tree::Line::More(id)) => Some(more_row(id, self.tree.node(id)?)),
         }
+    }
+
+    /// Row `i` as the keys see it (no strings built).
+    pub fn key_row(&self, i: usize) -> Option<KeyRow> {
+        Some(match *self.lines.get(i)? {
+            Line::Base(k) => {
+                let row = self.base.get(k)?;
+                let arrow = match self.keys.get(k)? {
+                    Some(key) => {
+                        self.tree.root_of(key).and_then(|id| self.tree.node(id)).map_or(1, |n| n.state.arrow())
+                    }
+                    None => 0,
+                };
+                KeyRow { selectable: !row.header, depth: 0, arrow }
+            }
+            Line::Tree(tree::Line::Node(id)) => {
+                let node = self.tree.node(id)?;
+                KeyRow { selectable: true, depth: i32::from(node.depth), arrow: node.state.arrow() }
+            }
+            Line::Tree(tree::Line::More(id)) => {
+                KeyRow { selectable: true, depth: i32::from(self.tree.node(id)?.depth) + 1, arrow: 0 }
+            }
+        })
+    }
+
+    /// Row `i`'s name, and whether it can be chosen, for typing.
+    pub fn label(&self, i: usize) -> Option<(bool, String)> {
+        let row = self.row(i)?;
+        Some((!row.header, row.label.to_string()))
+    }
+
+    /// The row of the folder shown, if the sidebar has it.
+    // shortcut: builds each row to find the lit one, once per focus without a cursor; keep the lit row's index in Shown if it shows in a profile.
+    pub fn active_row(&self) -> Option<usize> {
+        (0..self.lines.len()).find(|i| self.row(*i).is_some_and(|row| row.active))
     }
 }
 
@@ -184,6 +220,146 @@ pub fn scroll_to_show(row: usize, row_height: f32, scroll: f32, height: f32) -> 
     }
 }
 
+/// A key the sidebar tree takes while it has the keyboard (spec 10 §5.1, sapma 12).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SideKey {
+    Up,
+    Down,
+    Left,
+    Right,
+    Home,
+    End,
+    PageUp,
+    PageDown,
+    Open,
+    OpenInTab,
+    Leave,
+    Menu,
+}
+
+/// What a key does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyDo {
+    Move(usize),
+    Toggle(usize),
+    Go(usize),
+    GoInTab(usize),
+    Menu(usize),
+    Leave,
+    Nothing,
+}
+
+/// A row as the keys see it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeyRow {
+    /// Not a heading.
+    pub selectable: bool,
+    pub depth: i32,
+    /// As `SidebarRow::arrow`.
+    pub arrow: i32,
+}
+
+/// The tree key of `chord`: arrows, Home/End, PgUp/PgDn, Enter, Esc without modifiers, the
+/// primary modifier (⌘ on a Mac) with Enter, and the menu key. Tab is none: it leaves.
+pub fn side_key(chord: &Chord, menu_key: bool, mac: bool) -> Option<SideKey> {
+    if menu_key {
+        return Some(SideKey::Menu);
+    }
+    let primary = if mac { chord.meta } else { chord.ctrl };
+    let other = if mac { chord.ctrl } else { chord.meta };
+    if chord.alt || chord.shift || other {
+        return None;
+    }
+    if primary {
+        return (chord.key == Key::Enter).then_some(SideKey::OpenInTab);
+    }
+    Some(match chord.key {
+        Key::Up => SideKey::Up,
+        Key::Down => SideKey::Down,
+        Key::Left => SideKey::Left,
+        Key::Right => SideKey::Right,
+        Key::Home => SideKey::Home,
+        Key::End => SideKey::End,
+        Key::PageUp => SideKey::PageUp,
+        Key::PageDown => SideKey::PageDown,
+        Key::Enter => SideKey::Open,
+        Key::Escape => SideKey::Leave,
+        _ => return None,
+    })
+}
+
+/// What `key` does with the cursor on row `cursor` (none yet: the first place) among `count`
+/// rows, `page` rows a screen.
+pub fn key_do(
+    rows: &dyn Fn(usize) -> Option<KeyRow>,
+    count: usize,
+    cursor: Option<usize>,
+    key: SideKey,
+    page: usize,
+) -> KeyDo {
+    let find = |from: isize, step: isize| -> Option<usize> {
+        let mut i = from;
+        while i >= 0 && (i as usize) < count {
+            if rows(i as usize).is_some_and(|r| r.selectable) {
+                return Some(i as usize);
+            }
+            i += step;
+        }
+        None
+    };
+    let to = |row: Option<usize>| row.map_or(KeyDo::Nothing, KeyDo::Move);
+    if key == SideKey::Leave {
+        return KeyDo::Leave;
+    }
+    let Some((at, row)) = cursor.filter(|c| *c < count).and_then(|c| Some((c, rows(c)?))) else {
+        return to(find(0, 1));
+    };
+    let (at_i, page) = (at as isize, page.max(1) as isize);
+    match key {
+        SideKey::Up => to(find(at_i - 1, -1)),
+        SideKey::Down => to(find(at_i + 1, 1)),
+        SideKey::Home => to(find(0, 1)),
+        SideKey::End => to(find(count as isize - 1, -1)),
+        SideKey::PageUp => to(find((at_i - page).max(0), 1)),
+        SideKey::PageDown => to(find((at_i + page).min(count as isize - 1), -1)),
+        SideKey::Right => match row.arrow {
+            1 => KeyDo::Toggle(at),
+            2 => to(rows(at + 1).filter(|next| next.depth > row.depth).map(|_| at + 1)),
+            _ => KeyDo::Nothing,
+        },
+        SideKey::Left => match row.arrow {
+            2 | 3 => KeyDo::Toggle(at),
+            _ if row.depth > 0 => to((0..at).rev().find(|i| rows(*i).is_some_and(|r| r.depth == row.depth - 1))),
+            _ => KeyDo::Nothing,
+        },
+        SideKey::Open => KeyDo::Go(at),
+        SideKey::OpenInTab => KeyDo::GoInTab(at),
+        SideKey::Menu => KeyDo::Menu(at),
+        SideKey::Leave => KeyDo::Leave,
+    }
+}
+
+/// The row whose name starts with `typed` (lowercase), from the one after the cursor round to
+/// it (with more than one letter typed, from the cursor's own row).
+pub fn find_typed(
+    label: &dyn Fn(usize) -> Option<(bool, String)>,
+    count: usize,
+    cursor: Option<usize>,
+    typed: &str,
+) -> Option<usize> {
+    if count == 0 {
+        return None;
+    }
+    let start = match cursor {
+        Some(c) if typed.chars().count() > 1 => c,
+        Some(c) => c + 1,
+        None => 0,
+    };
+    (0..count).map(|k| (start + k) % count).find(|&i| {
+        label(i).is_some_and(|(selectable, name)| selectable && crate::keys::starts_with_lowercase(&name, typed))
+    })
+}
+
 /// The sidebar's rows for Slint, built when asked.
 pub struct SidebarModel {
     shown: Rc<RefCell<Shown>>,
@@ -233,6 +409,7 @@ impl Model for SidebarModel {
 mod tests {
     use super::*;
     use crate::sidebar::{SECTION_DRIVES, SECTION_FOLDERS};
+    use gezik_config::shortcuts::{Chord, Key};
 
     fn place(label: &str, section: i32) -> SidebarRow {
         SidebarRow {
@@ -385,5 +562,89 @@ mod tests {
         let _held = shown.borrow_mut();
         assert_eq!(model.row_count(), 0, "no second borrow (panic=abort)");
         assert!(model.row_data(1).is_none());
+    }
+
+    #[test]
+    fn the_keys_see_the_rows_as_drawn() {
+        let mut s = shown();
+        let read = s.tree.toggle_root((SECTION_FOLDERS, PathBuf::from("/h"))).unwrap();
+        s.tree.loaded(&read, Some(tree::prepare(vec!["a".into(), "b".into()], None)));
+        s.current = Some(PathBuf::from("/h/b"));
+        s.relayout();
+        for i in 0..s.lines.len() {
+            let (row, key) = (s.row(i).unwrap(), s.key_row(i).unwrap());
+            assert_eq!((key.selectable, key.depth, key.arrow), (!row.header, row.depth, row.arrow), "row {i}");
+            assert_eq!(s.label(i), Some((!row.header, row.label.to_string())));
+        }
+        assert_eq!(s.active_row(), Some(3), "/h/b");
+        assert_eq!(s.key_row(s.lines.len()), None);
+    }
+
+    fn rows() -> Vec<KeyRow> {
+        let r = |selectable, depth, arrow| KeyRow { selectable, depth, arrow };
+        // 0 FOLDERS, 1 Home (open), 2 a (closed), 3 b (open), 4 b1, 5 DRIVES, 6 C (closed)
+        vec![r(false, 0, 0), r(true, 0, 2), r(true, 1, 1), r(true, 1, 2), r(true, 2, 0), r(false, 0, 0), r(true, 0, 1)]
+    }
+
+    fn press(cursor: Option<usize>, key: SideKey) -> KeyDo {
+        let rows = rows();
+        key_do(&|i| rows.get(i).copied(), rows.len(), cursor, key, 3)
+    }
+
+    #[test]
+    fn keys_walk_the_tree() {
+        assert_eq!(press(None, SideKey::Down), KeyDo::Move(1), "no cursor: the first place");
+        assert_eq!(press(Some(4), SideKey::Down), KeyDo::Move(6), "headings are skipped");
+        assert_eq!(press(Some(1), SideKey::Up), KeyDo::Nothing, "nothing above the first place");
+        assert_eq!(press(Some(6), SideKey::Down), KeyDo::Nothing, "nothing below the last");
+        assert_eq!(press(Some(4), SideKey::Home), KeyDo::Move(1));
+        assert_eq!(press(Some(1), SideKey::End), KeyDo::Move(6));
+        assert_eq!(press(Some(1), SideKey::PageDown), KeyDo::Move(4));
+        assert_eq!(press(Some(6), SideKey::PageUp), KeyDo::Move(3));
+        assert_eq!(press(Some(1), SideKey::PageUp), KeyDo::Move(1), "a page up from the top stays");
+        assert_eq!(press(Some(2), SideKey::Right), KeyDo::Toggle(2), "closed: it opens");
+        assert_eq!(press(Some(3), SideKey::Right), KeyDo::Move(4), "open: down to its first folder");
+        assert_eq!(press(Some(4), SideKey::Right), KeyDo::Nothing, "no arrow");
+        assert_eq!(press(Some(3), SideKey::Left), KeyDo::Toggle(3), "open: it closes");
+        assert_eq!(press(Some(4), SideKey::Left), KeyDo::Move(3), "up to its folder");
+        assert_eq!(press(Some(2), SideKey::Left), KeyDo::Move(1));
+        assert_eq!(press(Some(6), SideKey::Left), KeyDo::Nothing, "a closed place has no folder above");
+        assert_eq!(press(Some(4), SideKey::Open), KeyDo::Go(4));
+        assert_eq!(press(Some(4), SideKey::OpenInTab), KeyDo::GoInTab(4));
+        assert_eq!(press(Some(4), SideKey::Menu), KeyDo::Menu(4));
+        assert_eq!(press(Some(4), SideKey::Leave), KeyDo::Leave);
+        assert_eq!(press(None, SideKey::Leave), KeyDo::Leave, "Esc always leaves");
+        assert_eq!(press(Some(99), SideKey::Up), KeyDo::Move(1), "a cursor past the rows starts again");
+        assert_eq!(key_do(&|_| None, 0, None, SideKey::Down, 3), KeyDo::Nothing, "no rows");
+    }
+
+    #[test]
+    fn typing_finds_the_next_row() {
+        let names = ["FOLDERS", "Home", "hidden", "Huge", "Hub", "DRIVES", "C:"];
+        let label = |i: usize| names.get(i).map(|n| (i != 0 && i != 5, (*n).to_owned()));
+        assert_eq!(find_typed(&label, 7, Some(1), "h"), Some(2), "one letter: the next one after the cursor");
+        assert_eq!(find_typed(&label, 7, Some(4), "h"), Some(1), "round past the end");
+        assert_eq!(find_typed(&label, 7, Some(3), "hu"), Some(3), "more letters: the cursor's row may stay");
+        assert_eq!(find_typed(&label, 7, None, "d"), None, "a heading is not found");
+        assert_eq!(find_typed(&label, 0, None, "a"), None);
+    }
+
+    #[test]
+    fn a_chord_is_a_tree_key_only_without_modifiers() {
+        let chord = |key, ctrl, meta, shift| Chord { ctrl, alt: false, shift, meta, key };
+        assert_eq!(side_key(&chord(Key::Down, false, false, false), false, false), Some(SideKey::Down));
+        assert_eq!(side_key(&chord(Key::Down, false, false, true), false, false), None, "Shift+Down is no tree key");
+        assert_eq!(side_key(&chord(Key::Enter, true, false, false), false, false), Some(SideKey::OpenInTab));
+        assert_eq!(side_key(&chord(Key::Enter, false, true, false), false, true), Some(SideKey::OpenInTab), "⌘Enter");
+        assert_eq!(side_key(&chord(Key::Enter, true, false, false), false, true), None, "Ctrl+Enter on a Mac");
+        assert_eq!(
+            side_key(&chord(Key::Delete, false, false, false), false, false),
+            None,
+            "Delete deletes nothing here"
+        );
+        assert_eq!(side_key(&chord(Key::Tab, false, false, false), false, false), None, "Tab leaves the sidebar");
+        assert_eq!(side_key(&chord(Key::Tab, false, false, true), false, false), None, "and Shift+Tab");
+        assert_eq!(side_key(&chord(Key::F(10), false, false, true), true, false), Some(SideKey::Menu));
+        assert_eq!(side_key(&chord(Key::Escape, false, false, false), false, false), Some(SideKey::Leave));
     }
 }

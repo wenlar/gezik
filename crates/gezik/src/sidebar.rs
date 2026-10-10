@@ -9,7 +9,7 @@ use gezik_config::Warning;
 use gezik_config::paths::KnownDirs;
 use gezik_config::pins::{self, PinEntry};
 use gezik_config::settings_writer::SettingsChange;
-use gezik_config::shortcuts::{Action, Platform};
+use gezik_config::shortcuts::{Action, Chord, Platform};
 use gezik_config::store::ConfigStore;
 use gezik_core::nav::Location;
 use gezik_core::tree::{self, Listed, NodeId, Read, RootKey};
@@ -17,7 +17,9 @@ use slint::{ComponentHandle, ModelRc};
 
 use crate::navigation::Navigator;
 use crate::places::Places;
-use crate::sidebar_model::{Line, Shown, SidebarModel, base_at, change_plan, row_of_base, scroll_to_show};
+use crate::sidebar_model::{
+    KeyDo, Line, Shown, SidebarModel, base_at, change_plan, find_typed, key_do, row_of_base, scroll_to_show, side_key,
+};
 use crate::{AppWindow, SidebarRow};
 
 pub const SECTION_FOLDERS: i32 = 0;
@@ -299,6 +301,10 @@ struct Inner {
     followed: Option<PathBuf>,
     /// The folder the tree is opening down to, and whether the user asked (Show in Sidebar Tree).
     pending: Option<(PathBuf, bool)>,
+    /// The keyboard's row (spec 10 §5.1): its line, and its row number last (kept when the
+    /// line goes, held within the rows).
+    cursor: Option<(Line, usize)>,
+    type_ahead: crate::keys::TypeAhead,
 }
 
 /// Where an opening of the tree got to (`Sidebar::continue_reveal`).
@@ -309,6 +315,18 @@ enum RevealStep {
     Missing,
     /// Under no place (or the places not loaded yet).
     Unplaced,
+}
+
+/// The keyboard's row `cursor` (its line, its row last) in `lines`: where its line is now, else
+/// its row number held within the rows (`None` without rows).
+fn cursor_in(lines: &[Line], (line, last): (Line, usize)) -> Option<(Line, usize)> {
+    match lines.iter().position(|l| *l == line) {
+        Some(row) => Some((line, row)),
+        None => {
+            let row = last.min(lines.len().checked_sub(1)?);
+            Some((lines[row], row))
+        }
+    }
 }
 
 /// The row of the place or folder an opening reached.
@@ -386,6 +404,8 @@ impl Sidebar {
             follow: false,
             followed: None,
             pending: None,
+            cursor: None,
+            type_ahead: crate::keys::TypeAhead::new(),
         })));
         // Re-highlight on location changes, relabel after places reload. No I/O here: this
         // runs on every navigation (tree-follow's reads are on workers).
@@ -719,11 +739,18 @@ impl Sidebar {
     /// that: the rows that came or went, and the rows to draw again. The pinned part's first and
     /// end rows follow.
     fn publish<R>(&self, change: impl FnOnce(&mut Shown, &mut Vec<NodeId>) -> R) -> R {
-        let (shown, model, window, first, end) = {
+        let (shown, model, window, first, end, cursor) = {
             let inner = self.0.borrow();
-            (inner.shown.clone(), inner.model.clone(), inner.window.clone(), inner.first_pin_base, inner.end_pin_base)
+            (
+                inner.shown.clone(),
+                inner.model.clone(),
+                inner.window.clone(),
+                inner.first_pin_base,
+                inner.end_pin_base,
+                inner.cursor,
+            )
         };
-        let (result, plan, rows) = {
+        let (result, plan, rows, cursor) = {
             let mut shown = shown.borrow_mut();
             let was = shown.current.clone();
             let mut touched = Vec::new();
@@ -748,13 +775,15 @@ impl Sidebar {
             let row = |k: Option<usize>| k.and_then(|k| row_of_base(&shown.base_rows, k));
             let first_row = row(first);
             let end_row = first_row.map(|_| row(end).unwrap_or(shown.lines.len()));
-            (result, plan, (first_row, end_row))
+            (result, plan, (first_row, end_row), cursor.and_then(|c| cursor_in(&shown.lines, c)))
         };
+        self.0.borrow_mut().cursor = cursor;
         model.apply(plan);
         if let Some(window) = window.upgrade() {
             let as_row = |row: Option<usize>| row.map_or(-1, |r| i32::try_from(r).unwrap_or(i32::MAX));
             window.set_sidebar_pinned_first_row(as_row(rows.0));
             window.set_sidebar_pinned_end_row(as_row(rows.1));
+            window.set_sidebar_cursor(as_row(cursor.map(|c| c.1)));
         }
         result
     }
@@ -925,6 +954,13 @@ impl Sidebar {
             inner.shown.try_borrow().ok().and_then(|shown| reveal_row(&shown, &step))
         };
         match row {
+            Some(row) if asked => {
+                // Show in Sidebar Tree also gives the tree the keyboard there (sapma 11).
+                self.set_cursor(row);
+                if let Some(window) = self.0.borrow().window.upgrade() {
+                    window.set_sidebar_focus_seq(window.get_sidebar_focus_seq().wrapping_add(1));
+                }
+            }
             Some(row) => self.scroll_to_row(row),
             None if asked => self
                 .say_text(format!("{} is not in the sidebar tree (hidden, or under no place there)", target.display())),
@@ -954,6 +990,93 @@ impl Sidebar {
         let theme = window.global::<crate::Theme>();
         let height = window.get_drop_geometry().sidebar_height - 2.0 * theme.get_spacing();
         window.set_sidebar_scroll(scroll_to_show(row, theme.get_row_height(), window.get_sidebar_scroll(), height));
+    }
+
+    /// Puts the keyboard's row on `row` and scrolls it into view.
+    fn set_cursor(&self, row: usize) {
+        let line = self.0.borrow().shown.try_borrow().ok().and_then(|s| s.lines.get(row).copied());
+        let Some(line) = line else { return };
+        self.0.borrow_mut().cursor = Some((line, row));
+        if let Some(window) = self.0.borrow().window.upgrade() {
+            window.set_sidebar_cursor(i32::try_from(row).unwrap_or(i32::MAX));
+        }
+        self.scroll_to_row(row);
+    }
+
+    /// A key while the sidebar has the keyboard (spec 10 §5.1): returns whether it was the
+    /// tree's. Typed letters jump (a letter that matches nothing is used up, as in the list);
+    /// Tab, Shift+Tab and the shortcuts are not the tree's.
+    pub fn key(&self, chord: &Chord, text: &str, has_modifier: bool, menu_key: bool) -> bool {
+        let key = side_key(chord, menu_key, Platform::current() == Platform::Mac);
+        let typed = if key.is_none() && !has_modifier { crate::keys::typed_char(text) } else { None };
+        if key.is_none() && typed.is_none() {
+            return false;
+        }
+        let Some(window) = self.0.borrow().window.upgrade() else { return false };
+        let (shown, cursor) = {
+            let inner = self.0.borrow();
+            (inner.shown.clone(), inner.cursor)
+        };
+        let todo = {
+            let Ok(s) = shown.try_borrow() else { return false };
+            let cursor = cursor.and_then(|c| cursor_in(&s.lines, c)).map(|c| c.1).or_else(|| s.active_row());
+            match (key, typed) {
+                (Some(key), _) => key_do(&|i| s.key_row(i), s.lines.len(), cursor, key, self.page_rows(&window)),
+                (None, Some(c)) => {
+                    let found = self.0.borrow_mut().type_ahead.type_char(c, std::time::Instant::now(), |typed| {
+                        find_typed(&|i| s.label(i), s.lines.len(), cursor, typed)
+                    });
+                    found.map_or(KeyDo::Nothing, KeyDo::Move)
+                }
+                (None, None) => KeyDo::Nothing,
+            }
+        };
+        self.do_key(&window, todo);
+        true
+    }
+
+    /// Rows a screen, less one (PgUp/PgDn).
+    fn page_rows(&self, window: &AppWindow) -> usize {
+        let theme = window.global::<crate::Theme>();
+        let height = window.get_drop_geometry().sidebar_height - 2.0 * theme.get_spacing();
+        ((height / theme.get_row_height().max(1.0)).floor() as usize).saturating_sub(1).max(1)
+    }
+
+    fn do_key(&self, window: &AppWindow, todo: KeyDo) {
+        let row_at = |row: usize| self.0.borrow().shown.try_borrow().ok().and_then(|s| s.row(row));
+        match todo {
+            KeyDo::Move(row) => self.set_cursor(row),
+            KeyDo::Toggle(row) => {
+                self.set_cursor(row);
+                self.toggle_row(row);
+            }
+            // The same ways as a click, a middle-click and a right-click (a saved search's too).
+            KeyDo::Go(row) | KeyDo::GoInTab(row) | KeyDo::Menu(row) => {
+                self.set_cursor(row);
+                let Some(r) = row_at(row) else { return };
+                match todo {
+                    KeyDo::Go(_) => window.invoke_sidebar_clicked(r.section, r.index),
+                    KeyDo::GoInTab(_) => window.invoke_sidebar_middle_clicked(r.section, r.index),
+                    _ => {
+                        let (x, y) = self.row_point(window, row);
+                        window.invoke_sidebar_menu(r.section, r.index, x, y);
+                    }
+                }
+            }
+            KeyDo::Leave => window.invoke_focus_list(),
+            KeyDo::Nothing => {}
+        }
+    }
+
+    /// Under row `row`'s name, in window coordinates (the keyboard's menu opens there).
+    fn row_point(&self, window: &AppWindow, row: usize) -> (f32, f32) {
+        let g = window.get_drop_geometry();
+        let theme = window.global::<crate::Theme>();
+        let width = window.get_sidebar_width();
+        let x = if window.get_sidebar_position() == 1 { g.window_width - width } else { 0.0 };
+        let y =
+            g.sidebar_y + theme.get_spacing() + window.get_sidebar_scroll() + (row + 1) as f32 * theme.get_row_height();
+        (x + theme.get_spacing() * 3.0, y)
     }
 
     /// Checks on a background thread which pinned entries exist on this machine, then
@@ -1372,6 +1495,20 @@ mod tests {
         assert_eq!(place_path(&places, &pins, SECTION_PINNED, 1), None);
         assert_eq!(place_path(&places, &pins, SECTION_SEARCHES, 0), None, "no tree under a saved search");
         assert_eq!(place_path(&places, &pins, SECTION_TRASH, 0), None, "nor under the trash");
+    }
+
+    #[test]
+    fn the_keyboards_row_follows_its_line_or_stays_within_the_rows() {
+        let node = |id| Line::Tree(tree::Line::Node(id));
+        let lines = [Line::Base(0), node(4), node(5), Line::Base(1)];
+        assert_eq!(cursor_in(&lines, (node(5), 1)), Some((node(5), 2)), "rows came above it: it moves with them");
+        assert_eq!(cursor_in(&lines, (node(9), 2)), Some((node(5), 2)), "its folder went: the row it was on");
+        assert_eq!(
+            cursor_in(&lines, (node(9), 30)),
+            Some((Line::Base(1), 3)),
+            "a branch closed under it: the last row"
+        );
+        assert_eq!(cursor_in(&[], (node(5), 0)), None);
     }
 
     #[test]

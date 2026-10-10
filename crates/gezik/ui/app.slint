@@ -343,6 +343,19 @@ export component AppWindow inherits Window {
     in-out property <length> sidebar-tip-y;
     // 0 left, 1 right, 2 hidden (`layout.sidebar`).
     in property <int> sidebar-position;
+    // A sidebar taken away or moved while it had the keyboard: the list takes it (no stale
+    // `sidebar-focused`, no keyboard left nowhere).
+    changed sidebar-position => {
+        if root.sidebar-focused {
+            root.sidebar-focused = false;
+            root.focus-list();
+        }
+    }
+    // The sidebar tree's keyboard (spec 10 §5.1): its row, whether the sidebar has the
+    // keyboard, and a counter whose change gives it the keyboard.
+    in property <int> sidebar-cursor: -1;
+    in-out property <bool> sidebar-focused;
+    in property <int> sidebar-focus-seq;
     // Dragged with the splitter (120–480px); saved in state.toml on close.
     in-out property <length> sidebar-width: 200px;
     // What the Slint context menu shows; set from Rust before `show-menu`: the items, then
@@ -1007,6 +1020,9 @@ export component AppWindow inherits Window {
                     rows: root.sidebar-rows;
                     pinned-first-row: root.sidebar-pinned-first-row;
                     pinned-end-row: root.sidebar-pinned-end-row;
+                    cursor: root.sidebar-cursor;
+                    focused <=> root.sidebar-focused;
+                    focus-seq: root.sidebar-focus-seq;
                     tip-text <=> root.sidebar-tip;
                     tip-x <=> root.sidebar-tip-x;
                     tip-y <=> root.sidebar-tip-y;
@@ -1200,6 +1216,9 @@ export component AppWindow inherits Window {
                     rows: root.sidebar-rows;
                     pinned-first-row: root.sidebar-pinned-first-row;
                     pinned-end-row: root.sidebar-pinned-end-row;
+                    cursor: root.sidebar-cursor;
+                    focused <=> root.sidebar-focused;
+                    focus-seq: root.sidebar-focus-seq;
                     tip-text <=> root.sidebar-tip;
                     tip-x <=> root.sidebar-tip-x;
                     tip-y <=> root.sidebar-tip-y;
