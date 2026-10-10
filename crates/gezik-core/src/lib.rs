@@ -5,6 +5,7 @@ pub mod attrs;
 pub mod batch;
 pub mod complete;
 pub mod drag;
+pub mod drop_names;
 pub mod elevated;
 pub mod history;
 pub mod kind;
