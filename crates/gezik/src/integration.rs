@@ -603,13 +603,18 @@ pub fn hotkey_note(text: &str, os: changes::Os) -> (String, bool) {
 /// only in the text). `previous`: the text and the reason when asking again.
 pub fn ask_hotkey(previous: Option<(String, String)>) {
     let os = changes::Os::HERE;
-    let logo = match os {
-        changes::Os::Windows => "Win",
-        changes::Os::Mac => "Cmd",
-        changes::Os::Linux => "Super",
+    // The rules of parse_hotkey (a77a1c2), in words.
+    let rule = match os {
+        changes::Os::Mac => "A letter, a digit or F1-F12 with ⌘ (cmd) or ⌃ (ctrl), and ⌥ (alt) or ⇧ (shift).",
+        changes::Os::Windows => {
+            "A letter, a digit or F1-F12 with Win, or with Ctrl+Shift or Alt+Shift; Ctrl+Alt is not used (it types AltGr characters)."
+        }
+        changes::Os::Linux => {
+            "A letter, a digit or F1-F12 with Super, or with Ctrl+Shift or Alt+Shift; Ctrl+Alt is not used (it types AltGr characters)."
+        }
     };
     let mut message = format!(
-        "Type the keys that show or hide Gezik from any app, for example {}. A letter, a digit or F1-F12 with Ctrl, Alt or {logo}; Ctrl+Alt is not used (it types AltGr characters).",
+        "Type the keys that show or hide Gezik from any app, for example {}. {rule}",
         crate::resident::example(os),
     );
     let initial = match previous {
