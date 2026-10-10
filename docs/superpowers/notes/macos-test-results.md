@@ -434,13 +434,13 @@ Each of these was kept to macOS where the logic allowed:
 | 83 | Quick Open | PASS |
 | 84 | Saved searches | PASS (saved to GEZIK_CONFIG_DIR's settings.toml) |
 | 85 | Probe | **FAIL** (probe: "cancel after 5 ms" still gave a PDF thumbnail; workspace tests fail, see below) |
-| 86 | System icons | NOT TESTED |
-| 87 | Speed and memory | NOT TESTED |
-| 88 | Quick Look thumbnails | NOT TESTED |
-| 89 | Finder names | NOT TESTED |
-| 90 | Opening aliases | NOT TESTED |
-| 91 | Make Alias | NOT TESTED |
-| 92 | Packages | NOT TESTED |
+| 86 | System icons | **FAIL** (no special icons for Desktop/Documents/Downloads or /Applications etc.) |
+| 87 | Speed and memory | PASS (largest grid size and SMB not tried) |
+| 88 | Quick Look thumbnails | **FAIL** (JPEG with EXIF orientation 6 shown sideways in grid and preview) |
+| 89 | Finder names | NOT TESTED (needs Turkish as the system language and a log-out) |
+| 90 | Opening aliases | PASS (sym-dosya opened in TextEdit not checked separately) |
+| 91 | Make Alias | PASS (three-item selection and arrow badge not checked) |
+| 92 | Packages | **FAIL** (Safari.app is entered; a plain x.app folder can't be entered) |
 | 93 | Exe size | PASS (20,942,592 bytes) |
 | 94 | Probe | NOT TESTED |
 | 95 | Open With | NOT TESTED |
@@ -1112,3 +1112,52 @@ With `folder-sizes = "local"` (picked up live):
 - The sidebar has a SEARCHES section (after CLOUD) with "Rust" and a magnifier icon.
 - In `pdf-test/`, a click on Rust ran it there: the tab is titled "Rust", and the scope is "in pdf-test" (`{here}`), with no results (no .rs files there).
 - Right-click on it: Run in new tab / Rename… / Delete.
+
+#### 86. System icons: FAIL
+With `icons = "system"`:
+- `/Applications` in the list and the grid: each app's own icon, crisp, upright, with clean transparent edges (1Password, Adobe, Docker, Figma, Chrome, Keynote, Pages, Safari …). Names keep `.app` (`Docker.app`), which Finder hides.
+- **`~` shows Desktop, Documents, Downloads, Movies, Music, Pictures, Public, Library as plain blue folders**, without Finder's special folder icons (in the list and the grid). **`/` shows Applications, Library, System, Users as plain folders too.** Only `home` (a link) and `dev` look different.
+  Cause, from the code: `media.rs` asks NSWorkspace for a folder's own icon only when `folder_has_own_icon` is true (an `Icon\r` file, the FinderInfo custom-icon flag, or another device than the parent). The special folders have none of these. On macOS 26, `/`, `/Applications`, `/Users` and `~` all have the same `st_dev` (16777229, firmlinks), so the device rule doesn't fire either. That is also why the `apps_folders_and_types_have_icons` test fails (C above). A fix could ask NSWorkspace for the known folders by path (home's Desktop/Documents/Downloads/…, and `/Applications`, `/Library`, `/System`, `/Users`).
+- A folder with a custom icon (set with `NSWorkspace setIcon`, so FinderInfo has the flag): its own icon (a calculator) shows. PASS.
+- `/Volumes`: the mounted disk image GezikHedef shows its volume icon. Macintosh HD (a link) is a plain folder.
+- `.pdf` (Acrobat's PDF icon, the default app here), `.zip` and a file with no extension have Finder's document icons. Empty `.txt` and `.md` files show a plain white square in the grid: that is Quick Look's thumbnail of an empty text, with no page frame around it.
+- Switching `icons` live did not take while the config was under `/tmp` (see the reload finding), and the switch under `/private/tmp` was not repeated.
+
+#### 87. Speed and memory: PASS
+- `1000-dosya/` (1,000 files of four types): the list was drawn with icons and Finder kinds in a screenshot 0.62 s after Return (the screenshot itself takes ~0.5 s, so the list came well under that). Ten Page Downs in a row: CPU 1.2 % right after, 0 % two seconds later.
+- `/Applications` in the grid (medium; changing `grid-size` in the file didn't change this folder, which keeps its own view in `views.toml`): RSS 158,176 KB before and 160,176 KB after six fast scrolls through the whole list and back, then 160,944 KB after six more. That is about 2.8 MB, well within ~40 MB. CPU is 0 % once scrolling stops.
+- Not tried: the largest grid size (would need View ▸ size), and a folder of 200 subfolders on an SMB share.
+
+#### 88. Quick Look thumbnails: FAIL
+Grid view, `thumbnails = true`, in `onizleme/`:
+- PDF: its first page. HEIC: the picture. MOV: a frame. `.txt`: its text on a white page. PNG/JPEG come at once (Gezik's own). The PNG with alpha shows its transparency over the dark background.
+- **`portre-o6.jpg` (stored 1600×1200, EXIF orientation 6) is drawn landscape and not rotated**, in the grid thumbnail and in the preview panel. Quick Look (`qlmanage -t`) gives 192×256, upright. Gezik's own JPEG path ignores the EXIF orientation. (Convert in 35 and Images to PDF in 41 do apply it.)
+- A Pages document (`scenario 2.pages`, a single-file zip package, copied from iCloud's Pages folder) shows the Pages document icon, not its first page.
+- The preview panel shows the PDF's first page and a frame of the MOV.
+- Not tried: a PSD, Keynote/Numbers, scrolling 500 PDFs, leaving a folder of big videos, and the iCloud-only case.
+
+#### 89. Finder names: NOT TESTED
+Not tested. Starting Gezik with `-AppleLanguages "(tr-TR)"` (the per-process trick used in 28) does not change Finder's localized names: `~` still lists Desktop, Documents, Downloads … in English. Those names follow the login session's language, so this needs Türkçe first in System Settings and a log-out, which was left to the maintainer.
+
+#### 90. Opening aliases: PASS
+Aliases made by Finder (AppleScript `make new alias file`) of a file, a folder, the GezikHedef volume and `/Applications/Safari.app`, plus symlinks to a file, a folder and a missing file.
+- The folder alias (⌘↓) went into `orijinal`, and ⌘[ returned. The volume alias went into GezikHedef.
+- The file alias opened `dosya.txt` in TextEdit (its window "dosya.txt" with "orijinal dosya" was on screen).
+- The Safari alias started Safari (Safari became the front app), and Gezik stayed in `alias`.
+- Original file deleted, then the alias opened: "The original item can't be found — The alias \"dosya alias\" can't be opened." with Delete Alias / OK. Delete Alias moved it to the Trash at once with no second question, and ⌘Z brought it back.
+- A broken symlink (`sym-kirik`) gets the same question (its text says "alias" for a symlink). A symlink to a folder is entered (`sym-klasor`).
+- In the list, the aliases and the file symlinks show as "Document" (known gap).
+
+#### 91. Make Alias: PASS
+- ⌃⌘A on `rapor.pdf`: `rapor.pdf alias` next to it, selected. Finder calls it "Alias" and its original item is `rapor.pdf`. Again on the same file: `rapor.pdf alias (2)`, and the first alias is untouched.
+- File ▸ Make Alias on the folder `dosyalar`: `dosyalar alias`.
+- ⌘Z moved the last alias (`dosyalar alias`) to the Trash. The originals are untouched.
+- The original moved elsewhere in Finder (`takma-baska/`): Finder still resolves the alias to the new place (`/private/tmp/gezik-test/takma-baska/rapor.pdf`).
+- Not checked: the row menu item, three items at once, and Finder's arrow badge.
+
+#### 92. Packages: FAIL
+- **`/Applications/Safari.app`** (on macOS 26 a symlink to `/System/Cryptexes/App/System/Applications/Safari.app`): ⌘↓ (open) **went into it** (`Safari.app ▸ Contents`) instead of starting Safari. Gezik's `is_package` doesn't follow the link (the failing test `folders_have_finder_names_and_links_resolve`, C). The same in the Safari alias case in 90 worked, because the alias resolves to the real bundle.
+- `Numbers.app` (a real bundle): ⌘↓ started Numbers and Gezik stayed in `/Applications`. File ▸ Show Package Contents went into `Numbers.app` (Contents).
+- **A plain folder named `x.app`** (`mkdir`): double-click does not enter it. The status bar says `Cannot open /private/tmp/gezik-test/x.app: Launcher "/usr/bin/open" "--" "/private/tmp/gezik-test/x.app" failed with ExitStatus(unix_wait_status(256))`. LaunchServices treats any `.app` folder as a package (it shows the "not allowed" app icon), so Gezik hands it to `open`, which fails. The checklist expects it to be entered. Typing its path in the address bar does enter it.
+- The command palette lists Make Alias (⌃⌘A) and Show Package Contents.
+- Not tried: a `.key`/`.pages` folder package or an `.rtfd`.
