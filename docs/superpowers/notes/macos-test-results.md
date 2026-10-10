@@ -373,8 +373,8 @@ Each of these was kept to macOS where the logic allowed:
 4. **Folders and apps:** Desktop/Documents/Downloads and `/Applications`, `/System`, `/Users` get no special icons (86). `/Applications/Safari.app` (a symlink on macOS 26) is entered instead of started, and a plain folder named `x.app` can't be entered (92).
 5. **Pictures:** a JPEG with EXIF orientation 6 is shown sideways in the grid and the preview (88).
 6. **Quick Look panel:** closing it opens Gezik's own preview window as well, and three files show as one (98).
-7. **Turkish-QWERTY-PC:** ⌘I (Get Info) only works with the key that types `i`, not the one at I's place (102). ⌘= needs a custom key (48).
-8. Smaller ones: `--new-window`/⌘N stack on the old window (112), a minimized Gezik comes back inactive (115), `{files}` passes absolute paths (54), MP3/M4A from a silent `.mov` show a raw ffmpeg error (38), WIM is "Document" (34), undo of an 'Apply to enclosed items' from a group I'm not in does nothing (106), and the Get Info labels overlap the checkboxes (102).
+7. **Turkish-QWERTY-PC:** ⌘= needs a custom key (48). (⌘I only from the key that types `i` is what Finder does too, so not a bug; see 102.)
+8. Smaller ones: `--new-window`/⌘N stack on the old window (112), a minimized Gezik comes back inactive (115), `{files}` passes absolute paths as the spec says (54), MP3/M4A from a silent `.mov` show a raw ffmpeg error (38), WIM is "Document" (34), undo of an 'Apply to enclosed items' from a group I'm not in does nothing (106), and the Get Info labels overlap the checkboxes (102).
 
 ### Summary
 
@@ -415,7 +415,7 @@ Each of these was kept to macOS where the logic allowed:
 | 51 | Saved filters | PASS (one note) |
 | 52 | Path suggestions | PASS (network-share part not tested) |
 | 53 | Folder history | PASS (one note) |
-| 54 | Command keys | **FAIL** ({files} gives absolute paths, so the zip holds /private/tmp/…) |
+| 54 | Command keys | PASS (as specified; one note) |
 | 55 | No history | PASS |
 | 56 | Open terminal | PASS |
 | 57 | Copy path | PASS (one note: ⌘V after ⌘⌥C makes a text file, from 7c) |
@@ -463,7 +463,7 @@ Each of these was kept to macOS where the logic allowed:
 | 99 | Unchanged | PASS |
 | 100 | Exe size | PASS (20,942,592 bytes; see 93) |
 | 101 | Probe | PASS |
-| 102 | Opening | **FAIL** (⌘I: the key at I's place does nothing on Turkish Q; labels overlap) |
+| 102 | Opening | **FAIL** (labels overlap; fixed on fix/macos-2) |
 | 103 | Permissions | PASS (except the "replaced file" case, see note) |
 | 104 | Owner and group | PASS |
 | 105 | Hidden and Locked | PASS (Finder hiding not looked at) |
@@ -915,11 +915,11 @@ Window title was used to tell the tab in front.
 - Go ▸ Clear Folder History: the status bar says "Folder history cleared", and `state.toml` has no `[history]` any more.
 - **Note:** the same folder reached through `/tmp/…` and `/private/tmp/…` is kept twice (`klasör A  /tmp/gezik-test` and `klasör A  /private/tmp/gezik-test`, `alt` twice). Paths are not canonicalized before they are counted. It is the same `/tmp` link as A and the reload finding.
 
-#### 54. Command keys: FAIL
+#### 54. Command keys: PASS
 The two commands from the checklist were added live (config under `/private/tmp`).
 - The notice in the status bar says `settings.toml: commands[7]: shortcut "mod+f" is already used by filter; the command has no key`, and ⌘F still opens the filter.
 - Select all (`a.txt`, `b.txt`, folder `alt`), ⌃⌥Z: "Zip together — Run Zip together on 3 items?" with Run / Cancel. Cancel runs nothing. Run makes one `together.zip`, and the panel row says "Running Zip together on 3 items — Done · can't be undone". ⌘Z does not remove it.
-- **But `unzip -l together.zip` lists `private/tmp/gezik-test/ziptest/a.txt`, `…/b.txt`, `…/alt/c.txt`.** `{files}` expands to absolute paths, so `zip -r` stores the whole path. In Finder or 7-Zip the archive opens as `private/tmp/gezik-test/ziptest/…`. The command runs in the folder (the zip landed there), so passing names relative to it (`a.txt`, `alt`) would give the expected archive. The checklist's own example hits this.
+- **Note:** `unzip -l together.zip` lists `private/tmp/gezik-test/ziptest/a.txt`, `…/b.txt`, `…/alt/c.txt`.** `{files}` expands to absolute paths, so `zip -r` stores the whole path. In Finder or 7-Zip the archive opens as `private/tmp/gezik-test/ziptest/…`. The command runs in the folder (the zip landed there), so passing names relative to it (`a.txt`, `alt`) would give the expected archive. The checklist's own example hits this. The spec (2026-10-07-klavye-paketi-design.md) says `{files}` passes full paths, so this is as designed; a `{names}` token or a note in the template would help.
 - The menu bar has a **Commands** menu: a grey "Archives" heading and "Zip together    ⌃⌥Z" (the key is part of the title, not a key equivalent). Choosing it asks the same question ("on 1 item" with one row selected).
 - Right-click ▸ Commands ▸: Thumbnail, Missing program (grey), Slow copy, Clash, then a grey "Archives" heading over Zip together. The heading can't be chosen.
 - ⌃⌥Z while the path field or the filter field has the keyboard runs nothing. It types `z` into the field instead.
@@ -1214,7 +1214,7 @@ See "Probes" above: section 6 is all PASS, users/groups 133/162 in 19.0 ms, and 
 
 #### 102. Opening: FAIL
 - File ▸ Get Info on `rapor.pdf`: a panel on the right, "rapor.pdf Info", with Kind, Size ("18.3 KB in 1 file"), Where, Created, Modified, Last opened, then Sharing & Permissions (Owner, Group ▾, Read/Write/Execute for Owner/Group/Everyone), Hidden, Locked, Octal, Open with, Done. Esc closes it and the list has the keyboard again.
-- **⌘I does not work on Turkish-QWERTY-PC with the key at the I place** (it types `ı`). ⌘ + the key that types `i` (right of L) opens it. The menu shows ⌘I. On Turkish Q, macOS apps (Finder) take ⌘I from the I-place key. Item 24 handled the same issue for ⌘[ / ⌘] by key place; this shortcut (and probably others with I) needs the same.
+- ⌘I on Turkish-QWERTY-PC works with the key that types `i` (right of L), not the key at I's place (it types `ı`). Finder does the same (checked: ⌘ + the I-place key opens no Info window in Finder either), so this is not a bug.
 - **The row labels Owner / Group / Everyone are drawn on top of the Read and Write checkboxes** ("ReadOwne✓Write", "ReadEveryo☐Write"). The label column is too narrow for the text at this size.
 - Two items (`a.txt` 644, `b.txt` 600): "2 items", "5 B in 2 files", Where is their folder. Group Read and Everyone Read show a dash, and Octal is empty.
 - Not tried: a folder's "calculating…" size, and "several folders".
@@ -1330,3 +1330,32 @@ They need Gezik to be the folder handler, which 141 could not make on macOS 26.5
 
 #### 146. Restore and `--unregister`: PASS (after the failed attempt)
 After the failed Make default (and the hand-made test bundle removed), `gezik --unregister` printed `No system-changes.toml: taking back what has Gezik's names` / `Nothing of Gezik's was found.` and exited 0. The probe and `defaults read -g NSFileViewer` show Finder's state: `public.folder` → `com.apple.finder`, no `NSFileViewer`. The Restore command itself had nothing to restore.
+
+### Fixes on fix/macos-2
+
+Made on `fix/macos-2` (from `master` at `6fcae22`), each checked on this Mac. After them, `cargo test --workspace` passes (all 28 suites; it had 28 failing tests), and clippy and `cargo fmt --check` are clean.
+
+| Finding | Fix | Checked |
+|---|---|---|
+| Abort when the last window closes | `Registration::drop` uses `TARGET.try_with` | Debug build, window closed twice: clean exit, no panic, no crash report |
+| A: restore refused under `/tmp`, `/var` | `fs::through_system_links` reads macOS's own root links (root-owned `/tmp`, `/var`, `/etc` → `/private/…`) before the way back is checked; other links still refuse | The 22 tests pass |
+| B: non-UTF-8 names | The tests skip where the file system can't hold such a name | Pass |
+| C: Safari.app entered; `x.app` not enterable | `is_package` follows a link, and a `*.app` folder with no `Contents` is a plain folder | Safari started from `/Applications`; `x.app` entered |
+| C/86: no special folder icons | `folder_has_own_icon` knows Desktop, Documents, Downloads, Movies, Music, Pictures, Public, Library, Applications in the home folder, and `/Applications`, `/Library`, `/System`, `/Users` | `~` shows Finder's icons |
+| D: Windows-only Everything test | `#[cfg(windows)]` | — |
+| E: link-loop size test | Expects the link's own bytes to be left out (unix sizes regular files only) | Pass |
+| Live reload through a linked config folder | The watcher reads FSEvents' `/private/…` paths back under the folder as given | `theme` edits applied with `GEZIK_CONFIG_DIR=/tmp/gezik-cfg` |
+| Folder history kept `/tmp/x` and `/private/tmp/x` apart | Visits go through `through_system_links` | — |
+| 88: EXIF orientation ignored | `decode_image` applies the decoder's orientation (new test with an orientation-6 JPEG) | Pass |
+| 98: Quick Look fallback window | The fallback waits 500 ms and opens Gezik's window only if the panel isn't there | Open/close with 1 and 3 items, Space and Esc: no extra window |
+| 102: Get Info labels overlap | `x: 0` on the three labels | Screenshot |
+| 38: raw ffmpeg error for a silent video | "it has no sound to keep" (new test) | Pass |
+| 34: WIM is "Document" | An archive the system only calls the generic "Document" gets Gezik's name | `x.wim` shows "WIM archive" |
+| 106: undo refused for a foreign group, modes not put back | A refused owner/group still lets the mode and flags through, and still reports "Requires administrator" (new test) | Apply in `/tmp` then ⌘Z: modes back, group stays staff |
+| 112: new windows stacked | The saved position (and the 32-point offset) is set again once the native window exists | First window at its saved place, second 32 points off |
+| 115: minimized Gezik not activated | Focus and `activateIgnoringOtherApps` again 400 ms after un-minimizing | Twice: Gezik in front |
+
+Not changed:
+- 141: macOS 26 refuses `public.folder` (-50) for any third-party bundle. This needs a decision (for example, keep only `NSFileViewer`, or say so in the confirmation).
+- 54: `{files}` passes full paths as the spec says.
+- 26/40: the native drop menu and Commands submenu not taking synthetic clicks. To be tried with a real mouse first.
