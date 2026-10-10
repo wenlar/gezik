@@ -2151,7 +2151,8 @@ impl View {
     /// `line-of` depends on).
     fn groups_changed(&self) {
         if let Some(window) = self.0.window.upgrade() {
-            window.set_list_groups_version(window.get_list_groups_version().wrapping_add(1));
+            // Never negative: file-view.slint's `rename-line` reads it as `groups-version < 0`.
+            window.set_list_groups_version(window.get_list_groups_version().checked_add(1).unwrap_or(0));
         }
     }
 

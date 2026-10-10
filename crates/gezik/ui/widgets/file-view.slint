@@ -173,8 +173,8 @@ export component FileView inherits Rectangle {
     out property <bool> rename-focused: root.rename-has-focus && root.renaming-index >= 0
         && (root.rename-line + 1) * root.item-height > -root.scroll
         && root.rename-line * root.item-height < -root.scroll + list.visible-height;
-    // The renamed entry's line; `* 0` only makes it depend on `groups-version`.
-    property <int> rename-line: root.line-of(root.renaming-index + root.groups-version * 0);
+    // The renamed entry's line; reading `groups-version` (never negative) makes it update.
+    property <int> rename-line: root.groups-version < 0 ? -1 : root.line-of(root.renaming-index);
     out property <length> cell-width: max(root.picture-size + 24px, 96px);
     // The grid's first column starts here: the cells are inset from the sheet's edge
     // (`Geometry::Grid.left` in gezik-core layout.rs).
