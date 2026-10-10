@@ -38,6 +38,7 @@ use gezik_search::results::{Batch, ResultSet, TrashLabel};
 use slint::{ComponentHandle, ModelRc};
 
 use crate::media::{Media, Ready};
+use crate::panes::PaneId;
 use crate::{AppWindow, Theme};
 use listing::{filtered_listing, filtered_results, name_taken};
 use model::{ItemsModel, ViewData, hide_collapsed};
@@ -68,6 +69,7 @@ pub fn header_sort(column: i32) -> Option<SortKey> {
 type Listener = Rc<dyn Fn()>;
 
 struct Inner {
+    id: PaneId,
     window: slint::Weak<AppWindow>,
     /// `[view]`'s options in effect (view_options.rs).
     options: Cell<ViewOptions>,
@@ -242,23 +244,11 @@ impl SortGate {
     }
 }
 
-thread_local! {
-    /// The view of this (UI) thread, for settings changes.
-    static CURRENT: RefCell<Option<View>> = const { RefCell::new(None) };
-}
-
-/// Runs `f` with this UI thread's view, if there is one yet.
-pub fn with_current(f: impl FnOnce(&View)) {
-    if let Some(view) = CURRENT.with(|c| c.borrow().clone()) {
-        f(&view);
-    }
-}
-
 #[derive(Clone)]
 pub struct View(Rc<Inner>);
 
 impl View {
-    pub fn new(window: &AppWindow, memory: ViewMemory, store: Option<ConfigStore>) -> View {
+    pub fn new(id: PaneId, window: &AppWindow, memory: ViewMemory, store: Option<ConfigStore>) -> View {
         let media = Media::new();
         media.install();
         let defaults = ViewDefaults::default();
@@ -271,6 +261,7 @@ impl View {
         let model = Rc::new(ItemsModel::new(data.clone()));
         window.set_items(ModelRc::from(model.clone()));
         let view = View(Rc::new(Inner {
+            id,
             window: window.as_weak(),
             data,
             model,
@@ -317,7 +308,6 @@ impl View {
                 View(inner).media_ready(entries, ready);
             }
         });
-        CURRENT.with(|c| *c.borrow_mut() = Some(view.clone()));
         view.sync_columns();
         view.apply_layout();
         view
@@ -1381,11 +1371,12 @@ impl View {
         }
         let view = self.0.current.get();
         let Some(store) = &self.0.store else { return self.applied_to_all(view) };
+        let id = self.0.id;
         store.write_settings(gezik_config::settings_writer::SettingsChange::ViewDefaults(view), move |result| {
             let _ = slint::invoke_from_event_loop(move || {
-                with_current(|this| match result {
-                    Ok(()) => this.applied_to_all(view),
-                    Err(warning) => this.set_note(warning.to_string()),
+                crate::panes::with_id(id, |p| match result {
+                    Ok(()) => p.view.applied_to_all(view),
+                    Err(warning) => p.view.set_note(warning.to_string()),
                 });
             });
         });
@@ -1644,7 +1635,7 @@ impl View {
         let version = self.0.results_version.get();
         let generation = self.0.sort_gate.borrow_mut().start();
         let dates = self.fresh_dates();
-        let weak = self.0.window.clone();
+        let (id, weak) = (self.0.id, self.0.window.clone());
         let spawned = std::thread::Builder::new().name("gezik-sort".into()).spawn(move || {
             let plain =
                 |e: &Entry| own_type_name(&e.name, e.is_dir).unwrap_or_else(|| fallback_type_name(&e.name, e.is_dir));
@@ -1654,7 +1645,7 @@ impl View {
             drop(full);
             let sorted = (spec, folders_first, by);
             let _ = weak.upgrade_in_event_loop(move |_| {
-                with_current(|view| view.results_sorted(generation, version, sorted, order));
+                crate::panes::with_id(id, |p| p.view.results_sorted(generation, version, sorted, order));
             });
         });
         if spawned.is_err() {

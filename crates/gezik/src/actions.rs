@@ -43,7 +43,9 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
             }
         }
         Action::TabLast => nav.activate_tab(nav.tab_count().saturating_sub(1)),
-        Action::Filter => crate::filter::with_current(crate::filter::Filter::open),
+        Action::Filter => {
+            crate::panes::with_active(|p| p.filter.open());
+        }
         Action::InvertSelection => view.invert_selection(),
         Action::SelectSameType => view.select_same_type(),
         Action::RestoreSelection => view.restore_remembered(),
@@ -54,11 +56,17 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         Action::ToggleStack => crate::stack::with_current(crate::stack::Stack::toggle),
         Action::ShowHistory => crate::operations::with_current(crate::operations::Operations::show_history),
         Action::ReopenTab => nav.reopen_tab(),
-        Action::Search => crate::search::with_current(crate::search::Searches::open),
-        Action::FlatView => crate::search::with_current(crate::search::Searches::flat_view),
+        Action::Search => {
+            crate::panes::with_active(|p| p.search.open());
+        }
+        Action::FlatView => {
+            crate::panes::with_active(|p| p.search.flat_view());
+        }
         Action::ToggleTabLock => nav.toggle_tab_lock(nav.active_index()),
         Action::TabPicker => crate::tab_tools::with_current(crate::tab_tools::TabTools::open),
-        Action::ClearHistory => crate::path_box::with_current(|p| p.forget(true)),
+        Action::ClearHistory => {
+            crate::panes::with_active(|p| p.path_box.forget(true));
+        }
         Action::OpenTerminal => crate::terminal::open_for_view(view, false),
         Action::OpenTerminalAdmin => crate::terminal::open_for_view(view, true),
         Action::CopyPath => crate::copy_path::copy_selection(view),
@@ -66,8 +74,12 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         Action::ShowInFolder => crate::operations::with_current(|ops| ops.show_in_folder(false)),
         Action::CopyWithFolders => crate::operations::with_current(|ops| ops.copy_with_folders(false)),
         Action::CutWithFolders => crate::operations::with_current(|ops| ops.copy_with_folders(true)),
-        Action::CalculateFolderSizes => crate::folder_sizes::with_current(crate::folder_sizes::FolderSizes::calculate),
-        Action::SaveSearch => crate::search::with_current(crate::search::Searches::save_current),
+        Action::CalculateFolderSizes => {
+            crate::panes::with_active(|p| p.folder_sizes.calculate());
+        }
+        Action::SaveSearch => {
+            crate::panes::with_active(|p| p.search.save_current());
+        }
         Action::MakeAlias => crate::operations::with_current(crate::operations::Operations::make_alias_of_selection),
         Action::GetInfo => crate::info::get_info(view),
         Action::ShowPackageContents => {

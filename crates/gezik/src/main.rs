@@ -31,6 +31,7 @@ mod navigation;
 mod op_history;
 mod operations;
 mod palette;
+mod panes;
 mod path_box;
 mod pdf;
 mod places;
@@ -117,7 +118,7 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
         eprintln!("gezik: {warning}");
     }
     window.set_notice(notice_text(&loaded.warnings).into());
-    navigation::with_current(|nav| nav.set_session_restore(loaded.settings.session.restore));
+    panes::with_active(|p| p.nav.set_session_restore(loaded.settings.session.restore));
     window.set_sidebar_position(match loaded.settings.sidebar {
         SidebarPosition::Left => 0,
         SidebarPosition::Right => 1,
@@ -135,14 +136,14 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
     sidebar::with_current(|s| s.set_show_cloud(loaded.settings.sidebar_cloud));
     sidebar::with_current(|s| s.set_tree_follow(loaded.settings.sidebar_tree_follow));
     // The defaults first: a rule change then switches the view once.
-    view::with_current(|view| view.set_defaults(loaded.settings.view));
-    view::with_current(|view| {
+    panes::with_active(|p| p.view.set_defaults(loaded.settings.view));
+    panes::with_active(|p| {
         let place = || {
             let mut place = Default::default();
-            navigation::with_current(|nav| place = nav.rule_place());
+            panes::with_active(|p| place = p.nav.rule_place());
             place
         };
-        view.set_rules(view::compile_rules(&loaded.settings.view_rules), place);
+        p.view.set_rules(view::compile_rules(&loaded.settings.view_rules), place);
     });
     view_options::set_from_file(loaded.settings.view.options);
     #[cfg(target_os = "macos")]
@@ -155,8 +156,10 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
     convert::set_settings(loaded.settings.convert.clone(), loaded.settings.commands.clone());
     filter::set_settings(loaded.settings.keyboard, loaded.settings.filters.clone());
     path_box::set_settings(loaded.settings.history);
-    search::with_current(|s| s.set_settings(loaded.settings.search.clone()));
-    folder_sizes::with_current(|f| f.set_settings(loaded.settings.folder_sizes, loaded.settings.search.everything));
+    panes::with_active(|p| p.search.set_settings(loaded.settings.search.clone()));
+    panes::with_active(|p| {
+        p.folder_sizes.set_settings(loaded.settings.folder_sizes, loaded.settings.search.everything)
+    });
     tab_sets::set_settings(loaded.settings.tab_sets.clone());
     saved_searches::set_settings(loaded.settings.searches.clone());
     #[cfg(target_os = "macos")]
@@ -198,7 +201,7 @@ fn perform(
         Action::Forward => nav.forward(),
         Action::Up => nav.up(),
         Action::FocusPath => {
-            path_box::with_current(path_box::PathBox::reset);
+            panes::with_active(|p| p.path_box.reset());
             window.invoke_edit_path()
         }
         Action::Refresh => nav.reload(),
@@ -368,7 +371,7 @@ fn handle_key(
         // The suggestion list's keys first: ↓ ↑ Tab → Enter Esc (spec 6.1).
         if !has_modifier {
             let mut used = false;
-            path_box::with_current(|p| used = p.chord(chord));
+            panes::with_active(|p| used = p.path_box.chord(chord));
             if used {
                 return true;
             }
@@ -391,15 +394,15 @@ fn handle_key(
         let alt_only = chord.alt && !chord.ctrl && !chord.meta && !chord.shift;
         match chord.key {
             Key::Escape if plain => {
-                search::with_current(search::Searches::escape);
+                panes::with_active(|p| p.search.escape());
                 return true;
             }
             Key::Enter if plain => {
-                search::with_current(|s| s.go(false));
+                panes::with_active(|p| p.search.go(false));
                 return true;
             }
             Key::Enter if alt_only => {
-                search::with_current(|s| s.go(true));
+                panes::with_active(|p| p.search.go(true));
                 return true;
             }
             Key::Down if plain => {
@@ -419,13 +422,13 @@ fn handle_key(
     if filtering && let Some(chord) = &chord {
         // Shift+Enter: the filter's pattern searched in the subfolders (spec 4.1).
         if chord.shift && !has_modifier && chord.key == Key::Enter {
-            search::with_current(search::Searches::filter_to_search);
+            panes::with_active(|p| p.search.filter_to_search());
             return true;
         }
         if !has_modifier && !chord.shift {
             match chord.key {
                 Key::Escape => {
-                    filter::with_current(filter::Filter::close);
+                    panes::with_active(|p| p.filter.close());
                     return true;
                 }
                 Key::Down | Key::Enter => {
@@ -534,9 +537,9 @@ fn handle_key(
                 // The first Esc stops a running search, then closes the filter, then clears the selection.
                 Key::Escape if !primary && !chord.shift => {
                     if search::running() {
-                        search::with_current(search::Searches::stop);
+                        panes::with_active(|p| p.search.stop());
                     } else if view.filter_text().is_some() {
-                        filter::with_current(filter::Filter::close);
+                        panes::with_active(|p| p.filter.close());
                     } else {
                         view.clear_selection();
                     }
@@ -554,12 +557,12 @@ fn handle_key(
     // `/` is in no name: it opens the filter whatever the typing mode (and on a layout where
     // it needs Shift, as no shortcut could).
     if c == '/' {
-        filter::with_current(filter::Filter::open);
+        panes::with_active(|p| p.filter.open());
         return true;
     }
     // A space is no letter: it stays quick look's (or type-ahead's, as before).
     if filter::typing() == Typing::Filter && c != ' ' && !view.shows_drives() {
-        filter::with_current(|f| f.typed(c));
+        panes::with_active(|p| p.filter.typed(c));
         return true;
     }
     // Type-ahead. A typed character that matches nothing is still used up.
@@ -930,7 +933,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     let mut current = files.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                     *current = fresh;
                     let (_, plan) = apply_config_and_start(&window, &mut current, &[], false, None);
-                    navigation::with_current(|nav| nav.set_start(plan.start));
+                    panes::with_active(|p| p.nav.set_start(plan.start));
                 });
             },
             {
@@ -952,7 +955,9 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = window.as_weak();
         move || keep_on_screen(weak, 0)
     });
-    let view = view::View::new(&window, memory, config.clone());
+    // The pane's parts carry its id; it is installed once they all exist.
+    let pane_id = panes::next_id();
+    let view = view::View::new(pane_id, &window, memory, config.clone());
     view.set_defaults(initial_settings.view);
     // No folder shows yet: its place comes with the first one.
     view.set_rules(view::compile_rules(&initial_settings.view_rules), Default::default);
@@ -972,13 +977,12 @@ fn main() -> Result<(), slint::PlatformError> {
         .into(),
     );
     window.set_preview_width(saved_state.preview_width.unwrap_or(280) as f32);
-    folder_sizes::FolderSizes::new(&window, view.clone())
-        .set_settings(initial_settings.folder_sizes, initial_settings.search.everything);
+    let folder_sizes = folder_sizes::FolderSizes::new(pane_id, &window, view.clone());
+    folder_sizes.set_settings(initial_settings.folder_sizes, initial_settings.search.everything);
     let preview = preview::Preview::new(&window, view.clone());
     preview.set_pane_open(saved_state.preview_open);
     let StartPlan { session, select, start, .. } = plan;
-    let nav = navigation::Navigator::new(&window, view.clone(), session, select, start);
-    nav.install();
+    let nav = navigation::Navigator::new(pane_id, &window, view.clone(), session, select, start);
     // The open tabs go to state.toml as they change (spec 5.1); its own thread writes them, so
     // a crash or a kill leaves the last tabs too.
     if !secondary && let Some(store) = config.clone() {
@@ -987,9 +991,11 @@ fn main() -> Result<(), slint::PlatformError> {
             store.update_state(move |state| state.session = session);
         });
     }
-    let _path_box = path_box::PathBox::new(&window, nav.clone(), config.clone(), saved_state.history.clone());
+    let path_box = path_box::PathBox::new(pane_id, &window, nav.clone(), config.clone(), saved_state.history.clone());
     // Captures no navigator (it is not `Send`): the result finds it on the UI thread.
-    places::load_in_background(window.as_weak(), |part| navigation::with_current(|nav| nav.set_places(part)));
+    places::load_in_background(window.as_weak(), |part| {
+        panes::with_active(|p| p.nav.set_places(part));
+    });
     // The templates of New ▸, read once the window is up.
     slint::Timer::single_shot(std::time::Duration::from_millis(500), templates::load_in_background);
 
@@ -1002,10 +1008,23 @@ fn main() -> Result<(), slint::PlatformError> {
     let _tab_sets = tab_sets::TabSets::new(&window, nav.clone(), view.clone(), dialogs.clone(), config.clone());
     let _saved_searches =
         saved_searches::SavedSearches::new(&window, nav.clone(), view.clone(), dialogs.clone(), config.clone());
-    let _filter = filter::Filter::new(&window, view.clone(), dialogs.clone(), config.clone());
-    let searches = search::Searches::new(&window, nav.clone(), view.clone(), dialogs.clone());
+    let filter = filter::Filter::new(pane_id, &window, view.clone(), dialogs.clone(), config.clone());
+    let searches = search::Searches::new(pane_id, &window, nav.clone(), view.clone(), dialogs.clone());
     searches.set_settings(initial_settings.search.clone());
-    nav.on_changed(|location| search::with_current(|s| s.location_changed(location)));
+    panes::install(panes::Pane {
+        id: pane_id,
+        nav: nav.clone(),
+        view: view.clone(),
+        filter,
+        search: searches,
+        path_box,
+        folder_sizes,
+    });
+    // The first tab loads once the pane is installed: its listing comes back through it.
+    nav.install();
+    nav.on_changed(|location| {
+        panes::with_active(|p| p.search.location_changed(location));
+    });
     let _tab_tools = tab_tools::TabTools::new(&window, nav.clone());
     let _integration = integration::Integration::new(&window);
     let _select_tools = select_tools::SelectTools::new(

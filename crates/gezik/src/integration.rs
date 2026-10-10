@@ -588,7 +588,8 @@ pub fn run(command: Command) {
 fn setting(command: Command) {
     // Deviation 11: only the first Gezik keeps them; a second window writes nothing.
     if !crate::resident::status().primary {
-        return crate::view::with_current(|v| v.note("Kept by the first Gezik window".into()));
+        crate::panes::with_active(|p| p.view.note("Kept by the first Gezik window".into()));
+        return;
     }
     match command {
         Command::TrayOn => crate::resident::turn_on_tray(),
@@ -731,7 +732,7 @@ fn carry_out(action: RowAction) {
                     Ok(Some(note)) => tell("Reveal in Finder opens in Gezik now", note),
                     Ok(None) => {
                         crate::single_instance::start_file_manager1();
-                        crate::view::with_current(|v| v.note("Gezik is the default file manager now".into()));
+                        crate::panes::with_active(|p| p.view.note("Gezik is the default file manager now".into()));
                     }
                 });
             });
@@ -746,7 +747,9 @@ fn carry_out(action: RowAction) {
                 let result = changes::login_on_now();
                 let _ = slint::invoke_from_event_loop(move || match result {
                     Err(why) => tell("Could not make Gezik start at login", why),
-                    Ok(()) => crate::view::with_current(|v| v.note("Gezik starts at login now".into())),
+                    Ok(()) => {
+                        crate::panes::with_active(|p| p.view.note("Gezik starts at login now".into()));
+                    }
                 });
             });
         }
@@ -801,7 +804,9 @@ fn added(result: Result<(), String>) {
                 },
             ),
             None => {
-                crate::view::with_current(|v| v.note("gezik is a command now: open a new terminal to use it".into()))
+                crate::panes::with_active(|p| {
+                    p.view.note("gezik is a command now: open a new terminal to use it".into())
+                });
             }
         },
     }

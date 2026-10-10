@@ -112,7 +112,7 @@ pub fn change(option: ViewOption) {
 
 fn written(option: ViewOption, result: Result<(), Warning>) {
     if let Err(warning) = &result {
-        crate::view::with_current(|view| view.note(warning.to_string()));
+        crate::panes::with_active(|p| p.view.note(warning.to_string()));
     }
     let back = STATE.with(|s| s.borrow_mut().written(result.is_ok(), option));
     if let Some(options) = back {
@@ -129,9 +129,9 @@ pub fn toggle_hidden() {
 /// come or go.
 fn show(options: ViewOptions) {
     let mut reload = false;
-    crate::view::with_current(|view| reload = view.set_options(options));
+    crate::panes::with_active(|p| reload = p.view.set_options(options));
     if reload {
-        crate::navigation::with_current(|nav| nav.reload());
+        crate::panes::with_active(|p| p.nav.reload());
         // Hidden or system folders come or go in the sidebar tree's open branches too.
         crate::sidebar::with_current(crate::sidebar::Sidebar::options_changed);
     }

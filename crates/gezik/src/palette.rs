@@ -200,7 +200,7 @@ impl Palette {
             add(Kind::Pinned, text.clone(), label, text, Target::Folder(path));
         }
         let mut recent = Vec::new();
-        crate::path_box::with_current(|p| recent = p.recent(50));
+        crate::panes::with_active(|p| recent = p.path_box.recent(50));
         for path in recent {
             let text = path.display().to_string();
             let name = path.file_name().map_or_else(|| text.clone(), |n| n.to_string_lossy().into_owned());
@@ -295,7 +295,9 @@ impl Palette {
         let this = self.clone();
         slint::Timer::single_shot(Duration::ZERO, move || match (target, line) {
             (Some(target), _) => this.run_target(target, new_tab),
-            (None, Line::SearchFor(text)) => crate::search::with_current(|s| s.search_for(&text)),
+            (None, Line::SearchFor(text)) => {
+                crate::panes::with_active(|p| p.search.search_for(&text));
+            }
             (None, Line::Item(_)) => {}
         });
     }
@@ -318,7 +320,9 @@ impl Palette {
             Target::Folder(path) => nav.go(Location::Path(path)),
             Target::Tab(index) => nav.activate_tab(index),
             Target::TabSet(name) => crate::tab_sets::with_current(|sets| sets.open(&name, false)),
-            Target::Filter(name) => crate::filter::with_current(|filter| filter.apply_saved(&name)),
+            Target::Filter(name) => {
+                crate::panes::with_active(|p| p.filter.apply_saved(&name));
+            }
             Target::SavedSearch(name) => crate::saved_searches::with_current(|s| s.run(&name, new_tab)),
             Target::System(command) => crate::integration::run(command),
         }

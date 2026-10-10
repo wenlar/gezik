@@ -2185,7 +2185,7 @@ impl Convert {
 
     /// Says `text` in the status bar until the selection changes.
     fn note(&self, text: String) {
-        crate::view::with_current(|view| view.note(text));
+        crate::panes::with_active(|p| p.view.note(text));
     }
 
     /// A command asked for by its key: on the items it takes; when it takes none or cannot

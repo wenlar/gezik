@@ -194,7 +194,7 @@ fn window() -> Option<AppWindow> {
 }
 
 fn note(text: String) {
-    crate::view::with_current(|v| v.note(text));
+    crate::panes::with_active(|p| p.view.note(text));
 }
 
 fn tell(title: &str, message: String, buttons: &[&str], answer: impl FnOnce(Option<usize>) + 'static) {

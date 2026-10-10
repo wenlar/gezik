@@ -14,7 +14,7 @@ use slint::ComponentHandle;
 
 use crate::AppWindow;
 use crate::cli::{self, Open};
-use crate::navigation::{self, Navigator};
+use crate::navigation::Navigator;
 
 /// Answers other `gezik` calls from now on. Received paths are only opened as folders in
 /// tabs, never run.
@@ -30,7 +30,7 @@ pub fn serve(listener: Listener, window: slint::Weak<AppWindow>) {
                 window
                     .upgrade_in_event_loop(move |_window| {
                         if turn.begin() {
-                            navigation::with_current(|nav| apply(nav, opens, missing, new_tab, trash));
+                            crate::panes::with_active(|p| apply(&p.nav, opens, missing, new_tab, trash));
                             crate::resident::reveal();
                             turn.done();
                         }
@@ -124,7 +124,7 @@ pub fn apply(nav: &Navigator, opens: Vec<Open>, missing: Vec<PathBuf>, new_tab: 
     }
     if !missing.is_empty() {
         let names: Vec<String> = missing.iter().map(|path| path.display().to_string()).collect();
-        crate::view::with_current(|view| view.note(format!("{}: not found", names.join(", "))));
+        crate::panes::with_active(|p| p.view.note(format!("{}: not found", names.join(", "))));
     }
     if trash {
         match existing(&Location::Trash) {
@@ -141,7 +141,7 @@ pub fn open_here(window: slint::Weak<AppWindow>, request: gezik_platform::instan
     std::thread::spawn(move || {
         let (opens, missing) = cli::group(&request.targets, crate::start::path_kind);
         let _ = window.upgrade_in_event_loop(move |_window| {
-            navigation::with_current(|nav| apply(nav, opens, missing, request.new_tab, request.trash));
+            crate::panes::with_active(|p| apply(&p.nav, opens, missing, request.new_tab, request.trash));
             crate::resident::reveal();
         });
     });

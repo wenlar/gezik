@@ -114,7 +114,7 @@ impl SavedSearches {
         match resolve(&saved.folder, &here, &KnownDirs::system()) {
             Ok(scope) => {
                 let spec = SearchSpec { scope, name: Some(saved.name.clone()), ..saved.spec };
-                crate::search::with_current(|s| s.run_saved(spec, new_tab));
+                crate::panes::with_active(|p| p.search.run_saved(spec, new_tab));
             }
             Err(why) => self.0.view.note(format!("Saved search \"{name}\": {why}")),
         }

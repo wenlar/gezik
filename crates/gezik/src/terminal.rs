@@ -44,7 +44,7 @@ pub fn error_text(err: &TerminalError) -> Option<String> {
 }
 
 fn note(text: String) {
-    crate::view::with_current(|view| view.note(text));
+    crate::panes::with_active(|p| p.view.note(text));
 }
 
 /// Opens a terminal in `dir` (`admin`: as administrator, Windows only), on a thread.
