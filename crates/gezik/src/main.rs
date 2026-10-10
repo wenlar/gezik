@@ -37,6 +37,7 @@ mod places;
 mod popup;
 mod preview;
 mod quick_look;
+mod resident;
 mod saved_searches;
 mod search;
 mod select_tools;
@@ -128,6 +129,9 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
     // Unchanged pins cost nothing (also after the reload that follows our own save).
     sidebar::with_current(|sidebar| sidebar.set_pinned(loaded.settings.pinned.clone()));
     sidebar::with_current(sidebar::Sidebar::relabel);
+    // 9b9: the tray and the shortcut follow [system]; the tray menu follows the pins.
+    resident::apply(&loaded.settings.system);
+    resident::refresh_pins();
     sidebar::with_current(|s| s.set_show_cloud(loaded.settings.sidebar_cloud));
     view::with_current(|view| view.set_defaults(loaded.settings.view));
     view_options::set_from_file(loaded.settings.view.options);
@@ -697,6 +701,7 @@ fn main() -> Result<(), slint::PlatformError> {
     // A window that could not hand over is a second window as --new-window's is (spec 5.3):
     // two windows writing the same tabs to state.toml would lose one's.
     let mut secondary = cli.new_window;
+    let background = cli.background;
     // Started by the bus for FileManager1 (decision 18): the channel decides, nothing is sent.
     let dbus = cli.dbus && cfg!(all(unix, not(target_os = "macos")));
     // Decision 16: LaunchServices starts the bundle bare and hands the folders over by event
@@ -707,7 +712,7 @@ fn main() -> Result<(), slint::PlatformError> {
         && gezik_platform::system::exe()
             .ok()
             .is_some_and(|e| e.to_str().is_some_and(|s| s.ends_with(".app/Contents/MacOS/gezik")));
-    if !secondary && !dbus && !bundle_launch {
+    if !secondary && !dbus && !bundle_launch && !background {
         match instance::send(&key, &request, instance::SEND_TIMEOUT) {
             instance::Sent::Delivered => return Ok(()),
             instance::Sent::NoInstance => {}
@@ -765,6 +770,8 @@ fn main() -> Result<(), slint::PlatformError> {
             instance::Claim::Listening(listener) => Some(listener),
             // The running Gezik holds FileManager1 already (decision 18).
             instance::Claim::Taken if dbus => return Ok(()),
+            // Deviation 12: a Gezik is running already; start at login has nothing to add.
+            instance::Claim::Taken if background => return Ok(()),
             // The folders come by event, later: handed on below.
             instance::Claim::Taken if bundle_launch => {
                 taken = true;
@@ -815,6 +822,9 @@ fn main() -> Result<(), slint::PlatformError> {
     if secondary && let Some(store) = &config {
         store.keep_state_unwritten();
     }
+    // Spec 9.3: hidden only where the tray can bring the window back.
+    let hidden = resident::start_hidden(background, !secondary, initial_settings.system.tray);
+    resident::begin(&window, config.clone(), !secondary, !hidden, saved_state.tray_told);
     let plan = resolve_start(
         &initial_settings,
         &cli.targets,
@@ -877,7 +887,10 @@ fn main() -> Result<(), slint::PlatformError> {
     });
     apply_config(&window, &files.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
     window_state::restore(&window, &saved_state, if secondary { 32 } else { 0 });
-    keep_on_screen(window.as_weak(), 0);
+    resident::when_shown({
+        let weak = window.as_weak();
+        move || keep_on_screen(weak, 0)
+    });
     let view = view::View::new(&window, memory, config.clone());
     view.set_defaults(initial_settings.view);
     view.set_options(view_options::current());
@@ -1064,23 +1077,59 @@ fn main() -> Result<(), slint::PlatformError> {
             preview.close_quick_look();
         })
     };
-    window.window().on_close_requested({
-        let (ops, save_and_quit, weak) = (ops.clone(), save_and_quit.clone(), window.as_weak());
-        move || {
-            let quit = {
-                let (save_and_quit, weak) = (save_and_quit.clone(), weak.clone());
-                move || {
-                    save_and_quit();
-                    if let Some(window) = weak.upgrade() {
-                        let _ = window.hide();
-                    }
-                    let _ = slint::quit_event_loop();
+    // Saves and ends the event loop (run_event_loop_until_quit: deviation 13).
+    let finish: Rc<dyn Fn()> = {
+        let (save_and_quit, weak) = (save_and_quit.clone(), window.as_weak());
+        Rc::new(move || {
+            save_and_quit();
+            if let Some(window) = weak.upgrade() {
+                let _ = window.hide();
+            }
+            let _ = slint::quit_event_loop();
+        })
+    };
+    // Quit Gezik (the tray menu, the first close's question): running jobs ask first, over the window.
+    let quit_app: Rc<dyn Fn()> = {
+        let (ops, finish) = (ops.clone(), finish.clone());
+        Rc::new(move || {
+            let then = finish.clone();
+            if ops.confirm_close(move || then()) {
+                resident::reveal();
+            } else {
+                finish();
+            }
+        })
+    };
+    resident::set_hooks(resident::Hooks {
+        quit: quit_app.clone(),
+        run: {
+            let (weak, nav, view, preview, ops) =
+                (window.as_weak(), nav.clone(), view.clone(), preview.clone(), ops.clone());
+            Rc::new(move |action| {
+                if let Some(window) = weak.upgrade() {
+                    perform(action, &window, &nav, &view, &preview, &ops);
                 }
-            };
-            if ops.confirm_close(quit) {
+            })
+        },
+        pins: Rc::new(|| {
+            let mut pins = Vec::new();
+            sidebar::with_current(|s| pins = s.pinned_places().into_iter().map(|(label, _)| label).collect());
+            pins
+        }),
+    });
+    window.window().on_close_requested({
+        let (ops, save_and_quit, finish) = (ops.clone(), save_and_quit.clone(), finish.clone());
+        move || {
+            // With the tray icon up the window only hides (spec 9.1); what it shows is saved.
+            if resident::close_requested() {
+                save_and_quit();
                 return slint::CloseRequestResponse::KeepWindowShown;
             }
-            save_and_quit();
+            let then = finish.clone();
+            if ops.confirm_close(move || then()) {
+                return slint::CloseRequestResponse::KeepWindowShown;
+            }
+            finish();
             slint::CloseRequestResponse::HideWindow
         }
     });
@@ -1132,7 +1181,10 @@ fn main() -> Result<(), slint::PlatformError> {
         context_menu::Menus::new(&window, nav.clone(), view.clone(), preview.clone(), sidebar.clone(), ops.clone());
     let drags = drag::Drags::new(&window, nav.clone(), view.clone(), sidebar, ops.clone(), menus.clone());
     drags.install(&window);
-    drags.attach_when_ready(0);
+    resident::when_shown({
+        let drags = drags.clone();
+        move || drags.attach_when_ready(0)
+    });
     window.on_row_menu({
         let (menus, view) = (menus.clone(), view.clone());
         move |i, x, y| {
@@ -1531,7 +1583,14 @@ fn main() -> Result<(), slint::PlatformError> {
             });
         });
     }
-    window.run()
+    resident::start();
+    // Deviation 13: hiding the last window must not end the event loop.
+    if !hidden {
+        window.show()?;
+    }
+    let ran = slint::run_event_loop_until_quit();
+    resident::shutdown();
+    ran
 }
 
 #[cfg(test)]
