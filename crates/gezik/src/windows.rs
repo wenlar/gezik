@@ -383,14 +383,19 @@ fn open_new(opening: Opening) -> Option<WindowId> {
 }
 
 /// The extra windows of last time (deviation 5), built behind `first` (the most recently
-/// focused one, `[session]`'s); the last one first, so they keep their order.
+/// focused one, `[session]`'s) in their focus order.
 /// Call before `first` is built: its build writes every window's tabs once.
 pub fn open_saved(first: WindowId, state: &Rc<State>, start: &Location) {
     let before = BUILDING.with(|b| b.replace(true));
-    for saved in state.windows.iter().rev() {
-        open_new(Opening::saved(saved, state, start));
-    }
+    // Slint makes the native windows of a start in the reverse order of their `AppWindow`s
+    // (the last made goes under the others): the front one is made first (`first`, by main),
+    // then each one in front of the next.
+    let built: Vec<WindowId> =
+        state.windows.iter().filter_map(|saved| open_new(Opening::saved(saved, state, start))).collect();
     BUILDING.with(|b| b.set(before));
+    for id in built.into_iter().rev() {
+        focused(id);
+    }
     focused(first);
 }
 
@@ -1834,6 +1839,34 @@ pub(crate) mod tests {
         assert!(!others_open(second));
         close_requested(second);
         assert_eq!(finished.get(), 3);
+        for_each(|w| {
+            let _ = w.hide();
+        });
+        release_all();
+    }
+
+    /// Fix 7: the saved windows come back in their focus order behind the first one, their
+    /// `AppWindow`s made front to back (Slint makes the native ones of a start in reverse).
+    #[test]
+    fn saved_windows_come_back_in_their_order() {
+        let ((first, _), (second, _)) = two_windows(Rc::new(Cell::new(0)));
+        let home = Location::Path(std::env::temp_dir());
+        let at = |name: &str| WindowSession {
+            session: Session::single(Location::Path(std::env::temp_dir().join(name))),
+            ..WindowSession::default()
+        };
+        let state = Rc::new(State { windows: vec![at("c"), at("b")], ..State::default() });
+        focused(first);
+        open_saved(first, &state, &home);
+        let order = focus_order();
+        let shown = |id| enter(id, || panes::active_nav().active_location());
+        assert_eq!(order[0], first);
+        assert_eq!(
+            (shown(order[1]), shown(order[2])),
+            (at("c").session.tabs[0].location.clone(), at("b").session.tabs[0].location.clone())
+        );
+        assert!(order[1].0 < order[2].0, "the one in front is made first");
+        assert_eq!(order[3], second);
         for_each(|w| {
             let _ = w.hide();
         });
