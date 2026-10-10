@@ -56,7 +56,8 @@ pub fn run_with_input(args: &[&str], input: &str) -> io::Result<Ran> {
 /// How long a helper may take (a server that never answers): it is then stopped.
 const HELPER_LIMIT: Duration = Duration::from_secs(60);
 
-fn run_until(args: &[&str], input: &str, limit: Duration) -> io::Result<Ran> {
+/// [`run_with_input`] with its own time limit; past it the helper is stopped (`TimedOut`).
+pub(crate) fn run_until(args: &[&str], input: &str, limit: Duration) -> io::Result<Ran> {
     let (program, rest) = args.split_first().ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
     let mut child = Command::new(program)
         .args(rest)
