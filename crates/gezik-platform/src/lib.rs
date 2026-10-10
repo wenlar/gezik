@@ -51,6 +51,9 @@ pub use locale::language;
 /// macOS: the folders LaunchServices hands to Gezik (spec 6.2).
 #[cfg(target_os = "macos")]
 pub use mac::open_urls;
+/// macOS: a Dock click shows the hidden window (9b9).
+#[cfg(target_os = "macos")]
+pub use mac::reopen;
 pub use picture::{
     Decoded, MAX_DECODE_BYTES, MAX_DECODE_SIDE, can_decode, decode_image, only_in_cloud, thumbnail, thumbnail_while,
 };

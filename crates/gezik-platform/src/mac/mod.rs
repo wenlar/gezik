@@ -9,6 +9,7 @@ pub(crate) mod info;
 pub mod open_urls;
 pub(crate) mod open_with;
 pub(crate) mod ql_panel;
+pub mod reopen;
 pub(crate) mod services;
 pub(crate) mod share;
 pub(crate) mod thumbs;
