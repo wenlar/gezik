@@ -49,7 +49,7 @@ pub fn with_pinned(text: &str, pinned: &[PinEntry]) -> Result<String, String> {
     Ok(doc.to_string())
 }
 
-/// Returns `text` with `[view]`'s `mode`, `sort`, `sort-dir` and `grid-size` set from
+/// Returns `text` with `[view]`'s `mode`, `sort`, `sort-dir`, `grid-size` and `group` set from
 /// `view` ("Apply to all folders"); other `[view]` keys and the rest of the file stay.
 pub fn with_view_defaults(text: &str, view: &gezik_core::view::ViewSettings) -> Result<String, String> {
     edit_table(
@@ -60,6 +60,7 @@ pub fn with_view_defaults(text: &str, view: &gezik_core::view::ViewSettings) -> 
             ("sort", view.sort.key.as_str().into()),
             ("sort-dir", view.sort.dir.as_str().into()),
             ("grid-size", view.grid_size.as_str().into()),
+            ("group", view.group.as_str().into()),
         ],
     )
 }
@@ -442,6 +443,7 @@ mod tests {
             mode: ViewMode::Grid,
             sort: SortSpec { key: SortKey::Size, dir: SortDir::Desc },
             grid_size: GridSize::Large,
+            group: gezik_core::group::GroupBy::Size,
         };
         let text = "# mine\ntheme = \"nord\"\n\n[view]\n# keep me\nicons = \"gezik\"\nmode = \"list\"\n";
         let out = with_view_defaults(text, &view).unwrap();
@@ -452,6 +454,7 @@ mod tests {
         assert_eq!(v["sort"].as_str(), Some("size"));
         assert_eq!(v["sort-dir"].as_str(), Some("desc"));
         assert_eq!(v["grid-size"].as_str(), Some("large"));
+        assert_eq!(v["group"].as_str(), Some("size"));
         assert_eq!(v["icons"].as_str(), Some("gezik"));
 
         let added = with_view_defaults("theme = \"auto\"\n", &view).unwrap();

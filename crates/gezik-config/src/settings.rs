@@ -4,6 +4,7 @@ use crate::Warning;
 use crate::pins::{PinEntry, find as find_pin, parse_pin};
 use crate::shortcuts::{KeyOwner, Platform, Shortcuts, fixed_owner, parse_chord};
 use gezik_core::batch::convert::{CommandSpec, check_command};
+use gezik_core::group::GroupBy;
 use gezik_core::history::Visit;
 use gezik_core::nav::{Location, Session, SessionTab};
 use gezik_core::ops::threads::{COPY_THREADS_RANGE, CopyThreads};
@@ -755,6 +756,10 @@ fn parse_view(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> V
     let sizes = "\"small\", \"medium\" or \"large\"";
     if let Some(size) = view_choice(table, "grid-size", sizes, GridSize::parse, file, warnings) {
         out.view.grid_size = size;
+    }
+    let groups = "\"none\", \"type\", \"date\" or \"size\"";
+    if let Some(group) = view_choice(table, "group", groups, GroupBy::parse, file, warnings) {
+        out.view.group = group;
     }
     if let Some(icons) = view_choice(table, "icons", "\"system\" or \"gezik\"", IconMode::parse, file, warnings) {
         out.icons = icons;
@@ -2135,24 +2140,30 @@ width = 900
         use gezik_core::view::{GridSize, IconMode, SortDir, SortKey, ViewMode};
         let (settings, warnings) = parse(
             "[view]\nmode = \"grid\"\nsort = \"size\"\nsort-dir = \"desc\"\ngrid-size = \"large\"\n\
-             icons = \"gezik\"\nthumbnails = false\n",
+             group = \"date\"\nicons = \"gezik\"\nthumbnails = false\n",
         );
         assert!(warnings.is_empty(), "{warnings:?}");
         let v = settings.view;
         assert_eq!((v.view.mode, v.view.sort.key, v.view.sort.dir), (ViewMode::Grid, SortKey::Size, SortDir::Desc));
         assert_eq!((v.view.grid_size, v.icons, v.thumbnails), (GridSize::Large, IconMode::Gezik, false));
+        assert_eq!(v.view.group, gezik_core::group::GroupBy::Date);
     }
 
     #[test]
     fn bad_view_values_keep_defaults_with_warnings() {
-        let (settings, warnings) =
-            parse("[view]\nmode = \"tiles\"\nsort-dir = 1\nthumbnails = \"yes\"\nicons = \"system\"\n");
+        let (settings, warnings) = parse(
+            "[view]\nmode = \"tiles\"\nsort-dir = 1\ngroup = \"tag\"\nthumbnails = \"yes\"\nicons = \"system\"\n",
+        );
         assert_eq!(settings.view, ViewDefaults::default());
         let messages: Vec<_> = warnings.iter().map(|w| w.message.as_str()).collect();
-        assert_eq!(messages.len(), 3, "{messages:?}");
+        assert_eq!(messages.len(), 4, "{messages:?}");
         assert!(messages[0].starts_with("view.mode:") && messages[0].contains("\"tiles\""));
         assert!(messages[1].starts_with("view.sort-dir:"));
-        assert!(messages[2].starts_with("view.thumbnails:"));
+        assert!(
+            messages[2].starts_with("view.group: expected \"none\", \"type\", \"date\" or \"size\""),
+            "{messages:?}"
+        );
+        assert!(messages[3].starts_with("view.thumbnails:"));
         let (_, warnings) = parse("view = 3\n");
         assert!(warnings[0].message.starts_with("view: expected a table"));
     }

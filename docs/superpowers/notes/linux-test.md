@@ -524,6 +524,16 @@ Numbers start at 131: 122–130 are 9b10's (PR #56), so whichever of the two mer
 136. **Shortcut on Wayland.** KDE 6 or GNOME 48+: `Turn on` ▸ `super+shift+e`: the desktop shows its own shortcut dialog (write down what it shows and whether it kept Super+Shift+E); after you accept, the shortcut works. Cancel the desktop's dialog: write down what Gezik says. A desktop without the GlobalShortcuts portal: `This desktop does not support global shortcuts.`
 137. **Start at login and --background.** `Turn on` in `Start at login`: `~/.config/autostart/gezik.desktop` (`desktop-file-validate` clean, `Exec="…/gezik" --background` with the absolute path, `NoDisplay=true`); log out and in: Gezik in the tray without a window (tray on and a host) or with its window. `Turn off` removes the file; `gezik --unregister` removes it too. Memory (`ps -o rss= -p $(pgrep -x gezik)`): defaults, tray + shortcut on, hidden; write the three numbers (spec: the D-Bus connection ≤ +0.3 MB).
 
+### 10d, grouping
+
+Numbers stay as they are when branches merge: if this range meets one merged earlier, the later branch moves its items to the next free ten and writes the old number in brackets in the results file; gaps are not filled. 10d starts at 150 as its plan decided (other open branches take the numbers before it).
+
+150. **Tests first.** `cargo test -p gezik-core group layout selection drag`, `cargo test -p gezik view::`; paste.
+151. **Group by Date and keys** (GNOME and KDE): View ▸ Group by ▸ Date in `~/Downloads`; headers, ↑/↓ skip them, Home/End, PgUp/PgDn; a header click closes/opens; right-click menu (`Collapse All Groups`, `Expand All Groups`, `Group by ▸`).
+152. **Grid and rubber band.** Ctrl+Shift+2; a rubber band across a header; Ctrl+A with a group closed counts only the shown items.
+153. **Trash.** The Trash grouped by Date shows the deletion dates (`~/.local/share/Trash/info/*.trashinfo` `DeletionDate`). Do not empty or restore anything.
+154. **Remembered.** Restart: the folder keeps its grouping (`~/.config/gezik/views.toml` has `group = "date"`).
+
 ## Known gaps (not bugs)
 
 - **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (F5 works it out again). Search results and the flat view show no folder sizes.

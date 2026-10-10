@@ -9,6 +9,7 @@ use std::rc::Rc;
 
 use gezik_config::settings::ViewOption;
 use gezik_core::drag::Effect;
+use gezik_core::group::GroupBy;
 use gezik_core::nav::Location;
 use gezik_core::path_text::PathFormat;
 use gezik_core::search::{DateRange, Scope, SearchSpec};
@@ -479,6 +480,14 @@ pub const KEEP_OFFLINE: u32 = 1860;
 pub const FREE_UP: u32 = 1861;
 /// 1881: the View menu's last item (spec 13.3).
 pub const SYSTEM_INTEGRATION: u32 = 1881;
+// Step 10 (spec 10 §10.3): 2000–2199.
+/// Group by ▸ None, Type, Date, Size (`GroupBy::ALL` order); 2004–2009 for tags and later.
+pub const GROUP_BY_NONE: u32 = 2000;
+pub const GROUP_BY_TYPE: u32 = 2001;
+pub const GROUP_BY_DATE: u32 = 2002;
+pub const GROUP_BY_SIZE: u32 = 2003;
+pub const COLLAPSE_GROUPS: u32 = 2010;
+pub const EXPAND_GROUPS: u32 = 2011;
 
 /// A trash row's menu: only what the trash does (no Explorer menu, nothing that acts on a
 /// `$R…` name).
@@ -763,6 +772,22 @@ pub fn format_subs(options: ViewOptions, at: usize) -> Vec<Submenu> {
         Submenu { title: "Date format".to_owned(), at, items: dates },
         Submenu { title: "Size format".to_owned(), at, items: sizes },
     ]
+}
+
+/// Group by ▸ (spec 10 §6.2): None, Type, Date, Size, the current one marked; at place `at`.
+pub fn group_by_sub(current: GroupBy, at: usize) -> Submenu {
+    let mark = |on: bool, title: &str| format!("{}{title}", if on { "• " } else { "    " });
+    let items = [GROUP_BY_NONE, GROUP_BY_TYPE, GROUP_BY_DATE, GROUP_BY_SIZE]
+        .into_iter()
+        .zip(GroupBy::ALL)
+        .map(|(id, by)| (id, mark(by == current, by.title()), true))
+        .collect();
+    Submenu { title: "Group by".to_owned(), at, items }
+}
+
+/// A group header's menu, before Group by ▸.
+pub fn group_header_items() -> Vec<(u32, &'static str)> {
+    vec![(COLLAPSE_GROUPS, "Collapse All Groups"), (EXPAND_GROUPS, "Expand All Groups")]
 }
 
 /// What View menu item `id` changes, from `options` as they are now.
@@ -1356,14 +1381,25 @@ impl Menus {
         self.open_slint_entries(&list, subs, Anchor::point(x, y));
     }
 
-    /// Right-click on the column header, at window position `x`, `y`.
+    /// Right-click on the column header, at window position `x`, `y`: the columns, then Group by ▸.
     pub fn header(&self, x: f32, y: f32) {
         *self.subject.borrow_mut() = Some(Subject::Header);
-        if self.view.shows_results() {
-            self.open_slint(&result_header_items(&self.view.result_columns()), Anchor::point(x, y));
+        let items: Vec<(u32, String, bool)> = if self.view.shows_results() {
+            result_header_items(&self.view.result_columns()).into_iter().map(|(id, t)| (id, t, true)).collect()
         } else {
-            self.open_slint(&header_items(&self.view.columns()), Anchor::point(x, y));
-        }
+            header_items(&self.view.columns()).into_iter().map(|(id, t)| (id, t.to_owned(), true)).collect()
+        };
+        let at = items.len();
+        self.open_slint_entries(&items, vec![group_by_sub(self.view.view_settings().group, at)], Anchor::point(x, y));
+    }
+
+    /// Right-click on a group's header line (spec 10 §6.2).
+    pub fn group_header(&self, x: f32, y: f32) {
+        *self.subject.borrow_mut() = Some(Subject::View);
+        let items: Vec<(u32, String, bool)> =
+            group_header_items().into_iter().map(|(id, t)| (id, t.to_owned(), true)).collect();
+        let at = items.len();
+        self.open_slint_entries(&items, vec![group_by_sub(self.view.view_settings().group, at)], Anchor::point(x, y));
     }
 
     /// The View button's menu, under it.
@@ -1389,7 +1425,18 @@ impl Menus {
             let at_calc = entries.iter().position(|(id, _, _)| *id == RESET_FOLDER).unwrap_or(entries.len());
             entries.insert(at_calc, (CALC_FOLDER_SIZES, "    Calculate folder sizes".to_owned(), true));
         }
-        self.open_slint_entries(&entries, format_subs(options, place + 1), at);
+        // Group by ▸ right after the sort's direction; a grouped view's Collapse/Expand All after it.
+        let at_group = entries.iter().position(|(id, _, _)| *id == SORT_DESC).map_or(entries.len(), |i| i + 1);
+        let shift = if self.view.grouped() {
+            let all = group_header_items().into_iter().map(|(id, t)| (id, format!("    {t}"), true));
+            entries.splice(at_group..at_group, all);
+            group_header_items().len()
+        } else {
+            0
+        };
+        let mut subs = format_subs(options, place + 1 + shift);
+        subs.push(group_by_sub(self.view.view_settings().group, at_group));
+        self.open_slint_entries(&entries, subs, at);
     }
 
     /// `subs`: submenus among `items`. `at`: where the Windows menu opens (window position),
@@ -1663,6 +1710,11 @@ impl Menus {
             (id, _) if (RECENT_SERVER_FIRST..RECENT_SERVER_FIRST + RECENT_SERVER_MAX).contains(&id) => {
                 crate::connect::open_recent((id - RECENT_SERVER_FIRST) as usize)
             }
+            (id, _) if (GROUP_BY_NONE..=GROUP_BY_SIZE).contains(&id) => {
+                self.view.set_group(GroupBy::ALL[(id - GROUP_BY_NONE) as usize]);
+            }
+            (COLLAPSE_GROUPS, _) => self.view.collapse_all(true),
+            (EXPAND_GROUPS, _) => self.view.collapse_all(false),
             (RUN_SEARCH_NEW_TAB, Subject::SavedSearch(name)) => {
                 crate::saved_searches::with_current(|s| s.run(&name, true));
             }
@@ -2097,6 +2149,7 @@ fn from_submenu(id: u32) -> bool {
         || crate::tab_sets::set_item(id).is_some()
         || (DATE_FORMAT_FIRST..DATE_FORMAT_FIRST + DateFormat::ALL.len() as u32).contains(&id)
         || (SIZE_FORMAT_FIRST..SIZE_FORMAT_FIRST + SizeFormat::ALL.len() as u32).contains(&id)
+        || (GROUP_BY_NONE..=GROUP_BY_SIZE).contains(&id)
         || (GROUP_MOVE_FIRST..GROUP_MOVE_FIRST + GROUP_MAX).contains(&id)
         || id == GROUP_NEW
         || id == GROUP_NONE
@@ -2403,6 +2456,26 @@ mod tests {
     }
 
     #[test]
+    fn group_menus_list_the_choices() {
+        let sub = group_by_sub(GroupBy::Date, 3);
+        assert_eq!((sub.title.as_str(), sub.at), ("Group by", 3));
+        let ids: Vec<u32> = sub.items.iter().map(|(id, _, _)| *id).collect();
+        assert_eq!(ids, [GROUP_BY_NONE, GROUP_BY_TYPE, GROUP_BY_DATE, GROUP_BY_SIZE]);
+        let marked: Vec<&str> =
+            sub.items.iter().filter(|(_, t, _)| t.starts_with("• ")).map(|(_, t, _)| t.as_str()).collect();
+        assert_eq!(marked, ["• Date"]);
+        assert_eq!(
+            group_header_items(),
+            [(COLLAPSE_GROUPS, "Collapse All Groups"), (EXPAND_GROUPS, "Expand All Groups")]
+        );
+        assert_eq!(
+            (GROUP_BY_NONE, GROUP_BY_SIZE, COLLAPSE_GROUPS, EXPAND_GROUPS),
+            (2000, 2003, 2010, 2011),
+            "spec 10 §10.3"
+        );
+    }
+
+    #[test]
     fn conversion_ids_meet_no_others() {
         // Every range of ids, with the single ids as ranges of one.
         let singles = [
@@ -2510,10 +2583,13 @@ mod tests {
             CONNECT_SERVER,
             EJECT,
             DISCONNECT,
+            COLLAPSE_GROUPS,
+            EXPAND_GROUPS,
         ];
         let mut ranges: Vec<std::ops::Range<u32>> = singles.iter().map(|id| *id..id + 1).collect();
         ranges.extend([
             RECENT_SERVER_FIRST..RECENT_SERVER_FIRST + RECENT_SERVER_MAX,
+            GROUP_BY_NONE..GROUP_BY_NONE + 4,
             TOGGLE_COLUMN_FIRST..RESET_COLUMNS,
             CONFLICT_FIRST..CONFLICT_FIRST + 4,
             ADD_RULE_FIRST..ADD_RULE_FIRST + 10,
@@ -2858,6 +2934,7 @@ mod tests {
             mode: ViewMode::Grid,
             sort: SortSpec { key: SortKey::Size, dir: SortDir::Desc },
             grid_size: GridSize::Large,
+            ..ViewSettings::default()
         };
         let items = view_items(grid, false, false, ViewOptions::default(), false);
         let marked: Vec<&str> =

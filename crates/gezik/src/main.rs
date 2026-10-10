@@ -266,7 +266,13 @@ fn perform(
         | Action::ShowPackageContents
         | Action::GetInfo
         | Action::ConnectToServer
-        | Action::Eject => return actions::run(action, nav, view),
+        | Action::Eject
+        | Action::GroupNone
+        | Action::GroupType
+        | Action::GroupDate
+        | Action::GroupSize
+        | Action::CollapseGroups
+        | Action::ExpandGroups => return actions::run(action, nav, view),
     }
     true
 }
@@ -1300,6 +1306,22 @@ fn main() -> Result<(), slint::PlatformError> {
     window.on_header_menu({
         let menus = menus.clone();
         move |x, y| menus.header(x, y)
+    });
+    window.on_list_line_of({
+        let view = view.clone();
+        move |i| view.place_of(usize::try_from(i).unwrap_or(usize::MAX)).0
+    });
+    window.on_list_column_of({
+        let view = view.clone();
+        move |i| view.place_of(usize::try_from(i).unwrap_or(usize::MAX)).1
+    });
+    window.on_list_group_toggled({
+        let view = view.clone();
+        move |first| view.toggle_group(usize::try_from(first).unwrap_or(usize::MAX))
+    });
+    window.on_list_group_menu({
+        let menus = menus.clone();
+        move |x, y| menus.group_header(x, y)
     });
     window.on_filter_menu({
         let menus = menus.clone();

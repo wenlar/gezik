@@ -1,6 +1,7 @@
 //! `views.toml` (this machine only): the view of each folder the user changed. Gezik
 //! writes it itself, so single bad entries are skipped without warnings.
 
+use gezik_core::group::GroupBy;
 use gezik_core::view::{GridSize, SortDir, SortKey, SortSpec, ViewMode, ViewSettings};
 use gezik_core::view_memory::FolderView;
 
@@ -26,6 +27,7 @@ pub fn parse_views(text: &str) -> Result<Vec<FolderView>, String> {
                         dir: text("sort-dir").and_then(SortDir::parse).unwrap_or(defaults.sort.dir),
                     },
                     grid_size: text("grid-size").and_then(GridSize::parse).unwrap_or(defaults.grid_size),
+                    group: text("group").and_then(GroupBy::parse).unwrap_or(defaults.group),
                 },
                 used: item.get("used").and_then(|v| v.as_integer()).and_then(|u| u64::try_from(u).ok()).unwrap_or(0),
             })
@@ -44,6 +46,7 @@ pub fn views_to_toml(folders: &[FolderView]) -> String {
             folder.insert("sort".into(), text(f.view.sort.key.as_str()));
             folder.insert("sort-dir".into(), text(f.view.sort.dir.as_str()));
             folder.insert("grid-size".into(), text(f.view.grid_size.as_str()));
+            folder.insert("group".into(), text(f.view.group.as_str()));
             folder.insert("used".into(), toml::Value::Integer(i64::try_from(f.used).unwrap_or(i64::MAX)));
             toml::Value::Table(folder)
         })
@@ -70,12 +73,30 @@ mod tests {
                     mode: ViewMode::List,
                     sort: SortSpec { key: SortKey::Modified, dir: SortDir::Desc },
                     grid_size: GridSize::Small,
+                    group: GroupBy::Date,
                 },
                 ..folder("/home/me/Belgeler", ViewMode::List, 3)
             },
         ];
         assert_eq!(parse_views(&views_to_toml(&folders)).unwrap(), folders);
         assert_eq!(parse_views(&views_to_toml(&[])).unwrap(), []);
+    }
+
+    #[test]
+    fn a_missing_or_bad_group_is_none() {
+        let folders = parse_views(
+            "[[folder]]
+path = \"/a\"
+group = \"tag\"
+
+[[folder]]
+path = \"/b\"
+",
+        )
+        .unwrap();
+        assert!(folders.iter().all(|f| f.view.group == GroupBy::None), "{folders:?}");
+        let text = views_to_toml(&[folder("/c", ViewMode::List, 1)]);
+        assert!(text.contains("group = \"none\""), "{text}");
     }
 
     #[test]

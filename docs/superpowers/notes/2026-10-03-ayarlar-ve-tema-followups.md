@@ -946,6 +946,92 @@ Alt proje 1 tamamlandıktan sonra bilerek ertelenen maddeler. Kaynak: görev inc
 - **Küçük not:** kısayolu kapattıktan sonra durum çubuğunda önceki `Shift+Win+F9 shows or hides Gezik now` iletisi duruyor (eski ileti, yeni bir şey yazılmıyor) (`r3c`).
 - **Temizlik:** Gezik kapalı, yardımcılar kapalı, Win+Shift+F9 serbest (True), `Run`'da `Gezik` yok.
 
+## Adım 10, alt parça 10d (Gruplama: tür, tarih, boyut; kapanır grup başlıkları) sonrası
+
+- Ölçüm, exe boyutu (sürüm, `cargo build --release -p gezik -j 4`, Windows): taban (planın commit'i `9c5c7b6`, ayrı bir `git worktree`'de) **24.667.136 bayt**; sınır taban + 262.144 = **24.929.280**. Görev görev: Task 1 `31ef9ac` 24.679.936 (+12.800), Task 2 `e0cf157` 24.680.448, Task 3 `a584ef6` 24.722.944, Task 4 `9a5970e` **24.769.536** (toplam **+102.400**, sınırın 159.744 altında; planın beklentisi ~20-50 KB'ın üstünde: başlık satırı, menüler ve iki `pure callback` Slint'te büyüttü). Task 5 kod eklemedi, aynı boyut.
+- Sapmalar (planın 1-18'i, kısaca): kendi sütunuyla gruplanınca gruplar o sütunun yönünü izler (1); `folders-first` klasör grubunu her yönde başa alır (2); tarih kovaları yerel gece yarıları, `Later` eklendi, hafta Pazartesi (3); tür grubu Type sütununun metni (4); boyut kovaları ikili, bilinmeyen klasörler `Folders` (5); ızgarada başlık bir hücre satırı (6); `ItemRow.header`/`collapsed`, sayı metinde (7); menü kimlikleri `GROUP_BY_*` 2000-2003, 2010, 2011 (8); `Action::ALL` 85 → 89 (9; incelemeyle 91, aşağıda); arama sonuçları ve düz görünüm yalnız sıralandıktan sonra gruplu (10); kapanan grubun seçimi ve odağı (11); başlık odak almaz (12); This PC gruplanmaz (13); sıralama maliyeti ölçütü (14); macOS menü çubuğu işaretsiz (15); `stress.ps1 -Group` (16); liste numaraları macOS 200, Linux 150 (17); dal ve ağaç (18).
+  - Uygulamadaki ek sapmalar: gruplamasız sıralama ayrı bir `sort_unstable_by` çağrısıyla, karşılaştırıcısı bugünküyle aynı (Task 1); sonuçlarda `resort` modeli yalnız önce ya da sonra gruplu ise sıfırlar, `after_selection` yalnız gizli satır varsa yeni `Vec` kurar, `sort_now` `DateBounds`/`Grouping`'i yalnız gruplu kurar (Task 3, gruplamasız yol değişmesin diye); `group_by_sub` dört kimliği `GroupBy::ALL` ile eşler, Group by kimlikleri `from_submenu`'de (alt menü seçiminden sonra odak listeye döner), başlığın `TouchArea`'sı süren lastik bandı besler (Task 4). Sapma 6'nın ızgara başlığı için `shortcut:` yorumu yazılmadı (yalnız Slint'te açıklama yorumu).
+- **İnceleme düzeltmeleri:** Task 1 ve 2 onaylandı (devredilen: `items_in_rect`/`entries_on` satır × grup olmasın). Task 3: `Lines::lines_from(n)` tek geçişle n. satırın grubuna gelir, sonra satırları yürür; `line`, `entries_on`, `items_in_rect` onu kullanır (lastik bant ve ekrandaki satırlar O(grup + satır)); gruplu görünümde yeniden çizim model satırıyla, satır satır (`ItemsModel::lines_changed`, hiçbir zaman sıfırlama değil; `a584ef6`, 100.000 satırlık kapalı grubun öbür yanındaki satırlar testi). Task 4: `collapse-groups` / `expand-groups` eylemleri (`Collapse All Groups` / `Expand All Groups`, tuşsuz; `Action::ALL` 89 → 91), View düğmesi menüsünde yalnız gruplu iken, macOS menü çubuğunun View'ında hep (`b9d9047`); ad değiştirme satırı ve hata kutusu grup değişince yeniden hesaplanır: `groups-version` (`View::groups_changed`, `regroup` ve `collapse_where` sonunda, ödünç bitince) `rename-line`'ın bağımlılığı, `groups-version < 0 ? -1 : line-of(i)` (`9a5970e`).
+- Başarım (sürüm, 100.000 öğe, `cargo test -p gezik-core --release -- --ignored grouped_sort`, Task 5'te): ad 47,0 ms, Type 91,5 ms; gruplu tarih 36,0 ms (**0,77×** ad), boyut 44,9 ms (**0,96×** ad), tür 60,4 ms (**0,66×** Type sıralaması; ölçüt bu, sapma 14). Tür gruplu ad sıralaması ÷ gruplamasız ad sıralaması **1,28×** (satır başına tür adı). Task 1'in sayıları aynı (0,75×, 0,94×, 0,67×, 1,33×). Gruplamasız `sorting_100k_names_is_fast` tabanla aynı (ort. 49,0 / 49,6 ms; 50 ms sınırı bu makinede tabanda da yarı yarıya düşer).
+- Bilinen sınırlar ve ertelenenler:
+  - `Lines::line_of`, `step`, `count` her çağrıda grupları dolaşır: O(grup) (`layout.rs` `shortcut:`). Binlerce türü olan bir klasörde ok tuşları ve `notify_plan` (değişen öğe başına bir `line_of`) yavaşlarsa her grubun ilk satırı tutulur.
+  - Tür gruplamasında `spans` satır başına tür adını `String` olarak alır (Task 1 incelemesi; sıralama bitince bırakılır, kalıcı bellek yok). `stress.ps1 -Group type` doğrular.
+  - macOS menü çubuğunun View ▸ `Collapse All Groups` / `Expand All Groups`'u gruplamasız da görünür (öğe başına kök özelliği yok; gruplamasız hiçbir şey yapmaz).
+  - Ad değiştirme alanı + grup açıp kapama / grup değişimi birlikte ekranda denenmedi (`rename-line`'ın `groups-version` bağımlılığı yalnız derlemeyle ve testlerle sınandı).
+  - Hafta her yerde Pazartesi başlar (sapma 3, `group.rs` `shortcut:`); ızgara başlığı bir hücre satırı (sapma 6); tek sonuçlu küme başlıksız (sapma 10, `shortcut:`); tür önbelleği eklenmedi.
+  - Gruplu sıralama satır başına `entry(i)`'yi iki kez kurar (sıra + tür); arama sonuçlarında (`Cow::Owned`) yalnız gruplu iken satır kurma maliyeti iki katı.
+  - `stress.ps1`'in klasörü 100.000 aynı tarihli boş `.txt`: her gruplama tek grup verir; başlık ve gruplu model yolunu ölçer, çok gruplu kaydırmayı değil.
+- Denetimler (`-j 4`, Windows, `9a5970e` + Task 5): `master` (`4645f24`) birleştirildi (zaten günceldi, çakışma yok); `cargo build --workspace`, `cargo test --workspace` **2027 geçti, 0 düştü**, `clippy --workspace --all-targets -D warnings`, `fmt --all --check` temiz. Çapraz denetimler: `gezik-core`, `gezik-config`, `gezik-platform`, `gezik-ops`, `gezik-search` için `x86_64-unknown-linux-gnu` `check` ve `clippy --all-targets -D warnings`; `RUST_MIN_STACK=67108864` ile `-p gezik --target aarch64-apple-darwin --no-default-features` `check` ve `clippy -D warnings`: **hepsi temiz, düzeltme gerekmedi**.
+- Bekleyenler:
+  - **Windows ekran testleri** (planın 14 maddesi, durum: bekliyor; ajan, kullanıcı uzaktayken), madde 13 dahil: `scripts/perf/stress.ps1 -Exe target\gezik-base.exe`, `stress.ps1`, `stress.ps1 -Group date`, `-Group type` (gruplu bellek ≤ gruplamasız + 0,1 MB, kaydırma CPU'su ±%5) ve `measure.ps1 -Runs 5`. Betik Task 5'te yazıldı, koşmadı.
+  - **macOS** (`macos-test.md` 200-207) ve **Linux** (`linux-test.md` 150-154): planın kararıyla 200'den ve 150'den (sapma 17).
+
+## Windows ekran testleri: 10d (2026-10-11)
+
+# 10d Windows ekran testleri (2026-10-10, ajan, kullanıcı uyurken)
+
+- Derleme: `D:\Work\gezik-10d` HEAD `e42cfd1`, `cargo build --release -p gezik -j 4` (zaten güncel, 0,28 s), exe **24.769.536 bayt** (notlardaki değerle aynı). Kopya `%TEMP%\gezik-10dgui\bin\gezik.exe`, her oturum taze `GEZIK_CONFIG_DIR`.
+- Birincil ekran (2560×1440), pencere 1500×1000 @ 100,80. Her tuş/tıklamadan önce ön plan penceresinin Gezik süreci olduğu denetlendi; yazı `SendInput` Unicode ile (klavye düzeni değişmedi).
+- Deneme klasörü `%TEMP%\gezik-10d`: 60 dosya (10 uzantı, 0 B…47,7 MB, yarın…2002 tarihleri), seyrek 300 MB / 2 GB / 5 GB `.iso`, 5 klasör (içinde 0,4…2 MB `inner.bin`).
+- Ekran görüntüleri `%TEMP%\gezik-10dgui\shots\` (dosya adları madde numarasıyla başlar; `R*` ad değiştirme, `K*` klavye).
+
+## Sonuçlar
+
+1. **Gruplama ve sıra — PASS.** Date: `Later (3)`, `Today (14)`, `Yesterday`, `Earlier this week`, `Last week`, `Last month`, `Earlier this year`, `2025`, `2024`, `2022`, `2019`, `2017`, `A long time ago (6)` (2013 ve 2002). Modified ↑ en eski başta (gruplar ters), ↓ en yeni başta; Name ↓ gruplar ters. Type (klasörler `File folder` başta, sistem adları), Size (`Folders`, `Gigantic`, `Huge`, `Large`, `Medium`, `Small`, `Tiny`, `Empty`). Sütun başlığı sağ tık menüsünde `Group by ▸` (None/Type/•Date/Size) var ve çalışıyor.
+   - Küçük gözlem: Home (ve sıralama sonrası Home) ilk öğeyi en üste kaydırıyor, ilk grubun başlığı (`Later (3)`, `A long time ago (6)`) görünür alanın üstünde kalıyor; tekerlekle yukarı çıkınca görünüyor (`01-modified-desc.png` / `01-modified-desc-top.png`). Explorer başlığı da gösterir.
+2. **Aç/kapa — PASS.** Başlık tıklaması grubu kapatıp açıyor, ok `⌄`/`›` dönüyor, kaydırma yerinde. Grup başlığı sağ tık: `Collapse All Groups` / `Expand All Groups` / `Group by ▸`. Palet ▸ `Group by Size` çalışıyor.
+3. **Kapalı grup ve seçim — PASS.** Medium kapalı, Ctrl+A → `52 selected` (68 − 16). Shift+↓ ×2 `big_large.iso`'dan kapalı Medium'un üstünden: `3 selected (300.3 MB)`, Medium'dan hiçbir şey yok. Odak Small'dayken Small kapatıldı → odak Tiny'nin ilk öğesine geçti, seçim yalnız görünen kaldı. Bütün gruplar kapalıyken Ctrl+A → seçim yok, Delete / Enter / F2 hiçbir şey yapmadı; `Get-ChildItem` 68 öğe.
+4. **Klavye — PASS.** ↑/↓/PgUp/PgDn/Home/End başlıkları atlıyor (↑ Tiny'nin ilk öğesinden iki kapalı başlığın üstünden `big_large.iso`'ya). `file_12` yazınca kapalı Medium açıldı, odak `file_12.png`. F2 gruplu listede; `bad<name` → `A name cannot contain <` kutusu doğru satırın altında. Shift+F10 menüyü odaktaki satırın adı hizasında açıyor (menü uzun olduğundan Windows yukarı kaydırdı).
+5. **Izgara — PASS.** Ctrl+Shift+2: her grup yeni satırda, başlık bir hücre satırı yüksekliğinde (sapma 6; başlık metni satırın altında, üstünde boş bir şerit — görsel olarak geniş boşluk). Pencere 1500 → 900: 10 → 5 sütun, yeniden diziliyor. → `renamed_ok`'tan (Tiny'nin sonu) `file_00.txt`'ye (Empty), ← geri. Lastik bant grup içinde 10 hücre; başlığın üstünden geçince (kenarda otomatik kaydırmayla) 27 hücre, başlık seçilmiyor.
+   - Küçük gözlem: lastik bant bir başlık satırının boş alanında (başlık metninin üstündeki şerit) başlatılınca hiç başlamıyor (`05-rubberband.png`).
+   - Küçük gözlem: liste → ızgara geçişinde odaktaki öğe (`file_13.jpg`) görünür alana kaydırılmadı, görünüm listenin sonundaydı.
+6. **Tür adları — PASS.** `[view] group = "type"` ile `C:\Windows\System32` (4960 öğe): gruplar sistem adlarıyla (`VBScript Script File`, `XSLT Stylesheet`, `Windows Command Script`…), yüklemeden sonra 10 s boyunca CPU 156 ms'de sabit (yeniden sıralama fırtınası yok), titreme görülmedi.
+7. **Boyut ve klasör boyutları — PASS.** Group by Size + Calculate Folder Sizes: klasörler `Folders`'tan çıkıp `Medium (19)` (folder_3/4/5, 1,1–1,9 MB) ve `Small (19)` (folder_1/2) gruplarına geçti; `Folders` grubu kalktı.
+   - Gözlem (10d dışı): bir dosya seçiliyken `Calculate Folder Sizes` hiçbir şey hesaplamadı (seçimde klasör yok; "none selected → all" kuralı dosya seçimiyle devreye girmiyor).
+8. **Arama ve düz görünüm — PASS (notla).** Arama (Ctrl+Shift+F, Everything ile 0,0 s) sonuçları ilk açılışta düz: klasörün `type` gruplaması sonuç görünümüne geçmiyor, sonuç görünümünün kendi ayarı var (`views.toml` `path = "<results>"`). Sonuçlarda palet ▸ Group by Type → gruplu (Gezik'in yedek tür adlarıyla, sapma 4: `CSV File`, `ZIP archive`…), yeniden arayınca gruplu kalıyor. `*.md` (6 sonuç, tek tür) başlıksız. "Arama sürerken düz" gözlenemedi (arama anlık). Ctrl+B düz görünüm `<results>` ayarıyla gruplu; süzgeç `_1` yazılınca başlık sayıları `(1)`'e indi, `10 / 68`.
+   - Plan "deneme klasöründe arama Group by Type ile … bitince gruplu" diyor; klasörün gruplaması aramaya taşınmıyor. Tasarım mı hata mı karar kullanıcıda.
+9. **Çöp — KISMİ (doğrulanamadı).** Show Trash açıldı, palet ▸ Group by Date (`views.toml` `<trash>` `group = "date"`). Çöp ilk açılışta boştu; sonra madde 10'un Ctrl+Z'si bir öğe ekledi (aşağıda), tek öğe olduğundan başlık yok (sapma 10). Silinme tarihi gruplaması birden çok öğeyle görülmedi. Hiçbir öğe silinmedi, geri konmadı, çöp boşaltılmadı.
+10. **Sürükle-bırak — PASS.** `file_15.zip` açık gruptaki `folder_2`'ye bırakıldı → `folder_2\file_15.zip`; Ctrl+Z geri aldı. `file_03.jpg` klasör satırının hemen altındaki başlığa (`Compressed (zipped) Folder`) bırakıldı → `folder_5`'e gitmedi, kökte kaldı; Ctrl ile bırakınca gösterilen klasöre `file_03 (2).jpg` kopyalandı (alt klasöre değil). Ctrl+Z kopyayı geri aldı.
+    - Yan etki: kopyanın Ctrl+Z'si dosyayı **Geri Dönüşüm Kutusu'na** taşıdı: çöpte şimdi `file_03 (2).jpg` (19,5 KB, `%TEMP%\gezik-10d`'den) var. Kurala göre çöpte silmedim; kullanıcı silebilir.
+    - Düz görünümde başlığa bırakmak: `Not in search results: open a folder first` (sonuç görünümüne bırakma zaten yok, 10d'den önce de böyle).
+11. **Bellek ve kalıcılık — PASS.** Klasör Date ile gruplu, kapat-aç: gruplu açıldı (`views.toml` `group = "date"`); `Temp` gruplamasız. `Apply to all folders` → `settings.toml` `[view] group = "date"` (ve `views.toml` `folder = []`). Klasör Size'a alınıp `Reset this folder` → varsayılan Date'e döndü. Kapalı `Later` grubu üst klasöre gidip dönünce açık.
+12. **İzleyici — PASS.** `Yesterday` kapalıyken dışarıdan `watch_today.txt` + dünkü tarihli `watch_yday.txt` eklendi → `Today (15)`, `Yesterday (4)`, kapalı kaldı, `70 items`; `watch_today.txt` ve `file_23.jpg` silindi → `Today (14)`, `Yesterday (3)`, `68 items`.
+13. **Ölçüm — PASS.** Aşağıda. Ölçümler sırasında cargo/rustc yoktu (her koşuda 0), CPU yükü %2.
+14. **Erişilebilirlik — PASS (Narrator olmadan).** Narrator açılmadı (ses ve ilk açılış penceresi odak alırdı); yerine UI Automation ağacı okundu: başlıklar `Button`, ad `Later (3), expanded` / `Today (14), expanded` / `Yesterday (3), collapsed`, `InvokePattern` var. `Today`'in Invoke'u grubu kapattı, ad `Today (14), collapsed` oldu. (`ExpandCollapsePattern` yok.)
+
+## Ek denetimler
+
+- **Ad değiştirme kutusu + grup açıp kapama:**
+  - Ad değiştirme sürerken palet (Ctrl+Shift+P) açılmıyor (metin alanı tuşu alıyor); yalnız View menüsü kalıyor.
+  - Geçerli bir ad yazılıyken View menüsüne tıklamak ad değiştirmeyi **onaylıyor** (odak kaybı): `file_02.png` → `renamed_ok` oldu, uzantısı gitti (Ctrl+A bütün adı seçtiği için; benim girdim). Bu yüzden geçerli adla "kutu açıkken grup değişimi" mümkün değil.
+  - Geçersiz adla (`x<y`, hata kutusu açık) View menüsü açılınca kutu açık kalıyor. Medium (16) kapalıyken Small'daki `file_03.jpg` adlandırılırken View ▸ `Expand All Groups`: kutu ve hata kutusu satırla birlikte 514 → 930 px'e indi, doğru satırda (**PASS**, `R9`/`R10`). Esc ad değiştirmeyi iptal etti, dosya aynı.
+  - Geçersiz adla View ▸ `Collapse All Groups`: satır gizlendi, ad değiştirme kutusu kayboldu (iptal; `file_54.docx` aynı adla duruyor).
+- **Yalnız klavyeyle aç/kapa — PASS (sınırla).** Palet ▸ `Collapse All Groups` / `Expand All Groups` çalışıyor; hepsi kapalıyken ↓, Enter, F2 hiçbir şey yapmıyor. Başlıklar odak almadığı için (sapma 12) tek bir grubu klavyeyle açıp kapamanın yolu yok; yalnız harfle atlama kapalı grubu açıyor.
+
+## Ölçüm (madde 13)
+
+`stress.ps1` (100.000 boş `.txt`, aynı tarih, yani her gruplamada tek grup), 3 tur, sırayla:
+
+| Koşu | Yükleme sonrası MB (3 tur) | Ort. | Kaydırma sonrası MB | Kaydırma CPU ms (3 tur) | Ort. |
+|---|---|---|---|---|---|
+| taban (`gezik-base.exe`, gruplamasız) | 17,0 / 17,2 / 16,8 | 17,0 | 17,1 / 17,3 / 17,1 | 250 / 203 / 313 | 255 |
+| 10d gruplamasız | 17,2 / 16,9 / 16,8 | 17,0 | 17,3 / 17,2 / 17,0 | 219 / 250 / 250 | 240 |
+| `-Group date` | 16,8 / 16,9 / 16,9 | 16,9 | 17,1 / 17,1 / 17,1 | 203 / 297 / 266 | 255 |
+| `-Group type` | 16,9 / 16,9 / 16,9 | 16,9 | 17,3 / 17,0 / 17,2 | 250 / 266 / 281 | 266 |
+| `-Group size` | 17,1 / 16,9 / 16,9 | 17,0 | 17,3 / 17,2 / 16,9 | 250 / 266 / 188 | 235 |
+
+- Bellek: gruplu ≤ gruplamasız + 0,1 MB **sağlanıyor** (hepsi 16,9–17,0 MB). 10d gruplamasız = taban.
+- Kaydırma CPU'su: 60 tekerlek adımı ~2,6 s'de 188–313 ms; turlar arası sapma ±50 ms (`TotalProcessorTime` 15,6 ms adımlı), ±%5 ölçütünden büyük. Ortalamalar 235–266 ms, taban 255: gürültü içinde, gruplu/gruplamasız arasında sistematik fark yok.
+- `measure.ps1 -Runs 5` (taze boş config, 2 tur): taban açılış 46 / 35 ms, bellek 7,2 / 7,3 MB; 10d açılış 38 / 38 ms, bellek 7,3 / 7,3 MB. Fark yok. Exe 23,52 MB → 23,62 MB (+102.400 bayt, sınırın altında).
+- Taban exe `target/gezik-base.exe` (planın commit'i `9c5c7b6`'dan, notlardaki gibi); master'ı ayrıca derlemedim.
+
+## Temizlik
+
+- Açtığım bütün Gezik pencereleri kapatıldı (Alt+F4); arta kalan `gezik` süreci yok.
+- Silinenler: deneme klasörü `%TEMP%\gezik-10d`, config klasörleri (`cfg1`, `cfg6`, `cfg-perf-none`, `cfg-measure`, `%TEMP%\gezik-stress-config-{date,type,size}`), `bin\`, yardımcı betikler. `%TEMP%\gezik-stress-100000` daha önce vardı, dokunulmadı.
+- Geri Dönüşüm Kutusu'nda benim yüzümden bir öğe var: `file_03 (2).jpg` (madde 10'daki kopyanın Ctrl+Z'si). Silmedim.
+- Kayıt defterine yazılmadı, klavye düzeni değişmedi, commit yok.
+
 ## Windows ekran testleri: 9b8 (2026-10-11)
 
 - **Windows ekran testleri** (2026-10-10 05:33-05:50, kullanıcı uzaktayken (uyurken) onun izniyle; `feat/system-9b8` `b3e7280`'in sürüm derlemesi (`D:\Work\gezik-9b8`, `cargo build --release -p gezik -j 4`, **24.714.752 bayt**), kopyası `%TEMP%\gezik-9b8gui\bin\gezik.exe`; Win32 SendInput (fare mutlak, metin `KEYEVENTF_UNICODE`; her tuştan önce hedef pencerenin önde olduğu denetlendi) + `CopyFromScreen` (imleç ayrıca `GetCursorInfo`/`DrawIconEx` ile çizildi), geçici `GEZIK_CONFIG_DIR` (`%TEMP%\gezik-9b8gui\cfg`), bırakma klasörü `%TEMP%\gezik-9b8gui\data\gezik-9b8-screen`; yalnız birincil ekran (2560×1440); klavye düzeni hiç değiştirilmedi; kayıt defterine yazılmadı; kanıt `%TEMP%\gezik-9b8gui\shots\`). Kaynaklar: Edge ve Chrome **ayrı, yeni profillerle** (`--user-data-dir` geçici klasörde) açılmış kendi pencereleri; sayfa `127.0.0.1:8798` üzerinde yerel `python -m http.server` (internet yok; planın "https sayfası" yerine, `file://` sayfa `CF_HDROP` verebileceği için); Explorer'ın zip görünümü kendi açtığımız pencerelerde (7-Zip `-mx0`: `arsiv.zip` = `Klasor\{a.txt, Alt\b.txt, Alt\Derin\c.txt, Bos\}` + `kucuk.txt` + 200 MiB `buyuk.bin`; ayrıca 2 GiB `dev.bin`'li `buyuk2.zip`). Not: aynı anda başka bir ajanın `pane-probe` pencereleri ekranın sol üstünde açılıp kapanıyordu; pencerelerimiz sağ yarıya alındı (bir kez, düzen değişmeden önce, Edge'e gidecek bir adres yazısı + Enter o sırada önde olan Windows Terminal sekmesine (`pane-probe`'un) gitti; sonrasında her tuş ön pencere denetimiyle). Sonuç: **5 PASS, 2 FAIL (yalnız ipucu), 1 kullanıcıda, 1 yeniden ölçülecek.**
