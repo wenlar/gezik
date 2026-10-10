@@ -1789,3 +1789,38 @@ FAIL 6 gibi (bilerek bırakıldı): +0,8–1,0 MB, tutamaklar +0.
 - Veri eski haline döndü (`drop` 8 öğe, `in1..3` boş, `Gamma` 3, `Alpha` ve `A2` özgün, `wsrc` 4, `wheel` dosyasız). `cfg\`, `shots\` (165 dosya), `bin\` duruyor.
 - Geri Dönüşüm Kutusu'na bir şey gitmedi (yalnız görüntülendi). Kayıt defterine yazılmadı, kaynak değişmedi, commit yok.
 - `Get-WinUserLanguageList` sonda yine `en-US=0409:0000041F`.
+
+## 10b/10e bellek düzeltmesi
+
+Çözüm: Windows exe'si segment heap ile bağlanıyor (`crates/gezik/windows/gezik.manifest`, `build.rs` içinde `/MANIFESTINPUT`). İkinci bölme kapanınca `give_back_memory()` çağrılıyor: Linux'ta (glibc) `malloc_trim(0)`, macOS'ta `malloc_zone_pressure_relief(NULL, 0)` (bunlar ölçülmedi). Windows'ta zaten var olan `HeapOptimizeResources` çağrısı.
+
+Teşhis (HeapSummary ile, eski heap): kapatmadan sonra canlı ayırma tek bölmeye göre yalnız +22 KB. Buna karşın heap'in commit'i +1,35 MB (3,98 → 5,33 MB). Yani kalan şey bizim yapılarımız değil, heap'in boşalmış ama parçalı sayfaları. `HeapCompact` ve `HeapOptimizeResources` commit'i hiç düşürmedi. `SetProcessWorkingSetSize(-1,-1)` WS'yi -1,3 MB gösterdi ama commit +0,9–1,1 MB kaldı, yani yalnız görüntüydü. Bu yüzden konmadı. Slint'in metin düzeni önbelleği (`TextLayoutCache`) bileşen yok edilince kendi girdilerini siliyor. Glif önbelleği ortak ve en çok 1 MB; kapatınca büyümüyor.
+
+Bölmeler (panes.ps1 + commit, 3 koşu; tek bölmeye göre, WorkingSetPrivate / private commit):
+
+| | master | düzeltme |
+|---|---|---|
+| tek bölme | 9,46 / 9,81 / 9,31 MB WS; 12,28 / 12,63 / 12,13 MB commit | 8,95 / 8,96 / 8,92 MB WS; 11,77 / 11,78 / 11,74 MB commit |
+| iki bölme | +1,21 / +1,18 / +1,61 | +0,80 / +0,79 / +0,88 |
+| kapattıktan sonra, WS | +0,73 / +0,97 / +0,87 | +0,28 / +0,30 / +0,33 |
+| kapattıktan sonra, commit | +0,84 / +1,22 / +1,09 | +0,30 / +0,32 / +0,35 |
+| 2. aç/kapa sonrası, WS / commit | +1,21 / +1,05 / +1,14; +1,40 / +1,14 / +1,26 | +0,22 / +0,29 / +0,34; +0,24 / +0,30 / +0,36 |
+
+±0,1 MB hedefine ulaşılamadı. Kalan yaklaşık 0,3 MB, segment heap'in parçalı kovaları (canlı nesneler arasında kalan boş yer): commit +430 KB, canlı ayırma +23 KB. Taşınmayan canlı nesneler yüzünden bu sayfalar geri verilemiyor. Döngüler arasında artmıyor.
+
+Sütunlar ve liste (30 seviye in, 30 seviye geri; geri dönüşten sonra başlangıca göre; WS / commit):
+
+| | master | düzeltme |
+|---|---|---|
+| liste, döngü 1 (2 koşu) | +1,8 / +1,6; +1,74 / +1,66 | +0,0 / +0,0; -0,03 / +0,03 |
+| liste, döngü 3 | +2,1 / +2,0 | +0,0 / +0,0 |
+| sütunlar, döngü 1 (= columns.ps1, 3 koşu) | +2,2 / +2,3 / +1,2; +2,52 / +2,46 / +1,32 | +0,7 / +0,5 / +0,3; +0,70 / +0,54 / +0,26 |
+| sütunlar, döngü 3 | +2,9 / +2,6 / +1,8 | +0,6 / +0,4 / +0,5 |
+
+- Yeni 10e hedefi "liste kipinin ≤ +0,5 MB üstü, döngü başına büyüme yok": düzeltmeyle sütunlar eksi liste ortalama +0,5 MB (+0,3–0,7). Hedefin sınırında. Döngü başına büyüme yok.
+- ← tuşunda ayrıca `give_back_memory()` çağrısına gerek yok: segment heap sayfaları kendisi geri veriyor, `HeapOptimizeResources` ise ölçülebilir bir şey kazandırmadı.
+
+Başka yerde maliyet (bir koşu; master / düzeltme):
+- `measure.ps1` (3'er açılış, iki tur): açılış 49 / 47 ms ve 44 / 34 ms. Boşta bellek 9,2 / 8,8 MB ve 9,3 / 8,8 MB.
+- 100.000 dosyalı klasör (stress, güvenli kopya): yükleme CPU'su 359 / 266 ms. Yükleme sonrası 18,9 / 16,8 MB WS (commit 22,0 / 19,7). Kaydırma CPU'su 406 / 438 ms. Önceki 3 koşuluk A/B'de kaydırma CPU'su master 391–500 ms, segment heap 422–484 ms; fark gürültü içinde.
+- exe: 25.662.464 B (master 25.661.440 B, +1.024 B).
