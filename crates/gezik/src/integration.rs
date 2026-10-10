@@ -63,6 +63,17 @@ impl Command {
         }
     }
 
+    /// Whether the palette lists it now: only the tray and shortcut commands that change
+    /// something (Turn off only while on; Turn on also while on but not shown).
+    pub fn applies(self, status: &crate::resident::Status) -> bool {
+        match self {
+            Command::TrayOn => !status.tray || status.tray_missing || status.tray_problem.is_some(),
+            Command::TrayOff => status.tray,
+            Command::HotkeyOff => status.hotkey.is_some(),
+            _ => true,
+        }
+    }
+
     /// Settings of Gezik's own (settings.toml): no system question, no journal (spec 3.1).
     pub fn is_setting(self) -> bool {
         matches!(self, Command::TrayOn | Command::TrayOff | Command::HotkeyOn | Command::HotkeyOff)
@@ -185,6 +196,8 @@ pub fn rows(snapshot: &Snapshot) -> Vec<(Row, RowAction)> {
             row(TRAY, "No tray on this desktop (it needs a StatusNotifier host)", "Off", "Turn on"),
             RowAction::Run(Command::TrayOn),
         )
+    } else if let Some(why) = &resident.tray_problem {
+        (row(TRAY, why.as_str(), "Off", "Turn on"), RowAction::Run(Command::TrayOn))
     } else if resident.tray {
         (
             row(TRAY, format!("Closing the window keeps Gezik in {}", tray_place()), "On", "Turn off"),
@@ -599,8 +612,18 @@ pub fn hotkey_note(text: &str, os: changes::Os) -> (String, bool) {
     }
 }
 
+/// The line under the field when asked again: the reason while the field still holds what was
+/// refused, then what the new text reads as (pure).
+fn hotkey_note_again(text: &str, previous: Option<&(String, String)>, os: changes::Os) -> (String, bool) {
+    match previous {
+        Some((refused, why)) if text.trim() == refused.trim() => (why.clone(), true),
+        _ => hotkey_note(text, os),
+    }
+}
+
 /// Set a global shortcut (user decision: no default; the field starts empty, the example is
-/// only in the text). `previous`: the text and the reason when asking again.
+/// only in the text). `previous`: the text and the reason when asking again (said under the
+/// field until the text changes).
 pub fn ask_hotkey(previous: Option<(String, String)>) {
     let os = changes::Os::HERE;
     // The rules of parse_hotkey (a77a1c2), in words.
@@ -613,24 +636,18 @@ pub fn ask_hotkey(previous: Option<(String, String)>) {
             "A letter, a digit or F1-F12 with Super, or with Ctrl+Shift or Alt+Shift; Ctrl+Alt is not used (it types AltGr characters)."
         }
     };
-    let mut message = format!(
+    let message = format!(
         "Type the keys that show or hide Gezik from any app, for example {}. {rule}",
         crate::resident::example(os),
     );
-    let initial = match previous {
-        Some((text, why)) => {
-            message = format!("{why}\n\n{message}");
-            text
-        }
-        None => String::new(),
-    };
+    let initial = previous.as_ref().map(|(text, _)| text.clone()).unwrap_or_default();
     crate::operations::with_current(|ops| {
         ops.dialogs().ask_text_noted(
             "Global shortcut",
             message,
             initial,
             &["Turn On", "Cancel"],
-            move |text| hotkey_note(text, os),
+            move |text| hotkey_note_again(text, previous.as_ref(), os),
             move |answer| {
                 let Some(text) = answer else { return };
                 match parse_hotkey(&text, hotkey_platform(os)) {
@@ -1079,6 +1096,48 @@ mod tests {
         assert!(repair.contains(r"Run\Gezik"), "what is taken back: {repair}");
         assert!(repair.contains(r#"""D:\New\gezik.exe" --background"#), "what is written: {repair}");
         assert!(confirmation_with(RowAction::RepairLogin, &listed, None, &[], None, None, None).is_err());
+    }
+
+    #[test]
+    fn the_palette_lists_only_what_changes_something() {
+        use crate::resident::Status;
+        let lists = |s: &Status| Command::ALL.into_iter().filter(|c| c.applies(s)).collect::<Vec<_>>();
+        let off = lists(&Status { primary: true, ..Status::default() });
+        assert!(off.contains(&Command::TrayOn) && !off.contains(&Command::TrayOff));
+        assert!(off.contains(&Command::HotkeyOn) && !off.contains(&Command::HotkeyOff));
+        let on = lists(&Status { primary: true, tray: true, hotkey: Some("Shift+Win+E".into()), ..Status::default() });
+        assert!(!on.contains(&Command::TrayOn) && on.contains(&Command::TrayOff));
+        assert!(on.contains(&Command::HotkeyOn), "set another");
+        assert!(on.contains(&Command::HotkeyOff));
+        let missing = lists(&Status { primary: true, tray: true, tray_missing: true, ..Status::default() });
+        assert!(missing.contains(&Command::TrayOn) && missing.contains(&Command::TrayOff));
+        assert!(off.contains(&Command::LoginOn) && off.contains(&Command::LoginOff), "login asks with its state");
+    }
+
+    #[test]
+    fn a_failed_tray_row_says_why() {
+        let status = crate::resident::Status {
+            primary: true,
+            tray: true,
+            tray_problem: Some("The tray icon could not be shown: x".into()),
+            ..Default::default()
+        };
+        let row = row_of(&with_resident(status), "Tray icon");
+        assert_eq!(
+            row,
+            ("The tray icon could not be shown: x".into(), "Off", "Turn on", RowAction::Run(Command::TrayOn))
+        );
+    }
+
+    #[test]
+    fn asking_again_says_why_until_the_text_changes() {
+        let previous = (String::new(), "Shift+Win+E is used by another app.".to_owned());
+        let os = changes::Os::Windows;
+        assert_eq!(hotkey_note_again("", Some(&previous), os), (previous.1.clone(), true));
+        assert_eq!(hotkey_note_again("win+shift+k", Some(&previous), os).0, "Shift+Win+K will show or hide Gezik");
+        let typed = ("ctrl+alt+e".to_owned(), "\"ctrl+alt+e\" uses Ctrl+Alt".to_owned());
+        assert_eq!(hotkey_note_again("ctrl+alt+e ", Some(&typed), os).0, typed.1);
+        assert_eq!(hotkey_note_again("", None, os), hotkey_note("", os));
     }
 
     #[test]

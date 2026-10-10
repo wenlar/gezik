@@ -129,9 +129,8 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
     // Unchanged pins cost nothing (also after the reload that follows our own save).
     sidebar::with_current(|sidebar| sidebar.set_pinned(loaded.settings.pinned.clone()));
     sidebar::with_current(sidebar::Sidebar::relabel);
-    // 9b9: the tray and the shortcut follow [system]; the tray menu follows the pins.
+    // 9b9: the tray and the shortcut follow [system] (the tray menu follows the sidebar's pins).
     resident::apply(&loaded.settings.system);
-    resident::refresh_pins();
     sidebar::with_current(|s| s.set_show_cloud(loaded.settings.sidebar_cloud));
     view::with_current(|view| view.set_defaults(loaded.settings.view));
     view_options::set_from_file(loaded.settings.view.options);

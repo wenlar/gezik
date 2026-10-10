@@ -205,6 +205,11 @@ pub fn parse_hotkey(text: &str, platform: Platform) -> Result<Option<Chord>, Str
         if !(chord.meta || chord.ctrl) || !(chord.alt || chord.shift) {
             return Err("needs ⌘ (cmd) or ⌃ (ctrl) with ⌥ (alt) or ⇧ (shift) on macOS".to_owned());
         }
+        let screenshot = chord.meta && chord.shift && !chord.alt && matches!(chord.key, Key::Char('3' | '4' | '5'));
+        let dock = chord.meta && chord.alt && !chord.ctrl && !chord.shift && chord.key == Key::Char('d');
+        if screenshot || dock {
+            return Err("belongs to the system (⌘⇧3, 4 and 5 take screenshots; ⌘⌥D hides the Dock)".to_owned());
+        }
         return Ok(Some(chord));
     }
     if chord.ctrl && chord.alt {
@@ -1646,6 +1651,10 @@ clear-history = \"ctrl+shift+h\"
         for text in ["win+l", "win+d", "win+e", "win+r", "win+1", "win+shift+3", "super+ctrl+0"] {
             refused(win(text), own);
         }
+        for text in ["cmd+shift+3", "cmd+shift+4", "cmd+shift+5", "ctrl+cmd+shift+4", "cmd+alt+d"] {
+            refused(mac(text), own);
+        }
+        assert!(mac("cmd+shift+6").is_ok() && mac("cmd+alt+shift+d").is_ok());
         refused(win("win+space"), "letter, a digit or F1-F12");
         refused(win("win+num+"), "letter, a digit or F1-F12");
         refused(win("win+["), "letter, a digit or F1-F12");

@@ -165,7 +165,8 @@ impl Palette {
         for name in crate::convert::command_names() {
             add(Kind::Command, name.clone(), name.clone(), String::new(), Target::Command(name));
         }
-        for command in crate::integration::Command::ALL {
+        let resident = crate::resident::status();
+        for command in crate::integration::Command::ALL.into_iter().filter(|c| c.applies(&resident)) {
             let title = command.title().to_owned();
             add(Kind::Command, title.clone(), title, String::new(), Target::System(command));
         }

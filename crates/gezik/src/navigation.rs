@@ -1071,16 +1071,28 @@ impl Navigator {
         if !same {
             inner.watch.watch(folder.as_deref());
             inner.removal = None;
-            inner.removal = folder.as_deref().and_then(|folder| {
-                let window = inner.window.upgrade()?;
-                gezik_platform::watch_removal(&window.window().window_handle(), folder, || {
-                    with_current(Navigator::drive_removal_asked);
-                })
-            });
             inner.watched = folder;
             inner.pace.reset();
             inner.refresh_timer.stop();
+            drop(inner);
+            // A `--background` start has no native window yet: the watch waits for the first show.
+            let nav = self.clone();
+            crate::resident::when_shown(move || nav.watch_removal());
         }
+    }
+
+    /// The removal watch of the folder watched now (none yet).
+    fn watch_removal(&self) {
+        let mut inner = self.0.borrow_mut();
+        if inner.removal.is_some() {
+            return;
+        }
+        let Some(window) = inner.window.upgrade() else { return };
+        inner.removal = inner.watched.as_deref().and_then(|folder| {
+            gezik_platform::watch_removal(&window.window().window_handle(), folder, || {
+                with_current(Navigator::drive_removal_asked);
+            })
+        });
     }
 
     /// Lets go of everything on the drive at `root` before it is ejected (spec 9 §7.4): every

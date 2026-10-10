@@ -132,6 +132,8 @@ pub struct Status {
     pub tray: bool,
     /// Linux: the last try found no StatusNotifier host.
     pub tray_missing: bool,
+    /// Why the last try to show the icon failed otherwise.
+    pub tray_problem: Option<String>,
     /// The shortcut's label, if one is set.
     pub hotkey: Option<String>,
     /// Why the set shortcut is not working (taken, unsupported).
@@ -167,6 +169,7 @@ struct State {
     tray_missing: bool,
     /// The last try failed: not tried again on every reload, only when asked again.
     tray_failed: bool,
+    tray_problem: Option<String>,
     /// The panel turned it on just now: a failure turns the setting off again and says so.
     tray_asked: bool,
     hotkey: Option<(Chord, hotkey::Hotkey)>,
@@ -239,6 +242,7 @@ fn sync() {
     let (started, (want_tray, want_hotkey), have_tray, have_hotkey, tray_failed, hotkey_failed) = with(|s| {
         if !wanted(&s.system, s.primary).0 {
             s.tray_failed = false;
+            s.tray_problem = None;
         }
         (
             s.started,
@@ -263,8 +267,7 @@ fn sync() {
         // Review focus 1: a hidden window never stays hidden without its icon.
         reveal_if_hidden();
     }
-    // A shortcut that failed is tried again only once it is changed or asked for again.
-    if want_hotkey != have_hotkey && want_hotkey != hotkey_failed {
+    if hotkey_moves(want_hotkey, have_hotkey, hotkey_failed) {
         // The old one goes first (macOS keeps one handler per thread).
         let old = with(|s| s.hotkey.take());
         drop(old);
@@ -277,6 +280,12 @@ fn sync() {
             start_hotkey(chord);
         }
     }
+}
+
+/// Whether the shortcut held must change: turning it off always lets the held one go; a
+/// shortcut that failed is tried again only once it is changed or asked for again.
+fn hotkey_moves(want: Option<Chord>, have: Option<Chord>, failed: Option<Chord>) -> bool {
+    want != have && (want.is_none() || want != failed)
 }
 
 fn start_tray() {
@@ -306,6 +315,7 @@ fn tray_ready(number: u64, result: Result<(), TrayError>) {
         Ok(()) => with(|s| {
             s.tray_ready = true;
             s.tray_missing = false;
+            s.tray_problem = None;
         }),
         Err(why) => {
             let tray = with(|s| {
@@ -320,7 +330,11 @@ fn tray_ready(number: u64, result: Result<(), TrayError>) {
             drop(tray);
             let text = match why {
                 TrayError::NoTray => "No tray on this desktop (it needs a StatusNotifier host, such as KDE's panel or GNOME's AppIndicator extension).".to_owned(),
-                TrayError::Failed(why) => format!("The tray icon could not be shown: {why}"),
+                TrayError::Failed(why) => {
+                    let text = format!("The tray icon could not be shown: {why}");
+                    with(|s| s.tray_problem = Some(text.clone()));
+                    text
+                }
             };
             if asked {
                 write(SystemValue::Tray(false));
@@ -531,6 +545,7 @@ pub fn status() -> Status {
         primary: s.primary,
         tray: s.system.tray,
         tray_missing: s.tray_missing,
+        tray_problem: s.tray_problem.clone(),
         hotkey: s.system.hotkey.map(|c| label(&c, Os::HERE)),
         hotkey_problem: s
             .hotkey_problem
@@ -564,6 +579,7 @@ pub fn turn_on_tray() {
         s.tray_asked = true;
         s.tray_failed = false;
         s.tray_missing = false;
+        s.tray_problem = None;
     });
     write(SystemValue::Tray(true));
     sync();
@@ -607,6 +623,18 @@ pub fn shutdown() {
 mod tests {
     use super::*;
     use gezik_config::shortcuts::{Key, Platform, parse_hotkey};
+
+    #[test]
+    fn turning_the_shortcut_off_lets_it_go() {
+        let (a, b) = (Some(chord("win+shift+e")), Some(chord("ctrl+shift+7")));
+        assert!(hotkey_moves(None, a, None), "off drops the held one");
+        assert!(hotkey_moves(None, a, a), "off drops it even after a failure");
+        assert!(!hotkey_moves(None, None, a), "nothing held, nothing wanted");
+        assert!(hotkey_moves(a, None, None), "on starts it");
+        assert!(!hotkey_moves(a, None, a), "a failed one waits to be asked again");
+        assert!(hotkey_moves(b, a, None), "a change");
+        assert!(!hotkey_moves(a, a, None));
+    }
 
     #[test]
     fn turning_on_a_missing_tray_tries_again() {

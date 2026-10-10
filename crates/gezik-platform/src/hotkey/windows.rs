@@ -75,13 +75,19 @@ impl Hotkey {
     }
 }
 
+/// The thread WM_QUIT goes to: only one that is still ours (a finished thread's id may
+/// already be another thread's).
+fn quit_to(id: u32, running: bool) -> Option<u32> {
+    (id != 0 && running).then_some(id)
+}
+
 impl Drop for Hotkey {
     fn drop(&mut self) {
         // The thread stores its id before it looks at `stop`: either it sees `stop`, or WM_QUIT
         // is posted to a queue that exists.
         self.stop.store(true, SeqCst);
-        let id = self.thread_id.load(SeqCst);
-        if id != 0 {
+        let running = self.thread.as_ref().map(JoinHandle::is_finished) == Some(false);
+        if let Some(id) = quit_to(self.thread_id.load(SeqCst), running) {
             // SAFETY: a plain message to the hotkey thread (fails harmlessly if it has ended).
             unsafe {
                 let _ = PostThreadMessageW(id, WM_QUIT, WPARAM(0), LPARAM(0));
@@ -91,5 +97,15 @@ impl Drop for Hotkey {
         if let Some(thread) = self.thread.take().filter(|t| t.thread().id() != std::thread::current().id()) {
             let _ = thread.join();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn quit_goes_only_to_a_thread_still_running() {
+        assert_eq!(super::quit_to(42, true), Some(42));
+        assert_eq!(super::quit_to(42, false), None, "its id may be another thread's now");
+        assert_eq!(super::quit_to(0, true), None, "no queue yet: it sees stop");
     }
 }
