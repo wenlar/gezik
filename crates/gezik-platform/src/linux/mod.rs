@@ -3,14 +3,22 @@
 
 #[cfg(any(all(unix, not(target_os = "macos")), test))]
 pub mod dbus;
+#[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
+pub(crate) mod desktop_entry;
 #[cfg(any(all(unix, not(target_os = "macos")), test))]
 pub mod file_manager1;
 #[cfg(any(all(unix, not(target_os = "macos")), test))]
 pub mod hotkey_x11;
+#[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
+pub(crate) mod icon_theme;
+#[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
+pub(crate) mod mime;
 #[cfg(any(all(unix, not(target_os = "macos")), test))]
 pub mod portal;
 #[cfg(any(all(unix, not(target_os = "macos")), test))]
 pub mod sni;
+#[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
+pub(crate) mod thumbs;
 #[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
 pub(crate) mod uri;
 #[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]

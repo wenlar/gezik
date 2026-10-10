@@ -551,6 +551,73 @@ fn mimeapps_set_file(path: &Path, key: &str, value: &Value) -> io::Result<()> {
     gezik_config::paths::write_atomic(path, &t::mimeapps_set(&text, key, value))
 }
 
+/// `Change All…` on Linux (spec 9 §4.4, §8.5; deviation 4 of 9b10): `app` opens every file of
+/// type `mime` from now on. The user's own choice: not journaled, `--unregister` leaves it
+/// (decision 30). Blocking: not on the UI thread.
+pub fn set_mime_default(app: &Path, mime: &str) -> Result<(), String> {
+    let places = gezik_platform::system::places();
+    let config = places.config_home.ok_or_else(|| "There is no configuration folder".to_owned())?;
+    set_mime_default_in(&config, &places.desktops, app, mime)
+}
+
+/// [`set_mime_default`] in `config_home`: its mimeapps.list (made if missing), and each
+/// `<desktop>-mimeapps.list` there that already names the type (it would win otherwise).
+/// A linked file stays a link: `write_atomic` writes through to the link's target.
+pub(crate) fn set_mime_default_in(
+    config_home: &Path,
+    desktops: &[String],
+    app: &Path,
+    mime: &str,
+) -> Result<(), String> {
+    let id = gezik_platform::open_with::desktop_id_of(app).ok_or_else(|| "This app has no desktop id".to_owned())?;
+    let value = format!("{id};");
+    if !gezik_platform::open_with::is_mime_type(mime) || !t::desktop_ids(&value) {
+        return Err("This type or app cannot be written to mimeapps.list".to_owned());
+    }
+    let read = |path: &Path| read_list(path).map_err(|e| gezik_platform::fs::describe(&e));
+    let list = config_home.join("mimeapps.list");
+    let mut writes = vec![(read(&list)?.unwrap_or_else(|| t::MIMEAPPS_EMPTY.to_owned()), list)];
+    for desktop in desktops {
+        let path = config_home.join(format!("{desktop}-mimeapps.list"));
+        if let Some(text) = read(&path)?
+            && t::mimeapps_get(&text, mime).is_some()
+        {
+            writes.push((text, path));
+        }
+    }
+    std::fs::create_dir_all(config_home).map_err(|e| gezik_platform::fs::describe(&e))?;
+    for (text, path) in writes {
+        gezik_config::paths::write_atomic(&path, &t::mimeapps_set(&text, mime, Some(&value)))
+            .map_err(|e| gezik_platform::fs::describe(&e))?;
+    }
+    Ok(())
+}
+
+/// The most of a user's mimeapps.list `Change All…` reads (as `linux::mime` reads lists).
+const MAX_LIST_BYTES: u64 = 4 * 1024 * 1024;
+
+/// A mimeapps.list (through a link), `None` when missing. Only a regular file of at most
+/// `MAX_LIST_BYTES`: a link to /dev/zero, a FIFO or a huge file is refused, never read.
+fn read_list(path: &Path) -> io::Result<Option<String>> {
+    use std::io::Read;
+    let meta = match std::fs::metadata(path) {
+        Ok(meta) => meta,
+        // A link to nothing is not "missing": writing would replace the link with a file.
+        Err(err) if err.kind() == io::ErrorKind::NotFound && path.symlink_metadata().is_err() => return Ok(None),
+        Err(err) => return Err(err),
+    };
+    let refused = || io::Error::new(io::ErrorKind::InvalidData, "mimeapps.list is not a plain file of at most 4 MB");
+    if !meta.is_file() || meta.len() > MAX_LIST_BYTES {
+        return Err(refused());
+    }
+    let mut text = String::new();
+    std::fs::File::open(path)?.take(MAX_LIST_BYTES + 1).read_to_string(&mut text)?;
+    if text.len() as u64 > MAX_LIST_BYTES {
+        return Err(refused());
+    }
+    Ok(Some(text))
+}
+
 /// What is at `path`, never through a link (decision 9).
 fn file_current(path: &Path, kind: Kind) -> io::Result<Value> {
     let meta = match std::fs::symlink_metadata(path) {
@@ -2303,6 +2370,91 @@ mod tests {
             left.keys().all(|(_, place, _)| !place.contains("gezik") && !place.contains("52205fd8")),
             "only keys not named Gezik's: {left:?}"
         );
+    }
+
+    #[test]
+    fn change_all_writes_the_users_lists() {
+        let dir = std::env::temp_dir().join(format!("gezik-change-all-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let config = dir.join("config");
+        let app = Path::new("/usr/share/applications/org.gnome.eog.desktop");
+        let read = |name: &str| std::fs::read_to_string(config.join(name)).unwrap();
+        // No file (nor folder) yet: made.
+        set_mime_default_in(&config, &[], app, "image/png").unwrap();
+        assert_eq!(read("mimeapps.list"), "[Default Applications]\nimage/png=org.gnome.eog.desktop;\n");
+        // Other lines, comments and sections kept; the desktop's own list changed only when it has the type.
+        let user = "# mine\n[Added Associations]\nimage/png=gimp.desktop;\n\n[Default Applications]\n\
+                    text/plain=gedit.desktop;\nimage/png=gimp.desktop;\n";
+        std::fs::write(config.join("mimeapps.list"), user).unwrap();
+        std::fs::write(config.join("gnome-mimeapps.list"), "[Default Applications]\nimage/png=shotwell.desktop;\n")
+            .unwrap();
+        std::fs::write(config.join("ubuntu-mimeapps.list"), "[Default Applications]\ntext/plain=x.desktop;\n").unwrap();
+        set_mime_default_in(&config, &["ubuntu".into(), "gnome".into(), "kde".into()], app, "image/png").unwrap();
+        assert_eq!(
+            read("mimeapps.list"),
+            "# mine\n[Added Associations]\nimage/png=gimp.desktop;\n\n[Default Applications]\n\
+             text/plain=gedit.desktop;\nimage/png=org.gnome.eog.desktop;\n"
+        );
+        assert_eq!(read("gnome-mimeapps.list"), "[Default Applications]\nimage/png=org.gnome.eog.desktop;\n");
+        assert_eq!(
+            read("ubuntu-mimeapps.list"),
+            "[Default Applications]\ntext/plain=x.desktop;\n",
+            "without the type: untouched"
+        );
+        assert!(!config.join("kde-mimeapps.list").exists(), "never made");
+        // A linked mimeapps.list (a dotfile) stays a link; a link to nothing is left alone.
+        #[cfg(unix)]
+        {
+            let real = dir.join("dotfiles-mimeapps.list");
+            std::fs::rename(config.join("mimeapps.list"), &real).unwrap();
+            std::os::unix::fs::symlink(&real, config.join("mimeapps.list")).unwrap();
+            set_mime_default_in(&config, &[], Path::new("/usr/share/applications/gimp.desktop"), "image/png").unwrap();
+            assert!(std::fs::symlink_metadata(config.join("mimeapps.list")).unwrap().file_type().is_symlink());
+            assert!(
+                std::fs::read_to_string(&real)
+                    .unwrap()
+                    .contains("[Default Applications]\ntext/plain=gedit.desktop;\nimage/png=gimp.desktop;\n")
+            );
+            std::fs::remove_file(&real).unwrap();
+            assert!(set_mime_default_in(&config, &[], app, "image/png").is_err());
+            assert!(std::fs::symlink_metadata(config.join("mimeapps.list")).unwrap().file_type().is_symlink());
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn change_all_refuses_what_would_break_the_file() {
+        let dir = std::env::temp_dir().join(format!("gezik-change-all-bad-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let good = Path::new("/usr/share/applications/eog.desktop");
+        let app = |name: &str| PathBuf::from(format!("/usr/share/applications/{name}"));
+        assert!(set_mime_default_in(&dir, &[], good, "image/png\n[Default Applications]").is_err());
+        assert!(set_mime_default_in(&dir, &[], good, "image").is_err());
+        assert!(set_mime_default_in(&dir, &[], good, "image/png=x").is_err());
+        assert!(
+            set_mime_default_in(&dir, &[], Path::new("/home/u/eog.desktop"), "image/png").is_err(),
+            "not in applications"
+        );
+        assert!(set_mime_default_in(&dir, &[], &app("my app.desktop"), "image/png").is_err());
+        assert!(set_mime_default_in(&dir, &[], &app("a\n[x].desktop"), "image/png").is_err());
+        assert!(!dir.join("mimeapps.list").exists(), "nothing written");
+        // Too big, or not a plain file: refused, never read.
+        let big = "#".repeat(MAX_LIST_BYTES as usize + 1);
+        std::fs::write(dir.join("mimeapps.list"), &big).unwrap();
+        assert!(set_mime_default_in(&dir, &[], good, "image/png").is_err());
+        assert_eq!(std::fs::read_to_string(dir.join("mimeapps.list")).unwrap().len(), big.len(), "untouched");
+        std::fs::remove_file(dir.join("mimeapps.list")).unwrap();
+        std::fs::create_dir(dir.join("mimeapps.list")).unwrap();
+        assert!(set_mime_default_in(&dir, &[], good, "image/png").is_err(), "a folder");
+        std::fs::remove_dir(dir.join("mimeapps.list")).unwrap();
+        #[cfg(unix)]
+        {
+            // No libc in this crate: coreutils' mkfifo makes it.
+            assert!(std::process::Command::new("mkfifo").arg(dir.join("mimeapps.list")).status().unwrap().success());
+            assert!(set_mime_default_in(&dir, &[], good, "image/png").is_err(), "a FIFO is not opened");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn unix_places() -> Places {

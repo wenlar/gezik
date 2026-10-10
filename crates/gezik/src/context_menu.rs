@@ -1151,8 +1151,9 @@ impl Menus {
         }
     }
 
-    /// macOS: asks Open With's apps and the Quick Actions for `rows` (at most `WAIT`), adds
-    /// Open With ▸ after the Open items; Share… and Quick Actions ▸ come with `add_finder_items`.
+    /// macOS and Linux: asks Open With's apps (and on macOS the Quick Actions) for `rows` (at
+    /// most `WAIT`), adds Open With ▸ after the Open items; Share… and Quick Actions ▸ come with
+    /// `add_finder_items`.
     /// Asked for exactly the rows the menu acts on, so never for more than `MAX_ITEMS`.
     fn add_finder_extras(
         &self,
@@ -1162,7 +1163,7 @@ impl Menus {
     ) -> Option<Vec<gezik_platform::services::Service>> {
         self.menu_apps.borrow_mut().clear();
         self.menu_services.borrow_mut().clear();
-        if !cfg!(target_os = "macos")
+        if !gezik_platform::open_with::SUPPORTED
             || self.view.shows_drives()
             || rows.is_empty()
             || rows.len() > gezik_platform::open_with::MAX_ITEMS
@@ -1171,7 +1172,7 @@ impl Menus {
         }
         let items: Vec<PathBuf> = rows.iter().map(|(path, _)| path.clone()).collect();
         let extras = crate::finder_menu::fetch(&self.late, items);
-        if crate::finder_menu::offers_open_with(rows, true) {
+        if crate::finder_menu::offers_open_with(rows, gezik_platform::open_with::SUPPORTED, cfg!(target_os = "macos")) {
             let apps = extras.as_ref().map(|e| e.apps.as_slice());
             subs.push(open_with_sub(apps, crate::finder_menu::open_with_place(list)));
             *self.menu_apps.borrow_mut() = extras.as_ref().map(|e| e.apps.clone()).unwrap_or_default();
