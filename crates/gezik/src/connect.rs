@@ -136,7 +136,7 @@ fn run(address: ServerAddress, letter: Option<char>, login: Option<Login>) {
     let shown = address.shown(cfg!(windows));
     status(format!("Connecting to {shown}…"));
     let mut owner = 0;
-    crate::navigation::with_current(|nav| owner = nav.owner());
+    crate::panes::with_active(|p| owner = p.nav.owner());
     let target = address.clone();
     // shortcut: if the event loop is gone, `finish` cannot run; the app is closing then.
     let reply = Reply {
@@ -162,7 +162,7 @@ fn finish(address: ServerAddress, shown: String, result: Result<PathBuf, Connect
             save(kept(&address, cfg!(windows)));
             // A mapped letter, a macOS volume or a gvfs share: the drives changed.
             crate::sidebar::with_current(|sidebar| sidebar.check_drives(true));
-            crate::navigation::with_current(|nav| nav.go(Location::Path(folder)));
+            crate::panes::with_active(|p| p.nav.go(Location::Path(folder)));
         }
         Err(ConnectError::NeedsLogin) => ask_login(address),
         Err(ConnectError::Cancelled) => status("Not connected".to_owned()),
@@ -203,7 +203,7 @@ fn ask_login(address: ServerAddress) {
 }
 
 fn status(text: String) {
-    crate::navigation::with_current(|nav| nav.status(text));
+    crate::panes::with_active(|p| p.nav.status(text));
 }
 
 #[cfg(test)]

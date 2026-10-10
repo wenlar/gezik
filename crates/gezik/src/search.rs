@@ -26,6 +26,7 @@ use crate::AppWindow;
 use crate::context_menu::{self as ids, Submenu};
 use crate::dialog::Dialogs;
 use crate::navigation::Navigator;
+use crate::panes::PaneId;
 use crate::preview::with_commas;
 use crate::view::{Listing, View};
 
@@ -34,20 +35,9 @@ const TYPING: Duration = Duration::from_millis(150);
 /// An unused name cache goes after this long (spec 3.5).
 const CACHE_IDLE: Duration = Duration::from_secs(120);
 
-thread_local! {
-    static CURRENT: RefCell<Option<Searches>> = const { RefCell::new(None) };
-}
-
-/// Runs `f` with this UI thread's searches, if set up.
-pub fn with_current(f: impl FnOnce(&Searches)) {
-    if let Some(searches) = CURRENT.with(|c| c.borrow().clone()) {
-        f(&searches);
-    }
-}
-
 /// Whether a search runs (Esc on the list stops it first).
 pub fn running() -> bool {
-    CURRENT.with(|c| c.borrow().as_ref().is_some_and(|s| s.0.running.borrow().is_some()))
+    crate::panes::with_active(|p| p.search.0.running.borrow().is_some()).unwrap_or(false)
 }
 
 /// The status bar while a search runs: `Searching… 12,345 found · 48,210 folders`.
@@ -369,6 +359,7 @@ struct Run {
 }
 
 struct Inner {
+    id: PaneId,
     window: slint::Weak<AppWindow>,
     nav: Navigator,
     view: View,
@@ -416,8 +407,9 @@ struct Inner {
 pub struct Searches(Rc<Inner>);
 
 impl Searches {
-    pub fn new(window: &AppWindow, nav: Navigator, view: View, dialogs: Dialogs) -> Searches {
+    pub fn new(id: PaneId, window: &AppWindow, nav: Navigator, view: View, dialogs: Dialogs) -> Searches {
         let searches = Searches(Rc::new(Inner {
+            id,
             window: window.as_weak(),
             nav,
             view,
@@ -446,14 +438,25 @@ impl Searches {
             problems: RefCell::new(Vec::new()),
             menu_names: RefCell::new(Vec::new()),
         }));
-        window.on_search_edited(|text| with_current(|s| s.edited(&text)));
-        window.on_search_content_edited(|text| with_current(|s| s.content_edited(&text)));
-        window.on_search_content_toggle(|| with_current(Searches::content_toggle));
-        window.on_search_go(|| with_current(Searches::button));
-        window.on_filter_search(|| with_current(Searches::filter_to_search));
+        window.on_search_edited(|text| {
+            crate::panes::with_active(|p| p.search.edited(&text));
+        });
+        window.on_search_content_edited(|text| {
+            crate::panes::with_active(|p| p.search.content_edited(&text));
+        });
+        window.on_search_content_toggle(|| {
+            crate::panes::with_active(|p| p.search.content_toggle());
+        });
+        window.on_search_go(|| {
+            crate::panes::with_active(|p| p.search.button());
+        });
+        window.on_filter_search(|| {
+            crate::panes::with_active(|p| p.search.filter_to_search());
+        });
         // Called after every edit of the results too (a delete, a job's check).
-        searches.0.view.on_selection_changed(|| with_current(Searches::recount));
-        CURRENT.with(|c| *c.borrow_mut() = Some(searches.clone()));
+        searches.0.view.on_selection_changed(move || {
+            crate::panes::with_id(id, |p| p.search.recount());
+        });
         searches
     }
 
@@ -652,7 +655,10 @@ impl Searches {
         let step = live_step(&self.0.names.borrow(), &key, asks);
         match step {
             Live::Now => {
-                self.0.typing.start(slint::TimerMode::SingleShot, TYPING, || with_current(|s| s.run(false, true)))
+                let id = self.0.id;
+                self.0.typing.start(slint::TimerMode::SingleShot, TYPING, move || {
+                    crate::panes::with_id(id, |p| p.search.run(false, true));
+                })
             }
             Live::Wait => self.0.live_waiting.set(true),
             Live::Large => self.0.view.note("Large folder: press Enter to search".to_owned()),
@@ -763,7 +769,7 @@ impl Searches {
         let Some(pattern) = self.0.view.filter_text().filter(|t| !t.trim().is_empty()) else { return };
         let location = self.0.nav.active_location();
         let Some(folder) = location.folder().map(Path::to_path_buf) else { return };
-        crate::filter::with_current(crate::filter::Filter::close);
+        crate::panes::with_active(|p| p.filter.close());
         let mut spec = SearchSpec::new(Scope::Folder(folder.clone()));
         spec.pattern = pattern;
         self.show_bar(spec, Some(folder));
@@ -968,6 +974,7 @@ impl Searches {
         };
         let shown = Searches::view_shown();
         let weak = self.0.window.clone();
+        let id = self.0.id;
         let spawned = std::thread::Builder::new().name("gezik-results-check".into()).spawn(move || {
             gezik_platform::priority::lower_this_thread();
             let verified = probe.verify();
@@ -987,7 +994,7 @@ impl Searches {
             added.extend(verified.rows);
             let gone = verified.gone;
             let _ = weak.upgrade_in_event_loop(move |_| {
-                with_current(|searches| searches.checked(key, change, gone, added));
+                crate::panes::with_id(id, |p| p.search.checked(key, change, gone, added));
             });
         });
         if spawned.is_err() {
@@ -1163,9 +1170,11 @@ impl Searches {
 
     /// Events of search `generation`, brought to the UI thread.
     fn sink(&self, generation: u64) -> impl Fn(Event) + Send + Sync + Clone + 'static {
-        let weak = self.0.window.clone();
+        let (id, weak) = (self.0.id, self.0.window.clone());
         move |event| {
-            let _ = weak.upgrade_in_event_loop(move |_| with_current(|s| s.event(generation, event)));
+            let _ = weak.upgrade_in_event_loop(move |_| {
+                crate::panes::with_id(id, |p| p.search.event(generation, event));
+            });
         }
     }
 
@@ -1211,7 +1220,10 @@ impl Searches {
             _ => None,
         };
         if cache.is_some() {
-            self.0.idle.start(slint::TimerMode::SingleShot, CACHE_IDLE, || with_current(Searches::drop_names));
+            let id = self.0.id;
+            self.0.idle.start(slint::TimerMode::SingleShot, CACHE_IDLE, move || {
+                crate::panes::with_id(id, |p| p.search.drop_names());
+            });
         }
         cache
     }
@@ -1238,6 +1250,7 @@ impl Searches {
         let shown = Searches::view_shown();
         let weak = self.0.window.clone();
         let own = cancel.clone();
+        let id = self.0.id;
         let spawned = std::thread::Builder::new().name("gezik-search-cache".into()).spawn(move || {
             gezik_platform::priority::lower_this_thread();
             let walk = plan_walk(&spec, &skip, shown);
@@ -1252,7 +1265,9 @@ impl Searches {
                     CacheOutcome::Cancelled => Warmed::Cancelled,
                 }
             };
-            let _ = weak.upgrade_in_event_loop(move |_| with_current(|s| s.warmed(key, &own, warmed)));
+            let _ = weak.upgrade_in_event_loop(move |_| {
+                crate::panes::with_id(id, |p| p.search.warmed(key, &own, warmed));
+            });
         });
         if spawned.is_err() {
             *self.0.names.borrow_mut() = Names::None;
@@ -1276,7 +1291,10 @@ impl Searches {
         // network folder: Enter searches).
         let waiting = self.0.live_waiting.replace(false);
         if ready {
-            self.0.idle.start(slint::TimerMode::SingleShot, CACHE_IDLE, || with_current(Searches::drop_names));
+            let id = self.0.id;
+            self.0.idle.start(slint::TimerMode::SingleShot, CACHE_IDLE, move || {
+                crate::panes::with_id(id, |p| p.search.drop_names());
+            });
             if waiting && self.0.open.get() {
                 self.follow_typing();
             }

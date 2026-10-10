@@ -31,7 +31,7 @@ pub(crate) fn way_at(root: &Path) -> Option<EjectWay> {
 /// The drives as last read (This PC's and the sidebar's).
 fn drives() -> Vec<Drive> {
     let mut drives = Vec::new();
-    crate::navigation::with_current(|nav| drives = nav.places().drives);
+    crate::panes::with_active(|p| drives = p.nav.places().drives);
     drives
 }
 
@@ -54,9 +54,9 @@ pub fn eject_path(path: &Path) {
     let Some(drive) = drive_for(&drives, path).cloned() else { return status(NO_DRIVE.to_owned()) };
     let Some(way) = eject::offer(&drive) else { return status(eject::CANNOT.to_owned()) };
     let mut owner = 0;
-    crate::navigation::with_current(|nav| {
-        nav.leave_drive(&drive.path);
-        owner = nav.owner();
+    crate::panes::with_active(|p| {
+        p.nav.leave_drive(&drive.path);
+        owner = p.nav.owner();
     });
     let doing = if way == EjectWay::Eject { "Ejecting" } else { "Disconnecting" };
     status(format!("{doing} {}…", drive.label));
@@ -75,9 +75,9 @@ fn finish(drive: &Drive, way: EjectWay, result: Result<(), String>) {
                 EjectWay::Disconnect => format!("Disconnected {}", drive.label),
             });
             crate::sidebar::with_current(|sidebar| sidebar.check_drives(true));
-            crate::navigation::with_current(|nav| {
-                if nav.active_location() == Location::Drives {
-                    nav.reload();
+            crate::panes::with_active(|p| {
+                if p.nav.active_location() == Location::Drives {
+                    p.nav.reload();
                 }
             });
         }
@@ -87,7 +87,7 @@ fn finish(drive: &Drive, way: EjectWay, result: Result<(), String>) {
 }
 
 fn status(text: String) {
-    crate::navigation::with_current(|nav| nav.status(text));
+    crate::panes::with_active(|p| p.nav.status(text));
 }
 
 #[cfg(test)]

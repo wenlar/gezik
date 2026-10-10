@@ -481,7 +481,7 @@ impl Sidebar {
             // A pinned folder may have appeared or gone with the drive.
             self.refresh();
             crate::places::load_in_background(window, |part| {
-                crate::navigation::with_current(|nav| nav.set_places(part));
+                crate::panes::with_active(|p| p.nav.set_places(part));
             });
         }
     }

@@ -20,6 +20,7 @@ use gezik_search::size::{CACHE_MAX, FolderTotal, Known, SizeCache, measure};
 use slint::ComponentHandle;
 
 use crate::AppWindow;
+use crate::panes::PaneId;
 use crate::view::View;
 
 /// Results are sent at most this often (one view update each).
@@ -29,19 +30,9 @@ const RESORT_EVERY: Duration = Duration::from_secs(1);
 /// Larger folders sort again only once every size is in (sapma 9).
 const RESORT_MAX_ENTRIES: usize = 50_000;
 
-thread_local! {
-    static CURRENT: RefCell<Option<FolderSizes>> = const { RefCell::new(None) };
-}
-
-pub fn with_current(f: impl FnOnce(&FolderSizes)) {
-    if let Some(sizes) = CURRENT.with(|c| c.borrow().clone()) {
-        f(&sizes);
-    }
-}
-
 /// The files and folders under `path`, if its size is known (the preview).
 pub fn counts(path: &Path) -> Option<(u64, u64)> {
-    CURRENT.with(|c| c.borrow().as_ref().and_then(|s| s.0.cache.borrow().get(path)).and_then(|t| t.counts))
+    crate::panes::with_active(|p| p.folder_sizes.0.cache.borrow().get(path).and_then(|t| t.counts)).flatten()
 }
 
 /// Whether the folder shown gets its folders' sizes (spec 6.1); `explicit`: Calculate folder sizes.
@@ -104,6 +95,7 @@ struct Arrival {
 }
 
 struct Inner {
+    id: PaneId,
     window: slint::Weak<AppWindow>,
     view: View,
     cache: RefCell<SizeCache>,
@@ -126,8 +118,9 @@ struct Inner {
 pub struct FolderSizes(Rc<Inner>);
 
 impl FolderSizes {
-    pub fn new(window: &AppWindow, view: View) -> FolderSizes {
-        let sizes = FolderSizes(Rc::new(Inner {
+    pub fn new(id: PaneId, window: &AppWindow, view: View) -> FolderSizes {
+        FolderSizes(Rc::new(Inner {
+            id,
             window: window.as_weak(),
             view,
             cache: RefCell::new(SizeCache::new(CACHE_MAX)),
@@ -140,9 +133,7 @@ impl FolderSizes {
             clock: RefCell::default(),
             resort: slint::Timer::default(),
             done: Cell::new(true),
-        }));
-        CURRENT.with(|c| *c.borrow_mut() = Some(sizes.clone()));
-        sizes
+        }))
     }
 
     /// settings.toml was read: `[view] folder-sizes` and `[search] everything`.
@@ -233,11 +224,14 @@ impl FolderSizes {
         self.0.again.set(false);
         self.0.done.set(false);
         *self.0.running.borrow_mut() = Some((folder.clone(), cancel.clone()));
-        let (mode, everything, window) = (self.0.mode.get(), self.0.everything.get(), self.0.window.clone());
+        let (id, mode, everything, window) =
+            (self.0.id, self.0.mode.get(), self.0.everything.get(), self.0.window.clone());
         let spawned = std::thread::Builder::new().name("gezik-sizes".into()).spawn(move || {
             gezik_platform::priority::lower_this_thread();
             work(run, folder, names, mode, everything, explicit, &cancel, &|arrival| {
-                let _ = window.upgrade_in_event_loop(move |_| with_current(|s| s.arrived(arrival)));
+                let _ = window.upgrade_in_event_loop(move |_| {
+                    crate::panes::with_id(id, |p| p.folder_sizes.arrived(arrival));
+                });
             });
             // What the walk read and freed (up to ~30 MB on a home folder) goes back (spec 12).
             gezik_platform::priority::give_back_memory();

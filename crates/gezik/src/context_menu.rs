@@ -1717,7 +1717,7 @@ impl Menus {
     pub fn filter_menu(&self, at: Anchor) {
         let names: Vec<String> = crate::filter::saved().into_iter().map(|f| f.name).collect();
         let mut can_save = false;
-        crate::filter::with_current(|filter| can_save = filter.can_save());
+        crate::panes::with_active(|p| can_save = p.filter.can_save());
         let items = filter_items(&names, can_save);
         *self.subject.borrow_mut() = Some(Subject::Filter(names));
         self.open_slint_entries(&items, Vec::new(), at);
@@ -1726,14 +1726,16 @@ impl Menus {
     /// One of the search bar's menus, under its button.
     pub fn search_menu(&self, which: crate::search::SearchMenu, at: Anchor) {
         let mut built = (Vec::new(), Vec::new());
-        crate::search::with_current(|s| built = s.menu(which));
+        crate::panes::with_active(|p| built = p.search.menu(which));
         *self.subject.borrow_mut() = Some(Subject::Search);
         self.open_slint_entries(&built.0, built.1, at);
     }
 
     fn run(&self, id: u32, subject: Subject) {
         match (id, subject) {
-            (id, Subject::Search) => crate::search::with_current(|s| s.menu_chosen(id)),
+            (id, Subject::Search) => {
+                crate::panes::with_active(|p| p.search.menu_chosen(id));
+            }
             (PUT_BACK, _) => crate::trash_view::put_back(&self.view),
             (TRASH_DELETE, _) => crate::trash_view::delete_selection(&self.view),
             (EMPTY_TRASH, _) => crate::trash_view::empty(),
@@ -1753,7 +1755,7 @@ impl Menus {
             (RENAME_SEARCH, Subject::SavedSearch(name)) => crate::saved_searches::with_current(|s| s.ask_rename(&name)),
             (DELETE_SEARCH, Subject::SavedSearch(name)) => crate::saved_searches::with_current(|s| s.delete(&name)),
             (SEARCH_HERE, Subject::Background(dir) | Subject::SidebarEntry(dir) | Subject::Row(dir)) => {
-                crate::search::with_current(|s| s.open_in(dir));
+                crate::panes::with_active(|p| p.search.open_in(dir));
             }
             (SHOW_IN_FOLDER | SHOW_IN_FOLDER_NEW_TAB, Subject::Row(path)) => {
                 self.ops.show_path_in_folder(&path, id == SHOW_IN_FOLDER_NEW_TAB);
@@ -1762,17 +1764,21 @@ impl Menus {
             (COPY_WITH_FOLDERS | CUT_WITH_FOLDERS, Subject::Row(_) | Subject::Rows(_)) => {
                 self.ops.copy_with_folders(id == CUT_WITH_FOLDERS);
             }
-            (FLAT_VIEW, Subject::View) => crate::search::with_current(crate::search::Searches::flat_view),
+            (FLAT_VIEW, Subject::View) => {
+                crate::panes::with_active(|p| p.search.flat_view());
+            }
             // By name: settings.toml may have been reloaded since the menu opened.
             (id, Subject::Filter(names)) if (FILTER_FIRST..FILTER_FIRST + FILTER_MAX).contains(&id) => {
                 if let Some(name) = names.get((id - FILTER_FIRST) as usize) {
-                    crate::filter::with_current(|filter| filter.apply_saved(name));
+                    crate::panes::with_active(|p| p.filter.apply_saved(name));
                 }
             }
-            (FILTER_SAVE, Subject::Filter(_)) => crate::filter::with_current(crate::filter::Filter::ask_save),
+            (FILTER_SAVE, Subject::Filter(_)) => {
+                crate::panes::with_active(|p| p.filter.ask_save());
+            }
             (id, Subject::Filter(names)) if (FILTER_DELETE_FIRST..FILTER_DELETE_FIRST + FILTER_MAX).contains(&id) => {
                 if let Some(name) = names.get((id - FILTER_DELETE_FIRST) as usize) {
-                    crate::filter::with_current(|filter| filter.delete_saved(name));
+                    crate::panes::with_active(|p| p.filter.delete_saved(name));
                 }
             }
             (id, Subject::BatchRename(_)) if (ADD_RULE_FIRST..ADD_RULE_FIRST + 10).contains(&id) => {
@@ -1939,7 +1945,9 @@ impl Menus {
                 crate::integration::with_current(crate::integration::Integration::open)
             }
             (REVEAL_IN_TREE, _) => self.sidebar.reveal_current(),
-            (CALC_FOLDER_SIZES, _) => crate::folder_sizes::with_current(crate::folder_sizes::FolderSizes::calculate),
+            (CALC_FOLDER_SIZES, _) => {
+                crate::panes::with_active(|p| p.folder_sizes.calculate());
+            }
             (id, Subject::View) => {
                 if let Some(option) = view_option_for(id, crate::view_options::current()) {
                     crate::view_options::change(option);

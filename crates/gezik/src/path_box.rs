@@ -17,6 +17,7 @@ use gezik_core::ops::paths::same_path;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::navigation::{Navigator, resolve_typed};
+use crate::panes::PaneId;
 use crate::{AppWindow, PathRow};
 
 /// How long typing pauses before the folder is read.
@@ -195,7 +196,7 @@ fn remember() -> bool {
 pub fn set_settings(history: HistorySettings) {
     REMEMBER.with(|r| r.set(history.remember));
     if !history.remember {
-        with_current(|p| p.forget(false));
+        crate::panes::with_active(|p| p.path_box.forget(false));
     }
 }
 
@@ -370,6 +371,7 @@ pub fn list_subfolders(dir: &Path, show_hidden: bool, show_system: bool) -> std:
 type Cached = (PathBuf, Rc<Vec<String>>, u64);
 
 struct Inner {
+    id: PaneId,
     window: slint::Weak<AppWindow>,
     nav: Navigator,
     /// The text as last typed; `None`: not changed since typing began (the path on screen).
@@ -398,17 +400,6 @@ struct Inner {
 #[derive(Clone)]
 pub struct PathBox(Rc<Inner>);
 
-thread_local! {
-    static CURRENT: RefCell<Option<PathBox>> = const { RefCell::new(None) };
-}
-
-/// Runs `f` with this UI thread's path box, if set up.
-pub fn with_current(f: impl FnOnce(&PathBox)) {
-    if let Some(path_box) = CURRENT.with(|c| c.borrow().clone()) {
-        f(&path_box);
-    }
-}
-
 fn slint_row(row: &Row) -> PathRow {
     match row {
         Row::Heading(title) => PathRow { title: (*title).into(), detail: "".into(), path: "".into(), heading: true },
@@ -427,7 +418,13 @@ impl PathBox {
         self.0.history.borrow().recent(n).into_iter().map(|visit| visit.path.clone()).collect()
     }
 
-    pub fn new(window: &AppWindow, nav: Navigator, store: Option<ConfigStore>, saved: Vec<Visit>) -> PathBox {
+    pub fn new(
+        id: PaneId,
+        window: &AppWindow,
+        nav: Navigator,
+        store: Option<ConfigStore>,
+        saved: Vec<Visit>,
+    ) -> PathBox {
         let history = if remember() {
             FolderHistory::from_visits(saved, now())
         } else {
@@ -439,6 +436,7 @@ impl PathBox {
             FolderHistory::default()
         };
         let this = PathBox(Rc::new(Inner {
+            id,
             window: window.as_weak(),
             nav: nav.clone(),
             text: RefCell::default(),
@@ -455,12 +453,19 @@ impl PathBox {
             checked: RefCell::default(),
             checking: Cell::new(false),
         }));
-        window.on_path_edited(|text| with_current(|p| p.edited(text.into())));
+        window.on_path_edited(|text| {
+            crate::panes::with_active(|p| p.path_box.edited(text.into()));
+        });
         // By path, not by row: whatever happened to the list meanwhile, the click goes there.
-        window.on_path_chosen(|path| with_current(|p| p.go_to(PathBuf::from(path.as_str()))));
-        window.on_path_editing_changed(|| with_current(PathBox::reset));
-        nav.on_visited(|path| with_current(|p| p.visited(path)));
-        CURRENT.with(|c| *c.borrow_mut() = Some(this.clone()));
+        window.on_path_chosen(|path| {
+            crate::panes::with_active(|p| p.path_box.go_to(PathBuf::from(path.as_str())));
+        });
+        window.on_path_editing_changed(|| {
+            crate::panes::with_active(|p| p.path_box.reset());
+        });
+        nav.on_visited(move |path| {
+            crate::panes::with_id(id, |p| p.path_box.visited(path));
+        });
         this
     }
 
@@ -468,7 +473,10 @@ impl PathBox {
         *self.0.text.borrow_mut() = Some(text);
         self.0.list.borrow_mut().edited();
         self.set_current(None);
-        self.0.debounce.start(slint::TimerMode::SingleShot, DEBOUNCE, || with_current(PathBox::update));
+        let id = self.0.id;
+        self.0.debounce.start(slint::TimerMode::SingleShot, DEBOUNCE, move || {
+            crate::panes::with_id(id, |p| p.path_box.update());
+        });
     }
 
     /// Typing began or ended: the list, the text and what was read are forgotten (reads
@@ -582,7 +590,7 @@ impl PathBox {
             self.save();
         }
         if say {
-            crate::view::with_current(|view| view.note("Folder history cleared".to_owned()));
+            crate::panes::with_active(|p| p.view.note("Folder history cleared".to_owned()));
         }
         if self.is_open() {
             self.update();
@@ -610,9 +618,12 @@ impl PathBox {
         }
         self.0.checked.borrow_mut().extend(paths.iter().cloned());
         self.0.checking.set(true);
+        let id = self.0.id;
         let spawned = std::thread::Builder::new().name("gezik-history-check".into()).spawn(move || {
             let gone: Vec<PathBuf> = paths.into_iter().filter(|path| gone_locally(path)).collect();
-            let _ = slint::invoke_from_event_loop(move || with_current(|p| p.gone(gone)));
+            let _ = slint::invoke_from_event_loop(move || {
+                crate::panes::with_id(id, |p| p.path_box.gone(gone));
+            });
         });
         if spawned.is_err() {
             self.0.checking.set(false);
@@ -633,7 +644,10 @@ impl PathBox {
 
     fn wait_for(&self, folder: PathBuf, prefix: String) {
         *self.0.wanted.borrow_mut() = Some((folder, prefix));
-        self.0.limit.start(slint::TimerMode::SingleShot, READ_LIMIT, || with_current(PathBox::too_slow));
+        let id = self.0.id;
+        self.0.limit.start(slint::TimerMode::SingleShot, READ_LIMIT, move || {
+            crate::panes::with_id(id, |p| p.path_box.too_slow());
+        });
     }
 
     /// Reads `folder` on a thread of its own.
@@ -643,12 +657,13 @@ impl PathBox {
         self.0.reads.set(number);
         self.0.reading.borrow_mut().push((folder.clone(), generation));
         let options = crate::view_options::current();
+        let id = self.0.id;
         let spawned = std::thread::Builder::new().name("gezik-complete".into()).spawn({
             let folder = folder.clone();
             move || {
                 let names = list_subfolders(&folder, options.show_hidden, options.show_system);
                 let _ = slint::invoke_from_event_loop(move || {
-                    with_current(|p| p.listed(generation, number, folder, names));
+                    crate::panes::with_id(id, |p| p.path_box.listed(generation, number, folder, names));
                 });
             }
         });

@@ -520,7 +520,7 @@ impl Operations {
         let title = task.title();
         let id = self.0.engine.submit(task);
         let mut job = JobView::new(id, title);
-        crate::search::with_current(|searches| job.origin = searches.results_key());
+        crate::panes::with_active(|p| job.origin = p.search.results_key());
         job.retry = retry;
         job.after = after;
         self.0.jobs.borrow_mut().push(job);
@@ -540,7 +540,7 @@ impl Operations {
         let title = tasks.first().map(|task| task.title()).unwrap_or_default();
         let id = self.0.engine.submit_chain(tasks, label);
         let mut job = JobView::new(id, title);
-        crate::search::with_current(|searches| job.origin = searches.results_key());
+        crate::panes::with_active(|p| job.origin = p.search.results_key());
         job.again = again;
         job.after = after;
         self.0.jobs.borrow_mut().push(job);
@@ -578,7 +578,7 @@ impl Operations {
             // A new folder or file is named in the whole folder: the filter (which would most
             // likely hide "New folder") closes first.
             if self.0.view.filter_text().is_some() {
-                crate::filter::with_current(crate::filter::Filter::close);
+                crate::panes::with_active(|p| p.filter.close());
             }
             self.0.view.begin_rename_by_name(&name);
         }
@@ -641,7 +641,7 @@ impl Operations {
         store.write_settings(change, |result| {
             if let Err(warning) = result {
                 let _ = slint::invoke_from_event_loop(move || {
-                    crate::view::with_current(|view| view.note(warning.to_string()));
+                    crate::panes::with_active(|p| p.view.note(warning.to_string()));
                 });
             }
         });
@@ -1448,7 +1448,7 @@ impl Operations {
         let mut touched = report.changed_dirs.clone();
         touched.extend(report.results.iter().cloned());
         touched.extend(report.moved.iter().map(|(from, _)| from.clone()));
-        crate::folder_sizes::with_current(|f| f.forget(&touched));
+        crate::panes::with_active(|p| p.folder_sizes.forget(&touched));
         let mut dirs = report.changed_dirs.clone();
         dirs.extend(hidden_in);
         let skipped = (report.skipped_changed > 0)
@@ -1466,8 +1466,8 @@ impl Operations {
         // Search results follow Gezik's own jobs (spec 4.7), those kept by a tab too.
         let mut paths = report.results.clone();
         paths.extend(hidden_paths);
-        crate::search::with_current(|searches| {
-            searches.job_done(origin.as_ref(), report.changed_dirs.clone(), paths, report.moved.clone());
+        crate::panes::with_active(|p| {
+            p.search.job_done(origin.as_ref(), report.changed_dirs.clone(), paths, report.moved.clone());
         });
         self.0.sidebar.refresh();
         if let (false, Some(note)) = (reloading, note) {

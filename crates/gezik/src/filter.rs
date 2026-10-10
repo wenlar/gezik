@@ -15,11 +15,10 @@ use slint::ComponentHandle;
 use crate::AppWindow;
 use crate::context_menu::FILTER_MAX;
 use crate::dialog::Dialogs;
+use crate::panes::PaneId;
 use crate::view::View;
 
 thread_local! {
-    /// The filter of this (UI) thread, for the key handler and the actions.
-    static CURRENT: RefCell<Option<Filter>> = const { RefCell::new(None) };
     /// `[keyboard]` and `[[filters]]` of the settings in effect.
     static SETTINGS: RefCell<(KeyboardSettings, Vec<SavedFilter>)> = RefCell::default();
     /// Saves on their way to settings.toml: the last one's number, and the list after it while
@@ -114,15 +113,9 @@ fn can_save_text(text: Option<&str>, error: &str) -> bool {
     text.is_some_and(|t| !t.trim().is_empty()) && error.is_empty()
 }
 
-/// Runs `f` with this UI thread's filter, if there is one yet.
-pub fn with_current(f: impl FnOnce(&Filter)) {
-    if let Some(filter) = CURRENT.with(|c| c.borrow().clone()) {
-        f(&filter);
-    }
-}
-
 #[derive(Clone)]
 pub struct Filter {
+    id: PaneId,
     window: slint::Weak<AppWindow>,
     view: View,
     dialogs: Dialogs,
@@ -133,13 +126,12 @@ pub struct Filter {
 
 impl Filter {
     /// The ▾ menu is `Menus::filter_menu`'s (main.rs connects it).
-    pub fn new(window: &AppWindow, view: View, dialogs: Dialogs, store: Option<ConfigStore>) -> Filter {
-        let filter = Filter { window: window.as_weak(), view, dialogs, store };
+    pub fn new(id: PaneId, window: &AppWindow, view: View, dialogs: Dialogs, store: Option<ConfigStore>) -> Filter {
+        let filter = Filter { id, window: window.as_weak(), view, dialogs, store };
         window.on_filter_edited({
             let view = filter.view.clone();
             move |text| view.set_filter(Some(&text))
         });
-        CURRENT.with(|c| *c.borrow_mut() = Some(filter.clone()));
         filter
     }
 
@@ -269,9 +261,11 @@ impl Filter {
     fn write(&self, filters: Vec<SavedFilter>) {
         let Some(store) = &self.store else { return set_saved(filters) };
         let seq = queue_write(filters.clone());
-        let window = self.window.clone();
+        let (id, window) = (self.id, self.window.clone());
         store.write_settings(SettingsChange::Filters(filters.clone()), move |result| {
-            let _ = window.upgrade_in_event_loop(move |_| with_current(|f| f.written(seq, filters, result)));
+            let _ = window.upgrade_in_event_loop(move |_| {
+                crate::panes::with_id(id, |p| p.filter.written(seq, filters, result));
+            });
         });
     }
 

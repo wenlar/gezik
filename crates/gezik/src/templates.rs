@@ -54,16 +54,18 @@ pub fn load_in_background() {
 /// tab of Gezik.
 pub fn open_folder() {
     let Some(dir) = dir() else {
-        crate::view::with_current(|view| view.note("No config folder for templates".to_owned()));
+        crate::panes::with_active(|p| p.view.note("No config folder for templates".to_owned()));
         return;
     };
     let _ = std::thread::Builder::new().name("gezik-templates".into()).spawn(move || {
         let made = std::fs::create_dir_all(&dir);
         let _ = slint::invoke_from_event_loop(move || match made {
-            Ok(()) => crate::navigation::with_current(|nav| nav.open_tab(Location::Path(dir), true)),
+            Ok(()) => {
+                crate::panes::with_active(|p| p.nav.open_tab(Location::Path(dir), true));
+            }
             Err(err) => {
                 let why = gezik_platform::fs::describe(&err);
-                crate::view::with_current(|view| view.note(format!("Cannot make the templates folder: {why}")));
+                crate::panes::with_active(|p| p.view.note(format!("Cannot make the templates folder: {why}")));
             }
         });
     });

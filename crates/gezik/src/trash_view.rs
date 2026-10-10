@@ -154,7 +154,7 @@ fn bin_changed() {
 pub fn changed() {
     RELOAD.with(|timer| {
         timer.start(slint::TimerMode::SingleShot, Duration::from_secs(1), || {
-            crate::navigation::with_current(crate::navigation::Navigator::refresh_trash);
+            crate::panes::with_active(|p| p.nav.refresh_trash());
         });
     });
 }
@@ -391,7 +391,8 @@ pub fn put_back(view: &View) {
                 // shortcut: one stat on the UI thread for a typed folder (a dead network path
                 // blocks); check it off the thread if that bites.
                 if !folder.is_absolute() || !folder.is_dir() {
-                    return crate::view::with_current(|v| v.note(format!("{} is not a folder", folder.display())));
+                    crate::panes::with_active(|p| p.view.note(format!("{} is not a folder", folder.display())));
+                    return;
                 }
                 crate::operations::with_current(|ops| ops.restore_from_trash(into_folder(&folder, unknown)));
             },
@@ -440,7 +441,8 @@ fn confirm_empty(items: Vec<TrashItem>) {
         .filter(|i| !i.trashed.file_name().and_then(|n| n.to_str()).is_some_and(gezik_ops::pending::is_internal_name))
         .collect();
     if items.is_empty() {
-        return crate::view::with_current(|v| v.note(format!("The {bin} is empty")));
+        crate::panes::with_active(|p| p.view.note(format!("The {bin} is empty")));
+        return;
     }
     // Sizes are known on Windows, and elsewhere when no folder is in it (decision 5).
     let size = (cfg!(windows) || items.iter().all(|i| !i.is_dir)).then(|| items.iter().map(|i| i.size).sum());
