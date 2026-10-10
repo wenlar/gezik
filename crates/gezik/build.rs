@@ -14,5 +14,8 @@ fn main() {
     {
         println!("cargo:rustc-link-arg-bins=/DELAYLOAD:winhttp.dll");
         println!("cargo:rustc-link-arg-bins=delayimp.lib");
+        // The exe's own imports come from System32 only, never from its folder: the
+        // administrator helper is this exe (9b7 security review 1; the CRT is static).
+        println!("cargo:rustc-link-arg-bins=/DEPENDENTLOADFLAG:0x800");
     }
 }

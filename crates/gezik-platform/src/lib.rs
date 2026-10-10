@@ -8,6 +8,7 @@ mod datetime;
 pub mod dnd;
 mod drives;
 pub mod eject;
+pub mod elevate;
 pub mod everything;
 pub mod finder;
 pub mod fs;
