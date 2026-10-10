@@ -150,6 +150,221 @@ impl Geometry {
     }
 }
 
+/// One group of a grouped view (spec 10 §6): entries `start..start + len`, together in the
+/// listing; a closed one shows only its header.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Span {
+    pub start: usize,
+    pub len: usize,
+    pub collapsed: bool,
+}
+
+impl Span {
+    fn end(&self) -> usize {
+        self.start + self.len
+    }
+}
+
+/// A line of a grouped view: group `g`'s header, or entries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Line {
+    Header(usize),
+    Cells(Range<usize>),
+}
+
+/// The lines of a grouped view: per group a header line, then its entries `per_row` a line
+/// (none while closed). Every line is as high as the others (spec 10 §6.2: in the grid a
+/// header takes a cell line). shortcut: each call walks the groups (a rubber band or the lines
+/// on screen walk them once); keep the first line of each if a folder with thousands of types
+/// scrolls slowly.
+#[derive(Debug, Clone, Copy)]
+pub struct Lines<'a> {
+    pub spans: &'a [Span],
+    pub per_row: usize,
+}
+
+impl Lines<'_> {
+    fn per(&self) -> usize {
+        self.per_row.max(1)
+    }
+
+    /// Lines of entries in group `g` (none while closed).
+    fn rows_in(&self, g: usize) -> usize {
+        let s = &self.spans[g];
+        if s.collapsed { 0 } else { s.len.div_ceil(self.per()) }
+    }
+
+    pub fn count(&self) -> usize {
+        (0..self.spans.len()).map(|g| 1 + self.rows_in(g)).sum()
+    }
+
+    pub fn line(&self, n: usize) -> Option<Line> {
+        self.lines_from(n).next()
+    }
+
+    /// Lines `from..` in order, in one pass over the groups.
+    fn lines_from(&self, from: usize) -> impl Iterator<Item = Line> + '_ {
+        let (mut g, mut first) = (0, 0);
+        while g < self.spans.len() && from >= first + 1 + self.rows_in(g) {
+            first += 1 + self.rows_in(g);
+            g += 1;
+        }
+        // Within group `g`: 0 is its header, k its (k - 1)'th line of entries.
+        let skip = from - first;
+        (g..self.spans.len()).flat_map(move |h| {
+            let k = if h == g { skip } else { 0 };
+            let header = (k == 0).then_some(Line::Header(h));
+            header.into_iter().chain((k.saturating_sub(1)..self.rows_in(h)).map(move |r| Line::Cells(self.row(h, r))))
+        })
+    }
+
+    /// The line entry `index` is on and its column; `None` in a closed group or past the end.
+    pub fn line_of(&self, index: usize) -> Option<(usize, usize)> {
+        let mut first = 0;
+        for (g, s) in self.spans.iter().enumerate() {
+            if (s.start..s.end()).contains(&index) {
+                let k = index - s.start;
+                return (!s.collapsed).then_some((first + 1 + k / self.per(), k % self.per()));
+            }
+            first += 1 + self.rows_in(g);
+        }
+        None
+    }
+
+    /// The entries on lines `lines`: from the first to past the last (a closed group between
+    /// counts in; headers have none).
+    pub fn entries_on(&self, lines: Range<usize>) -> Range<usize> {
+        let mut out: Option<Range<usize>> = None;
+        for line in self.lines_from(lines.start).take(lines.len()) {
+            if let Line::Cells(r) = line {
+                out = Some(out.map_or(r.clone(), |o| o.start..r.end));
+            }
+        }
+        out.unwrap_or(0..0)
+    }
+
+    /// The entries `rect` touches (content coordinates), as `Geometry::items_in_rect` does
+    /// without groups; header lines have none.
+    pub fn items_in_rect(&self, geometry: &Geometry, rect: Rect) -> Vec<Range<usize>> {
+        let h = geometry.row_height();
+        let (bottom, count) = (rect.y + rect.height, self.count());
+        if count == 0 || h <= 0.0 || bottom <= 0.0 {
+            return Vec::new();
+        }
+        let first = (rect.y.max(0.0) / h).floor() as usize;
+        let last = ((bottom / h).ceil() as usize).saturating_sub(1).min(count - 1);
+        if first > last {
+            return Vec::new();
+        }
+        let columns = match *geometry {
+            Geometry::List { .. } => None,
+            Geometry::Grid { cell_width, left, .. } => {
+                let (x, right) = (rect.x - left, rect.x + rect.width - left);
+                if right <= 0.0 || cell_width <= 0.0 || x >= self.per() as f32 * cell_width {
+                    return Vec::new();
+                }
+                let c0 = (x.max(0.0) / cell_width).floor() as usize;
+                let c1 = ((right / cell_width).ceil() as usize).saturating_sub(1).min(self.per() - 1);
+                Some((c0, c1))
+            }
+        };
+        self.lines_from(first)
+            .take(last - first + 1)
+            .filter_map(|line| match line {
+                Line::Header(_) => None,
+                Line::Cells(r) => match columns {
+                    None => Some(r),
+                    Some((c0, c1)) => {
+                        let (start, end) = (r.start + c0, (r.start + c1 + 1).min(r.end));
+                        (start < end).then_some(start..end)
+                    }
+                },
+            })
+            .collect()
+    }
+
+    /// Entries `r`'th line in group `g`.
+    fn row(&self, g: usize, r: usize) -> Range<usize> {
+        let s = &self.spans[g];
+        let a = s.start + r * self.per();
+        a..(a + self.per()).min(s.end())
+    }
+
+    fn next_row(&self, (g, r): (usize, usize)) -> Option<(usize, usize)> {
+        if r + 1 < self.rows_in(g) {
+            return Some((g, r + 1));
+        }
+        (g + 1..self.spans.len()).find(|&h| self.rows_in(h) > 0).map(|h| (h, 0))
+    }
+
+    fn prev_row(&self, (g, r): (usize, usize)) -> Option<(usize, usize)> {
+        if r > 0 {
+            return Some((g, r - 1));
+        }
+        (0..g).rev().find(|&h| self.rows_in(h) > 0).map(|h| (h, self.rows_in(h) - 1))
+    }
+
+    /// Where the focus goes from `from` for a key, as `Geometry::step` does without groups:
+    /// lines of entries only (headers and closed groups are skipped). A focus in a closed
+    /// group counts as none. `None` if no entry shows, or for Left/Right in the list.
+    pub fn step(&self, from: Option<usize>, mv: Move, page_rows: usize, grid: bool) -> Option<usize> {
+        let first_g = (0..self.spans.len()).find(|&g| self.rows_in(g) > 0)?;
+        let last_g = (0..self.spans.len()).rev().find(|&g| self.rows_in(g) > 0)?;
+        let (first, last) = (self.spans[first_g].start, self.row(last_g, self.rows_in(last_g) - 1).end - 1);
+        let located = from.and_then(|i| {
+            let g = self.spans.iter().position(|s| !s.collapsed && (s.start..s.end()).contains(&i))?;
+            Some((i, (g, (i - self.spans[g].start) / self.per())))
+        });
+        let Some((i, at)) = located else {
+            return match mv {
+                Move::Left | Move::Right if !grid => None,
+                Move::End => Some(last),
+                _ => Some(first),
+            };
+        };
+        let here = self.row(at.0, at.1);
+        let col = i - here.start;
+        let land = |(g, r): (usize, usize)| {
+            let row = self.row(g, r);
+            (row.start + col).min(row.end - 1)
+        };
+        let walk = |n: usize, down: bool| {
+            let mut p = at;
+            for _ in 0..n {
+                match if down { self.next_row(p) } else { self.prev_row(p) } {
+                    Some(q) => p = q,
+                    None => break,
+                }
+            }
+            p
+        };
+        let page = page_rows.max(1);
+        Some(match mv {
+            Move::Up => land(walk(1, false)),
+            Move::Down => land(walk(1, true)),
+            Move::PageUp => land(walk(page, false)),
+            Move::PageDown => land(walk(page, true)),
+            Move::Left if grid => {
+                if i > here.start {
+                    i - 1
+                } else {
+                    self.prev_row(at).map_or(i, |p| self.row(p.0, p.1).end - 1)
+                }
+            }
+            Move::Right if grid => {
+                if i + 1 < here.end {
+                    i + 1
+                } else {
+                    self.next_row(at).map_or(i, |p| self.row(p.0, p.1).start)
+                }
+            }
+            Move::Left | Move::Right => return None,
+            Move::Home => first,
+            Move::End => last,
+        })
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::single_range_in_vec_init)]
 mod tests {
@@ -229,5 +444,103 @@ mod tests {
         assert_eq!(g.step(Some(0), Move::PageDown, 100, 2), Some(8));
         assert_eq!(g.step(Some(3), Move::Home, 10, 2), Some(0));
         assert_eq!(g.step(Some(3), Move::End, 10, 2), Some(9));
+    }
+
+    fn spans(list: &[(usize, usize, bool)]) -> Vec<Span> {
+        list.iter().map(|&(start, len, collapsed)| Span { start, len, collapsed }).collect()
+    }
+
+    #[test]
+    fn list_lines_have_a_header_per_group() {
+        // 0..3 open, 3..5 closed, 5..9 open.
+        let s = spans(&[(0, 3, false), (3, 2, true), (5, 4, false)]);
+        let lines = Lines { spans: &s, per_row: 1 };
+        assert_eq!(lines.count(), 10);
+        assert_eq!(lines.line(0), Some(Line::Header(0)));
+        assert_eq!(lines.line(1), Some(Line::Cells(0..1)));
+        assert_eq!(lines.line(4), Some(Line::Header(1)), "a closed group shows only its header");
+        assert_eq!(lines.line(5), Some(Line::Header(2)));
+        assert_eq!(lines.line(9), Some(Line::Cells(8..9)));
+        assert_eq!(lines.line(10), None);
+        assert_eq!(lines.line_of(0), Some((1, 0)));
+        assert_eq!(lines.line_of(3), None, "closed");
+        assert_eq!(lines.line_of(5), Some((6, 0)));
+        assert_eq!(lines.line_of(9), None, "past the end");
+        assert_eq!(lines.entries_on(0..5), 0..3);
+        assert_eq!(lines.entries_on(4..6), 0..0, "headers only");
+        // One pass from any line gives the same lines as from the start.
+        let grid = spans(&[(0, 3, false), (3, 2, true), (5, 5, false)]);
+        let grid = Lines { spans: &grid, per_row: 2 };
+        let all: Vec<Line> = grid.lines_from(0).collect();
+        assert_eq!(all.len(), grid.count());
+        for n in 0..=all.len() {
+            assert_eq!(grid.lines_from(n).collect::<Vec<_>>(), all[n..], "from line {n}");
+        }
+        assert_eq!(lines.entries_on(8..20), 7..9);
+    }
+
+    #[test]
+    fn grid_lines_start_each_group_on_a_new_line() {
+        let s = spans(&[(0, 3, false), (3, 4, false)]);
+        let lines = Lines { spans: &s, per_row: 2 };
+        assert_eq!(lines.count(), 6);
+        assert_eq!(lines.line(2), Some(Line::Cells(2..3)), "the group's short last line");
+        assert_eq!(lines.line(3), Some(Line::Header(1)));
+        assert_eq!(lines.line(4), Some(Line::Cells(3..5)));
+        assert_eq!(lines.line_of(4), Some((4, 1)));
+        assert_eq!(lines.line_of(6), Some((5, 1)));
+    }
+
+    #[test]
+    fn list_keys_skip_headers_and_closed_groups() {
+        let s = spans(&[(0, 3, false), (3, 2, true), (5, 4, false)]);
+        let lines = Lines { spans: &s, per_row: 1 };
+        let step = |from, mv| lines.step(from, mv, 3, false);
+        assert_eq!(step(Some(2), Move::Down), Some(5));
+        assert_eq!(step(Some(5), Move::Up), Some(2));
+        assert_eq!(step(Some(0), Move::Up), Some(0));
+        assert_eq!(step(Some(8), Move::Down), Some(8));
+        assert_eq!(step(Some(0), Move::PageDown), Some(5), "three lines of entries");
+        assert_eq!(step(Some(8), Move::PageUp), Some(5));
+        assert_eq!(step(Some(6), Move::Home), Some(0));
+        assert_eq!(step(Some(0), Move::End), Some(8));
+        assert_eq!(step(None, Move::Down), Some(0));
+        assert_eq!(step(None, Move::End), Some(8));
+        assert_eq!(step(Some(3), Move::Down), Some(0), "a focus in a closed group counts as none");
+        assert_eq!(step(Some(2), Move::Left), None);
+        let closed = spans(&[(0, 3, true)]);
+        assert_eq!(Lines { spans: &closed, per_row: 1 }.step(Some(1), Move::Down, 3, false), None, "nothing shows");
+    }
+
+    #[test]
+    fn grid_keys_cross_groups() {
+        let s = spans(&[(0, 3, false), (3, 4, false)]);
+        let lines = Lines { spans: &s, per_row: 2 };
+        let step = |from, mv| lines.step(Some(from), mv, 1, true);
+        assert_eq!(step(1, Move::Down), Some(2), "onto the short last line");
+        assert_eq!(step(2, Move::Down), Some(3), "into the next group");
+        assert_eq!(step(4, Move::Up), Some(2), "column kept, cut to the short line");
+        assert_eq!(step(2, Move::Right), Some(3));
+        assert_eq!(step(3, Move::Left), Some(2));
+        assert_eq!(step(6, Move::Right), Some(6), "the last entry stays");
+        assert_eq!(step(0, Move::Left), Some(0));
+        assert_eq!(step(5, Move::Down), Some(5), "the last line stays");
+    }
+
+    #[test]
+    fn a_rubber_band_skips_header_lines() {
+        let s = spans(&[(0, 3, false), (3, 4, false)]);
+        let lines = Lines { spans: &s, per_row: 2 };
+        let g = grid(2);
+        // Column 1 of lines 1-2 (y 120-359): entry 1; line 2 has no column 1.
+        assert_eq!(lines.items_in_rect(&g, Rect::from_points(150.0, 130.0, 160.0, 250.0)), [1..2]);
+        // Over the second header only.
+        assert_eq!(lines.items_in_rect(&g, Rect::from_points(0.0, 370.0, 199.0, 380.0)), []);
+        // Lines 1-4, both columns.
+        assert_eq!(lines.items_in_rect(&g, Rect::from_points(0.0, 125.0, 199.0, 590.0)), [0..2, 2..3, 3..5]);
+        let list = spans(&[(0, 2, false), (2, 2, true), (4, 2, false)]);
+        let lines = Lines { spans: &list, per_row: 1 };
+        // Lines 0-5: header, 0, 1, closed header, header, 4.
+        assert_eq!(lines.items_in_rect(&LIST, Rect::from_points(0.0, 0.0, 10.0, 26.0 * 6.0)), [0..1, 1..2, 4..5]);
     }
 }

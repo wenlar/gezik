@@ -211,6 +211,15 @@ impl Selection {
         })
     }
 
+    /// Unselects `range` (the part past the end is ignored); focus and anchor stay.
+    pub fn unselect(&mut self, range: Range<usize>) -> Vec<Range<usize>> {
+        self.change(|s| {
+            for i in range.start..range.end.min(s.len) {
+                s.set(i, false);
+            }
+        })
+    }
+
     /// Becomes `new` (selection, focus and anchor); returns only the rows whose selection or
     /// focus changed (all of them if the length differs).
     pub fn replace(&mut self, new: Selection) -> Vec<Range<usize>> {
@@ -586,5 +595,15 @@ mod tests {
     fn iterates_across_words() {
         let s = Selection::from_indices(200, [0, 63, 64, 199], None);
         assert_eq!(selected(&s), [0, 63, 64, 199]);
+    }
+
+    #[test]
+    fn unselect_leaves_focus_and_others() {
+        let mut s = Selection::from_indices(10, [1, 4, 5, 8], Some(4));
+        let changed = s.unselect(3..6);
+        assert_eq!(s.iter().collect::<Vec<_>>(), [1, 8]);
+        assert_eq!((s.focus(), s.count()), (Some(4), 2));
+        assert_eq!(changed, [4..6]);
+        assert_eq!(s.unselect(9..20), [], "past the end: nothing");
     }
 }

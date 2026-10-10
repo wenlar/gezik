@@ -514,6 +514,19 @@ Write the results to `macos-test-results.md` ("Run: 9b7"). Use an admin account 
 
 Report anything else that looks wrong: layout, fonts, Retina scaling, ⌘ shortcuts that don't work, and the wording of the boxes.
 
+### 10d, grouping
+
+Numbers stay as they are when branches merge: if this range meets one merged earlier, the later branch moves its items to the next free ten and writes the old number in brackets in the results file; gaps are not filled. 10d starts at 200 as its plan decided (other open branches take the numbers before it). Results go to `macos-test-results.md`.
+
+200. **Tests first.** `cargo test -p gezik-core group layout selection drag`, `cargo test -p gezik view::`, `cargo test -p gezik-core --release -- --ignored grouped_sort`; paste the output (the five times).
+201. **Group by Date.** In `~/Downloads`, View button ▸ Group by ▸ Date, and the menu bar's View ▸ Group By ▸ Date: headers `Today (n)`, `Yesterday`, … newest first with a chevron and a line under each; compare with Finder's "Use Groups" by Date Modified and write down what differs. Sort by Date Modified ascending (header click): the groups go oldest first; Name descending: the groups turn round. ↑/↓ skip the headers, ⌘↑ / ⌘↓ (Home/End if mapped) go to the first/last item, Page Up/Down move a screen.
+202. **Collapse.** Click a header: its rows go, the header stays with ▸; click again: back, the scroll stays. Right-click a header: `Collapse All Groups`, `Expand All Groups`, `Group by ▸`. The View button's menu has `Collapse All Groups` / `Expand All Groups` only while grouped; the menu bar's View has them always (they do nothing ungrouped). With a group closed: ⌘A, the status bar counts only the shown items; ⌘⌫ moves only those to the Trash (use a test folder of copies). Shift+↓ across a closed group selects nothing in it. Typing the name of an item in a closed group opens the group and selects the item. Rename an item (Return) and, while the field is open, `touch ~/Downloads/zz-new.txt` in Terminal so the groups change above it: the rename field (and its error box, after typing a taken name) stays on the item's line.
+203. **Grid.** ⌘⇧2: every group starts on a new line, its header a line as high as the cells (write down if it looks wrong); resize the window: the cells reflow; drag a rubber band across a header: only cells are selected; drop a file on a header: it goes into the folder shown, not a subfolder.
+204. **Type and Size.** Group by Type: folders first (`Folder`), then the types by name as the Kind column shows them; Group by Size: `Folders`, `Gigantic` … `Empty`; View ▸ Calculate Folder Sizes: the folders move into their buckets once their sizes come.
+205. **Results and Trash.** A search (⌘F) grouped by Type: flat while it searches, grouped when it ends; Go ▸ Trash grouped by Date: the dates are when the items were deleted. Do not empty or put back anything.
+206. **Remembered.** Quit and start again: `~/Downloads` is still grouped by Date, another folder is not; View ▸ Apply to All Folders: `settings.toml` has `group = "date"` under `[view]`; Reset This Folder brings back the default.
+207. **iCloud.** In an iCloud Drive folder with items only in the cloud, Group by Size: the cloud-only items stay in the size the system gives them (no download starts: `brctl status` or Finder's cloud icons unchanged).
+
 ## Known gaps (not bugs)
 
 These are known differences from Finder and ForkLift (from the ForkLift comparison, §3). Don't report them as failures. A note is welcome if one hurts more than expected.

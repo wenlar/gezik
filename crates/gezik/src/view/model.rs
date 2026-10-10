@@ -5,7 +5,9 @@ use std::cell::{Cell, RefCell};
 use std::ops::Range;
 use std::rc::Rc;
 
+use gezik_core::group::GroupKey;
 use gezik_core::kind::{IconLookup, fallback_type_name, icon_lookup, own_type_name};
+use gezik_core::layout::{Line, Lines, Span};
 use gezik_core::selection::{PendingPress, Selection};
 use gezik_core::view::{IconMode, SizeFormat, ViewMode};
 use gezik_core::{Entry, format_size_in};
@@ -45,6 +47,11 @@ pub struct ViewData {
     pub cut: std::collections::HashSet<String>,
     /// `[view]`'s options in effect (view_options.rs).
     pub options: gezik_core::view::ViewOptions,
+    /// The groups shown (spec 10 §6), in list order; empty when the view is not grouped.
+    /// Per group, never per entry (spec 10 §6.3).
+    pub groups: Vec<Span>,
+    /// Each group's key, as `groups`.
+    pub group_keys: Vec<GroupKey>,
 }
 
 pub struct ItemsModel {
@@ -71,7 +78,8 @@ impl ItemsModel {
     /// Redraws the lines holding the entries in `rows`; everything when that is many.
     /// Returns whether the whole model was reset.
     pub fn entries_changed(&self, rows: &[Range<usize>]) -> bool {
-        match notify_plan(rows, self.per_row.get()) {
+        let plan = notify_plan(rows, self.per_row.get(), &self.data.borrow().groups);
+        match plan {
             Plan::Reset => {
                 self.notify.reset();
                 true
@@ -82,24 +90,64 @@ impl ItemsModel {
             }
         }
     }
+
+    /// Redraws `lines` (model rows), those past the end left out; never a reset. Returns how
+    /// many were redrawn.
+    pub fn lines_changed(&self, lines: Range<usize>) -> usize {
+        let lines = lines.start..lines.end.min(self.row_count());
+        lines.clone().for_each(|line| self.notify.row_changed(line));
+        lines.len()
+    }
+
+    /// The line entry `index` is on and its column; `None` in a closed group or past the end.
+    /// While the view's data is borrowed (a binding read during a change) it answers as
+    /// without groups, never with a panic.
+    pub fn place_of(&self, index: usize) -> Option<(usize, usize)> {
+        let per_row = self.per_row.get();
+        match self.data.try_borrow() {
+            Ok(data) if !data.groups.is_empty() => Lines { spans: &data.groups, per_row }.line_of(index),
+            Ok(data) => (index < data.listing.len()).then_some((index / per_row, index % per_row)),
+            Err(_) => Some((index / per_row, index % per_row)),
+        }
+    }
 }
 
 impl Model for ItemsModel {
     type Data = ItemRow;
 
     fn row_count(&self) -> usize {
-        self.data.borrow().listing.len().div_ceil(self.per_row.get())
+        let data = self.data.borrow();
+        let per_row = self.per_row.get();
+        if data.groups.is_empty() {
+            return data.listing.len().div_ceil(per_row);
+        }
+        Lines { spans: &data.groups, per_row }.count()
     }
 
     fn row_data(&self, line: usize) -> Option<ItemRow> {
         let data = self.data.borrow();
-        let first = line * self.per_row.get();
+        let per_row = self.per_row.get();
         let len = data.listing.len();
-        if first >= len {
+        let cells = if data.groups.is_empty() {
+            let first = line * per_row;
+            first..(first + per_row).min(len)
+        } else {
+            match (Lines { spans: &data.groups, per_row }).line(line)? {
+                Line::Header(g) => return header_row(&data, g),
+                Line::Cells(cells) => cells.start..cells.end.min(len),
+            }
+        };
+        if cells.is_empty() {
             return None;
         }
-        let cells: Vec<FileRow> = (first..(first + self.per_row.get()).min(len)).map(|i| file_row(&data, i)).collect();
-        Some(ItemRow { first: i32::try_from(first).unwrap_or(i32::MAX), cells: ModelRc::new(VecModel::from(cells)) })
+        let first = i32::try_from(cells.start).unwrap_or(i32::MAX);
+        let cells: Vec<FileRow> = cells.map(|i| file_row(&data, i)).collect();
+        Some(ItemRow {
+            first,
+            cells: ModelRc::new(VecModel::from(cells)),
+            header: Default::default(),
+            collapsed: false,
+        })
     }
 
     fn model_tracker(&self) -> &dyn ModelTracker {
@@ -109,6 +157,45 @@ impl Model for ItemsModel {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
+}
+
+/// Group `g`'s header line: its name and how many entries it has (`Today (12)`).
+fn header_row(data: &ViewData, g: usize) -> Option<ItemRow> {
+    let (span, key) = (data.groups.get(g)?, data.group_keys.get(g)?);
+    (span.start < data.listing.len()).then(|| ItemRow {
+        first: i32::try_from(span.start).unwrap_or(i32::MAX),
+        cells: ModelRc::default(),
+        header: format!("{} ({})", key.label(), span.len).into(),
+        collapsed: span.collapsed,
+    })
+}
+
+/// Rows in closed groups are never selected (spec 10 §6.2): they leave the selection, and a
+/// focus on one moves to the next row shown (the last one before it at the end; none if none
+/// shows). Returns the rows to draw again.
+pub fn hide_collapsed(data: &mut ViewData) -> Vec<Range<usize>> {
+    let closed: Vec<Range<usize>> =
+        data.groups.iter().filter(|s| s.collapsed).map(|s| s.start..s.start + s.len).collect();
+    if closed.is_empty() {
+        return Vec::new();
+    }
+    let mut changes = Vec::new();
+    if data.selection.count() > 0 {
+        for range in &closed {
+            changes.extend(data.selection.unselect(range.clone()));
+        }
+    }
+    if let Some(focus) = data.selection.focus().filter(|f| closed.iter().any(|r| r.contains(f))) {
+        let open = || data.groups.iter().filter(|s| !s.collapsed);
+        let next = open()
+            .find(|s| s.start > focus)
+            .map(|s| s.start)
+            .or_else(|| open().rfind(|s| s.start < focus).map(|s| s.start + s.len - 1));
+        data.selection = std::mem::take(&mut data.selection).focused_at(next);
+        changes.push(focus..focus + 1);
+        changes.extend(next.map(|n| n..n + 1));
+    }
+    changes
 }
 
 /// Entry `i` as Slint shows it.
@@ -259,9 +346,23 @@ pub enum Plan {
     Lines(Vec<usize>),
 }
 
-/// Which lines to redraw for changed entry `rows` with `per_row` entries per line.
-pub fn notify_plan(rows: &[Range<usize>], per_row: usize) -> Plan {
+/// Which lines to redraw for changed entry `rows` with `per_row` entries per line, in a view
+/// grouped as `groups` (empty: not grouped). A closed group's rows are on no line.
+pub fn notify_plan(rows: &[Range<usize>], per_row: usize, groups: &[Span]) -> Plan {
     let per_row = per_row.max(1);
+    if !groups.is_empty() {
+        if rows.iter().map(|r| r.len()).sum::<usize>() > MAX_LINE_UPDATES * per_row {
+            return Plan::Reset;
+        }
+        let lines_of = Lines { spans: groups, per_row };
+        let mut lines: Vec<usize> = Vec::new();
+        for (line, _) in rows.iter().flat_map(|r| r.clone()).filter_map(|i| lines_of.line_of(i)) {
+            if !lines.contains(&line) {
+                lines.push(line);
+            }
+        }
+        return Plan::Lines(lines);
+    }
     let mut lines: Vec<usize> = Vec::new();
     for range in rows.iter().filter(|r| !r.is_empty()) {
         let (first, last) = (range.start / per_row, (range.end - 1) / per_row);
@@ -282,6 +383,9 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
     use std::sync::Arc;
+
+    use gezik_core::group::GroupKey;
+    use gezik_core::layout::Span;
 
     #[test]
     fn a_folders_size_cell_says_what_is_known() {
@@ -399,16 +503,16 @@ mod tests {
 
     #[test]
     fn small_changes_redraw_their_lines() {
-        assert_eq!(notify_plan(&[2..4, 9..10], 1), Plan::Lines(vec![2, 3, 9]));
-        assert_eq!(notify_plan(&[2..4, 9..10], 4), Plan::Lines(vec![0, 2]));
-        assert_eq!(notify_plan(&[], 1), Plan::Lines(vec![]));
+        assert_eq!(notify_plan(&[2..4, 9..10], 1, &[]), Plan::Lines(vec![2, 3, 9]));
+        assert_eq!(notify_plan(&[2..4, 9..10], 4, &[]), Plan::Lines(vec![0, 2]));
+        assert_eq!(notify_plan(&[], 1, &[]), Plan::Lines(vec![]));
     }
 
     #[test]
     #[allow(clippy::single_range_in_vec_init, reason = "one changed range of entries")]
     fn large_changes_reset_the_model() {
-        assert_eq!(notify_plan(&[0..100_000], 1), Plan::Reset);
-        assert_eq!(notify_plan(&[0..1000], 8), Plan::Lines((0..125).collect()));
+        assert_eq!(notify_plan(&[0..100_000], 1, &[]), Plan::Reset);
+        assert_eq!(notify_plan(&[0..1000], 8, &[]), Plan::Lines((0..125).collect()));
     }
 
     #[test]
@@ -441,5 +545,95 @@ mod tests {
             gezik_core::kind::fallback_type_name("a.txt", false),
             "the system name is still asked for"
         );
+    }
+
+    fn grouped(names: &[&str], spans: &[(usize, usize, bool)], keys: &[&str]) -> ViewData {
+        ViewData {
+            listing: super::super::listing::files("/x", names),
+            media: Media::idle(),
+            groups: spans.iter().map(|&(start, len, collapsed)| Span { start, len, collapsed }).collect(),
+            group_keys: keys.iter().map(|k| GroupKey::Type((*k).to_owned())).collect(),
+            ..ViewData::default()
+        }
+    }
+
+    #[test]
+    fn a_grouped_view_has_a_header_line_per_group() {
+        let data =
+            grouped(&["a.txt", "b.txt", "c.png", "d.png", "e.png"], &[(0, 2, false), (2, 3, true)], &["TXT", "PNG"]);
+        let model = ItemsModel::new(Rc::new(RefCell::new(data)));
+        assert_eq!(model.row_count(), 4, "header, a, b, closed header");
+        let header = model.row_data(0).unwrap();
+        assert_eq!((header.header.as_str(), header.first, header.cells.row_count()), ("TXT (2)", 0, 0));
+        assert_eq!(model.row_data(1).unwrap().cells.row_data(0).unwrap().name.as_str(), "a.txt");
+        let closed = model.row_data(3).unwrap();
+        assert!(closed.collapsed && closed.header.as_str() == "PNG (3)" && closed.first == 2);
+        assert!(model.row_data(4).is_none());
+        model.set_per_row(2);
+        assert_eq!(model.row_count(), 3);
+        assert_eq!(model.place_of(1), Some((1, 1)));
+        assert_eq!(model.place_of(3), None, "closed");
+    }
+
+    #[test]
+    fn stale_groups_never_index_past_the_listing() {
+        // Groups worked out for five rows, two left (a deletion before the regroup).
+        let data = grouped(&["a.txt", "b.txt"], &[(0, 1, false), (1, 4, false), (5, 1, false)], &["A", "B", "C"]);
+        let model = ItemsModel::new(Rc::new(RefCell::new(data)));
+        let lines: Vec<Option<ItemRow>> = (0..model.row_count()).map(|n| model.row_data(n)).collect();
+        assert!(lines.iter().flatten().all(|row| row.first < 2), "nothing past the end");
+        assert!(lines.last().unwrap().is_none(), "a group starting past the end is not drawn");
+    }
+
+    #[test]
+    fn place_of_falls_back_while_borrowed() {
+        let data = Rc::new(RefCell::new(grouped(&["a", "b"], &[(0, 2, false)], &["A"])));
+        let model = ItemsModel::new(data.clone());
+        let _held = data.borrow_mut();
+        assert_eq!(model.place_of(1), Some((1, 0)), "as without groups, never a panic");
+    }
+
+    #[test]
+    fn hidden_rows_leave_the_selection_and_the_focus_moves() {
+        let mut data =
+            grouped(&["a", "b", "c", "d", "e"], &[(0, 2, false), (2, 2, true), (4, 1, false)], &["A", "B", "C"]);
+        data.selection = Selection::from_indices(5, [0, 2, 3, 4], Some(3));
+        let changed = hide_collapsed(&mut data);
+        assert_eq!(data.selection.iter().collect::<Vec<_>>(), [0, 4]);
+        assert_eq!(data.selection.focus(), Some(4), "the next row shown");
+        assert!(changed.contains(&(3..4)) && changed.contains(&(4..5)));
+        data.groups[2].collapsed = true;
+        data.selection = Selection::from_indices(5, std::iter::empty(), Some(4));
+        hide_collapsed(&mut data);
+        assert_eq!(data.selection.focus(), Some(1), "at the end: the row before");
+    }
+
+    #[test]
+    fn all_groups_closed_leave_no_focus() {
+        let mut data = grouped(&["a", "b"], &[(0, 2, true)], &["A"]);
+        data.selection = Selection::from_indices(2, [0, 1], Some(1));
+        hide_collapsed(&mut data);
+        assert_eq!((data.selection.count(), data.selection.focus()), (0, None));
+    }
+
+    #[test]
+    fn a_grouped_redraw_is_by_line_past_a_big_closed_group() {
+        // Lines on screen: open A (header, 0), closed B (100k rows), open C (header, 100_001).
+        let names: Vec<String> = (0..100_002).map(|i| format!("{i}")).collect();
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        let data = grouped(&names, &[(0, 1, false), (1, 100_000, true), (100_001, 1, false)], &["A", "B", "C"]);
+        let model = ItemsModel::new(Rc::new(RefCell::new(data)));
+        assert_eq!(model.row_count(), 5);
+        assert_eq!(model.lines_changed(0..5), 5, "each line on screen, no reset");
+        assert_eq!(model.lines_changed(3..40), 2, "nothing past the end");
+    }
+
+    #[test]
+    fn grouped_changes_redraw_their_lines() {
+        let s = [Span { start: 0, len: 3, collapsed: false }, Span { start: 3, len: 2, collapsed: true }];
+        assert_eq!(notify_plan(&[1..2, 3..5], 1, &s), Plan::Lines(vec![2]), "a closed group's rows are not drawn");
+        #[allow(clippy::single_range_in_vec_init, reason = "one changed range of entries")]
+        let all = [0..100_000];
+        assert_eq!(notify_plan(&all, 1, &s), Plan::Reset);
     }
 }

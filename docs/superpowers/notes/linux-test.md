@@ -498,6 +498,16 @@ You need a desktop session with a polkit agent (GNOME, KDE, …) and `pkexec` (`
 120. **Links.** `sudo mkdir /opt/gt/d && sudo ln -s /etc /opt/gt/d/etc-link`; delete `/opt/gt/d` → Retry as administrator → `This will delete 1 item permanently as administrator. It cannot be undone.` (`Cancel` is the Enter button) → pkexec → `/opt/gt/d` is gone, `/etc` is where it was (`ls /etc | head`). Ctrl+Z does not bring it back.
 121. **Refusals.** (a) Hard links: `sudo sh -c 'echo x > /opt/gt/h && ln /opt/gt/h /opt/gt/h2'`; change `h`'s permissions in the Info window → `Change as administrator…` → pkexec: `It has several names; Gezik does not change it as administrator`, `ls -l` unchanged; deleting `h` as administrator works and `h2` still says `x`. (b) setuid: `cp /bin/ls ~/s && chmod 4755 ~/s`, copy it into `/opt/gt` as administrator: `ls -l` shows no `s`, owner root. (c) FIFO: `mkfifo ~/fifo`, copy it into `/opt/gt` as administrator: `A device, pipe or socket; left alone`, nothing hangs. (d) Rename as administrator in `/opt/gt` to a free name works (`renameat2` with `RENAME_NOREPLACE`); write down the file system (`df -T /opt`). (e) Delete `/opt` itself (select it in `/`) → Retry as administrator: the status bar says `Not done as administrator: /opt (…)`, no polkit window.
 
+### 10d, grouping
+
+Numbers stay as they are when branches merge: if this range meets one merged earlier, the later branch moves its items to the next free ten and writes the old number in brackets in the results file; gaps are not filled. 10d starts at 150 as its plan decided (other open branches take the numbers before it).
+
+150. **Tests first.** `cargo test -p gezik-core group layout selection drag`, `cargo test -p gezik view::`; paste.
+151. **Group by Date and keys** (GNOME and KDE): View ▸ Group by ▸ Date in `~/Downloads`; headers, ↑/↓ skip them, Home/End, PgUp/PgDn; a header click closes/opens; right-click menu (`Collapse All Groups`, `Expand All Groups`, `Group by ▸`).
+152. **Grid and rubber band.** Ctrl+Shift+2; a rubber band across a header; Ctrl+A with a group closed counts only the shown items.
+153. **Trash.** The Trash grouped by Date shows the deletion dates (`~/.local/share/Trash/info/*.trashinfo` `DeletionDate`). Do not empty or restore anything.
+154. **Remembered.** Restart: the folder keeps its grouping (`~/.config/gezik/views.toml` has `group = "date"`).
+
 ## Known gaps (not bugs)
 
 - **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (F5 works it out again). Search results and the flat view show no folder sizes.

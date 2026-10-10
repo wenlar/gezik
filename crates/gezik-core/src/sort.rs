@@ -314,7 +314,31 @@ pub fn sort_entries(
     folders_first: bool,
     type_name: impl Fn(&Entry) -> String,
 ) -> Vec<usize> {
-    let order = sort_order(entries, spec, folders_first, type_name, &|_| "");
+    sort_entries_grouped(entries, spec, folders_first, type_name, None)
+}
+
+/// [`sort_entries`] with each row's group first (`Grouping::ranks`), so a group's rows are
+/// together; `None`: as `sort_entries`.
+pub fn sort_entries_grouped(
+    entries: &mut [Entry],
+    spec: SortSpec,
+    folders_first: bool,
+    type_name: impl Fn(&Entry) -> String,
+    group: Option<&crate::group::Grouping<'_>>,
+) -> Vec<usize> {
+    let order = {
+        let view: &[Entry] = entries;
+        sort_rows_grouped(
+            view.len(),
+            &|i| Cow::Borrowed(&view[i]),
+            &|i| &view[i].name,
+            spec,
+            folders_first,
+            type_name,
+            &|_| "",
+            group,
+        )
+    };
     apply_order(entries, &order);
     order
 }
@@ -352,6 +376,23 @@ pub fn sort_rows<'e, 'a>(
     type_name: impl Fn(&Entry) -> String,
     folder: &dyn Fn(usize) -> &'a str,
 ) -> Vec<usize> {
+    sort_rows_grouped(len, entry, name, spec, folders_first, type_name, folder, None)
+}
+
+/// [`sort_rows`] with each row's group first (`Grouping::ranks`); `None`: as `sort_rows`.
+#[allow(clippy::too_many_arguments, reason = "sort_rows's arguments and the grouping")]
+pub fn sort_rows_grouped<'e, 'a>(
+    len: usize,
+    entry: &dyn Fn(usize) -> Cow<'e, Entry>,
+    name: &dyn Fn(usize) -> &'e str,
+    spec: SortSpec,
+    folders_first: bool,
+    type_name: impl Fn(&Entry) -> String,
+    folder: &dyn Fn(usize) -> &'a str,
+    group: Option<&crate::group::Grouping<'_>>,
+) -> Vec<usize> {
+    // Each row's group, the first key (empty when not grouped).
+    let ranks = group.map(|g| g.ranks(len, entry)).unwrap_or_default();
     // Names and folders are compared token by token from their text, not from stored keys:
     // keys took ~4 B a character and 32 B a row (21 MB at 250,000 results); the compares cost
     // a little time.
@@ -391,7 +432,7 @@ pub fn sort_rows<'e, 'a>(
     let span = |(start, end): (u32, u32)| &buf[start as usize..end as usize];
     // Sorting indices moves 8 bytes per swap instead of a whole `Entry`.
     let mut order: Vec<usize> = (0..len).collect();
-    order.sort_unstable_by(|&i, &j| {
+    let cmp = |&i: &usize, &j: &usize| {
         let ((a_dir, a_last), (b_dir, b_last)) = (kinds[i], kinds[j]);
         let folders = if folders_first { b_dir.cmp(&a_dir) } else { Ordering::Equal };
         folders.then_with(|| a_last.cmp(&b_last)).then_with(|| {
@@ -412,7 +453,13 @@ pub fn sort_rows<'e, 'a>(
                 .then_with(|| i.cmp(&j));
             if spec.dir == SortDir::Desc { order.reverse() } else { order }
         })
-    });
+    };
+    // Two sorts so the plain one keeps its comparison as it was.
+    if ranks.is_empty() {
+        order.sort_unstable_by(cmp);
+    } else {
+        order.sort_unstable_by(|i, j| ranks[*i].cmp(&ranks[*j]).then_with(|| cmp(i, j)));
+    }
     order
 }
 
