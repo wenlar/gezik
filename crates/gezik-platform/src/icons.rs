@@ -40,8 +40,8 @@ pub fn type_name(ext: &str, is_dir: bool) -> Option<String> {
 }
 
 /// The system's icon for `target`, at most `px` wide: smaller sizes come as the system has
-/// them (the UI scales them), bigger ones are shrunk to `px`. `None` where there are no
-/// system icons: Linux uses Gezik's own icons for now.
+/// them (the UI scales them), bigger ones are shrunk to `px`. `None` where the system has
+/// none: Linux's theme without a PNG for it (Gezik's own icon then).
 pub fn icon(target: &IconTarget, px: u32) -> Option<Rgba> {
     imp::icon(target, px)
 }
@@ -142,12 +142,14 @@ pub(crate) fn finder_info_custom_icon(info: &[u8]) -> bool {
 }
 
 /// Whether the folder `path` may have an icon of its own, to be looked up by path: Windows
-/// (and Linux, where it changes nothing yet) a `desktop.ini`; macOS a custom icon or a
-/// volume's root. Reads the disk: worker threads only.
+/// a `desktop.ini`; macOS a custom icon or a volume's root; Linux home and the XDG user
+/// folders (no disk access there). Worker threads only.
 pub fn folder_has_own_icon(path: &std::path::Path) -> bool {
     #[cfg(target_os = "macos")]
     return crate::mac::icons::folder_has_own_icon(path);
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(unix, not(target_os = "macos")))]
+    return crate::linux::icon_theme::is_special(path);
+    #[cfg(windows)]
     path.join("desktop.ini").is_file()
 }
 
@@ -164,8 +166,8 @@ mod imp {
     }
 
     #[cfg(not(target_os = "macos"))]
-    pub fn icon(_target: &IconTarget, _px: u32) -> Option<Rgba> {
-        None
+    pub fn icon(target: &IconTarget, px: u32) -> Option<Rgba> {
+        crate::linux::icon_theme::icon(target, px)
     }
 
     #[cfg(target_os = "macos")]
@@ -175,7 +177,7 @@ mod imp {
 
     #[cfg(not(target_os = "macos"))]
     pub fn type_name(ext: &str, is_dir: bool) -> Option<String> {
-        super::mime::type_name(ext, is_dir)
+        crate::linux::mime::type_name(ext, is_dir)
     }
 }
 
@@ -268,64 +270,6 @@ mod kinds {
             let unknown = type_name("gezikunknownext", false).unwrap();
             assert_eq!(type_name("", false), Some(unknown), "no extension: an unknown document");
             assert_eq!(type_name("wim", false), None, "an archive with no app is Gezik's to name");
-        }
-    }
-}
-
-/// Linux: type names from shared-mime-info.
-#[cfg(all(unix, not(target_os = "macos")))]
-mod mime {
-    use std::collections::HashMap;
-    use std::sync::OnceLock;
-
-    const MIME_DIR: &str = "/usr/share/mime";
-
-    /// Extension → MIME type, from `globs2` (it lists higher weights first: the first wins).
-    fn globs() -> &'static HashMap<String, String> {
-        static GLOBS: OnceLock<HashMap<String, String>> = OnceLock::new();
-        GLOBS.get_or_init(|| {
-            let text = std::fs::read_to_string(format!("{MIME_DIR}/globs2")).unwrap_or_default();
-            let mut map = HashMap::new();
-            for line in text.lines().filter(|l| !l.starts_with('#')) {
-                let mut parts = line.split(':');
-                let (Some(_weight), Some(mime), Some(glob)) = (parts.next(), parts.next(), parts.next()) else {
-                    continue;
-                };
-                if let Some(ext) = glob.strip_prefix("*.")
-                    && !ext.contains(['*', '?', '['])
-                {
-                    map.entry(ext.to_lowercase()).or_insert_with(|| mime.to_owned());
-                }
-            }
-            map
-        })
-    }
-
-    pub fn type_name(ext: &str, is_dir: bool) -> Option<String> {
-        let mime = if is_dir { "inode/directory".to_owned() } else { globs().get(&ext.to_lowercase())?.clone() };
-        comment(&std::fs::read_to_string(format!("{MIME_DIR}/{mime}.xml")).ok()?)
-    }
-
-    /// The first `<comment>` without a language: the English description.
-    fn comment(xml: &str) -> Option<String> {
-        let start = xml.find("<comment>")? + "<comment>".len();
-        let end = start + xml[start..].find("</comment>")?;
-        let text = xml[start..end]
-            .replace("&lt;", "<")
-            .replace("&gt;", ">")
-            .replace("&quot;", "\"")
-            .replace("&apos;", "'")
-            .replace("&amp;", "&");
-        Some(text)
-    }
-
-    #[cfg(test)]
-    mod tests {
-        #[test]
-        fn reads_the_unlocalized_comment() {
-            let xml =
-                "<mime-type><comment xml:lang=\"tr\">Metin</comment><comment>Plain &amp; simple</comment></mime-type>";
-            assert_eq!(super::comment(xml).as_deref(), Some("Plain & simple"));
         }
     }
 }

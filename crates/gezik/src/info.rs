@@ -66,7 +66,7 @@ struct Loaded {
     times: [Option<SystemTime>; 3],
     /// Read when the window opens, not on a reload.
     names: Option<Names>,
-    /// macOS, one file: the apps that open it.
+    /// macOS and Linux, one file: the apps that open it.
     apps: Vec<AppChoice>,
 }
 
@@ -85,9 +85,13 @@ fn load(paths: &[PathBuf], names: bool) -> Loaded {
         groups: gezik_platform::attrs::groups(),
         mine: gezik_platform::attrs::my_groups(),
     });
-    // macOS: the apps for one file (or package); the row is not there for folders and links.
+    // macOS and Linux: the apps for one file (a package too on macOS); not for folders and links.
     let apps = match items.as_slice() {
-        [(path, e)] if !e.is_link && (!e.is_dir || gezik_core::kind::is_package_name(&path.to_string_lossy())) => {
+        [(path, e)]
+            if !e.is_link
+                && (!e.is_dir
+                    || (cfg!(target_os = "macos") && gezik_core::kind::is_package_name(&path.to_string_lossy()))) =>
+        {
             gezik_platform::open_with::apps(std::slice::from_ref(path))
         }
         _ => Vec::new(),
@@ -389,6 +393,20 @@ impl Info {
     /// This file opens with `app` from now on; the row shows it at once.
     fn set_app(&self, app: PathBuf) {
         let Some(file) = self.app_file() else { return };
+        if !gezik_platform::open_with::PER_FILE {
+            // Linux keeps no app per file (deviation 3 of 9b10): the row marks the choice and
+            // Change All… makes it the type's. shortcut: a reload shows the system's default again.
+            let name = gezik_platform::open_with::app_name_of(&app);
+            if let Some(state) = self.0.state.borrow_mut().as_mut() {
+                if !state.apps.iter().any(|a| a.path == app) {
+                    state.apps.push(AppChoice { path: app.clone(), name: name.clone(), default: false });
+                }
+                for choice in &mut state.apps {
+                    choice.default = choice.path == app;
+                }
+            }
+            return self.set_note(format!("Change All… opens every file of this type with {name}"), false);
+        }
         let failed = |why: String| {
             let _ = slint::invoke_from_event_loop(move || {
                 with_current(|info| info.set_note(format!("Cannot change the app: {why}"), true));
@@ -433,6 +451,22 @@ impl Info {
             &["Change All", "Cancel"],
             move |choice| {
                 if choice == Some(0) {
+                    if !gezik_platform::open_with::PER_FILE {
+                        // Linux: mimeapps.list, off the UI thread.
+                        let spawned = std::thread::Builder::new().name("gezik-change-all".into()).spawn(move || {
+                            let result = crate::system_changes::set_mime_default(&app.path, &uti);
+                            let _ = slint::invoke_from_event_loop(move || {
+                                with_current(|info| match result {
+                                    Ok(()) => info.set_note(format!("{kind} files open with {} now", app.name), false),
+                                    Err(why) => info.set_note(format!("Cannot change the app: {why}"), true),
+                                });
+                            });
+                        });
+                        if spawned.is_err() {
+                            info.set_note("Cannot change the app now; try again".to_owned(), true);
+                        }
+                        return;
+                    }
                     let (note, error) = match gezik_platform::open_with::set_default_for_type(&app.path, &uti) {
                         Ok(()) => (format!("{kind} files open with {} now", app.name), false),
                         Err(why) => (format!("Cannot change the app: {why}"), true),
@@ -445,8 +479,11 @@ impl Info {
 
     pub fn menu_chosen(&self, id: u32) {
         if id == OPEN_WITH_OTHER {
-            // After the menu is gone: the panel is modal.
             let info = self.clone();
+            if gezik_platform::open_with::ASKS_IN_GEZIK {
+                return crate::finder_menu::ask_app(move |app| info.set_app(app));
+            }
+            // After the menu is gone: the panel is modal.
             return slint::Timer::single_shot(std::time::Duration::ZERO, move || {
                 if let Some(app) = gezik_platform::open_with::choose_app() {
                     info.set_app(app);
