@@ -874,7 +874,8 @@ mod tests {
                 | Action::RevealInTree
                 | Action::MoveTabToOtherPane
                 | Action::SyncBrowsing
-                | Action::OtherPaneSameFolder => continue,
+                | Action::OtherPaneSameFolder
+                | Action::MoveTabToNewWindow => continue,
             };
             assert_eq!(reach(text), Some(action), "{text}");
         }

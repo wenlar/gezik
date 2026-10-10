@@ -33,6 +33,9 @@ fn chosen(window: &AppWindow, name: &str, ops: &Operations) {
             if let Some(index) = name.strip_prefix("command:").and_then(|i| i.parse::<usize>().ok()) {
                 return crate::actions::run_command(index, &crate::panes::active_view());
             }
+            if let Some(number) = name.strip_prefix("window:").and_then(|i| i.parse::<i32>().ok()) {
+                return crate::windows::raise_number(number);
+            }
             if let Some(id) = name.strip_prefix("tab-set:").and_then(|i| i.parse::<u32>().ok()) {
                 let names = crate::tab_sets::names();
                 return crate::tab_sets::with_current(|sets| sets.chosen(id, &names));

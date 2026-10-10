@@ -1435,6 +1435,7 @@ impl Navigator {
             let active = crate::panes::is_active(inner.id);
             if active {
                 window.set_title_text(format!("{} — Gezik", inner.places.title_for(&location)).into());
+                crate::windows::titles_changed();
             }
             let active_tab = inner.tabs.active_index();
             let tabs = inner.tabs.iter().enumerate().map(|(i, h)| TabItem {

@@ -338,7 +338,8 @@ fn perform(
         | Action::MoveTabToOtherPane
         | Action::SyncBrowsing
         | Action::SwapPanes
-        | Action::OtherPaneSameFolder => return actions::run(action, nav, view),
+        | Action::OtherPaneSameFolder
+        | Action::MoveTabToNewWindow => return actions::run(action, nav, view),
     }
     true
 }
@@ -687,6 +688,29 @@ fn resolve_start(
     )
 }
 
+/// What a `gezik` does once it tried to hand its request over (spec 5.2, spec 10 §9.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Next {
+    /// The running Gezik did it (with `--new-window`: in a new window of its own).
+    Exit,
+    /// No Gezik runs: this one is the first (with `--new-window` too).
+    First,
+    /// Hung, refusing (an older Gezik refuses `--new-window`'s flag) or someone else's: a
+    /// process of its own, the channel left alone.
+    OwnProcess,
+    /// A hung Gezik and a place the shell asked for: it still opens somewhere.
+    Explorer,
+}
+
+fn after_send(sent: instance::Sent, shell: bool) -> Next {
+    match sent {
+        instance::Sent::Delivered => Next::Exit,
+        instance::Sent::NoInstance => Next::First,
+        instance::Sent::Failed if shell => Next::Explorer,
+        instance::Sent::Failed => Next::OwnProcess,
+    }
+}
+
 /// Hands `target` to Explorer (decisions 2, 3), unless fallbacks come so fast that Gezik and
 /// Explorer are sending places back and forth: then it stops and offers once to give folders
 /// back to Explorer. The exit code.
@@ -814,12 +838,12 @@ fn main() -> Result<(), slint::PlatformError> {
     }
     cli.make_absolute();
     // A running Gezik takes the paths (spec 5.2): tried before any window or settings, so a
-    // second call costs only the attempt. --new-window never hands over and never listens.
+    // second call costs only the attempt. --new-window asks it for a new window (spec 10 §9.3).
     let key = instance::key(gezik_config::paths::config_dir().as_deref());
     let request = cli.request();
-    // A window that could not hand over is a second window as --new-window's is (spec 5.3):
-    // two windows writing the same tabs to state.toml would lose one's.
-    let mut secondary = cli.new_window;
+    // A window that could not hand over is a process of its own (spec 5.3): two processes
+    // writing the same tabs to state.toml would lose one's.
+    let mut secondary = false;
     let background = cli.background;
     // Started by the bus for FileManager1 (decision 18): the channel decides, nothing is sent.
     let dbus = cli.dbus && cfg!(all(unix, not(target_os = "macos")));
@@ -832,15 +856,11 @@ fn main() -> Result<(), slint::PlatformError> {
             .ok()
             .is_some_and(|e| e.to_str().is_some_and(|s| s.ends_with(".app/Contents/MacOS/gezik")));
     if !secondary && !dbus && !bundle_launch && !background {
-        match instance::send(&key, &request, instance::SEND_TIMEOUT) {
-            instance::Sent::Delivered => return Ok(()),
-            instance::Sent::NoInstance => {}
-            // A hung Gezik (spec 5.2): what the shell asked for still opens somewhere.
-            instance::Sent::Failed if shell.is_some() => {
-                std::process::exit(explorer_fallback(shell.as_deref().unwrap_or_default()))
-            }
-            // Hung, refusing or someone else's: a window of its own, the channel left alone.
-            instance::Sent::Failed => secondary = true,
+        match after_send(instance::send(&key, &request, instance::SEND_TIMEOUT), shell.is_some()) {
+            Next::Exit => return Ok(()),
+            Next::First => {}
+            Next::Explorer => std::process::exit(explorer_fallback(shell.as_deref().unwrap_or_default())),
+            Next::OwnProcess => secondary = true,
         }
     }
     // Gezik has its own tabs: no window tabs of macOS (nor their items in the View menu).
@@ -1245,5 +1265,52 @@ mod tests {
         assert!(not_printed_yet(&mut printed, &now).is_empty(), "a re-resolve prints nothing again");
         assert!(not_printed_yet(&mut printed, &[]).is_empty());
         assert_eq!(not_printed_yet(&mut printed, &now), [cli, theme], "back after it was fixed: said again");
+    }
+
+    #[test]
+    fn what_a_gezik_does_after_handing_over() {
+        use instance::Sent::{Delivered, Failed, NoInstance};
+        // --new-window or not, the answer decides alike: the flag only changes what the
+        // running Gezik does with a delivered request.
+        assert_eq!(after_send(Delivered, false), Next::Exit);
+        assert_eq!(after_send(NoInstance, false), Next::First);
+        assert_eq!(after_send(Failed, false), Next::OwnProcess);
+        assert_eq!(after_send(Failed, true), Next::Explorer, "--shell");
+        assert_eq!(after_send(Delivered, true), Next::Exit);
+        assert_eq!(after_send(NoInstance, true), Next::First);
+        for new_window in [false, true] {
+            let request = cli::Cli { new_window, ..cli::Cli::default() }.request();
+            assert_eq!(request.new_window, new_window);
+        }
+    }
+
+    /// spec 10 §9.3: a running Gezik that does not answer (a fake listener holding the call)
+    /// leaves the caller to open a process of its own after two seconds, with --new-window too.
+    #[test]
+    fn a_hung_gezik_leaves_the_caller_its_own_process() {
+        let key = format!("t{}hung-main", std::process::id());
+        let instance::Claim::Listening(listener) = instance::claim(&key) else { panic!("no channel") };
+        listener.serve(|_| {
+            std::thread::sleep(std::time::Duration::from_secs(4));
+            true
+        });
+        let calls: Vec<_> = [false, true]
+            .into_iter()
+            .map(|new_window| {
+                let key = key.clone();
+                std::thread::spawn(move || {
+                    let request = instance::Request { new_window, ..Default::default() };
+                    let started = std::time::Instant::now();
+                    let sent = instance::send(&key, &request, instance::SEND_TIMEOUT);
+                    (sent, started.elapsed())
+                })
+            })
+            .collect();
+        for call in calls {
+            let (sent, took) = call.join().unwrap();
+            assert_eq!(sent, instance::Sent::Failed);
+            assert!(took >= instance::SEND_TIMEOUT, "gave up after {took:?}");
+            assert_eq!(after_send(sent, false), Next::OwnProcess);
+        }
     }
 }

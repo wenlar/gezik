@@ -86,8 +86,9 @@ impl StateCell {
         let _ = written.recv_timeout(FLUSH_WAIT);
     }
 
-    /// From now on nothing is written: a `--new-window` Gezik (spec 5.3) must not put the
-    /// tabs it read at start over those of the window that keeps them.
+    /// From now on nothing is written: a second Gezik process (one that could not hand over,
+    /// spec 5.3; `--new-window` opens a window in the running Gezik since 10g) must not put
+    /// the tabs it read at start over those of the Gezik that keeps them.
     pub fn keep_unwritten(&self) {
         self.read_only.store(true, std::sync::atomic::Ordering::Relaxed);
     }

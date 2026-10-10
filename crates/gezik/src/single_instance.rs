@@ -18,10 +18,11 @@ use crate::navigation::Navigator;
 
 /// Answers other `gezik` calls from now on. Received paths are only opened as folders in
 /// tabs, never run.
-/// They open in the most recently focused window (spec 9.3).
+/// They open in the most recently focused window, or with `--new-window` in a new one beside
+/// it (spec 10 §9.3).
 pub fn serve(listener: Listener) {
     listener.serve(move |request| {
-        let (new_tab, trash) = (request.new_tab, request.trash);
+        let (new_tab, trash, new_window) = (request.new_tab, request.trash, request.new_window);
         carry_out(
             Instant::now() + CARRY_OUT_TIMEOUT,
             // Looking at the paths may be slow (a network folder): not on the UI thread.
@@ -30,8 +31,13 @@ pub fn serve(listener: Listener) {
                 slint::invoke_from_event_loop(move || {
                     if turn.begin() {
                         crate::windows::with_focused(|_| {
-                            crate::panes::with_active(|p| apply(&p.nav, opens, missing, new_tab, trash));
-                            crate::resident::reveal();
+                            if new_window {
+                                // spec 10 §9.3: beside the most recently focused window.
+                                crate::windows::open_for(opens, missing, trash);
+                            } else {
+                                crate::panes::with_active(|p| apply(&p.nav, opens, missing, new_tab, trash));
+                                crate::resident::reveal();
+                            }
                         });
                         turn.done();
                     }

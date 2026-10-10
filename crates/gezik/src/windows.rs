@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use gezik_config::settings::{State, WindowSession};
 use gezik_config::shortcuts::{Key, Platform};
 use gezik_config::store::{ConfigFiles, ConfigStore, Loaded};
-use gezik_core::nav::{Location, Session};
+use gezik_core::nav::{Location, Session, SessionTab};
 use gezik_core::view_memory::ViewMemory;
 use slint::ComponentHandle;
 use slint::winit_030::winit::keyboard::ModifiersState;
@@ -52,6 +52,9 @@ thread_local! {
     static SAVING: Cell<bool> = const { Cell::new(false) };
     /// Windows asked to close, closing once the event at hand is done.
     static CLOSING: RefCell<Vec<WindowId>> = const { RefCell::new(Vec::new()) };
+    /// macOS: the Window menu's list of windows is rewritten once the event at hand is done.
+    #[cfg(target_os = "macos")]
+    static LISTING: Cell<bool> = const { Cell::new(false) };
 }
 
 /// The parts of a window that are kept by window: each slot forgets a closed window's
@@ -354,6 +357,7 @@ pub fn open(id: WindowId, opening: Opening) {
     enter(id, || build(id, &window, opening, &process));
     BUILDING.with(|b| b.set(before));
     save_sessions();
+    titles_changed();
 }
 
 /// A new window, put in the register in front and built (not shown yet); `None` if Slint
@@ -399,13 +403,137 @@ pub fn show_all() -> Result<(), slint::PlatformError> {
 /// `new-window` (spec 9.3): one pane at the current window's folder (This PC, a search, a
 /// flat view or the trash: the start folder), its size, its place moved by 24 px, in front.
 pub fn open_beside() {
-    let Some(process) = process() else { return };
     let nav = panes::active_nav();
-    let start = nav.start();
     let location = match nav.active_location() {
         Location::Path(dir) => Location::Path(dir),
-        _ => start.clone(),
+        _ => nav.start(),
     };
+    open_beside_with(Session::single(location), Vec::new(), |_| {});
+}
+
+/// `move-tab-to-new-window` (spec 9.4): tab `index` of the active pane goes to a new window
+/// with its history, lock and view; a window's only tab (one pane, one tab) stays.
+pub fn move_tab_to_new(index: usize) {
+    let nav = panes::active_nav();
+    if !dual::is_open() && nav.tab_count() == 1 {
+        return;
+    }
+    let (Some(location), Some(tab)) = (nav.tab_locations().get(index).cloned(), nav.tab_id(index)) else { return };
+    let from = current();
+    // The new window opens at the tab's folder; the tab then takes that first tab's place
+    // (taken only now: a window that cannot open loses no tab).
+    open_beside_with(Session::single(location), Vec::new(), move |_| {
+        let Some(taken) = enter(from, || nav.tab_index(tab).and_then(|i| nav.take_tab(i))) else { return };
+        let new = panes::active_nav();
+        new.put_tab(taken, Some(0));
+        new.take_tab(1);
+    });
+}
+
+/// Tab menu ▸ Move to window (spec 9.4): tab `index` of the active pane goes to window `to`'s
+/// active pane (after its active tab), and that window comes forward. A window's only tab
+/// leaves its window, which closes (deviation 11).
+pub fn move_tab_to(index: usize, to: WindowId) {
+    let from = current();
+    if from == to || window_of(to).is_none() {
+        return;
+    }
+    let nav = panes::active_nav();
+    let only = !dual::is_open() && nav.tab_count() == 1;
+    let Some(tab) = nav.take_tab(index) else { return };
+    with_window(to, |window| {
+        panes::active_nav().put_tab(tab, None);
+        crate::single_instance::raise(window);
+    });
+    if only && others_open(from) {
+        CLOSING.with(|c| c.borrow_mut().push(from));
+        close_later(from);
+    }
+}
+
+/// The other windows on screen, for the tab menu's Move to window ▸ (spec 9.4): their ids and
+/// titles, in the order they were opened; none with one window.
+pub fn others() -> Vec<(WindowId, String)> {
+    let from = current();
+    by_age()
+        .into_iter()
+        .filter(|(id, window)| *id != from && !closing(*id) && window.window().is_visible())
+        .map(|(id, window)| (id, window.get_title_text().to_string()))
+        .collect()
+}
+
+/// The open windows in the order they were opened.
+fn by_age() -> Vec<(WindowId, AppWindow)> {
+    let mut list: Vec<_> = WINDOWS.with(|w| w.borrow().iter().map(|(id, w)| (*id, w.clone_strong())).collect());
+    list.sort_by_key(|(id, _)| id.0);
+    list
+}
+
+/// A window's title changed, or a window opened or closed: macOS's Window menu lists the
+/// windows in every window (deviation 9), rewritten once the event at hand is done. Nothing
+/// elsewhere.
+pub fn titles_changed() {
+    #[cfg(target_os = "macos")]
+    if !LISTING.with(|l| l.replace(true)) {
+        slint::Timer::single_shot(std::time::Duration::ZERO, || {
+            LISTING.with(|l| l.set(false));
+            let entries: Vec<crate::MenuEntry> = by_age()
+                .iter()
+                .map(|(id, window)| crate::MenuEntry {
+                    id: i32::try_from(id.0).unwrap_or(-1),
+                    title: crate::context_menu::menu_title(&window.get_title_text()).into(),
+                    enabled: true,
+                })
+                .collect();
+            let model = slint::ModelRc::new(slint::VecModel::from(entries));
+            for_each(|window| window.set_bar_windows(model.clone()));
+        });
+    }
+}
+
+/// macOS's Window menu ▸ a window (`window:N`): it comes forward.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn raise_number(number: i32) {
+    let Some(id) = focus_order().into_iter().find(|id| i64::from(id.0) == i64::from(number)) else { return };
+    with_window(id, crate::single_instance::raise);
+}
+
+/// `gezik --new-window` handed to this Gezik (spec 9.3): a window beside the most recently
+/// focused one with a tab for each folder asked for, missing paths said in its status bar; it
+/// comes forward.
+pub fn open_for(opens: Vec<crate::cli::Open>, missing: Vec<std::path::PathBuf>, trash: bool) {
+    let start = panes::active_nav().start();
+    let (session, select) = new_window_tabs(opens, trash, &start);
+    open_beside_with(session, select, move |window| {
+        if !missing.is_empty() {
+            let names: Vec<String> = missing.iter().map(|path| path.display().to_string()).collect();
+            panes::active_view().note(format!("{}: not found", names.join(", ")));
+        }
+        crate::single_instance::raise(window);
+    });
+}
+
+/// The tabs of a window opened for `opens` (`--new-window`): a tab each and the trash after
+/// them, the last in front with its names selected (the trash: none); nothing asked for: one
+/// tab at `start`.
+fn new_window_tabs(opens: Vec<crate::cli::Open>, trash: bool, start: &Location) -> (Session, Vec<String>) {
+    let select = if trash { Vec::new() } else { opens.last().map(|o| o.select.clone()).unwrap_or_default() };
+    let mut locations: Vec<Location> = opens.into_iter().map(|o| Location::Path(o.dir)).collect();
+    if trash {
+        locations.push(Location::Trash);
+    }
+    if locations.is_empty() {
+        return (Session::single(start.clone()), Vec::new());
+    }
+    let tabs: Vec<SessionTab> = locations.into_iter().map(|location| SessionTab { location, locked: false }).collect();
+    (Session { active: tabs.len() - 1, tabs }, select)
+}
+
+/// A new window beside the current one: `session`'s tabs (`select` in the one in front) in one
+/// pane, its size, its place moved by 24 px, in front; `then` runs in it once it is shown.
+fn open_beside_with(session: Session, select: Vec<String>, then: impl FnOnce(&AppWindow) + 'static) {
+    let Some(process) = process() else { return };
+    let start = panes::active_nav().start();
     let mut state = State::clone(&process.state);
     with_window(current(), |window| {
         window_state::capture_into(window, &mut state);
@@ -413,7 +541,7 @@ pub fn open_beside() {
         state.preview_width = Some(window.get_preview_width().round().clamp(200.0, 600.0) as u32);
     });
     let opening = Opening {
-        plan: StartPlan { session: Session::single(location), select: Vec::new(), start, warnings: Vec::new() },
+        plan: StartPlan { session, select, start, warnings: Vec::new() },
         right: Session::default(),
         dual: false,
         active_pane: 0,
@@ -424,11 +552,13 @@ pub fn open_beside() {
     // Opened once the key or menu that asked is done with (no callback of the window that
     // asked runs while another window is built).
     slint::Timer::single_shot(std::time::Duration::ZERO, move || {
-        if let Some(id) = open_new(opening)
-            && let Some(Err(err)) = with_window(id, AppWindow::show)
-        {
-            eprintln!("gezik: cannot show the window: {err}");
-        }
+        let Some(id) = open_new(opening) else { return };
+        with_window(id, |window| {
+            if let Err(err) = window.show() {
+                eprintln!("gezik: cannot show the window: {err}");
+            }
+            then(window);
+        });
     });
 }
 
@@ -566,6 +696,7 @@ pub fn close(id: WindowId) {
         drag::with_current(drag::Drags::focused);
     });
     save_sessions();
+    titles_changed();
 }
 
 #[allow(clippy::too_many_lines, reason = "main's window set-up, moved here as it was")]
@@ -1366,6 +1497,8 @@ pub(crate) mod tests {
     use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType};
     use slint::platform::{Platform, WindowAdapter};
 
+    use std::path::PathBuf;
+
     use super::*;
     use crate::Theme;
 
@@ -1614,6 +1747,57 @@ pub(crate) mod tests {
             let _ = w.hide();
         });
         release_all();
+    }
+
+    /// Spec 9.4: Move to window ▸ lists the other windows; a tab goes to the chosen one's active
+    /// pane; a window's only tab leaves it, and it closes (deviation 11). Move to new window
+    /// leaves a window's only tab where it is.
+    #[test]
+    fn a_tab_moves_to_another_window_by_menu() {
+        let ((first, first_weak), (second, _)) = two_windows(Rc::new(Cell::new(0)));
+        let tabs = |id| enter(id, || panes::active_nav().tab_count());
+        enter(first, || move_tab_to_new(0));
+        assert_eq!(tabs(first), 1, "a window's only tab stays");
+        let titles = |id| enter(id, || others().into_iter().map(|(id, _)| id).collect::<Vec<_>>());
+        assert_eq!(titles(first), [second]);
+        assert_eq!(titles(second), [first]);
+        enter(first, || panes::active_nav().open_tab(Location::Path(std::env::temp_dir().join("a")), true));
+        assert_eq!(tabs(first), 2);
+        enter(first, || move_tab_to(1, second));
+        assert_eq!((tabs(first), tabs(second)), (1, 2));
+        assert_eq!(enter(second, || panes::active_nav().active_index()), 1, "after its active tab, shown");
+        assert!(!closing(first));
+        // The only tab: it goes, and its window closes.
+        enter(first, || move_tab_to(0, second));
+        assert_eq!(tabs(second), 3);
+        assert!(closing(first));
+        close(first);
+        assert!(first_weak.upgrade().is_none());
+        assert_eq!(focus_order(), [second]);
+        assert!(enter(second, others).is_empty(), "one window: no Move to window ▸");
+        for_each(|w| {
+            let _ = w.hide();
+        });
+        release_all();
+    }
+
+    #[test]
+    fn a_new_window_asked_for_shows_a_tab_for_each_folder() {
+        use crate::cli::Open;
+        let start = Location::Path(PathBuf::from("/start"));
+        let open = |dir: &str, select: &[&str]| Open {
+            dir: PathBuf::from(dir),
+            select: select.iter().map(|s| (*s).to_owned()).collect(),
+        };
+        let (session, select) = new_window_tabs(Vec::new(), false, &start);
+        assert_eq!((session, select), (Session::single(start.clone()), Vec::<String>::new()), "a bare --new-window");
+        let (session, select) = new_window_tabs(vec![open("/a", &[]), open("/b", &["x.txt"])], false, &start);
+        let shown: Vec<_> = session.tabs.iter().map(|t| t.location.clone()).collect();
+        assert_eq!(shown, [Location::Path(PathBuf::from("/a")), Location::Path(PathBuf::from("/b"))]);
+        assert_eq!((session.active, select), (1, vec!["x.txt".to_owned()]), "the last in front, its names selected");
+        let (session, select) = new_window_tabs(vec![open("/a", &["y"])], true, &start);
+        assert_eq!(session.tabs.last().map(|t| t.location.clone()), Some(Location::Trash));
+        assert_eq!((session.active, select), (1, Vec::<String>::new()), "the trash after them, in front");
     }
 
     fn closing_none() -> bool {
