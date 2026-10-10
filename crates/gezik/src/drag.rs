@@ -21,7 +21,7 @@ use slint::{ComponentHandle, Model, Timer, TimerMode};
 use crate::context_menu::Menus;
 use crate::navigation::Navigator;
 use crate::operations::Operations;
-use crate::sidebar::{SECTION_GROUP, SECTION_PINNED, Sidebar};
+use crate::sidebar::{SECTION_GROUP, SECTION_PINNED, SECTION_TREE_MORE, Sidebar};
 use crate::view::View;
 use crate::{AppWindow, SidebarRow, Theme};
 
@@ -156,19 +156,21 @@ fn menu_effects(allowed: Allowed, writable: bool, sources: &[PathBuf], dir: &Pat
     (can(Effect::Copy, allowed.copy), can(Effect::Move, allowed.move_), can(Effect::Link, allowed.link))
 }
 
-/// The keys held, as this system's file manager reads them (`drag::keys_of`). Slint reports
-/// macOS's Command key as `control`.
 /// How a sidebar row takes a drop: headings take nothing (those of the pinned part pin there),
-/// pinned rows have their pin lines, the rest are folders.
+/// pinned rows have their pin lines, a capped branch's "… n more" line takes nothing either, the
+/// rest (tree folders too) are folders.
 fn side_row(row: &SidebarRow) -> SideRow {
     match (row.header, row.section) {
         (true, SECTION_PINNED | SECTION_GROUP) => SideRow::PinHeader,
         (true, _) => SideRow::Header,
         (false, SECTION_PINNED) => SideRow::Pinned,
+        (false, SECTION_TREE_MORE) => SideRow::Header,
         _ => SideRow::Item,
     }
 }
 
+/// The keys held, as this system's file manager reads them (`drag::keys_of`). Slint reports
+/// macOS's Command key as `control`.
 fn keys(shift: bool, ctrl: bool, alt: bool) -> Keys {
     match drag::DragOs::current() {
         drag::DragOs::Mac => drag::keys_of(drag::DragOs::Mac, shift, false, alt, ctrl),

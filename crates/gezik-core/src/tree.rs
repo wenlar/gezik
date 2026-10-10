@@ -153,12 +153,20 @@ pub struct Tree {
     roots: Vec<(RootKey, NodeId)>,
     next_id: NodeId,
     next_ticket: u64,
+    /// Bumped whenever the lines may have changed, so the sidebar lays its rows out again only
+    /// then (not on every navigation).
+    version: u64,
 }
 
 impl Tree {
     /// Nothing open, nothing kept.
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
+    }
+
+    /// Changes whenever [`Tree::lines`] or a node's state may have changed.
+    pub fn version(&self) -> u64 {
+        self.version
     }
 
     pub fn node(&self, id: NodeId) -> Option<&Node> {
@@ -233,6 +241,7 @@ impl Tree {
         if node.state != State::Closed {
             return None;
         }
+        self.version += 1;
         if node.depth >= MAX_DEPTH {
             node.state = State::Loop;
             return None;
@@ -251,6 +260,7 @@ impl Tree {
         node.state = State::Closed;
         node.more = 0;
         node.ticket = 0;
+        self.version += 1;
         for child in std::mem::take(&mut node.children) {
             self.drop_subtree(child);
         }
@@ -263,6 +273,10 @@ impl Tree {
     /// Lets go of the roots whose places are no longer in the sidebar, with their branches.
     pub fn keep_roots(&mut self, keys: &[RootKey]) {
         let gone: Vec<NodeId> = self.roots.iter().filter(|(k, _)| !keys.contains(k)).map(|(_, id)| *id).collect();
+        if gone.is_empty() {
+            return;
+        }
+        self.version += 1;
         self.roots.retain(|(k, _)| keys.contains(k));
         for id in gone {
             self.drop_subtree(id);
@@ -292,6 +306,7 @@ impl Tree {
     }
 
     fn fill(&mut self, id: NodeId, listed: Listed) {
+        self.version += 1;
         let looped = listed.real.is_some() && self.ancestors(id).any(|a| a.real == listed.real);
         let Some(node) = self.nodes.get_mut(&id) else { return };
         node.real = listed.real;
@@ -346,11 +361,14 @@ impl Tree {
             if node.state == State::Empty {
                 if !found.names.is_empty() {
                     node.state = State::Closed;
+                    self.version += 1;
                     changed.push(id);
                 }
                 continue;
             }
             let real = node.real.clone();
+            // A read already on its way is older than this listing: dropped when it comes.
+            self.ticket(id);
             self.fill(id, Listed { names: found.names.clone(), more: found.more, real });
             changed.push(id);
         }
@@ -372,6 +390,7 @@ impl Tree {
             if state == State::Empty {
                 if let Some(node) = self.nodes.get_mut(&id) {
                     node.state = State::Closed;
+                    self.version += 1;
                 }
                 rearmed.push(id);
             } else {
@@ -429,8 +448,17 @@ impl Tree {
                 State::Empty | State::Loop => return Reveal::Missing,
                 State::Open => {}
             }
-            let want = node.path.join(name);
-            match node.children.iter().find(|c| self.nodes.get(c).is_some_and(|n| same(&n.path, &want))) {
+            // By name first (no allocation per sub-folder); `same` (case-blind on Windows) only
+            // when no name matches exactly.
+            let exact = node
+                .children
+                .iter()
+                .find(|c| self.nodes.get(c).is_some_and(|n| n.path.file_name() == Some(name.as_os_str())));
+            let found = exact.or_else(|| {
+                let want = node.path.join(name);
+                node.children.iter().find(|c| self.nodes.get(c).is_some_and(|n| same(&n.path, &want)))
+            });
+            match found {
                 Some(child) => id = *child,
                 None => return Reveal::Missing,
             }
@@ -606,6 +634,38 @@ mod tests {
         assert_eq!(tree.listed(Path::new("/r/e"), &prepare(vec!["sub".into()], None), &same), vec![e]);
         assert_eq!(tree.node(e).unwrap().state, State::Closed, "an arrow again, nothing read");
         assert!(tree.listed(Path::new("/r/a"), &prepare(vec!["x".into()], None), &same).is_empty());
+    }
+
+    #[test]
+    fn a_read_older_than_a_pane_listing_is_dropped() {
+        let mut tree = Tree::default();
+        let read = tree.toggle_root(key("/r")).unwrap();
+        tree.loaded(&read, found(&["a"]));
+        let root = tree.root_of(&key("/r")).unwrap();
+        let (reads, _) = tree.rereads(&[PathBuf::from("/r")], &same);
+        tree.listed(Path::new("/r"), &prepare(vec!["a".into(), "new".into()], None), &same);
+        assert!(!tree.loaded(&reads[0], found(&["a"])), "the listing is newer than the read");
+        assert_eq!(names(&tree, &tree.lines(root)), ["a", "new"]);
+    }
+
+    #[test]
+    fn the_version_moves_only_when_the_lines_may_have() {
+        let mut tree = Tree::default();
+        let v = tree.version();
+        let read = tree.toggle_root(key("/r")).unwrap();
+        let opened = tree.version();
+        assert_ne!(opened, v);
+        assert!(tree.reread_all().is_empty());
+        tree.keep_roots(&[key("/r")]);
+        assert!(!tree.has_branch_at(Path::new("/r"), &same));
+        assert_eq!(tree.version(), opened, "asking and keeping change nothing");
+        tree.loaded(&read, found(&["a"]));
+        assert_ne!(tree.version(), opened);
+        let filled = tree.version();
+        tree.reread_all();
+        assert_eq!(tree.version(), filled, "a read on its way shows nothing new yet");
+        tree.keep_roots(&[]);
+        assert_ne!(tree.version(), filled);
     }
 
     #[test]

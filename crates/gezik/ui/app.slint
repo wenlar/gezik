@@ -388,6 +388,8 @@ export component AppWindow inherits Window {
     callback pinned-drop(int, int);
     // The splitter was released.
     callback sidebar-resized();
+    // The arrow of sidebar row `i` (a row of sidebar-rows): its branch opens or closes (spec 10 §5).
+    callback sidebar-toggled(int);
     // The preview pane on the right (Alt+P); its width is dragged (200-600px) and saved
     // in state.toml on close.
     in property <bool> preview-open;
@@ -1012,6 +1014,7 @@ export component AppWindow inherits Window {
                     pin-line: root.drop-pin-row;
                     clicked(s, i) => { root.sidebar-clicked(s, i); }
                     middle-clicked(s, i) => { root.sidebar-middle-clicked(s, i); }
+                    toggled(i) => { root.sidebar-toggled(i); }
                     menu(s, i, x, y) => {
                         root.end-path-editing();
                         root.sidebar-menu(s, i, x, y);
@@ -1204,6 +1207,7 @@ export component AppWindow inherits Window {
                     pin-line: root.drop-pin-row;
                     clicked(s, i) => { root.sidebar-clicked(s, i); }
                     middle-clicked(s, i) => { root.sidebar-middle-clicked(s, i); }
+                    toggled(i) => { root.sidebar-toggled(i); }
                     menu(s, i, x, y) => {
                         root.end-path-editing();
                         root.sidebar-menu(s, i, x, y);

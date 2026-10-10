@@ -104,7 +104,7 @@ fn list(location: &Location, mode: &Mode) -> LoadResult {
 }
 
 /// The server of a bare `\\server` path (Windows), whose shares are its listing.
-fn server_of(path: &Path) -> Option<String> {
+pub(crate) fn server_of(path: &Path) -> Option<String> {
     if !cfg!(windows) {
         return None;
     }

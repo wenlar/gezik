@@ -41,6 +41,7 @@ mod saved_searches;
 mod search;
 mod select_tools;
 mod sidebar;
+mod sidebar_model;
 mod single_instance;
 mod stack;
 mod start;
@@ -1117,6 +1118,14 @@ fn main() -> Result<(), slint::PlatformError> {
         move |from, line| {
             if let (Ok(from), Ok(line)) = (usize::try_from(from), usize::try_from(line)) {
                 sidebar.drop_pinned(from, line);
+            }
+        }
+    });
+    window.on_sidebar_toggled({
+        let sidebar = sidebar.clone();
+        move |row| {
+            if let Ok(row) = usize::try_from(row) {
+                sidebar.toggle_row(row);
             }
         }
     });

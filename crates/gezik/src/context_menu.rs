@@ -1320,6 +1320,10 @@ impl Menus {
     /// Right-click on sidebar entry (`section`, `index`), at window position `x`, `y`; on a
     /// group's heading, its menu.
     pub fn sidebar_entry(&self, section: i32, index: i32, x: f32, y: f32) {
+        // A capped branch's "… n more" line: a click opens the folder; no menu.
+        if section == crate::sidebar::SECTION_TREE_MORE {
+            return;
+        }
         if section == SECTION_GROUP {
             return self.group_heading(index, x, y);
         }

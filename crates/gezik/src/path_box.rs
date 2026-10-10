@@ -328,10 +328,12 @@ fn suggested(name: &str, flags: u8, show_hidden: bool, show_system: bool) -> boo
     entry.is_shown(show_hidden, show_system)
 }
 
-/// The names of the folders in `dir` (links to folders too, not Gezik's temporary names),
-/// sorted as suggestions list them, those the list would show with these options. Touches the
-/// disk: only on a worker thread.
-pub fn list_subfolders(dir: &Path, show_hidden: bool, show_system: bool) -> std::io::Result<Vec<String>> {
+/// The names of the folders in `dir` (links to folders too, not Gezik's temporary names) the
+/// list would show with these options (the list's own test, `Entry::is_shown`), in no order.
+/// Touches the disk: only on a worker thread. Opens no item: on Windows the attributes come
+/// with the listing; on Linux hiding goes by the name, so nothing more is asked per folder
+/// (macOS asks for its hidden flag, as the list does).
+pub fn subfolder_names(dir: &Path, show_hidden: bool, show_system: bool) -> std::io::Result<Vec<String>> {
     let mut names = Vec::new();
     for entry in std::fs::read_dir(dir)?.flatten() {
         let is_dir = match entry.file_type() {
@@ -344,12 +346,22 @@ pub fn list_subfolders(dir: &Path, show_hidden: bool, show_system: bool) -> std:
             && !gezik_ops::pending::is_internal_name(name)
         {
             // Free on Windows: the listing brought the attributes along.
-            let flags = entry.metadata().map_or(0, |meta| gezik_core::attribute_flags(&meta));
+            let flags = if cfg!(any(windows, target_os = "macos")) {
+                entry.metadata().map_or(0, |meta| gezik_core::attribute_flags(&meta))
+            } else {
+                0
+            };
             if suggested(name, flags, show_hidden, show_system) {
                 names.push(name.to_owned());
             }
         }
     }
+    Ok(names)
+}
+
+/// [`subfolder_names`], sorted as suggestions list them.
+pub fn list_subfolders(dir: &Path, show_hidden: bool, show_system: bool) -> std::io::Result<Vec<String>> {
+    let mut names = subfolder_names(dir, show_hidden, show_system)?;
     sort_names(&mut names);
     Ok(names)
 }
