@@ -12,6 +12,7 @@ use gezik_core::kind::is_package_name;
 use gezik_core::nav::{Closed, Crumb, Location, Session, Step, Tabs, ViewState, crumbs, nearest_existing};
 use gezik_core::ops::paths::same_path;
 use gezik_core::refresh::{QUIET, RefreshPace};
+use gezik_core::view_rules::Place;
 use gezik_core::{Entry, list_dir};
 use gezik_platform::Drive;
 use gezik_platform::finder::AliasTarget;
@@ -410,6 +411,12 @@ impl Navigator {
 
     pub fn active_location(&self) -> Location {
         self.0.borrow().tabs.active().location().clone()
+    }
+
+    /// The active tab's place as the view rules see it.
+    pub fn rule_place(&self) -> Place {
+        let inner = self.0.borrow();
+        inner.view.rule_place(inner.tabs.active().location(), &inner.places)
     }
 
     /// Where new tabs open (`start-folder`).
@@ -1020,17 +1027,17 @@ impl Navigator {
                 return self.show_failed(&mode, &location, format!("Cannot open {shown}: {why}"));
             }
         };
-        let (view, state) = {
+        let (view, state, place) = {
             let mut inner = self.0.borrow_mut();
             if let Mode::Move(steps) = &mode {
                 inner.tabs.active_mut().apply_steps(steps);
             }
             inner.cleared = false;
             let state = with_selection(view_to_show(&mode, inner.tabs.active().view()), select_next);
-            (inner.view.clone(), state)
+            (inner.view.clone(), state, inner.view.rule_place(&location, &inner.places))
         };
         self.watch_shown(&location);
-        view.show(listing, &state, note);
+        view.show(listing, &state, note, place);
         crate::folder_sizes::with_current(|f| f.shown(&location));
         self.update_chrome();
         if location.is_results() {
@@ -1163,7 +1170,7 @@ impl Navigator {
             (empty, inner.view.clone(), inner.tabs.active().view().clone())
         };
         let Some(empty) = empty else { return self.status(message) };
-        view.show(empty, &state, Some(message));
+        view.show(empty, &state, Some(message), Place::default());
         // Whatever was being added up is not on screen any more.
         crate::folder_sizes::with_current(|f| f.shown(location));
         self.update_chrome();

@@ -13,6 +13,7 @@ pub mod store;
 pub mod system_journal;
 pub mod theme;
 pub mod theme_rules;
+mod view_rules;
 pub mod views_file;
 mod views_writer;
 

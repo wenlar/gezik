@@ -488,6 +488,10 @@ pub const GROUP_BY_DATE: u32 = 2002;
 pub const GROUP_BY_SIZE: u32 = 2003;
 pub const COLLAPSE_GROUPS: u32 = 2010;
 pub const EXPAND_GROUPS: u32 = 2011;
+/// View ▸ "Reset to rule N" (spec 10 §8.2, §10.3): the folder forgets its own view, rule N applies.
+pub const RESET_TO_RULE: u32 = 2041;
+/// View ▸ "View rule N applies", greyed: which rule set the folder's view.
+pub const VIEW_RULE_APPLIES: u32 = 2042;
 /// View ▸ Show in sidebar tree (spec 10 §10.3, 10c).
 pub const REVEAL_IN_TREE: u32 = 2050;
 
@@ -756,6 +760,20 @@ pub fn view_items(
     out.push((SYSTEM_INTEGRATION, "    System Integration…".to_owned()));
     out.push((REVEAL_IN_TREE, "    Show in sidebar tree".to_owned()));
     out
+}
+
+/// The View menu with a view rule (spec 10 §8.2, plan deviation 10): `rule` is its number and
+/// whether it sets this folder's view. It does: "View rule N applies", greyed, before "Reset this
+/// folder". The folder has its own view and rule N would apply without it: "Reset to rule N"
+/// instead.
+fn rule_items(entries: &mut Vec<(u32, String, bool)>, rule: Option<(usize, bool)>) {
+    let Some((number, applies)) = rule else { return };
+    let Some(at) = entries.iter().position(|(id, _, _)| *id == RESET_FOLDER) else { return };
+    if applies {
+        entries.insert(at, (VIEW_RULE_APPLIES, format!("    View rule {number} applies"), false));
+    } else {
+        entries[at] = (RESET_TO_RULE, format!("Reset to rule {number}"), true);
+    }
 }
 
 /// Date format ▸ and Size format ▸ of the View menu, at place `at`, the current one marked.
@@ -1393,9 +1411,9 @@ impl Menus {
     pub fn header(&self, x: f32, y: f32) {
         *self.subject.borrow_mut() = Some(Subject::Header);
         let items: Vec<(u32, String, bool)> = if self.view.shows_results() {
-            result_header_items(&self.view.result_columns()).into_iter().map(|(id, t)| (id, t, true)).collect()
+            result_header_items(&self.view.columns_shown()).into_iter().map(|(id, t)| (id, t, true)).collect()
         } else {
-            header_items(&self.view.columns()).into_iter().map(|(id, t)| (id, t.to_owned(), true)).collect()
+            header_items(&self.view.columns_shown()).into_iter().map(|(id, t)| (id, t.to_owned(), true)).collect()
         };
         let at = items.len();
         self.open_slint_entries(&items, vec![group_by_sub(self.view.view_settings().group, at)], Anchor::point(x, y));
@@ -1442,6 +1460,7 @@ impl Menus {
         } else {
             0
         };
+        rule_items(&mut entries, self.view.rule_state());
         let mut subs = format_subs(options, place + 1 + shift);
         subs.push(group_by_sub(self.view.view_settings().group, at_group));
         self.open_slint_entries(&entries, subs, at);
@@ -1915,6 +1934,7 @@ impl Menus {
             (SHOW_HISTORY, Subject::View) => self.ops.show_history(),
             (APPLY_TO_ALL, Subject::View) => self.view.apply_to_all(),
             (RESET_FOLDER, Subject::View) => self.view.reset_folder(),
+            (RESET_TO_RULE, Subject::View) => self.view.reset_folder(),
             (SYSTEM_INTEGRATION, Subject::View) => {
                 crate::integration::with_current(crate::integration::Integration::open)
             }
@@ -2601,6 +2621,8 @@ mod tests {
             DISCONNECT,
             COLLAPSE_GROUPS,
             EXPAND_GROUPS,
+            RESET_TO_RULE,
+            VIEW_RULE_APPLIES,
         ];
         let mut ranges: Vec<std::ops::Range<u32>> = singles.iter().map(|id| *id..id + 1).collect();
         ranges.extend([
@@ -2913,6 +2935,29 @@ mod tests {
         assert!(tab_set_items(&[]).is_empty());
         let many: Vec<String> = (0..TAB_SET_MAX + 3).map(|i| format!("S{i}")).collect();
         assert_eq!(tab_set_items(&many).len(), 3 * TAB_SET_MAX as usize);
+    }
+
+    #[test]
+    fn the_view_menu_says_which_rule_applies_or_offers_it_back() {
+        let base = || -> Vec<(u32, String, bool)> {
+            view_items(ViewSettings::default(), false, false, ViewOptions::default(), true)
+                .into_iter()
+                .map(|(id, title)| (id, title, true))
+                .collect()
+        };
+        let mut plain = base();
+        rule_items(&mut plain, None);
+        assert_eq!(plain, base(), "no rule: the menu as it was");
+        let mut applies = base();
+        rule_items(&mut applies, Some((2, true)));
+        let at = applies.iter().position(|(id, _, _)| *id == VIEW_RULE_APPLIES).unwrap();
+        assert_eq!(applies[at], (VIEW_RULE_APPLIES, "    View rule 2 applies".to_owned(), false), "greyed");
+        assert_eq!(applies[at + 1].0, RESET_FOLDER);
+        let mut own = base();
+        rule_items(&mut own, Some((3, false)));
+        assert!(!own.iter().any(|(id, _, _)| *id == RESET_FOLDER || *id == VIEW_RULE_APPLIES));
+        assert!(own.contains(&(RESET_TO_RULE, "Reset to rule 3".to_owned(), true)));
+        assert_eq!(own.len(), base().len());
     }
 
     #[test]

@@ -11,7 +11,7 @@
 use crate::Entry;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Token {
+pub(crate) enum Token {
     /// One character, folded (see [`fold`]).
     Char(char),
     /// `?`: any one character.
@@ -112,6 +112,21 @@ fn tokens(body: &str) -> Vec<Token> {
     out
 }
 
+/// `body` as tokens that must match a whole name: no `*` is added around it (view rules' path
+/// parts). Characters are folded when `fold_case`; `**` is `*`.
+pub(crate) fn exact_tokens(body: &str, fold_case: bool) -> Vec<Token> {
+    let mut out: Vec<Token> = body
+        .chars()
+        .map(|c| match c {
+            '*' => Token::Star,
+            '?' => Token::Any,
+            c => Token::Char(if fold_case { fold(c) } else { c }),
+        })
+        .collect();
+    out.dedup_by(|a, b| *a == Token::Star && *b == Token::Star);
+    out
+}
+
 /// A character as compared: lower case, with i, İ, ı and I all one letter, and the Greek
 /// final ς one with σ.
 fn fold(c: char) -> char {
@@ -132,6 +147,11 @@ pub fn fold_text(text: &str) -> String {
 /// Whether the whole of `name` matches `tokens`: one pass with a single back-track point for
 /// the last `*` (the classic wildcard matcher), on byte offsets into `name`.
 fn glob(tokens: &[Token], name: &str) -> bool {
+    glob_case(tokens, name, true)
+}
+
+/// [`glob`], comparing characters folded (`fold_case`) or as they are.
+pub(crate) fn glob_case(tokens: &[Token], name: &str, fold_case: bool) -> bool {
     let (mut t, mut n) = (0, 0);
     // After the last `*`: the token after it and where in the name it was tried from.
     let mut back: Option<(usize, usize)> = None;
@@ -148,7 +168,7 @@ fn glob(tokens: &[Token], name: &str) -> bool {
                 n += c.len_utf8();
                 continue;
             }
-            (Some(Token::Char(want)), Some(c)) if *want == fold(c) => {
+            (Some(Token::Char(want)), Some(c)) if *want == if fold_case { fold(c) } else { c } => {
                 t += 1;
                 n += c.len_utf8();
                 continue;

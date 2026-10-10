@@ -134,7 +134,16 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
     resident::apply(&loaded.settings.system);
     sidebar::with_current(|s| s.set_show_cloud(loaded.settings.sidebar_cloud));
     sidebar::with_current(|s| s.set_tree_follow(loaded.settings.sidebar_tree_follow));
+    // The defaults first: a rule change then switches the view once.
     view::with_current(|view| view.set_defaults(loaded.settings.view));
+    view::with_current(|view| {
+        let place = || {
+            let mut place = Default::default();
+            navigation::with_current(|nav| place = nav.rule_place());
+            place
+        };
+        view.set_rules(view::compile_rules(&loaded.settings.view_rules), place);
+    });
     view_options::set_from_file(loaded.settings.view.options);
     #[cfg(target_os = "macos")]
     menu_bar::set_commands(window, &loaded.settings.commands);
@@ -945,6 +954,8 @@ fn main() -> Result<(), slint::PlatformError> {
     });
     let view = view::View::new(&window, memory, config.clone());
     view.set_defaults(initial_settings.view);
+    // No folder shows yet: its place comes with the first one.
+    view.set_rules(view::compile_rules(&initial_settings.view_rules), Default::default);
     view.set_options(view_options::current());
     view.set_columns(saved_state.columns.clone().unwrap_or_else(gezik_core::view::default_columns));
     view.set_result_columns(

@@ -568,6 +568,18 @@ Numbers stay as they are when branches merge: if this range meets one merged ear
 218. **Follow.** View ▸ Show in Sidebar Tree in a deep folder of Documents: the tree opens under Documents down to it, the row shows and has the keyboard. Set `[sidebar] tree-follow = true` in settings.toml: going into folders opens the tree along; a hidden folder (with hidden items off) leaves it as is, silently.
 219. **Nothing at rest.** Quit and start again: every branch is closed; with every branch closed, Activity Monitor shows the same memory as before this change (10d's build) within noise.
 
+### 10f, view rules
+
+Numbers stay as they are when branches merge: if this range meets one merged earlier, the later branch moves its items to the next free ten and writes the old number in brackets in the results file; gaps are not filled. 10f starts at 220 as its plan decided (other open branches take the numbers before it). Results go to `macos-test-results.md`.
+
+220. **Tests first.** `cargo test -p gezik-core view_rules`, `cargo test -p gezik-config view_rules`, `cargo test -p gezik a_folder_s_own_view`, `cargo run -p gezik-core --release --example rules_bench`; paste the output (the last one within its three budgets).
+221. **A path rule.** Add to settings.toml `[[view-rules]]` with `path = "{pictures}/**"`, `mode = "grid"`, `grid-size = "large"`. Open Pictures and a folder inside it: each shows in the large grid at once (no list with rows first); the View button's menu has a greyed `View rule 1 applies` above `Reset this folder`. Another folder stays as it was.
+222. **Your own view wins.** In Pictures choose View ▸ List; go elsewhere and back: it stays a list; the View menu now says `Reset to rule 1`; choose it: the large grid is back and the menu says `View rule 1 applies` again.
+223. **Content.** `mkdir /tmp/gezik-rules && cd /tmp/gezik-rules && mkdir six five four && touch six/{1..6}.jpg six/{1..4}.txt five/{1..5}.jpg five/{1..5}.txt four/{1..4}.jpg four/{1..6}.txt`; rule `content = "pictures >= 50%"`, `mode = "grid"`: `six` and `five` open as a grid, `four` as a list. `touch four/.a.jpg four/.b.jpg`: with Show Hidden Items off `four` stays a list. In `five`, `touch five/{6..12}.txt` from Terminal while it is open: it stays a grid (a reload keeps the rule).
+224. **Kinds.** Rules `kind = "trash"` (`sort = "modified"`, `sort-dir = "desc"`), `kind = "removable"` (`mode = "grid"`) and `kind = "cloud"` (`group = "type"`): the Trash (open it only; move nothing in or out) sorts newest first; a USB stick under /Volumes opens as a grid; iCloud Drive groups by type. `kind = "network"` with an SMB share opened with ⌘K: note whether it applies (only if the drive list calls the share a network one).
+225. **Mistakes and reloads.** Add a rule with `mode = "columns"`, one with `content = "pictures > 50%"` and one with `kind = "archive-root"`: the notice lists `view-rules[n]: …` for each and the other rules still apply. With a ruled folder on screen change its rule's `grid-size` in settings.toml and save: the folder changes without being opened again.
+226. **Case and rest.** A rule `path = "~/downloads"` (small d) does not match Downloads on macOS (case counts outside Windows). Remove every rule, quit and start again: Activity Monitor shows the same memory as the 10c build within noise.
+
 ## Known gaps (not bugs)
 
 These are known differences from Finder and ForkLift (from the ForkLift comparison, §3). Don't report them as failures. A note is welcome if one hurts more than expected.

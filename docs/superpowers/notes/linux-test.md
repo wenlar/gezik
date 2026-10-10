@@ -545,6 +545,15 @@ Numbers stay as they are when branches merge: if this range meets one merged ear
 164. **Keyboard and Orca.** As macOS 217 with Ctrl+Enter; Orca reads expanded/collapsed.
 165. **Follow.** As macOS 218.
 
+### 10f, view rules
+
+Numbers stay as they are when branches merge: if this range meets one merged earlier, the later branch moves its items to the next free ten and writes the old number in brackets in the results file; gaps are not filled. 10f starts at 170 as its plan decided (other open branches take the numbers before it). GNOME and KDE, X11 and Wayland.
+
+170. **Tests first.** As macOS 220; paste.
+171. **Path, own view, content.** As macOS 221–223 (Ctrl instead of ⌘; Ctrl+H for hidden items; `/tmp/gezik-rules` the same).
+172. **Kinds.** `kind = "removable"` with a USB stick under /media or /run/media; `kind = "trash"` (open only); a share mounted by the file manager (gvfs) is not `network` (a known limit) — note what happens.
+173. **Mistakes and reloads.** As macOS 225.
+
 ## Known gaps (not bugs)
 
 - **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (F5 works it out again). Search results and the flat view show no folder sizes.
