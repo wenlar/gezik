@@ -106,6 +106,16 @@ single-instance = true
 # macOS: Space opens the system Quick Look panel ("system") or Gezik's own window ("gezik").
 # Windows and Linux always use Gezik's own.
 quick-look = "system"     # system | gezik
+# An icon in the notification area (macOS: menu bar; Linux: tray). With it, closing the
+# window keeps Gezik running; quit from the icon's menu. Turned on in System Integration.
+tray = false
+# A system-wide shortcut that shows or hides Gezik from any app, e.g. "win+shift+e"
+# (macOS "cmd+alt+e", Linux "super+shift+e"). "" is off; there is no default. A letter, a
+# digit or F1-F12 with Win/Super, or with Ctrl+Shift or Alt+Shift (one modifier alone is every
+# app's own: Ctrl+C, Alt+F4); Ctrl+Alt is not used (AltGr); Win+L, D, E, R and Win+<digit> are
+# the system's. macOS: Cmd or Ctrl with Option or Shift (Cmd alone is every app's own).
+hotkey = ""
+# Start at login is not a setting: System Integration > Start at login (a system change).
 
 [sidebar]
 # OneDrive, iCloud Drive, Dropbox, Google Drive … under CLOUD, found by Gezik. Rows in these

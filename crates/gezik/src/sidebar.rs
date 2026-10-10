@@ -381,6 +381,7 @@ impl Sidebar {
         let changed = self.0.borrow_mut().pins.set(pinned);
         if changed {
             self.update_rows();
+            crate::resident::refresh_pins();
             self.refresh();
         }
     }
@@ -653,6 +654,8 @@ impl Sidebar {
         let applied = self.0.borrow_mut().pins.finish_check(ticket, visible);
         if applied {
             self.update_rows();
+            // The tray menu lists the pins shown (the check is what shows them).
+            crate::resident::refresh_pins();
         }
     }
 

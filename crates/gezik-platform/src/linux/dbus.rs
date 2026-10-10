@@ -86,6 +86,43 @@ impl Message {
     }
 }
 
+/// The reply to a call (an error if `error` is given); none when no reply is expected.
+pub fn answer(to: &Message, error: Option<(&str, &str)>, body: Vec<Value>) -> Option<Message> {
+    if to.flags & NO_REPLY_EXPECTED != 0 {
+        return None;
+    }
+    Some(Message {
+        kind: if error.is_some() { MsgKind::Error } else { MsgKind::Return },
+        reply_serial: Some(to.serial),
+        destination: to.sender.clone(),
+        error_name: error.map(|(name, _)| name.to_owned()),
+        body: error.map_or(body, |(_, text)| vec![Value::Str(text.to_owned())]),
+        ..Message::default()
+    })
+}
+
+/// A call to the bus itself (org.freedesktop.DBus).
+#[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
+pub fn bus_call(member: &str, body: Vec<Value>) -> Message {
+    Message {
+        path: Some("/org/freedesktop/DBus".into()),
+        destination: Some("org.freedesktop.DBus".into()),
+        interface: Some("org.freedesktop.DBus".into()),
+        member: Some(member.into()),
+        body,
+        ..Message::default()
+    }
+}
+
+/// Calls `ready` with `result` unless the handle was dropped (`stop`): a dropped tray or
+/// shortcut's thread wakes with an error that its former owner must not hear.
+#[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
+pub fn tell<T>(stop: &std::sync::atomic::AtomicBool, ready: impl FnOnce(T), result: T) {
+    if !stop.load(std::sync::atomic::Ordering::SeqCst) {
+        ready(result);
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Bad(pub &'static str);
 
@@ -576,14 +613,22 @@ mod conn {
             }
             stream.write_all(b"BEGIN\r\n")?;
             let mut bus = Bus { stream, serial: 0 };
-            bus.call(Message {
-                path: Some("/org/freedesktop/DBus".into()),
-                destination: Some("org.freedesktop.DBus".into()),
-                interface: Some("org.freedesktop.DBus".into()),
-                member: Some("Hello".into()),
-                ..Message::default()
-            })?;
+            bus.call(bus_call("Hello", Vec::new()))?;
             Ok(bus)
+        }
+
+        /// RequestName with DO_NOT_QUEUE (4): the reply's code (1 primary owner, 4 already the owner).
+        pub fn request_name(&mut self, name: &str) -> io::Result<u32> {
+            let reply = self.call(bus_call("RequestName", vec![Value::Str(name.into()), Value::U32(4)]))?;
+            match reply.body.first() {
+                Some(Value::U32(code)) => Ok(*code),
+                _ => Err(io::Error::new(io::ErrorKind::InvalidData, "RequestName's reply")),
+            }
+        }
+
+        /// Asks the bus for signals matching `rule`.
+        pub fn add_match(&mut self, rule: &str) -> io::Result<()> {
+            self.call(bus_call("AddMatch", vec![Value::Str(rule.into())])).map(drop)
         }
 
         pub fn send(&mut self, mut m: Message) -> io::Result<u32> {
@@ -769,6 +814,17 @@ mod tests {
         let be = encode_with(&message, false).unwrap();
         assert_eq!(be[0], b'B');
         assert_eq!(decode(&be), Ok(message));
+    }
+
+    #[test]
+    fn a_dropped_handle_hears_nothing() {
+        use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
+        let stop = AtomicBool::new(false);
+        let mut heard = Vec::new();
+        tell(&stop, |r: Result<(), &str>| heard.push(r), Err("bus closed"));
+        stop.store(true, SeqCst);
+        tell(&stop, |r: Result<(), &str>| heard.push(r), Err("woken by the shutdown"));
+        assert_eq!(heard, [Err("bus closed")]);
     }
 
     #[test]

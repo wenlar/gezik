@@ -725,6 +725,38 @@ Alt proje 1 tamamlandıktan sonra bilerek ertelenen maddeler. Kaynak: görev inc
   - **Linux** (`linux-test.md` 122-130): uygulama sandığını Linux'ta derle; Papirus/Adwaita/Breeze ve bir PNG teması; `;` adlı dosyanın küçük resmi; düşmanca adla Open With; sembolik bağlantılı `mimeapps.list`.
   - **macOS:** yeni madde yok; paylaşılan `finder_menu`/`info` yolu macOS listesinin 9a2/9a3 Open With ve `Change All…` maddeleri yeniden koşulunca sınanır.
 
+## Alt proje 9b9 (Tepsi, genel kısayol, girişte başlama, `--background`) sonrası
+
+- Ölçüm, exe boyutu (sürüm, `cargo build --release -p gezik -j 4`, Windows): **24.752.640 bayt** (Task 9). Taban (Task 1'de dalda ölçüldü; Task 2/3'ün kodu henüz çağrılmıyordu, yani `master` 4645f24'ün sayısı) **24.667.136**; sınır taban + 262.144 = **24.929.280**, altında (+85.504; sınıra 176.640 bayt var). Görev görev: Task 1 24.673.280, Task 7 24.725.504 (Task 4-6 dahil; inceleme düzeltmeleriyle 24.730.624), Task 8 24.751.104 (inceleme düzeltmeleriyle 24.752.640). Task 2-6 kendi başına ölçülmedi (kodları Task 7'ye dek çağrılmıyordu).
+- Sapmalar (planın 1-22'si, kısaca): girişte başlama ayar değil, günlüktür (1); yazılan yerler `Run\Gezik`, `com.wenlar.gezik.plist`, `autostart/gezik.desktop` (2); kısayolun varsayılanı ve önerisi yok, alan boş (3); kısayol kuralları (4; inceleme ile sıkılaştı, aşağıda); kayıt başarısızsa ayar geri yazılır, `Choose Another` (5); Windows tepsi penceresi gizli üst düzey pencere, kısayol iş parçacığı kuyruğunda (6); Gezik'in simgesi yok, sistemin klasör simgesi (7); tıklama ve menü (macOS'ta tık menüyü açar, Linux'ta menü yok) (8); kısayol öndeyse gizler/küçültür (9); ilk kapanışta bildirim yerine bir soru (10); yalnız ilk Gezik tepsi ve kısayol tutar (11); `--background` tek örneğe gitmez, çalışan varsa sessiz çıkar (12); olay döngüsü `run_event_loop_until_quit` (13); tepsi menüsünün kendi kimlikleri, yeni `Action` yok (14); Linux kısayolu Wayland'de portal, X11'de `XGrabKey` (15); ayrı D-Bus bağlantıları (16); gizli pencerenin belleği ölçülecek (17); ayar `SettingsChange::System` ile yazılır (18); Carbon tuş kodları ABD yerleşimine göre (19); Wayland'de gizleme (20; uygulandı, aşağıda); dal ve numaralar (21; aşağıda); ekran testleri ayrı yapılandırma klasörüyle (22).
+  - Uygulamadaki ek sapmalar: `parse_hotkey` `num+` ile biten metni harf olmayan tuş diye reddeder; ayırma `rsplit_once('+')`; `edit_view` → `edit_table` (Task 1). Okuyucular U+FFFE/U+FFFF'i de reddeder (Task 2). `Hotkey`'in alanı yalnız `Drop` için tutulur (`#[allow(dead_code, reason)]`) (Task 3). `NSVariableStatusItemLength` `static` değil `const`; macOS geri çağrıları `Rc` ile, `RefCell` dışında çağrılır (kendi geri çağrısında bırakılan tepsi `BorrowMutError` vermez); `reopen::install` yeniden denenebilir (Task 4). SNI kaydı gönderilir ve yanıtı hizmet döngüsünde okunur (kayıt beklenirken gelen Get/GetAll yanıtsız kalmaz); portal `request()` erken gelen `Response`'ları saklar; X11 uyandırma iletisi yalnız `stop` kuruluyken döngüyü bitirir (Task 5). `login_targets` exe'yi denetler (mutlak, adı `gezik.exe`/`gezik`, tırnak ve denetim karakteri yok) ve her metni okuyucusundan geçirir; `file_text_allowed` yalnız `…/autostart/gezik.desktop`'ı kabul eder (Task 6). `default_lines` → `feature_lines(feature)` (Task 8). Task 9: kısayol sorusunun kural cümlesi a77a1c2'nin kurallarına göre sistem sistem yazıldı (önceki metin "Ctrl, Alt or Win" diyordu, artık Win ya da Ctrl+Shift/Alt+Shift; macOS'ta ⌘/⌃ ile ⌥/⇧).
+- **İnceleme düzeltmeleri (görev görev):**
+  - Task 1 (`a77a1c2`): Windows/Linux'ta kısayol Win/Super ya da Ctrl+Shift / Alt+Shift ister; Ctrl+Alt (AltGr) reddedilir; Win+L/D/E/R tek başına ve her Win+<rakam> "belongs to the system" ile reddedilir. macOS'ta ⌘ ya da ⌃, yanında ⌥ ya da ⇧ (⌃⌥ orada serbest).
+  - Task 3 (`82ab0ff`): tepsi ve kısayol tutamakları kendi iş parçacıklarında bırakılırsa kendini beklemez (no self-join); tepsinin `Drop`'u `WM_CLOSE`'dan önce `EndMenu` gönderir, açık bir `TrackPopupMenu` bırakmayı tutamaz.
+  - Task 5 (`9331a61`): D-Bus sinyallerinde gönderen denetimi (SNI `watcher_came_back` yalnız `org.freedesktop.DBus`'tan; portal `Response`/`Activated` yalnız portalın tekil adından, ad `CreateSession` yanıtının göndericisinden); bırakılmış tutamak `on_ready` duymaz (`dbus::tell`). Bırakırken `Session.Close` yok (portal bağlantı kapanınca oturumu kapatır).
+  - Task 2/6 (onaylandı, devredilenler uygulandı): okuyucular tam metin ister (`writer(exe) == text`); yazmadan önce her metin okuyucusundan geçer, exe mutlak ve adı `gezik` olmalı.
+  - Task 7 (`6e7c899`): gizli başlangıçta 4 sn'lik tepsi güvenlik ağı (simge gelmezse pencere görünür, tepsi bırakılmaz); Wayland'de (ya da `SLINT_DESTROY_WINDOW_ON_HIDE`) gizleme yerine simge durumuna küçültme (sapma 20'nin yedeği; gizlemek winit penceresini yok eder, dnd/pano arka ucu eski yüzeyi tutar); tek örnek kapalıyken `<key>-resident` kilidi (ikinci `--background` sessiz çıkar, ikinci pencere tepsi/kısayol tutmaz); macOS `applicationShouldTerminate:` ile ⌘Q/Dock Quit/oturum kapanışında kayıt, Windows'ta `WM_ENDSESSION(TRUE)`'da kayıt (alt sınıflama); gizliyken pencere konumu kaydedilmez.
+  - Task 8 (`62a47a5`): `Turn on` eksik ya da başarısız tepsiyi yeniden dener; Repair geri alınanları ve yeni hedefleri listeler; ikinci pencerede ayar komutları yalnız "Kept by the first Gezik window" der; panelin yazdığı `[system]` değerleri yorumları koruyarak gidip gelir.
+- **Ölçüm** (ekran testi 10, `scripts/perf/resident.ps1 -Runs 3`): **bekliyor** (GUI açar; kullanıcı uzaktayken). Üç satır (kapalı / tepsi + kısayol / `--background` gizli) buraya yazılacak; spec §12 ölçütleri: tepsi + kısayol ≤ kapalı + 0,5 MB, gizli ≤ kapalı (**doğrulanacak**: Slint'in yazılım çizicisi gizli pencerede arabelleği bırakıyor mu, sapma 17).
+- Ertelenenler ve bilinen sınırlar:
+  - Linux'ta tepsi menüsü yok (sapma 8, 10): tık göster/gizle, çıkış ilk kapanış sorusundan ya da tepsiyi kapatarak.
+  - Görev Yöneticisi'nde kapatılmış başlangıç girdisi (`StartupApproved\Run`) okunmaz: satır `On` der (sapma 1).
+  - macOS'ta ⌘Q (ve Dock'un Quit'i, oturum kapanışı) çalışan işler sorusunu sormadan çıkar (önceden de sormuyordu; kayıt yapılır).
+  - Unix'te exe'nin yalnız harf büyüklüğü değişen taşınması `Moved` değil `On` okunur (`login_state` harf duyarsız karşılaştırır).
+  - Wayland'de gizleme yerine simge durumuna küçültme (sapma 20; Linux listesi 132).
+  - Carbon tuş kodları ABD yerleşimine göre (sapma 19; Türkçe Q'da `i`/`ı`).
+  - Tepsi/kısayol iş parçacığı başlatılamazsa `on_ready` hiç gelmez (`shortcut:`); gizli başlangıçta 4 sn'lik ağ pencereyi gösterir.
+  - Panel yazması ile eşzamanlı bir yeniden yükleme yarışı (`resident.rs` `shortcut:`); tek örnek kapalıyken sonradan panelden açılan ikinci pencerenin tepsisi (`shortcut:`).
+  - Tepsi simgesi Gezik'in değil sistemin klasör simgesi (sapma 7); X11'de 250 ms içindeki ikinci basış düşer (sapma 15).
+  - Kayıp bir günlükten kalan Gezik biçimli plist/autostart dosyası `Turn on`'u reddeder ("not made by Gezik"), `--unregister` süpürene dek.
+- Denetimler (`-j 4`, Windows, Task 9 ucu): `cargo build --workspace`, `cargo test --workspace -- --test-threads 4` **2052 geçti, 0 düştü, 20 yok sayıldı** (gezik 501, gezik-platform 342, gezik-config 269), `clippy --workspace --all-targets -D warnings` ve `fmt --all --check` temiz. Çapraz denetimler: `gezik-core`, `gezik-platform`, `gezik-config`, `gezik-ops` için `x86_64-unknown-linux-gnu` `check` ve `clippy --all-targets -D warnings`; `RUST_MIN_STACK=67108864` ile `-p gezik --target aarch64-apple-darwin --no-default-features` `check` ve `clippy -D warnings`, `gezik-platform` `aarch64-apple-darwin` `clippy --all-targets -D warnings`: **hepsi temiz, düzeltme gerekmedi** (Task 3-8 kendi kollarını her görevde derlemişti). macOS ve Linux kolları yalnız derlendi; hiçbir test gerçek `Run` değeri, LaunchAgent ya da autostart yazmadı (`HKCU\Software\GezikTest-*`, temizlendi), kalıcı genel kısayol bırakmadı.
+- **Numaralar:** `master`'da en yüksek macOS 160, Linux 121. Açık PR'lar: #55 (9b8) macOS 161-168'i, #56 (9b10) Linux 122-130'u kullanıyor. Çakışmasın diye 9b9 macOS **169-176**, Linux **131-137** (planın 168-175 ve 122-128'i yerine); hangisi önce birleşirse birleşsin numaralar değişmez.
+- Bekleyenler:
+  - **Windows ekran testleri** (planın 12 maddesi, durum: bekliyor; 7, 8 ve 12 kullanıcıda): madde 4'te `win+l` artık "belongs to the system" ile reddedilir (çakışma başka bir uygulamanın tuttuğu akorla denenir); 11: tepsi menüsü açıkken tepsiyi kapatmak ve menüden çıkış (kendi olayında bırakma), simge gelmeyince 4 sn'lik ağ; 12: oturum kapanırken kayıt.
+  - `measure.ps1 -Runs 5`: `master`'a göre açılış ve boşta bellek farkı yok (varsayılanlarla açılışta hiçbir şey eklenmedi).
+  - **macOS** (`macos-test.md` 169-176): `NSStatusItem`, Carbon, Dock tıkı, `applicationShouldTerminate:`, LaunchAgent ilk kez çalışacak.
+  - **Linux** (`linux-test.md` 131-137): SNI (KDE, GNOME AppIndicator), portal, X11 kapma, Wayland'de küçültme ilk kez çalışacak.
+
 ## Alt proje 9b8 (Sanal dosya bırakma: Windows ve macOS) sonrası
 
 - Ölçüm, exe boyutu (sürüm, `cargo build --release -p gezik`, Windows): **24.714.752 bayt** (`854f87f`, `master` 4645f24 birleşmiş). Taban (Task 1 Step 0, `master` 2343a8e = 9b7 + `crt-static` birleşmiş) **24.656.384**; sınır taban + 262.144 = **24.918.528; 203.776 bayt altında**. Artış 58.368 bayt; `master`'ın 4645f24 birleşmesi (#47 motor `same_targets`, #48/#49 macOS) bu sayının içinde, ayrıca ölçülmedi. Görev görev: Task 1 `5fad8d2` 24.656.896 (+512); Task 3 `9e1a27c` 24.666.624 (+10.240, Task 2/4'ün yarım işi ağaçtayken); Task 2 ve Task 4 ayrı ölçülmedi (Task 2'yi Task 5'e kadar çağıran yok; Task 4 yalnız macOS); `master` birleşmesi ve Task 5 birlikte 24.714.752 (+48.128).
@@ -773,6 +805,146 @@ Alt proje 1 tamamlandıktan sonra bilerek ertelenen maddeler. Kaynak: görev inc
      - Tur 2 (önce master): master **52 ms / 7,2 MB**, 9b10 **33 ms / 7,3 MB**.
      Fark gürültü içinde (açılış iki yönde de oynuyor, bellek ±0,1 MB). **Makine meşguldü:** ölçüm boyunca başka ajanların derlemeleri sürüyordu (tur 1'de 6, tur 2'de 3 `cargo`/`rustc`: `cargo build --release`, `cargo clippy --workspace`, `cargo check --workspace`); açılış süreleri bu yüzden güvenilir değil, boş makinede yeniden ölçülebilir.
   - Temizlik: açtığım bütün Gezik süreçleri ve Özellikler penceresi kapatıldı (sonda çalışan `gezik.exe` yok); `D:\Work\gezik-mbase` çalışma ağacı kaldırıldı; commit yok. Deneme verisi ve yapılandırma klasörleri `%TEMP%\gezik-9b10gui\` altında kaldı (çöpe bir şey atılmadı).
+
+## Windows ekran testleri: 9b9 (2026-10-11)
+
+# 9b9 Windows ekran testleri — sonuçlar (2026-10-10, 06:30–06:50)
+
+- Exe: `D:\Work\gezik-9b9` HEAD 99d471c, `cargo build --release` (güncel, derleme yok), kopya `%TEMP%\gezik-9b9gui\bin\gezik.exe` (23,61 MB).
+- Yapılandırma: `cfg1`, `cfg2` (taze `GEZIK_CONFIG_DIR`); kullanıcının ayarlarına dokunulmadı. Kısayol akoru: **Win+Shift+F9** (planın Win+Shift+E'si yerine; metinler aynı).
+- Girdi: SendInput (Unicode yazım, düzen değişmedi); her basıştan önce GetForegroundWindow = Gezik / kendi yardımcı pencerem / açtığım tepsi menüsü denetlendi.
+- "Başka uygulama" = kendi WinForms yardımcı pencerem (`helper.ps1`); "alınmış akor" = aynı yardımcı `RegisterHotKey` ile.
+- Arka planda başka bir `cargo test -p gezik` / rustc derlemesi sürüyordu (ölçümler buna göre okunmalı).
+- Ekran görüntüleri: `shots\`.
+
+## Sonuç tablosu
+
+| # | Madde | Sonuç |
+|---|---|---|
+| 1 | Tepsiyi açmak ve kapanış | PASS |
+| 2 | Menü ve çıkış | **FAIL** (pinler menüye gelmiyor) — geri kalanı PASS |
+| 3 | Explorer yeniden başlar | PASS |
+| 4 | Kısayol | **FAIL** (Turn off akoru bırakmıyor) — geri kalanı PASS |
+| 5 | Gizliyken başka çağrı | PASS |
+| 6 | `--background` | PASS |
+| 7 | Girişte başlama | kullanıcı |
+| 8 | Exe taşındı | kullanıcı |
+| 9 | Tepsi gizliyken kapanır | PASS |
+| 10 | Ölçüm | PASS (master karşılaştırması eski exe ile, not aşağıda) |
+| 11 | Tepsi kendi içinden kapanır | PASS (Explorer kapalıyken metin farklı, not aşağıda) |
+| 12 | Oturum kapanırken kayıt | kullanıcı |
+
+## FAIL'ler
+
+1. **Tepsi menüsünde pinler yok** (madde 2): açılışta ya da `settings.toml`'a pin yazılınca menü yalnız `Show Gezik` / `Quit Gezik`. Neden: `sidebar` pinlerin varlık denetimi eşzamansız; `main.rs` `resident::refresh_pins()`'i `set_pinned` hemen ardından çağırıyor (o an `visible` boş/eksik), `Sidebar::finish_check` ise tepsiyi yenilemiyor. Bir sonraki ayar yeniden yüklemesinde (dosyaya dokununca) pinler geliyor. Düzeltme yeri: `finish_check` uygulanınca `resident::refresh_pins()`.
+2. **Kısayol kapatılınca akor bırakılmıyor** (madde 4): `Turn off the global shortcut` → `hotkey = ""`, panel `Off`, ama Win+Shift+F9 Gezik'i hâlâ öne getiriyor; başka süreç `RegisterHotKey` yapamıyor (False); Gezik kapanınca serbest (True). İki kez yeniden üretildi. Neden: `resident.rs` `sync()` — `want_hotkey != have_hotkey && want_hotkey != hotkey_failed`; kapatırken `want = None`, sorun yoksa `hotkey_failed = None` → ikinci koşul yanlış, eski `Hotkey` hiç düşürülmüyor.
+
+## Ayrıntı
+
+### 1. Tepsiyi açmak ve kapanış — PASS
+- Palet ▸ `System Integration…` ▸ `Tray icon` (Off, `Turn on`) ▸ Enter → `[system] tray = true`; bildirim alanı taşma bölümünde sistemin klasör simgesi, UIA adı (ipucu) `Gezik` (`01g-overflow-crop.png`).
+- X → `Gezik keeps running in the notification area` [OK] [Quit Gezik] (`01f-close-question.png`); OK → pencere görünmez, görev çubuğunda yok (UIA TaskList'te `gezik` yok), süreç sürüyor.
+- Simgeye sol tık → pencere gelir, öne çıkar (GetForegroundWindow = Gezik); yine sol tık → gizlenir.
+- `state.toml` `[tray] told = true`; ikinci X → soru yok, gizlendi.
+- Son sekmede Ctrl+W → gizlendi, süreç sürüyor.
+- Not: paletin `tray icon` aramasında tepsi kapalıyken ilk sıra `Turn off tray icon` (alfabetik); kapalıyken çalıştırınca sessizce hiçbir şey yapmıyor. Küçük bir şey, istenirse yalnız geçerli olanı göstermek.
+
+### 2. Menü ve çıkış — FAIL (pinler)
+- Sağ tık → `Show Gezik`, ayırıcı, `Quit Gezik` — pin yok (10 pin vardı) (`02a-menu-crop.png`, `02c-menu-crop.png`). Bkz. FAIL 1.
+- `settings.toml`'a dokununca: `Show Gezik`, `A & B`, `P2`…`P9` (ilk 9, `P10` yok), `Quit Gezik`; `&` doğru görünüyor (`02e-menu-pins-crop.png`).
+- `A & B` → pencere `A & B — Gezik` olarak öne geldi.
+- Menü açıkken Gezik penceresine tık → menü kapandı.
+- 40 000 dosyalık kopya sürerken `Quit Gezik` → pencere öne geldi, `1 operation is running` [Keep open] [Cancel them and quit] (`02i-quit-jobs.png`); Keep open → kopya bitti (40 000).
+- İş yokken `Quit Gezik` → süreç 7 ms içinde bitti; UIA bildirim alanı listesinde `Gezik` yok (fare simgenin üstüne gitmeden).
+
+### 3. Explorer yeniden başlar — PASS
+- `taskkill /f /im explorer.exe` + `explorer.exe` → Gezik simgesi taşma bölümünde yeniden var; sol tık çalışıyor (gizle/göster).
+
+### 4. Kısayol — FAIL (kapatma)
+- `Set a global shortcut`: boş alan, metin `…for example win+shift+e…`, alt satır kırmızı `Type a shortcut, for example win+shift+e` (`04b-ask.png`).
+- `ctrl+alt+e` → kırmızı `"ctrl+alt+e" uses Ctrl+Alt, which types AltGr characters`; Enter → kutu gerekçeyi başa koyup yeniden soruyor (`04d-ctrlalt-enter.png`).
+- `win+l` → `"win+l" belongs to the system (Win+L locks; Win+D, E, R and Win+<digit> are Explorer's)` (`04e-winl.png`).
+- `win+shift+f9` → `Shift+Win+F9 will show or hide Gezik`; Turn On → `hotkey = "win+shift+f9"`, durum çubuğu `Shift+Win+F9 shows or hides Gezik now` (`04g-on.png`).
+  - Küçük: geçerli akor yazıldıktan sonra kutunun başında eski gerekçe (`"ctrl+alt+e" uses Ctrl+Alt…`) duruyor (`04f-ok.png`).
+- Gezik öndeyken basış, tepsi açık → gizlendi. Yardımcı pencere öndeyken → Gezik geldi ve öne çıktı.
+- Tepsi kapalı, Gezik öndeyken → simge durumuna küçüldü (IsIconic); yardımcı öndeyken → geri geldi, öne çıktı.
+- Çakışma: yardımcı akoru tutarken Turn On → `Shift+Win+F9 is used by another app.` [Choose Another] [Close] (`04k-taken.png`); Choose Another → kutu gerekçeyle yeniden açıldı (`04l-choose-another.png`); `hotkey = ""`.
+- `Turn off` → `hotkey = ""`, panel `Off`; **ama akor hâlâ Gezik'te** (bkz. FAIL 2). Gezik kapanınca akor serbest (son denetim: True).
+
+### 5. Gizliyken başka çağrı — PASS
+- Tepside gizliyken `gezik C:\Windows` (4 ms'de döndü) → pencere görünür, `Windows` yeni sekmede, öne çıktı (`05-cli-shown.png`).
+
+### 6. `--background` — PASS
+- Gezik kapalı, tepsi açık: `gezik --background` → pencere yok, simge var; simgeye tık → pencere 26,26–942,665 (ekranda), öne çıktı.
+- Sürükle-bırak: kendi WinForms penceremden `d.txt` (FileDrop) Gezik'in `P4` listesine bırakıldı → `Copy`, dosya `P4`'te.
+- Tepsi kapalı (taze `cfg2`): `gezik --background` → pencere açıldı.
+- Gezik açıkken `gezik --background` → çıkış kodu 0, 15–23 ms; ikinci süreç yok.
+
+### 7, 8, 12 — kullanıcı
+- Gerçek `HKCU\…\Run\Gezik` yazımı / oturum kapat-aç; denenmedi. Son durumda `Run`'da `Gezik` yok (yazılmadı).
+
+### 9. Tepsi gizliyken kapanır — PASS
+- `--background` (gizli) → `settings.toml` `tray = false` → pencere kendiliğinden göründü; simge taşma bölümünde yok.
+
+### 10. Ölçüm — PASS
+`resident.ps1 -Runs 3` (kopya exe):
+
+| durum | bellek (özel çalışma kümesi) |
+|---|---|
+| kapalı (varsayılanlar) | 7,30 MB |
+| tepsi + kısayol, pencere açık | 7,47 MB (+0,17 MB ≤ +0,5 ✓) |
+| tepsi, `--background` (gizli) | 3,54 MB (≤ kapalı ✓) |
+
+`measure.ps1 -Runs 5` (taze yapılandırma klasörleriyle, iki tur, sıra ters):
+
+| exe | açılış | bellek | exe |
+|---|---|---|---|
+| 9b9 | 37 / 38 ms | 7,3 / 7,4 MB | 23,61 MB |
+| master* | 39 / 33 ms | 10,6 / 10,4 MB | 22,55 MB |
+
+- *master exe `D:\Work\gezik\target\release\gezik.exe` 9.10.2026 09:54 tarihli (master HEAD 4645f24'ten eski), yeniden derlenmedi; bellek farkı (9b9 daha az) aradaki değişikliklerden, 9b9'a yorulmamalı. Açılışta fark yok. Exe +1,06 MB.
+- Arka planda rustc derliyordu.
+- `resident.ps1` Gezik'i Stop-Process ile durduruyor: bildirim alanında hayalet simgeler kalabilir (fare üstünden geçince gider).
+
+### 11. Tepsi kendi içinden kapanır — PASS
+- Tepsi menüsü açıkken `tray = false` → menü kapandı, simge gitti, Gezik yanıt veriyor (Responding = True).
+- Menüden `Quit Gezik` → süreç 6–7 ms'de bitti.
+- Explorer kapalıyken `gezik --background` (tepsi açık) → pencere 36 ms'de göründü, durum çubuğu `The tray icon could not be shown: the taskbar did not take the icon` (`11a-no-tray.png`). Plandaki 4 sn'lik `The tray icon did not come up; the window is shown instead` metni değil: `Shell_NotifyIcon` hemen hata verdiği için hata yolu çalıştı (doğru davranış, yalnız metin farklı).
+- Explorer geri gelince `Turn on tray icon` → simge geldi.
+
+## Temizlik
+- Test Gezik'leri kapalı; yardımcı pencereler kapalı; Win+Shift+F9 serbest (RegisterHotKey True).
+- Explorer iki kez yeniden başlatıldı, çalışıyor.
+- Kayıt defterine yazım yok; `Run`'da `Gezik` yok. Geri Dönüşüm Kutusu'na dokunulmadı.
+- Test verisi `%TEMP%\gezik-9b9gui\` altında (40 000 dosyalık klasörler silindi).
+
+---
+
+# Yeniden test — 2026-10-10 07:00–07:10 (841b410, feat/system-9b9)
+
+- Exe: `cargo build --release -p gezik -j 4` (güncel), kopya `bin\gezik.exe` (24 755 200 bayt). Taze `cfg3` (`[system] tray = true` + 10 pin, `A & B` dahil). Akor yine Win+Shift+F9.
+
+| Madde | Sonuç |
+|---|---|
+| 2 — pinler tepsi menüsünde | PASS |
+| 4 — kısayolu kapatmak akoru bırakır | PASS |
+| Palet yalnız geçerli tepsi/kısayol komutlarını gösterir | PASS |
+| Kısayol sorusunda ret satırı yazdıkça değişir | PASS |
+
+- **Madde 2:**
+  - Açılışta menü: `Show Gezik, A & B, P2 … P9, Quit Gezik` (ilk 9).
+  - Dosyada pinler tek pine inince menü `Show Gezik, A & B, Quit Gezik` oldu.
+  - Arayüzden sabitleme (sağ tık ▸ `Pin to sidebar`, P5) → hemen ardından menü `Show Gezik, A & B, P5, Quit Gezik`; `P5`'e tık → pencere `P5 — Gezik`.
+- **Madde 4:**
+  - Turn On (`hotkey = "win+shift+f9"`) → başka süreç `RegisterHotKey` False (Gezik tutuyor).
+  - `Turn off the global shortcut` → `hotkey = ""`, ~0,5 sn sonra başka süreç `RegisterHotKey` **True**.
+  - Kendi pencerem öndeyken Win+Shift+F9 → hiçbir şey olmadı (öndeki pencere yardımcı kaldı).
+- **Palet:**
+  - Tepsi açık: `tray icon` → yalnız `Turn off tray icon` (`r3a`); kapalı: yalnız `Turn on tray icon` (`r3c`).
+  - Kısayol kapalı: yalnız `Set a global shortcut` (`r3b`); açık: `Set a global shortcut` + `Turn off the global shortcut` (`r4c`).
+- **Ret satırı:** `ctrl+alt+e` + Enter → kutu yeniden açıldı, başta eski gerekçe kopyası yok, alt satır kırmızı gerekçe (`r4a`); `win+shift+f9` yazınca alt satır `Shift+Win+F9 will show or hide Gezik` oldu, eski gerekçe hiçbir yerde kalmadı (`r4b`).
+- **Küçük not:** kısayolu kapattıktan sonra durum çubuğunda önceki `Shift+Win+F9 shows or hides Gezik now` iletisi duruyor (eski ileti, yeni bir şey yazılmıyor) (`r3c`).
+- **Temizlik:** Gezik kapalı, yardımcılar kapalı, Win+Shift+F9 serbest (True), `Run`'da `Gezik` yok.
 
 ## Windows ekran testleri: 9b8 (2026-10-11)
 

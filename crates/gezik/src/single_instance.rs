@@ -28,10 +28,10 @@ pub fn serve(listener: Listener, window: slint::Weak<AppWindow>) {
             move || cli::group(&request.targets, crate::start::path_kind),
             move |(opens, missing), turn| {
                 window
-                    .upgrade_in_event_loop(move |window| {
+                    .upgrade_in_event_loop(move |_window| {
                         if turn.begin() {
                             navigation::with_current(|nav| apply(nav, opens, missing, new_tab, trash));
-                            bring_to_front(&window);
+                            crate::resident::reveal();
                             turn.done();
                         }
                     })
@@ -140,9 +140,9 @@ pub fn apply(nav: &Navigator, opens: Vec<Open>, missing: Vec<PathBuf>, new_tab: 
 pub fn open_here(window: slint::Weak<AppWindow>, request: gezik_platform::instance::Request) {
     std::thread::spawn(move || {
         let (opens, missing) = cli::group(&request.targets, crate::start::path_kind);
-        let _ = window.upgrade_in_event_loop(move |window| {
+        let _ = window.upgrade_in_event_loop(move |_window| {
             navigation::with_current(|nav| apply(nav, opens, missing, request.new_tab, request.trash));
-            bring_to_front(&window);
+            crate::resident::reveal();
         });
     });
 }
@@ -216,7 +216,7 @@ pub fn file_manager1_taken() -> bool {
 
 /// Restores and raises the window (spec 5.2): on Windows with the leave the caller gave; on
 /// macOS and X11 through winit. Wayland: see `Cli::request`'s shortcut.
-fn bring_to_front(window: &AppWindow) {
+pub fn raise(window: &AppWindow) {
     #[cfg(windows)]
     gezik_platform::instance::bring_to_front(&window.window().window_handle());
     #[cfg(not(windows))]
