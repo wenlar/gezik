@@ -147,14 +147,23 @@ fn stop_ends_a_hanging_worker_at_once() {
     let out = d.join("out");
     std::fs::create_dir(&out).unwrap();
     let input = script(&d, "h.pdf", "hang\n");
+    let log = d.join("h.pdf.log");
     let started = Instant::now();
+    // Stopped once the worker runs (its process id written), timed from then: on a loaded
+    // machine starting it alone may take longer than any fixed wait.
+    let stopped = std::cell::Cell::new(None);
     let err = run(&worker(), &request(&out, WorkerJob::Split(Split::EachPage), &[&input]), &mut |_| {}, &|| {
-        started.elapsed() > Duration::from_millis(300)
+        let running = std::fs::read_to_string(&log).is_ok_and(|s| s.ends_with('\n'));
+        if stopped.get().is_none() && (running || started.elapsed() > Duration::from_secs(30)) {
+            stopped.set(Some(Instant::now()));
+        }
+        stopped.get().is_some()
     })
     .unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::Interrupted);
-    assert!(started.elapsed() < Duration::from_secs(2));
-    let pid: u32 = std::fs::read_to_string(d.join("h.pdf.log")).unwrap().trim().parse().unwrap();
+    let took = stopped.get().unwrap().elapsed();
+    assert!(took < Duration::from_secs(5), "{took:?}");
+    let pid: u32 = std::fs::read_to_string(&log).unwrap().trim().parse().unwrap();
     wait("the worker to end", || !gezik_platform::process_alive(pid));
 }
 

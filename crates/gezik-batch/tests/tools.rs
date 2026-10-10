@@ -24,6 +24,7 @@ fn dir(name: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!("gezik-download-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
+    gezik_platform::trash::purge_at_thread_end(&d);
     d
 }
 
