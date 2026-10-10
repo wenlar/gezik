@@ -5,6 +5,7 @@ pub mod attrs;
 pub mod batch;
 pub mod complete;
 pub mod drag;
+pub mod elevated;
 pub mod history;
 pub mod kind;
 pub mod layout;
