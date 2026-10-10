@@ -18,11 +18,11 @@ pub const NOT_PLAIN_EXE: &str = "Gezik's own path has characters the prompt cann
 const MAX_LINE: usize = 4096;
 const MAX_READ: u64 = 16 * 1024 * 1024;
 
-/// The checks before anything starts: a plain exe path and a list that fits one command line.
+/// The checks before anything starts: a plain, full exe path and a list that fits one command line.
 pub fn ready<'a>(exe: &'a Path, ops: &[Op]) -> Result<&'a str, LaunchError> {
     let text = exe
         .to_str()
-        .filter(|text| !text.chars().any(char::is_control))
+        .filter(|text| exe.is_absolute() && !text.chars().any(char::is_control))
         .ok_or_else(|| LaunchError::Failed(NOT_PLAIN_EXE.into()))?;
     if !elevated::fits(text, ops, cfg!(windows)) {
         return Err(LaunchError::Failed(elevated::TOO_MANY.into()));
@@ -94,9 +94,9 @@ pub fn pkexec_path(exists: impl Fn(&Path) -> bool) -> Option<PathBuf> {
 }
 
 /// The helper's first steps (spec §10.4): system DLLs only (Windows), a fixed working folder,
-/// `umask 022` (Unix). Before anything else of the helper.
-pub fn harden() {
-    imp::harden();
+/// `umask 022` (Unix). Before anything else of the helper; an error: the helper must not go on.
+pub fn harden() -> io::Result<()> {
+    imp::harden()
 }
 
 /// Whether this process runs with administrator rights (an elevated token; root).
@@ -208,10 +208,10 @@ mod imp {
         }
     }
 
-    pub(super) fn harden() {
+    pub(super) fn harden() -> io::Result<()> {
         // SAFETY: umask only changes this process's mask.
         unsafe { libc::umask(0o022) };
-        let _ = std::env::set_current_dir("/");
+        std::env::set_current_dir("/")
     }
 
     pub(super) fn is_elevated() -> bool {
@@ -474,16 +474,15 @@ mod imp {
         (len > 0 && len < buffer.len()).then(|| String::from_utf16_lossy(&buffer[..len]))
     }
 
-    pub(super) fn harden() {
+    pub(super) fn harden() -> io::Result<()> {
         // SAFETY: these change only this process's DLL search and current folder.
         unsafe {
-            let _ = SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32);
-            let _ = SetDllDirectoryW(w!(""));
+            SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32)?;
+            SetDllDirectoryW(w!(""))?;
         }
         // SAFETY: the buffer holds its length.
-        if let Some(dir) = system_dir(|buffer| unsafe { GetSystemDirectoryW(Some(buffer)) }) {
-            let _ = std::env::set_current_dir(dir);
-        }
+        let dir = system_dir(|buffer| unsafe { GetSystemDirectoryW(Some(buffer)) }).ok_or(io::ErrorKind::NotFound)?;
+        std::env::set_current_dir(dir)
     }
 
     pub(super) fn is_elevated() -> bool {
@@ -680,8 +679,10 @@ mod tests {
         let ops = [Op::Mkdir(PathBuf::from("/opt/x"))];
         assert_eq!(ready(Path::new("/a\nb/gezik"), &ops), Err(LaunchError::Failed(NOT_PLAIN_EXE.into())));
         let many: Vec<Op> = (0..5000).map(|i| Op::Delete(PathBuf::from(format!("/opt/app/file number {i}")))).collect();
-        assert_eq!(ready(Path::new("/opt/gezik"), &many), Err(LaunchError::Failed(elevated::TOO_MANY.into())));
-        assert_eq!(ready(Path::new("/opt/gezik"), &ops), Ok("/opt/gezik"));
+        let exe = std::env::temp_dir().join("gezik");
+        assert_eq!(ready(&exe, &many), Err(LaunchError::Failed(elevated::TOO_MANY.into())));
+        assert_eq!(ready(&exe, &ops), Ok(exe.to_str().unwrap()));
+        assert_eq!(ready(Path::new("gezik"), &ops), Err(LaunchError::Failed(NOT_PLAIN_EXE.into())), "not a full path");
     }
 
     #[test]
