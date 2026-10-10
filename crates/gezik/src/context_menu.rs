@@ -1033,7 +1033,7 @@ impl Menus {
                             if let Some(window) = weak.upgrade()
                                 && !window.get_dialog_open()
                             {
-                                window.invoke_focus_list();
+                                window.invoke_menu_gives_keyboard_back();
                             }
                         });
                     }
@@ -1495,6 +1495,9 @@ impl Menus {
         subs: Vec<Submenu>,
         at: Option<(f32, f32)>,
     ) {
+        if let Some(window) = self.window.upgrade() {
+            window.set_menu_from_sidebar(false);
+        }
         let Some(claim) = self.native_menu.claim() else { return };
         let menus = self.clone();
         slint::Timer::single_shot(std::time::Duration::from_millis(16), move || {
@@ -1563,6 +1566,8 @@ impl Menus {
     /// macOS; elsewhere Gezik draws its own, which popup.rs keeps inside the window.)
     fn open_slint_entries(&self, items: &[(u32, String, bool)], subs: Vec<Submenu>, anchor: Anchor) {
         let Some(window) = self.window.upgrade() else { return };
+        // A menu opened by the sidebar's menu key sets it again once open.
+        window.set_menu_from_sidebar(false);
         if items.is_empty() && subs.iter().all(|sub| sub.items.is_empty()) {
             return;
         }

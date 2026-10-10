@@ -329,6 +329,10 @@ fn moved(followed: Option<&Path>, now: Option<&Path>) -> bool {
 /// The keyboard's row `cursor` (its line, its row last) in `lines`: where its line is now, else
 /// its row number held within the rows (`None` without rows).
 fn cursor_in(lines: &[Line], (line, last): (Line, usize)) -> Option<(Line, usize)> {
+    // Where it was (no row came or went above it): no scan.
+    if lines.get(last) == Some(&line) {
+        return Some((line, last));
+    }
     match lines.iter().position(|l| *l == line) {
         Some(row) => Some((line, row)),
         None => {
@@ -1017,7 +1021,10 @@ impl Sidebar {
     /// Tab, Shift+Tab and the shortcuts are not the tree's.
     pub fn key(&self, chord: &Chord, text: &str, has_modifier: bool, menu_key: bool) -> bool {
         let key = side_key(chord, menu_key, Platform::current() == Platform::Mac);
-        let typed = if key.is_none() && !has_modifier { crate::keys::typed_char(text) } else { None };
+        // A key bound to an action (num/ is Restore Selection) stays the action's, as in the
+        // list; Space is the list's quick look, so here it is typed.
+        let bound = crate::keys::action_for(chord).is_some_and(|a| a != Action::QuickLook);
+        let typed = if key.is_none() && !has_modifier && !bound { crate::keys::typed_char(text) } else { None };
         if key.is_none() && typed.is_none() {
             return false;
         }
@@ -1069,6 +1076,9 @@ impl Sidebar {
                     _ => {
                         let (x, y) = self.row_point(window, row);
                         window.invoke_sidebar_menu(r.section, r.index, x, y);
+                        // Set once the menu is open (opening one clears it): closing it gives
+                        // the tree the keyboard back.
+                        window.set_menu_from_sidebar(true);
                     }
                 }
             }
@@ -1523,6 +1533,7 @@ mod tests {
     fn the_keyboards_row_follows_its_line_or_stays_within_the_rows() {
         let node = |id| Line::Tree(tree::Line::Node(id));
         let lines = [Line::Base(0), node(4), node(5), Line::Base(1)];
+        assert_eq!(cursor_in(&lines, (node(5), 2)), Some((node(5), 2)), "where it was");
         assert_eq!(cursor_in(&lines, (node(5), 1)), Some((node(5), 2)), "rows came above it: it moves with them");
         assert_eq!(cursor_in(&lines, (node(9), 2)), Some((node(5), 2)), "its folder went: the row it was on");
         assert_eq!(

@@ -355,7 +355,10 @@ export component AppWindow inherits Window {
     // keyboard, and a counter whose change gives it the keyboard.
     in property <int> sidebar-cursor: -1;
     in-out property <bool> sidebar-focused;
-    in property <int> sidebar-focus-seq;
+    in-out property <int> sidebar-focus-seq;
+    // The menu open came from the sidebar's menu key: closing it gives the sidebar the
+    // keyboard back, not the list. Opening any menu clears it.
+    in-out property <bool> menu-from-sidebar;
     // Dragged with the splitter (120–480px); saved in state.toml on close.
     in-out property <length> sidebar-width: 200px;
     // What the Slint context menu shows; set from Rust before `show-menu`: the items, then
@@ -777,6 +780,16 @@ export component AppWindow inherits Window {
     function end-path-editing-for-filter() {
         if root.path-editing {
             root.path-editing = false;
+        }
+    }
+
+    // A menu closed: the keyboard goes back to the sidebar if its menu key opened it, else to
+    // the list.
+    public function menu-gives-keyboard-back() {
+        if root.menu-from-sidebar {
+            root.sidebar-focus-seq += 1;
+        } else {
+            root.focus-list();
         }
     }
 
@@ -1675,7 +1688,7 @@ export component AppWindow inherits Window {
         closed => {
             root.menu-closed();
             if !root.dialog-open {
-                root.focus-list();
+                root.menu-gives-keyboard-back();
             }
         }
     }

@@ -4,6 +4,7 @@
 //! of 20,000 folders costs ~40 rows. The rows are a flat list laid out again only when the tree
 //! or the places change, so a row costs the same however long the list is.
 
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -109,10 +110,20 @@ impl Shown {
         })
     }
 
-    /// Row `i`'s name, and whether it can be chosen, for typing.
-    pub fn label(&self, i: usize) -> Option<(bool, String)> {
-        let row = self.row(i)?;
-        Some((!row.header, row.label.to_string()))
+    /// Row `i`'s name, and whether it can be chosen, for typing: borrowed, no row built
+    /// ("… n more" has none to type).
+    pub fn label(&self, i: usize) -> Option<(bool, Cow<'_, str>)> {
+        Some(match *self.lines.get(i)? {
+            Line::Base(k) => {
+                let row = self.base.get(k)?;
+                (!row.header, Cow::Borrowed(row.label.as_str()))
+            }
+            Line::Tree(tree::Line::Node(id)) => {
+                let node = self.tree.node(id)?;
+                (true, node.path.file_name().map_or_else(|| Cow::Owned(node.name()), |name| name.to_string_lossy()))
+            }
+            Line::Tree(tree::Line::More(_)) => (false, Cow::Borrowed("")),
+        })
     }
 
     /// The row of the folder shown, if the sidebar has it.
@@ -341,8 +352,8 @@ pub fn key_do(
 
 /// The row whose name starts with `typed` (lowercase), from the one after the cursor round to
 /// it (with more than one letter typed, from the cursor's own row).
-pub fn find_typed(
-    label: &dyn Fn(usize) -> Option<(bool, String)>,
+pub fn find_typed<'a>(
+    label: &dyn Fn(usize) -> Option<(bool, Cow<'a, str>)>,
     count: usize,
     cursor: Option<usize>,
     typed: &str,
@@ -574,7 +585,8 @@ mod tests {
         for i in 0..s.lines.len() {
             let (row, key) = (s.row(i).unwrap(), s.key_row(i).unwrap());
             assert_eq!((key.selectable, key.depth, key.arrow), (!row.header, row.depth, row.arrow), "row {i}");
-            assert_eq!(s.label(i), Some((!row.header, row.label.to_string())));
+            assert_eq!(s.label(i), Some((!row.header, Cow::Borrowed(row.label.as_str()))));
+            assert!(matches!(s.label(i), Some((_, Cow::Borrowed(_)))), "row {i}: the name is borrowed");
         }
         assert_eq!(s.active_row(), Some(3), "/h/b");
         assert_eq!(s.key_row(s.lines.len()), None);
@@ -621,7 +633,7 @@ mod tests {
     #[test]
     fn typing_finds_the_next_row() {
         let names = ["FOLDERS", "Home", "hidden", "Huge", "Hub", "DRIVES", "C:"];
-        let label = |i: usize| names.get(i).map(|n| (i != 0 && i != 5, (*n).to_owned()));
+        let label = |i: usize| names.get(i).map(|n| (i != 0 && i != 5, Cow::Borrowed(*n)));
         assert_eq!(find_typed(&label, 7, Some(1), "h"), Some(2), "one letter: the next one after the cursor");
         assert_eq!(find_typed(&label, 7, Some(4), "h"), Some(1), "round past the end");
         assert_eq!(find_typed(&label, 7, Some(3), "hu"), Some(3), "more letters: the cursor's row may stay");
