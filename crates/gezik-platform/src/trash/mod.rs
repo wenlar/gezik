@@ -110,6 +110,46 @@ pub fn changed() {
     imp::changed();
 }
 
+/// For tests: deletes for good what this user's bins hold from `dir` or inside it, entry and
+/// record, so a test that trashes or undoes leaves nothing in the real trash. How many went.
+/// shortcut: Finder's Trash has no records `list` reads an origin from, so nothing goes there.
+#[doc(hidden)]
+pub fn purge_from(dir: &Path) -> usize {
+    let mut purged = 0;
+    for item in list().items {
+        if !item.original.as_deref().is_some_and(|original| gezik_core::ops::paths::is_within(original, dir)) {
+            continue;
+        }
+        let gone =
+            if item.is_dir { std::fs::remove_dir_all(&item.trashed) } else { std::fs::remove_file(&item.trashed) };
+        if gone.is_ok() {
+            if let Some(info) = &item.info {
+                let _ = std::fs::remove_file(info);
+            }
+            purged += 1;
+        }
+    }
+    purged
+}
+
+/// For tests: [`purge_from`] `dir` when the calling thread ends, also after a panic. Each test
+/// runs on a thread of its own, so a test folder helper calling this cleans up after the test.
+#[doc(hidden)]
+pub fn purge_at_thread_end(dir: &Path) {
+    struct Dirs(std::cell::RefCell<Vec<PathBuf>>);
+    impl Drop for Dirs {
+        fn drop(&mut self) {
+            for dir in self.0.get_mut().drain(..) {
+                purge_from(&dir);
+            }
+        }
+    }
+    thread_local! {
+        static DIRS: Dirs = const { Dirs(std::cell::RefCell::new(Vec::new())) };
+    }
+    let _ = DIRS.try_with(|dirs| dirs.0.borrow_mut().push(dir.to_path_buf()));
+}
+
 /// Refuses to put `trashed` back at `original` when a folder on the way there is a link or a
 /// junction (or cannot be looked at), so a link planted on a shared volume cannot send an item
 /// elsewhere. Unix: a place in the user's home is checked from the home folder, so the system's

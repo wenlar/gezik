@@ -16,6 +16,8 @@ pub(crate) fn test_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("gezik-ops-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
+    // What a test trashes or undoes from here leaves the real trash when it ends.
+    gezik_platform::trash::purge_at_thread_end(&dir);
     dir
 }
 

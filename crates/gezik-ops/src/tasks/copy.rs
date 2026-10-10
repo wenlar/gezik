@@ -627,6 +627,33 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A test that trashes through undo and redo leaves no record in the real trash once its
+    /// thread ends (`test_dir` purges it then), also when it fails.
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn a_test_leaves_nothing_in_the_real_trash() {
+        let in_trash = |dir: &Path| {
+            let items = gezik_platform::trash::list().items;
+            items.iter().filter(|i| i.original.as_deref().is_some_and(|o| is_within(o, dir))).count()
+        };
+        let dir = std::thread::spawn(move || {
+            let dir = test_dir("copy-leaves-no-trash");
+            write(&dir.join("src/a/x.txt"), "x");
+            let items = vec![(dir.join("src/a/x.txt"), PathBuf::from("a").join("x.txt"))];
+            let engine = engine();
+            finish(&engine, engine.submit(Box::new(CopyTask::with_folders(items, &dir.join("dst")))), no_conflicts);
+            finish(&engine, engine.undo().unwrap(), no_conflicts);
+            finish(&engine, engine.redo().unwrap(), no_conflicts);
+            finish(&engine, engine.undo().unwrap(), no_conflicts);
+            assert!(in_trash(&dir) > 0, "the undo went to the real trash");
+            dir
+        })
+        .join()
+        .unwrap();
+        assert_eq!(in_trash(&dir), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// The engine's guard knows the same file by what it is, not by how it is spelled.
     #[cfg(windows)]
     #[test]
