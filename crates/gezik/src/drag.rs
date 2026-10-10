@@ -15,7 +15,7 @@ use gezik_core::layout::Rect;
 use gezik_core::nav::Location;
 use gezik_core::ops::paths::is_within;
 use gezik_platform::DriveKind;
-use gezik_platform::dnd::{Answer, Attached, DragEnd, DropHandler, Handoff, Offer, OnEnd, OutsideDrag};
+use gezik_platform::dnd::{Answer, Attached, DragEnd, DropHandler, Handoff, Offer, OnEnd, OutsideDrag, VirtualFiles};
 use slint::{ComponentHandle, Model, Timer, TimerMode};
 
 use crate::context_menu::Menus;
@@ -64,6 +64,10 @@ struct Dragging {
     pressed: Option<usize>,
     /// From the drop stack: the strip takes none of it back.
     from_stack: bool,
+    /// From another program, items with no file behind them (`sources` is empty): this many.
+    virtual_count: usize,
+    /// Those items, once dropped.
+    virtual_files: Option<VirtualFiles>,
 }
 
 enum Phase {
@@ -368,6 +372,8 @@ impl Drags {
             target: None,
             pressed: None,
             from_stack: false,
+            virtual_count: 0,
+            virtual_files: None,
         };
         if let Some(effect) = self.effect(&d, &dir) {
             self.0.ops.transfer(d.sources, dir, effect);
@@ -533,6 +539,8 @@ impl Drags {
             target: None,
             pressed,
             from_stack,
+            virtual_count: 0,
+            virtual_files: None,
         });
     }
 
@@ -709,13 +717,16 @@ impl Drags {
 
     /// What dropping `d` at `hit` would do.
     fn resolve(&self, window: &AppWindow, hit: Hit, d: &Dragging) -> Target {
+        if d.virtual_count > 0 && !virtual_allows(hit) {
+            return Target::none(hit);
+        }
         let (hit, dir) = match hit {
             // Nothing goes into the bins but by a delete.
             Hit::Entry(_) if self.0.view.shows_trash() => (Hit::Background, None),
             Hit::Entry(i) => match self.0.view.entry_path(i) {
                 Some((path, true)) => (hit, Some(path)),
                 // A zip, 7z or tar file (not one of those dragged): the files are added to it.
-                Some((path, false)) if self.can_add_to(d, &path) => {
+                Some((path, false)) if d.virtual_count == 0 && self.can_add_to(d, &path) => {
                     let folder = path.parent().map(Path::to_path_buf);
                     let action = folder.as_deref().is_some_and(|f| self.writable(f)).then_some(Action::AddToArchive);
                     return Target { hit, dir: folder, action, archive: Some(path) };
@@ -750,6 +761,10 @@ impl Drags {
     fn effect(&self, d: &Dragging, dir: &Path) -> Option<Effect> {
         if !self.writable(dir) {
             return None;
+        }
+        if d.virtual_count > 0 {
+            // Nothing to move or link: what has no file behind it is copied.
+            return Some(Effect::Copy);
         }
         let roots: Vec<PathBuf> = self.0.nav.places().drives.into_iter().map(|drive| drive.path).collect();
         let first = d.sources.first()?;
@@ -942,6 +957,15 @@ impl Drags {
             }
             return None;
         };
+        if d.virtual_count > 0 {
+            // Written into `dir` by a job (spec 9 §8.1); no menu: a copy is all it can be.
+            let files = d.virtual_files?;
+            if target.action != Some(Action::Transfer(Effect::Copy)) {
+                return None;
+            }
+            self.0.ops.materialize(files, dir, d.virtual_count);
+            return Some(Effect::Copy);
+        }
         if d.right {
             let writable = self.writable(&dir);
             let (can_copy, can_move, can_link) = menu_effects(d.allowed, writable, &d.sources, &dir);
@@ -1127,6 +1151,8 @@ impl Drags {
                         target: None,
                         pressed: None,
                         from_stack: false,
+                        virtual_count: offer.virtual_count,
+                        virtual_files: None,
                     })
                 }
                 // Gezik's own drag (or a press) is under way: not an offer from outside.
@@ -1148,13 +1174,22 @@ impl Drags {
         self.offer_over(offer, x, y, keys);
         let phase = std::mem::replace(&mut *self.0.phase.borrow_mut(), Phase::Idle);
         match phase {
-            Phase::Offer(d) => self.finish(Some(d)),
+            Phase::Offer(mut d) => {
+                d.virtual_files = offer.virtual_files.clone();
+                self.finish(Some(d))
+            }
             other => {
                 *self.0.phase.borrow_mut() = other;
                 None
             }
         }
     }
+}
+
+/// Whether items with no file behind them may land at `hit`: into a folder only (not the drop
+/// stack, not pinned; an archive's entry means its folder).
+fn virtual_allows(hit: Hit) -> bool {
+    matches!(hit, Hit::Entry(_) | Hit::Background | Hit::Sidebar(_) | Hit::Tab(_) | Hit::Crumb(_))
 }
 
 /// The window's drop target, for files dragged in from other programs.
@@ -1201,6 +1236,18 @@ mod tests {
             target: None,
             pressed: None,
             from_stack: false,
+            virtual_count: 0,
+            virtual_files: None,
+        }
+    }
+
+    #[test]
+    fn virtual_items_go_only_into_folders() {
+        for hit in [Hit::Entry(0), Hit::Background, Hit::Sidebar(2), Hit::Tab(1), Hit::Crumb(0)] {
+            assert!(virtual_allows(hit), "{hit:?}");
+        }
+        for hit in [Hit::Stack, Hit::PinAt(1), Hit::Outside, Hit::Nothing] {
+            assert!(!virtual_allows(hit), "{hit:?}");
         }
     }
 

@@ -248,14 +248,14 @@ unsafe fn write_medium(
             let memory = medium.u.hGlobal;
             let size = GlobalSize(memory);
             let size = declared.map_or(size, |most| size.min(usize::try_from(most).unwrap_or(usize::MAX)));
-            let mut file = File::create_new(to)?;
             let at = GlobalLock(memory);
             if at.is_null() {
                 return Err(io::Error::other("The program's data could not be read"));
             }
             let mut done = 0;
-            let result =
-                write_counted(&mut file, std::slice::from_raw_parts(at.cast::<u8>(), size), &mut done, progress);
+            let result = File::create_new(to).and_then(|mut file| {
+                write_counted(&mut file, std::slice::from_raw_parts(at.cast::<u8>(), size), &mut done, progress)
+            });
             let _ = GlobalUnlock(memory);
             result.map(|()| done)
         } else if medium.tymed == TYMED_ISTREAM.0 as u32 {
