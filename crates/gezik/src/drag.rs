@@ -290,7 +290,9 @@ impl Drags {
     pub fn install(&self, window: &AppWindow) {
         window.on_item_down({
             let drags = self.clone();
-            move |_pane, i, x, y, right, can_drag| {
+            move |pane, i, x, y, right, can_drag| {
+                // A press (a right one too) is an action in its pane.
+                crate::dual::pick(pane);
                 if let Ok(index) = usize::try_from(i) {
                     drags.down(index, x, y, right, can_drag);
                 }

@@ -300,6 +300,9 @@ struct Inner {
     session_sent: Session,
     /// `[session] restore`: off, the sink is told an empty session (state.toml forgets it).
     session_on: bool,
+    /// A quiet re-read of the folder on screen (its generation): it keeps the selection and
+    /// scroll there when it lands, not those saved when it started (a click meanwhile stays).
+    reread: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -354,6 +357,7 @@ impl Navigator {
             session_sink: None,
             session_sent: Session::default(),
             session_on: false,
+            reread: None,
         })))
     }
 
@@ -404,8 +408,15 @@ impl Navigator {
         if !matches!(self.active_location(), Location::Path(ref path) if same_path(path, &watched)) {
             return;
         }
+        self.reread(Location::Path(watched));
+    }
+
+    /// Reads the folder on screen again, quietly, keeping what the user does meanwhile.
+    fn reread(&self, location: Location) {
         self.save_view();
-        self.load_with(Location::Path(watched), Mode::Show, None, false);
+        self.load_with(location, Mode::Show, None, false);
+        let mut inner = self.0.borrow_mut();
+        inner.reread = Some(inner.generation.load(Ordering::SeqCst));
     }
 
     fn id(&self) -> PaneId {
@@ -450,10 +461,7 @@ impl Navigator {
         }
         self.watch_shown(&location);
         match &location {
-            Location::Path(path) if server_of(path).is_none() => {
-                self.save_view();
-                self.load_with(location, Mode::Show, None, false);
-            }
+            Location::Path(path) if server_of(path).is_none() => self.reread(location),
             Location::Trash => self.refresh_trash(),
             _ => {}
         }
@@ -1098,8 +1106,10 @@ impl Navigator {
             if let Mode::Move(steps) = &mode {
                 inner.tabs.active_mut().apply_steps(steps);
             }
+            let reread = inner.reread.take() == Some(inner.generation.load(Ordering::SeqCst)) && !inner.cleared;
             inner.cleared = false;
-            let state = with_selection(view_to_show(&mode, inner.tabs.active().view()), select_next);
+            let shown = if reread { inner.view.capture() } else { view_to_show(&mode, inner.tabs.active().view()) };
+            let state = with_selection(shown, select_next);
             (inner.view.clone(), state, inner.view.rule_place(&location, &inner.places))
         };
         self.watch_shown(&location);

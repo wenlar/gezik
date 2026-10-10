@@ -294,6 +294,8 @@ struct JobView {
     hidden_paths: Vec<PathBuf>,
     /// The search results it was started from, if any (spec 4.7).
     origin: Option<crate::search::ResultsKey>,
+    /// The pane it was started in (none: the engine started it; the active pane hears).
+    pane: Option<crate::panes::PaneId>,
     /// Said after the detail in the panel ([`CANT_UNDO`]).
     note: Option<&'static str>,
     /// Works in the bins (Put Back, delete from the trash): the system hears when it ends.
@@ -327,6 +329,7 @@ impl JobView {
             hidden_in: None,
             hidden_paths: Vec::new(),
             origin: None,
+            pane: None,
             note: None,
             bins: false,
         }
@@ -504,7 +507,7 @@ impl Operations {
         let title = task.title();
         let id = self.0.engine.submit(task);
         let mut job = JobView::new(id, title);
-        crate::panes::with_active(|p| job.origin = p.search.results_key());
+        crate::panes::with_active(|p| (job.origin, job.pane) = (p.search.results_key(), Some(p.id)));
         job.retry = retry;
         job.after = after;
         self.0.jobs.borrow_mut().push(job);
@@ -524,7 +527,7 @@ impl Operations {
         let title = tasks.first().map(|task| task.title()).unwrap_or_default();
         let id = self.0.engine.submit_chain(tasks, label);
         let mut job = JobView::new(id, title);
-        crate::panes::with_active(|p| job.origin = p.search.results_key());
+        crate::panes::with_active(|p| (job.origin, job.pane) = (p.search.results_key(), Some(p.id)));
         job.again = again;
         job.after = after;
         self.0.jobs.borrow_mut().push(job);
@@ -1355,7 +1358,9 @@ impl Operations {
                 Event::Question { job, id, question } => self.question(job, id, question),
                 Event::Finished { job, report } => self.finished(job, report),
                 Event::Changed { dirs } => {
-                    crate::panes::active_nav().refresh_showing(&dirs, &[], None);
+                    for p in crate::panes::all() {
+                        p.nav.refresh_showing(&dirs, &[], None);
+                    }
                     crate::sidebar::with_current(|s| s.folders_changed(&dirs));
                 }
                 Event::History => {}
@@ -1442,6 +1447,7 @@ impl Operations {
         let mut hidden_in = None;
         let mut hidden_paths = Vec::new();
         let mut origin = None;
+        let mut pane = None;
         let mut title = String::new();
         let mut bins = false;
         self.with_job(id, |job| {
@@ -1453,6 +1459,7 @@ impl Operations {
             hidden_in = job.hidden_in.take();
             hidden_paths = std::mem::take(&mut job.hidden_paths);
             origin = job.origin.take();
+            pane = job.pane;
             title = job.title.clone();
             job.finish(report.clone());
         });
@@ -1469,16 +1476,22 @@ impl Operations {
             // Something failed: the panel opens by itself.
             self.0.collapsed.set(false);
         }
-        if after == After::Rename {
+        // The pane the job was started in (gone: nothing of it to follow).
+        let pane = match pane {
+            Some(id) => crate::panes::with_id(id, crate::panes::Pane::clone),
+            None => crate::panes::with_active(crate::panes::Pane::clone),
+        };
+        // A new item is renamed once its folder shows, in the active pane only.
+        if after == After::Rename && pane.as_ref().is_some_and(|p| crate::panes::is_active(p.id)) {
             *self.0.rename_when_shown.borrow_mut() = report.results.first().cloned();
         }
         // A rename is open (Tab went on): the selection stays with it.
-        let after = if after == After::Select && crate::panes::active_view().renaming().is_some() {
+        let after = if after == After::Select && pane.as_ref().is_some_and(|p| p.view.renaming().is_some()) {
             After::Nothing
         } else {
             after
         };
-        let select = match (after, crate::panes::active_view().folder()) {
+        let select = match (after, pane.as_ref().and_then(|p| p.view.folder())) {
             (After::Nothing, _) | (_, None) => Vec::new(),
             (_, Some(folder)) => first_level_names(&report.results, &folder),
         };
@@ -1487,34 +1500,37 @@ impl Operations {
         let mut touched = report.changed_dirs.clone();
         touched.extend(report.results.iter().cloned());
         touched.extend(report.moved.iter().map(|(from, _)| from.clone()));
-        crate::panes::with_active(|p| p.folder_sizes.forget(&touched));
         let mut dirs = report.changed_dirs.clone();
         dirs.extend(hidden_in);
         let skipped = (report.skipped_changed > 0)
             .then(|| format!("{} changed since; skipped", crate::stack::count_text(report.skipped_changed)));
         // New items here the filter hides (a paste, a drop, an extract): the filter stays, the
         // status bar says so. A new folder's rename closes the filter instead.
-        let hidden = if after == After::Rename {
-            None
-        } else {
-            hidden_note(crate::panes::active_view().hidden_by_filter(&select))
+        let hidden = match &pane {
+            Some(p) if after != After::Rename => hidden_note(p.view.hidden_by_filter(&select)),
+            _ => None,
         };
         let note = match (skipped, hidden) {
             (Some(a), Some(b)) => Some(format!("{a} · {b}")),
             (a, b) => a.or(b),
         };
-        let reloading = crate::panes::active_nav().refresh_showing(&dirs, &select, note.clone());
-        // The sidebar tree's open branches the job touched are read again (spec 10 §5.2).
-        crate::sidebar::with_current(|s| s.folders_changed(&report.changed_dirs));
-        // Search results follow Gezik's own jobs (spec 4.7), those kept by a tab too.
+        let reloading = pane.as_ref().is_some_and(|p| p.nav.refresh_showing(&dirs, &select, note.clone()));
+        // Search results follow Gezik's own jobs (spec 4.7), those kept by a tab too; the other
+        // pane is read again if it shows a folder the job changed.
         let mut paths = report.results.clone();
         paths.extend(hidden_paths);
-        crate::panes::with_active(|p| {
-            p.search.job_done(origin.as_ref(), report.changed_dirs.clone(), paths, report.moved.clone());
-        });
+        for p in crate::panes::all() {
+            p.folder_sizes.forget(&touched);
+            p.search.job_done(origin.as_ref(), report.changed_dirs.clone(), paths.clone(), report.moved.clone());
+            if pane.as_ref().is_none_or(|of| of.id != p.id) {
+                p.nav.refresh_showing(&dirs, &[], None);
+            }
+        }
+        // The sidebar tree's open branches the job touched are read again (spec 10 §5.2).
+        crate::sidebar::with_current(|s| s.folders_changed(&report.changed_dirs));
         self.0.sidebar.refresh();
-        if let (false, Some(note)) = (reloading, note) {
-            crate::panes::active_view().note(note);
+        if let (false, Some(note), Some(p)) = (reloading, note, &pane) {
+            p.view.note(note);
         }
         if !report.no_trash.is_empty() {
             self.ask_delete_for_good(report.no_trash.clone());

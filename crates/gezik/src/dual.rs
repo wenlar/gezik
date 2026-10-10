@@ -203,13 +203,10 @@ pub fn focus_other() -> bool {
     true
 }
 
-/// The splitter between the panes moved by `delta` of their room.
-pub fn split_moved(delta: f32) {
-    let split = DUAL.with(|d| {
-        let mut d = d.borrow_mut();
-        d.split = (d.split + delta).clamp(0.2, 0.8);
-        d.split
-    });
+/// The splitter between the panes was dragged to `share` of their room.
+pub fn split_moved(share: f32) {
+    let split = share.clamp(0.2, 0.8);
+    DUAL.with(|d| d.borrow_mut().split = split);
     if let Some(window) = window() {
         window.set_pane_split(split * 100.0);
         window.set_right_split(100.0 - split * 100.0);
@@ -218,8 +215,7 @@ pub fn split_moved(delta: f32) {
 
 /// A double-click on the splitter: the panes share the room evenly.
 pub fn split_reset() {
-    let delta = DUAL.with(|d| 0.5 - d.borrow().split);
-    split_moved(delta);
+    split_moved(0.5);
     split_done();
 }
 
