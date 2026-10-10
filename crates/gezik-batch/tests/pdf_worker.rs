@@ -377,7 +377,8 @@ fn odd_names_open_and_name_their_outputs() {
         use std::os::windows::ffi::OsStringExt;
         stems.push(OsString::from_wide(&[0x72, 0xD800, 0x78])); // "r", a lone surrogate, "x"
     }
-    #[cfg(unix)]
+    // APFS and HFS+ (macOS) refuse names that are not UTF-8.
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         use std::os::unix::ffi::OsStringExt;
         stems.push(OsString::from_vec(vec![b'r', 0xFF, b'x'])); // not UTF-8

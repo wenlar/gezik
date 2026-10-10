@@ -21,6 +21,15 @@ pub(crate) fn test_dir(name: &str) -> PathBuf {
     dir
 }
 
+/// Whether `dir` can hold a file named `name`: APFS and HFS+ (macOS) refuse names that are not
+/// UTF-8 (`EILSEQ`), so the tests about such names have nothing to try there.
+pub(crate) fn can_hold_name(dir: &Path, name: &std::ffi::OsStr) -> bool {
+    let probe = dir.join(name);
+    let made = std::fs::write(&probe, "").is_ok();
+    let _ = std::fs::remove_file(&probe);
+    made
+}
+
 pub(crate) fn read(path: &Path) -> String {
     std::fs::read_to_string(path).unwrap_or_else(|err| panic!("{}: {err}", path.display()))
 }

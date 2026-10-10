@@ -315,6 +315,9 @@ mod tests {
             (wide(".txt"), wide(" (2).txt"))
         };
         let dir = test_dir("copy-keep-both-bytes");
+        if !crate::testing::can_hold_name(&dir, &name) {
+            return;
+        }
         write(&dir.join(&name), "x");
         let engine = engine();
         finish(&engine, engine.submit(Box::new(CopyTask::into(vec![dir.join(&name)], &dir))), no_conflicts);
