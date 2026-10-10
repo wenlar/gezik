@@ -1600,6 +1600,11 @@ fn main() -> Result<(), slint::PlatformError> {
 
     // The window and tabs are up; calls that came before this wait in the channel.
     single_instance::set_window(window.as_weak());
+    // 9b9: a Dock click shows the window hidden in the menu bar (deviation 8).
+    #[cfg(target_os = "macos")]
+    if !gezik_platform::reopen::install(Box::new(resident::reveal)) {
+        eprintln!("gezik: the Dock icon does not show a hidden window (winit answers it)");
+    }
     #[cfg(target_os = "macos")]
     {
         let weak = window.as_weak();

@@ -8,7 +8,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use gezik_config::shortcuts::{Chord, Key};
+use gezik_config::shortcuts::{Chord, Key, Platform, parse_hotkey};
 use gezik_config::system_journal::FILE;
 use gezik_core::system_change::{self as sc, Change, Kind, Value};
 use slint::{ComponentHandle, ModelRc, VecModel};
@@ -24,11 +24,28 @@ pub enum Command {
     AddToPath,
     RemoveFromPath,
     UndoAll,
+    TrayOn,
+    TrayOff,
+    HotkeyOn,
+    HotkeyOff,
+    LoginOn,
+    LoginOff,
 }
 
 impl Command {
-    pub const ALL: [Command; 5] =
-        [Command::MakeDefault, Command::RestoreDefault, Command::AddToPath, Command::RemoveFromPath, Command::UndoAll];
+    pub const ALL: [Command; 11] = [
+        Command::MakeDefault,
+        Command::RestoreDefault,
+        Command::AddToPath,
+        Command::RemoveFromPath,
+        Command::UndoAll,
+        Command::TrayOn,
+        Command::TrayOff,
+        Command::HotkeyOn,
+        Command::HotkeyOff,
+        Command::LoginOn,
+        Command::LoginOff,
+    ];
 
     pub fn title(self) -> &'static str {
         match self {
@@ -37,7 +54,18 @@ impl Command {
             Command::AddToPath => "Add gezik to PATH",
             Command::RemoveFromPath => "Remove gezik from PATH",
             Command::UndoAll => "Undo all system changes",
+            Command::TrayOn => "Turn on tray icon",
+            Command::TrayOff => "Turn off tray icon",
+            Command::HotkeyOn => "Set a global shortcut",
+            Command::HotkeyOff => "Turn off the global shortcut",
+            Command::LoginOn => "Start Gezik at login",
+            Command::LoginOff => "Do not start Gezik at login",
         }
+    }
+
+    /// Settings of Gezik's own (settings.toml): no system question, no journal (spec 3.1).
+    pub fn is_setting(self) -> bool {
+        matches!(self, Command::TrayOn | Command::TrayOff | Command::HotkeyOn | Command::HotkeyOff)
     }
 }
 
@@ -57,6 +85,8 @@ pub enum RowAction {
     Repair,
     /// Repair and Update of the default file manager: Restore, then Make default again.
     RepairDefault,
+    /// Update and Repair of start at login: its entry undone, then made again.
+    RepairLogin,
     Show,
     Nothing,
 }
@@ -73,6 +103,17 @@ fn system_manager() -> &'static str {
         "Finder"
     } else {
         "the system's file manager"
+    }
+}
+
+/// Where the tray icon is, as the rows say it.
+fn tray_place() -> &'static str {
+    if cfg!(windows) {
+        "the notification area"
+    } else if cfg!(target_os = "macos") {
+        "the menu bar"
+    } else {
+        "the tray"
     }
 }
 
@@ -132,6 +173,57 @@ pub fn rows(snapshot: &Snapshot) -> Vec<(Row, RowAction)> {
             (row(PATH, format!("{place} was not made by Gezik; left alone"), "Off", ""), RowAction::Nothing)
         }
     };
+    const TRAY: &str = "Tray icon";
+    const SHORTCUT: &str = "Global shortcut";
+    const LOGIN: &str = "Start at login";
+    let resident = &snapshot.resident;
+    let first = "Kept by the first Gezik window";
+    let tray = if !resident.primary {
+        (row(TRAY, first, "", ""), RowAction::Nothing)
+    } else if resident.tray_missing {
+        (
+            row(TRAY, "No tray on this desktop (it needs a StatusNotifier host)", "Off", "Turn on"),
+            RowAction::Run(Command::TrayOn),
+        )
+    } else if resident.tray {
+        (
+            row(TRAY, format!("Closing the window keeps Gezik in {}", tray_place()), "On", "Turn off"),
+            RowAction::Run(Command::TrayOff),
+        )
+    } else {
+        (row(TRAY, "Closing the window quits Gezik", "Off", "Turn on"), RowAction::Run(Command::TrayOn))
+    };
+    let shortcut = match (&resident.hotkey, &resident.hotkey_problem) {
+        _ if !resident.primary => (row(SHORTCUT, first, "", ""), RowAction::Nothing),
+        (Some(_), Some(why)) => (row(SHORTCUT, why.as_str(), "Off", "Change"), RowAction::Run(Command::HotkeyOn)),
+        (Some(name), None) => (
+            row(SHORTCUT, format!("{name} shows or hides Gezik from any app"), "On", "Turn off"),
+            RowAction::Run(Command::HotkeyOff),
+        ),
+        (None, _) => {
+            (row(SHORTCUT, "No key shows Gezik from other apps", "Off", "Turn on"), RowAction::Run(Command::HotkeyOn))
+        }
+    };
+    let starts = if resident.tray {
+        "Gezik starts in the tray when you sign in"
+    } else {
+        "Gezik opens its window when you sign in"
+    };
+    let login = match (&snapshot.changes, &snapshot.login) {
+        (Err(_), _) => (row(LOGIN, format!("Fix or delete {FILE} first"), "?", ""), RowAction::Nothing),
+        (_, changes::LoginState::Off) => {
+            (row(LOGIN, "Gezik does not start when you sign in", "Off", "Turn on"), RowAction::Run(Command::LoginOn))
+        }
+        (_, changes::LoginState::On) => (row(LOGIN, starts, "On", "Turn off"), RowAction::Run(Command::LoginOff)),
+        (_, changes::LoginState::Moved { old }) => (
+            row(LOGIN, format!("Gezik's exe moved; sign-in still starts {old}"), "On", "Update"),
+            RowAction::RepairLogin,
+        ),
+        (_, changes::LoginState::Changed) => {
+            (row(LOGIN, "Changed outside Gezik", "Changed", "Repair"), RowAction::RepairLogin)
+        }
+        (_, changes::LoginState::Taken { why }) => (row(LOGIN, why.as_str(), "Off", ""), RowAction::Nothing),
+    };
     let log = match &snapshot.changes {
         Ok(list) if list.is_empty() => {
             (row("Changes made: 0", "Nothing written to the system", "", ""), RowAction::Nothing)
@@ -151,7 +243,7 @@ pub fn rows(snapshot: &Snapshot) -> Vec<(Row, RowAction)> {
         ),
         RowAction::Run(Command::UndoAll),
     );
-    vec![default, path, log, undo]
+    vec![default, path, tray, shortcut, login, log, undo]
 }
 
 /// The question's title and its yes button.
@@ -163,6 +255,9 @@ fn words(action: RowAction) -> (String, &'static str) {
         RowAction::Run(Command::MakeDefault) => ("Make Gezik the default file manager?".into(), "Make Default"),
         RowAction::Run(Command::RestoreDefault) => (format!("Give folders back to {}?", system_manager()), "Restore"),
         RowAction::RepairDefault => ("Repair the default file manager?".into(), "Repair"),
+        RowAction::Run(Command::LoginOn) => ("Start Gezik at login?".into(), "Turn On"),
+        RowAction::Run(Command::LoginOff) => ("Stop starting Gezik at login?".into(), "Turn Off"),
+        RowAction::RepairLogin => ("Repair start at login?".into(), "Repair"),
         _ => ("Repair gezik on PATH?".into(), "Repair"),
     }
 }
@@ -204,11 +299,12 @@ pub fn confirmation(
     add: Option<&[Change]>,
     sweep: &[Change],
 ) -> Result<String, String> {
-    confirmation_with(action, snapshot, add, sweep, None, None)
+    confirmation_with(action, snapshot, add, sweep, None, None, None)
 }
 
 /// As [`confirmation`], with what Make default writes (`None`: not known) and the warning
-/// that Gezik's exe is somewhere it may leave (decision 14), said first.
+/// that Gezik's exe is somewhere it may leave (decision 14), said first, and what turning on
+/// start at login writes (`login_add`).
 pub fn confirmation_with(
     action: RowAction,
     snapshot: &Snapshot,
@@ -216,6 +312,7 @@ pub fn confirmation_with(
     sweep: &[Change],
     default_add: Option<&[Change]>,
     risky: Option<&str>,
+    login_add: Option<&[Change]>,
 ) -> Result<String, String> {
     let list = match &snapshot.changes {
         Err(why) => {
@@ -242,8 +339,9 @@ pub fn confirmation_with(
             "Gezik puts these back as they were, newest first, each only if it is still what Gezik wrote:\n\n{lines}"
         ))
     };
-    let default_lines =
-        || bullets(list.iter().rev().filter(|c| c.feature == changes::FEATURE_DEFAULT).map(sc::describe));
+    let feature_lines = |feature: &str| bullets(list.iter().rev().filter(|c| c.feature == feature).map(sc::describe));
+    let default_lines = || feature_lines(changes::FEATURE_DEFAULT);
+    let login_lines = || feature_lines(changes::FEATURE_LOGIN);
     match action {
         RowAction::Run(Command::MakeDefault) => match &snapshot.default {
             DefaultState::On => Err("Gezik is already the default file manager.".into()),
@@ -295,6 +393,36 @@ pub fn confirmation_with(
             bullets(sweep.iter().map(sc::what))
         )),
         RowAction::Run(Command::UndoAll) => Err("Gezik has made no system changes; there is nothing to undo.".into()),
+        RowAction::Run(Command::LoginOn) => match &snapshot.login {
+            changes::LoginState::On => Err("Gezik already starts at login.".into()),
+            changes::LoginState::Taken { why } => Err(why.clone()),
+            _ => {
+                let Some(targets) = login_add else {
+                    return Err("Gezik cannot tell its own path or the user's folders; nothing was changed.".into());
+                };
+                Ok(format!(
+                    "Gezik writes these, each noted in {FILE} before it is made; what is there already is kept:\n\n{}\n\nAt sign-in Gezik starts with --background: without a window while the tray icon is on, else with its window.",
+                    bullets(targets.iter().map(will_write))
+                ))
+            }
+        },
+        RowAction::Run(Command::LoginOff) => {
+            let lines = login_lines();
+            if lines.is_empty() {
+                return Err("Gezik does not start at login; there is nothing to turn off.".into());
+            }
+            Ok(format!(
+                "Gezik puts these back as they were, newest first, each only if it is still what Gezik wrote:\n\n{lines}"
+            ))
+        }
+        RowAction::RepairLogin => Ok(format!(
+            "Gezik takes back its start at login entry and makes it again for this Gezik:\n\n{}",
+            login_lines()
+        )),
+        // Settings never ask (`run`, `choose`); spelled out so the match stays exhaustive.
+        RowAction::Run(Command::TrayOn | Command::TrayOff | Command::HotkeyOn | Command::HotkeyOff) => {
+            Err(String::new())
+        }
         RowAction::Show | RowAction::Nothing => Err(String::new()),
     }
 }
@@ -355,6 +483,7 @@ impl Integration {
         }
         let mut snapshot = snapshot;
         snapshot.dbus_taken = crate::single_instance::file_manager1_taken();
+        snapshot.resident = crate::resident::status();
         let (lines, actions): (Vec<Row>, Vec<RowAction>) = rows(&snapshot).into_iter().unzip();
         self.0.model.set_vec(
             lines
@@ -415,6 +544,7 @@ impl Integration {
         self.close();
         match action {
             RowAction::Show => show_log(snapshot),
+            RowAction::Run(command) if command.is_setting() => setting(command),
             _ => confirm(action),
         }
     }
@@ -431,9 +561,74 @@ impl Integration {
     }
 }
 
-/// A palette command or a panel button: asks first.
+/// A palette command or a panel button: system changes ask first; settings just happen.
 pub fn run(command: Command) {
-    confirm(RowAction::Run(command));
+    if command.is_setting() { setting(command) } else { confirm(RowAction::Run(command)) }
+}
+
+fn setting(command: Command) {
+    match command {
+        Command::TrayOn => crate::resident::turn_on_tray(),
+        Command::TrayOff => crate::resident::turn_off_tray(),
+        Command::HotkeyOn => ask_hotkey(None),
+        Command::HotkeyOff => crate::resident::turn_off_hotkey(),
+        _ => {}
+    }
+}
+
+fn hotkey_platform(os: changes::Os) -> Platform {
+    if os == changes::Os::Mac { Platform::Mac } else { Platform::Other }
+}
+
+/// The line under the shortcut field as it is typed (pure).
+pub fn hotkey_note(text: &str, os: changes::Os) -> (String, bool) {
+    match parse_hotkey(text, hotkey_platform(os)) {
+        Ok(None) => (format!("Type a shortcut, for example {}", crate::resident::example(os)), true),
+        Ok(Some(chord)) => (format!("{} will show or hide Gezik", crate::resident::label(&chord, os)), false),
+        Err(why) => (format!("\"{}\" {why}", text.trim()), true),
+    }
+}
+
+/// Set a global shortcut (user decision: no default; the field starts empty, the example is
+/// only in the text). `previous`: the text and the reason when asking again.
+pub fn ask_hotkey(previous: Option<(String, String)>) {
+    let os = changes::Os::HERE;
+    let logo = match os {
+        changes::Os::Windows => "Win",
+        changes::Os::Mac => "Cmd",
+        changes::Os::Linux => "Super",
+    };
+    let mut message = format!(
+        "Type the keys that show or hide Gezik from any app, for example {}. A letter, a digit or F1-F12 with Ctrl, Alt or {logo}; Ctrl+Alt is not used (it types AltGr characters).",
+        crate::resident::example(os),
+    );
+    let initial = match previous {
+        Some((text, why)) => {
+            message = format!("{why}\n\n{message}");
+            text
+        }
+        None => String::new(),
+    };
+    crate::operations::with_current(|ops| {
+        ops.dialogs().ask_text_noted(
+            "Global shortcut",
+            message,
+            initial,
+            &["Turn On", "Cancel"],
+            move |text| hotkey_note(text, os),
+            move |answer| {
+                let Some(text) = answer else { return };
+                match parse_hotkey(&text, hotkey_platform(os)) {
+                    Ok(Some(chord)) => crate::resident::set_hotkey(chord),
+                    Ok(None) => {}
+                    Err(why) => {
+                        let reason = format!("\"{}\" {why}", text.trim());
+                        ask_hotkey(Some((text, reason)));
+                    }
+                }
+            },
+        )
+    });
 }
 
 /// Reads what is there now on a thread, asks with exactly what will be written, then does it.
@@ -455,8 +650,20 @@ fn confirm(action: RowAction) {
         } else {
             (None, None)
         };
-        let asked =
-            confirmation_with(action, &snapshot, add.as_deref(), &sweep, default_add.as_deref(), risky.as_deref());
+        let login_add = if matches!(action, RowAction::Run(Command::LoginOn) | RowAction::RepairLogin) {
+            exe.to_str().and_then(|e| changes::login_targets(&access.places, e, changes::Os::HERE))
+        } else {
+            None
+        };
+        let asked = confirmation_with(
+            action,
+            &snapshot,
+            add.as_deref(),
+            &sweep,
+            default_add.as_deref(),
+            risky.as_deref(),
+            login_add.as_deref(),
+        );
         let _ = slint::invoke_from_event_loop(move || {
             let (title, button) = words(action);
             match asked {
@@ -502,6 +709,22 @@ fn carry_out(action: RowAction) {
             in_background("Restore the system file manager", changes::restore_default_now);
         }
         RowAction::RepairDefault => in_background("Repair the default file manager", changes::repair_default_now),
+        RowAction::Run(Command::LoginOn) => {
+            std::thread::spawn(|| {
+                let result = changes::login_on_now();
+                let _ = slint::invoke_from_event_loop(move || match result {
+                    Err(why) => tell("Could not make Gezik start at login", why),
+                    Ok(()) => crate::view::with_current(|v| v.note("Gezik starts at login now".into())),
+                });
+            });
+        }
+        RowAction::Run(Command::LoginOff) => {
+            in_background("Do not start Gezik at login", || changes::undo_feature_now(changes::FEATURE_LOGIN))
+        }
+        RowAction::RepairLogin => in_background("Repair start at login", changes::repair_login_now),
+        RowAction::Run(command @ (Command::TrayOn | Command::TrayOff | Command::HotkeyOn | Command::HotkeyOff)) => {
+            setting(command)
+        }
         RowAction::Show | RowAction::Nothing => {}
     }
 }
@@ -603,6 +826,7 @@ mod tests {
             changes: changes.map(|n| vec![change; n]).map_err(str::to_owned),
             journal: PathBuf::from("/c/system-changes.toml"),
             dbus_taken: false,
+            resident: crate::resident::Status { primary: true, ..Default::default() },
         }
     }
 
@@ -614,19 +838,20 @@ mod tests {
     fn rows_follow_the_state() {
         let off = shape(&snap(PathState::Off, Ok(0)));
         assert_eq!(off[1], ("Command line (PATH)".into(), "Off", "Add", RowAction::Run(Command::AddToPath)));
-        assert_eq!(off[2], ("Changes made: 0".into(), "", "", RowAction::Nothing));
-        assert_eq!(off[3], ("Undo all system changes".into(), "", "Undo all", RowAction::Run(Command::UndoAll)));
+        assert_eq!(off[5], ("Changes made: 0".into(), "", "", RowAction::Nothing));
+        assert_eq!(off[6], ("Undo all system changes".into(), "", "Undo all", RowAction::Run(Command::UndoAll)));
         let on = shape(&snap(PathState::On { command: "/h/.local/bin/gezik".into() }, Ok(3)));
         assert_eq!((on[1].1, on[1].2), ("On", "Remove"));
         assert_eq!(on[1].3, RowAction::Run(Command::RemoveFromPath));
-        assert_eq!(on[2], ("Changes made: 3 (system-changes.toml)".into(), "", "Show", RowAction::Show));
+        assert_eq!(on[5], ("Changes made: 3 (system-changes.toml)".into(), "", "Show", RowAction::Show));
         assert_eq!(shape(&snap(PathState::Moved { old: "/old".into() }, Ok(3)))[1].2, "Update");
         assert_eq!(shape(&snap(PathState::Changed, Ok(3)))[1].3, RowAction::Repair);
         assert_eq!(shape(&snap(PathState::Taken { place: "/p".into() }, Ok(0)))[1].3, RowAction::Nothing);
         let bad = shape(&snap(PathState::Off, Err("system-changes.toml cannot be read: version 9")));
         assert_eq!(bad[0].3, RowAction::Nothing, "nothing is written next to a journal that cannot be read");
         assert_eq!(bad[1].3, RowAction::Nothing);
-        assert_eq!(bad[2].3, RowAction::Nothing);
+        assert_eq!(bad[4].3, RowAction::Nothing, "start at login");
+        assert_eq!(bad[5].3, RowAction::Nothing);
     }
 
     #[test]
@@ -639,8 +864,18 @@ mod tests {
                 "Restore the system file manager",
                 "Add gezik to PATH",
                 "Remove gezik from PATH",
-                "Undo all system changes"
+                "Undo all system changes",
+                "Turn on tray icon",
+                "Turn off tray icon",
+                "Set a global shortcut",
+                "Turn off the global shortcut",
+                "Start Gezik at login",
+                "Do not start Gezik at login"
             ]
+        );
+        assert!(
+            Command::ALL.iter().filter(|c| c.is_setting()).count() == 4,
+            "tray and shortcut are settings: no system question"
         );
     }
 
@@ -674,16 +909,17 @@ mod tests {
         let places = Places { home: Some(PathBuf::from("/h")), ..Places::default() };
         let add = changes::default_targets(&places, r"C:\G\gezik.exe", changes::Os::Windows, None).unwrap();
         let off = with_default(DefaultState::Off);
-        let text = confirmation_with(make, &off, None, &[], Some(&add), Some("Gezik is in Downloads. …")).unwrap();
+        let text =
+            confirmation_with(make, &off, None, &[], Some(&add), Some("Gezik is in Downloads. …"), None).unwrap();
         assert!(text.starts_with("Gezik is in Downloads. …\n\nGezik writes these"), "{text}");
         assert!(text.contains(r#"= ""C:\G\gezik.exe" --shell "%1""#), "{text}");
-        assert!(!confirmation_with(make, &off, None, &[], Some(&add), None).unwrap().starts_with("Gezik is in"));
-        assert!(confirmation_with(make, &off, None, &[], None, None).is_err(), "targets not known");
+        assert!(!confirmation_with(make, &off, None, &[], Some(&add), None, None).unwrap().starts_with("Gezik is in"));
+        assert!(confirmation_with(make, &off, None, &[], None, None, None).is_err(), "targets not known");
         let on = with_default(DefaultState::On);
-        assert!(confirmation_with(make, &on, None, &[], Some(&add), None).unwrap_err().contains("already"));
+        assert!(confirmation_with(make, &on, None, &[], Some(&add), None, None).unwrap_err().contains("already"));
         let taken = with_default(DefaultState::Taken { why: "another file manager answers Win+E".into() });
         assert_eq!(
-            confirmation_with(make, &taken, None, &[], Some(&add), None).unwrap_err(),
+            confirmation_with(make, &taken, None, &[], Some(&add), None, None).unwrap_err(),
             "another file manager answers Win+E"
         );
         let restore = RowAction::Run(Command::RestoreDefault);
@@ -732,5 +968,116 @@ mod tests {
         for action in [add_to_path, remove, undo, RowAction::Repair] {
             assert!(confirmation(action, &bad, Some(&add), &add).unwrap_err().starts_with("version 9"));
         }
+    }
+
+    fn with_resident(resident: crate::resident::Status) -> Snapshot {
+        Snapshot { resident, ..snap(PathState::Off, Ok(0)) }
+    }
+
+    fn row_of(snapshot: &Snapshot, title: &str) -> (String, &'static str, &'static str, RowAction) {
+        rows(snapshot)
+            .into_iter()
+            .find(|(r, _)| r.title == title)
+            .map(|(r, a)| (r.detail, r.tag, r.button, a))
+            .unwrap_or_else(|| panic!("no row {title}"))
+    }
+
+    #[test]
+    fn the_tray_and_shortcut_rows_say_what_they_do() {
+        use crate::resident::Status;
+        let primary = Status { primary: true, ..Status::default() };
+        let tray = |s: Status| row_of(&with_resident(s), "Tray icon");
+        assert_eq!(
+            tray(primary.clone()),
+            ("Closing the window quits Gezik".into(), "Off", "Turn on", RowAction::Run(Command::TrayOn))
+        );
+        let on = tray(Status { tray: true, ..primary.clone() });
+        assert_eq!((on.1, on.2, on.3), ("On", "Turn off", RowAction::Run(Command::TrayOff)));
+        assert!(on.0.starts_with("Closing the window keeps Gezik in "), "{}", on.0);
+        let missing = tray(Status { tray: true, tray_missing: true, ..primary.clone() });
+        assert!(missing.0.starts_with("No tray on this desktop"), "{}", missing.0);
+        assert_eq!((missing.1, missing.3), ("Off", RowAction::Run(Command::TrayOn)), "it may be tried again");
+        let second = tray(Status::default());
+        assert_eq!((second.0.as_str(), second.3), ("Kept by the first Gezik window", RowAction::Nothing));
+
+        let shortcut = |s: Status| row_of(&with_resident(s), "Global shortcut");
+        assert_eq!(
+            shortcut(primary.clone()),
+            ("No key shows Gezik from other apps".into(), "Off", "Turn on", RowAction::Run(Command::HotkeyOn))
+        );
+        let set = shortcut(Status { hotkey: Some("Shift+Win+E".into()), ..primary.clone() });
+        assert_eq!(
+            set,
+            (
+                "Shift+Win+E shows or hides Gezik from any app".into(),
+                "On",
+                "Turn off",
+                RowAction::Run(Command::HotkeyOff)
+            )
+        );
+        let taken = shortcut(Status {
+            hotkey: Some("Shift+Win+E".into()),
+            hotkey_problem: Some("Shift+Win+E is used by another app.".into()),
+            ..primary.clone()
+        });
+        assert_eq!(
+            taken,
+            ("Shift+Win+E is used by another app.".into(), "Off", "Change", RowAction::Run(Command::HotkeyOn))
+        );
+        assert_eq!(shortcut(Status::default()).3, RowAction::Nothing);
+    }
+
+    #[test]
+    fn the_login_row_and_its_question() {
+        let login = |state: changes::LoginState| {
+            row_of(&Snapshot { login: state, ..snap(PathState::Off, Ok(0)) }, "Start at login")
+        };
+        assert_eq!(login(changes::LoginState::Off).3, RowAction::Run(Command::LoginOn));
+        assert_eq!(login(changes::LoginState::On).3, RowAction::Run(Command::LoginOff));
+        assert_eq!(login(changes::LoginState::Moved { old: "x".into() }).3, RowAction::RepairLogin);
+        assert_eq!(login(changes::LoginState::Moved { old: "x".into() }).2, "Update");
+        assert_eq!(login(changes::LoginState::Changed).2, "Repair");
+        assert_eq!(login(changes::LoginState::Taken { why: "w".into() }).3, RowAction::Nothing);
+        let places = Places::default();
+        let add = changes::login_targets(&places, r"C:\G\gezik.exe", changes::Os::Windows).unwrap();
+        let on = RowAction::Run(Command::LoginOn);
+        let off = snap(PathState::Off, Ok(0));
+        let text = confirmation_with(on, &off, None, &[], None, None, Some(&add)).unwrap();
+        assert!(
+            text.contains(
+                r#"• HKCU\Software\Microsoft\Windows\CurrentVersion\Run\Gezik = ""C:\G\gezik.exe" --background""#
+            ),
+            "{text}"
+        );
+        assert!(text.contains("At sign-in Gezik starts with --background"), "{text}");
+        assert!(confirmation_with(on, &off, None, &[], None, None, None).is_err(), "targets not known");
+        let already = Snapshot { login: changes::LoginState::On, ..off.clone() };
+        assert!(confirmation_with(on, &already, None, &[], None, None, Some(&add)).unwrap_err().contains("already"));
+        let off_action = RowAction::Run(Command::LoginOff);
+        assert!(confirmation(off_action, &off, None, &[]).unwrap_err().contains("nothing to turn off"));
+        let mut made = add.iter().find(|c| c.kind == Kind::RegistryValue).unwrap().clone();
+        made.done = true;
+        let listed = Snapshot { changes: Ok(vec![made]), login: changes::LoginState::On, ..off };
+        assert!(confirmation(off_action, &listed, None, &[]).unwrap().contains(r"Run\Gezik"));
+        assert!(
+            confirmation_with(RowAction::RepairLogin, &listed, None, &[], None, None, Some(&add))
+                .unwrap()
+                .contains(r"Run\Gezik")
+        );
+    }
+
+    #[test]
+    fn the_hotkey_note_says_what_it_reads() {
+        assert_eq!(hotkey_note("", changes::Os::Windows), ("Type a shortcut, for example win+shift+e".into(), true));
+        assert_eq!(
+            hotkey_note("win+shift+e", changes::Os::Windows),
+            ("Shift+Win+E will show or hide Gezik".into(), false)
+        );
+        assert_eq!(
+            hotkey_note("ctrl+alt+e", changes::Os::Windows),
+            ("\"ctrl+alt+e\" uses Ctrl+Alt, which types AltGr characters".into(), true)
+        );
+        assert!(hotkey_note("alt+e", changes::Os::Mac).1, "macOS needs ⌘ or ⌃");
+        assert_eq!(hotkey_note("super+shift+e", changes::Os::Linux).0, "Shift+Super+E will show or hide Gezik");
     }
 }

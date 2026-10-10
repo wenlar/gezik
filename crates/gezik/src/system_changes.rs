@@ -1112,6 +1112,8 @@ pub struct Snapshot {
     pub journal: PathBuf,
     /// Linux: another file manager holds FileManager1 (set by the panel on the UI thread).
     pub dbus_taken: bool,
+    /// The tray and shortcut rows (set by the panel on the UI thread).
+    pub resident: crate::resident::Status,
 }
 
 pub fn snapshot(file: Option<&JournalFile>, access: &dyn Access, places: &Places, exe: &str, os: Os) -> Snapshot {
@@ -1153,6 +1155,7 @@ pub fn snapshot(file: Option<&JournalFile>, access: &dyn Access, places: &Places
         changes,
         journal: file.map(JournalFile::path).unwrap_or_default(),
         dbus_taken: false,
+        resident: Default::default(),
     }
 }
 

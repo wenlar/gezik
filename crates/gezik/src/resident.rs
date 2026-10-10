@@ -5,9 +5,6 @@
 //! `tray` and `hotkey`; their answers come from other threads and are brought here with
 //! `slint::invoke_from_event_loop`.
 
-// Task 8's System Integration rows call the panel's part (status, turn_on_tray, ...).
-#![allow(dead_code, reason = "the panel (Task 8) calls the rest")]
-
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -416,9 +413,14 @@ fn hotkey_ready(number: u64, chord: Chord, result: Result<(), HotkeyError>) {
     }
 }
 
-/// The panel's shortcut could not be registered (Task 8 adds "Choose another").
+/// The panel's shortcut could not be registered (deviation 5): Choose Another asks again,
+/// the field empty and the reason above it.
 fn refused(why: String) {
-    tell("Global shortcut", why, &["Close"], |_| {});
+    tell("Global shortcut", why.clone(), &["Choose Another", "Close"], move |choice| {
+        if choice == Some(0) {
+            crate::integration::ask_hotkey(Some((String::new(), why)));
+        }
+    });
 }
 
 fn pressed() {
