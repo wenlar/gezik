@@ -191,18 +191,23 @@ impl Default for SessionSettings {
     }
 }
 
-/// `[system]` (spec 13.1): how Gezik meets the system: the single instance (9b1) and what
-/// Space shows on macOS (9a2); the tray, the hotkey and start at login come with their parts.
+/// `[system]` (spec 13.1): how Gezik meets the system: the single instance (9b1), what Space
+/// shows on macOS (9a2), the tray icon and the global shortcut (9b9). Start at login is not a
+/// setting: it is a system change in system-changes.toml (9b9 deviation 1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SystemSettings {
     /// A second `gezik` opens in the running window (spec 5.2). Read at start only.
     pub single_instance: bool,
     pub quick_look: QuickLookMode,
+    /// An icon in the notification area / menu bar / tray; closing the window keeps Gezik running.
+    pub tray: bool,
+    /// A system-wide shortcut that shows or hides Gezik; `None` is off (there is no default).
+    pub hotkey: Option<crate::shortcuts::Chord>,
 }
 
 impl Default for SystemSettings {
     fn default() -> Self {
-        SystemSettings { single_instance: true, quick_look: QuickLookMode::default() }
+        SystemSettings { single_instance: true, quick_look: QuickLookMode::default(), tray: false, hotkey: None }
     }
 }
 
@@ -1169,6 +1174,28 @@ fn parse_system(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) ->
                 .push(Warning::new(file, format!("system.quick-look: expected \"system\" or \"gezik\", got {value}"))),
         }
     }
+    if let Some(value) = table.get("tray") {
+        match value.as_bool() {
+            Some(on) => out.tray = on,
+            None => warnings.push(Warning::new(file, format!("system.tray: expected true or false, got {value}"))),
+        }
+    }
+    if let Some(value) = table.get("hotkey") {
+        match value.as_str() {
+            Some(text) => match crate::shortcuts::parse_hotkey(text, crate::shortcuts::Platform::current()) {
+                Ok(chord) => out.hotkey = chord,
+                Err(why) => warnings.push(Warning::new(file, format!("system.hotkey: \"{text}\" {why}"))),
+            },
+            None => warnings
+                .push(Warning::new(file, format!("system.hotkey: expected text such as \"win+shift+e\", got {value}"))),
+        }
+    }
+    if table.contains_key("start-at-login") {
+        warnings.push(Warning::new(
+            file,
+            "system.start-at-login: start at login is a system change; turn it on or off in System Integration (this key is ignored)",
+        ));
+    }
     out
 }
 
@@ -1484,6 +1511,8 @@ pub struct State {
     pub preview_width: Option<u32>,
     /// The operations panel is folded into the status bar.
     pub operations_collapsed: bool,
+    /// The first close with the tray icon on said once that Gezik keeps running (9b9).
+    pub tray_told: bool,
     /// The rename layer's last rules.
     pub batch_rename: Option<BatchRenameState>,
     pub archive: ArchiveState,
@@ -1577,6 +1606,12 @@ impl State {
             .and_then(|o| o.get("panel-collapsed"))
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
+        let tray_told = table
+            .get("tray")
+            .and_then(|v| v.as_table())
+            .and_then(|t| t.get("told"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         let batch_rename = table.get("batch-rename").and_then(|v| v.as_table()).map(|t| BatchRenameState {
             include_extension: t.get("include-extension").and_then(|v| v.as_bool()).unwrap_or(false),
             // The app wrote it: a broken rule just drops the list.
@@ -1647,6 +1682,7 @@ impl State {
             preview_open,
             preview_width,
             operations_collapsed,
+            tray_told,
             batch_rename,
             archive,
             convert,
@@ -1696,6 +1732,11 @@ impl State {
             let mut operations = toml::Table::new();
             operations.insert("panel-collapsed".into(), toml::Value::Boolean(true));
             root.insert("operations".into(), toml::Value::Table(operations));
+        }
+        if self.tray_told {
+            let mut tray = toml::Table::new();
+            tray.insert("told".into(), toml::Value::Boolean(true));
+            root.insert("tray".into(), toml::Value::Table(tray));
         }
         if let Some(batch) = &self.batch_rename {
             let mut table = toml::Table::new();
@@ -3220,5 +3261,55 @@ shortcut = \"shift+f8\"
         assert_eq!(warnings[0].message, "system.single-instance: expected true or false, got \"no\"");
         let (_, warnings) = parse("system = 3\n");
         assert_eq!(warnings[0].message, "system: expected a table, got 3");
+    }
+
+    #[test]
+    fn tray_and_hotkey_are_off_unless_turned_on() {
+        let system = Settings::default().system;
+        assert!(!system.tray);
+        assert_eq!(system.hotkey, None, "no default key");
+        let (settings, warnings) = parse("[system]\ntray = true\nhotkey = \"win+shift+e\"\n");
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(settings.system.tray);
+        let chord = settings.system.hotkey.unwrap();
+        assert!(chord.meta && chord.shift && !chord.ctrl && chord.key == crate::shortcuts::Key::Char('e'));
+        let (settings, _) = parse("[system]\nhotkey = \"\"\n");
+        assert_eq!(settings.system.hotkey, None);
+    }
+
+    #[test]
+    fn hotkey_settings_warn() {
+        let (settings, warnings) = parse("[system]\ntray = \"yes\"\nhotkey = \"ctrl+alt+e\"\n");
+        assert!(!settings.system.tray && settings.system.hotkey.is_none(), "bad values keep the defaults");
+        let messages: Vec<&str> = warnings.iter().map(|w| w.message.as_str()).collect();
+        assert_eq!(
+            messages,
+            [
+                "system.tray: expected true or false, got \"yes\"",
+                "system.hotkey: \"ctrl+alt+e\" uses Ctrl+Alt, which types AltGr characters",
+            ]
+        );
+        let (_, warnings) = parse("[system]\nhotkey = 5\n");
+        assert_eq!(warnings[0].message, "system.hotkey: expected text such as \"win+shift+e\", got 5");
+    }
+
+    #[test]
+    fn a_start_at_login_key_is_ignored_and_said() {
+        let (settings, warnings) = parse("[system]\nstart-at-login = true\n");
+        assert_eq!(settings.system, SystemSettings::default());
+        assert_eq!(
+            warnings[0].message,
+            "system.start-at-login: start at login is a system change; turn it on or off in System Integration (this key is ignored)"
+        );
+    }
+
+    #[test]
+    fn the_tray_question_is_remembered() {
+        assert!(!State::default().tray_told);
+        let told = State { tray_told: true, ..State::default() };
+        let text = told.to_toml();
+        assert!(text.contains("[tray]\ntold = true"), "{text}");
+        assert!(State::parse(&text).tray_told);
+        assert!(!State::default().to_toml().contains("[tray]"), "nothing written while false");
     }
 }

@@ -69,7 +69,10 @@ pub fn ensure_visible(window: &AppWindow) -> bool {
 /// always.
 pub fn capture_into(window: &AppWindow, state: &mut State) {
     let native = window.window();
-    if native.is_maximized() {
+    // Hidden (in the tray, or a --background start never shown): the last saved rect stays.
+    if !native.is_visible() {
+        // Nothing to take.
+    } else if native.is_maximized() {
         // shortcut: a window maximized before any normal rect was saved is not remembered
         // maximized (no rect to restore to); fine unless users report it.
         if let Some(saved) = &mut state.window {

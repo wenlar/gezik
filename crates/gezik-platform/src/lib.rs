@@ -12,6 +12,7 @@ pub mod elevate;
 pub mod everything;
 pub mod finder;
 pub mod fs;
+pub mod hotkey;
 pub mod http;
 mod icons;
 pub mod instance;
@@ -35,6 +36,7 @@ pub mod taskbar;
 pub mod terminal;
 mod text;
 pub mod trash;
+pub mod tray;
 
 use std::path::PathBuf;
 
@@ -49,6 +51,12 @@ pub use locale::language;
 /// macOS: the folders LaunchServices hands to Gezik (spec 6.2).
 #[cfg(target_os = "macos")]
 pub use mac::open_urls;
+/// macOS: a Dock click shows the hidden window (9b9).
+#[cfg(target_os = "macos")]
+pub use mac::reopen;
+/// macOS: ⌘Q and signing out save before the app ends (9b9).
+#[cfg(target_os = "macos")]
+pub use mac::terminate;
 pub use picture::{
     Decoded, MAX_DECODE_BYTES, MAX_DECODE_SIDE, can_decode, decode_image, only_in_cloud, thumbnail, thumbnail_while,
 };
@@ -122,6 +130,8 @@ mod properties;
 #[cfg(windows)]
 mod removal;
 #[cfg(windows)]
+mod session_end;
+#[cfg(windows)]
 mod shell_menu;
 #[cfg(windows)]
 pub use keyboard::{ModifierKeys, modifier_keys_down};
@@ -131,6 +141,8 @@ pub use pointer::catch_up_pointer;
 pub use properties::show_properties;
 #[cfg(windows)]
 pub use removal::{RemovalWatch, watch_removal};
+#[cfg(windows)]
+pub use session_end::on_session_end;
 #[cfg(windows)]
 pub use shell_menu::{FIRST_SHELL_ID, ShellSubmenu, show_shell_menu};
 

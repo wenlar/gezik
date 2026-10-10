@@ -52,8 +52,9 @@ pub fn with_pinned(text: &str, pinned: &[PinEntry]) -> Result<String, String> {
 /// Returns `text` with `[view]`'s `mode`, `sort`, `sort-dir`, `grid-size` and `group` set from
 /// `view` ("Apply to all folders"); other `[view]` keys and the rest of the file stay.
 pub fn with_view_defaults(text: &str, view: &gezik_core::view::ViewSettings) -> Result<String, String> {
-    edit_view(
+    edit_table(
         text,
+        "view",
         vec![
             ("mode", view.mode.as_str().into()),
             ("sort", view.sort.key.as_str().into()),
@@ -76,17 +77,23 @@ pub fn with_view_option(text: &str, option: crate::settings::ViewOption) -> Resu
         ViewOption::DateFormat(format) => format.as_str().into(),
         ViewOption::SizeFormat(format) => format.as_str().into(),
     };
-    edit_view(text, vec![(option.key(), value)])
+    edit_table(text, "view", vec![(option.key(), value)])
 }
 
-/// Sets `entries` in `[view]` (adding the table and the missing keys), keeping each old value's
+/// Returns `text` with `[system]`'s `key` set (System Integration's tray and shortcut rows);
+/// the old value's comment and the rest of the file stay.
+pub fn with_system(text: &str, key: &str, value: toml_edit::Value) -> Result<String, String> {
+    edit_table(text, "system", vec![(key, value)])
+}
+
+/// Sets `entries` in `[name]` (adding the table and the missing keys), keeping each old value's
 /// decor so inline comments (`# list | grid`) survive.
-fn edit_view(text: &str, entries: Vec<(&str, toml_edit::Value)>) -> Result<String, String> {
+fn edit_table(text: &str, name: &str, entries: Vec<(&str, toml_edit::Value)>) -> Result<String, String> {
     let mut doc = text.parse::<toml_edit::DocumentMut>().map_err(|err| err.to_string().trim().to_owned())?;
-    if doc.get("view").is_none() {
-        doc["view"] = toml_edit::table();
+    if doc.get(name).is_none() {
+        doc[name] = toml_edit::table();
     }
-    let Some(table) = doc["view"].as_table_like_mut() else { return Err("view must be a table".to_owned()) };
+    let Some(table) = doc[name].as_table_like_mut() else { return Err(format!("{name} must be a table")) };
     for (key, value) in entries {
         if let Some(old) = table.get_mut(key).and_then(|item| item.as_value_mut()) {
             let decor = old.decor().clone();
@@ -771,5 +778,17 @@ pattern = \"y\"
 ";
         let out = with_filters(text, &[SavedFilter { name: "b".into(), pattern: "z".into() }]).unwrap();
         assert!(!out.contains("\"a\"") && out.contains("name = \"A\""), "the copy stays: {out}");
+    }
+
+    #[test]
+    fn with_system_keeps_comments_and_other_keys() {
+        let text = "[system]\n# mine\nsingle-instance = true\ntray = false   # the icon\n";
+        let on = with_system(text, "tray", true.into()).unwrap();
+        assert_eq!(on, "[system]\n# mine\nsingle-instance = true\ntray = true   # the icon\n");
+        let shortcut = with_system(&on, "hotkey", "win+shift+e".into()).unwrap();
+        assert!(shortcut.ends_with("hotkey = \"win+shift+e\"\n"), "{shortcut}");
+        let fresh = with_system("pinned = []\n", "tray", true.into()).unwrap();
+        assert!(fresh.contains("[system]\ntray = true"), "{fresh}");
+        assert!(with_system("system = 3\n", "tray", true.into()).is_err());
     }
 }
