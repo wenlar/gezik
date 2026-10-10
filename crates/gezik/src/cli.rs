@@ -20,6 +20,8 @@ Usage: gezik [OPTIONS] [PATH...]
   --new-tab         always a new tab (default: reuse a tab already showing that folder)
   --new-window      a separate Gezik window (a new process), not the running one
   --select PATH     open PATH's folder with PATH selected (may repeat)
+  --background      start without a window if the tray icon is on (start at login uses it);
+                    with a Gezik already running, do nothing
   --unregister      undo every system change Gezik made (see system-changes.toml), then exit;
                     exit code 0: all undone, 1: some left as they were, 2: an error
                     (in cmd: start /wait gezik --unregister)
@@ -39,6 +41,9 @@ pub struct Cli {
     pub unregister: bool,
     /// `--shell TARGET` (Windows' folder verb and Win+E, spec 6.1): mapped by [`shell_target`].
     pub shell: Option<String>,
+    /// `--background` (spec 5.1, 9.3): start without a window if the tray icon is on; never
+    /// handed to a running Gezik.
+    pub background: bool,
     /// `--dbus`: started by the session bus for FileManager1 (spec 6.4).
     pub dbus: bool,
     /// Open the Recycle Bin / Trash (from `--shell`; spec 6.1).
@@ -70,6 +75,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>, windows: bool) -> Cli {
             "--unregister" => cli.unregister = true,
             "--shell" => cli.shell = Some(args.next().and_then(|a| a.into_string().ok()).unwrap_or_default()),
             "--dbus" => cli.dbus = true,
+            "--background" => cli.background = true,
             // macOS before 10.9 passed the process serial number to apps opened by Finder.
             other if other.starts_with("-psn_") => {}
             "--select" => match args.next() {
@@ -280,6 +286,14 @@ mod tests {
 
     fn args(list: &[&str]) -> Vec<OsString> {
         list.iter().map(OsString::from).collect()
+    }
+
+    #[test]
+    fn background_is_a_flag_of_its_own() {
+        let cli = parse(args(&["--background"]), true);
+        assert!(cli.background && cli.targets.is_empty() && cli.warnings.is_empty());
+        assert!(HELP.contains("--background"));
+        assert!(!parse(args(&["/a"]), false).background);
     }
 
     fn t(path: &str, select: bool) -> Target {

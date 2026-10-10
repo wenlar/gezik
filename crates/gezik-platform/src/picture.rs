@@ -54,8 +54,9 @@ pub fn decode_image(path: &Path, max_px: u32) -> Result<Decoded, String> {
     Ok(Decoded { image: Rgba { width: rgba.width(), height: rgba.height(), pixels: rgba.into_raw() }, width, height })
 }
 
-/// A thumbnail at most `px` on its longer side: the system's (Windows), else Gezik's own for
-/// the formats it decodes, else Quick Look's (macOS). `None` if there is none.
+/// A thumbnail at most `px` on its longer side: the system's (Windows; Linux's thumbnail
+/// cache), else Gezik's own for the formats it decodes, else Quick Look's (macOS). `None` if
+/// there is none.
 pub fn thumbnail(path: &Path, px: u32) -> Option<Rgba> {
     thumbnail_while(path, px, &|| true)
 }
@@ -72,6 +73,13 @@ pub fn thumbnail_while(path: &Path, px: u32, wanted: &dyn Fn() -> bool) -> Optio
     }
     if in_cloud {
         return None;
+    }
+    // Linux: a current thumbnail another program left in the freedesktop cache (spec 9 §8.5).
+    #[cfg(all(unix, not(target_os = "macos")))]
+    if let Some(root) = dirs::cache_dir().map(|cache| cache.join("thumbnails"))
+        && let Some(image) = crate::linux::thumbs::cached(path, px, &root)
+    {
+        return Some(image);
     }
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or_default();
     if can_decode(ext) {

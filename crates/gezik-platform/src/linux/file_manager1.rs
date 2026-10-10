@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use crate::linux::dbus::{Message, MsgKind, NO_REPLY_EXPECTED, Value};
+use crate::linux::dbus::{Message, MsgKind, Value, answer};
 
 #[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
 pub const NAME: &str = "org.freedesktop.FileManager1";
@@ -25,20 +25,6 @@ pub struct Call {
     pub show: Show,
     pub paths: Vec<PathBuf>,
     pub trash: bool,
-}
-
-fn answer(to: &Message, error: Option<(&str, &str)>, body: Vec<Value>) -> Option<Message> {
-    if to.flags & NO_REPLY_EXPECTED != 0 {
-        return None;
-    }
-    Some(Message {
-        kind: if error.is_some() { MsgKind::Error } else { MsgKind::Return },
-        reply_serial: Some(to.serial),
-        destination: to.sender.clone(),
-        error_name: error.map(|(name, _)| name.to_owned()),
-        body: error.map_or(body, |(_, text)| vec![Value::Str(text.to_owned())]),
-        ..Message::default()
-    })
 }
 
 /// What a message asks for, and the reply to send (none for signals and replies).
@@ -111,17 +97,10 @@ impl Drop for Owner {
 pub fn serve(on_call: impl Fn(Call) + Send + 'static) -> std::io::Result<Owner> {
     use crate::linux::dbus::Bus;
     let mut bus = Bus::session()?;
-    let reply = bus.call(Message {
-        path: Some("/org/freedesktop/DBus".into()),
-        destination: Some("org.freedesktop.DBus".into()),
-        interface: Some("org.freedesktop.DBus".into()),
-        member: Some("RequestName".into()),
-        body: vec![Value::Str(NAME.into()), Value::U32(4)],
-        ..Message::default()
-    })?;
+    let code = bus.request_name(NAME)?;
     bus.stream.set_read_timeout(None)?;
     // 1 primary owner, 4 already the owner.
-    if !matches!(reply.body.first(), Some(Value::U32(1 | 4))) {
+    if !matches!(code, 1 | 4) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::AlreadyExists,
             "another file manager answers Show in folder",
