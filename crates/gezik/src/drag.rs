@@ -659,6 +659,7 @@ impl Drags {
             scroll: window.get_list_scroll(),
             geometry: self.0.view.layout_geometry(),
             count: self.0.view.len(),
+            groups: Vec::new(),
         };
         let sidebar = match window.get_sidebar_position() {
             position @ (0 | 1) => {

@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::layout::{Geometry, Rect};
+use crate::layout::{Geometry, Line, Lines, Rect, Span};
 use crate::ops::paths::{is_within, lexical_roots, same_path};
 
 /// How far the pointer moves (on either axis) before a press becomes a drag.
@@ -19,13 +19,15 @@ pub fn past_threshold(dx: f32, dy: f32) -> bool {
 }
 
 /// The file list: its visible area (window coordinates), scroll offset (content-y, zero or
-/// negative), the list or grid geometry, and how many entries it has.
+/// negative), the list or grid geometry, how many entries it has, and its groups.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ListArea {
     pub rect: Rect,
     pub scroll: f32,
     pub geometry: Geometry,
     pub count: usize,
+    /// The groups shown (`layout::Lines`); empty when the view is not grouped.
+    pub groups: Vec<Span>,
 }
 
 /// A sidebar row: a section title, a place, a pinned folder, or a heading in the pinned part
@@ -171,8 +173,18 @@ const CELL_INSET: f32 = 4.0;
 fn list_hit(list: &ListArea, x: f32, y: f32) -> Hit {
     let content_y = y - list.rect.y - list.scroll;
     let Some(line) = index_at(content_y, list.geometry.row_height()) else { return Hit::Background };
+    let per_row = list.geometry.per_row();
+    // The entries on the line: `per_row` of them, or a group's line (a header has none).
+    let cells = if list.groups.is_empty() {
+        line * per_row..((line + 1) * per_row).min(list.count)
+    } else {
+        match (Lines { spans: &list.groups, per_row }).line(line) {
+            Some(Line::Cells(cells)) => cells,
+            _ => return Hit::Background,
+        }
+    };
     let index = match list.geometry {
-        Geometry::List { .. } => Some(line),
+        Geometry::List { .. } => Some(cells.start),
         Geometry::Grid { cell_width, cell_height, columns, left } => {
             let local_x = x - list.rect.x - left;
             index_at(local_x, cell_width).filter(|&column| column < columns.max(1)).and_then(|column| {
@@ -181,12 +193,12 @@ fn list_hit(list: &ListArea, x: f32, y: f32) -> Hit {
                     && in_x < cell_width - CELL_INSET
                     && in_y >= CELL_INSET
                     && in_y < cell_height - CELL_INSET;
-                inside.then_some(line * columns.max(1) + column)
+                inside.then_some(cells.start + column)
             })
         }
     };
     match index {
-        Some(i) if i < list.count => Hit::Entry(i),
+        Some(i) if cells.contains(&i) => Hit::Entry(i),
         _ => Hit::Background,
     }
 }
@@ -349,6 +361,7 @@ mod tests {
             scroll: 0.0,
             geometry: Geometry::List { row_height: 20.0 },
             count,
+            groups: Vec::new(),
         }
     }
 
@@ -611,5 +624,25 @@ mod tests {
         assert_eq!(edge_scroll(390.0, 400.0, 10.0), -10.0);
         assert_eq!(edge_scroll(200.0, 400.0, 10.0), 0.0);
         assert_eq!(edge_scroll(-30.0, 400.0, 10.0), 10.0, "above the list still scrolls up");
+    }
+
+    #[test]
+    fn drops_on_a_header_go_to_the_folder() {
+        // 0..3 open, 3..5 closed, 5..9 open; the list starts at y = 100, rows 20 high.
+        let grouped = ListArea {
+            groups: vec![
+                Span { start: 0, len: 3, collapsed: false },
+                Span { start: 3, len: 2, collapsed: true },
+                Span { start: 5, len: 4, collapsed: false },
+            ],
+            ..list(9)
+        };
+        let l = layout(grouped);
+        let at = |line: f32| hit(&l, 300.0, 100.0 + line * 20.0 + 10.0, false);
+        assert_eq!(at(0.0), Hit::Background, "a header");
+        assert_eq!(at(1.0), Hit::Entry(0));
+        assert_eq!(at(4.0), Hit::Background, "a closed group's header");
+        assert_eq!(at(6.0), Hit::Entry(5));
+        assert_eq!(at(10.0), Hit::Background, "past the last line");
     }
 }
