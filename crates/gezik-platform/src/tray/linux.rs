@@ -1,11 +1,12 @@
-//! Not built yet (9b9 Task 5).
-use crate::tray::{OnEvent, OnReady, TrayError};
+//! Linux: the tray icon is a StatusNotifierItem (linux/sni.rs). It has no menu (decision 24),
+//! so the pins are not used.
 
-pub struct Tray;
+use crate::tray::{OnEvent, OnReady};
 
-pub fn start(_pins: Vec<String>, _on_event: OnEvent, on_ready: OnReady) -> Tray {
-    on_ready(Err(TrayError::Failed("not built yet".to_owned())));
-    Tray
+pub struct Tray(#[allow(dead_code, reason = "held for its Drop, which closes the connection")] crate::linux::sni::Item);
+
+pub fn start(_pins: Vec<String>, on_event: OnEvent, on_ready: OnReady) -> Tray {
+    Tray(crate::linux::sni::start(on_event, on_ready))
 }
 
 impl Tray {
