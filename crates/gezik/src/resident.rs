@@ -352,7 +352,7 @@ fn tray_event(event: TrayEvent) {
     let Some(window) = window() else { return };
     match event {
         TrayEvent::Toggle => match on_click(window.window().is_visible(), window.window().is_minimized()) {
-            Press::Hide => hide(&window),
+            Press::Hide => hide_all(),
             _ => reveal(),
         },
         TrayEvent::Show => reveal(),
@@ -443,7 +443,7 @@ fn pressed() {
     let focused = window.window().with_winit_window(|native| native.has_focus()).unwrap_or(false);
     let tray = with(|s| s.tray.is_some() && s.tray_ready);
     match on_hotkey(window.window().is_visible(), window.window().is_minimized(), focused, tray) {
-        Press::Hide => hide(&window),
+        Press::Hide => hide_all(),
         Press::Minimize => window.window().set_minimized(true),
         Press::Show => reveal(),
     }
@@ -460,16 +460,15 @@ pub fn when_shown(f: impl FnOnce() + 'static) {
     }
 }
 
-/// Shows the window (hidden or minimized) and brings it to the front.
+/// Shows every window hidden in the tray (or by a --background start) and brings the most
+/// recently focused one to the front: Gezik is shown or hidden as a whole (10g fix 2).
 pub fn reveal() {
     let Some(window) = window() else { return };
-    let (first, waiting) = with(|s| (!std::mem::replace(&mut s.shown, true), std::mem::take(&mut s.when_shown)));
-    // A --background start shows every window of last time the first time.
-    if first {
-        let _ = crate::windows::show_all();
-    } else {
-        let _ = window.show();
-    }
+    let waiting = with(|s| {
+        s.shown = true;
+        std::mem::take(&mut s.when_shown)
+    });
+    let _ = crate::windows::show_all();
     for f in waiting {
         f();
     }
@@ -480,6 +479,15 @@ fn reveal_if_hidden() {
     if window().is_some_and(|w| !w.window().is_visible()) {
         reveal();
     }
+}
+
+/// The tray or the shortcut hides Gezik: every window on screen goes to the tray.
+fn hide_all() {
+    crate::windows::for_each(|window| {
+        if window.window().is_visible() {
+            hide(window);
+        }
+    });
 }
 
 fn hide(window: &AppWindow) {

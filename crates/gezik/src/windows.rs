@@ -394,10 +394,11 @@ pub fn open_saved(first: WindowId, state: &Rc<State>, start: &Location) {
     focused(first);
 }
 
-/// Shows every window, the most recently focused one last (on top).
+/// Shows every window (hidden in the tray, or not shown yet) but one closing, the most
+/// recently focused one last (on top).
 pub fn show_all() -> Result<(), slint::PlatformError> {
     let list: Vec<_> = WINDOWS.with(|w| w.borrow().iter().map(|(id, w)| (*id, w.clone_strong())).collect());
-    for (id, window) in list.into_iter().rev() {
+    for (id, window) in list.into_iter().rev().filter(|(id, _)| !closing(*id)) {
         enter(id, || window.show())?;
     }
     Ok(())
@@ -1836,6 +1837,31 @@ pub(crate) mod tests {
         for_each(|w| {
             let _ = w.hide();
         });
+        release_all();
+    }
+
+    /// Fix 2: with the tray, two windows closed in one go both go to the tray; showing Gezik
+    /// brings every hidden window back, never one closing.
+    #[test]
+    fn showing_gezik_brings_every_hidden_window_back() {
+        let ((first, first_weak), (second, second_weak)) = two_windows(Rc::new(Cell::new(0)));
+        let shown = |weak: &slint::Weak<AppWindow>| weak.upgrade().is_some_and(|w| w.window().is_visible());
+        close_requested(first);
+        close_requested(second);
+        let _ = second_weak.upgrade().map(|w| w.hide());
+        close(first);
+        assert!(!shown(&first_weak) && !shown(&second_weak), "both in the tray");
+        assert_eq!(focus_order().len(), 2, "both kept");
+        show_all().expect("shown");
+        assert!(shown(&first_weak) && shown(&second_weak), "both come back");
+        // One closing stays hidden.
+        let _ = first_weak.upgrade().map(|w| w.hide());
+        CLOSING.with(|c| c.borrow_mut().push(first));
+        show_all().expect("shown");
+        assert!(!shown(&first_weak));
+        close(first);
+        assert!(first_weak.upgrade().is_none());
+        let _ = (second, second_weak.upgrade().map(|w| w.hide()));
         release_all();
     }
 
