@@ -1,5 +1,6 @@
-//! macOS row menu extras (spec 9 §4.3): Open With ▸, Share…, Quick Actions ▸. What they list
-//! is asked when the menu opens, on a short-lived thread, never ahead of it.
+//! Row menu extras (spec 9 §4.3, §8.5): Open With ▸ (macOS and Linux), Share… and Quick
+//! Actions ▸ (macOS). What they list is asked when the menu opens, on a short-lived thread,
+//! never ahead of it.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -52,13 +53,16 @@ fn fetch_with(late: &Late, items: Vec<PathBuf>, wait: Duration, compute: fn(&[Pa
     receive.recv_timeout(wait).ok()
 }
 
-/// Whether Open With ▸ is offered for `rows`: on macOS, up to `MAX_ITEMS` files or packages
-/// (beyond, the list would be one item's, yet every row would open with the app).
-pub fn offers_open_with(rows: &[(PathBuf, bool)], mac: bool) -> bool {
-    mac && !rows.is_empty()
+/// Whether Open With ▸ is offered for `rows` where the system lists apps (`supported`): up
+/// to `MAX_ITEMS` files, and on macOS (`mac`) packages (beyond `MAX_ITEMS` the list would be
+/// one item's, yet every row would open with the app).
+pub fn offers_open_with(rows: &[(PathBuf, bool)], supported: bool, mac: bool) -> bool {
+    supported
+        && !rows.is_empty()
         && rows.len() <= gezik_platform::open_with::MAX_ITEMS
         && rows.iter().all(|(path, is_dir)| {
-            !is_dir || path.file_name().is_some_and(|n| gezik_core::kind::is_package_name(&n.to_string_lossy()))
+            !is_dir
+                || (mac && path.file_name().is_some_and(|n| gezik_core::kind::is_package_name(&n.to_string_lossy())))
         })
 }
 
@@ -67,26 +71,89 @@ pub fn open_with_place(list: &[(u32, String)]) -> usize {
     list.iter().rposition(|(id, _)| matches!(*id, OPEN | OPEN_DEFAULT | SHOW_PACKAGE)).map_or(0, |i| i + 1)
 }
 
-/// Opens `paths` with `app`, or with one chosen in /Applications (Other…) once the menu is done.
+/// Opens `paths` with `app`, or with one chosen with Other… once the menu is done (macOS'
+/// panel; Linux Gezik's own question, `ask_app`).
 pub fn open_with(window: &slint::Weak<crate::AppWindow>, paths: Vec<PathBuf>, app: Option<PathBuf>) {
     let window = window.clone();
-    slint::Timer::single_shot(Duration::ZERO, move || {
-        let Some(app) = app.or_else(gezik_platform::open_with::choose_app) else { return };
-        let name = gezik_platform::open_with::app_name_of(&app);
-        let report = window.clone();
-        let failed = move |why: String| {
-            let _ = slint::invoke_from_event_loop(move || {
-                if let Some(window) = report.upgrade() {
-                    window.set_status(format!("{name} could not open them: {why}").into());
-                }
-            });
-        };
-        if let Err(why) = gezik_platform::open_with::open(&paths, &app, failed)
-            && let Some(window) = window.upgrade()
-        {
-            window.set_status(why.into());
-        }
+    slint::Timer::single_shot(Duration::ZERO, move || match app.or_else(gezik_platform::open_with::choose_app) {
+        Some(app) => open_now(&window, &paths, &app),
+        None if gezik_platform::open_with::ASKS_IN_GEZIK => ask_app(move |app| open_now(&window, &paths, &app)),
+        None => {}
     });
+}
+
+fn open_now(window: &slint::Weak<crate::AppWindow>, paths: &[PathBuf], app: &std::path::Path) {
+    let name = gezik_platform::open_with::app_name_of(app);
+    let report = window.clone();
+    let failed = move |why: String| {
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(window) = report.upgrade() {
+                window.set_status(format!("{name} could not open them: {why}").into());
+            }
+        });
+    };
+    if let Err(why) = gezik_platform::open_with::open(paths, app, failed)
+        && let Some(window) = window.upgrade()
+    {
+        window.set_status(why.into());
+    }
+}
+
+/// Other…'s title on Linux.
+pub const OTHER_TITLE: &str = "Open With";
+
+type Chosen = Box<dyn FnOnce(PathBuf)>;
+
+thread_local! {
+    /// Other…'s answer, kept on the UI thread while the apps are read.
+    static WAITING: std::cell::RefCell<Option<Chosen>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Linux Other… (deviation 2 of 9b10): reads the installed apps on a thread, then asks for one
+/// by name; `chosen` gets its desktop file. A second Other… while the first reads replaces it.
+pub fn ask_app(chosen: impl FnOnce(PathBuf) + 'static) {
+    WAITING.with(|w| *w.borrow_mut() = Some(Box::new(chosen)));
+    let spawned = std::thread::Builder::new().name("gezik-apps".into()).spawn(|| {
+        let apps = gezik_platform::open_with::all_apps();
+        let _ = slint::invoke_from_event_loop(move || show_apps(apps));
+    });
+    if spawned.is_err() {
+        WAITING.with(|w| w.borrow_mut().take());
+    }
+}
+
+fn show_apps(apps: Vec<AppChoice>) {
+    let Some(chosen) = WAITING.with(|w| w.borrow_mut().take()) else { return };
+    let apps = std::rc::Rc::new(apps);
+    let (for_note, for_answer) = (apps.clone(), apps);
+    crate::operations::with_current(move |ops| {
+        ops.dialogs().ask_text_noted(
+            OTHER_TITLE,
+            "Type the app's name.",
+            "",
+            &["Open", "Cancel"],
+            move |text| other_note(&for_note, text),
+            move |answer| {
+                let app = answer
+                    .and_then(|text| gezik_platform::open_with::find_app(&for_answer, &text).map(|a| a.path.clone()));
+                if let Some(app) = app {
+                    chosen(app);
+                }
+            },
+        );
+    });
+}
+
+/// The line under Other…'s field.
+pub fn other_note(apps: &[AppChoice], text: &str) -> (String, bool) {
+    if apps.is_empty() {
+        return ("No apps were found".to_owned(), true);
+    }
+    match gezik_platform::open_with::find_app(apps, text) {
+        Some(app) => (format!("Opens with {}", app.name), false),
+        None if text.trim().is_empty() => ("Type part of the app's name".to_owned(), false),
+        None => ("No app has that name".to_owned(), true),
+    }
 }
 
 /// Share… for `paths` at window position `at` (a right-click), else at the pointer.
@@ -165,17 +232,28 @@ mod tests {
     }
 
     #[test]
-    fn open_with_is_offered_for_files_and_packages_on_macos() {
-        let file = (PathBuf::from("/x/a.pdf"), false);
-        let app = (PathBuf::from("/Applications/Safari.app"), true);
-        let folder = (PathBuf::from("/x/Docs"), true);
-        assert!(offers_open_with(&[file.clone(), app.clone()], true));
-        assert!(!offers_open_with(&[file.clone(), folder], true), "a plain folder opens in Gezik");
-        assert!(!offers_open_with(std::slice::from_ref(&file), false), "not off macOS");
-        assert!(!offers_open_with(&[], true));
+    fn open_with_is_offered_where_the_system_lists_apps() {
+        let file = (PathBuf::from("/a/x.pdf"), false);
+        let app = (PathBuf::from("/A/Preview.app"), true);
+        let folder = (PathBuf::from("/a/b"), true);
+        assert!(offers_open_with(&[file.clone(), app.clone()], true, true));
+        assert!(!offers_open_with(&[file.clone(), folder.clone()], true, true), "a plain folder opens in Gezik");
+        assert!(!offers_open_with(std::slice::from_ref(&file), false, false), "not where no apps are listed");
+        assert!(offers_open_with(std::slice::from_ref(&file), true, false), "Linux: files");
+        assert!(!offers_open_with(&[file.clone(), app], true, false), "Linux: a .app folder is a folder");
+        assert!(!offers_open_with(&[], true, true));
         let many = vec![file.clone(); gezik_platform::open_with::MAX_ITEMS];
-        assert!(offers_open_with(&many, true), "50 rows are asked together");
-        assert!(!offers_open_with(&[many, vec![file]].concat(), true), "not for more rows than are asked");
+        assert!(offers_open_with(&many, true, true), "50 rows are asked together");
+        assert!(!offers_open_with(&[many, vec![file]].concat(), true, true), "not for more rows than are asked");
+    }
+
+    #[test]
+    fn others_note_says_which_app_opens() {
+        let apps = [AppChoice { path: PathBuf::from("/a/gimp.desktop"), name: "GIMP".into(), default: false }];
+        assert_eq!(other_note(&apps, "gi"), ("Opens with GIMP".to_owned(), false));
+        assert_eq!(other_note(&apps, ""), ("Type part of the app's name".to_owned(), false));
+        assert_eq!(other_note(&apps, "krita"), ("No app has that name".to_owned(), true));
+        assert_eq!(other_note(&[], "gimp"), ("No apps were found".to_owned(), true));
     }
 
     #[test]
