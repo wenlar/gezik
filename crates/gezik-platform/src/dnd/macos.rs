@@ -38,7 +38,8 @@ pub struct Registration {
 
 impl Drop for Registration {
     fn drop(&mut self) {
-        TARGET.with(|t| t.borrow_mut().take());
+        // At exit another thread-local may drop this after TARGET is gone: nothing to clear then.
+        let _ = TARGET.try_with(|t| t.borrow_mut().take());
     }
 }
 

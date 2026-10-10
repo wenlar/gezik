@@ -94,6 +94,15 @@ pub fn rows(snapshot: &Snapshot) -> Vec<(Row, RowAction)> {
             row(DEFAULT, format!("Folders open in {}", system_manager()), "Off", "Make default"),
             RowAction::Run(Command::MakeDefault),
         ),
+        (Ok(changes), DefaultState::On)
+            if cfg!(target_os = "macos")
+                && !changes.iter().any(|c| c.done && c.kind == gezik_core::system_change::Kind::MacDefault) =>
+        {
+            (
+                row(DEFAULT, "Reveal in Finder opens in Gezik; macOS keeps folders for Finder", "On", "Restore"),
+                RowAction::Run(Command::RestoreDefault),
+            )
+        }
         (_, DefaultState::On) => {
             (row(DEFAULT, format!("{on_detail}{taken}"), "On", "Restore"), RowAction::Run(Command::RestoreDefault))
         }
@@ -480,7 +489,8 @@ fn carry_out(action: RowAction) {
                 let result = changes::make_default_now();
                 let _ = slint::invoke_from_event_loop(move || match result {
                     Err(why) => tell("Could not make Gezik the default file manager", why),
-                    Ok(()) => {
+                    Ok(Some(note)) => tell("Reveal in Finder opens in Gezik now", note),
+                    Ok(None) => {
                         crate::single_instance::start_file_manager1();
                         crate::view::with_current(|v| v.note("Gezik is the default file manager now".into()));
                     }

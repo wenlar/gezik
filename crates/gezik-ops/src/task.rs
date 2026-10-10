@@ -798,6 +798,9 @@ mod tests {
         };
         let dir = test_dir("temp-copy-name");
         std::fs::create_dir(dir.join("to")).unwrap();
+        if !crate::testing::can_hold_name(&dir.join("to"), &name) {
+            return;
+        }
         std::fs::write(dir.join("small.txt"), "x").unwrap();
         let pending = std::sync::Arc::new(PendingDeletes::new(dir.join("pending-deletes")));
         let temp = TempCopies::new(Some(pending.clone()));

@@ -6,6 +6,11 @@ use slint::{ComponentHandle, LogicalSize, PhysicalPosition};
 
 use crate::AppWindow;
 
+thread_local! {
+    /// The saved position and the second window's offset, until the native window exists.
+    static PENDING: std::cell::Cell<Option<(i32, i32, i32)>> = const { std::cell::Cell::new(None) };
+}
+
 /// Applies the saved size, position and sidebar width. Call before the window is shown.
 /// `offset` moves a second window off the first (spec 5.3).
 pub fn restore(window: &AppWindow, state: &State, offset: i32) {
@@ -16,6 +21,9 @@ pub fn restore(window: &AppWindow, state: &State, offset: i32) {
     window.window().set_size(LogicalSize::new(saved.width as f32, saved.height as f32));
     if let (Some(x), Some(y)) = (saved.x, saved.y) {
         window.window().set_position(PhysicalPosition::new(x + offset, y + offset));
+        // On macOS a position set before the native window exists is not used: it is set
+        // again once there is one (`ensure_visible`), with the offset in points.
+        PENDING.with(|p| p.set(Some((x, y, offset))));
     }
     // After the normal rect, so un-maximizing goes back to it.
     if saved.maximized {
@@ -28,6 +36,12 @@ pub fn restore(window: &AppWindow, state: &State, offset: i32) {
 /// Returns false if the native window does not exist yet (try again later).
 pub fn ensure_visible(window: &AppWindow) -> bool {
     let Some(target) = window.window().with_winit_window(|native| {
+        if cfg!(target_os = "macos")
+            && let Some((x, y, offset)) = PENDING.with(|p| p.take())
+        {
+            let offset = (f64::from(offset) * native.scale_factor()).round() as i32;
+            native.set_outer_position(slint::winit_030::winit::dpi::PhysicalPosition::new(x + offset, y + offset));
+        }
         let position = native.outer_position().ok()?;
         // A point in the title bar must be on some monitor, so the window can be dragged.
         let (x, y) = (position.x + 100, position.y + 20);

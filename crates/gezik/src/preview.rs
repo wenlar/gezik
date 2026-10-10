@@ -452,8 +452,8 @@ impl Preview {
         panel_items(selected, view.focus().and_then(|i| view.entry_path(i)).map(|(path, _)| path))
     }
 
-    /// Space with the system panel (macOS): closes it, or opens it on the selection. `false`
-    /// when it did not open: Gezik's own window is shown instead.
+    /// Space with the system panel (macOS): closes it, or opens it on the selection. If it has
+    /// not come on screen shortly after, Gezik's own window is shown instead.
     #[cfg(target_os = "macos")]
     fn toggle_system_panel(&self) -> bool {
         if gezik_platform::ql_panel::is_open() {
@@ -466,11 +466,23 @@ impl Preview {
         }
         let Some(window) = self.0.window.upgrade() else { return true };
         let on_move = Box::new(|to| with_current(|p| p.0.view.key_move(to, false, false, 1)).unwrap_or(false));
-        let shown = gezik_platform::ql_panel::show(&window.window().window_handle(), &items, index, on_move);
-        if !shown {
-            window.set_status("The system Quick Look panel did not open; Gezik's own is shown".into());
+        if gezik_platform::ql_panel::show(&window.window().window_handle(), &items, index, on_move) {
+            return true;
         }
-        shown
+        // With several items the panel can come on screen a moment after the call: Gezik's own
+        // window is shown only if it still is not there then.
+        slint::Timer::single_shot(Duration::from_millis(500), || {
+            if gezik_platform::ql_panel::is_open() {
+                return;
+            }
+            with_current(|p| {
+                if let Some(window) = p.0.window.upgrade() {
+                    window.set_status("The system Quick Look panel did not open; Gezik's own is shown".into());
+                }
+                p.open_own_quick_look();
+            });
+        });
+        true
     }
 
     /// Space on the list: opens quick look, or closes it.
@@ -482,6 +494,11 @@ impl Preview {
         if self.quick_look_open() {
             return self.close_quick_look();
         }
+        self.open_own_quick_look();
+    }
+
+    /// Gezik's own quick look window on the selection.
+    fn open_own_quick_look(&self) {
         // Nothing selected: nothing to look at.
         if self.0.view.preview_target() == Target::Nothing {
             return;

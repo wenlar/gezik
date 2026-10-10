@@ -22,12 +22,19 @@ pub fn watch_config(
     watcher.watch(store.dir(), RecursiveMode::Recursive)?;
 
     let store = store.clone();
+    // FSEvents names the real folder (`/private/tmp/…` for `/tmp/…` on macOS): its events are
+    // read back as under the folder as it was given.
+    let real = std::fs::canonicalize(store.dir()).ok().filter(|real| real != store.dir());
     std::thread::spawn(move || {
+        let as_given = |path: &std::path::Path| match real.as_deref().and_then(|real| path.strip_prefix(real).ok()) {
+            Some(rest) => store.dir().join(rest),
+            None => path.to_path_buf(),
+        };
         // (settings or a theme, a template) a change touched.
         let touched = |event: &notify::Result<notify::Event>| match event {
             Ok(e) => (
-                e.paths.iter().any(|path| store.is_config_file(path)),
-                e.paths.iter().any(|path| store.is_template_path(path)),
+                e.paths.iter().any(|path| store.is_config_file(&as_given(path))),
+                e.paths.iter().any(|path| store.is_template_path(&as_given(path))),
             ),
             Err(_) => (false, false),
         };

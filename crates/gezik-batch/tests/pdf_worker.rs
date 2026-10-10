@@ -371,13 +371,16 @@ fn odd_names_open_and_name_their_outputs() {
     let d = dir("names");
     // Windows forbids `"` in names; everything else is the same.
     let shown = if cfg!(windows) { "rapor ş 'a'; $ & ğüİ 😀" } else { "rapor ş \"a\"; $ & ğüİ 😀" };
+    // A name that is not Unicode joins it where the system allows one (not on macOS).
+    #[cfg_attr(target_os = "macos", allow(unused_mut))]
     let mut stems: Vec<OsString> = vec![shown.into()];
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStringExt;
         stems.push(OsString::from_wide(&[0x72, 0xD800, 0x78])); // "r", a lone surrogate, "x"
     }
-    #[cfg(unix)]
+    // APFS and HFS+ (macOS) refuse names that are not UTF-8.
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         use std::os::unix::ffi::OsStringExt;
         stems.push(OsString::from_vec(vec![b'r', 0xFF, b'x'])); // not UTF-8
