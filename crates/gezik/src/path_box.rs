@@ -441,7 +441,18 @@ impl PathBox {
 
     /// A path box for pane `id` with this one's folder history (one for the process).
     pub fn for_pane(&self, id: PaneId, nav: Navigator) -> PathBox {
-        PathBox::with_history(id, self.0.window.clone(), nav, self.0.store.clone(), self.0.history.clone())
+        self.in_window(id, self.0.window.clone(), nav)
+    }
+
+    /// A path box for pane `id` of `window` with this one's folder history (another window's
+    /// pane: every window feeds the one history).
+    pub fn in_window(&self, id: PaneId, window: slint::Weak<AppWindow>, nav: Navigator) -> PathBox {
+        PathBox::with_history(id, window, nav, self.0.store.clone(), self.0.history.clone())
+    }
+
+    #[cfg(test)]
+    pub fn shares_history(&self, other: &PathBox) -> bool {
+        Rc::ptr_eq(&self.0.history, &other.0.history)
     }
 
     fn with_history(

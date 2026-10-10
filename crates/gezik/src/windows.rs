@@ -834,8 +834,11 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
     if !secondary && config.is_some() {
         nav.keep_session(state.session.clone(), settings.session.restore, |_| save_sessions_soon());
     }
-    let path_box =
-        path_box::PathBox::new(pane_id, window.as_weak(), nav.clone(), config.clone(), state.history.clone());
+    // The folder history is the process's: a later window's box shares the open windows' one.
+    let path_box = match panes::everywhere().first() {
+        Some(other) => other.path_box.in_window(pane_id, window.as_weak(), nav.clone()),
+        None => path_box::PathBox::new(pane_id, window.as_weak(), nav.clone(), config.clone(), state.history.clone()),
+    };
     // Captures no navigator (it is not `Send`): the result finds the panes on the UI thread.
     places::load_in_background(window.as_weak(), move |part| {
         with_window(id, |_| {
@@ -1758,6 +1761,8 @@ pub(crate) mod tests {
         assert_eq!(focus_order(), [second, first], "the new window is in front");
         assert_eq!(crate::panes::PANES.with(Slot::len), 2);
         assert_eq!(enter(second, crate::panes::count), 1, "one pane");
+        let path_box = |id| enter(id, || panes::active().path_box);
+        assert!(path_box(first).shares_history(&path_box(second)), "one folder history for every window");
         assert!(matches!(close_requested(second), slint::CloseRequestResponse::HideWindow));
         assert_eq!(finished.get(), 0, "another window is open: only this one closes");
         // A question waiting in it is asked in the other window, its answer going where it went.
