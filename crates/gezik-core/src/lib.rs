@@ -6,6 +6,7 @@ pub mod batch;
 pub mod complete;
 pub mod drag;
 pub mod elevated;
+pub mod group;
 pub mod history;
 pub mod kind;
 pub mod layout;

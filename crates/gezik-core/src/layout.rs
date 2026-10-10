@@ -150,6 +150,15 @@ impl Geometry {
     }
 }
 
+/// One group of a grouped view (spec 10 §6): entries `start..start + len`, together in the
+/// listing; a closed one shows only its header.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Span {
+    pub start: usize,
+    pub len: usize,
+    pub collapsed: bool,
+}
+
 #[cfg(test)]
 #[allow(clippy::single_range_in_vec_init)]
 mod tests {

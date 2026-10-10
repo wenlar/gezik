@@ -231,6 +231,8 @@ pub struct ViewSettings {
     pub mode: ViewMode,
     pub sort: SortSpec,
     pub grid_size: GridSize,
+    /// Group headers (spec 10 §6); none by default.
+    pub group: crate::group::GroupBy,
 }
 
 /// The list's columns after Name (which is always shown and takes the remaining width),

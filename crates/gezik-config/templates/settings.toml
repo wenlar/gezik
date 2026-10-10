@@ -32,11 +32,12 @@ reduce-motion = false
 
 [view]
 # How folders look. A folder you change keeps its own view; "Apply to all folders"
-# in the View menu writes mode, sort, sort-dir and grid-size here.
+# in the View menu writes mode, sort, sort-dir, grid-size and group here.
 mode = "list"          # list | grid
 sort = "name"          # name | modified | created | type | size
 sort-dir = "asc"       # asc | desc
 grid-size = "medium"   # small | medium | large
+group = "none"         # none | type | date | size: the list's groups when a folder has no view of its own
 icons = "system"       # system | gezik (Gezik's own icons, colored by the theme)
 folder-sizes = "off"      # sizes of the folders shown: off (only when asked) | local (not on network folders) | all
 thumbnails = true      # pictures and videos show a preview in the grid

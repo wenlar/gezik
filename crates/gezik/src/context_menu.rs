@@ -2857,6 +2857,7 @@ mod tests {
             mode: ViewMode::Grid,
             sort: SortSpec { key: SortKey::Size, dir: SortDir::Desc },
             grid_size: GridSize::Large,
+            ..ViewSettings::default()
         };
         let items = view_items(grid, false, false, ViewOptions::default(), false);
         let marked: Vec<&str> =
