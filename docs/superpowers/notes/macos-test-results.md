@@ -479,22 +479,22 @@ Each of these was kept to macOS where the logic allowed:
 | 128 | `--unregister` | PASS |
 | 129 | No journal | PASS (one note) |
 | 130 | Tests and probe first | PASS |
-| 131 | Sidebar | NOT TESTED |
-| 132 | State badges | NOT TESTED |
-| 133 | Download Now / Remove Download | NOT TESTED |
+| 131 | Sidebar | PASS (no OneDrive/Google Drive here) |
+| 132 | State badges | PASS (download-safety of the preview/thumbnail not checked) |
+| 133 | Download Now / Remove Download | NOT TESTED (would change the maintainer's iCloud files) |
 | 134 | Data safety | NOT TESTED |
 | 135 | OneDrive / Google Drive | NOT TESTED |
 | 136 | Links | NOT TESTED |
 | 137 | Late roots | NOT TESTED |
 | 138 | Search reads no cloud-only file | NOT TESTED |
 | 139 | Tests and probe first | PASS |
-| 140 | Panel and palette | NOT TESTED |
-| 141 | Make default from outside a bundle | NOT TESTED |
-| 142 | `open ~/Documents` | NOT TESTED |
-| 143 | `application:openURLs:` | NOT TESTED |
-| 144 | Bundle launch while Gezik runs | NOT TESTED |
-| 145 | Gezik moved | NOT TESTED |
-| 146 | Restore and `--unregister` | NOT TESTED |
+| 140 | Panel and palette | PASS |
+| 141 | Make default from outside a bundle | NOT TESTED (changes the Mac's default folder handler; waiting for the maintainer) |
+| 142 | `open ~/Documents` | NOT TESTED (changes the Mac's default folder handler; waiting for the maintainer) |
+| 143 | `application:openURLs:` | NOT TESTED (changes the Mac's default folder handler; waiting for the maintainer) |
+| 144 | Bundle launch while Gezik runs | NOT TESTED (changes the Mac's default folder handler; waiting for the maintainer) |
+| 145 | Gezik moved | NOT TESTED (changes the Mac's default folder handler; waiting for the maintainer) |
+| 146 | Restore and `--unregister` | NOT TESTED (changes the Mac's default folder handler; waiting for the maintainer) |
 
 ### Build
 
@@ -1290,3 +1290,18 @@ With Gezik running: `gezik --unregister` printed `undone: /Users/macbookpro/.loc
 - Add, then `system-changes.toml` deleted, then `gezik --unregister`: `No system-changes.toml: taking back what has Gezik's names`, `undone: /Users/macbookpro/.local/bin/gezik`, exit 0. Only the link was swept; `~/.local/bin` stayed (empty).
 - `version = 9` in a fresh `system-changes.toml`: the panel shows Default file manager and Command line "Fix or delete system-changes.toml first" with `?`, and Changes made "?" with "system-changes.toml cannot be read: version 9 is not one this Gezik knows". `gezik --unregister` printed that line and "nothing was changed", exited 2, and the file was unchanged.
 - **Note:** the panel still offers "Undo all" while the journal can't be read. Add wasn't tried in that state.
+
+#### 131. Sidebar: PASS
+A CLOUD heading right after PINNED (before SEARCHES) with "iCloud Drive" (cloud icon). A click went to `~/Library/Mobile Documents/com~apple~CloudDocs` (tab "iCloud Drive"). `[sidebar] cloud = false` hid the heading live (the row badges stayed), and `true` brought it back. Resting the pointer on the row showed no tip in the screenshot taken 1.5 s later. No OneDrive or Google Drive is installed.
+
+#### 132. State badges: PASS
+In iCloud Drive: files that are downloaded (`ls -lO` without `dataless`) have a small green check on the icon's corner. Selected alone, the status bar ends with "· Available on this device". A file that is only in the cloud (`f8.csv`, `compressed,dataless`) has a cloud badge, and the status bar ends with "· Online only". Outside the cloud folders there is no badge and no words. The list view did not download `f8.csv` (still `dataless` afterwards). The preview panel and grid thumbnails on a cloud-only file were not tried.
+
+#### 133. Download Now / Remove Download: NOT TESTED
+The row menu on a cloud-only file has "Download Now" and "Remove Download" (after Delete permanently). Neither was run, because they would download or evict the maintainer's own iCloud files. A test file made for this is needed.
+
+#### 134-138. Data safety, OneDrive/Google Drive, links, late roots, search: NOT TESTED
+Not tested. 134 and 138 need a test file to be evicted and uploaded again (turning Wi-Fi off, Remove Download), which would touch the maintainer's iCloud Drive. 135: neither OneDrive nor Google Drive is installed (`~/Library/CloudStorage` doesn't exist). 136 and 137 were left with them.
+
+#### 140. Panel and palette: PASS
+System Integration… shows "Default file manager — Folders open in Finder", Off, "Make default" as the first row (seen in 124). The command palette lists "Make Gezik the default file manager" and "Restore the system file manager" (kind Command).
