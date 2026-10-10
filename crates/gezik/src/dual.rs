@@ -328,7 +328,9 @@ pub fn to_other(moving: bool) {
                 ops.transfer(paths, target, if moving { Effect::Move } else { Effect::Copy });
             }
             None => {
-                let anchor = if is_within(&target, &shown) { shown } else { target.clone() };
+                // shortcut: one stat per level above a typed folder outside the other pane's, on
+                // the UI thread (a dead network path blocks); move it off the thread if that bites.
+                let anchor = anchor(&target, shown, |path| path.exists());
                 ops.transfer_making(paths, &target, anchor, moving);
             }
         });
@@ -357,13 +359,13 @@ pub fn to_other(moving: bool) {
             note,
             move |answer| {
                 let Some((choice, typed)) = answer else { return };
+                let Some(target) = typed_target(&typed_base, &typed) else {
+                    return panes::active_view().note("No folder was typed".to_owned());
+                };
                 if choice == 1 {
                     dont_ask_again();
                 }
-                match typed_target(&typed_base, &typed) {
-                    Some(target) => go(target),
-                    None => panes::active_view().note("No folder was typed".to_owned()),
-                }
+                go(target);
             },
         );
     });
@@ -400,6 +402,16 @@ pub fn typed_target(base: &Path, typed: &str) -> Option<PathBuf> {
         }
     }
     target.is_absolute().then_some(target)
+}
+
+/// Where the job starts making folders for `target`: the other pane's folder `base` when the
+/// target is under it, else the nearest folder above it that `exists` (the target itself if
+/// it is there); every missing level below it is made.
+fn anchor(target: &Path, base: PathBuf, exists: impl Fn(&Path) -> bool) -> PathBuf {
+    if is_within(target, &base) {
+        return base;
+    }
+    target.ancestors().find(|path| exists(path)).unwrap_or(target).to_path_buf()
 }
 
 /// At start (Windows and Linux, `[shortcuts]` naming neither search nor toggle-dual-pane):
@@ -524,6 +536,18 @@ mod tests {
             assert_eq!(typed_target(&base, "D:x"), None, "no root: not a folder");
             assert_eq!(typed_target(Path::new("C:\\"), "..\\.."), Some(PathBuf::from("C:\\")));
         }
+    }
+
+    #[test]
+    fn missing_folders_are_made_from_the_nearest_one_there() {
+        let base = std::env::temp_dir().join("Yedek");
+        let under = base.join("new").join("sub");
+        assert_eq!(anchor(&under, base.clone(), |_| false), base, "under the other pane's folder: from it");
+        let root = std::env::temp_dir();
+        let far = root.join("newA").join("newB");
+        assert_eq!(anchor(&far, base.clone(), |p| p == root.as_path()), root, "two levels missing");
+        assert_eq!(anchor(&far, base.clone(), |_| true), far, "there already");
+        assert_eq!(anchor(&far, base, |_| false), far, "nothing found: the target, the job says why");
     }
 
     #[test]

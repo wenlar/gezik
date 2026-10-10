@@ -1009,7 +1009,19 @@ impl Shortcuts {
             let mut taken: Vec<(&str, Action)> = Vec::new();
             for text in action.default_texts(platform) {
                 let chord = parse_chord(text, platform).expect("defaults are valid").expect("defaults are set");
-                match holder(&bindings, &chord, action) {
+                // A key written for another action is not a pane action's to share: the user
+                // meant it for that one (unless it is that action's own default, `refresh = "f5"`).
+                let written = || {
+                    let mut owners = bindings.iter().filter(|(c, _)| *c == chord).map(|(_, a)| *a);
+                    owners.find(|owner| {
+                        user.iter().any(|(a, _)| a == owner)
+                            && !owner
+                                .default_texts(platform)
+                                .iter()
+                                .any(|t| parse_chord(t, platform) == Ok(Some(chord)))
+                    })
+                };
+                match holder(&bindings, &chord, action).or_else(|| action.needs_dual_pane().then(written).flatten()) {
                     Some(owner) => taken.push((text, owner)),
                     None => bindings.push((chord, action)),
                 }
@@ -1751,6 +1763,30 @@ clear-history = \"ctrl+shift+h\"
             warnings[0].message.starts_with("shortcuts: the default \"f3\" of toggle-dual-pane is used by search"),
             "{warnings:?}"
         );
+    }
+
+    #[test]
+    fn a_key_written_for_another_action_is_not_a_pane_actions() {
+        let two = KeyContext { dual: true };
+        let (s, warnings) = build(
+            "[shortcuts]
+rename = \"f6\"
+",
+        );
+        assert_eq!(s.action_in(&chord("f6"), two), Some(Action::Rename), "the user's F6 stays with two panes");
+        assert_eq!(s.chord_for(Action::MoveToOtherPane), None);
+        assert_eq!(
+            warnings[0].message,
+            "shortcuts: the default \"f6\" of move-to-other-pane is used by rename; move-to-other-pane is disabled (give rename another key to use it)"
+        );
+        // Refresh written with its own default keys (the template's line): F5 still copies.
+        let (s, warnings) = build(
+            "[shortcuts]
+refresh = [\"f5\", \"ctrl+r\"]
+",
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(s.action_in(&chord("f5"), two), Some(Action::CopyToOtherPane));
     }
 
     #[test]
