@@ -1,0 +1,27 @@
+PASS both instances created: ["ready 0 0", "ready 1 0", "geometry 0 0 24 499 676", "geometry 1 501 24 499 676", "geometry 1 501 24 499 676", "focus 0 true"]
+PASS each pane reports its list rect: 
+PASS focus-request focuses pane 0: 
+PASS Down goes to the window capture, then to pane 0 only: ["wkey Down", "key 0 Down"]
+PASS selection moved in pane 0: 
+INFO after selection change in pane 0: row_data a=0 b=0 | row evals p0=28 p1=0
+INFO after a scalar (path) change in pane 0: row_data a=0 b=0 | row evals p0=28 p1=0
+PASS pane 0 keeps focus across set_row_data: []
+PASS scroll-request scrolls pane 1 only: p0=0 p1=240000
+INFO after scroll-request in pane 1 (10000 rows down): row_data a=0 b=29 | row evals p0=0 p1=28
+PASS new model + scroll-request in one write keeps the scroll: p1=12000
+PASS new model, then scroll-request in the same tick: p1=24000
+PASS notify.reset(), then scroll-request in the same tick: p1=36000
+PASS Tab (pane-owned): pane 0 reports it, Rust moves focus to pane 1: ["wkey Tab", "tab 0 false", "focus 1 true", "focus 0 false"]
+PASS Down now goes to pane 1: ["wkey Down", "key 1 Down"]
+PASS Shift+Tab back to pane 0: ["wkey Backtab", "tab 1 true", "focus 0 true", "focus 1 false"]
+INFO Slint's own Tab chain from pane 0: ["wkey Tab", "key 0 Tab", "focus 1 true", "focus 0 false"] (p0=false, p1=true)
+INFO Slint's own Tab chain, second Tab: ["wkey Tab", "key 1 Tab", "focus 99 true", "focus 1 false"] (p0=false, p1=false)
+PASS rename-request moves focus into the pane's field: ["focus 10 true", "focus 99 false"]
+PASS typing reaches rename-edited with the pane index: ["wkey x", "rename-edited 0 xabc.txt"]
+PASS Return ends the rename in pane 0 and gives focus back: ["wkey Return", "rename-done 0 xabc.txt", "focus 0 true", "focus 10 false"]
+PASS drag from pane 0: pane 1 finds its own drop row from the window drag point: ["press 0 2", "drag-start 0 2", "drop 0 2", "drop 1 1505"]
+PASS release goes to the pressed pane (0) with window coordinates: ["drag-end 0 750 156", "focus 0 false"]
+PASS closing pane 1 re-reports pane 0's list rect (full width): ["drag-end 0 750 156", "focus 0 false", "geometry 0 0 24 1000 676"]
+PASS closing pane 1 frees its rows model: 
+PASS reopened pane applies its scroll in init (a wheel step then reports 4800 + 24): ready=["ready 1 0", "ready 1 4800"] scrolled=4824
+RESULT 0 failed
