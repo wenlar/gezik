@@ -350,6 +350,8 @@ pub struct Settings {
     pub convert: ConvertSettings,
     /// User commands (`[[commands]]`); invalid ones are left out.
     pub commands: Vec<CommandSpec>,
+    /// View rules (`[[view-rules]]`, spec 10 §8); invalid ones are left out.
+    pub view_rules: Vec<gezik_core::view_rules::RuleSpec>,
 }
 
 /// Allowed `max-fps` values besides 0 (no limit).
@@ -387,6 +389,7 @@ impl Default for Settings {
             tools: ToolsSettings::default(),
             convert: ConvertSettings::default(),
             commands: Vec::new(),
+            view_rules: Vec::new(),
         }
     }
 }
@@ -732,6 +735,9 @@ impl Settings {
                     }
                 }
             }
+        }
+        if let Some(value) = table.get("view-rules") {
+            settings.view_rules = crate::view_rules::parse_view_rules(value, file, warnings);
         }
         settings
     }

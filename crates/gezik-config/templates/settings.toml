@@ -235,6 +235,35 @@ tree-follow = false
 # modified = "30d"
 # type = "videos"
 
+# View rules: the first rule that matches a folder sets its view, unless you changed that
+# folder's view yourself (the View menu's "Reset to rule" forgets that). A rule matches by
+# path (* and ? within a name, ** for any folders below; ~ and tokens like {pictures} work;
+# case is ignored on Windows), by kind (drives | trash | search | flat | network | removable |
+# cloud) and by content ("pictures >= 50%" of the items shown; pictures, videos, audio,
+# documents, archives, code or folders); with more than one, all must match. Search results
+# match by kind only. A rule sets mode (list | grid), sort, sort-dir, group, grid-size and
+# columns (modified, created, type, size; name always shows); what it leaves out stays
+# [view]'s. A rule with a mistake is reported and left out.
+# [[view-rules]]
+# path = "{pictures}/**"
+# mode = "grid"
+# grid-size = "large"
+#
+# [[view-rules]]
+# kind = "network"
+# mode = "list"
+# columns = ["modified", "size"]
+#
+# [[view-rules]]
+# content = "pictures >= 50%"
+# mode = "grid"
+#
+# [[view-rules]]
+# path = "~/Downloads"
+# sort = "modified"
+# sort-dir = "desc"
+# group = "date"
+
 # Your own commands, shown in the Convert layer under "Commands" and in the right-click
 # menu under "Commands >" (only for files that match "types"). No shell is used: "run" is a
 # program followed by its arguments, and placeholders are replaced inside each argument, so

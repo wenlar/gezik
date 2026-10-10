@@ -12,6 +12,9 @@ pub fn config_dir() -> Option<PathBuf> {
     dirs::config_dir().map(|dir| dir.join("gezik"))
 }
 
+/// The `{token}`s [`KnownDirs::system`] knows, for settings that check a path's token.
+pub const TOKENS: [&str; 7] = ["home", "desktop", "documents", "downloads", "pictures", "music", "videos"];
+
 /// Well-known folders, used to store paths so they work on another machine or OS.
 #[derive(Debug, Clone)]
 pub struct KnownDirs {
@@ -239,5 +242,10 @@ mod tests {
         write_atomic(&link, "new").unwrap();
         assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
         assert_eq!(std::fs::read_to_string(&target).unwrap(), "new");
+    }
+
+    #[test]
+    fn the_system_folders_use_the_known_tokens() {
+        assert!(KnownDirs::system().dirs.iter().all(|(token, _)| TOKENS.contains(token)));
     }
 }
