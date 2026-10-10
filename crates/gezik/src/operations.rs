@@ -16,10 +16,11 @@ use gezik_core::ops::paths::same_path;
 use gezik_core::ops::rate::{Rate, format_eta, format_rate};
 use gezik_core::templates::{LinkKind, PasteKind, Template, pasted_name};
 use gezik_ops::{
-    Answer, CopyTask, DeleteTask, Engine, Event, GroupTask, JobId, JobState, LinkTask, MoveTask, NewTask, PauseReason,
-    Progress, Question, Report, RestoreTask, Settings, Task, TrashTask,
+    Answer, CopyTask, DeleteTask, Engine, Event, GroupTask, JobId, JobState, LinkTask, MaterializeTask, MoveTask,
+    NewTask, PauseReason, Progress, Question, Report, RestoreTask, Settings, Task, TrashTask,
 };
 use gezik_platform::clipboard::{self, ClipboardError, ClipboardFiles};
+use gezik_platform::dnd::VirtualFiles;
 use gezik_platform::taskbar::{Taskbar, TaskbarState};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
@@ -908,6 +909,13 @@ impl Operations {
             }
         });
         self.submit(retry(), Some(retry), After::Select)
+    }
+
+    /// Items another program offers with no file behind them (an attachment, a browser's
+    /// picture, a promised file), written into `dir` as one job; Ctrl+Z trashes what it made
+    /// (spec 9 §8.1). No retry: the source may be gone by then.
+    pub fn materialize(&self, files: VirtualFiles, dir: PathBuf, count: usize) {
+        self.submit(Box::new(MaterializeTask::new(files, &dir, count)), None, After::Select);
     }
 
     /// The clipboard may have changed in another program: re-read what is cut there (when
