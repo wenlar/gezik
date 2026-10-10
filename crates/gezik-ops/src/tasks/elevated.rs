@@ -179,6 +179,9 @@ impl Task for ElevatedTask {
                 });
                 match ran {
                     Ok(()) => elevated::answers(count, &replies),
+                    // A helper that ended badly after some replies: what it said counts (and is
+                    // checked on disk); the rest stopped.
+                    Err(LaunchError::Failed(_)) if !replies.is_empty() => elevated::answers(count, &replies),
                     Err(LaunchError::Cancelled) => vec![Answer::NotRun(CANCELLED.to_owned()); count],
                     Err(LaunchError::Unavailable(why) | LaunchError::Failed(why)) => vec![Answer::NotRun(why); count],
                 }
@@ -341,6 +344,24 @@ mod tests {
         let (_, missing) =
             run(Some(Fake::new(false, &[], Err(LaunchError::Unavailable("No pkexec".into())))), &ops[..1]);
         assert_eq!(messages(&missing), [(dir.join("d1"), "No pkexec".to_owned())]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_helper_that_crashed_midway_keeps_what_it_said() {
+        let dir = test_dir("elevated-crash");
+        let ops = [Op::Mkdir(dir.join("d1")), Op::Mkdir(dir.join("d2")), Op::Mkdir(dir.join("d3"))];
+        std::fs::create_dir(dir.join("d1")).unwrap();
+        let crashed = || Err(LaunchError::Failed("boom".into()));
+        let (engine, report) = run(Some(Fake::new(false, &["ok 0", "ok 1"], crashed())), &ops);
+        assert_eq!(
+            messages(&report),
+            [(dir.join("d2"), NOT_SO.to_owned()), (dir.join("d3"), elevated::STOPPED.to_owned())],
+            "d1 said and seen; d2 said but not there; d3 never answered"
+        );
+        assert_eq!(engine.undo_label().as_deref(), Some("New folder as administrator"), "d1's undo");
+        let (_, silent) = run(Some(Fake::new(false, &[], crashed())), &ops[2..]);
+        assert_eq!(messages(&silent), [(dir.join("d3"), "boom".to_owned())], "no replies: the launch error");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

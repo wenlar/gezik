@@ -636,6 +636,7 @@ Alt proje 1 tamamlandıktan sonra bilerek ertelenen maddeler. Kaynak: görev inc
   - Windows'ta `CreateDirectoryW` ile kimliği okuyan açış arasında bir pencere var: bu arada araya sokulan klasör "kendi yaptığı" sanılabilir; üst klasöre yazma hakkı ister (`secure_windows.rs` `shortcut:`). Unix'te sahip denetimi kapatır.
   - Boruya başka bir sürecin bağlanıp meşgul etmesi yalnız rahatsızlıktır (en çok 8 ret, sonra iş `ENDED` ile düşer); yanlış bir sonuç üretemez.
   - Korunan klasörler yalnız **kendileri** korunur: `C:\Windows\System32` ya da `/usr/bin` gibi içerikleri değiştirilebilir (planın kuralı; diğer kapılar onay kutusu, sistemin yetki penceresi ve kimlik denetimi).
+  - Aynı kullanıcıdaki herhangi bir süreç `gezik --elevated …`'ı kendisi `runas`/`pkexec`/`osascript` ile başlatabilir; yetki penceresi listeyi göstermez. Bu bir yönetici yazma aracıdır, ama kötü amaçlı bir yazılımın kendi ikilisini yükseltmesiyle eşdeğerdir, daha kötüsü değil; kabul edildi (imzalı exe'de UAC Gezik'in yayıncısını gösterir).
   - Sahip/grup onayda isim değil sayı olarak (uid/gid) görünür: gönderilen tam olarak budur.
   - `others_can_change` Windows'ta sahibin örtük `WRITE_DAC`'ını (sahip her zaman DACL'i değiştirebilir), reddetme ve koşullu ACE'leri, Unix'te macOS ACL'lerini hesaba katmaz; Windows'ta exe'nin üstündeki klasörlere bakmaz.
   - Unix'te exe tutulamaz (sapma 15); `remove`/`rmdir` kimlik denetiminden sonra adla `unlinkat` eder (o klasöre yazabilen biri yalnız tek bir adı ya da boş bir klasörü etkileyebilir, bağlantıdan asla).

@@ -46,12 +46,14 @@ pub fn applescript(text: &str) -> String {
 
 /// The AppleScript that runs `exe` with `args` as root behind the system's password prompt:
 /// only the exe and its arguments, each a quoted `sh` word (spec §10.5's one exception).
-/// `without altering line endings`: the replies come back with `\n`, not `\r`.
+/// `without altering line endings`: the replies come back with `\n`, not `\r`. `exit 0`:
+/// `do shell script` drops the output of a command that fails, and the replies a helper wrote
+/// before it crashed must still reach Gezik (a finished list ends with `done`).
 pub fn osascript_source(exe: &str, args: &[String], prompt: &str) -> String {
     let command: Vec<String> = std::iter::once(exe).chain(args.iter().map(String::as_str)).map(sh_word).collect();
     format!(
         "do shell script {} with prompt {} with administrator privileges without altering line endings",
-        applescript(&command.join(" ")),
+        applescript(&format!("{}; exit 0", command.join(" "))),
         applescript(prompt)
     )
 }
@@ -189,7 +191,7 @@ mod tests {
         let source = osascript_source("/Apps/gé zik", &["--elevated".into(), "it's".into()], "Gezik: Copy 1 item.");
         assert_eq!(
             source,
-            r#"do shell script "'/Apps/gé zik' '--elevated' 'it'\\''s'" with prompt "Gezik: Copy 1 item." with administrator privileges without altering line endings"#
+            r#"do shell script "'/Apps/gé zik' '--elevated' 'it'\\''s'; exit 0" with prompt "Gezik: Copy 1 item." with administrator privileges without altering line endings"#
         );
     }
 

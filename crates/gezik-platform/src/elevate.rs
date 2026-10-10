@@ -12,7 +12,7 @@ use gezik_core::elevated::{self, LaunchError, Op};
 pub const NEEDS_PKEXEC: &str = "Administrator operations need pkexec (polkit).";
 pub const NO_AGENT: &str =
     "No polkit authentication agent is running, so nothing can ask for the administrator password.";
-pub const ENDED: &str = "The administrator helper ended without answering";
+pub const ENDED: &str = "The administrator helper stopped early; some items may have been done. Check the folder.";
 pub const NOT_PLAIN_EXE: &str = "Gezik's own path has characters the prompt cannot carry";
 /// A reply line is cut to this; more than `MAX_READ` bytes in all are not read.
 const MAX_LINE: usize = 4096;
