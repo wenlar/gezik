@@ -1,0 +1,42 @@
+run.ps1 output, Windows 11 24H2, 2026-10-10, pane-probe release (LTO), window 1000x700 logical,
+100k rows per pane. Machine busy with other builds (CPU load 63-87 %), so CPU is noisy.
+Memory = Task Manager "Memory" (private working set). Scroll = dispatch_event wheel, 40 px every 16 ms, 5 s.
+
+run 1 [bench 1 0]: scroll 5,77 MB; after 5,77 MB; scroll CPU 7,7% of one core
+run 2 [bench 1 0]: idle 5,75 MB; scroll 5,81 MB; after 5,81 MB; scroll CPU 13,8% of one core
+run 3 [bench 1 0]: idle 5,75 MB; scroll 5,82 MB; after 5,82 MB; scroll CPU 9,4% of one core
+run 1 [bench 2 0]: idle 6,28 MB; scroll 6,32 MB; after 6,33 MB; scroll CPU 9,5% of one core
+run 2 [bench 2 0]: idle 6,33 MB; scroll 6,34 MB; after 6,34 MB; scroll CPU 8,4% of one core
+run 3 [bench 2 0]: idle 6,32 MB; scroll 6,30 MB; after 6,30 MB; scroll CPU 8,4% of one core
+run 1 [bench 2 both]: idle 6,29 MB; scroll 6,48 MB; after 6,48 MB; scroll CPU 17,4% of one core
+run 2 [bench 2 both]: idle 6,31 MB; scroll 6,37 MB; after 6,37 MB; scroll CPU 9,4% of one core
+run 3 [bench 2 both]: idle 6,31 MB; scroll 6,36 MB; after 6,36 MB; scroll CPU 13,8% of one core
+run 1 [bench 1 0]: idle 5,80 MB; scroll 5,91 MB; after 5,91 MB; scroll CPU 11,3% of one core
+run 2 [bench 1 0]: idle 5,76 MB; scroll 5,79 MB; after 5,79 MB; scroll CPU 10,8% of one core
+run 3 [bench 1 0]: idle 5,73 MB; scroll 5,88 MB; after 5,88 MB; scroll CPU 12,9% of one core
+run 4 [bench 1 0]: idle 5,78 MB; scroll 5,82 MB; after 5,82 MB; scroll CPU 11,9% of one core
+run 5 [bench 1 0]: idle 5,77 MB; scroll 5,90 MB; after 4,38 MB; scroll CPU 10,4% of one core
+run 1 [bench 2 0]: idle 6,35 MB; scroll 6,37 MB; after 6,37 MB; scroll CPU 10,7% of one core
+run 2 [bench 2 0]: idle 6,35 MB; scroll 6,33 MB; after 6,33 MB; scroll CPU 18,9% of one core
+run 3 [bench 2 0]: idle 6,35 MB; scroll 6,33 MB; after 6,33 MB; scroll CPU 10,0% of one core
+run 4 [bench 2 0]: idle 6,32 MB; scroll 6,31 MB; after 6,31 MB; scroll CPU 18,0% of one core
+run 5 [bench 2 0]: idle 6,30 MB; scroll 6,35 MB; after 6,35 MB; scroll CPU 12,6% of one core
+run 1 [bench 2 both]: idle 6,30 MB; scroll 6,36 MB; after 6,36 MB; scroll CPU 15,9% of one core
+run 2 [bench 2 both]: idle 6,33 MB; scroll 6,38 MB; after 6,38 MB; scroll CPU 15,5% of one core
+run 3 [bench 2 both]: idle 6,32 MB; scroll 6,39 MB; after 6,39 MB; scroll CPU 24,0% of one core
+run 4 [bench 2 both]: idle 6,30 MB; scroll 6,36 MB; after 6,36 MB; scroll CPU 25,9% of one core
+run 5 [bench 2 both]: idle 6,33 MB; scroll 6,38 MB; after 6,38 MB; scroll CPU 17,3% of one core
+
+run 1 [openclose]: one 6,01 MB; two 6,30 MB; closed 6,06 MB;   (second model freed: true)
+run 2 [openclose]: one 6,05 MB; two 6,34 MB; closed 6,09 MB;   (second model freed: true)
+run 3 [openclose]: one 6,01 MB; two 6,20 MB; closed 6,07 MB;   (second model freed: true)
+run 4 [openclose]: one 6,03 MB; two 6,33 MB; closed 6,09 MB;   (second model freed: true)
+run 5 [openclose]: one 6,05 MB; two 6,35 MB; closed 6,10 MB;   (second model freed: true)
+
+run 1 [windows]: one 7,40 MB; create 7,40 MB; two 9,03 MB; closed 6,14 MB;   (second window model freed: true)
+run 2 [windows]: one 7,37 MB; create 7,37 MB; two 9,00 MB; closed 6,00 MB;   (second window model freed: true)
+run 3 [windows]: one 7,36 MB; create 7,36 MB; two 8,98 MB; closed 6,13 MB;   (second window model freed: true)
+(4 earlier runs without the "create" mark: one 7,34-7,40; two 8,97-9,04; closed 6,02-6,16.)
+
+exe (strip, LTO, panic=abort): `for p[i] in panes: PaneView` 9.403.904 B;
+PROBE_STATIC=1 (two literal PaneView instances) 9.404.416 B (+512 B).
