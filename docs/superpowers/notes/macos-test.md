@@ -512,6 +512,19 @@ Write the results to `macos-test-results.md` ("Run: 9b7"). Use an admin account 
 159. **Delete and links.** `sudo ln -s ~/Documents /Applications/GezikTest/link && sudo touch /Applications/GezikTest/g`; delete the whole `GezikTest` folder (moving it to the trash fails with `Access denied`) → Retry as administrator → the box starts with `This will delete 1 item permanently as administrator. It cannot be undone.`, buttons `Cancel` (Return) and `Delete` → password → the folder is gone, `~/Documents` and its files are where they were. ⌘Z does not bring it back (`Nothing to undo` or the job before). Make the test folder again for 160.
 160. **Refusals.** (a) Hard links: `sudo sh -c 'echo x > /Applications/GezikTest/h && ln /Applications/GezikTest/h /Applications/GezikTest/h2'`; Get Info on `h`, change a permission → `Change as administrator…` → password: the row fails with `It has several names; Gezik does not change it as administrator`, `ls -l` unchanged. Deleting `h` as administrator works and `h2` still says `x`. (b) setuid: `cp /bin/ls ~/s && chmod 4755 ~/s`, copy `~/s` into `GezikTest` as administrator: `ls -l` shows `-rwxr-xr-x` (no `s`), owner root. (c) FIFO: `mkfifo ~/fifo`, copy it into `GezikTest` as administrator: the row says `A device, pipe or socket; left alone`, Gezik and the helper do not hang (`ps ax | grep "gezik --elevated"` empty). (d) Rename as administrator inside `GezikTest` to a free name works (`renameatx_np`); to a taken name (`h2`) nothing is overwritten (`cat h2`), write down what Gezik said. (e) A system folder itself: select `/Applications` in `/` and Delete → Retry as administrator: the status bar says `Not done as administrator: /Applications (…)` and no box or password comes.
 
+### 9b8, files promised by other programs
+
+Write the results to `macos-test-results.md` ("Run: 9b8"). Programs like Mail, Photos and Safari drag a promise, not a file: Gezik asks for the files into a private folder (`$TMPDIR/gezik-drop-…`, only yours), then a job moves them into the folder you dropped on. Names come from the other program and are cleaned (no `/`, `..` or hidden characters; nothing leaves the folder).
+
+161. **Tests first.** `cargo test -p gezik-core drop_names`, `cargo test -p gezik-ops materialize`, `cargo test -p gezik-platform promise`; paste the output. The promise code was only compiled on Windows: `only_link_promises_are_left_out`, `the_private_folder_is_new_and_only_ours` and `a_plain_copy_keeps_the_quarantine_mark` run here for the first time.
+162. **Mail attachment.** Drag an attachment from a Mail message onto a Gezik folder: the drag shows `Copy to <folder>`, a job row `Copying 1 item to …` appears, the file arrives with its name, and it is selected. ⌘Z puts it in the Trash. Drag a whole message from Mail's list: a `.eml` file arrives (or write down what does).
+163. **Photos.** Drag two photos from Photos into a folder: two files (HEIC or JPEG: write down which). A photo kept only in iCloud: the job row waits while Photos downloads it, then the file arrives; Gezik responds meanwhile.
+164. **Safari.** Drag a picture from a web page: a picture file arrives (or the drag is refused: write down which). Drag a link: nothing is made (no `.webloc`), the drag shows it is refused.
+165. **Same name twice.** Drop the same attachment twice: the second time the conflict list asks; Keep both gives `name (2).ext`, the first file stays as it was.
+166. **Cancel and clean up.** Start a large promised drop (a long video from Photos, or a large attachment) and cancel the job row at once: nothing is left in the folder; `ls $TMPDIR | grep gezik-drop` lists nothing once the row is gone. An older app that promises files the old way (if you know one, e.g. an older FTP client): its files arrive too (write down the app and what happened).
+167. **Into a sidebar row and a tab.** Drop an attachment on a sidebar folder and on a tab: it goes there. On the drop stack strip: refused. On a `.zip` file in the list: it goes into the zip's folder, not into the zip.
+168. **The quarantine mark stays.** Save the same Mail attachment once with Mail's own Save and once by dragging it into Gezik (162); do the same for a Safari picture (Save Image As vs 164). `xattr -l` on each pair: if Mail's or Safari's copy has `com.apple.quarantine`, Gezik's copy has it too. A `.zip` attachment with a script or `.app` inside, dropped through Gezik and opened: Gatekeeper asks as it does for a downloaded file. Write down any file that arrived without the mark.
+
 Report anything else that looks wrong: layout, fonts, Retina scaling, ⌘ shortcuts that don't work, and the wording of the boxes.
 
 ### 10d, grouping
@@ -570,7 +583,6 @@ These are known differences from Finder and ForkLift (from the ForkLift comparis
   - The interface is in English.
 - **Drag and drop:**
   - Spring-loaded folders work only on tabs.
-  - Drags of file promises from Photos or Mail probably don't arrive. This is worth trying and noting.
 - **Look:** the controls are drawn by Slint. There is no Liquid Glass sidebar, no system accent colour, and no macOS window tabs.
 
 ## When you are done
