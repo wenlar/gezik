@@ -520,6 +520,9 @@ pub fn offer_repair(text: String) {
                 if matches!(snapshot.path, PathState::Moved { .. }) {
                     lines.extend(changes::repair_now()?);
                 }
+                if matches!(snapshot.login, changes::LoginState::Moved { .. }) {
+                    lines.extend(changes::repair_login_now()?);
+                }
                 Ok(lines)
             });
         }
@@ -596,6 +599,7 @@ mod tests {
         Snapshot {
             path,
             default: changes::DefaultState::Off,
+            login: changes::LoginState::Off,
             changes: changes.map(|n| vec![change; n]).map_err(str::to_owned),
             journal: PathBuf::from("/c/system-changes.toml"),
             dbus_taken: false,

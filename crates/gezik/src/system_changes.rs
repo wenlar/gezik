@@ -17,6 +17,9 @@ use gezik_platform::system::text as t;
 pub const FEATURE_PATH: &str = "path";
 /// Gezik as the default file manager (9b4).
 pub const FEATURE_DEFAULT: &str = "default-file-manager";
+/// Gezik starting at sign-in (9b9; spec 9.3, 11). A system change, not a setting (deviation 1).
+pub const FEATURE_LOGIN: &str = "start-at-login";
+const RUN: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 /// `gezik.cmd` (decision 3): no path in it, so no code page can break it; `start` finds
 /// gezik.exe through App Paths, which holds the exe's path as Unicode. `""` is start's
 /// window title; `%*` the arguments as the shell gave them. `start` looks for `gezik.exe`
@@ -212,15 +215,69 @@ fn linux_targets(places: &Places, exe: &str, read: Option<&ReadText>) -> Option<
     Some(out)
 }
 
+fn login_step(kind: Kind, place: impl Into<String>, name: &str, after: Value) -> Change {
+    Change { feature: FEATURE_LOGIN.into(), name: name.into(), ..target(kind, place, "", "", after) }
+}
+
+/// Start at login's places, whatever `exe` is (the allow list and the sweep pass "").
+fn login_steps(places: &Places, exe: &str, os: Os) -> Option<Vec<Change>> {
+    Some(match os {
+        Os::Windows => vec![
+            login_step(Kind::RegistryKey, RUN, "", Value::Present),
+            login_step(Kind::RegistryValue, RUN, t::RUN_NAME, sz(&t::login_command(exe))),
+        ],
+        Os::Mac => {
+            let agents = format!("{}/Library/LaunchAgents", places.home.as_ref()?.to_str()?);
+            vec![
+                login_step(Kind::Folder, agents.as_str(), "", Value::Present),
+                login_step(
+                    Kind::File,
+                    format!("{agents}/{}", t::LAUNCH_AGENT_FILE),
+                    "",
+                    Value::Text(t::launch_agent(exe)),
+                ),
+            ]
+        }
+        Os::Linux => {
+            let config = places.config_home.as_ref()?.to_str()?;
+            vec![
+                login_step(Kind::Folder, config, "", Value::Present),
+                login_step(Kind::Folder, format!("{config}/autostart"), "", Value::Present),
+                login_step(
+                    Kind::File,
+                    format!("{config}/autostart/gezik.desktop"),
+                    "",
+                    Value::Text(t::autostart_entry(exe)),
+                ),
+            ]
+        }
+    })
+}
+
+/// What start at login writes (spec 9.3), per user only: Windows the Run value, macOS a
+/// LaunchAgent, Linux an XDG autostart entry, each starting `<exe> --background`; the folder
+/// or key first, made only if missing. `None`: the user's folder is not known, or `exe` is not
+/// an absolute `gezik`/`gezik.exe` that the entry's exact reader gives back unchanged.
+pub fn login_targets(places: &Places, exe: &str, os: Os) -> Option<Vec<Change>> {
+    let targets = login_steps(places, exe, os)?;
+    let ours = |c: &Change| {
+        value_allowed(c, &Value::Absent, &c.after)
+            && (matches!(c.kind, Kind::Folder | Kind::RegistryKey) || login_exe_of(c).as_deref() == Some(exe))
+    };
+    targets.iter().all(ours).then_some(targets)
+}
+
 /// Whether `change` is at a place Gezik writes (decision 8): a journal edited by hand or by
 /// something else cannot point Gezik at anything else. Feature, kind, place, name and entry
-/// must all be one of [`path_targets`]'s or [`default_targets`]'s (Windows without case).
+/// must all be one of [`path_targets`]'s, [`default_targets`]'s or start at login's (Windows
+/// without case).
 pub fn allowed(change: &Change, places: &Places, os: Os) -> bool {
     let windows = os == Os::Windows;
     let same = |a: &str, b: &str| if windows { a.to_lowercase() == b.to_lowercase() } else { a == b };
     let path = path_targets(places, "", windows).unwrap_or_default();
     let default = default_targets(places, "", os, None).unwrap_or_default();
-    path.iter().chain(&default).any(|t| {
+    let login = login_steps(places, "", os).unwrap_or_default();
+    path.iter().chain(&default).chain(&login).any(|t| {
         t.feature == change.feature
             && t.kind == change.kind
             && same(&t.place, &change.place)
@@ -356,12 +413,17 @@ fn value_allowed(change: &Change, now: &Value, value: &Value) -> bool {
 /// A file's text by its name: `allowed` has pinned the place already.
 fn file_text_allowed(place: &str, text: &str) -> bool {
     let unix_gezik = |exe: String| exe.starts_with('/') && exe.rsplit('/').next() == Some("gezik");
+    // Two files are named gezik.desktop: the login one is in autostart/ (9b9).
+    if place.ends_with("/autostart/gezik.desktop") {
+        return t::autostart_exe(text).is_some_and(unix_gezik);
+    }
     match place.rsplit(['/', '\\']).next().unwrap_or("") {
         "gezik.cmd" => text == SHIM,
         "Info.plist" => text == INFO_PLIST,
         "gezik.desktop" => t::desktop_exe(text).is_some_and(unix_gezik),
         "org.freedesktop.FileManager1.service" => t::service_exe(text).is_some_and(unix_gezik),
         "mimeapps.list" => text == t::MIMEAPPS_EMPTY,
+        n if n == t::LAUNCH_AGENT_FILE => t::launch_agent_exe(text).is_some_and(unix_gezik),
         _ => false,
     }
 }
@@ -372,6 +434,9 @@ fn registry_value_allowed(place: &str, name: &str, data: &str) -> bool {
     let place = place.to_lowercase();
     if place == APP_PATH.to_lowercase() {
         return name.is_empty() && names_gezik_exe(data);
+    }
+    if place == RUN.to_lowercase() {
+        return name.eq_ignore_ascii_case(t::RUN_NAME) && t::login_exe(data).is_some_and(names_gezik_exe);
     }
     let command = |arg: &str| t::command_exe(data, arg).is_some_and(names_gezik_exe);
     if place.ends_with(r"\opennewwindow\command") {
@@ -746,6 +811,13 @@ pub fn sweep_changes(access: &dyn Access, places: &Places, exe: &Path, os: Os) -
         let Some(before) = swept_before(&target, &now, exe) else { continue };
         out.push(Change { before, after: now, done: true, ..target });
     }
+    // Start at login: only the entry in Gezik's exact shape (the Run key, LaunchAgents and
+    // autostart folders are not named Gezik's: swept_before leaves them).
+    for target in login_steps(places, "", os).unwrap_or_default() {
+        let Ok(now) = access.current(&target) else { continue };
+        let Some(before) = swept_before(&target, &now, exe) else { continue };
+        out.push(Change { before, after: now, done: true, ..target });
+    }
     out
 }
 
@@ -983,11 +1055,59 @@ pub fn default_state(made: &[(Change, Value)], exe: &str, taken: Option<String>)
     }
 }
 
+/// The start at login row (9b9).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LoginState {
+    Off,
+    On,
+    /// Made by Gezik for an exe that is not this one.
+    Moved {
+        old: String,
+    },
+    /// Something else changed what Gezik wrote, or it stopped before the entry.
+    Changed,
+    /// Gezik made nothing and turning it on would refuse (another program's `Run\Gezik`): why.
+    Taken {
+        why: String,
+    },
+}
+
+/// The exe a login entry starts, read back only from Gezik's exact text (REG_SZ only).
+fn login_exe_of(change: &Change) -> Option<String> {
+    match (&change.kind, &change.after) {
+        (Kind::RegistryValue, Value::Reg { ty: RegType::Sz, data }) => t::login_exe(data).map(str::to_owned),
+        (Kind::File, Value::Text(text)) if change.place.ends_with(".plist") => t::launch_agent_exe(text),
+        (Kind::File, Value::Text(text)) => t::autostart_exe(text),
+        _ => None,
+    }
+}
+
+/// The row from the journal's finished login changes paired with what is there now.
+pub fn login_state(made: &[(Change, Value)], exe: &str, taken: Option<String>) -> LoginState {
+    let made: Vec<&(Change, Value)> = made.iter().filter(|(c, _)| c.done && c.feature == FEATURE_LOGIN).collect();
+    if made.is_empty() {
+        return taken.map_or(LoginState::Off, |why| LoginState::Taken { why });
+    }
+    let entry = |c: &Change| matches!(c.kind, Kind::RegistryValue | Kind::File);
+    let still = |(c, now): &&(Change, Value)| match c.kind {
+        Kind::Folder | Kind::RegistryKey => *now != Value::Absent,
+        _ => *now == c.after,
+    };
+    if !made.iter().any(|(c, _)| entry(c)) || !made.iter().all(still) {
+        return LoginState::Changed;
+    }
+    match made.iter().find_map(|(c, _)| login_exe_of(c)) {
+        Some(old) if !old.eq_ignore_ascii_case(exe) => LoginState::Moved { old },
+        _ => LoginState::On,
+    }
+}
+
 /// What the panel shows; only shown, never acted on.
 #[derive(Debug, Clone)]
 pub struct Snapshot {
     pub path: PathState,
     pub default: DefaultState,
+    pub login: LoginState,
     pub changes: Result<Vec<Change>, String>,
     pub journal: PathBuf,
     /// Linux: another file manager holds FileManager1 (set by the panel on the UI thread).
@@ -1020,9 +1140,16 @@ pub fn snapshot(file: Option<&JournalFile>, access: &dyn Access, places: &Places
     } else {
         None
     };
+    let made_login = made(FEATURE_LOGIN);
+    let login_refused = if made_login.is_empty() {
+        login_targets(places, exe, os).and_then(|targets| would_refuse(list, access, targets))
+    } else {
+        None
+    };
     Snapshot {
         path: path_state(&made(FEATURE_PATH), exe, taken, windows),
         default: default_state(&made_default, exe, refused),
+        login: login_state(&made_login, exe, login_refused),
         changes,
         journal: file.map(JournalFile::path).unwrap_or_default(),
         dbus_taken: false,
@@ -1151,6 +1278,30 @@ pub fn repair_default_now() -> Result<Vec<String>, String> {
     Ok(lines)
 }
 
+/// Start at login (spec 9.3): every target read first; a foreign one refuses with nothing written.
+pub fn login_on_now() -> Result<(), String> {
+    let file = journal_file().ok_or("there is no config folder to keep system-changes.toml in")?;
+    let access = SystemAccess::new();
+    let exe = exe_text()?;
+    let targets = login_targets(&access.places, &exe, Os::HERE).ok_or_else(|| {
+        if login_steps(&access.places, "", Os::HERE).is_none() {
+            "the user's folders are not known".to_owned()
+        } else {
+            format!("Gezik's own path ({exe}) cannot be written into a login entry")
+        }
+    })?;
+    let mut locked = file.lock().map_err(|e| e.to_string())?;
+    apply_all(&mut locked, &access, targets, &exe).map(drop)
+}
+
+/// Repair and Update: Gezik's login entry undone, then made again for this exe.
+pub fn repair_login_now() -> Result<Vec<String>, String> {
+    let mut lines = undo_feature_now(FEATURE_LOGIN)?;
+    login_on_now()?;
+    lines.push("made again for this Gezik".into());
+    Ok(lines)
+}
+
 pub fn undo_all_now() -> Report {
     let access = SystemAccess::new();
     let exe = gezik_platform::system::exe().unwrap_or_default();
@@ -1207,8 +1358,9 @@ pub fn idle_check() -> (Option<String>, bool) {
         return (None, false);
     }
     let snapshot = read_snapshot();
-    let moved =
-        matches!(snapshot.path, PathState::Moved { .. }) || matches!(snapshot.default, DefaultState::Moved { .. });
+    let moved = matches!(snapshot.path, PathState::Moved { .. })
+        || matches!(snapshot.default, DefaultState::Moved { .. })
+        || matches!(snapshot.login, LoginState::Moved { .. });
     let note = moved.then(|| {
         "System registrations still point to Gezik's old place; folders will not open in Gezik until they are repaired."
             .to_owned()
@@ -2148,5 +2300,270 @@ mod tests {
             left.keys().all(|(_, place, _)| !place.contains("gezik") && !place.contains("52205fd8")),
             "only keys not named Gezik's: {left:?}"
         );
+    }
+
+    fn unix_places() -> Places {
+        Places { home: Some("/home/u".into()), config_home: Some("/home/u/.config".into()), ..Places::default() }
+    }
+
+    #[test]
+    fn login_targets_name_only_the_user_s_places() {
+        let windows = login_targets(&win_places(), EXE, Os::Windows).unwrap();
+        let shape: Vec<(Kind, &str, &str)> =
+            windows.iter().map(|t| (t.kind, t.place.as_str(), t.name.as_str())).collect();
+        assert_eq!(shape, [(Kind::RegistryKey, RUN, ""), (Kind::RegistryValue, RUN, "Gezik")]);
+        assert_eq!(windows[1].after, reg(r#""C:\T\gezik.exe" --background"#));
+        assert!(windows.iter().all(|t| t.feature == FEATURE_LOGIN));
+        let mac = login_targets(
+            &Places { home: Some("/Users/u".into()), ..Places::default() },
+            "/Applications/Gezik.app/Contents/MacOS/gezik",
+            Os::Mac,
+        )
+        .unwrap();
+        assert_eq!(mac[0].place, "/Users/u/Library/LaunchAgents");
+        assert_eq!(mac[1].place, "/Users/u/Library/LaunchAgents/com.wenlar.gezik.plist");
+        let linux = login_targets(&unix_places(), "/home/u/apps/gezik", Os::Linux).unwrap();
+        assert_eq!(linux.last().unwrap().place, "/home/u/.config/autostart/gezik.desktop");
+        for (places, os, targets) in [(win_places(), Os::Windows, &windows), (unix_places(), Os::Linux, &linux)] {
+            for target in targets.iter() {
+                assert!(allowed(target, &places, os), "{target:?}");
+            }
+        }
+        let value = &windows[1];
+        for bad in [
+            Change { place: r"HKLM\Software\Microsoft\Windows\CurrentVersion\Run".into(), ..value.clone() },
+            Change { place: format!(r"{RUN}Once"), ..value.clone() },
+            Change { name: "OneDrive".into(), ..value.clone() },
+            Change { feature: FEATURE_PATH.into(), ..value.clone() },
+        ] {
+            assert!(!allowed(&bad, &win_places(), Os::Windows), "{bad:?}");
+        }
+        let entry = linux.last().unwrap();
+        let system = Change { place: "/etc/xdg/autostart/gezik.desktop".into(), ..entry.clone() };
+        assert!(!allowed(&system, &unix_places(), Os::Linux));
+        assert!(login_targets(&Places::default(), EXE, Os::Linux).is_none(), "no config folder known");
+    }
+
+    /// Carry-over from Task 2: no login text is made for an exe its exact reader would not
+    /// give back, or that is not an absolute gezik / gezik.exe.
+    #[test]
+    fn login_targets_need_an_absolute_gezik() {
+        let mac = Places { home: Some("/Users/u".into()), ..Places::default() };
+        for exe in [r"C:\T\evil.exe", r"T\gezik.exe", r#"C:\T\"x\gezik.exe"#, "C:\\T\n\\gezik.exe", ""] {
+            assert!(login_targets(&win_places(), exe, Os::Windows).is_none(), "{exe:?}");
+        }
+        for exe in ["/home/u/apps/evil", "apps/gezik", "/home/u/a\nExec=/bin/sh\n/gezik", "/home/u/gezik.exe", ""] {
+            assert!(login_targets(&unix_places(), exe, Os::Linux).is_none(), "{exe:?}");
+            assert!(login_targets(&mac, exe, Os::Mac).is_none(), "{exe:?}");
+        }
+        for exe in [r"D:\Araçlar\Gezik Dev\gezik.exe", r"\\server\share\GEZIK.EXE"] {
+            assert!(login_targets(&win_places(), exe, Os::Windows).is_some(), "{exe:?}");
+        }
+        for exe in ["/home/u/a b/$x `y` 100%/gezik", "/Users/u/<&>'\"/gezik"] {
+            assert!(login_targets(&unix_places(), exe, Os::Linux).is_some(), "{exe:?}");
+            assert!(login_targets(&mac, exe, Os::Mac).is_some(), "{exe:?}");
+        }
+    }
+
+    #[test]
+    fn only_gezik_login_values_are_written() {
+        let windows = login_targets(&win_places(), EXE, Os::Windows).unwrap();
+        let run = &windows[1];
+        let ok = |c: &Change, to: Value| value_allowed(c, &Value::Absent, &to);
+        assert!(ok(run, reg(r#""D:\Araçlar\gezik.exe" --background"#)));
+        assert!(ok(run, Value::Absent));
+        for bad in [
+            r#""C:\T\evil.exe" --background"#,
+            r#""C:\T\gezik.exe" --background --evil"#,
+            r#""C:\T\gezik.exe" --shell "%1""#,
+            r#"C:\T\gezik.exe --background"#,
+            r#""T\gezik.exe" --background"#,
+        ] {
+            assert!(!ok(run, reg(bad)), "{bad}");
+        }
+        let expand = Value::Reg { ty: RegType::ExpandSz, data: r#""C:\T\gezik.exe" --background"#.into() };
+        assert!(!ok(run, expand), "REG_SZ only");
+        let linux = login_targets(&unix_places(), "/home/u/apps/gezik", Os::Linux).unwrap();
+        let entry = linux.last().unwrap();
+        assert!(ok(entry, entry.after.clone()));
+        let Value::Text(text) = &entry.after else { panic!() };
+        assert!(!ok(entry, Value::Text(text.replace("--background", "--background --evil"))));
+        assert!(!ok(entry, Value::Text(t::autostart_entry("/bin/sh"))), "not a gezik");
+        assert!(
+            !ok(entry, Value::Text(t::desktop_entry("/home/u/apps/gezik"))),
+            "the default's entry is not the login one"
+        );
+        let mac = login_targets(
+            &Places { home: Some("/Users/u".into()), ..Places::default() },
+            "/Users/u/bin/gezik",
+            Os::Mac,
+        )
+        .unwrap();
+        let plist = &mac[1];
+        assert!(ok(plist, plist.after.clone()));
+        let Value::Text(text) = &plist.after else { panic!() };
+        assert!(!ok(plist, Value::Text(text.replace("</dict>", "\t<key>KeepAlive</key>\n\t<true/>\n</dict>"))));
+        assert!(!ok(plist, Value::Text(t::launch_agent("/usr/bin/curl"))));
+        // The default file manager's .desktop is not a login entry either.
+        let applications = default_targets(
+            &Places { data_home: Some("/home/u/.local/share".into()), ..unix_places() },
+            "/home/u/apps/gezik",
+            Os::Linux,
+            None,
+        )
+        .unwrap()
+        .into_iter()
+        .find(|t| t.place.ends_with("applications/gezik.desktop"))
+        .unwrap();
+        assert!(!value_allowed(&applications, &Value::Absent, &entry.after));
+    }
+
+    #[test]
+    fn login_on_and_off_round_trip() {
+        let fake = Fake::default();
+        fake.put(Kind::RegistryKey, RUN, "", Value::Present);
+        fake.put(Kind::RegistryValue, RUN, "OneDrive", reg(r#""C:\OD\OneDrive.exe" /background"#));
+        let start = fake.0.borrow().clone();
+        let file = journal("login");
+        let checked = Checked(&fake, win_places());
+        let targets = login_targets(&win_places(), EXE, Os::Windows).unwrap();
+        assert_eq!(apply_all(&mut file.lock().unwrap(), &checked, targets, EXE), Ok(false));
+        assert_eq!(fake.get(Kind::RegistryValue, RUN, "Gezik"), Some(reg(r#""C:\T\gezik.exe" --background"#)));
+        let made: Vec<Kind> = file.lock().unwrap().journal().changes.iter().map(|c| c.kind).collect();
+        assert_eq!(made, [Kind::RegistryValue], "the Run key was there: not Gezik's");
+        let state = snapshot(Some(&file), &fake, &win_places(), EXE, Os::Windows);
+        assert_eq!(state.login, LoginState::On);
+        let undone = undo_matching(&mut file.lock().unwrap(), &checked, |c| c.feature == FEATURE_LOGIN);
+        assert_eq!(undone.lines, [r"undone: HKCU\Software\Microsoft\Windows\CurrentVersion\Run\Gezik"]);
+        assert_eq!(*fake.0.borrow(), start, "OneDrive's value and the key untouched");
+        assert!(!file.exists());
+    }
+
+    #[test]
+    fn a_tampered_login_journal_writes_nothing_back() {
+        let fake = Fake::default();
+        let file = journal("login-tampered");
+        let targets = login_targets(&win_places(), EXE, Os::Windows).unwrap();
+        apply_all(&mut file.lock().unwrap(), &fake, targets, EXE).unwrap();
+        // The journal says the value was another program before: an undo must not write it.
+        let locked = file.lock().unwrap();
+        let mut changes = locked.journal().changes.clone();
+        changes[1].before = reg(r#""C:\T\evil.exe" --background"#);
+        let checked = Checked(&fake, win_places());
+        let outcomes = sc::undo(&changes[1..], &checked);
+        drop(locked);
+        assert!(!outcomes[0].settled(), "{outcomes:?}");
+        assert_eq!(fake.get(Kind::RegistryValue, RUN, "Gezik"), Some(reg(&t::login_command(EXE))));
+    }
+
+    #[test]
+    fn a_foreign_run_value_refuses_turning_on() {
+        let fake = Fake::default();
+        fake.put(Kind::RegistryKey, RUN, "", Value::Present);
+        fake.put(Kind::RegistryValue, RUN, "Gezik", reg(r#""C:\Other\tool.exe" --background"#));
+        let file = journal("login-foreign");
+        let targets = login_targets(&win_places(), EXE, Os::Windows).unwrap();
+        let err = apply_all(&mut file.lock().unwrap(), &fake, targets, EXE).unwrap_err();
+        assert!(err.contains("not made by Gezik"), "{err}");
+        assert_eq!(fake.get(Kind::RegistryValue, RUN, "Gezik"), Some(reg(r#""C:\Other\tool.exe" --background"#)));
+        let state = snapshot(Some(&file), &fake, &win_places(), EXE, Os::Windows).login;
+        assert!(matches!(state, LoginState::Taken { ref why } if why.contains("not made by Gezik")), "{state:?}");
+    }
+
+    #[test]
+    fn login_state_follows_what_is_there() {
+        let made: Vec<(Change, Value)> = login_targets(&win_places(), EXE, Os::Windows)
+            .unwrap()
+            .into_iter()
+            .map(|t| (Change { done: true, ..t.clone() }, t.after))
+            .collect();
+        assert_eq!(login_state(&made, EXE, None), LoginState::On);
+        assert_eq!(login_state(&made, r"D:\New\gezik.exe", None), LoginState::Moved { old: EXE.into() });
+        let mut edited = made.clone();
+        edited[1].1 = reg(r#""C:\T\gezik.exe""#);
+        assert_eq!(login_state(&edited, EXE, None), LoginState::Changed, "someone took --background away");
+        let only_key: Vec<(Change, Value)> = made[..1].to_vec();
+        assert_eq!(login_state(&only_key, EXE, None), LoginState::Changed, "stopped before the value");
+        assert_eq!(login_state(&[], EXE, None), LoginState::Off);
+        assert_eq!(login_state(&[], EXE, Some("x".into())), LoginState::Taken { why: "x".into() });
+        let linux: Vec<(Change, Value)> = login_targets(&unix_places(), "/home/u/apps/gezik", Os::Linux)
+            .unwrap()
+            .into_iter()
+            .map(|t| (Change { done: true, ..t.clone() }, t.after))
+            .collect();
+        assert_eq!(
+            login_state(&linux, "/home/u/new/gezik", None),
+            LoginState::Moved { old: "/home/u/apps/gezik".into() }
+        );
+    }
+
+    #[test]
+    fn the_sweep_takes_back_a_lost_login_entry_only() {
+        let fake = Fake::default();
+        fake.put(Kind::RegistryKey, RUN, "", Value::Present);
+        fake.put(Kind::RegistryValue, RUN, "Gezik", reg(r#""D:\Moved\gezik.exe" --background"#));
+        fake.put(Kind::RegistryValue, RUN, "OneDrive", reg(r#""C:\OD\OneDrive.exe" /background"#));
+        let report = unregister(Some(&journal("login-sweep")), &fake, &win_places(), Path::new(EXE), Os::Windows);
+        assert_eq!(report.code, 0, "{:?}", report.lines);
+        assert!(fake.get(Kind::RegistryValue, RUN, "Gezik").is_none());
+        assert!(fake.get(Kind::RegistryValue, RUN, "OneDrive").is_some(), "another program's value stays");
+        assert_eq!(fake.get(Kind::RegistryKey, RUN, ""), Some(Value::Present), "the Run key is not Gezik's");
+        for foreign_value in [
+            reg(r#""C:\Other\tool.exe" --background"#),
+            reg(r#""C:\T\gezik.exe" --background --evil"#),
+            Value::Reg { ty: RegType::ExpandSz, data: r#""C:\T\gezik.exe" --background"#.into() },
+        ] {
+            let foreign = Fake::default();
+            foreign.put(Kind::RegistryValue, RUN, "Gezik", foreign_value.clone());
+            assert!(
+                sweep_changes(&foreign, &win_places(), Path::new(EXE), Os::Windows).is_empty(),
+                "{foreign_value:?}"
+            );
+        }
+        // macOS and Linux: only the entry in Gezik's exact text; the folders stay.
+        let linux = Fake::default();
+        let entry = login_targets(&unix_places(), "/home/u/apps/gezik", Os::Linux).unwrap().pop().unwrap();
+        linux.put(Kind::Folder, "/home/u/.config", "", Value::Present);
+        linux.put(Kind::Folder, "/home/u/.config/autostart", "", Value::Present);
+        linux.put(Kind::File, &entry.place, "", entry.after.clone());
+        let swept = sweep_changes(&linux, &unix_places(), Path::new("/home/u/apps/gezik"), Os::Linux);
+        let places: Vec<&str> = swept.iter().map(|c| c.place.as_str()).collect();
+        assert_eq!(places, [entry.place.as_str()]);
+        let Value::Text(text) = &entry.after else { panic!() };
+        linux.put(Kind::File, &entry.place, "", Value::Text(format!("{text}X-Extra=1\n")));
+        assert!(sweep_changes(&linux, &unix_places(), Path::new("/home/u/apps/gezik"), Os::Linux).is_empty());
+    }
+
+    /// The real registry under a test key (never the user's own Run): on, then --unregister,
+    /// and the tree is as it was, byte for byte.
+    #[cfg(windows)]
+    #[test]
+    fn the_real_run_value_round_trips() {
+        use gezik_platform::system::windows as reg;
+        let root = format!(r"Software\GezikTest-{}-login", std::process::id());
+        let guard = TestRoot(root.clone());
+        let mut level = root.clone();
+        reg::create_key(&level).unwrap();
+        for part in ["Software", "Microsoft", "Windows", "CurrentVersion"] {
+            level = format!(r"{level}\{part}");
+            reg::create_key(&level).unwrap();
+        }
+        let dir = std::env::temp_dir().join(format!("gezik-login-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let places = Places { local_app_data: Some(dir.clone()), ..Places::default() };
+        let access = SystemAccess { places: places.clone(), registry_root: root.clone() };
+        let file = journal("real-login");
+        let before = snapshot_tree(&root);
+        let exe = r"D:\Araçlar\Gezik Dev\gezik.exe";
+        apply_all(&mut file.lock().unwrap(), &access, login_targets(&places, exe, Os::Windows).unwrap(), exe).unwrap();
+        let run = format!(r"{root}\Software\Microsoft\Windows\CurrentVersion\Run");
+        assert_eq!(reg::read_value(&run, "Gezik").unwrap(), Some((RegType::Sz, t::login_command(exe))));
+        assert_eq!(snapshot(Some(&file), &access, &places, exe, Os::Windows).login, LoginState::On);
+        let report = unregister(Some(&file), &access, &places, Path::new(exe), Os::Windows);
+        assert_eq!(report.code, 0, "{:?}", report.lines);
+        assert_eq!(snapshot_tree(&root), before, "byte for byte");
+        drop(guard);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
