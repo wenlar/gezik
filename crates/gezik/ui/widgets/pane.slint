@@ -300,7 +300,21 @@ export component PaneView inherits Rectangle {
     };
     changed geometry => { root.geometry-changed(root.index, self.geometry); }
     changed fields => { root.focus-changed(root.index, self.fields); }
-    changed list-scroll => { root.scrolled(root.index, self.list-scroll); }
+    // The lowest offset the lines allow. The list does not always come back within it by
+    // itself when its lines change height (a switch to the grid deep in a folder left it
+    // past the end until the next scroll): kept within it here.
+    property <length> scroll-floor: min(0px, file-view.list-height - root.items.length * file-view.item-height);
+    changed scroll-floor => {
+        if root.list-scroll < self.scroll-floor {
+            root.list-scroll = self.scroll-floor;
+        }
+    }
+    changed list-scroll => {
+        if self.list-scroll < root.scroll-floor {
+            self.list-scroll = root.scroll-floor;
+        }
+        root.scrolled(root.index, self.list-scroll);
+    }
 
     changed data => { root.apply(); }
     // `changed` does not see the first value: a pane made with requests in its row does them now.
