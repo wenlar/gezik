@@ -86,6 +86,13 @@ export component ColumnView inherits Rectangle {
             x: i * root.stride;
             width: root.column-width;
             height: root.height;
+            // Rust's offset for the column, set on its list whenever it or the rows change: a
+            // binding would be cut by the first wheel scroll, and later offsets (another folder
+            // in this place after ← or →) would no longer show, nor match what drops hit.
+            property <length> scroll: column.scroll;
+            property <int> rows: column.rows.length;
+            changed scroll => { list.content-y = self.scroll; }
+            changed rows => { list.content-y = self.scroll; }
 
             // Behind the rows (the list passes presses through): presses, drags, menus on a row
             // or on the column's empty space. Pressed, it keeps the pointer while its column
@@ -128,7 +135,7 @@ export component ColumnView inherits Rectangle {
             list := ListView {
                 y: root.pad;
                 height: parent.height - 2 * root.pad;
-                content-y: column.scroll;
+                init => { self.content-y = column.scroll; }
                 changed content-y => { root.scrolled(i, self.content-y); }
                 for item in column.rows: row := Rectangle {
                     property <FileRow> file: item.cells[0];
