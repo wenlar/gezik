@@ -131,11 +131,30 @@ fn names(dir: &OwnedFd) -> io::Result<Vec<CString>> {
 pub(crate) fn delete(path: &Path, guard: &Guard) -> io::Result<()> {
     let (dir, name) = parent_of(path)?;
     let parent = fstat(dir.as_raw_fd())?;
-    remove(dir.as_raw_fd(), &name, &parent, guard, 0)
+    remove(dir.as_raw_fd(), &name, &parent, guard, 0, None)
 }
 
-fn remove(dir: RawFd, name: &CStr, parent: &libc::stat, guard: &Guard, depth: usize) -> io::Result<()> {
+/// Deletes `path` only if it is still the item `own` (a folder this helper made): one swapped in
+/// since is refused, not deleted.
+pub(crate) fn delete_own(path: &Path, own: Id) -> io::Result<()> {
+    let (dir, name) = parent_of(path)?;
+    let parent = fstat(dir.as_raw_fd())?;
+    remove(dir.as_raw_fd(), &name, &parent, &Guard::none(), 0, Some(own))
+}
+
+/// `own`: the item at `name` must be this one (checked again on the folder once opened).
+fn remove(
+    dir: RawFd,
+    name: &CStr,
+    parent: &libc::stat,
+    guard: &Guard,
+    depth: usize,
+    own: Option<Id>,
+) -> io::Result<()> {
     let st = stat_at(dir, name)?;
+    if own.is_some_and(|own| own != id(&st)) {
+        return Err(refused(CHANGED));
+    }
     guard.check(id(&st))?;
     if kind(&st) != libc::S_IFDIR {
         // A file (one of its names, if it has several), a link (the link itself) or anything
@@ -155,7 +174,7 @@ fn remove(dir: RawFd, name: &CStr, parent: &libc::stat, guard: &Guard, depth: us
         return Err(refused(CHANGED));
     }
     for child in names(&fd)? {
-        remove(fd.as_raw_fd(), &child, &now, guard, depth + 1)?;
+        remove(fd.as_raw_fd(), &child, &now, guard, depth + 1, None)?;
     }
     cvt(unsafe { libc::unlinkat(dir, name.as_ptr(), libc::AT_REMOVEDIR) })?;
     Ok(())
@@ -247,16 +266,17 @@ pub(crate) fn copy(from: &Path, to: &Path, replace: bool) -> io::Result<()> {
     let (dst_dir, dst_name) = parent_of(to)?;
     // Only a folder this copy made itself is taken back: a name someone else took in the
     // meantime makes the make fail, and what they put there stays.
-    let mut made = false;
+    let mut made = None;
     let result = copy_at(src_dir.as_raw_fd(), &src_name, dst_dir.as_raw_fd(), &dst_name, replace, 0, &mut made);
-    if result.is_err() && made {
-        let parent = fstat(dst_dir.as_raw_fd())?;
-        let _ = remove(dst_dir.as_raw_fd(), &dst_name, &parent, &Guard::none(), 0);
+    if result.is_err()
+        && let Some(own) = made
+    {
+        let _ = delete_own(to, own);
     }
     result
 }
 
-/// `made`: set once this call made the folder `to` itself (a file or link it made and could not
+/// `made`: the identity of the folder `to` once this call made it itself (a file or link it made and could not
 /// finish is removed right here).
 fn copy_at(
     src: RawFd,
@@ -265,7 +285,7 @@ fn copy_at(
     to: &CStr,
     replace: bool,
     depth: usize,
-    made: &mut bool,
+    made: &mut Option<Id>,
 ) -> io::Result<()> {
     let st = stat_at(src, name)?;
     match kind(&st) {
@@ -320,14 +340,22 @@ fn copy_at(
                 Err(err) if err.kind() == io::ErrorKind::NotFound => {
                     // Fails if the name was taken since: then it is not ours.
                     cvt(unsafe { libc::mkdirat(dst, to.as_ptr(), 0o700) })?;
-                    *made = true;
                     true
                 }
                 Err(err) => return Err(err),
             };
             let out = open_at(dst, to, DIR).map_err(on_the_way)?;
+            if mine {
+                // What was opened is what mkdirat made: Gezik's own (a folder swapped in since
+                // belongs to someone else).
+                let now = fstat(out.as_raw_fd())?;
+                if now.st_uid != unsafe { libc::geteuid() } {
+                    return Err(refused(CHANGED));
+                }
+                *made = Some(id(&now));
+            }
             for child in names(&from)? {
-                copy_at(from.as_raw_fd(), &child, out.as_raw_fd(), &child, replace, depth + 1, &mut false)?;
+                copy_at(from.as_raw_fd(), &child, out.as_raw_fd(), &child, replace, depth + 1, &mut None)?;
             }
             if mine {
                 // The folder's own permissions last (0700 kept it Gezik's while it filled); sticky

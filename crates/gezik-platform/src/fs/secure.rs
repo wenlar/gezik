@@ -234,6 +234,23 @@ mod tests {
     }
 
     #[test]
+    fn a_rollback_deletes_only_the_folder_it_made() {
+        let dir = base("own");
+        fs::create_dir(dir.join("mine")).unwrap();
+        fs::create_dir(dir.join("swapped")).unwrap();
+        write(&dir.join("swapped").join("theirs.txt"), "theirs");
+        let mine = imp::id_of(&dir.join("mine")).unwrap();
+        // The folder made was swapped for another one under the same name.
+        fs::rename(dir.join("mine"), dir.join("aside")).unwrap();
+        fs::rename(dir.join("swapped"), dir.join("mine")).unwrap();
+        assert_eq!(imp::delete_own(&dir.join("mine"), mine).unwrap_err().to_string(), CHANGED);
+        assert_eq!(fs::read_to_string(dir.join("mine").join("theirs.txt")).unwrap(), "theirs");
+        imp::delete_own(&dir.join("aside"), mine).unwrap();
+        assert!(!dir.join("aside").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn names_that_are_taken_are_never_overwritten_unasked() {
         let dir = base("taken");
         write(&dir.join("a.txt"), "a");

@@ -206,6 +206,16 @@ pub(crate) fn delete(path: &Path, guard: &Guard) -> io::Result<()> {
     remove(path, file, guard, 0)
 }
 
+/// Deletes `path` only if it is still the item `own` (a folder this helper made): one swapped in
+/// since is refused, not deleted. Checked on the handle the delete goes through.
+pub(crate) fn delete_own(path: &Path, own: Id) -> io::Result<()> {
+    let (_folder, file) = item(path, REMOVE | FILE_LIST_DIRECTORY.0)?;
+    if id(&info(&file)?) != own {
+        return Err(refused(CHANGED));
+    }
+    remove(path, file, &Guard::none(), 0)
+}
+
 fn remove(path: &Path, file: File, guard: &Guard, depth: usize) -> io::Result<()> {
     let found = info(&file)?;
     guard.check(id(&found))?;
@@ -288,16 +298,18 @@ pub(crate) fn copy(from: &Path, to: &Path, replace: bool) -> io::Result<()> {
     // Only a folder this copy made itself is taken back (a file it made is disposed of through
     // its handle in `copy_item`): a name someone else took in the meantime makes the make fail,
     // and what they put there stays.
-    let mut made = false;
+    let mut made = None;
     let result = copy_item(from, to, replace, 0, &mut made);
-    if result.is_err() && made {
-        let _ = delete(to, &Guard::none());
+    if result.is_err()
+        && let Some(own) = made
+    {
+        let _ = delete_own(to, own);
     }
     result
 }
 
-/// `made`: set once this call made the folder `to` itself.
-fn copy_item(from: &Path, to: &Path, replace: bool, depth: usize, made: &mut bool) -> io::Result<()> {
+/// `made`: the identity of the folder `to` once this call made it itself.
+fn copy_item(from: &Path, to: &Path, replace: bool, depth: usize, made: &mut Option<Id>) -> io::Result<()> {
     let (_from_folder, source) = item(from, GENERIC_READ.0 | LOOK)?;
     let found = info(&source)?;
     if is_link(&found) {
@@ -320,13 +332,17 @@ fn copy_item(from: &Path, to: &Path, replace: bool, depth: usize, made: &mut boo
             Err(err) if err.kind() == io::ErrorKind::NotFound => {
                 // Fails if the name was taken since: then it is not ours.
                 unsafe { CreateDirectoryW(&verbatim(to), None) }.map_err(io_error)?;
-                *made = true;
+                // shortcut: a folder swapped in between the make and this open is taken for
+                // ours (needs write access to the folder above); NtCreateFile would close it.
+                let ours = open(to, LOOK, OPEN_EXISTING)?;
+                same_place(&ours, to)?;
+                *made = Some(id(&info(&ours)?));
             }
             Err(err) => return Err(err),
         }
         for entry in std::fs::read_dir(from)? {
             let name = entry?.file_name();
-            copy_item(&from.join(&name), &to.join(&name), replace, depth + 1, &mut false)?;
+            copy_item(&from.join(&name), &to.join(&name), replace, depth + 1, &mut None)?;
         }
         return Ok(());
     }
