@@ -413,6 +413,12 @@ impl Navigator {
         self.0.borrow().tabs.active().location().clone()
     }
 
+    /// The active tab's place as the view rules see it.
+    pub fn rule_place(&self) -> Place {
+        let inner = self.0.borrow();
+        inner.view.rule_place(inner.tabs.active().location(), &inner.places)
+    }
+
     /// Where new tabs open (`start-folder`).
     pub fn start(&self) -> Location {
         self.0.borrow().start.clone()
@@ -1028,7 +1034,7 @@ impl Navigator {
             }
             inner.cleared = false;
             let state = with_selection(view_to_show(&mode, inner.tabs.active().view()), select_next);
-            (inner.view.clone(), state, crate::view::rule_place(&location, &inner.places))
+            (inner.view.clone(), state, inner.view.rule_place(&location, &inner.places))
         };
         self.watch_shown(&location);
         view.show(listing, &state, note, place);

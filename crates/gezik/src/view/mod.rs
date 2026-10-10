@@ -1411,16 +1411,38 @@ impl View {
     }
 
     /// New `[[view-rules]]` (a settings load): the folder shown takes them at once unless it has
-    /// its own view. The same rules again cost nothing.
-    pub fn set_rules(&self, rules: ViewRules) {
+    /// its own view. The same rules again cost nothing. `place`: where the folder shown is (it
+    /// was not worked out while there were no rules).
+    pub fn set_rules(&self, rules: ViewRules, place: impl FnOnce() -> Place) {
         if *self.0.rules.borrow() == rules {
             return;
         }
         *self.0.rules.borrow_mut() = rules;
+        let place = place();
+        *self.0.place.borrow_mut() = place;
         let own = self.0.folder.borrow().as_deref().is_some_and(|f| self.0.memory.borrow().contains(f));
         if !own {
             self.apply_rule(self.pick_shown());
         }
+    }
+
+    pub fn has_rules(&self) -> bool {
+        !self.0.rules.borrow().is_empty()
+    }
+
+    /// `location` as the view rules see it (spec 10 §8.3): from the drives and cloud roots the
+    /// places load already found; no file system call. Without rules, nothing is worked out.
+    pub fn rule_place(&self, location: &gezik_core::nav::Location, places: &crate::places::Places) -> Place {
+        use gezik_platform::DriveKind;
+        if !self.has_rules() {
+            return Place::default();
+        }
+        let drives = places.drives.iter().filter_map(|drive| match drive.kind {
+            DriveKind::Network => Some((drive.path.as_path(), PlaceKind::Network)),
+            DriveKind::Removable | DriveKind::Optical => Some((drive.path.as_path(), PlaceKind::Removable)),
+            DriveKind::Fixed => None,
+        });
+        Place::of(location, drives, places.cloud.iter().map(|root| root.path.as_path()))
     }
 
     /// The rule that matches the place shown, counting the listing in memory.
@@ -2398,18 +2420,6 @@ fn decide(
         None => rules.pick(place, entries),
     };
     (rules.view(rule, defaults), rule)
-}
-
-/// `location` as the view rules see it (spec 10 §8.3): from the drives and cloud roots the
-/// places load already found; no file system call.
-pub fn rule_place(location: &gezik_core::nav::Location, places: &crate::places::Places) -> Place {
-    use gezik_platform::DriveKind;
-    let drives = places.drives.iter().filter_map(|drive| match drive.kind {
-        DriveKind::Network => Some((drive.path.as_path(), PlaceKind::Network)),
-        DriveKind::Removable | DriveKind::Optical => Some((drive.path.as_path(), PlaceKind::Removable)),
-        DriveKind::Fixed => None,
-    });
-    Place::of(location, drives, places.cloud.iter().map(|root| root.path.as_path()))
 }
 
 /// `[[view-rules]]` compiled for matching, once per settings load (spec 10 §8.3); without rules
