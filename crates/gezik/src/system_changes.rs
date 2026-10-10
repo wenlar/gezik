@@ -509,12 +509,7 @@ pub(crate) fn set_mime_default_in(
     if !gezik_platform::open_with::is_mime_type(mime) || !t::desktop_ids(&value) {
         return Err("This type or app cannot be written to mimeapps.list".to_owned());
     }
-    let read = |path: &Path| match std::fs::read_to_string(path) {
-        Ok(text) => Ok(Some(text)),
-        // A link to nothing is not "missing": writing would replace the link with a file.
-        Err(err) if err.kind() == io::ErrorKind::NotFound && path.symlink_metadata().is_err() => Ok(None),
-        Err(err) => Err(gezik_platform::fs::describe(&err)),
-    };
+    let read = |path: &Path| read_list(path).map_err(|e| gezik_platform::fs::describe(&e));
     let list = config_home.join("mimeapps.list");
     let mut writes = vec![(read(&list)?.unwrap_or_else(|| t::MIMEAPPS_EMPTY.to_owned()), list)];
     for desktop in desktops {
@@ -531,6 +526,31 @@ pub(crate) fn set_mime_default_in(
             .map_err(|e| gezik_platform::fs::describe(&e))?;
     }
     Ok(())
+}
+
+/// The most of a user's mimeapps.list `Change All…` reads (as `linux::mime` reads lists).
+const MAX_LIST_BYTES: u64 = 4 * 1024 * 1024;
+
+/// A mimeapps.list (through a link), `None` when missing. Only a regular file of at most
+/// `MAX_LIST_BYTES`: a link to /dev/zero, a FIFO or a huge file is refused, never read.
+fn read_list(path: &Path) -> io::Result<Option<String>> {
+    use std::io::Read;
+    let meta = match std::fs::metadata(path) {
+        Ok(meta) => meta,
+        // A link to nothing is not "missing": writing would replace the link with a file.
+        Err(err) if err.kind() == io::ErrorKind::NotFound && path.symlink_metadata().is_err() => return Ok(None),
+        Err(err) => return Err(err),
+    };
+    let refused = || io::Error::new(io::ErrorKind::InvalidData, "mimeapps.list is not a plain file of at most 4 MB");
+    if !meta.is_file() || meta.len() > MAX_LIST_BYTES {
+        return Err(refused());
+    }
+    let mut text = String::new();
+    std::fs::File::open(path)?.take(MAX_LIST_BYTES + 1).read_to_string(&mut text)?;
+    if text.len() as u64 > MAX_LIST_BYTES {
+        return Err(refused());
+    }
+    Ok(Some(text))
 }
 
 /// What is at `path`, never through a link (decision 9).
@@ -2264,6 +2284,21 @@ mod tests {
         assert!(set_mime_default_in(&dir, &[], &app("my app.desktop"), "image/png").is_err());
         assert!(set_mime_default_in(&dir, &[], &app("a\n[x].desktop"), "image/png").is_err());
         assert!(!dir.join("mimeapps.list").exists(), "nothing written");
+        // Too big, or not a plain file: refused, never read.
+        let big = "#".repeat(MAX_LIST_BYTES as usize + 1);
+        std::fs::write(dir.join("mimeapps.list"), &big).unwrap();
+        assert!(set_mime_default_in(&dir, &[], good, "image/png").is_err());
+        assert_eq!(std::fs::read_to_string(dir.join("mimeapps.list")).unwrap().len(), big.len(), "untouched");
+        std::fs::remove_file(dir.join("mimeapps.list")).unwrap();
+        std::fs::create_dir(dir.join("mimeapps.list")).unwrap();
+        assert!(set_mime_default_in(&dir, &[], good, "image/png").is_err(), "a folder");
+        std::fs::remove_dir(dir.join("mimeapps.list")).unwrap();
+        #[cfg(unix)]
+        {
+            // No libc in this crate: coreutils' mkfifo makes it.
+            assert!(std::process::Command::new("mkfifo").arg(dir.join("mimeapps.list")).status().unwrap().success());
+            assert!(set_mime_default_in(&dir, &[], good, "image/png").is_err(), "a FIFO is not opened");
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
