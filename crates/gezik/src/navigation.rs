@@ -815,32 +815,39 @@ impl Navigator {
         self.queue(|_| Some(Step::Forward));
     }
 
+    /// Nothing is loading or cleared: what is on screen is the active tab's location.
+    pub fn settled(&self) -> bool {
+        let quiet = {
+            let inner = self.0.borrow();
+            !inner.cleared && inner.user_load.is_none()
+        };
+        quiet && self.pending_steps().is_empty()
+    }
+
     pub fn up(&self) {
-        let id = self.id();
-        self.queue(|base| {
-            let parent = base.parent()?;
-            crate::dual::stepped(id);
-            Some(Step::Navigate(parent))
-        });
+        if self.queue(|base| base.parent().map(Step::Navigate)) {
+            crate::dual::stepped(self.id());
+        }
     }
 
     /// Adds the step `next` makes from `base` (where a pending move leads, else the current
     /// location) after that pending move, and loads where they all lead. So pressing back
     /// three times while a slow folder loads goes back three levels, not one.
-    fn queue(&self, next: impl FnOnce(&Location) -> Option<Step>) {
+    /// Whether a load started.
+    fn queue(&self, next: impl FnOnce(&Location) -> Option<Step>) -> bool {
         let mut steps = self.pending_steps();
         let target = {
             let inner = self.0.borrow();
             let history = inner.tabs.active();
-            let Some(base) = history.target_after(&steps) else { return };
-            let Some(step) = next(&base) else { return };
+            let Some(base) = history.target_after(&steps) else { return false };
+            let Some(step) = next(&base) else { return false };
             steps.push(step);
             history.target_after(&steps)
         };
-        if let Some(target) = target {
-            self.save_view();
-            self.load(target, Mode::Move(steps), None);
-        }
+        let Some(target) = target else { return false };
+        self.save_view();
+        self.load(target, Mode::Move(steps), None);
+        true
     }
 
     /// The moves of the load still in flight, if its result would still apply.
@@ -942,8 +949,8 @@ impl Navigator {
     pub fn open_item(&self, path: PathBuf, is_dir: bool) {
         match system_opening(path, is_dir) {
             Opening::Go(folder) => {
-                crate::dual::stepped(self.id());
                 self.go(Location::Path(folder));
+                crate::dual::stepped(self.id());
             }
             Opening::Launch(path) => self.launch(&path),
             Opening::MissingAlias(alias) => crate::operations::with_current(|ops| ops.missing_alias(alias)),
@@ -984,8 +991,8 @@ impl Navigator {
             }
         }
         if let Some(folder) = folder {
-            crate::dual::stepped(self.id());
             self.go(Location::Path(folder));
+            crate::dual::stepped(self.id());
         }
     }
 
@@ -1054,6 +1061,8 @@ impl Navigator {
             inner.user_load = loading_text.then_some(ticket);
             if loading_text {
                 inner.select_next = None;
+                // A load the user starts is no step for sync browsing until a step marks it.
+                crate::dual::stepped(None);
             }
             // Any load of the watched folder covers its changes so far.
             if let Location::Path(path) = &location
@@ -1288,6 +1297,7 @@ impl Navigator {
 
     /// Shows `message` for a failed load; see [`apply_failure`].
     fn show_failed(&self, mode: &Mode, location: &Location, message: String) {
+        crate::dual::stepped(None);
         let (empty, view, state) = {
             let mut inner = self.0.borrow_mut();
             let empty = apply_failure(&mut inner.cleared, mode, location);

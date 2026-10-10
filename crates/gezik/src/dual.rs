@@ -325,6 +325,10 @@ pub fn is_synced() -> bool {
 /// `sync-browsing` (spec 10 §4.7): only with two panes.
 pub fn toggle_sync() {
     if !is_open() {
+        // The macOS menu ticked it already.
+        if let Some(window) = window() {
+            window.set_view_sync(false);
+        }
         return panes::active_view().note("Sync browsing needs two panes".to_owned());
     }
     set_sync(!is_synced());
@@ -341,9 +345,10 @@ fn set_sync(on: bool) {
     }
 }
 
-/// Pane `id` steps into a sub-folder or up (Navigator): its next location may be followed.
-pub fn stepped(id: PaneId) {
-    STEPPED.with(|s| s.set(Some(id)));
+/// Pane `id` stepped into a sub-folder or up (Navigator, after the load started): the location
+/// it lands on may be followed. None: a load that is no step, or a failed one.
+pub fn stepped(id: impl Into<Option<PaneId>>) {
+    STEPPED.with(|s| s.set(id.into()));
 }
 
 /// The active pane `id` shows `location`: with sync browsing on, the other pane makes the same
@@ -360,8 +365,10 @@ fn followed(id: PaneId, location: &Location) {
     }
     let stepped = STEPPED.with(Cell::take) == Some(id);
     let Some(other) = other_pane() else { return };
+    // Still loading (or cleared): its folder and names are not what it will show.
+    // shortcut: such a step ends sync browsing; queue it after that load if that bites.
     let base = match other.nav.active_location() {
-        Location::Path(path) => Some(path),
+        Location::Path(path) if other.nav.settled() => Some(path),
         _ => None,
     };
     let names = other.view.folder_names();

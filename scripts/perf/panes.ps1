@@ -40,8 +40,9 @@ function Sample($id) {
 
 $oldConfig = $env:GEZIK_CONFIG_DIR
 $env:GEZIK_CONFIG_DIR = $config
-$p = Start-Process $Exe -PassThru
+$p = $null
 try {
+    $p = Start-Process $Exe -PassThru
     $hwnd = Find-GezikWindow $p.Id 10000
     if ($hwnd -eq [IntPtr]::Zero) { throw "no Gezik window within 10 s" }
     Start-Sleep -Seconds $Wait
@@ -63,7 +64,11 @@ try {
     "two panes     {0,6:N1} MB  {1,5} handles  ({2:+0.0;-0.0} MB, {3:+0;-0} handles)" -f $two.Mb, $two.Handles, ($two.Mb - $one.Mb), ($two.Handles - $one.Handles)
     "after closing {0,6:N1} MB  {1,5} handles  ({2:+0.0;-0.0} MB vs one pane, target within 0.1; {3:+0;-0} handles)" -f $closed.Mb, $closed.Handles, ($closed.Mb - $one.Mb), ($closed.Handles - $one.Handles)
 } finally {
-    Stop-Process -Id $p.Id -ErrorAction SilentlyContinue
+    if ($p) {
+        Stop-Process -Id $p.Id -ErrorAction SilentlyContinue
+        Wait-Process -Id $p.Id -Timeout 10 -ErrorAction SilentlyContinue
+    }
+    Remove-Item -Recurse -Force $root, $config -ErrorAction SilentlyContinue
     # The calling shell keeps its own config folder (or none).
     if ($null -eq $oldConfig) { Remove-Item Env:GEZIK_CONFIG_DIR -ErrorAction SilentlyContinue } else { $env:GEZIK_CONFIG_DIR = $oldConfig }
 }
