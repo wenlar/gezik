@@ -623,8 +623,8 @@ fn open_beside_with(
         state.preview_open = preview::with_current(preview::Preview::is_pane_open).unwrap_or(false);
         state.preview_width = Some(window.get_preview_width().round().clamp(200.0, 600.0) as u32);
     });
-    if let (Some((x, y)), Some(rect)) = (place, state.window.as_mut()) {
-        *rect = WindowState { x: Some(x), y: Some(y), maximized: false, ..*rect };
+    if let Some(place) = place {
+        state.window = Some(placed(state.window, place));
     }
     let opening = Opening {
         plan: StartPlan { session, select, start, warnings: Vec::new() },
@@ -646,6 +646,13 @@ fn open_beside_with(
             then(window);
         });
     });
+}
+
+/// A new window's rect with its outer top left at `place`, not maximized; with no normal rect
+/// yet (the source opened maximized), the window's own size (app.slint's preferred one).
+fn placed(rect: Option<WindowState>, (x, y): (i32, i32)) -> WindowState {
+    let rect = rect.unwrap_or(WindowState { width: 900, height: 600, x: None, y: None, maximized: false });
+    WindowState { x: Some(x), y: Some(y), maximized: false, ..rect }
 }
 
 /// Writes every window's tabs and panes to state.toml (deviation 5): the most recently focused
@@ -1843,6 +1850,16 @@ pub(crate) mod tests {
             let _ = w.hide();
         });
         release_all();
+    }
+
+    /// Fix 10: a torn-off tab's window goes where it was dropped, even from a window with no
+    /// normal rect yet.
+    #[test]
+    fn a_torn_off_window_goes_to_its_place() {
+        let at = |x, y| WindowState { width: 900, height: 600, x: Some(x), y: Some(y), maximized: false };
+        assert_eq!(placed(None, (10, 20)), at(10, 20));
+        let maximized = WindowState { width: 1200, maximized: true, ..at(0, 0) };
+        assert_eq!(placed(Some(maximized), (5, 6)), WindowState { width: 1200, ..at(5, 6) });
     }
 
     /// Fix 7: the saved windows come back in their focus order behind the first one, their
