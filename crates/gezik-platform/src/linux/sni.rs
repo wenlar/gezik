@@ -101,9 +101,11 @@ pub fn register_call(name: &str) -> Message {
     }
 }
 
-/// NameOwnerChanged: the watcher has a new owner.
+/// NameOwnerChanged from the bus itself: the watcher has a new owner. Another app may send a
+/// signal straight to Gezik (no match rule stops it), so the sender is checked.
 pub fn watcher_came_back(m: &Message) -> bool {
     m.kind == MsgKind::Signal
+        && m.sender.as_deref() == Some("org.freedesktop.DBus")
         && m.member.as_deref() == Some("NameOwnerChanged")
         && matches!(m.body.as_slice(), [Value::Str(name), _, Value::Str(new)] if name == WATCHER && !new.is_empty())
 }
@@ -133,7 +135,7 @@ mod serving {
     use std::sync::{Arc, Mutex};
 
     use super::*;
-    use crate::linux::dbus::{Bus, NO_REPLY_EXPECTED};
+    use crate::linux::dbus::{Bus, NO_REPLY_EXPECTED, tell};
     use crate::tray::{OnEvent, OnReady, TrayError};
 
     /// The icon while held: dropped, the connection closes and the bus lets the name go.
@@ -152,7 +154,8 @@ mod serving {
         let (slot, stop) = (item.stream.clone(), item.stop.clone());
         // shortcut: if no thread can be started, on_ready is never called (as tray/windows.rs).
         let _ = std::thread::Builder::new().name("gezik-sni".into()).spawn(move || match connect() {
-            Err(why) => on_ready(Err(why)),
+            // Dropped meanwhile: nobody to tell.
+            Err(why) => tell(&stop, on_ready, Err(why)),
             Ok(mut bus) => {
                 if let (Ok(clone), Ok(mut held)) = (bus.stream.try_clone(), slot.lock()) {
                     *held = Some(clone);
@@ -161,7 +164,7 @@ mod serving {
                 if stop.load(SeqCst) {
                     return;
                 }
-                serve(&mut bus, &on_event, on_ready);
+                serve(&mut bus, &on_event, on_ready, &stop);
             }
         });
         item
@@ -178,11 +181,11 @@ mod serving {
         Ok(bus)
     }
 
-    fn serve(bus: &mut Bus, on_event: &OnEvent, on_ready: OnReady) {
+    fn serve(bus: &mut Bus, on_event: &OnEvent, on_ready: OnReady, stop: &AtomicBool) {
         let name = item_name(std::process::id());
         // The bus answers a silent watcher with NoReply after its own timeout.
         let Ok(serial) = bus.send(register_call(&name)) else {
-            return on_ready(Err(TrayError::Failed("the session bus closed".into())));
+            return tell(stop, on_ready, Err(TrayError::Failed("the session bus closed".into())));
         };
         let mut on_ready = Some(on_ready);
         while let Ok(message) = bus.read() {
@@ -192,7 +195,7 @@ mod serving {
             {
                 let result = registered(&message);
                 let failed = result.is_err();
-                ready(result);
+                tell(stop, ready, result);
                 if failed {
                     return;
                 }
@@ -216,7 +219,8 @@ mod serving {
             }
         }
         if let Some(ready) = on_ready {
-            ready(Err(TrayError::Failed("the session bus closed".into())));
+            // The shutdown of a dropped Item ends the read too: then nobody is told.
+            tell(stop, ready, Err(TrayError::Failed("the session bus closed".into())));
         }
     }
 
@@ -305,6 +309,7 @@ mod tests {
         assert!(encode(&Message { serial: 1, ..register }).is_ok());
         let owner = |new: &str| Message {
             kind: MsgKind::Signal,
+            sender: Some("org.freedesktop.DBus".into()),
             interface: Some("org.freedesktop.DBus".into()),
             member: Some("NameOwnerChanged".into()),
             body: vec![Value::Str(WATCHER.into()), Value::Str(String::new()), Value::Str(new.into())],
@@ -312,6 +317,8 @@ mod tests {
         };
         assert!(watcher_came_back(&owner(":1.5")));
         assert!(!watcher_came_back(&owner("")), "it went away: nothing to register with");
+        let forged = Message { sender: Some(":1.66".into()), ..owner(":1.5") };
+        assert!(!watcher_came_back(&forged), "sent straight to Gezik by another app");
         assert!(no_watcher("org.freedesktop.DBus.Error.ServiceUnknown"));
         assert!(!no_watcher("org.freedesktop.DBus.Error.AccessDenied"));
         use crate::tray::TrayError;

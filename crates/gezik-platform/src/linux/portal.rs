@@ -73,10 +73,15 @@ pub fn request_of(reply: &Message) -> Option<&str> {
     }
 }
 
-/// A Response signal of `request`: the code (0 done, 1 cancelled by the user, 2 other) and
-/// the results.
-pub fn response<'a>(m: &'a Message, request: &str) -> Option<(u32, &'a [Value])> {
-    if m.kind != MsgKind::Signal || m.path.as_deref() != Some(request) || m.member.as_deref() != Some("Response") {
+/// A Response signal of `request` from the portal (`owner`, its unique name): the code (0
+/// done, 1 cancelled by the user, 2 other) and the results. A signal sent straight to Gezik
+/// skips the match rules, so its sender is checked here.
+pub fn response<'a>(m: &'a Message, request: &str, owner: &str) -> Option<(u32, &'a [Value])> {
+    if m.kind != MsgKind::Signal
+        || m.sender.as_deref() != Some(owner)
+        || m.path.as_deref() != Some(request)
+        || m.member.as_deref() != Some("Response")
+    {
         return None;
     }
     match m.body.as_slice() {
@@ -107,9 +112,10 @@ pub fn bound(results: &[Value]) -> bool {
     matches!(result(results, "shortcuts"), Some(Value::Array(_, list)) if !list.is_empty())
 }
 
-/// Gezik's shortcut was pressed in `session`.
-pub fn activated(m: &Message, session: &str) -> bool {
+/// Gezik's shortcut was pressed in `session`, said by the portal (`owner`).
+pub fn activated(m: &Message, session: &str, owner: &str) -> bool {
     m.kind == MsgKind::Signal
+        && m.sender.as_deref() == Some(owner)
         && m.interface.as_deref() == Some(IFACE)
         && m.member.as_deref() == Some("Activated")
         && matches!(m.body.as_slice(), [Value::Path(s), Value::Str(id), ..] if s == session && id == SHORTCUT_ID)
@@ -139,7 +145,7 @@ mod serving {
 
     use super::*;
     use crate::hotkey::{HotkeyError, OnPress, OnReady};
-    use crate::linux::dbus::Bus;
+    use crate::linux::dbus::{Bus, tell};
 
     /// The bound shortcut while held: dropped, the connection closes and the portal ends the
     /// session. Drop never waits for the thread, so it may run inside `on_press` too.
@@ -154,11 +160,12 @@ mod serving {
         // shortcut: if no thread can be started, on_ready is never called (as hotkey/windows.rs).
         let _ = std::thread::Builder::new().name("gezik-portal".into()).spawn(move || {
             match set_up(&trigger, &slot, &stop) {
-                Err(why) => on_ready(Err(why)),
-                Ok((mut bus, session)) => {
-                    on_ready(Ok(()));
+                // Dropped meanwhile (the shutdown woke the read): nobody to tell.
+                Err(why) => tell(&stop, on_ready, Err(why)),
+                Ok((mut bus, session, owner)) => {
+                    tell(&stop, on_ready, Ok(()));
                     while let Ok(message) = bus.read() {
-                        if activated(&message, &session) {
+                        if activated(&message, &session, &owner) {
                             on_press();
                         } else if let Some(reply) = refuse(&message)
                             && bus.send(reply).is_err()
@@ -181,7 +188,7 @@ mod serving {
         trigger: &str,
         slot: &Mutex<Option<UnixStream>>,
         stop: &AtomicBool,
-    ) -> Result<(Bus, String), HotkeyError> {
+    ) -> Result<(Bus, String, String), HotkeyError> {
         let mut bus = Bus::session().map_err(failed)?;
         if let (Ok(clone), Ok(mut held)) = (bus.stream.try_clone(), slot.lock()) {
             *held = Some(clone);
@@ -194,32 +201,34 @@ mod serving {
         let token = format!("gezik{}", std::process::id());
         // The desktop may ask the user now: no time limit (dropping the Shortcut ends the wait).
         bus.stream.set_read_timeout(None).map_err(failed)?;
-        let (code, results) = request(&mut bus, create_session(&token))?;
+        let (code, results, owner) = request(&mut bus, create_session(&token))?;
         let session = session_handle(&results)
             .filter(|_| code == 0)
             .ok_or(HotkeyError::Failed("the desktop did not open a shortcut session".into()))?;
-        let (code, results) = request(&mut bus, bind(&session, trigger, &format!("{token}b")))?;
+        let (code, results, _) = request(&mut bus, bind(&session, trigger, &format!("{token}b")))?;
         if code != 0 || !bound(&results) {
             return Err(HotkeyError::Failed("the desktop did not bind the shortcut".into()));
         }
-        Ok((bus, session))
+        Ok((bus, session, owner))
     }
 
-    /// A portal call and its Response. A Response that comes before the call's reply is
-    /// kept (the reply names the request it belongs to).
-    fn request(bus: &mut Bus, call: Message) -> Result<(u32, Vec<Value>), HotkeyError> {
+    /// A portal call, its Response, and the portal's unique name: the reply's sender (the bus
+    /// sets it and only routes a reply the call expects; GetNameOwner would fail before the
+    /// call starts a portal that is not running yet). A Response that comes before the reply
+    /// is kept (the reply names the request and the sender it must come from).
+    fn request(bus: &mut Bus, call: Message) -> Result<(u32, Vec<Value>, String), HotkeyError> {
         let serial = bus.send(call).map_err(failed)?;
         let mut early: Vec<Message> = Vec::new();
-        let request = loop {
+        let (request, owner) = loop {
             let message = bus.read().map_err(failed)?;
             if message.reply_serial == Some(serial) {
                 match message.kind {
                     MsgKind::Error => {
                         return Err(failed(std::io::Error::other(message.error_name.unwrap_or_default())));
                     }
-                    _ => match request_of(&message) {
-                        Some(path) => break path.to_owned(),
-                        None => return Err(HotkeyError::Failed("the portal's reply had no request".into())),
+                    _ => match (request_of(&message), message.sender.clone()) {
+                        (Some(path), Some(owner)) => break (path.to_owned(), owner),
+                        _ => return Err(HotkeyError::Failed("the portal's reply had no request".into())),
                     },
                 }
             }
@@ -233,13 +242,13 @@ mod serving {
                 bus.send(reply).map_err(failed)?;
             }
         };
-        if let Some((code, results)) = early.iter().find_map(|m| response(m, &request)) {
-            return Ok((code, results.to_vec()));
+        if let Some((code, results)) = early.iter().find_map(|m| response(m, &request, &owner)) {
+            return Ok((code, results.to_vec(), owner));
         }
         loop {
             let message = bus.read().map_err(failed)?;
-            if let Some((code, results)) = response(&message, &request) {
-                return Ok((code, results.to_vec()));
+            if let Some((code, results)) = response(&message, &request, &owner) {
+                return Ok((code, results.to_vec(), owner));
             }
             if let Some(reply) = refuse(&message) {
                 bus.send(reply).map_err(failed)?;
@@ -248,6 +257,8 @@ mod serving {
     }
 
     impl Drop for Shortcut {
+        // No Session.Close: the portal closes a session whose client leaves the bus, and a
+        // write from here would interleave with the thread's writes and serials on the socket.
         fn drop(&mut self) {
             self.stop.store(true, SeqCst);
             if let Ok(mut held) = self.stream.lock()
@@ -264,6 +275,9 @@ mod tests {
     use super::*;
     use crate::linux::dbus::{Message, MsgKind, Value, encode};
 
+    /// The portal's unique name on the bus.
+    const PORTAL: &str = ":1.20";
+
     fn entry(key: &str, value: Value) -> Value {
         Value::Entry(Box::new(Value::Str(key.into())), Box::new(Value::Variant(Box::new(value))))
     }
@@ -271,6 +285,7 @@ mod tests {
     fn signal(path: &str, member: &str, body: Vec<Value>) -> Message {
         Message {
             kind: MsgKind::Signal,
+            sender: Some(PORTAL.into()),
             path: Some(path.into()),
             member: Some(member.into()),
             body,
@@ -303,10 +318,10 @@ mod tests {
             "Response",
             vec![Value::U32(0), Value::Array("{sv}".into(), vec![entry("session_handle", Value::Str(session.into()))])],
         );
-        let (code, results) = response(&done, "/r/1").unwrap();
+        let (code, results) = response(&done, "/r/1", PORTAL).unwrap();
         assert_eq!(code, 0);
         assert_eq!(session_handle(results).as_deref(), Some(session));
-        assert!(response(&done, "/r/2").is_none(), "another request's answer");
+        assert!(response(&done, "/r/2", PORTAL).is_none(), "another request's answer");
         let bound_now = signal(
             "/r/2",
             "Response",
@@ -327,9 +342,9 @@ mod tests {
                 ),
             ],
         );
-        assert!(bound(response(&bound_now, "/r/2").unwrap().1));
+        assert!(bound(response(&bound_now, "/r/2", PORTAL).unwrap().1));
         let cancelled = signal("/r/2", "Response", vec![Value::U32(1), Value::Array("{sv}".into(), vec![])]);
-        assert_eq!(response(&cancelled, "/r/2").map(|(c, r)| (c, bound(r))), Some((1, false)));
+        assert_eq!(response(&cancelled, "/r/2", PORTAL).map(|(c, r)| (c, bound(r))), Some((1, false)));
         let pressed = Message {
             interface: Some(IFACE.into()),
             ..signal(
@@ -343,10 +358,15 @@ mod tests {
                 ],
             )
         };
-        assert!(activated(&pressed, session));
-        assert!(!activated(&pressed, "/other/session"));
+        assert!(activated(&pressed, session, PORTAL));
+        assert!(!activated(&pressed, "/other/session", PORTAL));
         let other_id = Message { body: vec![Value::Path(session.into()), Value::Str("x".into())], ..pressed.clone() };
-        assert!(!activated(&other_id, session));
+        assert!(!activated(&other_id, session, PORTAL));
+        // Sent straight to Gezik by another app: no match rule stops it, its sender does.
+        let forged = |m: &Message| Message { sender: Some(":1.66".into()), ..m.clone() };
+        assert!(!activated(&forged(&pressed), session, PORTAL));
+        assert!(response(&forged(&done), "/r/1", PORTAL).is_none());
+        assert!(response(&Message { sender: None, ..done.clone() }, "/r/1", PORTAL).is_none());
         assert!(unsupported("org.freedesktop.DBus.Error.ServiceUnknown"));
         assert!(unsupported("org.freedesktop.DBus.Error.UnknownMethod"));
         assert!(!unsupported("org.freedesktop.portal.Error.NotAllowed"));

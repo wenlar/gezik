@@ -114,6 +114,15 @@ pub fn bus_call(member: &str, body: Vec<Value>) -> Message {
     }
 }
 
+/// Calls `ready` with `result` unless the handle was dropped (`stop`): a dropped tray or
+/// shortcut's thread wakes with an error that its former owner must not hear.
+#[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
+pub fn tell<T>(stop: &std::sync::atomic::AtomicBool, ready: impl FnOnce(T), result: T) {
+    if !stop.load(std::sync::atomic::Ordering::SeqCst) {
+        ready(result);
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Bad(pub &'static str);
 
@@ -805,6 +814,17 @@ mod tests {
         let be = encode_with(&message, false).unwrap();
         assert_eq!(be[0], b'B');
         assert_eq!(decode(&be), Ok(message));
+    }
+
+    #[test]
+    fn a_dropped_handle_hears_nothing() {
+        use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
+        let stop = AtomicBool::new(false);
+        let mut heard = Vec::new();
+        tell(&stop, |r: Result<(), &str>| heard.push(r), Err("bus closed"));
+        stop.store(true, SeqCst);
+        tell(&stop, |r: Result<(), &str>| heard.push(r), Err("woken by the shutdown"));
+        assert_eq!(heard, [Err("bus closed")]);
     }
 
     #[test]
