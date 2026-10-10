@@ -206,19 +206,33 @@ pub fn take_pressed() -> Press {
 /// and, for a press, what `Press` says.
 pub fn note_key(event: &slint::winit_030::winit::event::KeyEvent) {
     use slint::winit_030::winit::event::ElementState;
-    use slint::winit_030::winit::keyboard::{Key as WinitKey, NamedKey, PhysicalKey};
+    use slint::winit_030::winit::keyboard::{Key as WinitKey, NamedKey};
     let pressed = event.state == ElementState::Pressed;
     if event.logical_key == WinitKey::Named(NamedKey::AltGraph) {
         ALTGR.with(|a| a.set(pressed));
     }
     if pressed {
-        let physical = match event.physical_key {
-            PhysicalKey::Code(code) => physical_of(code),
-            PhysicalKey::Unidentified(_) => Physical::Other,
-        };
+        let physical = physical_of_event(event);
         let held = ALTGR.with(std::cell::Cell::get);
         let blank = altgr_blank(held, event.text.as_deref(), &event.logical_key, cfg!(windows));
         note_pressed(Press { physical, altgr_blank: blank });
+    }
+}
+
+pub fn physical_of_event(event: &slint::winit_030::winit::event::KeyEvent) -> Physical {
+    use slint::winit_030::winit::keyboard::PhysicalKey;
+    match event.physical_key {
+        PhysicalKey::Code(code) => physical_of(code),
+        PhysicalKey::Unidentified(_) => Physical::Other,
+    }
+}
+
+/// The digit of a Ctrl (⌘) + digit-key press the layout makes a dead key of (Turkish Q
+/// Shift+3 is `^`): Slint drops dead keys, so main.rs's hook hands it the digit instead.
+pub fn dead_digit(physical: Physical, dead: bool, ctrl_or_cmd: bool, alt: bool) -> Option<char> {
+    match physical {
+        Physical::Digit(d) if dead && ctrl_or_cmd && !alt => Some(d),
+        _ => None,
     }
 }
 
@@ -939,6 +953,19 @@ mod tests {
         assert_eq!(chord_from_press("{", Physical::Digit('7'), true, true, false, false, Platform::Other), None);
         // Plain Shift+1 types `!`: no chord.
         assert_eq!(chord_from_press("!", Physical::Digit('1'), false, false, true, false, Platform::Other), None);
+    }
+
+    #[test]
+    fn ctrl_and_a_dead_digit_key_is_the_digit() {
+        // Turkish Q Ctrl+Shift+3: Shift+3 is the dead key `^`.
+        assert_eq!(dead_digit(Physical::Digit('3'), true, true, false), Some('3'));
+        let got = chord_from_press("3", Physical::Digit('3'), true, false, true, false, Platform::Other).unwrap();
+        assert_eq!(Shortcuts::defaults(Platform::Other).action_for(&got), Some(Action::ViewColumns));
+        // Without Ctrl, or with AltGr, the dead key composes as the layout says.
+        assert_eq!(dead_digit(Physical::Digit('3'), true, false, false), None);
+        assert_eq!(dead_digit(Physical::Digit('3'), true, true, true), None);
+        assert_eq!(dead_digit(Physical::Digit('3'), false, true, false), None);
+        assert_eq!(dead_digit(Physical::Other, true, true, false), None);
     }
 
     #[test]

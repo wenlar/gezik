@@ -1765,12 +1765,30 @@ fn main() -> Result<(), slint::PlatformError> {
         let pointer = std::cell::Cell::new((0.0f32, 0.0f32));
         let ops = ops.clone();
         let drags = drags.clone();
-        window.window().on_winit_window_event(move |_, event| {
+        let modifiers = std::cell::Cell::new(winit::keyboard::ModifiersState::empty());
+        window.window().on_winit_window_event(move |slint_window, event| {
+            if let winit::event::WindowEvent::ModifiersChanged(m) = event {
+                modifiers.set(m.state());
+            }
             // The keypad's keys and Ctrl+Shift+digits, which Slint's text cannot tell apart
             // (keys.rs `Physical`), and AltGr on a key it types nothing with (keys.rs
             // `altgr_blank`): noted before Slint hands the key to `key-event`.
             if let winit::event::WindowEvent::KeyboardInput { event, .. } = event {
                 keys::note_key(event);
+                let m = modifiers.get();
+                let dead = event.state == winit::event::ElementState::Pressed
+                    && matches!(event.logical_key, winit::keyboard::Key::Dead(_));
+                if let Some(digit) = keys::dead_digit(
+                    keys::physical_of_event(event),
+                    dead,
+                    m.control_key() || m.super_key(),
+                    m.alt_key(),
+                ) {
+                    let text = slint::SharedString::from(digit.to_string());
+                    slint_window.dispatch_event(slint::platform::WindowEvent::KeyPressed { text: text.clone() });
+                    slint_window.dispatch_event(slint::platform::WindowEvent::KeyReleased { text });
+                    return EventResult::PreventDefault;
+                }
             }
             if let winit::event::WindowEvent::Focused(false) = event {
                 keys::forget_altgr();
