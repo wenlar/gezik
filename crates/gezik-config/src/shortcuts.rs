@@ -159,6 +159,72 @@ pub fn parse_chord(text: &str, platform: Platform) -> Result<Option<Chord>, Stri
     Ok(Some(chord))
 }
 
+/// `[system] hotkey` (spec 9 §9.2, §13.1): the chord syntax plus `win`, `super`, `cmd` and
+/// `meta` for the logo key (`meta`), `option` for Alt; `mod` is Cmd on macOS, Ctrl elsewhere.
+/// `""` is off (`Ok(None)`); there is no default. A system-wide shortcut takes its key from
+/// every app, so only a letter, a digit or F1-F12, with Ctrl, Alt or the logo key; never
+/// Ctrl+Alt (AltGr types with it); on macOS with ⌘ or ⌃ (macOS 15 refuses ⌥ or ⇧ alone).
+/// An error is a phrase that follows the quoted text: `"ctrl+alt+e" uses Ctrl+Alt, …`.
+pub fn parse_hotkey(text: &str, platform: Platform) -> Result<Option<Chord>, String> {
+    let text = text.trim().to_ascii_lowercase();
+    if text.is_empty() {
+        return Ok(None);
+    }
+    let not_a_key = |name: &str| format!("ends in \"{name}\": a global shortcut's key is a letter, a digit or F1-F12");
+    // "num+" ends in the separator, so it would read as a missing key.
+    if text.ends_with("num+") {
+        return Err(not_a_key("num+"));
+    }
+    let (modifiers, name) = text.rsplit_once('+').unwrap_or(("", text.as_str()));
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("has no key after \"+\"".to_owned());
+    }
+    let key = match Key::parse(name) {
+        Some(Key::Char(c)) if c.is_ascii_alphanumeric() => Key::Char(c),
+        Some(Key::F(n)) => Key::F(n),
+        _ => return Err(not_a_key(name)),
+    };
+    let mut chord = Chord { ctrl: false, alt: false, shift: false, meta: false, key };
+    for modifier in modifiers.split('+').map(str::trim).filter(|_| !modifiers.is_empty()) {
+        match modifier {
+            "ctrl" => chord.ctrl = true,
+            "alt" | "option" => chord.alt = true,
+            "shift" => chord.shift = true,
+            "win" | "super" | "cmd" | "meta" => chord.meta = true,
+            "mod" => match platform {
+                Platform::Mac => chord.meta = true,
+                Platform::Other => chord.ctrl = true,
+            },
+            other => return Err(format!("has an unknown modifier \"{other}\"")),
+        }
+    }
+    if chord.ctrl && chord.alt {
+        return Err("uses Ctrl+Alt, which types AltGr characters".to_owned());
+    }
+    if platform == Platform::Mac && !chord.meta && !chord.ctrl {
+        return Err("needs ⌘ (cmd) or ⌃ (ctrl) on macOS".to_owned());
+    }
+    if !chord.ctrl && !chord.alt && !chord.meta {
+        return Err("needs Ctrl, Alt or the Windows/Super key".to_owned());
+    }
+    Ok(Some(chord))
+}
+
+/// How Gezik writes a global shortcut to settings.toml: the logo key by this system's name
+/// (`win`, `cmd`, `super`), `ctrl`, `alt`, `shift`, the key (as the spec writes them).
+pub fn hotkey_text(chord: &Chord, logo: &str) -> String {
+    let held = [(chord.meta, logo), (chord.ctrl, "ctrl"), (chord.alt, "alt"), (chord.shift, "shift")];
+    let mut parts: Vec<String> = held.iter().filter(|(on, _)| *on).map(|(_, name)| (*name).to_owned()).collect();
+    parts.push(match chord.key {
+        Key::F(n) => format!("f{n}"),
+        Key::Char(c) => c.to_string(),
+        // parse_hotkey makes no other key.
+        _ => String::new(),
+    });
+    parts.join("+")
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Action {
     NewTab,
@@ -1519,5 +1585,61 @@ clear-history = \"ctrl+shift+h\"
         }
         assert_eq!(Action::Search.title(), "Find…");
         assert_eq!(Action::CommandPalette.title(), "Command Palette…");
+    }
+
+    #[test]
+    fn hotkey_rules() {
+        let win = |text: &str| parse_hotkey(text, Platform::Other);
+        let mac = |text: &str| parse_hotkey(text, Platform::Mac);
+        let chord = |ctrl, alt, shift, meta, key| Some(Chord { ctrl, alt, shift, meta, key });
+        assert_eq!(win(""), Ok(None), "empty is off");
+        assert_eq!(win("  "), Ok(None));
+        assert_eq!(win("win+shift+e"), Ok(chord(false, false, true, true, Key::Char('e'))));
+        assert_eq!(win("Super+Shift+E"), Ok(chord(false, false, true, true, Key::Char('e'))), "any case");
+        assert_eq!(
+            win("cmd+alt+e"),
+            Ok(chord(false, true, false, true, Key::Char('e'))),
+            "cmd is the logo key everywhere"
+        );
+        assert_eq!(win("meta + alt + 7"), Ok(chord(false, true, false, true, Key::Char('7'))), "spaces around +");
+        assert_eq!(win("ctrl+shift+f12"), Ok(chord(true, false, true, false, Key::F(12))));
+        assert_eq!(win("mod+shift+g"), Ok(chord(true, false, true, false, Key::Char('g'))), "mod is Ctrl off macOS");
+        assert_eq!(mac("mod+alt+e"), Ok(chord(false, true, false, true, Key::Char('e'))), "mod is Cmd on macOS");
+        assert_eq!(mac("option+cmd+e"), Ok(chord(false, true, false, true, Key::Char('e'))));
+        let refused = |result: Result<Option<Chord>, String>, why: &str| {
+            let err = result.unwrap_err();
+            assert!(err.contains(why), "{err} should say {why}");
+        };
+        refused(win("ctrl+alt+e"), "uses Ctrl+Alt, which types AltGr characters");
+        refused(win("ctrl+alt+shift+f11"), "AltGr");
+        refused(win("e"), "needs Ctrl, Alt or the Windows/Super key");
+        refused(win("shift+e"), "needs Ctrl, Alt or the Windows/Super key");
+        refused(win("f12"), "needs Ctrl, Alt");
+        refused(win("win+space"), "letter, a digit or F1-F12");
+        refused(win("win+num+"), "letter, a digit or F1-F12");
+        refused(win("win+["), "letter, a digit or F1-F12");
+        refused(win("win+left"), "letter, a digit or F1-F12");
+        refused(win("hyper+e"), "unknown modifier \"hyper\"");
+        refused(win("win+"), "no key after");
+        refused(mac("alt+e"), "needs ⌘ (cmd) or ⌃ (ctrl) on macOS");
+        refused(mac("alt+shift+e"), "⌘ (cmd)");
+        assert!(mac("ctrl+shift+e").is_ok(), "⌃ is enough on macOS");
+    }
+
+    #[test]
+    fn hotkey_text_reads_back() {
+        for (text, logo) in
+            [("win+shift+e", "win"), ("ctrl+shift+f12", "win"), ("cmd+alt+e", "cmd"), ("super+shift+7", "super")]
+        {
+            let chord = parse_hotkey(text, Platform::Other).unwrap().unwrap();
+            let written = hotkey_text(&chord, logo);
+            assert_eq!(written, text, "canonical order: logo, ctrl, alt, shift, key");
+            assert_eq!(parse_hotkey(&written, Platform::Other).unwrap(), Some(chord));
+        }
+        let chord = parse_hotkey("win+shift+e", Platform::Other).unwrap().unwrap();
+        assert_eq!(hotkey_text(&chord, "win"), "win+shift+e", "the modifiers in Gezik's order");
+        let chord = parse_hotkey("shift+alt+win+f3", Platform::Other).unwrap().unwrap();
+        assert_eq!(hotkey_text(&chord, "super"), "super+alt+shift+f3");
+        assert!(parse_hotkey("e+shift+win", Platform::Other).is_err(), "the key comes last");
     }
 }
