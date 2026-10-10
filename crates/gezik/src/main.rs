@@ -1001,6 +1001,14 @@ fn main() -> Result<(), slint::PlatformError> {
     });
     apply_config(&window, &files.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
     window_state::restore(&window, &saved_state, if secondary { 32 } else { 0 });
+    if let Some(saved) = saved_state.window.filter(|_| hidden) {
+        let weak = window.as_weak();
+        resident::when_shown(move || {
+            if let Some(window) = weak.upgrade() {
+                window_state::restore_size(&window, saved);
+            }
+        });
+    }
     resident::when_shown({
         let weak = window.as_weak();
         move || keep_on_screen(weak, 0)
