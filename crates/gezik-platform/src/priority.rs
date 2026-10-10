@@ -40,8 +40,8 @@ pub fn lower_this_thread() {
 }
 
 /// Hands the memory a large piece of work freed back to the system (Windows keeps the heap's
-/// freed pages otherwise: a folder sizes run on the home folder left ~3 MB, spec 12). Call it
-/// when the work has ended; elsewhere nothing to do.
+/// freed pages otherwise: a folder sizes run on the home folder left ~3 MB, spec 12; glibc and
+/// macOS's malloc keep them too). Call it when the work has ended, not on every key.
 pub fn give_back_memory() {
     #[cfg(windows)]
     {
@@ -61,6 +61,21 @@ pub fn give_back_memory() {
                 Some((&info as *const Optimize).cast()),
                 size_of::<Optimize>(),
             );
+        }
+    }
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    // SAFETY: it only returns the free pages of malloc's arenas.
+    unsafe {
+        let _ = libc::malloc_trim(0);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        unsafe extern "C" {
+            fn malloc_zone_pressure_relief(zone: *mut libc::c_void, goal: libc::size_t) -> libc::size_t;
+        }
+        // SAFETY: a null zone means every zone, a goal of 0 as much as it can.
+        unsafe {
+            malloc_zone_pressure_relief(std::ptr::null_mut(), 0);
         }
     }
 }

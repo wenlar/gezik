@@ -17,5 +17,12 @@ fn main() {
         // The exe's own imports come from System32 only, never from its folder: the
         // administrator helper is this exe (9b7 security review 1; the CRT is static).
         println!("cargo:rustc-link-arg-bins=/DEPENDENTLOADFLAG:0x800");
+        // The segment heap: it gives freed pages back by itself, where the default heap kept
+        // ~1 MB after the second pane closed and ~1.5 MB after a 30-folder walk (spec 10 §4.2).
+        let manifest =
+            std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("windows/gezik.manifest");
+        println!("cargo:rerun-if-changed={}", manifest.display());
+        println!("cargo:rustc-link-arg-bins=/MANIFEST:EMBED");
+        println!("cargo:rustc-link-arg-bins=/MANIFESTINPUT:{}", manifest.display());
     }
 }
