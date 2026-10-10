@@ -91,6 +91,14 @@ impl ItemsModel {
         }
     }
 
+    /// Redraws `lines` (model rows), those past the end left out; never a reset. Returns how
+    /// many were redrawn.
+    pub fn lines_changed(&self, lines: Range<usize>) -> usize {
+        let lines = lines.start..lines.end.min(self.row_count());
+        lines.clone().for_each(|line| self.notify.row_changed(line));
+        lines.len()
+    }
+
     /// The line entry `index` is on and its column; `None` in a closed group or past the end.
     /// While the view's data is borrowed (a binding read during a change) it answers as
     /// without groups, never with a panic.
@@ -606,6 +614,18 @@ mod tests {
         data.selection = Selection::from_indices(2, [0, 1], Some(1));
         hide_collapsed(&mut data);
         assert_eq!((data.selection.count(), data.selection.focus()), (0, None));
+    }
+
+    #[test]
+    fn a_grouped_redraw_is_by_line_past_a_big_closed_group() {
+        // Lines on screen: open A (header, 0), closed B (100k rows), open C (header, 100_001).
+        let names: Vec<String> = (0..100_002).map(|i| format!("{i}")).collect();
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        let data = grouped(&names, &[(0, 1, false), (1, 100_000, true), (100_001, 1, false)], &["A", "B", "C"]);
+        let model = ItemsModel::new(Rc::new(RefCell::new(data)));
+        assert_eq!(model.row_count(), 5);
+        assert_eq!(model.lines_changed(0..5), 5, "each line on screen, no reset");
+        assert_eq!(model.lines_changed(3..40), 2, "nothing past the end");
     }
 
     #[test]

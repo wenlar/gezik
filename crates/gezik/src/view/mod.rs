@@ -950,14 +950,25 @@ impl View {
 
     /// Draws again the lines on screen only (a minute passed).
     fn redraw_visible(&self) {
-        let entries = self.visible_entries();
-        self.0.model.entries_changed(std::slice::from_ref(&entries));
+        if self.0.data.borrow().groups.is_empty() {
+            let entries = self.visible_entries();
+            self.0.model.entries_changed(std::slice::from_ref(&entries));
+        } else {
+            // By line: the entries from the first to the last line on screen may hold a closed
+            // group of any size, which would reset the model (and jump the scroll).
+            self.0.model.lines_changed(self.lines_on_screen());
+        }
+    }
+
+    /// The lines on screen.
+    fn lines_on_screen(&self) -> Range<usize> {
+        let Some(window) = self.0.window.upgrade() else { return 0..0 };
+        visible_lines(window.get_list_scroll(), window.get_drop_geometry().list_height, self.line_height())
     }
 
     /// The entries on the lines on screen.
     fn visible_entries(&self) -> Range<usize> {
-        let Some(window) = self.0.window.upgrade() else { return 0..0 };
-        let lines = visible_lines(window.get_list_scroll(), window.get_drop_geometry().list_height, self.line_height());
+        let lines = self.lines_on_screen();
         let per_row = self.0.model.per_row();
         let data = self.0.data.borrow();
         if !data.groups.is_empty() {
