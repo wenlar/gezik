@@ -32,13 +32,14 @@ pub fn apply(window: &AppWindow, theme: &ResolvedTheme) {
     crate::preview::with_current(|p| p.retheme(theme));
 }
 
-/// Makes the next frame redraw the whole window: the window's background is set to another
-/// color and back, which marks all of it as changed (Slint has no direct call for this).
+/// Makes the next frame redraw the whole window: the window's background (`Theme.chrome`,
+/// app.slint) is set to another color and back, which marks all of it as changed (Slint has
+/// no direct call for this). Any other color only redraws the items that use it.
 pub fn repaint_all(window: &AppWindow) {
     let global = window.global::<Theme>();
-    let background = global.get_background();
-    global.set_background(background.with_alpha(if background.alpha() == 255 { 0.99 } else { 1.0 }));
-    global.set_background(background);
+    let chrome = global.get_chrome();
+    global.set_chrome(chrome.with_alpha(if chrome.alpha() == 255 { 0.99 } else { 1.0 }));
+    global.set_chrome(chrome);
     window.window().request_redraw();
 }
 
@@ -102,4 +103,15 @@ pub fn apply_global(global: &Theme<'_>, theme: &ResolvedTheme) {
 /// `[layout] reduce-motion`: hover and popup fades take no time.
 pub fn set_reduce_motion(window: &AppWindow, on: bool) {
     window.global::<Theme>().set_reduce_motion(on);
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn repaint_all_flips_the_window_background() {
+        let app = include_str!("../ui/app.slint");
+        let window = &app[app.find("export component AppWindow inherits Window").unwrap()..];
+        let background = window.lines().find_map(|l| l.trim().strip_prefix("background: "));
+        assert_eq!(background, Some("Theme.chrome;"), "repaint_all must flip the color the window is filled with");
+    }
 }

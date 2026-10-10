@@ -449,6 +449,11 @@ fn pressed() {
     }
 }
 
+/// Whether Gezik has been shown (not a --background start still in the tray).
+pub fn shown() -> bool {
+    with(|s| s.shown)
+}
+
 /// Runs `f` once the window has been shown (now, unless a `--background` start hid it):
 /// work that needs the native window waits for it (deviation 12).
 pub fn when_shown(f: impl FnOnce() + 'static) {

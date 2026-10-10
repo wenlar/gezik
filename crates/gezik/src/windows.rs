@@ -809,6 +809,15 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
         }
     });
     window_state::restore(&window, &state, opening.offset);
+    // A window built before Gezik shows (a --background start) gets its saved size back then.
+    if let Some(saved) = state.window.filter(|_| !resident::shown()) {
+        let weak = window.as_weak();
+        resident::when_shown(move || {
+            if let Some(window) = weak.upgrade() {
+                window_state::restore_size(&window, saved);
+            }
+        });
+    }
     resident::when_shown({
         let weak = window.as_weak();
         move || crate::keep_on_screen(id, weak, 0)
