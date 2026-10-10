@@ -72,6 +72,10 @@ impl Task for RestoreTask {
         }
     }
 
+    fn same_targets(&self) -> bool {
+        true
+    }
+
     fn run(&self, item: &PlanItem, _cx: &RunCx<'_>) -> io::Result<Outcome> {
         let (Some(trashed), Some(original)) = (&item.source, &item.target) else { return Ok(Outcome::Nothing) };
         fs::restore(trashed, original)?;
@@ -204,6 +208,28 @@ mod tests {
         assert_eq!(*asked.borrow(), std::slice::from_ref(&original));
         assert_eq!(read(&original), "first");
         assert_eq!(read(&dir.join("dst").join("x (2).txt")), "second");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn keep_both_passes_over_a_name_another_item_is_bound_for() {
+        let dir = test_dir("restore-same-name-next");
+        let (bin, dst) = (dir.join("bin"), dir.join("dst"));
+        write(&bin.join("$R1.txt"), "first");
+        write(&bin.join("$R2.txt"), "second");
+        write(&bin.join("$R3.txt"), "third");
+        let pairs = vec![
+            (bin.join("$R1.txt"), dst.join("x.txt")),
+            (bin.join("$R2.txt"), dst.join("x.txt")),
+            (bin.join("$R3.txt"), dst.join("x (2).txt")),
+        ];
+        let engine = engine();
+        let job = engine.submit(Box::new(RestoreTask::new(pairs)));
+        let (report, _) = finish(&engine, job, |c| vec![Decision::KeepBoth; c.len()]);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert_eq!(read(&dst.join("x.txt")), "first");
+        assert_eq!(read(&dst.join("x (2).txt")), "third");
+        assert_eq!(read(&dst.join("x (3).txt")), "second");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

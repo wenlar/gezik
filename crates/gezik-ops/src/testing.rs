@@ -116,6 +116,8 @@ pub(crate) struct FakeTask {
     pub disk_full_once: Mutex<Vec<usize>>,
     pub log: Arc<Mutex<Vec<String>>>,
     pub running: Arc<AtomicUsize>,
+    /// Where item `i` goes (checked; logged as `i@name`), as for items that may share a place.
+    pub targets: Vec<PathBuf>,
 }
 
 impl FakeTask {
@@ -129,6 +131,7 @@ impl FakeTask {
             disk_full_once: Mutex::default(),
             log: log.clone(),
             running: Arc::default(),
+            targets: Vec::new(),
         }
     }
 }
@@ -153,15 +156,27 @@ impl Task for FakeTask {
     fn plan(&self, sink: &mut dyn ScanSink) {
         for i in 0..self.items {
             let facts = Facts { is_dir: false, size: 10, modified: None };
-            if !sink.item(PlanItem::new(Stage::Parallel, facts).top(i)) {
+            let item = PlanItem::new(Stage::Parallel, facts).top(i);
+            let item = match self.targets.get(i) {
+                Some(target) => item.target(target).checked(),
+                None => item,
+            };
+            if !sink.item(item) {
                 return;
             }
         }
     }
 
+    fn same_targets(&self) -> bool {
+        !self.targets.is_empty()
+    }
+
     fn run(&self, item: &PlanItem, _cx: &RunCx<'_>) -> io::Result<Outcome> {
         self.running.fetch_add(1, Ordering::SeqCst);
         lock(&self.log).push(format!("{}+{}", self.name, item.root));
+        if let Some(name) = item.target.as_deref().and_then(Path::file_name) {
+            lock(&self.log).push(format!("{}@{}", item.root, name.to_string_lossy()));
+        }
         if let Some(gate) = &self.gate {
             gate.wait();
         }

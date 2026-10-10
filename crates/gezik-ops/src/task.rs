@@ -188,6 +188,9 @@ pub struct PlanItem {
     /// A `Before` folder meeting a folder merges into it without asking; `false`: it is a
     /// conflict like any other (a folder coming back from the trash).
     pub(crate) merges: bool,
+    /// Bound where an earlier item of the job goes: runs after every other item, in the order
+    /// these were planned (set by the engine).
+    pub(crate) waits: bool,
 }
 
 impl PlanItem {
@@ -205,6 +208,7 @@ impl PlanItem {
             replace: false,
             counted: true,
             merges: true,
+            waits: false,
         }
     }
 
@@ -380,6 +384,11 @@ pub trait Task: Send + Sync {
     fn run(&self, item: &PlanItem, cx: &RunCx<'_>) -> io::Result<Outcome>;
     /// Called once the job ends.
     fn done(&self, _cancelled: bool) {}
+    /// Whether two of its items may be bound for one place (two binned `x.txt` from one
+    /// folder): the engine then holds the later one as a conflict, at 8 bytes per item.
+    fn same_targets(&self) -> bool {
+        false
+    }
 }
 
 /// What `Task::run` may use: progress, pause and cancel, the drive's trash, questions.

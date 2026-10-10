@@ -53,6 +53,7 @@ fn run_task(shared: &Shared, job: &Job, task: &dyn Task, kinds: &[gezik_core::op
     let (sender, receiver) = mpsc::channel::<PlanItem>();
     let receiver = Mutex::new(receiver);
     let mut after: Vec<PlanItem> = Vec::new();
+    let mut waiting: Vec<PlanItem> = Vec::new();
     std::thread::scope(|scope| {
         for _ in 0..count.max(1) {
             scope.spawn(|| {
@@ -70,12 +71,13 @@ fn run_task(shared: &Shared, job: &Job, task: &dyn Task, kinds: &[gezik_core::op
             task,
             sender: &sender,
             after: &mut after,
+            waiting: &mut waiting,
             held: Vec::new(),
             merges: Vec::new(),
             renames: Vec::new(),
             blocked: Vec::new(),
             taken: HashSet::new(),
-            queued: HashMap::new(),
+            queued: queued_for(task),
         };
         task.plan(&mut sink);
         control.scanning.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -86,7 +88,8 @@ fn run_task(shared: &Shared, job: &Job, task: &dyn Task, kinds: &[gezik_core::op
         // The workers stop once the queue is empty and closed.
         drop(sender);
     });
-    for item in after.into_iter().rev() {
+    // In the order they were planned: the last one chosen to replace is the one left.
+    for item in waiting.into_iter().chain(after.into_iter().rev()) {
         if control.cancelled() {
             break;
         }
@@ -118,9 +121,25 @@ struct Sink<'a> {
     blocked: Vec<(PathBuf, usize)>,
     /// Names this task chose that may not exist on disk yet.
     taken: HashSet<PathBuf>,
-    /// Checked targets of items queued to run side by side, not on disk yet when planned: a
-    /// later item of this task bound for one of them is a conflict (two restored `x.txt`).
-    queued: HashMap<Vec<String>, Facts>,
+    /// Items bound where an earlier one goes, settled: they run once the others are done.
+    waiting: &'a mut Vec<PlanItem>,
+    /// Checked targets (`target_hash`) of items queued to run side by side, not on disk yet
+    /// when planned: a later item bound for one is a conflict. Only for a task whose items
+    /// may share a place (`Task::same_targets`): a big copy keeps no list.
+    queued: Option<HashMap<u64, Facts>>,
+}
+
+fn queued_for(task: &dyn Task) -> Option<HashMap<u64, Facts>> {
+    task.same_targets().then(HashMap::new)
+}
+
+/// A path's key as the file system compares it, in 8 bytes.
+// shortcut: two places sharing a hash make a needless conflict question; key by the path if one is ever seen.
+fn target_hash(path: &Path) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::hash::DefaultHasher::new();
+    path_key(path).hash(&mut hasher);
+    hasher.finish()
 }
 
 fn conflict(item: &PlanItem, target: &Path, kind: ConflictKind, existing: Facts, decision: Decision) -> ConflictItem {
@@ -186,15 +205,16 @@ impl ScanSink for Sink<'_> {
         if item.check_target
             && item.stage == Stage::Parallel
             && let Some(target) = item.target.clone()
+            && let Some(queued) = &mut self.queued
         {
-            let key = path_key(&target);
-            if let Some(&earlier) = self.queued.get(&key) {
+            let key = target_hash(&target);
+            if let Some(&earlier) = queued.get(&key) {
                 let kind = match kind_of(item.facts, earlier) {
                     ConflictKind::Folder => ConflictKind::Mismatch,
                     kind => kind,
                 };
                 // Runs once the earlier one is done (never beside it): `Replace` then finds it.
-                item.stage = Stage::After;
+                item.waits = true;
                 if let Some(decision) = item.preset {
                     self.apply(item, kind, earlier, decision);
                     return true;
@@ -207,7 +227,7 @@ impl ScanSink for Sink<'_> {
                 });
                 return true;
             }
-            self.queued.insert(key, item.facts);
+            queued.insert(key, item.facts);
         }
         self.dispatch(item);
         true
@@ -220,6 +240,9 @@ impl ScanSink for Sink<'_> {
 
 impl Sink<'_> {
     fn dispatch(&mut self, item: PlanItem) {
+        if item.waits {
+            return self.waiting.push(item);
+        }
         match item.stage {
             Stage::Before => execute(self.shared, self.job, self.task, item),
             Stage::Parallel => {
@@ -252,16 +275,21 @@ impl Sink<'_> {
     }
 
     /// A free `name (n)` next to `target`.
-    fn free_target(&mut self, target: &Path, is_dir: bool) -> PathBuf {
+    fn free_target(&mut self, target: &Path, facts: Facts) -> PathBuf {
         let parent = target.parent().unwrap_or(Path::new(""));
         let name = target.file_name().unwrap_or_default();
-        let taken = &self.taken;
-        let free = next_free_os(name, is_dir, |candidate| {
+        let (taken, queued) = (&self.taken, &self.queued);
+        let free = next_free_os(name, facts.is_dir, |candidate| {
             let path = parent.join(candidate);
-            taken.contains(&path) || std::fs::symlink_metadata(&path).is_ok()
+            taken.contains(&path)
+                || queued.as_ref().is_some_and(|q| q.contains_key(&target_hash(&path)))
+                || std::fs::symlink_metadata(&path).is_ok()
         });
         let path = parent.join(free);
         self.taken.insert(path.clone());
+        if let Some(queued) = &mut self.queued {
+            queued.insert(target_hash(&path), facts);
+        }
         path
     }
 
@@ -284,7 +312,7 @@ impl Sink<'_> {
             }
             Resolution::Rename => {
                 let Some(target) = item.target.clone() else { return true };
-                let free = self.free_target(&target, item.facts.is_dir);
+                let free = self.free_target(&target, item.facts);
                 // Only a folder has items following it inside.
                 if item.facts.is_dir {
                     self.renames.push((target, free.clone()));
@@ -506,5 +534,19 @@ pub(crate) fn execute(shared: &Shared, job: &Job, task: &dyn Task, item: PlanIte
     // Whatever the task did not count itself (a rename, a delete) is done now too.
     if !item.facts.is_dir {
         control.add_bytes(item.facts.size.saturating_sub(cx.added.get()));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_task_whose_items_may_share_a_place_keeps_their_targets() {
+        let copy = crate::CopyTask::into(vec![PathBuf::from("a.txt")], Path::new("dst"));
+        assert!(queued_for(&copy).is_none(), "a big copy keeps no list");
+        let restore = crate::RestoreTask::new(Vec::new());
+        assert!(queued_for(&restore).is_some());
+        assert_eq!(target_hash(Path::new("d/x.txt")), target_hash(Path::new("d/./x.txt")));
     }
 }
