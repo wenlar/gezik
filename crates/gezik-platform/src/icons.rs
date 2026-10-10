@@ -40,8 +40,8 @@ pub fn type_name(ext: &str, is_dir: bool) -> Option<String> {
 }
 
 /// The system's icon for `target`, at most `px` wide: smaller sizes come as the system has
-/// them (the UI scales them), bigger ones are shrunk to `px`. `None` where there are no
-/// system icons: Linux uses Gezik's own icons for now.
+/// them (the UI scales them), bigger ones are shrunk to `px`. `None` where the system has
+/// none: Linux's theme without a PNG for it (Gezik's own icon then).
 pub fn icon(target: &IconTarget, px: u32) -> Option<Rgba> {
     imp::icon(target, px)
 }
@@ -142,12 +142,14 @@ pub(crate) fn finder_info_custom_icon(info: &[u8]) -> bool {
 }
 
 /// Whether the folder `path` may have an icon of its own, to be looked up by path: Windows
-/// (and Linux, where it changes nothing yet) a `desktop.ini`; macOS a custom icon or a
-/// volume's root. Reads the disk: worker threads only.
+/// a `desktop.ini`; macOS a custom icon or a volume's root; Linux home and the XDG user
+/// folders (no disk access there). Worker threads only.
 pub fn folder_has_own_icon(path: &std::path::Path) -> bool {
     #[cfg(target_os = "macos")]
     return crate::mac::icons::folder_has_own_icon(path);
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(unix, not(target_os = "macos")))]
+    return crate::linux::icon_theme::is_special(path);
+    #[cfg(windows)]
     path.join("desktop.ini").is_file()
 }
 
@@ -164,8 +166,8 @@ mod imp {
     }
 
     #[cfg(not(target_os = "macos"))]
-    pub fn icon(_target: &IconTarget, _px: u32) -> Option<Rgba> {
-        None
+    pub fn icon(target: &IconTarget, px: u32) -> Option<Rgba> {
+        crate::linux::icon_theme::icon(target, px)
     }
 
     #[cfg(target_os = "macos")]
