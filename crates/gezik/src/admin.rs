@@ -85,6 +85,21 @@ pub fn skipping(ops: Vec<Op>, exists: &dyn Fn(&Path) -> bool) -> Vec<Op> {
     ops.into_iter().filter(|op| !op.target().is_some_and(exists)).collect()
 }
 
+/// The conflict question's buttons: Enter (the first) never replaces.
+pub const TAKEN_BUTTONS: &[&str] = &["Cancel", "Replace", "Skip them"];
+
+/// The confirmation's buttons and which one goes ahead: with a delete or a replace in the list,
+/// Cancel comes first, so Enter does nothing destructive.
+pub fn confirm_buttons(ops: &[Op]) -> (&'static [&'static str], usize) {
+    let replaces = ops.iter().any(|op| matches!(op, Op::Copy { replace: true, .. } | Op::Move { replace: true, .. }));
+    let deletes = ops.iter().any(|op| matches!(op, Op::Delete(_)));
+    match (deletes, replaces) {
+        (true, _) => (&["Cancel", "Delete"], 1),
+        (false, true) => (&["Cancel", "Continue"], 1),
+        _ => (&["Continue", "Cancel"], 0),
+    }
+}
+
 fn items(n: usize) -> String {
     if n == 1 { "1 item".to_owned() } else { format!("{n} items") }
 }
@@ -102,8 +117,34 @@ pub fn delete_text(n: usize) -> String {
     format!("This will delete {} permanently as administrator. It cannot be undone.", items(n))
 }
 
+/// `text` with what could hide or reorder what is shown (control, bidi and invisible format
+/// characters) written as `\u{..}`: the list on screen reads as what is sent.
+pub fn escaped(text: &str) -> String {
+    text.chars()
+        .map(|c| {
+            let hidden = c.is_control()
+                || matches!(
+                    c,
+                    '\u{AD}'
+                        | '\u{61C}'
+                        | '\u{180E}'
+                        | '\u{200B}'..='\u{200F}'
+                        | '\u{202A}'..='\u{202E}'
+                        | '\u{2060}'..='\u{2069}'
+                        | '\u{FEFF}'
+                        | '\u{FFF9}'..='\u{FFFB}'
+                );
+            if hidden { format!("\\u{{{:04x}}}", u32::from(c)) } else { c.to_string() }
+        })
+        .collect()
+}
+
+fn shown(path: &Path) -> String {
+    escaped(&path.display().to_string())
+}
+
 pub fn refusal_text(op: &Op, why: &str) -> String {
-    format!("Not done as administrator: {} ({why})", op.path().display())
+    format!("Not done as administrator: {} ({why})", shown(op.path()))
 }
 
 /// One operation in words, with every value the helper gets.
@@ -111,19 +152,19 @@ pub fn op_text(op: &Op) -> String {
     match op {
         Op::Copy { from, to, replace } => {
             let how = if *replace { ", replacing files there" } else { "" };
-            format!("Copy {} to {}{how}", from.display(), to.display())
+            format!("Copy {} to {}{how}", shown(from), shown(to))
         }
         Op::Move { from, to, replace } => {
             let how = if *replace { ", replacing a file there" } else { "" };
-            format!("Move {} to {}{how}", from.display(), to.display())
+            format!("Move {} to {}{how}", shown(from), shown(to))
         }
-        Op::Delete(path) => format!("Delete {} permanently", path.display()),
-        Op::Rename { path, name } => format!("Rename {} to \"{name}\"", path.display()),
-        Op::Mkdir(path) => format!("Make the folder {}", path.display()),
-        Op::Rmdir(path) => format!("Remove the empty folder {}", path.display()),
-        Op::Chmod { path, mode } => format!("Set the permissions of {} to {mode:03o}", path.display()),
+        Op::Delete(path) => format!("Delete {} permanently", shown(path)),
+        Op::Rename { path, name } => format!("Rename {} to \"{}\"", shown(path), escaped(name)),
+        Op::Mkdir(path) => format!("Make the folder {}", shown(path)),
+        Op::Rmdir(path) => format!("Remove the empty folder {}", shown(path)),
+        Op::Chmod { path, mode } => format!("Set the permissions of {} to {mode:03o}", shown(path)),
         Op::Chown { path, uid, gid } => {
-            format!("Set the owner of {} to user {uid} and group {gid}", path.display())
+            format!("Set the owner of {} to user {uid} and group {gid}", shown(path))
         }
         Op::Chflags { path, set, clear } => {
             let flag = |bit: u32, name: &str| {
@@ -133,7 +174,7 @@ pub fn op_text(op: &Op) -> String {
                     .map(|(_, s)| format!("{name} {s}"))
             };
             let what: Vec<String> = [flag(HIDDEN, "Hidden"), flag(LOCKED, "Locked")].into_iter().flatten().collect();
-            format!("Change the flags of {}: {}", path.display(), what.join(", "))
+            format!("Change the flags of {}: {}", shown(path), what.join(", "))
         }
     }
 }
@@ -165,7 +206,7 @@ pub fn unchecked_text(paths: &[PathBuf]) -> Option<String> {
     if paths.is_empty() {
         return None;
     }
-    let lines: Vec<String> = paths.iter().map(|path| path.display().to_string()).collect();
+    let lines: Vec<String> = paths.iter().map(|path| shown(path)).collect();
     Some(format!("{}:\n{}", gezik_ops::UNCHECKED, lines.join("\n")))
 }
 
@@ -191,16 +232,11 @@ pub fn start(ops: &Operations, wanted: Vec<Op>, started: impl FnOnce(JobId) + 's
         return confirm(ops, wanted, started);
     }
     let again = ops.clone();
-    ops.dialogs().ask(
-        RETRY_AS_ADMIN,
-        taken_text(count),
-        &["Replace", "Skip them", "Cancel"],
-        move |choice| match choice {
-            Some(0) => confirm(&again, replacing(wanted, &exists), started),
-            Some(1) => confirm(&again, skipping(wanted, &exists), started),
-            _ => {}
-        },
-    );
+    ops.dialogs().ask_escape(RETRY_AS_ADMIN, taken_text(count), TAKEN_BUTTONS, 0, move |choice| match choice {
+        Some(1) => confirm(&again, replacing(wanted, &exists), started),
+        Some(2) => confirm(&again, skipping(wanted, &exists), started),
+        _ => {}
+    });
 }
 
 /// Gezik's own check (what the helper would refuse is refused before anything is asked), then
@@ -218,11 +254,12 @@ fn confirm(ops: &Operations, wanted: Vec<Op>, started: Started) {
     if !elevated::fits(&exe, &wanted, cfg!(windows)) {
         return ops.status(elevated::TOO_MANY.to_owned());
     }
-    let deletes = wanted.iter().any(|op| matches!(op, Op::Delete(_)));
-    let buttons: &[&str] = if deletes { &["Delete", "Cancel"] } else { &["Continue", "Cancel"] };
+    let (buttons, yes) = confirm_buttons(&wanted);
+    let cancel = 1 - yes;
     let again = ops.clone();
-    ops.dialogs().ask(elevated::label(&wanted), confirm_text(&wanted, exposed()), buttons, move |choice| {
-        if choice == Some(0) {
+    let text = confirm_text(&wanted, exposed());
+    ops.dialogs().ask_escape(elevated::label(&wanted), text, buttons, cancel, move |choice| {
+        if choice == Some(yes) {
             submit(&again, wanted, started);
         }
     });
@@ -338,6 +375,27 @@ mod tests {
         assert_eq!(undo_text(false, &ops, false), format!("{UNDO_ADMIN}\n\n{}", op_text(&ops[0])));
         assert!(undo_text(true, &ops, true).starts_with(REDO_ADMIN));
         assert!(undo_text(true, &ops, true).ends_with(gezik_platform::elevate::EXPOSED));
+    }
+
+    #[test]
+    fn hidden_characters_are_shown_not_obeyed() {
+        let op = Op::Rename { path: p("/d/report\u{202E}fdp.exe"), name: "a\u{200B}b\nc\u{FEFF}".into() };
+        let text = op_text(&op);
+        assert!(text.contains(r"report\u{202e}fdp.exe"), "{text}");
+        assert!(text.ends_with(r#"to "a\u{200b}b\u{000a}c\u{feff}""#), "{text}");
+        assert!(!text.chars().any(|c| c.is_control() || ('\u{2000}'..='\u{206F}').contains(&c) || c == '\u{FEFF}'));
+        assert_eq!(escaped("çğ ü.txt"), "çğ ü.txt", "plain names stay");
+        assert!(unchecked_text(&[p("/x/\u{2066}a")]).unwrap().contains(r"\u{2066}a"));
+    }
+
+    #[test]
+    fn enter_never_picks_what_destroys() {
+        assert_eq!(TAKEN_BUTTONS[0], "Cancel");
+        let copy = Op::Copy { from: p("/a/1"), to: p("/d/1"), replace: false };
+        assert_eq!(confirm_buttons(std::slice::from_ref(&copy)), (&["Continue", "Cancel"][..], 0));
+        assert_eq!(confirm_buttons(&[copy, Op::Delete(p("/d/2"))]), (&["Cancel", "Delete"][..], 1));
+        let replace = [Op::Move { from: p("/a/1"), to: p("/d/1"), replace: true }];
+        assert_eq!(confirm_buttons(&replace), (&["Cancel", "Continue"][..], 1));
     }
 
     #[test]

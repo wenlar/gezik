@@ -504,17 +504,18 @@ impl Info {
     /// "Change as administrator…": the last job's refused items, behind the system's prompt; the
     /// window reads the items again when that job ends.
     fn as_admin(&self) {
-        let wanted =
-            self.0.state.borrow_mut().as_mut().map(|state| std::mem::take(&mut state.as_admin)).unwrap_or_default();
+        // Kept until the job starts: a Cancel or a refusal leaves the button.
+        let wanted = self.0.state.borrow().as_ref().map(|state| state.as_admin.clone()).unwrap_or_default();
         if wanted.is_empty() {
             return;
         }
-        self.show(false);
         let info = self.clone();
         crate::admin::start(&self.0.ops, wanted, move |id| {
             if let Some(state) = info.0.state.borrow_mut().as_mut() {
+                state.as_admin.clear();
                 state.jobs.push((id, Vec::new()));
             }
+            info.show(false);
         });
     }
 
