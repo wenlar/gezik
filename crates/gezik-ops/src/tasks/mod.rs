@@ -4,6 +4,7 @@ mod attrs;
 mod cloud;
 mod copy;
 mod delete;
+mod elevated;
 mod group;
 mod link;
 mod move_;
@@ -17,6 +18,7 @@ pub use cloud::CloudPinTask;
 pub use copy::CopyTask;
 pub(crate) use delete::restore_hidden;
 pub use delete::{DeleteTask, in_a_bin_folder};
+pub use elevated::{CANCELLED, ElevatedTask, Elevator, NOT_AVAILABLE, NOT_SO, UNCHECKED};
 pub use group::GroupTask;
 pub use link::LinkTask;
 pub use move_::MoveTask;
@@ -50,6 +52,11 @@ pub(crate) fn name(path: &Path) -> String {
 pub(crate) fn same_drive(a: &Path, b: &Path) -> bool {
     let id = |path: &Path| fs::nearest_existing(path).and_then(|p| fs::drive_facts(&p).ok()).map(|facts| facts.id);
     matches!((id(a), id(b)), (Some(x), Some(y)) if x == y)
+}
+
+/// Whether one of `denied` is `path` or something inside it.
+pub(crate) fn hit(denied: &[PathBuf], path: &Path) -> bool {
+    denied.iter().any(|refused| gezik_core::ops::paths::is_within(refused, path))
 }
 
 /// A drive or volume root (`C:\`, `/`): nothing here may copy, move, trash or delete one.
@@ -174,6 +181,45 @@ mod tests {
             refused(&RenameTask::one(root.clone(), "x"), &root);
         }
         assert!(!is_root(&std::env::temp_dir().join("x")));
+    }
+
+    #[test]
+    fn denied_items_become_administrator_operations() {
+        use gezik_core::elevated::Op;
+        let src = PathBuf::from("/s");
+        let dst = PathBuf::from("/d");
+        let copy = CopyTask::into(vec![src.join("a"), src.join("b")], &dst);
+        assert_eq!(
+            copy.as_admin(&[src.join("a").join("inner.txt")]),
+            [Op::Copy { from: src.join("a"), to: dst.join("a"), replace: false }],
+            "the chosen item that holds the refused file"
+        );
+        assert_eq!(
+            copy.as_admin(&[dst.join("b")]),
+            [Op::Copy { from: src.join("b"), to: dst.join("b"), replace: false }],
+            "refused on the target side"
+        );
+        assert!(CopyTask::duplicate(vec![src.join("a")]).as_admin(&[src.join("a")]).is_empty());
+        assert!(CopyTask::into(vec![dst.join("x")], &dst).as_admin(&[dst.join("x")]).is_empty(), "keep both");
+        let moved = MoveTask::into(vec![src.join("a")], &dst);
+        assert_eq!(
+            moved.as_admin(&[src.join("a")]),
+            [Op::Move { from: src.join("a"), to: dst.join("a"), replace: false }]
+        );
+        assert!(MoveTask::back(vec![(dst.join("a"), src.join("a"), None)]).as_admin(&[dst.join("a")]).is_empty());
+        assert_eq!(TrashTask::new(vec![src.join("a")]).as_admin(&[src.join("a")]), [Op::Delete(src.join("a"))]);
+        assert!(TrashTask::checked(vec![(src.join("a"), None)]).as_admin(&[src.join("a")]).is_empty());
+        assert_eq!(
+            DeleteTask::new(vec![src.join("a")], None).as_admin(&[src.join("a").join("x")]),
+            [Op::Delete(src.join("a"))]
+        );
+        assert_eq!(
+            RenameTask::one(src.join("a"), "b").as_admin(&[src.join("a")]),
+            [Op::Rename { path: src.join("a"), name: "b".into() }]
+        );
+        assert_eq!(NewTask::folder(&dst).as_admin(&[dst.join("New folder 2")]), [Op::Mkdir(dst.join("New folder 2"))]);
+        assert!(NewTask::file(&dst).as_admin(&[dst.join("New file.txt")]).is_empty());
+        assert!(TrashTask::new(vec![src.join("a")]).as_admin(&[src.join("b")]).is_empty(), "not refused: not offered");
     }
 
     #[test]

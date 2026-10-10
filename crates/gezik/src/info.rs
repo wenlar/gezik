@@ -108,9 +108,11 @@ struct State {
     note: (String, bool),
     /// This window's jobs and what each was to change.
     jobs: Vec<(JobId, Vec<Wanted>)>,
-    /// The last job's items the system refused without administrator rights: 9b7's
-    /// "Change as administrator…" does these (absolute values, spec §10.3).
+    /// The last job's items the system refused without administrator rights: the note counts
+    /// these.
     denied: Vec<Wanted>,
+    /// The last job's refused items as administrator operations (`Report::as_admin`).
+    as_admin: Vec<gezik_core::elevated::Op>,
 }
 
 struct Inner {
@@ -157,6 +159,8 @@ impl Info {
         window.on_info_enclosed(move || t.ask_enclosed());
         let t = self.clone();
         window.on_info_change_all(move || t.ask_change_all());
+        let t = self.clone();
+        window.on_info_as_admin(move || t.as_admin());
         let t = self.clone();
         window.on_info_close(move || t.close());
     }
@@ -239,6 +243,7 @@ impl Info {
             note: unreadable_note(loaded.unreadable),
             jobs: Vec::new(),
             denied: Vec::new(),
+            as_admin: Vec::new(),
         });
         self.show(true);
         window.set_info_open(true);
@@ -278,6 +283,7 @@ impl Info {
             enclosed: matches!(state.items.as_slice(), [(_, e)] if e.is_dir && !e.is_link),
             note: state.note.0.as_str().into(),
             error: state.note.1,
+            admin: !state.as_admin.is_empty(),
         });
         if fields {
             window.set_info_owner(attrs::shared_name(all.iter().map(|a| a.uid), &state.names.users).into());
@@ -495,6 +501,24 @@ impl Info {
         );
     }
 
+    /// "Change as administrator…": the last job's refused items, behind the system's prompt; the
+    /// window reads the items again when that job ends.
+    fn as_admin(&self) {
+        // Kept until the job starts: a Cancel or a refusal leaves the button.
+        let wanted = self.0.state.borrow().as_ref().map(|state| state.as_admin.clone()).unwrap_or_default();
+        if wanted.is_empty() {
+            return;
+        }
+        let info = self.clone();
+        crate::admin::start(&self.0.ops, wanted, move |id| {
+            if let Some(state) = info.0.state.borrow_mut().as_mut() {
+                state.as_admin.clear();
+                state.jobs.push((id, Vec::new()));
+            }
+            info.show(false);
+        });
+    }
+
     /// One of this window's jobs ended: what it says, and the items read again.
     pub fn job_finished(&self, id: JobId, report: &Report) {
         let paths = {
@@ -503,6 +527,7 @@ impl Info {
             let Some(at) = state.jobs.iter().position(|(job, _)| *job == id) else { return };
             let (_, wanted) = state.jobs.remove(at);
             state.denied = denied(&wanted, report);
+            state.as_admin = report.as_admin.clone();
             state.note = job_note(report, state.denied.len());
             state.paths.clone()
         };
@@ -664,13 +689,18 @@ mod tests {
         Report {
             kind: TaskKind::Attributes,
             cancelled: false,
-            failures: failures.iter().map(|(p, m)| Failure { path: p.into(), message: (*m).to_owned() }).collect(),
+            failures: failures
+                .iter()
+                .map(|(p, m)| Failure { path: p.into(), message: (*m).to_owned(), denied: false })
+                .collect(),
             skipped: Vec::new(),
             skipped_changed: changed,
             no_trash: Vec::new(),
+            unchecked: Vec::new(),
             results: Vec::new(),
             changed_dirs: Vec::new(),
             moved: Vec::new(),
+            as_admin: Vec::new(),
         }
     }
 

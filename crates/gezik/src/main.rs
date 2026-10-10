@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod actions;
+mod admin;
 mod archives;
 mod batch_rename;
 mod cli;
@@ -14,6 +15,7 @@ mod copy_path;
 mod dialog;
 mod drag;
 mod eject;
+mod elevated;
 mod filter;
 mod finder_menu;
 mod folder_sizes;
@@ -627,6 +629,12 @@ fn keep_on_screen(window: slint::Weak<AppWindow>, attempt: u32) {
 }
 
 fn main() -> Result<(), slint::PlatformError> {
+    // The administrator helper (`gezik --elevated …`, spec 9 §10): started by the system's
+    // prompt for one list; before anything else, the PDF worker, Slint, settings or the single
+    // instance (its first step hardens the DLL search).
+    if std::env::args_os().nth(1).is_some_and(|arg| arg == gezik_core::elevated::ARG) {
+        std::process::exit(elevated::main());
+    }
     // The PDF worker (`gezik --pdf-worker`) is this exe run by Gezik itself: it does one PDF
     // request with pdfium and exits, before any window, Slint or settings. Its pipes come from
     // the handles `ChildProcess` gives it, so this works in the windowless release build too.

@@ -29,6 +29,8 @@ export struct InfoView {
     // What the last change did ("Requires administrator: 2 items not changed"), red if `error`.
     note: string,
     error: bool,
+    // "Change as administrator…" shows (the last job's refused items, spec 9 §10).
+    admin: bool,
 }
 
 component Labeled inherits HorizontalLayout {
@@ -63,6 +65,7 @@ export component InfoLayer inherits Rectangle {
     callback enclosed();
     callback app-menu(length, length, length, length);
     callback change-all();
+    callback as-admin();
     callback close();
 
     property <string> menu-arrow: "M 1 2.5 L 4 5.5 L 7 2.5";
@@ -233,6 +236,10 @@ export component InfoLayer inherits Rectangle {
                         vertical-alignment: center;
                         horizontal-stretch: 1;
                         color: root.view.error ? Theme.danger : Theme.foreground-muted;
+                    }
+                    if root.view.admin: TextButton {
+                        text: "Change as administrator…";
+                        clicked => { root.as-admin(); }
                     }
                     done := TextButton {
                         text: "Done";

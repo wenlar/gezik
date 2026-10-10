@@ -35,6 +35,24 @@ pub(crate) struct Record {
     inverse: Vec<Arc<dyn Task>>,
 }
 
+/// Whether the system refused `error` for lack of rights, however it was wrapped: Windows'
+/// "privilege not held" has no kind of its own in std.
+pub(crate) fn is_denied(error: &io::Error) -> bool {
+    const PRIVILEGE_NOT_HELD: i32 = 1314;
+    error.kind() == io::ErrorKind::PermissionDenied
+        || (cfg!(windows) && error.raw_os_error() == Some(PRIVILEGE_NOT_HELD))
+        || error.get_ref().and_then(|inner| inner.downcast_ref::<io::Error>()).is_some_and(is_denied)
+}
+
+/// Whether undoing (or redoing) through `inverse` needs the administrator's prompt.
+fn needs_admin(inverse: &[Arc<dyn Task>]) -> bool {
+    inverse.iter().any(|task| task.kind() == TaskKind::Elevated)
+}
+
+fn admin_ops(inverse: &[Arc<dyn Task>]) -> Vec<gezik_core::elevated::Op> {
+    inverse.iter().flat_map(|task| task.elevated_ops().iter().cloned()).collect()
+}
+
 #[cfg(test)]
 pub(crate) type DriveQueryHook = Arc<dyn Fn(&Path) + Send + Sync>;
 
@@ -93,6 +111,8 @@ pub struct ConflictItem {
 pub struct Failure {
     pub path: PathBuf,
     pub message: String,
+    /// The system refused for lack of rights (Retry as administrator).
+    pub denied: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -107,12 +127,18 @@ pub struct Report {
     pub skipped_changed: usize,
     /// Items not trashed because their drive has no trash: the UI offers to delete them.
     pub no_trash: Vec<PathBuf>,
+    /// Done by the administrator helper, but Gezik has no rights to look there: the app notes
+    /// each with `UNCHECKED` (neither a failure nor checked, so no undo).
+    pub unchecked: Vec<PathBuf>,
     /// Where the chosen items are now (pasted, renamed, new), to select them.
     pub results: Vec<PathBuf>,
     pub changed_dirs: Vec<PathBuf>,
     /// Items it moved or renamed (from, to), each as it really went: search results follow
     /// them (spec 4.7).
     pub moved: Vec<(PathBuf, PathBuf)>,
+    /// A new job's refused items, as administrator operations (`Task::as_admin`); empty for an
+    /// undo or redo.
+    pub as_admin: Vec<gezik_core::elevated::Op>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -174,6 +200,7 @@ pub(crate) struct Acc {
     pub skipped: Vec<Failure>,
     pub skipped_changed: usize,
     pub no_trash: Vec<PathBuf>,
+    pub unchecked: Vec<PathBuf>,
     pub results: Vec<PathBuf>,
     pub changed: BTreeSet<PathBuf>,
     /// Changed folders not yet sent in a `Changed` event.
@@ -211,11 +238,12 @@ impl Job {
     }
 
     pub fn fail(&self, path: &Path, error: &io::Error) {
-        lock(&self.acc).failures.push(Failure { path: path.to_path_buf(), message: fs::describe(error) });
+        let denied = is_denied(error);
+        lock(&self.acc).failures.push(Failure { path: path.to_path_buf(), message: fs::describe(error), denied });
     }
 
     pub fn skip(&self, path: &Path, why: &io::Error) {
-        lock(&self.acc).skipped.push(Failure { path: path.to_path_buf(), message: fs::describe(why) });
+        lock(&self.acc).skipped.push(Failure { path: path.to_path_buf(), message: fs::describe(why), denied: false });
     }
 
     pub fn skipped_changed(&self) {
@@ -224,6 +252,10 @@ impl Job {
 
     pub fn no_trash(&self, path: &Path) {
         lock(&self.acc).no_trash.push(path.to_path_buf());
+    }
+
+    pub fn unchecked(&self, path: &Path) {
+        lock(&self.acc).unchecked.push(path.to_path_buf());
     }
 
     pub fn result(&self, path: PathBuf) {
@@ -277,6 +309,8 @@ pub(crate) struct Shared {
     next_id: AtomicU64,
     pub pending: Option<Arc<PendingDeletes>>,
     history: Mutex<UndoStack<Record>>,
+    /// How administrator operations run (`Engine::set_elevator`).
+    pub(crate) elevator: Mutex<Option<Arc<dyn crate::tasks::Elevator>>>,
     /// Tests: called before each drive query (to make one hang).
     #[cfg(test)]
     pub drive_query_hook: Mutex<Option<DriveQueryHook>>,
@@ -421,6 +455,13 @@ impl Shared {
                 }
             }
         }
+        // Retry as administrator (spec 9 §10.1): what the system refused, as the chosen items.
+        let denied: Vec<PathBuf> = acc.failures.iter().filter(|f| f.denied).map(|f| f.path.clone()).collect();
+        let as_admin = if job.origin == Origin::New && !denied.is_empty() {
+            job.tasks.iter().flat_map(|task| task.as_admin(&denied)).collect()
+        } else {
+            Vec::new()
+        };
         let kind = job.tasks.first().map_or(TaskKind::Copy, |task| task.kind());
         let report = Report {
             kind,
@@ -429,9 +470,11 @@ impl Shared {
             skipped: acc.skipped,
             skipped_changed: acc.skipped_changed,
             no_trash: acc.no_trash,
+            unchecked: acc.unchecked,
             results: acc.results,
             changed_dirs: acc.changed.into_iter().collect(),
             moved,
+            as_admin,
         };
         job.done.store(true, Ordering::SeqCst);
         lock(&self.jobs).retain(|other| other.id != job.id);
@@ -510,6 +553,7 @@ impl Engine {
             next_id: AtomicU64::new(0),
             pending,
             history: Mutex::new(UndoStack::new(HISTORY)),
+            elevator: Mutex::default(),
             #[cfg(test)]
             drive_query_hook: Mutex::default(),
         }))
@@ -630,23 +674,39 @@ impl Engine {
 
     /// Undoes the last action; its progress shows like any job.
     pub fn undo(&self) -> Option<JobId> {
-        let (record, stamp) = {
-            let mut history = lock(&self.0.history);
-            let stamp = history.stamp();
-            (history.pop_undo()?, stamp)
-        };
-        self.0.push([Event::History]);
-        Some(self.start(record.inverse, Origin::Undo(stamp), Some(record.label)))
+        self.step(false, None)
     }
 
     pub fn redo(&self) -> Option<JobId> {
+        self.step(true, None)
+    }
+
+    /// The administrator operations Undo (`redo`: Redo) would send, in order; empty if none.
+    pub fn admin_ops(&self, redo: bool) -> Vec<gezik_core::elevated::Op> {
+        let history = lock(&self.0.history);
+        let record = if redo { history.peek_redo() } else { history.peek_undo() };
+        record.map(|record| admin_ops(&record.inverse)).unwrap_or_default()
+    }
+
+    /// Undo (`redo`: Redo) only while it still sends exactly `agreed`, the list the user said
+    /// yes to; else nothing is done (another action came on top meanwhile).
+    pub fn undo_agreed(&self, redo: bool, agreed: &[gezik_core::elevated::Op]) -> Option<JobId> {
+        self.step(redo, Some(agreed))
+    }
+
+    fn step(&self, redo: bool, agreed: Option<&[gezik_core::elevated::Op]>) -> Option<JobId> {
         let (record, stamp) = {
             let mut history = lock(&self.0.history);
             let stamp = history.stamp();
-            (history.pop_redo()?, stamp)
+            let top = if redo { history.peek_redo() } else { history.peek_undo() };
+            if agreed.is_some_and(|agreed| top.is_none_or(|record| admin_ops(&record.inverse) != agreed)) {
+                return None;
+            }
+            (if redo { history.pop_redo() } else { history.pop_undo() }?, stamp)
         };
         self.0.push([Event::History]);
-        Some(self.start(record.inverse, Origin::Redo(stamp), Some(record.label)))
+        let origin = if redo { Origin::Redo(stamp) } else { Origin::Undo(stamp) };
+        Some(self.start(record.inverse, origin, Some(record.label)))
     }
 
     /// "Copy 3 items" if there is something to undo.
@@ -656,6 +716,22 @@ impl Engine {
 
     pub fn redo_label(&self) -> Option<String> {
         lock(&self.0.history).peek_redo().map(|record| record.label.clone())
+    }
+
+    /// How administrator operations run (the app: the system's prompt; tests: a fake). Without
+    /// one, every administrator operation fails with `NOT_AVAILABLE`.
+    pub fn set_elevator(&self, elevator: Arc<dyn crate::tasks::Elevator>) {
+        *lock(&self.0.elevator) = Some(elevator);
+    }
+
+    /// Whether Undo runs as administrator (a new prompt; the app asks before).
+    pub fn undo_needs_admin(&self) -> bool {
+        lock(&self.0.history).peek_undo().is_some_and(|record| needs_admin(&record.inverse))
+    }
+
+    /// Whether Redo runs as administrator.
+    pub fn redo_needs_admin(&self) -> bool {
+        lock(&self.0.history).peek_redo().is_some_and(|record| needs_admin(&record.inverse))
     }
 
     /// Puts events back at the front of the queue (test helpers).
@@ -915,6 +991,63 @@ mod tests {
         gate.open();
         run(&engine, stuck);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// One item that fails with `kind`, and offers deleting it as administrator.
+    struct Refusing(PathBuf, io::ErrorKind);
+
+    impl Task for Refusing {
+        fn kind(&self) -> TaskKind {
+            TaskKind::Delete
+        }
+        fn title(&self) -> String {
+            "refusing".into()
+        }
+        fn count(&self) -> usize {
+            1
+        }
+        fn resources(&self) -> crate::task::Resources {
+            crate::task::Resources { paths: vec![self.0.clone()], work: crate::task::Work::Disk }
+        }
+        fn plan(&self, sink: &mut dyn crate::task::ScanSink) {
+            sink.item(
+                crate::task::PlanItem::new(crate::task::Stage::Parallel, Facts::default()).source(&self.0).top(0),
+            );
+        }
+        fn run(&self, _item: &crate::task::PlanItem, _cx: &crate::task::RunCx<'_>) -> io::Result<Outcome> {
+            Err(self.1.into())
+        }
+        fn as_admin(&self, denied: &[PathBuf]) -> Vec<gezik_core::elevated::Op> {
+            denied.iter().map(|path| gezik_core::elevated::Op::Delete(path.clone())).collect()
+        }
+    }
+
+    #[test]
+    fn refusals_are_known_however_they_come() {
+        assert!(is_denied(&io::ErrorKind::PermissionDenied.into()));
+        assert!(is_denied(&io::Error::other(io::Error::from(io::ErrorKind::PermissionDenied))), "wrapped");
+        assert_eq!(is_denied(&io::Error::from_raw_os_error(1314)), cfg!(windows), "privilege not held");
+        #[cfg(windows)]
+        assert!(is_denied(&io::Error::from_raw_os_error(5)));
+        #[cfg(unix)]
+        assert!(
+            is_denied(&io::Error::from_raw_os_error(libc::EACCES))
+                && is_denied(&io::Error::from_raw_os_error(libc::EPERM))
+        );
+        assert!(!is_denied(&io::ErrorKind::NotFound.into()) && !is_denied(&io::Error::other("no")));
+    }
+
+    #[test]
+    fn a_denied_failure_offers_the_administrator() {
+        let path = std::env::temp_dir().join("gezik-refusing");
+        let engine = engine();
+        let job = engine.submit(Box::new(Refusing(path.clone(), io::ErrorKind::PermissionDenied)));
+        let report = finish(&engine, job, defaults).0;
+        assert!(report.failures[0].denied);
+        assert_eq!(report.as_admin, [gezik_core::elevated::Op::Delete(path.clone())]);
+        let job = engine.submit(Box::new(Refusing(path, io::ErrorKind::NotFound)));
+        let report = finish(&engine, job, defaults).0;
+        assert!(!report.failures[0].denied && report.as_admin.is_empty(), "only a refusal");
     }
 
     /// Writes a partial file, then removes it and fails, or (cancelled) is interrupted.

@@ -359,7 +359,11 @@ impl JobView {
             can_resume: !finished && paused_by_user,
             can_start_now: !finished && state == RowState::Waiting && self.progress.is_some(),
             can_retry: failed && (self.retry.is_some() || self.again.is_some()),
-            can_details: failed || self.report.as_ref().is_some_and(|r| !r.cancelled && !r.skipped.is_empty()),
+            can_details: failed
+                || self
+                    .report
+                    .as_ref()
+                    .is_some_and(|r| !r.cancelled && (!r.skipped.is_empty() || !r.unchecked.is_empty())),
             finished,
             ..OpRow::default()
         }
@@ -433,6 +437,8 @@ impl Operations {
                 }
             }
         });
+        // Only an `Arc`: nothing starts until the user asks for an administrator operation.
+        engine.set_elevator(Arc::new(crate::admin::SystemElevator::new(window)));
         let conflicts = crate::conflicts::Conflicts::new(window, engine.clone());
         let rows = Rc::new(VecModel::default());
         window.set_op_rows(ModelRc::from(rows.clone()));
@@ -546,6 +552,11 @@ impl Operations {
         if let Some(job) = self.0.jobs.borrow_mut().iter_mut().find(|job| job.id == id) {
             job.note = Some(note);
         }
+    }
+
+    /// A line in the status bar (the administrator's refusals).
+    pub fn status(&self, text: String) {
+        self.0.view.note(text);
     }
 
     /// A folder is on screen: start a rename that waited for it (a new folder).
@@ -1216,15 +1227,33 @@ impl Operations {
     }
 
     pub fn undo(&self) {
-        if self.0.engine.undo().is_none() {
+        if !self.ask_admin(false) && self.0.engine.undo().is_none() {
             self.0.view.note("Nothing to undo".to_owned());
         }
     }
 
     pub fn redo(&self) {
-        if self.0.engine.redo().is_none() {
+        if !self.ask_admin(true) && self.0.engine.redo().is_none() {
             self.0.view.note("Nothing to redo".to_owned());
         }
+    }
+
+    /// An undo (`redo`: redo) that runs as administrator asks first, every time, naming what it
+    /// sends; only that very list runs. Returns whether it asked.
+    fn ask_admin(&self, redo: bool) -> bool {
+        let agreed = self.0.engine.admin_ops(redo);
+        if agreed.is_empty() {
+            return false;
+        }
+        let (title, button) = if redo { ("Redo as administrator", "Redo") } else { ("Undo as administrator", "Undo") };
+        let text = crate::admin::undo_text(redo, &agreed, crate::admin::exposed());
+        let (engine, view) = (self.0.engine.clone(), self.0.view.clone());
+        self.0.dialogs.ask(title, text, &[button, "Cancel"], move |choice| {
+            if choice == Some(0) && engine.undo_agreed(redo, &agreed).is_none() {
+                view.note("Not done: something else was done meanwhile".to_owned());
+            }
+        });
+        true
     }
 
     pub fn undo_label(&self) -> Option<String> {
@@ -1372,6 +1401,9 @@ impl Operations {
         let mut title = String::new();
         let mut bins = false;
         self.with_job(id, |job| {
+            if !report.unchecked.is_empty() {
+                job.note = Some(gezik_ops::UNCHECKED);
+            }
             after = job.after;
             bins = job.bins;
             hidden_in = job.hidden_in.take();
@@ -1434,7 +1466,7 @@ impl Operations {
             self.ask_delete_for_good(report.no_trash.clone());
         }
         // A row with skipped items stays until closed, for its Details.
-        let notes = !report.cancelled && !report.skipped.is_empty();
+        let notes = !report.cancelled && (!report.skipped.is_empty() || !report.unchecked.is_empty());
         if !problems && !notes {
             let ops = self.clone();
             slint::Timer::single_shot(DONE_FOR, move || ops.remove(id));
@@ -1628,23 +1660,34 @@ impl Operations {
         }
     }
 
-    /// The failures of a row, with Retry.
+    /// The failures of a row, with Retry, and Retry as administrator when the system refused
+    /// items the administrator can redo (spec 9 §10.1); done items Gezik could not check.
     pub fn details(&self, id: i32) {
         let id = Self::id(id);
-        let (title, message, can_retry) = {
+        let (title, message, can_retry, admin) = {
             let jobs = self.0.jobs.borrow();
             let Some(job) = jobs.iter().find(|j| j.id == id) else { return };
             let Some(report) = &job.report else { return };
-            let lines = crate::op_history::details_text(report).unwrap_or_default();
+            let lines = [crate::op_history::details_text(report), crate::admin::unchecked_text(&report.unchecked)];
+            let message = lines.into_iter().flatten().collect::<Vec<_>>().join(
+                "
+
+",
+            );
             let can_retry = !report.failures.is_empty() && (job.retry.is_some() || job.again.is_some());
-            (job.title.clone(), lines, can_retry)
+            (job.title.clone(), message, can_retry, report.as_admin.clone())
         };
         let ops = self.clone();
-        let buttons: &[&str] = if can_retry { &["Retry", "Close"] } else { &["Close"] };
-        self.0.dialogs.ask(title, message, buttons, move |choice| {
-            if can_retry && choice == Some(0) {
-                ops.retry(i32::try_from(id).unwrap_or(0));
+        let buttons = crate::admin::detail_buttons(!admin.is_empty(), can_retry);
+        let chosen = buttons.clone();
+        self.0.dialogs.ask(title, message, &buttons, move |choice| match choice.and_then(|i| chosen.get(i)).copied() {
+            Some(crate::admin::RETRY_AS_ADMIN) => {
+                // The row goes once the new job is there (it stays if the user cancels).
+                let row = ops.clone();
+                crate::admin::start(&ops, admin, move |_| row.remove(id));
             }
+            Some("Retry") => ops.retry(i32::try_from(id).unwrap_or(0)),
+            _ => {}
         });
     }
 
@@ -1749,13 +1792,17 @@ mod tests {
         Report {
             kind: TaskKind::Copy,
             cancelled,
-            failures: (0..failures).map(|i| Failure { path: format!("/f{i}").into(), message: "x".into() }).collect(),
+            failures: (0..failures)
+                .map(|i| Failure { path: format!("/f{i}").into(), message: "x".into(), denied: false })
+                .collect(),
             skipped: Vec::new(),
             skipped_changed: 0,
             no_trash: Vec::new(),
+            unchecked: Vec::new(),
             results: Vec::new(),
             changed_dirs: Vec::new(),
             moved: Vec::new(),
+            as_admin: Vec::new(),
         }
     }
 
@@ -1766,6 +1813,7 @@ mod tests {
         notes.skipped.push(Failure {
             path: "/huge - page 1.jpg".into(),
             message: "page 1 was made at 40 dpi: at 300 dpi it would be too large".into(),
+            denied: false,
         });
         let mut job = JobView::new(1, "PDF to images".into());
         job.finish(notes.clone());
@@ -1837,7 +1885,7 @@ mod tests {
         );
         assert_eq!(describe(None, Some(&report(3, true)), None, None).1, "Cancelled");
         let mut skipped = report(0, false);
-        skipped.skipped.push(Failure { path: "/a.zip".into(), message: "no password".into() });
+        skipped.skipped.push(Failure { path: "/a.zip".into(), message: "no password".into(), denied: false });
         assert_eq!(describe(None, Some(&skipped), None, None), (RowState::Done, "Done · 1 item skipped".into(), 1.0));
     }
 

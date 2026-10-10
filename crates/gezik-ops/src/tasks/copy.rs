@@ -3,6 +3,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
+use gezik_core::elevated::Op;
 use gezik_core::ops::conflict::{Decision, Facts};
 use gezik_core::ops::paths::{is_within, same_path};
 
@@ -152,6 +153,22 @@ impl Task for CopyTask {
                 return;
             }
         }
+    }
+
+    fn as_admin(&self, denied: &[PathBuf]) -> Vec<Op> {
+        // A plain copy into a folder only: not a duplicate, a template, a "keep both" copy into
+        // its own folder, or a copy with folders.
+        if self.new.is_some() || self.dir.is_none() || !self.parents.is_empty() {
+            return Vec::new();
+        }
+        self.pairs
+            .iter()
+            .zip(&self.presets)
+            .filter(|((source, target), preset)| {
+                preset.is_none() && (super::hit(denied, source) || super::hit(denied, target))
+            })
+            .map(|((source, target), _)| Op::Copy { from: source.clone(), to: target.clone(), replace: false })
+            .collect()
     }
 
     fn run(&self, item: &PlanItem, cx: &RunCx<'_>) -> io::Result<Outcome> {
