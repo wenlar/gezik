@@ -664,13 +664,17 @@ mod tests {
         Report {
             kind: TaskKind::Attributes,
             cancelled: false,
-            failures: failures.iter().map(|(p, m)| Failure { path: p.into(), message: (*m).to_owned() }).collect(),
+            failures: failures
+                .iter()
+                .map(|(p, m)| Failure { path: p.into(), message: (*m).to_owned(), denied: false })
+                .collect(),
             skipped: Vec::new(),
             skipped_changed: changed,
             no_trash: Vec::new(),
             results: Vec::new(),
             changed_dirs: Vec::new(),
             moved: Vec::new(),
+            as_admin: Vec::new(),
         }
     }
 

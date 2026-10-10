@@ -21,6 +21,6 @@ pub use task::{
     TaskKind, Work, changed_since, facts_after, is_restart, no_trash, restart, unchanged,
 };
 pub use tasks::{
-    CloudPinTask, CopyTask, DeleteTask, GroupTask, LinkTask, MoveTask, NEEDS_ADMIN, NewTask, RenameTask, RestoreTask,
-    SetAttributesTask, TrashTask, in_a_bin_folder, trash_path,
+    CANCELLED, CloudPinTask, CopyTask, DeleteTask, ElevatedTask, Elevator, GroupTask, LinkTask, MoveTask, NEEDS_ADMIN,
+    NOT_AVAILABLE, NOT_SO, NewTask, RenameTask, RestoreTask, SetAttributesTask, TrashTask, in_a_bin_folder, trash_path,
 };

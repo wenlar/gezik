@@ -5,6 +5,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use gezik_core::elevated::Op;
 use gezik_core::ops::names::next_free_os;
 use gezik_platform::fs;
 
@@ -395,6 +396,14 @@ impl Task for DeleteTask {
                 return;
             }
         }
+    }
+
+    fn as_admin(&self, denied: &[PathBuf]) -> Vec<Op> {
+        // Not a recovery of an earlier delete, nor a delete from the trash (its records stay).
+        if self.recovering || !self.infos.is_empty() {
+            return Vec::new();
+        }
+        self.roots.iter().filter(|root| super::hit(denied, root)).map(|root| Op::Delete(root.clone())).collect()
     }
 
     fn run(&self, item: &PlanItem, _cx: &RunCx<'_>) -> io::Result<Outcome> {

@@ -136,11 +136,18 @@ mod tests {
             results: Vec::new(),
             changed_dirs: Vec::new(),
             moved: Vec::new(),
+            as_admin: Vec::new(),
         }
     }
 
     fn failures(n: usize) -> Vec<Failure> {
-        (0..n).map(|i| Failure { path: PathBuf::from(format!("f{i}.txt")), message: "It is open".to_owned() }).collect()
+        (0..n)
+            .map(|i| Failure {
+                path: PathBuf::from(format!("f{i}.txt")),
+                message: "It is open".to_owned(),
+                denied: false,
+            })
+            .collect()
     }
 
     #[test]

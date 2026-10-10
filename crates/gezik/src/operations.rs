@@ -1749,13 +1749,16 @@ mod tests {
         Report {
             kind: TaskKind::Copy,
             cancelled,
-            failures: (0..failures).map(|i| Failure { path: format!("/f{i}").into(), message: "x".into() }).collect(),
+            failures: (0..failures)
+                .map(|i| Failure { path: format!("/f{i}").into(), message: "x".into(), denied: false })
+                .collect(),
             skipped: Vec::new(),
             skipped_changed: 0,
             no_trash: Vec::new(),
             results: Vec::new(),
             changed_dirs: Vec::new(),
             moved: Vec::new(),
+            as_admin: Vec::new(),
         }
     }
 
@@ -1766,6 +1769,7 @@ mod tests {
         notes.skipped.push(Failure {
             path: "/huge - page 1.jpg".into(),
             message: "page 1 was made at 40 dpi: at 300 dpi it would be too large".into(),
+            denied: false,
         });
         let mut job = JobView::new(1, "PDF to images".into());
         job.finish(notes.clone());
@@ -1837,7 +1841,7 @@ mod tests {
         );
         assert_eq!(describe(None, Some(&report(3, true)), None, None).1, "Cancelled");
         let mut skipped = report(0, false);
-        skipped.skipped.push(Failure { path: "/a.zip".into(), message: "no password".into() });
+        skipped.skipped.push(Failure { path: "/a.zip".into(), message: "no password".into(), denied: false });
         assert_eq!(describe(None, Some(&skipped), None, None), (RowState::Done, "Done · 1 item skipped".into(), 1.0));
     }
 

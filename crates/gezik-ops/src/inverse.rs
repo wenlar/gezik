@@ -1,7 +1,7 @@
 //! Undo, built from what a job did: what it made goes to the trash, what it moved goes back,
 //! what it trashed comes back; items moved into a folder the job made come out before it goes,
 //! and come back after it (spec 8.2); attributes go back to what they were. Nothing here knows
-//! the task kinds.
+//! the task kinds; what the administrator did is undone by the administrator.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -12,7 +12,7 @@ use gezik_core::ops::conflict::Facts;
 use gezik_core::ops::paths::{cover, path_key};
 
 use crate::task::{Outcome, Task};
-use crate::tasks::{MoveTask, RenameTask, RestoreTask, SetAttributesTask, TrashTask};
+use crate::tasks::{ElevatedTask, MoveTask, RenameTask, RestoreTask, SetAttributesTask, TrashTask};
 
 /// Files are checked before undo touches them; folders are not (they change as files land).
 fn expect(facts: &Facts) -> Option<Facts> {
@@ -59,6 +59,7 @@ pub(crate) fn build(outcomes: &[Outcome]) -> Vec<Arc<dyn Task>> {
     let mut moved: Vec<(PathBuf, PathBuf, Option<Facts>)> = Vec::new();
     let mut trashed: Vec<(PathBuf, PathBuf)> = Vec::new();
     let mut attrs: Vec<Wanted> = Vec::new();
+    let mut admin = Vec::new();
     let mut flat = Vec::new();
     flatten(outcomes, &mut flat);
     for outcome in flat {
@@ -81,6 +82,7 @@ pub(crate) fn build(outcomes: &[Outcome]) -> Vec<Arc<dyn Task>> {
             Outcome::AttributesChanged { path, id, before, after } => {
                 attrs.push(Wanted { path: path.clone(), id: *id, from: *after, to: *before })
             }
+            Outcome::AsAdmin { undo } => admin.push(undo.clone()),
             Outcome::Deleted { .. } | Outcome::Nothing | Outcome::Several(_) => {}
         }
     }
@@ -148,6 +150,11 @@ pub(crate) fn build(outcomes: &[Outcome]) -> Vec<Arc<dyn Task>> {
     // A job of its own: no other outcome comes with it.
     if !attrs.is_empty() {
         tasks.push(Arc::new(SetAttributesTask::new(attrs)));
+    }
+    // The administrator's list goes back as one list, last first, behind one new prompt.
+    if !admin.is_empty() {
+        admin.reverse();
+        tasks.push(Arc::new(ElevatedTask::new(admin)));
     }
     tasks
 }
@@ -262,6 +269,20 @@ mod tests {
         assert_eq!(kinds, [TaskKind::Trash, TaskKind::Trash]);
         assert_eq!(tasks[0].count(), 2, "the file with its check and the folder that came back alone");
         assert_eq!(tasks[1].count(), 1, "the holder, only if it holds no files");
+    }
+
+    #[test]
+    fn administrator_outcomes_undo_as_one_list_in_reverse() {
+        use gezik_core::elevated::Op;
+        let outcomes = vec![Outcome::Several(vec![
+            Outcome::AsAdmin { undo: Op::Delete("/d/b".into()) },
+            Outcome::AsAdmin { undo: Op::Rmdir("/d/n".into()) },
+        ])];
+        let tasks = build(&outcomes);
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].kind(), TaskKind::Elevated);
+        assert_eq!(tasks[0].count(), 2);
+        assert_eq!(tasks[0].title(), "2 changes as administrator");
     }
 
     #[test]

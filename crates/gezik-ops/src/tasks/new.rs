@@ -3,6 +3,7 @@
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+use gezik_core::elevated::Op;
 use gezik_core::ops::conflict::{Decision, Facts};
 
 use crate::task::{Outcome, PlanItem, Resources, RunCx, ScanSink, Stage, Task, TaskKind, Work, facts_after};
@@ -72,6 +73,18 @@ impl Task for NewTask {
             .top(0)
             .preset(Some(Decision::KeepBoth));
         sink.item(item);
+    }
+
+    fn as_admin(&self, denied: &[PathBuf]) -> Vec<Op> {
+        // A new folder only; the refused path is the new folder itself.
+        if !self.folder || self.contents.is_some() {
+            return Vec::new();
+        }
+        denied
+            .iter()
+            .filter(|path| path.parent() == Some(self.dir.as_path()))
+            .map(|path| Op::Mkdir(path.clone()))
+            .collect()
     }
 
     fn run(&self, item: &PlanItem, _cx: &RunCx<'_>) -> io::Result<Outcome> {

@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use gezik_core::attrs::{Attrs, Entry, Identity, Wanted, enclosed_target};
+use gezik_core::elevated::Op;
 use gezik_core::ops::conflict::Facts;
 
 use super::{name, what};
@@ -140,6 +141,15 @@ impl Task for SetAttributesTask {
                 true
             }
         });
+    }
+
+    fn as_admin(&self, denied: &[PathBuf]) -> Vec<Op> {
+        // The window's own items only: "Apply to enclosed items" has no administrator form (deviation 3).
+        if self.enclosed.is_some() {
+            return Vec::new();
+        }
+        let refused: Vec<Wanted> = self.items.iter().filter(|w| denied.contains(&w.path)).cloned().collect();
+        gezik_core::elevated::attr_ops(&refused)
     }
 
     fn run(&self, item: &PlanItem, cx: &RunCx<'_>) -> io::Result<Outcome> {
@@ -410,6 +420,21 @@ mod tests {
         let (undo, _) = finish(&engine, engine.undo().unwrap(), defaults);
         assert!(undo.failures.is_empty() && undo.skipped_changed == 0, "{:?}", undo.failures);
         assert_eq!(mode(), 0o644);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn refused_items_are_offered_to_the_administrator() {
+        let (dir, paths) = files("attrs-admin", &["a.txt", "b.txt"]);
+        let fake = Arc::new(Fake::default());
+        let items = shown(&fake, &paths);
+        let task = SetAttributesTask::new(wanted(&items, Change::owner(0)));
+        assert_eq!(
+            task.as_admin(std::slice::from_ref(&paths[0])),
+            [Op::Chown { path: paths[0].clone(), uid: 0, gid: 20 }]
+        );
+        let folder = SetAttributesTask::enclosed(dir.clone(), items[0].1.id, items[0].1.attrs);
+        assert!(folder.as_admin(std::slice::from_ref(&dir)).is_empty(), "no -r operations (deviation 3)");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

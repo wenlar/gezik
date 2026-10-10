@@ -5,6 +5,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
+use gezik_core::elevated::Op;
 use gezik_core::ops::conflict::Facts;
 use gezik_core::ops::paths::path_key;
 use gezik_core::ops::renames::{Step, order};
@@ -172,6 +173,18 @@ impl Task for RenameTask {
                 return;
             }
         }
+    }
+
+    fn as_admin(&self, denied: &[PathBuf]) -> Vec<Op> {
+        // The user's renames in one folder only, not an undo.
+        self.pairs
+            .iter()
+            .zip(&self.expect)
+            .filter(|((from, to), expect)| expect.is_none() && from.parent() == to.parent() && super::hit(denied, from))
+            .filter_map(|((from, to), _)| {
+                Some(Op::Rename { path: from.clone(), name: to.file_name()?.to_str()?.to_owned() })
+            })
+            .collect()
     }
 
     fn run(&self, item: &PlanItem, cx: &RunCx<'_>) -> io::Result<Outcome> {
