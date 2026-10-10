@@ -9,12 +9,17 @@ use gezik_config::Warning;
 use gezik_config::paths::KnownDirs;
 use gezik_config::pins::{self, PinEntry};
 use gezik_config::settings_writer::SettingsChange;
-use gezik_config::shortcuts::{Action, Platform};
+use gezik_config::shortcuts::{Action, Chord, Platform};
 use gezik_config::store::ConfigStore;
 use gezik_core::nav::Location;
-use slint::{ComponentHandle, ModelRc, VecModel};
+use gezik_core::tree::{self, Listed, NodeId, Read, RootKey};
+use slint::{ComponentHandle, ModelRc};
 
-use crate::navigation::{Navigator, sync_model};
+use crate::navigation::Navigator;
+use crate::places::Places;
+use crate::sidebar_model::{
+    KeyDo, Line, Shown, SidebarModel, base_at, change_plan, find_typed, key_do, row_of_base, scroll_to_show, side_key,
+};
 use crate::{AppWindow, SidebarRow};
 
 pub const SECTION_FOLDERS: i32 = 0;
@@ -26,10 +31,14 @@ pub const SECTION_SEARCHES: i32 = 4;
 pub const SECTION_TRASH: i32 = 5;
 /// The cloud roots (spec 9 §7.2), after the pinned part.
 pub const SECTION_CLOUD: i32 = 6;
+/// A folder of the sidebar tree (spec 10 §5), `index` its node.
+pub const SECTION_TREE: i32 = 7;
+/// A capped branch's "… n more" line, `index` the branch's node: it opens that folder.
+pub const SECTION_TREE_MORE: i32 = 8;
 
 /// `SidebarRow.icon`: the glyph sidebar.slint draws on a place (0: none, on headings).
 const ICON_HOME: i32 = 1;
-const ICON_FOLDER: i32 = 2;
+pub(crate) const ICON_FOLDER: i32 = 2;
 const ICON_PIN: i32 = 3;
 const ICON_ALIAS: i32 = 4;
 const ICON_DRIVE: i32 = 5;
@@ -80,7 +89,8 @@ pub fn check_pins(dirs: &KnownDirs, pinned: &[PinEntry], exists: impl Fn(&Path) 
     pinned
         .iter()
         .filter_map(|entry| {
-            let path = dirs.expand_checked(&entry.path).filter(|p| exists(p))?;
+            // A bare server (`\\server`) is listed by its shares; it is no folder to ask about.
+            let path = dirs.expand_checked(&entry.path).filter(|p| is_server(p) || exists(p))?;
             Some(Pin { entry: entry.clone(), path })
         })
         .collect()
@@ -154,6 +164,8 @@ pub fn cloud_rows(roots: &[gezik_platform::cloud::CloudRoot], on: bool) -> Vec<S
         active: false,
         tip: "".into(),
         icon: 0,
+        depth: 0,
+        arrow: 0,
     }];
     rows.extend(roots.iter().enumerate().map(|(i, root)| {
         let path = root.path.display().to_string();
@@ -166,9 +178,51 @@ pub fn cloud_rows(roots: &[gezik_platform::cloud::CloudRoot], on: bool) -> Vec<S
             active: false,
             tip: tip.into(),
             icon: ICON_CLOUD,
+            depth: 0,
+            arrow: 0,
         }
     }));
     rows
+}
+
+/// The folder of place (`section`, `index`): a known folder, a shown pin, a drive or a cloud
+/// root; the root of its tree branch (spec 10 §5.1). Not a saved search, nor the trash.
+fn place_path(places: &Places, pins: &[Pin], section: i32, index: i32) -> Option<PathBuf> {
+    let index = usize::try_from(index).ok()?;
+    match section {
+        SECTION_FOLDERS => places.known.get(index).map(|f| f.path.clone()),
+        SECTION_PINNED => pins.get(index).map(|pin| pin.path.clone()),
+        SECTION_DRIVES => places.drives.get(index).map(|d| d.path.clone()),
+        SECTION_CLOUD => places.cloud.get(index).map(|r| r.path.clone()),
+        _ => None,
+    }
+}
+
+/// Reads a branch's sub-folders for `read`, on a worker (spec 10 §5.2): a `\\server`'s shares,
+/// else the sub-folders the list would show (nothing opened, no cloud file downloaded), sorted
+/// and capped here, and where the folder really is for the loop guard (`canonicalize` for
+/// every branch, so all the real paths compared have one form). The tree's only read.
+/// Why a branch could not be read: a folder not found is the folder itself gone (the system's
+/// "path not found" would say the folder above it is).
+fn read_error(err: &std::io::Error) -> String {
+    if err.kind() == std::io::ErrorKind::NotFound {
+        return "It no longer exists".to_owned();
+    }
+    gezik_platform::fs::describe(err)
+}
+
+/// A bare server path (`\\server`) on Windows, whose shares the tree lists.
+fn is_server(path: &Path) -> bool {
+    cfg!(windows) && gezik_core::path_text::server_only(&path.to_string_lossy()).is_some()
+}
+
+fn read_branch(path: &Path, options: gezik_core::view::ViewOptions) -> Result<Listed, String> {
+    let names = match crate::navigation::server_of(path) {
+        Some(server) => gezik_platform::network::shares(&server),
+        None => crate::path_box::subfolder_names(path, options.show_hidden, options.show_system),
+    };
+    let names = names.map_err(|err| read_error(&err))?;
+    Ok(tree::prepare(names, std::fs::canonicalize(path).ok()))
 }
 
 /// The shown pin next to shown pin `n` (before it with `up`) if it is in the same group.
@@ -239,20 +293,80 @@ struct Inner {
     dirs: KnownDirs,
     pins: PinState,
     drive_signature: u64,
-    /// The rows' model, updated in place (see [`sync_model`]).
-    rows: Rc<VecModel<SidebarRow>>,
+    /// What the sidebar shows (places and open branches), and its model for Slint.
+    shown: Rc<RefCell<Shown>>,
+    model: Rc<SidebarModel>,
     poll: slint::Timer,
     /// Pin lists sent to the settings writer and not yet written (or failed).
     pins_on_their_way: usize,
     /// The pinned list settings.toml has, as last read or written.
     pins_in_file: Vec<PinEntry>,
-    /// The pinned part as last drawn: its rows, the sidebar row of its first, the groups shown.
-    lines: Vec<PinLine>,
-    first_pin_row: Option<usize>,
+    /// The pinned part as last drawn: its lines, the base row (`Shown::base`) of its first and
+    /// of the one after its last, the groups shown.
+    pin_lines: Vec<PinLine>,
+    first_pin_base: Option<usize>,
+    end_pin_base: Option<usize>,
     groups: Vec<String>,
     dialogs: crate::dialog::Dialogs,
     /// `[sidebar] cloud`.
     show_cloud: bool,
+    /// `[sidebar] tree-follow`.
+    follow: bool,
+    /// The folder last shown (`None`: not a folder), so a reload of the same one follows nothing.
+    followed: Option<PathBuf>,
+    /// The folder the tree is opening down to, and whether the user asked (Show in Sidebar Tree).
+    pending: Option<(PathBuf, bool)>,
+    /// The keyboard's row (spec 10 §5.1): its line, and its row number last (kept when the
+    /// line goes, held within the rows).
+    cursor: Option<(Line, usize)>,
+    type_ahead: crate::keys::TypeAhead,
+}
+
+/// Where an opening of the tree got to (`Sidebar::continue_reveal`).
+enum RevealStep {
+    Place(RootKey),
+    Node(NodeId),
+    Wait(Option<Read>),
+    Missing,
+    /// Under no place (or the places not loaded yet).
+    Unplaced,
+}
+
+/// Whether the location shown is another one than the folder last followed (`None`: not a
+/// folder): the same folder again (a reload, a listing that came in) is no move.
+fn moved(followed: Option<&Path>, now: Option<&Path>) -> bool {
+    match (followed, now) {
+        (Some(a), Some(b)) => !same_path(a, b),
+        (a, b) => a.is_some() || b.is_some(),
+    }
+}
+
+/// The keyboard's row `cursor` (its line, its row last) in `lines`: where its line is now, else
+/// its row number held within the rows (`None` without rows).
+fn cursor_in(lines: &[Line], (line, last): (Line, usize)) -> Option<(Line, usize)> {
+    // Where it was (no row came or went above it): no scan.
+    if lines.get(last) == Some(&line) {
+        return Some((line, last));
+    }
+    match lines.iter().position(|l| *l == line) {
+        Some(row) => Some((line, row)),
+        None => {
+            let row = last.min(lines.len().checked_sub(1)?);
+            Some((lines[row], row))
+        }
+    }
+}
+
+/// The row of the place or folder an opening reached.
+fn reveal_row(shown: &Shown, step: &RevealStep) -> Option<usize> {
+    match step {
+        RevealStep::Place(key) => {
+            let k = shown.keys.iter().position(|k| k.as_ref() == Some(key))?;
+            row_of_base(&shown.base_rows, k)
+        }
+        RevealStep::Node(id) => shown.lines.iter().position(|line| *line == Line::Tree(tree::Line::Node(*id))),
+        RevealStep::Wait(_) | RevealStep::Missing | RevealStep::Unplaced => None,
+    }
 }
 
 thread_local! {
@@ -294,8 +408,9 @@ impl Sidebar {
         store: Option<ConfigStore>,
         dialogs: crate::dialog::Dialogs,
     ) -> Sidebar {
-        let rows = Rc::new(VecModel::default());
-        window.set_sidebar_rows(ModelRc::from(rows.clone()));
+        let shown = Rc::new(RefCell::new(Shown::default()));
+        let model = Rc::new(SidebarModel::new(shown.clone()));
+        window.set_sidebar_rows(ModelRc::from(model.clone()));
         let sidebar = Sidebar(Rc::new(RefCell::new(Inner {
             window: window.as_weak(),
             nav: nav.clone(),
@@ -303,22 +418,31 @@ impl Sidebar {
             dirs: KnownDirs::system(),
             pins: PinState::default(),
             drive_signature: gezik_platform::drive_signature(),
-            rows,
+            shown,
+            model,
             poll: slint::Timer::default(),
             pins_on_their_way: 0,
             pins_in_file: Vec::new(),
-            lines: Vec::new(),
-            first_pin_row: None,
+            pin_lines: Vec::new(),
+            first_pin_base: None,
+            end_pin_base: None,
             groups: Vec::new(),
             dialogs,
             show_cloud: true,
+            follow: false,
+            followed: None,
+            pending: None,
+            cursor: None,
+            type_ahead: crate::keys::TypeAhead::new(),
         })));
         // Re-highlight on location changes, relabel after places reload. No I/O here: this
-        // runs on every navigation.
+        // runs on every navigation (tree-follow's reads are on workers).
         let weak = Rc::downgrade(&sidebar.0);
-        nav.on_changed(move |_| {
+        nav.on_changed(move |location| {
             if let Some(inner) = weak.upgrade() {
-                Sidebar(inner).update_rows();
+                let sidebar = Sidebar(inner);
+                sidebar.update_rows();
+                sidebar.location_changed(location);
             }
         });
         sidebar.start_drive_polling();
@@ -411,17 +535,19 @@ impl Sidebar {
     /// The shown pin on sidebar row `row`, as its index in the pinned list.
     fn pin_on_row(&self, row: usize) -> Option<usize> {
         let inner = self.0.borrow();
-        match inner.lines.get(row.checked_sub(inner.first_pin_row?)?)? {
+        let Line::Base(k) = *inner.shown.try_borrow().ok()?.lines.get(row)? else { return None };
+        match inner.pin_lines.get(k.checked_sub(inner.first_pin_base?)?)? {
             PinLine::Pin(n) => inner.pins.stored_index(*n),
             PinLine::Header(_) => None,
         }
     }
 
     /// Where a pin dropped on the line above sidebar row `row` goes: next to which pin of the
-    /// list, and whether after it.
+    /// list, and whether after it. Rows of an open branch count as the place after them.
     fn anchor_at_row(&self, row: usize) -> Option<(usize, bool)> {
         let inner = self.0.borrow();
-        let slot = slot_at(&inner.lines, row.checked_sub(inner.first_pin_row?)?)?;
+        let k = base_at(&inner.shown.try_borrow().ok()?.base_rows, row);
+        let slot = slot_at(&inner.pin_lines, k.checked_sub(inner.first_pin_base?)?)?;
         Some((inner.pins.stored_index(slot.pin)?, slot.after))
     }
 
@@ -613,25 +739,379 @@ impl Sidebar {
     }
 
     fn say(&self, warning: &Warning) {
+        self.say_text(warning.to_string());
+    }
+
+    fn say_text(&self, text: String) {
         let window = self.0.borrow().window.upgrade();
         if let Some(window) = window {
-            window.set_status(warning.to_string().into());
+            window.set_status(text.into());
         }
     }
 
     /// Where sidebar item (`section`, `index`) leads.
     pub fn location_of(&self, section: i32, index: i32) -> Option<Location> {
         let inner = self.0.borrow();
-        let index = usize::try_from(index).ok()?;
-        let places = inner.nav.places();
         match section {
-            SECTION_FOLDERS => places.known.get(index).map(|f| Location::Path(f.path.clone())),
-            SECTION_PINNED => inner.pins.visible.get(index).map(|pin| Location::Path(pin.path.clone())),
-            SECTION_DRIVES => places.drives.get(index).map(|d| Location::Path(d.path.clone())),
             SECTION_TRASH => (index == 0).then_some(Location::Trash),
-            SECTION_CLOUD => places.cloud.get(index).map(|r| Location::Path(r.path.clone())),
-            _ => None,
+            // A tree folder, or a capped branch's folder (its "… n more" line).
+            SECTION_TREE | SECTION_TREE_MORE => {
+                let shown = inner.shown.try_borrow().ok()?;
+                shown.tree.node(u32::try_from(index).ok()?).map(|node| Location::Path(node.path.clone()))
+            }
+            _ => place_path(&inner.nav.places(), &inner.pins.visible, section, index).map(Location::Path),
         }
+    }
+
+    /// Changes what the sidebar shows with `change` (which notes the tree nodes whose own row
+    /// changed), lays the rows out again if the tree or the places changed, and tells Slint only
+    /// that: the rows that came or went, and the rows to draw again. The pinned part's first and
+    /// end rows follow.
+    fn publish<R>(&self, change: impl FnOnce(&mut Shown, &mut Vec<NodeId>) -> R) -> R {
+        let (shown, model, window, first, end, cursor) = {
+            let inner = self.0.borrow();
+            (
+                inner.shown.clone(),
+                inner.model.clone(),
+                inner.window.clone(),
+                inner.first_pin_base,
+                inner.end_pin_base,
+                inner.cursor,
+            )
+        };
+        let (result, plan, rows, cursor) = {
+            let mut shown = shown.borrow_mut();
+            let was = shown.current.clone();
+            let mut touched = Vec::new();
+            let result = change(&mut shown, &mut touched);
+            let old = shown.relayout();
+            // The highlight moved: the folders shown before and now are drawn again.
+            let moved = was != shown.current && !shown.tree.is_empty();
+            let lit = |id: NodeId| {
+                moved
+                    && shown.tree.node(id).is_some_and(|node| {
+                        [&was, &shown.current].into_iter().flatten().any(|c| same_path(c, &node.path))
+                    })
+            };
+            let scan = moved || !touched.is_empty();
+            let plan = change_plan(
+                old.as_deref(),
+                &shown.lines,
+                &shown.base_rows,
+                &|id| touched.contains(&id) || lit(id),
+                scan,
+            );
+            let row = |k: Option<usize>| k.and_then(|k| row_of_base(&shown.base_rows, k));
+            let first_row = row(first);
+            let end_row = first_row.map(|_| row(end).unwrap_or(shown.lines.len()));
+            (result, plan, (first_row, end_row), cursor.and_then(|c| cursor_in(&shown.lines, c)))
+        };
+        self.0.borrow_mut().cursor = cursor;
+        model.apply(plan);
+        if let Some(window) = window.upgrade() {
+            let as_row = |row: Option<usize>| row.map_or(-1, |r| i32::try_from(r).unwrap_or(i32::MAX));
+            window.set_sidebar_pinned_first_row(as_row(rows.0));
+            window.set_sidebar_pinned_end_row(as_row(rows.1));
+            window.set_sidebar_cursor(as_row(cursor.map(|c| c.1)));
+        }
+        result
+    }
+
+    /// The arrow of row `row` (spec 10 §5.1): its branch opens (read in the background) or closes.
+    pub fn toggle_row(&self, row: usize) {
+        // The user's own arrow ends an opening on its way (sapma 16).
+        self.0.borrow_mut().pending = None;
+        let read = self.publish(|shown, touched| match shown.lines.get(row).copied() {
+            Some(Line::Base(k)) => shown.keys.get(k).cloned().flatten().and_then(|key| shown.tree.toggle_root(key)),
+            Some(Line::Tree(tree::Line::Node(id))) => {
+                touched.push(id);
+                shown.tree.toggle(id)
+            }
+            _ => None,
+        });
+        self.start_reads(read.into_iter().collect());
+    }
+
+    /// Reads each folder off the UI thread, one thread each (a slow share holds only its own).
+    fn start_reads(&self, reads: Vec<Read>) {
+        if reads.is_empty() {
+            return;
+        }
+        let window = self.0.borrow().window.clone();
+        let options = crate::view_options::current();
+        for read in reads {
+            let window = window.clone();
+            std::thread::spawn(move || {
+                let found = read_branch(&read.path, options);
+                let _ = window.upgrade_in_event_loop(move |_| with_current(|sidebar| sidebar.branch_read(read, found)));
+            });
+        }
+    }
+
+    /// A branch's read came back; a failed first read says why (spec 10 §5.2, sapma 6).
+    fn branch_read(&self, read: Read, found: Result<Listed, String>) {
+        let failed = found.as_ref().err().cloned();
+        let changed = self.publish(|shown, touched| {
+            touched.push(read.node);
+            shown.tree.loaded(&read, found.ok())
+        });
+        if let Some(why) = failed {
+            // A failed read ends an opening on its way (no loop opening the same folder again).
+            self.0.borrow_mut().pending = None;
+            if changed {
+                self.say_text(format!("Cannot open {}: {why}", read.path.display()));
+            }
+        }
+        self.continue_reveal();
+    }
+
+    /// A pane listed `folder` (spec 10 §5.2): its open branch shows the listing's sub-folders
+    /// (the list's own hidden rule, `Entry::is_shown`), no read of its own. Costs nothing unless
+    /// the tree has a branch there.
+    pub fn listed(&self, folder: &Path, entries: &[gezik_core::Entry]) {
+        let shown = self.0.borrow().shown.clone();
+        if !shown.try_borrow().is_ok_and(|s| s.tree.has_branch_at(folder, &same_path)) {
+            return;
+        }
+        let options = crate::view_options::current();
+        let names = entries
+            .iter()
+            .filter(|e| e.is_dir && e.is_shown(options.show_hidden, options.show_system))
+            .map(|e| e.name.clone())
+            .collect();
+        let found = tree::prepare(names, None);
+        self.publish(|shown, touched| touched.extend(shown.tree.listed(folder, &found, &same_path)));
+    }
+
+    /// Gezik's own job changed `dirs` (spec 10 §5.2): their open branches are read again.
+    pub fn folders_changed(&self, dirs: &[PathBuf]) {
+        let shown = self.0.borrow().shown.clone();
+        if shown.try_borrow().is_ok_and(|s| s.tree.is_empty()) {
+            return;
+        }
+        let reads = self.publish(|shown, touched| {
+            let (reads, rearmed) = shown.tree.rereads(dirs, &same_path);
+            touched.extend(rearmed);
+            reads
+        });
+        self.start_reads(reads);
+    }
+
+    /// Hidden or system items come or go: the open branches are read again.
+    pub fn options_changed(&self) {
+        let reads = self.publish(|shown, touched| {
+            let (reads, rearmed) = shown.tree.reread_all();
+            touched.extend(rearmed);
+            reads
+        });
+        self.start_reads(reads);
+    }
+
+    /// `[sidebar] tree-follow` (at start and on every settings reload); turned on, the tree
+    /// opens down to the folder shown now.
+    pub fn set_tree_follow(&self, on: bool) {
+        let location = {
+            let mut inner = self.0.borrow_mut();
+            let was = std::mem::replace(&mut inner.follow, on);
+            if !on || was {
+                return;
+            }
+            inner.followed = None;
+            inner.nav.active_location()
+        };
+        self.location_changed(&location);
+    }
+
+    /// The folder shown changed: with tree-follow on the tree opens down to it (spec 10 §5.3);
+    /// an opening on its way for another folder ends either way. The same folder again (a
+    /// reload, a listing that came in) changes nothing.
+    fn location_changed(&self, location: &Location) {
+        let path = match location {
+            Location::Path(path) => Some(path),
+            _ => None,
+        };
+        let follow = {
+            let mut inner = self.0.borrow_mut();
+            if !moved(inner.followed.as_deref(), path.map(PathBuf::as_path)) {
+                return;
+            }
+            inner.followed = path.cloned();
+            inner.pending = None;
+            inner.follow
+        };
+        if follow && let Some(path) = path {
+            self.reveal(path.clone(), false);
+        }
+    }
+
+    /// Opens the tree down to `target` under the nearest place (spec 10 §5.3), each closed
+    /// folder above it read in turn, then scrolls its row into view. `asked`: the user asked
+    /// (Show in Sidebar Tree), so a folder the tree cannot show is said.
+    pub fn reveal(&self, target: PathBuf, asked: bool) {
+        self.0.borrow_mut().pending = Some((target, asked));
+        self.continue_reveal();
+    }
+
+    /// One step of the opening on its way, if any (again after each read).
+    fn continue_reveal(&self) {
+        let Some((target, asked)) = self.0.borrow().pending.clone() else { return };
+        let step = self.publish(|shown, touched| {
+            let places: Vec<RootKey> = shown.keys.iter().flatten().cloned().collect();
+            let Some((key, rest)) = tree::nearest_place(&places, &target, &same_path) else {
+                return RevealStep::Unplaced;
+            };
+            match shown.tree.reveal(key.clone(), &rest, &same_path) {
+                tree::Reveal::Place => RevealStep::Place(key),
+                tree::Reveal::Shown(id) => RevealStep::Node(id),
+                tree::Reveal::Wait(read) => {
+                    touched.extend(read.as_ref().map(|r| r.node));
+                    RevealStep::Wait(read)
+                }
+                tree::Reveal::Missing => RevealStep::Missing,
+            }
+        });
+        if let RevealStep::Wait(read) = step {
+            return self.start_reads(read.into_iter().collect());
+        }
+        let row = {
+            let mut inner = self.0.borrow_mut();
+            inner.pending = None;
+            if matches!(step, RevealStep::Unplaced) {
+                // Followed again on the next change: the places may still be loading (at start).
+                inner.followed = None;
+            }
+            inner.shown.try_borrow().ok().and_then(|shown| reveal_row(&shown, &step))
+        };
+        match row {
+            Some(row) if asked => {
+                // Show in Sidebar Tree also gives the tree the keyboard there (sapma 11).
+                self.set_cursor(row);
+                if let Some(window) = self.0.borrow().window.upgrade() {
+                    window.set_sidebar_focus_seq(window.get_sidebar_focus_seq().wrapping_add(1));
+                }
+            }
+            Some(row) => self.scroll_to_row(row),
+            None if asked => self
+                .say_text(format!("{} is not in the sidebar tree (hidden, or under no place there)", target.display())),
+            None => {}
+        }
+    }
+
+    /// Show in Sidebar Tree (spec 10 §5.3): once, whatever tree-follow says.
+    pub fn reveal_current(&self) {
+        let (window, location) = {
+            let inner = self.0.borrow();
+            (inner.window.upgrade(), inner.nav.active_location())
+        };
+        let Some(window) = window else { return };
+        if window.get_sidebar_position() == 2 {
+            return self.say_text("The sidebar is hidden (settings.toml [layout] sidebar)".to_owned());
+        }
+        match location {
+            Location::Path(path) => self.reveal(path, true),
+            _ => self.say_text("Only a folder can be shown in the sidebar tree".to_owned()),
+        }
+    }
+
+    /// Scrolls the sidebar so that row `row` shows whole.
+    fn scroll_to_row(&self, row: usize) {
+        let Some(window) = self.0.borrow().window.upgrade() else { return };
+        let theme = window.global::<crate::Theme>();
+        let height = window.get_drop_geometry().sidebar_height - 2.0 * theme.get_spacing();
+        window.set_sidebar_scroll(scroll_to_show(row, theme.get_row_height(), window.get_sidebar_scroll(), height));
+    }
+
+    /// Puts the keyboard's row on `row` and scrolls it into view.
+    fn set_cursor(&self, row: usize) {
+        let line = self.0.borrow().shown.try_borrow().ok().and_then(|s| s.lines.get(row).copied());
+        let Some(line) = line else { return };
+        self.0.borrow_mut().cursor = Some((line, row));
+        if let Some(window) = self.0.borrow().window.upgrade() {
+            window.set_sidebar_cursor(i32::try_from(row).unwrap_or(i32::MAX));
+        }
+        self.scroll_to_row(row);
+    }
+
+    /// A key while the sidebar has the keyboard (spec 10 §5.1): returns whether it was the
+    /// tree's. Typed letters jump (a letter that matches nothing is used up, as in the list);
+    /// Tab, Shift+Tab and the shortcuts are not the tree's.
+    pub fn key(&self, chord: Option<&Chord>, text: &str, has_modifier: bool, menu_key: bool) -> bool {
+        let key = side_key(chord, menu_key, Platform::current() == Platform::Mac);
+        // A key bound to an action (num/ is Restore Selection) stays the action's, as in the
+        // list; Space is the list's quick look, so here it is typed.
+        let bound = chord.and_then(crate::keys::action_for).is_some_and(|a| a != Action::QuickLook);
+        let typed = if key.is_none() && !has_modifier && !bound { crate::keys::typed_char(text) } else { None };
+        if key.is_none() && typed.is_none() {
+            return false;
+        }
+        let Some(window) = self.0.borrow().window.upgrade() else { return false };
+        let (shown, cursor) = {
+            let inner = self.0.borrow();
+            (inner.shown.clone(), inner.cursor)
+        };
+        let todo = {
+            let Ok(s) = shown.try_borrow() else { return false };
+            let cursor = cursor.and_then(|c| cursor_in(&s.lines, c)).map(|c| c.1).or_else(|| s.active_row());
+            match (key, typed) {
+                (Some(key), _) => key_do(&|i| s.key_row(i), s.lines.len(), cursor, key, self.page_rows(&window)),
+                (None, Some(c)) => {
+                    let found = self.0.borrow_mut().type_ahead.type_char(c, std::time::Instant::now(), |typed| {
+                        find_typed(&|i| s.label(i), s.lines.len(), cursor, typed)
+                    });
+                    found.map_or(KeyDo::Nothing, KeyDo::Move)
+                }
+                (None, None) => KeyDo::Nothing,
+            }
+        };
+        self.do_key(&window, todo);
+        true
+    }
+
+    /// Rows a screen, less one (PgUp/PgDn).
+    fn page_rows(&self, window: &AppWindow) -> usize {
+        let theme = window.global::<crate::Theme>();
+        let height = window.get_drop_geometry().sidebar_height - 2.0 * theme.get_spacing();
+        ((height / theme.get_row_height().max(1.0)).floor() as usize).saturating_sub(1).max(1)
+    }
+
+    fn do_key(&self, window: &AppWindow, todo: KeyDo) {
+        let row_at = |row: usize| self.0.borrow().shown.try_borrow().ok().and_then(|s| s.row(row));
+        match todo {
+            KeyDo::Move(row) => self.set_cursor(row),
+            KeyDo::Toggle(row) => {
+                self.set_cursor(row);
+                self.toggle_row(row);
+            }
+            // The same ways as a click, a middle-click and a right-click (a saved search's too).
+            KeyDo::Go(row) | KeyDo::GoInTab(row) | KeyDo::Menu(row) => {
+                self.set_cursor(row);
+                let Some(r) = row_at(row) else { return };
+                match todo {
+                    KeyDo::Go(_) => window.invoke_sidebar_clicked(r.section, r.index),
+                    KeyDo::GoInTab(_) => window.invoke_sidebar_middle_clicked(r.section, r.index),
+                    _ => {
+                        let (x, y) = self.row_point(window, row);
+                        window.invoke_sidebar_menu(r.section, r.index, x, y);
+                        // Set once the menu is open (opening one clears it): closing it gives
+                        // the tree the keyboard back.
+                        window.set_menu_from_sidebar(true);
+                    }
+                }
+            }
+            KeyDo::Leave => window.invoke_focus_list(),
+            KeyDo::Nothing => {}
+        }
+    }
+
+    /// Under row `row`'s name, in window coordinates (the keyboard's menu opens there).
+    fn row_point(&self, window: &AppWindow, row: usize) -> (f32, f32) {
+        let g = window.get_drop_geometry();
+        let theme = window.global::<crate::Theme>();
+        let width = window.get_sidebar_width();
+        let x = if window.get_sidebar_position() == 1 { g.window_width - width } else { 0.0 };
+        let y =
+            g.sidebar_y + theme.get_spacing() + window.get_sidebar_scroll() + (row + 1) as f32 * theme.get_row_height();
+        (x + theme.get_spacing() * 3.0, y)
     }
 
     /// Checks on a background thread which pinned entries exist on this machine, then
@@ -675,9 +1155,11 @@ impl Sidebar {
     /// Rebuilds the rows: sections, labels, the pinned part's headings and tips, and the
     /// highlight of the exact current location. No file system access.
     fn update_rows(&self) {
-        let (lines, first, groups) = {
+        let (rows, keys, current_path, lines, first, end, groups) = {
             let inner = self.0.borrow();
-            let Some(window) = inner.window.upgrade() else { return };
+            if inner.window.upgrade().is_none() {
+                return;
+            }
             let places = inner.nav.places();
             let current = inner.nav.active_location();
             let is_current = |path: &Path| matches!(&current, Location::Path(p) if same_path(p, path));
@@ -690,6 +1172,8 @@ impl Sidebar {
                 active: false,
                 tip: "".into(),
                 icon: 0,
+                depth: 0,
+                arrow: 0,
             };
             let item = |label: &str, section, i, path: &Path, icon: i32| SidebarRow {
                 header: false,
@@ -699,6 +1183,8 @@ impl Sidebar {
                 active: is_current(path),
                 tip: "".into(),
                 icon,
+                depth: 0,
+                arrow: 0,
             };
 
             let mut rows = vec![header("FOLDERS", SECTION_FOLDERS, -1)];
@@ -760,6 +1246,8 @@ impl Sidebar {
                     active: false,
                     tip: "".into(),
                     icon: ICON_SEARCH,
+                    depth: 0,
+                    arrow: 0,
                 }));
             }
             rows.push(header(DRIVES_HEADER, SECTION_DRIVES, -1));
@@ -774,18 +1262,37 @@ impl Sidebar {
                 active: current == Location::Trash,
                 tip: "".into(),
                 icon: ICON_TRASH,
+                depth: 0,
+                arrow: 0,
             });
 
-            let as_row = |row: Option<usize>| row.map_or(-1, index);
-            window.set_sidebar_pinned_first_row(as_row(first));
-            window.set_sidebar_pinned_end_row(as_row(end));
-            sync_model(&inner.rows, rows.into_iter());
-            (lines, first, groups)
+            let current_path = match &current {
+                Location::Path(path) => Some(path.clone()),
+                _ => None,
+            };
+            let keys: Vec<Option<RootKey>> = rows
+                .iter()
+                .map(|row| {
+                    let path = (!row.header).then(|| place_path(&places, visible, row.section, row.index)).flatten();
+                    path.map(|path| (row.section, path))
+                })
+                .collect();
+            (rows, keys, current_path, lines, first, end, groups)
         };
-        let mut inner = self.0.borrow_mut();
-        inner.lines = lines;
-        inner.first_pin_row = first;
-        inner.groups = groups;
+        {
+            let mut inner = self.0.borrow_mut();
+            inner.pin_lines = lines;
+            inner.first_pin_base = first;
+            inner.end_pin_base = end;
+            inner.groups = groups;
+        }
+        let live: Vec<RootKey> = keys.iter().flatten().cloned().collect();
+        self.publish(|shown, _| {
+            shown.set_base(rows, keys);
+            shown.current = current_path;
+            // A place gone (an ejected drive, an unpinned folder) takes its branch.
+            shown.tree.keep_roots(&live);
+        });
     }
 }
 
@@ -853,6 +1360,27 @@ mod tests {
         let visible = check_pins(&dirs, &pinned, |p| p != Path::new("/gone"));
         // Entries with `..` are never expanded.
         assert_eq!(visible, [pin("{documents}", "/u/docs"), pin("/work", "/work")]);
+    }
+
+    #[test]
+    fn a_pinned_server_shows_without_asking_the_network() {
+        let dirs = KnownDirs::new(Vec::new());
+        let visible = check_pins(&dirs, &plain(&["//localhost", "//localhost/gone"]), |_| false);
+        let shown: Vec<&Path> = visible.iter().map(|p| p.path.as_path()).collect();
+        if cfg!(windows) {
+            assert_eq!(shown, [Path::new("//localhost")], "a share is still a folder to find");
+        } else {
+            assert!(shown.is_empty());
+        }
+    }
+
+    #[test]
+    fn a_branch_gone_says_so_not_its_parent() {
+        let gone = std::io::Error::from(std::io::ErrorKind::NotFound);
+        assert_eq!(read_error(&gone), "It no longer exists");
+        #[cfg(windows)]
+        assert_eq!(read_error(&std::io::Error::from_raw_os_error(3)), "It no longer exists", "path not found");
+        assert_eq!(read_error(&std::io::Error::from(std::io::ErrorKind::PermissionDenied)), "Access denied");
     }
 
     #[test]
@@ -1010,6 +1538,67 @@ mod tests {
         assert_eq!(group_neighbour(&visible, 1, false), Some(2));
         assert_eq!(group_neighbour(&visible, 2, true), Some(1));
         assert_eq!(group_neighbour(&visible, 2, false), None);
+    }
+
+    #[test]
+    fn a_place_leads_to_its_folder() {
+        let places = Places {
+            known: vec![gezik_platform::KnownFolder { name: "Home".into(), path: PathBuf::from("/h") }],
+            drives: Vec::new(),
+            cloud: Vec::new(),
+        };
+        let pins = [pin("/w", "/w")];
+        assert_eq!(place_path(&places, &pins, SECTION_FOLDERS, 0), Some(PathBuf::from("/h")));
+        assert_eq!(place_path(&places, &pins, SECTION_PINNED, 0), Some(PathBuf::from("/w")));
+        assert_eq!(place_path(&places, &pins, SECTION_PINNED, 1), None);
+        assert_eq!(place_path(&places, &pins, SECTION_SEARCHES, 0), None, "no tree under a saved search");
+        assert_eq!(place_path(&places, &pins, SECTION_TRASH, 0), None, "nor under the trash");
+    }
+
+    #[test]
+    fn only_another_location_moves_the_follow() {
+        let (a, b) = (Path::new("/a"), Path::new("/b"));
+        assert!(!moved(Some(a), Some(a)), "a reload of the same folder");
+        assert!(moved(Some(a), Some(b)));
+        assert!(moved(None, Some(a)), "into a folder from This PC or a search");
+        assert!(moved(Some(a), None), "out of a folder: the opening on its way ends");
+        assert!(!moved(None, None), "from one non-folder to another");
+        if cfg!(windows) {
+            assert!(!moved(Some(Path::new(r"C:\A")), Some(Path::new("c:/a"))), "case-blind on Windows");
+        }
+    }
+
+    #[test]
+    fn the_keyboards_row_follows_its_line_or_stays_within_the_rows() {
+        let node = |id| Line::Tree(tree::Line::Node(id));
+        let lines = [Line::Base(0), node(4), node(5), Line::Base(1)];
+        assert_eq!(cursor_in(&lines, (node(5), 2)), Some((node(5), 2)), "where it was");
+        assert_eq!(cursor_in(&lines, (node(5), 1)), Some((node(5), 2)), "rows came above it: it moves with them");
+        assert_eq!(cursor_in(&lines, (node(9), 2)), Some((node(5), 2)), "its folder went: the row it was on");
+        assert_eq!(
+            cursor_in(&lines, (node(9), 30)),
+            Some((Line::Base(1), 3)),
+            "a branch closed under it: the last row"
+        );
+        assert_eq!(cursor_in(&[], (node(5), 0)), None);
+    }
+
+    #[test]
+    fn an_opening_ends_on_the_row_of_its_place_or_folder() {
+        let place = |label: &str| SidebarRow { label: label.into(), ..SidebarRow::default() };
+        let home: RootKey = (SECTION_FOLDERS, PathBuf::from("/h"));
+        let mut shown = Shown::default();
+        shown.set_base(vec![place("FOLDERS"), place("Home"), place("C")], vec![None, Some(home.clone()), None]);
+        let read = shown.tree.toggle_root(home.clone()).unwrap();
+        shown.tree.loaded(&read, Some(tree::prepare(vec!["a".into(), "b".into()], None)));
+        shown.relayout();
+        let target = Path::new("/h/b");
+        let (key, rest) = tree::nearest_place(std::slice::from_ref(&home), target, &same_path).unwrap();
+        let tree::Reveal::Shown(b) = shown.tree.reveal(key, &rest, &same_path) else { panic!("open down to it") };
+        assert_eq!(reveal_row(&shown, &RevealStep::Node(b)), Some(3), "FOLDERS, Home, a, b");
+        assert_eq!(reveal_row(&shown, &RevealStep::Place(home)), Some(1));
+        assert_eq!(reveal_row(&shown, &RevealStep::Place((SECTION_DRIVES, PathBuf::from("/x")))), None);
+        assert_eq!(reveal_row(&shown, &RevealStep::Unplaced), None);
     }
 
     #[test]

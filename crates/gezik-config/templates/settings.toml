@@ -122,6 +122,9 @@ hotkey = ""
 # OneDrive, iCloud Drive, Dropbox, Google Drive … under CLOUD, found by Gezik. Rows in these
 # folders show whether a file is only in the cloud either way.
 cloud = true
+# The sidebar's folder tree opens down to the folder shown, as Explorer's "Expand to open
+# folder" (each closed folder above it is read once). Off: Show in Sidebar Tree does it once.
+tree-follow = false
 
 [shortcuts]
 # Change any shortcut; "mod" is Cmd on macOS and Ctrl elsewhere; "" disables.
@@ -201,6 +204,7 @@ cloud = true
 # group-size = ""   # Group by ▸ Size: Empty, Tiny … Gigantic, Folders
 # collapse-groups = ""   # Collapse All Groups (a grouped view)
 # expand-groups = ""   # Expand All Groups
+# reveal-in-tree = ""   # Show in Sidebar Tree: opens the sidebar tree down to the folder shown
 
 # Saved rule sets for batch rename (Rename… with two or more items selected). The rename
 # layer writes them with "Presets ▾ › Save current rules as…"; they can also be written here.

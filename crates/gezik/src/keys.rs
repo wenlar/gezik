@@ -835,7 +835,8 @@ mod tests {
                 | Action::GroupDate
                 | Action::GroupSize
                 | Action::CollapseGroups
-                | Action::ExpandGroups => continue,
+                | Action::ExpandGroups
+                | Action::RevealInTree => continue,
             };
             assert_eq!(reach(text), Some(action), "{text}");
         }

@@ -42,6 +42,7 @@ mod saved_searches;
 mod search;
 mod select_tools;
 mod sidebar;
+mod sidebar_model;
 mod single_instance;
 mod stack;
 mod start;
@@ -132,6 +133,7 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
     // 9b9: the tray and the shortcut follow [system] (the tray menu follows the sidebar's pins).
     resident::apply(&loaded.settings.system);
     sidebar::with_current(|s| s.set_show_cloud(loaded.settings.sidebar_cloud));
+    sidebar::with_current(|s| s.set_tree_follow(loaded.settings.sidebar_tree_follow));
     view::with_current(|view| view.set_defaults(loaded.settings.view));
     view_options::set_from_file(loaded.settings.view.options);
     #[cfg(target_os = "macos")]
@@ -272,7 +274,8 @@ fn perform(
         | Action::GroupDate
         | Action::GroupSize
         | Action::CollapseGroups
-        | Action::ExpandGroups => return actions::run(action, nav, view),
+        | Action::ExpandGroups
+        | Action::RevealInTree => return actions::run(action, nav, view),
     }
     true
 }
@@ -428,6 +431,16 @@ fn handle_key(
         }
     }
 
+    // The sidebar tree has the keyboard (spec 10 §5.1): its keys first; shortcuts go on below,
+    // the list's own (Delete, F2 …) do not, the list not having the keyboard.
+    if window.get_sidebar_focused() && !window.get_list_focused() && !editing && !filtering && !in_search {
+        // The menu key has no chord: it is the tree's too.
+        let mut used = false;
+        sidebar::with_current(|s| used = s.key(chord.as_ref(), text, has_modifier, menu_key));
+        if used {
+            return true;
+        }
+    }
     if let Some(action) = chord.as_ref().and_then(keys::action_for) {
         // Space opens quick look only on the focused list and outside type-ahead; elsewhere
         // it is an ordinary key.
@@ -974,6 +987,7 @@ fn main() -> Result<(), slint::PlatformError> {
     sidebar.install();
     sidebar.set_pinned(initial_settings.pinned);
     sidebar.set_show_cloud(initial_settings.sidebar_cloud);
+    sidebar.set_tree_follow(initial_settings.sidebar_tree_follow);
     let _tab_sets = tab_sets::TabSets::new(&window, nav.clone(), view.clone(), dialogs.clone(), config.clone());
     let _saved_searches =
         saved_searches::SavedSearches::new(&window, nav.clone(), view.clone(), dialogs.clone(), config.clone());
@@ -1212,6 +1226,14 @@ fn main() -> Result<(), slint::PlatformError> {
         move |from, line| {
             if let (Ok(from), Ok(line)) = (usize::try_from(from), usize::try_from(line)) {
                 sidebar.drop_pinned(from, line);
+            }
+        }
+    });
+    window.on_sidebar_toggled({
+        let sidebar = sidebar.clone();
+        move |row| {
+            if let Ok(row) = usize::try_from(row) {
+                sidebar.toggle_row(row);
             }
         }
     });

@@ -534,6 +534,17 @@ Numbers stay as they are when branches merge: if this range meets one merged ear
 153. **Trash.** The Trash grouped by Date shows the deletion dates (`~/.local/share/Trash/info/*.trashinfo` `DeletionDate`). Do not empty or restore anything.
 154. **Remembered.** Restart: the folder keeps its grouping (`~/.config/gezik/views.toml` has `group = "date"`).
 
+### 10c, the sidebar folder tree
+
+Numbers stay as they are when branches merge: if this range meets one merged earlier, the later branch moves its items to the next free ten and writes the old number in brackets in the results file; gaps are not filled. 10c starts at 160 as its plan decided (other open branches take the numbers before it). GNOME and KDE, X11 and Wayland.
+
+160. **Tests first.** `cargo test -p gezik-core tree`, `cargo test -p gezik sidebar`; paste.
+161. **`/` and home.** Open the arrows of `/` (DRIVES) and Home: folders only, natural order, dot folders only with Ctrl+H; `/proc` opens without hanging.
+162. **Link loop.** `mkdir -p ~/loop/a && ln -s ~/loop ~/loop/a/back`; pin `~/loop`, open `a` then `back`: no arrow on `back`, nothing hangs.
+163. **Huge branch.** As macOS 212 under `/tmp/gezik-tree`; the window stays usable while it reads.
+164. **Keyboard and Orca.** As macOS 217 with Ctrl+Enter; Orca reads expanded/collapsed.
+165. **Follow.** As macOS 218.
+
 ## Known gaps (not bugs)
 
 - **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (F5 works it out again). Search results and the flat view show no folder sizes.

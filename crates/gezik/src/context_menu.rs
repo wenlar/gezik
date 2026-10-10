@@ -478,7 +478,7 @@ pub fn drives_background_items(recent: &[String]) -> Vec<(u32, String, bool)> {
 /// Keep on this device / Free up space (spec 13.3): only Gezik's own menus draw them.
 pub const KEEP_OFFLINE: u32 = 1860;
 pub const FREE_UP: u32 = 1861;
-/// 1881: the View menu's last item (spec 13.3).
+/// 1881: the View menu's item before Show in sidebar tree (spec 13.3).
 pub const SYSTEM_INTEGRATION: u32 = 1881;
 // Step 10 (spec 10 §10.3): 2000–2199.
 /// Group by ▸ None, Type, Date, Size (`GroupBy::ALL` order); 2004–2009 for tags and later.
@@ -488,6 +488,8 @@ pub const GROUP_BY_DATE: u32 = 2002;
 pub const GROUP_BY_SIZE: u32 = 2003;
 pub const COLLAPSE_GROUPS: u32 = 2010;
 pub const EXPAND_GROUPS: u32 = 2011;
+/// View ▸ Show in sidebar tree (spec 10 §10.3, 10c).
+pub const REVEAL_IN_TREE: u32 = 2050;
 
 /// A trash row's menu: only what the trash does (no Explorer menu, nothing that acts on a
 /// `$R…` name).
@@ -752,6 +754,7 @@ pub fn view_items(
     out.push((APPLY_TO_ALL, "Apply to all folders".to_owned()));
     out.push((RESET_FOLDER, "Reset this folder".to_owned()));
     out.push((SYSTEM_INTEGRATION, "    System Integration…".to_owned()));
+    out.push((REVEAL_IN_TREE, "    Show in sidebar tree".to_owned()));
     out
 }
 
@@ -1030,7 +1033,7 @@ impl Menus {
                             if let Some(window) = weak.upgrade()
                                 && !window.get_dialog_open()
                             {
-                                window.invoke_focus_list();
+                                window.invoke_menu_gives_keyboard_back();
                             }
                         });
                     }
@@ -1321,6 +1324,10 @@ impl Menus {
     /// Right-click on sidebar entry (`section`, `index`), at window position `x`, `y`; on a
     /// group's heading, its menu.
     pub fn sidebar_entry(&self, section: i32, index: i32, x: f32, y: f32) {
+        // A capped branch's "… n more" line: a click opens the folder; no menu.
+        if section == crate::sidebar::SECTION_TREE_MORE {
+            return;
+        }
         if section == SECTION_GROUP {
             return self.group_heading(index, x, y);
         }
@@ -1357,7 +1364,8 @@ impl Menus {
         list.push((SEARCH_HERE, "Search in this folder…".to_owned()));
         list.extend(owned(terminal_items(cfg!(windows))));
         subs.push(self.copy_path_sub(std::slice::from_ref(&path), list.len()));
-        self.open(Subject::SidebarEntry(path.clone()), list, subs, MenuTarget::Item(path), x, y, None);
+        // At the point given (the pointer, or under the row for the menu key), not at the pointer.
+        self.open(Subject::SidebarEntry(path.clone()), list, subs, MenuTarget::Item(path), x, y, Some((x, y)));
     }
 
     /// Right-click on the heading of group `index` (its place among the groups shown).
@@ -1489,6 +1497,9 @@ impl Menus {
         subs: Vec<Submenu>,
         at: Option<(f32, f32)>,
     ) {
+        if let Some(window) = self.window.upgrade() {
+            window.set_menu_from_sidebar(false);
+        }
         let Some(claim) = self.native_menu.claim() else { return };
         let menus = self.clone();
         slint::Timer::single_shot(std::time::Duration::from_millis(16), move || {
@@ -1557,6 +1568,8 @@ impl Menus {
     /// macOS; elsewhere Gezik draws its own, which popup.rs keeps inside the window.)
     fn open_slint_entries(&self, items: &[(u32, String, bool)], subs: Vec<Submenu>, anchor: Anchor) {
         let Some(window) = self.window.upgrade() else { return };
+        // A menu opened by the sidebar's menu key sets it again once open.
+        window.set_menu_from_sidebar(false);
         if items.is_empty() && subs.iter().all(|sub| sub.items.is_empty()) {
             return;
         }
@@ -1905,6 +1918,7 @@ impl Menus {
             (SYSTEM_INTEGRATION, Subject::View) => {
                 crate::integration::with_current(crate::integration::Integration::open)
             }
+            (REVEAL_IN_TREE, _) => self.sidebar.reveal_current(),
             (CALC_FOLDER_SIZES, _) => crate::folder_sizes::with_current(crate::folder_sizes::FolderSizes::calculate),
             (id, Subject::View) => {
                 if let Some(option) = view_option_for(id, crate::view_options::current()) {
@@ -2294,6 +2308,7 @@ mod tests {
             APPLY_TO_ALL,
             RESET_FOLDER,
             SYSTEM_INTEGRATION,
+            REVEAL_IN_TREE,
             UNDO,
             REDO,
             PASTE,
@@ -2506,6 +2521,7 @@ mod tests {
             APPLY_TO_ALL,
             RESET_FOLDER,
             SYSTEM_INTEGRATION,
+            REVEAL_IN_TREE,
             UNDO,
             REDO,
             PASTE,
@@ -2925,11 +2941,12 @@ mod tests {
                 SHOW_HIDDEN,
                 APPLY_TO_ALL,
                 RESET_FOLDER,
-                SYSTEM_INTEGRATION
+                SYSTEM_INTEGRATION,
+                REVEAL_IN_TREE
             ]
         );
         assert!(list[0].1.starts_with("• ") && !list[1].1.starts_with("• "));
-        assert_eq!(list.last().map(|(id, _)| *id), Some(SYSTEM_INTEGRATION));
+        assert_eq!(list.last().map(|(id, _)| *id), Some(REVEAL_IN_TREE));
         let grid = ViewSettings {
             mode: ViewMode::Grid,
             sort: SortSpec { key: SortKey::Size, dir: SortDir::Desc },
@@ -2949,6 +2966,17 @@ mod tests {
                 .iter()
                 .any(|(id, t)| *id == PREVIEW_PANE && t.starts_with("• "))
         );
+    }
+
+    #[test]
+    fn the_view_menu_ends_with_show_in_sidebar_tree() {
+        use gezik_core::view::{ViewOptions, ViewSettings};
+        let items = view_items(ViewSettings::default(), false, false, ViewOptions::default(), true);
+        assert_eq!(
+            items.last().map(|(id, title)| (*id, title.as_str())),
+            Some((REVEAL_IN_TREE, "    Show in sidebar tree"))
+        );
+        assert_eq!(REVEAL_IN_TREE, 2050, "spec 10 §10.3");
     }
 
     #[test]
@@ -2976,7 +3004,8 @@ mod tests {
                 SHOW_SYSTEM,
                 APPLY_TO_ALL,
                 RESET_FOLDER,
-                SYSTEM_INTEGRATION
+                SYSTEM_INTEGRATION,
+                REVEAL_IN_TREE
             ]
         );
         assert!(items[12].1.starts_with("• ") && items[13].1.starts_with("• "), "extensions hidden, folders first");

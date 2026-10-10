@@ -250,7 +250,8 @@ pub fn allowed(action: Action) -> bool {
         | Action::GroupDate
         | Action::GroupSize
         | Action::CollapseGroups
-        | Action::ExpandGroups => true,
+        | Action::ExpandGroups
+        | Action::RevealInTree => true,
         // No drive to eject in the trash.
         Action::Eject
         | Action::Rename

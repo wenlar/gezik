@@ -23,6 +23,7 @@ pub mod sort;
 pub mod system_change;
 pub mod templates;
 pub mod text;
+pub mod tree;
 pub mod view;
 pub mod view_memory;
 
