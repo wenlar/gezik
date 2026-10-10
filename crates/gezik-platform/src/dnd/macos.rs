@@ -132,7 +132,9 @@ fn over(view: &NSView, info: &ProtocolObject<dyn NSDraggingInfo>, entered: bool)
     let (x, y) = point_in(view, info);
     let keys = keys_now();
     let allowed = allowed_by(info.draggingSourceOperationMask());
-    let answered = with_target(view, |target| {
+    // The handler is asked with no borrow held (it may reach another window's target): the
+    // offer is taken out for it and put back after.
+    let taken = with_target(view, |target| {
         if entered || target.offer.is_none() {
             let paths = paths_of(info);
             // No file paths: files another program promises.
@@ -144,9 +146,17 @@ fn over(view: &NSView, info: &ProtocolObject<dyn NSDraggingInfo>, entered: bool)
         if offer.paths.is_empty() && offer.virtual_count == 0 {
             return None;
         }
-        Some(operation_for(target.handler.over(offer, x, y, keys).effect))
+        Some((target.handler.clone(), target.offer.take()?))
+    })
+    .flatten();
+    let Some((handler, offer)) = taken else { return NSDragOperation::None };
+    let answer = handler.over(&offer, x, y, keys);
+    with_target(view, |target| {
+        if target.offer.is_none() {
+            target.offer = Some(offer);
+        }
     });
-    answered.flatten().unwrap_or(NSDragOperation::None)
+    operation_for(answer.effect)
 }
 
 extern "C-unwind" fn dragging_entered(

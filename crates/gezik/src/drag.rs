@@ -127,6 +127,8 @@ struct Inner {
     attached: RefCell<Option<Attached>>,
     /// A drag outside the window that Gezik drives itself (X11).
     outside: RefCell<Option<Box<dyn OutsideDrag>>>,
+    /// The window closed while its drop target was in use: it goes when that is over.
+    detach_later: Cell<bool>,
     /// Handing this drag to the system failed: it stays in the window.
     handoff_failed: Cell<bool>,
     /// A tab opened under the drag: the list was rebuilt, and the entry that held the
@@ -278,6 +280,7 @@ impl Drags {
             scroll_timer: Timer::default(),
             attached: RefCell::default(),
             outside: RefCell::default(),
+            detach_later: Cell::new(false),
             handoff_failed: Cell::new(false),
             grab_lost: Cell::new(false),
             last_open: Cell::new(None),
@@ -1104,6 +1107,11 @@ impl Drags {
             Some(attached) => attached.drag_out(&sources, right, on_end),
             None => Err("no drop target".into()),
         });
+        // The window closed during the drag loop: its drop target goes now.
+        if self.0.detach_later.take() {
+            let gone = self.0.attached.borrow_mut().take();
+            drop(gone);
+        }
         match result {
             // Its last position is outside the window: the next move (inside) places it.
             Ok(Handoff::Ended(DragEnd::Returned)) => self.resume(d, false),
@@ -1218,12 +1226,22 @@ impl Drags {
     }
 
     /// The window closes: its drop target goes before its native window does (deviation 13),
-    /// and with it the handler that holds these drags.
+    /// and with it the handler that holds these drags. Inside its own system drag (Windows'
+    /// loop holds the target) it goes when that returns.
     pub fn detach(&self) {
-        let outside = self.0.outside.borrow_mut().take();
-        drop(outside);
-        let attached = self.0.attached.borrow_mut().take();
-        drop(attached);
+        if let Ok(mut outside) = self.0.outside.try_borrow_mut() {
+            let gone = outside.take();
+            drop(outside);
+            drop(gone);
+        }
+        match self.0.attached.try_borrow_mut() {
+            Ok(mut attached) => {
+                let gone = attached.take();
+                drop(attached);
+                drop(gone);
+            }
+            Err(_) => self.0.detach_later.set(true),
+        }
     }
 
     /// The window got the focus: the clipboard is its window system connection's (Linux).

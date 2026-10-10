@@ -50,6 +50,8 @@ thread_local! {
     static BUILDING: Cell<bool> = const { Cell::new(false) };
     /// The tabs are written once the event at hand is done.
     static SAVING: Cell<bool> = const { Cell::new(false) };
+    /// Windows asked to close, closing once the event at hand is done.
+    static CLOSING: RefCell<Vec<WindowId>> = const { RefCell::new(Vec::new()) };
 }
 
 /// The parts of a window that are kept by window: each slot forgets a closed window's
@@ -442,7 +444,13 @@ pub fn save_sessions() {
     let Some(store) = process.config.clone().filter(|_| !process.secondary) else { return };
     let restore = loaded().is_none_or(|l| l.settings.session.restore);
     let mut list = Vec::new();
+    let mut seen = 0;
     for_each(|window| {
+        // A window closing now is no longer kept.
+        if closing(current()) {
+            return;
+        }
+        seen += 1;
         // With `[session] restore` off, no tabs of any window are kept.
         if restore {
             let (dual, active_pane, sync, right_session) = dual::session();
@@ -451,7 +459,22 @@ pub fn save_sessions() {
             list.push(WindowSession { session, right_session, dual, active_pane, sync, window });
         }
     });
+    // No window (all closing, or none yet): what state.toml has stays.
+    if seen == 0 {
+        return;
+    }
     store.update_state(move |state| sessions_into(list, state));
+}
+
+fn closing(id: WindowId) -> bool {
+    CLOSING.with(|c| c.borrow().contains(&id))
+}
+
+/// Whether a window besides `id` stays open on screen: shown and not closing (one hidden in
+/// the tray or already asked to close leaves `id` the last one).
+fn others_open(id: WindowId) -> bool {
+    let list: Vec<_> = WINDOWS.with(|w| w.borrow().iter().map(|(of, w)| (*of, w.clone_strong())).collect());
+    list.iter().any(|(of, window)| *of != id && !closing(*of) && window.window().is_visible())
 }
 
 /// [`save_sessions`] once the event at hand is done (a tab or pane change): it reads every
@@ -483,13 +506,20 @@ fn sessions_into(list: Vec<WindowSession>, state: &mut State) {
 /// jobs as one window did.
 fn close_requested(id: WindowId) -> slint::CloseRequestResponse {
     with_window(id, |_| {
-        if focus_order().len() > 1 {
+        if others_open(id) {
+            CLOSING.with(|c| c.borrow_mut().push(id));
             close_later(id);
             return slint::CloseRequestResponse::HideWindow;
         }
-        process().map_or(slint::CloseRequestResponse::HideWindow, |process| (process.close_requested)())
+        last_closes()
     })
     .unwrap_or(slint::CloseRequestResponse::HideWindow)
+}
+
+/// The last window on screen closes: the tray, the running jobs' question or quitting, as one
+/// window did.
+fn last_closes() -> slint::CloseRequestResponse {
+    process().map_or(slint::CloseRequestResponse::HideWindow, |process| (process.close_requested)())
 }
 
 /// Closes window `id` once the event at hand is done (its close button, its last tab) while
@@ -503,7 +533,18 @@ fn close_later(id: WindowId) {
 /// its drop target goes before its native window, and no strong handle of it is left (its
 /// frame buffer goes with it). The others' tabs are written.
 pub fn close(id: WindowId) {
+    CLOSING.with(|c| c.borrow_mut().retain(|of| *of != id));
     let Some(window) = window_of(id) else { return };
+    // The others closed meanwhile (two closed in one go: a taskbar group, macOS's close all):
+    // this one is the last after all, shown again for the tray or the jobs' question.
+    if !others_open(id) {
+        let _ = window.show();
+        focused(id);
+        if matches!(enter(id, last_closes), slint::CloseRequestResponse::HideWindow) {
+            let _ = window.hide();
+        }
+        return;
+    }
     let to = focus_order().into_iter().find(|other| *other != id);
     enter(id, || {
         if let Some(to) = to {
@@ -518,6 +559,12 @@ pub fn close(id: WindowId) {
     let _ = window.hide();
     drop(window);
     forget(id);
+    // What the focused window owns goes to the one in front now (Wayland may not tell it
+    // the focus again): the administrator prompt, the clipboard (Linux).
+    with_focused(|window| {
+        crate::admin::focused(window.window());
+        drag::with_current(drag::Drags::focused);
+    });
     save_sessions();
 }
 
@@ -1479,6 +1526,7 @@ pub(crate) mod tests {
         open(first, opening(&state));
         let second = open_new(opening(&state)).expect("a second window");
         let second_weak = with_window(second, AppWindow::as_weak).expect("open");
+        show_all().expect("shown");
         ((first, first_weak), (second, second_weak))
     }
 
@@ -1529,8 +1577,84 @@ pub(crate) mod tests {
         acting(first);
         close_requested(first);
         assert_eq!(finished.get(), 1);
+        // Slint hides it on that answer; a shown window is held by Slint.
+        let _ = first_weak.upgrade().map(|w| w.hide());
         release_all();
         assert!(first_weak.upgrade().is_none());
+    }
+
+    /// Review: two windows closed in one go leave the last one open, and its close is the last
+    /// window's (tray, jobs, quitting); a window hidden in the tray does not count.
+    #[test]
+    fn the_last_window_on_screen_never_closes_as_one_of_many() {
+        let finished = Rc::new(Cell::new(0));
+        let ((first, first_weak), (second, _)) = two_windows(finished.clone());
+        // Both asked in one go: the second is the last one on screen.
+        close_requested(first);
+        close_requested(second);
+        assert_eq!(finished.get(), 1, "the second is the last: the process's close");
+        close(first);
+        assert_eq!(focus_order(), [second], "it stays");
+        assert!(closing_none());
+        assert!(first_weak.upgrade().is_none());
+        // Asked while another was shown, which went to the tray before the close ran.
+        let (third, third_weak) = window();
+        enter(third, || third_weak.upgrade().map(|w| w.show()));
+        close_requested(second);
+        assert_eq!(finished.get(), 1, "the third was shown");
+        let _ = third_weak.upgrade().map(|w| w.hide());
+        close(second);
+        assert_eq!(finished.get(), 2, "the last after all: the process's close, not closed");
+        assert!(focus_order().contains(&second) && closing_none());
+        // Hidden in the tray: not an open window.
+        assert!(!others_open(second));
+        close_requested(second);
+        assert_eq!(finished.get(), 3);
+        for_each(|w| {
+            let _ = w.hide();
+        });
+        release_all();
+    }
+
+    fn closing_none() -> bool {
+        CLOSING.with(|c| c.borrow().is_empty())
+    }
+
+    /// Review: with no window to take the tabs from, state.toml keeps what it has.
+    #[test]
+    fn no_window_writes_no_tabs() {
+        let dir = std::env::temp_dir().join(format!("gezik-10g-no-window-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a folder");
+        let store = ConfigStore::new(dir.clone());
+        let kept = State { session: Session::single(Location::Drives), ..State::default() };
+        store.save_state(&kept).expect("written");
+        let (first, weak) = window();
+        let ops = Operations::new(
+            &weak.upgrade().expect("open"),
+            gezik_ops::Settings { threads: Default::default(), pending_deletes: None },
+            Default::default(),
+            false,
+            None,
+            Default::default(),
+        );
+        forget(first);
+        set_process(Rc::new(Process {
+            config: Some(store.clone()),
+            state: Rc::new(State::default()),
+            memory: Rc::default(),
+            media: crate::media::Media::new(),
+            ops,
+            files: Arc::default(),
+            secondary: false,
+            close_requested: Rc::new(|| slint::CloseRequestResponse::HideWindow),
+            save: Rc::new(|| {}),
+        }));
+        save_sessions();
+        store.flush_state();
+        assert_eq!(store.load_state().session, kept.session);
+        release_all();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
