@@ -489,7 +489,7 @@ fn move_tab_into(
     }
 }
 
-/// The windows on screen (not closing), the most recently focused first, with their outer
+/// The windows on screen (not closing), the most recently focused first, with their visible
 /// frames in physical screen pixels: where a dragged tab would go (spec 9.5). A window whose
 /// frame is not known (no native window yet, Wayland) is left out.
 pub fn frames() -> Vec<(WindowId, gezik_core::layout::Rect)> {
@@ -498,13 +498,15 @@ pub fn frames() -> Vec<(WindowId, gezik_core::layout::Rect)> {
         .filter(|(id, window)| !closing(*id) && window.window().is_visible())
         .filter_map(|(id, window)| {
             let frame = window.window().with_winit_window(|native| {
-                let at = native.outer_position().ok()?;
-                let size = native.outer_size();
+                // The title bar and the client area: Windows 11's outer frame also takes in its
+                // invisible resize borders, 7 px left, right and below.
+                let (top, at, size) =
+                    (native.outer_position().ok()?.y, native.inner_position().ok()?, native.inner_size());
                 Some(gezik_core::layout::Rect {
                     x: at.x as f32,
-                    y: at.y as f32,
+                    y: top as f32,
                     width: size.width as f32,
-                    height: size.height as f32,
+                    height: (at.y + size.height as i32 - top) as f32,
                 })
             });
             Some((id, frame.flatten()?))

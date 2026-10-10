@@ -124,6 +124,8 @@ struct Inner {
     crumbs: RefCell<[Vec<(String, f32, f32)>; 2]>,
     /// The tab under the pointer (pane, tab), waiting to open.
     hover_tab: Cell<Option<(usize, usize)>>,
+    /// Since when the pointer rests on that tab.
+    hover_since: Cell<std::time::Instant>,
     tab_timer: Timer,
     scroll_timer: Timer,
     /// The window's drop target for other programs.
@@ -284,6 +286,7 @@ impl Drags {
             phase: RefCell::new(Phase::Idle),
             crumbs: RefCell::default(),
             hover_tab: Cell::new(None),
+            hover_since: Cell::new(std::time::Instant::now()),
             tab_timer: Timer::default(),
             scroll_timer: Timer::default(),
             attached: RefCell::default(),
@@ -987,6 +990,7 @@ impl Drags {
             return;
         }
         self.0.hover_tab.set(tab);
+        self.0.hover_since.set(std::time::Instant::now());
         match tab {
             Some(tab) => self.0.tab_timer.start(
                 TimerMode::SingleShot,
@@ -999,11 +1003,18 @@ impl Drags {
         }
     }
 
-    fn tab_rested(&self, (p, i): (usize, usize)) {
+    fn tab_rested(&self, tab: (usize, usize)) {
+        if self.open_rested(tab) {
+            self.reanswer();
+        }
+    }
+
+    /// Opens tab `(p, i)` the drag rests on, if it still does; whether it did.
+    fn open_rested(&self, (p, i): (usize, usize)) -> bool {
         if self.0.hover_tab.get() != Some((p, i))
             || !matches!(*self.0.phase.borrow(), Phase::Dragging(_) | Phase::Offer(_))
         {
-            return;
+            return false;
         }
         self.0.hover_tab.set(None);
         if let Some(pane) = crate::panes::at(index(p)) {
@@ -1019,7 +1030,7 @@ impl Drags {
             self.0.grab_lost.set(true);
         }
         self.update();
-        self.reanswer();
+        true
     }
 
     /// Near the list's top or bottom edge the list scrolls while the pointer rests there.
@@ -1378,6 +1389,13 @@ impl Drags {
             }
         }
         self.update();
+        // A drag from another Gezik window runs in its system drag loop, where no timer fires
+        // (`tab_timer`), but the system asks again every few dozen milliseconds.
+        if let Some(tab) = self.0.hover_tab.get()
+            && self.0.hover_since.get().elapsed() >= drag::TAB_HOVER
+        {
+            self.open_rested(tab);
+        }
         self.offer_answer()
     }
 
@@ -1437,7 +1455,14 @@ fn on_screen(window: &AppWindow, x: f32, y: f32, grab: (f32, f32)) -> Option<((f
             let (sx, sy) = (inner.x as f32 + x * scale, inner.y as f32 + y * scale);
             let left = sx - (inner.x - outer.x) as f32 - grab.0 * scale;
             let top = sy - (inner.y - outer.y) as f32 - grab.1 * scale;
-            Some(((sx, sy), (left.round() as i32, top.round() as i32)))
+            let (px, py) = (sx.round() as i32, sy.round() as i32);
+            let monitor = native.available_monitors().find_map(|m| {
+                let (at, size) = (m.position(), m.size());
+                let (width, height) = (size.width as i32, size.height as i32);
+                (px >= at.x && px < at.x + width && py >= at.y && py < at.y + height)
+                    .then_some((at.x, at.y, width, height))
+            });
+            Some(((sx, sy), tab_drag::placed((left.round() as i32, top.round() as i32), monitor)))
         })
         .flatten()
 }
