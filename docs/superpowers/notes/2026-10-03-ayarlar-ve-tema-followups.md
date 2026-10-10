@@ -1255,3 +1255,109 @@ Alt proje 1 tamamlandıktan sonra bilerek ertelenen maddeler. Kaynak: görev inc
 - Ölçüm (sürüm, Windows, 2026-10-10; taban 10a-1 `de4e9ec`): exe **25.090.560 → 25.098.240 bayt** (+7.680). `measure.ps1 -Runs 5` iki tur: boşta 7,3 → 7,4 / 7,3 → 7,3 MB. `grid.ps1` (1000 resim, sayfalama koştu) iki tur: 24,6/24,4 → 24,7/24,8 MB. `stress.ps1` (100.000) dört tur taban/sonra iç içe: yükleme 17,0–21,0 MB, kaydırma CPU'su 203–469 ms (15,6 ms'lik saat adımı; fark gürültü içinde).
 - İnceleme: hata yok. Düzeltilen: istek bayrağı yalnız iş kuyruğa girince ayrılır (100.000 öğede tekrar istekler ayırmasın). Kalan küçükler: kapanan bölmenin istemcisinin kuyruktaki işleri bitene kadar koşar (10b bir `Drop` ile iptal edebilir); iki istemcide kuyruk taşması ve `SAVE_PENDING` testsiz.
 - `scripts/perf/grid.ps1` her PgDn'den önce ön plandaki pencerenin Gezik olduğunu denetler, değilse sayfalamayı bırakır.
+
+## Adım 10, alt parça 10a-3 (`PaneView` çıkarımı) sonrası
+
+- Yapı: `app.slint`'in bölme kısmı (sekmeler, araç satırı, adres, arama/süzgeç çubukları, `FileView`) `ui/widgets/pane.slint`'teki `PaneView`'a taşındı; `AppWindow` `[PaneData]` modelinden `for p[i]` ile örnekler. Tek bölmede aynı görünüm için `PaneView` sekmeler + araç satırı + pencereden gelen bir satırdır (kenar çubukları, ayırıcılar, önizleme, `sheet-place`); 10b'de kenar çubuğu tam boy olunca kalkar. Bağlar `data`'yı doğrudan okumaz: `apply()` (`changed data` ve `init`) alanları düz özelliklere kopyalar ve istekleri (`*-done` sayaçlarıyla bir kez) sabit sırayla uygular; Rust'ta `panes::Mirror` kaydırma, ad alanı, adres yazma kipi ve liste dikdörtgeni aynalarını tutar.
+- Ölçüm (sürüm, Windows, 2026-10-10; taban 10a-2): exe **25.098.240 → 25.213.952 bayt** (+115.712). `measure.ps1 -Runs 5` iki tur 7,3/7,4 → 7,5/7,4 MB; `-Runs 8` üç tur (aynı yapılandırma) 17,0/17,0/16,9 → 17,0/17,1/17,1 MB (fark gürültü içinde). `stress.ps1` iki tur: yükleme 17,0/17,1 → 17,0/16,8 MB, kaydırma CPU'su 297/203 → 188/281 ms. `grid.ps1` 24,9 → 24,6 MB. Boşta CPU 10 sn'de 0 ms (iki derleme).
+- Bilinen farklar: kenar çubuğu sağdayken ve bir çubuk/ad alanı açıkken Tab sırası (süzgeç → kayıtlı süzgeçler → liste; taban arada Places'e uğrar). Odak, adres yazma, gösterme ve klavye menüsü istekleri değişim geçişinde uygulanır (sonraki kareden önce); klavye menüsü bir döngü turu sonra açılır. Izgara sütun sayısı Rust'ta `file-view.slint`'in formülüyle hesaplanır.
+- Ekran testlerinde bulunup düzeltilen: listeden ızgaraya geçişte ızgaranın sonunun ötesine kayması (gerileme; `pane.slint` en düşük kaydırma sınırı, `a628a04`). Tabanda da olan ad değiştirme hataları: ad alanı kaydırılıp görünmez olunca Enter öğeyi de açıyordu, Esc kaydediyordu, Tab'la açılan alanda gövde seçilmiyordu (`89f12d6`); görünmezken geçersiz adla Enter alanı geri getirip hatayı gösterir (`15f0e38`); tıklama/harf ad değiştirmeyi bitirirken seçimi korur (`856fede`).
+- İnceleme: hata yok; düşük etkili bırakılan: görünmez bir ad alanı varken başka bir alana (süzgeç çubuğu) geçilip satır geri kaydırılırsa alan klavyeyi geri alır.
+
+## Windows ekran testleri: 10a-3 (2026-10-10 13:09-13:34, ajan)
+
+- Derlemeler: TABAN `base.exe` (25.098.240 bayt, Step 0) ve SONRA `after.exe` (25.209.344 bayt, `578acd2`), oturumun `scratchpad\m10a3\` klasöründen `%TEMP%\gezik-gui-10a3\bin\`'e kopyalandı, yeniden derlenmedi (cargo/rustc süreci 0).
+- Yöntem: Win32 `keybd_event`/`mouse_event` + UI Automation + `PrintWindow` (`PW_RENDERFULLCONTENT`) ile piksel karşılaştırma (alfa dışında birebir). Pencere 1280×800 @ 40,40, birincil ekran. Her tuş/tıklama/tekerlekten önce ön plan penceresinin **bu koşuda başlatılan bir Gezik PID'i** olduğu denetlendi; tıklamada noktanın altındaki pencerenin PID'i de. Yazı `SendInput` + `KEYEVENTF_UNICODE`. Ctrl+Shift kısayolları Ctrl↓ Shift↓ tuş Shift↑ Ctrl↑ sırasıyla.
+- Her oturum taze `GEZIK_CONFIG_DIR` = `%TEMP%\gezik-gui-10a3\cfg\<ad>` (kullanıcının ayarlarına dokunulmadı). Veri `%TEMP%\gezik-gui-10a3\data`: `px` (3 klasör + 40 karışık dosya, sabit tarihler), `big` (2.000 dosya + `sub`, `sub2`), `dnd`.
+- Klavye düzeni hiç değiştirilmedi; sonunda `Get-WinUserLanguageList` yine yalnız `en-US=0409:0000041F` (başta da öyleydi).
+- Ekran görüntüleri `%TEMP%\gezik-gui-10a3\shots\` (dosya adı madde numarasıyla başlar; `*-base-*` / `*-after-*`, farklar `*-diff-*`).
+- Güvenlik olayı: madde 5'te SONRA'nın kendi davranışı (aşağıda, TABAN'da da aynı) bir `.zip` dosyasını kabuğa açtırdı, Windows "Select an app to open this .zip file" (OpenWith) penceresi öne geldi. Ön plan denetimi bunu yakaladı, betik **hiç girdi göndermeden durdu**; pencere `WM_CLOSE` ile kapatıldı (tuş/tıklama yok), dosya eski adına döndürüldü. Sonraki denemeler bu yüzden dosya yerine klasörle yapıldı.
+
+### Sonuçlar
+
+1. **Piksel karşılaştırma — PASS (bir yerde 4 piksellik kenar yumuşatma farkı).** Aynı ayar, aynı klasör (`px`), imleç pencere dışında:
+   - Düz liste, ızgara (Ctrl+Shift+2), süzgeç çubuğu açık (Ctrl+F), arama çubuğu açık (F3), ad değiştirme kutusu açık (F2, 270 ms arayla 3 kare): **hepsi birebir aynı** (`01-{base,after}-{list,grid,filter,search,rename-a,rename-b,rename-c}.png`).
+   - Kenar çubuğu sağda + önizleme açık: **4 piksel farklı**, kutu 20,109–21,110: sayfanın (sheet) sol üst yuvarlak köşesinin kenar yumuşatması, kırmızı kanalda en çok 6/255 (ör. 0x23→0x1D, 0x28→0x26). İki TABAN koşusu kendi aralarında birebir, yani fark kararlı ve SONRA'ya özgü; gözle görülmez (`01-*-right-preview.png`, `01-diff-right-preview.png`, `01-*-right-preview-corner.png`). Muhtemel neden: sağ kenar çubuğunda sayfa yeni `sheet-place` yerleşimiyle kesirli bir konumda çiziliyor.
+   - Ek: madde 6/7/8/9/10/12/13'ün `PrintWindow` kareleri de TABAN ile birebir (aşağıda).
+2. **Klavye menüsü — PASS (TABAN ile aynı).** `big`'de `file0005.md` (satır y 333–359): Shift+F10 ve Menü tuşu menüyü 289,359'da açıyor (satırın hemen altı; imleç 1200,700'deydi). End → `file2000.txt`, Menü tuşu → menü satırın üstüne açıldı (289,124, ekrana sığsın diye). Odaktaki öğe tekerlekle görünür alanın dışına kaydırılıp Shift+F10: liste öğeyi geri gösterdi, menü onun yanında. Esc menüyü kapatıyor, ↑ hemen çalışıyor (klavye listede). TABAN'da bütün sayılar aynı (`02-*`).
+3. **Kaydırma geri yükleme — PASS (TABAN ile aynı).** 2.002 öğe, tekerlekle `file0575…file0598`, `file0585` tıklandı; Ctrl+L ile `big\sub`, Back → `file0575…file0598`, seçim `file0585`; Forward/Back yine aynı. Size'a göre sıralama → `file0585` görünür; F5 → görünür, seçim yerinde; Ctrl+A → görünüm kıpırdamadı (`2002 selected`). (`03-*`)
+4. **End / Home / harfle atlama — PASS (TABAN ile aynı).** End → `file2000.txt` görünür; Home → `sub`; `file1500` yazınca `file1477…file1500`; `file0042` → görünür.
+5. **Ad değiştirme — PASS (ekran dışı iki durum TABAN'da da aynı hatalı).**
+   - F2 kökü seçiyor: `file0003.pdf` alanında seçim `file0003` (`05-after-a-f2.png`); `renamed` yazınca `renamed.pdf`, Enter → dosya yeniden adlandı; Ctrl+Z geri aldı.
+   - Tab: `tabA` onaylandı, sonraki öğe (`file0011.pdf`) için kutu açıldı; Esc iptal etti (`file0011.pdf` yerinde). Gözlem (TABAN'da da birebir aynı, `05-*-b-tab-crop.png`): Tab ile açılan kutuda kök seçili değil, imleç başta.
+   - **Önceden var olan hata A (TABAN aynı):** ad değiştirme sürerken kutu tekerlekle görünür alanın dışına kaydırılıp **Enter**'a basılınca ad değişikliği onaylanıyor **ve öğe açılıyor**. Yeniden üretme: `big`'de Home, ↓ (`sub2`), F2, `sub2x` yaz, tekerlekle ~10×1200 aşağı kaydır, Enter → `sub2` → `sub2x` oldu ve pencere `sub2x — Gezik`'e gitti (iki derlemede de; `05-*-f-enter-folder.png`). Dosyada (`file0020.zip` → `scrolled.zip`) aynı Enter dosyayı kabuğa açtı (OpenWith penceresi, yukarıda).
+   - **Önceden var olan hata B (TABAN aynı):** aynı durumda **Esc** iptal etmiyor, **onaylıyor**: `file0030.csv` → `escaped.csv` (SONRA), `file0031.docx` → `escaped.docx` (TABAN). (`05-*-e-esc.png`; dosyalar eski adlarına döndürüldü.) Kutu görünür alandayken Esc doğru iptal ediyor.
+6. **Ctrl+L — PASS (TABAN ile aynı).** Adres düzenlenebilir alana dönüyor (tam yol, odak Edit'te); `…\data\` yazınca öneri listesi adres çubuğunun hemen altında (`06-*-suggest3.png`, `06-*-suggest4.png`; TABAN ile birebir). İlk Esc öneri listesini kapatıyor, ikinci Esc düzenlemeyi bitiriyor (öneri yokken tek Esc yeter), kırıntılar geri geliyor, ↓ listede seçimi ilerletiyor.
+7. **Süzgeç ve arama çubuğu — PASS (TABAN ile aynı).** Ctrl+F: odak süzgeç alanında, `file19` → `100 items`; Esc kapatıyor (`2002 items`), ↓ listede çalışıyor. F3: odak arama alanında, `file0007` yazıldı; Esc çubuğu kapatıyor, sonuç görünümü (`Search: file0007 — Gezik`) kalıyor, ↓ listede çalışıyor. Kareler birebir (`07-*`).
+8. **Sütun genişliği — PASS (TABAN ile aynı).** Name/Modified sınırı 250 px sola sürüklendi: Name 617→367, Modified 150→400. Başka klasöre gidip (`px`) Back ile dönünce genişlikler kalıyor (genişlik bütün klasörlerde ortak). Arama sonuç görünümünde de aynı (orada sütunlar ayrı tutuluyor). Not: Gezik `Stop-Process` ile kapatıldığı için yeniden açılışta kalıcılık denenemedi (iki derlemede de varsayılan döndü, kaydetme kapanışta). (`08-*`)
+9. **Izgara boyutu — PASS (TABAN ile aynı); ayrıca liste→ızgara geçişinde FAIL (gerileme), aşağıda.** Izgarada `file1000` harfle atlayınca görünür; Ctrl+tekerlek yukarı/aşağı (1, 1, 3, 2 adım) sonrası kareler TABAN ile birebir; odaktaki öğe büyütmede en alt satırda yarım görünüyor, küçültmede tam görünüyor (iki derlemede aynı, `09-*-b*.png`).
+10. **Sürükle-bırak — PASS (TABAN ile aynı).** `drag_1.txt` → `target1` satırına: taşındı. `drag_2.txt` → `target2` sekmesine: sekme vurgulanıp öne geçti, `Move to target2` ipucu, taşındı. `drag_3.txt` → `data` kırıntısına: taşındı (`data\drag_3.txt`). `drag_4.txt` → PINNED `pinme`: satır vurgulu, `Move to pinme`, taşındı. Bırakma anı kareleri TABAN ile yalnız dosya saatlerinde ve pencere dışı kenarlarda farklı (veri bir dakika sonra yeniden kuruldu) (`10-*-hover.png`, `10-diff-*`).
+11. **Sekmeler — PASS (TABAN ile aynı).** `big`'de `file0691…file0714`, seçim `file0696`; Ctrl+T (Home açıldı), `px`'te `report_03.pdf`. Sekme tıklamaları arasında her sekme kendi kaydırmasını ve seçimini birebir koruyor; `px` sekmesi `big`'in önüne sürüklendi (sıra `px, big`), sonra da `big` aynı; Ctrl+W → `px` kaldı, durumu aynı. (`11-*`)
+12. **Tab sırası — sol kenar çubuğu: PASS (değişmedi); sağ + çubuk açık: bilinen fark doğrulandı.**
+    - Sol (varsayılan), ileri: liste → Up → Refresh → adres; geri: liste → Places → View → adres → Refresh. Süzgeç açıkken ileri: süzgeç → Saved filters → liste → Up. TABAN ile adım adım aynı, kareler birebir (`12-*-left*`).
+    - Sağ, çubuksuz: ileri aynı.
+    - **Sağ + süzgeç açık (bilinen fark):** TABAN ileri süzgeç → Saved filters → **Places** → liste; SONRA süzgeç → Saved filters → liste (Places atlanıyor). Geri: TABAN süzgeç → View; SONRA süzgeç → **Places** → View. Yani SONRA'da sağ kenar çubuğu çubuktan önce geliyor; raporun "Tab order" notuyla uyumlu.
+    - Gözlem (iki derlemede aynı): adres alanına Tab'la girildikten sonra Tab orada kalıyor.
+13. **Gruplar ve ağaç — PASS (TABAN ile birebir).** `[view] group = "type"`: başlıklar `File folder (3)`, `Compressed (zipped) Folder (5)`…; başlık tıklaması `collapsed` yapıyor. `tree-follow = true` + `px` iğnesi: `px\Beta`'ya gidince ağaçta `Beta` vurgulu. Üç kare birebir (`13-*`).
+14. **Boşta — PASS.** `big` açık, 4 s bekleyip 10 s ölçüm, iki tur: TABAN 0 / 0 ms, SONRA 0 / 0 ms CPU; 500 ms arayla iki kare birebir (yeniden çizim döngüsü yok). Süzgeç açıkken (yanıp sönen imleç) TABAN 31 / 16 ms, SONRA 31 / 16 ms. Çalışma kümesi ~40 MB, ikisi aynı.
+
+### FAIL: liste→ızgara geçişinde aşırı kaydırma (gerileme)
+
+- Yeniden üretme: taze ayarla `big` (2.002 öğe) açılır; liste görünümünde `file1000` yazılır (görünüm `file0977…file1000`); Ctrl+Shift+2.
+- SONRA: ızgara yalnız son satırı (`file1999.docx`, `file2000.txt`) en üstte gösteriyor, altı boş, kaydırma çubuğu en altta (`09-after-grid.png`, `09-after-r1-t18.png`); 0,3 / 1,8 / 4,8 s'de aynı, kendiliğinden düzelmiyor. Tek tekerlek adımı görünümü normal sona oturtuyor (`file1975…file2000`).
+- TABAN: aynı adımlarda ızgara sona kenetleniyor, son 26 öğe dolu (`09-base-grid.png`).
+- `file1900`'de de aynı; `file0100`'de (liste kaydırması ızgaranın sınırı içinde) iki derleme birebir. Yani SONRA ızgaraya geçerken eski kaydırmayı ızgaranın en büyük kaydırmasına kenetlemiyor. Muhtemelen raporun "Requests are applied in Slint's change-handler pass" / `apply_layout` (madde 2 ve 4) değişikliğiyle ilgili: kaydırma, ızgaranın içerik yüksekliği güncellenmeden uygulanıyor.
+- Önceden var olan (TABAN'da da): liste→ızgara geçişinde odaktaki öğe görünür alana getirilmiyor (10d testindeki gözlem); ızgaradan listeye dönüşte de (`file0165…file0188`, odak `file1000`).
+
+### Temizlik
+
+- Başlattığım bütün Gezik süreçleri kapatıldı (yalnız kayıtlı PID'ler; sonunda çalışan `gezik` yok). OpenWith penceresi `WM_CLOSE` ile kapandı.
+- Silinenler: `%TEMP%\gezik-gui-10a3\cfg\` ve `bin\`. Kalanlar: `shots\` (223 dosya) ve `data\` (ad değiştirmeler geri alındı; madde 10'un taşımaları `dnd\` ve `data\drag_3.txt` içinde).
+- Silme/çöp denenmedi, Geri Dönüşüm Kutusu'na dokunulmadı, kayıt defterine yazılmadı, commit yok. Ctrl+T yeni sekmeyi kullanıcının Home klasöründe açtı (yalnız listelendi).
+
+### Yeniden test (after2)
+
+- 2026-10-10 13:54-14:01, ajan. Derleme `after2.exe` (25.213.952 bayt, iki düzeltme commit'i), TABAN yine `base.exe`; ikisi `%TEMP%\gezik-gui-10a3\bin\`'e kopyalandı. Yöntem, güvenlik kuralları ve pencere boyutu öncekiyle aynı (her girdiden önce ön plan PID denetimi, `SendInput` Unicode, taze `GEZIK_CONFIG_DIR` = `%TEMP%\gezik-gui-10a3\cfg\<ad>`). Enter denemeleri yalnız klasörlerde: yeni veri `data\ren` (300 klasör `dir000…dir299` + `zz0…zz4.txt`). Hiçbir pencere başka uygulamada dosya açmadı (OpenWith yok). Klavye düzeni sonunda yine `en-US=0409:0000041F`. Not: ölçüm sırasında arka planda 3 cargo/rustc süreci vardı (koordinatörün derlemesi); Gezik'in CPU'su etkilenmedi.
+- Ekran görüntüleri yine `shots\`: `09-after2-*`, `R9-*`, `RB-*`, `01-after2-*`, `14-after2-*`.
+
+### A) Izgara aşırı kaydırma — PASS (düzeldi)
+
+- `big`, listede `file1000` → Ctrl+Shift+2: ızgara `file1975…file2000` (26), sona kenetli; 0,3 / 1,8 / 4,8 s kareleri ve → tuşu sonrası kare önceki TABAN kareleriyle **birebir** (`09-after2-r1-*` ↔ `09-base-r1-*`). `file1900` (`r4`) ve `file0100` (`r3`, sınır içi) de birebir.
+- Sona yakın ızgara boyutu: ızgarada `file1990`, Ctrl+tekerlek yukarı 1, aşağı 3: TABAN ile birebir (`R9-*-c0/c1-up/c2-down`; büyütmede odak en alt satırda yarım, iki derlemede aynı).
+- Izgara→liste (`file1500` odakta): `file0244…file0267`, TABAN ile birebir (odak görünür alana getirilmiyor; önceden de böyle) (`R9-*-c3-list`).
+- Madde 3 yeniden: Back/Forward `file0575…file0598` ve seçim `file0585` geri geliyor; Size sıralaması + F5'te odak görünür; Ctrl+A kıpırdatmıyor. Önceki koşuyla aynı sayılar.
+
+### B) Görünür alan dışındaki ad değiştirme (`data\ren`, klasörler) — PASS (ikisi TABAN'dan farklı, doğru yönde)
+
+| Durum | after2 | TABAN |
+|---|---|---|
+| F2, `b1x`, ~95 satır aşağı kaydır, Enter | `dir000` → `b1x`, **açılmadı** (başlık `ren — Gezik`) | ad değişti **ve** `b1x`'e girdi |
+| F2, `b2x`, kaydır, Esc | **iptal**, `dir010` yerinde | ad değişti (`b2x`) |
+| F2, `b3x`, kaydır, geri kaydır | kutu yerinde, değer `b3x`, odak kutuda; Enter → `b3x`, açılmadı | kutu yok, odak pencerede; Enter → ad değişti ve klasöre girdi |
+| Tab ile sonraki ad değiştirme (`zz1.txt` → `zzA`, Tab) | `zz2.txt` kutusunda **kök seçili** (`zz2`) | seçim yok |
+| F2, `b5x`, kaydır, başka öğeye tıkla | ad **onaylandı** (`b5x`), tıklanan öğe **seçilmedi** (seçim boş; iki koşuda da) | ad onaylandı, tıklanan öğe (`dir109`) seçili |
+| F2, `b6x`, kaydır, `q` harfi | ad **onaylandı** (`b6x`), `q` hiçbir şey yazmadı/atlamadı, seçim boş; geri kaydırınca kutu yok | aynı |
+
+- Küçük fark (yeni): kutu görünür alan dışındayken başka öğeye tıklamak ad değiştirmeyi bitiriyor ama tıklamayı seçime çevirmiyor; TABAN'da tıklanan öğe seçiliyordu. Yeniden üretme: `ren`'de `dir030`, F2, `b5x` yaz, tekerlekle 5×1200 aşağı, görünen bir satıra tıkla → `b5x` var, seçim boş. Esas davranış (onay) aynı.
+- Kutu görünürken normal yol değişmedi (aşağıda C).
+
+### C) Hızlı yeniden koşu — PASS
+
+- Madde 1: düz liste, ızgara, süzgeç, arama, ad değiştirme (3 kare) ve sağ kenar çubuğu + önizleme: **sekizi de TABAN ile birebir** (önceki koşudaki 4 piksellik köşe farkı da artık yok) (`01-after2-*`).
+- Madde 5 (`big`): F2 kökü seçiyor (`file0003`), `renamed.pdf` onaylandı, Ctrl+Z geri aldı; Tab → `file0011.pdf` kutusunda kök `file0011` seçili; Esc iptal; kutu görünür alan dışındayken Esc artık iptal ediyor (`file0030.csv` yerinde), ↓ odaktan devam ediyor (`file0031.docx`). Bütün ad değiştirmeler geri alındı, `big` yine 2.002 öğe, eksik yok.
+- Madde 14: iki tur, boşta 10 s CPU 0 / 0 ms, iki kare birebir; süzgeç açıkken 31 / 31 ms (TABAN'ın önceki değerleriyle aynı aralık), çalışma kümesi 40,1 MB.
+
+### Temizlik
+
+- Başlatılan Gezik süreçleri kapatıldı, çalışan `gezik` yok; `cfg\` ve `bin\` silindi; `shots\` ve `data\` (`ren` dahil, adlar geri alınmış) kaldı. Çöp, kayıt defteri, commit: dokunulmadı.
+
+### Yeniden test (after4)
+
+- 2026-10-10 14:08-14:13, ajan. Derleme `after4.exe` (25.213.952 bayt; after2/after3 ile aynı boyut, MD5 farklı: `C8AFD563…`), `%TEMP%\gezik-gui-10a3\bin\`'e kopyalandı. Kurallar öncekiyle aynı (her girdiden önce ön plan PID denetimi, Unicode yazı, taze `GEZIK_CONFIG_DIR`). Yalnız `data\ren` (300 klasör + `zz0…zz4.txt`); Enter'lar yalnız klasörlerde, hiçbir şey başka uygulamada açılmadı. Her durum **iki koşu**, iki koşunun sonuçları birebir aynı. Klavye düzeni sonunda yine `en-US=0409:0000041F`. Ekran görüntüleri `shots\RC-after4-r{1,2}-*`.
+
+1. **Kutu ekran dışındayken başka satıra tıklama — PASS.** `dir030`, F2, `b5x`, 5×1200 aşağı, görünen dördüncü satıra (`dir125`) tıklama: `dir030` → `b5x` onaylandı **ve** `dir125` seçili (TABAN gibi; after2'deki "seçim boş" farkı düzeldi) (`RC-after4-r*-1-click.png`).
+2. **Kutu ekran dışındayken harf — PASS.** `dir040`, F2, `b6x`, kaydır, `z`: `b6x` onaylandı, harfle atlama `zz0.txt`'ye gitti (seçili ve görünür, `dir277 … zz0.txt`) (`RC-after4-r*-2-letter.png`).
+3. **Var olan adla ekran dışında Enter — PASS.** `dir050`, F2, `dir051` (kardeşin adı): yazarken `A file with this name already exists` görünüyor. Kaydırınca kutu görünmüyor; Enter → liste kutuya geri döndü (`dir050 … dir073`, kutu en üst satırda), hata kutusu altında görünüyor, klavye kutuda (odak Edit). Esc → iptal, `dir050` yerinde, hata gitti, hiçbir şey yeniden adlandırılmadı (`RC-after4-r*-3-dup.png`).
+4. **Hızlı kontrol — PASS (after2 ile aynı).** Ekran dışında Enter: `dir060` → `c1x`, klasör açılmadı. Ekran dışında Esc: `dir070` yerinde. Normal F2: `dir080` tamamen seçili (klasörün uzantısı yok), `c3x` + Enter onaylandı, açılmadı. Dosyada F2: kök `zz1` seçili; `zzA` + Tab → `zz2.txt` kutusu, kök `zz2` seçili; Esc iptal.
+
+- Temizlik: bütün ad değiştirmeler geri alındı (`ren` yine 305 öğe, artık ad yok); başlatılan Gezik süreçleri kapalı, `cfg\` ve `bin\` silindi; `shots\` ve `data\` kaldı. Çöp, kayıt defteri, commit: dokunulmadı.
