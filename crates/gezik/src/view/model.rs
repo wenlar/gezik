@@ -283,13 +283,13 @@ pub fn type_name_for(data: &ViewData, i: usize) -> String {
 }
 
 /// In the grid with thumbnails on, a file's thumbnail once loaded (its icon until then): the
-/// system's on Windows and macOS, Gezik's own formats elsewhere.
+/// system's on Windows and macOS, Linux's thumbnail cache, else Gezik's own formats. Asked
+/// only for the cells on screen; reads only the file's metadata unless Gezik decodes it.
 fn picture_for(data: &ViewData, i: usize) -> Option<slint::Image> {
     if data.mode == ViewMode::Grid
         && data.thumbnails
         && let Some(e) = data.listing.entry(i)
         && !e.is_dir
-        && (cfg!(any(windows, target_os = "macos")) || gezik_platform::can_decode(e.extension()))
         && let Some((path, _)) = data.listing.path_at(i)
     {
         let key = MediaKey::Thumbnail { path, modified: e.modified, px: data.icon_px };

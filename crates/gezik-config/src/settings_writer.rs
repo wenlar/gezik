@@ -19,7 +19,8 @@ use crate::paths::write_atomic;
 use crate::pins::PinEntry;
 use crate::settings::{RenamePreset, SavedFilter, SavedSearch, TabSet, ViewOption};
 use crate::settings_edit::{
-    with_filters, with_pinned, with_rename_presets, with_searches, with_tab_sets, with_view_defaults, with_view_option,
+    with_filters, with_pinned, with_rename_presets, with_searches, with_system, with_tab_sets, with_view_defaults,
+    with_view_option,
 };
 use crate::store::{SETTINGS_TEMPLATE, read_text};
 
@@ -43,6 +44,16 @@ pub enum SettingsChange {
     TabSets(Vec<TabSet>),
     /// The saved searches (`[[searches]]`).
     Searches(Vec<SavedSearch>),
+    /// A `[system]` value (the tray icon, the global shortcut).
+    System(SystemValue),
+}
+
+/// A `[system]` value System Integration writes (9b9).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SystemValue {
+    Tray(bool),
+    /// Gezik's text for the shortcut (`hotkey_text`), or "" for off.
+    Hotkey(String),
 }
 
 impl SettingsChange {
@@ -55,6 +66,8 @@ impl SettingsChange {
             SettingsChange::Filters(filters) => with_filters(text, filters),
             SettingsChange::TabSets(sets) => with_tab_sets(text, sets),
             SettingsChange::Searches(searches) => with_searches(text, searches),
+            SettingsChange::System(SystemValue::Tray(on)) => with_system(text, "tray", (*on).into()),
+            SettingsChange::System(SystemValue::Hotkey(chord)) => with_system(text, "hotkey", chord.as_str().into()),
         }
     }
 }
@@ -170,6 +183,20 @@ mod tests {
     fn read(dir: &Path) -> Settings {
         let text = std::fs::read_to_string(dir.join("settings.toml")).unwrap();
         Settings::parse("settings.toml", &text, &mut Vec::new())
+    }
+
+    #[test]
+    fn system_values_round_trip_and_keep_comments() {
+        let text = "# mine\n[system]\n# keep\nsingle-instance = true\n";
+        let on = SettingsChange::System(SystemValue::Tray(true)).apply(text).unwrap();
+        let on = SettingsChange::System(SystemValue::Hotkey("win+shift+e".into())).apply(&on).unwrap();
+        assert!(on.contains("# mine") && on.contains("# keep"), "{on}");
+        let mut warnings = Vec::new();
+        let settings = Settings::parse("settings.toml", &on, &mut warnings);
+        assert!(warnings.is_empty() && settings.system.tray && settings.system.hotkey.is_some(), "{on}");
+        let off = SettingsChange::System(SystemValue::Hotkey(String::new())).apply(&on).unwrap();
+        let settings = Settings::parse("settings.toml", &off, &mut warnings);
+        assert!(warnings.is_empty() && settings.system.hotkey.is_none() && settings.system.tray, "{off}");
     }
 
     #[test]

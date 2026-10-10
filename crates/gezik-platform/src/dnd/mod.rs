@@ -138,6 +138,14 @@ impl OutsideDrag for SystemDrag {
     fn cancel(&mut self) {}
 }
 
+/// Whether hiding `window` destroys its native window (Slint 1.18 does so on Wayland, which
+/// cannot hide one, and with `SLINT_DESTROY_WINDOW_ON_HIDE`): the drop target and the
+/// clipboard hold its surface, so Gezik minimizes such a window instead of hiding it.
+pub fn hide_destroys(window: &impl HasWindowHandle) -> bool {
+    std::env::var_os("SLINT_DESTROY_WINDOW_ON_HIDE").is_some()
+        || window.window_handle().is_ok_and(|h| matches!(h.as_raw(), raw_window_handle::RawWindowHandle::Wayland(..)))
+}
+
 /// Makes `window` take files dropped from other programs. `wake` is called from another
 /// thread when events wait for [`Attached::poll`] (on the UI thread); unused on Windows.
 pub fn attach(
