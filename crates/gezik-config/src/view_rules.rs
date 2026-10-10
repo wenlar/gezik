@@ -116,11 +116,7 @@ fn content_of(text: &str) -> Result<Content, String> {
 }
 
 fn mode_of(text: &str) -> Result<ViewMode, String> {
-    // 10e+ (spec 10 §8.3) turns this into a third mode.
-    if text == "columns" {
-        return Err("mode: \"columns\" is not supported yet (it comes with the column view)".to_owned());
-    }
-    choice(text, "mode", "\"list\" or \"grid\"", ViewMode::parse)
+    choice(text, "mode", "\"list\", \"grid\" or \"columns\"", ViewMode::parse)
 }
 
 /// `columns = ["modified", "size"]`: which columns show; `name` always does.
@@ -207,6 +203,9 @@ mod tests {
         let (named, warnings) = parse("[[view-rules]]\nkind = \"trash\"\ncolumns = [\"name\", \"size\"]\n");
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(named[0].set.columns, Some(Columns::of(&[ColumnKey::Size])), "name is always shown");
+        let (named, warnings) = parse("[[view-rules]]\npath = \"~/Projects/**\"\nmode = \"columns\"\n");
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(named[0].set.mode, Some(ViewMode::Columns));
     }
 
     #[test]
@@ -242,7 +241,7 @@ mod tests {
             ("path = \"{home}/{pictures}\"\nmode = \"grid\"", "path: {pictures} only works at the start"),
             ("path = \" \"\nmode = \"grid\"", "path: empty"),
             ("path = 3\nmode = \"grid\"", "path: expected text, got 3"),
-            ("kind = \"trash\"\nmode = \"columns\"", "mode: \"columns\" is not supported yet"),
+            ("kind = \"trash\"\nmode = \"tiles\"", "mode: expected \"list\", \"grid\" or \"columns\""),
             ("kind = \"trash\"\nsort = \"folder\"", "sort: expected"),
             ("kind = \"trash\"\ngrid-size = \"huge\"", "grid-size: expected"),
             ("kind = \"trash\"\ncolumns = [\"modified\", \"colour\"]", "columns: expected a list of"),

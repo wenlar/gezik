@@ -266,7 +266,7 @@ confirm = true
 # case is ignored on Windows), by kind (drives | trash | search | flat | network | removable |
 # cloud) and by content ("pictures >= 50%" of the items shown; pictures, videos, audio,
 # documents, archives, code or folders); with more than one, all must match. Search results
-# match by kind only. A rule sets mode (list | grid), sort, sort-dir, group, grid-size and
+# match by kind only. A rule sets mode (list | grid | columns), sort, sort-dir, group, grid-size and
 # columns (modified, created, type, size; name always shows); what it leaves out stays
 # [view]'s. A rule with a mistake is reported and left out.
 # [[view-rules]]
