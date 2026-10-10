@@ -77,7 +77,7 @@ struct Inner {
     folded: RefCell<Vec<Folded>>,
     lines: RefCell<Vec<Line>>,
     current: Cell<usize>,
-    recent: RefCell<Vec<String>>,
+    recent: Rc<RefCell<Vec<String>>>,
     model: Rc<VecModel<PickRow>>,
 }
 
@@ -85,12 +85,22 @@ struct Inner {
 pub struct Palette(Rc<Inner>);
 
 impl Palette {
+    /// Whether `other` (another window's) keeps the same last values as this one.
+    #[cfg(test)]
+    pub fn shares_with(&self, other: &Palette) -> bool {
+        Rc::ptr_eq(&self.0.recent, &other.0.recent)
+    }
+
     pub fn new(
         window: &AppWindow,
         store: Option<ConfigStore>,
         recent: Vec<String>,
         run_action: impl Fn(Action) + 'static,
     ) -> Palette {
+        // The process's one recent list: a later window shares an open window's (no window writes over another's).
+        let recent = CURRENT
+            .with(|c| c.find_map(|_, other| Some(other.0.recent.clone())))
+            .unwrap_or_else(|| Rc::new(RefCell::new(recent)));
         let palette = Palette(Rc::new(Inner {
             window: window.as_weak(),
             store,
@@ -101,7 +111,7 @@ impl Palette {
             folded: RefCell::default(),
             lines: RefCell::default(),
             current: Cell::new(0),
-            recent: RefCell::new(recent),
+            recent,
             model: Rc::new(VecModel::default()),
         }));
         CURRENT.with(|c| c.set(crate::windows::current(), palette.clone()));

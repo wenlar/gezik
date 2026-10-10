@@ -526,7 +526,7 @@ struct Inner {
     ops: Operations,
     dialogs: Dialogs,
     store: Option<ConfigStore>,
-    state: RefCell<ArchiveState>,
+    state: Rc<RefCell<ArchiveState>>,
     jobs: RefCell<HashMap<JobId, Pending>>,
     /// The tools whose box is on screen (several things that need one ask once).
     offering: RefCell<Vec<Tool>>,
@@ -567,6 +567,12 @@ pub fn with_current(f: impl FnOnce(&Archives)) {
 }
 
 impl Archives {
+    /// Whether `other` (another window's) keeps the same last values as this one.
+    #[cfg(test)]
+    pub fn shares_with(&self, other: &Archives) -> bool {
+        Rc::ptr_eq(&self.0.state, &other.0.state)
+    }
+
     pub fn new(
         window: &AppWindow,
         ops: Operations,
@@ -574,12 +580,16 @@ impl Archives {
         store: Option<ConfigStore>,
         state: ArchiveState,
     ) -> Archives {
+        // The process's one last choices: a later window shares an open window's (no window writes over another's).
+        let state = CURRENT
+            .with(|c| c.find_map(|_, other| Some(other.0.state.clone())))
+            .unwrap_or_else(|| Rc::new(RefCell::new(state)));
         let this = Archives(Rc::new(Inner {
             window: window.as_weak(),
             ops,
             dialogs,
             store,
-            state: RefCell::new(state),
+            state,
             jobs: RefCell::default(),
             offering: RefCell::default(),
             waiting: RefCell::default(),

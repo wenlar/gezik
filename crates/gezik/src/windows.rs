@@ -1778,6 +1778,13 @@ pub(crate) mod tests {
         assert_eq!(enter(second, crate::panes::count), 1, "one pane");
         let path_box = |id| enter(id, || panes::active().path_box);
         assert!(path_box(first).shares_history(&path_box(second)), "one folder history for every window");
+        // The palette's recent list, the last pattern, the archive and convert choices too.
+        let shared = |a: Option<bool>| a.unwrap_or(false);
+        let (a, b) = (first, second);
+        assert!(shared(crate::palette::CURRENT.with(|s| Some(s.get(a)?.shares_with(&s.get(b)?)))));
+        assert!(shared(crate::select_tools::CURRENT.with(|s| Some(s.get(a)?.shares_with(&s.get(b)?)))));
+        assert!(shared(crate::archives::CURRENT.with(|s| Some(s.get(a)?.shares_with(&s.get(b)?)))));
+        assert!(shared(crate::convert::CURRENT.with(|s| Some(s.get(a)?.shares_with(&s.get(b)?)))));
         assert!(matches!(close_requested(second), slint::CloseRequestResponse::HideWindow));
         assert_eq!(finished.get(), 0, "another window is open: only this one closes");
         // A question waiting in it is asked in the other window, its answer going where it went.

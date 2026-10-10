@@ -1136,7 +1136,7 @@ struct Inner {
     ops: Operations,
     dialogs: Dialogs,
     store: Option<ConfigStore>,
-    state: RefCell<ConvertState>,
+    state: Rc<RefCell<ConvertState>>,
     layer: RefCell<Option<Layer>>,
     /// Counts openings of the layer: what a thread found for an earlier one is dropped.
     opening: Arc<AtomicU64>,
@@ -1252,6 +1252,12 @@ pub fn with_current(f: impl FnOnce(&Convert)) {
 }
 
 impl Convert {
+    /// Whether `other` (another window's) keeps the same last values as this one.
+    #[cfg(test)]
+    pub fn shares_with(&self, other: &Convert) -> bool {
+        Rc::ptr_eq(&self.0.state, &other.0.state)
+    }
+
     pub fn new(
         window: &AppWindow,
         ops: Operations,
@@ -1259,12 +1265,16 @@ impl Convert {
         store: Option<ConfigStore>,
         state: ConvertState,
     ) -> Convert {
+        // The process's one last choices: a later window shares an open window's (no window writes over another's).
+        let state = CURRENT
+            .with(|c| c.find_map(|_, other| Some(other.0.state.clone())))
+            .unwrap_or_else(|| Rc::new(RefCell::new(state)));
         let this = Convert(Rc::new(Inner {
             window: window.as_weak(),
             ops,
             dialogs,
             store,
-            state: RefCell::new(state),
+            state,
             layer: RefCell::default(),
             opening: Arc::default(),
             jobs: RefCell::default(),
