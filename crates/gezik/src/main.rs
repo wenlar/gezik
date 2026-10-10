@@ -644,6 +644,20 @@ fn keep_on_screen(window: slint::Weak<AppWindow>, attempt: u32) {
     });
 }
 
+/// Windows signs out or shuts down without a close request: what the window shows is saved
+/// first (on the native window, once it exists).
+#[cfg(windows)]
+fn save_on_session_end(window: slint::Weak<AppWindow>, save: Rc<dyn Fn()>, attempt: u32) {
+    slint::Timer::single_shot(std::time::Duration::from_millis(10), move || {
+        let Some(strong) = window.upgrade() else { return };
+        let handle = strong.window().window_handle();
+        let save_now = save.clone();
+        if !gezik_platform::on_session_end(&handle, move || save_now()) && attempt < 200 {
+            save_on_session_end(window, save, attempt + 1);
+        }
+    });
+}
+
 fn main() -> Result<(), slint::PlatformError> {
     // The administrator helper (`gezik --elevated …`, spec 9 §10): started by the system's
     // prompt for one list; before anything else, the PDF worker, Slint, settings or the single
@@ -822,9 +836,29 @@ fn main() -> Result<(), slint::PlatformError> {
     if secondary && let Some(store) = &config {
         store.keep_state_unwritten();
     }
+    // With single instance off no Gezik holds the channel: a lock of their own keeps the tray
+    // and the shortcut to one Gezik, and a --background start beside a running one does nothing.
+    // shortcut: taken only if they are on at start; a second window turning them on later from
+    // the panel gets its own (rare: single instance off), take it in turn_on_tray if that matters.
+    let mut resident_primary = !secondary;
+    let system = &initial_settings.system;
+    let wants_lock = !system.single_instance && (background || system.tray || system.hotkey.is_some());
+    let _resident_lock = if !secondary && wants_lock {
+        match instance::claim(&format!("{key}-resident")) {
+            instance::Claim::Listening(lock) => Some(lock),
+            instance::Claim::Taken if background => return Ok(()),
+            instance::Claim::Taken => {
+                resident_primary = false;
+                None
+            }
+            instance::Claim::Off => None,
+        }
+    } else {
+        None
+    };
     // Spec 9.3: hidden only where the tray can bring the window back.
-    let hidden = resident::start_hidden(background, !secondary, initial_settings.system.tray);
-    resident::begin(&window, config.clone(), !secondary, !hidden, saved_state.tray_told);
+    let hidden = resident::start_hidden(background, resident_primary, initial_settings.system.tray);
+    resident::begin(&window, config.clone(), resident_primary, !hidden, saved_state.tray_told);
     let plan = resolve_start(
         &initial_settings,
         &cli.targets,
@@ -1117,6 +1151,19 @@ fn main() -> Result<(), slint::PlatformError> {
             pins
         }),
     });
+    // ⌘Q, the Dock's Quit and signing out terminate the app without a close request.
+    #[cfg(target_os = "macos")]
+    gezik_platform::terminate::install(Box::new({
+        let save_and_quit = save_and_quit.clone();
+        move || save_and_quit()
+    }));
+    #[cfg(windows)]
+    if !secondary {
+        resident::when_shown({
+            let (weak, save) = (window.as_weak(), save_and_quit.clone());
+            move || save_on_session_end(weak, save, 0)
+        });
+    }
     window.window().on_close_requested({
         let (ops, save_and_quit, finish) = (ops.clone(), save_and_quit.clone(), finish.clone());
         move || {

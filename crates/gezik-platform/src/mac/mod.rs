@@ -12,4 +12,5 @@ pub(crate) mod ql_panel;
 pub mod reopen;
 pub(crate) mod services;
 pub(crate) mod share;
+pub mod terminate;
 pub(crate) mod thumbs;

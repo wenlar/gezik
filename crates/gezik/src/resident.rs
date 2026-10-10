@@ -51,6 +51,15 @@ pub fn start_hidden(background: bool, primary: bool, tray: bool) -> bool {
     background && primary && tray
 }
 
+/// How long a hidden start waits for its tray icon before it shows the window.
+const TRAY_WAIT: std::time::Duration = std::time::Duration::from_secs(4);
+
+/// A hidden start whose icon is not up by `TRAY_WAIT` (no answer at all: the tray's thread
+/// never ran) shows the window: nothing else could bring it back.
+fn tray_late(shown: bool, ready: bool) -> bool {
+    !shown && !ready
+}
+
 /// The tray and the shortcut this Gezik should hold.
 pub fn wanted(system: &SystemSettings, primary: bool) -> (bool, Option<Chord>) {
     if primary { (system.tray, system.hotkey) } else { (false, None) }
@@ -211,6 +220,14 @@ pub fn set_hooks(hooks: Hooks) {
 pub fn start() {
     with(|s| s.started = true);
     sync();
+    if !with(|s| s.shown) {
+        slint::Timer::single_shot(TRAY_WAIT, || {
+            if with(|s| tray_late(s.shown, s.tray_ready)) {
+                note("The tray icon did not come up; the window is shown instead".to_owned());
+                reveal();
+            }
+        });
+    }
 }
 
 /// Every settings resolve (start, a reload, the panel's own write). The first comes before
@@ -447,7 +464,12 @@ fn reveal_if_hidden() {
 }
 
 fn hide(window: &AppWindow) {
-    let _ = window.hide();
+    // Slint destroys the native window on such a hide; the drop target keeps its surface.
+    if gezik_platform::dnd::hide_destroys(&window.window().window_handle()) {
+        window.window().set_minimized(true);
+    } else {
+        let _ = window.hide();
+    }
 }
 
 /// The window's close button and the last tab's close: with the tray icon up, Gezik keeps
@@ -600,6 +622,13 @@ mod tests {
         assert_eq!(on_click(true, false), Press::Hide);
         assert_eq!(on_click(true, true), Press::Show);
         assert_eq!(on_click(false, false), Press::Show);
+    }
+
+    #[test]
+    fn a_hidden_start_without_its_icon_shows_the_window() {
+        assert!(tray_late(false, false), "still hidden, no icon: shown");
+        assert!(!tray_late(false, true), "the icon is up: stays hidden");
+        assert!(!tray_late(true, false), "shown already: nothing to do");
     }
 
     #[test]
