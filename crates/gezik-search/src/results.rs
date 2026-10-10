@@ -6,6 +6,7 @@ use std::path::{MAIN_SEPARATOR, MAIN_SEPARATOR_STR, Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use gezik_core::Entry;
+use gezik_core::group::GroupBy;
 use gezik_core::ops::paths::is_within;
 use gezik_core::sort::SortSpec;
 
@@ -50,8 +51,9 @@ pub struct ResultSet {
     parent: Vec<u32>,
     /// A content search's first matching line per entry; `None` without content.
     matches: Option<Vec<Option<Found>>>,
-    /// The sort (and folders-first) the entries are in; `None` once new ones came unsorted.
-    sorted: Option<(SortSpec, bool)>,
+    /// The sort, folders-first and grouping the entries are in; `None` once new ones came
+    /// unsorted.
+    sorted: Option<(SortSpec, bool, GroupBy)>,
     /// The trash's rows' labels (`ResultSet::trash`); `None` for a search.
     labels: Option<Vec<TrashLabel>>,
 }
@@ -289,9 +291,16 @@ impl ResultSet {
         self.entries.heap_bytes() + self.parent.capacity() * std::mem::size_of::<u32>()
     }
 
-    /// The order the rows sort in (`gezik_core::sort::sort_rows`); `type_name` as there.
-    pub fn sort_order(&self, spec: SortSpec, folders_first: bool, type_name: impl Fn(&Entry) -> String) -> Vec<usize> {
-        gezik_core::sort::sort_rows(
+    /// The order the rows sort in (`gezik_core::sort::sort_rows_grouped`); `type_name` and
+    /// `group` as there.
+    pub fn sort_order(
+        &self,
+        spec: SortSpec,
+        folders_first: bool,
+        type_name: impl Fn(&Entry) -> String,
+        group: Option<&gezik_core::group::Grouping<'_>>,
+    ) -> Vec<usize> {
+        gezik_core::sort::sort_rows_grouped(
             self.len(),
             &|i| std::borrow::Cow::Owned(self.entries.get(i)),
             &|i| self.shown_name(i).unwrap_or(""),
@@ -299,6 +308,7 @@ impl ResultSet {
             folders_first,
             type_name,
             &|i| self.shown_folder(i).unwrap_or(""),
+            group,
         )
     }
 
@@ -347,13 +357,13 @@ impl ResultSet {
         }
     }
 
-    /// The sort and folders-first the entries are in, if they are sorted (`set_sorted_by`) and
-    /// nothing came since.
-    pub fn sorted_by(&self) -> Option<(SortSpec, bool)> {
+    /// The sort, folders-first and grouping the entries are in, if they are sorted
+    /// (`set_sorted_by`) and nothing came since.
+    pub fn sorted_by(&self) -> Option<(SortSpec, bool, GroupBy)> {
         self.sorted
     }
 
-    pub fn set_sorted_by(&mut self, sorted: Option<(SortSpec, bool)>) {
+    pub fn set_sorted_by(&mut self, sorted: Option<(SortSpec, bool, GroupBy)>) {
         self.sorted = sorted;
     }
 
@@ -971,7 +981,11 @@ mod tests {
     #[test]
     fn new_entries_make_the_set_unsorted() {
         let mut set = sample();
-        let by_size = (SortSpec { key: gezik_core::sort::SortKey::Size, dir: gezik_core::sort::SortDir::Asc }, true);
+        let by_size = (
+            SortSpec { key: gezik_core::sort::SortKey::Size, dir: gezik_core::sort::SortDir::Asc },
+            true,
+            GroupBy::None,
+        );
         set.set_sorted_by(Some(by_size));
         assert_eq!(set.subset(&[0]).sorted_by(), Some(by_size), "a part keeps the order");
         set.remove(&[0]);
@@ -1056,7 +1070,7 @@ mod tests {
             parent: vec![0, 1, 2, 3],
             matches: vec![None, Some((1, "in".into())), None, None],
         });
-        set.set_sorted_by(Some((SortSpec::default(), true)));
+        set.set_sorted_by(Some((SortSpec::default(), true, GroupBy::None)));
         let gone = [root.join("d"), root.join("d").join("in.txt"), root.join("d").join("e").join("deep.txt")];
         let from =
             set.apply_changes(&gone, vec![(root.join("r"), folder_entry("r"))], &[(root.join("d"), root.join("r"))]);
@@ -1165,7 +1179,7 @@ mod tests {
             parent: vec![0, 0],
             matches: vec![None, None],
         });
-        set.set_sorted_by(Some((SortSpec::default(), true)));
+        set.set_sorted_by(Some((SortSpec::default(), true, GroupBy::None)));
         let verified = set.probe(std::slice::from_ref(&root), &[]).verify();
         assert!(verified.gone.is_empty() && verified.added.is_empty());
         assert!(verified.rows.is_empty(), "nothing changed: nothing to edit, {:?}", verified.rows);
@@ -1272,7 +1286,7 @@ mod tests {
                 let spec = SortSpec { key, dir };
                 let folder = |i: usize| set.folder(i).unwrap_or("");
                 let expected = gezik_core::sort::sort_order(&entries, spec, true, |_| String::new(), &folder);
-                assert_eq!(set.sort_order(spec, true, |_| String::new()), expected);
+                assert_eq!(set.sort_order(spec, true, |_| String::new(), None), expected);
             }
         }
     }
@@ -1374,7 +1388,7 @@ mod tests {
     #[test]
     fn labels_follow_sort_subset_and_removal() {
         let mut set = trash_set();
-        let order = set.sort_order(SortSpec::default(), false, |_| String::new());
+        let order = set.sort_order(SortSpec::default(), false, |_| String::new(), None);
         assert_eq!(order, [1, 2, 0], "by the names they had, not $R…");
         set.apply_order(&order);
         assert_eq!(set.shown_name(0), Some("a.txt"));

@@ -70,7 +70,7 @@ fn main() {
     );
     // The list sorts the results when the search ends (by name here, as it opens).
     let started = Instant::now();
-    let order = flat.sort_order(SortSpec::default(), true, |_| String::new());
+    let order = flat.sort_order(SortSpec::default(), true, |_| String::new(), None);
     flat.apply_order(&order);
     println!("sort: {:?}", started.elapsed());
     memory("sort");

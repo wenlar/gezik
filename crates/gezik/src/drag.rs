@@ -659,7 +659,7 @@ impl Drags {
             scroll: window.get_list_scroll(),
             geometry: self.0.view.layout_geometry(),
             count: self.0.view.len(),
-            groups: Vec::new(),
+            groups: self.0.view.group_spans(),
         };
         let sidebar = match window.get_sidebar_position() {
             position @ (0 | 1) => {
@@ -869,7 +869,12 @@ impl Drags {
         let list = &layout.list;
         let row_height = list.geometry.row_height();
         let step = drag::edge_scroll(y - list.rect.y, list.rect.height, row_height / 2.0);
-        let content = list.geometry.row_count(list.count) as f32 * row_height;
+        let lines = if list.groups.is_empty() {
+            list.geometry.row_count(list.count)
+        } else {
+            gezik_core::layout::Lines { spans: &list.groups, per_row: list.geometry.per_row() }.count()
+        };
+        let content = lines as f32 * row_height;
         let lowest = (list.rect.height - content).min(0.0);
         window.set_list_scroll((list.scroll + step).clamp(lowest, 0.0));
         self.update();

@@ -18,14 +18,15 @@ use std::time::{Duration, SystemTime};
 use gezik_config::settings::ViewDefaults;
 use gezik_config::store::ConfigStore;
 use gezik_core::Entry;
+use gezik_core::group::{DateBounds, GroupBy, GroupKey, Grouping, spans as group_spans};
 use gezik_core::kind::{fallback_type_name, own_type_name};
-use gezik_core::layout::{Geometry, Move, Rect};
+use gezik_core::layout::{Geometry, Lines, Move, Rect, Span};
 use gezik_core::nav::ViewState;
 use gezik_core::ops::names::rename_selection;
 use gezik_core::ops::paths::same_path;
 use gezik_core::pattern::Pattern;
 use gezik_core::selection::Selection;
-use gezik_core::sort::{SortDir, SortKey, SortSpec, sort_entries};
+use gezik_core::sort::{SortDir, SortKey, SortSpec, sort_entries_grouped};
 use gezik_core::view::{
     ColumnKey, ColumnState, GridSize, MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH, ViewMode, ViewSettings, default_columns,
     normalize_columns,
@@ -38,7 +39,7 @@ use slint::{ComponentHandle, ModelRc};
 use crate::media::{Media, Ready};
 use crate::{AppWindow, Theme};
 use listing::{filtered_listing, filtered_results, name_taken};
-use model::{ItemsModel, ViewData};
+use model::{ItemsModel, ViewData, hide_collapsed};
 
 /// How long after showing a listing (or a far jump) its scroll offset is applied again:
 /// about three frames. A new model makes the ListView re-place its lines on its next
@@ -126,6 +127,10 @@ struct Inner {
     /// The selection before the last file operation: its folder and the selected names
     /// (`restore_remembered`).
     remembered: RefCell<Option<(PathBuf, Vec<String>)>>,
+    /// The groups closed in the folder shown, by key (spec 10 §6.2): kept while it shows.
+    collapsed: RefCell<HashSet<GroupKey>>,
+    /// Where the date groups start, as the last sort saw them (its groups and its order agree).
+    dates: RefCell<DateBounds>,
 }
 
 /// The filter bar's text, the pattern the list shows, and what is wrong with the text.
@@ -289,6 +294,8 @@ impl View {
             filter: RefCell::new(None),
             cleared: Cell::new(false),
             remembered: RefCell::new(None),
+            collapsed: RefCell::new(HashSet::new()),
+            dates: RefCell::new(DateBounds::default()),
         }));
         // Weak: the media lives inside the view.
         let weak = Rc::downgrade(&view.0);
@@ -328,7 +335,8 @@ impl View {
         let mut rows: Vec<Range<usize>> = entries.iter().map(|&i| i..i + 1).collect();
         rows.sort_by_key(|r| r.start);
         self.0.model.entries_changed(&rows);
-        if ready == Ready::TypeName && self.sort().key == SortKey::Type {
+        if ready == Ready::TypeName && (self.sort().key == SortKey::Type || self.0.current.get().group == GroupBy::Type)
+        {
             self.resort_soon();
         }
     }
@@ -414,6 +422,9 @@ impl View {
         // A reload of the same folder (it changed on disk) keeps the icons and thumbnails asked
         // for: a folder that changes all the time would never get its slow thumbnails.
         let same_folder = !results && folder.is_some() && *self.0.folder.borrow() == folder;
+        if !same_folder {
+            self.0.collapsed.borrow_mut().clear();
+        }
         *self.0.folder.borrow_mut() = folder;
         self.0.current.set(settings);
         if !same_folder {
@@ -475,6 +486,7 @@ impl View {
             data.marquee_base = None;
             data.pending = Default::default();
         }
+        self.regroup();
         self.0.results_status.borrow_mut().take();
         self.0.results_version.set(self.0.results_version.get() + 1);
         self.0.sort_gate.borrow_mut().reset();
@@ -666,6 +678,8 @@ impl View {
             data.selection = Selection::new(0);
             data.marquee_base = None;
             data.pending = Default::default();
+            data.groups.clear();
+            data.group_keys.clear();
         }
         self.0.model.notify.reset();
         self.0.shown.set(self.0.shown.get() + 1);
@@ -761,6 +775,7 @@ impl View {
                 data.marquee_base = None;
                 data.pending = Default::default();
             }
+            self.regroup();
             self.0.model.notify.reset();
             // A delayed scroll restore of the listing before must not undo this.
             self.0.shown.set(self.0.shown.get() + 1);
@@ -944,7 +959,11 @@ impl View {
         let Some(window) = self.0.window.upgrade() else { return 0..0 };
         let lines = visible_lines(window.get_list_scroll(), window.get_drop_geometry().list_height, self.line_height());
         let per_row = self.0.model.per_row();
-        let len = self.0.data.borrow().listing.len();
+        let data = self.0.data.borrow();
+        if !data.groups.is_empty() {
+            return Lines { spans: &data.groups, per_row }.entries_on(lines);
+        }
+        let len = data.listing.len();
         (lines.start * per_row).min(len)..(lines.end * per_row).min(len)
     }
 
@@ -972,6 +991,7 @@ impl View {
 
     /// Changes the folder's entries with `edit` (true: it changed that one), keeping the order,
     /// the filter's rows and the selection; redraws the lines on screen. Whether any changed.
+    /// The groups stay (same order and places); a size grouping follows by `resort_in_place`.
     fn edit_folder_entries(&self, mut edit: impl FnMut(&mut Entry) -> bool) -> bool {
         let (listing, mut full, rows, selection) = self.take_listing();
         let Listing::Files(dir, shown) = listing else {
@@ -1059,8 +1079,9 @@ impl View {
             .collect()
     }
 
+    /// The order depends on folder sizes: sorted or grouped by size.
     pub fn sorted_by_size(&self) -> bool {
-        self.sort().key == SortKey::Size
+        self.sort().key == SortKey::Size || self.0.current.get().group == GroupBy::Size
     }
 
     /// The folder's entries before the filter.
@@ -1084,10 +1105,10 @@ impl View {
     pub fn resort_in_place(&self) {
         let Some(window) = self.0.window.upgrade() else { return };
         let (before, scroll) = (self.focus(), window.get_list_scroll());
+        let old_line = before.and_then(|i| self.0.model.place_of(i)).map(|(line, _)| line);
         self.resort(false);
-        let (Some(old), Some(new)) = (before, self.focus()) else { return };
-        let per_row = self.0.model.per_row();
-        let target = keep_on_screen(scroll, old / per_row, new / per_row, self.line_height());
+        let (Some(old), Some(new)) = (old_line, self.focus().and_then(|i| self.0.model.place_of(i))) else { return };
+        let target = keep_on_screen(scroll, old, new.0, self.line_height());
         // `resort` asked for the old offset after its reset: this one replaces that ask.
         self.0.revealed.set(self.0.revealed.get() + 1);
         window.set_list_scroll(target);
@@ -1210,6 +1231,17 @@ impl View {
 
     /// Type-ahead found entry `index`: it becomes the only selected one, in view.
     pub fn jump_to(&self, index: usize) {
+        // Type-ahead found a row in a closed group: the group opens (spec 10 §6.2).
+        let closed = {
+            let data = self.0.data.borrow();
+            data.groups
+                .iter()
+                .position(|s| s.collapsed && (s.start..s.start + s.len).contains(&index))
+                .and_then(|g| data.group_keys.get(g).cloned())
+        };
+        if let Some(key) = closed {
+            self.collapse_where(|k, now| now && *k != key);
+        }
         let changes = self.0.data.borrow_mut().selection.select_only(index);
         self.after_selection(&changes);
         self.reveal(index);
@@ -1219,11 +1251,18 @@ impl View {
     /// the anchor (Ctrl+Shift adds), Ctrl moves only the focus. Returns whether the key
     /// was used.
     pub fn key_move(&self, mv: Move, shift: bool, ctrl: bool, page_rows: usize) -> bool {
-        let geometry = self.geometry();
+        let (geometry, per_row) = (self.geometry(), self.0.model.per_row());
         let (target, changes) = {
             let mut data = self.0.data.borrow_mut();
             let len = data.listing.len();
-            let Some(target) = geometry.step(data.selection.focus(), mv, len, page_rows) else { return false };
+            let focus = data.selection.focus();
+            let target = if data.groups.is_empty() {
+                geometry.step(focus, mv, len, page_rows)
+            } else {
+                let grid = matches!(geometry, Geometry::Grid { .. });
+                Lines { spans: &data.groups, per_row }.step(focus, mv, page_rows, grid)
+            };
+            let Some(target) = target else { return false };
             let changes = if shift {
                 data.selection.extend_to(target, ctrl)
             } else if ctrl {
@@ -1241,13 +1280,17 @@ impl View {
     /// A rubber-band drag over `rect` (content coordinates): selects what it touches, added
     /// to the selection at the drag's start if `additive` (Ctrl).
     pub fn marquee(&self, rect: Rect, additive: bool) {
-        let geometry = self.geometry();
+        let (geometry, per_row) = (self.geometry(), self.0.model.per_row());
         let changes = {
             let mut data = self.0.data.borrow_mut();
-            let ViewData { listing, selection, marquee_base, .. } = &mut *data;
+            let ViewData { listing, selection, marquee_base, groups, .. } = &mut *data;
             let base = marquee_base
                 .get_or_insert_with(|| if additive { selection.clone() } else { Selection::new(listing.len()) });
-            let hits = geometry.items_in_rect(rect, listing.len());
+            let hits = if groups.is_empty() {
+                geometry.items_in_rect(rect, listing.len())
+            } else {
+                Lines { spans: groups, per_row }.items_in_rect(&geometry, rect)
+            };
             selection.set_rect(base, &hits)
         };
         self.after_selection(&changes);
@@ -1418,6 +1461,7 @@ impl View {
         }
         let Some(batch) = self.0.sort_gate.borrow_mut().hold(batch) else { return };
         let pattern = self.0.filter.borrow().as_ref().map(|f| f.pattern.clone()).unwrap_or_default();
+        let grouped = !self.0.data.borrow().groups.is_empty();
         let (before, after) = {
             let mut data = self.0.data.borrow_mut();
             let ViewData { listing, results, rows, selection, .. } = &mut *data;
@@ -1444,8 +1488,11 @@ impl View {
             (before, listing.len())
         };
         self.0.results_version.set(self.0.results_version.get() + 1);
-        if after > before {
-            if self.0.model.per_row() == 1 {
+        if grouped {
+            self.regroup();
+        }
+        if after > before || grouped {
+            if self.0.model.per_row() == 1 && !grouped {
                 self.0.model.notify.row_added(before, after - before);
             } else {
                 let scroll = self.0.window.upgrade().map_or(0.0, |w| w.get_list_scroll());
@@ -1480,22 +1527,25 @@ impl View {
         if self.0.searching.get() {
             return;
         }
-        let (spec, folders_first) = (self.sort(), self.0.options.get().folders_first);
-        if full.len() < 2 || full.sorted_by() == Some((spec, folders_first)) {
+        let (spec, folders_first, by) = (self.sort(), self.0.options.get().folders_first, self.0.current.get().group);
+        // shortcut: a single result is never sorted, so it shows without its group's header.
+        if full.len() < 2 || full.sorted_by() == Some((spec, folders_first, by)) {
             // In this order already (a tab shown again, the sort clicked back): an older sort
             // still running must not reorder it.
             return self.0.sort_gate.borrow_mut().cancel();
         }
         let version = self.0.results_version.get();
         let generation = self.0.sort_gate.borrow_mut().start();
+        let dates = self.fresh_dates();
         let weak = self.0.window.clone();
         let spawned = std::thread::Builder::new().name("gezik-sort".into()).spawn(move || {
-            let order = full.sort_order(spec, folders_first, |e| {
-                own_type_name(&e.name, e.is_dir).unwrap_or_else(|| fallback_type_name(&e.name, e.is_dir))
-            });
+            let plain =
+                |e: &Entry| own_type_name(&e.name, e.is_dir).unwrap_or_else(|| fallback_type_name(&e.name, e.is_dir));
+            let grouping = Grouping { by, spec, folders_first, dates: &dates, type_name: &plain };
+            let order = full.sort_order(spec, folders_first, plain, (by != GroupBy::None).then_some(&grouping));
             // Let go first: the UI thread then moves the set, no copy.
             drop(full);
-            let sorted = (spec, folders_first);
+            let sorted = (spec, folders_first, by);
             let _ = weak.upgrade_in_event_loop(move |_| {
                 with_current(|view| view.results_sorted(generation, version, sorted, order));
             });
@@ -1509,7 +1559,7 @@ impl View {
     /// Sort `generation`'s `order` came: applied if it is the newest and the results did not
     /// change meanwhile (then the focus is shown), sorted again if they did; then the batches
     /// that waited are appended.
-    fn results_sorted(&self, generation: u64, version: u64, sorted: (SortSpec, bool), order: Vec<usize>) {
+    fn results_sorted(&self, generation: u64, version: u64, sorted: (SortSpec, bool, GroupBy), order: Vec<usize>) {
         let unchanged = self.0.results_version.get() == version;
         let outcome = self.0.sort_gate.borrow_mut().finish(generation, unchanged);
         if outcome == SortOutcome::Apply {
@@ -1558,6 +1608,8 @@ impl View {
             data.rows = rows;
             data.selection = selection;
         }
+        // Results sorted this way come here (`results_sorted`): their headers show.
+        self.regroup();
         self.0.results_version.set(self.0.results_version.get() + 1);
         self.follow_rename();
         self.0.model.notify.reset();
@@ -1653,6 +1705,7 @@ impl View {
             data.rows = rows;
             data.selection = selection;
         }
+        self.regroup();
         self.0.model.notify.reset();
         if let Some(window) = self.0.window.upgrade() {
             self.sync_focus(&window);
@@ -1725,7 +1778,10 @@ impl View {
                 self.reveal(focus);
             }
         }
-        if view.sort != old.sort {
+        if view.group != old.group {
+            self.0.collapsed.borrow_mut().clear();
+        }
+        if view.sort != old.sort || view.group != old.group {
             self.sync_header();
             self.resort(true);
         }
@@ -1873,7 +1929,10 @@ impl View {
     fn sorted(&self, listing: Listing, by_name: bool) -> Listing {
         match listing {
             Listing::Files(dir, entries)
-                if !(by_name && self.sort() == SortSpec::default() && self.0.options.get().folders_first) =>
+                if !(by_name
+                    && self.sort() == SortSpec::default()
+                    && self.0.options.get().folders_first
+                    && self.0.current.get().group == GroupBy::None) =>
             {
                 Listing::Files(dir, self.sort_now(entries).0)
             }
@@ -1884,12 +1943,21 @@ impl View {
     /// `entries` in the current sort order (copied only if shared), and where each came from
     /// (`sort_entries`).
     fn sort_now(&self, entries: Rc<Vec<Entry>>) -> (Rc<Vec<Entry>>, Vec<usize>) {
-        let spec = self.sort();
-        if spec.key == SortKey::Type {
+        let view = self.0.current.get();
+        if view.sort.key == SortKey::Type || view.group == GroupBy::Type {
             self.request_type_names(&entries);
         }
+        let folders_first = self.0.options.get().folders_first;
         let mut entries = Rc::unwrap_or_clone(entries);
-        let order = sort_entries(&mut entries, spec, self.0.options.get().folders_first, |e| self.type_name_of(e));
+        let type_name = |e: &Entry| self.type_name_of(e);
+        let order = if view.group == GroupBy::None {
+            sort_entries_grouped(&mut entries, view.sort, folders_first, type_name, None)
+        } else {
+            let dates = self.fresh_dates();
+            let grouping =
+                Grouping { by: view.group, spec: view.sort, folders_first, dates: &dates, type_name: &type_name };
+            sort_entries_grouped(&mut entries, view.sort, folders_first, type_name, Some(&grouping))
+        };
         (Rc::new(entries), order)
     }
 
@@ -1906,6 +1974,14 @@ impl View {
     /// position.
     fn resort(&self, reveal: bool) {
         if self.shows_results() {
+            // The groups go until the results are sorted this way (sapma 10).
+            let grouped = !self.0.data.borrow().groups.is_empty();
+            self.regroup();
+            if grouped || !self.0.data.borrow().groups.is_empty() {
+                let scroll = self.list_scroll();
+                self.0.model.notify.reset();
+                self.keep_scroll_after_reset(scroll);
+            }
             return self.sort_results();
         }
         let scroll = self.0.window.upgrade().map_or(0.0, |w| w.get_list_scroll());
@@ -1931,6 +2007,7 @@ impl View {
             data.rows = rows;
             data.selection = selection;
         }
+        self.regroup();
         self.0.model.notify.reset();
         if let Some(window) = self.0.window.upgrade() {
             self.sync_focus(&window);
@@ -1943,6 +2020,128 @@ impl View {
             self.reveal(focus);
         }
         self.notify_listeners();
+    }
+
+    /// The date buckets as of now, kept for the groups of this sort.
+    fn fresh_dates(&self) -> DateBounds {
+        let dates = DateBounds::new(SystemTime::now(), &gezik_platform::local_date_parts);
+        *self.0.dates.borrow_mut() = dates.clone();
+        dates
+    }
+
+    /// The groups of the listing shown, from scratch (spec 10 §6.1): runs of rows with the same
+    /// group, those closed in this folder closed; rows in closed groups leave the selection. No
+    /// file system call. Not grouped, "This PC", or results not yet sorted this way: none.
+    fn regroup(&self) {
+        let by = self.0.current.get().group;
+        let (spans, keys) = {
+            let data = self.0.data.borrow();
+            let in_order = match &data.listing {
+                Listing::Files(dir, _) => !dir.as_os_str().is_empty(),
+                Listing::Drives(_) => false,
+                // Batches come unsorted: grouped once sorted this way (sapma 10).
+                Listing::Results(set) => set.sorted_by().is_some_and(|(_, _, group)| group == by),
+            };
+            if by == GroupBy::None || !in_order {
+                (Vec::new(), Vec::new())
+            } else {
+                // The type names the sort used: the results are sorted by Gezik's own (sapma 4).
+                let own = |e: &Entry| self.type_name_of(e);
+                let plain = |e: &Entry| {
+                    own_type_name(&e.name, e.is_dir).unwrap_or_else(|| fallback_type_name(&e.name, e.is_dir))
+                };
+                let type_name: &dyn Fn(&Entry) -> String =
+                    if matches!(data.listing, Listing::Results(_)) { &plain } else { &own };
+                let dates = self.0.dates.borrow();
+                let grouping = Grouping {
+                    by,
+                    spec: self.sort(),
+                    folders_first: self.0.options.get().folders_first,
+                    dates: &dates,
+                    type_name,
+                };
+                let collapsed = self.0.collapsed.borrow();
+                let listing = &data.listing;
+                group_spans(listing.len(), &|i| listing.entry(i), &grouping, &|key| collapsed.contains(key))
+            }
+        };
+        let mut data = self.0.data.borrow_mut();
+        data.groups = spans;
+        data.group_keys = keys;
+        hide_collapsed(&mut data);
+    }
+
+    /// Opens or closes groups without reading or sorting anything (spec 10 §6.2): `change` gives
+    /// a group's new state from its key and its state now. The scroll stays.
+    fn collapse_where(&self, change: impl Fn(&GroupKey, bool) -> bool) {
+        {
+            let mut data = self.0.data.borrow_mut();
+            let mut collapsed = self.0.collapsed.borrow_mut();
+            let mut any = false;
+            let ViewData { groups, group_keys, .. } = &mut *data;
+            for (span, key) in groups.iter_mut().zip(group_keys.iter()) {
+                let now = change(key, span.collapsed);
+                if now != span.collapsed {
+                    span.collapsed = now;
+                    any = true;
+                    if now {
+                        collapsed.insert(key.clone());
+                    } else {
+                        collapsed.remove(key);
+                    }
+                }
+            }
+            if !any {
+                return;
+            }
+            hide_collapsed(&mut data);
+        }
+        let scroll = self.list_scroll();
+        self.0.model.notify.reset();
+        self.keep_scroll_after_reset(scroll);
+        if let Some(window) = self.0.window.upgrade() {
+            self.sync_focus(&window);
+        }
+        self.update_status();
+        self.notify_listeners();
+    }
+
+    /// A click on a group's header (its first entry `first`): the group opens or closes.
+    #[allow(dead_code, reason = "the header lines call it (10d Task 4)")]
+    pub fn toggle_group(&self, first: usize) {
+        let key = {
+            let data = self.0.data.borrow();
+            data.groups.iter().position(|s| s.start == first).and_then(|g| data.group_keys.get(g).cloned())
+        };
+        if let Some(key) = key {
+            self.collapse_where(|k, now| if *k == key { !now } else { now });
+        }
+    }
+
+    /// Collapse All Groups (`true`) / Expand All Groups.
+    #[allow(dead_code, reason = "the menus call it (10d Task 4)")]
+    pub fn collapse_all(&self, on: bool) {
+        self.collapse_where(|_, _| on);
+    }
+
+    /// Group by ▸ (spec 10 §6.2); the folder remembers it.
+    #[allow(dead_code, reason = "the menus call it (10d Task 4)")]
+    pub fn set_group(&self, by: GroupBy) {
+        self.change_view(|v| v.group = by);
+    }
+
+    /// The groups shown, for the drop target (drag.rs).
+    pub fn group_spans(&self) -> Vec<Span> {
+        self.0.data.borrow().groups.clone()
+    }
+
+    /// The line and column of entry `index`, for the Slint side; `(-1, 0)` in a closed group or
+    /// past the end.
+    #[allow(dead_code, reason = "the Slint lines call it (10d Task 4)")]
+    pub fn place_of(&self, index: usize) -> (i32, i32) {
+        self.0.model.place_of(index).map_or((-1, 0), |(line, column)| {
+            (i32::try_from(line).unwrap_or(i32::MAX), i32::try_from(column).unwrap_or(0))
+        })
     }
 
     /// Where entries are on screen.
@@ -1961,9 +2160,18 @@ impl View {
     }
 
     fn after_selection(&self, changes: &[Range<usize>]) {
-        if changes.is_empty() {
+        // Rows in closed groups leave every selection (Ctrl+A, invert, a Shift range, a band).
+        let hidden = hide_collapsed(&mut self.0.data.borrow_mut());
+        if changes.is_empty() && hidden.is_empty() {
             return;
         }
+        let joined: Vec<Range<usize>>;
+        let changes = if hidden.is_empty() {
+            changes
+        } else {
+            joined = changes.iter().cloned().chain(hidden).collect();
+            &joined
+        };
         let scroll = self.0.window.upgrade().map(|w| w.get_list_scroll());
         if self.0.model.entries_changed(changes)
             && let Some(scroll) = scroll

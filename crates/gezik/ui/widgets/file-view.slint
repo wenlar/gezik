@@ -32,11 +32,16 @@ export struct FileRow {
     found: string,
 }
 
-// One line of the view: one entry in the list, a row of cells in the grid.
+// One line of the view: one entry in the list, a row of cells in the grid, or a group's
+// header (spec 10 §6.2): its text with the count (`Today (12)`), no cells.
 export struct ItemRow {
-    // The index of its first entry.
+    // The index of its first entry (a header's: its group's first entry).
     first: int,
     cells: [FileRow],
+    // A group header's text; empty on a line of entries.
+    header: string,
+    // The header's group is closed.
+    collapsed: bool,
 }
 
 // A column title: click sorts, right-click opens the header menu, the left edge drags to

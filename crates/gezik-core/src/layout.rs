@@ -174,8 +174,9 @@ pub enum Line {
 
 /// The lines of a grouped view: per group a header line, then its entries `per_row` a line
 /// (none while closed). Every line is as high as the others (spec 10 §6.2: in the grid a
-/// header takes a cell line). shortcut: each call walks the groups; keep the first line of each
-/// if a folder with thousands of types scrolls slowly.
+/// header takes a cell line). shortcut: each call walks the groups (a rubber band or the lines
+/// on screen walk them once); keep the first line of each if a folder with thousands of types
+/// scrolls slowly.
 #[derive(Debug, Clone, Copy)]
 pub struct Lines<'a> {
     pub spans: &'a [Span],
@@ -198,15 +199,23 @@ impl Lines<'_> {
     }
 
     pub fn line(&self, n: usize) -> Option<Line> {
-        let mut first = 0;
-        for g in 0..self.spans.len() {
-            let lines = 1 + self.rows_in(g);
-            if n < first + lines {
-                return Some(if n == first { Line::Header(g) } else { Line::Cells(self.row(g, n - first - 1)) });
-            }
-            first += lines;
+        self.lines_from(n).next()
+    }
+
+    /// Lines `from..` in order, in one pass over the groups.
+    fn lines_from(&self, from: usize) -> impl Iterator<Item = Line> + '_ {
+        let (mut g, mut first) = (0, 0);
+        while g < self.spans.len() && from >= first + 1 + self.rows_in(g) {
+            first += 1 + self.rows_in(g);
+            g += 1;
         }
-        None
+        // Within group `g`: 0 is its header, k its (k - 1)'th line of entries.
+        let skip = from - first;
+        (g..self.spans.len()).flat_map(move |h| {
+            let k = if h == g { skip } else { 0 };
+            let header = (k == 0).then_some(Line::Header(h));
+            header.into_iter().chain((k.saturating_sub(1)..self.rows_in(h)).map(move |r| Line::Cells(self.row(h, r))))
+        })
     }
 
     /// The line entry `index` is on and its column; `None` in a closed group or past the end.
@@ -226,11 +235,9 @@ impl Lines<'_> {
     /// counts in; headers have none).
     pub fn entries_on(&self, lines: Range<usize>) -> Range<usize> {
         let mut out: Option<Range<usize>> = None;
-        for n in lines {
-            match self.line(n) {
-                Some(Line::Cells(r)) => out = Some(out.map_or(r.clone(), |o| o.start..r.end)),
-                Some(Line::Header(_)) => {}
-                None => break,
+        for line in self.lines_from(lines.start).take(lines.len()) {
+            if let Line::Cells(r) = line {
+                out = Some(out.map_or(r.clone(), |o| o.start..r.end));
             }
         }
         out.unwrap_or(0..0)
@@ -261,8 +268,9 @@ impl Lines<'_> {
                 Some((c0, c1))
             }
         };
-        (first..=last)
-            .filter_map(|n| match self.line(n)? {
+        self.lines_from(first)
+            .take(last - first + 1)
+            .filter_map(|line| match line {
                 Line::Header(_) => None,
                 Line::Cells(r) => match columns {
                     None => Some(r),
@@ -460,6 +468,14 @@ mod tests {
         assert_eq!(lines.line_of(9), None, "past the end");
         assert_eq!(lines.entries_on(0..5), 0..3);
         assert_eq!(lines.entries_on(4..6), 0..0, "headers only");
+        // One pass from any line gives the same lines as from the start.
+        let grid = spans(&[(0, 3, false), (3, 2, true), (5, 5, false)]);
+        let grid = Lines { spans: &grid, per_row: 2 };
+        let all: Vec<Line> = grid.lines_from(0).collect();
+        assert_eq!(all.len(), grid.count());
+        for n in 0..=all.len() {
+            assert_eq!(grid.lines_from(n).collect::<Vec<_>>(), all[n..], "from line {n}");
+        }
         assert_eq!(lines.entries_on(8..20), 7..9);
     }
 
