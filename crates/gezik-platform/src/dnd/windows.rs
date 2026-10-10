@@ -201,7 +201,13 @@ impl IDropTarget_Impl for Target_Impl {
                     *self.offer.borrow_mut() = None;
                     Answer::default()
                 } else {
-                    let offer = Offer { paths, allowed: allowed_by(offered), right: state.0 & MK_RBUTTON.0 != 0 };
+                    let offer = Offer {
+                        paths,
+                        allowed: allowed_by(offered),
+                        right: state.0 & MK_RBUTTON.0 != 0,
+                        virtual_count: 0,
+                        virtual_files: None,
+                    };
                     let answer = self.handler.over(&offer, x, y, keys_of(state));
                     *self.offer.borrow_mut() = Some(offer);
                     answer

@@ -105,7 +105,8 @@ fn over(view: &NSView, info: &ProtocolObject<dyn NSDraggingInfo>, entered: bool)
         let mut target = t.borrow_mut();
         let Some(target) = target.as_mut() else { return NSDragOperation::None };
         if entered || target.offer.is_none() {
-            target.offer = Some(Offer { paths: paths_of(info), allowed, right: false });
+            target.offer =
+                Some(Offer { paths: paths_of(info), allowed, right: false, virtual_count: 0, virtual_files: None });
         }
         let Some(offer) = target.offer.as_mut() else { return NSDragOperation::None };
         offer.allowed = allowed;

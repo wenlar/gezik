@@ -231,7 +231,7 @@ impl Shared {
                 paths
             }
         };
-        Some(Offer { paths, allowed, right: false })
+        Some(Offer { paths, allowed, right: false, virtual_count: 0, virtual_files: None })
     }
 }
 

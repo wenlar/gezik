@@ -735,7 +735,7 @@ impl X11 {
                 paths
             }
         };
-        Some(Offer { paths, allowed: Allowed::ALL, right: false })
+        Some(Offer { paths, allowed: Allowed::ALL, right: false, virtual_count: 0, virtual_files: None })
     }
 }
 
