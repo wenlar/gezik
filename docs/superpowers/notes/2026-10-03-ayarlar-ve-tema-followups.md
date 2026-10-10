@@ -711,3 +711,4 @@ Alt proje 1 tamamlandıktan sonra bilerek ertelenen maddeler. Kaynak: görev inc
 - **Betik (9b1 madde 12, düzeltildi `0706998`):** `scripts/perf/instance.ps1` `Start-Process -Wait` ile her çağrıya ~1 sn ekliyordu.
 - **Küçük gözlem (9b1 madde 4):** Konsoldan bilinmeyen bayrakla başlatılan ilk örnek uyarıyı konsola 4 kez yazıyor (bir `gezik: unknown option …`, üç `gezik: command line: unknown option …`).
 - **Düzeltmeler (aynı dal):** madde 1 `acbf77d`, madde 3 `ad6c152` + `44fac60`, madde 8 `13b58da`, madde 4 `3b58487`; ekranda yeniden denenmedi.
+- **İkinci tur (2026-10-10):** 9b1 madde 4'ün cmd kısmı PASS (`gezik --version`/`--help` klasik konsolda yazıyor, pencere ve arta kalan süreç yok). 9b3 PATH/App Paths, 9b4 varsayılan dosya yöneticisi ve 9b2 Empty Recycle Bin Claude Code'un izin denetimine takıldı (kalıcı sistem değişikliği / geri alınamaz silme): kullanıcıda. Kayıt dışa aktarımları tur öncesi ve sonrası bayt bayt aynı.
