@@ -465,19 +465,19 @@ Each of these was kept to macOS where the logic allowed:
 | 114 | Off | PASS |
 | 115 | Bring to front | **FAIL** (a minimized Gezik comes back but is not activated) |
 | 116 | Tests first | **FAIL** (every restore under `/var` or `/tmp` is refused) |
-| 117 | Full Disk Access off | NOT TESTED |
-| 118 | Full Disk Access on | NOT TESTED |
-| 119 | Real bins on USB volumes | NOT TESTED |
-| 120 | Put Back | NOT TESTED |
-| 121 | Delete for good and Empty | NOT TESTED |
-| 122 | Live and refused | NOT TESTED |
+| 117 | Full Disk Access off | PASS |
+| 118 | Full Disk Access on | NOT TESTED (Full Disk Access was not turned on) |
+| 119 | Real bins on USB volumes | PASS (HFS+ disk image only) |
+| 120 | Put Back | PASS (partly) |
+| 121 | Delete for good and Empty | PASS (Empty not confirmed on the real Trash) |
+| 122 | Live and refused | PASS (partly) |
 | 123 | Tests first | PASS |
-| 124 | Panel | NOT TESTED |
-| 125 | Add, no `~/.local/bin` | NOT TESTED |
-| 126 | Someone else's file | NOT TESTED |
-| 127 | Gezik moved | NOT TESTED |
-| 128 | `--unregister` | NOT TESTED |
-| 129 | No journal | NOT TESTED |
+| 124 | Panel | PASS |
+| 125 | Add, no `~/.local/bin` | PASS (new-Terminal check not done) |
+| 126 | Someone else's file | PASS |
+| 127 | Gezik moved | NOT TESTED (no .app here) |
+| 128 | `--unregister` | PASS |
+| 129 | No journal | PASS (one note) |
 | 130 | Tests and probe first | PASS |
 | 131 | Sidebar | NOT TESTED |
 | 132 | State badges | NOT TESTED |
@@ -1245,3 +1245,48 @@ Folder `kutu` with two files, a script (`+x`), a subfolder and a symlink to a fi
 #### 108. Links and ACLs: PASS
 - Get Info on a symlink (`a-link` → `a.txt`): Kind "Symbolic link", 27 B, the permission boxes and Octal greyed. Typing group `staff` changed the link's own group (`ls -l`: staff) and not the file's (`ls -lL`: wheel).
 - `chmod +a "everyone deny delete" b.txt`: Get Info says "This item has access control entries; they are not shown or changed here".
+
+#### 117. Full Disk Access off: PASS
+Terminal (which runs Gezik) has no Full Disk Access.
+- Sidebar Trash (under the drives) and Go ▸ Show Trash: the status bar says "Gezik needs Full Disk Access to show the Trash", and a box asks once: "Gezik needs Full Disk Access to show the Trash. Allow it in System Settings ▸ Privacy & Security ▸ Full Disk Access, then open the Trash again." with Open Privacy Settings / Not Now.
+- Open Privacy Settings opened System Settings straight at **Privacy & Security ▸ Full Disk Access** (window title "Full Disk Access"). The setting was not changed.
+- Opening the Trash again in the same run: the note, no box.
+- Items in the GezikHedef image's `/Volumes/GezikHedef/.Trashes/501` are still listed (see 119).
+
+#### 118. Full Disk Access on: NOT TESTED
+Not tested: turning on Full Disk Access for Terminal is a system privacy change, left to the maintainer. So the `~/.Trash/.DS_Store` reader (`ptbL`/`ptbN`) was only tried on the disk image's bin (119), where it worked.
+
+#### 119. Real bins on USB volumes: PASS
+On GezikHedef (an HFS+ disk image standing in for a USB stick): a file trashed with Finder (AppleScript `delete`) lands in `.Trashes/501/usb-cop.txt`. Gezik listed it at once, and about a second later (when Finder wrote `.Trashes/501/.DS_Store`) showed its Original location `/Volumes/GezikHedef` and Date deleted. Put Back returned it to the volume (not the startup disk). APFS and exFAT/FAT sticks and the foreign-owner case were not tried.
+
+#### 120. Put Back: PASS
+Row menu ▸ Put Back on `usb-cop.txt`: it went back to `/Volumes/GezikHedef` and left `.Trashes/501`. ⌘Z put it back in the Trash. **The Trash list doesn't follow** right after Put Back or its undo: the row stayed while the file was on the volume, and stayed after ⌘R while the file had gone back in. Not tried: a deleted original folder, a name conflict, an item with no known place.
+
+#### 121. Delete for good and Empty: PASS
+- ⌘⌫ in the Trash on `usb-cop.txt`: "Delete \"usb-cop.txt\" permanently? This cannot be undone." Delete / Cancel. Delete removed it from `.Trashes/501`.
+- File ▸ Empty Trash…: "Empty the Trash? Permanently delete 1 item (4 B)? This cannot be undone." Empty / Cancel. Cancel did nothing. Empty was not confirmed, because the box counts only the bins Gezik can see, and `~/.Trash` couldn't be listed without Full Disk Access.
+- File ▸ Empty Trash… with nothing visible: the status bar says "The Trash is empty".
+- Not tried: ⌘⇧⌫, the sidebar/background menus, cancelling an empty with a big folder.
+
+#### 122. Live and refused: PASS
+In the Trash: ⌘C, ⌘X, ⌘V and ⇧⌘N say "Not available in the Trash" in the status bar and do nothing. A file trashed in Finder on GezikHedef showed in Gezik's Trash within about 1 s. Go ▸ Show Trash opens it. Not tried: Activity Monitor's open files, ⌘D, rename, a command key, dragging rows out.
+
+#### 124. Panel: PASS
+View ▸ System Integration… (menu bar) opens a box with four rows: Default file manager (Folders open in Finder, Off, Make default), Command line (PATH) (gezik is not a command yet, Off, Add), Changes made: 0 (Nothing written to the system), Undo all system changes (Undo all). Esc closes it. Typing in its field did nothing to the rows. ↓ and Return work.
+
+#### 125. Add, no ~/.local/bin: PASS
+`~/.local` existed (share, state), `~/.local/bin` did not. Add asked "Add gezik to PATH?" and named every place: the folder `~/.local` if not there, the folder `~/.local/bin` if not there, and the link `~/.local/bin/gezik` to `…/target/release/gezik`. After Add: `~/.local/bin` (0755) has the `gezik` link to the real binary (here the bare `target/release/gezik`, not a `.app`). `system-changes.toml` noted the folder and the link, each with `before = { absent = true }`. The hint box "gezik is a command now" shows `export PATH="$HOME/.local/bin:$PATH"`, and Copy put that line on the clipboard. `~/.zshrc` was not edited, so the "new Terminal" step was not done.
+
+#### 126. Someone else's file: PASS
+With `echo hi > ~/.local/bin/gezik`: the panel's PATH row says `/Users/macbookpro/.local/bin/gezik was not …` (made by Gezik; left alone), Off, with no button, and the file still says `hi`. The same with `ln -s /usr/bin/true ~/.local/bin/gezik`: the link was left as it was. Both were cleaned up.
+
+#### 127. Gezik moved: NOT TESTED
+Not tested: there is no `Gezik.app` here to copy elsewhere (the build is a bare binary).
+
+#### 128. --unregister: PASS
+With Gezik running: `gezik --unregister` printed `undone: /Users/macbookpro/.local/bin/gezik` and `undone: /Users/macbookpro/.local/bin` and exited 0. The link and `~/.local/bin` were gone, and `~/.local` (which existed before) stayed. A second run: `No system-changes.toml: taking back what has Gezik's names`, `Nothing of Gezik's was found.`, exit 0. With another file put in `~/.local/bin` first: `undone: …/gezik`, `left (not empty): /Users/macbookpro/.local/bin`, exit 1, and the folder stayed.
+
+#### 129. No journal: PASS
+- Add, then `system-changes.toml` deleted, then `gezik --unregister`: `No system-changes.toml: taking back what has Gezik's names`, `undone: /Users/macbookpro/.local/bin/gezik`, exit 0. Only the link was swept; `~/.local/bin` stayed (empty).
+- `version = 9` in a fresh `system-changes.toml`: the panel shows Default file manager and Command line "Fix or delete system-changes.toml first" with `?`, and Changes made "?" with "system-changes.toml cannot be read: version 9 is not one this Gezik knows". `gezik --unregister` printed that line and "nothing was changed", exited 2, and the file was unchanged.
+- **Note:** the panel still offers "Undo all" while the journal can't be read. Add wasn't tried in that state.
