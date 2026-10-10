@@ -360,8 +360,21 @@ Each of these was kept to macOS where the logic allowed:
 - macOS 26.5.1 (25F80). System languages en-TR, tr-TR (English first). Keyboard layout **Turkish-QWERTY-PC**.
 - Toolchain: rustc 1.99.0 / cargo 1.99.0, Apple clang 21.0.0
 - Run: `GEZIK_CONFIG_DIR=/tmp/gezik-cfg ./target/release/gezik /tmp/gezik-test`, starting from an empty `/tmp/gezik-cfg`.
-- Steps 1-2 (build, tests, probes, command line) were run by Claude Code on the Mac. The window items were done by the maintainer at the keyboard, walked through item by item, with Claude Code checking the file system and screenshots.
+- Everything was run by Claude Code on the Mac, at the maintainer's request. Clicks, drags and keys in Gezik's window went in as synthetic CGEvents (modifiers sent as real key down/up). Menu-bar items were chosen through Accessibility (System Events), because this Mac's menu bar hides itself. Results were checked with screenshots, `ls`/`xxd`/`ffprobe`, and the files on disk. Where a check needs a real hand (trackpad feel, a real mouse on a native drop menu), the item says so.
+- From item 33 on, the config folder was given as `GEZIK_CONFIG_DIR=/private/tmp/gezik-cfg` (the same folder), because live reload doesn't work through the `/tmp` link (see the reload finding). Most file tests from 35 on ran in `/private/tmp/gezik-test` for the same reason (bug A).
+- The maintainer answered macOS's privacy prompts (Photo Library for Terminal, allowed; a TextEdit automation prompt set off by the test tooling, not by Gezik).
 - Test data was made on the Mac (`/tmp/gezik-test`): JPEGs and PNGs written with ImageIO (one with EXIF orientation 6 and GPS, a PNG with alpha), a HEIC written with ImageIO (**not** a real tiled iPhone HEIC), PDFs written with CoreGraphics (3, 5 and 240 pages, and one encrypted with the password `gezik`), the repo's `enc_aes256.pdf` and RAR files, a 4 s screen recording (`klip.mov`), an AAC `.m4a` from `say`, a Windows-1254 text, zips (single root, multi root, ZipCrypto with a password), a `tar.gz`, a `.dmg`, and a folder of 1,000 empty files of mixed types.
+
+### Main findings
+
+1. **Every quit by closing the last window aborts** with a crash report (`dnd::macos::Registration::drop` touches a thread-local that is already gone). ⌘Q is clean. See "(extra) Gezik aborts every time it exits".
+2. **The system's `/tmp` and `/var` links break several things** (bug A): Put Back and ⌘Z of anything that went to the Trash are refused under `/tmp` or `/var` (22 failing tests). Live reload of `settings.toml` doesn't work with a symlinked config folder. Folder history keeps `/tmp/x` and `/private/tmp/x` apart.
+3. **Default file manager (141):** LaunchServices refuses `public.folder` with -50 on macOS 26.5.1, also for a copied bundle, so 142-145 couldn't run.
+4. **Folders and apps:** Desktop/Documents/Downloads and `/Applications`, `/System`, `/Users` get no special icons (86). `/Applications/Safari.app` (a symlink on macOS 26) is entered instead of started, and a plain folder named `x.app` can't be entered (92).
+5. **Pictures:** a JPEG with EXIF orientation 6 is shown sideways in the grid and the preview (88).
+6. **Quick Look panel:** closing it opens Gezik's own preview window as well, and three files show as one (98).
+7. **Turkish-QWERTY-PC:** ⌘I (Get Info) only works with the key that types `i`, not the one at I's place (102). ⌘= needs a custom key (48).
+8. Smaller ones: `--new-window`/⌘N stack on the old window (112), a minimized Gezik comes back inactive (115), `{files}` passes absolute paths (54), MP3/M4A from a silent `.mov` show a raw ffmpeg error (38), WIM is "Document" (34), undo of an 'Apply to enclosed items' from a group I'm not in does nothing (106), and the Get Info labels overlap the checkboxes (102).
 
 ### Summary
 
@@ -489,12 +502,12 @@ Each of these was kept to macOS where the logic allowed:
 | 138 | Search reads no cloud-only file | NOT TESTED |
 | 139 | Tests and probe first | PASS |
 | 140 | Panel and palette | PASS |
-| 141 | Make default from outside a bundle | NOT TESTED (changes the Mac's default folder handler; waiting for the maintainer) |
-| 142 | `open ~/Documents` | NOT TESTED (changes the Mac's default folder handler; waiting for the maintainer) |
-| 143 | `application:openURLs:` | NOT TESTED (changes the Mac's default folder handler; waiting for the maintainer) |
-| 144 | Bundle launch while Gezik runs | NOT TESTED (changes the Mac's default folder handler; waiting for the maintainer) |
-| 145 | Gezik moved | NOT TESTED (changes the Mac's default folder handler; waiting for the maintainer) |
-| 146 | Restore and `--unregister` | NOT TESTED (changes the Mac's default folder handler; waiting for the maintainer) |
+| 141 | Make default from outside a bundle | **FAIL** (LaunchServices refuses public.folder with -50, symlinked or copied bundle) |
+| 142 | `open ~/Documents` | NOT TESTED (needs a successful Make default, see 141) |
+| 143 | `application:openURLs:` | NOT TESTED (needs a successful Make default, see 141) |
+| 144 | Bundle launch while Gezik runs | NOT TESTED (needs a successful Make default, see 141) |
+| 145 | Gezik moved | NOT TESTED (needs a successful Make default, see 141) |
+| 146 | Restore and `--unregister` | PASS (nothing to restore after the failed Make default; see 141) |
 
 ### Build
 
@@ -864,7 +877,7 @@ In `filtre/` (8 items: `İSTANBUL.txt`, `ILIK.doc`, `a.jpg`, `b.jpg`, `c.png`, `
 - `istanbul` finds `İSTANBUL.txt` (1 / 8), and `ılık` finds `ILIK.doc` (1 / 8). Matching folds both ways: `il` also matches `BILgi.txt`, which strict Turkish casing (`BIL` → `bıl`) would not. That is friendly for a filter.
 
 #### 48. Pattern box and selection keys: PASS
-- Edit ▸ Select by Pattern… (chosen through Accessibility) opens "Select by pattern" with "8 items match" for an empty field. `*.jpg` says "2 items match", and Return selects `a.jpg`, `b.jpg`. A bad pattern `!` says "Type a name after \"!\"" in red. The box reopens with the last pattern (`*.jpg`, selected).
+- Edit ▸ Select by Pattern… (chosen through Accessibility) opens "Select by pattern" with "8 items match" for an empty field. `*.jpg` says "2 items match", and Return selects `a.jpg`, `b.jpg`. A bad pattern `!` says "Type a name after '!'" in red. The box reopens with the last pattern (`*.jpg`, selected).
 - ⌘⇧I inverts the selection (6 of 8 selected).
 - The Edit menu shows Filter… ⌘F, Select by Pattern… ⌘=, Deselect by Pattern… ⌘-, Invert Selection ⌘⇧I, Select Same Type and Restore Selection (no keys). Window ▸ Reopen Closed Tab shows ⌘⇧T (AX key equivalents).
 - **Turkish-QWERTY-PC:** `=` is ⇧0, and ⌘⇧0 does nothing by default. ⌘ + the key that types `-` (right of 0) opens "Deselect by pattern". With `select-pattern = ["num+", "mod+shift+0"]` under `[shortcuts]`, ⌘⇧0 opens Select by pattern (picked up live, with the config under `/private/tmp`).
@@ -1107,7 +1120,7 @@ With `folder-sizes = "local"` (picked up live):
 - Go ▸ Quick Open… (⌘P) and Go ▸ Command Palette… (⌘⇧P) carry the keys and do the same.
 
 #### 84. Saved searches: PASS
-- Search `*.rs` in `proje/`, then the bar's ▾ ▸ Save search…: "Name for this search:" `Rust`, then "Save \"Rust\" with /private/tmp/gezik-test/proje, or for the folder shown when it runs?" with Save with this folder / Save for any folder ({here}) / Cancel.
+- Search `*.rs` in `proje/`, then the bar's ▾ ▸ Save search…: "Name for this search:" `Rust`, then "Save 'Rust' with /private/tmp/gezik-test/proje, or for the folder shown when it runs?" with Save with this folder / Save for any folder ({here}) / Cancel.
 - "Save for any folder" wrote `[[searches]] name = "Rust" folder = "{here}" pattern = "*.rs"` to `/private/tmp/gezik-cfg/settings.toml` (`GEZIK_CONFIG_DIR`'s, not `~/Library/…`). A comment added by hand just before (`# kendi notum: kalsin`) stayed.
 - The sidebar has a SEARCHES section (after CLOUD) with "Rust" and a magnifier icon.
 - In `pdf-test/`, a click on Rust ran it there: the tab is titled "Rust", and the scope is "in pdf-test" (`{here}`), with no results (no .rs files there).
@@ -1144,7 +1157,7 @@ Aliases made by Finder (AppleScript `make new alias file`) of a file, a folder, 
 - The folder alias (⌘↓) went into `orijinal`, and ⌘[ returned. The volume alias went into GezikHedef.
 - The file alias opened `dosya.txt` in TextEdit (its window "dosya.txt" with "orijinal dosya" was on screen).
 - The Safari alias started Safari (Safari became the front app), and Gezik stayed in `alias`.
-- Original file deleted, then the alias opened: "The original item can't be found — The alias \"dosya alias\" can't be opened." with Delete Alias / OK. Delete Alias moved it to the Trash at once with no second question, and ⌘Z brought it back.
+- Original file deleted, then the alias opened: "The original item can't be found — The alias 'dosya alias' can't be opened." with Delete Alias / OK. Delete Alias moved it to the Trash at once with no second question, and ⌘Z brought it back.
 - A broken symlink (`sym-kirik`) gets the same question (its text says "alias" for a symlink). A symlink to a folder is entered (`sym-klasor`).
 - In the list, the aliases and the file symlinks show as "Document" (known gap).
 
@@ -1218,7 +1231,7 @@ On `rapor.pdf` (644):
 - Group ▾ lists my groups (everyone, staff, _appstore, localaccounts, admin, _lpadmin, _developer, com.apple.access_ssh …, as `id -Gn`). Choosing admin: `ls -l` shows `admin`.
 - A setuid file (`chmod 4755`, `rwsr-xr-x`): typing `staff` for its group kept `rws` (`-rwsr-xr-x staff`). The panel shows "Special: setuid (not changed here)" next to Octal 755.
 - Group `wheel` (not mine) + Return: "Requires administrator: 1 item not changed" in red, and the group stayed `staff`.
-- Owner `root` + Return: the same note, and the owner stayed. Owner `nobody-at-all`: "No user is named \"nobody-at-all\"", and nothing ran.
+- Owner `root` + Return: the same note, and the owner stayed. Owner `nobody-at-all`: "No user is named 'nobody-at-all'", and nothing ran.
 - Not checked: the operations panel row "Requires administrator".
 
 #### 105. Hidden and Locked: PASS
@@ -1231,7 +1244,7 @@ On `a.txt`:
 
 #### 106. Apply to enclosed items: FAIL
 Folder `kutu` with two files, a script (`+x`), a subfolder and a symlink to a file outside.
-- Folder set to 750 and group staff, then "Apply to enclosed items…": the question "Everything inside \"kutu\" gets this folder's owner, group and permissions. Files keep execute only where they had it; links are left as they are. Undo puts each item back." Cancel did nothing.
+- Folder set to 750 and group staff, then "Apply to enclosed items…": the question "Everything inside 'kutu' gets this folder's owner, group and permissions. Files keep execute only where they had it; links are left as they are. Undo puts each item back." Cancel did nothing.
 - Apply: `ls -lR` shows the files `rw-r-----`, the script `rwxr-x---`, the subfolder `rwxr-x---`, all group staff. The symlink and the file it leads to are unchanged.
 - **In `/private/tmp` the items were group `wheel` before** (BSD inherits the parent's group), and I am not in wheel. **⌘Z then failed for every item**: "Undoing Change attributes of 1 item — 4 items failed", with Details `f1.txt: Requires administrator`, `alt: …`, `betik.sh: …`, `f2.txt: …`. The modes were not put back either (still `rw-r-----`), because the mode and the group are restored as one step. Putting back the mode, and saying only the group needs an administrator, would be better.
 - Under `$TMPDIR` (group staff before and after): Apply, then ⌘Z put every enclosed item back (`rw-r--r--`, `rwxr-xr-x`), and a second ⌘Z put the folder back (`rwxr-xr-x`).
@@ -1239,7 +1252,7 @@ Folder `kutu` with two files, a script (`+x`), a subfolder and a symlink to a fi
 
 #### 107. Open with: PASS
 - One PDF (`rapor.pdf`): "Open with: Adobe Acrobat ▾" lists Adobe Acrobat (default), the other PDF apps, Preview, Safari … and Other…. Choosing Preview changed only that file (`NSWorkspace urlForApplication`: `rapor.pdf` → Preview, `belge-a.pdf` still → Adobe Acrobat). It was set back to Acrobat the same way.
-- "Change All…" asks "Open every Document (com.adobe.pdf) file, like \"rapor.pdf\", with Adobe Acrobat? This changes it for all your files of this type, in every app." with Change All / Cancel. Cancel changed nothing. Change All was **not** confirmed, so the Mac's PDF default was not touched. (The kind shows as "Document" for com.adobe.pdf here.)
+- "Change All…" asks "Open every Document (com.adobe.pdf) file, like 'rapor.pdf', with Adobe Acrobat? This changes it for all your files of this type, in every app." with Change All / Cancel. Cancel changed nothing. Change All was **not** confirmed, so the Mac's PDF default was not touched. (The kind shows as "Document" for com.adobe.pdf here.)
 - A folder (`klasor`) and a symlink have no "Open with" row. A `.txt` has one (TextEdit). The `.app` and "Not set" cases were not tried. macOS 26.5.1.
 
 #### 108. Links and ACLs: PASS
@@ -1263,7 +1276,7 @@ On GezikHedef (an HFS+ disk image standing in for a USB stick): a file trashed w
 Row menu ▸ Put Back on `usb-cop.txt`: it went back to `/Volumes/GezikHedef` and left `.Trashes/501`. ⌘Z put it back in the Trash. **The Trash list doesn't follow** right after Put Back or its undo: the row stayed while the file was on the volume, and stayed after ⌘R while the file had gone back in. Not tried: a deleted original folder, a name conflict, an item with no known place.
 
 #### 121. Delete for good and Empty: PASS
-- ⌘⌫ in the Trash on `usb-cop.txt`: "Delete \"usb-cop.txt\" permanently? This cannot be undone." Delete / Cancel. Delete removed it from `.Trashes/501`.
+- ⌘⌫ in the Trash on `usb-cop.txt`: "Delete 'usb-cop.txt' permanently? This cannot be undone." Delete / Cancel. Delete removed it from `.Trashes/501`.
 - File ▸ Empty Trash…: "Empty the Trash? Permanently delete 1 item (4 B)? This cannot be undone." Empty / Cancel. Cancel did nothing. Empty was not confirmed, because the box counts only the bins Gezik can see, and `~/.Trash` couldn't be listed without Full Disk Access.
 - File ▸ Empty Trash… with nothing visible: the status bar says "The Trash is empty".
 - Not tried: ⌘⇧⌫, the sidebar/background menus, cancelling an empty with a big folder.
@@ -1305,3 +1318,15 @@ Not tested. 134 and 138 need a test file to be evicted and uploaded again (turni
 
 #### 140. Panel and palette: PASS
 System Integration… shows "Default file manager — Folders open in Finder", Off, "Make default" as the first row (seen in 124). The command palette lists "Make Gezik the default file manager" and "Restore the system file manager" (kind Command).
+
+#### 141. Make default from outside a bundle: FAIL
+The bare `target/release/gezik`, from the palette ("Make Gezik the default file manager").
+- The confirmation names every place it writes: `~/Applications` (if not there), `~/Applications/Gezik.app`, `…/Contents`, `…/Contents/MacOS`, the file `Info.plist`, the link `…/MacOS/gezik` → `target/release/gezik`, "the app for folders (public.folder): com.wenlar.gezik" and "NSFileViewer (Reveal in Finder) = com.wenlar.gezik". (It was not started from `~/Downloads`, so the temporary-place warning was not seen.)
+- **Make Default failed:** "Could not make Gezik the default file manager — public.folder: LaunchServices refused it (-50); what this run made was taken back". The rollback was clean: no `~/Applications/Gezik.app`, no `NSFileViewer`, no `system-changes.toml`, and the handler is still `com.apple.finder`.
+- **Not the symlink's fault:** a hand-made `~/Applications/Gezik.app` with a *copied* binary and the repo's `crates/gezik/macos/Info.plist` registered fine (`LSRegisterURL` 0), but `LSSetDefaultRoleHandlerForContentType("public.folder", …, "com.wenlar.gezik")` returned -50 for both `kLSRolesAll` and `kLSRolesViewer`. On macOS 26.5.1 LaunchServices does not let a third-party app take `public.folder` this way. The copy route won't fix it. Setting only `NSFileViewer` (Reveal in Finder) may still be possible, and is worth a separate try. The test bundle was unregistered (`lsregister -u`) and deleted, and the handler is `com.apple.finder` again.
+
+#### 142-145: NOT TESTED
+They need Gezik to be the folder handler, which 141 could not make on macOS 26.5.1.
+
+#### 146. Restore and `--unregister`: PASS (after the failed attempt)
+After the failed Make default (and the hand-made test bundle removed), `gezik --unregister` printed `No system-changes.toml: taking back what has Gezik's names` / `Nothing of Gezik's was found.` and exited 0. The probe and `defaults read -g NSFileViewer` show Finder's state: `public.folder` → `com.apple.finder`, no `NSFileViewer`. The Restore command itself had nothing to restore.
