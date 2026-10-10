@@ -145,6 +145,8 @@ pub fn close() {
     // A field of the closed pane may have had the keyboard: it went with the pane.
     window.invoke_focus_list();
     save();
+    // What the pane held is freed now; the allocator would keep its pages (spec 10 §4.2).
+    gezik_platform::priority::give_back_memory();
 }
 
 /// Takes pane `id` out after stopping what it runs: its search, folder sizes, watcher and
