@@ -92,6 +92,8 @@ pub enum TaskKind {
     /// Keep on this device / Free up space (spec 9 §7.3).
     KeepOnDevice,
     FreeUpSpace,
+    /// Done by the one-shot administrator helper (spec 9 §10).
+    Elevated,
 }
 
 impl TaskKind {
@@ -117,6 +119,8 @@ impl TaskKind {
             TaskKind::Attributes => "Change attributes of",
             TaskKind::KeepOnDevice => "Keep on this device",
             TaskKind::FreeUpSpace => "Free up space of",
+            // Its jobs always bring their own label; this is a fallback.
+            TaskKind::Elevated => "Do as administrator",
         }
     }
 
@@ -312,6 +316,10 @@ pub enum Outcome {
         before: gezik_core::attrs::Attrs,
         after: gezik_core::attrs::Attrs,
     },
+    /// Done by the administrator helper and seen on disk: undo runs `undo`, as administrator too.
+    AsAdmin {
+        undo: gezik_core::elevated::Op,
+    },
     /// Nothing changed (a folder that was already there).
     Nothing,
     /// One item did several of these (an archive replaced: the old one trashed, the new made).
@@ -388,6 +396,17 @@ pub trait Task: Send + Sync {
     /// folder): the engine then holds the later one as a conflict, at 8 bytes per item.
     fn same_targets(&self) -> bool {
         false
+    }
+    /// The chosen items whose work the system refused (`denied`: the failures' paths), as
+    /// operations the administrator helper can do (spec 9 §10.1: Retry as administrator). Only
+    /// the plain kinds offer it; the rest offer nothing.
+    fn as_admin(&self, _denied: &[PathBuf]) -> Vec<gezik_core::elevated::Op> {
+        Vec::new()
+    }
+    /// What it sends the administrator helper (an `ElevatedTask`'s list): the app shows it
+    /// before an undo or redo asks for the prompt.
+    fn elevated_ops(&self) -> &[gezik_core::elevated::Op] {
+        &[]
     }
 }
 
@@ -470,6 +489,26 @@ impl RunCx<'_> {
         if let Some((_, job)) = self.job {
             job.fail(path, err);
         }
+    }
+
+    /// The folders holding `paths` changed (an item that works in many places: the
+    /// administrator's list).
+    pub(crate) fn touched<'p>(&self, paths: impl IntoIterator<Item = &'p Path>) {
+        if let Some((_, job)) = self.job {
+            job.touch(paths, true);
+        }
+    }
+
+    /// `path` was done by the administrator helper, but Gezik cannot look there to check it.
+    pub(crate) fn unchecked(&self, path: &Path) {
+        if let Some((_, job)) = self.job {
+            job.unchecked(path);
+        }
+    }
+
+    /// How administrator operations run here, if the engine was given a way.
+    pub(crate) fn elevator(&self) -> Option<std::sync::Arc<dyn crate::tasks::Elevator>> {
+        self.job.and_then(|(shared, _)| lock(&shared.elevator).clone())
     }
 
     /// Notes that `path` was left out on purpose (`why`); not a failure.

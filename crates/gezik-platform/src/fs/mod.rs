@@ -4,6 +4,11 @@
 mod describe;
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) mod freedesktop;
+pub mod secure;
+#[cfg(unix)]
+mod secure_unix;
+#[cfg(windows)]
+mod secure_windows;
 #[cfg(unix)]
 mod unix;
 #[cfg(windows)]
@@ -129,6 +134,8 @@ pub(crate) fn test_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("gezik-fs-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
+    // What a test trashes from here leaves the real trash when it ends.
+    crate::trash::purge_at_thread_end(&dir);
     dir
 }
 

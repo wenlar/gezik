@@ -71,6 +71,15 @@ fn is_root(path: &str, windows: bool) -> bool {
     }
 }
 
+/// The server of a path that names a server alone (`\\nas`, `\\nas\`, `//nas`): Windows lists
+/// its shares there (spec 9 §7.4). `None` for a share, a device path (`\\?\`, `\\.\`) or
+/// anything else.
+pub fn server_only(text: &str) -> Option<&str> {
+    let rest = text.strip_prefix(r"\\").or_else(|| text.strip_prefix("//"))?;
+    let name = rest.strip_suffix(['\\', '/']).unwrap_or(rest);
+    (!name.is_empty() && !name.contains(['\\', '/']) && name != "?" && name != ".").then_some(name)
+}
+
 /// The last part of `path` (`rapor.pdf`); a root is its own name.
 pub fn file_name(path: &str, windows: bool) -> &str {
     if is_root(path, windows) {
@@ -176,6 +185,19 @@ pub fn format_paths(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn server_only_names_a_bare_server() {
+        assert_eq!(server_only(r"\\nas"), Some("nas"));
+        assert_eq!(server_only(r"\\nas\"), Some("nas"));
+        assert_eq!(server_only("//nas"), Some("nas"));
+        assert_eq!(server_only(r"\\nas\foto"), None, "a share");
+        assert_eq!(server_only(r"\\?\"), None);
+        assert_eq!(server_only(r"\\.\"), None);
+        assert_eq!(server_only(r"\\"), None);
+        assert_eq!(server_only(r"C:\"), None);
+        assert_eq!(server_only("/home"), None);
+    }
 
     fn none(_: char) -> Option<String> {
         None

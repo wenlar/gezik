@@ -12,8 +12,8 @@ use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoTa
 use windows::Win32::UI::Shell::Common::ITEMIDLIST;
 use windows::Win32::UI::Shell::{
     CMF_CANRENAME, CMF_NORMAL, CMINVOKECOMMANDINFO, DefSubclassProc, GCS_VERBA, IContextMenu, IContextMenu2,
-    IContextMenu3, IShellFolder, RemoveWindowSubclass, SHBindToParent, SHGetDesktopFolder, SHParseDisplayName,
-    SetWindowSubclass,
+    IContextMenu3, IShellFolder, RemoveWindowSubclass, SEE_MASK_FLAG_NO_UI, SHBindToParent, SHGetDesktopFolder,
+    SHParseDisplayName, SetWindowSubclass,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, DestroyMenu, GetCursorPos, HMENU, InsertMenuW, MF_BYPOSITION, MF_GRAYED, MF_POPUP,
@@ -330,11 +330,60 @@ fn targets_a_drive(target: &MenuTarget) -> bool {
 
 /// The command at `offset` if Gezik does it itself (cut, copy, paste, delete, rename).
 unsafe fn gezik_verb(menu: &IContextMenu, offset: u32) -> Option<ShellVerb> {
+    unsafe { verb_name(menu, offset) }.and_then(|name| ShellVerb::from_name(name.as_bytes()))
+}
+
+/// The canonical name of the command at `offset` (`GCS_VERBA`), if it has one.
+unsafe fn verb_name(menu: &IContextMenu, offset: u32) -> Option<String> {
     let mut verb = [0u8; 64];
     unsafe { menu.GetCommandString(offset as usize, GCS_VERBA, None, PSTR(verb.as_mut_ptr()), verb.len() as u32) }
         .ok()?;
     let end = verb.iter().position(|&b| b == 0).unwrap_or(verb.len());
-    ShellVerb::from_name(&verb[..end])
+    (end > 0).then(|| String::from_utf8_lossy(&verb[..end]).into_owned())
+}
+
+/// Runs the Shell's own `verb` ("eject") of `path`'s menu without showing the menu, asking it
+/// for no UI of its own (spec 9 §7.4; whether Explorer's eject still shows an error window is
+/// **doğrulanacak**). COM must be set up on the calling thread.
+pub(crate) fn invoke_verb(owner: HWND, path: &Path, verb: &std::ffi::CStr) -> windows::core::Result<()> {
+    unsafe {
+        let menu = items_menu(owner, &[path.to_path_buf()])?;
+        let hmenu = CreatePopupMenu()?;
+        let result = menu.QueryContextMenu(hmenu, 0, FIRST_SHELL_ID, LAST_SHELL_ID, CMF_NORMAL).ok().and_then(|()| {
+            let info = CMINVOKECOMMANDINFO {
+                cbSize: size_of::<CMINVOKECOMMANDINFO>() as u32,
+                // CMIC_MASK_FLAG_NO_UI is SEE_MASK_FLAG_NO_UI (windows 0.62 has only the latter).
+                fMask: SEE_MASK_FLAG_NO_UI,
+                hwnd: owner,
+                lpVerb: PCSTR(verb.as_ptr().cast()),
+                nShow: SW_SHOWNORMAL.0,
+                ..Default::default()
+            };
+            menu.InvokeCommand(&info)
+        });
+        let _ = DestroyMenu(hmenu);
+        result
+    }
+}
+
+/// The canonical verb names in the top level of `path`'s menu (`eject_probe`): nothing is run.
+/// COM must be set up on the calling thread.
+pub(crate) fn verb_names(path: &Path) -> windows::core::Result<Vec<String>> {
+    use windows::Win32::UI::WindowsAndMessaging::{GetMenuItemCount, GetMenuItemID};
+    unsafe {
+        let menu = items_menu(HWND::default(), &[path.to_path_buf()])?;
+        let hmenu = CreatePopupMenu()?;
+        let names = menu.QueryContextMenu(hmenu, 0, FIRST_SHELL_ID, LAST_SHELL_ID, CMF_NORMAL).ok().map(|()| {
+            (0..GetMenuItemCount(Some(hmenu)).max(0))
+                .map(|position| GetMenuItemID(hmenu, position))
+                // Separators and submenus give 0 or u32::MAX.
+                .filter(|id| (FIRST_SHELL_ID..=LAST_SHELL_ID).contains(id))
+                .filter_map(|id| verb_name(&menu, id - FIRST_SHELL_ID))
+                .collect()
+        });
+        let _ = DestroyMenu(hmenu);
+        names
+    }
 }
 
 /// Forwards owner-draw and submenu messages ("Send to", "Open with") while the menu is open,

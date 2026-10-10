@@ -279,10 +279,14 @@ pub enum Action {
     FreeUpSpace,
     /// The selection's Info window (macOS, Linux); Windows: the system's Properties (9a3).
     GetInfo,
+    /// Connect to Server…: a share by its address (9b6).
+    ConnectToServer,
+    /// Ejects the selected drive or the shown folder's; a network drive: Disconnect (9b6).
+    Eject,
 }
 
 impl Action {
-    pub const ALL: [Action; 83] = [
+    pub const ALL: [Action; 85] = [
         Action::NewTab,
         Action::NewWindow,
         Action::CloseTab,
@@ -366,6 +370,8 @@ impl Action {
         Action::KeepOffline,
         Action::FreeUpSpace,
         Action::GetInfo,
+        Action::ConnectToServer,
+        Action::Eject,
     ];
 
     pub fn name(self) -> &'static str {
@@ -453,6 +459,8 @@ impl Action {
             Action::KeepOffline => "always-keep-offline",
             Action::FreeUpSpace => "free-up-space",
             Action::GetInfo => "get-info",
+            Action::ConnectToServer => "connect-to-server",
+            Action::Eject => "eject",
         }
     }
 
@@ -554,6 +562,8 @@ impl Action {
                 }
             }
             Action::GetInfo => "Get Info",
+            Action::ConnectToServer => "Connect to Server…",
+            Action::Eject => "Eject",
         }
     }
 
@@ -721,6 +731,9 @@ impl Action {
             | (Action::EmptyTrash, Platform::Other) => &[],
             (Action::GetInfo, Platform::Mac) => &["mod+i"],
             (Action::GetInfo, Platform::Other) => &["alt+enter"],
+            (Action::ConnectToServer, _) => &["mod+k"],
+            (Action::Eject, Platform::Mac) => &["mod+e"],
+            (Action::Eject, Platform::Other) => &[],
         }
     }
 }
@@ -907,7 +920,7 @@ mod tests {
             assert_eq!(fixed_owner(&cmd_option, Platform::Mac), None);
         }
         assert_eq!((Action::pin(0), Action::pin(10)), (None, None));
-        assert_eq!(Action::ALL.len(), 83);
+        assert_eq!(Action::ALL.len(), 85);
         assert_eq!(other.action_for(&chord("ctrl+1")), Some(Action::Tab1), "Ctrl+1 is still tab 1");
         assert_eq!(other.action_for(&chord("ctrl+alt+1")), None, "AltGr+1 types");
     }
@@ -1365,7 +1378,7 @@ clear-history = \"ctrl+shift+h\"
         for name in ["search", "flat-view", "show-in-folder", "copy-with-folders", "cut-with-folders"] {
             assert!(Action::from_name(name).is_some(), "{name}");
         }
-        assert_eq!(Action::ALL.len(), 83);
+        assert_eq!(Action::ALL.len(), 85);
     }
 
     #[test]
@@ -1387,7 +1400,7 @@ clear-history = \"ctrl+shift+h\"
         for name in ["command-palette", "quick-open", "calculate-folder-sizes", "save-search"] {
             assert!(Action::from_name(name).is_some(), "{name}");
         }
-        assert_eq!(Action::ALL.len(), 83);
+        assert_eq!(Action::ALL.len(), 85);
     }
 
     #[test]
@@ -1407,7 +1420,7 @@ clear-history = \"ctrl+shift+h\"
         }
         assert_eq!(Action::MakeAlias.title(), "Make Alias");
         assert_eq!(Action::ShowPackageContents.title(), "Show Package Contents");
-        assert_eq!(Action::ALL.len(), 83);
+        assert_eq!(Action::ALL.len(), 85);
     }
 
     #[test]
@@ -1417,7 +1430,7 @@ clear-history = \"ctrl+shift+h\"
         }
         assert_eq!(Action::from_name("share"), Some(Action::Share));
         assert_eq!(Action::Share.title(), "Share…");
-        assert_eq!(Action::ALL.len(), 83);
+        assert_eq!(Action::ALL.len(), 85);
     }
 
     #[test]
@@ -1431,7 +1444,31 @@ clear-history = \"ctrl+shift+h\"
         assert_eq!(fixed_owner(&chord("mod+i", Platform::Mac), Platform::Mac), None);
         assert_eq!(Action::from_name("get-info"), Some(Action::GetInfo));
         assert_eq!(Action::GetInfo.title(), "Get Info");
-        assert_eq!(Action::ALL.len(), 83);
+        assert_eq!(Action::ALL.len(), 85);
+    }
+
+    #[test]
+    fn connect_to_server_has_mod_k() {
+        let chord = |t: &str, p| parse_chord(t, p).unwrap().unwrap();
+        for platform in [Platform::Other, Platform::Mac] {
+            let keys = Shortcuts::defaults(platform);
+            assert_eq!(keys.action_for(&chord("mod+k", platform)), Some(Action::ConnectToServer));
+            assert_eq!(fixed_owner(&chord("mod+k", platform), platform), None);
+        }
+        assert_eq!(Action::from_name("connect-to-server"), Some(Action::ConnectToServer));
+        assert_eq!(Action::ConnectToServer.title(), "Connect to Server…");
+        assert_eq!(Action::ALL.len(), 85);
+    }
+
+    #[test]
+    fn eject_has_mod_e_on_macos_only() {
+        let mac_chord = parse_chord("mod+e", Platform::Mac).unwrap().unwrap();
+        assert_eq!(Shortcuts::defaults(Platform::Mac).action_for(&mac_chord), Some(Action::Eject));
+        assert_eq!(fixed_owner(&mac_chord, Platform::Mac), None);
+        assert_eq!(Shortcuts::defaults(Platform::Other).chord_for(Action::Eject), None);
+        assert_eq!(Action::from_name("eject"), Some(Action::Eject));
+        assert_eq!(Action::Eject.title(), "Eject");
+        assert_eq!(Action::ALL.len(), 85);
     }
 
     #[test]

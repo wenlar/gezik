@@ -38,6 +38,67 @@ pub fn process_alive(pid: u32) -> bool {
     unsafe { libc::kill(pid, 0) == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM) }
 }
 
+/// What a finished helper said (gio, udisksctl).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Ran {
+    pub ok: bool,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+/// Runs `args` (no shell) with `input` on its stdin, its messages in English (`LC_ALL=C`, so
+/// what Gezik looks for in them stays the same), and waits. Blocking: background threads only.
+/// `input` never goes on the command line: it may hold a password (spec 9 §10.5).
+pub fn run_with_input(args: &[&str], input: &str) -> io::Result<Ran> {
+    run_until(args, input, HELPER_LIMIT)
+}
+
+/// How long a helper may take (a server that never answers): it is then stopped.
+const HELPER_LIMIT: Duration = Duration::from_secs(60);
+
+fn run_until(args: &[&str], input: &str, limit: Duration) -> io::Result<Ran> {
+    let (program, rest) = args.split_first().ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
+    let mut child = Command::new(program)
+        .args(rest)
+        .env("LC_ALL", "C")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    // Read on other threads, so a chatty helper never stops on a full pipe.
+    fn read_all(pipe: Option<impl Read + Send + 'static>) -> Option<JoinHandle<Vec<u8>>> {
+        pipe.map(|mut pipe| {
+            std::thread::spawn(move || {
+                let mut bytes = Vec::new();
+                let _ = pipe.read_to_end(&mut bytes);
+                bytes
+            })
+        })
+    }
+    let stdout = read_all(child.stdout.take());
+    let stderr = read_all(child.stderr.take());
+    if let Some(mut stdin) = child.stdin.take() {
+        // A helper that asks nothing closes its end: that is not an error. Dropped: closed.
+        let _ = stdin.write_all(input.as_bytes());
+    }
+    let started = std::time::Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if started.elapsed() > limit {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(io::ErrorKind::TimedOut.into());
+        }
+        std::thread::sleep(POLL);
+    };
+    let text = |thread: Option<JoinHandle<Vec<u8>>>| {
+        String::from_utf8_lossy(&thread.and_then(|t| t.join().ok()).unwrap_or_default()).into_owned()
+    };
+    Ok(Ran { ok: status.success(), stdout: text(stdout), stderr: text(stderr) })
+}
+
 /// The longest command line Gezik starts a program with, kept short of the system's limit:
 /// on Windows 32,000 characters (of 32,767), but 8,000 (of 8,191) for a `.bat` or `.cmd`
 /// `program`, which `cmd.exe` runs and which also rewrites `%`; elsewhere half of `ARG_MAX`
@@ -586,6 +647,33 @@ mod tests {
         let lines: Vec<String> = lines.map(|line| line.trim().to_owned()).collect();
         assert_eq!(lines, ["one", "two"]);
         assert_eq!(child.stderr_text(), "");
+    }
+
+    #[test]
+    fn a_missing_helper_is_not_found() {
+        let err = run_with_input(&["gezik-no-such-helper-9b6"], "").unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+        assert_eq!(run_with_input(&[], "").unwrap_err().kind(), std::io::ErrorKind::InvalidInput);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_input_goes_to_stdin_only() {
+        let ran = run_with_input(&["cat"], "teo\n\nsecret\n").unwrap();
+        assert_eq!(ran, Ran { ok: true, stdout: "teo\n\nsecret\n".into(), stderr: String::new() });
+        let failed = run_with_input(&["sh", "-c", "echo no >&2; exit 3"], "").unwrap();
+        assert!(!failed.ok && failed.stderr == "no\n");
+    }
+
+    #[test]
+    fn a_helper_that_hangs_is_stopped() {
+        let args: &[&str] = if cfg!(windows) { &["ping", "-n", "30", "127.0.0.1"] } else { &["sleep", "30"] };
+        let started = Instant::now();
+        let err = run_until(args, "", Duration::from_millis(300)).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+        assert!(started.elapsed() < Duration::from_secs(5));
+        let quick: &[&str] = if cfg!(windows) { &["cmd", "/c", "echo hi"] } else { &["echo", "hi"] };
+        assert_eq!(run_until(quick, "", Duration::from_secs(10)).unwrap().stdout.trim(), "hi");
     }
 
     #[test]

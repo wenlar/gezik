@@ -5,6 +5,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use gezik_core::elevated::Op;
 use gezik_core::ops::conflict::Facts;
 use gezik_core::ops::paths::{is_within, same_path};
 use gezik_platform::fs;
@@ -188,6 +189,18 @@ impl Task for MoveTask {
                 return;
             }
         }
+    }
+
+    fn as_admin(&self, denied: &[PathBuf]) -> Vec<Op> {
+        // A plain move into a folder only: not an undo, a placing, or a move with folders.
+        if self.back || self.placing || self.kind != TaskKind::Move || !self.parents.is_empty() {
+            return Vec::new();
+        }
+        self.pairs
+            .iter()
+            .filter(|(source, target)| super::hit(denied, source) || super::hit(denied, target))
+            .map(|(source, target)| Op::Move { from: source.clone(), to: target.clone(), replace: false })
+            .collect()
     }
 
     fn run(&self, item: &PlanItem, cx: &RunCx<'_>) -> io::Result<Outcome> {

@@ -102,6 +102,7 @@ export component AppWindow inherits Window {
             MenuItem { title: "Make Alias"; shortcut: root.menu-keys ? @keys(Control + Meta + A) : @keys(); activated => { root.menu-command("make-alias"); } }
             MenuItem { title: "Show Package Contents"; activated => { root.menu-command("show-package-contents"); } }
             MenuItem { title: "Share…"; activated => { root.menu-command("share"); } }
+            MenuItem { title: "Eject"; shortcut: root.menu-keys ? @keys(Control + E) : @keys(); activated => { root.menu-command("eject"); } }
             MenuSeparator { }
             MenuItem { title: "Put Back"; activated => { root.menu-command("put-back"); } }
             MenuItem { title: "Empty Trash…"; shortcut: root.menu-keys ? @keys(Control + Shift + Backspace) : @keys(); activated => { root.menu-command("empty-trash"); } }
@@ -170,6 +171,7 @@ export component AppWindow inherits Window {
             MenuItem { title: "Enclosing Folder"; shortcut: root.menu-keys ? @keys(Control + UpArrow) : @keys(); activated => { root.menu-command("up"); } }
             MenuItem { title: "Show in Folder"; shortcut: root.menu-keys ? @keys(Control + Shift + E) : @keys(); activated => { root.menu-command("show-in-folder"); } }
             MenuItem { title: "Show Trash"; activated => { root.menu-command("show-trash"); } }
+            MenuItem { title: "Connect to Server…"; shortcut: root.menu-keys ? @keys(Control + K) : @keys(); activated => { root.menu-command("connect-to-server"); } }
             MenuSeparator { }
             MenuItem { title: "Go to Folder…"; shortcut: root.menu-keys ? @keys(Control + L) : @keys(); activated => { root.menu-command("focus-path"); } }
             MenuItem { title: "Quick Open…"; shortcut: root.menu-keys ? @keys(Control + P) : @keys(); activated => { root.menu-command("quick-open"); } }
@@ -618,6 +620,7 @@ export component AppWindow inherits Window {
     callback info-enclosed();
     callback info-app-menu(length, length, length, length);
     callback info-change-all();
+    callback info-as-admin();
     callback info-close();
 
     // The tab picker (tab_tools.rs): the tabs the query lets through, the row Enter picks.
@@ -1464,6 +1467,7 @@ export component AppWindow inherits Window {
             enclosed => { root.info-enclosed(); }
             app-menu(x, y, r, t) => { root.info-app-menu(x, y, r, t); }
             change-all => { root.info-change-all(); }
+            as-admin => { root.info-as-admin(); }
             close => { root.info-close(); }
         }
         if root.conflicts-open: ConflictList {

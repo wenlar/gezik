@@ -3,6 +3,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
+use gezik_core::elevated::Op;
 use gezik_core::ops::conflict::{Decision, Facts};
 use gezik_core::ops::paths::{is_within, same_path};
 
@@ -152,6 +153,22 @@ impl Task for CopyTask {
                 return;
             }
         }
+    }
+
+    fn as_admin(&self, denied: &[PathBuf]) -> Vec<Op> {
+        // A plain copy into a folder only: not a duplicate, a template, a "keep both" copy into
+        // its own folder, or a copy with folders.
+        if self.new.is_some() || self.dir.is_none() || !self.parents.is_empty() {
+            return Vec::new();
+        }
+        self.pairs
+            .iter()
+            .zip(&self.presets)
+            .filter(|((source, target), preset)| {
+                preset.is_none() && (super::hit(denied, source) || super::hit(denied, target))
+            })
+            .map(|((source, target), _)| Op::Copy { from: source.clone(), to: target.clone(), replace: false })
+            .collect()
     }
 
     fn run(&self, item: &PlanItem, cx: &RunCx<'_>) -> io::Result<Outcome> {
@@ -624,6 +641,33 @@ mod tests {
             assert_eq!(undo.skipped_changed, 0, "{round}");
             assert!(!dst.exists(), "{round}: nothing is left behind");
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A test that trashes through undo and redo leaves no record in the real trash once its
+    /// thread ends (`test_dir` purges it then), also when it fails.
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn a_test_leaves_nothing_in_the_real_trash() {
+        let in_trash = |dir: &Path| {
+            let items = gezik_platform::trash::list().items;
+            items.iter().filter(|i| i.original.as_deref().is_some_and(|o| is_within(o, dir))).count()
+        };
+        let dir = std::thread::spawn(move || {
+            let dir = test_dir("copy-leaves-no-trash");
+            write(&dir.join("src/a/x.txt"), "x");
+            let items = vec![(dir.join("src/a/x.txt"), PathBuf::from("a").join("x.txt"))];
+            let engine = engine();
+            finish(&engine, engine.submit(Box::new(CopyTask::with_folders(items, &dir.join("dst")))), no_conflicts);
+            finish(&engine, engine.undo().unwrap(), no_conflicts);
+            finish(&engine, engine.redo().unwrap(), no_conflicts);
+            finish(&engine, engine.undo().unwrap(), no_conflicts);
+            assert!(in_trash(&dir) > 0, "the undo went to the real trash");
+            dir
+        })
+        .join()
+        .unwrap();
+        assert_eq!(in_trash(&dir), 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

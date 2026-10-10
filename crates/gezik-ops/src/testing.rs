@@ -16,6 +16,8 @@ pub(crate) fn test_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("gezik-ops-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
+    // What a test trashes or undoes from here leaves the real trash when it ends.
+    gezik_platform::trash::purge_at_thread_end(&dir);
     dir
 }
 
@@ -45,7 +47,10 @@ pub(crate) fn finish(
     job: JobId,
     decide: impl Fn(&[ConflictItem]) -> Vec<Decision>,
 ) -> (Report, Vec<Event>) {
-    let deadline = Instant::now() + Duration::from_secs(30);
+    // Only a guard against a hang: undo and trash go through the system Recycle Bin, which
+    // every test process shares; under a full workspace run a job of a few items there took
+    // over 30 s.
+    let deadline = Instant::now() + Duration::from_secs(300);
     let mut seen = Vec::new();
     // Other jobs' events go back to the queue for their own `finish`.
     let mut others = Vec::new();

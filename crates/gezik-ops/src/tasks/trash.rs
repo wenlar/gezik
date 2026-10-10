@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use gezik_core::elevated::Op;
 use gezik_core::ops::conflict::Facts;
 use gezik_core::ops::paths::path_key;
 use gezik_platform::fs;
@@ -116,6 +117,18 @@ impl Task for TrashTask {
                 Err(err) => sink.failed(path, err),
             }
         }
+    }
+
+    fn as_admin(&self, denied: &[PathBuf]) -> Vec<Op> {
+        // As administrator there is no trash: it is a delete for good (the app asks first).
+        if self.undoing {
+            return Vec::new();
+        }
+        self.items
+            .iter()
+            .filter(|(path, _)| super::hit(denied, path))
+            .map(|(path, _)| Op::Delete(path.clone()))
+            .collect()
     }
 
     fn run(&self, item: &PlanItem, cx: &RunCx<'_>) -> io::Result<Outcome> {

@@ -28,9 +28,14 @@ impl Location {
         match self {
             Location::Drives => None,
             Location::Trash => Some(Location::Drives),
-            Location::Path(path) => Some(match path.parent() {
-                Some(parent) => Location::Path(parent.to_path_buf()),
-                None => Location::Drives,
+            Location::Path(path) => Some(if server_root(path) {
+                Location::Drives
+            } else {
+                match path.parent() {
+                    Some(parent) => Location::Path(parent.to_path_buf()),
+                    // A share's root: the server's shares (Windows), else This PC.
+                    None => share_server(path).map_or(Location::Drives, Location::Path),
+                }
             }),
             Location::Search(spec) => Some(match spec.scope.folder() {
                 Some(folder) => Location::Path(folder.to_path_buf()),
@@ -442,6 +447,19 @@ impl Tabs {
             self.locked.push(id);
         }
     }
+    /// Every tab whose location is on the drive at `root` (a folder, a flat view, a search
+    /// under it) goes to This PC, as a step: Back returns there once the drive is back (spec
+    /// 9 §7.4, before an eject). Returns whether the active tab moved.
+    pub fn leave(&mut self, root: &Path) -> bool {
+        let mut active = false;
+        for (i, history) in self.tabs.iter_mut().enumerate() {
+            if history.location().folder().is_some_and(|f| crate::ops::paths::is_within(f, root)) {
+                history.navigate(Location::Drives);
+                active |= i == self.active;
+            }
+        }
+        active
+    }
     /// The saved search `old` is now called `new` (renamed, or replaced under another spelling):
     /// the tabs showing it, and their back and forward steps, take the new title. Whether any did.
     pub fn rename_search(&mut self, old: &str, new: &str) -> bool {
@@ -523,6 +541,23 @@ pub const DRIVES_NAME: &str = if cfg!(target_os = "macos") { "Computer" } else {
 /// The trash's name: Explorer's "Recycle Bin", Finder's and the freedesktop desktops' "Trash".
 pub const TRASH_NAME: &str = if cfg!(windows) { "Recycle Bin" } else { "Trash" };
 
+/// A server alone (`\\nas`), on Windows: its shares are listed (spec 9 §7.4).
+fn server_root(path: &Path) -> bool {
+    cfg!(windows) && crate::path_text::server_only(&path.to_string_lossy()).is_some()
+}
+
+/// `\\server` for a path on one of its shares (`\\server\share\…`).
+fn share_server(path: &Path) -> Option<PathBuf> {
+    use std::path::Prefix;
+    let Some(Component::Prefix(prefix)) = path.components().next() else { return None };
+    match prefix.kind() {
+        Prefix::UNC(server, _) | Prefix::VerbatimUNC(server, _) => {
+            Some(PathBuf::from(format!(r"\\{}", server.to_string_lossy())))
+        }
+        _ => None,
+    }
+}
+
 /// The address bar parts for `location`: always the drives (`DRIVES_NAME`) first, then the path from its
 /// root. With more than `max_parts` path parts, the leading ones collapse into one "…"
 /// part that goes to the first hidden folder's parent... (see tests).
@@ -541,6 +576,11 @@ pub fn crumbs(location: &Location, max_parts: usize) -> Vec<Crumb> {
     }
     let mut out = vec![Crumb { label: DRIVES_NAME.to_owned(), location: Location::Drives }];
     let Location::Path(path) = location else { return out };
+    if server_root(path) {
+        let label = path.to_string_lossy().trim_end_matches(['\\', '/']).to_owned();
+        out.push(Crumb { label, location: location.clone() });
+        return out;
+    }
 
     let mut parts: Vec<Crumb> = Vec::new();
     let mut acc = PathBuf::new();
@@ -800,6 +840,42 @@ mod tests {
     fn parent_of_windows_drive_root_is_drives() {
         assert_eq!(p(r"C:\").parent(), Some(Location::Drives));
         assert_eq!(p(r"C:\Users").parent(), Some(p(r"C:\")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_server_and_its_shares() {
+        assert_eq!(p(r"\\nas\foto").parent(), Some(p(r"\\nas")), "up from a share: the server's shares");
+        assert_eq!(p(r"\\nas\foto\").parent(), Some(p(r"\\nas")));
+        assert_eq!(p(r"\\nas").parent(), Some(Location::Drives));
+        assert_eq!(p(r"\\nas\").parent(), Some(Location::Drives));
+        assert_eq!(p(r"\\nas\foto\x").parent(), Some(p(r"\\nas\foto\")));
+        let c = crumbs(&p(r"\\nas"), 4);
+        assert_eq!(labels(&c), [DRIVES_NAME, r"\\nas"]);
+        assert_eq!(c[1].location, p(r"\\nas"));
+    }
+
+    #[test]
+    fn leaving_a_drive_moves_its_tabs_to_this_pc() {
+        let (root, inside, other) = if cfg!(windows) {
+            (r"E:\", r"e:\Photos", r"C:\Users")
+        } else {
+            ("/media/u/USB", "/media/u/USB/Photos", "/home/u")
+        };
+        let mut tabs = Tabs::new(p(inside));
+        tabs.open(p(other), false);
+        tabs.open(p(root), false);
+        tabs.open(Location::Trash, false);
+        tabs.open(Location::Flat(PathBuf::from(inside)), false);
+        assert!(tabs.leave(Path::new(root)), "the active tab was on it");
+        let on = |l: Location| tabs.iter().filter(|h| *h.location() == l).count();
+        assert_eq!(on(Location::Drives), 3, "the folder, the root and the flat view");
+        assert_eq!((on(p(other)), on(Location::Trash)), (1, 1), "the others stay");
+        assert!(tabs.active_mut().back());
+        assert_eq!(*tabs.active().location(), p(inside), "Back returns once the drive is back");
+        let mut once = Tabs::new(p(other));
+        assert!(!once.leave(Path::new(root)), "nothing on it");
+        assert_eq!(*once.active().location(), p(other));
     }
 
     // ---- History ----

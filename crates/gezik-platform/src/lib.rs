@@ -7,6 +7,8 @@ pub mod cloud_pin;
 mod datetime;
 pub mod dnd;
 mod drives;
+pub mod eject;
+pub mod elevate;
 pub mod everything;
 pub mod finder;
 pub mod fs;
@@ -19,6 +21,7 @@ mod linux;
 mod locale;
 #[cfg(target_os = "macos")]
 mod mac;
+pub mod network;
 pub mod open_with;
 mod picture;
 pub mod priority;
@@ -73,6 +76,8 @@ pub enum ShellVerb {
     Rename,
     /// Explorer's "Create shortcut".
     Link,
+    /// Explorer's Eject (and Disconnect): Gezik lets go of the drive first, then runs it itself.
+    Eject,
 }
 
 impl ShellVerb {
@@ -85,6 +90,9 @@ impl ShellVerb {
             b"delete" => Some(ShellVerb::Delete),
             b"rename" => Some(ShellVerb::Rename),
             b"link" => Some(ShellVerb::Link),
+            // shortcut: `disconnect` (a mapped drive's) is unconfirmed; eject_probe on a mapped
+            // drive checks it (screen test). If its name differs, Explorer's own runs.
+            b"eject" | b"disconnect" => Some(ShellVerb::Eject),
             _ => None,
         }
     }
@@ -158,5 +166,7 @@ mod tests {
         assert_eq!(ShellVerb::from_name(b"delete"), Some(ShellVerb::Delete));
         assert_eq!(ShellVerb::from_name(b"Paste"), Some(ShellVerb::Paste));
         assert_eq!(ShellVerb::from_name(b"properties"), None);
+        assert_eq!(ShellVerb::from_name(b"Eject"), Some(ShellVerb::Eject));
+        assert_eq!(ShellVerb::from_name(b"disconnect"), Some(ShellVerb::Eject));
     }
 }
