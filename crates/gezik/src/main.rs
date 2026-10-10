@@ -711,6 +711,12 @@ fn after_send(sent: instance::Sent, shell: bool) -> Next {
     }
 }
 
+/// `--new-window` with `[system] single-instance = false`: no Gezik answers it, yet it is a
+/// second process as before 10g (no saved windows, no state written, not the tray's).
+fn own_process(new_window: bool, single_instance: bool) -> bool {
+    new_window && !single_instance
+}
+
 /// Hands `target` to Explorer (decisions 2, 3), unless fallbacks come so fast that Gezik and
 /// Explorer are sending places back and forth: then it stops and offers once to give folders
 /// back to Explorer. The exit code.
@@ -907,6 +913,8 @@ fn main() -> Result<(), slint::PlatformError> {
     let saved_state = config.as_ref().map(ConfigStore::load_state).unwrap_or_default();
     // As apply_config_and_start, split so the channel is claimed before the session is chosen.
     let initial_settings = apply_config(&files).settings;
+    // With single instance off, --new-window found no Gezik to ask: still a process of its own.
+    secondary |= own_process(cli.new_window, initial_settings.system.single_instance);
     let mut taken = false;
     let listener = if !secondary && initial_settings.system.single_instance {
         match instance::claim(&key) {
@@ -1278,6 +1286,9 @@ mod tests {
         assert_eq!(after_send(Failed, true), Next::Explorer, "--shell");
         assert_eq!(after_send(Delivered, true), Next::Exit);
         assert_eq!(after_send(NoInstance, true), Next::First);
+        assert!(own_process(true, false), "single instance off: a process of its own");
+        assert!(!own_process(true, true), "none running: the first one");
+        assert!(!own_process(false, false));
         for new_window in [false, true] {
             let request = cli::Cli { new_window, ..cli::Cli::default() }.request();
             assert_eq!(request.new_window, new_window);

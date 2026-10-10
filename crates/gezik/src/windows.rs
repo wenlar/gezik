@@ -55,6 +55,9 @@ thread_local! {
     /// macOS: the Window menu's list of windows is rewritten once the event at hand is done.
     #[cfg(target_os = "macos")]
     static LISTING: Cell<bool> = const { Cell::new(false) };
+    /// macOS: the windows the Window menu lists now (rewritten only when they change).
+    #[cfg(target_os = "macos")]
+    static LISTED: RefCell<Vec<(u32, String)>> = const { RefCell::new(Vec::new()) };
 }
 
 /// The parts of a window that are kept by window: each slot forgets a closed window's
@@ -419,9 +422,14 @@ pub fn move_tab_to_new(index: usize) {
         return;
     }
     let (Some(location), Some(tab)) = (nav.tab_locations().get(index).cloned(), nav.tab_id(index)) else { return };
+    // The new window opens at the tab's folder (a search or a flat view: the start folder, no
+    // walk started for nothing); the tab then takes that first tab's place (taken only now:
+    // a window that cannot open loses no tab).
+    let location = match location {
+        Location::Path(dir) => Location::Path(dir),
+        _ => nav.start(),
+    };
     let from = current();
-    // The new window opens at the tab's folder; the tab then takes that first tab's place
-    // (taken only now: a window that cannot open loses no tab).
     open_beside_with(Session::single(location), Vec::new(), move |_| {
         let Some(taken) = enter(from, || nav.tab_index(tab).and_then(|i| nav.take_tab(i))) else { return };
         let new = panes::active_nav();
@@ -439,13 +447,14 @@ pub fn move_tab_to(index: usize, to: WindowId) {
         return;
     }
     let nav = panes::active_nav();
-    let only = !dual::is_open() && nav.tab_count() == 1;
-    let Some(tab) = nav.take_tab(index) else { return };
+    let closes = !dual::is_open() && nav.tab_count() == 1 && others_open(from);
+    let taken = if closes { nav.take_last_tab() } else { nav.take_tab(index) };
+    let Some(tab) = taken else { return };
     with_window(to, |window| {
         panes::active_nav().put_tab(tab, None);
         crate::single_instance::raise(window);
     });
-    if only && others_open(from) {
+    if closes {
         CLOSING.with(|c| c.borrow_mut().push(from));
         close_later(from);
     }
@@ -477,14 +486,21 @@ pub fn titles_changed() {
     if !LISTING.with(|l| l.replace(true)) {
         slint::Timer::single_shot(std::time::Duration::ZERO, || {
             LISTING.with(|l| l.set(false));
-            let entries: Vec<crate::MenuEntry> = by_age()
+            let list: Vec<(u32, String)> =
+                by_age().iter().map(|(id, window)| (id.0, window.get_title_text().to_string())).collect();
+            // muda rebuilds the whole menu on a new model: not for every step into a folder.
+            if LISTED.with(|l| *l.borrow() == list) {
+                return;
+            }
+            let entries: Vec<crate::MenuEntry> = list
                 .iter()
-                .map(|(id, window)| crate::MenuEntry {
-                    id: i32::try_from(id.0).unwrap_or(-1),
-                    title: crate::context_menu::menu_title(&window.get_title_text()).into(),
+                .map(|(id, title)| crate::MenuEntry {
+                    id: i32::try_from(*id).unwrap_or(-1),
+                    title: crate::context_menu::menu_title(title).into(),
                     enabled: true,
                 })
                 .collect();
+            LISTED.with(|l| *l.borrow_mut() = list);
             let model = slint::ModelRc::new(slint::VecModel::from(entries));
             for_each(|window| window.set_bar_windows(model.clone()));
         });
@@ -504,12 +520,15 @@ pub fn raise_number(number: i32) {
 pub fn open_for(opens: Vec<crate::cli::Open>, missing: Vec<std::path::PathBuf>, trash: bool) {
     let start = panes::active_nav().start();
     let (session, select) = new_window_tabs(opens, trash, &start);
-    open_beside_with(session, select, move |window| {
+    open_beside_with(session, select, move |_| {
         if !missing.is_empty() {
             let names: Vec<String> = missing.iter().map(|path| path.display().to_string()).collect();
             panes::active_view().note(format!("{}: not found", names.join(", ")));
         }
-        crate::single_instance::raise(window);
+        // As a request in the window used last does: after a --background start the windows
+        // count as shown from now on (what waits for that runs), and the new one (in front of
+        // the focus order) is raised.
+        resident::reveal();
     });
 }
 

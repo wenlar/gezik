@@ -783,6 +783,16 @@ impl Navigator {
         taken
     }
 
+    /// Takes the only tab out for another window, its own about to close (deviation 11): no tab
+    /// takes its place on screen (nothing is listed for a window that goes), a load or search
+    /// of it stops.
+    pub fn take_last_tab(&self) -> Option<(History, bool)> {
+        let start = self.start();
+        let taken = self.with_tabs(|tabs| tabs.take(0, start));
+        crate::panes::with_id(self.id(), |p| p.search.leaving());
+        taken
+    }
+
     /// Shows a tab taken from the other pane at `at` (None: after the active tab).
     pub fn put_tab(&self, (history, locked): (History, bool), at: Option<usize>) {
         let at = at.unwrap_or_else(|| self.active_index() + 1);

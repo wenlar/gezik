@@ -2294,6 +2294,7 @@ fn from_submenu(id: u32) -> bool {
         || (SIZE_FORMAT_FIRST..SIZE_FORMAT_FIRST + SizeFormat::ALL.len() as u32).contains(&id)
         || (GROUP_BY_NONE..=GROUP_BY_SIZE).contains(&id)
         || (GROUP_MOVE_FIRST..GROUP_MOVE_FIRST + GROUP_MAX).contains(&id)
+        || (WINDOW_FIRST..WINDOW_FIRST + WINDOW_MAX).contains(&id)
         || id == GROUP_NEW
         || id == GROUP_NONE
         || (TEMPLATE_FIRST..TEMPLATE_FIRST + TEMPLATE_MAX).contains(&id)
@@ -3064,6 +3065,8 @@ mod tests {
         );
         assert_eq!(window_items(&titles).len(), WINDOW_MAX as usize, "more are left out");
         assert_eq!(window_items(&titles).last().map(|i| i.0), Some(WINDOW_FIRST + WINDOW_MAX - 1));
+        assert!(from_submenu(WINDOW_FIRST) && from_submenu(WINDOW_FIRST + WINDOW_MAX - 1), "the keyboard comes back");
+        assert!(!from_submenu(MOVE_TAB_WINDOW));
     }
 
     #[test]
