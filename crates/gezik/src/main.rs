@@ -216,6 +216,7 @@ fn perform(
         Action::SelectAll => view.select_all(),
         Action::ViewList => view.set_mode(gezik_core::view::ViewMode::List),
         Action::ViewGrid => view.set_mode(gezik_core::view::ViewMode::Grid),
+        Action::ViewColumns => view.show_columns(&nav.active_location()),
         Action::TogglePreview => preview.toggle_pane(),
         Action::QuickLook => preview.toggle_quick_look(),
         Action::Share => finder_menu::share_selection(window, view),

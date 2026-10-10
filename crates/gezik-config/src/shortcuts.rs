@@ -259,6 +259,8 @@ pub enum Action {
     SelectAll,
     ViewList,
     ViewGrid,
+    /// Miller columns (spec 10 §7); the list in search results, a flat view, the trash, This PC.
+    ViewColumns,
     TogglePreview,
     QuickLook,
     Copy,
@@ -401,7 +403,7 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Action; 100] = [
+    pub const ALL: [Action; 101] = [
         Action::NewTab,
         Action::NewWindow,
         Action::CloseTab,
@@ -415,6 +417,7 @@ impl Action {
         Action::SelectAll,
         Action::ViewList,
         Action::ViewGrid,
+        Action::ViewColumns,
         Action::TogglePreview,
         Action::QuickLook,
         Action::Copy,
@@ -519,6 +522,7 @@ impl Action {
             Action::SelectAll => "select-all",
             Action::ViewList => "view-list",
             Action::ViewGrid => "view-grid",
+            Action::ViewColumns => "view-columns",
             Action::TogglePreview => "toggle-preview",
             Action::QuickLook => "quick-look",
             Action::Copy => "copy",
@@ -625,6 +629,7 @@ impl Action {
             Action::SelectAll => "Select All",
             Action::ViewList => "View as List",
             Action::ViewGrid => "View as Grid",
+            Action::ViewColumns => "View as Columns",
             Action::TogglePreview => "Show Preview",
             Action::QuickLook => "Quick Look",
             Action::Copy => "Copy",
@@ -795,6 +800,9 @@ impl Action {
             (Action::SelectAll, _) => &["mod+a"],
             (Action::ViewList, _) => &["mod+shift+1"],
             (Action::ViewGrid, _) => &["mod+shift+2"],
+            // ⌃⌘3: ⇧⌘3 is the macOS screenshot, ⌘3 is tab 3 (spec 10 §7.1).
+            (Action::ViewColumns, Platform::Mac) => &["mod+ctrl+3"],
+            (Action::ViewColumns, Platform::Other) => &["ctrl+shift+3"],
             (Action::TogglePreview, _) => &["alt+p"],
             (Action::QuickLook, _) => &["space"],
             (Action::Copy, _) => &["mod+c"],
@@ -1151,7 +1159,7 @@ mod tests {
             assert_eq!(fixed_owner(&cmd_option, Platform::Mac), None);
         }
         assert_eq!((Action::pin(0), Action::pin(10)), (None, None));
-        assert_eq!(Action::ALL.len(), 100);
+        assert_eq!(Action::ALL.len(), 101);
         assert_eq!(other.action_for(&chord("ctrl+1")), Some(Action::Tab1), "Ctrl+1 is still tab 1");
         assert_eq!(other.action_for(&chord("ctrl+alt+1")), None, "AltGr+1 types");
     }
@@ -1620,7 +1628,7 @@ clear-history = \"ctrl+shift+h\"
         for name in ["search", "flat-view", "show-in-folder", "copy-with-folders", "cut-with-folders"] {
             assert!(Action::from_name(name).is_some(), "{name}");
         }
-        assert_eq!(Action::ALL.len(), 100);
+        assert_eq!(Action::ALL.len(), 101);
     }
 
     #[test]
@@ -1642,7 +1650,7 @@ clear-history = \"ctrl+shift+h\"
         for name in ["command-palette", "quick-open", "calculate-folder-sizes", "save-search"] {
             assert!(Action::from_name(name).is_some(), "{name}");
         }
-        assert_eq!(Action::ALL.len(), 100);
+        assert_eq!(Action::ALL.len(), 101);
     }
 
     #[test]
@@ -1662,7 +1670,7 @@ clear-history = \"ctrl+shift+h\"
         }
         assert_eq!(Action::MakeAlias.title(), "Make Alias");
         assert_eq!(Action::ShowPackageContents.title(), "Show Package Contents");
-        assert_eq!(Action::ALL.len(), 100);
+        assert_eq!(Action::ALL.len(), 101);
     }
 
     #[test]
@@ -1672,7 +1680,7 @@ clear-history = \"ctrl+shift+h\"
         }
         assert_eq!(Action::from_name("share"), Some(Action::Share));
         assert_eq!(Action::Share.title(), "Share…");
-        assert_eq!(Action::ALL.len(), 100);
+        assert_eq!(Action::ALL.len(), 101);
     }
 
     #[test]
@@ -1686,7 +1694,7 @@ clear-history = \"ctrl+shift+h\"
         assert_eq!(fixed_owner(&chord("mod+i", Platform::Mac), Platform::Mac), None);
         assert_eq!(Action::from_name("get-info"), Some(Action::GetInfo));
         assert_eq!(Action::GetInfo.title(), "Get Info");
-        assert_eq!(Action::ALL.len(), 100);
+        assert_eq!(Action::ALL.len(), 101);
     }
 
     #[test]
@@ -1699,7 +1707,7 @@ clear-history = \"ctrl+shift+h\"
         }
         assert_eq!(Action::from_name("connect-to-server"), Some(Action::ConnectToServer));
         assert_eq!(Action::ConnectToServer.title(), "Connect to Server…");
-        assert_eq!(Action::ALL.len(), 100);
+        assert_eq!(Action::ALL.len(), 101);
     }
 
     #[test]
@@ -1718,7 +1726,7 @@ clear-history = \"ctrl+shift+h\"
                 assert_eq!(Shortcuts::defaults(platform).chord_for(action), None, "{name}");
             }
         }
-        assert_eq!(Action::ALL.len(), 100);
+        assert_eq!(Action::ALL.len(), 101);
     }
 
     #[test]
@@ -1728,7 +1736,7 @@ clear-history = \"ctrl+shift+h\"
         for platform in [Platform::Other, Platform::Mac] {
             assert_eq!(Shortcuts::defaults(platform).chord_for(Action::RevealInTree), None);
         }
-        assert_eq!(Action::ALL.len(), 100);
+        assert_eq!(Action::ALL.len(), 101);
     }
 
     #[test]
@@ -1766,7 +1774,24 @@ clear-history = \"ctrl+shift+h\"
         assert_eq!(fixed_owner(&chord("mod+ctrl+u", Platform::Mac), Platform::Mac), None);
         assert_eq!(Action::from_name("sync-browsing"), Some(Action::SyncBrowsing));
         assert_eq!(Action::from_name("other-pane-same-folder"), Some(Action::OtherPaneSameFolder));
-        assert_eq!(Action::ALL.len(), 100);
+        assert_eq!(Action::ALL.len(), 101);
+    }
+
+    #[test]
+    fn view_columns_has_its_keys_and_they_are_free() {
+        let chord = |t: &str, p| parse_chord(t, p).unwrap().unwrap();
+        for (text, platform) in [("ctrl+shift+3", Platform::Other), ("mod+ctrl+3", Platform::Mac)] {
+            let c = chord(text, platform);
+            assert_eq!(Shortcuts::defaults(platform).action_for(&c), Some(Action::ViewColumns), "{text}");
+            assert_eq!(fixed_owner(&c, platform), None, "{text}");
+        }
+        // ⇧⌘3 is the macOS screenshot; ⌘3 stays tab 3.
+        let mac = Shortcuts::defaults(Platform::Mac);
+        assert_eq!(mac.action_for(&chord("mod+shift+3", Platform::Mac)), None);
+        assert_eq!(mac.action_for(&chord("mod+3", Platform::Mac)), Some(Action::Tab3));
+        assert_eq!(Action::from_name("view-columns"), Some(Action::ViewColumns));
+        assert_eq!(Action::ViewColumns.title(), "View as Columns");
+        assert_eq!(Action::ALL.len(), 101);
     }
 
     #[test]
@@ -1846,7 +1871,7 @@ refresh = [\"f5\", \"ctrl+r\"]
         assert_eq!(Shortcuts::defaults(Platform::Other).chord_for(Action::Eject), None);
         assert_eq!(Action::from_name("eject"), Some(Action::Eject));
         assert_eq!(Action::Eject.title(), "Eject");
-        assert_eq!(Action::ALL.len(), 100);
+        assert_eq!(Action::ALL.len(), 101);
     }
 
     #[test]

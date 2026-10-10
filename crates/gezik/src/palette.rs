@@ -416,6 +416,7 @@ mod tests {
                 action,
                 Action::ViewList
                     | Action::ViewGrid
+                    | Action::ViewColumns
                     | Action::GroupNone
                     | Action::GroupType
                     | Action::GroupDate

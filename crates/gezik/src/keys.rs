@@ -767,6 +767,7 @@ mod tests {
                 Action::SelectAll => "ctrl+a",
                 Action::ViewList => "ctrl+shift+1",
                 Action::ViewGrid => "ctrl+shift+2",
+                Action::ViewColumns => "ctrl+shift+3",
                 Action::TogglePreview => "alt+p",
                 Action::QuickLook => "space",
                 Action::Copy => "ctrl+c",
@@ -917,16 +918,23 @@ mod tests {
     #[test]
     fn ctrl_shift_and_a_digit_is_the_digit_whatever_shift_types() {
         let defaults = Shortcuts::defaults(Platform::Other);
-        // US: Shift+1 types !, Shift+2 @; Turkish Q: Shift+2 types '.
-        for (text, digit, action) in
-            [("!", '1', Action::ViewList), ("@", '2', Action::ViewGrid), ("'", '2', Action::ViewGrid)]
-        {
+        // US: Shift+1 types !, Shift+2 @, Shift+3 #; Turkish Q: Shift+2 types ', Shift+3 ^.
+        for (text, digit, action) in [
+            ("!", '1', Action::ViewList),
+            ("@", '2', Action::ViewGrid),
+            ("'", '2', Action::ViewGrid),
+            ("#", '3', Action::ViewColumns),
+            ("^", '3', Action::ViewColumns),
+        ] {
             let got =
                 chord_from_press(text, Physical::Digit(digit), true, false, true, false, Platform::Other).unwrap();
             assert_eq!(defaults.action_for(&got), Some(action), "{text}");
         }
         let cmd = chord_from_press("!", Physical::Digit('1'), true, false, true, false, Platform::Mac).unwrap();
         assert_eq!(Shortcuts::defaults(Platform::Mac).action_for(&cmd), Some(Action::ViewList));
+        // ⌃⌘3 (Slint's `control` is ⌘, `meta` ⌃).
+        let columns = chord_from_press("3", Physical::Digit('3'), true, false, false, true, Platform::Mac).unwrap();
+        assert_eq!(Shortcuts::defaults(Platform::Mac).action_for(&columns), Some(Action::ViewColumns));
         // AltGr (Ctrl+Alt on Windows) types what the layout says: Turkish Q AltGr+7 is `{`.
         assert_eq!(chord_from_press("{", Physical::Digit('7'), true, true, false, false, Platform::Other), None);
         // Plain Shift+1 types `!`: no chord.

@@ -781,7 +781,8 @@ impl Settings {
 
 fn parse_view(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> ViewDefaults {
     let mut out = ViewDefaults::default();
-    if let Some(mode) = view_choice(table, "mode", "\"list\" or \"grid\"", ViewMode::parse, file, warnings) {
+    if let Some(mode) = view_choice(table, "mode", "\"list\", \"grid\" or \"columns\"", ViewMode::parse, file, warnings)
+    {
         out.view.mode = mode;
     }
     let keys = "\"name\", \"modified\", \"created\", \"type\" or \"size\"";

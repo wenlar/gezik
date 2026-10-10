@@ -1425,6 +1425,16 @@ impl View {
         self.change_view(|v| v.mode = mode);
     }
 
+    /// `view-columns`: Miller columns in a folder; search results, a flat view, the trash and
+    /// This PC have no chain of folders and take the list (spec 10 §7.3).
+    pub fn show_columns(&self, location: &gezik_core::nav::Location) {
+        if gezik_core::columns::shows(location) {
+            return self.set_mode(ViewMode::Columns);
+        }
+        self.set_mode(ViewMode::List);
+        self.set_note("Columns show folders only: the list is shown here".to_owned());
+    }
+
     pub fn set_grid_size(&self, size: GridSize) {
         self.change_view(|v| v.grid_size = size);
     }

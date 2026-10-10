@@ -1,4 +1,4 @@
-//! How a folder is shown: list or grid, sort order, grid size, and the list's columns.
+//! How a folder is shown: list, grid or columns, sort order, grid size, and the list's columns.
 
 pub use crate::sort::{SortDir, SortKey, SortSpec};
 
@@ -7,6 +7,8 @@ pub enum ViewMode {
     #[default]
     List,
     Grid,
+    /// Miller columns (spec 10 §7); only a folder shows them (`columns::shows`).
+    Columns,
 }
 
 impl ViewMode {
@@ -14,11 +16,12 @@ impl ViewMode {
         match self {
             ViewMode::List => "list",
             ViewMode::Grid => "grid",
+            ViewMode::Columns => "columns",
         }
     }
 
     pub fn parse(text: &str) -> Option<ViewMode> {
-        [ViewMode::List, ViewMode::Grid].into_iter().find(|m| m.as_str() == text)
+        [ViewMode::List, ViewMode::Grid, ViewMode::Columns].into_iter().find(|m| m.as_str() == text)
     }
 }
 
@@ -384,7 +387,7 @@ mod tests {
 
     #[test]
     fn names_round_trip() {
-        for mode in [ViewMode::List, ViewMode::Grid] {
+        for mode in [ViewMode::List, ViewMode::Grid, ViewMode::Columns] {
             assert_eq!(ViewMode::parse(mode.as_str()), Some(mode));
         }
         for size in [GridSize::Small, GridSize::Medium, GridSize::Large] {

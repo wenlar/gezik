@@ -68,6 +68,7 @@ mod tests {
     fn round_trips() {
         let folders = vec![
             folder(r"C:\Pictures", ViewMode::Grid, 7),
+            folder("/home/me/Kod", ViewMode::Columns, 2),
             FolderView {
                 view: ViewSettings {
                     mode: ViewMode::List,

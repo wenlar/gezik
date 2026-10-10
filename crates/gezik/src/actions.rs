@@ -147,6 +147,7 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         | Action::SelectAll
         | Action::ViewList
         | Action::ViewGrid
+        | Action::ViewColumns
         | Action::TogglePreview
         | Action::QuickLook
         | Action::Share

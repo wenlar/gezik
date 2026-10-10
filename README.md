@@ -304,7 +304,7 @@ quick-look = "system"     # macOS: Space opens the system Quick Look panel, or "
 | Type a path | Ctrl+L | ⌘L |
 | Refresh | F5 or Ctrl+R (Ctrl+R with two panes) | ⌘R |
 | Select all | Ctrl+A | ⌘A |
-| List view / grid view | Ctrl+Shift+1 / Ctrl+Shift+2 | ⌘⇧1 / ⌘⇧2 |
+| List / grid / columns view | Ctrl+Shift+1 / Ctrl+Shift+2 / Ctrl+Shift+3 | ⌘⇧1 / ⌘⇧2 / ⌃⌘3 |
 | Show or hide the preview pane | Alt+P | Alt+P |
 | Quick look (only while the file list has focus) | Space | Space |
 | Show hidden items | Ctrl+H | ⌘⇧. |

@@ -123,6 +123,7 @@ export component AppWindow inherits Window {
             title: "View";
             MenuItem { title: "as List"; shortcut: root.menu-keys ? @keys(Control + Shift + "1") : @keys(); activated => { root.menu-command("view-list"); } }
             MenuItem { title: "as Grid"; shortcut: root.menu-keys ? @keys(Control + Shift + "2") : @keys(); activated => { root.menu-command("view-grid"); } }
+            MenuItem { title: "as Columns"; shortcut: root.menu-keys ? @keys(Control + Meta + "3") : @keys(); activated => { root.menu-command("view-columns"); } }
             Menu {
                 title: "Group By";
                 MenuItem { title: "None"; activated => { root.menu-command("group-none"); } }
