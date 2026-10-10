@@ -162,8 +162,10 @@ pub fn parse_chord(text: &str, platform: Platform) -> Result<Option<Chord>, Stri
 /// `[system] hotkey` (spec 9 §9.2, §13.1): the chord syntax plus `win`, `super`, `cmd` and
 /// `meta` for the logo key (`meta`), `option` for Alt; `mod` is Cmd on macOS, Ctrl elsewhere.
 /// `""` is off (`Ok(None)`); there is no default. A system-wide shortcut takes its key from
-/// every app, so only a letter, a digit or F1-F12, with Ctrl, Alt or the logo key; never
-/// Ctrl+Alt (AltGr types with it); on macOS with ⌘ or ⌃ (macOS 15 refuses ⌥ or ⇧ alone).
+/// every app, so only a letter, a digit or F1-F12, with the logo key or two of Ctrl, Alt and
+/// Shift (one alone is every app's Ctrl+C, Alt+F4, Alt+<menu letter>); never Ctrl+Alt (AltGr
+/// types with it); not the system's own Win+L/D/E/R or Win+<digit>. On macOS ⌘ or ⌃ with ⌥ or
+/// ⇧ (⌘ alone is every app's Quit, Copy, Close; macOS 15 refuses ⌥ or ⇧ alone).
 /// An error is a phrase that follows the quoted text: `"ctrl+alt+e" uses Ctrl+Alt, …`.
 pub fn parse_hotkey(text: &str, platform: Platform) -> Result<Option<Chord>, String> {
     let text = text.trim().to_ascii_lowercase();
@@ -199,14 +201,26 @@ pub fn parse_hotkey(text: &str, platform: Platform) -> Result<Option<Chord>, Str
             other => return Err(format!("has an unknown modifier \"{other}\"")),
         }
     }
+    if platform == Platform::Mac {
+        if !(chord.meta || chord.ctrl) || !(chord.alt || chord.shift) {
+            return Err("needs ⌘ (cmd) or ⌃ (ctrl) with ⌥ (alt) or ⇧ (shift) on macOS".to_owned());
+        }
+        return Ok(Some(chord));
+    }
     if chord.ctrl && chord.alt {
         return Err("uses Ctrl+Alt, which types AltGr characters".to_owned());
     }
-    if platform == Platform::Mac && !chord.meta && !chord.ctrl {
-        return Err("needs ⌘ (cmd) or ⌃ (ctrl) on macOS".to_owned());
+    let alone = !chord.ctrl && !chord.alt && !chord.shift;
+    let system_own = match chord.key {
+        Key::Char(c) => c.is_ascii_digit() || (alone && matches!(c, 'l' | 'd' | 'e' | 'r')),
+        _ => false,
+    };
+    if chord.meta && system_own {
+        return Err("belongs to the system (Win+L locks; Win+D, E, R and Win+<digit> are Explorer's)".to_owned());
     }
-    if !chord.ctrl && !chord.alt && !chord.meta {
-        return Err("needs Ctrl, Alt or the Windows/Super key".to_owned());
+    // Ctrl+Alt is refused above, so two of the three is Ctrl+Shift or Alt+Shift.
+    if !chord.meta && !(chord.shift && (chord.ctrl || chord.alt)) {
+        return Err("needs two of Ctrl, Alt and Shift (Ctrl+Shift or Alt+Shift) or the Windows/Super key".to_owned());
     }
     Ok(Some(chord))
 }
@@ -1601,35 +1615,55 @@ clear-history = \"ctrl+shift+h\"
             Ok(chord(false, true, false, true, Key::Char('e'))),
             "cmd is the logo key everywhere"
         );
-        assert_eq!(win("meta + alt + 7"), Ok(chord(false, true, false, true, Key::Char('7'))), "spaces around +");
+        assert_eq!(win("meta + alt + k"), Ok(chord(false, true, false, true, Key::Char('k'))), "spaces around +");
+        assert_eq!(win("win+g"), Ok(chord(false, false, false, true, Key::Char('g'))), "the logo key alone is enough");
+        assert_eq!(win("win+f9"), Ok(chord(false, false, false, true, Key::F(9))));
         assert_eq!(win("ctrl+shift+f12"), Ok(chord(true, false, true, false, Key::F(12))));
+        assert_eq!(win("alt+shift+7"), Ok(chord(false, true, true, false, Key::Char('7'))));
         assert_eq!(win("mod+shift+g"), Ok(chord(true, false, true, false, Key::Char('g'))), "mod is Ctrl off macOS");
         assert_eq!(mac("mod+alt+e"), Ok(chord(false, true, false, true, Key::Char('e'))), "mod is Cmd on macOS");
         assert_eq!(mac("option+cmd+e"), Ok(chord(false, true, false, true, Key::Char('e'))));
+        assert!(mac("cmd+shift+f5").is_ok());
+        assert!(mac("ctrl+shift+e").is_ok(), "⌃⇧ is enough on macOS");
+        assert!(mac("ctrl+alt+e").is_ok(), "⌃⌥ is no AltGr on macOS");
         let refused = |result: Result<Option<Chord>, String>, why: &str| {
             let err = result.unwrap_err();
             assert!(err.contains(why), "{err} should say {why}");
         };
         refused(win("ctrl+alt+e"), "uses Ctrl+Alt, which types AltGr characters");
         refused(win("ctrl+alt+shift+f11"), "AltGr");
-        refused(win("e"), "needs Ctrl, Alt or the Windows/Super key");
-        refused(win("shift+e"), "needs Ctrl, Alt or the Windows/Super key");
-        refused(win("f12"), "needs Ctrl, Alt");
+        refused(win("win+ctrl+alt+k"), "AltGr");
+        // One modifier or none: every app's own keys (copy, paste, close, menu mnemonics).
+        let two = "needs two of Ctrl, Alt and Shift (Ctrl+Shift or Alt+Shift) or the Windows/Super key";
+        for text in ["e", "shift+e", "f12", "ctrl+c", "ctrl+v", "ctrl+x", "ctrl+z", "ctrl+y", "ctrl+a", "ctrl+s"] {
+            refused(win(text), two);
+        }
+        for text in ["ctrl+w", "alt+f4", "alt+f", "ctrl+f5", "shift+f10"] {
+            refused(win(text), two);
+        }
+        // The system's own logo-key shortcuts.
+        let own = "belongs to the system";
+        for text in ["win+l", "win+d", "win+e", "win+r", "win+1", "win+shift+3", "super+ctrl+0"] {
+            refused(win(text), own);
+        }
         refused(win("win+space"), "letter, a digit or F1-F12");
         refused(win("win+num+"), "letter, a digit or F1-F12");
         refused(win("win+["), "letter, a digit or F1-F12");
         refused(win("win+left"), "letter, a digit or F1-F12");
         refused(win("hyper+e"), "unknown modifier \"hyper\"");
         refused(win("win+"), "no key after");
-        refused(mac("alt+e"), "needs ⌘ (cmd) or ⌃ (ctrl) on macOS");
-        refused(mac("alt+shift+e"), "⌘ (cmd)");
-        assert!(mac("ctrl+shift+e").is_ok(), "⌃ is enough on macOS");
+        let mac_rule = "needs ⌘ (cmd) or ⌃ (ctrl) with ⌥ (alt) or ⇧ (shift) on macOS";
+        for text in
+            ["cmd+q", "cmd+c", "cmd+w", "cmd+h", "cmd+e", "cmd+f5", "ctrl+e", "alt+e", "alt+shift+e", "cmd+ctrl+e"]
+        {
+            refused(mac(text), mac_rule);
+        }
     }
 
     #[test]
     fn hotkey_text_reads_back() {
         for (text, logo) in
-            [("win+shift+e", "win"), ("ctrl+shift+f12", "win"), ("cmd+alt+e", "cmd"), ("super+shift+7", "super")]
+            [("win+shift+e", "win"), ("ctrl+shift+f12", "win"), ("cmd+alt+e", "cmd"), ("super+shift+k", "super")]
         {
             let chord = parse_hotkey(text, Platform::Other).unwrap().unwrap();
             let written = hotkey_text(&chord, logo);

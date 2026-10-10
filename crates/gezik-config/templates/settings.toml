@@ -111,7 +111,9 @@ quick-look = "system"     # system | gezik
 tray = false
 # A system-wide shortcut that shows or hides Gezik from any app, e.g. "win+shift+e"
 # (macOS "cmd+alt+e", Linux "super+shift+e"). "" is off; there is no default. A letter, a
-# digit or F1-F12 with Ctrl, Alt or Win/Super/Cmd; Ctrl+Alt is not used (AltGr).
+# digit or F1-F12 with Win/Super, or with Ctrl+Shift or Alt+Shift (one modifier alone is every
+# app's own: Ctrl+C, Alt+F4); Ctrl+Alt is not used (AltGr); Win+L, D, E, R and Win+<digit> are
+# the system's. macOS: Cmd or Ctrl with Option or Shift (Cmd alone is every app's own).
 hotkey = ""
 # Start at login is not a setting: System Integration > Start at login (a system change).
 
