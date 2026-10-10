@@ -826,3 +826,79 @@ Alt proje 1 tamamlandıktan sonra bilerek ertelenen maddeler. Kaynak: görev inc
 - Bekleyenler:
   - **Windows ekran testleri** (planın 14 maddesi, durum: bekliyor; ajan, kullanıcı uzaktayken), madde 3 ve 13 dahil: `scripts/perf/tree.ps1 -Dirs 50000`, `tree.ps1 -Dirs 1000`, `stress.ps1 -Files 1000`, `measure.ps1 -Runs 5` (`target\gezik-base.exe` ile).
   - **macOS** (`macos-test.md` 210-219) ve **Linux** (`linux-test.md` 160-165): planın kararıyla 210'dan ve 160'tan (sapma 22).
+
+## Windows ekran testleri: 10c (2026-10-11)
+
+# 10c Windows ekran testleri (2026-10-10, ajan, kullanıcı uyurken)
+
+- Derleme: `D:\Work\gezik-10c` HEAD `d9548b5`, `cargo build --release -p gezik -j 4` (zaten güncel, 0,28 s), exe **24.908.800 bayt** (taban 24.771.072, +137.728; sınır 25.033.216). Kopya `%TEMP%\gezik-10cgui\bin\gezik.exe`, her oturum taze `GEZIK_CONFIG_DIR` (`cfg-s1` … `cfg-s5`).
+- Birincil ekran 2560×1440, pencere 1400×900 @ 100,80. Her tuş/tıklamadan önce ön plan penceresinin Gezik olduğu denetlendi; yazı `SendInput` Unicode ile; klavye düzeni değişmedi. Narrator açılmadı, UI Automation ağacı okundu.
+- Deneme klasörü `%TEMP%\gezik-10cgui\data\t10c` (a\a1\a11\a111, a2, a3, a10, `a\loop` junction → t10c, `hid` +h, `syshid` +s+h, `deep\d1\d2\d3\d4`, many30, kopya dosyalar), `big20k` (20.500 alt klasör), `tree-50000`, `tree-1000`, `stress-1000`.
+- Ekran görüntüleri `%TEMP%\gezik-10cgui\shots\` (madde numarasıyla başlar).
+
+## Sonuçlar
+
+1. **Oklar ve sıra — PASS.** Home…Videos, iğneler, OneDrive, C:/D:/E:'de ok; Recycle Bin ve kayıtlı arama (`txt here`) oksuz. Dal yalnız klasör, doğal sıra `a1, a2, a3, a10, loop`. Satır tıklaması gidiyor (`a2 — Gezik`), ok tıklaması gitmiyor. Girinti 12 px (ok x: 28 → 40 → 52). 150 % / 200 %: `SLINT_SCALE_FACTOR` ile (sistem DPI'sı değiştirilmedi), ok-simge-ad hizalı (`01-scale-*-sidebar.png`).
+2. **Gizli ve sistem — PASS.** Windows'ta Show hidden varsayılan açık; kapatınca `hid` açık daldan gitti, açınca geri geldi (dal kapanmadan). `syshid` yalnız Show system items açıkken.
+3. **Büyük dal — PASS.** 20.500 klasör: açılış en uzun meşguliyet 8 ms; son satırlar `dir_19999`, `… 500 more (open the folder)`; tıklanınca `big20k` açıldı (`20500 items`). 20.000 satırlı kenar çubuğunda 40 tekerlek adımı boyunca en uzun meşguliyet 10 ms. `tree.ps1 -Dirs 50000`: aşağıda. `…` işareti gözle yakalanamadı (okuma < 30 ms).
+4. **Paylaşım ve sürücü — KISMİ / FAIL (sunucu iğnesi).**
+   - **FAIL:** `\\localhost` iğnesi kenar çubuğunda hiç görünmüyor (`\\localhost`, `\\localhost\`, `//localhost/` üçü de). `check_pins` `Path::is_dir` ile süzüyor, sunucu kökü klasör sayılmıyor; `\\sunucu` dalına arayüzden ulaşılamıyor. Arayüzden iğneleme yolu da yok (`\\localhost`'ta arka plan menüsünde Pin yok).
+   - `\\localhost\Users` (paylaşım) iğnesi görünüyor, dalı `Default, Public, teoma`.
+   - `net use Z: \\localhost\Users /persistent:no`: DRIVES'ta `Network (Z:)`, dal açıldı. Dal açıkken `net use Z: /delete` → Z: ve dalı kenar çubuğundan hemen kalktı (yer gidince dal da gider), takılma yok; "dalın içinde klasör açmaya çalışma" bu yüzden yapılamadı. Yerine: açık dalda bir klasör dışarıdan silindi, oku tıklandı → durum satırı `Cannot open …\t10c\c: The folder it is in no longer exists`, ok geri geldi. Gözlem: metin yanıltıcı (klasörün kendisi yok, içinde olduğu klasör var).
+   - `\\192.0.2.1\x`: burada hemen `Cannot open \\192.0.2.1\x: It no longer exists` dedi (yavaş değil), dal açma beklemedi ama gerçek "yavaş listeleme" koşulu kurulamadı. "Okuma sürerken ok yeniden tıklanırsa dal kapanır" denenemedi: 50.000'lik dal bile 15 ms'de okundu.
+5. **Döngü — PASS.** `a\loop` açılınca oksuz, ipucu `Leads back to a folder above it`, takılma yok.
+6. **Bulut — PASS (notla).** OneDrive bu makinede oturum açık değil, OneDrive.exe çalışmıyor; yalnız çevrimiçi dosya yok (129 dosyada Offline/Recall 0). Dal `Apps, Desktop, Documents, Pictures` getirdi; öncesi/sonrası öznitelikler aynı. Gerçek bulut dosyalı denetim yapılamadı.
+7. **Pinned ve sürükleme — PASS.** `big20k` iğnesi açık `t10c` dalının `c` satırına bırakıldı → `t10c`'den sonraya geçti (gözlem: sürüklerken çizgi dalın içinde, `c` ile `deep` arasında çiziliyor, sonuç doğru). Listeden `newf` klasörü iğne çizgisine → iğnelendi. `copy1.txt` ağaç satırı `b`'ye → `b`'ye taşındı, Ctrl+Z geri aldı. Alt+1 ilk iğneye (`t10c`). `Work` grup başlığı sağ tık: `Rename group… | Ungroup`, Ungroup çalıştı.
+8. **Gezik'in işleri — PASS.** Ctrl+Shift+N `newf` dalda belirdi. `a` (alt dalı açık) F2 ile `a_ren` → dalda yeni adla, alt dalı kapalı; Ctrl+Z geri. `c` Ctrl+X → açık `deep`'e Ctrl+V: eski yerinden gitti, `deep`'in altında; Ctrl+Z geri. Oku kaybolan `emptyish`'te yeni klasör → ok geri geldi; boş `b`'ye taşıma da `b`'ye oku geri verdi. Silme/çöp denenmedi.
+9. **Bölmenin listelemesi — PASS.** Dışarıdan `ext_made` → dal değişmedi; `t10c`'ye gidince dalda belirdi. (Ek okuma olmadığı ayrıca ölçülmedi.)
+10. **Klavye — KISMİ / FAIL.**
+    - PASS: Shift+Tab kenar çubuğuna (odak çerçevesi), ↓ PINNED başlığını atlıyor, → açar/iner, ← kapar/üste çıkar, harfle atlama (`m` → many30, `de` → sıradaki eşleşme Desktop), Enter gider ve odak kenar çubuğunda kalır, Ctrl+Enter yeni sekme (odak kalır), Esc listeye döner, Tab kenar çubuğundan çıkar. F2 hiçbir şey yapmadı.
+    - **FAIL:** Shift+F10 menüsü satırın altında değil, **fare imlecinin olduğu yerde** açılıyor (iki kez denendi: imleç 200,580 → menü 200,580; imleç 900,700 → menü 900,700). Listede Shift+F10 satırda açılıyor.
+    - **FAIL:** Menü tuşu (Apps) kenar çubuğunda **hiç menü açmıyor**, üstelik kenar çubuğu klavyeyi kaybediyor (odak pencereye geçiyor). Listede aynı tuş menüyü açıyor. Olası neden: `main.rs` `handle_key`'te kenar çubuğu dalı `let Some(chord) = &chord` istiyor; Menü tuşunda chord yok, `menu_key` hiç `Sidebar::key`'e ulaşmıyor. Bu yüzden "menü kapanınca klavye kenar çubuğuna döner" yalnız Shift+F10 ile doğrulandı (PASS).
+    - Numpad `/` kenar çubuğunda Restore Selection çalıştırdı (Ctrl+C ile hatırlanan 2 seçim geri geldi), imleç yerinde kaldı, harfle atlama olmadı — PASS.
+    - Delete denenmedi: kenar çubuğunda Delete'in yanlışlıkla çöpe atma riski yüzünden otomatik izin sistemi engelledi (çöp kuralı). Kullanıcı elle bakmalı.
+11. **Erişilebilirlik — PASS (Narrator olmadan).** UIA: kök `Tree` `Places`; satırlar ad `Home`, ExpandCollapse `Collapsed`/`Expanded` (Narrator "Home, collapsed" okuyacak bilgiler), `d1` FullDescription `Level 3` (derinlik 2; derinlik 1 → `Level 2`), yer satırlarında açıklama boş. `ExpandCollapsePattern.Expand()` dalı açtı. (.NET UIA HelpText boş; açıklama FullDescription'da.)
+12. **`tree-follow` ve Show in Sidebar Tree — PASS.** `deep\d1\d2\d3\d4`'te View ▸ Show in sidebar tree: ağaç açıldı, `d4` görünür ve klavyede. Gizli `hid` (Show hidden kapalı): `… is not in the sidebar tree (hidden, or under no place there)`. `sidebar = "hidden"`: `The sidebar is hidden (settings.toml [layout] sidebar)`. `tree-follow = true`: `a\a1\a11\a111`'e gidince ağaç oraya açıldı; `big20k\dir_15000`'e gidince satır görünür. "Okuma sürerken başka yere gidince eski hedefe açılmaz" yavaş okuma kurulamadığı için denenemedi.
+13. **Hafiflik — PASS (bellek ölçütü çözünürlük altında).** Kapatıp açınca bütün dallar kapalı (`t10c [Collapsed]`, `tree-follow = true` dahil). Ölçümler aşağıda.
+14. **Kenar çubuğu sağda — PASS (10'daki menü hatasıyla).** `sidebar = "right"`: oklar, dal, iğne sürükleme (big20k → t10c'den sonra), ↓ → → ←, Enter (odak kalır), Esc. Shift+F10 burada da fare imlecinde açıldı.
+
+## Ölçüm (madde 3 ve 13)
+
+Ölçümler sırasında cargo/rustc süreci yoktu (öncesi ve sonrası 0).
+
+- `tree.ps1 -Dirs 50000` (2 koşu; betiğin kopyası, tekerlekten önce ön plan denetimi eklendi, ayar klasörü `cfg-tree-*`):
+  - follow false: en uzun meşguliyet 6,8 / 11,7 ms; bellek önce 12,18 / 12,32, sonra 7,58 / 7,51 MB; kaydırma CPU 47 / 16 ms.
+  - follow true: en uzun meşguliyet **7,4 / 6,8 ms** (≤ 50 ms ✓); bellek önce 12,67 / 12,74, sonra 16,15 / 16,15 MB (20.000 satırlık dal +8,6 MB); kaydırma CPU 125 / 141 ms.
+- `tree.ps1 -Dirs 1000` (3 koşu): false sonra 7,85 / 7,60 / 7,96 MB, true sonra 8,80 / 8,75 / 8,43 MB → fark **0,95 / 1,15 / 0,47 MB, ort. 0,86 MB** (ölçüt ≤ 0,5 MB; "önce" değerleri ~12,5 MB'tan "sonra" ~7,8'e düşüyor, çalışma kümesi kırpılıyor, ölçüm gürültülü; sınırda/aşıyor). Meşguliyet 4,9–11,7 ms. Kaydırma CPU true 172 / 188 / 172 ms (ort. 177).
+- `stress.ps1 -Files 1000` (taze boş ayar, 3 koşu): yükleme sonrası 7,8 / 7,5 / 7,7 MB, kaydırma CPU 250 / 266 / 266 ms (ort. 261). Ağaç kaydırması 177 / 261 = **0,68×** (≤ 1,2× ✓).
+- `measure.ps1 -Runs 5`, taze boş ayar, 2 tur: taban açılış 42 / 33 ms, bellek 7,2 / 7,2 MB; 10c açılış 38 / 36 ms, bellek 7,3 / 7,3 MB. Açılış farkı yok.
+- Ek boşta bellek (2 ondalık, 6 tur dönüşümlü): taban ort. 7,322 MB (7,10–7,55), 10c ort. 7,400 MB (7,27–7,63) → +0,08 MB, turlar arası ±0,2 MB; +0,02 MB ölçütü bu yöntemle ayırt edilemiyor.
+- Exe 23,62 → 23,75 MB (+137.728 bayt), sınırın altında.
+
+## Temizlik
+
+- Bütün deneme Gezik süreçleri kapatıldı; `net use` listesi boş (Z: silindi). Çöpe dokunulmadı (Gezik'te silme yapılmadı; Ctrl+Z'ler yalnız taşıma/ad değiştirme geri almasıydı). Kayıt defterine yazılmadı. Pano: Ctrl+C ile iki deneme dosyasının yolu kaldı.
+- `bin`, `cfg-*`, `data` silindi; `shots\` ve bu dosya kaldı.
+
+## Yeniden test (2026-10-10, 7adbcd9 sonrası)
+
+- Derleme: `D:\Work\gezik-10c` HEAD `7adbcd9` (feat/layout-10c), `cargo build --release -p gezik -j 4` (güncel, 0,30 s), exe 24.909.824 bayt. Taze `GEZIK_CONFIG_DIR`'ler (`cfg-r1`, `cfg-r2`), aynı kurallar (her tuştan önce ön plan denetimi, birincil ekran).
+
+1. **Menü tuşu (Apps) kenar çubuğunda — PASS.** Documents satırında (y 273–299) menü 126,299'da, satırın hemen altında; imleç 900,700'deydi. Esc → odak `Places`'te kaldı, ↓ sonraki satıra geçti. İğnelenmiş `t10c`'de (y 429) menü 126,455'te. (`R10-menukey.png`)
+2. **Shift+F10 satırın altında — PASS (sol ve sağ).** Sol: Downloads (y 299) → menü 126,325; imleç 900,700'deydi. Sağ (`sidebar = "right"`): Desktop (y 247) → menü 1310,273; Documents'ta menü tuşu → 1310,299. Esc sonrası klavye kenar çubuğunda. (`R10-shiftf10.png`, `R14-shiftf10-right.png`)
+3. **`\localhost` iğnesi — PASS.** `pinned = ["…", "\\localhost"]` → PINNED'da `localhost`; açılınca `\localhost\Dune`, `\localhost\DuneAwakening`, `\localhost\Dunex`, `\localhost\Users`. Paylaşım satırı tıklanınca `\localhost\Users — Gezik` (3 items), dalı `Default, Public, teoma`. (`R4-localhost-pin.png`)
+   - Gözlem: paylaşım satırları adlarını tam yolla gösteriyor (`\localhost\Users`), yalnız `Users` değil.
+4. **Silinen klasörün iletisi — PASS.** Açık `t10c` dalında `gone` dışarıdan silindi, oku tıklandı → `Cannot open …\t10c\gone: It no longer exists`. Satır (oklu) dalda kalıyor, bir sonraki listelemeye kadar.
+5. **`tree.ps1 -Dirs 1000`, 3 tur** (cargo/rustc 0; her tur taze `cfg-tree-*`):
+
+| Tur | false: önce → sonra MB | true: önce → sonra MB | sonra farkı (true − false) | en uzun meşguliyet false / true | kaydırma CPU false / true |
+|---|---|---|---|---|---|
+| 1 | 11,86 → 7,54 | 12,50 → 8,46 | 0,92 MB | 6,8 / 9,4 ms | 63 / 188 ms |
+| 2 | 12,20 → 7,65 | 13,25 → 9,05 | 1,40 MB | 8,5 / 8,3 ms | 0 / 94 ms |
+| 3 | 12,37 → 7,65 | 12,58 → 8,25 | 0,60 MB | 6,9 / 6,9 ms | 0 / 141 ms |
+
+   - Fark ort. **0,97 MB** (önceki koşu 0,86): ≤ 0,5 MB ölçütünün üstünde, **FAIL**. false "sonra" kararlı (7,54–7,65), true "sonra" 8,25–9,05 (±0,4 MB gürültü), yani fark gürültüden büyük, 1.000 satırlık dal için yaklaşık 1 MB. "Önce" değerleri "sonra"dan ~4,5 MB yüksek: ilk ölçümde çalışma kümesi henüz kırpılmamış, karşılaştırma yalnız "sonra"larla anlamlı. follow false'ta dal hiç açılmıyor; fark dalın kendisi + `tree-follow` okumaları.
+   - Kaydırma CPU true ort. 141 ms, `stress.ps1 -Files 1000`'in önceki ort. 261 ms'sine göre 0,54× (✓).
+- Temizlik: Gezik süreçleri kapalı, `data`, `bin`, `cfg-*` silindi; çöp ve kayıt defterine dokunulmadı.
+
+- **Karar (bellek):** 1.000 klasörlük açık bir dal yaklaşık 1 MB tutuyor (hedef 0,5 MB). Yalnız kullanıcı dal açınca ödenir, boşta ve kapalıyken sıfır; şimdilik kabul, `Box<Path>` / yalnız ad tutma sonraki iyileştirme.
