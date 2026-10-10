@@ -12,6 +12,7 @@ pub mod elevate;
 pub mod everything;
 pub mod finder;
 pub mod fs;
+pub mod hotkey;
 pub mod http;
 mod icons;
 pub mod instance;
@@ -35,6 +36,7 @@ pub mod taskbar;
 pub mod terminal;
 mod text;
 pub mod trash;
+pub mod tray;
 
 use std::path::PathBuf;
 
