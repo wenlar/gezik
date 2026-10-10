@@ -671,6 +671,12 @@ impl Operations {
     /// Ends renaming with `typed`: the entry's index if the field closed (unchanged or
     /// renamed), `None` if the name cannot be used (the field stays, with the problem shown).
     fn commit_rename(&self, typed: &str, how: Commit) -> Option<usize> {
+        self.commit_rename_then(typed, how, how != Commit::Tab)
+    }
+
+    /// [`Operations::commit_rename`]; `select`: the renamed entry is selected once the rename
+    /// is done.
+    fn commit_rename_then(&self, typed: &str, how: Commit, select: bool) -> Option<usize> {
         let view = &self.0.view;
         let (index, old) = view.renaming()?;
         // Enter and Esc leave the keyboard with the list; a blur or Tab does not, but for a
@@ -708,7 +714,7 @@ impl Operations {
                 if let Some(path) = path {
                     self.remember_for(std::slice::from_ref(&path));
                     // Going on to another entry: its refresh must not pull the selection away.
-                    let after = if how == Commit::Tab { After::Nothing } else { After::Select };
+                    let after = if select { After::Select } else { After::Nothing };
                     self.submit(Box::new(gezik_ops::RenameTask::one(path, &name)), None, after);
                 }
                 Some(index)
@@ -740,8 +746,10 @@ impl Operations {
         if mirror.focus.borrow().rename {
             return true;
         }
+        // The press or key goes on (a row selected, type-ahead): the rename done later must
+        // not pull the selection back to the renamed entry.
         let typed = mirror.rename_text.borrow().to_string();
-        self.rename_blurred(typed, self.0.view.rename_generation());
+        self.commit_rename_then(&typed, Commit::Blur, false);
         false
     }
 
