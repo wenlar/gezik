@@ -183,6 +183,9 @@ fn run(
         return Ok(());
     }
     let errors = child.stderr_text();
+    if let Some(plain) = plain_failure(&errors) {
+        return Err(io::Error::other(plain));
+    }
     let tail = stderr_tail(&errors);
     let code = status.code().map_or_else(|| status.to_string(), |code| format!("exit code {code}"));
     Err(io::Error::other(if tail.is_empty() {
@@ -190,6 +193,12 @@ fn run(
     } else {
         format!("ffmpeg failed ({code}): {tail}")
     }))
+}
+
+/// A failure ffmpeg's own words would not explain: an audio output from a video with no sound
+/// (a screen recording without a microphone) leaves the output with nothing in it.
+pub fn plain_failure(errors: &str) -> Option<&'static str> {
+    errors.contains("Output file does not contain any stream").then_some("it has no sound to keep")
 }
 
 /// The last lines of an error output, blank ones left out.
@@ -239,6 +248,13 @@ fn ask_version(path: &Path, timeout: Duration) -> Asked<Answer> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_video_with_no_sound_is_said_plainly() {
+        let ffmpeg = "[out#0/mp3 @ 0x1] Output file does not contain any stream\nError opening output file x.\n";
+        assert_eq!(plain_failure(ffmpeg), Some("it has no sound to keep"));
+        assert_eq!(plain_failure("Invalid data found when processing input"), None);
+    }
     use super::*;
 
     #[test]
