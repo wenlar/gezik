@@ -49,6 +49,10 @@ fn needs_admin(inverse: &[Arc<dyn Task>]) -> bool {
     inverse.iter().any(|task| task.kind() == TaskKind::Elevated)
 }
 
+fn admin_ops(inverse: &[Arc<dyn Task>]) -> Vec<gezik_core::elevated::Op> {
+    inverse.iter().flat_map(|task| task.elevated_ops().iter().cloned()).collect()
+}
+
 #[cfg(test)]
 pub(crate) type DriveQueryHook = Arc<dyn Fn(&Path) + Send + Sync>;
 
@@ -670,23 +674,39 @@ impl Engine {
 
     /// Undoes the last action; its progress shows like any job.
     pub fn undo(&self) -> Option<JobId> {
-        let (record, stamp) = {
-            let mut history = lock(&self.0.history);
-            let stamp = history.stamp();
-            (history.pop_undo()?, stamp)
-        };
-        self.0.push([Event::History]);
-        Some(self.start(record.inverse, Origin::Undo(stamp), Some(record.label)))
+        self.step(false, None)
     }
 
     pub fn redo(&self) -> Option<JobId> {
+        self.step(true, None)
+    }
+
+    /// The administrator operations Undo (`redo`: Redo) would send, in order; empty if none.
+    pub fn admin_ops(&self, redo: bool) -> Vec<gezik_core::elevated::Op> {
+        let history = lock(&self.0.history);
+        let record = if redo { history.peek_redo() } else { history.peek_undo() };
+        record.map(|record| admin_ops(&record.inverse)).unwrap_or_default()
+    }
+
+    /// Undo (`redo`: Redo) only while it still sends exactly `agreed`, the list the user said
+    /// yes to; else nothing is done (another action came on top meanwhile).
+    pub fn undo_agreed(&self, redo: bool, agreed: &[gezik_core::elevated::Op]) -> Option<JobId> {
+        self.step(redo, Some(agreed))
+    }
+
+    fn step(&self, redo: bool, agreed: Option<&[gezik_core::elevated::Op]>) -> Option<JobId> {
         let (record, stamp) = {
             let mut history = lock(&self.0.history);
             let stamp = history.stamp();
-            (history.pop_redo()?, stamp)
+            let top = if redo { history.peek_redo() } else { history.peek_undo() };
+            if agreed.is_some_and(|agreed| top.is_none_or(|record| admin_ops(&record.inverse) != agreed)) {
+                return None;
+            }
+            (if redo { history.pop_redo() } else { history.pop_undo() }?, stamp)
         };
         self.0.push([Event::History]);
-        Some(self.start(record.inverse, Origin::Redo(stamp), Some(record.label)))
+        let origin = if redo { Origin::Redo(stamp) } else { Origin::Undo(stamp) };
+        Some(self.start(record.inverse, origin, Some(record.label)))
     }
 
     /// "Copy 3 items" if there is something to undo.

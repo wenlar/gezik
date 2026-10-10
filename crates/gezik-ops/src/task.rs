@@ -394,6 +394,11 @@ pub trait Task: Send + Sync {
     fn as_admin(&self, _denied: &[PathBuf]) -> Vec<gezik_core::elevated::Op> {
         Vec::new()
     }
+    /// What it sends the administrator helper (an `ElevatedTask`'s list): the app shows it
+    /// before an undo or redo asks for the prompt.
+    fn elevated_ops(&self) -> &[gezik_core::elevated::Op] {
+        &[]
+    }
 }
 
 /// What `Task::run` may use: progress, pause and cancel, the drive's trash, questions.

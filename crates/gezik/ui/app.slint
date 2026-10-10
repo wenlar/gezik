@@ -620,6 +620,7 @@ export component AppWindow inherits Window {
     callback info-enclosed();
     callback info-app-menu(length, length, length, length);
     callback info-change-all();
+    callback info-as-admin();
     callback info-close();
 
     // The tab picker (tab_tools.rs): the tabs the query lets through, the row Enter picks.
@@ -1466,6 +1467,7 @@ export component AppWindow inherits Window {
             enclosed => { root.info-enclosed(); }
             app-menu(x, y, r, t) => { root.info-app-menu(x, y, r, t); }
             change-all => { root.info-change-all(); }
+            as-admin => { root.info-as-admin(); }
             close => { root.info-close(); }
         }
         if root.conflicts-open: ConflictList {

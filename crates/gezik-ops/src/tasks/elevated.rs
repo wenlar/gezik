@@ -135,6 +135,10 @@ impl Task for ElevatedTask {
         TaskKind::Elevated
     }
 
+    fn elevated_ops(&self) -> &[Op] {
+        &self.ops
+    }
+
     fn title(&self) -> String {
         elevated::label(&self.ops)
     }
@@ -287,14 +291,15 @@ mod tests {
         assert!(dir.join("b.txt").exists() && dir.join("d").is_dir());
         assert_eq!(engine.undo_label().as_deref(), Some("2 changes as administrator"));
         assert!(engine.undo_needs_admin());
-        let undo = engine.undo().unwrap();
+        let undo_ops = vec![Op::Rmdir(dir.join("d")), Op::Delete(dir.join("b.txt"))];
+        assert_eq!(engine.admin_ops(false), undo_ops, "what the app shows before asking");
+        assert!(engine.admin_ops(true).is_empty());
+        assert_eq!(engine.undo_agreed(false, &undo_ops[..1]), None, "not what the user agreed to");
+        assert_eq!(engine.admin_ops(false), undo_ops, "left where it was");
+        let undo = engine.undo_agreed(false, &undo_ops).unwrap();
         let undone = finish(&engine, undo, defaults).0;
         assert!(undone.failures.is_empty(), "{:?}", undone.failures);
-        assert_eq!(
-            fake.seen()[1],
-            [Op::Rmdir(dir.join("d")), Op::Delete(dir.join("b.txt"))],
-            "reverse order, one list"
-        );
+        assert_eq!(fake.seen()[1], undo_ops, "reverse order, one list");
         assert!(!dir.join("b.txt").exists() && !dir.join("d").exists());
         assert!(engine.redo_needs_admin());
         assert!(!engine.undo_needs_admin(), "nothing left to undo");
