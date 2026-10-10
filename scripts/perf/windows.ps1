@@ -120,8 +120,11 @@ try {
         Press "^n"
         Wait-Windows 2
         Start-Sleep -Seconds $Wait
-        $count = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exePath }).Count
-        if ($count -ne 1) { $fail += "two windows run in $count processes (one expected)" }
+        # Its own process and any it started, not every Gezik run from the same exe.
+        $spawned = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$($p.Id)" | Where-Object { $_.ExecutablePath -eq $exePath }).Count
+        if ($spawned -ne 0 -or -not (Get-Process -Id $p.Id -ErrorAction SilentlyContinue)) {
+            $fail += "two windows run in $($spawned + 1) processes (one expected)"
+        }
         $two = Sample $p.Id
         Show "two windows" $two $base
         $extra = $two.Mb - $base.Mb

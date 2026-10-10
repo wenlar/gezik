@@ -43,6 +43,10 @@ fn take_pending() -> Option<(i32, i32, i32)> {
     pending
 }
 
+/// The point in a window's title bar (physical pixels from its outer top left) that
+/// [`ensure_visible`] wants on some monitor.
+pub const TITLE_POINT: (i32, i32) = (100, 20);
+
 /// Moves the window onto the primary monitor if its restored position is on a monitor
 /// that is no longer connected. Needs the native window, so call it from the event loop.
 /// Returns false if the native window does not exist yet (try again later).
@@ -56,7 +60,7 @@ pub fn ensure_visible(window: &AppWindow) -> bool {
         }
         let position = native.outer_position().ok()?;
         // A point in the title bar must be on some monitor, so the window can be dragged.
-        let (x, y) = (position.x + 100, position.y + 20);
+        let (x, y) = (position.x + TITLE_POINT.0, position.y + TITLE_POINT.1);
         let on_screen = native.available_monitors().any(|monitor| {
             let (origin, size) = (monitor.position(), monitor.size());
             x >= origin.x && x < origin.x + size.width as i32 && y >= origin.y && y < origin.y + size.height as i32

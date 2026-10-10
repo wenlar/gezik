@@ -124,8 +124,12 @@ struct Inner {
     crumbs: RefCell<[Vec<(String, f32, f32)>; 2]>,
     /// The tab under the pointer (pane, tab), waiting to open.
     hover_tab: Cell<Option<(usize, usize)>>,
+    /// Since when the pointer rests on that tab.
+    hover_since: Cell<std::time::Instant>,
     tab_timer: Timer,
     scroll_timer: Timer,
+    /// When the list last scrolled a step at its edge (or began to).
+    scrolled: Cell<std::time::Instant>,
     /// The window's drop target for other programs.
     attached: RefCell<Option<Attached>>,
     /// A drag outside the window that Gezik drives itself (X11).
@@ -284,8 +288,10 @@ impl Drags {
             phase: RefCell::new(Phase::Idle),
             crumbs: RefCell::default(),
             hover_tab: Cell::new(None),
+            hover_since: Cell::new(std::time::Instant::now()),
             tab_timer: Timer::default(),
             scroll_timer: Timer::default(),
+            scrolled: Cell::new(std::time::Instant::now()),
             attached: RefCell::default(),
             outside: RefCell::default(),
             detach_later: Cell::new(false),
@@ -987,6 +993,7 @@ impl Drags {
             return;
         }
         self.0.hover_tab.set(tab);
+        self.0.hover_since.set(std::time::Instant::now());
         match tab {
             Some(tab) => self.0.tab_timer.start(
                 TimerMode::SingleShot,
@@ -999,11 +1006,18 @@ impl Drags {
         }
     }
 
-    fn tab_rested(&self, (p, i): (usize, usize)) {
+    fn tab_rested(&self, tab: (usize, usize)) {
+        if self.open_rested(tab) {
+            self.reanswer();
+        }
+    }
+
+    /// Opens tab `(p, i)` the drag rests on, if it still does; whether it did.
+    fn open_rested(&self, (p, i): (usize, usize)) -> bool {
         if self.0.hover_tab.get() != Some((p, i))
             || !matches!(*self.0.phase.borrow(), Phase::Dragging(_) | Phase::Offer(_))
         {
-            return;
+            return false;
         }
         self.0.hover_tab.set(None);
         if let Some(pane) = crate::panes::at(index(p)) {
@@ -1019,7 +1033,7 @@ impl Drags {
             self.0.grab_lost.set(true);
         }
         self.update();
-        self.reanswer();
+        true
     }
 
     /// Near the list's top or bottom edge the list scrolls while the pointer rests there.
@@ -1028,6 +1042,7 @@ impl Drags {
             drag::edge_scroll(y - list.rect.y, list.rect.height, list.geometry.row_height() / 2.0) != 0.0
         });
         if near && !self.0.scroll_timer.running() {
+            self.0.scrolled.set(std::time::Instant::now());
             self.0.scroll_timer.start(
                 TimerMode::Repeated,
                 SCROLL_STEP,
@@ -1041,6 +1056,12 @@ impl Drags {
     }
 
     fn scroll_step(&self) {
+        self.scroll_once();
+        self.reanswer();
+    }
+
+    fn scroll_once(&self) {
+        self.0.scrolled.set(std::time::Instant::now());
         let Some(window) = self.0.window.upgrade() else { return };
         let (x, y) = match &*self.0.phase.borrow() {
             Phase::Dragging(d) | Phase::Offer(d) => (d.x, d.y),
@@ -1061,7 +1082,6 @@ impl Drags {
             pane.view.set_list_scroll((list.scroll + step).clamp(lowest, 0.0));
         }
         self.update();
-        self.reanswer();
     }
 
     /// The target of an offer from outside changed with no move (a tab opened, the list
@@ -1378,6 +1398,19 @@ impl Drags {
             }
         }
         self.update();
+        // A drag from another Gezik window runs in its system drag loop, where no timer fires
+        // (`tab_timer`), but the system asks again every few dozen milliseconds.
+        if let Some(tab) = self.0.hover_tab.get()
+            && self.0.hover_since.get().elapsed() >= drag::TAB_HOVER
+        {
+            self.open_rested(tab);
+        }
+        // So does the list's scrolling at its edge (`scroll_timer`).
+        if self.0.scroll_timer.running() {
+            for _ in 0..stalled_steps(self.0.scrolled.get().elapsed()) {
+                self.scroll_once();
+            }
+        }
         self.offer_answer()
     }
 
@@ -1402,6 +1435,15 @@ impl Drags {
             }
         }
     }
+}
+
+/// The scroll steps owed at the list's edge `since` the last one, when its timer has not been
+/// running (two steps' time gone by); none while it runs. At most a few: no jump after a pause.
+fn stalled_steps(since: Duration) -> u32 {
+    if since < SCROLL_STEP * 2 {
+        return 0;
+    }
+    (since.as_millis() / SCROLL_STEP.as_millis()).min(5) as u32
 }
 
 /// Whether items with no file behind them may land at `hit`: into a folder only (not the drop
@@ -1437,7 +1479,14 @@ fn on_screen(window: &AppWindow, x: f32, y: f32, grab: (f32, f32)) -> Option<((f
             let (sx, sy) = (inner.x as f32 + x * scale, inner.y as f32 + y * scale);
             let left = sx - (inner.x - outer.x) as f32 - grab.0 * scale;
             let top = sy - (inner.y - outer.y) as f32 - grab.1 * scale;
-            Some(((sx, sy), (left.round() as i32, top.round() as i32)))
+            let (px, py) = (sx.round() as i32, sy.round() as i32);
+            let monitor = native.available_monitors().find_map(|m| {
+                let (at, size) = (m.position(), m.size());
+                let (width, height) = (size.width as i32, size.height as i32);
+                (px >= at.x && px < at.x + width && py >= at.y && py < at.y + height)
+                    .then_some((at.x, at.y, width, height))
+            });
+            Some(((sx, sy), tab_drag::placed((left.round() as i32, top.round() as i32), monitor)))
         })
         .flatten()
 }
@@ -1485,6 +1534,17 @@ impl DropHandler for Outside {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_stalled_edge_scroll_catches_up_a_few_steps() {
+        assert_eq!(stalled_steps(Duration::ZERO), 0);
+        // The timer runs: it scrolls by itself.
+        assert_eq!(stalled_steps(SCROLL_STEP), 0);
+        assert_eq!(stalled_steps(SCROLL_STEP * 2 - Duration::from_millis(1)), 0);
+        assert_eq!(stalled_steps(SCROLL_STEP * 2), 2);
+        assert_eq!(stalled_steps(SCROLL_STEP * 3 + Duration::from_millis(5)), 3);
+        assert_eq!(stalled_steps(Duration::from_secs(10)), 5);
+    }
 
     #[test]
     fn a_click_opens_once_and_not_after_a_drag() {

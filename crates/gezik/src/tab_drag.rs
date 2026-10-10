@@ -3,6 +3,7 @@
 
 use gezik_core::layout::Rect;
 
+use crate::window_state::TITLE_POINT;
 use crate::windows::WindowId;
 
 /// Tearing tabs off works where the strip keeps the pointer outside the window (§9.2 source
@@ -50,9 +51,33 @@ pub fn target(
     }
 }
 
+/// Where a torn-off window's outer top left goes (physical pixels): `wanted`, moved just enough
+/// that its title bar point [`TITLE_POINT`] stays on `monitor` (x, y, width, height), the one
+/// under the pointer; off every monitor, `ensure_visible` would send it to the primary one.
+pub fn placed(wanted: (i32, i32), monitor: Option<(i32, i32, i32, i32)>) -> (i32, i32) {
+    let Some((x, y, width, height)) = monitor else { return wanted };
+    let (dx, dy) = TITLE_POINT;
+    (wanted.0.clamp(x - dx, x + width - 1 - dx), wanted.1.clamp(y - dy, y + height - 1 - dy))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_torn_off_window_keeps_its_title_bar_on_the_pointers_monitor() {
+        // The rightmost monitor, right of the primary one.
+        let monitor = Some((2560, 0, 1920, 1080));
+        assert_eq!(placed((3000, 400), monitor), (3000, 400));
+        // Grabbed near the right edge: the point 100 px in would be past it.
+        assert_eq!(placed((4400, 400), monitor), (4379, 400));
+        // And near the top or the left edge.
+        assert_eq!(placed((3000, -30), monitor), (3000, -20));
+        assert_eq!(placed((2400, 400), monitor), (2460, 400));
+        assert_eq!(placed((5000, 2000), monitor), (4379, 1059));
+        // No monitor known: where it was wanted.
+        assert_eq!(placed((4400, -30), None), (4400, -30));
+    }
 
     fn rect(x: f32, y: f32) -> Rect {
         Rect { x, y, width: 100.0, height: 100.0 }
