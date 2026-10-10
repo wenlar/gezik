@@ -170,6 +170,20 @@ pub fn row_of_base(base_rows: &[usize], k: usize) -> Option<usize> {
     base_rows.get(k).copied()
 }
 
+/// The sidebar's scroll offset (content-y, zero or less) that shows row `row` whole, moving as
+/// little as it can, for `height` shown.
+pub fn scroll_to_show(row: usize, row_height: f32, scroll: f32, height: f32) -> f32 {
+    let top = row as f32 * row_height;
+    if top < -scroll {
+        -top
+    } else if top + row_height > -scroll + height {
+        // A row taller than the sidebar shows its top.
+        -(top + row_height - height).max(0.0).min(top)
+    } else {
+        scroll
+    }
+}
+
 /// The sidebar's rows for Slint, built when asked.
 pub struct SidebarModel {
     shown: Rc<RefCell<Shown>>,
@@ -351,6 +365,15 @@ mod tests {
         );
         let moved = [Line::Base(0), Line::Tree(tree::Line::Node(6)), Line::Base(1)];
         assert_eq!(plan(Some(&old), &moved, &base_rows, &|_| false).splice, Some((1, 1, 1)));
+    }
+
+    #[test]
+    fn a_row_scrolls_into_view_moving_as_little_as_it_can() {
+        // 20 px rows, 200 px shown.
+        assert_eq!(scroll_to_show(3, 20.0, 0.0, 200.0), 0.0, "already shown");
+        assert_eq!(scroll_to_show(30, 20.0, 0.0, 200.0), -420.0, "below: it comes up to the bottom");
+        assert_eq!(scroll_to_show(2, 20.0, -400.0, 200.0), -40.0, "above: it comes down to the top");
+        assert_eq!(scroll_to_show(0, 20.0, 0.0, 10.0), 0.0, "a sidebar lower than a row");
     }
 
     #[test]

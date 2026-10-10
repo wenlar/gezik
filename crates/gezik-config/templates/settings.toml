@@ -194,6 +194,7 @@ tree-follow = false
 # group-size = ""   # Group by ▸ Size: Empty, Tiny … Gigantic, Folders
 # collapse-groups = ""   # Collapse All Groups (a grouped view)
 # expand-groups = ""   # Expand All Groups
+# reveal-in-tree = ""   # Show in Sidebar Tree: opens the sidebar tree down to the folder shown
 
 # Saved rule sets for batch rename (Rename… with two or more items selected). The rename
 # layer writes them with "Presets ▾ › Save current rules as…"; they can also be written here.

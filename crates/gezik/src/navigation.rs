@@ -983,6 +983,8 @@ impl Navigator {
         let listing = match result {
             LoadResult::Files(path, mut entries) => {
                 crate::folder_sizes::with_current(|f| f.apply_known(&path, &mut entries));
+                // The sidebar tree's open branch of this folder shows its sub-folders (spec 10 §5.2).
+                crate::sidebar::with_current(|s| s.listed(&path, &entries));
                 Listing::Files(path, Rc::new(entries))
             }
             LoadResult::Drives(drives) => Listing::Drives(drives),

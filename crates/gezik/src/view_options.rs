@@ -132,6 +132,8 @@ fn show(options: ViewOptions) {
     crate::view::with_current(|view| reload = view.set_options(options));
     if reload {
         crate::navigation::with_current(|nav| nav.reload());
+        // Hidden or system folders come or go in the sidebar tree's open branches too.
+        crate::sidebar::with_current(crate::sidebar::Sidebar::options_changed);
     }
     sync_window(options);
 }

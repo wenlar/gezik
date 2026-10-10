@@ -1313,6 +1313,7 @@ impl Operations {
                 Event::Finished { job, report } => self.finished(job, report),
                 Event::Changed { dirs } => {
                     self.0.nav.refresh_showing(&dirs, &[], None);
+                    crate::sidebar::with_current(|s| s.folders_changed(&dirs));
                 }
                 Event::History => {}
             }
@@ -1452,6 +1453,8 @@ impl Operations {
             (a, b) => a.or(b),
         };
         let reloading = self.0.nav.refresh_showing(&dirs, &select, note.clone());
+        // The sidebar tree's open branches the job touched are read again (spec 10 §5.2).
+        crate::sidebar::with_current(|s| s.folders_changed(&report.changed_dirs));
         // Search results follow Gezik's own jobs (spec 4.7), those kept by a tab too.
         let mut paths = report.results.clone();
         paths.extend(hidden_paths);

@@ -17,7 +17,7 @@ use slint::{ComponentHandle, ModelRc};
 
 use crate::navigation::Navigator;
 use crate::places::Places;
-use crate::sidebar_model::{Line, Shown, SidebarModel, base_at, change_plan, row_of_base};
+use crate::sidebar_model::{Line, Shown, SidebarModel, base_at, change_plan, row_of_base, scroll_to_show};
 use crate::{AppWindow, SidebarRow};
 
 pub const SECTION_FOLDERS: i32 = 0;
@@ -293,6 +293,34 @@ struct Inner {
     dialogs: crate::dialog::Dialogs,
     /// `[sidebar] cloud`.
     show_cloud: bool,
+    /// `[sidebar] tree-follow`.
+    follow: bool,
+    /// The folder last shown (`None`: not a folder), so a reload of the same one follows nothing.
+    followed: Option<PathBuf>,
+    /// The folder the tree is opening down to, and whether the user asked (Show in Sidebar Tree).
+    pending: Option<(PathBuf, bool)>,
+}
+
+/// Where an opening of the tree got to (`Sidebar::continue_reveal`).
+enum RevealStep {
+    Place(RootKey),
+    Node(NodeId),
+    Wait(Option<Read>),
+    Missing,
+    /// Under no place (or the places not loaded yet).
+    Unplaced,
+}
+
+/// The row of the place or folder an opening reached.
+fn reveal_row(shown: &Shown, step: &RevealStep) -> Option<usize> {
+    match step {
+        RevealStep::Place(key) => {
+            let k = shown.keys.iter().position(|k| k.as_ref() == Some(key))?;
+            row_of_base(&shown.base_rows, k)
+        }
+        RevealStep::Node(id) => shown.lines.iter().position(|line| *line == Line::Tree(tree::Line::Node(*id))),
+        RevealStep::Wait(_) | RevealStep::Missing | RevealStep::Unplaced => None,
+    }
 }
 
 thread_local! {
@@ -355,13 +383,18 @@ impl Sidebar {
             groups: Vec::new(),
             dialogs,
             show_cloud: true,
+            follow: false,
+            followed: None,
+            pending: None,
         })));
         // Re-highlight on location changes, relabel after places reload. No I/O here: this
-        // runs on every navigation.
+        // runs on every navigation (tree-follow's reads are on workers).
         let weak = Rc::downgrade(&sidebar.0);
-        nav.on_changed(move |_| {
+        nav.on_changed(move |location| {
             if let Some(inner) = weak.upgrade() {
-                Sidebar(inner).update_rows();
+                let sidebar = Sidebar(inner);
+                sidebar.update_rows();
+                sidebar.location_changed(location);
             }
         });
         sidebar.start_drive_polling();
@@ -728,6 +761,8 @@ impl Sidebar {
 
     /// The arrow of row `row` (spec 10 §5.1): its branch opens (read in the background) or closes.
     pub fn toggle_row(&self, row: usize) {
+        // The user's own arrow ends an opening on its way (sapma 16).
+        self.0.borrow_mut().pending = None;
         let read = self.publish(|shown, touched| match shown.lines.get(row).copied() {
             Some(Line::Base(k)) => shown.keys.get(k).cloned().flatten().and_then(|key| shown.tree.toggle_root(key)),
             Some(Line::Tree(tree::Line::Node(id))) => {
@@ -762,9 +797,163 @@ impl Sidebar {
             touched.push(read.node);
             shown.tree.loaded(&read, found.ok())
         });
-        if changed && let Some(why) = failed {
-            self.say_text(format!("Cannot open {}: {why}", read.path.display()));
+        if let Some(why) = failed {
+            // A failed read ends an opening on its way (no loop opening the same folder again).
+            self.0.borrow_mut().pending = None;
+            if changed {
+                self.say_text(format!("Cannot open {}: {why}", read.path.display()));
+            }
         }
+        self.continue_reveal();
+    }
+
+    /// A pane listed `folder` (spec 10 §5.2): its open branch shows the listing's sub-folders
+    /// (the list's own hidden rule, `Entry::is_shown`), no read of its own. Costs nothing unless
+    /// the tree has a branch there.
+    pub fn listed(&self, folder: &Path, entries: &[gezik_core::Entry]) {
+        let shown = self.0.borrow().shown.clone();
+        if !shown.try_borrow().is_ok_and(|s| s.tree.has_branch_at(folder, &same_path)) {
+            return;
+        }
+        let options = crate::view_options::current();
+        let names = entries
+            .iter()
+            .filter(|e| e.is_dir && e.is_shown(options.show_hidden, options.show_system))
+            .map(|e| e.name.clone())
+            .collect();
+        let found = tree::prepare(names, None);
+        self.publish(|shown, touched| touched.extend(shown.tree.listed(folder, &found, &same_path)));
+    }
+
+    /// Gezik's own job changed `dirs` (spec 10 §5.2): their open branches are read again.
+    pub fn folders_changed(&self, dirs: &[PathBuf]) {
+        let shown = self.0.borrow().shown.clone();
+        if shown.try_borrow().is_ok_and(|s| s.tree.is_empty()) {
+            return;
+        }
+        let reads = self.publish(|shown, touched| {
+            let (reads, rearmed) = shown.tree.rereads(dirs, &same_path);
+            touched.extend(rearmed);
+            reads
+        });
+        self.start_reads(reads);
+    }
+
+    /// Hidden or system items come or go: the open branches are read again.
+    pub fn options_changed(&self) {
+        let reads = self.publish(|shown, _| shown.tree.reread_all());
+        self.start_reads(reads);
+    }
+
+    /// `[sidebar] tree-follow` (at start and on every settings reload); turned on, the tree
+    /// opens down to the folder shown now.
+    pub fn set_tree_follow(&self, on: bool) {
+        let location = {
+            let mut inner = self.0.borrow_mut();
+            let was = std::mem::replace(&mut inner.follow, on);
+            if !on || was {
+                return;
+            }
+            inner.followed = None;
+            inner.nav.active_location()
+        };
+        self.location_changed(&location);
+    }
+
+    /// The folder shown changed: with tree-follow on the tree opens down to it (spec 10 §5.3);
+    /// an opening on its way for another folder ends either way. The same folder again (a
+    /// reload, a listing that came in) changes nothing.
+    fn location_changed(&self, location: &Location) {
+        let path = match location {
+            Location::Path(path) => Some(path),
+            _ => None,
+        };
+        let follow = {
+            let mut inner = self.0.borrow_mut();
+            let same = match (path, &inner.followed) {
+                (Some(a), Some(b)) => same_path(a, b),
+                (a, b) => a.is_none() && b.is_none(),
+            };
+            if same {
+                return;
+            }
+            inner.followed = path.cloned();
+            inner.pending = None;
+            inner.follow
+        };
+        if follow && let Some(path) = path {
+            self.reveal(path.clone(), false);
+        }
+    }
+
+    /// Opens the tree down to `target` under the nearest place (spec 10 §5.3), each closed
+    /// folder above it read in turn, then scrolls its row into view. `asked`: the user asked
+    /// (Show in Sidebar Tree), so a folder the tree cannot show is said.
+    pub fn reveal(&self, target: PathBuf, asked: bool) {
+        self.0.borrow_mut().pending = Some((target, asked));
+        self.continue_reveal();
+    }
+
+    /// One step of the opening on its way, if any (again after each read).
+    fn continue_reveal(&self) {
+        let Some((target, asked)) = self.0.borrow().pending.clone() else { return };
+        let step = self.publish(|shown, touched| {
+            let places: Vec<RootKey> = shown.keys.iter().flatten().cloned().collect();
+            let Some((key, rest)) = tree::nearest_place(&places, &target, &same_path) else {
+                return RevealStep::Unplaced;
+            };
+            match shown.tree.reveal(key.clone(), &rest, &same_path) {
+                tree::Reveal::Place => RevealStep::Place(key),
+                tree::Reveal::Shown(id) => RevealStep::Node(id),
+                tree::Reveal::Wait(read) => {
+                    touched.extend(read.as_ref().map(|r| r.node));
+                    RevealStep::Wait(read)
+                }
+                tree::Reveal::Missing => RevealStep::Missing,
+            }
+        });
+        if let RevealStep::Wait(read) = step {
+            return self.start_reads(read.into_iter().collect());
+        }
+        let row = {
+            let mut inner = self.0.borrow_mut();
+            inner.pending = None;
+            if matches!(step, RevealStep::Unplaced) {
+                // Followed again on the next change: the places may still be loading (at start).
+                inner.followed = None;
+            }
+            inner.shown.try_borrow().ok().and_then(|shown| reveal_row(&shown, &step))
+        };
+        match row {
+            Some(row) => self.scroll_to_row(row),
+            None if asked => self
+                .say_text(format!("{} is not in the sidebar tree (hidden, or under no place there)", target.display())),
+            None => {}
+        }
+    }
+
+    /// Show in Sidebar Tree (spec 10 §5.3): once, whatever tree-follow says.
+    pub fn reveal_current(&self) {
+        let (window, location) = {
+            let inner = self.0.borrow();
+            (inner.window.upgrade(), inner.nav.active_location())
+        };
+        let Some(window) = window else { return };
+        if window.get_sidebar_position() == 2 {
+            return self.say_text("The sidebar is hidden (settings.toml [layout] sidebar)".to_owned());
+        }
+        match location {
+            Location::Path(path) => self.reveal(path, true),
+            _ => self.say_text("Only a folder can be shown in the sidebar tree".to_owned()),
+        }
+    }
+
+    /// Scrolls the sidebar so that row `row` shows whole.
+    fn scroll_to_row(&self, row: usize) {
+        let Some(window) = self.0.borrow().window.upgrade() else { return };
+        let theme = window.global::<crate::Theme>();
+        let height = window.get_drop_geometry().sidebar_height - 2.0 * theme.get_spacing();
+        window.set_sidebar_scroll(scroll_to_show(row, theme.get_row_height(), window.get_sidebar_scroll(), height));
     }
 
     /// Checks on a background thread which pinned entries exist on this machine, then
@@ -1183,6 +1372,24 @@ mod tests {
         assert_eq!(place_path(&places, &pins, SECTION_PINNED, 1), None);
         assert_eq!(place_path(&places, &pins, SECTION_SEARCHES, 0), None, "no tree under a saved search");
         assert_eq!(place_path(&places, &pins, SECTION_TRASH, 0), None, "nor under the trash");
+    }
+
+    #[test]
+    fn an_opening_ends_on_the_row_of_its_place_or_folder() {
+        let place = |label: &str| SidebarRow { label: label.into(), ..SidebarRow::default() };
+        let home: RootKey = (SECTION_FOLDERS, PathBuf::from("/h"));
+        let mut shown = Shown::default();
+        shown.set_base(vec![place("FOLDERS"), place("Home"), place("C")], vec![None, Some(home.clone()), None]);
+        let read = shown.tree.toggle_root(home.clone()).unwrap();
+        shown.tree.loaded(&read, Some(tree::prepare(vec!["a".into(), "b".into()], None)));
+        shown.relayout();
+        let target = Path::new("/h/b");
+        let (key, rest) = tree::nearest_place(std::slice::from_ref(&home), target, &same_path).unwrap();
+        let tree::Reveal::Shown(b) = shown.tree.reveal(key, &rest, &same_path) else { panic!("open down to it") };
+        assert_eq!(reveal_row(&shown, &RevealStep::Node(b)), Some(3), "FOLDERS, Home, a, b");
+        assert_eq!(reveal_row(&shown, &RevealStep::Place(home)), Some(1));
+        assert_eq!(reveal_row(&shown, &RevealStep::Place((SECTION_DRIVES, PathBuf::from("/x")))), None);
+        assert_eq!(reveal_row(&shown, &RevealStep::Unplaced), None);
     }
 
     #[test]

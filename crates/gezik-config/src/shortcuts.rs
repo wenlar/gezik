@@ -295,10 +295,12 @@ pub enum Action {
     CollapseGroups,
     /// Opens every group of a grouped view.
     ExpandGroups,
+    /// Opens the sidebar tree down to the folder shown and gives it the keyboard (10c).
+    RevealInTree,
 }
 
 impl Action {
-    pub const ALL: [Action; 91] = [
+    pub const ALL: [Action; 92] = [
         Action::NewTab,
         Action::NewWindow,
         Action::CloseTab,
@@ -390,6 +392,7 @@ impl Action {
         Action::GroupSize,
         Action::CollapseGroups,
         Action::ExpandGroups,
+        Action::RevealInTree,
     ];
 
     pub fn name(self) -> &'static str {
@@ -485,6 +488,7 @@ impl Action {
             Action::GroupSize => "group-size",
             Action::CollapseGroups => "collapse-groups",
             Action::ExpandGroups => "expand-groups",
+            Action::RevealInTree => "reveal-in-tree",
         }
     }
 
@@ -594,6 +598,7 @@ impl Action {
             Action::GroupSize => "Group by Size",
             Action::CollapseGroups => "Collapse All Groups",
             Action::ExpandGroups => "Expand All Groups",
+            Action::RevealInTree => "Show in Sidebar Tree",
         }
     }
 
@@ -770,7 +775,8 @@ impl Action {
                 | Action::GroupDate
                 | Action::GroupSize
                 | Action::CollapseGroups
-                | Action::ExpandGroups,
+                | Action::ExpandGroups
+                | Action::RevealInTree,
                 _,
             ) => &[],
         }
@@ -959,7 +965,7 @@ mod tests {
             assert_eq!(fixed_owner(&cmd_option, Platform::Mac), None);
         }
         assert_eq!((Action::pin(0), Action::pin(10)), (None, None));
-        assert_eq!(Action::ALL.len(), 91);
+        assert_eq!(Action::ALL.len(), 92);
         assert_eq!(other.action_for(&chord("ctrl+1")), Some(Action::Tab1), "Ctrl+1 is still tab 1");
         assert_eq!(other.action_for(&chord("ctrl+alt+1")), None, "AltGr+1 types");
     }
@@ -1417,7 +1423,7 @@ clear-history = \"ctrl+shift+h\"
         for name in ["search", "flat-view", "show-in-folder", "copy-with-folders", "cut-with-folders"] {
             assert!(Action::from_name(name).is_some(), "{name}");
         }
-        assert_eq!(Action::ALL.len(), 91);
+        assert_eq!(Action::ALL.len(), 92);
     }
 
     #[test]
@@ -1439,7 +1445,7 @@ clear-history = \"ctrl+shift+h\"
         for name in ["command-palette", "quick-open", "calculate-folder-sizes", "save-search"] {
             assert!(Action::from_name(name).is_some(), "{name}");
         }
-        assert_eq!(Action::ALL.len(), 91);
+        assert_eq!(Action::ALL.len(), 92);
     }
 
     #[test]
@@ -1459,7 +1465,7 @@ clear-history = \"ctrl+shift+h\"
         }
         assert_eq!(Action::MakeAlias.title(), "Make Alias");
         assert_eq!(Action::ShowPackageContents.title(), "Show Package Contents");
-        assert_eq!(Action::ALL.len(), 91);
+        assert_eq!(Action::ALL.len(), 92);
     }
 
     #[test]
@@ -1469,7 +1475,7 @@ clear-history = \"ctrl+shift+h\"
         }
         assert_eq!(Action::from_name("share"), Some(Action::Share));
         assert_eq!(Action::Share.title(), "Share…");
-        assert_eq!(Action::ALL.len(), 91);
+        assert_eq!(Action::ALL.len(), 92);
     }
 
     #[test]
@@ -1483,7 +1489,7 @@ clear-history = \"ctrl+shift+h\"
         assert_eq!(fixed_owner(&chord("mod+i", Platform::Mac), Platform::Mac), None);
         assert_eq!(Action::from_name("get-info"), Some(Action::GetInfo));
         assert_eq!(Action::GetInfo.title(), "Get Info");
-        assert_eq!(Action::ALL.len(), 91);
+        assert_eq!(Action::ALL.len(), 92);
     }
 
     #[test]
@@ -1496,7 +1502,7 @@ clear-history = \"ctrl+shift+h\"
         }
         assert_eq!(Action::from_name("connect-to-server"), Some(Action::ConnectToServer));
         assert_eq!(Action::ConnectToServer.title(), "Connect to Server…");
-        assert_eq!(Action::ALL.len(), 91);
+        assert_eq!(Action::ALL.len(), 92);
     }
 
     #[test]
@@ -1515,7 +1521,17 @@ clear-history = \"ctrl+shift+h\"
                 assert_eq!(Shortcuts::defaults(platform).chord_for(action), None, "{name}");
             }
         }
-        assert_eq!(Action::ALL.len(), 91);
+        assert_eq!(Action::ALL.len(), 92);
+    }
+
+    #[test]
+    fn the_tree_action_has_no_key() {
+        assert_eq!(Action::from_name("reveal-in-tree"), Some(Action::RevealInTree));
+        assert_eq!(Action::RevealInTree.title(), "Show in Sidebar Tree");
+        for platform in [Platform::Other, Platform::Mac] {
+            assert_eq!(Shortcuts::defaults(platform).chord_for(Action::RevealInTree), None);
+        }
+        assert_eq!(Action::ALL.len(), 92);
     }
 
     #[test]
@@ -1526,7 +1542,7 @@ clear-history = \"ctrl+shift+h\"
         assert_eq!(Shortcuts::defaults(Platform::Other).chord_for(Action::Eject), None);
         assert_eq!(Action::from_name("eject"), Some(Action::Eject));
         assert_eq!(Action::Eject.title(), "Eject");
-        assert_eq!(Action::ALL.len(), 91);
+        assert_eq!(Action::ALL.len(), 92);
     }
 
     #[test]
