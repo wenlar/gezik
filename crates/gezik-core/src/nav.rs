@@ -502,6 +502,37 @@ impl Tabs {
     pub fn prev(&mut self) {
         self.active = (self.active + self.tabs.len() - 1) % self.tabs.len();
     }
+    /// Takes tab `index` out to put it in another pane (spec 10 §4.5): its history and whether
+    /// it was locked. The neighbour becomes active as on a close; the last tab leaves a new tab
+    /// at `start` in its place. Not on the closed list.
+    pub fn take(&mut self, index: usize, start: Location) -> Option<(History, bool)> {
+        if index >= self.tabs.len() {
+            return None;
+        }
+        let locked = self.is_locked(index);
+        if self.tabs.len() == 1 {
+            self.push(start);
+        }
+        let history = self.tabs.remove(index);
+        let id = self.ids.remove(index);
+        self.locked.retain(|&l| l != id);
+        if index < self.active || self.active == self.tabs.len() {
+            self.active -= 1;
+        }
+        Some((history, locked))
+    }
+
+    /// Puts a tab taken from another pane at `at` (clamped), as the active tab. Its index.
+    pub fn insert(&mut self, at: usize, history: History, locked: bool) -> usize {
+        let index = at.min(self.tabs.len());
+        self.tabs.insert(index, history);
+        let id = self.new_id();
+        self.ids.insert(index, id);
+        self.set_locked(index, locked);
+        self.active = index;
+        index
+    }
+
     /// Moves tab `from` to position `to` (clamped); the active tab stays active.
     pub fn move_tab(&mut self, from: usize, to: usize) {
         if from >= self.tabs.len() {
@@ -1088,6 +1119,47 @@ mod tests {
         assert_eq!(tabs.active_index(), 2);
         tabs.next();
         assert_eq!(tabs.active_index(), 0);
+    }
+
+    #[test]
+    fn a_tab_taken_to_the_other_pane_keeps_its_history_and_lock() {
+        let mut left = tabs_at(&["/a", "/b", "/c"]);
+        left.active_mut().navigate(Location::Path(PathBuf::from("/c/d")));
+        left.set_locked(2, true);
+        let (history, locked) = left.take(2, Location::Drives).unwrap();
+        assert!(locked);
+        assert!(history.can_go_back(), "its history goes with it");
+        assert_eq!((left.len(), left.active_index(), left.closed_count()), (2, 1, 0), "not a closed tab");
+        let mut right = tabs_at(&["/x", "/y"]);
+        right.activate(0);
+        assert_eq!(right.insert(1, history, locked), 1);
+        assert_eq!((right.len(), right.active_index()), (3, 1), "shown where it went");
+        assert!(right.is_locked(1));
+        assert_eq!(right.active().location(), &Location::Path(PathBuf::from("/c/d")));
+        assert_eq!(right.insert(9, History::new(Location::Drives), false), 3, "past the end: at the end");
+        assert!(left.take(5, Location::Drives).is_none());
+    }
+
+    #[test]
+    fn taking_an_inactive_tab_keeps_the_active_one() {
+        let mut tabs = tabs_at(&["/a", "/b", "/c"]);
+        tabs.activate(2);
+        tabs.take(0, Location::Drives);
+        assert_eq!(tabs.active().location(), &Location::Path(PathBuf::from("/c")));
+        tabs.activate(0);
+        tabs.take(1, Location::Drives);
+        assert_eq!(tabs.active().location(), &Location::Path(PathBuf::from("/b")));
+    }
+
+    #[test]
+    fn the_last_tab_taken_leaves_a_new_one_at_the_start() {
+        let mut tabs = tabs_at(&["/a"]);
+        tabs.set_locked(0, true);
+        let (history, locked) = tabs.take(0, Location::Drives).unwrap();
+        assert_eq!((history.location(), locked), (&Location::Path(PathBuf::from("/a")), true));
+        assert_eq!((tabs.len(), tabs.active_index()), (1, 0));
+        assert_eq!(tabs.active().location(), &Location::Drives);
+        assert!(!tabs.is_locked(0), "the new tab is not locked");
     }
 
     #[test]

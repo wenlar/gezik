@@ -143,6 +143,7 @@ export component PaneView inherits Rectangle {
     in property <int> drop-entry: -1;
     in property <int> drop-tab: -1;
     in property <int> drop-crumb: -1;
+    in property <int> tab-insert: -1;
     in-out property <length> col-modified;
     in-out property <length> col-created;
     in-out property <length> col-type;
@@ -181,6 +182,7 @@ export component PaneView inherits Rectangle {
     callback tab-new(int);
     callback tab-move(int, int, int);
     callback tab-menu(int, int, length, length);
+    callback tab-out(int, int, length, length, bool) -> bool;
     callback view-menu(int, length, length, length, length);
     callback filter-edited(int, string);
     callback filter-menu(int, length, length, length, length);
@@ -471,6 +473,8 @@ export component PaneView inherits Rectangle {
             close(i) => { root.tab-close(root.index, i); }
             new-tab => { root.tab-new(root.index); }
             move-tab(from, to) => { root.tab-move(root.index, from, to); }
+            insert-at: root.tab-insert;
+            tab-out(t, x, y, r) => { return root.tab-out(root.index, t, x, y, r); }
             tab-menu(i, x, y) => {
                 root.end-path-editing();
                 root.tab-menu(root.index, i, x, y);

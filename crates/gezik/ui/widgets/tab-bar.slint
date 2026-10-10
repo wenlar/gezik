@@ -18,6 +18,11 @@ export component TabBar inherits Rectangle {
     callback move-tab(int, int);
     // Right-click on tab `int`, at a window position.
     callback tab-menu(int, length, length);
+    // Tab `int` dragged to a window position (released: dropped; -1: the drag ended): whether
+    // it is over the other pane, which takes it on the drop (spec 10 §4.5).
+    callback tab-out(int, length, length, bool) -> bool;
+    // Where a tab dragged from the other pane would go (-1: none).
+    in property <int> insert-at: -1;
 
     // Equal-width tabs that shrink as more are opened, down to a minimum; then the strip scrolls.
     out property <length> tab-width: clamp(strip.width / max(1, root.tabs.length), 90px, 220px);
@@ -39,6 +44,8 @@ export component TabBar inherits Rectangle {
     property <int> tab-count: root.tabs.length;
     // Set when a drag ends or is dropped; a new drag needs a new press.
     property <bool> drag-blocked;
+    // The dragged tab is over the other pane: this strip does not reorder.
+    property <bool> away;
     changed tab-count => { root.cancel-drag(); }
 
     height: Theme.tab-strip-height;
@@ -49,6 +56,8 @@ export component TabBar inherits Rectangle {
         root.drag-blocked = true;
         root.drag-from = -1;
         root.drag-to = -1;
+        // The other pane's strip shows no insertion line any more.
+        root.away = root.tab-out(-1, 0px, 0px, true);
     }
 
     // Scrolls the strip by `delta` (the wheel), staying within its content.
@@ -128,7 +137,9 @@ export component TabBar inherits Rectangle {
                             root.drag-blocked = false;
                         }
                         if event.kind == PointerEventKind.up && event.button == PointerEventButton.left && root.drag-from >= 0 {
-                            if root.drag-to != root.drag-from { root.move-tab(root.drag-from, root.drag-to); }
+                            if !root.tab-out(root.drag-from, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y, true) && root.drag-to != root.drag-from {
+                                root.move-tab(root.drag-from, root.drag-to);
+                            }
                             root.cancel-drag();
                         }
                         if event.kind == PointerEventKind.cancel {
@@ -146,6 +157,7 @@ export component TabBar inherits Rectangle {
                             root.dragged = true;
                             root.drag-from = i;
                             root.drag-to = clamp(floor((i * root.tab-width + self.mouse-x) / root.tab-width), 0, root.tabs.length - 1);
+                            root.away = root.tab-out(i, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y, false);
                         }
                     }
                     scroll-event(event) => {
@@ -265,9 +277,17 @@ export component TabBar inherits Rectangle {
         }
 
         // Drop position while dragging.
-        if root.drag-from >= 0: Rectangle {
+        if root.drag-from >= 0 && !root.away: Rectangle {
             // Between two tabs; at either end, kept just inside the strip.
             x: clamp((root.drag-to > root.drag-from ? root.drag-to + 1 : root.drag-to) * root.tab-width - 1px, 0px, parent.width - self.width);
+            y: (parent.height - Theme.control-height) / 2;
+            width: 2px;
+            height: Theme.control-height;
+            background: Theme.accent;
+        }
+        // Where a tab dragged from the other pane would go.
+        if root.insert-at >= 0: Rectangle {
+            x: clamp(root.insert-at * root.tab-width - 1px, 0px, parent.width - self.width);
             y: (parent.height - Theme.control-height) / 2;
             width: 2px;
             height: Theme.control-height;

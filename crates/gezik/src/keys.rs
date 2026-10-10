@@ -855,7 +855,8 @@ mod tests {
                 | Action::GroupSize
                 | Action::CollapseGroups
                 | Action::ExpandGroups
-                | Action::RevealInTree => continue,
+                | Action::RevealInTree
+                | Action::MoveTabToOtherPane => continue,
             };
             assert_eq!(reach(text), Some(action), "{text}");
         }

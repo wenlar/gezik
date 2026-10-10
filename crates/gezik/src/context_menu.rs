@@ -100,6 +100,7 @@ pub fn items(place: Place, native_shell: bool) -> Vec<(u32, &'static str)> {
         }
         Place::Tab { only_tab, locked } => {
             out.push((DUPLICATE_TAB, "Duplicate"));
+            out.push((MOVE_TAB_OTHER, "Move to other pane"));
             if locked {
                 out.push((UNLOCK_TAB, "Unlock tab"));
             } else {
@@ -490,6 +491,8 @@ pub const EXPAND_GROUPS: u32 = 2011;
 pub const RESET_TO_RULE: u32 = 2041;
 /// View ▸ "View rule N applies", greyed: which rule set the folder's view.
 pub const VIEW_RULE_APPLIES: u32 = 2042;
+/// The tab menu's Move to other pane (spec 10 §10.3, 10b).
+pub const MOVE_TAB_OTHER: u32 = 2020;
 /// View ▸ Two panes (spec 10 §10.3, 10b).
 pub const TWO_PANES: u32 = 2030;
 /// View ▸ Show in sidebar tree (spec 10 §10.3, 10c).
@@ -1891,6 +1894,11 @@ impl Menus {
                 let nav = crate::panes::active_nav().clone();
                 slint::Timer::single_shot(std::time::Duration::ZERO, move || nav.close_tab_by_id(id));
             }
+            (MOVE_TAB_OTHER, Subject::Tab(id, _)) => {
+                if let Some(i) = crate::panes::active_nav().tab_index(id) {
+                    crate::dual::move_tab(crate::panes::active_index(), i, None);
+                }
+            }
             (LOCK_TAB | UNLOCK_TAB, Subject::Tab(id, _)) => {
                 if let Some(i) = crate::panes::active_nav().tab_index(id) {
                     crate::panes::active_nav().toggle_tab_lock(i);
@@ -2354,6 +2362,7 @@ mod tests {
             RESET_FOLDER,
             SYSTEM_INTEGRATION,
             REVEAL_IN_TREE,
+            MOVE_TAB_OTHER,
             TWO_PANES,
             UNDO,
             REDO,
@@ -2649,6 +2658,7 @@ mod tests {
             EXPAND_GROUPS,
             RESET_TO_RULE,
             VIEW_RULE_APPLIES,
+            MOVE_TAB_OTHER,
             TWO_PANES,
         ];
         let mut ranges: Vec<std::ops::Range<u32>> = singles.iter().map(|id| *id..id + 1).collect();
@@ -2935,10 +2945,13 @@ mod tests {
     #[test]
     fn the_tab_menu_offers_the_lock_and_no_close_on_a_locked_tab() {
         let tab = |only_tab, locked| ids(items(Place::Tab { only_tab, locked }, false));
-        assert_eq!(tab(false, false), [DUPLICATE_TAB, LOCK_TAB, CLOSE_TAB, CLOSE_OTHER_TABS, SAVE_TAB_SET]);
-        assert_eq!(tab(true, false), [DUPLICATE_TAB, LOCK_TAB, CLOSE_TAB, SAVE_TAB_SET]);
-        assert_eq!(tab(false, true), [DUPLICATE_TAB, UNLOCK_TAB, CLOSE_OTHER_TABS, SAVE_TAB_SET]);
-        assert_eq!(tab(true, true), [DUPLICATE_TAB, UNLOCK_TAB, SAVE_TAB_SET]);
+        assert_eq!(
+            tab(false, false),
+            [DUPLICATE_TAB, MOVE_TAB_OTHER, LOCK_TAB, CLOSE_TAB, CLOSE_OTHER_TABS, SAVE_TAB_SET]
+        );
+        assert_eq!(tab(true, false), [DUPLICATE_TAB, MOVE_TAB_OTHER, LOCK_TAB, CLOSE_TAB, SAVE_TAB_SET]);
+        assert_eq!(tab(false, true), [DUPLICATE_TAB, MOVE_TAB_OTHER, UNLOCK_TAB, CLOSE_OTHER_TABS, SAVE_TAB_SET]);
+        assert_eq!(tab(true, true), [DUPLICATE_TAB, MOVE_TAB_OTHER, UNLOCK_TAB, SAVE_TAB_SET]);
     }
 
     #[test]

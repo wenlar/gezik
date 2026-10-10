@@ -214,6 +214,7 @@ confirm = true
 # focus-other-pane = "tab"   # the other pane takes the keyboard (only with two panes, the file list focused)
 # copy-to-other-pane = "f5"  # the selection into the other pane's folder (only with two panes; F5 refreshes with one)
 # move-to-other-pane = "f6"  # the same as a move (only with two panes)
+# move-tab-to-other-pane = ""   # the active tab into the other pane (opens it first)
 
 # Saved rule sets for batch rename (Rename… with two or more items selected). The rename
 # layer writes them with "Presets ▾ › Save current rules as…"; they can also be written here.

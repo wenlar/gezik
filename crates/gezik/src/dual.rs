@@ -233,6 +233,20 @@ pub fn focus_other() -> bool {
     true
 }
 
+/// `move-tab-to-other-pane` (spec 10 §4.5): tab `index` of the pane at place `from` goes to the
+/// other pane (opened first if closed) at `at` (None: after its active tab) with its history,
+/// lock and view, and is shown there; that pane becomes the active one.
+pub fn move_tab(from: usize, index: usize, at: Option<usize>) {
+    if !is_open() {
+        open(None);
+    }
+    let to = usize::from(from == 0);
+    let (Some(source), Some(target)) = (panes::at(from as i32), panes::at(to as i32)) else { return };
+    let Some(tab) = source.nav.take_tab(index) else { return };
+    target.nav.put_tab(tab, at);
+    activate(to);
+}
+
 /// The splitter between the panes was dragged to `share` of their room.
 pub fn split_moved(share: f32) {
     let split = share.clamp(0.2, 0.8);
@@ -499,6 +513,28 @@ mod tests {
         assert_eq!(panes::count(), 1);
         assert_eq!(panes::model().row_count(), 1, "its row is gone too");
         assert_eq!(panes::active_id(), Some(left.id));
+    }
+
+    #[test]
+    fn a_tab_moves_to_the_other_pane_and_the_last_one_leaves_a_new_tab() {
+        let left = test_pane();
+        panes::install(left.clone());
+        left.nav.open_tab(Location::Trash, true);
+        left.nav.toggle_tab_lock(1);
+        let right = make(&left, Session::single(Location::Drives));
+        panes::install(right.clone());
+        move_tab(0, 1, Some(0));
+        assert_eq!(left.nav.tab_locations(), [Location::Drives]);
+        assert_eq!(right.nav.tab_locations(), [Location::Trash, Location::Drives], "at the slot dropped on");
+        assert_eq!((right.nav.active_index(), right.nav.is_tab_locked(0)), (0, true), "shown, still locked");
+        assert_eq!(panes::active_index(), 1, "the pane it went to is active");
+        // The right pane's last tab: a new tab at the start folder stays behind.
+        move_tab(1, 1, None);
+        move_tab(1, 0, None);
+        assert_eq!(right.nav.tab_count(), 1);
+        assert_eq!(left.nav.tab_count(), 3);
+        assert_eq!(left.nav.active_location(), Location::Trash);
+        release(right.id);
     }
 
     /// The window's keys follow how many panes are open (spec 10 §10.2, `handle_key`'s lookup).

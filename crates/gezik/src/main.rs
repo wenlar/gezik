@@ -299,7 +299,8 @@ fn perform(
         | Action::ToggleDualPane
         | Action::FocusOtherPane
         | Action::CopyToOtherPane
-        | Action::MoveToOtherPane => return actions::run(action, nav, view),
+        | Action::MoveToOtherPane
+        | Action::MoveTabToOtherPane => return actions::run(action, nav, view),
     }
     true
 }

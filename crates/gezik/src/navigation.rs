@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use gezik_core::kind::is_package_name;
-use gezik_core::nav::{Closed, Crumb, Location, Session, Step, Tabs, ViewState, crumbs, nearest_existing};
+use gezik_core::nav::{Closed, Crumb, History, Location, Session, Step, Tabs, ViewState, crumbs, nearest_existing};
 use gezik_core::ops::paths::same_path;
 use gezik_core::refresh::{QUIET, RefreshPace};
 use gezik_core::view_rules::Place;
@@ -745,6 +745,27 @@ impl Navigator {
     pub fn move_tab(&self, from: usize, to: usize) {
         self.keep_active_tab(|tabs| tabs.move_tab(from, to));
         self.update_chrome();
+    }
+
+    /// Takes tab `index` out for the other pane, with its history, view and lock (spec 10
+    /// §4.5); the last tab leaves a new one at the start folder.
+    pub fn take_tab(&self, index: usize) -> Option<(History, bool)> {
+        let start = self.start();
+        if index != self.active_index() {
+            let taken = self.keep_active_tab(|tabs| tabs.take(index, start));
+            self.update_chrome();
+            return taken;
+        }
+        let taken = self.with_tabs(|tabs| tabs.take(index, start));
+        self.after_tabs_changed();
+        taken
+    }
+
+    /// Shows a tab taken from the other pane at `at` (None: after the active tab).
+    pub fn put_tab(&self, (history, locked): (History, bool), at: Option<usize>) {
+        let at = at.unwrap_or_else(|| self.active_index() + 1);
+        self.with_tabs(|tabs| tabs.insert(at, history, locked));
+        self.after_tabs_changed();
     }
 
     /// Goes to `location` from the location on screen (a pending move is dropped: the

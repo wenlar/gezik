@@ -70,40 +70,57 @@ pub struct CrumbArea {
     pub spans: Vec<(f32, f32)>,
 }
 
+/// A pane's parts a drop can land on (spec 10 §4.6).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PaneArea {
+    pub list: ListArea,
+    pub tabs: TabArea,
+    pub crumbs: CrumbArea,
+}
+
 /// Where everything a drop can land on is.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Layout {
     pub width: f32,
     pub height: f32,
-    pub list: ListArea,
+    /// The panes, left first.
+    pub panes: Vec<PaneArea>,
     /// None while the sidebar is hidden.
     pub sidebar: Option<SidebarArea>,
-    pub tabs: TabArea,
-    pub crumbs: CrumbArea,
     /// The drop stack strip; None while it is closed.
     pub stack: Option<Rect>,
 }
 
-/// What is under the pointer.
+/// What is under the pointer. A pane's parts carry the pane's place (0 left, 1 right).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Hit {
     /// Outside the window.
     Outside,
     /// Somewhere nothing can be dropped (a title, a button).
     Nothing,
-    /// Entry n of the list.
-    Entry(usize),
-    /// The list's empty space: the folder shown.
-    Background,
+    /// Entry n of a pane's list.
+    Entry(usize, usize),
+    /// A pane's empty list space: the folder shown.
+    Background(usize),
     /// Sidebar row n (a place).
     Sidebar(usize),
     /// A line in the pinned part: pins above sidebar row n (in the group of the pin there, or of
     /// the one before it; spec 6.2).
     PinAt(usize),
-    Tab(usize),
-    Crumb(usize),
+    Tab(usize, usize),
+    Crumb(usize, usize),
     /// The drop stack strip (spec 9.3).
     Stack,
+}
+
+impl Hit {
+    /// The pane it is in, if any.
+    pub fn pane(self) -> Option<usize> {
+        match self {
+            Hit::Entry(pane, _) | Hit::Background(pane) | Hit::Tab(pane, _) | Hit::Crumb(pane, _) => Some(pane),
+            _ => None,
+        }
+    }
 }
 
 /// What is at window point (`x`, `y`). `pin_zones`: the edges of pinned rows pin (only
@@ -112,20 +129,22 @@ pub fn hit(layout: &Layout, x: f32, y: f32, pin_zones: bool) -> Hit {
     if !(x >= 0.0 && y >= 0.0 && x < layout.width && y < layout.height) {
         return Hit::Outside;
     }
-    let tabs = &layout.tabs;
-    if tabs.rect.contains(x, y) {
-        return match index_at(x - tabs.rect.x - tabs.scroll, tabs.tab_width) {
-            Some(i) if i < tabs.count => Hit::Tab(i),
-            _ => Hit::Nothing,
-        };
-    }
-    let crumbs = &layout.crumbs;
-    if crumbs.rect.contains(x, y) {
-        return crumbs
-            .spans
-            .iter()
-            .position(|&(left, width)| x >= left && x < left + width)
-            .map_or(Hit::Nothing, Hit::Crumb);
+    for (pane, area) in layout.panes.iter().enumerate() {
+        let tabs = &area.tabs;
+        if tabs.rect.contains(x, y) {
+            return match index_at(x - tabs.rect.x - tabs.scroll, tabs.tab_width) {
+                Some(i) if i < tabs.count => Hit::Tab(pane, i),
+                _ => Hit::Nothing,
+            };
+        }
+        let crumbs = &area.crumbs;
+        if crumbs.rect.contains(x, y) {
+            return crumbs
+                .spans
+                .iter()
+                .position(|&(left, width)| x >= left && x < left + width)
+                .map_or(Hit::Nothing, |i| Hit::Crumb(pane, i));
+        }
     }
     if let Some(stack) = &layout.stack
         && stack.contains(x, y)
@@ -137,10 +156,24 @@ pub fn hit(layout: &Layout, x: f32, y: f32, pin_zones: bool) -> Hit {
     {
         return sidebar_hit(side, y, pin_zones);
     }
-    if layout.list.rect.contains(x, y) {
-        return list_hit(&layout.list, x, y);
+    for (pane, area) in layout.panes.iter().enumerate() {
+        if area.list.rect.contains(x, y) {
+            return list_hit(&area.list, pane, x, y);
+        }
     }
     Hit::Nothing
+}
+
+/// Where a tab dragged out of pane `from` would go at (`x`, `y`): another pane under the
+/// pointer, and over its tab strip the slot between its tabs (else after its active tab).
+pub fn tab_target(layout: &Layout, from: usize, x: f32, y: f32) -> Option<(usize, Option<usize>)> {
+    let (pane, area) = layout.panes.iter().enumerate().find(|(pane, area)| {
+        *pane != from && [area.tabs.rect, area.crumbs.rect, area.list.rect].iter().any(|r| r.contains(x, y))
+    })?;
+    let tabs = &area.tabs;
+    let slot = (tabs.rect.contains(x, y) && tabs.tab_width > 0.0)
+        .then(|| ((x - tabs.rect.x - tabs.scroll) / tabs.tab_width).round().clamp(0.0, tabs.count as f32) as usize);
+    Some((pane, slot))
 }
 
 /// Which slot of `size` holds `offset` (None before the first or with no size).
@@ -185,9 +218,9 @@ pub fn sidebar_window(scroll: f32, pad: f32, row_height: f32, height: f32, total
 /// Grid cells are inset this much: the gaps between them are the folder's empty space.
 const CELL_INSET: f32 = 4.0;
 
-fn list_hit(list: &ListArea, x: f32, y: f32) -> Hit {
+fn list_hit(list: &ListArea, pane: usize, x: f32, y: f32) -> Hit {
     let content_y = y - list.rect.y - list.scroll;
-    let Some(line) = index_at(content_y, list.geometry.row_height()) else { return Hit::Background };
+    let Some(line) = index_at(content_y, list.geometry.row_height()) else { return Hit::Background(pane) };
     let per_row = list.geometry.per_row();
     // The entries on the line: `per_row` of them, or a group's line (a header has none).
     let cells = if list.groups.is_empty() {
@@ -195,7 +228,7 @@ fn list_hit(list: &ListArea, x: f32, y: f32) -> Hit {
     } else {
         match (Lines { spans: &list.groups, per_row }).line(line) {
             Some(Line::Cells(cells)) => cells,
-            _ => return Hit::Background,
+            _ => return Hit::Background(pane),
         }
     };
     let index = match list.geometry {
@@ -213,8 +246,8 @@ fn list_hit(list: &ListArea, x: f32, y: f32) -> Hit {
         }
     };
     match index {
-        Some(i) if cells.contains(&i) => Hit::Entry(i),
-        _ => Hit::Background,
+        Some(i) if cells.contains(&i) => Hit::Entry(pane, i),
+        _ => Hit::Background(pane),
     }
 }
 
@@ -384,7 +417,19 @@ mod tests {
         Layout {
             width: 1000.0,
             height: 700.0,
-            list,
+            panes: vec![PaneArea {
+                list,
+                tabs: TabArea {
+                    rect: Rect { x: 0.0, y: 0.0, width: 960.0, height: 30.0 },
+                    scroll: 0.0,
+                    tab_width: 100.0,
+                    count: 3,
+                },
+                crumbs: CrumbArea {
+                    rect: Rect { x: 300.0, y: 40.0, width: 500.0, height: 24.0 },
+                    spans: vec![(300.0, 60.0), (372.0, 40.0)],
+                },
+            }],
             sidebar: Some(SidebarArea {
                 rect: Rect { x: 0.0, y: 100.0, width: 195.0, height: 400.0 },
                 scroll: 0.0,
@@ -401,16 +446,6 @@ mod tests {
                     SideRow::Pinned,
                 ],
             }),
-            tabs: TabArea {
-                rect: Rect { x: 0.0, y: 0.0, width: 960.0, height: 30.0 },
-                scroll: 0.0,
-                tab_width: 100.0,
-                count: 3,
-            },
-            crumbs: CrumbArea {
-                rect: Rect { x: 300.0, y: 40.0, width: 500.0, height: 24.0 },
-                spans: vec![(300.0, 60.0), (372.0, 40.0)],
-            },
             stack: Some(Rect { x: 0.0, y: 600.0, width: 1000.0, height: 30.0 }),
         }
     }
@@ -457,16 +492,16 @@ mod tests {
     #[test]
     fn list_rows_and_the_space_below_them() {
         let l = layout(list(3));
-        assert_eq!(hit(&l, 300.0, 105.0, false), Hit::Entry(0));
-        assert_eq!(hit(&l, 300.0, 145.0, false), Hit::Entry(2));
-        assert_eq!(hit(&l, 300.0, 170.0, false), Hit::Background);
+        assert_eq!(hit(&l, 300.0, 105.0, false), Hit::Entry(0, 0));
+        assert_eq!(hit(&l, 300.0, 145.0, false), Hit::Entry(0, 2));
+        assert_eq!(hit(&l, 300.0, 170.0, false), Hit::Background(0));
     }
 
     #[test]
     fn scrolled_list_hits_the_right_entry() {
         let mut a = list(100);
         a.scroll = -200.0; // ten rows up
-        assert_eq!(hit(&layout(a), 300.0, 105.0, false), Hit::Entry(10));
+        assert_eq!(hit(&layout(a), 300.0, 105.0, false), Hit::Entry(0, 10));
     }
 
     #[test]
@@ -476,11 +511,11 @@ mod tests {
             ..list(7)
         };
         let l = layout(a);
-        assert_eq!(hit(&l, 250.0, 150.0, false), Hit::Entry(0));
-        assert_eq!(hit(&l, 202.0, 150.0, false), Hit::Background, "inside the 4px inset");
-        assert_eq!(hit(&l, 350.0, 250.0, false), Hit::Entry(6), "second line, second column");
-        assert_eq!(hit(&l, 650.0, 250.0, false), Hit::Background, "no 10th cell");
-        assert_eq!(hit(&l, 760.0, 150.0, false), Hit::Background, "right of the last column");
+        assert_eq!(hit(&l, 250.0, 150.0, false), Hit::Entry(0, 0));
+        assert_eq!(hit(&l, 202.0, 150.0, false), Hit::Background(0), "inside the 4px inset");
+        assert_eq!(hit(&l, 350.0, 250.0, false), Hit::Entry(0, 6), "second line, second column");
+        assert_eq!(hit(&l, 650.0, 250.0, false), Hit::Background(0), "no 10th cell");
+        assert_eq!(hit(&l, 760.0, 150.0, false), Hit::Background(0), "right of the last column");
     }
 
     #[test]
@@ -490,12 +525,12 @@ mod tests {
             ..list(7)
         };
         let l = layout(a);
-        assert_eq!(hit(&l, 203.0, 150.0, false), Hit::Background, "the gap left of the first column");
-        assert_eq!(hit(&l, 208.0, 150.0, false), Hit::Background, "inside the first cell's 4px inset");
-        assert_eq!(hit(&l, 211.0, 150.0, false), Hit::Entry(0));
-        assert_eq!(hit(&l, 300.0, 150.0, false), Hit::Entry(0));
-        assert_eq!(hit(&l, 303.0, 150.0, false), Hit::Background, "the first cell's right inset");
-        assert_eq!(hit(&l, 311.0, 150.0, false), Hit::Entry(1));
+        assert_eq!(hit(&l, 203.0, 150.0, false), Hit::Background(0), "the gap left of the first column");
+        assert_eq!(hit(&l, 208.0, 150.0, false), Hit::Background(0), "inside the first cell's 4px inset");
+        assert_eq!(hit(&l, 211.0, 150.0, false), Hit::Entry(0, 0));
+        assert_eq!(hit(&l, 300.0, 150.0, false), Hit::Entry(0, 0));
+        assert_eq!(hit(&l, 303.0, 150.0, false), Hit::Background(0), "the first cell's right inset");
+        assert_eq!(hit(&l, 311.0, 150.0, false), Hit::Entry(0, 1));
     }
 
     #[test]
@@ -524,14 +559,65 @@ mod tests {
     #[test]
     fn tabs_crumbs_and_outside() {
         let mut l = layout(list(0));
-        assert_eq!(hit(&l, 150.0, 10.0, false), Hit::Tab(1));
+        assert_eq!(hit(&l, 150.0, 10.0, false), Hit::Tab(0, 1));
         assert_eq!(hit(&l, 350.0, 10.0, false), Hit::Nothing, "past the last tab");
-        assert_eq!(hit(&l, 380.0, 50.0, false), Hit::Crumb(1));
+        assert_eq!(hit(&l, 380.0, 50.0, false), Hit::Crumb(0, 1));
         assert_eq!(hit(&l, 365.0, 50.0, false), Hit::Nothing, "between parts");
         assert_eq!(hit(&l, -1.0, 50.0, false), Hit::Outside);
         assert_eq!(hit(&l, 500.0, 700.0, false), Hit::Outside);
-        l.tabs.scroll = -100.0;
-        assert_eq!(hit(&l, 150.0, 10.0, false), Hit::Tab(2), "a scrolled strip");
+        l.panes[0].tabs.scroll = -100.0;
+        assert_eq!(hit(&l, 150.0, 10.0, false), Hit::Tab(0, 2), "a scrolled strip");
+    }
+
+    /// Two panes side by side: the left one's parts as in `layout`, the right one's from x 500.
+    fn two_panes() -> Layout {
+        let mut l = layout(list(3));
+        let left = &mut l.panes[0];
+        left.list.rect.width = 290.0;
+        left.tabs.rect.width = 490.0;
+        left.crumbs.rect.width = 190.0;
+        let mut right = left.clone();
+        right.list.rect.x = 505.0;
+        right.list.count = 5;
+        right.tabs.rect.x = 505.0;
+        right.tabs.count = 2;
+        right.crumbs =
+            CrumbArea { rect: Rect { x: 505.0, y: 40.0, width: 490.0, height: 24.0 }, spans: vec![(510.0, 50.0)] };
+        l.panes.push(right);
+        l
+    }
+
+    #[test]
+    fn each_pane_has_its_own_parts() {
+        let l = two_panes();
+        assert_eq!(hit(&l, 300.0, 145.0, false), Hit::Entry(0, 2));
+        assert_eq!(hit(&l, 600.0, 165.0, false), Hit::Entry(1, 3), "the right list has more rows");
+        assert_eq!(hit(&l, 300.0, 170.0, false), Hit::Background(0));
+        assert_eq!(hit(&l, 600.0, 300.0, false), Hit::Background(1));
+        assert_eq!(hit(&l, 502.0, 145.0, false), Hit::Nothing, "the gap between the panes");
+        assert_eq!(hit(&l, 150.0, 10.0, false), Hit::Tab(0, 1));
+        assert_eq!(hit(&l, 610.0, 10.0, false), Hit::Tab(1, 1));
+        assert_eq!(hit(&l, 720.0, 10.0, false), Hit::Nothing, "past the right pane's last tab");
+        assert_eq!(hit(&l, 520.0, 50.0, false), Hit::Crumb(1, 0));
+        assert_eq!(hit(&l, 380.0, 50.0, false), Hit::Crumb(0, 1));
+        assert_eq!(hit(&l, 495.0, 50.0, false), Hit::Nothing, "between the address bars");
+        assert_eq!(Hit::Entry(1, 3).pane(), Some(1));
+        assert_eq!(Hit::Sidebar(1).pane(), None);
+        assert_eq!(Hit::Stack.pane(), None);
+    }
+
+    #[test]
+    fn a_tab_goes_to_the_other_pane_between_its_tabs() {
+        let l = two_panes();
+        assert_eq!(tab_target(&l, 0, 540.0, 10.0), Some((1, Some(0))), "left half of the first tab");
+        assert_eq!(tab_target(&l, 0, 560.0, 10.0), Some((1, Some(1))));
+        assert_eq!(tab_target(&l, 0, 900.0, 10.0), Some((1, Some(2))), "past the last tab: the end");
+        assert_eq!(tab_target(&l, 0, 600.0, 300.0), Some((1, None)), "its list: after its active tab");
+        assert_eq!(tab_target(&l, 0, 700.0, 50.0), Some((1, None)), "its address bar");
+        assert_eq!(tab_target(&l, 0, 150.0, 10.0), None, "its own strip reorders");
+        assert_eq!(tab_target(&l, 1, 300.0, 300.0), Some((0, None)));
+        assert_eq!(tab_target(&l, 0, 50.0, 610.0), None, "the drop stack");
+        assert_eq!(tab_target(&layout(list(3)), 0, 300.0, 120.0), None, "one pane");
     }
 
     #[test]
@@ -677,10 +763,10 @@ mod tests {
         };
         let l = layout(grouped);
         let at = |line: f32| hit(&l, 300.0, 100.0 + line * 20.0 + 10.0, false);
-        assert_eq!(at(0.0), Hit::Background, "a header");
-        assert_eq!(at(1.0), Hit::Entry(0));
-        assert_eq!(at(4.0), Hit::Background, "a closed group's header");
-        assert_eq!(at(6.0), Hit::Entry(5));
-        assert_eq!(at(10.0), Hit::Background, "past the last line");
+        assert_eq!(at(0.0), Hit::Background(0), "a header");
+        assert_eq!(at(1.0), Hit::Entry(0, 0));
+        assert_eq!(at(4.0), Hit::Background(0), "a closed group's header");
+        assert_eq!(at(6.0), Hit::Entry(0, 5));
+        assert_eq!(at(10.0), Hit::Background(0), "past the last line");
     }
 }

@@ -129,6 +129,7 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         Action::FocusOtherPane => return crate::dual::focus_other(),
         Action::CopyToOtherPane => crate::dual::to_other(false),
         Action::MoveToOtherPane => crate::dual::to_other(true),
+        Action::MoveTabToOtherPane => crate::dual::move_tab(crate::panes::active_index(), nav.active_index(), None),
         // Not theirs: `handle_key` and the menu bar run these themselves. Listed one by one so
         // that a new action is a compile error here until it is placed.
         Action::NewTab

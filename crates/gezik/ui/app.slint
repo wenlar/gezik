@@ -355,6 +355,9 @@ export component AppWindow inherits Window {
     callback tab-move(int, int, int);
     // Right-click on a tab, at a window position.
     callback tab-menu(int, int, length, length);
+    // Pane `int`'s tab `int` dragged to a window position (released: dropped; tab -1: the drag
+    // ended): whether the other pane is under it (Rust moves the tab there on the drop).
+    callback tab-out(int, int, length, length, bool) -> bool;
     // Middle-click on a row: opens a folder in a background tab.
     callback row-middle-clicked(int, int);
     // Sidebar item (section, index): click, middle-click, right-click at a window position.
@@ -673,6 +676,9 @@ export component AppWindow inherits Window {
     in property <int> drop-pin-row: -1;
     in property <int> drop-tab: -1;
     in property <int> drop-crumb: -1;
+    // The pane those are in; and where a tab dragged from the other pane would go in its strip.
+    in property <int> drop-pane: -1;
+    in property <int> tab-insert: -1;
     in-out property <length> sidebar-scroll;
     out property <DropGeometry> drop-geometry: {
         window-width: root.width,
@@ -876,9 +882,10 @@ export component AppWindow inherits Window {
                             list-focused: keys.has-focus && i == root.active-pane;
                             drag-active: root.drag-active;
                             drag-forbidden: root.drag-forbidden;
-                            drop-entry: root.drop-entry;
-                            drop-tab: root.drop-tab;
-                            drop-crumb: root.drop-crumb;
+                            drop-entry: i == root.drop-pane ? root.drop-entry : -1;
+                            drop-tab: i == root.drop-pane ? root.drop-tab : -1;
+                            drop-crumb: i == root.drop-pane ? root.drop-crumb : -1;
+                            tab-insert: i == root.drop-pane ? root.tab-insert : -1;
                             col-modified <=> root.col-modified;
                             col-created <=> root.col-created;
                             col-type <=> root.col-type;
@@ -912,6 +919,7 @@ export component AppWindow inherits Window {
                             tab-new(p) => { root.tab-new(p); }
                             tab-move(p, from, to) => { root.tab-move(p, from, to); }
                             tab-menu(p, t, x, y) => { root.tab-menu(p, t, x, y); }
+                            tab-out(p, t, x, y, r) => { return root.tab-out(p, t, x, y, r); }
                             view-menu(p, x, y, r, t) => { root.view-menu(p, x, y, r, t); }
                             filter-edited(p, t) => { root.filter-edited(p, t); }
                             filter-menu(p, x, y, r, t) => { root.filter-menu(p, x, y, r, t); }
