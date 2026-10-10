@@ -31,6 +31,16 @@ pub fn restore(window: &AppWindow, state: &State, offset: i32) {
     }
 }
 
+/// Puts the saved size back on the first show of a `--background` start. Its native window
+/// is made hidden at once, while the window's parts are not built yet: Slint gives it their
+/// far too small limits and shrinks it to them, then on show grows it only to the minimum.
+pub fn restore_size(window: &AppWindow, saved: WindowState) {
+    window.window().set_size(LogicalSize::new(saved.width as f32, saved.height as f32));
+    if saved.maximized {
+        window.window().set_maximized(true);
+    }
+}
+
 /// Moves the window onto the primary monitor if its restored position is on a monitor
 /// that is no longer connected. Needs the native window, so call it from the event loop.
 /// Returns false if the native window does not exist yet (try again later).
