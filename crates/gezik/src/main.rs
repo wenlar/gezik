@@ -110,7 +110,8 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
         theme_bridge::apply(window, theme);
     }
     theme_bridge::set_reduce_motion(window, loaded.settings.reduce_motion);
-    for warning in &loaded.warnings {
+    let new = not_printed_yet(&mut PRINTED.lock().unwrap_or_else(std::sync::PoisonError::into_inner), &loaded.warnings);
+    for warning in new {
         eprintln!("gezik: {warning}");
     }
     window.set_notice(notice_text(&loaded.warnings).into());
@@ -608,6 +609,17 @@ fn explorer_fallback(_: &str) -> i32 {
     1
 }
 
+/// The warnings last printed: each config resolve prints only new ones (the list carries the
+/// same ones from resolve to resolve).
+static PRINTED: Mutex<Vec<Warning>> = Mutex::new(Vec::new());
+
+/// Of `now`, those not in `printed`; `printed` becomes `now`.
+fn not_printed_yet(printed: &mut Vec<Warning>, now: &[Warning]) -> Vec<Warning> {
+    let new = now.iter().filter(|w| !printed.contains(w)).cloned().collect();
+    *printed = now.to_vec();
+    new
+}
+
 /// The first warning, plus how many more there are.
 fn notice_text(warnings: &[Warning]) -> String {
     match warnings {
@@ -736,8 +748,12 @@ fn main() -> Result<(), slint::PlatformError> {
     if config.is_none() {
         eprintln!("gezik: no config folder available; using defaults");
         files.warnings.push(Warning::new("config", "no config folder available; using default settings"));
+        PRINTED.lock().unwrap_or_else(std::sync::PoisonError::into_inner).extend(files.warnings.last().cloned());
     }
-    files.warnings.extend(cli.warnings.iter().map(|w| Warning::new("command line", w.clone())));
+    let from_cli = cli.warnings.iter().map(|w| Warning::new("command line", w.clone()));
+    // Printed already, before the window opened.
+    PRINTED.lock().unwrap_or_else(std::sync::PoisonError::into_inner).extend(from_cli.clone());
+    files.warnings.extend(from_cli);
     // Something sensible is on screen even if the selected theme cannot be read.
     theme_bridge::apply(&window, &theme::builtin_dark());
     let saved_state = config.as_ref().map(ConfigStore::load_state).unwrap_or_default();
@@ -1516,4 +1532,22 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     }
     window.run()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_warning_is_printed_once_however_often_the_config_is_applied() {
+        let cli = Warning::new("command line", "unknown option --x (ignored)");
+        let theme = Warning::new("nord.toml", "bad colour");
+        // Printed by itself before the window opens.
+        let mut printed = vec![cli.clone()];
+        let now = [cli.clone(), theme.clone()];
+        assert_eq!(not_printed_yet(&mut printed, &now), std::slice::from_ref(&theme));
+        assert!(not_printed_yet(&mut printed, &now).is_empty(), "a re-resolve prints nothing again");
+        assert!(not_printed_yet(&mut printed, &[]).is_empty());
+        assert_eq!(not_printed_yet(&mut printed, &now), [cli, theme], "back after it was fixed: said again");
+    }
 }
