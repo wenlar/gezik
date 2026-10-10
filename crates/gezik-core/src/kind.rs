@@ -30,25 +30,28 @@ impl Kind {
         if split_part(name).is_some() {
             return Kind::Archive;
         }
-        match extension_lowercase(name).as_str() {
-            "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "tif" | "tiff" | "svg" | "ico" | "heic" | "heif"
-            | "avif" | "raw" | "cr2" | "nef" | "psd" => Kind::Image,
-            "mp4" | "mkv" | "mov" | "avi" | "wmv" | "webm" | "m4v" | "flv" | "mpg" | "mpeg" => Kind::Video,
-            "mp3" | "wav" | "flac" | "ogg" | "m4a" | "aac" | "wma" | "opus" => Kind::Audio,
-            "zip" | "rar" | "7z" | "tar" | "gz" | "bz2" | "xz" | "zst" | "tgz" | "txz" | "tbz" | "tbz2" | "tzst"
-            | "cab" | "cpio" | "wim" | "swm" | "esd" | "lzh" | "lha" | "arj" | "xar" | "z01" => Kind::Archive,
-            "doc" | "docx" | "odt" | "rtf" | "pages" => Kind::Document,
-            "xls" | "xlsx" | "ods" | "csv" | "numbers" => Kind::Spreadsheet,
-            "ppt" | "pptx" | "odp" | "key" => Kind::Presentation,
-            "pdf" => Kind::Pdf,
-            "rs" | "c" | "h" | "cpp" | "hpp" | "cs" | "java" | "kt" | "go" | "py" | "js" | "ts" | "tsx" | "jsx"
-            | "html" | "css" | "scss" | "json" | "toml" | "yaml" | "yml" | "xml" | "sh" | "ps1" | "bat" | "cmd"
-            | "sql" | "swift" | "rb" | "php" | "lua" | "slint" => Kind::Code,
-            "txt" | "md" | "log" | "ini" | "cfg" | "conf" => Kind::Text,
-            "exe" | "msi" | "apk" | "deb" | "rpm" | "appimage" | "com" | "scr" | "app" => Kind::Executable,
-            "ttf" | "otf" | "woff" | "woff2" => Kind::Font,
-            "iso" | "img" | "dmg" | "vhd" | "vhdx" => Kind::DiskImage,
-            "lnk" | "url" | "desktop" | "webloc" => Kind::Link,
+        let mut buf = [0u8; 16];
+        match short_extension(name, &mut buf) {
+            b"png" | b"jpg" | b"jpeg" | b"gif" | b"bmp" | b"webp" | b"tif" | b"tiff" | b"svg" | b"ico" | b"heic"
+            | b"heif" | b"avif" | b"raw" | b"cr2" | b"nef" | b"psd" => Kind::Image,
+            b"mp4" | b"mkv" | b"mov" | b"avi" | b"wmv" | b"webm" | b"m4v" | b"flv" | b"mpg" | b"mpeg" => Kind::Video,
+            b"mp3" | b"wav" | b"flac" | b"ogg" | b"m4a" | b"aac" | b"wma" | b"opus" => Kind::Audio,
+            b"zip" | b"rar" | b"7z" | b"tar" | b"gz" | b"bz2" | b"xz" | b"zst" | b"tgz" | b"txz" | b"tbz" | b"tbz2"
+            | b"tzst" | b"cab" | b"cpio" | b"wim" | b"swm" | b"esd" | b"lzh" | b"lha" | b"arj" | b"xar" | b"z01" => {
+                Kind::Archive
+            }
+            b"doc" | b"docx" | b"odt" | b"rtf" | b"pages" => Kind::Document,
+            b"xls" | b"xlsx" | b"ods" | b"csv" | b"numbers" => Kind::Spreadsheet,
+            b"ppt" | b"pptx" | b"odp" | b"key" => Kind::Presentation,
+            b"pdf" => Kind::Pdf,
+            b"rs" | b"c" | b"h" | b"cpp" | b"hpp" | b"cs" | b"java" | b"kt" | b"go" | b"py" | b"js" | b"ts"
+            | b"tsx" | b"jsx" | b"html" | b"css" | b"scss" | b"json" | b"toml" | b"yaml" | b"yml" | b"xml" | b"sh"
+            | b"ps1" | b"bat" | b"cmd" | b"sql" | b"swift" | b"rb" | b"php" | b"lua" | b"slint" => Kind::Code,
+            b"txt" | b"md" | b"log" | b"ini" | b"cfg" | b"conf" => Kind::Text,
+            b"exe" | b"msi" | b"apk" | b"deb" | b"rpm" | b"appimage" | b"com" | b"scr" | b"app" => Kind::Executable,
+            b"ttf" | b"otf" | b"woff" | b"woff2" => Kind::Font,
+            b"iso" | b"img" | b"dmg" | b"vhd" | b"vhdx" => Kind::DiskImage,
+            b"lnk" | b"url" | b"desktop" | b"webloc" => Kind::Link,
             _ => Kind::File,
         }
     }
@@ -190,6 +193,24 @@ fn extension_lowercase(name: &str) -> String {
         Some(i) if i > 0 => name[i + 1..].to_lowercase(),
         _ => String::new(),
     }
+}
+
+/// The extension in lower case, in `buf` rather than on the heap (100,000 names are counted for a
+/// view rule, spec 10 §8.3). Every ending `Kind::of` knows is short ASCII, so a longer or
+/// non-ASCII one is none of them: empty. Bytes, not `str`: `Kind::of` matches byte strings, which
+/// compile to a branch on length and bytes rather than one comparison per ending.
+fn short_extension<'a>(name: &str, buf: &'a mut [u8; 16]) -> &'a [u8] {
+    let ext = match name.rfind('.') {
+        Some(i) if i > 0 => &name[i + 1..],
+        _ => "",
+    };
+    if ext.len() > buf.len() || !ext.is_ascii() {
+        return b"";
+    }
+    let out = &mut buf[..ext.len()];
+    out.copy_from_slice(ext.as_bytes());
+    out.make_ascii_lowercase();
+    out
 }
 
 #[cfg(test)]

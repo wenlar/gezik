@@ -25,6 +25,7 @@ pub mod text;
 pub mod tree;
 pub mod view;
 pub mod view_memory;
+pub mod view_rules;
 
 use std::io;
 use std::path::Path;
