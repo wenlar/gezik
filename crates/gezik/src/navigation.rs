@@ -868,10 +868,17 @@ impl Navigator {
             let place = inner.view.rule_place(&location, &inner.places);
             (inner.view.clone(), place)
         };
+        // A column not read yet loads as the user's load: it lands with `state` (a quiet re-read
+        // would keep what the empty listing shows).
+        let unread = listing.len() == 0;
         view.show(listing, &state, None, place);
         crate::dual::stepped(self.id());
         self.update_chrome();
-        self.reread(location);
+        if unread {
+            self.load(location, Mode::Show, None);
+        } else {
+            self.reread(location);
+        }
     }
 
     /// Adds the step `next` makes from `base` (where a pending move leads, else the current

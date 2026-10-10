@@ -24,6 +24,10 @@ use crate::ColumnItem;
 /// At most this many other tabs keep their column paths.
 const MAX_PARKED: usize = 64;
 
+/// How long the columns must stay before the ones missing are read (↓ held over folders opens
+/// and closes a column per row: only the last one is read).
+const READ_DELAY: std::time::Duration = std::time::Duration::from_millis(100);
+
 /// The status line where only the list can show (spec 10 §7.3).
 pub const LIST_ONLY: &str = "Columns show folders only: the list is shown here";
 
@@ -38,6 +42,15 @@ struct List {
     scroll: f32,
     /// The name selected in it, as its rows show it.
     selected: Option<String>,
+}
+
+/// A column let go of: its icon requests go too, so they do not wait ahead of the live ones.
+impl Drop for List {
+    fn drop(&mut self) {
+        if let Some(data) = self.shown.as_ref().and_then(|(data, _)| data.try_borrow().ok()) {
+            data.media.new_generation();
+        }
+    }
 }
 
 impl List {
@@ -68,9 +81,15 @@ pub(super) struct Columns {
     generation: u64,
     /// The columns on screen (from the first to one past the last that fits).
     visible: Range<usize>,
-    /// The focused column takes its first item once it has rows (→ into a column with nothing
-    /// selected in it).
+    /// The focused column takes its first item once its listing shows (→ into a column with
+    /// nothing selected in it); not when that listing is empty.
     select_first: bool,
+    /// The focused column shows an empty stand-in until its listing is read: its selection says
+    /// nothing yet.
+    unread: bool,
+    /// Folders to read once the columns stay (`READ_DELAY`).
+    pending: Vec<PathBuf>,
+    timer: slint::Timer,
     lists: Vec<List>,
     model: Option<Rc<VecModel<ColumnItem>>>,
 }
@@ -137,6 +156,7 @@ impl Columns {
     fn restart(&mut self) {
         self.generation += 1;
         self.select_first = false;
+        self.unread = false;
         for list in &mut self.lists {
             list.reading = false;
         }
@@ -172,6 +192,14 @@ impl Columns {
             }
         }
         read
+    }
+
+    /// The folders waiting to be read that are still wanted, taken out, and their generation.
+    fn due(&mut self) -> (Vec<PathBuf>, u64) {
+        let mut due = std::mem::take(&mut self.pending);
+        due.dedup();
+        due.retain(|folder| self.waits_for(self.generation, folder));
+        (due, self.generation)
     }
 
     /// Whether a read of `folder` for `generation` is still wanted.
@@ -352,7 +380,11 @@ impl View {
         }
         // Nothing shown yet (its read under way): the column left is read like any other.
         let entries = self.0.data.borrow().full.clone();
-        let list = (!entries.is_empty()).then(|| List { scroll: self.list_scroll(), ..self.make_list(&left, entries) });
+        let list = (!entries.is_empty()).then(|| {
+            let mut list = self.make_list(&left, entries);
+            list.scroll = self.list_scroll();
+            list
+        });
         let taken = {
             let mut columns = self.0.miller.borrow_mut();
             columns.path = Some(path.clone());
@@ -360,7 +392,9 @@ impl View {
                 columns.put(list);
             }
             columns.select_first = first;
-            columns.take(path.location())
+            let taken = columns.take(path.location());
+            columns.unread = taken.is_none();
+            taken
         };
         let (entries, own) = taken.unwrap_or_default();
         let state = selecting(name, scroll.unwrap_or(own));
@@ -380,17 +414,23 @@ impl View {
             let name = one.and_then(|i| data.listing.name_at(i)).map(str::to_owned);
             (name, one.is_some_and(|i| data.listing.is_dir(i)), data.selection.count(), data.listing.len())
         };
-        let first = {
+        let (first, waiting) = {
             let mut columns = self.0.miller.borrow_mut();
-            let first = columns.select_first && count == 0 && len > 0;
-            if count > 0 || first {
+            // The empty stand-in of a column not read yet: its listing decides once it shows.
+            let waiting = columns.unread && len == 0;
+            let first = columns.select_first && !waiting && count == 0 && len > 0;
+            if !waiting {
+                columns.unread = false;
                 columns.select_first = false;
             }
-            first
+            (first, waiting)
         };
         if first {
             // Comes back here with the first item selected.
             return self.jump_to(0);
+        }
+        if waiting {
+            return self.columns_sync();
         }
         let focus = path.focus();
         let open = !is_dir || path.columns().len() > focus + 1;
@@ -407,7 +447,7 @@ impl View {
     /// and whether its preview shows. Without columns, all of it goes.
     pub(super) fn columns_sync(&self) {
         let on = self.columns_on();
-        let (read, generation, items, focus, model, fresh) = {
+        let (read, items, focus, model, fresh) = {
             let mut columns = self.0.miller.borrow_mut();
             if !on {
                 columns.lists.clear();
@@ -443,7 +483,7 @@ impl View {
                 .collect();
             let fresh = columns.model.is_none();
             let model = columns.model.get_or_insert_with(Rc::default).clone();
-            (read, columns.generation, items, path.focus(), model, fresh)
+            (read, items, path.focus(), model, fresh)
         };
         if fresh {
             crate::panes::edit(self.0.id, |d| d.columns = ModelRc::from(model.clone()));
@@ -454,8 +494,36 @@ impl View {
             d.column_focus = i32::try_from(focus).unwrap_or(0);
             d.column_file = file;
         });
-        for folder in read {
-            self.read_column(folder, generation);
+        self.read_soon(read);
+    }
+
+    /// `folders` are read once the columns stay a moment: one read per column that stayed,
+    /// not one per row held over.
+    fn read_soon(&self, folders: Vec<PathBuf>) {
+        if folders.is_empty() {
+            return;
+        }
+        let mut columns = self.0.miller.borrow_mut();
+        columns.pending.extend(folders);
+        let weak = Rc::downgrade(&self.0);
+        columns.timer.start(slint::TimerMode::SingleShot, READ_DELAY, move || {
+            if let Some(inner) = weak.upgrade() {
+                let view = View(inner);
+                let (due, generation) = view.0.miller.borrow_mut().due();
+                for folder in due {
+                    view.read_column(folder, generation);
+                }
+            }
+        });
+    }
+
+    /// The `[view]` options or defaults changed: the columns beside the focused one are read
+    /// again with them.
+    pub(super) fn columns_relist(&self) {
+        let had = !self.0.miller.borrow().lists.is_empty();
+        if had {
+            self.0.miller.borrow_mut().lists.clear();
+            self.columns_sync();
         }
     }
 
@@ -490,7 +558,7 @@ impl View {
 
     /// Gezik's own job changed `dirs`: the columns showing one of them are read again.
     pub fn columns_touched(&self, dirs: &[PathBuf]) {
-        let (read, generation) = {
+        let read = {
             let mut columns = self.0.miller.borrow_mut();
             let mut read = Vec::new();
             for list in columns.lists.iter_mut().filter(|l| l.shown.is_some() && !l.reading) {
@@ -499,11 +567,9 @@ impl View {
                     read.push(list.folder.clone());
                 }
             }
-            (read, columns.generation)
+            read
         };
-        for folder in read {
-            self.read_column(folder, generation);
-        }
+        self.read_soon(read);
     }
 
     /// `entries` read for a column as the view would show them: without what `[view]` hides,
@@ -549,7 +615,7 @@ impl View {
                 model.entries_changed(&rows);
             }
         });
-        List { shown: Some((data, model)), ..List::new(folder.to_path_buf()) }
+        List { folder: folder.to_path_buf(), shown: Some((data, model)), reading: false, scroll: 0.0, selected: None }
     }
 }
 
@@ -716,6 +782,26 @@ mod tests {
     }
 
     #[test]
+    fn only_the_columns_still_wanted_are_read_when_they_stay() {
+        let mut columns = with_path(deep());
+        columns.visible = 0..3;
+        columns.pending = columns.keep();
+        assert!(columns.keep().is_empty(), "asked once");
+        // ↓ to a file meanwhile: /a/b/c closed before its read started.
+        let mut path = deep();
+        path.select(1, Some("f.txt".into()), false);
+        columns.path = Some(path);
+        columns.keep();
+        let (due, generation) = columns.due();
+        assert_eq!((due, generation), (vec![p("/a")], columns.generation));
+        assert!(columns.pending.is_empty());
+        // The columns started over: nothing of before is read.
+        columns.pending.push(p("/a"));
+        columns.restart();
+        assert!(columns.due().0.is_empty());
+    }
+
+    #[test]
     fn a_listing_goes_only_to_a_column_of_the_path() {
         let mut columns = with_path(deep());
         columns.put(List::new(p("/a")));
@@ -750,6 +836,11 @@ mod tests {
         assert!(!view.columns_on());
         show(super::super::listing::files("/x", &[]));
         assert!(view.columns_on(), "back in a folder: columns again");
+        // /x has no view of its own (the list): a sort changed there keeps it the list in
+        // views.toml, the columns only show it so.
+        view.set_sort(SortSpec { key: gezik_core::sort::SortKey::Size, dir: gezik_core::sort::SortDir::Desc });
+        assert_eq!(view.0.memory.borrow_mut().get("/x").map(|v| v.mode), Some(ViewMode::List));
+        assert!(view.columns_on());
         view.set_mode(ViewMode::List);
         show(super::super::listing::files("/w", &[]));
         assert!(!view.columns_on(), "the list was chosen");

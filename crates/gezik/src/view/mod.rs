@@ -150,6 +150,9 @@ struct Inner {
     rule_columns: Cell<Option<Columns>>,
     /// Miller columns (spec 10 §7): the tab's column path and the other columns' listings.
     miller: RefCell<columns::Columns>,
+    /// The shown folder's own mode, before the columns or the list forced another (what a
+    /// change of its sort or picture size keeps in views.toml).
+    own_mode: Cell<ViewMode>,
 }
 
 /// The filter bar's text, the pattern the list shows, and what is wrong with the text.
@@ -330,6 +333,7 @@ impl View {
             place: RefCell::new(Place::default()),
             rule_columns: Cell::new(None),
             miller: RefCell::default(),
+            own_mode: Cell::new(defaults.view.mode),
         }));
         // Weak: the media client lives inside the view.
         let weak = Rc::downgrade(&view.0);
@@ -382,6 +386,7 @@ impl View {
         }
         // Icons or thumbnails may have changed even if the view did not.
         self.0.model.notify.reset();
+        self.columns_relist();
     }
 
     fn media_ready(&self, entries: &[usize], ready: Ready) {
@@ -489,6 +494,7 @@ impl View {
         let kept = same_folder.then(|| self.0.applied.get());
         let (mut settings, rule) =
             decide(own, kept, &self.0.rules.borrow(), &place, entries, self.0.defaults.get().view);
+        self.0.own_mode.set(settings.mode);
         // A tab in columns stays in them for every folder; elsewhere the list (spec 10 §7).
         settings.mode = match self.columns_for(listing.folder(), settings.mode == ViewMode::Columns) {
             true => ViewMode::Columns,
@@ -1000,6 +1006,7 @@ impl View {
         }
         self.update_status();
         self.notify_listeners();
+        self.columns_relist();
         (old.show_hidden, old.show_system) != (options.show_hidden, options.show_system)
     }
 
@@ -1967,7 +1974,12 @@ impl View {
         }
         let folder = self.0.folder.borrow().clone();
         if let Some(folder) = folder {
-            self.0.memory.borrow_mut().set(&folder, view);
+            // A mode forced by the columns (or the list where they cannot show) is not the folder's.
+            if view.mode != self.0.current.get().mode {
+                self.0.own_mode.set(view.mode);
+            }
+            let own = ViewSettings { mode: self.0.own_mode.get(), ..view };
+            self.0.memory.borrow_mut().set(&folder, own);
             self.save_memory_soon();
             // Its own view now: the rule is done with this folder (spec 10 §8.2).
             self.0.applied.set(None);
