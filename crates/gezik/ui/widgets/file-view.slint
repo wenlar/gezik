@@ -171,8 +171,10 @@ export component FileView inherits Rectangle {
     // The field has the keyboard. A field whose row scrolled out is gone and says nothing, so
     // it only counts while its row is on screen.
     out property <bool> rename-focused: root.rename-has-focus && root.renaming-index >= 0
-        && (root.line-of(root.renaming-index) + 1) * root.item-height > -root.scroll
-        && root.line-of(root.renaming-index) * root.item-height < -root.scroll + list.visible-height;
+        && (root.rename-line + 1) * root.item-height > -root.scroll
+        && root.rename-line * root.item-height < -root.scroll + list.visible-height;
+    // The renamed entry's line; `* 0` only makes it depend on `groups-version`.
+    property <int> rename-line: root.line-of(root.renaming-index + root.groups-version * 0);
     out property <length> cell-width: max(root.picture-size + 24px, 96px);
     // The grid's first column starts here: the cells are inset from the sheet's edge
     // (`Geometry::Grid.left` in gezik-core layout.rs).
@@ -229,6 +231,8 @@ export component FileView inherits Rectangle {
     // with groups an entry's line is not `index / per-row`. -1: in a closed group.
     pure callback line-of(int) -> int;
     pure callback column-of(int) -> int;
+    // Bumped by Rust whenever the groups change: bindings that call `line-of` read it to update.
+    in property <int> groups-version;
     // A click on a group's header (its first entry), and its right-click (window position).
     callback group-toggled(int);
     callback group-menu(int, length, length);
@@ -911,7 +915,7 @@ export component FileView inherits Rectangle {
 
     // Why the typed name cannot be used, just under the entry.
     if root.rename-error != "" && root.renaming-index >= 0: Rectangle {
-        property <int> line: root.line-of(root.renaming-index);
+        property <int> line: root.rename-line;
         x: list.x + (root.mode == 0 ? Theme.inset + root.side + Theme.icon-size + root.gap : root.grid-left + root.column-of(root.renaming-index) * root.cell-width + 8px);
         y: list.y + root.scroll + (self.line + 1) * root.item-height;
         width: error-text.preferred-width + Theme.spacing * 2;

@@ -1424,9 +1424,16 @@ impl Menus {
             let at_calc = entries.iter().position(|(id, _, _)| *id == RESET_FOLDER).unwrap_or(entries.len());
             entries.insert(at_calc, (CALC_FOLDER_SIZES, "    Calculate folder sizes".to_owned(), true));
         }
-        let mut subs = format_subs(options, place + 1);
-        // Group by ▸ right after the sort's direction.
+        // Group by ▸ right after the sort's direction; a grouped view's Collapse/Expand All after it.
         let at_group = entries.iter().position(|(id, _, _)| *id == SORT_DESC).map_or(entries.len(), |i| i + 1);
+        let shift = if self.view.grouped() {
+            let all = group_header_items().into_iter().map(|(id, t)| (id, format!("    {t}"), true));
+            entries.splice(at_group..at_group, all);
+            group_header_items().len()
+        } else {
+            0
+        };
+        let mut subs = format_subs(options, place + 1 + shift);
         subs.push(group_by_sub(self.view.view_settings().group, at_group));
         self.open_slint_entries(&entries, subs, at);
     }

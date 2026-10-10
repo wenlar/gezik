@@ -2076,10 +2076,13 @@ impl View {
                 group_spans(listing.len(), &|i| listing.entry(i), &grouping, &|key| collapsed.contains(key))
             }
         };
-        let mut data = self.0.data.borrow_mut();
-        data.groups = spans;
-        data.group_keys = keys;
-        hide_collapsed(&mut data);
+        {
+            let mut data = self.0.data.borrow_mut();
+            data.groups = spans;
+            data.group_keys = keys;
+            hide_collapsed(&mut data);
+        }
+        self.groups_changed();
     }
 
     /// Opens or closes groups without reading or sorting anything (spec 10 §6.2): `change` gives
@@ -2107,6 +2110,7 @@ impl View {
             }
             hide_collapsed(&mut data);
         }
+        self.groups_changed();
         let scroll = self.list_scroll();
         self.0.model.notify.reset();
         self.keep_scroll_after_reset(scroll);
@@ -2136,6 +2140,19 @@ impl View {
     /// Group by ▸ (spec 10 §6.2); the folder remembers it.
     pub fn set_group(&self, by: GroupBy) {
         self.change_view(|v| v.group = by);
+    }
+
+    /// Whether the list shows group headers.
+    pub fn grouped(&self) -> bool {
+        !self.0.data.borrow().groups.is_empty()
+    }
+
+    /// Tells the Slint side the lines moved (`rename-focused` reads it; Slint cannot see what
+    /// `line-of` depends on).
+    fn groups_changed(&self) {
+        if let Some(window) = self.0.window.upgrade() {
+            window.set_list_groups_version(window.get_list_groups_version().wrapping_add(1));
+        }
     }
 
     /// The groups shown, for the drop target (drag.rs).

@@ -110,6 +110,8 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         Action::GroupType => view.set_group(GroupBy::Type),
         Action::GroupDate => view.set_group(GroupBy::Date),
         Action::GroupSize => view.set_group(GroupBy::Size),
+        Action::CollapseGroups => view.collapse_all(true),
+        Action::ExpandGroups => view.collapse_all(false),
         // Not theirs: `handle_key` and the menu bar run these themselves. Listed one by one so
         // that a new action is a compile error here until it is placed.
         Action::NewTab

@@ -145,6 +145,8 @@ export component AppWindow inherits Window {
                 MenuItem { title: "Date"; activated => { root.menu-command("group-date"); } }
                 MenuItem { title: "Size"; activated => { root.menu-command("group-size"); } }
             }
+            MenuItem { title: "Collapse All Groups"; activated => { root.menu-command("collapse-groups"); } }
+            MenuItem { title: "Expand All Groups"; activated => { root.menu-command("expand-groups"); } }
             MenuSeparator { }
             MenuItem { title: "Flat View"; shortcut: root.menu-keys ? @keys(Control + B) : @keys(); activated => { root.menu-command("flat-view"); } }
             MenuItem { title: "Show Preview"; activated => { root.menu-command("toggle-preview"); } }
@@ -422,6 +424,7 @@ export component AppWindow inherits Window {
     pure callback list-column-of(int) -> int;
     callback list-group-toggled(int);
     callback list-group-menu(length, length);
+    in property <int> list-groups-version;
     // A column edge was released: Rust reads the widths.
     callback columns-resized();
     // A rubber-band drag in the file view; see FileView.
@@ -1081,6 +1084,7 @@ export component AppWindow inherits Window {
                             trash: root.trash-shown;
                             grid-columns-changed(n) => { root.grid-columns-changed(n); }
                             zoom(bigger) => { root.zoom(bigger); }
+                            groups-version: root.list-groups-version;
                             line-of(i) => { return root.list-line-of(i); }
                             column-of(i) => { return root.list-column-of(i); }
                             group-toggled(first) => { root.list-group-toggled(first); }

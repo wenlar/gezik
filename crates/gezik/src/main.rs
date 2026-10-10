@@ -267,7 +267,9 @@ fn perform(
         | Action::GroupNone
         | Action::GroupType
         | Action::GroupDate
-        | Action::GroupSize => return actions::run(action, nav, view),
+        | Action::GroupSize
+        | Action::CollapseGroups
+        | Action::ExpandGroups => return actions::run(action, nav, view),
     }
     true
 }

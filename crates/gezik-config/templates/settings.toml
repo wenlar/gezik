@@ -189,6 +189,8 @@ cloud = true
 # group-type = ""   # Group by ▸ Type (the Type column's text)
 # group-date = ""   # Group by ▸ Date: Today, Yesterday, Earlier this week …
 # group-size = ""   # Group by ▸ Size: Empty, Tiny … Gigantic, Folders
+# collapse-groups = ""   # Collapse All Groups (a grouped view)
+# expand-groups = ""   # Expand All Groups
 
 # Saved rule sets for batch rename (Rename… with two or more items selected). The rename
 # layer writes them with "Presets ▾ › Save current rules as…"; they can also be written here.
