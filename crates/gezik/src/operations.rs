@@ -757,7 +757,13 @@ impl Operations {
         }
         if keep {
             let typed = mirror.rename_text.borrow().to_string();
-            self.commit_rename(&typed, Commit::Enter);
+            // A name that cannot be used keeps the field: it comes back on screen with the
+            // problem under it (and takes the keyboard again).
+            if self.commit_rename(&typed, Commit::Enter).is_none()
+                && let Some((index, _)) = self.0.view.renaming()
+            {
+                self.0.view.reveal(index);
+            }
         } else {
             self.rename_cancelled();
         }

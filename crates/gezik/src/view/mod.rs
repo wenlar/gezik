@@ -2415,7 +2415,7 @@ impl View {
     }
 
     /// Scrolls entry `index` fully into view (its pane does, then calls [`View::revealed`]).
-    fn reveal(&self, index: usize) {
+    pub fn reveal(&self, index: usize) {
         if self.0.window.upgrade().is_none() {
             return;
         }
