@@ -527,6 +527,21 @@ Numbers stay as they are when branches merge: if this range meets one merged ear
 206. **Remembered.** Quit and start again: `~/Downloads` is still grouped by Date, another folder is not; View ▸ Apply to All Folders: `settings.toml` has `group = "date"` under `[view]`; Reset This Folder brings back the default.
 207. **iCloud.** In an iCloud Drive folder with items only in the cloud, Group by Size: the cloud-only items stay in the size the system gives them (no download starts: `brctl status` or Finder's cloud icons unchanged).
 
+### 10c, the sidebar folder tree
+
+Numbers stay as they are when branches merge: if this range meets one merged earlier, the later branch moves its items to the next free ten and writes the old number in brackets in the results file; gaps are not filled. 10c starts at 210 as its plan decided (other open branches take the numbers before it). Results go to `macos-test-results.md`.
+
+210. **Tests first.** `cargo test -p gezik-core tree`, `cargo test -p gezik sidebar`, `cargo test -p gezik-core drag`; paste the output.
+211. **Arrows.** Click the arrow before Home, Macintosh HD (LOCATIONS), a pinned folder and iCloud Drive (CLOUD): each opens below its row, folders only, in Finder's name order (`a2` before `a10`), dot folders only with Show Hidden Items (⌘⇧.); toggling ⌘⇧. while a branch is open adds/removes them. A click on the row (not the arrow) goes there as before. Closing and opening reads the branch again.
+212. **A huge branch.** `mkdir /tmp/gezik-tree && cd /tmp/gezik-tree && seq 0 49999 | xargs -n 1000 mkdir`, pin `/tmp/gezik-tree`, open its arrow: `…` while it reads, no beachball, the window stays usable meanwhile; then 20,000 rows and a last line `… 30,000 more (open the folder)`; scrolling the sidebar stays smooth; a click on the last line opens the folder. Close it: Activity Monitor's memory for Gezik falls back near where it was.
+213. **A link loop.** `mkdir -p /tmp/loop/a && ln -s /tmp/loop /tmp/loop/a/back`; pin `/tmp/loop`, open `a`, then `back`: `back` shows without an arrow (its tip says `Leads back to a folder above it`); nothing hangs.
+214. **iCloud, nothing downloads.** In an iCloud Drive folder whose items are only in the cloud (Finder's cloud icons), open branches below it: folder names show; no file starts downloading (`brctl status`, Finder's icons unchanged).
+215. **A server.** ⌘K to an SMB share, then open its branch in LOCATIONS; turn Wi-Fi off and open another branch of it: the window stays usable, the arrow shows `…`, later the status bar says `Cannot open …`; close the branch while it reads — nothing appears later.
+216. **Drop, menu, new tab.** Drag a copy of a file onto a tree folder: it goes there (⌘Z undoes); right-click a tree folder: the sidebar's folder menu (Open in new tab, Pin, Search in this folder…, Copy path ▸); middle-click (or ⌘Enter from the keyboard) opens it in a new tab. Drag a pinned folder over an open pin's branch: it lands after that pin.
+217. **Keyboard and VoiceOver.** Tab until the sidebar has the keyboard (a focus ring on a row); ↑/↓ skip headings, → opens / goes in, ← closes / goes up, typing a name jumps, Enter goes, ⌘Enter opens a new tab, Esc goes back to the list; ⌘⌫ does nothing while the sidebar has the keyboard. With VoiceOver: rows read "expanded"/"collapsed" and "Level 2" for tree folders; VO's expand action opens a branch.
+218. **Follow.** View ▸ Show in Sidebar Tree in a deep folder of Documents: the tree opens under Documents down to it, the row shows and has the keyboard. Set `[sidebar] tree-follow = true` in settings.toml: going into folders opens the tree along; a hidden folder (with hidden items off) leaves it as is, silently.
+219. **Nothing at rest.** Quit and start again: every branch is closed; with every branch closed, Activity Monitor shows the same memory as before this change (10d's build) within noise.
+
 ## Known gaps (not bugs)
 
 These are known differences from Finder and ForkLift (from the ForkLift comparison, §3). Don't report them as failures. A note is welcome if one hurts more than expected.
