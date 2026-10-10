@@ -93,7 +93,8 @@ export component Breadcrumb inherits Rectangle {
                     animate background { duration: Theme.motion-hover; }
                     border-width: i == root.drop-crumb ? 1px : 0px;
                     border-color: Theme.accent;
-                    min-width: 0px;
+                    // The current folder keeps its name (up to a point); the others give way first.
+                    min-width: i == root.crumbs.length - 1 ? min(self.preferred-width, 120px) : 0px;
                     preferred-width: part-label.preferred-width + Theme.spacing * 2;
                     accessible-role: button;
                     accessible-label: crumb.label;

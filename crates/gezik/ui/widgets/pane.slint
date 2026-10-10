@@ -469,6 +469,11 @@ export component PaneView inherits Rectangle {
     // (they are cut off); with one, what they need.
     min-width: root.dual ? 240px : body.min-width;
     clip: root.dual;
+    // Only with two panes. Set when the width changes: a binding on it would loop through the
+    // layout (with one pane the width follows what the bars need).
+    property <bool> narrow;
+    changed width => { self.narrow = root.dual && self.width < 400px; }
+    changed dual => { self.narrow = root.dual && self.width < 400px; }
 
     body := VerticalLayout {
         tab-bar := TabBar {
@@ -538,7 +543,7 @@ export component PaneView inherits Rectangle {
                         root.navigate(root.index, path);
                     }
                 }
-                TextButton {
+                if !root.narrow: TextButton {
                     text: "View";
                     lead-icon: Glyph.view;
                     icon: Glyph.chevron-down;
@@ -546,6 +551,19 @@ export component PaneView inherits Rectangle {
                     clicked => {
                         root.end-path-editing();
                         root.view-menu(root.index, self.absolute-position.x, self.absolute-position.y + self.height, self.absolute-position.x + self.width, self.absolute-position.y);
+                    }
+                }
+                // A narrow pane: its glyph only, leaving the address room for the folder's name.
+                if root.narrow: HorizontalLayout {
+                    padding-top: (Theme.control-height - Theme.row-height) / 2;
+                    padding-bottom: (Theme.control-height - Theme.row-height) / 2;
+                    ToolButton {
+                        text: "View";
+                        icon: Glyph.view;
+                        clicked => {
+                            root.end-path-editing();
+                            root.view-menu(root.index, self.absolute-position.x, self.absolute-position.y + self.height, self.absolute-position.x + self.width, self.absolute-position.y);
+                        }
                     }
                 }
             }

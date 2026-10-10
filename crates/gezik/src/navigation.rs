@@ -1173,7 +1173,7 @@ impl Navigator {
                 return self.show_failed(&mode, &location, format!("Cannot open {shown}: {why}"));
             }
         };
-        let (view, state, place) = {
+        let (view, state, place, quiet) = {
             let mut inner = self.0.borrow_mut();
             if let Mode::Move(steps) = &mode {
                 inner.tabs.active_mut().apply_steps(steps);
@@ -1181,11 +1181,16 @@ impl Navigator {
             let reread = inner.reread.take() == Some(inner.generation.load(Ordering::SeqCst)) && !inner.cleared;
             inner.cleared = false;
             let shown = if reread { inner.view.capture() } else { view_to_show(&mode, inner.tabs.active().view()) };
+            let quiet = reread && select_next.is_none();
             let state = with_selection(shown, select_next);
-            (inner.view.clone(), state, inner.view.rule_place(&location, &inner.places))
+            (inner.view.clone(), state, inner.view.rule_place(&location, &inner.places), quiet)
         };
         self.watch_shown(&location);
-        view.show(listing, &state, note, place);
+        // A quiet re-read that found nothing new (the usual one, as a pane becomes active)
+        // leaves the rows alone: made anew, they would lose the click that made it active.
+        if !(quiet && note.is_none() && view.shows_same(&listing)) {
+            view.show(listing, &state, note, place);
+        }
         crate::panes::with_id(self.id(), |p| p.folder_sizes.shown(&location));
         self.update_chrome();
         if location.is_results() {

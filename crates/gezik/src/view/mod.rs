@@ -1572,6 +1572,19 @@ impl View {
         }
     }
 
+    /// Whether `listing` (a folder read again) is what the view shows already: then showing it
+    /// would only make every row anew, losing a press, a double-click or a drag under way.
+    pub fn shows_same(&self, listing: &Listing) -> bool {
+        let Listing::Files(dir, entries) = listing else { return false };
+        let options = self.0.options.get();
+        let read = Listing::Files(dir.clone(), entries.clone());
+        let Listing::Files(_, entries) = read.without_hidden(options.show_hidden, options.show_system) else {
+            return false;
+        };
+        let data = self.0.data.borrow();
+        data.listing.folder().is_some_and(|shown| shown == dir.as_path()) && same_entries(&data.full, &entries)
+    }
+
     /// The folder shown; `None` for "This PC".
     pub fn folder(&self) -> Option<PathBuf> {
         self.0.data.borrow().listing.folder().map(Path::to_path_buf)
@@ -2592,6 +2605,18 @@ fn sources_in(folder: Option<&Path>, sources: &[PathBuf]) -> bool {
 /// by the filter", "Nothing to undo") only while the item count stays as it was, so a changed
 /// count is not hidden; any note also goes at the next selection change. Another folder or
 /// tab starts without one.
+/// Whether `a` and `b` hold the same entries, in any order.
+fn same_entries(a: &[Entry], b: &[Entry]) -> bool {
+    type Key<'a> = (&'a str, bool, u8, u64, Option<SystemTime>, Option<SystemTime>);
+    fn keys(entries: &[Entry]) -> Vec<Key<'_>> {
+        let mut keys: Vec<Key> =
+            entries.iter().map(|e| (e.name.as_str(), e.is_dir, e.flags, e.size, e.modified, e.created)).collect();
+        keys.sort_unstable();
+        keys
+    }
+    a.len() == b.len() && keys(a) == keys(b)
+}
+
 fn note_after_show(standing: Option<String>, new: Option<String>, live: bool, count_changed: bool) -> Option<String> {
     new.or(standing.filter(|_| live && !count_changed))
 }
@@ -2691,6 +2716,23 @@ pub fn sizes_belong(shown: Option<&Path>, folder: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_folder_read_again_is_the_same_in_any_order() {
+        let entry = |name: &str, size| Entry {
+            name: name.to_owned(),
+            is_dir: false,
+            flags: 0,
+            size,
+            modified: None,
+            created: None,
+        };
+        let shown = [entry("a", 1), entry("b", 2)];
+        assert!(same_entries(&shown, &[entry("b", 2), entry("a", 1)]));
+        assert!(!same_entries(&shown, &[entry("a", 1), entry("b", 3)]), "a size changed");
+        assert!(!same_entries(&shown, &[entry("a", 1)]), "one is gone");
+        assert!(!same_entries(&shown, &[entry("a", 1), entry("c", 2)]), "renamed");
+    }
     use listing::files;
 
     #[test]
