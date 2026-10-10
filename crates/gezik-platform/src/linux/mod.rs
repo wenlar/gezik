@@ -7,6 +7,9 @@ pub mod dbus;
 pub mod file_manager1;
 #[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
 pub(crate) mod mime;
+// shortcut: nothing calls it on Linux until Open With (9b10 Task 5); then cfg_attr like the rest.
+#[allow(dead_code)]
+pub(crate) mod desktop_entry;
 #[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
 pub(crate) mod thumbs;
 #[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
