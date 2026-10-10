@@ -1,0 +1,170 @@
+// 10a-0 probe: a PaneView whose live state stays inside it, fed by one PaneData row.
+// Throwaway; not product code. Gezik's own ListView (row recycling) is imported as is.
+import { ListView } from "../../../../crates/gezik/ui/widgets/scrollbar.slint";
+
+export struct Row {
+    name: string,
+    size: string,
+    modified: string,
+}
+
+// What Rust sends to one pane. The *-request fields are counters: the pane applies the
+// matching value when the counter changes (one-way requests replace `<=>`).
+export struct PaneData {
+    path: string,
+    items: [Row],
+    selected: int,
+    active: bool,
+    scroll-request: int,
+    scroll-to: length,
+    rename-request: int,
+    rename-row: int,
+    rename-text: string,
+    focus-request: int,
+}
+
+export component PaneView inherits Rectangle {
+    in property <PaneData> data;
+    in property <int> index;
+    // Window-level things, the same for both panes: root properties, not PaneData.
+    in property <bool> own-tab: true;
+    in property <bool> drag-active;
+    in property <length> drag-x;
+    in property <length> drag-y;
+    in property <length> col-size: 80px;
+
+    callback item-pressed(int, int);
+    callback key(int, string) -> bool;
+    callback tab(int, bool);
+    callback scrolled(int, length);
+    callback rename-edited(int, string);
+    callback rename-done(int, string);
+    callback focus-changed(int, bool);
+    callback drag-start(int, int);
+    callback drag-move(int, length, length);
+    callback drag-end(int, length, length);
+    callback drop-target(int, int);
+    callback ready(int, length);
+    // The list's rect in the window, for Rust's pure drop hit test (gezik-core drag.rs).
+    callback geometry(int, length, length, length, length);
+    // Counts re-evaluations of a row binding that reads the pane's PaneData (path).
+    pure callback row-eval(int, string) -> bool;
+
+    property <length> row-h: 24px;
+    property <length> head-h: 24px;
+    property <int> scroll-req: root.data.scroll-request;
+    property <int> rename-req: root.data.rename-request;
+    property <int> focus-req: root.data.focus-request;
+    property <bool> renaming;
+    property <bool> dragging;
+    property <bool> over: root.drag-active
+        && root.drag-x >= self.absolute-position.x && root.drag-x < self.absolute-position.x + self.width
+        && root.drag-y >= list.absolute-position.y && root.drag-y < list.absolute-position.y + list.height;
+    property <int> over-row: !self.over ? -2
+        : min(root.data.items.length, floor((root.drag-y - list.absolute-position.y - list.content-y) / root.row-h));
+
+    changed scroll-req => { list.content-y = -root.data.scroll-to; }
+    changed rename-req => {
+        root.renaming = true;
+        field.text = root.data.rename-text;
+        field.focus();
+    }
+    changed focus-req => { fs.focus(); }
+    property <length> list-x: list.absolute-position.x;
+    property <length> list-y: list.absolute-position.y;
+    changed list-x => { root.report(); }
+    changed list-y => { root.report(); }
+    changed width => { root.report(); }
+    changed height => { root.report(); }
+    function report() { root.geometry(root.index, list.absolute-position.x, list.absolute-position.y, list.width, list.height); }
+    changed over-row => {
+        if self.over-row >= -1 {
+            root.drop-target(root.index, self.over-row >= root.data.items.length ? -1 : self.over-row);
+        }
+    }
+    // A new instance (pane opened) sees its PaneData once, with no `changed`.
+    init => {
+        list.content-y = -root.data.scroll-to;
+        root.ready(root.index, -list.content-y);
+    }
+
+    background: #1e1e1e;
+
+    VerticalLayout {
+        Rectangle {
+            height: root.head-h;
+            background: root.data.active ? #2d6a3e : #3a3a3a;
+            Text { x: 6px; text: root.data.path; color: white; vertical-alignment: center; }
+        }
+        fs := FocusScope {
+            changed has-focus => { root.focus-changed(root.index, self.has-focus); }
+            key-pressed(e) => {
+                if root.own-tab && (e.text == Key.Tab || e.text == Key.Backtab) {
+                    root.tab(root.index, e.text == Key.Backtab || e.modifiers.shift);
+                    return accept;
+                }
+                return root.key(root.index, e.text) ? accept : reject;
+            }
+            list := ListView {
+                changed content-y => { root.scrolled(root.index, -self.content-y); }
+                for item[i] in root.data.items: Rectangle {
+                    height: root.row-h;
+                    background: i == root.data.selected ? (root.data.active ? #2a5db0 : #2a5db073)
+                        : i == root.over-row ? #444 : transparent;
+                    ta := TouchArea {
+                        pointer-event(e) => {
+                            if e.kind == PointerEventKind.down && e.button == PointerEventButton.left {
+                                root.item-pressed(root.index, i);
+                                fs.focus();
+                            }
+                            if e.kind == PointerEventKind.up && root.dragging {
+                                root.dragging = false;
+                                root.drag-end(root.index, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                            }
+                        }
+                        moved => {
+                            if self.pressed && !root.dragging && abs(self.mouse-x - self.pressed-x) + abs(self.mouse-y - self.pressed-y) > 4px {
+                                root.dragging = true;
+                                root.drag-start(root.index, i);
+                            }
+                            if root.dragging {
+                                root.drag-move(root.index, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        padding-left: 6px;
+                        padding-right: 12px;
+                        spacing: 8px;
+                        Rectangle {
+                            width: 16px;
+                            Rectangle { height: 16px; background: root.row-eval(root.index, root.data.path) ? #c9a227 : #888; border-radius: 2px; }
+                        }
+                        Text { text: item.name; color: #ddd; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+                        Text { text: item.size; color: #aaa; width: root.col-size; horizontal-alignment: right; vertical-alignment: center; }
+                        Text { text: item.modified; color: #aaa; width: 120px; vertical-alignment: center; }
+                    }
+                }
+            }
+        }
+    }
+
+    // The rename field: its text lives here; Rust gets it through callbacks only.
+    field := TextInput {
+        x: 22px;
+        y: root.head-h + root.data.rename-row * root.row-h + list.content-y;
+        width: root.width - 160px;
+        height: root.row-h;
+        visible: root.renaming;
+        color: white;
+        vertical-alignment: center;
+        // Reported as pane + 10, to see where Slint's own Tab chain goes.
+        changed has-focus => { root.focus-changed(root.index + 10, self.has-focus); }
+        edited => { root.rename-edited(root.index, self.text); }
+        accepted => {
+            root.renaming = false;
+            root.rename-done(root.index, self.text);
+            fs.focus();
+        }
+    }
+}

@@ -1,0 +1,37 @@
+# 10a-0 probe. To build: copy this file to Cargo.toml next to it (and the root Cargo.lock,
+# so Slint stays at the patched 1.18.1), then `cargo build --release -j 4`.
+[package]
+name = "pane-probe"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[[bin]]
+name = "pane-probe"
+path = "main.rs"
+
+[dependencies]
+# Gezik's exact Slint features (crates/gezik/Cargo.toml), minus the unstable winit/handle ones.
+slint = { version = "=1.18.1", default-features = false, features = [
+    "std",
+    "compat-1-2",
+    "backend-winit",
+    "renderer-software",
+    "software-renderer-systemfonts",
+    "accessibility",
+] }
+
+[build-dependencies]
+slint-build = "=1.18.1"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[patch.crates-io]
+i-slint-core = { path = "../../../../vendor/i-slint-core" }
