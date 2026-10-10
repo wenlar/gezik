@@ -400,10 +400,30 @@ impl Tree {
         (reads, rearmed)
     }
 
-    /// Every open branch read again (the hidden-items setting changed).
-    pub fn reread_all(&mut self) -> Vec<Read> {
-        let open: Vec<NodeId> = self.nodes.iter().filter(|(_, n)| n.state == State::Open).map(|(id, _)| *id).collect();
-        open.into_iter().filter_map(|id| self.ticket(id)).collect()
+    /// The hidden-items setting changed: every open branch is read again, a read on its way
+    /// (under the old setting) is asked again, and a branch found empty gets its arrow back (its
+    /// hidden sub-folders may show now). Returns the reads and the nodes whose arrow came back.
+    pub fn reread_all(&mut self) -> (Vec<Read>, Vec<NodeId>) {
+        let hit: Vec<(NodeId, State)> = self
+            .nodes
+            .iter()
+            .filter(|(_, n)| matches!(n.state, State::Open | State::Loading | State::Empty))
+            .map(|(id, n)| (*id, n.state))
+            .collect();
+        let mut reads = Vec::new();
+        let mut rearmed = Vec::new();
+        for (id, state) in hit {
+            if state == State::Empty {
+                if let Some(node) = self.nodes.get_mut(&id) {
+                    node.state = State::Closed;
+                    self.version += 1;
+                }
+                rearmed.push(id);
+            } else {
+                reads.extend(self.ticket(id));
+            }
+        }
+        (reads, rearmed)
     }
 
     /// The lines under `root`, top to bottom: each shown sub-folder, the open ones followed by
@@ -502,7 +522,7 @@ mod tests {
         let mut tree = Tree::default();
         assert!(tree.is_empty());
         assert_eq!(tree.root_of(&key("/r")), None);
-        assert!(tree.reread_all().is_empty());
+        assert_eq!(tree.reread_all(), (Vec::new(), Vec::new()));
         assert_eq!(tree.rereads(&[PathBuf::from("/r")], &same), (Vec::new(), Vec::new()));
         assert!(!tree.has_branch_at(Path::new("/r"), &same));
         assert!(tree.is_empty(), "asking reads nothing and keeps nothing (spec 10 §5.4)");
@@ -655,7 +675,10 @@ mod tests {
         let read = tree.toggle_root(key("/r")).unwrap();
         let opened = tree.version();
         assert_ne!(opened, v);
-        assert!(tree.reread_all().is_empty());
+        let (mut asked, _) = tree.reread_all();
+        assert_eq!(tree.version(), opened, "a read asked again shows nothing new yet");
+        assert!(!tree.loaded(&read, found(&["old"])), "the read under the old setting is dropped");
+        let read = asked.remove(0);
         tree.keep_roots(&[key("/r")]);
         assert!(!tree.has_branch_at(Path::new("/r"), &same));
         assert_eq!(tree.version(), opened, "asking and keeping change nothing");
@@ -681,7 +704,7 @@ mod tests {
         assert!(reads.is_empty(), "/r/e is not open; /elsewhere is not in the tree");
         assert_eq!(rearmed, [e]);
         assert_eq!(tree.node(e).unwrap().state, State::Closed, "a new folder may be there: the arrow comes back");
-        let all: Vec<PathBuf> = tree.reread_all().into_iter().map(|r| r.path).collect();
+        let all: Vec<PathBuf> = tree.reread_all().0.into_iter().map(|r| r.path).collect();
         assert_eq!(all, [PathBuf::from("/r")]);
     }
 
@@ -811,6 +834,73 @@ mod tests {
         tree.loaded(&read, Some(prepare(vec!["j".into(), "ok".into()], real("D:/r/a"))));
         assert_eq!(tree.node(child(&tree, a, "j")).unwrap().state, State::Loop);
         assert_eq!(names(&tree, &tree.lines(root)), ["a", "j", "ok", "x"]);
+    }
+
+    #[test]
+    fn showing_hidden_items_rereads_open_and_loading_branches_and_rearms_empty_ones() {
+        let mut tree = Tree::default();
+        let read = tree.toggle_root(key("/r")).unwrap();
+        tree.loaded(&read, found(&["a", "e"]));
+        let root = tree.root_of(&key("/r")).unwrap();
+        let (a, e) = (child(&tree, root, "a"), child(&tree, root, "e"));
+        let read = tree.expand(e).unwrap();
+        tree.loaded(&read, found(&[]));
+        let slow = tree.expand(a).unwrap();
+        let v = tree.version();
+        let (reads, rearmed) = tree.reread_all();
+        let mut paths: Vec<PathBuf> = reads.iter().map(|r| r.path.clone()).collect();
+        paths.sort();
+        assert_eq!(paths, [PathBuf::from("/r"), PathBuf::from("/r/a")]);
+        assert_eq!(rearmed, [e]);
+        assert_eq!(tree.node(e).unwrap().state, State::Closed, "only hidden sub-folders: they may show now");
+        assert_ne!(tree.version(), v);
+        assert!(!tree.loaded(&slow, found(&["x"])), "a read under the old setting is dropped");
+        assert_eq!(tree.node(a).unwrap().state, State::Loading, "the new read is on its way");
+    }
+
+    #[test]
+    fn reveal_stops_at_an_empty_folder_or_a_loop_and_matches_a_case_only_name() {
+        let lower = |p: &Path| PathBuf::from(p.to_string_lossy().to_lowercase());
+        let blind = |a: &Path, b: &Path| lower(a) == lower(b);
+        let mut tree = Tree::default();
+        let read = tree.toggle_root(key("/r")).unwrap();
+        let real = Some(PathBuf::from("/real/r"));
+        tree.loaded(&read, Some(prepare(vec!["Docs".into(), "e".into(), "link".into()], real.clone())));
+        let root = tree.root_of(&key("/r")).unwrap();
+        let docs = child(&tree, root, "Docs");
+        let rest = |p: &str| rest_under(Path::new("/r"), Path::new(p), &blind).unwrap();
+        assert_eq!(tree.reveal(key("/r"), &rest("/r/docs"), &blind), Reveal::Shown(docs), "Docs for docs");
+        assert_eq!(tree.reveal(key("/r"), &rest("/r/docs"), &same), Reveal::Missing, "case counts where it does");
+        let e = child(&tree, root, "e");
+        let read = tree.expand(e).unwrap();
+        tree.loaded(&read, found(&[]));
+        assert_eq!(tree.reveal(key("/r"), &rest("/r/e/x"), &same), Reveal::Missing, "found empty");
+        let link = child(&tree, root, "link");
+        let read = tree.expand(link).unwrap();
+        tree.loaded(&read, Some(prepare(vec!["x".into()], real)));
+        assert_eq!(tree.node(link).unwrap().state, State::Loop);
+        assert_eq!(tree.reveal(key("/r"), &rest("/r/link/x"), &same), Reveal::Missing, "under a loop");
+    }
+
+    #[test]
+    fn a_failed_read_of_an_ancestor_closes_it_and_a_listing_rearms_an_empty_one() {
+        let mut tree = Tree::default();
+        let read = tree.toggle_root(key("/r")).unwrap();
+        tree.loaded(&read, found(&["a"]));
+        let root = tree.root_of(&key("/r")).unwrap();
+        let a = child(&tree, root, "a");
+        let rest = rest_under(Path::new("/r"), Path::new("/r/a/b"), &same).unwrap();
+        let Reveal::Wait(Some(read)) = tree.reveal(key("/r"), &rest, &same) else { panic!("/r/a is read") };
+        assert!(tree.loaded(&read, None));
+        assert_eq!(tree.node(a).unwrap().state, State::Closed, "the arrow is back");
+        // Asked again, the opening would read it again: the sidebar ends it on a failed read.
+        let Reveal::Wait(Some(read)) = tree.reveal(key("/r"), &rest, &same) else { panic!("read again") };
+        tree.loaded(&read, found(&[]));
+        assert_eq!(tree.node(a).unwrap().state, State::Empty);
+        assert!(tree.listed(Path::new("/r/a"), &prepare(Vec::new(), None), &same).is_empty(), "still empty");
+        assert_eq!(tree.node(a).unwrap().state, State::Empty);
+        assert_eq!(tree.listed(Path::new("/r/a"), &prepare(vec!["b".into()], None), &same), [a]);
+        assert_eq!(tree.node(a).unwrap().state, State::Closed, "a sub-folder now: the arrow is back");
     }
 
     #[test]
