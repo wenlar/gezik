@@ -543,27 +543,17 @@ export component PaneView inherits Rectangle {
                         root.navigate(root.index, path);
                     }
                 }
-                if !root.narrow: TextButton {
-                    text: "View";
+                // In a narrow pane its glyph only, leaving the address room for the folder's name.
+                TextButton {
+                    text: root.narrow ? "" : "View";
+                    label: "View";
                     lead-icon: Glyph.view;
-                    icon: Glyph.chevron-down;
+                    icon: root.narrow ? "" : Glyph.chevron-down;
+                    compact: root.narrow;
                     height: Theme.control-height;
                     clicked => {
                         root.end-path-editing();
                         root.view-menu(root.index, self.absolute-position.x, self.absolute-position.y + self.height, self.absolute-position.x + self.width, self.absolute-position.y);
-                    }
-                }
-                // A narrow pane: its glyph only, leaving the address room for the folder's name.
-                if root.narrow: HorizontalLayout {
-                    padding-top: (Theme.control-height - Theme.row-height) / 2;
-                    padding-bottom: (Theme.control-height - Theme.row-height) / 2;
-                    ToolButton {
-                        text: "View";
-                        icon: Glyph.view;
-                        clicked => {
-                            root.end-path-editing();
-                            root.view-menu(root.index, self.absolute-position.x, self.absolute-position.y + self.height, self.absolute-position.x + self.width, self.absolute-position.y);
-                        }
                     }
                 }
             }
