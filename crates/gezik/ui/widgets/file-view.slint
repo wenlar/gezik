@@ -132,7 +132,7 @@ component HeaderCell inherits Rectangle {
 // reports presses and draws.
 export component FileView inherits Rectangle {
     in property <[ItemRow]> items;
-    // 0: list, 1: grid.
+    // 0: list, 1: grid, 2: the focused Miller column (spec 10 §7: no header, only the names).
     in property <int> mode;
     // The grid's picture size.
     in property <length> picture-size: 96px;
@@ -183,7 +183,7 @@ export component FileView inherits Rectangle {
     out property <length> cell-height: root.picture-size + 24px + Theme.font-size * 2.8;
     // Grid cells per line.
     out property <int> grid-columns: max(1, floor((list.visible-width - 2 * root.grid-left) / root.cell-width));
-    out property <length> item-height: root.mode == 0 ? Theme.row-height : root.cell-height;
+    out property <length> item-height: root.mode == 1 ? root.cell-height : Theme.row-height;
     // How many lines PgUp/PgDn move: one screen, less one line.
     out property <int> page-rows: max(1, floor(list.visible-height / self.item-height) - 1);
 
@@ -250,7 +250,7 @@ export component FileView inherits Rectangle {
         }
     }
 
-    property <int> per-row: root.mode == 0 ? 1 : root.grid-columns;
+    property <int> per-row: root.mode == 1 ? root.grid-columns : 1;
     // The selection shows in full while the view or its rename field has the keyboard, and
     // in the inactive color otherwise.
     property <bool> active: root.has-focus || root.rename-has-focus;
@@ -261,7 +261,7 @@ export component FileView inherits Rectangle {
     // The gap above and below the visible list (the rows' inset leaves room for it); the
     // grid's is its inset (Theme.inset + the cells' 4px above the first line); none
     // in the classic themes.
-    property <length> list-pad: root.mode == 0 ? min(Theme.inset, 2px) : Theme.inset;
+    property <length> list-pad: root.mode == 1 ? Theme.inset : min(Theme.inset, 2px);
     property <length> header-height: root.mode == 0 ? Theme.row-height : 0px;
     property <length> gap: Theme.spacing + 2px;
     property <length> side: Theme.spacing + 4px;
@@ -272,7 +272,7 @@ export component FileView inherits Rectangle {
     // Right edge of the Name column, in a row's own coordinates (rows are inset from the
     // list's edges): a drag that starts right of it, on a row, selects with a rectangle; from
     // the name it is kept for dragging files (sub-project 4).
-    property <length> name-end: max(root.side + 150px, list.visible-width - 2 * Theme.inset - root.side - root.col-modified - root.col-created
+    property <length> name-end: root.mode == 2 ? list.visible-width : max(root.side + 150px, list.visible-width - 2 * Theme.inset - root.side - root.col-modified - root.col-created
         - root.col-type - root.col-size - root.col-folder - root.col-match - root.gap * root.shown-columns);
 
     property <bool> marquee-active;
@@ -359,7 +359,7 @@ export component FileView inherits Rectangle {
         if index < 0 {
             return list.absolute-position.x + Theme.spacing * 2;
         }
-        if root.mode == 0 {
+        if root.mode != 1 {
             return list.absolute-position.x + Theme.spacing * 6;
         }
         return list.absolute-position.x + root.grid-left + root.column-of(index) * root.cell-width + root.cell-width / 2;
@@ -531,7 +531,7 @@ export component FileView inherits Rectangle {
             height: root.item-height;
 
             // The list: one entry with its columns.
-            if root.mode == 0 && item.header == "": entry := Rectangle {
+            if root.mode != 1 && item.header == "": entry := Rectangle {
                 property <FileRow> file: item.cells[0];
                 property <int> index: item.first;
                 property <color> text-color: self.file.selected ? Theme.selection-foreground : Theme.foreground;
@@ -618,7 +618,7 @@ export component FileView inherits Rectangle {
                     spacing: root.gap;
                     HorizontalLayout {
                         horizontal-stretch: 1;
-                        min-width: 150px;
+                        min-width: root.mode == 0 ? 150px : 0px;
                         spacing: root.gap;
                         VerticalLayout {
                             alignment: center;
@@ -661,43 +661,57 @@ export component FileView inherits Rectangle {
                             applied <=> root.rename-applied;
                             focused <=> root.rename-has-focus;
                         }
+                        if root.mode == 2 && entry.file.is-dir: VerticalLayout {
+                            alignment: center;
+                            Path {
+                                width: 8px;
+                                height: 8px;
+                                viewbox-width: 8;
+                                viewbox-height: 8;
+                                commands: Glyph.chevron-right;
+                                stroke: entry.muted-color;
+                                stroke-width: 1.2px;
+                                stroke-line-cap: round;
+                                stroke-line-join: round;
+                            }
+                        }
                     }
-                    if root.col-folder > 0: Text {
+                    if root.col-folder > 0 && root.mode == 0: Text {
                         width: root.col-folder;
                         text: entry.file.folder;
                         vertical-alignment: center;
                         overflow: elide;
                         color: entry.muted-color;
                     }
-                    if root.col-match > 0: Text {
+                    if root.col-match > 0 && root.mode == 0: Text {
                         width: root.col-match;
                         text: entry.file.found;
                         vertical-alignment: center;
                         overflow: elide;
                         color: entry.text-color;
                     }
-                    if root.col-modified > 0: Text {
+                    if root.col-modified > 0 && root.mode == 0: Text {
                         width: root.col-modified;
                         text: entry.file.modified;
                         vertical-alignment: center;
                         overflow: elide;
                         color: entry.muted-color;
                     }
-                    if root.col-created > 0: Text {
+                    if root.col-created > 0 && root.mode == 0: Text {
                         width: root.col-created;
                         text: entry.file.created;
                         vertical-alignment: center;
                         overflow: elide;
                         color: entry.muted-color;
                     }
-                    if root.col-type > 0: Text {
+                    if root.col-type > 0 && root.mode == 0: Text {
                         width: root.col-type;
                         text: entry.file.type-name;
                         vertical-alignment: center;
                         overflow: elide;
                         color: entry.muted-color;
                     }
-                    if root.col-size > 0: Text {
+                    if root.col-size > 0 && root.mode == 0: Text {
                         width: root.col-size;
                         text: entry.file.size;
                         opacity: entry.file.size-stale ? 0.55 : 1;
@@ -938,7 +952,7 @@ export component FileView inherits Rectangle {
     // Why the typed name cannot be used, just under the entry.
     if root.rename-error != "" && root.renaming-index >= 0: Rectangle {
         property <int> line: root.rename-line;
-        x: list.x + (root.mode == 0 ? Theme.inset + root.side + Theme.icon-size + root.gap : root.grid-left + root.column-of(root.renaming-index) * root.cell-width + 8px);
+        x: list.x + (root.mode != 1 ? Theme.inset + root.side + Theme.icon-size + root.gap : root.grid-left + root.column-of(root.renaming-index) * root.cell-width + 8px);
         y: list.y + root.scroll + (self.line + 1) * root.item-height;
         width: error-text.preferred-width + Theme.spacing * 2;
         height: error-text.preferred-height + Theme.spacing;

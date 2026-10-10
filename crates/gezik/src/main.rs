@@ -179,6 +179,9 @@ fn close_tab_later(nav: &navigation::Navigator, index: usize) {
     }
 }
 
+/// A Miller column's width by default (spec 10 §7.1; state.toml `[panes] column-width`).
+const COLUMN_WIDTH: u32 = 220;
+
 /// The pane on row `row` (a Slint callback's), made the active one: a click or an action in a
 /// pane picks it (spec 10 §4.3).
 fn pick(row: i32) -> Option<panes::Pane> {
@@ -216,7 +219,11 @@ fn perform(
         Action::SelectAll => view.select_all(),
         Action::ViewList => view.set_mode(gezik_core::view::ViewMode::List),
         Action::ViewGrid => view.set_mode(gezik_core::view::ViewMode::Grid),
-        Action::ViewColumns => view.show_columns(&nav.active_location()),
+        Action::ViewColumns => {
+            if !view.show_columns(&nav.active_location()) {
+                nav.note(view::LIST_ONLY.to_owned());
+            }
+        }
         Action::TogglePreview => preview.toggle_pane(),
         Action::QuickLook => preview.toggle_quick_look(),
         Action::Share => finder_menu::share_selection(window, view),
@@ -541,6 +548,14 @@ fn handle_key(
             // On macOS Enter renames, so opening is Cmd+Down (as in Finder).
             if platform == Platform::Mac && primary && !chord.shift && chord.key == Key::Down {
                 nav.open_selected();
+                return true;
+            }
+            // Miller columns (spec 10 §7.1): → into the selected folder, ← back to the left.
+            if !primary
+                && !chord.shift
+                && matches!(chord.key, Key::Left | Key::Right)
+                && view.column_key(chord.key == Key::Right)
+            {
                 return true;
             }
             let mv = match chord.key {
@@ -1018,6 +1033,7 @@ fn main() -> Result<(), slint::PlatformError> {
         .into(),
     );
     window.set_preview_width(saved_state.preview_width.unwrap_or(280) as f32);
+    window.set_column_width(saved_state.column_width.unwrap_or(COLUMN_WIDTH) as f32);
     let folder_sizes = folder_sizes::FolderSizes::new(pane_id, window.as_weak(), view.clone());
     folder_sizes.set_settings(initial_settings.folder_sizes, initial_settings.search.everything);
     let preview = preview::Preview::new(&window);
@@ -1186,6 +1202,8 @@ fn main() -> Result<(), slint::PlatformError> {
                     state.result_columns = Some(view.result_columns());
                     state.preview_open = preview.is_pane_open();
                     state.preview_width = Some(window.get_preview_width().round().clamp(200.0, 600.0) as u32);
+                    let column = window.get_column_width().round().clamp(120.0, 600.0) as u32;
+                    state.column_width = (column != COLUMN_WIDTH).then_some(column);
                     state.operations_collapsed = ops.collapsed();
                 });
                 dual::save();
@@ -1558,6 +1576,19 @@ fn main() -> Result<(), slint::PlatformError> {
     });
 
     // Double-click; with single-click-open the click already opened it.
+    // Miller columns (spec 10 §7): a press in a column beside the focused one, the columns on screen.
+    window.on_column_clicked({
+        let ops = ops.clone();
+        move |pane, column, row, scroll| {
+            ops.end_unfocused_rename();
+            if let Some(p) = pick(pane) {
+                p.view.column_clicked(column, row, scroll);
+            }
+        }
+    });
+    window.on_columns_shown(|pane, first, end| {
+        panes::with_row(pane, |p| p.view.columns_on_screen(first, end));
+    });
     window.on_open_row(|pane, i| {
         if let Some(p) = pick(pane)
             && let Ok(index) = usize::try_from(i)

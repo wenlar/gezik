@@ -1968,7 +1968,10 @@ impl Menus {
             (VIEW_LIST, Subject::View) => crate::panes::active_view().set_mode(ViewMode::List),
             (VIEW_GRID, Subject::View) => crate::panes::active_view().set_mode(ViewMode::Grid),
             (VIEW_COLUMNS, Subject::View) => {
-                crate::panes::active_view().show_columns(&crate::panes::active_nav().active_location())
+                let nav = crate::panes::active_nav();
+                if !crate::panes::active_view().show_columns(&nav.active_location()) {
+                    nav.note(crate::view::LIST_ONLY.to_owned());
+                }
             }
             (GRID_SMALL, Subject::View) => crate::panes::active_view().set_grid_size(GridSize::Small),
             (GRID_MEDIUM, Subject::View) => crate::panes::active_view().set_grid_size(GridSize::Medium),
