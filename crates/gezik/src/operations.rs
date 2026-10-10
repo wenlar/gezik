@@ -657,9 +657,7 @@ impl Operations {
     }
 
     fn set_rename_error(&self, error: &str) {
-        if let Some(window) = self.0.window.upgrade() {
-            window.set_rename_error(error.into());
-        }
+        crate::panes::edit(self.0.view.pane_id(), |d| d.rename_error = error.into());
     }
 
     /// While typing: say at once what is wrong with the name.
@@ -735,14 +733,15 @@ impl Operations {
     /// was destroyed with its row, which fires no blur), ends it like a blur. Returns whether
     /// a rename is open with its field focused.
     pub fn end_unfocused_rename(&self) -> bool {
-        let Some(window) = self.0.window.upgrade() else { return false };
-        if self.0.view.renaming().is_none() {
+        if self.0.window.upgrade().is_none() || self.0.view.renaming().is_none() {
             return false;
         }
-        if window.get_rename_focused() {
+        let mirror = crate::panes::mirror(self.0.view.pane_id());
+        if mirror.focus.borrow().rename {
             return true;
         }
-        self.rename_blurred(window.get_rename_text().into(), self.0.view.rename_generation());
+        let typed = mirror.rename_text.borrow().to_string();
+        self.rename_blurred(typed, self.0.view.rename_generation());
         false
     }
 

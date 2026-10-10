@@ -267,7 +267,7 @@ impl View {
             ..ViewData::default()
         }));
         let model = Rc::new(ItemsModel::new(data.clone()));
-        window.set_items(ModelRc::from(model.clone()));
+        crate::panes::edit(id, |d| d.items = ModelRc::from(model.clone()));
         let view = View(Rc::new(Inner {
             id,
             window: window.as_weak(),
@@ -522,16 +522,14 @@ impl View {
         let kept = self.0.note.borrow_mut().take();
         *self.0.note.borrow_mut() = note_after_show(kept, note, live, count != count_before);
         let Some(window) = self.0.window.upgrade() else { return };
-        self.sync_focus(&window);
+        self.sync_focus();
         self.sync_filter_bar(&window);
-        window.set_list_scroll(state.scroll);
+        self.set_list_scroll(state.scroll);
         if state.scroll != 0.0 && count > 0 {
             let (view, scroll) = (self.clone(), state.scroll);
             slint::Timer::single_shot(SCROLL_RESTORE_DELAY, move || {
-                if view.0.shown.get() == shown
-                    && let Some(window) = view.0.window.upgrade()
-                {
-                    window.set_list_scroll(scroll);
+                if view.0.shown.get() == shown && view.0.window.upgrade().is_some() {
+                    view.set_list_scroll(scroll);
                 }
             });
         }
@@ -554,9 +552,7 @@ impl View {
         match index {
             Some(index) => {
                 *self.0.renaming.borrow_mut() = Some((index, name));
-                if let Some(window) = self.0.window.upgrade() {
-                    window.set_renaming_index(i32::try_from(index).unwrap_or(-1));
-                }
+                crate::panes::edit(self.0.id, |d| d.renaming_index = i32::try_from(index).unwrap_or(-1));
             }
             None => self.end_rename(false),
         }
@@ -627,16 +623,22 @@ impl View {
         self.after_selection(&changes);
         self.reveal(index);
         let (_, end) = rename_selection(&name, is_dir);
-        let Some(window) = self.0.window.upgrade() else { return false };
-        window.set_rename_text(name.clone().into());
-        window.set_rename_select(i32::try_from(end).unwrap_or(0));
-        window.set_rename_error("".into());
+        if self.0.window.upgrade().is_none() {
+            return false;
+        }
         let generation = self.0.rename_generation.get().wrapping_add(1);
         self.0.rename_generation.set(generation);
-        window.set_rename_generation(generation);
+        *crate::panes::mirror(self.0.id).rename_text.borrow_mut() = name.as_str().into();
+        // One write: the new generation puts the text in the field before it shows.
+        crate::panes::edit(self.0.id, |d| {
+            d.rename_text = name.as_str().into();
+            d.rename_select = i32::try_from(end).unwrap_or(0);
+            d.rename_error = "".into();
+            d.rename_generation = generation;
+            d.renaming_index = i32::try_from(index).unwrap_or(-1);
+        });
         *self.0.rename_folder.borrow_mut() = self.0.folder.borrow().clone();
         *self.0.renaming.borrow_mut() = Some((index, name));
-        window.set_renaming_index(i32::try_from(index).unwrap_or(-1));
         true
     }
 
@@ -677,11 +679,14 @@ impl View {
             // (the field may still be alive and focused, or destroyed with nothing focused):
             // either way the list must get the keyboard back. Cleared so it cannot go stale
             // into the next rename.
+            let mirror = crate::panes::mirror(self.0.id);
             let had_focus =
-                window.get_rename_field_focused() && !window.get_path_editing() && !window.get_dialog_open();
-            window.set_rename_field_focused(false);
-            window.set_renaming_index(-1);
-            window.set_rename_error("".into());
+                mirror.focus.borrow().rename_field && !mirror.path_editing.get() && !window.get_dialog_open();
+            mirror.focus.borrow_mut().rename_field = false;
+            crate::panes::edit(self.0.id, |d| {
+                d.renaming_index = -1;
+                d.rename_error = "".into();
+            });
             if refocus || (if_focused && had_focus) {
                 window.invoke_focus_list();
             }
@@ -714,8 +719,8 @@ impl View {
         self.0.results_status.borrow_mut().take();
         self.0.sort_gate.borrow_mut().reset();
         if let Some(window) = self.0.window.upgrade() {
-            self.sync_focus(&window);
-            window.set_list_scroll(0.0);
+            self.sync_focus();
+            self.set_list_scroll(0.0);
             self.sync_filter_bar(&window);
         }
         self.notify_listeners();
@@ -731,7 +736,7 @@ impl View {
         let name = |i: usize| data.listing.key_at(i).map(Cow::into_owned);
         let selected =
             if data.selection.count() > max { Vec::new() } else { data.selection.iter().filter_map(name).collect() };
-        let scroll = self.0.window.upgrade().map_or(0.0, |w| w.get_list_scroll());
+        let scroll = self.list_scroll();
         ViewState { selected, focus: data.selection.focus().and_then(name), scroll, filter: self.filter_text() }
     }
 
@@ -804,10 +809,10 @@ impl View {
             // A delayed scroll restore of the listing before must not undo this.
             self.0.shown.set(self.0.shown.get() + 1);
             self.0.note.borrow_mut().take();
-            self.sync_focus(&window);
+            self.sync_focus();
             match self.focus() {
                 Some(focus) if closing => self.reveal(focus),
-                _ => window.set_list_scroll(0.0),
+                _ => self.set_list_scroll(0.0),
             }
             self.update_status();
             self.notify_listeners();
@@ -831,16 +836,16 @@ impl View {
             }
         };
         // A closing bar takes the keyboard with it: the list gets it.
-        if text.is_none() && window.get_filter_focused() {
+        if text.is_none() && crate::panes::mirror(self.0.id).focus.borrow().filter {
             window.invoke_focus_list();
         }
-        window.set_filter_open(text.is_some());
-        let text = text.unwrap_or_default();
-        if window.get_filter_text().as_str() != text {
-            window.set_filter_text(text.into());
-        }
-        window.set_filter_count(count.into());
-        window.set_filter_error(error.into());
+        let open = text.is_some();
+        crate::panes::set_filter_text(self.0.id, &text.unwrap_or_default());
+        crate::panes::edit(self.0.id, |d| {
+            d.filter_open = open;
+            d.filter_count = count.into();
+            d.filter_error = error.into();
+        });
     }
 
     pub fn focus(&self) -> Option<usize> {
@@ -940,7 +945,7 @@ impl View {
         } else if (old.hide_extensions, old.date_format, old.size_format)
             != (options.hide_extensions, options.date_format, options.size_format)
         {
-            let scroll = self.0.window.upgrade().map_or(0.0, |w| w.get_list_scroll());
+            let scroll = self.list_scroll();
             self.0.model.notify.reset();
             self.keep_scroll_after_reset(scroll);
         }
@@ -986,8 +991,11 @@ impl View {
 
     /// The lines on screen.
     fn lines_on_screen(&self) -> Range<usize> {
-        let Some(window) = self.0.window.upgrade() else { return 0..0 };
-        visible_lines(window.get_list_scroll(), window.get_drop_geometry().list_height, self.line_height())
+        if self.0.window.upgrade().is_none() {
+            return 0..0;
+        }
+        let height = crate::panes::mirror(self.0.id).geometry.borrow().list_height;
+        visible_lines(self.list_scroll(), height, self.line_height())
     }
 
     /// The entries on the lines on screen.
@@ -1132,21 +1140,34 @@ impl View {
             || crate::drag::with_current(|d| d.is_active()).unwrap_or(false)
     }
 
+    /// The pane this view is in.
+    pub fn pane_id(&self) -> PaneId {
+        self.0.id
+    }
+
     pub fn list_scroll(&self) -> f32 {
-        self.0.window.upgrade().map_or(0.0, |w| w.get_list_scroll())
+        crate::panes::mirror(self.0.id).scroll.get()
+    }
+
+    /// Scrolls the list to `scroll` (content-y); reading it back gives it at once.
+    pub fn set_list_scroll(&self, scroll: f32) {
+        crate::panes::mirror(self.0.id).scroll.set(scroll);
+        crate::panes::edit(self.0.id, |d| crate::panes::scroll_to(d, scroll));
     }
 
     /// Sorts again (sizes came in), the focused row staying where it is on screen (spec 6.3).
     pub fn resort_in_place(&self) {
-        let Some(window) = self.0.window.upgrade() else { return };
-        let (before, scroll) = (self.focus(), window.get_list_scroll());
+        if self.0.window.upgrade().is_none() {
+            return;
+        }
+        let (before, scroll) = (self.focus(), self.list_scroll());
         let old_line = before.and_then(|i| self.0.model.place_of(i)).map(|(line, _)| line);
         self.resort(false);
         let (Some(old), Some(new)) = (old_line, self.focus().and_then(|i| self.0.model.place_of(i))) else { return };
         let target = keep_on_screen(scroll, old, new.0, self.line_height());
         // `resort` asked for the old offset after its reset: this one replaces that ask.
         self.0.revealed.set(self.0.revealed.get() + 1);
-        window.set_list_scroll(target);
+        self.set_list_scroll(target);
         self.keep_scroll_after_reset(target);
     }
 }
@@ -1600,7 +1621,7 @@ impl View {
             if self.0.model.per_row() == 1 && !grouped {
                 self.0.model.notify.row_added(before, after - before);
             } else {
-                let scroll = self.0.window.upgrade().map_or(0.0, |w| w.get_list_scroll());
+                let scroll = self.list_scroll();
                 self.0.model.notify.reset();
                 self.keep_scroll_after_reset(scroll);
             }
@@ -1694,7 +1715,7 @@ impl View {
     /// scroll follow. A removal while a sort thread still holds the set copies it once (rare:
     /// a job's end during the sort after a search); the sort then runs again.
     fn edit_results(&self, edit: impl FnOnce(&mut ResultSet) -> Vec<usize>) {
-        let scroll = self.0.window.upgrade().map_or(0.0, |w| w.get_list_scroll());
+        let scroll = self.list_scroll();
         let (listing, files, old_rows, selection) = self.take_listing();
         drop(listing);
         let Some(mut full) = self.0.data.borrow_mut().results.take() else { return };
@@ -1719,8 +1740,8 @@ impl View {
         self.follow_rename();
         self.0.model.notify.reset();
         if let Some(window) = self.0.window.upgrade() {
-            self.sync_focus(&window);
-            window.set_list_scroll(scroll);
+            self.sync_focus();
+            self.set_list_scroll(scroll);
             self.keep_scroll_after_reset(scroll);
             self.sync_filter_bar(&window);
         }
@@ -1789,7 +1810,7 @@ impl View {
     /// brings back anything that stayed).
     pub fn hide_names(&self, names: &[String]) {
         let hidden: HashSet<&str> = names.iter().map(String::as_str).collect();
-        let scroll = self.0.window.upgrade().map_or(0.0, |w| w.get_list_scroll());
+        let scroll = self.list_scroll();
         let (listing, full, old_rows, selection) = self.take_listing();
         let (listing, full, rows, selection) = match listing {
             Listing::Files(dir, _) => {
@@ -1813,8 +1834,8 @@ impl View {
         self.regroup();
         self.0.model.notify.reset();
         if let Some(window) = self.0.window.upgrade() {
-            self.sync_focus(&window);
-            window.set_list_scroll(scroll);
+            self.sync_focus();
+            self.set_list_scroll(scroll);
             self.keep_scroll_after_reset(scroll);
             self.sync_filter_bar(&window);
         }
@@ -1899,17 +1920,28 @@ impl View {
         let Some(window) = self.0.window.upgrade() else { return };
         let view = self.0.current.get();
         let grid = view.mode == ViewMode::Grid;
-        window.set_view_mode(if grid { 1 } else { 0 });
-        window.set_grid_size(view.grid_size.px() as f32);
-        let logical = if grid { view.grid_size.px() as f32 } else { window.global::<Theme>().get_icon_size() };
+        let picture = view.grid_size.px() as f32;
+        crate::panes::edit(self.0.id, |d| {
+            d.view_mode = if grid { 1 } else { 0 };
+            d.grid_size = picture;
+        });
+        let logical = if grid { picture } else { window.global::<Theme>().get_icon_size() };
         {
             let mut data = self.0.data.borrow_mut();
             data.mode = view.mode;
             data.icon_px = (logical * window.window().scale_factor()).round().max(1.0) as u32;
         }
-        let per_row = if grid { usize::try_from(window.get_grid_columns()).unwrap_or(1) } else { 1 };
+        let per_row = if grid { self.grid_columns(&window, picture) } else { 1 };
         self.0.model.set_per_row(per_row);
         self.sync_header();
+    }
+
+    /// The grid's cells per line with pictures of `picture` px, as file-view.slint works out
+    /// `grid-columns`; worked out here because its pane tells it only after this write.
+    fn grid_columns(&self, window: &AppWindow, picture: f32) -> usize {
+        let inset = window.global::<Theme>().get_inset();
+        let width = crate::panes::mirror(self.0.id).geometry.borrow().list_width;
+        Geometry::grid(width - 2.0 * inset, (picture + 24.0).max(96.0), 0.0).per_row()
     }
 
     /// Writes `views.toml` a moment after the last change, so a burst of changes is one write.
@@ -2033,11 +2065,11 @@ impl View {
         window.set_col_size(width(ColumnKey::Size));
         window.set_col_folder(width(ColumnKey::Folder));
         window.set_col_match(width(ColumnKey::Match));
-        window.set_trash_shown(self.shows_trash());
+        let trash = self.shows_trash();
+        crate::panes::edit(self.0.id, |d| d.trash_shown = trash);
     }
 
     fn sync_header(&self) {
-        let Some(window) = self.0.window.upgrade() else { return };
         let spec = self.0.current.get().sort;
         let column = match spec.key {
             SortKey::Name => 0,
@@ -2047,8 +2079,10 @@ impl View {
             SortKey::Size => ColumnKey::Size.index(),
             SortKey::Folder => ColumnKey::Folder.index(),
         };
-        window.set_sort_column(column);
-        window.set_sort_desc(spec.dir == SortDir::Desc);
+        crate::panes::edit(self.0.id, |d| {
+            d.sort_column = column;
+            d.sort_desc = spec.dir == SortDir::Desc;
+        });
     }
 
     /// `listing` in the current sort order. A fresh folder load is already sorted by name
@@ -2111,7 +2145,7 @@ impl View {
             }
             return self.sort_results();
         }
-        let scroll = self.0.window.upgrade().map_or(0.0, |w| w.get_list_scroll());
+        let scroll = self.list_scroll();
         let (listing, full, old_rows, selection) = self.take_listing();
         // The full list is sorted (no longer shared with the shown one, so not copied), then
         // filtered again. The drives are not sorted.
@@ -2136,10 +2170,10 @@ impl View {
         }
         self.regroup();
         self.0.model.notify.reset();
-        if let Some(window) = self.0.window.upgrade() {
-            self.sync_focus(&window);
+        if self.0.window.upgrade().is_some() {
+            self.sync_focus();
             if !reveal {
-                window.set_list_scroll(scroll);
+                self.set_list_scroll(scroll);
                 self.keep_scroll_after_reset(scroll);
             }
         }
@@ -2230,8 +2264,8 @@ impl View {
         let scroll = self.list_scroll();
         self.0.model.notify.reset();
         self.keep_scroll_after_reset(scroll);
-        if let Some(window) = self.0.window.upgrade() {
-            self.sync_focus(&window);
+        if self.0.window.upgrade().is_some() {
+            self.sync_focus();
         }
         self.update_status();
         self.notify_listeners();
@@ -2266,10 +2300,8 @@ impl View {
     /// Tells the Slint side the lines moved (`rename-focused` reads it; Slint cannot see what
     /// `line-of` depends on).
     fn groups_changed(&self) {
-        if let Some(window) = self.0.window.upgrade() {
-            // Never negative: file-view.slint's `rename-line` reads it as `groups-version < 0`.
-            window.set_list_groups_version(window.get_list_groups_version().checked_add(1).unwrap_or(0));
-        }
+        // Never negative: file-view.slint's `rename-line` reads it as `groups-version < 0`.
+        crate::panes::edit(self.0.id, |d| d.groups_version = d.groups_version.checked_add(1).unwrap_or(0));
     }
 
     /// The groups shown, for the drop target (drag.rs).
@@ -2287,16 +2319,19 @@ impl View {
 
     /// Where entries are on screen.
     fn geometry(&self) -> Geometry {
-        let Some(window) = self.0.window.upgrade() else { return Geometry::List { row_height: 26.0 } };
+        if self.0.window.upgrade().is_none() {
+            return Geometry::List { row_height: 26.0 };
+        }
+        let g = crate::panes::mirror(self.0.id).geometry.borrow().clone();
         if self.0.current.get().mode == ViewMode::Grid {
             Geometry::Grid {
-                cell_width: window.get_cell_width(),
-                cell_height: window.get_cell_height(),
+                cell_width: g.cell_width,
+                cell_height: g.cell_height,
                 columns: self.0.model.per_row(),
-                left: window.get_grid_left(),
+                left: g.grid_left,
             }
         } else {
-            Geometry::List { row_height: window.get_item_height() }
+            Geometry::List { row_height: g.item_height }
         }
     }
 
@@ -2313,15 +2348,15 @@ impl View {
             joined = changes.iter().cloned().chain(hidden).collect();
             &joined
         };
-        let scroll = self.0.window.upgrade().map(|w| w.get_list_scroll());
+        let scroll = self.0.window.upgrade().map(|_| self.list_scroll());
         if self.0.model.entries_changed(changes)
             && let Some(scroll) = scroll
         {
             self.keep_scroll_after_reset(scroll);
         }
         self.0.note.borrow_mut().take();
-        if let Some(window) = self.0.window.upgrade() {
-            self.sync_focus(&window);
+        if self.0.window.upgrade().is_some() {
+            self.sync_focus();
         }
         self.update_status();
         self.notify_listeners();
@@ -2335,10 +2370,10 @@ impl View {
         slint::Timer::single_shot(SCROLL_RESTORE_DELAY, move || {
             if view.0.shown.get() == shown
                 && view.0.revealed.get() == revealed
-                && let Some(window) = view.0.window.upgrade()
-                && window.get_list_scroll() != scroll
+                && view.0.window.upgrade().is_some()
+                && view.list_scroll() != scroll
             {
-                window.set_list_scroll(scroll);
+                view.set_list_scroll(scroll);
             }
         });
     }
@@ -2350,11 +2385,13 @@ impl View {
         }
     }
 
-    fn sync_focus(&self, window: &AppWindow) {
+    fn sync_focus(&self) {
         let data = self.0.data.borrow();
         let focus = data.selection.focus();
-        window.set_focus_row(focus.and_then(|f| i32::try_from(f).ok()).unwrap_or(-1));
-        window.set_focus_selected(focus.is_some_and(|f| data.selection.is_selected(f)));
+        crate::panes::edit(self.0.id, |d| {
+            d.focus_row = focus.and_then(|f| i32::try_from(f).ok()).unwrap_or(-1);
+            d.focus_selected = focus.is_some_and(|f| data.selection.is_selected(f));
+        });
     }
 
     fn update_status(&self) {
@@ -2377,23 +2414,27 @@ impl View {
         window.set_status(text.into());
     }
 
-    /// Scrolls entry `index` fully into view. After a far jump (End, type-ahead) Slint's
-    /// ListView snaps the offset to a line boundary on its next layout, which can leave the
-    /// target line at the bottom edge only partly visible; the offset is set again once
-    /// that frame is done (see [`crate::keys::scroll_was_snapped`]).
+    /// Scrolls entry `index` fully into view (its pane does, then calls [`View::revealed`]).
     fn reveal(&self, index: usize) {
-        let Some(window) = self.0.window.upgrade() else { return };
+        if self.0.window.upgrade().is_none() {
+            return;
+        }
         self.0.revealed.set(self.0.revealed.get() + 1);
         let index = i32::try_from(index).unwrap_or(i32::MAX);
-        window.invoke_ensure_visible(index);
-        let (target, line_height) = (window.get_list_scroll(), window.get_item_height());
-        let weak = window.as_weak();
+        crate::panes::edit(self.0.id, |d| crate::panes::reveal(d, index));
+    }
+
+    /// The pane scrolled entry `index` into view at offset `target`. After a far jump (End,
+    /// type-ahead) Slint's ListView snaps the offset to a line boundary on its next layout,
+    /// which can leave the target line at the bottom edge only partly visible; the offset is
+    /// set again once that frame is done (see [`crate::keys::scroll_was_snapped`]).
+    pub fn revealed(&self, index: i32, target: f32) {
+        let view = self.clone();
         slint::Timer::single_shot(SCROLL_RESTORE_DELAY, move || {
-            if let Some(window) = weak.upgrade()
-                && window.get_focus_row() == index
-                && crate::keys::scroll_was_snapped(window.get_list_scroll(), target, line_height)
+            if crate::panes::data(view.0.id).is_some_and(|d| d.focus_row == index)
+                && crate::keys::scroll_was_snapped(view.list_scroll(), target, view.line_height())
             {
-                window.set_list_scroll(target);
+                view.set_list_scroll(target);
             }
         });
     }

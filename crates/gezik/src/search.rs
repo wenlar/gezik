@@ -438,19 +438,21 @@ impl Searches {
             problems: RefCell::new(Vec::new()),
             menu_names: RefCell::new(Vec::new()),
         }));
-        window.on_search_edited(|text| {
+        window.on_search_edited(|pane, text| {
+            *crate::panes::mirror_at(pane).search_text.borrow_mut() = text.clone();
             crate::panes::with_active(|p| p.search.edited(&text));
         });
-        window.on_search_content_edited(|text| {
+        window.on_search_content_edited(|pane, text| {
+            *crate::panes::mirror_at(pane).search_content.borrow_mut() = text.clone();
             crate::panes::with_active(|p| p.search.content_edited(&text));
         });
-        window.on_search_content_toggle(|| {
+        window.on_search_content_toggle(|_pane| {
             crate::panes::with_active(|p| p.search.content_toggle());
         });
-        window.on_search_go(|| {
+        window.on_search_go(|_pane| {
             crate::panes::with_active(|p| p.search.button());
         });
-        window.on_filter_search(|| {
+        window.on_filter_search(|_pane| {
             crate::panes::with_active(|p| p.search.filter_to_search());
         });
         // Called after every edit of the results too (a delete, a job's check).
@@ -483,9 +485,11 @@ impl Searches {
     /// `search` (Ctrl+Shift+F, F3): the bar on the folder shown (This PC: every drive); on an
     /// open bar, its name field with the text selected.
     pub fn open(&self) {
-        let Some(window) = self.0.window.upgrade() else { return };
+        if self.0.window.upgrade().is_none() {
+            return;
+        }
         if self.0.open.get() {
-            window.invoke_select_search_text();
+            crate::panes::edit(self.0.id, crate::panes::focus_search);
             return;
         }
         let location = self.0.nav.active_location();
@@ -522,9 +526,7 @@ impl Searches {
 
     fn show_bar(&self, spec: SearchSpec, origin: Option<PathBuf>) {
         self.0.content_open.set(!spec.content.is_empty());
-        if let Some(window) = self.0.window.upgrade() {
-            window.set_search_content_focus(false);
-        }
+        crate::panes::edit(self.0.id, |d| d.search_content_focus = false);
         *self.0.draft.borrow_mut() = spec;
         *self.0.origin.borrow_mut() = origin;
         self.0.open.set(true);
@@ -553,22 +555,13 @@ impl Searches {
 
     /// The bar as the draft is.
     fn sync_bar(&self) {
-        let Some(window) = self.0.window.upgrade() else { return };
+        if self.0.window.upgrade().is_none() {
+            return;
+        }
         let draft = self.0.draft.borrow();
-        window.set_search_open(self.0.open.get());
-        window.set_search_scope(scope_label(&draft.scope).into());
-        if window.get_search_text().as_str() != draft.pattern {
-            window.set_search_text(draft.pattern.as_str().into());
-        }
-        if window.get_search_content().as_str() != draft.content {
-            window.set_search_content(draft.content.as_str().into());
-        }
-        window.set_search_content_open(self.0.content_open.get());
-        window.set_search_filters(match draft.filter_count() {
-            0 => "Filters".into(),
-            n => format!("Filters ({n})").into(),
-        });
-        window.set_search_running(self.0.running.borrow().is_some());
+        let id = self.0.id;
+        crate::panes::set_search_text(id, &draft.pattern);
+        crate::panes::set_search_content(id, &draft.content);
         let checked: Checked =
             (draft.pattern.clone(), draft.name_regex, draft.content.clone(), draft.content_regex, draft.match_case);
         let mut last = self.0.checked.borrow_mut();
@@ -579,10 +572,20 @@ impl Searches {
                 .flatten();
             *last = Some((checked, name_error.unwrap_or_default(), content_error.unwrap_or_default()));
         }
-        if let Some((_, name_error, content_error)) = last.as_ref() {
-            window.set_search_error(name_error.as_str().into());
-            window.set_search_content_error(content_error.as_str().into());
-        }
+        crate::panes::edit(id, |d| {
+            d.search_open = self.0.open.get();
+            d.search_scope = scope_label(&draft.scope).into();
+            d.search_content_open = self.0.content_open.get();
+            d.search_filters = match draft.filter_count() {
+                0 => "Filters".into(),
+                n => format!("Filters ({n})").into(),
+            };
+            d.search_running = self.0.running.borrow().is_some();
+            if let Some((_, name_error, content_error)) = last.as_ref() {
+                d.search_error = name_error.as_str().into();
+                d.search_content_error = content_error.as_str().into();
+            }
+        });
     }
 
     /// Whether the name field's text can be used (`sync_bar` worked it out).
@@ -591,12 +594,10 @@ impl Searches {
     }
 
     fn focus_later(&self) {
-        let weak = self.0.window.clone();
+        let id = self.0.id;
         slint::Timer::single_shot(Duration::ZERO, move || {
-            if let Some(window) = weak.upgrade()
-                && window.get_search_open()
-            {
-                window.invoke_select_search_text();
+            if crate::panes::data(id).is_some_and(|d| d.search_open) {
+                crate::panes::edit(id, crate::panes::focus_search);
             }
         });
     }
@@ -628,13 +629,15 @@ impl Searches {
             draft.name = None;
         }
         self.sync_bar();
-        if let Some(window) = self.0.window.upgrade() {
-            if open {
-                // The field is made as Content opens and takes the keyboard then.
-                window.set_search_content_focus(true);
-            } else {
-                window.invoke_select_search_text();
-            }
+        if self.0.window.upgrade().is_some() {
+            crate::panes::edit(self.0.id, |d| {
+                if open {
+                    // The field is made as Content opens and takes the keyboard then.
+                    d.search_content_focus = true;
+                } else {
+                    crate::panes::focus_search(d);
+                }
+            });
         }
     }
 
@@ -691,8 +694,8 @@ impl Searches {
         if !spec.is_query() {
             return self.0.view.note("Type something to search".to_owned());
         }
-        if let Some(window) = self.0.window.upgrade()
-            && (!window.get_search_error().is_empty() || !window.get_search_content_error().is_empty())
+        if crate::panes::data(self.0.id)
+            .is_some_and(|d| !d.search_error.is_empty() || !d.search_content_error.is_empty())
         {
             return;
         }
@@ -865,9 +868,7 @@ impl Searches {
             run.handle.cancel();
             self.0.generation.set(self.0.generation.get() + 1);
             self.0.view.set_searching(false);
-            if let Some(window) = self.0.window.upgrade() {
-                window.set_search_running(false);
-            }
+            crate::panes::edit(self.0.id, |d| d.search_running = false);
         }
         let replacing = self.0.replacing.replace(false);
         let Some(showing) = self.0.showing.borrow_mut().take() else { return };
@@ -1133,9 +1134,7 @@ impl Searches {
         self.0.view.set_results_status(Some(progress_text(0, 0)));
         let running = Running::default();
         *self.0.running.borrow_mut() = Some(Run { handle: running.clone() });
-        if let Some(window) = self.0.window.upgrade() {
-            window.set_search_running(true);
-        }
+        crate::panes::edit(self.0.id, |d| d.search_running = true);
         let sink = self.sink(generation);
         let started = Instant::now();
         let cache = spec.content.is_empty().then(|| self.ready_cache(&spec)).flatten();
@@ -1162,9 +1161,7 @@ impl Searches {
             self.0.running.borrow_mut().take();
             self.0.view.set_searching(false);
             self.0.view.set_results_status(Some("Cannot start the search".to_owned()));
-            if let Some(window) = self.0.window.upgrade() {
-                window.set_search_running(false);
-            }
+            crate::panes::edit(self.0.id, |d| d.search_running = false);
         }
     }
 
@@ -1199,9 +1196,7 @@ impl Searches {
                     }
                     None => None,
                 };
-                if let Some(window) = self.0.window.upgrade() {
-                    window.set_search_running(false);
-                }
+                crate::panes::edit(self.0.id, |d| d.search_running = false);
                 // Jobs that ended while it ran: one check now.
                 if let (Some(key), Some(change)) = (self.results_key(), changes) {
                     self.check(key, change);

@@ -1,0 +1,650 @@
+import { Theme } from "../theme.slint";
+import { Glyph } from "../glyphs.slint";
+import { ToolButton } from "button.slint";
+import { TextButton } from "text-button.slint";
+import { Breadcrumb, CrumbItem } from "breadcrumb.slint";
+import { TabBar, TabItem } from "tab-bar.slint";
+import { FileView, ItemRow } from "file-view.slint";
+import { FilterBar } from "filter-bar.slint";
+
+// What Rust shows in one pane (spec 10 §3.2): written as one row of the window's `panes`
+// (panes.rs `edit`). Only what changes now and then: the selection, the focus ring, cut and
+// folder sizes stay in the rows of `items`. A `*-request` field is a counter: the pane does
+// what it asks (with the fields next to it) when it changes, and when the pane is made.
+export struct PaneData {
+    tabs: [TabItem],
+    crumbs: [CrumbItem],
+    items: [ItemRow],
+    current-path: string,
+    can-go-back: bool,
+    can-go-forward: bool,
+    can-go-up: bool,
+    // The entry with the keyboard focus (-1: none), and whether it is selected.
+    focus-row: int,
+    focus-selected: bool,
+    // 0: list, 1: grid; the grid's picture size.
+    view-mode: int,
+    grid-size: length,
+    // The trash is shown (its column headers say so).
+    trash-shown: bool,
+    // The sort column (0 Name, 1-4 Modified, Created, Type, Size, 5 Folder, 6 Match) and direction.
+    sort-column: int,
+    sort-desc: bool,
+    // Bumped whenever the groups change (FileView `groups-version`).
+    groups-version: int,
+    // Renaming in place (view/mod.rs, operations.rs): a new `rename-generation` puts
+    // `rename-text` in the field before it shows.
+    renaming-index: int,
+    rename-text: string,
+    rename-select: int,
+    rename-error: string,
+    rename-generation: int,
+    // The filter bar above the file list (Ctrl+F): open, its text, "12 / 340" and what is
+    // wrong with the text; the field takes the keyboard at byte `filter-focus-at` (-1: all
+    // of its text selected).
+    filter-open: bool,
+    filter-text: string,
+    filter-text-request: int,
+    filter-count: string,
+    filter-error: string,
+    filter-focus-request: int,
+    filter-focus-at: int,
+    // The search bar (search.rs, spec 4.2): open, where it looks, its fields, Filters' count,
+    // whether a search runs, what is wrong with a field; the name field takes the keyboard
+    // with its text selected.
+    search-open: bool,
+    search-scope: string,
+    search-text: string,
+    search-text-request: int,
+    search-content-open: bool,
+    // Content was just turned on: its field takes the keyboard as it is made.
+    search-content-focus: bool,
+    search-content: string,
+    search-content-request: int,
+    search-error: string,
+    search-content-error: string,
+    search-filters: string,
+    search-running: bool,
+    search-focus-request: int,
+    // The list's scroll offset (content-y): set to `scroll-to` when `scroll-seq` changed,
+    // then entry `reveal-index` (-1: none) scrolled into view.
+    scroll-request: int,
+    scroll-seq: int,
+    scroll-to: length,
+    reveal-index: int,
+    // The address bar: typing begins with the whole path selected (`path-edit`) or ends; a
+    // suggestion's text put in the field with the cursor at byte `path-text-at`.
+    path-request: int,
+    path-edit: bool,
+    path-text-request: int,
+    path-text: string,
+    path-text-at: int,
+    // Shift+F10 or the Menu key: the keyboard menu (`open-keyboard-menu`).
+    menu-request: int,
+}
+
+// Where the pane's parts are in the window and how big its lines are (drag.rs, sidebar.rs,
+// view/mod.rs read it from Rust's copy).
+export struct PaneGeometry {
+    // The file view (it fills the sheet), and the visible list inside it (below the column header).
+    view-x: length,
+    view-y: length,
+    list-top: length,
+    list-width: length,
+    list-height: length,
+    // The row under the toolbar, down to the sheet's bottom (the sidebar's top and height).
+    body-y: length,
+    body-height: length,
+    // The tab strip's left edge (it is inset).
+    tab-x: length,
+    tab-scroll: length,
+    tab-width: length,
+    tab-strip-width: length,
+    tab-height: length,
+    address-x: length,
+    address-y: length,
+    address-width: length,
+    address-height: length,
+    item-height: length,
+    cell-width: length,
+    cell-height: length,
+    grid-left: length,
+    grid-columns: int,
+    // How many rows PgUp/PgDn move: one screen, less one row.
+    page-rows: int,
+}
+
+// Which of the pane's text fields has the keyboard.
+export struct PaneFocus {
+    filter: bool,
+    search: bool,
+    // The rename field has the keyboard while its row is on screen (FileView `rename-focused`).
+    rename: bool,
+    // The rename field held the keyboard last, even if its row scrolled out: whether ending
+    // the rename must give the keyboard back to the list.
+    rename-field: bool,
+}
+
+// One pane (spec 10 §3.1): the tab strip, the toolbar (Back, Forward, Up, Refresh, the
+// address, View), the search and filter bars and the file view. Its children are the row
+// under the toolbar (the window's sidebar and preview); the bars and the sheet are laid
+// over that row where `sheet-*` say.
+export component PaneView inherits Rectangle {
+    in property <PaneData> data;
+    in property <int> index;
+    // The window's: the file list has the keyboard (its `keys` scope), what files dragged
+    // would drop on, the column widths (shared by every pane, spec 10 §3.3).
+    in property <bool> list-focused;
+    in property <bool> drag-active;
+    in property <bool> drag-forbidden;
+    in property <int> drop-entry: -1;
+    in property <int> drop-tab: -1;
+    in property <int> drop-crumb: -1;
+    in-out property <length> col-modified;
+    in-out property <length> col-created;
+    in-out property <length> col-type;
+    in-out property <length> col-size;
+    in-out property <length> col-folder;
+    in-out property <length> col-match;
+    // Where the bars and the sheet go in the row under the toolbar (a place the window keeps
+    // for them between its sidebar and preview), and the room they need.
+    in property <length> sheet-x;
+    in property <length> sheet-y;
+    in property <length> sheet-width;
+    in property <length> sheet-height;
+    out property <length> sheet-min-width: sheet.min-width;
+    out property <length> sheet-min-height: sheet.min-height;
+
+    // The keyboard should go to the file list (the window's `keys`).
+    callback focus-requested(int);
+    // The keyboard menu of row `int` (-1: the background), at a window position.
+    callback keyboard-menu(int, int, length, length);
+    callback scrolled(int, length);
+    // Entry `int` was scrolled into view (`reveal-index`): the offset that took.
+    callback revealed(int, int, length);
+    callback geometry-changed(int, PaneGeometry);
+    callback focus-changed(int, PaneFocus);
+    callback path-editing-changed(int, bool);
+    callback go-back(int);
+    callback go-forward(int);
+    callback go-up(int);
+    callback refresh(int);
+    callback navigate(int, string);
+    callback crumb-clicked(int, int);
+    callback crumb-span(int, int, length, length);
+    callback path-edited(int, string);
+    callback tab-activate(int, int);
+    callback tab-close(int, int);
+    callback tab-new(int);
+    callback tab-move(int, int, int);
+    callback tab-menu(int, int, length, length);
+    callback view-menu(int, length, length, length, length);
+    callback filter-edited(int, string);
+    callback filter-menu(int, length, length, length, length);
+    callback filter-search(int);
+    callback search-edited(int, string);
+    callback search-content-edited(int, string);
+    callback search-content-toggle(int);
+    callback search-go(int);
+    callback search-menu(int, int, length, length, length, length);
+    callback grid-columns-changed(int, int);
+    callback zoom(int, bool);
+    pure callback list-line-of(int, int) -> int;
+    pure callback list-column-of(int, int) -> int;
+    callback list-group-toggled(int, int);
+    callback list-group-menu(int, length, length);
+    callback header-clicked(int, int);
+    callback header-menu(int, length, length);
+    callback columns-resized(int);
+    callback rename-accepted(int, string);
+    callback rename-cancelled(int);
+    callback rename-tab(int, string, bool);
+    callback rename-edited(int, string);
+    callback rename-blurred(int, string, int);
+    callback item-pressed(int, int, bool, bool);
+    callback item-down(int, int, length, length, bool, bool);
+    callback item-drag(length, length, bool, bool, bool);
+    callback item-up(int, length, length, bool) -> bool;
+    callback item-cancel();
+    callback open-row(int, int);
+    callback row-middle-clicked(int, int);
+    callback row-menu(int, int, length, length);
+    callback background-pressed(int, bool);
+    callback background-menu(int, length, length);
+    callback marquee(int, length, length, length, length, bool);
+    callback marquee-done(int);
+
+    // What lives here and Rust only hears of (callbacks above) or asks for (`data` requests).
+    property <length> list-scroll;
+    property <bool> path-editing;
+    property <string> rename-text;
+    property <bool> rename-has-focus;
+    property <string> filter-text;
+    property <string> search-text;
+    property <string> search-content;
+    // What the pane shows of its row, copied from `data` as it is written (`apply`): a binding
+    // reading `data` itself would be looked at again (and its rows redrawn) on every write.
+    property <[TabItem]> tabs;
+    property <[CrumbItem]> crumbs;
+    property <[ItemRow]> items;
+    property <string> current-path;
+    property <bool> can-go-back;
+    property <bool> can-go-forward;
+    property <bool> can-go-up;
+    property <int> focus-row: -1;
+    property <bool> focus-selected;
+    property <int> view-mode;
+    property <length> grid-size: 96px;
+    property <bool> trash-shown;
+    property <int> sort-column;
+    property <bool> sort-desc;
+    property <int> groups-version;
+    property <int> renaming-index: -1;
+    property <int> rename-select;
+    property <string> rename-error;
+    property <int> rename-generation;
+    property <bool> filter-open;
+    property <string> filter-count;
+    property <string> filter-error;
+    property <bool> search-open;
+    property <string> search-scope;
+    property <bool> search-content-open;
+    property <bool> search-content-focus;
+    property <string> search-error;
+    property <string> search-content-error;
+    property <string> search-filters: "Filters";
+    property <bool> search-running;
+    // The requests done: each `*-request` counter as last seen, the scroll asked last, the
+    // rename whose text is in the field.
+    property <int> scroll-done;
+    property <int> scroll-seq-done;
+    property <int> path-done;
+    property <int> path-text-done;
+    property <int> filter-text-done;
+    property <int> filter-focus-done;
+    property <int> search-text-done;
+    property <int> search-content-done;
+    property <int> search-focus-done;
+    property <int> menu-done;
+    property <int> rename-shown;
+
+    out property <PaneGeometry> geometry: {
+        view-x: file-view.absolute-position.x,
+        view-y: file-view.absolute-position.y,
+        list-top: file-view.list-top,
+        list-width: file-view.list-width,
+        list-height: file-view.list-height,
+        body-y: search-bar.absolute-position.y,
+        body-height: file-view.absolute-position.y + file-view.height - search-bar.absolute-position.y,
+        tab-x: tab-bar.strip-x,
+        tab-scroll: tab-bar.scroll,
+        tab-width: tab-bar.tab-width,
+        tab-strip-width: tab-bar.strip-width,
+        tab-height: tab-bar.height,
+        address-x: address.absolute-position.x,
+        address-y: address.absolute-position.y,
+        address-width: address.width,
+        address-height: address.height,
+        item-height: file-view.item-height,
+        cell-width: file-view.cell-width,
+        cell-height: file-view.cell-height,
+        grid-left: file-view.grid-left,
+        grid-columns: file-view.grid-columns,
+        page-rows: file-view.page-rows,
+    };
+    property <PaneFocus> fields: {
+        filter: filter-bar.field-focused,
+        search: search-bar.field-focused,
+        rename: file-view.rename-focused,
+        rename-field: root.rename-has-focus,
+    };
+    changed geometry => { root.geometry-changed(root.index, self.geometry); }
+    changed fields => { root.focus-changed(root.index, self.fields); }
+    changed list-scroll => { root.scrolled(root.index, self.list-scroll); }
+
+    changed data => { root.apply(); }
+    // `changed` does not see the first value: a pane made with requests in its row does them now.
+    init => {
+        root.apply();
+        root.geometry-changed(root.index, root.geometry);
+    }
+
+    // Shows the row and does what it asks, in this order: what shows, then the requests.
+    function apply() {
+        root.tabs = root.data.tabs;
+        root.crumbs = root.data.crumbs;
+        root.items = root.data.items;
+        root.current-path = root.data.current-path;
+        root.can-go-back = root.data.can-go-back;
+        root.can-go-forward = root.data.can-go-forward;
+        root.can-go-up = root.data.can-go-up;
+        root.focus-row = root.data.focus-row;
+        root.focus-selected = root.data.focus-selected;
+        root.view-mode = root.data.view-mode;
+        root.grid-size = root.data.grid-size;
+        root.trash-shown = root.data.trash-shown;
+        root.sort-column = root.data.sort-column;
+        root.sort-desc = root.data.sort-desc;
+        root.groups-version = root.data.groups-version;
+        root.rename-select = root.data.rename-select;
+        root.rename-error = root.data.rename-error;
+        root.rename-generation = root.data.rename-generation;
+        root.filter-open = root.data.filter-open;
+        root.filter-count = root.data.filter-count;
+        root.filter-error = root.data.filter-error;
+        root.search-open = root.data.search-open;
+        root.search-scope = root.data.search-scope;
+        root.search-content-open = root.data.search-content-open;
+        root.search-content-focus = root.data.search-content-focus;
+        root.search-error = root.data.search-error;
+        root.search-content-error = root.data.search-content-error;
+        root.search-filters = root.data.search-filters;
+        root.search-running = root.data.search-running;
+        // A new rename: its text is in the field before the field shows.
+        if root.data.rename-generation != root.rename-shown {
+            root.rename-shown = root.data.rename-generation;
+            root.rename-text = root.data.rename-text;
+            root.rename-has-focus = false;
+        }
+        root.renaming-index = root.data.renaming-index;
+        // The field is gone with its rename: its focus flag must not go stale into the next one.
+        if root.renaming-index < 0 {
+            root.rename-has-focus = false;
+        }
+        if root.data.filter-text-request != root.filter-text-done {
+            root.filter-text-done = root.data.filter-text-request;
+            root.filter-text = root.data.filter-text;
+        }
+        if root.data.search-text-request != root.search-text-done {
+            root.search-text-done = root.data.search-text-request;
+            root.search-text = root.data.search-text;
+        }
+        if root.data.search-content-request != root.search-content-done {
+            root.search-content-done = root.data.search-content-request;
+            root.search-content = root.data.search-content;
+        }
+        if root.data.path-request != root.path-done {
+            root.path-done = root.data.path-request;
+            if root.data.path-edit {
+                address.edit();
+            } else if root.path-editing {
+                root.path-editing = false;
+            }
+        }
+        if root.data.path-text-request != root.path-text-done {
+            root.path-text-done = root.data.path-text-request;
+            address.set-text(root.data.path-text, root.data.path-text-at);
+        }
+        if root.data.scroll-request != root.scroll-done {
+            root.scroll-done = root.data.scroll-request;
+            if root.data.scroll-seq != root.scroll-seq-done {
+                root.scroll-seq-done = root.data.scroll-seq;
+                root.list-scroll = root.data.scroll-to;
+            }
+            if root.data.reveal-index >= 0 {
+                file-view.ensure-visible(root.data.reveal-index);
+                root.revealed(root.index, root.data.reveal-index, root.list-scroll);
+            }
+        }
+        if root.data.filter-focus-request != root.filter-focus-done {
+            root.filter-focus-done = root.data.filter-focus-request;
+            root.end-path-editing-for-filter();
+            if root.data.filter-focus-at < 0 {
+                filter-bar.select-all();
+            } else {
+                filter-bar.focus-at(root.data.filter-focus-at);
+            }
+        }
+        if root.data.search-focus-request != root.search-focus-done {
+            root.search-focus-done = root.data.search-focus-request;
+            root.end-path-editing-for-filter();
+            search-bar.select-all();
+        }
+        if root.data.menu-request != root.menu-done {
+            root.menu-done = root.data.menu-request;
+            root.open-keyboard-menu();
+        }
+    }
+
+    // However typing ends (Enter, Esc, a click elsewhere, switching windows, a menu opening),
+    // the keyboard goes back to the list. The hidden text box cannot keep the focus: Slint
+    // drops the focus of an item that becomes invisible, and then no key reaches
+    // `key-event` at all. Done even while the window is inactive, so the list gets the focus
+    // back when the window is activated again.
+    changed path-editing => {
+        root.path-editing-changed(root.index, self.path-editing);
+        // Shift+Tab out of the field lands on Refresh: it keeps the keyboard.
+        if !self.path-editing && !root.list-focused && !filter-bar.field-focused && !search-bar.field-focused && !refresh-button.focused { root.focus-requested(root.index); }
+    }
+
+    // Typing in the address bar ends when the filter takes the keyboard.
+    function end-path-editing-for-filter() {
+        if root.path-editing {
+            root.path-editing = false;
+        }
+    }
+
+    // Called before any context menu opens: like Explorer, a menu ends typing in the address
+    // bar (cancelling it), so the list has the keyboard once the menu closes. The focus moves
+    // here, before the menu takes it, rather than later in `changed path-editing`.
+    public function end-path-editing() {
+        if root.path-editing {
+            root.path-editing = false;
+            root.focus-requested(root.index);
+        }
+    }
+
+    // Opens the context menu from the keyboard: the selection's (just below the focused
+    // entry, scrolled into view) if the focused entry is selected, else the background's.
+    function open-keyboard-menu() {
+        if root.focus-row >= 0 && root.focus-selected {
+            file-view.ensure-visible(root.focus-row);
+            root.keyboard-menu(root.index, root.focus-row, file-view.menu-x(root.focus-row), file-view.menu-y(root.focus-row));
+        } else {
+            root.keyboard-menu(root.index, -1, file-view.menu-x(-1), file-view.menu-y(-1));
+        }
+    }
+
+    VerticalLayout {
+        tab-bar := TabBar {
+            tabs: root.tabs;
+            drop-tab: root.drop-tab;
+            activate(i) => { root.tab-activate(root.index, i); }
+            close(i) => { root.tab-close(root.index, i); }
+            new-tab => { root.tab-new(root.index); }
+            move-tab(from, to) => { root.tab-move(root.index, from, to); }
+            tab-menu(i, x, y) => {
+                root.end-path-editing();
+                root.tab-menu(root.index, i, x, y);
+            }
+        }
+        Rectangle {
+            height: Theme.toolbar-height;
+            background: Theme.chrome;
+            HorizontalLayout {
+                padding-left: Theme.inset + 4px;
+                padding-right: Theme.inset + 4px;
+                padding-top: (Theme.toolbar-height - Theme.control-height) / 2;
+                padding-bottom: (Theme.toolbar-height - Theme.control-height) / 2;
+                spacing: Theme.spacing;
+                // Back, Forward, Up, Refresh: row-height squares in the control-high row.
+                HorizontalLayout {
+                    spacing: 2px;
+                    padding-top: (Theme.control-height - Theme.row-height) / 2;
+                    padding-bottom: (Theme.control-height - Theme.row-height) / 2;
+                    ToolButton {
+                        text: "Back";
+                        icon: Glyph.back;
+                        enabled: root.can-go-back;
+                        clicked => { root.go-back(root.index); }
+                    }
+                    ToolButton {
+                        text: "Forward";
+                        icon: Glyph.forward;
+                        enabled: root.can-go-forward;
+                        clicked => { root.go-forward(root.index); }
+                    }
+                    ToolButton {
+                        text: "Up";
+                        icon: Glyph.up;
+                        enabled: root.can-go-up;
+                        clicked => { root.go-up(root.index); }
+                    }
+                    refresh-button := ToolButton {
+                        text: "Refresh";
+                        icon: Glyph.refresh;
+                        clicked => { root.refresh(root.index); }
+                    }
+                }
+                address := Breadcrumb {
+                    crumbs: root.crumbs;
+                    path-text: root.current-path;
+                    editing <=> root.path-editing;
+                    edited(text) => { root.path-edited(root.index, text); }
+                    crumb-clicked(i) => { root.crumb-clicked(root.index, i); }
+                    crumb-span(i, x, w) => { root.crumb-span(root.index, i, x, w); }
+                    drop-crumb: root.drop-crumb;
+                    accepted(path) => {
+                        root.focus-requested(root.index);
+                        root.navigate(root.index, path);
+                    }
+                }
+                TextButton {
+                    text: "View";
+                    lead-icon: Glyph.view;
+                    icon: Glyph.chevron-down;
+                    height: Theme.control-height;
+                    clicked => {
+                        root.end-path-editing();
+                        root.view-menu(root.index, self.absolute-position.x, self.absolute-position.y + self.height, self.absolute-position.x + self.width, self.absolute-position.y);
+                    }
+                }
+            }
+        }
+        // The row under the toolbar: the window's (its layout keeps the sheets' place).
+        Rectangle {
+            @children
+            sheet := VerticalLayout {
+                x: root.sheet-x;
+                y: root.sheet-y;
+                width: root.sheet-width;
+                height: root.sheet-height;
+                search-bar := FilterBar {
+                    search: true;
+                    height: root.search-open ? Theme.row-height + 8px : 0px;
+                    visible: root.search-open;
+                    text <=> root.search-text;
+                    error: root.search-error;
+                    scope: root.search-scope;
+                    content-open: root.search-content-open;
+                    content-focus: root.search-content-focus;
+                    content <=> root.search-content;
+                    content-error: root.search-content-error;
+                    filters: root.search-filters;
+                    running: root.search-running;
+                    edited(t) => { root.search-edited(root.index, t); }
+                    content-edited(t) => { root.search-content-edited(root.index, t); }
+                    content-toggle => { root.search-content-toggle(root.index); }
+                    go => { root.search-go(root.index); }
+                    menu(which, x, y, fx, fy) => {
+                        root.end-path-editing();
+                        root.search-menu(root.index, which, x, y, fx, fy);
+                    }
+                }
+                filter-bar := FilterBar {
+                    height: root.filter-open ? Theme.row-height + 8px : 0px;
+                    visible: root.filter-open;
+                    text <=> root.filter-text;
+                    count: root.filter-count;
+                    error: root.filter-error;
+                    edited(t) => { root.filter-edited(root.index, t); }
+                    go => { root.filter-search(root.index); }
+                    menu(which, x, y, fx, fy) => {
+                        root.end-path-editing();
+                        root.filter-menu(root.index, x, y, fx, fy);
+                    }
+                }
+                // The sheet: the column header and the list or grid on the content color. Its
+                // frame is drawn over them; they are not clipped to its corners (spec 13.7).
+                Rectangle {
+                    background: Theme.background;
+                    border-radius: Theme.sheet-radius;
+                    file-view := FileView {
+                        width: parent.width;
+                        height: parent.height;
+                        items: root.items;
+                        mode: root.view-mode;
+                        picture-size: root.grid-size;
+                        trash: root.trash-shown;
+                        grid-columns-changed(n) => { root.grid-columns-changed(root.index, n); }
+                        zoom(bigger) => { root.zoom(root.index, bigger); }
+                        groups-version: root.groups-version;
+                        line-of(i) => { return root.list-line-of(root.index, i); }
+                        column-of(i) => { return root.list-column-of(root.index, i); }
+                        group-toggled(first) => { root.list-group-toggled(root.index, first); }
+                        group-menu(first, x, y) => {
+                            root.end-path-editing();
+                            root.list-group-menu(root.index, x, y);
+                        }
+                        has-focus: root.list-focused;
+                        scroll <=> root.list-scroll;
+                        focus-requested => { root.focus-requested(root.index); }
+                        col-modified <=> root.col-modified;
+                        col-created <=> root.col-created;
+                        col-type <=> root.col-type;
+                        renaming-index: root.renaming-index;
+                        rename-text <=> root.rename-text;
+                        rename-select: root.rename-select;
+                        rename-error: root.rename-error;
+                        rename-accepted(t) => { root.rename-accepted(root.index, t); }
+                        rename-cancelled => { root.rename-cancelled(root.index); }
+                        rename-tab(t, back) => { root.rename-tab(root.index, t, back); }
+                        rename-edited(t) => { root.rename-edited(root.index, t); }
+                        rename-blurred(t, g) => { root.rename-blurred(root.index, t, g); }
+                        rename-generation: root.rename-generation;
+                        rename-has-focus <=> root.rename-has-focus;
+                        col-size <=> root.col-size;
+                        col-folder <=> root.col-folder;
+                        col-match <=> root.col-match;
+                        sort-column: root.sort-column;
+                        sort-desc: root.sort-desc;
+                        header-clicked(i) => { root.header-clicked(root.index, i); }
+                        header-menu(x, y) => {
+                            root.end-path-editing();
+                            root.header-menu(root.index, x, y);
+                        }
+                        columns-resized => { root.columns-resized(root.index); }
+                        item-pressed(i, ctrl, shift) => { root.item-pressed(root.index, i, ctrl, shift); }
+                        item-down(i, x, y, right, can-drag) => { root.item-down(root.index, i, x, y, right, can-drag); }
+                        item-drag(x, y, shift, ctrl, alt) => { root.item-drag(x, y, shift, ctrl, alt); }
+                        item-up(i, x, y, right) => { return root.item-up(i, x, y, right); }
+                        item-cancel => { root.item-cancel(); }
+                        drag-active: root.drag-active;
+                        drag-forbidden: root.drag-forbidden;
+                        drop-entry: root.drop-entry;
+                        item-double-clicked(i) => { root.open-row(root.index, i); }
+                        item-middle-clicked(i) => { root.row-middle-clicked(root.index, i); }
+                        item-menu(i, x, y) => {
+                            root.end-path-editing();
+                            root.row-menu(root.index, i, x, y);
+                        }
+                        background-pressed(ctrl) => { root.background-pressed(root.index, ctrl); }
+                        marquee(x, y, w, h, additive) => { root.marquee(root.index, x, y, w, h, additive); }
+                        marquee-done => { root.marquee-done(root.index); }
+                        background-menu(x, y) => {
+                            root.end-path-editing();
+                            root.background-menu(root.index, x, y);
+                        }
+                    }
+                    Rectangle {
+                        width: parent.width;
+                        height: parent.height;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        border-radius: Theme.sheet-radius;
+                    }
+                }
+            }
+        }
+    }
+}

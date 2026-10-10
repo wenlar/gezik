@@ -303,7 +303,7 @@ impl Drags {
     pub fn install(&self, window: &AppWindow) {
         window.on_item_down({
             let drags = self.clone();
-            move |i, x, y, right, can_drag| {
+            move |_pane, i, x, y, right, can_drag| {
                 if let Ok(index) = usize::try_from(i) {
                     drags.down(index, x, y, right, can_drag);
                 }
@@ -327,13 +327,10 @@ impl Drags {
         });
         window.on_crumb_span({
             let drags = self.clone();
-            move |i, x, width| {
+            move |_pane, i, x, width| {
                 if let Ok(i) = usize::try_from(i) {
-                    let label = drags
-                        .0
-                        .window
-                        .upgrade()
-                        .and_then(|w| w.get_crumbs().row_data(i))
+                    let label = crate::panes::data(drags.0.view.pane_id())
+                        .and_then(|d| d.crumbs.row_data(i))
                         .map(|crumb| crumb.label.to_string())
                         .unwrap_or_default();
                     let mut crumbs = drags.0.crumbs.borrow_mut();
@@ -674,10 +671,14 @@ impl Drags {
     /// Where everything a drop can land on is, from the window as it is now.
     fn layout(&self, window: &AppWindow) -> Layout {
         let g = window.get_drop_geometry();
+        let id = self.0.view.pane_id();
+        let mirror = crate::panes::mirror(id);
+        let p = mirror.geometry.borrow().clone();
+        let data = crate::panes::data(id).unwrap_or_default();
         let theme = window.global::<Theme>();
         let list = ListArea {
-            rect: Rect { x: g.view_x, y: g.view_y + g.list_top, width: g.list_width, height: g.list_height },
-            scroll: window.get_list_scroll(),
+            rect: Rect { x: p.view_x, y: p.view_y + p.list_top, width: p.list_width, height: p.list_height },
+            scroll: self.0.view.list_scroll(),
             geometry: self.0.view.layout_geometry(),
             count: self.0.view.len(),
             groups: self.0.view.group_spans(),
@@ -689,10 +690,10 @@ impl Drags {
                 let model = window.get_sidebar_rows();
                 let (pad, row_height) = (theme.get_spacing(), theme.get_row_height());
                 let (first, count) =
-                    drag::sidebar_window(g.sidebar_scroll, pad, row_height, g.sidebar_height, model.row_count());
+                    drag::sidebar_window(g.sidebar_scroll, pad, row_height, p.body_height, model.row_count());
                 let rows = (first..first + count).filter_map(|i| model.row_data(i)).map(|row| side_row(&row)).collect();
                 Some(SidebarArea {
-                    rect: Rect { x, y: g.sidebar_y, width, height: g.sidebar_height },
+                    rect: Rect { x, y: p.body_y, width, height: p.body_height },
                     scroll: g.sidebar_scroll,
                     pad,
                     row_height,
@@ -703,19 +704,19 @@ impl Drags {
             _ => None,
         };
         let tabs = TabArea {
-            rect: Rect { x: g.tab_x, y: 0.0, width: g.tab_strip_width, height: g.tab_height },
-            scroll: g.tab_scroll,
-            tab_width: g.tab_width,
-            count: window.get_tabs().row_count(),
+            rect: Rect { x: p.tab_x, y: 0.0, width: p.tab_strip_width, height: p.tab_height },
+            scroll: p.tab_scroll,
+            tab_width: p.tab_width,
+            count: data.tabs.row_count(),
         };
-        let spans = if window.get_path_editing() {
+        let spans = if mirror.path_editing.get() {
             Vec::new()
         } else {
-            let labels: Vec<String> = window.get_crumbs().iter().map(|crumb| crumb.label.to_string()).collect();
+            let labels: Vec<String> = data.crumbs.iter().map(|crumb| crumb.label.to_string()).collect();
             current_spans(&self.0.crumbs.borrow(), &labels)
         };
         let crumbs =
-            CrumbArea { rect: Rect { x: 0.0, y: g.address_y, width: g.window_width, height: g.address_height }, spans };
+            CrumbArea { rect: Rect { x: 0.0, y: p.address_y, width: g.window_width, height: p.address_height }, spans };
         let stack = (g.stack_height > 0.0).then_some(Rect {
             x: 0.0,
             y: g.stack_y,
@@ -900,7 +901,7 @@ impl Drags {
         };
         let content = lines as f32 * row_height;
         let lowest = (list.rect.height - content).min(0.0);
-        window.set_list_scroll((list.scroll + step).clamp(lowest, 0.0));
+        self.0.view.set_list_scroll((list.scroll + step).clamp(lowest, 0.0));
         self.update();
         self.reanswer();
     }

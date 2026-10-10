@@ -202,7 +202,7 @@ fn perform(
         Action::Up => nav.up(),
         Action::FocusPath => {
             panes::with_active(|p| p.path_box.reset());
-            window.invoke_edit_path()
+            panes::edit(view.pane_id(), |d| panes::path_editing(d, true))
         }
         Action::Refresh => nav.reload(),
         Action::SelectAll => view.select_all(),
@@ -365,7 +365,8 @@ fn handle_key(
     if ops.end_unfocused_rename() {
         return false;
     }
-    let editing = window.get_path_editing();
+    let mirror = panes::mirror(view.pane_id());
+    let editing = mirror.path_editing.get();
 
     if editing && let Some(chord) = &chord {
         // The suggestion list's keys first: ↓ ↑ Tab → Enter Esc (spec 6.1).
@@ -378,7 +379,7 @@ fn handle_key(
         }
         if chord.key == Key::Escape && !has_modifier {
             window.invoke_focus_list();
-            window.set_path_editing(false);
+            panes::with_active(|p| p.path_box.end_editing());
             return true;
         }
         if !has_modifier || keys::is_text_edit(chord, Platform::current()) {
@@ -388,7 +389,7 @@ fn handle_key(
 
     // The search bar's fields (spec 4.2): Esc stops or closes, Enter searches, Alt+Enter in a
     // new tab, Down gives the list the keyboard; other plain keys are the field's.
-    let in_search = window.get_search_focused();
+    let in_search = mirror.focus.borrow().search;
     if in_search && let Some(chord) = &chord {
         let plain = !has_modifier && !chord.shift;
         let alt_only = chord.alt && !chord.ctrl && !chord.meta && !chord.shift;
@@ -418,7 +419,7 @@ fn handle_key(
 
     // The filter bar's field: Esc closes the filter, Down or Enter give the list the keyboard
     // (the bar stays); other plain keys and the text editing shortcuts are the field's.
-    let filtering = window.get_filter_focused();
+    let filtering = mirror.focus.borrow().filter;
     if filtering && let Some(chord) = &chord {
         // Shift+Enter: the filter's pattern searched in the subfolders (spec 4.1).
         if chord.shift && !has_modifier && chord.key == Key::Enter {
@@ -465,7 +466,7 @@ fn handle_key(
                 return false;
             }
             if action == Action::Filter && editing {
-                window.set_path_editing(false);
+                panes::with_active(|p| p.path_box.end_editing());
             }
             if !perform(action, window, nav, view, preview, ops) {
                 return false;
@@ -493,7 +494,7 @@ fn handle_key(
 
     // Shift+F10 or the Menu key: the selection's menu (the background's if none).
     if menu_key {
-        window.invoke_open_keyboard_menu();
+        panes::edit(view.pane_id(), panes::keyboard_menu);
         return true;
     }
 
@@ -522,7 +523,7 @@ fn handle_key(
                 _ => None,
             };
             if let Some(mv) = mv {
-                let page = usize::try_from(window.get_list_page_rows()).unwrap_or(1).max(1);
+                let page = usize::try_from(mirror.geometry.borrow().page_rows).unwrap_or(1).max(1);
                 return view.key_move(mv, chord.shift, primary, page);
             }
             match chord.key {
@@ -957,6 +958,7 @@ fn main() -> Result<(), slint::PlatformError> {
     });
     // The pane's parts carry its id; it is installed once they all exist.
     let pane_id = panes::next_id();
+    window.set_panes(panes::model());
     // One media and one folder view memory for the process; each view holds a client of the
     // media and the same memory (spec 10 §3.3).
     let media = media::Media::new();
@@ -1296,7 +1298,7 @@ fn main() -> Result<(), slint::PlatformError> {
     });
     window.on_row_menu({
         let (menus, view) = (menus.clone(), view.clone());
-        move |i, x, y| {
+        move |_pane, i, x, y| {
             if let Ok(index) = usize::try_from(i) {
                 view.prepare_menu(index);
             }
@@ -1307,7 +1309,7 @@ fn main() -> Result<(), slint::PlatformError> {
     // opens at the cursor.
     window.on_background_menu({
         let (menus, view) = (menus.clone(), view.clone());
-        move |x, y| {
+        move |_pane, x, y| {
             view.clear_selection();
             menus.background(x, y)
         }
@@ -1315,7 +1317,7 @@ fn main() -> Result<(), slint::PlatformError> {
     window.on_item_pressed({
         let view = view.clone();
         let ops = ops.clone();
-        move |i, ctrl, shift| {
+        move |_pane, i, ctrl, shift| {
             ops.end_unfocused_rename();
             if let Ok(index) = usize::try_from(i) {
                 view.press(index, ctrl, shift);
@@ -1324,25 +1326,32 @@ fn main() -> Result<(), slint::PlatformError> {
     });
     window.on_marquee({
         let view = view.clone();
-        move |x, y, width, height, additive| view.marquee(gezik_core::layout::Rect { x, y, width, height }, additive)
+        move |_pane, x, y, width, height, additive| {
+            view.marquee(gezik_core::layout::Rect { x, y, width, height }, additive)
+        }
     });
     window.on_marquee_done({
         let view = view.clone();
-        move || view.marquee_done()
+        move |_pane| view.marquee_done()
     });
     window.on_background_pressed({
         let view = view.clone();
         let ops = ops.clone();
-        move |ctrl| {
+        move |_pane, ctrl| {
             ops.end_unfocused_rename();
             if !ctrl {
                 view.clear_selection();
             }
         }
     });
+    // Opened once the pane's request is done with (it asks from inside Slint's change
+    // handlers, where a system menu's own loop must not start).
     window.on_keyboard_menu({
         let menus = menus.clone();
-        move |i, x, y| menus.keyboard(i, x, y)
+        move |_pane, i, x, y| {
+            let menus = menus.clone();
+            slint::Timer::single_shot(std::time::Duration::ZERO, move || menus.keyboard(i, x, y));
+        }
     });
     window.on_sidebar_menu({
         let menus = menus.clone();
@@ -1350,7 +1359,7 @@ fn main() -> Result<(), slint::PlatformError> {
     });
     window.on_header_clicked({
         let view = view.clone();
-        move |column| view.header_clicked(column)
+        move |_pane, column| view.header_clicked(column)
     });
     window.on_preview_resized({
         let preview = preview.clone();
@@ -1358,50 +1367,66 @@ fn main() -> Result<(), slint::PlatformError> {
     });
     window.on_columns_resized({
         let view = view.clone();
-        move || view.columns_resized()
+        move |_pane| view.columns_resized()
     });
     window.on_header_menu({
         let menus = menus.clone();
-        move |x, y| menus.header(x, y)
+        move |_pane, x, y| menus.header(x, y)
     });
     window.on_list_line_of({
         let view = view.clone();
-        move |i| view.place_of(usize::try_from(i).unwrap_or(usize::MAX)).0
+        move |_pane, i| view.place_of(usize::try_from(i).unwrap_or(usize::MAX)).0
     });
     window.on_list_column_of({
         let view = view.clone();
-        move |i| view.place_of(usize::try_from(i).unwrap_or(usize::MAX)).1
+        move |_pane, i| view.place_of(usize::try_from(i).unwrap_or(usize::MAX)).1
     });
     window.on_list_group_toggled({
         let view = view.clone();
-        move |first| view.toggle_group(usize::try_from(first).unwrap_or(usize::MAX))
+        move |_pane, first| view.toggle_group(usize::try_from(first).unwrap_or(usize::MAX))
     });
     window.on_list_group_menu({
         let menus = menus.clone();
-        move |x, y| menus.group_header(x, y)
+        move |_pane, x, y| menus.group_header(x, y)
     });
     window.on_filter_menu({
         let menus = menus.clone();
-        move |left, bottom, right, top| menus.filter_menu(popup::Anchor::below(left, top, right, bottom))
+        move |_pane, left, bottom, right, top| menus.filter_menu(popup::Anchor::below(left, top, right, bottom))
     });
     window.on_search_menu({
         let menus = menus.clone();
-        move |which, left, bottom, right, top| {
+        move |_pane, which, left, bottom, right, top| {
             let which = search::SearchMenu::from_index(which);
             menus.search_menu(which, popup::Anchor::below(left, top, right, bottom))
         }
     });
     window.on_view_menu({
         let menus = menus.clone();
-        move |left, bottom, right, top| menus.view_menu(popup::Anchor::below(left, top, right, bottom))
+        move |_pane, left, bottom, right, top| menus.view_menu(popup::Anchor::below(left, top, right, bottom))
     });
     window.on_grid_columns_changed({
         let view = view.clone();
-        move |columns| view.grid_columns_changed(usize::try_from(columns).unwrap_or(1))
+        move |_pane, columns| view.grid_columns_changed(usize::try_from(columns).unwrap_or(1))
+    });
+    // What the pane keeps and only tells (spec 10 §3.2): Rust's mirror of it.
+    window.on_scrolled(|pane, y| panes::mirror_at(pane).scroll.set(y));
+    window.on_pane_focus(|pane, focus| *panes::mirror_at(pane).focus.borrow_mut() = focus);
+    window.on_pane_geometry({
+        let view = view.clone();
+        move |pane, geometry| {
+            let columns = usize::try_from(geometry.grid_columns).unwrap_or(1);
+            *panes::mirror_at(pane).geometry.borrow_mut() = geometry;
+            // A pane made after the first layout never sees its grid's columns change.
+            view.grid_columns_changed(columns);
+        }
+    });
+    window.on_revealed({
+        let view = view.clone();
+        move |_pane, index, target| view.revealed(index, target)
     });
     window.on_zoom({
         let view = view.clone();
-        move |bigger| view.zoom(bigger)
+        move |_pane, bigger| view.zoom(bigger)
     });
     window.on_conflict_row_menu({
         let menus = menus.clone();
@@ -1457,7 +1482,7 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
     // Slint passes indexes as `i32`: a negative one does nothing.
-    window.on_tab_menu(move |i, x, y| {
+    window.on_tab_menu(move |_pane, i, x, y| {
         if let Ok(i) = usize::try_from(i) {
             menus.tab(i, x, y);
         }
@@ -1466,7 +1491,7 @@ fn main() -> Result<(), slint::PlatformError> {
     // Double-click; with single-click-open the click already opened it.
     window.on_open_row({
         let (nav, view) = (nav.clone(), view.clone());
-        move |i| {
+        move |_pane, i| {
             if let Ok(index) = usize::try_from(i)
                 && !view_options::current().single_click_open
             {
@@ -1476,32 +1501,32 @@ fn main() -> Result<(), slint::PlatformError> {
     });
     window.on_go_back({
         let nav = nav.clone();
-        move || nav.back()
+        move |_pane| nav.back()
     });
     window.on_go_forward({
         let nav = nav.clone();
-        move || nav.forward()
+        move |_pane| nav.forward()
     });
     window.on_go_up({
         let nav = nav.clone();
-        move || nav.up()
+        move |_pane| nav.up()
     });
     window.on_refresh({
         let nav = nav.clone();
-        move || nav.reload()
+        move |_pane| nav.reload()
     });
     window.on_navigate({
         let nav = nav.clone();
-        move |text| nav.navigate_text(text.into())
+        move |_pane, text| nav.navigate_text(text.into())
     });
     window.on_crumb_clicked({
         let nav = nav.clone();
-        move |i| nav.crumb_clicked(i)
+        move |_pane, i| nav.crumb_clicked(i)
     });
     // Slint passes indexes as `i32`: a negative one does nothing.
     window.on_tab_activate({
         let nav = nav.clone();
-        move |i| {
+        move |_pane, i| {
             if let Ok(i) = usize::try_from(i) {
                 nav.activate_tab(i);
             }
@@ -1510,7 +1535,7 @@ fn main() -> Result<(), slint::PlatformError> {
     // Closed once the click is fully handled.
     window.on_tab_close({
         let nav = nav.clone();
-        move |i| {
+        move |_pane, i| {
             if let Ok(i) = usize::try_from(i) {
                 close_tab_later(&nav, i);
             }
@@ -1518,11 +1543,11 @@ fn main() -> Result<(), slint::PlatformError> {
     });
     window.on_tab_new({
         let nav = nav.clone();
-        move || nav.open_tab(nav.start(), true)
+        move |_pane| nav.open_tab(nav.start(), true)
     });
     window.on_tab_move({
         let nav = nav.clone();
-        move |from, to| {
+        move |_pane, from, to| {
             if let (Ok(from), Ok(to)) = (usize::try_from(from), usize::try_from(to)) {
                 nav.move_tab(from, to);
             }
@@ -1530,7 +1555,7 @@ fn main() -> Result<(), slint::PlatformError> {
     });
     window.on_row_middle_clicked({
         let nav = nav.clone();
-        move |i| {
+        move |_pane, i| {
             // A folder in the trash is a bin entry: not opened (spec 7.1).
             if let Some((path, true)) =
                 nav.entry_path(i).filter(|_| nav.active_location() != gezik_core::nav::Location::Trash)
@@ -1542,23 +1567,26 @@ fn main() -> Result<(), slint::PlatformError> {
 
     window.on_rename_accepted({
         let ops = ops.clone();
-        move |text| ops.rename_accepted(text.into())
+        move |_pane, text| ops.rename_accepted(text.into())
     });
     window.on_rename_cancelled({
         let ops = ops.clone();
-        move || ops.rename_cancelled()
+        move |_pane| ops.rename_cancelled()
     });
     window.on_rename_tab({
         let ops = ops.clone();
-        move |text, back| ops.rename_tab(text.into(), back)
+        move |_pane, text, back| ops.rename_tab(text.into(), back)
     });
     window.on_rename_blurred({
         let ops = ops.clone();
-        move |text, generation| ops.rename_blurred(text.into(), generation)
+        move |_pane, text, generation| ops.rename_blurred(text.into(), generation)
     });
     window.on_rename_edited({
         let ops = ops.clone();
-        move |text| ops.rename_edited(&text)
+        move |pane, text| {
+            *panes::mirror_at(pane).rename_text.borrow_mut() = text.clone();
+            ops.rename_edited(&text)
+        }
     });
 
     window.on_key_event({

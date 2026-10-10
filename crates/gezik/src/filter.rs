@@ -130,20 +130,22 @@ impl Filter {
         let filter = Filter { id, window: window.as_weak(), view, dialogs, store };
         window.on_filter_edited({
             let view = filter.view.clone();
-            move |text| view.set_filter(Some(&text))
+            move |pane, text| {
+                *crate::panes::mirror_at(pane).filter_text.borrow_mut() = text.clone();
+                view.set_filter(Some(&text))
+            }
         });
         filter
     }
 
     /// Ctrl+F: opens the bar empty and gives it the keyboard; on an open bar, selects its text.
     pub fn open(&self) {
-        let Some(window) = self.window.upgrade() else { return };
-        if !self.can_filter() {
+        if self.window.upgrade().is_none() || !self.can_filter() {
             return;
         }
         if self.view.filter_text().is_some() {
             // Focused or not, the field gets the keyboard with its text selected.
-            window.invoke_select_filter_text();
+            crate::panes::edit(self.id, |d| crate::panes::focus_filter(d, -1));
             return;
         }
         self.view.set_filter(Some(""));
@@ -166,8 +168,8 @@ impl Filter {
         let was_open = self.view.filter_text().is_some();
         self.view.set_filter(Some(&text));
         let end = i32::try_from(text.len()).unwrap_or(i32::MAX);
-        if was_open && let Some(window) = self.window.upgrade() {
-            window.invoke_focus_filter(end);
+        if was_open && self.window.upgrade().is_some() {
+            crate::panes::edit(self.id, |d| crate::panes::focus_filter(d, end));
         } else {
             self.focus_later(end);
         }
@@ -194,7 +196,7 @@ impl Filter {
 
     /// Whether "Save as…" can save the bar's text: open, not blank, no error.
     pub fn can_save(&self) -> bool {
-        let error = self.window.upgrade().map(|w| w.get_filter_error().to_string()).unwrap_or_default();
+        let error = crate::panes::data(self.id).map(|d| d.filter_error.to_string()).unwrap_or_default();
         can_save_text(self.view.filter_text().as_deref(), &error)
     }
 
@@ -278,12 +280,10 @@ impl Filter {
 
     /// Focuses the field once the bar is on screen (an invisible item cannot take the focus).
     fn focus_later(&self, at: i32) {
-        let weak = self.window.clone();
+        let id = self.id;
         slint::Timer::single_shot(Duration::ZERO, move || {
-            if let Some(window) = weak.upgrade()
-                && window.get_filter_open()
-            {
-                window.invoke_focus_filter(at);
+            if crate::panes::data(id).is_some_and(|d| d.filter_open) {
+                crate::panes::edit(id, |d| crate::panes::focus_filter(d, at));
             }
         });
     }
