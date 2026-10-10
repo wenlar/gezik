@@ -137,11 +137,12 @@ fn run(address: ServerAddress, letter: Option<char>, login: Option<Login>) {
     status(format!("Connecting to {shown}…"));
     let mut owner = 0;
     crate::panes::with_active(|p| owner = p.nav.owner());
+    let window_id = crate::windows::current();
     let target = address.clone();
     // shortcut: if the event loop is gone, `finish` cannot run; the app is closing then.
     let reply = Reply {
         post: Some(move |result| {
-            let _ = slint::invoke_from_event_loop(move || finish(address, shown, result));
+            crate::windows::post(window_id, move || finish(address, shown, result));
         }),
         result: None,
     };

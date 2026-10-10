@@ -391,9 +391,13 @@ impl Navigator {
         if let Some(at) = inner.pace.next() {
             let delay = at.saturating_duration_since(Instant::now());
             let id = inner.id;
-            inner.refresh_timer.start(slint::TimerMode::SingleShot, delay, move || {
-                crate::panes::with_id(id, |p| p.nav.refresh_due());
-            });
+            inner.refresh_timer.start(
+                slint::TimerMode::SingleShot,
+                delay,
+                crate::windows::bind_mut(move || {
+                    crate::panes::with_id(id, |p| p.nav.refresh_due());
+                }),
+            );
         }
     }
 
@@ -410,9 +414,13 @@ impl Navigator {
                 || inner.view.renaming().is_some();
             if busy {
                 let id = inner.id;
-                inner.refresh_timer.start(slint::TimerMode::SingleShot, QUIET, move || {
-                    crate::panes::with_id(id, |p| p.nav.refresh_due());
-                });
+                inner.refresh_timer.start(
+                    slint::TimerMode::SingleShot,
+                    QUIET,
+                    crate::windows::bind_mut(move || {
+                        crate::panes::with_id(id, |p| p.nav.refresh_due());
+                    }),
+                );
                 return;
             }
             inner.watched.clone()
@@ -1360,22 +1368,26 @@ impl Navigator {
         let Some(folder) = folder else { return };
         let checks = Rc::new(std::cell::Cell::new(0u32));
         let id = self.0.borrow().id;
-        self.0.borrow().refresh_timer.start(slint::TimerMode::Repeated, REMOVAL_CHECK, move || {
-            let gone = !folder.exists();
-            checks.set(checks.get() + 1);
-            if gone || checks.get() >= REMOVAL_CHECKS {
-                crate::panes::with_id(id, |p| {
-                    p.nav.0.borrow().refresh_timer.stop();
-                    // Still there after all: watch it again (forgotten first, so it starts anew).
-                    p.nav.0.borrow_mut().watched = None;
-                    if gone {
-                        p.nav.reload();
-                    } else {
-                        p.nav.watch_shown(&p.nav.active_location());
-                    }
-                });
-            }
-        });
+        self.0.borrow().refresh_timer.start(
+            slint::TimerMode::Repeated,
+            REMOVAL_CHECK,
+            crate::windows::bind_mut(move || {
+                let gone = !folder.exists();
+                checks.set(checks.get() + 1);
+                if gone || checks.get() >= REMOVAL_CHECKS {
+                    crate::panes::with_id(id, |p| {
+                        p.nav.0.borrow().refresh_timer.stop();
+                        // Still there after all: watch it again (forgotten first, so it starts anew).
+                        p.nav.0.borrow_mut().watched = None;
+                        if gone {
+                            p.nav.reload();
+                        } else {
+                            p.nav.watch_shown(&p.nav.active_location());
+                        }
+                    });
+                }
+            }),
+        );
     }
 
     /// Shows `message` for a failed load; see [`apply_failure`].

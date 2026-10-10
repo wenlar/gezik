@@ -142,12 +142,12 @@ struct Inner {
 }
 
 thread_local! {
-    static CURRENT: RefCell<Option<Drags>> = const { RefCell::new(None) };
+    pub(crate) static CURRENT: crate::windows::Slot<Drags> = const { crate::windows::Slot::new() };
 }
 
 /// Runs `f` with this UI thread's drags, if there are any yet.
 pub fn with_current<R>(f: impl FnOnce(&Drags) -> R) -> Option<R> {
-    CURRENT.with(|c| c.borrow().clone()).map(|drags| f(&drags))
+    CURRENT.with(crate::windows::Slot::current).map(|drags| f(&drags))
 }
 
 /// Which of Copy, Move and Link the right-drag menu offers: what the source allows, in a
@@ -284,7 +284,7 @@ impl Drags {
             handed: Cell::new(None),
             dropped_files: RefCell::default(),
         }));
-        CURRENT.with(|c| *c.borrow_mut() = Some(drags.clone()));
+        CURRENT.with(|c| c.set(crate::windows::current(), drags.clone()));
         drags
     }
 
@@ -353,7 +353,7 @@ impl Drags {
         window.set_tab_insert(shown.and_then(|(_, slot)| slot).map_or(-1, index));
         if let Some((from, tab, (_, at))) = target.filter(|_| released) {
             // Once the release is fully handled: both strips' tabs change.
-            Timer::single_shot(Duration::ZERO, move || crate::dual::move_tab(from, tab, at));
+            Timer::single_shot(Duration::ZERO, crate::windows::bind(move || crate::dual::move_tab(from, tab, at)));
         }
         target.is_some()
     }
@@ -374,7 +374,7 @@ impl Drags {
         };
         if first {
             let drags = self.clone();
-            Timer::single_shot(Duration::ZERO, move || drags.take_dropped_files());
+            Timer::single_shot(Duration::ZERO, crate::windows::bind(move || drags.take_dropped_files()));
         }
     }
 
@@ -602,11 +602,14 @@ impl Drags {
                         // By path: a listing replaced before the timer fires must not open
                         // another entry under the same index.
                         let clicked = crate::panes::active_view().entry_path(index);
-                        Timer::single_shot(Duration::ZERO, move || {
-                            if let Some((path, is_dir)) = clicked {
-                                crate::open_path(&nav, path, is_dir);
-                            }
-                        });
+                        Timer::single_shot(
+                            Duration::ZERO,
+                            crate::windows::bind(move || {
+                                if let Some((path, is_dir)) = clicked {
+                                    crate::open_path(&nav, path, is_dir);
+                                }
+                            }),
+                        );
                     }
                 }
                 false
@@ -901,9 +904,13 @@ impl Drags {
         }
         self.0.hover_tab.set(tab);
         match tab {
-            Some(tab) => self.0.tab_timer.start(TimerMode::SingleShot, drag::TAB_HOVER, move || {
-                with_current(|drags| drags.tab_rested(tab));
-            }),
+            Some(tab) => self.0.tab_timer.start(
+                TimerMode::SingleShot,
+                drag::TAB_HOVER,
+                crate::windows::bind_mut(move || {
+                    with_current(|drags| drags.tab_rested(tab));
+                }),
+            ),
             None => self.0.tab_timer.stop(),
         }
     }
@@ -937,9 +944,13 @@ impl Drags {
             drag::edge_scroll(y - list.rect.y, list.rect.height, list.geometry.row_height() / 2.0) != 0.0
         });
         if near && !self.0.scroll_timer.running() {
-            self.0.scroll_timer.start(TimerMode::Repeated, SCROLL_STEP, || {
-                with_current(|drags| drags.scroll_step());
-            });
+            self.0.scroll_timer.start(
+                TimerMode::Repeated,
+                SCROLL_STEP,
+                crate::windows::bind_mut(|| {
+                    with_current(|drags| drags.scroll_step());
+                }),
+            );
         } else if !near {
             self.0.scroll_timer.stop();
         }
@@ -1181,20 +1192,25 @@ impl Drags {
     /// after the event loop starts, so this retries for a while).
     pub fn attach_when_ready(&self, attempt: u32) {
         let drags = self.clone();
-        Timer::single_shot(Duration::from_millis(20), move || {
-            let Some(window) = drags.0.window.upgrade() else { return };
-            let handler: Rc<dyn DropHandler> = Rc::new(Outside(drags.clone()));
-            let wake = std::sync::Arc::new(|| {
-                let _ = slint::invoke_from_event_loop(|| {
-                    with_current(|drags| drags.poll());
+        Timer::single_shot(
+            Duration::from_millis(20),
+            crate::windows::bind(move || {
+                let Some(window) = drags.0.window.upgrade() else { return };
+                let handler: Rc<dyn DropHandler> = Rc::new(Outside(drags.clone()));
+                // Called on the drop target's thread: the window is taken here.
+                let id = crate::windows::current();
+                let wake = std::sync::Arc::new(move || {
+                    let _ = slint::invoke_from_event_loop(move || {
+                        crate::windows::with_window(id, |_| with_current(|drags| drags.poll()));
+                    });
                 });
-            });
-            match gezik_platform::dnd::attach(&window.window().window_handle(), handler, wake) {
-                Some(attached) => *drags.0.attached.borrow_mut() = Some(attached),
-                None if attempt < 100 => drags.attach_when_ready(attempt + 1),
-                None => {}
-            }
-        });
+                match gezik_platform::dnd::attach(&window.window().window_handle(), handler, wake) {
+                    Some(attached) => *drags.0.attached.borrow_mut() = Some(attached),
+                    None if attempt < 100 => drags.attach_when_ready(attempt + 1),
+                    None => {}
+                }
+            }),
+        );
     }
 
     /// Events from the drop target's thread (Linux).

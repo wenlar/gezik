@@ -64,8 +64,7 @@ impl Dialogs {
         dialogs
     }
 
-    /// Dialogs with no window, for tests: nothing is ever asked.
-    #[cfg(test)]
+    /// Dialogs with no window (tests, a window not attached yet): nothing is ever asked.
     pub fn detached() -> Dialogs {
         Dialogs(Rc::new(Inner {
             window: slint::Weak::default(),

@@ -608,11 +608,14 @@ impl Searches {
 
     fn focus_later(&self) {
         let id = self.0.id;
-        slint::Timer::single_shot(Duration::ZERO, move || {
-            if crate::panes::data(id).is_some_and(|d| d.search_open) {
-                crate::panes::edit(id, crate::panes::focus_search);
-            }
-        });
+        slint::Timer::single_shot(
+            Duration::ZERO,
+            crate::windows::bind(move || {
+                if crate::panes::data(id).is_some_and(|d| d.search_open) {
+                    crate::panes::edit(id, crate::panes::focus_search);
+                }
+            }),
+        );
     }
 
     fn edited(&self, text: &str) {
@@ -672,9 +675,13 @@ impl Searches {
         match step {
             Live::Now => {
                 let id = self.0.id;
-                self.0.typing.start(slint::TimerMode::SingleShot, TYPING, move || {
-                    crate::panes::with_id(id, |p| p.search.run(false, true));
-                })
+                self.0.typing.start(
+                    slint::TimerMode::SingleShot,
+                    TYPING,
+                    crate::windows::bind_mut(move || {
+                        crate::panes::with_id(id, |p| p.search.run(false, true));
+                    }),
+                )
             }
             Live::Wait => self.0.live_waiting.set(true),
             Live::Large => self.0.view.note("Large folder: press Enter to search".to_owned()),
@@ -1229,9 +1236,13 @@ impl Searches {
         };
         if cache.is_some() {
             let id = self.0.id;
-            self.0.idle.start(slint::TimerMode::SingleShot, CACHE_IDLE, move || {
-                crate::panes::with_id(id, |p| p.search.drop_names());
-            });
+            self.0.idle.start(
+                slint::TimerMode::SingleShot,
+                CACHE_IDLE,
+                crate::windows::bind_mut(move || {
+                    crate::panes::with_id(id, |p| p.search.drop_names());
+                }),
+            );
         }
         cache
     }
@@ -1300,9 +1311,13 @@ impl Searches {
         let waiting = self.0.live_waiting.replace(false);
         if ready {
             let id = self.0.id;
-            self.0.idle.start(slint::TimerMode::SingleShot, CACHE_IDLE, move || {
-                crate::panes::with_id(id, |p| p.search.drop_names());
-            });
+            self.0.idle.start(
+                slint::TimerMode::SingleShot,
+                CACHE_IDLE,
+                crate::windows::bind_mut(move || {
+                    crate::panes::with_id(id, |p| p.search.drop_names());
+                }),
+            );
             if waiting && self.0.open.get() {
                 self.follow_typing();
             }

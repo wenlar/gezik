@@ -13,57 +13,61 @@ use crate::keys;
 use crate::operations::Operations;
 use crate::{AppWindow, MenuEntry};
 
+/// The menu bar of the window being opened: its items run in that window (muda's events are
+/// no winit events, so the router has not made it the current one).
 pub fn install(window: &AppWindow, ops: Operations) {
     window.set_native_menu_bar(true);
-    let weak = window.as_weak();
+    let id = crate::windows::current();
     window.on_menu_command(move |name| {
-        let Some(window) = weak.upgrade() else { return };
-        match name.as_str() {
-            "minimize" => window.window().set_minimized(true),
-            "zoom" => window.window().set_maximized(!window.window().is_maximized()),
-            name => {
-                if let Some(index) = name.strip_prefix("command:").and_then(|i| i.parse::<usize>().ok()) {
-                    return crate::actions::run_command(index, &crate::panes::active_view());
+        crate::windows::with_window(id, |window| chosen(window, &name, &ops));
+    });
+}
+
+fn chosen(window: &AppWindow, name: &str, ops: &Operations) {
+    // The window the item was chosen in, for the keys played after it.
+    let id = crate::windows::current();
+    match name {
+        "minimize" => window.window().set_minimized(true),
+        "zoom" => window.window().set_maximized(!window.window().is_maximized()),
+        name => {
+            if let Some(index) = name.strip_prefix("command:").and_then(|i| i.parse::<usize>().ok()) {
+                return crate::actions::run_command(index, &crate::panes::active_view());
+            }
+            if let Some(id) = name.strip_prefix("tab-set:").and_then(|i| i.parse::<u32>().ok()) {
+                let names = crate::tab_sets::names();
+                return crate::tab_sets::with_current(|sets| sets.chosen(id, &names));
+            }
+            if let Some(id) = name.strip_prefix("view-option:").and_then(|i| i.parse::<u32>().ok()) {
+                let options = crate::view_options::current();
+                if let Some(option) = crate::context_menu::view_option_for(id, options) {
+                    crate::view_options::change(option);
                 }
-                if let Some(id) = name.strip_prefix("tab-set:").and_then(|i| i.parse::<u32>().ok()) {
-                    let names = crate::tab_sets::names();
-                    return crate::tab_sets::with_current(|sets| sets.chosen(id, &names));
+                return crate::view_options::sync_window(crate::view_options::current());
+            }
+            let Some(action) = Action::from_name(name) else { return };
+            let (nav, view) = (crate::panes::active_nav(), crate::panes::active_view());
+            if crate::trash_view::instead(action, &view) {
+                return;
+            }
+            match keys::chord_for(action).filter(|c| !matches!(c.key, Key::Num(_))) {
+                // After the menu is done with this item: playing the keys changes the
+                // menu's shortcuts, which Slint must not rebuild while it activates one.
+                Some(chord) => {
+                    slint::Timer::single_shot(std::time::Duration::ZERO, move || {
+                        crate::windows::with_window(id, |window| play(window, &chord));
+                    });
                 }
-                if let Some(id) = name.strip_prefix("view-option:").and_then(|i| i.parse::<u32>().ok()) {
-                    let options = crate::view_options::current();
-                    if let Some(option) = crate::context_menu::view_option_for(id, options) {
-                        crate::view_options::change(option);
-                    }
-                    return crate::view_options::sync_window(crate::view_options::current());
-                }
-                let Some(action) = Action::from_name(name) else { return };
-                let (nav, view) = (crate::panes::active_nav(), crate::panes::active_view());
-                if crate::trash_view::instead(action, &view) {
-                    return;
-                }
-                match keys::chord_for(action).filter(|c| !matches!(c.key, Key::Num(_))) {
-                    // After the menu is done with this item: playing the keys changes the
-                    // menu's shortcuts, which Slint must not rebuild while it activates one.
-                    Some(chord) => {
-                        let weak = window.as_weak();
-                        slint::Timer::single_shot(std::time::Duration::ZERO, move || {
-                            if let Some(window) = weak.upgrade() {
-                                play(&window, &chord);
-                            }
-                        });
-                    }
-                    // No shortcut (none by default, or turned off in settings.toml), or only
-                    // the keypad's.
-                    None if crate::actions::run(action, &nav, &view) => {}
-                    None => {
-                        if action == Action::BatchRename {
-                            ops.batch_rename();
-                        }
+                // No shortcut (none by default, or turned off in settings.toml), or only
+                // the keypad's.
+                None if crate::actions::run(action, &nav, &view) => {}
+                None => {
+                    if action == Action::BatchRename {
+                        ops.batch_rename();
                     }
                 }
             }
         }
-    });
+    }
 }
 
 /// The Commands menu: the commands that have a key, with the key in the title.

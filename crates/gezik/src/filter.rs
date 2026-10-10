@@ -221,11 +221,14 @@ impl Filter {
         self.view.set_filter(Some(&filters[i].pattern));
         // Once the menu is gone (it gives the keyboard back to where it was).
         let weak = self.window.clone();
-        slint::Timer::single_shot(Duration::ZERO, move || {
-            if let Some(window) = weak.upgrade() {
-                window.invoke_focus_list();
-            }
-        });
+        slint::Timer::single_shot(
+            Duration::ZERO,
+            crate::windows::bind(move || {
+                if let Some(window) = weak.upgrade() {
+                    window.invoke_focus_list();
+                }
+            }),
+        );
     }
 
     /// "Save as…": asks for a name, then saves the bar's text under it; a name already there
@@ -291,11 +294,14 @@ impl Filter {
     /// Focuses the field once the bar is on screen (an invisible item cannot take the focus).
     fn focus_later(&self, at: i32) {
         let id = self.id;
-        slint::Timer::single_shot(Duration::ZERO, move || {
-            if crate::panes::data(id).is_some_and(|d| d.filter_open) {
-                crate::panes::edit(id, |d| crate::panes::focus_filter(d, at));
-            }
-        });
+        slint::Timer::single_shot(
+            Duration::ZERO,
+            crate::windows::bind(move || {
+                if crate::panes::data(id).is_some_and(|d| d.filter_open) {
+                    crate::panes::edit(id, |d| crate::panes::focus_filter(d, at));
+                }
+            }),
+        );
     }
 }
 

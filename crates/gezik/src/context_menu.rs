@@ -1049,13 +1049,16 @@ impl Menus {
                     // the layer over it) takes it, unless a question came up.
                     if from_submenu(id) {
                         let weak = menus.window.clone();
-                        slint::Timer::single_shot(std::time::Duration::ZERO, move || {
-                            if let Some(window) = weak.upgrade()
-                                && !window.get_dialog_open()
-                            {
-                                window.invoke_menu_gives_keyboard_back();
-                            }
-                        });
+                        slint::Timer::single_shot(
+                            std::time::Duration::ZERO,
+                            crate::windows::bind(move || {
+                                if let Some(window) = weak.upgrade()
+                                    && !window.get_dialog_open()
+                                {
+                                    window.invoke_menu_gives_keyboard_back();
+                                }
+                            }),
+                        );
                     }
                 }
             }
@@ -1247,11 +1250,14 @@ impl Menus {
     /// Share… from a row menu, at the right-click's place once the menu is done.
     fn share(&self, paths: Vec<PathBuf>) {
         let (window, at) = (self.window.clone(), self.menu_at.get());
-        slint::Timer::single_shot(std::time::Duration::ZERO, move || {
-            if let Some(window) = window.upgrade() {
-                crate::finder_menu::share(&window, paths, Some(at));
-            }
-        });
+        slint::Timer::single_shot(
+            std::time::Duration::ZERO,
+            crate::windows::bind(move || {
+                if let Some(window) = window.upgrade() {
+                    crate::finder_menu::share(&window, paths, Some(at));
+                }
+            }),
+        );
     }
 
     /// Create link ▸ (Windows) or Create link at the end of the items so far, for `rows`;
@@ -1557,48 +1563,52 @@ impl Menus {
         }
         let Some(claim) = self.native_menu.claim() else { return };
         let menus = self.clone();
-        slint::Timer::single_shot(std::time::Duration::from_millis(16), move || {
-            let Some(window) = menus.window.upgrade() else { return };
-            let handle = window.window().window_handle();
-            let scale = window.window().scale_factor();
-            let at = at.map(|(x, y)| ((x * scale).round() as i32, (y * scale).round() as i32));
-            let items: Vec<(u32, &str)> = items.iter().map(|(id, title)| (*id, title.as_str())).collect();
-            let sub_items: Vec<Vec<(u32, &str, bool)>> = subs
-                .iter()
-                .map(|sub| sub.items.iter().map(|(id, title, on)| (*id, title.as_str(), *on)).collect())
-                .collect();
-            let shell_subs: Vec<gezik_platform::ShellSubmenu> = subs
-                .iter()
-                .zip(&sub_items)
-                .map(|(sub, items)| gezik_platform::ShellSubmenu { title: sub.title.as_str(), at: sub.at, items })
-                .collect();
-            // Gezik renames in place, only a single row of a folder listing (see run_verb).
-            let can_rename = matches!(subject, Some(Subject::Row(_))) && !crate::panes::active_view().shows_drives();
-            crate::drag::with_current(|drags| drags.menu_shown());
-            let outcome = gezik_platform::show_shell_menu(&handle, &target, &items, &shell_subs, at, can_rename);
-            release_stale_modifiers(&window);
-            after_native_menu(&window);
-            drop(claim);
-            match outcome {
-                Ok(gezik_platform::MenuOutcome::Gezik(id)) => {
-                    if let Some(subject) = subject {
-                        menus.run(id, subject);
+        slint::Timer::single_shot(
+            std::time::Duration::from_millis(16),
+            crate::windows::bind(move || {
+                let Some(window) = menus.window.upgrade() else { return };
+                let handle = window.window().window_handle();
+                let scale = window.window().scale_factor();
+                let at = at.map(|(x, y)| ((x * scale).round() as i32, (y * scale).round() as i32));
+                let items: Vec<(u32, &str)> = items.iter().map(|(id, title)| (*id, title.as_str())).collect();
+                let sub_items: Vec<Vec<(u32, &str, bool)>> = subs
+                    .iter()
+                    .map(|sub| sub.items.iter().map(|(id, title, on)| (*id, title.as_str(), *on)).collect())
+                    .collect();
+                let shell_subs: Vec<gezik_platform::ShellSubmenu> = subs
+                    .iter()
+                    .zip(&sub_items)
+                    .map(|(sub, items)| gezik_platform::ShellSubmenu { title: sub.title.as_str(), at: sub.at, items })
+                    .collect();
+                // Gezik renames in place, only a single row of a folder listing (see run_verb).
+                let can_rename =
+                    matches!(subject, Some(Subject::Row(_))) && !crate::panes::active_view().shows_drives();
+                crate::drag::with_current(|drags| drags.menu_shown());
+                let outcome = gezik_platform::show_shell_menu(&handle, &target, &items, &shell_subs, at, can_rename);
+                release_stale_modifiers(&window);
+                after_native_menu(&window);
+                drop(claim);
+                match outcome {
+                    Ok(gezik_platform::MenuOutcome::Gezik(id)) => {
+                        if let Some(subject) = subject {
+                            menus.run(id, subject);
+                        }
                     }
-                }
-                Ok(gezik_platform::MenuOutcome::SystemCommandRan) => {
-                    // The command may have created, renamed or deleted anything, pinned
-                    // folders included. Results are not read again for it: that would run the
-                    // whole search and read its name cache anew (F5 does, spec 4.7).
-                    if !crate::panes::active_nav().active_location().is_results() {
-                        crate::panes::active_nav().reload();
+                    Ok(gezik_platform::MenuOutcome::SystemCommandRan) => {
+                        // The command may have created, renamed or deleted anything, pinned
+                        // folders included. Results are not read again for it: that would run the
+                        // whole search and read its name cache anew (F5 does, spec 4.7).
+                        if !crate::panes::active_nav().active_location().is_results() {
+                            crate::panes::active_nav().reload();
+                        }
+                        menus.sidebar.refresh();
                     }
-                    menus.sidebar.refresh();
+                    Ok(gezik_platform::MenuOutcome::Verb(verb)) => menus.run_verb(verb, subject),
+                    Ok(gezik_platform::MenuOutcome::Dismissed) => {}
+                    Err(err) => window.set_status(format!("Cannot show the menu: {err}").into()),
                 }
-                Ok(gezik_platform::MenuOutcome::Verb(verb)) => menus.run_verb(verb, subject),
-                Ok(gezik_platform::MenuOutcome::Dismissed) => {}
-                Err(err) => window.set_status(format!("Cannot show the menu: {err}").into()),
-            }
-        });
+            }),
+        );
     }
 
     #[cfg(not(windows))]
@@ -1717,7 +1727,7 @@ impl Menus {
     /// The decision menu of conflict row `row`, at window position `x`, `y`.
     pub fn conflict(&self, row: i32, x: f32, y: f32) {
         let Ok(row) = usize::try_from(row) else { return };
-        let conflicts = self.ops.conflicts();
+        let Some(conflicts) = self.ops.conflicts() else { return };
         let list: Vec<(u32, &'static str)> = crate::conflicts::DECISIONS
             .iter()
             .enumerate()
@@ -1839,8 +1849,10 @@ impl Menus {
                 }
             }
             (id, Subject::Conflict(row)) if (CONFLICT_FIRST..CONFLICT_FIRST + 4).contains(&id) => {
-                if let Some(decision) = crate::conflicts::DECISIONS.get((id - CONFLICT_FIRST) as usize) {
-                    self.ops.conflicts().decide_row(row, *decision);
+                if let Some(decision) = crate::conflicts::DECISIONS.get((id - CONFLICT_FIRST) as usize)
+                    && let Some(conflicts) = self.ops.conflicts()
+                {
+                    conflicts.decide_row(row, *decision);
                 }
             }
             (COPY_HERE, Subject::Drop(paths, dir, _)) => self.ops.transfer(paths, dir, Effect::Copy),
@@ -1911,7 +1923,10 @@ impl Menus {
             (CLOSE_TAB, Subject::Tab(id, _)) => {
                 // After the menu is fully done: closing the last tab closes the window.
                 let nav = crate::panes::active_nav().clone();
-                slint::Timer::single_shot(std::time::Duration::ZERO, move || nav.close_tab_by_id(id));
+                slint::Timer::single_shot(
+                    std::time::Duration::ZERO,
+                    crate::windows::bind(move || nav.close_tab_by_id(id)),
+                );
             }
             (MOVE_TAB_OTHER, Subject::Tab(id, _)) => {
                 if let Some(i) = crate::panes::active_nav().tab_index(id) {

@@ -18,17 +18,17 @@ use crate::context_menu as ids;
 use crate::{AppWindow, PickRow};
 
 thread_local! {
-    static CURRENT: RefCell<Option<Palette>> = const { RefCell::new(None) };
+    pub(crate) static CURRENT: crate::windows::Slot<Palette> = const { crate::windows::Slot::new() };
 }
 
 pub fn with_current(f: impl FnOnce(&Palette)) {
-    if let Some(palette) = CURRENT.with(|c| c.borrow().clone()) {
+    if let Some(palette) = CURRENT.with(crate::windows::Slot::current) {
         f(&palette);
     }
 }
 
 pub fn is_open() -> bool {
-    CURRENT.with(|c| c.borrow().as_ref().is_some_and(|p| p.0.open.get()))
+    CURRENT.with(crate::windows::Slot::current).is_some_and(|p| p.0.open.get())
 }
 
 /// A line of the box: an item, or quick open's last line "Search for …".
@@ -104,7 +104,7 @@ impl Palette {
             recent: RefCell::new(recent),
             model: Rc::new(VecModel::default()),
         }));
-        CURRENT.with(|c| *c.borrow_mut() = Some(palette.clone()));
+        CURRENT.with(|c| c.set(crate::windows::current(), palette.clone()));
         palette
     }
 
@@ -285,13 +285,16 @@ impl Palette {
         };
         self.close();
         let this = self.clone();
-        slint::Timer::single_shot(Duration::ZERO, move || match (target, line) {
-            (Some(target), _) => this.run_target(target, new_tab),
-            (None, Line::SearchFor(text)) => {
-                crate::panes::with_active(|p| p.search.search_for(&text));
-            }
-            (None, Line::Item(_)) => {}
-        });
+        slint::Timer::single_shot(
+            Duration::ZERO,
+            crate::windows::bind(move || match (target, line) {
+                (Some(target), _) => this.run_target(target, new_tab),
+                (None, Line::SearchFor(text)) => {
+                    crate::panes::with_active(|p| p.search.search_for(&text));
+                }
+                (None, Line::Item(_)) => {}
+            }),
+        );
     }
 
     fn run_target(&self, target: Target, new_tab: bool) {

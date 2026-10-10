@@ -437,9 +437,10 @@ pub fn delete_selection(view: &View) {
 /// Empty Trash (spec 7.1): reads every bin afresh (off the UI thread), asks with the count and
 /// size, then deletes what that read found.
 pub fn empty() {
-    std::thread::spawn(|| {
+    let window_id = crate::windows::current();
+    std::thread::spawn(move || {
         let list = gezik_platform::trash::list();
-        let _ = slint::invoke_from_event_loop(move || confirm_empty(list.items));
+        crate::windows::post(window_id, move || confirm_empty(list.items));
     });
 }
 

@@ -553,15 +553,19 @@ impl View {
         let mut columns = self.0.miller.borrow_mut();
         columns.pending.extend(folders);
         let weak = Rc::downgrade(&self.0);
-        columns.timer.start(slint::TimerMode::SingleShot, READ_DELAY, move || {
-            if let Some(inner) = weak.upgrade() {
-                let view = View(inner);
-                let (due, generation) = view.0.miller.borrow_mut().due();
-                for folder in due {
-                    view.read_column(folder, generation);
+        columns.timer.start(
+            slint::TimerMode::SingleShot,
+            READ_DELAY,
+            crate::windows::bind_mut(move || {
+                if let Some(inner) = weak.upgrade() {
+                    let view = View(inner);
+                    let (due, generation) = view.0.miller.borrow_mut().due();
+                    for folder in due {
+                        view.read_column(folder, generation);
+                    }
                 }
-            }
-        });
+            }),
+        );
     }
 
     /// The `[view]` options or defaults changed: the columns beside the focused one are read

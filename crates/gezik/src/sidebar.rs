@@ -381,12 +381,12 @@ fn reveal_row(shown: &Shown, step: &RevealStep) -> Option<usize> {
 thread_local! {
     /// The sidebar of this (UI) thread, so the config watcher and background checks can
     /// reach it.
-    static CURRENT: RefCell<Option<Sidebar>> = const { RefCell::new(None) };
+    pub(crate) static CURRENT: crate::windows::Slot<Sidebar> = const { crate::windows::Slot::new() };
 }
 
 /// Runs `f` with this UI thread's sidebar, if one is installed.
 pub fn with_current(f: impl FnOnce(&Sidebar)) {
-    if let Some(sidebar) = CURRENT.with(|c| c.borrow().clone()) {
+    if let Some(sidebar) = CURRENT.with(crate::windows::Slot::current) {
         f(&sidebar);
     }
 }
@@ -454,18 +454,22 @@ impl Sidebar {
     /// Makes this sidebar reachable from the config watcher and background checks. Call
     /// once, right after `new`, before any pins are set.
     pub fn install(&self) {
-        CURRENT.with(|c| *c.borrow_mut() = Some(self.clone()));
+        CURRENT.with(|c| c.set(crate::windows::current(), self.clone()));
     }
 
     /// Checks the drive signature (cheap) every few seconds; reloads places only if it
     /// changed.
     fn start_drive_polling(&self) {
         let weak = Rc::downgrade(&self.0);
-        self.0.borrow().poll.start(slint::TimerMode::Repeated, DRIVE_POLL, move || {
-            if let Some(inner) = weak.upgrade() {
-                Sidebar(inner).check_drives(false);
-            }
-        });
+        self.0.borrow().poll.start(
+            slint::TimerMode::Repeated,
+            DRIVE_POLL,
+            crate::windows::bind_mut(move || {
+                if let Some(inner) = weak.upgrade() {
+                    Sidebar(inner).check_drives(false);
+                }
+            }),
+        );
     }
 
     /// Reads the drives again if their signature changed, or always with `force` (after Gezik
@@ -717,8 +721,9 @@ impl Sidebar {
         };
         self.0.borrow_mut().pins_on_their_way += 1;
         self.show_pinned(pinned.clone());
+        let window_id = crate::windows::current();
         store.write_settings(SettingsChange::Pinned(pinned.clone()), move |result| {
-            let _ = slint::invoke_from_event_loop(move || with_current(|sidebar| sidebar.pins_written(pinned, result)));
+            crate::windows::post(window_id, move || with_current(|sidebar| sidebar.pins_written(pinned, result)));
         });
     }
 
@@ -841,13 +846,12 @@ impl Sidebar {
         if reads.is_empty() {
             return;
         }
-        let window = self.0.borrow().window.clone();
+        let window_id = crate::windows::current();
         let options = crate::view_options::current();
         for read in reads {
-            let window = window.clone();
             std::thread::spawn(move || {
                 let found = read_branch(&read.path, options);
-                let _ = window.upgrade_in_event_loop(move |_| with_current(|sidebar| sidebar.branch_read(read, found)));
+                crate::windows::post(window_id, move || with_current(|sidebar| sidebar.branch_read(read, found)));
             });
         }
     }
@@ -1121,14 +1125,15 @@ impl Sidebar {
     /// Checks on a background thread which pinned entries exist on this machine, then
     /// shows them. Until then the PINNED section keeps what it shows.
     pub fn refresh(&self) {
-        let (ticket, dirs, pinned, window) = {
+        let (ticket, dirs, pinned) = {
             let mut inner = self.0.borrow_mut();
             let ticket = inner.pins.begin_check();
-            (ticket, inner.dirs.clone(), inner.pins.pinned.clone(), inner.window.clone())
+            (ticket, inner.dirs.clone(), inner.pins.pinned.clone())
         };
+        let window_id = crate::windows::current();
         std::thread::spawn(move || {
             let visible = check_pins(&dirs, &pinned, Path::is_dir);
-            let _ = window.upgrade_in_event_loop(move |_| {
+            crate::windows::post(window_id, move || {
                 with_current(|sidebar| sidebar.finish_check(ticket, visible));
             });
         });

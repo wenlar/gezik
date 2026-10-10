@@ -12,12 +12,12 @@ use crate::{AppWindow, PickRow};
 
 thread_local! {
     /// The tab picker of this (UI) thread, for the actions and the keys.
-    static CURRENT: RefCell<Option<TabTools>> = const { RefCell::new(None) };
+    pub(crate) static CURRENT: crate::windows::Slot<TabTools> = const { crate::windows::Slot::new() };
 }
 
 /// Runs `f` with this UI thread's tab picker, if there is one yet.
 pub fn with_current(f: impl FnOnce(&TabTools)) {
-    if let Some(tools) = CURRENT.with(|c| c.borrow().clone()) {
+    if let Some(tools) = CURRENT.with(crate::windows::Slot::current) {
         f(&tools);
     }
 }
@@ -110,7 +110,7 @@ impl TabTools {
                 t.choose();
             });
         });
-        CURRENT.with(|c| *c.borrow_mut() = Some(tools.clone()));
+        CURRENT.with(|c| c.set(crate::windows::current(), tools.clone()));
         tools
     }
 

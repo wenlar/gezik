@@ -9,7 +9,6 @@
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-use std::thread::LocalKey;
 
 use slint::{Model, ModelRc, SharedString, VecModel};
 
@@ -21,6 +20,7 @@ use crate::navigation::Navigator;
 use crate::path_box::PathBox;
 use crate::search::Searches;
 use crate::view::View;
+use crate::windows::{self, Slot, WindowId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PaneId(u32);
@@ -51,23 +51,44 @@ pub struct Mirror {
     pub geometry: RefCell<PaneGeometry>,
 }
 
+/// A window's panes (10g): its list, the active one, and its `panes` model with a row for
+/// each pane, made with its id (its parts write to it before it is installed), in the order
+/// of `rows`.
+#[derive(Default)]
+pub struct Panes {
+    list: RefCell<Vec<Pane>>,
+    /// The index in `list` of the pane the keyboard and the window's bars act on.
+    active: Cell<usize>,
+    model: Rc<VecModel<PaneData>>,
+    rows: RefCell<Vec<(PaneId, Rc<Mirror>)>>,
+}
+
 thread_local! {
-    /// The panes of this (UI) thread.
-    static PANES: RefCell<Vec<Pane>> = const { RefCell::new(Vec::new()) };
-    /// The index in `PANES` of the pane the keyboard and the window's bars act on.
-    static ACTIVE: Cell<usize> = const { Cell::new(0) };
+    /// Each window's panes.
+    pub(crate) static PANES: Slot<Rc<Panes>> = const { Slot::new() };
+    /// Pane ids are the process's: one window has the pane of an id.
     static NEXT_ID: Cell<u32> = const { Cell::new(0) };
-    /// The window's `panes`: a row for each pane, made with its id (its parts write to it
-    /// before it is installed), in the order of `ROWS`.
-    static MODEL: Rc<VecModel<PaneData>> = Rc::default();
-    static ROWS: RefCell<Vec<(PaneId, Rc<Mirror>)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// The current window's panes (made with its first pane id).
+fn here() -> Rc<Panes> {
+    PANES.with(|s| s.current_or(Rc::default))
+}
+
+/// The window that has pane `id`, its panes and the pane's row there.
+fn row_of(id: PaneId) -> Option<(WindowId, Rc<Panes>, usize)> {
+    PANES.with(Slot::all).into_iter().find_map(|(window, panes)| {
+        let row = panes.rows.borrow().iter().position(|(of, _)| *of == id)?;
+        Some((window, panes, row))
+    })
 }
 
 /// A new pane's id, for its parts to carry before the pane is installed, and its row.
 pub fn next_id() -> PaneId {
     let id = PaneId(NEXT_ID.with(|n| n.replace(n.get() + 1)));
-    ROWS.with(|r| r.borrow_mut().push((id, Rc::default())));
-    MODEL.with(|m| m.push(new_data()));
+    let panes = here();
+    panes.rows.borrow_mut().push((id, Rc::default()));
+    panes.model.push(new_data());
     id
 }
 
@@ -85,23 +106,20 @@ fn new_data() -> PaneData {
 
 /// The window's `panes` model.
 pub fn model() -> ModelRc<PaneData> {
-    ModelRc::from(MODEL.with(Rc::clone))
-}
-
-fn row_of(id: PaneId) -> Option<usize> {
-    ROWS.with(|r| r.borrow().iter().position(|(of, _)| *of == id))
+    ModelRc::from(here().model.clone())
 }
 
 /// What the window shows of pane `id` now.
 pub fn data(id: PaneId) -> Option<PaneData> {
-    MODEL.with(|m| m.row_data(row_of(id)?))
+    let (_, panes, row) = row_of(id)?;
+    panes.model.row_data(row)
 }
 
 /// Changes what the window shows of pane `id` with `f`, in one write (a write makes every
 /// binding of the pane on its row look again): nothing is written if nothing changed.
 pub fn edit(id: PaneId, f: impl FnOnce(&mut PaneData)) {
-    let Some(row) = row_of(id) else { return };
-    let model = MODEL.with(Rc::clone);
+    let Some((_, panes, row)) = row_of(id) else { return };
+    let model = panes.model.clone();
     let Some(old) = model.row_data(row) else { return };
     let mut new = old.clone();
     f(&mut new);
@@ -112,13 +130,13 @@ pub fn edit(id: PaneId, f: impl FnOnce(&mut PaneData)) {
 
 /// Pane `id`'s mirror (an empty one for a pane that is gone).
 pub fn mirror(id: PaneId) -> Rc<Mirror> {
-    ROWS.with(|r| r.borrow().iter().find(|(of, _)| *of == id).map(|(_, m)| m.clone())).unwrap_or_default()
+    row_of(id).and_then(|(_, panes, row)| panes.rows.borrow().get(row).map(|(_, m)| m.clone())).unwrap_or_default()
 }
 
 /// The mirror of the pane on row `index` (Slint callbacks name a pane by its row).
 pub fn mirror_at(index: i32) -> Rc<Mirror> {
     let row = usize::try_from(index).ok();
-    ROWS.with(|r| row.and_then(|i| r.borrow().get(i).map(|(_, m)| m.clone()))).unwrap_or_default()
+    row.and_then(|i| here().rows.borrow().get(i).map(|(_, m)| m.clone())).unwrap_or_default()
 }
 
 fn bump(n: &mut i32) {
@@ -203,41 +221,42 @@ fn set_field(
 
 /// Makes `pane` reachable once all its parts exist (in the order of their rows: left first).
 pub fn install(pane: Pane) {
-    PANES.with(|p| p.borrow_mut().push(pane));
+    here().list.borrow_mut().push(pane);
 }
 
 /// Takes pane `id` out with its row (the window drops its `PaneView`); the active pane stays
 /// the same one. The pane, if it was there.
 pub fn remove(id: PaneId) -> Option<Pane> {
-    let active = active_id();
-    let pane = PANES.with(|p| {
-        let mut panes = p.borrow_mut();
-        let at = panes.iter().position(|p| p.id == id)?;
-        Some(panes.remove(at))
-    })?;
-    if let Some(row) = row_of(id) {
-        ROWS.with(|r| r.borrow_mut().remove(row));
-        MODEL.with(|m| m.remove(row));
-    }
-    let at = active.and_then(index_of).unwrap_or(0);
-    ACTIVE.with(|a| a.set(at));
-    Some(pane)
+    let (window, panes, row) = row_of(id)?;
+    windows::enter(window, || {
+        let active = active_id();
+        let pane = {
+            let mut list = panes.list.borrow_mut();
+            let at = list.iter().position(|p| p.id == id)?;
+            list.remove(at)
+        };
+        panes.rows.borrow_mut().remove(row);
+        panes.model.remove(row);
+        let at = active.and_then(index_of).unwrap_or(0);
+        panes.active.set(at);
+        Some(pane)
+    })
 }
 
 /// How many panes are open.
 pub fn count() -> usize {
-    PANES.with(|p| p.borrow().len())
+    here().list.borrow().len()
 }
 
 /// The place (0 left, 1 right) of the active pane.
 pub fn active_index() -> usize {
-    ACTIVE.with(Cell::get)
+    here().active.get()
 }
 
 /// Makes the pane at place `index` the active one (nothing else: see `dual::activate`).
 pub fn set_active(index: usize) {
     if index < count() {
-        ACTIVE.with(|a| a.set(index));
+        here().active.set(index);
     }
 }
 
@@ -251,7 +270,7 @@ pub fn is_active(id: PaneId) -> bool {
 
 /// The place of pane `id`.
 pub fn index_of(id: PaneId) -> Option<usize> {
-    PANES.with(|p| p.borrow().iter().position(|p| p.id == id))
+    here().list.borrow().iter().position(|p| p.id == id)
 }
 
 /// The active pane (its parts are handles). main.rs installs the left pane before anything
@@ -280,32 +299,40 @@ pub fn at(index: i32) -> Option<Pane> {
 /// Runs `f` with the pane at place `index` (a Slint callback's pane number), if it is open.
 pub fn with_row<R>(index: i32, f: impl FnOnce(&Pane) -> R) -> Option<R> {
     let index = usize::try_from(index).ok()?;
-    with_picked(&PANES, |panes| panes.get(index), f)
+    with_picked(&here().list, |panes| panes.get(index), f)
 }
 
-/// Every open pane, left first.
+/// Every open pane of the window, left first.
 pub fn all() -> Vec<Pane> {
-    PANES.with(|p| p.borrow().clone())
+    here().list.borrow().clone()
+}
+
+/// Every open pane of every window (a settings change).
+pub fn everywhere() -> Vec<Pane> {
+    PANES.with(Slot::all).into_iter().flat_map(|(_, panes)| panes.list.borrow().clone()).collect()
 }
 
 /// Runs `f` with the active pane, if one is installed.
 pub fn with_active<R>(f: impl FnOnce(&Pane) -> R) -> Option<R> {
-    with_picked(&PANES, |panes| panes.get(ACTIVE.with(Cell::get)), f)
+    let panes = here();
+    with_picked(&panes.list, |list| list.get(panes.active.get()), f)
 }
 
-/// Runs `f` with pane `id`, if it is still open.
+/// Runs `f` with pane `id`, if it is still open, in its window: a pane's own background
+/// results and timers act in the window the pane is in.
 pub fn with_id<R>(id: PaneId, f: impl FnOnce(&Pane) -> R) -> Option<R> {
-    with_picked(&PANES, |panes| panes.iter().find(|p| p.id == id), f)
+    let (window, panes, _) = row_of(id)?;
+    windows::enter(window, || with_picked(&panes.list, |list| list.iter().find(|p| p.id == id), f))
 }
 
 /// Runs `f` with a clone of what `pick` takes from `list`, taken out of the borrow: `f` may
 /// reach the list again (a second borrow would abort the release build).
-fn with_picked<T: Clone + 'static, R>(
-    list: &'static LocalKey<RefCell<Vec<T>>>,
+fn with_picked<T: Clone, R>(
+    list: &RefCell<Vec<T>>,
     pick: impl FnOnce(&[T]) -> Option<&T>,
     f: impl FnOnce(&T) -> R,
 ) -> Option<R> {
-    let item = list.with(|l| pick(&l.borrow()).cloned())?;
+    let item = pick(&list.borrow()).cloned()?;
     Some(f(&item))
 }
 
@@ -318,11 +345,11 @@ mod tests {
     }
 
     fn by_id(id: u32, f: impl FnOnce(&u32) -> u32) -> Option<u32> {
-        with_picked(&LIST, |l| l.iter().find(|&&x| x == id), f)
+        LIST.with(|list| with_picked(list, |l| l.iter().find(|&&x| x == id), f))
     }
 
     fn first(f: impl FnOnce(&u32) -> u32) -> Option<u32> {
-        with_picked(&LIST, |l| l.first(), f)
+        LIST.with(|list| with_picked(list, |l| l.first(), f))
     }
 
     #[test]
@@ -388,5 +415,30 @@ mod tests {
             0
         });
         assert_eq!(LIST.with(|l| l.borrow().len()), 2);
+    }
+
+    /// 10g: each window has its own panes; a pane's own results find it from any window and
+    /// act in its window.
+    #[test]
+    fn each_window_has_its_own_panes() {
+        use crate::dual::tests::test_pane;
+        crate::windows::tests::platform();
+        let a = windows::install(crate::AppWindow::new().expect("a headless window"));
+        let b = windows::install(crate::AppWindow::new().expect("a headless window"));
+        let in_window = |window| {
+            windows::enter(window, || {
+                let pane = test_pane();
+                install(pane.clone());
+                pane.id
+            })
+        };
+        let (left_a, left_b) = (in_window(a), in_window(b));
+        assert_eq!(windows::enter(a, || at(0).map(|p| p.id)), Some(left_a));
+        assert_eq!(windows::enter(b, || at(0).map(|p| p.id)), Some(left_b));
+        assert_eq!(windows::enter(a, count), 1);
+        assert_eq!(windows::enter(a, || with_id(left_b, |_| windows::current())), Some(b));
+        assert_eq!(windows::enter(b, || with_id(left_a, |p| p.id)), Some(left_a));
+        assert!(windows::enter(b, || data(left_a).is_some()), "its row is found from the other window");
+        assert_eq!(everywhere().len(), 2);
     }
 }

@@ -53,16 +53,17 @@ pub fn eject_path(path: &Path) {
     let drives = drives();
     let Some(drive) = drive_for(&drives, path).cloned() else { return status(NO_DRIVE.to_owned()) };
     let Some(way) = eject::offer(&drive) else { return status(eject::CANNOT.to_owned()) };
-    for p in crate::panes::all() {
+    for p in crate::panes::everywhere() {
         p.nav.leave_drive(&drive.path);
     }
     let owner = crate::panes::with_active(|p| p.nav.owner()).unwrap_or(0);
     let doing = if way == EjectWay::Eject { "Ejecting" } else { "Disconnecting" };
     status(format!("{doing} {}…", drive.label));
+    let window_id = crate::windows::current();
     std::thread::spawn(move || {
         std::thread::sleep(GRACE);
         let result = eject::eject(&drive, owner);
-        let _ = slint::invoke_from_event_loop(move || finish(&drive, way, result));
+        crate::windows::post(window_id, move || finish(&drive, way, result));
     });
 }
 

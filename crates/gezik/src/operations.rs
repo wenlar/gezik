@@ -26,7 +26,6 @@ use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::dialog::Dialogs;
 use crate::navigation::sync_model;
-use crate::sidebar::Sidebar;
 use crate::view::hidden_note;
 use crate::{AppWindow, OpRow};
 
@@ -226,7 +225,21 @@ pub fn items_text(paths: &[PathBuf]) -> String {
 }
 
 thread_local! {
+    /// The process's operations (the engine, the jobs, the history, the clipboard).
     static CURRENT: RefCell<Option<Operations>> = const { RefCell::new(None) };
+    /// Each window's parts of them (deviation 4).
+    pub(crate) static PARTS: crate::windows::Slot<Rc<Part>> = const { crate::windows::Slot::new() };
+}
+
+/// What a window has of the operations: its panel shows the same rows as every window's, its
+/// questions and conflict list are over it (deviation 4).
+pub struct Part {
+    window: slint::Weak<AppWindow>,
+    dialogs: Dialogs,
+    conflicts: crate::conflicts::Conflicts,
+    taskbar: RefCell<Option<Taskbar>>,
+    /// A new entry to rename once its folder shows it.
+    rename_when_shown: RefCell<Option<PathBuf>>,
 }
 
 /// Runs `f` with this UI thread's operations, if set up.
@@ -296,6 +309,9 @@ struct JobView {
     origin: Option<crate::search::ResultsKey>,
     /// The pane it was started in (none: the engine started it; the active pane hears).
     pane: Option<crate::panes::PaneId>,
+    /// The window it was started in (none: the engine started it); its questions open there,
+    /// else in the most recently focused window (spec 9.3).
+    window: Option<crate::windows::WindowId>,
     /// Said after the detail in the panel ([`CANT_UNDO`]).
     note: Option<&'static str>,
     /// Works in the bins (Put Back, delete from the trash): the system hears when it ends.
@@ -330,6 +346,7 @@ impl JobView {
             hidden_paths: Vec::new(),
             origin: None,
             pane: None,
+            window: None,
             note: None,
             bins: false,
         }
@@ -375,10 +392,7 @@ impl JobView {
 }
 
 struct Inner {
-    window: slint::Weak<AppWindow>,
     engine: Engine,
-    sidebar: Sidebar,
-    dialogs: Dialogs,
     rows: Rc<VecModel<OpRow>>,
     jobs: RefCell<Vec<JobView>>,
     files: Cell<FilesSettings>,
@@ -388,11 +402,8 @@ struct Inner {
     /// Finished jobs, newest first (allocated on the first one).
     history: RefCell<crate::op_history::History>,
     history_rows: Rc<VecModel<OpRow>>,
-    taskbar: RefCell<Option<Taskbar>>,
     /// Jobs whose pause already has a question (several workers may report the same pause).
     asked: RefCell<HashSet<JobId>>,
-    /// A new entry to rename once its folder shows it.
-    rename_when_shown: RefCell<Option<PathBuf>>,
     /// What Gezik put on the clipboard (the only clipboard where the system has none for files).
     clip: RefCell<Option<ClipboardFiles>>,
     /// Paths on the clipboard as cut (faded in the list), and the clipboard's change number
@@ -401,7 +412,6 @@ struct Inner {
     clip_sequence: Cell<u64>,
     /// The last "Copy/Cut with folders", while it may own the clipboard.
     with_folders: RefCell<Option<WithFolders>>,
-    conflicts: crate::conflicts::Conflicts,
     /// Where state.toml is (none: nothing is saved).
     store: Option<ConfigStore>,
     /// The batch rename layer's last rules.
@@ -412,11 +422,10 @@ struct Inner {
 pub struct Operations(Rc<Inner>);
 
 impl Operations {
-    #[allow(clippy::too_many_arguments, reason = "the parts of the app it works with")]
+    /// The process's operations; `owner` is the window the system's administrator prompt
+    /// belongs to. Each window is attached with [`Operations::attach`].
     pub fn new(
-        window: &AppWindow,
-        sidebar: Sidebar,
-        dialogs: Dialogs,
+        owner: &AppWindow,
         settings: Settings,
         files: FilesSettings,
         collapsed: bool,
@@ -438,17 +447,11 @@ impl Operations {
             }
         });
         // Only an `Arc`: nothing starts until the user asks for an administrator operation.
-        engine.set_elevator(Arc::new(crate::admin::SystemElevator::new(window)));
-        let conflicts = crate::conflicts::Conflicts::new(window, engine.clone());
+        engine.set_elevator(Arc::new(crate::admin::SystemElevator::new(owner)));
         let rows = Rc::new(VecModel::default());
-        window.set_op_rows(ModelRc::from(rows.clone()));
         let history_rows = Rc::new(VecModel::default());
-        window.set_history_rows(ModelRc::from(history_rows.clone()));
         let ops = Operations(Rc::new(Inner {
-            window: window.as_weak(),
             engine,
-            sidebar,
-            dialogs,
             rows,
             jobs: RefCell::default(),
             files: Cell::new(files),
@@ -456,14 +459,11 @@ impl Operations {
             tab: Cell::new(0),
             history: RefCell::default(),
             history_rows,
-            taskbar: RefCell::default(),
             asked: RefCell::default(),
-            rename_when_shown: RefCell::default(),
             clip: RefCell::default(),
             cut: RefCell::default(),
             clip_sequence: Cell::new(0),
             with_folders: RefCell::default(),
-            conflicts,
             store,
             batch_last: RefCell::new(batch_last),
         }));
@@ -477,12 +477,48 @@ impl Operations {
         self.0.engine.set_threads(files.copy_threads);
     }
 
-    pub fn dialogs(&self) -> &Dialogs {
-        &self.0.dialogs
+    /// The window being opened has the operations panel (the same rows as every window's),
+    /// its questions and its conflict list.
+    pub fn attach(&self, window: &AppWindow, dialogs: Dialogs) {
+        window.set_op_rows(ModelRc::from(self.0.rows.clone()));
+        window.set_history_rows(ModelRc::from(self.0.history_rows.clone()));
+        let part = Part {
+            window: window.as_weak(),
+            dialogs,
+            conflicts: crate::conflicts::Conflicts::new(window, self.0.engine.clone()),
+            taskbar: RefCell::default(),
+            rename_when_shown: RefCell::default(),
+        };
+        PARTS.with(|p| p.set(crate::windows::current(), Rc::new(part)));
     }
 
-    pub fn conflicts(&self) -> &crate::conflicts::Conflicts {
-        &self.0.conflicts
+    /// The current window's part.
+    fn part(&self) -> Option<Rc<Part>> {
+        PARTS.with(crate::windows::Slot::current)
+    }
+
+    fn window(&self) -> Option<AppWindow> {
+        self.part()?.window.upgrade()
+    }
+
+    /// The current window's questions (none before it is attached: nothing is asked).
+    pub fn dialogs(&self) -> Dialogs {
+        self.part().map_or_else(Dialogs::detached, |part| part.dialogs.clone())
+    }
+
+    pub fn conflicts(&self) -> Option<crate::conflicts::Conflicts> {
+        self.part().map(|part| part.conflicts.clone())
+    }
+
+    /// Runs `f` in the window job `job` was started in, else (closed, or started by the
+    /// engine) in the most recently focused one.
+    fn in_job_window(&self, job: JobId, f: impl FnOnce()) {
+        let started = self.0.jobs.borrow().iter().find(|j| j.id == job).and_then(|j| j.window);
+        let open = crate::windows::focus_order();
+        match started.filter(|id| open.contains(id)).or_else(|| open.first().copied()) {
+            Some(id) => crate::windows::enter(id, f),
+            None => f(),
+        }
     }
 
     pub fn collapsed(&self) -> bool {
@@ -508,6 +544,7 @@ impl Operations {
         let id = self.0.engine.submit(task);
         let mut job = JobView::new(id, title);
         crate::panes::with_active(|p| (job.origin, job.pane) = (p.search.results_key(), Some(p.id)));
+        job.window = Some(crate::windows::current());
         job.retry = retry;
         job.after = after;
         self.0.jobs.borrow_mut().push(job);
@@ -528,6 +565,7 @@ impl Operations {
         let id = self.0.engine.submit_chain(tasks, label);
         let mut job = JobView::new(id, title);
         crate::panes::with_active(|p| (job.origin, job.pane) = (p.search.results_key(), Some(p.id)));
+        job.window = Some(crate::windows::current());
         job.again = again;
         job.after = after;
         self.0.jobs.borrow_mut().push(job);
@@ -555,18 +593,19 @@ impl Operations {
 
     /// A folder is on screen: start a rename that waited for it (a new folder).
     fn folder_shown(&self) {
-        let Some(path) = self.0.rename_when_shown.borrow().clone() else { return };
+        let Some(part) = self.part() else { return };
+        let Some(path) = part.rename_when_shown.borrow().clone() else { return };
         let Some(folder) = crate::panes::active_view().folder() else { return };
         if !path.parent().is_some_and(|parent| same_path(parent, &folder)) {
             // Another folder is on screen: the wait is over.
-            self.0.rename_when_shown.borrow_mut().take();
+            part.rename_when_shown.borrow_mut().take();
             return;
         }
         // A rename is open: wait for it to end.
         if crate::panes::active_view().renaming().is_some() {
             return;
         }
-        self.0.rename_when_shown.borrow_mut().take();
+        part.rename_when_shown.borrow_mut().take();
         if let Some(name) = path.file_name().map(|n| n.to_string_lossy().into_owned()) {
             // A new folder or file is named in the whole folder: the filter (which would most
             // likely hide "New folder") closes first.
@@ -631,10 +670,13 @@ impl Operations {
     pub fn save_rename_presets(&self, presets: &[gezik_config::settings::RenamePreset]) {
         let Some(store) = &self.0.store else { return };
         let change = gezik_config::settings_writer::SettingsChange::RenamePresets(presets.to_vec());
-        store.write_settings(change, |result| {
+        let id = crate::windows::current();
+        store.write_settings(change, move |result| {
             if let Err(warning) = result {
                 let _ = slint::invoke_from_event_loop(move || {
-                    crate::panes::with_active(|p| p.view.note(warning.to_string()));
+                    crate::windows::with_window(id, |_| {
+                        crate::panes::with_active(|p| p.view.note(warning.to_string()))
+                    });
                 });
             }
         });
@@ -642,7 +684,7 @@ impl Operations {
 
     /// Asks for a text over the window; `f` gets it when Save is chosen.
     pub fn ask_text(&self, title: &str, message: &str, f: impl FnOnce(String) + 'static) {
-        self.0.dialogs.ask_text(title, message, "", &["Save", "Cancel"], move |text| {
+        self.dialogs().ask_text(title, message, "", &["Save", "Cancel"], move |text| {
             if let Some(text) = text {
                 f(text);
             }
@@ -675,11 +717,8 @@ impl Operations {
         let (index, old) = view.renaming()?;
         // Enter and Esc leave the keyboard with the list; a blur or Tab does not, but for a
         // window switch.
-        let refocus = self
-            .0
-            .window
-            .upgrade()
-            .is_some_and(|window| refocus_after(how, window_active(&window), window.get_dialog_open()));
+        let refocus =
+            self.window().is_some_and(|window| refocus_after(how, window_active(&window), window.get_dialog_open()));
         match rename_check(typed, &old, |name| view.has_other_named(name, index)) {
             Err(_) if how == Commit::Blur => {
                 // The field lost the focus with a name that cannot be used: keep the old one.
@@ -733,7 +772,7 @@ impl Operations {
     /// was destroyed with its row, which fires no blur), ends it like a blur. Returns whether
     /// a rename is open with its field focused.
     pub fn end_unfocused_rename(&self) -> bool {
-        if self.0.window.upgrade().is_none() || crate::panes::active_view().renaming().is_none() {
+        if self.window().is_none() || crate::panes::active_view().renaming().is_none() {
             return false;
         }
         let mirror = crate::panes::mirror(crate::panes::active_view().pane_id());
@@ -760,7 +799,7 @@ impl Operations {
     /// Enter (`keep`) or Esc while a rename is open but its field is off screen: the typed
     /// name is kept, or the old one. Returns whether there was such a rename.
     pub fn off_screen_rename_key(&self, keep: bool) -> bool {
-        if self.0.window.upgrade().is_none() || crate::panes::active_view().renaming().is_none() {
+        if self.window().is_none() || crate::panes::active_view().renaming().is_none() {
             return false;
         }
         let mirror = crate::panes::mirror(crate::panes::active_view().pane_id());
@@ -791,7 +830,7 @@ impl Operations {
         let Some(index) = self.commit_rename(&typed, Commit::Tab) else { return };
         let next = if back { index.checked_sub(1) } else { Some(index + 1) };
         if !next.is_some_and(|next| crate::panes::active_view().begin_rename(next))
-            && let Some(window) = self.0.window.upgrade()
+            && let Some(window) = self.window()
         {
             window.invoke_focus_list();
         }
@@ -1025,7 +1064,7 @@ impl Operations {
         let what = items_text(&paths);
         let ops = self.clone();
         if permanent {
-            self.0.dialogs.ask(
+            self.dialogs().ask(
                 format!("Delete {what} permanently?"),
                 "This cannot be undone.",
                 &["Delete", "Cancel"],
@@ -1037,7 +1076,7 @@ impl Operations {
             );
         } else if always_ask || self.0.files.get().confirm_trash {
             let bin = if cfg!(windows) { "Recycle Bin" } else { "Trash" };
-            self.0.dialogs.ask(format!("Move {what} to the {bin}?"), "", &["Trash", "Cancel"], move |choice| {
+            self.dialogs().ask(format!("Move {what} to the {bin}?"), "", &["Trash", "Cancel"], move |choice| {
                 if choice == Some(0) {
                     ops.trash_now(paths);
                 }
@@ -1245,7 +1284,7 @@ impl Operations {
     pub fn missing_alias(&self, alias: PathBuf) {
         let name = alias.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let ops = self.clone();
-        self.0.dialogs.ask(
+        self.dialogs().ask(
             "The original item can't be found",
             format!("The alias \"{name}\" can't be opened."),
             &["Delete Alias", "OK"],
@@ -1312,7 +1351,7 @@ impl Operations {
         let (title, button) = if redo { ("Redo as administrator", "Redo") } else { ("Undo as administrator", "Undo") };
         let text = crate::admin::undo_text(redo, &agreed, crate::admin::exposed());
         let (engine, view) = (self.0.engine.clone(), crate::panes::active_view().clone());
-        self.0.dialogs.ask(title, text, &[button, "Cancel"], move |choice| {
+        self.dialogs().ask(title, text, &[button, "Cancel"], move |choice| {
             if choice == Some(0) && engine.undo_agreed(redo, &agreed).is_none() {
                 view.note("Not done: something else was done meanwhile".to_owned());
             }
@@ -1371,15 +1410,15 @@ impl Operations {
                     j.rate.record(Instant::now(), progress.bytes_done);
                     j.progress = Some(progress);
                 }),
-                Event::Conflicts { job, conflicts } => self.show_conflicts(job, conflicts),
-                Event::Paused { job, reason, path } => self.paused(job, reason, path),
-                Event::Question { job, id, question } => self.question(job, id, question),
-                Event::Finished { job, report } => self.finished(job, report),
+                Event::Conflicts { job, conflicts } => self.in_job_window(job, || self.show_conflicts(job, conflicts)),
+                Event::Paused { job, reason, path } => self.in_job_window(job, || self.paused(job, reason, path)),
+                Event::Question { job, id, question } => self.in_job_window(job, || self.question(job, id, question)),
+                Event::Finished { job, report } => self.in_job_window(job, || self.finished(job, report)),
                 Event::Changed { dirs } => {
-                    for p in crate::panes::all() {
+                    for p in crate::panes::everywhere() {
                         p.nav.refresh_showing(&dirs, &[], None);
                     }
-                    crate::sidebar::with_current(|s| s.folders_changed(&dirs));
+                    crate::windows::for_each(|_| crate::sidebar::with_current(|s| s.folders_changed(&dirs)));
                 }
                 Event::History => {}
             }
@@ -1397,7 +1436,9 @@ impl Operations {
         if self.0.collapsed.get() {
             self.0.collapsed.set(false);
         }
-        self.0.conflicts.open(job, &title, conflicts);
+        if let Some(list) = self.conflicts() {
+            list.open(job, &title, conflicts);
+        }
     }
 
     /// A job asks something (an archive's password, whether to go on); its answer goes back
@@ -1408,14 +1449,14 @@ impl Operations {
         match question {
             Question::Password { archive, retry } => {
                 let (title, message) = crate::archives::password_text(&archive, retry);
-                self.0.dialogs.ask_password(job, title, message, &["OK", "Skip"], move |text| {
+                self.dialogs().ask_password(job, title, message, &["OK", "Skip"], move |text| {
                     engine.answer(job, id, text.map_or(Answer::Cancel, Answer::Text));
                 });
             }
             Question::Confirm { title, message, buttons } => {
                 let labels: Vec<&str> = buttons.iter().map(String::as_str).collect();
                 let escape = labels.len().saturating_sub(1);
-                self.0.dialogs.ask_for_job(job, title, message, &labels, escape, move |choice| {
+                self.dialogs().ask_for_job(job, title, message, &labels, escape, move |choice| {
                     engine.answer(job, id, choice.map_or(Answer::Cancel, Answer::Button));
                 });
             }
@@ -1444,7 +1485,7 @@ impl Operations {
         // Waiting for the user: the panel opens by itself.
         self.0.collapsed.set(false);
         let ops = self.clone();
-        self.0.dialogs.ask_escape(title, message, &["Resume", "Cancel"], 0, move |choice| {
+        self.dialogs().ask_escape(title, message, &["Resume", "Cancel"], 0, move |choice| {
             ops.0.asked.borrow_mut().remove(&job);
             match choice {
                 Some(0) => ops.0.engine.resume(job),
@@ -1456,9 +1497,11 @@ impl Operations {
     fn finished(&self, id: JobId, mut report: Report) {
         // Only the chosen items' moves are kept (a folder moved across drives lists every file).
         report.moved = relevant_moves(&report.moved, &report.results);
-        self.0.conflicts.close_if(id);
         // Its questions are moot now (answering one is harmless: nothing waits for it).
-        self.0.dialogs.forget_job(id);
+        for (_, part) in PARTS.with(crate::windows::Slot::all) {
+            part.conflicts.close_if(id);
+            part.dialogs.forget_job(id);
+        }
         self.0.asked.borrow_mut().remove(&id);
         let problems = !report.cancelled && !report.failures.is_empty();
         let mut after = After::Nothing;
@@ -1500,8 +1543,11 @@ impl Operations {
             None => crate::panes::with_active(crate::panes::Pane::clone),
         };
         // A new item is renamed once its folder shows, in the active pane only.
-        if after == After::Rename && pane.as_ref().is_some_and(|p| crate::panes::is_active(p.id)) {
-            *self.0.rename_when_shown.borrow_mut() = report.results.first().cloned();
+        if after == After::Rename
+            && pane.as_ref().is_some_and(|p| crate::panes::is_active(p.id))
+            && let Some(part) = self.part()
+        {
+            *part.rename_when_shown.borrow_mut() = report.results.first().cloned();
         }
         // A rename is open (Tab went on): the selection stays with it.
         let after = if after == After::Select && pane.as_ref().is_some_and(|p| p.view.renaming().is_some()) {
@@ -1537,7 +1583,7 @@ impl Operations {
         // pane is read again if it shows a folder the job changed.
         let mut paths = report.results.clone();
         paths.extend(hidden_paths);
-        for p in crate::panes::all() {
+        for p in crate::panes::everywhere() {
             p.folder_sizes.forget(&touched);
             p.search.job_done(origin.as_ref(), report.changed_dirs.clone(), paths.clone(), report.moved.clone());
             if pane.as_ref().is_none_or(|of| of.id != p.id) {
@@ -1545,8 +1591,12 @@ impl Operations {
             }
         }
         // The sidebar tree's open branches the job touched are read again (spec 10 §5.2).
-        crate::sidebar::with_current(|s| s.folders_changed(&report.changed_dirs));
-        self.0.sidebar.refresh();
+        crate::windows::for_each(|_| {
+            crate::sidebar::with_current(|s| {
+                s.folders_changed(&report.changed_dirs);
+                s.refresh();
+            });
+        });
         if let (false, Some(note), Some(p)) = (reloading, note, &pane) {
             p.view.note(note);
         }
@@ -1600,7 +1650,7 @@ impl Operations {
             format!("{} items cannot go to the {bin}", paths.len())
         };
         let ops = self.clone();
-        self.0.dialogs.ask(
+        self.dialogs().ask(
             title,
             format!("{} Delete permanently? This cannot be undone.", no_trash_reason(&paths, bin)),
             &["Delete", "Cancel"],
@@ -1625,7 +1675,9 @@ impl Operations {
 
     /// Redraws the panel, the summary and the taskbar.
     fn update(&self) {
-        let Some(window) = self.0.window.upgrade() else { return };
+        // shortcut: the taskbar shows the progress on the most recently focused window only,
+        // and stays on the one it came up on while jobs run; per window if users ask.
+        let Some(focused) = crate::windows::with_focused(|_| self.part()).flatten() else { return };
         let jobs = self.0.jobs.borrow();
         let shown: Vec<&JobView> = jobs.iter().filter(|j| j.shown).collect();
         let rows: Vec<OpRow> = shown.iter().map(|j| j.row()).collect();
@@ -1648,15 +1700,23 @@ impl Operations {
         let overall =
             (!running.is_empty()).then(|| running.iter().map(|(_, f)| *f).sum::<f32>() / running.len() as f32);
         let failed_items: usize = shown.iter().filter_map(|j| j.report.as_ref()).map(|r| r.failures.len()).sum();
-        window.set_ops_summary(summary_text(running.len(), overall, failed_items, rows.len()).into());
-        window.set_ops_collapsed(self.0.collapsed.get());
+        let summary: slint::SharedString = summary_text(running.len(), overall, failed_items, rows.len()).into();
         let history = self.0.tab.get() == 1;
-        window.set_ops_panel_open((!rows.is_empty() || history) && !self.0.collapsed.get());
-        window.set_ops_tab(self.0.tab.get());
+        let open = (!rows.is_empty() || history) && !self.0.collapsed.get();
+        // Every window's panel shows the same rows (one model).
+        crate::windows::for_each(|window| {
+            window.set_ops_summary(summary.clone());
+            window.set_ops_collapsed(self.0.collapsed.get());
+            window.set_ops_panel_open(open);
+            window.set_ops_tab(self.0.tab.get());
+        });
         sync_model(&self.0.rows, rows.into_iter());
         let (state, done, total) = taskbar_progress(&states);
-        let mut taskbar = self.0.taskbar.borrow_mut();
-        if taskbar.is_none() && state != TaskbarState::Off {
+        let mut taskbar = focused.taskbar.borrow_mut();
+        if taskbar.is_none()
+            && state != TaskbarState::Off
+            && let Some(window) = focused.window.upgrade()
+        {
             *taskbar = Some(Taskbar::new(&window.window().window_handle()));
         }
         if let Some(taskbar) = taskbar.as_ref() {
@@ -1708,10 +1768,9 @@ impl Operations {
 
     /// The History's rows and the status bar's button.
     fn sync_history(&self) {
-        let Some(window) = self.0.window.upgrade() else { return };
         let history = self.0.history.borrow();
         sync_model(&self.0.history_rows, history.records().map(history_row));
-        window.set_history_available(true);
+        crate::windows::for_each(|window| window.set_history_available(true));
     }
 
     /// `show-history`, View ▸ Operation history: the panel opens on its History.
@@ -1746,7 +1805,7 @@ impl Operations {
     pub fn history_details(&self, id: i32) {
         let record = u64::try_from(id).ok().and_then(|id| self.0.history.borrow().get(id).cloned());
         if let Some(record) = record {
-            self.0.dialogs.ask(record.title, record.details.unwrap_or_default(), &["Close"], |_| {});
+            self.dialogs().ask(record.title, record.details.unwrap_or_default(), &["Close"], |_| {});
         }
     }
 
@@ -1770,7 +1829,7 @@ impl Operations {
         let ops = self.clone();
         let buttons = crate::admin::detail_buttons(!admin.is_empty(), can_retry);
         let chosen = buttons.clone();
-        self.0.dialogs.ask(title, message, &buttons, move |choice| match choice.and_then(|i| chosen.get(i)).copied() {
+        self.dialogs().ask(title, message, &buttons, move |choice| match choice.and_then(|i| chosen.get(i)).copied() {
             Some(crate::admin::RETRY_AS_ADMIN) => {
                 // The row goes once the new job is there (it stays if the user cancels).
                 let row = ops.clone();
@@ -1794,7 +1853,7 @@ impl Operations {
             format!("{running} operations are running")
         };
         let engine = self.0.engine.clone();
-        self.0.dialogs.ask_escape(
+        self.dialogs().ask_escape(
             title,
             "Quitting cancels them. What is already copied or moved stays.",
             &["Keep open", "Cancel them and quit"],

@@ -2,29 +2,31 @@
 //! the display refreshes (360 on a 360 Hz screen) while it scrolls or animates, and the
 //! software renderer redraws the visible text every frame.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::time::{Duration, Instant};
 
 thread_local! {
-    /// The limit of this (UI) thread's windows.
-    static LIMIT: RefCell<FrameLimit> = RefCell::new(FrameLimit::new(0));
+    /// `max-fps`. Each window keeps its own limit (deviation 14): one limit would make two
+    /// windows' frames wait for each other.
+    static MAX_FPS: Cell<u32> = const { Cell::new(0) };
 }
 
 /// Applies `max-fps` (after every settings load).
 pub fn set_max_fps(max_fps: u32) {
-    LIMIT.with(|l| l.borrow_mut().set_max_fps(max_fps));
+    MAX_FPS.with(|m| m.set(max_fps));
 }
 
-/// Called for every redraw request, before Slint draws: if the last frame was drawn too
-/// recently, waits until the next one may be drawn (at most one frame interval). Frames
-/// are delayed, never dropped: a dropped request may be the system's repaint after the
-/// window is restored or uncovered, which Slint does not repeat.
-pub fn wait_for_frame() {
-    let wait = LIMIT.with(|l| l.borrow().wait(Instant::now()));
+/// Called for every redraw request of the window `limit` is of, before Slint draws: if its
+/// last frame was drawn too recently, waits until the next one may be drawn (at most one
+/// frame interval). Frames are delayed, never dropped: a dropped request may be the
+/// system's repaint after the window is restored or uncovered, which Slint does not repeat.
+pub fn wait_for_frame(limit: &RefCell<FrameLimit>) {
+    limit.borrow_mut().set_max_fps(MAX_FPS.with(Cell::get));
+    let wait = limit.borrow().wait(Instant::now());
     if !wait.is_zero() {
         std::thread::sleep(wait);
     }
-    LIMIT.with(|l| l.borrow_mut().allow(Instant::now()));
+    limit.borrow_mut().allow(Instant::now());
 }
 
 pub struct FrameLimit {

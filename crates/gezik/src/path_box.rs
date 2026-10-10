@@ -499,9 +499,13 @@ impl PathBox {
         self.0.list.borrow_mut().edited();
         self.set_current(None);
         let id = self.0.id;
-        self.0.debounce.start(slint::TimerMode::SingleShot, DEBOUNCE, move || {
-            crate::panes::with_id(id, |p| p.path_box.update());
-        });
+        self.0.debounce.start(
+            slint::TimerMode::SingleShot,
+            DEBOUNCE,
+            crate::windows::bind_mut(move || {
+                crate::panes::with_id(id, |p| p.path_box.update());
+            }),
+        );
     }
 
     /// Typing began or ended: the list, the text and what was read are forgotten (reads
@@ -670,9 +674,13 @@ impl PathBox {
     fn wait_for(&self, folder: PathBuf, prefix: String) {
         *self.0.wanted.borrow_mut() = Some((folder, prefix));
         let id = self.0.id;
-        self.0.limit.start(slint::TimerMode::SingleShot, READ_LIMIT, move || {
-            crate::panes::with_id(id, |p| p.path_box.too_slow());
-        });
+        self.0.limit.start(
+            slint::TimerMode::SingleShot,
+            READ_LIMIT,
+            crate::windows::bind_mut(move || {
+                crate::panes::with_id(id, |p| p.path_box.too_slow());
+            }),
+        );
     }
 
     /// Reads `folder` on a thread of its own.

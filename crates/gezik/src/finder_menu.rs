@@ -75,18 +75,22 @@ pub fn open_with_place(list: &[(u32, String)]) -> usize {
 /// panel; Linux Gezik's own question, `ask_app`).
 pub fn open_with(window: &slint::Weak<crate::AppWindow>, paths: Vec<PathBuf>, app: Option<PathBuf>) {
     let window = window.clone();
-    slint::Timer::single_shot(Duration::ZERO, move || match app.or_else(gezik_platform::open_with::choose_app) {
-        Some(app) => open_now(&window, &paths, &app),
-        None if gezik_platform::open_with::ASKS_IN_GEZIK => ask_app(move |app| open_now(&window, &paths, &app)),
-        None => {}
-    });
+    slint::Timer::single_shot(
+        Duration::ZERO,
+        crate::windows::bind(move || match app.or_else(gezik_platform::open_with::choose_app) {
+            Some(app) => open_now(&window, &paths, &app),
+            None if gezik_platform::open_with::ASKS_IN_GEZIK => ask_app(move |app| open_now(&window, &paths, &app)),
+            None => {}
+        }),
+    );
 }
 
 fn open_now(window: &slint::Weak<crate::AppWindow>, paths: &[PathBuf], app: &std::path::Path) {
     let name = gezik_platform::open_with::app_name_of(app);
     let report = window.clone();
+    let window_id = crate::windows::current();
     let failed = move |why: String| {
-        let _ = slint::invoke_from_event_loop(move || {
+        crate::windows::post(window_id, move || {
             if let Some(window) = report.upgrade() {
                 window.set_status(format!("{name} could not open them: {why}").into());
             }
@@ -113,9 +117,10 @@ thread_local! {
 /// by name; `chosen` gets its desktop file. A second Other… while the first reads replaces it.
 pub fn ask_app(chosen: impl FnOnce(PathBuf) + 'static) {
     WAITING.with(|w| *w.borrow_mut() = Some(Box::new(chosen)));
-    let spawned = std::thread::Builder::new().name("gezik-apps".into()).spawn(|| {
+    let window_id = crate::windows::current();
+    let spawned = std::thread::Builder::new().name("gezik-apps".into()).spawn(move || {
         let apps = gezik_platform::open_with::all_apps();
-        let _ = slint::invoke_from_event_loop(move || show_apps(apps));
+        crate::windows::post(window_id, move || show_apps(apps));
     });
     if spawned.is_err() {
         WAITING.with(|w| w.borrow_mut().take());

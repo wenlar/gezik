@@ -152,7 +152,6 @@ pub struct Hooks {
 
 #[derive(Default)]
 struct State {
-    window: Option<slint::Weak<AppWindow>>,
     store: Option<ConfigStore>,
     primary: bool,
     started: bool,
@@ -189,22 +188,24 @@ fn with<T>(f: impl FnOnce(&mut State) -> T) -> T {
     STATE.with(|s| f(&mut s.borrow_mut()))
 }
 
+/// The window the tray and the shortcut act on: the most recently focused one (spec 9.3).
 fn window() -> Option<AppWindow> {
-    with(|s| s.window.clone()).and_then(|w| w.upgrade())
+    crate::windows::with_focused(AppWindow::clone_strong)
 }
 
 fn note(text: String) {
-    crate::panes::with_active(|p| p.view.note(text));
+    crate::windows::with_focused(|_| crate::panes::with_active(|p| p.view.note(text)));
 }
 
 fn tell(title: &str, message: String, buttons: &[&str], answer: impl FnOnce(Option<usize>) + 'static) {
-    crate::operations::with_current(|ops| ops.dialogs().ask(title, message, buttons, answer));
+    crate::windows::with_focused(|_| {
+        crate::operations::with_current(|ops| ops.dialogs().ask(title, message, buttons, answer));
+    });
 }
 
-/// Early in main: the window, the config, whether this is the first Gezik and shown.
-pub fn begin(window: &AppWindow, store: Option<ConfigStore>, primary: bool, shown: bool, told: bool) {
+/// Early in main: the config, whether this is the first Gezik and shown.
+pub fn begin(store: Option<ConfigStore>, primary: bool, shown: bool, told: bool) {
     with(|s| {
-        s.window = Some(window.as_weak());
         s.store = store;
         s.primary = primary;
         s.shown = shown;

@@ -304,7 +304,11 @@ impl FolderSizes {
             self.0.clock.borrow_mut().sorted(Instant::now());
         } else if !self.0.resort.running() {
             let this = self.clone();
-            self.0.resort.start(slint::TimerMode::SingleShot, wait, move || this.resort_soon());
+            self.0.resort.start(
+                slint::TimerMode::SingleShot,
+                wait,
+                crate::windows::bind_mut(move || this.resort_soon()),
+            );
         }
     }
 }
