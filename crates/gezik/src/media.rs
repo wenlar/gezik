@@ -393,14 +393,15 @@ impl Media {
                 entries.push(entry);
             }
         }
-        let wanted = Wanted::new(AtomicBool::new(true));
-        {
+        let wanted = {
             let mut pending = self.shared.pending.borrow_mut();
             if pending.contains_key(&key) {
                 return;
             }
+            let wanted = Wanted::new(AtomicBool::new(true));
             pending.insert(key.clone(), wanted.clone());
-        }
+            wanted
+        };
         self.start(key.slow());
         let queue = if key.slow() { &self.shared.slow } else { &self.shared.fast };
         if let Some(dropped) = queue.push(wanted, key) {

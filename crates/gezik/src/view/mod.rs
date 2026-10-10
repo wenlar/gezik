@@ -69,7 +69,7 @@ pub fn header_sort(column: i32) -> Option<SortKey> {
 type Listener = Rc<dyn Fn()>;
 
 thread_local! {
-    /// A `views.toml` write is scheduled: one for the process, whichever view asked.
+    /// A `views.toml` write is scheduled: one for the process, whichever view asked (all views share one store).
     static SAVE_PENDING: Cell<bool> = const { Cell::new(false) };
 }
 
