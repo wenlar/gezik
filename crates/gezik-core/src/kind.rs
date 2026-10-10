@@ -132,6 +132,9 @@ pub fn icon_lookup(name: &str, is_dir: bool, mac: bool) -> IconLookup {
 /// part is named by `own_type_name` first, everywhere.
 pub fn fallback_type_name(name: &str, is_dir: bool) -> String {
     if cfg!(target_os = "macos") {
+        if !is_dir && Kind::of(name, false) == Kind::Archive {
+            return format!("{} archive", archive_ending(name).to_uppercase());
+        }
         return if is_dir { "Folder" } else { "Document" }.to_owned();
     }
     if is_dir {

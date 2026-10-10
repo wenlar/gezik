@@ -206,6 +206,7 @@ mod kinds {
     const FOLDER: u32 = u32::from_be_bytes(*b"fold");
 
     pub fn type_name(ext: &str, is_dir: bool) -> Option<String> {
+        let ending = ext;
         let ext = (!is_dir).then(|| NSString::from_str(ext));
         let ext_ptr = ext.as_deref().map_or(std::ptr::null(), |e| (e as *const NSString).cast::<c_void>());
         let mut out: *mut c_void = std::ptr::null_mut();
@@ -217,7 +218,40 @@ mod kinds {
         }
         // SAFETY: the copy is ours to release, and a CFString is an NSString.
         let kind = unsafe { Retained::from_raw(out.cast::<NSString>()) }?;
-        Some(kind.to_string()).filter(|k| !k.is_empty())
+        let kind = Some(kind.to_string()).filter(|k| !k.is_empty())?;
+        // An archive the system has no app for is only "Document" to it: Gezik's own name
+        // ("WIM archive") says more.
+        let archive =
+            !is_dir && gezik_core::kind::Kind::of(&format!("x.{ending}"), false) == gezik_core::kind::Kind::Archive;
+        if archive && !ending.is_empty() && Some(&kind) == generic().as_ref() {
+            return None;
+        }
+        Some(kind)
+    }
+
+    /// The system's name for a document of no known type ("Document", in its language).
+    fn generic() -> Option<String> {
+        static GENERIC: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+        GENERIC
+            .get_or_init(|| {
+                let none = NSString::from_str("gezik-no-such-type");
+                let mut out: *mut c_void = std::ptr::null_mut();
+                // SAFETY: as in `type_name`.
+                let status = unsafe {
+                    LSCopyKindStringForTypeInfo(
+                        UNKNOWN,
+                        UNKNOWN,
+                        (&*none as *const NSString).cast::<c_void>(),
+                        &mut out,
+                    )
+                };
+                if status != 0 || out.is_null() {
+                    return None;
+                }
+                // SAFETY: as in `type_name`.
+                unsafe { Retained::from_raw(out.cast::<NSString>()) }.map(|k| k.to_string())
+            })
+            .clone()
     }
 
     #[cfg(test)]
@@ -233,6 +267,7 @@ mod kinds {
             assert!(!folder.is_empty() && folder != "File folder", "{folder}");
             let unknown = type_name("gezikunknownext", false).unwrap();
             assert_eq!(type_name("", false), Some(unknown), "no extension: an unknown document");
+            assert_eq!(type_name("wim", false), None, "an archive with no app is Gezik's to name");
         }
     }
 }
