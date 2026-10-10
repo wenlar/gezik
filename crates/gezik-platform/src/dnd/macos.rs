@@ -19,6 +19,8 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 use super::{Allowed, DragEnd, DropHandler, Effect, Keys, Offer, OnEnd};
 
+mod promise;
+
 /// What the replaced methods need: Gezik's handler and the offer over the view now.
 struct Target {
     handler: Rc<dyn DropHandler>,
@@ -106,11 +108,14 @@ fn over(view: &NSView, info: &ProtocolObject<dyn NSDraggingInfo>, entered: bool)
         let mut target = t.borrow_mut();
         let Some(target) = target.as_mut() else { return NSDragOperation::None };
         if entered || target.offer.is_none() {
-            target.offer = Some(Offer { paths: paths_of(info), allowed, right: false });
+            let paths = paths_of(info);
+            // No file paths: files another program promises.
+            let virtual_count = if paths.is_empty() { promise::count(info) } else { 0 };
+            target.offer = Some(Offer { paths, allowed, right: false, virtual_count, virtual_files: None });
         }
         let Some(offer) = target.offer.as_mut() else { return NSDragOperation::None };
         offer.allowed = allowed;
-        if offer.paths.is_empty() {
+        if offer.paths.is_empty() && offer.virtual_count == 0 {
             return NSDragOperation::None;
         }
         operation_for(target.handler.over(offer, x, y, keys).effect)
@@ -159,7 +164,14 @@ extern "C-unwind" fn perform(this: &NSView, _: Sel, info: &ProtocolObject<dyn NS
         Some((target.handler.clone(), offer))
     });
     match taken {
-        Some((handler, offer)) => handler.dropped(&offer, x, y, keys).is_some(),
+        Some((handler, mut offer)) => {
+            if offer.virtual_count > 0 {
+                // Asked for now, on the main thread; the job waits for the files.
+                let Some(files) = promise::receive(info) else { return false };
+                offer.virtual_files = Some(files);
+            }
+            handler.dropped(&offer, x, y, keys).is_some()
+        }
         None => false,
     }
 }
@@ -203,7 +215,8 @@ pub fn register(window: &impl HasWindowHandle, handler: Rc<dyn DropHandler>) -> 
     }
     // winit registers the window, so drags go to its delegate (with no position or keys);
     // a registered view under the pointer comes first, so the methods above are asked.
-    view.registerForDraggedTypes(&NSArray::from_slice(&[unsafe { NSPasteboardTypeFileURL }]));
+    // Files, and files promised by other programs (Mail, Photos).
+    view.registerForDraggedTypes(&promise::types().arrayByAddingObject(unsafe { NSPasteboardTypeFileURL }));
     TARGET.with(|t| *t.borrow_mut() = Some(Target { handler, offer: None }));
     Some(Registration { view })
 }

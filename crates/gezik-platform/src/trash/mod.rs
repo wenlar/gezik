@@ -119,9 +119,33 @@ pub fn purge_from(dir: &Path) -> usize {
     if !is_test_dir(dir, &std::env::temp_dir()) {
         return 0;
     }
+    purge_where(|original| gezik_core::ops::paths::is_within(original, dir))
+}
+
+/// For tests: [`purge_from`] what test processes that no longer run left: one killed mid-run
+/// (`cargo test | head` closing its output, Ctrl+C, a timeout) never reaches its thread-end
+/// purges. Only items from a test folder named `gezik-…-<pid>` ([`left_by_dead_test`]).
+fn purge_dead_tests() -> usize {
+    let temp = std::env::temp_dir();
+    purge_where(|original| left_by_dead_test(original, &temp, crate::process::process_alive))
+}
+
+/// Whether `original` is in a test folder ([`is_test_dir`]) whose top folder under `temp` ends
+/// in the id of a process other than this one that `alive` says no longer runs.
+fn left_by_dead_test(original: &Path, temp: &Path, alive: impl Fn(u32) -> bool) -> bool {
+    if !is_test_dir(original, temp) {
+        return false;
+    }
+    let top = gezik_core::ops::paths::path_key(original).swap_remove(gezik_core::ops::paths::path_key(temp).len());
+    let pid = top.rsplit('-').next().and_then(|pid| pid.parse::<u32>().ok());
+    pid.is_some_and(|pid| pid != std::process::id() && !alive(pid))
+}
+
+/// Deletes for good each item of this user's bins whose original place is `wanted`. How many.
+fn purge_where(wanted: impl Fn(&Path) -> bool) -> usize {
     let mut purged = 0;
     for item in list().items {
-        if !item.original.as_deref().is_some_and(|original| gezik_core::ops::paths::is_within(original, dir)) {
+        if !item.original.as_deref().is_some_and(&wanted) {
             continue;
         }
         let gone =
@@ -163,6 +187,11 @@ pub fn purge_at_thread_end(dir: &Path) {
         static DIRS: Dirs = const { Dirs(std::cell::RefCell::new(Vec::new())) };
     }
     let _ = DIRS.try_with(|dirs| dirs.0.borrow_mut().push(dir.to_path_buf()));
+    // Once per test process: what earlier runs that were killed left behind.
+    static DEAD: std::sync::Once = std::sync::Once::new();
+    DEAD.call_once(|| {
+        purge_dead_tests();
+    });
 }
 
 /// Refuses to put `trashed` back at `original` when a folder on the way there is a link or a
@@ -386,6 +415,46 @@ mod tests {
         use gezik_core::ops::paths::is_within;
         assert!(is_within(&temp.join("gezik-abc").join("f"), &temp.join("gezik-abc")));
         assert!(!is_within(&temp.join("gezik-abcd").join("f"), &temp.join("gezik-abc")));
+    }
+
+    #[test]
+    fn only_what_a_dead_test_process_left_is_taken() {
+        let temp = std::env::temp_dir();
+        let dead = |name: &str| left_by_dead_test(&temp.join(name).join("a.txt"), &temp, |pid| pid == 7);
+        assert!(dead("gezik-ops-copy-redo-8"));
+        assert!(dead("gezik-pdf-tasks-8"));
+        assert!(!dead("gezik-ops-copy-redo-7"), "still running");
+        assert!(!dead(&format!("gezik-ops-x-{}", std::process::id())), "this process");
+        for no in ["gezik-refusing", "gezik", "other-8", "gezik-x-8x"] {
+            assert!(!dead(no), "{no}");
+        }
+        assert!(!left_by_dead_test(&temp.join("other").join("gezik-x-8"), &temp, |_| false));
+    }
+
+    /// A record left by a test process that was killed before its thread-end purge goes once
+    /// a later test process looks.
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn a_killed_test_process_leaves_nothing_in_the_real_trash() {
+        let mut child = if cfg!(windows) {
+            std::process::Command::new("cmd").args(["/c", "exit"]).spawn()
+        } else {
+            std::process::Command::new("true").spawn()
+        }
+        .unwrap();
+        let pid = child.id();
+        child.wait().unwrap();
+        let dir = std::env::temp_dir().join(format!("gezik-trash-killed-{pid}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.txt"), "a").unwrap();
+        crate::fs::trash(&dir.join("a.txt")).unwrap();
+        let in_trash =
+            || list().items.iter().filter(|i| i.original.as_deref().is_some_and(|o| o.starts_with(&dir))).count();
+        assert_eq!(in_trash(), 1);
+        purge_dead_tests();
+        assert_eq!(in_trash(), 0);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
