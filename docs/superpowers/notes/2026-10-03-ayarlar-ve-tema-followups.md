@@ -925,3 +925,41 @@ Alt proje 1 tamamlandıktan sonra bilerek ertelenen maddeler. Kaynak: görev inc
 - Bekleyenler:
   - **Windows ekran testleri** (planın 11 maddesi, durum: bekliyor; ajan, kullanıcı uzaktayken), madde 10 dahil: `scripts/perf/rules.ps1`, `measure.ps1 -Runs 5` (`target\gezik-base.exe` ile), `stress.ps1` bir `content` kuralıyla ve kuralsız.
   - **macOS** (`macos-test.md` 220–226) ve **Linux** (`linux-test.md` 170–173).
+
+## Windows ekran testleri: 10f (2026-10-11)
+
+# 10f Windows ekran testleri (2026-10-10, ajan, kullanıcı uyurken)
+
+- Derleme: `D:\Work\gezik-10f` HEAD `87d005a`, `cargo build --release -p gezik -j 4` (zaten güncel, 0,30 s), exe **24.944.640 bayt** (taban `target\gezik-base.exe` 24.909.824 → **+34.816 bayt**). Kopya `%TEMP%\gezik-10fgui\bin\gezik.exe`; her oturum taze `GEZIK_CONFIG_DIR` (`%TEMP%\gezik-10fgui\cfg\<ad>`), kullanıcının ayarlarına dokunulmadı.
+- Birincil ekran, pencere 1500×1000 @ 100,80. Her tuş/tıklamadan önce ön plan penceresinin Gezik süreci olduğu denetlendi; yazı `SendInput` Unicode ile (klavye düzeni değişmedi). Kayıt defterine yazılmadı; Geri Dönüşüm Kutusu yalnız açılıp bakıldı (boştu).
+- Deneme klasörü `%TEMP%\gezik-10f`: `photos` (+`2024\summer`), `six` (6 jpg + 4 txt), `five` (5 + 5), `four` (4 + 6, iki gizli jpg), `Downloads-like` (10 dosya, bugün…8 yıl önce), `plain` (6 txt). Kurallar plandaki 1–5.
+- Ekran görüntüleri `%TEMP%\gezik-10fgui\shots\` (dosya adları madde numarasıyla başlar; `m*` birleştirilmiş, `*-burst` gidişten hemen sonra ~15 ms arayla 8–12 kare; `X-*` ayar yeniden yükleme).
+
+## Sonuçlar
+
+1. **Yol kuralı ve ilk kare — PASS.** `plain` (liste) → `photos`, `photos\2024\summer`, `…\PHOTOS` (adres çubuğuna yazma): Enter'dan hemen sonraki ilk karede bile büyük ızgara, hiçbir karede liste satırı yok (`01-*-burst.png`). Büyük harfli adres de eşleşti (sekme/başlık yazılan gibi `PHOTOS` gösteriyor). View menüsünde soluk `View rule 1 applies`, ardından `Reset this folder` (`01-viewmenu.png`).
+2. **Sütunlar — PASS.** `Downloads-like`: Modified ↓, tarih grupları (Today … 2018), yalnız Modified + Size; başlık menüsü `Hide Modified / Show Created / Show Type / Hide Size` (yalnız ikisi açık). Show Type → Modified, Type, Size; `plain`'e geçiş → listenin kendi sütunları (Modified, Type, Size); dönüş → yine yalnız Modified + Size. Kuralın klasöründe Modified|Size kenarı sürüklendi: Size genişledi, `plain`'de Created gizli kaldı, hiçbir sütun 50 px'e ezilmedi. Kapatıp açınca `state.toml` `columns`: modified açık, created gizli, **type açık 140**, size açık (sürüklenen genişlik) — kuralın kümesi yazılmadı; yeniden açılışta `Downloads-like` yine kural sütunlarıyla.
+   - `Reset columns` kuralın klasöründe: o ziyaret için varsayılanlar (Modified, Type, Size) — plan sapma 9'daki gibi; sonraki ziyarette kural yine uygulanıyor.
+3. **İçerik — PASS.** Gizliler kapalı (Ctrl+H; Windows'ta varsayılan açık): `six`, `five` ızgara, `four` liste. Gizliler açılınca aynı ziyarette liste kalıyor (titreme yok); `four`'a yeniden gidince (6/12) ızgara.
+4. **Kendi görünümü kazanır — PASS.** `photos`'ta List → başka yer → dönüş: liste; `views.toml`'da `photos` (`mode = "list"`). Menüde `Reset to rule 1` (soluk satır yok); seçilince büyük ızgara geri, menüde soluk `View rule 1 applies`, `views.toml` → `folder = []`.
+5. **Yeniden yükleme titremez — PASS.** `five` açıkken 8 `.txt` eklendi: 18 öğe ızgarada kaldı; başka yere gidip dönünce (5/18) liste.
+6. **Tür kuralları — PASS.** Geri Dönüşüm Kutusu: Date deleted ↓, menüde `View rule 4 applies` (çöp boş olduğundan sıra satırla görülemedi). `photos`'ta Ctrl+B: orta ızgara, `View rule 5 applies` (yol kuralı 1 sonuçlarda uygulanmıyor, beklenen). This PC: bugünkü liste, kural yok. `\\localhost\Dune` paylaşımı (`net share`'de var) ayrı bir denemede `kind = "network"` kuralıyla (6. kural, küçük ızgara): küçük ızgara, `View rule 6 applies`.
+7. **Ayar düzenlenir — PASS (not).** `photos` açıkken kural 1 `grid-size = "small"` kaydedildi: yeniden açmadan küçük ızgara (~2 sn içinde). Üç hatalı kural (4–6) eklendi: durum çubuğu `settings.toml: view-rules[4]: mode: "columns" is not supported yet (it comes with the column view) (+2 more)`; stderr'de üçü de: `[4]` columns, `[5]` `content: expected "<kind> >= <n>%" … got "pictures > 50%"`, `[6]` `kind: "archive-root" is not supported yet`. Diğer kurallar sürdü; menüde `Downloads-like` → `View rule 3 applies`, flat → `View rule 8 applies` (dosyadaki sıra).
+   - Not: durum çubuğu üçünü değil ilkini + `(+2 more)` gösteriyor (mevcut `notice_text` davranışı); üçü stderr'de.
+8. **`Apply to all folders` — PASS (not).** `plain`'de Grid + Apply to all folders: `settings.toml`'da `[[view-rules]]` yerinde, sonuna `[view] mode = "grid"…` eklendi. `Downloads-like` yine Modified ↓ + tarih grupları — ama **ızgarada**, çünkü kural 3 `mode` vermiyor; plandaki "yine sıralı liste" beklentisi kuralın tanımıyla örtüşmüyor (kural doğru uygulanıyor).
+   - Gruplu ızgarada başlıkların üstünde/arasında büyük boşluklar var (başlık bir hücre satırı yüksekliğinde, 10d sapma 6 — 10f'e özgü değil).
+9. **`Reset this folder` kuralı getirir — PASS.** `six`'te List → menüde `Reset to rule 2`; kural 2 silinip kaydedildi → menü `Reset this folder`; seçilince liste (varsayılan), `views.toml` boş, menüde kural satırı yok.
+10. **Hafiflik — PASS.**
+    - `measure.ps1 -Runs 5`, boş `settings.toml`, sırayla yeni/taban ×2 (cargo/rustc yokken): yeni **45 / 36 ms**, taban **37 / 38 ms** açılış; bellek dördünde de **7,3 MB**. İlk yeni koşu dışında fark gürültü içinde.
+    - `rules.ps1` (100.000 girdi, 20 kural), iki koşu: content count medyan **1,21 / 1,16 ms** (bütçe 2 ms), değerlendirme medyan **500 ns**, en kötü 38,7 / 39 µs (bütçe 50 µs), kurallar **5.876 bayt** (bütçe 20.480). Çıkış 0.
+    - `stress.ps1` (100.000 dosya; ön plan denetimi eklenmiş geçici kopya): kuralsız 16,8 / 17,1 MB yüklemede, 16,9 / 17,5 MB kaydırmada; `content` kuralıyla 17,1 / 17,1 / 17,2 MB, 17,3–17,5 MB. Kaydırma CPU 266–594 ms (≈2,6 s'de), iki tarafta da aynı aralık. Bu koşuların bir kısmında başka bir ajanın cargo/rustc'si çalışıyordu (4–10 süreç); ilk koşular odak alamayınca girdi gönderilmeden durdu (betik reddetti).
+    - Klasör açılış süresi `stress.ps1`'de ölçülmüyor; eklenen iş `rules.ps1`'in content count'u (~1,2 ms / 100.000 girdi) — ≤ 2 ms sınırı içinde.
+    - Exe +34.816 bayt.
+11. **Kenar çubuğu ve sekmeler — PASS.** `gezik-10f` listesinde `photos` ve `Downloads-like` orta tıkla yeni sekmede: `photos` büyük ızgara, `Downloads-like` kural görünümü; Ctrl+1/2/3 ile geçişte her sekme kendi görünümünde. Kenar çubuğu ağacından (`Show in sidebar tree` + açma) `photos` → büyük ızgara, `six` → ızgara, `plain` → liste.
+
+## Ek denetimler
+
+- **Kural ekleyen ayar yüklemesi — PASS.** Boş `settings.toml` ile `plain` (liste) açıkken `path = …/plain`, `mode = "grid"`, `grid-size = "large"` yazıldı: ~2 sn içinde, yeniden açmadan büyük ızgara; menüde `View rule 1 applies` (`X-reload-*.png`).
+- **`Reset to rule N` / soluk `View rule N applies` — PASS** (madde 1, 4, 6, 7, 9).
+- **Kural sütunlarıyla aç/kapa, sıfırlama, genişlik sürükleme — PASS** (madde 2).
+- **Gruplu kurallar (10d) — PASS** (`Downloads-like` tarih grupları; madde 2, 8).
