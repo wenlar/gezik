@@ -201,9 +201,91 @@ fn set_field(
     });
 }
 
-/// Makes `pane` reachable once all its parts exist.
+/// Makes `pane` reachable once all its parts exist (in the order of their rows: left first).
 pub fn install(pane: Pane) {
     PANES.with(|p| p.borrow_mut().push(pane));
+}
+
+/// Takes pane `id` out with its row (the window drops its `PaneView`); the active pane stays
+/// the same one. The pane, if it was there.
+pub fn remove(id: PaneId) -> Option<Pane> {
+    let active = active_id();
+    let pane = PANES.with(|p| {
+        let mut panes = p.borrow_mut();
+        let at = panes.iter().position(|p| p.id == id)?;
+        Some(panes.remove(at))
+    })?;
+    if let Some(row) = row_of(id) {
+        ROWS.with(|r| r.borrow_mut().remove(row));
+        MODEL.with(|m| m.remove(row));
+    }
+    let at = active.and_then(index_of).unwrap_or(0);
+    ACTIVE.with(|a| a.set(at));
+    Some(pane)
+}
+
+/// How many panes are open.
+pub fn count() -> usize {
+    PANES.with(|p| p.borrow().len())
+}
+
+/// The place (0 left, 1 right) of the active pane.
+pub fn active_index() -> usize {
+    ACTIVE.with(Cell::get)
+}
+
+/// Makes the pane at place `index` the active one (nothing else: see `dual::activate`).
+pub fn set_active(index: usize) {
+    if index < count() {
+        ACTIVE.with(|a| a.set(index));
+    }
+}
+
+pub fn active_id() -> Option<PaneId> {
+    with_active(|p| p.id)
+}
+
+pub fn is_active(id: PaneId) -> bool {
+    active_id() == Some(id)
+}
+
+/// The place of pane `id`.
+pub fn index_of(id: PaneId) -> Option<usize> {
+    PANES.with(|p| p.borrow().iter().position(|p| p.id == id))
+}
+
+/// The active pane (its parts are handles). main.rs installs the left pane before anything
+/// that asks.
+/// Not inlined: hundreds of places ask.
+#[inline(never)]
+pub fn active() -> Pane {
+    with_active(Pane::clone).expect("the left pane is installed first")
+}
+
+#[inline(never)]
+pub fn active_nav() -> Navigator {
+    with_active(|p| p.nav.clone()).expect("the left pane is installed first")
+}
+
+#[inline(never)]
+pub fn active_view() -> View {
+    with_active(|p| p.view.clone()).expect("the left pane is installed first")
+}
+
+/// The pane at place `index` (a Slint callback's pane number).
+pub fn at(index: i32) -> Option<Pane> {
+    with_row(index, Pane::clone)
+}
+
+/// Runs `f` with the pane at place `index` (a Slint callback's pane number), if it is open.
+pub fn with_row<R>(index: i32, f: impl FnOnce(&Pane) -> R) -> Option<R> {
+    let index = usize::try_from(index).ok()?;
+    with_picked(&PANES, |panes| panes.get(index), f)
+}
+
+/// Every open pane, left first.
+pub fn all() -> Vec<Pane> {
+    PANES.with(|p| p.borrow().clone())
 }
 
 /// Runs `f` with the active pane, if one is installed.

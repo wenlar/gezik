@@ -14,6 +14,8 @@ export component TextButton inherits Rectangle {
     in property <string> label: root.text;
     in property <bool> primary;
     in property <bool> checked;
+    // No 72 px floor: just its content (a glyph-only button in a narrow pane).
+    in property <bool> compact;
     callback clicked();
 
     // The lead glyph, the label and the icon, centered together.
@@ -22,7 +24,7 @@ export component TextButton inherits Rectangle {
     property <length> content-width: root.lead + caption.preferred-width + (root.icon != "" ? root.gap + 8px : 0px);
 
     height: Theme.row-height + 4px;
-    min-width: max(72px, root.content-width + Theme.spacing * 4);
+    min-width: root.compact ? root.content-width + Theme.spacing * 2 : max(72px, root.content-width + Theme.spacing * 4);
     // Wider only when nothing else in the layout grows (the label used to size the button).
     horizontal-stretch: 0;
     border-radius: Theme.radius;

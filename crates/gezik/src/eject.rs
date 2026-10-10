@@ -53,11 +53,10 @@ pub fn eject_path(path: &Path) {
     let drives = drives();
     let Some(drive) = drive_for(&drives, path).cloned() else { return status(NO_DRIVE.to_owned()) };
     let Some(way) = eject::offer(&drive) else { return status(eject::CANNOT.to_owned()) };
-    let mut owner = 0;
-    crate::panes::with_active(|p| {
+    for p in crate::panes::all() {
         p.nav.leave_drive(&drive.path);
-        owner = p.nav.owner();
-    });
+    }
+    let owner = crate::panes::with_active(|p| p.nav.owner()).unwrap_or(0);
     let doing = if way == EjectWay::Eject { "Ejecting" } else { "Disconnecting" };
     status(format!("{doing} {}…", drive.label));
     std::thread::spawn(move || {
@@ -75,11 +74,11 @@ fn finish(drive: &Drive, way: EjectWay, result: Result<(), String>) {
                 EjectWay::Disconnect => format!("Disconnected {}", drive.label),
             });
             crate::sidebar::with_current(|sidebar| sidebar.check_drives(true));
-            crate::panes::with_active(|p| {
+            for p in crate::panes::all() {
                 if p.nav.active_location() == Location::Drives {
                     p.nav.reload();
                 }
-            });
+            }
         }
         // The tabs stay on This PC; Back returns to the folder.
         Err(why) => status(why),

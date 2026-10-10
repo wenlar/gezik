@@ -9,7 +9,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gezik_core::drag::{
-    self, Action, Allowed, CrumbArea, Effect, Hit, Keys, Layout, ListArea, SideRow, SidebarArea, TabArea,
+    self, Action, Allowed, CrumbArea, Effect, Hit, Keys, Layout, ListArea, PaneArea, SideRow, SidebarArea, TabArea,
 };
 use gezik_core::layout::Rect;
 use gezik_core::nav::Location;
@@ -19,10 +19,8 @@ use gezik_platform::dnd::{Answer, Attached, DragEnd, DropHandler, Handoff, Offer
 use slint::{ComponentHandle, Model, Timer, TimerMode};
 
 use crate::context_menu::Menus;
-use crate::navigation::Navigator;
 use crate::operations::Operations;
 use crate::sidebar::{SECTION_GROUP, SECTION_PINNED, SECTION_TREE_MORE, Sidebar};
-use crate::view::View;
 use crate::{AppWindow, SidebarRow, Theme};
 
 /// How often a drag near the list's top or bottom edge scrolls it.
@@ -114,16 +112,14 @@ struct Handed {
 
 struct Inner {
     window: slint::Weak<AppWindow>,
-    nav: Navigator,
-    view: View,
     sidebar: Sidebar,
     ops: Operations,
     menus: Menus,
     phase: RefCell<Phase>,
-    /// Where each address bar part is (window x, width), as Slint last reported it.
-    crumbs: RefCell<Vec<(String, f32, f32)>>,
-    /// The tab under the pointer, waiting to open.
-    hover_tab: Cell<Option<usize>>,
+    /// Where each pane's address bar parts are (window x, width), as Slint last reported them.
+    crumbs: RefCell<[Vec<(String, f32, f32)>; 2]>,
+    /// The tab under the pointer (pane, tab), waiting to open.
+    hover_tab: Cell<Option<(usize, usize)>>,
     tab_timer: Timer,
     scroll_timer: Timer,
     /// The window's drop target for other programs.
@@ -268,18 +264,9 @@ fn path_of(location: Location) -> Option<PathBuf> {
 pub struct Drags(Rc<Inner>);
 
 impl Drags {
-    pub fn new(
-        window: &AppWindow,
-        nav: Navigator,
-        view: View,
-        sidebar: Sidebar,
-        ops: Operations,
-        menus: Menus,
-    ) -> Drags {
+    pub fn new(window: &AppWindow, sidebar: Sidebar, ops: Operations, menus: Menus) -> Drags {
         let drags = Drags(Rc::new(Inner {
             window: window.as_weak(),
-            nav,
-            view,
             sidebar,
             ops,
             menus,
@@ -303,7 +290,9 @@ impl Drags {
     pub fn install(&self, window: &AppWindow) {
         window.on_item_down({
             let drags = self.clone();
-            move |_pane, i, x, y, right, can_drag| {
+            move |pane, i, x, y, right, can_drag| {
+                // A press (a right one too) is an action in its pane.
+                crate::dual::pick(pane);
                 if let Ok(index) = usize::try_from(i) {
                     drags.down(index, x, y, right, can_drag);
                 }
@@ -327,13 +316,14 @@ impl Drags {
         });
         window.on_crumb_span({
             let drags = self.clone();
-            move |_pane, i, x, width| {
-                if let Ok(i) = usize::try_from(i) {
-                    let label = crate::panes::data(drags.0.view.pane_id())
+            move |pane, i, x, width| {
+                if let (Ok(place @ 0..2), Ok(i)) = (usize::try_from(pane), usize::try_from(i)) {
+                    let label = crate::panes::at(pane)
+                        .and_then(|p| crate::panes::data(p.id))
                         .and_then(|d| d.crumbs.row_data(i))
                         .map(|crumb| crumb.label.to_string())
                         .unwrap_or_default();
-                    let mut crumbs = drags.0.crumbs.borrow_mut();
+                    let crumbs = &mut drags.0.crumbs.borrow_mut()[place];
                     if crumbs.len() <= i {
                         crumbs.resize(i + 1, (String::new(), 0.0, 0.0));
                     }
@@ -341,6 +331,30 @@ impl Drags {
                 }
             }
         });
+        window.on_tab_out({
+            let drags = self.clone();
+            move |pane, tab, x, y, released| drags.tab_dragged(pane, tab, x, y, released)
+        });
+    }
+
+    /// Tab `tab` of the pane at place `from` dragged to window point (`x`, `y`) (`tab` < 0: the
+    /// drag ended without a drop): over the other pane its strip shows where the tab would go,
+    /// and the release moves it there (spec 10 §4.5). Whether it is over the other pane (then
+    /// the strip it came from does not reorder).
+    fn tab_dragged(&self, from: i32, tab: i32, x: f32, y: f32, released: bool) -> bool {
+        let Some(window) = self.0.window.upgrade() else { return false };
+        let target = match (usize::try_from(from), usize::try_from(tab)) {
+            (Ok(from), Ok(tab)) => drag::tab_target(&self.layout(&window), from, x, y).map(|to| (from, tab, to)),
+            _ => None,
+        };
+        let shown = target.filter(|_| !released).map(|(_, _, to)| to);
+        window.set_drop_pane(shown.map_or(-1, |(pane, _)| index(pane)));
+        window.set_tab_insert(shown.and_then(|(_, slot)| slot).map_or(-1, index));
+        if let Some((from, tab, (_, at))) = target.filter(|_| released) {
+            // Once the release is fully handled: both strips' tabs change.
+            Timer::single_shot(Duration::ZERO, move || crate::dual::move_tab(from, tab, at));
+        }
+        target.is_some()
     }
 
     /// Whether files are being dragged (Esc cancels).
@@ -365,9 +379,9 @@ impl Drags {
 
     fn take_dropped_files(&self) {
         let sources = std::mem::take(&mut *self.0.dropped_files.borrow_mut());
-        let Some(dir) = self.0.view.folder() else {
-            if self.0.view.shows_results() {
-                self.0.view.note(crate::operations::NOT_HERE.to_owned());
+        let Some(dir) = crate::panes::active_view().folder() else {
+            if crate::panes::active_view().shows_results() {
+                crate::panes::active_view().note(crate::operations::NOT_HERE.to_owned());
             }
             return;
         };
@@ -449,10 +463,11 @@ impl Drags {
     fn down(&self, index: usize, x: f32, y: f32, right: bool, can_drag: bool) {
         if right {
             // The menu or the drag is for this entry: select it first if it is not.
-            self.0.view.prepare_menu(index);
+            crate::panes::active_view().prepare_menu(index);
         }
         // Drives (This PC) are not files to move.
-        let can_drag = can_drag && !self.0.view.shows_drives() && !self.0.view.shows_trash();
+        let can_drag =
+            can_drag && !crate::panes::active_view().shows_drives() && !crate::panes::active_view().shows_trash();
         *self.0.phase.borrow_mut() = Phase::Armed { index, x, y, right, can_drag };
     }
 
@@ -500,8 +515,8 @@ impl Drags {
 
     /// The pointer went far enough from the press on entry `index`: drag the selection.
     fn start(&self, index: usize, right: bool, keys: Keys) {
-        let items = self.0.view.selected_items();
-        let row = self.0.view.file_row(index);
+        let items = crate::panes::active_view().selected_items();
+        let row = crate::panes::active_view().file_row(index);
         self.start_with(items, row, right, keys, Some(index), false);
     }
 
@@ -558,7 +573,9 @@ impl Drags {
     fn up(&self, x: f32, y: f32, right: bool) -> bool {
         let phase = std::mem::replace(&mut *self.0.phase.borrow_mut(), Phase::Idle);
         match phase {
-            Phase::Idle => false,
+            // A release whose press Gezik never saw: no click and no menu. (Entries report
+            // every release, since one made anew under the press, by a re-read, lost its grab.)
+            Phase::Idle => true,
             Phase::StackArmed { .. } => false,
             // An offer from outside is not ended by Gezik's own button events.
             offer @ Phase::Offer(_) => {
@@ -567,23 +584,23 @@ impl Drags {
             }
             Phase::Armed { index, x: x0, y: y0, right: pressed_right, .. } => {
                 if !pressed_right && !right {
-                    self.0.view.release(index, false);
+                    crate::panes::active_view().release(index, false);
                     let moved = gezik_core::drag::past_threshold(x - x0, y - y0);
                     let since = self.0.last_open.get().map(|at| at.elapsed());
                     // Single-click-open: a plain click (no Ctrl, Cmd or Shift) opens (spec 7.1);
                     // after the release is fully handled.
-                    let plain = self.0.view.take_plain_press(index);
+                    let plain = crate::panes::active_view().take_plain_press(index);
                     if opens_on_release(
                         crate::view_options::current().single_click_open,
                         plain,
-                        moved || self.0.view.marquee_active(),
+                        moved || crate::panes::active_view().marquee_active(),
                         since,
                     ) {
                         self.0.last_open.set(Some(std::time::Instant::now()));
-                        let nav = self.0.nav.clone();
+                        let nav = crate::panes::active_nav().clone();
                         // By path: a listing replaced before the timer fires must not open
                         // another entry under the same index.
-                        let clicked = self.0.view.entry_path(index);
+                        let clicked = crate::panes::active_view().entry_path(index);
                         Timer::single_shot(Duration::ZERO, move || {
                             if let Some((path, is_dir)) = clicked {
                                 crate::open_path(&nav, path, is_dir);
@@ -602,14 +619,14 @@ impl Drags {
                     outside.released();
                 }
                 if let Some(index) = d.pressed {
-                    self.0.view.release(index, true);
+                    crate::panes::active_view().release(index, true);
                 }
                 true
             }
             Phase::Dragging(mut d) => {
                 (d.x, d.y) = (x, y);
                 if let Some(index) = d.pressed {
-                    self.0.view.release(index, true);
+                    crate::panes::active_view().release(index, true);
                 }
                 *self.0.phase.borrow_mut() = Phase::Dragging(d);
                 self.update();
@@ -671,29 +688,19 @@ impl Drags {
     /// Where everything a drop can land on is, from the window as it is now.
     fn layout(&self, window: &AppWindow) -> Layout {
         let g = window.get_drop_geometry();
-        let id = self.0.view.pane_id();
-        let mirror = crate::panes::mirror(id);
-        let p = mirror.geometry.borrow().clone();
-        let data = crate::panes::data(id).unwrap_or_default();
         let theme = window.global::<Theme>();
-        let list = ListArea {
-            rect: Rect { x: p.view_x, y: p.view_y + p.list_top, width: p.list_width, height: p.list_height },
-            scroll: self.0.view.list_scroll(),
-            geometry: self.0.view.layout_geometry(),
-            count: self.0.view.len(),
-            groups: self.0.view.group_spans(),
-        };
+        let panes = crate::panes::all().iter().enumerate().map(|(place, pane)| self.pane_area(pane, place)).collect();
         let sidebar = match window.get_sidebar_position() {
             position @ (0 | 1) => {
                 let width = window.get_sidebar_width();
                 let x = if position == 0 { 0.0 } else { g.window_width - width };
                 let model = window.get_sidebar_rows();
                 let (pad, row_height) = (theme.get_spacing(), theme.get_row_height());
-                let (first, count) =
-                    drag::sidebar_window(g.sidebar_scroll, pad, row_height, p.body_height, model.row_count());
+                let (y, height) = crate::sidebar::span();
+                let (first, count) = drag::sidebar_window(g.sidebar_scroll, pad, row_height, height, model.row_count());
                 let rows = (first..first + count).filter_map(|i| model.row_data(i)).map(|row| side_row(&row)).collect();
                 Some(SidebarArea {
-                    rect: Rect { x, y: p.body_y, width, height: p.body_height },
+                    rect: Rect { x, y, width, height },
                     scroll: g.sidebar_scroll,
                     pad,
                     row_height,
@@ -702,6 +709,27 @@ impl Drags {
                 })
             }
             _ => None,
+        };
+        let stack = (g.stack_height > 0.0).then_some(Rect {
+            x: 0.0,
+            y: g.stack_y,
+            width: g.window_width,
+            height: g.stack_height,
+        });
+        Layout { width: g.window_width, height: g.window_height, panes, sidebar, stack }
+    }
+
+    /// Where the parts of `pane` (at `place`) are.
+    fn pane_area(&self, pane: &crate::panes::Pane, place: usize) -> PaneArea {
+        let mirror = crate::panes::mirror(pane.id);
+        let p = mirror.geometry.borrow().clone();
+        let data = crate::panes::data(pane.id).unwrap_or_default();
+        let list = ListArea {
+            rect: Rect { x: p.view_x, y: p.view_y + p.list_top, width: p.list_width, height: p.list_height },
+            scroll: pane.view.list_scroll(),
+            geometry: pane.view.layout_geometry(),
+            count: pane.view.len(),
+            groups: pane.view.group_spans(),
         };
         let tabs = TabArea {
             rect: Rect { x: p.tab_x, y: 0.0, width: p.tab_strip_width, height: p.tab_height },
@@ -713,17 +741,13 @@ impl Drags {
             Vec::new()
         } else {
             let labels: Vec<String> = data.crumbs.iter().map(|crumb| crumb.label.to_string()).collect();
-            current_spans(&self.0.crumbs.borrow(), &labels)
+            current_spans(self.0.crumbs.borrow().get(place).map_or(&[], Vec::as_slice), &labels)
         };
-        let crumbs =
-            CrumbArea { rect: Rect { x: 0.0, y: p.address_y, width: g.window_width, height: p.address_height }, spans };
-        let stack = (g.stack_height > 0.0).then_some(Rect {
-            x: 0.0,
-            y: g.stack_y,
-            width: g.window_width,
-            height: g.stack_height,
-        });
-        Layout { width: g.window_width, height: g.window_height, list, sidebar, tabs, crumbs, stack }
+        let crumbs = CrumbArea {
+            rect: Rect { x: p.address_x, y: p.address_y, width: p.address_width, height: p.address_height },
+            spans,
+        };
+        PaneArea { list, tabs, crumbs }
     }
 
     /// What dropping `d` at `hit` would do.
@@ -731,10 +755,11 @@ impl Drags {
         if d.virtual_count > 0 && !virtual_allows(hit) {
             return Target::none(hit);
         }
-        let (hit, dir) = match hit {
+        let pane = hit.pane().and_then(|place| crate::panes::at(index(place)));
+        let (hit, dir) = match (hit, &pane) {
             // Nothing goes into the bins but by a delete.
-            Hit::Entry(_) if self.0.view.shows_trash() => (Hit::Background, None),
-            Hit::Entry(i) => match self.0.view.entry_path(i) {
+            (Hit::Entry(p, _), Some(pane)) if pane.view.shows_trash() => (Hit::Background(p), None),
+            (Hit::Entry(p, i), Some(pane)) => match pane.view.entry_path(i) {
                 Some((path, true)) => (hit, Some(path)),
                 // A zip, 7z or tar file (not one of those dragged): the files are added to it.
                 Some((path, false)) if d.virtual_count == 0 && self.can_add_to(d, &path) => {
@@ -743,19 +768,20 @@ impl Drags {
                     return Target { hit, dir: folder, action, archive: Some(path) };
                 }
                 // A file: into the folder it is in.
-                _ => (Hit::Background, self.0.view.folder()),
+                _ => (Hit::Background(p), pane.view.folder()),
             },
-            Hit::Background => (hit, self.0.view.folder()),
-            Hit::Sidebar(row) => {
+            (Hit::Background(_), Some(pane)) => (hit, pane.view.folder()),
+            (Hit::Sidebar(row), _) => {
                 let place = window.get_sidebar_rows().row_data(row);
                 (hit, place.and_then(|r| self.0.sidebar.location_of(r.section, r.index)).and_then(path_of))
             }
-            Hit::Tab(i) => (hit, self.0.nav.tab_location(i).and_then(path_of)),
-            Hit::Crumb(i) => (hit, self.0.nav.crumb_location(i).and_then(path_of)),
-            Hit::PinAt(_) => return Target { action: Some(Action::Pin), ..Target::none(hit) },
-            Hit::Stack if d.from_stack => return Target::none(hit),
-            Hit::Stack => return Target { action: Some(Action::AddToStack), ..Target::none(hit) },
-            Hit::Outside | Hit::Nothing => (hit, None),
+            (Hit::Tab(_, i), Some(pane)) => (hit, pane.nav.tab_location(i).and_then(path_of)),
+            (Hit::Crumb(_, i), Some(pane)) => (hit, pane.nav.crumb_location(i).and_then(path_of)),
+            (Hit::PinAt(_), _) => return Target { action: Some(Action::Pin), ..Target::none(hit) },
+            (Hit::Stack, _) if d.from_stack => return Target::none(hit),
+            (Hit::Stack, _) => return Target { action: Some(Action::AddToStack), ..Target::none(hit) },
+            // Outside, nothing there, or a pane that closed.
+            _ => (hit, None),
         };
         let action = dir.as_deref().and_then(|dir| self.effect(d, dir)).map(Action::Transfer);
         Target { hit, dir, action, archive: None }
@@ -777,7 +803,8 @@ impl Drags {
             // Nothing to move or link: what has no file behind it is copied.
             return Some(Effect::Copy);
         }
-        let roots: Vec<PathBuf> = self.0.nav.places().drives.into_iter().map(|drive| drive.path).collect();
+        let roots: Vec<PathBuf> =
+            crate::panes::active_nav().places().drives.into_iter().map(|drive| drive.path).collect();
         let first = d.sources.first()?;
         let effect = drag::choose(d.keys, drag::same_drive(first, dir, &roots), d.allowed)?;
         (!drag::refuse(&d.sources, dir, effect)).then_some(effect)
@@ -786,15 +813,19 @@ impl Drags {
     /// Whether files can be dropped into `dir` as far as Gezik knows without touching the
     /// disk: not on an optical drive.
     fn writable(&self, dir: &Path) -> bool {
-        !self.0.nav.places().drives.iter().any(|drive| drive.kind == DriveKind::Optical && is_within(dir, &drive.path))
+        !crate::panes::active_nav()
+            .places()
+            .drives
+            .iter()
+            .any(|drive| drive.kind == DriveKind::Optical && is_within(dir, &drive.path))
     }
 
     /// Shows `target`: highlighted, and (with `ghost`) described next to the dragged items.
     fn show(&self, window: &AppWindow, x: f32, y: f32, target: &Target, ghost: bool) {
-        let index = |i: usize| i32::try_from(i).unwrap_or(-1);
         let on = target.action.is_some();
+        window.set_drop_pane(target.hit.pane().map_or(-1, index));
         window.set_drop_entry(match target.hit {
-            Hit::Entry(i) if on => index(i),
+            Hit::Entry(_, i) if on => index(i),
             _ => -1,
         });
         window.set_drop_sidebar_row(match target.hit {
@@ -806,11 +837,11 @@ impl Drags {
             _ => -1,
         });
         window.set_drop_tab(match target.hit {
-            Hit::Tab(i) if on => index(i),
+            Hit::Tab(_, i) if on => index(i),
             _ => -1,
         });
         window.set_drop_crumb(match target.hit {
-            Hit::Crumb(i) if on => index(i),
+            Hit::Crumb(_, i) if on => index(i),
             _ => -1,
         });
         window.set_drop_stack(target.hit == Hit::Stack && on);
@@ -838,7 +869,9 @@ impl Drags {
     /// Resting on a tab opens it after a moment, and the drag goes on in it.
     fn follow_tab(&self, hit: Hit) {
         let tab = match hit {
-            Hit::Tab(i) if i != self.0.nav.active_index() => Some(i),
+            Hit::Tab(p, i) if crate::panes::at(index(p)).is_some_and(|pane| i != pane.nav.active_index()) => {
+                Some((p, i))
+            }
             _ => None,
         };
         if tab == self.0.hover_tab.get() {
@@ -846,21 +879,27 @@ impl Drags {
         }
         self.0.hover_tab.set(tab);
         match tab {
-            Some(i) => self.0.tab_timer.start(TimerMode::SingleShot, drag::TAB_HOVER, move || {
-                with_current(|drags| drags.tab_rested(i));
+            Some(tab) => self.0.tab_timer.start(TimerMode::SingleShot, drag::TAB_HOVER, move || {
+                with_current(|drags| drags.tab_rested(tab));
             }),
             None => self.0.tab_timer.stop(),
         }
     }
 
-    fn tab_rested(&self, i: usize) {
-        if self.0.hover_tab.get() != Some(i) || !matches!(*self.0.phase.borrow(), Phase::Dragging(_) | Phase::Offer(_))
+    fn tab_rested(&self, (p, i): (usize, usize)) {
+        if self.0.hover_tab.get() != Some((p, i))
+            || !matches!(*self.0.phase.borrow(), Phase::Dragging(_) | Phase::Offer(_))
         {
             return;
         }
         self.0.hover_tab.set(None);
-        self.0.nav.activate_tab(i);
-        if let Phase::Dragging(d) = &mut *self.0.phase.borrow_mut() {
+        if let Some(pane) = crate::panes::at(index(p)) {
+            pane.nav.activate_tab(i);
+        }
+        // Only the active pane's list (the one dragged from) was rebuilt.
+        if p == crate::panes::active_index()
+            && let Phase::Dragging(d) = &mut *self.0.phase.borrow_mut()
+        {
             // The pressed entry is gone with the old list, and so is its pointer grab: a
             // release over anything but the list would reach no one.
             d.pressed = None;
@@ -872,9 +911,9 @@ impl Drags {
 
     /// Near the list's top or bottom edge the list scrolls while the pointer rests there.
     fn follow_edge(&self, layout: &Layout, x: f32, y: f32) {
-        let list = &layout.list;
-        let near = list.rect.contains(x, y)
-            && drag::edge_scroll(y - list.rect.y, list.rect.height, list.geometry.row_height() / 2.0) != 0.0;
+        let near = list_under(layout, x, y).is_some_and(|(_, list)| {
+            drag::edge_scroll(y - list.rect.y, list.rect.height, list.geometry.row_height() / 2.0) != 0.0
+        });
         if near && !self.0.scroll_timer.running() {
             self.0.scroll_timer.start(TimerMode::Repeated, SCROLL_STEP, || {
                 with_current(|drags| drags.scroll_step());
@@ -886,12 +925,12 @@ impl Drags {
 
     fn scroll_step(&self) {
         let Some(window) = self.0.window.upgrade() else { return };
-        let y = match &*self.0.phase.borrow() {
-            Phase::Dragging(d) | Phase::Offer(d) => d.y,
+        let (x, y) = match &*self.0.phase.borrow() {
+            Phase::Dragging(d) | Phase::Offer(d) => (d.x, d.y),
             _ => return self.0.scroll_timer.stop(),
         };
         let layout = self.layout(&window);
-        let list = &layout.list;
+        let Some((p, list)) = list_under(&layout, x, y) else { return self.0.scroll_timer.stop() };
         let row_height = list.geometry.row_height();
         let step = drag::edge_scroll(y - list.rect.y, list.rect.height, row_height / 2.0);
         let lines = if list.groups.is_empty() {
@@ -901,7 +940,9 @@ impl Drags {
         };
         let content = lines as f32 * row_height;
         let lowest = (list.rect.height - content).min(0.0);
-        self.0.view.set_list_scroll((list.scroll + step).clamp(lowest, 0.0));
+        if let Some(pane) = crate::panes::at(index(p)) {
+            pane.view.set_list_scroll((list.scroll + step).clamp(lowest, 0.0));
+        }
         self.update();
         self.reanswer();
     }
@@ -956,6 +997,10 @@ impl Drags {
     }
 
     fn drop_on(&self, d: Dragging, target: Target) -> Option<Effect> {
+        // The pane dropped on becomes the active one (spec 10 §4.6).
+        if let Some(p) = target.hit.pane() {
+            crate::dual::activate(p);
+        }
         if let (Hit::PinAt(row), Some(Action::Pin)) = (target.hit, target.action) {
             self.0.sidebar.pin_at_row(&d.sources, row);
             return None;
@@ -968,8 +1013,8 @@ impl Drags {
         }
         let Some(dir) = target.dir else {
             // Search results have no folder to drop into (spec 4.6).
-            if matches!(target.hit, Hit::Background) && self.0.view.shows_results() {
-                self.0.view.note(crate::operations::NOT_HERE.to_owned());
+            if matches!(target.hit, Hit::Background(_)) && crate::panes::active_view().shows_results() {
+                crate::panes::active_view().note(crate::operations::NOT_HERE.to_owned());
             }
             return None;
         };
@@ -1031,7 +1076,7 @@ impl Drags {
                 self.0.grab_lost.set(false);
                 *self.0.phase.borrow_mut() = Phase::Ended;
                 if let Some(index) = d.pressed {
-                    self.0.view.release(index, true);
+                    crate::panes::active_view().release(index, true);
                 }
             }
             Ok(Handoff::Running(outside)) => {
@@ -1100,7 +1145,7 @@ impl Drags {
             }
         }
         if let Some(index) = handed.pressed {
-            self.0.view.release(index, true);
+            crate::panes::active_view().release(index, true);
         }
         if let Some(window) = self.0.window.upgrade() {
             use slint::platform::{PointerEventButton, WindowEvent};
@@ -1205,7 +1250,17 @@ impl Drags {
 /// Whether items with no file behind them may land at `hit`: into a folder only (not the drop
 /// stack, not pinned; an archive's entry means its folder).
 fn virtual_allows(hit: Hit) -> bool {
-    matches!(hit, Hit::Entry(_) | Hit::Background | Hit::Sidebar(_) | Hit::Tab(_) | Hit::Crumb(_))
+    matches!(hit, Hit::Entry(..) | Hit::Background(_) | Hit::Sidebar(_) | Hit::Tab(..) | Hit::Crumb(..))
+}
+
+/// The pane (its place) whose list is under (`x`, `y`), and that list.
+fn list_under(layout: &Layout, x: f32, y: f32) -> Option<(usize, &ListArea)> {
+    layout.panes.iter().enumerate().find(|(_, area)| area.list.rect.contains(x, y)).map(|(p, area)| (p, &area.list))
+}
+
+/// A place or index as Slint numbers it.
+fn index(i: usize) -> i32 {
+    i32::try_from(i).unwrap_or(-1)
 }
 
 /// The window's drop target, for files dragged in from other programs.
@@ -1259,7 +1314,7 @@ mod tests {
 
     #[test]
     fn virtual_items_go_only_into_folders() {
-        for hit in [Hit::Entry(0), Hit::Background, Hit::Sidebar(2), Hit::Tab(1), Hit::Crumb(0)] {
+        for hit in [Hit::Entry(0, 0), Hit::Background(1), Hit::Sidebar(2), Hit::Tab(1, 1), Hit::Crumb(0, 0)] {
             assert!(virtual_allows(hit), "{hit:?}");
         }
         for hit in [Hit::Stack, Hit::PinAt(1), Hit::Outside, Hit::Nothing] {

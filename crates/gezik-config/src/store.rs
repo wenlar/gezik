@@ -639,7 +639,8 @@ theme = \"dark\"
         use crate::settings::TabSet;
         let store = store("save-tab-sets");
         write(&store, "settings.toml", "# mine\ntheme = \"dark\"\n");
-        let set = TabSet { name: "Release".into(), tabs: vec!["{downloads}".into(), "drives".into()] };
+        let set =
+            TabSet { name: "Release".into(), tabs: vec!["{downloads}".into(), "drives".into()], right: Vec::new() };
         store.save_tab_sets(std::slice::from_ref(&set)).unwrap();
         let text = std::fs::read_to_string(store.dir().join("settings.toml")).unwrap();
         assert!(text.contains("# mine"));

@@ -10,12 +10,10 @@ use slint::platform::{Key as SlintKey, WindowEvent};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::keys;
-use crate::navigation::Navigator;
 use crate::operations::Operations;
-use crate::view::View;
 use crate::{AppWindow, MenuEntry};
 
-pub fn install(window: &AppWindow, view: View, nav: Navigator, ops: Operations) {
+pub fn install(window: &AppWindow, ops: Operations) {
     window.set_native_menu_bar(true);
     let weak = window.as_weak();
     window.on_menu_command(move |name| {
@@ -25,7 +23,7 @@ pub fn install(window: &AppWindow, view: View, nav: Navigator, ops: Operations) 
             "zoom" => window.window().set_maximized(!window.window().is_maximized()),
             name => {
                 if let Some(index) = name.strip_prefix("command:").and_then(|i| i.parse::<usize>().ok()) {
-                    return crate::actions::run_command(index, &view);
+                    return crate::actions::run_command(index, &crate::panes::active_view());
                 }
                 if let Some(id) = name.strip_prefix("tab-set:").and_then(|i| i.parse::<u32>().ok()) {
                     let names = crate::tab_sets::names();
@@ -39,6 +37,7 @@ pub fn install(window: &AppWindow, view: View, nav: Navigator, ops: Operations) 
                     return crate::view_options::sync_window(crate::view_options::current());
                 }
                 let Some(action) = Action::from_name(name) else { return };
+                let (nav, view) = (crate::panes::active_nav(), crate::panes::active_view());
                 if crate::trash_view::instead(action, &view) {
                     return;
                 }

@@ -3,7 +3,7 @@
 use std::cell::RefCell;
 use std::time::{Duration, Instant};
 
-use gezik_config::shortcuts::{Action, Chord, Key, Platform, Shortcuts};
+use gezik_config::shortcuts::{Action, Chord, Key, KeyContext, Platform, Shortcuts};
 use slint::platform::Key as SlintKey;
 
 thread_local! {
@@ -16,9 +16,11 @@ pub fn set_shortcuts(shortcuts: Shortcuts) {
     SHORTCUTS.with(|s| *s.borrow_mut() = shortcuts);
 }
 
-/// The action bound to `chord` in the shortcuts in effect.
+/// The action bound to `chord` in the shortcuts in effect, with as many panes as are open (a
+/// pane action's key is another's with one pane, spec 10 §4.4).
 pub fn action_for(chord: &Chord) -> Option<Action> {
-    SHORTCUTS.with(|s| s.borrow().action_for(chord))
+    let context = KeyContext { dual: crate::dual::is_open() };
+    SHORTCUTS.with(|s| s.borrow().action_in(chord, context))
 }
 
 /// The `[[commands]]` entry `chord` runs, by its index.
@@ -483,6 +485,8 @@ pub fn acts_on_files(action: Action) -> bool {
             | Action::Undo
             | Action::Redo
             | Action::BatchRename
+            | Action::CopyToOtherPane
+            | Action::MoveToOtherPane
     )
 }
 
@@ -514,7 +518,7 @@ pub fn acts_on_selection(action: Action) -> bool {
 /// Shortcuts left to the path box and the filter bar while either has the keyboard: the
 /// file operations and the selection's. (A dialog has the keyboard to itself anyway.)
 pub fn waits_for_text_fields(action: Action) -> bool {
-    acts_on_files(action) || acts_on_selection(action)
+    acts_on_files(action) || acts_on_selection(action) || action == Action::FocusOtherPane
 }
 
 /// Those that act on the selection: only while the file list has the keyboard.
@@ -540,6 +544,9 @@ pub fn needs_list(action: Action) -> bool {
             | Action::KeepOffline
             | Action::FreeUpSpace
             | Action::GetInfo
+            | Action::FocusOtherPane
+            | Action::CopyToOtherPane
+            | Action::MoveToOtherPane
     )
 }
 
@@ -708,6 +715,7 @@ mod tests {
                     3 => SlintKey::F3,
                     4 => SlintKey::F4,
                     5 => SlintKey::F5,
+                    6 => SlintKey::F6,
                     other => panic!("no default uses f{other}"),
                 }),
                 Physical::Other,
@@ -737,12 +745,13 @@ mod tests {
     fn every_default_is_reachable_on_windows_and_linux() {
         use gezik_config::shortcuts::parse_chord;
         let defaults = Shortcuts::defaults(Platform::Other);
-        let reach = |text: &str| {
+        let reach_in = |text: &str, dual: bool| {
             let chord = parse_chord(text, Platform::Other).unwrap().unwrap();
             let (t, physical, control, alt, shift, meta) = other_event(&chord);
             let got = chord_from_press(&t, physical, control, alt, shift, meta, Platform::Other).unwrap();
-            defaults.action_for(&got)
+            defaults.action_in(&got, KeyContext { dual })
         };
+        let reach = |text: &str| reach_in(text, false);
         for action in Action::ALL {
             let text = match action {
                 Action::NewTab => "ctrl+t",
@@ -807,6 +816,17 @@ mod tests {
                 Action::QuickOpen => "ctrl+p",
                 Action::GetInfo => "alt+enter",
                 Action::ConnectToServer => "ctrl+k",
+                Action::ToggleDualPane => "f3",
+                Action::SwapPanes => "ctrl+u",
+                Action::FocusOtherPane | Action::CopyToOtherPane | Action::MoveToOtherPane => {
+                    let text = match action {
+                        Action::FocusOtherPane => "tab",
+                        Action::CopyToOtherPane => "f5",
+                        _ => "f6",
+                    };
+                    assert_eq!(reach_in(text, true), Some(action), "{text} with two panes");
+                    continue;
+                }
                 Action::PasteMove
                 | Action::MakeAlias
                 | Action::ShowPackageContents
@@ -836,7 +856,10 @@ mod tests {
                 | Action::GroupSize
                 | Action::CollapseGroups
                 | Action::ExpandGroups
-                | Action::RevealInTree => continue,
+                | Action::RevealInTree
+                | Action::MoveTabToOtherPane
+                | Action::SyncBrowsing
+                | Action::OtherPaneSameFolder => continue,
             };
             assert_eq!(reach(text), Some(action), "{text}");
         }
@@ -862,7 +885,10 @@ mod tests {
         // there (known, spec 10.3), Shift+F4 is the one that always works.
         assert_eq!(reach("ctrl+alt+t"), Some(Action::OpenTerminal));
         assert_eq!(chord_from_slint("₺", true, true, false, false, Platform::Other), None);
-        assert_eq!(reach("f3"), Some(Action::Search));
+        // 10b: F3 opens the second pane, search has Ctrl+E, refresh Ctrl+R too.
+        assert_eq!(reach("ctrl+e"), Some(Action::Search));
+        assert_eq!(reach_in("ctrl+r", true), Some(Action::Refresh));
+        assert_eq!(reach("f5"), Some(Action::Refresh));
     }
 
     #[test]

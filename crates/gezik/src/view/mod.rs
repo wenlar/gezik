@@ -112,9 +112,9 @@ struct Inner {
     store: Option<ConfigStore>,
     /// The shown folder as remembered in `memory`; `None` for "This PC".
     folder: RefCell<Option<String>>,
-    columns: RefCell<Vec<ColumnState>>,
+    columns: SharedColumns,
     /// The search results' columns (sapma 6).
-    result_columns: RefCell<Vec<ColumnState>>,
+    result_columns: SharedColumns,
     /// The status bar while results show and nothing is selected ("Searching… 1,234 found").
     results_status: RefCell<Option<String>>,
     /// A search still adds batches: sorting waits for its end (sapma 4).
@@ -248,16 +248,34 @@ impl SortGate {
     }
 }
 
+/// A column layout, shared by every pane's view (spec 10 §3.3).
+type SharedColumns = Rc<RefCell<Vec<ColumnState>>>;
+
 #[derive(Clone)]
 pub struct View(Rc<Inner>);
 
 impl View {
     pub fn new(
         id: PaneId,
-        window: &AppWindow,
+        window: slint::Weak<AppWindow>,
         media: Media,
         memory: Rc<RefCell<ViewMemory>>,
         store: Option<ConfigStore>,
+    ) -> View {
+        let columns = (
+            Rc::new(RefCell::new(default_columns())),
+            Rc::new(RefCell::new(gezik_core::view::default_result_columns())),
+        );
+        View::with_columns(id, window, media, memory, store, columns)
+    }
+
+    fn with_columns(
+        id: PaneId,
+        window: slint::Weak<AppWindow>,
+        media: Media,
+        memory: Rc<RefCell<ViewMemory>>,
+        store: Option<ConfigStore>,
+        (columns, result_columns): (SharedColumns, SharedColumns),
     ) -> View {
         let defaults = ViewDefaults::default();
         let data = Rc::new(RefCell::new(ViewData {
@@ -270,7 +288,7 @@ impl View {
         crate::panes::edit(id, |d| d.items = ModelRc::from(model.clone()));
         let view = View(Rc::new(Inner {
             id,
-            window: window.as_weak(),
+            window,
             data,
             model,
             media: media.clone(),
@@ -289,8 +307,8 @@ impl View {
             memory,
             store,
             folder: RefCell::new(None),
-            columns: RefCell::new(default_columns()),
-            result_columns: RefCell::new(gezik_core::view::default_result_columns()),
+            columns,
+            result_columns,
             results_status: RefCell::new(None),
             searching: Cell::new(false),
             results_version: Cell::new(0),
@@ -322,6 +340,25 @@ impl View {
 
     /// `[view]` settings, at startup and whenever settings.toml changes. A folder without
     /// its own view follows the new defaults at once.
+    /// A view for pane `id` like this one: the same media, folder view memory, defaults,
+    /// options and rules, and the same column layout (one for every pane, spec 10 §3.3).
+    pub fn for_pane(&self, id: PaneId) -> View {
+        let columns = (self.0.columns.clone(), self.0.result_columns.clone());
+        let media = self.0.media.client();
+        let shared =
+            View::with_columns(id, self.0.window.clone(), media, self.0.memory.clone(), self.0.store.clone(), columns);
+        shared.set_defaults(self.0.defaults.get());
+        shared.set_options(self.0.options.get());
+        // No folder shows yet: its place comes with the first one.
+        shared.set_rules(self.0.rules.borrow().clone(), Default::default);
+        shared
+    }
+
+    #[cfg(test)]
+    pub fn downgrade(&self) -> std::rc::Weak<impl Sized + use<>> {
+        Rc::downgrade(&self.0)
+    }
+
     pub fn set_defaults(&self, defaults: ViewDefaults) {
         // `options` go through `set_options` (view_options.rs): a change of only them must not
         // reset the model and lose the scroll.
@@ -1111,6 +1148,15 @@ impl View {
         Some((dir, out))
     }
 
+    /// The shown folder's sub-folders, those the filter hides too (sync browsing looks a name up).
+    pub fn folder_names(&self) -> Vec<String> {
+        let data = self.0.data.borrow();
+        match data.listing {
+            Listing::Files(..) => data.full.iter().filter(|e| e.is_dir).map(|e| e.name.clone()).collect(),
+            _ => Vec::new(),
+        }
+    }
+
     /// The selected folders' names (the shown folder's rows).
     pub fn selected_folder_names(&self) -> Vec<String> {
         let data = self.0.data.borrow();
@@ -1524,6 +1570,19 @@ impl View {
             Listing::Drives(drives) => drives.iter().any(|d| d.path == path),
             Listing::Results(set) => set.rows_of(&[path.to_path_buf()]).into_iter().any(|i| set.is_dir(i)),
         }
+    }
+
+    /// Whether `listing` (a folder read again) is what the view shows already: then showing it
+    /// would only make every row anew, losing a press, a double-click or a drag under way.
+    pub fn shows_same(&self, listing: &Listing) -> bool {
+        let Listing::Files(dir, entries) = listing else { return false };
+        let options = self.0.options.get();
+        let read = Listing::Files(dir.clone(), entries.clone());
+        let Listing::Files(_, entries) = read.without_hidden(options.show_hidden, options.show_system) else {
+            return false;
+        };
+        let data = self.0.data.borrow();
+        data.listing.folder().is_some_and(|shown| shown == dir.as_path()) && same_entries(&data.full, &entries)
     }
 
     /// The folder shown; `None` for "This PC".
@@ -2394,8 +2453,12 @@ impl View {
         });
     }
 
-    fn update_status(&self) {
+    /// The status line says what this view shows, if it is the active pane's.
+    pub fn update_status(&self) {
         let Some(window) = self.0.window.upgrade() else { return };
+        if !crate::panes::is_active(self.0.id) {
+            return;
+        }
         if let Some(note) = self.0.note.borrow().clone() {
             window.set_status(note.into());
             return;
@@ -2542,6 +2605,18 @@ fn sources_in(folder: Option<&Path>, sources: &[PathBuf]) -> bool {
 /// by the filter", "Nothing to undo") only while the item count stays as it was, so a changed
 /// count is not hidden; any note also goes at the next selection change. Another folder or
 /// tab starts without one.
+/// Whether `a` and `b` hold the same entries, in any order.
+fn same_entries(a: &[Entry], b: &[Entry]) -> bool {
+    type Key<'a> = (&'a str, bool, u8, u64, Option<SystemTime>, Option<SystemTime>);
+    fn keys(entries: &[Entry]) -> Vec<Key<'_>> {
+        let mut keys: Vec<Key> =
+            entries.iter().map(|e| (e.name.as_str(), e.is_dir, e.flags, e.size, e.modified, e.created)).collect();
+        keys.sort_unstable();
+        keys
+    }
+    a.len() == b.len() && keys(a) == keys(b)
+}
+
 fn note_after_show(standing: Option<String>, new: Option<String>, live: bool, count_changed: bool) -> Option<String> {
     new.or(standing.filter(|_| live && !count_changed))
 }
@@ -2641,6 +2716,23 @@ pub fn sizes_belong(shown: Option<&Path>, folder: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_folder_read_again_is_the_same_in_any_order() {
+        let entry = |name: &str, size| Entry {
+            name: name.to_owned(),
+            is_dir: false,
+            flags: 0,
+            size,
+            modified: None,
+            created: None,
+        };
+        let shown = [entry("a", 1), entry("b", 2)];
+        assert!(same_entries(&shown, &[entry("b", 2), entry("a", 1)]));
+        assert!(!same_entries(&shown, &[entry("a", 1), entry("b", 3)]), "a size changed");
+        assert!(!same_entries(&shown, &[entry("a", 1)]), "one is gone");
+        assert!(!same_entries(&shown, &[entry("a", 1), entry("c", 2)]), "renamed");
+    }
     use listing::files;
 
     #[test]

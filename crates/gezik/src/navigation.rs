@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use gezik_core::kind::is_package_name;
-use gezik_core::nav::{Closed, Crumb, Location, Session, Step, Tabs, ViewState, crumbs, nearest_existing};
+use gezik_core::nav::{Closed, Crumb, History, Location, Session, Step, Tabs, ViewState, crumbs, nearest_existing};
 use gezik_core::ops::paths::same_path;
 use gezik_core::refresh::{QUIET, RefreshPace};
 use gezik_core::view_rules::Place;
@@ -290,6 +290,9 @@ struct Inner {
     /// Names to select once the next move is shown ("Show in folder"). Dropped when that
     /// load fails or is overtaken, and by any other load the user starts.
     select_next: Option<Vec<String>>,
+    /// A note given while the user's load ran: shown with its listing (its item count would
+    /// replace it at once).
+    note_next: Option<String>,
     /// A tab was opened in front (its id): its first show is a visit.
     visit_next_show: Option<u64>,
     /// The load (its generation) going to the nearest folder of one found gone: no visit.
@@ -300,6 +303,9 @@ struct Inner {
     session_sent: Session,
     /// `[session] restore`: off, the sink is told an empty session (state.toml forgets it).
     session_on: bool,
+    /// A quiet re-read of the folder on screen (its generation): it keeps the selection and
+    /// scroll there when it lands, not those saved when it started (a click meanwhile stays).
+    reread: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -310,7 +316,7 @@ impl Navigator {
     /// `start`. Does not load anything: call [`install`](Self::install) next.
     pub fn new(
         id: PaneId,
-        window: &AppWindow,
+        window: slint::Weak<AppWindow>,
         view: View,
         session: Session,
         select: Vec<String>,
@@ -327,7 +333,7 @@ impl Navigator {
         crate::panes::edit(id, |d| d.tabs = ModelRc::from(tab_model.clone()));
         Navigator(Rc::new(RefCell::new(Inner {
             id,
-            window: window.as_weak(),
+            window,
             tabs,
             view,
             cleared: false,
@@ -349,11 +355,13 @@ impl Navigator {
             removal: None,
             on_visited: Vec::new(),
             select_next: None,
+            note_next: None,
             visit_next_show: None,
             fallback: None,
             session_sink: None,
             session_sent: Session::default(),
             session_on: false,
+            reread: None,
         })))
     }
 
@@ -404,8 +412,68 @@ impl Navigator {
         if !matches!(self.active_location(), Location::Path(ref path) if same_path(path, &watched)) {
             return;
         }
+        self.reread(Location::Path(watched));
+    }
+
+    /// Reads the folder on screen again, quietly, keeping what the user does meanwhile.
+    fn reread(&self, location: Location) {
         self.save_view();
-        self.load_with(Location::Path(watched), Mode::Show, None, false);
+        self.load_with(location, Mode::Show, None, false);
+        let mut inner = self.0.borrow_mut();
+        inner.reread = Some(inner.generation.load(Ordering::SeqCst));
+    }
+
+    fn id(&self) -> PaneId {
+        self.0.borrow().id
+    }
+
+    /// A navigator for pane `id` (its `view`) with `session`'s tabs, opening new tabs where
+    /// this one does and knowing the same places.
+    pub fn for_pane(&self, id: PaneId, view: View, session: Session) -> Navigator {
+        let (window, start, places) = {
+            let inner = self.0.borrow();
+            (inner.window.clone(), inner.start.clone(), inner.places.clone())
+        };
+        let nav = Navigator::new(id, window, view, session, Vec::new(), start);
+        nav.0.borrow_mut().places = places;
+        nav
+    }
+
+    /// The tabs as the session keeps them.
+    pub fn session(&self) -> Session {
+        self.0.borrow().tabs.session()
+    }
+
+    /// The pane is no longer the active one (or closes): its folder is not watched.
+    pub fn unwatch(&self) {
+        let mut inner = self.0.borrow_mut();
+        if inner.watched.take().is_some() {
+            inner.watch.watch(None);
+        }
+        inner.removal = None;
+        inner.pace.reset();
+        inner.refresh_timer.stop();
+    }
+
+    /// The pane became the active one: its folder is watched again and read anew in the
+    /// background, the selection and scroll kept (it was not watched meanwhile).
+    pub fn rewatch(&self) {
+        let location = self.active_location();
+        // A load under way (the pane's first) watches and shows the folder itself.
+        if self.0.borrow().cleared || self.0.borrow().user_load.is_some() {
+            return;
+        }
+        self.watch_shown(&location);
+        match &location {
+            Location::Path(path) if server_of(path).is_none() => self.reread(location),
+            Location::Trash => self.refresh_trash(),
+            _ => {}
+        }
+    }
+
+    #[cfg(test)]
+    pub fn downgrade(&self) -> std::rc::Weak<impl Sized + use<>> {
+        Rc::downgrade(&self.0)
     }
 
     /// Shows the first tab. Call once, after its pane is installed (`panes::install`): the
@@ -484,17 +552,18 @@ impl Navigator {
             inner.view.clone()
         };
         // A search running on screen stops; whole results stay with their tab.
-        crate::panes::with_active(|p| p.search.leaving());
+        crate::panes::with_id(self.id(), |p| p.search.leaving());
         // Not while borrowed: the view calls its selection listeners.
         view.clear();
-        self.update_chrome();
+        // Loading first: a note the change brings (sync browsing ending) waits for the listing.
         self.load(self.active_location(), Mode::Show, note);
+        self.update_chrome();
     }
 
     /// The saved search `old` is now called `new`: the tabs showing it are titled so.
     pub fn rename_search(&self, old: &str, new: &str) {
         if self.keep_active_tab(|tabs| tabs.rename_search(old, new)) {
-            crate::panes::with_active(|p| p.search.rename_saved(old, new));
+            crate::panes::with_id(self.id(), |p| p.search.rename_saved(old, new));
             self.update_chrome();
         }
     }
@@ -548,6 +617,8 @@ impl Navigator {
             return self.update_chrome();
         }
         match self.with_tabs(|tabs| tabs.close(index)) {
+            // The right pane's last tab closes the pane (it keeps that tab for next time).
+            Closed::LastTab if crate::panes::index_of(self.id()) == Some(1) => crate::dual::close(),
             Closed::LastTab => {
                 let window = self.0.borrow().window.upgrade();
                 if let Some(window) = window
@@ -681,6 +752,39 @@ impl Navigator {
         self.update_chrome();
     }
 
+    /// Takes tab `index` out for the other pane, with its history, view and lock (spec 10
+    /// §4.5); the last tab leaves a new one at the start folder.
+    pub fn take_tab(&self, index: usize) -> Option<(History, bool)> {
+        let start = self.start();
+        if index != self.active_index() {
+            let taken = self.keep_active_tab(|tabs| tabs.take(index, start));
+            self.update_chrome();
+            return taken;
+        }
+        let taken = self.with_tabs(|tabs| tabs.take(index, start));
+        self.after_tabs_changed();
+        taken
+    }
+
+    /// Shows a tab taken from the other pane at `at` (None: after the active tab).
+    pub fn put_tab(&self, (history, locked): (History, bool), at: Option<usize>) {
+        let at = at.unwrap_or_else(|| self.active_index() + 1);
+        self.with_tabs(|tabs| tabs.insert(at, history, locked));
+        self.after_tabs_changed();
+    }
+
+    /// Swaps every tab (histories, locks, views) with `other`'s, and shows both (`swap-panes`).
+    pub fn swap_tabs(&self, other: &Navigator) {
+        for nav in [self, other] {
+            nav.save_view();
+            // A load in flight was for the tab that leaves.
+            nav.0.borrow().generation.fetch_add(1, Ordering::SeqCst);
+        }
+        std::mem::swap(&mut self.0.borrow_mut().tabs, &mut other.0.borrow_mut().tabs);
+        self.after_tabs_changed();
+        other.after_tabs_changed();
+    }
+
     /// Goes to `location` from the location on screen (a pending move is dropped: the
     /// click or typed path was meant for what is shown).
     pub fn go(&self, location: Location) {
@@ -716,27 +820,39 @@ impl Navigator {
         self.queue(|_| Some(Step::Forward));
     }
 
+    /// Nothing is loading or cleared: what is on screen is the active tab's location.
+    pub fn settled(&self) -> bool {
+        let quiet = {
+            let inner = self.0.borrow();
+            !inner.cleared && inner.user_load.is_none()
+        };
+        quiet && self.pending_steps().is_empty()
+    }
+
     pub fn up(&self) {
-        self.queue(|base| base.parent().map(Step::Navigate));
+        if self.queue(|base| base.parent().map(Step::Navigate)) {
+            crate::dual::stepped(self.id());
+        }
     }
 
     /// Adds the step `next` makes from `base` (where a pending move leads, else the current
     /// location) after that pending move, and loads where they all lead. So pressing back
     /// three times while a slow folder loads goes back three levels, not one.
-    fn queue(&self, next: impl FnOnce(&Location) -> Option<Step>) {
+    /// Whether a load started.
+    fn queue(&self, next: impl FnOnce(&Location) -> Option<Step>) -> bool {
         let mut steps = self.pending_steps();
         let target = {
             let inner = self.0.borrow();
             let history = inner.tabs.active();
-            let Some(base) = history.target_after(&steps) else { return };
-            let Some(step) = next(&base) else { return };
+            let Some(base) = history.target_after(&steps) else { return false };
+            let Some(step) = next(&base) else { return false };
             steps.push(step);
             history.target_after(&steps)
         };
-        if let Some(target) = target {
-            self.save_view();
-            self.load(target, Mode::Move(steps), None);
-        }
+        let Some(target) = target else { return false };
+        self.save_view();
+        self.load(target, Mode::Move(steps), None);
+        true
     }
 
     /// The moves of the load still in flight, if its result would still apply.
@@ -751,12 +867,12 @@ impl Navigator {
     pub fn reload(&self) {
         self.save_view();
         if let Location::Path(folder) = self.active_location() {
-            crate::panes::with_active(|p| p.folder_sizes.forget_children(&folder));
+            crate::panes::with_id(self.id(), |p| p.folder_sizes.forget_children(&folder));
         }
         // F5 on results runs the search again, with the name cache read anew (spec 4.7).
         if self.active_location().is_results() {
             let tab = self.tab_id(self.active_index());
-            crate::panes::with_active(|p| p.search.forget(tab));
+            crate::panes::with_id(self.id(), |p| p.search.forget(tab));
         }
         self.load(self.active_location(), Mode::Show, None);
     }
@@ -837,7 +953,10 @@ impl Navigator {
     /// as a file and an alias leads to its original.
     pub fn open_item(&self, path: PathBuf, is_dir: bool) {
         match system_opening(path, is_dir) {
-            Opening::Go(folder) => self.go(Location::Path(folder)),
+            Opening::Go(folder) => {
+                self.go(Location::Path(folder));
+                crate::dual::stepped(self.id());
+            }
             Opening::Launch(path) => self.launch(&path),
             Opening::MissingAlias(alias) => crate::operations::with_current(|ops| ops.missing_alias(alias)),
         }
@@ -878,6 +997,7 @@ impl Navigator {
         }
         if let Some(folder) = folder {
             self.go(Location::Path(folder));
+            crate::dual::stepped(self.id());
         }
     }
 
@@ -910,6 +1030,21 @@ impl Navigator {
         self.0.borrow().window.upgrade().map_or(0, |w| gezik_platform::network::owner_of(&w.window().window_handle()))
     }
 
+    /// Shows `text` in the status bar until the selection changes: once the folder the user
+    /// is opening shows, if one is loading (F3's hint for a new pane, sync browsing ending on a
+    /// new tab).
+    pub fn note(&self, text: String) {
+        let view = {
+            let mut inner = self.0.borrow_mut();
+            if inner.user_load.is_some() {
+                inner.note_next = Some(text);
+                return;
+            }
+            inner.view.clone()
+        };
+        view.note(text);
+    }
+
     pub fn status(&self, text: String) {
         if let Some(window) = self.0.borrow().window.upgrade() {
             window.set_status(text.into());
@@ -919,7 +1054,7 @@ impl Navigator {
     /// Stores the active tab's selection and scroll before leaving it.
     fn save_view(&self) {
         // Results on screen stay with their tab; a search running there stops (spec 4.4).
-        crate::panes::with_active(|p| p.search.leaving());
+        crate::panes::with_id(self.id(), |p| p.search.leaving());
         let mut inner = self.0.borrow_mut();
         if inner.cleared {
             return;
@@ -946,6 +1081,8 @@ impl Navigator {
             inner.user_load = loading_text.then_some(ticket);
             if loading_text {
                 inner.select_next = None;
+                // A load the user starts is no step for sync browsing until a step marks it.
+                crate::dual::stepped(None);
             }
             // Any load of the watched folder covers its changes so far.
             if let Location::Path(path) = &location
@@ -955,7 +1092,10 @@ impl Navigator {
             }
             (inner.id, inner.window.clone(), inner.generation.clone(), ticket)
         };
-        if loading_text && let Some(w) = window.upgrade() {
+        if loading_text
+            && crate::panes::is_active(id)
+            && let Some(w) = window.upgrade()
+        {
             w.set_status("Loading…".into());
         }
         std::thread::spawn(move || {
@@ -978,6 +1118,7 @@ impl Navigator {
             let ticket = inner.pending.take().map(|(ticket, _)| ticket);
             // Names for this load only: a failed one drops them too.
             select_next = inner.select_next.take();
+            note = note.or(inner.note_next.take());
             inner.user_load = None;
             inner.pace.finished(Instant::now());
             let active = inner.tabs.id(inner.tabs.active_index());
@@ -994,7 +1135,7 @@ impl Navigator {
         };
         let listing = match result {
             LoadResult::Files(path, mut entries) => {
-                crate::panes::with_active(|p| p.folder_sizes.apply_known(&path, &mut entries));
+                crate::panes::with_id(self.id(), |p| p.folder_sizes.apply_known(&path, &mut entries));
                 // The sidebar tree's open branch of this folder shows its sub-folders (spec 10 §5.2).
                 crate::sidebar::with_current(|s| s.listed(&path, &entries));
                 Listing::Files(path, Rc::new(entries))
@@ -1007,7 +1148,7 @@ impl Navigator {
             LoadResult::Results => {
                 let tab = self.tab_id(self.active_index());
                 let mut listing = Listing::default();
-                crate::panes::with_active(|p| listing = p.search.listing_for(&location, tab));
+                crate::panes::with_id(self.id(), |p| listing = p.search.listing_for(&location, tab));
                 listing
             }
             LoadResult::Gone { fallback } => {
@@ -1032,21 +1173,28 @@ impl Navigator {
                 return self.show_failed(&mode, &location, format!("Cannot open {shown}: {why}"));
             }
         };
-        let (view, state, place) = {
+        let (view, state, place, quiet) = {
             let mut inner = self.0.borrow_mut();
             if let Mode::Move(steps) = &mode {
                 inner.tabs.active_mut().apply_steps(steps);
             }
+            let reread = inner.reread.take() == Some(inner.generation.load(Ordering::SeqCst)) && !inner.cleared;
             inner.cleared = false;
-            let state = with_selection(view_to_show(&mode, inner.tabs.active().view()), select_next);
-            (inner.view.clone(), state, inner.view.rule_place(&location, &inner.places))
+            let shown = if reread { inner.view.capture() } else { view_to_show(&mode, inner.tabs.active().view()) };
+            let quiet = reread && select_next.is_none();
+            let state = with_selection(shown, select_next);
+            (inner.view.clone(), state, inner.view.rule_place(&location, &inner.places), quiet)
         };
         self.watch_shown(&location);
-        view.show(listing, &state, note, place);
-        crate::panes::with_active(|p| p.folder_sizes.shown(&location));
+        // A quiet re-read that found nothing new (the usual one, as a pane becomes active)
+        // leaves the rows alone: made anew, they would lose the click that made it active.
+        if !(quiet && note.is_none() && view.shows_same(&listing)) {
+            view.show(listing, &state, note, place);
+        }
+        crate::panes::with_id(self.id(), |p| p.folder_sizes.shown(&location));
         self.update_chrome();
         if location.is_results() {
-            crate::panes::with_active(|p| p.search.shown());
+            crate::panes::with_id(self.id(), |p| p.search.shown());
         }
         self.schedule_refresh();
         let visited = self.0.borrow().on_visited.clone();
@@ -1064,16 +1212,18 @@ impl Navigator {
         self.0.borrow_mut().on_visited.push(Rc::new(f));
     }
 
-    /// Watches the folder now on screen (none for This PC).
+    /// Watches the folder now on screen (none for This PC), while this pane is the active one
+    /// (one watcher at most, spec 10 §4.3).
     fn watch_shown(&self, location: &Location) {
+        let active = crate::panes::is_active(self.id());
         // Results are not watched (spec 4.7).
         let folder = match location {
-            Location::Path(path) if server_of(path).is_none() => Some(path.clone()),
+            Location::Path(path) if active && server_of(path).is_none() => Some(path.clone()),
             // The trash's bins are watched by `trash_view` while it shows; a server's shares
             // are not watched.
             Location::Path(_) | Location::Drives | Location::Search(_) | Location::Flat(_) | Location::Trash => None,
         };
-        if *location != Location::Trash {
+        if active && *location != Location::Trash {
             crate::trash_view::left();
         }
         let mut inner = self.0.borrow_mut();
@@ -1090,8 +1240,10 @@ impl Navigator {
             inner.refresh_timer.stop();
             drop(inner);
             // A `--background` start has no native window yet: the watch waits for the first show.
-            let nav = self.clone();
-            crate::resident::when_shown(move || nav.watch_removal());
+            let id = self.id();
+            crate::resident::when_shown(move || {
+                crate::panes::with_id(id, |p| p.nav.watch_removal());
+            });
         }
     }
 
@@ -1171,6 +1323,7 @@ impl Navigator {
 
     /// Shows `message` for a failed load; see [`apply_failure`].
     fn show_failed(&self, mode: &Mode, location: &Location, message: String) {
+        crate::dual::stepped(None);
         let (empty, view, state) = {
             let mut inner = self.0.borrow_mut();
             let empty = apply_failure(&mut inner.cleared, mode, location);
@@ -1179,7 +1332,7 @@ impl Navigator {
         let Some(empty) = empty else { return self.status(message) };
         view.show(empty, &state, Some(message), Place::default());
         // Whatever was being added up is not on screen any more.
-        crate::panes::with_active(|p| p.folder_sizes.shown(location));
+        crate::panes::with_id(self.id(), |p| p.folder_sizes.shown(location));
         self.update_chrome();
     }
 
@@ -1208,15 +1361,20 @@ impl Navigator {
                     }
                 };
             });
-            window.set_title_text(format!("{} — Gezik", inner.places.title_for(&location)).into());
-            let active = inner.tabs.active_index();
+            let active = crate::panes::is_active(inner.id);
+            if active {
+                window.set_title_text(format!("{} — Gezik", inner.places.title_for(&location)).into());
+            }
+            let active_tab = inner.tabs.active_index();
             let tabs = inner.tabs.iter().enumerate().map(|(i, h)| TabItem {
                 title: inner.places.title_for(h.location()).into(),
-                active: i == active,
+                active: i == active_tab,
                 locked: inner.tabs.is_locked(i),
             });
             sync_model(&inner.tab_model, tabs);
-            window.set_active_tab_locked(inner.tabs.is_locked(active));
+            if active {
+                window.set_active_tab_locked(inner.tabs.is_locked(active_tab));
+            }
             inner.on_changed.clone()
         };
         // Called with no borrow held, so listeners may use the navigator.
@@ -1288,6 +1446,21 @@ pub fn sync_model<T: Clone + PartialEq + 'static>(model: &VecModel<T>, items: im
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_note_given_while_a_folder_loads_waits_for_it() {
+        let id = crate::panes::next_id();
+        let window = slint::Weak::default();
+        let view = View::new(id, window.clone(), crate::media::Media::idle(), Default::default(), None);
+        let nav = Navigator::new(id, window, view, Session::single(Location::Drives), Vec::new(), Location::Drives);
+        nav.install();
+        nav.note("Sync browsing off".to_owned());
+        assert_eq!(nav.0.borrow().note_next.as_deref(), Some("Sync browsing off"), "kept for the listing");
+        nav.finish_load(Location::Drives, Mode::Show, LoadResult::Drives(Vec::new()), None);
+        assert!(nav.0.borrow().note_next.is_none(), "shown with it");
+        nav.note("now".to_owned());
+        assert!(nav.0.borrow().note_next.is_none(), "nothing loads: shown at once");
+    }
 
     #[test]
     fn a_bare_server_is_listed_by_its_shares_on_windows_only() {

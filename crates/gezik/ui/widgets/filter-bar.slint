@@ -89,6 +89,8 @@ export component FilterBar inherits Rectangle {
 
         Rectangle {
             horizontal-stretch: 1;
+            // A narrow pane squeezes it: the hint stays inside.
+            clip: true;
             field := TextField {
                 width: parent.width;
                 y: (parent.height - self.height) / 2;
@@ -117,6 +119,7 @@ export component FilterBar inherits Rectangle {
         // Text in files (spec 4.2): made only while Content is on (the filter bar has none).
         if root.search && root.content-open: Rectangle {
             horizontal-stretch: 1;
+            clip: true;
             content-field := TextField {
                 width: parent.width;
                 y: (parent.height - self.height) / 2;

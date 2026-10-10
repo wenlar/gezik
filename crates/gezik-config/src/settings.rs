@@ -224,6 +224,8 @@ pub struct TabSet {
     pub name: String,
     /// Paths with `{home}`-style tokens, or "drives" (This PC).
     pub tabs: Vec<String>,
+    /// The right pane's tabs (`right`, same form; spec 10 §4.9): opening the set opens it too.
+    pub right: Vec<String>,
 }
 
 /// A saved filter (`[[filters]]`): a name and a pattern of the filter's own language.
@@ -342,6 +344,8 @@ pub struct Settings {
     pub sidebar_cloud: bool,
     /// `[sidebar] tree-follow`: the sidebar tree opens down to the folder shown (spec 10 §5.3).
     pub sidebar_tree_follow: bool,
+    /// `[panes] confirm`: F5/F6 ask before copying or moving to the other pane (spec 10 §4.4).
+    pub panes_confirm: bool,
     pub terminal: TerminalSettings,
     pub search: SearchSettings,
     /// Tab sets (`[[tab-sets]]`); invalid ones are left out.
@@ -385,6 +389,7 @@ impl Default for Settings {
             system: SystemSettings::default(),
             sidebar_cloud: true,
             sidebar_tree_follow: false,
+            panes_confirm: true,
             terminal: TerminalSettings::default(),
             search: SearchSettings::default(),
             tab_sets: Vec::new(),
@@ -622,6 +627,23 @@ impl Settings {
                     }
                 }
                 None => warnings.push(Warning::new(file, format!("sidebar: expected a table, got {value}"))),
+            },
+        }
+        match table.get("panes") {
+            None => {}
+            Some(value) => match value.as_table() {
+                Some(panes) => {
+                    if let Some(value) = panes.get("confirm") {
+                        match value.as_bool() {
+                            Some(on) => settings.panes_confirm = on,
+                            None => warnings.push(Warning::new(
+                                file,
+                                format!("panes.confirm: expected true or false, got {value}"),
+                            )),
+                        }
+                    }
+                }
+                None => warnings.push(Warning::new(file, format!("panes: expected a table, got {value}"))),
             },
         }
         match table.get("terminal") {
@@ -1232,19 +1254,25 @@ pub(crate) fn parse_tab_set(value: &toml::Value) -> Result<TabSet, String> {
     if tabs.is_empty() {
         return Err("tabs is missing".to_owned());
     }
-    if tabs.iter().any(|tab| tab.trim().is_empty()) {
-        return Err("tabs has an empty path".to_owned());
+    let right = table.get("right").map_or(Ok(Vec::new()), |value| string_list(value, "right"))?;
+    for (key, list) in [("tabs", &tabs), ("right", &right)] {
+        if list.iter().any(|tab| tab.trim().is_empty()) {
+            return Err(format!("{key} has an empty path"));
+        }
+        if let Some(bad) = list.iter().find(|tab| crate::paths::has_parent_segment(tab)) {
+            return Err(format!("\"{bad}\" must not contain \"..\""));
+        }
     }
-    if let Some(bad) = tabs.iter().find(|tab| crate::paths::has_parent_segment(tab)) {
-        return Err(format!("\"{bad}\" must not contain \"..\""));
-    }
-    Ok(TabSet { name: name.to_owned(), tabs })
+    Ok(TabSet { name: name.to_owned(), tabs, right })
 }
 
 pub fn tab_set_to_toml(set: &TabSet) -> toml::Table {
     let mut table = toml::Table::new();
     table.insert("name".into(), toml::Value::String(set.name.clone()));
     table.insert("tabs".into(), toml::Value::Array(set.tabs.iter().cloned().map(toml::Value::String).collect()));
+    if !set.right.is_empty() {
+        table.insert("right".into(), toml::Value::Array(set.right.iter().cloned().map(toml::Value::String).collect()));
+    }
     table
 }
 
@@ -1522,21 +1550,35 @@ pub struct State {
     pub history: Vec<Visit>,
     /// The tabs of last time (`[session]`), opened at start if `[session] restore`.
     pub session: Session,
+    /// The right pane's tabs (`[session] right-tabs`, `right-active`), kept while it is closed.
+    pub right_session: Session,
+    /// The second pane was open (`[session] dual`), and which pane was active (`active-pane`, 0 or 1).
+    pub dual: bool,
+    pub active_pane: usize,
+    /// Sync browsing was on (`[session] sync`, spec 10 §4.7).
+    pub sync: bool,
+    /// The left pane's share of the two panes' width in thousandths (`[panes] split`, 0.2–0.8).
+    pub pane_split: Option<u16>,
     /// The palette's items used last, newest first (spec 7.3).
     pub palette_recent: Vec<String>,
     /// Connect to Server's addresses, newest first (`[servers] recent`).
     pub servers_recent: Vec<String>,
+    /// The F3 hint was shown (`[hints] f3-moved`, spec 10 §10.2), and when (Unix seconds,
+    /// `f3-moved-at`) while it may show once more.
+    pub f3_moved: bool,
+    pub f3_moved_at: Option<u64>,
 }
 
-/// state.toml's `[session]` (spec 5.1): the tabs in order and the one in front. An entry
+/// state.toml's `[session]` (spec 5.1): the tabs in order (key `tabs`, the right pane's
+/// `right-tabs`) and the one in front (`active`, `right-active`). An entry
 /// without a path (or `drives = true`), or with a relative one, is left out, and `active`
 /// counts the kept ones (the first if its entry was left out).
-fn session_state(value: Option<&toml::Value>) -> Session {
+fn session_state(value: Option<&toml::Value>, tabs: &str, active: &str) -> Session {
     let Some(table) = value.and_then(|v| v.as_table()) else { return Session::default() };
-    let wanted = table.get("active").and_then(|v| v.as_integer()).and_then(|n| usize::try_from(n).ok()).unwrap_or(0);
+    let wanted = table.get(active).and_then(|v| v.as_integer()).and_then(|n| usize::try_from(n).ok()).unwrap_or(0);
     let mut session = Session::default();
     let mut active = None;
-    for (i, item) in table.get("tabs").and_then(|v| v.as_array()).into_iter().flatten().enumerate() {
+    for (i, item) in table.get(tabs).and_then(|v| v.as_array()).into_iter().flatten().enumerate() {
         let Some(tab) = item.as_table() else { continue };
         let location = if tab.get("drives").and_then(|v| v.as_bool()) == Some(true) {
             Location::Drives
@@ -1672,6 +1714,8 @@ impl State {
                 })
                 .unwrap_or_default()
         };
+        let hint = |key: &str| table.get("hints").and_then(|v| v.as_table()).and_then(|t| t.get(key));
+        let session_flag = |key: &str| table.get("session").and_then(|v| v.as_table()).and_then(|t| t.get(key));
         let palette_recent = recent("palette", gezik_core::palette::RECENT_MAX);
         let servers_recent = recent("servers", SERVERS_MAX);
         State {
@@ -1688,9 +1732,22 @@ impl State {
             convert,
             selection,
             history,
-            session: session_state(table.get("session")),
+            session: session_state(table.get("session"), "tabs", "active"),
+            right_session: session_state(table.get("session"), "right-tabs", "right-active"),
+            dual: session_flag("dual").and_then(|v| v.as_bool()).unwrap_or(false),
+            active_pane: session_flag("active-pane").and_then(|v| v.as_integer()).map_or(0, |n| usize::from(n == 1)),
+            sync: session_flag("sync").and_then(|v| v.as_bool()).unwrap_or(false),
+            pane_split: table
+                .get("panes")
+                .and_then(|v| v.as_table())
+                .and_then(|t| t.get("split"))
+                .and_then(|v| v.as_float())
+                .filter(|f| (0.2..=0.8).contains(f))
+                .map(|f| (f * 1000.0).round() as u16),
             palette_recent,
             servers_recent,
+            f3_moved: hint("f3-moved").and_then(|v| v.as_bool()).unwrap_or(false),
+            f3_moved_at: hint("f3-moved-at").and_then(|v| v.as_integer()).and_then(|n| u64::try_from(n).ok()),
         }
     }
 
@@ -1820,43 +1877,77 @@ impl State {
             servers.insert("recent".into(), toml::Value::Array(recent));
             root.insert("servers".into(), toml::Value::Table(servers));
         }
+        let mut session = toml::Table::new();
         if !self.session.is_empty() {
-            let tabs = self
-                .session
-                .tabs
-                .iter()
-                .map(|tab| {
-                    let mut table = toml::Table::new();
-                    match &tab.location {
-                        Location::Path(path) => {
-                            table.insert("path".into(), toml::Value::String(path.to_string_lossy().into_owned()));
-                        }
-                        Location::Drives => {
-                            table.insert("drives".into(), toml::Value::Boolean(true));
-                        }
-                        Location::Trash => {
-                            table.insert("trash".into(), toml::Value::Boolean(true));
-                        }
-                        Location::Search(spec) => {
-                            table.insert("search".into(), toml::Value::Table(search_to_toml(spec)));
-                        }
-                        Location::Flat(path) => {
-                            table.insert("flat".into(), toml::Value::String(path.to_string_lossy().into_owned()));
-                        }
-                    }
-                    if tab.locked {
-                        table.insert("locked".into(), toml::Value::Boolean(true));
-                    }
-                    toml::Value::Table(table)
-                })
-                .collect();
-            let mut session = toml::Table::new();
             session.insert("active".into(), toml::Value::Integer(i64::try_from(self.session.active).unwrap_or(0)));
-            session.insert("tabs".into(), toml::Value::Array(tabs));
+            session.insert("tabs".into(), tabs_toml(&self.session));
+        }
+        if !self.right_session.is_empty() {
+            let active = i64::try_from(self.right_session.active).unwrap_or(0);
+            session.insert("right-active".into(), toml::Value::Integer(active));
+            session.insert("right-tabs".into(), tabs_toml(&self.right_session));
+        }
+        if self.dual {
+            session.insert("dual".into(), toml::Value::Boolean(true));
+        }
+        if self.active_pane == 1 {
+            session.insert("active-pane".into(), toml::Value::Integer(1));
+        }
+        if self.sync {
+            session.insert("sync".into(), toml::Value::Boolean(true));
+        }
+        if !session.is_empty() {
             root.insert("session".into(), toml::Value::Table(session));
+        }
+        if self.f3_moved {
+            let mut hints = toml::Table::new();
+            hints.insert("f3-moved".into(), toml::Value::Boolean(true));
+            if let Some(at) = self.f3_moved_at.and_then(|at| i64::try_from(at).ok()) {
+                hints.insert("f3-moved-at".into(), toml::Value::Integer(at));
+            }
+            root.insert("hints".into(), toml::Value::Table(hints));
+        }
+        if let Some(split) = self.pane_split {
+            let mut panes = toml::Table::new();
+            panes.insert("split".into(), toml::Value::Float(f64::from(split) / 1000.0));
+            root.insert("panes".into(), toml::Value::Table(panes));
         }
         root.to_string()
     }
+}
+
+/// A session's tabs as `[[session.tabs]]` writes them.
+fn tabs_toml(session: &Session) -> toml::Value {
+    toml::Value::Array(
+        session
+            .tabs
+            .iter()
+            .map(|tab| {
+                let mut table = toml::Table::new();
+                match &tab.location {
+                    Location::Path(path) => {
+                        table.insert("path".into(), toml::Value::String(path.to_string_lossy().into_owned()));
+                    }
+                    Location::Drives => {
+                        table.insert("drives".into(), toml::Value::Boolean(true));
+                    }
+                    Location::Trash => {
+                        table.insert("trash".into(), toml::Value::Boolean(true));
+                    }
+                    Location::Search(spec) => {
+                        table.insert("search".into(), toml::Value::Table(search_to_toml(spec)));
+                    }
+                    Location::Flat(path) => {
+                        table.insert("flat".into(), toml::Value::String(path.to_string_lossy().into_owned()));
+                    }
+                }
+                if tab.locked {
+                    table.insert("locked".into(), toml::Value::Boolean(true));
+                }
+                toml::Value::Table(table)
+            })
+            .collect(),
+    )
 }
 
 #[cfg(test)]
@@ -2901,7 +2992,8 @@ shortcut = \"shift+f8\"
             settings.tab_sets,
             [TabSet {
                 name: "Release".into(),
-                tabs: vec!["D:/Work/gezik".into(), "{downloads}".into(), "drives".into()]
+                tabs: vec!["D:/Work/gezik".into(), "{downloads}".into(), "drives".into()],
+                right: Vec::new(),
             }]
         );
         let defaults = Settings::default();
@@ -2917,7 +3009,8 @@ shortcut = \"shift+f8\"
              [[tab-sets]]\nname = \"None\"\ntabs = []\n\
              [[tab-sets]]\nname = \"Good\"\ntabs = [\"/a\"]\n\
              [[tab-sets]]\nname = \"GOOD\"\ntabs = [\"/b\"]\n\
-             [[tab-sets]]\nname = \"Num\"\ntabs = [3]\n",
+             [[tab-sets]]\nname = \"Num\"\ntabs = [3]\n\
+             [[tab-sets]]\nname = \"Right\"\ntabs = [\"/a\"]\nright = [\"{home}/../y\"]\n",
         );
         assert!(settings.session.restore, "a bad value keeps the default");
         assert_eq!(settings.terminal.command, None);
@@ -2933,6 +3026,7 @@ shortcut = \"shift+f8\"
                 "tab-sets[3]: tabs is missing",
                 "tab-sets[5]: \"GOOD\" is already used; this one is left out",
                 "tab-sets[6]: tabs must be a list of text, got 3",
+                "tab-sets[7]: \"{home}/../y\" must not contain \"..\"",
             ]
         );
         let (_, warnings) = parse("terminal = 1\n");
@@ -2958,6 +3052,85 @@ shortcut = \"shift+f8\"
         };
         assert_eq!(State::parse(&state.to_toml()), state);
         assert!(!State::default().to_toml().contains("session"));
+    }
+
+    #[test]
+    fn the_right_pane_round_trips_in_state() {
+        use gezik_core::nav::{Location, Session, SessionTab};
+        let state = State {
+            session: Session::single(Location::Drives),
+            right_session: Session {
+                tabs: vec![
+                    SessionTab { location: Location::Trash, locked: false },
+                    SessionTab { location: Location::Path(std::env::temp_dir().join("r")), locked: true },
+                ],
+                active: 1,
+            },
+            dual: true,
+            active_pane: 1,
+            sync: true,
+            pane_split: Some(350),
+            ..State::default()
+        };
+        let text = state.to_toml();
+        assert!(text.contains("right-tabs") && text.contains("split = 0.35") && text.contains("sync = true"), "{text}");
+        assert_eq!(State::parse(&text), state);
+        // Closed, the right tabs are still kept.
+        let closed = State { dual: false, active_pane: 0, sync: false, pane_split: None, ..state };
+        assert_eq!(State::parse(&closed.to_toml()), closed);
+    }
+
+    #[test]
+    fn the_panes_ask_unless_told_not_to_and_the_f3_hint_is_kept() {
+        assert!(Settings::default().panes_confirm, "spec 10 §10.1: asks by default");
+        let (settings, warnings) = parse("[panes]\nconfirm = false\n");
+        assert!(!settings.panes_confirm && warnings.is_empty());
+        let (settings, warnings) = parse("[panes]\nconfirm = \"no\"\n");
+        assert!(settings.panes_confirm, "a bad value keeps the default");
+        assert_eq!(warnings[0].message, "panes.confirm: expected true or false, got \"no\"");
+        let state = State { f3_moved: true, f3_moved_at: Some(1_800_000_000), ..State::default() };
+        assert_eq!(State::parse(&state.to_toml()), state);
+        let done = State { f3_moved_at: None, ..state };
+        assert_eq!(State::parse(&done.to_toml()), done);
+        assert!(!State::default().to_toml().contains("hints"));
+    }
+
+    #[test]
+    fn an_old_state_is_the_left_pane() {
+        let old = State::parse(
+            "[session]
+active = 0
+
+[[session.tabs]]
+drives = true
+",
+        );
+        assert_eq!(old.session.tabs.len(), 1);
+        assert!(
+            old.right_session.is_empty() && !old.dual && old.active_pane == 0 && !old.sync && old.pane_split.is_none()
+        );
+        // Out of range or the wrong type: the defaults.
+        let bad = State::parse(
+            "[session]
+dual = 1
+active-pane = 4
+sync = \"yes\"
+
+[panes]
+split = 0.9
+",
+        );
+        assert!(!bad.dual && bad.active_pane == 0 && !bad.sync && bad.pane_split.is_none());
+        assert_eq!(
+            State::parse(
+                "[panes]
+split = 0.2
+"
+            )
+            .pane_split,
+            Some(200)
+        );
+        assert!(!State::default().to_toml().contains("panes"));
     }
 
     #[test]

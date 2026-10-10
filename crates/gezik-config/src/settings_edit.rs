@@ -86,6 +86,11 @@ pub fn with_system(text: &str, key: &str, value: toml_edit::Value) -> Result<Str
     edit_table(text, "system", vec![(key, value)])
 }
 
+/// Returns `text` with `[panes] confirm` set (the F5/F6 question's Don't Ask Again).
+pub fn with_panes_confirm(text: &str, on: bool) -> Result<String, String> {
+    edit_table(text, "panes", vec![("confirm", on.into())])
+}
+
 /// Sets `entries` in `[name]` (adding the table and the missing keys), keeping each old value's
 /// decor so inline comments (`# list | grid`) survive.
 fn edit_table(text: &str, name: &str, entries: Vec<(&str, toml_edit::Value)>) -> Result<String, String> {
@@ -680,7 +685,11 @@ name = \"broken\" # mine
     #[test]
     fn tab_sets_are_written_keeping_the_rest() {
         use crate::settings::{Settings, TabSet};
-        let set = TabSet { name: "Release".into(), tabs: vec!["{downloads}".into(), "drives".into()] };
+        let set = TabSet {
+            name: "Release".into(),
+            tabs: vec!["{downloads}".into(), "drives".into()],
+            right: vec!["{home}".into()],
+        };
         let text = "# mine\n\n[[tab-sets]]\nname = \"old\"\ntabs = [\"/a\"]\n\n\
                     [[tab-sets]]\nname = \"broken\" # mine\ntabs = [\"{home}/../x\"]\n";
         let out = with_tab_sets(text, std::slice::from_ref(&set)).unwrap();
@@ -691,7 +700,7 @@ name = \"broken\" # mine
         assert_eq!(settings.tab_sets, [set]);
         assert_eq!(warnings.len(), 1, "the broken one still warns: {warnings:?}");
         let template = include_str!("../templates/settings.toml");
-        let one = [TabSet { name: "X".into(), tabs: vec!["/x".into()] }];
+        let one = [TabSet { name: "X".into(), tabs: vec!["/x".into()], right: Vec::new() }];
         let back = with_tab_sets(&with_tab_sets(template, &one).unwrap(), &[]).unwrap();
         for line in template.lines().filter(|l| l.starts_with('#')) {
             assert!(back.lines().any(|b| b == line), "{line} lost:\n{back}");
@@ -790,5 +799,12 @@ pattern = \"y\"
         let fresh = with_system("pinned = []\n", "tray", true.into()).unwrap();
         assert!(fresh.contains("[system]\ntray = true"), "{fresh}");
         assert!(with_system("system = 3\n", "tray", true.into()).is_err());
+    }
+
+    #[test]
+    fn dont_ask_again_turns_the_pane_question_off() {
+        let text = "[panes]\nconfirm = true           # F5/F6 ask\n";
+        assert_eq!(with_panes_confirm(text, false).unwrap(), "[panes]\nconfirm = false           # F5/F6 ask\n");
+        assert!(with_panes_confirm("", false).unwrap().contains("[panes]\nconfirm = false"));
     }
 }

@@ -129,9 +129,13 @@ pub fn toggle_hidden() {
 /// come or go.
 fn show(options: ViewOptions) {
     let mut reload = false;
-    crate::panes::with_active(|p| reload = p.view.set_options(options));
+    for p in crate::panes::all() {
+        if p.view.set_options(options) {
+            p.nav.reload();
+            reload = true;
+        }
+    }
     if reload {
-        crate::panes::with_active(|p| p.nav.reload());
         // Hidden or system folders come or go in the sidebar tree's open branches too.
         crate::sidebar::with_current(crate::sidebar::Sidebar::options_changed);
     }

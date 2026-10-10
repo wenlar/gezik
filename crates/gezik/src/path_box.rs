@@ -14,7 +14,7 @@ use gezik_core::complete::{rank, shows_history, sort_names, split_typed};
 use gezik_core::history::{FolderHistory, Visit};
 use gezik_core::nav::{Location, expand_typed};
 use gezik_core::ops::paths::same_path;
-use slint::{ComponentHandle, ModelRc, VecModel};
+use slint::{ModelRc, VecModel};
 
 use crate::navigation::{Navigator, resolve_typed};
 use crate::panes::PaneId;
@@ -389,7 +389,8 @@ struct Inner {
     reads: Cell<u64>,
     /// The folder, and the start of a name in it, the list waits for.
     wanted: RefCell<Option<(PathBuf, String)>>,
-    history: RefCell<FolderHistory>,
+    /// One for the process: every pane's box shares it.
+    history: Rc<RefCell<FolderHistory>>,
     store: Option<ConfigStore>,
     /// The folders looked at for being gone in this typing.
     checked: RefCell<Vec<PathBuf>>,
@@ -420,7 +421,7 @@ impl PathBox {
 
     pub fn new(
         id: PaneId,
-        window: &AppWindow,
+        window: slint::Weak<AppWindow>,
         nav: Navigator,
         store: Option<ConfigStore>,
         saved: Vec<Visit>,
@@ -435,9 +436,24 @@ impl PathBox {
             }
             FolderHistory::default()
         };
+        PathBox::with_history(id, window, nav, store, Rc::new(RefCell::new(history)))
+    }
+
+    /// A path box for pane `id` with this one's folder history (one for the process).
+    pub fn for_pane(&self, id: PaneId, nav: Navigator) -> PathBox {
+        PathBox::with_history(id, self.0.window.clone(), nav, self.0.store.clone(), self.0.history.clone())
+    }
+
+    fn with_history(
+        id: PaneId,
+        window: slint::Weak<AppWindow>,
+        nav: Navigator,
+        store: Option<ConfigStore>,
+        history: Rc<RefCell<FolderHistory>>,
+    ) -> PathBox {
         let this = PathBox(Rc::new(Inner {
             id,
-            window: window.as_weak(),
+            window,
             nav: nav.clone(),
             text: RefCell::default(),
             list: RefCell::default(),
@@ -448,13 +464,21 @@ impl PathBox {
             reading: RefCell::default(),
             reads: Cell::new(0),
             wanted: RefCell::default(),
-            history: RefCell::new(history),
+            history,
             store,
             checked: RefCell::default(),
             checking: Cell::new(false),
         }));
-        window.on_path_edited(|_pane, text| {
-            crate::panes::with_active(|p| p.path_box.edited(text.into()));
+        nav.on_visited(move |path| {
+            crate::panes::with_id(id, |p| p.path_box.visited(path));
+        });
+        this
+    }
+
+    /// The window's address bar callbacks, for every pane (once).
+    pub fn connect(window: &AppWindow) {
+        window.on_path_edited(|pane, text| {
+            crate::panes::with_row(pane, |p| p.path_box.edited(text.into()));
         });
         // By path, not by row: whatever happened to the list meanwhile, the click goes there.
         window.on_path_chosen(|path| {
@@ -462,12 +486,12 @@ impl PathBox {
         });
         window.on_path_editing_changed(|pane, on| {
             crate::panes::mirror_at(pane).path_editing.set(on);
-            crate::panes::with_active(|p| p.path_box.reset());
+            // Typing an address is an action in its pane.
+            if on {
+                crate::dual::pick(pane);
+            }
+            crate::panes::with_row(pane, |p| p.path_box.reset());
         });
-        nav.on_visited(move |path| {
-            crate::panes::with_id(id, |p| p.path_box.visited(path));
-        });
-        this
     }
 
     fn edited(&self, text: String) {

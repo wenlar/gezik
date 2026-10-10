@@ -1361,3 +1361,226 @@ Alt proje 1 tamamlandıktan sonra bilerek ertelenen maddeler. Kaynak: görev inc
 4. **Hızlı kontrol — PASS (after2 ile aynı).** Ekran dışında Enter: `dir060` → `c1x`, klasör açılmadı. Ekran dışında Esc: `dir070` yerinde. Normal F2: `dir080` tamamen seçili (klasörün uzantısı yok), `c3x` + Enter onaylandı, açılmadı. Dosyada F2: kök `zz1` seçili; `zzA` + Tab → `zz2.txt` kutusu, kök `zz2` seçili; Esc iptal.
 
 - Temizlik: bütün ad değiştirmeler geri alındı (`ren` yine 305 öğe, artık ad yok); başlatılan Gezik süreçleri kapalı, `cfg\` ve `bin\` silindi; `shots\` ve `data\` kaldı. Çöp, kayıt defteri, commit: dokunulmadı.
+
+## Adım 10, alt parça 10b (Çift panel) sonrası
+
+- Yapı: `dual.rs` ikinci bölmeyi açar/kapatır (F3; macOS ⌃⌘P), etkin bölmeyi, ayracı (`[panes] split`), F5/F6'yı (`copy-to-other-pane`/`move-to-other-pane`, `[panes] confirm`), sekme taşımayı, eşli gezinmeyi (`sync_nav`), `swap-panes` (Ctrl+U) ve `other-pane-same-folder`'ı tutar. Pencere düzeyindeki modüller `panes::active_nav()/active_view()`'a bakar; bölmenin sonuç yolu `with_id`'dir; işler başladıkları bölmeyi hatırlar. Yalnız etkin bölme klasörünü izler; etkin olan bölme klasörünü sessizce yeniden okur ve klasör değişmediyse (`View::shows_same`) satırlara dokunmaz. `Shortcuts::action_in(&chord, KeyContext { dual })`: iki bölmede bölme eylemleri önce gelir, `[shortcuts]`'ta yazılı bir tuş varsayılan bölme eylemini yener. Değişen varsayılanlar (Windows/Linux): F3 iki bölme, arama Ctrl+Shift+F ve Ctrl+E, yenile F5 ve Ctrl+R; F3 ipucu `[hints] f3-moved` (7 gün kuralı, zamanlayıcısız). `Action::ALL` 100. `state.toml`: `[session] right-tabs/right-active/dual/active-pane/sync`, `[panes] split`; sekme setleri `right = [...]`.
+- Ölçüm (sürüm, Windows, 2026-10-10; taban 10a-3): exe **25.213.952 → 25.451.520 bayt** (+237.568, bütçe 262.144). `measure.ps1 -Runs 5`: açılış 44 → 38 ms, bellek 7,4 → 7,5 MB. `stress.ps1` 100k: 17,4/16,9 → 17,3/17,5 MB (gürültü içinde). `panes.ps1` üç koşu: tek bölme 7,7–7,8 MB, iki bölme 8,8–9,0 MB, kapattıktan sonra +0,8–1,0 MB; tutamak 394, fark 0. Boşta CPU 10 sn'de tek bölme 0, iki bölme 0, kapattıktan sonra 0 ms; yeniden çizim döngüsü yok.
+- Spec §4.2'nin "kapatınca ±0,1 MB" hedefi tutmadı: kapattıktan sonra +0,8–1,0 MB kalıyor, altı aç/kapa döngüsünde büyümüyor, tutamaklar tabana dönüyor; kapanan bölmenin bütün yapıları bırakılıyor (`a_closed_pane_lets_go_of_everything_but_its_tabs`). Büyük olasılıkla ayırıcının tuttuğu boş bellek ve Slint'in bir kerelik yazı/glif önbellekleri. Öneri: hedefi "döngü başına büyüme yok" olarak yeniden yazmak (kullanıcı kararı bekliyor).
+- Bilinen sınırlar: arama ad önbelleği ve klasör boyutları önbelleği bölme başına (spec §4.10 ortak ister); eşli gezinme öbür bölmenin son listesine bakar (izlenmediği için dışarıda yeni açılmış klasörü kaçırabilir) ve öbür bölme yüklenirken adım gelirse "went apart" ile kapanır; bölme etkin olurken klasör tam o anda değiştiyse tıklama yine kaybolabilir; konumsuz dış bırakma (winit `dropped_file`) etkin bölmeye gider; kapalı ikinci bölmeye sekme taşınınca bölme kendi sekmesiyle açılır (yanında fazladan bir sekme); iki bölmede Shift+Tab her iki bölmeden de önce sağ bölmenin araç satırına gider; 240 px bölmede arama ad alanı 16 px (metin görünmez); program pencereyi en küçük genişliğin altına zorlarsa bölmeler eksik kalan kadar taşar; Miller'in sol oku (10e) eşli gezinmede adım sayılmıyor.
+- İncelemelerde bulunup düzeltilen: etkin olmayan bölmeye tıklama seçimini kaybediyordu, sağ basış öbür bölmede seçiyordu, bölme değişince işin sonucu yanlış bölmeye gidiyordu, çıkarma yalnız etkin bölmeyi bırakıyordu, ayraç uca kayıyordu (`7875b37`); iki düzeyden fazla eksik hedef klasör kurulamıyordu, `[shortcuts]`'ta yazılı tuşu bölme eylemi gölgeliyordu, Don't Ask Again doğrulamadan önce kaydediliyordu (`8277216`); tek bölmede Sync Browsing işareti açık kalıyordu, `panes.ps1` geçici klasörlerini bırakıyordu, eşli gezinme yüklenmekte olan bölmenin eski listesine bakıyordu, adım işareti başarısız yüklemeden sonra kalıyordu (`276f234`).
+- Ekran testlerinde bulunup düzeltilen: önizleme açıkken kapatılınca açılışta çökme (sol bölme kurulmadan önizleme etkin bölmeye bakıyordu), vurgu çizgisi sekmenin ortasındaydı, etkin olmayan bölmede ilk sağ tık menü açmıyordu, bölme en az ~390 px'ti ve uçta pencereden taşıyordu (iki bölmede pencere en az 1012 px'ti, şimdi 706), F3 ipucu ve "went apart" sözü siliniyordu, tek öğe başlığı tırnaksızdı (`81b2bfb`); etkin olmayan bölmede çift tık, sağ sürükleme ve bırakınca tek seçime inme kayboluyordu (aynı neden: etkinleşince yeniden okuma satırları tıklamanın altında kuruyordu), dar bölmede adres boştu ve klasör adı görünmüyordu, arama yer tutucusu `Content` ile çakışıyordu (`9349704`, `106059e`).
+
+## Windows ekran testleri: 10b (2026-10-10 16:58-17:50, ajan)
+
+- Derlemeler: TABAN `base.exe` (25.213.952 bayt, 10a-3) ve SONRA `task4-fix.exe` (25.423.872 bayt, `276f234`), oturumun `scratchpad\m10b\` klasöründen `%TEMP%\gezik-gui-10b\bin\`'e kopyalandı, yeniden derlenmedi (ölçümlerde cargo/rustc süreci 0).
+- Yöntem 10a-3 ile aynı: Win32 `keybd_event`/`mouse_event` + `SendInput` (`KEYEVENTF_UNICODE` ile yazı) + UI Automation + `PrintWindow` (`PW_RENDERFULLCONTENT`) piksel karşılaştırması (alfa dışında birebir). Birincil ekran (2560×1440); tek bölme testleri 1280×800 @ 40,40, iki bölme testleri 1600×900 @ 40,40. Her tuş/tıklama/tekerlekten önce ön plan penceresinin **bu koşuda başlatılan bir Gezik PID'i** olduğu, tıklamada noktanın altındaki pencerenin de öyle olduğu denetlendi. Gezik öne kendiliğinden gelmezse yalnız **kendi** penceresi bir an `HWND_TOPMOST` yapılıp kendi başlık çubuğuna tıklandı. Denetim birkaç kez betiği durdurdu (pencere dışına düşen sürükleme hedefi, açılmayan pencere); hiçbir girdi başka pencereye gitmedi.
+- Her oturum taze `GEZIK_CONFIG_DIR` = `%TEMP%\gezik-gui-10b\cfg\<ad>`; SONRA oturumlarında `state.toml`'a `[hints] f3-moved = true` önceden yazıldı (ipucu testi dışında). Kullanıcının ayarlarına dokunulmadı. Veri `%TEMP%\gezik-gui-10b\data`: `px`, `big` (2.000 dosya), `dual\L` / `dual\R` (eşli gezinme ağaçları, `Docs` / `docs`), `ops\src|dst`, `dnd2`, `watch\A|B` (200'er dosya), `tabs\t1..t4`, `stress-100000`, `perf-panes`.
+- Çıkış yalnız `WM_CLOSE` ile (durum dosyası yazılsın diye); takılan pencerede kendi PID'im durduruldu. Kabuğa dosya açtırılmadı (Enter/açma yalnız klasörlerde), kayıt defterine yazılmadı, Geri Dönüşüm Kutusu'na dokunulmadı (çöp maddeleri atlandı; çakışma panelinde `Replace` seçilmedi).
+- Klavye düzeni değiştirilmedi: başta ve sonda `Get-WinUserLanguageList` = `en-US=0409:0000041F`.
+- Ekran görüntüleri `%TEMP%\gezik-gui-10b\shots\` (dosya adı madde/oturum harfiyle başlar; `01-{base,after,diff}-*` piksel karşılaştırması). Betikler oturumun `scratchpad\m10bs\` klasöründe.
+
+### Sonuçlar
+
+1. **Tek bölmede piksel eşliği — PASS.** Aynı ayar, `px`, imleç pencere dışında:
+   - Düz liste, ızgara, süzgeç çubuğu, arama çubuğu (TABAN F3 ↔ SONRA Ctrl+E), ad değiştirme kutusu (270 ms arayla 3 kare), sağ kenar çubuğu + önizleme (Alt+P ile açıldı, aşağıdaki FAIL 1 yüzünden durumdan değil): **hepsi birebir** (`01-*-{list,grid,filter,search,rename-a,b,c,right-preview}.png`).
+   - Gizli kenar çubuğu: 4 piksel, kutu 20,109–21,110 (sayfanın sol üst köşe yumuşatması). Aynı fark **iki TABAN koşusu arasında da** var (TABAN r1↔r2 ve SONRA r1↔r2 de 4 piksel), yani koşudan koşuya oynayan bir kenar yumuşatması, 10b'ye özgü değil (`01-*-hidden*.png`).
+   - Pencerenin en küçük boyutu aynı (ikisinde de `MoveWindow` 200×150'yi kabul ediyor; kenardan sürüklemede ikisi de 617 px'te duruyor). Tek bölmede Tab sırası aynı: pencere → Up → Refresh → adres…; Shift+Tab: Places → View → adres (iki derlemede birebir).
+2. **F3 aç/kapa, yeniden açılış — PASS.** F3: sağ bölme sol bölmenin klasöründe açıldı ve etkin oldu (liste adları `Left pane, …\dual\L` / `Right pane, …\dual\L`). Sağda `R` ve yeni sekmede `R\docs` açıldı; F3 kapattı (tek liste `Files`), F3 yeniden açtı: `[R, docs]`, `docs` etkin. Çıkış sonrası `state.toml`: `right-active = 1`, `dual = true`, `active-pane = 1`, iki `[[session.right-tabs]]`; yeniden başlatma iki bölmeyi aynı sekmelerle ve sağ etkin olarak açtı (`A3-after-restart.png`). `split` varsayılanda yazılmıyor, sürükleyince `split = 0.691` yazıldı ve yeniden açılışta korundu. `[session] restore = false`: sağ sekmeler yazılmadı, yeniden açılışta F3 sol klasörde açtı. Sağ bölme hiç gezinmeden kapanınca `right-tabs` yazılmıyor ama yeniden açılışta sağ bölme yine soldaki klasörde geliyor (doğru).
+3. **640 px kuralı — PASS; 240 px alt sınır — FAIL (aşağıda FAIL 4).** 600 px pencerede F3: `The window is too narrow for two panes`, bölme açılmadı (`B1-after-narrow-refused.png`). 700 px'te F3 açtı ve pencere kendini 1012 px'e büyüttü. İki bölme + önizleme açıkken pencere daraltıldı: 1300'de önizleme yerinde, 1100'de önizleme kapandı ve durum satırı bir kez `The preview pane closed to keep room for two panes` dedi (`B2`, `B3`). Ama bölmeler 240 px'te değil **~390 px'te** duruyor (Lw 393 / Rw 390); aşağısı FAIL 4.
+4. **Ayraç — sürükleme, çift tık, kaydırmasız (drift) — PASS; uçta taşma — FAIL 4.** 1600 px: ayraç −300 px → L 390 / R 981; çift tık → 687 / 681 (ortada). Basılı tutup 900 px sola (en küçüğün ötesine) ve aynı yola geri: başlangıç noktasına dönünce genişlikler tam başlangıçtaki gibi (687 / 681, ayraç 942), kayma yok. Kenar çubuğu ayracı iki bölmede +80 px: kenar 200→280, bölmeler 647 / 641. Önizleme ayracı +60: sağ bölme 541→571 (iki bölme de +30).
+5. **Etkin bölme gösterimi ve ekran okuyucu adı — PASS (vurgu çizgisinin yeri FAIL 2).** Tıklama, Tab, araç düğmesi, alan odağı etkin bölmeyi değiştiriyor; başlık, durum satırı (`33 items · 1 selected (100 B)`) ve adres etkin bölmeyi izliyor. Etkin olmayan bölmenin seçili satırı %45: etkin `#5F3F31`, etkin değilken `#382B27` (zemin `#1B1C20`; 0,45 karışımıyla uyumlu), odak halkası yok (`C1-after-inactive-sel.png`). UIA adı `Left pane, C:\…\dual\L` / `Right pane, C:\…\dual\R` (Anlatıcı'nın okuyacağı ad); tek bölmede `Files` kalıyor. Kenar çubuğu vurgusu etkin bölmenin klasörünü izliyor (sağ `docs` → `[docs]`, Tab → `[L]`, Tab → `[docs]`).
+6. **Tab — PASS.** İki bölmede liste odaktayken Tab bölme değiştiriyor; adres alanında Tab alanda kalıyor (odak Edit, etkin bölme aynı), süzgeçte Tab `Saved filters`'a gidiyor (eski sıra), F2 kutusunda/adreste/süzgeçte F5-F6 alanda kalıyor. Shift+Tab iki bölmede listeden o bölmenin `View` düğmesine gidiyor (bölme değiştirmiyor). Harfle atlama bölme değişince sıfırlanıyor: sağda `r2` → `r20.txt`; Tab, `l1` → solda `l10.txt`; hızlı `l2`, Tab, `r1` → sol `l20`, sağ `r10` (birleşik `l2r1` aranmadı).
+7. **Etkin olmayan bölmeye tıklama seçimi koruyor — PASS.** Sağ etkin, solda `l07.txt` tıklandı: tıklamadan hemen sonra ve 1,5 s sonra (sessiz yeniden okumadan sonra) seçim `l07.txt`.
+8. **Etkin olmayan bölmede sağ basış — FAIL 3.** Bölme etkin oluyor, satır seçiliyor, ama bağlam menüsü açılmıyor (aşağıda).
+9. **Tek izleyici — PASS.** Sol `watch\A`, sağ `watch\B` (etkin). PowerShell ile `B\000_newB.txt`: sağ hemen gösterdi (`201 items`). `A\000_newA.txt`: 2,5 s sonra sol göstermiyor; Tab → gösterdi, seçim `a002.txt` yerinde. Sol aşağı kaydırılıp `a100` seçildi (`a092…a119`), Tab ile sağa, dışarıdan bir dosya daha, Tab ile geri: seçim `a100`, görünüm `a091…a118` (piksel kaydırması korunuyor; üste bir satır eklendiği için liste bir satır kaydı; 100 ms ve 1,5 s kareleri aynı, titreme yok). `HandleCount` için madde Ölçümler/`panes.ps1`.
+10. **F5/F6 öbür bölmeye — PASS.**
+    - Tek bölme: F5 soru açmıyor (yeniler), F6 hiçbir şey yapmıyor, Ctrl+R yeniliyor, Ctrl+E ve Ctrl+Shift+F arama alanını açıyor.
+    - İki bölme (sol `ops\src` etkin, sağ `ops\dst`): F5 → `Copy op_1.txt to C:\…\ops\dst?`, `Into this folder (a relative path is under it; a missing folder is made):`, alan = hedef, düğmeler `Copy | Don't Ask Again | Cancel` (`E1-after-f5-dialog.png`). Enter kopyaladı, etkin olmayan sağ bölme **hemen** gösterdi; Ctrl+Z geri aldı. İki öğe F6 → `Move 2 items to …?`, Enter taşıdı, iki bölme güncellendi, Ctrl+Z geri taşıdı.
+    - Alana `new\sub`: alt satır `Into …\dst\new\sub`; Enter iki klasörü yaptı, dosya içinde; Ctrl+Z dosyayı ve yapılan klasörleri kaldırdı. `..\newA\newB` (iki düzey eksik, öbür bölmenin dışında): `Into …\ops\newA\newB`, ikisi de yapıldı, Ctrl+Z `newA`'yı da kaldırdı. Boş alan: kırmızı `Type a folder`, Enter → durum `No folder was typed`, iş yok.
+    - Aynı ad: çakışma listesi (drop ile aynı panel); Esc iptal etti (`Cancelled`).
+    - `Don't Ask Again`: kopyaladı, `settings.toml` → `[panes]` altında `confirm = false`, yorumlar (`# my comment`, `# keep me`) yerinde; sonraki F5 sormadan kopyaladı; dosyada elle `true` → yeniden yüklendi, F5 yine sordu.
+    - Sözler: aynı klasör `Both panes show the same folder`; öbürü This PC → F5 `The other pane shows no folder to copy into`, F6 `… to move into`; öbürü arama sonuçları → aynı söz. Kaynak arama sonucu (`Search: op_8`) → F5 sordu, sağa kopyaladı, Ctrl+Z geri aldı. Palet: `Copy to the Other Pane F5`, `Move to the Other Pane F6`; tek bölmede palet → `There is no other pane`.
+    - Not: tek öğe başlığında ad tırnaksız (`Copy op_1.txt to …?`; listede `Copy "a.txt" to …` yazıyor). Çöp (F6 ile geri yükleme, öbür bölme çöpteyken F6 sözü) kural gereği **denenmedi**.
+11. **F3 ipucu — PASS (ikinci söz FAIL 5).** Taze durum: 1 s içinde durum satırı `F3 now opens a second pane; search is Ctrl+Shift+F or Ctrl+E`; `state.toml` `f3-moved = true`, `f3-moved-at = …`. Yeniden başlatma: ipucu yok. F3 (7 gün içinde) → `f3-moved-at` silindi ama söz ekranda görünmedi (FAIL 5). 8 gün önceki `f3-moved-at`: F3 bir şey demiyor. `[shortcuts] search = "f3"`: ipucu yok, F3 arama açıyor, uyarı `the default "f3" of toggle-dual-pane is used by search; toggle-dual-pane is disabled (give search another key to use it)`.
+12. **Sekmeyi menüyle / paletle taşıma — PASS.** Tek bölme, sekme menüsü `Move to other pane` (sıra: Duplicate, Move to other pane, Lock tab, Close, Close other tabs, Save tabs as…): ikinci bölme açıldı, `t2` gösterildi ve etkin, sol `[t1, t3]`. Taşınan sekmede Back → `t1`, Forward → `t2`, seçim `in_t2.txt` korunmuş. Kilitli `t1` taşındı, kilit simgesiyle (`G1-after-locked-crop.png`). Solun tek sekmesi taşınınca sol başlangıç klasöründe (`Home`) yeni sekme aldı, bölme açık kaldı. Palet `Move Tab to the Other Pane`: etkin bölmenin etkin sekmesini taşıdı, öbür bölme etkin oldu. 600 px pencerede menüden taşıma: `The window is too narrow…`, sekmeler yerinde. Not: tek bölmeden taşırken açılan sağ bölme ilk açılış sekmesini de (solun klasörü) tutuyor: sağ `[t3, t2]`.
+13. **Sekmeyi sürükleyerek taşıma — PASS.** Sağ sekme sol şeridin başına: `[t1, Home, t3]`, sol etkin. Sol sekme sağ şeridin sonunun ötesine: sonuna (`[t4, t1]`), sağ etkin. Sol sekme sağ listeye: sağın etkin sekmesinden sonra. Kenar çubuğuna bırakma: hiçbir şey taşınmadı, çizgi kalmadı (`G1b-after-tab-on-sidebar.png`). Kendi şeridinde sıralama eskisi gibi. Not (TABAN'da da aynı): sürükleme sırasında Esc sürüklemeyi iptal etmiyor, bırakınca taşıyor.
+14. **Dosyayı bölmeler arası sürükleme — PASS.** `dnd2\left` → `dnd2\right` (aynı sürücü): düz sürükleme taşıdı, sağ etkin oldu, iki bölme güncellendi, Ctrl+Z geri aldı; Ctrl kopyaladı; Shift taşıdı; `inbox` satırına: vurgu yalnız sağ bölmede, `Move to inbox` (`G2-after-hover-folder.png`); sağın `right2` sekmesine: üzerinde durunca sekme orada açıldı, bırakınca içine taşındı; sağın `dnd2` adres parçasına: oraya taşındı; sağ sürükleme: `Copy here / Move here / Create link` menüsü, `Copy here` kopyaladı (menü açıkken bölme henüz etkin değil, gözlem). Kenara yakın tutma öbür listeyi kaydırdı (`sub…file0024` → `file0029…file0054`). Arama sonucu gösteren öbür bölmenin boşluğuna: `Not in search results: open a folder first`, bölme etkin oldu, iş yok. Sağ bölmenin kendi sekmesine, kendi adres parçasına ve tam boy kenar çubuğundaki iğneye sürükleme doğru yere taşıdı. Tek bölmede satır/sekme/kenar çubuğu hedefleri TABAN ile aynı sonuç. Farklı sürücü ve Explorer'dan bırakma **denenmedi** (veri yalnız C:'de, başka uygulamaya girdi yok).
+15. **Eşli gezinme — PASS (bir söz görünmüyor, FAIL 5 notu).** View ▸ `Sync browsing` (madde işaretli; tek bölmede bu üç madde gri), adres çubukları arasında bağlantı simgesi, iki şeridin altında ince vurgu (`H1-after-sync-on-crop.png`). Çift tık `Docs` → sağ `docs` (harf duyarsız), Enter `deep` → iki taraf `deep`, Alt+Up → ikisi yukarı, iki düzey inip hızlı 3× Alt+Up → ikisi `L` / `R`. Sağ etkinken `Pics` → sol da `Pics`. Olmayan ad: `Sync browsing off: no folder "OnlyL" in …\dual\R`. Back, adres çubuğu, adres parçası: `Sync browsing off: the panes went apart`. Ctrl+T (sekme değişimi) eşlemeyi kapatıyor ama söz yeni sekmenin `62 items`'ıyla hemen siliniyor. Yeniden başlatma: `sync = true` geri geldi (adım eşlendi); ikinci bölme kapanınca kapandı. Tek bölmede palet: `Sync browsing needs two panes`. (Backspace Windows'ta yukarı gitmiyor; Alt+Up kullanıldı.)
+16. **Ctrl+U — PASS.** Tek bölme: `There is no other pane`. Sol `[L, Docs (kilitli)]` (Docs etkin), sağ `[R]`: Ctrl+U → sol `[R]`, sağ `[L, Docs]`, `Docs` etkin ve sağ etkin; kilit korunmuş (`state.toml` sağda `locked = true`), Back/Forward çalışıyor. Eşleme açıkken Ctrl+U sonrası adım eşlendi (açık kaldı). Çıkıştan sonra `tabs` / `right-tabs` yer değiştirmiş.
+17. **Same folder in other pane — PASS.** Öbür bölme etkin bölmenin klasörüne gitti; o bölmede Back eski yere döndü.
+18. **Sekme setleri — PASS.** İki bölmede `Save tabs as…` `set1` → `settings.toml`: `tabs = [L, L/Pics]`, `right = [R, R/docs]` (`{home}` ile). İkinci bölme kapalıyken Ctrl+P `set1`: ikinci bölme açıldı, sola `tabs`, sağa `right` (setler var olan sekmelere ekleniyor; TABAN tek bölmede de böyle). 600 px pencerede: bütün sekmeler etkin bölmede, ikinci bölme açılmadı.
+19. **İkinci çalıştırma / CLI ve hızlı açma — PASS.** Sağ etkinken `task4-fix.exe …\dual\L\OnlyL`: sağ bölmede yeni sekme açıldı; aynı yol tekrar: o sekme yeniden kullanıldı. Ctrl+P iğnelenmiş `Pics` → etkin (sağ) bölmede; Alt+Enter → sağda yeni sekme.
+20. **§4.10 satırları — PASS (denenenler).** Süzgeç yalnız kendi bölmesinde; iki arama aynı anda (sol `Search: op_`, sağ `Search: file1`, 1.000 sonuç), sağda Ctrl+B solun sonuçlarına dokunmadı; önizleme etkin bölmenin seçimini gösteriyor (`l01.txt` ↔ Tab ↔ `rd.txt`); Get Info (Alt+Enter) `op_7 Properties`, Tab sonrası `dst Properties` (pencereler `WM_CLOSE` ile kapatıldı); iş paneli: soldan F5, Tab, sağda Ctrl+Z geri aldı; bırakma yığını: soldan eklendi, sağ etkinken `Copy here` sağın klasörüne kopyaladı; klasör boyutları (`folder-sizes = "local"`) iki bölmede kendi klasörleri için (`Docs 10 B`, `docs 10 B`); kenar çubuğu tıklaması etkin bölmede açıyor, orta tık etkin bölmede yeni sekme; F2 açıkken öbür bölmeye tıklama adı onayladı (`zz.txt`, sonra geri adlandırıldı); adres yazarken öbür bölmeye tıklama düzenlemeyi bitirdi. **Denenmedi:** çöp görünümü, bulut işaretleri, çıkarma (USB), Hızlı Bakış (sistem uygulaması açabilir), Explorer'dan bırakma.
+21. **Etkin sağ bölmeyi kapatma — PASS.** Arama başlatılıp View ▸ Two panes ile kapatıldı: tek liste, başlık `L - Gezik`, ↓↓ sol listede ilerledi (klavye listede). Sağın son sekmesinde Ctrl+W bölmeyi kapattı. (Sol bölmenin son sekmesi pencereyi kapatıyor: bilinen açık madde.)
+22. **Bellek bırakma — FAIL 6 (tutamaklar PASS).** Ölçümler bölümünde.
+23. **Boşta CPU — PASS.** `big`, 4 s bekleme + 10 s ölçüm, iki tur: TABAN tek bölme 0 / 0 ms, SONRA tek bölme 0 / 16 ms, SONRA iki bölme (sağ `px`) 0 / 0 ms, sol etkinken 0 / 0 ms, ikinci bölme kapandıktan sonra 0 / 0 ms. Her durumda 500 ms arayla iki kare birebir (yeniden çizim döngüsü yok).
+
+### FAIL 1: önizleme açıkken çıkılırsa SONRA açılmıyor (çökme)
+
+- Yeniden üretme: taze ayar, `task4-fix.exe …\data\dual\L`; Alt+P (önizleme açılır); pencereyi kapat (`WM_CLOSE`/×). `state.toml` artık `[preview] open = true`. Yeniden başlat → pencere hiç gelmiyor, süreç çıkıyor, stderr: `thread 'main' panicked at crates\gezik\src\panes.rs:272:37: the left pane is installed first`. Yalnız `[preview] open = true` yazılı bir `state.toml` de yetiyor (kenar çubuğu konumundan bağımsız).
+- TABAN aynı adımlarda normal açılıyor.
+- Neden (kaynaktan): `main.rs:1023` `preview.set_pane_open(saved_state.preview_open)` → `Preview::refresh()` → `panes::active_view()`; sol bölme ise `main.rs:1064`'te `panes::install(left)` ile kuruluyor. Önizleme açılışı bölme kurulduktan sonraya alınmalı (ya da `refresh` bölme yokken bir şey yapmamalı).
+- Kullanıcı etkisi: önizleme bölmesini açık bırakıp çıkan herkes Gezik'i bir daha açamıyor (state.toml elle düzeltilene kadar).
+
+### FAIL 2: etkin bölme çizgisi sekmenin ortasından geçiyor
+
+- İki bölmede etkin bölmenin etkin sekmesindeki 2 px vurgu çizgisi sekmenin **üstünde değil, dikey ortasında** çiziliyor: başlığın ve × düğmesinin üstünden üstü çizili yazı gibi geçiyor (`ex1-tabs-crop.png`, `G1-after-locked-crop.png`; `PrintWindow` ve ekran kopyasında aynı).
+- Neden: `crates/gezik/ui/widgets/tab-bar.slint:262` `if item.active && root.marked: Rectangle { x: …; width: …; height: 2px; … }` — `y` yok, Slint ortalıyor. `y: 0` (ya da `y: 1px`) gerekiyor.
+
+### FAIL 3: etkin olmayan bölmede sağ tık menü açmıyor
+
+- Yeniden üretme: iki bölme, sağ etkin (`dual\R`), solda `l04.txt` satırına (ya da sol listenin boşluğuna) sağ tık → sol etkin oluyor, `l04.txt` seçiliyor, **menü yok** (800 ms ve 1,3 s sonra da `#32768` penceresi yok). Aynı yere ikinci sağ tık menüyü açıyor. Sağ bölme için de aynı.
+- Etkin bölmede ilk sağ tık menüyü hemen açıyor; TABAN'da (tek bölme) ilk sağ tık açıyor.
+- Muhtemel neden: Task 1 düzeltme 2 (`on_item_down` önce bölmeyi seçiyor); seçim değişimi menü isteğini düşürüyor.
+
+### FAIL 4: bölmelerin en küçük genişliği ~390 px ve ayraç uçta bölmeyi pencereden taşırıyor
+
+- En küçük bölme genişliği 240 değil ~390 px (araç çubuğunun en küçük genişliği: dört düğme + adres + View). Pencereyi kenarından sürükleyerek daraltınca pencere 1012 px'te duruyor (tek bölmede 617).
+- Yeniden üretme (taşma): 1600×900, F3, ayracı sonuna kadar sağa sürükle → L 1099, R 390, R'nin x'i 1357: sağ bölmenin ~110 px'i pencerenin dışında (View düğmesi, Type/Size sütunları, kaydırma çubuğu, `+` görünmüyor; `B5-after-split-max.png`). Sola sonuna kadar: L 390, R 1093 (aynı taşma sağ kenarda). Oran %20/%80'e kenetleniyor, öbür bölmenin en küçüğü (390) kazanınca diğerinin yüzdesi küçülmüyor.
+- Programla daraltmada (`MoveWindow` 600 px) sağ bölme tamamen pencere dışında kalıyor, açık ve etkin görünmeden (`B3-after-min.png`); fareyle kenar sürüklemede pencere 1012'de durduğu için bu yol elle zor (Aero Snap denenmedi).
+
+### FAIL 5 (küçük): bazı durum sözleri hemen siliniyor
+
+- F3 ipucunun ikinci kez söylenmesi (7 gün içinde F3): `f3-moved-at` siliniyor ama söz görünmüyor; ilk örnekleme (156 ms) zaten `33 items`. `dual::f3_pressed` sözü yeni sağ bölmeye yazıyor, bölmenin ilk okuması onu durum sayısıyla değiştiriyor (Task 2'nin başlangıç ipucu için not ettiği durum).
+- Eşli gezinmede Ctrl+T: eşleme kapanıyor ama `Sync browsing off: the panes went apart` görünmüyor (yeni sekmenin `62 items`'ı).
+
+### FAIL 6: ikinci bölme kapanınca bellek tek bölmeye dönmüyor (hedef ±0,1 MB)
+
+- `panes.ps1` (3 koşu): kapattıktan sonra +1,1 / +0,8 / +0,7 MB; tutamaklar +0 (izleyici bırakılıyor).
+- Altı aç/kapa döngüsü (`watch\A|B`): kapalıyken 12,3 → 12,8 → 12,5 → 13,1 → 13,0 → 13,0 MB (başlangıç 11,4): ~+1,6 MB'ta duruyor, döngü başına büyümüyor; sızıntıdan çok ayırıcı/önbellek tutması gibi. Spec §4.2 / §13.1 hedefini yine de karşılamıyor.
+
+### Ölçümler
+
+| Ölçüm | TABAN | SONRA |
+|---|---|---|
+| exe | 25.213.952 B | 25.423.872 B (+209.920, bütçenin %80'i) |
+| `measure.ps1` (5 koşu, 2 tur): açılış | 45 / 34 ms | 35 / 33 ms |
+| `measure.ps1`: Görev Yöneticisi belleği | 7,4 / 7,3 MB | 7,4 / 7,4 MB |
+| `stress.ps1` 100.000 dosya, yükleme sonrası | 17,4 / 16,9 MB | 17,3 / 17,5 MB |
+| `stress.ps1` kaydırma sonrası | 17,5 / 17,1 MB | 17,4 / 17,5 MB |
+| `stress.ps1` kaydırma CPU'su (60 tekerlek) | 297 / 297 ms (2,45 / 2,54 s) | 266 / 297 ms (2,56 / 2,52 s) |
+| boşta CPU, `big`, 10 s, tek bölme | 0 / 0 ms | 0 / 16 ms |
+| boşta CPU, iki bölme (sağ `px`) | — | 0 / 0 ms |
+
+`panes.ps1` (SONRA, 3 koşu; özel çalışma kümesi):
+
+| | koşu 1 | koşu 2 | koşu 3 |
+|---|---|---|---|
+| tek bölme | 7,7 MB, 394 tutamak | 8,0 MB, 394 | 8,0 MB, 394 |
+| iki bölme | 9,3 (+1,6), 394 (+0) | 9,4 (+1,3), 394 (+0) | 9,3 (+1,3), 394 (+0) |
+| kapattıktan sonra | 8,8 (+1,1), 394 | 8,8 (+0,8), 394 | 8,7 (+0,7), 394 |
+
+Boşta ölçümünün kendi bellek/tutamak sayıları (`big` + sağda `px`, 2 tur): TABAN tek 11,7 MB / 395; SONRA tek 12,0–12,1 MB / 395; iki bölme 14,0–14,3 MB / 411–413; kapattıktan sonra 13,6–14,1 MB / 408. Buradaki +13 tutamak `panes.ps1`'de (iki tarafta yalnız `.txt`) yok; `px`'in dosya türlerinin (png/pdf/zip/docx…) simge/kabuk tutamakları olabilir, ayrıca incelenmedi.
+
+- Betik notları: `measure.ps1` özgün haliyle `-Config` ile (SONRA'nın ayar klasöründe `[hints] f3-moved = true`). `stress.ps1` ve `panes.ps1` kopyayla koşuldu (kaynak değişmedi): `stress.ps1`'e her tekerlekten önce ön plan + imleç altı PID denetimi eklendi, `-Dir` veri klasörüne, `GEZIK_CONFIG_DIR` geçici klasöre; `panes.ps1`'de yalnız `$root` / `$config` yolları `gezik-gui-10b\data|cfg` altına alındı (zaten her tuştan önce ön planı denetliyor).
+
+### Temizlik
+
+- Başlattığım bütün Gezik süreçleri kapandı (98 kayıtlı PID'in hiçbiri çalışmıyor; başka `gezik` süreci yok). Açılan iki Properties penceresi `WM_CLOSE` ile kapatıldı.
+- Veri yerinde bırakıldı (`%TEMP%\gezik-gui-10b\data`): `ops` sıfırlandı, `dual\L\l04.txt` geri adlandırıldı, `watch`'a eklenen dosyalar silindi, `dnd2` son sürükleme testlerinin sonucuyla kaldı, `big\file1924.zip` dokunulmamış (6.988 B, eski tarih; sahte zip'e bırakma `1 item failed` verdi). `cfg\`, `shots\` (99 dosya), `bin\` duruyor.
+- Silme/çöp denenmedi, Geri Dönüşüm Kutusu'na dokunulmadı, kayıt defterine yazılmadı, commit yok. Ctrl+T ve tek sekme taşıma kullanıcının Home klasörünü yalnız listeledi.
+- `Get-WinUserLanguageList` sonda yine `en-US=0409:0000041F`.
+
+### Yeniden test (81b2bfb)
+
+- 2026-10-10, ajan, bakımcı yokken. Derlemeler kopyalandı, yeniden derlenmedi: TABAN `base.exe` (10a-3, hash öncekiyle aynı), DÜZELTME `fix1.exe` (25.426.944 B, `81b2bfb`); karşılaştırma için önceki `task4-fix.exe` (`276f234`). Yöntem ve veri öncekiyle aynı (Win32 girdi + UIA + `PrintWindow`; her tuş/tıklamadan önce ön plan ve imleç altı pencere bu koşuda başlatılan bir Gezik PID'i mi diye denetlendi; taze `GEZIK_CONFIG_DIR` her oturumda, ipucu testi dışında `[hints] f3-moved = true`). Betikler `scratchpad\m10br\`, ekran görüntüleri `shots\` altında `R*`, `C*`, `D*`, `F2*`, `H5*`, `P-*`, `S*`.
+- Klavye düzeni: başta ve sonda `en-US=0409:0000041F`, değişmedi. 45 Gezik süreci başlatıldı, hepsi kapalı. `ops` sıfırlandı; silme/çöp/kayıt defteri yok.
+
+#### Sonuçlar
+
+1. **Açılış çökmesi — PASS.** Alt+P ile önizleme açılıp çıkıldı (`[preview] open = true`), yeniden açılış normal (`R1-fix-restart-preview.png`). Yalnız `[preview] open = true` içeren `state.toml`: açılıyor. İki bölme (sağ `R`, etkin) + önizleme açıkken çıkıp yeniden açma: iki bölme, sağ etkin, önizleme açık geldi (541/541, `R1-fix-restart-dual-preview.png`).
+2. **Vurgu çizgisi — PASS.** Etkin bölmenin etkin sekmesinde 2 px `#FF8F57` çizgi sekmenin üst kenarında (y=35–36, sekme çerçevesi satırı); başlık ve × üzerinden geçmiyor. Etkin olmayan bölmenin sekmesinde yok; ortada çizgi hiçbir ölçümde bulunmadı (`R2-fix-tab-top-zoom.png`). Tek bölme TABAN ile birebir (madde 7), çizgi yok.
+3. **Etkin olmayan bölmede ilk sağ tık — PASS; ama eski sorunlar bulundu (FAIL 7, FAIL 8) ve bir beklenen davranış gelmedi.**
+   - Liste ve ızgarada, satıra ve boşluğa: etkin olmayan bölmede ilk sağ tıkta menü 300 ms'de ve 800 ms'de açık; bölme etkin oluyor, satır seçiliyor (boşlukta seçim kalkıyor). 5'er tekrar: 5/5 (satır) ve 5/5 (boşluk), liste ve ızgarada. Etkin bölmede satır/boşluk sağ tık da menüyü açıyor.
+   - Etkin olmayan bölmede: düz tık satırı seçiyor ve bölmeyi etkin yapıyor; Ctrl+tık ekliyor (`op_2,op_5`), Shift+tık aralık seçiyor, boşluğa tık seçimi kaldırıyor. `single-click-open = true`: etkin olmayan bölmede tek tık klasörü açıyor (sol `Pics`, sağ `docs`); Ctrl+tık yalnız seçiyor.
+   - **Bırakınca tekli seçime inme (deselect-on-release) etkin olmayan bölmede çalışmıyor:** solda `op_1..op_3` seçili, sağ etkin; seçili `op_2`'ye düz tık → sol etkin oluyor ama seçim `op_1,op_2,op_3` kalıyor. Aynı tık etkin bölmede `op_2`'ye iniyor. Liste ve ızgarada aynı. Düzeltme raporu bunun da geri geldiğini söylüyor; ekranda gelmedi (bilerek mi, karar gerek).
+   - Etkin bölmeden sağ sürükleme `Copy here / Move here / Create link` menüsünü (180×94) açıyor; sol sürükleme etkin olmayan bölmeden de bölmeler arası taşıyor, Ctrl+Z geri alıyor.
+4. **Bölme genişlikleri — PASS (adres çubuğu FAIL 9).**
+   - 1600 px: ayraç sonuna kadar sağa → sol liste 1099, sağ 268 (oran %80'e kenetleniyor), sağ bölmenin sağ ucu 1625 < pencere 1640, sağ `View` 1534–1622 görünür. Sola → 274 / 1093, yine içeride (`D1-fix-1600-*.png`). Çift tık → 687/681. Basılı tutup +700 px ve geri: başlangıçtaki 687/681, kayma yok.
+   - 900 px: 337/331; sağa sonuna kadar 434/234, sola 240/428; iki `View` ve kaydırma çubuğu pencerede (`D1-fix-900-*.png`). (UIA liste genişliği; sağ liste soldan hep 6 px dar.)
+   - Pencereyi kenarından daraltma, iki bölme: **706 px**'te duruyor (önce 1012), bölmeler 240/234, hiçbir şey dışarıda değil (`D1-fix-min-dual.png`). Tek bölme: FIX 617, TABAN 617.
+   - 700 px pencerede F3: pencere 706'ya büyüdü (önce 1012), bölmeler 240/234.
+   - Önizleme açıkken: `MoveWindow` 1000'de önizleme hâlâ açık (bölmeler 241/241), 900'de kapandı ve `The preview pane closed to keep room for two panes` dedi. Fareyle kenar sürüklemede pencere önizlemeli en küçükte (997 px) duruyor, önizleme sürükleme sırasında kapanıyor (`D6-fix-held-997.png`); daha dar için ikinci bir sürükleme gerekiyor (o zaman 706). Kullanılabilir, not.
+   - Arama çubuğu 240 px bölmede: sağ ucu bölme kenarında kesiliyor, öbür bölmeye taşmıyor. Ama yer tutucu `Name contains…` ile `Content` düğmesi üst üste çiziliyor (`D1-fix-narrow-search-crop.png`), küçük kusur.
+5. **Durum sözleri — PASS.** `f3-moved-at` 2 gün önce: F3 → `F3 now opens a second pane; search is Ctrl+Shift+F or Ctrl+E` 0–2,5 s boyunca duruyor, çıkışta `f3-moved-at` silindi; sonraki açılışta F3'te ipucu yok. 8 gün önce: söz yok. Taze ayar: başlangıç ipucu 0,5 s'de geliyor. Eşli gezinmede Ctrl+T: `Sync browsing off: the panes went apart` 0–2,5 s duruyor, satır seçilince `62 items · 1 selected`. Back, adres çubuğu, eksik ad (`Sync browsing off: no folder "OnlyL" in …\R\docs`) sözleri eskisi gibi; Ctrl+Tab ve Back/Forward normal.
+6. **F5 başlığı — PASS.** `Copy "op_1.txt" to …\ops\dst?`, F6 `Move "op_2.txt" to …?`, iki öğe `Copy 2 items to …?`.
+7. **Gerileme — PASS.** Tek bölmede TABAN ↔ FIX piksel eşliği: liste, ızgara, süzgeç, arama (TABAN F3 ↔ FIX Ctrl+E), ad değiştirme (3 kare), sağ kenar çubuğu + önizleme, gizli kenar çubuğu: **hepsi birebir** (`P-*`). Duman: F3 aç/kapa/aç, Tab, F5 kopyala + Ctrl+Z, F6 taşı + Ctrl+Z, sekmeyi sağdan sol şeride sürükleme (`[src, Home]`), dosyayı soldan sağa sürükleme + Ctrl+Z, eşli gezinme (çift tık `Docs` → sağ `docs`, Alt+Up ikisi), Ctrl+U (sekmeler yer değiştirdi): hepsi doğru.
+8. **Ölçümler.**
+
+| Ölçüm | TABAN | FIX |
+|---|---|---|
+| `measure.ps1` (5 koşu, 2 tur): açılış | 33 / 33 ms | 43 / 33 ms |
+| `measure.ps1`: Görev Yöneticisi belleği | 7,4 / 7,4 MB | 7,4 / 7,4 MB |
+| exe | 25.213.952 B | 25.426.944 B (+212.992) |
+
+`panes.ps1` (FIX, 3 koşu; önceki kopya, yalnız yollar `gezik-gui-10b` altında, her tuştan önce ön plan denetimi):
+
+| | koşu 1 | koşu 2 | koşu 3 |
+|---|---|---|---|
+| tek bölme | 7,8 MB, 394 tutamak | 7,7 MB, 394 | 7,8 MB, 394 |
+| iki bölme | 9,1 (+1,3), 394 (+0) | 8,9 (+1,2), 394 (+0) | 8,9 (+1,2), 394 (+0) |
+| kapattıktan sonra | 8,5 (+0,8), 394 | 8,3 (+0,6), 394 | 8,4 (+0,7), 394 |
+
+Önceki gibi +0,6–0,8 MB'ta kalıyor (FAIL 6 bilerek bırakıldı), büyümüyor; tutamaklar +0.
+
+#### FAIL 7: etkin olmayan bölmede çift tık klasörü açmıyor (eski, 276f234'te de var)
+
+- Yeniden üretme: 1600×900, sol `dual\L`, F3, sağ `dual\R` (sağ etkin). Soldaki `Docs` satırına çift tık (iki tık arası 30, 120, 250 ms denendi) → sol etkin oluyor, `Docs` seçili, **klasör açılmıyor** (başlık `L — Gezik`, sekme `[L]`). Aynı çift tık sol etkinken her aralıkta açıyor. Sağ bölme için de aynı.
+- `task4-fix.exe` aynı sonucu veriyor; önceki koşuda denenmemişti. TABAN'da iki bölme yok.
+- Muhtemel neden FAIL 3 ile aynı: ilk basış bölmeyi seçip klasörü yeniden okutuyor, satır yeniden yapılıyor ve Slint'in `double-clicked`'i (eski TouchArea'da) kayboluyor. Düzeltme yalnız `item-up`'ı kurtarıyor. Aynı neden deselect-on-release'i de açıklayabilir (madde 3).
+
+#### FAIL 8: etkin olmayan bölmeden sağ sürükleme bırakma menüsü yerine hedefin bağlam menüsünü açıyor (eski)
+
+- Yeniden üretme: sol `ops\src`, sağ `ops\dst` etkin. Soldaki `op_7.txt`'yi sağ tuşla tutup sağ listenin boşluğuna sürükle, bırak → sağ bölmenin **boşluk bağlam menüsü** açılıyor (`Redo…, New folder, New file, …`, 262×372, `S2-after-rightdragfromINACTIVEleft.png`); `Copy here / Move here` yok, iş yapılmıyor. Aynı sağ sürükleme sol etkinken doğru menüyü açıyor (180×94). Sol tuşla sürükleme etkin olmayan bölmeden de çalışıyor.
+- `task4-fix.exe` aynı. Önceki koşudaki sağ sürükleme testi önce satıra sol tıklayıp bölmeyi etkin yapmıştı, o yüzden görülmedi.
+
+#### FAIL 9 (küçük): dar bölmede adres çubuğu boş
+
+- 900 px pencere, ayraç sonuna kadar sola (sol bölme 240): sol bölmenin adres alanı ~10 px'lik boş bir kutu; hiçbir yol parçası görünmüyor, `…\L\Docs\deep\deeper`'de de (`D1-fix-narrow-deep-crop.png`, `D1-fix-900-left.png`). Düzeltme raporu son parçaların görüneceğini söylüyor. 428 px'lik sağ bölmede parçalar `Thi… › › gezik-… › › ›` diye kısalıyor, bulunulan klasörün adı görünmüyor (541 px'te de; bu kısalma önceki derlemede de vardı, `B2-after-dual-preview.png`). Dar parçalara tıklama/bırakma bu yüzden denenemedi.
+- Küçük: 240 px bölmede arama çubuğunun yer tutucusu `Content` düğmesinin altında kalıyor.
+
+### Son yeniden test (106059e)
+
+- 2026-10-10 19:15-19:45, ajan, bakımcı yokken. Derlemeler kopyalandı, yeniden derlenmedi: TABAN `base.exe` (10a-3, 25.213.952 B, hash öncekiyle aynı), DÜZELTME `fix3.exe` (`106059e`, 25.451.520 B, +237.568); karşılaştırma için `fix1.exe` (`81b2bfb`). Yöntem ve veri öncekiyle aynı (Win32 girdi + UIA + `PrintWindow`; her tuş/tıklama/tekerlekten önce ön plan ve imleç altı pencerenin bu koşuda başlatılan bir Gezik PID'i olduğu denetlendi, PID listesi bu koşu için ayrı `pids-f.txt`; taze `GEZIK_CONFIG_DIR` her oturumda, `[hints] f3-moved = true`). Betikler `scratchpad\m10bf\`, ekran görüntüleri `shots\` altında `FA*`, `FB*`, `FC*`, `PF-*`.
+- Güvenlik denetimi bir kez betiği durdurdu (UIA'dan boş gelen bir öğe yüzünden 0,0 noktasına tıklanacaktı; tıklama gönderilmedi). Başka pencereye girdi gitmedi.
+- **Recycle Bin'e dokunmamak için kopyalar Ctrl+Z ile geri alınmadı** (kopyanın geri alınması çöpe atıyor, `gezik-ops` `TrashTask`); kopyalar betikle `Remove-Item` ile silindi. Taşımalar Ctrl+Z ile geri alındı (geri taşıma). Önceki koşulardaki "F5 kopyala + Ctrl+Z" adımları bu yüzden burada yok.
+- Klavye düzeni başta ve sonda `en-US=0409:0000041F`, değişmedi. 25 Gezik süreci başlatıldı (+ `panes.ps1` / `measure.ps1`'in kendileri), hepsi kapalı. Veri eski haline döndü (`ops` sıfır, `dual` 33/33 öğe, `watch`'a eklenenler silindi).
+
+#### Sonuçlar
+
+1. **FAIL 7 (etkin olmayan bölmede çift tık) — PASS.** 1600×900, sol `dual\L`, sağ `dual\R`. İki tık arası 30 / 120 / 250 ms; sol etkin değilken `Docs`, sağ etkin değilken `docs`: liste 6/6, ızgara 6/6 açıldı (bölme etkin oldu, adres ve liste adı `…\L\Docs` / `…\R\docs`).
+2. **FAIL 8 (etkin olmayan bölmeden sağ sürükleme) — PASS.** `ops\src` ↔ `ops\dst`. Etkin olmayan soldan sağın boşluğuna ve etkin olmayan sağdan solun boşluğuna, 3'er tekrar: her seferinde `Copy here / Move here / Create link here / Cancel` menüsü (180×94, `FA8-fix3-list-menu-from-inactive-left.png`), `Copy here` kopyaladı: liste 6/6, ızgara 6/6. `Move here` (liste ve ızgarada birer kez) taşıdı, Ctrl+Z geri taşıdı.
+3. **FAIL 9 (üç seçili öğeden birine düz tık) — PASS.** `l01..l03` / `r01..r03` seçili, öbür bölme etkin, ortadakine düz tık → yalnız `l02.txt` / `r02.txt` seçili, bölme etkin: liste 6/6, ızgara 6/6. Etkin bölmede de aynı (denetim).
+4. **Dışarıdan değişen klasör — PASS.** Sol `watch\A`, sağ `watch\B` etkin. PowerShell ile `A\000_ext1..3.txt`: 2,5 s sonra sol göstermiyor (tek izleyici, beklenen); Tab ile (2 kez) ve satıra tıklayarak (1 kez) sola geçince yeni dosya görünüyor. Tab'da seçim (`a002`, `a003`) ve piksel kaydırması korunuyor (üste bir satır eklendiği için liste bir satır kayıyor). Sağ etkin değilken eklenen dosya Tab'da göründü, dışarıdan silinen dosya Tab'da kayboldu. Etkin bölmede izleyici ekleme/silmeyi hemen gösteriyor.
+5. **Dar bölme — PASS (iki gözlem aşağıda).** 900 px pencere, ayraç sonuna kadar solda:
+   - 240 px: adres `deeper` (bulunulan klasör, adres 60 px, parça 380–433 içinde); `…\dual\L`'de `› › L`. 428 px'lik sağ bölmede `This PC … R`, `R` görünüyor. 390 px: `This PC › Docs › deep › deeper`, `deeper` tam. 400 px ve üstünde View yazılı (88 px), 390'da ve 240'ta yalnız simge (38 px, UIA adı `View`).
+   - View simge düğmesine tıklama: View menüsü (246×666) düğmenin hemen altında (üst kenar = düğmenin alt kenarı, x = düğmenin x'i), 240 ve 390 px'te.
+   - Klavye: soldaki simge View Shift+Tab zincirinde var (UIA `Button 'View'`), ama soldaki listeden 6. Shift+Tab'da (aşağıda gözlem 1).
+   - Parça tıklama: 240 px'te `deeper` yeniledi (`0 items`); 390 px'te `deep` → `…\Docs\deep`'e gitti. Bırakma: sağdan `r01.txt` 240 px'te `deeper` parçasına → oraya taşındı; 390 px'te `r02.txt` 15 px'lik kısalmış `Docs` parçasına → `L\Docs`'a taşındı; ikisi de Ctrl+Z ile geri taşındı.
+   - Arama çubuğu (Ctrl+E) 240 ve 390 px'te: yer tutucu `Content`'in altına/üstüne çizilmiyor, sağ uç bölme kenarında kesiliyor (`FC-fix3-240-search-zoom.png`, `FC-fix3-390-search-zoom.png`).
+6. **Gerileme — PASS.**
+   - Tek bölmede TABAN ↔ FIX3 piksel eşliği (`px`): liste, ızgara, süzgeç, arama (TABAN F3 ↔ FIX3 Ctrl+E), ad değiştirme 3 kare, sağ kenar çubuğu + önizleme, gizli kenar çubuğu: **hepsi birebir** (`PF-*`). Tek bölme pencere en küçüğü kenardan sürüklemede FIX3 617, TABAN 617.
+   - Duman: `[preview] open = true` ile açılış normal; F3 aç/kapa/aç; Tab bölme değiştiriyor; F5 `Copy "op_1.txt" to …?` kopyaladı; F6 `Move "op_2.txt" to …?` taşıdı, Ctrl+Z geri aldı; sekme sağdan sol şeride (`[src, Home]`); dosya soldan sağa sürükleme taşıdı, Ctrl+Z geri aldı; eşli gezinme (çift tık `Docs` → sağ `docs`, Alt+Up ikisi); Ctrl+U (`[dst]` ↔ `[src, Home]`); etkin olmayan bölmede ilk sağ tık satırda ve boşlukta menüyü 300 ms'de açtı.
+7. **Ölçümler.**
+
+| Ölçüm | TABAN | FIX3 |
+|---|---|---|
+| `measure.ps1` (5 koşu, 1 tur): açılış | 44 ms | 38 ms |
+| `measure.ps1`: Görev Yöneticisi belleği | 7,4 MB | 7,5 MB |
+| exe | 25.213.952 B | 25.451.520 B (+237.568) |
+
+`panes.ps1` (FIX3, 3 koşu; önceki kopya):
+
+| | koşu 1 | koşu 2 | koşu 3 |
+|---|---|---|---|
+| tek bölme | 7,7 MB, 394 tutamak | 7,7 MB, 394 | 7,8 MB, 394 |
+| iki bölme | 8,8 (+1,2), 394 (+0) | 9,0 (+1,2), 394 (+0) | 8,9 (+1,1), 394 (+0) |
+| kapattıktan sonra | 8,6 (+1,0), 394 | 8,5 (+0,8), 394 | 8,7 (+0,9), 394 |
+
+FAIL 6 gibi (bilerek bırakıldı): +0,8–1,0 MB, tutamaklar +0.
+
+#### Gözlemler (FAIL değil, karar için)
+
+1. **Shift+Tab hangi bölmeden olursa olsun sağ bölmenin araç çubuğuna gidiyor.** Sol etkin, sol listede satır seçili, Shift+Tab → sağ `View`, sonra sağ adres (sağ etkin oluyor), Refresh, Up, Back, ancak 6. adımda sol `View`, 7. adımda sol adres. `fix1.exe`'de de aynı (yeni değil); ilk koşunun "Shift+Tab o bölmenin View düğmesine gidiyor" notu yalnız sağ bölme için doğruymuş. Tab ise listede bölme değiştiriyor (beklenen).
+2. **240 px bölmede arama alanı 16 px.** Ctrl+E ile açılan ad alanı (`in L ▾` ile `Content` arasında) 16 px genişliğinde; yer tutucu da yazılan metin de görünmüyor. 390 px'te ~45 px, yine yer tutucu görünmüyor. Üst üste binme düzeldi ama dar bölmede arama pratikte görmeden yazmak demek.

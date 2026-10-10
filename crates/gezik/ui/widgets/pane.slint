@@ -95,7 +95,7 @@ export struct PaneGeometry {
     // The row under the toolbar, down to the sheet's bottom (the sidebar's top and height).
     body-y: length,
     body-height: length,
-    // The tab strip's left edge (it is inset).
+    // The tab strip's left edge in the window (it is inset).
     tab-x: length,
     tab-scroll: length,
     tab-width: length,
@@ -132,6 +132,10 @@ export struct PaneFocus {
 export component PaneView inherits Rectangle {
     in property <PaneData> data;
     in property <int> index;
+    // Two panes are open (spec 10 §4), and this one is the active one.
+    in property <bool> dual;
+    in property <bool> active;
+    in property <bool> synced;
     // The window's: the file list has the keyboard (its `keys` scope), what files dragged
     // would drop on, the column widths (shared by every pane, spec 10 §3.3).
     in property <bool> list-focused;
@@ -140,6 +144,7 @@ export component PaneView inherits Rectangle {
     in property <int> drop-entry: -1;
     in property <int> drop-tab: -1;
     in property <int> drop-crumb: -1;
+    in property <int> tab-insert: -1;
     in-out property <length> col-modified;
     in-out property <length> col-created;
     in-out property <length> col-type;
@@ -178,6 +183,7 @@ export component PaneView inherits Rectangle {
     callback tab-new(int);
     callback tab-move(int, int, int);
     callback tab-menu(int, int, length, length);
+    callback tab-out(int, int, length, length, bool) -> bool;
     callback view-menu(int, length, length, length, length);
     callback filter-edited(int, string);
     callback filter-menu(int, length, length, length, length);
@@ -276,7 +282,7 @@ export component PaneView inherits Rectangle {
         list-height: file-view.list-height,
         body-y: search-bar.absolute-position.y,
         body-height: file-view.absolute-position.y + file-view.height - search-bar.absolute-position.y,
-        tab-x: tab-bar.strip-x,
+        tab-x: tab-bar.absolute-position.x + tab-bar.strip-x,
         tab-scroll: tab-bar.scroll,
         tab-width: tab-bar.tab-width,
         tab-strip-width: tab-bar.strip-width,
@@ -459,14 +465,28 @@ export component PaneView inherits Rectangle {
         }
     }
 
-    VerticalLayout {
+    // With two panes, neither gets narrower than this (spec 10 §4.1), whatever its bars need
+    // (they are cut off); with one, what they need.
+    min-width: root.dual ? 240px : body.min-width;
+    clip: root.dual;
+    // Only with two panes. Set when the width changes: a binding on it would loop through the
+    // layout (with one pane the width follows what the bars need).
+    property <bool> narrow;
+    changed width => { self.narrow = root.dual && self.width < 400px; }
+    changed dual => { self.narrow = root.dual && self.width < 400px; }
+
+    body := VerticalLayout {
         tab-bar := TabBar {
             tabs: root.tabs;
             drop-tab: root.drop-tab;
+            marked: root.dual && root.active;
+            synced: root.synced;
             activate(i) => { root.tab-activate(root.index, i); }
             close(i) => { root.tab-close(root.index, i); }
             new-tab => { root.tab-new(root.index); }
             move-tab(from, to) => { root.tab-move(root.index, from, to); }
+            insert-at: root.tab-insert;
+            tab-out(t, x, y, r) => { return root.tab-out(root.index, t, x, y, r); }
             tab-menu(i, x, y) => {
                 root.end-path-editing();
                 root.tab-menu(root.index, i, x, y);
@@ -523,10 +543,13 @@ export component PaneView inherits Rectangle {
                         root.navigate(root.index, path);
                     }
                 }
+                // In a narrow pane its glyph only, leaving the address room for the folder's name.
                 TextButton {
-                    text: "View";
+                    text: root.narrow ? "" : "View";
+                    label: "View";
                     lead-icon: Glyph.view;
-                    icon: Glyph.chevron-down;
+                    icon: root.narrow ? "" : Glyph.chevron-down;
+                    compact: root.narrow;
                     height: Theme.control-height;
                     clicked => {
                         root.end-path-editing();
@@ -589,6 +612,8 @@ export component PaneView inherits Rectangle {
                         items: root.items;
                         mode: root.view-mode;
                         picture-size: root.grid-size;
+                        dimmed: root.dual && !root.active;
+                        label: !root.dual ? "Files" : (root.index == 0 ? "Left pane, " : "Right pane, ") + root.current-path;
                         trash: root.trash-shown;
                         grid-columns-changed(n) => { root.grid-columns-changed(root.index, n); }
                         zoom(bigger) => { root.zoom(root.index, bigger); }

@@ -251,7 +251,15 @@ pub fn allowed(action: Action) -> bool {
         | Action::GroupSize
         | Action::CollapseGroups
         | Action::ExpandGroups
-        | Action::RevealInTree => true,
+        | Action::RevealInTree
+        | Action::ToggleDualPane
+        | Action::FocusOtherPane
+        | Action::MoveTabToOtherPane
+        | Action::SyncBrowsing
+        | Action::SwapPanes
+        | Action::OtherPaneSameFolder
+        // Out of the trash it puts the items back into the other pane's folder (spec 10 §4.4).
+        | Action::MoveToOtherPane => true,
         // No drive to eject in the trash.
         Action::Eject
         | Action::Rename
@@ -279,7 +287,8 @@ pub fn allowed(action: Action) -> bool {
         | Action::CopyWithFolders
         | Action::CutWithFolders
         | Action::CalculateFolderSizes
-        | Action::SaveSearch => false,
+        | Action::SaveSearch
+        | Action::CopyToOtherPane => false,
     }
 }
 

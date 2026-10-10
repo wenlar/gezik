@@ -382,10 +382,26 @@ pub enum Action {
     ExpandGroups,
     /// Opens the sidebar tree down to the folder shown and gives it the keyboard (10c).
     RevealInTree,
+    /// Opens or closes the second pane (10b).
+    ToggleDualPane,
+    /// Makes the other pane the active one (Tab, only with two panes and the list focused).
+    FocusOtherPane,
+    /// Copies the selection into the other pane's folder (F5 with two panes).
+    CopyToOtherPane,
+    /// Moves the selection into the other pane's folder (F6 with two panes).
+    MoveToOtherPane,
+    /// Moves the active tab into the other pane, opening it first (no key).
+    MoveTabToOtherPane,
+    /// Turns sync browsing on or off: steps into a sub-folder or up are made in both panes.
+    SyncBrowsing,
+    /// Swaps the two panes' tabs; the active pane moves with its tab.
+    SwapPanes,
+    /// The other pane goes to the active pane's folder (no key).
+    OtherPaneSameFolder,
 }
 
 impl Action {
-    pub const ALL: [Action; 92] = [
+    pub const ALL: [Action; 100] = [
         Action::NewTab,
         Action::NewWindow,
         Action::CloseTab,
@@ -478,6 +494,14 @@ impl Action {
         Action::CollapseGroups,
         Action::ExpandGroups,
         Action::RevealInTree,
+        Action::ToggleDualPane,
+        Action::FocusOtherPane,
+        Action::CopyToOtherPane,
+        Action::MoveToOtherPane,
+        Action::MoveTabToOtherPane,
+        Action::SyncBrowsing,
+        Action::SwapPanes,
+        Action::OtherPaneSameFolder,
     ];
 
     pub fn name(self) -> &'static str {
@@ -574,6 +598,14 @@ impl Action {
             Action::CollapseGroups => "collapse-groups",
             Action::ExpandGroups => "expand-groups",
             Action::RevealInTree => "reveal-in-tree",
+            Action::ToggleDualPane => "toggle-dual-pane",
+            Action::FocusOtherPane => "focus-other-pane",
+            Action::CopyToOtherPane => "copy-to-other-pane",
+            Action::MoveToOtherPane => "move-to-other-pane",
+            Action::MoveTabToOtherPane => "move-tab-to-other-pane",
+            Action::SyncBrowsing => "sync-browsing",
+            Action::SwapPanes => "swap-panes",
+            Action::OtherPaneSameFolder => "other-pane-same-folder",
         }
     }
 
@@ -684,6 +716,14 @@ impl Action {
             Action::CollapseGroups => "Collapse All Groups",
             Action::ExpandGroups => "Expand All Groups",
             Action::RevealInTree => "Show in Sidebar Tree",
+            Action::ToggleDualPane => "Two Panes",
+            Action::FocusOtherPane => "Switch to the Other Pane",
+            Action::CopyToOtherPane => "Copy to the Other Pane",
+            Action::MoveToOtherPane => "Move to the Other Pane",
+            Action::MoveTabToOtherPane => "Move Tab to the Other Pane",
+            Action::SyncBrowsing => "Sync Browsing",
+            Action::SwapPanes => "Swap Panes",
+            Action::OtherPaneSameFolder => "Same Folder in the Other Pane",
         }
     }
 
@@ -723,6 +763,12 @@ impl Action {
         })
     }
 
+    /// Only with two panes: its key may be another action's too, which has it with one pane
+    /// (spec 10 §4.4).
+    pub fn needs_dual_pane(self) -> bool {
+        matches!(self, Action::FocusOtherPane | Action::CopyToOtherPane | Action::MoveToOtherPane)
+    }
+
     /// The action named `name` in settings.toml (`new-tab`).
     pub fn from_name(name: &str) -> Option<Action> {
         Action::ALL.into_iter().find(|a| a.name() == name)
@@ -744,7 +790,8 @@ impl Action {
             (Action::Up, Platform::Other) => &["alt+up"],
             (Action::FocusPath, _) => &["mod+l"],
             (Action::Refresh, Platform::Mac) => &["mod+r"],
-            (Action::Refresh, Platform::Other) => &["f5"],
+            // Ctrl+R as in Explorer: F5 copies while two panes are open (spec 10 §4.4).
+            (Action::Refresh, Platform::Other) => &["f5", "ctrl+r"],
             (Action::SelectAll, _) => &["mod+a"],
             (Action::ViewList, _) => &["mod+shift+1"],
             (Action::ViewGrid, _) => &["mod+shift+2"],
@@ -828,9 +875,10 @@ impl Action {
             (Action::AddToStack, _) => &["mod+shift+s"],
             (Action::ToggleStack, _) => &[],
             (Action::ShowHistory, _) => &[],
-            // F3 is Mission Control's on macOS (spec 9.3).
+            // F3 is Mission Control's on macOS (spec 9.3); elsewhere the second pane's since 10b,
+            // Ctrl+E is Explorer's search key.
             (Action::Search, Platform::Mac) => &["mod+shift+f"],
-            (Action::Search, Platform::Other) => &["mod+shift+f", "f3"],
+            (Action::Search, Platform::Other) => &["mod+shift+f", "ctrl+e"],
             (Action::FlatView, _) => &["mod+b"],
             (Action::ShowInFolder, _) => &["mod+shift+e"],
             (Action::CopyWithFolders | Action::CutWithFolders, _) => &[],
@@ -861,9 +909,20 @@ impl Action {
                 | Action::GroupSize
                 | Action::CollapseGroups
                 | Action::ExpandGroups
-                | Action::RevealInTree,
+                | Action::RevealInTree
+                | Action::MoveTabToOtherPane
+                | Action::SyncBrowsing
+                | Action::OtherPaneSameFolder,
                 _,
             ) => &[],
+            (Action::SwapPanes, Platform::Mac) => &["mod+ctrl+u"],
+            (Action::SwapPanes, Platform::Other) => &["ctrl+u"],
+            (Action::ToggleDualPane, Platform::Mac) => &["mod+ctrl+p"],
+            (Action::ToggleDualPane, Platform::Other) => &["f3"],
+            (Action::FocusOtherPane, _) => &["tab"],
+            // fn+F5 / fn+F6 on a Mac laptop's keyboard.
+            (Action::CopyToOtherPane, _) => &["f5"],
+            (Action::MoveToOtherPane, _) => &["f6"],
         }
     }
 }
@@ -876,9 +935,23 @@ pub enum KeyOwner {
     Command(usize),
 }
 
+/// Where a key is pressed: with two panes open, a key shared by a pane action is that one's.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct KeyContext {
+    pub dual: bool,
+}
+
+/// The action that has `chord` already, as far as `action` is concerned: one of the same kind
+/// (a pane action and another may share a key, spec 10 §4.4).
+fn holder(bindings: &[(Chord, Action)], chord: &Chord, action: Action) -> Option<Action> {
+    bindings.iter().find(|(c, a)| c == chord && a.needs_dual_pane() == action.needs_dual_pane()).map(|(_, a)| *a)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Shortcuts {
     bindings: Vec<(Chord, Action)>,
+    /// The actions `[shortcuts]` names (validly), whatever keys it gave them.
+    written: Vec<Action>,
     /// The keys of `[[commands]]` entries, by their index among the valid ones.
     commands: Vec<(Chord, usize)>,
 }
@@ -936,10 +1009,10 @@ impl Shortcuts {
         for (action, chords) in &user {
             let mut taken: Vec<Action> = Vec::new();
             for chord in chords {
-                match bindings.iter().find(|(c, _)| c == chord) {
+                match holder(&bindings, chord, *action) {
                     // The same key written twice for one action is just that key.
-                    Some((_, owner)) if owner == action => {}
-                    Some((_, owner)) => taken.push(*owner),
+                    Some(owner) if owner == *action => {}
+                    Some(owner) => taken.push(owner),
                     None => bindings.push((*chord, *action)),
                 }
             }
@@ -961,8 +1034,20 @@ impl Shortcuts {
             let mut taken: Vec<(&str, Action)> = Vec::new();
             for text in action.default_texts(platform) {
                 let chord = parse_chord(text, platform).expect("defaults are valid").expect("defaults are set");
-                match bindings.iter().find(|(c, _)| *c == chord) {
-                    Some((_, owner)) => taken.push((text, *owner)),
+                // A key written for another action is not a pane action's to share: the user
+                // meant it for that one (unless it is that action's own default, `refresh = "f5"`).
+                let written = || {
+                    let mut owners = bindings.iter().filter(|(c, _)| *c == chord).map(|(_, a)| *a);
+                    owners.find(|owner| {
+                        user.iter().any(|(a, _)| a == owner)
+                            && !owner
+                                .default_texts(platform)
+                                .iter()
+                                .any(|t| parse_chord(t, platform) == Ok(Some(chord)))
+                    })
+                };
+                match holder(&bindings, &chord, action).or_else(|| action.needs_dual_pane().then(written).flatten()) {
+                    Some(owner) => taken.push((text, owner)),
                     None => bindings.push((chord, action)),
                 }
             }
@@ -983,11 +1068,26 @@ impl Shortcuts {
                 ));
             }
         }
-        Shortcuts { bindings, commands: Vec::new() }
+        let written = user.iter().map(|(action, _)| *action).collect();
+        Shortcuts { bindings, written, commands: Vec::new() }
     }
 
+    /// The action `chord` runs with one pane.
     pub fn action_for(&self, chord: &Chord) -> Option<Action> {
-        self.bindings.iter().find(|(c, _)| c == chord).map(|(_, a)| *a)
+        self.action_in(chord, KeyContext::default())
+    }
+
+    /// The action `chord` runs in `context`: with two panes a pane action first, else the
+    /// other one; with one pane never a pane action.
+    pub fn action_in(&self, chord: &Chord, context: KeyContext) -> Option<Action> {
+        let of =
+            |dual: bool| self.bindings.iter().find(|(c, a)| c == chord && a.needs_dual_pane() == dual).map(|(_, a)| *a);
+        if context.dual { of(true).or_else(|| of(false)) } else { of(false) }
+    }
+
+    /// Whether `[shortcuts]` names `action` (its default keys are not in use then).
+    pub fn is_written(&self, action: Action) -> bool {
+        self.written.contains(&action)
     }
 
     /// The chord bound to `action`, if any.
@@ -999,8 +1099,9 @@ impl Shortcuts {
     /// action (default or written) or an earlier command has it: then nothing changes and
     /// the owner is returned.
     pub fn bind_command(&mut self, index: usize, chord: Chord) -> Result<(), KeyOwner> {
-        if let Some(action) = self.action_for(&chord) {
-            return Err(KeyOwner::Action(action));
+        // Any action's key, a pane action's too (F6 copies with two panes).
+        if let Some((_, action)) = self.bindings.iter().find(|(c, _)| *c == chord) {
+            return Err(KeyOwner::Action(*action));
         }
         if let Some(other) = self.command_for(&chord) {
             return Err(KeyOwner::Command(other));
@@ -1050,7 +1151,7 @@ mod tests {
             assert_eq!(fixed_owner(&cmd_option, Platform::Mac), None);
         }
         assert_eq!((Action::pin(0), Action::pin(10)), (None, None));
-        assert_eq!(Action::ALL.len(), 92);
+        assert_eq!(Action::ALL.len(), 100);
         assert_eq!(other.action_for(&chord("ctrl+1")), Some(Action::Tab1), "Ctrl+1 is still tab 1");
         assert_eq!(other.action_for(&chord("ctrl+alt+1")), None, "AltGr+1 types");
     }
@@ -1163,14 +1264,21 @@ mod tests {
     #[test]
     fn defaults_cover_every_action() {
         for platform in [Platform::Mac, Platform::Other] {
-            let s = Shortcuts::defaults(platform);
+            let mut warnings = Vec::new();
+            let s = Shortcuts::from_table(None, platform, "settings.toml", &mut warnings);
+            assert!(warnings.is_empty(), "{platform:?}: {warnings:?}");
             for action in Action::ALL {
+                let context = KeyContext { dual: action.needs_dual_pane() };
                 for text in action.default_texts(platform) {
                     let c = parse_chord(text, platform).unwrap().unwrap();
-                    assert_eq!(s.action_for(&c), Some(action), "{platform:?} {} {text}", action.name());
+                    assert_eq!(s.action_in(&c, context), Some(action), "{platform:?} {} {text}", action.name());
                 }
             }
         }
+        // F5 in each context.
+        let other = Shortcuts::defaults(Platform::Other);
+        assert_eq!(other.action_in(&chord("f5"), KeyContext { dual: false }), Some(Action::Refresh));
+        assert_eq!(other.action_in(&chord("f5"), KeyContext { dual: true }), Some(Action::CopyToOtherPane));
     }
 
     #[test]
@@ -1243,6 +1351,7 @@ duplicate = \"ctrl+d\"
         assert_eq!(s.action_for(&chord("ctrl+1")), Some(Action::ViewList));
         assert_eq!(s.action_for(&chord("ctrl+2")), Some(Action::ViewGrid));
         assert_eq!(s.action_for(&chord("f5")), None);
+        assert_eq!(s.action_in(&chord("f5"), KeyContext { dual: true }), Some(Action::CopyToOtherPane));
         assert_eq!(s.action_for(&chord("ctrl+h")), Some(Action::ToggleHidden));
         assert_eq!(s.action_for(&chord("ctrl+d")), Some(Action::Duplicate));
         assert_eq!(s.action_for(&chord("ctrl+3")), Some(Action::Tab3), "the other tab keys stay");
@@ -1340,9 +1449,9 @@ refresh = \"num+\"
         // The user's own list, all of it taken by keys written before it.
         let (s, warnings) = build(
             "[shortcuts]
-up = \"ctrl+u\"
+up = \"ctrl+g\"
 forward = \"ctrl+j\"
-back = [\"ctrl+u\", \"ctrl+j\"]
+back = [\"ctrl+g\", \"ctrl+j\"]
 ",
         );
         assert_eq!(s.chord_for(Action::Back), None);
@@ -1356,8 +1465,8 @@ back = [\"ctrl+u\", \"ctrl+j\"]
         );
         let (_, warnings) = build(
             "[shortcuts]
-up = \"ctrl+u\"
-back = [\"ctrl+u\", \"ctrl+j\"]
+up = \"ctrl+g\"
+back = [\"ctrl+g\", \"ctrl+j\"]
 ",
         );
         assert_eq!(warnings[0].message, "shortcuts.back: already used by up; that key is left out");
@@ -1402,12 +1511,14 @@ back = [\"ctrl+u\", \"ctrl+j\"]
         let (s, warnings) = build("[shortcuts]\nrefresh = \"\"\n");
         assert!(warnings.is_empty());
         assert_eq!(s.action_for(&chord("f5")), None);
+        assert_eq!(s.action_in(&chord("f5"), KeyContext { dual: true }), Some(Action::CopyToOtherPane));
     }
 
     #[test]
     fn invalid_binding_keeps_default_with_warning() {
         let (s, warnings) = build("[shortcuts]\nrefresh = \"hyper+r\"\nback = 5\n");
         assert_eq!(s.action_for(&chord("f5")), Some(Action::Refresh));
+        assert_eq!(s.action_in(&chord("f5"), KeyContext { dual: true }), Some(Action::CopyToOtherPane));
         assert_eq!(s.action_for(&chord("alt+left")), Some(Action::Back));
         assert_eq!(warnings.len(), 2, "{warnings:?}");
         assert!(warnings[0].message.starts_with("shortcuts.refresh:"));
@@ -1431,8 +1542,8 @@ back = [\"ctrl+u\", \"ctrl+j\"]
 
     #[test]
     fn first_written_user_binding_wins() {
-        let (s, warnings) = build("[shortcuts]\nup = \"ctrl+u\"\nback = \"ctrl+u\"\n");
-        assert_eq!(s.action_for(&chord("ctrl+u")), Some(Action::Up));
+        let (s, warnings) = build("[shortcuts]\nup = \"ctrl+g\"\nback = \"ctrl+g\"\n");
+        assert_eq!(s.action_for(&chord("ctrl+g")), Some(Action::Up));
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].message.starts_with("shortcuts.back:"));
         // back lost its user binding and is disabled (not reverted to its default).
@@ -1492,7 +1603,8 @@ clear-history = \"ctrl+shift+h\"
         let mac = Shortcuts::defaults(Platform::Mac);
         let mac_chord = |t: &str| parse_chord(t, Platform::Mac).unwrap().unwrap();
         assert_eq!(other.action_for(&chord("ctrl+shift+f")), Some(Action::Search));
-        assert_eq!(other.action_for(&chord("f3")), Some(Action::Search));
+        assert_eq!(other.action_for(&chord("f3")), Some(Action::ToggleDualPane), "F3 moved in 10b");
+        assert_eq!(other.action_for(&chord("ctrl+e")), Some(Action::Search), "Explorer's search key");
         assert_eq!(mac.action_for(&mac_chord("mod+shift+f")), Some(Action::Search));
         assert_eq!(mac.action_for(&mac_chord("f3")), None, "F3 is macOS's (Mission Control)");
         assert_eq!(other.action_for(&chord("ctrl+b")), Some(Action::FlatView));
@@ -1502,13 +1614,13 @@ clear-history = \"ctrl+shift+h\"
         for action in [Action::CopyWithFolders, Action::CutWithFolders] {
             assert_eq!((other.chord_for(action), mac.chord_for(action)), (None, None), "{}", action.name());
         }
-        for text in ["ctrl+shift+f", "f3", "ctrl+b", "ctrl+shift+e"] {
+        for text in ["ctrl+shift+f", "f3", "ctrl+e", "ctrl+b", "ctrl+shift+e"] {
             assert_eq!(fixed_owner(&chord(text), Platform::Other), None, "{text}");
         }
         for name in ["search", "flat-view", "show-in-folder", "copy-with-folders", "cut-with-folders"] {
             assert!(Action::from_name(name).is_some(), "{name}");
         }
-        assert_eq!(Action::ALL.len(), 92);
+        assert_eq!(Action::ALL.len(), 100);
     }
 
     #[test]
@@ -1530,7 +1642,7 @@ clear-history = \"ctrl+shift+h\"
         for name in ["command-palette", "quick-open", "calculate-folder-sizes", "save-search"] {
             assert!(Action::from_name(name).is_some(), "{name}");
         }
-        assert_eq!(Action::ALL.len(), 92);
+        assert_eq!(Action::ALL.len(), 100);
     }
 
     #[test]
@@ -1550,7 +1662,7 @@ clear-history = \"ctrl+shift+h\"
         }
         assert_eq!(Action::MakeAlias.title(), "Make Alias");
         assert_eq!(Action::ShowPackageContents.title(), "Show Package Contents");
-        assert_eq!(Action::ALL.len(), 92);
+        assert_eq!(Action::ALL.len(), 100);
     }
 
     #[test]
@@ -1560,7 +1672,7 @@ clear-history = \"ctrl+shift+h\"
         }
         assert_eq!(Action::from_name("share"), Some(Action::Share));
         assert_eq!(Action::Share.title(), "Share…");
-        assert_eq!(Action::ALL.len(), 92);
+        assert_eq!(Action::ALL.len(), 100);
     }
 
     #[test]
@@ -1574,7 +1686,7 @@ clear-history = \"ctrl+shift+h\"
         assert_eq!(fixed_owner(&chord("mod+i", Platform::Mac), Platform::Mac), None);
         assert_eq!(Action::from_name("get-info"), Some(Action::GetInfo));
         assert_eq!(Action::GetInfo.title(), "Get Info");
-        assert_eq!(Action::ALL.len(), 92);
+        assert_eq!(Action::ALL.len(), 100);
     }
 
     #[test]
@@ -1587,7 +1699,7 @@ clear-history = \"ctrl+shift+h\"
         }
         assert_eq!(Action::from_name("connect-to-server"), Some(Action::ConnectToServer));
         assert_eq!(Action::ConnectToServer.title(), "Connect to Server…");
-        assert_eq!(Action::ALL.len(), 92);
+        assert_eq!(Action::ALL.len(), 100);
     }
 
     #[test]
@@ -1606,7 +1718,7 @@ clear-history = \"ctrl+shift+h\"
                 assert_eq!(Shortcuts::defaults(platform).chord_for(action), None, "{name}");
             }
         }
-        assert_eq!(Action::ALL.len(), 92);
+        assert_eq!(Action::ALL.len(), 100);
     }
 
     #[test]
@@ -1616,7 +1728,114 @@ clear-history = \"ctrl+shift+h\"
         for platform in [Platform::Other, Platform::Mac] {
             assert_eq!(Shortcuts::defaults(platform).chord_for(Action::RevealInTree), None);
         }
-        assert_eq!(Action::ALL.len(), 92);
+        assert_eq!(Action::ALL.len(), 100);
+    }
+
+    #[test]
+    fn the_pane_actions_have_their_keys() {
+        let chord = |t: &str, p| parse_chord(t, p).unwrap().unwrap();
+        let mac = Shortcuts::defaults(Platform::Mac);
+        assert_eq!(mac.action_for(&chord("mod+ctrl+p", Platform::Mac)), Some(Action::ToggleDualPane), "⌃⌘P");
+        assert_eq!(fixed_owner(&chord("mod+ctrl+p", Platform::Mac), Platform::Mac), None);
+        let other = Shortcuts::defaults(Platform::Other);
+        assert_eq!(other.action_for(&chord("f3", Platform::Other)), Some(Action::ToggleDualPane));
+        let (one, two) = (KeyContext { dual: false }, KeyContext { dual: true });
+        for platform in [Platform::Other, Platform::Mac] {
+            let keys = Shortcuts::defaults(platform);
+            let tab = chord("tab", platform);
+            assert_eq!(keys.action_in(&tab, one), None, "Tab goes on with one pane");
+            assert_eq!(keys.action_in(&tab, two), Some(Action::FocusOtherPane));
+            let f6 = chord("f6", platform);
+            assert_eq!(keys.action_in(&f6, one), None, "F6 does nothing with one pane");
+            assert_eq!(keys.action_in(&f6, two), Some(Action::MoveToOtherPane));
+            assert_eq!(keys.action_in(&chord("f5", platform), two), Some(Action::CopyToOtherPane));
+            for text in ["tab", "f5", "f6"] {
+                assert_eq!(fixed_owner(&chord(text, platform), platform), None, "{text}");
+            }
+        }
+        assert_eq!(Shortcuts::defaults(Platform::Mac).action_in(&chord("f5", Platform::Mac), one), None);
+        for text in ["f3", "ctrl+e", "ctrl+r"] {
+            assert_eq!(fixed_owner(&chord(text, Platform::Other), Platform::Other), None, "{text}");
+        }
+        assert_eq!(Action::from_name("toggle-dual-pane"), Some(Action::ToggleDualPane));
+        assert_eq!(Action::from_name("focus-other-pane"), Some(Action::FocusOtherPane));
+        assert_eq!(Action::ToggleDualPane.title(), "Two Panes");
+        let swap = |text: &str, p| Shortcuts::defaults(p).action_for(&chord(text, p));
+        assert_eq!(swap("ctrl+u", Platform::Other), Some(Action::SwapPanes));
+        assert_eq!(swap("mod+ctrl+u", Platform::Mac), Some(Action::SwapPanes), "⌃⌘U");
+        assert_eq!(fixed_owner(&chord("mod+ctrl+u", Platform::Mac), Platform::Mac), None);
+        assert_eq!(Action::from_name("sync-browsing"), Some(Action::SyncBrowsing));
+        assert_eq!(Action::from_name("other-pane-same-folder"), Some(Action::OtherPaneSameFolder));
+        assert_eq!(Action::ALL.len(), 100);
+    }
+
+    #[test]
+    fn a_pane_action_shares_a_key_with_another_and_only_with_one() {
+        let two = KeyContext { dual: true };
+        // A pane action on another action's key: no warning, each has it in its context.
+        let (s, warnings) = build("[shortcuts]\nmove-to-other-pane = \"ctrl+t\"\n");
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(s.action_for(&chord("ctrl+t")), Some(Action::NewTab));
+        assert_eq!(s.action_in(&chord("ctrl+t"), two), Some(Action::MoveToOtherPane));
+        assert_eq!(s.action_in(&chord("ctrl+n"), two), Some(Action::NewWindow), "the others stay with two panes");
+        // Two pane actions on one key: the second loses it.
+        let (s, warnings) = build("[shortcuts]\ncopy-to-other-pane = \"f6\"\n");
+        assert_eq!(s.action_in(&chord("f6"), two), Some(Action::CopyToOtherPane));
+        assert_eq!(s.chord_for(Action::MoveToOtherPane), None);
+        assert_eq!(
+            warnings[0].message,
+            "shortcuts: the default \"f6\" of move-to-other-pane is used by copy-to-other-pane; move-to-other-pane is disabled (give copy-to-other-pane another key to use it)"
+        );
+        // Search written on F3: the user's choice wins, the pane toggle says so (spec 10 §10.2).
+        let (s, warnings) = build("[shortcuts]\nsearch = \"f3\"\n");
+        assert_eq!(s.action_in(&chord("f3"), two), Some(Action::Search));
+        assert!(s.is_written(Action::Search) && !s.is_written(Action::ToggleDualPane));
+        assert!(
+            warnings[0].message.starts_with("shortcuts: the default \"f3\" of toggle-dual-pane is used by search"),
+            "{warnings:?}"
+        );
+    }
+
+    #[test]
+    fn a_key_written_for_another_action_is_not_a_pane_actions() {
+        let two = KeyContext { dual: true };
+        let (s, warnings) = build(
+            "[shortcuts]
+rename = \"f6\"
+",
+        );
+        assert_eq!(s.action_in(&chord("f6"), two), Some(Action::Rename), "the user's F6 stays with two panes");
+        assert_eq!(s.chord_for(Action::MoveToOtherPane), None);
+        assert_eq!(
+            warnings[0].message,
+            "shortcuts: the default \"f6\" of move-to-other-pane is used by rename; move-to-other-pane is disabled (give rename another key to use it)"
+        );
+        // Refresh written with its own default keys (the template's line): F5 still copies.
+        let (s, warnings) = build(
+            "[shortcuts]
+refresh = [\"f5\", \"ctrl+r\"]
+",
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(s.action_in(&chord("f5"), two), Some(Action::CopyToOtherPane));
+    }
+
+    #[test]
+    fn ctrl_r_refreshes_with_one_pane_and_two() {
+        let other = Shortcuts::defaults(Platform::Other);
+        for dual in [false, true] {
+            assert_eq!(other.action_in(&chord("ctrl+r"), KeyContext { dual }), Some(Action::Refresh));
+        }
+        assert_eq!(other.chord_for(Action::Refresh), Some(chord("f5")), "the one the menus show");
+    }
+
+    #[test]
+    fn tab_and_the_pane_keys_are_no_command_keys() {
+        let mut s = Shortcuts::defaults(Platform::Other);
+        assert!(!chord("tab").leaves_typing_alone());
+        assert_eq!(s.bind_command(0, chord("tab")), Err(KeyOwner::Action(Action::FocusOtherPane)));
+        assert_eq!(s.bind_command(0, chord("f6")), Err(KeyOwner::Action(Action::MoveToOtherPane)));
+        assert_eq!(s.bind_command(0, chord("f5")), Err(KeyOwner::Action(Action::Refresh)));
     }
 
     #[test]
@@ -1627,7 +1846,7 @@ clear-history = \"ctrl+shift+h\"
         assert_eq!(Shortcuts::defaults(Platform::Other).chord_for(Action::Eject), None);
         assert_eq!(Action::from_name("eject"), Some(Action::Eject));
         assert_eq!(Action::Eject.title(), "Eject");
-        assert_eq!(Action::ALL.len(), 92);
+        assert_eq!(Action::ALL.len(), 100);
     }
 
     #[test]

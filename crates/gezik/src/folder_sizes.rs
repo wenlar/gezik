@@ -17,7 +17,6 @@ use gezik_core::ops::paths::is_within;
 use gezik_core::pattern::fold_text;
 use gezik_platform::fs::DirItem;
 use gezik_search::size::{CACHE_MAX, FolderTotal, Known, SizeCache, measure};
-use slint::ComponentHandle;
 
 use crate::AppWindow;
 use crate::panes::PaneId;
@@ -118,10 +117,10 @@ struct Inner {
 pub struct FolderSizes(Rc<Inner>);
 
 impl FolderSizes {
-    pub fn new(id: PaneId, window: &AppWindow, view: View) -> FolderSizes {
+    pub fn new(id: PaneId, window: slint::Weak<AppWindow>, view: View) -> FolderSizes {
         FolderSizes(Rc::new(Inner {
             id,
-            window: window.as_weak(),
+            window,
             view,
             cache: RefCell::new(SizeCache::new(CACHE_MAX)),
             mode: Cell::new(FolderSizeMode::default()),
@@ -134,6 +133,13 @@ impl FolderSizes {
             resort: slint::Timer::default(),
             done: Cell::new(true),
         }))
+    }
+
+    /// The folder sizes of pane `id` (its `view`), with this one's settings.
+    pub fn for_pane(&self, id: PaneId, view: View) -> FolderSizes {
+        let sizes = FolderSizes::new(id, self.0.window.clone(), view);
+        sizes.set_settings(self.0.mode.get(), self.0.everything.get());
+        sizes
     }
 
     /// settings.toml was read: `[view] folder-sizes` and `[search] everything`.

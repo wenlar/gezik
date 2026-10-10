@@ -60,6 +60,9 @@ export component AppWindow inherits Window {
     in-out property <bool> view-date-system;
     in-out property <bool> view-size-binary;
     in-out property <bool> view-size-decimal;
+    in-out property <bool> view-two-panes;
+    // Sync browsing (spec 10 §4.7): the menu's mark, the link between the panes, the strips' line.
+    in-out property <bool> view-sync;
     // The Commands menu: the `[[commands]]` with a key (id: the command's index, -1 a heading).
     in property <[MenuEntry]> bar-commands;
     // The Window menu's "Open Tab Set": the tab sets to open, to replace the tabs with, to delete.
@@ -79,6 +82,8 @@ export component AppWindow inherits Window {
             MenuItem { title: "Rename"; activated => { root.menu-command("rename"); } }
             MenuItem { title: "Rename Items…"; activated => { root.menu-command("batch-rename"); } }
             MenuItem { title: "Duplicate"; shortcut: root.menu-keys ? @keys(Control + D) : @keys(); activated => { root.menu-command("duplicate"); } }
+            MenuItem { title: "Copy to the Other Pane"; activated => { root.menu-command("copy-to-other-pane"); } }
+            MenuItem { title: "Move to the Other Pane"; activated => { root.menu-command("move-to-other-pane"); } }
             MenuItem { title: "Make Alias"; shortcut: root.menu-keys ? @keys(Control + Meta + A) : @keys(); activated => { root.menu-command("make-alias"); } }
             MenuItem { title: "Show Package Contents"; activated => { root.menu-command("show-package-contents"); } }
             MenuItem { title: "Share…"; activated => { root.menu-command("share"); } }
@@ -130,6 +135,10 @@ export component AppWindow inherits Window {
             MenuSeparator { }
             MenuItem { title: "Flat View"; shortcut: root.menu-keys ? @keys(Control + B) : @keys(); activated => { root.menu-command("flat-view"); } }
             MenuItem { title: "Show Preview"; activated => { root.menu-command("toggle-preview"); } }
+            MenuItem { title: "Two Panes"; checkable: true; checked <=> root.view-two-panes; shortcut: root.menu-keys ? @keys(Control + Meta + P) : @keys(); activated => { root.menu-command("toggle-dual-pane"); } }
+            MenuItem { title: "Sync Browsing"; checkable: true; checked <=> root.view-sync; activated => { root.menu-command("sync-browsing"); } }
+            MenuItem { title: "Swap Panes"; shortcut: root.menu-keys ? @keys(Control + Meta + U) : @keys(); activated => { root.menu-command("swap-panes"); } }
+            MenuItem { title: "Same Folder in the Other Pane"; activated => { root.menu-command("other-pane-same-folder"); } }
             MenuItem { title: "Drop Stack"; activated => { root.menu-command("toggle-stack"); } }
             MenuItem { title: "Operation History"; activated => { root.menu-command("show-history"); } }
             MenuItem { title: "Calculate Folder Sizes"; activated => { root.menu-command("calculate-folder-sizes"); } }
@@ -226,6 +235,30 @@ export component AppWindow inherits Window {
     // The panes (spec 10 §3.2): one row each (panes.rs). Their callbacks below come with the
     // pane's index first.
     in property <[PaneData]> panes;
+    // Two panes (spec 10 §4): open, the active one (its row in `panes`), and the left one's share
+    // of their width (0.2–0.8), dragged with the splitter between them.
+    in property <bool> dual;
+    in property <int> active-pane;
+    in property <percent> pane-split: 50%;
+    // Where the right pane starts (the splitter is just left of it).
+    property <length> split-x;
+    // The panes' room (their row's width), copied when it changes: read in the panes' widths
+    // directly, it would loop through the row's layout.
+    property <length> panes-room;
+    // The left pane's width: its share of the room, but each pane at least 240 px while the
+    // room allows (spec 10 §4.1), so neither is pushed out of the window.
+    property <length> left-width: max(0px, min(max((root.panes-room - 5px) * (root.pane-split / 100%), 240px), root.panes-room - 5px - 240px));
+    // The splitter between the panes was dragged to this share of their room (Rust sets
+    // `pane-split`), was let go, or was double-clicked (back to the middle).
+    callback pane-split-moved(float);
+    callback pane-split-done();
+    callback pane-split-reset();
+    // Two panes with the preview open came down to their narrowest: the preview closes first.
+    callback panes-cramped();
+    property <bool> cramped: root.dual && root.preview-open && panes-row.width <= panes-row.min-width + 1px;
+    changed cramped => {
+        if self.cramped { root.panes-cramped(); }
+    }
     callback scrolled(int, length);
     callback revealed(int, int, length);
     callback pane-geometry(int, PaneGeometry);
@@ -251,8 +284,9 @@ export component AppWindow inherits Window {
     // (-1: none, the text is what counts). Rust empties them when typing ends.
     in property <[PathRow]> path-rows;
     in property <int> path-current: -1;
-    // Where the address bar is (its pane says), for the suggestions under it.
-    property <PaneGeometry> address-box;
+    // Where the active pane's address bar is (it says; Rust when another pane becomes active),
+    // for the suggestions under it.
+    in-out property <PaneGeometry> address-box;
     // The address text as typed; a suggestion clicked (its path); typing began or ended.
     callback path-edited(int, string);
     callback path-chosen(string);
@@ -331,6 +365,9 @@ export component AppWindow inherits Window {
     callback tab-move(int, int, int);
     // Right-click on a tab, at a window position.
     callback tab-menu(int, int, length, length);
+    // Pane `int`'s tab `int` dragged to a window position (released: dropped; tab -1: the drag
+    // ended): whether the other pane is under it (Rust moves the tab there on the drop).
+    callback tab-out(int, int, length, length, bool) -> bool;
     // Middle-click on a row: opens a folder in a background tab.
     callback row-middle-clicked(int, int);
     // Sidebar item (section, index): click, middle-click, right-click at a window position.
@@ -649,6 +686,9 @@ export component AppWindow inherits Window {
     in property <int> drop-pin-row: -1;
     in property <int> drop-tab: -1;
     in property <int> drop-crumb: -1;
+    // The pane those are in; and where a tab dragged from the other pane would go in its strip.
+    in property <int> drop-pane: -1;
+    in property <int> tab-insert: -1;
     in-out property <length> sidebar-scroll;
     out property <DropGeometry> drop-geometry: {
         window-width: root.width,
@@ -790,196 +830,323 @@ export component AppWindow inherits Window {
         }
 
         VerticalLayout {
-            for pane-data[i] in root.panes: pane := PaneView {
-                data: pane-data;
-                index: i;
-                list-focused: keys.has-focus;
-                drag-active: root.drag-active;
-                drag-forbidden: root.drag-forbidden;
-                drop-entry: root.drop-entry;
-                drop-tab: root.drop-tab;
-                drop-crumb: root.drop-crumb;
-                col-modified <=> root.col-modified;
-                col-created <=> root.col-created;
-                col-type <=> root.col-type;
-                col-size <=> root.col-size;
-                col-folder <=> root.col-folder;
-                col-match <=> root.col-match;
-                sheet-x: sheet-place.x;
-                sheet-y: sheet-place.y;
-                sheet-width: sheet-place.width;
-                sheet-height: sheet-place.height;
-                focus-requested => { keys.focus(); }
-                keyboard-menu(p, row, x, y) => { root.keyboard-menu(p, row, x, y); }
-                scrolled(p, y) => { root.scrolled(p, y); }
-                revealed(p, entry, y) => { root.revealed(p, entry, y); }
-                geometry-changed(p, g) => {
-                    root.address-box = g;
-                    root.pane-geometry(p, g);
+            // One pane: it holds the sidebar and the preview in the row under its toolbar. Two:
+            // the sidebar runs the window's height beside them, the preview after them (spec 10 §4.1).
+            HorizontalLayout {
+                // Left or right of the panes (`layout-order`), as in one pane.
+                if root.dual && root.sidebar-position != 2: Sidebar {
+                    layout-order: root.sidebar-position == 0 ? -2 : 2;
+                    width: root.sidebar-width;
+                    rows: root.sidebar-rows;
+                    pinned-first-row: root.sidebar-pinned-first-row;
+                    pinned-end-row: root.sidebar-pinned-end-row;
+                    cursor: root.sidebar-cursor;
+                    focused <=> root.sidebar-focused;
+                    focus-seq: root.sidebar-focus-seq;
+                    tip-text <=> root.sidebar-tip;
+                    tip-x <=> root.sidebar-tip-x;
+                    tip-y <=> root.sidebar-tip-y;
+                    scroll <=> root.sidebar-scroll;
+                    drop-row: root.drop-sidebar-row;
+                    pin-line: root.drop-pin-row;
+                    clicked(s, i) => { root.sidebar-clicked(s, i); }
+                    middle-clicked(s, i) => { root.sidebar-middle-clicked(s, i); }
+                    toggled(i) => { root.sidebar-toggled(i); }
+                    menu(s, i, x, y) => { root.sidebar-menu(s, i, x, y); }
+                    pinned-drop(a, b) => { root.pinned-drop(a, b); }
                 }
-                focus-changed(p, f) => { root.pane-focus(p, f); }
-                path-editing-changed(p, on) => { root.path-editing-changed(p, on); }
-                go-back(p) => { root.go-back(p); }
-                go-forward(p) => { root.go-forward(p); }
-                go-up(p) => { root.go-up(p); }
-                refresh(p) => { root.refresh(p); }
-                navigate(p, path) => { root.navigate(p, path); }
-                crumb-clicked(p, c) => { root.crumb-clicked(p, c); }
-                crumb-span(p, c, x, w) => { root.crumb-span(p, c, x, w); }
-                path-edited(p, text) => { root.path-edited(p, text); }
-                tab-activate(p, t) => { root.tab-activate(p, t); }
-                tab-close(p, t) => { root.tab-close(p, t); }
-                tab-new(p) => { root.tab-new(p); }
-                tab-move(p, from, to) => { root.tab-move(p, from, to); }
-                tab-menu(p, t, x, y) => { root.tab-menu(p, t, x, y); }
-                view-menu(p, x, y, r, t) => { root.view-menu(p, x, y, r, t); }
-                filter-edited(p, t) => { root.filter-edited(p, t); }
-                filter-menu(p, x, y, r, t) => { root.filter-menu(p, x, y, r, t); }
-                filter-search(p) => { root.filter-search(p); }
-                search-edited(p, t) => { root.search-edited(p, t); }
-                search-content-edited(p, t) => { root.search-content-edited(p, t); }
-                search-content-toggle(p) => { root.search-content-toggle(p); }
-                search-go(p) => { root.search-go(p); }
-                search-menu(p, which, x, y, r, t) => { root.search-menu(p, which, x, y, r, t); }
-                grid-columns-changed(p, n) => { root.grid-columns-changed(p, n); }
-                zoom(p, bigger) => { root.zoom(p, bigger); }
-                list-line-of(p, e) => { return root.list-line-of(p, e); }
-                list-column-of(p, e) => { return root.list-column-of(p, e); }
-                list-group-toggled(p, first) => { root.list-group-toggled(p, first); }
-                list-group-menu(p, x, y) => { root.list-group-menu(p, x, y); }
-                header-clicked(p, c) => { root.header-clicked(p, c); }
-                header-menu(p, x, y) => { root.header-menu(p, x, y); }
-                columns-resized(p) => { root.columns-resized(p); }
-                rename-accepted(p, t) => { root.rename-accepted(p, t); }
-                rename-cancelled(p) => { root.rename-cancelled(p); }
-                rename-tab(p, t, back) => { root.rename-tab(p, t, back); }
-                rename-edited(p, t) => { root.rename-edited(p, t); }
-                rename-blurred(p, t, g) => { root.rename-blurred(p, t, g); }
-                item-pressed(p, e, ctrl, shift) => { root.item-pressed(p, e, ctrl, shift); }
-                item-down(p, e, x, y, right, can-drag) => { root.item-down(p, e, x, y, right, can-drag); }
-                item-drag(x, y, shift, ctrl, alt) => { root.item-drag(x, y, shift, ctrl, alt); }
-                item-up(e, x, y, right) => { return root.item-up(e, x, y, right); }
-                item-cancel => { root.item-cancel(); }
-                open-row(p, e) => { root.open-row(p, e); }
-                row-middle-clicked(p, e) => { root.row-middle-clicked(p, e); }
-                row-menu(p, e, x, y) => { root.row-menu(p, e, x, y); }
-                background-pressed(p, ctrl) => { root.background-pressed(p, ctrl); }
-                background-menu(p, x, y) => { root.background-menu(p, x, y); }
-                marquee(p, x, y, w, h, additive) => { root.marquee(p, x, y, w, h, additive); }
-                marquee-done(p) => { root.marquee-done(p); }
+                if root.dual && root.sidebar-position != 2: Rectangle {
+                    layout-order: root.sidebar-position == 0 ? -1 : 1;
+                    width: 5px;
+                    accessible-role: none;
+                    Rectangle {
+                        x: (parent.width - self.width) / 2;
+                        width: 1px;
+                        background: dual-splitter.has-hover || dual-splitter.pressed ? Theme.accent : transparent;
+                    }
+                    dual-splitter := TouchArea {
+                        mouse-cursor: col-resize;
+                        moved => {
+                            let delta = self.mouse-x - self.pressed-x;
+                            root.sidebar-width = clamp(root.sidebar-width + (root.sidebar-position == 0 ? delta : -delta), 120px, 480px);
+                        }
+                        changed pressed => { if !self.pressed { root.sidebar-resized(); } }
+                    }
+                }
+                Rectangle {
+                    init => { root.panes-room = self.width; }
+                    changed width => { root.panes-room = self.width; }
+                    panes-row := HorizontalLayout {
+                        spacing: 5px;
+                        for pane-data[i] in root.panes: pane := PaneView {
+                            data: pane-data;
+                            index: i;
+                            dual: root.dual;
+                            active: i == root.active-pane;
+                            synced: root.view-sync;
+                            // The left one's share of the room (the layout fills it); one pane has all of it.
+                            preferred-width: !root.dual ? root.panes-room : i == 0 ? root.left-width : root.panes-room - 5px - root.left-width;
+                            init => {
+                                if i == 1 { root.split-x = self.x; }
+                            }
+                            changed x => {
+                                if i == 1 { root.split-x = self.x; }
+                            }
+                            list-focused: keys.has-focus && i == root.active-pane;
+                            drag-active: root.drag-active;
+                            drag-forbidden: root.drag-forbidden;
+                            drop-entry: i == root.drop-pane ? root.drop-entry : -1;
+                            drop-tab: i == root.drop-pane ? root.drop-tab : -1;
+                            drop-crumb: i == root.drop-pane ? root.drop-crumb : -1;
+                            tab-insert: i == root.drop-pane ? root.tab-insert : -1;
+                            col-modified <=> root.col-modified;
+                            col-created <=> root.col-created;
+                            col-type <=> root.col-type;
+                            col-size <=> root.col-size;
+                            col-folder <=> root.col-folder;
+                            col-match <=> root.col-match;
+                            sheet-x: sheet-place.x;
+                            sheet-y: sheet-place.y;
+                            sheet-width: sheet-place.width;
+                            sheet-height: sheet-place.height;
+                            focus-requested => { keys.focus(); }
+                            keyboard-menu(p, row, x, y) => { root.keyboard-menu(p, row, x, y); }
+                            scrolled(p, y) => { root.scrolled(p, y); }
+                            revealed(p, entry, y) => { root.revealed(p, entry, y); }
+                            geometry-changed(p, g) => {
+                                if p == root.active-pane { root.address-box = g; }
+                                root.pane-geometry(p, g);
+                            }
+                            focus-changed(p, f) => { root.pane-focus(p, f); }
+                            path-editing-changed(p, on) => { root.path-editing-changed(p, on); }
+                            go-back(p) => { root.go-back(p); }
+                            go-forward(p) => { root.go-forward(p); }
+                            go-up(p) => { root.go-up(p); }
+                            refresh(p) => { root.refresh(p); }
+                            navigate(p, path) => { root.navigate(p, path); }
+                            crumb-clicked(p, c) => { root.crumb-clicked(p, c); }
+                            crumb-span(p, c, x, w) => { root.crumb-span(p, c, x, w); }
+                            path-edited(p, text) => { root.path-edited(p, text); }
+                            tab-activate(p, t) => { root.tab-activate(p, t); }
+                            tab-close(p, t) => { root.tab-close(p, t); }
+                            tab-new(p) => { root.tab-new(p); }
+                            tab-move(p, from, to) => { root.tab-move(p, from, to); }
+                            tab-menu(p, t, x, y) => { root.tab-menu(p, t, x, y); }
+                            tab-out(p, t, x, y, r) => { return root.tab-out(p, t, x, y, r); }
+                            view-menu(p, x, y, r, t) => { root.view-menu(p, x, y, r, t); }
+                            filter-edited(p, t) => { root.filter-edited(p, t); }
+                            filter-menu(p, x, y, r, t) => { root.filter-menu(p, x, y, r, t); }
+                            filter-search(p) => { root.filter-search(p); }
+                            search-edited(p, t) => { root.search-edited(p, t); }
+                            search-content-edited(p, t) => { root.search-content-edited(p, t); }
+                            search-content-toggle(p) => { root.search-content-toggle(p); }
+                            search-go(p) => { root.search-go(p); }
+                            search-menu(p, which, x, y, r, t) => { root.search-menu(p, which, x, y, r, t); }
+                            grid-columns-changed(p, n) => { root.grid-columns-changed(p, n); }
+                            zoom(p, bigger) => { root.zoom(p, bigger); }
+                            list-line-of(p, e) => { return root.list-line-of(p, e); }
+                            list-column-of(p, e) => { return root.list-column-of(p, e); }
+                            list-group-toggled(p, first) => { root.list-group-toggled(p, first); }
+                            list-group-menu(p, x, y) => { root.list-group-menu(p, x, y); }
+                            header-clicked(p, c) => { root.header-clicked(p, c); }
+                            header-menu(p, x, y) => { root.header-menu(p, x, y); }
+                            columns-resized(p) => { root.columns-resized(p); }
+                            rename-accepted(p, t) => { root.rename-accepted(p, t); }
+                            rename-cancelled(p) => { root.rename-cancelled(p); }
+                            rename-tab(p, t, back) => { root.rename-tab(p, t, back); }
+                            rename-edited(p, t) => { root.rename-edited(p, t); }
+                            rename-blurred(p, t, g) => { root.rename-blurred(p, t, g); }
+                            item-pressed(p, e, ctrl, shift) => { root.item-pressed(p, e, ctrl, shift); }
+                            item-down(p, e, x, y, right, can-drag) => { root.item-down(p, e, x, y, right, can-drag); }
+                            item-drag(x, y, shift, ctrl, alt) => { root.item-drag(x, y, shift, ctrl, alt); }
+                            item-up(e, x, y, right) => { return root.item-up(e, x, y, right); }
+                            item-cancel => { root.item-cancel(); }
+                            open-row(p, e) => { root.open-row(p, e); }
+                            row-middle-clicked(p, e) => { root.row-middle-clicked(p, e); }
+                            row-menu(p, e, x, y) => { root.row-menu(p, e, x, y); }
+                            background-pressed(p, ctrl) => { root.background-pressed(p, ctrl); }
+                            background-menu(p, x, y) => { root.background-menu(p, x, y); }
+                            marquee(p, x, y, w, h, additive) => { root.marquee(p, x, y, w, h, additive); }
+                            marquee-done(p) => { root.marquee-done(p); }
 
-                // The row under the toolbar; the pane lays its bars and sheet over `sheet-place`.
-                HorizontalLayout {
-                    // The sheets' gap from the chrome: below them, and on the side away from the
-                    // sidebar (on its side the splitter is the gap). None in the classic themes.
-                    padding-left: root.sidebar-position == 0 ? 0px : Theme.inset;
+                            // The row under the toolbar; the pane lays its bars and sheet over `sheet-place`.
+                            HorizontalLayout {
+                                // The sheets' gap from the chrome: below them, and on the side away from the
+                                // sidebar (on its side the splitter is the gap). None in the classic themes.
+                                // With two panes the splitters are the gaps between them and what is beside them.
+                                padding-left: root.dual ? (i == 0 && root.sidebar-position != 0 ? Theme.inset : 0px) : root.sidebar-position == 0 ? 0px : Theme.inset;
+                                padding-right: root.dual ? (i == 1 && !root.preview-open && root.sidebar-position != 1 ? Theme.inset : 0px) : root.sidebar-position == 1 ? 0px : Theme.inset;
+                                padding-bottom: Theme.inset;
+                                if !root.dual && root.sidebar-position == 0: Sidebar {
+                                    width: root.sidebar-width;
+                                    rows: root.sidebar-rows;
+                                    pinned-first-row: root.sidebar-pinned-first-row;
+                                    pinned-end-row: root.sidebar-pinned-end-row;
+                                    cursor: root.sidebar-cursor;
+                                    focused <=> root.sidebar-focused;
+                                    focus-seq: root.sidebar-focus-seq;
+                                    tip-text <=> root.sidebar-tip;
+                                    tip-x <=> root.sidebar-tip-x;
+                                    tip-y <=> root.sidebar-tip-y;
+                                    scroll <=> root.sidebar-scroll;
+                                    drop-row: root.drop-sidebar-row;
+                                    pin-line: root.drop-pin-row;
+                                    clicked(s, i) => { root.sidebar-clicked(s, i); }
+                                    middle-clicked(s, i) => { root.sidebar-middle-clicked(s, i); }
+                                    toggled(i) => { root.sidebar-toggled(i); }
+                                    menu(s, i, x, y) => {
+                                        pane.end-path-editing();
+                                        root.sidebar-menu(s, i, x, y);
+                                    }
+                                    pinned-drop(a, b) => { root.pinned-drop(a, b); }
+                                }
+                                // Grabbable over 5px; the line shows only while hovered or dragged.
+                                if !root.dual && root.sidebar-position == 0: Rectangle {
+                                    width: 5px;
+                                    accessible-role: none;
+                                    Rectangle {
+                                        x: (parent.width - self.width) / 2;
+                                        width: 1px;
+                                        background: splitter-left.has-hover || splitter-left.pressed ? Theme.accent : transparent;
+                                    }
+                                    splitter-left := TouchArea {
+                                        mouse-cursor: col-resize;
+                                        moved => { root.sidebar-width = clamp(root.sidebar-width + (self.mouse-x - self.pressed-x), 120px, 480px); }
+                                        changed pressed => { if !self.pressed { root.sidebar-resized(); } }
+                                    }
+                                }
+                                sheet-place := Rectangle {
+                                    horizontal-stretch: 1;
+                                    // With two panes the pane's own minimum rules (its bars fit or are cut off).
+                                    min-width: root.dual ? 0px : pane.sheet-min-width;
+                                    min-height: pane.sheet-min-height;
+                                }
+                                // Grabbable over 5px; the line shows only while hovered or dragged.
+                                if !root.dual && root.preview-open: Rectangle {
+                                    width: 5px;
+                                    accessible-role: none;
+                                    Rectangle {
+                                        x: (parent.width - self.width) / 2;
+                                        width: 1px;
+                                        background: preview-splitter.has-hover || preview-splitter.pressed ? Theme.accent : transparent;
+                                    }
+                                    preview-splitter := TouchArea {
+                                        mouse-cursor: col-resize;
+                                        moved => { root.preview-width = clamp(root.preview-width - (self.mouse-x - self.pressed-x), 200px, 600px); }
+                                        changed pressed => { if !self.pressed { root.preview-resized(); } }
+                                    }
+                                }
+                                if !root.dual && root.preview-open: PreviewPane {
+                                    width: root.preview-width;
+                                    info: root.preview;
+                                    mono-font: root.mono-font;
+                                    // Its own sheet, like the list's.
+                                    background: Theme.background;
+                                    border-radius: Theme.sheet-radius;
+                                    border-width: 1px;
+                                    border-color: Theme.border;
+                                }
+                                // Grabbable over 5px; the line shows only while hovered or dragged.
+                                if !root.dual && root.sidebar-position == 1: Rectangle {
+                                    width: 5px;
+                                    accessible-role: none;
+                                    Rectangle {
+                                        x: (parent.width - self.width) / 2;
+                                        width: 1px;
+                                        background: splitter-right.has-hover || splitter-right.pressed ? Theme.accent : transparent;
+                                    }
+                                    splitter-right := TouchArea {
+                                        mouse-cursor: col-resize;
+                                        moved => { root.sidebar-width = clamp(root.sidebar-width - (self.mouse-x - self.pressed-x), 120px, 480px); }
+                                        changed pressed => { if !self.pressed { root.sidebar-resized(); } }
+                                    }
+                                }
+                                if !root.dual && root.sidebar-position == 1: Sidebar {
+                                    width: root.sidebar-width;
+                                    rows: root.sidebar-rows;
+                                    pinned-first-row: root.sidebar-pinned-first-row;
+                                    pinned-end-row: root.sidebar-pinned-end-row;
+                                    cursor: root.sidebar-cursor;
+                                    focused <=> root.sidebar-focused;
+                                    focus-seq: root.sidebar-focus-seq;
+                                    tip-text <=> root.sidebar-tip;
+                                    tip-x <=> root.sidebar-tip-x;
+                                    tip-y <=> root.sidebar-tip-y;
+                                    scroll <=> root.sidebar-scroll;
+                                    drop-row: root.drop-sidebar-row;
+                                    pin-line: root.drop-pin-row;
+                                    clicked(s, i) => { root.sidebar-clicked(s, i); }
+                                    middle-clicked(s, i) => { root.sidebar-middle-clicked(s, i); }
+                                    toggled(i) => { root.sidebar-toggled(i); }
+                                    menu(s, i, x, y) => {
+                                        pane.end-path-editing();
+                                        root.sidebar-menu(s, i, x, y);
+                                    }
+                                    pinned-drop(a, b) => { root.pinned-drop(a, b); }
+                                }
+                            }
+                        }
+                    }
+                    // Grabbable over 5px, between the panes; a double-click puts it in the middle.
+                    if root.dual: Rectangle {
+                        x: root.split-x - self.width;
+                        width: 5px;
+                        height: parent.height;
+                        accessible-role: none;
+                        Rectangle {
+                            x: (parent.width - self.width) / 2;
+                            width: 1px;
+                            background: pane-splitter.has-hover || pane-splitter.pressed ? Theme.accent : transparent;
+                        }
+                        pane-splitter := TouchArea {
+                            mouse-cursor: col-resize;
+                            // From where the pointer is, not by steps: a pane at its minimum does not let the share run on.
+                            moved => { root.pane-split-moved((parent.x + self.mouse-x - self.pressed-x) / max(1px, panes-row.width - 5px)); }
+                            changed pressed => { if !self.pressed { root.pane-split-done(); } }
+                            double-clicked => { root.pane-split-reset(); }
+                        }
+                        // Sync browsing: a link between the two address bars.
+                        if root.view-sync: Path {
+                            x: (parent.width - self.width) / 2;
+                            y: Theme.tab-strip-height + (Theme.toolbar-height - self.height) / 2;
+                            width: 12px;
+                            height: 12px;
+                            viewbox-width: 16;
+                            viewbox-height: 16;
+                            commands: Glyph.link;
+                            stroke: Theme.accent;
+                            stroke-width: 1.5px;
+                            stroke-line-cap: round;
+                        }
+                    }
+                }
+                if root.dual && root.preview-open: Rectangle {
+                    width: 5px;
+                    accessible-role: none;
+                    Rectangle {
+                        x: (parent.width - self.width) / 2;
+                        width: 1px;
+                        background: dual-preview-splitter.has-hover || dual-preview-splitter.pressed ? Theme.accent : transparent;
+                    }
+                    dual-preview-splitter := TouchArea {
+                        mouse-cursor: col-resize;
+                        moved => { root.preview-width = clamp(root.preview-width - (self.mouse-x - self.pressed-x), 200px, 600px); }
+                        changed pressed => { if !self.pressed { root.preview-resized(); } }
+                    }
+                }
+                // Level with the panes' sheets.
+                if root.dual && root.preview-open: VerticalLayout {
+                    padding-top: Theme.tab-strip-height + Theme.toolbar-height;
                     padding-right: root.sidebar-position == 1 ? 0px : Theme.inset;
                     padding-bottom: Theme.inset;
-                    if root.sidebar-position == 0: Sidebar {
-                        width: root.sidebar-width;
-                        rows: root.sidebar-rows;
-                        pinned-first-row: root.sidebar-pinned-first-row;
-                        pinned-end-row: root.sidebar-pinned-end-row;
-                        cursor: root.sidebar-cursor;
-                        focused <=> root.sidebar-focused;
-                        focus-seq: root.sidebar-focus-seq;
-                        tip-text <=> root.sidebar-tip;
-                        tip-x <=> root.sidebar-tip-x;
-                        tip-y <=> root.sidebar-tip-y;
-                        scroll <=> root.sidebar-scroll;
-                        drop-row: root.drop-sidebar-row;
-                        pin-line: root.drop-pin-row;
-                        clicked(s, i) => { root.sidebar-clicked(s, i); }
-                        middle-clicked(s, i) => { root.sidebar-middle-clicked(s, i); }
-                        toggled(i) => { root.sidebar-toggled(i); }
-                        menu(s, i, x, y) => {
-                            pane.end-path-editing();
-                            root.sidebar-menu(s, i, x, y);
-                        }
-                        pinned-drop(a, b) => { root.pinned-drop(a, b); }
-                    }
-                    // Grabbable over 5px; the line shows only while hovered or dragged.
-                    if root.sidebar-position == 0: Rectangle {
-                        width: 5px;
-                        accessible-role: none;
-                        Rectangle {
-                            x: (parent.width - self.width) / 2;
-                            width: 1px;
-                            background: splitter-left.has-hover || splitter-left.pressed ? Theme.accent : transparent;
-                        }
-                        splitter-left := TouchArea {
-                            mouse-cursor: col-resize;
-                            moved => { root.sidebar-width = clamp(root.sidebar-width + (self.mouse-x - self.pressed-x), 120px, 480px); }
-                            changed pressed => { if !self.pressed { root.sidebar-resized(); } }
-                        }
-                    }
-                    sheet-place := Rectangle {
-                        horizontal-stretch: 1;
-                        min-width: pane.sheet-min-width;
-                        min-height: pane.sheet-min-height;
-                    }
-                    // Grabbable over 5px; the line shows only while hovered or dragged.
-                    if root.preview-open: Rectangle {
-                        width: 5px;
-                        accessible-role: none;
-                        Rectangle {
-                            x: (parent.width - self.width) / 2;
-                            width: 1px;
-                            background: preview-splitter.has-hover || preview-splitter.pressed ? Theme.accent : transparent;
-                        }
-                        preview-splitter := TouchArea {
-                            mouse-cursor: col-resize;
-                            moved => { root.preview-width = clamp(root.preview-width - (self.mouse-x - self.pressed-x), 200px, 600px); }
-                            changed pressed => { if !self.pressed { root.preview-resized(); } }
-                        }
-                    }
-                    if root.preview-open: PreviewPane {
+                    PreviewPane {
                         width: root.preview-width;
                         info: root.preview;
                         mono-font: root.mono-font;
-                        // Its own sheet, like the list's.
                         background: Theme.background;
                         border-radius: Theme.sheet-radius;
                         border-width: 1px;
                         border-color: Theme.border;
-                    }
-                    // Grabbable over 5px; the line shows only while hovered or dragged.
-                    if root.sidebar-position == 1: Rectangle {
-                        width: 5px;
-                        accessible-role: none;
-                        Rectangle {
-                            x: (parent.width - self.width) / 2;
-                            width: 1px;
-                            background: splitter-right.has-hover || splitter-right.pressed ? Theme.accent : transparent;
-                        }
-                        splitter-right := TouchArea {
-                            mouse-cursor: col-resize;
-                            moved => { root.sidebar-width = clamp(root.sidebar-width - (self.mouse-x - self.pressed-x), 120px, 480px); }
-                            changed pressed => { if !self.pressed { root.sidebar-resized(); } }
-                        }
-                    }
-                    if root.sidebar-position == 1: Sidebar {
-                        width: root.sidebar-width;
-                        rows: root.sidebar-rows;
-                        pinned-first-row: root.sidebar-pinned-first-row;
-                        pinned-end-row: root.sidebar-pinned-end-row;
-                        cursor: root.sidebar-cursor;
-                        focused <=> root.sidebar-focused;
-                        focus-seq: root.sidebar-focus-seq;
-                        tip-text <=> root.sidebar-tip;
-                        tip-x <=> root.sidebar-tip-x;
-                        tip-y <=> root.sidebar-tip-y;
-                        scroll <=> root.sidebar-scroll;
-                        drop-row: root.drop-sidebar-row;
-                        pin-line: root.drop-pin-row;
-                        clicked(s, i) => { root.sidebar-clicked(s, i); }
-                        middle-clicked(s, i) => { root.sidebar-middle-clicked(s, i); }
-                        toggled(i) => { root.sidebar-toggled(i); }
-                        menu(s, i, x, y) => {
-                            pane.end-path-editing();
-                            root.sidebar-menu(s, i, x, y);
-                        }
-                        pinned-drop(a, b) => { root.pinned-drop(a, b); }
                     }
                 }
             }
