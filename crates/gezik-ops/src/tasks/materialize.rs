@@ -64,6 +64,28 @@ impl MaterializeTask {
     }
 }
 
+impl MaterializeTask {
+    /// Moves `temp` to `target`, never over anything. A name taken meanwhile (Keep both chose
+    /// the number a renumbered file of this drop had; spec 9 §8.1) moves on to the next free
+    /// one, unless the item replaces what was there. Returns where it went.
+    fn place(&self, temp: &Path, target: &Path, replace: bool) -> io::Result<PathBuf> {
+        let mut to = target.to_path_buf();
+        for _ in 0..8 {
+            match gezik_platform::fs::move_entry(temp, &to) {
+                Ok(()) => return Ok(to),
+                Err(err) if replace || err.kind() != io::ErrorKind::AlreadyExists => return Err(err),
+                Err(_) => {
+                    let parent = to.parent().unwrap_or(Path::new("")).to_path_buf();
+                    let name = to.file_name().unwrap_or_default().to_string_lossy().into_owned();
+                    to = parent.join(next_free(&name, false, |c| std::fs::symlink_metadata(parent.join(c)).is_ok()));
+                    self.check_target(&to)?;
+                }
+            }
+        }
+        gezik_platform::fs::move_entry(temp, &to).map(|()| to)
+    }
+}
+
 impl Task for MaterializeTask {
     fn kind(&self) -> TaskKind {
         TaskKind::Copy
@@ -176,11 +198,11 @@ impl Task for MaterializeTask {
             counted = counted.max(done);
             !cx.stopped()
         });
-        if let Err(err) = written.and_then(|_| gezik_platform::fs::move_entry(&temp, target)) {
+        let placed = written.and_then(|_| self.place(&temp, target, item.replace));
+        let placed = placed.inspect_err(|_| {
             let _ = gezik_platform::fs::delete(&temp);
-            return Err(err);
-        }
-        Ok(Outcome::Created { path: target.clone(), facts: facts_after(target, false), from: None })
+        })?;
+        Ok(Outcome::Created { facts: facts_after(&placed, false), path: placed, from: None })
     }
 }
 
@@ -207,6 +229,9 @@ mod tests {
         Endless,
         /// Every write puts a few bytes down, then fails.
         Fails,
+        /// The second item's write waits until the test sets `started` (the conflicts are
+        /// answered), then a little more: the first item's Keep both picks its name meanwhile.
+        SecondWaits,
     }
 
     /// Items in memory, as another program would offer them.
@@ -230,6 +255,13 @@ mod tests {
         }
 
         fn write(&self, index: usize, to: &Path, progress: &mut dyn FnMut(u64) -> bool) -> io::Result<u64> {
+            if self.mode == Mode::SecondWaits && index == 1 {
+                let deadline = Instant::now() + Duration::from_secs(30);
+                while !self.started.load(Ordering::SeqCst) && Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                std::thread::sleep(Duration::from_millis(300));
+            }
             let mut file = std::fs::File::create_new(to)?;
             let body = self.bodies.get(index).copied().unwrap_or_default();
             file.write_all(body.as_bytes())?;
@@ -367,6 +399,33 @@ mod tests {
         let (task2, _) = task(&dir, vec![file("a.txt")], vec!["newer"], Mode::Plain);
         finish(&engine, engine.submit(task2), |c: &[ConflictItem]| vec![Decision::Skip; c.len()]);
         assert_eq!(names_in(&dir), ["a (2).txt", "a.txt"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn keep_both_and_names_that_meet_never_lose_a_file() {
+        let dir = test_dir("materialize-meet-keep-both");
+        write(&dir.join("a_b.txt"), "old");
+        let (task, answered) =
+            task(&dir, vec![file("a<b.txt"), file("a>b.txt")], vec!["one", "two"], Mode::SecondWaits);
+        let engine = engine();
+        let keep_both = |c: &[ConflictItem]| {
+            answered.store(true, Ordering::SeqCst);
+            vec![Decision::KeepBoth; c.len()]
+        };
+        let (report, _) = finish(&engine, engine.submit(task), keep_both);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert_eq!(read(&dir.join("a_b.txt")), "old");
+        let names = names_in(&dir);
+        assert_eq!(names.len(), 3, "{names:?}");
+        let mut bodies: Vec<String> = names.iter().map(|n| read(&dir.join(n))).collect();
+        bodies.sort();
+        assert_eq!(bodies, ["old", "one", "two"]);
+        let mut results = report.results.clone();
+        results.sort();
+        assert_eq!(results.len(), 2, "{results:?}");
+        assert!(results.iter().all(|r| r.exists() && *r != dir.join("a_b.txt")), "{results:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
