@@ -271,11 +271,13 @@ pub struct KeyRow {
 }
 
 /// The tree key of `chord`: arrows, Home/End, PgUp/PgDn, Enter, Esc without modifiers, the
-/// primary modifier (⌘ on a Mac) with Enter, and the menu key. Tab is none: it leaves.
-pub fn side_key(chord: &Chord, menu_key: bool, mac: bool) -> Option<SideKey> {
+/// primary modifier (⌘ on a Mac) with Enter, and the menu key (which has no chord). Tab is
+/// none: it leaves.
+pub fn side_key(chord: Option<&Chord>, menu_key: bool, mac: bool) -> Option<SideKey> {
     if menu_key {
         return Some(SideKey::Menu);
     }
+    let chord = chord?;
     let primary = if mac { chord.meta } else { chord.ctrl };
     let other = if mac { chord.ctrl } else { chord.meta };
     if chord.alt || chord.shift || other {
@@ -644,19 +646,29 @@ mod tests {
     #[test]
     fn a_chord_is_a_tree_key_only_without_modifiers() {
         let chord = |key, ctrl, meta, shift| Chord { ctrl, alt: false, shift, meta, key };
-        assert_eq!(side_key(&chord(Key::Down, false, false, false), false, false), Some(SideKey::Down));
-        assert_eq!(side_key(&chord(Key::Down, false, false, true), false, false), None, "Shift+Down is no tree key");
-        assert_eq!(side_key(&chord(Key::Enter, true, false, false), false, false), Some(SideKey::OpenInTab));
-        assert_eq!(side_key(&chord(Key::Enter, false, true, false), false, true), Some(SideKey::OpenInTab), "⌘Enter");
-        assert_eq!(side_key(&chord(Key::Enter, true, false, false), false, true), None, "Ctrl+Enter on a Mac");
+        assert_eq!(side_key(Some(&chord(Key::Down, false, false, false)), false, false), Some(SideKey::Down));
         assert_eq!(
-            side_key(&chord(Key::Delete, false, false, false), false, false),
+            side_key(Some(&chord(Key::Down, false, false, true)), false, false),
+            None,
+            "Shift+Down is no tree key"
+        );
+        assert_eq!(side_key(Some(&chord(Key::Enter, true, false, false)), false, false), Some(SideKey::OpenInTab));
+        assert_eq!(
+            side_key(Some(&chord(Key::Enter, false, true, false)), false, true),
+            Some(SideKey::OpenInTab),
+            "⌘Enter"
+        );
+        assert_eq!(side_key(Some(&chord(Key::Enter, true, false, false)), false, true), None, "Ctrl+Enter on a Mac");
+        assert_eq!(
+            side_key(Some(&chord(Key::Delete, false, false, false)), false, false),
             None,
             "Delete deletes nothing here"
         );
-        assert_eq!(side_key(&chord(Key::Tab, false, false, false), false, false), None, "Tab leaves the sidebar");
-        assert_eq!(side_key(&chord(Key::Tab, false, false, true), false, false), None, "and Shift+Tab");
-        assert_eq!(side_key(&chord(Key::F(10), false, false, true), true, false), Some(SideKey::Menu));
-        assert_eq!(side_key(&chord(Key::Escape, false, false, false), false, false), Some(SideKey::Leave));
+        assert_eq!(side_key(Some(&chord(Key::Tab, false, false, false)), false, false), None, "Tab leaves the sidebar");
+        assert_eq!(side_key(Some(&chord(Key::Tab, false, false, true)), false, false), None, "and Shift+Tab");
+        assert_eq!(side_key(Some(&chord(Key::F(10), false, false, true)), true, false), Some(SideKey::Menu));
+        assert_eq!(side_key(Some(&chord(Key::Escape, false, false, false)), false, false), Some(SideKey::Leave));
+        assert_eq!(side_key(None, true, false), Some(SideKey::Menu), "the menu key has no chord");
+        assert_eq!(side_key(None, false, false), None);
     }
 }

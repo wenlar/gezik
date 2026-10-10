@@ -89,7 +89,8 @@ pub fn check_pins(dirs: &KnownDirs, pinned: &[PinEntry], exists: impl Fn(&Path) 
     pinned
         .iter()
         .filter_map(|entry| {
-            let path = dirs.expand_checked(&entry.path).filter(|p| exists(p))?;
+            // A bare server (`\\server`) is listed by its shares; it is no folder to ask about.
+            let path = dirs.expand_checked(&entry.path).filter(|p| is_server(p) || exists(p))?;
             Some(Pin { entry: entry.clone(), path })
         })
         .collect()
@@ -201,12 +202,26 @@ fn place_path(places: &Places, pins: &[Pin], section: i32, index: i32) -> Option
 /// else the sub-folders the list would show (nothing opened, no cloud file downloaded), sorted
 /// and capped here, and where the folder really is for the loop guard (`canonicalize` for
 /// every branch, so all the real paths compared have one form). The tree's only read.
+/// Why a branch could not be read: a folder not found is the folder itself gone (the system's
+/// "path not found" would say the folder above it is).
+fn read_error(err: &std::io::Error) -> String {
+    if err.kind() == std::io::ErrorKind::NotFound {
+        return "It no longer exists".to_owned();
+    }
+    gezik_platform::fs::describe(err)
+}
+
+/// A bare server path (`\\server`) on Windows, whose shares the tree lists.
+fn is_server(path: &Path) -> bool {
+    cfg!(windows) && gezik_core::path_text::server_only(&path.to_string_lossy()).is_some()
+}
+
 fn read_branch(path: &Path, options: gezik_core::view::ViewOptions) -> Result<Listed, String> {
     let names = match crate::navigation::server_of(path) {
         Some(server) => gezik_platform::network::shares(&server),
         None => crate::path_box::subfolder_names(path, options.show_hidden, options.show_system),
     };
-    let names = names.map_err(|err| gezik_platform::fs::describe(&err))?;
+    let names = names.map_err(|err| read_error(&err))?;
     Ok(tree::prepare(names, std::fs::canonicalize(path).ok()))
 }
 
@@ -1019,11 +1034,11 @@ impl Sidebar {
     /// A key while the sidebar has the keyboard (spec 10 §5.1): returns whether it was the
     /// tree's. Typed letters jump (a letter that matches nothing is used up, as in the list);
     /// Tab, Shift+Tab and the shortcuts are not the tree's.
-    pub fn key(&self, chord: &Chord, text: &str, has_modifier: bool, menu_key: bool) -> bool {
+    pub fn key(&self, chord: Option<&Chord>, text: &str, has_modifier: bool, menu_key: bool) -> bool {
         let key = side_key(chord, menu_key, Platform::current() == Platform::Mac);
         // A key bound to an action (num/ is Restore Selection) stays the action's, as in the
         // list; Space is the list's quick look, so here it is typed.
-        let bound = crate::keys::action_for(chord).is_some_and(|a| a != Action::QuickLook);
+        let bound = chord.and_then(crate::keys::action_for).is_some_and(|a| a != Action::QuickLook);
         let typed = if key.is_none() && !has_modifier && !bound { crate::keys::typed_char(text) } else { None };
         if key.is_none() && typed.is_none() {
             return false;
@@ -1342,6 +1357,27 @@ mod tests {
         let visible = check_pins(&dirs, &pinned, |p| p != Path::new("/gone"));
         // Entries with `..` are never expanded.
         assert_eq!(visible, [pin("{documents}", "/u/docs"), pin("/work", "/work")]);
+    }
+
+    #[test]
+    fn a_pinned_server_shows_without_asking_the_network() {
+        let dirs = KnownDirs::new(Vec::new());
+        let visible = check_pins(&dirs, &plain(&["//localhost", "//localhost/gone"]), |_| false);
+        let shown: Vec<&Path> = visible.iter().map(|p| p.path.as_path()).collect();
+        if cfg!(windows) {
+            assert_eq!(shown, [Path::new("//localhost")], "a share is still a folder to find");
+        } else {
+            assert!(shown.is_empty());
+        }
+    }
+
+    #[test]
+    fn a_branch_gone_says_so_not_its_parent() {
+        let gone = std::io::Error::from(std::io::ErrorKind::NotFound);
+        assert_eq!(read_error(&gone), "It no longer exists");
+        #[cfg(windows)]
+        assert_eq!(read_error(&std::io::Error::from_raw_os_error(3)), "It no longer exists", "path not found");
+        assert_eq!(read_error(&std::io::Error::from(std::io::ErrorKind::PermissionDenied)), "Access denied");
     }
 
     #[test]

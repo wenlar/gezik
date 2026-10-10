@@ -1363,7 +1363,8 @@ impl Menus {
         list.push((SEARCH_HERE, "Search in this folder…".to_owned()));
         list.extend(owned(terminal_items(cfg!(windows))));
         subs.push(self.copy_path_sub(std::slice::from_ref(&path), list.len()));
-        self.open(Subject::SidebarEntry(path.clone()), list, subs, MenuTarget::Item(path), x, y, None);
+        // At the point given (the pointer, or under the row for the menu key), not at the pointer.
+        self.open(Subject::SidebarEntry(path.clone()), list, subs, MenuTarget::Item(path), x, y, Some((x, y)));
     }
 
     /// Right-click on the heading of group `index` (its place among the groups shown).

@@ -177,7 +177,9 @@ impl Tree {
         self.roots.iter().find(|(k, _)| k == key).map(|(_, id)| *id)
     }
 
-    fn add(&mut self, path: PathBuf, parent: Option<NodeId>, depth: u16) -> NodeId {
+    fn add(&mut self, mut path: PathBuf, parent: Option<NodeId>, depth: u16) -> NodeId {
+        // `join` leaves room for more (about the path's length again), kept for each folder.
+        path.shrink_to_fit();
         self.next_id += 1;
         let node =
             Node { path, parent, depth, state: State::Closed, children: Vec::new(), more: 0, ticket: 0, real: None };
@@ -552,6 +554,16 @@ mod tests {
         assert_eq!(lines.last(), Some(&Line::More(root)));
         assert_eq!(tree.node(root).unwrap().more, 5);
         assert_eq!(names(&tree, &lines[..3]), ["d0", "d1", "d2"]);
+    }
+
+    #[test]
+    fn a_folder_keeps_no_room_past_its_path() {
+        let mut tree = Tree::default();
+        let read = tree.toggle_root(key("/a/rather/long/place")).unwrap();
+        tree.loaded(&read, found(&["sub"]));
+        let root = tree.root_of(&key("/a/rather/long/place")).unwrap();
+        let sub = tree.node(tree.node(root).unwrap().children[0]).unwrap();
+        assert_eq!(sub.path.capacity(), sub.path.as_os_str().len());
     }
 
     #[test]
