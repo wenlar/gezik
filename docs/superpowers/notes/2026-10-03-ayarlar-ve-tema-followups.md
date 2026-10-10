@@ -1248,3 +1248,10 @@ Alt proje 1 tamamlandıktan sonra bilerek ertelenen maddeler. Kaynak: görev inc
 - Kurulum sırası: altı yapı bugünkü sırada kurulur, sonra `panes::install`, sonra `nav.install()` (yalnız ilk yüklemeyi başlatır). Kurulum sırasındaki eşzamanlı çağrılar denetlendi: hepsi önce de etkisizdi.
 - İnceleme: bulgu yok. Kalan risk: çıkışta iş parçacığı yerel `PANES`'in bırakılma sırası eski altı tekilden farklı (aynı türden risk); `Pane` kendisi testte kurulamıyor, kayıt mantığı jenerik `with_picked` ile sınanıyor.
 - Linux derlemesi bu makinede denetlenemiyor (fontconfig); dönüştürülen çağrıların hiçbiri Linux'a özgü bölgede değil.
+
+## Adım 10, alt parça 10a-2 (`Media` ve `ViewMemory` süreç başına) sonrası
+
+- Yapı: `Media` süreç başına bir tane (önbellekler, kuyruklar, iki işçi); her `View` `Media::client()` ile kendi ince tutamağını alır (beklenen anahtarlar ve öğe numaraları, `on_ready` dinleyicisi). Genel kuşak sayacı kalktı: her iş kendi `Wanted` bayrağını (`Arc<AtomicBool>`) taşır; bir istemcinin yeni kuşağı yalnız başka istemcinin beklemediği anahtarları iptal eder, kuyruk istenmeyen işleri atar (`retain_wanted`). `views.toml` belleği tek `Rc<RefCell<ViewMemory>>`, ertelenmiş yazım süreç başına tek (`SAVE_PENDING`).
+- Ölçüm (sürüm, Windows, 2026-10-10; taban 10a-1 `de4e9ec`): exe **25.090.560 → 25.098.240 bayt** (+7.680). `measure.ps1 -Runs 5` iki tur: boşta 7,3 → 7,4 / 7,3 → 7,3 MB. `grid.ps1` (1000 resim, sayfalama koştu) iki tur: 24,6/24,4 → 24,7/24,8 MB. `stress.ps1` (100.000) dört tur taban/sonra iç içe: yükleme 17,0–21,0 MB, kaydırma CPU'su 203–469 ms (15,6 ms'lik saat adımı; fark gürültü içinde).
+- İnceleme: hata yok. Düzeltilen: istek bayrağı yalnız iş kuyruğa girince ayrılır (100.000 öğede tekrar istekler ayırmasın). Kalan küçükler: kapanan bölmenin istemcisinin kuyruktaki işleri bitene kadar koşar (10b bir `Drop` ile iptal edebilir); iki istemcide kuyruk taşması ve `SAVE_PENDING` testsiz.
+- `scripts/perf/grid.ps1` her PgDn'den önce ön plandaki pencerenin Gezik olduğunu denetler, değilse sayfalamayı bırakır.

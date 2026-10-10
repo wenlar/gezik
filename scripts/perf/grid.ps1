@@ -9,7 +9,7 @@ param([string]$Exe = "$PSScriptRoot\..\..\target\release\gezik.exe", [int]$Count
 . "$PSScriptRoot\_window.ps1"
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Windows.Forms
-Add-Type -Name Focus -Namespace GezikGrid -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);'
+Add-Type -Name Focus -Namespace GezikGrid -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h); [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();'
 
 $dir = Join-Path $env:TEMP "gezik-perf-grid-$Count"
 if (-not (Test-Path $dir) -or (Get-ChildItem $dir).Count -ne $Count) {
@@ -37,7 +37,11 @@ try {
     [void][GezikGrid.Focus]::SetForegroundWindow($hwnd)
     $paged = $true
     try {
-        for ($i = 0; $i -lt 60; $i++) { [System.Windows.Forms.SendKeys]::SendWait("{PGDN}"); Start-Sleep -Milliseconds 150 }
+        for ($i = 0; $i -lt 60; $i++) {
+            # Never type into another window (someone may have clicked elsewhere).
+            if ([GezikGrid.Focus]::GetForegroundWindow() -ne $hwnd) { throw "Gezik lost the focus" }
+            [System.Windows.Forms.SendKeys]::SendWait("{PGDN}"); Start-Sleep -Milliseconds 150
+        }
     } catch { $paged = $false; Write-Warning "PgDn paging did not run ($($_.Exception.Message)); is the desktop locked?" }
     Start-Sleep -Seconds $Wait
     $mb = (Get-CimInstance Win32_PerfFormattedData_PerfProc_Process -Filter "IDProcess=$($p.Id)").WorkingSetPrivate / 1MB
