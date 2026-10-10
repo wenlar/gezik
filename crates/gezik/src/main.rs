@@ -49,6 +49,7 @@ mod single_instance;
 mod stack;
 mod start;
 mod system_changes;
+mod tab_drag;
 mod tab_sets;
 mod tab_tools;
 mod templates;
