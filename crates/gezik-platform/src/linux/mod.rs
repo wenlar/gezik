@@ -8,6 +8,8 @@ pub mod file_manager1;
 #[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
 pub(crate) mod mime;
 #[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
+pub(crate) mod thumbs;
+#[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
 pub(crate) mod uri;
 #[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
 pub(crate) mod xdnd;
