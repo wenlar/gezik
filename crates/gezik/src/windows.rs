@@ -114,6 +114,12 @@ impl<T: Clone> Slot<T> {
         value
     }
 
+    /// The first of `f`'s answers over the windows' values, looked for under the borrow: `f`
+    /// must not reach the slot (it only looks).
+    pub fn find_map<R>(&self, mut f: impl FnMut(WindowId, &T) -> Option<R>) -> Option<R> {
+        self.0.borrow().iter().find_map(|(id, value)| f(*id, value))
+    }
+
     /// Every window's value, with the window.
     pub fn all(&self) -> Vec<(WindowId, T)> {
         self.0.borrow().clone()
@@ -157,6 +163,15 @@ pub fn forget(id: WindowId) {
         forget(id);
     }
     drop(gone);
+}
+
+/// Calls [`release_all`] when dropped: main's every return lets the windows go in order.
+pub struct Release;
+
+impl Drop for Release {
+    fn drop(&mut self) {
+        release_all();
+    }
 }
 
 /// Lets go of every window at the end of main, as main's own handle went before 10g (their

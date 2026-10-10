@@ -857,6 +857,8 @@ fn main() -> Result<(), slint::PlatformError> {
     };
     // The first window: in the register from now on (the settings are shown in every window).
     let first = windows::install(window.clone_strong());
+    // Every way out of main lets the windows go here, before the thread's own teardown.
+    let _release = windows::Release;
 
     let config = ConfigStore::system();
     templates::set_dir(config.as_ref().map(ConfigStore::templates_dir));
@@ -1217,7 +1219,6 @@ fn main() -> Result<(), slint::PlatformError> {
     drop(window);
     let ran = slint::run_event_loop_until_quit();
     resident::shutdown();
-    windows::release_all();
     ran
 }
 

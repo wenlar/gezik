@@ -77,9 +77,12 @@ fn here() -> Rc<Panes> {
 
 /// The window that has pane `id`, its panes and the pane's row there.
 fn row_of(id: PaneId) -> Option<(WindowId, Rc<Panes>, usize)> {
-    PANES.with(Slot::all).into_iter().find_map(|(window, panes)| {
-        let row = panes.rows.borrow().iter().position(|(of, _)| *of == id)?;
-        Some((window, panes, row))
+    // Only the matching window's panes are cloned out; the borrow ends before any call out.
+    PANES.with(|s| {
+        s.find_map(|window, panes| {
+            let row = panes.rows.borrow().iter().position(|(of, _)| *of == id)?;
+            Some((window, panes.clone(), row))
+        })
     })
 }
 
