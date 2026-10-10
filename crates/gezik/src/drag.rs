@@ -573,7 +573,9 @@ impl Drags {
     fn up(&self, x: f32, y: f32, right: bool) -> bool {
         let phase = std::mem::replace(&mut *self.0.phase.borrow_mut(), Phase::Idle);
         match phase {
-            Phase::Idle => false,
+            // A release whose press Gezik never saw: no click and no menu. (Entries report
+            // every release, since one made anew under the press, by a re-read, lost its grab.)
+            Phase::Idle => true,
             Phase::StackArmed { .. } => false,
             // An offer from outside is not ended by Gezik's own button events.
             offer @ Phase::Offer(_) => {

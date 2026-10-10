@@ -465,7 +465,12 @@ export component PaneView inherits Rectangle {
         }
     }
 
-    VerticalLayout {
+    // With two panes, neither gets narrower than this (spec 10 §4.1), whatever its bars need
+    // (they are cut off); with one, what they need.
+    min-width: root.dual ? 240px : body.min-width;
+    clip: root.dual;
+
+    body := VerticalLayout {
         tab-bar := TabBar {
             tabs: root.tabs;
             drop-tab: root.drop-tab;
@@ -671,11 +676,6 @@ export component PaneView inherits Rectangle {
                     }
                 }
             }
-        }
-        // With two panes, neither gets narrower than this (spec 10 §4.1); nothing with one.
-        Rectangle {
-            min-width: root.dual ? 240px : 0px;
-            height: 0px;
         }
     }
 }

@@ -290,6 +290,9 @@ struct Inner {
     /// Names to select once the next move is shown ("Show in folder"). Dropped when that
     /// load fails or is overtaken, and by any other load the user starts.
     select_next: Option<Vec<String>>,
+    /// A note given while the user's load ran: shown with its listing (its item count would
+    /// replace it at once).
+    note_next: Option<String>,
     /// A tab was opened in front (its id): its first show is a visit.
     visit_next_show: Option<u64>,
     /// The load (its generation) going to the nearest folder of one found gone: no visit.
@@ -352,6 +355,7 @@ impl Navigator {
             removal: None,
             on_visited: Vec::new(),
             select_next: None,
+            note_next: None,
             visit_next_show: None,
             fallback: None,
             session_sink: None,
@@ -551,8 +555,9 @@ impl Navigator {
         crate::panes::with_id(self.id(), |p| p.search.leaving());
         // Not while borrowed: the view calls its selection listeners.
         view.clear();
-        self.update_chrome();
+        // Loading first: a note the change brings (sync browsing ending) waits for the listing.
         self.load(self.active_location(), Mode::Show, note);
+        self.update_chrome();
     }
 
     /// The saved search `old` is now called `new`: the tabs showing it are titled so.
@@ -1025,6 +1030,21 @@ impl Navigator {
         self.0.borrow().window.upgrade().map_or(0, |w| gezik_platform::network::owner_of(&w.window().window_handle()))
     }
 
+    /// Shows `text` in the status bar until the selection changes: once the folder the user
+    /// is opening shows, if one is loading (F3's hint for a new pane, sync browsing ending on a
+    /// new tab).
+    pub fn note(&self, text: String) {
+        let view = {
+            let mut inner = self.0.borrow_mut();
+            if inner.user_load.is_some() {
+                inner.note_next = Some(text);
+                return;
+            }
+            inner.view.clone()
+        };
+        view.note(text);
+    }
+
     pub fn status(&self, text: String) {
         if let Some(window) = self.0.borrow().window.upgrade() {
             window.set_status(text.into());
@@ -1098,6 +1118,7 @@ impl Navigator {
             let ticket = inner.pending.take().map(|(ticket, _)| ticket);
             // Names for this load only: a failed one drops them too.
             select_next = inner.select_next.take();
+            note = note.or(inner.note_next.take());
             inner.user_load = None;
             inner.pace.finished(Instant::now());
             let active = inner.tabs.id(inner.tabs.active_index());
@@ -1420,6 +1441,21 @@ pub fn sync_model<T: Clone + PartialEq + 'static>(model: &VecModel<T>, items: im
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_note_given_while_a_folder_loads_waits_for_it() {
+        let id = crate::panes::next_id();
+        let window = slint::Weak::default();
+        let view = View::new(id, window.clone(), crate::media::Media::idle(), Default::default(), None);
+        let nav = Navigator::new(id, window, view, Session::single(Location::Drives), Vec::new(), Location::Drives);
+        nav.install();
+        nav.note("Sync browsing off".to_owned());
+        assert_eq!(nav.0.borrow().note_next.as_deref(), Some("Sync browsing off"), "kept for the listing");
+        nav.finish_load(Location::Drives, Mode::Show, LoadResult::Drives(Vec::new()), None);
+        assert!(nav.0.borrow().note_next.is_none(), "shown with it");
+        nav.note("now".to_owned());
+        assert!(nav.0.borrow().note_next.is_none(), "nothing loads: shown at once");
+    }
 
     #[test]
     fn a_bare_server_is_listed_by_its_shares_on_windows_only() {

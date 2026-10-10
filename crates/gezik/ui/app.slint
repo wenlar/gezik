@@ -240,9 +240,14 @@ export component AppWindow inherits Window {
     in property <bool> dual;
     in property <int> active-pane;
     in property <percent> pane-split: 50%;
-    in property <percent> right-split: 50%;
     // Where the right pane starts (the splitter is just left of it).
     property <length> split-x;
+    // The panes' room (their row's width), copied when it changes: read in the panes' widths
+    // directly, it would loop through the row's layout.
+    property <length> panes-room;
+    // The left pane's width: its share of the room, but each pane at least 240 px while the
+    // room allows (spec 10 §4.1), so neither is pushed out of the window.
+    property <length> left-width: max(0px, min(max((root.panes-room - 5px) * (root.pane-split / 100%), 240px), root.panes-room - 5px - 240px));
     // The splitter between the panes was dragged to this share of their room (Rust sets
     // `pane-split`), was let go, or was double-clicked (back to the middle).
     callback pane-split-moved(float);
@@ -869,6 +874,8 @@ export component AppWindow inherits Window {
                     }
                 }
                 Rectangle {
+                    init => { root.panes-room = self.width; }
+                    changed width => { root.panes-room = self.width; }
                     panes-row := HorizontalLayout {
                         spacing: 5px;
                         for pane-data[i] in root.panes: pane := PaneView {
@@ -877,8 +884,8 @@ export component AppWindow inherits Window {
                             dual: root.dual;
                             active: i == root.active-pane;
                             synced: root.view-sync;
-                            // The left one's share of the room; one pane has all of it.
-                            width: !root.dual ? 100% : i == 0 ? root.pane-split : root.right-split;
+                            // The left one's share of the room (the layout fills it); one pane has all of it.
+                            preferred-width: !root.dual ? root.panes-room : i == 0 ? root.left-width : root.panes-room - 5px - root.left-width;
                             init => {
                                 if i == 1 { root.split-x = self.x; }
                             }
@@ -1010,7 +1017,8 @@ export component AppWindow inherits Window {
                                 }
                                 sheet-place := Rectangle {
                                     horizontal-stretch: 1;
-                                    min-width: pane.sheet-min-width;
+                                    // With two panes the pane's own minimum rules (its bars fit or are cut off).
+                                    min-width: root.dual ? 0px : pane.sheet-min-width;
                                     min-height: pane.sheet-min-height;
                                 }
                                 // Grabbable over 5px; the line shows only while hovered or dragged.

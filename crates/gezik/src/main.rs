@@ -1020,7 +1020,6 @@ fn main() -> Result<(), slint::PlatformError> {
     let folder_sizes = folder_sizes::FolderSizes::new(pane_id, window.as_weak(), view.clone());
     folder_sizes.set_settings(initial_settings.folder_sizes, initial_settings.search.everything);
     let preview = preview::Preview::new(&window);
-    preview.set_pane_open(saved_state.preview_open);
     let StartPlan { session, select, start, .. } = plan;
     let nav = navigation::Navigator::new(pane_id, window.as_weak(), view.clone(), session, select, start);
     // The open tabs go to state.toml as they change (spec 5.1); its own thread writes them, so
@@ -1062,6 +1061,8 @@ fn main() -> Result<(), slint::PlatformError> {
     dual::connect(&left);
     // Installed before the window's parts are made: they reach the active pane.
     panes::install(left);
+    // Opening the preview reads the active pane's selection.
+    preview.set_pane_open(saved_state.preview_open);
     let restore = initial_settings.session.restore && !secondary;
     let state_store = config.clone().filter(|_| !secondary);
     let right_session = if restore { saved_state.right_session.clone() } else { Default::default() };

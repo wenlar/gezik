@@ -584,8 +584,9 @@ export component FileView inherits Rectangle {
                         if event.kind == PointerEventKind.up && event.button == PointerEventButton.middle {
                             root.item-middle-clicked(entry.index);
                         }
-                        if event.kind == PointerEventKind.up && (event.button == PointerEventButton.left || event.button == PointerEventButton.right)
-                            && (self.button-down || root.drag-active) {
+                        // Every release, without `button-down` too: a re-read (the pane just made
+                        // active) makes the entry anew under the press; Rust knows the press.
+                        if event.kind == PointerEventKind.up && (event.button == PointerEventButton.left || event.button == PointerEventButton.right) {
                             self.button-down = false;
                             let used = root.item-up(entry.index, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y,
                                 event.button == PointerEventButton.right);
@@ -830,8 +831,8 @@ export component FileView inherits Rectangle {
                                 if event.kind == PointerEventKind.up && event.button == PointerEventButton.middle {
                                     root.item-middle-clicked(tile.index);
                                 }
-                                if event.kind == PointerEventKind.up && (event.button == PointerEventButton.left || event.button == PointerEventButton.right)
-                                    && (self.button-down || root.drag-active) {
+                                // Every release, as for list entries.
+                                if event.kind == PointerEventKind.up && (event.button == PointerEventButton.left || event.button == PointerEventButton.right) {
                                     self.button-down = false;
                                     let used = root.item-up(tile.index, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y,
                                         event.button == PointerEventButton.right);

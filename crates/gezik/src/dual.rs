@@ -71,7 +71,6 @@ pub fn install(
     let right = (!right.is_empty()).then_some(right);
     let split = split.map_or(0.5, |split| f32::from(split) / 1000.0);
     window.set_pane_split(split * 100.0);
-    window.set_right_split(100.0 - split * 100.0);
     DUAL.with(|d| {
         *d.borrow_mut() =
             Dual { window: window.as_weak(), store, restore, right, split, config, f3_at: None, sync: None }
@@ -263,7 +262,6 @@ pub fn split_moved(share: f32) {
     DUAL.with(|d| d.borrow_mut().split = split);
     if let Some(window) = window() {
         window.set_pane_split(split * 100.0);
-        window.set_right_split(100.0 - split * 100.0);
     }
 }
 
@@ -377,7 +375,7 @@ fn followed(id: PaneId, location: &Location) {
         Follow::Off(why) => {
             set_sync(false);
             save();
-            panes::active_view().note(why);
+            panes::active_nav().note(why);
         }
     }
 }
@@ -514,7 +512,7 @@ pub fn to_other(moving: bool) {
     }
     // shortcut: the typed folder is not looked up on disk (no stat on the UI thread): a file by
     // that name fails in the job; check it off the thread if that confuses.
-    let title = format!("{verb} {} to {}?", crate::operations::items_text(&names), base.display());
+    let title = question_title(verb, &names, &base);
     let message = "Into this folder (a relative path is under it; a missing folder is made):";
     let typed_base = base.clone();
     let note = move |typed: &str| match typed_target(&typed_base, typed) {
@@ -610,12 +608,19 @@ pub fn f3_pressed() {
     if !f3_again(at, now_secs()) {
         return;
     }
-    panes::active_view().note(F3_HINT.to_owned());
+    panes::active_nav().note(F3_HINT.to_owned());
     DUAL.with(|d| d.borrow_mut().f3_at = None);
     let store = DUAL.with(|d| d.borrow().store.clone());
     if let Some(store) = store {
         store.update_state(|state| state.f3_moved_at = None);
     }
+}
+
+/// The F5/F6 question: `Copy "a.txt" to D:\Yedek?`, `Move 3 items to …?`.
+fn question_title(verb: &str, names: &[PathBuf], base: &Path) -> String {
+    let what = crate::operations::items_text(names);
+    let what = if names.len() == 1 { format!("\"{what}\"") } else { what };
+    format!("{verb} {what} to {}?", base.display())
 }
 
 /// Whether the F3 hint shown at `at` says it again at `now`.
@@ -765,6 +770,14 @@ mod tests {
         let top = backup.ancestors().last().unwrap().to_path_buf();
         let deep = work.join("a").join("b").join("c").join("d");
         assert_eq!(sync_nav(true, &at(&deep), &at(&root), Some(&top), &names, false), apart);
+    }
+
+    #[test]
+    fn the_question_quotes_one_name() {
+        let base = PathBuf::from("dst");
+        assert_eq!(question_title("Copy", &[PathBuf::from("src").join("a.txt")], &base), "Copy \"a.txt\" to dst?");
+        let two = [PathBuf::from("a"), PathBuf::from("b")];
+        assert_eq!(question_title("Move", &two, &base), "Move 2 items to dst?");
     }
 
     #[test]

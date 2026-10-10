@@ -261,6 +261,8 @@ export component TabBar inherits Rectangle {
                 // The active pane's active tab, with two panes (spec 10 §4.3).
                 if item.active && root.marked: Rectangle {
                     x: Theme.radius;
+                    // The top edge; without it Slint centres the line.
+                    y: 0;
                     width: parent.width - 2 * Theme.radius;
                     height: 2px;
                     background: Theme.accent;

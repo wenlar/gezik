@@ -44,6 +44,9 @@ export component Breadcrumb inherits Rectangle {
     }
 
     if !root.editing: Rectangle {
+        // Narrower than its parts' arrows (a narrow pane): the last parts stay in view.
+        min-width: 0px;
+        clip: true;
         // Clicking empty space switches to typing.
         TouchArea {
             clicked => { root.edit(); }
@@ -59,6 +62,8 @@ export component Breadcrumb inherits Rectangle {
             }
         }
         HorizontalLayout {
+            x: min(0px, parent.width - self.min-width);
+            width: max(parent.width, self.min-width);
             padding-left: Theme.spacing;
             padding-right: Theme.spacing;
             alignment: start;
