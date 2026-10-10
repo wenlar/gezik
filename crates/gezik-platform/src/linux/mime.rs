@@ -4,9 +4,6 @@
 //! legacy defaults.list). Read when needed, never ahead. Compiled everywhere: tested on
 //! Windows with files in a temp folder.
 
-// Open With (task 5) and the theme icons (task 4) use the rest on Linux; drop this then.
-#![cfg_attr(all(unix, not(target_os = "macos")), allow(dead_code))]
-
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
