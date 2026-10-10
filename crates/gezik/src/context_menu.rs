@@ -21,12 +21,10 @@ use gezik_core::view::{
 use gezik_platform::MenuTarget;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
-use crate::navigation::Navigator;
 use crate::operations::Operations;
 use crate::popup::Anchor;
 use crate::preview::Preview;
 use crate::sidebar::{SECTION_GROUP, SECTION_PINNED, Sidebar};
-use crate::view::View;
 use crate::{AppWindow, MenuEntry, MenuSub};
 
 pub const OPEN_IN_NEW_TAB: u32 = 1;
@@ -492,6 +490,8 @@ pub const EXPAND_GROUPS: u32 = 2011;
 pub const RESET_TO_RULE: u32 = 2041;
 /// View ▸ "View rule N applies", greyed: which rule set the folder's view.
 pub const VIEW_RULE_APPLIES: u32 = 2042;
+/// View ▸ Two panes (spec 10 §10.3, 10b).
+pub const TWO_PANES: u32 = 2030;
 /// View ▸ Show in sidebar tree (spec 10 §10.3, 10c).
 pub const REVEAL_IN_TREE: u32 = 2050;
 
@@ -982,8 +982,6 @@ impl Drop for MenuClaim {
 #[derive(Clone)]
 pub struct Menus {
     window: slint::Weak<AppWindow>,
-    nav: Navigator,
-    view: View,
     preview: Preview,
     sidebar: Sidebar,
     ops: Operations,
@@ -1008,18 +1006,9 @@ pub struct Menus {
 }
 
 impl Menus {
-    pub fn new(
-        window: &AppWindow,
-        nav: Navigator,
-        view: View,
-        preview: Preview,
-        sidebar: Sidebar,
-        ops: Operations,
-    ) -> Menus {
+    pub fn new(window: &AppWindow, preview: Preview, sidebar: Sidebar, ops: Operations) -> Menus {
         let menus = Menus {
             window: window.as_weak(),
-            nav,
-            view,
             preview,
             sidebar,
             ops,
@@ -1084,7 +1073,7 @@ impl Menus {
 
     fn row_menu(&self, index: i32, x: f32, y: f32, at_position: bool) {
         let Ok(i) = usize::try_from(index) else { return };
-        if self.view.shows_trash() {
+        if crate::panes::active_view().shows_trash() {
             *self.subject.borrow_mut() = Some(Subject::Background(PathBuf::new()));
             return self.open_slint(&trash_row_items(), Anchor::point(x, y));
         }
@@ -1092,10 +1081,10 @@ impl Menus {
         let native = cfg!(windows);
         self.menu_at.set((x, y));
         self.ops.clipboard_check();
-        if self.view.is_selected(i) && self.view.selection_count() > 1 {
-            let rows = self.view.selected_items();
+        if crate::panes::active_view().is_selected(i) && crate::panes::active_view().selection_count() > 1 {
+            let rows = crate::panes::active_view().selected_items();
             let paths: Vec<PathBuf> = rows.iter().map(|(path, _)| path.clone()).collect();
-            let results = self.view.shows_results();
+            let results = crate::panes::active_view().shows_results();
             // Results from several folders get Gezik's own menu (spec 4.6).
             let native = native && (!results || one_folder(&paths));
             let mut list = owned(items(Place::Rows, native));
@@ -1111,15 +1100,15 @@ impl Menus {
             self.add_finder_items(&mut list, &mut subs, services);
             if results {
                 list.extend(owned(result_row_items()).into_iter().filter(|(id, _)| *id != SHOW_IN_FOLDER_NEW_TAB));
-            } else if !self.view.shows_drives() {
+            } else if !crate::panes::active_view().shows_drives() {
                 list.push((NEW_FOLDER_WITH_SELECTION, "New folder with selection".to_owned()));
             }
-            if native && !self.view.shows_drives() {
+            if native && !crate::panes::active_view().shows_drives() {
                 list.push((BATCH_RENAME, format!("Rename {} items…", paths.len())));
             }
             return self.open_as(native, Subject::Rows(paths.clone()), list, subs, MenuTarget::Items(paths), x, y, at);
         }
-        let Some((path, is_dir)) = self.view.entry_path(i) else { return };
+        let Some((path, is_dir)) = crate::panes::active_view().entry_path(i) else { return };
         let place = Place::Row { is_dir, pinned: is_dir && self.sidebar.is_pinned(&path) };
         let mut list = owned(items(place, native));
         if let Some(item) = package_item(&path, is_dir, cfg!(target_os = "macos")) {
@@ -1130,7 +1119,7 @@ impl Menus {
                 SEARCH_HERE,
                 format!("Search in \"{}\"…", crate::operations::items_text(std::slice::from_ref(&path))),
             ));
-            if matches!(self.nav.active_location(), Location::Path(_)) {
+            if matches!(crate::panes::active_nav().active_location(), Location::Path(_)) {
                 list.push((CALC_FOLDER_SIZES, "Calculate folder sizes".to_owned()));
             }
         }
@@ -1142,12 +1131,12 @@ impl Menus {
         list.extend(self.file_extras(true, is_dir, native));
         list.extend(cloud_items(crate::cloud::root_of(&path).is_some(), native, cfg!(target_os = "macos")));
         // Not asked on Windows: Explorer's menu has Eject, and asking a fixed drive's bus costs a query.
-        if self.view.shows_drives() && !native {
+        if crate::panes::active_view().shows_drives() && !native {
             list.extend(drive_items(crate::eject::way_at(&path), native));
         }
         list.extend(info_item(native, cfg!(target_os = "macos")));
         self.add_finder_items(&mut list, &mut subs, services);
-        if self.view.shows_results() {
+        if crate::panes::active_view().shows_results() {
             list.extend(owned(result_row_items()));
         }
         self.open(Subject::Row(path.clone()), list, subs, MenuTarget::Item(path), x, y, at);
@@ -1163,7 +1152,7 @@ impl Menus {
         rows: Vec<(PathBuf, bool)>,
         native: bool,
     ) {
-        if self.view.shows_drives() {
+        if crate::panes::active_view().shows_drives() {
             return;
         }
         let mut extra = crate::archives::menu_items(&rows);
@@ -1188,7 +1177,7 @@ impl Menus {
     /// `run_verb`), so only Duplicate is added there.
     fn file_extras(&self, single: bool, folder: bool, native: bool) -> Vec<(u32, String)> {
         // Drives (This PC) are not files: no copying, deleting or renaming them.
-        if self.view.shows_drives() {
+        if crate::panes::active_view().shows_drives() {
             Vec::new()
         } else if native {
             vec![(DUPLICATE, "Duplicate".to_owned())]
@@ -1210,7 +1199,7 @@ impl Menus {
         self.menu_apps.borrow_mut().clear();
         self.menu_services.borrow_mut().clear();
         if !gezik_platform::open_with::SUPPORTED
-            || self.view.shows_drives()
+            || crate::panes::active_view().shows_drives()
             || rows.is_empty()
             || rows.len() > gezik_platform::open_with::MAX_ITEMS
         {
@@ -1233,7 +1222,7 @@ impl Menus {
         subs: &mut Vec<Submenu>,
         services: Option<Vec<gezik_platform::services::Service>>,
     ) {
-        if self.view.shows_drives() {
+        if crate::panes::active_view().shows_drives() {
             return;
         }
         let (items, sub) = finder_items(services.as_deref(), cfg!(target_os = "macos"), list.len());
@@ -1261,11 +1250,10 @@ impl Menus {
         rows: &[(PathBuf, bool)],
         native: bool,
     ) {
-        if self.view.shows_drives() {
+        if crate::panes::active_view().shows_drives() {
             return;
         }
-        let network: Vec<PathBuf> = self
-            .nav
+        let network: Vec<PathBuf> = crate::panes::active_nav()
             .places()
             .drives
             .into_iter()
@@ -1287,7 +1275,7 @@ impl Menus {
 
     fn background_menu(&self, at: Option<(f32, f32)>, x: f32, y: f32) {
         // Search results have no folder: Undo, Redo and Refresh (spec 4.6).
-        if self.view.shows_results() {
+        if crate::panes::active_view().shows_results() {
             let list: Vec<(u32, String, bool)> = background_items(
                 self.ops.undo_label().as_deref(),
                 self.ops.redo_label().as_deref(),
@@ -1299,18 +1287,18 @@ impl Menus {
             .map(|(id, title)| (id, title, true))
             .collect();
             let mut list = list;
-            if self.view.shows_trash() {
+            if crate::panes::active_view().shows_trash() {
                 list.push((EMPTY_TRASH, empty_title(), true));
             }
             *self.subject.borrow_mut() = Some(Subject::Background(PathBuf::new()));
             return self.open_slint_entries(&list, Vec::new(), Anchor::point(x, y));
         }
-        if self.view.shows_drives() {
+        if crate::panes::active_view().shows_drives() {
             *self.subject.borrow_mut() = Some(Subject::Background(PathBuf::new()));
             let items = drives_background_items(&crate::connect::recent());
             return self.open_slint_entries(&items, Vec::new(), Anchor::point(x, y));
         }
-        let Location::Path(dir) = self.nav.active_location() else { return };
+        let Location::Path(dir) = crate::panes::active_nav().active_location() else { return };
         self.ops.clipboard_check();
         // One clipboard query each, shared by the menu and its Paste item.
         let can_paste = self.ops.can_paste();
@@ -1397,8 +1385,11 @@ impl Menus {
     /// Right-click on tab `index`, at window position `x`, `y`. Tabs get Gezik's own menu
     /// everywhere, with "Open tab set ▸" when there are sets.
     pub fn tab(&self, index: usize, x: f32, y: f32) {
-        let Some(id) = self.nav.tab_id(index) else { return };
-        let place = Place::Tab { only_tab: self.nav.tab_count() == 1, locked: self.nav.is_tab_locked(index) };
+        let Some(id) = crate::panes::active_nav().tab_id(index) else { return };
+        let place = Place::Tab {
+            only_tab: crate::panes::active_nav().tab_count() == 1,
+            locked: crate::panes::active_nav().is_tab_locked(index),
+        };
         let list: Vec<(u32, String, bool)> =
             items(place, false).into_iter().map(|(id, title)| (id, title.to_owned(), true)).collect();
         let names = crate::tab_sets::names();
@@ -1410,13 +1401,23 @@ impl Menus {
     /// Right-click on the column header, at window position `x`, `y`: the columns, then Group by ▸.
     pub fn header(&self, x: f32, y: f32) {
         *self.subject.borrow_mut() = Some(Subject::Header);
-        let items: Vec<(u32, String, bool)> = if self.view.shows_results() {
-            result_header_items(&self.view.columns_shown()).into_iter().map(|(id, t)| (id, t, true)).collect()
+        let items: Vec<(u32, String, bool)> = if crate::panes::active_view().shows_results() {
+            result_header_items(&crate::panes::active_view().columns_shown())
+                .into_iter()
+                .map(|(id, t)| (id, t, true))
+                .collect()
         } else {
-            header_items(&self.view.columns_shown()).into_iter().map(|(id, t)| (id, t.to_owned(), true)).collect()
+            header_items(&crate::panes::active_view().columns_shown())
+                .into_iter()
+                .map(|(id, t)| (id, t.to_owned(), true))
+                .collect()
         };
         let at = items.len();
-        self.open_slint_entries(&items, vec![group_by_sub(self.view.view_settings().group, at)], Anchor::point(x, y));
+        self.open_slint_entries(
+            &items,
+            vec![group_by_sub(crate::panes::active_view().view_settings().group, at)],
+            Anchor::point(x, y),
+        );
     }
 
     /// Right-click on a group's header line (spec 10 §6.2).
@@ -1425,7 +1426,11 @@ impl Menus {
         let items: Vec<(u32, String, bool)> =
             group_header_items().into_iter().map(|(id, t)| (id, t.to_owned(), true)).collect();
         let at = items.len();
-        self.open_slint_entries(&items, vec![group_by_sub(self.view.view_settings().group, at)], Anchor::point(x, y));
+        self.open_slint_entries(
+            &items,
+            vec![group_by_sub(crate::panes::active_view().view_settings().group, at)],
+            Anchor::point(x, y),
+        );
     }
 
     /// The View button's menu, under it.
@@ -1434,18 +1439,27 @@ impl Menus {
         let options = crate::view_options::current();
         let mut stack_open = false;
         crate::stack::with_current(|stack| stack_open = stack.is_open());
-        let items =
-            view_items(self.view.view_settings(), self.preview.is_pane_open(), stack_open, options, cfg!(windows));
+        let items = view_items(
+            crate::panes::active_view().view_settings(),
+            self.preview.is_pane_open(),
+            stack_open,
+            options,
+            cfg!(windows),
+        );
         let place = items.iter().position(|(id, _)| *id == APPLY_TO_ALL).unwrap_or(items.len());
         let mut entries: Vec<(u32, String, bool)> = items.into_iter().map(|(id, title)| (id, title, true)).collect();
         // Flat view (spec 5): marked in it, off in This PC.
-        let location = self.nav.active_location();
+        let location = crate::panes::active_nav().active_location();
         let flat = matches!(location, Location::Flat(_));
         let at_flat = entries.iter().position(|(id, _, _)| *id == PREVIEW_PANE).unwrap_or(entries.len());
         entries.insert(
             at_flat,
             (FLAT_VIEW, format!("{}Flat view", if flat { "• " } else { "    " }), location.folder().is_some()),
         );
+        // Two panes (spec 10 §10.3), right after the preview pane.
+        let at_panes = entries.iter().position(|(id, _, _)| *id == PREVIEW_PANE).map_or(entries.len(), |i| i + 1);
+        let dual = crate::dual::is_open();
+        entries.insert(at_panes, (TWO_PANES, format!("{}Two panes", if dual { "• " } else { "    " }), true));
         // After "Apply to all folders" (the formats' place stays): only in a folder.
         if matches!(location, Location::Path(_)) {
             let at_calc = entries.iter().position(|(id, _, _)| *id == RESET_FOLDER).unwrap_or(entries.len());
@@ -1453,16 +1467,16 @@ impl Menus {
         }
         // Group by ▸ right after the sort's direction; a grouped view's Collapse/Expand All after it.
         let at_group = entries.iter().position(|(id, _, _)| *id == SORT_DESC).map_or(entries.len(), |i| i + 1);
-        let shift = if self.view.grouped() {
+        let shift = if crate::panes::active_view().grouped() {
             let all = group_header_items().into_iter().map(|(id, t)| (id, format!("    {t}"), true));
             entries.splice(at_group..at_group, all);
             group_header_items().len()
         } else {
             0
         };
-        rule_items(&mut entries, self.view.rule_state());
-        let mut subs = format_subs(options, place + 1 + shift);
-        subs.push(group_by_sub(self.view.view_settings().group, at_group));
+        rule_items(&mut entries, crate::panes::active_view().rule_state());
+        let mut subs = format_subs(options, place + 2 + shift);
+        subs.push(group_by_sub(crate::panes::active_view().view_settings().group, at_group));
         self.open_slint_entries(&entries, subs, at);
     }
 
@@ -1537,7 +1551,7 @@ impl Menus {
                 .map(|(sub, items)| gezik_platform::ShellSubmenu { title: sub.title.as_str(), at: sub.at, items })
                 .collect();
             // Gezik renames in place, only a single row of a folder listing (see run_verb).
-            let can_rename = matches!(subject, Some(Subject::Row(_))) && !menus.view.shows_drives();
+            let can_rename = matches!(subject, Some(Subject::Row(_))) && !crate::panes::active_view().shows_drives();
             crate::drag::with_current(|drags| drags.menu_shown());
             let outcome = gezik_platform::show_shell_menu(&handle, &target, &items, &shell_subs, at, can_rename);
             release_stale_modifiers(&window);
@@ -1553,8 +1567,8 @@ impl Menus {
                     // The command may have created, renamed or deleted anything, pinned
                     // folders included. Results are not read again for it: that would run the
                     // whole search and read its name cache anew (F5 does, spec 4.7).
-                    if !menus.nav.active_location().is_results() {
-                        menus.nav.reload();
+                    if !crate::panes::active_nav().active_location().is_results() {
+                        crate::panes::active_nav().reload();
                     }
                     menus.sidebar.refresh();
                 }
@@ -1736,8 +1750,8 @@ impl Menus {
             (id, Subject::Search) => {
                 crate::panes::with_active(|p| p.search.menu_chosen(id));
             }
-            (PUT_BACK, _) => crate::trash_view::put_back(&self.view),
-            (TRASH_DELETE, _) => crate::trash_view::delete_selection(&self.view),
+            (PUT_BACK, _) => crate::trash_view::put_back(&crate::panes::active_view()),
+            (TRASH_DELETE, _) => crate::trash_view::delete_selection(&crate::panes::active_view()),
             (EMPTY_TRASH, _) => crate::trash_view::empty(),
             (CONNECT_SERVER, _) => crate::connect::open(),
             (EJECT | DISCONNECT, Subject::Row(path) | Subject::SidebarEntry(path)) => crate::eject::eject_path(&path),
@@ -1745,10 +1759,10 @@ impl Menus {
                 crate::connect::open_recent((id - RECENT_SERVER_FIRST) as usize)
             }
             (id, _) if (GROUP_BY_NONE..=GROUP_BY_SIZE).contains(&id) => {
-                self.view.set_group(GroupBy::ALL[(id - GROUP_BY_NONE) as usize]);
+                crate::panes::active_view().set_group(GroupBy::ALL[(id - GROUP_BY_NONE) as usize]);
             }
-            (COLLAPSE_GROUPS, _) => self.view.collapse_all(true),
-            (EXPAND_GROUPS, _) => self.view.collapse_all(false),
+            (COLLAPSE_GROUPS, _) => crate::panes::active_view().collapse_all(true),
+            (EXPAND_GROUPS, _) => crate::panes::active_view().collapse_all(false),
             (RUN_SEARCH_NEW_TAB, Subject::SavedSearch(name)) => {
                 crate::saved_searches::with_current(|s| s.run(&name, true));
             }
@@ -1816,10 +1830,10 @@ impl Menus {
             (id, Subject::Convert) => crate::convert::with_current(|convert| convert.menu_chosen(id)),
             (GET_INFO, Subject::Row(path)) => crate::info::with_current(|info| info.show_for(vec![path])),
             (GET_INFO, Subject::Rows(paths)) => crate::info::with_current(|info| info.show_for(paths)),
-            (KEEP_OFFLINE, Subject::Row(path)) => crate::cloud::run(vec![path], true, &self.view),
-            (KEEP_OFFLINE, Subject::Rows(paths)) => crate::cloud::run(paths, true, &self.view),
-            (FREE_UP, Subject::Row(path)) => crate::cloud::run(vec![path], false, &self.view),
-            (FREE_UP, Subject::Rows(paths)) => crate::cloud::run(paths, false, &self.view),
+            (KEEP_OFFLINE, Subject::Row(path)) => crate::cloud::run(vec![path], true, &crate::panes::active_view()),
+            (KEEP_OFFLINE, Subject::Rows(paths)) => crate::cloud::run(paths, true, &crate::panes::active_view()),
+            (FREE_UP, Subject::Row(path)) => crate::cloud::run(vec![path], false, &crate::panes::active_view()),
+            (FREE_UP, Subject::Rows(paths)) => crate::cloud::run(paths, false, &crate::panes::active_view()),
             (id, Subject::Info) => crate::info::with_current(|info| info.menu_chosen(id)),
             (CONVERT, Subject::Row(_) | Subject::Rows(_)) => {
                 let rows = std::mem::take(&mut *self.rows.borrow_mut());
@@ -1846,7 +1860,7 @@ impl Menus {
                 });
             }
             (OPEN_IN_NEW_TAB, Subject::Row(path) | Subject::SidebarEntry(path)) => {
-                self.nav.open_tab(Location::Path(path), false);
+                crate::panes::active_nav().open_tab(Location::Path(path), false);
             }
             (PIN, Subject::Row(path) | Subject::SidebarEntry(path)) => self.sidebar.pin(path),
             (UNPIN, Subject::Row(path) | Subject::SidebarEntry(path)) => self.sidebar.unpin_path(&path),
@@ -1868,23 +1882,23 @@ impl Menus {
                 crate::tab_sets::with_current(|sets| sets.chosen(id, &names));
             }
             (DUPLICATE_TAB, Subject::Tab(id, _)) => {
-                if let Some(i) = self.nav.tab_index(id) {
-                    self.nav.duplicate_tab(i);
+                if let Some(i) = crate::panes::active_nav().tab_index(id) {
+                    crate::panes::active_nav().duplicate_tab(i);
                 }
             }
             (CLOSE_TAB, Subject::Tab(id, _)) => {
                 // After the menu is fully done: closing the last tab closes the window.
-                let nav = self.nav.clone();
+                let nav = crate::panes::active_nav().clone();
                 slint::Timer::single_shot(std::time::Duration::ZERO, move || nav.close_tab_by_id(id));
             }
             (LOCK_TAB | UNLOCK_TAB, Subject::Tab(id, _)) => {
-                if let Some(i) = self.nav.tab_index(id) {
-                    self.nav.toggle_tab_lock(i);
+                if let Some(i) = crate::panes::active_nav().tab_index(id) {
+                    crate::panes::active_nav().toggle_tab_lock(i);
                 }
             }
             (CLOSE_OTHER_TABS, Subject::Tab(id, _)) => {
-                if let Some(i) = self.nav.tab_index(id) {
-                    self.nav.close_other_tabs(i);
+                if let Some(i) = crate::panes::active_nav().tab_index(id) {
+                    crate::panes::active_nav().close_other_tabs(i);
                 }
             }
             (OPEN | OPEN_DEFAULT, Subject::Row(path)) => {
@@ -1916,31 +1930,34 @@ impl Menus {
             }
             (id, Subject::Header) if (TOGGLE_COLUMN_FIRST..TOGGLE_COLUMN_FIRST + 4).contains(&id) => {
                 if let Some(key) = ColumnKey::ALL.get((id - TOGGLE_COLUMN_FIRST) as usize) {
-                    self.view.toggle_column(*key);
+                    crate::panes::active_view().toggle_column(*key);
                 }
             }
-            (RESET_COLUMNS, Subject::Header) => self.view.reset_columns(),
+            (RESET_COLUMNS, Subject::Header) => crate::panes::active_view().reset_columns(),
             (id, Subject::Header) if (RESULT_COLUMN_FIRST..RESULT_COLUMN_FIRST + 6).contains(&id) => {
-                self.view.toggle_column(ColumnKey::RESULTS[(id - RESULT_COLUMN_FIRST) as usize]);
+                crate::panes::active_view().toggle_column(ColumnKey::RESULTS[(id - RESULT_COLUMN_FIRST) as usize]);
             }
-            (RESULT_COLUMNS_RESET, Subject::Header) => self.view.reset_columns(),
-            (VIEW_LIST, Subject::View) => self.view.set_mode(ViewMode::List),
-            (VIEW_GRID, Subject::View) => self.view.set_mode(ViewMode::Grid),
-            (GRID_SMALL, Subject::View) => self.view.set_grid_size(GridSize::Small),
-            (GRID_MEDIUM, Subject::View) => self.view.set_grid_size(GridSize::Medium),
-            (GRID_LARGE, Subject::View) => self.view.set_grid_size(GridSize::Large),
+            (RESULT_COLUMNS_RESET, Subject::Header) => crate::panes::active_view().reset_columns(),
+            (VIEW_LIST, Subject::View) => crate::panes::active_view().set_mode(ViewMode::List),
+            (VIEW_GRID, Subject::View) => crate::panes::active_view().set_mode(ViewMode::Grid),
+            (GRID_SMALL, Subject::View) => crate::panes::active_view().set_grid_size(GridSize::Small),
+            (GRID_MEDIUM, Subject::View) => crate::panes::active_view().set_grid_size(GridSize::Medium),
+            (GRID_LARGE, Subject::View) => crate::panes::active_view().set_grid_size(GridSize::Large),
             (id, Subject::View) if (SORT_BY_NAME..=SORT_BY_SIZE).contains(&id) => {
                 let key = SortKey::ALL[(id - SORT_BY_NAME) as usize];
-                self.view.set_sort(SortSpec { key, dir: self.view.sort().dir });
+                crate::panes::active_view().set_sort(SortSpec { key, dir: crate::panes::active_view().sort().dir });
             }
-            (SORT_ASC, Subject::View) => self.view.set_sort(SortSpec { dir: SortDir::Asc, ..self.view.sort() }),
-            (SORT_DESC, Subject::View) => self.view.set_sort(SortSpec { dir: SortDir::Desc, ..self.view.sort() }),
+            (SORT_ASC, Subject::View) => crate::panes::active_view()
+                .set_sort(SortSpec { dir: SortDir::Asc, ..crate::panes::active_view().sort() }),
+            (SORT_DESC, Subject::View) => crate::panes::active_view()
+                .set_sort(SortSpec { dir: SortDir::Desc, ..crate::panes::active_view().sort() }),
             (PREVIEW_PANE, Subject::View) => self.preview.toggle_pane(),
+            (TWO_PANES, Subject::View) => crate::dual::toggle(),
             (TOGGLE_STACK, Subject::View) => crate::stack::with_current(crate::stack::Stack::toggle),
             (SHOW_HISTORY, Subject::View) => self.ops.show_history(),
-            (APPLY_TO_ALL, Subject::View) => self.view.apply_to_all(),
-            (RESET_FOLDER, Subject::View) => self.view.reset_folder(),
-            (RESET_TO_RULE, Subject::View) => self.view.reset_folder(),
+            (APPLY_TO_ALL, Subject::View) => crate::panes::active_view().apply_to_all(),
+            (RESET_FOLDER, Subject::View) => crate::panes::active_view().reset_folder(),
+            (RESET_TO_RULE, Subject::View) => crate::panes::active_view().reset_folder(),
             (SYSTEM_INTEGRATION, Subject::View) => {
                 crate::integration::with_current(crate::integration::Integration::open)
             }
@@ -1984,7 +2001,7 @@ impl Menus {
             (LINK_SHORTCUT | LINK_JUNCTION | LINK_SYMLINK | MAKE_ALIAS, Subject::Rows(paths)) => {
                 self.ops.create_links(paths, link_kind(id))
             }
-            (SHOW_PACKAGE, Subject::Row(path)) => self.nav.go(Location::Path(path)),
+            (SHOW_PACKAGE, Subject::Row(path)) => crate::panes::active_nav().go(Location::Path(path)),
             (id, subject @ (Subject::Row(_) | Subject::Rows(_)))
                 if (OPEN_WITH_FIRST..OPEN_WITH_FIRST + OPEN_WITH_MAX).contains(&id) || id == OPEN_WITH_OTHER =>
             {
@@ -2025,12 +2042,12 @@ impl Menus {
                     window.set_status(format!("Cannot run {title}: {why}").into());
                 }
             }
-            (REFRESH, Subject::Background(_)) => self.nav.reload(),
+            (REFRESH, Subject::Background(_)) => crate::panes::active_nav().reload(),
             (OPEN_TERMINAL | OPEN_TERMINAL_ADMIN, subject) => {
                 let dir = match subject {
-                    Subject::Row(path) if self.view.is_folder_row(&path) => Some(path),
+                    Subject::Row(path) if crate::panes::active_view().is_folder_row(&path) => Some(path),
                     Subject::Row(path) => path.parent().map(Path::to_path_buf),
-                    Subject::Rows(_) => self.view.folder(),
+                    Subject::Rows(_) => crate::panes::active_view().folder(),
                     Subject::SidebarEntry(path) | Subject::Background(path) => Some(path),
                     _ => None,
                 };
@@ -2045,7 +2062,7 @@ impl Menus {
                     _ => Vec::new(),
                 };
                 if let Some(kind) = PathFormat::ALL.get((id - COPY_PATH_FIRST) as usize) {
-                    crate::copy_path::copy(&self.view, &paths, *kind);
+                    crate::copy_path::copy(&crate::panes::active_view(), &paths, *kind);
                 }
             }
             _ => {}
@@ -2068,7 +2085,7 @@ impl Menus {
             ShellVerb::Paste => {
                 let into = match subject {
                     // A row is a target only if it is a folder, else the shown folder gets it.
-                    Some(Subject::Row(path)) => self.view.is_folder_row(&path).then_some(path),
+                    Some(Subject::Row(path)) => crate::panes::active_view().is_folder_row(&path).then_some(path),
                     Some(Subject::SidebarEntry(path) | Subject::Background(path)) => Some(path),
                     _ => None,
                 };
@@ -2093,7 +2110,7 @@ impl Menus {
             ShellVerb::Eject => match paths.first() {
                 // Only a drive's own menu: a row elsewhere never ejects the drive it is on.
                 Some(root) if crate::eject::way_at(root).is_some() => crate::eject::eject_path(root),
-                _ => self.nav.status(gezik_platform::eject::CANNOT.to_owned()),
+                _ => crate::panes::active_nav().status(gezik_platform::eject::CANNOT.to_owned()),
             },
         }
     }
@@ -2337,6 +2354,7 @@ mod tests {
             RESET_FOLDER,
             SYSTEM_INTEGRATION,
             REVEAL_IN_TREE,
+            TWO_PANES,
             UNDO,
             REDO,
             PASTE,
@@ -2631,6 +2649,7 @@ mod tests {
             EXPAND_GROUPS,
             RESET_TO_RULE,
             VIEW_RULE_APPLIES,
+            TWO_PANES,
         ];
         let mut ranges: Vec<std::ops::Range<u32>> = singles.iter().map(|id| *id..id + 1).collect();
         ranges.extend([

@@ -251,7 +251,9 @@ pub fn allowed(action: Action) -> bool {
         | Action::GroupSize
         | Action::CollapseGroups
         | Action::ExpandGroups
-        | Action::RevealInTree => true,
+        | Action::RevealInTree
+        | Action::ToggleDualPane
+        | Action::FocusOtherPane => true,
         // No drive to eject in the trash.
         Action::Eject
         | Action::Rename

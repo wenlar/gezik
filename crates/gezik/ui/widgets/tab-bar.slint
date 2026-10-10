@@ -28,6 +28,8 @@ export component TabBar inherits Rectangle {
     out property <length> strip-width: strip.width;
     // While files are dragged: the tab they would drop on (-1: none).
     in property <int> drop-tab: -1;
+    // The strip of the active one of two panes: its active tab gets an accent line on top.
+    in property <bool> marked;
     // While a tab is dragged: where it came from and where it would be dropped.
     property <int> drag-from: -1;
     property <int> drag-to: -1;
@@ -240,6 +242,14 @@ export component TabBar inherits Rectangle {
                             }
                         }
                     }
+                }
+
+                // The active pane's active tab, with two panes (spec 10 §4.3).
+                if item.active && root.marked: Rectangle {
+                    x: Theme.radius;
+                    width: parent.width - 2 * Theme.radius;
+                    height: 2px;
+                    background: Theme.accent;
                 }
 
                 // The active tab's accent bar.

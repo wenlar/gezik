@@ -15,8 +15,6 @@ use gezik_core::view::{DateFormat, SizeFormat};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::context_menu as ids;
-use crate::navigation::Navigator;
-use crate::view::View;
 use crate::{AppWindow, PickRow};
 
 thread_local! {
@@ -71,8 +69,6 @@ pub enum Target {
 
 struct Inner {
     window: slint::Weak<AppWindow>,
-    nav: Navigator,
-    view: View,
     store: Option<ConfigStore>,
     run_action: Box<dyn Fn(Action)>,
     open: Cell<bool>,
@@ -91,16 +87,12 @@ pub struct Palette(Rc<Inner>);
 impl Palette {
     pub fn new(
         window: &AppWindow,
-        nav: Navigator,
-        view: View,
         store: Option<ConfigStore>,
         recent: Vec<String>,
         run_action: impl Fn(Action) + 'static,
     ) -> Palette {
         let palette = Palette(Rc::new(Inner {
             window: window.as_weak(),
-            nav,
-            view,
             store,
             run_action: Box::new(run_action),
             open: Cell::new(false),
@@ -206,7 +198,7 @@ impl Palette {
             let name = path.file_name().map_or_else(|| text.clone(), |n| n.to_string_lossy().into_owned());
             add(Kind::Recent, text.clone(), name, text, Target::Folder(path));
         }
-        for (i, (title, path)) in self.0.nav.tab_list().into_iter().enumerate() {
+        for (i, (title, path)) in crate::panes::active_nav().tab_list().into_iter().enumerate() {
             add(Kind::Tab, i.to_string(), title, path, Target::Tab(i));
         }
         for name in crate::tab_sets::names() {
@@ -303,12 +295,12 @@ impl Palette {
     }
 
     fn run_target(&self, target: Target, new_tab: bool) {
-        let nav = &self.0.nav;
+        let nav = &crate::panes::active_nav();
         match target {
             Target::Action(action) => (self.0.run_action)(action),
             Target::Command(name) => {
                 if let Some(index) = crate::convert::command_names().iter().position(|n| *n == name) {
-                    crate::actions::run_command(index, &self.0.view);
+                    crate::actions::run_command(index, &crate::panes::active_view());
                 }
             }
             Target::ViewOption(id) => {
@@ -366,7 +358,7 @@ impl Palette {
                     }
                 }
                 Line::SearchFor(text) => {
-                    let place = match self.0.nav.active_location() {
+                    let place = match crate::panes::active_nav().active_location() {
                         Location::Drives => "This PC".to_owned(),
                         location => location
                             .folder()

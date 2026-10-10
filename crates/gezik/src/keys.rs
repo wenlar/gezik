@@ -514,7 +514,7 @@ pub fn acts_on_selection(action: Action) -> bool {
 /// Shortcuts left to the path box and the filter bar while either has the keyboard: the
 /// file operations and the selection's. (A dialog has the keyboard to itself anyway.)
 pub fn waits_for_text_fields(action: Action) -> bool {
-    acts_on_files(action) || acts_on_selection(action)
+    acts_on_files(action) || acts_on_selection(action) || action == Action::FocusOtherPane
 }
 
 /// Those that act on the selection: only while the file list has the keyboard.
@@ -540,6 +540,7 @@ pub fn needs_list(action: Action) -> bool {
             | Action::KeepOffline
             | Action::FreeUpSpace
             | Action::GetInfo
+            | Action::FocusOtherPane
     )
 }
 
@@ -807,6 +808,7 @@ mod tests {
                 Action::QuickOpen => "ctrl+p",
                 Action::GetInfo => "alt+enter",
                 Action::ConnectToServer => "ctrl+k",
+                Action::FocusOtherPane => "tab",
                 Action::PasteMove
                 | Action::MakeAlias
                 | Action::ShowPackageContents
@@ -836,7 +838,8 @@ mod tests {
                 | Action::GroupSize
                 | Action::CollapseGroups
                 | Action::ExpandGroups
-                | Action::RevealInTree => continue,
+                | Action::RevealInTree
+                | Action::ToggleDualPane => continue,
             };
             assert_eq!(reach(text), Some(action), "{text}");
         }

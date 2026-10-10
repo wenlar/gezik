@@ -25,9 +25,9 @@ use gezik_platform::taskbar::{Taskbar, TaskbarState};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::dialog::Dialogs;
-use crate::navigation::{Navigator, sync_model};
+use crate::navigation::sync_model;
 use crate::sidebar::Sidebar;
-use crate::view::{View, hidden_note};
+use crate::view::hidden_note;
 use crate::{AppWindow, OpRow};
 
 /// A job shows in the panel only if it still runs after this long.
@@ -374,8 +374,6 @@ impl JobView {
 struct Inner {
     window: slint::Weak<AppWindow>,
     engine: Engine,
-    nav: Navigator,
-    view: View,
     sidebar: Sidebar,
     dialogs: Dialogs,
     rows: Rc<VecModel<OpRow>>,
@@ -414,8 +412,6 @@ impl Operations {
     #[allow(clippy::too_many_arguments, reason = "the parts of the app it works with")]
     pub fn new(
         window: &AppWindow,
-        nav: Navigator,
-        view: View,
         sidebar: Sidebar,
         dialogs: Dialogs,
         settings: Settings,
@@ -448,8 +444,6 @@ impl Operations {
         let ops = Operations(Rc::new(Inner {
             window: window.as_weak(),
             engine,
-            nav,
-            view,
             sidebar,
             dialogs,
             rows,
@@ -470,16 +464,6 @@ impl Operations {
             store,
             batch_last: RefCell::new(batch_last),
         }));
-        ops.0.view.on_shown({
-            let weak = Rc::downgrade(&ops.0);
-            move || {
-                if let Some(inner) = weak.upgrade() {
-                    let ops = Operations(inner);
-                    ops.folder_shown();
-                    ops.update_cut();
-                }
-            }
-        });
         CURRENT.with(|c| *c.borrow_mut() = Some(ops.clone()));
         ops
     }
@@ -511,7 +495,7 @@ impl Operations {
     /// about to run on `sources`, if they are all in the folder shown: a paste or a drop from
     /// elsewhere, or a job for a folder left meanwhile, leaves what was remembered alone.
     pub fn remember_for(&self, sources: &[PathBuf]) {
-        self.0.view.remember_selection_for(sources);
+        crate::panes::active_view().remember_selection_for(sources);
     }
 
     /// Runs `task`; `retry` runs the same operation again from its row, `after` says what to
@@ -557,30 +541,36 @@ impl Operations {
 
     /// A line in the status bar (the administrator's refusals).
     pub fn status(&self, text: String) {
-        self.0.view.note(text);
+        crate::panes::active_view().note(text);
+    }
+
+    /// The active pane shows a listing: a new entry waiting for it is renamed, cut items fade.
+    pub fn shown(&self) {
+        self.folder_shown();
+        self.update_cut();
     }
 
     /// A folder is on screen: start a rename that waited for it (a new folder).
     fn folder_shown(&self) {
         let Some(path) = self.0.rename_when_shown.borrow().clone() else { return };
-        let Some(folder) = self.0.view.folder() else { return };
+        let Some(folder) = crate::panes::active_view().folder() else { return };
         if !path.parent().is_some_and(|parent| same_path(parent, &folder)) {
             // Another folder is on screen: the wait is over.
             self.0.rename_when_shown.borrow_mut().take();
             return;
         }
         // A rename is open: wait for it to end.
-        if self.0.view.renaming().is_some() {
+        if crate::panes::active_view().renaming().is_some() {
             return;
         }
         self.0.rename_when_shown.borrow_mut().take();
         if let Some(name) = path.file_name().map(|n| n.to_string_lossy().into_owned()) {
             // A new folder or file is named in the whole folder: the filter (which would most
             // likely hide "New folder") closes first.
-            if self.0.view.filter_text().is_some() {
+            if crate::panes::active_view().filter_text().is_some() {
                 crate::panes::with_active(|p| p.filter.close());
             }
-            self.0.view.begin_rename_by_name(&name);
+            crate::panes::active_view().begin_rename_by_name(&name);
         }
     }
 
@@ -589,10 +579,10 @@ impl Operations {
         if self.refused_in_trash() {
             return;
         }
-        if self.0.view.shows_drives() {
+        if crate::panes::active_view().shows_drives() {
             return;
         }
-        let view = &self.0.view;
+        let view = &crate::panes::active_view();
         if view.selection_count() >= 2 {
             self.batch_rename();
             return;
@@ -607,15 +597,15 @@ impl Operations {
         if self.refused_in_trash() {
             return;
         }
-        if self.0.view.shows_drives() {
+        if crate::panes::active_view().shows_drives() {
             return;
         }
-        let items = self.0.view.selected_entries();
+        let items = crate::panes::active_view().selected_entries();
         if items.is_empty() {
             return;
         }
         // Search results: the layer reads each item's folder itself (spec 4.6).
-        let others = (!self.0.view.shows_results()).then(|| self.0.view.all_names());
+        let others = (!crate::panes::active_view().shows_results()).then(|| crate::panes::active_view().all_names());
         let last = self.0.batch_last.borrow().clone();
         crate::batch_rename::with_current(|layer| {
             // Already open (a menu over it): keep what is being edited.
@@ -657,14 +647,15 @@ impl Operations {
     }
 
     fn set_rename_error(&self, error: &str) {
-        crate::panes::edit(self.0.view.pane_id(), |d| d.rename_error = error.into());
+        crate::panes::edit(crate::panes::active_view().pane_id(), |d| d.rename_error = error.into());
     }
 
     /// While typing: say at once what is wrong with the name.
     pub fn rename_edited(&self, typed: &str) {
-        let Some((index, old)) = self.0.view.renaming() else { return };
-        let error =
-            rename_check(typed, &old, |name| self.0.view.has_other_named(name, index)).err().unwrap_or_default();
+        let Some((index, old)) = crate::panes::active_view().renaming() else { return };
+        let error = rename_check(typed, &old, |name| crate::panes::active_view().has_other_named(name, index))
+            .err()
+            .unwrap_or_default();
         self.set_rename_error(&error);
     }
 
@@ -677,7 +668,7 @@ impl Operations {
     /// [`Operations::commit_rename`]; `select`: the renamed entry is selected once the rename
     /// is done.
     fn commit_rename_then(&self, typed: &str, how: Commit, select: bool) -> Option<usize> {
-        let view = &self.0.view;
+        let view = &crate::panes::active_view();
         let (index, old) = view.renaming()?;
         // Enter and Esc leave the keyboard with the list; a blur or Tab does not, but for a
         // window switch.
@@ -729,7 +720,7 @@ impl Operations {
     /// The field lost the keyboard to something else: keep a usable name, else the old one.
     pub fn rename_blurred(&self, typed: String, generation: i32) {
         // A late blur of an earlier rename's field (Tab went on) is not this rename's.
-        if generation != self.0.view.rename_generation() {
+        if generation != crate::panes::active_view().rename_generation() {
             return;
         }
         self.commit_rename(&typed, Commit::Blur);
@@ -739,10 +730,10 @@ impl Operations {
     /// was destroyed with its row, which fires no blur), ends it like a blur. Returns whether
     /// a rename is open with its field focused.
     pub fn end_unfocused_rename(&self) -> bool {
-        if self.0.window.upgrade().is_none() || self.0.view.renaming().is_none() {
+        if self.0.window.upgrade().is_none() || crate::panes::active_view().renaming().is_none() {
             return false;
         }
-        let mirror = crate::panes::mirror(self.0.view.pane_id());
+        let mirror = crate::panes::mirror(crate::panes::active_view().pane_id());
         if mirror.focus.borrow().rename {
             return true;
         }
@@ -753,13 +744,23 @@ impl Operations {
         false
     }
 
+    /// The active pane changes: a rename open in it ends as a blur ends it (spec 10 §4.10).
+    pub fn end_rename_for_switch(&self) {
+        let view = crate::panes::active_view();
+        if view.renaming().is_none() {
+            return;
+        }
+        let typed = crate::panes::mirror(view.pane_id()).rename_text.borrow().to_string();
+        self.commit_rename_then(&typed, Commit::Blur, false);
+    }
+
     /// Enter (`keep`) or Esc while a rename is open but its field is off screen: the typed
     /// name is kept, or the old one. Returns whether there was such a rename.
     pub fn off_screen_rename_key(&self, keep: bool) -> bool {
-        if self.0.window.upgrade().is_none() || self.0.view.renaming().is_none() {
+        if self.0.window.upgrade().is_none() || crate::panes::active_view().renaming().is_none() {
             return false;
         }
-        let mirror = crate::panes::mirror(self.0.view.pane_id());
+        let mirror = crate::panes::mirror(crate::panes::active_view().pane_id());
         if mirror.focus.borrow().rename {
             return false;
         }
@@ -768,9 +769,9 @@ impl Operations {
             // A name that cannot be used keeps the field: it comes back on screen with the
             // problem under it (and takes the keyboard again).
             if self.commit_rename(&typed, Commit::Enter).is_none()
-                && let Some((index, _)) = self.0.view.renaming()
+                && let Some((index, _)) = crate::panes::active_view().renaming()
             {
-                self.0.view.reveal(index);
+                crate::panes::active_view().reveal(index);
             }
         } else {
             self.rename_cancelled();
@@ -779,14 +780,14 @@ impl Operations {
     }
 
     pub fn rename_cancelled(&self) {
-        self.0.view.end_rename(true);
+        crate::panes::active_view().end_rename(true);
     }
 
     /// Tab / Shift+Tab: keep the name and rename the next / previous entry.
     pub fn rename_tab(&self, typed: String, back: bool) {
         let Some(index) = self.commit_rename(&typed, Commit::Tab) else { return };
         let next = if back { index.checked_sub(1) } else { Some(index + 1) };
-        if !next.is_some_and(|next| self.0.view.begin_rename(next))
+        if !next.is_some_and(|next| crate::panes::active_view().begin_rename(next))
             && let Some(window) = self.0.window.upgrade()
         {
             window.invoke_focus_list();
@@ -795,7 +796,7 @@ impl Operations {
 
     /// A new folder in `dir` (else the folder shown), renamed right away.
     pub fn new_folder(&self, dir: Option<PathBuf>) {
-        match dir.or_else(|| self.0.view.folder()) {
+        match dir.or_else(|| crate::panes::active_view().folder()) {
             Some(dir) => {
                 self.submit(Box::new(NewTask::folder(&dir)), None, After::Rename);
             }
@@ -808,12 +809,12 @@ impl Operations {
         if self.refused_in_trash() {
             return;
         }
-        if self.0.view.shows_drives() {
+        if crate::panes::active_view().shows_drives() {
             return;
         }
         // Pasted elsewhere, keypad / brings this selection back here.
-        self.0.view.remember_selection();
-        self.copy_paths(self.0.view.selected_paths(), cut);
+        crate::panes::active_view().remember_selection();
+        self.copy_paths(crate::panes::active_view().selected_paths(), cut);
     }
 
     pub fn copy_paths(&self, paths: Vec<PathBuf>, cut: bool) {
@@ -824,7 +825,9 @@ impl Operations {
         }
         match clipboard::write_files(&paths, cut) {
             Ok(()) | Err(ClipboardError::Unsupported) => {}
-            Err(ClipboardError::Failed(why)) => return self.0.view.note(format!("Cannot use the clipboard: {why}")),
+            Err(ClipboardError::Failed(why)) => {
+                return crate::panes::active_view().note(format!("Cannot use the clipboard: {why}"));
+            }
         }
         *self.0.cut.borrow_mut() = if cut { paths.clone() } else { Vec::new() };
         *self.0.clip.borrow_mut() = Some(ClipboardFiles { paths, cut });
@@ -839,10 +842,10 @@ impl Operations {
         if self.refused_in_trash() {
             return;
         }
-        if !self.0.view.shows_results() {
-            return self.0.view.note(only_in_results("Copy with folders"));
+        if !crate::panes::active_view().shows_results() {
+            return crate::panes::active_view().note(only_in_results("Copy with folders"));
         }
-        let items = self.0.view.selected_relative();
+        let items = crate::panes::active_view().selected_relative();
         if items.is_empty() {
             return;
         }
@@ -880,7 +883,7 @@ impl Operations {
     /// Ctrl+V: into `into` (a folder's menu) or the folder shown. Cut items move; `force_move`
     /// moves copied ones too (macOS Cmd+Option+V).
     pub fn paste(&self, into: Option<PathBuf>, force_move: bool) {
-        let Some(dir) = into.or_else(|| self.0.view.folder()) else { return self.not_here() };
+        let Some(dir) = into.or_else(|| crate::panes::active_view().folder()) else { return self.not_here() };
         // A copy with folders keeps them (spec 4.6).
         if let Some((items, cut)) = self.with_folders_to_paste() {
             let sources: Vec<PathBuf> = items.iter().map(|(path, _)| path.clone()).collect();
@@ -919,8 +922,8 @@ impl Operations {
 
     /// Says why a job that needs a folder does nothing while search results show.
     fn not_here(&self) {
-        if self.0.view.shows_results() {
-            self.0.view.note(NOT_HERE.to_owned());
+        if crate::panes::active_view().shows_results() {
+            crate::panes::active_view().note(NOT_HERE.to_owned());
         }
     }
 
@@ -968,18 +971,18 @@ impl Operations {
 
     /// Fades the cut items of the folder shown.
     fn update_cut(&self) {
-        self.0.view.set_cut(&self.0.cut.borrow());
+        crate::panes::active_view().set_cut(&self.0.cut.borrow());
     }
 
     /// Delete / Shift+Delete on the selection.
     pub fn trash(&self, permanent: bool) {
-        if self.0.view.shows_drives() {
+        if crate::panes::active_view().shows_drives() {
             return;
         }
-        if self.0.view.shows_trash() {
-            return crate::trash_view::delete_selection(&self.0.view);
+        if crate::panes::active_view().shows_trash() {
+            return crate::trash_view::delete_selection(&crate::panes::active_view());
         }
-        self.trash_paths(self.0.view.selected_paths(), permanent);
+        self.trash_paths(crate::panes::active_view().selected_paths(), permanent);
     }
 
     pub fn trash_paths(&self, paths: Vec<PathBuf>, permanent: bool) {
@@ -1026,15 +1029,15 @@ impl Operations {
     /// Hides the rows of `paths` in the folder shown; the folder, to reload when the job ends.
     fn hide(&self, paths: &[PathBuf]) -> Option<PathBuf> {
         // Search results: their rows go at once; the check after the job brings back what stayed.
-        if self.0.view.shows_results() {
+        if crate::panes::active_view().shows_results() {
             self.remember_for(paths);
-            self.0.view.hide_paths(paths);
+            crate::panes::active_view().hide_paths(paths);
             return None;
         }
-        let folder = self.0.view.folder()?;
+        let folder = crate::panes::active_view().folder()?;
         // Before the names go: the job is submitted after this.
         self.remember_for(paths);
-        self.0.view.hide_names(&result_names(paths, &folder));
+        crate::panes::active_view().hide_names(&result_names(paths, &folder));
         Some(folder)
     }
 
@@ -1044,7 +1047,7 @@ impl Operations {
         let asked = paths.len();
         let kept: Vec<PathBuf> = paths.into_iter().filter(|path| !is_root(path)).collect();
         if kept.is_empty() && asked > 0 {
-            self.0.view.note(format!("Cannot {what} a drive"));
+            crate::panes::active_view().note(format!("Cannot {what} a drive"));
         }
         kept
     }
@@ -1052,9 +1055,9 @@ impl Operations {
     /// Says so and returns true while the trash is shown: what acts on the selection by its
     /// names (copy, rename, …) would act on `$R…` entries there (spec 7.1).
     fn refused_in_trash(&self) -> bool {
-        let refused = self.0.view.shows_trash();
+        let refused = crate::panes::active_view().shows_trash();
         if refused {
-            self.0.view.note(crate::trash_view::not_here());
+            crate::panes::active_view().note(crate::trash_view::not_here());
         }
         refused
     }
@@ -1080,7 +1083,7 @@ impl Operations {
     pub fn run_hiding(&self, paths: Vec<PathBuf>, retry: Retry) -> JobId {
         let hidden_in = self.hide(&paths);
         let id = self.submit(retry(), Some(retry), After::Nothing);
-        let results = self.0.view.shows_results();
+        let results = crate::panes::active_view().shows_results();
         self.with_job(id, |job| {
             job.hidden_in = hidden_in;
             if results {
@@ -1115,10 +1118,10 @@ impl Operations {
         if self.refused_in_trash() {
             return;
         }
-        if self.0.view.shows_drives() {
+        if crate::panes::active_view().shows_drives() {
             return;
         }
-        let paths = self.without_roots(self.0.view.selected_paths(), "duplicate");
+        let paths = self.without_roots(crate::panes::active_view().selected_paths(), "duplicate");
         if paths.is_empty() {
             return;
         }
@@ -1143,26 +1146,26 @@ impl Operations {
 
     /// `new-folder-with-selection`: the selected items into a new folder next to them.
     pub fn new_folder_with_selection(&self) {
-        if self.0.view.shows_results() {
+        if crate::panes::active_view().shows_results() {
             return self.not_here();
         }
-        if self.0.view.shows_drives() {
+        if crate::panes::active_view().shows_drives() {
             return;
         }
-        self.new_folder_with(self.0.view.selected_paths());
+        self.new_folder_with(crate::panes::active_view().selected_paths());
     }
 
     /// `paths` (those in the folder shown) moved into a new "New folder" there, as one job,
     /// and the folder renamed right away (spec 8.2).
     pub fn new_folder_with(&self, paths: Vec<PathBuf>) {
-        let Some(dir) = self.0.view.folder() else { return self.not_here() };
+        let Some(dir) = crate::panes::active_view().folder() else { return self.not_here() };
         let paths: Vec<PathBuf> = self
             .without_roots(paths, "move")
             .into_iter()
             .filter(|path| path.parent().is_some_and(|parent| same_path(parent, &dir)))
             .collect();
         if paths.is_empty() {
-            return self.0.view.note("Select the items to put in a new folder".to_owned());
+            return crate::panes::active_view().note("Select the items to put in a new folder".to_owned());
         }
         self.remember_for(&paths);
         let retry: Retry = Rc::new(move || -> Box<dyn Task> { Box::new(GroupTask::new(paths.clone(), &dir)) });
@@ -1213,7 +1216,7 @@ impl Operations {
             Ok(_) => {}
             Err(err) => problem = failed(err).or(problem),
         }
-        self.0.view.note(problem.unwrap_or_else(|| "Nothing to paste".to_owned()));
+        crate::panes::active_view().note(problem.unwrap_or_else(|| "Nothing to paste".to_owned()));
     }
 
     /// An alias whose original is gone (spec 9 §4.2): Finder's question; Delete Alias moves it
@@ -1236,7 +1239,7 @@ impl Operations {
     /// Make Alias (⌃⌘A): an alias of each selected item (the focused one when none), next to it.
     /// macOS only: elsewhere there are no aliases to make.
     pub fn make_alias_of_selection(&self) {
-        let view = &self.0.view;
+        let view = &crate::panes::active_view();
         if !cfg!(target_os = "macos") || view.shows_drives() {
             return;
         }
@@ -1258,7 +1261,7 @@ impl Operations {
     }
 
     pub fn new_file(&self, dir: Option<PathBuf>) {
-        match dir.or_else(|| self.0.view.folder()) {
+        match dir.or_else(|| crate::panes::active_view().folder()) {
             Some(dir) => {
                 self.submit(Box::new(NewTask::file(&dir)), None, After::Rename);
             }
@@ -1268,13 +1271,13 @@ impl Operations {
 
     pub fn undo(&self) {
         if !self.ask_admin(false) && self.0.engine.undo().is_none() {
-            self.0.view.note("Nothing to undo".to_owned());
+            crate::panes::active_view().note("Nothing to undo".to_owned());
         }
     }
 
     pub fn redo(&self) {
         if !self.ask_admin(true) && self.0.engine.redo().is_none() {
-            self.0.view.note("Nothing to redo".to_owned());
+            crate::panes::active_view().note("Nothing to redo".to_owned());
         }
     }
 
@@ -1287,7 +1290,7 @@ impl Operations {
         }
         let (title, button) = if redo { ("Redo as administrator", "Redo") } else { ("Undo as administrator", "Undo") };
         let text = crate::admin::undo_text(redo, &agreed, crate::admin::exposed());
-        let (engine, view) = (self.0.engine.clone(), self.0.view.clone());
+        let (engine, view) = (self.0.engine.clone(), crate::panes::active_view().clone());
         self.0.dialogs.ask(title, text, &[button, "Cancel"], move |choice| {
             if choice == Some(0) && engine.undo_agreed(redo, &agreed).is_none() {
                 view.note("Not done: something else was done meanwhile".to_owned());
@@ -1352,7 +1355,7 @@ impl Operations {
                 Event::Question { job, id, question } => self.question(job, id, question),
                 Event::Finished { job, report } => self.finished(job, report),
                 Event::Changed { dirs } => {
-                    self.0.nav.refresh_showing(&dirs, &[], None);
+                    crate::panes::active_nav().refresh_showing(&dirs, &[], None);
                     crate::sidebar::with_current(|s| s.folders_changed(&dirs));
                 }
                 Event::History => {}
@@ -1470,8 +1473,12 @@ impl Operations {
             *self.0.rename_when_shown.borrow_mut() = report.results.first().cloned();
         }
         // A rename is open (Tab went on): the selection stays with it.
-        let after = if after == After::Select && self.0.view.renaming().is_some() { After::Nothing } else { after };
-        let select = match (after, self.0.view.folder()) {
+        let after = if after == After::Select && crate::panes::active_view().renaming().is_some() {
+            After::Nothing
+        } else {
+            after
+        };
+        let select = match (after, crate::panes::active_view().folder()) {
             (After::Nothing, _) | (_, None) => Vec::new(),
             (_, Some(folder)) => first_level_names(&report.results, &folder),
         };
@@ -1487,12 +1494,16 @@ impl Operations {
             .then(|| format!("{} changed since; skipped", crate::stack::count_text(report.skipped_changed)));
         // New items here the filter hides (a paste, a drop, an extract): the filter stays, the
         // status bar says so. A new folder's rename closes the filter instead.
-        let hidden = if after == After::Rename { None } else { hidden_note(self.0.view.hidden_by_filter(&select)) };
+        let hidden = if after == After::Rename {
+            None
+        } else {
+            hidden_note(crate::panes::active_view().hidden_by_filter(&select))
+        };
         let note = match (skipped, hidden) {
             (Some(a), Some(b)) => Some(format!("{a} · {b}")),
             (a, b) => a.or(b),
         };
-        let reloading = self.0.nav.refresh_showing(&dirs, &select, note.clone());
+        let reloading = crate::panes::active_nav().refresh_showing(&dirs, &select, note.clone());
         // The sidebar tree's open branches the job touched are read again (spec 10 §5.2).
         crate::sidebar::with_current(|s| s.folders_changed(&report.changed_dirs));
         // Search results follow Gezik's own jobs (spec 4.7), those kept by a tab too.
@@ -1503,7 +1514,7 @@ impl Operations {
         });
         self.0.sidebar.refresh();
         if let (false, Some(note)) = (reloading, note) {
-            self.0.view.note(note);
+            crate::panes::active_view().note(note);
         }
         if !report.no_trash.is_empty() {
             self.ask_delete_for_good(report.no_trash.clone());
@@ -1524,10 +1535,12 @@ impl Operations {
     /// `show-in-folder` (spec 4.6): the focused result's folder with it selected; Back comes
     /// back to the results.
     pub fn show_in_folder(&self, new_tab: bool) {
-        if !self.0.view.shows_results() {
-            return self.0.view.note(only_in_results("Show in folder"));
+        if !crate::panes::active_view().shows_results() {
+            return crate::panes::active_view().note(only_in_results("Show in folder"));
         }
-        if let Some((path, _)) = self.0.view.focus().and_then(|i| self.0.view.entry_path(i)) {
+        if let Some((path, _)) =
+            crate::panes::active_view().focus().and_then(|i| crate::panes::active_view().entry_path(i))
+        {
             self.show_path_in_folder(&path, new_tab);
         }
     }
@@ -1537,9 +1550,9 @@ impl Operations {
         let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else { return };
         let names = vec![name.to_string_lossy().into_owned()];
         if new_tab {
-            self.0.nav.open_tab_selecting(dir.to_path_buf(), names);
+            crate::panes::active_nav().open_tab_selecting(dir.to_path_buf(), names);
         } else {
-            self.0.nav.go_selecting(dir.to_path_buf(), names);
+            crate::panes::active_nav().go_selecting(dir.to_path_buf(), names);
         }
     }
 
@@ -1691,7 +1704,7 @@ impl Operations {
     pub fn history_show(&self, id: i32) {
         let show = u64::try_from(id).ok().and_then(|id| self.0.history.borrow().get(id).and_then(|r| r.show.clone()));
         if let Some((dir, names)) = show {
-            self.0.nav.go_selecting(dir, names);
+            crate::panes::active_nav().go_selecting(dir, names);
         }
     }
 

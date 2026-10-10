@@ -16,8 +16,6 @@ use slint::ComponentHandle;
 
 use crate::AppWindow;
 use crate::dialog::Dialogs;
-use crate::navigation::Navigator;
-use crate::view::View;
 
 thread_local! {
     static SAVED: RefCell<Vec<SavedSearch>> = const { RefCell::new(Vec::new()) };
@@ -84,8 +82,6 @@ pub fn with_current(f: impl FnOnce(&SavedSearches)) {
 
 struct Inner {
     window: slint::Weak<AppWindow>,
-    nav: Navigator,
-    view: View,
     dialogs: Dialogs,
     /// Where settings.toml is (none without a config folder: the searches live in memory then).
     store: Option<ConfigStore>,
@@ -95,14 +91,8 @@ struct Inner {
 pub struct SavedSearches(Rc<Inner>);
 
 impl SavedSearches {
-    pub fn new(
-        window: &AppWindow,
-        nav: Navigator,
-        view: View,
-        dialogs: Dialogs,
-        store: Option<ConfigStore>,
-    ) -> SavedSearches {
-        let searches = SavedSearches(Rc::new(Inner { window: window.as_weak(), nav, view, dialogs, store }));
+    pub fn new(window: &AppWindow, dialogs: Dialogs, store: Option<ConfigStore>) -> SavedSearches {
+        let searches = SavedSearches(Rc::new(Inner { window: window.as_weak(), dialogs, store }));
         CURRENT.with(|c| *c.borrow_mut() = Some(searches.clone()));
         searches
     }
@@ -110,13 +100,13 @@ impl SavedSearches {
     /// Runs the saved search `name` in the active tab, or a new one; its tab is titled by it.
     pub fn run(&self, name: &str, new_tab: bool) {
         let Some(saved) = saved().into_iter().find(|s| s.name == name) else { return };
-        let here = self.0.nav.active_location();
+        let here = crate::panes::active_nav().active_location();
         match resolve(&saved.folder, &here, &KnownDirs::system()) {
             Ok(scope) => {
                 let spec = SearchSpec { scope, name: Some(saved.name.clone()), ..saved.spec };
                 crate::panes::with_active(|p| p.search.run_saved(spec, new_tab));
             }
-            Err(why) => self.0.view.note(format!("Saved search \"{name}\": {why}")),
+            Err(why) => crate::panes::active_view().note(format!("Saved search \"{name}\": {why}")),
         }
     }
 
@@ -127,7 +117,7 @@ impl SavedSearches {
             let Some(name) = name.map(|n| n.trim().to_owned()).filter(|n| !n.is_empty()) else { return };
             let names: Vec<String> = latest().into_iter().map(|s| s.name).collect();
             if !room_for(&names, &name) {
-                return this.0.view.note(format!("Up to {SEARCHES_MAX} saved searches"));
+                return crate::panes::active_view().note(format!("Up to {SEARCHES_MAX} saved searches"));
             }
             match names.iter().find(|n| same_name(n, &name)).cloned() {
                 Some(old) => {
@@ -165,7 +155,7 @@ impl SavedSearches {
             match list.iter().position(|s| same_name(&s.name, &name)) {
                 Some(i) => {
                     let old = std::mem::replace(&mut list[i], entry).name;
-                    this.0.nav.rename_search(&old, &name);
+                    crate::panes::active_nav().rename_search(&old, &name);
                 }
                 None => list.push(entry),
             }
@@ -180,10 +170,10 @@ impl SavedSearches {
             let Some(new) = new.map(|n| n.trim().to_owned()).filter(|n| !n.is_empty()) else { return };
             let mut list = latest();
             if list.iter().any(|s| same_name(&s.name, &new) && !same_name(&s.name, &old)) {
-                return this.0.view.note(format!("A search called \"{new}\" already exists"));
+                return crate::panes::active_view().note(format!("A search called \"{new}\" already exists"));
             }
             if let Some(search) = list.iter_mut().find(|s| s.name == old) {
-                this.0.nav.rename_search(&old, &new);
+                crate::panes::active_nav().rename_search(&old, &new);
                 search.name = new;
                 this.write(list);
             }
@@ -223,7 +213,7 @@ impl SavedSearches {
         });
         match result {
             Ok(()) => set_settings(list),
-            Err(warning) => self.0.view.note(warning.to_string()),
+            Err(warning) => crate::panes::active_view().note(warning.to_string()),
         }
     }
 }

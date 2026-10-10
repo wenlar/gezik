@@ -14,7 +14,6 @@ use std::time::{Duration, SystemTime};
 use gezik_platform::{IconTarget, Rgba};
 use slint::{ComponentHandle, Image, Rgba8Pixel, SharedPixelBuffer};
 
-use crate::view::View;
 use crate::{AppWindow, PreviewInfo};
 
 /// How much of a text file is shown.
@@ -327,7 +326,6 @@ fn panel_items(selected: Vec<PathBuf>, focused: Option<PathBuf>) -> (Vec<PathBuf
 
 struct Inner {
     window: slint::Weak<AppWindow>,
-    view: View,
     pane_open: Cell<bool>,
     /// Bumped per request: a load whose number is no longer current is dropped.
     generation: Arc<AtomicU64>,
@@ -343,10 +341,9 @@ struct Inner {
 pub struct Preview(Rc<Inner>);
 
 impl Preview {
-    pub fn new(window: &AppWindow, view: View) -> Preview {
+    pub fn new(window: &AppWindow) -> Preview {
         let preview = Preview(Rc::new(Inner {
             window: window.as_weak(),
-            view: view.clone(),
             pane_open: Cell::new(false),
             generation: Arc::default(),
             worker: RefCell::new(None),
@@ -355,9 +352,6 @@ impl Preview {
             quick_look: RefCell::new(None),
         }));
         CURRENT.with(|c| *c.borrow_mut() = Some(preview.clone()));
-        view.on_selection_changed(|| {
-            with_current(Preview::schedule);
-        });
         preview
     }
 
@@ -406,7 +400,7 @@ impl Preview {
         if !self.active() {
             return;
         }
-        let target = self.0.view.preview_target();
+        let target = crate::panes::active_view().preview_target();
         let generation = self.0.generation.fetch_add(1, Ordering::SeqCst) + 1;
         self.publish(describe(&target, None));
         if !matches!(target, Target::Entry { .. }) {
@@ -447,7 +441,7 @@ impl Preview {
     /// The selection and focus as the system panel shows them.
     #[cfg(target_os = "macos")]
     fn panel_view(&self) -> (Vec<PathBuf>, usize) {
-        let view = &self.0.view;
+        let view = &crate::panes::active_view();
         let selected = view.selected_items().into_iter().map(|(path, _)| path).collect();
         panel_items(selected, view.focus().and_then(|i| view.entry_path(i)).map(|(path, _)| path))
     }
@@ -465,7 +459,7 @@ impl Preview {
             return true;
         }
         let Some(window) = self.0.window.upgrade() else { return true };
-        let on_move = Box::new(|to| with_current(|p| p.0.view.key_move(to, false, false, 1)).unwrap_or(false));
+        let on_move = Box::new(|to| crate::panes::active_view().key_move(to, false, false, 1));
         if gezik_platform::ql_panel::show(&window.window().window_handle(), &items, index, on_move) {
             return true;
         }
@@ -500,7 +494,7 @@ impl Preview {
     /// Gezik's own quick look window on the selection.
     fn open_own_quick_look(&self) {
         // Nothing selected: nothing to look at.
-        if self.0.view.preview_target() == Target::Nothing {
+        if crate::panes::active_view().preview_target() == Target::Nothing {
             return;
         }
         let Some(window) = self.0.window.upgrade() else { return };
@@ -563,7 +557,7 @@ impl Preview {
             Key::Right => Move::Right,
             _ => return false,
         };
-        self.0.view.key_move(mv, false, false, 1)
+        crate::panes::active_view().key_move(mv, false, false, 1)
     }
 
     /// The theme changed: quick look follows (the main window is done by theme_bridge).

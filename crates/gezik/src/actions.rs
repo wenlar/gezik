@@ -125,6 +125,8 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         Action::CollapseGroups => view.collapse_all(true),
         Action::ExpandGroups => view.collapse_all(false),
         Action::RevealInTree => crate::sidebar::with_current(crate::sidebar::Sidebar::reveal_current),
+        Action::ToggleDualPane => crate::dual::toggle(),
+        Action::FocusOtherPane => return crate::dual::focus_other(),
         // Not theirs: `handle_key` and the menu bar run these themselves. Listed one by one so
         // that a new action is a compile error here until it is placed.
         Action::NewTab

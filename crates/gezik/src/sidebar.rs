@@ -15,7 +15,6 @@ use gezik_core::nav::Location;
 use gezik_core::tree::{self, Listed, NodeId, Read, RootKey};
 use slint::{ComponentHandle, ModelRc};
 
-use crate::navigation::Navigator;
 use crate::places::Places;
 use crate::sidebar_model::{
     KeyDo, Line, Shown, SidebarModel, base_at, change_plan, find_typed, key_do, row_of_base, scroll_to_show, side_key,
@@ -58,9 +57,15 @@ const DRIVES_HEADER: &str = if cfg!(target_os = "macos") { "LOCATIONS" } else { 
 /// How often the (cheap) drive signature is checked.
 const DRIVE_POLL: Duration = Duration::from_secs(3);
 
-/// `f` of where the active pane's row under its toolbar is: the sidebar's top and height.
-fn pane_body(f: impl FnOnce(&crate::PaneGeometry) -> f32) -> f32 {
-    crate::panes::with_active(|p| f(&crate::panes::mirror(p.id).geometry.borrow())).unwrap_or(0.0)
+/// The sidebar's top and height in the window: the active pane's row under its toolbar, or
+/// from the window's top with two panes (spec 10 §4.1).
+pub fn span() -> (f32, f32) {
+    let (y, height) = crate::panes::with_active(|p| {
+        let g = crate::panes::mirror(p.id).geometry.borrow().clone();
+        (g.body_y, g.body_height)
+    })
+    .unwrap_or_default();
+    if crate::dual::is_open() { (0.0, y + height) } else { (y, height) }
 }
 
 /// Whether `a` and `b` name the same location (see [`pins::same_path_text`]). Separators and
@@ -293,7 +298,6 @@ impl PinState {
 
 struct Inner {
     window: slint::Weak<AppWindow>,
-    nav: Navigator,
     store: Option<ConfigStore>,
     dirs: KnownDirs,
     pins: PinState,
@@ -394,7 +398,7 @@ impl Sidebar {
     /// The pinned folders shown with their labels (the palette's Pinned).
     pub fn pinned_places(&self) -> Vec<(String, PathBuf)> {
         let inner = self.0.borrow();
-        let places = inner.nav.places();
+        let places = crate::panes::active_nav().places();
         inner
             .pins
             .visible
@@ -407,18 +411,12 @@ impl Sidebar {
             .collect()
     }
 
-    pub fn new(
-        window: &AppWindow,
-        nav: Navigator,
-        store: Option<ConfigStore>,
-        dialogs: crate::dialog::Dialogs,
-    ) -> Sidebar {
+    pub fn new(window: &AppWindow, store: Option<ConfigStore>, dialogs: crate::dialog::Dialogs) -> Sidebar {
         let shown = Rc::new(RefCell::new(Shown::default()));
         let model = Rc::new(SidebarModel::new(shown.clone()));
         window.set_sidebar_rows(ModelRc::from(model.clone()));
         let sidebar = Sidebar(Rc::new(RefCell::new(Inner {
             window: window.as_weak(),
-            nav: nav.clone(),
             store,
             dirs: KnownDirs::system(),
             pins: PinState::default(),
@@ -440,19 +438,17 @@ impl Sidebar {
             cursor: None,
             type_ahead: crate::keys::TypeAhead::new(),
         })));
-        // Re-highlight on location changes, relabel after places reload. No I/O here: this
-        // runs on every navigation (tree-follow's reads are on workers).
-        let weak = Rc::downgrade(&sidebar.0);
-        nav.on_changed(move |location| {
-            if let Some(inner) = weak.upgrade() {
-                let sidebar = Sidebar(inner);
-                sidebar.update_rows();
-                sidebar.location_changed(location);
-            }
-        });
         sidebar.start_drive_polling();
         sidebar.update_rows();
         sidebar
+    }
+
+    /// The active pane shows `location` (it changed, or another pane became active): the
+    /// highlight follows; with tree-follow the tree too. No I/O here: this runs on every
+    /// navigation (tree-follow's reads are on workers).
+    pub fn follow(&self, location: &Location) {
+        self.update_rows();
+        self.location_changed(location);
     }
 
     /// Makes this sidebar reachable from the config watcher and background checks. Call
@@ -486,7 +482,9 @@ impl Sidebar {
             // A pinned folder may have appeared or gone with the drive.
             self.refresh();
             crate::places::load_in_background(window, |part| {
-                crate::panes::with_active(|p| p.nav.set_places(part));
+                for p in crate::panes::all() {
+                    p.nav.set_places(part.clone());
+                }
             });
         }
     }
@@ -629,7 +627,7 @@ impl Sidebar {
         let found = {
             let inner = self.0.borrow();
             inner.pins.visible.iter().find(|pin| same_path(&pin.path, path)).map(|pin| {
-                let folder = inner.nav.places().title_for(&Location::Path(pin.path.clone()));
+                let folder = crate::panes::active_nav().places().title_for(&Location::Path(pin.path.clone()));
                 (pin.entry.path.clone(), pin.entry.name.clone().unwrap_or_else(|| folder.clone()), folder)
             })
         };
@@ -764,7 +762,8 @@ impl Sidebar {
                 let shown = inner.shown.try_borrow().ok()?;
                 shown.tree.node(u32::try_from(index).ok()?).map(|node| Location::Path(node.path.clone()))
             }
-            _ => place_path(&inner.nav.places(), &inner.pins.visible, section, index).map(Location::Path),
+            _ => place_path(&crate::panes::active_nav().places(), &inner.pins.visible, section, index)
+                .map(Location::Path),
         }
     }
 
@@ -922,7 +921,7 @@ impl Sidebar {
                 return;
             }
             inner.followed = None;
-            inner.nav.active_location()
+            crate::panes::active_nav().active_location()
         };
         self.location_changed(&location);
     }
@@ -1006,7 +1005,7 @@ impl Sidebar {
     pub fn reveal_current(&self) {
         let (window, location) = {
             let inner = self.0.borrow();
-            (inner.window.upgrade(), inner.nav.active_location())
+            (inner.window.upgrade(), crate::panes::active_nav().active_location())
         };
         let Some(window) = window else { return };
         if window.get_sidebar_position() == 2 {
@@ -1022,7 +1021,7 @@ impl Sidebar {
     fn scroll_to_row(&self, row: usize) {
         let Some(window) = self.0.borrow().window.upgrade() else { return };
         let theme = window.global::<crate::Theme>();
-        let height = pane_body(|g| g.body_height) - 2.0 * theme.get_spacing();
+        let height = span().1 - 2.0 * theme.get_spacing();
         window.set_sidebar_scroll(scroll_to_show(row, theme.get_row_height(), window.get_sidebar_scroll(), height));
     }
 
@@ -1075,7 +1074,7 @@ impl Sidebar {
     /// Rows a screen, less one (PgUp/PgDn).
     fn page_rows(&self, window: &AppWindow) -> usize {
         let theme = window.global::<crate::Theme>();
-        let height = pane_body(|g| g.body_height) - 2.0 * theme.get_spacing();
+        let height = span().1 - 2.0 * theme.get_spacing();
         ((height / theme.get_row_height().max(1.0)).floor() as usize).saturating_sub(1).max(1)
     }
 
@@ -1114,10 +1113,8 @@ impl Sidebar {
         let theme = window.global::<crate::Theme>();
         let width = window.get_sidebar_width();
         let x = if window.get_sidebar_position() == 1 { g.window_width - width } else { 0.0 };
-        let y = pane_body(|g| g.body_y)
-            + theme.get_spacing()
-            + window.get_sidebar_scroll()
-            + (row + 1) as f32 * theme.get_row_height();
+        let y =
+            span().0 + theme.get_spacing() + window.get_sidebar_scroll() + (row + 1) as f32 * theme.get_row_height();
         (x + theme.get_spacing() * 3.0, y)
     }
 
@@ -1167,8 +1164,8 @@ impl Sidebar {
             if inner.window.upgrade().is_none() {
                 return;
             }
-            let places = inner.nav.places();
-            let current = inner.nav.active_location();
+            let places = crate::panes::active_nav().places();
+            let current = crate::panes::active_nav().active_location();
             let is_current = |path: &Path| matches!(&current, Location::Path(p) if same_path(p, path));
             let index = |i: usize| i32::try_from(i).unwrap_or(i32::MAX);
             let header = |label: &str, section, i| SidebarRow {

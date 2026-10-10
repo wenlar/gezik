@@ -64,6 +64,18 @@ impl Dialogs {
         dialogs
     }
 
+    /// Dialogs with no window, for tests: nothing is ever asked.
+    #[cfg(test)]
+    pub fn detached() -> Dialogs {
+        Dialogs(Rc::new(Inner {
+            window: slint::Weak::default(),
+            queue: RefCell::default(),
+            open: RefCell::default(),
+            open_job: Cell::new(None),
+            open_note: RefCell::new(None),
+        }))
+    }
+
     /// Asks; `answer` gets the index of the chosen button (Enter: the first, Esc: the last).
     pub fn ask(
         &self,

@@ -8,7 +8,6 @@ use gezik_config::shortcuts::{Chord, Key};
 use gezik_core::pattern::Pattern;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
-use crate::navigation::Navigator;
 use crate::{AppWindow, PickRow};
 
 thread_local! {
@@ -64,7 +63,6 @@ pub fn step(current: usize, len: usize, down: bool) -> usize {
 
 struct Inner {
     window: slint::Weak<AppWindow>,
-    nav: Navigator,
     /// The tabs as the picker opened (title, path); they cannot change while it is open.
     tabs: RefCell<Vec<(String, String)>>,
     /// The tabs shown, as indexes into `tabs`.
@@ -78,12 +76,11 @@ struct Inner {
 pub struct TabTools(Rc<Inner>);
 
 impl TabTools {
-    pub fn new(window: &AppWindow, nav: Navigator) -> TabTools {
+    pub fn new(window: &AppWindow) -> TabTools {
         let model = Rc::new(VecModel::default());
         window.set_tp_rows(ModelRc::from(model.clone()));
         let tools = TabTools(Rc::new(Inner {
             window: window.as_weak(),
-            nav,
             tabs: RefCell::default(),
             rows: RefCell::default(),
             current: Cell::new(0),
@@ -125,10 +122,10 @@ impl TabTools {
         if over_another_layer(&window) {
             return;
         }
-        *self.0.tabs.borrow_mut() = self.0.nav.tab_list();
+        *self.0.tabs.borrow_mut() = crate::panes::active_nav().tab_list();
         let all = picker_rows(&self.0.tabs.borrow(), "");
         *self.0.rows.borrow_mut() = all;
-        self.0.current.set(self.0.nav.active_index());
+        self.0.current.set(crate::panes::active_nav().active_index());
         window.set_tp_rows(ModelRc::from(self.0.model.clone()));
         window.set_tp_label("Tabs".into());
         window.set_tp_empty("No tabs match".into());
@@ -174,7 +171,7 @@ impl TabTools {
     fn choose(&self) {
         let Some(tab) = self.0.rows.borrow().get(self.0.current.get()).copied() else { return };
         self.close();
-        self.0.nav.activate_tab(tab);
+        crate::panes::active_nav().activate_tab(tab);
     }
 
     fn close(&self) {
@@ -192,7 +189,7 @@ impl TabTools {
 
     /// Puts the shown rows and the current one on screen.
     fn show(&self, window: &AppWindow) {
-        let active = self.0.nav.active_index();
+        let active = crate::panes::active_nav().active_index();
         let tabs = self.0.tabs.borrow();
         let rows: Vec<PickRow> = self
             .0

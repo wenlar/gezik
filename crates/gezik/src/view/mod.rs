@@ -112,9 +112,9 @@ struct Inner {
     store: Option<ConfigStore>,
     /// The shown folder as remembered in `memory`; `None` for "This PC".
     folder: RefCell<Option<String>>,
-    columns: RefCell<Vec<ColumnState>>,
+    columns: SharedColumns,
     /// The search results' columns (sapma 6).
-    result_columns: RefCell<Vec<ColumnState>>,
+    result_columns: SharedColumns,
     /// The status bar while results show and nothing is selected ("Searching… 1,234 found").
     results_status: RefCell<Option<String>>,
     /// A search still adds batches: sorting waits for its end (sapma 4).
@@ -248,16 +248,34 @@ impl SortGate {
     }
 }
 
+/// A column layout, shared by every pane's view (spec 10 §3.3).
+type SharedColumns = Rc<RefCell<Vec<ColumnState>>>;
+
 #[derive(Clone)]
 pub struct View(Rc<Inner>);
 
 impl View {
     pub fn new(
         id: PaneId,
-        window: &AppWindow,
+        window: slint::Weak<AppWindow>,
         media: Media,
         memory: Rc<RefCell<ViewMemory>>,
         store: Option<ConfigStore>,
+    ) -> View {
+        let columns = (
+            Rc::new(RefCell::new(default_columns())),
+            Rc::new(RefCell::new(gezik_core::view::default_result_columns())),
+        );
+        View::with_columns(id, window, media, memory, store, columns)
+    }
+
+    fn with_columns(
+        id: PaneId,
+        window: slint::Weak<AppWindow>,
+        media: Media,
+        memory: Rc<RefCell<ViewMemory>>,
+        store: Option<ConfigStore>,
+        (columns, result_columns): (SharedColumns, SharedColumns),
     ) -> View {
         let defaults = ViewDefaults::default();
         let data = Rc::new(RefCell::new(ViewData {
@@ -270,7 +288,7 @@ impl View {
         crate::panes::edit(id, |d| d.items = ModelRc::from(model.clone()));
         let view = View(Rc::new(Inner {
             id,
-            window: window.as_weak(),
+            window,
             data,
             model,
             media: media.clone(),
@@ -289,8 +307,8 @@ impl View {
             memory,
             store,
             folder: RefCell::new(None),
-            columns: RefCell::new(default_columns()),
-            result_columns: RefCell::new(gezik_core::view::default_result_columns()),
+            columns,
+            result_columns,
             results_status: RefCell::new(None),
             searching: Cell::new(false),
             results_version: Cell::new(0),
@@ -322,6 +340,25 @@ impl View {
 
     /// `[view]` settings, at startup and whenever settings.toml changes. A folder without
     /// its own view follows the new defaults at once.
+    /// A view for pane `id` like this one: the same media, folder view memory, defaults,
+    /// options and rules, and the same column layout (one for every pane, spec 10 §3.3).
+    pub fn for_pane(&self, id: PaneId) -> View {
+        let columns = (self.0.columns.clone(), self.0.result_columns.clone());
+        let media = self.0.media.client();
+        let shared =
+            View::with_columns(id, self.0.window.clone(), media, self.0.memory.clone(), self.0.store.clone(), columns);
+        shared.set_defaults(self.0.defaults.get());
+        shared.set_options(self.0.options.get());
+        // No folder shows yet: its place comes with the first one.
+        shared.set_rules(self.0.rules.borrow().clone(), Default::default);
+        shared
+    }
+
+    #[cfg(test)]
+    pub fn downgrade(&self) -> std::rc::Weak<impl Sized + use<>> {
+        Rc::downgrade(&self.0)
+    }
+
     pub fn set_defaults(&self, defaults: ViewDefaults) {
         // `options` go through `set_options` (view_options.rs): a change of only them must not
         // reset the model and lose the scroll.
@@ -2394,8 +2431,12 @@ impl View {
         });
     }
 
-    fn update_status(&self) {
+    /// The status line says what this view shows, if it is the active pane's.
+    pub fn update_status(&self) {
         let Some(window) = self.0.window.upgrade() else { return };
+        if !crate::panes::is_active(self.0.id) {
+            return;
+        }
         if let Some(note) = self.0.note.borrow().clone() {
             window.set_status(note.into());
             return;

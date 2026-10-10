@@ -10,7 +10,6 @@ use gezik_config::Warning;
 use gezik_config::settings::{KeyboardSettings, SavedFilter, Typing};
 use gezik_config::settings_writer::SettingsChange;
 use gezik_config::store::ConfigStore;
-use slint::ComponentHandle;
 
 use crate::AppWindow;
 use crate::context_menu::FILTER_MAX;
@@ -126,16 +125,27 @@ pub struct Filter {
 
 impl Filter {
     /// The ▾ menu is `Menus::filter_menu`'s (main.rs connects it).
-    pub fn new(id: PaneId, window: &AppWindow, view: View, dialogs: Dialogs, store: Option<ConfigStore>) -> Filter {
-        let filter = Filter { id, window: window.as_weak(), view, dialogs, store };
-        window.on_filter_edited({
-            let view = filter.view.clone();
-            move |pane, text| {
-                *crate::panes::mirror_at(pane).filter_text.borrow_mut() = text.clone();
-                view.set_filter(Some(&text))
-            }
+    pub fn new(
+        id: PaneId,
+        window: slint::Weak<AppWindow>,
+        view: View,
+        dialogs: Dialogs,
+        store: Option<ConfigStore>,
+    ) -> Filter {
+        Filter { id, window, view, dialogs, store }
+    }
+
+    /// The filter of pane `id` (its `view`), saving where this one does.
+    pub fn for_pane(&self, id: PaneId, view: View) -> Filter {
+        Filter { id, view, ..self.clone() }
+    }
+
+    /// The window's filter field callback, for every pane (once).
+    pub fn connect(window: &AppWindow) {
+        window.on_filter_edited(|pane, text| {
+            *crate::panes::mirror_at(pane).filter_text.borrow_mut() = text.clone();
+            crate::panes::with_row(pane, |p| p.view.set_filter(Some(&text)));
         });
-        filter
     }
 
     /// Ctrl+F: opens the bar empty and gives it the keyboard; on an open bar, selects its text.

@@ -10,7 +10,6 @@ use gezik_core::pattern::Pattern;
 
 use crate::dialog::Dialogs;
 use crate::preview::with_commas;
-use crate::view::View;
 
 const MESSAGE: &str = "Names that match (* and ? are wildcards, ; separates patterns, ! leaves out):";
 
@@ -42,7 +41,6 @@ pub fn match_note(text: &str, count: impl Fn(&Pattern) -> usize) -> (String, boo
 }
 
 struct Inner {
-    view: View,
     dialogs: Dialogs,
     store: Option<ConfigStore>,
     /// The last pattern used (the box starts with it).
@@ -54,8 +52,8 @@ pub struct SelectTools(Rc<Inner>);
 
 impl SelectTools {
     /// `last`: the pattern state.toml remembers.
-    pub fn new(view: View, dialogs: Dialogs, store: Option<ConfigStore>, last: Option<String>) -> SelectTools {
-        let tools = SelectTools(Rc::new(Inner { view, dialogs, store, last: RefCell::new(last.unwrap_or_default()) }));
+    pub fn new(dialogs: Dialogs, store: Option<ConfigStore>, last: Option<String>) -> SelectTools {
+        let tools = SelectTools(Rc::new(Inner { dialogs, store, last: RefCell::new(last.unwrap_or_default()) }));
         CURRENT.with(|c| *c.borrow_mut() = Some(tools.clone()));
         tools
     }
@@ -67,7 +65,7 @@ impl SelectTools {
         } else {
             ("Deselect by pattern", &["Deselect", "Cancel"])
         };
-        let view = self.0.view.clone();
+        let view = crate::panes::active_view().clone();
         let note = move |text: &str| match_note(text, |p| view.count_matching(p));
         let tools = self.clone();
         let last = self.0.last.borrow().clone();
@@ -75,13 +73,13 @@ impl SelectTools {
             let Some(text) = text else { return };
             match Pattern::compile(&text) {
                 Ok(pattern) => {
-                    tools.0.view.select_matching(&pattern, select);
+                    crate::panes::active_view().select_matching(&pattern, select);
                     *tools.0.last.borrow_mut() = text.clone();
                     if let Some(store) = &tools.0.store {
                         store.update_state(|s| s.selection.last_pattern = Some(text));
                     }
                 }
-                Err(error) => tools.0.view.note(error),
+                Err(error) => crate::panes::active_view().note(error),
             }
         });
     }

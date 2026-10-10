@@ -254,6 +254,10 @@ export component FileView inherits Rectangle {
     // The selection shows in full while the view or its rename field has the keyboard, and
     // in the inactive color otherwise.
     property <bool> active: root.has-focus || root.rename-has-focus;
+    // The inactive one of two panes (spec 10 §4.3): its selection in the selection color at 45%.
+    in property <bool> dimmed;
+    // What a screen reader calls the list ("Left pane, C:\Work" with two panes).
+    in property <string> label: "Files";
     // The gap above and below the visible list (the rows' inset leaves room for it); the
     // grid's is its inset (Theme.inset + the cells' 4px above the first line); none
     // in the classic themes.
@@ -331,7 +335,7 @@ export component FileView inherits Rectangle {
 
     clip: true;
     accessible-role: AccessibleRole.list;
-    accessible-label: "Files";
+    accessible-label: root.label;
 
     // Scrolls so entry `index` is fully visible.
     public function ensure-visible(index: int) {
@@ -537,7 +541,7 @@ export component FileView inherits Rectangle {
                 width: parent.width - 2 * Theme.inset;
                 border-radius: Theme.row-radius;
                 background: root.drop-entry == self.index ? Theme.drop-target
-                    : self.file.selected ? (root.active ? Theme.selection : Theme.selection-inactive)
+                    : self.file.selected ? (root.dimmed ? Theme.selection.transparentize(0.55) : root.active ? Theme.selection : Theme.selection-inactive)
                     : touch.has-hover && !root.drag-active ? Theme.hover : transparent;
                 border-width: root.drop-entry == self.index ? 1px : 0px;
                 border-color: Theme.accent;
@@ -737,7 +741,7 @@ export component FileView inherits Rectangle {
                             height: parent.height - 8px;
                             border-radius: Theme.radius;
                             background: root.drop-entry == tile.index ? Theme.drop-target
-                                : tile.cell.selected ? (root.active ? Theme.selection : Theme.selection-inactive)
+                                : tile.cell.selected ? (root.dimmed ? Theme.selection.transparentize(0.55) : root.active ? Theme.selection : Theme.selection-inactive)
                                 : tile-touch.has-hover && !root.drag-active ? Theme.hover : transparent;
                             border-width: root.drop-entry == tile.index ? 1px : tile.cell.focused && root.has-focus ? Theme.focus-width : 0px;
                             border-color: root.drop-entry == tile.index ? Theme.accent : Theme.focus-ring;

@@ -95,7 +95,7 @@ export struct PaneGeometry {
     // The row under the toolbar, down to the sheet's bottom (the sidebar's top and height).
     body-y: length,
     body-height: length,
-    // The tab strip's left edge (it is inset).
+    // The tab strip's left edge in the window (it is inset).
     tab-x: length,
     tab-scroll: length,
     tab-width: length,
@@ -132,6 +132,9 @@ export struct PaneFocus {
 export component PaneView inherits Rectangle {
     in property <PaneData> data;
     in property <int> index;
+    // Two panes are open (spec 10 §4), and this one is the active one.
+    in property <bool> dual;
+    in property <bool> active;
     // The window's: the file list has the keyboard (its `keys` scope), what files dragged
     // would drop on, the column widths (shared by every pane, spec 10 §3.3).
     in property <bool> list-focused;
@@ -276,7 +279,7 @@ export component PaneView inherits Rectangle {
         list-height: file-view.list-height,
         body-y: search-bar.absolute-position.y,
         body-height: file-view.absolute-position.y + file-view.height - search-bar.absolute-position.y,
-        tab-x: tab-bar.strip-x,
+        tab-x: tab-bar.absolute-position.x + tab-bar.strip-x,
         tab-scroll: tab-bar.scroll,
         tab-width: tab-bar.tab-width,
         tab-strip-width: tab-bar.strip-width,
@@ -463,6 +466,7 @@ export component PaneView inherits Rectangle {
         tab-bar := TabBar {
             tabs: root.tabs;
             drop-tab: root.drop-tab;
+            marked: root.dual && root.active;
             activate(i) => { root.tab-activate(root.index, i); }
             close(i) => { root.tab-close(root.index, i); }
             new-tab => { root.tab-new(root.index); }
@@ -589,6 +593,8 @@ export component PaneView inherits Rectangle {
                         items: root.items;
                         mode: root.view-mode;
                         picture-size: root.grid-size;
+                        dimmed: root.dual && !root.active;
+                        label: !root.dual ? "Files" : (root.index == 0 ? "Left pane, " : "Right pane, ") + root.current-path;
                         trash: root.trash-shown;
                         grid-columns-changed(n) => { root.grid-columns-changed(root.index, n); }
                         zoom(bigger) => { root.zoom(root.index, bigger); }
@@ -659,6 +665,11 @@ export component PaneView inherits Rectangle {
                     }
                 }
             }
+        }
+        // With two panes, neither gets narrower than this (spec 10 §4.1); nothing with one.
+        Rectangle {
+            min-width: root.dual ? 240px : 0px;
+            height: 0px;
         }
     }
 }

@@ -205,6 +205,8 @@ tree-follow = false
 # collapse-groups = ""   # Collapse All Groups (a grouped view)
 # expand-groups = ""   # Expand All Groups
 # reveal-in-tree = ""   # Show in Sidebar Tree: opens the sidebar tree down to the folder shown
+# toggle-dual-pane = ""   # Two Panes: opens or closes the second pane; macOS: "mod+ctrl+p"
+# focus-other-pane = "tab"   # the other pane takes the keyboard (only with two panes, the file list focused)
 
 # Saved rule sets for batch rename (Rename… with two or more items selected). The rename
 # layer writes them with "Presets ▾ › Save current rules as…"; they can also be written here.

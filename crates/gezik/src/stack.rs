@@ -14,7 +14,6 @@ use gezik_ops::{JobId, Report};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::operations::Operations;
-use crate::view::View;
 use crate::{AppWindow, StackRow};
 
 /// The most paths the stack keeps.
@@ -156,7 +155,6 @@ pub fn with_current(f: impl FnOnce(&Stack)) {
 
 struct Inner {
     window: slint::Weak<AppWindow>,
-    view: View,
     ops: Operations,
     items: RefCell<StackItems>,
     open: Cell<bool>,
@@ -171,12 +169,11 @@ struct Inner {
 pub struct Stack(Rc<Inner>);
 
 impl Stack {
-    pub fn new(window: &AppWindow, view: View, ops: Operations) -> Stack {
+    pub fn new(window: &AppWindow, ops: Operations) -> Stack {
         let rows = Rc::new(VecModel::default());
         window.set_stack_rows(ModelRc::from(rows.clone()));
         let stack = Stack(Rc::new(Inner {
             window: window.as_weak(),
-            view,
             ops,
             items: RefCell::default(),
             open: Cell::new(false),
@@ -215,7 +212,7 @@ impl Stack {
     pub fn add(&self, items: Vec<(PathBuf, bool)>) {
         let (added, full) = self.0.items.borrow_mut().add(items);
         if full > 0 {
-            self.0.view.note(format!("The drop stack holds at most {STACK_MAX} items"));
+            crate::panes::active_view().note(format!("The drop stack holds at most {STACK_MAX} items"));
         }
         if added > 0 {
             self.0.open.set(true);
@@ -223,19 +220,19 @@ impl Stack {
         } else if full == 0 {
             // All of it was on the stack already: show where.
             self.0.open.set(true);
-            self.0.view.note("Already on the drop stack".to_owned());
+            crate::panes::active_view().note("Already on the drop stack".to_owned());
         }
         self.sync();
     }
 
     /// `add-to-stack`: the selected items.
     pub fn add_selection(&self) {
-        if self.0.view.shows_drives() {
-            return self.0.view.note("Open a folder to add items to the drop stack".to_owned());
+        if crate::panes::active_view().shows_drives() {
+            return crate::panes::active_view().note("Open a folder to add items to the drop stack".to_owned());
         }
-        let items = self.0.view.selected_items();
+        let items = crate::panes::active_view().selected_items();
         if items.is_empty() {
-            return self.0.view.note("Select the items to add to the drop stack".to_owned());
+            return crate::panes::active_view().note("Select the items to add to the drop stack".to_owned());
         }
         self.add(items);
     }
@@ -282,18 +279,19 @@ impl Stack {
 
     /// Copy here / Move here: the paths still there, to the folder shown, as one job.
     fn send(&self, effect: Effect) {
-        let Some(dir) = self.0.view.folder() else {
-            return self.0.view.note("Open a folder to copy or move the drop stack into".to_owned());
+        let Some(dir) = crate::panes::active_view().folder() else {
+            return crate::panes::active_view().note("Open a folder to copy or move the drop stack into".to_owned());
         };
         let usable = self.0.items.borrow().usable();
         if usable.is_empty() {
-            return self.0.view.note("The drop stack has nothing to copy or move".to_owned());
+            return crate::panes::active_view().note("The drop stack has nothing to copy or move".to_owned());
         }
         // Items already in this folder have nothing to do here.
         let paths: Vec<PathBuf> =
             usable.into_iter().filter(|path| !path.parent().is_some_and(|parent| same_path(parent, &dir))).collect();
         if paths.is_empty() {
-            return self.0.view.note("Everything on the drop stack is already in this folder".to_owned());
+            return crate::panes::active_view()
+                .note("Everything on the drop stack is already in this folder".to_owned());
         }
         let job = self.0.ops.transfer_job(paths.clone(), dir, effect);
         if effect == Effect::Move {
@@ -322,8 +320,8 @@ impl Stack {
             .ok()
             .and_then(|i| self.0.items.borrow().items().get(i).map(|item| item.path.clone()));
         match path {
-            Some(path) => self.0.view.note(path.display().to_string()),
-            None => self.0.view.clear_note(),
+            Some(path) => crate::panes::active_view().note(path.display().to_string()),
+            None => crate::panes::active_view().clear_note(),
         }
     }
 

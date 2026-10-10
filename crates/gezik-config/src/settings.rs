@@ -1522,21 +1522,29 @@ pub struct State {
     pub history: Vec<Visit>,
     /// The tabs of last time (`[session]`), opened at start if `[session] restore`.
     pub session: Session,
+    /// The right pane's tabs (`[session] right-tabs`, `right-active`), kept while it is closed.
+    pub right_session: Session,
+    /// The second pane was open (`[session] dual`), and which pane was active (`active-pane`, 0 or 1).
+    pub dual: bool,
+    pub active_pane: usize,
+    /// The left pane's share of the two panes' width in thousandths (`[panes] split`, 0.2–0.8).
+    pub pane_split: Option<u16>,
     /// The palette's items used last, newest first (spec 7.3).
     pub palette_recent: Vec<String>,
     /// Connect to Server's addresses, newest first (`[servers] recent`).
     pub servers_recent: Vec<String>,
 }
 
-/// state.toml's `[session]` (spec 5.1): the tabs in order and the one in front. An entry
+/// state.toml's `[session]` (spec 5.1): the tabs in order (key `tabs`, the right pane's
+/// `right-tabs`) and the one in front (`active`, `right-active`). An entry
 /// without a path (or `drives = true`), or with a relative one, is left out, and `active`
 /// counts the kept ones (the first if its entry was left out).
-fn session_state(value: Option<&toml::Value>) -> Session {
+fn session_state(value: Option<&toml::Value>, tabs: &str, active: &str) -> Session {
     let Some(table) = value.and_then(|v| v.as_table()) else { return Session::default() };
-    let wanted = table.get("active").and_then(|v| v.as_integer()).and_then(|n| usize::try_from(n).ok()).unwrap_or(0);
+    let wanted = table.get(active).and_then(|v| v.as_integer()).and_then(|n| usize::try_from(n).ok()).unwrap_or(0);
     let mut session = Session::default();
     let mut active = None;
-    for (i, item) in table.get("tabs").and_then(|v| v.as_array()).into_iter().flatten().enumerate() {
+    for (i, item) in table.get(tabs).and_then(|v| v.as_array()).into_iter().flatten().enumerate() {
         let Some(tab) = item.as_table() else { continue };
         let location = if tab.get("drives").and_then(|v| v.as_bool()) == Some(true) {
             Location::Drives
@@ -1672,6 +1680,7 @@ impl State {
                 })
                 .unwrap_or_default()
         };
+        let session_flag = |key: &str| table.get("session").and_then(|v| v.as_table()).and_then(|t| t.get(key));
         let palette_recent = recent("palette", gezik_core::palette::RECENT_MAX);
         let servers_recent = recent("servers", SERVERS_MAX);
         State {
@@ -1688,7 +1697,17 @@ impl State {
             convert,
             selection,
             history,
-            session: session_state(table.get("session")),
+            session: session_state(table.get("session"), "tabs", "active"),
+            right_session: session_state(table.get("session"), "right-tabs", "right-active"),
+            dual: session_flag("dual").and_then(|v| v.as_bool()).unwrap_or(false),
+            active_pane: session_flag("active-pane").and_then(|v| v.as_integer()).map_or(0, |n| usize::from(n == 1)),
+            pane_split: table
+                .get("panes")
+                .and_then(|v| v.as_table())
+                .and_then(|t| t.get("split"))
+                .and_then(|v| v.as_float())
+                .filter(|f| (0.2..=0.8).contains(f))
+                .map(|f| (f * 1000.0).round() as u16),
             palette_recent,
             servers_recent,
         }
@@ -1820,43 +1839,66 @@ impl State {
             servers.insert("recent".into(), toml::Value::Array(recent));
             root.insert("servers".into(), toml::Value::Table(servers));
         }
+        let mut session = toml::Table::new();
         if !self.session.is_empty() {
-            let tabs = self
-                .session
-                .tabs
-                .iter()
-                .map(|tab| {
-                    let mut table = toml::Table::new();
-                    match &tab.location {
-                        Location::Path(path) => {
-                            table.insert("path".into(), toml::Value::String(path.to_string_lossy().into_owned()));
-                        }
-                        Location::Drives => {
-                            table.insert("drives".into(), toml::Value::Boolean(true));
-                        }
-                        Location::Trash => {
-                            table.insert("trash".into(), toml::Value::Boolean(true));
-                        }
-                        Location::Search(spec) => {
-                            table.insert("search".into(), toml::Value::Table(search_to_toml(spec)));
-                        }
-                        Location::Flat(path) => {
-                            table.insert("flat".into(), toml::Value::String(path.to_string_lossy().into_owned()));
-                        }
-                    }
-                    if tab.locked {
-                        table.insert("locked".into(), toml::Value::Boolean(true));
-                    }
-                    toml::Value::Table(table)
-                })
-                .collect();
-            let mut session = toml::Table::new();
             session.insert("active".into(), toml::Value::Integer(i64::try_from(self.session.active).unwrap_or(0)));
-            session.insert("tabs".into(), toml::Value::Array(tabs));
+            session.insert("tabs".into(), tabs_toml(&self.session));
+        }
+        if !self.right_session.is_empty() {
+            let active = i64::try_from(self.right_session.active).unwrap_or(0);
+            session.insert("right-active".into(), toml::Value::Integer(active));
+            session.insert("right-tabs".into(), tabs_toml(&self.right_session));
+        }
+        if self.dual {
+            session.insert("dual".into(), toml::Value::Boolean(true));
+        }
+        if self.active_pane == 1 {
+            session.insert("active-pane".into(), toml::Value::Integer(1));
+        }
+        if !session.is_empty() {
             root.insert("session".into(), toml::Value::Table(session));
+        }
+        if let Some(split) = self.pane_split {
+            let mut panes = toml::Table::new();
+            panes.insert("split".into(), toml::Value::Float(f64::from(split) / 1000.0));
+            root.insert("panes".into(), toml::Value::Table(panes));
         }
         root.to_string()
     }
+}
+
+/// A session's tabs as `[[session.tabs]]` writes them.
+fn tabs_toml(session: &Session) -> toml::Value {
+    toml::Value::Array(
+        session
+            .tabs
+            .iter()
+            .map(|tab| {
+                let mut table = toml::Table::new();
+                match &tab.location {
+                    Location::Path(path) => {
+                        table.insert("path".into(), toml::Value::String(path.to_string_lossy().into_owned()));
+                    }
+                    Location::Drives => {
+                        table.insert("drives".into(), toml::Value::Boolean(true));
+                    }
+                    Location::Trash => {
+                        table.insert("trash".into(), toml::Value::Boolean(true));
+                    }
+                    Location::Search(spec) => {
+                        table.insert("search".into(), toml::Value::Table(search_to_toml(spec)));
+                    }
+                    Location::Flat(path) => {
+                        table.insert("flat".into(), toml::Value::String(path.to_string_lossy().into_owned()));
+                    }
+                }
+                if tab.locked {
+                    table.insert("locked".into(), toml::Value::Boolean(true));
+                }
+                toml::Value::Table(table)
+            })
+            .collect(),
+    )
 }
 
 #[cfg(test)]
@@ -2958,6 +3000,66 @@ shortcut = \"shift+f8\"
         };
         assert_eq!(State::parse(&state.to_toml()), state);
         assert!(!State::default().to_toml().contains("session"));
+    }
+
+    #[test]
+    fn the_right_pane_round_trips_in_state() {
+        use gezik_core::nav::{Location, Session, SessionTab};
+        let state = State {
+            session: Session::single(Location::Drives),
+            right_session: Session {
+                tabs: vec![
+                    SessionTab { location: Location::Trash, locked: false },
+                    SessionTab { location: Location::Path(std::env::temp_dir().join("r")), locked: true },
+                ],
+                active: 1,
+            },
+            dual: true,
+            active_pane: 1,
+            pane_split: Some(350),
+            ..State::default()
+        };
+        let text = state.to_toml();
+        assert!(text.contains("right-tabs") && text.contains("split = 0.35"), "{text}");
+        assert_eq!(State::parse(&text), state);
+        // Closed, the right tabs are still kept.
+        let closed = State { dual: false, active_pane: 0, pane_split: None, ..state };
+        assert_eq!(State::parse(&closed.to_toml()), closed);
+    }
+
+    #[test]
+    fn an_old_state_is_the_left_pane() {
+        let old = State::parse(
+            "[session]
+active = 0
+
+[[session.tabs]]
+drives = true
+",
+        );
+        assert_eq!(old.session.tabs.len(), 1);
+        assert!(old.right_session.is_empty() && !old.dual && old.active_pane == 0 && old.pane_split.is_none());
+        // Out of range or the wrong type: the defaults.
+        let bad = State::parse(
+            "[session]
+dual = 1
+active-pane = 4
+
+[panes]
+split = 0.9
+",
+        );
+        assert!(!bad.dual && bad.active_pane == 0 && bad.pane_split.is_none());
+        assert_eq!(
+            State::parse(
+                "[panes]
+split = 0.2
+"
+            )
+            .pane_split,
+            Some(200)
+        );
+        assert!(!State::default().to_toml().contains("panes"));
     }
 
     #[test]

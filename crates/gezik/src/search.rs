@@ -20,7 +20,6 @@ use gezik_search::query::{Query, QueryError, QueryOptions};
 use gezik_search::results::ResultSet;
 use gezik_search::run::{Event, Running, Summary, plan_walk, send_whole, start_with};
 use gezik_search::walk::Walk;
-use slint::ComponentHandle;
 
 use crate::AppWindow;
 use crate::context_menu::{self as ids, Submenu};
@@ -407,10 +406,10 @@ struct Inner {
 pub struct Searches(Rc<Inner>);
 
 impl Searches {
-    pub fn new(id: PaneId, window: &AppWindow, nav: Navigator, view: View, dialogs: Dialogs) -> Searches {
+    pub fn new(id: PaneId, window: slint::Weak<AppWindow>, nav: Navigator, view: View, dialogs: Dialogs) -> Searches {
         let searches = Searches(Rc::new(Inner {
             id,
-            window: window.as_weak(),
+            window,
             nav,
             view,
             dialogs,
@@ -438,28 +437,42 @@ impl Searches {
             problems: RefCell::new(Vec::new()),
             menu_names: RefCell::new(Vec::new()),
         }));
-        window.on_search_edited(|pane, text| {
-            *crate::panes::mirror_at(pane).search_text.borrow_mut() = text.clone();
-            crate::panes::with_active(|p| p.search.edited(&text));
-        });
-        window.on_search_content_edited(|pane, text| {
-            *crate::panes::mirror_at(pane).search_content.borrow_mut() = text.clone();
-            crate::panes::with_active(|p| p.search.content_edited(&text));
-        });
-        window.on_search_content_toggle(|_pane| {
-            crate::panes::with_active(|p| p.search.content_toggle());
-        });
-        window.on_search_go(|_pane| {
-            crate::panes::with_active(|p| p.search.button());
-        });
-        window.on_filter_search(|_pane| {
-            crate::panes::with_active(|p| p.search.filter_to_search());
-        });
         // Called after every edit of the results too (a delete, a job's check).
         searches.0.view.on_selection_changed(move || {
             crate::panes::with_id(id, |p| p.search.recount());
         });
         searches
+    }
+
+    /// The search of pane `id`, with this one's dialogs and settings.
+    pub fn for_pane(&self, id: PaneId, nav: Navigator, view: View) -> Searches {
+        let searches = Searches::new(id, self.0.window.clone(), nav, view, self.0.dialogs.clone());
+        searches.set_settings(self.0.settings.borrow().clone());
+        searches
+    }
+
+    /// The window's search bar callbacks, for every pane (once).
+    pub fn connect(window: &AppWindow) {
+        window.on_search_edited(|pane, text| {
+            *crate::panes::mirror_at(pane).search_text.borrow_mut() = text.clone();
+            crate::panes::with_row(pane, |p| p.search.edited(&text));
+        });
+        window.on_search_content_edited(|pane, text| {
+            *crate::panes::mirror_at(pane).search_content.borrow_mut() = text.clone();
+            crate::panes::with_row(pane, |p| p.search.content_edited(&text));
+        });
+        window.on_search_content_toggle(|pane| {
+            crate::dual::pick(pane);
+            crate::panes::with_active(|p| p.search.content_toggle());
+        });
+        window.on_search_go(|pane| {
+            crate::dual::pick(pane);
+            crate::panes::with_active(|p| p.search.button());
+        });
+        window.on_filter_search(|pane| {
+            crate::dual::pick(pane);
+            crate::panes::with_active(|p| p.search.filter_to_search());
+        });
     }
 
     /// `[search]` (every resolve).
