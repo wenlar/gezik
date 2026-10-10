@@ -129,6 +129,10 @@ fn conflict(item: &PlanItem, target: &Path, kind: ConflictKind, existing: Facts,
 }
 
 impl ScanSink for Sink<'_> {
+    fn cancelled(&self) -> bool {
+        self.job.control.cancelled()
+    }
+
     fn item(&mut self, mut item: PlanItem) -> bool {
         let control = &self.job.control;
         if control.cancelled() {

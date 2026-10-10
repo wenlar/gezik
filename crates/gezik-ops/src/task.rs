@@ -368,6 +368,10 @@ pub trait ScanSink {
     fn item(&mut self, item: PlanItem) -> bool;
     /// Something could not be read; it is reported as failed.
     fn failed(&mut self, path: &Path, error: io::Error);
+    /// Whether the job was cancelled, for a plan that waits (the files a macOS drop promised).
+    fn cancelled(&self) -> bool {
+        false
+    }
 }
 
 pub trait Task: Send + Sync {
