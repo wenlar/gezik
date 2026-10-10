@@ -768,6 +768,18 @@ impl Navigator {
         self.after_tabs_changed();
     }
 
+    /// Swaps every tab (histories, locks, views) with `other`'s, and shows both (`swap-panes`).
+    pub fn swap_tabs(&self, other: &Navigator) {
+        for nav in [self, other] {
+            nav.save_view();
+            // A load in flight was for the tab that leaves.
+            nav.0.borrow().generation.fetch_add(1, Ordering::SeqCst);
+        }
+        std::mem::swap(&mut self.0.borrow_mut().tabs, &mut other.0.borrow_mut().tabs);
+        self.after_tabs_changed();
+        other.after_tabs_changed();
+    }
+
     /// Goes to `location` from the location on screen (a pending move is dropped: the
     /// click or typed path was meant for what is shown).
     pub fn go(&self, location: Location) {
@@ -804,7 +816,12 @@ impl Navigator {
     }
 
     pub fn up(&self) {
-        self.queue(|base| base.parent().map(Step::Navigate));
+        let id = self.id();
+        self.queue(|base| {
+            let parent = base.parent()?;
+            crate::dual::stepped(id);
+            Some(Step::Navigate(parent))
+        });
     }
 
     /// Adds the step `next` makes from `base` (where a pending move leads, else the current
@@ -924,7 +941,10 @@ impl Navigator {
     /// as a file and an alias leads to its original.
     pub fn open_item(&self, path: PathBuf, is_dir: bool) {
         match system_opening(path, is_dir) {
-            Opening::Go(folder) => self.go(Location::Path(folder)),
+            Opening::Go(folder) => {
+                crate::dual::stepped(self.id());
+                self.go(Location::Path(folder));
+            }
             Opening::Launch(path) => self.launch(&path),
             Opening::MissingAlias(alias) => crate::operations::with_current(|ops| ops.missing_alias(alias)),
         }
@@ -964,6 +984,7 @@ impl Navigator {
             }
         }
         if let Some(folder) = folder {
+            crate::dual::stepped(self.id());
             self.go(Location::Path(folder));
         }
     }

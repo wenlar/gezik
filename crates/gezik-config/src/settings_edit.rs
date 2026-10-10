@@ -685,7 +685,11 @@ name = \"broken\" # mine
     #[test]
     fn tab_sets_are_written_keeping_the_rest() {
         use crate::settings::{Settings, TabSet};
-        let set = TabSet { name: "Release".into(), tabs: vec!["{downloads}".into(), "drives".into()] };
+        let set = TabSet {
+            name: "Release".into(),
+            tabs: vec!["{downloads}".into(), "drives".into()],
+            right: vec!["{home}".into()],
+        };
         let text = "# mine\n\n[[tab-sets]]\nname = \"old\"\ntabs = [\"/a\"]\n\n\
                     [[tab-sets]]\nname = \"broken\" # mine\ntabs = [\"{home}/../x\"]\n";
         let out = with_tab_sets(text, std::slice::from_ref(&set)).unwrap();
@@ -696,7 +700,7 @@ name = \"broken\" # mine
         assert_eq!(settings.tab_sets, [set]);
         assert_eq!(warnings.len(), 1, "the broken one still warns: {warnings:?}");
         let template = include_str!("../templates/settings.toml");
-        let one = [TabSet { name: "X".into(), tabs: vec!["/x".into()] }];
+        let one = [TabSet { name: "X".into(), tabs: vec!["/x".into()], right: Vec::new() }];
         let back = with_tab_sets(&with_tab_sets(template, &one).unwrap(), &[]).unwrap();
         for line in template.lines().filter(|l| l.starts_with('#')) {
             assert!(back.lines().any(|b| b == line), "{line} lost:\n{back}");

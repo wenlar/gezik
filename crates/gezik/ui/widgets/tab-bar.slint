@@ -35,6 +35,8 @@ export component TabBar inherits Rectangle {
     in property <int> drop-tab: -1;
     // The strip of the active one of two panes: its active tab gets an accent line on top.
     in property <bool> marked;
+    // Sync browsing is on (spec 10 §4.7): a thin accent line under the strip.
+    in property <bool> synced;
     // While a tab is dragged: where it came from and where it would be dropped.
     property <int> drag-from: -1;
     property <int> drag-to: -1;
@@ -324,5 +326,11 @@ export component TabBar inherits Rectangle {
                 clicked => { root.new-tab(); }
             }
         }
+    }
+
+    if root.synced: Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: Theme.accent;
     }
 }

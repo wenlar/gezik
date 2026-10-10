@@ -135,6 +135,7 @@ export component PaneView inherits Rectangle {
     // Two panes are open (spec 10 §4), and this one is the active one.
     in property <bool> dual;
     in property <bool> active;
+    in property <bool> synced;
     // The window's: the file list has the keyboard (its `keys` scope), what files dragged
     // would drop on, the column widths (shared by every pane, spec 10 §3.3).
     in property <bool> list-focused;
@@ -469,6 +470,7 @@ export component PaneView inherits Rectangle {
             tabs: root.tabs;
             drop-tab: root.drop-tab;
             marked: root.dual && root.active;
+            synced: root.synced;
             activate(i) => { root.tab-activate(root.index, i); }
             close(i) => { root.tab-close(root.index, i); }
             new-tab => { root.tab-new(root.index); }

@@ -215,6 +215,9 @@ confirm = true
 # copy-to-other-pane = "f5"  # the selection into the other pane's folder (only with two panes; F5 refreshes with one)
 # move-to-other-pane = "f6"  # the same as a move (only with two panes)
 # move-tab-to-other-pane = ""   # the active tab into the other pane (opens it first)
+# sync-browsing = ""   # Sync Browsing: a step into a sub-folder or up is made in both panes
+# swap-panes = "ctrl+u"   # Swap Panes: the two panes trade their tabs; macOS: "mod+ctrl+u"
+# other-pane-same-folder = ""   # the other pane goes to the active pane's folder
 
 # Saved rule sets for batch rename (Rename… with two or more items selected). The rename
 # layer writes them with "Presets ▾ › Save current rules as…"; they can also be written here.
@@ -239,6 +242,7 @@ confirm = true
 # [[tab-sets]]
 # name = "Release"
 # tabs = ["{documents}/Projects", "{downloads}", "drives"]
+# right = ["{downloads}"]   # optional: the second pane's tabs (it opens with the set)
 
 # Saved searches, run from the search bar's ▾ menu, the palette (Ctrl+P) and the sidebar's
 # SEARCHES ("Save search…" in the ▾ menu writes them here). folder is a path, "{here}" (the

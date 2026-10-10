@@ -61,6 +61,8 @@ export component AppWindow inherits Window {
     in-out property <bool> view-size-binary;
     in-out property <bool> view-size-decimal;
     in-out property <bool> view-two-panes;
+    // Sync browsing (spec 10 §4.7): the menu's mark, the link between the panes, the strips' line.
+    in-out property <bool> view-sync;
     // The Commands menu: the `[[commands]]` with a key (id: the command's index, -1 a heading).
     in property <[MenuEntry]> bar-commands;
     // The Window menu's "Open Tab Set": the tab sets to open, to replace the tabs with, to delete.
@@ -134,6 +136,9 @@ export component AppWindow inherits Window {
             MenuItem { title: "Flat View"; shortcut: root.menu-keys ? @keys(Control + B) : @keys(); activated => { root.menu-command("flat-view"); } }
             MenuItem { title: "Show Preview"; activated => { root.menu-command("toggle-preview"); } }
             MenuItem { title: "Two Panes"; checkable: true; checked <=> root.view-two-panes; shortcut: root.menu-keys ? @keys(Control + Meta + P) : @keys(); activated => { root.menu-command("toggle-dual-pane"); } }
+            MenuItem { title: "Sync Browsing"; checkable: true; checked <=> root.view-sync; activated => { root.menu-command("sync-browsing"); } }
+            MenuItem { title: "Swap Panes"; shortcut: root.menu-keys ? @keys(Control + Meta + U) : @keys(); activated => { root.menu-command("swap-panes"); } }
+            MenuItem { title: "Same Folder in the Other Pane"; activated => { root.menu-command("other-pane-same-folder"); } }
             MenuItem { title: "Drop Stack"; activated => { root.menu-command("toggle-stack"); } }
             MenuItem { title: "Operation History"; activated => { root.menu-command("show-history"); } }
             MenuItem { title: "Calculate Folder Sizes"; activated => { root.menu-command("calculate-folder-sizes"); } }
@@ -871,6 +876,7 @@ export component AppWindow inherits Window {
                             index: i;
                             dual: root.dual;
                             active: i == root.active-pane;
+                            synced: root.view-sync;
                             // The left one's share of the room; one pane has all of it.
                             width: !root.dual ? 100% : i == 0 ? root.pane-split : root.right-split;
                             init => {
@@ -1090,6 +1096,19 @@ export component AppWindow inherits Window {
                             moved => { root.pane-split-moved((parent.x + self.mouse-x - self.pressed-x) / max(1px, panes-row.width - 5px)); }
                             changed pressed => { if !self.pressed { root.pane-split-done(); } }
                             double-clicked => { root.pane-split-reset(); }
+                        }
+                        // Sync browsing: a link between the two address bars.
+                        if root.view-sync: Path {
+                            x: (parent.width - self.width) / 2;
+                            y: Theme.tab-strip-height + (Theme.toolbar-height - self.height) / 2;
+                            width: 12px;
+                            height: 12px;
+                            viewbox-width: 16;
+                            viewbox-height: 16;
+                            commands: Glyph.link;
+                            stroke: Theme.accent;
+                            stroke-width: 1.5px;
+                            stroke-line-cap: round;
                         }
                     }
                 }

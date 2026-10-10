@@ -33,13 +33,20 @@ struct Dual {
     config: Option<ConfigStore>,
     /// When the F3 hint showed (Unix seconds), while it may show once more.
     f3_at: Option<u64>,
+    /// Sync browsing is on: the active pane and the location it was last seen at.
+    sync: Option<(PaneId, Location)>,
 }
 
 thread_local! {
     static DUAL: RefCell<Dual> = RefCell::default();
     /// `[panes] confirm`: F5/F6 ask first.
     static CONFIRM: Cell<bool> = const { Cell::new(true) };
+    /// The pane that just stepped into a sub-folder or up (sync browsing follows only those).
+    static STEPPED: Cell<Option<PaneId>> = const { Cell::new(None) };
 }
+
+/// Names on this system: Linux tells "Docs" from "docs", Windows and macOS do not.
+const CASE_SENSITIVE: bool = cfg!(target_os = "linux");
 
 /// The F3 hint's words (spec 10 §10.2).
 const F3_HINT: &str = "F3 now opens a second pane; search is Ctrl+Shift+F or Ctrl+E";
@@ -66,7 +73,8 @@ pub fn install(
     window.set_pane_split(split * 100.0);
     window.set_right_split(100.0 - split * 100.0);
     DUAL.with(|d| {
-        *d.borrow_mut() = Dual { window: window.as_weak(), store, restore, right, split, config, f3_at: None }
+        *d.borrow_mut() =
+            Dual { window: window.as_weak(), store, restore, right, split, config, f3_at: None, sync: None }
     });
 }
 
@@ -129,6 +137,7 @@ pub fn open(start: Option<usize>) {
 pub fn close() {
     let Some(window) = window() else { return };
     let Some(right) = panes::at(1) else { return };
+    set_sync(false);
     activate(0);
     let session = release(right.id);
     DUAL.with(|d| d.borrow_mut().right = session);
@@ -178,6 +187,7 @@ pub fn connect(pane: &Pane) {
         panes::with_id(id, |p| p.search.location_changed(location));
         if panes::is_active(id) {
             crate::sidebar::with_current(|s| s.follow(location));
+            followed(id, location);
         }
     });
     pane.view.on_selection_changed(move || {
@@ -286,9 +296,9 @@ pub fn cramped() {
 /// tabs while it is closed; with `[session] restore` off, none of them. Also at quit: a pane
 /// switch writes nothing by itself.
 pub fn save() {
-    let (store, restore, right) = DUAL.with(|d| {
+    let (store, restore, right, sync) = DUAL.with(|d| {
         let d = d.borrow();
-        (d.store.clone(), d.restore, d.right.clone())
+        (d.store.clone(), d.restore, d.right.clone(), d.sync.is_some())
     });
     let Some(store) = store else { return };
     let open = is_open();
@@ -296,10 +306,153 @@ pub fn save() {
     store.update_state(move |state| {
         state.dual = dual;
         state.active_pane = active;
+        state.sync = dual && sync;
         if !open {
             state.right_session = right.filter(|_| restore).unwrap_or_default();
         }
     });
+}
+
+/// The other pane, by place, while there are two.
+fn other_pane() -> Option<Pane> {
+    panes::at(i32::from(panes::active_index() == 0)).filter(|_| is_open())
+}
+
+pub fn is_synced() -> bool {
+    DUAL.with(|d| d.borrow().sync.is_some())
+}
+
+/// `sync-browsing` (spec 10 §4.7): only with two panes.
+pub fn toggle_sync() {
+    if !is_open() {
+        return panes::active_view().note("Sync browsing needs two panes".to_owned());
+    }
+    set_sync(!is_synced());
+    save();
+}
+
+/// Turns sync browsing on (from the active pane's location) or off.
+fn set_sync(on: bool) {
+    let start = on.then(|| (panes::active().id, panes::active_nav().active_location()));
+    DUAL.with(|d| d.borrow_mut().sync = start);
+    STEPPED.with(|s| s.set(None));
+    if let Some(window) = window() {
+        window.set_view_sync(on);
+    }
+}
+
+/// Pane `id` steps into a sub-folder or up (Navigator): its next location may be followed.
+pub fn stepped(id: PaneId) {
+    STEPPED.with(|s| s.set(Some(id)));
+}
+
+/// The active pane `id` shows `location`: with sync browsing on, the other pane makes the same
+/// step, or sync browsing goes off and says why.
+fn followed(id: PaneId, location: &Location) {
+    let Some((last_id, last)) = DUAL.with(|d| d.borrow().sync.clone()) else { return };
+    if last_id == id && last == *location {
+        return;
+    }
+    DUAL.with(|d| d.borrow_mut().sync = Some((id, location.clone())));
+    // The other pane became the active one: its location is where steps start from now.
+    if last_id != id {
+        return;
+    }
+    let stepped = STEPPED.with(Cell::take) == Some(id);
+    let Some(other) = other_pane() else { return };
+    let base = match other.nav.active_location() {
+        Location::Path(path) => Some(path),
+        _ => None,
+    };
+    let names = other.view.folder_names();
+    match sync_nav(stepped, &last, location, base.as_deref(), &names, CASE_SENSITIVE) {
+        Follow::Go(path) => other.nav.go(Location::Path(path)),
+        Follow::Off(why) => {
+            set_sync(false);
+            save();
+            panes::active_view().note(why);
+        }
+    }
+}
+
+/// What the other pane does after the active one moved (spec 10 §4.7).
+#[derive(Debug, PartialEq)]
+enum Follow {
+    Go(PathBuf),
+    Off(String),
+}
+
+/// Sync browsing's rule: a step (`stepped`) into a sub-folder is made in the other pane's folder
+/// `other`, to the sub-folder of the same name among `names` (`case_sensitive` or not); a step
+/// up (any number of levels) goes as many levels up there. Anything else, or a name not there,
+/// ends sync browsing.
+fn sync_nav(
+    stepped: bool,
+    from: &Location,
+    to: &Location,
+    other: Option<&Path>,
+    names: &[String],
+    case_sensitive: bool,
+) -> Follow {
+    const APART: &str = "Sync browsing off: the panes went apart";
+    let (true, Location::Path(from), Location::Path(to), Some(other)) = (stepped, from, to, other) else {
+        return Follow::Off(APART.to_owned());
+    };
+    if let Ok(rest) = from.strip_prefix(to) {
+        let mut target = other.to_path_buf();
+        for _ in rest.components() {
+            if !target.pop() {
+                return Follow::Off(APART.to_owned());
+            }
+        }
+        return Follow::Go(target);
+    }
+    // shortcut: one level down only (Enter pressed again while the first load runs is two).
+    let name = to.strip_prefix(from).ok().and_then(|rest| {
+        let mut parts = rest.components();
+        match (parts.next(), parts.next()) {
+            (Some(Component::Normal(name)), None) => name.to_str(),
+            _ => None,
+        }
+    });
+    let Some(name) = name else { return Follow::Off(APART.to_owned()) };
+    let same =
+        |found: &&String| if case_sensitive { *found == name } else { found.to_lowercase() == name.to_lowercase() };
+    match names.iter().find(same) {
+        Some(found) => Follow::Go(other.join(found)),
+        None => Follow::Off(format!("Sync browsing off: no folder \"{name}\" in {}", other.display())),
+    }
+}
+
+/// `swap-panes` (Ctrl+U / ⌃⌘U, spec 10 §4.8): the panes trade their tabs; the active pane
+/// moves with its tab, so the keyboard stays on it.
+pub fn swap() {
+    let (Some(left), Some(right)) = (panes::at(0), panes::at(1)) else {
+        return panes::active_view().note("There is no other pane".to_owned());
+    };
+    // Off while both panes change, then on again from where the active tab is now.
+    let synced = DUAL.with(|d| d.borrow_mut().sync.take()).is_some();
+    // shortcut: a search's results stay with the pane that ran them, so a results tab swapped
+    // over runs its search again there; move them with the tab if that bites.
+    left.nav.swap_tabs(&right.nav);
+    activate(1 - panes::active_index());
+    if synced {
+        set_sync(true);
+    }
+}
+
+/// `other-pane-same-folder` (spec 10 §4.8): the other pane's active tab goes to the active
+/// pane's folder (a step in its history).
+pub fn same_folder() {
+    let Some(other) = other_pane() else {
+        return panes::active_view().note("There is no other pane".to_owned());
+    };
+    let location = panes::active_nav().active_location();
+    let location = match location.folder() {
+        Some(folder) if location.is_results() => Location::Path(folder.to_path_buf()),
+        _ => location,
+    };
+    other.nav.go(location);
 }
 
 /// `copy-to-other-pane` / `move-to-other-pane` (F5 / F6, spec 10 §4.4): the active pane's
@@ -556,6 +709,55 @@ mod tests {
         assert_eq!(key("f3"), Some(Action::ToggleDualPane));
         release(right.id);
         assert_eq!(key("f5"), Some(Action::Refresh), "closed: F5 refreshes again");
+    }
+
+    #[test]
+    fn swapping_trades_the_tabs_and_the_active_pane_goes_with_its_tab() {
+        let left = test_pane();
+        panes::install(left.clone());
+        left.nav.open_tab(Location::Trash, true);
+        left.nav.toggle_tab_lock(1);
+        let right = make(&left, Session::single(Location::Drives));
+        panes::install(right.clone());
+        assert_eq!(panes::active_index(), 0);
+        swap();
+        assert_eq!(left.nav.tab_locations(), [Location::Drives]);
+        assert_eq!(right.nav.tab_locations(), [Location::Drives, Location::Trash]);
+        assert_eq!((right.nav.active_index(), right.nav.is_tab_locked(1)), (1, true), "same tab shown, still locked");
+        assert_eq!(panes::active_index(), 1, "the keyboard stays on that tab");
+        release(right.id);
+    }
+
+    #[test]
+    fn sync_browsing_makes_the_same_step_or_says_why_not() {
+        let root = std::env::temp_dir();
+        let (work, backup) = (root.join("Work"), root.join("Yedek"));
+        let at = |path: &Path| Location::Path(path.to_path_buf());
+        let names = ["Docs".to_owned(), "src".to_owned()];
+        let follow = |from: &Path, to: &Path, case_sensitive| {
+            sync_nav(true, &at(from), &at(to), Some(&backup), &names, case_sensitive)
+        };
+        // Down one level: the other pane's folder of that name, spelled as it is there.
+        assert_eq!(follow(&work, &work.join("docs"), false), Follow::Go(backup.join("Docs")), "Windows, macOS");
+        assert_eq!(follow(&work, &work.join("src"), true), Follow::Go(backup.join("src")));
+        let missing = format!("Sync browsing off: no folder \"docs\" in {}", backup.display());
+        assert_eq!(follow(&work, &work.join("docs"), true), Follow::Off(missing), "Linux tells the case apart");
+        assert!(matches!(follow(&work, &work.join("x"), false), Follow::Off(why) if why.contains("no folder \"x\"")));
+        // Up, one level or more (Up pressed while the first load ran).
+        assert_eq!(follow(&work, &root, false), Follow::Go(root.clone()));
+        let two_up = root.parent().unwrap().to_path_buf();
+        assert_eq!(follow(&work.join("a").join("b"), &work, false), Follow::Go(two_up));
+        let apart = Follow::Off("Sync browsing off: the panes went apart".to_owned());
+        // Not a step (Back, Forward, the address bar, the sidebar, a tab), or somewhere else.
+        assert_eq!(sync_nav(false, &at(&work), &at(&work.join("Docs")), Some(&backup), &names, false), apart);
+        assert_eq!(follow(&work, &backup, false), apart);
+        assert_eq!(follow(&work, &work.join("a").join("b"), false), apart, "two levels down");
+        // The other pane shows no folder, or has no level to go up.
+        assert_eq!(sync_nav(true, &at(&work), &at(&root), None, &names, false), apart);
+        assert_eq!(sync_nav(true, &at(&work), &Location::Drives, Some(&backup), &names, false), apart);
+        let top = backup.ancestors().last().unwrap().to_path_buf();
+        let deep = work.join("a").join("b").join("c").join("d");
+        assert_eq!(sync_nav(true, &at(&deep), &at(&root), Some(&top), &names, false), apart);
     }
 
     #[test]

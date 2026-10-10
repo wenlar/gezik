@@ -182,24 +182,43 @@ impl TabSets {
     }
 
     /// Opens set `name` (if it is still there) after the open tabs; `replace` closes the
-    /// unlocked ones first.
+    /// unlocked ones first. A set with `right` tabs opens the second pane with them (spec 10
+    /// §4.9); its `tabs` go to the left pane then, else to the active one.
     pub fn open(&self, name: &str, replace: bool) {
         let sets = saved();
         let Some(i) = find(&sets, name) else { return };
         let dirs = KnownDirs::system();
-        let locations: Vec<Location> = sets[i].tabs.iter().filter_map(|text| location_of(text, &dirs)).collect();
-        if locations.is_empty() {
-            return crate::panes::active_view().note(no_folders_text(&sets[i].name));
+        let places =
+            |texts: &[String]| -> Vec<Location> { texts.iter().filter_map(|text| location_of(text, &dirs)).collect() };
+        let (mut left, right) = (places(&sets[i].tabs), places(&sets[i].right));
+        if !right.is_empty() && !crate::dual::is_open() {
+            crate::dual::open(None);
         }
-        crate::panes::active_nav().open_tab_set(locations, replace);
+        if right.is_empty() || !crate::dual::is_open() {
+            // One pane (or the window too narrow for two): every tab goes to it.
+            left.extend(right);
+            if left.is_empty() {
+                return crate::panes::active_view().note(no_folders_text(&sets[i].name));
+            }
+            return crate::panes::active_nav().open_tab_set(left, replace);
+        }
+        for (index, locations) in [(0, left), (1, right)] {
+            if let Some(pane) = crate::panes::at(index) {
+                pane.nav.open_tab_set(locations, replace);
+            }
+        }
     }
 
     /// "Save tabs as…": asks for a name, then saves the tabs open now under it; a name already
     /// there (ignoring case) is replaced only if the answer says so.
     pub fn ask_save(&self) {
         let dirs = KnownDirs::system();
-        let tabs: Vec<String> =
-            crate::panes::active_nav().tab_locations().iter().map(|location| text_of(location, &dirs)).collect();
+        // Pane by place: the left one (the only one) and, with two, the right one (spec 10 §4.9).
+        let texts = |index: i32| -> Vec<String> {
+            let tabs = crate::panes::at(index).map(|pane| pane.nav.tab_locations()).unwrap_or_default();
+            tabs.iter().map(|location| text_of(location, &dirs)).collect()
+        };
+        let (tabs, right) = (texts(0), texts(1));
         let this = self.clone();
         self.dialogs.ask_text("Save tabs", "Name for these tabs:", "", &["Save", "Cancel"], move |name| {
             let Some(name) = name.map(|n| n.trim().to_owned()).filter(|n| !n.is_empty()) else { return };
@@ -210,11 +229,11 @@ impl TabSets {
                     let again = this.clone();
                     this.dialogs.ask("Save tabs", message, &["Replace", "Cancel"], move |choice| {
                         if choice == Some(0) {
-                            again.save(TabSet { name, tabs });
+                            again.save(TabSet { name, tabs, right });
                         }
                     });
                 }
-                None => this.save(TabSet { name, tabs }),
+                None => this.save(TabSet { name, tabs, right }),
             }
         });
     }
@@ -258,7 +277,7 @@ mod tests {
     use super::*;
 
     fn set(name: &str, tabs: &[&str]) -> TabSet {
-        TabSet { name: name.into(), tabs: tabs.iter().map(|t| (*t).to_owned()).collect() }
+        TabSet { name: name.into(), tabs: tabs.iter().map(|t| (*t).to_owned()).collect(), right: Vec::new() }
     }
 
     fn home() -> std::path::PathBuf {

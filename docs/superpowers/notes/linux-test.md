@@ -542,6 +542,17 @@ Numbers stay as they are when branches merge: if this range meets one merged ear
 172. **Kinds.** `kind = "removable"` with a USB stick under /media or /run/media; `kind = "trash"` (open only); a share mounted by the file manager (gvfs) is not `network` (a known limit) — note what happens.
 173. **Mistakes and reloads.** As macOS 225.
 
+### 10b, two panes
+
+Numbers stay as they are when branches merge: if this range meets one merged earlier, the later branch moves its items to the next free ten and writes the old number in brackets in the results file; gaps are not filled. 10b starts at 180 as its plan decided. GNOME and KDE, X11 and Wayland.
+
+180. **Tests first.** As macOS 230; `sync_browsing_makes_the_same_step_or_says_why_not` is Linux's case rule here: "docs" does not find "Docs". Paste.
+181. **F3 and the hint.** Delete `[hints]` from `~/.config/gezik/state.toml`, start: after ~2 s the status bar says `F3 now opens a second pane; search is Ctrl+Shift+F or Ctrl+E` once. F3 opens the second pane (says it once more within a week); Ctrl+E and Ctrl+Shift+F search; with one pane F5 and Ctrl+R refresh, F6 does nothing.
+182. **Open, close, active pane, watcher.** As macOS 231–234 with F3 for ⌃⌘P and Ctrl for ⌘ (memory: `ps -o rss= -p $(pgrep -x gezik)`; inotify watches: `ls -l /proc/$(pgrep -x gezik)/fd | grep -c inotify` is the same with one and two panes).
+183. **F5 / F6, tabs, drag.** As macOS 235–237 (F5/F6, Ctrl; drag from the desktop's file manager onto the right pane goes there).
+184. **Sync browsing.** As macOS 238 with Ctrl, Alt+Up for Up and Alt+Left for Back, except the case: "Docs" on the left and "docs" on the right do **not** match on Linux (`Sync browsing off: no folder "Docs" in …`).
+185. **Swap, same folder, tab sets, second launch.** As macOS 239–242 with Ctrl+U for ⌃⌘U and the View button menu (`Sync browsing`, `Swap panes`, `Same folder in other pane`, greyed with one pane).
+
 ### 9b9, tray icon, global shortcut, start at login
 
 Numbers start at 131: 122–130 are 9b10's (PR #56), so whichever of the two merges second keeps these numbers as they are. Try KDE (X11 and Wayland) and GNOME if you can; write down the desktop and session for each item.

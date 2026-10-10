@@ -495,6 +495,10 @@ pub const VIEW_RULE_APPLIES: u32 = 2042;
 pub const MOVE_TAB_OTHER: u32 = 2020;
 /// View ▸ Two panes (spec 10 §10.3, 10b).
 pub const TWO_PANES: u32 = 2030;
+/// View ▸ Sync browsing, Swap panes, Same folder in other pane (spec 10 §10.3, 10b).
+pub const SYNC_BROWSING: u32 = 2031;
+pub const SWAP_PANES: u32 = 2032;
+pub const SAME_FOLDER: u32 = 2033;
 /// View ▸ Show in sidebar tree (spec 10 §10.3, 10c).
 pub const REVEAL_IN_TREE: u32 = 2050;
 
@@ -1462,7 +1466,16 @@ impl Menus {
         // Two panes (spec 10 §10.3), right after the preview pane.
         let at_panes = entries.iter().position(|(id, _, _)| *id == PREVIEW_PANE).map_or(entries.len(), |i| i + 1);
         let dual = crate::dual::is_open();
-        entries.insert(at_panes, (TWO_PANES, format!("{}Two panes", if dual { "• " } else { "    " }), true));
+        let sync = crate::dual::is_synced();
+        entries.splice(
+            at_panes..at_panes,
+            [
+                (TWO_PANES, format!("{}Two panes", if dual { "• " } else { "    " }), true),
+                (SYNC_BROWSING, format!("{}Sync browsing", if sync { "• " } else { "    " }), dual),
+                (SWAP_PANES, "    Swap panes".to_owned(), dual),
+                (SAME_FOLDER, "    Same folder in other pane".to_owned(), dual),
+            ],
+        );
         // After "Apply to all folders" (the formats' place stays): only in a folder.
         if matches!(location, Location::Path(_)) {
             let at_calc = entries.iter().position(|(id, _, _)| *id == RESET_FOLDER).unwrap_or(entries.len());
@@ -1961,6 +1974,9 @@ impl Menus {
                 .set_sort(SortSpec { dir: SortDir::Desc, ..crate::panes::active_view().sort() }),
             (PREVIEW_PANE, Subject::View) => self.preview.toggle_pane(),
             (TWO_PANES, Subject::View) => crate::dual::toggle(),
+            (SYNC_BROWSING, Subject::View) => crate::dual::toggle_sync(),
+            (SWAP_PANES, Subject::View) => crate::dual::swap(),
+            (SAME_FOLDER, Subject::View) => crate::dual::same_folder(),
             (TOGGLE_STACK, Subject::View) => crate::stack::with_current(crate::stack::Stack::toggle),
             (SHOW_HISTORY, Subject::View) => self.ops.show_history(),
             (APPLY_TO_ALL, Subject::View) => crate::panes::active_view().apply_to_all(),
@@ -2364,6 +2380,9 @@ mod tests {
             REVEAL_IN_TREE,
             MOVE_TAB_OTHER,
             TWO_PANES,
+            SYNC_BROWSING,
+            SWAP_PANES,
+            SAME_FOLDER,
             UNDO,
             REDO,
             PASTE,
@@ -2660,6 +2679,9 @@ mod tests {
             VIEW_RULE_APPLIES,
             MOVE_TAB_OTHER,
             TWO_PANES,
+            SYNC_BROWSING,
+            SWAP_PANES,
+            SAME_FOLDER,
         ];
         let mut ranges: Vec<std::ops::Range<u32>> = singles.iter().map(|id| *id..id + 1).collect();
         ranges.extend([

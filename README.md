@@ -217,7 +217,7 @@ typing = "jump"           # jump: letters go to a name | filter: letters open th
 - Tabs come back as you left them (`[session] restore`). Ctrl+1…8 and Ctrl+9 pick a tab,
   Ctrl+Shift+T reopens a closed one, Ctrl+Shift+A lists them. A **locked** tab does not close.
 - **Tab sets**: save the open tabs under a name and open them again from a tab's right-click
-  menu (`[[tab-sets]]`).
+  menu (`[[tab-sets]]`); with two panes both panes' tabs are saved (`right = [...]`).
 - The address bar (Ctrl+L) completes folder names and lists **Recent** and **Frequent**
   folders.
 - **Pinned folders** can have an alias and a group; Alt+1…9 (⌘⌥1…9 on macOS) go to the first nine.
@@ -312,6 +312,7 @@ quick-look = "system"     # macOS: Space opens the system Quick Look panel, or "
 | Search / flat view | Ctrl+Shift+F or Ctrl+E / Ctrl+B | ⌘⇧F / ⌘B |
 | Two panes / switch to the other pane | F3 / Tab (file list) | ⌃⌘P / Tab (file list) |
 | Copy / move to the other pane (two panes; asks first) | F5 / F6 | F5 / F6 |
+| Swap the panes' tabs | Ctrl+U | ⌃⌘U |
 | Command palette / quick open | Ctrl+Shift+P / Ctrl+P | ⌘⇧P / ⌘P |
 | Copy / cut / paste | Ctrl+C / Ctrl+X / Ctrl+V | ⌘C / ⌘X / ⌘V (⌘⌥V moves) |
 | Delete / delete permanently | Delete / Shift+Delete | ⌘⌫ / ⌘⌥⌫ |

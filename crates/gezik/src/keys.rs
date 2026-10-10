@@ -817,6 +817,7 @@ mod tests {
                 Action::GetInfo => "alt+enter",
                 Action::ConnectToServer => "ctrl+k",
                 Action::ToggleDualPane => "f3",
+                Action::SwapPanes => "ctrl+u",
                 Action::FocusOtherPane | Action::CopyToOtherPane | Action::MoveToOtherPane => {
                     let text = match action {
                         Action::FocusOtherPane => "tab",
@@ -856,7 +857,9 @@ mod tests {
                 | Action::CollapseGroups
                 | Action::ExpandGroups
                 | Action::RevealInTree
-                | Action::MoveTabToOtherPane => continue,
+                | Action::MoveTabToOtherPane
+                | Action::SyncBrowsing
+                | Action::OtherPaneSameFolder => continue,
             };
             assert_eq!(reach(text), Some(action), "{text}");
         }

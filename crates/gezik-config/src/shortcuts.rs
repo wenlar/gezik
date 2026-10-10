@@ -392,10 +392,16 @@ pub enum Action {
     MoveToOtherPane,
     /// Moves the active tab into the other pane, opening it first (no key).
     MoveTabToOtherPane,
+    /// Turns sync browsing on or off: steps into a sub-folder or up are made in both panes.
+    SyncBrowsing,
+    /// Swaps the two panes' tabs; the active pane moves with its tab.
+    SwapPanes,
+    /// The other pane goes to the active pane's folder (no key).
+    OtherPaneSameFolder,
 }
 
 impl Action {
-    pub const ALL: [Action; 97] = [
+    pub const ALL: [Action; 100] = [
         Action::NewTab,
         Action::NewWindow,
         Action::CloseTab,
@@ -493,6 +499,9 @@ impl Action {
         Action::CopyToOtherPane,
         Action::MoveToOtherPane,
         Action::MoveTabToOtherPane,
+        Action::SyncBrowsing,
+        Action::SwapPanes,
+        Action::OtherPaneSameFolder,
     ];
 
     pub fn name(self) -> &'static str {
@@ -594,6 +603,9 @@ impl Action {
             Action::CopyToOtherPane => "copy-to-other-pane",
             Action::MoveToOtherPane => "move-to-other-pane",
             Action::MoveTabToOtherPane => "move-tab-to-other-pane",
+            Action::SyncBrowsing => "sync-browsing",
+            Action::SwapPanes => "swap-panes",
+            Action::OtherPaneSameFolder => "other-pane-same-folder",
         }
     }
 
@@ -709,6 +721,9 @@ impl Action {
             Action::CopyToOtherPane => "Copy to the Other Pane",
             Action::MoveToOtherPane => "Move to the Other Pane",
             Action::MoveTabToOtherPane => "Move Tab to the Other Pane",
+            Action::SyncBrowsing => "Sync Browsing",
+            Action::SwapPanes => "Swap Panes",
+            Action::OtherPaneSameFolder => "Same Folder in the Other Pane",
         }
     }
 
@@ -895,9 +910,13 @@ impl Action {
                 | Action::CollapseGroups
                 | Action::ExpandGroups
                 | Action::RevealInTree
-                | Action::MoveTabToOtherPane,
+                | Action::MoveTabToOtherPane
+                | Action::SyncBrowsing
+                | Action::OtherPaneSameFolder,
                 _,
             ) => &[],
+            (Action::SwapPanes, Platform::Mac) => &["mod+ctrl+u"],
+            (Action::SwapPanes, Platform::Other) => &["ctrl+u"],
             (Action::ToggleDualPane, Platform::Mac) => &["mod+ctrl+p"],
             (Action::ToggleDualPane, Platform::Other) => &["f3"],
             (Action::FocusOtherPane, _) => &["tab"],
@@ -1132,7 +1151,7 @@ mod tests {
             assert_eq!(fixed_owner(&cmd_option, Platform::Mac), None);
         }
         assert_eq!((Action::pin(0), Action::pin(10)), (None, None));
-        assert_eq!(Action::ALL.len(), 97);
+        assert_eq!(Action::ALL.len(), 100);
         assert_eq!(other.action_for(&chord("ctrl+1")), Some(Action::Tab1), "Ctrl+1 is still tab 1");
         assert_eq!(other.action_for(&chord("ctrl+alt+1")), None, "AltGr+1 types");
     }
@@ -1430,9 +1449,9 @@ refresh = \"num+\"
         // The user's own list, all of it taken by keys written before it.
         let (s, warnings) = build(
             "[shortcuts]
-up = \"ctrl+u\"
+up = \"ctrl+g\"
 forward = \"ctrl+j\"
-back = [\"ctrl+u\", \"ctrl+j\"]
+back = [\"ctrl+g\", \"ctrl+j\"]
 ",
         );
         assert_eq!(s.chord_for(Action::Back), None);
@@ -1446,8 +1465,8 @@ back = [\"ctrl+u\", \"ctrl+j\"]
         );
         let (_, warnings) = build(
             "[shortcuts]
-up = \"ctrl+u\"
-back = [\"ctrl+u\", \"ctrl+j\"]
+up = \"ctrl+g\"
+back = [\"ctrl+g\", \"ctrl+j\"]
 ",
         );
         assert_eq!(warnings[0].message, "shortcuts.back: already used by up; that key is left out");
@@ -1523,8 +1542,8 @@ back = [\"ctrl+u\", \"ctrl+j\"]
 
     #[test]
     fn first_written_user_binding_wins() {
-        let (s, warnings) = build("[shortcuts]\nup = \"ctrl+u\"\nback = \"ctrl+u\"\n");
-        assert_eq!(s.action_for(&chord("ctrl+u")), Some(Action::Up));
+        let (s, warnings) = build("[shortcuts]\nup = \"ctrl+g\"\nback = \"ctrl+g\"\n");
+        assert_eq!(s.action_for(&chord("ctrl+g")), Some(Action::Up));
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].message.starts_with("shortcuts.back:"));
         // back lost its user binding and is disabled (not reverted to its default).
@@ -1601,7 +1620,7 @@ clear-history = \"ctrl+shift+h\"
         for name in ["search", "flat-view", "show-in-folder", "copy-with-folders", "cut-with-folders"] {
             assert!(Action::from_name(name).is_some(), "{name}");
         }
-        assert_eq!(Action::ALL.len(), 97);
+        assert_eq!(Action::ALL.len(), 100);
     }
 
     #[test]
@@ -1623,7 +1642,7 @@ clear-history = \"ctrl+shift+h\"
         for name in ["command-palette", "quick-open", "calculate-folder-sizes", "save-search"] {
             assert!(Action::from_name(name).is_some(), "{name}");
         }
-        assert_eq!(Action::ALL.len(), 97);
+        assert_eq!(Action::ALL.len(), 100);
     }
 
     #[test]
@@ -1643,7 +1662,7 @@ clear-history = \"ctrl+shift+h\"
         }
         assert_eq!(Action::MakeAlias.title(), "Make Alias");
         assert_eq!(Action::ShowPackageContents.title(), "Show Package Contents");
-        assert_eq!(Action::ALL.len(), 97);
+        assert_eq!(Action::ALL.len(), 100);
     }
 
     #[test]
@@ -1653,7 +1672,7 @@ clear-history = \"ctrl+shift+h\"
         }
         assert_eq!(Action::from_name("share"), Some(Action::Share));
         assert_eq!(Action::Share.title(), "Share…");
-        assert_eq!(Action::ALL.len(), 97);
+        assert_eq!(Action::ALL.len(), 100);
     }
 
     #[test]
@@ -1667,7 +1686,7 @@ clear-history = \"ctrl+shift+h\"
         assert_eq!(fixed_owner(&chord("mod+i", Platform::Mac), Platform::Mac), None);
         assert_eq!(Action::from_name("get-info"), Some(Action::GetInfo));
         assert_eq!(Action::GetInfo.title(), "Get Info");
-        assert_eq!(Action::ALL.len(), 97);
+        assert_eq!(Action::ALL.len(), 100);
     }
 
     #[test]
@@ -1680,7 +1699,7 @@ clear-history = \"ctrl+shift+h\"
         }
         assert_eq!(Action::from_name("connect-to-server"), Some(Action::ConnectToServer));
         assert_eq!(Action::ConnectToServer.title(), "Connect to Server…");
-        assert_eq!(Action::ALL.len(), 97);
+        assert_eq!(Action::ALL.len(), 100);
     }
 
     #[test]
@@ -1699,7 +1718,7 @@ clear-history = \"ctrl+shift+h\"
                 assert_eq!(Shortcuts::defaults(platform).chord_for(action), None, "{name}");
             }
         }
-        assert_eq!(Action::ALL.len(), 97);
+        assert_eq!(Action::ALL.len(), 100);
     }
 
     #[test]
@@ -1709,7 +1728,7 @@ clear-history = \"ctrl+shift+h\"
         for platform in [Platform::Other, Platform::Mac] {
             assert_eq!(Shortcuts::defaults(platform).chord_for(Action::RevealInTree), None);
         }
-        assert_eq!(Action::ALL.len(), 97);
+        assert_eq!(Action::ALL.len(), 100);
     }
 
     #[test]
@@ -1741,7 +1760,13 @@ clear-history = \"ctrl+shift+h\"
         assert_eq!(Action::from_name("toggle-dual-pane"), Some(Action::ToggleDualPane));
         assert_eq!(Action::from_name("focus-other-pane"), Some(Action::FocusOtherPane));
         assert_eq!(Action::ToggleDualPane.title(), "Two Panes");
-        assert_eq!(Action::ALL.len(), 97);
+        let swap = |text: &str, p| Shortcuts::defaults(p).action_for(&chord(text, p));
+        assert_eq!(swap("ctrl+u", Platform::Other), Some(Action::SwapPanes));
+        assert_eq!(swap("mod+ctrl+u", Platform::Mac), Some(Action::SwapPanes), "⌃⌘U");
+        assert_eq!(fixed_owner(&chord("mod+ctrl+u", Platform::Mac), Platform::Mac), None);
+        assert_eq!(Action::from_name("sync-browsing"), Some(Action::SyncBrowsing));
+        assert_eq!(Action::from_name("other-pane-same-folder"), Some(Action::OtherPaneSameFolder));
+        assert_eq!(Action::ALL.len(), 100);
     }
 
     #[test]
@@ -1821,7 +1846,7 @@ refresh = [\"f5\", \"ctrl+r\"]
         assert_eq!(Shortcuts::defaults(Platform::Other).chord_for(Action::Eject), None);
         assert_eq!(Action::from_name("eject"), Some(Action::Eject));
         assert_eq!(Action::Eject.title(), "Eject");
-        assert_eq!(Action::ALL.len(), 97);
+        assert_eq!(Action::ALL.len(), 100);
     }
 
     #[test]

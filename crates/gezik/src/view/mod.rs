@@ -1148,6 +1148,15 @@ impl View {
         Some((dir, out))
     }
 
+    /// The shown folder's sub-folders, those the filter hides too (sync browsing looks a name up).
+    pub fn folder_names(&self) -> Vec<String> {
+        let data = self.0.data.borrow();
+        match data.listing {
+            Listing::Files(..) => data.full.iter().filter(|e| e.is_dir).map(|e| e.name.clone()).collect(),
+            _ => Vec::new(),
+        }
+    }
+
     /// The selected folders' names (the shown folder's rows).
     pub fn selected_folder_names(&self) -> Vec<String> {
         let data = self.0.data.borrow();

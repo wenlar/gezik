@@ -224,6 +224,8 @@ pub struct TabSet {
     pub name: String,
     /// Paths with `{home}`-style tokens, or "drives" (This PC).
     pub tabs: Vec<String>,
+    /// The right pane's tabs (`right`, same form; spec 10 §4.9): opening the set opens it too.
+    pub right: Vec<String>,
 }
 
 /// A saved filter (`[[filters]]`): a name and a pattern of the filter's own language.
@@ -1252,19 +1254,25 @@ pub(crate) fn parse_tab_set(value: &toml::Value) -> Result<TabSet, String> {
     if tabs.is_empty() {
         return Err("tabs is missing".to_owned());
     }
-    if tabs.iter().any(|tab| tab.trim().is_empty()) {
-        return Err("tabs has an empty path".to_owned());
+    let right = table.get("right").map_or(Ok(Vec::new()), |value| string_list(value, "right"))?;
+    for (key, list) in [("tabs", &tabs), ("right", &right)] {
+        if list.iter().any(|tab| tab.trim().is_empty()) {
+            return Err(format!("{key} has an empty path"));
+        }
+        if let Some(bad) = list.iter().find(|tab| crate::paths::has_parent_segment(tab)) {
+            return Err(format!("\"{bad}\" must not contain \"..\""));
+        }
     }
-    if let Some(bad) = tabs.iter().find(|tab| crate::paths::has_parent_segment(tab)) {
-        return Err(format!("\"{bad}\" must not contain \"..\""));
-    }
-    Ok(TabSet { name: name.to_owned(), tabs })
+    Ok(TabSet { name: name.to_owned(), tabs, right })
 }
 
 pub fn tab_set_to_toml(set: &TabSet) -> toml::Table {
     let mut table = toml::Table::new();
     table.insert("name".into(), toml::Value::String(set.name.clone()));
     table.insert("tabs".into(), toml::Value::Array(set.tabs.iter().cloned().map(toml::Value::String).collect()));
+    if !set.right.is_empty() {
+        table.insert("right".into(), toml::Value::Array(set.right.iter().cloned().map(toml::Value::String).collect()));
+    }
     table
 }
 
@@ -1547,6 +1555,8 @@ pub struct State {
     /// The second pane was open (`[session] dual`), and which pane was active (`active-pane`, 0 or 1).
     pub dual: bool,
     pub active_pane: usize,
+    /// Sync browsing was on (`[session] sync`, spec 10 §4.7).
+    pub sync: bool,
     /// The left pane's share of the two panes' width in thousandths (`[panes] split`, 0.2–0.8).
     pub pane_split: Option<u16>,
     /// The palette's items used last, newest first (spec 7.3).
@@ -1726,6 +1736,7 @@ impl State {
             right_session: session_state(table.get("session"), "right-tabs", "right-active"),
             dual: session_flag("dual").and_then(|v| v.as_bool()).unwrap_or(false),
             active_pane: session_flag("active-pane").and_then(|v| v.as_integer()).map_or(0, |n| usize::from(n == 1)),
+            sync: session_flag("sync").and_then(|v| v.as_bool()).unwrap_or(false),
             pane_split: table
                 .get("panes")
                 .and_then(|v| v.as_table())
@@ -1881,6 +1892,9 @@ impl State {
         }
         if self.active_pane == 1 {
             session.insert("active-pane".into(), toml::Value::Integer(1));
+        }
+        if self.sync {
+            session.insert("sync".into(), toml::Value::Boolean(true));
         }
         if !session.is_empty() {
             root.insert("session".into(), toml::Value::Table(session));
@@ -2978,7 +2992,8 @@ shortcut = \"shift+f8\"
             settings.tab_sets,
             [TabSet {
                 name: "Release".into(),
-                tabs: vec!["D:/Work/gezik".into(), "{downloads}".into(), "drives".into()]
+                tabs: vec!["D:/Work/gezik".into(), "{downloads}".into(), "drives".into()],
+                right: Vec::new(),
             }]
         );
         let defaults = Settings::default();
@@ -2994,7 +3009,8 @@ shortcut = \"shift+f8\"
              [[tab-sets]]\nname = \"None\"\ntabs = []\n\
              [[tab-sets]]\nname = \"Good\"\ntabs = [\"/a\"]\n\
              [[tab-sets]]\nname = \"GOOD\"\ntabs = [\"/b\"]\n\
-             [[tab-sets]]\nname = \"Num\"\ntabs = [3]\n",
+             [[tab-sets]]\nname = \"Num\"\ntabs = [3]\n\
+             [[tab-sets]]\nname = \"Right\"\ntabs = [\"/a\"]\nright = [\"{home}/../y\"]\n",
         );
         assert!(settings.session.restore, "a bad value keeps the default");
         assert_eq!(settings.terminal.command, None);
@@ -3010,6 +3026,7 @@ shortcut = \"shift+f8\"
                 "tab-sets[3]: tabs is missing",
                 "tab-sets[5]: \"GOOD\" is already used; this one is left out",
                 "tab-sets[6]: tabs must be a list of text, got 3",
+                "tab-sets[7]: \"{home}/../y\" must not contain \"..\"",
             ]
         );
         let (_, warnings) = parse("terminal = 1\n");
@@ -3051,14 +3068,15 @@ shortcut = \"shift+f8\"
             },
             dual: true,
             active_pane: 1,
+            sync: true,
             pane_split: Some(350),
             ..State::default()
         };
         let text = state.to_toml();
-        assert!(text.contains("right-tabs") && text.contains("split = 0.35"), "{text}");
+        assert!(text.contains("right-tabs") && text.contains("split = 0.35") && text.contains("sync = true"), "{text}");
         assert_eq!(State::parse(&text), state);
         // Closed, the right tabs are still kept.
-        let closed = State { dual: false, active_pane: 0, pane_split: None, ..state };
+        let closed = State { dual: false, active_pane: 0, sync: false, pane_split: None, ..state };
         assert_eq!(State::parse(&closed.to_toml()), closed);
     }
 
@@ -3088,18 +3106,21 @@ drives = true
 ",
         );
         assert_eq!(old.session.tabs.len(), 1);
-        assert!(old.right_session.is_empty() && !old.dual && old.active_pane == 0 && old.pane_split.is_none());
+        assert!(
+            old.right_session.is_empty() && !old.dual && old.active_pane == 0 && !old.sync && old.pane_split.is_none()
+        );
         // Out of range or the wrong type: the defaults.
         let bad = State::parse(
             "[session]
 dual = 1
 active-pane = 4
+sync = \"yes\"
 
 [panes]
 split = 0.9
 ",
         );
-        assert!(!bad.dual && bad.active_pane == 0 && bad.pane_split.is_none());
+        assert!(!bad.dual && bad.active_pane == 0 && !bad.sync && bad.pane_split.is_none());
         assert_eq!(
             State::parse(
                 "[panes]

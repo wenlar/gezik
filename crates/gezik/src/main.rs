@@ -300,7 +300,10 @@ fn perform(
         | Action::FocusOtherPane
         | Action::CopyToOtherPane
         | Action::MoveToOtherPane
-        | Action::MoveTabToOtherPane => return actions::run(action, nav, view),
+        | Action::MoveTabToOtherPane
+        | Action::SyncBrowsing
+        | Action::SwapPanes
+        | Action::OtherPaneSameFolder => return actions::run(action, nav, view),
     }
     true
 }
@@ -1775,6 +1778,9 @@ fn main() -> Result<(), slint::PlatformError> {
     // The second pane of last time, with its own tabs (its listing comes in the background).
     if restore && saved_state.dual {
         dual::open(Some(saved_state.active_pane));
+        if saved_state.sync {
+            dual::toggle_sync();
+        }
     }
     // The window and tabs are up; calls that came before this wait in the channel.
     single_instance::set_window(window.as_weak());
