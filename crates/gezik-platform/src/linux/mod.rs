@@ -6,6 +6,8 @@ pub mod dbus;
 #[cfg(any(all(unix, not(target_os = "macos")), test))]
 pub mod file_manager1;
 #[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
+pub(crate) mod mime;
+#[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
 pub(crate) mod uri;
 #[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
 pub(crate) mod xdnd;
