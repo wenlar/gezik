@@ -441,23 +441,23 @@ Each of these was kept to macOS where the logic allowed:
 | 90 | Opening aliases | PASS (sym-dosya opened in TextEdit not checked separately) |
 | 91 | Make Alias | PASS (three-item selection and arrow badge not checked) |
 | 92 | Packages | **FAIL** (Safari.app is entered; a plain x.app folder can't be entered) |
-| 93 | Exe size | PASS (20,942,592 bytes) |
-| 94 | Probe | NOT TESTED |
-| 95 | Open With | NOT TESTED |
-| 96 | Share | NOT TESTED |
-| 97 | Quick Actions | NOT TESTED |
-| 98 | Quick Look panel | NOT TESTED |
-| 99 | Unchanged | NOT TESTED |
-| 100 | Exe size | PASS (20,942,592 bytes) |
+| 93 | Exe size | PASS (one build only) |
+| 94 | Probe | PASS (section 4); section 5 NOT TESTED (no Quick Action installed) |
+| 95 | Open With | PASS (60-file case and Safari.app/.pages menus not tried) |
+| 96 | Share | PASS (nothing was sent; File ▸ Share… through Accessibility showed nothing) |
+| 97 | Quick Actions | NOT TESTED (needs a Quick Action made in Automator) |
+| 98 | Quick Look panel | **FAIL** (closing the panel falls back to Gezik's own window; no "1 of 3") |
+| 99 | Unchanged | PASS |
+| 100 | Exe size | PASS (20,942,592 bytes; see 93) |
 | 101 | Probe | PASS |
-| 102 | Opening | NOT TESTED |
-| 103 | Permissions | NOT TESTED |
-| 104 | Owner and group | NOT TESTED |
-| 105 | Hidden and Locked | NOT TESTED |
-| 106 | Apply to enclosed items | NOT TESTED |
-| 107 | Open with | NOT TESTED |
-| 108 | Links and ACLs | NOT TESTED |
-| 109 | Exe size | PASS (20,942,592 bytes) |
+| 102 | Opening | **FAIL** (⌘I: the key at I's place does nothing on Turkish Q; labels overlap) |
+| 103 | Permissions | PASS (except the "replaced file" case, see note) |
+| 104 | Owner and group | PASS |
+| 105 | Hidden and Locked | PASS (Finder hiding not looked at) |
+| 106 | Apply to enclosed items | **FAIL** (undo of a group change away from a group I'm not in fails, and the mode isn't put back either) |
+| 107 | Open with | PASS (Change All not confirmed on purpose) |
+| 108 | Links and ACLs | PASS |
+| 109 | Exe size | PASS (20,942,592 bytes; see 93) |
 | 110 | Tests first | PASS |
 | 111 | Hand-over | PASS |
 | 112 | Help, version, new window | **FAIL** (the second window is not offset) |
@@ -1161,3 +1161,87 @@ Aliases made by Finder (AppleScript `make new alias file`) of a file, a folder, 
 - **A plain folder named `x.app`** (`mkdir`): double-click does not enter it. The status bar says `Cannot open /private/tmp/gezik-test/x.app: Launcher "/usr/bin/open" "--" "/private/tmp/gezik-test/x.app" failed with ExitStatus(unix_wait_status(256))`. LaunchServices treats any `.app` folder as a package (it shows the "not allowed" app icon), so Gezik hands it to `open`, which fails. The checklist expects it to be entered. Typing its path in the address bar does enter it.
 - The command palette lists Make Alias (⌃⌘A) and Show Package Contents.
 - Not tried: a `.key`/`.pages` folder package or an `.rtfd`.
+
+#### 95. Open With: PASS
+In `acwith/` (`a.txt`, `b.md`, `c.png`):
+- Right-click `a.txt`: "Open With ▸" right after "Open with default app", listing TextEdit (default) first, then other apps by name (Adobe Illustrator…, Firefox Developer Edition, Chrome, Notes, Numbers, Pages, Safari, Sublime Text, Xcode …), then "Other…". App names have no icons (known).
+- `a.txt` + `b.md`: only apps that open both (no "(default)", TextEdit among them). `a.txt` + `c.png`: TextEdit is not offered (Illustrator, Firefox, Chrome, HP, Safari).
+- Choosing TextEdit for `b.md` opened it in TextEdit (window "b.md").
+- "Other…" opens a panel in /Applications. Cancel did nothing. (A synthetic click on Cancel missed at first and walked into a folder in the panel; Esc doesn't reach the panel while it isn't key. The real Cancel button closed it.)
+- A plain folder's menu has no "Open With".
+- Not tried: 60 files at once, Safari.app and a `.pages` package's menu.
+
+#### 96. Share: PASS
+Only the menu was checked; nothing was sent to Mail or Messages (that would send real mail).
+- Right-click `a.txt` ▸ "Share…": the system share menu (header "a · Text Document · 2 bytes", AirDrop, Mail, Messages, Notes, Freeform, Simulator, Journal, Reminders, Copy, Edit Extensions…) opened at the row. It stayed up for 2 s+ until Esc, and closed cleanly.
+- The command palette's "Share…" (pointer over the list) opened it at the pointer, with an arrow to it.
+- File ▸ Share… chosen through Accessibility (System Events `click menu item`, three files selected) showed no menu. This fits Apple's note that the picker must open on a real mouse press. A click on the menu bar with a real mouse is still to be tried.
+- Not tried: three files into Mail.
+
+#### 97. Quick Actions: NOT TESTED
+Not tested. It needs Quick Actions made in Automator's window (a files one, an image-only one, a slow shell one), which could not be scripted reliably here. `~/Library/Services` has none, and the probe found none for the four files ("0 in 0.1 ms"). With no file-taking Quick Action installed, the row menu has no "Quick Actions" item, as expected (seen in every menu in this run).
+
+#### 98. Quick Look panel: FAIL
+`[system] quick-look = "system"` (default), in `onizleme/`:
+- Space on `belge-a.pdf` opened the system Quick Look panel (as in Finder: pages on the right, "Open with Adobe Acrobat"). With the panel open, ↓ moved Gezik's selection and the panel followed (`foto1.jpg`, then `foto-heic.heic`, "Open with Preview").
+- Space again closed it, and the keyboard was Gezik's at once (↓ moved the selection).
+- **Esc in the panel (one file): the panel closed and Gezik's own preview window ("klip.mov — Gezik") opened** in addition, and the status bar said "The system Quick Look panel did not open; Gezik's own is shown". The system panel *had* opened; its closing is taken as "did not open".
+- **Three files selected, Space: the panel shows only one item (the HEIC, with ‹ › arrows) and no "1 of 3".** Space again closed it and then Gezik's own window "3 items selected — Gezik" (a generic icon, "3 items selected · Total size 166.3 KB") opened, with the same status message.
+- In the second try with one file, Space and Esc then left only the main window. So the fallback fires in some cases and not others.
+- Not tried: a video playing, a folder, `quick-look = "gezik"`.
+
+#### 99. Unchanged: PASS
+The row menu on `metin.txt` (with `[[commands]]` set up) has Open, Open with default app, Open With ▸, Open terminal here, Copy path as ▸, Make Alias, Create link, Compress…, Compress to, Convert…, Commands ▸, Cut, Copy, Duplicate, Rename, Move to Trash, Delete permanently, Get Info, Share…. The three submenus (Open With, Copy path as, Commands) show together (no Quick Actions here, see 97). It opened at once. Gezik had 13 threads before the menu and 13 after it closed (`ps -M`).
+
+#### 93. Exe size: PASS
+`ls -l target/release/gezik` on `master` `cbf1ab0`: 20,942,592 bytes. The branches `feat/system-9a1`/`9a2`/`9a3` are merged, so there is no before/after pair to compare on this Mac (as the guide allows). Run 1's `feat/batch-ops-5c` build was 15,755,408 bytes, so 9a1-9b5 together added about 5.2 MB.
+
+#### 101. Probe: PASS
+See "Probes" above: section 6 is all PASS, users/groups 133/162 in 19.0 ms, and `cargo test -p gezik-platform attrs` (8) and `cargo test -p gezik-ops attrs` (9) pass.
+
+#### 102. Opening: FAIL
+- File ▸ Get Info on `rapor.pdf`: a panel on the right, "rapor.pdf Info", with Kind, Size ("18.3 KB in 1 file"), Where, Created, Modified, Last opened, then Sharing & Permissions (Owner, Group ▾, Read/Write/Execute for Owner/Group/Everyone), Hidden, Locked, Octal, Open with, Done. Esc closes it and the list has the keyboard again.
+- **⌘I does not work on Turkish-QWERTY-PC with the key at the I place** (it types `ı`). ⌘ + the key that types `i` (right of L) opens it. The menu shows ⌘I. On Turkish Q, macOS apps (Finder) take ⌘I from the I-place key. Item 24 handled the same issue for ⌘[ / ⌘] by key place; this shortcut (and probably others with I) needs the same.
+- **The row labels Owner / Group / Everyone are drawn on top of the Read and Write checkboxes** ("ReadOwne✓Write", "ReadEveryo☐Write"). The label column is too narrow for the text at this size.
+- Two items (`a.txt` 644, `b.txt` 600): "2 items", "5 B in 2 files", Where is their folder. Group Read and Everyone Read show a dash, and Octal is empty.
+- Not tried: a folder's "calculating…" size, and "several folders".
+
+#### 103. Permissions: PASS
+On `rapor.pdf` (644):
+- Group ▸ Write: `ls -l` showed `rw-rw-r--` at once. Esc, then ⌘Z: back to `rw-r--r--`.
+- Octal `600` + Return: `rw-------`. `4755`: "Setuid, setgid and sticky can't be changed here" in red, nothing changed.
+- Two files with different modes: the Group/Everyone Read boxes are dashed. Clicking the dashed Group Read made it the same for both (`b.txt` became `rw-r-----`).
+- With the panel open, `chmod 777` in Terminal, then a box ticked: "1 item changed since; shown as it is now" in red, the boxes show 777, and that click did nothing. The next click worked (owner execute off: `rw-rwxrwx`).
+- **Note:** with the panel open, the file was replaced in Terminal (`cp other.pdf x && mv x rapor.pdf`, new inode, 644), then a box ticked: the new file was not changed (`rw-r--r--`), and the note stayed "1 item changed since; shown as it is now". PASS for safety.
+
+#### 104. Owner and group: PASS
+- Group ▾ lists my groups (everyone, staff, _appstore, localaccounts, admin, _lpadmin, _developer, com.apple.access_ssh …, as `id -Gn`). Choosing admin: `ls -l` shows `admin`.
+- A setuid file (`chmod 4755`, `rwsr-xr-x`): typing `staff` for its group kept `rws` (`-rwsr-xr-x staff`). The panel shows "Special: setuid (not changed here)" next to Octal 755.
+- Group `wheel` (not mine) + Return: "Requires administrator: 1 item not changed" in red, and the group stayed `staff`.
+- Owner `root` + Return: the same note, and the owner stayed. Owner `nobody-at-all`: "No user is named \"nobody-at-all\"", and nothing ran.
+- Not checked: the operations panel row "Requires administrator".
+
+#### 105. Hidden and Locked: PASS
+On `a.txt`:
+- Tick Hidden: `ls -lO` shows `hidden`. Gezik still lists the file (known gap).
+- Tick Locked: `uchg,hidden`. The permission boxes, Octal, Owner and Group are greyed. Untick Locked: `hidden`, and they work again.
+- After Done, ⌘Z undid each change in order: the unlock (→ `uchg,hidden`), the lock (→ `hidden`), the hide (→ `-`).
+- While the file is locked the Group field is greyed, so "a locked file given a group you are not in" can't be started from the panel. (Typing into the greyed field and Return closed the panel instead.)
+- Finder's own view of the hidden file and the lock badge were not looked at.
+
+#### 106. Apply to enclosed items: FAIL
+Folder `kutu` with two files, a script (`+x`), a subfolder and a symlink to a file outside.
+- Folder set to 750 and group staff, then "Apply to enclosed items…": the question "Everything inside \"kutu\" gets this folder's owner, group and permissions. Files keep execute only where they had it; links are left as they are. Undo puts each item back." Cancel did nothing.
+- Apply: `ls -lR` shows the files `rw-r-----`, the script `rwxr-x---`, the subfolder `rwxr-x---`, all group staff. The symlink and the file it leads to are unchanged.
+- **In `/private/tmp` the items were group `wheel` before** (BSD inherits the parent's group), and I am not in wheel. **⌘Z then failed for every item**: "Undoing Change attributes of 1 item — 4 items failed", with Details `f1.txt: Requires administrator`, `alt: …`, `betik.sh: …`, `f2.txt: …`. The modes were not put back either (still `rw-r-----`), because the mode and the group are restored as one step. Putting back the mode, and saying only the group needs an administrator, would be better.
+- Under `$TMPDIR` (group staff before and after): Apply, then ⌘Z put every enclosed item back (`rw-r--r--`, `rwxr-xr-x`), and a second ⌘Z put the folder back (`rwxr-xr-x`).
+- Not tried: the big folder with progress and Cancel.
+
+#### 107. Open with: PASS
+- One PDF (`rapor.pdf`): "Open with: Adobe Acrobat ▾" lists Adobe Acrobat (default), the other PDF apps, Preview, Safari … and Other…. Choosing Preview changed only that file (`NSWorkspace urlForApplication`: `rapor.pdf` → Preview, `belge-a.pdf` still → Adobe Acrobat). It was set back to Acrobat the same way.
+- "Change All…" asks "Open every Document (com.adobe.pdf) file, like \"rapor.pdf\", with Adobe Acrobat? This changes it for all your files of this type, in every app." with Change All / Cancel. Cancel changed nothing. Change All was **not** confirmed, so the Mac's PDF default was not touched. (The kind shows as "Document" for com.adobe.pdf here.)
+- A folder (`klasor`) and a symlink have no "Open with" row. A `.txt` has one (TextEdit). The `.app` and "Not set" cases were not tried. macOS 26.5.1.
+
+#### 108. Links and ACLs: PASS
+- Get Info on a symlink (`a-link` → `a.txt`): Kind "Symbolic link", 27 B, the permission boxes and Octal greyed. Typing group `staff` changed the link's own group (`ls -l`: staff) and not the file's (`ls -lL`: wheel).
+- `chmod +a "everyone deny delete" b.txt`: Get Info says "This item has access control entries; they are not shown or changed here".
