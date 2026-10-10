@@ -170,8 +170,9 @@ export component FileView inherits Rectangle {
     in-out property <bool> rename-has-focus;
     // The field has the keyboard. A field whose row scrolled out is gone and says nothing, so
     // it only counts while its row is on screen.
-    out property <bool> rename-focused: root.rename-has-focus && root.renaming-index >= 0
-        && (root.rename-line + 1) * root.item-height > -root.scroll
+    out property <bool> rename-focused: root.rename-has-focus && root.renaming-index >= 0 && root.rename-shown;
+    // The renamed entry's line is on screen.
+    property <bool> rename-shown: (root.rename-line + 1) * root.item-height > -root.scroll
         && root.rename-line * root.item-height < -root.scroll + list.visible-height;
     // The renamed entry's line; reading `groups-version` (never negative) makes it update.
     property <int> rename-line: root.groups-version < 0 ? -1 : root.line-of(root.renaming-index);
@@ -240,10 +241,12 @@ export component FileView inherits Rectangle {
     changed grid-columns => { root.grid-columns-changed(self.grid-columns); }
     // The field's row went off screen while the field had the keyboard: the list drops the
     // field without a blur, and with nothing focused Slint delivers key presses nowhere. The
-    // rename ends as on a click elsewhere (as Explorer does on a scroll).
+    // list takes the keyboard and the rename stays open: Enter and Esc are still its own
+    // (main.rs), any other key or a click ends it as a blur; scrolled back, the field takes
+    // the keyboard again.
     changed rename-focused => {
         if !self.rename-focused && root.rename-has-focus && root.renaming-index >= 0 {
-            root.rename-blurred(root.rename-text, root.rename-generation);
+            root.focus-requested();
         }
     }
 
@@ -641,7 +644,14 @@ export component FileView inherits Rectangle {
                             cancelled => { root.rename-cancelled(); }
                             tab(t, back) => { root.rename-tab(t, back); }
                             edited(t) => { root.rename-edited(t); }
-                            blurred(t, g) => { root.rename-blurred(t, g); }
+                            // Off screen the field loses the keyboard to the list (`rename-focused`):
+                            // no blur, the rename stays open.
+                            blurred(t, g) => {
+                                if root.rename-shown {
+                                    root.rename-blurred(t, g);
+                                }
+                            }
+                            shown: root.rename-shown;
                             generation: root.rename-generation;
                             applied <=> root.rename-applied;
                             focused <=> root.rename-has-focus;
@@ -771,7 +781,14 @@ export component FileView inherits Rectangle {
                             cancelled => { root.rename-cancelled(); }
                             tab(t, back) => { root.rename-tab(t, back); }
                             edited(t) => { root.rename-edited(t); }
-                            blurred(t, g) => { root.rename-blurred(t, g); }
+                            // Off screen the field loses the keyboard to the list (`rename-focused`):
+                            // no blur, the rename stays open.
+                            blurred(t, g) => {
+                                if root.rename-shown {
+                                    root.rename-blurred(t, g);
+                                }
+                            }
+                            shown: root.rename-shown;
                             generation: root.rename-generation;
                             applied <=> root.rename-applied;
                             focused <=> root.rename-has-focus;

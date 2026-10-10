@@ -1,14 +1,11 @@
 import { Palette } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { ToolButton } from "widgets/button.slint";
-import { TextButton } from "widgets/text-button.slint";
 import { Glyph } from "glyphs.slint";
-import { Breadcrumb, CrumbItem } from "widgets/breadcrumb.slint";
-import { TabBar, TabItem } from "widgets/tab-bar.slint";
+import { CrumbItem } from "widgets/breadcrumb.slint";
+import { TabItem } from "widgets/tab-bar.slint";
 import { Sidebar, SidebarRow } from "widgets/sidebar.slint";
 import { PreviewPane, PreviewInfo } from "widgets/preview-pane.slint";
-import { FileView, FileRow, ItemRow } from "widgets/file-view.slint";
-import { FilterBar } from "widgets/filter-bar.slint";
+import { FileRow, ItemRow } from "widgets/file-view.slint";
 import { OpsPanel, OpRow } from "widgets/ops-panel.slint";
 import { DropStack, StackRow } from "widgets/drop-stack.slint";
 import { Dialog } from "widgets/dialog.slint";
@@ -21,35 +18,18 @@ import { InfoLayer, InfoView } from "widgets/info.slint";
 import { PopupMenu, MenuEntry, MenuPlace, MenuSub } from "widgets/popup-menu.slint";
 import { Picker, PickRow } from "widgets/picker.slint";
 import { PathSuggestions, PathRow } from "widgets/path-suggestions.slint";
+import { PaneView, PaneData, PaneGeometry, PaneFocus } from "widgets/pane.slint";
 
 // Re-exported so Rust can set it with `window.global::<Theme>()` and build crumbs, tabs
 // and sidebar rows.
-export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, OpRow, StackRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView, InfoView, MenuEntry, MenuPlace, MenuSub, PickRow, PathRow }
+export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, OpRow, StackRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView, InfoView, MenuEntry, MenuPlace, MenuSub, PickRow, PathRow, PaneData, PaneGeometry, PaneFocus }
 
-// Where the drop targets are, in window coordinates (drag.rs reads it while files are
-// dragged; every field is computed when read).
+// Where the window's drop targets are, in window coordinates (drag.rs reads it while files
+// are dragged; every field is computed when read). The pane's are in its `PaneGeometry`.
 export struct DropGeometry {
     window-width: length,
     window-height: length,
-    // The file view (it fills the sheet), and the visible list inside it (below the column header).
-    view-x: length,
-    view-y: length,
-    list-top: length,
-    list-width: length,
-    list-height: length,
-    // The sidebar's top and height: the main row's, from under the toolbar to the sheet's
-    // bottom (the filter and search bars sit above the sheet, beside the sidebar).
-    sidebar-y: length,
-    sidebar-height: length,
     sidebar-scroll: length,
-    // The tab strip's left edge (it is inset).
-    tab-x: length,
-    tab-scroll: length,
-    tab-width: length,
-    tab-strip-width: length,
-    tab-height: length,
-    address-y: length,
-    address-height: length,
     stack-y: length,
     stack-height: length,
 }
@@ -243,95 +223,51 @@ export component AppWindow inherits Window {
     default-font-family: Theme.font-family;
     default-font-size: Theme.font-size;
 
-    in property <[ItemRow]> items;
-    // The entry with the keyboard focus (-1: none), and whether it is selected.
-    in property <int> focus-row: -1;
-    in property <bool> focus-selected;
-    out property <length> item-height: file-view.item-height;
-    // 0: list, 1: grid; the grid's picture size.
-    in property <int> view-mode;
-    in property <length> grid-size: 96px;
-    out property <length> cell-width: file-view.cell-width;
-    out property <length> cell-height: file-view.cell-height;
-    out property <length> grid-left: file-view.grid-left;
-    out property <int> grid-columns: file-view.grid-columns;
-    callback grid-columns-changed(int);
+    // The panes (spec 10 §3.2): one row each (panes.rs). Their callbacks below come with the
+    // pane's index first.
+    in property <[PaneData]> panes;
+    callback scrolled(int, length);
+    callback revealed(int, int, length);
+    callback pane-geometry(int, PaneGeometry);
+    callback pane-focus(int, PaneFocus);
+    callback grid-columns-changed(int, int);
     // Ctrl+wheel in the view: true for bigger.
-    callback zoom(bool);
+    callback zoom(int, bool);
     // Renaming in place (view/mod.rs, operations.rs).
-    in property <int> renaming-index: -1;
-    in-out property <string> rename-text;
-    in property <int> rename-select;
-    in property <string> rename-error;
-    callback rename-accepted(string);
-    callback rename-cancelled();
-    callback rename-tab(string, bool);
-    callback rename-edited(string);
-    callback rename-blurred(string, int);
-    in property <int> rename-generation;
-    out property <bool> rename-focused: file-view.rename-focused;
-    // The rename field held the keyboard last, even if its row scrolled out: whether ending
-    // the rename must give the keyboard back to the list. Rust clears it when a rename ends.
-    in-out property <bool> rename-field-focused;
+    callback rename-accepted(int, string);
+    callback rename-cancelled(int);
+    callback rename-tab(int, string, bool);
+    callback rename-edited(int, string);
+    callback rename-blurred(int, string, int);
     // The View button, with its box for its menu: (left, bottom, right, top), as for every
     // menu that opens under a button (the menu flips above it or to its right edge).
-    callback view-menu(length, length, length, length);
-    in-out property <string> current-path;
+    callback view-menu(int, length, length, length, length);
     in property <string> status;
     // Settings/theme problems, shown on the right of the status bar.
     in property <string> notice;
-    in property <bool> can-go-back;
-    in property <bool> can-go-forward;
-    in property <bool> can-go-up;
-    in property <[CrumbItem]> crumbs;
-    in property <[TabItem]> tabs;
     // The active tab is locked (the menu bar's Lock/Unlock Tab).
     in property <bool> active-tab-locked;
-    // The file list's scroll offset (content-y), saved and restored per history entry.
-    in-out property <length> list-scroll;
-    in-out property <bool> path-editing;
     // The address bar's suggestions while a path is typed (path_box.rs) and the chosen one
-    // (-1: none, the text is what counts).
+    // (-1: none, the text is what counts). Rust empties them when typing ends.
     in property <[PathRow]> path-rows;
     in property <int> path-current: -1;
+    // Where the address bar is (its pane says), for the suggestions under it.
+    property <PaneGeometry> address-box;
     // The address text as typed; a suggestion clicked (its path); typing began or ended.
-    callback path-edited(string);
+    callback path-edited(int, string);
     callback path-chosen(string);
-    callback path-editing-changed();
-    // The filter bar above the file list (Ctrl+F): open, its text, "12 / 340" and what is
-    // wrong with the text.
-    in property <bool> filter-open;
-    in-out property <string> filter-text;
-    in property <string> filter-count;
-    in property <string> filter-error;
-    // The filter bar's field has the keyboard.
-    out property <bool> filter-focused: filter-bar.field-focused;
-    callback filter-edited(string);
+    callback path-editing-changed(int, bool);
+    callback filter-edited(int, string);
     // The saved filters' button, with its box (as `view-menu`).
-    callback filter-menu(length, length, length, length);
-    // The search bar (search.rs, spec 4.2): open, where it looks, its fields, Filters' count,
-    // whether a search runs, what is wrong with a field.
-    in property <bool> search-open;
-    in property <string> search-scope;
-    in-out property <string> search-text;
-    in property <bool> search-content-open;
-    // Content was just turned on: its field takes the keyboard as it is made.
-    in property <bool> search-content-focus;
-    in-out property <string> search-content;
-    in property <string> search-error;
-    in property <string> search-content-error;
-    in property <string> search-filters: "Filters";
-    in property <bool> search-running;
-    // One of the search bar's fields has the keyboard.
-    out property <bool> search-focused: search-bar.field-focused;
-    callback search-edited(string);
-    callback search-content-edited(string);
-    callback search-content-toggle();
-    callback search-go();
+    callback filter-menu(int, length, length, length, length);
+    callback search-edited(int, string);
+    callback search-content-edited(int, string);
+    callback search-content-toggle(int);
+    callback search-go(int);
     // One of its menus (the bar's `menu`: 0 ▾, 1 the scope, 2 Filters), with its button's box.
-    callback search-menu(int, length, length, length, length);
+    callback search-menu(int, int, length, length, length, length);
     // The filter bar's "Search subfolders".
-    callback filter-search();
+    callback filter-search(int);
     in property <[SidebarRow]> sidebar-rows;
     // Position in `sidebar-rows` of the pinned part's first row (a heading; -1 if none), and the
     // row after its last pin.
@@ -380,23 +316,23 @@ export component AppWindow inherits Window {
     out property <bool> system-dark: Palette.color-scheme == ColorScheme.dark;
     changed system-dark => { root.system-scheme-changed(); }
 
-    callback open-row(int);
-    callback go-back();
-    callback go-forward();
-    callback go-up();
-    callback navigate(string);
-    callback refresh();
-    callback crumb-clicked(int);
+    callback open-row(int, int);
+    callback go-back(int);
+    callback go-forward(int);
+    callback go-up(int);
+    callback navigate(int, string);
+    callback refresh(int);
+    callback crumb-clicked(int, int);
     callback system-scheme-changed();
-    callback tab-activate(int);
-    callback tab-close(int);
-    callback tab-new();
+    callback tab-activate(int, int);
+    callback tab-close(int, int);
+    callback tab-new(int);
     // Moves tab `from` to position `to`.
-    callback tab-move(int, int);
+    callback tab-move(int, int, int);
     // Right-click on a tab, at a window position.
-    callback tab-menu(int, length, length);
+    callback tab-menu(int, int, length, length);
     // Middle-click on a row: opens a folder in a background tab.
-    callback row-middle-clicked(int);
+    callback row-middle-clicked(int, int);
     // Sidebar item (section, index): click, middle-click, right-click at a window position.
     callback sidebar-clicked(int, int);
     callback sidebar-middle-clicked(int, int);
@@ -421,40 +357,35 @@ export component AppWindow inherits Window {
     // Gezik's own menu closed (chosen, Esc or a press outside it).
     callback menu-closed();
     // Left press on an entry with Ctrl (Cmd on macOS) and Shift; left click on empty space with Ctrl.
-    callback item-pressed(int, bool, bool);
-    callback background-pressed(bool);
-    // Column widths (0: hidden), set by Rust; dragging an edge changes them here.
+    callback item-pressed(int, int, bool, bool);
+    callback background-pressed(int, bool);
+    // Column widths (0: hidden), set by Rust; dragging an edge changes them here. Every
+    // pane shows them (spec 10 §3.3).
     in-out property <length> col-modified;
     in-out property <length> col-created;
     in-out property <length> col-type;
     in-out property <length> col-size;
     in-out property <length> col-folder;
     in-out property <length> col-match;
-    // The trash is shown (its column headers say so).
-    in property <bool> trash-shown;
-    // The sort column (0 Name, 1-4 Modified, Created, Type, Size, 5 Folder, 6 Match) and direction.
-    in property <int> sort-column;
-    in property <bool> sort-desc;
-    callback header-clicked(int);
+    callback header-clicked(int, int);
     // Right-click on the column header, at a window position.
-    callback header-menu(length, length);
+    callback header-menu(int, length, length);
     // Grouped lists (spec 10 §6): where an entry's line is, and its group header's presses.
-    pure callback list-line-of(int) -> int;
-    pure callback list-column-of(int) -> int;
-    callback list-group-toggled(int);
-    callback list-group-menu(length, length);
-    in property <int> list-groups-version;
+    pure callback list-line-of(int, int) -> int;
+    pure callback list-column-of(int, int) -> int;
+    callback list-group-toggled(int, int);
+    callback list-group-menu(int, length, length);
     // A column edge was released: Rust reads the widths.
-    callback columns-resized();
+    callback columns-resized(int);
     // A rubber-band drag in the file view; see FileView.
-    callback marquee(length, length, length, length, bool);
-    callback marquee-done();
+    callback marquee(int, length, length, length, length, bool);
+    callback marquee-done(int);
     // Right-click on an entry (Rust selects it first if it was not selected) / on empty space, at a window position.
-    callback row-menu(int, length, length);
-    callback background-menu(length, length);
+    callback row-menu(int, int, length, length);
+    callback background-menu(int, length, length);
     // Shift+F10 or the Menu key on the list: the menu of row `int` (-1: the background), at
     // a window position.
-    callback keyboard-menu(int, length, length);
+    callback keyboard-menu(int, int, length, length);
     // Every key press, before the focused item sees it. Returns whether it was handled
     // (shortcuts, list keys; see keys.rs and main.rs).
     // File operations (operations.rs): the panel above the status bar, folded into the
@@ -689,12 +620,12 @@ export component AppWindow inherits Window {
     callback key-event(KeyEvent) -> bool;
 
     // Dragging files (drag.rs). Presses, moves and releases on entries; see FileView.
-    callback item-down(int, length, length, bool, bool);
+    callback item-down(int, int, length, length, bool, bool);
     callback item-drag(length, length, bool, bool, bool);
     callback item-up(int, length, length, bool) -> bool;
     callback item-cancel();
     // An address bar part moved (index, window x, width).
-    callback crumb-span(int, length, length);
+    callback crumb-span(int, int, length, length);
     // A key went down or up while files are dragged (Shift, Ctrl, Alt held now).
     callback drag-keys(bool, bool, bool);
     // What is dragged, drawn at the pointer (`drag-x`, `drag-y`): the first item's icon, how
@@ -722,66 +653,15 @@ export component AppWindow inherits Window {
     out property <DropGeometry> drop-geometry: {
         window-width: root.width,
         window-height: root.height,
-        view-x: file-view.absolute-position.x,
-        view-y: file-view.absolute-position.y,
-        sidebar-y: search-bar.absolute-position.y,
-        sidebar-height: file-view.absolute-position.y + file-view.height - search-bar.absolute-position.y,
-        list-top: file-view.list-top,
-        list-width: file-view.list-width,
-        list-height: file-view.list-height,
         sidebar-scroll: root.sidebar-scroll,
-        tab-x: tab-bar.strip-x,
-        tab-scroll: tab-bar.scroll,
-        tab-width: tab-bar.tab-width,
-        tab-strip-width: tab-bar.strip-width,
-        tab-height: tab-bar.height,
-        address-y: address.absolute-position.y,
-        address-height: address.height,
         stack-y: root.stack-open ? root.height - Theme.row-height - (Theme.row-height + 6px) : 0px,
         stack-height: root.stack-open ? Theme.row-height + 6px : 0px,
     };
 
     // Whether the file list has keyboard focus (and not the address bar or a button).
     out property <bool> list-focused: keys.has-focus;
-    // How many rows PgUp/PgDn move: one screen, less one row.
-    out property <int> list-page-rows: file-view.page-rows;
 
     init => { keys.focus(); }
-    // However typing ends (Enter, Esc, a click elsewhere, switching windows, a menu opening),
-    // the keyboard goes back to the list. The hidden text box cannot keep the focus: Slint
-    // drops the focus of an item that becomes invisible, and then no key reaches
-    // `key-event` at all. Done even while the window is inactive, so the list gets the focus
-    // back when the window is activated again.
-    changed path-editing => {
-        root.path-editing-changed();
-        // Shift+Tab out of the field lands on Refresh: it keeps the keyboard.
-        if !self.path-editing && !keys.has-focus && !filter-bar.field-focused && !search-bar.field-focused && !refresh-button.focused { keys.focus(); }
-    }
-
-    // Gives the keyboard to the filter bar's field, the cursor at byte `at`.
-    public function focus-filter(at: int) {
-        root.end-path-editing-for-filter();
-        filter-bar.focus-at(at);
-    }
-
-    // Gives the keyboard to the filter bar's field with its whole text selected.
-    public function select-filter-text() {
-        root.end-path-editing-for-filter();
-        filter-bar.select-all();
-    }
-
-    // Gives the keyboard to the search bar's name field with its whole text selected.
-    public function select-search-text() {
-        root.end-path-editing-for-filter();
-        search-bar.select-all();
-    }
-
-    // Typing in the address bar ends when the filter takes the keyboard.
-    function end-path-editing-for-filter() {
-        if root.path-editing {
-            root.path-editing = false;
-        }
-    }
 
     // A menu closed: the keyboard goes back to the sidebar if its menu key opened it, else to
     // the list.
@@ -810,42 +690,6 @@ export component AppWindow inherits Window {
         } else {
             keys.focus();
         }
-    }
-
-    // Called before any context menu opens: like Explorer, a menu ends typing in the address
-    // bar (cancelling it), so the list has the keyboard once the menu closes. The focus moves
-    // here, before the menu takes it, rather than later in `changed path-editing`.
-    function end-path-editing() {
-        if root.path-editing {
-            root.path-editing = false;
-            keys.focus();
-        }
-    }
-
-    // Scrolls the view so entry `index` is visible.
-    public function ensure-visible(index: int) {
-        file-view.ensure-visible(index);
-    }
-
-    // Opens the context menu from the keyboard: the selection's (just below the focused
-    // entry, scrolled into view) if the focused entry is selected, else the background's.
-    public function open-keyboard-menu() {
-        if root.focus-row >= 0 && root.focus-selected {
-            file-view.ensure-visible(root.focus-row);
-            root.keyboard-menu(root.focus-row, file-view.menu-x(root.focus-row), file-view.menu-y(root.focus-row));
-        } else {
-            root.keyboard-menu(-1, file-view.menu-x(-1), file-view.menu-y(-1));
-        }
-    }
-
-    // Puts `text` in the address field with the cursor at byte `at` (a suggestion taken).
-    public function set-path-text(text: string, at: int) {
-        address.set-text(text, at);
-    }
-
-    // Switches the address bar to typing, with the whole path selected.
-    public function edit-path() {
-        address.edit();
     }
 
     // Shows `menu-entries` at a window position: at `x`, `y` (its top left) when there is
@@ -946,306 +790,197 @@ export component AppWindow inherits Window {
         }
 
         VerticalLayout {
-            tab-bar := TabBar {
-                tabs: root.tabs;
+            for pane-data[i] in root.panes: pane := PaneView {
+                data: pane-data;
+                index: i;
+                list-focused: keys.has-focus;
+                drag-active: root.drag-active;
+                drag-forbidden: root.drag-forbidden;
+                drop-entry: root.drop-entry;
                 drop-tab: root.drop-tab;
-                activate(i) => { root.tab-activate(i); }
-                close(i) => { root.tab-close(i); }
-                new-tab => { root.tab-new(); }
-                move-tab(from, to) => { root.tab-move(from, to); }
-                tab-menu(i, x, y) => {
-                    root.end-path-editing();
-                    root.tab-menu(i, x, y);
+                drop-crumb: root.drop-crumb;
+                col-modified <=> root.col-modified;
+                col-created <=> root.col-created;
+                col-type <=> root.col-type;
+                col-size <=> root.col-size;
+                col-folder <=> root.col-folder;
+                col-match <=> root.col-match;
+                sheet-x: sheet-place.x;
+                sheet-y: sheet-place.y;
+                sheet-width: sheet-place.width;
+                sheet-height: sheet-place.height;
+                focus-requested => { keys.focus(); }
+                keyboard-menu(p, row, x, y) => { root.keyboard-menu(p, row, x, y); }
+                scrolled(p, y) => { root.scrolled(p, y); }
+                revealed(p, entry, y) => { root.revealed(p, entry, y); }
+                geometry-changed(p, g) => {
+                    root.address-box = g;
+                    root.pane-geometry(p, g);
                 }
-            }
-            Rectangle {
-                height: Theme.toolbar-height;
-                background: Theme.chrome;
-                HorizontalLayout {
-                    padding-left: Theme.inset + 4px;
-                    padding-right: Theme.inset + 4px;
-                    padding-top: (Theme.toolbar-height - Theme.control-height) / 2;
-                    padding-bottom: (Theme.toolbar-height - Theme.control-height) / 2;
-                    spacing: Theme.spacing;
-                    // Back, Forward, Up, Refresh: row-height squares in the control-high row.
-                    HorizontalLayout {
-                        spacing: 2px;
-                        padding-top: (Theme.control-height - Theme.row-height) / 2;
-                        padding-bottom: (Theme.control-height - Theme.row-height) / 2;
-                        ToolButton {
-                            text: "Back";
-                            icon: Glyph.back;
-                            enabled: root.can-go-back;
-                            clicked => { root.go-back(); }
-                        }
-                        ToolButton {
-                            text: "Forward";
-                            icon: Glyph.forward;
-                            enabled: root.can-go-forward;
-                            clicked => { root.go-forward(); }
-                        }
-                        ToolButton {
-                            text: "Up";
-                            icon: Glyph.up;
-                            enabled: root.can-go-up;
-                            clicked => { root.go-up(); }
-                        }
-                        refresh-button := ToolButton {
-                            text: "Refresh";
-                            icon: Glyph.refresh;
-                            clicked => { root.refresh(); }
-                        }
-                    }
-                    address := Breadcrumb {
-                        crumbs: root.crumbs;
-                        path-text: root.current-path;
-                        editing <=> root.path-editing;
-                        edited(text) => { root.path-edited(text); }
-                        crumb-clicked(i) => { root.crumb-clicked(i); }
-                        crumb-span(i, x, w) => { root.crumb-span(i, x, w); }
-                        drop-crumb: root.drop-crumb;
-                        accepted(path) => {
-                            keys.focus();
-                            root.navigate(path);
-                        }
-                    }
-                    TextButton {
-                        text: "View";
-                        lead-icon: Glyph.view;
-                        icon: Glyph.chevron-down;
-                        height: Theme.control-height;
-                        clicked => {
-                            root.end-path-editing();
-                            root.view-menu(self.absolute-position.x, self.absolute-position.y + self.height, self.absolute-position.x + self.width, self.absolute-position.y);
-                        }
-                    }
-                }
-            }
+                focus-changed(p, f) => { root.pane-focus(p, f); }
+                path-editing-changed(p, on) => { root.path-editing-changed(p, on); }
+                go-back(p) => { root.go-back(p); }
+                go-forward(p) => { root.go-forward(p); }
+                go-up(p) => { root.go-up(p); }
+                refresh(p) => { root.refresh(p); }
+                navigate(p, path) => { root.navigate(p, path); }
+                crumb-clicked(p, c) => { root.crumb-clicked(p, c); }
+                crumb-span(p, c, x, w) => { root.crumb-span(p, c, x, w); }
+                path-edited(p, text) => { root.path-edited(p, text); }
+                tab-activate(p, t) => { root.tab-activate(p, t); }
+                tab-close(p, t) => { root.tab-close(p, t); }
+                tab-new(p) => { root.tab-new(p); }
+                tab-move(p, from, to) => { root.tab-move(p, from, to); }
+                tab-menu(p, t, x, y) => { root.tab-menu(p, t, x, y); }
+                view-menu(p, x, y, r, t) => { root.view-menu(p, x, y, r, t); }
+                filter-edited(p, t) => { root.filter-edited(p, t); }
+                filter-menu(p, x, y, r, t) => { root.filter-menu(p, x, y, r, t); }
+                filter-search(p) => { root.filter-search(p); }
+                search-edited(p, t) => { root.search-edited(p, t); }
+                search-content-edited(p, t) => { root.search-content-edited(p, t); }
+                search-content-toggle(p) => { root.search-content-toggle(p); }
+                search-go(p) => { root.search-go(p); }
+                search-menu(p, which, x, y, r, t) => { root.search-menu(p, which, x, y, r, t); }
+                grid-columns-changed(p, n) => { root.grid-columns-changed(p, n); }
+                zoom(p, bigger) => { root.zoom(p, bigger); }
+                list-line-of(p, e) => { return root.list-line-of(p, e); }
+                list-column-of(p, e) => { return root.list-column-of(p, e); }
+                list-group-toggled(p, first) => { root.list-group-toggled(p, first); }
+                list-group-menu(p, x, y) => { root.list-group-menu(p, x, y); }
+                header-clicked(p, c) => { root.header-clicked(p, c); }
+                header-menu(p, x, y) => { root.header-menu(p, x, y); }
+                columns-resized(p) => { root.columns-resized(p); }
+                rename-accepted(p, t) => { root.rename-accepted(p, t); }
+                rename-cancelled(p) => { root.rename-cancelled(p); }
+                rename-tab(p, t, back) => { root.rename-tab(p, t, back); }
+                rename-edited(p, t) => { root.rename-edited(p, t); }
+                rename-blurred(p, t, g) => { root.rename-blurred(p, t, g); }
+                item-pressed(p, e, ctrl, shift) => { root.item-pressed(p, e, ctrl, shift); }
+                item-down(p, e, x, y, right, can-drag) => { root.item-down(p, e, x, y, right, can-drag); }
+                item-drag(x, y, shift, ctrl, alt) => { root.item-drag(x, y, shift, ctrl, alt); }
+                item-up(e, x, y, right) => { return root.item-up(e, x, y, right); }
+                item-cancel => { root.item-cancel(); }
+                open-row(p, e) => { root.open-row(p, e); }
+                row-middle-clicked(p, e) => { root.row-middle-clicked(p, e); }
+                row-menu(p, e, x, y) => { root.row-menu(p, e, x, y); }
+                background-pressed(p, ctrl) => { root.background-pressed(p, ctrl); }
+                background-menu(p, x, y) => { root.background-menu(p, x, y); }
+                marquee(p, x, y, w, h, additive) => { root.marquee(p, x, y, w, h, additive); }
+                marquee-done(p) => { root.marquee-done(p); }
 
-            HorizontalLayout {
-                // The sheets' gap from the chrome: below them, and on the side away from the
-                // sidebar (on its side the splitter is the gap). None in the classic themes.
-                padding-left: root.sidebar-position == 0 ? 0px : Theme.inset;
-                padding-right: root.sidebar-position == 1 ? 0px : Theme.inset;
-                padding-bottom: Theme.inset;
-                if root.sidebar-position == 0: Sidebar {
-                    width: root.sidebar-width;
-                    rows: root.sidebar-rows;
-                    pinned-first-row: root.sidebar-pinned-first-row;
-                    pinned-end-row: root.sidebar-pinned-end-row;
-                    cursor: root.sidebar-cursor;
-                    focused <=> root.sidebar-focused;
-                    focus-seq: root.sidebar-focus-seq;
-                    tip-text <=> root.sidebar-tip;
-                    tip-x <=> root.sidebar-tip-x;
-                    tip-y <=> root.sidebar-tip-y;
-                    scroll <=> root.sidebar-scroll;
-                    drop-row: root.drop-sidebar-row;
-                    pin-line: root.drop-pin-row;
-                    clicked(s, i) => { root.sidebar-clicked(s, i); }
-                    middle-clicked(s, i) => { root.sidebar-middle-clicked(s, i); }
-                    toggled(i) => { root.sidebar-toggled(i); }
-                    menu(s, i, x, y) => {
-                        root.end-path-editing();
-                        root.sidebar-menu(s, i, x, y);
+                // The row under the toolbar; the pane lays its bars and sheet over `sheet-place`.
+                HorizontalLayout {
+                    // The sheets' gap from the chrome: below them, and on the side away from the
+                    // sidebar (on its side the splitter is the gap). None in the classic themes.
+                    padding-left: root.sidebar-position == 0 ? 0px : Theme.inset;
+                    padding-right: root.sidebar-position == 1 ? 0px : Theme.inset;
+                    padding-bottom: Theme.inset;
+                    if root.sidebar-position == 0: Sidebar {
+                        width: root.sidebar-width;
+                        rows: root.sidebar-rows;
+                        pinned-first-row: root.sidebar-pinned-first-row;
+                        pinned-end-row: root.sidebar-pinned-end-row;
+                        cursor: root.sidebar-cursor;
+                        focused <=> root.sidebar-focused;
+                        focus-seq: root.sidebar-focus-seq;
+                        tip-text <=> root.sidebar-tip;
+                        tip-x <=> root.sidebar-tip-x;
+                        tip-y <=> root.sidebar-tip-y;
+                        scroll <=> root.sidebar-scroll;
+                        drop-row: root.drop-sidebar-row;
+                        pin-line: root.drop-pin-row;
+                        clicked(s, i) => { root.sidebar-clicked(s, i); }
+                        middle-clicked(s, i) => { root.sidebar-middle-clicked(s, i); }
+                        toggled(i) => { root.sidebar-toggled(i); }
+                        menu(s, i, x, y) => {
+                            pane.end-path-editing();
+                            root.sidebar-menu(s, i, x, y);
+                        }
+                        pinned-drop(a, b) => { root.pinned-drop(a, b); }
                     }
-                    pinned-drop(a, b) => { root.pinned-drop(a, b); }
-                }
-                // Grabbable over 5px; the line shows only while hovered or dragged.
-                if root.sidebar-position == 0: Rectangle {
-                    width: 5px;
-                    accessible-role: none;
-                    Rectangle {
-                        x: (parent.width - self.width) / 2;
-                        width: 1px;
-                        background: splitter-left.has-hover || splitter-left.pressed ? Theme.accent : transparent;
-                    }
-                    splitter-left := TouchArea {
-                        mouse-cursor: col-resize;
-                        moved => { root.sidebar-width = clamp(root.sidebar-width + (self.mouse-x - self.pressed-x), 120px, 480px); }
-                        changed pressed => { if !self.pressed { root.sidebar-resized(); } }
-                    }
-                }
-                VerticalLayout {
-                    horizontal-stretch: 1;
-                    search-bar := FilterBar {
-                        search: true;
-                        height: root.search-open ? Theme.row-height + 8px : 0px;
-                        visible: root.search-open;
-                        text <=> root.search-text;
-                        error: root.search-error;
-                        scope: root.search-scope;
-                        content-open: root.search-content-open;
-                        content-focus: root.search-content-focus;
-                        content <=> root.search-content;
-                        content-error: root.search-content-error;
-                        filters: root.search-filters;
-                        running: root.search-running;
-                        edited(t) => { root.search-edited(t); }
-                        content-edited(t) => { root.search-content-edited(t); }
-                        content-toggle => { root.search-content-toggle(); }
-                        go => { root.search-go(); }
-                        menu(which, x, y, fx, fy) => {
-                            root.end-path-editing();
-                            root.search-menu(which, x, y, fx, fy);
+                    // Grabbable over 5px; the line shows only while hovered or dragged.
+                    if root.sidebar-position == 0: Rectangle {
+                        width: 5px;
+                        accessible-role: none;
+                        Rectangle {
+                            x: (parent.width - self.width) / 2;
+                            width: 1px;
+                            background: splitter-left.has-hover || splitter-left.pressed ? Theme.accent : transparent;
+                        }
+                        splitter-left := TouchArea {
+                            mouse-cursor: col-resize;
+                            moved => { root.sidebar-width = clamp(root.sidebar-width + (self.mouse-x - self.pressed-x), 120px, 480px); }
+                            changed pressed => { if !self.pressed { root.sidebar-resized(); } }
                         }
                     }
-                    filter-bar := FilterBar {
-                        height: root.filter-open ? Theme.row-height + 8px : 0px;
-                        visible: root.filter-open;
-                        text <=> root.filter-text;
-                        count: root.filter-count;
-                        error: root.filter-error;
-                        edited(t) => { root.filter-edited(t); }
-                        go => { root.filter-search(); }
-                        menu(which, x, y, fx, fy) => {
-                            root.end-path-editing();
-                            root.filter-menu(x, y, fx, fy);
+                    sheet-place := Rectangle {
+                        horizontal-stretch: 1;
+                        min-width: pane.sheet-min-width;
+                        min-height: pane.sheet-min-height;
+                    }
+                    // Grabbable over 5px; the line shows only while hovered or dragged.
+                    if root.preview-open: Rectangle {
+                        width: 5px;
+                        accessible-role: none;
+                        Rectangle {
+                            x: (parent.width - self.width) / 2;
+                            width: 1px;
+                            background: preview-splitter.has-hover || preview-splitter.pressed ? Theme.accent : transparent;
+                        }
+                        preview-splitter := TouchArea {
+                            mouse-cursor: col-resize;
+                            moved => { root.preview-width = clamp(root.preview-width - (self.mouse-x - self.pressed-x), 200px, 600px); }
+                            changed pressed => { if !self.pressed { root.preview-resized(); } }
                         }
                     }
-                    // The sheet: the column header and the list or grid on the content color. Its
-                    // frame is drawn over them; they are not clipped to its corners (spec 13.7).
-                    Rectangle {
+                    if root.preview-open: PreviewPane {
+                        width: root.preview-width;
+                        info: root.preview;
+                        mono-font: root.mono-font;
+                        // Its own sheet, like the list's.
                         background: Theme.background;
                         border-radius: Theme.sheet-radius;
-                        file-view := FileView {
-                            width: parent.width;
-                            height: parent.height;
-                            items: root.items;
-                            mode: root.view-mode;
-                            picture-size: root.grid-size;
-                            trash: root.trash-shown;
-                            grid-columns-changed(n) => { root.grid-columns-changed(n); }
-                            zoom(bigger) => { root.zoom(bigger); }
-                            groups-version: root.list-groups-version;
-                            line-of(i) => { return root.list-line-of(i); }
-                            column-of(i) => { return root.list-column-of(i); }
-                            group-toggled(first) => { root.list-group-toggled(first); }
-                            group-menu(first, x, y) => {
-                                root.end-path-editing();
-                                root.list-group-menu(x, y);
-                            }
-                            has-focus: keys.has-focus;
-                            scroll <=> root.list-scroll;
-                            focus-requested => { keys.focus(); }
-                            col-modified <=> root.col-modified;
-                            col-created <=> root.col-created;
-                            col-type <=> root.col-type;
-                            renaming-index: root.renaming-index;
-                            rename-text <=> root.rename-text;
-                            rename-select: root.rename-select;
-                            rename-error: root.rename-error;
-                            rename-accepted(t) => { root.rename-accepted(t); }
-                            rename-cancelled => { root.rename-cancelled(); }
-                            rename-tab(t, back) => { root.rename-tab(t, back); }
-                            rename-edited(t) => { root.rename-edited(t); }
-                            rename-blurred(t, g) => { root.rename-blurred(t, g); }
-                            rename-generation: root.rename-generation;
-                            rename-has-focus <=> root.rename-field-focused;
-                            col-size <=> root.col-size;
-                            col-folder <=> root.col-folder;
-                            col-match <=> root.col-match;
-                            sort-column: root.sort-column;
-                            sort-desc: root.sort-desc;
-                            header-clicked(i) => { root.header-clicked(i); }
-                            header-menu(x, y) => {
-                                root.end-path-editing();
-                                root.header-menu(x, y);
-                            }
-                            columns-resized => { root.columns-resized(); }
-                            item-pressed(i, ctrl, shift) => { root.item-pressed(i, ctrl, shift); }
-                            item-down(i, x, y, right, can-drag) => { root.item-down(i, x, y, right, can-drag); }
-                            item-drag(x, y, shift, ctrl, alt) => { root.item-drag(x, y, shift, ctrl, alt); }
-                            item-up(i, x, y, right) => { return root.item-up(i, x, y, right); }
-                            item-cancel => { root.item-cancel(); }
-                            drag-active: root.drag-active;
-                            drag-forbidden: root.drag-forbidden;
-                            drop-entry: root.drop-entry;
-                            item-double-clicked(i) => { root.open-row(i); }
-                            item-middle-clicked(i) => { root.row-middle-clicked(i); }
-                            item-menu(i, x, y) => {
-                                root.end-path-editing();
-                                root.row-menu(i, x, y);
-                            }
-                            background-pressed(ctrl) => { root.background-pressed(ctrl); }
-                            marquee(x, y, w, h, additive) => { root.marquee(x, y, w, h, additive); }
-                            marquee-done => { root.marquee-done(); }
-                            background-menu(x, y) => {
-                                root.end-path-editing();
-                                root.background-menu(x, y);
-                            }
-                        }
+                        border-width: 1px;
+                        border-color: Theme.border;
+                    }
+                    // Grabbable over 5px; the line shows only while hovered or dragged.
+                    if root.sidebar-position == 1: Rectangle {
+                        width: 5px;
+                        accessible-role: none;
                         Rectangle {
-                            width: parent.width;
-                            height: parent.height;
-                            border-width: 1px;
-                            border-color: Theme.border;
-                            border-radius: Theme.sheet-radius;
+                            x: (parent.width - self.width) / 2;
+                            width: 1px;
+                            background: splitter-right.has-hover || splitter-right.pressed ? Theme.accent : transparent;
+                        }
+                        splitter-right := TouchArea {
+                            mouse-cursor: col-resize;
+                            moved => { root.sidebar-width = clamp(root.sidebar-width - (self.mouse-x - self.pressed-x), 120px, 480px); }
+                            changed pressed => { if !self.pressed { root.sidebar-resized(); } }
                         }
                     }
-                }
-                // Grabbable over 5px; the line shows only while hovered or dragged.
-                if root.preview-open: Rectangle {
-                    width: 5px;
-                    accessible-role: none;
-                    Rectangle {
-                        x: (parent.width - self.width) / 2;
-                        width: 1px;
-                        background: preview-splitter.has-hover || preview-splitter.pressed ? Theme.accent : transparent;
+                    if root.sidebar-position == 1: Sidebar {
+                        width: root.sidebar-width;
+                        rows: root.sidebar-rows;
+                        pinned-first-row: root.sidebar-pinned-first-row;
+                        pinned-end-row: root.sidebar-pinned-end-row;
+                        cursor: root.sidebar-cursor;
+                        focused <=> root.sidebar-focused;
+                        focus-seq: root.sidebar-focus-seq;
+                        tip-text <=> root.sidebar-tip;
+                        tip-x <=> root.sidebar-tip-x;
+                        tip-y <=> root.sidebar-tip-y;
+                        scroll <=> root.sidebar-scroll;
+                        drop-row: root.drop-sidebar-row;
+                        pin-line: root.drop-pin-row;
+                        clicked(s, i) => { root.sidebar-clicked(s, i); }
+                        middle-clicked(s, i) => { root.sidebar-middle-clicked(s, i); }
+                        toggled(i) => { root.sidebar-toggled(i); }
+                        menu(s, i, x, y) => {
+                            pane.end-path-editing();
+                            root.sidebar-menu(s, i, x, y);
+                        }
+                        pinned-drop(a, b) => { root.pinned-drop(a, b); }
                     }
-                    preview-splitter := TouchArea {
-                        mouse-cursor: col-resize;
-                        moved => { root.preview-width = clamp(root.preview-width - (self.mouse-x - self.pressed-x), 200px, 600px); }
-                        changed pressed => { if !self.pressed { root.preview-resized(); } }
-                    }
-                }
-                if root.preview-open: PreviewPane {
-                    width: root.preview-width;
-                    info: root.preview;
-                    mono-font: root.mono-font;
-                    // Its own sheet, like the list's.
-                    background: Theme.background;
-                    border-radius: Theme.sheet-radius;
-                    border-width: 1px;
-                    border-color: Theme.border;
-                }
-                // Grabbable over 5px; the line shows only while hovered or dragged.
-                if root.sidebar-position == 1: Rectangle {
-                    width: 5px;
-                    accessible-role: none;
-                    Rectangle {
-                        x: (parent.width - self.width) / 2;
-                        width: 1px;
-                        background: splitter-right.has-hover || splitter-right.pressed ? Theme.accent : transparent;
-                    }
-                    splitter-right := TouchArea {
-                        mouse-cursor: col-resize;
-                        moved => { root.sidebar-width = clamp(root.sidebar-width - (self.mouse-x - self.pressed-x), 120px, 480px); }
-                        changed pressed => { if !self.pressed { root.sidebar-resized(); } }
-                    }
-                }
-                if root.sidebar-position == 1: Sidebar {
-                    width: root.sidebar-width;
-                    rows: root.sidebar-rows;
-                    pinned-first-row: root.sidebar-pinned-first-row;
-                    pinned-end-row: root.sidebar-pinned-end-row;
-                    cursor: root.sidebar-cursor;
-                    focused <=> root.sidebar-focused;
-                    focus-seq: root.sidebar-focus-seq;
-                    tip-text <=> root.sidebar-tip;
-                    tip-x <=> root.sidebar-tip-x;
-                    tip-y <=> root.sidebar-tip-y;
-                    scroll <=> root.sidebar-scroll;
-                    drop-row: root.drop-sidebar-row;
-                    pin-line: root.drop-pin-row;
-                    clicked(s, i) => { root.sidebar-clicked(s, i); }
-                    middle-clicked(s, i) => { root.sidebar-middle-clicked(s, i); }
-                    toggled(i) => { root.sidebar-toggled(i); }
-                    menu(s, i, x, y) => {
-                        root.end-path-editing();
-                        root.sidebar-menu(s, i, x, y);
-                    }
-                    pinned-drop(a, b) => { root.pinned-drop(a, b); }
                 }
             }
 
@@ -1556,10 +1291,10 @@ export component AppWindow inherits Window {
             cancel-operation => { root.conflict-cancel(); }
             key(event) => { return root.conflict-key(event); }
         }
-        if root.path-editing && root.path-rows.length > 0: PathSuggestions {
-            x: address.absolute-position.x;
-            y: address.absolute-position.y + address.height + 2px;
-            width: max(address.width, 320px);
+        if root.path-rows.length > 0: PathSuggestions {
+            x: root.address-box.address-x;
+            y: root.address-box.address-y + root.address-box.address-height + 2px;
+            width: max(root.address-box.address-width, 320px);
             rows: root.path-rows;
             current: root.path-current;
             chosen(path) => { root.path-chosen(path); }

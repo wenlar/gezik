@@ -657,9 +657,7 @@ impl Operations {
     }
 
     fn set_rename_error(&self, error: &str) {
-        if let Some(window) = self.0.window.upgrade() {
-            window.set_rename_error(error.into());
-        }
+        crate::panes::edit(self.0.view.pane_id(), |d| d.rename_error = error.into());
     }
 
     /// While typing: say at once what is wrong with the name.
@@ -673,6 +671,12 @@ impl Operations {
     /// Ends renaming with `typed`: the entry's index if the field closed (unchanged or
     /// renamed), `None` if the name cannot be used (the field stays, with the problem shown).
     fn commit_rename(&self, typed: &str, how: Commit) -> Option<usize> {
+        self.commit_rename_then(typed, how, how != Commit::Tab)
+    }
+
+    /// [`Operations::commit_rename`]; `select`: the renamed entry is selected once the rename
+    /// is done.
+    fn commit_rename_then(&self, typed: &str, how: Commit, select: bool) -> Option<usize> {
         let view = &self.0.view;
         let (index, old) = view.renaming()?;
         // Enter and Esc leave the keyboard with the list; a blur or Tab does not, but for a
@@ -710,7 +714,7 @@ impl Operations {
                 if let Some(path) = path {
                     self.remember_for(std::slice::from_ref(&path));
                     // Going on to another entry: its refresh must not pull the selection away.
-                    let after = if how == Commit::Tab { After::Nothing } else { After::Select };
+                    let after = if select { After::Select } else { After::Nothing };
                     self.submit(Box::new(gezik_ops::RenameTask::one(path, &name)), None, after);
                 }
                 Some(index)
@@ -735,15 +739,43 @@ impl Operations {
     /// was destroyed with its row, which fires no blur), ends it like a blur. Returns whether
     /// a rename is open with its field focused.
     pub fn end_unfocused_rename(&self) -> bool {
-        let Some(window) = self.0.window.upgrade() else { return false };
-        if self.0.view.renaming().is_none() {
+        if self.0.window.upgrade().is_none() || self.0.view.renaming().is_none() {
             return false;
         }
-        if window.get_rename_focused() {
+        let mirror = crate::panes::mirror(self.0.view.pane_id());
+        if mirror.focus.borrow().rename {
             return true;
         }
-        self.rename_blurred(window.get_rename_text().into(), self.0.view.rename_generation());
+        // The press or key goes on (a row selected, type-ahead): the rename done later must
+        // not pull the selection back to the renamed entry.
+        let typed = mirror.rename_text.borrow().to_string();
+        self.commit_rename_then(&typed, Commit::Blur, false);
         false
+    }
+
+    /// Enter (`keep`) or Esc while a rename is open but its field is off screen: the typed
+    /// name is kept, or the old one. Returns whether there was such a rename.
+    pub fn off_screen_rename_key(&self, keep: bool) -> bool {
+        if self.0.window.upgrade().is_none() || self.0.view.renaming().is_none() {
+            return false;
+        }
+        let mirror = crate::panes::mirror(self.0.view.pane_id());
+        if mirror.focus.borrow().rename {
+            return false;
+        }
+        if keep {
+            let typed = mirror.rename_text.borrow().to_string();
+            // A name that cannot be used keeps the field: it comes back on screen with the
+            // problem under it (and takes the keyboard again).
+            if self.commit_rename(&typed, Commit::Enter).is_none()
+                && let Some((index, _)) = self.0.view.renaming()
+            {
+                self.0.view.reveal(index);
+            }
+        } else {
+            self.rename_cancelled();
+        }
+        true
     }
 
     pub fn rename_cancelled(&self) {

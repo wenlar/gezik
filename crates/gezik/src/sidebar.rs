@@ -58,6 +58,11 @@ const DRIVES_HEADER: &str = if cfg!(target_os = "macos") { "LOCATIONS" } else { 
 /// How often the (cheap) drive signature is checked.
 const DRIVE_POLL: Duration = Duration::from_secs(3);
 
+/// `f` of where the active pane's row under its toolbar is: the sidebar's top and height.
+fn pane_body(f: impl FnOnce(&crate::PaneGeometry) -> f32) -> f32 {
+    crate::panes::with_active(|p| f(&crate::panes::mirror(p.id).geometry.borrow())).unwrap_or(0.0)
+}
+
 /// Whether `a` and `b` name the same location (see [`pins::same_path_text`]). Separators and
 /// redundant `/` or `.` parts do not matter.
 pub fn same_path(a: &Path, b: &Path) -> bool {
@@ -1017,7 +1022,7 @@ impl Sidebar {
     fn scroll_to_row(&self, row: usize) {
         let Some(window) = self.0.borrow().window.upgrade() else { return };
         let theme = window.global::<crate::Theme>();
-        let height = window.get_drop_geometry().sidebar_height - 2.0 * theme.get_spacing();
+        let height = pane_body(|g| g.body_height) - 2.0 * theme.get_spacing();
         window.set_sidebar_scroll(scroll_to_show(row, theme.get_row_height(), window.get_sidebar_scroll(), height));
     }
 
@@ -1070,7 +1075,7 @@ impl Sidebar {
     /// Rows a screen, less one (PgUp/PgDn).
     fn page_rows(&self, window: &AppWindow) -> usize {
         let theme = window.global::<crate::Theme>();
-        let height = window.get_drop_geometry().sidebar_height - 2.0 * theme.get_spacing();
+        let height = pane_body(|g| g.body_height) - 2.0 * theme.get_spacing();
         ((height / theme.get_row_height().max(1.0)).floor() as usize).saturating_sub(1).max(1)
     }
 
@@ -1109,8 +1114,10 @@ impl Sidebar {
         let theme = window.global::<crate::Theme>();
         let width = window.get_sidebar_width();
         let x = if window.get_sidebar_position() == 1 { g.window_width - width } else { 0.0 };
-        let y =
-            g.sidebar_y + theme.get_spacing() + window.get_sidebar_scroll() + (row + 1) as f32 * theme.get_row_height();
+        let y = pane_body(|g| g.body_y)
+            + theme.get_spacing()
+            + window.get_sidebar_scroll()
+            + (row + 1) as f32 * theme.get_row_height();
         (x + theme.get_spacing() * 3.0, y)
     }
 

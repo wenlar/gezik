@@ -14,8 +14,9 @@ export component RenameField inherits Rectangle {
     callback edited(string);
     // The field lost the focus to something else (not Enter, Esc or Tab).
     callback blurred(string, int);
-    // Which rename this is, and the last one whose stem was selected: the field is
-    // recreated while scrolling, and must select only when a rename starts.
+    // Which rename this is, and the last one typed in: the field is recreated while scrolling
+    // and when the folder is read again (the rename Tab went on from was done), and selects
+    // the stem each time until something is typed.
     in property <int> generation;
     in-out property <int> applied: -1;
     // Whether the input has the focus (written here, read by the view).
@@ -25,6 +26,15 @@ export component RenameField inherits Rectangle {
 
     // Esc ended it: losing the focus right after does not accept again.
     property <bool> done;
+    // Its row is on screen. Scrolled away it gave the keyboard to the list (the view says no
+    // blur then); back on screen it takes it again.
+    in property <bool> shown: true;
+    changed shown => {
+        if self.shown && root.mine == root.generation && !input.has-focus {
+            root.done = false;
+            input.focus();
+        }
+    }
 
     background: Theme.input-background;
     border-width: 1px;
@@ -64,11 +74,11 @@ export component RenameField inherits Rectangle {
                 self.focus();
                 root.focused = self.has-focus;
                 if root.applied != root.generation {
-                    root.applied = root.generation;
                     self.set-selection-offsets(0, root.select-end);
                 }
             }
             edited => {
+                root.applied = root.generation;
                 root.done = false;
                 root.edited(self.text);
             }

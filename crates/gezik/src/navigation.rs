@@ -324,7 +324,7 @@ impl Navigator {
             filter: None,
         });
         let tab_model = Rc::new(VecModel::default());
-        window.set_tabs(ModelRc::from(tab_model.clone()));
+        crate::panes::edit(id, |d| d.tabs = ModelRc::from(tab_model.clone()));
         Navigator(Rc::new(RefCell::new(Inner {
             id,
             window: window.as_weak(),
@@ -1190,21 +1190,23 @@ impl Navigator {
             let inner = self.0.borrow();
             let Some(window) = inner.window.upgrade() else { return };
             let history = inner.tabs.active();
-            window.set_can_go_back(history.can_go_back());
-            window.set_can_go_forward(history.can_go_forward());
-            window.set_can_go_up(location.parent().is_some());
             let parts = crumbs(&location, MAX_CRUMBS);
             let parts: Vec<CrumbItem> = crumb_labels(&parts, gezik_platform::finder::finder_name)
                 .into_iter()
                 .map(|label| CrumbItem { label: label.into() })
                 .collect();
-            window.set_crumbs(ModelRc::new(VecModel::from(parts)));
-            window.set_current_path(match &location {
-                Location::Path(p) => p.display().to_string().into(),
-                Location::Drives | Location::Trash => "".into(),
-                Location::Search(_) | Location::Flat(_) => {
-                    location.folder().map(|p| p.display().to_string()).unwrap_or_default().into()
-                }
+            crate::panes::edit(inner.id, |d| {
+                d.can_go_back = history.can_go_back();
+                d.can_go_forward = history.can_go_forward();
+                d.can_go_up = location.parent().is_some();
+                d.crumbs = ModelRc::new(VecModel::from(parts));
+                d.current_path = match &location {
+                    Location::Path(p) => p.display().to_string().into(),
+                    Location::Drives | Location::Trash => "".into(),
+                    Location::Search(_) | Location::Flat(_) => {
+                        location.folder().map(|p| p.display().to_string()).unwrap_or_default().into()
+                    }
+                };
             });
             window.set_title_text(format!("{} — Gezik", inner.places.title_for(&location)).into());
             let active = inner.tabs.active_index();

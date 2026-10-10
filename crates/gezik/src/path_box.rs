@@ -453,14 +453,15 @@ impl PathBox {
             checked: RefCell::default(),
             checking: Cell::new(false),
         }));
-        window.on_path_edited(|text| {
+        window.on_path_edited(|_pane, text| {
             crate::panes::with_active(|p| p.path_box.edited(text.into()));
         });
         // By path, not by row: whatever happened to the list meanwhile, the click goes there.
         window.on_path_chosen(|path| {
             crate::panes::with_active(|p| p.path_box.go_to(PathBuf::from(path.as_str())));
         });
-        window.on_path_editing_changed(|| {
+        window.on_path_editing_changed(|pane, on| {
+            crate::panes::mirror_at(pane).path_editing.set(on);
             crate::panes::with_active(|p| p.path_box.reset());
         });
         nav.on_visited(move |path| {
@@ -503,12 +504,12 @@ impl PathBox {
             .text
             .borrow()
             .clone()
-            .or_else(|| self.0.window.upgrade().map(|w| w.get_current_path().to_string()))
+            .or_else(|| crate::panes::data(self.0.id).map(|d| d.current_path.to_string()))
             .unwrap_or_default()
     }
 
     fn is_open(&self) -> bool {
-        !self.0.list.borrow().rows.is_empty() && self.0.window.upgrade().is_some_and(|w| w.get_path_editing())
+        !self.0.list.borrow().rows.is_empty() && self.editing()
     }
 
     /// The list for the text now: the history (Task 8) or the folder's names, read first if
@@ -683,7 +684,7 @@ impl PathBox {
     /// list still waits for it.
     fn listed(&self, generation: u64, number: u64, folder: PathBuf, names: std::io::Result<Vec<String>>) {
         self.done_reading(&folder, generation);
-        let editing = self.0.window.upgrade().is_some_and(|w| w.get_path_editing());
+        let editing = self.editing();
         if !keeps(generation, self.0.generation.get(), editing) {
             return;
         }
@@ -778,15 +779,29 @@ impl PathBox {
 
     /// Writes `path` into the field (typing goes on, now inside it).
     fn accept(&self, path: &Path) {
-        let Some(window) = self.0.window.upgrade() else { return };
+        if self.0.window.upgrade().is_none() {
+            return;
+        }
         let text = accept_text(path);
-        window.invoke_set_path_text(text.as_str().into(), i32::try_from(text.len()).unwrap_or(i32::MAX));
+        let at = i32::try_from(text.len()).unwrap_or(i32::MAX);
+        crate::panes::edit(self.0.id, |d| crate::panes::path_text(d, &text, at));
         self.edited(text);
     }
 
+    /// Whether the address bar is typed in.
+    fn editing(&self) -> bool {
+        self.0.window.upgrade().is_some() && crate::panes::mirror(self.0.id).path_editing.get()
+    }
+
+    /// Ends typing in the address bar (its pane says so back: [`PathBox::reset`]).
+    pub fn end_editing(&self) {
+        crate::panes::mirror(self.0.id).path_editing.set(false);
+        crate::panes::edit(self.0.id, |d| crate::panes::path_editing(d, false));
+    }
+
     fn go_to(&self, path: PathBuf) {
-        if let Some(window) = self.0.window.upgrade() {
-            window.set_path_editing(false);
+        if self.0.window.upgrade().is_some() {
+            self.end_editing();
         }
         self.reset();
         self.0.nav.go(Location::Path(path));
