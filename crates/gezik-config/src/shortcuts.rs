@@ -283,10 +283,18 @@ pub enum Action {
     ConnectToServer,
     /// Ejects the selected drive or the shown folder's; a network drive: Disconnect (9b6).
     Eject,
+    /// The list in one piece, no group headers (10d).
+    GroupNone,
+    /// Groups by the Type column's text.
+    GroupType,
+    /// Groups by date modified (created when sorted by it): Today, Yesterday, …
+    GroupDate,
+    /// Groups by size: Empty, Tiny … Gigantic, and Folders.
+    GroupSize,
 }
 
 impl Action {
-    pub const ALL: [Action; 85] = [
+    pub const ALL: [Action; 89] = [
         Action::NewTab,
         Action::NewWindow,
         Action::CloseTab,
@@ -372,6 +380,10 @@ impl Action {
         Action::GetInfo,
         Action::ConnectToServer,
         Action::Eject,
+        Action::GroupNone,
+        Action::GroupType,
+        Action::GroupDate,
+        Action::GroupSize,
     ];
 
     pub fn name(self) -> &'static str {
@@ -461,6 +473,10 @@ impl Action {
             Action::GetInfo => "get-info",
             Action::ConnectToServer => "connect-to-server",
             Action::Eject => "eject",
+            Action::GroupNone => "group-none",
+            Action::GroupType => "group-type",
+            Action::GroupDate => "group-date",
+            Action::GroupSize => "group-size",
         }
     }
 
@@ -564,6 +580,10 @@ impl Action {
             Action::GetInfo => "Get Info",
             Action::ConnectToServer => "Connect to Server…",
             Action::Eject => "Eject",
+            Action::GroupNone => "Group by None",
+            Action::GroupType => "Group by Type",
+            Action::GroupDate => "Group by Date",
+            Action::GroupSize => "Group by Size",
         }
     }
 
@@ -734,6 +754,7 @@ impl Action {
             (Action::ConnectToServer, _) => &["mod+k"],
             (Action::Eject, Platform::Mac) => &["mod+e"],
             (Action::Eject, Platform::Other) => &[],
+            (Action::GroupNone | Action::GroupType | Action::GroupDate | Action::GroupSize, _) => &[],
         }
     }
 }
@@ -920,7 +941,7 @@ mod tests {
             assert_eq!(fixed_owner(&cmd_option, Platform::Mac), None);
         }
         assert_eq!((Action::pin(0), Action::pin(10)), (None, None));
-        assert_eq!(Action::ALL.len(), 85);
+        assert_eq!(Action::ALL.len(), 89);
         assert_eq!(other.action_for(&chord("ctrl+1")), Some(Action::Tab1), "Ctrl+1 is still tab 1");
         assert_eq!(other.action_for(&chord("ctrl+alt+1")), None, "AltGr+1 types");
     }
@@ -1378,7 +1399,7 @@ clear-history = \"ctrl+shift+h\"
         for name in ["search", "flat-view", "show-in-folder", "copy-with-folders", "cut-with-folders"] {
             assert!(Action::from_name(name).is_some(), "{name}");
         }
-        assert_eq!(Action::ALL.len(), 85);
+        assert_eq!(Action::ALL.len(), 89);
     }
 
     #[test]
@@ -1400,7 +1421,7 @@ clear-history = \"ctrl+shift+h\"
         for name in ["command-palette", "quick-open", "calculate-folder-sizes", "save-search"] {
             assert!(Action::from_name(name).is_some(), "{name}");
         }
-        assert_eq!(Action::ALL.len(), 85);
+        assert_eq!(Action::ALL.len(), 89);
     }
 
     #[test]
@@ -1420,7 +1441,7 @@ clear-history = \"ctrl+shift+h\"
         }
         assert_eq!(Action::MakeAlias.title(), "Make Alias");
         assert_eq!(Action::ShowPackageContents.title(), "Show Package Contents");
-        assert_eq!(Action::ALL.len(), 85);
+        assert_eq!(Action::ALL.len(), 89);
     }
 
     #[test]
@@ -1430,7 +1451,7 @@ clear-history = \"ctrl+shift+h\"
         }
         assert_eq!(Action::from_name("share"), Some(Action::Share));
         assert_eq!(Action::Share.title(), "Share…");
-        assert_eq!(Action::ALL.len(), 85);
+        assert_eq!(Action::ALL.len(), 89);
     }
 
     #[test]
@@ -1444,7 +1465,7 @@ clear-history = \"ctrl+shift+h\"
         assert_eq!(fixed_owner(&chord("mod+i", Platform::Mac), Platform::Mac), None);
         assert_eq!(Action::from_name("get-info"), Some(Action::GetInfo));
         assert_eq!(Action::GetInfo.title(), "Get Info");
-        assert_eq!(Action::ALL.len(), 85);
+        assert_eq!(Action::ALL.len(), 89);
     }
 
     #[test]
@@ -1457,7 +1478,24 @@ clear-history = \"ctrl+shift+h\"
         }
         assert_eq!(Action::from_name("connect-to-server"), Some(Action::ConnectToServer));
         assert_eq!(Action::ConnectToServer.title(), "Connect to Server…");
-        assert_eq!(Action::ALL.len(), 85);
+        assert_eq!(Action::ALL.len(), 89);
+    }
+
+    #[test]
+    fn the_group_actions_have_no_keys() {
+        for (action, name, title) in [
+            (Action::GroupNone, "group-none", "Group by None"),
+            (Action::GroupType, "group-type", "Group by Type"),
+            (Action::GroupDate, "group-date", "Group by Date"),
+            (Action::GroupSize, "group-size", "Group by Size"),
+        ] {
+            assert_eq!(Action::from_name(name), Some(action));
+            assert_eq!(action.title(), title);
+            for platform in [Platform::Other, Platform::Mac] {
+                assert_eq!(Shortcuts::defaults(platform).chord_for(action), None, "{name}");
+            }
+        }
+        assert_eq!(Action::ALL.len(), 89);
     }
 
     #[test]
@@ -1468,7 +1506,7 @@ clear-history = \"ctrl+shift+h\"
         assert_eq!(Shortcuts::defaults(Platform::Other).chord_for(Action::Eject), None);
         assert_eq!(Action::from_name("eject"), Some(Action::Eject));
         assert_eq!(Action::Eject.title(), "Eject");
-        assert_eq!(Action::ALL.len(), 85);
+        assert_eq!(Action::ALL.len(), 89);
     }
 
     #[test]

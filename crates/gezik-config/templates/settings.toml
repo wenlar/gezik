@@ -185,6 +185,10 @@ cloud = true
 # get-info = "alt+enter"       # Get Info (Windows: the system's Properties); macOS: "mod+i"
 # connect-to-server = "mod+k"  # Connect to Server: a share by its address (\\server\share, smb://server/share)
 # eject = ""   # Eject the selected drive, or the shown folder's (a network drive: Disconnect); macOS: "mod+e"
+# group-none = ""   # Group by ▸ None: the list without group headers
+# group-type = ""   # Group by ▸ Type (the Type column's text)
+# group-date = ""   # Group by ▸ Date: Today, Yesterday, Earlier this week …
+# group-size = ""   # Group by ▸ Size: Empty, Tiny … Gigantic, Folders
 
 # Saved rule sets for batch rename (Rename… with two or more items selected). The rename
 # layer writes them with "Presets ▾ › Save current rules as…"; they can also be written here.

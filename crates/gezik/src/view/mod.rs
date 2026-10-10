@@ -2118,7 +2118,6 @@ impl View {
     }
 
     /// A click on a group's header (its first entry `first`): the group opens or closes.
-    #[allow(dead_code, reason = "the header lines call it (10d Task 4)")]
     pub fn toggle_group(&self, first: usize) {
         let key = {
             let data = self.0.data.borrow();
@@ -2130,13 +2129,11 @@ impl View {
     }
 
     /// Collapse All Groups (`true`) / Expand All Groups.
-    #[allow(dead_code, reason = "the menus call it (10d Task 4)")]
     pub fn collapse_all(&self, on: bool) {
         self.collapse_where(|_, _| on);
     }
 
     /// Group by ▸ (spec 10 §6.2); the folder remembers it.
-    #[allow(dead_code, reason = "the menus call it (10d Task 4)")]
     pub fn set_group(&self, by: GroupBy) {
         self.change_view(|v| v.group = by);
     }
@@ -2148,7 +2145,6 @@ impl View {
 
     /// The line and column of entry `index`, for the Slint side; `(-1, 0)` in a closed group or
     /// past the end.
-    #[allow(dead_code, reason = "the Slint lines call it (10d Task 4)")]
     pub fn place_of(&self, index: usize) -> (i32, i32) {
         self.0.model.place_of(index).map_or((-1, 0), |(line, column)| {
             (i32::try_from(line).unwrap_or(i32::MAX), i32::try_from(column).unwrap_or(0))

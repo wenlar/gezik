@@ -829,7 +829,11 @@ mod tests {
                 | Action::SystemIntegration
                 | Action::KeepOffline
                 | Action::FreeUpSpace
-                | Action::Eject => continue,
+                | Action::Eject
+                | Action::GroupNone
+                | Action::GroupType
+                | Action::GroupDate
+                | Action::GroupSize => continue,
             };
             assert_eq!(reach(text), Some(action), "{text}");
         }

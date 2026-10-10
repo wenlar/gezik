@@ -413,8 +413,17 @@ mod tests {
         for line in slint.lines().filter(|l| l.contains("MenuItem { title: \"")) {
             let Some(name) = line.split("menu-command(\"").nth(1).and_then(|r| r.split('"').next()) else { continue };
             let Some(action) = Action::from_name(name) else { continue };
-            // The View menu says "as List" and "as Grid" under its own title (sapma 6).
-            if matches!(action, Action::ViewList | Action::ViewGrid) {
+            // The View menu says "as List", "as Grid" and Group By's "None" … under its own titles
+            // (sapma 6; 10d sapma 15).
+            if matches!(
+                action,
+                Action::ViewList
+                    | Action::ViewGrid
+                    | Action::GroupNone
+                    | Action::GroupType
+                    | Action::GroupDate
+                    | Action::GroupSize
+            ) {
                 continue;
             }
             let title = line.split("title: \"").nth(1).and_then(|r| r.split('"').next()).unwrap_or_default();

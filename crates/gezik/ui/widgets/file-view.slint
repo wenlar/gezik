@@ -171,8 +171,8 @@ export component FileView inherits Rectangle {
     // The field has the keyboard. A field whose row scrolled out is gone and says nothing, so
     // it only counts while its row is on screen.
     out property <bool> rename-focused: root.rename-has-focus && root.renaming-index >= 0
-        && (floor(root.renaming-index / root.per-row) + 1) * root.item-height > -root.scroll
-        && floor(root.renaming-index / root.per-row) * root.item-height < -root.scroll + list.visible-height;
+        && (root.line-of(root.renaming-index) + 1) * root.item-height > -root.scroll
+        && root.line-of(root.renaming-index) * root.item-height < -root.scroll + list.visible-height;
     out property <length> cell-width: max(root.picture-size + 24px, 96px);
     // The grid's first column starts here: the cells are inset from the sheet's edge
     // (`Geometry::Grid.left` in gezik-core layout.rs).
@@ -225,6 +225,13 @@ export component FileView inherits Rectangle {
     callback grid-columns-changed(int);
     // Ctrl+wheel: true for bigger pictures.
     callback zoom(bool);
+    // The line entry `index` is on and its column (the grid's), from Rust (`View::place_of`):
+    // with groups an entry's line is not `index / per-row`. -1: in a closed group.
+    pure callback line-of(int) -> int;
+    pure callback column-of(int) -> int;
+    // A click on a group's header (its first entry), and its right-click (window position).
+    callback group-toggled(int);
+    callback group-menu(int, length, length);
 
     changed grid-columns => { root.grid-columns-changed(self.grid-columns); }
     // The field's row went off screen while the field had the keyboard: the list drops the
@@ -324,7 +331,10 @@ export component FileView inherits Rectangle {
         if index < 0 {
             return;
         }
-        let line = floor(index / root.per-row);
+        let line = root.line-of(index);
+        if line < 0 {
+            return;
+        }
         if line * root.item-height < -root.scroll {
             root.scroll = -line * root.item-height;
         } else if (line + 1) * root.item-height > -root.scroll + list.visible-height {
@@ -341,14 +351,14 @@ export component FileView inherits Rectangle {
         if root.mode == 0 {
             return list.absolute-position.x + Theme.spacing * 6;
         }
-        return list.absolute-position.x + root.grid-left + mod(index, root.per-row) * root.cell-width + root.cell-width / 2;
+        return list.absolute-position.x + root.grid-left + root.column-of(index) * root.cell-width + root.cell-width / 2;
     }
 
     public function menu-y(index: int) -> length {
         if index < 0 {
             return list.absolute-position.y + Theme.spacing * 2;
         }
-        return list.absolute-position.y + root.scroll + (floor(index / root.per-row) + 1) * root.item-height;
+        return list.absolute-position.y + root.scroll + (root.line-of(index) + 1) * root.item-height;
     }
 
     // The column header, in the list only.
@@ -510,7 +520,7 @@ export component FileView inherits Rectangle {
             height: root.item-height;
 
             // The list: one entry with its columns.
-            if root.mode == 0: entry := Rectangle {
+            if root.mode == 0 && item.header == "": entry := Rectangle {
                 property <FileRow> file: item.cells[0];
                 property <int> index: item.first;
                 property <color> text-color: self.file.selected ? Theme.selection-foreground : Theme.foreground;
@@ -691,7 +701,7 @@ export component FileView inherits Rectangle {
             // per cell: a changed line (a new selection) brings a new cells model, a
             // repeater over a new model rebuilds its tiles, and a rebuilt tile loses the
             // press under the pointer and with it a double-click.
-            if root.mode == 1: Rectangle {
+            if root.mode == 1 && item.header == "": Rectangle {
                 for c in root.per-row: Rectangle {
                     if c < item.cells.length: tile := Rectangle {
                         property <FileRow> cell: item.cells[c];
@@ -812,6 +822,67 @@ export component FileView inherits Rectangle {
                     }
                 }
             }
+
+            // A group's header (spec 10 §6.2): its name and count, at the bottom of the line (in
+            // the grid the line is as high as a cell line). A click opens or closes the group;
+            // it never takes the keyboard.
+            if item.header != "": Rectangle {
+                x: Theme.inset;
+                width: parent.width - 2 * Theme.inset;
+                accessible-role: button;
+                accessible-label: item.header + (item.collapsed ? ", collapsed" : ", expanded");
+                accessible-action-default => { root.group-toggled(item.first); }
+                TouchArea {
+                    scroll-event(event) => { return root.wheel(event); }
+                    clicked => {
+                        root.focus-requested();
+                        root.group-toggled(item.first);
+                    }
+                    pointer-event(event) => {
+                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {
+                            root.group-menu(item.first, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                        }
+                        if !self.pressed || event.kind == PointerEventKind.up {
+                            root.marquee-pointer(event.kind, parent.x + self.mouse-x, line.y + root.scroll + self.mouse-y);
+                        }
+                    }
+                }
+                HorizontalLayout {
+                    y: parent.height - Theme.row-height;
+                    width: parent.width;
+                    height: Theme.row-height;
+                    padding-left: root.side;
+                    padding-right: root.side;
+                    spacing: root.gap;
+                    VerticalLayout {
+                        alignment: center;
+                        Path {
+                            width: 8px;
+                            height: 8px;
+                            viewbox-width: 8;
+                            viewbox-height: 8;
+                            commands: item.collapsed ? Glyph.chevron-right : Glyph.chevron-down;
+                            stroke: Theme.foreground-muted;
+                            stroke-width: 1.2px;
+                            stroke-line-cap: round;
+                            stroke-line-join: round;
+                        }
+                    }
+                    Text {
+                        text: item.header;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                        overflow: elide;
+                        color: Theme.foreground;
+                    }
+                }
+                Rectangle {
+                    y: parent.height - 1px;
+                    height: 1px;
+                    background: Theme.border;
+                }
+            }
         }
     }
 
@@ -840,8 +911,8 @@ export component FileView inherits Rectangle {
 
     // Why the typed name cannot be used, just under the entry.
     if root.rename-error != "" && root.renaming-index >= 0: Rectangle {
-        property <int> line: floor(root.renaming-index / root.per-row);
-        x: list.x + (root.mode == 0 ? Theme.inset + root.side + Theme.icon-size + root.gap : root.grid-left + mod(root.renaming-index, root.per-row) * root.cell-width + 8px);
+        property <int> line: root.line-of(root.renaming-index);
+        x: list.x + (root.mode == 0 ? Theme.inset + root.side + Theme.icon-size + root.gap : root.grid-left + root.column-of(root.renaming-index) * root.cell-width + 8px);
         y: list.y + root.scroll + (self.line + 1) * root.item-height;
         width: error-text.preferred-width + Theme.spacing * 2;
         height: error-text.preferred-height + Theme.spacing;
