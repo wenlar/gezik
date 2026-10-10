@@ -25,7 +25,7 @@ thread_local! {
 /// settings.toml changed (every resolve); the sidebar's SEARCHES follows.
 pub fn set_settings(searches: Vec<SavedSearch>) {
     SAVED.with(|s| *s.borrow_mut() = searches);
-    crate::sidebar::with_current(crate::sidebar::Sidebar::searches_changed);
+    crate::windows::for_each(|_| crate::sidebar::with_current(crate::sidebar::Sidebar::searches_changed));
 }
 
 pub fn saved() -> Vec<SavedSearch> {

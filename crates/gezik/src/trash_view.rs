@@ -126,6 +126,8 @@ pub fn shown(bins: &[PathBuf], denied: bool) -> Option<String> {
 }
 
 /// The trash is no longer shown: the watches go.
+// shortcut: one watch for the process; a window leaving the trash stops it while another
+// window still shows it (that one reloads on F5 or a job's change); per window if users ask.
 pub fn left() {
     if WATCHING.with(|w| w.borrow_mut().take()).is_some() {
         RELOAD.with(slint::Timer::stop);
@@ -154,7 +156,10 @@ fn bin_changed() {
 pub fn changed() {
     RELOAD.with(|timer| {
         timer.start(slint::TimerMode::SingleShot, Duration::from_secs(1), || {
-            crate::panes::with_active(|p| p.nav.refresh_trash());
+            // Every window's active pane that shows it.
+            crate::windows::for_each(|_| {
+                crate::panes::with_active(|p| p.nav.refresh_trash());
+            });
         });
     });
 }

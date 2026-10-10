@@ -72,6 +72,17 @@ impl FrameLimit {
 mod tests {
     use super::*;
 
+    /// Deviation 14: each window's limit is its own, one window's frame never waits for another's.
+    #[test]
+    fn two_windows_do_not_wait_for_each_other() {
+        let t0 = Instant::now();
+        let (mut a, mut b) = (FrameLimit::new(100), FrameLimit::new(100));
+        assert!(a.allow(t0));
+        assert!(b.allow(t0 + Duration::from_millis(1)), "the other window's frame came just before");
+        assert_eq!(b.wait(t0 + Duration::from_millis(1)), Duration::from_millis(10));
+        assert!(a.wait(t0 + Duration::from_millis(10)).is_zero());
+    }
+
     #[test]
     fn spaces_frames_by_the_interval() {
         let t0 = Instant::now();

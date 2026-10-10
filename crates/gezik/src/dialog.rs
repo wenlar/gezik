@@ -142,6 +142,31 @@ impl Dialogs {
         }
     }
 
+    /// Its window closes (spec 9.3): the question on screen (as it shows now) and those waiting
+    /// are asked in `to`, their answers going where they went.
+    pub fn hand_over(&self, to: &Dialogs) {
+        let open = self.0.open.borrow_mut().take();
+        let (job, note) = (self.0.open_job.take(), self.0.open_note.borrow_mut().take());
+        let mut moved = std::mem::take(&mut *self.0.queue.borrow_mut());
+        if let (Some(answer), Some(window)) = (open, self.0.window.upgrade()) {
+            use slint::Model;
+            moved.push_front(Question {
+                title: window.get_dialog_title().into(),
+                message: window.get_dialog_message().into(),
+                buttons: window.get_dialog_buttons().iter().map(String::from).collect(),
+                escape: usize::try_from(window.get_dialog_escape()).unwrap_or(0),
+                input: window.get_dialog_has_input().then(|| window.get_dialog_input().into()),
+                secret: window.get_dialog_input_secret(),
+                job: job.map(|(job, _)| job),
+                note,
+                answer,
+            });
+        }
+        for question in moved {
+            to.push(question);
+        }
+    }
+
     fn push(&self, question: Question) {
         self.0.queue.borrow_mut().push_back(question);
         if self.0.open.borrow().is_none() {

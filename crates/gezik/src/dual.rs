@@ -125,11 +125,9 @@ pub fn open(start: Option<usize>) {
     connect(&right);
     panes::install(right.clone());
     let (store, restore) = with_dual(|d| (d.borrow().store.clone(), d.borrow().restore));
-    if let Some(store) = store {
-        right.nav.keep_session(session, restore, move |session| {
-            let session = session.clone();
-            store.update_state(move |state| state.right_session = session);
-        });
+    // Every window's tabs go to state.toml together (deviation 5).
+    if store.is_some() {
+        right.nav.keep_session(session, restore, |_| crate::windows::save_sessions_soon());
     }
     right.nav.install();
     window.set_dual(true);
@@ -158,14 +156,20 @@ pub fn close() {
 /// media requests. Its tabs.
 fn release(id: PaneId) -> Option<Session> {
     let pane = panes::with_id(id, Pane::clone)?;
-    pane.search.leaving();
-    pane.folder_sizes.shown(&Location::Drives);
-    pane.nav.unwatch();
-    pane.view.clear();
+    stop(&pane);
     let session = pane.nav.session();
     drop(pane);
     panes::remove(id);
     Some(session)
+}
+
+/// Stops what `pane` runs (its search, folder sizes, watcher and media requests): it closes,
+/// or its window does.
+pub fn stop(pane: &Pane) {
+    pane.search.leaving();
+    pane.folder_sizes.shown(&Location::Drives);
+    pane.nav.unwatch();
+    pane.view.clear();
 }
 
 /// A pane like `like` (its settings, media, folder view memory, dialogs, history) showing
@@ -298,24 +302,18 @@ pub fn cramped() {
 }
 
 /// Writes whether the second pane is open and which pane is active, and the right pane's
-/// tabs while it is closed; with `[session] restore` off, none of them. Also at quit: a pane
-/// switch writes nothing by itself.
+/// tabs while it is closed; with `[session] restore` off, none of them (every window's, once
+/// the event at hand is done: deviation 5). A pane switch writes nothing by itself.
 pub fn save() {
-    let (store, restore, right, sync) = with_dual(|d| {
-        let d = d.borrow();
-        (d.store.clone(), d.restore, d.right.clone(), d.sync.is_some())
-    });
-    let Some(store) = store else { return };
+    crate::windows::save_sessions_soon();
+}
+
+/// What state.toml keeps of the current window's panes (deviation 5): whether the second pane
+/// is open, the active pane, sync browsing and the right pane's tabs (kept while it is closed).
+pub fn session() -> (bool, usize, bool, Session) {
     let open = is_open();
-    let (dual, active) = if restore { (open, panes::active_index()) } else { (false, 0) };
-    store.update_state(move |state| {
-        state.dual = dual;
-        state.active_pane = active;
-        state.sync = dual && sync;
-        if !open {
-            state.right_session = right.filter(|_| restore).unwrap_or_default();
-        }
-    });
+    let right = if open { panes::at(1).map(|p| p.nav.session()) } else { with_dual(|d| d.borrow().right.clone()) };
+    (open, panes::active_index(), open && is_synced(), right.unwrap_or_default())
 }
 
 /// The other pane, by place, while there are two.

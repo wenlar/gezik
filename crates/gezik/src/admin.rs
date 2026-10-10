@@ -5,6 +5,7 @@
 
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicIsize, Ordering};
 
 use gezik_core::attrs::{HIDDEN, LOCKED};
 use gezik_core::elevated::{self, LaunchError, Op, System};
@@ -17,16 +18,22 @@ pub const UNDO_ADMIN: &str = "Undoing this needs administrator rights.";
 pub const REDO_ADMIN: &str = "Redoing this needs administrator rights.";
 const EXACTLY: &str = "Gezik asks the system for administrator rights to do exactly this:";
 
-/// The system's prompt and helper, for the engine (`Engine::set_elevator`).
-pub struct SystemElevator {
-    /// The window the Windows prompt belongs to.
-    owner: isize,
+/// The window the Windows prompt belongs to: the most recently focused one (deviation 13).
+static OWNER: AtomicIsize = AtomicIsize::new(0);
+
+/// A window got the focus: the prompt is its from now on.
+pub fn focused(window: &slint::Window) {
+    OWNER.store(gezik_platform::elevate::owner_of(&window.window_handle()), Ordering::Relaxed);
 }
+
+/// The system's prompt and helper, for the engine (`Engine::set_elevator`).
+pub struct SystemElevator;
 
 impl SystemElevator {
     pub fn new(window: &crate::AppWindow) -> SystemElevator {
         use slint::ComponentHandle;
-        SystemElevator { owner: gezik_platform::elevate::owner_of(&window.window().window_handle()) }
+        focused(window.window());
+        SystemElevator
     }
 }
 
@@ -34,7 +41,7 @@ impl Elevator for SystemElevator {
     fn run(&self, ops: &[Op], prompt: &str, reply: &mut dyn FnMut(&str)) -> Result<(), LaunchError> {
         let exe =
             gezik_platform::system::exe().map_err(|err| LaunchError::Failed(gezik_platform::fs::describe(&err)))?;
-        gezik_platform::elevate::run(&exe, ops, prompt, self.owner, reply)
+        gezik_platform::elevate::run(&exe, ops, prompt, OWNER.load(Ordering::Relaxed), reply)
     }
 }
 

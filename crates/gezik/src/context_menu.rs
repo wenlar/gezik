@@ -1584,7 +1584,10 @@ impl Menus {
                 let can_rename =
                     matches!(subject, Some(Subject::Row(_))) && !crate::panes::active_view().shows_drives();
                 crate::drag::with_current(|drags| drags.menu_shown());
-                let outcome = gezik_platform::show_shell_menu(&handle, &target, &items, &shell_subs, at, can_rename);
+                // The menu's own loop handles other windows' events: this one is current after it.
+                let outcome = crate::windows::enter(crate::windows::current(), || {
+                    gezik_platform::show_shell_menu(&handle, &target, &items, &shell_subs, at, can_rename)
+                });
                 release_stale_modifiers(&window);
                 after_native_menu(&window);
                 drop(claim);

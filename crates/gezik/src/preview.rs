@@ -519,6 +519,12 @@ impl Preview {
         let info = self.0.info.borrow().clone();
         // Its window's events are no events of a Gezik window: they act in this one.
         let id = crate::windows::current();
+        // One quick look in the process (deviation 15): another window's closes.
+        for (other, preview) in CURRENT.with(crate::windows::Slot::all) {
+            if other != id {
+                crate::windows::enter(other, || preview.close_quick_look());
+            }
+        }
         let opened = crate::quick_look::QuickLook::open(
             &window,
             info,

@@ -199,9 +199,22 @@ mod backend {
 
     static BACKEND: Mutex<Option<Arc<dyn Backend>>> = Mutex::new(None);
 
-    /// The backend of Gezik's window, once it has one.
+    /// The backend of Gezik's most recently focused window, once it has one (the clipboard).
     pub(crate) fn backend() -> Option<Arc<dyn Backend>> {
         BACKEND.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
+    }
+
+    /// A window with `backend` got the focus.
+    pub(crate) fn set_backend(backend: &Arc<dyn Backend>) {
+        *BACKEND.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(backend.clone());
+    }
+
+    /// The window with `backend` closes: the clipboard waits for the next focused window's.
+    pub(crate) fn forget_backend(backend: &Arc<dyn Backend>) {
+        let mut held = BACKEND.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if held.as_ref().is_some_and(|held| Arc::ptr_eq(held, backend)) {
+            *held = None;
+        }
     }
 
     /// Starts the backend for `window`'s window system.
@@ -215,7 +228,7 @@ mod backend {
             RawWindowHandle::Xcb(h) => super::x11::X11::start(h.window.get(), wake).map(|b| Arc::new(b) as _),
             RawWindowHandle::Wayland(h) => match window.display_handle().ok().map(|d| d.as_raw()) {
                 // Safety: winit's display and surface live as long as its window, which
-                // outlives Gezik's use of them (the app quits when the window closes).
+                // outlives Gezik's use of them (a closing window's drop target goes first).
                 Some(RawDisplayHandle::Wayland(d)) => unsafe {
                     super::wayland::Wayland::start(d.display.as_ptr(), h.surface.as_ptr(), wake)
                         .map(|b| Arc::new(b) as _)

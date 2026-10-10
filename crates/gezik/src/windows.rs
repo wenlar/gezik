@@ -12,10 +12,10 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-use gezik_config::settings::State;
+use gezik_config::settings::{State, WindowSession};
 use gezik_config::shortcuts::{Key, Platform};
 use gezik_config::store::{ConfigFiles, ConfigStore, Loaded};
-use gezik_core::nav::Session;
+use gezik_core::nav::{Location, Session};
 use gezik_core::view_memory::ViewMemory;
 use slint::ComponentHandle;
 use slint::winit_030::winit::keyboard::ModifiersState;
@@ -44,11 +44,16 @@ thread_local! {
     static NEXT: Cell<u32> = const { Cell::new(0) };
     /// The settings last resolved, for a window opened later (deviation 16).
     static LOADED: RefCell<Option<Rc<Loaded>>> = const { RefCell::new(None) };
+    /// What the windows share, for a window opened later.
+    static PROCESS: RefCell<Option<Rc<Process>>> = const { RefCell::new(None) };
+    /// A window is being built: its tabs are not written until it is whole.
+    static BUILDING: Cell<bool> = const { Cell::new(false) };
+    /// The tabs are written once the event at hand is done.
+    static SAVING: Cell<bool> = const { Cell::new(false) };
 }
 
 /// The parts of a window that are kept by window: each slot forgets a closed window's
 /// (deviation 2; a test counts the slots against this list).
-#[cfg_attr(not(test), allow(dead_code, reason = "closing a window comes with Task 3"))]
 const FORGETS: &[fn(WindowId)] = &[
     |id| crate::archives::CURRENT.with(|s| s.forget(id)),
     |id| crate::batch_rename::CURRENT.with(|s| s.forget(id)),
@@ -68,6 +73,7 @@ const FORGETS: &[fn(WindowId)] = &[
     |id| crate::tab_sets::CURRENT.with(|s| s.forget(id)),
     |id| crate::tab_tools::CURRENT.with(|s| s.forget(id)),
     |id| crate::window_state::PENDING.with(|s| s.forget(id)),
+    |id| crate::window_state::RECT.with(|s| s.forget(id)),
 ];
 
 /// A part each window has of its own: a value per open window.
@@ -149,7 +155,6 @@ pub fn install(window: AppWindow) -> WindowId {
 }
 
 /// Takes window `id` out of the register and every slot: nothing of it is kept here.
-#[cfg_attr(not(test), allow(dead_code, reason = "closing a window comes with Task 3"))]
 pub fn forget(id: WindowId) {
     let gone = WINDOWS.with(|w| {
         let mut list = w.borrow_mut();
@@ -177,6 +182,9 @@ impl Drop for Release {
 /// Lets go of every window at the end of main, as main's own handle went before 10g (their
 /// drop is not left to the thread's end; the slots stay as they did).
 pub fn release_all() {
+    // The process's parts first, as main's own went before its window did.
+    let process = PROCESS.with(|p| p.borrow_mut().take());
+    drop(process);
     let gone = WINDOWS.with(|w| std::mem::take(&mut *w.borrow_mut()));
     ACTING.with(|a| a.set(None));
     drop(gone);
@@ -295,6 +303,14 @@ pub struct Process {
     pub save: Rc<dyn Fn()>,
 }
 
+pub fn set_process(process: Rc<Process>) {
+    PROCESS.with(|p| *p.borrow_mut() = Some(process));
+}
+
+fn process() -> Option<Rc<Process>> {
+    PROCESS.with(|p| p.borrow().clone())
+}
+
 /// What a window opens with.
 pub struct Opening {
     /// Its left pane's tabs and the start folder.
@@ -305,15 +321,204 @@ pub struct Opening {
     pub dual: bool,
     pub active_pane: usize,
     pub sync: bool,
-    /// How far it is moved off the saved position (spec 5.3).
+    /// How far it is moved off the saved position (spec 5.3; a new window: 24 px).
     pub offset: i32,
+    /// state.toml as this window reads it: its size and place, sidebar and preview.
+    pub state: Rc<State>,
+}
+
+impl Opening {
+    /// An extra window of last time (`[[session.window]]`), new tabs opening at `start`.
+    fn saved(saved: &WindowSession, state: &Rc<State>, start: &Location) -> Opening {
+        let session = if saved.session.is_empty() { Session::single(start.clone()) } else { saved.session.clone() };
+        Opening {
+            plan: StartPlan { session, select: Vec::new(), start: start.clone(), warnings: Vec::new() },
+            right: saved.right_session.clone(),
+            dual: saved.dual,
+            active_pane: saved.active_pane,
+            sync: saved.sync,
+            offset: 0,
+            state: Rc::new(State { window: saved.window, ..State::clone(state) }),
+        }
+    }
 }
 
 /// Builds window `id`'s parts and callbacks (all but showing it): its panes, sidebar, preview,
-/// layers, menus and drags, and the router of its events.
-pub fn open(id: WindowId, opening: Opening, process: &Process) {
+/// layers, menus and drags, and the router of its events. Every window's tabs are written
+/// once it is whole.
+pub fn open(id: WindowId, opening: Opening) {
+    let (Some(window), Some(process)) = (window_of(id), process()) else { return };
+    let before = BUILDING.with(|b| b.replace(true));
+    enter(id, || build(id, &window, opening, &process));
+    BUILDING.with(|b| b.set(before));
+    save_sessions();
+}
+
+/// A new window, put in the register in front and built (not shown yet); `None` if Slint
+/// cannot make one.
+fn open_new(opening: Opening) -> Option<WindowId> {
+    let window = match AppWindow::new() {
+        Ok(window) => window,
+        Err(err) => {
+            eprintln!("gezik: cannot open a window: {err}");
+            return None;
+        }
+    };
+    // Its theme and settings first, as the first window has them before it is built.
+    if let Some(loaded) = loaded() {
+        crate::apply_to_window(&window, &loaded);
+    }
+    let id = install(window);
+    open(id, opening);
+    Some(id)
+}
+
+/// The extra windows of last time (deviation 5), built behind `first` (the most recently
+/// focused one, `[session]`'s); the last one first, so they keep their order.
+/// Call before `first` is built: its build writes every window's tabs once.
+pub fn open_saved(first: WindowId, state: &Rc<State>, start: &Location) {
+    let before = BUILDING.with(|b| b.replace(true));
+    for saved in state.windows.iter().rev() {
+        open_new(Opening::saved(saved, state, start));
+    }
+    BUILDING.with(|b| b.set(before));
+    focused(first);
+}
+
+/// Shows every window, the most recently focused one last (on top).
+pub fn show_all() -> Result<(), slint::PlatformError> {
+    let list: Vec<_> = WINDOWS.with(|w| w.borrow().iter().map(|(id, w)| (*id, w.clone_strong())).collect());
+    for (id, window) in list.into_iter().rev() {
+        enter(id, || window.show())?;
+    }
+    Ok(())
+}
+
+/// `new-window` (spec 9.3): one pane at the current window's folder (This PC, a search, a
+/// flat view or the trash: the start folder), its size, its place moved by 24 px, in front.
+pub fn open_beside() {
+    let Some(process) = process() else { return };
+    let nav = panes::active_nav();
+    let start = nav.start();
+    let location = match nav.active_location() {
+        Location::Path(dir) => Location::Path(dir),
+        _ => start.clone(),
+    };
+    let mut state = State::clone(&process.state);
+    with_window(current(), |window| {
+        window_state::capture_into(window, &mut state);
+        state.preview_open = preview::with_current(preview::Preview::is_pane_open).unwrap_or(false);
+        state.preview_width = Some(window.get_preview_width().round().clamp(200.0, 600.0) as u32);
+    });
+    let opening = Opening {
+        plan: StartPlan { session: Session::single(location), select: Vec::new(), start, warnings: Vec::new() },
+        right: Session::default(),
+        dual: false,
+        active_pane: 0,
+        sync: false,
+        offset: 24,
+        state: Rc::new(state),
+    };
+    // Opened once the key or menu that asked is done with (no callback of the window that
+    // asked runs while another window is built).
+    slint::Timer::single_shot(std::time::Duration::ZERO, move || {
+        if let Some(id) = open_new(opening)
+            && let Some(Err(err)) = with_window(id, AppWindow::show)
+        {
+            eprintln!("gezik: cannot show the window: {err}");
+        }
+    });
+}
+
+/// Writes every window's tabs and panes to state.toml (deviation 5): the most recently focused
+/// one's as `[session]`, the others' as `[[session.window]]` with their size and place. The
+/// one writer of them (a tab change, a pane change, a window opened or closed, quitting); a
+/// second Gezik (spec 5.3) writes none.
+pub fn save_sessions() {
+    if BUILDING.with(Cell::get) {
+        return;
+    }
+    let Some(process) = process() else { return };
+    let Some(store) = process.config.clone().filter(|_| !process.secondary) else { return };
+    let restore = loaded().is_none_or(|l| l.settings.session.restore);
+    let mut list = Vec::new();
+    for_each(|window| {
+        // With `[session] restore` off, no tabs of any window are kept.
+        if restore {
+            let (dual, active_pane, sync, right_session) = dual::session();
+            let session = panes::at(0).map(|p| p.nav.session()).unwrap_or_default();
+            let window = window_state::capture(window);
+            list.push(WindowSession { session, right_session, dual, active_pane, sync, window });
+        }
+    });
+    store.update_state(move |state| sessions_into(list, state));
+}
+
+/// [`save_sessions`] once the event at hand is done (a tab or pane change): it reads every
+/// window's panes, which the code that changed one may still hold; a burst writes once.
+pub fn save_sessions_soon() {
+    if SAVING.with(|s| s.replace(true)) {
+        return;
+    }
+    slint::Timer::single_shot(std::time::Duration::ZERO, || {
+        SAVING.with(|s| s.set(false));
+        save_sessions();
+    });
+}
+
+/// `list` (the windows, the most recently focused first) into state.toml's `[session]`.
+fn sessions_into(list: Vec<WindowSession>, state: &mut State) {
+    let mut list = list.into_iter();
+    let first = list.next().unwrap_or_default();
+    state.session = first.session;
+    state.right_session = first.right_session;
+    state.dual = first.dual;
+    state.active_pane = first.active_pane;
+    state.sync = first.sync;
+    state.windows = list.collect();
+}
+
+/// Window `id`'s close button or last tab (spec 9.3): with other windows open only this one
+/// closes, with no question (its jobs go on); the last one follows the tray and the running
+/// jobs as one window did.
+fn close_requested(id: WindowId) -> slint::CloseRequestResponse {
+    with_window(id, |_| {
+        if focus_order().len() > 1 {
+            close_later(id);
+            return slint::CloseRequestResponse::HideWindow;
+        }
+        process().map_or(slint::CloseRequestResponse::HideWindow, |process| (process.close_requested)())
+    })
+    .unwrap_or(slint::CloseRequestResponse::HideWindow)
+}
+
+/// Closes window `id` once the event at hand is done (its close button, its last tab) while
+/// other windows stay open (spec 9.3).
+fn close_later(id: WindowId) {
+    slint::Timer::single_shot(std::time::Duration::ZERO, move || close(id));
+}
+
+/// Closes window `id`: its jobs go on (the engine is the process's), a question or conflict
+/// list waiting in it moves to the most recently focused window, what its panes run stops,
+/// its drop target goes before its native window, and no strong handle of it is left (its
+/// frame buffer goes with it). The others' tabs are written.
+pub fn close(id: WindowId) {
     let Some(window) = window_of(id) else { return };
-    enter(id, || build(id, &window, opening, process));
+    let to = focus_order().into_iter().find(|other| *other != id);
+    enter(id, || {
+        if let Some(to) = to {
+            crate::operations::with_current(|ops| ops.hand_over(id, to));
+        }
+        preview::with_current(preview::Preview::close_quick_look);
+        for pane in panes::all() {
+            dual::stop(&pane);
+        }
+        drag::with_current(drag::Drags::detach);
+    });
+    let _ = window.hide();
+    drop(window);
+    forget(id);
+    save_sessions();
 }
 
 #[allow(clippy::too_many_lines, reason = "main's window set-up, moved here as it was")]
@@ -321,7 +526,7 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
     let window = window.clone_strong();
     let Some(loaded) = loaded() else { return };
     let settings = &loaded.settings;
-    let state = process.state.clone();
+    let state = opening.state.clone();
     let config = process.config.clone();
     let secondary = process.secondary;
     window.on_system_scheme_changed({
@@ -367,11 +572,9 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
     let nav = navigation::Navigator::new(pane_id, window.as_weak(), view.clone(), session, select, start);
     // The open tabs go to state.toml as they change (spec 5.1); its own thread writes them, so
     // a crash or a kill leaves the last tabs too.
-    if !secondary && let Some(store) = config.clone() {
-        nav.keep_session(state.session.clone(), settings.session.restore, move |session| {
-            let session = session.clone();
-            store.update_state(move |state| state.session = session);
-        });
+    // Every window's tabs go to state.toml together (deviation 5).
+    if !secondary && config.is_some() {
+        nav.keep_session(state.session.clone(), settings.session.restore, |_| save_sessions_soon());
     }
     let path_box =
         path_box::PathBox::new(pane_id, window.as_weak(), nav.clone(), config.clone(), state.history.clone());
@@ -499,10 +702,7 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
             move || crate::save_on_session_end(weak, save, 0)
         });
     }
-    window.window().on_close_requested({
-        let close_requested = process.close_requested.clone();
-        move || with_window(id, |_| close_requested()).unwrap_or(slint::CloseRequestResponse::HideWindow)
-    });
+    window.window().on_close_requested(move || close_requested(id));
     // The sidebar is the window's: it leads the active pane (spec 10 §4.10).
     window.on_sidebar_clicked({
         let sidebar = sidebar.clone();
@@ -1014,6 +1214,10 @@ fn route(
     slint_window: &slint::Window,
     event: &winit::event::WindowEvent,
 ) -> EventResult {
+    // A late event of a closed window acts on nothing (its parts are gone).
+    if !WINDOWS.with(|w| w.borrow().iter().any(|(of, _)| *of == id)) {
+        return EventResult::Propagate;
+    }
     acting(id);
     if let winit::event::WindowEvent::Focused(focused) = event {
         // macOS: winit's value can be wrong (winit #4371); Slint reads the window too.
@@ -1024,6 +1228,9 @@ fn route(
         };
         if focused {
             self::focused(id);
+            // The administrator prompt and (Linux) the clipboard are the focused window's.
+            crate::admin::focused(slint_window);
+            drag::with_current(drag::Drags::focused);
         }
     }
     if let winit::event::WindowEvent::ModifiersChanged(m) = event {
@@ -1232,6 +1439,117 @@ pub(crate) mod tests {
         }
         let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         assert_eq!(count(&src), FORGETS.len());
+    }
+
+    /// Two whole windows (as main and `new-window` open them) over a process with no config
+    /// folder; `finished` counts the last window's close requests.
+    fn two_windows(
+        finished: Rc<Cell<u32>>,
+    ) -> ((WindowId, slint::Weak<AppWindow>), (WindowId, slint::Weak<AppWindow>)) {
+        let (first, first_weak) = window();
+        set_loaded(gezik_config::store::resolve(&Default::default(), true));
+        let first_window = first_weak.upgrade().expect("open");
+        let ops = Operations::new(
+            &first_window,
+            gezik_ops::Settings { threads: Default::default(), pending_deletes: None },
+            Default::default(),
+            false,
+            None,
+            Default::default(),
+        );
+        drop(first_window);
+        let state = Rc::new(State::default());
+        let process = Rc::new(Process {
+            config: None,
+            state: state.clone(),
+            memory: Rc::default(),
+            media: crate::media::Media::new(),
+            ops,
+            files: Arc::default(),
+            secondary: false,
+            close_requested: Rc::new(move || {
+                finished.set(finished.get() + 1);
+                slint::CloseRequestResponse::HideWindow
+            }),
+            save: Rc::new(|| {}),
+        });
+        set_process(process);
+        let home = Location::Path(std::env::temp_dir());
+        let opening = |state: &Rc<State>| Opening::saved(&WindowSession::default(), state, &home);
+        open(first, opening(&state));
+        let second = open_new(opening(&state)).expect("a second window");
+        let second_weak = with_window(second, AppWindow::as_weak).expect("open");
+        ((first, first_weak), (second, second_weak))
+    }
+
+    /// Spec 9.3 and review focus 1: a closed window keeps nothing (its frame buffer goes with
+    /// its last strong handle), a late event of it acts on nothing, and the last window's
+    /// close is the one window's of before.
+    #[test]
+    fn a_closed_window_lets_everything_of_it_go() {
+        let finished = Rc::new(Cell::new(0));
+        let ((first, first_weak), (second, second_weak)) = two_windows(finished.clone());
+        assert_eq!(focus_order(), [second, first], "the new window is in front");
+        assert_eq!(crate::panes::PANES.with(Slot::len), 2);
+        assert_eq!(enter(second, crate::panes::count), 1, "one pane");
+        assert!(matches!(close_requested(second), slint::CloseRequestResponse::HideWindow));
+        assert_eq!(finished.get(), 0, "another window is open: only this one closes");
+        // A question waiting in it is asked in the other window, its answer going where it went.
+        let answered = Rc::new(Cell::new(None));
+        let ops = process().expect("set up").ops.clone();
+        enter(second, || {
+            let answered = answered.clone();
+            ops.dialogs().ask("Replace?", "a.txt", &["Replace", "Skip"], move |choice| answered.set(choice));
+            ops.dialogs().ask("Next", "b.txt", &["OK"], |_| {});
+        });
+        close(second);
+        let first_window = first_weak.upgrade().expect("open");
+        assert!(first_window.get_dialog_open());
+        assert_eq!(first_window.get_dialog_title().as_str(), "Replace?");
+        first_window.invoke_dialog_chosen(1);
+        assert_eq!(answered.get(), Some(1));
+        assert_eq!(first_window.get_dialog_title().as_str(), "Next", "the waiting one follows");
+        drop(first_window);
+        assert!(second_weak.upgrade().is_none(), "no strong handle is left: its frame buffer goes");
+        assert!(with_window(second, |_| ()).is_none());
+        assert_eq!(focus_order(), [first]);
+        // A late event of the closed window: nothing of it, nothing of the other one either.
+        let router = Router {
+            minimized: Cell::new(false),
+            pointer: Cell::new((0.0, 0.0)),
+            modifiers: Cell::new(ModifiersState::empty()),
+            frames: RefCell::new(FrameLimit::new(0)),
+        };
+        let first_window = first_weak.upgrade().expect("open");
+        route(second, &second_weak, &router, first_window.window(), &winit::event::WindowEvent::Focused(true));
+        assert_eq!(focus_order(), [first], "the closed window does not come back in front");
+        assert_eq!(current(), first, "nor is it the window events act in");
+        drop(first_window);
+        // The last window: as one window closed before 10g (the tray, the jobs' question, quitting).
+        acting(first);
+        close_requested(first);
+        assert_eq!(finished.get(), 1);
+        release_all();
+        assert!(first_weak.upgrade().is_none());
+    }
+
+    #[test]
+    fn the_windows_tabs_go_to_state_in_focus_order() {
+        let at = |x| {
+            Some(gezik_config::settings::WindowState { width: 800, height: 600, x: Some(x), y: None, maximized: false })
+        };
+        let one = |path: &str| WindowSession {
+            session: Session::single(Location::Path(path.into())),
+            window: at(1),
+            ..WindowSession::default()
+        };
+        let mut state = State { windows: vec![one("old")], ..State::default() };
+        sessions_into(vec![one("a"), one("b"), one("c")], &mut state);
+        assert_eq!(state.session, one("a").session, "the most recently focused one is [session]");
+        assert_eq!(state.windows, [one("b"), one("c")]);
+        assert_eq!(state.window, None, "its size and place are written at quit");
+        sessions_into(Vec::new(), &mut state);
+        assert!(state.session.is_empty() && state.windows.is_empty(), "restore off: no tabs of any window");
     }
 
     /// Spec 9.3 (decision 46): a settings change shows alike in every window.

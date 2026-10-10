@@ -112,6 +112,8 @@ fn run_saved_search(index: i32, new_tab: bool) {
 fn apply_config(files: &ConfigFiles) -> Loaded {
     let dark = windows::with_focused(AppWindow::get_system_dark).unwrap_or_default();
     let loaded = store::resolve(files, dark);
+    // First: a pane told `[session] restore` below writes the tabs as it now says.
+    windows::set_loaded(loaded.clone());
     let new = not_printed_yet(&mut PRINTED.lock().unwrap_or_else(std::sync::PoisonError::into_inner), &loaded.warnings);
     for warning in new {
         eprintln!("gezik: {warning}");
@@ -146,7 +148,6 @@ fn apply_config(files: &ConfigFiles) -> Loaded {
     tab_sets::set_settings(loaded.settings.tab_sets.clone());
     saved_searches::set_settings(loaded.settings.searches.clone());
     terminal::set_settings(loaded.settings.terminal.command.clone());
-    windows::set_loaded(loaded.clone());
     // Every window shows them alike (spec 9.3, decision 46).
     windows::for_each(|window| {
         dual::set_restore(loaded.settings.session.restore);
@@ -1068,7 +1069,8 @@ fn main() -> Result<(), slint::PlatformError> {
                         state.column_width = (column != COLUMN_WIDTH).then_some(column);
                         state.operations_collapsed = ops.collapsed();
                     });
-                    dual::save();
+                    // Every window's tabs and panes, now (deviation 5).
+                    windows::save_sessions();
                     // Quitting: what the other parts changed lately is written too (a saved
                     // filter, a pin or a default just sent to settings.toml as well).
                     store.flush_state();
@@ -1149,7 +1151,7 @@ fn main() -> Result<(), slint::PlatformError> {
             slint::CloseRequestResponse::HideWindow
         })
     };
-    let process = windows::Process {
+    let process = Rc::new(windows::Process {
         config: config.clone(),
         state: Rc::new(saved_state),
         memory,
@@ -1159,7 +1161,12 @@ fn main() -> Result<(), slint::PlatformError> {
         secondary,
         close_requested,
         save: save_and_quit,
-    };
+    });
+    windows::set_process(process.clone());
+    // The other windows of last time (deviation 5), behind the first.
+    if !secondary && initial_settings.session.restore {
+        windows::open_saved(first, &process.state, &plan.start);
+    }
     let opening = windows::Opening {
         plan,
         right: process.state.right_session.clone(),
@@ -1167,8 +1174,9 @@ fn main() -> Result<(), slint::PlatformError> {
         active_pane: process.state.active_pane,
         sync: process.state.sync,
         offset: if secondary { 32 } else { 0 },
+        state: process.state.clone(),
     };
-    windows::open(first, opening, &process);
+    windows::open(first, opening);
     // 9b9: a Dock click shows the window hidden in the menu bar (deviation 8).
     #[cfg(target_os = "macos")]
     if !gezik_platform::reopen::install(Box::new(resident::reveal)) {
@@ -1213,7 +1221,7 @@ fn main() -> Result<(), slint::PlatformError> {
     resident::start();
     // Deviation 13: hiding the last window must not end the event loop.
     if !hidden {
-        window.show()?;
+        windows::show_all()?;
     }
     // The register holds the window from here on.
     drop(window);

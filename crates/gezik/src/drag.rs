@@ -1093,13 +1093,17 @@ impl Drags {
         self.0.grab_lost.set(grab_lost);
         let (sources, right) = (d.sources.clone(), d.right);
         *self.0.phase.borrow_mut() = Phase::Outside(d.clone());
-        let on_end: OnEnd = Box::new(|end| {
-            with_current(|drags| drags.outside_ended(end));
+        // The system ends it later (macOS, Wayland), maybe while another window acts.
+        let id = crate::windows::current();
+        let on_end: OnEnd = Box::new(move |end| {
+            crate::windows::with_window(id, |_| with_current(|drags| drags.outside_ended(end)));
         });
-        let result = match &*self.0.attached.borrow() {
+        // Windows' drag loop handles other windows' events (a drop on another Gezik window
+        // runs in it): this one is current again after it.
+        let result = crate::windows::enter(id, || match &*self.0.attached.borrow() {
             Some(attached) => attached.drag_out(&sources, right, on_end),
             None => Err("no drop target".into()),
-        };
+        });
         match result {
             // Its last position is outside the window: the next move (inside) places it.
             Ok(Handoff::Ended(DragEnd::Returned)) => self.resume(d, false),
@@ -1196,9 +1200,9 @@ impl Drags {
             Duration::from_millis(20),
             crate::windows::bind(move || {
                 let Some(window) = drags.0.window.upgrade() else { return };
-                let handler: Rc<dyn DropHandler> = Rc::new(Outside(drags.clone()));
                 // Called on the drop target's thread: the window is taken here.
                 let id = crate::windows::current();
+                let handler: Rc<dyn DropHandler> = Rc::new(Outside(drags.clone(), id));
                 let wake = std::sync::Arc::new(move || {
                     let _ = slint::invoke_from_event_loop(move || {
                         crate::windows::with_window(id, |_| with_current(|drags| drags.poll()));
@@ -1211,6 +1215,22 @@ impl Drags {
                 }
             }),
         );
+    }
+
+    /// The window closes: its drop target goes before its native window does (deviation 13),
+    /// and with it the handler that holds these drags.
+    pub fn detach(&self) {
+        let outside = self.0.outside.borrow_mut().take();
+        drop(outside);
+        let attached = self.0.attached.borrow_mut().take();
+        drop(attached);
+    }
+
+    /// The window got the focus: the clipboard is its window system connection's (Linux).
+    pub fn focused(&self) {
+        if let Some(attached) = &*self.0.attached.borrow() {
+            attached.focused();
+        }
     }
 
     /// Events from the drop target's thread (Linux).
@@ -1305,19 +1325,21 @@ fn index(i: usize) -> i32 {
 }
 
 /// The window's drop target, for files dragged in from other programs.
-struct Outside(Drags);
+/// The drop target of a window: what it is told runs in that window (a drop from another
+/// Gezik window comes inside that window's drag loop).
+struct Outside(Drags, crate::windows::WindowId);
 
 impl DropHandler for Outside {
     fn over(&self, offer: &Offer, x: f64, y: f64, keys: Keys) -> Answer {
-        self.0.offer_over(offer, x, y, keys)
+        crate::windows::enter(self.1, || self.0.offer_over(offer, x, y, keys))
     }
 
     fn leave(&self) {
-        self.0.offer_left();
+        crate::windows::enter(self.1, || self.0.offer_left());
     }
 
     fn dropped(&self, offer: &Offer, x: f64, y: f64, keys: Keys) -> Option<Effect> {
-        self.0.offer_dropped(offer, x, y, keys)
+        crate::windows::enter(self.1, || self.0.offer_dropped(offer, x, y, keys))
     }
 }
 

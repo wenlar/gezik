@@ -463,11 +463,13 @@ pub fn when_shown(f: impl FnOnce() + 'static) {
 /// Shows the window (hidden or minimized) and brings it to the front.
 pub fn reveal() {
     let Some(window) = window() else { return };
-    let _ = window.show();
-    let waiting = with(|s| {
-        s.shown = true;
-        std::mem::take(&mut s.when_shown)
-    });
+    let (first, waiting) = with(|s| (!std::mem::replace(&mut s.shown, true), std::mem::take(&mut s.when_shown)));
+    // A --background start shows every window of last time the first time.
+    if first {
+        let _ = crate::windows::show_all();
+    } else {
+        let _ = window.show();
+    }
     for f in waiting {
         f();
     }

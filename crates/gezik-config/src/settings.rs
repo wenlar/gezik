@@ -1526,6 +1526,18 @@ pub struct WindowState {
 /// Connect to Server's addresses kept in state.toml `[servers] recent` (spec 9 §7.4); never a password.
 pub const SERVERS_MAX: usize = 10;
 
+/// A window besides the most recently focused one (`[[session.window]]`, spec 10 §9.7): its
+/// tabs and panes as `[session]` keeps the first one's, and where it was.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WindowSession {
+    pub session: Session,
+    pub right_session: Session,
+    pub dual: bool,
+    pub active_pane: usize,
+    pub sync: bool,
+    pub window: Option<WindowState>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct State {
     pub window: Option<WindowState>,
@@ -1571,6 +1583,56 @@ pub struct State {
     /// `f3-moved-at`) while it may show once more.
     pub f3_moved: bool,
     pub f3_moved_at: Option<u64>,
+    /// The other open windows, the most recently focused first (`[[session.window]]`).
+    pub windows: Vec<WindowSession>,
+}
+
+/// A window's size and place (`[window]`, or a `[[session.window]]` entry's keys).
+fn window_state(window: &toml::Table) -> Option<WindowState> {
+    let int = |key: &str| window.get(key).and_then(|v| v.as_integer());
+    let coord = |key: &str| int(key).and_then(|v| i32::try_from(v).ok());
+    Some(WindowState {
+        width: u32::try_from(int("width")?).ok().filter(|w| *w >= 200)?,
+        height: u32::try_from(int("height")?).ok().filter(|h| *h >= 150)?,
+        x: coord("x"),
+        y: coord("y"),
+        maximized: window.get("maximized").and_then(|v| v.as_bool()).unwrap_or(false),
+    })
+}
+
+/// The panes of `[session]`, or of a `[[session.window]]` entry (with its place).
+fn panes_state(value: Option<&toml::Value>) -> WindowSession {
+    let flag = |key: &str| value.and_then(|v| v.as_table()).and_then(|t| t.get(key));
+    WindowSession {
+        session: session_state(value, "tabs", "active"),
+        right_session: session_state(value, "right-tabs", "right-active"),
+        dual: flag("dual").and_then(|v| v.as_bool()).unwrap_or(false),
+        active_pane: flag("active-pane").and_then(|v| v.as_integer()).map_or(0, |n| usize::from(n == 1)),
+        sync: flag("sync").and_then(|v| v.as_bool()).unwrap_or(false),
+        window: value.and_then(|v| v.as_table()).and_then(window_state),
+    }
+}
+
+/// Writes `panes`' tabs and panes into `table` (`[session]` or a `[[session.window]]` entry).
+fn panes_toml(panes: &WindowSession, table: &mut toml::Table) {
+    if !panes.session.is_empty() {
+        table.insert("active".into(), toml::Value::Integer(i64::try_from(panes.session.active).unwrap_or(0)));
+        table.insert("tabs".into(), tabs_toml(&panes.session));
+    }
+    if !panes.right_session.is_empty() {
+        let active = i64::try_from(panes.right_session.active).unwrap_or(0);
+        table.insert("right-active".into(), toml::Value::Integer(active));
+        table.insert("right-tabs".into(), tabs_toml(&panes.right_session));
+    }
+    if panes.dual {
+        table.insert("dual".into(), toml::Value::Boolean(true));
+    }
+    if panes.active_pane == 1 {
+        table.insert("active-pane".into(), toml::Value::Integer(1));
+    }
+    if panes.sync {
+        table.insert("sync".into(), toml::Value::Boolean(true));
+    }
 }
 
 /// state.toml's `[session]` (spec 5.1): the tabs in order (key `tabs`, the right pane's
@@ -1619,17 +1681,7 @@ impl State {
     /// The app writes this file itself, so a damaged one just yields the defaults.
     pub fn parse(text: &str) -> State {
         let Ok(table) = text.parse::<toml::Table>() else { return State::default() };
-        let window = table.get("window").and_then(|v| v.as_table()).and_then(|window| {
-            let int = |key: &str| window.get(key).and_then(|v| v.as_integer());
-            let coord = |key: &str| int(key).and_then(|v| i32::try_from(v).ok());
-            Some(WindowState {
-                width: u32::try_from(int("width")?).ok().filter(|w| *w >= 200)?,
-                height: u32::try_from(int("height")?).ok().filter(|h| *h >= 150)?,
-                x: coord("x"),
-                y: coord("y"),
-                maximized: window.get("maximized").and_then(|v| v.as_bool()).unwrap_or(false),
-            })
-        });
+        let window = table.get("window").and_then(|v| v.as_table()).and_then(window_state);
         let sidebar_width = table
             .get("sidebar")
             .and_then(|v| v.as_table())
@@ -1719,7 +1771,19 @@ impl State {
                 .unwrap_or_default()
         };
         let hint = |key: &str| table.get("hints").and_then(|v| v.as_table()).and_then(|t| t.get(key));
-        let session_flag = |key: &str| table.get("session").and_then(|v| v.as_table()).and_then(|t| t.get(key));
+        let first = panes_state(table.get("session"));
+        // An entry with no tabs (or not a table) is left out.
+        let windows = table
+            .get("session")
+            .and_then(|v| v.as_table())
+            .and_then(|t| t.get("window"))
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .filter(|v| v.is_table())
+            .map(|v| panes_state(Some(v)))
+            .filter(|w| !w.session.is_empty())
+            .collect();
         let palette_recent = recent("palette", gezik_core::palette::RECENT_MAX);
         let servers_recent = recent("servers", SERVERS_MAX);
         State {
@@ -1736,11 +1800,11 @@ impl State {
             convert,
             selection,
             history,
-            session: session_state(table.get("session"), "tabs", "active"),
-            right_session: session_state(table.get("session"), "right-tabs", "right-active"),
-            dual: session_flag("dual").and_then(|v| v.as_bool()).unwrap_or(false),
-            active_pane: session_flag("active-pane").and_then(|v| v.as_integer()).map_or(0, |n| usize::from(n == 1)),
-            sync: session_flag("sync").and_then(|v| v.as_bool()).unwrap_or(false),
+            session: first.session,
+            right_session: first.right_session,
+            dual: first.dual,
+            active_pane: first.active_pane,
+            sync: first.sync,
             pane_split: table
                 .get("panes")
                 .and_then(|v| v.as_table())
@@ -1759,23 +1823,14 @@ impl State {
             servers_recent,
             f3_moved: hint("f3-moved").and_then(|v| v.as_bool()).unwrap_or(false),
             f3_moved_at: hint("f3-moved-at").and_then(|v| v.as_integer()).and_then(|n| u64::try_from(n).ok()),
+            windows,
         }
     }
 
     pub fn to_toml(&self) -> String {
         let mut root = toml::Table::new();
-        if let Some(w) = self.window {
-            let mut window = toml::Table::new();
-            window.insert("width".into(), toml::Value::Integer(w.width.into()));
-            window.insert("height".into(), toml::Value::Integer(w.height.into()));
-            if let (Some(x), Some(y)) = (w.x, w.y) {
-                window.insert("x".into(), toml::Value::Integer(x.into()));
-                window.insert("y".into(), toml::Value::Integer(y.into()));
-            }
-            if w.maximized {
-                window.insert("maximized".into(), toml::Value::Boolean(true));
-            }
-            root.insert("window".into(), toml::Value::Table(window));
+        if self.window.is_some() {
+            root.insert("window".into(), toml::Value::Table(window_toml(self.window)));
         }
         if let Some(width) = self.sidebar_width {
             let mut sidebar = toml::Table::new();
@@ -1889,23 +1944,26 @@ impl State {
             root.insert("servers".into(), toml::Value::Table(servers));
         }
         let mut session = toml::Table::new();
-        if !self.session.is_empty() {
-            session.insert("active".into(), toml::Value::Integer(i64::try_from(self.session.active).unwrap_or(0)));
-            session.insert("tabs".into(), tabs_toml(&self.session));
-        }
-        if !self.right_session.is_empty() {
-            let active = i64::try_from(self.right_session.active).unwrap_or(0);
-            session.insert("right-active".into(), toml::Value::Integer(active));
-            session.insert("right-tabs".into(), tabs_toml(&self.right_session));
-        }
-        if self.dual {
-            session.insert("dual".into(), toml::Value::Boolean(true));
-        }
-        if self.active_pane == 1 {
-            session.insert("active-pane".into(), toml::Value::Integer(1));
-        }
-        if self.sync {
-            session.insert("sync".into(), toml::Value::Boolean(true));
+        let first = WindowSession {
+            session: self.session.clone(),
+            right_session: self.right_session.clone(),
+            dual: self.dual,
+            active_pane: self.active_pane,
+            sync: self.sync,
+            window: None,
+        };
+        panes_toml(&first, &mut session);
+        let windows: Vec<toml::Value> = self
+            .windows
+            .iter()
+            .map(|w| {
+                let mut table = window_toml(w.window);
+                panes_toml(w, &mut table);
+                toml::Value::Table(table)
+            })
+            .collect();
+        if !windows.is_empty() {
+            session.insert("window".into(), toml::Value::Array(windows));
         }
         if !session.is_empty() {
             root.insert("session".into(), toml::Value::Table(session));
@@ -1930,6 +1988,23 @@ impl State {
         }
         root.to_string()
     }
+}
+
+/// A window's size and place as `[window]` writes them (nothing for `None`).
+fn window_toml(at: Option<WindowState>) -> toml::Table {
+    let mut window = toml::Table::new();
+    if let Some(w) = at {
+        window.insert("width".into(), toml::Value::Integer(w.width.into()));
+        window.insert("height".into(), toml::Value::Integer(w.height.into()));
+        if let (Some(x), Some(y)) = (w.x, w.y) {
+            window.insert("x".into(), toml::Value::Integer(x.into()));
+            window.insert("y".into(), toml::Value::Integer(y.into()));
+        }
+        if w.maximized {
+            window.insert("maximized".into(), toml::Value::Boolean(true));
+        }
+    }
+    window
 }
 
 /// A session's tabs as `[[session.tabs]]` writes them.
@@ -3168,6 +3243,65 @@ split = 0.2
             Some(200)
         );
         assert!(!State::default().to_toml().contains("panes"));
+    }
+
+    /// Spec 10 §9.7 (deviation 5): the other windows as `[[session.window]]`, in order.
+    #[test]
+    fn three_windows_round_trip_in_state() {
+        use gezik_core::nav::{Location, Session, SessionTab};
+        let at = |x| Some(WindowState { width: 900, height: 600, x: Some(x), y: Some(40), maximized: x == 300 });
+        let state = State {
+            session: Session::single(Location::Drives),
+            window: at(10),
+            windows: vec![
+                WindowSession {
+                    session: Session {
+                        tabs: vec![
+                            SessionTab { location: Location::Trash, locked: false },
+                            SessionTab { location: Location::Path(std::env::temp_dir().join("b")), locked: true },
+                        ],
+                        active: 1,
+                    },
+                    right_session: Session::single(Location::Drives),
+                    dual: true,
+                    active_pane: 1,
+                    sync: true,
+                    window: at(200),
+                },
+                WindowSession {
+                    session: Session::single(Location::Path(std::env::temp_dir().join("c"))),
+                    window: at(300),
+                    ..WindowSession::default()
+                },
+            ],
+            ..State::default()
+        };
+        let text = state.to_toml();
+        assert!(text.contains("[[session.window]]"), "{text}");
+        assert_eq!(State::parse(&text), state);
+    }
+
+    #[test]
+    fn an_old_state_or_one_window_has_no_other_windows() {
+        let old = State::parse("[session]\nactive = 0\n\n[[session.tabs]]\ndrives = true\n");
+        assert!(old.windows.is_empty() && old.session.tabs.len() == 1);
+        let one = State { session: old.session.clone(), ..State::default() };
+        let text = one.to_toml();
+        assert!(!text.contains("window"), "one window writes what it wrote before: {text}");
+        assert_eq!(State::parse(&text), one);
+    }
+
+    #[test]
+    fn a_broken_window_entry_is_left_out() {
+        let state = State::parse(
+            "[[session.tabs]]\ndrives = true\n\n[[session.window]]\nwidth = 5\n\n\
+             [[session.window]]\nwidth = 800\nheight = 600\n\n[[session.window.tabs]]\npath = \"relative\"\n\n\
+             [[session.window]]\nwidth = 50\nheight = 600\n\n[[session.window.tabs]]\ndrives = true\n",
+        );
+        assert_eq!(state.windows.len(), 1, "no tabs: left out; {state:?}");
+        assert_eq!(state.windows[0].window, None, "too narrow: opens where the system puts it");
+        assert_eq!(State::parse("[session]\nwindow = 3\n").windows, []);
+        assert_eq!(State::parse("[session]\nwindow = [1, \"x\"]\n").windows, []);
     }
 
     #[test]

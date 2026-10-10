@@ -510,6 +510,15 @@ impl Operations {
         self.part().map(|part| part.conflicts.clone())
     }
 
+    /// Window `from` closes (spec 9.3): its question and conflict list go to window `to`.
+    pub fn hand_over(&self, from: crate::windows::WindowId, to: crate::windows::WindowId) {
+        let (Some(from), Some(to_part)) = (PARTS.with(|p| p.get(from)), PARTS.with(|p| p.get(to))) else { return };
+        crate::windows::enter(to, || {
+            from.dialogs.hand_over(&to_part.dialogs);
+            from.conflicts.hand_over(&to_part.conflicts);
+        });
+    }
+
     /// Runs `f` in the window job `job` was started in, else (closed, or started by the
     /// engine) in the most recently focused one.
     fn in_job_window(&self, job: JobId, f: impl FnOnce()) {

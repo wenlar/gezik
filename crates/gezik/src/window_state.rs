@@ -9,6 +9,9 @@ use crate::AppWindow;
 thread_local! {
     /// The saved position and the second window's offset, until the native window exists.
     pub(crate) static PENDING: crate::windows::Slot<(i32, i32, i32)> = const { crate::windows::Slot::new() };
+    /// Each window's size and place as last taken (or opened with): a maximized, minimized
+    /// or hidden window keeps its normal rect from here.
+    pub(crate) static RECT: crate::windows::Slot<WindowState> = const { crate::windows::Slot::new() };
 }
 
 /// Applies the saved size, position and sidebar width. Call before the window is shown.
@@ -18,6 +21,7 @@ pub fn restore(window: &AppWindow, state: &State, offset: i32) {
         window.set_sidebar_width(width as f32);
     }
     let Some(saved) = state.window else { return };
+    RECT.with(|r| r.set(crate::windows::current(), saved));
     window.window().set_size(LogicalSize::new(saved.width as f32, saved.height as f32));
     if let (Some(x), Some(y)) = (saved.x, saved.y) {
         window.window().set_position(PhysicalPosition::new(x + offset, y + offset));
@@ -71,31 +75,41 @@ pub fn ensure_visible(window: &AppWindow) -> bool {
     true
 }
 
-/// Updates `state` from the window: the size (logical pixels) and position (physical
-/// pixels) only while the window is in its normal state (a minimized or maximized one has
-/// no meaningful normal rect), whether it is maximized unless minimized, the sidebar width
-/// always.
-pub fn capture_into(window: &AppWindow, state: &mut State) {
+/// The current window's size (logical pixels) and position (physical pixels), taken only
+/// while it is in its normal state (a minimized or maximized one has no meaningful normal
+/// rect: the last one taken stays), and whether it is maximized unless minimized.
+pub fn capture(window: &AppWindow) -> Option<WindowState> {
+    let id = crate::windows::current();
+    let saved = RECT.with(|r| r.get(id));
     let native = window.window();
-    // Hidden (in the tray, or a --background start never shown): the last saved rect stays.
-    if !native.is_visible() {
-        // Nothing to take.
+    // Hidden (in the tray, or a --background start never shown): the last rect stays.
+    let rect = if !native.is_visible() || native.is_minimized() {
+        saved
     } else if native.is_maximized() {
-        // shortcut: a window maximized before any normal rect was saved is not remembered
+        // shortcut: a window maximized before any normal rect was taken is not remembered
         // maximized (no rect to restore to); fine unless users report it.
-        if let Some(saved) = &mut state.window {
-            saved.maximized = true;
-        }
-    } else if !native.is_minimized() {
+        saved.map(|saved| WindowState { maximized: true, ..saved })
+    } else {
         let size = native.size().to_logical(native.scale_factor());
         let position = native.position();
-        state.window = Some(WindowState {
+        Some(WindowState {
             width: size.width.round() as u32,
             height: size.height.round() as u32,
             x: Some(position.x),
             y: Some(position.y),
             maximized: false,
-        });
+        })
+    };
+    if let Some(rect) = rect {
+        RECT.with(|r| r.set(id, rect));
+    }
+    rect
+}
+
+/// Updates `state` from the window: its size and place ([`capture`]), the sidebar width always.
+pub fn capture_into(window: &AppWindow, state: &mut State) {
+    if let Some(rect) = capture(window) {
+        state.window = Some(rect);
     }
     state.sidebar_width = Some(window.get_sidebar_width().round().clamp(120.0, 480.0) as u32);
 }
