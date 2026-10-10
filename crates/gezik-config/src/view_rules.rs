@@ -8,6 +8,9 @@ use gezik_core::view_rules::{Columns, Content, ContentClass, PlaceKind, RuleSpec
 use crate::Warning;
 use crate::paths::TOKENS;
 
+/// More would only slow every folder open; nobody writes this many by hand.
+const MAX_RULES: usize = 256;
+
 const KEYS: [&str; 9] = ["path", "kind", "content", "mode", "sort", "sort-dir", "group", "grid-size", "columns"];
 
 pub(crate) fn parse_view_rules(value: &toml::Value, file: &str, warnings: &mut Vec<Warning>) -> Vec<RuleSpec> {
@@ -15,8 +18,11 @@ pub(crate) fn parse_view_rules(value: &toml::Value, file: &str, warnings: &mut V
         warnings.push(Warning::new(file, format!("view-rules: expected [[view-rules]] tables, got {value}")));
         return Vec::new();
     };
+    if items.len() > MAX_RULES {
+        warnings.push(Warning::new(file, format!("view-rules: only the first {MAX_RULES} rules are used")));
+    }
     let mut rules = Vec::new();
-    for (i, item) in items.iter().enumerate() {
+    for (i, item) in items.iter().enumerate().take(MAX_RULES) {
         match parse_rule(item, i + 1) {
             Ok(rule) => rules.push(rule),
             Err(err) => warnings.push(Warning::new(file, format!("view-rules[{}]: {err}", i + 1))),
@@ -81,11 +87,17 @@ fn path_text(text: &str) -> Result<String, String> {
         Some(rest) if rest.is_empty() || rest.starts_with('/') => format!("{{home}}{rest}"),
         _ => text,
     };
-    if let Some((token, _)) = text.strip_prefix('{').and_then(|inner| inner.split_once('}'))
-        && !TOKENS.contains(&token)
-    {
-        let known: Vec<String> = TOKENS.iter().map(|t| format!("{{{t}}}")).collect();
-        return Err(format!("path: unknown folder {{{token}}} (known: {})", known.join(", ")));
+    let rest = match text.strip_prefix('{').and_then(|inner| inner.split_once('}')) {
+        Some((token, rest)) if TOKENS.contains(&token) => rest,
+        Some((token, _)) => {
+            let known: Vec<String> = TOKENS.iter().map(|t| format!("{{{t}}}")).collect();
+            return Err(format!("path: unknown folder {{{token}}} (known: {})", known.join(", ")));
+        }
+        None => text.as_str(),
+    };
+    // Only a leading token is a folder; later on it would be matched as a name.
+    if let Some((token, _)) = rest.split_once('{').and_then(|(_, after)| after.split_once('}')) {
+        return Err(format!("path: {{{token}}} only works at the start"));
     }
     Ok(text)
 }
@@ -226,6 +238,8 @@ mod tests {
             ("kind = \"archive-root\"\nmode = \"grid\"", "kind: \"archive-root\" is not supported yet"),
             ("content = \"pictures > 50%\"\nmode = \"grid\"", "content: expected \"<kind> >= <n>%\""),
             ("path = \"{photos}/**\"\nmode = \"grid\"", "path: unknown folder {photos}"),
+            ("path = \"D:/{photos}/**\"\nmode = \"grid\"", "path: {photos} only works at the start"),
+            ("path = \"{home}/{pictures}\"\nmode = \"grid\"", "path: {pictures} only works at the start"),
             ("path = \" \"\nmode = \"grid\"", "path: empty"),
             ("path = 3\nmode = \"grid\"", "path: expected text, got 3"),
             ("kind = \"trash\"\nmode = \"columns\"", "mode: \"columns\" is not supported yet"),
@@ -349,13 +363,15 @@ columns = [{many}]
         ));
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(rules[0].set.columns, Some(Columns::of(&[ColumnKey::Size])));
-        // Many rules keep their numbers.
-        let text = "[[view-rules]]
+        // Many rules keep their numbers, up to the cap.
+        let rule = "[[view-rules]]
 kind = \"trash\"
 mode = \"grid\"
-"
-        .repeat(1_000);
-        let (rules, warnings) = parse(&text);
-        assert!(warnings.is_empty() && rules.len() == 1_000 && rules[999].number == 1_000);
+";
+        let (rules, warnings) = parse(&rule.repeat(256));
+        assert!(warnings.is_empty() && rules.len() == 256 && rules[255].number == 256);
+        let (rules, warnings) = parse(&rule.repeat(1_000));
+        assert_eq!(rules.len(), 256);
+        assert_eq!(warnings, ["view-rules: only the first 256 rules are used"]);
     }
 }

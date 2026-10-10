@@ -33,6 +33,7 @@ use gezik_core::view::{
 };
 use gezik_core::view::{DateFormat, ViewOptions};
 use gezik_core::view_memory::ViewMemory;
+use gezik_core::view_rules::{Columns, Place, PlaceKind, RuleSpec, ViewRules, shown_columns};
 use gezik_search::results::{Batch, ResultSet, TrashLabel};
 use slint::{ComponentHandle, ModelRc};
 
@@ -131,6 +132,14 @@ struct Inner {
     collapsed: RefCell<HashSet<GroupKey>>,
     /// Where the date groups start, as the last sort saw them (its groups and its order agree).
     dates: RefCell<DateBounds>,
+    /// `[[view-rules]]`, compiled (spec 10 §8); empty, nothing is allocated.
+    rules: RefCell<ViewRules>,
+    /// The rule that set the shown folder's view (`None`: its own view or `[view]`).
+    applied: Cell<Option<usize>>,
+    /// The shown place as the rules see it (kept for a settings reload and for the View menu).
+    place: RefCell<Place>,
+    /// The columns the applied rule shows (`None`: the list's own).
+    rule_columns: Cell<Option<Columns>>,
 }
 
 /// The filter bar's text, the pattern the list shows, and what is wrong with the text.
@@ -296,6 +305,10 @@ impl View {
             remembered: RefCell::new(None),
             collapsed: RefCell::new(HashSet::new()),
             dates: RefCell::new(DateBounds::default()),
+            rules: RefCell::new(ViewRules::default()),
+            applied: Cell::new(None),
+            place: RefCell::new(Place::default()),
+            rule_columns: Cell::new(None),
         }));
         // Weak: the media lives inside the view.
         let weak = Rc::downgrade(&view.0);
@@ -325,7 +338,8 @@ impl View {
         }
         let own = self.0.folder.borrow().as_deref().is_some_and(|f| self.0.memory.borrow().contains(f));
         if !own {
-            self.switch_to(defaults.view);
+            let view = self.0.rules.borrow().view(self.0.applied.get(), defaults.view);
+            self.switch_to(view);
         }
         // Icons or thumbnails may have changed even if the view did not.
         self.0.model.notify.reset();
@@ -407,7 +421,8 @@ impl View {
 
     /// Shows `listing` with the selection, focus and scroll `state` remembers. `note`, if
     /// any, replaces the item count in the status bar until the selection changes.
-    pub fn show(&self, listing: Listing, state: &ViewState, note: Option<String>) {
+    /// `place`: where it is, for the view rules (spec 10 §8).
+    pub fn show(&self, listing: Listing, state: &ViewState, note: Option<String>, place: Place) {
         let results = matches!(listing, Listing::Results(_));
         let folder = match &listing {
             Listing::Results(set) => Some(if set.is_trash() { TRASH_KEY } else { RESULTS_KEY }.to_owned()),
@@ -417,8 +432,7 @@ impl View {
         if self.0.renaming.borrow().is_some() && *self.0.rename_folder.borrow() != folder {
             self.end_rename(false);
         }
-        let settings =
-            folder.as_deref().and_then(|f| self.0.memory.borrow_mut().get(f)).unwrap_or(self.0.defaults.get().view);
+        let own = folder.as_deref().and_then(|f| self.0.memory.borrow_mut().get(f));
         // A reload of the same folder (it changed on disk) keeps the icons and thumbnails asked
         // for: a folder that changes all the time would never get its slow thumbnails.
         let same_folder = !results && folder.is_some() && *self.0.folder.borrow() == folder;
@@ -426,13 +440,26 @@ impl View {
             self.0.collapsed.borrow_mut().clear();
         }
         *self.0.folder.borrow_mut() = folder;
+        let options = self.0.options.get();
+        let listing = listing.without_hidden(options.show_hidden, options.show_system);
+        // The view is chosen before any row of this listing is drawn: a content rule counts the
+        // names about to show (spec 10 §8.2), hidden ones left out.
+        let entries = match &listing {
+            Listing::Files(_, entries) => Some(entries.as_slice()),
+            _ => None,
+        };
+        let kept = same_folder.then(|| self.0.applied.get());
+        let (settings, rule) = decide(own, kept, &self.0.rules.borrow(), &place, entries, self.0.defaults.get().view);
+        self.0.applied.set(rule);
+        if !same_folder {
+            self.0.rule_columns.set(self.0.rules.borrow().columns(rule));
+        }
+        *self.0.place.borrow_mut() = place;
         self.0.current.set(settings);
         if !same_folder {
             self.0.media.new_generation();
         }
         self.apply_layout();
-        let options = self.0.options.get();
-        let listing = listing.without_hidden(options.show_hidden, options.show_system);
         let listing = self.sorted(listing, true);
         // A reload of the folder on screen keeps the bar as it is now (the text may have
         // changed while it loaded); so does a move to it (its breadcrumb or sidebar entry, its
@@ -1372,14 +1399,61 @@ impl View {
         self.save_memory_soon();
     }
 
-    /// "Reset this folder": forgets its own view; the defaults apply.
+    /// "Reset this folder" / "Reset to rule N": forgets its own view; the first rule that
+    /// matches applies, else the defaults (spec 10 §8.2).
     pub fn reset_folder(&self) {
         let Some(folder) = self.0.folder.borrow().clone() else { return };
         let removed = self.0.memory.borrow_mut().remove(&folder);
         if removed {
             self.save_memory_soon();
         }
-        self.switch_to(self.0.defaults.get().view);
+        self.apply_rule(self.pick_shown());
+    }
+
+    /// New `[[view-rules]]` (a settings load): the folder shown takes them at once unless it has
+    /// its own view. The same rules again cost nothing.
+    pub fn set_rules(&self, rules: ViewRules) {
+        if *self.0.rules.borrow() == rules {
+            return;
+        }
+        *self.0.rules.borrow_mut() = rules;
+        let own = self.0.folder.borrow().as_deref().is_some_and(|f| self.0.memory.borrow().contains(f));
+        if !own {
+            self.apply_rule(self.pick_shown());
+        }
+    }
+
+    /// The rule that matches the place shown, counting the listing in memory.
+    fn pick_shown(&self) -> Option<usize> {
+        let data = self.0.data.borrow();
+        let entries = matches!(data.listing, Listing::Files(..)).then(|| data.full.as_slice());
+        self.0.rules.borrow().pick(&self.0.place.borrow(), entries)
+    }
+
+    /// Shows the folder with `rule`'s view (`None`: the defaults) and its columns.
+    fn apply_rule(&self, rule: Option<usize>) {
+        self.0.applied.set(rule);
+        let (view, columns) = {
+            let rules = self.0.rules.borrow();
+            (rules.view(rule, self.0.defaults.get().view), rules.columns(rule))
+        };
+        self.0.rule_columns.set(columns);
+        self.switch_to(view);
+        self.sync_columns();
+    }
+
+    /// For the View menu (spec 10 §8.2): the number of the rule that sets the folder's view
+    /// (`true`), or of the one that would without its own view (`false`).
+    pub fn rule_state(&self) -> Option<(usize, bool)> {
+        if let Some(rule) = self.0.applied.get() {
+            return Some((self.0.rules.borrow().number(rule), true));
+        }
+        let own = self.0.folder.borrow().as_deref().is_some_and(|f| self.0.memory.borrow().contains(f));
+        if !own {
+            return None;
+        }
+        let rule = self.pick_shown()?;
+        Some((self.0.rules.borrow().number(rule), false))
     }
 
     /// The grid's width now fits `columns` cells per line.
@@ -1774,6 +1848,8 @@ impl View {
         if let Some(folder) = folder {
             self.0.memory.borrow_mut().set(&folder, view);
             self.save_memory_soon();
+            // Its own view now: the rule is done with this folder (spec 10 §8.2).
+            self.0.applied.set(None);
         }
         self.switch_to(view);
     }
@@ -1874,7 +1950,10 @@ impl View {
     /// A column edge was dragged: takes the widths from the window.
     pub fn columns_resized(&self) {
         let Some(window) = self.0.window.upgrade() else { return };
-        for column in self.active_columns().borrow_mut().iter_mut().filter(|c| c.visible) {
+        // Only the columns shown: one a rule hides reads 0 and must keep its width.
+        let rule = self.0.rule_columns.get();
+        let shown = |c: &ColumnState| rule.map_or(c.visible, |set| set.has(c.key));
+        for column in self.active_columns().borrow_mut().iter_mut().filter(|c| shown(c)) {
             let width = match column.key {
                 ColumnKey::Modified => window.get_col_modified(),
                 ColumnKey::Created => window.get_col_created(),
@@ -1888,14 +1967,28 @@ impl View {
         self.sync_columns();
     }
 
+    /// Shows or hides `key`. Under a rule's columns, what shows becomes the list's own first, so
+    /// the click changes what is on screen (plan deviation 9).
     pub fn toggle_column(&self, key: ColumnKey) {
-        if let Some(column) = self.active_columns().borrow_mut().iter_mut().find(|c| c.key == key) {
-            column.visible = !column.visible;
+        let shown = self.columns_shown();
+        self.0.rule_columns.set(None);
+        {
+            let mut columns = self.active_columns().borrow_mut();
+            *columns = shown;
+            if let Some(column) = columns.iter_mut().find(|c| c.key == key) {
+                column.visible = !column.visible;
+            }
         }
         self.sync_columns();
     }
 
+    /// The columns as shown: with a rule's `columns`, which of them show (spec 10 §8.1).
+    pub fn columns_shown(&self) -> Vec<ColumnState> {
+        shown_columns(&self.active_columns().borrow(), self.0.rule_columns.get())
+    }
+
     pub fn reset_columns(&self) {
+        self.0.rule_columns.set(None);
         *self.active_columns().borrow_mut() =
             if self.shows_results() { gezik_core::view::default_result_columns() } else { default_columns() };
         self.sync_columns();
@@ -1904,12 +1997,15 @@ impl View {
     fn sync_columns(&self) {
         let Some(window) = self.0.window.upgrade() else { return };
         let matches = self.results().is_some_and(|set| set.has_matches());
+        // As `columns_shown`, without a copy.
+        let rule = self.0.rule_columns.get();
         let columns = self.active_columns().borrow();
         let width = |key: ColumnKey| {
             if key == ColumnKey::Match && !matches {
                 return 0.0;
             }
-            columns.iter().find(|c| c.key == key && c.visible).map_or(0.0, |c| c.width as f32)
+            let shown = |c: &ColumnState| rule.map_or(c.visible, |set| set.has(c.key));
+            columns.iter().find(|c| c.key == key && shown(c)).map_or(0.0, |c| c.width as f32)
         };
         window.set_col_modified(width(ColumnKey::Modified));
         window.set_col_created(width(ColumnKey::Created));
@@ -2283,6 +2379,49 @@ impl View {
     }
 }
 
+/// The view a folder shows and the rule that set it (spec 10 §8.2): its own view (views.toml),
+/// else the first rule that matches, else `[view]`. A reload of the folder shown keeps the rule
+/// it had (`kept`): a folder that changes while watched does not flip its view.
+fn decide(
+    own: Option<ViewSettings>,
+    kept: Option<Option<usize>>,
+    rules: &ViewRules,
+    place: &Place,
+    entries: Option<&[Entry]>,
+    defaults: ViewSettings,
+) -> (ViewSettings, Option<usize>) {
+    if let Some(own) = own {
+        return (own, None);
+    }
+    let rule = match kept {
+        Some(rule) => rule,
+        None => rules.pick(place, entries),
+    };
+    (rules.view(rule, defaults), rule)
+}
+
+/// `location` as the view rules see it (spec 10 §8.3): from the drives and cloud roots the
+/// places load already found; no file system call.
+pub fn rule_place(location: &gezik_core::nav::Location, places: &crate::places::Places) -> Place {
+    use gezik_platform::DriveKind;
+    let drives = places.drives.iter().filter_map(|drive| match drive.kind {
+        DriveKind::Network => Some((drive.path.as_path(), PlaceKind::Network)),
+        DriveKind::Removable | DriveKind::Optical => Some((drive.path.as_path(), PlaceKind::Removable)),
+        DriveKind::Fixed => None,
+    });
+    Place::of(location, drives, places.cloud.iter().map(|root| root.path.as_path()))
+}
+
+/// `[[view-rules]]` compiled for matching, once per settings load (spec 10 §8.3); without rules
+/// not even the known folders are asked for.
+pub fn compile_rules(specs: &[RuleSpec]) -> ViewRules {
+    if specs.is_empty() {
+        return ViewRules::default();
+    }
+    let dirs = gezik_config::paths::KnownDirs::system();
+    ViewRules::compile(specs, &|text| dirs.expand(text))
+}
+
 /// At most this many items are opened with their default apps at once (Enter, the menu's
 /// "Open"); Ctrl+A and Enter in a large folder would otherwise start thousands of apps.
 pub const MAX_OPEN_AT_ONCE: usize = 15;
@@ -2454,6 +2593,41 @@ pub fn sizes_belong(shown: Option<&Path>, folder: &Path) -> bool {
 mod tests {
     use super::*;
     use listing::files;
+
+    #[test]
+    fn a_folder_s_own_view_beats_a_rule_and_a_reload_keeps_the_rule() {
+        use gezik_core::view_rules::{Content, RuleView};
+        let grid = RuleView { mode: Some(ViewMode::Grid), ..RuleView::default() };
+        let spec =
+            RuleSpec { number: 1, path: None, kind: None, content: Content::parse("pictures >= 50%"), set: grid };
+        let rules = ViewRules::compile(&[spec], &|text| PathBuf::from(text));
+        let entry = |name: &str| Entry {
+            name: name.to_owned(),
+            is_dir: false,
+            flags: 0,
+            size: 0,
+            modified: None,
+            created: None,
+        };
+        let photos = [entry("a.jpg"), entry("b.png")];
+        let texts = [entry("a.txt"), entry("b.txt")];
+        let defaults = ViewSettings::default();
+        let gridded = ViewSettings { mode: ViewMode::Grid, ..defaults };
+        let place = Place::default();
+        // A folder opened: the rule counts the listing it is about to show (spec 10 §8.2).
+        assert_eq!(decide(None, None, &rules, &place, Some(&photos), defaults), (gridded, Some(0)));
+        assert_eq!(decide(None, None, &rules, &place, Some(&texts), defaults), (defaults, None));
+        // The same folder again (it changed on disk): the rule it had, not a new count.
+        assert_eq!(decide(None, Some(Some(0)), &rules, &place, Some(&texts), defaults), (gridded, Some(0)));
+        assert_eq!(decide(None, Some(None), &rules, &place, Some(&photos), defaults), (defaults, None));
+        // Its own view (views.toml) beats every rule.
+        let own = ViewSettings { sort: SortSpec { key: SortKey::Size, dir: SortDir::Desc }, ..defaults };
+        assert_eq!(decide(Some(own), None, &rules, &place, Some(&photos), defaults), (own, None));
+        assert_eq!(decide(Some(own), Some(Some(0)), &rules, &place, Some(&photos), defaults), (own, None));
+        // No rules: the defaults, nothing counted.
+        let none = ViewRules::default();
+        assert_eq!(decide(None, None, &none, &place, Some(&photos), defaults), (defaults, None));
+    }
 
     #[test]
     fn one_selected_cloud_item_says_its_state() {

@@ -100,11 +100,11 @@ impl Place {
             kinds |= PlaceKind::Network.bit();
         }
         for (root, kind) in drives {
-            if path.starts_with(root) {
+            if under(path, root) {
                 kinds |= kind.bit();
             }
         }
-        if clouds.into_iter().any(|root| path.starts_with(root)) {
+        if clouds.into_iter().any(|root| under(path, root)) {
             kinds |= PlaceKind::Cloud.bit();
         }
         Place { path: Some(path.clone()), kinds }
@@ -271,6 +271,18 @@ pub struct RuleSpec {
     pub kind: Option<PlaceKind>,
     pub content: Option<Content>,
     pub set: RuleView,
+}
+
+/// Whether `path` is `root` or inside it, by whole parts; on Windows the case does not matter
+/// (`d:\x` is on the drive listed as `D:\`).
+/// shortcut: ASCII case only, enough for drive letters and the roots the system lists; fold like
+/// the globs if a non-ASCII cloud root shows up in another case.
+fn under(path: &Path, root: &Path) -> bool {
+    if !FOLD {
+        return path.starts_with(root);
+    }
+    let mut parts = path.components();
+    root.components().all(|r| parts.next().is_some_and(|p| p.as_os_str().eq_ignore_ascii_case(r.as_os_str())))
 }
 
 /// A path glob, compiled: `**` takes any number of folders, other parts are names with `*` and `?`.
@@ -506,6 +518,19 @@ mod tests {
         assert!(of(Location::Path(PathBuf::from(r"\\nas\share\x"))).is(PlaceKind::Network), "a UNC path");
         assert!(of(Location::Path(PathBuf::from("//nas/share"))).is(PlaceKind::Network));
         assert!(!of(Location::Path(PathBuf::from("/media/usbstick"))).is(PlaceKind::Removable), "whole parts only");
+        if cfg!(windows) {
+            let (e, cloud) = (PathBuf::from(r"E:\"), PathBuf::from(r"C:\Users\a\OneDrive"));
+            let place = Place::of(
+                &Location::Path(PathBuf::from(r"e:\DCIM")),
+                [(e.as_path(), PlaceKind::Removable)],
+                [cloud.as_path()],
+            );
+            assert!(place.is(PlaceKind::Removable), "a drive letter in either case");
+            let docs = Place::of(&Location::Path(PathBuf::from(r"c:\users\A\onedrive\Docs")), [], [cloud.as_path()]);
+            assert!(docs.is(PlaceKind::Cloud), "a cloud root in either case");
+            let next = Place::of(&Location::Path(PathBuf::from(r"C:\Users\a\OneDriveOld")), [], [cloud.as_path()]);
+            assert!(!next.is(PlaceKind::Cloud), "whole parts only");
+        }
     }
 
     #[test]

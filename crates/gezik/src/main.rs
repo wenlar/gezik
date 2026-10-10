@@ -131,6 +131,7 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
     sidebar::with_current(sidebar::Sidebar::relabel);
     sidebar::with_current(|s| s.set_show_cloud(loaded.settings.sidebar_cloud));
     sidebar::with_current(|s| s.set_tree_follow(loaded.settings.sidebar_tree_follow));
+    view::with_current(|view| view.set_rules(view::compile_rules(&loaded.settings.view_rules)));
     view::with_current(|view| view.set_defaults(loaded.settings.view));
     view_options::set_from_file(loaded.settings.view.options);
     #[cfg(target_os = "macos")]
@@ -898,6 +899,7 @@ fn main() -> Result<(), slint::PlatformError> {
     window_state::restore(&window, &saved_state, if secondary { 32 } else { 0 });
     keep_on_screen(window.as_weak(), 0);
     let view = view::View::new(&window, memory, config.clone());
+    view.set_rules(view::compile_rules(&initial_settings.view_rules));
     view.set_defaults(initial_settings.view);
     view.set_options(view_options::current());
     view.set_columns(saved_state.columns.clone().unwrap_or_else(gezik_core::view::default_columns));
