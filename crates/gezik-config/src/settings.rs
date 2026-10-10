@@ -335,6 +335,8 @@ pub struct Settings {
     pub system: SystemSettings,
     /// `[sidebar] cloud`: the CLOUD section (spec 13.1); roots are found either way.
     pub sidebar_cloud: bool,
+    /// `[sidebar] tree-follow`: the sidebar tree opens down to the folder shown (spec 10 §5.3).
+    pub sidebar_tree_follow: bool,
     pub terminal: TerminalSettings,
     pub search: SearchSettings,
     /// Tab sets (`[[tab-sets]]`); invalid ones are left out.
@@ -375,6 +377,7 @@ impl Default for Settings {
             session: SessionSettings::default(),
             system: SystemSettings::default(),
             sidebar_cloud: true,
+            sidebar_tree_follow: false,
             terminal: TerminalSettings::default(),
             search: SearchSettings::default(),
             tab_sets: Vec::new(),
@@ -597,6 +600,15 @@ impl Settings {
                             None => warnings.push(Warning::new(
                                 file,
                                 format!("sidebar.cloud: expected true or false, got {value}"),
+                            )),
+                        }
+                    }
+                    if let Some(value) = sidebar.get("tree-follow") {
+                        match value.as_bool() {
+                            Some(on) => settings.sidebar_tree_follow = on,
+                            None => warnings.push(Warning::new(
+                                file,
+                                format!("sidebar.tree-follow: expected true or false, got {value}"),
                             )),
                         }
                     }
@@ -1830,6 +1842,17 @@ mod tests {
         assert_eq!(warnings[0].message, "sidebar.cloud: expected true or false, got \"no\"");
         let (_, warnings) = parse("sidebar = 3\n");
         assert_eq!(warnings[0].message, "sidebar: expected a table, got 3");
+    }
+
+    #[test]
+    fn the_tree_follows_the_folder_only_when_asked() {
+        assert!(!Settings::default().sidebar_tree_follow, "spec 10 §5.3: off by default");
+        let (settings, warnings) = parse("[sidebar]\ntree-follow = true\n");
+        assert!(settings.sidebar_tree_follow);
+        assert!(warnings.is_empty());
+        let (settings, warnings) = parse("[sidebar]\ntree-follow = 1\n");
+        assert!(!settings.sidebar_tree_follow, "a bad value keeps the default");
+        assert_eq!(warnings[0].message, "sidebar.tree-follow: expected true or false, got 1");
     }
 
     #[test]

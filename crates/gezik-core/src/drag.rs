@@ -48,6 +48,9 @@ pub struct SidebarArea {
     pub scroll: f32,
     pub pad: f32,
     pub row_height: f32,
+    /// The sidebar row `rows[0]` is: only the rows on screen are given (a tree branch may hold
+    /// 20,000 rows, spec 10 §5.2).
+    pub first: usize,
     pub rows: Vec<SideRow>,
 }
 
@@ -148,7 +151,7 @@ fn index_at(offset: f32, size: f32) -> Option<usize> {
 fn sidebar_hit(side: &SidebarArea, y: f32, pin_zones: bool) -> Hit {
     let offset = y - side.rect.y - side.scroll - side.pad;
     let Some(row) = index_at(offset, side.row_height) else { return Hit::Nothing };
-    match side.rows.get(row) {
+    match row.checked_sub(side.first).and_then(|k| side.rows.get(k)) {
         None | Some(SideRow::Header) => Hit::Nothing,
         // On a heading: the first place of its group.
         Some(SideRow::PinHeader) if pin_zones => Hit::PinAt(row + 1),
@@ -165,6 +168,18 @@ fn sidebar_hit(side: &SidebarArea, y: f32, pin_zones: bool) -> Hit {
             }
         }
     }
+}
+
+/// The sidebar rows a drag looks at: those on screen and one to spare each side, as (first,
+/// count) of `total` rows, for a sidebar `height` high scrolled by `scroll` (zero or less).
+pub fn sidebar_window(scroll: f32, pad: f32, row_height: f32, height: f32, total: usize) -> (usize, usize) {
+    if row_height <= 0.0 || total == 0 {
+        return (0, 0);
+    }
+    let top = ((-scroll - pad) / row_height).floor().max(0.0) as usize;
+    let first = top.saturating_sub(1).min(total);
+    let count = ((height / row_height).ceil().max(0.0) as usize + 3).min(total - first);
+    (first, count)
 }
 
 /// Grid cells are inset this much: the gaps between them are the folder's empty space.
@@ -375,6 +390,7 @@ mod tests {
                 scroll: 0.0,
                 pad: 4.0,
                 row_height: 20.0,
+                first: 0,
                 rows: vec![
                     SideRow::Header,
                     SideRow::Item,
@@ -397,6 +413,28 @@ mod tests {
             },
             stack: Some(Rect { x: 0.0, y: 600.0, width: 1000.0, height: 30.0 }),
         }
+    }
+
+    #[test]
+    fn only_the_sidebar_rows_on_screen_are_looked_at() {
+        assert_eq!(sidebar_window(0.0, 4.0, 20.0, 400.0, 30), (0, 23));
+        assert_eq!(sidebar_window(-2000.0, 4.0, 20.0, 400.0, 20_000), (98, 23), "a row to spare above");
+        assert_eq!(sidebar_window(-2000.0, 4.0, 20.0, 400.0, 105), (98, 7), "not past the last");
+        assert_eq!(sidebar_window(0.0, 4.0, 20.0, 400.0, 0), (0, 0));
+        assert_eq!(sidebar_window(0.0, 4.0, 0.0, 400.0, 10), (0, 0));
+    }
+
+    #[test]
+    fn a_window_of_sidebar_rows_keeps_their_numbers() {
+        let mut l = layout(list(0));
+        let side = l.sidebar.as_mut().unwrap();
+        // Rows 97 and 98 given; row r spans offsets [20r, 20r + 20) below the pad.
+        side.scroll = -1900.0;
+        side.first = 97;
+        side.rows = vec![SideRow::Item, SideRow::Header];
+        assert_eq!(hit(&l, 50.0, 150.0, true), Hit::Sidebar(97));
+        assert_eq!(hit(&l, 50.0, 170.0, true), Hit::Nothing, "a heading");
+        assert_eq!(hit(&l, 50.0, 190.0, true), Hit::Nothing, "past the rows given");
     }
 
     #[test]

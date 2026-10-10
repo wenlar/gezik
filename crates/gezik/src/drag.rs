@@ -23,7 +23,7 @@ use crate::navigation::Navigator;
 use crate::operations::Operations;
 use crate::sidebar::{SECTION_GROUP, SECTION_PINNED, Sidebar};
 use crate::view::View;
-use crate::{AppWindow, Theme};
+use crate::{AppWindow, SidebarRow, Theme};
 
 /// How often a drag near the list's top or bottom edge scrolls it.
 const SCROLL_STEP: Duration = Duration::from_millis(30);
@@ -158,6 +158,17 @@ fn menu_effects(allowed: Allowed, writable: bool, sources: &[PathBuf], dir: &Pat
 
 /// The keys held, as this system's file manager reads them (`drag::keys_of`). Slint reports
 /// macOS's Command key as `control`.
+/// How a sidebar row takes a drop: headings take nothing (those of the pinned part pin there),
+/// pinned rows have their pin lines, the rest are folders.
+fn side_row(row: &SidebarRow) -> SideRow {
+    match (row.header, row.section) {
+        (true, SECTION_PINNED | SECTION_GROUP) => SideRow::PinHeader,
+        (true, _) => SideRow::Header,
+        (false, SECTION_PINNED) => SideRow::Pinned,
+        _ => SideRow::Item,
+    }
+}
+
 fn keys(shift: bool, ctrl: bool, alt: bool) -> Keys {
     match drag::DragOs::current() {
         drag::DragOs::Mac => drag::keys_of(drag::DragOs::Mac, shift, false, alt, ctrl),
@@ -665,21 +676,17 @@ impl Drags {
             position @ (0 | 1) => {
                 let width = window.get_sidebar_width();
                 let x = if position == 0 { 0.0 } else { g.window_width - width };
-                let rows = window
-                    .get_sidebar_rows()
-                    .iter()
-                    .map(|row| match (row.header, row.section) {
-                        (true, SECTION_PINNED | SECTION_GROUP) => SideRow::PinHeader,
-                        (true, _) => SideRow::Header,
-                        (false, SECTION_PINNED) => SideRow::Pinned,
-                        _ => SideRow::Item,
-                    })
-                    .collect();
+                let model = window.get_sidebar_rows();
+                let (pad, row_height) = (theme.get_spacing(), theme.get_row_height());
+                let (first, count) =
+                    drag::sidebar_window(g.sidebar_scroll, pad, row_height, g.sidebar_height, model.row_count());
+                let rows = (first..first + count).filter_map(|i| model.row_data(i)).map(|row| side_row(&row)).collect();
                 Some(SidebarArea {
                     rect: Rect { x, y: g.sidebar_y, width, height: g.sidebar_height },
                     scroll: g.sidebar_scroll,
-                    pad: theme.get_spacing(),
-                    row_height: theme.get_row_height(),
+                    pad,
+                    row_height,
+                    first,
                     rows,
                 })
             }
