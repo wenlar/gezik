@@ -80,6 +80,8 @@ export component AppWindow inherits Window {
             MenuItem { title: "Rename"; activated => { root.menu-command("rename"); } }
             MenuItem { title: "Rename Items…"; activated => { root.menu-command("batch-rename"); } }
             MenuItem { title: "Duplicate"; shortcut: root.menu-keys ? @keys(Control + D) : @keys(); activated => { root.menu-command("duplicate"); } }
+            MenuItem { title: "Copy to the Other Pane"; activated => { root.menu-command("copy-to-other-pane"); } }
+            MenuItem { title: "Move to the Other Pane"; activated => { root.menu-command("move-to-other-pane"); } }
             MenuItem { title: "Make Alias"; shortcut: root.menu-keys ? @keys(Control + Meta + A) : @keys(); activated => { root.menu-command("make-alias"); } }
             MenuItem { title: "Show Package Contents"; activated => { root.menu-command("show-package-contents"); } }
             MenuItem { title: "Share…"; activated => { root.menu-command("share"); } }

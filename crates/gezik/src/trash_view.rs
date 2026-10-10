@@ -253,7 +253,9 @@ pub fn allowed(action: Action) -> bool {
         | Action::ExpandGroups
         | Action::RevealInTree
         | Action::ToggleDualPane
-        | Action::FocusOtherPane => true,
+        | Action::FocusOtherPane
+        // Out of the trash it puts the items back into the other pane's folder (spec 10 §4.4).
+        | Action::MoveToOtherPane => true,
         // No drive to eject in the trash.
         Action::Eject
         | Action::Rename
@@ -281,7 +283,8 @@ pub fn allowed(action: Action) -> bool {
         | Action::CopyWithFolders
         | Action::CutWithFolders
         | Action::CalculateFolderSizes
-        | Action::SaveSearch => false,
+        | Action::SaveSearch
+        | Action::CopyToOtherPane => false,
     }
 }
 

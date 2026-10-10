@@ -123,6 +123,7 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
         p.nav.set_session_restore(loaded.settings.session.restore);
     }
     dual::set_restore(loaded.settings.session.restore);
+    dual::set_confirm(loaded.settings.panes_confirm);
     window.set_sidebar_position(match loaded.settings.sidebar {
         SidebarPosition::Left => 0,
         SidebarPosition::Right => 1,
@@ -296,7 +297,9 @@ fn perform(
         | Action::ExpandGroups
         | Action::RevealInTree
         | Action::ToggleDualPane
-        | Action::FocusOtherPane => return actions::run(action, nav, view),
+        | Action::FocusOtherPane
+        | Action::CopyToOtherPane
+        | Action::MoveToOtherPane => return actions::run(action, nav, view),
     }
     true
 }
@@ -490,6 +493,10 @@ fn handle_key(
             }
             if !perform(action, window, nav, view, preview, ops) {
                 return false;
+            }
+            if action == Action::ToggleDualPane && chord.as_ref().is_some_and(|c| c.key == Key::F(3)) && dual::is_open()
+            {
+                dual::f3_pressed();
             }
             // The typed text no longer fits once the location or tab changed.
             if (editing || filtering || in_search)
@@ -1054,7 +1061,8 @@ fn main() -> Result<(), slint::PlatformError> {
     let restore = initial_settings.session.restore && !secondary;
     let state_store = config.clone().filter(|_| !secondary);
     let right_session = if restore { saved_state.right_session.clone() } else { Default::default() };
-    dual::install(&window, state_store, initial_settings.session.restore, right_session, saved_state.pane_split);
+    let stores = (state_store, config.clone());
+    dual::install(&window, stores, initial_settings.session.restore, right_session, saved_state.pane_split);
     // The first tab loads once the pane is installed: its listing comes back through it.
     nav.install();
     let sidebar = sidebar::Sidebar::new(&window, config.clone(), dialogs.clone());
@@ -1789,8 +1797,16 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     }
     if !secondary {
+        // The F3 hint (spec 10 §10.2), off macOS and unless [shortcuts] names either action.
+        let shortcuts = &initial_settings.shortcuts;
+        let f3_hint = Platform::current() == Platform::Other
+            && !shortcuts.is_written(Action::Search)
+            && !shortcuts.is_written(Action::ToggleDualPane);
+        let (f3_moved, f3_moved_at) = (saved_state.f3_moved, saved_state.f3_moved_at);
         // Decision 13: once, two seconds after start; with no journal, one stat and nothing more.
-        slint::Timer::single_shot(std::time::Duration::from_secs(2), || {
+        // The hint then too: the first folder is shown by then, which would take a note away.
+        slint::Timer::single_shot(std::time::Duration::from_secs(2), move || {
+            dual::f3_hint_at_start(f3_hint, f3_moved, f3_moved_at);
             std::thread::spawn(|| {
                 let (note, file_manager1) = system_changes::idle_check();
                 let _ = slint::invoke_from_event_loop(move || {

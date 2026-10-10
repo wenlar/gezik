@@ -342,6 +342,8 @@ pub struct Settings {
     pub sidebar_cloud: bool,
     /// `[sidebar] tree-follow`: the sidebar tree opens down to the folder shown (spec 10 §5.3).
     pub sidebar_tree_follow: bool,
+    /// `[panes] confirm`: F5/F6 ask before copying or moving to the other pane (spec 10 §4.4).
+    pub panes_confirm: bool,
     pub terminal: TerminalSettings,
     pub search: SearchSettings,
     /// Tab sets (`[[tab-sets]]`); invalid ones are left out.
@@ -385,6 +387,7 @@ impl Default for Settings {
             system: SystemSettings::default(),
             sidebar_cloud: true,
             sidebar_tree_follow: false,
+            panes_confirm: true,
             terminal: TerminalSettings::default(),
             search: SearchSettings::default(),
             tab_sets: Vec::new(),
@@ -622,6 +625,23 @@ impl Settings {
                     }
                 }
                 None => warnings.push(Warning::new(file, format!("sidebar: expected a table, got {value}"))),
+            },
+        }
+        match table.get("panes") {
+            None => {}
+            Some(value) => match value.as_table() {
+                Some(panes) => {
+                    if let Some(value) = panes.get("confirm") {
+                        match value.as_bool() {
+                            Some(on) => settings.panes_confirm = on,
+                            None => warnings.push(Warning::new(
+                                file,
+                                format!("panes.confirm: expected true or false, got {value}"),
+                            )),
+                        }
+                    }
+                }
+                None => warnings.push(Warning::new(file, format!("panes: expected a table, got {value}"))),
             },
         }
         match table.get("terminal") {
@@ -1533,6 +1553,10 @@ pub struct State {
     pub palette_recent: Vec<String>,
     /// Connect to Server's addresses, newest first (`[servers] recent`).
     pub servers_recent: Vec<String>,
+    /// The F3 hint was shown (`[hints] f3-moved`, spec 10 §10.2), and when (Unix seconds,
+    /// `f3-moved-at`) while it may show once more.
+    pub f3_moved: bool,
+    pub f3_moved_at: Option<u64>,
 }
 
 /// state.toml's `[session]` (spec 5.1): the tabs in order (key `tabs`, the right pane's
@@ -1680,6 +1704,7 @@ impl State {
                 })
                 .unwrap_or_default()
         };
+        let hint = |key: &str| table.get("hints").and_then(|v| v.as_table()).and_then(|t| t.get(key));
         let session_flag = |key: &str| table.get("session").and_then(|v| v.as_table()).and_then(|t| t.get(key));
         let palette_recent = recent("palette", gezik_core::palette::RECENT_MAX);
         let servers_recent = recent("servers", SERVERS_MAX);
@@ -1710,6 +1735,8 @@ impl State {
                 .map(|f| (f * 1000.0).round() as u16),
             palette_recent,
             servers_recent,
+            f3_moved: hint("f3-moved").and_then(|v| v.as_bool()).unwrap_or(false),
+            f3_moved_at: hint("f3-moved-at").and_then(|v| v.as_integer()).and_then(|n| u64::try_from(n).ok()),
         }
     }
 
@@ -1857,6 +1884,14 @@ impl State {
         }
         if !session.is_empty() {
             root.insert("session".into(), toml::Value::Table(session));
+        }
+        if self.f3_moved {
+            let mut hints = toml::Table::new();
+            hints.insert("f3-moved".into(), toml::Value::Boolean(true));
+            if let Some(at) = self.f3_moved_at.and_then(|at| i64::try_from(at).ok()) {
+                hints.insert("f3-moved-at".into(), toml::Value::Integer(at));
+            }
+            root.insert("hints".into(), toml::Value::Table(hints));
         }
         if let Some(split) = self.pane_split {
             let mut panes = toml::Table::new();
@@ -3025,6 +3060,21 @@ shortcut = \"shift+f8\"
         // Closed, the right tabs are still kept.
         let closed = State { dual: false, active_pane: 0, pane_split: None, ..state };
         assert_eq!(State::parse(&closed.to_toml()), closed);
+    }
+
+    #[test]
+    fn the_panes_ask_unless_told_not_to_and_the_f3_hint_is_kept() {
+        assert!(Settings::default().panes_confirm, "spec 10 §10.1: asks by default");
+        let (settings, warnings) = parse("[panes]\nconfirm = false\n");
+        assert!(!settings.panes_confirm && warnings.is_empty());
+        let (settings, warnings) = parse("[panes]\nconfirm = \"no\"\n");
+        assert!(settings.panes_confirm, "a bad value keeps the default");
+        assert_eq!(warnings[0].message, "panes.confirm: expected true or false, got \"no\"");
+        let state = State { f3_moved: true, f3_moved_at: Some(1_800_000_000), ..State::default() };
+        assert_eq!(State::parse(&state.to_toml()), state);
+        let done = State { f3_moved_at: None, ..state };
+        assert_eq!(State::parse(&done.to_toml()), done);
+        assert!(!State::default().to_toml().contains("hints"));
     }
 
     #[test]

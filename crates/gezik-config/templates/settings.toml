@@ -126,8 +126,13 @@ cloud = true
 # folder" (each closed folder above it is read once). Off: Show in Sidebar Tree does it once.
 tree-follow = false
 
+[panes]
+# F5/F6 ask before copying or moving to the other pane (its folder can be changed there).
+confirm = true
+
 [shortcuts]
 # Change any shortcut; "mod" is Cmd on macOS and Ctrl elsewhere; "" disables.
+# F3 now opens a second pane. Search is Ctrl+Shift+F or Ctrl+E.
 # new-tab = "mod+t"
 # new-window = "mod+n"     # a separate Gezik window (a new process) at the folder shown
 # close-tab = "mod+w"
@@ -137,7 +142,7 @@ tree-follow = false
 # forward = "alt+right"    # macOS: "mod+]"
 # up = "alt+up"            # macOS: "mod+up"
 # focus-path = "mod+l"
-# refresh = "f5"           # macOS: "mod+r"
+# refresh = ["f5", "ctrl+r"]   # with two panes F5 copies: Ctrl+R refreshes; macOS: "mod+r"
 # select-all = "mod+a"
 # view-list = "mod+shift+1"
 # view-grid = "mod+shift+2"
@@ -177,7 +182,7 @@ tree-follow = false
 # add-to-stack = "mod+shift+s"   # the selected items onto the drop stack
 # toggle-stack = ""        # show or hide the drop stack
 # show-history = ""        # the operations panel's History
-# search = ["mod+shift+f", "f3"]   # search under the folder shown; macOS: "mod+shift+f" (F3 is the system's)
+# search = ["mod+shift+f", "ctrl+e"]   # search under the folder shown; macOS: "mod+shift+f" (F3 is the system's)
 # flat-view = "mod+b"      # every file under the folder in one list; again: back to the folder
 # show-in-folder = "mod+shift+e"   # a search result's folder, with it selected
 # copy-with-folders = ""   # copy search results keeping their folders
@@ -205,8 +210,10 @@ tree-follow = false
 # collapse-groups = ""   # Collapse All Groups (a grouped view)
 # expand-groups = ""   # Expand All Groups
 # reveal-in-tree = ""   # Show in Sidebar Tree: opens the sidebar tree down to the folder shown
-# toggle-dual-pane = ""   # Two Panes: opens or closes the second pane; macOS: "mod+ctrl+p"
+# toggle-dual-pane = "f3"   # Two Panes: opens or closes the second pane; macOS: "mod+ctrl+p"
 # focus-other-pane = "tab"   # the other pane takes the keyboard (only with two panes, the file list focused)
+# copy-to-other-pane = "f5"  # the selection into the other pane's folder (only with two panes; F5 refreshes with one)
+# move-to-other-pane = "f6"  # the same as a move (only with two panes)
 
 # Saved rule sets for batch rename (Rename… with two or more items selected). The rename
 # layer writes them with "Presets ▾ › Save current rules as…"; they can also be written here.

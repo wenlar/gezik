@@ -239,7 +239,7 @@ restore = true            # open the tabs of last time at start
 
 ### Search
 
-- **Search** (Ctrl+Shift+F or F3, ⌘⇧F on macOS) searches under the folder shown, with the
+- **Search** (Ctrl+Shift+F or Ctrl+E, ⌘⇧F on macOS) searches under the folder shown, with the
   filter's pattern language. **Content** finds text in files; **Filters ▾** adds size, date,
   type, regex, match case and hidden items. Results fill a normal list: sort, filter,
   preview, copy, rename and batch rename work there. Back returns to the folder.
@@ -302,14 +302,16 @@ quick-look = "system"     # macOS: Space opens the system Quick Look panel, or "
 | Back / forward | Alt+← / Alt+→ (or mouse side buttons) | ⌘[ / ⌘] |
 | Parent folder | Alt+↑ | ⌘↑ |
 | Type a path | Ctrl+L | ⌘L |
-| Refresh | F5 | ⌘R |
+| Refresh | F5 or Ctrl+R (Ctrl+R with two panes) | ⌘R |
 | Select all | Ctrl+A | ⌘A |
 | List view / grid view | Ctrl+Shift+1 / Ctrl+Shift+2 | ⌘⇧1 / ⌘⇧2 |
 | Show or hide the preview pane | Alt+P | Alt+P |
 | Quick look (only while the file list has focus) | Space | Space |
 | Show hidden items | Ctrl+H | ⌘⇧. |
 | Filter | Ctrl+F or / | ⌘F or / |
-| Search / flat view | Ctrl+Shift+F or F3 / Ctrl+B | ⌘⇧F / ⌘B |
+| Search / flat view | Ctrl+Shift+F or Ctrl+E / Ctrl+B | ⌘⇧F / ⌘B |
+| Two panes / switch to the other pane | F3 / Tab (file list) | ⌃⌘P / Tab (file list) |
+| Copy / move to the other pane (two panes; asks first) | F5 / F6 | F5 / F6 |
 | Command palette / quick open | Ctrl+Shift+P / Ctrl+P | ⌘⇧P / ⌘P |
 | Copy / cut / paste | Ctrl+C / Ctrl+X / Ctrl+V | ⌘C / ⌘X / ⌘V (⌘⌥V moves) |
 | Delete / delete permanently | Delete / Shift+Delete | ⌘⌫ / ⌘⌥⌫ |
@@ -321,6 +323,9 @@ quick-look = "system"     # macOS: Space opens the system Quick Look panel, or "
 | Copy path | Ctrl+Shift+C | ⌘⌥C |
 | Get Info (Windows: Properties) | Alt+Enter | ⌘I |
 | Empty Trash | (menu) | ⌘⇧⌫ |
+
+**What changed:** F3 now opens a second pane. Search is Ctrl+Shift+F or Ctrl+E. With two
+panes F5 copies and F6 moves to the other pane; with one, F5 refreshes as before.
 
 Change them in `settings.toml` under `[shortcuts]` (`"mod"` is ⌘ on macOS and Ctrl
 elsewhere, `""` disables one, a list gives several keys). The template lists every action,

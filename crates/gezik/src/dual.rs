@@ -1,10 +1,14 @@
 //! The second pane (spec 10 §4): opening and closing it, which pane is active (one folder
 //! watcher, the active pane's), and what state.toml keeps of them.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+use std::path::{Component, Path, PathBuf};
 
+use gezik_config::settings_writer::SettingsChange;
 use gezik_config::store::ConfigStore;
-use gezik_core::nav::{Location, Session};
+use gezik_core::drag::Effect;
+use gezik_core::nav::{Location, Session, TRASH_NAME};
+use gezik_core::ops::paths::{is_within, same_path};
 use slint::ComponentHandle;
 
 use crate::AppWindow;
@@ -25,24 +29,50 @@ struct Dual {
     right: Option<Session>,
     /// The left pane's share of the two panes' width (0.2–0.8).
     split: f32,
+    /// settings.toml, for Don't Ask Again.
+    config: Option<ConfigStore>,
+    /// When the F3 hint showed (Unix seconds), while it may show once more.
+    f3_at: Option<u64>,
 }
 
 thread_local! {
     static DUAL: RefCell<Dual> = RefCell::default();
+    /// `[panes] confirm`: F5/F6 ask first.
+    static CONFIRM: Cell<bool> = const { Cell::new(true) };
 }
+
+/// The F3 hint's words (spec 10 §10.2).
+const F3_HINT: &str = "F3 now opens a second pane; search is Ctrl+Shift+F or Ctrl+E";
+
+/// How long after the F3 hint opening the second pane with F3 says it once more.
+const F3_AGAIN_FOR: u64 = 7 * 24 * 60 * 60;
 
 fn window() -> Option<AppWindow> {
     DUAL.with(|d| d.borrow().window.upgrade())
 }
 
-/// Call once the left pane is installed: `right` is the right pane's tabs of last time,
-/// `split` the left pane's share in thousandths.
-pub fn install(window: &AppWindow, store: Option<ConfigStore>, restore: bool, right: Session, split: Option<u16>) {
+/// Call once the left pane is installed: `store` writes state.toml (none in a second window),
+/// `config` settings.toml; `right` is the right pane's tabs of last time, `split` the left
+/// pane's share in thousandths.
+pub fn install(
+    window: &AppWindow,
+    (store, config): (Option<ConfigStore>, Option<ConfigStore>),
+    restore: bool,
+    right: Session,
+    split: Option<u16>,
+) {
     let right = (!right.is_empty()).then_some(right);
     let split = split.map_or(0.5, |split| f32::from(split) / 1000.0);
     window.set_pane_split(split * 100.0);
     window.set_right_split(100.0 - split * 100.0);
-    DUAL.with(|d| *d.borrow_mut() = Dual { window: window.as_weak(), store, restore, right, split });
+    DUAL.with(|d| {
+        *d.borrow_mut() = Dual { window: window.as_weak(), store, restore, right, split, config, f3_at: None }
+    });
+}
+
+/// `[panes] confirm` changed.
+pub fn set_confirm(confirm: bool) {
+    CONFIRM.with(|c| c.set(confirm));
 }
 
 /// `[session] restore` changed: off, state.toml forgets the right pane's tabs too.
@@ -258,6 +288,159 @@ pub fn save() {
     });
 }
 
+/// `copy-to-other-pane` / `move-to-other-pane` (F5 / F6, spec 10 §4.4): the active pane's
+/// selection (else its focused item) into the other pane's folder, asked first unless
+/// `[panes] confirm` is off. The job is a drop's: conflict list, panel, undo; no drive rule.
+/// Out of the trash, F6 puts the items back into that folder.
+pub fn to_other(moving: bool) {
+    let source = panes::active_view();
+    let Some(other) = panes::at(i32::from(panes::active_index() == 0)) else {
+        return source.note("There is no other pane".to_owned());
+    };
+    let verb = if moving { "Move" } else { "Copy" };
+    let Some(base) = other.view.folder() else {
+        return source.note(if moving && other.view.shows_trash() {
+            format!("Use Delete to move items to the {TRASH_NAME}")
+        } else {
+            format!("The other pane shows no folder to {} into", verb.to_lowercase())
+        });
+    };
+    if source.folder().is_some_and(|folder| same_path(&folder, &base)) {
+        return source.note("Both panes show the same folder".to_owned());
+    }
+    // The trash's rows are entries in the bins, with the names they had.
+    let trash = source.shows_trash().then(|| source.selected_trash());
+    let (paths, names): (Vec<PathBuf>, Vec<PathBuf>) = match &trash {
+        Some(rows) => rows.iter().map(|(entry, label)| (entry.clone(), PathBuf::from(&*label.name))).unzip(),
+        None => source.selected_entries().into_iter().map(|(path, _)| (path.clone(), path)).unzip(),
+    };
+    if paths.is_empty() {
+        return;
+    }
+    let shown = base.clone();
+    let go = move |target: PathBuf| {
+        crate::operations::with_current(|ops| match trash {
+            Some(rows) => {
+                let rows = rows.into_iter().map(|(entry, label)| (entry, label.name.into())).collect();
+                ops.restore_from_trash(crate::trash_view::into_folder(&target, rows));
+            }
+            None if same_path(&target, &shown) => {
+                ops.transfer(paths, target, if moving { Effect::Move } else { Effect::Copy });
+            }
+            None => {
+                let anchor = if is_within(&target, &shown) { shown } else { target.clone() };
+                ops.transfer_making(paths, &target, anchor, moving);
+            }
+        });
+    };
+    if !CONFIRM.with(Cell::get) {
+        return go(base);
+    }
+    // shortcut: the typed folder is not looked up on disk (no stat on the UI thread): a file by
+    // that name fails in the job; check it off the thread if that confuses.
+    let title = format!("{verb} {} to {}?", crate::operations::items_text(&names), base.display());
+    let message = "Into this folder (a relative path is under it; a missing folder is made):";
+    let typed_base = base.clone();
+    let note = move |typed: &str| match typed_target(&typed_base, typed) {
+        None => ("Type a folder".to_owned(), true),
+        Some(target) if same_path(&target, &typed_base) => (String::new(), false),
+        Some(target) => (format!("Into {}", target.display()), false),
+    };
+    let field = base.display().to_string();
+    let typed_base = base;
+    crate::operations::with_current(|ops| {
+        ops.dialogs().ask_text_choice(
+            title,
+            message,
+            field,
+            &[verb, "Don't Ask Again", "Cancel"],
+            note,
+            move |answer| {
+                let Some((choice, typed)) = answer else { return };
+                if choice == 1 {
+                    dont_ask_again();
+                }
+                match typed_target(&typed_base, &typed) {
+                    Some(target) => go(target),
+                    None => panes::active_view().note("No folder was typed".to_owned()),
+                }
+            },
+        );
+    });
+}
+
+/// The F5/F6 question's Don't Ask Again: `[panes] confirm = false`, now and in settings.toml.
+fn dont_ask_again() {
+    set_confirm(false);
+    let Some(config) = DUAL.with(|d| d.borrow().config.clone()) else { return };
+    config.write_settings(SettingsChange::PanesConfirm(false), |result| {
+        if let Err(warning) = result {
+            let _ = slint::invoke_from_event_loop(move || panes::active_view().note(warning.to_string()));
+        }
+    });
+}
+
+/// The folder typed into the F5/F6 question: a relative path is under `base`, `.` and `..`
+/// are worked out. `None` when nothing is typed or the path has no root (Windows `D:x`).
+pub fn typed_target(base: &Path, typed: &str) -> Option<PathBuf> {
+    let typed = typed.trim();
+    if typed.is_empty() {
+        return None;
+    }
+    let mut target = PathBuf::new();
+    for part in base.join(typed).components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if target.file_name().is_some() {
+                    target.pop();
+                }
+            }
+            part => target.push(part.as_os_str()),
+        }
+    }
+    target.is_absolute().then_some(target)
+}
+
+/// At start (Windows and Linux, `[shortcuts]` naming neither search nor toggle-dual-pane):
+/// says once that F3 moved, and keeps when (state.toml `[hints]`, spec 10 §10.2).
+pub fn f3_hint_at_start(applies: bool, shown: bool, shown_at: Option<u64>) {
+    if shown || !applies {
+        return DUAL.with(|d| d.borrow_mut().f3_at = shown_at);
+    }
+    let now = now_secs();
+    panes::active_view().note(F3_HINT.to_owned());
+    DUAL.with(|d| d.borrow_mut().f3_at = Some(now));
+    let store = DUAL.with(|d| d.borrow().store.clone());
+    if let Some(store) = store {
+        store.update_state(move |state| (state.f3_moved, state.f3_moved_at) = (true, Some(now)));
+    }
+}
+
+/// F3 opened the second pane: within a week of the hint it says it once more (no timer: the
+/// date is looked at only now).
+pub fn f3_pressed() {
+    let Some(at) = DUAL.with(|d| d.borrow().f3_at) else { return };
+    if !f3_again(at, now_secs()) {
+        return;
+    }
+    panes::active_view().note(F3_HINT.to_owned());
+    DUAL.with(|d| d.borrow_mut().f3_at = None);
+    let store = DUAL.with(|d| d.borrow().store.clone());
+    if let Some(store) = store {
+        store.update_state(|state| state.f3_moved_at = None);
+    }
+}
+
+/// Whether the F3 hint shown at `at` says it again at `now`.
+fn f3_again(at: u64, now: u64) -> bool {
+    now.checked_sub(at).is_some_and(|since| since < F3_AGAIN_FOR)
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -304,5 +487,51 @@ mod tests {
         assert_eq!(panes::count(), 1);
         assert_eq!(panes::model().row_count(), 1, "its row is gone too");
         assert_eq!(panes::active_id(), Some(left.id));
+    }
+
+    /// The window's keys follow how many panes are open (spec 10 §10.2, `handle_key`'s lookup).
+    #[test]
+    fn the_keys_are_the_pane_actions_only_with_two_panes() {
+        use gezik_config::shortcuts::{Action, Platform, Shortcuts, parse_chord};
+        crate::keys::set_shortcuts(Shortcuts::defaults(Platform::Other));
+        let key = |text: &str| crate::keys::action_for(&parse_chord(text, Platform::Other).unwrap().unwrap());
+        let left = test_pane();
+        panes::install(left.clone());
+        assert_eq!((key("f5"), key("f6"), key("tab")), (Some(Action::Refresh), None, None));
+        let right = make(&left, Session::single(Location::Drives));
+        panes::install(right.clone());
+        assert_eq!(key("f5"), Some(Action::CopyToOtherPane));
+        assert_eq!(key("f6"), Some(Action::MoveToOtherPane));
+        assert_eq!(key("tab"), Some(Action::FocusOtherPane));
+        assert_eq!(key("ctrl+r"), Some(Action::Refresh));
+        assert_eq!(key("ctrl+e"), Some(Action::Search));
+        assert_eq!(key("f3"), Some(Action::ToggleDualPane));
+        release(right.id);
+        assert_eq!(key("f5"), Some(Action::Refresh), "closed: F5 refreshes again");
+    }
+
+    #[test]
+    fn a_typed_folder_is_under_the_other_panes_folder() {
+        let base = std::env::temp_dir().join("Yedek");
+        assert_eq!(typed_target(&base, "  "), None);
+        assert_eq!(typed_target(&base, &base.display().to_string()), Some(base.clone()));
+        assert_eq!(typed_target(&base, "new/sub"), Some(base.join("new").join("sub")));
+        assert_eq!(typed_target(&base, "./a/../b"), Some(base.join("b")));
+        assert_eq!(typed_target(&base, ".."), base.parent().map(Path::to_path_buf));
+        let elsewhere = std::env::temp_dir().join("elsewhere");
+        assert_eq!(typed_target(&base, &elsewhere.display().to_string()), Some(elsewhere));
+        if cfg!(windows) {
+            assert_eq!(typed_target(&base, "D:x"), None, "no root: not a folder");
+            assert_eq!(typed_target(Path::new("C:\\"), "..\\.."), Some(PathBuf::from("C:\\")));
+        }
+    }
+
+    #[test]
+    fn the_f3_hint_says_it_again_only_within_a_week() {
+        let at = 1_800_000_000;
+        assert!(f3_again(at, at));
+        assert!(f3_again(at, at + F3_AGAIN_FOR - 1));
+        assert!(!f3_again(at, at + F3_AGAIN_FOR));
+        assert!(!f3_again(at, at - 1), "a clock set back says nothing");
     }
 }

@@ -949,6 +949,24 @@ impl Operations {
         self.submit(retry(), Some(retry), After::Select)
     }
 
+    /// Like `transfer` into `dir`, making the folders from `anchor` (`dir` or one above it) down
+    /// to `dir` that are not there (F5/F6 to a typed folder, spec 10 §4.4); Ctrl+Z takes away
+    /// the ones it made.
+    pub fn transfer_making(&self, paths: Vec<PathBuf>, dir: &Path, anchor: PathBuf, moving: bool) {
+        let under: PathBuf = dir.components().skip(anchor.components().count()).collect();
+        let items: Vec<(PathBuf, PathBuf)> =
+            paths.iter().map(|path| (path.clone(), under.join(path.file_name().unwrap_or_default()))).collect();
+        self.remember_for(&paths);
+        let retry: Retry = Rc::new(move || -> Box<dyn Task> {
+            if moving {
+                Box::new(MoveTask::with_folders(items.clone(), &anchor))
+            } else {
+                Box::new(CopyTask::with_folders(items.clone(), &anchor))
+            }
+        });
+        self.submit(retry(), Some(retry), After::Select);
+    }
+
     /// Items another program offers with no file behind them (an attachment, a browser's
     /// picture, a promised file), written into `dir` as one job; Ctrl+Z trashes what it made
     /// (spec 9 §8.1). No retry: the source may be gone by then.
