@@ -72,6 +72,10 @@ impl Task for RestoreTask {
         }
     }
 
+    fn same_targets(&self) -> bool {
+        true
+    }
+
     fn run(&self, item: &PlanItem, _cx: &RunCx<'_>) -> io::Result<Outcome> {
         let (Some(trashed), Some(original)) = (&item.source, &item.target) else { return Ok(Outcome::Nothing) };
         fs::restore(trashed, original)?;
@@ -183,6 +187,65 @@ mod tests {
         assert!(dst.join("a (2)").is_dir(), "the folder came back beside it");
         assert_eq!(read(&dst.join("a (2)/x.txt")), "x", "what was inside follows it");
         assert!(!bin.join("2").exists() && !bin.join("1").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn two_items_from_one_place_ask_about_the_second() {
+        let dir = test_dir("restore-same-name");
+        let bin = dir.join("bin");
+        write(&bin.join("$R1.txt"), "first");
+        write(&bin.join("$R2.txt"), "second");
+        let original = dir.join("dst").join("x.txt");
+        let pairs = vec![(bin.join("$R1.txt"), original.clone()), (bin.join("$R2.txt"), original.clone())];
+        let engine = engine();
+        let asked = std::cell::RefCell::new(Vec::new());
+        let (report, _) = finish(&engine, engine.submit(Box::new(RestoreTask::new(pairs))), |c| {
+            asked.borrow_mut().extend(c.iter().map(|c| c.target.clone()));
+            vec![Decision::KeepBoth; c.len()]
+        });
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert_eq!(*asked.borrow(), std::slice::from_ref(&original));
+        assert_eq!(read(&original), "first");
+        assert_eq!(read(&dir.join("dst").join("x (2).txt")), "second");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn keep_both_passes_over_a_name_another_item_is_bound_for() {
+        let dir = test_dir("restore-same-name-next");
+        let (bin, dst) = (dir.join("bin"), dir.join("dst"));
+        write(&bin.join("$R1.txt"), "first");
+        write(&bin.join("$R2.txt"), "second");
+        write(&bin.join("$R3.txt"), "third");
+        let pairs = vec![
+            (bin.join("$R1.txt"), dst.join("x.txt")),
+            (bin.join("$R2.txt"), dst.join("x.txt")),
+            (bin.join("$R3.txt"), dst.join("x (2).txt")),
+        ];
+        let engine = engine();
+        let job = engine.submit(Box::new(RestoreTask::new(pairs)));
+        let (report, _) = finish(&engine, job, |c| vec![Decision::KeepBoth; c.len()]);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert_eq!(read(&dst.join("x.txt")), "first");
+        assert_eq!(read(&dst.join("x (2).txt")), "third");
+        assert_eq!(read(&dst.join("x (3).txt")), "second");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_failure_names_the_original_not_the_bin_entry() {
+        let dir = test_dir("restore-fail-name");
+        let bin = dir.join("bin");
+        write(&bin.join("$R1.txt"), "x");
+        // A file where its folder should be: it cannot come back.
+        write(&dir.join("dst"), "a file");
+        let original = dir.join("dst").join("x.txt");
+        let engine = engine();
+        let job = engine.submit(Box::new(RestoreTask::new(vec![(bin.join("$R1.txt"), original.clone())])));
+        let (report, _) = finish(&engine, job, |c| vec![Decision::KeepBoth; c.len()]);
+        let failed: Vec<&std::path::Path> = report.failures.iter().map(|f| f.path.as_path()).collect();
+        assert_eq!(failed, [original.as_path()]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

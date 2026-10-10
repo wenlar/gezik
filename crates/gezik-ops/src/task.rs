@@ -192,6 +192,9 @@ pub struct PlanItem {
     /// A `Before` folder meeting a folder merges into it without asking; `false`: it is a
     /// conflict like any other (a folder coming back from the trash).
     pub(crate) merges: bool,
+    /// Bound where an earlier item of the job goes: runs after every other item, in the order
+    /// these were planned (set by the engine).
+    pub(crate) waits: bool,
 }
 
 impl PlanItem {
@@ -209,6 +212,7 @@ impl PlanItem {
             replace: false,
             counted: true,
             merges: true,
+            waits: false,
         }
     }
 
@@ -392,6 +396,11 @@ pub trait Task: Send + Sync {
     fn run(&self, item: &PlanItem, cx: &RunCx<'_>) -> io::Result<Outcome>;
     /// Called once the job ends.
     fn done(&self, _cancelled: bool) {}
+    /// Whether two of its items may be bound for one place (two binned `x.txt` from one
+    /// folder): the engine then holds the later one as a conflict, at 8 bytes per item.
+    fn same_targets(&self) -> bool {
+        false
+    }
     /// The chosen items whose work the system refused (`denied`: the failures' paths), as
     /// operations the administrator helper can do (spec 9 §10.1: Retry as administrator). Only
     /// the plain kinds offer it; the rest offer nothing.
@@ -793,6 +802,9 @@ mod tests {
         };
         let dir = test_dir("temp-copy-name");
         std::fs::create_dir(dir.join("to")).unwrap();
+        if !crate::testing::can_hold_name(&dir.join("to"), &name) {
+            return;
+        }
         std::fs::write(dir.join("small.txt"), "x").unwrap();
         let pending = std::sync::Arc::new(PendingDeletes::new(dir.join("pending-deletes")));
         let temp = TempCopies::new(Some(pending.clone()));

@@ -41,7 +41,12 @@ pub fn decode_image(path: &Path, max_px: u32) -> Result<Decoded, String> {
     limits.max_image_height = Some(MAX_DECODE_SIDE);
     limits.max_alloc = Some(MAX_DECODE_ALLOC);
     reader.limits(limits);
-    let picture = reader.decode().map_err(|e| e.to_string())?;
+    // Turned as the EXIF orientation says, so a phone's portrait photo stands upright.
+    let mut decoder = reader.into_decoder().map_err(|e| e.to_string())?;
+    let orientation =
+        image::ImageDecoder::orientation(&mut decoder).unwrap_or(image::metadata::Orientation::NoTransforms);
+    let mut picture = image::DynamicImage::from_decoder(decoder).map_err(|e| e.to_string())?;
+    picture.apply_orientation(orientation);
     let (width, height) = (picture.width(), picture.height());
     let max_px = max_px.max(1);
     let picture = if width > max_px || height > max_px { picture.thumbnail(max_px, max_px) } else { picture };
@@ -199,6 +204,29 @@ mod tests {
 
     fn png(path: &Path, width: u32, height: u32) {
         image::RgbaImage::from_pixel(width, height, image::Rgba([200, 30, 30, 255])).save(path).unwrap();
+    }
+
+    #[test]
+    fn the_exif_orientation_is_applied() {
+        // A 4×2 JPEG whose EXIF says "turn 90° clockwise to show" (orientation 6).
+        let path = temp("oriented").join("o6.jpg");
+        let mut jpeg = Vec::new();
+        image::RgbImage::from_pixel(4, 2, image::Rgb([200, 30, 30]))
+            .write_to(&mut std::io::Cursor::new(&mut jpeg), image::ImageFormat::Jpeg)
+            .unwrap();
+        // APP1 Exif, big-endian TIFF, one IFD entry: 0x0112 Orientation = 6.
+        let tiff: &[u8] = &[b'M', b'M', 0, 42, 0, 0, 0, 8, 0, 1, 0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, 6, 0, 0, 0, 0, 0, 0];
+        let mut app1 = vec![0xFF, 0xE1];
+        app1.extend_from_slice(&((2 + 6 + tiff.len()) as u16).to_be_bytes());
+        app1.extend_from_slice(b"Exif\0\0");
+        app1.extend_from_slice(tiff);
+        let mut file = jpeg[..2].to_vec();
+        file.extend_from_slice(&app1);
+        file.extend_from_slice(&jpeg[2..]);
+        std::fs::write(&path, file).unwrap();
+        let decoded = decode_image(&path, 100).unwrap();
+        assert_eq!((decoded.image.width, decoded.image.height), (2, 4), "turned upright");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
     #[test]

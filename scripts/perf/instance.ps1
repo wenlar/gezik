@@ -15,7 +15,9 @@ try {
     $times = @()
     for ($i = 0; $i -lt $Calls; $i++) {
         $sw = [Diagnostics.Stopwatch]::StartNew()
-        $c = Start-Process $Exe -ArgumentList "`"$($folders[$i % 3])`"" -PassThru -Wait
+        # Process.Start + WaitForExit: Start-Process -Wait adds ~1 s of its own polling on PowerShell 5.1.
+        $c = [Diagnostics.Process]::Start($Exe, "`"$($folders[$i % 3])`"")
+        $c.WaitForExit()
         $times += $sw.Elapsed.TotalMilliseconds
         if ($c.ExitCode -ne 0) { throw "call $($i + 1) exited with $($c.ExitCode)" }
         if (-not (Get-Process -Id $p.Id -ErrorAction SilentlyContinue)) { throw "the running Gezik is gone after call $($i + 1)" }

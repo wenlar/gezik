@@ -33,10 +33,13 @@ pub fn icon(target: &IconTarget, px: u32) -> Option<Rgba> {
     })
 }
 
-/// A custom folder icon (Finder's `Icon\r` file or its flag), or a volume's root (another
-/// device than the parent's: `/Volumes/X`, and `/Applications`, `/Users` on the Data volume).
+/// A custom folder icon (Finder's `Icon\r` file or its flag), one of the folders Finder draws
+/// with their own icon (the home folder's Desktop, Documents …, and `/Applications`, `/System`
+/// …), or a volume's root (another device than the parent's, `/Volumes/X`). On macOS 26 `/`,
+/// `/Applications` and `/Users` share one device (firmlinks), so the device rule alone misses
+/// them.
 pub fn folder_has_own_icon(path: &Path) -> bool {
-    if path.join("Icon\r").exists() {
+    if is_special_folder(path) || path.join("Icon\r").exists() {
         return true;
     }
     if let (Ok(here), Some(Ok(up))) = (std::fs::metadata(path), path.parent().map(std::fs::metadata))
@@ -45,6 +48,19 @@ pub fn folder_has_own_icon(path: &Path) -> bool {
         return true;
     }
     finder_info(path).is_some_and(|info| crate::icons::finder_info_custom_icon(&info))
+}
+
+/// The folders Finder shows with a special icon of their own.
+fn is_special_folder(path: &Path) -> bool {
+    const ROOT: [&str; 4] = ["/Applications", "/Library", "/System", "/Users"];
+    const HOME: [&str; 9] =
+        ["Applications", "Desktop", "Documents", "Downloads", "Library", "Movies", "Music", "Pictures", "Public"];
+    if ROOT.iter().any(|root| path == Path::new(root)) {
+        return true;
+    }
+    let Some(home) = dirs::home_dir() else { return false };
+    path == home
+        || path.parent() == Some(home.as_path()) && path.file_name().is_some_and(|n| HOME.iter().any(|h| n == *h))
 }
 
 /// The item's `com.apple.FinderInfo` (32 bytes), if it has one.

@@ -173,7 +173,20 @@ impl Task for SetAttributesTask {
             return Ok(Outcome::Nothing);
         }
         let changed = |after| Outcome::AttributesChanged { path: path.clone(), id: now.id, before: from, after };
-        let Err(err) = self.io.write(path, now.id, from, to) else { return Ok(changed(to)) };
+        let Err(mut err) = self.io.write(path, now.id, from, to) else { return Ok(changed(to)) };
+        // An owner or group the system refuses (one the user is not in: an undo back to /tmp's
+        // `wheel`) need not keep the rest from being written: the mode and flags go on alone, and
+        // the item still says it needs an administrator.
+        let ids_kept = Attrs { uid: from.uid, gid: from.gid, ..to };
+        if err.kind() == io::ErrorKind::PermissionDenied && ids_kept != to && ids_kept != from {
+            match self.io.write(path, now.id, from, ids_kept) {
+                Ok(()) => {
+                    cx.fail(path, &refused(err));
+                    return Ok(changed(ids_kept));
+                }
+                Err(again) => err = again,
+            }
+        }
         // A write that failed halfway (the owner changed, the permissions not) stays undoable.
         match self.io.read(path) {
             Ok(after) if after.id != now.id => Err(changed_since()),
@@ -207,6 +220,8 @@ mod tests {
         halfway: Mutex<HashSet<PathBuf>>,
         /// Paths an editor saves over just before the write.
         swapped: Mutex<HashSet<PathBuf>>,
+        /// Paths whose owner and group can't be changed (a group the user is not in).
+        ids_fixed: Mutex<HashSet<PathBuf>>,
     }
 
     impl Fake {
@@ -240,6 +255,9 @@ mod tests {
             }
             let mut entries = self.entries.lock().unwrap();
             let entry = entries.get_mut(path).ok_or(io::ErrorKind::NotFound)?;
+            if self.ids_fixed.lock().unwrap().contains(path) && (to.uid, to.gid) != (entry.attrs.uid, entry.attrs.gid) {
+                return Err(io::ErrorKind::PermissionDenied.into());
+            }
             if self.swapped.lock().unwrap().contains(path) {
                 entry.id.ino += 1000;
             }
@@ -311,6 +329,20 @@ mod tests {
         assert_eq!(report.failures.len(), 1);
         assert_eq!((&report.failures[0].path, report.failures[0].message.as_str()), (&paths[0], NEEDS_ADMIN));
         assert_eq!((fake.entry(&paths[0]).attrs.uid, fake.entry(&paths[1]).attrs.uid), (501, 0));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_refused_group_still_lets_the_mode_through() {
+        let (dir, paths) = files("attrs-ids-fixed", &["a.txt"]);
+        let fake = Arc::new(Fake::default());
+        let items = shown(&fake, &paths);
+        fake.ids_fixed.lock().unwrap().insert(paths[0].clone());
+        let report = run(&fake, SetAttributesTask::new(wanted(&items, Change { gid: Some(0), ..Change::mode(0o600) })));
+        assert_eq!(report.failures.len(), 1);
+        assert_eq!(report.failures[0].message, NEEDS_ADMIN);
+        let after = fake.entry(&paths[0]).attrs;
+        assert_eq!((after.mode, after.gid), (0o600, 20), "the mode is written, the group is not");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -162,7 +162,8 @@ fn set_items(items: &[PathBuf]) {
 }
 
 /// Opens the panel on `items` at `index`; `on_move` moves Gezik's focus (one item). Whether the
-/// panel is on screen afterwards.
+/// panel is on screen at once: with several items it may come a moment later, so `false`
+/// is only a hint (see [`is_open`]).
 pub fn show(window: &impl HasWindowHandle, items: &[PathBuf], index: usize, on_move: OnMove) -> bool {
     let Some(mtm) = MainThreadMarker::new() else { return false };
     let Ok(handle) = window.window_handle() else { return false };

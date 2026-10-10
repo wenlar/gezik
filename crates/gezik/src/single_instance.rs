@@ -226,6 +226,18 @@ fn bring_to_front(window: &AppWindow) {
             native.set_minimized(false);
             native.focus_window();
         });
+        // macOS: a window coming back from the Dock takes a moment; focusing it before that is
+        // ignored and the app stays behind the one in front. Again once it is back.
+        #[cfg(target_os = "macos")]
+        {
+            let weak = window.as_weak();
+            slint::Timer::single_shot(std::time::Duration::from_millis(400), move || {
+                if let Some(window) = weak.upgrade() {
+                    window.window().with_winit_window(|native| native.focus_window());
+                }
+                gezik_platform::app::activate();
+            });
+        }
     }
 }
 

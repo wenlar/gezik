@@ -784,10 +784,13 @@ mod tests {
         assert_eq!(folder_size_query(Path::new(r"C:\Work")), r#"folder: parent:"C:\Work""#);
     }
 
+    #[cfg(windows)]
     fn folder_item(path: &str, size: Option<u64>) -> Item {
         Item { path: path.into(), is_dir: true, size, created: None, modified: None, attributes: None }
     }
 
+    // `C:\Work\a`'s name is only `a` with Windows' path rules.
+    #[cfg(windows)]
     #[test]
     fn folder_sizes_need_every_folder_sized() {
         let items = vec![folder_item(r"C:\Work\a", Some(10)), folder_item(r"C:\Work\b", Some(0))];

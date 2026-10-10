@@ -276,7 +276,9 @@ mod tests {
         write(&root.join("a/x.txt"), 4);
         std::os::unix::fs::symlink(&root, root.join("a/up")).unwrap();
         let total = measure(&root, 2, &Arc::default()).unwrap();
-        assert_eq!(total.bytes, 4 + std::fs::symlink_metadata(root.join("a/up")).unwrap().len());
+        // The link is not followed, and its own few bytes are not counted (`read_dir_items`
+        // sizes regular files only), so only the file's 4 bytes add up.
+        assert_eq!(total.bytes, 4);
         let _ = std::fs::remove_dir_all(&root);
     }
 
