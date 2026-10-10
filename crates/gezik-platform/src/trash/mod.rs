@@ -173,7 +173,7 @@ pub fn purge_at_thread_end(dir: &Path) {
 /// holds items from all of its device) from the root of its own volume. Call it right before
 /// the move.
 pub(crate) fn check_way_back(trashed: &Path, original: &Path) -> io::Result<()> {
-    let original = &through_system_links(original);
+    let original = &crate::fs::through_system_links(original);
     #[cfg(unix)]
     let home =
         dirs::home_dir().and_then(|home| home_root(original, &home, std::fs::canonicalize(&home).ok().as_deref()));
@@ -190,30 +190,6 @@ pub(crate) fn check_way_back(trashed: &Path, original: &Path) -> io::Result<()> 
             format!("{} is a link: put the item back by hand", link.display()),
         )),
     }
-}
-
-/// `path` with a first part that is one of macOS's own links at the root (`/tmp`, `/var`,
-/// `/etc` → `/private/…`, owned by root) written as where it leads, so the way back is not
-/// refused over the system's links. Other links are kept for the check. Elsewhere: `path`.
-fn through_system_links(path: &Path) -> PathBuf {
-    #[cfg(target_os = "macos")]
-    {
-        use std::os::unix::fs::MetadataExt;
-        let mut parts = path.components();
-        if let (Some(std::path::Component::RootDir), Some(std::path::Component::Normal(first))) =
-            (parts.next(), parts.next())
-        {
-            let link = Path::new("/").join(first);
-            let system = std::fs::symlink_metadata(&link).is_ok_and(|m| m.file_type().is_symlink() && m.uid() == 0);
-            if system
-                && let Ok(target) = std::fs::read_link(&link)
-                && target.starts_with("private")
-            {
-                return Path::new("/").join(target).join(parts.as_path());
-            }
-        }
-    }
-    path.to_path_buf()
 }
 
 /// The home folder `original` is under, as written (`home`) or resolved (`canonical`, e.g.

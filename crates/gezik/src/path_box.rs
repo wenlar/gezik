@@ -548,7 +548,9 @@ impl PathBox {
         if !remember() {
             return;
         }
-        self.0.history.borrow_mut().visit(path, now());
+        // `/tmp/x` and `/private/tmp/x` are one folder on macOS: counted once.
+        let path = gezik_platform::fs::through_system_links(path);
+        self.0.history.borrow_mut().visit(&path, now());
         self.save();
     }
 

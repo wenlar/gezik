@@ -124,6 +124,30 @@ pub(crate) fn cancelled() -> io::Error {
     io::Error::new(io::ErrorKind::Interrupted, "cancelled")
 }
 
+/// `path` with a first part that is one of macOS's own links at the root (`/tmp`, `/var`,
+/// `/etc` → `/private/…`, owned by root) written as where it leads, so the way back and the
+/// folder history are not thrown by the system's links. Other links are kept. Elsewhere: `path`.
+pub fn through_system_links(path: &Path) -> PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let mut parts = path.components();
+        if let (Some(std::path::Component::RootDir), Some(std::path::Component::Normal(first))) =
+            (parts.next(), parts.next())
+        {
+            let link = Path::new("/").join(first);
+            let system = std::fs::symlink_metadata(&link).is_ok_and(|m| m.file_type().is_symlink() && m.uid() == 0);
+            if system
+                && let Ok(target) = std::fs::read_link(&link)
+                && target.starts_with("private")
+            {
+                return Path::new("/").join(target).join(parts.as_path());
+            }
+        }
+    }
+    path.to_path_buf()
+}
+
 #[cfg(test)]
 pub(crate) fn test_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("gezik-fs-{name}-{}", std::process::id()));
@@ -136,6 +160,15 @@ pub(crate) fn test_dir(name: &str) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_system_links_at_the_root_are_read_through() {
+        assert_eq!(through_system_links(Path::new("/tmp/a/b")), Path::new("/private/tmp/a/b"));
+        assert_eq!(through_system_links(Path::new("/var")), Path::new("/private/var"));
+        assert_eq!(through_system_links(Path::new("/Users/x")), Path::new("/Users/x"));
+        assert_eq!(through_system_links(Path::new("tmp/a")), Path::new("tmp/a"), "relative");
+    }
+
     use super::*;
 
     #[test]
