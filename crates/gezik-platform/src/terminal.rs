@@ -449,11 +449,11 @@ fn start(launch: &Launch) -> Result<(), TerminalError> {
 #[cfg(unix)]
 static UNREAPED: std::sync::Mutex<Vec<std::process::Child>> = std::sync::Mutex::new(Vec::new());
 
-/// A process of its own group (Ctrl+C where Gezik was started does not reach it), waited for
-/// on a small thread so that one that exits at once (gnome-terminal hands its window to its
-/// server) leaves no zombie.
+/// Also Open With's launches on Linux. A process of its own group (Ctrl+C where Gezik was
+/// started does not reach it), waited for on a small thread so that one that exits at once
+/// (gnome-terminal hands its window to its server) leaves no zombie.
 #[cfg(unix)]
-fn start(launch: &Launch) -> Result<(), TerminalError> {
+pub(crate) fn start(launch: &Launch) -> Result<(), TerminalError> {
     use std::os::unix::process::CommandExt;
     use std::process::{Command, Stdio};
     use std::sync::{Arc, Mutex, PoisonError};

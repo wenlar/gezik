@@ -411,6 +411,171 @@ pub fn resolve(
     (default, apps)
 }
 
+// ---- Loaders: read the files the lists name (each Open With menu reads them again) ----
+
+use crate::linux::desktop_entry::{self as de, DesktopEntry};
+
+/// The most desktop files read from one folder without a mimeinfo.cache, and by `all_apps`.
+pub const MAX_DESKTOP_FILES: usize = 2000;
+
+/// A desktop file's entry: at most `MAX_ENTRY_BYTES`, checked before reading; not UTF-8 → None.
+pub fn read_entry(path: &Path) -> Option<DesktopEntry> {
+    read_small(path, de::MAX_ENTRY_BYTES).and_then(|text| de::parse(&text))
+}
+
+/// `(desktop id, path)` of the desktop files in `dir` and one folder below it
+/// (`kde4/a.desktop` is `kde4-a.desktop`), sorted by id, at most `MAX_DESKTOP_FILES`.
+pub fn desktop_files(dir: &Path) -> Vec<(String, PathBuf)> {
+    let mut out = Vec::new();
+    let names = |dir: &Path| -> Vec<(String, PathBuf, bool)> {
+        std::fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .take(MAX_DESKTOP_FILES)
+            .filter_map(|e| {
+                let kind = e.file_type().ok()?;
+                Some((e.file_name().to_str()?.to_owned(), e.path(), kind.is_dir()))
+            })
+            .collect()
+    };
+    for (name, path, is_dir) in names(dir) {
+        if is_dir {
+            for (inner, inner_path, inner_dir) in names(&path) {
+                let id = format!("{name}-{inner}");
+                if !inner_dir && desktop_id_like(&id) {
+                    out.push((id, inner_path));
+                }
+            }
+        } else if desktop_id_like(&name) {
+            out.push((name, path));
+        }
+    }
+    out.sort();
+    out.truncate(MAX_DESKTOP_FILES);
+    out
+}
+
+/// A folder without a mimeinfo.cache: its desktop files' `MimeType=`.
+fn scan_mime_types(dir: &Path) -> Lists {
+    let mut lists = Lists::new();
+    for (id, path) in desktop_files(dir) {
+        for mime in read_entry(&path).map(|e| e.mime_types).unwrap_or_default() {
+            if mime_like(&mime) {
+                lists.entry(mime).or_default().push(id.clone());
+            }
+        }
+    }
+    lists
+}
+
+/// Every list as the files say now (decision 14).
+pub fn associations(xdg: &Xdg) -> Associations {
+    let files =
+        xdg.mimeapps_files().iter().filter_map(|p| read_small(p, MAX_LIST_BYTES)).map(|t| parse_mimeapps(&t)).collect();
+    let (mut caches, mut legacy) = (Vec::new(), Vec::new());
+    for dir in xdg.data("applications") {
+        caches.push(match read_small(&dir.join("mimeinfo.cache"), MAX_LIST_BYTES) {
+            Some(text) => section_lists(&text, "MIME Cache"),
+            None => scan_mime_types(&dir),
+        });
+        if let Some(text) = read_small(&dir.join("defaults.list"), MAX_LIST_BYTES) {
+            legacy.push(section_lists(&text, "Default Applications"));
+        }
+    }
+    Associations { files, caches, legacy }
+}
+
+/// The file of desktop id `id`: the first applications folder that has it, as `id` or
+/// with its first `-` as `/` (shortcut: deeper folders are not tried; add them if an app is missed).
+pub fn find_desktop(xdg: &Xdg, id: &str) -> Option<PathBuf> {
+    if !desktop_id_like(id) {
+        return None;
+    }
+    for dir in xdg.data("applications") {
+        let direct = dir.join(id);
+        if direct.is_file() {
+            return Some(direct);
+        }
+        if let Some((sub, rest)) = id.split_once('-')
+            && desktop_id_like(rest)
+            && dir.join(sub).join(rest).is_file()
+        {
+            return Some(dir.join(sub).join(rest));
+        }
+    }
+    None
+}
+
+/// Whether `program` is on this system's `PATH` (or an existing absolute path).
+pub fn on_path(program: &str) -> bool {
+    de::program_found(program, std::env::var("PATH").ok().as_deref(), &|p| p.is_file())
+}
+
+/// The default app and the apps for the file `path`, as desktop file paths (decision 10:
+/// a NoDisplay app only as the default). `found` checks programs (`on_path`).
+pub fn apps_of(
+    xdg: &Xdg,
+    db: &MimeDb,
+    assoc: &Associations,
+    path: &Path,
+    found: &dyn Fn(&str) -> bool,
+) -> (Option<PathBuf>, Vec<PathBuf>) {
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let Some(mime) = db.type_of_name(&name) else { return (None, Vec::new()) };
+    let types = db.with_parents(&mime);
+    let mut known: HashMap<String, Option<(PathBuf, bool)>> = HashMap::new();
+    let mut look = |id: &str| -> Option<(PathBuf, bool)> {
+        known
+            .entry(id.to_owned())
+            .or_insert_with(|| {
+                let file = find_desktop(xdg, id)?;
+                let entry = read_entry(&file)?;
+                de::usable(&entry, &xdg.desktops, found).then_some((file, !entry.no_display))
+            })
+            .clone()
+    };
+    let (default, ids) = resolve(assoc, &types, &mut |id| look(id).is_some());
+    let default = default.and_then(|id| look(&id)).map(|(file, _)| file);
+    let apps = ids
+        .iter()
+        .filter_map(|id| look(id))
+        .filter(|(file, shown)| *shown || Some(file) == default.as_ref())
+        .map(|(file, _)| file)
+        .collect();
+    (default, apps)
+}
+
+/// Every app Other… may offer (decision 2): each id once (the first folder's), usable, not
+/// NoDisplay; by name.
+pub fn all_apps(xdg: &Xdg, found: &dyn Fn(&str) -> bool) -> Vec<(PathBuf, DesktopEntry)> {
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for dir in xdg.data("applications") {
+        for (id, path) in desktop_files(&dir) {
+            if out.len() >= MAX_DESKTOP_FILES || !seen.insert(id) {
+                continue;
+            }
+            if let Some(entry) = read_entry(&path)
+                && !entry.no_display
+                && de::usable(&entry, &xdg.desktops, found)
+            {
+                out.push((path, entry));
+            }
+        }
+    }
+    out.sort_by_cached_key(|(path, e)| (e.name.to_lowercase(), path.clone()));
+    out
+}
+
+/// An app's name for menus and messages: its entry's Name, else its file name.
+pub fn app_name(path: &Path) -> String {
+    read_entry(path)
+        .map(|e| e.name)
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -662,5 +827,106 @@ mod tests {
         assert_eq!(read_small(&big, 0), None, "over the limit");
         assert_eq!(read_small(&root.0, MAX_LIST_BYTES), None, "a folder");
         assert_eq!(read_small(&root.0.join("none"), MAX_LIST_BYTES), None);
+    }
+
+    fn tree(name: &str, files: &[(&str, &str)]) -> (PathBuf, Xdg) {
+        let root = std::env::temp_dir().join(format!("gezik-9b10-mime-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for (rel, text) in files {
+            let path = root.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, text).unwrap();
+        }
+        // Built directly: a Windows temp path has a drive colon, which `from` would split at.
+        let xdg = Xdg {
+            home: root.join("home"),
+            data_home: root.join("home/.local/share"),
+            data_dirs: vec![root.join("usr/share")],
+            config_home: root.join("home/.config"),
+            config_dirs: vec![root.join("etc/xdg")],
+            desktops: vec!["gnome".into()],
+        };
+        (root, xdg)
+    }
+
+    fn app(name: &str, exec: &str, extra: &str) -> String {
+        format!("[Desktop Entry]\nType=Application\nName={name}\nExec={exec}\n{extra}")
+    }
+
+    #[test]
+    fn apps_come_from_the_tree_in_order() {
+        let (root, xdg) = tree(
+            "apps",
+            &[
+                ("usr/share/mime/globs2", "50:image/png:*.png\n50:text/plain:*.txt\n"),
+                (
+                    "usr/share/applications/mimeinfo.cache",
+                    "[MIME Cache]\nimage/png=eog.desktop;gimp.desktop;kde4-paint.desktop;hidden.desktop;nodisplay.desktop;broken.desktop;big.desktop;latin.desktop;\n",
+                ),
+                ("usr/share/applications/eog.desktop", &app("Image Viewer", "eog %U", "MimeType=image/png;\n")),
+                ("usr/share/applications/gimp.desktop", &app("GIMP", "gimp %U", "")),
+                ("usr/share/applications/kde4/paint.desktop", &app("Paint", "kpaint %f", "OnlyShowIn=KDE;\n")),
+                ("usr/share/applications/hidden.desktop", &app("Hidden", "hidden %f", "")),
+                ("home/.local/share/applications/hidden.desktop", "[Desktop Entry]\nHidden=true\n"),
+                ("usr/share/applications/nodisplay.desktop", &app("Helper", "helper %f", "NoDisplay=true\n")),
+                ("usr/share/applications/broken.desktop", "[Desktop Entry]\nType=Application\nName=No command\n"),
+                // No mimeinfo.cache here: the files themselves are read.
+                (
+                    "home/.local/share/applications/mine.desktop",
+                    &app("My Viewer", "myview %f", "MimeType=image/png;\n"),
+                ),
+                ("home/.config/mimeapps.list", "[Default Applications]\nimage/png=gimp.desktop;\n"),
+            ],
+        );
+        // Over MAX_ENTRY_BYTES, and not UTF-8: skipped, no panic.
+        let big = app("Big", "big %f", &"X-Pad=x\n".repeat(40_000));
+        std::fs::write(root.join("usr/share/applications/big.desktop"), big).unwrap();
+        let mut latin = app("Latin", "latin %f", "").into_bytes();
+        latin.extend_from_slice(b"Comment=\xe7\xff\n");
+        std::fs::write(root.join("usr/share/applications/latin.desktop"), latin).unwrap();
+        let db = MimeDb::load(&xdg);
+        let assoc = associations(&xdg);
+        let found = |p: &str| !p.is_empty();
+        let (default, apps) = apps_of(&xdg, &db, &assoc, Path::new("/home/u/a.png"), &found);
+        let id = |p: &PathBuf| super::super::desktop_entry::desktop_id_of(p).unwrap_or_default();
+        assert_eq!(default.as_ref().map(id).as_deref(), Some("gimp.desktop"));
+        assert_eq!(
+            apps.iter().map(id).collect::<Vec<_>>(),
+            ["gimp.desktop", "mine.desktop", "eog.desktop"],
+            "the default first; the user's folder (no cache) before the system's; hidden, KDE-only, NoDisplay, broken, big and non-UTF-8 left out"
+        );
+        assert_eq!(
+            apps_of(&xdg, &db, &assoc, Path::new("/home/u/README"), &found),
+            (None, Vec::new()),
+            "no type, no apps"
+        );
+        let all: Vec<String> = all_apps(&xdg, &found).into_iter().map(|(_, e)| e.name).collect();
+        assert_eq!(
+            all,
+            ["GIMP", "Image Viewer", "My Viewer"],
+            "by name; no NoDisplay, hidden, other desktops' or broken ones"
+        );
+        assert_eq!(app_name(&root.join("usr/share/applications/eog.desktop")), "Image Viewer");
+        assert_eq!(app_name(Path::new("/nowhere/x.desktop")), "x");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn desktop_files_and_ids_stay_inside_their_folder() {
+        let (root, xdg) = tree(
+            "ids",
+            &[
+                ("usr/share/applications/a.desktop", &app("A", "a", "")),
+                ("usr/share/applications/kde4/b.desktop", &app("B", "b", "")),
+                ("usr/share/applications/notes.txt", "x"),
+            ],
+        );
+        let dir = &xdg.data("applications")[1];
+        let ids: Vec<String> = desktop_files(dir).into_iter().map(|(id, _)| id).collect();
+        assert_eq!(ids, ["a.desktop", "kde4-b.desktop"]);
+        assert!(find_desktop(&xdg, "kde4-b.desktop").is_some());
+        assert!(find_desktop(&xdg, "../a.desktop").is_none());
+        assert!(find_desktop(&xdg, "missing.desktop").is_none());
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

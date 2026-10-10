@@ -192,14 +192,20 @@ pub fn program(exec: &str) -> Option<String> {
 /// Whether `program` is a file: an absolute path, or a plain name in one of `path_var`'s
 /// folders (a relative path with a slash is refused).
 pub fn program_found(program: &str, path_var: Option<&str>, exists: &dyn Fn(&Path) -> bool) -> bool {
+    program_path(program, path_var, exists).is_some()
+}
+
+/// The absolute file `program` names: itself if absolute, else the first in one of
+/// `path_var`'s absolute folders (a relative folder like `.` would be the launch's own folder).
+pub fn program_path(program: &str, path_var: Option<&str>, exists: &dyn Fn(&Path) -> bool) -> Option<PathBuf> {
     if program.is_empty() {
-        return false;
+        return None;
     }
     if program.contains('/') {
         let path = Path::new(program);
-        return path.has_root() && exists(path);
+        return (path.has_root() && exists(path)).then(|| path.to_path_buf());
     }
-    path_var.unwrap_or_default().split(':').filter(|d| !d.is_empty()).any(|d| exists(&Path::new(d).join(program)))
+    path_var.unwrap_or_default().split(':').map(|d| Path::new(d).join(program)).find(|p| p.has_root() && exists(p))
 }
 
 /// Whether Open With may offer the entry (decisions 10, 12): not hidden, not a terminal app,
@@ -304,6 +310,39 @@ pub fn expand(entry: &DesktopEntry, desktop: &Path, files: &[PathBuf]) -> Result
     })
 }
 
+/// Starts `files` with the app of the desktop file `desktop` (decision 11): no shell, the
+/// program by its absolute path, each launch its own process group with stdin/stdout/stderr
+/// null, waited for on a small thread (`terminal::start`). Blocking (reads the entry, looks
+/// through PATH): not on the UI thread.
+#[cfg(all(unix, not(target_os = "macos")))]
+pub fn launch(desktop: &Path, files: &[PathBuf]) -> Result<(), String> {
+    let entry = crate::linux::mime::read_entry(desktop)
+        .filter(|e| !e.hidden && !e.terminal)
+        .ok_or_else(|| "The app's desktop file cannot be read".to_owned())?;
+    let dir = files
+        .first()
+        .and_then(|f| f.parent())
+        .map(Path::to_path_buf)
+        .or_else(dirs::home_dir)
+        .unwrap_or_else(|| PathBuf::from("/"));
+    let path_var = std::env::var("PATH").ok();
+    for argv in expand(&entry, desktop, files)? {
+        let Some((program, args)) = argv.split_first() else { continue };
+        let program = program
+            .to_str()
+            .and_then(|p| program_path(p, path_var.as_deref(), &|p| p.is_file()))
+            .ok_or_else(|| "The app's program was not found".to_owned())?;
+        let launch = crate::terminal::Launch {
+            program: program.into_os_string(),
+            args: args.to_vec(),
+            dir: dir.clone(),
+            elevated: false,
+        };
+        crate::terminal::start(&launch).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// A desktop file's id: its path below the last `applications` folder, `/` as `-`
 /// (`…/applications/kde4/a.desktop` is `kde4-a.desktop`).
 pub fn desktop_id_of(path: &Path) -> Option<String> {
@@ -384,6 +423,12 @@ mod tests {
         assert!(program_found("tool", Some("/bin::/opt/bin"), &exists));
         assert!(!program_found("bin/viewer", Some("/usr"), &exists), "a relative path with a slash");
         assert!(!program_found("", Some("/usr/bin"), &exists));
+        let here = |p: &Path| p.to_string_lossy().replace('\\', "/") == "./tool";
+        assert!(!program_found("tool", Some(".:"), &here), "relative PATH folders are not searched");
+        assert_eq!(
+            program_path("tool", Some("rel:/bin:/opt/bin"), &exists).map(|p| p.to_string_lossy().replace('\\', "/")),
+            Some("/opt/bin/tool".into())
+        );
         assert_eq!(program(r#""/opt/My App/app" --x %F"#).as_deref(), Some("/opt/My App/app"));
         assert_eq!(program("%f"), None);
     }
