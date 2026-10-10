@@ -962,7 +962,8 @@ pub fn default_state(made: &[(Change, Value)], exe: &str, taken: Option<String>)
         return taken.map_or(DefaultState::Off, |why| DefaultState::Taken { why });
     }
     let switch = |c: &Change| match c.kind {
-        Kind::MacDefault | Kind::Mimeapps => true,
+        // NSFileViewer alone where macOS keeps the folder handler (see `make_default_now`).
+        Kind::MacDefault | Kind::MacPref | Kind::Mimeapps => true,
         Kind::RegistryValue => c.place.to_lowercase().ends_with(r"\shell"),
         _ => false,
     };
@@ -1086,8 +1087,9 @@ pub fn repair_now() -> Result<Vec<String>, String> {
 }
 
 /// Make default (spec 6): every target read first, the recovery file written from what is
-/// about to be made, then the targets, then the system told.
-pub fn make_default_now() -> Result<(), String> {
+/// about to be made, then the targets, then the system told. `Ok(Some(note))`: done in part,
+/// as the note says (macOS 26 keeps folders for Finder; Reveal in Finder still comes to Gezik).
+pub fn make_default_now() -> Result<Option<String>, String> {
     let file = journal_file().ok_or("there is no config folder to keep system-changes.toml in")?;
     let access = SystemAccess::new();
     let exe = exe_text()?;
@@ -1100,12 +1102,22 @@ pub fn make_default_now() -> Result<(), String> {
         all.extend(plan_step(&locked.journal().changes, &access, target.clone())?);
     }
     write_reg_for(&all, locked.dir(), Os::HERE).map_err(|e| format!("{RESTORE_REG}: {e}"))?;
-    let result = apply_all(&mut locked, &access, targets, &exe);
+    let mut result = apply_all(&mut locked, &access, targets.clone(), &exe).map(|_| None);
+    // macOS 26 gives the folder handler to no app but Finder (LaunchServices -50, also through
+    // NSWorkspace). What this run made was taken back; the rest is made again without it.
+    if Os::HERE == Os::Mac && result.as_ref().is_err_and(|why| why.starts_with("public.folder: ")) {
+        let rest: Vec<Change> = targets.into_iter().filter(|t| t.kind != Kind::MacDefault).collect();
+        result = apply_all(&mut locked, &access, rest, &exe).map(|_| Some(FOLDERS_KEPT.to_owned()));
+    }
     let _ = write_restore_reg(&locked, Os::HERE);
     drop(locked);
     after_default_change(&exe);
-    result.map(drop)
+    result
 }
+
+/// What Make default says when macOS keeps folders for Finder.
+pub const FOLDERS_KEPT: &str = "macOS does not let another app open folders, so they still open in Finder. \
+Reveal in Finder (Show in Finder in other apps) now opens in Gezik.";
 
 fn after_default_change(exe: &str) {
     gezik_platform::system::associations_changed();
