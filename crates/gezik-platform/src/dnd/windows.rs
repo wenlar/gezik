@@ -1,6 +1,8 @@
 //! Windows: Gezik's own OLE drop target in place of winit's (which only reports paths, with
 //! no position or keys), and the Shell's drag image over the window.
 
+mod virtual_files;
+
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -197,7 +199,9 @@ impl IDropTarget_Impl for Target_Impl {
             Some(data) => {
                 let paths = paths_in(data);
                 *self.data.borrow_mut() = Some(data.clone());
-                if paths.is_empty() {
+                // No file paths: items with no file behind them (an attachment, a picture).
+                let virtual_count = if paths.is_empty() { virtual_files::offered(data).len() } else { 0 };
+                if paths.is_empty() && virtual_count == 0 {
                     *self.offer.borrow_mut() = None;
                     Answer::default()
                 } else {
@@ -205,7 +209,7 @@ impl IDropTarget_Impl for Target_Impl {
                         paths,
                         allowed: allowed_by(offered),
                         right: state.0 & MK_RBUTTON.0 != 0,
-                        virtual_count: 0,
+                        virtual_count,
                         virtual_files: None,
                     };
                     let answer = self.handler.over(&offer, x, y, keys_of(state));
@@ -267,6 +271,10 @@ impl IDropTarget_Impl for Target_Impl {
         let offer = self.offer.borrow_mut().take();
         let done = offer.and_then(|mut offer| {
             offer.allowed = allowed_by(offered);
+            if offer.virtual_count > 0 {
+                // Held for the job from now on: the source may let go of it once this returns.
+                offer.virtual_files = Some(virtual_files::files(data.as_ref()?)?);
+            }
             self.handler.dropped(&offer, x, y, keys_of(state))
         });
         let (reply, performed, logical) = drop_reply(done);
