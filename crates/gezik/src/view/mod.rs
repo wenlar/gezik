@@ -262,6 +262,13 @@ type SharedColumns = Rc<RefCell<Vec<ColumnState>>>;
 pub struct View(Rc<Inner>);
 
 impl View {
+    /// Whether this view is still held (a test of a closed window: it is not).
+    #[cfg(test)]
+    pub fn alive(&self) -> impl Fn() -> bool + use<> {
+        let weak = Rc::downgrade(&self.0);
+        move || weak.upgrade().is_some()
+    }
+
     pub fn new(
         id: PaneId,
         window: slint::Weak<AppWindow>,

@@ -1786,7 +1786,17 @@ pub(crate) mod tests {
             ops.dialogs().ask("Replace?", "a.txt", &["Replace", "Skip"], move |choice| answered.set(choice));
             ops.dialogs().ask("Next", "b.txt", &["OK"], |_| {});
         });
+        // Fix 4: nothing of its panes is held once it closes (no `Rc` cycle keeps them).
+        let pane = enter(second, panes::active);
+        let held = (pane.nav.alive(), pane.view.alive());
+        let parts = (
+            Rc::downgrade(&crate::panes::PANES.with(|s| s.get(second)).expect("its panes")),
+            Rc::downgrade(&crate::dual::DUAL.with(|s| s.get(second)).expect("its panes' layout")),
+        );
+        drop(pane);
         close(second);
+        assert!(!held.0() && !held.1(), "its navigator and view are let go");
+        assert!(parts.0.upgrade().is_none() && parts.1.upgrade().is_none());
         let first_window = first_weak.upgrade().expect("open");
         assert!(first_window.get_dialog_open());
         assert_eq!(first_window.get_dialog_title().as_str(), "Replace?");

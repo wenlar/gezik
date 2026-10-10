@@ -321,6 +321,13 @@ struct Inner {
 pub struct Navigator(Rc<RefCell<Inner>>);
 
 impl Navigator {
+    /// Whether this navigator is still held (a test of a closed window: it is not).
+    #[cfg(test)]
+    pub fn alive(&self) -> impl Fn() -> bool + use<> {
+        let weak = Rc::downgrade(&self.0);
+        move || weak.upgrade().is_some()
+    }
+
     /// The tabs of `session` open, the one in front with `select` selected; new tabs open at
     /// `start`. Does not load anything: call [`install`](Self::install) next.
     pub fn new(
