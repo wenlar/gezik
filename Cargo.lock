@@ -1751,6 +1751,7 @@ dependencies = [
  "cab",
  "chardetng",
  "cpio",
+ "crc32fast",
  "encoding_rs",
  "fast_image_resize",
  "flate2",
@@ -1833,6 +1834,7 @@ name = "gezik-search"
 version = "0.1.0"
 dependencies = [
  "gezik-core",
+ "gezik-ops",
  "gezik-platform",
  "icu_normalizer",
  "regex",

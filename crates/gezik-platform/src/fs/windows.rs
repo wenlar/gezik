@@ -236,7 +236,8 @@ pub(crate) fn verbatim(path: &Path) -> HSTRING {
     HSTRING::from_wide(&verbatim_wide(&wide))
 }
 
-pub fn copy_file(from: &Path, to: &Path, size: u64, progress: &mut dyn FnMut(u64) -> bool) -> io::Result<()> {
+/// Copies `from` to a new `to`; true if it was cloned (never here: Windows does not say).
+pub fn copy_file(from: &Path, to: &Path, size: u64, progress: &mut dyn FnMut(u64) -> bool) -> io::Result<bool> {
     struct Context<'a> {
         progress: &'a mut dyn FnMut(u64) -> bool,
         cancelled: bool,
@@ -273,7 +274,7 @@ pub fn copy_file(from: &Path, to: &Path, size: u64, progress: &mut dyn FnMut(u64
     // CopyFileExW removes a half-written copy itself when cancelled or failed.
     let result = unsafe { CopyFileExW(&verbatim(from), &verbatim(to), Some(routine), Some(data), None, flags) };
     match result {
-        Ok(()) => Ok(()),
+        Ok(()) => Ok(false),
         Err(_) if context.cancelled => Err(cancelled()),
         Err(err) => Err(io_error(err)),
     }

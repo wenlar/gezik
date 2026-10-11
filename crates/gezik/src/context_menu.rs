@@ -490,6 +490,19 @@ pub const COLLAPSE_GROUPS: u32 = 2010;
 pub const EXPAND_GROUPS: u32 = 2011;
 /// View ▸ Columns (spec 10 §10.3, 10e).
 pub const VIEW_COLUMNS: u32 = 2040;
+/// A job's menu in the operations panel (spec 11 §13.3: 2320–2339).
+pub const JOB_VERIFY: u32 = 2320;
+pub const JOB_UP: u32 = 2321;
+pub const JOB_DOWN: u32 = 2322;
+pub const JOB_START_NOW: u32 = 2323;
+/// Speed limit ▸, one id per speed in `JOB_SPEEDS`.
+pub const JOB_SPEED_FIRST: u32 = 2324;
+/// The speed limits offered, in MB/s; 0: none.
+pub const JOB_SPEEDS: [u64; 7] = [0, 1, 5, 10, 25, 50, 100];
+/// A duplicates search's "select all but one" (spec 11 §9.3, §13.3: 2310–2319), in
+/// `duplicate_select_items`' order.
+pub const DUP_SELECT_FIRST: u32 = 2310;
+pub const DUP_SELECT_COUNT: u32 = 5;
 /// View ▸ "Reset to rule N" (spec 10 §8.2, §10.3): the folder forgets its own view, rule N applies.
 pub const RESET_TO_RULE: u32 = 2041;
 /// View ▸ "View rule N applies", greyed: which rule set the folder's view.
@@ -519,16 +532,22 @@ pub const TOOLS_SELECT_DIFFERENCES: u32 = 2201;
 /// Tools ▸ Calculate checksums… and Verify checksums (11a), on rows.
 pub const TOOLS_CHECKSUMS: u32 = 2202;
 pub const TOOLS_VERIFY: u32 = 2203;
-/// Tools ▸ Size Map (11g), on one folder or a folder's empty space.
+/// Tools ▸ Find duplicates (11f) and Size Map (11g), on one folder or a folder's empty space.
+pub const TOOLS_DUPLICATES: u32 = 2204;
 pub const TOOLS_SIZE_MAP: u32 = 2205;
 /// Tools ▸ Export list… (11h).
 pub const TOOLS_EXPORT_LIST: u32 = 2206;
+/// Tools ▸ Copy to…, Move to…, Split file…, Join files (11i), on rows.
+pub const TOOLS_COPY_TO: u32 = 2207;
+pub const TOOLS_MOVE_TO: u32 = 2208;
+pub const TOOLS_SPLIT: u32 = 2209;
+pub const TOOLS_JOIN: u32 = 2210;
 
 /// `Tools ▸` (spec 11 §3.3) at place `at`: only what applies: Compare for the selection when it
 /// can be compared (`compare`), Select Differences with two panes, Calculate checksums… for
-/// `rows` (a row menu's) and Verify
-/// checksums for one checksum file, Size Map on one folder or a folder's empty space
-/// (`size_map`), Export list… always.
+/// `rows` (a row menu's) and Verify checksums for one checksum file, Find duplicates and Size
+/// Map on one folder or a folder's empty space (`size_map`), Export list… always, then Copy
+/// to… and Move to… for `rows`, Split file… for one file and Join files for one part or `.crc`.
 pub fn tools_sub(at: usize, compare: bool, rows: &[(PathBuf, bool)], size_map: bool) -> Submenu {
     let mut items = Vec::new();
     if compare {
@@ -546,9 +565,11 @@ pub fn tools_sub(at: usize, compare: bool, rows: &[(PathBuf, bool)], size_map: b
         items.push((TOOLS_VERIFY, "Verify checksums".to_owned(), true));
     }
     if size_map {
+        items.push((TOOLS_DUPLICATES, "Find duplicates".to_owned(), true));
         items.push((TOOLS_SIZE_MAP, "Size Map".to_owned(), true));
     }
     items.push((TOOLS_EXPORT_LIST, "Export list…".to_owned(), true));
+    items.extend(crate::copy_to::menu_items(rows).into_iter().map(|(id, title)| (id, title, true)));
     Submenu { title: "Tools".to_owned(), at, items }
 }
 
@@ -581,6 +602,55 @@ pub struct Submenu {
     pub title: String,
     pub at: usize,
     pub items: Vec<(u32, String, bool)>,
+}
+
+/// A job's menu (spec 11 §5): a copy's Verify copies and Speed limit ▸ (a limit from the
+/// settings that is not offered shows in the title), a waiting job's Move up, Move down
+/// (greyed when it cannot) and Start now.
+pub fn job_items(
+    copies: bool,
+    waiting: bool,
+    options: &gezik_ops::JobOptions,
+) -> (Vec<(u32, String, bool)>, Vec<Submenu>) {
+    let mut items = Vec::new();
+    let mut subs = Vec::new();
+    if copies {
+        items.push((JOB_VERIFY, marked(options.verify, "Verify copies"), true));
+        let speed = options.speed.unwrap_or(0);
+        let speeds = JOB_SPEEDS.iter().enumerate().map(|(i, &mb)| {
+            let title = if mb == 0 { "No limit".to_owned() } else { format!("{mb} MB/s") };
+            (JOB_SPEED_FIRST + i as u32, marked(speed == mb * 1_000_000, &title), true)
+        });
+        let title = if JOB_SPEEDS.iter().any(|&mb| speed == mb * 1_000_000) {
+            "Speed limit".to_owned()
+        } else {
+            let rate = gezik_core::ops::rate::format_rate(speed as f64, gezik_core::view::SizeFormat::Decimal);
+            format!("Speed limit ({rate})")
+        };
+        subs.push(Submenu { title, at: items.len(), items: speeds.collect() });
+    }
+    if waiting {
+        items.push((JOB_UP, "Move up".to_owned(), options.can_up));
+        items.push((JOB_DOWN, "Move down".to_owned(), options.can_down));
+        items.push((JOB_START_NOW, "Start now".to_owned(), true));
+    }
+    (items, subs)
+}
+
+/// "Select all but one" in a duplicates search (spec 11 §9.3): the search bar's ▾ menu and a
+/// result row's menu.
+pub fn duplicate_select_items() -> Vec<(u32, &'static str)> {
+    [
+        "Select all but the newest in each group",
+        "Select all but the oldest in each group",
+        "Select all but the first in each group",
+        "Select all in this folder",
+        "Keep this one, select its copies",
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(i, title)| (DUP_SELECT_FIRST + i as u32, title))
+    .collect()
 }
 
 /// What a search result's row menu adds.
@@ -1019,6 +1089,8 @@ enum Subject {
     Search,
     /// A saved search in the sidebar, by name.
     SavedSearch(String),
+    /// A job's row in the operations panel, by id.
+    Job(i32),
     /// The size map's rectangle menu (items by id).
     SizeMap,
 }
@@ -1172,6 +1244,9 @@ impl Menus {
             self.add_finder_items(&mut list, &mut subs, services);
             if results {
                 list.extend(owned(result_row_items()).into_iter().filter(|(id, _)| *id != SHOW_IN_FOLDER_NEW_TAB));
+                if crate::panes::active_view().shows_duplicates() {
+                    list.extend(owned(duplicate_select_items()));
+                }
             } else if !crate::panes::active_view().shows_drives() {
                 list.push((NEW_FOLDER_WITH_SELECTION, "New folder with selection".to_owned()));
             }
@@ -1210,6 +1285,9 @@ impl Menus {
         self.add_finder_items(&mut list, &mut subs, services);
         if crate::panes::active_view().shows_results() {
             list.extend(owned(result_row_items()));
+            if crate::panes::active_view().shows_duplicates() {
+                list.extend(owned(duplicate_select_items()));
+            }
         }
         self.open(Subject::Row(path.clone()), list, subs, MenuTarget::Item(path), x, y, at);
     }
@@ -1856,8 +1934,17 @@ impl Menus {
         self.open_slint_entries(&built.0, built.1, at);
     }
 
+    /// A job's menu in the operations panel, under its button (spec 11 §5).
+    pub fn job_menu(&self, job: i32, at: Anchor) {
+        let Some((copies, waiting, options)) = self.ops.job_menu(job) else { return };
+        let (items, subs) = job_items(copies, waiting, &options);
+        *self.subject.borrow_mut() = Some(Subject::Job(job));
+        self.open_slint_entries(&items, subs, at);
+    }
+
     fn run(&self, id: u32, subject: Subject) {
         match (id, subject) {
+            (id, Subject::Job(job)) => self.ops.job_chosen(job, id),
             (id, Subject::Search) => {
                 crate::panes::with_active(|p| p.search.menu_chosen(id));
             }
@@ -1972,6 +2059,26 @@ impl Menus {
                 crate::checksums::open(rows.into_iter().map(|(path, _)| path).collect());
             }
             (TOOLS_VERIFY, Subject::Row(path)) => crate::checksums::verify(path),
+            (TOOLS_DUPLICATES, Subject::Row(_) | Subject::Background(_)) => {
+                crate::panes::with_active(|p| p.search.find_duplicates());
+            }
+            (id, Subject::Row(_) | Subject::Rows(_))
+                if (DUP_SELECT_FIRST..DUP_SELECT_FIRST + DUP_SELECT_COUNT).contains(&id) =>
+            {
+                crate::search::select_duplicates(&crate::panes::active_view(), id);
+            }
+            (TOOLS_COPY_TO..=TOOLS_JOIN, Subject::Row(_) | Subject::Rows(_)) => {
+                let rows = std::mem::take(&mut *self.rows.borrow_mut());
+                let mut paths: Vec<PathBuf> = rows.into_iter().map(|(path, _)| path).collect();
+                match (id, paths.pop()) {
+                    (TOOLS_SPLIT, Some(path)) => crate::copy_to::split_path(path),
+                    (TOOLS_JOIN, Some(path)) => crate::copy_to::join_path(path),
+                    (_, last) => {
+                        paths.extend(last);
+                        crate::copy_to::copy_to_paths(paths, id == TOOLS_MOVE_TO);
+                    }
+                }
+            }
             (EXTRACT_HERE..=COMPRESS_TO, Subject::Row(_) | Subject::Rows(_)) => {
                 let rows = std::mem::take(&mut *self.rows.borrow_mut());
                 let paths: Vec<PathBuf> = rows.iter().map(|(path, _)| path.clone()).collect();
@@ -2367,11 +2474,13 @@ fn from_submenu(id: u32) -> bool {
         || id == GROUP_NEW
         || id == TOOLS_EXPORT_LIST
         || id == TOOLS_SIZE_MAP
+        || id == TOOLS_DUPLICATES
         || id == GROUP_NONE
         || id == TOOLS_COMPARE
         || id == TOOLS_SELECT_DIFFERENCES
         || id == TOOLS_CHECKSUMS
         || id == TOOLS_VERIFY
+        || (TOOLS_COPY_TO..=TOOLS_JOIN).contains(&id)
         || (TEMPLATE_FIRST..TEMPLATE_FIRST + TEMPLATE_MAX).contains(&id)
         || (OPEN_WITH_FIRST..OPEN_WITH_FIRST + OPEN_WITH_MAX).contains(&id)
         || id == OPEN_WITH_OTHER
@@ -2653,12 +2762,26 @@ mod tests {
         assert_eq!(ids, [TOOLS_COMPARE, TOOLS_EXPORT_LIST]);
         assert_eq!(tools_sub(0, false, &[], false).items.len(), 1, "Compare only where it applies");
         let sums = [(PathBuf::from("a.sha256"), false)];
-        let ids: Vec<u32> = tools_sub(0, true, &sums, true).items.iter().map(|(id, _, _)| *id).collect();
+        let all = tools_sub(0, true, &sums, true);
+        let ids: Vec<u32> = all.items.iter().map(|(id, _, _)| *id).collect();
         assert_eq!(
             ids,
-            [TOOLS_COMPARE, TOOLS_CHECKSUMS, TOOLS_VERIFY, TOOLS_SIZE_MAP, TOOLS_EXPORT_LIST],
+            [
+                TOOLS_COMPARE,
+                TOOLS_CHECKSUMS,
+                TOOLS_VERIFY,
+                TOOLS_DUPLICATES,
+                TOOLS_SIZE_MAP,
+                TOOLS_EXPORT_LIST,
+                TOOLS_COPY_TO,
+                TOOLS_MOVE_TO,
+                TOOLS_SPLIT
+            ],
             "the macOS Tools menu's order"
         );
+        assert_eq!((TOOLS_COPY_TO, TOOLS_MOVE_TO, TOOLS_SPLIT, TOOLS_JOIN), (2207, 2208, 2209, 2210));
+        assert!(all.items.iter().all(|(id, _, _)| (2200..2220).contains(id) && from_submenu(*id)));
+        assert!(from_submenu(TOOLS_JOIN));
         assert_eq!(TOOLS_SIZE_MAP, 2205, "spec 11 §13.3, after Find Duplicates 2204");
         assert!(tools.items.iter().all(|(id, _, _)| (2200..2220).contains(id) && from_submenu(*id)));
     }
@@ -2857,11 +2980,21 @@ mod tests {
             TOOLS_SIZE_MAP,
             TOOLS_CHECKSUMS,
             TOOLS_VERIFY,
+            JOB_VERIFY,
+            JOB_UP,
+            JOB_DOWN,
+            JOB_START_NOW,
+            TOOLS_DUPLICATES,
+            TOOLS_COPY_TO,
+            TOOLS_MOVE_TO,
+            TOOLS_SPLIT,
+            TOOLS_JOIN,
         ];
         let mut ranges: Vec<std::ops::Range<u32>> = singles.iter().map(|id| *id..id + 1).collect();
         ranges.extend([
             RECENT_SERVER_FIRST..RECENT_SERVER_FIRST + RECENT_SERVER_MAX,
             GROUP_BY_NONE..GROUP_BY_NONE + 4,
+            DUP_SELECT_FIRST..DUP_SELECT_FIRST + DUP_SELECT_COUNT,
             TOGGLE_COLUMN_FIRST..RESET_COLUMNS,
             CONFLICT_FIRST..CONFLICT_FIRST + 4,
             ADD_RULE_FIRST..ADD_RULE_FIRST + 10,
@@ -2884,8 +3017,10 @@ mod tests {
             SAVED_SEARCH_FIRST..SAVED_SEARCH_FIRST + SAVED_SEARCH_MAX,
             SAVED_SEARCH_DELETE_FIRST..SAVED_SEARCH_DELETE_FIRST + SAVED_SEARCH_MAX,
             WINDOW_FIRST..WINDOW_FIRST + WINDOW_MAX,
+            JOB_SPEED_FIRST..JOB_SPEED_FIRST + JOB_SPEEDS.len() as u32,
             crate::size_map::MAP_OPEN..crate::size_map::MAP_COPY_PATH + 1,
         ]);
+        assert!(JOB_SPEED_FIRST + (JOB_SPEEDS.len() as u32) <= 2340, "the job menu keeps to 2320-2339");
         for (i, a) in ranges.iter().enumerate() {
             assert!(a.start >= 1 && a.end <= GEZIK_IDS_END, "{a:?}: 1..4096 (0 is a heading, 4096 on the Shell's)");
             for b in &ranges[i + 1..] {
@@ -2898,13 +3033,37 @@ mod tests {
     }
 
     #[test]
+    fn a_job_menu_offers_what_the_job_can_do() {
+        let options = gezik_ops::JobOptions { verify: true, speed: Some(5_000_000), can_up: false, can_down: true };
+        let (items, subs) = job_items(true, true, &options);
+        let shown: Vec<(u32, bool)> = items.iter().map(|(id, _, on)| (*id, *on)).collect();
+        assert_eq!(shown, [(JOB_VERIFY, true), (JOB_UP, false), (JOB_DOWN, true), (JOB_START_NOW, true)]);
+        assert!(items[0].1.starts_with('•'), "verifying");
+        assert_eq!((subs.len(), subs[0].at, subs[0].title.as_str()), (1, 1, "Speed limit"));
+        let marked: Vec<&str> = subs[0].items.iter().filter(|i| i.1.starts_with('•')).map(|i| i.1.as_str()).collect();
+        assert_eq!(marked, ["• 5 MB/s"]);
+        assert_eq!(subs[0].items[0].0, JOB_SPEED_FIRST);
+        // A limit from the settings that is not offered shows in the title; none is marked.
+        let odd = gezik_ops::JobOptions { speed: Some(20_000_000), ..options };
+        let (_, subs) = job_items(true, false, &odd);
+        assert_eq!(subs[0].title, "Speed limit (20.0 MB/s)");
+        assert!(subs[0].items.iter().all(|i| !i.1.starts_with('•')));
+        // A running copy: no queue items; a job that copies nothing: only the queue.
+        let (items, _) = job_items(true, false, &options);
+        assert_eq!(items.len(), 1);
+        let (items, subs) = job_items(false, true, &options);
+        assert_eq!((items.len(), subs.len()), (3, 0));
+        assert_eq!(job_items(false, false, &options).0.len(), 0);
+    }
+
+    #[test]
     fn tools_offer_verify_only_for_one_checksum_file() {
         let ids = |rows: &[(PathBuf, bool)]| -> Vec<u32> {
             tools_sub(0, false, rows, false)
                 .items
                 .into_iter()
                 .map(|(id, ..)| id)
-                .filter(|id| *id != TOOLS_EXPORT_LIST)
+                .filter(|id| *id < TOOLS_EXPORT_LIST)
                 .collect()
         };
         assert_eq!(ids(&[(PathBuf::from("a.txt"), false)]), [TOOLS_CHECKSUMS]);
@@ -2915,6 +3074,8 @@ mod tests {
         assert_eq!(ids(&two), [TOOLS_CHECKSUMS]);
         assert!(ids(&[]).is_empty(), "no rows (a folder's empty space): no checksums");
         assert!(from_submenu(TOOLS_CHECKSUMS) && from_submenu(TOOLS_VERIFY));
+        let select: Vec<u32> = duplicate_select_items().iter().map(|(id, _)| *id).collect();
+        assert_eq!(select, (DUP_SELECT_FIRST..DUP_SELECT_FIRST + DUP_SELECT_COUNT).collect::<Vec<_>>());
     }
 
     fn ids(v: Vec<(u32, &str)>) -> Vec<u32> {

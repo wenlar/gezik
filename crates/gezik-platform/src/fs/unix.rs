@@ -14,18 +14,22 @@ pub(super) fn entry_id(path: &Path) -> io::Result<(u64, u64)> {
     Ok((meta.dev(), meta.ino()))
 }
 
-pub fn copy_file(from: &Path, to: &Path, size: u64, progress: &mut dyn FnMut(u64) -> bool) -> io::Result<()> {
+/// Copies `from` to a new `to`; true if no bytes were copied: a clone (APFS, Btrfs, XFS: the
+/// copy shares the original's blocks) or a link made anew, which is neither verified nor held
+/// to a speed limit. Its bytes are not reported (only `progress(0)`, to hear a cancel): its
+/// caller counts them.
+pub fn copy_file(from: &Path, to: &Path, size: u64, progress: &mut dyn FnMut(u64) -> bool) -> io::Result<bool> {
     let meta = std::fs::symlink_metadata(from)?;
     if meta.file_type().is_symlink() {
         // A link stays a link; `symlink` fails if `to` exists.
         std::os::unix::fs::symlink(std::fs::read_link(from)?, to)?;
-        return Ok(());
+        return Ok(true);
     }
     // The clone is instant, so the first word comes after it, as below once the copy exists.
     #[cfg(target_os = "macos")]
     if clone_file(from, to).is_ok() {
-        return if progress(0) && progress(size) {
-            Ok(())
+        return if progress(0) {
+            Ok(true)
         } else {
             let _ = std::fs::remove_file(to);
             Err(cancelled())
@@ -36,9 +40,9 @@ pub fn copy_file(from: &Path, to: &Path, size: u64, progress: &mut dyn FnMut(u64
     // As on Windows, the first word comes once the copy exists: a pause or a cancel here
     // already finds it (under its temporary name, for a large file).
     let copied = if progress(0) { copy_contents(&mut source, &mut target, size, progress) } else { Err(cancelled()) };
-    let copied = copied.and_then(|()| {
+    let copied = copied.and_then(|cloned| {
         let times = FileTimes::new().set_modified(meta.modified()?).set_accessed(meta.accessed()?);
-        target.set_times(times)
+        target.set_times(times).map(|()| cloned)
     });
     if copied.is_err() {
         drop(target);
@@ -66,11 +70,11 @@ fn copy_contents(
     target: &mut File,
     size: u64,
     progress: &mut dyn FnMut(u64) -> bool,
-) -> io::Result<()> {
+) -> io::Result<bool> {
     use std::os::fd::AsRawFd;
     // Btrfs and XFS clone in one call; other file systems refuse and we copy.
     if unsafe { libc::ioctl(target.as_raw_fd(), libc::FICLONE, source.as_raw_fd()) } == 0 {
-        return if progress(size) { Ok(()) } else { Err(cancelled()) };
+        return if progress(0) { Ok(true) } else { Err(cancelled()) };
     }
     let mut done = 0u64;
     loop {
@@ -95,7 +99,7 @@ fn copy_contents(
         if n == 0 {
             // Some kernels and file systems answer 0 ("end of file") for a file they cannot
             // copy this way; a non-empty file with nothing copied gets the plain loop.
-            return if done == 0 && size > 0 { buffered(source, target, progress) } else { Ok(()) };
+            return if done == 0 && size > 0 { buffered(source, target, progress) } else { Ok(false) };
         }
         done += n as u64;
         if !progress(done) {
@@ -110,17 +114,17 @@ fn copy_contents(
     target: &mut File,
     _size: u64,
     progress: &mut dyn FnMut(u64) -> bool,
-) -> io::Result<()> {
+) -> io::Result<bool> {
     buffered(source, target, progress)
 }
 
-fn buffered(source: &mut File, target: &mut File, progress: &mut dyn FnMut(u64) -> bool) -> io::Result<()> {
+fn buffered(source: &mut File, target: &mut File, progress: &mut dyn FnMut(u64) -> bool) -> io::Result<bool> {
     let mut buffer = vec![0u8; 1 << 20];
     let mut done = 0u64;
     loop {
         let n = source.read(&mut buffer)?;
         if n == 0 {
-            return Ok(());
+            return Ok(false);
         }
         target.write_all(&buffer[..n])?;
         done += n as u64;

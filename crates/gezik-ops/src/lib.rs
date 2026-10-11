@@ -14,7 +14,10 @@ mod tasks;
 mod testing;
 pub mod walk;
 
-pub use engine::{ConflictItem, Engine, Event, Failure, JobId, JobState, PauseReason, Progress, Report, Settings};
+pub use engine::{
+    ConflictItem, Engine, Event, Failure, JobId, JobOptions, JobState, PauseReason, Progress, Report, Settings,
+    move_next_to,
+};
 pub use gezik_core::ops::conflict::{ConflictKind, Decision, Facts};
 pub use pending::PendingDeletes;
 pub use task::{
@@ -23,7 +26,7 @@ pub use task::{
 };
 pub use tasks::{
     CANCELLED, CloudPinTask, CopyTask, DeleteTask, ElevatedTask, Elevator, GroupTask, HashResults, HashRow, HashTask,
-    LinkTask, MAX_CHECKSUM_FILE, MaterializeTask, MoveTask, NEEDS_ADMIN, NOT_AVAILABLE, NOT_SO, NewTask, RenameTask,
-    RestoreTask, RowState, Seen, SetAttributesTask, SharedResults, SyncStep, SyncTask, TrashTask, UNCHECKED, Verdict,
-    in_a_bin_folder, sync_label, trash_path,
+    LinkTask, MAX_CHECKSUM_FILE, MaterializeTask, MoveTask, NEEDS_ADMIN, NOT_AVAILABLE, NOT_SO, NewTask, Pick,
+    RenameTask, RestoreTask, RowState, Seen, SetAttributesTask, SharedResults, SyncStep, SyncTask, TrashTask,
+    UNCHECKED, Verdict, in_a_bin_folder, sync_label, trash_path,
 };

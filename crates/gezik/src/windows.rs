@@ -1060,6 +1060,10 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
         popup::step_line(&enabled, from, down)
     });
     let menus = context_menu::Menus::new(&window, preview.clone(), sidebar.clone(), ops.clone());
+    window.on_op_more({
+        let menus = menus.clone();
+        move |id, left, bottom, right, top| menus.job_menu(id, popup::Anchor::below(left, top, right, bottom))
+    });
     let drags = drag::Drags::new(&window, sidebar, ops.clone(), menus.clone());
     drags.install(&window);
     resident::when_shown({
@@ -1776,7 +1780,7 @@ pub(crate) mod tests {
         let first_window = first_weak.upgrade().expect("open");
         let ops = Operations::new(
             &first_window,
-            gezik_ops::Settings { threads: Default::default(), pending_deletes: None },
+            gezik_ops::Settings::default(),
             Default::default(),
             false,
             None,
@@ -2052,7 +2056,7 @@ pub(crate) mod tests {
         let (first, weak) = window();
         let ops = Operations::new(
             &weak.upgrade().expect("open"),
-            gezik_ops::Settings { threads: Default::default(), pending_deletes: None },
+            gezik_ops::Settings::default(),
             Default::default(),
             false,
             None,

@@ -6,6 +6,7 @@
 - [Convert and PDF](#convert-and-pdf)
 - [Filter and selection](#filter-and-selection)
 - [Tabs, address bar and terminal](#tabs-address-bar-and-terminal)
+- [Layouts](#layouts)
 - [Search](#search)
 - [System integration](#system-integration)
 
@@ -37,17 +38,35 @@ Gezik copies, moves and deletes with its own engine on every OS:
   **New folder with selection** (Ctrl+Alt+N, ⌃⌘N on macOS) moves the selected items into a
   new folder.
 - **Create link**: a shortcut, junction or symbolic link on Windows, a symbolic link elsewhere.
+- **Copy To… / Move To…** (palette, row menu; F5/F6 with two panes ask the same): type the
+  target folder, end it with a name mask to rename (`D:\Yedek\*.bak`, `*_old.*`), and with
+  **Filter…** take only some files: `*.jpg *.png | thumbs\ *.tmp` (after `|`: left out; a
+  name ending in `\` or `/` is a folder), `*.jpg>*.cr2` brings each `.jpg`'s `.cr2` along.
+  No empty folders are made; a filtered move leaves the rest where it is.
+- **Split File…** cuts a file into `name.001`, `name.002`… and a `name.crc` (Total
+  Commander's); **Join Files** on any part puts it back together and checks its CRC before
+  anything is placed (a damaged or missing part is named, nothing is written).
 - **Drop stack**: a strip above the status bar that collects items (Ctrl+Shift+S, or drag
   onto it) from several folders; then **Copy here** or **Move here**. Kept for the session only.
 - Operations on the same drive wait for each other; different drives run at the same time.
   Long ones show in a panel above the status bar (fold it into the status bar with the
   arrow), with pause, cancel and, on Windows, progress on the taskbar button. Its
   **History** tab lists what finished this session.
+- **Verify copies**: each copied file is read back past the system's cache and compared
+  with the original byte by byte; a copy that differs is copied once more, and a move keeps
+  its source until the copy checked. Off by default (copies take about twice as long); on
+  for all copies in the settings, for one F5/F6 in its question, or for a running job in the
+  row's **⋯** menu. Clones (APFS, Btrfs, XFS) share the original's blocks and are not read.
+- **Speed limit** per copy or move: in the settings for all, or in the row's **⋯ ▸ Speed
+  limit** (1 to 100 MB/s) while it runs.
+- **Queue**: a job waiting for its drive moves up or down with **⋯ ▸ Move up / Move down**.
 
 ```toml
 [files]
 confirm-trash = false     # ask before moving to the trash
 copy-threads = "auto"     # auto (SSD 6, spinning disk 1, network 4) or 1-16
+verify = false            # read each copy back and compare it with the original
+max-speed = ""            # "20 MB/s", "500 KB/s"…; empty = no limit
 ```
 
 ## Batch rename
@@ -130,12 +149,6 @@ typing = "jump"           # jump: letters go to a name | filter: letters open th
 - The address bar (Ctrl+L) completes folder names and lists **Recent** and **Frequent**
   folders.
 - **Pinned folders** can have an alias and a group; Alt+1…9 (⌘⌥1…9 on macOS) go to the first nine.
-- **Columns view** (Ctrl+Shift+3, ⌃⌘3 on macOS, or View ▸ Columns) shows folders side by side
-  as Miller columns: ↑↓ move in a column, → goes into the selected folder, ← goes back. The
-  focused column's folder is the tab's location; moving between columns adds no Back step. A
-  selected file is previewed in a last column (unless the preview pane is open). Drag files
-  onto any column's rows or empty space; drag a column's edge to set every column's width.
-  Search results, the flat view, the Trash and This PC show the list instead.
 - **Compare** (Shift+F2, ⌃⌘C on macOS, or right-click ▸ Tools ▸ Compare): two selected
   files, or one selected in each pane, side by side. Changed lines and the changed part of
   each are marked; added and removed lines are tinted; line-ending and encoding differences
@@ -193,6 +206,52 @@ restore = true            # open the tabs of last time at start
 # command = ["wezterm", "start", "--cwd", "{dir}"]   # unset: Gezik finds one
 ```
 
+## Layouts
+
+- **Two panes** (F3, ⌃⌘P on macOS) put a second file list beside the first, each with its
+  own tabs; Tab switches between them and the divider can be dragged. F5 copies and F6 moves
+  the selection into the other pane's folder (asking first, where that folder can still be
+  changed); Ctrl+U swaps the panes' tabs. **Sync Browsing** makes a step into a sub-folder or
+  up in both panes. One pane is the default; the second comes back if you left it open.
+- **Folder tree**: the arrow on a folder in the sidebar (places, pinned folders, drives)
+  opens it as a tree; the arrow keys move in it. **Show in Sidebar Tree** (View button menu)
+  opens the tree down to the folder shown, `tree-follow = true` does it all the time. A
+  branch is read only when you open it.
+- **Grouping** (View ▸ Group by): by type, date (Today, Yesterday, Earlier this week …) or
+  size, in the list and the grid, with headers that fold; **Collapse / Expand All Groups**.
+  A folder keeps its grouping like its sort.
+- **Columns view** (Ctrl+Shift+3, ⌃⌘3 on macOS, or View ▸ Columns) shows folders side by side
+  as Miller columns: ↑↓ move in a column, → goes into the selected folder, ← goes back. The
+  focused column's folder is the tab's location; moving between columns adds no Back step. A
+  selected file is previewed in a last column (unless the preview pane is open). Drag files
+  onto any column's rows or empty space; drag a column's edge to set every column's width.
+  Search results, the flat view, the Trash and This PC show the list instead.
+- **Windows**: New window (Ctrl+N, ⌘N on macOS) opens another window in the same Gezik. On
+  Windows and macOS a tab dragged out of the tab strip becomes a window of its own, or joins
+  another window's tabs where you drop it. All windows come back at the next start.
+- **View rules** (`[[view-rules]]`): the first rule that matches a folder sets its view (mode,
+  sort, grouping, grid size, list columns), by path (`{pictures}/**`), by kind (network, removable,
+  cloud, search, …) or by content (`pictures >= 50%`). A view you set yourself wins; the View
+  button menu's **Reset to rule** goes back to the rule.
+
+```toml
+[sidebar]
+tree-follow = false       # the tree opens down to the folder shown
+
+[panes]
+confirm = true            # F5/F6 ask before copying or moving to the other pane
+
+[[view-rules]]
+content = "pictures >= 50%"
+mode = "grid"
+
+[[view-rules]]
+path = "~/Downloads"
+sort = "modified"
+sort-dir = "desc"
+group = "date"
+```
+
 ## Search
 
 - **Search** (Ctrl+Shift+F or Ctrl+E, ⌘⇧F on macOS) searches under the folder shown, with the
@@ -229,6 +288,16 @@ Right-click ▸ Tools, the command palette, and on macOS the Tools menu.
   `.crc` or `SHA256SUMS` file names: OK, FAILED, MISSING.
 - Both run as jobs in the operations panel (pause, cancel); files that are only in the cloud
   are downloaded only if you agree.
+- **Find Duplicates** (Tools ▸ on a folder or its empty space, the palette) opens the search bar to look for
+  files with the same content in the selected folder or the one shown (Enter starts it; the
+  name, size, type and date filters apply). Files are compared by size, then their first
+  64 KB, then their whole content; empty files, links, hard links of one file and files only
+  in the cloud are left out. The results come in groups, the most space to free first
+  (`3 files × 12.4 MB · 24.8 MB could be freed`). The ▾ menu and a row's right-click select
+  all but the newest, oldest or first copy in each group, all copies in one folder (one is
+  always kept) or all but the focused one. Delete moves them to the trash (one undo); on a
+  drive without a trash nothing is deleted. A saved search keeps it as `duplicates = true`.
+
 ## Export list
 
 Tools ▸ Export list… (right-click a row or the background; the palette's `Export List…`; Tools on the macOS menu bar) writes the list the pane shows, sorted and filtered as it is, to a file or the clipboard. The name's extension picks the format: `.txt` (one name, or with "Full paths in text" one path, per line), `.csv` (the columns shown plus Path, sizes in bytes and ISO dates; on Windows the system's list separator, `;` in Turkish, and a BOM so Excel reads it as UTF-8) or `.html` (one page, light and dark). With a selection, only the selected items go unless you untick the box. Search results and the flat view export their folders too; for the files in subfolders use the flat view first. Saving is a normal operation: a taken name asks, Ctrl+Z (⌘Z) removes the file.

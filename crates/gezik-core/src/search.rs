@@ -328,6 +328,8 @@ pub struct SearchSpec {
     pub skipped: bool,
     /// The flat view: every file under the scope, no folders.
     pub flat: bool,
+    /// Find duplicates (spec 11 §9): files with the same content, in groups.
+    pub duplicates: bool,
     /// A saved search's name (spec 8): the tab's title. Never written to state.toml (spec 9.2).
     pub name: Option<String>,
 }
@@ -347,6 +349,7 @@ impl SearchSpec {
             hidden: HiddenRule::FollowView,
             skipped: false,
             flat: false,
+            duplicates: false,
             name: None,
         }
     }
@@ -360,6 +363,7 @@ impl SearchSpec {
     /// An empty search says "Type something to search" (spec 3.1).
     pub fn is_query(&self) -> bool {
         self.flat
+            || self.duplicates
             || !self.pattern.trim().is_empty()
             || !self.content.is_empty()
             || !self.size.is_any()
@@ -389,6 +393,9 @@ impl SearchSpec {
         if let Some(name) = &self.name {
             return name.clone();
         }
+        if self.duplicates {
+            return self.crumb();
+        }
         if !self.content.is_empty() {
             format!("Search: \"{}\"", self.content)
         } else if self.pattern.trim().is_empty() {
@@ -400,6 +407,12 @@ impl SearchSpec {
 
     /// The last address bar part: `Search "*.pdf"`.
     pub fn crumb(&self) -> String {
+        if self.duplicates {
+            return match self.pattern.trim() {
+                "" => "Duplicates".to_owned(),
+                pattern => format!("Duplicates: {pattern}"),
+            };
+        }
         if !self.content.is_empty() {
             format!("Search \"{}\"", self.content)
         } else if self.pattern.trim().is_empty() {
@@ -606,6 +619,16 @@ mod tests {
         spec.match_case = true;
         spec.hidden = HiddenRule::Include;
         assert_eq!(spec.filter_count(), 3);
+    }
+
+    #[test]
+    fn duplicates_search_without_a_name() {
+        let mut spec = SearchSpec::new(Scope::Folder("/w".into()));
+        spec.duplicates = true;
+        assert!(spec.is_query(), "the whole scope");
+        assert_eq!((spec.title(), spec.crumb()), ("Duplicates".to_owned(), "Duplicates".to_owned()));
+        spec.pattern = "*.jpg".into();
+        assert_eq!(spec.title(), "Duplicates: *.jpg");
     }
 
     #[test]

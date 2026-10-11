@@ -17,7 +17,7 @@ use gezik_core::ops::rate::{Rate, format_eta, format_rate};
 use gezik_core::templates::{LinkKind, PasteKind, Template, pasted_name};
 use gezik_ops::{
     Answer, CopyTask, DeleteTask, Engine, Event, GroupTask, JobId, JobState, LinkTask, MaterializeTask, MoveTask,
-    NewTask, PauseReason, Progress, Question, Report, RestoreTask, Settings, Task, TrashTask,
+    NewTask, PauseReason, Pick, Progress, Question, Report, RestoreTask, Settings, Task, TaskKind, TrashTask,
 };
 use gezik_platform::clipboard::{self, ClipboardError, ClipboardFiles};
 use gezik_platform::dnd::VirtualFiles;
@@ -90,6 +90,9 @@ pub fn describe(
         JobState::Paused(PauseReason::ManyFailures) => (RowState::Paused, "Paused after errors".to_owned(), done),
         JobState::Running => {
             let mut text = format!("{}%", (done * 100.0).floor() as u32);
+            if progress.verifying {
+                text.push_str(" · Verifying…");
+            }
             if let Some(speed) = speed.filter(|s| *s > 0.0 && progress.bytes_total > 0) {
                 text.push_str(&format!(" · {}", format_rate(speed, crate::view_options::current().size_format)));
             }
@@ -293,6 +296,8 @@ type Again = Rc<dyn Fn()>;
 struct JobView {
     id: JobId,
     title: String,
+    /// Its kind once the engine said (a copy or move has Verify copies and Speed limit).
+    kind: Option<TaskKind>,
     background: bool,
     shown: bool,
     progress: Option<Progress>,
@@ -316,6 +321,12 @@ struct JobView {
     note: Option<&'static str>,
     /// Works in the bins (Put Back, delete from the trash): the system hears when it ends.
     bins: bool,
+    /// Duplicates go only to the trash (spec 11 §9.3): what cannot is left, never offered for
+    /// a permanent delete.
+    trash_only: bool,
+    /// A duplicates delete's paths: while it runs, another delete does not count them as the
+    /// copy that stays.
+    deleting: Vec<PathBuf>,
 }
 
 /// The note of a `{files}` run in the panel (spec 7).
@@ -330,10 +341,20 @@ pub fn with_note(detail: String, note: Option<&str>) -> String {
 }
 
 impl JobView {
+    /// What a retry of `job` keeps: a duplicates delete stays one (trash only).
+    fn retried(job: &JobView) -> impl FnOnce(&mut JobView) + use<> {
+        let (trash_only, deleting) = (job.trash_only, job.deleting.clone());
+        move |new: &mut JobView| {
+            new.trash_only = trash_only;
+            new.deleting = deleting;
+        }
+    }
+
     fn new(id: JobId, title: String) -> JobView {
         JobView {
             id,
             title,
+            kind: None,
             background: false,
             shown: false,
             progress: None,
@@ -349,6 +370,8 @@ impl JobView {
             window: None,
             note: None,
             bins: false,
+            trash_only: false,
+            deleting: Vec::new(),
         }
     }
 
@@ -370,6 +393,7 @@ impl JobView {
         let failed = state == RowState::Failed;
         let paused_by_user =
             matches!(self.progress.as_ref().map(|p| p.state), Some(JobState::Paused(PauseReason::User)));
+        let waiting = !finished && state == RowState::Waiting && self.progress.is_some();
         OpRow {
             id: i32::try_from(self.id).unwrap_or(i32::MAX),
             title: self.title.clone().into(),
@@ -378,7 +402,8 @@ impl JobView {
             state: state as i32,
             can_pause: !finished && matches!(state, RowState::Running),
             can_resume: !finished && paused_by_user,
-            can_start_now: !finished && state == RowState::Waiting && self.progress.is_some(),
+            can_start_now: waiting,
+            can_more: !finished && (waiting || self.copies()),
             can_retry: failed && (self.retry.is_some() || self.again.is_some()),
             can_details: failed
                 || self
@@ -388,6 +413,13 @@ impl JobView {
             finished,
             ..OpRow::default()
         }
+    }
+}
+
+impl JobView {
+    /// A copy or a move: its files can be verified and its speed limited.
+    fn copies(&self) -> bool {
+        matches!(self.kind, Some(TaskKind::Copy | TaskKind::Move))
     }
 }
 
@@ -475,6 +507,7 @@ impl Operations {
     pub fn set_files(&self, files: FilesSettings) {
         self.0.files.set(files);
         self.0.engine.set_threads(files.copy_threads);
+        self.0.engine.set_copy_defaults(files.verify, files.max_speed);
     }
 
     /// The window being opened has the operations panel (the same rows as every window's),
@@ -554,8 +587,13 @@ impl Operations {
     /// Runs `task`; `retry` runs the same operation again from its row, `after` says what to
     /// do with the results. The selection is not remembered here: see `remember_for`.
     pub fn submit(&self, task: Box<dyn Task>, retry: Option<Retry>, after: After) -> JobId {
+        self.submit_verifying(task, retry, after, None)
+    }
+
+    /// `submit` whose copies are verified as `verify` says (`None`: as `[files] verify` says).
+    fn submit_verifying(&self, task: Box<dyn Task>, retry: Option<Retry>, after: After, verify: Option<bool>) -> JobId {
         let title = task.title();
-        let id = self.0.engine.submit(task);
+        let id = self.0.engine.submit_verifying(task, verify);
         let mut job = JobView::new(id, title);
         crate::panes::with_active(|p| (job.origin, job.pane) = (p.search.results_key(), Some(p.id)));
         job.window = Some(crate::windows::current());
@@ -991,6 +1029,11 @@ impl Operations {
 
     /// Like `transfer`, giving the job (the drop stack follows a Move here by it).
     pub fn transfer_job(&self, paths: Vec<PathBuf>, dir: PathBuf, effect: Effect) -> JobId {
+        self.transfer_verifying(paths, dir, effect, None)
+    }
+
+    /// Like `transfer_job`, its copies verified as `verify` says (`None`: as the settings say).
+    pub fn transfer_verifying(&self, paths: Vec<PathBuf>, dir: PathBuf, effect: Effect, verify: Option<bool>) -> JobId {
         self.remember_for(&paths);
         let retry: Retry = Rc::new(move || -> Box<dyn Task> {
             match effect {
@@ -999,25 +1042,41 @@ impl Operations {
                 Effect::Link => Box::new(LinkTask::into(paths.clone(), &dir, LinkKind::for_drops())),
             }
         });
-        self.submit(retry(), Some(retry), After::Select)
+        self.submit_verifying(retry(), Some(retry), After::Select, verify)
     }
 
     /// Like `transfer` into `dir`, making the folders from `anchor` (`dir` or one above it) down
     /// to `dir` that are not there (F5/F6 to a typed folder, spec 10 §4.4); Ctrl+Z takes away
     /// the ones it made.
-    pub fn transfer_making(&self, paths: Vec<PathBuf>, dir: &Path, anchor: PathBuf, moving: bool) {
+    /// `pick`: only what a filter takes, under a name mask (spec 11 §12; empty: everything);
+    /// `verify`: the question's Verify copies (`None`: as `[files] verify` says).
+    pub fn transfer_making(
+        &self,
+        paths: Vec<PathBuf>,
+        dir: &Path,
+        anchor: PathBuf,
+        moving: bool,
+        pick: Pick,
+        verify: Option<bool>,
+    ) {
         let under: PathBuf = dir.components().skip(anchor.components().count()).collect();
         let items: Vec<(PathBuf, PathBuf)> =
             paths.iter().map(|path| (path.clone(), under.join(path.file_name().unwrap_or_default()))).collect();
         self.remember_for(&paths);
+        let to = dir.to_path_buf();
         let retry: Retry = Rc::new(move || -> Box<dyn Task> {
             if moving {
-                Box::new(MoveTask::with_folders(items.clone(), &anchor))
+                Box::new(MoveTask::with_folders(items.clone(), &anchor).picking(pick.clone()))
             } else {
-                Box::new(CopyTask::with_folders(items.clone(), &anchor))
+                Box::new(CopyTask::with_folders(items.clone(), &anchor).picking(pick.clone()).titled(&to))
             }
         });
-        self.submit(retry(), Some(retry), After::Select);
+        self.submit_verifying(retry(), Some(retry), After::Select, verify);
+    }
+
+    /// `[files] verify`: what a new copy starts with.
+    pub fn verify_default(&self) -> bool {
+        self.0.files.get().verify
     }
 
     /// Items another program offers with no file behind them (an attachment, a browser's
@@ -1059,6 +1118,21 @@ impl Operations {
         self.trash_paths(crate::panes::active_view().selected_paths(), permanent);
     }
 
+    /// The paths running duplicates deletes take (spec 11 §9.3).
+    fn busy_duplicates(&self) -> Vec<PathBuf> {
+        let jobs = self.0.jobs.borrow();
+        jobs.iter().filter(|job| job.trash_only && job.report.is_none()).flat_map(|job| job.deleting.clone()).collect()
+    }
+
+    /// Runs a duplicates delete: to the trash only, one job and one undo.
+    fn trash_duplicates_now(&self, paths: Vec<PathBuf>) {
+        let id = self.trash_now(paths.clone());
+        self.with_job(id, |job| {
+            job.trash_only = true;
+            job.deleting = paths;
+        });
+    }
+
     pub fn trash_paths(&self, paths: Vec<PathBuf>, permanent: bool) {
         self.trash_with(paths, permanent, false);
     }
@@ -1070,15 +1144,33 @@ impl Operations {
         self.trash_with(paths, permanent, true);
     }
 
+    /// Every delete comes here (Delete, Shift+Delete, the row menus, Explorer's verb): rows of a
+    /// duplicates search go only to the trash (spec 11 §9.3).
     fn trash_with(&self, paths: Vec<PathBuf>, permanent: bool, always_ask: bool) {
         let paths = self.without_roots(paths, if permanent { "delete" } else { "trash" });
         if paths.is_empty() {
             return;
         }
         let what = items_text(&paths);
+        let bin = if cfg!(windows) { "Recycle Bin" } else { "Trash" };
+        let dups = crate::panes::active_view().duplicate_groups_all_in(&paths, &self.busy_duplicates());
         let ops = self.clone();
-        if permanent {
-            self.dialogs().ask(
+        match delete_route(dups, permanent, always_ask || self.0.files.get().confirm_trash) {
+            DeleteRoute::DuplicatesAsk(whole) => {
+                let title = match whole {
+                    0 => format!("Move {what} to the {bin}?"),
+                    1 => "This deletes every copy of 1 file".to_owned(),
+                    n => format!("This deletes every copy of {n} files"),
+                };
+                let detail = if whole > 0 { format!("Move {what} to the {bin}?") } else { String::new() };
+                self.dialogs().ask(title, detail, &["Trash", "Cancel"], move |choice| {
+                    if choice == Some(0) {
+                        ops.trash_duplicates_now(paths);
+                    }
+                });
+            }
+            DeleteRoute::Duplicates => self.trash_duplicates_now(paths),
+            DeleteRoute::Permanent => self.dialogs().ask(
                 format!("Delete {what} permanently?"),
                 "This cannot be undone.",
                 &["Delete", "Cancel"],
@@ -1087,21 +1179,27 @@ impl Operations {
                         ops.delete_now(paths);
                     }
                 },
-            );
-        } else if always_ask || self.0.files.get().confirm_trash {
-            let bin = if cfg!(windows) { "Recycle Bin" } else { "Trash" };
-            self.dialogs().ask(format!("Move {what} to the {bin}?"), "", &["Trash", "Cancel"], move |choice| {
-                if choice == Some(0) {
-                    ops.trash_now(paths);
-                }
-            });
-        } else {
-            self.trash_now(paths);
+            ),
+            DeleteRoute::AskTrash => {
+                self.dialogs().ask(format!("Move {what} to the {bin}?"), "", &["Trash", "Cancel"], move |choice| {
+                    if choice == Some(0) {
+                        ops.trash_now(paths);
+                    }
+                });
+            }
+            DeleteRoute::Trash => {
+                self.trash_now(paths);
+            }
         }
     }
 
     /// Hides the rows of `paths` in the folder shown; the folder, to reload when the job ends.
     fn hide(&self, paths: &[PathBuf]) -> Option<PathBuf> {
+        // Duplicates: their rows go once the job is done (a row brought back would have no group).
+        if crate::panes::active_view().shows_duplicates() {
+            self.remember_for(paths);
+            return None;
+        }
         // Search results: their rows go at once; the check after the job brings back what stayed.
         if crate::panes::active_view().shows_results() {
             self.remember_for(paths);
@@ -1136,12 +1234,12 @@ impl Operations {
         refused
     }
 
-    fn trash_now(&self, paths: Vec<PathBuf>) {
+    fn trash_now(&self, paths: Vec<PathBuf>) -> JobId {
         let retry: Retry = {
             let paths = paths.clone();
             Rc::new(move || -> Box<dyn Task> { Box::new(TrashTask::new(paths.clone())) })
         };
-        self.run_hiding(paths, retry);
+        self.run_hiding(paths, retry)
     }
 
     fn delete_now(&self, paths: Vec<PathBuf>) {
@@ -1409,15 +1507,16 @@ impl Operations {
     pub fn drain(&self) {
         for event in self.0.engine.drain() {
             match event {
-                Event::Added { job, title, background, .. } => {
+                Event::Added { job, title, background, kind } => {
                     let known = self.0.jobs.borrow().iter().any(|j| j.id == job);
                     if !known {
                         let mut view = JobView::new(job, title);
                         view.background = background;
+                        view.kind = Some(kind);
                         self.0.jobs.borrow_mut().push(view);
                         self.show_later(job);
                     } else {
-                        self.with_job(job, |j| j.background = background);
+                        self.with_job(job, |j| (j.background, j.kind) = (background, Some(kind)));
                     }
                 }
                 Event::Progress { job, progress } => self.with_job(job, |j| {
@@ -1526,12 +1625,14 @@ impl Operations {
         let mut pane = None;
         let mut title = String::new();
         let mut bins = false;
+        let mut trash_only = false;
         self.with_job(id, |job| {
             if !report.unchecked.is_empty() {
                 job.note = Some(gezik_ops::UNCHECKED);
             }
             after = job.after;
             bins = job.bins;
+            trash_only = job.trash_only;
             hidden_in = job.hidden_in.take();
             hidden_paths = std::mem::take(&mut job.hidden_paths);
             origin = job.origin.take();
@@ -1616,7 +1717,13 @@ impl Operations {
             p.view.note(note);
         }
         if !report.no_trash.is_empty() {
-            self.ask_delete_for_good(report.no_trash.clone());
+            match trash_only_note(trash_only, &report.no_trash) {
+                Some(note) => match &pane {
+                    Some(p) => p.view.note(note),
+                    None => crate::panes::active_view().note(note),
+                },
+                None => self.ask_delete_for_good(report.no_trash.clone()),
+            }
         }
         // A row with skipped items stays until closed, for its Details.
         let notes = !report.cancelled && (!report.skipped.is_empty() || !report.unchecked.is_empty());
@@ -1763,6 +1870,48 @@ impl Operations {
         self.0.engine.start_now(Self::id(id));
     }
 
+    /// What row `id`'s menu needs: whether it copies, whether it waits, and its options;
+    /// `None` once it ended.
+    pub fn job_menu(&self, id: i32) -> Option<(bool, bool, gezik_ops::JobOptions)> {
+        let id = Self::id(id);
+        let options = self.0.engine.job_options(id)?;
+        let jobs = self.0.jobs.borrow();
+        let job = jobs.iter().find(|j| j.id == id)?;
+        let row = job.row();
+        Some((job.copies(), row.can_start_now, options))
+    }
+
+    /// An item of row `id`'s menu was chosen (`context_menu::JOB_*`).
+    pub fn job_chosen(&self, id: i32, choice: u32) {
+        use crate::context_menu::{JOB_DOWN, JOB_SPEED_FIRST, JOB_SPEEDS, JOB_START_NOW, JOB_UP, JOB_VERIFY};
+        let (job, engine) = (Self::id(id), &self.0.engine);
+        match choice {
+            JOB_VERIFY => {
+                if let Some(options) = engine.job_options(job) {
+                    engine.set_verify(job, !options.verify);
+                }
+            }
+            JOB_UP | JOB_DOWN => {
+                let Some(other) = engine.move_in_queue(job, choice == JOB_UP) else { return };
+                // The rows follow the queue.
+                {
+                    let mut jobs = self.0.jobs.borrow_mut();
+                    let at = |id| jobs.iter().position(|j| j.id == id);
+                    if let (Some(a), Some(b)) = (at(job), at(other)) {
+                        gezik_ops::move_next_to(&mut jobs, a, b);
+                    }
+                }
+                self.update();
+            }
+            JOB_START_NOW => engine.start_now(job),
+            _ => {
+                if let Some(&mb) = choice.checked_sub(JOB_SPEED_FIRST).and_then(|i| JOB_SPEEDS.get(i as usize)) {
+                    engine.set_speed(job, (mb > 0).then_some(mb * 1_000_000));
+                }
+            }
+        }
+    }
+
     pub fn dismiss(&self, id: i32) {
         self.remove(Self::id(id));
     }
@@ -1771,13 +1920,14 @@ impl Operations {
     /// skipped).
     pub fn retry(&self, id: i32) {
         let id = Self::id(id);
-        let (retry, again) = match self.0.jobs.borrow().iter().find(|j| j.id == id) {
-            Some(job) => (job.retry.clone(), job.again.clone()),
+        let (retry, again, kept) = match self.0.jobs.borrow().iter().find(|j| j.id == id) {
+            Some(job) => (job.retry.clone(), job.again.clone(), JobView::retried(job)),
             None => return,
         };
         if let Some(retry) = retry {
             self.remove(id);
-            self.submit(retry(), Some(retry.clone()), After::Select);
+            let new = self.submit(retry(), Some(retry.clone()), After::Select);
+            self.with_job(new, kept);
         } else if let Some(again) = again {
             self.remove(id);
             again();
@@ -1888,6 +2038,41 @@ impl Operations {
     }
 }
 
+/// Where a delete goes.
+#[derive(Debug, PartialEq, Eq)]
+enum DeleteRoute {
+    /// Rows of a duplicates search, asked first; the number of groups left without a copy.
+    DuplicatesAsk(usize),
+    Duplicates,
+    Permanent,
+    AskTrash,
+    Trash,
+}
+
+/// `dups`: how many duplicate groups the delete leaves without a copy (`None`: no duplicates
+/// rows); `ask`: the trash asks first (the setting, or Explorer's Delete on a sidebar entry).
+/// Duplicates go to the trash even with Shift (spec 11 §9.3).
+fn delete_route(dups: Option<usize>, permanent: bool, ask: bool) -> DeleteRoute {
+    match dups {
+        Some(whole) if whole > 0 || ask => DeleteRoute::DuplicatesAsk(whole),
+        Some(_) => DeleteRoute::Duplicates,
+        None if permanent => DeleteRoute::Permanent,
+        None if ask => DeleteRoute::AskTrash,
+        None => DeleteRoute::Trash,
+    }
+}
+
+/// What is said of `paths` the trash could not take: nothing for a job that may delete them
+/// for good instead (it asks), why they stay for one that goes only to the trash (duplicates).
+fn trash_only_note(trash_only: bool, paths: &[PathBuf]) -> Option<String> {
+    let bin = if cfg!(windows) { "Recycle Bin" } else { "trash" };
+    trash_only.then(|| {
+        let what =
+            if paths.len() == 1 { "1 duplicate was".to_owned() } else { format!("{} duplicates were", paths.len()) };
+        format!("{what} not deleted: {} Duplicates only go to the {bin}.", no_trash_reason(paths, bin))
+    })
+}
+
 /// Why `paths` cannot go to the trash (`bin`): their drive has none, or (Windows) their
 /// names end in a dot or a space.
 fn no_trash_reason(paths: &[PathBuf], bin: &str) -> String {
@@ -1924,6 +2109,41 @@ mod tests {
     use gezik_ops::{Failure, TaskKind};
 
     #[test]
+    fn every_delete_of_duplicates_goes_to_the_trash() {
+        // Delete, Shift+Delete, the row menu's Delete permanently, Explorer's verb with Shift.
+        for permanent in [false, true] {
+            assert_eq!(delete_route(Some(0), permanent, false), DeleteRoute::Duplicates);
+            assert_eq!(delete_route(Some(0), permanent, true), DeleteRoute::DuplicatesAsk(0), "confirm-trash");
+            assert_eq!(delete_route(Some(2), permanent, false), DeleteRoute::DuplicatesAsk(2), "every copy: asks");
+        }
+        assert_eq!(delete_route(None, true, false), DeleteRoute::Permanent);
+        assert_eq!(delete_route(None, false, true), DeleteRoute::AskTrash);
+        assert_eq!(delete_route(None, false, false), DeleteRoute::Trash);
+    }
+
+    #[test]
+    fn a_retried_duplicates_delete_stays_trash_only() {
+        let mut job = JobView::new(1, "Moving to the Recycle Bin".into());
+        job.trash_only = true;
+        job.deleting = vec![PathBuf::from("/w/a")];
+        let mut again = JobView::new(2, String::new());
+        JobView::retried(&job)(&mut again);
+        assert!(again.trash_only);
+        assert_eq!(again.deleting, [PathBuf::from("/w/a")]);
+    }
+
+    #[test]
+    fn duplicates_without_a_trash_stay() {
+        let usb = [PathBuf::from("/usb/a.jpg"), PathBuf::from("/usb/b.jpg")];
+        assert_eq!(trash_only_note(false, &usb), None, "a plain delete asks");
+        let bin = if cfg!(windows) { "Recycle Bin" } else { "trash" };
+        assert_eq!(
+            trash_only_note(true, &usb),
+            Some(format!("2 duplicates were not deleted: This drive has no {bin}. Duplicates only go to the {bin}."))
+        );
+    }
+
+    #[test]
     fn no_trash_reasons() {
         let bin = "Recycle Bin";
         assert_eq!(no_trash_reason(&[PathBuf::from("/usb/a.txt")], bin), "This drive has no Recycle Bin.");
@@ -1952,7 +2172,14 @@ mod tests {
     }
 
     fn progress(state: JobState, items: (u64, u64), bytes: (u64, u64)) -> Progress {
-        Progress { state, items_done: items.0, items_total: items.1, bytes_done: bytes.0, bytes_total: bytes.1 }
+        Progress {
+            state,
+            items_done: items.0,
+            items_total: items.1,
+            bytes_done: bytes.0,
+            bytes_total: bytes.1,
+            verifying: false,
+        }
     }
 
     fn report(failures: usize, cancelled: bool) -> Report {
@@ -2033,6 +2260,8 @@ mod tests {
         assert!((bar - 0.61).abs() < 0.001);
         let items_only = progress(JobState::Running, (1, 4), (0, 0));
         assert_eq!(describe(Some(&items_only), None, None, None).1, "25%");
+        let verifying = Progress { verifying: true, ..p };
+        assert_eq!(describe(Some(&verifying), None, None, None).1, "61% · Verifying…");
     }
 
     #[test]

@@ -76,17 +76,23 @@ pub fn forget(id: WindowId) {
     CURRENT.with(|s| s.forget(id));
 }
 
-/// Job `id` ended: a compare whose sync it was marks its rows; for the others what they show may
-/// be out of date.
+/// Job `id` ended: a compare whose sync it was marks its rows; one whose folders hold a folder
+/// the job changed may be out of date.
 pub fn job_finished(id: gezik_ops::JobId, report: &gezik_ops::Report) {
-    for (_, layer) in CURRENT.with(Slot::all) {
+    for (window, layer) in CURRENT.with(Slot::all) {
         let mine = layer.0.syncing.borrow().as_ref().is_some_and(|(job, ..)| *job == id);
         if mine {
-            layer.sync_finished(report);
-        } else if layer.0.done.borrow().is_some() {
-            layer.0.stale.set(true);
+            crate::windows::enter(window, || layer.sync_finished(report));
+        } else if layer.touched_by(&report.changed_dirs) {
+            crate::windows::enter(window, || layer.show_summary());
         }
     }
+}
+
+/// Whether one of `dirs` is in (or is) one of the compared folders.
+fn touches(dirs: &[PathBuf], roots: &(PathBuf, PathBuf)) -> bool {
+    use gezik_core::ops::paths::is_within;
+    dirs.iter().any(|dir| is_within(dir, &roots.0) || is_within(dir, &roots.1))
 }
 
 const NESTED: &str = "Cannot synchronize a folder with itself or with a folder inside it";
@@ -142,27 +148,9 @@ fn open_with(
     if let Some(old) = CURRENT.with(Slot::current) {
         old.0.stop.borrow().store(true, Ordering::Relaxed);
     }
-    let rows = Rc::new(Rows::default());
-    let layer = FolderCompare(Rc::new(Inner {
-        window,
-        paths: RefCell::new((left, right)),
-        options: Cell::new(options),
-        filter_text: RefCell::new(filter),
-        scanned_filter: RefCell::default(),
-        rows,
-        done: RefCell::default(),
-        generation: Cell::new(0),
-        stop: RefCell::new(Arc::new(AtomicBool::new(false))),
-        running: Cell::new(false),
-        progress: RefCell::default(),
-        told: RefCell::new(told),
-        hidden: Cell::new(false),
-        stale: Cell::new(false),
-        anchor: Cell::new(None),
-        note: RefCell::default(),
-        profile: RefCell::new(profile),
-        syncing: RefCell::default(),
-    }));
+    let layer = FolderCompare::new(window, (left, right), options, told);
+    *layer.0.filter_text.borrow_mut() = filter;
+    *layer.0.profile.borrow_mut() = profile;
     CURRENT.with(|s| s.set(crate::windows::current(), layer.clone()));
     layer.show();
     layer.start();
@@ -368,6 +356,39 @@ enum Message {
 }
 
 impl FolderCompare {
+    fn new(window: slint::Weak<AppWindow>, paths: (PathBuf, PathBuf), options: Options, told: String) -> Self {
+        FolderCompare(Rc::new(Inner {
+            window,
+            paths: RefCell::new(paths),
+            options: Cell::new(options),
+            filter_text: RefCell::default(),
+            scanned_filter: RefCell::default(),
+            rows: Rc::default(),
+            done: RefCell::default(),
+            generation: Cell::new(0),
+            stop: RefCell::new(Arc::new(AtomicBool::new(false))),
+            running: Cell::new(false),
+            progress: RefCell::default(),
+            told: RefCell::new(told),
+            hidden: Cell::new(false),
+            stale: Cell::new(false),
+            anchor: Cell::new(None),
+            note: RefCell::default(),
+            profile: RefCell::default(),
+            syncing: RefCell::default(),
+        }))
+    }
+
+    /// A job changed `dirs`: marks the result out of date if they are in its folders (and says
+    /// whether it did).
+    fn touched_by(&self, dirs: &[PathBuf]) -> bool {
+        let touched = self.0.done.borrow().is_some() && touches(dirs, &self.0.rows.roots.borrow());
+        if touched {
+            self.0.stale.set(true);
+        }
+        touched
+    }
+
     /// Puts the compare into the tool table and shows it.
     fn show(&self) {
         let Some(window) = self.0.window.upgrade() else { return };
@@ -430,6 +451,9 @@ impl FolderCompare {
     }
 
     fn show_summary(&self) {
+        if self.0.hidden.get() {
+            return self.show_chip();
+        }
         let Some(window) = self.0.window.upgrade() else { return };
         let (text, tone) = self.summary();
         let told = self.0.told.borrow();
@@ -564,7 +588,15 @@ impl FolderCompare {
                         self.0.anchor.set(None);
                         self.refilter();
                     }
-                    Err(text) => *self.0.progress.borrow_mut() = text,
+                    Err(text) => {
+                        // The earlier result is not this one's: it goes, the reason shows.
+                        *self.0.progress.borrow_mut() = text;
+                        *self.0.done.borrow_mut() = None;
+                        *self.0.rows.done.borrow_mut() = None;
+                        self.0.rows.selected.borrow_mut().clear();
+                        self.0.stale.set(false);
+                        self.refilter();
+                    }
                 }
             }
         }
@@ -1257,23 +1289,30 @@ struct Job {
 /// Reads both sides at once, compares them and (asked) reads the same-size pairs; `say` hears
 /// how far it is (at most every 250 ms). Err: what to say instead of rows.
 fn run(job: &Job, say: &mut dyn FnMut(String)) -> Result<Done, String> {
-    let root_name = job.left.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let rules = Rules {
-        subfolders: job.options.subfolders,
-        filter: &job.filter,
-        root_taken: job.filter.top_folder(&root_name) != Some(false),
-        shown: job.shown,
-        case_sensitive: CASE_SENSITIVE,
-        max_items: tree_scan::MAX_ITEMS,
+    // Each side by its own folder's name (11i's `top_folder`): a taken folder pattern it does
+    // not match leaves its own files out; a left-out pattern it matches leaves it all out.
+    let rules = |root: &Path| {
+        let name = root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        job.filter.top_folder(&name).map(|root_taken| Rules {
+            subfolders: job.options.subfolders,
+            filter: &job.filter,
+            root_taken,
+            shown: job.shown,
+            case_sensitive: CASE_SENSITIVE,
+            max_items: tree_scan::MAX_ITEMS,
+        })
     };
     let read = AtomicUsize::new(0);
     let (left, right) = std::thread::scope(|s| {
         let scan_side = |root: &Path| {
-            let (rules, stop, read) = (&rules, &job.stop, &read);
+            let (rules, stop, read) = (rules(root), &job.stop, &read);
             let root = root.to_path_buf();
-            s.spawn(move || {
-                gezik_platform::priority::lower_this_thread();
-                tree_scan::scan(&root, rules, stop, read)
+            s.spawn(move || match rules {
+                Some(rules) => {
+                    gezik_platform::priority::lower_this_thread();
+                    tree_scan::scan(&root, &rules, stop, read)
+                }
+                None => tree_scan::left_out(),
             })
         };
         let (l, r) = (scan_side(&job.left), scan_side(&job.right));
@@ -1474,6 +1513,73 @@ mod tests {
         read_contents(&late, &left, &right, &mut rows, &mut |_| {});
         assert!(rows[0].check, "not read");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn each_side_takes_the_root_filter_by_its_own_name() {
+        let root = dir("roots");
+        let (left, right) = (root.join("src"), root.join("lib"));
+        write(&left.join("a.txt"), "a", T);
+        write(&right.join("a.txt"), "a", T);
+        write(&right.join("src/b.txt"), "b", T);
+        write(&right.join("docs/c.txt"), "c", T);
+        // `src` is taken: the left (named src) gives its files, the right only its src folder.
+        let done = run(&job(&left, &right, Options::default(), "src\\"), &mut |_| {}).unwrap();
+        assert_eq!(
+            found(&done),
+            [
+                ("a.txt".to_owned(), State::LeftOnly),
+                ("src".to_owned(), State::RightOnly),
+                ("src/b.txt".to_owned(), State::RightOnly)
+            ]
+        );
+        // `src` left out: the left folder is out as a whole.
+        let done = run(&job(&left, &right, Options::default(), "| src\\"), &mut |_| {}).unwrap();
+        assert_eq!(
+            found(&done),
+            [
+                ("a.txt".to_owned(), State::RightOnly),
+                ("docs".to_owned(), State::RightOnly),
+                ("docs/c.txt".to_owned(), State::RightOnly)
+            ]
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_failed_run_drops_the_earlier_result() {
+        let root = dir("failed");
+        write(&root.join("L/a.txt"), "a", T);
+        write(&root.join("R/b.txt"), "b", T);
+        let layer = FolderCompare::new(
+            slint::Weak::default(),
+            (root.join("L"), root.join("R")),
+            Options::default(),
+            String::new(),
+        );
+        let ok = run(&job(&root.join("L"), &root.join("R"), Options::default(), ""), &mut |_| {});
+        layer.0.generation.set(1);
+        layer.heard(1, Message::Done(Box::new(ok)));
+        assert_eq!(layer.0.rows.row_count(), 2);
+        assert!(layer.summary().0.contains("2 items compared"));
+        for why in
+            ["Stopped. Compare Again (F5) reads both folders again", "Cannot read x: gone", "More than 2,000,000 items"]
+        {
+            layer.heard(1, Message::Done(Box::new(Err(why.to_owned()))));
+            assert_eq!(layer.summary().0, why);
+            assert_eq!(layer.0.rows.row_count(), 0, "the old rows are not shown as this run's");
+            assert!(layer.0.done.borrow().is_none());
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn only_a_job_in_the_compared_folders_makes_it_stale() {
+        let roots = (PathBuf::from("/w/left"), PathBuf::from("/x/right"));
+        assert!(touches(&[PathBuf::from("/w/left")], &roots));
+        assert!(touches(&[PathBuf::from("/x/right/sub/deep")], &roots));
+        assert!(!touches(&[PathBuf::from("/w/leftover"), PathBuf::from("/x")], &roots), "next to it, above it");
+        assert!(!touches(&[], &roots), "a job that changed no folder (Checksums)");
     }
 
     fn scan_for(job: &Job, side: &str, root: &Path) -> Tree {

@@ -14,6 +14,7 @@ mod connect;
 mod context_menu;
 mod convert;
 mod copy_path;
+mod copy_to;
 mod dialog;
 mod diff;
 mod drag;
@@ -354,7 +355,12 @@ fn perform(
         | Action::ExportList
         | Action::SizeMap
         | Action::Checksums
-        | Action::VerifyChecksums => return actions::run(action, nav, view),
+        | Action::VerifyChecksums
+        | Action::FindDuplicates
+        | Action::CopyTo
+        | Action::MoveTo
+        | Action::SplitFile
+        | Action::JoinFiles => return actions::run(action, nav, view),
     }
     true
 }
@@ -1102,6 +1108,8 @@ fn main() -> Result<(), slint::PlatformError> {
     let engine_settings = gezik_ops::Settings {
         threads: initial_settings.files.copy_threads,
         pending_deletes: config.as_ref().map(|store| store.dir().join("pending-deletes")),
+        verify: initial_settings.files.verify,
+        max_speed: initial_settings.files.max_speed,
     };
     let ops = operations::Operations::new(
         &window,

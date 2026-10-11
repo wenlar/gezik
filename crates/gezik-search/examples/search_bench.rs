@@ -32,7 +32,7 @@ fn timed(label: &str, root: &Path, spec: &SearchSpec) -> ResultSet {
                 first.get_or_insert_with(|| started.elapsed());
                 set.append(batch);
             }
-            Event::Progress { .. } => {}
+            Event::Progress { .. } | Event::Comparing { .. } => {}
             Event::Done(summary) => {
                 println!(
                     "{label}: {} found, first {:?}, all {:?}, {} folders, limit {}",

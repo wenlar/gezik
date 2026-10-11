@@ -20,7 +20,7 @@ use gezik_batch::tools::says_damaged;
 use gezik_config::settings::{ArchiveState, ArchivesSettings, DoubleClick, ToolsSettings};
 use gezik_config::shortcuts::{Chord, Key, Platform as KeyPlatform};
 use gezik_config::store::ConfigStore;
-use gezik_core::batch::archive::{Format, archive_stem, detect, looks_like_archive, split_sizes};
+use gezik_core::batch::archive::{Format, archive_stem, detect, looks_like_archive, split_ending, split_sizes};
 use gezik_core::batch::tools::{Platform, Tool, ToolBuild, build_for};
 use gezik_core::format_size;
 use gezik_core::ops::names::{NameRules, validate_name};
@@ -54,7 +54,9 @@ pub fn menu_items(items: &[(PathBuf, bool)]) -> Vec<(u32, String)> {
     if items.is_empty() {
         return out;
     }
-    if items.iter().all(|(path, is_dir)| !is_dir && looks_like_archive(&name_of(path))) {
+    // A raw part (`film.mkv.001`, made by Split File) is no archive: Join Files takes it.
+    let extracts = |name: &str| looks_like_archive(name) && split_ending(name) != Some("");
+    if items.iter().all(|(path, is_dir)| !is_dir && extracts(&name_of(path))) {
         out.push((EXTRACT_HERE, "Extract here".to_owned()));
         match items {
             [(one, _)] => out.push((EXTRACT_TO_OWN, format!("Extract to \"{}{MAIN_SEPARATOR}\"", stem_of(one)))),
@@ -1110,6 +1112,11 @@ mod tests {
         assert_eq!(menu_items(std::slice::from_ref(&folder))[1].1, "Compress to \"Belgeler.zip\"");
         assert_eq!(menu_items(std::slice::from_ref(&text))[1].1, "Compress to \"notes.zip\"");
         assert!(menu_items(&[]).is_empty());
+        // Raw parts are joined, not extracted; an archive's parts still extract.
+        let part = (PathBuf::from("d").join("film.mkv.001"), false);
+        assert_eq!(ids(&menu_items(&[part])), [COMPRESS, COMPRESS_TO]);
+        let zip_part = (PathBuf::from("d").join("a.zip.001"), false);
+        assert_eq!(ids(&menu_items(&[zip_part]))[0], EXTRACT_HERE);
     }
 
     #[test]

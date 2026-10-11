@@ -10,6 +10,7 @@ pub mod complete;
 pub mod diff;
 pub mod drag;
 pub mod drop_names;
+pub mod duplicates;
 pub mod elevated;
 pub mod export;
 pub mod file_filter;
@@ -234,6 +235,19 @@ pub fn list_dir(path: &Path) -> io::Result<Vec<Entry>> {
 /// Formats a byte count for display, e.g. `1.5 KB` (binary steps; see `format_size_in`).
 pub fn format_size(bytes: u64) -> String {
     format_size_in(bytes, view::SizeFormat::Binary)
+}
+
+/// `1234567` as `1,234,567`.
+pub fn group_digits(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// A byte count as `format` writes it: `1.5 KB` (steps of 1024) or `1.5 kB` (steps of 1000).

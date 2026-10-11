@@ -23,6 +23,8 @@ export struct OpRow {
     can-retry: bool,
     can-details: bool,
     can-show: bool,
+    // Its menu has something (a copy's Verify and Speed limit, a waiting job's Move up/down).
+    can-more: bool,
     finished: bool,
 }
 
@@ -70,6 +72,8 @@ export component OpsPanel inherits Rectangle {
     callback details(int);
     callback retry(int);
     callback dismiss(int);
+    // A row's menu, under its button (left, bottom, right, top).
+    callback more(int, length, length, length, length);
     // 0 Current, 1 History.
     in property <int> tab;
     in property <[OpRow]> history;
@@ -234,6 +238,17 @@ export component OpsPanel inherits Rectangle {
                             } else {
                                 root.resume(row.id);
                             }
+                        }
+                    }
+                    ToolButton {
+                        width: row.can-more ? self.height : 0px;
+                        visible: row.can-more;
+                        changed focused => { if self.focused { root.reveal(index); } }
+                        text: "More";
+                        icon: "M 3 8 L 3.5 8 M 7.75 8 L 8.25 8 M 12.5 8 L 13 8";
+                        clicked => {
+                            root.more(row.id, self.absolute-position.x, self.absolute-position.y + self.height,
+                                self.absolute-position.x + self.width, self.absolute-position.y);
                         }
                     }
                     // History rows have no Close.

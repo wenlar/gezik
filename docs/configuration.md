@@ -15,10 +15,11 @@ Set the `GEZIK_CONFIG_DIR` environment variable to use another folder.
   key is listed there with a comment.
 - `themes/*.toml` — your themes. `themes/example.toml` is a commented starting point.
 - `templates/` — files and folders offered under **New ▸** (see [File operations](features.md#file-operations)).
-- `state.toml` — window size and position, column widths, the preview pane, the tabs of the
-  last session and the folders you visited on this machine. Not meant to be copied.
-- `views.toml` — the view (list or grid, sort, size) of each folder you changed. Local to
-  this machine, like `state.toml`; at most 500 folders are remembered.
+- `state.toml` — window size and position, column widths, the preview pane, the windows,
+  panes and tabs of the last session and the folders you visited on this machine. Not meant
+  to be copied.
+- `views.toml` — the view (list, grid or columns, sort, grouping, size) of each folder you
+  changed. Local to this machine, like `state.toml`; at most 500 folders are remembered.
 - `pending-deletes` — permanent deletes not finished yet (Gezik finishes them on start).
   Local to this machine; not meant to be copied.
 - `system-changes.toml` — the changes Gezik made to the system on your command (see
@@ -57,6 +58,7 @@ mode = "list"             # list | grid | columns
 sort = "name"             # name | modified | created | type | size
 sort-dir = "asc"          # asc | desc
 grid-size = "medium"      # small | medium | large
+group = "none"            # none | type | date | size
 icons = "system"          # system | gezik (Gezik's own icons, colored by the theme)
 folder-sizes = "off"      # off (only when asked) | local (not on network folders) | all
 thumbnails = true         # pictures and videos show a preview in the grid
@@ -71,9 +73,10 @@ show-system = false       # Windows only: protected system items (desktop.ini, $
 
 `icons = "system"` uses the operating system's icons and type names where Gezik can read
 them; `"gezik"` uses Gezik's own icons, colored by the theme's `icon-*` colors.
-A folder you change in the View menu (list or grid, sort, size) keeps its own view in
+A folder you change in the View menu (mode, sort, grouping, size) keeps its own view in
 `views.toml`. "Apply to all folders" writes the current view into `[view]` (your comments
-are kept); "Reset this folder" returns a folder to the default. The options from
+are kept); "Reset this folder" returns a folder to the default. [View rules](features.md#layouts)
+pick a view by path, kind or content for folders you have not changed. The options from
 `hide-extensions` down are the same in every folder, and the View menu changes them here too.
 
 Folder sizes are off by default, so nothing is counted in the background. **Calculate
