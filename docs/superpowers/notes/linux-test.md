@@ -656,6 +656,14 @@ Numbers stay as they are when branches merge (see 10b). 11d uses 239–243 as it
 242. **Filter, links, stop, rows and panes.** As macOS 329–330 with Enter, Ctrl+C, Ctrl+R; a symlinked folder is counted and not followed.
 243. **Select Differences and memory.** As macOS 331 with `ps -o rss= -p $(pgrep -x gezik)`.
 
+### 11e, folder sync
+
+244. **Tests first.** As macOS 332; paste.
+245. **Modes, rows, Synchronize.** As macOS 333–335 with Ctrl+→ / Ctrl+←, Delete, Space, Shift+Space, Ctrl+Enter and Ctrl+Z; the Trash is `~/.local/share/Trash`.
+246. **Changed since the compare.** As macOS 336.
+247. **Removable disk and network.** A USB stick (vfat or ext4) gets Mirror deletions in its `.Trash-<uid>` and Ctrl+Z brings them back; on an SMB or NFS mount (no trash) deletions are left out and replacing needs Replace them anyway, as macOS 337.
+248. **Profiles and memory.** As macOS 338–339 with Ctrl+Shift+P and `ps -o rss= -p $(pgrep -x gezik)`.
+
 ## Known gaps (not bugs)
 
 - **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (F5 works it out again). Search results and the flat view show no folder sizes.

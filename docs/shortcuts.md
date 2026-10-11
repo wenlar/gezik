@@ -22,6 +22,7 @@
 | Copy / move to the other pane (two panes; asks first) | F5 / F6 | F5 / F6 |
 | Swap the panes' tabs | Ctrl+U | ⌃⌘U |
 | Compare two files or folders (two selected, one in each pane, or the two panes' folders) | Shift+F2 | ⌃⌘C |
+| Folder compare: row direction / to the trash / nothing / the mode's / Synchronize… | Ctrl+→ Ctrl+← / Delete / Space / Shift+Space / Ctrl+Enter | ⌘→ ⌘← / ⌫ / Space / ⇧Space / ⌘↩ |
 | Command palette / quick open | Ctrl+Shift+P / Ctrl+P | ⌘⇧P / ⌘P |
 | Copy / cut / paste | Ctrl+C / Ctrl+X / Ctrl+V | ⌘C / ⌘X / ⌘V (⌘⌥V moves) |
 | Delete / delete permanently | Delete / Shift+Delete | ⌘⌫ / ⌘⌥⌫ |

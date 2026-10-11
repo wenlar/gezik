@@ -154,6 +154,17 @@ pub fn with_searches(text: &str, searches: &[crate::settings::SavedSearch]) -> R
     })
 }
 
+/// Returns `text` with `[[sync-profiles]]` replaced by `profiles` (see `with_rename_presets`).
+pub fn with_sync_profiles(text: &str, profiles: &[crate::sync_profiles::SyncProfile]) -> Result<String, String> {
+    use crate::sync_profiles::{SYNC_PROFILES_MAX, parse, to_toml};
+    let tables = profiles.iter().map(to_toml).collect();
+    let mut name = read_once(SYNC_PROFILES_MAX);
+    with_tables(text, "sync-profiles", tables, move |item| {
+        let profile = parse(item).ok()?;
+        name(profile.name.clone()).then(|| to_toml(&profile))
+    })
+}
+
 /// Whether a readable entry named `name` is one `Settings::parse` keeps: among the first `max`,
 /// its name not already used (ignoring case). The others stay as written, like broken ones.
 fn read_once(max: usize) -> impl FnMut(String) -> bool {

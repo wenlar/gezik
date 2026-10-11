@@ -171,6 +171,22 @@ typing = "jump"           # jump: letters go to a name | filter: letters open th
   (`Compare: foto (3 ≠)`): click it to come back, ✕ to let it go. The buttons and boxes are
   remembered (`[compare]` in state.toml). With `[tools] folder-diff = true` your compare
   program gets the two folders instead.
+- **Synchronize** (in the folder compare): Mode picks Two-way (newer wins, what one side
+  lacks is copied over), Left to right (only to the right) or Mirror (the right becomes the
+  left; what only the right has goes to its trash). Each row's middle column is what it will
+  do: `→` / `←` copy, `×→` / `←×` to the trash on that side, empty nothing. Ctrl+→ / Ctrl+←
+  (⌘→ / ⌘← on macOS), Delete (marks a one-sided item for the trash), Space (nothing),
+  Shift+Space (the mode's choice) and the Direction button change the selected rows; a
+  folder's direction goes to everything under it. Synchronize… (Ctrl+Enter, ⌘↩) asks first
+  with the counts and sizes (and Verify copies, from `[files] verify`), then runs one job: copies to the right, to the left, then the
+  trash, and Ctrl+Z undoes all of it. A file is replaced only once its new copy is complete
+  (the old one goes to the trash); one that changed since the compare is left alone and
+  said in the job's Details; nothing goes to the trash if a copy failed. A drive without a
+  trash gets no deletions, and replacing files there needs Replace them anyway. Sync is
+  stateless: in Two-way a file deleted on one side is copied back from the other; turn that
+  row to `×` or use Mirror to spread a delete. Save Profile… keeps the folders, mode, options
+  and filter in settings.toml (`[[sync-profiles]]`); the palette's `Sync: <name>` (also with `>`) opens and
+  compares one, never synchronizing without the question.
 - **Select Differences** (right-click ▸ Tools with two panes, the palette, Tools on the macOS
   menu bar): in each pane, what the other pane's list lacks or has older. Only the two lists
   shown are compared (no subfolders, nothing read).
