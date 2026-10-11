@@ -17,7 +17,7 @@ use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
 use crate::operations::After;
 use crate::windows::Slot;
-use crate::{AppWindow, ChecksumColumn, ChecksumRow};
+use crate::{AppWindow, ChecksumRow};
 
 thread_local! {
     /// The open layer of each window (none while closed).
@@ -212,7 +212,6 @@ impl Checksums {
         window_ref.set_ck_verify(verify);
         window_ref.set_ck_expected(expected.map(|(_, hex)| hex).unwrap_or_default().into());
         window_ref.set_ck_only_failed(false);
-        window_ref.set_ck_can_save(!verify);
         window_ref.set_ck_field_focused(false);
         window_ref.set_ck_scroll(0.0);
         window_ref.set_ck_rows(ModelRc::from(layer.model.clone()));
@@ -234,78 +233,63 @@ impl Checksums {
         Algo::ALL.into_iter().filter(|a| on[a.index()]).collect()
     }
 
-    /// The value columns: the ticked algorithms (verify: the one value each row has).
-    fn value_columns(&self) -> Vec<(String, usize)> {
-        if self.verify {
-            return vec![("Checksum".to_owned(), 64)];
-        }
-        self.ticked().into_iter().map(|a| (a.name().to_owned(), a.hex_len().max(24))).collect()
+    /// The algorithms whose values a row shows (verify: none; each row has its own).
+    fn columns(&self) -> Vec<Algo> {
+        if self.verify { Vec::new() } else { self.ticked() }
     }
 
     fn show_columns(&self) {
         let Some(window) = self.window.upgrade() else { return };
-        let columns = self.value_columns();
-        let weight: usize = columns.iter().map(|(_, w)| w).sum();
-        let total = if columns.is_empty() { 0.0 } else { 0.7 };
-        let columns: Vec<ChecksumColumn> = columns
-            .into_iter()
-            .map(|(title, w)| ChecksumColumn { title: title.into(), share: total * w as f32 / weight.max(1) as f32 })
-            .collect();
-        window.set_ck_columns(ModelRc::new(VecModel::from(columns)));
-        window.set_ck_value_total(total);
+        let title = if self.verify {
+            "Checksum".to_owned()
+        } else {
+            self.columns().iter().map(|a| format!("{:<1$}", a.name(), a.hex_len())).collect::<Vec<_>>().join("  ")
+        };
+        window.set_ck_values_title(title.trim_end().into());
         window.set_ck_algos(ModelRc::new(VecModel::from(self.algos.get().to_vec())));
     }
 
-    /// How row `row` shows.
+    /// How row `row` shows: its values padded to their lengths, so they line up in columns.
     fn row(&self, row: &HashRow, selected: bool) -> ChecksumRow {
-        let (values, marks, status, tone) = if self.verify {
+        let (values, status, tone) = if self.verify {
             let verdict = row.verdict();
             let value = row.expected.as_ref().and_then(|(algo, _)| row.digest(*algo)).unwrap_or_default();
-            let mark = match verdict {
-                Verdict::Ok => 1,
-                Verdict::Failed => 2,
-                _ => 0,
-            };
             let tone = match verdict {
                 Verdict::Ok => 1,
                 Verdict::Failed | Verdict::Missing | Verdict::Unreadable => 2,
                 _ => 0,
             };
-            (vec![SharedString::from(value)], vec![mark], verdict.label().to_owned(), tone)
+            (value.to_owned(), verdict.label().to_owned(), tone)
         } else {
             let expected = self.expected.borrow();
-            let mut matched = false;
+            let mut compared = None;
             let mut values = Vec::new();
-            let mut marks = Vec::new();
-            for algo in self.ticked() {
+            for algo in self.columns() {
                 let value = row.digest(algo);
-                values.push(SharedString::from(value.unwrap_or_default()));
-                let mark = match (&*expected, value) {
-                    (Some((want, hex)), Some(value)) if *want == algo => {
-                        matched |= value == hex;
-                        if value == hex { 1 } else { 2 }
-                    }
-                    _ => 0,
-                };
-                marks.push(mark);
+                values.push(format!("{:<1$}", value.unwrap_or_default(), algo.hex_len()));
+                if let (Some((want, hex)), Some(value)) = (&*expected, value)
+                    && *want == algo
+                {
+                    compared = Some(value == hex);
+                }
             }
-            let (status, tone) = match &row.state {
-                RowState::Unreadable(why) => (format!("Unreadable: {why}"), 2),
-                RowState::OnlineOnly => ("Online only".to_owned(), 0),
-                RowState::Missing => ("Missing".to_owned(), 2),
-                RowState::Done if matched => ("Matches".to_owned(), 1),
-                RowState::Done => (String::new(), 0),
-                RowState::Waiting => ("Waiting".to_owned(), 0),
+            let (status, tone) = match (&row.state, compared) {
+                (RowState::Unreadable(why), _) => (format!("Unreadable: {why}"), 2),
+                (RowState::OnlineOnly, _) => ("Online only".to_owned(), 0),
+                (RowState::Missing, _) => ("Missing".to_owned(), 2),
+                (RowState::Waiting, _) => ("Waiting".to_owned(), 0),
+                (RowState::Done, Some(true)) => ("Matches".to_owned(), 1),
+                (RowState::Done, Some(false)) => ("No match".to_owned(), 2),
+                (RowState::Done, None) => (String::new(), 0),
             };
-            (values, marks, status, tone)
+            (values.join("  ").trim_end().to_owned(), status, tone)
         };
         let size =
             if row.state == RowState::Missing { String::new() } else { crate::view_options::size_text(row.size) };
         ChecksumRow {
             name: row.name.as_str().into(),
             size: size.into(),
-            values: ModelRc::new(VecModel::from(values)),
-            marks: ModelRc::new(VecModel::from(marks)),
+            values: values.into(),
             status: status.into(),
             tone,
             selected,
@@ -696,7 +680,6 @@ impl Checksums {
         if let Some(window) = self.window.upgrade() {
             window.set_ck_open(false);
             window.set_ck_rows(ModelRc::default());
-            window.set_ck_columns(ModelRc::default());
             window.set_ck_algos(ModelRc::default());
             window.set_ck_expected(SharedString::new());
             if !window.get_dialog_open() && !window.get_conflicts_open() {

@@ -15,7 +15,7 @@ import { FileIcon } from "widgets/file-icon.slint";
 import { CompressLayer } from "widgets/compress.slint";
 import { ConvertLayer, ConvertView } from "widgets/convert.slint";
 import { InfoLayer, InfoView } from "widgets/info.slint";
-import { ChecksumsLayer, ChecksumRow, ChecksumColumn } from "widgets/checksums.slint";
+import { ChecksumsLayer, ChecksumRow } from "widgets/checksums.slint";
 import { PopupMenu, MenuEntry, MenuPlace, MenuSub } from "widgets/popup-menu.slint";
 import { Picker, PickRow } from "widgets/picker.slint";
 import { PathSuggestions, PathRow } from "widgets/path-suggestions.slint";
@@ -24,7 +24,7 @@ import { ColumnItem } from "widgets/column-view.slint";
 
 // Re-exported so Rust can set it with `window.global::<Theme>()` and build crumbs, tabs
 // and sidebar rows.
-export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, OpRow, StackRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView, InfoView, ChecksumRow, ChecksumColumn, MenuEntry, MenuPlace, MenuSub, PickRow, PathRow, PaneData, PaneGeometry, PaneFocus, ColumnItem }
+export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, OpRow, StackRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView, InfoView, ChecksumRow, MenuEntry, MenuPlace, MenuSub, PickRow, PathRow, PaneData, PaneGeometry, PaneFocus, ColumnItem }
 
 // Where the window's drop targets are, in window coordinates (drag.rs reads it while files
 // are dragged; every field is computed when read). The pane's are in its `PaneGeometry`.
@@ -637,14 +637,12 @@ export component AppWindow inherits Window {
     in property <string> ck-title;
     in property <bool> ck-verify;
     in property <[bool]> ck-algos;
-    in property <[ChecksumColumn]> ck-columns;
-    in property <float> ck-value-total;
+    in property <string> ck-values-title;
     in property <[ChecksumRow]> ck-rows;
     in-out property <string> ck-expected;
     in property <string> ck-summary;
     in property <int> ck-summary-tone;
     in property <bool> ck-only-failed;
-    in property <bool> ck-can-save;
     in-out property <bool> ck-field-focused;
     in-out property <length> ck-scroll;
     callback ck-toggle-algo(int);
@@ -1480,14 +1478,12 @@ export component AppWindow inherits Window {
             verify: root.ck-verify;
             mono-font: root.mono-font;
             algos: root.ck-algos;
-            columns: root.ck-columns;
-            value-total: root.ck-value-total;
+            values-title: root.ck-values-title;
             rows: root.ck-rows;
             expected <=> root.ck-expected;
             summary: root.ck-summary;
             summary-tone: root.ck-summary-tone;
             only-failed: root.ck-only-failed;
-            can-save: root.ck-can-save;
             field-focused <=> root.ck-field-focused;
             scroll <=> root.ck-scroll;
             toggle-algo(i) => { root.ck-toggle-algo(i); }
