@@ -2304,6 +2304,56 @@ Dal `perf/idle-memory` (10g'den, PR #71'den sonra master'a). Ölçümler `measur
 - **Davranış:** `copy-to`, `move-to`, `split-file`, `join-files` (tuşsuz, palet; satır menüsünde 2207–2210, Compress/Convert yanında; `Action::ALL` bu dalda 106). Hedef alanının son parçası `*`/`?` içeriyorsa ad maskesi; `Filter…` ikinci soruyu açar (son süzgeç oturumda bellekte). Süzgeçte dışlanan klasör okunmaz, boş klasör yapılmaz, ilişkili dosya bir kez gelir; taşımada kalanlar yerinde, boşalan kaynak klasör gider. Bölme parçaları ve `.crc`'yi, birleştirme sonucu önce hazırlık klasörüne yazar; birleştirmede CRC ve boyut, hiçbir şey yerleşmeden denetlenir.
 - **İnceleme düzeltmeleri:** Move To süzgeci `>`'ı reddediyor (yalnız kopyada); kullanılamaz ad yapan maske (seçilen bir öğenin adı ya da örnek ad) kırmızı satır ve ret; `D:*.bak` artık gösterilen klasöre maske değil, `Type a folder`; Unix'te `*`/`?` içeren gerçek bir klasör adı maske sayılmıyor; zaten o klasördeki öğelerin taşınması `Nothing to move: same folder` diyor; birden çok seçimle Split/Join reddediyor; maskesiz de aynı hedef ada giden iki öğe (aramada iki klasörden aynı ad) çakışma listesine gidiyor; `.CRC` her harf biçiminde bulunuyor; var olan parça kümesi tek birim: bir kez sorulur, `Replace All` eski kümenin hepsini (yeni son parçanın ötesindekiler dahil) yeni küme tamamlanınca çöpe atar, `Cancel` hepsini bırakır, karışık küme kalmaz.
 - **Sapmalar:** 11b'nin `Verify copies` kutusu yok; `Options ▸` ve `state.toml [copy-to]` yok; macOS menü çubuğunda `Tools` menüsü yok (11a gibi); bölmede hedef klasör soruda değişmiyor; tırnaklı (boşluklu) desen yok; maske hedef klasörde zaten duran üst düzey öğeleri yeniden adlandırmıyor (artık sessiz değil: taşımada not).
-- **Exe:** 25.913.344 B, master 25.801.728'e göre **+111.616 B** (bütçe +262.144, hedef 150 KB). Yeni Slint yok.
+- **Ekran testinden sonra:** maske hatası seçilen öğenin adını söylüyor (örnek ad yalnız seçim yokken); hatalı yanıt (bozan maske, `D:*.bak`, okunmayan süzgeç) soruyu yazılanla ve kırmızı satırla yeniden açıyor, durum satırına düşüp kapanmıyor; başlık yazılan klasörü izliyor; klasör yaparak kopyanın başlığı (iş paneli, çakışma listesi) gerçek hedefi söylüyor (`CopyTask::titled`); ham parçalar (`film.mkv.001`) satır menüsünde Extract değil Join gösteriyor, arşiv parçaları (`a.zip.001`) yine Extract.
+- **Exe:** 25.918.464 B, master 25.801.728'e göre **+116.736 B** (bütçe +262.144, hedef 150 KB). Yeni Slint yok.
+- **Bilinen sınır (11i öncesinden):** çakışma listesi aynı boyut ve zamandaki dosyaları içerikleri farklı olsa da "identical" gösteriyor (içerik okunmuyor); burada değiştirilmedi.
 - **Denenmedi:** bölmede iptal (birim testi yok; aynı hazırlık klasörü mekanizması testli), GUI.
-- **Bekleyen:** Windows ekran testleri (rapor `gezik-11i/.superpowers/sdd/2026-10-11-araclar-11i/report.md`), macOS 303–310, Linux 226–230.
+- **Bekleyen:** macOS 303–310, Linux 226–230. Windows ekran testleri aşağıda (20/20).
+
+## Windows ekran testleri: 11i (2026-10-11 19:50-20:03, ajan, kullanıcı uzakta)
+
+- Derleme: `%TEMP%\gezik-gui-11\bin\t11i.exe` (`feat/tools-11i` 8be7290, sürüm, 25.913.344 B). Yeniden derlenmedi.
+- Birincil ekran, pencere 1600×900 @ 40,40. Taze `GEZIK_CONFIG_DIR` = `%TEMP%\gezik-gui-11\cfg\i1`, `i2` (`state.toml` `[hints] f3-moved = true`, `settings.toml` `[files] confirm-trash = true`).
+- Veri `%TEMP%\gezik-gui-11\data\i`, yalnız işleyicisi olmayan uzantılar (`.gzt`, `.gzx`, `.gzr`; `*.jpg>*.cr2` yerine `*.gzt>*.gzr`). 50 MB rastgele `big\film.gzt`; `big\pre\` içinde aynı dosya + eski `film.gzt.001…005`.
+- Güvenlik: her Ctrl+A / yazı / Enter öncesi UIA `FocusedElement` bu Gezik'in diyalog alanı (`ControlType.Edit`, 636,377 dolayı) ya da palet alanı; dosya listesine hiç Enter/Ctrl+A gitmedi. F5/F6 tuşu basılmadı: aynı eylemler paletten (`Copy to the Other Pane`, `Move to the Other Pane`) fareyle açıldı. Düğmeler (Filter…, Cancel, Cancel operation, Close, Details) fareyle. Çöpe giden hiçbir şey tetiklenmedi (Replace / Replace All seçilmedi, Ctrl+Z yalnız klasör yapmayan taşımada).
+- Klavye düzeni başta/sonda `en-US=0409:0000041F`. Açılan Gezik'lerin hepsi kapatıldı.
+- Ekran görüntüleri `%TEMP%\gezik-gui-11\shots\i*.png`.
+
+### Sonuçlar
+
+1. **Satır menüsü — PASS.** Dosyada `Copy to…`, `Move to…`, `Split file…` (Compress yanında, `i01-rowmenu.png`); `.001`'de `Join files` da var; klasörde (`src`) ve üç dosyalı seçimde Split/Join yok.
+2. **Copy To…, satır menüsü + maske `*.bak` — PASS.** Alan boş, altında `Type a folder` (`i02-copyto-dlg.png`). `…\out\bak\*.bak` → `Into …\out\bak, names as *.bak` (`i03-mask-note.png`); Enter → eksik klasör yapıldı, `a.bak`.
+3. **Copy To…, paletten + maske `new_*` — PASS (not).** `sub` + `b.gzt` → `out\nw\sub\` (klasör adı korunmuş), dosyalar `new_t`, `sub\new_zt`, `sub\new_zx`. Bu, birim testteki DOS kuralı (`report.txt` → `new_rt.txt`, düz karakter bir yer tutar); kısa adlarda uzantı yitiyor (bkz. Notlar).
+4. **Kullanılamaz ad yapan maske — PASS (not).** `…\out\bad\*:x` → kırmızı `The mask *:x makes no usable name of name.txt` (`i06-badmask.png`); Enter → iş yok, klasör yapılmadı, durum satırında aynı hata. Diyalog Enter'de kapanıyor.
+5. **`D:*.bak` — PASS.** `Type a folder` (`i07-dmask.png`); Enter → iş yok, durum satırı `Type a folder`; D:\'de `.bak` yok.
+6. **Filter… `*.gzt|old* sub\` — PASS.** `src` klasörü → `out\f1\src\a.gzt`, `b.gzt`, `thumbs\t1.gzt`; `old*`, `c.gzx`, `sub\` yok, boş klasör yok (`i09-filter.png`). `a | b | c` → kırmızı `Only one "|": what follows it is left out` (`i08-filter-bad.png`).
+7. **İlişkili dosyalar Copy To'da — PASS.** `IMG_1.gzt` seçili, `*.gzt>*.gzr` → `IMG_1.gzt` + `IMG_1.gzr`, `IMG_2*`/`IMG_3` yok. İkinci açılışta alanda son süzgeç (`*.gzt|old* sub\`).
+8. **İlişkili dosyalar Move To'da — PASS.** Süzgeç sorusunda `>` açıklaması yok, alt satır kırmızı `Related files (>) work only when copying` (`i10-move-rel.png`); Enter → iş yok, durum satırında aynı not, `rel` değişmedi.
+9. **Süzgeçli taşıma — PASS.** (a) `mv`'de `m1.gzt`, `m2.gzt`, `n1.gzx` → `mvout`, `*.gzt`: yalnız iki `.gzt` taşındı, `n1.gzx` yerinde. (b) `mv` klasörü → `mvout`, `*.gzt`: `mvout\mv\m1,m2,all\x.gzt`; boşalan `mv\all` gitti, `mv\` `n1.gzx` ve `keep\k.gzx` ile yerinde.
+10. **Ctrl+Z süzgeçli taşıma — PASS.** 9a'dan sonra Ctrl+Z: `m1`, `m2` `mv`'ye döndü, `mvout` boş (`i11-undo-move.png`).
+11. **Aynı klasöre taşıma — PASS.** `a.gzt` → `…\src`: durum satırı `Nothing to move: same folder` (`i12-samefolder.png`), dosyalar aynı.
+12. **Split (50 MB, 10 MB) — PASS (not).** Alan `100 MB`, `1 part`; `0` → `The parts need a size above 0`, `abc` → `Type a size like 100 MB, 4.7 GB or 500 KB`, `1 KB` → `52429 parts: at most 999` (kırmızı). `10 MB` → `6 parts` (`i13-split-dlg.png`): `film.gzt.001…005` 10.000.000 B, `.006` 2.428.800 B, `film.gzt.crc` (`filename=film.gzt`, `size=52428800`, `crc32=F9D901A0`). MB onluk (10⁶).
+13. **Join .001'den — PASS.** Özgün `film.orig` diye ayrıldı; `.001` → `Join files` → `film.gzt` 52.428.800 B, SHA-256 özgünle aynı (`369BF4DB…37DF`).
+14. **Bozuk parçayla Join — PASS.** `.003`'te bir bayt değişti; var olan `film.gzt` dururken Join: soru sorulmadı, iş başarısız, ayrıntı `film.gzt.001: The joined file does not match film.gzt.crc (CRC or size); a part may be damaged` (`i16-join-bad-details.png`); `film.gzt`'nin zamanı ve özeti değişmedi, artık dosya / gizli `.gezik-` klasörü yok.
+15. **Eksik parçayla Join — PASS.** `.004` yokken: `film.gzt.001: Part film.gzt.004 is missing` (`i17-join-missing.png`), hiçbir şey yazılmadı.
+16. **Var olan parça kümesine Split + Cancel — PASS.** `big\pre` (`film.gzt` + eski `.001…005`), 10 MB: tek soru `Parts are there already` / `…holds 5 file(s) of a split film.gzt already. Replace that whole set? The old files go to the trash.` (`Replace All`, `Cancel`, `i19-parts-there.png`). Cancel → klasör (ad, boyut, zaman) önceki gibi, gizli klasör yok. Replace All denenmedi (çöpe gönderir).
+17. **Çoklu seçimde Split/Join — PASS.** `.001` + `.002` seçili, palette `Split File…` → `Select one file to split`; `Join Files` → `Select one .001 part or its .crc file to join` (`i20-multi-split.png`); iş yok.
+18. **İki bölmede F5/F6 — PASS.** Paletten `Copy to the Other Pane`: başlık `Copy 2 items to …\out\dual?`, alan öbür bölmenin klasörü, düğmeler `Copy`, `Filter…`, `Don't Ask Again`, `Cancel` (`i21-f5-dlg.png`); Enter → süzgeçsiz kopya (`a.gzt`, `sub\…`). `Move to the Other Pane`: aynı düğmeler (`Move`), Cancel → hiçbir şey taşınmadı (`i22-f6-dlg.png`).
+19. **Aramadan aynı adlı iki dosya — PASS (not).** `same.gzt` araması (s1, s2) → ikisi seçili → `Copy to…` → `…\out\srch`: birincisi kopyalandı, ikincisi çakışma listesinde (`i24-search-conflict.png`); Cancel operation.
+20. **Maske iki dosyayı aynı ada düşürüyor — PASS.** `d.gzt` + `d.gzx`, `…\out\dupb\*.bak` → `d.bak` (ilki), ikincisi çakışma listesinde `d.bak` (`i25-mask-same.png`); Cancel operation.
+21. **Ctrl+Z kopya ve bölme — koşulmadı.** Bu işlerin geri alması çıktıları Geri Dönüşüm Kutusu'na atıyor (sorusuz; `confirm-trash` yalnız çöp eylemine bakıyor), kural "Geri Dönüşüm Kutusu'na dokunma" olduğu için atlandı. Aynı nedenle süzgeçli taşımanın klasör yapan hali (9b) de geri alınmadı (yapılan boş `mvout\mv` çöpe gider).
+
+### FAIL'ler
+
+Yok.
+
+### Notlar
+
+- **Maske notu var olmayan dosyayı anıyor:** seçili `a.gzt` iken `*:x` için not `…makes no usable name of name.txt` diyor; `mask_error` önce sabit `name.txt` örneğini deniyor. Seçili öğenin adı daha anlaşılır olur.
+- Kullanılamaz maske ve `D:*.bak` ile Enter diyaloğu kapatıyor (iş yok, hata durum satırında). 11h'deki dışa aktarma diyaloğu böyle durumda açık kalıyordu; tutarlılık için açık kalması düşünülebilir.
+- `new_*` kısa adlarda uzantıyı yutuyor (`b.gzt` → `new_t`); DOS kuralına uygun ve testli, ama kullanıcı `new_b.gzt` bekleyebilir.
+- Çakışma listesinin başlığı hedefi değil yapılan klasörün üstünü gösteriyor: `Copying 2 items to …\data\i\out` (hedef `…\out\srch` / `…\out\dupb`).
+- Çakışma listesinde içerikleri farklı (`one` / `two`) ama boyutu ve zamanı aynı iki dosya `identical` diye işaretlendi (`Hide identical (1)`); karşılaştırma boyut+zamanla.
+- İki bölmede `Copy to…` başlığı alan değişince güncellenmiyor (`Copy 2 items to …\out\dual?`, alan `…\out\srch`).
+- Ham `film.gzt.001` satır menüsünde `Extract here` / `Extract to…` de çıkıyor (tür sütunu `Split archive`).
+- Satır menüsü UIA'da, menüyü açan aynı PowerShell sürecinde görünmüyor; ayrı çağrıda görünüyor (betik sorunu, uygulamayla ilgisi yok).
