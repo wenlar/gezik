@@ -55,6 +55,12 @@ show-system = false       # Windows only: protected system items (desktop.ini, $
 confirm-trash = false
 # Files copied or deleted at once: "auto" (SSD 6, spinning disk 1, network 4) or 1-16.
 copy-threads = "auto"
+# Read each copied file back and compare it with the original (copies take about twice as
+# long); a file that differs is copied once more. Each job can change it in its ⋯ menu.
+verify = false
+# The most a copy or move may take, as "20 MB/s", "500 KB/s" or "1.5 GB/s" (1 MB = 1,000,000
+# bytes); empty = no limit. Each job can change it in its ⋯ menu.
+max-speed = ""
 
 [archives]
 # What double-clicking an archive does: open it with the system's program, or extract it

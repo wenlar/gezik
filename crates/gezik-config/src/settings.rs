@@ -63,6 +63,10 @@ pub struct FilesSettings {
     /// Ask before moving to the trash.
     pub confirm_trash: bool,
     pub copy_threads: CopyThreads,
+    /// New copies and moves check each file against the original (spec 11 §5.1).
+    pub verify: bool,
+    /// New copies and moves go at most this many bytes a second; `None`: as fast as they can.
+    pub max_speed: Option<u64>,
 }
 
 /// `[tools]`: the programs Gezik may download.
@@ -1329,6 +1333,22 @@ fn parse_files(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> 
             )),
         }
     }
+    if let Some(value) = table.get("verify") {
+        match value.as_bool() {
+            Some(on) => out.verify = on,
+            None => warnings.push(Warning::new(file, format!("files.verify: expected true or false, got {value}"))),
+        }
+    }
+    if let Some(value) = table.get("max-speed") {
+        match value.as_str().map(str::trim) {
+            Some("") => {}
+            Some(text) if let Some(speed) = gezik_core::ops::rate::parse_speed(text) => out.max_speed = Some(speed),
+            _ => warnings.push(Warning::new(
+                file,
+                format!("files.max-speed: expected a speed like \"20 MB/s\" or \"\", got {value}"),
+            )),
+        }
+    }
     out
 }
 
@@ -2427,7 +2447,25 @@ width = 900
         use gezik_core::ops::threads::CopyThreads;
         let (settings, warnings) = parse("[files]\nconfirm-trash = true\ncopy-threads = 3\n");
         assert!(warnings.is_empty(), "{warnings:?}");
-        assert_eq!(settings.files, FilesSettings { confirm_trash: true, copy_threads: CopyThreads::Fixed(3) });
+        assert_eq!(
+            settings.files,
+            FilesSettings { confirm_trash: true, copy_threads: CopyThreads::Fixed(3), ..FilesSettings::default() }
+        );
+        let (settings, warnings) = parse(
+            "[files]
+verify = true
+max-speed = \"1.5 MB/s\"
+",
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(settings.files.verify);
+        assert_eq!(settings.files.max_speed, Some(1_500_000));
+        let (settings, _) = parse(
+            "[files]
+max-speed = \"\"
+",
+        );
+        assert_eq!(settings.files.max_speed, None);
         let (settings, _) = parse("[files]\ncopy-threads = \"Auto\"\n");
         assert_eq!(settings.files.copy_threads, CopyThreads::Auto);
         assert_eq!(Settings::default().files, FilesSettings::default());
