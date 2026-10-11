@@ -324,6 +324,37 @@ impl Dialogs {
         });
     }
 
+    /// A question with check boxes and no field (`(label, checked)`): every button except the
+    /// last (Esc) answers with its index and the marks.
+    pub fn ask_checks(
+        &self,
+        title: impl Into<String>,
+        message: impl Into<String>,
+        checks: Vec<(String, bool)>,
+        buttons: &[&str],
+        answer: impl FnOnce(Option<(usize, Vec<bool>)>) + 'static,
+    ) {
+        let window = self.0.window.clone();
+        let escape = buttons.len().saturating_sub(1);
+        self.push(Question {
+            title: title.into(),
+            message: message.into(),
+            buttons: buttons.iter().map(|b| (*b).to_owned()).collect(),
+            escape,
+            input: None,
+            secret: false,
+            job: None,
+            note: None,
+            checks,
+            blocks: false,
+            answer: Box::new(move |choice| {
+                use slint::Model;
+                let marks = window.upgrade().map(|w| w.get_dialog_checks().iter().collect::<Vec<bool>>());
+                answer(choice.filter(|&c| c != escape).zip(marks));
+            }),
+        });
+    }
+
     /// A password field with no engine job (Connect to Server on Linux); the window keeps no
     /// copy once answered.
     pub fn ask_secret(

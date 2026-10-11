@@ -61,6 +61,9 @@ pub struct SyncTask {
     for_good: bool,
     /// A copy was left alone because it changed: the trash steps wait for another sync.
     troubled: AtomicBool,
+    /// Whether the copies went through, settled when the first trash step runs (they run
+    /// after every copy): a trash step failing does not hold back the others.
+    held: std::sync::OnceLock<bool>,
 }
 
 /// Why a step was left alone.
@@ -74,7 +77,7 @@ const HELD: &str = "Not moved to the trash: a copy of this sync did not go throu
 
 impl SyncTask {
     pub fn new(left: PathBuf, right: PathBuf, steps: Vec<SyncStep>, for_good: bool) -> SyncTask {
-        SyncTask { left, right, steps, for_good, troubled: AtomicBool::new(false) }
+        SyncTask { left, right, steps, for_good, troubled: AtomicBool::new(false), held: std::sync::OnceLock::new() }
     }
 
     /// Leaves `path` alone with a note; a copy left alone holds back the trash steps.
@@ -86,9 +89,11 @@ impl SyncTask {
         Ok(Outcome::Nothing)
     }
 
-    /// Whether a copy failed or was left alone so far.
+    /// Whether a copy failed or was left alone.
     fn troubled(&self, cx: &RunCx<'_>) -> bool {
-        self.troubled.load(Ordering::SeqCst) || cx.job.is_some_and(|(_, job)| !lock(&job.acc).failures.is_empty())
+        *self.held.get_or_init(|| {
+            self.troubled.load(Ordering::SeqCst) || cx.job.is_some_and(|(_, job)| !lock(&job.acc).failures.is_empty())
+        })
     }
 
     /// `from` over `old`: copied next to it under a temporary name, `old` checked again and

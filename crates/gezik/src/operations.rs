@@ -1630,7 +1630,7 @@ impl Operations {
         crate::stack::with_current(|stack| stack.job_finished(id, &report));
         crate::info::with_current(|info| info.job_finished(id, &report));
         crate::checksums::job_finished(id, &report);
-        crate::compare::job_finished();
+        crate::compare::job_finished(id, &report);
         crate::windows::for_each(|_| crate::size_map::with_current(crate::size_map::SizeMap::job_finished));
     }
 

@@ -649,6 +649,19 @@ Numbers stay as they are when branches merge. 11c starts at 281 as its plan deci
 284. **Binary and FileMerge.** Compare two copies of an app's binary (`cp /bin/ls /tmp/a; cp /bin/ls /tmp/b`): a question says `The files are identical`; change a byte (`printf 'x' | dd of=/tmp/b bs=1 seek=100 conv=notrunc`): `The files differ from byte 101 (of …)`. Then set `[tools] diff = "opendiff"` in settings.toml and compare the two text files: FileMerge opens (Gezik does not wait); an app path (`diff = "/Applications/Beyond Compare.app"`, or any compare `.app` you have) opens through `open -n -a`; `diff = "nope"`: the status bar says `The compare program "nope" was not found; using Gezik's own` and Gezik's compare opens.
 285. **Memory.** Activity Monitor's memory before opening a compare of two 1 MB text files (`seq 1 150000 > /tmp/l1; seq 1 150000 | sed 's/7$/x/' > /tmp/r1`), with it open, and after Esc: the last within 0.3 MB of the first (write the three numbers).
 
+### 11e, folder sync
+
+Numbers stay as they are when branches merge (see 10b). 11e uses 332–339 as its plan decided. Results go to `macos-test-results.md`.
+
+332. **Tests first.** `cargo test -p gezik-core compare::`, `cargo test -p gezik-ops sync`, `cargo test -p gezik-config sync_profiles`, `cargo test -p gezik sync::`; paste the output.
+333. **Modes and arrows.** The 326 folders (`/tmp/L`, `/tmp/R`) plus `echo z > /tmp/R/zonly`. Compare: Mode reads `Mode: Two-way`; `only` shows `→`, `new` `←`, `sub/r` `←`, `zonly` `←`. Click Mode: Left to right: `new`, `r` and `zonly` go empty; Mirror: `new` `→`, `r` and `zonly` `×→`. The summary says `N items to synchronize (Ctrl+Enter)`; quit and start: the mode is remembered.
+334. **Changing rows.** Select `only`, ⌘←: `←×` with `· your choice`; Space: empty; ⇧Space: back to the mode's `→`. ⌫ on `zonly` marks `×→`. Select the `sub/` row and press ⌘←: every row under it turns. Direction turns the selected rows → ← empty. Compare Again (⌘R) after a change: `Your direction choices were reset`.
+335. **Synchronize, Mirror.** Mirror, ⌘↩: the question lists `Copy N files (… B) to /tmp/R, replacing 1` and `Move 2 items on /tmp/R to the Trash`; Synchronize. One job in the panel; the rows say `Synchronized` with `=`; `/tmp/R` matches `/tmp/L`; `zonly` and `r` are in the Trash. ⌘Z once: everything is as before (the replaced `new` back with its old text, the trashed ones back, the copies gone).
+336. **Changed since the compare.** Compare, then in Terminal `echo more >> /tmp/L/only` before Synchronize: the job ends with `1 item skipped`; Details says `Changed after the compare; left alone`, the row `Not done: …`, and nothing went to the Trash in that run.
+337. **External disk.** Compare a folder with a copy on an exFAT USB stick (it has a `.Trashes`): Mirror deletions there go to the stick's trash and come back with ⌘Z. On an SMB share (no trash): the question says `… has no trash: N deletions there are left out` and, for files to replace, `… would be replaced without a way back` with Replace them anyway; unticked, those files stay as they were.
+338. **Profiles.** Save Profile… `Photos` (Mode Mirror, Content on, a filter): settings.toml has `[[sync-profiles]]` with `name = "Photos"`, `mode = "mirror"`, `content = true` and the filter. Close the compare; ⌘⇧P `Sync: Photos`: the compare opens with those folders, mode and filter, reads, and copies nothing. Save Profile… again with `Photos`, Delete: the profile is gone from settings.toml and the palette.
+339. **Two-way and memory.** Two-way with a file deleted on the right since the last sync: it shows `→` and is copied back (stateless, as the README says). Activity Monitor before a compare + sync of ≈ 10,000 files, and after Close: within 0.3 MB (write both numbers).
+
 ### 11h, list export
 
 Numbers stay as they are when branches merge (see 10b). 11h starts at 291 as its plan decided. Results go to `macos-test-results.md`.

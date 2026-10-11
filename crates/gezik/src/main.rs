@@ -53,6 +53,7 @@ mod single_instance;
 mod size_map;
 mod stack;
 mod start;
+mod sync;
 mod system_changes;
 mod tab_drag;
 mod tab_sets;
@@ -154,6 +155,7 @@ fn apply_config(files: &ConfigFiles) -> Loaded {
     }
     tab_sets::set_settings(loaded.settings.tab_sets.clone());
     saved_searches::set_settings(loaded.settings.searches.clone());
+    sync::set_profiles(loaded.settings.sync_profiles.clone());
     terminal::set_settings(loaded.settings.terminal.command.clone());
     // Every window shows them alike (spec 9.3, decision 46).
     windows::for_each(|window| {

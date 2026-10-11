@@ -63,6 +63,8 @@ pub enum Target {
     TabSet(String),
     Filter(String),
     SavedSearch(String),
+    /// A saved folder sync, by name: opened and compared, never applied (spec 11 §8.4).
+    SyncProfile(String),
     /// A System Integration command (spec 3.2).
     System(crate::integration::Command),
 }
@@ -223,6 +225,11 @@ impl Palette {
                 Target::Filter(filter.name),
             );
         }
+        for profile in crate::sync::profiles() {
+            let title = format!("Sync: {}", profile.name);
+            let detail = format!("{} ⇄ {}", profile.left, profile.right);
+            add(Kind::SavedSearch, title.clone(), title, detail, Target::SyncProfile(profile.name));
+        }
         for saved in crate::saved_searches::saved() {
             add(
                 Kind::SavedSearch,
@@ -329,6 +336,7 @@ impl Palette {
                 crate::panes::with_active(|p| p.filter.apply_saved(&name));
             }
             Target::SavedSearch(name) => crate::saved_searches::with_current(|s| s.run(&name, new_tab)),
+            Target::SyncProfile(name) => crate::compare::open_profile(&name),
             Target::System(command) => crate::integration::run(command),
         }
     }
