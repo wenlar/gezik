@@ -135,6 +135,7 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         Action::OtherPaneSameFolder => crate::dual::same_folder(),
         Action::MoveTabToNewWindow => crate::windows::move_tab_to_new(nav.active_index()),
         Action::Compare => crate::diff::compare(),
+        Action::SelectDifferences => crate::compare::select_differences(),
         Action::ExportList => crate::export::ask(nav, view),
         Action::SizeMap => crate::size_map::open_for(view),
         Action::Checksums => crate::checksums::open_for_view(view),

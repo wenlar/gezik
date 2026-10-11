@@ -881,6 +881,7 @@ mod tests {
                 | Action::SyncBrowsing
                 | Action::OtherPaneSameFolder
                 | Action::MoveTabToNewWindow
+                | Action::SelectDifferences
                 | Action::ExportList
                 | Action::SizeMap
                 | Action::Checksums

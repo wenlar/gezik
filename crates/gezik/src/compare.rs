@@ -1,0 +1,1028 @@
+//! The folder compare (11d, spec 11 §7): two folder trees side by side in the shared tool table
+//! (11a's `ToolTable`, so no layer of its own), with TC's show buttons, the options as boxes,
+//! a filter, and the layer hidden to a status-bar chip while the panes are looked at. The two
+//! sides are read on two low-priority threads at once, then (asked) the same-size pairs read
+//! byte by byte; all of it stops on Esc or when the layer goes. Nothing of it exists until it
+//! opens. Also `select-differences`: the panes' shown lists, nothing read.
+
+use std::cell::{Cell, RefCell};
+use std::collections::{BTreeSet, HashMap};
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::time::{Duration, Instant, SystemTime};
+
+use gezik_config::shortcuts::{Chord, Key, Platform};
+use gezik_core::compare::{self, Kind, NO_TIME, Node, Options, Row, SHOW, State, Tree};
+use gezik_core::file_filter::FileFilter;
+use gezik_search::tree_scan::{self, Rules, Scan};
+use slint::{ComponentHandle, Model, ModelNotify, ModelRc, ModelTracker, SharedString, VecModel};
+
+use crate::windows::{Slot, WindowId};
+use crate::{AppWindow, ToolRow, ToolToggle};
+
+/// Linux tells `Docs` from `docs`; Windows and macOS do not (spec 11 §7.3).
+const CASE_SENSITIVE: bool = cfg!(target_os = "linux");
+/// The boxes after the six show buttons.
+const BOXES: [&str; 4] = ["Subfolders", "Content", "Ignore dates", "Ignore 1 h"];
+const BUTTONS: [&str; 6] = ["Compare Again", "Swap", "Show Left", "Show Right", "Hide", "Close"];
+/// How often the reading threads say how far they are.
+const PROGRESS_EVERY: Duration = Duration::from_millis(250);
+const SIZE_WIDTH: usize = 10;
+const DATE_WIDTH: usize = 17;
+
+thread_local! {
+    /// Each window's compare: open, or hidden behind the chip.
+    pub(crate) static CURRENT: Slot<FolderCompare> = const { Slot::new() };
+}
+
+/// Runs `f` with the current window's compare (open or hidden).
+pub fn with_current(f: impl FnOnce(&FolderCompare)) {
+    if let Some(layer) = CURRENT.with(Slot::current) {
+        f(&layer);
+    }
+}
+
+/// Runs `f` with the current window's compare while it shows (it has the tool table).
+pub fn with_shown(f: impl FnOnce(&FolderCompare)) {
+    if let Some(layer) = CURRENT.with(Slot::current).filter(|l| !l.0.hidden.get()) {
+        f(&layer);
+    }
+}
+
+/// The chip's callbacks.
+pub fn install(window: &AppWindow) {
+    window.on_tool_chip_open(|| with_current(FolderCompare::restore));
+    window.on_tool_chip_close(|| with_current(FolderCompare::close));
+}
+
+/// Window `id` closes: its compare stops and goes.
+pub fn forget(id: WindowId) {
+    if let Some(layer) = CURRENT.with(|s| s.get(id)) {
+        layer.0.stop.borrow().store(true, Ordering::Relaxed);
+    }
+    CURRENT.with(|s| s.forget(id));
+}
+
+/// One of Gezik's jobs ended: what the compare shows may be out of date.
+pub fn job_finished() {
+    for (_, layer) in CURRENT.with(Slot::all) {
+        if layer.0.done.borrow().is_some() {
+            layer.0.stale.set(true);
+        }
+    }
+}
+
+/// Compares `left` and `right` in the current window (a compare hidden there goes); `told` is
+/// said first (the compare program was not found).
+pub fn open(left: PathBuf, right: PathBuf, told: String) {
+    let Some(window) = crate::windows::with_window(crate::windows::current(), |w| w.as_weak()) else { return };
+    let Some(window_ref) = window.upgrade() else { return };
+    if window_ref.get_tool_open() && CURRENT.with(Slot::current).is_none_or(|l| l.0.hidden.get()) {
+        return crate::panes::active_view().note("Close the open tool first".to_owned());
+    }
+    if let Some(old) = CURRENT.with(Slot::current) {
+        old.0.stop.borrow().store(true, Ordering::Relaxed);
+    }
+    let options = crate::windows::config().map(|c| c.load_state().compare).unwrap_or_default();
+    let rows = Rc::new(Rows::default());
+    let layer = FolderCompare(Rc::new(Inner {
+        window,
+        paths: RefCell::new((left, right)),
+        options: Cell::new(options),
+        filter_text: RefCell::default(),
+        scanned_filter: RefCell::default(),
+        rows,
+        done: RefCell::default(),
+        generation: Cell::new(0),
+        stop: RefCell::new(Arc::new(AtomicBool::new(false))),
+        running: Cell::new(false),
+        progress: RefCell::default(),
+        told: RefCell::new(told),
+        hidden: Cell::new(false),
+        stale: Cell::new(false),
+        anchor: Cell::new(None),
+    }));
+    CURRENT.with(|s| s.set(crate::windows::current(), layer.clone()));
+    layer.show();
+    layer.start();
+}
+
+/// `select-differences` (spec 11 §7.5): in both panes, what the other pane's list lacks or has
+/// older. Only the lists shown: nothing is read.
+pub fn select_differences() {
+    let view = crate::panes::active_view();
+    let (Some(left), Some(right)) = (crate::panes::at(0), crate::panes::at(1)) else {
+        return view.note("Select Differences needs two panes (F3)".to_owned());
+    };
+    let folder = |v: &crate::view::View| v.folder().is_some() && !v.shows_results() && !v.shows_trash();
+    if !folder(&left.view) || !folder(&right.view) {
+        return view.note("Select Differences compares the folders the two panes show".to_owned());
+    }
+    let items = |v: &crate::view::View| -> Vec<compare::Item> {
+        v.shown_entries()
+            .iter()
+            .map(|e| (tree_scan::name_key(&e.name, CASE_SENSITIVE), e.is_dir, compare::seconds(e.modified)))
+            .collect()
+    };
+    let (l, r) = compare::differences(&items(&left.view), &items(&right.view));
+    left.view.select_only(&l);
+    right.view.select_only(&r);
+    view.note(format!("Selected {} on the left, {} on the right", group(l.len()), group(r.len())));
+}
+
+/// What a finished compare found.
+struct Done {
+    left: Tree,
+    right: Tree,
+    rows: Vec<Row>,
+    /// Why a pair could not be read for its content (by row).
+    unreadable: HashMap<u32, String>,
+    links: usize,
+    online: usize,
+}
+
+/// The rows shown: built only for the rows on screen.
+#[derive(Default)]
+struct Rows {
+    done: RefCell<Option<Rc<Done>>>,
+    /// The row indices shown, in order.
+    shown: RefCell<Vec<u32>>,
+    /// Open folders (by row).
+    open: RefCell<Vec<bool>>,
+    selected: RefCell<BTreeSet<u32>>,
+    roots: RefCell<(PathBuf, PathBuf)>,
+    notify: ModelNotify,
+}
+
+impl Model for Rows {
+    type Data = ToolRow;
+
+    fn row_count(&self) -> usize {
+        self.shown.borrow().len()
+    }
+
+    fn row_data(&self, i: usize) -> Option<ToolRow> {
+        let at = *self.shown.borrow().get(i)?;
+        let done = self.done.borrow().clone()?;
+        let open = self.open.borrow().get(at as usize).copied().unwrap_or(false);
+        Some(tool_row(&done, at, open, self.selected.borrow().contains(&at)))
+    }
+
+    fn model_tracker(&self) -> &dyn ModelTracker {
+        &self.notify
+    }
+}
+
+/// A side's size and date text (none for a folder or a missing item).
+fn side(node: Option<&Node>) -> (String, String) {
+    match node {
+        Some(n) if matches!(n.kind, Kind::File | Kind::OnlineFile) => {
+            let date = if n.modified == NO_TIME {
+                String::new()
+            } else {
+                let at = u64::try_from(n.modified)
+                    .map_or(SystemTime::UNIX_EPOCH, |s| SystemTime::UNIX_EPOCH + Duration::from_secs(s));
+                crate::view_options::date_text(at)
+            };
+            (crate::view_options::size_text(n.size), date)
+        }
+        _ => (String::new(), String::new()),
+    }
+}
+
+/// Row `at` as the table shows it.
+fn tool_row(done: &Done, at: u32, open: bool, selected: bool) -> ToolRow {
+    let row = done.rows[at as usize];
+    let l = row.left.map(|i| &done.left.nodes[i as usize]);
+    let r = row.right.map(|i| &done.right.nodes[i as usize]);
+    let named = l.or(r).map_or("", |n| &n.name);
+    let mark = match (row.folder, open) {
+        (false, _) => "",
+        (true, true) => "▾ ",
+        (true, false) => "▸ ",
+    };
+    let slash = if row.folder { std::path::MAIN_SEPARATOR_STR } else { "" };
+    let name = format!("{}{mark}{named}{slash}", "   ".repeat(usize::from(row.depth)));
+    let ((ls, ld), (rs, rd)) = (side(l), side(r));
+    let values = format!("{ls:>SIZE_WIDTH$}  {ld:<DATE_WIDTH$}  {}  {rs:>SIZE_WIDTH$}  {rd}", row.state.symbol());
+    let status = match row.state {
+        State::Unreadable => {
+            let why = done
+                .unreadable
+                .get(&at)
+                .map(String::as_str)
+                .or_else(|| row.left.and_then(|i| done.left.problem(i)))
+                .or_else(|| row.right.and_then(|i| done.right.problem(i)));
+            match why {
+                Some(why) => format!("Unreadable: {why}"),
+                None => "Unreadable".to_owned(),
+            }
+        }
+        State::Equal if row.dates_differ => "Same content".to_owned(),
+        state if row.check => format!("{} (content not read)", state.label()),
+        state => state.label().to_owned(),
+    };
+    let tone = match row.state {
+        State::Equal => 1,
+        State::Mismatch | State::Unreadable => 2,
+        _ => 0,
+    };
+    ToolRow { name: name.into(), values: values.trim_end().into(), status: status.into(), tone, selected }
+}
+
+struct Inner {
+    window: slint::Weak<AppWindow>,
+    /// The folders compared (left, right).
+    paths: RefCell<(PathBuf, PathBuf)>,
+    options: Cell<Options>,
+    filter_text: RefCell<String>,
+    /// The filter the shown result was read with.
+    scanned_filter: RefCell<String>,
+    rows: Rc<Rows>,
+    done: RefCell<Option<Rc<Done>>>,
+    /// Bumped by each run: a late answer of an earlier one is dropped.
+    generation: Cell<u64>,
+    stop: RefCell<Arc<AtomicBool>>,
+    running: Cell<bool>,
+    progress: RefCell<String>,
+    /// Said before the summary until a result comes.
+    told: RefCell<String>,
+    /// Behind the chip.
+    hidden: Cell<bool>,
+    /// One of Gezik's jobs ended since the result came.
+    stale: Cell<bool>,
+    anchor: Cell<Option<u32>>,
+}
+
+#[derive(Clone)]
+pub struct FolderCompare(Rc<Inner>);
+
+/// What the reading threads send.
+enum Message {
+    Progress(String),
+    Done(Box<Result<Done, String>>),
+}
+
+impl FolderCompare {
+    /// Puts the compare into the tool table and shows it.
+    fn show(&self) {
+        let Some(window) = self.0.window.upgrade() else { return };
+        self.0.hidden.set(false);
+        let (left, right) = self.0.paths.borrow().clone();
+        window.set_tool_title(format!("Compare  {}  ⇄  {}", left.display(), right.display()).into());
+        window.set_tool_field_label("Filter".into());
+        window.set_tool_field_text(self.0.filter_text.borrow().as_str().into());
+        window.set_tool_field_focused(false);
+        let labels: Vec<SharedString> = BUTTONS.iter().map(|b| SharedString::from(*b)).collect();
+        window.set_tool_buttons(ModelRc::new(VecModel::from(labels)));
+        window.set_tool_columns(
+            format!("{:>SIZE_WIDTH$}  {:<DATE_WIDTH$}  ⇄  {:>SIZE_WIDTH$}  Modified", "Size", "Modified", "Size")
+                .into(),
+        );
+        window.set_tool_rows(ModelRc::from(self.0.rows.clone()));
+        window.set_tool_chip(SharedString::new());
+        self.show_toggles();
+        self.show_summary();
+        window.set_tool_open(true);
+    }
+
+    /// The boxes: the show buttons with their numbers, then the options.
+    fn show_toggles(&self) {
+        let Some(window) = self.0.window.upgrade() else { return };
+        let o = self.0.options.get();
+        let counts = self.0.done.borrow().as_ref().map(|d| compare::counts(&d.rows));
+        let mut toggles: Vec<ToolToggle> = SHOW
+            .iter()
+            .enumerate()
+            .map(|(i, b)| ToolToggle {
+                label: counts.map_or_else(|| (*b).to_owned(), |n| format!("{b} {}", group(n[i]))).into(),
+                checked: o.show[i],
+            })
+            .collect();
+        for (label, checked) in BOXES.iter().zip([o.subfolders, o.content, o.ignore_dates, o.ignore_hour]) {
+            toggles.push(ToolToggle { label: (*label).into(), checked });
+        }
+        // Changed in place: a new model would rebuild the boxes and drop the keyboard's one.
+        let current = window.get_tool_toggles();
+        if current.row_count() == toggles.len() {
+            for (i, toggle) in toggles.into_iter().enumerate() {
+                if current.row_data(i).as_ref() != Some(&toggle) {
+                    current.set_row_data(i, toggle);
+                }
+            }
+        } else {
+            window.set_tool_toggles(ModelRc::new(VecModel::from(toggles)));
+        }
+    }
+
+    fn show_summary(&self) {
+        let Some(window) = self.0.window.upgrade() else { return };
+        let (text, tone) = self.summary();
+        let told = self.0.told.borrow();
+        let text = if told.is_empty() { text } else { format!("{told}. {text}") };
+        window.set_tool_summary(text.into());
+        window.set_tool_summary_tone(tone);
+    }
+
+    fn summary(&self) -> (String, i32) {
+        if self.0.running.get() {
+            return (self.0.progress.borrow().clone(), 0);
+        }
+        let typed = self.0.filter_text.borrow().clone();
+        if let Err(err) = FileFilter::parse(&typed, false) {
+            return (err, 2);
+        }
+        let Some(done) = self.0.done.borrow().clone() else { return (self.0.progress.borrow().clone(), 0) };
+        let n = compare::counts(&done.rows);
+        let mut parts = vec![format!("{} compared", items_text(n[4] + n[5]))];
+        for (i, what) in [(0, "→"), (3, "←"), (2, "≠")] {
+            if n[i] > 0 {
+                parts.push(format!("{} {what}", group(n[i])));
+            }
+        }
+        if n[4] > 0 {
+            parts.push(format!("{} on one side only", group(n[4])));
+        }
+        if done.links > 0 {
+            parts.push(format!("{} left out (links)", group(done.links)));
+        }
+        if done.online > 0 {
+            parts.push(format!("{} online only, not read", group(done.online)));
+        }
+        let unread = done.rows.iter().filter(|r| r.check).count();
+        if unread > 0 {
+            parts.push(format!("content of {} not read", items_text(unread)));
+        }
+        let selected = self.0.rows.selected.borrow().len();
+        if selected > 0 {
+            parts.push(format!("Selected {}", group(selected)));
+        }
+        if typed != *self.0.scanned_filter.borrow() {
+            parts.push("Compare Again (F5) applies the filter".to_owned());
+        }
+        if self.0.stale.get() {
+            parts.push("Files may have changed: Compare Again (F5)".to_owned());
+        }
+        (parts.join(" · "), 0)
+    }
+
+    /// Reads both sides (again) with the options and filter set now.
+    fn start(&self) {
+        let filter = match FileFilter::parse(&self.0.filter_text.borrow(), false) {
+            Ok(filter) => filter,
+            Err(_) => return self.show_summary(),
+        };
+        self.0.stop.borrow().store(true, Ordering::Relaxed);
+        let stop = Arc::new(AtomicBool::new(false));
+        *self.0.stop.borrow_mut() = stop.clone();
+        // Numbered across the process: a later compare in this window never takes an earlier
+        // one's late answer for its own.
+        static RUNS: AtomicU64 = AtomicU64::new(0);
+        let generation = RUNS.fetch_add(1, Ordering::Relaxed) + 1;
+        self.0.generation.set(generation);
+        self.0.running.set(true);
+        *self.0.scanned_filter.borrow_mut() = self.0.filter_text.borrow().clone();
+        *self.0.progress.borrow_mut() = "Reading…".to_owned();
+        self.0.stale.set(false);
+        let (left, right) = self.0.paths.borrow().clone();
+        let options = self.0.options.get();
+        let shown = {
+            let o = crate::view_options::current();
+            (o.show_hidden, o.show_system)
+        };
+        let window = crate::windows::current();
+        let job = Job { left, right, options, filter, shown, stop };
+        let spawned = std::thread::Builder::new().name("gezik-folder-compare".into()).spawn(move || {
+            gezik_platform::priority::lower_this_thread();
+            let answer = run(&job, &mut |text| {
+                crate::windows::post(window, move || with_current(|c| c.heard(generation, Message::Progress(text))));
+            });
+            let message = Message::Done(Box::new(answer));
+            crate::windows::post(window, move || with_current(|c| c.heard(generation, message)));
+        });
+        if let Err(err) = spawned {
+            self.0.running.set(false);
+            *self.0.progress.borrow_mut() = format!("Cannot compare: {err}");
+        }
+        self.show_summary();
+    }
+
+    fn heard(&self, generation: u64, message: Message) {
+        if generation != self.0.generation.get() {
+            return;
+        }
+        match message {
+            Message::Progress(text) => *self.0.progress.borrow_mut() = text,
+            Message::Done(answer) => {
+                self.0.running.set(false);
+                match *answer {
+                    Ok(done) => {
+                        let open: Vec<bool> = done.rows.iter().map(|r| r.folder && !r.one_sided()).collect();
+                        let done = Rc::new(done);
+                        *self.0.done.borrow_mut() = Some(done.clone());
+                        *self.0.rows.done.borrow_mut() = Some(done);
+                        *self.0.rows.open.borrow_mut() = open;
+                        *self.0.rows.roots.borrow_mut() = self.0.paths.borrow().clone();
+                        self.0.rows.selected.borrow_mut().clear();
+                        self.0.anchor.set(None);
+                        self.refilter();
+                    }
+                    Err(text) => *self.0.progress.borrow_mut() = text,
+                }
+            }
+        }
+        if self.0.hidden.get() {
+            self.show_chip();
+        } else {
+            self.show_toggles();
+            self.show_summary();
+        }
+    }
+
+    /// The shown rows again (a button, a folder opened or closed); the cursor to the first.
+    fn refilter(&self) {
+        let shown = match &*self.0.rows.done.borrow() {
+            Some(done) => compare::visible(&done.rows, &self.0.options.get().show, &self.0.rows.open.borrow()),
+            None => Vec::new(),
+        };
+        *self.0.rows.shown.borrow_mut() = shown;
+        self.0.rows.notify.reset();
+        if let Some(window) = self.0.window.upgrade()
+            && !self.0.hidden.get()
+        {
+            window.set_tool_cursor(-1);
+        }
+    }
+
+    /// Box `i`: a show button, or an option (Subfolders, Content, the dates: read again).
+    pub(crate) fn toggle(&self, i: i32) {
+        let Ok(i) = usize::try_from(i) else { return };
+        let mut o = self.0.options.get();
+        let again = match i {
+            0..6 => {
+                o.show[i] = !o.show[i];
+                false
+            }
+            6 => toggled(&mut o.subfolders),
+            7 => toggled(&mut o.content),
+            8 => toggled(&mut o.ignore_dates),
+            9 => toggled(&mut o.ignore_hour),
+            _ => return,
+        };
+        self.0.options.set(o);
+        if let Some(config) = crate::windows::config() {
+            config.update_state(move |state| state.compare = o);
+        }
+        self.show_toggles();
+        if again {
+            self.start();
+        } else {
+            self.refilter();
+            self.show_summary();
+        }
+    }
+
+    pub(crate) fn button(&self, i: i32) {
+        match usize::try_from(i).ok().and_then(|i| BUTTONS.get(i)) {
+            Some(&"Compare Again") => self.start(),
+            Some(&"Swap") => self.swap(),
+            Some(&"Show Left") => self.show_in_pane(false),
+            Some(&"Show Right") => self.show_in_pane(true),
+            Some(&"Hide") => self.hide(),
+            Some(_) => self.close(),
+            None => {}
+        }
+    }
+
+    pub(crate) fn field_edited(&self) {
+        let Some(window) = self.0.window.upgrade() else { return };
+        *self.0.filter_text.borrow_mut() = window.get_tool_field_text().to_string();
+        self.show_summary();
+    }
+
+    fn swap(&self) {
+        {
+            let mut paths = self.0.paths.borrow_mut();
+            let (l, r) = paths.clone();
+            *paths = (r, l);
+        }
+        self.show();
+        self.start();
+    }
+
+    /// The row the cursor is on (a row index).
+    fn cursor_row(&self) -> Option<u32> {
+        let window = self.0.window.upgrade()?;
+        let at = usize::try_from(window.get_tool_cursor()).ok()?;
+        self.0.rows.shown.borrow().get(at).copied()
+    }
+
+    /// Row `at`'s path on one side (`None`: that side lacks it).
+    fn path(&self, at: u32, right_side: bool) -> Option<PathBuf> {
+        let done = self.0.done.borrow().clone()?;
+        let row = done.rows.get(at as usize)?;
+        let roots = self.0.rows.roots.borrow();
+        if right_side {
+            row.right.map(|i| tree_scan::path_of(&roots.1, &done.right, i))
+        } else {
+            row.left.map(|i| tree_scan::path_of(&roots.0, &done.left, i))
+        }
+    }
+
+    /// Show Left / Show Right: that pane (opened if needed) goes to the row's folder there with
+    /// it selected (a side lacking it: the nearest folder it has), and the layer hides.
+    fn show_in_pane(&self, right_side: bool) {
+        let Some(at) = self.cursor_row().or_else(|| self.0.rows.selected.borrow().first().copied()) else {
+            return self.say("Select a row first");
+        };
+        let target = self.path(at, right_side);
+        let (dir, names) = match target {
+            Some(path) => {
+                let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
+                (path.parent().map(Path::to_path_buf).unwrap_or_default(), name.into_iter().collect())
+            }
+            None => {
+                let other = self.path(at, !right_side).unwrap_or_default();
+                let (from, to) = self.0.rows.roots.borrow().clone();
+                let (from, to) = if right_side { (from, to) } else { (to, from) };
+                let mut dir = to.join(other.strip_prefix(&from).unwrap_or(Path::new("")));
+                while !dir.is_dir() && dir.pop() {}
+                (dir, Vec::new())
+            }
+        };
+        self.hide();
+        if !crate::dual::is_open() {
+            crate::dual::open(None);
+        }
+        if crate::dual::is_open() {
+            crate::dual::activate(usize::from(right_side));
+        }
+        crate::panes::active_nav().go_selecting(dir, names);
+    }
+
+    fn show_chip(&self) {
+        let Some(window) = self.0.window.upgrade() else { return };
+        let name = self.0.paths.borrow().0.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let differs = self.0.done.borrow().as_ref().map(|d| {
+            let n = compare::counts(&d.rows);
+            n[0] + n[2] + n[3]
+        });
+        let text = match (self.0.running.get(), differs) {
+            (true, _) => format!("Compare: {name} (…)"),
+            (false, Some(n)) => format!("Compare: {name} ({} ≠)", group(n)),
+            (false, None) => format!("Compare: {name}"),
+        };
+        window.set_tool_chip(text.into());
+    }
+
+    /// The layer goes behind a status-bar chip; everything it found stays.
+    fn hide(&self) {
+        let Some(window) = self.0.window.upgrade() else { return };
+        self.0.hidden.set(true);
+        window.set_tool_open(false);
+        window.set_tool_rows(ModelRc::default());
+        window.set_tool_toggles(ModelRc::default());
+        self.show_chip();
+        if !window.get_dialog_open() && !window.get_conflicts_open() {
+            window.invoke_focus_list();
+        }
+    }
+
+    /// The chip was clicked: the layer is back (unless another tool has the table).
+    pub fn restore(&self) {
+        let Some(window) = self.0.window.upgrade() else { return };
+        if !self.0.hidden.get() {
+            return;
+        }
+        if window.get_tool_open() {
+            return crate::panes::active_view().note("Close the open tool first".to_owned());
+        }
+        self.show();
+        self.refilter();
+    }
+
+    /// Closes the compare: its threads stop, its rows go.
+    pub fn close(&self) {
+        self.0.stop.borrow().store(true, Ordering::Relaxed);
+        self.0.generation.set(0);
+        let hidden = self.0.hidden.get();
+        CURRENT.with(|s| s.forget(crate::windows::current()));
+        let Some(window) = self.0.window.upgrade() else { return };
+        window.set_tool_chip(SharedString::new());
+        // Hidden, the table may be another tool's now.
+        if hidden {
+            return;
+        }
+        window.set_tool_open(false);
+        window.set_tool_rows(ModelRc::default());
+        window.set_tool_toggles(ModelRc::default());
+        window.set_tool_buttons(ModelRc::default());
+        window.set_tool_field_text(SharedString::new());
+        if !window.get_dialog_open() && !window.get_conflicts_open() {
+            window.invoke_focus_list();
+        }
+    }
+
+    fn say(&self, text: &str) {
+        if let Some(window) = self.0.window.upgrade() {
+            window.set_tool_summary(text.into());
+            window.set_tool_summary_tone(0);
+        }
+    }
+
+    /// A click on shown row `i`: it alone, with Ctrl added or taken away, with Shift the span.
+    /// A plain click on the folder the cursor is on opens or closes it.
+    pub(crate) fn pressed(&self, i: i32, ctrl: bool, shift: bool) {
+        let shown = self.0.rows.shown.borrow().clone();
+        let Some(&at) = usize::try_from(i).ok().and_then(|i| shown.get(i)) else { return };
+        let Some(window) = self.0.window.upgrade() else { return };
+        if !ctrl && !shift && window.get_tool_cursor() == i && self.is_folder(at) {
+            return self.open_folder(at, None);
+        }
+        {
+            let mut selected = self.0.rows.selected.borrow_mut();
+            match (ctrl, shift, self.0.anchor.get().and_then(|a| shown.iter().position(|s| *s == a))) {
+                (_, true, Some(from)) => {
+                    let to = usize::try_from(i).unwrap_or(0);
+                    if !ctrl {
+                        selected.clear();
+                    }
+                    selected.extend(shown[from.min(to)..=from.max(to)].iter().copied());
+                }
+                (true, false, _) => {
+                    if !selected.remove(&at) {
+                        selected.insert(at);
+                    }
+                    self.0.anchor.set(Some(at));
+                }
+                _ => {
+                    selected.clear();
+                    selected.insert(at);
+                    self.0.anchor.set(Some(at));
+                }
+            }
+        }
+        window.set_tool_cursor(i);
+        self.0.rows.notify.reset();
+        self.show_summary();
+    }
+
+    fn is_folder(&self, at: u32) -> bool {
+        self.0.done.borrow().as_ref().is_some_and(|d| d.rows.get(at as usize).is_some_and(|r| r.folder))
+    }
+
+    /// Opens (`Some(true)`), closes (`Some(false)`) or flips (`None`) folder row `at`; the
+    /// cursor stays on it.
+    fn open_folder(&self, at: u32, to: Option<bool>) {
+        {
+            let mut open = self.0.rows.open.borrow_mut();
+            let Some(slot) = open.get_mut(at as usize) else { return };
+            *slot = to.unwrap_or(!*slot);
+        }
+        self.refilter();
+        let index = self.0.rows.shown.borrow().iter().position(|s| *s == at);
+        if let (Some(window), Some(index)) = (self.0.window.upgrade(), index) {
+            window.set_tool_cursor(i32::try_from(index).unwrap_or(-1));
+        }
+    }
+
+    /// Enter: a folder opens or closes; two files open in the file compare (over this layer).
+    fn enter(&self) {
+        let Some(at) = self.cursor_row() else { return };
+        if self.is_folder(at) {
+            return self.open_folder(at, None);
+        }
+        match (self.path(at, false), self.path(at, true)) {
+            (Some(l), Some(r)) if l.is_file() && r.is_file() => crate::diff::with_current(|d| d.open(l, r)),
+            _ => self.say("Enter compares two files: this one is not on both sides"),
+        }
+    }
+
+    /// Ctrl+C: the selected rows' paths (the left one, else the right).
+    fn copy(&self) {
+        let selected: Vec<u32> = self.0.rows.selected.borrow().iter().copied().collect();
+        let picked = if selected.is_empty() { self.cursor_row().into_iter().collect() } else { selected };
+        let paths: Vec<String> = picked
+            .into_iter()
+            .filter_map(|at| self.path(at, false).or_else(|| self.path(at, true)))
+            .map(|p| p.display().to_string())
+            .collect();
+        if paths.is_empty() {
+            return self.say("Nothing to copy");
+        }
+        let text = paths.join(if cfg!(windows) { "\r\n" } else { "\n" });
+        match gezik_platform::clipboard::write_text(&text) {
+            Ok(()) => self.say(&format!(
+                "Copied {}",
+                if paths.len() == 1 { "1 path".to_owned() } else { format!("{} paths", group(paths.len())) }
+            )),
+            Err(_) => self.say("Cannot use the clipboard"),
+        }
+    }
+
+    fn select_all(&self) {
+        let shown = self.0.rows.shown.borrow().clone();
+        self.0.rows.selected.borrow_mut().extend(shown);
+        self.0.rows.notify.reset();
+        self.show_summary();
+    }
+
+    /// The layer's keys: Esc stops a running read, else closes; the row keys, → / ← open and
+    /// close, Enter, F5 / Ctrl+R again, Ctrl+C, Ctrl+A (⌘ on macOS); the field keeps its own.
+    pub fn chord(&self, chord: &Chord, field_focused: bool) -> bool {
+        let primary = crate::keys::is_primary(chord, Platform::current());
+        let plain = !primary && !chord.alt;
+        match chord.key {
+            Key::Escape if plain && !chord.shift => {
+                if self.0.running.get() {
+                    self.0.stop.borrow().store(true, Ordering::Relaxed);
+                } else {
+                    self.close();
+                }
+            }
+            Key::F(5) if plain && !chord.shift => self.start(),
+            Key::Char('r') if primary && !chord.shift => self.start(),
+            // Enter in the filter applies it.
+            Key::Enter if field_focused && plain && !chord.shift => self.start(),
+            _ if field_focused => return false,
+            Key::Up | Key::Down | Key::PageUp | Key::PageDown | Key::Home | Key::End if plain => {
+                let Some(window) = self.0.window.upgrade() else { return true };
+                let len = self.0.rows.shown.borrow().len();
+                if let Some(to) =
+                    crate::checksums::stepped(chord.key, usize::try_from(window.get_tool_cursor()).ok(), len)
+                {
+                    self.pressed(i32::try_from(to).unwrap_or(0), false, chord.shift);
+                }
+            }
+            Key::Right | Key::Left if plain && !chord.shift => {
+                if let Some(at) = self.cursor_row().filter(|at| self.is_folder(*at)) {
+                    self.open_folder(at, Some(chord.key == Key::Right));
+                }
+            }
+            Key::Enter if plain && !chord.shift => self.enter(),
+            Key::Char('c') if primary && !chord.shift => self.copy(),
+            Key::Char('a') if primary && !chord.shift => self.select_all(),
+            _ => return false,
+        }
+        true
+    }
+}
+
+fn toggled(flag: &mut bool) -> bool {
+    *flag = !*flag;
+    true
+}
+
+/// `1,234`.
+fn group(n: usize) -> String {
+    crate::preview::with_commas(n)
+}
+
+fn items_text(n: usize) -> String {
+    if n == 1 { "1 item".to_owned() } else { format!("{} items", group(n)) }
+}
+
+/// What the reading thread is given.
+struct Job {
+    left: PathBuf,
+    right: PathBuf,
+    options: Options,
+    filter: FileFilter,
+    shown: (bool, bool),
+    stop: Arc<AtomicBool>,
+}
+
+/// Reads both sides at once, compares them and (asked) reads the same-size pairs; `say` hears
+/// how far it is (at most every 250 ms). Err: what to say instead of rows.
+fn run(job: &Job, say: &mut dyn FnMut(String)) -> Result<Done, String> {
+    let root_name = job.left.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let rules = Rules {
+        subfolders: job.options.subfolders,
+        filter: &job.filter,
+        root_taken: job.filter.top_folder(&root_name) != Some(false),
+        shown: job.shown,
+        case_sensitive: CASE_SENSITIVE,
+        max_items: tree_scan::MAX_ITEMS,
+    };
+    let read = AtomicUsize::new(0);
+    let (left, right) = std::thread::scope(|s| {
+        let scan_side = |root: &Path| {
+            let (rules, stop, read) = (&rules, &job.stop, &read);
+            let root = root.to_path_buf();
+            s.spawn(move || {
+                gezik_platform::priority::lower_this_thread();
+                tree_scan::scan(&root, rules, stop, read)
+            })
+        };
+        let (l, r) = (scan_side(&job.left), scan_side(&job.right));
+        let mut last = Instant::now();
+        // Looked at often enough that a close is heard within 100 ms.
+        while !(l.is_finished() && r.is_finished()) {
+            std::thread::sleep(Duration::from_millis(50));
+            if last.elapsed() >= PROGRESS_EVERY {
+                last = Instant::now();
+                say(format!("Reading… {} folders", group(read.load(Ordering::Relaxed))));
+            }
+        }
+        // A panic aborts the process (panic=abort): a join has nothing else to give.
+        (l.join().unwrap_or_default(), r.join().unwrap_or_default())
+    });
+    scanned(&job.left, &left).and(scanned(&job.right, &right))?;
+    let mut rows = compare::build(&left.tree, &right.tree, &job.options);
+    let unreadable = read_contents(job, &left.tree, &right.tree, &mut rows, say);
+    compare::settle_folders(&mut rows);
+    let done = Done {
+        left: left.tree,
+        right: right.tree,
+        rows,
+        unreadable,
+        links: left.links + right.links,
+        online: left.online + right.online,
+    };
+    Ok(done)
+}
+
+/// A side's scan as an error to say, if it is one.
+fn scanned(root: &Path, scan: &Scan) -> Result<(), String> {
+    if scan.stopped {
+        return Err("Stopped. Compare Again (F5) reads both folders again".to_owned());
+    }
+    if scan.too_many {
+        return Err(format!(
+            "More than {} items in {}; narrow the filter or compare subfolders",
+            group(tree_scan::MAX_ITEMS),
+            root.display()
+        ));
+    }
+    if scan.tree.nodes.first().is_some_and(|n| n.kind == Kind::Unread) {
+        let why = scan.tree.problem(0).unwrap_or("it cannot be read");
+        return Err(format!("Cannot read {}: {why}", root.display()));
+    }
+    Ok(())
+}
+
+/// Reads the pairs `rows` marks byte by byte (`hash::same_content`); the answers go into the
+/// rows. A stop leaves the rest marked. Returns why a pair could not be read, by row.
+fn read_contents(
+    job: &Job,
+    left: &Tree,
+    right: &Tree,
+    rows: &mut [Row],
+    say: &mut dyn FnMut(String),
+) -> HashMap<u32, String> {
+    let mut problems = HashMap::new();
+    let total: u64 = rows.iter().filter(|r| r.check).filter_map(|r| r.left).map(|i| left.nodes[i as usize].size).sum();
+    let total_text = crate::view_options::size_text(total);
+    let mut done = 0u64;
+    let mut last = Instant::now();
+    for (at, row) in rows.iter_mut().enumerate() {
+        if !row.check {
+            continue;
+        }
+        if job.stop.load(Ordering::Relaxed) {
+            break;
+        }
+        let (Some(l), Some(r)) = (row.left, row.right) else { continue };
+        let a = tree_scan::path_of(&job.left, left, l);
+        let b = tree_scan::path_of(&job.right, right, r);
+        let mut progress = |n: u64| {
+            done += n;
+            if last.elapsed() >= PROGRESS_EVERY {
+                last = Instant::now();
+                say(format!("Comparing content… {} of {total_text}", crate::view_options::size_text(done)));
+            }
+            !job.stop.load(Ordering::Relaxed)
+        };
+        match gezik_ops::hash::same_content(&a, &b, false, &mut progress) {
+            Ok(first) => compare::content_result(row, first.is_none()),
+            Err(_) if job.stop.load(Ordering::Relaxed) => break,
+            Err(err) => {
+                row.check = false;
+                row.state = State::Unreadable;
+                problems.insert(u32::try_from(at).unwrap_or(u32::MAX), gezik_platform::fs::describe(&err));
+            }
+        }
+    }
+    problems
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("gezik-folder-compare-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write(path: &Path, text: &str, seconds: u64) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+        let file = std::fs::File::options().write(true).open(path).unwrap();
+        file.set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(seconds)).unwrap();
+    }
+
+    fn job(left: &Path, right: &Path, options: Options, filter: &str) -> Job {
+        Job {
+            left: left.to_path_buf(),
+            right: right.to_path_buf(),
+            options,
+            filter: FileFilter::parse(filter, false).unwrap(),
+            shown: (true, true),
+            stop: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// Each row's name and state.
+    fn found(done: &Done) -> Vec<(String, State)> {
+        done.rows
+            .iter()
+            .map(|r| {
+                let names = match (r.left, r.right) {
+                    (Some(i), _) => done.left.names(i),
+                    (_, Some(i)) => done.right.names(i),
+                    _ => Vec::new(),
+                };
+                (names.join("/"), r.state)
+            })
+            .collect()
+    }
+
+    const T: u64 = 1_700_000_000;
+
+    #[test]
+    fn two_trees_are_compared_with_their_content_when_asked() {
+        let root = dir("content");
+        let (left, right) = (root.join("L"), root.join("R"));
+        write(&left.join("same.txt"), "abc", T);
+        write(&right.join("same.txt"), "abc", T + 1);
+        write(&left.join("moved.txt"), "abc", T + 600);
+        write(&right.join("moved.txt"), "abc", T);
+        write(&left.join("edited.txt"), "abc", T + 600);
+        write(&right.join("edited.txt"), "abd", T);
+        write(&left.join("sub/only.txt"), "x", T);
+        write(&right.join("sub/keep.txt"), "x", T);
+        write(&right.join("skip/x.tmp"), "x", T);
+        let plain = run(&job(&left, &right, Options::default(), "| skip\\"), &mut |_| {}).unwrap();
+        assert_eq!(
+            found(&plain),
+            [
+                ("edited.txt".to_owned(), State::LeftNewer),
+                ("moved.txt".to_owned(), State::LeftNewer),
+                ("same.txt".to_owned(), State::Equal),
+                ("sub".to_owned(), State::Differs),
+                ("sub/keep.txt".to_owned(), State::RightOnly),
+                ("sub/only.txt".to_owned(), State::LeftOnly),
+            ],
+            "the filter's folder is not there"
+        );
+        let content = Options { content: true, ..Options::default() };
+        let mut heard = Vec::new();
+        let done = run(&job(&left, &right, content, "| skip\\"), &mut |text| heard.push(text)).unwrap();
+        let states = found(&done);
+        assert_eq!(states[0].1, State::LeftNewer, "other bytes keep the date's state");
+        assert_eq!(states[1].1, State::Equal, "the same bytes are the same");
+        assert!(done.rows[1].dates_differ);
+        assert_eq!(tool_row(&done, 1, false, false).status, "Same content");
+        assert!(done.rows.iter().all(|r| !r.check));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_stop_says_so_and_a_missing_folder_is_said() {
+        let root = dir("stop");
+        write(&root.join("L/a.txt"), "a", T);
+        write(&root.join("R/a.txt"), "a", T);
+        let stopped = job(&root.join("L"), &root.join("R"), Options::default(), "");
+        stopped.stop.store(true, Ordering::Relaxed);
+        assert!(run(&stopped, &mut |_| {}).err().unwrap().starts_with("Stopped"));
+        let missing = job(&root.join("L"), &root.join("nope"), Options::default(), "");
+        assert!(run(&missing, &mut |_| {}).err().unwrap().starts_with("Cannot read"));
+        // A stop while contents are read leaves the rest marked.
+        let content = Options { content: true, ignore_dates: true, ..Options::default() };
+        let late = job(&root.join("L"), &root.join("R"), content, "");
+        let (left, right) = (scan_for(&late, "L", &root), scan_for(&late, "R", &root));
+        let mut rows = compare::build(&left, &right, &content);
+        assert!(rows[0].check);
+        late.stop.store(true, Ordering::Relaxed);
+        read_contents(&late, &left, &right, &mut rows, &mut |_| {});
+        assert!(rows[0].check, "not read");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn scan_for(job: &Job, side: &str, root: &Path) -> Tree {
+        let rules = Rules {
+            subfolders: true,
+            filter: &job.filter,
+            root_taken: true,
+            shown: (true, true),
+            case_sensitive: true,
+            max_items: tree_scan::MAX_ITEMS,
+        };
+        tree_scan::scan(&root.join(side), &rules, &AtomicBool::new(false), &AtomicUsize::new(0)).tree
+    }
+}

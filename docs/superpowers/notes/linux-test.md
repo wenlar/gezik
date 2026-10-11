@@ -619,6 +619,16 @@ Numbers stay as they are when branches merge (see 10b). 11g starts at 223 as its
 224. **Open, look, zoom, keys, menu.** As macOS 298–301 with the palette (Ctrl+Shift+P `Size Map`) and the right-click `Tools ▸ Size Map` (no menu bar), Backspace / Alt+Up for ⌫ / ⌥↑, Ctrl+R / F5, Move to Trash going to `~/.local/share/Trash`; on a 2× scale screen the box edges stay sharp.
 225. **Root.** Map `/`: it stays on the root file system (no `/proc`, `/sys`, `/dev`, `/run` or other mounts), finishes, and memory (`ps -o rss= -p $(pgrep -x gezik)`) goes back to within 0.3 MB of before after closing (write both numbers).
 
+### 11d, folder compare
+
+Numbers stay as they are when branches merge (see 10b). 11d uses 239–243 as its plan decided. GNOME and KDE, X11 and Wayland.
+
+239. **Tests first.** As macOS 324; paste.
+240. **Open, states, buttons, content.** As macOS 325–327 with Shift+F2, the palette (`Compare`, `Select Differences`) and Gezik's own right-click `Tools ▸` (there is no menu bar); `touch -d` for the times.
+241. **Case.** Folders with `Docs/` on one side and `docs/` on the other: two rows (Linux tells them apart); on a FAT USB stick (`vfat`), the 2 s rule: a file copied there with `cp -p` is `=`.
+242. **Filter, links, stop, rows and panes.** As macOS 329–330 with Enter, Ctrl+C, Ctrl+R; a symlinked folder is counted and not followed.
+243. **Select Differences and memory.** As macOS 331 with `ps -o rss= -p $(pgrep -x gezik)`.
+
 ## Known gaps (not bugs)
 
 - **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (F5 works it out again). Search results and the flat view show no folder sizes.

@@ -144,6 +144,23 @@ typing = "jump"           # jump: letters go to a name | filter: letters open th
   reads the files again, Esc closes. Binary files and files over 16 MB are compared byte by
   byte. To use WinMerge, Meld, Beyond Compare or FileMerge instead, set `[tools] diff`
   (`diff-args` defaults to `["{left}", "{right}"]`; a macOS `.app` opens with `open -a`).
+- **Compare folders** (the same Compare on two selected folders, one folder in each pane, or
+  with two panes and anything else the two folders they show): both trees with their
+  subfolders, matched by name (case ignored on Windows and macOS; macOS's decomposed names
+  meet USB drives' composed ones), told apart by size and date (2 seconds apart is the same:
+  FAT; Ignore 1 h for its daylight-saving shift; Ignore dates) and, with Content, byte by
+  byte. The show buttons → = ≠ ← 1× 2× (with their numbers) filter the rows; `=` starts off.
+  Filter takes `*.jpg *.cr2 | thumbs\ *.tmp` (after `|` left out; a name ending in `\` or
+  `/` is a folder's, never read when left out); Enter or F5 applies it. Links are not
+  followed, online-only files are not read. → / ← open and close folders, Enter on two files
+  opens their compare, Ctrl+C copies paths, Esc stops a running read, then closes. Show Left
+  / Show Right show the row in that pane and Hide puts the compare behind a status-bar chip
+  (`Compare: foto (3 ≠)`): click it to come back, ✕ to let it go. The buttons and boxes are
+  remembered (`[compare]` in state.toml). With `[tools] folder-diff = true` your compare
+  program gets the two folders instead.
+- **Select Differences** (right-click ▸ Tools with two panes, the palette, Tools on the macOS
+  menu bar): in each pane, what the other pane's list lacks or has older. Only the two lists
+  shown are compared (no subfolders, nothing read).
 - **Open terminal** (Shift+F4 or Ctrl+Alt+T, ⌘⌥T on macOS) opens one in the folder; on
   Windows also as administrator. **Copy path** (Ctrl+Shift+C, ⌘⌥C on macOS) copies the
   selected paths; **Copy path as ▸** has quoted, forward slashes, name, folder, `file://` and

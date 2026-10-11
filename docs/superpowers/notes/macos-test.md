@@ -668,6 +668,19 @@ Numbers stay as they are when branches merge (see 10b). 11g starts at 297 as its
 301. **Menu.** Right-click a box: Open, Show in Pane, Move to Trash, Copy Path. Move to Trash: the box goes at once, the file is in the Trash, ⌘Z brings it back (the map does not: F5). Copy Path: the path is on the clipboard.
 302. **Sizes kept.** After a map of a folder, close it and look at the list with folder sizes on: the folders under it show their sizes without `Calculating`. Map `/` (or the startup disk in the computer root): it stays on the startup volume (no `/System/Volumes/Data` twice, no other disks), and Activity Monitor's memory goes back to within 0.3 MB of before after closing the map (write both numbers).
 
+### 11d, folder compare
+
+Numbers stay as they are when branches merge (see 10b). 11d uses 324–331 as its plan decided. Results go to `macos-test-results.md`.
+
+324. **Tests first.** `cargo test -p gezik-core compare::`, `cargo test -p gezik-search tree_scan`, `cargo test -p gezik compare::`; paste the output.
+325. **Open three ways.** Select two folders, ⌃⌘C: the compare opens with `Compare  <left>  ⇄  <right>` and `Reading…`, then rows. Close (Esc); with two panes on two folders and nothing selected, the menu bar's Tools ▸ Compare: the panes' folders, the left pane's on the left. Right-click a folder's empty space with two panes: `Tools ▸ Compare` and `Select differences` are there.
+326. **States and buttons.** Two folders made in Terminal (`mkdir -p /tmp/L/sub /tmp/R/sub; echo a > /tmp/L/same; cp -p /tmp/L/same /tmp/R/; echo b > /tmp/L/new; sleep 3; echo b > /tmp/R/new; echo c > /tmp/L/only; echo d > /tmp/R/sub/r`): `new` shows `←` Right newer, `only` → Only left, `sub/` ▾ with `r` ← Only right, `same` hidden until `=` is ticked. The buttons' numbers match the rows; untick `2×`: only one-sided rows stay. Quit and start: the buttons are as you left them (`[compare]` in state.toml).
+327. **Content and the hour.** Tick Content: `new` turns `=` with `Same content`; `touch -t 202401011200 /tmp/L/same; touch -t 202401011300 /tmp/R/same`: `same` is ← until Ignore 1 h is ticked, then `=`. Ignore dates: only sizes (and content) count.
+328. **APFS and exFAT names.** On an exFAT USB stick copy a folder with `café.txt` and `Résumé/` from the Mac (Finder), then compare the Mac folder with the stick's: the names meet (no Only left / Only right pairs for them); `Docs` vs `docs` also meet (case ignored).
+329. **Filter, links, stop.** Filter `*.txt | sub/` and Return: `sub` is gone and only `.txt` files show. `ln -s /tmp/L /tmp/R/loop`: the summary says `1 left out (links)` and nothing under `loop`. Compare your home folder with an external disk's copy: Esc while `Reading…` says `Stopped…`; a second Esc closes.
+330. **Rows and panes.** ↓↓, → / ← open and close `sub`, a second click on a folder row does too, Return on `new` opens the file compare over it (⌘R there, Esc back to the folder compare with the keyboard), ⌘C copies the selected rows' paths. Show Right: two panes open, the right goes to `/tmp/R` with `new` selected, the compare hides and the status bar says `Compare: L (2 ≠)`; click it: the compare is back as it was; Hide then ✕ on the chip: gone. Copy a file in a pane while it is hidden, then click the chip: `Files may have changed: Compare Again (F5)`.
+331. **Select Differences and memory.** Two panes on `/tmp/L` and `/tmp/R`, Tools ▸ Select Differences: the left pane selects `only`, the right `new` (what the other side lacks or has older), the status bar `Selected N on the left, M on the right`. Activity Monitor's memory before comparing a big folder (≈ 100,000 files) with its copy, with it open, and after Close: the last within 0.3 MB of the first (write the three numbers).
+
 ## Known gaps (not bugs)
 
 These are known differences from Finder and ForkLift (from the ForkLift comparison, §3). Don't report them as failures. A note is welcome if one hurts more than expected.

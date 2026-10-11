@@ -8,6 +8,7 @@ mod batch_rename;
 mod checksums;
 mod cli;
 mod cloud;
+mod compare;
 mod conflicts;
 mod connect;
 mod context_menu;
@@ -347,6 +348,7 @@ fn perform(
         | Action::OtherPaneSameFolder
         | Action::MoveTabToNewWindow
         | Action::Compare
+        | Action::SelectDifferences
         | Action::ExportList
         | Action::SizeMap
         | Action::Checksums
@@ -402,12 +404,15 @@ fn handle_key(
         }
         return used;
     }
-    // The Checksums layer (the tool table): Esc, the row keys, and Ctrl+C / Ctrl+A unless its
-    // field has the keyboard.
-    if window.get_tool_open() {
+    // The tool table (Checksums or the folder compare): Esc, the row keys, and Ctrl+C / Ctrl+A
+    // unless its field has the keyboard. The file compare opened from the folder compare's row
+    // is over it and has the keys then.
+    if window.get_tool_open() && !window.get_df_open() {
         let mut used = false;
         if let Some(chord) = &chord {
-            checksums::with_current(|layer| used = layer.chord(chord, window.get_tool_field_focused()));
+            let field = window.get_tool_field_focused();
+            checksums::with_current(|layer| used = layer.chord(chord, field));
+            compare::with_shown(|layer| used = layer.chord(chord, field));
         }
         return used;
     }
