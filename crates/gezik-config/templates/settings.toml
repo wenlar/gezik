@@ -271,6 +271,22 @@ confirm = true
 # modified = "30d"
 # type = "videos"
 
+# Folder syncs, saved by the folder compare's "Save Profile…" and opened from the palette
+# ("Sync: Photos backup"), where they only compare: nothing is copied before the summary
+# question. mode is two-way (newer wins; stateless: a file deleted on one side is copied back
+# from the other), left-to-right (update) or mirror (the right becomes the left; what only the
+# right has goes to its trash). filter is the compare's (*.jpg *.cr2 | thumbs\). At most 40.
+# [[sync-profiles]]
+# name = "Photos backup"
+# left = "{pictures}/2024"
+# right = "E:/Yedek/foto"
+# mode = "mirror"
+# subfolders = true
+# content = false
+# ignore-dates = false
+# ignore-hour = false
+# filter = "*.jpg *.cr2 | thumbs\\"
+
 # View rules: the first rule that matches a folder sets its view, unless you changed that
 # folder's view yourself (the View menu's "Reset to rule" forgets that). A rule matches by
 # path (* and ? within a name, ** for any folders below; ~ and tokens like {pictures} work;

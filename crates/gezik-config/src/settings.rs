@@ -376,6 +376,8 @@ pub struct Settings {
     pub filters: Vec<SavedFilter>,
     /// Saved searches (`[[searches]]`); invalid ones are left out, at most `SEARCHES_MAX`.
     pub searches: Vec<SavedSearch>,
+    /// Saved folder syncs (`[[sync-profiles]]`, spec 11 §8.4); invalid ones are left out.
+    pub sync_profiles: Vec<crate::sync_profiles::SyncProfile>,
     pub archives: ArchivesSettings,
     pub tools: ToolsSettings,
     pub convert: ConvertSettings,
@@ -417,6 +419,7 @@ impl Default for Settings {
             tab_sets: Vec::new(),
             filters: Vec::new(),
             searches: Vec::new(),
+            sync_profiles: Vec::new(),
             archives: ArchivesSettings::default(),
             tools: ToolsSettings::default(),
             convert: ConvertSettings::default(),
@@ -733,6 +736,9 @@ impl Settings {
                     }
                 }
             }
+        }
+        if let Some(value) = table.get("sync-profiles") {
+            parse_sync_profiles(value, &mut settings.sync_profiles, file, warnings);
         }
         if let Some(value) = table.get("tab-sets") {
             match value.as_array() {
@@ -1297,6 +1303,36 @@ pub fn tab_set_to_toml(set: &TabSet) -> toml::Table {
         table.insert("right".into(), toml::Value::Array(set.right.iter().cloned().map(toml::Value::String).collect()));
     }
     table
+}
+
+/// `[[sync-profiles]]`: the readable ones, by name ignoring case, at most `SYNC_PROFILES_MAX`.
+fn parse_sync_profiles(
+    value: &toml::Value,
+    into: &mut Vec<crate::sync_profiles::SyncProfile>,
+    file: &str,
+    warnings: &mut Vec<Warning>,
+) {
+    use crate::sync_profiles::{SYNC_PROFILES_MAX, parse};
+    let Some(items) = value.as_array() else {
+        return warnings
+            .push(Warning::new(file, format!("sync-profiles: expected [[sync-profiles]] tables, got {value}")));
+    };
+    for (i, item) in items.iter().enumerate() {
+        let said = match parse(item) {
+            Ok(p) if into.iter().any(|q| same_filter_name(&q.name, &p.name)) => {
+                format!("\"{}\" is already used; this one is left out", p.name)
+            }
+            Ok(_) if into.len() == SYNC_PROFILES_MAX => {
+                format!("at most {SYNC_PROFILES_MAX} sync profiles; this one is left out")
+            }
+            Ok(p) => {
+                into.push(p);
+                continue;
+            }
+            Err(err) => err,
+        };
+        warnings.push(Warning::new(file, format!("sync-profiles[{}]: {said}", i + 1)));
+    }
 }
 
 /// Whether two saved filters' names are one, ignoring case.

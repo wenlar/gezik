@@ -19,8 +19,8 @@ use crate::paths::write_atomic;
 use crate::pins::PinEntry;
 use crate::settings::{RenamePreset, SavedFilter, SavedSearch, TabSet, ViewOption};
 use crate::settings_edit::{
-    with_filters, with_panes_confirm, with_pinned, with_rename_presets, with_searches, with_system, with_tab_sets,
-    with_view_defaults, with_view_option,
+    with_filters, with_panes_confirm, with_pinned, with_rename_presets, with_searches, with_sync_profiles, with_system,
+    with_tab_sets, with_view_defaults, with_view_option,
 };
 use crate::store::{SETTINGS_TEMPLATE, read_text};
 
@@ -44,6 +44,8 @@ pub enum SettingsChange {
     TabSets(Vec<TabSet>),
     /// The saved searches (`[[searches]]`).
     Searches(Vec<SavedSearch>),
+    /// The saved folder syncs (`[[sync-profiles]]`).
+    SyncProfiles(Vec<crate::sync_profiles::SyncProfile>),
     /// A `[system]` value (the tray icon, the global shortcut).
     System(SystemValue),
     /// `[panes] confirm` (the F5/F6 question's Don't Ask Again).
@@ -68,6 +70,7 @@ impl SettingsChange {
             SettingsChange::Filters(filters) => with_filters(text, filters),
             SettingsChange::TabSets(sets) => with_tab_sets(text, sets),
             SettingsChange::Searches(searches) => with_searches(text, searches),
+            SettingsChange::SyncProfiles(profiles) => with_sync_profiles(text, profiles),
             SettingsChange::System(SystemValue::Tray(on)) => with_system(text, "tray", (*on).into()),
             SettingsChange::System(SystemValue::Hotkey(chord)) => with_system(text, "hotkey", chord.as_str().into()),
             SettingsChange::PanesConfirm(on) => with_panes_confirm(text, *on),
