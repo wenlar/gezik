@@ -150,23 +150,26 @@ pub fn hash_reader(
     result
 }
 
-/// The SHA-256 of the first `n` bytes of `path` (all of it if shorter): duplicates' first sieve.
-pub fn hash_prefix(path: &Path, n: u64) -> io::Result<[u8; 32]> {
+/// The SHA-256 of the first `n` bytes of `path` (all of it if shorter) and how many bytes that
+/// was: duplicates' first sieve (a file that changed since its size was read shows here).
+pub fn hash_prefix(path: &Path, n: u64) -> io::Result<([u8; 32], u64)> {
     let mut hasher = Sha256::new();
     let mut buffer = take_buffer();
     let result = (|| {
         let mut file = open_sequential(path)?.take(n);
         let chunk = &mut buffer[..CHUNK];
+        let mut total = 0u64;
         loop {
             let read = read_full(&mut file, chunk, false)?;
             hasher.update(&chunk[..read]);
+            total += read as u64;
             if read < CHUNK {
-                return Ok(());
+                return Ok(total);
             }
         }
     })();
     give_back(buffer);
-    result.map(|()| hasher.finalize().into())
+    result.map(|total| (hasher.finalize().into(), total))
 }
 
 /// Reads `a` and `b` side by side and returns where they first differ (`None`: the same bytes;
@@ -378,9 +381,9 @@ mod tests {
         let data: Vec<u8> = (0..200_000u32).map(|i| (i % 241) as u8).collect();
         std::fs::write(dir.join("f"), &data).unwrap();
         let want: [u8; 32] = Sha256::digest(&data[..65536]).into();
-        assert_eq!(hash_prefix(&dir.join("f"), 65536).unwrap(), want);
+        assert_eq!(hash_prefix(&dir.join("f"), 65536).unwrap(), (want, 65536));
         let whole: [u8; 32] = Sha256::digest(&data).into();
-        assert_eq!(hash_prefix(&dir.join("f"), 1 << 30).unwrap(), whole, "shorter than n: all of it");
+        assert_eq!(hash_prefix(&dir.join("f"), 1 << 30).unwrap(), (whole, 200_000), "shorter than n: all of it");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

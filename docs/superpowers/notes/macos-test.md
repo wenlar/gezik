@@ -680,6 +680,18 @@ Numbers stay as they are when branches merge. 11i starts at 303 as its plan deci
 309. **Join.** Select `name.002`, `Join Files`: the file comes back; compare it (`cmp` or `shasum`) with the original. Change one byte in a part (`printf 'x' | dd of=name.002 bs=1 seek=5 conv=notrunc`): Join fails with `does not match name.crc`, and an existing `name` there is not touched. Delete a middle part: `Part name.00N is missing`, nothing written.
 310. **Total Commander parts.** If you have parts and a `.crc` made by Total Commander (or `split -b 100m -d -a 3 --numeric-suffixes=1`), Join joins them; write which.
 
+### 11f, duplicate files
+
+11f uses 317–323.
+
+317. **Tests first.** `cargo test -p gezik-search duplicates`, `cargo test -p gezik-core duplicates`; paste the output (the link test makes real symbolic links here).
+318. **Find Duplicates.** Make a folder with a photo and a copy of it in a subfolder, a file with a hard link (`ln a.txt b.txt`), two empty files and a symbolic link to the photo (`ln -s`). Tools ▸ Find Duplicates on it: the search bar says `Find duplicates in <folder>`; Enter. One group, `2 files × … could be freed`: the photo and its copy (the symbolic link is not read); the hard link is no group and the empty files are not listed; the status bar says `1 group · 2 files · … could be freed · 1 hard link counted once`.
+319. **Select helpers.** With a few groups: the search bar's ▾ menu and a row's right-click list `Select all but the newest in each group` … `Keep this one, select its copies`; each selects as it says and never every copy of a group. `Select all in this folder` on a folder holding every copy of a group: one stays unselected and the status bar says so.
+320. **Delete and undo.** Delete on the selection: the Trash gets them, the rows go after the job, a group left with one file goes. ⌘Z brings the files back in Finder; the rows do not come back (search again). Select every copy of a group and Delete: Gezik asks `This deletes every copy of 1 file` first.
+321. **No trash.** On a network share (SMB, no Trash there) find duplicates and Delete: nothing is deleted, no "delete permanently?" question; the status bar says the duplicates were not deleted and why.
+322. **iCloud and APFS clones.** In iCloud Drive with files not downloaded: they are not read (no download starts) and the status bar counts them as online-only. Duplicate a large file in Finder (⌘D makes an APFS clone): it is listed as a duplicate (spec §19: deleting a clone may free little).
+323. **Stop.** On a large folder (home), Esc or Stop while it says `comparing … of same size`: it stops within a second, the status bar says `Stopped`, Activity Monitor's memory falls back.
+
 ### 11b, copy verification, speed limit, queue
 
 Numbers stay as they are when branches merge. 11b uses 311–316. Results go to `macos-test-results.md`.

@@ -2552,6 +2552,40 @@ Yok.
 - Ham `film.gzt.001` satır menüsünde `Extract here` / `Extract to…` de çıkıyor (tür sütunu `Split archive`).
 - Satır menüsü UIA'da, menüyü açan aynı PowerShell sürecinde görünmüyor; ayrı çağrıda görünüyor (betik sorunu, uygulamayla ilgisi yok).
 
+## Adım 11, alt parça 11f (Yinelenen dosyalar) sonrası
+
+- Yapı: arama kipi (`SearchSpec::duplicates`, `[[searches]] duplicates = true`), boru hattı `gezik-search::duplicates` (8a'nın yürüyüşü; boyut → ilk 64 KB SHA-256 → iki üyede bayt karşılaştırması, daha çokta tam SHA-256; düşük öncelikli okuyucular SSD 4, ağ 2, diğer 1; iptal edilebilir), sonuç kümesinde satır başına grup (`Batch::dups`, `ResultSet::duplicates`), 10d başlıkları (`GroupBy::Duplicates`, `Grouping::row`, `3 files × … · … could be freed`), seçim kuralları `gezik-core::duplicates::pick`. Yeni katman yok, Slint'e yalnız macOS `Tools` menüsünün bir satırı. `Action::ALL` 105, sağ tık `Find duplicates` 2204 (2205 11g'nin Size Map'i), seçim yardımcıları 2310–2314.
+- Veri güvenliği (gözden geçirme): her silme yolu (Delete, Shift+Delete, satır menüsünün Delete ve Delete permanently'si, Explorer fiili) `trash_with`'ten geçer; yineleme satırları yalnız çöpe gider, iş `trash_only` (çöpsüz sürücüde dokunulmaz, "kalıcı silinsin mi?" sorulmaz, not çıkar; yeniden denemede de korunur). Bir grubun öbür kopyaları seçiliyse, yürüyen başka bir yineleme silmesindeyse ya da diskte artık yoksa (`symlink_metadata`, o an) bir kez sorar. Yürüyüşten sonra boyutu değişen dosya ve kimliği okunamayan dosya (subst/paylaşım üzerinden aynı dosya olabilir) hiç önerilmez; sabit bağlantılar tek sayılır.
+- Ölçüm (sürüm, Windows, 2026-10-11): exe **26.244.608 B**; 11a dalına göre +95.232 (bütçe 262.144, hedef ≤ 100 KB), `master`'a göre +442.880.
+- Bilinen sınırlar: satırda `+1 hard link` notu yerine durum satırında sayı; `Select ▾` düğmesi yerine çubuğun ▾ menüsü ve satır menüsü; silinen satırlar iş bitince düşer; Ctrl+Z ile dönen dosya listeye gelmez (`Run again`); kimlik vermeyen dosya sisteminde yineleme bulunmaz; `tools.ps1` ve 100.000 dosyalık bellek ölçümü yok; sembolik bağlantı testi Windows'ta izin yoksa atlanır.
+- Windows ekran testleri koşuldu (14/14, aşağıda); macOS 317–323 ve Linux 235–238 bekliyor.
+
+## Windows ekran testleri: 11f (2026-10-11, ajan)
+
+Veri `%TEMP%\gezik-gui-11\data\f` altında (`.gzt`), her oturumda yeni `GEZIK_CONFIG_DIR`, `confirm-trash = true`. Her silme sorusuna Cancel; dosya listesi önce/sonra aynı. Ekran görüntüleri `%TEMP%\gezik-gui-11\shots\f-*.png`.
+
+| # | Madde | Sonuç |
+|---|---|---|
+| 1 | Klasör satır menüsü ▸ `Find duplicates`: çubuk `Find duplicates in w`, Enter | PASS |
+| 2 | Palet (Ctrl+Shift+P) `Find Duplicates`, seçimsiz: `Find duplicates in w` (gösterilen klasör), aynı sonuç | PASS |
+| 3 | Gruplar ve başlıklar: `3 files × 293.0 KB · 585.9 KB could be freed`, `2 files × 97.7 KB · 97.7 KB …`, `2 files × 2.0 KB · 2.0 KB …`; boşa giden bayta göre sıralı; durum `3 groups · 7 files · 685.5 KB could be freed · 1 hard link counted once` | PASS |
+| 4 | Aynı boyut farklı içerik (`samesize`, `s1/s2`), aynı 64 KB önek farklı son (`tail`) gruplanmadı | PASS |
+| 5 | `mklink /H` sabit bağlantı (`uniq` + `uniq-hl`) yinelenen sayılmadı, durumda "1 hard link counted once" | PASS |
+| 6 | Boş dosyalar (`empty1/2`) gruplanmadı | PASS |
+| 7 | Okuma sırasında Esc (Enter'dan 120 ms sonra, 60 × 64 MB): `Stopped · 15 groups · 30 files · 960.0 MB could be freed`, yalnız kesinleşmiş a/b çiftleri, hiçbir `-c` dosyası yok | PASS |
+| 8 | ▾ menüsü: all but newest / oldest / first → her grupta tam bir kopya seçilmedi (doğru olan) | PASS |
+| 9 | `Select all in this folder`: kök klasörden 3 dosya; `same` klasöründe grubun hepsi → yalnız biri seçildi, durum `1 group had every copy in this folder; one copy is kept` | PASS |
+| 10 | `Keep this one, select its copies`: big2 → big1+big3; photo → photo-copy | PASS |
+| 11 | Delete, Shift+Delete, satır menüsü Delete, Shift+tık satır menüsü Delete (Windows'ta ayrı "Delete permanently" öğesi yok): hepsi `Move photo-copy.gzt to the Recycle Bin?` [Trash/Cancel], kalıcı silme sorusu hiç yok → Cancel | PASS |
+| 12 | Bir grubun bütün kopyaları seçili (a+b ile Delete; big1-3+photo ile Shift+Delete): `This deletes every copy of 1 file` / `Move N items to the Recycle Bin?` → Cancel | PASS |
+| 13 | Kayıtlı arama: `Save search…` → `Save with this folder` → settings.toml'da `[[searches]] name="dupw" … duplicates = true`; kapat/aç: sekme geri geldi ve yeniden koştu; ▾ ▸ `dupw` aynı 3 grubu verdi | PASS |
+| 14 | Bellek (özel çalışma kümesi), ~5.000 dosya (`many`, 100 çift): önce 4,59 MB, tarama 0,1 s, tepe 13,24 MB, sonuçlarda 13,25 MB, Alt+← ile klasöre dönünce 12,24 MB | PASS (not: sonuçtan çıkınca bellek önceki düzeye inmiyor, ~7,6 MB kalıyor; normal 5.000 satırlık aramayla kıyaslanmadı) |
+
+Notlar: sonuçlarda Esc çubuğu/sekmeyi kapatmıyor (başlık `Duplicates` kaldı) — beklenen mi bakılmalı. Okunamayan/çevrimiçi dosya, USB (çöpsüz sürücü), grup başlığı kapatma ve sütun sıralaması bu turda denenmedi.
+
+- Bellek (madde 14'ün izi): sonuçtan çıkınca kalan ~7,6 MB yinelemeye özgü değil. `cargo run --release -p gezik-search --example dup_memory -- <boş klasör>` (5.000 dosya, 100 çift; her tür üç kez, sonuçlar her seferinde bırakılarak) özel bellekte: başta 1,20 MB; düz arama 5.000 satır tutulurken 2,66, bırakınca 2,18; yineleme 200 satır 2,96, bırakınca 2,96; tur başına ikisi de ≈ +1,1 MB büyüyüp yatışıyor (3. turda düz 4,51, yineleme 4,48). Yineleme ön özet ve tam özet tablolarını, okuma tamponlarını (okuyucu iş parçacıklarıyla gider) ve dosya listesini bırakıyor; sonuç kümesini sekme Geri için tutar (Karar 12), düz aramada da aynı. Kalan, Windows yığınının geri vermediği ayırıcı payı.
+- Esc: yineleme sonuçlarında Esc düz aramadakiyle aynı yoldan geçer (çubukta aramayı durdurur, değilse çubuğu kapatır; listede süzgeci kapatır, değilse seçimi temizler). Sonuç sekmesi ve başlığı iki aramada da kalır; çıkmak Alt+← ya da Backspace. Değişiklik yapılmadı.
+
 ## Adım 11, alt parça 11b (Doğrulama, hız sınırı, kuyruk) sonrası
 
 - Yapı: doğrulama ve hız sınırı işin `Control`'unda (`verify`, `speed`, `bucket`, `verifying`), uygulama tek yerde `RunCx::copy_file`. Doğrulama açıkken her kopya geçici ada yazılır, `hash::same_content(.., uncached_b = true)` ile karşılaştırılır, sonra son adını alır: farklı kopya hiçbir zaman son adla durmaz. Fark → bir yeniden kopya → yine fark: `The copy differs from the original at byte N`; silinemeyen bozuk kopya öğeyi hemen düşürür ve yerini söyler. Bağlantılar bağlantı olarak kopyalanır, doğrulanmaz; klonlar (APFS, FICLONE; platform `copy_file` artık `bool` döner) ne doğrulanır ne sınırlanır.

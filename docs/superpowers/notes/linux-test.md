@@ -628,6 +628,15 @@ Numbers stay as they are when branches merge. 11i starts at 226 as its plan deci
 229. **Split and join.** As macOS 308–309 (`cmp`, `sha256sum`; the FAT32 default with a vfat stick as the other pane).
 230. **Other tools' parts.** `split -b 10m -d -a 3 --numeric-suffixes=1 big.iso big.iso.` makes `big.iso.001`…: Join Files joins them (no `.crc`: the job says the result was not checked); `sha256sum` matches the original.
 
+### 11f, duplicate files
+
+11f uses 235–238.
+
+235. **Tests first.** As macOS 317; paste.
+236. **Find Duplicates.** As macOS 318–319 with Gezik's own menu (right-click a folder: `Find duplicates`; there is no menu bar).
+237. **Delete, undo and a removable disk.** As macOS 320; then on a USB disk (its `.Trash-<uid>`): Delete goes there and Ctrl+Z brings it back. On an NFS or SMB mount without a trash: nothing is deleted, the status bar says why (macOS 321).
+238. **Stop and Btrfs.** As macOS 323; on Btrfs a `cp --reflink` copy is listed as a duplicate.
+
 ### 11b, copy verification, speed limit, queue
 
 Numbers stay as they are when branches merge. 11b uses 231–234.

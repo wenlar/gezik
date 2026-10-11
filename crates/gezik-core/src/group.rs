@@ -20,6 +20,9 @@ pub enum GroupBy {
     Type,
     Date,
     Size,
+    /// Duplicate files' groups (spec 11 §9.3): only a duplicates search's results, never a
+    /// setting or a menu item (not in `ALL`).
+    Duplicates,
 }
 
 impl GroupBy {
@@ -31,6 +34,7 @@ impl GroupBy {
             GroupBy::Type => "type",
             GroupBy::Date => "date",
             GroupBy::Size => "size",
+            GroupBy::Duplicates => "duplicates",
         }
     }
 
@@ -45,6 +49,7 @@ impl GroupBy {
             GroupBy::Type => "Type",
             GroupBy::Date => "Date",
             GroupBy::Size => "Size",
+            GroupBy::Duplicates => "Duplicates",
         }
     }
 }
@@ -85,6 +90,11 @@ pub enum GroupKey {
     Type(String),
     Date(DateGroup),
     Size(SizeGroup),
+    /// A group of duplicate files: its place (most bytes to free first) and each file's size.
+    Duplicates {
+        id: u32,
+        size: u64,
+    },
 }
 
 impl GroupKey {
@@ -116,6 +126,19 @@ impl GroupKey {
                 SizeGroup::Folders => "Folders",
             }
             .to_owned(),
+            GroupKey::Duplicates { size, .. } => crate::format_size(*size),
+        }
+    }
+
+    /// Its header line for `len` rows: `Today (12)`; duplicates
+    /// `3 files × 12.4 MB · 24.8 MB could be freed`.
+    pub fn header(&self, len: usize) -> String {
+        match self {
+            GroupKey::Duplicates { size, .. } => {
+                let freed = size.saturating_mul(len.saturating_sub(1) as u64);
+                format!("{len} files × {} · {} could be freed", crate::format_size(*size), crate::format_size(freed))
+            }
+            _ => format!("{} ({len})", self.label()),
         }
     }
 }
@@ -241,6 +264,8 @@ pub struct Grouping<'a> {
     pub dates: &'a DateBounds,
     /// The Type column's text (the same function the sort uses).
     pub type_name: &'a dyn Fn(&Entry) -> String,
+    /// Row `i`'s group when the row, not its entry, knows it (duplicates); `None` for others.
+    pub row: Option<&'a dyn Fn(usize) -> Option<GroupKey>>,
 }
 
 /// Ranks below this go first in either direction (the folders' group with folders-first).
@@ -256,13 +281,26 @@ impl Grouping<'_> {
                 GroupKey::Date(self.dates.group(if self.spec.key == SortKey::Created { e.created } else { e.modified }))
             }
             GroupBy::Size => GroupKey::Size(size_group(e)),
+            GroupBy::Duplicates => return None,
         })
+    }
+
+    /// Row `i`'s group (its entry `e`).
+    fn key_at(&self, i: usize, e: &Entry) -> Option<GroupKey> {
+        match self.row {
+            Some(row) => row(i),
+            None => self.key(e),
+        }
     }
 
     /// Whether the groups go against their canonical order (sapma 1): a grouping sorted by its
     /// own column follows that column's direction, any other sort turns them round when
     /// descending.
     fn reversed(&self) -> bool {
+        // Duplicates: the most bytes to free first, whatever the sort.
+        if self.by == GroupBy::Duplicates {
+            return false;
+        }
         let own = matches!(
             (self.by, self.spec.key),
             (GroupBy::Date, SortKey::Modified | SortKey::Created) | (GroupBy::Size, SortKey::Size)
@@ -276,7 +314,7 @@ impl Grouping<'_> {
             && match key {
                 GroupKey::Type(_) => e.is_dir,
                 GroupKey::Size(g) => *g == SizeGroup::Folders,
-                GroupKey::Date(_) => false,
+                GroupKey::Date(_) | GroupKey::Duplicates { .. } => false,
             }
     }
 
@@ -287,7 +325,7 @@ impl Grouping<'_> {
         let mut rows: Vec<(bool, u32)> = Vec::with_capacity(len);
         for i in 0..len {
             let e = entry(i);
-            let Some(key) = self.key(&e) else { return Vec::new() };
+            let Some(key) = self.key_at(i, &e) else { return Vec::new() };
             let pinned = self.pinned(&e, &key);
             let place = match key {
                 GroupKey::Type(name) => {
@@ -296,6 +334,7 @@ impl Grouping<'_> {
                 }
                 GroupKey::Date(g) => self.dates.place(g),
                 GroupKey::Size(g) => g as u32,
+                GroupKey::Duplicates { id, .. } => id,
             };
             rows.push((pinned, place));
         }
@@ -332,7 +371,7 @@ pub fn spans<'e>(
     let (mut spans, mut keys): (Vec<Span>, Vec<GroupKey>) = (Vec::new(), Vec::new());
     for i in 0..len {
         let Some(e) = entry(i) else { break };
-        let Some(key) = grouping.key(&e) else { return (Vec::new(), Vec::new()) };
+        let Some(key) = grouping.key_at(i, &e) else { return (Vec::new(), Vec::new()) };
         match (spans.last_mut(), keys.last()) {
             (Some(span), Some(last)) if *last == key => span.len += 1,
             _ => {
@@ -477,7 +516,7 @@ mod tests {
             if e.is_dir { "File folder".to_owned() } else { format!("{} File", e.extension().to_uppercase()) }
         };
         let spec = SortSpec { key, dir };
-        let grouping = Grouping { by: group, spec, folders_first, dates: &dates, type_name: &type_name };
+        let grouping = Grouping { by: group, spec, folders_first, dates: &dates, type_name: &type_name, row: None };
         let mut v = entries.to_vec();
         crate::sort::sort_entries_grouped(&mut v, spec, folders_first, type_name, Some(&grouping));
         v.into_iter().map(|e| e.name).collect()
@@ -553,7 +592,8 @@ mod tests {
         let dates = DateBounds::new(utc(2026, 10, 14, 15, 0), &zone(|_| 0));
         let type_name = |e: &Entry| format!("{} File", e.extension().to_uppercase());
         let spec = SortSpec::default();
-        let grouping = Grouping { by: GroupBy::Type, spec, folders_first: true, dates: &dates, type_name: &type_name };
+        let grouping =
+            Grouping { by: GroupBy::Type, spec, folders_first: true, dates: &dates, type_name: &type_name, row: None };
         let rows = [file("a.png", 1, None), file("b.png", 1, None), file("c.txt", 1, None)];
         let closed = GroupKey::Type("TXT File".into());
         let (spans, keys) = spans(3, &|i| rows.get(i).map(Cow::Borrowed), &grouping, &|k| *k == closed);
@@ -570,6 +610,58 @@ mod tests {
         assert_eq!(GroupKey::Date(DateGroup::Year(2024)).label(), "2024");
         assert_eq!(GroupKey::Date(DateGroup::EarlierThisWeek).label(), "Earlier this week");
         assert_eq!(GroupKey::Size(SizeGroup::Gigantic).label(), "Gigantic");
+    }
+
+    #[test]
+    fn duplicates_group_by_row_most_to_free_first_whatever_the_sort() {
+        let dates = DateBounds::default();
+        let type_name = |_: &Entry| String::new();
+        // Rows 0 and 2 are group 1, rows 1 and 3 group 0 (the one with more to free).
+        let ids = [1u32, 0, 1, 0];
+        let row = |i: usize| Some(GroupKey::Duplicates { id: ids[i], size: 5 });
+        let rows = [file("b", 5, None), file("d", 5, None), file("a", 5, None), file("c", 5, None)];
+        for dir in [SortDir::Asc, SortDir::Desc] {
+            let spec = SortSpec { key: SortKey::Name, dir };
+            let grouping = Grouping {
+                by: GroupBy::Duplicates,
+                spec,
+                folders_first: true,
+                dates: &dates,
+                type_name: &type_name,
+                row: Some(&row),
+            };
+            let order = crate::sort::sort_rows_grouped(
+                4,
+                &|i| Cow::Borrowed(&rows[i]),
+                &|i| &rows[i].name,
+                spec,
+                true,
+                type_name,
+                &|_| "",
+                Some(&grouping),
+            );
+            let names: Vec<&str> = order.iter().map(|&i| rows[i].name.as_str()).collect();
+            let want = if dir == SortDir::Asc { ["c", "d", "a", "b"] } else { ["d", "c", "b", "a"] };
+            assert_eq!(names, want, "group 0 first, the sort inside: {dir:?}");
+        }
+        let sorted = [1usize, 3, 0, 2];
+        let spec = SortSpec::default();
+        let in_order = |i: usize| Some(GroupKey::Duplicates { id: ids[sorted[i]], size: 5 });
+        let grouping = Grouping {
+            by: GroupBy::Duplicates,
+            spec,
+            folders_first: true,
+            dates: &dates,
+            type_name: &type_name,
+            row: Some(&in_order),
+        };
+        let (spans, keys) = spans(4, &|i| rows.get(i).map(Cow::Borrowed), &grouping, &|_| false);
+        assert_eq!(spans.iter().map(|s| (s.start, s.len)).collect::<Vec<_>>(), [(0, 2), (2, 2)]);
+        assert_eq!(keys[0], GroupKey::Duplicates { id: 0, size: 5 });
+        let key = GroupKey::Duplicates { id: 0, size: 13 * 1024 * 1024 };
+        assert_eq!(key.header(3), "3 files × 13.0 MB · 26.0 MB could be freed");
+        assert_eq!(GroupKey::Size(SizeGroup::Tiny).header(12), "Tiny (12)");
+        assert_eq!(GroupBy::parse("duplicates"), None, "never a setting");
     }
 
     #[test]
@@ -607,8 +699,14 @@ mod tests {
                 .map(|_| {
                     let mut v = rows.clone();
                     let spec = SortSpec { key, dir: SortDir::Asc };
-                    let grouping =
-                        Grouping { by: group, spec, folders_first: true, dates: &dates, type_name: &type_name };
+                    let grouping = Grouping {
+                        by: group,
+                        spec,
+                        folders_first: true,
+                        dates: &dates,
+                        type_name: &type_name,
+                        row: None,
+                    };
                     let start = std::time::Instant::now();
                     crate::sort::sort_entries_grouped(
                         &mut v,

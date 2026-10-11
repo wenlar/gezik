@@ -893,6 +893,7 @@ mod tests {
                 | Action::SizeMap
                 | Action::Checksums
                 | Action::VerifyChecksums
+                | Action::FindDuplicates
                 | Action::CopyTo
                 | Action::MoveTo
                 | Action::SplitFile

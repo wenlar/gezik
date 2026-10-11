@@ -499,6 +499,10 @@ pub const JOB_START_NOW: u32 = 2323;
 pub const JOB_SPEED_FIRST: u32 = 2324;
 /// The speed limits offered, in MB/s; 0: none.
 pub const JOB_SPEEDS: [u64; 7] = [0, 1, 5, 10, 25, 50, 100];
+/// A duplicates search's "select all but one" (spec 11 §9.3, §13.3: 2310–2319), in
+/// `duplicate_select_items`' order.
+pub const DUP_SELECT_FIRST: u32 = 2310;
+pub const DUP_SELECT_COUNT: u32 = 5;
 /// View ▸ "Reset to rule N" (spec 10 §8.2, §10.3): the folder forgets its own view, rule N applies.
 pub const RESET_TO_RULE: u32 = 2041;
 /// View ▸ "View rule N applies", greyed: which rule set the folder's view.
@@ -527,7 +531,8 @@ pub const TOOLS_COMPARE: u32 = 2200;
 /// Tools ▸ Calculate checksums… and Verify checksums (11a), on rows.
 pub const TOOLS_CHECKSUMS: u32 = 2202;
 pub const TOOLS_VERIFY: u32 = 2203;
-/// Tools ▸ Size Map (11g), on one folder or a folder's empty space.
+/// Tools ▸ Find duplicates (11f) and Size Map (11g), on one folder or a folder's empty space.
+pub const TOOLS_DUPLICATES: u32 = 2204;
 pub const TOOLS_SIZE_MAP: u32 = 2205;
 /// Tools ▸ Export list… (11h).
 pub const TOOLS_EXPORT_LIST: u32 = 2206;
@@ -539,9 +544,9 @@ pub const TOOLS_JOIN: u32 = 2210;
 
 /// `Tools ▸` (spec 11 §3.3) at place `at`: only what applies: Compare for the selection when it
 /// can be compared (`compare`), Calculate checksums… for `rows` (a row menu's) and Verify
-/// checksums for one checksum file, Size Map on one folder or a folder's empty space
-/// (`size_map`), Export list… always, then Copy to… and Move to… for `rows`, Split file… for one
-/// file and Join files for one part or `.crc`.
+/// checksums for one checksum file, Find duplicates and Size Map on one folder or a folder's
+/// empty space (`size_map`), Export list… always, then Copy to… and Move to… for `rows`, Split
+/// file… for one file and Join files for one part or `.crc`.
 pub fn tools_sub(at: usize, compare: bool, rows: &[(PathBuf, bool)], size_map: bool) -> Submenu {
     let mut items = Vec::new();
     if compare {
@@ -556,6 +561,7 @@ pub fn tools_sub(at: usize, compare: bool, rows: &[(PathBuf, bool)], size_map: b
         items.push((TOOLS_VERIFY, "Verify checksums".to_owned(), true));
     }
     if size_map {
+        items.push((TOOLS_DUPLICATES, "Find duplicates".to_owned(), true));
         items.push((TOOLS_SIZE_MAP, "Size Map".to_owned(), true));
     }
     items.push((TOOLS_EXPORT_LIST, "Export list…".to_owned(), true));
@@ -625,6 +631,22 @@ pub fn job_items(
         items.push((JOB_START_NOW, "Start now".to_owned(), true));
     }
     (items, subs)
+}
+
+/// "Select all but one" in a duplicates search (spec 11 §9.3): the search bar's ▾ menu and a
+/// result row's menu.
+pub fn duplicate_select_items() -> Vec<(u32, &'static str)> {
+    [
+        "Select all but the newest in each group",
+        "Select all but the oldest in each group",
+        "Select all but the first in each group",
+        "Select all in this folder",
+        "Keep this one, select its copies",
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(i, title)| (DUP_SELECT_FIRST + i as u32, title))
+    .collect()
 }
 
 /// What a search result's row menu adds.
@@ -1218,6 +1240,9 @@ impl Menus {
             self.add_finder_items(&mut list, &mut subs, services);
             if results {
                 list.extend(owned(result_row_items()).into_iter().filter(|(id, _)| *id != SHOW_IN_FOLDER_NEW_TAB));
+                if crate::panes::active_view().shows_duplicates() {
+                    list.extend(owned(duplicate_select_items()));
+                }
             } else if !crate::panes::active_view().shows_drives() {
                 list.push((NEW_FOLDER_WITH_SELECTION, "New folder with selection".to_owned()));
             }
@@ -1256,6 +1281,9 @@ impl Menus {
         self.add_finder_items(&mut list, &mut subs, services);
         if crate::panes::active_view().shows_results() {
             list.extend(owned(result_row_items()));
+            if crate::panes::active_view().shows_duplicates() {
+                list.extend(owned(duplicate_select_items()));
+            }
         }
         self.open(Subject::Row(path.clone()), list, subs, MenuTarget::Item(path), x, y, at);
     }
@@ -2024,6 +2052,14 @@ impl Menus {
                 crate::checksums::open(rows.into_iter().map(|(path, _)| path).collect());
             }
             (TOOLS_VERIFY, Subject::Row(path)) => crate::checksums::verify(path),
+            (TOOLS_DUPLICATES, Subject::Row(_) | Subject::Background(_)) => {
+                crate::panes::with_active(|p| p.search.find_duplicates());
+            }
+            (id, Subject::Row(_) | Subject::Rows(_))
+                if (DUP_SELECT_FIRST..DUP_SELECT_FIRST + DUP_SELECT_COUNT).contains(&id) =>
+            {
+                crate::search::select_duplicates(&crate::panes::active_view(), id);
+            }
             (TOOLS_COPY_TO..=TOOLS_JOIN, Subject::Row(_) | Subject::Rows(_)) => {
                 let rows = std::mem::take(&mut *self.rows.borrow_mut());
                 let mut paths: Vec<PathBuf> = rows.into_iter().map(|(path, _)| path).collect();
@@ -2431,6 +2467,7 @@ fn from_submenu(id: u32) -> bool {
         || id == GROUP_NEW
         || id == TOOLS_EXPORT_LIST
         || id == TOOLS_SIZE_MAP
+        || id == TOOLS_DUPLICATES
         || id == GROUP_NONE
         || id == TOOLS_COMPARE
         || id == TOOLS_CHECKSUMS
@@ -2723,6 +2760,7 @@ mod tests {
                 TOOLS_COMPARE,
                 TOOLS_CHECKSUMS,
                 TOOLS_VERIFY,
+                TOOLS_DUPLICATES,
                 TOOLS_SIZE_MAP,
                 TOOLS_EXPORT_LIST,
                 TOOLS_COPY_TO,
@@ -2935,6 +2973,7 @@ mod tests {
             JOB_UP,
             JOB_DOWN,
             JOB_START_NOW,
+            TOOLS_DUPLICATES,
             TOOLS_COPY_TO,
             TOOLS_MOVE_TO,
             TOOLS_SPLIT,
@@ -2944,6 +2983,7 @@ mod tests {
         ranges.extend([
             RECENT_SERVER_FIRST..RECENT_SERVER_FIRST + RECENT_SERVER_MAX,
             GROUP_BY_NONE..GROUP_BY_NONE + 4,
+            DUP_SELECT_FIRST..DUP_SELECT_FIRST + DUP_SELECT_COUNT,
             TOGGLE_COLUMN_FIRST..RESET_COLUMNS,
             CONFLICT_FIRST..CONFLICT_FIRST + 4,
             ADD_RULE_FIRST..ADD_RULE_FIRST + 10,
@@ -3023,6 +3063,8 @@ mod tests {
         assert_eq!(ids(&two), [TOOLS_CHECKSUMS]);
         assert!(ids(&[]).is_empty(), "no rows (a folder's empty space): no checksums");
         assert!(from_submenu(TOOLS_CHECKSUMS) && from_submenu(TOOLS_VERIFY));
+        let select: Vec<u32> = duplicate_select_items().iter().map(|(id, _)| *id).collect();
+        assert_eq!(select, (DUP_SELECT_FIRST..DUP_SELECT_FIRST + DUP_SELECT_COUNT).collect::<Vec<_>>());
     }
 
     fn ids(v: Vec<(u32, &str)>) -> Vec<u32> {

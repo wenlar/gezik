@@ -274,7 +274,7 @@ pub struct SavedSearch {
 pub const SEARCHES_MAX: usize = 30;
 /// A saved search's folder that is the place shown when it runs.
 pub const HERE: &str = "{here}";
-const SEARCH_KEYS: [&str; 13] = [
+const SEARCH_KEYS: [&str; 14] = [
     "name",
     "folder",
     "pattern",
@@ -288,6 +288,7 @@ const SEARCH_KEYS: [&str; 13] = [
     "type",
     "hidden",
     "skipped",
+    "duplicates",
 ];
 
 /// One `[[searches]]` entry; the error is why it is left out (sapma 17: whether the folder is a
@@ -977,6 +978,7 @@ pub fn search_to_toml(spec: &SearchSpec) -> toml::Table {
         ("match-case", spec.match_case),
         ("hidden", spec.hidden == HiddenRule::Include),
         ("skipped", spec.skipped),
+        ("duplicates", spec.duplicates),
     ] {
         if on {
             table.insert(key.into(), toml::Value::Boolean(true));
@@ -1031,6 +1033,7 @@ pub fn search_from_toml(table: &toml::Table) -> Result<SearchSpec, String> {
     spec.match_case = flag("match-case")?;
     spec.hidden = if flag("hidden")? { HiddenRule::Include } else { HiddenRule::FollowView };
     spec.skipped = flag("skipped")?;
+    spec.duplicates = flag("duplicates")?;
     if let Some(size) = text("size-min")? {
         spec.size.min = Some(parse_size(size).map_err(|err| format!("size-min: {err}"))?);
     }
@@ -3637,6 +3640,11 @@ split = 0.2
         let keys: Vec<&str> = table.keys().map(String::as_str).collect();
         assert_eq!(keys, ["name", "folder", "pattern", "content", "modified"], "name and folder first");
         assert_eq!(parse_saved_search(&toml::Value::Table(table)).unwrap(), search);
+        let mut duplicates = SearchSpec::new(Scope::AllDrives);
+        duplicates.duplicates = true;
+        let table = search_to_toml(&duplicates);
+        assert_eq!(table.get("duplicates"), Some(&toml::Value::Boolean(true)));
+        assert_eq!(search_from_toml(&table), Ok(duplicates), "[[searches]] duplicates = true");
     }
 
     #[test]

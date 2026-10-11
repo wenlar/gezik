@@ -70,6 +70,12 @@ pub fn done_text(summary: &Summary) -> String {
     if summary.everything {
         text.push_str(" via Everything");
     }
+    push_unread(&mut text, summary);
+    text
+}
+
+/// What a search left out, after its count: skipped folders, folders it could not read.
+fn push_unread(text: &mut String, summary: &Summary) {
     match summary.skipped {
         0 => {}
         1 => text.push_str(" · Skipped 1 folder (search.skip)"),
@@ -80,7 +86,81 @@ pub fn done_text(summary: &Summary) -> String {
         1 => text.push_str(" · 1 folder could not be read"),
         n => text.push_str(&format!(" · {} folders could not be read", with_commas(n))),
     }
+}
+
+/// The status bar while duplicates are looked for (spec 11 §9.2): the walk, then the reads.
+pub fn scanned_text(files: usize, folders: usize) -> String {
+    format!("Scanned {} files · {} folders", with_commas(files), with_commas(folders))
+}
+
+pub fn comparing_text(scanned: usize, files: usize, bytes: u64) -> String {
+    format!(
+        "Scanned {} files · comparing {} of same size ({})",
+        with_commas(scanned),
+        with_commas(files),
+        gezik_core::format_size(bytes)
+    )
+}
+
+/// A duplicates search's status bar (spec 11 §9.3): `48 groups · 131 files · 1.8 GB could be
+/// freed`, then what was left out.
+pub fn duplicates_text((groups, files, freed): (usize, usize, u64), summary: &Summary) -> String {
+    let freed = gezik_core::format_size(freed);
+    let mut text = match groups {
+        0 => "No duplicates".to_owned(),
+        1 => format!("1 group · {} files · {freed} could be freed", with_commas(files)),
+        n => format!("{} groups · {} files · {freed} could be freed", with_commas(n), with_commas(files)),
+    };
+    if summary.cancelled {
+        text = format!("Stopped · {text}");
+    }
+    match summary.online {
+        0 => {}
+        1 => text.push_str(" · 1 online-only file not read"),
+        n => text.push_str(&format!(" · {} online-only files not read", with_commas(n))),
+    }
+    match summary.hard_links {
+        0 => {}
+        1 => text.push_str(" · 1 hard link counted once"),
+        n => text.push_str(&format!(" · {} hard links counted once", with_commas(n))),
+    }
+    push_unread(&mut text, summary);
     text
+}
+
+/// A "select all but one" item (`ids::DUP_SELECT_FIRST`…, spec 11 §9.3) on `view`'s duplicates
+/// (the pane whose bar or row menu it came from); the status bar says when a group kept a copy
+/// because all were in the folder.
+pub fn select_duplicates(view: &View, id: u32) {
+    use gezik_core::duplicates::Keep;
+    let kept = view.select_duplicates(|focus| match id.checked_sub(ids::DUP_SELECT_FIRST) {
+        Some(0) => Some(Keep::Newest),
+        Some(1) => Some(Keep::Oldest),
+        Some(2) => Some(Keep::First),
+        Some(3) => focus.map(Keep::ThisFolder),
+        Some(4) => focus.map(Keep::ThisOne),
+        _ => None,
+    });
+    if let Some(note) = kept.and_then(kept_note) {
+        view.note(note);
+    }
+}
+
+/// What "Select all in this folder" says when `groups` had every copy there.
+fn kept_note(groups: usize) -> Option<String> {
+    match groups {
+        0 => None,
+        1 => Some("1 group had every copy in this folder; one copy is kept".to_owned()),
+        n => Some(format!("{} groups had every copy in this folder; one copy of each is kept", with_commas(n))),
+    }
+}
+
+/// The status bar of results that ended: a duplicates search's or another's.
+fn summary_text(summary: &Summary, set: Option<&ResultSet>) -> String {
+    match set.filter(|set| set.is_duplicates()) {
+        Some(set) => duplicates_text(set.dup_counts(), summary),
+        None => done_text(summary),
+    }
 }
 
 fn name_of(path: &Path) -> String {
@@ -530,6 +610,21 @@ impl Searches {
         self.go(false);
     }
 
+    /// `find-duplicates` (spec 11 §9.1): the bar in its duplicates mode on the selected folder
+    /// (This PC: the selected drive), else on the place shown; Enter starts it.
+    pub fn find_duplicates(&self) {
+        let selected = self.0.view.single_selected().and_then(|i| self.0.view.entry_path(i));
+        let scope = match (selected, self.0.nav.active_location()) {
+            (Some((folder, true)), _) => Scope::Folder(folder),
+            (_, Location::Search(spec)) => spec.scope.clone(),
+            (_, Location::Path(folder) | Location::Flat(folder)) => Scope::Folder(folder),
+            (_, Location::Drives | Location::Trash) => Scope::AllDrives,
+        };
+        let origin = scope.folder().map(Path::to_path_buf);
+        self.show_bar(SearchSpec { duplicates: true, ..SearchSpec::new(scope) }, origin);
+        self.focus_later();
+    }
+
     /// "Search in this folder…": the bar on `folder`, empty.
     pub fn open_in(&self, folder: PathBuf) {
         self.show_bar(SearchSpec::new(Scope::Folder(folder.clone())), Some(folder));
@@ -587,7 +682,11 @@ impl Searches {
         }
         crate::panes::edit(id, |d| {
             d.search_open = self.0.open.get();
-            d.search_scope = scope_label(&draft.scope).into();
+            d.search_scope = if draft.duplicates {
+                format!("Find duplicates {}", scope_label(&draft.scope)).into()
+            } else {
+                scope_label(&draft.scope).into()
+            };
             d.search_content_open = self.0.content_open.get();
             d.search_filters = match draft.filter_count() {
                 0 => "Filters".into(),
@@ -637,6 +736,9 @@ impl Searches {
     }
 
     fn content_toggle(&self) {
+        if self.0.draft.borrow().duplicates {
+            return self.0.view.note("Duplicates compare whole files; text in files is not used".to_owned());
+        }
         let open = !self.0.content_open.get();
         self.0.content_open.set(open);
         if !open {
@@ -661,7 +763,8 @@ impl Searches {
     /// can answer at once; text in files and a scope too large for the cache wait for Enter.
     fn follow_typing(&self) {
         let draft = self.0.draft.borrow().clone();
-        if !draft.content.is_empty() || !draft.is_query() {
+        // Duplicates read files: only Enter starts them.
+        if !draft.content.is_empty() || !draft.is_query() || draft.duplicates {
             return;
         }
         if !self.name_ok() {
@@ -843,9 +946,11 @@ impl Searches {
         }
         let root = spec.scope.folder().map(Path::to_path_buf).unwrap_or_default();
         let content = !spec.content.is_empty();
+        let duplicates = spec.duplicates;
         *self.0.pending.borrow_mut() = Some(spec.clone());
         *self.0.showing.borrow_mut() = Some(Showing { tab, spec, summary: None, complete: false, changes: None });
-        Listing::Results(Arc::new(ResultSet::new(root, content)))
+        let set = if duplicates { ResultSet::duplicates(root) } else { ResultSet::new(root, content) };
+        Listing::Results(Arc::new(set))
     }
 
     /// The results `listing_for` gave are on screen: a fresh search starts; kept ones get their
@@ -855,8 +960,9 @@ impl Searches {
         match pending {
             Some(spec) => self.start(spec),
             None => {
+                let set = self.0.view.results();
                 let (status, changes) = match self.0.showing.borrow_mut().as_mut() {
-                    Some(s) => (s.summary.as_ref().map(done_text), s.changes.take()),
+                    Some(s) => (s.summary.as_ref().map(|sum| summary_text(sum, set.as_deref())), s.changes.take()),
                     None => (None, None),
                 };
                 self.0.view.set_results_status(status);
@@ -1046,14 +1152,14 @@ impl Searches {
     /// Rows taken out or added after the search ended: the status bar's count follows them
     /// ("Stopped at N results" names the limit and stays).
     fn recount(&self) {
-        let Some(len) = self.0.view.results().map(|set| set.len()) else { return };
+        let Some(set) = self.0.view.results() else { return };
         let text = {
             let mut showing = self.0.showing.borrow_mut();
             let Some(summary) = showing.as_mut().and_then(|s| s.summary.as_mut()) else { return };
-            if !recounted(summary, len) {
+            if !recounted(summary, set.len()) {
                 return;
             }
-            done_text(summary)
+            summary_text(summary, Some(&set))
         };
         self.0.view.set_results_status(Some(text));
     }
@@ -1157,6 +1263,9 @@ impl Searches {
         crate::panes::edit(self.0.id, |d| d.search_running = true);
         let sink = self.sink(generation);
         let started = Instant::now();
+        if spec.duplicates {
+            return self.start_duplicates(spec, query, settings.skip, running, sink);
+        }
         let cache = spec.content.is_empty().then(|| self.ready_cache(&spec)).flatten();
         let flag = running.flag();
         let (shown, skip, on) = (Searches::view_shown(), settings.skip.clone(), settings.everything);
@@ -1185,6 +1294,39 @@ impl Searches {
         }
     }
 
+    /// A duplicates search (spec 11 §9.2): the walk and the reads on the search's own threads,
+    /// never the name cache or Everything (they know no content).
+    fn start_duplicates(
+        &self,
+        spec: SearchSpec,
+        query: Query,
+        skip: Vec<String>,
+        running: Running,
+        sink: impl Fn(Event) + Send + Sync + 'static,
+    ) {
+        use gezik_core::ops::threads::DiskKind;
+        let shown = Searches::view_shown();
+        let spawned = std::thread::Builder::new().name("gezik-duplicates".into()).spawn(move || {
+            let mut walk = plan_walk(&spec, &skip, shown);
+            // A cloud folder is not gone into: listing it may download it (spec 11 §9.2).
+            walk.rules.enter_offline = false;
+            let kinds: Vec<DiskKind> = walk
+                .roots
+                .iter()
+                .map(|root| gezik_platform::fs::drive_facts(root).map_or(DiskKind::Unknown, |facts| facts.kind))
+                .collect();
+            let root = spec.scope.folder().map(Path::to_path_buf).unwrap_or_default();
+            let readers = gezik_search::duplicates::readers(&kinds);
+            gezik_search::duplicates::find(walk, query, &root, readers, &running, Arc::new(sink));
+        });
+        if spawned.is_err() {
+            self.0.running.borrow_mut().take();
+            self.0.view.set_searching(false);
+            self.0.view.set_results_status(Some("Cannot start the search".to_owned()));
+            crate::panes::edit(self.0.id, |d| d.search_running = false);
+        }
+    }
+
     /// Events of search `generation`, brought to the UI thread.
     fn sink(&self, generation: u64) -> impl Fn(Event) + Send + Sync + Clone + 'static {
         let (id, weak) = (self.0.id, self.0.window.clone());
@@ -1201,9 +1343,16 @@ impl Searches {
         }
         match event {
             Event::Batch(batch) => self.0.view.append_results(batch),
-            Event::Progress { found, folders } => self.0.view.set_results_status(Some(progress_text(found, folders))),
+            Event::Progress { found, folders } => {
+                let duplicates = self.0.showing.borrow().as_ref().is_some_and(|s| s.spec.duplicates);
+                let text = if duplicates { scanned_text(found, folders) } else { progress_text(found, folders) };
+                self.0.view.set_results_status(Some(text));
+            }
+            Event::Comparing { scanned, files, bytes } => {
+                self.0.view.set_results_status(Some(comparing_text(scanned, files, bytes)))
+            }
             Event::Done(summary) => {
-                let text = done_text(&summary);
+                let text = summary_text(&summary, self.0.view.results().as_deref());
                 *self.0.problems.borrow_mut() = summary.problems.first.clone();
                 self.0.running.borrow_mut().take();
                 self.0.view.set_searching(false);
@@ -1251,6 +1400,10 @@ impl Searches {
     /// done; Everything or a network folder keeps none (spec 3.5).
     fn warm(&self) {
         let spec = self.0.draft.borrow().clone();
+        // Duplicates never use the names (they read content): no walk for them.
+        if spec.duplicates {
+            return;
+        }
         let key = self.cache_key(&spec);
         let same = match &*self.0.names.borrow() {
             Names::Building(k, _) | Names::Ready(k, _) | Names::TooLarge(k) | Names::NoCache(k, _) => *k == key,
@@ -1339,7 +1492,11 @@ impl Searches {
             SearchMenu::Filters => ids::search_filter_items(&draft),
             SearchMenu::More => {
                 let names = crate::saved_searches::names();
-                let items = ids::search_more_items(self.0.problems.borrow().len(), &names, draft.is_query());
+                let mut items = ids::search_more_items(self.0.problems.borrow().len(), &names, draft.is_query());
+                if self.0.view.shows_duplicates() {
+                    let select = ids::duplicate_select_items().into_iter().map(|(id, t)| (id, t.to_owned(), true));
+                    items.splice(0..0, select);
+                }
                 *self.0.menu_names.borrow_mut() = names;
                 (items, Vec::new())
             }
@@ -1350,6 +1507,9 @@ impl Searches {
     pub fn menu_chosen(&self, id: u32) {
         match id {
             ids::SEARCH_NEW_TAB => return self.go(true),
+            id if (ids::DUP_SELECT_FIRST..ids::DUP_SELECT_FIRST + ids::DUP_SELECT_COUNT).contains(&id) => {
+                return select_duplicates(&self.0.view, id);
+            }
             ids::SEARCH_PROBLEMS => return self.show_problems(),
             ids::SIZE_MIN | ids::SIZE_MAX | ids::MODIFIED_BETWEEN => return self.ask_criterion(id),
             ids::SAVE_SEARCH => return self.save_current(),
@@ -1377,7 +1537,7 @@ impl Searches {
                 }
                 ids::FILTERS_CLEAR => {
                     let (scope, pattern, content) = (draft.scope.clone(), draft.pattern.clone(), draft.content.clone());
-                    *draft = SearchSpec { pattern, content, ..SearchSpec::new(scope) };
+                    *draft = SearchSpec { pattern, content, duplicates: draft.duplicates, ..SearchSpec::new(scope) };
                 }
                 id if (ids::SCOPE_FIRST..ids::SCOPE_FIRST + ids::SCOPE_MAX).contains(&id) => {
                     let Some(scope) = self.0.scopes.borrow().get((id - ids::SCOPE_FIRST) as usize).cloned() else {
@@ -1516,6 +1676,48 @@ mod tests {
         assert_eq!(done_text(&stopped), "Stopped · 1 result");
         let one = Summary { found: 1, skipped: 1, elapsed: Duration::from_millis(50), ..Summary::default() };
         assert_eq!(done_text(&one), "1 result in 0.1 s · Skipped 1 folder (search.skip)");
+    }
+
+    #[test]
+    fn the_duplicates_status_bar() {
+        assert_eq!(scanned_text(120_400, 48_210), "Scanned 120,400 files · 48,210 folders");
+        assert_eq!(
+            comparing_text(120_400, 3_210, 4_509_715_661),
+            "Scanned 120,400 files · comparing 3,210 of same size (4.2 GB)"
+        );
+        let done = Summary { found: 131, ..Summary::default() };
+        assert_eq!(duplicates_text((48, 131, 1_932_735_283), &done), "48 groups · 131 files · 1.8 GB could be freed");
+        let stopped = Summary { cancelled: true, online: 3, hard_links: 1, ..Summary::default() };
+        assert_eq!(
+            duplicates_text((1, 2, 10), &stopped),
+            "Stopped · 1 group · 2 files · 10 B could be freed · 3 online-only files not read · 1 hard link counted once"
+        );
+        assert_eq!(duplicates_text((0, 0, 0), &Summary::default()), "No duplicates");
+        let mut set = ResultSet::duplicates(PathBuf::from("/w"));
+        let entry = |name: &str| gezik_core::Entry {
+            name: name.into(),
+            is_dir: false,
+            flags: 0,
+            size: 5,
+            modified: None,
+            created: None,
+        };
+        set.append(gezik_search::results::Batch {
+            folders: vec!["".into()],
+            entries: vec![entry("a"), entry("b")],
+            parent: vec![0, 0],
+            matches: vec![None, None],
+            dups: vec![0, 0],
+        });
+        assert_eq!(summary_text(&done, Some(&set)), "1 group · 2 files · 5 B could be freed");
+        assert_eq!(summary_text(&done, None), "131 results in 0.0 s");
+    }
+
+    #[test]
+    fn a_folder_that_held_every_copy_is_said() {
+        assert_eq!(kept_note(0), None);
+        assert_eq!(kept_note(1).unwrap(), "1 group had every copy in this folder; one copy is kept");
+        assert_eq!(kept_note(2).unwrap(), "2 groups had every copy in this folder; one copy of each is kept");
     }
 
     #[test]

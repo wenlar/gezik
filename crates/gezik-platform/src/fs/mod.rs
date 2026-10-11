@@ -153,6 +153,16 @@ pub fn same_entry(a: &Path, b: &Path) -> Option<bool> {
     Some(entry_id(a).ok()? == entry_id(b).ok()?)
 }
 
+/// The entry's drive and file id as `same_entry` compares them (the last part not followed):
+/// two hard links of one file have the same. `None` where the file system gives none.
+pub fn file_id(path: &Path) -> Option<(u64, u128)> {
+    #[cfg(windows)]
+    let id = entry_id(path).ok();
+    #[cfg(unix)]
+    let id = entry_id(path).ok().map(|(device, inode)| (device, u128::from(inode)));
+    id
+}
+
 /// `path` or its nearest ancestor that exists.
 pub fn nearest_existing(path: &Path) -> Option<PathBuf> {
     path.ancestors().find(|p| std::fs::symlink_metadata(p).is_ok()).map(Path::to_path_buf)

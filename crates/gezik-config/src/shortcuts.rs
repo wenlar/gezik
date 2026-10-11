@@ -412,6 +412,8 @@ pub enum Action {
     Checksums,
     /// Checks the files the selected checksum file names (no key).
     VerifyChecksums,
+    /// The search bar finding duplicate files (no key; spec 11 §9).
+    FindDuplicates,
     /// The selection into a typed folder, with a filter and a name mask (no key; spec 11 §12).
     CopyTo,
     MoveTo,
@@ -422,7 +424,7 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Action; 111] = [
+    pub const ALL: [Action; 112] = [
         Action::NewTab,
         Action::NewWindow,
         Action::CloseTab,
@@ -530,6 +532,7 @@ impl Action {
         Action::SizeMap,
         Action::Checksums,
         Action::VerifyChecksums,
+        Action::FindDuplicates,
         Action::CopyTo,
         Action::MoveTo,
         Action::SplitFile,
@@ -645,6 +648,7 @@ impl Action {
             Action::SizeMap => "size-map",
             Action::Checksums => "checksums",
             Action::VerifyChecksums => "verify-checksums",
+            Action::FindDuplicates => "find-duplicates",
             Action::CopyTo => "copy-to",
             Action::MoveTo => "move-to",
             Action::SplitFile => "split-file",
@@ -774,6 +778,7 @@ impl Action {
             Action::SizeMap => "Size Map",
             Action::Checksums => "Calculate Checksums…",
             Action::VerifyChecksums => "Verify Checksums",
+            Action::FindDuplicates => "Find Duplicates",
             Action::CopyTo => "Copy To…",
             Action::MoveTo => "Move To…",
             Action::SplitFile => "Split File…",
@@ -975,6 +980,7 @@ impl Action {
                 | Action::SizeMap
                 | Action::Checksums
                 | Action::VerifyChecksums
+                | Action::FindDuplicates
                 | Action::CopyTo
                 | Action::MoveTo
                 | Action::SplitFile
@@ -1220,7 +1226,7 @@ mod tests {
             assert_eq!(fixed_owner(&cmd_option, Platform::Mac), None);
         }
         assert_eq!((Action::pin(0), Action::pin(10)), (None, None));
-        assert_eq!(Action::ALL.len(), 111);
+        assert_eq!(Action::ALL.len(), 112);
         assert_eq!(other.action_for(&chord("ctrl+1")), Some(Action::Tab1), "Ctrl+1 is still tab 1");
         assert_eq!(other.action_for(&chord("ctrl+alt+1")), None, "AltGr+1 types");
     }
@@ -1689,7 +1695,7 @@ clear-history = \"ctrl+shift+h\"
         for name in ["search", "flat-view", "show-in-folder", "copy-with-folders", "cut-with-folders"] {
             assert!(Action::from_name(name).is_some(), "{name}");
         }
-        assert_eq!(Action::ALL.len(), 111);
+        assert_eq!(Action::ALL.len(), 112);
     }
 
     #[test]
@@ -1711,7 +1717,7 @@ clear-history = \"ctrl+shift+h\"
         for name in ["command-palette", "quick-open", "calculate-folder-sizes", "save-search"] {
             assert!(Action::from_name(name).is_some(), "{name}");
         }
-        assert_eq!(Action::ALL.len(), 111);
+        assert_eq!(Action::ALL.len(), 112);
     }
 
     #[test]
@@ -1731,7 +1737,7 @@ clear-history = \"ctrl+shift+h\"
         }
         assert_eq!(Action::MakeAlias.title(), "Make Alias");
         assert_eq!(Action::ShowPackageContents.title(), "Show Package Contents");
-        assert_eq!(Action::ALL.len(), 111);
+        assert_eq!(Action::ALL.len(), 112);
     }
 
     #[test]
@@ -1741,7 +1747,7 @@ clear-history = \"ctrl+shift+h\"
         }
         assert_eq!(Action::from_name("share"), Some(Action::Share));
         assert_eq!(Action::Share.title(), "Share…");
-        assert_eq!(Action::ALL.len(), 111);
+        assert_eq!(Action::ALL.len(), 112);
     }
 
     #[test]
@@ -1755,7 +1761,7 @@ clear-history = \"ctrl+shift+h\"
         assert_eq!(fixed_owner(&chord("mod+i", Platform::Mac), Platform::Mac), None);
         assert_eq!(Action::from_name("get-info"), Some(Action::GetInfo));
         assert_eq!(Action::GetInfo.title(), "Get Info");
-        assert_eq!(Action::ALL.len(), 111);
+        assert_eq!(Action::ALL.len(), 112);
     }
 
     #[test]
@@ -1768,7 +1774,7 @@ clear-history = \"ctrl+shift+h\"
         }
         assert_eq!(Action::from_name("connect-to-server"), Some(Action::ConnectToServer));
         assert_eq!(Action::ConnectToServer.title(), "Connect to Server…");
-        assert_eq!(Action::ALL.len(), 111);
+        assert_eq!(Action::ALL.len(), 112);
     }
 
     #[test]
@@ -1787,7 +1793,7 @@ clear-history = \"ctrl+shift+h\"
                 assert_eq!(Shortcuts::defaults(platform).chord_for(action), None, "{name}");
             }
         }
-        assert_eq!(Action::ALL.len(), 111);
+        assert_eq!(Action::ALL.len(), 112);
     }
 
     #[test]
@@ -1797,7 +1803,7 @@ clear-history = \"ctrl+shift+h\"
         for platform in [Platform::Other, Platform::Mac] {
             assert_eq!(Shortcuts::defaults(platform).chord_for(Action::RevealInTree), None);
         }
-        assert_eq!(Action::ALL.len(), 111);
+        assert_eq!(Action::ALL.len(), 112);
     }
 
     #[test]
@@ -1835,7 +1841,7 @@ clear-history = \"ctrl+shift+h\"
         assert_eq!(fixed_owner(&chord("mod+ctrl+u", Platform::Mac), Platform::Mac), None);
         assert_eq!(Action::from_name("sync-browsing"), Some(Action::SyncBrowsing));
         assert_eq!(Action::from_name("other-pane-same-folder"), Some(Action::OtherPaneSameFolder));
-        assert_eq!(Action::ALL.len(), 111);
+        assert_eq!(Action::ALL.len(), 112);
     }
 
     #[test]
@@ -1859,7 +1865,7 @@ clear-history = \"ctrl+shift+h\"
         assert_eq!(Shortcuts::defaults(Platform::Mac).action_for(&chord("mod+c", Platform::Mac)), Some(Action::Copy));
         assert_eq!(Action::from_name("compare"), Some(Action::Compare));
         assert_eq!(Action::Compare.title(), "Compare");
-        assert_eq!(Action::ALL.len(), 111);
+        assert_eq!(Action::ALL.len(), 112);
     }
 
     #[test]
@@ -1876,7 +1882,7 @@ clear-history = \"ctrl+shift+h\"
         assert_eq!(mac.action_for(&chord("mod+3", Platform::Mac)), Some(Action::Tab3));
         assert_eq!(Action::from_name("view-columns"), Some(Action::ViewColumns));
         assert_eq!(Action::ViewColumns.title(), "View as Columns");
-        assert_eq!(Action::ALL.len(), 111);
+        assert_eq!(Action::ALL.len(), 112);
     }
 
     #[test]
@@ -1886,7 +1892,7 @@ clear-history = \"ctrl+shift+h\"
         for platform in [Platform::Other, Platform::Mac] {
             assert_eq!(Shortcuts::defaults(platform).chord_for(Action::ExportList), None);
         }
-        assert_eq!(Action::ALL.len(), 111);
+        assert_eq!(Action::ALL.len(), 112);
     }
 
     #[test]
@@ -1966,7 +1972,7 @@ refresh = [\"f5\", \"ctrl+r\"]
         assert_eq!(Shortcuts::defaults(Platform::Other).chord_for(Action::Eject), None);
         assert_eq!(Action::from_name("eject"), Some(Action::Eject));
         assert_eq!(Action::Eject.title(), "Eject");
-        assert_eq!(Action::ALL.len(), 111);
+        assert_eq!(Action::ALL.len(), 112);
     }
 
     #[test]
@@ -2104,6 +2110,7 @@ refresh = [\"f5\", \"ctrl+r\"]
         for (action, name, title) in [
             (Action::Checksums, "checksums", "Calculate Checksums…"),
             (Action::VerifyChecksums, "verify-checksums", "Verify Checksums"),
+            (Action::FindDuplicates, "find-duplicates", "Find Duplicates"),
         ] {
             assert_eq!(Action::from_name(name), Some(action));
             assert_eq!(action.title(), title);
@@ -2111,7 +2118,7 @@ refresh = [\"f5\", \"ctrl+r\"]
                 assert_eq!(Shortcuts::defaults(platform).chord_for(action), None, "{name}");
             }
         }
-        assert_eq!(Action::ALL.len(), 111);
+        assert_eq!(Action::ALL.len(), 112);
     }
 
     #[test]
@@ -2128,6 +2135,6 @@ refresh = [\"f5\", \"ctrl+r\"]
                 assert_eq!(Shortcuts::defaults(platform).chord_for(action), None, "{name}");
             }
         }
-        assert_eq!(Action::ALL.len(), 111);
+        assert_eq!(Action::ALL.len(), 112);
     }
 }

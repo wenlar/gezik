@@ -235,6 +235,7 @@ confirm = true
 # size-map = ""   # Size Map: the selected folder (else the one shown) as nested boxes by size
 # checksums = ""   # Calculate Checksums…: CRC32, MD5, SHA-1, SHA-256, SHA-512 of the selected files
 # verify-checksums = ""   # checks the files a selected .sha256, .md5, .sfv, SHA256SUMS… names
+# find-duplicates = ""   # Find Duplicates: the search bar finds files with the same content, in groups
 # copy-to = ""   # Copy To…: into a typed folder; a name mask (D:\Yedek\*.bak) and Filter… (*.jpg | thumbs\)
 # move-to = ""   # Move To…: the same, moving
 # split-file = ""   # Split File…: the selected file into .001, .002… parts and a .crc
@@ -271,7 +272,8 @@ confirm = true
 # keys are the search bar's: pattern (the filter's language), content (text in files),
 # name-regex, content-regex, match-case, hidden, skipped (true or false), size-min, size-max
 # ("500 MB"), modified (today | 7d | 30d | year | 2026-01-01..2026-06-30) and type (files |
-# folders | pictures | videos | audio | documents | archives | code). At most 30.
+# folders | pictures | videos | audio | documents | archives | code). duplicates = true finds
+# duplicate files instead (Find Duplicates). At most 30.
 # [[searches]]
 # name = "Large videos"
 # folder = "{home}"
