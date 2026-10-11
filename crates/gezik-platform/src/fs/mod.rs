@@ -27,17 +27,51 @@ pub(crate) use unix::home_trash;
 #[cfg(unix)]
 pub use unix::{
     clear_hidden, copy_file, delete, device_of, drive_facts, drive_root, free_space, is_hidden_attr, is_network,
-    mapped_remote, move_entry, open_regular, read_dir_items, restore, set_hidden, trash,
+    mapped_remote, move_entry, open_regular, open_sequential, open_uncached, read_dir_items, restore, set_hidden,
+    trash,
 };
 #[cfg(windows)]
 use windows::entry_id;
 #[cfg(windows)]
 pub use windows::{
     clear_hidden, copy_file, delete, device_of, drive_facts, drive_root, free_space, is_hidden_attr, is_network,
-    mapped_remote, move_entry, open_regular, read_dir_items, restore, set_hidden, trash,
+    mapped_remote, move_entry, open_regular, open_sequential, open_uncached, read_dir_items, restore, set_hidden,
+    trash,
 };
 #[cfg(windows)]
 pub(crate) use windows::{io_error, verbatim};
+
+/// A file opened by [`open_uncached`].
+pub struct Uncached {
+    pub file: std::fs::File,
+    /// Windows: the reads go past the cache, so each must be into a buffer aligned to
+    /// [`DIRECT_ALIGN`] and a whole number of it long; a short read is the file's end.
+    pub direct: bool,
+}
+
+/// The alignment (and length unit) of a direct read's buffer: a page, a whole number of sectors.
+pub const DIRECT_ALIGN: usize = 4096;
+
+/// Fills `buf` from `file` until it is full or the file ends, and returns how much was read.
+/// `direct` (an [`Uncached`] direct read): the first short read is the end, as reading on from an
+/// unaligned place would fail.
+pub fn read_full(file: &mut (impl io::Read + ?Sized), buf: &mut [u8], direct: bool) -> io::Result<usize> {
+    let mut filled = 0;
+    while filled < buf.len() {
+        match file.read(&mut buf[filled..]) {
+            Ok(0) => break,
+            Ok(n) => {
+                filled += n;
+                if direct {
+                    break;
+                }
+            }
+            Err(err) if err.kind() == io::ErrorKind::Interrupted => {}
+            Err(err) => return Err(err),
+        }
+    }
+    Ok(filled)
+}
 
 /// One item of a folder as the search reads it, with what the read itself gave (spec 3.4).
 #[derive(Debug, Clone)]

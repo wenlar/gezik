@@ -183,6 +183,19 @@ max-results = 250000       # 1000-2000000; a search stops there
 content-max-size = "64 MB" # larger files are not read for text
 ```
 
+## Tools
+
+Right-click ▸ Tools, the command palette, and on macOS the Tools menu.
+
+- **Calculate Checksums…** shows CRC32, MD5, SHA-1, SHA-256 and SHA-512 of the selected files
+  (folders: every file in them), each file read once. A value on the clipboard fills
+  **Expected** and the matching row is marked. **Copy** gives `sha256sum` lines, **Save…**
+  writes `.sha256`, `.md5`, `.sha1`, `.sha512` or `.sfv` files that `sha256sum -c` and
+  `shasum -a 256 -c` accept, **Export CSV…** a table.
+- **Verify Checksums** checks the files a `.sha256`, `.md5`, `.sha1`, `.sha512`, `.sfv`,
+  `.crc` or `SHA256SUMS` file names: OK, FAILED, MISSING.
+- Both run as jobs in the operations panel (pause, cancel); files that are only in the cloud
+  are downloaded only if you agree.
 ## Export list
 
 Tools ▸ Export list… (right-click a row or the background; the palette's `Export List…`; Tools on the macOS menu bar) writes the list the pane shows, sorted and filtered as it is, to a file or the clipboard. The name's extension picks the format: `.txt` (one name, or with "Full paths in text" one path, per line), `.csv` (the columns shown plus Path, sizes in bytes and ISO dates; on Windows the system's list separator, `;` in Turkish, and a BOM so Excel reads it as UTF-8) or `.html` (one page, light and dark). With a selection, only the selected items go unless you untick the box. Search results and the flat view export their folders too; for the files in subfolders use the flat view first. Saving is a normal operation: a taken name asks, Ctrl+Z (⌘Z) removes the file.

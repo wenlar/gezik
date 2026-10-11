@@ -508,6 +508,48 @@ pub fn open_regular(path: &Path) -> io::Result<Option<(File, u64)>> {
     Ok(meta.is_file().then_some((file, meta.len())))
 }
 
+/// Opens `path` to read it once from start to end (a checksum): the system reads further ahead
+/// (Linux `POSIX_FADV_SEQUENTIAL`, macOS `F_RDAHEAD`).
+pub fn open_sequential(path: &Path) -> io::Result<File> {
+    use std::os::fd::AsRawFd;
+    let file = File::open(path)?;
+    // Only a hint: a refusal changes nothing.
+    #[cfg(target_os = "linux")]
+    unsafe {
+        libc::posix_fadvise(file.as_raw_fd(), 0, 0, libc::POSIX_FADV_SEQUENTIAL);
+    }
+    #[cfg(target_os = "macos")]
+    unsafe {
+        libc::fcntl(file.as_raw_fd(), libc::F_RDAHEAD, 1);
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    let _ = file.as_raw_fd();
+    Ok(file)
+}
+
+/// Opens `path` so that its reads come from the disk, not the cache: Linux writes the file's
+/// pages out (`fdatasync`) and drops them (`POSIX_FADV_DONTNEED`); macOS flushes the drive
+/// (`F_FULLFSYNC`) and reads uncached (`F_NOCACHE`), though pages already cached may still be
+/// served (spec 11 §18).
+pub fn open_uncached(path: &Path) -> io::Result<super::Uncached> {
+    use std::os::fd::AsRawFd;
+    let file = open_sequential(path)?;
+    let fd = file.as_raw_fd();
+    #[cfg(target_os = "linux")]
+    unsafe {
+        libc::fdatasync(fd);
+        libc::posix_fadvise(fd, 0, 0, libc::POSIX_FADV_DONTNEED);
+    }
+    #[cfg(target_os = "macos")]
+    unsafe {
+        libc::fcntl(fd, libc::F_FULLFSYNC);
+        libc::fcntl(fd, libc::F_NOCACHE, 1);
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    let _ = fd;
+    Ok(super::Uncached { file, direct: false })
+}
+
 pub fn device_of(path: &Path) -> io::Result<u64> {
     use std::os::unix::fs::MetadataExt;
     Ok(std::fs::symlink_metadata(path)?.dev())

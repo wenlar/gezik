@@ -137,6 +137,8 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         Action::Compare => crate::diff::compare(),
         Action::ExportList => crate::export::ask(nav, view),
         Action::SizeMap => crate::size_map::open_for(view),
+        Action::Checksums => crate::checksums::open_for_view(view),
+        Action::VerifyChecksums => crate::checksums::verify_for_view(view),
         // Not theirs: `handle_key` and the menu bar run these themselves. Listed one by one so
         // that a new action is a compile error here until it is placed.
         Action::NewTab

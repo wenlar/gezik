@@ -629,6 +629,16 @@ Numbers stay as they are when branches merge (see 10b). 10g starts at 260 as its
 269. **Retina memory.** On the Retina screen, note Activity Monitor's memory with one window, then with a second full-size window, then after closing it (spec: framebuffer ≈ width × height × 4 × 4 + 2.5 MB).
 270. **Focus order.** Three windows: click them in the order 1, 3, 2, then `open -a` / `gezik <folder>`: it opens in 2. Hide Gezik (⌘H) and show it: the same window is in front. Quick Look (Space) in one window, then Space in the other: the first one's closes, one Quick Look at a time. Scrolling with the trackpad over the window behind scrolls that window, not the one in front.
 
+### 11a, checksums
+
+Numbers stay as they are when branches merge. 11a uses 271–276 (the other step 11 parts come later). Results go to `macos-test-results.md`.
+
+271. **Tests first.** `cargo test -p gezik-ops hash`, `cargo test -p gezik-core checksum_file`, `cargo test -p gezik-platform fs::`; paste the output.
+272. **Tools menu.** The menu bar's `Tools` (between Go and Commands) has `Calculate Checksums…` and `Verify Checksums` after Compare; right-click a file: `Tools ▸ Calculate checksums…` (and `Verify checksums` on a `.sha256` file). The row menu still shows Open With ▸, Copy path as ▸, Commands ▸ (if any) and Quick Actions ▸: write if one is missing.
+273. **Compute.** Select two files and a folder, Tools ▸ Calculate Checksums…: one row per file (folders' files with `sub/name`), SHA-256 ticked by default; tick MD5: only MD5 is read (fast), the SHA-256 values stay. The operations panel shows the job with progress; pause and resume it there. Esc closes the layer and the job stops. Activity Monitor: the memory falls back to within 0.3 MB of before it was opened.
+274. **shasum both ways.** Save… on a folder's files writes `<folder>.sha256`; in Terminal `cd` there and `shasum -a 256 -c <folder>.sha256`: every line `OK`. Then `shasum -a 256 * > mine.sha256` in a folder and Verify Checksums on `mine.sha256` in Gezik: all OK; change one file: `FAILED`; delete one: `MISSING`; `Failed and missing only` shows just those. Export CSV…: the file opens in Numbers with the names right.
+275. **Expected value.** Copy a SHA-256 from a download page (⌘C), select the downloaded file, Calculate Checksums…: Expected is filled, the value is green with a tick and the line says `Matches the expected SHA-256`; change one digit of Expected: red, `Does not match`.
+276. **iCloud and F_NOCACHE.** In iCloud Drive with a file that is not downloaded (the cloud icon), Calculate Checksums… on its folder: Gezik asks once `N files are online-only. Download them…`; Skip: those rows say `Online only` and Finder still shows them as not downloaded. Write whether a large file (≥ 1 GB) hashes at about the disk's read speed (time it once).
 ### 11c, file compare
 
 Numbers stay as they are when branches merge. 11c starts at 281 as its plan decided (11a and 11h take the numbers before and after).

@@ -1438,6 +1438,7 @@ impl Operations {
             }
         }
         self.update();
+        crate::checksums::engine_progress();
     }
 
     /// A job found existing items: the list shows them, the job waits for Start.
@@ -1628,6 +1629,7 @@ impl Operations {
         crate::convert::with_current(|convert| convert.job_finished(id, &report));
         crate::stack::with_current(|stack| stack.job_finished(id, &report));
         crate::info::with_current(|info| info.job_finished(id, &report));
+        crate::checksums::job_finished(id, &report);
         crate::windows::for_each(|_| crate::size_map::with_current(crate::size_map::SizeMap::job_finished));
     }
 

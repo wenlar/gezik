@@ -1638,6 +1638,9 @@ pub struct State {
     pub f3_moved_at: Option<u64>,
     /// The other open windows, the most recently focused first (`[[session.window]]`).
     pub windows: Vec<WindowSession>,
+    /// The Checksums layer's boxes ticked last (`[checksums] algorithms`, keys as `sha256`);
+    /// empty: SHA-256 only.
+    pub checksum_algorithms: Vec<String>,
 }
 
 /// A window's size and place (`[window]`, or a `[[session.window]]` entry's keys).
@@ -1890,6 +1893,13 @@ impl State {
             f3_moved: hint("f3-moved").and_then(|v| v.as_bool()).unwrap_or(false),
             f3_moved_at: hint("f3-moved-at").and_then(|v| v.as_integer()).and_then(|n| u64::try_from(n).ok()),
             windows,
+            checksum_algorithms: table
+                .get("checksums")
+                .and_then(|v| v.as_table())
+                .and_then(|t| t.get("algorithms"))
+                .and_then(|v| v.as_array())
+                .map(|items| items.iter().filter_map(|v| v.as_str()).map(str::to_owned).collect())
+                .unwrap_or_default(),
         }
     }
 
@@ -2066,6 +2076,12 @@ impl State {
         }
         if !panes.is_empty() {
             root.insert("panes".into(), toml::Value::Table(panes));
+        }
+        if !self.checksum_algorithms.is_empty() {
+            let keys = self.checksum_algorithms.iter().cloned().map(toml::Value::String).collect();
+            let mut checksums = toml::Table::new();
+            checksums.insert("algorithms".into(), toml::Value::Array(keys));
+            root.insert("checksums".into(), toml::Value::Table(checksums));
         }
         root.to_string()
     }
@@ -3306,6 +3322,15 @@ shortcut = \"shift+f8\"
         };
         assert_eq!(State::parse(&state.to_toml()), state);
         assert!(!State::default().to_toml().contains("session"));
+    }
+
+    #[test]
+    fn the_checksum_boxes_round_trip_in_state() {
+        let state = State { checksum_algorithms: vec!["md5".into(), "sha256".into()], ..State::default() };
+        let text = state.to_toml();
+        assert!(text.contains("[checksums]") && text.contains("algorithms = [\"md5\", \"sha256\"]"), "{text}");
+        assert_eq!(State::parse(&text), state);
+        assert!(!State::default().to_toml().contains("checksums"));
     }
 
     #[test]

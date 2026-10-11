@@ -35,6 +35,7 @@ and text, and for reading and writing PDFs; each keeps its own licence.
 | utf16string (through pdfium-render) | 0.2.0 | MIT OR Apache-2.0 | https://github.com/getsentry/utf16string |
 | vecmath (through pdfium-render) | 1.0.0 | MIT | https://github.com/pistondevelopers/vecmath |
 | piston-float (through vecmath) | 1.0.1 | MIT | https://github.com/pistondevelopers/float |
+| md-5 (checksums) | 0.11.0 | MIT OR Apache-2.0 | https://github.com/RustCrypto/hashes |
 
 ## Independent JPEG Group
 

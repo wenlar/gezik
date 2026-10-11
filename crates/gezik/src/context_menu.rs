@@ -515,18 +515,30 @@ pub const REVEAL_IN_TREE: u32 = 2050;
 // 2204, Size Map 2205, Export List 2206, Copy To 2207, Move To 2208, Split File 2209, Join Files 2210.
 /// Tools ▸ Compare (11c).
 pub const TOOLS_COMPARE: u32 = 2200;
+/// Tools ▸ Calculate checksums… and Verify checksums (11a), on rows.
+pub const TOOLS_CHECKSUMS: u32 = 2202;
+pub const TOOLS_VERIFY: u32 = 2203;
 /// Tools ▸ Size Map (11g), on one folder or a folder's empty space.
 pub const TOOLS_SIZE_MAP: u32 = 2205;
 /// Tools ▸ Export list… (11h).
 pub const TOOLS_EXPORT_LIST: u32 = 2206;
 
 /// `Tools ▸` (spec 11 §3.3) at place `at`: only what applies: Compare for the selection when it
-/// can be compared (`compare`), Size Map on one folder or a folder's empty space (`size_map`),
-/// Export list… always.
-pub fn tools_sub(at: usize, compare: bool, size_map: bool) -> Submenu {
+/// can be compared (`compare`), Calculate checksums… for `rows` (a row menu's) and Verify
+/// checksums for one checksum file, Size Map on one folder or a folder's empty space
+/// (`size_map`), Export list… always.
+pub fn tools_sub(at: usize, compare: bool, rows: &[(PathBuf, bool)], size_map: bool) -> Submenu {
     let mut items = Vec::new();
     if compare {
         items.push((TOOLS_COMPARE, "Compare".to_owned(), true));
+    }
+    if !rows.is_empty() {
+        items.push((TOOLS_CHECKSUMS, "Calculate checksums…".to_owned(), true));
+    }
+    if let [(path, false)] = rows
+        && crate::checksums::is_checksum_file(path)
+    {
+        items.push((TOOLS_VERIFY, "Verify checksums".to_owned(), true));
     }
     if size_map {
         items.push((TOOLS_SIZE_MAP, "Size Map".to_owned(), true));
@@ -1214,14 +1226,15 @@ impl Menus {
         let mut extra = crate::archives::menu_items(&rows);
         let (convert, commands) = crate::convert::menu_items(&rows);
         extra.extend(convert);
-        *self.rows.borrow_mut() = rows;
         let start = if native { 0 } else { list.len() };
+        let tools = tools_sub(start + extra.len(), crate::diff::offered(), &rows, one_folder);
+        *self.rows.borrow_mut() = rows;
         if native {
             for sub in subs.iter_mut() {
                 sub.at += extra.len();
             }
         }
-        subs.push(tools_sub(start + extra.len(), crate::diff::offered(), one_folder));
+        subs.push(tools);
         subs.extend(commands.map(|items| Submenu { title: "Commands".to_owned(), at: start + extra.len(), items }));
         if native {
             list.splice(0..0, extra);
@@ -1351,7 +1364,7 @@ impl Menus {
             if crate::panes::active_view().shows_trash() {
                 list.push((EMPTY_TRASH, empty_title(), true));
             } else {
-                subs.push(tools_sub(list.len(), false, false));
+                subs.push(tools_sub(list.len(), false, &[], false));
             }
             *self.subject.borrow_mut() = Some(Subject::Background(PathBuf::new()));
             return self.open_slint_entries(&list, subs, Anchor::point(x, y));
@@ -1381,7 +1394,7 @@ impl Menus {
         list.push((SEARCH_HERE, "Search in this folder…".to_owned()));
         list.extend(owned(terminal_items(windows)));
         subs.push(self.copy_path_sub(std::slice::from_ref(&dir), list.len()));
-        subs.push(tools_sub(list.len(), false, true));
+        subs.push(tools_sub(list.len(), false, &[], true));
         self.open(Subject::Background(dir.clone()), list, subs, MenuTarget::Background(dir), x, y, at);
     }
 
@@ -1946,6 +1959,11 @@ impl Menus {
                 let rows = std::mem::take(&mut *self.rows.borrow_mut());
                 crate::convert::run_menu_command((id - COMMAND_FIRST) as usize, rows);
             }
+            (TOOLS_CHECKSUMS, Subject::Row(_) | Subject::Rows(_)) => {
+                let rows = std::mem::take(&mut *self.rows.borrow_mut());
+                crate::checksums::open(rows.into_iter().map(|(path, _)| path).collect());
+            }
+            (TOOLS_VERIFY, Subject::Row(path)) => crate::checksums::verify(path),
             (EXTRACT_HERE..=COMPRESS_TO, Subject::Row(_) | Subject::Rows(_)) => {
                 let rows = std::mem::take(&mut *self.rows.borrow_mut());
                 let paths: Vec<PathBuf> = rows.iter().map(|(path, _)| path.clone()).collect();
@@ -2343,6 +2361,8 @@ fn from_submenu(id: u32) -> bool {
         || id == TOOLS_SIZE_MAP
         || id == GROUP_NONE
         || id == TOOLS_COMPARE
+        || id == TOOLS_CHECKSUMS
+        || id == TOOLS_VERIFY
         || (TEMPLATE_FIRST..TEMPLATE_FIRST + TEMPLATE_MAX).contains(&id)
         || (OPEN_WITH_FIRST..OPEN_WITH_FIRST + OPEN_WITH_MAX).contains(&id)
         || id == OPEN_WITH_OTHER
@@ -2616,13 +2636,18 @@ mod tests {
     fn the_tools_ids_stay_in_their_range() {
         assert_eq!(TOOLS_EXPORT_LIST, 2206, "spec 11 §13.3");
         assert_eq!(TOOLS_COMPARE, 2200, "spec 11 §13.3");
-        let tools = tools_sub(3, true, false);
+        let tools = tools_sub(3, true, &[], false);
         assert_eq!((tools.title.as_str(), tools.at), ("Tools", 3));
         let ids: Vec<u32> = tools.items.iter().map(|(id, _, _)| *id).collect();
         assert_eq!(ids, [TOOLS_COMPARE, TOOLS_EXPORT_LIST]);
-        assert_eq!(tools_sub(0, false, false).items.len(), 1, "Compare only where it applies");
-        let ids: Vec<u32> = tools_sub(0, true, true).items.iter().map(|(id, _, _)| *id).collect();
-        assert_eq!(ids, [TOOLS_COMPARE, TOOLS_SIZE_MAP, TOOLS_EXPORT_LIST], "the macOS Tools menu's order");
+        assert_eq!(tools_sub(0, false, &[], false).items.len(), 1, "Compare only where it applies");
+        let sums = [(PathBuf::from("a.sha256"), false)];
+        let ids: Vec<u32> = tools_sub(0, true, &sums, true).items.iter().map(|(id, _, _)| *id).collect();
+        assert_eq!(
+            ids,
+            [TOOLS_COMPARE, TOOLS_CHECKSUMS, TOOLS_VERIFY, TOOLS_SIZE_MAP, TOOLS_EXPORT_LIST],
+            "the macOS Tools menu's order"
+        );
         assert_eq!(TOOLS_SIZE_MAP, 2205, "spec 11 §13.3, after Find Duplicates 2204");
         assert!(tools.items.iter().all(|(id, _, _)| (2200..2220).contains(id) && from_submenu(*id)));
     }
@@ -2646,7 +2671,7 @@ mod tests {
             sub("Open With", 2),
             sub("Copy path as", 4),
             sub("Commands", 6),
-            tools_sub(6, false, false),
+            tools_sub(6, false, &[], false),
             sub("Quick Actions", 10),
         ];
         let (_, parts) = split_menu(&list, &subs);
@@ -2818,6 +2843,8 @@ mod tests {
             SAME_FOLDER,
             TOOLS_COMPARE,
             TOOLS_SIZE_MAP,
+            TOOLS_CHECKSUMS,
+            TOOLS_VERIFY,
         ];
         let mut ranges: Vec<std::ops::Range<u32>> = singles.iter().map(|id| *id..id + 1).collect();
         ranges.extend([
@@ -2856,6 +2883,26 @@ mod tests {
         assert!(!ranges.iter().any(|r| r.contains(&HEADING)), "a heading is never an item");
         let encodings = gezik_batch::convert::text::encodings().len() as u32;
         assert!(encodings < ENCODING_MAX, "{encodings} encodings and the first choice fit");
+    }
+
+    #[test]
+    fn tools_offer_verify_only_for_one_checksum_file() {
+        let ids = |rows: &[(PathBuf, bool)]| -> Vec<u32> {
+            tools_sub(0, false, rows, false)
+                .items
+                .into_iter()
+                .map(|(id, ..)| id)
+                .filter(|id| *id != TOOLS_EXPORT_LIST)
+                .collect()
+        };
+        assert_eq!(ids(&[(PathBuf::from("a.txt"), false)]), [TOOLS_CHECKSUMS]);
+        assert_eq!(ids(&[(PathBuf::from("a.iso.sha256"), false)]), [TOOLS_CHECKSUMS, TOOLS_VERIFY]);
+        assert_eq!(ids(&[(PathBuf::from("SHA256SUMS"), false)]), [TOOLS_CHECKSUMS, TOOLS_VERIFY]);
+        assert_eq!(ids(&[(PathBuf::from("x.sha256"), true)]), [TOOLS_CHECKSUMS], "a folder");
+        let two = [(PathBuf::from("a.md5"), false), (PathBuf::from("b.md5"), false)];
+        assert_eq!(ids(&two), [TOOLS_CHECKSUMS]);
+        assert!(ids(&[]).is_empty(), "no rows (a folder's empty space): no checksums");
+        assert!(from_submenu(TOOLS_CHECKSUMS) && from_submenu(TOOLS_VERIFY));
     }
 
     fn ids(v: Vec<(u32, &str)>) -> Vec<u32> {
