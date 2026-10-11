@@ -46,6 +46,7 @@ mod select_tools;
 mod sidebar;
 mod sidebar_model;
 mod single_instance;
+mod size_map;
 mod stack;
 mod start;
 mod system_changes;
@@ -340,7 +341,8 @@ fn perform(
         | Action::SyncBrowsing
         | Action::SwapPanes
         | Action::OtherPaneSameFolder
-        | Action::MoveTabToNewWindow => return actions::run(action, nav, view),
+        | Action::MoveTabToNewWindow
+        | Action::SizeMap => return actions::run(action, nav, view),
     }
     true
 }
@@ -391,6 +393,15 @@ fn handle_key(
             convert::with_current(|layer| used = layer.chord(chord));
         }
         return used;
+    }
+    // The size map: every key is its own.
+    if window.get_sm_open() {
+        if let Some(chord) = &chord {
+            size_map::with_current(|map| {
+                map.chord(chord);
+            });
+        }
+        return true;
     }
     // The Info window: Esc wherever its focus is, other keys to its fields.
     if window.get_info_open() {

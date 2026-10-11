@@ -510,6 +510,9 @@ pub const SWAP_PANES: u32 = 2032;
 pub const SAME_FOLDER: u32 = 2033;
 /// View ▸ Show in sidebar tree (spec 10 §10.3, 10c).
 pub const REVEAL_IN_TREE: u32 = 2050;
+// Step 11 (spec 11 §13.3): 2200–2399.
+/// Size Map on a folder row and a folder's empty space (11g; `Tools ▸` once it is there).
+pub const TOOLS_SIZE_MAP: u32 = 2204;
 
 /// A trash row's menu: only what the trash does (no Explorer menu, nothing that acts on a
 /// `$R…` name).
@@ -977,6 +980,8 @@ enum Subject {
     Search,
     /// A saved search in the sidebar, by name.
     SavedSearch(String),
+    /// The size map's rectangle menu (items by id).
+    SizeMap,
 }
 
 /// Lets one native menu be pending or open at a time, so two right-clicks in quick
@@ -1150,6 +1155,7 @@ impl Menus {
             if matches!(crate::panes::active_nav().active_location(), Location::Path(_)) {
                 list.push((CALC_FOLDER_SIZES, "Calculate folder sizes".to_owned()));
             }
+            list.push((TOOLS_SIZE_MAP, "Size Map".to_owned()));
         }
         list.extend(owned(terminal_items(native)));
         let mut subs = vec![self.copy_path_sub(std::slice::from_ref(&path), list.len())];
@@ -1347,6 +1353,7 @@ impl Menus {
         let mut subs = vec![new_sub(&templates, windows, new_at)];
         *self.menu_templates.borrow_mut() = templates;
         list.push((SEARCH_HERE, "Search in this folder…".to_owned()));
+        list.push((TOOLS_SIZE_MAP, "Size Map".to_owned()));
         list.extend(owned(terminal_items(windows)));
         subs.push(self.copy_path_sub(std::slice::from_ref(&dir), list.len()));
         self.open(Subject::Background(dir.clone()), list, subs, MenuTarget::Background(dir), x, y, at);
@@ -1704,6 +1711,12 @@ impl Menus {
         self.open_slint_entries(&items, Vec::new(), at);
     }
 
+    /// The size map's menu (size_map.rs builds it) at the pointer.
+    pub fn size_map_menu(&self, items: Vec<(u32, String, bool)>, at: Anchor) {
+        *self.subject.borrow_mut() = Some(Subject::SizeMap);
+        self.open_slint_entries(&items, Vec::new(), at);
+    }
+
     /// One of the Info window's ▾ menus (info.rs builds it): `items` under its button.
     pub fn info_menu(&self, items: Vec<(u32, String, bool)>, at: Anchor) {
         *self.subject.borrow_mut() = Some(Subject::Info);
@@ -1891,6 +1904,8 @@ impl Menus {
             (FREE_UP, Subject::Row(path)) => crate::cloud::run(vec![path], false, &crate::panes::active_view()),
             (FREE_UP, Subject::Rows(paths)) => crate::cloud::run(paths, false, &crate::panes::active_view()),
             (id, Subject::Info) => crate::info::with_current(|info| info.menu_chosen(id)),
+            (id, Subject::SizeMap) => crate::size_map::with_current(|map| map.menu_chosen(id)),
+            (TOOLS_SIZE_MAP, Subject::Row(path) | Subject::Background(path)) => crate::size_map::open_at(path),
             (CONVERT, Subject::Row(_) | Subject::Rows(_)) => {
                 let rows = std::mem::take(&mut *self.rows.borrow_mut());
                 crate::convert::with_current(|convert| convert.open(rows));
@@ -2747,6 +2762,7 @@ mod tests {
             SYNC_BROWSING,
             SWAP_PANES,
             SAME_FOLDER,
+            TOOLS_SIZE_MAP,
         ];
         let mut ranges: Vec<std::ops::Range<u32>> = singles.iter().map(|id| *id..id + 1).collect();
         ranges.extend([
@@ -2774,6 +2790,7 @@ mod tests {
             SAVED_SEARCH_FIRST..SAVED_SEARCH_FIRST + SAVED_SEARCH_MAX,
             SAVED_SEARCH_DELETE_FIRST..SAVED_SEARCH_DELETE_FIRST + SAVED_SEARCH_MAX,
             WINDOW_FIRST..WINDOW_FIRST + WINDOW_MAX,
+            crate::size_map::MAP_OPEN..crate::size_map::MAP_COPY_PATH + 1,
         ]);
         for (i, a) in ranges.iter().enumerate() {
             assert!(a.start >= 1 && a.end <= GEZIK_IDS_END, "{a:?}: 1..4096 (0 is a heading, 4096 on the Shell's)");
