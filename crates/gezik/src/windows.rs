@@ -192,14 +192,16 @@ impl Drop for Release {
 }
 
 /// Lets go of every window at the end of main, as main's own handle went before 10g (their
-/// drop is not left to the thread's end; the slots stay as they did).
+/// drop is not left to the thread's end). Each window goes as a closed one does, its slots
+/// too: left to the thread's teardown, a slot's drop (a pane's drive watch) reached thread
+/// locals destroyed already and panicked on every exit.
 pub fn release_all() {
     // The process's parts first, as main's own went before its window did.
     let process = PROCESS.with(|p| p.borrow_mut().take());
     drop(process);
-    let gone = WINDOWS.with(|w| std::mem::take(&mut *w.borrow_mut()));
-    ACTING.with(|a| a.set(None));
-    drop(gone);
+    for id in focus_order() {
+        forget(id);
+    }
 }
 
 /// Window `id` got the keyboard focus: it goes in front.
@@ -1726,6 +1728,22 @@ pub(crate) mod tests {
         assert!(crate::panes::data(pane).is_none());
         assert_eq!(crate::window_state::PENDING.with(Slot::len), 0);
         assert!(weak.upgrade().is_none(), "no strong handle is left: its frame buffer goes");
+    }
+
+    /// Exit panicked: the slots were left to the thread's teardown, where a pane's drop
+    /// reached thread locals destroyed already. Main's end empties them first.
+    #[test]
+    fn main_s_end_leaves_nothing_to_the_thread_s_teardown() {
+        let (a, weak_a) = window();
+        let (b, weak_b) = window();
+        enter(a, crate::panes::next_id);
+        enter(b, crate::panes::next_id);
+        crate::window_state::PENDING.with(|p| p.set(b, (1, 2, 3)));
+        drop(Release);
+        assert!(focus_order().is_empty());
+        assert_eq!(crate::panes::PANES.with(Slot::len), 0, "no pane is left to the teardown");
+        assert_eq!(crate::window_state::PENDING.with(Slot::len), 0);
+        assert!(weak_a.upgrade().is_none() && weak_b.upgrade().is_none());
     }
 
     #[test]
