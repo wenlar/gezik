@@ -26,7 +26,7 @@ pub use task::{
 };
 pub use tasks::{
     CANCELLED, CloudPinTask, CopyTask, DeleteTask, ElevatedTask, Elevator, GroupTask, HashResults, HashRow, HashTask,
-    LinkTask, MAX_CHECKSUM_FILE, MaterializeTask, MoveTask, NEEDS_ADMIN, NOT_AVAILABLE, NOT_SO, NewTask, RenameTask,
-    RestoreTask, RowState, SetAttributesTask, SharedResults, TrashTask, UNCHECKED, Verdict, in_a_bin_folder,
-    trash_path,
+    LinkTask, MAX_CHECKSUM_FILE, MaterializeTask, MoveTask, NEEDS_ADMIN, NOT_AVAILABLE, NOT_SO, NewTask, Pick,
+    RenameTask, RestoreTask, RowState, SetAttributesTask, SharedResults, TrashTask, UNCHECKED, Verdict,
+    in_a_bin_folder, trash_path,
 };

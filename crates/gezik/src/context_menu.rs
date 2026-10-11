@@ -531,11 +531,17 @@ pub const TOOLS_VERIFY: u32 = 2203;
 pub const TOOLS_SIZE_MAP: u32 = 2205;
 /// Tools ▸ Export list… (11h).
 pub const TOOLS_EXPORT_LIST: u32 = 2206;
+/// Tools ▸ Copy to…, Move to…, Split file…, Join files (11i), on rows.
+pub const TOOLS_COPY_TO: u32 = 2207;
+pub const TOOLS_MOVE_TO: u32 = 2208;
+pub const TOOLS_SPLIT: u32 = 2209;
+pub const TOOLS_JOIN: u32 = 2210;
 
 /// `Tools ▸` (spec 11 §3.3) at place `at`: only what applies: Compare for the selection when it
 /// can be compared (`compare`), Calculate checksums… for `rows` (a row menu's) and Verify
 /// checksums for one checksum file, Size Map on one folder or a folder's empty space
-/// (`size_map`), Export list… always.
+/// (`size_map`), Export list… always, then Copy to… and Move to… for `rows`, Split file… for one
+/// file and Join files for one part or `.crc`.
 pub fn tools_sub(at: usize, compare: bool, rows: &[(PathBuf, bool)], size_map: bool) -> Submenu {
     let mut items = Vec::new();
     if compare {
@@ -553,6 +559,7 @@ pub fn tools_sub(at: usize, compare: bool, rows: &[(PathBuf, bool)], size_map: b
         items.push((TOOLS_SIZE_MAP, "Size Map".to_owned(), true));
     }
     items.push((TOOLS_EXPORT_LIST, "Export list…".to_owned(), true));
+    items.extend(crate::copy_to::menu_items(rows).into_iter().map(|(id, title)| (id, title, true)));
     Submenu { title: "Tools".to_owned(), at, items }
 }
 
@@ -2017,6 +2024,18 @@ impl Menus {
                 crate::checksums::open(rows.into_iter().map(|(path, _)| path).collect());
             }
             (TOOLS_VERIFY, Subject::Row(path)) => crate::checksums::verify(path),
+            (TOOLS_COPY_TO..=TOOLS_JOIN, Subject::Row(_) | Subject::Rows(_)) => {
+                let rows = std::mem::take(&mut *self.rows.borrow_mut());
+                let mut paths: Vec<PathBuf> = rows.into_iter().map(|(path, _)| path).collect();
+                match (id, paths.pop()) {
+                    (TOOLS_SPLIT, Some(path)) => crate::copy_to::split_path(path),
+                    (TOOLS_JOIN, Some(path)) => crate::copy_to::join_path(path),
+                    (_, last) => {
+                        paths.extend(last);
+                        crate::copy_to::copy_to_paths(paths, id == TOOLS_MOVE_TO);
+                    }
+                }
+            }
             (EXTRACT_HERE..=COMPRESS_TO, Subject::Row(_) | Subject::Rows(_)) => {
                 let rows = std::mem::take(&mut *self.rows.borrow_mut());
                 let paths: Vec<PathBuf> = rows.iter().map(|(path, _)| path.clone()).collect();
@@ -2416,6 +2435,7 @@ fn from_submenu(id: u32) -> bool {
         || id == TOOLS_COMPARE
         || id == TOOLS_CHECKSUMS
         || id == TOOLS_VERIFY
+        || (TOOLS_COPY_TO..=TOOLS_JOIN).contains(&id)
         || (TEMPLATE_FIRST..TEMPLATE_FIRST + TEMPLATE_MAX).contains(&id)
         || (OPEN_WITH_FIRST..OPEN_WITH_FIRST + OPEN_WITH_MAX).contains(&id)
         || id == OPEN_WITH_OTHER
@@ -2695,12 +2715,25 @@ mod tests {
         assert_eq!(ids, [TOOLS_COMPARE, TOOLS_EXPORT_LIST]);
         assert_eq!(tools_sub(0, false, &[], false).items.len(), 1, "Compare only where it applies");
         let sums = [(PathBuf::from("a.sha256"), false)];
-        let ids: Vec<u32> = tools_sub(0, true, &sums, true).items.iter().map(|(id, _, _)| *id).collect();
+        let all = tools_sub(0, true, &sums, true);
+        let ids: Vec<u32> = all.items.iter().map(|(id, _, _)| *id).collect();
         assert_eq!(
             ids,
-            [TOOLS_COMPARE, TOOLS_CHECKSUMS, TOOLS_VERIFY, TOOLS_SIZE_MAP, TOOLS_EXPORT_LIST],
+            [
+                TOOLS_COMPARE,
+                TOOLS_CHECKSUMS,
+                TOOLS_VERIFY,
+                TOOLS_SIZE_MAP,
+                TOOLS_EXPORT_LIST,
+                TOOLS_COPY_TO,
+                TOOLS_MOVE_TO,
+                TOOLS_SPLIT
+            ],
             "the macOS Tools menu's order"
         );
+        assert_eq!((TOOLS_COPY_TO, TOOLS_MOVE_TO, TOOLS_SPLIT, TOOLS_JOIN), (2207, 2208, 2209, 2210));
+        assert!(all.items.iter().all(|(id, _, _)| (2200..2220).contains(id) && from_submenu(*id)));
+        assert!(from_submenu(TOOLS_JOIN));
         assert_eq!(TOOLS_SIZE_MAP, 2205, "spec 11 §13.3, after Find Duplicates 2204");
         assert!(tools.items.iter().all(|(id, _, _)| (2200..2220).contains(id) && from_submenu(*id)));
     }
@@ -2902,6 +2935,10 @@ mod tests {
             JOB_UP,
             JOB_DOWN,
             JOB_START_NOW,
+            TOOLS_COPY_TO,
+            TOOLS_MOVE_TO,
+            TOOLS_SPLIT,
+            TOOLS_JOIN,
         ];
         let mut ranges: Vec<std::ops::Range<u32>> = singles.iter().map(|id| *id..id + 1).collect();
         ranges.extend([
@@ -2975,7 +3012,7 @@ mod tests {
                 .items
                 .into_iter()
                 .map(|(id, ..)| id)
-                .filter(|id| *id != TOOLS_EXPORT_LIST)
+                .filter(|id| *id < TOOLS_EXPORT_LIST)
                 .collect()
         };
         assert_eq!(ids(&[(PathBuf::from("a.txt"), false)]), [TOOLS_CHECKSUMS]);

@@ -16,6 +16,7 @@ mod extract;
 mod images_pdf;
 mod pdf;
 mod place;
+mod split;
 
 use crate::archive::cancelled;
 use std::fmt;
@@ -36,6 +37,7 @@ use self::extract::ExtractTask;
 pub use self::images_pdf::{ImagesToPdfTask, images_pdf_label};
 pub use self::pdf::{PdfTools, PdfWork, pdf_chain, pdf_label};
 use self::place::PlaceTask;
+pub use self::split::{is_part, join_chain, join_label, split_chain, split_label};
 pub use crate::archive::write::{CompressOptions, Level, OutFormat};
 
 /// Where the extracted files go.

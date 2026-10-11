@@ -1751,6 +1751,7 @@ dependencies = [
  "cab",
  "chardetng",
  "cpio",
+ "crc32fast",
  "encoding_rs",
  "fast_image_resize",
  "flate2",

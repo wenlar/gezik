@@ -497,61 +497,44 @@ pub fn to_other(moving: bool) {
         return;
     }
     let shown = base.clone();
+    let restoring = trash.is_some();
     // `verify`: the question's Verify copies (`None`: as `[files] verify` says).
-    let go = move |target: PathBuf, verify: Option<bool>| {
+    let go = move |target: PathBuf, pick: gezik_ops::Pick, verify: Option<bool>| {
         crate::operations::with_current(|ops| match trash {
             Some(rows) => {
                 let rows = rows.into_iter().map(|(entry, label)| (entry, label.name.into())).collect();
                 ops.restore_from_trash(crate::trash_view::into_folder(&target, rows));
             }
-            None if same_path(&target, &shown) => {
+            None if moving && crate::copy_to::nothing_to_move(&paths, &target) => {
+                panes::active_view().note("Nothing to move: same folder".to_owned());
+            }
+            None if same_path(&target, &shown) && pick.is_empty() => {
                 ops.transfer_verifying(paths, target, if moving { Effect::Move } else { Effect::Copy }, verify);
             }
             None => {
                 // shortcut: one stat per level above a typed folder outside the other pane's, on
                 // the UI thread (a dead network path blocks); move it off the thread if that bites.
                 let anchor = anchor(&target, shown, |path| path.exists());
-                ops.transfer_making(paths, &target, anchor, moving, verify);
+                ops.transfer_making(paths, &target, anchor, moving, pick, verify);
             }
         });
     };
     if !CONFIRM.with(Cell::get) {
-        return go(base, None);
+        return go(base, gezik_ops::Pick::default(), None);
     }
-    // Putting items back from the trash copies nothing to verify.
-    let restoring = source.shows_trash();
     // shortcut: the typed folder is not looked up on disk (no stat on the UI thread): a file by
     // that name fails in the job; check it off the thread if that confuses.
-    let title = question_title(verb, &names, &base);
-    let message = "Into this folder (a relative path is under it; a missing folder is made):";
-    let typed_base = base.clone();
-    let note = move |typed: &str| match typed_target(&typed_base, typed) {
-        None => ("Type a folder".to_owned(), true),
-        Some(target) if same_path(&target, &typed_base) => (String::new(), false),
-        Some(target) => (format!("Into {}", target.display()), false),
+    let question = crate::copy_to::Ask {
+        moving,
+        field: base.display().to_string(),
+        base,
+        dont_ask: Some(dont_ask_again),
+        // Back out of the trash, items go whole and nothing is copied to verify.
+        filter: !restoring,
+        verify: (!restoring).then(crate::copy_to::verify_default),
+        items: names,
     };
-    let field = base.display().to_string();
-    let typed_base = base;
-    crate::operations::with_current(|ops| {
-        let checks = if restoring { Vec::new() } else { vec![("Verify copies".to_owned(), ops.verify_default())] };
-        ops.dialogs().ask_form(
-            title,
-            message,
-            (field, checks),
-            &[verb, "Don't Ask Again", "Cancel"],
-            note,
-            move |answer| {
-                let Some((choice, typed, marks)) = answer else { return };
-                let Some(target) = typed_target(&typed_base, &typed) else {
-                    return panes::active_view().note("No folder was typed".to_owned());
-                };
-                if choice == 1 {
-                    dont_ask_again();
-                }
-                go(target, marks.first().copied());
-            },
-        );
-    });
+    crate::copy_to::ask(question, go);
 }
 
 /// The F5/F6 question's Don't Ask Again: `[panes] confirm = false`, now and in settings.toml.
@@ -570,7 +553,7 @@ fn dont_ask_again() {
 
 /// The folder typed into the F5/F6 question: a relative path is under `base`, `.` and `..`
 /// are worked out. `None` when nothing is typed or the path has no root (Windows `D:x`).
-pub fn typed_target(base: &Path, typed: &str) -> Option<PathBuf> {
+pub(crate) fn typed_target(base: &Path, typed: &str) -> Option<PathBuf> {
     let typed = typed.trim();
     if typed.is_empty() {
         return None;
@@ -593,7 +576,7 @@ pub fn typed_target(base: &Path, typed: &str) -> Option<PathBuf> {
 /// Where the job starts making folders for `target`: the other pane's folder `base` when the
 /// target is under it, else the nearest folder above it that `exists` (the target itself if
 /// it is there); every missing level below it is made.
-fn anchor(target: &Path, base: PathBuf, exists: impl Fn(&Path) -> bool) -> PathBuf {
+pub(crate) fn anchor(target: &Path, base: PathBuf, exists: impl Fn(&Path) -> bool) -> PathBuf {
     if is_within(target, &base) {
         return base;
     }
@@ -631,7 +614,7 @@ pub fn f3_pressed() {
 }
 
 /// The F5/F6 question: `Copy "a.txt" to D:\Yedek?`, `Move 3 items to …?`.
-fn question_title(verb: &str, names: &[PathBuf], base: &Path) -> String {
+pub(crate) fn question_title(verb: &str, names: &[PathBuf], base: &Path) -> String {
     let what = crate::operations::items_text(names);
     let what = if names.len() == 1 { format!("\"{what}\"") } else { what };
     format!("{verb} {what} to {}?", base.display())
