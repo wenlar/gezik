@@ -613,8 +613,20 @@ impl Operations {
         again: Option<Again>,
         after: After,
     ) -> JobId {
+        self.submit_chain_verifying(tasks, label, again, after, None)
+    }
+
+    /// `submit_chain` whose copies are verified as `verify` says (`None`: as `[files] verify`).
+    pub fn submit_chain_verifying(
+        &self,
+        tasks: Vec<Box<dyn Task>>,
+        label: Option<String>,
+        again: Option<Again>,
+        after: After,
+        verify: Option<bool>,
+    ) -> JobId {
         let title = tasks.first().map(|task| task.title()).unwrap_or_default();
-        let id = self.0.engine.submit_chain(tasks, label);
+        let id = self.0.engine.submit_chain_verifying(tasks, label, verify);
         let mut job = JobView::new(id, title);
         crate::panes::with_active(|p| (job.origin, job.pane) = (p.search.results_key(), Some(p.id)));
         job.window = Some(crate::windows::current());

@@ -178,7 +178,7 @@ typing = "jump"           # jump: letters go to a name | filter: letters open th
   (⌘→ / ⌘← on macOS), Delete (marks a one-sided item for the trash), Space (nothing),
   Shift+Space (the mode's choice) and the Direction button change the selected rows; a
   folder's direction goes to everything under it. Synchronize… (Ctrl+Enter, ⌘↩) asks first
-  with the counts and sizes, then runs one job: copies to the right, to the left, then the
+  with the counts and sizes (and Verify copies, from `[files] verify`), then runs one job: copies to the right, to the left, then the
   trash, and Ctrl+Z undoes all of it. A file is replaced only once its new copy is complete
   (the old one goes to the trash); one that changed since the compare is left alone and
   said in the job's Details; nothing goes to the trash if a copy failed. A drive without a

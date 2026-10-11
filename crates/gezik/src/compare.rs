@@ -1042,9 +1042,16 @@ impl FolderCompare {
         let trees = [&done.left, &done.right];
         let emptied = [0, 1].map(|i| strict.trashed[i] > 0 && trees[1 - i].nodes.len() <= 1);
         let roots_of = [&roots.0, &roots.1];
-        // (side, what the box does): 0 replace anyway on that side, 1 empty that side.
+        // (side, what the box does): 0 replace anyway on that side, 1 empty that side, 2 verify
+        // the copies (side unused).
         let mut boxes: Vec<(usize, u8)> = Vec::new();
         let mut checks = Vec::new();
+        if strict.files != [0, 0] || ask_anyway != [false; 2] {
+            let mut verify = false;
+            crate::operations::with_current(|ops| verify = ops.verify_default());
+            boxes.push((0, 2));
+            checks.push(("Verify copies".to_owned(), verify));
+        }
         for i in [1, 0] {
             if ask_anyway[i] {
                 boxes.push((i, 0));
@@ -1076,12 +1083,19 @@ impl FolderCompare {
             if (0..2).any(|i| emptied[i] && !ticked(i, 1)) {
                 return this.say("Not synchronized: the box for the empty folder was not ticked");
             }
-            this.run_sync(planned, bins, [ticked(0, 0), ticked(1, 0)], done);
+            this.run_sync(planned, bins, [ticked(0, 0), ticked(1, 0)], ticked(0, 2), done);
         });
     }
 
     /// The sync the user said yes to: one job, its steps kept to mark the rows when it ends.
-    fn run_sync(&self, planned: crate::sync::Planned, bins: [bool; 2], anyway: [bool; 2], from: Rc<Done>) {
+    fn run_sync(
+        &self,
+        planned: crate::sync::Planned,
+        bins: [bool; 2],
+        anyway: [bool; 2],
+        verify: bool,
+        from: Rc<Done>,
+    ) {
         // Read again or closed meanwhile: these steps belong to another result.
         if !self.0.done.borrow().as_ref().is_some_and(|d| Rc::ptr_eq(d, &from)) || self.0.running.get() {
             return self.say("The compare changed; Synchronize again");
@@ -1095,7 +1109,8 @@ impl FolderCompare {
         let mut id = None;
         crate::operations::with_current(|ops| {
             let label = Some(gezik_ops::sync_label(&left));
-            id = Some(ops.submit_chain(vec![Box::new(task)], label, None, crate::operations::After::Nothing));
+            let after = crate::operations::After::Nothing;
+            id = Some(ops.submit_chain_verifying(vec![Box::new(task)], label, None, after, Some(verify)));
         });
         let Some(id) = id else { return };
         *self.0.syncing.borrow_mut() = Some((id, planned, from));

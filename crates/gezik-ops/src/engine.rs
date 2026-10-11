@@ -659,7 +659,17 @@ impl Engine {
 
     /// One job of `tasks`, run in order, undone as one action (`label`: what Undo says).
     pub fn submit_chain(&self, tasks: Vec<Box<dyn Task>>, label: Option<String>) -> JobId {
-        self.start(tasks.into_iter().map(Arc::from).collect(), Origin::New, label, None)
+        self.submit_chain_verifying(tasks, label, None)
+    }
+
+    /// `submit_chain` whose copies are verified as `verify` says (`None`: as the settings say).
+    pub fn submit_chain_verifying(
+        &self,
+        tasks: Vec<Box<dyn Task>>,
+        label: Option<String>,
+        verify: Option<bool>,
+    ) -> JobId {
+        self.start(tasks.into_iter().map(Arc::from).collect(), Origin::New, label, verify)
     }
 
     /// Starts a job of `tasks` (run in order) on its own thread. `label`: what Undo says
@@ -699,7 +709,7 @@ impl Engine {
             temp: crate::task::TempCopies::new(self.0.pending.clone()),
             staging: Mutex::default(),
         });
-        if origin == Origin::New && matches!(kind, TaskKind::Copy | TaskKind::Move) {
+        if origin == Origin::New && matches!(kind, TaskKind::Copy | TaskKind::Move | TaskKind::Sync) {
             let settings = self.0.settings();
             job.control.verify.store(verify.unwrap_or(settings.verify), Ordering::Relaxed);
             job.control.speed.store(settings.max_speed.unwrap_or(0), Ordering::Relaxed);

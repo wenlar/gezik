@@ -310,8 +310,10 @@ impl Task for SyncTask {
                 if !cx.has_trash(path) {
                     return self.leave(cx, path, NO_BIN, false);
                 }
-                match trash_path(path) {
-                    Ok(trashed) => Ok(Outcome::Trashed { original: path.clone(), trashed }),
+                // Refused by the bin (it would delete for good: `NotRecycled`) or failed: the item
+                // stays, and nothing more goes to the trash on this side.
+                match (self.remove_old)(path, true) {
+                    Ok(outcome) => Ok(outcome),
                     Err(err) => {
                         self.broken(path).store(true, Ordering::SeqCst);
                         Err(err)
@@ -602,6 +604,61 @@ mod tests {
         assert_eq!(report.failures.len(), 1);
         assert_eq!(report.failures[0].message, NESTED);
         assert!(dir.join("a/b/x.txt").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_verified_copy_that_differs_fails_and_holds_back_the_trash() {
+        let dir = test_dir("sync-verify");
+        let (l, r) = (dir.join("L"), dir.join("R"));
+        write(&l.join("a.txt"), "new");
+        write(&r.join("a.txt"), "old");
+        write(&r.join("b.txt"), "only right");
+        let steps = vec![copy(l.join("a.txt"), r.join("a.txt")), trash(r.join("b.txt"))];
+        // Every copy is spoiled after it is written: the first and the one try again differ.
+        let engine = crate::Engine::new(crate::Settings { spoil: 2, ..crate::Settings::default() }, || {});
+        let task = SyncTask::new(l.clone(), r.clone(), steps, [false; 2]);
+        let job = engine.submit_chain_verifying(vec![Box::new(task)], None, Some(true));
+        let (report, _) = finish(&engine, job, no_conflicts);
+        assert_eq!(report.failures.len(), 1, "{:?}", report.failures);
+        assert!(report.failures[0].message.contains("differs"), "{}", report.failures[0].message);
+        assert_eq!(read(&r.join("a.txt")), "old", "the old file stays");
+        assert_eq!(read(&r.join("b.txt")), "only right", "nothing went to the trash");
+        assert_eq!(std::fs::read_dir(&r).unwrap().count(), 2, "no temporary file is left");
+        // Verified and the same: the copy lands.
+        let steps = vec![copy(l.join("a.txt"), r.join("a.txt"))];
+        let task = SyncTask::new(l.clone(), r.clone(), steps, [false; 2]);
+        let engine = crate::testing::engine();
+        let (report, _) =
+            finish(&engine, engine.submit_chain_verifying(vec![Box::new(task)], None, Some(true)), no_conflicts);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert_eq!(read(&r.join("a.txt")), "new");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_bin_that_would_delete_for_good_stops_the_trash_on_that_side_only() {
+        let dir = test_dir("sync-not-recycled");
+        let (l, r) = (dir.join("L"), dir.join("R"));
+        write(&r.join("a.txt"), "a");
+        write(&r.join("b.txt"), "b");
+        write(&l.join("c.txt"), "c");
+        let steps = vec![trash(r.join("a.txt")), trash(r.join("b.txt")), trash(l.join("c.txt"))];
+        let mut task = SyncTask::new(l.clone(), r.clone(), steps, [false; 2]);
+        // The right side's bin refuses (it would delete for good) and leaves the item.
+        task.remove_old = |path, bin| {
+            if path.parent().is_some_and(|p| p.ends_with("R")) {
+                return Err(io::Error::other(fs::NotRecycled));
+            }
+            remove_old(path, bin)
+        };
+        let engine = engine();
+        let (report, _) = finish(&engine, engine.submit(Box::new(task)), no_conflicts);
+        assert_eq!(report.failures.len(), 1, "{:?}", report.failures);
+        assert_eq!(report.skipped.len(), 1);
+        assert_eq!(report.skipped[0].message, BROKEN);
+        assert_eq!((read(&r.join("a.txt")), read(&r.join("b.txt"))), ("a".to_owned(), "b".to_owned()));
+        assert!(!l.join("c.txt").exists(), "the left side's trash still works");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
