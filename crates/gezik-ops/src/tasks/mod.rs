@@ -13,6 +13,7 @@ mod move_;
 mod new;
 mod rename;
 mod restore;
+mod sync;
 mod trash;
 
 pub use attrs::{NEEDS_ADMIN, SetAttributesTask};
@@ -29,6 +30,7 @@ pub use move_::MoveTask;
 pub use new::NewTask;
 pub use rename::RenameTask;
 pub use restore::RestoreTask;
+pub use sync::{Seen, SyncStep, SyncTask, sync_label};
 pub use trash::{TrashTask, trash_path};
 
 use std::io;

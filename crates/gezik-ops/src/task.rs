@@ -96,6 +96,8 @@ pub enum TaskKind {
     Elevated,
     /// Checksums computed or verified (spec 11 §4.3): reads only, never undone.
     Checksum,
+    /// A folder sync (spec 11 §8.2): copies both ways, replaced and trashed files, one undo.
+    Sync,
 }
 
 impl TaskKind {
@@ -124,6 +126,7 @@ impl TaskKind {
             // Its jobs always bring their own label; this is a fallback.
             TaskKind::Elevated => "Do as administrator",
             TaskKind::Checksum => "Compute checksums of",
+            TaskKind::Sync => "Synchronize",
         }
     }
 
