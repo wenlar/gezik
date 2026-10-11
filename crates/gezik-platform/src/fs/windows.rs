@@ -32,9 +32,10 @@ use windows::Win32::System::Com::{
     CLSCTX_ALL, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemFree,
 };
 use windows::Win32::UI::Shell::{
-    FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOCONFIRMMKDIR, FOF_NOERRORUI, FOF_SILENT, FOF_WANTNUKEWARNING,
+    COPYENGINE_E_USER_CANCELLED, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOCONFIRMMKDIR, FOF_NOERRORUI, FOF_SILENT,
     FOFX_EARLYFAILURE, FOFX_RECYCLEONDELETE, FileOperation, IFileOperation, IFileOperationProgressSink,
     IFileOperationProgressSink_Impl, IShellItem, SHCreateItemFromParsingName, SIGDN_FILESYSPATH,
+    TSF_DELETE_RECYCLE_IF_POSSIBLE,
 };
 use windows::core::{HRESULT, HSTRING, PCWSTR, Ref};
 
@@ -468,6 +469,15 @@ pub fn is_hidden_attr(path: &Path) -> bool {
 struct DeleteSink {
     trashed: Rc<RefCell<Option<PathBuf>>>,
     result: Rc<Cell<HRESULT>>,
+    /// The Shell was about to delete the item for good: stopped before it did.
+    refused: Rc<Cell<bool>>,
+}
+
+/// Whether a delete `PreDeleteItem` is told of (by its `TSF_` flags) goes to the Recycle Bin.
+/// The Shell leaves the flag out when the bin would not take the item: set to delete at once
+/// for that drive, or the item is too big for it.
+fn recycles(flags: u32) -> bool {
+    flags & TSF_DELETE_RECYCLE_IF_POSSIBLE.0 as u32 != 0
 }
 
 impl IFileOperationProgressSink_Impl for DeleteSink_Impl {
@@ -518,8 +528,13 @@ impl IFileOperationProgressSink_Impl for DeleteSink_Impl {
     ) -> windows::core::Result<()> {
         Ok(())
     }
-    fn PreDeleteItem(&self, _: u32, _: Ref<IShellItem>) -> windows::core::Result<()> {
-        Ok(())
+    fn PreDeleteItem(&self, flags: u32, _: Ref<IShellItem>) -> windows::core::Result<()> {
+        if recycles(flags) {
+            return Ok(());
+        }
+        // An error here cancels the delete before anything is gone.
+        self.refused.set(true);
+        Err(COPYENGINE_E_USER_CANCELLED.into())
     }
     fn PostDeleteItem(
         &self,
@@ -570,8 +585,8 @@ impl IFileOperationProgressSink_Impl for DeleteSink_Impl {
     }
 }
 
-/// Moves `path` to the Recycle Bin without any Windows dialog, except the one that asks before
-/// deleting an item for good that does not fit in the Recycle Bin.
+/// Moves `path` to the Recycle Bin without any Windows dialog. An item the bin would delete for
+/// good instead (set to delete at once, or too big for it) is left alone: [`super::NotRecycled`].
 pub fn trash(path: &Path) -> io::Result<Option<PathBuf>> {
     // Better no trash than the wrong file (and the Shell refuses `\\?\` paths).
     if !super::can_trash_name(path) {
@@ -590,7 +605,6 @@ pub fn trash(path: &Path) -> io::Result<Option<PathBuf>> {
                     | FOF_SILENT
                     | FOF_NOERRORUI
                     | FOF_NOCONFIRMMKDIR
-                    | FOF_WANTNUKEWARNING
                     | FOFX_RECYCLEONDELETE
                     | FOFX_EARLYFAILURE,
             )
@@ -598,9 +612,15 @@ pub fn trash(path: &Path) -> io::Result<Option<PathBuf>> {
         let item: IShellItem = SHCreateItemFromParsingName(&HSTRING::from(path.as_os_str()), None).map_err(io_error)?;
         let trashed = Rc::new(RefCell::new(None));
         let result = Rc::new(Cell::new(S_OK));
-        let sink: IFileOperationProgressSink = DeleteSink { trashed: trashed.clone(), result: result.clone() }.into();
+        let refused = Rc::new(Cell::new(false));
+        let sink: IFileOperationProgressSink =
+            DeleteSink { trashed: trashed.clone(), result: result.clone(), refused: refused.clone() }.into();
         operation.DeleteItem(&item, &sink).map_err(io_error)?;
-        operation.PerformOperations().map_err(io_error)?;
+        let performed = operation.PerformOperations();
+        if refused.get() {
+            return Err(io::Error::other(super::NotRecycled));
+        }
+        performed.map_err(io_error)?;
         if operation.GetAnyOperationsAborted().map_err(io_error)?.as_bool() {
             return Err(cancelled());
         }
@@ -791,6 +811,17 @@ mod tests {
 
     fn wide(text: &str) -> Vec<u16> {
         text.encode_utf16().collect()
+    }
+
+    #[test]
+    fn only_a_delete_flagged_for_the_bin_goes_ahead() {
+        assert!(recycles(TSF_DELETE_RECYCLE_IF_POSSIBLE.0 as u32));
+        assert!(recycles(TSF_DELETE_RECYCLE_IF_POSSIBLE.0 as u32 | 0x1), "other flags do not matter");
+        assert!(!recycles(0), "no flag: deleted for good, so refused");
+        assert!(!recycles(0x1 | 0x40));
+        let refused = io::Error::other(super::super::NotRecycled);
+        assert!(super::super::is_not_recycled(&refused));
+        assert!(!super::super::is_not_recycled(&io::Error::other("x")));
     }
 
     #[test]

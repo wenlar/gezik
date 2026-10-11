@@ -381,13 +381,16 @@ enum OldTarget {
 /// item, or Gezik stopping meanwhile, puts it back.
 fn replace_target(shared: &Shared, job: &Job, cx: &RunCx<'_>, target: &Path) -> io::Result<OldTarget> {
     if shared.has_trash(target) {
-        return Ok(match fs::trash(target)? {
-            Some(trashed) => OldTarget::Trashed(trashed),
-            None => {
+        match fs::trash(target) {
+            Ok(Some(trashed)) => return Ok(OldTarget::Trashed(trashed)),
+            Ok(None) => {
                 job.outcome(Outcome::Deleted { path: target.to_path_buf() });
-                OldTarget::Gone
+                return Ok(OldTarget::Gone);
             }
-        });
+            // The bin would have deleted it for good: set aside, as on a drive without one.
+            Err(err) if fs::is_not_recycled(&err) => {}
+            Err(err) => return Err(err),
+        }
     }
     let aside = cx.aside_name(target);
     cx.note_aside(&[(aside.clone(), target.to_path_buf())]);

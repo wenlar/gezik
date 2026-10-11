@@ -2072,11 +2072,16 @@ fn trash_only_note(trash_only: bool, paths: &[PathBuf]) -> Option<String> {
     })
 }
 
-/// Why `paths` cannot go to the trash (`bin`): their drive has none, or (Windows) their
-/// names end in a dot or a space.
+/// Why `paths` cannot go to the trash (`bin`): their drive has none, the bin would delete them
+/// for good (Windows: set to, or too big for it), or (Windows) their names end in a dot or a space.
 fn no_trash_reason(paths: &[PathBuf], bin: &str) -> String {
     let named = paths.iter().filter(|path| !gezik_platform::fs::can_trash_name(path)).count();
-    if named == 0 {
+    let has_bin = |path: &PathBuf| {
+        path.symlink_metadata().is_ok() && gezik_platform::fs::drive_facts(path).is_ok_and(|facts| facts.trash)
+    };
+    if named == 0 && paths.iter().any(has_bin) {
+        format!("The {bin} would delete them for good: it is set to, or they are too big for it.")
+    } else if named == 0 {
         format!("This drive has no {bin}.")
     } else if named == paths.len() {
         format!("The {bin} cannot take names that end in a dot or a space.")
@@ -2153,6 +2158,12 @@ mod tests {
                 "The Recycle Bin cannot take names that end in a dot or a space."
             );
             assert!(no_trash_reason(&[dotted, PathBuf::from(r"E:\a")], bin).starts_with("Some are"));
+            // On a drive with a bin, the bin refused it.
+            let file = std::env::temp_dir().join(format!("gezik-no-trash-reason-{}", std::process::id()));
+            std::fs::write(&file, "x").unwrap();
+            let reason = no_trash_reason(std::slice::from_ref(&file), bin);
+            let _ = std::fs::remove_file(&file);
+            assert!(reason.starts_with("The Recycle Bin would delete them for good"), "{reason}");
         }
     }
 
