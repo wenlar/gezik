@@ -249,6 +249,7 @@ impl Checksums {
         window_ref.set_tool_field_text(expected.map(|(_, hex)| hex).unwrap_or_default().into());
         window_ref.set_tool_field_focused(false);
         window_ref.set_tool_scroll(0.0);
+        window_ref.set_tool_cursor(-1);
         window_ref.set_tool_rows(ModelRc::from(layer.model.clone()));
         let labels: Vec<SharedString> = buttons(verify).iter().map(|b| SharedString::from(*b)).collect();
         window_ref.set_tool_buttons(ModelRc::new(VecModel::from(labels)));
@@ -291,7 +292,17 @@ impl Checksums {
             let on = self.algos.get();
             Algo::ALL.iter().map(|a| ToolToggle { label: a.name().into(), checked: on[a.index()] }).collect()
         };
-        window.set_tool_toggles(ModelRc::new(VecModel::from(toggles)));
+        // Changed in place: a new model would rebuild the boxes and drop the keyboard's one.
+        let current = window.get_tool_toggles();
+        if current.row_count() == toggles.len() {
+            for (i, toggle) in toggles.into_iter().enumerate() {
+                if current.row_data(i).as_ref() != Some(&toggle) {
+                    current.set_row_data(i, toggle);
+                }
+            }
+        } else {
+            window.set_tool_toggles(ModelRc::new(VecModel::from(toggles)));
+        }
     }
 
     /// Box `i`: an algorithm, or verify's filter.
@@ -410,6 +421,10 @@ impl Checksums {
         }
         *self.shown.borrow_mut() = shown;
         self.model.set_vec(rows);
+        // The shown rows changed: the cursor starts again from the first.
+        if let Some(window) = self.window.upgrade() {
+            window.set_tool_cursor(-1);
+        }
         self.show_summary();
     }
 
@@ -548,7 +563,20 @@ impl Checksums {
                 }
             }
         }
+        if let Some(window) = self.window.upgrade() {
+            window.set_tool_cursor(i);
+        }
         self.show_selection();
+    }
+
+    /// An arrow, page or Home/End key on the rows: the row it reaches alone, with Shift the
+    /// span from the anchor.
+    fn step(&self, key: Key, shift: bool) {
+        let Some(window) = self.window.upgrade() else { return };
+        let len = self.shown.borrow().len();
+        if let Some(to) = stepped(key, usize::try_from(window.get_tool_cursor()).ok(), len) {
+            self.pressed(i32::try_from(to).unwrap_or(0), false, shift);
+        }
     }
 
     fn select_all(&self) {
@@ -698,12 +726,17 @@ impl Checksums {
         self.ask_and_write("Export CSV", message, initial, vec![(String::new(), text.into_bytes())]);
     }
 
-    /// Esc closes and Ctrl+C / Ctrl+A (⌘ on macOS) copy and select, unless the Expected field
-    /// has the keyboard; returns whether the key was used.
+    /// Esc closes; Ctrl+C / Ctrl+A (⌘ on macOS) copy and select and the arrow, page and Home/End
+    /// keys move the row cursor, unless the Expected field has the keyboard. Whether it was used.
     pub fn chord(&self, chord: &Chord, field_focused: bool) -> bool {
         let primary = crate::keys::is_primary(chord, Platform::current());
         match chord.key {
             Key::Escape if !primary && !chord.shift && !chord.alt => self.close(),
+            Key::Up | Key::Down | Key::PageUp | Key::PageDown | Key::Home | Key::End
+                if !field_focused && !primary && !chord.alt =>
+            {
+                self.step(chord.key, chord.shift)
+            }
             Key::Char('c') if primary && !chord.shift && !field_focused => self.copy(),
             Key::Char('a') if primary && !chord.shift && !field_focused => self.select_all(),
             _ => return false,
@@ -726,6 +759,22 @@ impl Checksums {
             }
         }
     }
+}
+
+/// The shown row a key moves the cursor to (`at`: where it is; none yet: the first), within
+/// `len` rows; a page is 10 rows.
+fn stepped(key: Key, at: Option<usize>, len: usize) -> Option<usize> {
+    let last = len.checked_sub(1)?;
+    let Some(at) = at else { return Some(if key == Key::End { last } else { 0 }) };
+    Some(match key {
+        Key::Up => at.saturating_sub(1),
+        Key::Down => (at + 1).min(last),
+        Key::PageUp => at.saturating_sub(10),
+        Key::PageDown => (at + 10).min(last),
+        Key::Home => 0,
+        Key::End => last,
+        _ => return None,
+    })
 }
 
 fn window_expected(window: &slint::Weak<AppWindow>) -> String {
@@ -771,6 +820,20 @@ mod tests {
             state: RowState::Done,
             online: false,
         }
+    }
+
+    #[test]
+    fn keys_move_the_cursor_within_the_rows() {
+        assert_eq!(stepped(Key::Down, None, 5), Some(0), "the first row first");
+        assert_eq!(stepped(Key::End, None, 5), Some(4));
+        assert_eq!(stepped(Key::Down, Some(4), 5), Some(4));
+        assert_eq!(stepped(Key::Up, Some(0), 5), Some(0));
+        assert_eq!(stepped(Key::PageDown, Some(1), 30), Some(11));
+        assert_eq!(stepped(Key::PageDown, Some(25), 30), Some(29));
+        assert_eq!(stepped(Key::PageUp, Some(5), 30), Some(0));
+        assert_eq!(stepped(Key::Home, Some(7), 30), Some(0));
+        assert_eq!(stepped(Key::Down, None, 0), None, "no rows");
+        assert_eq!(stepped(Key::Left, Some(1), 5), None);
     }
 
     #[test]

@@ -641,6 +641,7 @@ export component AppWindow inherits Window {
     in-out property <bool> tool-field-focused;
     in property <string> tool-columns;
     in property <[ToolRow]> tool-rows;
+    in property <int> tool-cursor: -1;
     in property <string> tool-summary;
     in property <int> tool-summary-tone;
     in property <[string]> tool-buttons;
@@ -1465,6 +1466,7 @@ export component AppWindow inherits Window {
             field-focused <=> root.tool-field-focused;
             columns: root.tool-columns;
             rows: root.tool-rows;
+            cursor: root.tool-cursor;
             summary: root.tool-summary;
             summary-tone: root.tool-summary-tone;
             buttons: root.tool-buttons;

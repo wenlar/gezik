@@ -40,12 +40,22 @@ export component ToolTable inherits Rectangle {
     // The titles of the fixed-width part, padded like the rows' values.
     in property <string> columns;
     in property <[ToolRow]> rows;
+    // The row the arrow keys are at (-1: none); kept in view.
+    in property <int> cursor: -1;
     in property <string> summary;
     // 0 plain, 1 good, 2 bad.
     in property <int> summary-tone;
     // The last one is the close button.
     in property <[string]> buttons;
     in-out property <length> scroll;
+    // Tab and Shift+Tab stay inside: the boxes, the field, the rows, the buttons, round again.
+    // `at` is the place that has the keyboard; `want` and `want-seq` move it.
+    property <int> field-at: root.toggles.length;
+    property <int> list-at: root.field-at + (root.field-label != "" ? 1 : 0);
+    property <int> places: root.list-at + 1 + root.buttons.length;
+    property <int> at: root.list-at;
+    property <int> want: -1;
+    property <int> want-seq;
     callback toggle(int);
     callback field-edited();
     callback pressed(int, bool, bool);
@@ -58,6 +68,14 @@ export component ToolTable inherits Rectangle {
             scope.focus();
         }
     }
+    changed cursor => {
+        let top = root.cursor * Theme.row-height;
+        if root.cursor >= 0 && top < -root.scroll {
+            root.scroll = -top;
+        } else if root.cursor >= 0 && top + Theme.row-height > -root.scroll + list.visible-height {
+            root.scroll = -(top + Theme.row-height - list.visible-height);
+        }
+    }
     changed focus-request => {
         if !root.dialog-open {
             scope.focus();
@@ -67,134 +85,188 @@ export component ToolTable inherits Rectangle {
     background: Theme.overlay;
     // Clicks outside the box go nowhere.
     TouchArea { }
-
-    Rectangle {
-        width: min(1100px, root.width - 48px);
-        height: min(640px, root.height - 48px);
-        x: (root.width - self.width) / 2;
-        y: max(24px, (root.height - self.height) / 3);
-        background: Theme.surface-raised;
-        border-radius: Theme.radius * 1.5;
-        border-width: 1px;
-        border-color: Theme.border;
-        accessible-role: groupbox;
-        accessible-label: root.title;
-
-        VerticalLayout {
-            padding: Theme.spacing * 3;
-            spacing: Theme.spacing * 1.5;
-
-            HorizontalLayout {
-                spacing: Theme.spacing * 2;
-                Text {
-                    text: root.title;
-                    font-weight: 600;
-                    overflow: elide;
-                    vertical-alignment: center;
-                    color: Theme.foreground;
-                }
-                for toggle[i] in root.toggles: Check {
-                    text: toggle.label;
-                    checked: toggle.checked;
-                    toggled => { root.toggle(i); }
-                }
+    // Sees Tab before the place that has the keyboard: the window behind never gets it.
+    trap := FocusScope {
+        capture-key-pressed(event) => {
+            if event.text == Key.Tab || event.text == Key.Backtab {
+                let back = event.text == Key.Backtab || event.modifiers.shift;
+                root.want = Math.mod(root.at + (back ? root.places - 1 : 1), root.places);
+                root.want-seq += 1;
+                return accept;
             }
-            if root.field-label != "": HorizontalLayout {
-                spacing: Theme.spacing;
-                Text {
-                    text: root.field-label;
-                    vertical-alignment: center;
-                    color: Theme.foreground-muted;
-                }
-                TextField {
-                    text <=> root.field-text;
-                    edited => { root.field-edited(); }
-                    changed has-focus => { root.field-focused = self.has-focus; }
-                }
-            }
+            return reject;
+        }
 
-            header := HorizontalLayout {
-                property <length> name-width: (self.width - 120px) * 0.3;
-                padding-left: Theme.spacing;
-                padding-right: 10px;
-                spacing: Theme.spacing * 2;
-                Text { text: "Name"; width: header.name-width; color: Theme.foreground-muted; }
-                Text {
-                    text: root.columns;
-                    font-family: root.mono-font;
-                    overflow: elide;
-                    color: Theme.foreground-muted;
-                }
-                Text { text: "Status"; width: 110px; color: Theme.foreground-muted; }
-            }
-            Rectangle { height: 1px; background: Theme.border; }
+        Rectangle {
+            width: min(1100px, root.width - 48px);
+            height: min(640px, root.height - 48px);
+            x: (root.width - self.width) / 2;
+            y: max(24px, (root.height - self.height) / 3);
+            background: Theme.surface-raised;
+            border-radius: Theme.radius * 1.5;
+            border-width: 1px;
+            border-color: Theme.border;
+            accessible-role: groupbox;
+            accessible-label: root.title;
 
-            scope := FocusScope {
-                vertical-stretch: 1;
-                ListView {
-                    content-y <=> root.scroll;
-                    for row[i] in root.rows: line := Rectangle {
-                        property <color> fg: row.selected ? Theme.selection-foreground : Theme.foreground;
-                        height: Theme.row-height;
-                        background: row.selected ? Theme.selection : touch.has-hover ? Theme.hover : transparent;
-                        accessible-role: list-item;
-                        accessible-label: row.name;
-                        accessible-value: row.values;
-                        accessible-description: row.status;
-                        accessible-item-selectable: true;
-                        accessible-item-selected: row.selected;
-                        accessible-item-index: i;
+            VerticalLayout {
+                padding: Theme.spacing * 3;
+                spacing: Theme.spacing * 1.5;
 
-                        touch := TouchArea {
-                            pointer-event(event) => {
-                                if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
-                                    scope.focus();
-                                    root.pressed(i, event.modifiers.control || event.modifiers.meta, event.modifiers.shift);
-                                }
-                            }
+                HorizontalLayout {
+                    spacing: Theme.spacing * 2;
+                    Text {
+                        text: root.title;
+                        font-weight: 600;
+                        overflow: elide;
+                        vertical-alignment: center;
+                        color: Theme.foreground;
+                    }
+                    // Each box takes the keyboard (Tab) and toggles with Space or Enter.
+                    for toggle[i] in root.toggles: Rectangle {
+                        property <int> wanted: root.want == i ? root.want-seq : -1;
+                        changed wanted => { if self.wanted >= 0 { keys.focus(); } }
+                        min-width: box.min-width + 8px;
+                        height: box.height;
+                        border-radius: Theme.radius;
+                        border-width: keys.has-focus ? Theme.focus-width : 0px;
+                        border-color: Theme.focus-ring;
+                        box := Check {
+                            x: 4px;
+                            accessible-role: none;
+                            text: toggle.label;
+                            checked: toggle.checked;
+                            toggled => { root.toggle(i); }
                         }
-                        HorizontalLayout {
-                            padding-left: Theme.spacing;
-                            spacing: Theme.spacing * 2;
-                            Text {
-                                text: row.name;
-                                width: header.name-width;
-                                vertical-alignment: center;
-                                overflow: elide;
-                                color: line.fg;
-                            }
-                            Text {
-                                text: row.values;
-                                font-family: root.mono-font;
-                                vertical-alignment: center;
-                                overflow: elide;
-                                color: line.fg;
-                            }
-                            Text {
-                                text: row.status;
-                                width: 110px;
-                                vertical-alignment: center;
-                                overflow: elide;
-                                color: row.tone == 1 ? Theme.success : row.tone == 2 ? Theme.danger : line.fg;
+                        keys := FocusScope {
+                            changed has-focus => { if self.has-focus { root.at = i; } }
+                            accessible-role: checkbox;
+                            accessible-label: toggle.label;
+                            accessible-checked: toggle.checked;
+                            accessible-action-default => { root.toggle(i); }
+                            key-pressed(event) => {
+                                if event.text == " " || event.text == Key.Return {
+                                    root.toggle(i);
+                                    return accept;
+                                }
+                                return reject;
                             }
                         }
                     }
                 }
-            }
-
-            Text {
-                text: root.summary;
-                wrap: word-wrap;
-                color: root.summary-tone == 1 ? Theme.success : root.summary-tone == 2 ? Theme.danger : Theme.foreground-muted;
-            }
-            HorizontalLayout {
-                spacing: Theme.spacing;
-                for label[k] in root.buttons: TextButton {
-                    text: label;
-                    primary: k == root.buttons.length - 1;
-                    clicked => { root.button(k); }
+                if root.field-label != "": HorizontalLayout {
+                    spacing: Theme.spacing;
+                    Text {
+                        text: root.field-label;
+                        vertical-alignment: center;
+                        color: Theme.foreground-muted;
+                    }
+                    field := TextField {
+                        property <int> wanted: root.want == root.field-at ? root.want-seq : -1;
+                        changed wanted => { if self.wanted >= 0 { field.focus(); } }
+                        accessible-label: root.field-label;
+                        text <=> root.field-text;
+                        edited => { root.field-edited(); }
+                        changed has-focus => {
+                            root.field-focused = self.has-focus;
+                            if self.has-focus { root.at = root.field-at; }
+                        }
+                    }
                 }
-                Rectangle { horizontal-stretch: 1; }
+
+                header := HorizontalLayout {
+                    property <length> name-width: (self.width - 120px) * 0.3;
+                    padding-left: Theme.spacing;
+                    padding-right: 10px;
+                    spacing: Theme.spacing * 2;
+                    Text { text: "Name"; width: header.name-width; color: Theme.foreground-muted; }
+                    Text {
+                        text: root.columns;
+                        font-family: root.mono-font;
+                        overflow: elide;
+                        color: Theme.foreground-muted;
+                    }
+                    Text { text: "Status"; width: 110px; color: Theme.foreground-muted; }
+                }
+                Rectangle { height: 1px; background: Theme.border; }
+
+                scope := FocusScope {
+                    property <int> wanted: root.want == root.list-at ? root.want-seq : -1;
+                    changed wanted => { if self.wanted >= 0 { scope.focus(); } }
+                    changed has-focus => { if self.has-focus { root.at = root.list-at; } }
+                    vertical-stretch: 1;
+                    accessible-role: AccessibleRole.list;
+                    accessible-label: root.title;
+                    list := ListView {
+                        content-y <=> root.scroll;
+                        for row[i] in root.rows: line := Rectangle {
+                            property <color> fg: row.selected ? Theme.selection-foreground : Theme.foreground;
+                            height: Theme.row-height;
+                            background: row.selected ? Theme.selection : touch.has-hover ? Theme.hover : transparent;
+                            border-width: i == root.cursor && scope.has-focus ? Theme.focus-width : 0px;
+                            border-color: Theme.focus-ring;
+                            accessible-role: list-item;
+                            accessible-label: row.name;
+                            accessible-value: row.values;
+                            accessible-description: row.status;
+                            accessible-item-selectable: true;
+                            accessible-item-selected: row.selected;
+                            accessible-item-index: i;
+
+                            touch := TouchArea {
+                                pointer-event(event) => {
+                                    if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                                        scope.focus();
+                                        root.pressed(i, event.modifiers.control || event.modifiers.meta, event.modifiers.shift);
+                                    }
+                                }
+                            }
+                            HorizontalLayout {
+                                padding-left: Theme.spacing;
+                                spacing: Theme.spacing * 2;
+                                Text {
+                                    text: row.name;
+                                    width: header.name-width;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                    color: line.fg;
+                                }
+                                Text {
+                                    text: row.values;
+                                    font-family: root.mono-font;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                    color: line.fg;
+                                }
+                                Text {
+                                    text: row.status;
+                                    width: 110px;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                    color: row.tone == 1 ? Theme.success : row.tone == 2 ? Theme.danger : line.fg;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Text {
+                    text: root.summary;
+                    wrap: word-wrap;
+                    color: root.summary-tone == 1 ? Theme.success : root.summary-tone == 2 ? Theme.danger : Theme.foreground-muted;
+                }
+                HorizontalLayout {
+                    spacing: Theme.spacing;
+                    for label[k] in root.buttons: button := TextButton {
+                        property <int> wanted: root.want == root.list-at + 1 + k ? root.want-seq : -1;
+                        changed wanted => { if self.wanted >= 0 { button.focus(); } }
+                        changed has-focus => { if self.has-focus { root.at = root.list-at + 1 + k; } }
+                        text: label;
+                        primary: k == root.buttons.length - 1;
+                        clicked => { root.button(k); }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                }
             }
         }
     }
