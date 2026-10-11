@@ -629,6 +629,17 @@ Numbers stay as they are when branches merge (see 10b). 10g starts at 260 as its
 269. **Retina memory.** On the Retina screen, note Activity Monitor's memory with one window, then with a second full-size window, then after closing it (spec: framebuffer ≈ width × height × 4 × 4 + 2.5 MB).
 270. **Focus order.** Three windows: click them in the order 1, 3, 2, then `open -a` / `gezik <folder>`: it opens in 2. Hide Gezik (⌘H) and show it: the same window is in front. Quick Look (Space) in one window, then Space in the other: the first one's closes, one Quick Look at a time. Scrolling with the trackpad over the window behind scrolls that window, not the one in front.
 
+### 11g, size map
+
+Numbers stay as they are when branches merge (see 10b). 11g starts at 297 as its plan decided. Results go to `macos-test-results.md`.
+
+297. **Tests first.** `cargo test -p gezik-core treemap`, `cargo test -p gezik-search size`, `cargo test -p gezik size_map`; paste the output.
+298. **Open.** Tools ▸ Size Map in the menu bar with a folder selected (and the ⌘⇧P palette's `Size Map`, a folder row's right-click `Size Map`, a folder's empty space `Size Map`): a layer with nested boxes; while it scans the boxes grow (at most twice a second) and the status line says `Scanning…`; at the end it says `<size> · <n> files · <n> folders`. Esc while it scans: `Stopped`; Esc again closes it.
+299. **Look on Retina.** Folders are tones of the accent colour, pictures green, video red, sound purple, documents blue, archives orange, the rest and `N small items` grey; box edges are sharp on the Retina screen (write if they look blurred or doubled); labels (`name  size`) only in boxes big enough, readable in light and dark. Resize the window: the map lays out again at once.
+300. **Zoom and keys.** Click a folder box: the map zooms into it (no new scan: the status line never says `Scanning…`), the path at the top follows; Up, ⌫ and ⌥↑ go back out (not above the folder it opened on). Arrow keys move a frame between boxes, the status line names the framed one (`path · size · n files · 12% of <folder>`); Return on a folder: the pane goes there and the map closes; on a file: the pane shows its folder with it selected. Double-click a folder box: the pane goes to that folder. ⌘R / F5 scans again.
+301. **Menu.** Right-click a box: Open, Show in Pane, Move to Trash, Copy Path. Move to Trash: the box goes at once, the file is in the Trash, ⌘Z brings it back (the map does not: F5). Copy Path: the path is on the clipboard.
+302. **Sizes kept.** After a map of a folder, close it and look at the list with folder sizes on: the folders under it show their sizes without `Calculating`. Map `/` (or the startup disk in the computer root): it stays on the startup volume (no `/System/Volumes/Data` twice, no other disks), and Activity Monitor's memory goes back to within 0.3 MB of before after closing the map (write both numbers).
+
 ## Known gaps (not bugs)
 
 These are known differences from Finder and ForkLift (from the ForkLift comparison, §3). Don't report them as failures. A note is welcome if one hurts more than expected.

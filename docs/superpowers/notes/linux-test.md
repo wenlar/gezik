@@ -588,6 +588,14 @@ Numbers stay as they are when branches merge (see 10b). 10g starts at 200 as its
 205. **Second launch and session.** As macOS 267–268 (`gezik <folder>` from a terminal; FileManager1 "Show in folder" from a browser's downloads opens in the window used last).
 206. **Focus order.** As macOS 270 with Gezik's own menus (`gezik <folder>` from a terminal); on Wayland write whether the window used last really gets the folder (the compositor may not say which window has the focus).
 
+### 11g, size map
+
+Numbers stay as they are when branches merge (see 10b). 11g starts at 223 as its plan decided. GNOME and KDE, X11 and Wayland.
+
+223. **Tests first.** As macOS 297; paste.
+224. **Open, look, zoom, keys, menu.** As macOS 298–301 with the palette (Ctrl+Shift+P `Size Map`) and the right-click `Size Map` (no menu bar), Backspace / Alt+Up for ⌫ / ⌥↑, Ctrl+R / F5, Move to Trash going to `~/.local/share/Trash`; on a 2× scale screen the box edges stay sharp.
+225. **Root.** Map `/`: it stays on the root file system (no `/proc`, `/sys`, `/dev`, `/run` or other mounts), finishes, and memory (`ps -o rss= -p $(pgrep -x gezik)`) goes back to within 0.3 MB of before after closing (write both numbers).
+
 ## Known gaps (not bugs)
 
 - **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (F5 works it out again). Search results and the flat view show no folder sizes.
