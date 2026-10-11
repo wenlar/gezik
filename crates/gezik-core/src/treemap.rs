@@ -333,8 +333,8 @@ pub fn layout(tree: &SizeTree, focus: u32, area: Rect) -> Vec<Tile> {
         let inner = Rect { x: rect.x + 2.0, y: rect.y + top, w: rect.w - 4.0, h: rect.h - top - 2.0 };
         let budget = MAX_TILES - tiles.len();
         let items = level_items(tree, id);
-        // Only its own files: one block over the folder would say nothing more.
-        if inner.w < 8.0 || inner.h < 8.0 || budget < 2 || items.len() < 2 {
+        // A folder of files only still shows its grey files block inside it.
+        if inner.w < 8.0 || inner.h < 8.0 || budget < 2 || items.is_empty() {
             continue;
         }
         tiles.extend(place(items, inner, budget).into_iter().map(|t| tile(t, 1)));
@@ -348,18 +348,28 @@ pub fn hit(tiles: &[Tile], x: f32, y: f32) -> Option<usize> {
 }
 
 /// The rectangle of the same depth nearest to `from` in the direction `dx`, `dy` (one of
-/// them 0, the other ±1): the arrow keys.
+/// them 0, the other ±1): the arrow keys. Only one beyond `from`'s edge that way and beside
+/// it across (sharing some of its width for ↑↓, of its height for ←→); none: `None`.
 pub fn neighbor(tiles: &[Tile], from: usize, dx: f32, dy: f32) -> Option<usize> {
-    let here = tiles.get(from)?;
-    let (fx, fy) = here.rect.center();
+    const EDGE: f32 = 0.5;
+    let here = tiles.get(from)?.rect;
+    let (fx, fy) = here.center();
     tiles
         .iter()
         .enumerate()
-        .filter(|(i, t)| *i != from && t.depth == here.depth)
+        .filter(|(i, t)| *i != from && t.depth == tiles[from].depth)
         .filter_map(|(i, t)| {
-            let (cx, cy) = t.rect.center();
-            let (ahead, aside) = ((cx - fx) * dx + (cy - fy) * dy, ((cx - fx) * dy).abs() + ((cy - fy) * dx).abs());
-            (ahead > 0.5).then_some((i, ahead + 2.0 * aside))
+            let r = t.rect;
+            let (gap, overlap) = if dx != 0.0 {
+                let gap = if dx > 0.0 { r.x - (here.x + here.w) } else { here.x - (r.x + r.w) };
+                (gap, r.y.max(here.y) < (r.y + r.h).min(here.y + here.h) - EDGE)
+            } else {
+                let gap = if dy > 0.0 { r.y - (here.y + here.h) } else { here.y - (r.y + r.h) };
+                (gap, r.x.max(here.x) < (r.x + r.w).min(here.x + here.w) - EDGE)
+            };
+            let (cx, cy) = r.center();
+            let aside = ((cx - fx) * dy).abs() + ((cy - fy) * dx).abs();
+            (gap > -EDGE && overlap).then_some((i, gap.max(0.0) + aside))
         })
         .min_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(i, _)| i)
@@ -464,11 +474,12 @@ mod tests {
         assert_eq!(top.len(), 3, "a, the file, b");
         assert!(matches!(top[0], What::Folder(_)) && top[1] == What::File(0));
         let nested: Vec<What> = tiles.iter().filter(|t| t.depth == 1).map(|t| t.what).collect();
-        assert_eq!(nested.len(), 3, "a's two folders and its files: {nested:?}");
-        assert!(nested.iter().any(|w| matches!(w, What::Files(_))));
+        assert_eq!(nested.len(), 4, "a's two folders and its files, b's files: {nested:?}");
+        assert_eq!(nested.iter().filter(|w| matches!(w, What::Files(_))).count(), 2);
         // A nested item lies inside its folder, under the label.
         let a = tiles[0].rect;
-        for t in tiles.iter().filter(|t| t.depth == 1) {
+        // a's items come first after the top level.
+        for t in &tiles[3..6] {
             assert!(t.rect.x >= a.x && t.rect.y >= a.y + LABEL_H - 0.01 && t.rect.x + t.rect.w <= a.x + a.w + 0.01);
         }
         assert_eq!(hit(&tiles, a.x + a.w / 2.0, a.y + 5.0), Some(0), "the label strip is the folder's");
@@ -524,6 +535,27 @@ mod tests {
         };
         assert_eq!(names(&a), names(&b));
         assert_eq!(layout(&a, 0, AREA), layout(&a, 0, AREA));
+    }
+
+    #[test]
+    fn a_folder_of_files_only_shows_its_files_block() {
+        let t = tree(&[("many", 500, &[])], &[]);
+        let tiles = layout(&t, 0, AREA);
+        assert_eq!(tiles.len(), 2, "{tiles:?}");
+        assert!(matches!(tiles[1].what, What::Files(_)) && tiles[1].depth == 1);
+    }
+
+    #[test]
+    fn an_arrow_with_nothing_that_way_does_nothing() {
+        let tile = |x, y, w, h| Tile { rect: Rect { x, y, w, h }, what: What::Small(1), depth: 0, bytes: 1 };
+        // A full-height tile on the left, a column of two on the right.
+        let tiles = [tile(0.0, 0.0, 60.0, 100.0), tile(60.0, 0.0, 40.0, 50.0), tile(60.0, 50.0, 40.0, 50.0)];
+        assert_eq!(neighbor(&tiles, 0, 0.0, 1.0), None, "nothing below the full-height tile");
+        assert_eq!(neighbor(&tiles, 0, 0.0, -1.0), None);
+        assert_eq!(neighbor(&tiles, 0, 1.0, 0.0), Some(1));
+        assert_eq!(neighbor(&tiles, 1, 0.0, 1.0), Some(2));
+        assert_eq!(neighbor(&tiles, 2, -1.0, 0.0), Some(0));
+        assert_eq!(neighbor(&tiles, 2, 0.0, 1.0), None);
     }
 
     #[test]
