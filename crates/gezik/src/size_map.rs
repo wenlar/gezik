@@ -73,6 +73,8 @@ fn open(view: &View, folder: PathBuf) {
         tiles: RefCell::default(),
         current: Cell::new(None),
         zoomed: Cell::new(false),
+        stopped: Cell::new(false),
+        trashing: RefCell::default(),
     }));
     CURRENT.with(|c| c.set(crate::windows::current(), map.clone()));
     if let Some(window) = map.0.window.upgrade() {
@@ -97,6 +99,10 @@ struct Inner {
     current: Cell<Option<usize>>,
     /// The last click zoomed in: a double-click's second half means the folder zoomed into.
     zoomed: Cell<bool>,
+    /// Esc stopped the scan: its totals stay as they were then.
+    stopped: Cell<bool>,
+    /// Paths sent to the trash: they leave the map once a job has taken them away.
+    trashing: RefCell<Vec<PathBuf>>,
 }
 
 #[derive(Clone)]
@@ -106,6 +112,27 @@ pub struct SizeMap(Rc<Inner>);
 enum Target {
     Folder(PathBuf),
     File(PathBuf),
+    /// A folder's own files as one block: only its folder can be opened or named.
+    FilesOf(PathBuf),
+}
+
+/// The menu a rectangle gets: a folder or file everything, a files block only what does not
+/// act on the folder as a whole (its Move to Trash would trash the folder).
+pub fn menu_ids(what: What) -> &'static [u32] {
+    match what {
+        What::Folder(_) | What::File(_) => &[MAP_OPEN, MAP_SHOW, MAP_TRASH, MAP_COPY_PATH],
+        What::Files(_) => &[MAP_OPEN, MAP_COPY_PATH],
+        What::Small(_) => &[],
+    }
+}
+
+fn menu_title(id: u32) -> &'static str {
+    match id {
+        MAP_OPEN => "Open",
+        MAP_SHOW => "Show in Pane",
+        MAP_TRASH => "Move to Trash",
+        _ => "Copy Path",
+    }
 }
 
 impl SizeMap {
@@ -118,6 +145,7 @@ impl SizeMap {
         *self.0.tree.borrow_mut() = tree.clone();
         *self.0.cancel.borrow_mut() = cancel.clone();
         self.0.scanning.set(true);
+        self.0.stopped.set(false);
         self.0.focus.set(0);
         self.0.current.set(None);
         let (root, window_id) = (self.0.root.clone(), crate::windows::current());
@@ -143,7 +171,8 @@ impl SizeMap {
 
     /// The scan of `tree` has more (`done`: all of it).
     fn arrived(&self, tree: &Arc<Mutex<SizeTree>>, done: bool) {
-        if !Arc::ptr_eq(tree, &self.0.tree.borrow()) {
+        // A newer scan's, or one stopped by Esc (its last ticks are not shown).
+        if !Arc::ptr_eq(tree, &self.0.tree.borrow()) || !self.0.scanning.get() {
             return;
         }
         if done {
@@ -161,7 +190,7 @@ impl SizeMap {
             let tree = tree.lock().unwrap_or_else(PoisonError::into_inner);
             (0..tree.len() as u32)
                 .rev()
-                .filter(|&id| id == 0 || tree.node(id).parent != NONE)
+                .filter(|&id| tree.is_live(id))
                 .map(|id| {
                     let node = tree.node(id);
                     let total = FolderTotal {
@@ -229,6 +258,7 @@ impl SizeMap {
         let status = match current {
             Some(i) => self.describe(i),
             None if self.0.scanning.get() => "Scanning…".to_owned(),
+            None if self.0.stopped.get() => format!("Stopped · {}", self.describe_focus()),
             None => self.describe_focus(),
         };
         window.set_sm_status(status.into());
@@ -270,7 +300,8 @@ impl SizeMap {
         let tree = self.0.tree.borrow().clone();
         let tree = tree.lock().unwrap_or_else(PoisonError::into_inner);
         match tile.what {
-            What::Folder(id) | What::Files(id) => Some(Target::Folder(self.path_of(&tree, id))),
+            What::Folder(id) => Some(Target::Folder(self.path_of(&tree, id))),
+            What::Files(id) => Some(Target::FilesOf(self.path_of(&tree, id))),
             What::File(f) => Some(Target::File(self.0.root.join(&tree.files[f].0))),
             What::Small(_) => None,
         }
@@ -295,6 +326,7 @@ impl SizeMap {
 
     /// A click: a folder is zoomed into (no reading: the tree has it), anything else is picked.
     pub fn clicked(&self, x: f32, y: f32) {
+        self.0.zoomed.set(false);
         let Some(i) = self.tile_at(x, y) else { return };
         let what = self.0.tiles.borrow().get(i).map(|t| t.what);
         self.0.zoomed.set(matches!(what, Some(What::Folder(_))));
@@ -328,7 +360,8 @@ impl SizeMap {
     /// Enter, double-click: the pane goes to the folder (a file: its folder, with it selected)
     /// and the map closes.
     pub fn activated_at(&self, x: f32, y: f32) {
-        if self.0.zoomed.replace(false) {
+        let at = self.tile_at(x, y);
+        if self.0.zoomed.replace(false) && at.is_some() {
             let path = {
                 let tree = self.0.tree.borrow().clone();
                 let tree = tree.lock().unwrap_or_else(PoisonError::into_inner);
@@ -337,7 +370,7 @@ impl SizeMap {
             self.close();
             return crate::panes::active_nav().go(Location::Path(path));
         }
-        if let Some(i) = self.tile_at(x, y) {
+        if let Some(i) = at {
             self.enter(i);
         }
     }
@@ -346,7 +379,7 @@ impl SizeMap {
         let Some(target) = self.target(i) else { return };
         self.close();
         match target {
-            Target::Folder(path) => crate::panes::active_nav().go(Location::Path(path)),
+            Target::Folder(path) | Target::FilesOf(path) => crate::panes::active_nav().go(Location::Path(path)),
             Target::File(path) => crate::operations::with_current(|ops| ops.show_path_in_folder(&path, false)),
         }
     }
@@ -356,20 +389,19 @@ impl SizeMap {
         let Some(i) = self.tile_at(x, y) else { return Vec::new() };
         self.0.current.set(Some(i));
         self.show_current();
-        if self.target(i).is_none() {
-            return Vec::new();
-        }
-        [(MAP_OPEN, "Open"), (MAP_SHOW, "Show in Pane"), (MAP_TRASH, "Move to Trash"), (MAP_COPY_PATH, "Copy Path")]
-            .into_iter()
-            .map(|(id, title)| (id, title.to_owned(), true))
-            .collect()
+        let Some(what) = self.0.tiles.borrow().get(i).map(|t| t.what) else { return Vec::new() };
+        menu_ids(what).iter().map(|&id| (id, menu_title(id).to_owned(), true)).collect()
     }
 
     pub fn menu_chosen(&self, id: u32) {
         let Some(i) = self.0.current.get() else { return };
+        let Some(what) = self.0.tiles.borrow().get(i).map(|t| t.what) else { return };
+        if !menu_ids(what).contains(&id) {
+            return;
+        }
         let Some(target) = self.target(i) else { return };
         let (path, is_dir) = match &target {
-            Target::Folder(path) => (path.clone(), true),
+            Target::Folder(path) | Target::FilesOf(path) => (path.clone(), true),
             Target::File(path) => (path.clone(), false),
         };
         match id {
@@ -380,8 +412,10 @@ impl SizeMap {
                 crate::operations::with_current(|ops| ops.show_path_in_folder(&path, false));
             }
             MAP_TRASH => {
+                // It leaves the map only once a job has taken it away (`job_finished`): Cancel
+                // in the question, or a failed job, keeps it.
+                self.0.trashing.borrow_mut().push(path.clone());
                 crate::operations::with_current(|ops| ops.trash_paths(vec![path], false));
-                self.drop_tile(i);
             }
             MAP_COPY_PATH => {
                 crate::copy_path::copy(&crate::panes::active_view(), &[path], gezik_core::path_text::PathFormat::Full);
@@ -390,19 +424,38 @@ impl SizeMap {
         }
     }
 
-    /// Rectangle `i` went to the trash: the map leaves it out without scanning again.
-    fn drop_tile(&self, i: usize) {
-        let Some(what) = self.0.tiles.borrow().get(i).map(|t| t.what) else { return };
+    /// A job ended: what was sent to the trash and is gone now leaves the map (no new scan),
+    /// and the pane's folder sizes forget it and the folders above it (after `keep_totals`).
+    pub fn job_finished(&self) {
+        let gone: Vec<PathBuf> = {
+            let mut trashing = self.0.trashing.borrow_mut();
+            let (gone, kept) =
+                std::mem::take(&mut *trashing).into_iter().partition(|p: &PathBuf| p.symlink_metadata().is_err());
+            *trashing = kept;
+            gone
+        };
+        if gone.is_empty() {
+            return;
+        }
         {
             let tree = self.0.tree.borrow().clone();
             let mut tree = tree.lock().unwrap_or_else(PoisonError::into_inner);
-            match what {
-                What::Folder(id) => tree.remove(id),
-                What::File(f) => tree.remove_file(f),
-                What::Files(_) | What::Small(_) => return,
+            for path in &gone {
+                let Ok(under) = path.strip_prefix(&self.0.root) else { continue };
+                let names: Vec<&str> = under.iter().filter_map(|n| n.to_str()).collect();
+                let file = match names.as_slice() {
+                    [name] => tree.files.iter().position(|(f, _)| f == name),
+                    _ => None,
+                };
+                match (file, tree.find(&names)) {
+                    (Some(f), _) => tree.remove_file(f),
+                    (None, Some(id)) if id != 0 => tree.remove(id),
+                    _ => {}
+                }
             }
             tree.sum();
         }
+        crate::panes::with_id(self.0.pane, |p| p.folder_sizes.forget(&gone));
         self.0.current.set(None);
         self.redraw();
     }
@@ -424,16 +477,21 @@ impl SizeMap {
         match chord.key {
             Key::Escape if self.0.scanning.get() => {
                 self.0.cancel.borrow().store(true, Ordering::Relaxed);
-                self.0.scanning.set(false);
-                self.redraw();
-                if let Some(window) = self.0.window.upgrade() {
-                    window.set_sm_status("Stopped".into());
+                {
+                    // The totals as far as it got, added up once; later ticks are dropped.
+                    let tree = self.0.tree.borrow().clone();
+                    tree.lock().unwrap_or_else(PoisonError::into_inner).sum();
                 }
+                self.0.scanning.set(false);
+                self.0.stopped.set(true);
+                self.0.current.set(None);
+                self.redraw();
             }
             Key::Escape => self.close(),
             Key::Backspace => self.up(),
             Key::Up if chord.alt => self.up(),
             Key::Enter => {
+                self.0.zoomed.set(false);
                 if let Some(i) = self.0.current.get() {
                     self.enter(i);
                 }
@@ -504,6 +562,13 @@ fn ink_on(color: Color) -> Color {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_files_block_cannot_be_trashed_or_shown() {
+        assert_eq!(menu_ids(What::Files(3)), [MAP_OPEN, MAP_COPY_PATH], "its trash would take the folder");
+        assert!(menu_ids(What::Folder(3)).contains(&MAP_TRASH) && menu_ids(What::File(0)).contains(&MAP_TRASH));
+        assert!(menu_ids(What::Small(9)).is_empty());
+    }
 
     #[test]
     fn files_take_their_type_colors() {
