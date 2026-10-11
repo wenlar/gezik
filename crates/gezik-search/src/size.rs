@@ -111,7 +111,7 @@ impl Visit for TreeBuilder {
         !is_dir
     }
 
-    fn folder(&self, _: &Path, relative: &str, items: Vec<DirItem>) {
+    fn folder(&self, dir: &Path, relative: &str, items: Vec<DirItem>) {
         {
             let mut waiting = self.waiting.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             let Some(id) = waiting.remove(relative) else { return };
@@ -124,11 +124,20 @@ impl Visit for TreeBuilder {
                     if id == 0 {
                         tree.files.push((item.name, item.size));
                     }
-                } else if walk::goes_into(&item, &self.rules) && walk::same_device(&self.rules.devices, item.device) {
+                } else if item.is_link {
+                    // Neither gone into nor counted, as `Adder` does.
+                } else if walk::goes_into(&item, &self.rules)
+                    && walk::same_device(&self.rules.devices, item.device)
+                    && !(cfg!(target_os = "macos") && walk::walked_twice(&dir.join(&item.name)))
+                {
                     let child = tree.add(id, &item.name, item.modified);
                     waiting.insert(crate::results::relative_key(relative, &item.name), child);
-                } else if item.offline && !item.is_link {
-                    tree.node_mut(id).unread = true;
+                } else {
+                    // A folder the walk does not go into still counts as one (`Adder`); a
+                    // cloud folder makes the total partial.
+                    let node = tree.node_mut(id);
+                    node.other_folders += 1;
+                    node.unread |= item.offline;
                 }
             }
         }
@@ -330,6 +339,28 @@ mod tests {
         assert_eq!(map.len(), 4, "folders only");
         drop(map);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_cloud_folder_counts_in_the_tree_as_in_measure() {
+        let builder = TreeBuilder {
+            tree: Arc::new(Mutex::new(SizeTree::new("x"))),
+            waiting: Mutex::new(HashMap::from([(String::new(), 0)])),
+            rules: size_rules(Path::new("x")),
+            tick: Box::new(|| {}),
+            ticked: Mutex::new(Instant::now()),
+        };
+        let cloud = DirItem { name: "OneDrive folder".into(), is_dir: true, offline: true, ..file_item(0) };
+        let link = DirItem { name: "link".into(), is_dir: true, is_link: true, ..file_item(0) };
+        builder.folder(Path::new("x"), "", vec![file_item(5), cloud.clone(), link.clone()]);
+        let mut tree = builder.tree.lock().unwrap();
+        tree.sum();
+        let adder = Adder::default();
+        adder.folder(Path::new("x"), "", vec![file_item(5), cloud, link]);
+        let measured = adder.total(&walk::WalkStats::default());
+        let top = tree.node(0);
+        assert_eq!((top.bytes, Some((top.files, top.folders)), top.partial), (measured.bytes, measured.counts, true));
+        assert_eq!(tree.len(), 1, "no node for either");
     }
 
     #[test]

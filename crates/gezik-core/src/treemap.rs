@@ -97,6 +97,9 @@ pub struct Node {
     /// Its own files.
     pub own_bytes: u64,
     pub own_files: u64,
+    /// Folders in it that are not nodes (not gone into: a cloud folder, another file system),
+    /// counted as the folder sizes count them.
+    pub other_folders: u64,
     /// It could not be read, or was not gone into (a cloud folder, too deep).
     pub unread: bool,
     /// Under it, as [`SizeTree::sum`] last added them up.
@@ -135,6 +138,7 @@ impl SizeTree {
             stamp,
             own_bytes: 0,
             own_files: 0,
+            other_folders: 0,
             unread: false,
             bytes: 0,
             files: 0,
@@ -204,7 +208,22 @@ impl SizeTree {
                 self.nodes[before as usize].next = next;
             }
         }
-        self.nodes[id as usize].parent = NONE;
+        // It and everything under it: no longer in the tree (never kept as a folder size).
+        let mut stack = vec![id];
+        while let Some(at) = stack.pop() {
+            stack.extend(self.children(at));
+            self.nodes[at as usize].parent = NONE;
+        }
+    }
+
+    /// Whether `id` is still in the tree (not removed, nor under a removed folder).
+    pub fn is_live(&self, id: u32) -> bool {
+        id == 0 || self.nodes.get(id as usize).is_some_and(|n| n.parent != NONE)
+    }
+
+    /// The folder at `names` under the root (`[]`: the root).
+    pub fn find(&self, names: &[&str]) -> Option<u32> {
+        names.iter().try_fold(0, |at, name| self.children(at).find(|&c| self.name(c) == *name))
     }
 
     /// Takes the root's file `index` out (it went to the trash).
@@ -221,7 +240,8 @@ impl SizeTree {
     /// partial ones). A removed node's totals do not reach the folders above it.
     pub fn sum(&mut self) {
         for node in &mut self.nodes {
-            (node.bytes, node.files, node.folders, node.partial) = (node.own_bytes, node.own_files, 0, node.unread);
+            (node.bytes, node.files, node.folders, node.partial) =
+                (node.own_bytes, node.own_files, node.other_folders, node.unread);
         }
         for id in (1..self.nodes.len()).rev() {
             let node = &self.nodes[id];
@@ -423,9 +443,14 @@ mod tests {
         assert_eq!((t.node(0).bytes, t.node(0).folders, t.node(0).files), (23, 4, 0));
         let a = t.children(0).find(|&c| t.name(c) == "a").unwrap();
         assert_eq!(t.path(t.children(a).next().unwrap()), ["a", "a1"]);
+        assert_eq!(t.find(&["a", "a1"]), t.children(a).next());
+        assert_eq!(t.find(&[]), Some(0));
+        let a1 = t.find(&["a", "a1"]).unwrap();
         t.remove(a);
         t.sum();
         assert_eq!(t.node(0).bytes, 3);
+        assert!(!t.is_live(a) && !t.is_live(a1), "its folders went with it");
+        assert_eq!(t.find(&["a"]), None);
         t.remove_file(0);
         t.sum();
         assert_eq!(t.node(0).bytes, 0);
