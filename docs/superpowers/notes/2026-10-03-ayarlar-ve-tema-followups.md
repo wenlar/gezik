@@ -2492,6 +2492,142 @@ Not (FAIL değil): uzun satırda sol metin sütun çizgisine kadar dayanıyor, s
 - Doğrulama: `SHA256SUMS` (ok, bozuk, eksik, `../secret`, bozuk satır) → `OK`, `FAILED`, `MISSING`, `UNREADABLE` ve `1 OK · 1 failed · 1 missing · 1 unreadable · 1 line could not be read`; `Failed and missing only` süzdü; Esc kapattı. Bulunan: klasör dışı satır `0 B` gösteriyordu, düzeltildi (`93c13dc`).
 - Klavye: açılışta odak satırlarda; ↓↓ imleci ikinci satıra taşıdı (odak çerçevesi görünür); Tab sırası Copy → Save… → Export CSV… → Close → CRC32 → MD5 → SHA-1 → SHA-256 → SHA-512 → Expected → satırlar (katmandan çıkmadı); Shift+Tab geri; MD5'te Space kutuyu işaretledi, odak ve çerçeve kutuda kaldı, MD5 sütunu doldu; Close'da Enter katmanı kapattı. İlk denemede bulunanlar düzeltildi: Tab katmandan alttaki pencereye kaçıyordu (odak tuzağı), Space sonrası kutular yeniden kurulup odak düşüyordu (model yerinde güncelleniyor), satır oklarına odak durumu ulaşmıyordu.
 
+## Adım 11, alt parça 11i (Copy To, süzgeçli kopya, böl/birleştir) sonrası
+
+- **Yapı:** saf çekirdek `gezik-core/src/file_filter.rs` (süzgeç: boşluk/`;` ile desenler, `|` sonrası dışlanır, `\` ya da `/` ile biten desen klasör, `A>B` ilişkili dosyalar; tam ad, 6a'nın harf katlaması), `ops::names::{apply_mask, try_mask, mask_error, split_mask}` (DOS/TC maskesi), `ops/split.rs` (boyut ayrıştırma, `.001` adları, TC `.crc`). Yürüyüş `gezik-ops/src/tasks/pick.rs` (`Pick`; `CopyTask::picking`, `MoveTask::picking`). Bölme/birleştirme `gezik-batch/src/tasks/split.rs` (hazırlık klasörü + `PlaceTask::outputs`). Soru `gezik/src/copy_to.rs`; F5/F6 da oradan soruyor. `file_filter.rs` 11d'den önce burada doğdu (11d onu kullanmalı).
+- **Davranış:** `copy-to`, `move-to`, `split-file`, `join-files` (tuşsuz, palet; master'la birleşince `Tools ▸` alt menüsünde 2207–2210, Export list…'ten sonra (önce satır menüsünde Compress/Convert yanındaydı); `Action::ALL` birleşmeden sonra 111). Hedef alanının son parçası `*`/`?` içeriyorsa ad maskesi; `Filter…` ikinci soruyu açar (son süzgeç oturumda bellekte). Süzgeçte dışlanan klasör okunmaz, boş klasör yapılmaz, ilişkili dosya bir kez gelir; taşımada kalanlar yerinde, boşalan kaynak klasör gider. Bölme parçaları ve `.crc`'yi, birleştirme sonucu önce hazırlık klasörüne yazar; birleştirmede CRC ve boyut, hiçbir şey yerleşmeden denetlenir.
+- **İnceleme düzeltmeleri:** Move To süzgeci `>`'ı reddediyor (yalnız kopyada); kullanılamaz ad yapan maske (seçilen bir öğenin adı ya da örnek ad) kırmızı satır ve ret; `D:*.bak` artık gösterilen klasöre maske değil, `Type a folder`; Unix'te `*`/`?` içeren gerçek bir klasör adı maske sayılmıyor; zaten o klasördeki öğelerin taşınması `Nothing to move: same folder` diyor; birden çok seçimle Split/Join reddediyor; maskesiz de aynı hedef ada giden iki öğe (aramada iki klasörden aynı ad) çakışma listesine gidiyor; `.CRC` her harf biçiminde bulunuyor; var olan parça kümesi tek birim: bir kez sorulur, `Replace All` eski kümenin hepsini (yeni son parçanın ötesindekiler dahil) yeni küme tamamlanınca çöpe atar, `Cancel` hepsini bırakır, karışık küme kalmaz.
+- **Sapmalar:** 11b'nin `Verify copies` kutusu yok; `Options ▸` ve `state.toml [copy-to]` yok; macOS menü çubuğunda `Tools` menüsü yok (11a gibi); bölmede hedef klasör soruda değişmiyor; tırnaklı (boşluklu) desen yok; maske hedef klasörde zaten duran üst düzey öğeleri yeniden adlandırmıyor (artık sessiz değil: taşımada not).
+- **Ekran testinden sonra:** maske hatası seçilen öğenin adını söylüyor (örnek ad yalnız seçim yokken); hatalı yanıt (bozan maske, `D:*.bak`, okunmayan süzgeç) soruyu yazılanla ve kırmızı satırla yeniden açıyor, durum satırına düşüp kapanmıyor; başlık yazılan klasörü izliyor; klasör yaparak kopyanın başlığı (iş paneli, çakışma listesi) gerçek hedefi söylüyor (`CopyTask::titled`); ham parçalar (`film.mkv.001`) satır menüsünde Extract değil Join gösteriyor, arşiv parçaları (`a.zip.001`) yine Extract.
+- **Exe:** 25.918.464 B, master 25.801.728'e göre **+116.736 B** (bütçe +262.144, hedef 150 KB). Yeni Slint yok. master 06a313b ile birleşince: 26.715.648 B, 06a313b'nin 26.599.424 B'ına göre **+116.224 B**.
+- **Bilinen sınır (11i öncesinden):** çakışma listesi aynı boyut ve zamandaki dosyaları içerikleri farklı olsa da "identical" gösteriyor (içerik okunmuyor); burada değiştirilmedi.
+- **Denenmedi:** bölmede iptal (birim testi yok; aynı hazırlık klasörü mekanizması testli), GUI.
+- **Bekleyen:** macOS 303–310, Linux 226–230. Windows ekran testleri aşağıda (20/20).
+
+## Windows ekran testleri: 11i (2026-10-11 19:50-20:03, ajan, kullanıcı uzakta)
+
+- Derleme: `%TEMP%\gezik-gui-11\bin\t11i.exe` (`feat/tools-11i` 8be7290, sürüm, 25.913.344 B). Yeniden derlenmedi.
+- Birincil ekran, pencere 1600×900 @ 40,40. Taze `GEZIK_CONFIG_DIR` = `%TEMP%\gezik-gui-11\cfg\i1`, `i2` (`state.toml` `[hints] f3-moved = true`, `settings.toml` `[files] confirm-trash = true`).
+- Veri `%TEMP%\gezik-gui-11\data\i`, yalnız işleyicisi olmayan uzantılar (`.gzt`, `.gzx`, `.gzr`; `*.jpg>*.cr2` yerine `*.gzt>*.gzr`). 50 MB rastgele `big\film.gzt`; `big\pre\` içinde aynı dosya + eski `film.gzt.001…005`.
+- Güvenlik: her Ctrl+A / yazı / Enter öncesi UIA `FocusedElement` bu Gezik'in diyalog alanı (`ControlType.Edit`, 636,377 dolayı) ya da palet alanı; dosya listesine hiç Enter/Ctrl+A gitmedi. F5/F6 tuşu basılmadı: aynı eylemler paletten (`Copy to the Other Pane`, `Move to the Other Pane`) fareyle açıldı. Düğmeler (Filter…, Cancel, Cancel operation, Close, Details) fareyle. Çöpe giden hiçbir şey tetiklenmedi (Replace / Replace All seçilmedi, Ctrl+Z yalnız klasör yapmayan taşımada).
+- Klavye düzeni başta/sonda `en-US=0409:0000041F`. Açılan Gezik'lerin hepsi kapatıldı.
+- Ekran görüntüleri `%TEMP%\gezik-gui-11\shots\i*.png`.
+
+### Sonuçlar
+
+1. **Satır menüsü — PASS.** Dosyada `Copy to…`, `Move to…`, `Split file…` (Compress yanında, `i01-rowmenu.png`); `.001`'de `Join files` da var; klasörde (`src`) ve üç dosyalı seçimde Split/Join yok.
+2. **Copy To…, satır menüsü + maske `*.bak` — PASS.** Alan boş, altında `Type a folder` (`i02-copyto-dlg.png`). `…\out\bak\*.bak` → `Into …\out\bak, names as *.bak` (`i03-mask-note.png`); Enter → eksik klasör yapıldı, `a.bak`.
+3. **Copy To…, paletten + maske `new_*` — PASS (not).** `sub` + `b.gzt` → `out\nw\sub\` (klasör adı korunmuş), dosyalar `new_t`, `sub\new_zt`, `sub\new_zx`. Bu, birim testteki DOS kuralı (`report.txt` → `new_rt.txt`, düz karakter bir yer tutar); kısa adlarda uzantı yitiyor (bkz. Notlar).
+4. **Kullanılamaz ad yapan maske — PASS (not).** `…\out\bad\*:x` → kırmızı `The mask *:x makes no usable name of name.txt` (`i06-badmask.png`); Enter → iş yok, klasör yapılmadı, durum satırında aynı hata. Diyalog Enter'de kapanıyor.
+5. **`D:*.bak` — PASS.** `Type a folder` (`i07-dmask.png`); Enter → iş yok, durum satırı `Type a folder`; D:\'de `.bak` yok.
+6. **Filter… `*.gzt|old* sub\` — PASS.** `src` klasörü → `out\f1\src\a.gzt`, `b.gzt`, `thumbs\t1.gzt`; `old*`, `c.gzx`, `sub\` yok, boş klasör yok (`i09-filter.png`). `a | b | c` → kırmızı `Only one "|": what follows it is left out` (`i08-filter-bad.png`).
+7. **İlişkili dosyalar Copy To'da — PASS.** `IMG_1.gzt` seçili, `*.gzt>*.gzr` → `IMG_1.gzt` + `IMG_1.gzr`, `IMG_2*`/`IMG_3` yok. İkinci açılışta alanda son süzgeç (`*.gzt|old* sub\`).
+8. **İlişkili dosyalar Move To'da — PASS.** Süzgeç sorusunda `>` açıklaması yok, alt satır kırmızı `Related files (>) work only when copying` (`i10-move-rel.png`); Enter → iş yok, durum satırında aynı not, `rel` değişmedi.
+9. **Süzgeçli taşıma — PASS.** (a) `mv`'de `m1.gzt`, `m2.gzt`, `n1.gzx` → `mvout`, `*.gzt`: yalnız iki `.gzt` taşındı, `n1.gzx` yerinde. (b) `mv` klasörü → `mvout`, `*.gzt`: `mvout\mv\m1,m2,all\x.gzt`; boşalan `mv\all` gitti, `mv\` `n1.gzx` ve `keep\k.gzx` ile yerinde.
+10. **Ctrl+Z süzgeçli taşıma — PASS.** 9a'dan sonra Ctrl+Z: `m1`, `m2` `mv`'ye döndü, `mvout` boş (`i11-undo-move.png`).
+11. **Aynı klasöre taşıma — PASS.** `a.gzt` → `…\src`: durum satırı `Nothing to move: same folder` (`i12-samefolder.png`), dosyalar aynı.
+12. **Split (50 MB, 10 MB) — PASS (not).** Alan `100 MB`, `1 part`; `0` → `The parts need a size above 0`, `abc` → `Type a size like 100 MB, 4.7 GB or 500 KB`, `1 KB` → `52429 parts: at most 999` (kırmızı). `10 MB` → `6 parts` (`i13-split-dlg.png`): `film.gzt.001…005` 10.000.000 B, `.006` 2.428.800 B, `film.gzt.crc` (`filename=film.gzt`, `size=52428800`, `crc32=F9D901A0`). MB onluk (10⁶).
+13. **Join .001'den — PASS.** Özgün `film.orig` diye ayrıldı; `.001` → `Join files` → `film.gzt` 52.428.800 B, SHA-256 özgünle aynı (`369BF4DB…37DF`).
+14. **Bozuk parçayla Join — PASS.** `.003`'te bir bayt değişti; var olan `film.gzt` dururken Join: soru sorulmadı, iş başarısız, ayrıntı `film.gzt.001: The joined file does not match film.gzt.crc (CRC or size); a part may be damaged` (`i16-join-bad-details.png`); `film.gzt`'nin zamanı ve özeti değişmedi, artık dosya / gizli `.gezik-` klasörü yok.
+15. **Eksik parçayla Join — PASS.** `.004` yokken: `film.gzt.001: Part film.gzt.004 is missing` (`i17-join-missing.png`), hiçbir şey yazılmadı.
+16. **Var olan parça kümesine Split + Cancel — PASS.** `big\pre` (`film.gzt` + eski `.001…005`), 10 MB: tek soru `Parts are there already` / `…holds 5 file(s) of a split film.gzt already. Replace that whole set? The old files go to the trash.` (`Replace All`, `Cancel`, `i19-parts-there.png`). Cancel → klasör (ad, boyut, zaman) önceki gibi, gizli klasör yok. Replace All denenmedi (çöpe gönderir).
+17. **Çoklu seçimde Split/Join — PASS.** `.001` + `.002` seçili, palette `Split File…` → `Select one file to split`; `Join Files` → `Select one .001 part or its .crc file to join` (`i20-multi-split.png`); iş yok.
+18. **İki bölmede F5/F6 — PASS.** Paletten `Copy to the Other Pane`: başlık `Copy 2 items to …\out\dual?`, alan öbür bölmenin klasörü, düğmeler `Copy`, `Filter…`, `Don't Ask Again`, `Cancel` (`i21-f5-dlg.png`); Enter → süzgeçsiz kopya (`a.gzt`, `sub\…`). `Move to the Other Pane`: aynı düğmeler (`Move`), Cancel → hiçbir şey taşınmadı (`i22-f6-dlg.png`).
+19. **Aramadan aynı adlı iki dosya — PASS (not).** `same.gzt` araması (s1, s2) → ikisi seçili → `Copy to…` → `…\out\srch`: birincisi kopyalandı, ikincisi çakışma listesinde (`i24-search-conflict.png`); Cancel operation.
+20. **Maske iki dosyayı aynı ada düşürüyor — PASS.** `d.gzt` + `d.gzx`, `…\out\dupb\*.bak` → `d.bak` (ilki), ikincisi çakışma listesinde `d.bak` (`i25-mask-same.png`); Cancel operation.
+21. **Ctrl+Z kopya ve bölme — koşulmadı.** Bu işlerin geri alması çıktıları Geri Dönüşüm Kutusu'na atıyor (sorusuz; `confirm-trash` yalnız çöp eylemine bakıyor), kural "Geri Dönüşüm Kutusu'na dokunma" olduğu için atlandı. Aynı nedenle süzgeçli taşımanın klasör yapan hali (9b) de geri alınmadı (yapılan boş `mvout\mv` çöpe gider).
+
+### FAIL'ler
+
+Yok.
+
+### Notlar
+
+- **Maske notu var olmayan dosyayı anıyor:** seçili `a.gzt` iken `*:x` için not `…makes no usable name of name.txt` diyor; `mask_error` önce sabit `name.txt` örneğini deniyor. Seçili öğenin adı daha anlaşılır olur.
+- Kullanılamaz maske ve `D:*.bak` ile Enter diyaloğu kapatıyor (iş yok, hata durum satırında). 11h'deki dışa aktarma diyaloğu böyle durumda açık kalıyordu; tutarlılık için açık kalması düşünülebilir.
+- `new_*` kısa adlarda uzantıyı yutuyor (`b.gzt` → `new_t`); DOS kuralına uygun ve testli, ama kullanıcı `new_b.gzt` bekleyebilir.
+- Çakışma listesinin başlığı hedefi değil yapılan klasörün üstünü gösteriyor: `Copying 2 items to …\data\i\out` (hedef `…\out\srch` / `…\out\dupb`).
+- Çakışma listesinde içerikleri farklı (`one` / `two`) ama boyutu ve zamanı aynı iki dosya `identical` diye işaretlendi (`Hide identical (1)`); karşılaştırma boyut+zamanla.
+- İki bölmede `Copy to…` başlığı alan değişince güncellenmiyor (`Copy 2 items to …\out\dual?`, alan `…\out\srch`).
+- Ham `film.gzt.001` satır menüsünde `Extract here` / `Extract to…` de çıkıyor (tür sütunu `Split archive`).
+- Satır menüsü UIA'da, menüyü açan aynı PowerShell sürecinde görünmüyor; ayrı çağrıda görünüyor (betik sorunu, uygulamayla ilgisi yok).
+
+## Adım 11, alt parça 11f (Yinelenen dosyalar) sonrası
+
+- Yapı: arama kipi (`SearchSpec::duplicates`, `[[searches]] duplicates = true`), boru hattı `gezik-search::duplicates` (8a'nın yürüyüşü; boyut → ilk 64 KB SHA-256 → iki üyede bayt karşılaştırması, daha çokta tam SHA-256; düşük öncelikli okuyucular SSD 4, ağ 2, diğer 1; iptal edilebilir), sonuç kümesinde satır başına grup (`Batch::dups`, `ResultSet::duplicates`), 10d başlıkları (`GroupBy::Duplicates`, `Grouping::row`, `3 files × … · … could be freed`), seçim kuralları `gezik-core::duplicates::pick`. Yeni katman yok, Slint'e yalnız macOS `Tools` menüsünün bir satırı. `Action::ALL` 105, sağ tık `Find duplicates` 2204 (2205 11g'nin Size Map'i), seçim yardımcıları 2310–2314.
+- Veri güvenliği (gözden geçirme): her silme yolu (Delete, Shift+Delete, satır menüsünün Delete ve Delete permanently'si, Explorer fiili) `trash_with`'ten geçer; yineleme satırları yalnız çöpe gider, iş `trash_only` (çöpsüz sürücüde dokunulmaz, "kalıcı silinsin mi?" sorulmaz, not çıkar; yeniden denemede de korunur). Bir grubun öbür kopyaları seçiliyse, yürüyen başka bir yineleme silmesindeyse ya da diskte artık yoksa (`symlink_metadata`, o an) bir kez sorar. Yürüyüşten sonra boyutu değişen dosya ve kimliği okunamayan dosya (subst/paylaşım üzerinden aynı dosya olabilir) hiç önerilmez; sabit bağlantılar tek sayılır.
+- Ölçüm (sürüm, Windows, 2026-10-11): exe **26.244.608 B**; 11a dalına göre +95.232 (bütçe 262.144, hedef ≤ 100 KB), `master`'a göre +442.880.
+- Bilinen sınırlar: satırda `+1 hard link` notu yerine durum satırında sayı; `Select ▾` düğmesi yerine çubuğun ▾ menüsü ve satır menüsü; silinen satırlar iş bitince düşer; Ctrl+Z ile dönen dosya listeye gelmez (`Run again`); kimlik vermeyen dosya sisteminde yineleme bulunmaz; `tools.ps1` ve 100.000 dosyalık bellek ölçümü yok; sembolik bağlantı testi Windows'ta izin yoksa atlanır.
+- Windows ekran testleri koşuldu (14/14, aşağıda); macOS 317–323 ve Linux 235–238 bekliyor.
+
+## Windows ekran testleri: 11f (2026-10-11, ajan)
+
+Veri `%TEMP%\gezik-gui-11\data\f` altında (`.gzt`), her oturumda yeni `GEZIK_CONFIG_DIR`, `confirm-trash = true`. Her silme sorusuna Cancel; dosya listesi önce/sonra aynı. Ekran görüntüleri `%TEMP%\gezik-gui-11\shots\f-*.png`.
+
+| # | Madde | Sonuç |
+|---|---|---|
+| 1 | Klasör satır menüsü ▸ `Find duplicates`: çubuk `Find duplicates in w`, Enter | PASS |
+| 2 | Palet (Ctrl+Shift+P) `Find Duplicates`, seçimsiz: `Find duplicates in w` (gösterilen klasör), aynı sonuç | PASS |
+| 3 | Gruplar ve başlıklar: `3 files × 293.0 KB · 585.9 KB could be freed`, `2 files × 97.7 KB · 97.7 KB …`, `2 files × 2.0 KB · 2.0 KB …`; boşa giden bayta göre sıralı; durum `3 groups · 7 files · 685.5 KB could be freed · 1 hard link counted once` | PASS |
+| 4 | Aynı boyut farklı içerik (`samesize`, `s1/s2`), aynı 64 KB önek farklı son (`tail`) gruplanmadı | PASS |
+| 5 | `mklink /H` sabit bağlantı (`uniq` + `uniq-hl`) yinelenen sayılmadı, durumda "1 hard link counted once" | PASS |
+| 6 | Boş dosyalar (`empty1/2`) gruplanmadı | PASS |
+| 7 | Okuma sırasında Esc (Enter'dan 120 ms sonra, 60 × 64 MB): `Stopped · 15 groups · 30 files · 960.0 MB could be freed`, yalnız kesinleşmiş a/b çiftleri, hiçbir `-c` dosyası yok | PASS |
+| 8 | ▾ menüsü: all but newest / oldest / first → her grupta tam bir kopya seçilmedi (doğru olan) | PASS |
+| 9 | `Select all in this folder`: kök klasörden 3 dosya; `same` klasöründe grubun hepsi → yalnız biri seçildi, durum `1 group had every copy in this folder; one copy is kept` | PASS |
+| 10 | `Keep this one, select its copies`: big2 → big1+big3; photo → photo-copy | PASS |
+| 11 | Delete, Shift+Delete, satır menüsü Delete, Shift+tık satır menüsü Delete (Windows'ta ayrı "Delete permanently" öğesi yok): hepsi `Move photo-copy.gzt to the Recycle Bin?` [Trash/Cancel], kalıcı silme sorusu hiç yok → Cancel | PASS |
+| 12 | Bir grubun bütün kopyaları seçili (a+b ile Delete; big1-3+photo ile Shift+Delete): `This deletes every copy of 1 file` / `Move N items to the Recycle Bin?` → Cancel | PASS |
+| 13 | Kayıtlı arama: `Save search…` → `Save with this folder` → settings.toml'da `[[searches]] name="dupw" … duplicates = true`; kapat/aç: sekme geri geldi ve yeniden koştu; ▾ ▸ `dupw` aynı 3 grubu verdi | PASS |
+| 14 | Bellek (özel çalışma kümesi), ~5.000 dosya (`many`, 100 çift): önce 4,59 MB, tarama 0,1 s, tepe 13,24 MB, sonuçlarda 13,25 MB, Alt+← ile klasöre dönünce 12,24 MB | PASS (not: sonuçtan çıkınca bellek önceki düzeye inmiyor, ~7,6 MB kalıyor; normal 5.000 satırlık aramayla kıyaslanmadı) |
+
+Notlar: sonuçlarda Esc çubuğu/sekmeyi kapatmıyor (başlık `Duplicates` kaldı) — beklenen mi bakılmalı. Okunamayan/çevrimiçi dosya, USB (çöpsüz sürücü), grup başlığı kapatma ve sütun sıralaması bu turda denenmedi.
+
+- Bellek (madde 14'ün izi): sonuçtan çıkınca kalan ~7,6 MB yinelemeye özgü değil. `cargo run --release -p gezik-search --example dup_memory -- <boş klasör>` (5.000 dosya, 100 çift; her tür üç kez, sonuçlar her seferinde bırakılarak) özel bellekte: başta 1,20 MB; düz arama 5.000 satır tutulurken 2,66, bırakınca 2,18; yineleme 200 satır 2,96, bırakınca 2,96; tur başına ikisi de ≈ +1,1 MB büyüyüp yatışıyor (3. turda düz 4,51, yineleme 4,48). Yineleme ön özet ve tam özet tablolarını, okuma tamponlarını (okuyucu iş parçacıklarıyla gider) ve dosya listesini bırakıyor; sonuç kümesini sekme Geri için tutar (Karar 12), düz aramada da aynı. Kalan, Windows yığınının geri vermediği ayırıcı payı.
+- Esc: yineleme sonuçlarında Esc düz aramadakiyle aynı yoldan geçer (çubukta aramayı durdurur, değilse çubuğu kapatır; listede süzgeci kapatır, değilse seçimi temizler). Sonuç sekmesi ve başlığı iki aramada da kalır; çıkmak Alt+← ya da Backspace. Değişiklik yapılmadı.
+
+## Adım 11, alt parça 11b (Doğrulama, hız sınırı, kuyruk) sonrası
+
+- Yapı: doğrulama ve hız sınırı işin `Control`'unda (`verify`, `speed`, `bucket`, `verifying`), uygulama tek yerde `RunCx::copy_file`. Doğrulama açıkken her kopya geçici ada yazılır, `hash::same_content(.., uncached_b = true)` ile karşılaştırılır, sonra son adını alır: farklı kopya hiçbir zaman son adla durmaz. Fark → bir yeniden kopya → yine fark: `The copy differs from the original at byte N`; silinemeyen bozuk kopya öğeyi hemen düşürür ve yerini söyler. Bağlantılar bağlantı olarak kopyalanır, doğrulanmaz; klonlar (APFS, FICLONE; platform `copy_file` artık `bool` döner) ne doğrulanır ne sınırlanır.
+- "Replace" ile çöpe giden eski hedef, öğe başarısız olur ya da iptal edilirse çöpten geri gelir (yalnız doğrulamada değil, her işte; eskiden undo'yu beklerdi). `gezik-batch` sıkıştırma testi buna göre güncellendi.
+- Hız sınırı: iş başına borçlu kova (`gezik-core::ops::rate::Bucket`, boş başlar, kapasite 1 sn), ilerleme geri çağrısında ≤ 100 ms dilimlerle uyku; her dilimde sınır yeniden okunur (yükseltme/kaldırma hemen), iptal ve duraklatma dilimi keser. Doğrulama süresi borcu öder ama birikim yapmaz (sonraki dosyada patlama yok). Linux'ta sınırlıyken de 8 MiB `copy_file_range` parçası.
+- Kuyruk: `Engine::move_in_queue` işi aynı sürücüdeki en yakın bekleyen işin hemen önüne/arkasına taşır (çıkar + ekle; takas değil: arada kalan işler sırasını korur); çalışan işin önüne geçilmez. Panel satırları aynı biçimde taşınır.
+- Arayüz: iş paneli satırında `⋯` (var olan Slint menüsü, kimlikler 2320–2330: Verify copies, Speed limit ▸ 1–100 MB/s, Move up/down, Start now); F5/F6 sorusunda var olan `Check` ile `Verify copies` kutusu. Ayarlar `[files] verify`, `[files] max-speed` (uyarılı). Varsayılanlar yalnız yeni kopya/taşıma işlerine.
+- Ölçüm (sürüm, Windows, 2026-10-11): exe **26.215.936 B** (11a'ya göre +66.560, master'a göre +414.208); cilalamadan sonra **26.217.472 B** (+68.096 / +415.744). master 06a313b (11a, 11c, 11g, 11h) ile birleştikten sonra **26.644.480 B**, master **26.599.424 B**: 11b **+45.056 B** (F5/F6 kutusu artık master'ın `ask_form` onay kutularını kullanıyor). Doğrulama ve sınır kapalıyken kopya (ops_bench, measure, birer koşu, 11a/11b): 10.000 küçük dosya 3.313/3.405 ms, 2 GB tek dosya 599/593 ms.
+- Bilinen sınırlar: macOS'ta doğrulama okuması önbellekte duran sayfaları atlamayabilir; bağlantı testi bu Windows'ta (bağlantı yetkisi yok) atlanıyor, macOS/Linux'ta koşar; aynı sürücüyü paylaşmayan işlerin yer değiştirmemesi saf birim testiyle (gerçek iki sürücü yok); Retry ayarın değerini alır; `ops.ps1`'e doğrulamalı/sınırlı satır yok.
+- macOS denetim listesi 311–316, Linux 231–234 bekliyor; Windows ekran testleri denetleyicide.
+
+## Windows ekran testleri: 11b
+
+Yapı: %TEMP%\gezik-gui-11\bin\t11b.exe (feat/tools-11b 5326b12). Her oturum için temiz GEZIK_CONFIG_DIR (%TEMP%\gezik-gui-11\cfg\b1…b5, bb-*), `[files] confirm-trash = true`, `[panes] confirm = true`, iki bölme (sol kaynak, sağ hedef). Veriler yalnız %TEMP%\gezik-gui-11\data\b altında (.gzt). Hız ölçümü: Gezik sürecinin WriteTransferCount/ReadTransferCount farkı. Klavye düzeni başta ve sonda en-US=0409:0000041F. Replace/geri alma/çöp kullanılmadı. Görüntüler: %TEMP%\gezik-gui-11\shots\b*.png.
+
+| # | Madde | Sonuç | Not |
+|---|---|---|---|
+| 1 | F5 sorusunda "Verify copies" kutusu, varsayılan kapalı | PASS | b1-f5-default.png |
+| 2 | `[files] verify = true` → kutu işaretli gelir | PASS | b2-f5-crop.png |
+| 3 | Doğrulamalı kopya: 200 MB hedef = kaynak (SHA-256) | PASS | 200 MB'ta "Verifying…" yakalanamayacak kadar kısa; 2 GB'ta görüldü (aşağı) |
+| 4 | 2 GB doğrulamalı kopya: satırda "54% · Verifying…" … 94%, sonra Done; hash aynı | PASS | b1-vTrue-strip.png. Okuma: doğrulamasız 2,15 GB, doğrulamalı 6,44 GB (kaynak+hedef yeniden okundu) |
+| 5 | ⋯ menüsü: Verify copies, Speed limit ▸ (No limit, 1, 5, 10, 25, 50, 100 MB/s); ayardaki 10 MB/s işaretli | PASS | b2-menu.png, b2-speed-sub-crop.png |
+| 6 | `max-speed = "10 MB/s"` yeni işe uygulanır | PASS | 10,03 ve 10,02 MB/s (10 s) |
+| 7 | Speed limit 5 MB/s | PASS | 4,97 MB/s (10 s), ±%10 içinde |
+| 8 | Çalışırken 25 MB/s'e yükseltme ilk saniyede etkili | PASS | ilk 1 s 25,0 MB/s; 4 s ortalama 25,09 |
+| 9 | No limit → tam hız | PASS | kalan ~1,8 GB ~1 s içinde bitti, hash aynı |
+| 10 | Çalışırken ⋯ ▸ Verify copies açma, sonraki dosyalara uygulanır | PASS | menüde işaret değişiyor (b4-menus.png); 2.000 küçük dosya @1 MB/s: okuma 8,4 MB → 18,1 MB. (İki dosyalı klasörde iki işçi aynı anda başladığından etkisiz kaldı; beklenen) |
+| 11 | Kuyruk: aynı sürücüye üç iş → 2. ve 3. "Waiting for the drive" | PASS | |
+| 12 | Bekleyen 2. işin menüsü: Move up gri, Move down, Start now; 3.'nün: Move down gri; çalışan işte Move öğeleri yok | PASS | b3-menus.png |
+| 13 | Move up/down yalnız bekleyenleri sıralar, çalışan yerinde | PASS | big2g,v200,v50 → (v50 up) big2g,v50,v200 → (down) big2g,v200,v50 → (v200 down) big2g,v50,v200 |
+| 14 | Start now (menüden) | PASS | sondaki v200 hemen başladı, v50 beklemede kaldı |
+| 15 | Çalışan bitince sıradaki (taşınmış) bekleyen başlar | PASS | big2g No limit ile bitince v50 kendiliğinden başladı; üç kopyanın hash'i aynı |
+| 16 | Sınırlıyken Pause / Resume / Cancel | PASS | ölçüm penceresi ~200 ms: Pause'tan sonraki ilk pencerede yazma 0; Resume'da ilk pencerede yeniden ~10 MB/s; Cancel'dan sonra 0, soru yok, geçici dosya kalmadı |
+| 17 | Kapalıyken hız, base-old.exe (master release, 02:37, 25.662.464 B; tam master değil, kopya motoru aynı) ile | PASS | 2 GB: base 1057/989 ms, 11b 986/980 ms; 2.000×4 KB: base 763/762 ms, 11b 756/740 ms (GUI, onaydan bitişe) |
+
+Gözlemler (hata değil):
+- Sınırlı bir iş başlarken satırdaki hız ilk saniyelerde düşük görünüyor ("527.8 KB/s", "260.6 KB/s"), sonra 9,6 MB/s'e oturuyor.
+- "Verify copies" kutusu UIA'da TogglePattern vermiyor (durum ekran okuyucuya gidiyor mu, ayrıca bakılmalı).
+- Doğrulama kapalıyken de (b3, büyük dosya) kopya hedefte geçici `.gezik-copying-…` adıyla yazılıyor; iş bitince ya da iptalde kalmıyor.
+
+- Sonrası (cilalama): `Check` bileşeni `accessible-checkable` alır (UI Automation onay durumunu görür); işin hız ortalaması ilk baytlar geçtiğinde başlar (bekleme ve tarama süresi ortalamaya girmez). İkisi exe'ye +1.536 B.
+
 ## Adım 11, alt parça 11d (Klasör karşılaştırma) sonrası
 
 - `compare` (Shift+F2 / ⌃⌘C) iki klasörde, her bölmede bir klasörde ya da iki bölmede başka her durumda bölmelerin klasörlerinde klasör karşılaştırmayı açar (§7.1; arama sonucu, This PC, çöp → `Compare needs two files or two folders`). `[tools] folder-diff` + dış araç varsa dış araç, bulunamazsa kendi karşılaştırma.
@@ -2502,4 +2638,4 @@ Not (FAIL değil): uzun satırda sol metin sütun çizgisine kadar dayanıyor, s
 - `select-differences` (Action 108, tuşsuz, `Tools ▸` 2201 iki bölmede, macOS Tools menüsü): G/Ç yok; aynı adlı dosya ile klasör seçilmez.
 - Gözden geçirme düzeltmeleri: bayatlık yalnız karşılaştırılan klasörlere dokunan işte; başarısız koşu eski satırları göstermez; süzgecin klasör deseni her tarafa kendi adıyla (dışlanan kök boş taraf); NFC yalnız macOS'ta.
 - Açık sınırlar (plan sapmaları): satır menüsü ve yol alanları yok (Swap düğmesi), harf duyarlılığı kutusu yok, süzgeç Enter/F5 ile uygulanır, aynı fiziksel disk kuralı yok; `tools.ps1` 100.000 çift ölçümü yok. Windows ekran testleri, macOS 324–331 ve Linux 239–243 bekliyor.
-- Sürüm exe'si 26.725.888 B (master 06a313b 26.599.424, +126.464 B; bütçe 262.144).
+- Sürüm exe'si 26.725.888 B (master 06a313b 26.599.424, +126.464 B; bütçe 262.144). master f9248ac (11b, 11f, 11i) ile birleşince 26.974.720 B (master f9248ac 26.852.352, +122.368 B).

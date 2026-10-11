@@ -11,6 +11,7 @@ export component Check inherits Rectangle {
     height: Theme.row-height;
     min-width: label.preferred-width + 24px;
     accessible-role: checkbox;
+    accessible-checkable: true;
     accessible-checked: root.checked;
     accessible-label: root.text;
     accessible-enabled: root.enabled;

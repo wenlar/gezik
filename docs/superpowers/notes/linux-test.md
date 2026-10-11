@@ -618,6 +618,33 @@ Numbers stay as they are when branches merge (see 10b). 11g starts at 223 as its
 223. **Tests first.** As macOS 297; paste.
 224. **Open, look, zoom, keys, menu.** As macOS 298–301 with the palette (Ctrl+Shift+P `Size Map`) and the right-click `Tools ▸ Size Map` (no menu bar), Backspace / Alt+Up for ⌫ / ⌥↑, Ctrl+R / F5, Move to Trash going to `~/.local/share/Trash`; on a 2× scale screen the box edges stay sharp.
 225. **Root.** Map `/`: it stays on the root file system (no `/proc`, `/sys`, `/dev`, `/run` or other mounts), finishes, and memory (`ps -o rss= -p $(pgrep -x gezik)`) goes back to within 0.3 MB of before after closing (write both numbers).
+### 11i, filtered copy, split and join
+
+Numbers stay as they are when branches merge. 11i starts at 226 as its plan decided. GNOME and KDE, X11 and Wayland.
+
+226. **Tests first.** As macOS 303; paste.
+227. **Copy To…, mask, filter.** As macOS 304–306 with Ctrl+Shift+P for the palette and Ctrl+Z; `*.jpg>*.cr2` with `IMG_1.jpg` selected takes `IMG_1.CR2` but not `img_1.cr2` (Linux names tell case apart).
+228. **Filtered move.** As macOS 307 with F6; on a USB stick (other drive) the moved files are copied and removed, and Ctrl+Z brings them back.
+229. **Split and join.** As macOS 308–309 (`cmp`, `sha256sum`; the FAT32 default with a vfat stick as the other pane).
+230. **Other tools' parts.** `split -b 10m -d -a 3 --numeric-suffixes=1 big.iso big.iso.` makes `big.iso.001`…: Join Files joins them (no `.crc`: the job says the result was not checked); `sha256sum` matches the original.
+
+### 11f, duplicate files
+
+11f uses 235–238.
+
+235. **Tests first.** As macOS 317; paste.
+236. **Find Duplicates.** As macOS 318–319 with Gezik's own menu (right-click a folder: `Find duplicates`; there is no menu bar).
+237. **Delete, undo and a removable disk.** As macOS 320; then on a USB disk (its `.Trash-<uid>`): Delete goes there and Ctrl+Z brings it back. On an NFS or SMB mount without a trash: nothing is deleted, the status bar says why (macOS 321).
+238. **Stop and Btrfs.** As macOS 323; on Btrfs a `cp --reflink` copy is listed as a duplicate.
+
+### 11b, copy verification, speed limit, queue
+
+Numbers stay as they are when branches merge. 11b uses 231–234.
+
+231. **Tests first.** As macOS 311; paste.
+232. **Verify and FICLONE.** As macOS 312–313: on Btrfs or XFS a copy on the same file system is a clone (instant, no `Verifying…`); to an ext4 USB stick or a VFAT one the row says `Verifying…`. While it verifies, `iostat -x 1` (or `cat /proc/diskstats`) shows reads from the stick.
+233. **Speed limit.** As macOS 314 (Linux copies in 8 MB pieces: the speed may move in steps, the average stays near the limit; time a 2 GB copy at 20 MB/s, ≈ 100 s ±5 %).
+234. **Queue and F5.** As macOS 315–316 with Gezik's own ⋯ menu (X11 and Wayland: the menu opens under the button, inside the window).
 
 ### 11d, folder compare
 

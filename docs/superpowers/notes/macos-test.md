@@ -667,6 +667,41 @@ Numbers stay as they are when branches merge (see 10b). 11g starts at 297 as its
 300. **Zoom and keys.** Click a folder box: the map zooms into it (no new scan: the status line never says `Scanning…`), the path at the top follows; Up, ⌫ and ⌥↑ go back out (not above the folder it opened on). Arrow keys move a frame between boxes, the status line names the framed one (`path · size · n files · 12% of <folder>`); Return on a folder: the pane goes there and the map closes; on a file: the pane shows its folder with it selected. Double-click a folder box: the pane goes to that folder. ⌘R / F5 scans again.
 301. **Menu.** Right-click a box: Open, Show in Pane, Move to Trash, Copy Path. Move to Trash: the box goes at once, the file is in the Trash, ⌘Z brings it back (the map does not: F5). Copy Path: the path is on the clipboard.
 302. **Sizes kept.** After a map of a folder, close it and look at the list with folder sizes on: the folders under it show their sizes without `Calculating`. Map `/` (or the startup disk in the computer root): it stays on the startup volume (no `/System/Volumes/Data` twice, no other disks), and Activity Monitor's memory goes back to within 0.3 MB of before after closing the map (write both numbers).
+### 11i, filtered copy, split and join
+
+Numbers stay as they are when branches merge. 11i starts at 303 as its plan decided. Results go to `macos-test-results.md`.
+
+303. **Tests first.** `cargo test -p gezik-core file_filter`, `cargo test -p gezik-core ops::`, `cargo test -p gezik-ops pick`, `cargo test -p gezik-ops move_`, `cargo test -p gezik-batch --test split`, `cargo test -p gezik copy_to`; paste the output.
+304. **Copy To… in one pane.** Select files and a folder, palette (⌘⇧P) `Copy To…`: the field is empty, `Type a folder` shows under it; type `~/Desktop/gezik-11i` (missing): `Into …` shows; ⌘↩/Enter copies and makes the folder; ⌘Z takes it all away. Right-click a row: `Copy to…`, `Move to…` are there with Compress and Convert; `Split file…` only for one file, `Join files` only for a `.001` or `.crc`.
+305. **Name mask.** Copy To… a few `.txt` files with the field ending in `/*.bak`: the line says `Names as *.bak`, the copies are `name.bak`; folders inside keep their names. Two files that become one name (`a.txt`, `a.log`): the conflict list asks about the second.
+306. **Filter.** Copy To… a folder tree with `Filter…`: `*.jpg | thumbs/` copies only the `.jpg` files outside `thumbs` folders, and no empty folders appear. A typing mistake (`a | b | c`) shows red under the field. `*.jpg>*.cr2` with `IMG_1.jpg` selected copies `IMG_1.CR2` too (any case of the extension); write whether a `img_1.cr2` (other case of the name) comes along on APFS (it should: case-insensitive volume).
+307. **Filtered move.** Move To… a folder with `Filter…` `*.jpg`: only the `.jpg` files move, the rest stays, a source folder left empty goes; ⌘Z puts everything back. F6 with two panes offers the same `Filter…` button and `Don't Ask Again`; from the Trash, F6 offers no filter.
+308. **Split.** Select a file of a few hundred MB, `Split File…`: the size field says `100 MB` and the line `N parts`; Split writes `name.001`… and `name.crc` (open it in TextEdit: `filename=`, `size=`, `crc32=`). On an exFAT/FAT32 USB stick as the other pane with a file over 4 GB, the field starts at `4095 MB`. Cancel a big split in the job panel: nothing is left in the target folder.
+309. **Join.** Select `name.002`, `Join Files`: the file comes back; compare it (`cmp` or `shasum`) with the original. Change one byte in a part (`printf 'x' | dd of=name.002 bs=1 seek=5 conv=notrunc`): Join fails with `does not match name.crc`, and an existing `name` there is not touched. Delete a middle part: `Part name.00N is missing`, nothing written.
+310. **Total Commander parts.** If you have parts and a `.crc` made by Total Commander (or `split -b 100m -d -a 3 --numeric-suffixes=1`), Join joins them; write which.
+
+### 11f, duplicate files
+
+11f uses 317–323.
+
+317. **Tests first.** `cargo test -p gezik-search duplicates`, `cargo test -p gezik-core duplicates`; paste the output (the link test makes real symbolic links here).
+318. **Find Duplicates.** Make a folder with a photo and a copy of it in a subfolder, a file with a hard link (`ln a.txt b.txt`), two empty files and a symbolic link to the photo (`ln -s`). Tools ▸ Find Duplicates on it: the search bar says `Find duplicates in <folder>`; Enter. One group, `2 files × … could be freed`: the photo and its copy (the symbolic link is not read); the hard link is no group and the empty files are not listed; the status bar says `1 group · 2 files · … could be freed · 1 hard link counted once`.
+319. **Select helpers.** With a few groups: the search bar's ▾ menu and a row's right-click list `Select all but the newest in each group` … `Keep this one, select its copies`; each selects as it says and never every copy of a group. `Select all in this folder` on a folder holding every copy of a group: one stays unselected and the status bar says so.
+320. **Delete and undo.** Delete on the selection: the Trash gets them, the rows go after the job, a group left with one file goes. ⌘Z brings the files back in Finder; the rows do not come back (search again). Select every copy of a group and Delete: Gezik asks `This deletes every copy of 1 file` first.
+321. **No trash.** On a network share (SMB, no Trash there) find duplicates and Delete: nothing is deleted, no "delete permanently?" question; the status bar says the duplicates were not deleted and why.
+322. **iCloud and APFS clones.** In iCloud Drive with files not downloaded: they are not read (no download starts) and the status bar counts them as online-only. Duplicate a large file in Finder (⌘D makes an APFS clone): it is listed as a duplicate (spec §19: deleting a clone may free little).
+323. **Stop.** On a large folder (home), Esc or Stop while it says `comparing … of same size`: it stops within a second, the status bar says `Stopped`, Activity Monitor's memory falls back.
+
+### 11b, copy verification, speed limit, queue
+
+Numbers stay as they are when branches merge. 11b uses 311–316. Results go to `macos-test-results.md`.
+
+311. **Tests first.** `cargo test -p gezik-ops verif`, `cargo test -p gezik-ops limited`, `cargo test -p gezik-ops waiting_jobs`, `cargo test -p gezik-core ops::rate`, `cargo test -p gezik-platform fs::`; paste the output.
+312. **Clones are not verified.** In `settings.toml` set `[files] verify = true`. Copy a 2 GB file to another folder on the same APFS disk (⌘C, ⌘V): it is done at once and the panel never says `Verifying…`. Then copy it to a USB stick or another disk (not APFS, or another APFS volume): the row says `Verifying…` after the copy and the job takes about twice as long. Write both times.
+313. **F_NOCACHE.** The same copy to the stick with `verify = true`: while it verifies, Activity Monitor ▸ Disk shows reads from the stick (not only from the Mac's disk). Write whether it does: macOS may give the read from the cache (a known limit).
+314. **Speed limit.** `[files] max-speed = "20 MB/s"`, copy a 2 GB file to the stick: the row's speed stays near 20 MB/s; time it (≈ 100 s ±5 %). In the row's ⋯ menu choose Speed limit ▸ No limit: it speeds up at once; ▸ 5 MB/s: it slows at once. Pause and Cancel answer within a moment while limited.
+315. **Queue.** Start three large copies to the same stick one after the other: the first runs, the others say `Waiting for the drive`. The third's ⋯ ▸ Move up: it goes above the second (the rows swap) and runs right after the first; Move up on a waiting job right after the running one is greyed; the running job's ⋯ has no Move items.
+316. **F5 and the menu.** With two panes (F3) and `[panes] confirm = true`, F5: the question has `Verify copies`, ticked as `[files] verify` says; untick it and copy: no `Verifying…`. Tools ▸ Copy To… and Move To… ask the same question with the same box. During a long copy ⋯ ▸ Verify copies turns it on for the files not copied yet. A move to another disk with verification on keeps each source file until its copy checked (watch a big file: the source goes only after `Verifying…`).
 
 ### 11d, folder compare
 

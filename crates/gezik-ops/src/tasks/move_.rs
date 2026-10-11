@@ -10,6 +10,7 @@ use gezik_core::ops::conflict::Facts;
 use gezik_core::ops::paths::{is_within, same_path};
 use gezik_platform::fs;
 
+use super::pick::{Pick, Picked, Picker};
 use super::{same_drive, what};
 use crate::task::{
     Outcome, PlanItem, Resources, RunCx, ScanSink, Stage, Task, TaskKind, Work, changed_since, facts_after, unchanged,
@@ -24,6 +25,8 @@ const MKDIR: u8 = 3;
 const RMDIR: u8 = 4;
 /// A folder on the way to a target, made before what goes into it (move with folders).
 const MAKE_PARENT: u8 = 5;
+/// A folder a filtered move puts files into: made if missing, taken away by undo if empty.
+const PICK_DIR: u8 = 6;
 
 pub struct MoveTask {
     /// (where it is, where it goes) per chosen item.
@@ -37,11 +40,13 @@ pub struct MoveTask {
     /// `Move`, or the kind of the job that places.
     kind: TaskKind,
     /// Tests only: plan as if the target were on another drive.
-    cross: bool,
+    pub(crate) cross: bool,
     /// Folders to make before the items (move with folders, spec 4.6), shallowest first.
     parents: Vec<PathBuf>,
     /// Move with folders: items whose relative path would leave the target folder.
     refused: Vec<PathBuf>,
+    /// Only what a filter picks, under a name mask (spec 11 §12.2); the rest stays.
+    pick: Option<Pick>,
 }
 
 impl MoveTask {
@@ -55,7 +60,17 @@ impl MoveTask {
             cross: false,
             parents: Vec::new(),
             refused: Vec::new(),
+            pick: None,
         }
+    }
+
+    /// Moves only what `pick` takes, under its name mask (an empty one changes nothing). A
+    /// source folder goes only once it is empty.
+    // shortcut: an item already in the target folder is dropped by `with_folders` before the
+    // mask is known, so a mask renames nothing there; pick them in a subfolder or use Rename.
+    pub fn picking(mut self, pick: Pick) -> MoveTask {
+        self.pick = (!pick.is_empty()).then_some(pick);
+        self
     }
 
     /// Moves each source to `dir` joined with its path under a search's scope (spec 4.6), making
@@ -160,6 +175,7 @@ impl Task for MoveTask {
         if !super::plan_parents(sink, &self.parents, MAKE_PARENT) {
             return;
         }
+        let mut picker = self.pick.as_ref().map(Picker::new);
         for (root, (source, target)) in self.pairs.iter().enumerate() {
             if super::refuse_root(sink, source, "move") {
                 continue;
@@ -180,6 +196,10 @@ impl Task for MoveTask {
             } else if facts.is_dir && is_within(target, source) {
                 sink.failed(source, io::Error::new(io::ErrorKind::InvalidInput, "Cannot move a folder into itself"));
                 true
+            } else if let Some(picker) = &mut picker {
+                let same = !self.cross && same_drive(source, target.parent().unwrap_or(target));
+                let emit = &mut |sink: &mut dyn ScanSink, p: Picked<'_>| plan_picked(sink, &p, root, same);
+                picker.root(sink, source, target, facts, emit)
             } else if !self.cross && same_drive(source, target.parent().unwrap_or(target)) {
                 plan_rename(sink, source, target, facts, root, true)
             } else {
@@ -191,9 +211,15 @@ impl Task for MoveTask {
         }
     }
 
+    /// Two items may be bound for one name (a mask, or the same name from two folders of a
+    /// search): the later one meets the conflict list.
+    fn same_targets(&self) -> bool {
+        self.pick.as_ref().is_some_and(|pick| pick.mask.is_some()) || super::shared_target(&self.pairs)
+    }
+
     fn as_admin(&self, denied: &[PathBuf]) -> Vec<Op> {
         // A plain move into a folder only: not an undo, a placing, or a move with folders.
-        if self.back || self.placing || self.kind != TaskKind::Move || !self.parents.is_empty() {
+        if self.back || self.placing || self.kind != TaskKind::Move || !self.parents.is_empty() || self.pick.is_some() {
             return Vec::new();
         }
         self.pairs
@@ -204,7 +230,7 @@ impl Task for MoveTask {
     }
 
     fn run(&self, item: &PlanItem, cx: &RunCx<'_>) -> io::Result<Outcome> {
-        if item.tag == MAKE_PARENT {
+        if item.tag == MAKE_PARENT || item.tag == PICK_DIR {
             return super::make_parent_dir(item);
         }
         let Some(source) = &item.source else { return Ok(Outcome::Nothing) };
@@ -333,6 +359,19 @@ fn plan_rename(sink: &mut dyn ScanSink, source: &Path, target: &Path, facts: Fac
     sink.item(if top { item.top(root) } else { item.under(root) })
 }
 
+/// An entry a filtered move picked: a folder made (Before) and removed once empty (After); a
+/// file renamed on the same drive, else copied and its original removed.
+fn plan_picked(sink: &mut dyn ScanSink, p: &Picked<'_>, root: usize, same: bool) -> bool {
+    let place = |item: PlanItem| if p.top { item.top(root) } else { item.under(root) };
+    if p.facts.is_dir {
+        let made = PlanItem::new(Stage::Before, p.facts).source(p.source).target(p.target).checked().tag(PICK_DIR);
+        let emptied = PlanItem::new(Stage::After, p.facts).source(p.source).target(p.target).under(root).tag(RMDIR);
+        return sink.item(place(made)) && sink.item(emptied);
+    }
+    let tag = if same { RENAME } else { COPY_DELETE };
+    sink.item(place(PlanItem::new(Stage::Parallel, p.facts).source(p.source).target(p.target).checked().tag(tag)))
+}
+
 /// Another drive: folders made first, files copied then removed, emptied folders removed last.
 fn plan_cross(sink: &mut dyn ScanSink, source: &Path, target: &Path, facts: Facts, root: usize) -> bool {
     if !facts.is_dir {
@@ -376,6 +415,7 @@ mod tests {
     use crate::engine::ConflictItem;
     use crate::testing::{defaults, engine, finish, read, test_dir, write};
     use gezik_core::ops::conflict::Decision;
+    use std::path::PathBuf;
 
     fn no_conflicts(_: &[ConflictItem]) -> Vec<Decision> {
         panic!("no conflicts expected")
@@ -587,5 +627,39 @@ mod tests {
         assert!(!dst.join("a").exists(), "the made folder left empty went");
         assert_eq!(read(&dst.join("c/user.txt")), "mine", "a file put there since stays");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A filtered move takes only what matches; the rest stays where it is, a folder emptied by
+    /// it goes, and one undo puts everything back. On the same drive and across drives.
+    #[test]
+    fn a_filtered_move_leaves_the_rest_and_undoes_in_one() {
+        for cross in [false, true] {
+            let dir = test_dir(if cross { "move-pick-cross" } else { "move-pick" });
+            let src = dir.join("src");
+            for file in ["a/x.jpg", "a/y.txt", "a/sub/z.jpg", "a/only/w.txt"] {
+                write(&src.join(file), file);
+            }
+            let dst = dir.join("dst");
+            let filter = gezik_core::file_filter::FileFilter::parse("*.jpg", false).unwrap();
+            let mut task = MoveTask::with_folders(vec![(src.join("a"), PathBuf::from("a"))], &dst)
+                .picking(Pick { filter: Some(filter), mask: Some("*_1.*".into()) });
+            task.cross = cross;
+            let engine = engine();
+            let (report, _) = finish(&engine, engine.submit(Box::new(task)), no_conflicts);
+            assert!(report.failures.is_empty(), "{cross}: {:?}", report.failures);
+            assert_eq!(read(&dst.join("a/x_1.jpg")), "a/x.jpg", "{cross}");
+            assert_eq!(read(&dst.join("a/sub/z_1.jpg")), "a/sub/z.jpg", "{cross}");
+            assert!(!dst.join("a/only").exists() && !dst.join("a/y.txt").exists(), "{cross}");
+            assert_eq!(read(&src.join("a/y.txt")), "a/y.txt", "{cross}: what the filter left stays");
+            assert_eq!(read(&src.join("a/only/w.txt")), "a/only/w.txt", "{cross}");
+            assert!(!src.join("a/x.jpg").exists(), "{cross}");
+            assert!(!src.join("a/sub").exists(), "{cross}: the folder it emptied went");
+            let (undo, _) = finish(&engine, engine.undo().unwrap(), no_conflicts);
+            assert!(undo.failures.is_empty(), "{cross}: {:?}", undo.failures);
+            assert_eq!(read(&src.join("a/x.jpg")), "a/x.jpg", "{cross}");
+            assert_eq!(read(&src.join("a/sub/z.jpg")), "a/sub/z.jpg", "{cross}");
+            assert!(!dst.exists(), "{cross}: the folders it made went");
+            let _ = std::fs::remove_dir_all(&dir);
+        }
     }
 }

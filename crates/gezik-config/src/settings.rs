@@ -63,6 +63,10 @@ pub struct FilesSettings {
     /// Ask before moving to the trash.
     pub confirm_trash: bool,
     pub copy_threads: CopyThreads,
+    /// New copies and moves check each file against the original (spec 11 §5.1).
+    pub verify: bool,
+    /// New copies and moves go at most this many bytes a second; `None`: as fast as they can.
+    pub max_speed: Option<u64>,
 }
 
 /// `[tools]`: the programs Gezik may download, and the compare program (spec 11 §6.4).
@@ -270,7 +274,7 @@ pub struct SavedSearch {
 pub const SEARCHES_MAX: usize = 30;
 /// A saved search's folder that is the place shown when it runs.
 pub const HERE: &str = "{here}";
-const SEARCH_KEYS: [&str; 13] = [
+const SEARCH_KEYS: [&str; 14] = [
     "name",
     "folder",
     "pattern",
@@ -284,6 +288,7 @@ const SEARCH_KEYS: [&str; 13] = [
     "type",
     "hidden",
     "skipped",
+    "duplicates",
 ];
 
 /// One `[[searches]]` entry; the error is why it is left out (sapma 17: whether the folder is a
@@ -973,6 +978,7 @@ pub fn search_to_toml(spec: &SearchSpec) -> toml::Table {
         ("match-case", spec.match_case),
         ("hidden", spec.hidden == HiddenRule::Include),
         ("skipped", spec.skipped),
+        ("duplicates", spec.duplicates),
     ] {
         if on {
             table.insert(key.into(), toml::Value::Boolean(true));
@@ -1027,6 +1033,7 @@ pub fn search_from_toml(table: &toml::Table) -> Result<SearchSpec, String> {
     spec.match_case = flag("match-case")?;
     spec.hidden = if flag("hidden")? { HiddenRule::Include } else { HiddenRule::FollowView };
     spec.skipped = flag("skipped")?;
+    spec.duplicates = flag("duplicates")?;
     if let Some(size) = text("size-min")? {
         spec.size.min = Some(parse_size(size).map_err(|err| format!("size-min: {err}"))?);
     }
@@ -1348,6 +1355,22 @@ fn parse_files(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> 
                     COPY_THREADS_RANGE.start(),
                     COPY_THREADS_RANGE.end()
                 ),
+            )),
+        }
+    }
+    if let Some(value) = table.get("verify") {
+        match value.as_bool() {
+            Some(on) => out.verify = on,
+            None => warnings.push(Warning::new(file, format!("files.verify: expected true or false, got {value}"))),
+        }
+    }
+    if let Some(value) = table.get("max-speed") {
+        match value.as_str().map(str::trim) {
+            Some("") => {}
+            Some(text) if let Some(speed) = gezik_core::ops::rate::parse_speed(text) => out.max_speed = Some(speed),
+            _ => warnings.push(Warning::new(
+                file,
+                format!("files.max-speed: expected a speed like \"20 MB/s\" or \"\", got {value}"),
             )),
         }
     }
@@ -2547,7 +2570,25 @@ width = 900
         use gezik_core::ops::threads::CopyThreads;
         let (settings, warnings) = parse("[files]\nconfirm-trash = true\ncopy-threads = 3\n");
         assert!(warnings.is_empty(), "{warnings:?}");
-        assert_eq!(settings.files, FilesSettings { confirm_trash: true, copy_threads: CopyThreads::Fixed(3) });
+        assert_eq!(
+            settings.files,
+            FilesSettings { confirm_trash: true, copy_threads: CopyThreads::Fixed(3), ..FilesSettings::default() }
+        );
+        let (settings, warnings) = parse(
+            "[files]
+verify = true
+max-speed = \"1.5 MB/s\"
+",
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(settings.files.verify);
+        assert_eq!(settings.files.max_speed, Some(1_500_000));
+        let (settings, _) = parse(
+            "[files]
+max-speed = \"\"
+",
+        );
+        assert_eq!(settings.files.max_speed, None);
         let (settings, _) = parse("[files]\ncopy-threads = \"Auto\"\n");
         assert_eq!(settings.files.copy_threads, CopyThreads::Auto);
         assert_eq!(Settings::default().files, FilesSettings::default());
@@ -3660,6 +3701,11 @@ split = 0.2
         let keys: Vec<&str> = table.keys().map(String::as_str).collect();
         assert_eq!(keys, ["name", "folder", "pattern", "content", "modified"], "name and folder first");
         assert_eq!(parse_saved_search(&toml::Value::Table(table)).unwrap(), search);
+        let mut duplicates = SearchSpec::new(Scope::AllDrives);
+        duplicates.duplicates = true;
+        let table = search_to_toml(&duplicates);
+        assert_eq!(table.get("duplicates"), Some(&toml::Value::Boolean(true)));
+        assert_eq!(search_from_toml(&table), Ok(duplicates), "[[searches]] duplicates = true");
     }
 
     #[test]

@@ -32,6 +32,17 @@ pub(crate) struct Control {
     pub bytes_done: AtomicU64,
     pub bytes_total: AtomicU64,
     failures_in_row: AtomicU32,
+    /// Each copied file is read back and compared with the original (spec 11 §5.1).
+    pub verify: AtomicBool,
+    /// Bytes a second its copies may go at; 0: no limit (spec 11 §5.2).
+    pub speed: AtomicU64,
+    /// The limit's bucket, shared by the job's workers.
+    pub bucket: Mutex<gezik_core::ops::rate::Bucket>,
+    /// How many of its workers are verifying a copy now.
+    pub verifying: AtomicU32,
+    /// Tests: how many copies get one byte changed before they are verified.
+    #[cfg(test)]
+    pub spoil: AtomicU32,
 }
 
 /// How long a waiting thread sleeps before it looks at the cancel switch again.

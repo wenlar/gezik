@@ -202,6 +202,7 @@ export component AppWindow inherits Window {
             MenuSeparator { }
             MenuItem { title: "Calculate Checksums…"; activated => { root.menu-command("checksums"); } }
             MenuItem { title: "Verify Checksums"; activated => { root.menu-command("verify-checksums"); } }
+            MenuItem { title: "Find Duplicates"; activated => { root.menu-command("find-duplicates"); } }
             MenuItem { title: "Size Map"; activated => { root.menu-command("size-map"); } }
             MenuSeparator { }
             MenuItem { title: "Export List…"; activated => { root.menu-command("export-list"); } }
@@ -477,6 +478,7 @@ export component AppWindow inherits Window {
     callback op-resume(int);
     callback op-cancel(int);
     callback op-start-now(int);
+    callback op-more(int, length, length, length, length);
     callback op-details(int);
     callback op-retry(int);
     callback op-dismiss(int);
@@ -1280,6 +1282,7 @@ export component AppWindow inherits Window {
                 resume(i) => { root.op-resume(i); }
                 cancel(i) => { root.op-cancel(i); }
                 start-now(i) => { root.op-start-now(i); }
+                more(i, x, y, r, t) => { root.op-more(i, x, y, r, t); }
                 details(i) => { root.op-details(i); }
                 retry(i) => { root.op-retry(i); }
                 dismiss(i) => { root.op-dismiss(i); }

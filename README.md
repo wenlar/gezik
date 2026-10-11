@@ -14,9 +14,9 @@ Windows · macOS · Linux
 
 | Startup to window | Idle memory | 100,000-file folder | 20 tabs vs 1 |
 | :---: | :---: | :---: | :---: |
-| **24–35 ms** | **6.8 MB** | **17.2 MB** | **+0.1 MB** |
+| **32–38 ms** | **5.1 MB** | **13.1 MB** | **+0.4 MB** |
 
-<sub>Release build, Windows 11. Method and full results in [Performance](docs/performance.md).</sub>
+<sub>Release build, Windows 11, default 900×600 window. Method and full results in [Performance](docs/performance.md).</sub>
 
 ## Goals
 
@@ -32,7 +32,9 @@ Windows · macOS · Linux
 
 **Finding things.** A filter that narrows the folder as you type, search under any folder by name or content (Everything on Windows), flat view, saved searches, a command palette and quick open. → [Filter](docs/features.md#filter-and-selection) · [Search](docs/features.md#search)
 
-**Navigation.** Tabs that come back as you left them, tab sets, two panes, pinned folders with aliases and groups, and an address bar with Recent and Frequent folders. → [Tabs, address bar and terminal](docs/features.md#tabs-address-bar-and-terminal)
+**Navigation.** Tabs that come back as you left them, tab sets, pinned folders with aliases and groups, and an address bar with Recent and Frequent folders. → [Tabs, address bar and terminal](docs/features.md#tabs-address-bar-and-terminal)
+
+**Layouts.** Two panes with F5/F6 copy and move and synced browsing, a folder tree in the sidebar, grouping by type, date or size, Miller columns, several windows with tabs you can tear off, and view rules that pick a folder's view by path, kind or content. → [Layouts](docs/features.md#layouts)
 
 **The system.** A command line, a single instance, one Trash view for every bin, and PATH integration you can undo. → [System integration](docs/features.md#system-integration)
 

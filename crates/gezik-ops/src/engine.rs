@@ -66,6 +66,13 @@ pub struct Settings {
     /// Where instant deletes note the hidden folders they have not finished; `None`: deletes
     /// run in place.
     pub pending_deletes: Option<PathBuf>,
+    /// New copies and moves verify each file (spec 11 §5.1).
+    pub verify: bool,
+    /// New copies and moves go at most this many bytes a second (spec 11 §5.2).
+    pub max_speed: Option<u64>,
+    /// Tests: how many of a new copy's files get one byte changed before they are verified.
+    #[cfg(test)]
+    pub spoil: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,6 +101,18 @@ pub struct Progress {
     pub items_total: u64,
     pub bytes_done: u64,
     pub bytes_total: u64,
+    /// A copy is being read back and compared.
+    pub verifying: bool,
+}
+
+/// What a job's menu in the panel offers (spec 11 §5): its copies' verification and speed
+/// limit, and whether it can move up or down the queue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JobOptions {
+    pub verify: bool,
+    pub speed: Option<u64>,
+    pub can_up: bool,
+    pub can_down: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -292,6 +311,7 @@ impl Job {
             items_total: c.items_total.load(Ordering::Relaxed),
             bytes_done: c.bytes_done.load(Ordering::Relaxed),
             bytes_total: c.bytes_total.load(Ordering::Relaxed),
+            verifying: c.verifying.load(Ordering::Relaxed) > 0,
         }
     }
 }
@@ -620,18 +640,38 @@ impl Engine {
         lock(&self.0.settings).threads = threads;
     }
 
+    /// `[files] verify` and `max-speed`: what new copies and moves start with.
+    pub fn set_copy_defaults(&self, verify: bool, max_speed: Option<u64>) {
+        let mut settings = lock(&self.0.settings);
+        settings.verify = verify;
+        settings.max_speed = max_speed;
+    }
+
     pub fn submit(&self, task: Box<dyn Task>) -> JobId {
-        self.start(vec![Arc::from(task)], Origin::New, None)
+        self.start(vec![Arc::from(task)], Origin::New, None, None)
+    }
+
+    /// `submit` whose copies are verified or not as `verify` says (`None`: as the settings
+    /// say), from its first file on.
+    pub fn submit_verifying(&self, task: Box<dyn Task>, verify: Option<bool>) -> JobId {
+        self.start(vec![Arc::from(task)], Origin::New, None, verify)
     }
 
     /// One job of `tasks`, run in order, undone as one action (`label`: what Undo says).
     pub fn submit_chain(&self, tasks: Vec<Box<dyn Task>>, label: Option<String>) -> JobId {
-        self.start(tasks.into_iter().map(Arc::from).collect(), Origin::New, label)
+        self.start(tasks.into_iter().map(Arc::from).collect(), Origin::New, label, None)
     }
 
     /// Starts a job of `tasks` (run in order) on its own thread. `label`: what Undo says
-    /// (default: from the first task); an undo or redo keeps the action's label.
-    pub(crate) fn start(&self, tasks: Vec<Arc<dyn Task>>, origin: Origin, label: Option<String>) -> JobId {
+    /// (default: from the first task); an undo or redo keeps the action's label. A new copy
+    /// or move takes `[files] verify` (or `verify`) and `max-speed`.
+    pub(crate) fn start(
+        &self,
+        tasks: Vec<Arc<dyn Task>>,
+        origin: Origin,
+        label: Option<String>,
+        verify: Option<bool>,
+    ) -> JobId {
         let id = self.0.next_id.fetch_add(1, Ordering::SeqCst) + 1;
         let Some(first) = tasks.first() else { return id };
         let label = label.unwrap_or_else(|| first.kind().label(first.count()));
@@ -659,6 +699,13 @@ impl Engine {
             temp: crate::task::TempCopies::new(self.0.pending.clone()),
             staging: Mutex::default(),
         });
+        if origin == Origin::New && matches!(kind, TaskKind::Copy | TaskKind::Move) {
+            let settings = self.0.settings();
+            job.control.verify.store(verify.unwrap_or(settings.verify), Ordering::Relaxed);
+            job.control.speed.store(settings.max_speed.unwrap_or(0), Ordering::Relaxed);
+            #[cfg(test)]
+            job.control.spoil.store(settings.spoil, Ordering::SeqCst);
+        }
         lock(&self.0.jobs).push(job.clone());
         self.0.push([Event::Added { job: id, title, kind, background }]);
         self.0.ensure_reporter();
@@ -706,7 +753,7 @@ impl Engine {
         };
         self.0.push([Event::History]);
         let origin = if redo { Origin::Redo(stamp) } else { Origin::Undo(stamp) };
-        Some(self.start(record.inverse, origin, Some(record.label)))
+        Some(self.start(record.inverse, origin, Some(record.label), None))
     }
 
     /// "Copy 3 items" if there is something to undo.
@@ -792,6 +839,51 @@ impl Engine {
         self.0.turn.notify_all();
     }
 
+    /// Turns job `job`'s verification on or off for the files it has not copied yet.
+    pub fn set_verify(&self, job: JobId, verify: bool) {
+        if let Some(job) = self.job(job) {
+            job.control.verify.store(verify, Ordering::Relaxed);
+        }
+    }
+
+    /// Sets job `job`'s speed limit in bytes a second (`None`: no limit), at once.
+    pub fn set_speed(&self, job: JobId, speed: Option<u64>) {
+        if let Some(job) = self.job(job) {
+            job.control.speed.store(speed.unwrap_or(0), Ordering::Relaxed);
+        }
+    }
+
+    /// What job `job`'s menu in the panel shows; `None` once it ended.
+    pub fn job_options(&self, job: JobId) -> Option<JobOptions> {
+        let jobs = lock(&self.0.jobs);
+        let at = jobs.iter().position(|j| j.id == job)?;
+        let control = &jobs[at].control;
+        let speed = control.speed.load(Ordering::Relaxed);
+        Some(JobOptions {
+            verify: control.verify.load(Ordering::Relaxed),
+            speed: (speed > 0).then_some(speed),
+            can_up: swap_partner(&jobs, at, true).is_some(),
+            can_down: swap_partner(&jobs, at, false).is_some(),
+        })
+    }
+
+    /// Moves job `job`, waiting for its drive, just before (`up`) or after the nearest job
+    /// waiting for one of the same drives (spec 11 §5.3); returns that job. Every other job
+    /// keeps its order (no job jumps ahead of one it shares a drive with). A job that runs, or
+    /// one with no such neighbour, stays.
+    pub fn move_in_queue(&self, job: JobId, up: bool) -> Option<JobId> {
+        let other = {
+            let mut jobs = lock(&self.0.jobs);
+            let at = jobs.iter().position(|j| j.id == job)?;
+            let other = swap_partner(&jobs, at, up)?;
+            let id = jobs[other].id;
+            move_next_to(&mut jobs, at, other);
+            id
+        };
+        self.0.turn.notify_all();
+        Some(other)
+    }
+
     pub fn cancel_all(&self) {
         for job in lock(&self.0.jobs).iter() {
             job.control.cancel();
@@ -817,6 +909,52 @@ impl Engine {
             std::thread::sleep(Duration::from_millis(20));
         }
     }
+}
+
+/// Whether `job` has not started and is not done: it may change places in the queue.
+fn waiting(job: &Job) -> bool {
+    !job.control.running.load(Ordering::SeqCst) && !job.done.load(Ordering::SeqCst)
+}
+
+/// Whether `a` and `b` share a drive, as `wait_turn` sees it.
+fn share_a_drive(a: &Job, b: &Job) -> bool {
+    if a.drives_known.load(Ordering::SeqCst) && b.drives_known.load(Ordering::SeqCst) {
+        lock(&a.drives).intersects(&lock(&b.drives))
+    } else {
+        a.roots.intersects(&b.roots)
+    }
+}
+
+/// The place in `jobs` of the job the waiting job at `at` goes past to go up (or down).
+fn swap_partner(jobs: &[Arc<Job>], at: usize, up: bool) -> Option<usize> {
+    queue_partner(jobs, at, up, |a, b| share_a_drive(a, b), |job| waiting(job))
+}
+
+/// The nearest item before (`up`) or after `at` that `shares` a drive with it, if both `wait`.
+fn queue_partner<T>(
+    list: &[T],
+    at: usize,
+    up: bool,
+    shares: impl Fn(&T, &T) -> bool,
+    waits: impl Fn(&T) -> bool,
+) -> Option<usize> {
+    let item = &list[at];
+    if !waits(item) {
+        return None;
+    }
+    let found = if up {
+        (0..at).rev().find(|&i| shares(item, &list[i]))
+    } else {
+        (at + 1..list.len()).find(|&i| shares(item, &list[i]))
+    };
+    found.filter(|&i| waits(&list[i]))
+}
+
+/// Moves the item at `at` just before (`partner` earlier) or after (`partner` later) the item
+/// at `partner`; every other item keeps its order.
+pub fn move_next_to<T>(list: &mut Vec<T>, at: usize, partner: usize) {
+    let item = list.remove(at);
+    list.insert(partner, item);
 }
 
 #[cfg(test)]
@@ -1611,5 +1749,148 @@ mod tests {
         assert_eq!(paused, 1);
         assert!(report.failures.is_empty());
         assert_eq!(lock(&log).iter().filter(|e| *e == "a+1").count(), 2, "item 1 ran twice");
+    }
+
+    #[test]
+    fn a_job_moves_past_its_partner_without_reordering_the_others() {
+        // (name, drives as bits, waits): `a` runs on X; `b` waits on X and Y, `c` on Y, `d` on X.
+        let mut list = vec![('a', 0b01, false), ('b', 0b11, true), ('c', 0b10, true), ('d', 0b01, true)];
+        let shares = |p: &(char, u8, bool), q: &(char, u8, bool)| p.1 & q.1 != 0;
+        let waits = |p: &(char, u8, bool)| p.2;
+        let names = |list: &[(char, u8, bool)]| list.iter().map(|p| p.0).collect::<String>();
+        // `d` goes up past `b` (its nearest on X); `c` (Y only) stays behind `b` (on Y too).
+        let partner = queue_partner(&list, 3, true, shares, waits).unwrap();
+        assert_eq!(partner, 1);
+        move_next_to(&mut list, 3, partner);
+        assert_eq!(names(&list), "adbc", "a swap would give adcb: c ahead of b");
+        // Up again would pass `a`, which runs; down goes back past `b`.
+        assert_eq!(queue_partner(&list, 1, true, shares, waits), None);
+        let partner = queue_partner(&list, 1, false, shares, waits).unwrap();
+        move_next_to(&mut list, 1, partner);
+        assert_eq!(names(&list), "abdc");
+        // `c` down: nothing after it; up: past `b` (Y), `d` (X) is not on its drive.
+        assert_eq!(queue_partner(&list, 3, false, shares, waits), None);
+        assert_eq!(queue_partner(&list, 3, true, shares, waits), Some(1));
+    }
+
+    fn verifying_engine(spoil: u32) -> Engine {
+        Engine::new(Settings { verify: true, spoil, ..Settings::default() }, || {})
+    }
+
+    #[test]
+    fn a_copy_that_differs_is_copied_once_more() {
+        let dir = test_dir("verify-again");
+        write(&dir.join("src/a.txt"), "the original");
+        std::fs::create_dir(dir.join("dst")).unwrap();
+        let engine = verifying_engine(1);
+        let job = engine.submit(Box::new(CopyTask::into(vec![dir.join("src/a.txt")], &dir.join("dst"))));
+        let (report, _) = finish(&engine, job, defaults);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert_eq!(read(&dir.join("dst/a.txt")), "the original");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_move_whose_copy_differs_twice_fails_and_keeps_the_source() {
+        let dir = test_dir("verify-move");
+        write(&dir.join("src/a.txt"), "the original");
+        std::fs::create_dir(dir.join("dst")).unwrap();
+        let engine = verifying_engine(2);
+        let mut task = MoveTask::into(vec![dir.join("src/a.txt")], &dir.join("dst"));
+        task.cross = true;
+        let job = engine.submit(Box::new(task));
+        let (report, _) = finish(&engine, job, defaults);
+        assert_eq!(report.failures.len(), 1, "{:?}", report.failures);
+        assert_eq!(report.failures[0].message, "The copy differs from the original at byte 0");
+        assert_eq!(read(&dir.join("src/a.txt")), "the original", "the source stays");
+        assert!(!dir.join("dst/a.txt").exists(), "no copy that differs is left");
+        assert_eq!(engine.undo_label(), None, "nothing to undo");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn only_new_copies_and_moves_take_the_settings() {
+        let engine = Engine::new(Settings { verify: true, max_speed: Some(5_000_000), ..Settings::default() }, || {});
+        let log = Arc::default();
+        let gate = Gate::default();
+        let mut copy = FakeTask::new("a", 1, &log);
+        copy.gate = Some(gate.clone());
+        let a = engine.submit(Box::new(copy));
+        let options = engine.job_options(a).unwrap();
+        assert!(options.verify);
+        assert_eq!(options.speed, Some(5_000_000));
+        let mut unverified = FakeTask::new("b", 1, &log);
+        unverified.gate = Some(gate.clone());
+        let b = engine.submit_verifying(Box::new(unverified), Some(false));
+        assert!(!engine.job_options(b).unwrap().verify, "the job's own choice");
+        engine.set_verify(b, true);
+        engine.set_speed(b, None);
+        assert_eq!(engine.job_options(b).map(|o| (o.verify, o.speed)), Some((true, None)));
+        let other = engine.submit(Box::new(crate::testing::AskingTask));
+        assert_eq!(engine.job_options(other).map(|o| (o.verify, o.speed)), Some((false, None)), "not a copy");
+        engine.cancel(other);
+        gate.open();
+        finish(&engine, a, defaults);
+        finish(&engine, b, defaults);
+        finish(&engine, other, defaults);
+        assert_eq!(engine.job_options(a), None, "ended");
+    }
+
+    #[test]
+    fn waiting_jobs_change_places_but_never_pass_a_running_one() {
+        let dir = test_dir("queue-order");
+        let engine = engine();
+        let log = Arc::default();
+        let gate = Gate::default();
+        let make = |name| {
+            let mut task = FakeTask::new(name, 1, &log);
+            task.paths = vec![dir.clone()];
+            task
+        };
+        let mut first = make("a");
+        first.gate = Some(gate.clone());
+        let a = engine.submit(Box::new(first));
+        wait_for("a to start", || lock(&log).contains(&"a+0".to_owned()));
+        let b = engine.submit(Box::new(make("b")));
+        let c = engine.submit(Box::new(make("c")));
+        // Their drives are known before anything is asked.
+        wait_for("b and c to wait", || {
+            [b, c].iter().all(|&id| engine.job(id).is_some_and(|job| job.drives_known.load(Ordering::SeqCst)))
+        });
+        assert_eq!(engine.move_in_queue(a, false), None, "a runs");
+        assert_eq!(engine.move_in_queue(b, true), None, "b would pass a, which runs");
+        assert_eq!(engine.move_in_queue(c, false), None, "nothing after c");
+        let options = engine.job_options(c).unwrap();
+        assert!(options.can_up && !options.can_down);
+        assert_eq!(engine.move_in_queue(c, true), Some(b));
+        assert!(!engine.job_options(c).unwrap().can_up, "now right after a");
+        gate.open();
+        for job in [a, b, c] {
+            finish(&engine, job, defaults);
+        }
+        assert_eq!(*lock(&log), ["a+0", "a-0", "c+0", "c-0", "b+0", "b-0"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_replace_whose_copy_does_not_verify_puts_the_old_file_back() {
+        let dir = test_dir("verify-replace");
+        write(&dir.join("src/a.txt"), "the new one");
+        write(&dir.join("dst/a.txt"), "the old one");
+        let engine = verifying_engine(2);
+        let job = engine.submit(Box::new(CopyTask::into(vec![dir.join("src/a.txt")], &dir.join("dst"))));
+        let (report, _) = finish(&engine, job, |c| vec![Decision::Replace; c.len()]);
+        assert_eq!(report.failures.len(), 1, "{:?}", report.failures);
+        assert_eq!(read(&dir.join("dst/a.txt")), "the old one", "back from the trash");
+        assert_eq!(engine.undo_label(), None, "nothing left to undo");
+        // Verified: replaced, and undo brings the old one back.
+        let engine = verifying_engine(0);
+        let job = engine.submit(Box::new(CopyTask::into(vec![dir.join("src/a.txt")], &dir.join("dst"))));
+        let (report, _) = finish(&engine, job, |c| vec![Decision::Replace; c.len()]);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert_eq!(read(&dir.join("dst/a.txt")), "the new one");
+        run(&engine, engine.undo().unwrap());
+        assert_eq!(read(&dir.join("dst/a.txt")), "the old one");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

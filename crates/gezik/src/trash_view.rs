@@ -291,6 +291,7 @@ pub fn allowed(action: Action) -> bool {
         | Action::GetInfo
         | Action::Checksums
         | Action::VerifyChecksums
+        | Action::FindDuplicates
         | Action::MakeAlias
         | Action::ShowPackageContents
         | Action::Share
@@ -301,6 +302,10 @@ pub fn allowed(action: Action) -> bool {
         | Action::Compare
         | Action::SelectDifferences
         | Action::SizeMap
+        | Action::CopyTo
+        | Action::MoveTo
+        | Action::SplitFile
+        | Action::JoinFiles
         | Action::CopyToOtherPane => false,
     }
 }
@@ -619,6 +624,7 @@ mod tests {
             Action::NewFolderWithSelection,
             Action::CalculateFolderSizes,
             Action::SaveSearch,
+            Action::FindDuplicates,
         ] {
             assert!(!allowed(blocked), "{blocked:?}");
         }
