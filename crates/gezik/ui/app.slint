@@ -206,6 +206,11 @@ export component AppWindow inherits Window {
             MenuItem { title: "Size Map"; activated => { root.menu-command("size-map"); } }
             MenuSeparator { }
             MenuItem { title: "Export List…"; activated => { root.menu-command("export-list"); } }
+            MenuSeparator { }
+            MenuItem { title: "Copy To…"; activated => { root.menu-command("copy-to"); } }
+            MenuItem { title: "Move To…"; activated => { root.menu-command("move-to"); } }
+            MenuItem { title: "Split File…"; activated => { root.menu-command("split-file"); } }
+            MenuItem { title: "Join Files"; activated => { root.menu-command("join-files"); } }
         }
         if root.bar-commands.length > 0: Menu {
             title: "Commands";

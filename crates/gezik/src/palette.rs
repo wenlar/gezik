@@ -450,5 +450,8 @@ mod tests {
             checked += 1;
         }
         assert!(checked >= 50, "only {checked} menu items read");
+        for name in ["copy-to", "move-to", "split-file", "join-files"] {
+            assert!(slint.contains(&format!("menu-command(\"{name}\")")), "{name} in the Tools menu");
+        }
     }
 }
