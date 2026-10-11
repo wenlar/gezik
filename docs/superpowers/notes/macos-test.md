@@ -629,6 +629,16 @@ Numbers stay as they are when branches merge (see 10b). 10g starts at 260 as its
 269. **Retina memory.** On the Retina screen, note Activity Monitor's memory with one window, then with a second full-size window, then after closing it (spec: framebuffer ≈ width × height × 4 × 4 + 2.5 MB).
 270. **Focus order.** Three windows: click them in the order 1, 3, 2, then `open -a` / `gezik <folder>`: it opens in 2. Hide Gezik (⌘H) and show it: the same window is in front. Quick Look (Space) in one window, then Space in the other: the first one's closes, one Quick Look at a time. Scrolling with the trackpad over the window behind scrolls that window, not the one in front.
 
+### 11c, file compare
+
+Numbers stay as they are when branches merge. 11c starts at 281 as its plan decided (11a and 11h take the numbers before and after).
+
+281. **Tests first.** `cargo test -p gezik-core diff::`, `cargo test -p gezik diff::`, `cargo test -p gezik-platform terminal::`; paste the output.
+282. **⌃⌘C and the Tools menu.** Make two text files (`printf 'a\nb\nc\n' > /tmp/l.txt; printf 'a\r\nB x\r\nc\r\nd\r\n' > /tmp/r.txt`), select both, press ⌃⌘C: the compare opens over the window, `b` ↔ `B x` tinted with the changed part marked, `d` green on the right, `UTF-8 · LF` ↔ `UTF-8 · CRLF` marked in the header, `2 changes`. Menu bar ▸ Tools ▸ Compare does the same; right-click ▸ Tools ▸ Compare too (it is not there with one file or a file and a folder). With two panes (⌃⌘P), one file selected in each: left pane's on the left. Write whether ⌃⌘C reaches Gezik at all (no system or app shortcut takes it).
+283. **Keys in the compare.** ⌥↓ / ⌥↑ go to the next / previous change (the row's ring moves, the list scrolls to it), ↑↓, PgUp/PgDn, Home/End move the ring, ⌘C copies `< b` and `> B x`, ⌘R and F5 read the files again (change one in TextEdit first), Esc closes and the list has the keyboard again. Ignore case and Ignore whitespace re-line the files and are still on after a restart. VoiceOver reads the rows ("Changed: b to B x").
+284. **Binary and FileMerge.** Compare two copies of an app's binary (`cp /bin/ls /tmp/a; cp /bin/ls /tmp/b`): a question says `The files are identical`; change a byte (`printf 'x' | dd of=/tmp/b bs=1 seek=100 conv=notrunc`): `The files differ from byte 101 (of …)`. Then set `[tools] diff = "opendiff"` in settings.toml and compare the two text files: FileMerge opens (Gezik does not wait); an app path (`diff = "/Applications/Beyond Compare.app"`, or any compare `.app` you have) opens through `open -n -a`; `diff = "nope"`: the status bar says `The compare program "nope" was not found; using Gezik's own` and Gezik's compare opens.
+285. **Memory.** Activity Monitor's memory before opening a compare of two 1 MB text files (`seq 1 150000 > /tmp/l1; seq 1 150000 | sed 's/7$/x/' > /tmp/r1`), with it open, and after Esc: the last within 0.3 MB of the first (write the three numbers).
+
 ## Known gaps (not bugs)
 
 These are known differences from Finder and ForkLift (from the ForkLift comparison, §3). Don't report them as failures. A note is welcome if one hurts more than expected.
