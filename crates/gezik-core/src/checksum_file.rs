@@ -100,11 +100,20 @@ pub enum FileKind {
     Crc,
 }
 
+/// The digest names checksum files go by: `md5`, `sha256` …
+const SUM_NAMES: [&str; 4] = ["md5", "sha1", "sha256", "sha512"];
+
+/// `md5sum`, `sha256sums` … (lowercase).
+fn sums_name(text: &str) -> bool {
+    let text = text.strip_suffix('s').unwrap_or(text);
+    text.strip_suffix("sum").is_some_and(|algo| SUM_NAMES.contains(&algo))
+}
+
 /// Whether `name` is a checksum file Verify Checksums reads: `.md5`, `.sha1`, `.sha256`,
-/// `.sha512`, `.sfv`, `.crc`, or `MD5SUMS` … `SHA512SUMS` (any case).
+/// `.sha512` (also `.sha256sum` …), `.sfv`, `.crc`, or `MD5SUM(S)` … `SHA512SUM(S)` (any case).
 pub fn recognize(name: &str) -> Option<FileKind> {
     let lower = name.to_ascii_lowercase();
-    if matches!(lower.as_str(), "md5sums" | "sha1sums" | "sha256sums" | "sha512sums") {
+    if sums_name(&lower) {
         return Some(FileKind::Sums);
     }
     let (stem, ext) = lower.rsplit_once('.')?;
@@ -112,7 +121,7 @@ pub fn recognize(name: &str) -> Option<FileKind> {
         return None;
     }
     match ext {
-        "md5" | "sha1" | "sha256" | "sha512" => Some(FileKind::Sums),
+        ext if SUM_NAMES.contains(&ext) || sums_name(ext) => Some(FileKind::Sums),
         "sfv" => Some(FileKind::Sfv),
         "crc" => Some(FileKind::Crc),
         _ => None,
@@ -136,6 +145,44 @@ pub struct Parsed {
     pub entries: Vec<Entry>,
     /// Lines that are neither empty nor comments and could not be read.
     pub bad: usize,
+}
+
+/// A checksum file's bytes as text: UTF-16 with its BOM (Windows tools write it), else UTF-8
+/// (a BOM is dropped by `parse`, a broken byte becomes U+FFFD).
+pub fn decode(bytes: &[u8]) -> String {
+    let utf16 = |rest: &[u8], le: bool| -> String {
+        let units = rest
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&pair| if le { u16::from_le_bytes(pair) } else { u16::from_be_bytes(pair) });
+        char::decode_utf16(units).map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER)).collect()
+    };
+    match bytes {
+        [0xFF, 0xFE, rest @ ..] => utf16(rest, true),
+        [0xFE, 0xFF, rest @ ..] => utf16(rest, false),
+        _ => String::from_utf8_lossy(bytes).into_owned(),
+    }
+}
+
+/// Reads checksum file `name` from its bytes. A `.sha256` (…) holding only a value is that of
+/// the file of the same name without the ending (`a.iso.sha256` → `a.iso`), as many download
+/// pages give them.
+pub fn parse_file(name: &str, bytes: &[u8]) -> Parsed {
+    let kind = recognize(name).unwrap_or(FileKind::Sums);
+    let text = decode(bytes);
+    let parsed = parse(&text, kind);
+    let mut lines = text.trim_start_matches('\u{feff}').lines().map(str::trim).filter(|l| !l.is_empty());
+    if let (Some(line), None) = (lines.next(), lines.next())
+        && parsed.entries.is_empty()
+        && kind == FileKind::Sums
+        && let Some((stem, _)) = name.rsplit_once('.').filter(|(stem, _)| !stem.is_empty())
+        && let Some(algo) = Algo::from_hex_len(line.len())
+        && let Some(hex) = hex_of(line, algo)
+    {
+        return Parsed { entries: vec![Entry { path: stem.to_owned(), algo, hex, size: None }], bad: 0 };
+    }
+    parsed
 }
 
 /// Reads a checksum file's text (a UTF-8 BOM and CRLF line ends are fine).
@@ -264,9 +311,15 @@ pub fn write_gnu<'a>(rows: impl IntoIterator<Item = (&'a str, &'a str)>) -> Stri
     out
 }
 
-/// SFV lines: `<path> <CRC32 in capitals>`.
+/// SFV lines: `<path> <CRC32 in capitals>`. A name starting with `;` would read as a comment:
+/// it is written `./;name`, the same file.
 pub fn write_sfv<'a>(rows: impl IntoIterator<Item = (&'a str, &'a str)>) -> String {
-    rows.into_iter().map(|(path, hex)| format!("{path} {}\n", hex.to_ascii_uppercase())).collect()
+    rows.into_iter()
+        .map(|(path, hex)| {
+            let lead = if path.starts_with(';') { "./" } else { "" };
+            format!("{lead}{path} {}\n", hex.to_ascii_uppercase())
+        })
+        .collect()
 }
 
 /// BSD lines (`SHA256 (<path>) = <hex>`): several algorithms in one text.
@@ -274,12 +327,20 @@ pub fn write_bsd<'a>(rows: impl IntoIterator<Item = (Algo, &'a str, &'a str)>) -
     rows.into_iter().map(|(algo, path, hex)| format!("{} ({path}) = {hex}\n", algo.bsd_tag())).collect()
 }
 
-/// The clipboard's text when it is one hex value of a known length (spaces around it are
-/// fine): its algorithm and the value in lowercase.
-pub fn clipboard_hex(text: &str) -> Option<(Algo, String)> {
+/// A typed value of a known length (spaces around it are fine): its algorithm and the value
+/// in lowercase.
+pub fn typed_hex(text: &str) -> Option<(Algo, String)> {
     let text = text.trim();
     let algo = Algo::from_hex_len(text.len())?;
     hex_of(text, algo).map(|hex| (algo, hex))
+}
+
+/// The clipboard's text taken as the expected value without asking: only an MD5 or longer
+/// (32+ digits) with a letter in it, so a date (`20261011`), a number or `deadbeef` never fills
+/// it. A dashless UUID (32) still reads as MD5 and a git commit id (40) as SHA-1: the layer then
+/// just says no file matches.
+pub fn clipboard_hex(text: &str) -> Option<(Algo, String)> {
+    typed_hex(text).filter(|(algo, hex)| algo.hex_len() >= 32 && hex.bytes().any(|b| b.is_ascii_alphabetic()))
 }
 
 /// `path` relative to `base` with `/` between its parts, as a checksum file writes it; the
@@ -293,10 +354,15 @@ pub fn relative_slash(path: &Path, base: &Path) -> String {
     }
 }
 
-/// Where a checksum file's `path` is: relative to the file's folder `base` (absolute paths and
-/// `..` are kept, as GNU does); on Windows `/` and `\` both separate.
-pub fn resolve(base: &Path, path: &str) -> PathBuf {
-    if cfg!(windows) { base.join(path.replace('/', "\\")) } else { base.join(path) }
+/// Where a checksum file's `path` is, in the file's folder `base`; on Windows `/` and `\` both
+/// separate. `None` for a path that leaves the folder: absolute, a drive or a share (a
+/// `\\host\x` read sends the user's NTLM hash to that host), or with `..` (spec 11 §4.4).
+pub fn resolve(base: &Path, path: &str) -> Option<PathBuf> {
+    use std::path::Component;
+    let path = if cfg!(windows) { path.replace('/', "\\") } else { path.to_owned() };
+    let relative = Path::new(&path);
+    let inside = relative.components().all(|c| matches!(c, Component::Normal(_) | Component::CurDir));
+    (inside && relative.components().next().is_some()).then(|| base.join(relative))
 }
 
 #[cfg(test)]
@@ -372,7 +438,17 @@ mod tests {
         let paths: Vec<String> = parse(&text, FileKind::Sums).entries.into_iter().map(|e| e.path).collect();
         assert_eq!(paths, ["../up.txt", "/etc/abs.txt", "C:\\w\\x.txt"]);
         let base = Path::new("base");
-        assert_eq!(resolve(base, "../up.txt"), base.join(if cfg!(windows) { "..\\up.txt" } else { "../up.txt" }));
+        assert_eq!(resolve(base, "../up.txt"), None, "it leaves the folder");
+        assert_eq!(resolve(base, "a/../../x"), None);
+        assert_eq!(resolve(base, "/etc/abs.txt"), None);
+        assert_eq!(resolve(base, ""), None);
+        assert_eq!(resolve(base, "sub/x.txt"), Some(base.join("sub").join("x.txt")));
+        assert_eq!(resolve(base, ";x"), Some(base.join(";x")));
+        if cfg!(windows) {
+            for outside in ["C:\\w\\x.txt", "\\\\host\\share\\x", "C:x", "\\x", "//host/share/x", "x:stream"] {
+                assert_eq!(resolve(base, outside), None, "{outside}");
+            }
+        }
     }
 
     #[test]
@@ -421,14 +497,48 @@ mod tests {
             clipboard_hex(&format!("  {}\n", SHA256_ABC.to_uppercase())),
             Some((Algo::Sha256, SHA256_ABC.into()))
         );
-        assert_eq!(clipboard_hex("CBF43926"), Some((Algo::Crc32, "cbf43926".into())));
         assert_eq!(clipboard_hex(MD5_ABC).map(|(a, _)| a), Some(Algo::Md5));
-        assert_eq!(clipboard_hex(&"a".repeat(40)).map(|(a, _)| a), Some(Algo::Sha1));
         assert_eq!(clipboard_hex(&"b".repeat(128)).map(|(a, _)| a), Some(Algo::Sha512));
         assert_eq!(clipboard_hex(&"a".repeat(33)), None);
-        assert_eq!(clipboard_hex("cbf4392g"), None);
         assert_eq!(clipboard_hex(&format!("{MD5_ABC} {MD5_ABC}")), None, "two values");
         assert_eq!(clipboard_hex(""), None);
+        // Never a CRC32 or anything without a letter: a date, a number, a word.
+        for text in ["20261011", "deadbeef", "CBF43926", &"1".repeat(32), &"7".repeat(40)] {
+            assert_eq!(clipboard_hex(text), None, "{text}");
+        }
+        // Taken as they read (decided: no way to tell them apart): a dashless UUID as MD5, a
+        // git commit id as SHA-1.
+        assert_eq!(clipboard_hex("3f2b8c1e9d4a4b7e8f0a1c2d3e4f5a6b").map(|(a, _)| a), Some(Algo::Md5));
+        assert_eq!(clipboard_hex("e78236d9a1b2c3d4e5f60718293a4b5c6d7e8f90").map(|(a, _)| a), Some(Algo::Sha1));
+        // Typed into the field, any known length counts.
+        assert_eq!(typed_hex("CBF43926"), Some((Algo::Crc32, "cbf43926".into())));
+        assert_eq!(typed_hex("cbf4392g"), None);
+    }
+
+    #[test]
+    fn utf16_files_bare_values_and_more_names() {
+        let text = format!("{MD5_ABC}  a.txt\r\n");
+        let le: Vec<u8> = [0xFF, 0xFE].into_iter().chain(text.encode_utf16().flat_map(u16::to_le_bytes)).collect();
+        let be: Vec<u8> = [0xFE, 0xFF].into_iter().chain(text.encode_utf16().flat_map(u16::to_be_bytes)).collect();
+        for bytes in [le, be] {
+            assert_eq!(parse_file("x.md5", &bytes).entries, [entry("a.txt", Algo::Md5, MD5_ABC)]);
+        }
+        let bare = parse_file("ubuntu.iso.sha256", format!("{}\n", SHA256_ABC.to_uppercase()).as_bytes());
+        assert_eq!(bare, Parsed { entries: vec![entry("ubuntu.iso", Algo::Sha256, SHA256_ABC)], bad: 0 });
+        assert_eq!(parse_file("SHA256SUMS", SHA256_ABC.as_bytes()).bad, 1, "no name to take it from");
+        for name in ["a.sha256sum", "a.MD5SUM", "a.sha1sum", "MD5SUM", "SHA256SUM", "sha512sums"] {
+            assert_eq!(recognize(name), Some(FileKind::Sums), "{name}");
+        }
+        assert_eq!(recognize("checksum"), None);
+        assert_eq!(recognize("a.sum"), None);
+    }
+
+    #[test]
+    fn an_sfv_name_starting_with_a_semicolon_is_kept_from_reading_as_a_comment() {
+        let sfv = write_sfv([(";odd.bin", "cbf43926")]);
+        assert_eq!(sfv, "./;odd.bin CBF43926\n");
+        assert_eq!(parse(&sfv, FileKind::Sfv).entries, [entry("./;odd.bin", Algo::Crc32, "cbf43926")]);
+        assert_eq!(resolve(Path::new("b"), "./;odd.bin"), Some(Path::new("b").join(";odd.bin")));
     }
 
     #[test]

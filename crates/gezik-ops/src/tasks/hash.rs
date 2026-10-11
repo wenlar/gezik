@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use gezik_core::checksum_file::{self, Algo, FileKind};
+use gezik_core::checksum_file::{self, Algo};
 use gezik_core::ops::conflict::Facts;
 
 use crate::engine::lock;
@@ -116,6 +116,8 @@ pub struct HashResults {
     pub bad_lines: usize,
     /// Verify: why the checksum file itself could not be read.
     pub error: Option<String>,
+    /// Whether online-only files are downloaded: asked once for the layer (every job of it).
+    pub download: Option<bool>,
 }
 
 impl HashResults {
@@ -146,22 +148,13 @@ pub struct HashTask {
     work: HashWork,
     algos: Vec<Algo>,
     results: SharedResults,
-    /// Asked once: whether online-only files are downloaded.
-    download: Mutex<Option<bool>>,
     online: AtomicUsize,
     online_check: OnlineCheck,
 }
 
 impl HashTask {
     fn new(work: HashWork, algos: Vec<Algo>, results: SharedResults) -> HashTask {
-        HashTask {
-            work,
-            algos,
-            results,
-            download: Mutex::new(None),
-            online: AtomicUsize::new(0),
-            online_check: |_, said| said,
-        }
+        HashTask { work, algos, results, online: AtomicUsize::new(0), online_check: |_, said| said }
     }
 
     /// `algos` of the files of `roots`, folders walked; names relative to `base`.
@@ -206,13 +199,12 @@ impl HashTask {
     fn plan_items(&self, sink: &mut dyn ScanSink, roots: &[PathBuf], base: &Path, shown: (bool, bool)) {
         let mut files: Vec<(PathBuf, u64, bool)> = Vec::new();
         for root in roots {
-            // A chosen link is followed (it was chosen); links inside folders are not.
+            // A chosen link is followed (it was chosen); links inside folders are not. Only
+            // regular files are read: never a device or a pipe (`CON`, `/dev/zero`, a FIFO).
             match std::fs::metadata(root) {
                 Ok(meta) if meta.is_dir() => walk(root, shown, sink, &mut files),
-                Ok(meta) => {
-                    let online = gezik_core::attribute_flags(&meta) & gezik_core::Entry::CLOUD_ONLY != 0;
-                    files.push((root.clone(), meta.len(), online));
-                }
+                Ok(meta) if meta.is_file() => files.push((root.clone(), meta.len(), is_online(&meta))),
+                Ok(_) => sink.failed(root, not_a_file()),
                 Err(err) => sink.failed(root, err),
             }
             if sink.cancelled() {
@@ -268,43 +260,43 @@ impl HashTask {
             }
         };
         let name = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        let kind = checksum_file::recognize(&name).unwrap_or(FileKind::Sums);
-        let parsed = checksum_file::parse(&String::from_utf8_lossy(&bytes), kind);
+        let parsed = checksum_file::parse_file(&name, &bytes);
         lock(&self.results).bad_lines = parsed.bad;
         let base = file.parent().unwrap_or(Path::new(""));
         for entry in parsed.entries {
-            let path = checksum_file::resolve(base, &entry.path);
+            // Nothing outside the checksum file's folder is touched (spec 11 §4.4).
+            let Some(path) = checksum_file::resolve(base, &entry.path) else {
+                let mut row = HashRow::new(PathBuf::new(), entry.path, 0);
+                row.expected = Some((entry.algo, entry.hex));
+                row.state = RowState::Unreadable("Outside the folder".to_owned());
+                lock(&self.results).push(row);
+                continue;
+            };
             let mut row = HashRow::new(path.clone(), entry.path, 0);
             row.expected = Some((entry.algo, entry.hex));
             row.expected_size = entry.size;
-            match std::fs::metadata(&path) {
-                Ok(meta) if meta.is_dir() => {
-                    row.state = RowState::Unreadable("It is a folder".to_owned());
-                    lock(&self.results).push(row);
-                }
-                Ok(meta) => {
+            let why = match std::fs::metadata(&path) {
+                Ok(meta) if meta.is_file() => {
                     row.size = meta.len();
-                    let online = gezik_core::attribute_flags(&meta) & gezik_core::Entry::CLOUD_ONLY != 0;
-                    if !self.plan_row(sink, row, online) {
+                    if !self.plan_row(sink, row, is_online(&meta)) {
                         return;
                     }
+                    continue;
                 }
-                Err(err) if err.kind() == io::ErrorKind::NotFound => {
-                    row.state = RowState::Missing;
-                    lock(&self.results).push(row);
-                }
-                Err(err) => {
-                    row.state = RowState::Unreadable(err.to_string());
-                    lock(&self.results).push(row);
-                }
-            }
+                Ok(meta) if meta.is_dir() => RowState::Unreadable("It is a folder".to_owned()),
+                Ok(_) => RowState::Unreadable(not_a_file().to_string()),
+                Err(err) if err.kind() == io::ErrorKind::NotFound => RowState::Missing,
+                Err(err) => RowState::Unreadable(err.to_string()),
+            };
+            row.state = why;
+            lock(&self.results).push(row);
         }
     }
 
-    /// Whether online-only files are read: asked once, when the first comes up.
+    /// Whether online-only files are read: asked once for the layer, when the first comes up
+    /// (the online-only rows run one by one after the rest, so one asks at a time).
     fn downloads(&self, cx: &RunCx<'_>) -> bool {
-        let mut answer = lock(&self.download);
-        if let Some(yes) = *answer {
+        if let Some(yes) = lock(&self.results).download {
             return yes;
         }
         let count = self.online.load(Ordering::Relaxed);
@@ -315,7 +307,7 @@ impl HashTask {
             buttons: vec!["Download".to_owned(), "Skip".to_owned()],
         };
         let yes = cx.ask(question) == Answer::Button(0);
-        *answer = Some(yes);
+        lock(&self.results).download = Some(yes);
         yes
     }
 
@@ -326,6 +318,15 @@ impl HashTask {
             results.dirty.push(index);
         }
     }
+}
+
+/// Whether the system says `meta`'s data is in the cloud.
+fn is_online(meta: &std::fs::Metadata) -> bool {
+    gezik_core::attribute_flags(meta) & gezik_core::Entry::CLOUD_ONLY != 0
+}
+
+fn not_a_file() -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidInput, "Not a file (a device or a pipe)")
 }
 
 /// Every file under `dir` (not links; hidden ones as `shown` says), folders read in name order.
@@ -511,7 +512,7 @@ mod tests {
         write(&dir.join("bad.txt"), "abd");
         write(&dir.join("sub/up.txt"), "abc");
         let sums = format!(
-            "{SHA256_ABC} *ok.txt\n{SHA256_ABC}  bad.txt\n{SHA256_ABC}  gone.txt\nnonsense\nMD5 (sub/../sub/up.txt) = {MD5_ABC}\n"
+            "{SHA256_ABC} *ok.txt\n{SHA256_ABC}  bad.txt\n{SHA256_ABC}  gone.txt\nnonsense\nMD5 (sub/up.txt) = {MD5_ABC}\n"
         );
         write(&dir.join("SHA256SUMS"), &sums);
         let engine = engine();
@@ -525,7 +526,7 @@ mod tests {
                 ("ok.txt", Verdict::Ok),
                 ("bad.txt", Verdict::Failed),
                 ("gone.txt", Verdict::Missing),
-                ("sub/../sub/up.txt", Verdict::Ok)
+                ("sub/up.txt", Verdict::Ok)
             ]
         );
         assert_eq!(results.bad_lines, 1);
@@ -549,29 +550,79 @@ mod tests {
         let shared = shared_results();
         let task = HashTask::items(vec![dir.clone()], dir.clone(), (false, false), vec![Algo::Sha256], shared.clone())
             .online_check(|path, _| path.extension().is_some_and(|e| e == "cloud"));
-        let job = engine.submit(Box::new(task));
+        let asked = skipping(&engine, engine.submit(Box::new(task)));
+        assert_eq!(asked, ["2 files are online-only. Download them to compute checksums?"]);
+        let states =
+            |shared: &SharedResults| -> Vec<RowState> { lock(shared).rows.iter().map(|r| r.state.clone()).collect() };
+        assert_eq!(states(&shared), [RowState::OnlineOnly, RowState::OnlineOnly, RowState::Done]);
+        // A box ticked later: the layer's answer stands, nothing is asked again.
+        let again = HashTask::again(vec![Algo::Sha256, Algo::Md5], shared.clone());
+        assert!(skipping(&engine, engine.submit(Box::new(again))).is_empty());
+        assert_eq!(states(&shared), [RowState::OnlineOnly, RowState::OnlineOnly, RowState::Done]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Runs `job` to its end, answering Skip to every question; the questions asked.
+    fn skipping(engine: &crate::Engine, job: crate::JobId) -> Vec<String> {
         let mut asked = Vec::new();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-        'wait: loop {
+        loop {
             for event in engine.drain() {
                 match event {
                     Event::Question { id, question: Question::Confirm { message, .. }, .. } => {
                         asked.push(message);
                         engine.answer(job, id, Answer::Button(1));
                     }
-                    Event::Finished { .. } => break 'wait,
+                    Event::Finished { job: done, .. } if done == job => return asked,
                     _ => {}
                 }
             }
             assert!(std::time::Instant::now() < deadline);
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        assert_eq!(asked, ["2 files are online-only. Download them to compute checksums?"]);
+    }
+
+    #[test]
+    fn verify_touches_nothing_outside_the_files_folder() {
+        let dir = test_dir("hash-outside");
+        write(&dir.join("in/sums.md5"), "");
+        write(&dir.join("secret.txt"), "abc");
+        let mut lines = format!("{MD5_ABC}  ../secret.txt\n{MD5_ABC}  {}\n", dir.join("secret.txt").display());
+        if cfg!(windows) {
+            lines.push_str(&format!("{MD5_ABC}  \\\\127.0.0.1\\c$\\x.txt\n{MD5_ABC}  NUL\n{MD5_ABC}  CON\n"));
+        }
+        write(&dir.join("in/sums.md5"), &lines);
+        let engine = engine();
+        let shared = shared_results();
+        let (report, _) = finish(
+            &engine,
+            engine.submit(Box::new(HashTask::verify(dir.join("in/sums.md5"), shared.clone()))),
+            defaults,
+        );
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
         let results = lock(&shared);
-        let states: Vec<&RowState> = results.rows.iter().map(|r| &r.state).collect();
-        assert_eq!(states, [&RowState::OnlineOnly, &RowState::OnlineOnly, &RowState::Done]);
+        assert_eq!(results.rows.len(), if cfg!(windows) { 5 } else { 2 });
+        for row in &results.rows {
+            // A device name (`NUL`, `CON`) is a device or not found: never read.
+            assert!(matches!(row.verdict(), Verdict::Unreadable | Verdict::Missing), "{}", row.name);
+            assert!(row.digest(Algo::Md5).is_none(), "{} was read", row.name);
+        }
+        assert_eq!(results.rows[0].state, RowState::Unreadable("Outside the folder".into()));
+        assert_eq!(results.rows[1].state, RowState::Unreadable("Outside the folder".into()));
         drop(results);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_chosen_device_is_not_read() {
+        let device = PathBuf::from(if cfg!(windows) { "\\\\.\\NUL" } else { "/dev/zero" });
+        let engine = engine();
+        let shared = shared_results();
+        let task =
+            HashTask::items(vec![device.clone()], PathBuf::new(), (false, false), vec![Algo::Crc32], shared.clone());
+        let (report, _) = finish(&engine, engine.submit(Box::new(task)), defaults);
+        assert!(lock(&shared).rows.is_empty());
+        assert_eq!(report.failures.len(), 1, "{:?}", report.failures);
     }
 
     #[test]

@@ -2,11 +2,18 @@
 
 use std::borrow::Cow;
 
-/// `text` as one field: quoted (with `"` doubled) when it holds the separator, a quote or a
-/// line break, or starts or ends with a space (spreadsheets trim those otherwise).
+/// `text` as one field: a leading `=`, `+`, `-`, `@`, tab or CR gets a `'` first (a
+/// spreadsheet would run a file named `=HYPERLINK(…)` as a formula); quoted (with `"` doubled)
+/// when it holds the separator, a quote or a line break, or starts or ends with a space
+/// (spreadsheets trim those otherwise).
 pub fn field(text: &str, separator: char) -> Cow<'_, str> {
+    let text: Cow<'_, str> = if text.starts_with(['=', '+', '-', '@', '\t', '\r']) {
+        Cow::Owned(format!("'{text}"))
+    } else {
+        Cow::Borrowed(text)
+    };
     let quoted = text.contains([separator, '"', '\n', '\r']) || text.starts_with(' ') || text.ends_with(' ');
-    if quoted { Cow::Owned(format!("\"{}\"", text.replace('"', "\"\""))) } else { Cow::Borrowed(text) }
+    if quoted { Cow::Owned(format!("\"{}\"", text.replace('"', "\"\""))) } else { text }
 }
 
 /// Appends one row ending in CRLF.
@@ -35,6 +42,16 @@ mod tests {
         assert_eq!(field("cr\rhere", ','), "\"cr\rhere\"");
         assert_eq!(field(" lead", ','), "\" lead\"");
         assert_eq!(field("", ','), "");
+    }
+
+    #[test]
+    fn a_field_never_starts_a_formula() {
+        assert_eq!(field("=HYPERLINK(\"x\")", ','), "\"'=HYPERLINK(\"\"x\"\")\"");
+        for (text, want) in [("+1", "'+1"), ("-x.txt", "'-x.txt"), ("@sum", "'@sum"), ("\tx", "'\tx")] {
+            assert_eq!(field(text, ','), want);
+        }
+        assert_eq!(field("\rx", ','), "\"'\rx\"", "a CR is still quoted");
+        assert_eq!(field("a=b", ','), "a=b", "only at the start");
     }
 
     #[test]

@@ -117,7 +117,7 @@ Her araç var olan parçaların üstüne kurulur: dosya değiştiren her şey **
 - Eylem `verify-checksums` (`Verify Checksums`): seçili sağlama dosyası; ayrıca bir sağlama dosyasına çift tık **açmaz** (bugünkü açma davranışı kalır), yalnız sağ tıkta ve palette.
 - **Tanınan dosyalar:** uzantı `.md5`, `.sha1`, `.sha256`, `.sha512`, `.sfv`, `.crc` (TC, §12.4) ve adlar `MD5SUMS`, `SHA1SUMS`, `SHA256SUMS`, `SHA512SUMS` (büyük/küçük harf duyarsız). Algoritma uzantıdan/addan, bilinmezse onaltılık değerin uzunluğundan.
 - **Satır biçimleri:** GNU (`<hex>  <yol>`, `<hex> *<yol>`, ters bölü kaçışlı `\`-önekli satırlar), BSD (`SHA256 (<yol>) = <hex>`), SFV (`<yol> <crc>`, `;` yorum). UTF-8 BOM ve CRLF kabul. Bozuk satır atlanır ve sayılır (`3 lines could not be read`).
-- **Yollar:** sağlama dosyasının klasörüne göre çözülür; mutlak yol ve `..` kabul edilir (yalnız okuma; GNU da kabul eder). Windows'ta `/` ve `\` ikisi de ayırıcı.
+- **Yollar:** sağlama dosyasının klasörüne göre çözülür; Windows'ta `/` ve `\` ikisi de ayırıcı. Klasörün dışına çıkan girdi (mutlak yol, sürücü ya da paylaşım öneki, `..`) okunmaz, satırı `UNREADABLE` (`Outside the folder`); yalnız düzenli dosyalar okunur (aygıt, FIFO değil). *Gerekçe (11a gözden geçirmesi; ilk hâlin "mutlak yol ve `..` kabul edilir" kuralını tersine çevirir):* indirilmiş bir sağlama dosyasının `\\host\x` satırı Windows'un kullanıcının NTLM özetini o makineye göndermesine, `CON` ya da `/dev/zero` satırı doğrulamanın asılı kalmasına yol açardı.
 - Sonuç aynı katmanda: satırlar `OK`, `FAILED`, `MISSING`, `UNREADABLE`; üstte sayılar (`412 OK · 1 failed · 2 missing`); göster süzgeci (`Failed and missing only`), CSV.
 
 ### 4.5 Kabul ölçütleri

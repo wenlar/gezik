@@ -1,8 +1,8 @@
 import { ScrollView } from "scrollbar.slint";
 import { Theme } from "../theme.slint";
 
-// One item of a menu. `id` is one of the ids in context_menu.rs (-1…-5 in Gezik's own menu:
-// the line that opens submenu 1…5); a greyed one cannot be chosen.
+// One item of a menu. `id` is one of the ids in context_menu.rs (-1…-4 in Gezik's own menu:
+// the line that opens submenu 1…4); a greyed one cannot be chosen.
 export struct MenuEntry {
     id: int,
     title: string,
@@ -10,7 +10,7 @@ export struct MenuEntry {
 }
 
 // A submenu of a context menu: its title, its items, and the menu's items after it (up to
-// the next submenu). Rust fills up to five (context_menu.rs `MAX_SUBMENUS`).
+// the next submenu). Rust fills up to four (context_menu.rs `MAX_SUBMENUS`).
 export struct MenuSub {
     title: string,
     entries: [MenuEntry],
@@ -139,7 +139,7 @@ component MenuBox inherits Rectangle {
 
 // Gezik's own menu where the system has none for Slint (Linux): drawn in the window, kept
 // inside it (popup.rs places it: flipped up or left, scrolling when taller than the window),
-// with up to five submenus. Up/Down/Enter/Right/Left/Esc work as in Slint's menus; a press outside
+// with up to four submenus. Up/Down/Enter/Right/Left/Esc work as in Slint's menus; a press outside
 // closes it.
 export component PopupMenu inherits Rectangle {
     in property <[MenuEntry]> lines;
@@ -165,7 +165,7 @@ export component PopupMenu inherits Rectangle {
     property <int> sub-at: -1;
     property <bool> in-sub;
     property <int> sub-current: -1;
-    // The open submenu: which (0-4), and its lines (an index past the end gives none).
+    // The open submenu: which (0-3), and its lines (an index past the end gives none).
     property <int> sub-index: 0;
     property <[MenuEntry]> sub-lines: root.subs[root.sub-index].entries;
     property <MenuPlace> main-place: root.place(
