@@ -40,11 +40,11 @@ pub struct Scan {
     pub stopped: bool,
 }
 
-/// The name as names are matched: NFC (macOS's NFD names meet FAT's and NTFS's NFC ones; only
-/// names that are not ASCII are looked at), folded as the pattern language folds unless
-/// `case_sensitive`.
+/// The name as names are matched: on macOS NFC (its NFD names meet a USB drive's NFC ones; only
+/// names that are not ASCII are looked at; elsewhere two such names are two files), folded as
+/// the pattern language folds unless `case_sensitive`.
 pub fn name_key(name: &str, case_sensitive: bool) -> String {
-    let nfc = if name.is_ascii() {
+    let nfc = if name.is_ascii() || !cfg!(target_os = "macos") {
         Cow::Borrowed(name)
     } else {
         icu_normalizer::ComposingNormalizerBorrowed::new_nfc().normalize(name)
@@ -267,8 +267,12 @@ mod tests {
     fn names_meet_in_nfc_and_by_the_case_rule() {
         let nfd = "Cafe\u{301}.txt";
         let nfc = "Caf\u{e9}.txt";
-        assert_eq!(name_key(nfd, true), name_key(nfc, true));
-        assert_eq!(name_key(nfd, true), nfc);
+        if cfg!(target_os = "macos") {
+            assert_eq!(name_key(nfd, true), nfc, "macOS: NFD meets NFC");
+        } else {
+            assert_eq!(name_key(nfd, true), nfd, "Linux and Windows: the name as it is");
+            assert_ne!(name_key(nfd, false), name_key(nfc, false));
+        }
         assert_eq!(name_key("Docs", false), name_key("docs", false));
         assert_ne!(name_key("Docs", true), name_key("docs", true), "Linux tells them apart");
         assert_eq!(name_key("IRMAK", false), name_key("ırmak", false), "6a's folding");
@@ -279,7 +283,7 @@ mod tests {
         let folded = Rules { case_sensitive: false, ..rules(&none) };
         let (scan, _) = run(&root, &folded);
         let keys: Vec<&str> = scan.tree.nodes[1..].iter().map(Node::key).collect();
-        assert_eq!(keys, [name_key("b.txt", false), name_key(nfc, false)]);
+        assert_eq!(keys, [name_key("b.txt", false), name_key(nfd, false)]);
         let _ = std::fs::remove_dir_all(&root);
     }
 
