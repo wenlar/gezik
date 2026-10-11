@@ -63,6 +63,8 @@ const PAGE: usize = 10;
 #[derive(Default)]
 struct Data {
     job: Option<JobId>,
+    /// The job's title ("Copying 312 items to D:\Yedek").
+    title: String,
     /// As the engine sent them (folder merges first); decisions go back in this order.
     items: Vec<ConflictItem>,
     decisions: Vec<Decision>,
@@ -145,6 +147,7 @@ impl Conflicts {
             let mut data = self.0.data.borrow_mut();
             *data = Data {
                 job: Some(job),
+                title: title.to_owned(),
                 decisions: items.iter().map(|c| c.decision).collect(),
                 shown: (0..items.len()).collect(),
                 selection: Selection::new(items.len()),
@@ -166,6 +169,24 @@ impl Conflicts {
         window.set_conflict_scroll(0.0);
         self.refresh();
         window.set_conflicts_open(true);
+    }
+
+    /// Its window closes (spec 9.3): the list on screen, with what was decided in it, and those
+    /// waiting go to `to`.
+    pub fn hand_over(&self, to: &Conflicts) {
+        let open = std::mem::take(&mut *self.0.data.borrow_mut());
+        let waiting = std::mem::take(&mut *self.0.queue.borrow_mut());
+        if let Some(job) = open.job {
+            let mut items = open.items;
+            for (item, decision) in items.iter_mut().zip(open.decisions) {
+                item.decision = decision;
+            }
+            to.open(job, &open.title, items);
+        }
+        let mut waiting = waiting;
+        while let Some((job, (title, items))) = waiting.next() {
+            to.open(job, &title, items);
+        }
     }
 
     /// Closes the list if it belongs to `job` (it ended some other way).

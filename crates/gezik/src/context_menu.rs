@@ -101,6 +101,7 @@ pub fn items(place: Place, native_shell: bool) -> Vec<(u32, &'static str)> {
         Place::Tab { only_tab, locked } => {
             out.push((DUPLICATE_TAB, "Duplicate"));
             out.push((MOVE_TAB_OTHER, "Move to other pane"));
+            out.push((MOVE_TAB_WINDOW, "Move to new window"));
             if locked {
                 out.push((UNLOCK_TAB, "Unlock tab"));
             } else {
@@ -495,6 +496,12 @@ pub const RESET_TO_RULE: u32 = 2041;
 pub const VIEW_RULE_APPLIES: u32 = 2042;
 /// The tab menu's Move to other pane (spec 10 §10.3, 10b).
 pub const MOVE_TAB_OTHER: u32 = 2020;
+/// The tab menu's Move to new window (spec 10 §10.3, 10g).
+pub const MOVE_TAB_WINDOW: u32 = 2021;
+/// The tab menu's Move to window ▸, the other windows in the order they opened (10g).
+pub const WINDOW_FIRST: u32 = 2100;
+// shortcut: 64 windows listed, more are left out; list more if anyone opens that many.
+pub const WINDOW_MAX: u32 = 64;
 /// View ▸ Two panes (spec 10 §10.3, 10b).
 pub const TWO_PANES: u32 = 2030;
 /// View ▸ Sync browsing, Swap panes, Same folder in other pane (spec 10 §10.3, 10b).
@@ -868,6 +875,11 @@ pub fn filter_items(names: &[String], can_save: bool) -> Vec<(u32, String, bool)
     list
 }
 
+/// The tab menu's Move to window ▸: the other windows by title (none with one window).
+pub fn window_items(titles: &[String]) -> Vec<(u32, String, bool)> {
+    titles.iter().take(WINDOW_MAX as usize).zip(WINDOW_FIRST..).map(|(title, id)| (id, title.clone(), true)).collect()
+}
+
 /// "Open tab set ▸": each set (opened after the tabs), then "Replace tabs with" each, then
 /// "Delete" each (up to `TAB_SET_MAX` each), as the filter menu lists its own.
 pub fn tab_set_items(names: &[String]) -> Vec<(u32, String, bool)> {
@@ -943,8 +955,8 @@ enum Subject {
     SidebarEntry(PathBuf),
     /// A group heading of the sidebar, by name.
     PinGroup(String),
-    /// A tab by id, and the tab set names its menu listed.
-    Tab(u64, Vec<String>),
+    /// A tab by id, the tab set names and the other windows its menu listed.
+    Tab(u64, Vec<String>, Vec<crate::windows::WindowId>),
     /// Empty space in this folder.
     Background(PathBuf),
     Header,
@@ -1049,13 +1061,16 @@ impl Menus {
                     // the layer over it) takes it, unless a question came up.
                     if from_submenu(id) {
                         let weak = menus.window.clone();
-                        slint::Timer::single_shot(std::time::Duration::ZERO, move || {
-                            if let Some(window) = weak.upgrade()
-                                && !window.get_dialog_open()
-                            {
-                                window.invoke_menu_gives_keyboard_back();
-                            }
-                        });
+                        slint::Timer::single_shot(
+                            std::time::Duration::ZERO,
+                            crate::windows::bind(move || {
+                                if let Some(window) = weak.upgrade()
+                                    && !window.get_dialog_open()
+                                {
+                                    window.invoke_menu_gives_keyboard_back();
+                                }
+                            }),
+                        );
                     }
                 }
             }
@@ -1247,11 +1262,14 @@ impl Menus {
     /// Share… from a row menu, at the right-click's place once the menu is done.
     fn share(&self, paths: Vec<PathBuf>) {
         let (window, at) = (self.window.clone(), self.menu_at.get());
-        slint::Timer::single_shot(std::time::Duration::ZERO, move || {
-            if let Some(window) = window.upgrade() {
-                crate::finder_menu::share(&window, paths, Some(at));
-            }
-        });
+        slint::Timer::single_shot(
+            std::time::Duration::ZERO,
+            crate::windows::bind(move || {
+                if let Some(window) = window.upgrade() {
+                    crate::finder_menu::share(&window, paths, Some(at));
+                }
+            }),
+        );
     }
 
     /// Create link ▸ (Windows) or Create link at the end of the items so far, for `rows`;
@@ -1406,8 +1424,15 @@ impl Menus {
         let list: Vec<(u32, String, bool)> =
             items(place, false).into_iter().map(|(id, title)| (id, title.to_owned(), true)).collect();
         let names = crate::tab_sets::names();
-        let subs = vec![Submenu { title: "Open tab set".to_owned(), at: list.len(), items: tab_set_items(&names) }];
-        *self.subject.borrow_mut() = Some(Subject::Tab(id, names));
+        let others = crate::windows::others();
+        let titles: Vec<String> = others.iter().map(|(_, title)| title.clone()).collect();
+        // Right after Move to new window.
+        let at = list.iter().position(|(id, _, _)| *id == MOVE_TAB_WINDOW).map_or(list.len(), |i| i + 1);
+        let subs = vec![
+            Submenu { title: "Move to window".to_owned(), at, items: window_items(&titles) },
+            Submenu { title: "Open tab set".to_owned(), at: list.len(), items: tab_set_items(&names) },
+        ];
+        *self.subject.borrow_mut() = Some(Subject::Tab(id, names, others.into_iter().map(|(id, _)| id).collect()));
         self.open_slint_entries(&list, subs, Anchor::point(x, y));
     }
 
@@ -1557,48 +1582,55 @@ impl Menus {
         }
         let Some(claim) = self.native_menu.claim() else { return };
         let menus = self.clone();
-        slint::Timer::single_shot(std::time::Duration::from_millis(16), move || {
-            let Some(window) = menus.window.upgrade() else { return };
-            let handle = window.window().window_handle();
-            let scale = window.window().scale_factor();
-            let at = at.map(|(x, y)| ((x * scale).round() as i32, (y * scale).round() as i32));
-            let items: Vec<(u32, &str)> = items.iter().map(|(id, title)| (*id, title.as_str())).collect();
-            let sub_items: Vec<Vec<(u32, &str, bool)>> = subs
-                .iter()
-                .map(|sub| sub.items.iter().map(|(id, title, on)| (*id, title.as_str(), *on)).collect())
-                .collect();
-            let shell_subs: Vec<gezik_platform::ShellSubmenu> = subs
-                .iter()
-                .zip(&sub_items)
-                .map(|(sub, items)| gezik_platform::ShellSubmenu { title: sub.title.as_str(), at: sub.at, items })
-                .collect();
-            // Gezik renames in place, only a single row of a folder listing (see run_verb).
-            let can_rename = matches!(subject, Some(Subject::Row(_))) && !crate::panes::active_view().shows_drives();
-            crate::drag::with_current(|drags| drags.menu_shown());
-            let outcome = gezik_platform::show_shell_menu(&handle, &target, &items, &shell_subs, at, can_rename);
-            release_stale_modifiers(&window);
-            after_native_menu(&window);
-            drop(claim);
-            match outcome {
-                Ok(gezik_platform::MenuOutcome::Gezik(id)) => {
-                    if let Some(subject) = subject {
-                        menus.run(id, subject);
+        slint::Timer::single_shot(
+            std::time::Duration::from_millis(16),
+            crate::windows::bind(move || {
+                let Some(window) = menus.window.upgrade() else { return };
+                let handle = window.window().window_handle();
+                let scale = window.window().scale_factor();
+                let at = at.map(|(x, y)| ((x * scale).round() as i32, (y * scale).round() as i32));
+                let items: Vec<(u32, &str)> = items.iter().map(|(id, title)| (*id, title.as_str())).collect();
+                let sub_items: Vec<Vec<(u32, &str, bool)>> = subs
+                    .iter()
+                    .map(|sub| sub.items.iter().map(|(id, title, on)| (*id, title.as_str(), *on)).collect())
+                    .collect();
+                let shell_subs: Vec<gezik_platform::ShellSubmenu> = subs
+                    .iter()
+                    .zip(&sub_items)
+                    .map(|(sub, items)| gezik_platform::ShellSubmenu { title: sub.title.as_str(), at: sub.at, items })
+                    .collect();
+                // Gezik renames in place, only a single row of a folder listing (see run_verb).
+                let can_rename =
+                    matches!(subject, Some(Subject::Row(_))) && !crate::panes::active_view().shows_drives();
+                crate::drag::with_current(|drags| drags.menu_shown());
+                // The menu's own loop handles other windows' events: this one is current after it.
+                let outcome = crate::windows::enter(crate::windows::current(), || {
+                    gezik_platform::show_shell_menu(&handle, &target, &items, &shell_subs, at, can_rename)
+                });
+                release_stale_modifiers(&window);
+                after_native_menu(&window);
+                drop(claim);
+                match outcome {
+                    Ok(gezik_platform::MenuOutcome::Gezik(id)) => {
+                        if let Some(subject) = subject {
+                            menus.run(id, subject);
+                        }
                     }
-                }
-                Ok(gezik_platform::MenuOutcome::SystemCommandRan) => {
-                    // The command may have created, renamed or deleted anything, pinned
-                    // folders included. Results are not read again for it: that would run the
-                    // whole search and read its name cache anew (F5 does, spec 4.7).
-                    if !crate::panes::active_nav().active_location().is_results() {
-                        crate::panes::active_nav().reload();
+                    Ok(gezik_platform::MenuOutcome::SystemCommandRan) => {
+                        // The command may have created, renamed or deleted anything, pinned
+                        // folders included. Results are not read again for it: that would run the
+                        // whole search and read its name cache anew (F5 does, spec 4.7).
+                        if !crate::panes::active_nav().active_location().is_results() {
+                            crate::panes::active_nav().reload();
+                        }
+                        menus.sidebar.refresh();
                     }
-                    menus.sidebar.refresh();
+                    Ok(gezik_platform::MenuOutcome::Verb(verb)) => menus.run_verb(verb, subject),
+                    Ok(gezik_platform::MenuOutcome::Dismissed) => {}
+                    Err(err) => window.set_status(format!("Cannot show the menu: {err}").into()),
                 }
-                Ok(gezik_platform::MenuOutcome::Verb(verb)) => menus.run_verb(verb, subject),
-                Ok(gezik_platform::MenuOutcome::Dismissed) => {}
-                Err(err) => window.set_status(format!("Cannot show the menu: {err}").into()),
-            }
-        });
+            }),
+        );
     }
 
     #[cfg(not(windows))]
@@ -1717,7 +1749,7 @@ impl Menus {
     /// The decision menu of conflict row `row`, at window position `x`, `y`.
     pub fn conflict(&self, row: i32, x: f32, y: f32) {
         let Ok(row) = usize::try_from(row) else { return };
-        let conflicts = self.ops.conflicts();
+        let Some(conflicts) = self.ops.conflicts() else { return };
         let list: Vec<(u32, &'static str)> = crate::conflicts::DECISIONS
             .iter()
             .enumerate()
@@ -1839,8 +1871,10 @@ impl Menus {
                 }
             }
             (id, Subject::Conflict(row)) if (CONFLICT_FIRST..CONFLICT_FIRST + 4).contains(&id) => {
-                if let Some(decision) = crate::conflicts::DECISIONS.get((id - CONFLICT_FIRST) as usize) {
-                    self.ops.conflicts().decide_row(row, *decision);
+                if let Some(decision) = crate::conflicts::DECISIONS.get((id - CONFLICT_FIRST) as usize)
+                    && let Some(conflicts) = self.ops.conflicts()
+                {
+                    conflicts.decide_row(row, *decision);
                 }
             }
             (COPY_HERE, Subject::Drop(paths, dir, _)) => self.ops.transfer(paths, dir, Effect::Copy),
@@ -1900,30 +1934,44 @@ impl Menus {
             (GROUP_RENAME, Subject::PinGroup(group)) => self.sidebar.ask_group_name(&group),
             (UNGROUP, Subject::PinGroup(group)) => self.sidebar.ungroup(&group),
             (SAVE_TAB_SET, Subject::Tab(..)) => crate::tab_sets::with_current(crate::tab_sets::TabSets::ask_save),
-            (id, Subject::Tab(_, names)) if crate::tab_sets::set_item(id).is_some() => {
+            (id, Subject::Tab(_, names, _)) if crate::tab_sets::set_item(id).is_some() => {
                 crate::tab_sets::with_current(|sets| sets.chosen(id, &names));
             }
-            (DUPLICATE_TAB, Subject::Tab(id, _)) => {
+            (DUPLICATE_TAB, Subject::Tab(id, ..)) => {
                 if let Some(i) = crate::panes::active_nav().tab_index(id) {
                     crate::panes::active_nav().duplicate_tab(i);
                 }
             }
-            (CLOSE_TAB, Subject::Tab(id, _)) => {
+            (CLOSE_TAB, Subject::Tab(id, ..)) => {
                 // After the menu is fully done: closing the last tab closes the window.
                 let nav = crate::panes::active_nav().clone();
-                slint::Timer::single_shot(std::time::Duration::ZERO, move || nav.close_tab_by_id(id));
+                slint::Timer::single_shot(
+                    std::time::Duration::ZERO,
+                    crate::windows::bind(move || nav.close_tab_by_id(id)),
+                );
             }
-            (MOVE_TAB_OTHER, Subject::Tab(id, _)) => {
+            (MOVE_TAB_OTHER, Subject::Tab(id, ..)) => {
                 if let Some(i) = crate::panes::active_nav().tab_index(id) {
                     crate::dual::move_tab(crate::panes::active_index(), i, None);
                 }
             }
-            (LOCK_TAB | UNLOCK_TAB, Subject::Tab(id, _)) => {
+            (MOVE_TAB_WINDOW, Subject::Tab(id, ..)) => {
+                if let Some(i) = crate::panes::active_nav().tab_index(id) {
+                    crate::windows::move_tab_to_new(i);
+                }
+            }
+            (id, Subject::Tab(tab, _, windows)) if (WINDOW_FIRST..WINDOW_FIRST + WINDOW_MAX).contains(&id) => {
+                let to = windows.get((id - WINDOW_FIRST) as usize).copied();
+                if let (Some(to), Some(i)) = (to, crate::panes::active_nav().tab_index(tab)) {
+                    crate::windows::move_tab_to(i, to);
+                }
+            }
+            (LOCK_TAB | UNLOCK_TAB, Subject::Tab(id, ..)) => {
                 if let Some(i) = crate::panes::active_nav().tab_index(id) {
                     crate::panes::active_nav().toggle_tab_lock(i);
                 }
             }
-            (CLOSE_OTHER_TABS, Subject::Tab(id, _)) => {
+            (CLOSE_OTHER_TABS, Subject::Tab(id, ..)) => {
                 if let Some(i) = crate::panes::active_nav().tab_index(id) {
                     crate::panes::active_nav().close_other_tabs(i);
                 }
@@ -2246,6 +2294,7 @@ fn from_submenu(id: u32) -> bool {
         || (SIZE_FORMAT_FIRST..SIZE_FORMAT_FIRST + SizeFormat::ALL.len() as u32).contains(&id)
         || (GROUP_BY_NONE..=GROUP_BY_SIZE).contains(&id)
         || (GROUP_MOVE_FIRST..GROUP_MOVE_FIRST + GROUP_MAX).contains(&id)
+        || (WINDOW_FIRST..WINDOW_FIRST + WINDOW_MAX).contains(&id)
         || id == GROUP_NEW
         || id == GROUP_NONE
         || (TEMPLATE_FIRST..TEMPLATE_FIRST + TEMPLATE_MAX).contains(&id)
@@ -2392,6 +2441,7 @@ mod tests {
             SYSTEM_INTEGRATION,
             REVEAL_IN_TREE,
             MOVE_TAB_OTHER,
+            MOVE_TAB_WINDOW,
             TWO_PANES,
             SYNC_BROWSING,
             SWAP_PANES,
@@ -2692,6 +2742,7 @@ mod tests {
             RESET_TO_RULE,
             VIEW_RULE_APPLIES,
             MOVE_TAB_OTHER,
+            MOVE_TAB_WINDOW,
             TWO_PANES,
             SYNC_BROWSING,
             SWAP_PANES,
@@ -2722,6 +2773,7 @@ mod tests {
             TEMPLATE_FIRST..TEMPLATE_FIRST + TEMPLATE_MAX,
             SAVED_SEARCH_FIRST..SAVED_SEARCH_FIRST + SAVED_SEARCH_MAX,
             SAVED_SEARCH_DELETE_FIRST..SAVED_SEARCH_DELETE_FIRST + SAVED_SEARCH_MAX,
+            WINDOW_FIRST..WINDOW_FIRST + WINDOW_MAX,
         ]);
         for (i, a) in ranges.iter().enumerate() {
             assert!(a.start >= 1 && a.end <= GEZIK_IDS_END, "{a:?}: 1..4096 (0 is a heading, 4096 on the Shell's)");
@@ -2983,11 +3035,38 @@ mod tests {
         let tab = |only_tab, locked| ids(items(Place::Tab { only_tab, locked }, false));
         assert_eq!(
             tab(false, false),
-            [DUPLICATE_TAB, MOVE_TAB_OTHER, LOCK_TAB, CLOSE_TAB, CLOSE_OTHER_TABS, SAVE_TAB_SET]
+            [DUPLICATE_TAB, MOVE_TAB_OTHER, MOVE_TAB_WINDOW, LOCK_TAB, CLOSE_TAB, CLOSE_OTHER_TABS, SAVE_TAB_SET]
         );
-        assert_eq!(tab(true, false), [DUPLICATE_TAB, MOVE_TAB_OTHER, LOCK_TAB, CLOSE_TAB, SAVE_TAB_SET]);
-        assert_eq!(tab(false, true), [DUPLICATE_TAB, MOVE_TAB_OTHER, UNLOCK_TAB, CLOSE_OTHER_TABS, SAVE_TAB_SET]);
-        assert_eq!(tab(true, true), [DUPLICATE_TAB, MOVE_TAB_OTHER, UNLOCK_TAB, SAVE_TAB_SET]);
+        assert_eq!(
+            tab(true, false),
+            [DUPLICATE_TAB, MOVE_TAB_OTHER, MOVE_TAB_WINDOW, LOCK_TAB, CLOSE_TAB, SAVE_TAB_SET]
+        );
+        assert_eq!(
+            tab(false, true),
+            [DUPLICATE_TAB, MOVE_TAB_OTHER, MOVE_TAB_WINDOW, UNLOCK_TAB, CLOSE_OTHER_TABS, SAVE_TAB_SET]
+        );
+        assert_eq!(tab(true, true), [DUPLICATE_TAB, MOVE_TAB_OTHER, MOVE_TAB_WINDOW, UNLOCK_TAB, SAVE_TAB_SET]);
+    }
+
+    #[test]
+    fn move_to_window_lists_the_other_windows_only_when_there_are_some() {
+        // One window: an empty submenu, which no menu shows.
+        assert!(window_items(&[]).is_empty());
+        let none = [Submenu { title: "Move to window".into(), at: 1, items: window_items(&[]) }];
+        assert!(split_menu(&[1, 2, 3], &none).1.is_empty());
+        let titles: Vec<String> = (0..70).map(|i| format!("Folder {i} — Gezik")).collect();
+        let items = window_items(&titles[..2]);
+        assert_eq!(
+            items,
+            [
+                (WINDOW_FIRST, "Folder 0 — Gezik".to_owned(), true),
+                (WINDOW_FIRST + 1, "Folder 1 — Gezik".to_owned(), true)
+            ]
+        );
+        assert_eq!(window_items(&titles).len(), WINDOW_MAX as usize, "more are left out");
+        assert_eq!(window_items(&titles).last().map(|i| i.0), Some(WINDOW_FIRST + WINDOW_MAX - 1));
+        assert!(from_submenu(WINDOW_FIRST) && from_submenu(WINDOW_FIRST + WINDOW_MAX - 1), "the keyboard comes back");
+        assert!(!from_submenu(MOVE_TAB_WINDOW));
     }
 
     #[test]

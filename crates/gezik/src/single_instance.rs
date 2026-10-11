@@ -18,24 +18,31 @@ use crate::navigation::Navigator;
 
 /// Answers other `gezik` calls from now on. Received paths are only opened as folders in
 /// tabs, never run.
-pub fn serve(listener: Listener, window: slint::Weak<AppWindow>) {
+/// They open in the most recently focused window, or with `--new-window` in a new one beside
+/// it (spec 10 §9.3).
+pub fn serve(listener: Listener) {
     listener.serve(move |request| {
-        let (new_tab, trash) = (request.new_tab, request.trash);
-        let window = window.clone();
+        let (new_tab, trash, new_window) = (request.new_tab, request.trash, request.new_window);
         carry_out(
             Instant::now() + CARRY_OUT_TIMEOUT,
             // Looking at the paths may be slow (a network folder): not on the UI thread.
             move || cli::group(&request.targets, crate::start::path_kind),
             move |(opens, missing), turn| {
-                window
-                    .upgrade_in_event_loop(move |_window| {
-                        if turn.begin() {
-                            crate::panes::with_active(|p| apply(&p.nav, opens, missing, new_tab, trash));
-                            crate::resident::reveal();
-                            turn.done();
-                        }
-                    })
-                    .is_ok()
+                slint::invoke_from_event_loop(move || {
+                    if turn.begin() {
+                        crate::windows::with_focused(|_| {
+                            if new_window {
+                                // spec 10 §9.3: beside the most recently focused window.
+                                crate::windows::open_for(opens, missing, trash);
+                            } else {
+                                crate::panes::with_active(|p| apply(&p.nav, opens, missing, new_tab, trash));
+                                crate::resident::reveal();
+                            }
+                        });
+                        turn.done();
+                    }
+                })
+                .is_ok()
             },
         )
     });
@@ -137,18 +144,19 @@ pub fn apply(nav: &Navigator, opens: Vec<Open>, missing: Vec<PathBuf>, new_tab: 
 /// Opens `request` in this Gezik as if another `gezik` had sent it: FileManager1's calls and
 /// macOS's open event. Paths are looked at on a thread, opened on the UI thread.
 #[cfg_attr(windows, allow(dead_code))]
-pub fn open_here(window: slint::Weak<AppWindow>, request: gezik_platform::instance::Request) {
+pub fn open_here(request: gezik_platform::instance::Request) {
     std::thread::spawn(move || {
         let (opens, missing) = cli::group(&request.targets, crate::start::path_kind);
-        let _ = window.upgrade_in_event_loop(move |_window| {
-            crate::panes::with_active(|p| apply(&p.nav, opens, missing, request.new_tab, request.trash));
-            crate::resident::reveal();
+        let _ = slint::invoke_from_event_loop(move || {
+            crate::windows::with_focused(|_| {
+                crate::panes::with_active(|p| apply(&p.nav, opens, missing, request.new_tab, request.trash));
+                crate::resident::reveal();
+            });
         });
     });
 }
 
 thread_local! {
-    static WINDOW: std::cell::RefCell<Option<slint::Weak<AppWindow>>> = const { std::cell::RefCell::new(None) };
     /// Linux: another file manager holds FileManager1 (decision 18; the panel says so).
     static FM1_TAKEN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Linux: FileManager1 is wanted (started and not stopped since); a start under way
@@ -163,28 +171,21 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
-/// The window FileManager1's calls open into; set once by main.
-pub fn set_window(window: slint::Weak<AppWindow>) {
-    WINDOW.with(|w| *w.borrow_mut() = Some(window));
-}
-
 /// Answers "Show in folder" from now on, if no other file manager does (Linux, UI thread).
 /// Taking the name waits on the bus, so it is done on a thread.
 pub fn start_file_manager1() {
     #[cfg(all(unix, not(target_os = "macos")))]
     {
         use gezik_platform::file_manager1::{Show, serve};
-        let Some(window) = WINDOW.with(|w| w.borrow().clone()) else { return };
         if FM1_WANTED.replace(true) {
             return;
         }
         std::thread::spawn(move || {
-            let opener = window.clone();
             let result = serve(move |call| {
                 let select = call.show != Show::Folders;
                 let targets = call.paths.into_iter().map(|path| cli::Target { path, select }).collect();
                 let request = gezik_platform::instance::Request { targets, trash: call.trash, ..Default::default() };
-                open_here(opener.clone(), request);
+                open_here(request);
             });
             let _ = slint::invoke_from_event_loop(move || match result {
                 Ok(owner) if FM1_WANTED.get() => {

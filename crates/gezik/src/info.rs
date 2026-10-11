@@ -27,12 +27,12 @@ use crate::{AppWindow, InfoView};
 pub const MAX_ITEMS: usize = 1000;
 
 thread_local! {
-    static CURRENT: RefCell<Option<Info>> = const { RefCell::new(None) };
+    pub(crate) static CURRENT: crate::windows::Slot<Info> = const { crate::windows::Slot::new() };
 }
 
 /// Runs `f` with this UI thread's Info window, if set up.
 pub fn with_current(f: impl FnOnce(&Info)) {
-    if let Some(info) = CURRENT.with(|c| c.borrow().clone()) {
+    if let Some(info) = CURRENT.with(crate::windows::Slot::current) {
         f(&info);
     }
 }
@@ -144,7 +144,7 @@ impl Info {
             opened: Arc::default(),
         }));
         info.install(window);
-        CURRENT.with(|c| *c.borrow_mut() = Some(info.clone()));
+        CURRENT.with(|c| c.set(crate::windows::current(), info.clone()));
         info
     }
 
@@ -203,15 +203,16 @@ impl Info {
         self.0.generation.set(generation);
         let opened = if names { self.0.opened.fetch_add(1, Ordering::SeqCst) + 1 } else { 0 };
         let stop = self.0.opened.clone();
+        let window_id = crate::windows::current();
         std::thread::spawn(move || {
             let loaded = load(&paths, names);
             let sized = (names && !loaded.items.is_empty()).then(|| paths.clone());
-            let _ = slint::invoke_from_event_loop(move || {
+            crate::windows::post(window_id, move || {
                 with_current(|info| info.loaded(generation, paths, loaded));
             });
             if let Some(paths) = sized {
                 let (files, bytes) = crate::archives::total_size(&paths, || stop.load(Ordering::SeqCst) != opened);
-                let _ = slint::invoke_from_event_loop(move || {
+                crate::windows::post(window_id, move || {
                     with_current(|info| info.sized(opened, files, bytes));
                 });
             }
@@ -407,8 +408,9 @@ impl Info {
             }
             return self.set_note(format!("Change All… opens every file of this type with {name}"), false);
         }
-        let failed = |why: String| {
-            let _ = slint::invoke_from_event_loop(move || {
+        let window_id = crate::windows::current();
+        let failed = move |why: String| {
+            crate::windows::post(window_id, move || {
                 with_current(|info| info.set_note(format!("Cannot change the app: {why}"), true));
             });
         };
@@ -453,9 +455,10 @@ impl Info {
                 if choice == Some(0) {
                     if !gezik_platform::open_with::PER_FILE {
                         // Linux: mimeapps.list, off the UI thread.
+                        let window_id = crate::windows::current();
                         let spawned = std::thread::Builder::new().name("gezik-change-all".into()).spawn(move || {
                             let result = crate::system_changes::set_mime_default(&app.path, &uti);
-                            let _ = slint::invoke_from_event_loop(move || {
+                            crate::windows::post(window_id, move || {
                                 with_current(|info| match result {
                                     Ok(()) => info.set_note(format!("{kind} files open with {} now", app.name), false),
                                     Err(why) => info.set_note(format!("Cannot change the app: {why}"), true),
@@ -484,11 +487,14 @@ impl Info {
                 return crate::finder_menu::ask_app(move |app| info.set_app(app));
             }
             // After the menu is gone: the panel is modal.
-            return slint::Timer::single_shot(std::time::Duration::ZERO, move || {
-                if let Some(app) = gezik_platform::open_with::choose_app() {
-                    info.set_app(app);
-                }
-            });
+            return slint::Timer::single_shot(
+                std::time::Duration::ZERO,
+                crate::windows::bind(move || {
+                    if let Some(app) = gezik_platform::open_with::choose_app() {
+                        info.set_app(app);
+                    }
+                }),
+            );
         }
         if (OPEN_WITH_FIRST..OPEN_WITH_FIRST + OPEN_WITH_MAX).contains(&id) {
             let app = self.0.state.borrow().as_ref().and_then(|s| s.apps.get((id - OPEN_WITH_FIRST) as usize).cloned());

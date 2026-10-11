@@ -165,6 +165,8 @@ gezik [OPTIONS] [PATH...]
   --version, --help
 ```
 
+> 10g ile değişti: `--new-window` artık çalışan Gezik'te yeni pencere açar; yardım satırı `--new-window      a new window in the running Gezik (a new process if none answers)`. Gezik çalışmıyorsa ilk pencere olur; çalışan Gezik 2 sn içinde yanıt vermezse (ya da 10g öncesi bir Gezik bayrağı reddederse) yeni süreç açılır (10. spec §9.3). Tek örnek iletisinde `NEW_WINDOW = 4` bayrağı.
+
 İç bayraklar (yardımda yok, başka biri çağırırsa zararsız): `--shell TARGET` (Windows klasör fiili, §6.1), `--dbus` (Linux D-Bus etkinleştirmesi, §8.3), `--elevated …` (§10), `--pdf-worker` (bugünkü).
 
 - Ayrıştırma saf işlevdir (`gezik/src/cli.rs`, birim testli); bugünkü `start.rs` `plan_start` sonucu kullanır. Bilinmeyen bayrak uyarıdır (durum çubuğu ve konsol), Gezik yine açılır.
@@ -185,6 +187,8 @@ gezik [OPTIONS] [PATH...]
 ### 5.3 Yeni pencere
 
 Eylem `new-window` (Ctrl+N / ⌘N): Gezik'i `--new-window <gösterilen klasör>` ile yeni süreç olarak başlatır. Çok pencereli tek süreç yoktur (§17 karar 9). Yeni süreç tek örnek kanalını almaz; ilk Gezik kapanınca kanal boşta kalır, sonraki çağrı yeni bir ilk örnek olur.
+
+> 10g ile değişti: `new-window` aynı süreçte yeni pencere açar (odaktaki pencerenin etkin klasöründe tek bölme, +24 px); süreç başlatılmaz, karar 9'un yerine 10. spec §9 ve kararları geçer. `--new-window` tek örneğe gider (§5.1 notu); ayrı süreç isteyen için `[system] single-instance = false` kalır.
 
 ## 6. 9b4 — Varsayılan dosya yöneticisi
 

@@ -68,6 +68,8 @@ export component AppWindow inherits Window {
     in property <[MenuEntry]> bar-commands;
     // The Window menu's "Open Tab Set": the tab sets to open, to replace the tabs with, to delete.
     in property <[MenuEntry]> bar-tab-sets;
+    // The Window menu's list of the open windows (10g): choosing one brings it forward.
+    in property <[MenuEntry]> bar-windows;
     callback menu-command(string);
     if root.native-menu-bar: MenuBar {
         Menu {
@@ -209,6 +211,7 @@ export component AppWindow inherits Window {
             MenuItem { title: "Reopen Closed Tab"; shortcut: root.menu-keys ? @keys(Control + Shift + T) : @keys(); activated => { root.menu-command("reopen-tab"); } }
             MenuItem { title: "Show All Tabs…"; shortcut: root.menu-keys ? @keys(Control + Shift + A) : @keys(); activated => { root.menu-command("tab-picker"); } }
             MenuItem { title: root.active-tab-locked ? "Unlock Tab" : "Lock Tab"; activated => { root.menu-command("toggle-tab-lock"); } }
+            MenuItem { title: "Move Tab to New Window"; activated => { root.menu-command("move-tab-to-new-window"); } }
             MenuSeparator { }
             MenuItem { title: "Save Tabs As…"; activated => { root.menu-command("save-tab-set"); } }
             if root.bar-tab-sets.length > 0: Menu {
@@ -229,6 +232,11 @@ export component AppWindow inherits Window {
             MenuItem { title: "Tab 7"; shortcut: root.menu-keys ? @keys(Control + "7") : @keys(); activated => { root.menu-command("tab-7"); } }
             MenuItem { title: "Tab 8"; shortcut: root.menu-keys ? @keys(Control + "8") : @keys(); activated => { root.menu-command("tab-8"); } }
             MenuItem { title: "Last Tab"; shortcut: root.menu-keys ? @keys(Control + "9") : @keys(); activated => { root.menu-command("tab-last"); } }
+            MenuSeparator { }
+            for entry in root.bar-windows: MenuItem {
+                title: entry.title;
+                activated => { root.menu-command("window:" + entry.id); }
+            }
         }
     }
     default-font-family: Theme.font-family;

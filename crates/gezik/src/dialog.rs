@@ -64,8 +64,7 @@ impl Dialogs {
         dialogs
     }
 
-    /// Dialogs with no window, for tests: nothing is ever asked.
-    #[cfg(test)]
+    /// Dialogs with no window (tests, a window not attached yet): nothing is ever asked.
     pub fn detached() -> Dialogs {
         Dialogs(Rc::new(Inner {
             window: slint::Weak::default(),
@@ -140,6 +139,31 @@ impl Dialogs {
             && open == job
         {
             self.chosen(i32::try_from(escape).unwrap_or(0));
+        }
+    }
+
+    /// Its window closes (spec 9.3): the question on screen (as it shows now) and those waiting
+    /// are asked in `to`, their answers going where they went.
+    pub fn hand_over(&self, to: &Dialogs) {
+        let open = self.0.open.borrow_mut().take();
+        let (job, note) = (self.0.open_job.take(), self.0.open_note.borrow_mut().take());
+        let mut moved = std::mem::take(&mut *self.0.queue.borrow_mut());
+        if let (Some(answer), Some(window)) = (open, self.0.window.upgrade()) {
+            use slint::Model;
+            moved.push_front(Question {
+                title: window.get_dialog_title().into(),
+                message: window.get_dialog_message().into(),
+                buttons: window.get_dialog_buttons().iter().map(String::from).collect(),
+                escape: usize::try_from(window.get_dialog_escape()).unwrap_or(0),
+                input: window.get_dialog_has_input().then(|| window.get_dialog_input().into()),
+                secret: window.get_dialog_input_secret(),
+                job: job.map(|(job, _)| job),
+                note,
+                answer,
+            });
+        }
+        for question in moved {
+            to.push(question);
         }
     }
 

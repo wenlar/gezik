@@ -17,11 +17,14 @@ use gezik_core::nav::Location;
 use gezik_core::ops::paths::is_within;
 use gezik_platform::DriveKind;
 use gezik_platform::dnd::{Answer, Attached, DragEnd, DropHandler, Handoff, Offer, OnEnd, OutsideDrag, VirtualFiles};
+use slint::winit_030::WinitWindowAccessor;
 use slint::{ComponentHandle, Model, Timer, TimerMode};
 
 use crate::context_menu::Menus;
 use crate::operations::Operations;
 use crate::sidebar::{SECTION_GROUP, SECTION_PINNED, SECTION_TREE_MORE, Sidebar};
+use crate::tab_drag::{self, Spot, Tear};
+use crate::windows::WindowId;
 use crate::{AppWindow, SidebarRow, Theme};
 
 /// How often a drag near the list's top or bottom edge scrolls it.
@@ -127,6 +130,8 @@ struct Inner {
     attached: RefCell<Option<Attached>>,
     /// A drag outside the window that Gezik drives itself (X11).
     outside: RefCell<Option<Box<dyn OutsideDrag>>>,
+    /// The window closed while its drop target was in use: it goes when that is over.
+    detach_later: Cell<bool>,
     /// Handing this drag to the system failed: it stays in the window.
     handoff_failed: Cell<bool>,
     /// A tab opened under the drag: the list was rebuilt, and the entry that held the
@@ -139,15 +144,20 @@ struct Inner {
     /// Files winit reported dropped (an X11 source that ignores `XdndProxy`), gathered until
     /// the batch ends.
     dropped_files: RefCell<Vec<PathBuf>>,
+    /// A tab is being dragged (Esc cancels it), and it was cancelled: its release does nothing.
+    tab_live: Cell<bool>,
+    tab_cancelled: Cell<bool>,
+    /// The other window that shows where the dragged tab would go.
+    tab_shown: Cell<Option<WindowId>>,
 }
 
 thread_local! {
-    static CURRENT: RefCell<Option<Drags>> = const { RefCell::new(None) };
+    pub(crate) static CURRENT: crate::windows::Slot<Drags> = const { crate::windows::Slot::new() };
 }
 
 /// Runs `f` with this UI thread's drags, if there are any yet.
 pub fn with_current<R>(f: impl FnOnce(&Drags) -> R) -> Option<R> {
-    CURRENT.with(|c| c.borrow().clone()).map(|drags| f(&drags))
+    CURRENT.with(crate::windows::Slot::current).map(|drags| f(&drags))
 }
 
 /// Which of Copy, Move and Link the right-drag menu offers: what the source allows, in a
@@ -278,13 +288,17 @@ impl Drags {
             scroll_timer: Timer::default(),
             attached: RefCell::default(),
             outside: RefCell::default(),
+            detach_later: Cell::new(false),
             handoff_failed: Cell::new(false),
             grab_lost: Cell::new(false),
             last_open: Cell::new(None),
             handed: Cell::new(None),
             dropped_files: RefCell::default(),
+            tab_live: Cell::new(false),
+            tab_cancelled: Cell::new(false),
+            tab_shown: Cell::new(None),
         }));
-        CURRENT.with(|c| *c.borrow_mut() = Some(drags.clone()));
+        CURRENT.with(|c| c.set(crate::windows::current(), drags.clone()));
         drags
     }
 
@@ -340,22 +354,85 @@ impl Drags {
 
     /// Tab `tab` of the pane at place `from` dragged to window point (`x`, `y`) (`tab` < 0: the
     /// drag ended without a drop): over the other pane its strip shows where the tab would go,
-    /// and the release moves it there (spec 10 §4.5). Whether it is over the other pane (then
-    /// the strip it came from does not reorder).
+    /// and the release moves it there (spec 10 §4.5). Outside the window (spec 10 §9.5) over
+    /// another Gezik window that one shows it and takes it on the release; over no window the
+    /// release tears it off into a new window there; on Linux it stays. Whether it is away
+    /// from its own strip (then that strip does not reorder).
     fn tab_dragged(&self, from: i32, tab: i32, x: f32, y: f32, released: bool) -> bool {
         let Some(window) = self.0.window.upgrade() else { return false };
-        let target = match (usize::try_from(from), usize::try_from(tab)) {
-            (Ok(from), Ok(tab)) => drag::tab_target(&self.layout(&window), from, x, y).map(|to| (from, tab, to)),
-            _ => None,
+        let (Ok(from), Ok(tab)) = (usize::try_from(from), usize::try_from(tab)) else {
+            self.0.tab_live.set(false);
+            self.0.tab_cancelled.set(false);
+            self.show_tab_lines(&window, None, None);
+            return false;
         };
-        let shown = target.filter(|_| !released).map(|(_, _, to)| to);
-        window.set_drop_pane(shown.map_or(-1, |(pane, _)| index(pane)));
-        window.set_tab_insert(shown.and_then(|(_, slot)| slot).map_or(-1, index));
-        if let Some((from, tab, (_, at))) = target.filter(|_| released) {
-            // Once the release is fully handled: both strips' tabs change.
-            Timer::single_shot(Duration::ZERO, move || crate::dual::move_tab(from, tab, at));
+        // Esc: nothing until the button comes up.
+        if self.0.tab_cancelled.get() {
+            self.show_tab_lines(&window, None, None);
+            return true;
         }
-        target.is_some()
+        self.0.tab_live.set(!released);
+        let layout = self.layout(&window);
+        let inside = x >= 0.0 && y >= 0.0 && x < layout.width && y < layout.height;
+        // Torn off, the new window's first tab comes under the pointer.
+        let grab = layout.panes.first().map_or((0.0, 0.0), |p| {
+            (p.tabs.rect.x + p.tabs.tab_width.min(p.tabs.rect.width) / 2.0, p.tabs.rect.y + p.tabs.rect.height / 2.0)
+        });
+        let screen = if inside { None } else { on_screen(&window, x, y, grab) };
+        let point = screen.map(|(point, _)| point);
+        let frames = if inside { Vec::new() } else { crate::windows::frames() };
+        let tear = tab_drag::target(point, inside, crate::windows::current(), &frames, tab_drag::TEARS, |id| {
+            point.and_then(|point| strip_at(id, point))
+        });
+        let nav = crate::panes::at(index(from)).map(|p| p.nav);
+        match tear {
+            Tear::Inside => {
+                let target = drag::tab_target(&layout, from, x, y);
+                self.show_tab_lines(&window, target.filter(|_| !released), None);
+                if let Some((_, at)) = target.filter(|_| released) {
+                    // Once the release is fully handled: both strips' tabs change.
+                    Timer::single_shot(
+                        Duration::ZERO,
+                        crate::windows::bind(move || crate::dual::move_tab(from, tab, at)),
+                    );
+                }
+                target.is_some()
+            }
+            Tear::Window(to, at) => {
+                self.show_tab_lines(&window, None, (!released).then_some((to, at)));
+                if let Some(nav) = nav.filter(|_| released) {
+                    // After the release: the window it leaves may close.
+                    let drop = move || crate::windows::drop_tab(&nav, tab, to, at);
+                    Timer::single_shot(Duration::ZERO, crate::windows::bind(drop));
+                }
+                true
+            }
+            Tear::Empty => {
+                self.show_tab_lines(&window, None, None);
+                if let (Some(nav), Some((_, place))) = (nav.filter(|_| released), screen) {
+                    let tear = move || crate::windows::tear_off(&nav, tab, Some(place));
+                    Timer::single_shot(Duration::ZERO, crate::windows::bind(tear));
+                }
+                true
+            }
+            Tear::Stay => {
+                self.show_tab_lines(&window, None, None);
+                true
+            }
+        }
+    }
+
+    /// Where a dragged tab would go: in this window's other pane (`own`) or in another window
+    /// (`other`); every other window's line goes.
+    fn show_tab_lines(&self, window: &AppWindow, own: Spot, other: Option<(WindowId, Spot)>) {
+        show_tab_line(window, own);
+        let shown = other.map(|(id, _)| id);
+        if let Some(was) = self.0.tab_shown.replace(shown).filter(|was| Some(*was) != shown) {
+            crate::windows::with_window(was, |window| show_tab_line(window, None));
+        }
+        if let Some((id, at)) = other {
+            crate::windows::with_window(id, |window| show_tab_line(window, at));
+        }
     }
 
     /// Whether files are being dragged (Esc cancels).
@@ -374,7 +451,7 @@ impl Drags {
         };
         if first {
             let drags = self.clone();
-            Timer::single_shot(Duration::ZERO, move || drags.take_dropped_files());
+            Timer::single_shot(Duration::ZERO, crate::windows::bind(move || drags.take_dropped_files()));
         }
     }
 
@@ -427,6 +504,13 @@ impl Drags {
 
     /// Esc: drops nothing. Returns whether a drag was cancelled.
     pub fn escape(&self) -> bool {
+        if self.0.tab_live.get() {
+            self.0.tab_cancelled.set(true);
+            if let Some(window) = self.0.window.upgrade() {
+                self.show_tab_lines(&window, None, None);
+            }
+            return true;
+        }
         if let Some(mut outside) = self.0.outside.borrow_mut().take() {
             outside.cancel();
             self.0.handed.set(None);
@@ -602,11 +686,14 @@ impl Drags {
                         // By path: a listing replaced before the timer fires must not open
                         // another entry under the same index.
                         let clicked = crate::panes::active_view().entry_path(index);
-                        Timer::single_shot(Duration::ZERO, move || {
-                            if let Some((path, is_dir)) = clicked {
-                                crate::open_path(&nav, path, is_dir);
-                            }
-                        });
+                        Timer::single_shot(
+                            Duration::ZERO,
+                            crate::windows::bind(move || {
+                                if let Some((path, is_dir)) = clicked {
+                                    crate::open_path(&nav, path, is_dir);
+                                }
+                            }),
+                        );
                     }
                 }
                 false
@@ -901,9 +988,13 @@ impl Drags {
         }
         self.0.hover_tab.set(tab);
         match tab {
-            Some(tab) => self.0.tab_timer.start(TimerMode::SingleShot, drag::TAB_HOVER, move || {
-                with_current(|drags| drags.tab_rested(tab));
-            }),
+            Some(tab) => self.0.tab_timer.start(
+                TimerMode::SingleShot,
+                drag::TAB_HOVER,
+                crate::windows::bind_mut(move || {
+                    with_current(|drags| drags.tab_rested(tab));
+                }),
+            ),
             None => self.0.tab_timer.stop(),
         }
     }
@@ -937,9 +1028,13 @@ impl Drags {
             drag::edge_scroll(y - list.rect.y, list.rect.height, list.geometry.row_height() / 2.0) != 0.0
         });
         if near && !self.0.scroll_timer.running() {
-            self.0.scroll_timer.start(TimerMode::Repeated, SCROLL_STEP, || {
-                with_current(|drags| drags.scroll_step());
-            });
+            self.0.scroll_timer.start(
+                TimerMode::Repeated,
+                SCROLL_STEP,
+                crate::windows::bind_mut(|| {
+                    with_current(|drags| drags.scroll_step());
+                }),
+            );
         } else if !near {
             self.0.scroll_timer.stop();
         }
@@ -1082,13 +1177,22 @@ impl Drags {
         self.0.grab_lost.set(grab_lost);
         let (sources, right) = (d.sources.clone(), d.right);
         *self.0.phase.borrow_mut() = Phase::Outside(d.clone());
-        let on_end: OnEnd = Box::new(|end| {
-            with_current(|drags| drags.outside_ended(end));
+        // The system ends it later (macOS, Wayland), maybe while another window acts.
+        let id = crate::windows::current();
+        let on_end: OnEnd = Box::new(move |end| {
+            crate::windows::with_window(id, |_| with_current(|drags| drags.outside_ended(end)));
         });
-        let result = match &*self.0.attached.borrow() {
+        // Windows' drag loop handles other windows' events (a drop on another Gezik window
+        // runs in it): this one is current again after it.
+        let result = crate::windows::enter(id, || match &*self.0.attached.borrow() {
             Some(attached) => attached.drag_out(&sources, right, on_end),
             None => Err("no drop target".into()),
-        };
+        });
+        // The window closed during the drag loop: its drop target goes now.
+        if self.0.detach_later.take() {
+            let gone = self.0.attached.borrow_mut().take();
+            drop(gone);
+        }
         match result {
             // Its last position is outside the window: the next move (inside) places it.
             Ok(Handoff::Ended(DragEnd::Returned)) => self.resume(d, false),
@@ -1181,20 +1285,51 @@ impl Drags {
     /// after the event loop starts, so this retries for a while).
     pub fn attach_when_ready(&self, attempt: u32) {
         let drags = self.clone();
-        Timer::single_shot(Duration::from_millis(20), move || {
-            let Some(window) = drags.0.window.upgrade() else { return };
-            let handler: Rc<dyn DropHandler> = Rc::new(Outside(drags.clone()));
-            let wake = std::sync::Arc::new(|| {
-                let _ = slint::invoke_from_event_loop(|| {
-                    with_current(|drags| drags.poll());
+        Timer::single_shot(
+            Duration::from_millis(20),
+            crate::windows::bind(move || {
+                let Some(window) = drags.0.window.upgrade() else { return };
+                // Called on the drop target's thread: the window is taken here.
+                let id = crate::windows::current();
+                let handler: Rc<dyn DropHandler> = Rc::new(Outside(drags.clone(), id));
+                let wake = std::sync::Arc::new(move || {
+                    let _ = slint::invoke_from_event_loop(move || {
+                        crate::windows::with_window(id, |_| with_current(|drags| drags.poll()));
+                    });
                 });
-            });
-            match gezik_platform::dnd::attach(&window.window().window_handle(), handler, wake) {
-                Some(attached) => *drags.0.attached.borrow_mut() = Some(attached),
-                None if attempt < 100 => drags.attach_when_ready(attempt + 1),
-                None => {}
+                match gezik_platform::dnd::attach(&window.window().window_handle(), handler, wake) {
+                    Some(attached) => *drags.0.attached.borrow_mut() = Some(attached),
+                    None if attempt < 100 => drags.attach_when_ready(attempt + 1),
+                    None => {}
+                }
+            }),
+        );
+    }
+
+    /// The window closes: its drop target goes before its native window does (deviation 13),
+    /// and with it the handler that holds these drags. Inside its own system drag (Windows'
+    /// loop holds the target) it goes when that returns.
+    pub fn detach(&self) {
+        if let Ok(mut outside) = self.0.outside.try_borrow_mut() {
+            let gone = outside.take();
+            drop(outside);
+            drop(gone);
+        }
+        match self.0.attached.try_borrow_mut() {
+            Ok(mut attached) => {
+                let gone = attached.take();
+                drop(attached);
+                drop(gone);
             }
-        });
+            Err(_) => self.0.detach_later.set(true),
+        }
+    }
+
+    /// The window got the focus: the clipboard is its window system connection's (Linux).
+    pub fn focused(&self) {
+        if let Some(attached) = &*self.0.attached.borrow() {
+            attached.focused();
+        }
     }
 
     /// Events from the drop target's thread (Linux).
@@ -1242,6 +1377,13 @@ impl Drags {
                 _ => return Answer::default(),
             }
         }
+        // shortcut: a drag from another Gezik window (Windows) runs inside that window's
+        // SHDoDragDrop loop, where winit hands this window no timer, no repaint (WM_PAINT is
+        // dropped while its runner is busy) and no posted listing: so a tab the drag rests on
+        // does not open and the list does not scroll at its edge (a drop on a tab still goes to
+        // its folder). Opening or scrolling here would change what the screen cannot show, and
+        // an opened tab's list stays empty until the drop (nothing to drop into). Upgrade if
+        // Slint can render and deliver events to a window inside another one's callback.
         self.update();
         self.offer_answer()
     }
@@ -1284,24 +1426,73 @@ fn list_under(layout: &Layout, x: f32, y: f32) -> Option<(usize, &ListArea)> {
 }
 
 /// A place or index as Slint numbers it.
+/// A pane (and strip slot) showing where a dragged tab would go; `None`: nothing shown.
+fn show_tab_line(window: &AppWindow, at: Spot) {
+    window.set_drop_pane(at.map_or(-1, |(pane, _)| index(pane)));
+    window.set_tab_insert(at.and_then(|(_, slot)| slot).map_or(-1, index));
+}
+
+/// Window point (`x`, `y`) on screen (physical pixels), and where a window's outer top left
+/// goes for its own point `grab` to come under it; `None` where winit does not say (Wayland).
+fn on_screen(window: &AppWindow, x: f32, y: f32, grab: (f32, f32)) -> Option<((f32, f32), (i32, i32))> {
+    window
+        .window()
+        .with_winit_window(|native| {
+            let inner = native.inner_position().ok()?;
+            let outer = native.outer_position().ok()?;
+            let scale = native.scale_factor() as f32;
+            let (sx, sy) = (inner.x as f32 + x * scale, inner.y as f32 + y * scale);
+            let left = sx - (inner.x - outer.x) as f32 - grab.0 * scale;
+            let top = sy - (inner.y - outer.y) as f32 - grab.1 * scale;
+            let (px, py) = (sx.round() as i32, sy.round() as i32);
+            let monitor = native.available_monitors().find_map(|m| {
+                let (at, size) = (m.position(), m.size());
+                let (width, height) = (size.width as i32, size.height as i32);
+                (px >= at.x && px < at.x + width && py >= at.y && py < at.y + height)
+                    .then_some((at.x, at.y, width, height))
+            });
+            Some(((sx, sy), tab_drag::placed((left.round() as i32, top.round() as i32), monitor)))
+        })
+        .flatten()
+}
+
+/// The pane and strip slot of window `id` at screen point `point` (spec 10 §9.5).
+fn strip_at(id: WindowId, (sx, sy): (f32, f32)) -> Spot {
+    crate::windows::with_window(id, |window| {
+        let (x, y) = window
+            .window()
+            .with_winit_window(|native| {
+                let inner = native.inner_position().ok()?;
+                let scale = native.scale_factor() as f32;
+                Some(((sx - inner.x as f32) / scale, (sy - inner.y as f32) / scale))
+            })
+            .flatten()?;
+        // Every pane of it can take the tab.
+        with_current(|drags| drag::tab_target(&drags.layout(window), usize::MAX, x, y)).flatten()
+    })
+    .flatten()
+}
+
 fn index(i: usize) -> i32 {
     i32::try_from(i).unwrap_or(-1)
 }
 
 /// The window's drop target, for files dragged in from other programs.
-struct Outside(Drags);
+/// The drop target of a window: what it is told runs in that window (a drop from another
+/// Gezik window comes inside that window's drag loop).
+struct Outside(Drags, crate::windows::WindowId);
 
 impl DropHandler for Outside {
     fn over(&self, offer: &Offer, x: f64, y: f64, keys: Keys) -> Answer {
-        self.0.offer_over(offer, x, y, keys)
+        crate::windows::enter(self.1, || self.0.offer_over(offer, x, y, keys))
     }
 
     fn leave(&self) {
-        self.0.offer_left();
+        crate::windows::enter(self.1, || self.0.offer_left());
     }
 
     fn dropped(&self, offer: &Offer, x: f64, y: f64, keys: Keys) -> Option<Effect> {
-        self.0.offer_dropped(offer, x, y, keys)
+        crate::windows::enter(self.1, || self.0.offer_dropped(offer, x, y, keys))
     }
 }
 

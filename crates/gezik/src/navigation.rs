@@ -321,6 +321,13 @@ struct Inner {
 pub struct Navigator(Rc<RefCell<Inner>>);
 
 impl Navigator {
+    /// Whether this navigator is still held (a test of a closed window: it is not).
+    #[cfg(test)]
+    pub fn alive(&self) -> impl Fn() -> bool + use<> {
+        let weak = Rc::downgrade(&self.0);
+        move || weak.upgrade().is_some()
+    }
+
     /// The tabs of `session` open, the one in front with `select` selected; new tabs open at
     /// `start`. Does not load anything: call [`install`](Self::install) next.
     pub fn new(
@@ -391,9 +398,13 @@ impl Navigator {
         if let Some(at) = inner.pace.next() {
             let delay = at.saturating_duration_since(Instant::now());
             let id = inner.id;
-            inner.refresh_timer.start(slint::TimerMode::SingleShot, delay, move || {
-                crate::panes::with_id(id, |p| p.nav.refresh_due());
-            });
+            inner.refresh_timer.start(
+                slint::TimerMode::SingleShot,
+                delay,
+                crate::windows::bind_mut(move || {
+                    crate::panes::with_id(id, |p| p.nav.refresh_due());
+                }),
+            );
         }
     }
 
@@ -410,9 +421,13 @@ impl Navigator {
                 || inner.view.renaming().is_some();
             if busy {
                 let id = inner.id;
-                inner.refresh_timer.start(slint::TimerMode::SingleShot, QUIET, move || {
-                    crate::panes::with_id(id, |p| p.nav.refresh_due());
-                });
+                inner.refresh_timer.start(
+                    slint::TimerMode::SingleShot,
+                    QUIET,
+                    crate::windows::bind_mut(move || {
+                        crate::panes::with_id(id, |p| p.nav.refresh_due());
+                    }),
+                );
                 return;
             }
             inner.watched.clone()
@@ -772,6 +787,16 @@ impl Navigator {
         }
         let taken = self.with_tabs(|tabs| tabs.take(index, start));
         self.after_tabs_changed();
+        taken
+    }
+
+    /// Takes the only tab out for another window, its own about to close (deviation 11): no tab
+    /// takes its place on screen (nothing is listed for a window that goes), a load or search
+    /// of it stops.
+    pub fn take_last_tab(&self) -> Option<(History, bool)> {
+        let start = self.start();
+        let taken = self.with_tabs(|tabs| tabs.take(0, start));
+        crate::panes::with_id(self.id(), |p| p.search.leaving());
         taken
     }
 
@@ -1360,22 +1385,26 @@ impl Navigator {
         let Some(folder) = folder else { return };
         let checks = Rc::new(std::cell::Cell::new(0u32));
         let id = self.0.borrow().id;
-        self.0.borrow().refresh_timer.start(slint::TimerMode::Repeated, REMOVAL_CHECK, move || {
-            let gone = !folder.exists();
-            checks.set(checks.get() + 1);
-            if gone || checks.get() >= REMOVAL_CHECKS {
-                crate::panes::with_id(id, |p| {
-                    p.nav.0.borrow().refresh_timer.stop();
-                    // Still there after all: watch it again (forgotten first, so it starts anew).
-                    p.nav.0.borrow_mut().watched = None;
-                    if gone {
-                        p.nav.reload();
-                    } else {
-                        p.nav.watch_shown(&p.nav.active_location());
-                    }
-                });
-            }
-        });
+        self.0.borrow().refresh_timer.start(
+            slint::TimerMode::Repeated,
+            REMOVAL_CHECK,
+            crate::windows::bind_mut(move || {
+                let gone = !folder.exists();
+                checks.set(checks.get() + 1);
+                if gone || checks.get() >= REMOVAL_CHECKS {
+                    crate::panes::with_id(id, |p| {
+                        p.nav.0.borrow().refresh_timer.stop();
+                        // Still there after all: watch it again (forgotten first, so it starts anew).
+                        p.nav.0.borrow_mut().watched = None;
+                        if gone {
+                            p.nav.reload();
+                        } else {
+                            p.nav.watch_shown(&p.nav.active_location());
+                        }
+                    });
+                }
+            }),
+        );
     }
 
     /// Shows `message` for a failed load; see [`apply_failure`].
@@ -1423,6 +1452,7 @@ impl Navigator {
             let active = crate::panes::is_active(inner.id);
             if active {
                 window.set_title_text(format!("{} — Gezik", inner.places.title_for(&location)).into());
+                crate::windows::titles_changed();
             }
             let active_tab = inner.tabs.active_index();
             let tabs = inner.tabs.iter().enumerate().map(|(i, h)| TabItem {
@@ -1519,6 +1549,22 @@ mod tests {
         assert!(nav.0.borrow().note_next.is_none(), "shown with it");
         nav.note("now".to_owned());
         assert!(nav.0.borrow().note_next.is_none(), "nothing loads: shown at once");
+    }
+
+    /// Fix 9: a new window's "not found" waits for its first listing (its item count would
+    /// take a note given to the view at once away).
+    #[test]
+    fn a_new_windows_missing_path_waits_for_its_first_listing() {
+        let id = crate::panes::next_id();
+        let window = slint::Weak::default();
+        let view = View::new(id, window.clone(), crate::media::Media::idle(), Default::default(), None);
+        let nav = Navigator::new(id, window, view, Session::single(Location::Drives), Vec::new(), Location::Drives);
+        nav.install();
+        crate::windows::say_missing(&nav, &[]);
+        assert!(nav.0.borrow().note_next.is_none(), "nothing missing: no note");
+        let missing = PathBuf::from("nope");
+        crate::windows::say_missing(&nav, std::slice::from_ref(&missing));
+        assert_eq!(nav.0.borrow().note_next, Some(format!("{}: not found", missing.display())));
     }
 
     #[test]

@@ -526,7 +526,7 @@ struct Inner {
     ops: Operations,
     dialogs: Dialogs,
     store: Option<ConfigStore>,
-    state: RefCell<ArchiveState>,
+    state: Rc<RefCell<ArchiveState>>,
     jobs: RefCell<HashMap<JobId, Pending>>,
     /// The tools whose box is on screen (several things that need one ask once).
     offering: RefCell<Vec<Tool>>,
@@ -541,7 +541,7 @@ struct Inner {
 pub struct Archives(Rc<Inner>);
 
 thread_local! {
-    static CURRENT: RefCell<Option<Archives>> = const { RefCell::new(None) };
+    pub(crate) static CURRENT: crate::windows::Slot<Archives> = const { crate::windows::Slot::new() };
     static SETTINGS: RefCell<(ToolsSettings, ArchivesSettings)> = RefCell::default();
 }
 
@@ -561,12 +561,18 @@ pub fn extracts_on_double_click() -> bool {
 
 /// Runs `f` with this UI thread's archives, if set up.
 pub fn with_current(f: impl FnOnce(&Archives)) {
-    if let Some(archives) = CURRENT.with(|c| c.borrow().clone()) {
+    if let Some(archives) = CURRENT.with(crate::windows::Slot::current) {
         f(&archives);
     }
 }
 
 impl Archives {
+    /// Whether `other` (another window's) keeps the same last values as this one.
+    #[cfg(test)]
+    pub fn shares_with(&self, other: &Archives) -> bool {
+        Rc::ptr_eq(&self.0.state, &other.0.state)
+    }
+
     pub fn new(
         window: &AppWindow,
         ops: Operations,
@@ -574,12 +580,16 @@ impl Archives {
         store: Option<ConfigStore>,
         state: ArchiveState,
     ) -> Archives {
+        // The process's one last choices: a later window shares an open window's (no window writes over another's).
+        let state = CURRENT
+            .with(|c| c.find_map(|_, other| Some(other.0.state.clone())))
+            .unwrap_or_else(|| Rc::new(RefCell::new(state)));
         let this = Archives(Rc::new(Inner {
             window: window.as_weak(),
             ops,
             dialogs,
             store,
-            state: RefCell::new(state),
+            state,
             jobs: RefCell::default(),
             offering: RefCell::default(),
             waiting: RefCell::default(),
@@ -587,7 +597,7 @@ impl Archives {
             sizing: Arc::default(),
         }));
         this.install(window);
-        CURRENT.with(|c| *c.borrow_mut() = Some(this.clone()));
+        CURRENT.with(|c| c.set(crate::windows::current(), this.clone()));
         this
     }
 
@@ -678,6 +688,7 @@ impl Archives {
     fn extract(&self, archives: Vec<PathBuf>, to: ExtractTo, make_dir: bool) {
         let configured = tools_settings().seven_zip.map(PathBuf::from);
         let data = self.data_dir();
+        let window_id = crate::windows::current();
         std::thread::spawn(move || {
             let seven_zip = gezik_batch::tools::find(Tool::SevenZip, &data, configured.as_deref());
             let (now, waiting) = split_by_seven_zip(archives, seven_zip.is_some());
@@ -685,7 +696,7 @@ impl Archives {
                 // A failure shows when the job cannot use the folder.
                 let _ = std::fs::create_dir_all(to.dir());
             }
-            let _ = slint::invoke_from_event_loop(move || {
+            crate::windows::post(window_id, move || {
                 with_current(|this| this.extract_found(now, waiting, to, seven_zip, make_dir));
             });
         });
@@ -914,9 +925,10 @@ impl Archives {
         // The size is added up on a thread; a newer opening drops it.
         let opening = self.0.sizing.fetch_add(1, Ordering::SeqCst) + 1;
         let sizing = self.0.sizing.clone();
+        let window_id = crate::windows::current();
         std::thread::spawn(move || {
             let (files, bytes) = total_size(&sources, || sizing.load(Ordering::SeqCst) != opening);
-            let _ = slint::invoke_from_event_loop(move || {
+            crate::windows::post(window_id, move || {
                 with_current(|this| this.sized(opening, files, bytes));
             });
         });

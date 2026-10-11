@@ -441,7 +441,18 @@ impl PathBox {
 
     /// A path box for pane `id` with this one's folder history (one for the process).
     pub fn for_pane(&self, id: PaneId, nav: Navigator) -> PathBox {
-        PathBox::with_history(id, self.0.window.clone(), nav, self.0.store.clone(), self.0.history.clone())
+        self.in_window(id, self.0.window.clone(), nav)
+    }
+
+    /// A path box for pane `id` of `window` with this one's folder history (another window's
+    /// pane: every window feeds the one history).
+    pub fn in_window(&self, id: PaneId, window: slint::Weak<AppWindow>, nav: Navigator) -> PathBox {
+        PathBox::with_history(id, window, nav, self.0.store.clone(), self.0.history.clone())
+    }
+
+    #[cfg(test)]
+    pub fn shares_history(&self, other: &PathBox) -> bool {
+        Rc::ptr_eq(&self.0.history, &other.0.history)
     }
 
     fn with_history(
@@ -499,9 +510,13 @@ impl PathBox {
         self.0.list.borrow_mut().edited();
         self.set_current(None);
         let id = self.0.id;
-        self.0.debounce.start(slint::TimerMode::SingleShot, DEBOUNCE, move || {
-            crate::panes::with_id(id, |p| p.path_box.update());
-        });
+        self.0.debounce.start(
+            slint::TimerMode::SingleShot,
+            DEBOUNCE,
+            crate::windows::bind_mut(move || {
+                crate::panes::with_id(id, |p| p.path_box.update());
+            }),
+        );
     }
 
     /// Typing began or ended: the list, the text and what was read are forgotten (reads
@@ -670,9 +685,13 @@ impl PathBox {
     fn wait_for(&self, folder: PathBuf, prefix: String) {
         *self.0.wanted.borrow_mut() = Some((folder, prefix));
         let id = self.0.id;
-        self.0.limit.start(slint::TimerMode::SingleShot, READ_LIMIT, move || {
-            crate::panes::with_id(id, |p| p.path_box.too_slow());
-        });
+        self.0.limit.start(
+            slint::TimerMode::SingleShot,
+            READ_LIMIT,
+            crate::windows::bind_mut(move || {
+                crate::panes::with_id(id, |p| p.path_box.too_slow());
+            }),
+        );
     }
 
     /// Reads `folder` on a thread of its own.

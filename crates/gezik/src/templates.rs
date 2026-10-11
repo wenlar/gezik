@@ -57,9 +57,10 @@ pub fn open_folder() {
         crate::panes::with_active(|p| p.view.note("No config folder for templates".to_owned()));
         return;
     };
+    let window_id = crate::windows::current();
     let _ = std::thread::Builder::new().name("gezik-templates".into()).spawn(move || {
         let made = std::fs::create_dir_all(&dir);
-        let _ = slint::invoke_from_event_loop(move || match made {
+        crate::windows::post(window_id, move || match made {
             Ok(()) => {
                 crate::panes::with_active(|p| p.nav.open_tab(Location::Path(dir), true));
             }

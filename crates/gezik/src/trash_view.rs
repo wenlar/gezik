@@ -126,6 +126,8 @@ pub fn shown(bins: &[PathBuf], denied: bool) -> Option<String> {
 }
 
 /// The trash is no longer shown: the watches go.
+// shortcut: one watch for the process; a window leaving the trash stops it while another
+// window still shows it (that one reloads on F5 or a job's change); per window if users ask.
 pub fn left() {
     if WATCHING.with(|w| w.borrow_mut().take()).is_some() {
         RELOAD.with(slint::Timer::stop);
@@ -154,7 +156,10 @@ fn bin_changed() {
 pub fn changed() {
     RELOAD.with(|timer| {
         timer.start(slint::TimerMode::SingleShot, Duration::from_secs(1), || {
-            crate::panes::with_active(|p| p.nav.refresh_trash());
+            // Every window's active pane that shows it.
+            crate::windows::for_each(|_| {
+                crate::panes::with_active(|p| p.nav.refresh_trash());
+            });
         });
     });
 }
@@ -259,6 +264,7 @@ pub fn allowed(action: Action) -> bool {
         | Action::SyncBrowsing
         | Action::SwapPanes
         | Action::OtherPaneSameFolder
+        | Action::MoveTabToNewWindow
         // Out of the trash it puts the items back into the other pane's folder (spec 10 §4.4).
         | Action::MoveToOtherPane => true,
         // No drive to eject in the trash.
@@ -437,9 +443,10 @@ pub fn delete_selection(view: &View) {
 /// Empty Trash (spec 7.1): reads every bin afresh (off the UI thread), asks with the count and
 /// size, then deletes what that read found.
 pub fn empty() {
-    std::thread::spawn(|| {
+    let window_id = crate::windows::current();
+    std::thread::spawn(move || {
         let list = gezik_platform::trash::list();
-        let _ = slint::invoke_from_event_loop(move || confirm_empty(list.items));
+        crate::windows::post(window_id, move || confirm_empty(list.items));
     });
 }
 

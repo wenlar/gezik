@@ -11,15 +11,13 @@ use gezik_config::settings::TabSet;
 use gezik_config::settings_writer::SettingsChange;
 use gezik_config::store::ConfigStore;
 use gezik_core::nav::Location;
-use slint::ComponentHandle;
 
-use crate::AppWindow;
 use crate::context_menu::{TAB_SET_DELETE_FIRST, TAB_SET_MAX, TAB_SET_OPEN_FIRST, TAB_SET_REPLACE_FIRST};
 use crate::dialog::Dialogs;
 
 thread_local! {
     /// The tab sets of this (UI) thread, for the menus and the actions.
-    static CURRENT: RefCell<Option<TabSets>> = const { RefCell::new(None) };
+    pub(crate) static CURRENT: crate::windows::Slot<TabSets> = const { crate::windows::Slot::new() };
     /// `[[tab-sets]]` of the settings in effect.
     static SETS: RefCell<Vec<TabSet>> = const { RefCell::new(Vec::new()) };
     /// Saves on their way to settings.toml: the last one's number, and the list after it while
@@ -149,23 +147,22 @@ pub fn set_item(id: u32) -> Option<SetItem> {
 
 /// Runs `f` with this UI thread's tab sets, if there are any yet.
 pub fn with_current(f: impl FnOnce(&TabSets)) {
-    if let Some(sets) = CURRENT.with(|c| c.borrow().clone()) {
+    if let Some(sets) = CURRENT.with(crate::windows::Slot::current) {
         f(&sets);
     }
 }
 
 #[derive(Clone)]
 pub struct TabSets {
-    window: slint::Weak<AppWindow>,
     dialogs: Dialogs,
     /// Where settings.toml is (none without a config folder: the sets live in memory then).
     store: Option<ConfigStore>,
 }
 
 impl TabSets {
-    pub fn new(window: &AppWindow, dialogs: Dialogs, store: Option<ConfigStore>) -> TabSets {
-        let sets = TabSets { window: window.as_weak(), dialogs, store };
-        CURRENT.with(|c| *c.borrow_mut() = Some(sets.clone()));
+    pub fn new(dialogs: Dialogs, store: Option<ConfigStore>) -> TabSets {
+        let sets = TabSets { dialogs, store };
+        CURRENT.with(|c| c.set(crate::windows::current(), sets.clone()));
         sets
     }
 
@@ -259,9 +256,9 @@ impl TabSets {
     fn write(&self, sets: Vec<TabSet>) {
         let Some(store) = &self.store else { return set_settings(sets) };
         let seq = queue_write(sets.clone());
-        let window = self.window.clone();
+        let window_id = crate::windows::current();
         store.write_settings(SettingsChange::TabSets(sets.clone()), move |result| {
-            let _ = window.upgrade_in_event_loop(move |_| with_current(|t| t.written(seq, sets, result)));
+            crate::windows::post(window_id, move || with_current(|t| t.written(seq, sets, result)));
         });
     }
 

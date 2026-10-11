@@ -1136,7 +1136,7 @@ struct Inner {
     ops: Operations,
     dialogs: Dialogs,
     store: Option<ConfigStore>,
-    state: RefCell<ConvertState>,
+    state: Rc<RefCell<ConvertState>>,
     layer: RefCell<Option<Layer>>,
     /// Counts openings of the layer: what a thread found for an earlier one is dropped.
     opening: Arc<AtomicU64>,
@@ -1154,7 +1154,7 @@ struct Inner {
 pub struct Convert(Rc<Inner>);
 
 thread_local! {
-    static CURRENT: RefCell<Option<Convert>> = const { RefCell::new(None) };
+    pub(crate) static CURRENT: crate::windows::Slot<Convert> = const { crate::windows::Slot::new() };
     static SETTINGS: RefCell<(ConvertSettings, Vec<CommandSpec>)> = RefCell::default();
     /// Whether each command's program was found (by `run[0]`), looked up on a thread.
     static FOUND: RefCell<HashMap<String, bool>> = RefCell::default();
@@ -1246,12 +1246,18 @@ fn fits_one_run(spec: &CommandSpec, items: &[(PathBuf, bool)]) -> bool {
 
 /// Runs `f` with this UI thread's converter, if set up.
 pub fn with_current(f: impl FnOnce(&Convert)) {
-    if let Some(convert) = CURRENT.with(|c| c.borrow().clone()) {
+    if let Some(convert) = CURRENT.with(crate::windows::Slot::current) {
         f(&convert);
     }
 }
 
 impl Convert {
+    /// Whether `other` (another window's) keeps the same last values as this one.
+    #[cfg(test)]
+    pub fn shares_with(&self, other: &Convert) -> bool {
+        Rc::ptr_eq(&self.0.state, &other.0.state)
+    }
+
     pub fn new(
         window: &AppWindow,
         ops: Operations,
@@ -1259,12 +1265,16 @@ impl Convert {
         store: Option<ConfigStore>,
         state: ConvertState,
     ) -> Convert {
+        // The process's one last choices: a later window shares an open window's (no window writes over another's).
+        let state = CURRENT
+            .with(|c| c.find_map(|_, other| Some(other.0.state.clone())))
+            .unwrap_or_else(|| Rc::new(RefCell::new(state)));
         let this = Convert(Rc::new(Inner {
             window: window.as_weak(),
             ops,
             dialogs,
             store,
-            state: RefCell::new(state),
+            state,
             layer: RefCell::default(),
             opening: Arc::default(),
             jobs: RefCell::default(),
@@ -1272,7 +1282,7 @@ impl Convert {
             pdf_order: Rc::new(VecModel::default()),
         }));
         this.install(window);
-        CURRENT.with(|c| *c.borrow_mut() = Some(this.clone()));
+        CURRENT.with(|c| c.set(crate::windows::current(), this.clone()));
         this
     }
 
@@ -1471,6 +1481,7 @@ impl Convert {
         let wants_ffmpeg = kinds.iter().any(|k| matches!(k, Kind::Image | Kind::Media));
         let wants_text = kinds.contains(&Kind::Text);
         let (data, configured) = (self.data_dir(), configured_ffmpeg());
+        let window_id = crate::windows::current();
         std::thread::spawn(move || {
             let trash = gezik_platform::fs::drive_facts(&folder).is_ok_and(|facts| facts.trash);
             let found = if wants_ffmpeg {
@@ -1504,7 +1515,7 @@ impl Convert {
                 }
             }
             let detected = detected_text(&counts);
-            let _ = slint::invoke_from_event_loop(move || {
+            crate::windows::post(window_id, move || {
                 with_current(|this| this.probed(opening, trash, found, detected));
             });
         });
@@ -1515,11 +1526,12 @@ impl Convert {
     fn probe_pdfs(&self, opening: u64, pdfs: Vec<PathBuf>) {
         let current = self.0.opening.clone();
         let data = self.data_dir();
+        let window_id = crate::windows::current();
         std::thread::spawn(move || {
             let stale = || current.load(Ordering::SeqCst) != opening;
             let library = gezik_batch::tools::find(Tool::Pdfium, &data, None);
             let found = library.clone();
-            let _ = slint::invoke_from_event_loop(move || with_current(|this| this.pdfium_found(opening, found)));
+            crate::windows::post(window_id, move || with_current(|this| this.pdfium_found(opening, found)));
             let Some(library) = library.filter(|_| pdfs.len() <= COUNT_MAX) else { return };
             let worker = Worker::this_exe();
             for pdf in pdfs {
@@ -1531,7 +1543,7 @@ impl Convert {
                     Ok(Ok(None)) => Count::Encrypted,
                     _ => Count::Failed,
                 };
-                let _ = slint::invoke_from_event_loop(move || with_current(|this| this.counted(opening, pdf, count)));
+                crate::windows::post(window_id, move || with_current(|this| this.counted(opening, pdf, count)));
             }
         });
     }
@@ -1970,11 +1982,12 @@ impl Convert {
             }
             PdfJob::Pdfs { work, inputs, resubmitted } => {
                 let data = self.data_dir();
+                let window_id = crate::windows::current();
                 std::thread::spawn(move || {
                     let library = gezik_batch::tools::find(Tool::Pdfium, &data, None);
                     let hint = if library.is_none() { gezik_platform::http::tool_missing_hint() } else { None };
                     let worker = Worker::this_exe().map_err(|err| err.to_string());
-                    let _ = slint::invoke_from_event_loop(move || {
+                    crate::windows::post(window_id, move || {
                         with_current(|this| this.pdf_found(work, inputs, resubmitted, library, worker, hint));
                     });
                 });
@@ -2038,9 +2051,10 @@ impl Convert {
             PdfJob::Pdfs { work, inputs, .. } => PdfJob::Pdfs { work, inputs, resubmitted: true },
             other => other,
         };
+        let window_id = crate::windows::current();
         std::thread::spawn(move || {
             let hint = gezik_platform::http::tool_missing_hint();
-            let _ = slint::invoke_from_event_loop(move || {
+            crate::windows::post(window_id, move || {
                 with_current(|this| {
                     let again = this.pdf_again(job);
                     crate::archives::with_current(|archives| archives.offer_pdfium(true, hint, again, Some(id)));
@@ -2101,13 +2115,14 @@ impl Convert {
     fn start(&self, job: Job) {
         let wants = job.inputs.iter().any(|p| needs_ffmpeg(&job.what, &name_of(p)));
         let (data, configured) = (self.data_dir(), configured_ffmpeg());
+        let window_id = crate::windows::current();
         std::thread::spawn(move || {
             let ffmpeg = if wants { find_ffmpeg(&data, configured.as_deref()) } else { None };
             let hint = if wants { gezik_platform::http::tool_missing_hint() } else { None };
             let found = ffmpeg.as_ref().map(|ff| have_of(ff, configured.as_deref()));
             // A chosen folder that is not there is made by the job (with its missing parents),
             // undone with it.
-            let _ = slint::invoke_from_event_loop(move || {
+            crate::windows::post(window_id, move || {
                 with_current(|this| this.found(job, ffmpeg, found, hint));
             });
         });
@@ -2160,10 +2175,11 @@ impl Convert {
         }
         let job = Job { inputs: needing, ..job };
         let (data, configured) = (self.data_dir(), configured_ffmpeg());
+        let window_id = crate::windows::current();
         std::thread::spawn(move || {
             let found = find_ffmpeg(&data, configured.as_deref()).map(|ff| have_of(&ff, configured.as_deref()));
             let hint = gezik_platform::http::tool_missing_hint();
-            let _ = slint::invoke_from_event_loop(move || {
+            crate::windows::post(window_id, move || {
                 with_current(|this| this.offer_or_again(id, job, found, hint));
             });
         });

@@ -53,10 +53,11 @@ pub fn open_in(dir: PathBuf, admin: bool) {
         return note(ONLY_ON_WINDOWS.to_owned());
     }
     let command = COMMAND.with(|c| c.borrow().clone());
+    let window_id = crate::windows::current();
     let started = std::thread::Builder::new().name("gezik-open-terminal".into()).spawn(move || {
         let result = gezik_platform::terminal::open(&dir, admin, command.as_deref());
         if let Some(text) = result.err().as_ref().and_then(error_text) {
-            let _ = slint::invoke_from_event_loop(move || note(text));
+            crate::windows::post(window_id, move || note(text));
         }
     });
     if let Err(err) = started {

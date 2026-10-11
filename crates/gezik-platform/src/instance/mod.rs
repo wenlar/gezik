@@ -39,6 +39,9 @@ const NEW_TAB: u8 = 1;
 /// Set only when asked for, so other messages stay as an older Gezik reads them; an older
 /// Gezik refuses this flag, and its caller opens a window of its own.
 const TRASH: u8 = 2;
+/// `--new-window` (spec 10 §9.3): a new window in the running Gezik. Set only when asked for,
+/// as `TRASH`; an older Gezik refuses it and its caller opens a process of its own.
+const NEW_WINDOW: u8 = 4;
 
 /// A path from the command line: a folder to open, or (`select`, or any file) an item to show
 /// selected in its folder. Never opened with an app.
@@ -58,6 +61,8 @@ pub struct Request {
     pub activation_token: Option<String>,
     /// Open the Recycle Bin / Trash too (spec 6.1).
     pub trash: bool,
+    /// Open them in a new window (`--new-window`).
+    pub new_window: bool,
 }
 
 /// Why a message was not taken.
@@ -78,7 +83,11 @@ pub enum BadMessage {
 /// keeps to `MAX_PATHS` (cli.rs drops the rest).
 pub fn encode(request: &Request) -> Vec<u8> {
     debug_assert!(request.targets.len() <= MAX_PATHS);
-    let mut body = vec![(u8::from(request.new_tab) * NEW_TAB) | (u8::from(request.trash) * TRASH)];
+    let mut body = vec![
+        (u8::from(request.new_tab) * NEW_TAB)
+            | (u8::from(request.trash) * TRASH)
+            | (u8::from(request.new_window) * NEW_WINDOW),
+    ];
     body.extend_from_slice(&(request.targets.len().min(MAX_PATHS) as u16).to_le_bytes());
     for target in request.targets.iter().take(MAX_PATHS) {
         body.push(u8::from(target.select));
@@ -117,7 +126,7 @@ pub fn read_message(from: &mut impl Read) -> Result<Vec<u8>, BadMessage> {
 pub fn decode(body: &[u8]) -> Result<Request, BadMessage> {
     let mut reader = Reader(body);
     let flags = reader.u8()?;
-    if flags & !(NEW_TAB | TRASH) != 0 {
+    if flags & !(NEW_TAB | TRASH | NEW_WINDOW) != 0 {
         return Err(BadMessage::BadFlags(flags));
     }
     let count = usize::from(reader.u16()?);
@@ -144,7 +153,13 @@ pub fn decode(body: &[u8]) -> Result<Request, BadMessage> {
         return Err(BadMessage::Trailing);
     }
     let activation_token = (!token.is_empty()).then(|| String::from_utf8_lossy(token).into_owned());
-    Ok(Request { new_tab: flags & NEW_TAB != 0, targets, activation_token, trash: flags & TRASH != 0 })
+    Ok(Request {
+        new_tab: flags & NEW_TAB != 0,
+        targets,
+        activation_token,
+        trash: flags & TRASH != 0,
+        new_window: flags & NEW_WINDOW != 0,
+    })
 }
 
 pub fn reply(pid: u32) -> [u8; REPLY_LEN] {
@@ -537,6 +552,7 @@ mod tests {
             ],
             activation_token: Some("gezik-123_abc".to_owned()),
             trash: false,
+            new_window: false,
         }
     }
 
@@ -626,10 +642,19 @@ mod tests {
     }
 
     #[test]
+    fn the_new_window_flag_round_trips_and_leaves_the_old_flags_as_they_were() {
+        let request = Request { new_window: true, new_tab: true, ..request() };
+        assert_eq!(decode(&body_of(&request)), Ok(request.clone()));
+        assert_eq!(body_of(&request)[0], NEW_TAB | NEW_WINDOW);
+        assert_eq!(body_of(&Request { trash: true, ..Request::default() })[0], 0b10, "the trash flag as before");
+        assert_eq!(body_of(&Request { new_tab: true, ..Request::default() })[0], 0b1, "the new tab flag as before");
+    }
+
+    #[test]
     fn unknown_flags_and_kinds_are_refused() {
         let mut body = body_of(&request());
-        body[0] = 0b100;
-        assert_eq!(decode(&body), Err(BadMessage::BadFlags(0b100)));
+        body[0] = 0b1000;
+        assert_eq!(decode(&body), Err(BadMessage::BadFlags(0b1000)));
         let mut body = one_path(&raw(&abs("a")));
         body[3] = 7;
         assert_eq!(decode(&body), Err(BadMessage::BadKind(7)));

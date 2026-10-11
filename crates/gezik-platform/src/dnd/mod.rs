@@ -210,6 +210,13 @@ impl Attached {
         let _ = scale;
     }
 
+    /// Its window got the focus: the clipboard goes through its window system connection from
+    /// now on (Linux, a connection per window; nothing elsewhere).
+    pub fn focused(&self) {
+        #[cfg(all(unix, not(target_os = "macos")))]
+        self.inner.focused();
+    }
+
     /// Hands waiting events to the handler (Linux; nothing elsewhere).
     pub fn poll(&self) {
         #[cfg(all(unix, not(target_os = "macos")))]
@@ -256,6 +263,10 @@ mod linux {
             self.backend.set_scale(scale);
         }
 
+        pub fn focused(&self) {
+            crate::linux::set_backend(&self.backend);
+        }
+
         pub fn answer(&self, answer: &super::Answer) {
             self.backend.answer(answer);
         }
@@ -282,6 +293,14 @@ mod linux {
                     }
                 }
             }
+        }
+    }
+
+    impl Drop for Attachment {
+        /// Its window closes (before its native window goes, deviation 13): the clipboard no
+        /// longer goes through it.
+        fn drop(&mut self) {
+            crate::linux::forget_backend(&self.backend);
         }
     }
 }

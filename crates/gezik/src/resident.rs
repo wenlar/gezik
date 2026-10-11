@@ -152,7 +152,6 @@ pub struct Hooks {
 
 #[derive(Default)]
 struct State {
-    window: Option<slint::Weak<AppWindow>>,
     store: Option<ConfigStore>,
     primary: bool,
     started: bool,
@@ -189,22 +188,24 @@ fn with<T>(f: impl FnOnce(&mut State) -> T) -> T {
     STATE.with(|s| f(&mut s.borrow_mut()))
 }
 
+/// The window the tray and the shortcut act on: the most recently focused one (spec 9.3).
 fn window() -> Option<AppWindow> {
-    with(|s| s.window.clone()).and_then(|w| w.upgrade())
+    crate::windows::with_focused(AppWindow::clone_strong)
 }
 
 fn note(text: String) {
-    crate::panes::with_active(|p| p.view.note(text));
+    crate::windows::with_focused(|_| crate::panes::with_active(|p| p.view.note(text)));
 }
 
 fn tell(title: &str, message: String, buttons: &[&str], answer: impl FnOnce(Option<usize>) + 'static) {
-    crate::operations::with_current(|ops| ops.dialogs().ask(title, message, buttons, answer));
+    crate::windows::with_focused(|_| {
+        crate::operations::with_current(|ops| ops.dialogs().ask(title, message, buttons, answer));
+    });
 }
 
-/// Early in main: the window, the config, whether this is the first Gezik and shown.
-pub fn begin(window: &AppWindow, store: Option<ConfigStore>, primary: bool, shown: bool, told: bool) {
+/// Early in main: the config, whether this is the first Gezik and shown.
+pub fn begin(store: Option<ConfigStore>, primary: bool, shown: bool, told: bool) {
     with(|s| {
-        s.window = Some(window.as_weak());
         s.store = store;
         s.primary = primary;
         s.shown = shown;
@@ -351,7 +352,7 @@ fn tray_event(event: TrayEvent) {
     let Some(window) = window() else { return };
     match event {
         TrayEvent::Toggle => match on_click(window.window().is_visible(), window.window().is_minimized()) {
-            Press::Hide => hide(&window),
+            Press::Hide => hide_all(),
             _ => reveal(),
         },
         TrayEvent::Show => reveal(),
@@ -442,10 +443,15 @@ fn pressed() {
     let focused = window.window().with_winit_window(|native| native.has_focus()).unwrap_or(false);
     let tray = with(|s| s.tray.is_some() && s.tray_ready);
     match on_hotkey(window.window().is_visible(), window.window().is_minimized(), focused, tray) {
-        Press::Hide => hide(&window),
+        Press::Hide => hide_all(),
         Press::Minimize => window.window().set_minimized(true),
         Press::Show => reveal(),
     }
+}
+
+/// Whether Gezik has been shown (not a --background start still in the tray).
+pub fn shown() -> bool {
+    with(|s| s.shown)
 }
 
 /// Runs `f` once the window has been shown (now, unless a `--background` start hid it):
@@ -459,14 +465,15 @@ pub fn when_shown(f: impl FnOnce() + 'static) {
     }
 }
 
-/// Shows the window (hidden or minimized) and brings it to the front.
+/// Shows every window hidden in the tray (or by a --background start) and brings the most
+/// recently focused one to the front: Gezik is shown or hidden as a whole (10g fix 2).
 pub fn reveal() {
     let Some(window) = window() else { return };
-    let _ = window.show();
     let waiting = with(|s| {
         s.shown = true;
         std::mem::take(&mut s.when_shown)
     });
+    let _ = crate::windows::show_all();
     for f in waiting {
         f();
     }
@@ -477,6 +484,15 @@ fn reveal_if_hidden() {
     if window().is_some_and(|w| !w.window().is_visible()) {
         reveal();
     }
+}
+
+/// The tray or the shortcut hides Gezik: every window on screen goes to the tray.
+fn hide_all() {
+    crate::windows::for_each(|window| {
+        if window.window().is_visible() {
+            hide(window);
+        }
+    });
 }
 
 fn hide(window: &AppWindow) {

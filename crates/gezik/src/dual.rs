@@ -18,7 +18,7 @@ use crate::panes::{self, Pane, PaneId};
 const MIN_WIDTH: f32 = 640.0;
 
 #[derive(Default)]
-struct Dual {
+pub(crate) struct Dual {
     window: slint::Weak<AppWindow>,
     /// Where state.toml is; none for a second window (it writes no state) or without a config
     /// folder.
@@ -38,7 +38,8 @@ struct Dual {
 }
 
 thread_local! {
-    static DUAL: RefCell<Dual> = RefCell::default();
+    /// Each window's second pane state.
+    pub(crate) static DUAL: crate::windows::Slot<std::rc::Rc<RefCell<Dual>>> = const { crate::windows::Slot::new() };
     /// `[panes] confirm`: F5/F6 ask first.
     static CONFIRM: Cell<bool> = const { Cell::new(true) };
     /// The pane that just stepped into a sub-folder or up (sync browsing follows only those).
@@ -54,8 +55,14 @@ const F3_HINT: &str = "F3 now opens a second pane; search is Ctrl+Shift+F or Ctr
 /// How long after the F3 hint opening the second pane with F3 says it once more.
 const F3_AGAIN_FOR: u64 = 7 * 24 * 60 * 60;
 
+/// Runs `f` with the current window's state (cloned out of the slot first).
+fn with_dual<R>(f: impl FnOnce(&RefCell<Dual>) -> R) -> R {
+    let dual = DUAL.with(|s| s.current_or(std::rc::Rc::default));
+    f(&dual)
+}
+
 fn window() -> Option<AppWindow> {
-    DUAL.with(|d| d.borrow().window.upgrade())
+    with_dual(|d| d.borrow().window.upgrade())
 }
 
 /// Call once the left pane is installed: `store` writes state.toml (none in a second window),
@@ -71,7 +78,7 @@ pub fn install(
     let right = (!right.is_empty()).then_some(right);
     let split = split.map_or(0.5, |split| f32::from(split) / 1000.0);
     window.set_pane_split(split * 100.0);
-    DUAL.with(|d| {
+    with_dual(|d| {
         *d.borrow_mut() =
             Dual { window: window.as_weak(), store, restore, right, split, config, f3_at: None, sync: None }
     });
@@ -84,7 +91,7 @@ pub fn set_confirm(confirm: bool) {
 
 /// `[session] restore` changed: off, state.toml forgets the right pane's tabs too.
 pub fn set_restore(restore: bool) {
-    let changed = DUAL.with(|d| std::mem::replace(&mut d.borrow_mut().restore, restore) != restore);
+    let changed = with_dual(|d| std::mem::replace(&mut d.borrow_mut().restore, restore) != restore);
     if changed {
         save();
     }
@@ -112,17 +119,15 @@ pub fn open(start: Option<usize>) {
         return panes::active_view().note("The window is too narrow for two panes".to_owned());
     }
     let left = panes::active();
-    let session = DUAL.with(|d| d.borrow_mut().right.take());
+    let session = with_dual(|d| d.borrow_mut().right.take());
     let session = session.unwrap_or_else(|| Session::single(left.nav.active_location()));
     let right = make(&left, session.clone());
     connect(&right);
     panes::install(right.clone());
-    let (store, restore) = DUAL.with(|d| (d.borrow().store.clone(), d.borrow().restore));
-    if let Some(store) = store {
-        right.nav.keep_session(session, restore, move |session| {
-            let session = session.clone();
-            store.update_state(move |state| state.right_session = session);
-        });
+    let (store, restore) = with_dual(|d| (d.borrow().store.clone(), d.borrow().restore));
+    // Every window's tabs go to state.toml together (deviation 5).
+    if store.is_some() {
+        right.nav.keep_session(session, restore, |_| crate::windows::save_sessions_soon());
     }
     right.nav.install();
     window.set_dual(true);
@@ -139,7 +144,7 @@ pub fn close() {
     set_sync(false);
     activate(0);
     let session = release(right.id);
-    DUAL.with(|d| d.borrow_mut().right = session);
+    with_dual(|d| d.borrow_mut().right = session);
     window.set_dual(false);
     window.set_view_two_panes(false);
     // A field of the closed pane may have had the keyboard: it went with the pane.
@@ -153,14 +158,20 @@ pub fn close() {
 /// media requests. Its tabs.
 fn release(id: PaneId) -> Option<Session> {
     let pane = panes::with_id(id, Pane::clone)?;
-    pane.search.leaving();
-    pane.folder_sizes.shown(&Location::Drives);
-    pane.nav.unwatch();
-    pane.view.clear();
+    stop(&pane);
     let session = pane.nav.session();
     drop(pane);
     panes::remove(id);
     Some(session)
+}
+
+/// Stops what `pane` runs (its search, folder sizes, watcher and media requests): it closes,
+/// or its window does.
+pub fn stop(pane: &Pane) {
+    pane.search.leaving();
+    pane.folder_sizes.shown(&Location::Drives);
+    pane.nav.unwatch();
+    pane.view.clear();
 }
 
 /// A pane like `like` (its settings, media, folder view memory, dialogs, history) showing
@@ -261,7 +272,7 @@ pub fn move_tab(from: usize, index: usize, at: Option<usize>) {
 /// The splitter between the panes was dragged to `share` of their room.
 pub fn split_moved(share: f32) {
     let split = share.clamp(0.2, 0.8);
-    DUAL.with(|d| d.borrow_mut().split = split);
+    with_dual(|d| d.borrow_mut().split = split);
     if let Some(window) = window() {
         window.set_pane_split(split * 100.0);
     }
@@ -275,7 +286,7 @@ pub fn split_reset() {
 
 /// The splitter was let go: state.toml keeps the share.
 pub fn split_done() {
-    let (store, split) = DUAL.with(|d| (d.borrow().store.clone(), d.borrow().split));
+    let (store, split) = with_dual(|d| (d.borrow().store.clone(), d.borrow().split));
     let split = (split * 1000.0).round() as u16;
     if let Some(store) = store {
         store.update_state(move |state| state.pane_split = (split != 500).then_some(split));
@@ -293,24 +304,18 @@ pub fn cramped() {
 }
 
 /// Writes whether the second pane is open and which pane is active, and the right pane's
-/// tabs while it is closed; with `[session] restore` off, none of them. Also at quit: a pane
-/// switch writes nothing by itself.
+/// tabs while it is closed; with `[session] restore` off, none of them (every window's, once
+/// the event at hand is done: deviation 5). A pane switch writes nothing by itself.
 pub fn save() {
-    let (store, restore, right, sync) = DUAL.with(|d| {
-        let d = d.borrow();
-        (d.store.clone(), d.restore, d.right.clone(), d.sync.is_some())
-    });
-    let Some(store) = store else { return };
+    crate::windows::save_sessions_soon();
+}
+
+/// What state.toml keeps of the current window's panes (deviation 5): whether the second pane
+/// is open, the active pane, sync browsing and the right pane's tabs (kept while it is closed).
+pub fn session() -> (bool, usize, bool, Session) {
     let open = is_open();
-    let (dual, active) = if restore { (open, panes::active_index()) } else { (false, 0) };
-    store.update_state(move |state| {
-        state.dual = dual;
-        state.active_pane = active;
-        state.sync = dual && sync;
-        if !open {
-            state.right_session = right.filter(|_| restore).unwrap_or_default();
-        }
-    });
+    let right = if open { panes::at(1).map(|p| p.nav.session()) } else { with_dual(|d| d.borrow().right.clone()) };
+    (open, panes::active_index(), open && is_synced(), right.unwrap_or_default())
 }
 
 /// The other pane, by place, while there are two.
@@ -319,7 +324,7 @@ fn other_pane() -> Option<Pane> {
 }
 
 pub fn is_synced() -> bool {
-    DUAL.with(|d| d.borrow().sync.is_some())
+    with_dual(|d| d.borrow().sync.is_some())
 }
 
 /// `sync-browsing` (spec 10 §4.7): only with two panes.
@@ -338,7 +343,7 @@ pub fn toggle_sync() {
 /// Turns sync browsing on (from the active pane's location) or off.
 fn set_sync(on: bool) {
     let start = on.then(|| (panes::active().id, panes::active_nav().active_location()));
-    DUAL.with(|d| d.borrow_mut().sync = start);
+    with_dual(|d| d.borrow_mut().sync = start);
     STEPPED.with(|s| s.set(None));
     if let Some(window) = window() {
         window.set_view_sync(on);
@@ -354,11 +359,11 @@ pub fn stepped(id: impl Into<Option<PaneId>>) {
 /// The active pane `id` shows `location`: with sync browsing on, the other pane makes the same
 /// step, or sync browsing goes off and says why.
 fn followed(id: PaneId, location: &Location) {
-    let Some((last_id, last)) = DUAL.with(|d| d.borrow().sync.clone()) else { return };
+    let Some((last_id, last)) = with_dual(|d| d.borrow().sync.clone()) else { return };
     if last_id == id && last == *location {
         return;
     }
-    DUAL.with(|d| d.borrow_mut().sync = Some((id, location.clone())));
+    with_dual(|d| d.borrow_mut().sync = Some((id, location.clone())));
     // The other pane became the active one: its location is where steps start from now.
     if last_id != id {
         return;
@@ -438,7 +443,7 @@ pub fn swap() {
         return panes::active_view().note("There is no other pane".to_owned());
     };
     // Off while both panes change, then on again from where the active tab is now.
-    let synced = DUAL.with(|d| d.borrow_mut().sync.take()).is_some();
+    let synced = with_dual(|d| d.borrow_mut().sync.take()).is_some();
     // shortcut: a search's results stay with the pane that ran them, so a results tab swapped
     // over runs its search again there; move them with the tab if that bites.
     left.nav.swap_tabs(&right.nav);
@@ -548,10 +553,13 @@ pub fn to_other(moving: bool) {
 /// The F5/F6 question's Don't Ask Again: `[panes] confirm = false`, now and in settings.toml.
 fn dont_ask_again() {
     set_confirm(false);
-    let Some(config) = DUAL.with(|d| d.borrow().config.clone()) else { return };
-    config.write_settings(SettingsChange::PanesConfirm(false), |result| {
+    let Some(config) = with_dual(|d| d.borrow().config.clone()) else { return };
+    let id = crate::windows::current();
+    config.write_settings(SettingsChange::PanesConfirm(false), move |result| {
         if let Err(warning) = result {
-            let _ = slint::invoke_from_event_loop(move || panes::active_view().note(warning.to_string()));
+            let _ = slint::invoke_from_event_loop(move || {
+                crate::windows::with_window(id, |_| panes::active_view().note(warning.to_string()));
+            });
         }
     });
 }
@@ -592,12 +600,12 @@ fn anchor(target: &Path, base: PathBuf, exists: impl Fn(&Path) -> bool) -> PathB
 /// says once that F3 moved, and keeps when (state.toml `[hints]`, spec 10 §10.2).
 pub fn f3_hint_at_start(applies: bool, shown: bool, shown_at: Option<u64>) {
     if shown || !applies {
-        return DUAL.with(|d| d.borrow_mut().f3_at = shown_at);
+        return with_dual(|d| d.borrow_mut().f3_at = shown_at);
     }
     let now = now_secs();
     panes::active_view().note(F3_HINT.to_owned());
-    DUAL.with(|d| d.borrow_mut().f3_at = Some(now));
-    let store = DUAL.with(|d| d.borrow().store.clone());
+    with_dual(|d| d.borrow_mut().f3_at = Some(now));
+    let store = with_dual(|d| d.borrow().store.clone());
     if let Some(store) = store {
         store.update_state(move |state| (state.f3_moved, state.f3_moved_at) = (true, Some(now)));
     }
@@ -606,13 +614,13 @@ pub fn f3_hint_at_start(applies: bool, shown: bool, shown_at: Option<u64>) {
 /// F3 opened the second pane: within a week of the hint it says it once more (no timer: the
 /// date is looked at only now).
 pub fn f3_pressed() {
-    let Some(at) = DUAL.with(|d| d.borrow().f3_at) else { return };
+    let Some(at) = with_dual(|d| d.borrow().f3_at) else { return };
     if !f3_again(at, now_secs()) {
         return;
     }
     panes::active_nav().note(F3_HINT.to_owned());
-    DUAL.with(|d| d.borrow_mut().f3_at = None);
-    let store = DUAL.with(|d| d.borrow().store.clone());
+    with_dual(|d| d.borrow_mut().f3_at = None);
+    let store = with_dual(|d| d.borrow().store.clone());
     if let Some(store) = store {
         store.update_state(|state| state.f3_moved_at = None);
     }
@@ -635,12 +643,12 @@ fn now_secs() -> u64 {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use slint::Model;
 
     /// A pane as main.rs makes the left one, with no window.
-    fn test_pane() -> Pane {
+    pub(crate) fn test_pane() -> Pane {
         let id = panes::next_id();
         let window = slint::Weak::default();
         let dialogs = crate::dialog::Dialogs::detached();

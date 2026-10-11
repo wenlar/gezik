@@ -414,7 +414,7 @@ impl BatchRename {
             name_shown: Default::default(),
         }));
         this.install(window);
-        CURRENT.with(|c| *c.borrow_mut() = Some(this.clone()));
+        CURRENT.with(|c| c.set(crate::windows::current(), this.clone()));
         this
     }
 
@@ -484,7 +484,11 @@ impl BatchRename {
             t.0.rules.borrow_mut().set_manual(position, &text);
             // The field keeps what is typed: only the preview follows.
             let t2 = t.clone();
-            t.0.timer.start(slint::TimerMode::SingleShot, Duration::from_millis(50), move || t2.update());
+            t.0.timer.start(
+                slint::TimerMode::SingleShot,
+                Duration::from_millis(50),
+                crate::windows::bind_mut(move || t2.update()),
+            );
         });
         let t = self.clone();
         window.on_rb_name_reset(move || {
@@ -602,7 +606,11 @@ impl BatchRename {
         self.show_rules();
         if later {
             let t = self.clone();
-            self.0.timer.start(slint::TimerMode::SingleShot, Duration::from_millis(50), move || t.recompute());
+            self.0.timer.start(
+                slint::TimerMode::SingleShot,
+                Duration::from_millis(50),
+                crate::windows::bind_mut(move || t.recompute()),
+            );
         }
     }
 
@@ -680,7 +688,7 @@ impl BatchRename {
     fn read_folders(&self, folders: Vec<PathBuf>) {
         let counter = self.0.opening.clone();
         let opening = counter.load(Ordering::Relaxed);
-        let weak = self.0.window.clone();
+        let window_id = crate::windows::current();
         let spawned = std::thread::Builder::new().name("gezik-rename-folders".into()).spawn(move || {
             let names: Vec<HashSet<String>> = folders
                 .iter()
@@ -698,7 +706,7 @@ impl BatchRename {
             if counter.load(Ordering::Relaxed) != opening {
                 return;
             }
-            let _ = weak.upgrade_in_event_loop(move |_| {
+            crate::windows::post(window_id, move || {
                 with_current(|layer| {
                     if layer.0.opening.load(Ordering::Relaxed) != opening || !layer.is_open() {
                         return;
@@ -746,7 +754,7 @@ impl BatchRename {
         };
         let counter = self.0.opening.clone();
         let opening = counter.load(Ordering::Relaxed);
-        let weak = self.0.window.clone();
+        let window_id = crate::windows::current();
         std::thread::spawn(move || {
             let mut dates: Vec<(usize, DateParts)> = Vec::new();
             for (i, path) in paths {
@@ -756,7 +764,7 @@ impl BatchRename {
                 }
                 dates.extend(gezik_batch::exif::taken(&path).map(|d| (i, d)));
             }
-            let _ = weak.upgrade_in_event_loop(move |_| {
+            crate::windows::post(window_id, move || {
                 with_current(|layer| {
                     if layer.0.opening.load(Ordering::Relaxed) != opening || !layer.is_open() {
                         return;
@@ -1072,7 +1080,7 @@ pub fn key_action(chord: &Chord, platform: Platform, in_list: bool) -> Option<Ke
 }
 
 thread_local! {
-    static CURRENT: RefCell<Option<BatchRename>> = const { RefCell::new(None) };
+    pub(crate) static CURRENT: crate::windows::Slot<BatchRename> = const { crate::windows::Slot::new() };
     static PRESETS: RefCell<Vec<RenamePreset>> = const { RefCell::new(Vec::new()) };
 }
 
@@ -1087,7 +1095,7 @@ pub fn preset_names() -> Vec<String> {
 
 /// Runs `f` with this UI thread's batch rename layer, if set up.
 pub fn with_current(f: impl FnOnce(&BatchRename)) {
-    if let Some(layer) = CURRENT.with(|c| c.borrow().clone()) {
+    if let Some(layer) = CURRENT.with(crate::windows::Slot::current) {
         f(&layer);
     }
 }

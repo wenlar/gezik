@@ -143,12 +143,12 @@ fn check(paths: Vec<PathBuf>) -> Vec<(PathBuf, Option<bool>)> {
 }
 
 thread_local! {
-    static CURRENT: RefCell<Option<Stack>> = const { RefCell::new(None) };
+    pub(crate) static CURRENT: crate::windows::Slot<Stack> = const { crate::windows::Slot::new() };
 }
 
 /// Runs `f` with this UI thread's stack, if set up.
 pub fn with_current(f: impl FnOnce(&Stack)) {
-    if let Some(stack) = CURRENT.with(|c| c.borrow().clone()) {
+    if let Some(stack) = CURRENT.with(crate::windows::Slot::current) {
         f(&stack);
     }
 }
@@ -199,7 +199,7 @@ impl Stack {
                 stack.sync();
             })
         });
-        CURRENT.with(|c| *c.borrow_mut() = Some(stack.clone()));
+        CURRENT.with(|c| c.set(crate::windows::current(), stack.clone()));
         stack
     }
 
@@ -257,9 +257,10 @@ impl Stack {
             // What left is decided by the disk: a skipped, cancelled or failed item is still
             // there and stays.
             Some(paths) => {
+                let window_id = crate::windows::current();
                 let _ = std::thread::Builder::new().name("gezik-stack-check".into()).spawn(move || {
                     let found = check(paths);
-                    let _ = slint::invoke_from_event_loop(move || {
+                    crate::windows::post(window_id, move || {
                         with_current(|stack| {
                             stack.0.items.borrow_mut().left(&found);
                             stack.sync();
@@ -330,9 +331,10 @@ impl Stack {
         let generation = self.0.generation.get() + 1;
         self.0.generation.set(generation);
         let paths: Vec<PathBuf> = self.0.items.borrow().items().iter().map(|item| item.path.clone()).collect();
+        let window_id = crate::windows::current();
         let _ = std::thread::Builder::new().name("gezik-stack-check".into()).spawn(move || {
             let found = check(paths);
-            let _ = slint::invoke_from_event_loop(move || {
+            crate::windows::post(window_id, move || {
                 with_current(|stack| {
                     if stack.0.generation.get() == generation {
                         stack.0.items.borrow_mut().checked(&found);

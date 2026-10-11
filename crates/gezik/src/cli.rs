@@ -18,7 +18,7 @@ Usage: gezik [OPTIONS] [PATH...]
 
   PATH              folder: open it; file: open its folder with it selected; several: a tab each
   --new-tab         always a new tab (default: reuse a tab already showing that folder)
-  --new-window      a separate Gezik window (a new process), not the running one
+  --new-window      a new window in the running Gezik (a new process if none answers)
   --select PATH     open PATH's folder with PATH selected (may repeat)
   --background      start without a window if the tray icon is on (start at login uses it);
                     with a Gezik already running, do nothing
@@ -33,7 +33,7 @@ Usage: gezik [OPTIONS] [PATH...]
 pub struct Cli {
     pub targets: Vec<Target>,
     pub new_tab: bool,
-    // Used by the single instance, Task 4.
+    /// `--new-window`: a new window in the running Gezik (spec 10 §9.3).
     pub new_window: bool,
     pub help: bool,
     pub version: bool,
@@ -127,7 +127,7 @@ impl Cli {
             .iter()
             .filter_map(|t| Some(Target { path: hand_over_path(&t.path, cfg!(windows))?, select: t.select }))
             .collect();
-        Request { new_tab: self.new_tab, targets, activation_token, trash: self.trash }
+        Request { new_tab: self.new_tab, targets, activation_token, trash: self.trash, new_window: self.new_window }
     }
 }
 
@@ -350,6 +350,8 @@ mod tests {
         assert!(parse(args(&["-psn_0_12345"]), false).warnings.is_empty(), "macOS launch argument");
         assert!(!HELP.contains("--shell") && !HELP.contains("--dbus"));
         assert!(Cli { trash: true, ..Cli::default() }.request().trash, "the trash is handed over");
+        assert!(Cli { new_window: true, ..Cli::default() }.request().new_window, "--new-window is handed over");
+        assert!(HELP.contains("--new-window      a new window in the running Gezik (a new process if none answers)"));
     }
 
     #[test]

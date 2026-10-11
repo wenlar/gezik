@@ -49,6 +49,7 @@ mod single_instance;
 mod stack;
 mod start;
 mod system_changes;
+mod tab_drag;
 mod tab_sets;
 mod tab_tools;
 mod templates;
@@ -59,6 +60,7 @@ mod view;
 mod view_options;
 mod watcher;
 mod window_state;
+mod windows;
 
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -98,8 +100,6 @@ fn open_path(nav: &navigation::Navigator, path: PathBuf, is_dir: bool) {
     }
 }
 
-/// Resolves settings + theme from `files` and shows them. No I/O, so it runs on the UI
-/// thread at startup, after config files change and when the system theme flips.
 /// A click on the sidebar's saved search `index` (middle click: in a new tab).
 fn run_saved_search(index: i32, new_tab: bool) {
     let names = saved_searches::names();
@@ -108,47 +108,32 @@ fn run_saved_search(index: i32, new_tab: bool) {
     }
 }
 
-fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
-    let loaded = store::resolve(files, window.get_system_dark());
-    if let Some(theme) = &loaded.theme {
-        theme_bridge::apply(window, theme);
-    }
-    theme_bridge::set_reduce_motion(window, loaded.settings.reduce_motion);
+/// Resolves settings + theme from `files` and shows them in every window. No I/O, so it runs
+/// on the UI thread at startup, after config files change and when the system theme flips.
+fn apply_config(files: &ConfigFiles) -> Loaded {
+    let dark = windows::with_focused(AppWindow::get_system_dark).unwrap_or_default();
+    let loaded = store::resolve(files, dark);
+    // First: a pane told `[session] restore` below writes the tabs as it now says.
+    windows::set_loaded(loaded.clone());
     let new = not_printed_yet(&mut PRINTED.lock().unwrap_or_else(std::sync::PoisonError::into_inner), &loaded.warnings);
     for warning in new {
         eprintln!("gezik: {warning}");
     }
-    window.set_notice(notice_text(&loaded.warnings).into());
-    for p in panes::all() {
+    for p in panes::everywhere() {
         p.nav.set_session_restore(loaded.settings.session.restore);
     }
-    dual::set_restore(loaded.settings.session.restore);
     dual::set_confirm(loaded.settings.panes_confirm);
-    window.set_sidebar_position(match loaded.settings.sidebar {
-        SidebarPosition::Left => 0,
-        SidebarPosition::Right => 1,
-        SidebarPosition::Hidden => 2,
-    });
-    // A reload may hide or move the sidebar (or change its pins): no tip stays behind.
-    window.set_sidebar_tip("".into());
     // The shortcuts first: the pins' tips name their keys.
     keys::set_shortcuts(loaded.settings.shortcuts.clone());
-    // Unchanged pins cost nothing (also after the reload that follows our own save).
-    sidebar::with_current(|sidebar| sidebar.set_pinned(loaded.settings.pinned.clone()));
-    sidebar::with_current(sidebar::Sidebar::relabel);
     // 9b9: the tray and the shortcut follow [system] (the tray menu follows the sidebar's pins).
     resident::apply(&loaded.settings.system);
-    sidebar::with_current(|s| s.set_show_cloud(loaded.settings.sidebar_cloud));
-    sidebar::with_current(|s| s.set_tree_follow(loaded.settings.sidebar_tree_follow));
     // The defaults first: a rule change then switches the view once.
     let rules = view::compile_rules(&loaded.settings.view_rules);
-    for p in panes::all() {
+    for p in panes::everywhere() {
         p.view.set_defaults(loaded.settings.view);
         p.view.set_rules(rules.clone(), || p.nav.rule_place());
     }
     view_options::set_from_file(loaded.settings.view.options);
-    #[cfg(target_os = "macos")]
-    menu_bar::set_commands(window, &loaded.settings.commands);
     frame_limit::set_max_fps(loaded.settings.max_fps);
     operations::with_current(|ops| ops.set_files(loaded.settings.files));
     batch_rename::set_presets(loaded.settings.rename_presets.clone());
@@ -157,16 +142,59 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
     convert::set_settings(loaded.settings.convert.clone(), loaded.settings.commands.clone());
     filter::set_settings(loaded.settings.keyboard, loaded.settings.filters.clone());
     path_box::set_settings(loaded.settings.history);
-    for p in panes::all() {
+    for p in panes::everywhere() {
         p.search.set_settings(loaded.settings.search.clone());
         p.folder_sizes.set_settings(loaded.settings.folder_sizes, loaded.settings.search.everything);
     }
     tab_sets::set_settings(loaded.settings.tab_sets.clone());
     saved_searches::set_settings(loaded.settings.searches.clone());
+    terminal::set_settings(loaded.settings.terminal.command.clone());
+    // Every window shows them alike (spec 9.3, decision 46).
+    windows::for_each(|window| {
+        dual::set_restore(loaded.settings.session.restore);
+        apply_to_window(window, &loaded);
+    });
+    loaded
+}
+
+/// The monospace font of this system (the preview's text, the quick look window).
+fn mono_font() -> &'static str {
+    if cfg!(windows) {
+        "Consolas"
+    } else if cfg!(target_os = "macos") {
+        "Menlo"
+    } else {
+        "monospace"
+    }
+}
+
+/// What a window shows of the settings: the theme, the notice, the sidebar and the menus.
+fn apply_to_window(window: &AppWindow, loaded: &Loaded) {
+    if let Some(theme) = &loaded.theme {
+        theme_bridge::apply(window, theme);
+    }
+    theme_bridge::set_reduce_motion(window, loaded.settings.reduce_motion);
+    window.set_notice(notice_text(&loaded.warnings).into());
+    window.set_sidebar_position(match loaded.settings.sidebar {
+        SidebarPosition::Left => 0,
+        SidebarPosition::Right => 1,
+        SidebarPosition::Hidden => 2,
+    });
+    // A reload may hide or move the sidebar (or change its pins): no tip stays behind.
+    window.set_sidebar_tip("".into());
+    // Unchanged pins cost nothing (also after the reload that follows our own save).
+    sidebar::with_current(|sidebar| sidebar.set_pinned(loaded.settings.pinned.clone()));
+    sidebar::with_current(sidebar::Sidebar::relabel);
+    sidebar::with_current(|s| s.set_show_cloud(loaded.settings.sidebar_cloud));
+    sidebar::with_current(|s| s.set_tree_follow(loaded.settings.sidebar_tree_follow));
+    view_options::sync(window, view_options::current());
+    window.set_mono_font(mono_font().into());
+    // Gezik's own menus (where Slint has no system ones) stay inside the window.
+    window.set_native_menus(context_menu::native_menus());
+    #[cfg(target_os = "macos")]
+    menu_bar::set_commands(window, &loaded.settings.commands);
     #[cfg(target_os = "macos")]
     menu_bar::set_tab_sets(window, &tab_sets::names());
-    terminal::set_settings(loaded.settings.terminal.command.clone());
-    loaded
 }
 
 /// Closes tab `index` once the current event is fully handled (the last tab closes the
@@ -175,7 +203,7 @@ fn apply_config(window: &AppWindow, files: &ConfigFiles) -> Loaded {
 fn close_tab_later(nav: &navigation::Navigator, index: usize) {
     if let Some(id) = nav.tab_id(index) {
         let nav = nav.clone();
-        slint::Timer::single_shot(std::time::Duration::ZERO, move || nav.close_tab_by_id(id));
+        slint::Timer::single_shot(std::time::Duration::ZERO, windows::bind(move || nav.close_tab_by_id(id)));
     }
 }
 
@@ -311,7 +339,8 @@ fn perform(
         | Action::MoveTabToOtherPane
         | Action::SyncBrowsing
         | Action::SwapPanes
-        | Action::OtherPaneSameFolder => return actions::run(action, nav, view),
+        | Action::OtherPaneSameFolder
+        | Action::MoveTabToNewWindow => return actions::run(action, nav, view),
     }
     true
 }
@@ -624,17 +653,16 @@ fn handle_key(
 /// `start-folder`, missing command-line path) are added to `files` so the notice shows
 /// them (also after later re-resolves, until the files are read again).
 fn apply_config_and_start(
-    window: &AppWindow,
     files: &mut ConfigFiles,
     cli: &[cli::Target],
     new_tab: bool,
     saved: Option<&Session>,
 ) -> (Settings, StartPlan) {
-    let loaded = apply_config(window, files);
+    let loaded = apply_config(files);
     let plan = resolve_start(&loaded.settings, cli, new_tab, false, saved);
     if !plan.warnings.is_empty() {
         files.warnings.extend(plan.warnings.iter().cloned());
-        apply_config(window, files);
+        apply_config(files);
     }
     (loaded.settings, plan)
 }
@@ -659,6 +687,35 @@ fn resolve_start(
         start::path_kind,
         saved,
     )
+}
+
+/// What a `gezik` does once it tried to hand its request over (spec 5.2, spec 10 §9.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Next {
+    /// The running Gezik did it (with `--new-window`: in a new window of its own).
+    Exit,
+    /// No Gezik runs: this one is the first (with `--new-window` too).
+    First,
+    /// Hung, refusing (an older Gezik refuses `--new-window`'s flag) or someone else's: a
+    /// process of its own, the channel left alone.
+    OwnProcess,
+    /// A hung Gezik and a place the shell asked for: it still opens somewhere.
+    Explorer,
+}
+
+fn after_send(sent: instance::Sent, shell: bool) -> Next {
+    match sent {
+        instance::Sent::Delivered => Next::Exit,
+        instance::Sent::NoInstance => Next::First,
+        instance::Sent::Failed if shell => Next::Explorer,
+        instance::Sent::Failed => Next::OwnProcess,
+    }
+}
+
+/// `--new-window` with `[system] single-instance = false`: no Gezik answers it, yet it is a
+/// second process as before 10g (no saved windows, no state written, not the tray's).
+fn own_process(new_window: bool, single_instance: bool) -> bool {
+    new_window && !single_instance
 }
 
 /// Hands `target` to Explorer (decisions 2, 3), unless fallbacks come so fast that Gezik and
@@ -712,12 +769,13 @@ fn notice_text(warnings: &[Warning]) -> String {
 }
 
 /// The native window only exists once the event loop runs (not yet on the first tick),
-/// so retry shortly until it does, then move it on screen if needed.
-fn keep_on_screen(window: slint::Weak<AppWindow>, attempt: u32) {
+/// so retry shortly until it does, then move window `id` on screen if needed.
+fn keep_on_screen(id: windows::WindowId, window: slint::Weak<AppWindow>, attempt: u32) {
     slint::Timer::single_shot(std::time::Duration::from_millis(10), move || {
         let Some(strong) = window.upgrade() else { return };
-        if !window_state::ensure_visible(&strong) && attempt < 200 {
-            keep_on_screen(window, attempt + 1);
+        let shown = windows::with_window(id, |_| window_state::ensure_visible(&strong)).unwrap_or(true);
+        if !shown && attempt < 200 {
+            keep_on_screen(id, window, attempt + 1);
         }
     });
 }
@@ -787,12 +845,12 @@ fn main() -> Result<(), slint::PlatformError> {
     }
     cli.make_absolute();
     // A running Gezik takes the paths (spec 5.2): tried before any window or settings, so a
-    // second call costs only the attempt. --new-window never hands over and never listens.
+    // second call costs only the attempt. --new-window asks it for a new window (spec 10 §9.3).
     let key = instance::key(gezik_config::paths::config_dir().as_deref());
     let request = cli.request();
-    // A window that could not hand over is a second window as --new-window's is (spec 5.3):
-    // two windows writing the same tabs to state.toml would lose one's.
-    let mut secondary = cli.new_window;
+    // A window that could not hand over is a process of its own (spec 5.3): two processes
+    // writing the same tabs to state.toml would lose one's.
+    let mut secondary = false;
     let background = cli.background;
     // Started by the bus for FileManager1 (decision 18): the channel decides, nothing is sent.
     let dbus = cli.dbus && cfg!(all(unix, not(target_os = "macos")));
@@ -805,15 +863,11 @@ fn main() -> Result<(), slint::PlatformError> {
             .ok()
             .is_some_and(|e| e.to_str().is_some_and(|s| s.ends_with(".app/Contents/MacOS/gezik")));
     if !secondary && !dbus && !bundle_launch && !background {
-        match instance::send(&key, &request, instance::SEND_TIMEOUT) {
-            instance::Sent::Delivered => return Ok(()),
-            instance::Sent::NoInstance => {}
-            // A hung Gezik (spec 5.2): what the shell asked for still opens somewhere.
-            instance::Sent::Failed if shell.is_some() => {
-                std::process::exit(explorer_fallback(shell.as_deref().unwrap_or_default()))
-            }
-            // Hung, refusing or someone else's: a window of its own, the channel left alone.
-            instance::Sent::Failed => secondary = true,
+        match after_send(instance::send(&key, &request, instance::SEND_TIMEOUT), shell.is_some()) {
+            Next::Exit => return Ok(()),
+            Next::First => {}
+            Next::Explorer => std::process::exit(explorer_fallback(shell.as_deref().unwrap_or_default())),
+            Next::OwnProcess => secondary = true,
         }
     }
     // Gezik has its own tabs: no window tabs of macOS (nor their items in the View menu).
@@ -829,10 +883,14 @@ fn main() -> Result<(), slint::PlatformError> {
             return Err(err);
         }
     };
+    // The first window: in the register from now on (the settings are shown in every window).
+    let first = windows::install(window.clone_strong());
+    // Every way out of main lets the windows go here, before the thread's own teardown.
+    let _release = windows::Release;
 
     let config = ConfigStore::system();
     templates::set_dir(config.as_ref().map(ConfigStore::templates_dir));
-    view_options::install(&window, config.clone());
+    view_options::install(config.clone());
     let init_error = config.as_ref().and_then(|store| store.ensure_initialized().err().map(|e| (store, e)));
     let mut files = config.as_ref().map(ConfigStore::read_files).unwrap_or_default();
     if let Some((store, err)) = init_error {
@@ -855,7 +913,9 @@ fn main() -> Result<(), slint::PlatformError> {
     theme_bridge::apply(&window, &theme::builtin_dark());
     let saved_state = config.as_ref().map(ConfigStore::load_state).unwrap_or_default();
     // As apply_config_and_start, split so the channel is claimed before the session is chosen.
-    let initial_settings = apply_config(&window, &files).settings;
+    let initial_settings = apply_config(&files).settings;
+    // With single instance off, --new-window found no Gezik to ask: still a process of its own.
+    secondary |= own_process(cli.new_window, initial_settings.system.single_instance);
     let mut taken = false;
     let listener = if !secondary && initial_settings.system.single_instance {
         match instance::claim(&key) {
@@ -936,7 +996,7 @@ fn main() -> Result<(), slint::PlatformError> {
     };
     // Spec 9.3: hidden only where the tray can bring the window back.
     let hidden = resident::start_hidden(background, resident_primary, initial_settings.system.tray);
-    resident::begin(&window, config.clone(), resident_primary, !hidden, saved_state.tray_told);
+    resident::begin(config.clone(), resident_primary, !hidden, saved_state.tray_told);
     let plan = resolve_start(
         &initial_settings,
         &cli.targets,
@@ -946,7 +1006,7 @@ fn main() -> Result<(), slint::PlatformError> {
     );
     if !plan.warnings.is_empty() {
         files.warnings.extend(plan.warnings.iter().cloned());
-        apply_config(&window, &files);
+        apply_config(&files);
     }
 
     // Folder views; a broken views.toml starts over and says so in the status bar.
@@ -956,32 +1016,21 @@ fn main() -> Result<(), slint::PlatformError> {
     // The latest config files, so a system light/dark switch can re-resolve without I/O.
     let files = Arc::new(Mutex::new(files));
 
-    window.on_system_scheme_changed({
-        let weak = window.as_weak();
-        let files = files.clone();
-        move || {
-            if let Some(window) = weak.upgrade() {
-                apply_config(&window, &files.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
-            }
-        }
-    });
-
     // Reading happens on the watcher thread; resolving and applying on the UI thread.
     let files_for_warning = files.clone();
     let _watcher = config.as_ref().and_then(|store| {
         let reader = store.clone();
-        let weak = window.as_weak();
         let files = files.clone();
         watcher::watch_config(
             store,
             move || {
                 let fresh = reader.read_files();
                 let files = files.clone();
-                let _ = weak.upgrade_in_event_loop(move |window| {
+                let _ = slint::invoke_from_event_loop(move || {
                     let mut current = files.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                     *current = fresh;
-                    let (_, plan) = apply_config_and_start(&window, &mut current, &[], false, None);
-                    for p in panes::all() {
+                    let (_, plan) = apply_config_and_start(&mut current, &[], false, None);
+                    for p in panes::everywhere() {
                         p.nav.set_start(plan.start.clone());
                     }
                 });
@@ -999,121 +1048,20 @@ fn main() -> Result<(), slint::PlatformError> {
         })
         .ok()
     });
-    apply_config(&window, &files.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
-    window_state::restore(&window, &saved_state, if secondary { 32 } else { 0 });
-    if let Some(saved) = saved_state.window.filter(|_| hidden) {
-        let weak = window.as_weak();
-        resident::when_shown(move || {
-            if let Some(window) = weak.upgrade() {
-                window_state::restore_size(&window, saved);
-            }
-        });
-    }
-    resident::when_shown({
-        let weak = window.as_weak();
-        move || keep_on_screen(weak, 0)
-    });
-    // The pane's parts carry its id; it is installed once they all exist.
-    let pane_id = panes::next_id();
-    window.set_panes(panes::model());
+    apply_config(&files.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
     // One media and one folder view memory for the process; each view holds a client of the
     // media and the same memory (spec 10 §3.3).
     let media = media::Media::new();
     media.install();
     let memory = Rc::new(std::cell::RefCell::new(memory));
-    let view = view::View::new(pane_id, window.as_weak(), media.client(), memory, config.clone());
-    view.set_defaults(initial_settings.view);
-    // No folder shows yet: its place comes with the first one.
-    view.set_rules(view::compile_rules(&initial_settings.view_rules), Default::default);
-    view.set_options(view_options::current());
-    view.set_columns(saved_state.columns.clone().unwrap_or_else(gezik_core::view::default_columns));
-    view.set_result_columns(
-        saved_state.result_columns.clone().unwrap_or_else(gezik_core::view::default_result_columns),
-    );
-    window.set_mono_font(
-        if cfg!(windows) {
-            "Consolas"
-        } else if cfg!(target_os = "macos") {
-            "Menlo"
-        } else {
-            "monospace"
-        }
-        .into(),
-    );
-    window.set_preview_width(saved_state.preview_width.unwrap_or(280) as f32);
-    window.set_column_width(saved_state.column_width.unwrap_or(COLUMN_WIDTH) as f32);
-    let folder_sizes = folder_sizes::FolderSizes::new(pane_id, window.as_weak(), view.clone());
-    folder_sizes.set_settings(initial_settings.folder_sizes, initial_settings.search.everything);
-    let preview = preview::Preview::new(&window);
-    let StartPlan { session, select, start, .. } = plan;
-    let nav = navigation::Navigator::new(pane_id, window.as_weak(), view.clone(), session, select, start);
-    // The open tabs go to state.toml as they change (spec 5.1); its own thread writes them, so
-    // a crash or a kill leaves the last tabs too.
-    if !secondary && let Some(store) = config.clone() {
-        nav.keep_session(saved_state.session.clone(), initial_settings.session.restore, move |session| {
-            let session = session.clone();
-            store.update_state(move |state| state.session = session);
-        });
-    }
-    let path_box =
-        path_box::PathBox::new(pane_id, window.as_weak(), nav.clone(), config.clone(), saved_state.history.clone());
-    // Captures no navigator (it is not `Send`): the result finds the panes on the UI thread.
-    places::load_in_background(window.as_weak(), |part| {
-        for p in panes::all() {
-            p.nav.set_places(part.clone());
-        }
-    });
     // The templates of New ▸, read once the window is up.
     slint::Timer::single_shot(std::time::Duration::from_millis(500), templates::load_in_background);
-
-    let dialogs = dialog::Dialogs::new(&window);
-    let filter = filter::Filter::new(pane_id, window.as_weak(), view.clone(), dialogs.clone(), config.clone());
-    let searches = search::Searches::new(pane_id, window.as_weak(), nav.clone(), view.clone(), dialogs.clone());
-    searches.set_settings(initial_settings.search.clone());
-    // Every pane's bars and address go through the same window callbacks.
-    path_box::PathBox::connect(&window);
-    filter::Filter::connect(&window);
-    search::Searches::connect(&window);
-    let left = panes::Pane {
-        id: pane_id,
-        nav: nav.clone(),
-        view: view.clone(),
-        filter,
-        search: searches,
-        path_box,
-        folder_sizes,
-    };
-    dual::connect(&left);
-    // Installed before the window's parts are made: they reach the active pane.
-    panes::install(left);
-    // Opening the preview reads the active pane's selection.
-    preview.set_pane_open(saved_state.preview_open);
-    let restore = initial_settings.session.restore && !secondary;
-    let state_store = config.clone().filter(|_| !secondary);
-    let right_session = if restore { saved_state.right_session.clone() } else { Default::default() };
-    let stores = (state_store, config.clone());
-    dual::install(&window, stores, initial_settings.session.restore, right_session, saved_state.pane_split);
-    // The first tab loads once the pane is installed: its listing comes back through it.
-    nav.install();
-    let sidebar = sidebar::Sidebar::new(&window, config.clone(), dialogs.clone());
-    sidebar.install();
-    sidebar.set_pinned(initial_settings.pinned);
-    sidebar.set_show_cloud(initial_settings.sidebar_cloud);
-    sidebar.set_tree_follow(initial_settings.sidebar_tree_follow);
-    let _tab_sets = tab_sets::TabSets::new(&window, dialogs.clone(), config.clone());
-    let _saved_searches = saved_searches::SavedSearches::new(&window, dialogs.clone(), config.clone());
-    let _tab_tools = tab_tools::TabTools::new(&window);
-    let _integration = integration::Integration::new(&window);
-    let _select_tools =
-        select_tools::SelectTools::new(dialogs.clone(), config.clone(), saved_state.selection.last_pattern.clone());
     let engine_settings = gezik_ops::Settings {
         threads: initial_settings.files.copy_threads,
         pending_deletes: config.as_ref().map(|store| store.dir().join("pending-deletes")),
     };
     let ops = operations::Operations::new(
         &window,
-        sidebar.clone(),
-        dialogs.clone(),
         engine_settings,
         initial_settings.files,
         saved_state.operations_collapsed,
@@ -1121,73 +1069,6 @@ fn main() -> Result<(), slint::PlatformError> {
         saved_state.batch_rename.clone().unwrap_or_default(),
     );
     connect::install(config.clone(), saved_state.servers_recent.clone());
-    let _palette = palette::Palette::new(&window, config.clone(), saved_state.palette_recent.clone(), {
-        let (weak, preview, ops) = (window.as_weak(), preview.clone(), ops.clone());
-        move |action| {
-            if let Some(window) = weak.upgrade() {
-                let p = panes::active();
-                perform(action, &window, &p.nav, &p.view, &preview, &ops);
-            }
-        }
-    });
-    let _batch_rename = batch_rename::BatchRename::new(&window, ops.clone());
-    let _stack = stack::Stack::new(&window, ops.clone());
-    #[cfg(target_os = "macos")]
-    menu_bar::install(&window, ops.clone());
-    // Tools Gezik downloads (7-Zip) go to `<config dir>/tools/`, next to the pending deletes.
-    let _archives =
-        archives::Archives::new(&window, ops.clone(), dialogs.clone(), config.clone(), saved_state.archive.clone());
-    let _info = info::Info::new(&window, ops.clone(), dialogs.clone());
-    let _convert =
-        convert::Convert::new(&window, ops.clone(), dialogs.clone(), config.clone(), saved_state.convert.clone());
-    window.on_op_pause({
-        let ops = ops.clone();
-        move |id| ops.pause(id)
-    });
-    window.on_op_resume({
-        let ops = ops.clone();
-        move |id| ops.resume(id)
-    });
-    window.on_op_cancel({
-        let ops = ops.clone();
-        move |id| ops.cancel(id)
-    });
-    window.on_op_start_now({
-        let ops = ops.clone();
-        move |id| ops.start_now(id)
-    });
-    window.on_op_details({
-        let ops = ops.clone();
-        move |id| ops.details(id)
-    });
-    window.on_op_retry({
-        let ops = ops.clone();
-        move |id| ops.retry(id)
-    });
-    window.on_op_dismiss({
-        let ops = ops.clone();
-        move |id| ops.dismiss(id)
-    });
-    window.on_ops_toggle({
-        let ops = ops.clone();
-        move || ops.toggle_collapsed()
-    });
-    window.on_ops_tab_chosen({
-        let ops = ops.clone();
-        move |tab| ops.choose_tab(tab)
-    });
-    window.on_history_show({
-        let ops = ops.clone();
-        move |id| ops.history_show(id)
-    });
-    window.on_history_details({
-        let ops = ops.clone();
-        move |id| ops.history_details(id)
-    });
-    window.on_history_toggle({
-        let ops = ops.clone();
-        move || ops.history_toggle()
-    });
     // Deletes cut short last time finish in the background once the window is up.
     slint::Timer::single_shot(std::time::Duration::from_millis(500), {
         let ops = ops.clone();
@@ -1199,42 +1080,49 @@ fn main() -> Result<(), slint::PlatformError> {
         let _ =
             std::thread::Builder::new().name("gezik-symlink-probe".into()).spawn(gezik_platform::link::probe_symlinks);
     });
+    // Saves what the most recently focused window shows.
     let save_and_quit: Rc<dyn Fn()> = {
-        let (weak, store, preview, ops) = (window.as_weak(), config.clone(), preview.clone(), ops.clone());
+        let (store, ops) = (config.clone(), ops.clone());
         Rc::new(move || {
-            let view = panes::active_view();
-            if let (Some(window), Some(store)) = (weak.upgrade(), &store) {
-                store.update_state(|state| {
-                    window_state::capture_into(&window, state);
-                    state.columns = Some(view.columns());
-                    state.result_columns = Some(view.result_columns());
-                    state.preview_open = preview.is_pane_open();
-                    state.preview_width = Some(window.get_preview_width().round().clamp(200.0, 600.0) as u32);
-                    let column = window.get_column_width().round().clamp(120.0, 600.0) as u32;
-                    state.column_width = (column != COLUMN_WIDTH).then_some(column);
-                    state.operations_collapsed = ops.collapsed();
+            if let Some(store) = &store {
+                windows::with_focused(|window| {
+                    let view = panes::active_view();
+                    let preview_open = preview::with_current(preview::Preview::is_pane_open).unwrap_or(false);
+                    store.update_state(|state| {
+                        window_state::capture_into(window, state);
+                        state.columns = Some(view.columns());
+                        state.result_columns = Some(view.result_columns());
+                        state.preview_open = preview_open;
+                        state.preview_width = Some(window.get_preview_width().round().clamp(200.0, 600.0) as u32);
+                        let column = window.get_column_width().round().clamp(120.0, 600.0) as u32;
+                        state.column_width = (column != COLUMN_WIDTH).then_some(column);
+                        state.operations_collapsed = ops.collapsed();
+                    });
+                    // Every window's tabs and panes, now (deviation 5).
+                    windows::save_sessions();
+                    // Quitting: what the other parts changed lately is written too (a saved
+                    // filter, a pin or a default just sent to settings.toml as well).
+                    store.flush_state();
+                    store.flush_settings();
+                    // A view change still waiting for its timer is handed over, then written.
+                    view.flush_memory();
+                    store.flush_views();
                 });
-                dual::save();
-                // Quitting: what the other parts changed lately is written too (a saved
-                // filter, a pin or a default just sent to settings.toml as well).
-                store.flush_state();
-                store.flush_settings();
-                // A view change still waiting for its timer is handed over, then written.
-                view.flush_memory();
-                store.flush_views();
             }
             // Its window would otherwise keep the event loop (and the process) running.
-            preview.close_quick_look();
+            windows::for_each(|_| {
+                preview::with_current(preview::Preview::close_quick_look);
+            });
         })
     };
     // Saves and ends the event loop (run_event_loop_until_quit: deviation 13).
     let finish: Rc<dyn Fn()> = {
-        let (save_and_quit, weak) = (save_and_quit.clone(), window.as_weak());
+        let save_and_quit = save_and_quit.clone();
         Rc::new(move || {
             save_and_quit();
-            if let Some(window) = weak.upgrade() {
+            windows::for_each(|window| {
                 let _ = window.hide();
-            }
+            });
             let _ = slint::quit_event_loop();
         })
     };
@@ -1253,12 +1141,14 @@ fn main() -> Result<(), slint::PlatformError> {
     resident::set_hooks(resident::Hooks {
         quit: quit_app.clone(),
         run: {
-            let (weak, preview, ops) = (window.as_weak(), preview.clone(), ops.clone());
+            let ops = ops.clone();
             Rc::new(move |action| {
-                if let Some(window) = weak.upgrade() {
-                    let p = panes::active();
-                    perform(action, &window, &p.nav, &p.view, &preview, &ops);
-                }
+                windows::with_focused(|window| {
+                    let (p, preview) = (panes::active(), preview::with_current(preview::Preview::clone));
+                    if let Some(preview) = preview {
+                        perform(action, window, &p.nav, &p.view, &preview, &ops);
+                    }
+                });
             })
         },
         pins: Rc::new(|| {
@@ -1273,16 +1163,10 @@ fn main() -> Result<(), slint::PlatformError> {
         let save_and_quit = save_and_quit.clone();
         move || save_and_quit()
     }));
-    #[cfg(windows)]
-    if !secondary {
-        resident::when_shown({
-            let (weak, save) = (window.as_weak(), save_and_quit.clone());
-            move || save_on_session_end(weak, save, 0)
-        });
-    }
-    window.window().on_close_requested({
+    // A window's close button.
+    let close_requested: Rc<dyn Fn() -> slint::CloseRequestResponse> = {
         let (ops, save_and_quit, finish) = (ops.clone(), save_and_quit.clone(), finish.clone());
-        move || {
+        Rc::new(move || {
             // With the tray icon up the window only hides (spec 9.1); what it shows is saved.
             if resident::close_requested() {
                 save_and_quit();
@@ -1294,596 +1178,47 @@ fn main() -> Result<(), slint::PlatformError> {
             }
             finish();
             slint::CloseRequestResponse::HideWindow
-        }
-    });
-    // The sidebar is the window's: it leads the active pane (spec 10 §4.10).
-    window.on_sidebar_clicked({
-        let sidebar = sidebar.clone();
-        move |section, index| {
-            if section == sidebar::SECTION_SEARCHES {
-                return run_saved_search(index, false);
-            }
-            if let Some(location) = sidebar.location_of(section, index) {
-                panes::active_nav().go(location);
-            }
-        }
-    });
-    window.on_sidebar_middle_clicked({
-        let sidebar = sidebar.clone();
-        move |section, index| {
-            if section == sidebar::SECTION_SEARCHES {
-                return run_saved_search(index, true);
-            }
-            if let Some(location) = sidebar.location_of(section, index) {
-                panes::active_nav().open_tab(location, false);
-            }
-        }
-    });
-    window.on_pinned_drop({
-        let sidebar = sidebar.clone();
-        move |from, line| {
-            if let (Ok(from), Ok(line)) = (usize::try_from(from), usize::try_from(line)) {
-                sidebar.drop_pinned(from, line);
-            }
-        }
-    });
-    window.on_sidebar_toggled({
-        let sidebar = sidebar.clone();
-        move |row| {
-            if let Ok(row) = usize::try_from(row) {
-                sidebar.toggle_row(row);
-            }
-        }
-    });
-    // The sidebar width stays in memory and is saved with the window state on close.
-
-    // Gezik's own menus (where Slint has no system ones) stay inside the window.
-    window.set_native_menus(context_menu::native_menus());
-    window.on_place_menu(|x, y, flip_x, flip_y, width, height, area_width, area_height| {
-        let anchor = popup::Anchor { x, y, flip_x, flip_y };
-        let placed = popup::place_menu(anchor, (width, height), (area_width, area_height));
-        MenuPlace { x: placed.x, y: placed.y, width: placed.width, height: placed.height }
-    });
-    window.on_menu_step(|lines, from, down| {
-        use slint::Model;
-        let enabled: Vec<bool> = lines.iter().map(|line| line.enabled).collect();
-        popup::step_line(&enabled, from, down)
-    });
-    let menus = context_menu::Menus::new(&window, preview.clone(), sidebar.clone(), ops.clone());
-    let drags = drag::Drags::new(&window, sidebar, ops.clone(), menus.clone());
-    drags.install(&window);
-    resident::when_shown({
-        let drags = drags.clone();
-        move || drags.attach_when_ready(0)
-    });
-    // A pane's callbacks name it by its row: a click or an action there makes it the active
-    // one first (`pick`); what it only tells goes to it as it is.
-    window.on_row_menu({
-        let menus = menus.clone();
-        move |pane, i, x, y| {
-            let Some(p) = pick(pane) else { return };
-            if let Ok(index) = usize::try_from(i) {
-                p.view.prepare_menu(index);
-            }
-            menus.row(i, x, y)
-        }
-    });
-    // Right-click on empty space clears the selection, as in Explorer. The Windows menu
-    // opens at the cursor.
-    window.on_background_menu({
-        let menus = menus.clone();
-        move |pane, x, y| {
-            let Some(p) = pick(pane) else { return };
-            p.view.clear_selection();
-            menus.background(x, y)
-        }
-    });
-    window.on_item_pressed({
-        let ops = ops.clone();
-        move |pane, i, ctrl, shift| {
-            ops.end_unfocused_rename();
-            let Some(p) = pick(pane) else { return };
-            if let Ok(index) = usize::try_from(i) {
-                p.view.press(index, ctrl, shift);
-            }
-        }
-    });
-    window.on_marquee(move |pane, x, y, width, height, additive| {
-        if let Some(p) = pick(pane) {
-            p.view.marquee(gezik_core::layout::Rect { x, y, width, height }, additive);
-        }
-    });
-    window.on_marquee_done(|pane| {
-        panes::with_row(pane, |p| p.view.marquee_done());
-    });
-    window.on_background_pressed({
-        let ops = ops.clone();
-        move |pane, ctrl| {
-            ops.end_unfocused_rename();
-            let Some(p) = pick(pane) else { return };
-            if !ctrl {
-                p.view.clear_selection();
-            }
-        }
-    });
-    // Opened once the pane's request is done with (it asks from inside Slint's change
-    // handlers, where a system menu's own loop must not start).
-    window.on_keyboard_menu({
-        let menus = menus.clone();
-        move |_pane, i, x, y| {
-            let menus = menus.clone();
-            slint::Timer::single_shot(std::time::Duration::ZERO, move || menus.keyboard(i, x, y));
-        }
-    });
-    window.on_sidebar_menu({
-        let menus = menus.clone();
-        move |section, i, x, y| {
-            // With two panes the sidebar is outside them: typing an address ends here.
-            let id = panes::active().id;
-            if panes::mirror(id).path_editing.get() {
-                panes::edit(id, |d| panes::path_editing(d, false));
-            }
-            menus.sidebar_entry(section, i, x, y)
-        }
-    });
-    window.on_header_clicked(|pane, column| {
-        if let Some(p) = pick(pane) {
-            p.view.header_clicked(column);
-        }
-    });
-    window.on_preview_resized({
-        let preview = preview.clone();
-        move || preview.schedule()
-    });
-    // The columns are every pane's (spec 10 §3.3).
-    window.on_columns_resized(|_pane| {
-        for p in panes::all() {
-            p.view.columns_resized();
-        }
-    });
-    window.on_header_menu({
-        let menus = menus.clone();
-        move |pane, x, y| {
-            if pick(pane).is_some() {
-                menus.header(x, y);
-            }
-        }
-    });
-    window.on_list_line_of(|pane, i| {
-        panes::with_row(pane, |p| p.view.place_of(usize::try_from(i).unwrap_or(usize::MAX)).0).unwrap_or(0)
-    });
-    window.on_list_column_of(|pane, i| {
-        panes::with_row(pane, |p| p.view.place_of(usize::try_from(i).unwrap_or(usize::MAX)).1).unwrap_or(0)
-    });
-    window.on_list_group_toggled(|pane, first| {
-        if let Some(p) = pick(pane) {
-            p.view.toggle_group(usize::try_from(first).unwrap_or(usize::MAX));
-        }
-    });
-    window.on_list_group_menu({
-        let menus = menus.clone();
-        move |pane, x, y| {
-            if pick(pane).is_some() {
-                menus.group_header(x, y);
-            }
-        }
-    });
-    window.on_filter_menu({
-        let menus = menus.clone();
-        move |pane, left, bottom, right, top| {
-            if pick(pane).is_some() {
-                menus.filter_menu(popup::Anchor::below(left, top, right, bottom));
-            }
-        }
-    });
-    window.on_search_menu({
-        let menus = menus.clone();
-        move |pane, which, left, bottom, right, top| {
-            if pick(pane).is_some() {
-                let which = search::SearchMenu::from_index(which);
-                menus.search_menu(which, popup::Anchor::below(left, top, right, bottom));
-            }
-        }
-    });
-    window.on_view_menu({
-        let menus = menus.clone();
-        move |pane, left, bottom, right, top| {
-            if pick(pane).is_some() {
-                menus.view_menu(popup::Anchor::below(left, top, right, bottom));
-            }
-        }
-    });
-    window.on_grid_columns_changed(|pane, columns| {
-        panes::with_row(pane, |p| p.view.grid_columns_changed(usize::try_from(columns).unwrap_or(1)));
-    });
-    // What the pane keeps and only tells (spec 10 §3.2): Rust's mirror of it.
-    window.on_scrolled(|pane, y| panes::mirror_at(pane).scroll.set(y));
-    window.on_pane_focus(|pane, focus| {
-        // A field of the pane took the keyboard: an action in that pane.
-        if focus.filter || focus.search || focus.rename {
-            pick(pane);
-        }
-        *panes::mirror_at(pane).focus.borrow_mut() = focus;
-    });
-    window.on_pane_geometry(|pane, geometry| {
-        let columns = usize::try_from(geometry.grid_columns).unwrap_or(1);
-        *panes::mirror_at(pane).geometry.borrow_mut() = geometry;
-        // A pane made after the first layout never sees its grid's columns change.
-        panes::with_row(pane, |p| p.view.grid_columns_changed(columns));
-    });
-    window.on_revealed(|pane, index, target| {
-        panes::with_row(pane, |p| p.view.revealed(index, target));
-    });
-    window.on_zoom(|pane, bigger| {
-        if let Some(p) = pick(pane) {
-            p.view.zoom(bigger);
-        }
-    });
-    window.on_pane_split_moved(dual::split_moved);
-    window.on_pane_split_done(dual::split_done);
-    window.on_pane_split_reset(dual::split_reset);
-    window.on_panes_cramped(dual::cramped);
-    window.on_conflict_row_menu({
-        let menus = menus.clone();
-        move |row, x, y| menus.conflict(row, x, y)
-    });
-    window.on_rb_add_rule({
-        let menus = menus.clone();
-        move |left, bottom, right, top| menus.add_rule(popup::Anchor::below(left, top, right, bottom))
-    });
-    window.on_rb_presets({
-        let menus = menus.clone();
-        move |left, bottom, right, top| menus.presets(popup::Anchor::below(left, top, right, bottom))
-    });
-    // The Convert layer's menus: its presets, the text encodings.
-    window.on_cv_presets({
-        let menus = menus.clone();
-        move |left, bottom, right, top| {
-            let mut items = Vec::new();
-            convert::with_current(|convert| items = convert.preset_menu());
-            menus.convert_menu(items, popup::Anchor::below(left, top, right, bottom));
-        }
-    });
-    window.on_cv_from({
-        let menus = menus.clone();
-        move |left, bottom, right, top| {
-            let mut items = Vec::new();
-            convert::with_current(|convert| items = convert.encoding_menu(true));
-            menus.convert_menu(items, popup::Anchor::below(left, top, right, bottom));
-        }
-    });
-    window.on_cv_to({
-        let menus = menus.clone();
-        move |left, bottom, right, top| {
-            let mut items = Vec::new();
-            convert::with_current(|convert| items = convert.encoding_menu(false));
-            menus.convert_menu(items, popup::Anchor::below(left, top, right, bottom));
-        }
-    });
-    window.on_info_app_menu({
-        let menus = menus.clone();
-        move |left, bottom, right, top| {
-            let mut items = Vec::new();
-            info::with_current(|info| items = info.app_menu());
-            menus.info_menu(items, popup::Anchor::below(left, top, right, bottom));
-        }
-    });
-    window.on_info_group_menu({
-        let menus = menus.clone();
-        move |left, bottom, right, top| {
-            let mut items = Vec::new();
-            info::with_current(|info| items = info.group_menu());
-            menus.info_menu(items, popup::Anchor::below(left, top, right, bottom));
-        }
-    });
-    // Slint passes indexes as `i32`: a negative one does nothing.
-    window.on_tab_menu({
-        let menus = menus.clone();
-        move |pane, i, x, y| {
-            if let (Some(_), Ok(i)) = (pick(pane), usize::try_from(i)) {
-                menus.tab(i, x, y);
-            }
-        }
-    });
-
-    // Double-click; with single-click-open the click already opened it.
-    // Miller columns (spec 10 §7): a press in a column beside the focused one takes it there
-    // first, so the press, drag and menu that follow are the focused column's (as a pane is
-    // made active first, 10b); a middle-click, a scroll, the columns on screen.
-    window.on_column_pressed({
-        let (ops, drags) = (ops.clone(), drags.clone());
-        move |pane, column, row, scroll, x, y, right| {
-            ops.end_unfocused_rename();
-            if let Some(index) = pick(pane).and_then(|p| p.view.column_clicked(column, row, scroll)) {
-                drags.down(index, x, y, right, true);
-            }
-        }
-    });
-    window.on_column_menu(move |pane, row, x, y| {
-        let Some(p) = pick(pane) else { return };
-        match p.view.single_selected().filter(|_| row) {
-            Some(index) => menus.row(i32::try_from(index).unwrap_or(-1), x, y),
-            None => {
-                p.view.clear_selection();
-                menus.background(x, y);
-            }
-        }
-    });
-    window.on_column_middle(|pane, column, row| {
-        let Some(p) = pick(pane) else { return };
-        if let (Ok(column), Ok(row)) = (usize::try_from(column), usize::try_from(row))
-            && let Some((path, true)) = p.view.column_entry(column, row)
-        {
-            p.nav.open_tab(gezik_core::nav::Location::Path(path), false);
-        }
-    });
-    window.on_column_scrolled(|pane, column, scroll| {
-        panes::with_row(pane, |p| p.view.column_scrolled(column, scroll));
-    });
-    window.on_columns_shown(|pane, first, end| {
-        panes::with_row(pane, |p| p.view.columns_on_screen(first, end));
-    });
-    window.on_open_row(|pane, i| {
-        if let Some(p) = pick(pane)
-            && let Ok(index) = usize::try_from(i)
-            && !view_options::current().single_click_open
-        {
-            open_entry(&p.nav, &p.view, index);
-        }
-    });
-    window.on_go_back(|pane| {
-        if let Some(p) = pick(pane) {
-            p.nav.back();
-        }
-    });
-    window.on_go_forward(|pane| {
-        if let Some(p) = pick(pane) {
-            p.nav.forward();
-        }
-    });
-    window.on_go_up(|pane| {
-        if let Some(p) = pick(pane) {
-            p.nav.up();
-        }
-    });
-    window.on_refresh(|pane| {
-        if let Some(p) = pick(pane) {
-            p.nav.reload();
-        }
-    });
-    window.on_navigate(|pane, text| {
-        if let Some(p) = pick(pane) {
-            p.nav.navigate_text(text.into());
-        }
-    });
-    window.on_crumb_clicked(|pane, i| {
-        if let Some(p) = pick(pane) {
-            p.nav.crumb_clicked(i);
-        }
-    });
-    // Slint passes indexes as `i32`: a negative one does nothing.
-    window.on_tab_activate(|pane, i| {
-        if let (Some(p), Ok(i)) = (pick(pane), usize::try_from(i)) {
-            p.nav.activate_tab(i);
-        }
-    });
-    // Closed once the click is fully handled.
-    window.on_tab_close(|pane, i| {
-        if let (Some(p), Ok(i)) = (pick(pane), usize::try_from(i)) {
-            close_tab_later(&p.nav, i);
-        }
-    });
-    window.on_tab_new(|pane| {
-        if let Some(p) = pick(pane) {
-            p.nav.open_tab(p.nav.start(), true);
-        }
-    });
-    window.on_tab_move(|pane, from, to| {
-        if let (Some(p), Ok(from), Ok(to)) = (pick(pane), usize::try_from(from), usize::try_from(to)) {
-            p.nav.move_tab(from, to);
-        }
-    });
-    window.on_row_middle_clicked(|pane, i| {
-        let Some(p) = pick(pane) else { return };
-        // A folder in the trash is a bin entry: not opened (spec 7.1).
-        if let Some((path, true)) =
-            p.nav.entry_path(i).filter(|_| p.nav.active_location() != gezik_core::nav::Location::Trash)
-        {
-            p.nav.open_tab(gezik_core::nav::Location::Path(path), false);
-        }
-    });
-
-    window.on_rename_accepted({
-        let ops = ops.clone();
-        move |_pane, text| ops.rename_accepted(text.into())
-    });
-    window.on_rename_cancelled({
-        let ops = ops.clone();
-        move |_pane| ops.rename_cancelled()
-    });
-    window.on_rename_tab({
-        let ops = ops.clone();
-        move |_pane, text, back| ops.rename_tab(text.into(), back)
-    });
-    window.on_rename_blurred({
-        let ops = ops.clone();
-        move |pane, text, generation| {
-            // A rename of a pane left is ended already (`dual::activate`).
-            if usize::try_from(pane).is_ok_and(|pane| pane == panes::active_index()) {
-                ops.rename_blurred(text.into(), generation)
-            }
-        }
-    });
-    window.on_rename_edited({
-        let ops = ops.clone();
-        move |pane, text| {
-            *panes::mirror_at(pane).rename_text.borrow_mut() = text.clone();
-            ops.rename_edited(&text)
-        }
-    });
-
-    window.on_key_event({
-        let (preview, ops, weak) = (preview.clone(), ops.clone(), window.as_weak());
-        let drags = drags.clone();
-        let mut type_ahead = keys::TypeAhead::new();
-        // The pane typed into last: type-ahead starts over in another one.
-        let mut typed_in = None;
-        move |event| {
-            let Some(window) = weak.upgrade() else { return false };
-            let pane = panes::active();
-            if typed_in.replace(pane.id) != Some(pane.id) {
-                type_ahead = keys::TypeAhead::new();
-            }
-            let m = event.modifiers;
-            // Slint's `control` is ⌘ on macOS.
-            let press = keys::take_pressed();
-            // AltGr on a key it types nothing with is Ctrl+Alt (keys.rs `altgr_blank`).
-            let (control, alt) = press.modifiers(m.control, m.alt);
-            let text = keys::shortcut_text(&event.text, control);
-            let chord =
-                keys::chord_from_press(&text, press.physical, control, alt, m.shift, m.meta, Platform::current());
-            let menu_key = keys::is_context_menu_key(&event.text, control, alt, m.shift, m.meta);
-            // Esc while dragging files drops nothing.
-            if chord.as_ref().is_some_and(|c| c.key == Key::Escape) && drags.escape() {
-                return true;
-            }
-            let used = handle_key(
-                &window,
-                &pane.nav,
-                &pane.view,
-                &preview,
-                &ops,
-                &mut type_ahead,
-                &event.text,
-                chord,
-                control || alt || m.meta,
-                menu_key,
-            );
-            press.swallowed(used)
-        }
-    });
-
-    // Mouse back/forward side buttons, anywhere in the window. Slint passes them on to
-    // the items too, which ignore them.
-    {
-        use slint::winit_030::{EventResult, WinitWindowAccessor, winit};
-        let weak = window.as_weak();
-        let minimized = std::cell::Cell::new(false);
-        // The pointer's last window position (logical pixels).
-        let pointer = std::cell::Cell::new((0.0f32, 0.0f32));
-        let ops = ops.clone();
-        let drags = drags.clone();
-        let modifiers = std::cell::Cell::new(winit::keyboard::ModifiersState::empty());
-        window.window().on_winit_window_event(move |slint_window, event| {
-            if let winit::event::WindowEvent::ModifiersChanged(m) = event {
-                modifiers.set(m.state());
-            }
-            // The keypad's keys and Ctrl+Shift+digits, which Slint's text cannot tell apart
-            // (keys.rs `Physical`), and AltGr on a key it types nothing with (keys.rs
-            // `altgr_blank`): noted before Slint hands the key to `key-event`.
-            if let winit::event::WindowEvent::KeyboardInput { event, .. } = event {
-                keys::note_key(event);
-                let m = modifiers.get();
-                let dead = event.state == winit::event::ElementState::Pressed
-                    && matches!(event.logical_key, winit::keyboard::Key::Dead(_));
-                if let Some(digit) = keys::dead_digit(
-                    keys::physical_of_event(event),
-                    dead,
-                    m.control_key() || m.super_key(),
-                    m.alt_key(),
-                ) {
-                    let text = slint::SharedString::from(digit.to_string());
-                    slint_window.dispatch_event(slint::platform::WindowEvent::KeyPressed { text: text.clone() });
-                    slint_window.dispatch_event(slint::platform::WindowEvent::KeyReleased { text });
-                    return EventResult::PreventDefault;
-                }
-            }
-            if let winit::event::WindowEvent::Focused(false) = event {
-                keys::forget_altgr();
-            }
-            if let winit::event::WindowEvent::Focused(true) = event {
-                ops.clipboard_check();
-            }
-            if let winit::event::WindowEvent::DroppedFile(path) = event {
-                drags.dropped_file(path.clone());
-            }
-            // Windows drops a minimized window's picture, but the size on restore is the old
-            // one, so Slint redraws only what changed and the rest of the window stays empty.
-            if let winit::event::WindowEvent::Resized(size) = event {
-                let zero = size.width == 0 || size.height == 0;
-                if !zero && minimized.get() {
-                    let weak = weak.clone();
-                    slint::Timer::single_shot(std::time::Duration::ZERO, move || {
-                        if let Some(window) = weak.upgrade() {
-                            theme_bridge::repaint_all(&window);
-                        }
-                    });
-                }
-                minimized.set(zero);
-            }
-            // Caps the frame rate at `max-fps`: Slint draws as often as the display refreshes.
-            if let winit::event::WindowEvent::RedrawRequested = event {
-                frame_limit::wait_for_frame();
-                return EventResult::Propagate;
-            }
-            // A drag that lost its pointer grab to a tab switch follows the window's events.
-            if let winit::event::WindowEvent::CursorMoved { position, .. } = event {
-                let scale = weak.upgrade().map_or(1.0, |w| w.window().scale_factor());
-                let at = position.to_logical::<f32>(f64::from(scale));
-                drags.window_pointer_moved(at.x, at.y);
-                pointer.set((at.x, at.y));
-            }
-            if let winit::event::WindowEvent::MouseInput {
-                state: winit::event::ElementState::Released,
-                button: button @ (winit::event::MouseButton::Left | winit::event::MouseButton::Right),
-                ..
-            } = event
-            {
-                let (x, y) = pointer.get();
-                // A left release goes on to Slint (its grab points at an entry that is gone);
-                // a right one would open a second menu after the drop's (see drag.rs).
-                if drags.window_released(x, y, *button == winit::event::MouseButton::Right) {
-                    return EventResult::PreventDefault;
-                }
-            }
-            if let winit::event::WindowEvent::MouseInput {
-                state: winit::event::ElementState::Pressed, button, ..
-            } = event
-            {
-                match button {
-                    winit::event::MouseButton::Back => panes::active_nav().back(),
-                    winit::event::MouseButton::Forward => panes::active_nav().forward(),
-                    _ => {}
-                }
-            }
-            EventResult::Propagate
-        });
+        })
+    };
+    let process = Rc::new(windows::Process {
+        config: config.clone(),
+        state: Rc::new(saved_state),
+        memory,
+        media,
+        ops,
+        files,
+        secondary,
+        close_requested,
+        save: save_and_quit,
+    });
+    windows::set_process(process.clone());
+    // The other windows of last time (deviation 5), behind the first.
+    if !secondary && initial_settings.session.restore {
+        windows::open_saved(first, &process.state, &plan.start);
     }
-
-    // The second pane of last time, with its own tabs (its listing comes in the background).
-    if restore && saved_state.dual {
-        dual::open(Some(saved_state.active_pane));
-        if saved_state.sync {
-            dual::toggle_sync();
-        }
-    }
-    // The window and tabs are up; calls that came before this wait in the channel.
-    single_instance::set_window(window.as_weak());
+    let opening = windows::Opening {
+        plan,
+        right: process.state.right_session.clone(),
+        dual: process.state.dual,
+        active_pane: process.state.active_pane,
+        sync: process.state.sync,
+        offset: if secondary { 32 } else { 0 },
+        state: process.state.clone(),
+    };
+    windows::open(first, opening);
     // 9b9: a Dock click shows the window hidden in the menu bar (deviation 8).
     #[cfg(target_os = "macos")]
     if !gezik_platform::reopen::install(Box::new(resident::reveal)) {
         eprintln!("gezik: the Dock icon does not show a hidden window (winit answers it)");
     }
     #[cfg(target_os = "macos")]
-    {
-        let weak = window.as_weak();
-        gezik_platform::open_urls::install(Box::new(move |paths| {
-            let targets = paths.into_iter().map(|path| cli::Target { path, select: false }).collect();
-            single_instance::open_here(weak.clone(), instance::Request { targets, ..Default::default() });
-        }));
-    }
+    gezik_platform::open_urls::install(Box::new(move |paths| {
+        let targets = paths.into_iter().map(|path| cli::Target { path, select: false }).collect();
+        single_instance::open_here(instance::Request { targets, ..Default::default() });
+    }));
+    // The window and tabs are up; calls that came before this wait in the channel.
     if let Some(listener) = listener {
-        single_instance::serve(listener, window.as_weak());
+        single_instance::serve(listener);
         if dbus {
             single_instance::start_file_manager1();
         }
@@ -1894,16 +1229,16 @@ fn main() -> Result<(), slint::PlatformError> {
         let f3_hint = Platform::current() == Platform::Other
             && !shortcuts.is_written(Action::Search)
             && !shortcuts.is_written(Action::ToggleDualPane);
-        let (f3_moved, f3_moved_at) = (saved_state.f3_moved, saved_state.f3_moved_at);
+        let (f3_moved, f3_moved_at) = (process.state.f3_moved, process.state.f3_moved_at);
         // Decision 13: once, two seconds after start; with no journal, one stat and nothing more.
         // The hint then too: the first folder is shown by then, which would take a note away.
         slint::Timer::single_shot(std::time::Duration::from_secs(2), move || {
-            dual::f3_hint_at_start(f3_hint, f3_moved, f3_moved_at);
+            windows::with_window(first, |_| dual::f3_hint_at_start(f3_hint, f3_moved, f3_moved_at));
             std::thread::spawn(|| {
                 let (note, file_manager1) = system_changes::idle_check();
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(note) = note {
-                        integration::offer_repair(note);
+                        windows::with_focused(|_| integration::offer_repair(note));
                     }
                     if file_manager1 {
                         single_instance::start_file_manager1();
@@ -1915,8 +1250,10 @@ fn main() -> Result<(), slint::PlatformError> {
     resident::start();
     // Deviation 13: hiding the last window must not end the event loop.
     if !hidden {
-        window.show()?;
+        windows::show_all()?;
     }
+    // The register holds the window from here on.
+    drop(window);
     let ran = slint::run_event_loop_until_quit();
     resident::shutdown();
     ran
@@ -1937,5 +1274,55 @@ mod tests {
         assert!(not_printed_yet(&mut printed, &now).is_empty(), "a re-resolve prints nothing again");
         assert!(not_printed_yet(&mut printed, &[]).is_empty());
         assert_eq!(not_printed_yet(&mut printed, &now), [cli, theme], "back after it was fixed: said again");
+    }
+
+    #[test]
+    fn what_a_gezik_does_after_handing_over() {
+        use instance::Sent::{Delivered, Failed, NoInstance};
+        // --new-window or not, the answer decides alike: the flag only changes what the
+        // running Gezik does with a delivered request.
+        assert_eq!(after_send(Delivered, false), Next::Exit);
+        assert_eq!(after_send(NoInstance, false), Next::First);
+        assert_eq!(after_send(Failed, false), Next::OwnProcess);
+        assert_eq!(after_send(Failed, true), Next::Explorer, "--shell");
+        assert_eq!(after_send(Delivered, true), Next::Exit);
+        assert_eq!(after_send(NoInstance, true), Next::First);
+        assert!(own_process(true, false), "single instance off: a process of its own");
+        assert!(!own_process(true, true), "none running: the first one");
+        assert!(!own_process(false, false));
+        for new_window in [false, true] {
+            let request = cli::Cli { new_window, ..cli::Cli::default() }.request();
+            assert_eq!(request.new_window, new_window);
+        }
+    }
+
+    /// spec 10 §9.3: a running Gezik that does not answer (a fake listener holding the call)
+    /// leaves the caller to open a process of its own after two seconds, with --new-window too.
+    #[test]
+    fn a_hung_gezik_leaves_the_caller_its_own_process() {
+        let key = format!("t{}hung-main", std::process::id());
+        let instance::Claim::Listening(listener) = instance::claim(&key) else { panic!("no channel") };
+        listener.serve(|_| {
+            std::thread::sleep(std::time::Duration::from_secs(4));
+            true
+        });
+        let calls: Vec<_> = [false, true]
+            .into_iter()
+            .map(|new_window| {
+                let key = key.clone();
+                std::thread::spawn(move || {
+                    let request = instance::Request { new_window, ..Default::default() };
+                    let started = std::time::Instant::now();
+                    let sent = instance::send(&key, &request, instance::SEND_TIMEOUT);
+                    (sent, started.elapsed())
+                })
+            })
+            .collect();
+        for call in calls {
+            let (sent, took) = call.join().unwrap();
+            assert_eq!(sent, instance::Sent::Failed);
+            assert!(took >= instance::SEND_TIMEOUT, "gave up after {took:?}");
+            assert_eq!(after_send(sent, false), Next::OwnProcess);
+        }
     }
 }

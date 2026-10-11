@@ -28,7 +28,8 @@ struct Target {
 }
 
 thread_local! {
-    static TARGET: RefCell<Option<Target>> = const { RefCell::new(None) };
+    /// Each registered view's target, by the view's address (a window each, deviation 13).
+    static TARGETS: RefCell<Vec<(usize, Target)>> = const { RefCell::new(Vec::new()) };
     /// Called when Gezik's drag session ends.
     static ON_END: RefCell<Option<OnEnd>> = const { RefCell::new(None) };
 }
@@ -40,9 +41,36 @@ pub struct Registration {
 
 impl Drop for Registration {
     fn drop(&mut self) {
-        // At exit another thread-local may drop this after TARGET is gone: nothing to clear then.
-        let _ = TARGET.try_with(|t| t.borrow_mut().take());
+        // At exit another thread-local may drop this after TARGETS is gone: nothing to clear then.
+        let key = view_key(&self.view);
+        let gone = TARGETS.try_with(|t| take(&mut t.borrow_mut(), key));
+        drop(gone);
     }
+}
+
+/// A view's key in [`TARGETS`].
+fn view_key(view: &NSView) -> usize {
+    std::ptr::from_ref(view) as usize
+}
+
+/// Puts `value` in `list` under `key`, in place of what it had there.
+fn put<T>(list: &mut Vec<(usize, T)>, key: usize, value: T) {
+    match list.iter_mut().find(|(k, _)| *k == key) {
+        Some((_, old)) => *old = value,
+        None => list.push((key, value)),
+    }
+}
+
+/// Takes what `list` has under `key` out of it.
+fn take<T>(list: &mut Vec<(usize, T)>, key: usize) -> Option<T> {
+    let at = list.iter().position(|(k, _)| *k == key)?;
+    Some(list.remove(at).1)
+}
+
+/// Runs `f` with `view`'s target, if it has one.
+fn with_target<R>(view: &NSView, f: impl FnOnce(&mut Target) -> R) -> Option<R> {
+    let key = view_key(view);
+    TARGETS.with(|t| t.borrow_mut().iter_mut().find(|(k, _)| *k == key).map(|(_, target)| f(target)))
 }
 
 /// The NSDragOperation for an effect. A move is told as "generic": Gezik moves the files
@@ -104,22 +132,31 @@ fn over(view: &NSView, info: &ProtocolObject<dyn NSDraggingInfo>, entered: bool)
     let (x, y) = point_in(view, info);
     let keys = keys_now();
     let allowed = allowed_by(info.draggingSourceOperationMask());
-    TARGET.with(|t| {
-        let mut target = t.borrow_mut();
-        let Some(target) = target.as_mut() else { return NSDragOperation::None };
+    // The handler is asked with no borrow held (it may reach another window's target): the
+    // offer is taken out for it and put back after.
+    let taken = with_target(view, |target| {
         if entered || target.offer.is_none() {
             let paths = paths_of(info);
             // No file paths: files another program promises.
             let virtual_count = if paths.is_empty() { promise::count(info) } else { 0 };
             target.offer = Some(Offer { paths, allowed, right: false, virtual_count, virtual_files: None });
         }
-        let Some(offer) = target.offer.as_mut() else { return NSDragOperation::None };
+        let offer = target.offer.as_mut()?;
         offer.allowed = allowed;
         if offer.paths.is_empty() && offer.virtual_count == 0 {
-            return NSDragOperation::None;
+            return None;
         }
-        operation_for(target.handler.over(offer, x, y, keys).effect)
+        Some((target.handler.clone(), target.offer.take()?))
     })
+    .flatten();
+    let Some((handler, offer)) = taken else { return NSDragOperation::None };
+    let answer = handler.over(&offer, x, y, keys);
+    with_target(view, |target| {
+        if target.offer.is_none() {
+            target.offer = Some(offer);
+        }
+    });
+    operation_for(answer.effect)
 }
 
 extern "C-unwind" fn dragging_entered(
@@ -138,13 +175,12 @@ extern "C-unwind" fn dragging_updated(
     over(this, info, false)
 }
 
-extern "C-unwind" fn dragging_exited(_: &NSView, _: Sel, _: Option<&ProtocolObject<dyn NSDraggingInfo>>) {
-    let handler = TARGET.with(|t| {
-        let mut target = t.borrow_mut();
-        let target = target.as_mut()?;
+extern "C-unwind" fn dragging_exited(this: &NSView, _: Sel, _: Option<&ProtocolObject<dyn NSDraggingInfo>>) {
+    let handler = with_target(this, |target| {
         target.offer.take()?;
         Some(target.handler.clone())
-    });
+    })
+    .flatten();
     if let Some(handler) = handler {
         handler.leave();
     }
@@ -157,12 +193,11 @@ extern "C-unwind" fn prepare(_: &NSView, _: Sel, _: &ProtocolObject<dyn NSDraggi
 extern "C-unwind" fn perform(this: &NSView, _: Sel, info: &ProtocolObject<dyn NSDraggingInfo>) -> bool {
     let (x, y) = point_in(this, info);
     let keys = keys_now();
-    let taken = TARGET.with(|t| {
-        let mut target = t.borrow_mut();
-        let target = target.as_mut()?;
+    let taken = with_target(this, |target| {
         let offer = target.offer.take()?;
         Some((target.handler.clone(), offer))
-    });
+    })
+    .flatten();
     match taken {
         Some((handler, mut offer)) => {
             if offer.virtual_count > 0 {
@@ -217,8 +252,27 @@ pub fn register(window: &impl HasWindowHandle, handler: Rc<dyn DropHandler>) -> 
     // a registered view under the pointer comes first, so the methods above are asked.
     // Files, and files promised by other programs (Mail, Photos).
     view.registerForDraggedTypes(&promise::types().arrayByAddingObject(unsafe { NSPasteboardTypeFileURL }));
-    TARGET.with(|t| *t.borrow_mut() = Some(Target { handler, offer: None }));
+    let key = view_key(&view);
+    TARGETS.with(|t| put(&mut t.borrow_mut(), key, Target { handler, offer: None }));
     Some(Registration { view })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Deviation 13: a second window's view keeps the first one's target as it was.
+    #[test]
+    fn each_view_keeps_its_own_target() {
+        let mut list = Vec::new();
+        put(&mut list, 1, "first");
+        put(&mut list, 2, "second");
+        assert_eq!(list, [(1, "first"), (2, "second")]);
+        put(&mut list, 2, "again");
+        assert_eq!(take(&mut list, 2), Some("again"));
+        assert_eq!(take(&mut list, 2), None);
+        assert_eq!(list, [(1, "first")], "the first view's stays");
+    }
 }
 
 define_class!(

@@ -177,8 +177,11 @@ content-max-size = "64 MB" # larger files are not read for text
 - **Command line**: `gezik [PATH...]` opens folders as tabs; a file opens its folder with it
   selected. Options: `--new-tab`, `--new-window`, `--select PATH`, `--unregister`,
   `--version`, `--help`.
-- **Single instance**: a second `gezik` opens in the running window (in a tab already showing
-  that folder, or a new one). **New window** (Ctrl+N, ⌘N on macOS) starts a separate Gezik.
+- **Single instance**: a second `gezik` opens in the window used last (in a tab already
+  showing that folder, or a new one). **New window** (Ctrl+N, ⌘N on macOS) opens a window in
+  the same Gezik; `gezik --new-window [PATH...]` does too (a new process only if the running
+  Gezik does not answer, or with `[system] single-instance = false`). A tab moves to another
+  window from its menu (**Move to new window**, **Move to window ▸**).
 - **Trash view**: the Recycle Bin / Trash row in the sidebar shows every bin in one list,
   with original location and date deleted. **Put Back**, **Delete Permanently** and **Empty
   Trash**. On macOS, Gezik needs Full Disk Access to show the Trash.

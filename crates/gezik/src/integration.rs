@@ -447,17 +447,17 @@ pub fn confirmation_with(
 }
 
 thread_local! {
-    static CURRENT: RefCell<Option<Integration>> = const { RefCell::new(None) };
+    pub(crate) static CURRENT: crate::windows::Slot<Integration> = const { crate::windows::Slot::new() };
 }
 
 pub fn with_current(f: impl FnOnce(&Integration)) {
-    if let Some(integration) = CURRENT.with(|c| c.borrow().clone()) {
+    if let Some(integration) = CURRENT.with(crate::windows::Slot::current) {
         f(&integration);
     }
 }
 
 pub fn is_open() -> bool {
-    CURRENT.with(|c| c.borrow().as_ref().is_some_and(|i| i.0.open.get()))
+    CURRENT.with(crate::windows::Slot::current).is_some_and(|i| i.0.open.get())
 }
 
 struct Inner {
@@ -482,15 +482,16 @@ impl Integration {
             snapshot: RefCell::default(),
             model: Rc::new(VecModel::default()),
         }));
-        CURRENT.with(|c| *c.borrow_mut() = Some(integration.clone()));
+        CURRENT.with(|c| c.set(crate::windows::current(), integration.clone()));
         integration
     }
 
     /// `system-integration`: the state is read on a thread, then the box opens.
     pub fn open(&self) {
-        std::thread::spawn(|| {
+        let window_id = crate::windows::current();
+        std::thread::spawn(move || {
             let snapshot = changes::read_snapshot();
-            let _ = slint::invoke_from_event_loop(move || with_current(|i| i.show(snapshot)));
+            crate::windows::post(window_id, move || with_current(|i| i.show(snapshot)));
         });
     }
 
@@ -666,6 +667,7 @@ pub fn ask_hotkey(previous: Option<(String, String)>) {
 
 /// Reads what is there now on a thread, asks with exactly what will be written, then does it.
 fn confirm(action: RowAction) {
+    let window_id = crate::windows::current();
     std::thread::spawn(move || {
         let snapshot = changes::read_snapshot();
         let access = changes::SystemAccess::new();
@@ -697,7 +699,7 @@ fn confirm(action: RowAction) {
             risky.as_deref(),
             login_add.as_deref(),
         );
-        let _ = slint::invoke_from_event_loop(move || {
+        crate::windows::post(window_id, move || {
             let (title, button) = words(action);
             match asked {
                 Err(why) => tell(&title, why),
@@ -714,9 +716,10 @@ fn confirm(action: RowAction) {
 fn carry_out(action: RowAction) {
     match action {
         RowAction::Run(Command::AddToPath) => {
-            std::thread::spawn(|| {
+            let window_id = crate::windows::current();
+            std::thread::spawn(move || {
                 let result = changes::add_now();
-                let _ = slint::invoke_from_event_loop(move || added(result));
+                crate::windows::post(window_id, move || added(result));
             });
         }
         RowAction::Run(Command::RemoveFromPath) => in_background("Remove gezik from PATH", changes::remove_now),
@@ -725,9 +728,10 @@ fn carry_out(action: RowAction) {
         }
         RowAction::Repair => in_background("Repair gezik on PATH", changes::repair_now),
         RowAction::Run(Command::MakeDefault) => {
-            std::thread::spawn(|| {
+            let window_id = crate::windows::current();
+            std::thread::spawn(move || {
                 let result = changes::make_default_now();
-                let _ = slint::invoke_from_event_loop(move || match result {
+                crate::windows::post(window_id, move || match result {
                     Err(why) => tell("Could not make Gezik the default file manager", why),
                     Ok(Some(note)) => tell("Reveal in Finder opens in Gezik now", note),
                     Ok(None) => {
@@ -743,9 +747,10 @@ fn carry_out(action: RowAction) {
         }
         RowAction::RepairDefault => in_background("Repair the default file manager", changes::repair_default_now),
         RowAction::Run(Command::LoginOn) => {
-            std::thread::spawn(|| {
+            let window_id = crate::windows::current();
+            std::thread::spawn(move || {
                 let result = changes::login_on_now();
-                let _ = slint::invoke_from_event_loop(move || match result {
+                crate::windows::post(window_id, move || match result {
                     Err(why) => tell("Could not make Gezik start at login", why),
                     Ok(()) => {
                         crate::panes::with_active(|p| p.view.note("Gezik starts at login now".into()));
@@ -814,9 +819,10 @@ fn added(result: Result<(), String>) {
 
 /// Runs `work` on a thread; its lines (or its error) come back as one question.
 fn in_background(title: &'static str, work: impl FnOnce() -> Result<Vec<String>, String> + Send + 'static) {
+    let window_id = crate::windows::current();
     std::thread::spawn(move || {
         let result = work();
-        let _ = slint::invoke_from_event_loop(move || match result {
+        crate::windows::post(window_id, move || match result {
             Ok(lines) if lines.is_empty() => tell(title, "Nothing to do.".into()),
             Ok(lines) => tell(title, lines.join("\n")),
             Err(why) => tell(title, why),

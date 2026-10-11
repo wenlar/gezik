@@ -576,6 +576,18 @@ Numbers stay as they are when branches merge (see 10b). 10e starts at 190 as its
 194. **Menus.** As macOS 257 with Gezik's own menu; middle-click a folder row in another column: a new tab.
 195. **Fallback, two panes, memory.** As macOS 258–259 with F3 for two panes (memory: `ps -o rss= -p $(pgrep -x gezik)`; the deep chain under `/tmp/gezik-deep`).
 
+### 10g, windows
+
+Numbers stay as they are when branches merge (see 10b). 10g starts at 200 as its plan decided. GNOME and KDE, X11 and Wayland.
+
+200. **Tests first.** As macOS 260; paste.
+201. **Ctrl+N, close, memory.** As macOS 261 and 263 with Ctrl (memory: `ps -o rss= -p $(pgrep -x gezik)`; `pgrep -c -x gezik` is 1). On Wayland the new window may open anywhere (no positioning). On Wayland especially: closing the second window leaves the process and the first window running (write it if Gezik quits).
+202. **Move a tab by menu.** As macOS 264 (tab menu `Move to new window`, `Move to window ▸`).
+203. **Dragging a tab out does not tear it off.** Drag a tab out of the window and release over the desktop and over the other Gezik window: the tab stays where it was, nothing opens (X11 and Wayland). Inside the window reordering works as before.
+204. **Files between windows, clipboard.** As macOS 266 with Ctrl copy / Shift move; close the first-opened window, then copy (Ctrl+C) and paste (Ctrl+V) in the remaining one and drag files from the desktop's file manager onto it (the clipboard and drop target survive the window that started them; Wayland especially).
+205. **Second launch and session.** As macOS 267–268 (`gezik <folder>` from a terminal; FileManager1 "Show in folder" from a browser's downloads opens in the window used last).
+206. **Focus order.** As macOS 270 with Gezik's own menus (`gezik <folder>` from a terminal); on Wayland write whether the window used last really gets the folder (the compositor may not say which window has the focus).
+
 ## Known gaps (not bugs)
 
 - **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (F5 works it out again). Search results and the flat view show no folder sizes.

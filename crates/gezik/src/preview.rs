@@ -160,9 +160,10 @@ struct Request {
 
 /// Starts the worker thread: it takes the latest request, skips it if a newer one came
 /// meanwhile, loads it and hands the result to the UI thread.
-fn start_worker(window: slint::Weak<AppWindow>, current: Arc<AtomicU64>) -> Arc<Slot<Request>> {
+fn start_worker(current: Arc<AtomicU64>) -> Arc<Slot<Request>> {
     let slot = Arc::new(Slot::default());
     let requests = slot.clone();
+    let window_id = crate::windows::current();
     let spawned = std::thread::Builder::new().name("gezik-preview".into()).spawn(move || {
         gezik_platform::init_thread();
         loop {
@@ -173,7 +174,7 @@ fn start_worker(window: slint::Weak<AppWindow>, current: Arc<AtomicU64>) -> Arc<
                 continue;
             }
             let current = current.clone();
-            let _ = window.upgrade_in_event_loop(move |_| {
+            crate::windows::post(window_id, move || {
                 if current.load(Ordering::SeqCst) == generation {
                     with_current(|p| p.publish(describe(&target, Some(body))));
                 }
@@ -291,12 +292,12 @@ pub fn describe(target: &Target, body: Option<Body>) -> PreviewInfo {
 
 thread_local! {
     /// The preview of this (UI) thread, so loading threads and timers can reach it.
-    static CURRENT: RefCell<Option<Preview>> = const { RefCell::new(None) };
+    pub(crate) static CURRENT: crate::windows::Slot<Preview> = const { crate::windows::Slot::new() };
 }
 
 /// Runs `f` with this UI thread's preview, if there is one.
 pub fn with_current<R>(f: impl FnOnce(&Preview) -> R) -> Option<R> {
-    let preview = CURRENT.with(|c| c.borrow().clone())?;
+    let preview = CURRENT.with(crate::windows::Slot::current)?;
     Some(f(&preview))
 }
 
@@ -351,7 +352,7 @@ impl Preview {
             info: RefCell::new(PreviewInfo::default()),
             quick_look: RefCell::new(None),
         }));
-        CURRENT.with(|c| *c.borrow_mut() = Some(preview.clone()));
+        CURRENT.with(|c| c.set(crate::windows::current(), preview.clone()));
         preview
     }
 
@@ -399,9 +400,13 @@ impl Preview {
             }
             return;
         }
-        self.0.timer.start(slint::TimerMode::SingleShot, DELAY, || {
-            with_current(Preview::refresh);
-        });
+        self.0.timer.start(
+            slint::TimerMode::SingleShot,
+            DELAY,
+            crate::windows::bind_mut(|| {
+                with_current(Preview::refresh);
+            }),
+        );
     }
 
     /// Shows the selection's facts now and loads its picture or text in the background.
@@ -416,12 +421,7 @@ impl Preview {
             return;
         }
         let px = self.picture_px();
-        let worker = self
-            .0
-            .worker
-            .borrow_mut()
-            .get_or_insert_with(|| start_worker(self.0.window.clone(), self.0.generation.clone()))
-            .clone();
+        let worker = self.0.worker.borrow_mut().get_or_insert_with(|| start_worker(self.0.generation.clone())).clone();
         worker.put(Request { target, px, generation });
     }
 
@@ -480,17 +480,20 @@ impl Preview {
         }
         // With several items the panel can come on screen a moment after the call: Gezik's own
         // window is shown only if it still is not there then.
-        slint::Timer::single_shot(Duration::from_millis(500), || {
-            if gezik_platform::ql_panel::is_open() {
-                return;
-            }
-            with_current(|p| {
-                if let Some(window) = p.0.window.upgrade() {
-                    window.set_status("The system Quick Look panel did not open; Gezik's own is shown".into());
+        slint::Timer::single_shot(
+            Duration::from_millis(500),
+            crate::windows::bind(|| {
+                if gezik_platform::ql_panel::is_open() {
+                    return;
                 }
-                p.open_own_quick_look();
-            });
-        });
+                with_current(|p| {
+                    if let Some(window) = p.0.window.upgrade() {
+                        window.set_status("The system Quick Look panel did not open; Gezik's own is shown".into());
+                    }
+                    p.open_own_quick_look();
+                });
+            }),
+        );
         true
     }
 
@@ -514,14 +517,26 @@ impl Preview {
         }
         let Some(window) = self.0.window.upgrade() else { return };
         let info = self.0.info.borrow().clone();
+        // Its window's events are no events of a Gezik window: they act in this one.
+        let id = crate::windows::current();
+        // One quick look in the process (deviation 15): another window's closes.
+        for (other, preview) in CURRENT.with(crate::windows::Slot::all) {
+            if other != id {
+                crate::windows::enter(other, || preview.close_quick_look());
+            }
+        }
         let opened = crate::quick_look::QuickLook::open(
             &window,
             info,
             window.get_mono_font(),
-            |text, ctrl, alt, shift, meta| {
-                with_current(|p| p.quick_look_key(text, ctrl, alt, shift, meta)).unwrap_or(false)
+            move |text, ctrl, alt, shift, meta| {
+                crate::windows::with_window(id, |_| with_current(|p| p.quick_look_key(text, ctrl, alt, shift, meta)))
+                    .flatten()
+                    .unwrap_or(false)
             },
-            Preview::close_later,
+            move || {
+                crate::windows::with_window(id, |_| Preview::close_later());
+            },
         );
         match opened {
             Ok(quick_look) => {
@@ -546,9 +561,12 @@ impl Preview {
     /// Closes quick look once the current event is done: its window may be the one
     /// handling it.
     fn close_later() {
-        slint::Timer::single_shot(Duration::ZERO, || {
-            with_current(Preview::close_quick_look);
-        });
+        slint::Timer::single_shot(
+            Duration::ZERO,
+            crate::windows::bind(|| {
+                with_current(Preview::close_quick_look);
+            }),
+        );
     }
 
     /// A key in the quick look window: Space or Esc closes it, arrows move in the list.

@@ -262,6 +262,13 @@ type SharedColumns = Rc<RefCell<Vec<ColumnState>>>;
 pub struct View(Rc<Inner>);
 
 impl View {
+    /// Whether this view is still held (a test of a closed window: it is not).
+    #[cfg(test)]
+    pub fn alive(&self) -> impl Fn() -> bool + use<> {
+        let weak = Rc::downgrade(&self.0);
+        move || weak.upgrade().is_some()
+    }
+
     pub fn new(
         id: PaneId,
         window: slint::Weak<AppWindow>,
@@ -405,10 +412,13 @@ impl View {
             return;
         }
         let view = self.clone();
-        slint::Timer::single_shot(Duration::from_millis(150), move || {
-            view.0.resort_pending.set(false);
-            view.resort(false);
-        });
+        slint::Timer::single_shot(
+            Duration::from_millis(150),
+            crate::windows::bind(move || {
+                view.0.resort_pending.set(false);
+                view.resort(false);
+            }),
+        );
     }
 
     /// Asks for the system name of every type in `entries` (to sort by type).
@@ -581,11 +591,14 @@ impl View {
         self.set_list_scroll(state.scroll);
         if state.scroll != 0.0 && count > 0 {
             let (view, scroll) = (self.clone(), state.scroll);
-            slint::Timer::single_shot(SCROLL_RESTORE_DELAY, move || {
-                if view.0.shown.get() == shown && view.0.window.upgrade().is_some() {
-                    view.set_list_scroll(scroll);
-                }
-            });
+            slint::Timer::single_shot(
+                SCROLL_RESTORE_DELAY,
+                crate::windows::bind(move || {
+                    if view.0.shown.get() == shown && view.0.window.upgrade().is_some() {
+                        view.set_list_scroll(scroll);
+                    }
+                }),
+            );
         }
         self.update_status();
         self.sync_columns();
@@ -1019,11 +1032,15 @@ impl View {
             return;
         }
         let weak = Rc::downgrade(&self.0);
-        self.0.minute.start(slint::TimerMode::Repeated, Duration::from_secs(60), move || {
-            if let Some(inner) = weak.upgrade() {
-                View(inner).redraw_visible();
-            }
-        });
+        self.0.minute.start(
+            slint::TimerMode::Repeated,
+            Duration::from_secs(60),
+            crate::windows::bind_mut(move || {
+                if let Some(inner) = weak.upgrade() {
+                    View(inner).redraw_visible();
+                }
+            }),
+        );
     }
 
     /// The cloud roots arrived or changed (they load after the first folder may be shown):
@@ -2477,15 +2494,18 @@ impl View {
     /// frame is done, unless a listing was shown or an entry revealed meanwhile.
     fn keep_scroll_after_reset(&self, scroll: f32) {
         let (view, shown, revealed) = (self.clone(), self.0.shown.get(), self.0.revealed.get());
-        slint::Timer::single_shot(SCROLL_RESTORE_DELAY, move || {
-            if view.0.shown.get() == shown
-                && view.0.revealed.get() == revealed
-                && view.0.window.upgrade().is_some()
-                && view.list_scroll() != scroll
-            {
-                view.set_list_scroll(scroll);
-            }
-        });
+        slint::Timer::single_shot(
+            SCROLL_RESTORE_DELAY,
+            crate::windows::bind(move || {
+                if view.0.shown.get() == shown
+                    && view.0.revealed.get() == revealed
+                    && view.0.window.upgrade().is_some()
+                    && view.list_scroll() != scroll
+                {
+                    view.set_list_scroll(scroll);
+                }
+            }),
+        );
     }
 
     fn notify_listeners(&self) {
@@ -2545,13 +2565,16 @@ impl View {
     /// set again once that frame is done (see [`crate::keys::scroll_was_snapped`]).
     pub fn revealed(&self, index: i32, target: f32) {
         let view = self.clone();
-        slint::Timer::single_shot(SCROLL_RESTORE_DELAY, move || {
-            if crate::panes::data(view.0.id).is_some_and(|d| d.focus_row == index)
-                && crate::keys::scroll_was_snapped(view.list_scroll(), target, view.line_height())
-            {
-                view.set_list_scroll(target);
-            }
-        });
+        slint::Timer::single_shot(
+            SCROLL_RESTORE_DELAY,
+            crate::windows::bind(move || {
+                if crate::panes::data(view.0.id).is_some_and(|d| d.focus_row == index)
+                    && crate::keys::scroll_was_snapped(view.list_scroll(), target, view.line_height())
+                {
+                    view.set_list_scroll(target);
+                }
+            }),
+        );
     }
 }
 

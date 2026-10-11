@@ -12,22 +12,20 @@ use gezik_config::settings_writer::SettingsChange;
 use gezik_config::store::ConfigStore;
 use gezik_core::nav::Location;
 use gezik_core::search::{Scope, SearchSpec};
-use slint::ComponentHandle;
 
-use crate::AppWindow;
 use crate::dialog::Dialogs;
 
 thread_local! {
     static SAVED: RefCell<Vec<SavedSearch>> = const { RefCell::new(Vec::new()) };
     /// Saves on their way: the last one's number, and the list after it while any is on its way.
     static WRITING: RefCell<(u64, Option<Vec<SavedSearch>>)> = const { RefCell::new((0, None)) };
-    static CURRENT: RefCell<Option<SavedSearches>> = const { RefCell::new(None) };
+    pub(crate) static CURRENT: crate::windows::Slot<SavedSearches> = const { crate::windows::Slot::new() };
 }
 
 /// settings.toml changed (every resolve); the sidebar's SEARCHES follows.
 pub fn set_settings(searches: Vec<SavedSearch>) {
     SAVED.with(|s| *s.borrow_mut() = searches);
-    crate::sidebar::with_current(crate::sidebar::Sidebar::searches_changed);
+    crate::windows::for_each(|_| crate::sidebar::with_current(crate::sidebar::Sidebar::searches_changed));
 }
 
 pub fn saved() -> Vec<SavedSearch> {
@@ -75,13 +73,12 @@ pub fn resolve(folder: &str, here: &Location, dirs: &KnownDirs) -> Result<Scope,
 }
 
 pub fn with_current(f: impl FnOnce(&SavedSearches)) {
-    if let Some(searches) = CURRENT.with(|c| c.borrow().clone()) {
+    if let Some(searches) = CURRENT.with(crate::windows::Slot::current) {
         f(&searches);
     }
 }
 
 struct Inner {
-    window: slint::Weak<AppWindow>,
     dialogs: Dialogs,
     /// Where settings.toml is (none without a config folder: the searches live in memory then).
     store: Option<ConfigStore>,
@@ -91,9 +88,9 @@ struct Inner {
 pub struct SavedSearches(Rc<Inner>);
 
 impl SavedSearches {
-    pub fn new(window: &AppWindow, dialogs: Dialogs, store: Option<ConfigStore>) -> SavedSearches {
-        let searches = SavedSearches(Rc::new(Inner { window: window.as_weak(), dialogs, store }));
-        CURRENT.with(|c| *c.borrow_mut() = Some(searches.clone()));
+    pub fn new(dialogs: Dialogs, store: Option<ConfigStore>) -> SavedSearches {
+        let searches = SavedSearches(Rc::new(Inner { dialogs, store }));
+        CURRENT.with(|c| c.set(crate::windows::current(), searches.clone()));
         searches
     }
 
@@ -198,9 +195,9 @@ impl SavedSearches {
             w.1 = Some(list.clone());
             w.0
         });
-        let window = self.0.window.clone();
+        let window_id = crate::windows::current();
         store.write_settings(SettingsChange::Searches(list.clone()), move |result| {
-            let _ = window.upgrade_in_event_loop(move |_| with_current(|s| s.written(seq, list, result)));
+            crate::windows::post(window_id, move || with_current(|s| s.written(seq, list, result)));
         });
     }
 

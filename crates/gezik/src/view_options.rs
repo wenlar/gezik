@@ -11,7 +11,6 @@ use gezik_config::settings::ViewOption;
 use gezik_config::settings_writer::SettingsChange;
 use gezik_config::store::ConfigStore;
 use gezik_core::view::{DateFormat, SizeFormat, ViewOptions};
-use slint::ComponentHandle;
 
 use crate::AppWindow;
 
@@ -66,13 +65,13 @@ impl OptionsState {
 
 thread_local! {
     static STATE: RefCell<OptionsState> = RefCell::new(OptionsState::default());
-    /// The window (for the macOS menu bar's marks) and where settings.toml is.
-    static CONTEXT: RefCell<Option<(slint::Weak<AppWindow>, Option<ConfigStore>)>> = const { RefCell::new(None) };
+    /// Where settings.toml is.
+    static STORE: RefCell<Option<ConfigStore>> = const { RefCell::new(None) };
 }
 
 /// Once, at start, before the settings are first applied.
-pub fn install(window: &AppWindow, store: Option<ConfigStore>) {
-    CONTEXT.with(|c| *c.borrow_mut() = Some((window.as_weak(), store)));
+pub fn install(store: Option<ConfigStore>) {
+    STORE.with(|c| *c.borrow_mut() = store);
     sync_window(current());
 }
 
@@ -98,21 +97,22 @@ pub fn change(option: ViewOption) {
     if next == current() {
         return;
     }
-    let store = CONTEXT.with(|c| c.borrow().as_ref().and_then(|(_, store)| store.clone()));
+    let store = STORE.with(|c| c.borrow().clone());
     let Some(store) = store else {
         let shown = STATE.with(|s| s.borrow_mut().change_in_memory(option));
         return show(shown);
     };
     let shown = STATE.with(|s| s.borrow_mut().change(option));
     show(shown);
+    let id = crate::windows::current();
     store.write_settings(SettingsChange::ViewOption(option), move |result| {
-        let _ = slint::invoke_from_event_loop(move || written(option, result));
+        let _ = slint::invoke_from_event_loop(move || written(id, option, result));
     });
 }
 
-fn written(option: ViewOption, result: Result<(), Warning>) {
+fn written(id: crate::windows::WindowId, option: ViewOption, result: Result<(), Warning>) {
     if let Err(warning) = &result {
-        crate::panes::with_active(|p| p.view.note(warning.to_string()));
+        crate::windows::with_window(id, |_| crate::panes::with_active(|p| p.view.note(warning.to_string())));
     }
     let back = STATE.with(|s| s.borrow_mut().written(result.is_ok(), option));
     if let Some(options) = back {
@@ -129,7 +129,7 @@ pub fn toggle_hidden() {
 /// come or go.
 fn show(options: ViewOptions) {
     let mut reload = false;
-    for p in crate::panes::all() {
+    for p in crate::panes::everywhere() {
         if p.view.set_options(options) {
             p.nav.reload();
             reload = true;
@@ -137,7 +137,7 @@ fn show(options: ViewOptions) {
     }
     if reload {
         // Hidden or system folders come or go in the sidebar tree's open branches too.
-        crate::sidebar::with_current(crate::sidebar::Sidebar::options_changed);
+        crate::windows::for_each(|_| crate::sidebar::with_current(crate::sidebar::Sidebar::options_changed));
     }
     sync_window(options);
 }
@@ -146,8 +146,11 @@ fn show(options: ViewOptions) {
 /// properties too, unused). Also after a choice that changed nothing: Slint flipped that
 /// item's mark itself.
 pub fn sync_window(options: ViewOptions) {
-    let window = CONTEXT.with(|c| c.borrow().as_ref().and_then(|(window, _)| window.upgrade()));
-    let Some(window) = window else { return };
+    crate::windows::for_each(|window| sync(window, options));
+}
+
+/// [`sync_window`] for one window.
+pub fn sync(window: &AppWindow, options: ViewOptions) {
     window.set_view_hide_extensions(options.hide_extensions);
     window.set_view_folders_first(options.folders_first);
     window.set_view_single_click(options.single_click_open);

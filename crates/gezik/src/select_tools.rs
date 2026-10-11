@@ -15,12 +15,12 @@ const MESSAGE: &str = "Names that match (* and ? are wildcards, ; separates patt
 
 thread_local! {
     /// The selection tools of this (UI) thread, for the actions.
-    static CURRENT: RefCell<Option<SelectTools>> = const { RefCell::new(None) };
+    pub(crate) static CURRENT: crate::windows::Slot<SelectTools> = const { crate::windows::Slot::new() };
 }
 
 /// Runs `f` with this UI thread's selection tools, if there are any yet.
 pub fn with_current(f: impl FnOnce(&SelectTools)) {
-    if let Some(tools) = CURRENT.with(|c| c.borrow().clone()) {
+    if let Some(tools) = CURRENT.with(crate::windows::Slot::current) {
         f(&tools);
     }
 }
@@ -44,17 +44,27 @@ struct Inner {
     dialogs: Dialogs,
     store: Option<ConfigStore>,
     /// The last pattern used (the box starts with it).
-    last: RefCell<String>,
+    last: Rc<RefCell<String>>,
 }
 
 #[derive(Clone)]
 pub struct SelectTools(Rc<Inner>);
 
 impl SelectTools {
+    /// Whether `other` (another window's) keeps the same last values as this one.
+    #[cfg(test)]
+    pub fn shares_with(&self, other: &SelectTools) -> bool {
+        Rc::ptr_eq(&self.0.last, &other.0.last)
+    }
+
     /// `last`: the pattern state.toml remembers.
     pub fn new(dialogs: Dialogs, store: Option<ConfigStore>, last: Option<String>) -> SelectTools {
-        let tools = SelectTools(Rc::new(Inner { dialogs, store, last: RefCell::new(last.unwrap_or_default()) }));
-        CURRENT.with(|c| *c.borrow_mut() = Some(tools.clone()));
+        // The process's one last pattern: a later window shares an open window's (no window writes over another's).
+        let last = CURRENT
+            .with(|c| c.find_map(|_, other| Some(other.0.last.clone())))
+            .unwrap_or_else(|| Rc::new(RefCell::new(last.unwrap_or_default())));
+        let tools = SelectTools(Rc::new(Inner { dialogs, store, last }));
+        CURRENT.with(|c| c.set(crate::windows::current(), tools.clone()));
         tools
     }
 
