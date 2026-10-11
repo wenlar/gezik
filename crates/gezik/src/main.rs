@@ -13,6 +13,7 @@ mod connect;
 mod context_menu;
 mod convert;
 mod copy_path;
+mod copy_to;
 mod dialog;
 mod diff;
 mod drag;
@@ -351,7 +352,11 @@ fn perform(
         | Action::SizeMap
         | Action::Checksums
         | Action::VerifyChecksums
-        | Action::FindDuplicates => return actions::run(action, nav, view),
+        | Action::FindDuplicates
+        | Action::CopyTo
+        | Action::MoveTo
+        | Action::SplitFile
+        | Action::JoinFiles => return actions::run(action, nav, view),
     }
     true
 }

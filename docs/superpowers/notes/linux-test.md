@@ -618,6 +618,15 @@ Numbers stay as they are when branches merge (see 10b). 11g starts at 223 as its
 223. **Tests first.** As macOS 297; paste.
 224. **Open, look, zoom, keys, menu.** As macOS 298–301 with the palette (Ctrl+Shift+P `Size Map`) and the right-click `Tools ▸ Size Map` (no menu bar), Backspace / Alt+Up for ⌫ / ⌥↑, Ctrl+R / F5, Move to Trash going to `~/.local/share/Trash`; on a 2× scale screen the box edges stay sharp.
 225. **Root.** Map `/`: it stays on the root file system (no `/proc`, `/sys`, `/dev`, `/run` or other mounts), finishes, and memory (`ps -o rss= -p $(pgrep -x gezik)`) goes back to within 0.3 MB of before after closing (write both numbers).
+### 11i, filtered copy, split and join
+
+Numbers stay as they are when branches merge. 11i starts at 226 as its plan decided. GNOME and KDE, X11 and Wayland.
+
+226. **Tests first.** As macOS 303; paste.
+227. **Copy To…, mask, filter.** As macOS 304–306 with Ctrl+Shift+P for the palette and Ctrl+Z; `*.jpg>*.cr2` with `IMG_1.jpg` selected takes `IMG_1.CR2` but not `img_1.cr2` (Linux names tell case apart).
+228. **Filtered move.** As macOS 307 with F6; on a USB stick (other drive) the moved files are copied and removed, and Ctrl+Z brings them back.
+229. **Split and join.** As macOS 308–309 (`cmp`, `sha256sum`; the FAT32 default with a vfat stick as the other pane).
+230. **Other tools' parts.** `split -b 10m -d -a 3 --numeric-suffixes=1 big.iso big.iso.` makes `big.iso.001`…: Join Files joins them (no `.crc`: the job says the result was not checked); `sha256sum` matches the original.
 
 ### 11f, duplicate files
 

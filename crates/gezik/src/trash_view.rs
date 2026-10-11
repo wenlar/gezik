@@ -301,6 +301,10 @@ pub fn allowed(action: Action) -> bool {
         | Action::SaveSearch
         | Action::Compare
         | Action::SizeMap
+        | Action::CopyTo
+        | Action::MoveTo
+        | Action::SplitFile
+        | Action::JoinFiles
         | Action::CopyToOtherPane => false,
     }
 }

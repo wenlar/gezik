@@ -100,6 +100,80 @@ pub fn rename_selection(name: &str, is_dir: bool) -> (usize, usize) {
     (0, stem.len())
 }
 
+/// `name` renamed by the DOS/TC mask `mask` (spec 11 §12.3): name and mask each split at
+/// their last dot (a name starting with its only dot is all name); in each half `*` is the
+/// rest of the name's half, `?` its character there (none past its end), any other character
+/// is itself and stands for one. A mask without a dot works on the whole name. A result that
+/// cannot be a name here keeps `name` (the question refuses such a mask first: `mask_error`).
+pub fn apply_mask(name: &str, mask: &str) -> String {
+    try_mask(name, mask).unwrap_or_else(|| name.to_owned())
+}
+
+/// [`apply_mask`]'s result, `None` if it cannot be a name here.
+pub fn try_mask(name: &str, mask: &str) -> Option<String> {
+    fn halves(text: &str) -> (&str, Option<&str>) {
+        match text.rfind('.') {
+            None | Some(0) => (text, None),
+            Some(at) => (&text[..at], Some(&text[at + 1..])),
+        }
+    }
+    fn half(source: &str, mask: &str) -> String {
+        let chars: Vec<char> = source.chars().collect();
+        let (mut out, mut at) = (String::new(), 0);
+        for m in mask.chars() {
+            match m {
+                '*' => {
+                    out.extend(chars.get(at..).unwrap_or_default());
+                    at = chars.len();
+                }
+                '?' => {
+                    out.extend(chars.get(at));
+                    at += 1;
+                }
+                c => {
+                    out.push(c);
+                    at += 1;
+                }
+            }
+        }
+        out
+    }
+    let out = match halves(mask) {
+        (whole, None) => half(name, whole),
+        (stem_mask, Some(ext_mask)) => {
+            let (stem, ext) = halves(name);
+            let ext = half(ext.unwrap_or(""), ext_mask);
+            let stem = half(stem, stem_mask);
+            if ext.is_empty() { stem } else { format!("{stem}.{ext}") }
+        }
+    };
+    validate_name(&out, NameRules::current()).is_ok().then_some(out)
+}
+
+/// Why `mask` cannot rename `names` (the chosen items' names; with none, a sample name so a
+/// mask is checked by itself): the first of them it would make unusable here.
+pub fn mask_error(mask: &str, names: &[&str]) -> Option<String> {
+    let names = if names.is_empty() { &["name.txt"][..] } else { names };
+    let bad = names.iter().find(|name| try_mask(name, mask).is_none())?;
+    Some(format!("The mask {mask} makes no usable name of {bad}"))
+}
+
+/// A typed target split into its folder and a name mask: the last part is a mask if it holds
+/// `*` or `?` (`D:\Yedek\*.bak` → `D:\Yedek\`, `*.bak`; the folder keeps its separator, so a
+/// drive stays a root). On Windows `D:*.bak` gives the folder `D:`, which has no root: the
+/// question refuses it rather than masking the folder shown.
+pub fn split_mask(typed: &str) -> (&str, Option<&str>) {
+    let seps: &[char] = if cfg!(windows) { &['/', '\\'] } else { &['/'] };
+    let bytes = typed.as_bytes();
+    let drive = cfg!(windows) && bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic();
+    let (folder, last) = match typed.rfind(seps) {
+        Some(at) => (&typed[..=at], &typed[at + 1..]),
+        None if drive => (&typed[..2], &typed[2..]),
+        None => ("", typed),
+    };
+    if last.contains(['*', '?']) { (folder, Some(last)) } else { (typed, None) }
+}
+
 /// Which file system rules a name must follow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NameRules {
@@ -288,5 +362,52 @@ mod tests {
         assert_eq!(NameError::Character(':').to_string(), "A name cannot contain :");
         assert_eq!(NameError::Character('\t').to_string(), "A name cannot contain control characters");
         assert_eq!(NameError::Reserved("CON".into()).to_string(), "CON is reserved by Windows");
+    }
+
+    #[test]
+    fn a_mask_renames_as_dos_and_tc_do() {
+        assert_eq!(apply_mask("report.txt", "*.bak"), "report.bak");
+        assert_eq!(apply_mask("report.txt", "*_old.*"), "report_old.txt");
+        assert_eq!(apply_mask("2024-05-01.png", "????-*.jpg"), "2024-05-01.jpg");
+        assert_eq!(apply_mask("abc.txt", "x?c.*"), "xbc.txt", "a plain character stands for one");
+        assert_eq!(apply_mask("ab.txt", "???.txt"), "ab.txt", "? past the end: nothing");
+        assert_eq!(apply_mask("şarkı.mp3", "?????_1.*"), "şarkı_1.mp3", "characters, not bytes");
+        // `*.*` changes nothing, also with no extension and for a dot-file.
+        for name in ["report.txt", "Makefile", ".gitignore", "a.tar.gz"] {
+            assert_eq!(apply_mask(name, "*.*"), name);
+        }
+        assert_eq!(apply_mask("Makefile", "*.bak"), "Makefile.bak");
+        assert_eq!(apply_mask(".bashrc", "*.bak"), ".bashrc.bak", "a dot-file is all name");
+        assert_eq!(apply_mask("a.tar.gz", "*.old"), "a.tar.old", "the last dot");
+        assert_eq!(apply_mask("report.txt", "*"), "report.txt", "no dot: the whole name");
+        assert_eq!(apply_mask("report.txt", "new_*"), "new_rt.txt", "a plain character takes a place (DOS)");
+        assert_eq!(apply_mask("report.txt", "*."), "report", "an empty extension drops the dot");
+        if cfg!(windows) {
+            assert_eq!(apply_mask("a.txt", "*:*.txt"), "a.txt", "not a name here: kept");
+        }
+    }
+
+    #[test]
+    fn a_target_ending_in_a_mask_is_split() {
+        assert_eq!(split_mask("/b/*.bak"), ("/b/", Some("*.bak")));
+        assert_eq!(split_mask("*_old.*"), ("", Some("*_old.*")));
+        assert_eq!(split_mask("/b/c"), ("/b/c", None));
+        assert_eq!(split_mask("/a*/c"), ("/a*/c", None), "only the last part");
+        assert_eq!(mask_error("*.bak", &["a.txt", ".bashrc"]), None);
+        assert_eq!(mask_error("*/x", &[]).as_deref(), Some("The mask */x makes no usable name of name.txt"));
+        assert_eq!(mask_error("*/x", &["a.jpg"]).as_deref(), Some("The mask */x makes no usable name of a.jpg"));
+        if cfg!(windows) {
+            assert_eq!(split_mask("D:*.bak"), ("D:", Some("*.bak")), "drive-relative: the drive, not the base");
+            assert_eq!(
+                mask_error("* ", &["a.txt"]).as_deref(),
+                Some("The mask *  makes no usable name of a.txt"),
+                "a trailing space"
+            );
+            assert_eq!(mask_error("*", &["a.txt", "con"]).as_deref(), Some("The mask * makes no usable name of con"));
+        }
+        if cfg!(windows) {
+            assert_eq!(split_mask(r"D:\*.bak"), (r"D:\", Some("*.bak")));
+            assert_eq!(split_mask(r"D:\Yedek\????-*.jpg"), (r"D:\Yedek\", Some("????-*.jpg")));
+        }
     }
 }

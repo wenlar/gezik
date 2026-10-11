@@ -528,6 +528,10 @@ pub fn acts_on_selection(action: Action) -> bool {
             | Action::GetInfo
             | Action::Checksums
             | Action::VerifyChecksums
+            | Action::CopyTo
+            | Action::MoveTo
+            | Action::SplitFile
+            | Action::JoinFiles
     )
 }
 
@@ -562,6 +566,10 @@ pub fn needs_list(action: Action) -> bool {
             | Action::GetInfo
             | Action::Checksums
             | Action::VerifyChecksums
+            | Action::CopyTo
+            | Action::MoveTo
+            | Action::SplitFile
+            | Action::JoinFiles
             | Action::FocusOtherPane
             | Action::CopyToOtherPane
             | Action::MoveToOtherPane
@@ -885,7 +893,11 @@ mod tests {
                 | Action::SizeMap
                 | Action::Checksums
                 | Action::VerifyChecksums
-                | Action::FindDuplicates => continue,
+                | Action::FindDuplicates
+                | Action::CopyTo
+                | Action::MoveTo
+                | Action::SplitFile
+                | Action::JoinFiles => continue,
             };
             assert_eq!(reach(text), Some(action), "{text}");
         }

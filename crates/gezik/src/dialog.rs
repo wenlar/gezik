@@ -411,6 +411,13 @@ impl Dialogs {
         }
     }
 
+    /// Sets the title of the question on screen (a note that follows the field: where to).
+    pub fn retitle(&self, title: &str) {
+        if let Some(window) = self.0.window.upgrade() {
+            window.set_dialog_title(title.into());
+        }
+    }
+
     /// The field's text changed: the line under it follows.
     fn edited(&self, text: &str) {
         let Some(note) = self.0.open_note.borrow().clone() else { return };

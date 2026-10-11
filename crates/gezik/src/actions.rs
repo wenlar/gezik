@@ -142,6 +142,10 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         Action::FindDuplicates => {
             crate::panes::with_active(|p| p.search.find_duplicates());
         }
+        Action::CopyTo => crate::copy_to::copy_to(view, false),
+        Action::MoveTo => crate::copy_to::copy_to(view, true),
+        Action::SplitFile => crate::copy_to::split(view),
+        Action::JoinFiles => crate::copy_to::join(view),
         // Not theirs: `handle_key` and the menu bar run these themselves. Listed one by one so
         // that a new action is a compile error here until it is placed.
         Action::NewTab
