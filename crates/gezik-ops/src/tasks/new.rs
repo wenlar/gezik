@@ -17,11 +17,13 @@ pub struct NewTask {
     name: String,
     folder: bool,
     contents: Option<Contents>,
+    /// A taken name is a conflict to settle, not a new number.
+    asks: bool,
 }
 
 impl NewTask {
     fn new(dir: &Path, name: &str, folder: bool) -> NewTask {
-        NewTask { dir: dir.to_path_buf(), name: name.to_owned(), folder, contents: None }
+        NewTask { dir: dir.to_path_buf(), name: name.to_owned(), folder, contents: None, asks: false }
     }
 
     pub fn folder(dir: &Path) -> NewTask {
@@ -44,6 +46,16 @@ impl NewTask {
         contents: impl Fn() -> io::Result<Vec<u8>> + Send + Sync + 'static,
     ) -> NewTask {
         NewTask { contents: Some(Box::new(contents)), ..NewTask::new(dir, name, false) }
+    }
+
+    /// A file named `name` with `contents` (a saved checksum file, spec 11 §4.2): a taken name
+    /// goes to the conflict list.
+    pub fn asking(
+        dir: &Path,
+        name: &str,
+        contents: impl Fn() -> io::Result<Vec<u8>> + Send + Sync + 'static,
+    ) -> NewTask {
+        NewTask { asks: true, ..NewTask::with_contents(dir, name, contents) }
     }
 }
 
@@ -71,7 +83,7 @@ impl Task for NewTask {
             .target(self.dir.join(&self.name))
             .checked()
             .top(0)
-            .preset(Some(Decision::KeepBoth));
+            .preset((!self.asks).then_some(Decision::KeepBoth));
         sink.item(item);
     }
 
@@ -170,6 +182,23 @@ mod tests {
         assert_eq!(report.results, [dir.join("Pasted text (2).txt")]);
         assert_eq!(std::fs::read(dir.join("Pasted text (2).txt")).unwrap(), b"line 1\r\nline 2");
         assert_eq!(std::fs::read(dir.join("Pasted text.txt")).unwrap(), b"taken");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_file_that_asks_meets_a_taken_name_as_a_conflict() {
+        let dir = test_dir("new-asking");
+        std::fs::write(dir.join("x.sha256"), "old").unwrap();
+        let engine = engine();
+        let task = NewTask::asking(&dir, "x.sha256", || Ok(b"new".to_vec()));
+        let (report, events) = finish(&engine, engine.submit(Box::new(task)), |conflicts| {
+            assert_eq!(conflicts.len(), 1);
+            vec![Decision::Replace]
+        });
+        assert!(events.iter().any(|e| matches!(e, crate::engine::Event::Conflicts { .. })));
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert_eq!(std::fs::read(dir.join("x.sha256")).unwrap(), b"new");
+        assert_eq!(report.results, [dir.join("x.sha256")]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -94,6 +94,8 @@ pub enum TaskKind {
     FreeUpSpace,
     /// Done by the one-shot administrator helper (spec 9 §10).
     Elevated,
+    /// Checksums computed or verified (spec 11 §4.3): reads only, never undone.
+    Checksum,
 }
 
 impl TaskKind {
@@ -121,6 +123,7 @@ impl TaskKind {
             TaskKind::FreeUpSpace => "Free up space of",
             // Its jobs always bring their own label; this is a fallback.
             TaskKind::Elevated => "Do as administrator",
+            TaskKind::Checksum => "Compute checksums of",
         }
     }
 
@@ -858,6 +861,7 @@ mod tests {
         assert_eq!(TaskKind::KeepOnDevice.label(2), "Keep 2 items on this device");
         assert_eq!(TaskKind::KeepOnDevice.label(1), "Keep 1 item on this device");
         assert_eq!(TaskKind::FreeUpSpace.label(2), "Free up space of 2 items");
+        assert_eq!(TaskKind::Checksum.label(2), "Compute checksums of 2 items");
     }
 
     #[test]
