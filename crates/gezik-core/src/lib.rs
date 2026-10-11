@@ -3,8 +3,10 @@
 
 pub mod attrs;
 pub mod batch;
+pub mod checksum_file;
 pub mod columns;
 pub mod complete;
+pub mod csv;
 pub mod drag;
 pub mod drop_names;
 pub mod elevated;
