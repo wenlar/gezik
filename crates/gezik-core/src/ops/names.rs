@@ -104,8 +104,13 @@ pub fn rename_selection(name: &str, is_dir: bool) -> (usize, usize) {
 /// their last dot (a name starting with its only dot is all name); in each half `*` is the
 /// rest of the name's half, `?` its character there (none past its end), any other character
 /// is itself and stands for one. A mask without a dot works on the whole name. A result that
-/// cannot be a name here keeps `name`.
+/// cannot be a name here keeps `name` (the question refuses such a mask first: `mask_error`).
 pub fn apply_mask(name: &str, mask: &str) -> String {
+    try_mask(name, mask).unwrap_or_else(|| name.to_owned())
+}
+
+/// [`apply_mask`]'s result, `None` if it cannot be a name here.
+pub fn try_mask(name: &str, mask: &str) -> Option<String> {
     fn halves(text: &str) -> (&str, Option<&str>) {
         match text.rfind('.') {
             None | Some(0) => (text, None),
@@ -142,18 +147,27 @@ pub fn apply_mask(name: &str, mask: &str) -> String {
             if ext.is_empty() { stem } else { format!("{stem}.{ext}") }
         }
     };
-    if validate_name(&out, NameRules::current()).is_ok() { out } else { name.to_owned() }
+    validate_name(&out, NameRules::current()).is_ok().then_some(out)
+}
+
+/// Why `mask` cannot rename `names` (the chosen files' names, and a sample one so a mask is
+/// checked by itself too): the first name it would make unusable here.
+pub fn mask_error(mask: &str, names: &[&str]) -> Option<String> {
+    let bad = ["name.txt"].iter().chain(names).find(|name| try_mask(name, mask).is_none())?;
+    Some(format!("The mask {mask} makes no usable name of {bad}"))
 }
 
 /// A typed target split into its folder and a name mask: the last part is a mask if it holds
 /// `*` or `?` (`D:\Yedek\*.bak` → `D:\Yedek\`, `*.bak`; the folder keeps its separator, so a
-/// drive stays a root).
-// shortcut: on Unix a real folder whose name holds `*` or `?` is taken as a mask; type the
-// folder alone (no mask) then.
+/// drive stays a root). On Windows `D:*.bak` gives the folder `D:`, which has no root: the
+/// question refuses it rather than masking the folder shown.
 pub fn split_mask(typed: &str) -> (&str, Option<&str>) {
     let seps: &[char] = if cfg!(windows) { &['/', '\\'] } else { &['/'] };
+    let bytes = typed.as_bytes();
+    let drive = cfg!(windows) && bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic();
     let (folder, last) = match typed.rfind(seps) {
         Some(at) => (&typed[..=at], &typed[at + 1..]),
+        None if drive => (&typed[..2], &typed[2..]),
         None => ("", typed),
     };
     if last.contains(['*', '?']) { (folder, Some(last)) } else { (typed, None) }
@@ -378,6 +392,17 @@ mod tests {
         assert_eq!(split_mask("*_old.*"), ("", Some("*_old.*")));
         assert_eq!(split_mask("/b/c"), ("/b/c", None));
         assert_eq!(split_mask("/a*/c"), ("/a*/c", None), "only the last part");
+        assert_eq!(mask_error("*.bak", &["a.txt", ".bashrc"]), None);
+        assert_eq!(mask_error("*/x", &[]).as_deref(), Some("The mask */x makes no usable name of name.txt"));
+        if cfg!(windows) {
+            assert_eq!(split_mask("D:*.bak"), ("D:", Some("*.bak")), "drive-relative: the drive, not the base");
+            assert_eq!(
+                mask_error("* ", &["a.txt"]).as_deref(),
+                Some("The mask *  makes no usable name of name.txt"),
+                "a trailing space"
+            );
+            assert_eq!(mask_error("*", &["a.txt", "con"]).as_deref(), Some("The mask * makes no usable name of con"));
+        }
         if cfg!(windows) {
             assert_eq!(split_mask(r"D:\*.bak"), (r"D:\", Some("*.bak")));
             assert_eq!(split_mask(r"D:\Yedek\????-*.jpg"), (r"D:\Yedek\", Some("????-*.jpg")));

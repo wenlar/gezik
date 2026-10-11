@@ -144,6 +144,12 @@ pub(crate) fn relative_targets(items: Vec<(PathBuf, PathBuf)>, dir: &Path) -> Re
     Relative { pairs, parents, refused }
 }
 
+/// Whether two of `pairs` go to one target (as the file system compares names).
+pub(crate) fn shared_target(pairs: &[(PathBuf, PathBuf)]) -> bool {
+    let mut seen = std::collections::HashSet::new();
+    !pairs.iter().all(|(_, target)| seen.insert(gezik_core::ops::paths::path_key(target)))
+}
+
 /// Reports each of `refused` (see `Relative::refused`) as failed.
 pub(crate) fn refuse_outside(sink: &mut dyn crate::task::ScanSink, refused: &[PathBuf]) {
     for source in refused {

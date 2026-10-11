@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use gezik_core::ops::names::{NameRules, validate_name};
 use gezik_core::ops::split::{MAX_PARTS, crc_name, crc_text, first_gap, parse_crc, part_count, part_name, split_base};
-use gezik_ops::{Facts, Outcome, PlanItem, Resources, RunCx, ScanSink, Stage, Task, TaskKind, Work};
+use gezik_ops::{Answer, Facts, Outcome, PlanItem, Question, Resources, RunCx, ScanSink, Stage, Task, TaskKind, Work};
 
 use super::file_name;
 use super::place::PlaceTask;
@@ -132,6 +132,26 @@ impl Task for SplitTask {
 
     fn run(&self, item: &PlanItem, cx: &RunCx<'_>) -> io::Result<Outcome> {
         let name = file_name(&self.source);
+        // A set of that name there already is one unit (asked once): replaced whole, or left
+        // whole. Never a mix of old and new parts, nor old parts past the new last one.
+        let (old_parts, old_crc) = set_files(&self.dir, &name).unwrap_or_default();
+        let olds: Vec<PathBuf> = old_parts.into_iter().map(|(_, path, _)| path).chain(old_crc).collect();
+        if !olds.is_empty() {
+            let message = format!(
+                "{} holds {} file(s) of a split {name} already. Replace that whole set? The old files go to the trash.",
+                self.dir.display(),
+                olds.len()
+            );
+            let buttons = vec!["Replace All".to_owned(), "Cancel".to_owned()];
+            match cx.ask(Question::Confirm { title: "Parts are there already".to_owned(), message, buttons }) {
+                Answer::Button(0) => {}
+                _ if cx.stopped() => return Err(cancelled()),
+                _ => {
+                    cx.skip(&self.source, &io::Error::other("Left as it was: its parts are there already"));
+                    return Ok(Outcome::Nothing);
+                }
+            }
+        }
         let staging = cx.staging_dir(&self.dir.join(&name))?;
         let mut from = File::open(&self.source)?;
         let mut whole = crc32fast::Hasher::new();
@@ -141,9 +161,51 @@ impl Task for SplitTask {
             pour(&mut from, &mut to, Some(self.size), &mut whole, cx)?;
         }
         std::fs::write(staging.join(crc_name(&name)), crc_text(&name, item.facts.size, whole.finalize()))?;
+        // The new set is complete: the old one makes way (to the trash: undo brings it back).
+        let mut outcomes = Vec::new();
+        for old in &olds {
+            match super::compress::out_of_the_way(old, old, cx) {
+                Ok(outcome) => outcomes.push(outcome),
+                Err(err) => {
+                    let message = format!("{err}; it could not make way, so nothing was placed");
+                    cx.fail(old, &io::Error::new(err.kind(), message));
+                    return Ok(Outcome::Several(outcomes));
+                }
+            }
+        }
         *self.stage.lock().unwrap_or_else(|e| e.into_inner()) = Some(staging);
-        Ok(Outcome::Nothing)
+        Ok(Outcome::Several(outcomes))
     }
+}
+
+/// A part: its number, path and size.
+type Part = (u32, PathBuf, u64);
+
+/// The parts of `base` in `folder` (`base.001`… with three or more digits), sorted, with
+/// their sizes, and its `.crc` (the ending in any case: `X.CRC` from Windows on Linux too).
+fn set_files(folder: &Path, base: &str) -> io::Result<(Vec<Part>, Option<PathBuf>)> {
+    let fold = |s: &str| if cfg!(any(windows, target_os = "macos")) { s.to_lowercase() } else { s.to_owned() };
+    let prefix = fold(&format!("{base}."));
+    let mut parts: Vec<Part> = Vec::new();
+    let mut crc_file = None;
+    for entry in std::fs::read_dir(folder)?.flatten() {
+        let Ok(meta) = entry.metadata() else { continue };
+        if !meta.is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(tail) = fold(&name).strip_prefix(&prefix).map(str::to_owned) else { continue };
+        if tail.eq_ignore_ascii_case("crc") {
+            crc_file = Some(entry.path());
+        } else if tail.len() >= 3
+            && tail.bytes().all(|b| b.is_ascii_digit())
+            && let Ok(n) = tail.parse()
+        {
+            parts.push((n, entry.path(), meta.len()));
+        }
+    }
+    parts.sort();
+    Ok((parts, crc_file))
 }
 
 /// The parts found and what the `.crc` says.
@@ -168,27 +230,7 @@ impl JoinTask {
         let invalid = |message: String| io::Error::new(io::ErrorKind::InvalidInput, message);
         let base = split_base(&file_name(&self.part)).ok_or_else(|| invalid("Not a part of a split file".into()))?;
         let folder = self.part.parent().unwrap_or(Path::new("."));
-        let fold = |s: &str| if cfg!(any(windows, target_os = "macos")) { s.to_lowercase() } else { s.to_owned() };
-        let prefix = fold(&format!("{base}."));
-        let mut parts: Vec<(u32, PathBuf, u64)> = Vec::new();
-        let mut crc_file = None;
-        for entry in std::fs::read_dir(folder)?.flatten() {
-            let Ok(meta) = entry.metadata() else { continue };
-            if !meta.is_file() {
-                continue;
-            }
-            let name = entry.file_name().to_string_lossy().into_owned();
-            let Some(tail) = fold(&name).strip_prefix(&prefix).map(str::to_owned) else { continue };
-            if tail == "crc" {
-                crc_file = Some(entry.path());
-            } else if tail.len() >= 3
-                && tail.bytes().all(|b| b.is_ascii_digit())
-                && let Ok(n) = tail.parse()
-            {
-                parts.push((n, entry.path(), meta.len()));
-            }
-        }
-        parts.sort();
+        let (parts, crc_file) = set_files(folder, &base)?;
         let missing = |n: u32| invalid(format!("Part {} is missing", part_name(&base, n)));
         if let Some(gap) = first_gap(&parts.iter().map(|(n, ..)| *n).collect::<Vec<_>>()) {
             return Err(missing(gap));

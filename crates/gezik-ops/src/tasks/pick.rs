@@ -356,6 +356,29 @@ mod tests {
     }
 
     #[test]
+    fn one_name_from_two_folders_meets_the_conflict_list() {
+        let dir = test_dir("pick-same-name");
+        write(&dir.join("a/x.txt"), "a");
+        write(&dir.join("b/x.txt"), "b");
+        let dst = dir.join("dst");
+        std::fs::create_dir(&dst).unwrap();
+        let engine = engine();
+        let asked = std::cell::Cell::new(0);
+        let task = CopyTask::into(vec![dir.join("a/x.txt"), dir.join("b/x.txt")], &dst);
+        let (report, _) = finish(&engine, engine.submit(Box::new(task)), |c| {
+            asked.set(c.len());
+            vec![Decision::Skip; c.len()]
+        });
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert_eq!(asked.get(), 1, "the second x.txt is asked about, not written over the first");
+        assert_eq!(read(&dst.join("x.txt")), "a");
+        let task = crate::tasks::MoveTask::into(vec![dir.join("a/x.txt"), dir.join("b/x.txt")], &dir.join("dst2"));
+        assert!(task.same_targets());
+        assert!(!CopyTask::into(vec![dir.join("a/x.txt")], &dst).same_targets());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn an_empty_pick_changes_nothing() {
         assert!(Pick::default().is_empty());
         assert!(Pick { filter: Some(FileFilter::parse(" | ", true).unwrap()), mask: None }.is_empty());

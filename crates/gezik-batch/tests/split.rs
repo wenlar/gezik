@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use gezik_batch::tasks::{join_chain, join_label, split_chain, split_label};
-use gezik_ops::{Decision, Engine, Event, JobId, Report, Settings};
+use gezik_ops::{Answer, Decision, Engine, Event, JobId, Report, Settings};
 
 fn dir(name: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!("gezik-split-{name}-{}", std::process::id()));
@@ -23,8 +23,14 @@ fn bytes(len: usize) -> Vec<u8> {
 /// Runs `job` to its end, answering conflicts with `decision` (none: their defaults); returns
 /// the report and how many conflicts were asked.
 fn finish(engine: &Engine, job: JobId, decision: Option<Decision>) -> (Report, usize) {
+    let (report, asked, _) = finish_answering(engine, job, decision, Answer::Cancel);
+    (report, asked)
+}
+
+/// Like `finish`, answering every question with `answer`; also returns how many were asked.
+fn finish_answering(engine: &Engine, job: JobId, decision: Option<Decision>, answer: Answer) -> (Report, usize, usize) {
     let deadline = Instant::now() + Duration::from_secs(120);
-    let mut asked = 0;
+    let (mut asked, mut questions) = (0, 0);
     loop {
         for event in engine.drain() {
             match event {
@@ -32,7 +38,11 @@ fn finish(engine: &Engine, job: JobId, decision: Option<Decision>) -> (Report, u
                     asked += conflicts.len();
                     engine.decide(job, conflicts.iter().map(|c| decision.unwrap_or(c.decision)).collect());
                 }
-                Event::Finished { job: j, report } if j == job => return (report, asked),
+                Event::Question { job: j, id, .. } if j == job => {
+                    questions += 1;
+                    engine.answer(job, id, answer.clone());
+                }
+                Event::Finished { job: j, report } if j == job => return (report, asked, questions),
                 _ => {}
             }
         }
@@ -149,22 +159,64 @@ fn a_missing_part_stops_before_anything_is_written() {
 }
 
 #[test]
-fn names_already_there_meet_the_conflict_list() {
+fn parts_already_there_are_one_set_replaced_whole_or_left_whole() {
     let d = dir("conflicts");
     let data = bytes(150);
     std::fs::write(d.join("b.bin"), &data).unwrap();
-    std::fs::write(d.join("b.bin.001"), "older part").unwrap();
+    // An older set of three: its .003 is past the new last part.
+    for n in 1..=3 {
+        std::fs::write(d.join(format!("b.bin.00{n}")), format!("old {n}")).unwrap();
+    }
     let engine = Engine::new(Settings::default(), || {});
-    let (report, asked) = split(&engine, &d.join("b.bin"), &d, 100, Some(Decision::Skip));
+    let run = |answer: Answer| {
+        let tasks = split_chain(d.join("b.bin"), d.clone(), 100);
+        finish_answering(&engine, engine.submit_chain(tasks, Some(split_label(&d.join("b.bin")))), None, answer)
+    };
+    // Cancel: all is left as it was.
+    let (report, conflicts, questions) = run(Answer::Button(1));
     assert!(report.failures.is_empty(), "{:?}", report.failures);
-    assert_eq!(asked, 1);
-    assert_eq!(std::fs::read_to_string(d.join("b.bin.001")).unwrap(), "older part", "skipped: kept");
+    assert_eq!((conflicts, questions), (0, 1), "asked once for the set, no conflict list");
+    assert_eq!(names(&d), ["b.bin", "b.bin.001", "b.bin.002", "b.bin.003"]);
+    assert_eq!(std::fs::read_to_string(d.join("b.bin.001")).unwrap(), "old 1");
+    // Replace All: the whole old set goes, the new one comes; no old part is left over.
+    let (report, conflicts, questions) = run(Answer::Button(0));
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    assert_eq!((conflicts, questions), (0, 1));
+    assert_eq!(names(&d), ["b.bin", "b.bin.001", "b.bin.002", "b.bin.crc"]);
+    assert_eq!(std::fs::read(d.join("b.bin.001")).unwrap(), &data[..100]);
+    // One undo brings the old set back.
+    let (undo, _) = finish(&engine, engine.undo().unwrap(), None);
+    assert!(undo.failures.is_empty(), "{:?}", undo.failures);
+    assert_eq!(names(&d), ["b.bin", "b.bin.001", "b.bin.002", "b.bin.003"]);
+    assert_eq!(std::fs::read_to_string(d.join("b.bin.003")).unwrap(), "old 3");
+    // Joined where the original still is: the conflict list asks, Skip keeps it.
+    std::fs::remove_file(d.join("b.bin.003")).unwrap();
     std::fs::write(d.join("b.bin.001"), &data[..100]).unwrap();
-    // Joined where the original still is: asked, Skip keeps it.
+    std::fs::write(d.join("b.bin.002"), &data[100..]).unwrap();
     let (report, asked) = join(&engine, &d.join("b.bin.001"), &d, Some(Decision::Skip));
     assert!(report.failures.is_empty(), "{:?}", report.failures);
     assert_eq!(asked, 1);
     assert_eq!(std::fs::read(d.join("b.bin")).unwrap(), data);
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn a_crc_file_in_capitals_is_found_from_any_part() {
+    let d = dir("upper-crc");
+    std::fs::write(d.join("u.txt.001"), "abc").unwrap();
+    std::fs::write(d.join("u.txt.002"), "def").unwrap();
+    let crc = crc32fast::hash(b"abcdef");
+    std::fs::write(d.join("u.txt.CRC"), format!("filename=u.txt\r\nsize=6\r\ncrc32={crc:08X}\r\n")).unwrap();
+    let out = d.join("out");
+    std::fs::create_dir(&out).unwrap();
+    let engine = Engine::new(Settings::default(), || {});
+    for start in ["u.txt.CRC", "u.txt.002"] {
+        let _ = std::fs::remove_file(out.join("u.txt"));
+        let (report, _) = join(&engine, &d.join(start), &out, None);
+        assert!(report.failures.is_empty(), "{start}: {:?}", report.failures);
+        assert!(report.skipped.is_empty(), "{start}: checked against the .CRC: {:?}", report.skipped);
+        assert_eq!(std::fs::read_to_string(out.join("u.txt")).unwrap(), "abcdef");
+    }
     let _ = std::fs::remove_dir_all(&d);
 }
 

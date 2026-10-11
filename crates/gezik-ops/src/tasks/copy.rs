@@ -189,9 +189,10 @@ impl Task for CopyTask {
         }
     }
 
-    /// A name mask may bring two files to one name: the later one meets the conflict list.
+    /// Two items may be bound for one name (a mask, or the same name from two folders of a
+    /// search): the later one meets the conflict list.
     fn same_targets(&self) -> bool {
-        self.pick.as_ref().is_some_and(|pick| pick.mask.is_some())
+        self.pick.as_ref().is_some_and(|pick| pick.mask.is_some()) || super::shared_target(&self.pairs)
     }
 
     fn as_admin(&self, denied: &[PathBuf]) -> Vec<Op> {
