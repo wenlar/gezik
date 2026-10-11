@@ -59,7 +59,7 @@ here and apply the remaining changes.
 
 ## i-slint-backend-winit 1.18.1 (patched)
 
-The published `i-slint-backend-winit` 1.18.1, unchanged except for three small changes marked
+The published `i-slint-backend-winit` 1.18.1, unchanged except for four changes marked
 "Gezik patch", all for Windows only (`cfg(target_os = "windows")`). The root `Cargo.toml`
 uses it through `[patch.crates-io]`.
 
@@ -83,9 +83,41 @@ the native window itself (position, drop target, the tray's window).
 showing or restoring draws the whole window again (Gezik's own restore redraw is in
 `windows.rs`); `scripts/perf/hidden.ps1` measures both.
 
+4. `renderer/sw.rs`, `render_to_window`: the window is drawn line by line
+   (`SoftwareRenderer::render_by_line`) and copied to the window in bands of up to 16 lines with
+   GDI (`StretchDIBits` on the window's DC), so no frame buffer exists while the window is shown
+   either: only the bands of one frame (at most 3 x 16 lines x the dirty width x 4 bytes), freed
+   after it. DWM keeps the window's content, so as with softbuffer's reused buffer only the dirty
+   region is drawn; the first frame, a frame after a size change and one after `occluded` are
+   drawn whole. The environment variable `GEZIK_SOFTBUFFER` (any value) goes back to softbuffer,
+   for comparisons or if something draws wrong. Line rendering needs paths, see
+   `i-slint-renderer-software` below.
+
+**Check.** With the window in the tray or minimized, private memory drops by the buffer and
+showing or restoring draws the whole window again (Gezik's own restore redraw is in
+`windows.rs`); `scripts/perf/hidden.ps1` measures both. For 4: screenshots (`PrintWindow`) with
+and without `GEZIK_SOFTBUFFER` are identical; idle memory and `scripts/perf/stress.ps1` with both.
+
 **Updating Slint.** If the new release frees the software renderer's surface while hidden or
-minimized on Windows, remove this folder and its `[patch.crates-io]` line; otherwise copy the
-new release here and apply the same three changes.
+minimized on Windows, drop 1-3; if not, copy the new release here and apply the changes again.
+4 stays as long as softbuffer keeps a full-window buffer on Windows.
+
+## i-slint-renderer-software 1.18.1 (patched)
+
+The published `i-slint-renderer-software` 1.18.1, unchanged except for path drawing in
+line-by-line mode (`lib.rs`, `PrepareScene::process_filled_path`, `process_stroked_path` and
+`process_path`, marked "Gezik patch"). The root `Cargo.toml` uses it through
+`[patch.crates-io]`.
+
+**The problem.** `render_by_line` (used by the winit patch 4 above) skipped `Path` items: every
+icon drawn with a path (sidebar, toolbar, breadcrumb arrows, tab close buttons) was missing.
+
+**The fix.** A path is rendered, clipped, with the buffer renderer's own code
+(`path::render_filled_path` / `render_stroked_path`) into a premultiplied RGBA buffer of the clip's
+size, which goes into the scene as a texture. The pixels are the same as with `render`.
+
+**Updating Slint.** If the new release draws paths in `render_by_line`, remove this folder and its
+`[patch.crates-io]` line; otherwise copy the new release here and apply the same change.
 
 ## C++ exceptions on MSVC (`.cargo/config.toml`)
 
