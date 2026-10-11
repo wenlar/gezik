@@ -490,6 +490,15 @@ pub const COLLAPSE_GROUPS: u32 = 2010;
 pub const EXPAND_GROUPS: u32 = 2011;
 /// View ▸ Columns (spec 10 §10.3, 10e).
 pub const VIEW_COLUMNS: u32 = 2040;
+/// A job's menu in the operations panel (spec 11 §13.3: 2320–2339).
+pub const JOB_VERIFY: u32 = 2320;
+pub const JOB_UP: u32 = 2321;
+pub const JOB_DOWN: u32 = 2322;
+pub const JOB_START_NOW: u32 = 2323;
+/// Speed limit ▸, one id per speed in `JOB_SPEEDS`.
+pub const JOB_SPEED_FIRST: u32 = 2324;
+/// The speed limits offered, in MB/s; 0: none.
+pub const JOB_SPEEDS: [u64; 7] = [0, 1, 5, 10, 25, 50, 100];
 /// A duplicates search's "select all but one" (spec 11 §9.3, §13.3: 2310–2319), in
 /// `duplicate_select_items`' order.
 pub const DUP_SELECT_FIRST: u32 = 2310;
@@ -589,6 +598,39 @@ pub struct Submenu {
     pub title: String,
     pub at: usize,
     pub items: Vec<(u32, String, bool)>,
+}
+
+/// A job's menu (spec 11 §5): a copy's Verify copies and Speed limit ▸ (a limit from the
+/// settings that is not offered shows in the title), a waiting job's Move up, Move down
+/// (greyed when it cannot) and Start now.
+pub fn job_items(
+    copies: bool,
+    waiting: bool,
+    options: &gezik_ops::JobOptions,
+) -> (Vec<(u32, String, bool)>, Vec<Submenu>) {
+    let mut items = Vec::new();
+    let mut subs = Vec::new();
+    if copies {
+        items.push((JOB_VERIFY, marked(options.verify, "Verify copies"), true));
+        let speed = options.speed.unwrap_or(0);
+        let speeds = JOB_SPEEDS.iter().enumerate().map(|(i, &mb)| {
+            let title = if mb == 0 { "No limit".to_owned() } else { format!("{mb} MB/s") };
+            (JOB_SPEED_FIRST + i as u32, marked(speed == mb * 1_000_000, &title), true)
+        });
+        let title = if JOB_SPEEDS.iter().any(|&mb| speed == mb * 1_000_000) {
+            "Speed limit".to_owned()
+        } else {
+            let rate = gezik_core::ops::rate::format_rate(speed as f64, gezik_core::view::SizeFormat::Decimal);
+            format!("Speed limit ({rate})")
+        };
+        subs.push(Submenu { title, at: items.len(), items: speeds.collect() });
+    }
+    if waiting {
+        items.push((JOB_UP, "Move up".to_owned(), options.can_up));
+        items.push((JOB_DOWN, "Move down".to_owned(), options.can_down));
+        items.push((JOB_START_NOW, "Start now".to_owned(), true));
+    }
+    (items, subs)
 }
 
 /// "Select all but one" in a duplicates search (spec 11 §9.3): the search bar's ▾ menu and a
@@ -1043,6 +1085,8 @@ enum Subject {
     Search,
     /// A saved search in the sidebar, by name.
     SavedSearch(String),
+    /// A job's row in the operations panel, by id.
+    Job(i32),
     /// The size map's rectangle menu (items by id).
     SizeMap,
 }
@@ -1886,8 +1930,17 @@ impl Menus {
         self.open_slint_entries(&built.0, built.1, at);
     }
 
+    /// A job's menu in the operations panel, under its button (spec 11 §5).
+    pub fn job_menu(&self, job: i32, at: Anchor) {
+        let Some((copies, waiting, options)) = self.ops.job_menu(job) else { return };
+        let (items, subs) = job_items(copies, waiting, &options);
+        *self.subject.borrow_mut() = Some(Subject::Job(job));
+        self.open_slint_entries(&items, subs, at);
+    }
+
     fn run(&self, id: u32, subject: Subject) {
         match (id, subject) {
+            (id, Subject::Job(job)) => self.ops.job_chosen(job, id),
             (id, Subject::Search) => {
                 crate::panes::with_active(|p| p.search.menu_chosen(id));
             }
@@ -2916,6 +2969,10 @@ mod tests {
             TOOLS_SIZE_MAP,
             TOOLS_CHECKSUMS,
             TOOLS_VERIFY,
+            JOB_VERIFY,
+            JOB_UP,
+            JOB_DOWN,
+            JOB_START_NOW,
             TOOLS_DUPLICATES,
             TOOLS_COPY_TO,
             TOOLS_MOVE_TO,
@@ -2949,8 +3006,10 @@ mod tests {
             SAVED_SEARCH_FIRST..SAVED_SEARCH_FIRST + SAVED_SEARCH_MAX,
             SAVED_SEARCH_DELETE_FIRST..SAVED_SEARCH_DELETE_FIRST + SAVED_SEARCH_MAX,
             WINDOW_FIRST..WINDOW_FIRST + WINDOW_MAX,
+            JOB_SPEED_FIRST..JOB_SPEED_FIRST + JOB_SPEEDS.len() as u32,
             crate::size_map::MAP_OPEN..crate::size_map::MAP_COPY_PATH + 1,
         ]);
+        assert!(JOB_SPEED_FIRST + (JOB_SPEEDS.len() as u32) <= 2340, "the job menu keeps to 2320-2339");
         for (i, a) in ranges.iter().enumerate() {
             assert!(a.start >= 1 && a.end <= GEZIK_IDS_END, "{a:?}: 1..4096 (0 is a heading, 4096 on the Shell's)");
             for b in &ranges[i + 1..] {
@@ -2960,6 +3019,30 @@ mod tests {
         assert!(!ranges.iter().any(|r| r.contains(&HEADING)), "a heading is never an item");
         let encodings = gezik_batch::convert::text::encodings().len() as u32;
         assert!(encodings < ENCODING_MAX, "{encodings} encodings and the first choice fit");
+    }
+
+    #[test]
+    fn a_job_menu_offers_what_the_job_can_do() {
+        let options = gezik_ops::JobOptions { verify: true, speed: Some(5_000_000), can_up: false, can_down: true };
+        let (items, subs) = job_items(true, true, &options);
+        let shown: Vec<(u32, bool)> = items.iter().map(|(id, _, on)| (*id, *on)).collect();
+        assert_eq!(shown, [(JOB_VERIFY, true), (JOB_UP, false), (JOB_DOWN, true), (JOB_START_NOW, true)]);
+        assert!(items[0].1.starts_with('•'), "verifying");
+        assert_eq!((subs.len(), subs[0].at, subs[0].title.as_str()), (1, 1, "Speed limit"));
+        let marked: Vec<&str> = subs[0].items.iter().filter(|i| i.1.starts_with('•')).map(|i| i.1.as_str()).collect();
+        assert_eq!(marked, ["• 5 MB/s"]);
+        assert_eq!(subs[0].items[0].0, JOB_SPEED_FIRST);
+        // A limit from the settings that is not offered shows in the title; none is marked.
+        let odd = gezik_ops::JobOptions { speed: Some(20_000_000), ..options };
+        let (_, subs) = job_items(true, false, &odd);
+        assert_eq!(subs[0].title, "Speed limit (20.0 MB/s)");
+        assert!(subs[0].items.iter().all(|i| !i.1.starts_with('•')));
+        // A running copy: no queue items; a job that copies nothing: only the queue.
+        let (items, _) = job_items(true, false, &options);
+        assert_eq!(items.len(), 1);
+        let (items, subs) = job_items(false, true, &options);
+        assert_eq!((items.len(), subs.len()), (3, 0));
+        assert_eq!(job_items(false, false, &options).0.len(), 0);
     }
 
     #[test]

@@ -17,7 +17,7 @@ use gezik_core::ops::rate::{Rate, format_eta, format_rate};
 use gezik_core::templates::{LinkKind, PasteKind, Template, pasted_name};
 use gezik_ops::{
     Answer, CopyTask, DeleteTask, Engine, Event, GroupTask, JobId, JobState, LinkTask, MaterializeTask, MoveTask,
-    NewTask, PauseReason, Pick, Progress, Question, Report, RestoreTask, Settings, Task, TrashTask,
+    NewTask, PauseReason, Pick, Progress, Question, Report, RestoreTask, Settings, Task, TaskKind, TrashTask,
 };
 use gezik_platform::clipboard::{self, ClipboardError, ClipboardFiles};
 use gezik_platform::dnd::VirtualFiles;
@@ -90,6 +90,9 @@ pub fn describe(
         JobState::Paused(PauseReason::ManyFailures) => (RowState::Paused, "Paused after errors".to_owned(), done),
         JobState::Running => {
             let mut text = format!("{}%", (done * 100.0).floor() as u32);
+            if progress.verifying {
+                text.push_str(" · Verifying…");
+            }
             if let Some(speed) = speed.filter(|s| *s > 0.0 && progress.bytes_total > 0) {
                 text.push_str(&format!(" · {}", format_rate(speed, crate::view_options::current().size_format)));
             }
@@ -293,6 +296,8 @@ type Again = Rc<dyn Fn()>;
 struct JobView {
     id: JobId,
     title: String,
+    /// Its kind once the engine said (a copy or move has Verify copies and Speed limit).
+    kind: Option<TaskKind>,
     background: bool,
     shown: bool,
     progress: Option<Progress>,
@@ -349,6 +354,7 @@ impl JobView {
         JobView {
             id,
             title,
+            kind: None,
             background: false,
             shown: false,
             progress: None,
@@ -387,6 +393,7 @@ impl JobView {
         let failed = state == RowState::Failed;
         let paused_by_user =
             matches!(self.progress.as_ref().map(|p| p.state), Some(JobState::Paused(PauseReason::User)));
+        let waiting = !finished && state == RowState::Waiting && self.progress.is_some();
         OpRow {
             id: i32::try_from(self.id).unwrap_or(i32::MAX),
             title: self.title.clone().into(),
@@ -395,7 +402,8 @@ impl JobView {
             state: state as i32,
             can_pause: !finished && matches!(state, RowState::Running),
             can_resume: !finished && paused_by_user,
-            can_start_now: !finished && state == RowState::Waiting && self.progress.is_some(),
+            can_start_now: waiting,
+            can_more: !finished && (waiting || self.copies()),
             can_retry: failed && (self.retry.is_some() || self.again.is_some()),
             can_details: failed
                 || self
@@ -405,6 +413,13 @@ impl JobView {
             finished,
             ..OpRow::default()
         }
+    }
+}
+
+impl JobView {
+    /// A copy or a move: its files can be verified and its speed limited.
+    fn copies(&self) -> bool {
+        matches!(self.kind, Some(TaskKind::Copy | TaskKind::Move))
     }
 }
 
@@ -492,6 +507,7 @@ impl Operations {
     pub fn set_files(&self, files: FilesSettings) {
         self.0.files.set(files);
         self.0.engine.set_threads(files.copy_threads);
+        self.0.engine.set_copy_defaults(files.verify, files.max_speed);
     }
 
     /// The window being opened has the operations panel (the same rows as every window's),
@@ -571,8 +587,13 @@ impl Operations {
     /// Runs `task`; `retry` runs the same operation again from its row, `after` says what to
     /// do with the results. The selection is not remembered here: see `remember_for`.
     pub fn submit(&self, task: Box<dyn Task>, retry: Option<Retry>, after: After) -> JobId {
+        self.submit_verifying(task, retry, after, None)
+    }
+
+    /// `submit` whose copies are verified as `verify` says (`None`: as `[files] verify` says).
+    fn submit_verifying(&self, task: Box<dyn Task>, retry: Option<Retry>, after: After, verify: Option<bool>) -> JobId {
         let title = task.title();
-        let id = self.0.engine.submit(task);
+        let id = self.0.engine.submit_verifying(task, verify);
         let mut job = JobView::new(id, title);
         crate::panes::with_active(|p| (job.origin, job.pane) = (p.search.results_key(), Some(p.id)));
         job.window = Some(crate::windows::current());
@@ -1008,6 +1029,11 @@ impl Operations {
 
     /// Like `transfer`, giving the job (the drop stack follows a Move here by it).
     pub fn transfer_job(&self, paths: Vec<PathBuf>, dir: PathBuf, effect: Effect) -> JobId {
+        self.transfer_verifying(paths, dir, effect, None)
+    }
+
+    /// Like `transfer_job`, its copies verified as `verify` says (`None`: as the settings say).
+    pub fn transfer_verifying(&self, paths: Vec<PathBuf>, dir: PathBuf, effect: Effect, verify: Option<bool>) -> JobId {
         self.remember_for(&paths);
         let retry: Retry = Rc::new(move || -> Box<dyn Task> {
             match effect {
@@ -1016,14 +1042,23 @@ impl Operations {
                 Effect::Link => Box::new(LinkTask::into(paths.clone(), &dir, LinkKind::for_drops())),
             }
         });
-        self.submit(retry(), Some(retry), After::Select)
+        self.submit_verifying(retry(), Some(retry), After::Select, verify)
     }
 
     /// Like `transfer` into `dir`, making the folders from `anchor` (`dir` or one above it) down
     /// to `dir` that are not there (F5/F6 to a typed folder, spec 10 §4.4); Ctrl+Z takes away
     /// the ones it made.
-    /// `pick`: only what a filter takes, under a name mask (spec 11 §12; empty: everything).
-    pub fn transfer_making(&self, paths: Vec<PathBuf>, dir: &Path, anchor: PathBuf, moving: bool, pick: Pick) {
+    /// `pick`: only what a filter takes, under a name mask (spec 11 §12; empty: everything);
+    /// `verify`: the question's Verify copies (`None`: as `[files] verify` says).
+    pub fn transfer_making(
+        &self,
+        paths: Vec<PathBuf>,
+        dir: &Path,
+        anchor: PathBuf,
+        moving: bool,
+        pick: Pick,
+        verify: Option<bool>,
+    ) {
         let under: PathBuf = dir.components().skip(anchor.components().count()).collect();
         let items: Vec<(PathBuf, PathBuf)> =
             paths.iter().map(|path| (path.clone(), under.join(path.file_name().unwrap_or_default()))).collect();
@@ -1036,7 +1071,12 @@ impl Operations {
                 Box::new(CopyTask::with_folders(items.clone(), &anchor).picking(pick.clone()).titled(&to))
             }
         });
-        self.submit(retry(), Some(retry), After::Select);
+        self.submit_verifying(retry(), Some(retry), After::Select, verify);
+    }
+
+    /// `[files] verify`: what a new copy starts with.
+    pub fn verify_default(&self) -> bool {
+        self.0.files.get().verify
     }
 
     /// Items another program offers with no file behind them (an attachment, a browser's
@@ -1467,15 +1507,16 @@ impl Operations {
     pub fn drain(&self) {
         for event in self.0.engine.drain() {
             match event {
-                Event::Added { job, title, background, .. } => {
+                Event::Added { job, title, background, kind } => {
                     let known = self.0.jobs.borrow().iter().any(|j| j.id == job);
                     if !known {
                         let mut view = JobView::new(job, title);
                         view.background = background;
+                        view.kind = Some(kind);
                         self.0.jobs.borrow_mut().push(view);
                         self.show_later(job);
                     } else {
-                        self.with_job(job, |j| j.background = background);
+                        self.with_job(job, |j| (j.background, j.kind) = (background, Some(kind)));
                     }
                 }
                 Event::Progress { job, progress } => self.with_job(job, |j| {
@@ -1828,6 +1869,48 @@ impl Operations {
         self.0.engine.start_now(Self::id(id));
     }
 
+    /// What row `id`'s menu needs: whether it copies, whether it waits, and its options;
+    /// `None` once it ended.
+    pub fn job_menu(&self, id: i32) -> Option<(bool, bool, gezik_ops::JobOptions)> {
+        let id = Self::id(id);
+        let options = self.0.engine.job_options(id)?;
+        let jobs = self.0.jobs.borrow();
+        let job = jobs.iter().find(|j| j.id == id)?;
+        let row = job.row();
+        Some((job.copies(), row.can_start_now, options))
+    }
+
+    /// An item of row `id`'s menu was chosen (`context_menu::JOB_*`).
+    pub fn job_chosen(&self, id: i32, choice: u32) {
+        use crate::context_menu::{JOB_DOWN, JOB_SPEED_FIRST, JOB_SPEEDS, JOB_START_NOW, JOB_UP, JOB_VERIFY};
+        let (job, engine) = (Self::id(id), &self.0.engine);
+        match choice {
+            JOB_VERIFY => {
+                if let Some(options) = engine.job_options(job) {
+                    engine.set_verify(job, !options.verify);
+                }
+            }
+            JOB_UP | JOB_DOWN => {
+                let Some(other) = engine.move_in_queue(job, choice == JOB_UP) else { return };
+                // The rows follow the queue.
+                {
+                    let mut jobs = self.0.jobs.borrow_mut();
+                    let at = |id| jobs.iter().position(|j| j.id == id);
+                    if let (Some(a), Some(b)) = (at(job), at(other)) {
+                        gezik_ops::move_next_to(&mut jobs, a, b);
+                    }
+                }
+                self.update();
+            }
+            JOB_START_NOW => engine.start_now(job),
+            _ => {
+                if let Some(&mb) = choice.checked_sub(JOB_SPEED_FIRST).and_then(|i| JOB_SPEEDS.get(i as usize)) {
+                    engine.set_speed(job, (mb > 0).then_some(mb * 1_000_000));
+                }
+            }
+        }
+    }
+
     pub fn dismiss(&self, id: i32) {
         self.remove(Self::id(id));
     }
@@ -2088,7 +2171,14 @@ mod tests {
     }
 
     fn progress(state: JobState, items: (u64, u64), bytes: (u64, u64)) -> Progress {
-        Progress { state, items_done: items.0, items_total: items.1, bytes_done: bytes.0, bytes_total: bytes.1 }
+        Progress {
+            state,
+            items_done: items.0,
+            items_total: items.1,
+            bytes_done: bytes.0,
+            bytes_total: bytes.1,
+            verifying: false,
+        }
     }
 
     fn report(failures: usize, cancelled: bool) -> Report {
@@ -2169,6 +2259,8 @@ mod tests {
         assert!((bar - 0.61).abs() < 0.001);
         let items_only = progress(JobState::Running, (1, 4), (0, 0));
         assert_eq!(describe(Some(&items_only), None, None, None).1, "25%");
+        let verifying = Progress { verifying: true, ..p };
+        assert_eq!(describe(Some(&verifying), None, None, None).1, "61% · Verifying…");
     }
 
     #[test]

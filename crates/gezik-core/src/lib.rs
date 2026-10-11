@@ -236,6 +236,19 @@ pub fn format_size(bytes: u64) -> String {
     format_size_in(bytes, view::SizeFormat::Binary)
 }
 
+/// `1234567` as `1,234,567`.
+pub fn group_digits(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// A byte count as `format` writes it: `1.5 KB` (steps of 1024) or `1.5 kB` (steps of 1000).
 pub fn format_size_in(bytes: u64, format: view::SizeFormat) -> String {
     let (step, units): (f64, [&str; 5]) = match format {

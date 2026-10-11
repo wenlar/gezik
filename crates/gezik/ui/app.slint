@@ -477,6 +477,7 @@ export component AppWindow inherits Window {
     callback op-resume(int);
     callback op-cancel(int);
     callback op-start-now(int);
+    callback op-more(int, length, length, length, length);
     callback op-details(int);
     callback op-retry(int);
     callback op-dismiss(int);
@@ -1274,6 +1275,7 @@ export component AppWindow inherits Window {
                 resume(i) => { root.op-resume(i); }
                 cancel(i) => { root.op-cancel(i); }
                 start-now(i) => { root.op-start-now(i); }
+                more(i, x, y, r, t) => { root.op-more(i, x, y, r, t); }
                 details(i) => { root.op-details(i); }
                 retry(i) => { root.op-retry(i); }
                 dismiss(i) => { root.op-dismiss(i); }

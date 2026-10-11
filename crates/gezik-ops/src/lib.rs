@@ -14,7 +14,10 @@ mod tasks;
 mod testing;
 pub mod walk;
 
-pub use engine::{ConflictItem, Engine, Event, Failure, JobId, JobState, PauseReason, Progress, Report, Settings};
+pub use engine::{
+    ConflictItem, Engine, Event, Failure, JobId, JobOptions, JobState, PauseReason, Progress, Report, Settings,
+    move_next_to,
+};
 pub use gezik_core::ops::conflict::{ConflictKind, Decision, Facts};
 pub use pending::PendingDeletes;
 pub use task::{

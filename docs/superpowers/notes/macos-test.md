@@ -692,6 +692,17 @@ Numbers stay as they are when branches merge. 11i starts at 303 as its plan deci
 322. **iCloud and APFS clones.** In iCloud Drive with files not downloaded: they are not read (no download starts) and the status bar counts them as online-only. Duplicate a large file in Finder (⌘D makes an APFS clone): it is listed as a duplicate (spec §19: deleting a clone may free little).
 323. **Stop.** On a large folder (home), Esc or Stop while it says `comparing … of same size`: it stops within a second, the status bar says `Stopped`, Activity Monitor's memory falls back.
 
+### 11b, copy verification, speed limit, queue
+
+Numbers stay as they are when branches merge. 11b uses 311–316. Results go to `macos-test-results.md`.
+
+311. **Tests first.** `cargo test -p gezik-ops verif`, `cargo test -p gezik-ops limited`, `cargo test -p gezik-ops waiting_jobs`, `cargo test -p gezik-core ops::rate`, `cargo test -p gezik-platform fs::`; paste the output.
+312. **Clones are not verified.** In `settings.toml` set `[files] verify = true`. Copy a 2 GB file to another folder on the same APFS disk (⌘C, ⌘V): it is done at once and the panel never says `Verifying…`. Then copy it to a USB stick or another disk (not APFS, or another APFS volume): the row says `Verifying…` after the copy and the job takes about twice as long. Write both times.
+313. **F_NOCACHE.** The same copy to the stick with `verify = true`: while it verifies, Activity Monitor ▸ Disk shows reads from the stick (not only from the Mac's disk). Write whether it does: macOS may give the read from the cache (a known limit).
+314. **Speed limit.** `[files] max-speed = "20 MB/s"`, copy a 2 GB file to the stick: the row's speed stays near 20 MB/s; time it (≈ 100 s ±5 %). In the row's ⋯ menu choose Speed limit ▸ No limit: it speeds up at once; ▸ 5 MB/s: it slows at once. Pause and Cancel answer within a moment while limited.
+315. **Queue.** Start three large copies to the same stick one after the other: the first runs, the others say `Waiting for the drive`. The third's ⋯ ▸ Move up: it goes above the second (the rows swap) and runs right after the first; Move up on a waiting job right after the running one is greyed; the running job's ⋯ has no Move items.
+316. **F5 and the menu.** With two panes (F3) and `[panes] confirm = true`, F5: the question has `Verify copies`, ticked as `[files] verify` says; untick it and copy: no `Verifying…`. Tools ▸ Copy To… and Move To… ask the same question with the same box. During a long copy ⋯ ▸ Verify copies turns it on for the files not copied yet. A move to another disk with verification on keeps each source file until its copy checked (watch a big file: the source goes only after `Verifying…`).
+
 ## Known gaps (not bugs)
 
 These are known differences from Finder and ForkLift (from the ForkLift comparison, §3). Don't report them as failures. A note is welcome if one hurts more than expected.

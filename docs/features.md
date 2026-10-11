@@ -52,11 +52,21 @@ Gezik copies, moves and deletes with its own engine on every OS:
   Long ones show in a panel above the status bar (fold it into the status bar with the
   arrow), with pause, cancel and, on Windows, progress on the taskbar button. Its
   **History** tab lists what finished this session.
+- **Verify copies**: each copied file is read back past the system's cache and compared
+  with the original byte by byte; a copy that differs is copied once more, and a move keeps
+  its source until the copy checked. Off by default (copies take about twice as long); on
+  for all copies in the settings, for one F5/F6 in its question, or for a running job in the
+  row's **⋯** menu. Clones (APFS, Btrfs, XFS) share the original's blocks and are not read.
+- **Speed limit** per copy or move: in the settings for all, or in the row's **⋯ ▸ Speed
+  limit** (1 to 100 MB/s) while it runs.
+- **Queue**: a job waiting for its drive moves up or down with **⋯ ▸ Move up / Move down**.
 
 ```toml
 [files]
 confirm-trash = false     # ask before moving to the trash
 copy-threads = "auto"     # auto (SSD 6, spinning disk 1, network 4) or 1-16
+verify = false            # read each copy back and compare it with the original
+max-speed = ""            # "20 MB/s", "500 KB/s"…; empty = no limit
 ```
 
 ## Batch rename

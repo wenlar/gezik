@@ -1101,6 +1101,8 @@ fn main() -> Result<(), slint::PlatformError> {
     let engine_settings = gezik_ops::Settings {
         threads: initial_settings.files.copy_threads,
         pending_deletes: config.as_ref().map(|store| store.dir().join("pending-deletes")),
+        verify: initial_settings.files.verify,
+        max_speed: initial_settings.files.max_speed,
     };
     let ops = operations::Operations::new(
         &window,

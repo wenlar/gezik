@@ -498,7 +498,8 @@ pub fn to_other(moving: bool) {
     }
     let shown = base.clone();
     let restoring = trash.is_some();
-    let go = move |target: PathBuf, pick: gezik_ops::Pick| {
+    // `verify`: the question's Verify copies (`None`: as `[files] verify` says).
+    let go = move |target: PathBuf, pick: gezik_ops::Pick, verify: Option<bool>| {
         crate::operations::with_current(|ops| match trash {
             Some(rows) => {
                 let rows = rows.into_iter().map(|(entry, label)| (entry, label.name.into())).collect();
@@ -508,18 +509,18 @@ pub fn to_other(moving: bool) {
                 panes::active_view().note("Nothing to move: same folder".to_owned());
             }
             None if same_path(&target, &shown) && pick.is_empty() => {
-                ops.transfer(paths, target, if moving { Effect::Move } else { Effect::Copy });
+                ops.transfer_verifying(paths, target, if moving { Effect::Move } else { Effect::Copy }, verify);
             }
             None => {
                 // shortcut: one stat per level above a typed folder outside the other pane's, on
                 // the UI thread (a dead network path blocks); move it off the thread if that bites.
                 let anchor = anchor(&target, shown, |path| path.exists());
-                ops.transfer_making(paths, &target, anchor, moving, pick);
+                ops.transfer_making(paths, &target, anchor, moving, pick, verify);
             }
         });
     };
     if !CONFIRM.with(Cell::get) {
-        return go(base, gezik_ops::Pick::default());
+        return go(base, gezik_ops::Pick::default(), None);
     }
     // shortcut: the typed folder is not looked up on disk (no stat on the UI thread): a file by
     // that name fails in the job; check it off the thread if that confuses.
@@ -528,8 +529,9 @@ pub fn to_other(moving: bool) {
         field: base.display().to_string(),
         base,
         dont_ask: Some(dont_ask_again),
-        // Back out of the trash, items go whole.
+        // Back out of the trash, items go whole and nothing is copied to verify.
         filter: !restoring,
+        verify: (!restoring).then(crate::copy_to::verify_default),
         items: names,
     };
     crate::copy_to::ask(question, go);

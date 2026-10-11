@@ -37,6 +37,8 @@ pub(crate) struct Ask {
     pub dont_ask: Option<fn()>,
     /// Whether Filter… is offered (not when F6 puts items back from the trash).
     pub filter: bool,
+    /// The Verify copies box and its mark (spec 11 §5.1); `None`: no box (nothing is copied).
+    pub verify: Option<bool>,
     /// The chosen items (their names: the title, and a mask is checked against them; a mask
     /// is not applied to folders, but a folder's name is a fair sample of what is inside).
     pub items: Vec<PathBuf>,
@@ -105,10 +107,17 @@ pub(crate) fn nothing_to_move(paths: &[PathBuf], to: &Path) -> bool {
     paths.iter().all(|path| path.parent().is_some_and(|parent| same_path(parent, to)))
 }
 
-/// Asks; `go` gets the target folder and what to take (a mask, a filter) once answered. An
-/// answer the line under the field calls wrong asks again with what was typed (the question
-/// stays, red).
-pub(crate) fn ask(ask: Ask, go: impl FnOnce(PathBuf, Pick) + 'static) {
+/// `[files] verify`: what the Verify copies box starts with.
+pub(crate) fn verify_default() -> bool {
+    let mut on = false;
+    with_current(|ops| on = ops.verify_default());
+    on
+}
+
+/// Asks; `go` gets the target folder, what to take (a mask, a filter) and the Verify copies
+/// box (`None`: none) once answered. An answer the line under the field calls wrong asks again
+/// with what was typed (the question stays, red).
+pub(crate) fn ask(ask: Ask, go: impl FnOnce(PathBuf, Pick, Option<bool>) + 'static) {
     let again = ask.clone();
     let verb = if ask.moving { "Move" } else { "Copy" };
     let mut buttons = vec![verb];
@@ -123,14 +132,15 @@ pub(crate) fn ask(ask: Ask, go: impl FnOnce(PathBuf, Pick) + 'static) {
     let names = Rc::new(item_names(&ask.items));
     let checked = names.clone();
     let items = ask.items;
+    let checks: Vec<(String, bool)> = ask.verify.map(|on| ("Verify copies".to_owned(), on)).into_iter().collect();
     with_current(|ops| {
         let dialogs = ops.dialogs();
         // Holds the dialogs while the question is open: the line's closure goes when it closes.
         let titled = dialogs.clone();
-        dialogs.ask_text_choice(
+        dialogs.ask_form(
             title_for(verb, &items, None),
             message,
-            ask.field,
+            (ask.field, checks),
             &buttons,
             move |typed| {
                 let to = resolve(&noted, typed, real_folder).map(|(to, _)| to);
@@ -138,21 +148,25 @@ pub(crate) fn ask(ask: Ask, go: impl FnOnce(PathBuf, Pick) + 'static) {
                 note_for(&noted, typed, &checked, real_folder)
             },
             move |answer| {
-                let Some((choice, typed)) = answer else { return };
+                let Some((choice, typed, marks)) = answer else { return };
+                let verify = marks.first().copied();
                 if note_for(&base, &typed, &names, real_folder).1 {
-                    return self::ask(Ask { field: typed, ..again }, go);
+                    return self::ask(Ask { field: typed, verify, ..again }, go);
                 }
                 let Some((to, mask)) = resolve(&base, &typed, real_folder) else { return };
                 let pick = Pick { filter: None, mask: mask.map(str::to_owned) };
                 match chosen.get(choice).copied() {
-                    Some(FILTER) => ask_filter(moving, to, pick, LAST_FILTER.with(|last| last.borrow().clone()), go),
+                    Some(FILTER) => {
+                        let last = LAST_FILTER.with(|last| last.borrow().clone());
+                        ask_filter(moving, to, pick, last, verify, go);
+                    }
                     Some(DONT_ASK) => {
                         if let Some(dont_ask) = dont_ask {
                             dont_ask();
                         }
-                        go(to, pick);
+                        go(to, pick, verify);
                     }
-                    _ => go(to, pick),
+                    _ => go(to, pick, verify),
                 }
             },
         );
@@ -160,7 +174,14 @@ pub(crate) fn ask(ask: Ask, go: impl FnOnce(PathBuf, Pick) + 'static) {
 }
 
 /// Filter…: what to take, then the job.
-fn ask_filter(moving: bool, to: PathBuf, pick: Pick, typed: String, go: impl FnOnce(PathBuf, Pick) + 'static) {
+fn ask_filter(
+    moving: bool,
+    to: PathBuf,
+    pick: Pick,
+    typed: String,
+    verify: Option<bool>,
+    go: impl FnOnce(PathBuf, Pick, Option<bool>) + 'static,
+) {
     let verb = if moving { "Move" } else { "Copy" };
     let message = if moving {
         "Only these files: patterns split by spaces, what follows | is left out, a name ending in \\ is a folder:"
@@ -175,10 +196,10 @@ fn ask_filter(moving: bool, to: PathBuf, pick: Pick, typed: String, go: impl FnO
             match FileFilter::parse(&text, !moving) {
                 Ok(filter) => {
                     LAST_FILTER.with(|last| *last.borrow_mut() = text);
-                    go(to, Pick { filter: Some(filter), ..pick });
+                    go(to, Pick { filter: Some(filter), ..pick }, verify);
                 }
                 // Wrong: asked again with what was typed, the line red.
-                Err(_) => ask_filter(moving, to, pick, text, go),
+                Err(_) => ask_filter(moving, to, pick, text, verify, go),
             }
         });
     });
@@ -202,14 +223,15 @@ pub fn copy_to_paths(paths: Vec<PathBuf>, moving: bool) {
     let base = other.clone().or_else(|| panes::active_view().folder()).unwrap_or_default();
     let field = other.map(|folder| folder.display().to_string()).unwrap_or_default();
     let shown = base.clone();
-    let question = Ask { moving, base, field, dont_ask: None, filter: true, items: paths.clone() };
-    ask(question, move |to, pick| {
+    let verify = Some(verify_default());
+    let question = Ask { moving, base, field, dont_ask: None, filter: true, verify, items: paths.clone() };
+    ask(question, move |to, pick, verify| {
         if moving && nothing_to_move(&paths, &to) {
             return panes::active_view().note("Nothing to move: same folder".to_owned());
         }
         // shortcut: one stat per missing level, on the UI thread (as F5/F6's).
         let anchor = dual::anchor(&to, shown, |path| path.exists());
-        with_current(|ops| ops.transfer_making(paths, &to, anchor, moving, pick));
+        with_current(|ops| ops.transfer_making(paths, &to, anchor, moving, pick, verify));
     });
 }
 

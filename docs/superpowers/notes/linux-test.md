@@ -637,6 +637,15 @@ Numbers stay as they are when branches merge. 11i starts at 226 as its plan deci
 237. **Delete, undo and a removable disk.** As macOS 320; then on a USB disk (its `.Trash-<uid>`): Delete goes there and Ctrl+Z brings it back. On an NFS or SMB mount without a trash: nothing is deleted, the status bar says why (macOS 321).
 238. **Stop and Btrfs.** As macOS 323; on Btrfs a `cp --reflink` copy is listed as a duplicate.
 
+### 11b, copy verification, speed limit, queue
+
+Numbers stay as they are when branches merge. 11b uses 231–234.
+
+231. **Tests first.** As macOS 311; paste.
+232. **Verify and FICLONE.** As macOS 312–313: on Btrfs or XFS a copy on the same file system is a clone (instant, no `Verifying…`); to an ext4 USB stick or a VFAT one the row says `Verifying…`. While it verifies, `iostat -x 1` (or `cat /proc/diskstats`) shows reads from the stick.
+233. **Speed limit.** As macOS 314 (Linux copies in 8 MB pieces: the speed may move in steps, the average stays near the limit; time a 2 GB copy at 20 MB/s, ≈ 100 s ±5 %).
+234. **Queue and F5.** As macOS 315–316 with Gezik's own ⋯ menu (X11 and Wayland: the menu opens under the button, inside the window).
+
 ## Known gaps (not bugs)
 
 - **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (F5 works it out again). Search results and the flat view show no folder sizes.

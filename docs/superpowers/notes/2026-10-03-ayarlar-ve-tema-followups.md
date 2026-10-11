@@ -2585,3 +2585,45 @@ Notlar: sonuçlarda Esc çubuğu/sekmeyi kapatmıyor (başlık `Duplicates` kald
 
 - Bellek (madde 14'ün izi): sonuçtan çıkınca kalan ~7,6 MB yinelemeye özgü değil. `cargo run --release -p gezik-search --example dup_memory -- <boş klasör>` (5.000 dosya, 100 çift; her tür üç kez, sonuçlar her seferinde bırakılarak) özel bellekte: başta 1,20 MB; düz arama 5.000 satır tutulurken 2,66, bırakınca 2,18; yineleme 200 satır 2,96, bırakınca 2,96; tur başına ikisi de ≈ +1,1 MB büyüyüp yatışıyor (3. turda düz 4,51, yineleme 4,48). Yineleme ön özet ve tam özet tablolarını, okuma tamponlarını (okuyucu iş parçacıklarıyla gider) ve dosya listesini bırakıyor; sonuç kümesini sekme Geri için tutar (Karar 12), düz aramada da aynı. Kalan, Windows yığınının geri vermediği ayırıcı payı.
 - Esc: yineleme sonuçlarında Esc düz aramadakiyle aynı yoldan geçer (çubukta aramayı durdurur, değilse çubuğu kapatır; listede süzgeci kapatır, değilse seçimi temizler). Sonuç sekmesi ve başlığı iki aramada da kalır; çıkmak Alt+← ya da Backspace. Değişiklik yapılmadı.
+
+## Adım 11, alt parça 11b (Doğrulama, hız sınırı, kuyruk) sonrası
+
+- Yapı: doğrulama ve hız sınırı işin `Control`'unda (`verify`, `speed`, `bucket`, `verifying`), uygulama tek yerde `RunCx::copy_file`. Doğrulama açıkken her kopya geçici ada yazılır, `hash::same_content(.., uncached_b = true)` ile karşılaştırılır, sonra son adını alır: farklı kopya hiçbir zaman son adla durmaz. Fark → bir yeniden kopya → yine fark: `The copy differs from the original at byte N`; silinemeyen bozuk kopya öğeyi hemen düşürür ve yerini söyler. Bağlantılar bağlantı olarak kopyalanır, doğrulanmaz; klonlar (APFS, FICLONE; platform `copy_file` artık `bool` döner) ne doğrulanır ne sınırlanır.
+- "Replace" ile çöpe giden eski hedef, öğe başarısız olur ya da iptal edilirse çöpten geri gelir (yalnız doğrulamada değil, her işte; eskiden undo'yu beklerdi). `gezik-batch` sıkıştırma testi buna göre güncellendi.
+- Hız sınırı: iş başına borçlu kova (`gezik-core::ops::rate::Bucket`, boş başlar, kapasite 1 sn), ilerleme geri çağrısında ≤ 100 ms dilimlerle uyku; her dilimde sınır yeniden okunur (yükseltme/kaldırma hemen), iptal ve duraklatma dilimi keser. Doğrulama süresi borcu öder ama birikim yapmaz (sonraki dosyada patlama yok). Linux'ta sınırlıyken de 8 MiB `copy_file_range` parçası.
+- Kuyruk: `Engine::move_in_queue` işi aynı sürücüdeki en yakın bekleyen işin hemen önüne/arkasına taşır (çıkar + ekle; takas değil: arada kalan işler sırasını korur); çalışan işin önüne geçilmez. Panel satırları aynı biçimde taşınır.
+- Arayüz: iş paneli satırında `⋯` (var olan Slint menüsü, kimlikler 2320–2330: Verify copies, Speed limit ▸ 1–100 MB/s, Move up/down, Start now); F5/F6 sorusunda var olan `Check` ile `Verify copies` kutusu. Ayarlar `[files] verify`, `[files] max-speed` (uyarılı). Varsayılanlar yalnız yeni kopya/taşıma işlerine.
+- Ölçüm (sürüm, Windows, 2026-10-11): exe **26.215.936 B** (11a'ya göre +66.560, master'a göre +414.208); cilalamadan sonra **26.217.472 B** (+68.096 / +415.744). master 06a313b (11a, 11c, 11g, 11h) ile birleştikten sonra **26.644.480 B**, master **26.599.424 B**: 11b **+45.056 B** (F5/F6 kutusu artık master'ın `ask_form` onay kutularını kullanıyor). Doğrulama ve sınır kapalıyken kopya (ops_bench, measure, birer koşu, 11a/11b): 10.000 küçük dosya 3.313/3.405 ms, 2 GB tek dosya 599/593 ms.
+- Bilinen sınırlar: macOS'ta doğrulama okuması önbellekte duran sayfaları atlamayabilir; bağlantı testi bu Windows'ta (bağlantı yetkisi yok) atlanıyor, macOS/Linux'ta koşar; aynı sürücüyü paylaşmayan işlerin yer değiştirmemesi saf birim testiyle (gerçek iki sürücü yok); Retry ayarın değerini alır; `ops.ps1`'e doğrulamalı/sınırlı satır yok.
+- macOS denetim listesi 311–316, Linux 231–234 bekliyor; Windows ekran testleri denetleyicide.
+
+## Windows ekran testleri: 11b
+
+Yapı: %TEMP%\gezik-gui-11\bin\t11b.exe (feat/tools-11b 5326b12). Her oturum için temiz GEZIK_CONFIG_DIR (%TEMP%\gezik-gui-11\cfg\b1…b5, bb-*), `[files] confirm-trash = true`, `[panes] confirm = true`, iki bölme (sol kaynak, sağ hedef). Veriler yalnız %TEMP%\gezik-gui-11\data\b altında (.gzt). Hız ölçümü: Gezik sürecinin WriteTransferCount/ReadTransferCount farkı. Klavye düzeni başta ve sonda en-US=0409:0000041F. Replace/geri alma/çöp kullanılmadı. Görüntüler: %TEMP%\gezik-gui-11\shots\b*.png.
+
+| # | Madde | Sonuç | Not |
+|---|---|---|---|
+| 1 | F5 sorusunda "Verify copies" kutusu, varsayılan kapalı | PASS | b1-f5-default.png |
+| 2 | `[files] verify = true` → kutu işaretli gelir | PASS | b2-f5-crop.png |
+| 3 | Doğrulamalı kopya: 200 MB hedef = kaynak (SHA-256) | PASS | 200 MB'ta "Verifying…" yakalanamayacak kadar kısa; 2 GB'ta görüldü (aşağı) |
+| 4 | 2 GB doğrulamalı kopya: satırda "54% · Verifying…" … 94%, sonra Done; hash aynı | PASS | b1-vTrue-strip.png. Okuma: doğrulamasız 2,15 GB, doğrulamalı 6,44 GB (kaynak+hedef yeniden okundu) |
+| 5 | ⋯ menüsü: Verify copies, Speed limit ▸ (No limit, 1, 5, 10, 25, 50, 100 MB/s); ayardaki 10 MB/s işaretli | PASS | b2-menu.png, b2-speed-sub-crop.png |
+| 6 | `max-speed = "10 MB/s"` yeni işe uygulanır | PASS | 10,03 ve 10,02 MB/s (10 s) |
+| 7 | Speed limit 5 MB/s | PASS | 4,97 MB/s (10 s), ±%10 içinde |
+| 8 | Çalışırken 25 MB/s'e yükseltme ilk saniyede etkili | PASS | ilk 1 s 25,0 MB/s; 4 s ortalama 25,09 |
+| 9 | No limit → tam hız | PASS | kalan ~1,8 GB ~1 s içinde bitti, hash aynı |
+| 10 | Çalışırken ⋯ ▸ Verify copies açma, sonraki dosyalara uygulanır | PASS | menüde işaret değişiyor (b4-menus.png); 2.000 küçük dosya @1 MB/s: okuma 8,4 MB → 18,1 MB. (İki dosyalı klasörde iki işçi aynı anda başladığından etkisiz kaldı; beklenen) |
+| 11 | Kuyruk: aynı sürücüye üç iş → 2. ve 3. "Waiting for the drive" | PASS | |
+| 12 | Bekleyen 2. işin menüsü: Move up gri, Move down, Start now; 3.'nün: Move down gri; çalışan işte Move öğeleri yok | PASS | b3-menus.png |
+| 13 | Move up/down yalnız bekleyenleri sıralar, çalışan yerinde | PASS | big2g,v200,v50 → (v50 up) big2g,v50,v200 → (down) big2g,v200,v50 → (v200 down) big2g,v50,v200 |
+| 14 | Start now (menüden) | PASS | sondaki v200 hemen başladı, v50 beklemede kaldı |
+| 15 | Çalışan bitince sıradaki (taşınmış) bekleyen başlar | PASS | big2g No limit ile bitince v50 kendiliğinden başladı; üç kopyanın hash'i aynı |
+| 16 | Sınırlıyken Pause / Resume / Cancel | PASS | ölçüm penceresi ~200 ms: Pause'tan sonraki ilk pencerede yazma 0; Resume'da ilk pencerede yeniden ~10 MB/s; Cancel'dan sonra 0, soru yok, geçici dosya kalmadı |
+| 17 | Kapalıyken hız, base-old.exe (master release, 02:37, 25.662.464 B; tam master değil, kopya motoru aynı) ile | PASS | 2 GB: base 1057/989 ms, 11b 986/980 ms; 2.000×4 KB: base 763/762 ms, 11b 756/740 ms (GUI, onaydan bitişe) |
+
+Gözlemler (hata değil):
+- Sınırlı bir iş başlarken satırdaki hız ilk saniyelerde düşük görünüyor ("527.8 KB/s", "260.6 KB/s"), sonra 9,6 MB/s'e oturuyor.
+- "Verify copies" kutusu UIA'da TogglePattern vermiyor (durum ekran okuyucuya gidiyor mu, ayrıca bakılmalı).
+- Doğrulama kapalıyken de (b3, büyük dosya) kopya hedefte geçici `.gezik-copying-…` adıyla yazılıyor; iş bitince ya da iptalde kalmıyor.
+
+- Sonrası (cilalama): `Check` bileşeni `accessible-checkable` alır (UI Automation onay durumunu görür); işin hız ortalaması ilk baytlar geçtiğinde başlar (bekleme ve tarama süresi ortalamaya girmez). İkisi exe'ye +1.536 B.
