@@ -1,4 +1,5 @@
-//! A new, empty folder or file, or a file with given contents (a pasted picture or text).
+//! A new, empty folder or file, or a file with given contents (a pasted picture or text, an
+//! exported list).
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -8,16 +9,16 @@ use gezik_core::ops::conflict::{Decision, Facts};
 
 use crate::task::{Outcome, PlanItem, Resources, RunCx, ScanSink, Stage, Task, TaskKind, Work, facts_after};
 
-/// Makes a new file's bytes, on the job's thread (a pasted picture encoded as PNG). Called
+/// Writes a new file's bytes, on the job's thread (a pasted picture encoded as PNG). Called
 /// again if the item is tried again (a full disk).
-type Contents = Box<dyn Fn() -> io::Result<Vec<u8>> + Send + Sync>;
+type Contents = Box<dyn Fn(&mut dyn Write) -> io::Result<()> + Send + Sync>;
 
 pub struct NewTask {
     dir: PathBuf,
     name: String,
     folder: bool,
     contents: Option<Contents>,
-    /// A taken name is a conflict to settle, not a new number.
+    /// A taken name goes to the conflict list instead of getting a number.
     asks: bool,
 }
 
@@ -45,17 +46,18 @@ impl NewTask {
         name: &str,
         contents: impl Fn() -> io::Result<Vec<u8>> + Send + Sync + 'static,
     ) -> NewTask {
+        let contents = move |out: &mut dyn Write| out.write_all(&contents()?);
         NewTask { contents: Some(Box::new(contents)), ..NewTask::new(dir, name, false) }
     }
 
-    /// A file named `name` with `contents` (a saved checksum file, spec 11 §4.2): a taken name
-    /// goes to the conflict list.
-    pub fn asking(
+    /// A file named `name` that `write` streams out (an exported list, spec 11 §11.1); a taken
+    /// name is asked about.
+    pub fn written(
         dir: &Path,
         name: &str,
-        contents: impl Fn() -> io::Result<Vec<u8>> + Send + Sync + 'static,
+        write: impl Fn(&mut dyn Write) -> io::Result<()> + Send + Sync + 'static,
     ) -> NewTask {
-        NewTask { asks: true, ..NewTask::with_contents(dir, name, contents) }
+        NewTask { contents: Some(Box::new(write)), asks: true, ..NewTask::new(dir, name, false) }
     }
 }
 
@@ -78,7 +80,7 @@ impl Task for NewTask {
 
     fn plan(&self, sink: &mut dyn ScanSink) {
         let facts = Facts { is_dir: self.folder, ..Facts::default() };
-        // A taken name becomes "New folder (2)" without asking.
+        // A taken name becomes "New folder (2)" without asking, unless it asks.
         let item = PlanItem::new(Stage::Parallel, facts)
             .target(self.dir.join(&self.name))
             .checked()
@@ -104,11 +106,11 @@ impl Task for NewTask {
         if self.folder {
             std::fs::create_dir(target)?;
         } else if let Some(contents) = &self.contents {
-            // Made first: a picture that cannot be read leaves no file behind.
-            let bytes = contents()?;
-            let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(target)?;
-            if let Err(err) = file.write_all(&bytes) {
-                drop(file);
+            let file = std::fs::OpenOptions::new().write(true).create_new(true).open(target)?;
+            let mut out = io::BufWriter::with_capacity(64 * 1024, file);
+            // A picture that cannot be read, or a write that fails, leaves no file behind.
+            if let Err(err) = contents(&mut out).and_then(|()| out.flush()) {
+                drop(out);
                 let _ = std::fs::remove_file(target);
                 return Err(err);
             }
@@ -122,6 +124,7 @@ impl Task for NewTask {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ConflictItem;
     use crate::testing::{defaults, engine, finish, test_dir};
 
     #[test]
@@ -186,23 +189,6 @@ mod tests {
     }
 
     #[test]
-    fn a_file_that_asks_meets_a_taken_name_as_a_conflict() {
-        let dir = test_dir("new-asking");
-        std::fs::write(dir.join("x.sha256"), "old").unwrap();
-        let engine = engine();
-        let task = NewTask::asking(&dir, "x.sha256", || Ok(b"new".to_vec()));
-        let (report, events) = finish(&engine, engine.submit(Box::new(task)), |conflicts| {
-            assert_eq!(conflicts.len(), 1);
-            vec![Decision::Replace]
-        });
-        assert!(events.iter().any(|e| matches!(e, crate::engine::Event::Conflicts { .. })));
-        assert!(report.failures.is_empty(), "{:?}", report.failures);
-        assert_eq!(std::fs::read(dir.join("x.sha256")).unwrap(), b"new");
-        assert_eq!(report.results, [dir.join("x.sha256")]);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
     fn contents_that_cannot_be_made_leave_no_file() {
         let dir = test_dir("new-contents-bad");
         let engine = engine();
@@ -210,6 +196,48 @@ mod tests {
         let (report, _) = finish(&engine, engine.submit(Box::new(task)), defaults);
         assert_eq!(report.failures.len(), 1);
         assert!(!dir.join("x.png").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    #[test]
+    fn a_written_file_streams_and_asks_about_a_taken_name() {
+        let dir = test_dir("new-written");
+        let engine = engine();
+        let write = |out: &mut dyn Write| (0..3).try_for_each(|i| writeln!(out, "row {i}"));
+        let (report, _) = finish(&engine, engine.submit(Box::new(NewTask::written(&dir, "list.txt", write))), |c| {
+            panic!("a free name asks nothing: {c:?}")
+        });
+        assert_eq!(report.results, [dir.join("list.txt")]);
+        assert_eq!(
+            std::fs::read_to_string(dir.join("list.txt")).unwrap(),
+            "row 0
+row 1
+row 2
+"
+        );
+
+        // Taken: the conflict list; Skip leaves the file as it was.
+        std::fs::write(dir.join("list.txt"), "old").unwrap();
+        let skip = |c: &[ConflictItem]| vec![Decision::Skip; c.len()];
+        finish(&engine, engine.submit(Box::new(NewTask::written(&dir, "list.txt", write))), skip);
+        assert_eq!(std::fs::read_to_string(dir.join("list.txt")).unwrap(), "old");
+
+        // Replace writes it; undo brings the old one back.
+        let asked = std::sync::atomic::AtomicUsize::new(0);
+        let replace = |c: &[ConflictItem]| {
+            asked.fetch_add(c.len(), std::sync::atomic::Ordering::SeqCst);
+            vec![Decision::Replace; c.len()]
+        };
+        finish(&engine, engine.submit(Box::new(NewTask::written(&dir, "list.txt", write))), replace);
+        assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(
+            std::fs::read_to_string(dir.join("list.txt")).unwrap(),
+            "row 0
+row 1
+row 2
+"
+        );
+        finish(&engine, engine.undo().unwrap(), defaults);
+        assert_eq!(std::fs::read_to_string(dir.join("list.txt")).unwrap(), "old");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

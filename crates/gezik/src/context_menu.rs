@@ -490,11 +490,6 @@ pub const COLLAPSE_GROUPS: u32 = 2010;
 pub const EXPAND_GROUPS: u32 = 2011;
 /// View ▸ Columns (spec 10 §10.3, 10e).
 pub const VIEW_COLUMNS: u32 = 2040;
-/// The tools (spec 11 §13.3; 2200–2219 in the macOS Tools menu's order: Compare 2200, Select
-/// Differences 2201, …). In a row menu they stand with Compress and Convert, not in a submenu
-/// of their own: a menu has room for four, which macOS rows already fill.
-pub const TOOLS_CHECKSUMS: u32 = 2202;
-pub const TOOLS_VERIFY: u32 = 2203;
 /// View ▸ "Reset to rule N" (spec 10 §8.2, §10.3): the folder forgets its own view, rule N applies.
 pub const RESET_TO_RULE: u32 = 2041;
 /// View ▸ "View rule N applies", greyed: which rule set the folder's view.
@@ -515,6 +510,42 @@ pub const SWAP_PANES: u32 = 2032;
 pub const SAME_FOLDER: u32 = 2033;
 /// View ▸ Show in sidebar tree (spec 10 §10.3, 10c).
 pub const REVEAL_IN_TREE: u32 = 2050;
+// Step 11 (spec 11 §13.3): 2200–2399. Tools ▸ 2200–2219 in the macOS Tools menu's order: Compare
+// 2200, Select Differences 2201, Calculate Checksums 2202, Verify Checksums 2203, Find Duplicates
+// 2204, Size Map 2205, Export List 2206, Copy To 2207, Move To 2208, Split File 2209, Join Files 2210.
+/// Tools ▸ Compare (11c).
+pub const TOOLS_COMPARE: u32 = 2200;
+/// Tools ▸ Calculate checksums… and Verify checksums (11a), on rows.
+pub const TOOLS_CHECKSUMS: u32 = 2202;
+pub const TOOLS_VERIFY: u32 = 2203;
+/// Tools ▸ Size Map (11g), on one folder or a folder's empty space.
+pub const TOOLS_SIZE_MAP: u32 = 2205;
+/// Tools ▸ Export list… (11h).
+pub const TOOLS_EXPORT_LIST: u32 = 2206;
+
+/// `Tools ▸` (spec 11 §3.3) at place `at`: only what applies: Compare for the selection when it
+/// can be compared (`compare`), Calculate checksums… for `rows` (a row menu's) and Verify
+/// checksums for one checksum file, Size Map on one folder or a folder's empty space
+/// (`size_map`), Export list… always.
+pub fn tools_sub(at: usize, compare: bool, rows: &[(PathBuf, bool)], size_map: bool) -> Submenu {
+    let mut items = Vec::new();
+    if compare {
+        items.push((TOOLS_COMPARE, "Compare".to_owned(), true));
+    }
+    if !rows.is_empty() {
+        items.push((TOOLS_CHECKSUMS, "Calculate checksums…".to_owned(), true));
+    }
+    if let [(path, false)] = rows
+        && crate::checksums::is_checksum_file(path)
+    {
+        items.push((TOOLS_VERIFY, "Verify checksums".to_owned(), true));
+    }
+    if size_map {
+        items.push((TOOLS_SIZE_MAP, "Size Map".to_owned(), true));
+    }
+    items.push((TOOLS_EXPORT_LIST, "Export list…".to_owned(), true));
+    Submenu { title: "Tools".to_owned(), at, items }
+}
 
 /// A trash row's menu: only what the trash does (no Explorer menu, nothing that acts on a
 /// `$R…` name).
@@ -534,8 +565,9 @@ pub const HEADING: u32 = 0;
 pub const GEZIK_IDS_END: u32 = 4096;
 #[cfg(windows)]
 const _: () = assert!(gezik_platform::FIRST_SHELL_ID == GEZIK_IDS_END, "Gezik's ids end where Explorer's begin");
-/// Most submenus a menu shows: app.slint and popup-menu.slint have this many places.
-pub const MAX_SUBMENUS: usize = 4;
+/// Most submenus a menu shows: app.slint and popup-menu.slint have this many places (a macOS
+/// row: Open With, Copy path as, Commands, Tools, Quick Actions).
+pub const MAX_SUBMENUS: usize = 5;
 
 /// A submenu among a menu's items ("Commands ▸"): its title, its place among the items (0:
 /// first), and its items (id, title, enabled).
@@ -544,18 +576,6 @@ pub struct Submenu {
     pub title: String,
     pub at: usize,
     pub items: Vec<(u32, String, bool)>,
-}
-
-/// The tools for `rows`: Calculate checksums…, and Verify checksums for one checksum file
-/// (spec 11 §3.3: what does not fit is left out).
-pub fn tool_items(rows: &[(PathBuf, bool)]) -> Vec<(u32, String)> {
-    let mut items = vec![(TOOLS_CHECKSUMS, "Calculate checksums…".to_owned())];
-    if let [(path, false)] = rows
-        && crate::checksums::is_checksum_file(path)
-    {
-        items.push((TOOLS_VERIFY, "Verify checksums".to_owned()));
-    }
-    items
 }
 
 /// What a search result's row menu adds.
@@ -994,6 +1014,8 @@ enum Subject {
     Search,
     /// A saved search in the sidebar, by name.
     SavedSearch(String),
+    /// The size map's rectangle menu (items by id).
+    SizeMap,
 }
 
 /// Lets one native menu be pending or open at a time, so two right-clicks in quick
@@ -1200,17 +1222,19 @@ impl Menus {
         if crate::panes::active_view().shows_drives() {
             return;
         }
+        let one_folder = matches!(rows.as_slice(), [(_, true)]);
         let mut extra = crate::archives::menu_items(&rows);
         let (convert, commands) = crate::convert::menu_items(&rows);
         extra.extend(convert);
-        extra.extend(tool_items(&rows));
-        *self.rows.borrow_mut() = rows;
         let start = if native { 0 } else { list.len() };
+        let tools = tools_sub(start + extra.len(), crate::diff::offered(), &rows, one_folder);
+        *self.rows.borrow_mut() = rows;
         if native {
             for sub in subs.iter_mut() {
                 sub.at += extra.len();
             }
         }
+        subs.push(tools);
         subs.extend(commands.map(|items| Submenu { title: "Commands".to_owned(), at: start + extra.len(), items }));
         if native {
             list.splice(0..0, extra);
@@ -1336,11 +1360,14 @@ impl Menus {
             .map(|(id, title)| (id, title, true))
             .collect();
             let mut list = list;
+            let mut subs = Vec::new();
             if crate::panes::active_view().shows_trash() {
                 list.push((EMPTY_TRASH, empty_title(), true));
+            } else {
+                subs.push(tools_sub(list.len(), false, &[], false));
             }
             *self.subject.borrow_mut() = Some(Subject::Background(PathBuf::new()));
-            return self.open_slint_entries(&list, Vec::new(), Anchor::point(x, y));
+            return self.open_slint_entries(&list, subs, Anchor::point(x, y));
         }
         if crate::panes::active_view().shows_drives() {
             *self.subject.borrow_mut() = Some(Subject::Background(PathBuf::new()));
@@ -1367,6 +1394,7 @@ impl Menus {
         list.push((SEARCH_HERE, "Search in this folder…".to_owned()));
         list.extend(owned(terminal_items(windows)));
         subs.push(self.copy_path_sub(std::slice::from_ref(&dir), list.len()));
+        subs.push(tools_sub(list.len(), false, &[], true));
         self.open(Subject::Background(dir.clone()), list, subs, MenuTarget::Background(dir), x, y, at);
     }
 
@@ -1722,6 +1750,12 @@ impl Menus {
         self.open_slint_entries(&items, Vec::new(), at);
     }
 
+    /// The size map's menu (size_map.rs builds it) at the pointer.
+    pub fn size_map_menu(&self, items: Vec<(u32, String, bool)>, at: Anchor) {
+        *self.subject.borrow_mut() = Some(Subject::SizeMap);
+        self.open_slint_entries(&items, Vec::new(), at);
+    }
+
     /// One of the Info window's ▾ menus (info.rs builds it): `items` under its button.
     pub fn info_menu(&self, items: Vec<(u32, String, bool)>, at: Anchor) {
         *self.subject.borrow_mut() = Some(Subject::Info);
@@ -1909,6 +1943,9 @@ impl Menus {
             (FREE_UP, Subject::Row(path)) => crate::cloud::run(vec![path], false, &crate::panes::active_view()),
             (FREE_UP, Subject::Rows(paths)) => crate::cloud::run(paths, false, &crate::panes::active_view()),
             (id, Subject::Info) => crate::info::with_current(|info| info.menu_chosen(id)),
+            (TOOLS_COMPARE, Subject::Row(_) | Subject::Rows(_)) => crate::diff::compare(),
+            (id, Subject::SizeMap) => crate::size_map::with_current(|map| map.menu_chosen(id)),
+            (TOOLS_SIZE_MAP, Subject::Row(path) | Subject::Background(path)) => crate::size_map::open_at(path),
             (CONVERT, Subject::Row(_) | Subject::Rows(_)) => {
                 let rows = std::mem::take(&mut *self.rows.borrow_mut());
                 crate::convert::with_current(|convert| convert.open(rows));
@@ -2069,6 +2106,7 @@ impl Menus {
                 crate::integration::with_current(crate::integration::Integration::open)
             }
             (REVEAL_IN_TREE, _) => self.sidebar.reveal_current(),
+            (TOOLS_EXPORT_LIST, _) => crate::export::ask(&crate::panes::active_nav(), &crate::panes::active_view()),
             (CALC_FOLDER_SIZES, _) => {
                 crate::panes::with_active(|p| p.folder_sizes.calculate());
             }
@@ -2319,7 +2357,12 @@ fn from_submenu(id: u32) -> bool {
         || (GROUP_MOVE_FIRST..GROUP_MOVE_FIRST + GROUP_MAX).contains(&id)
         || (WINDOW_FIRST..WINDOW_FIRST + WINDOW_MAX).contains(&id)
         || id == GROUP_NEW
+        || id == TOOLS_EXPORT_LIST
+        || id == TOOLS_SIZE_MAP
         || id == GROUP_NONE
+        || id == TOOLS_COMPARE
+        || id == TOOLS_CHECKSUMS
+        || id == TOOLS_VERIFY
         || (TEMPLATE_FIRST..TEMPLATE_FIRST + TEMPLATE_MAX).contains(&id)
         || (OPEN_WITH_FIRST..OPEN_WITH_FIRST + OPEN_WITH_MAX).contains(&id)
         || id == OPEN_WITH_OTHER
@@ -2403,7 +2446,8 @@ mod tests {
         assert!(before.is_empty());
         let shown: Vec<(&str, Vec<&str>)> = parts.iter().map(|(s, after)| (s.title.as_str(), after.clone())).collect();
         assert_eq!(shown, [("First", vec!["a", "b"]), ("Mid", vec!["c", "d"]), ("Late", vec![])]);
-        let many: Vec<Submenu> = (0..6).map(|i| sub("S", i, 1)).collect();
+        // Six submenus, two pairs at one place: the last is left out.
+        let many: Vec<Submenu> = [0, 1, 2, 2, 3, 3].into_iter().map(|at| sub("S", at, 1)).collect();
         let (_, parts) = split_menu(&items, &many);
         assert_eq!(parts.len(), MAX_SUBMENUS);
         assert_eq!(parts.last().unwrap().1, ["d"], "the items after one left out stay");
@@ -2589,6 +2633,26 @@ mod tests {
     }
 
     #[test]
+    fn the_tools_ids_stay_in_their_range() {
+        assert_eq!(TOOLS_EXPORT_LIST, 2206, "spec 11 §13.3");
+        assert_eq!(TOOLS_COMPARE, 2200, "spec 11 §13.3");
+        let tools = tools_sub(3, true, &[], false);
+        assert_eq!((tools.title.as_str(), tools.at), ("Tools", 3));
+        let ids: Vec<u32> = tools.items.iter().map(|(id, _, _)| *id).collect();
+        assert_eq!(ids, [TOOLS_COMPARE, TOOLS_EXPORT_LIST]);
+        assert_eq!(tools_sub(0, false, &[], false).items.len(), 1, "Compare only where it applies");
+        let sums = [(PathBuf::from("a.sha256"), false)];
+        let ids: Vec<u32> = tools_sub(0, true, &sums, true).items.iter().map(|(id, _, _)| *id).collect();
+        assert_eq!(
+            ids,
+            [TOOLS_COMPARE, TOOLS_CHECKSUMS, TOOLS_VERIFY, TOOLS_SIZE_MAP, TOOLS_EXPORT_LIST],
+            "the macOS Tools menu's order"
+        );
+        assert_eq!(TOOLS_SIZE_MAP, 2205, "spec 11 §13.3, after Find Duplicates 2204");
+        assert!(tools.items.iter().all(|(id, _, _)| (2200..2220).contains(id) && from_submenu(*id)));
+    }
+
+    #[test]
     fn the_9a3_ids_stay_in_their_range() {
         assert_eq!(GET_INFO, 1742);
         for id in [INFO_GROUP_FIRST, INFO_GROUP_FIRST + INFO_GROUP_MAX - 1] {
@@ -2600,10 +2664,16 @@ mod tests {
     }
 
     #[test]
-    fn a_macos_row_keeps_all_four_submenus() {
+    fn a_macos_row_keeps_all_five_submenus() {
         let list: Vec<(u32, String)> = (0..10).map(|i| (i + 100, String::new())).collect();
         let sub = |title: &str, at: usize| Submenu { title: title.into(), at, items: vec![(1, String::new(), true)] };
-        let subs = [sub("Open With", 2), sub("Copy path as", 4), sub("Commands", 6), sub("Quick Actions", 10)];
+        let subs = [
+            sub("Open With", 2),
+            sub("Copy path as", 4),
+            sub("Commands", 6),
+            tools_sub(6, false, &[], false),
+            sub("Quick Actions", 10),
+        ];
         let (_, parts) = split_menu(&list, &subs);
         assert_eq!(parts.len(), MAX_SUBMENUS, "none is dropped");
     }
@@ -2682,6 +2752,7 @@ mod tests {
             RESET_FOLDER,
             SYSTEM_INTEGRATION,
             REVEAL_IN_TREE,
+            TOOLS_EXPORT_LIST,
             UNDO,
             REDO,
             PASTE,
@@ -2770,6 +2841,8 @@ mod tests {
             SYNC_BROWSING,
             SWAP_PANES,
             SAME_FOLDER,
+            TOOLS_COMPARE,
+            TOOLS_SIZE_MAP,
             TOOLS_CHECKSUMS,
             TOOLS_VERIFY,
         ];
@@ -2799,6 +2872,7 @@ mod tests {
             SAVED_SEARCH_FIRST..SAVED_SEARCH_FIRST + SAVED_SEARCH_MAX,
             SAVED_SEARCH_DELETE_FIRST..SAVED_SEARCH_DELETE_FIRST + SAVED_SEARCH_MAX,
             WINDOW_FIRST..WINDOW_FIRST + WINDOW_MAX,
+            crate::size_map::MAP_OPEN..crate::size_map::MAP_COPY_PATH + 1,
         ]);
         for (i, a) in ranges.iter().enumerate() {
             assert!(a.start >= 1 && a.end <= GEZIK_IDS_END, "{a:?}: 1..4096 (0 is a heading, 4096 on the Shell's)");
@@ -2813,13 +2887,22 @@ mod tests {
 
     #[test]
     fn tools_offer_verify_only_for_one_checksum_file() {
-        let ids = |rows: &[(PathBuf, bool)]| -> Vec<u32> { tool_items(rows).into_iter().map(|(id, _)| id).collect() };
+        let ids = |rows: &[(PathBuf, bool)]| -> Vec<u32> {
+            tools_sub(0, false, rows, false)
+                .items
+                .into_iter()
+                .map(|(id, ..)| id)
+                .filter(|id| *id != TOOLS_EXPORT_LIST)
+                .collect()
+        };
         assert_eq!(ids(&[(PathBuf::from("a.txt"), false)]), [TOOLS_CHECKSUMS]);
         assert_eq!(ids(&[(PathBuf::from("a.iso.sha256"), false)]), [TOOLS_CHECKSUMS, TOOLS_VERIFY]);
         assert_eq!(ids(&[(PathBuf::from("SHA256SUMS"), false)]), [TOOLS_CHECKSUMS, TOOLS_VERIFY]);
         assert_eq!(ids(&[(PathBuf::from("x.sha256"), true)]), [TOOLS_CHECKSUMS], "a folder");
         let two = [(PathBuf::from("a.md5"), false), (PathBuf::from("b.md5"), false)];
         assert_eq!(ids(&two), [TOOLS_CHECKSUMS]);
+        assert!(ids(&[]).is_empty(), "no rows (a folder's empty space): no checksums");
+        assert!(from_submenu(TOOLS_CHECKSUMS) && from_submenu(TOOLS_VERIFY));
     }
 
     fn ids(v: Vec<(u32, &str)>) -> Vec<u32> {
