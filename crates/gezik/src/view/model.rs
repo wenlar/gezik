@@ -159,13 +159,13 @@ impl Model for ItemsModel {
     }
 }
 
-/// Group `g`'s header line: its name and how many entries it has (`Today (12)`).
+/// Group `g`'s header line: its name and how many entries it has (`Today (12)`; `GroupKey::header`).
 fn header_row(data: &ViewData, g: usize) -> Option<ItemRow> {
     let (span, key) = (data.groups.get(g)?, data.group_keys.get(g)?);
     (span.start < data.listing.len()).then(|| ItemRow {
         first: i32::try_from(span.start).unwrap_or(i32::MAX),
         cells: ModelRc::default(),
-        header: format!("{} ({})", key.label(), span.len).into(),
+        header: key.header(span.len).into(),
         collapsed: span.collapsed,
     })
 }

@@ -1100,7 +1100,7 @@ mod tests {
                 match event {
                     Event::Batch(batch) => set.append(batch),
                     Event::Done(done) => summary = Some(done),
-                    Event::Progress { .. } => {}
+                    Event::Progress { .. } | Event::Comparing { .. } => {}
                 }
             }
             let summary = summary.expect("a summary");
@@ -1197,7 +1197,7 @@ mod tests {
             match event {
                 Event::Batch(batch) => set.append(batch),
                 Event::Done(done) => summary = Some(done),
-                Event::Progress { .. } => {}
+                Event::Progress { .. } | Event::Comparing { .. } => {}
             }
         }
         let summary = summary.unwrap();

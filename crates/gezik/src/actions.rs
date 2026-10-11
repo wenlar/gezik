@@ -139,6 +139,9 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         Action::SizeMap => crate::size_map::open_for(view),
         Action::Checksums => crate::checksums::open_for_view(view),
         Action::VerifyChecksums => crate::checksums::verify_for_view(view),
+        Action::FindDuplicates => {
+            crate::panes::with_active(|p| p.search.find_duplicates());
+        }
         Action::CopyTo => crate::copy_to::copy_to(view, false),
         Action::MoveTo => crate::copy_to::copy_to(view, true),
         Action::SplitFile => crate::copy_to::split(view),

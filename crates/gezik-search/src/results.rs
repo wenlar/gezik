@@ -19,6 +19,8 @@ pub struct Batch {
     pub entries: Vec<Entry>,
     pub parent: Vec<u32>,
     pub matches: Vec<Option<Found>>,
+    /// Duplicates (spec 11 §9.3): each entry's group; empty for other searches.
+    pub dups: Vec<u32>,
 }
 
 impl Batch {
@@ -56,6 +58,8 @@ pub struct ResultSet {
     sorted: Option<(SortSpec, bool, GroupBy)>,
     /// The trash's rows' labels (`ResultSet::trash`); `None` for a search.
     labels: Option<Vec<TrashLabel>>,
+    /// A duplicates search's rows' groups (`ResultSet::duplicates`): 0 frees the most.
+    dups: Option<Vec<u32>>,
 }
 
 // Above `Entry`'s eight flag bits, below the name's length.
@@ -199,7 +203,71 @@ impl ResultSet {
             matches: content.then(Vec::new),
             sorted: None,
             labels: None,
+            dups: None,
         }
+    }
+
+    /// Empty results of a duplicates search under `root` (spec 11 §9.3).
+    pub fn duplicates(root: PathBuf) -> ResultSet {
+        ResultSet { dups: Some(Vec::new()), ..ResultSet::new(root, false) }
+    }
+
+    pub fn is_duplicates(&self) -> bool {
+        self.dups.is_some()
+    }
+
+    /// Row `i`'s group in a duplicates search.
+    pub fn dup_group(&self, i: usize) -> Option<u32> {
+        self.dups.as_ref()?.get(i).copied()
+    }
+
+    /// Row `i`'s group header key in a duplicates search.
+    pub fn dup_key(&self, i: usize) -> Option<gezik_core::group::GroupKey> {
+        let id = self.dup_group(i)?;
+        Some(gezik_core::group::GroupKey::Duplicates { id, size: self.entries.rows[i].size })
+    }
+
+    /// How many duplicate groups deleting `paths` would leave without a copy: no other row of the
+    /// group is still on disk (`exists`) and not being deleted already (`busy`, other jobs).
+    /// `None` when this is no duplicates search or no path is a row of it.
+    pub fn groups_left_without_copy(
+        &self,
+        paths: &[PathBuf],
+        busy: &[PathBuf],
+        exists: &dyn Fn(&Path) -> bool,
+    ) -> Option<usize> {
+        let dups = self.dups.as_ref()?;
+        let rows = self.rows_of(paths);
+        if rows.is_empty() {
+            return None;
+        }
+        // Each touched group: whether a copy stays. One pass over the rows; the disk is asked
+        // only until a group has one.
+        let mut touched: std::collections::HashMap<u32, bool> = rows.iter().map(|&i| (dups[i], false)).collect();
+        let gone: std::collections::HashSet<&Path> = paths.iter().chain(busy).map(PathBuf::as_path).collect();
+        for (i, id) in dups.iter().enumerate() {
+            if touched.get(id) == Some(&false)
+                && let Some(path) = self.path_at(i)
+                && !gone.contains(path.as_path())
+                && exists(&path)
+            {
+                touched.insert(*id, true);
+            }
+        }
+        Some(touched.values().filter(|kept| !**kept).count())
+    }
+
+    /// A duplicates search's groups, files, and the bytes deleting all but one of each frees.
+    pub fn dup_counts(&self) -> (usize, usize, u64) {
+        let Some(dups) = &self.dups else { return (0, 0, 0) };
+        let mut groups: std::collections::HashMap<u32, (usize, u64)> = std::collections::HashMap::new();
+        for (i, id) in dups.iter().enumerate() {
+            let group = groups.entry(*id).or_default();
+            group.0 += 1;
+            group.1 = self.entries.rows[i].size;
+        }
+        let freed = groups.values().map(|(n, size)| size.saturating_mul(n.saturating_sub(1) as u64)).sum();
+        (groups.len(), dups.len(), freed)
     }
 
     /// The trash's rows (spec 7.1): every bin, so no scope (folders are whole paths).
@@ -241,6 +309,7 @@ impl ResultSet {
 
     pub(crate) fn push_entry(&mut self, entry: Entry, parent: u32) {
         assert!(!self.is_trash(), "a trash row needs its label");
+        debug_assert!(self.dups.is_none(), "a duplicate row needs its group");
         self.sorted = None;
         self.entries.push(&entry);
         self.parent.push(parent);
@@ -257,6 +326,7 @@ impl ResultSet {
             folders: self.folders,
             parent: self.parent,
             matches: self.matches.unwrap_or_else(|| vec![None; count]),
+            dups: self.dups.unwrap_or_default(),
         }
     }
 
@@ -355,6 +425,10 @@ impl ResultSet {
         if let Some(matches) = &mut self.matches {
             matches.extend(batch.matches);
         }
+        if let Some(dups) = &mut self.dups {
+            debug_assert_eq!(batch.dups.len(), batch.entries.len());
+            dups.extend(batch.dups);
+        }
     }
 
     /// The sort, folders-first and grouping the entries are in, if they are sorted
@@ -378,6 +452,9 @@ impl ResultSet {
         if let Some(labels) = &mut self.labels {
             gezik_core::sort::apply_order(labels, order);
         }
+        if let Some(dups) = &mut self.dups {
+            gezik_core::sort::apply_order(dups, order);
+        }
     }
 
     /// Entries `rows` (the filter's), with all the folders.
@@ -398,6 +475,7 @@ impl ResultSet {
                 .labels
                 .as_ref()
                 .map(|l| rows.iter().map(|&i| l.get(i).expect("a trash row has its label").clone()).collect()),
+            dups: self.dups.as_ref().map(|d| rows.iter().filter_map(|&i| d.get(i).copied()).collect()),
         }
     }
 
@@ -416,6 +494,9 @@ impl ResultSet {
             }
             if let Some(labels) = &mut self.labels {
                 labels.push(from.label(i).expect("a trash row has its label").clone());
+            }
+            if let Some(dups) = &mut self.dups {
+                dups.push(from.dup_group(i).unwrap_or(u32::MAX));
             }
         }
         if !rows.is_empty() {
@@ -459,7 +540,25 @@ impl ResultSet {
             index = 0;
             labels.retain(|_| (keep[index], index += 1).0);
         }
+        if let Some(dups) = &mut self.dups {
+            index = 0;
+            dups.retain(|_| (keep[index], index += 1).0);
+        }
     }
+}
+
+/// `removed` (ascending rows) and the rows of the groups that leaves with a single row.
+fn with_lone_groups(dups: &[u32], mut removed: Vec<usize>) -> Vec<usize> {
+    let mut left: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();
+    for (i, id) in dups.iter().enumerate() {
+        if removed.binary_search(&i).is_err() {
+            *left.entry(*id).or_default() += 1;
+        }
+    }
+    removed.extend((0..dups.len()).filter(|&i| left.get(&dups[i]) == Some(&1)));
+    removed.sort_unstable();
+    removed.dedup();
+    removed
 }
 
 /// Whether two times are the same; at whole seconds when one has nothing finer (the name
@@ -619,10 +718,16 @@ impl ResultSet {
                 }
             }
         }
-        let removed: Vec<usize> = gone_rows
+        let mut removed: Vec<usize> = gone_rows
             .into_iter()
             .filter(|&row| !taken[row] && !moved.get(self.parent[row] as usize).copied().unwrap_or(false))
             .collect();
+        // Duplicates (spec 11 §9.3): a group left with one file goes, and nothing comes in
+        // (a row has no group without the search: "Run again").
+        if let Some(dups) = &self.dups {
+            removed = with_lone_groups(dups, removed);
+            appended.clear();
+        }
         let kept: Vec<usize> = (0..self.entries.len()).filter(|i| removed.binary_search(i).is_err()).collect();
         self.remove(&removed);
         for (text, number, entry) in appended {
@@ -864,6 +969,7 @@ mod tests {
             entries: vec![entry("x.txt"), entry("y.txt"), entry("x.txt")],
             parent: vec![0, 1, 1],
             matches: vec![None, Some((3, "y line".into())), None],
+            ..Batch::default()
         });
         set
     }
@@ -891,6 +997,7 @@ mod tests {
             entries: vec![entry("x")],
             parent: vec![0],
             matches: vec![None],
+            ..Batch::default()
         });
         assert_eq!(set.path_at(0), Some(PathBuf::from(&folder).join("x")));
         assert_eq!(set.folder(0), Some(folder.as_str()));
@@ -962,6 +1069,7 @@ mod tests {
             entries: vec![entry("n.txt")],
             parent: vec![2],
             matches: vec![Some((9, "n".into()))],
+            ..Batch::default()
         });
         shown.extend_rows(&full, &[3]);
         assert_eq!(shown.len(), 2);
@@ -992,7 +1100,13 @@ mod tests {
         assert_eq!(set.sorted_by(), Some(by_size), "a removal keeps it too");
         set.append(Batch::default());
         assert_eq!(set.sorted_by(), Some(by_size), "an empty batch adds nothing");
-        set.append(Batch { folders: vec![], entries: vec![entry("n")], parent: vec![0], matches: vec![None] });
+        set.append(Batch {
+            folders: vec![],
+            entries: vec![entry("n")],
+            parent: vec![0],
+            matches: vec![None],
+            ..Batch::default()
+        });
         assert_eq!(set.sorted_by(), None);
         set.set_sorted_by(Some(by_size));
         assert!(set.push(&PathBuf::from("/w").join("z"), entry("z")));
@@ -1031,6 +1145,7 @@ mod tests {
             entries: vec![entry("kept.txt"), entry("gone.txt")],
             parent: vec![0, 0],
             matches: vec![None, None],
+            ..Batch::default()
         });
         let (gone, added) = verify(
             &set,
@@ -1041,6 +1156,60 @@ mod tests {
         assert_eq!(added.len(), 1, "a row already there and a path outside are left out");
         assert_eq!((added[0].0.clone(), added[0].1.size), (root.join("a").join("new.txt"), 2));
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn duplicates_keep_their_groups_and_a_lone_copy_leaves() {
+        let mut set = ResultSet::duplicates(PathBuf::from("/w"));
+        set.append(Batch {
+            folders: vec!["".into()],
+            entries: ["a", "b", "c", "d", "e"].map(entry).to_vec(),
+            parent: vec![0; 5],
+            matches: vec![None; 5],
+            dups: vec![0, 0, 0, 1, 1],
+        });
+        assert_eq!(set.dup_counts(), (2, 5, 3));
+        set.apply_order(&[4, 3, 2, 1, 0]);
+        assert_eq!((set.name(0), set.dup_group(0)), (Some("e"), Some(1)), "the group goes with the row");
+        let sub = set.subset(&[0, 2]);
+        assert_eq!((sub.dup_group(0), sub.dup_group(1)), (Some(1), Some(0)));
+        let w = PathBuf::from("/w");
+        // d is deleted: e is left alone and goes too; a file the undo brought back does not come in.
+        let kept = set.apply_changes(&[w.join("d")], vec![(w.join("d2"), entry("d2"))], &[]);
+        assert_eq!(kept, [2, 3, 4]);
+        assert_eq!((0..set.len()).map(|i| set.name(i).unwrap()).collect::<Vec<_>>(), ["c", "b", "a"]);
+        assert_eq!(set.dup_counts(), (1, 3, 2));
+        assert_eq!(set.into_batch().dups, [0, 0, 0]);
+    }
+
+    #[test]
+    fn a_group_without_a_copy_left_is_seen_on_disk_and_across_jobs() {
+        let mut set = ResultSet::duplicates(PathBuf::from("/w"));
+        set.append(Batch {
+            folders: vec!["".into()],
+            entries: ["a", "b", "c", "d"].map(entry).to_vec(),
+            parent: vec![0; 4],
+            matches: vec![None; 4],
+            dups: vec![0, 0, 0, 1],
+        });
+        let w = PathBuf::from("/w");
+        let all = |_: &Path| true;
+        assert_eq!(set.groups_left_without_copy(&[w.join("a")], &[], &all), Some(0));
+        assert_eq!(set.groups_left_without_copy(&[w.join("a"), w.join("b"), w.join("c")], &[], &all), Some(1));
+        assert_eq!(
+            set.groups_left_without_copy(&[w.join("a")], &[w.join("b"), w.join("c")], &all),
+            Some(1),
+            "another delete is taking the other copies"
+        );
+        let c_gone = |p: &Path| p != w.join("c");
+        assert_eq!(
+            set.groups_left_without_copy(&[w.join("a")], &[w.join("b")], &c_gone),
+            Some(1),
+            "the last copy is gone from the disk since the search"
+        );
+        assert_eq!(set.groups_left_without_copy(&[w.join("a")], &[], &c_gone), Some(0), "b is still there");
+        assert_eq!(set.groups_left_without_copy(&[w.join("zz")], &[], &all), None, "no row of it");
+        assert_eq!(sample().groups_left_without_copy(&[w.join("x.txt")], &[], &all), None, "no duplicates");
     }
 
     fn folder_entry(name: &str) -> Entry {
@@ -1069,6 +1238,7 @@ mod tests {
             entries: vec![folder_entry("d"), entry("in.txt"), entry("deep.txt"), entry("other.txt")],
             parent: vec![0, 1, 2, 3],
             matches: vec![None, Some((1, "in".into())), None, None],
+            ..Batch::default()
         });
         set.set_sorted_by(Some((SortSpec::default(), true, GroupBy::None)));
         let gone = [root.join("d"), root.join("d").join("in.txt"), root.join("d").join("e").join("deep.txt")];
@@ -1098,6 +1268,7 @@ mod tests {
             entries: vec![folder_entry("d1"), folder_entry("d2"), entry("IMG_0001.jpg"), entry("IMG_0001.jpg")],
             parent: vec![0, 0, 1, 2],
             matches: vec![None; 4],
+            ..Batch::default()
         });
         let (gone, added) = verify(&set, std::slice::from_ref(&root), &[root.join("r2"), root.join("r1")]);
         assert_eq!(gone.len(), 4, "both folders and what is in them");
@@ -1115,6 +1286,7 @@ mod tests {
             entries: vec![folder_entry("d1"), folder_entry("d2"), entry("IMG_0001.jpg"), entry("IMG_0001.jpg")],
             parent: vec![0, 0, 1, 2],
             matches: vec![None; 4],
+            ..Batch::default()
         });
         let (gone, added) = verify(&guess, std::slice::from_ref(&root), &[root.join("r2"), root.join("r1")]);
         guess.apply_changes(&gone, added, &[]);
@@ -1134,6 +1306,7 @@ mod tests {
             entries: vec![entry("a.txt")],
             parent: vec![0],
             matches: vec![Some((1, "old line".into()))],
+            ..Batch::default()
         });
         let verified = set.probe(std::slice::from_ref(&root), &[]).verify();
         assert!(verified.gone.is_empty());
@@ -1178,6 +1351,7 @@ mod tests {
             entries: vec![cached, b.clone()],
             parent: vec![0, 0],
             matches: vec![None, None],
+            ..Batch::default()
         });
         set.set_sorted_by(Some((SortSpec::default(), true, GroupBy::None)));
         let verified = set.probe(std::slice::from_ref(&root), &[]).verify();
@@ -1208,6 +1382,7 @@ mod tests {
             entries: vec![folder_entry("kept"), entry("k.txt"), entry("x.txt"), entry("y.txt")],
             parent: vec![0, 1, 2, 3],
             matches: vec![None; 4],
+            ..Batch::default()
         });
         let (gone, added) = verify(&set, &[root.join("a")], &[]);
         assert_eq!(gone, [root.join("a").join("gone").join("deep").join("x.txt")], "ab is not inside a");
@@ -1238,7 +1413,7 @@ mod tests {
         let folders: Vec<Box<str>> = (0..50).map(|f| format!("f{f}").into()).collect();
         let entries: Vec<Entry> = (0..5000).map(|i| entry(&format!("n{i}.txt"))).collect();
         let parent: Vec<u32> = (0..5000).map(|i| i % 50).collect();
-        set.append(Batch { folders, entries, parent, matches: vec![None; 5000] });
+        set.append(Batch { folders, entries, parent, matches: vec![None; 5000], ..Batch::default() });
         let path = |i: u32, name: &str| root.join(format!("f{}", i % 50)).join(name);
         let gone: Vec<PathBuf> = (0..2000).map(|i| path(i, &format!("n{i}.txt"))).collect();
         let added: Vec<(PathBuf, Entry)> =
@@ -1361,6 +1536,7 @@ mod tests {
                 entries: vec![entry("$R1.txt"), entry("$R2.txt"), entry("$R3.txt")],
                 parent: vec![0, 0, 0],
                 matches: Vec::new(),
+                ..Batch::default()
             },
             vec![label("b.txt", "/w"), label("a.txt", "/w"), label("a.txt", "/w")],
         );
@@ -1409,6 +1585,7 @@ mod tests {
             entries: names.iter().map(|n| entry(n)).collect(),
             parent: vec![0; names.len()],
             matches: Vec::new(),
+            ..Batch::default()
         }
     }
 

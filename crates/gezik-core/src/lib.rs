@@ -9,6 +9,7 @@ pub mod complete;
 pub mod diff;
 pub mod drag;
 pub mod drop_names;
+pub mod duplicates;
 pub mod elevated;
 pub mod export;
 pub mod file_filter;
