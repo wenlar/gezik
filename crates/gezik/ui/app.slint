@@ -671,7 +671,11 @@ export component AppWindow inherits Window {
     // gets the field's text as it is typed.
     in property <string> dialog-note;
     in property <bool> dialog-note-error;
+    // Its check boxes (dialog.rs `ask_form`); `dialog-check-toggled` gets one's index.
+    in property <[string]> dialog-check-labels;
+    in property <[bool]> dialog-checks;
     callback dialog-chosen(int);
+    callback dialog-check-toggled(int);
     callback dialog-edited(string);
     callback key-event(KeyEvent) -> bool;
 
@@ -1512,6 +1516,9 @@ export component AppWindow inherits Window {
             show-secret <=> root.dialog-show-secret;
             note: root.dialog-note;
             note-error: root.dialog-note-error;
+            check-labels: root.dialog-check-labels;
+            checks: root.dialog-checks;
+            check-toggled(i) => { root.dialog-check-toggled(i); }
             chosen(i) => { root.dialog-chosen(i); }
             edited(text) => { root.dialog-edited(text); }
         }

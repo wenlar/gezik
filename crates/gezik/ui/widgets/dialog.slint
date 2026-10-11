@@ -20,7 +20,11 @@ export component Dialog inherits Rectangle {
     // A line under the field (dialog.rs `ask_text_noted`), red if `note-error`.
     in property <string> note;
     in property <bool> note-error;
+    // Check boxes under the field (dialog.rs `ask_form`): their labels and marks.
+    in property <[string]> check-labels;
+    in property <[bool]> checks;
     callback chosen(int);
+    callback check-toggled(int);
     // The field's text changed (typed, not set).
     callback edited(string);
 
@@ -114,6 +118,11 @@ export component Dialog inherits Rectangle {
                 text: root.note;
                 wrap: word-wrap;
                 color: root.note-error ? Theme.danger : Theme.foreground-muted;
+            }
+            for label[i] in root.check-labels: Check {
+                text: label;
+                checked: root.checks[i];
+                toggled => { root.check-toggled(i); }
             }
             HorizontalLayout {
                 alignment: end;

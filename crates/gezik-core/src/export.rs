@@ -154,7 +154,7 @@ fn right_class(sheet: &Sheet, i: usize) -> &'static str {
 /// `text` as one CSV field (RFC 4180): quoted when it holds the separator, a quote or a line
 /// break, its quotes doubled.
 pub fn csv_field(text: &str, separator: char) -> Cow<'_, str> {
-    if text.contains(|c| c == separator || matches!(c, '"' | '\n' | '\r')) {
+    if text.contains([separator, '"', '\n', '\r']) {
         Cow::Owned(format!("\"{}\"", text.replace('"', "\"\"")))
     } else {
         Cow::Borrowed(text)

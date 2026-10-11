@@ -27,6 +27,8 @@ struct Question {
     job: Option<u64>,
     /// Writes the line under the field as its text changes; `None`: no line.
     note: Option<Note>,
+    /// Check boxes under the field: their labels and marks (`ask_form`).
+    checks: Vec<(String, bool)>,
     answer: Answer,
 }
 
@@ -60,6 +62,17 @@ impl Dialogs {
         window.on_dialog_edited({
             let dialogs = dialogs.clone();
             move |text| dialogs.edited(&text)
+        });
+        window.on_dialog_check_toggled({
+            let weak = window.as_weak();
+            move |index| {
+                use slint::Model;
+                let (Some(window), Ok(index)) = (weak.upgrade(), usize::try_from(index)) else { return };
+                let checks = window.get_dialog_checks();
+                if let Some(on) = checks.row_data(index) {
+                    checks.set_row_data(index, !on);
+                }
+            }
         });
         dialogs
     }
@@ -104,6 +117,7 @@ impl Dialogs {
             secret: false,
             job: None,
             note: None,
+            checks: Vec::new(),
             answer: Box::new(answer),
         });
     }
@@ -127,6 +141,7 @@ impl Dialogs {
             secret: false,
             job: Some(job),
             note: None,
+            checks: Vec::new(),
             answer: Box::new(answer),
         });
     }
@@ -159,6 +174,12 @@ impl Dialogs {
                 secret: window.get_dialog_input_secret(),
                 job: job.map(|(job, _)| job),
                 note,
+                checks: window
+                    .get_dialog_check_labels()
+                    .iter()
+                    .map(String::from)
+                    .zip(window.get_dialog_checks().iter())
+                    .collect(),
                 answer,
             });
         }
@@ -251,9 +272,43 @@ impl Dialogs {
             secret: false,
             job: None,
             note: Some(Rc::new(note)),
+            checks: Vec::new(),
             answer: Box::new(move |choice| {
                 let text = window.upgrade().map(|w| w.get_dialog_input().to_string());
                 answer(choice.filter(|&c| c != escape).zip(text));
+            }),
+        });
+    }
+
+    /// Like `ask_text_choice`, with check boxes under the field (`(label, checked)`): every
+    /// button except the last (Esc) answers with its index, the text and the marks.
+    pub fn ask_form(
+        &self,
+        title: impl Into<String>,
+        message: impl Into<String>,
+        (initial, checks): (String, Vec<(String, bool)>),
+        buttons: &[&str],
+        note: impl Fn(&str) -> (String, bool) + 'static,
+        answer: impl FnOnce(Option<(usize, String, Vec<bool>)>) + 'static,
+    ) {
+        let window = self.0.window.clone();
+        let escape = buttons.len().saturating_sub(1);
+        self.push(Question {
+            title: title.into(),
+            message: message.into(),
+            buttons: buttons.iter().map(|b| (*b).to_owned()).collect(),
+            escape,
+            input: Some(initial),
+            secret: false,
+            job: None,
+            note: Some(Rc::new(note)),
+            checks,
+            answer: Box::new(move |choice| {
+                use slint::Model;
+                let form = window
+                    .upgrade()
+                    .map(|w| (w.get_dialog_input().to_string(), w.get_dialog_checks().iter().collect::<Vec<bool>>()));
+                answer(choice.filter(|&c| c != escape).zip(form).map(|(c, (text, marks))| (c, text, marks)));
             }),
         });
     }
@@ -291,6 +346,7 @@ impl Dialogs {
             secret,
             job,
             note,
+            checks: Vec::new(),
             answer: Box::new(move |choice| {
                 let text = window.upgrade().map(|w| {
                     let text = w.get_dialog_input().to_string();
@@ -323,6 +379,10 @@ impl Dialogs {
                 window.set_dialog_note_error(error);
                 *self.0.open_note.borrow_mut() = question.note;
                 window.set_dialog_input(input.into());
+                let (labels, marks): (Vec<SharedString>, Vec<bool>) =
+                    question.checks.into_iter().map(|(label, on)| (SharedString::from(label), on)).unzip();
+                window.set_dialog_check_labels(model_or_none(labels));
+                window.set_dialog_checks(model_or_none(marks));
                 let buttons: Vec<SharedString> = question.buttons.into_iter().map(Into::into).collect();
                 window.set_dialog_buttons(ModelRc::new(VecModel::from(buttons)));
                 *self.0.open.borrow_mut() = Some(question.answer);
@@ -331,6 +391,8 @@ impl Dialogs {
             }
             None => {
                 window.set_dialog_open(false);
+                window.set_dialog_check_labels(ModelRc::default());
+                window.set_dialog_checks(ModelRc::default());
                 window.invoke_focus_list();
             }
         }
@@ -361,4 +423,9 @@ impl Dialogs {
             self.show_next();
         }
     }
+}
+
+/// `items` as a model; none allocated when there are none (most questions have no check boxes).
+fn model_or_none<T: Clone + 'static>(items: Vec<T>) -> ModelRc<T> {
+    if items.is_empty() { ModelRc::default() } else { ModelRc::new(VecModel::from(items)) }
 }
