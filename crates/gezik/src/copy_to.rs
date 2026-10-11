@@ -9,7 +9,7 @@ use std::rc::Rc;
 
 use gezik_batch::tasks::{is_part, join_chain, join_label, split_chain, split_label};
 use gezik_core::file_filter::FileFilter;
-use gezik_core::ops::names::split_mask;
+use gezik_core::ops::names::{mask_error, split_mask};
 use gezik_core::ops::paths::same_path;
 use gezik_core::ops::split::{MAX_PARTS, parse_size, part_count};
 use gezik_ops::Pick;
@@ -37,12 +37,28 @@ pub(crate) struct Ask {
     pub dont_ask: Option<fn()>,
     /// Whether Filter… is offered (not when F6 puts items back from the trash).
     pub filter: bool,
+    /// The chosen items' names, for checking a mask (a mask is not applied to folders, but a
+    /// folder's name is a fair sample of what is inside).
+    pub names: Vec<String>,
+}
+
+/// Whether `path` is a folder that is there: a last part with `*` or `?` that names one is
+/// that folder, not a mask (only Unix allows such names).
+fn real_folder(path: &Path) -> bool {
+    // shortcut: a stat on the UI thread, only for a typed `*`/`?` on Unix.
+    cfg!(unix) && path.is_dir()
 }
 
 /// The folder typed and the name mask at its end; a mask alone is for `base` (if it is a
 /// folder). Nothing typed: nothing (as F5/F6 always said).
-fn resolve<'t>(base: &Path, typed: &'t str) -> Option<(PathBuf, Option<&'t str>)> {
+fn resolve<'t>(base: &Path, typed: &'t str, is_dir: impl Fn(&Path) -> bool) -> Option<(PathBuf, Option<&'t str>)> {
     let (folder, mask) = split_mask(typed);
+    if mask.is_some()
+        && let Some(whole) = dual::typed_target(base, typed)
+        && is_dir(&whole)
+    {
+        return Some((whole, None));
+    }
     let to = if folder.trim().is_empty() && mask.is_some() {
         base.is_absolute().then(|| base.to_path_buf())
     } else {
@@ -51,9 +67,16 @@ fn resolve<'t>(base: &Path, typed: &'t str) -> Option<(PathBuf, Option<&'t str>)
     Some((to?, mask))
 }
 
-/// The line under the field: where the items go, and under which names.
-fn note_for(base: &Path, typed: &str) -> (String, bool) {
-    let Some((to, mask)) = resolve(base, typed) else { return ("Type a folder".to_owned(), true) };
+/// The line under the field: where the items go, and under which names; an error for no
+/// folder or a mask that makes unusable names.
+fn note_for(base: &Path, typed: &str, names: &[String], is_dir: impl Fn(&Path) -> bool) -> (String, bool) {
+    let Some((to, mask)) = resolve(base, typed, is_dir) else { return ("Type a folder".to_owned(), true) };
+    if let Some(mask) = mask {
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        if let Some(err) = mask_error(mask, &names) {
+            return (err, true);
+        }
+    }
     let into = (!same_path(&to, base)).then(|| format!("Into {}", to.display()));
     let line = match (into, mask) {
         (Some(into), Some(mask)) => format!("{into}, names as {mask}"),
@@ -61,6 +84,19 @@ fn note_for(base: &Path, typed: &str) -> (String, bool) {
         (into, None) => into.unwrap_or_default(),
     };
     (line, false)
+}
+
+/// The filter field's line: `>` only when copying.
+fn filter_note(typed: &str, moving: bool) -> (String, bool) {
+    match FileFilter::parse(typed, !moving) {
+        Ok(_) => (String::new(), false),
+        Err(err) => (err, true),
+    }
+}
+
+/// A move whose items are all in the target folder already: nothing would happen.
+pub(crate) fn nothing_to_move(paths: &[PathBuf], to: &Path) -> bool {
+    paths.iter().all(|path| path.parent().is_some_and(|parent| same_path(parent, to)))
 }
 
 /// Asks; `go` gets the target folder and what to take (a mask, a filter) once answered.
@@ -75,18 +111,22 @@ pub(crate) fn ask(ask: Ask, go: impl FnOnce(PathBuf, Pick) + 'static) {
                    like *.bak to rename):";
     let (base, noted) = (ask.base.clone(), ask.base);
     let (moving, dont_ask) = (ask.moving, ask.dont_ask);
+    let names = Rc::new(ask.names);
+    let checked = names.clone();
     with_current(|ops| {
         ops.dialogs().ask_text_choice(
             ask.title,
             message,
             ask.field,
             &buttons,
-            move |typed| note_for(&noted, typed),
+            move |typed| note_for(&noted, typed, &checked, real_folder),
             move |answer| {
                 let Some((choice, typed)) = answer else { return };
-                let Some((to, mask)) = resolve(&base, &typed) else {
-                    return panes::active_view().note("No folder was typed".to_owned());
-                };
+                let (line, bad) = note_for(&base, &typed, &names, real_folder);
+                if bad {
+                    return panes::active_view().note(line);
+                }
+                let Some((to, mask)) = resolve(&base, &typed, real_folder) else { return };
                 let pick = Pick { filter: None, mask: mask.map(str::to_owned) };
                 match chosen.get(choice).copied() {
                     Some(FILTER) => ask_filter(moving, to, pick, go),
@@ -106,17 +146,18 @@ pub(crate) fn ask(ask: Ask, go: impl FnOnce(PathBuf, Pick) + 'static) {
 /// Filter…: what to take, then the job.
 fn ask_filter(moving: bool, to: PathBuf, pick: Pick, go: impl FnOnce(PathBuf, Pick) + 'static) {
     let verb = if moving { "Move" } else { "Copy" };
-    let message = "Only these files: patterns split by spaces, what follows | is left out, a name ending in \\ is \
-                   a folder, *.jpg>*.cr2 takes each .jpg's .cr2 along:";
-    let last = LAST_FILTER.with(|last| last.borrow().clone());
-    let note = |typed: &str| match FileFilter::parse(typed, true) {
-        Ok(_) => (String::new(), false),
-        Err(err) => (err, true),
+    let message = if moving {
+        "Only these files: patterns split by spaces, what follows | is left out, a name ending in \\ is a folder:"
+    } else {
+        "Only these files: patterns split by spaces, what follows | is left out, a name ending in \\ is a folder, \
+         *.jpg>*.cr2 takes each .jpg's .cr2 along:"
     };
+    let last = LAST_FILTER.with(|last| last.borrow().clone());
+    let note = move |typed: &str| filter_note(typed, moving);
     with_current(|ops| {
         ops.dialogs().ask_text_noted(format!("{verb} only…"), message, last, &[verb, "Cancel"], note, move |text| {
             let Some(text) = text else { return };
-            match FileFilter::parse(&text, true) {
+            match FileFilter::parse(&text, !moving) {
                 Ok(filter) => {
                     LAST_FILTER.with(|last| *last.borrow_mut() = text);
                     go(to, Pick { filter: Some(filter), ..pick });
@@ -147,12 +188,21 @@ pub fn copy_to_paths(paths: Vec<PathBuf>, moving: bool) {
     let title = dual::question_title(verb, &paths, other.as_deref().unwrap_or(Path::new("…")));
     let field = other.map(|folder| folder.display().to_string()).unwrap_or_default();
     let shown = base.clone();
-    let question = Ask { moving, title, base, field, dont_ask: None, filter: true };
+    let names = item_names(&paths);
+    let question = Ask { moving, title, base, field, dont_ask: None, filter: true, names };
     ask(question, move |to, pick| {
+        if moving && nothing_to_move(&paths, &to) {
+            return panes::active_view().note("Nothing to move: same folder".to_owned());
+        }
         // shortcut: one stat per missing level, on the UI thread (as F5/F6's).
         let anchor = dual::anchor(&to, shown, |path| path.exists());
         with_current(|ops| ops.transfer_making(paths, &to, anchor, moving, pick));
     });
+}
+
+/// The last parts of `paths`, for checking a mask.
+pub(crate) fn item_names(paths: &[PathBuf]) -> Vec<String> {
+    paths.iter().filter_map(|path| path.file_name()).map(|name| name.to_string_lossy().into_owned()).collect()
 }
 
 /// `copy-to` / `move-to` on the view's selection (else its focused item).
@@ -165,8 +215,12 @@ fn out_dir(path: &Path) -> PathBuf {
     other_folder().unwrap_or_else(|| path.parent().map(Path::to_path_buf).unwrap_or_default())
 }
 
-/// The one file the view acts on: the selection if it is one item, else the focused item.
+/// The one file the view acts on: the selection if it is one item, else the focused item
+/// with nothing selected (several selected: none, rather than a surprise).
 fn one_file(view: &crate::view::View) -> Option<PathBuf> {
+    if view.selected_items().len() > 1 {
+        return None;
+    }
     let index = view.single_selected().or_else(|| view.focus())?;
     view.entry_path(index).filter(|(_, is_dir)| !is_dir).map(|(path, _)| path)
 }
@@ -230,7 +284,7 @@ fn submit_split(path: PathBuf, dir: PathBuf, size: u64) {
 pub fn join(view: &crate::view::View) {
     match one_file(view).filter(|path| is_part(path)) {
         Some(path) => join_path(path),
-        None => view.note("Select a .001 part or its .crc file to join".to_owned()),
+        None => view.note("Select one .001 part or its .crc file to join".to_owned()),
     }
 }
 
@@ -271,14 +325,57 @@ mod tests {
     fn the_line_under_the_field_says_where_and_how_named() {
         let base = std::env::temp_dir().join("Yedek");
         let sub = base.join("sub");
-        assert_eq!(note_for(&base, &base.display().to_string()), (String::new(), false));
-        assert_eq!(note_for(&base, "sub"), (format!("Into {}", sub.display()), false));
+        let note = |typed: &str| note_for(&base, typed, &[], |_: &Path| false);
+        assert_eq!(note(&base.display().to_string()), (String::new(), false));
+        assert_eq!(note("sub"), (format!("Into {}", sub.display()), false));
         let masked = format!("{}{}*.bak", base.display(), std::path::MAIN_SEPARATOR);
-        assert_eq!(note_for(&base, &masked), ("Names as *.bak".to_owned(), false));
-        assert_eq!(note_for(&base, "sub/*.bak"), (format!("Into {}, names as *.bak", sub.display()), false));
-        assert_eq!(note_for(&base, "*.bak"), ("Names as *.bak".to_owned(), false), "the mask alone: base");
-        assert_eq!(note_for(&PathBuf::new(), "*.bak"), ("Type a folder".to_owned(), true), "no base, no folder");
-        assert_eq!(note_for(&base, "  "), ("Type a folder".to_owned(), true), "nothing typed, as F5/F6 said");
+        assert_eq!(note(&masked), ("Names as *.bak".to_owned(), false));
+        assert_eq!(note("sub/*.bak"), (format!("Into {}, names as *.bak", sub.display()), false));
+        assert_eq!(note("*.bak"), ("Names as *.bak".to_owned(), false), "the mask alone: base");
+        assert_eq!(note_for(&PathBuf::new(), "*.bak", &[], |_: &Path| false), ("Type a folder".to_owned(), true));
+        assert_eq!(note("  "), ("Type a folder".to_owned(), true), "nothing typed, as F5/F6 said");
+    }
+
+    #[test]
+    fn a_mask_that_makes_unusable_names_is_refused() {
+        let base = std::env::temp_dir().join("Yedek");
+        let names = vec!["a.txt".to_owned(), "con".to_owned()];
+        assert!(!note_for(&base, "sub/*.bak", &names[..1], |_: &Path| false).1);
+        // Only Windows has names a mask can spoil (`:`, a trailing space, device names).
+        if cfg!(windows) {
+            let (line, bad) = note_for(&base, "sub/*:x", &names, |_: &Path| false);
+            assert!(bad && line.starts_with("The mask *:x"), "{line}");
+            let (line, bad) = note_for(&base, "*", &names, |_: &Path| false);
+            assert!(bad && line.ends_with("of con"), "a chosen item's name: {line}");
+            assert!(note_for(&base, "* ", &names, |_: &Path| false).1, "a trailing space");
+            // `D:*.bak` is not the folder shown with a mask: the drive alone has no root.
+            assert_eq!(note_for(&base, "D:*.bak", &names, |_: &Path| false), ("Type a folder".to_owned(), true));
+        }
+    }
+
+    #[test]
+    fn a_real_folder_with_a_star_is_a_folder_not_a_mask() {
+        let base = std::env::temp_dir().join("Yedek");
+        let starred = base.join("a*b");
+        let is = |path: &Path| path == starred;
+        assert_eq!(resolve(&base, "a*b", is), Some((starred.clone(), None)));
+        assert_eq!(resolve(&base, "a*c", is), Some((base.clone(), Some("a*c"))));
+    }
+
+    #[test]
+    fn moving_needs_a_filter_without_related_files() {
+        assert!(filter_note("*.jpg>*.cr2", true).1, "> only when copying");
+        assert_eq!(filter_note("*.jpg>*.cr2", false), (String::new(), false));
+        assert_eq!(filter_note("*.jpg | thumbs\\", true), (String::new(), false));
+    }
+
+    #[test]
+    fn a_move_into_the_folder_the_items_are_in_does_nothing() {
+        let dir = std::env::temp_dir().join("Yedek");
+        let paths = [dir.join("a.txt"), dir.join("b.txt")];
+        assert!(nothing_to_move(&paths, &dir));
+        assert!(!nothing_to_move(&paths, &dir.join("sub")));
+        assert!(!nothing_to_move(&[dir.join("a.txt"), dir.join("x").join("b.txt")], &dir));
     }
 
     #[test]

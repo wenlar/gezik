@@ -504,6 +504,9 @@ pub fn to_other(moving: bool) {
                 let rows = rows.into_iter().map(|(entry, label)| (entry, label.name.into())).collect();
                 ops.restore_from_trash(crate::trash_view::into_folder(&target, rows));
             }
+            None if moving && crate::copy_to::nothing_to_move(&paths, &target) => {
+                panes::active_view().note("Nothing to move: same folder".to_owned());
+            }
             None if same_path(&target, &shown) && pick.is_empty() => {
                 ops.transfer(paths, target, if moving { Effect::Move } else { Effect::Copy });
             }
@@ -528,6 +531,7 @@ pub fn to_other(moving: bool) {
         dont_ask: Some(dont_ask_again),
         // Back out of the trash, items go whole.
         filter: !restoring,
+        names: crate::copy_to::item_names(&names),
     };
     crate::copy_to::ask(question, go);
 }
