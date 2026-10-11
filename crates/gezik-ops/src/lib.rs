@@ -16,6 +16,7 @@ pub mod walk;
 
 pub use engine::{
     ConflictItem, Engine, Event, Failure, JobId, JobOptions, JobState, PauseReason, Progress, Report, Settings,
+    move_next_to,
 };
 pub use gezik_core::ops::conflict::{ConflictKind, Decision, Facts};
 pub use pending::PendingDeletes;

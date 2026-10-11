@@ -366,16 +366,28 @@ fn onto_itself(item: &PlanItem) -> bool {
     same_path(source, target) || fs::same_entry(source, target) == Some(true)
 }
 
+/// Where "Replace" put the existing target until the item ends.
+enum OldTarget {
+    /// Gone for good (a trash that deleted it): nothing to put back.
+    Gone,
+    /// In the trash at this path: put back if the item fails or is cancelled, else noted.
+    Trashed(PathBuf),
+    /// Aside under a noted name: deleted once the item is done, else put back.
+    Aside(PathBuf),
+}
+
 /// Moves an existing target out of the way for "Replace": to the trash if its drive has one,
-/// else aside under a noted name (returned), deleted only once the item is done: a failed or
-/// cancelled item, or Gezik stopping meanwhile, puts it back.
-fn replace_target(shared: &Shared, job: &Job, cx: &RunCx<'_>, target: &Path) -> io::Result<Option<PathBuf>> {
+/// else aside under a noted name, deleted only once the item is done: a failed or cancelled
+/// item, or Gezik stopping meanwhile, puts it back.
+fn replace_target(shared: &Shared, job: &Job, cx: &RunCx<'_>, target: &Path) -> io::Result<OldTarget> {
     if shared.has_trash(target) {
-        job.outcome(match fs::trash(target)? {
-            Some(trashed) => Outcome::Trashed { original: target.to_path_buf(), trashed },
-            None => Outcome::Deleted { path: target.to_path_buf() },
+        return Ok(match fs::trash(target)? {
+            Some(trashed) => OldTarget::Trashed(trashed),
+            None => {
+                job.outcome(Outcome::Deleted { path: target.to_path_buf() });
+                OldTarget::Gone
+            }
         });
-        return Ok(None);
     }
     let aside = cx.aside_name(target);
     cx.note_aside(&[(aside.clone(), target.to_path_buf())]);
@@ -383,7 +395,16 @@ fn replace_target(shared: &Shared, job: &Job, cx: &RunCx<'_>, target: &Path) -> 
         cx.forget_aside(&[&aside]);
         return Err(err);
     }
-    Ok(Some(aside))
+    Ok(OldTarget::Aside(aside))
+}
+
+/// The item replacing `target` ended without being done (failed, cancelled, a copy that did not
+/// verify): the old one comes back from the trash if nothing took its place. One that cannot
+/// stays in the trash, noted so undo still finds it.
+fn untrash(job: &Job, target: &Path, trashed: &Path) {
+    if std::fs::symlink_metadata(target).is_ok() || fs::restore(trashed, target).is_err() {
+        job.outcome(Outcome::Trashed { original: target.to_path_buf(), trashed: trashed.to_path_buf() });
+    }
 }
 
 /// The item replacing `target` ended: its old one, set aside, is deleted if the item `done`,
@@ -453,12 +474,12 @@ pub(crate) fn execute(shared: &Shared, job: &Job, task: &dyn Task, item: PlanIte
     let has_trash = |path: &Path| shared.has_trash(path);
     let cx =
         RunCx { control, trash: &has_trash, added: std::cell::Cell::new(0), temp: &job.temp, job: Some((shared, job)) };
-    let mut aside = None;
+    let mut old = OldTarget::Gone;
     if item.replace
         && let Some(target) = &item.target
     {
         match replace_target(shared, job, &cx, target) {
-            Ok(set_aside) => aside = set_aside,
+            Ok(put) => old = put,
             Err(err) => {
                 job.fail(target, &err);
                 control.item_done();
@@ -474,6 +495,10 @@ pub(crate) fn execute(shared: &Shared, job: &Job, task: &dyn Task, item: PlanIte
         match task.run(&item, &cx) {
             Ok(outcome) => {
                 control.succeeded();
+                // Noted before what replaced it: undo puts the new one away first.
+                if let (OldTarget::Trashed(trashed), Some(target)) = (&old, &item.target) {
+                    job.outcome(Outcome::Trashed { original: target.clone(), trashed: trashed.clone() });
+                }
                 if item.is_root
                     && let Some(path) = outcome.result()
                 {
@@ -525,8 +550,10 @@ pub(crate) fn execute(shared: &Shared, job: &Job, task: &dyn Task, item: PlanIte
             }
         }
     };
-    if let (Some(aside), Some(target)) = (&aside, &item.target) {
-        settle_aside(job, &cx, aside, target, ended == Some(true));
+    match (&old, &item.target) {
+        (OldTarget::Aside(aside), Some(target)) => settle_aside(job, &cx, aside, target, ended == Some(true)),
+        (OldTarget::Trashed(trashed), Some(target)) if ended != Some(true) => untrash(job, target, trashed),
+        _ => {}
     }
     if ended.is_none() {
         return;

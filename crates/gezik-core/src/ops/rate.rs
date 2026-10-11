@@ -68,6 +68,18 @@ impl Bucket {
         self.tokens = (self.tokens + earned).min(rate) - bytes as f64;
         if self.tokens >= 0.0 { Duration::ZERO } else { Duration::from_secs_f64(-self.tokens / rate) }
     }
+
+    /// The time since the last take was not spent copying (a verification read): it pays what
+    /// is owed but saves nothing up, so the next file does not start with a burst.
+    pub fn idle(&mut self, rate: u64, now: Instant) {
+        if self.tokens > 0.0 {
+            self.tokens = 0.0;
+        } else {
+            self.take(rate, 0, now);
+            self.tokens = self.tokens.min(0.0);
+        }
+        self.last = Some(now);
+    }
 }
 
 /// `[files] max-speed`: `"20 MB/s"`, `"500 KB/s"`, `"1.5 GB/s"`, `"300 B/s"` in decimal units
@@ -132,6 +144,29 @@ mod tests {
         assert_eq!(bucket.take(1000, 500, later), Duration::from_millis(500), "not more");
         // The rate changes on the next take.
         assert_eq!(bucket.take(100, 0, later + Duration::from_secs(1)), Duration::from_secs(4));
+    }
+
+    #[test]
+    fn a_wait_follows_a_new_rate() {
+        let (t0, mut bucket) = (Instant::now(), Bucket::default());
+        assert_eq!(bucket.take(1000, 10_000, t0), Duration::from_secs(10));
+        let later = t0 + Duration::from_secs(1);
+        assert_eq!(bucket.take(1000, 0, later), Duration::from_secs(9));
+        // The limit goes up tenfold: the 9,000 bytes still owed take 0.9 s.
+        assert_eq!(bucket.take(10_000, 0, later), Duration::from_millis(900));
+    }
+
+    #[test]
+    fn time_spent_verifying_saves_nothing_up() {
+        let (t0, mut bucket) = (Instant::now(), Bucket::default());
+        assert!(bucket.take(1000, 0, t0).is_zero());
+        bucket.idle(1000, t0 + Duration::from_secs(5));
+        assert_eq!(bucket.take(1000, 500, t0 + Duration::from_secs(5)), Duration::from_millis(500), "no burst");
+        // A debt is still paid by the time that passed.
+        let mut owing = Bucket::default();
+        assert_eq!(owing.take(1000, 2000, t0), Duration::from_secs(2));
+        owing.idle(1000, t0 + Duration::from_secs(1));
+        assert_eq!(owing.take(1000, 0, t0 + Duration::from_secs(1)), Duration::from_secs(1));
     }
 
     #[test]

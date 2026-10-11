@@ -867,16 +867,18 @@ impl Engine {
         })
     }
 
-    /// Moves job `job`, waiting for its drive, before (`up`) or after the nearest job waiting
-    /// for one of the same drives (spec 11 §5.3); returns that job. A job that runs, or one
-    /// with no such neighbour, stays.
+    /// Moves job `job`, waiting for its drive, just before (`up`) or after the nearest job
+    /// waiting for one of the same drives (spec 11 §5.3); returns that job. Every other job
+    /// keeps its order (no job jumps ahead of one it shares a drive with). A job that runs, or
+    /// one with no such neighbour, stays.
     pub fn move_in_queue(&self, job: JobId, up: bool) -> Option<JobId> {
         let other = {
             let mut jobs = lock(&self.0.jobs);
             let at = jobs.iter().position(|j| j.id == job)?;
             let other = swap_partner(&jobs, at, up)?;
-            jobs.swap(at, other);
-            jobs[at].id
+            let id = jobs[other].id;
+            move_next_to(&mut jobs, at, other);
+            id
         };
         self.0.turn.notify_all();
         Some(other)
@@ -923,19 +925,36 @@ fn share_a_drive(a: &Job, b: &Job) -> bool {
     }
 }
 
-/// The place in `jobs` the waiting job at `at` trades with to go up (or down): the nearest
-/// job that way sharing a drive with it, if that one waits too.
+/// The place in `jobs` of the job the waiting job at `at` goes past to go up (or down).
 fn swap_partner(jobs: &[Arc<Job>], at: usize, up: bool) -> Option<usize> {
-    let job = &jobs[at];
-    if !waiting(job) {
+    queue_partner(jobs, at, up, |a, b| share_a_drive(a, b), |job| waiting(job))
+}
+
+/// The nearest item before (`up`) or after `at` that `shares` a drive with it, if both `wait`.
+fn queue_partner<T>(
+    list: &[T],
+    at: usize,
+    up: bool,
+    shares: impl Fn(&T, &T) -> bool,
+    waits: impl Fn(&T) -> bool,
+) -> Option<usize> {
+    let item = &list[at];
+    if !waits(item) {
         return None;
     }
     let found = if up {
-        (0..at).rev().find(|&i| share_a_drive(job, &jobs[i]))
+        (0..at).rev().find(|&i| shares(item, &list[i]))
     } else {
-        (at + 1..jobs.len()).find(|&i| share_a_drive(job, &jobs[i]))
+        (at + 1..list.len()).find(|&i| shares(item, &list[i]))
     };
-    found.filter(|&i| waiting(&jobs[i]))
+    found.filter(|&i| waits(&list[i]))
+}
+
+/// Moves the item at `at` just before (`partner` earlier) or after (`partner` later) the item
+/// at `partner`; every other item keeps its order.
+pub fn move_next_to<T>(list: &mut Vec<T>, at: usize, partner: usize) {
+    let item = list.remove(at);
+    list.insert(partner, item);
 }
 
 #[cfg(test)]
@@ -1732,6 +1751,28 @@ mod tests {
         assert_eq!(lock(&log).iter().filter(|e| *e == "a+1").count(), 2, "item 1 ran twice");
     }
 
+    #[test]
+    fn a_job_moves_past_its_partner_without_reordering_the_others() {
+        // (name, drives as bits, waits): `a` runs on X; `b` waits on X and Y, `c` on Y, `d` on X.
+        let mut list = vec![('a', 0b01, false), ('b', 0b11, true), ('c', 0b10, true), ('d', 0b01, true)];
+        let shares = |p: &(char, u8, bool), q: &(char, u8, bool)| p.1 & q.1 != 0;
+        let waits = |p: &(char, u8, bool)| p.2;
+        let names = |list: &[(char, u8, bool)]| list.iter().map(|p| p.0).collect::<String>();
+        // `d` goes up past `b` (its nearest on X); `c` (Y only) stays behind `b` (on Y too).
+        let partner = queue_partner(&list, 3, true, shares, waits).unwrap();
+        assert_eq!(partner, 1);
+        move_next_to(&mut list, 3, partner);
+        assert_eq!(names(&list), "adbc", "a swap would give adcb: c ahead of b");
+        // Up again would pass `a`, which runs; down goes back past `b`.
+        assert_eq!(queue_partner(&list, 1, true, shares, waits), None);
+        let partner = queue_partner(&list, 1, false, shares, waits).unwrap();
+        move_next_to(&mut list, 1, partner);
+        assert_eq!(names(&list), "abdc");
+        // `c` down: nothing after it; up: past `b` (Y), `d` (X) is not on its drive.
+        assert_eq!(queue_partner(&list, 3, false, shares, waits), None);
+        assert_eq!(queue_partner(&list, 3, true, shares, waits), Some(1));
+    }
+
     fn verifying_engine(spoil: u32) -> Engine {
         Engine::new(Settings { verify: true, spoil, ..Settings::default() }, || {})
     }
@@ -1828,6 +1869,28 @@ mod tests {
             finish(&engine, job, defaults);
         }
         assert_eq!(*lock(&log), ["a+0", "a-0", "c+0", "c-0", "b+0", "b-0"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_replace_whose_copy_does_not_verify_puts_the_old_file_back() {
+        let dir = test_dir("verify-replace");
+        write(&dir.join("src/a.txt"), "the new one");
+        write(&dir.join("dst/a.txt"), "the old one");
+        let engine = verifying_engine(2);
+        let job = engine.submit(Box::new(CopyTask::into(vec![dir.join("src/a.txt")], &dir.join("dst"))));
+        let (report, _) = finish(&engine, job, |c| vec![Decision::Replace; c.len()]);
+        assert_eq!(report.failures.len(), 1, "{:?}", report.failures);
+        assert_eq!(read(&dir.join("dst/a.txt")), "the old one", "back from the trash");
+        assert_eq!(engine.undo_label(), None, "nothing left to undo");
+        // Verified: replaced, and undo brings the old one back.
+        let engine = verifying_engine(0);
+        let job = engine.submit(Box::new(CopyTask::into(vec![dir.join("src/a.txt")], &dir.join("dst"))));
+        let (report, _) = finish(&engine, job, |c| vec![Decision::Replace; c.len()]);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert_eq!(read(&dir.join("dst/a.txt")), "the new one");
+        run(&engine, engine.undo().unwrap());
+        assert_eq!(read(&dir.join("dst/a.txt")), "the old one");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

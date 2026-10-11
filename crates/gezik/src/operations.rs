@@ -1823,7 +1823,7 @@ impl Operations {
                     let mut jobs = self.0.jobs.borrow_mut();
                     let at = |id| jobs.iter().position(|j| j.id == id);
                     if let (Some(a), Some(b)) = (at(job), at(other)) {
-                        jobs.swap(a, b);
+                        gezik_ops::move_next_to(&mut jobs, a, b);
                     }
                 }
                 self.update();

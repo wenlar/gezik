@@ -608,28 +608,38 @@ impl RunCx<'_> {
     /// not pass for a finished file: a large one is copied under a temporary name and renamed
     /// when complete, a small one is noted in the job's journal first (see `TempCopies`), unless
     /// the journal cannot hold its names: it takes the temporary name too. With the job's
-    /// verification on, the copy is checked before it takes its name (spec 11 §5.1).
+    /// verification on, every copy takes a temporary name and is checked before it takes its
+    /// own (spec 11 §5.1): a copy that differs never stands under the final name. A link is
+    /// copied as a link and not checked (reading it would read what it points to).
     pub fn copy_file(&self, from: &Path, to: &Path, size: u64) -> io::Result<()> {
-        let temp = if size >= TEMP_COPY_MIN || !Journal::can_note(from, to) { self.temp.next_to(to) } else { None };
+        let verify = self.control.verify.load(Ordering::Relaxed)
+            && !std::fs::symlink_metadata(from).is_ok_and(|meta| meta.file_type().is_symlink());
+        let temp =
+            if verify || size >= TEMP_COPY_MIN || !Journal::can_note(from, to) { self.temp.next_to(to) } else { None };
         let Some(temp) = temp else {
             self.temp.journal.note(from, to);
-            return self.copy_checked(from, to, size);
+            return self.copy_checked(from, to, size, verify);
         };
-        let result = self.copy_checked(from, &temp, size).and_then(|()| gezik_platform::fs::move_entry(&temp, to));
-        if result.is_err() {
+        let mut kept = false;
+        let result = self
+            .copy_checked(from, &temp, size, verify)
+            .inspect_err(|err| kept = is_marker::<Leftover>(err))
+            .and_then(|()| gezik_platform::fs::move_entry(&temp, to));
+        if result.is_err() && !kept {
             let _ = gezik_platform::fs::delete(&temp);
         }
         result
     }
 
-    /// Copies `from` to `to`; with the job's verification on, reads the copy back past the
-    /// system's cache and compares it with `from`. One that differs is deleted and copied once
-    /// more; a second difference (or a failed check) fails the item with no copy left.
-    fn copy_checked(&self, from: &Path, to: &Path, size: u64) -> io::Result<()> {
+    /// Copies `from` to `to`; if `verify`, reads the copy back past the system's cache and
+    /// compares it with `from`. One that differs is deleted and copied once more; a second
+    /// difference (or a failed check) fails the item with no copy left, and one that cannot be
+    /// deleted fails it at once naming where it stays (a [`Leftover`]).
+    fn copy_checked(&self, from: &Path, to: &Path, size: u64, verify: bool) -> io::Result<()> {
         let mut again = false;
         loop {
             let cloned = self.copy_to(from, to, size)?;
-            if cloned || !self.control.verify.load(Ordering::Relaxed) {
+            if cloned || !verify {
                 return Ok(());
             }
             #[cfg(test)]
@@ -640,13 +650,18 @@ impl RunCx<'_> {
             if let Ok(None) = differs {
                 return Ok(());
             }
-            let _ = gezik_platform::fs::delete(to);
+            let deleted = gezik_platform::fs::delete(to);
             let at = differs?.unwrap_or_default();
+            let at = gezik_core::group_digits(at);
+            if let Err(err) = deleted {
+                return Err(io::Error::other(Leftover(format!(
+                    "The copy differs from the original at byte {at} and could not be deleted ({}); it is at {}",
+                    gezik_platform::fs::describe(&err),
+                    to.display()
+                ))));
+            }
             if again {
-                return Err(io::Error::other(format!(
-                    "The copy differs from the original at byte {}",
-                    gezik_core::group_digits(at)
-                )));
+                return Err(io::Error::other(format!("The copy differs from the original at byte {at}")));
             }
             again = true;
             // The copy is done once more: the bar counts it.
@@ -667,6 +682,11 @@ impl RunCx<'_> {
             !self.stopped()
         });
         control.verifying.fetch_sub(1, Ordering::SeqCst);
+        // The time spent reading was not spent copying: the limit saves none of it up.
+        let speed = control.speed.load(Ordering::Relaxed);
+        if speed > 0 {
+            lock(&control.bucket).idle(speed, Instant::now());
+        }
         // A short or failed check still leaves the bar where the pass would have ended.
         control.add_bytes(size.saturating_sub(read));
         result
@@ -685,24 +705,41 @@ impl RunCx<'_> {
     }
 
     /// Waits until `bytes` more are due at the job's speed limit, in slices short enough that
-    /// a pause, a cancel or a lifted limit is heard within 100 ms.
+    /// a pause, a cancel or a changed limit is heard within 100 ms (the wait left is worked out
+    /// again at the new limit).
     fn throttle(&self, bytes: u64) {
         const SLICE: Duration = Duration::from_millis(100);
         let control = self.control;
-        let speed = control.speed.load(Ordering::Relaxed);
+        let mut speed = control.speed.load(Ordering::Relaxed);
         if speed == 0 || bytes == 0 {
             return;
         }
-        let until = Instant::now() + lock(&control.bucket).take(speed, bytes, Instant::now());
-        loop {
-            let now = Instant::now();
-            if now >= until || control.cancelled() || control.paused() || control.speed.load(Ordering::Relaxed) == 0 {
+        let mut wait = lock(&control.bucket).take(speed, bytes, Instant::now());
+        while !wait.is_zero() {
+            std::thread::sleep(wait.min(SLICE));
+            if control.cancelled() || control.paused() {
                 return;
             }
-            std::thread::sleep((until - now).min(SLICE));
+            speed = control.speed.load(Ordering::Relaxed);
+            if speed == 0 {
+                return;
+            }
+            wait = lock(&control.bucket).take(speed, 0, Instant::now());
         }
     }
 }
+
+/// A copy that differs and could not be deleted: it is left where the message says.
+#[derive(Debug)]
+struct Leftover(String);
+
+impl fmt::Display for Leftover {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Leftover {}
 
 /// Tests: changes the first byte of `path`.
 #[cfg(test)]
@@ -1017,5 +1054,48 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
         assert!(!dir.join("b.bin").exists());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_link_is_copied_as_a_link_and_not_read_back() {
+        let dir = test_dir("verify-link");
+        std::fs::write(dir.join("target.txt"), "pointed at").unwrap();
+        #[cfg(windows)]
+        let made = std::os::windows::fs::symlink_file(dir.join("target.txt"), dir.join("link.txt"));
+        #[cfg(unix)]
+        let made = std::os::unix::fs::symlink(dir.join("target.txt"), dir.join("link.txt"));
+        if made.is_err() {
+            // Windows without the right to make links (no developer mode): nothing to try.
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        }
+        let (control, temp, no_bin) = (Control::default(), TempCopies::new(None), |_: &Path| false);
+        let cx = verifying_cx(&control, &temp, &no_bin);
+        // Spoiling would change what the link points to: a link must not get there.
+        control.spoil.store(2, Ordering::SeqCst);
+        cx.copy_file(&dir.join("link.txt"), &dir.join("copy.txt"), 0).unwrap();
+        assert!(std::fs::symlink_metadata(dir.join("copy.txt")).unwrap().file_type().is_symlink());
+        assert_eq!(control.spoil.load(Ordering::SeqCst), 2, "not verified");
+        assert_eq!(std::fs::read_to_string(dir.join("target.txt")).unwrap(), "pointed at");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_raised_limit_ends_a_long_wait() {
+        let control = Control::default();
+        let (temp, no_bin) = (TempCopies::new(None), |_: &Path| false);
+        control.speed.store(1000, Ordering::SeqCst);
+        let started = std::time::Instant::now();
+        std::thread::scope(|scope| {
+            let waiter = scope.spawn(|| {
+                let cx = RunCx { control: &control, trash: &no_bin, added: Cell::new(0), temp: &temp, job: None };
+                // 10 s at 1 KB/s.
+                cx.throttle(10_000);
+            });
+            std::thread::sleep(Duration::from_millis(150));
+            control.speed.store(1_000_000_000, Ordering::SeqCst);
+            waiter.join().unwrap();
+        });
+        assert!(started.elapsed() < Duration::from_secs(1), "{:?}", started.elapsed());
     }
 }

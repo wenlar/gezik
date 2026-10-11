@@ -814,16 +814,13 @@ fn a_part_that_cannot_land_brings_the_old_set_back() {
     });
     assert_eq!(report.failures.len(), 1, "{:?}", report.failures);
     assert!(report.failures[0].message.contains("set.7z.003"), "{:?}", report.failures);
-    // No new part stays; the old part set aside is back. The first old part was trashed by
-    // the engine for "Replace" before the run: undo brings it back.
-    assert!(!d.join("set.7z.001").exists());
+    // No new part stays; the old part set aside is back, and so is the first old part, which
+    // the engine trashed for "Replace" before the run (a failed item puts it back).
+    assert_eq!(std::fs::read(d.join("set.7z.001")).unwrap(), old_bytes[0]);
     assert_eq!(std::fs::read(d.join("set.7z.002")).unwrap(), old_bytes[1]);
     assert!(d.join("set.7z.003").is_dir());
     assert!(leftovers(&d).is_empty(), "{:?}", leftovers(&d));
     assert!(PendingDeletes::new(d.join("pending-deletes")).restores().is_empty(), "put back: no note left");
-    let report = finish(&engine, engine.undo().unwrap(), nothing).0;
-    assert!(report.failures.is_empty(), "{:?}", report.failures);
-    assert_eq!(std::fs::read(d.join("set.7z.001")).unwrap(), old_bytes[0]);
     std::fs::remove_dir(d.join("set.7z.003")).unwrap();
     assert_eq!(unpacked(&d.join("set.7z.001"), &d, "back", None), tree(&old));
     let _ = std::fs::remove_dir_all(&d);
