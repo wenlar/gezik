@@ -228,7 +228,7 @@ impl Palette {
         for profile in crate::sync::profiles() {
             let title = format!("Sync: {}", profile.name);
             let detail = format!("{} ⇄ {}", profile.left, profile.right);
-            add(Kind::SavedSearch, title.clone(), title, detail, Target::SyncProfile(profile.name));
+            add(Kind::SyncProfile, profile.name.clone(), title, detail, Target::SyncProfile(profile.name));
         }
         for saved in crate::saved_searches::saved() {
             add(

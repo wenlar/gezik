@@ -185,7 +185,7 @@ typing = "jump"           # jump: letters go to a name | filter: letters open th
   trash gets no deletions, and replacing files there needs Replace them anyway. Sync is
   stateless: in Two-way a file deleted on one side is copied back from the other; turn that
   row to `×` or use Mirror to spread a delete. Save Profile… keeps the folders, mode, options
-  and filter in settings.toml (`[[sync-profiles]]`); the palette's `Sync: <name>` opens and
+  and filter in settings.toml (`[[sync-profiles]]`); the palette's `Sync: <name>` (also with `>`) opens and
   compares one, never synchronizing without the question.
 - **Select Differences** (right-click ▸ Tools with two panes, the palette, Tools on the macOS
   menu bar): in each pane, what the other pane's list lacks or has older. Only the two lists

@@ -16,12 +16,15 @@ pub enum Kind {
     TabSet,
     SavedSearch,
     SavedFilter,
+    /// A saved folder sync (`[[sync-profiles]]`): opened and compared, a command, not a place.
+    SyncProfile,
 }
 
 /// The tie order of the command palette (spec 7.2's table) and of quick open (places first).
-const COMMANDS_ORDER: [Kind; 9] = [
+const COMMANDS_ORDER: [Kind; 10] = [
     Kind::Action,
     Kind::Command,
+    Kind::SyncProfile,
     Kind::ViewOption,
     Kind::Pinned,
     Kind::Recent,
@@ -30,7 +33,7 @@ const COMMANDS_ORDER: [Kind; 9] = [
     Kind::SavedSearch,
     Kind::SavedFilter,
 ];
-const QUICK_ORDER: [Kind; 9] = [
+const QUICK_ORDER: [Kind; 10] = [
     Kind::Pinned,
     Kind::Recent,
     Kind::Tab,
@@ -39,6 +42,7 @@ const QUICK_ORDER: [Kind; 9] = [
     Kind::SavedFilter,
     Kind::Action,
     Kind::Command,
+    Kind::SyncProfile,
     Kind::ViewOption,
 ];
 
@@ -55,6 +59,7 @@ impl Kind {
             Kind::TabSet => "Tab set",
             Kind::SavedSearch => "Saved search",
             Kind::SavedFilter => "Saved filter",
+            Kind::SyncProfile => "Sync profile",
         }
     }
 
@@ -70,12 +75,13 @@ impl Kind {
             Kind::TabSet => "tab-set",
             Kind::SavedSearch => "search",
             Kind::SavedFilter => "filter",
+            Kind::SyncProfile => "sync",
         }
     }
 
     /// A place: quick open's first, never the command palette's.
     pub fn is_place(self) -> bool {
-        !matches!(self, Kind::Action | Kind::Command | Kind::ViewOption)
+        !matches!(self, Kind::Action | Kind::Command | Kind::ViewOption | Kind::SyncProfile)
     }
 
     fn order(self, mode: Mode) -> usize {

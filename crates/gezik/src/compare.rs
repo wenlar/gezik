@@ -305,7 +305,8 @@ fn tool_row(done: &Done, at: u32, open: bool, selected: bool, sync: Mark) -> Too
     let status = match (sync.after, sync.user) {
         (Some(None), _) => "Synchronized".to_owned(),
         (Some(Some(why)), _) => format!("Not done: {why}"),
-        (None, true) => format!("{status} · your choice"),
+        // Short: the status column is narrow.
+        (None, true) => format!("{status} *"),
         (None, false) => status,
     };
     let tone = match row.state {
@@ -419,7 +420,18 @@ impl FolderCompare {
             .iter()
             .map(|b| if *b == "Mode" { format!("Mode: {}", mode.label()).into() } else { SharedString::from(*b) })
             .collect();
-        window.set_tool_buttons(ModelRc::new(VecModel::from(labels)));
+        // Changed in place: Mode is clicked from inside this strip, and a new model would destroy
+        // the button whose click is still running (the window then aborted on the next Close).
+        let current = window.get_tool_buttons();
+        if current.row_count() == labels.len() {
+            for (i, label) in labels.into_iter().enumerate() {
+                if current.row_data(i).as_ref() != Some(&label) {
+                    current.set_row_data(i, label);
+                }
+            }
+        } else {
+            window.set_tool_buttons(ModelRc::new(VecModel::from(labels)));
+        }
     }
 
     /// The boxes: the show buttons with their numbers, then the options.
@@ -1647,7 +1659,7 @@ mod tests {
         assert_eq!(a.status, "Left newer");
         let z = tool_row(&done, 1, false, false, mark(Dir::ToRight, true, None));
         assert!(values(z.clone()).contains("×→"), "{}", z.values);
-        assert_eq!(z.status, "Only right · your choice");
+        assert_eq!(z.status, "Only right *");
         let skipped = tool_row(&done, 1, false, false, mark(Dir::Skip, false, None));
         assert!(!values(skipped).contains('←'), "an empty direction shows nothing");
         let synced = tool_row(&done, 0, false, false, mark(Dir::Skip, false, Some(None)));
@@ -1671,6 +1683,43 @@ mod tests {
         assert_eq!(plain.bins, [has_bin(&root), has_bin(&root)]);
         let filtered = run(&job(&root.join("L"), &root.join("R"), Options::default(), "*.txt"), &mut |_| {}).unwrap();
         assert!(!filtered.whole, "a filter: folders go to the trash file by file");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The 11e screen test's abort: Mode (clicked inside the button strip) replaced the strip's
+    /// model, destroying the running button; a later Close aborted. The strip now changes in place.
+    #[test]
+    fn mode_and_the_sync_buttons_keep_the_button_strip_and_close_cleanly() {
+        crate::windows::tests::platform();
+        let window = crate::AppWindow::new().expect("a headless window");
+        let id = crate::windows::install(window.clone_strong());
+        crate::checksums::install(&window);
+        let root = dir("strip");
+        write(&root.join("L/a.txt"), "a", T + 600);
+        write(&root.join("R/a.txt"), "b", T);
+        write(&root.join("R/z.txt"), "z", T);
+        let (l, r) = (root.join("L"), root.join("R"));
+        crate::windows::enter(id, || {
+            let layer = FolderCompare::new(window.as_weak(), (l.clone(), r.clone()), Options::default(), String::new());
+            CURRENT.with(|s| s.set(id, layer.clone()));
+            layer.show();
+            layer.0.generation.set(3);
+            layer.0.running.set(true);
+            layer.heard(3, Message::Done(Box::new(run(&job(&l, &r, Options::default(), ""), &mut |_| {}))));
+            let strip = window.get_tool_buttons();
+            let at = |name: &str| i32::try_from(BUTTONS.iter().position(|b| *b == name).unwrap()).unwrap();
+            window.invoke_tool_button(at("Mode"));
+            assert!(window.get_tool_buttons() == strip, "the same model");
+            assert_eq!(strip.row_data(2).unwrap(), "Mode: Left to right");
+            window.invoke_tool_button(at("Mode"));
+            assert_eq!(strip.row_data(2).unwrap(), "Mode: Mirror");
+            window.set_tool_cursor(1);
+            window.invoke_tool_button(at("Direction"));
+            window.invoke_tool_button(at("Synchronize…"));
+            window.invoke_tool_button(at("Close"));
+            assert!(!window.get_tool_open());
+            assert!(CURRENT.with(|s| s.get(id)).is_none());
+        });
         let _ = std::fs::remove_dir_all(&root);
     }
 }
