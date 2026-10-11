@@ -61,7 +61,7 @@ pub use picture::{
     Decoded, MAX_DECODE_BYTES, MAX_DECODE_SIDE, can_decode, decode_image, only_in_cloud, thumbnail, thumbnail_while,
 };
 pub use process::{ChildProcess, Lines, process_alive};
-pub use text::decode_ansi;
+pub use text::{ansi_code_page, decode_ansi};
 
 /// What was right-clicked.
 #[derive(Debug, Clone, PartialEq, Eq)]

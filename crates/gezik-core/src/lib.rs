@@ -5,6 +5,7 @@ pub mod attrs;
 pub mod batch;
 pub mod columns;
 pub mod complete;
+pub mod diff;
 pub mod drag;
 pub mod drop_names;
 pub mod elevated;

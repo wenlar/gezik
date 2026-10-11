@@ -513,12 +513,20 @@ pub const REVEAL_IN_TREE: u32 = 2050;
 // Step 11 (spec 11 §13.3): 2200–2399. Tools ▸ 2200–2219 in the macOS Tools menu's order: Compare
 // 2200, Select Differences 2201, Calculate Checksums 2202, Verify Checksums 2203, Find Duplicates
 // 2204, Size Map 2205, Export List 2206, Copy To 2207, Move To 2208, Split File 2209, Join Files 2210.
+/// Tools ▸ Compare (11c).
+pub const TOOLS_COMPARE: u32 = 2200;
 /// Tools ▸ Export list… (11h).
 pub const TOOLS_EXPORT_LIST: u32 = 2206;
 
-/// Tools ▸ (spec 11 §3.3) at place `at`: the tools that work on the list or the selection.
-pub fn tools_sub(at: usize) -> Submenu {
-    Submenu { title: "Tools".to_owned(), at, items: vec![(TOOLS_EXPORT_LIST, "Export list…".to_owned(), true)] }
+/// `Tools ▸` (spec 11 §3.3) at place `at`: only what applies: Compare for the selection when it
+/// can be compared (`compare`), Export list… always.
+pub fn tools_sub(at: usize, compare: bool) -> Submenu {
+    let mut items = Vec::new();
+    if compare {
+        items.push((TOOLS_COMPARE, "Compare".to_owned(), true));
+    }
+    items.push((TOOLS_EXPORT_LIST, "Export list…".to_owned(), true));
+    Submenu { title: "Tools".to_owned(), at, items }
 }
 
 /// A trash row's menu: only what the trash does (no Explorer menu, nothing that acts on a
@@ -1204,8 +1212,8 @@ impl Menus {
                 sub.at += extra.len();
             }
         }
+        subs.push(tools_sub(start + extra.len(), crate::diff::offered()));
         subs.extend(commands.map(|items| Submenu { title: "Commands".to_owned(), at: start + extra.len(), items }));
-        subs.push(tools_sub(start + extra.len()));
         if native {
             list.splice(0..0, extra);
         } else {
@@ -1334,7 +1342,7 @@ impl Menus {
             if crate::panes::active_view().shows_trash() {
                 list.push((EMPTY_TRASH, empty_title(), true));
             } else {
-                subs.push(tools_sub(list.len()));
+                subs.push(tools_sub(list.len(), false));
             }
             *self.subject.borrow_mut() = Some(Subject::Background(PathBuf::new()));
             return self.open_slint_entries(&list, subs, Anchor::point(x, y));
@@ -1364,7 +1372,7 @@ impl Menus {
         list.push((SEARCH_HERE, "Search in this folder…".to_owned()));
         list.extend(owned(terminal_items(windows)));
         subs.push(self.copy_path_sub(std::slice::from_ref(&dir), list.len()));
-        subs.push(tools_sub(list.len()));
+        subs.push(tools_sub(list.len(), false));
         self.open(Subject::Background(dir.clone()), list, subs, MenuTarget::Background(dir), x, y, at);
     }
 
@@ -1907,6 +1915,7 @@ impl Menus {
             (FREE_UP, Subject::Row(path)) => crate::cloud::run(vec![path], false, &crate::panes::active_view()),
             (FREE_UP, Subject::Rows(paths)) => crate::cloud::run(paths, false, &crate::panes::active_view()),
             (id, Subject::Info) => crate::info::with_current(|info| info.menu_chosen(id)),
+            (TOOLS_COMPARE, Subject::Row(_) | Subject::Rows(_)) => crate::diff::compare(),
             (CONVERT, Subject::Row(_) | Subject::Rows(_)) => {
                 let rows = std::mem::take(&mut *self.rows.borrow_mut());
                 crate::convert::with_current(|convert| convert.open(rows));
@@ -2315,6 +2324,7 @@ fn from_submenu(id: u32) -> bool {
         || id == GROUP_NEW
         || id == TOOLS_EXPORT_LIST
         || id == GROUP_NONE
+        || id == TOOLS_COMPARE
         || (TEMPLATE_FIRST..TEMPLATE_FIRST + TEMPLATE_MAX).contains(&id)
         || (OPEN_WITH_FIRST..OPEN_WITH_FIRST + OPEN_WITH_MAX).contains(&id)
         || id == OPEN_WITH_OTHER
@@ -2587,8 +2597,12 @@ mod tests {
     #[test]
     fn the_tools_ids_stay_in_their_range() {
         assert_eq!(TOOLS_EXPORT_LIST, 2206, "spec 11 §13.3");
-        let tools = tools_sub(3);
+        assert_eq!(TOOLS_COMPARE, 2200, "spec 11 §13.3");
+        let tools = tools_sub(3, true);
         assert_eq!((tools.title.as_str(), tools.at), ("Tools", 3));
+        let ids: Vec<u32> = tools.items.iter().map(|(id, _, _)| *id).collect();
+        assert_eq!(ids, [TOOLS_COMPARE, TOOLS_EXPORT_LIST]);
+        assert_eq!(tools_sub(0, false).items.len(), 1, "Compare only where it applies");
         assert!(tools.items.iter().all(|(id, _, _)| (2200..2220).contains(id) && from_submenu(*id)));
     }
 
@@ -2607,8 +2621,13 @@ mod tests {
     fn a_macos_row_keeps_all_five_submenus() {
         let list: Vec<(u32, String)> = (0..10).map(|i| (i + 100, String::new())).collect();
         let sub = |title: &str, at: usize| Submenu { title: title.into(), at, items: vec![(1, String::new(), true)] };
-        let subs =
-            [sub("Open With", 2), sub("Copy path as", 4), sub("Commands", 6), tools_sub(6), sub("Quick Actions", 10)];
+        let subs = [
+            sub("Open With", 2),
+            sub("Copy path as", 4),
+            sub("Commands", 6),
+            tools_sub(6, false),
+            sub("Quick Actions", 10),
+        ];
         let (_, parts) = split_menu(&list, &subs);
         assert_eq!(parts.len(), MAX_SUBMENUS, "none is dropped");
     }
@@ -2776,6 +2795,7 @@ mod tests {
             SYNC_BROWSING,
             SWAP_PANES,
             SAME_FOLDER,
+            TOOLS_COMPARE,
         ];
         let mut ranges: Vec<std::ops::Range<u32>> = singles.iter().map(|id| *id..id + 1).collect();
         ranges.extend([

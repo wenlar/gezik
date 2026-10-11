@@ -588,6 +588,14 @@ Numbers stay as they are when branches merge (see 10b). 10g starts at 200 as its
 205. **Second launch and session.** As macOS 267–268 (`gezik <folder>` from a terminal; FileManager1 "Show in folder" from a browser's downloads opens in the window used last).
 206. **Focus order.** As macOS 270 with Gezik's own menus (`gezik <folder>` from a terminal); on Wayland write whether the window used last really gets the folder (the compositor may not say which window has the focus).
 
+### 11c, file compare
+
+Numbers stay as they are when branches merge. 11c starts at 213 as its plan decided. GNOME and KDE, X11 and Wayland.
+
+213. **Tests first.** As macOS 281; paste.
+214. **Shift+F2, menus, keys.** As macOS 282–283 with Shift+F2, Gezik's own right-click `Tools ▸ Compare`, Alt+↓/↑, Ctrl+C, Ctrl+R; memory as macOS 285 with `ps -o rss= -p $(pgrep -x gezik)`.
+215. **Meld from PATH.** `[tools] diff = "meld"` (and `kdiff3` on KDE): it opens on both files and stays open after Gezik quits; a path with spaces and an `'` arrives whole (`/tmp/it's a test/l.txt`); `diff = "nope"`: the status bar line and Gezik's own compare.
+
 ### 11h, list export
 
 Numbers stay as they are when branches merge (see 10b). 11h starts at 219 as its plan decided.

@@ -2298,6 +2298,75 @@ Dal `perf/idle-memory` (10g'den, PR #71'den sonra master'a). Ölçümler `measur
 - Denenmedi: %125/%150 DPI (ekran ayarları değiştirilmedi; ölçek değişince kare bütün çiziliyor), ekran çözünürlüğü değişikliği. macOS ve Linux'a dokunulmadı.
 - Sürüm exe'si 25.801.728 bayt (master 25.798.144, +3,5 KB).
 
+## Adım 11, alt parça 11c (Dosya farkı) sonrası
+
+- Yapı: `gezik-core/src/diff.rs` saf satır farkı (satırlar sayıya, ortak baş/son kırpma, Myers O(ND) doğrusal bellekli orta yılan; D > 20.000 → hizasız yan yana; silme/ekleme bloklarının aynı sıradaki satırları `Changed`; satır içi tek aralık; `Ignore whitespace`/`Ignore case`). `gezik/src/diff.rs` seçim (§7.1 dosya satırları), okuma bir iş parçacığında, tembel `slint::Model` (yalnız ekrandaki satırlar kurulur), klavye, dış araç; `ui/widgets/diff.slint` `if root.df-open` ile yalnız açıkken kurulur. Eylem `compare` (Shift+F2 / ⌃⌘C), `Action::ALL` 103; sağ tık `Tools ▸ Compare` (2200), macOS menü çubuğunda `Tools ▸ Compare`. Ayarlar `[tools] diff`, `diff-args`, `folder-diff`; son seçim `state.toml` `[diff]`.
+- Davranış: iki seçili dosya ya da iki bölmede birer dosya; satır sonu ve kodlama farkı fark sayılmaz, başlıktaki satırda söylenir. İkili (NUL), 16 MB üstü ya da 1.000.000 satır üstü dosya bayt bayt karşılaştırılır (soru penceresi: aynı / ilk farklı bayt). Okuma yalnız düz dosyada, 16 MB + 1 baytla sınırlı; bayt karşılaştırması açılıştaki boyutla sınırlı. Kodlama: BOM, geçerli UTF-8 (kopyasız), yoksa bütün dosyadan chardetng; çözülemeyen metin bayt karşılaştırmasına gider. Dış araç terminalin ayrık başlatmasıyla açılır (Gezik beklemez; `.bat`/`.cmd` araca özel karakterli yol verilmez; macOS `.app` → `open -n -a`, yoksa bulunamadı yolu); bulunamazsa not katmanda görünür ve Gezik'in kendi farkı açılır. İki klasör 11d'ye kadar yalnız `folder-diff` + dış araçla.
+- Exe: sürüm 26.006.528 B, master 25.801.728'e göre **+204.800 B** (sınır 262.144; ilk hâl +242.688, katman sadeleşince +195.072, ekran testi düzeltmeleriyle +204.800).
+- Gözden geçirme düzeltmeleri: düz dosya ve okuma sınırları, CR/LF/CRLF ile satır sınırı, bütün dosyada NUL, UTF-8 hatasında yeniden tahmin, kopyasız UTF-8, eksik `.app`, klasörde yanlış not, yeniden okuma sırasında seçenek değişimi; katman küçültüldü (↑/↓ düğmeleri yok, Alt+↓/↑ var; tek tekrarlanan düğme ve taraf; satır numarası tek aralıklı metnin içinde; ekran okuyucu metni Rust'ta).
+- Ekran testi düzeltmeleri: değişen bölüm işareti uzun satırda kayıyordu (karakter sayısı × genişlik) → öncesindeki metin ve bölüm yazı tipiyle ölçülüyor; 47 baytlık Windows-1254 dosya 1252 sanılıyordu → chardetng'in 1252 tahmini kullanıcının ANSI Latin kod sayfasına bırakılıyor; "bulunamadı" notu katman açılınca siliniyordu → katmanın satırında; kapat düğmesinde ✕ yoktu → sekmelerin kapat glifi.
+- Bilinen sınırlar: salt okunur, üç yollu birleştirme yok; bayt karşılaştırmasında ilerleme yüzdesi yok (11a'nın `same_content`'i gelince); işaret ölçüme dayandığı için çift genişlikli (CJK) karakterlerde Slint'in metin ölçüsü kadar doğrudur, ayrıca denenmedi; Türkçe yerel ayarda kısa gerçek bir Windows-1252 dosyası (Fransızca vb.) 1254 okunur (yalnız ðýþ/ÐÝÞ yanlış görünür), İngilizce sistemde chardetng'in kesin 1254 tahmini korunur. macOS 281–285 ve Linux 213–215 bekliyor.
+
+## Windows ekran testleri: 11c (2026-10-11 17:27-17:36, ajan, kullanıcı uzakta)
+
+- Derleme: `%TEMP%\gezik-gui-11\bin\t11c.exe` (`feat/tools-11c` 348ac60, sürüm, 25.996.800 B). Yeniden derlenmedi; master derlemesi yapılmadı (açık ↔ kapalı karşılaştırıldı).
+- Yöntem 10e ile aynı: Win32 `keybd_event`/`mouse_event` + `SendInput` (Unicode yazı) + UI Automation + `PrintWindow`. Betikler `scratchpad\m11g\` (`g.ps1`, `d.ps1`, `s.ps1`).
+- Pencere birincil ekranda (0,0 2560×1440), 1600×900 @ 40,40. Her girdi öncesi ön plan ve imleç altı bu koşuda başlatılan Gezik PID'i mi diye denetlendi; kullanıcı girdisi görülmedi.
+- Her oturum taze `GEZIK_CONFIG_DIR` = `%TEMP%\gezik-gui-11\cfg\c1..c4` (`state.toml`'da `[hints] f3-moved = true`). `%APPDATA%\gezik`'e dokunulmadı.
+- Veri `%TEMP%\gezik-gui-11\data\c`: `a.txt` (CRLF) / `b.txt` (LF), `L\left.txt` / `R\right.txt`, `tr-u16.txt` (UTF-16 LE BOM) / `tr-1254.txt` (47 B), `tr-1254-long.txt` (719 B) / `tr-utf8-long.txt`, `w1/w2.txt` (uzun satır hizası), `bin1/2/3.bin` (NUL'lu, 1234. baytta fark), `big1/2.txt` (17 MB, 10.000.000. baytta fark), `dirA`, `dirB`.
+- Klavye düzeni değişmedi: başta ve sonda `en-US=0409:0000041F`. Kayıt defteri, Geri Dönüşüm Kutusu, kullanıcı dosyaları: dokunulmadı.
+- Ekran görüntüleri `%TEMP%\gezik-gui-11\shots\c*.png`.
+
+### Sonuçlar
+
+1. **Shift+F2, aynı klasörde iki dosya — PASS.** `a.txt` + `b.txt` → katman: `Compare a.txt ↔ b.txt · 4 changes`, yan yana satırlar, satır numaraları, kaldırılan satırın karşısı boş, eklenen yeşil (`c01-diff-ab-away.png`).
+2. **Her bölmede bir dosya — PASS.** F3, solda `L\left.txt`, sağda `R\right.txt` seçili → Shift+F2: `left.txt ↔ right.txt · 2 changes` (`two`→`TWO` değişti, `four` eklendi) (`c07-panes.png`).
+3. **Sağ tık `Tools ▸ Compare` — PASS.** Satır menüsünde `Tools ▸` alt menüsünde tek öğe `Compare`; tıklayınca katman açılıyor (`c08-ctx.png`, `c09z.png`).
+4. **Satır içi vurgu hizası (Consolas) — kısa satırda PASS, uzun satırda FAIL (FAIL 1).** `dog`/`cat`, `  indented  `, `Mixed Case L`, `lpha beta gamma delta` doğru karakterlerde (`c01z-left.png`). 93. karakterden sonra kayıyor (aşağıda).
+5. **Ignore whitespace / Ignore case — PASS.** Açık düğme turuncu çerçeveli. Boşluk: 4. satır aynı oldu; harf: 5. ve 10. satır aynı oldu; ikisi birden: yalnız `dog/cat`, kaldırılan ve eklenen kaldı (`c02`–`c04`). Son seçim `state.toml` `[diff] ignore-whitespace = true` olarak yazıldı.
+6. **Alt+↓ / Alt+↑ — PASS.** İlk satırdan Alt+↓: 3 → 8 → 10 → son satır (`end left/end right`), sonda durur; Alt+↑ geri. Home/End/PgDn de çalışıyor. Ctrl+C: `< jumps over the lazy dog` / `> jumps over the lazy cat`.
+7. **F5 / Ctrl+R yeniden okuma — PASS.** `b.txt` dışarıdan değişti (`Line one`→`Line ONE!`), F5 → ilk satır `Changed` oldu. (Not: iki bölmede katman kapalıyken F5 Kopyala'dır; bir kez yanlışlıkla Kopyala sorusu açıldı, Esc ile iptal, dosya kopyalanmadı.)
+8. **CRLF ↔ LF — PASS.** Başlık altı `UTF-8 · CRLF ↔ UTF-8 · LF`, turuncu; satır sonu farkı satırları değiştirmiyor.
+9. **UTF-16 / Windows-1254 — uzun dosyada PASS, kısa dosyada FAIL (FAIL 2).** `tr-1254-long.txt` (719 B) ↔ UTF-8: `Windows-1254 · CRLF ↔ UTF-8 · CRLF`, ğ/ş/ı/İ doğru (`c11-tr-1254-long.png`). UTF-16 LE doğru okunuyor.
+10. **İkili dosya — PASS.** `bin1.bin`/`bin2.bin`: soru penceresi `The files differ from byte 1,235 (of 4.9 KB)`; `bin2`/`bin3`: `The files are identical` (`c13-bin.png`, `c14-bin-same.png`).
+11. **>16 MB — PASS.** `big1.txt`/`big2.txt` (17 MB): `The files differ from byte 10,000,001 (of 17.0 MB)`, ≈2,3 s (`c15-big.png`).
+12. **İki klasör — PASS.** Durum satırı: `Folder comparison comes later; set [tools] folder-diff to use your compare program for folders` (`c16-dirs.png`).
+13. **Eksik dış araç (`[tools] diff = "nope.exe"`) — iç katman PASS, not FAIL (FAIL 3).**
+14. **Esc kapatır — PASS.** Odak pencereye, seçim (`a.txt,b.txt`) yerinde.
+15. **Açık tema — PASS** (✕ dışında, FAIL 4). Renkler açık temada okunur (`c18-light.png`).
+16. **Bellek / boşta — not.** Taze oturum (`c4`): kapalı 7,55 MB → açık 8,46 → kapandıktan sonra 7,94 MB (WorkingSetPrivate; **+0,39 MB**, ölçüt +0,3). Ancak `c1`'de katmanı açmadan aynı tıklama döngüsü de döngü başına +0,4–0,5 MB büyüttü; katmanlı döngü +0,6–0,7. Yani katmana özgü kalan ≈ +0,15–0,2 MB/döngü; kesin hüküm için master'la aynı döngü gerekir (yapılmadı). Boşta CPU 10 s: kapalı 16 ms, açık 0 ms, kapandıktan sonra 0 ms.
+
+### FAIL'ler
+
+1. **Uzun satırda değişen bölüm işareti kayıyor (ASCII'de de).** `w1.txt` 1. satır: `0123456789`×9 + `ABCDEFGH`, `w2.txt`: `…ABCxEFGH`. Shift+F2 → işaret `D` yerine `D`/`E` sınırına ≈ 0,6 karakter sağa kaymış (`c12z.png`). `tr-1254-long` ↔ `tr-utf8-long`'da 93. karakterdeki `ı/i` değişikliği bir karakter sağda (`lık` işaretli, `ılı` olmalı; `c11z.png`). Kısa satırlar doğru. Karakter genişliği varsayımı birikimli hata veriyor gibi.
+2. **Kısa Windows-1254 dosyası Windows-1252 sanılıyor.** `tr-1254.txt` (47 B: `Türkçe: ğüşıöç İĞÜŞÖÇ` / `ikinci satır i` / `üçüncü`, 1254) ↔ `tr-u16.txt`: başlık `Windows-1252 · CRLF ↔ UTF-16 LE · CRLF`, sol `Türkçe: ðüþýöç ÝÐÜÞÖÇ` (`c10-tr-enc.png`). 719 B'lık dosyada doğru. Türkçe Windows'ta kısa dosyada tahmin yetersizse sistem ANSI kod sayfası (1254) daha iyi bir son çare olur.
+3. **Dış araç bulunamayınca dosyalarda durum notu görünmüyor.** `settings.toml`: `[tools]` `diff = "nope.exe"`; `a.txt`+`b.txt` Shift+F2 → iç katman açılıyor ama durum satırı 150 ms'den 1,2 s'ye kadar ve Esc'ten sonra yalnız `17 items · 2 selected (1.2 KB)`; `The compare program "nope.exe" was not found; using Gezik's own` hiç görünmüyor (`c17-nope.png`, `c17b-status.png`). Karşılaştırma: aynı ayar + `folder-diff = true`, `dirA`+`dirB` → `…was not found; Gezik does not compare folders yet` görünüyor. Yani not dosya yolunda katman açılırken kayboluyor (`diff.rs` `run_external` → `note` + `d.read`).
+4. **Katmanın kapat düğmesi boş.** Sağ üstteki 22 px düğmenin UIA adı `Close`, metni `✕`, ama ekranda glif yok (koyu ve açık tema; `c01z-btns.png`). Yazı tipinde U+2715 yok gibi; Esc çalışıyor.
+
+### Notlar (FAIL değil)
+
+- Değişiklik sayısı tür dizilerini sayıyor: aynı blokta `Changed` + `Added` iki sayılıyor (`a/b`: 3 blok, `4 changes`).
+- Blok içinde konumsal eşleme spec'e uygun ama anlamsız çiftler veriyor (`alpha beta gamma delta` ↔ `added line right`, ardından `alpha beta GAMMA delta` eklendi).
+- Uzun satırda yatay kaydırma yok: sol metin sütun sınırında kesiliyor, satırın geri kalanı görülemiyor (`c11-tr-1254-long.png`).
+- `Ignore whitespace` / `Ignore case` UIA'da düz `Button`, açık/kapalı durumu ekran okuyucuya gitmiyor.
+
+### Yeniden test (2026-10-11, ajan, kullanıcı uzakta)
+
+- Derleme: `%TEMP%\gezik-gui-11\bin\t11c-fix.exe` (26.006.528 B; `7c3a2c7` düzeltmeleri). Birincil ekran, 1600×900 @ 40,40; her girdi öncesi ön plan + imleç altı bu koşunun Gezik PID'i denetlendi. Taze `GEZIK_CONFIG_DIR` = `%TEMP%\gezik-gui-11\cfg\r1..r3`. Klavye düzeni başta/sonda `en-US=0409:0000041F`.
+- Güvenlik: veriler işleyicisi olmayan `.gzt` kopyalarına alındı (`data\c2`; `assoc .gzt` → yok). Bu bölümde hiç Enter / Ctrl+A / Delete / yazı gönderilmedi (yalnız Shift+F2, Alt+↓, F5, Esc, fare). Not: Slint UIA'ya iç odak bildirmiyor (`FocusedElement` hep pencere); katmanın açık olduğu `Ignore case` düğmesinin UIA'da varlığıyla doğrulandı.
+- Ekran görüntüleri `%TEMP%\gezik-gui-11\shots\r*.png`.
+
+1. **Uzun satırda vurgu hizası, ASCII — PASS.** `w1`/`w2` (90+ karakter): işaret tam `D` / `x` üzerinde (`r01-w12.png`, `r01z.png`).
+2. **Uzun satırda vurgu hizası, Türkçe — PASS.** `w3`/`w4` (`ğüşıöç` ×13 + `abcçdefgğhı…`, 97. karakter `e`→`X`): işaret tam `e` / `X` üzerinde (`r02zl.png`, `r02zr.png`). `tr-1254-long` ↔ `tr-utf8-long`: işaret `ılı` / `ili` üzerinde, artık kaymıyor (`r03-trlong.png`).
+3. **Kısa Windows-1254 dosyası — PASS.** `tr-1254` (47 B) ↔ `tr-u16`: başlık `Windows-1254 · CRLF ↔ UTF-16 LE · CRLF`, sol `Türkçe: ğüşıöç İĞÜŞÖÇ` doğru (`r04-tr1254.png`).
+4. **`[tools] diff = "nope.exe"` notu — PASS.** Katmanın kodlama satırında turuncu: `UTF-8 · CRLF ↔ UTF-8 · LF · The compare program "nope.exe" was not found; using Gezik's own` (`r10-nope-b.png`).
+5. **Kapat düğmesi glifi — PASS (küçük not).** Koyu ve açık temada `×` görünüyor (`r01z-btn.png`, `r11z-btn.png`); glif ≈ 5 px, 22 px düğmede oldukça küçük.
+6. **Shift+F2 — PASS** (`a`/`b`, `w*`, `tr-*` hepsi açıldı). **Ignore whitespace / Ignore case — PASS** (turuncu çerçeve, 4. ve 5. satır aynı oldu; `r07-wscase.png`). **Alt+↓ — PASS** (1 → 8 → 9). **F5 — PASS** (`b.gzt` dışarıdan değişti, 2. satır `Changed` oldu; `r09-f5.png`). **Esc — PASS** (katman kapandı, seçim `a.gzt b.gzt` yerinde).
+7. **Bellek aç/kapa — PASS.** WorkingSetPrivate: taban 7,51 MB; 5 döngü açık 8,52–8,60, kapalı 7,46–7,57; son 7,47 MB (+0, sızıntı yok).
+8. **Açık tema — PASS** (`r11-light.png`).
+
+Not (FAIL değil): uzun satırda sol metin sütun çizgisine kadar dayanıyor, sağ sütunun satır numarasıyla neredeyse bitişik (`r03z.png`); yatay kaydırma hâlâ yok.
+
 ## Adım 11, alt parça 11h (Liste dışa aktarma) sonrası
 
 - **Yapı:** saf yazıcılar `gezik-core/src/export.rs` (`Format`, `Column`, `columns`, `Sheet` + `begin`/`row`/`end` `dyn Write` üstünde, `csv_field`, `html_escape`, `iso_seconds`, `file_stem`); liste ayırıcısı `gezik-platform::list_separator` (Windows `LOCALE_SLIST`, başka yerde `,`); görünümün satırları `View::export_rows` (süzgeçten geçmiş, liste sırasında; ham ya da gösterilen hücreler; `dyn FnMut`); soru ve iş `gezik/src/export.rs`. CSV yazıcısı 11a'nın `csv.rs`'i yerine burada (paralel dallar çakışmasın); birleşince biri öbürüne bağlanmalı.
