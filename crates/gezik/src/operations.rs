@@ -502,6 +502,11 @@ impl Operations {
     }
 
     /// The current window's questions (none before it is attached: nothing is asked).
+    /// state.toml and the other files (none in tests).
+    pub fn store(&self) -> Option<&ConfigStore> {
+        self.0.store.as_ref()
+    }
+
     pub fn dialogs(&self) -> Dialogs {
         self.part().map_or_else(Dialogs::detached, |part| part.dialogs.clone())
     }

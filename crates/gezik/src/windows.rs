@@ -66,6 +66,7 @@ const FORGETS: &[fn(WindowId)] = &[
     |id| crate::archives::CURRENT.with(|s| s.forget(id)),
     |id| crate::batch_rename::CURRENT.with(|s| s.forget(id)),
     |id| crate::convert::CURRENT.with(|s| s.forget(id)),
+    |id| crate::diff::CURRENT.with(|s| s.forget(id)),
     |id| crate::drag::CURRENT.with(|s| s.forget(id)),
     |id| crate::dual::DUAL.with(|s| s.forget(id)),
     |id| crate::info::CURRENT.with(|s| s.forget(id)),
@@ -938,6 +939,7 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
     let _archives =
         archives::Archives::new(&window, ops.clone(), dialogs.clone(), config.clone(), state.archive.clone());
     let _info = info::Info::new(&window, ops.clone(), dialogs.clone());
+    let _diff = crate::diff::Diff::new(&window, dialogs.clone(), config.clone(), state.diff);
     let _convert = convert::Convert::new(&window, ops.clone(), dialogs.clone(), config.clone(), state.convert.clone());
     window.on_op_pause({
         let ops = ops.clone();

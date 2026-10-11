@@ -65,18 +65,31 @@ pub struct FilesSettings {
     pub copy_threads: CopyThreads,
 }
 
-/// `[tools]`: the programs Gezik may download.
+/// `[tools]`: the programs Gezik may download, and the compare program (spec 11 §6.4).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolsSettings {
     /// Offer to download 7-Zip (later ffmpeg and pdfium) when needed; off, only say so.
     pub download: bool,
     /// The 7-Zip to use (`seven-zip`); `None`: Gezik's download, then PATH.
     pub seven_zip: Option<String>,
+    /// An external compare program (`diff`): a full path, a name on PATH or a macOS `.app`;
+    /// `None`: Gezik's own.
+    pub diff: Option<String>,
+    /// Its arguments (`diff-args`); `{left}` and `{right}` become the two paths.
+    pub diff_args: Vec<String>,
+    /// Two folders go to it too (`folder-diff`).
+    pub folder_diff: bool,
 }
 
 impl Default for ToolsSettings {
     fn default() -> Self {
-        ToolsSettings { download: true, seven_zip: None }
+        ToolsSettings {
+            download: true,
+            seven_zip: None,
+            diff: None,
+            diff_args: vec!["{left}".to_owned(), "{right}".to_owned()],
+            folder_diff: false,
+        }
     }
 }
 
@@ -85,6 +98,15 @@ impl Default for ToolsSettings {
 pub struct ConvertSettings {
     /// The ffmpeg to use (`ffmpeg`), an absolute path; `None`: Gezik's download, then PATH.
     pub ffmpeg: Option<String>,
+}
+
+/// Export List's last choices (state.toml `[export]`, spec 11 §11.1).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ExportState {
+    /// `text`, `csv` or `html` (`Format::as_str`); `None`: never exported.
+    pub format: Option<String>,
+    /// Text writes full paths (`text = "paths"`), not names (`"names"`).
+    pub full_paths: bool,
 }
 
 /// The Convert layer's last choices (state.toml `[convert]`). The options are the layer's own
@@ -1366,6 +1388,34 @@ fn parse_tools(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> 
             None => warnings.push(Warning::new(file, format!("tools.seven-zip: expected text, got {value}"))),
         }
     }
+    if let Some(value) = table.get("diff") {
+        match value.as_str() {
+            Some(program) if program.trim().is_empty() => {}
+            Some(program) => out.diff = Some(program.trim().to_owned()),
+            None => warnings.push(Warning::new(file, format!("tools.diff: expected text, got {value}"))),
+        }
+    }
+    if let Some(value) = table.get("diff-args") {
+        match string_list(value, "diff-args") {
+            Err(_) => {
+                warnings.push(Warning::new(file, format!("tools.diff-args: expected a list of text, got {value}")))
+            }
+            Ok(args) => match gezik_core::batch::convert::check_diff_args(&args) {
+                Ok(()) => out.diff_args = args,
+                Err(err) => {
+                    warnings.push(Warning::new(file, format!("tools.diff-args: {err}; {{left}} {{right}} is used")))
+                }
+            },
+        }
+    }
+    if let Some(value) = table.get("folder-diff") {
+        match value.as_bool() {
+            Some(on) => out.folder_diff = on,
+            None => {
+                warnings.push(Warning::new(file, format!("tools.folder-diff: expected true or false, got {value}")))
+            }
+        }
+    }
     out
 }
 
@@ -1558,6 +1608,9 @@ pub struct State {
     pub batch_rename: Option<BatchRenameState>,
     pub archive: ArchiveState,
     pub convert: ConvertState,
+    /// The file compare's last options (`[diff] ignore-whitespace`, `ignore-case`; spec 11 §6.2).
+    pub diff: gezik_core::diff::Options,
+    pub export: ExportState,
     pub selection: SelectionState,
     /// The folders visited (`[history] folders`), for the address bar's lists.
     pub history: Vec<Visit>,
@@ -1725,6 +1778,11 @@ impl State {
                 last_extract_to: text("last-extract-to"),
             }
         });
+        let export =
+            table.get("export").and_then(|v| v.as_table()).map_or_else(ExportState::default, |t| ExportState {
+                format: t.get("format").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(str::to_owned),
+                full_paths: t.get("text").and_then(|v| v.as_str()) == Some("paths"),
+            });
         let convert = table.get("convert").and_then(|v| v.as_table()).map_or_else(ConvertState::default, |t| {
             let text = |key: &str| t.get(key).and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(str::to_owned);
             ConvertState {
@@ -1784,6 +1842,12 @@ impl State {
             .map(|v| panes_state(Some(v)))
             .filter(|w| !w.session.is_empty())
             .collect();
+        let diff_table = table.get("diff").and_then(|v| v.as_table());
+        let diff_flag = |key: &str| diff_table.and_then(|t| t.get(key)).and_then(|v| v.as_bool()).unwrap_or(false);
+        let diff = gezik_core::diff::Options {
+            ignore_whitespace: diff_flag("ignore-whitespace"),
+            ignore_case: diff_flag("ignore-case"),
+        };
         let palette_recent = recent("palette", gezik_core::palette::RECENT_MAX);
         let servers_recent = recent("servers", SERVERS_MAX);
         State {
@@ -1798,6 +1862,8 @@ impl State {
             batch_rename,
             archive,
             convert,
+            diff,
+            export,
             selection,
             history,
             session: first.session,
@@ -1904,6 +1970,15 @@ impl State {
             }
             root.insert("convert".into(), toml::Value::Table(table));
         }
+        if self.export != ExportState::default() {
+            let mut table = toml::Table::new();
+            if let Some(format) = &self.export.format {
+                table.insert("format".into(), toml::Value::String(format.clone()));
+            }
+            let text = if self.export.full_paths { "paths" } else { "names" };
+            table.insert("text".into(), toml::Value::String(text.into()));
+            root.insert("export".into(), toml::Value::Table(table));
+        }
         if let Some(pattern) = &self.selection.last_pattern {
             let mut table = toml::Table::new();
             table.insert("last-pattern".into(), toml::Value::String(pattern.clone()));
@@ -1936,6 +2011,12 @@ impl State {
             let mut palette = toml::Table::new();
             palette.insert("recent".into(), toml::Value::Array(recent));
             root.insert("palette".into(), toml::Value::Table(palette));
+        }
+        if self.diff != gezik_core::diff::Options::default() {
+            let mut diff = toml::Table::new();
+            diff.insert("ignore-whitespace".into(), toml::Value::Boolean(self.diff.ignore_whitespace));
+            diff.insert("ignore-case".into(), toml::Value::Boolean(self.diff.ignore_case));
+            root.insert("diff".into(), toml::Value::Table(diff));
         }
         if !self.servers_recent.is_empty() {
             let recent = self.servers_recent.iter().take(SERVERS_MAX).cloned().map(toml::Value::String).collect();
@@ -2475,7 +2556,10 @@ rules = []
         ));
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(settings.archives.double_click, DoubleClick::ExtractHere);
-        assert_eq!(settings.tools, ToolsSettings { download: false, seven_zip: Some(program.to_owned()) });
+        assert_eq!(
+            settings.tools,
+            ToolsSettings { download: false, seven_zip: Some(program.to_owned()), ..ToolsSettings::default() }
+        );
         let defaults = Settings::default();
         assert_eq!((defaults.archives.double_click, defaults.tools.download), (DoubleClick::System, true));
         // Empty means none set.
@@ -2486,6 +2570,68 @@ rules = []
         let (settings, warnings) = parse("[tools]\nseven-zip = \"7-Zip/7z.exe\"\n");
         assert_eq!(settings.tools.seven_zip, None);
         assert!(warnings[0].message.contains("must be a full path"), "{warnings:?}");
+    }
+
+    #[test]
+    fn the_compare_options_round_trip_in_state() {
+        let options = gezik_core::diff::Options { ignore_whitespace: true, ignore_case: false };
+        let text = State { diff: options, ..State::default() }.to_toml();
+        assert!(text.contains("[diff]") && text.contains("ignore-whitespace = true"), "{text}");
+        assert_eq!(State::parse(&text).diff, options);
+        assert!(!State::default().to_toml().contains("[diff]"), "the default is not written");
+        assert_eq!(
+            State::parse(
+                "[diff]
+ignore-case = \"yes\"
+"
+            )
+            .diff,
+            gezik_core::diff::Options::default()
+        );
+    }
+
+    #[test]
+    fn reads_the_compare_program() {
+        let (settings, warnings) = parse(
+            "[tools]
+diff = \" WinMergeU \"
+diff-args = [\"/e\", \"{left}\", \"{right}\"]
+folder-diff = true
+",
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(settings.tools.diff.as_deref(), Some("WinMergeU"), "a name on PATH, trimmed");
+        assert_eq!(settings.tools.diff_args, ["/e", "{left}", "{right}"]);
+        assert!(settings.tools.folder_diff);
+        let defaults = ToolsSettings::default();
+        assert_eq!(
+            (defaults.diff, defaults.diff_args.as_slice(), defaults.folder_diff),
+            (None, &["{left}".to_owned(), "{right}".to_owned()][..], false)
+        );
+        let (settings, warnings) = parse(
+            "[tools]
+diff = \"\"
+diff-args = [\"{in}\"]
+folder-diff = 1
+",
+        );
+        assert_eq!(settings.tools, ToolsSettings::default(), "empty: Gezik's own");
+        let messages: Vec<_> = warnings.iter().map(|w| w.message.as_str()).collect();
+        assert_eq!(
+            messages,
+            [
+                "tools.diff-args: unknown placeholder {in}; {left} {right} is used",
+                "tools.folder-diff: expected true or false, got 1"
+            ]
+        );
+        let (_, warnings) = parse(
+            "[tools]
+diff = 3
+diff-args = \"{left}\"
+",
+        );
+        assert!(warnings[0].message.starts_with("tools.diff: expected text"), "{warnings:?}");
+        assert!(warnings[1].message.starts_with("tools.diff-args: expected a list of text"), "{warnings:?}");
     }
 
     #[test]
@@ -2899,6 +3045,23 @@ last-pattern = \"\"
         assert!(!State::default().to_toml().contains("convert"), "the default is not written");
         let broken = State::parse("[convert]\nimage = 3\nlast-output = 4\nlast-folder = \"\"\n");
         assert_eq!(broken.convert, ConvertState::default());
+    }
+
+    #[test]
+    fn export_state_round_trips() {
+        let state =
+            State { export: ExportState { format: Some("html".to_owned()), full_paths: true }, ..State::default() };
+        let text = state.to_toml();
+        assert!(text.contains("[export]") && text.contains("text = \"paths\""), "{text}");
+        assert_eq!(State::parse(&text), state);
+        assert!(!State::default().to_toml().contains("export"), "the default is not written");
+        let broken = State::parse(
+            "[export]
+format = 3
+text = true
+",
+        );
+        assert_eq!(broken.export, ExportState::default());
     }
 
     #[test]

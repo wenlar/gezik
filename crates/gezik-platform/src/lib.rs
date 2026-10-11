@@ -47,7 +47,7 @@ pub use known::{KnownFolder, known_folders};
 /// Linux: org.freedesktop.FileManager1 (spec 6.4).
 #[cfg(all(unix, not(target_os = "macos")))]
 pub use linux::file_manager1;
-pub use locale::language;
+pub use locale::{language, list_separator};
 /// macOS: the folders LaunchServices hands to Gezik (spec 6.2).
 #[cfg(target_os = "macos")]
 pub use mac::open_urls;
@@ -61,7 +61,7 @@ pub use picture::{
     Decoded, MAX_DECODE_BYTES, MAX_DECODE_SIDE, can_decode, decode_image, only_in_cloud, thumbnail, thumbnail_while,
 };
 pub use process::{ChildProcess, Lines, process_alive};
-pub use text::decode_ansi;
+pub use text::{ansi_code_page, decode_ansi};
 
 /// What was right-clicked.
 #[derive(Debug, Clone, PartialEq, Eq)]

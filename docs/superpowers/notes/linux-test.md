@@ -588,12 +588,27 @@ Numbers stay as they are when branches merge (see 10b). 10g starts at 200 as its
 205. **Second launch and session.** As macOS 267–268 (`gezik <folder>` from a terminal; FileManager1 "Show in folder" from a browser's downloads opens in the window used last).
 206. **Focus order.** As macOS 270 with Gezik's own menus (`gezik <folder>` from a terminal); on Wayland write whether the window used last really gets the folder (the compositor may not say which window has the focus).
 
+### 11c, file compare
+
+Numbers stay as they are when branches merge. 11c starts at 213 as its plan decided. GNOME and KDE, X11 and Wayland.
+
+213. **Tests first.** As macOS 281; paste.
+214. **Shift+F2, menus, keys.** As macOS 282–283 with Shift+F2, Gezik's own right-click `Tools ▸ Compare`, Alt+↓/↑, Ctrl+C, Ctrl+R; memory as macOS 285 with `ps -o rss= -p $(pgrep -x gezik)`.
+215. **Meld from PATH.** `[tools] diff = "meld"` (and `kdiff3` on KDE): it opens on both files and stays open after Gezik quits; a path with spaces and an `'` arrives whole (`/tmp/it's a test/l.txt`); `diff = "nope"`: the status bar line and Gezik's own compare.
+
+### 11h, list export
+
+Numbers stay as they are when branches merge (see 10b). 11h starts at 219 as its plan decided.
+
+219. **Question and files.** As macOS 291–292 with Gezik's own right-click menu (Tools ▸ Export list…; there is no menu bar, the palette has `Export List…`) and Ctrl+Z; open the CSV in LibreOffice Calc: `,` separators, no BOM, LF line ends; the HTML in Firefox in light and dark.
+220. **Results and clipboard.** As macOS 293 (Ctrl+Shift+F); paste the copied CSV into a text editor on X11 and on Wayland.
+
 ### 11g, size map
 
 Numbers stay as they are when branches merge (see 10b). 11g starts at 223 as its plan decided. GNOME and KDE, X11 and Wayland.
 
 223. **Tests first.** As macOS 297; paste.
-224. **Open, look, zoom, keys, menu.** As macOS 298–301 with the palette (Ctrl+Shift+P `Size Map`) and the right-click `Size Map` (no menu bar), Backspace / Alt+Up for ⌫ / ⌥↑, Ctrl+R / F5, Move to Trash going to `~/.local/share/Trash`; on a 2× scale screen the box edges stay sharp.
+224. **Open, look, zoom, keys, menu.** As macOS 298–301 with the palette (Ctrl+Shift+P `Size Map`) and the right-click `Tools ▸ Size Map` (no menu bar), Backspace / Alt+Up for ⌫ / ⌥↑, Ctrl+R / F5, Move to Trash going to `~/.local/share/Trash`; on a 2× scale screen the box edges stay sharp.
 225. **Root.** Map `/`: it stays on the root file system (no `/proc`, `/sys`, `/dev`, `/run` or other mounts), finishes, and memory (`ps -o rss= -p $(pgrep -x gezik)`) goes back to within 0.3 MB of before after closing (write both numbers).
 
 ## Known gaps (not bugs)

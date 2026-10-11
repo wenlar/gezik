@@ -13,10 +13,12 @@ mod context_menu;
 mod convert;
 mod copy_path;
 mod dialog;
+mod diff;
 mod drag;
 mod dual;
 mod eject;
 mod elevated;
+mod export;
 mod filter;
 mod finder_menu;
 mod folder_sizes;
@@ -139,6 +141,7 @@ fn apply_config(files: &ConfigFiles) -> Loaded {
     operations::with_current(|ops| ops.set_files(loaded.settings.files));
     batch_rename::set_presets(loaded.settings.rename_presets.clone());
     archives::set_settings(loaded.settings.tools.clone(), loaded.settings.archives);
+    diff::set_settings(&loaded.settings.tools);
     preview::set_quick_look(loaded.settings.system.quick_look);
     convert::set_settings(loaded.settings.convert.clone(), loaded.settings.commands.clone());
     filter::set_settings(loaded.settings.keyboard, loaded.settings.filters.clone());
@@ -342,6 +345,8 @@ fn perform(
         | Action::SwapPanes
         | Action::OtherPaneSameFolder
         | Action::MoveTabToNewWindow
+        | Action::Compare
+        | Action::ExportList
         | Action::SizeMap => return actions::run(action, nav, view),
     }
     true
@@ -408,6 +413,14 @@ fn handle_key(
         let mut used = false;
         if let Some(chord) = &chord {
             info::with_current(|info| used = info.chord(chord));
+        }
+        return used;
+    }
+    // The file compare: its keys wherever its focus is.
+    if window.get_df_open() {
+        let mut used = false;
+        if let Some(chord) = &chord {
+            diff::with_current(|d| used = d.chord(chord));
         }
         return used;
     }
