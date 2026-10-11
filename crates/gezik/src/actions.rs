@@ -134,6 +134,10 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         Action::SwapPanes => crate::dual::swap(),
         Action::OtherPaneSameFolder => crate::dual::same_folder(),
         Action::MoveTabToNewWindow => crate::windows::move_tab_to_new(nav.active_index()),
+        Action::CopyTo => crate::copy_to::copy_to(view, false),
+        Action::MoveTo => crate::copy_to::copy_to(view, true),
+        Action::SplitFile => crate::copy_to::split(view),
+        Action::JoinFiles => crate::copy_to::join(view),
         // Not theirs: `handle_key` and the menu bar run these themselves. Listed one by one so
         // that a new action is a compile error here until it is placed.
         Action::NewTab

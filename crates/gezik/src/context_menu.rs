@@ -508,6 +508,13 @@ pub const TWO_PANES: u32 = 2030;
 pub const SYNC_BROWSING: u32 = 2031;
 pub const SWAP_PANES: u32 = 2032;
 pub const SAME_FOLDER: u32 = 2033;
+/// The tools (spec 11 §13.3: 2200–2219 in the macOS Tools menu's order). In a row menu they
+/// stand with Compress and Convert (11a's choice): Copy to… 2207, Move to… 2208, Split file…
+/// 2209, Join files 2210.
+pub const TOOLS_COPY_TO: u32 = 2207;
+pub const TOOLS_MOVE_TO: u32 = 2208;
+pub const TOOLS_SPLIT: u32 = 2209;
+pub const TOOLS_JOIN: u32 = 2210;
 /// View ▸ Show in sidebar tree (spec 10 §10.3, 10c).
 pub const REVEAL_IN_TREE: u32 = 2050;
 
@@ -1186,6 +1193,7 @@ impl Menus {
         let mut extra = crate::archives::menu_items(&rows);
         let (convert, commands) = crate::convert::menu_items(&rows);
         extra.extend(convert);
+        extra.extend(crate::copy_to::menu_items(&rows));
         *self.rows.borrow_mut() = rows;
         let start = if native { 0 } else { list.len() };
         if native {
@@ -1903,6 +1911,18 @@ impl Menus {
             (id, Subject::Row(_) | Subject::Rows(_)) if (COMMAND_FIRST..COMMAND_FIRST + COMMAND_MAX).contains(&id) => {
                 let rows = std::mem::take(&mut *self.rows.borrow_mut());
                 crate::convert::run_menu_command((id - COMMAND_FIRST) as usize, rows);
+            }
+            (TOOLS_COPY_TO..=TOOLS_JOIN, Subject::Row(_) | Subject::Rows(_)) => {
+                let rows = std::mem::take(&mut *self.rows.borrow_mut());
+                let mut paths: Vec<PathBuf> = rows.into_iter().map(|(path, _)| path).collect();
+                match (id, paths.pop()) {
+                    (TOOLS_SPLIT, Some(path)) => crate::copy_to::split_path(path),
+                    (TOOLS_JOIN, Some(path)) => crate::copy_to::join_path(path),
+                    (_, last) => {
+                        paths.extend(last);
+                        crate::copy_to::copy_to_paths(paths, id == TOOLS_MOVE_TO);
+                    }
+                }
             }
             (EXTRACT_HERE..=COMPRESS_TO, Subject::Row(_) | Subject::Rows(_)) => {
                 let rows = std::mem::take(&mut *self.rows.borrow_mut());
@@ -2747,6 +2767,10 @@ mod tests {
             SYNC_BROWSING,
             SWAP_PANES,
             SAME_FOLDER,
+            TOOLS_COPY_TO,
+            TOOLS_MOVE_TO,
+            TOOLS_SPLIT,
+            TOOLS_JOIN,
         ];
         let mut ranges: Vec<std::ops::Range<u32>> = singles.iter().map(|id| *id..id + 1).collect();
         ranges.extend([

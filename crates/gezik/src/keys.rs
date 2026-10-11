@@ -526,6 +526,10 @@ pub fn acts_on_selection(action: Action) -> bool {
             | Action::KeepOffline
             | Action::FreeUpSpace
             | Action::GetInfo
+            | Action::CopyTo
+            | Action::MoveTo
+            | Action::SplitFile
+            | Action::JoinFiles
     )
 }
 
@@ -558,6 +562,10 @@ pub fn needs_list(action: Action) -> bool {
             | Action::KeepOffline
             | Action::FreeUpSpace
             | Action::GetInfo
+            | Action::CopyTo
+            | Action::MoveTo
+            | Action::SplitFile
+            | Action::JoinFiles
             | Action::FocusOtherPane
             | Action::CopyToOtherPane
             | Action::MoveToOtherPane
@@ -875,7 +883,11 @@ mod tests {
                 | Action::MoveTabToOtherPane
                 | Action::SyncBrowsing
                 | Action::OtherPaneSameFolder
-                | Action::MoveTabToNewWindow => continue,
+                | Action::MoveTabToNewWindow
+                | Action::CopyTo
+                | Action::MoveTo
+                | Action::SplitFile
+                | Action::JoinFiles => continue,
             };
             assert_eq!(reach(text), Some(action), "{text}");
         }

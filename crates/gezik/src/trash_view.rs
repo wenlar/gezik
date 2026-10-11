@@ -295,6 +295,10 @@ pub fn allowed(action: Action) -> bool {
         | Action::CutWithFolders
         | Action::CalculateFolderSizes
         | Action::SaveSearch
+        | Action::CopyTo
+        | Action::MoveTo
+        | Action::SplitFile
+        | Action::JoinFiles
         | Action::CopyToOtherPane => false,
     }
 }

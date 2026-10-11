@@ -12,6 +12,7 @@ mod connect;
 mod context_menu;
 mod convert;
 mod copy_path;
+mod copy_to;
 mod dialog;
 mod drag;
 mod dual;
@@ -340,7 +341,11 @@ fn perform(
         | Action::SyncBrowsing
         | Action::SwapPanes
         | Action::OtherPaneSameFolder
-        | Action::MoveTabToNewWindow => return actions::run(action, nav, view),
+        | Action::MoveTabToNewWindow
+        | Action::CopyTo
+        | Action::MoveTo
+        | Action::SplitFile
+        | Action::JoinFiles => return actions::run(action, nav, view),
     }
     true
 }
