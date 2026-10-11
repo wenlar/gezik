@@ -877,7 +877,8 @@ mod tests {
                 | Action::SyncBrowsing
                 | Action::OtherPaneSameFolder
                 | Action::MoveTabToNewWindow
-                | Action::ExportList => continue,
+                | Action::ExportList
+                | Action::SizeMap => continue,
             };
             assert_eq!(reach(text), Some(action), "{text}");
         }

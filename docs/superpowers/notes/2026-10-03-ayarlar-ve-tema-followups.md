@@ -2423,3 +2423,55 @@ Not (FAIL değil): uzun satırda sol metin sütun çizgisine kadar dayanıyor, s
 7. **Açık tema — PASS** (`h27-light.png`).
 8. **Bellek — NOT (kesin değil).** Taze 4,87 → kabuk menüsü + Esc 6,39 MB; üç döngü (boşluk menüsü → `Tools ▸ Export list…` → Cancel) kapalıyken 7,60 / 7,91 / 8,10 MB. İlk döngü +1,2 (kabuk alt menüsünün ilk yüklemesi sayılabilir), sonrakiler +0,3 / +0,2. Döngüde kabuk menüsü de olduğundan diyalogun payı ayrılamadı; kısayolla açılan bir döngüyle ya da master'la karşılaştırma gerekir.
 - Bellek ölçümü kesin değil: her döngüde kabuk (sağ tık) menüsü de açıldığı için diyalogun payı ayrılamadı.
+
+## Adım 11, alt parça 11g (Boyut haritası) sonrası
+
+- `size-map` (tuşsuz; palet, macOS `Tools` menüsü, sağ tıkta tek klasör satırı ve klasör boşluğunda `Tools ▸ Size Map`, kimlik 2205): seçili klasörün, yoksa gösterilen klasörün kare-yakın ağaç haritası, pencere üstü katman.
+- Düzen saf Rust'ta (`gezik-core/src/treemap.rs`: ad arenası, iki düzey, 4×4 px altı `N small items`, en çok 2.000 dikdörtgen, isabet ve ok komşusu). Slint tarafı tek tekrarlayıcı ve tek `TouchArea` (`widgets/size-map.slint`).
+- Tarama `gezik-search::size::scan_tree`: `measure` ile aynı kurallar ve sayım (girilmeyen bulut/başka dosya sistemi klasörleri de klasör sayılır), en çok 500 ms'de bir kısmi çizim; bitince toplamlar bölmenin klasör boyutu önbelleğine yazılır. Esc ile durdurulan tarama önbelleğe yazılmaz.
+- Çöpe atma kutuyu iş bitip yol gerçekten gidince düşürür (Cancel ya da başarısız iş bırakır), her penceredeki haritaya ulaşır; o yol ve üstündekiler önbellekten silinir. Gri `Files` bloğunda yalnız Open ve Copy Path var (çöpe atma klasörü götürürdü).
+- İnceleme ve ekran düzeltmeleri: yalnız dosya tutan klasörde iç `Files` bloğu çiziliyor; ok tuşu o yönde komşu yoksa bir şey yapmıyor.
+- Açık sınırlar: harita izlemez (dış değişiklik için F5); yol parçaları yerine yol metni + Up; `tools.ps1` boyut haritası satırı yok; macOS 297–302 ve Linux 223–225 bekliyor.
+- Sürüm exe'si 25.939.968 B (master 25.801.728, +138.240 B).
+
+## Windows ekran testleri: 11g (2026-10-11, ajan, kullanıcı uzakta)
+
+- Derleme: `%TEMP%\gezik-gui-11\bin\t11g.exe` (25.936.896 B, 18:05). Birincil ekran, 1600×900 @ 40,40. Her girdi öncesi ön plan + imleç altı bu koşunun Gezik PID'i denetlendi. Taze `GEZIK_CONFIG_DIR` = `%TEMP%\gezik-gui-11\cfg\g1..g5` (`[hints] f3-moved = true`). Klavye düzeni başta/sonda `en-US=0409:0000041F`.
+- Veri: `data\g` (alpha/beta/gamma/delta 40/20/10/5 MB + ⅓'lük dosya, `many` = 50 MB + 500×500 B, 30 küçük dosya, 40 küçük klasör, 2×8 MB, `trashme` 30 MB; hepsi `.gzt`), `data\gbig` (5.050 klasör, 5.000 dosya). Esc testi için salt okuma `C:\Windows` taraması.
+- Güvenlik: Enter yalnız bir kez (harita katmanı UIA'da açık, ok tuşları haritayı gezdiriyor, dosya listesinde seçili satır `g` klasörü). Slint iç odağı UIA'ya bildirmiyor (`FocusedElement` hep pencere). Pano boştu; testten sonra boşaltıldı.
+- Ekran görüntüleri `%TEMP%\gezik-gui-11\shots\g*.png`.
+
+### Sonuçlar
+
+1. **Satır menüsünden açma — PASS.** `g` satırı sağ tık → `Size Map` (`g01-menu.png`) → harita: `alpha 53.3 MB`, `inner 40.0 MB`, gri `Files 13.3 MB` … alt satır `116.0 MB · 80 files · 48 folders` (`g02-map.png`).
+2. **Boş alan menüsünden açma — PASS.** `beta` içinde boş alana sağ tık → `Size Map` → `26.7 MB · 2 files · 1 folders` (`g07-emptymenu.png`, `g08-beta-map.png`).
+3. **Döşemeler ve etiketler — PASS.** Büyük döşemelerde `ad  boyut` etiketi; klasör iki düzey, dosyalar gri.
+4. **"N small items" — PASS.** `gbig`: 2.000 sınırında `51 small items 16.2 KB` gri döşeme (`g14-scan.png`). (`g`'de 30 küçük dosya + 40 küçük klasör için ayrı döşeme görünmedi; toplamları ≈ 30 KB / 116 MB, alanı çok küçük.)
+5. **Tıkla yakınlaş / Up — PASS.** `many` etiketine tık → `…\g\many`; `Up` → tekrar `g` (`166.3 MB · 581 files · 49 folders`). Kökteyken `Up` bir şey yapmıyor.
+6. **Ok tuşları — kısmen (NOT).** → : alpha → many; ← : gamma → many doğru. Ama tam boy `many` döşemesinde ↓ `gamma`'ya, ↑ `beta`'ya gidiyor; yukarıda/aşağıda komşu yokken yandaki sütuna atlıyor (`g05-arrows.png`). Hata mı tasarım mı, karar sizin.
+7. **Enter bölmede açar — PASS.** `beta` seçiliyken Enter → katman kapandı, başlık `beta — Gezik`, liste `inner, beta-2.gzt` (`g06-enter.png`).
+8. **Klasör döşemesi sağ tık — PASS.** `Open | Show in Pane | Move to Trash | Copy Path` (`g09-tile-menu.png`). Copy Path → pano `…\data\g\beta\inner`, durum `Copied the path`. Kök düzeyindeki dosya döşemesinde de aynı dört öğe.
+9. **Gri Files bloğu sağ tık — PASS.** Yalnız `Open | Copy Path` (`g11-files-menu.png`).
+10. **Move to Trash → Cancel — PASS (`confirm-trash = true` ile).** `Move trashme to the Recycle Bin?` `Trash`/`Cancel` (`g19-confirm.png`); Cancel → döşeme `trashme 30.0 MB` yerinde, klasör diskte (`g20-after-cancel.png`).
+11. **Taramada Esc — PASS.** `C:\Windows` taraması başladıktan ≈ 0,2 s sonra Esc → `Stopped · 7.5 GB · 72562 files · 72878 folders`, 3 s sonra değişmedi (`g17-stopped.png`). Durdurulan klasörün boyutu bölmeye yazılmadı (`Windows` satırının Size sütunu boş).
+12. **Büyük tarama yanıt veriyor — PASS.** `gbig` (5.050 klasör) < 0,65 s; `C:\Windows` tam tarama (33.9 GB, 143.473 dosya, 84.506 klasör, `some folders could not be read`) ≈ 4 s; tarama boyunca `Responding = True`, alt satır `Scanning…`.
+13. **Bölmede klasör boyutları — PASS.** Haritadan sonra `data` listesinde `g` satırında `166.3 MB`.
+14. **Bellek — PASS.** Kabuk sağ tık menüsü tek başına +7 MB yüklüyor (4,5 → 11,6–11,8 MB; kabuk uzantıları), o yüzden taban menüden sonra alındı: 11,78 → açık 12,26 → kapalı 11,94 (**+0,16 MB**). Üç döngüde 11,57 → 12,07 / 12,43 / 12,41, son 12,29.
+15. **Açık ve koyu tema — PASS** (`g18-light.png`, `g02-map.png`).
+
+### FAIL / bulgular
+
+1. **Varsayılan ayarda Move to Trash onay sormadan çöpe atıyor.** `[files] confirm-trash` varsayılanı `false`, harita da bunu izliyor; denetim listesindeki "onay penceresi → Cancel" adımı varsayılanda yok. Repro: taze config, `data\g` haritası, `delta` döşemesine sağ tık → `Move to Trash` → pencere çıkmadan `delta` (5 MB + 1,7 MB sıfır baytlık test dosyaları) Geri Dönüşüm Kutusu'na gitti, döşeme düştü, toplam `159.6 MB` (`g12a.png`, `g12-trash-confirm.png`). Tutarlı (listede de aynı ayar) ama harita yeni ve daha "kazara" tıklamaya açık; karar sizin. **Geri Dönüşüm Kutusu'nda şimdi `delta` klasörü var** (`%TEMP%\gezik-gui-11\data\g\delta`'dan); dokunulmadı, silmek size kalmış.
+2. **Yalnız dosya içeren klasörde iç Files bloğu çizilmiyor (küçük).** Kökte `many` (yalnız dosyalar) ve `beta` haritasında `inner` düz koyu renk, içinde gri `Files` yok; karışık klasörlerde (`alpha`, `gamma`) var. Yakınlaşınca `Files 50.2 MB` görünüyor (`g05-arrows.png`, `g08-beta-map.png`, `g04-zoom.png`).
+
+### Notlar
+- Kabuk sağ tık menüsü ilk açılışta ≈ +7 MB getiriyor (11g'ye özgü değil).
+- `Size Map`'in varsayılan kısayolu yok (bilinçli, `keys.rs`).
+## Windows ekran testleri: 11g
+
+- Derleme `%TEMP%\gezik-gui-11\bin\t11g-fix.exe` (25.939.968 B, 18:30). Birincil ekran, 1600×900 @ 40,40; taze `GEZIK_CONFIG_DIR` = `cfg\g6` (g5'in ayarları, `confirm-trash = true`). Her tuştan ve tıktan önce ön plan penceresinin bu koşunun PID'i (55308) olduğu denetlendi; Move to Trash hiç seçilmedi. Klavye düzeni başta/sonda `en-US 0409:0000041F`.
+
+1. **Yalnız dosya tutan klasörde iç Files bloğu — PASS.** Palet → `Size Map` (`data\g`): `many 50.2 MB` içinde gri `Files 50.2 MB`, `trashme 30.0 MB` içinde `Files 30.0 MB` (`g32-map.png`).
+2. **Ok tuşları — PASS.** İlk → `alpha` (tam boy); ↓ ve ↑ çerçeveyi `alpha`'da bıraktı (`g34-down-none.png`, `g35-up-none.png`); → `many` (`g36-right.png`); `many`'de ↓ yine `many` (`g37-many-down.png`).
+3. **İki pencere, iki harita — PASS.** Ctrl+N ile ikinci pencere; ikisinde de palet → `Size Map`, ikisi de aynı haritayı gösterdi (`g39-two-w1.png`, `g40-two-w2.png`); Esc ile ikisi de kapandı, liste geri geldi (`g41-w2-closed.png`, `g42-w1-closed.png`). Çöpe atma işinin öbür pencereye ulaşması gerçek bir çöpe atma gerektirdiği için denenmedi. Bellek iki harita kapandıktan sonra 11,11 MB (private).
+4. İki pencere `WM_CLOSE` ile kapatıldı, süreç bitti.

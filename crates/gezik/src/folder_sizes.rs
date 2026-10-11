@@ -213,6 +213,15 @@ impl FolderSizes {
         self.0.cache.borrow_mut().forget_with_ancestors(paths);
     }
 
+    /// The size map added these folders up (spec 11 §10.1): kept as if worked out here.
+    pub fn put_all(&self, totals: Vec<(PathBuf, FolderTotal, Option<SystemTime>)>) {
+        let now = Instant::now();
+        let mut cache = self.0.cache.borrow_mut();
+        for (path, total, stamp) in totals {
+            cache.put(&path, total, stamp, now);
+        }
+    }
+
     /// F5 on `folder`.
     pub fn forget_children(&self, folder: &Path) {
         self.0.cache.borrow_mut().forget_children(folder);

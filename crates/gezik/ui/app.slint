@@ -14,6 +14,7 @@ import { RenameBatch, RuleRow, RenamePreviewRow, RuleOptions } from "widgets/ren
 import { FileIcon } from "widgets/file-icon.slint";
 import { CompressLayer } from "widgets/compress.slint";
 import { ConvertLayer, ConvertView } from "widgets/convert.slint";
+import { SizeMapLayer, MapRect } from "widgets/size-map.slint";
 import { InfoLayer, InfoView } from "widgets/info.slint";
 import { DiffLayer, DiffRow, DiffView } from "widgets/diff.slint";
 import { PopupMenu, MenuEntry, MenuPlace, MenuSub } from "widgets/popup-menu.slint";
@@ -24,7 +25,7 @@ import { ColumnItem } from "widgets/column-view.slint";
 
 // Re-exported so Rust can set it with `window.global::<Theme>()` and build crumbs, tabs
 // and sidebar rows.
-export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, OpRow, StackRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView, InfoView, DiffRow, DiffView, MenuEntry, MenuPlace, MenuSub, PickRow, PathRow, PaneData, PaneGeometry, PaneFocus, ColumnItem }
+export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, OpRow, StackRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView, InfoView, DiffRow, DiffView, MapRect, MenuEntry, MenuPlace, MenuSub, PickRow, PathRow, PaneData, PaneGeometry, PaneFocus, ColumnItem }
 
 // Where the window's drop targets are, in window coordinates (drag.rs reads it while files
 // are dragged; every field is computed when read). The pane's are in its `PaneGeometry`.
@@ -196,6 +197,8 @@ export component AppWindow inherits Window {
         Menu {
             title: "Tools";
             MenuItem { title: "Compare"; shortcut: root.menu-keys ? @keys(Control + Meta + C) : @keys(); activated => { root.menu-command("compare"); } }
+            MenuSeparator { }
+            MenuItem { title: "Size Map"; activated => { root.menu-command("size-map"); } }
             MenuSeparator { }
             MenuItem { title: "Export List…"; activated => { root.menu-command("export-list"); } }
         }
@@ -632,6 +635,19 @@ export component AppWindow inherits Window {
     callback cv-pdf-set(string, int);
     callback cv-pdf-reorder(int, int);
     pure callback cv-pdf-drop-row(length, length, int) -> int;
+    // The size map (size_map.rs, spec 11 §10).
+    in property <bool> sm-open;
+    in property <string> sm-path;
+    in property <string> sm-status;
+    in property <[MapRect]> sm-rects;
+    in property <int> sm-current: -1;
+    callback sm-resized(length, length);
+    callback sm-hover(length, length);
+    callback sm-clicked(length, length);
+    callback sm-activated(length, length);
+    callback sm-menu(length, length, length, length);
+    callback sm-up();
+    callback sm-close();
     // The Info window (info.rs, spec 9 §4.4).
     in property <bool> info-open;
     property <int> info-focus-seq;
@@ -1461,6 +1477,23 @@ export component AppWindow inherits Window {
             pdf-set(key, i) => { root.cv-pdf-set(key, i); }
             pdf-reorder(from, to) => { root.cv-pdf-reorder(from, to); }
             pdf-drop-row(y, h, count) => { return root.cv-pdf-drop-row(y, h, count); }
+        }
+        if root.sm-open: SizeMapLayer {
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.height;
+            path: root.sm-path;
+            status: root.sm-status;
+            rects: root.sm-rects;
+            current: root.sm-current;
+            resized(w, h) => { root.sm-resized(w, h); }
+            hover(x, y) => { root.sm-hover(x, y); }
+            clicked(x, y) => { root.sm-clicked(x, y); }
+            activated(x, y) => { root.sm-activated(x, y); }
+            menu(x, y, wx, wy) => { root.sm-menu(x, y, wx, wy); }
+            up => { root.sm-up(); }
+            close => { root.sm-close(); }
         }
         if root.tp-open: Picker {
             x: 0;

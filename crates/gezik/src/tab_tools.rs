@@ -49,6 +49,7 @@ pub(crate) fn over_another_layer(window: &AppWindow) -> bool {
         || window.get_cv_open()
         || window.get_info_open()
         || window.get_df_open()
+        || window.get_sm_open()
 }
 
 /// The row Up/Down moves to, within `len` rows.

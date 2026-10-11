@@ -136,6 +136,7 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         Action::MoveTabToNewWindow => crate::windows::move_tab_to_new(nav.active_index()),
         Action::Compare => crate::diff::compare(),
         Action::ExportList => crate::export::ask(nav, view),
+        Action::SizeMap => crate::size_map::open_for(view),
         // Not theirs: `handle_key` and the menu bar run these themselves. Listed one by one so
         // that a new action is a compile error here until it is placed.
         Action::NewTab

@@ -515,15 +515,21 @@ pub const REVEAL_IN_TREE: u32 = 2050;
 // 2204, Size Map 2205, Export List 2206, Copy To 2207, Move To 2208, Split File 2209, Join Files 2210.
 /// Tools ▸ Compare (11c).
 pub const TOOLS_COMPARE: u32 = 2200;
+/// Tools ▸ Size Map (11g), on one folder or a folder's empty space.
+pub const TOOLS_SIZE_MAP: u32 = 2205;
 /// Tools ▸ Export list… (11h).
 pub const TOOLS_EXPORT_LIST: u32 = 2206;
 
 /// `Tools ▸` (spec 11 §3.3) at place `at`: only what applies: Compare for the selection when it
-/// can be compared (`compare`), Export list… always.
-pub fn tools_sub(at: usize, compare: bool) -> Submenu {
+/// can be compared (`compare`), Size Map on one folder or a folder's empty space (`size_map`),
+/// Export list… always.
+pub fn tools_sub(at: usize, compare: bool, size_map: bool) -> Submenu {
     let mut items = Vec::new();
     if compare {
         items.push((TOOLS_COMPARE, "Compare".to_owned(), true));
+    }
+    if size_map {
+        items.push((TOOLS_SIZE_MAP, "Size Map".to_owned(), true));
     }
     items.push((TOOLS_EXPORT_LIST, "Export list…".to_owned(), true));
     Submenu { title: "Tools".to_owned(), at, items }
@@ -996,6 +1002,8 @@ enum Subject {
     Search,
     /// A saved search in the sidebar, by name.
     SavedSearch(String),
+    /// The size map's rectangle menu (items by id).
+    SizeMap,
 }
 
 /// Lets one native menu be pending or open at a time, so two right-clicks in quick
@@ -1202,6 +1210,7 @@ impl Menus {
         if crate::panes::active_view().shows_drives() {
             return;
         }
+        let one_folder = matches!(rows.as_slice(), [(_, true)]);
         let mut extra = crate::archives::menu_items(&rows);
         let (convert, commands) = crate::convert::menu_items(&rows);
         extra.extend(convert);
@@ -1212,7 +1221,7 @@ impl Menus {
                 sub.at += extra.len();
             }
         }
-        subs.push(tools_sub(start + extra.len(), crate::diff::offered()));
+        subs.push(tools_sub(start + extra.len(), crate::diff::offered(), one_folder));
         subs.extend(commands.map(|items| Submenu { title: "Commands".to_owned(), at: start + extra.len(), items }));
         if native {
             list.splice(0..0, extra);
@@ -1342,7 +1351,7 @@ impl Menus {
             if crate::panes::active_view().shows_trash() {
                 list.push((EMPTY_TRASH, empty_title(), true));
             } else {
-                subs.push(tools_sub(list.len(), false));
+                subs.push(tools_sub(list.len(), false, false));
             }
             *self.subject.borrow_mut() = Some(Subject::Background(PathBuf::new()));
             return self.open_slint_entries(&list, subs, Anchor::point(x, y));
@@ -1372,7 +1381,7 @@ impl Menus {
         list.push((SEARCH_HERE, "Search in this folder…".to_owned()));
         list.extend(owned(terminal_items(windows)));
         subs.push(self.copy_path_sub(std::slice::from_ref(&dir), list.len()));
-        subs.push(tools_sub(list.len(), false));
+        subs.push(tools_sub(list.len(), false, true));
         self.open(Subject::Background(dir.clone()), list, subs, MenuTarget::Background(dir), x, y, at);
     }
 
@@ -1728,6 +1737,12 @@ impl Menus {
         self.open_slint_entries(&items, Vec::new(), at);
     }
 
+    /// The size map's menu (size_map.rs builds it) at the pointer.
+    pub fn size_map_menu(&self, items: Vec<(u32, String, bool)>, at: Anchor) {
+        *self.subject.borrow_mut() = Some(Subject::SizeMap);
+        self.open_slint_entries(&items, Vec::new(), at);
+    }
+
     /// One of the Info window's ▾ menus (info.rs builds it): `items` under its button.
     pub fn info_menu(&self, items: Vec<(u32, String, bool)>, at: Anchor) {
         *self.subject.borrow_mut() = Some(Subject::Info);
@@ -1916,6 +1931,8 @@ impl Menus {
             (FREE_UP, Subject::Rows(paths)) => crate::cloud::run(paths, false, &crate::panes::active_view()),
             (id, Subject::Info) => crate::info::with_current(|info| info.menu_chosen(id)),
             (TOOLS_COMPARE, Subject::Row(_) | Subject::Rows(_)) => crate::diff::compare(),
+            (id, Subject::SizeMap) => crate::size_map::with_current(|map| map.menu_chosen(id)),
+            (TOOLS_SIZE_MAP, Subject::Row(path) | Subject::Background(path)) => crate::size_map::open_at(path),
             (CONVERT, Subject::Row(_) | Subject::Rows(_)) => {
                 let rows = std::mem::take(&mut *self.rows.borrow_mut());
                 crate::convert::with_current(|convert| convert.open(rows));
@@ -2323,6 +2340,7 @@ fn from_submenu(id: u32) -> bool {
         || (WINDOW_FIRST..WINDOW_FIRST + WINDOW_MAX).contains(&id)
         || id == GROUP_NEW
         || id == TOOLS_EXPORT_LIST
+        || id == TOOLS_SIZE_MAP
         || id == GROUP_NONE
         || id == TOOLS_COMPARE
         || (TEMPLATE_FIRST..TEMPLATE_FIRST + TEMPLATE_MAX).contains(&id)
@@ -2598,11 +2616,14 @@ mod tests {
     fn the_tools_ids_stay_in_their_range() {
         assert_eq!(TOOLS_EXPORT_LIST, 2206, "spec 11 §13.3");
         assert_eq!(TOOLS_COMPARE, 2200, "spec 11 §13.3");
-        let tools = tools_sub(3, true);
+        let tools = tools_sub(3, true, false);
         assert_eq!((tools.title.as_str(), tools.at), ("Tools", 3));
         let ids: Vec<u32> = tools.items.iter().map(|(id, _, _)| *id).collect();
         assert_eq!(ids, [TOOLS_COMPARE, TOOLS_EXPORT_LIST]);
-        assert_eq!(tools_sub(0, false).items.len(), 1, "Compare only where it applies");
+        assert_eq!(tools_sub(0, false, false).items.len(), 1, "Compare only where it applies");
+        let ids: Vec<u32> = tools_sub(0, true, true).items.iter().map(|(id, _, _)| *id).collect();
+        assert_eq!(ids, [TOOLS_COMPARE, TOOLS_SIZE_MAP, TOOLS_EXPORT_LIST], "the macOS Tools menu's order");
+        assert_eq!(TOOLS_SIZE_MAP, 2205, "spec 11 §13.3, after Find Duplicates 2204");
         assert!(tools.items.iter().all(|(id, _, _)| (2200..2220).contains(id) && from_submenu(*id)));
     }
 
@@ -2625,7 +2646,7 @@ mod tests {
             sub("Open With", 2),
             sub("Copy path as", 4),
             sub("Commands", 6),
-            tools_sub(6, false),
+            tools_sub(6, false, false),
             sub("Quick Actions", 10),
         ];
         let (_, parts) = split_menu(&list, &subs);
@@ -2796,6 +2817,7 @@ mod tests {
             SWAP_PANES,
             SAME_FOLDER,
             TOOLS_COMPARE,
+            TOOLS_SIZE_MAP,
         ];
         let mut ranges: Vec<std::ops::Range<u32>> = singles.iter().map(|id| *id..id + 1).collect();
         ranges.extend([
@@ -2823,6 +2845,7 @@ mod tests {
             SAVED_SEARCH_FIRST..SAVED_SEARCH_FIRST + SAVED_SEARCH_MAX,
             SAVED_SEARCH_DELETE_FIRST..SAVED_SEARCH_DELETE_FIRST + SAVED_SEARCH_MAX,
             WINDOW_FIRST..WINDOW_FIRST + WINDOW_MAX,
+            crate::size_map::MAP_OPEN..crate::size_map::MAP_COPY_PATH + 1,
         ]);
         for (i, a) in ranges.iter().enumerate() {
             assert!(a.start >= 1 && a.end <= GEZIK_IDS_END, "{a:?}: 1..4096 (0 is a heading, 4096 on the Shell's)");

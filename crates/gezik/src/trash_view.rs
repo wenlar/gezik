@@ -297,6 +297,7 @@ pub fn allowed(action: Action) -> bool {
         | Action::CalculateFolderSizes
         | Action::SaveSearch
         | Action::Compare
+        | Action::SizeMap
         | Action::CopyToOtherPane => false,
     }
 }
