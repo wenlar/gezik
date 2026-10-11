@@ -355,13 +355,15 @@ mod tests {
         let data: Vec<u8> = (0..3_000_000u32).map(|i| (i % 251) as u8).collect();
         std::fs::write(&from, &data).unwrap();
         let mut seen = Vec::new();
-        copy_file(&from, &to, data.len() as u64, &mut |done| {
+        let cloned = copy_file(&from, &to, data.len() as u64, &mut |done| {
             seen.push(done);
             true
         })
         .unwrap();
         assert_eq!(std::fs::read(&to).unwrap(), data);
-        assert_eq!(seen.last().copied(), Some(data.len() as u64));
+        // A clone (APFS, Btrfs) reports no bytes: its caller counts them.
+        let reported = if cloned { 0 } else { data.len() as u64 };
+        assert_eq!(seen.last().copied(), Some(reported));
         assert!(seen.windows(2).all(|w| w[0] <= w[1]), "progress only grows");
         let _ = std::fs::remove_dir_all(&dir);
     }

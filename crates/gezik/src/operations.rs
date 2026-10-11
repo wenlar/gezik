@@ -475,6 +475,7 @@ impl Operations {
     pub fn set_files(&self, files: FilesSettings) {
         self.0.files.set(files);
         self.0.engine.set_threads(files.copy_threads);
+        self.0.engine.set_copy_defaults(files.verify, files.max_speed);
     }
 
     /// The window being opened has the operations panel (the same rows as every window's),
@@ -1945,7 +1946,14 @@ mod tests {
     }
 
     fn progress(state: JobState, items: (u64, u64), bytes: (u64, u64)) -> Progress {
-        Progress { state, items_done: items.0, items_total: items.1, bytes_done: bytes.0, bytes_total: bytes.1 }
+        Progress {
+            state,
+            items_done: items.0,
+            items_total: items.1,
+            bytes_done: bytes.0,
+            bytes_total: bytes.1,
+            verifying: false,
+        }
     }
 
     fn report(failures: usize, cancelled: bool) -> Report {

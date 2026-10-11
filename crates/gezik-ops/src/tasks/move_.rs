@@ -37,7 +37,7 @@ pub struct MoveTask {
     /// `Move`, or the kind of the job that places.
     kind: TaskKind,
     /// Tests only: plan as if the target were on another drive.
-    cross: bool,
+    pub(crate) cross: bool,
     /// Folders to make before the items (move with folders, spec 4.6), shallowest first.
     parents: Vec<PathBuf>,
     /// Move with folders: items whose relative path would leave the target folder.

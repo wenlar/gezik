@@ -5,6 +5,7 @@ use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use gezik_core::ops::conflict::{Decision, Facts};
 
@@ -606,28 +607,111 @@ impl RunCx<'_> {
     /// makes the copy its full size at once, so if Gezik is killed meanwhile the leftover must
     /// not pass for a finished file: a large one is copied under a temporary name and renamed
     /// when complete, a small one is noted in the job's journal first (see `TempCopies`), unless
-    /// the journal cannot hold its names: it takes the temporary name too.
+    /// the journal cannot hold its names: it takes the temporary name too. With the job's
+    /// verification on, the copy is checked before it takes its name (spec 11 §5.1).
     pub fn copy_file(&self, from: &Path, to: &Path, size: u64) -> io::Result<()> {
         let temp = if size >= TEMP_COPY_MIN || !Journal::can_note(from, to) { self.temp.next_to(to) } else { None };
         let Some(temp) = temp else {
             self.temp.journal.note(from, to);
-            return self.copy_to(from, to, size);
+            return self.copy_checked(from, to, size);
         };
-        let result = self.copy_to(from, &temp, size).and_then(|()| gezik_platform::fs::move_entry(&temp, to));
+        let result = self.copy_checked(from, &temp, size).and_then(|()| gezik_platform::fs::move_entry(&temp, to));
         if result.is_err() {
             let _ = gezik_platform::fs::delete(&temp);
         }
         result
     }
 
-    fn copy_to(&self, from: &Path, to: &Path, size: u64) -> io::Result<()> {
+    /// Copies `from` to `to`; with the job's verification on, reads the copy back past the
+    /// system's cache and compares it with `from`. One that differs is deleted and copied once
+    /// more; a second difference (or a failed check) fails the item with no copy left.
+    fn copy_checked(&self, from: &Path, to: &Path, size: u64) -> io::Result<()> {
+        let mut again = false;
+        loop {
+            let cloned = self.copy_to(from, to, size)?;
+            if cloned || !self.control.verify.load(Ordering::Relaxed) {
+                return Ok(());
+            }
+            #[cfg(test)]
+            if self.control.spoil.try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1)).is_ok() {
+                spoil(to);
+            }
+            let differs = self.compare(from, to, size);
+            if let Ok(None) = differs {
+                return Ok(());
+            }
+            let _ = gezik_platform::fs::delete(to);
+            let at = differs?.unwrap_or_default();
+            if again {
+                return Err(io::Error::other(format!(
+                    "The copy differs from the original at byte {}",
+                    gezik_core::group_digits(at)
+                )));
+            }
+            again = true;
+            // The copy is done once more: the bar counts it.
+            self.control.add_total(0, size);
+        }
+    }
+
+    /// Where the copy at `to` first differs from `from` (`None`: nowhere), counted in the job's
+    /// progress as one more pass over the file.
+    fn compare(&self, from: &Path, to: &Path, size: u64) -> io::Result<Option<u64>> {
+        let control = self.control;
+        control.add_total(0, size);
+        control.verifying.fetch_add(1, Ordering::SeqCst);
+        let mut read = 0u64;
+        let result = crate::hash::same_content(from, to, true, &mut |n| {
+            read += n;
+            control.add_bytes(n);
+            !self.stopped()
+        });
+        control.verifying.fetch_sub(1, Ordering::SeqCst);
+        // A short or failed check still leaves the bar where the pass would have ended.
+        control.add_bytes(size.saturating_sub(read));
+        result
+    }
+
+    /// Copies `from` to `to` held to the job's speed limit; true if it was cloned.
+    fn copy_to(&self, from: &Path, to: &Path, size: u64) -> io::Result<bool> {
         let mut counted = 0u64;
         gezik_platform::fs::copy_file(from, to, size, &mut |done| {
-            self.add_bytes(done.saturating_sub(counted));
+            let new = done.saturating_sub(counted);
+            self.add_bytes(new);
             counted = counted.max(done);
+            self.throttle(new);
             !self.stopped()
         })
     }
+
+    /// Waits until `bytes` more are due at the job's speed limit, in slices short enough that
+    /// a pause, a cancel or a lifted limit is heard within 100 ms.
+    fn throttle(&self, bytes: u64) {
+        const SLICE: Duration = Duration::from_millis(100);
+        let control = self.control;
+        let speed = control.speed.load(Ordering::Relaxed);
+        if speed == 0 || bytes == 0 {
+            return;
+        }
+        let until = Instant::now() + lock(&control.bucket).take(speed, bytes, Instant::now());
+        loop {
+            let now = Instant::now();
+            if now >= until || control.cancelled() || control.paused() || control.speed.load(Ordering::Relaxed) == 0 {
+                return;
+            }
+            std::thread::sleep((until - now).min(SLICE));
+        }
+    }
+}
+
+/// Tests: changes the first byte of `path`.
+#[cfg(test)]
+fn spoil(path: &Path) {
+    let mut data = std::fs::read(path).unwrap();
+    if let Some(first) = data.first_mut() {
+        *first ^= 0xFF;
+    }
+    std::fs::write(path, data).unwrap();
 }
 
 /// The item changed after the operation being undone: it is left alone.
@@ -869,5 +953,69 @@ mod tests {
         assert!(is_marker::<ChangedSince>(&changed_since()));
         assert!(!is_marker::<NoTrash>(&changed_since()));
         assert!(!is_marker::<NoTrash>(&io::Error::other("x")));
+    }
+
+    fn verifying_cx<'a>(control: &'a Control, temp: &'a TempCopies, no_bin: &'a dyn Fn(&Path) -> bool) -> RunCx<'a> {
+        control.verify.store(true, Ordering::SeqCst);
+        RunCx { control, trash: no_bin, added: Cell::new(0), temp, job: None }
+    }
+
+    #[test]
+    fn a_verified_copy_counts_its_bytes_twice() {
+        let dir = test_dir("verify-count");
+        std::fs::write(dir.join("a.bin"), vec![5u8; 300_000]).unwrap();
+        let (control, temp, no_bin) = (Control::default(), TempCopies::new(None), |_: &Path| false);
+        let cx = verifying_cx(&control, &temp, &no_bin);
+        cx.copy_file(&dir.join("a.bin"), &dir.join("b.bin"), 300_000).unwrap();
+        assert_eq!(std::fs::read(dir.join("b.bin")).unwrap(), vec![5u8; 300_000]);
+        // The plan counts the copy; the check adds a pass of its own.
+        assert_eq!(control.bytes_total.load(Ordering::SeqCst), 300_000);
+        assert_eq!(control.bytes_done.load(Ordering::SeqCst), 600_000);
+        assert_eq!(cx.counted(), 300_000, "the item's own count is the copy");
+        assert_eq!(control.verifying.load(Ordering::SeqCst), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_copy_that_differs_twice_fails_with_where_and_leaves_nothing() {
+        let dir = test_dir("verify-fail");
+        std::fs::write(dir.join("a.txt"), "abc").unwrap();
+        let (control, temp, no_bin) = (Control::default(), TempCopies::new(None), |_: &Path| false);
+        let cx = verifying_cx(&control, &temp, &no_bin);
+        control.spoil.store(2, Ordering::SeqCst);
+        let err = cx.copy_file(&dir.join("a.txt"), &dir.join("b.txt"), 3).unwrap_err();
+        assert_eq!(err.to_string(), "The copy differs from the original at byte 0");
+        assert!(!dir.join("b.txt").exists());
+        // Copy, check, copy again, check again: four passes, all counted.
+        assert_eq!(control.bytes_done.load(Ordering::SeqCst), 12);
+        assert_eq!(control.bytes_total.load(Ordering::SeqCst), 9, "with the plan's 3: 12");
+        // Off: nothing is read back, a spoiled copy passes unseen.
+        control.verify.store(false, Ordering::SeqCst);
+        cx.copy_file(&dir.join("a.txt"), &dir.join("b.txt"), 3).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("b.txt")).unwrap(), "abc");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_limited_copy_hears_a_cancel_at_once() {
+        let dir = test_dir("limit-cancel");
+        let size = 4_000_000u64;
+        std::fs::write(dir.join("a.bin"), vec![1u8; size as usize]).unwrap();
+        let (control, temp, no_bin) = (Control::default(), TempCopies::new(None), |_: &Path| false);
+        control.speed.store(1000, Ordering::SeqCst);
+        let started = std::time::Instant::now();
+        std::thread::scope(|scope| {
+            let copy = scope.spawn(|| {
+                let cx = RunCx { control: &control, trash: &no_bin, added: Cell::new(0), temp: &temp, job: None };
+                cx.copy_file(&dir.join("a.bin"), &dir.join("b.bin"), size)
+            });
+            std::thread::sleep(Duration::from_millis(200));
+            control.cancel();
+            assert!(copy.join().unwrap().is_err(), "cancelled");
+        });
+        // At 1 KB/s the copy would take over an hour; the cancel is heard within a slice.
+        assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
+        assert!(!dir.join("b.bin").exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

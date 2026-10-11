@@ -211,15 +211,7 @@ pub fn count_entries(path: &Path) -> (usize, bool) {
 
 /// `10000` as `10,000`.
 pub fn with_commas(n: usize) -> String {
-    let digits = n.to_string();
-    let mut out = String::new();
-    for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    out
+    gezik_core::group_digits(n as u64)
 }
 
 /// What the pane shows for `target`; `body` is `None` while it loads.
