@@ -1352,6 +1352,24 @@ impl View {
         self.after_selection(&changes);
     }
 
+    /// The entries shown, in list order (`select-differences` compares them; nothing is read).
+    pub fn shown_entries(&self) -> Vec<Entry> {
+        let data = self.0.data.borrow();
+        (0..data.listing.len()).filter_map(|i| data.listing.entry(i).map(Cow::into_owned)).collect()
+    }
+
+    /// Exactly the entries at `indices` (list order) are selected.
+    pub fn select_only(&self, indices: &[usize]) {
+        let wanted: HashSet<usize> = indices.iter().copied().collect();
+        let changes = {
+            let mut data = self.0.data.borrow_mut();
+            let mut changes = data.selection.clear();
+            changes.extend(data.selection.set_where(true, |i| wanted.contains(&i)));
+            changes
+        };
+        self.after_selection(&changes);
+    }
+
     pub fn select_all(&self) {
         let changes = self.0.data.borrow_mut().selection.select_all();
         self.after_selection(&changes);

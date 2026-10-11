@@ -646,6 +646,16 @@ Numbers stay as they are when branches merge. 11b uses 231–234.
 233. **Speed limit.** As macOS 314 (Linux copies in 8 MB pieces: the speed may move in steps, the average stays near the limit; time a 2 GB copy at 20 MB/s, ≈ 100 s ±5 %).
 234. **Queue and F5.** As macOS 315–316 with Gezik's own ⋯ menu (X11 and Wayland: the menu opens under the button, inside the window).
 
+### 11d, folder compare
+
+Numbers stay as they are when branches merge (see 10b). 11d uses 239–243 as its plan decided. GNOME and KDE, X11 and Wayland.
+
+239. **Tests first.** As macOS 324; paste.
+240. **Open, states, buttons, content.** As macOS 325–327 with Shift+F2, the palette (`Compare`, `Select Differences`) and Gezik's own right-click `Tools ▸` (there is no menu bar); `touch -d` for the times.
+241. **Case.** Folders with `Docs/` on one side and `docs/` on the other: two rows (Linux tells them apart); on a FAT USB stick (`vfat`), the 2 s rule: a file copied there with `cp -p` is `=`.
+242. **Filter, links, stop, rows and panes.** As macOS 329–330 with Enter, Ctrl+C, Ctrl+R; a symlinked folder is counted and not followed.
+243. **Select Differences and memory.** As macOS 331 with `ps -o rss= -p $(pgrep -x gezik)`.
+
 ## Known gaps (not bugs)
 
 - **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (F5 works it out again). Search results and the flat view show no folder sizes.

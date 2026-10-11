@@ -1633,6 +1633,8 @@ pub struct State {
     pub convert: ConvertState,
     /// The file compare's last options (`[diff] ignore-whitespace`, `ignore-case`; spec 11 §6.2).
     pub diff: gezik_core::diff::Options,
+    /// The folder compare's last show buttons and boxes (`[compare]`; spec 11 §7.2, §7.3).
+    pub compare: gezik_core::compare::Options,
     pub export: ExportState,
     pub selection: SelectionState,
     /// The folders visited (`[history] folders`), for the address bar's lists.
@@ -1664,6 +1666,21 @@ pub struct State {
     /// The Checksums layer's boxes ticked last (`[checksums] algorithms`, keys as `sha256`);
     /// empty: SHA-256 only.
     pub checksum_algorithms: Vec<String>,
+}
+
+/// `[compare]`: the show buttons by their symbols, the boxes; what is missing as by default.
+fn compare_options(table: Option<&toml::Table>) -> gezik_core::compare::Options {
+    let mut o = gezik_core::compare::Options::default();
+    let Some(table) = table else { return o };
+    if let Some(show) = table.get("show").and_then(|v| v.as_array()) {
+        o.show = gezik_core::compare::SHOW.map(|b| show.iter().any(|v| v.as_str() == Some(b)));
+    }
+    let flag = |key: &str, default: bool| table.get(key).and_then(|v| v.as_bool()).unwrap_or(default);
+    o.subfolders = flag("subfolders", o.subfolders);
+    o.content = flag("content", o.content);
+    o.ignore_dates = flag("ignore-dates", o.ignore_dates);
+    o.ignore_hour = flag("ignore-hour", o.ignore_hour);
+    o
 }
 
 /// A window's size and place (`[window]`, or a `[[session.window]]` entry's keys).
@@ -1874,6 +1891,7 @@ impl State {
             ignore_whitespace: diff_flag("ignore-whitespace"),
             ignore_case: diff_flag("ignore-case"),
         };
+        let compare = compare_options(table.get("compare").and_then(|v| v.as_table()));
         let palette_recent = recent("palette", gezik_core::palette::RECENT_MAX);
         let servers_recent = recent("servers", SERVERS_MAX);
         State {
@@ -1889,6 +1907,7 @@ impl State {
             archive,
             convert,
             diff,
+            compare,
             export,
             selection,
             history,
@@ -2050,6 +2069,26 @@ impl State {
             diff.insert("ignore-whitespace".into(), toml::Value::Boolean(self.diff.ignore_whitespace));
             diff.insert("ignore-case".into(), toml::Value::Boolean(self.diff.ignore_case));
             root.insert("diff".into(), toml::Value::Table(diff));
+        }
+        if self.compare != gezik_core::compare::Options::default() {
+            let o = &self.compare;
+            let show = gezik_core::compare::SHOW
+                .iter()
+                .zip(o.show)
+                .filter(|(_, on)| *on)
+                .map(|(b, _)| toml::Value::String((*b).to_owned()))
+                .collect();
+            let mut compare = toml::Table::new();
+            compare.insert("show".into(), toml::Value::Array(show));
+            for (key, on) in [
+                ("subfolders", o.subfolders),
+                ("content", o.content),
+                ("ignore-dates", o.ignore_dates),
+                ("ignore-hour", o.ignore_hour),
+            ] {
+                compare.insert(key.into(), toml::Value::Boolean(on));
+            }
+            root.insert("compare".into(), toml::Value::Table(compare));
         }
         if !self.servers_recent.is_empty() {
             let recent = self.servers_recent.iter().take(SERVERS_MAX).cloned().map(toml::Value::String).collect();
@@ -3363,6 +3402,28 @@ shortcut = \"shift+f8\"
         };
         assert_eq!(State::parse(&state.to_toml()), state);
         assert!(!State::default().to_toml().contains("session"));
+    }
+
+    #[test]
+    fn the_folder_compare_options_round_trip_in_state() {
+        let compare = gezik_core::compare::Options {
+            show: [true, true, false, true, false, true],
+            subfolders: false,
+            content: true,
+            ignore_dates: false,
+            ignore_hour: true,
+        };
+        let text = State { compare, ..State::default() }.to_toml();
+        assert!(text.contains("[compare]") && text.contains(r#"show = ["→", "=", "←", "2×"]"#), "{text}");
+        assert_eq!(State::parse(&text).compare, compare);
+        assert!(!State::default().to_toml().contains("[compare]"), "the default is not written");
+        let partial = State::parse(
+            "[compare]
+content = true
+",
+        )
+        .compare;
+        assert_eq!(partial, gezik_core::compare::Options { content: true, ..Default::default() });
     }
 
     #[test]

@@ -2627,3 +2627,16 @@ Gözlemler (hata değil):
 - Doğrulama kapalıyken de (b3, büyük dosya) kopya hedefte geçici `.gezik-copying-…` adıyla yazılıyor; iş bitince ya da iptalde kalmıyor.
 
 - Sonrası (cilalama): `Check` bileşeni `accessible-checkable` alır (UI Automation onay durumunu görür); işin hız ortalaması ilk baytlar geçtiğinde başlar (bekleme ve tarama süresi ortalamaya girmez). İkisi exe'ye +1.536 B.
+
+## Adım 11, alt parça 11d (Klasör karşılaştırma) sonrası
+
+- `compare` (Shift+F2 / ⌃⌘C) iki klasörde, her bölmede bir klasörde ya da iki bölmede başka her durumda bölmelerin klasörlerinde klasör karşılaştırmayı açar (§7.1; arama sonucu, This PC, çöp → `Compare needs two files or two folders`). `[tools] folder-diff` + dış araç varsa dış araç, bulunamazsa kendi karşılaştırma.
+- Yeni Slint katmanı yok: 11a'nın `ToolTable`'ı Rust'tan (`gezik/src/compare.rs`); tablo geri çağrıları ve tuşları tabloyu tutan araca gider. Slint'e yalnız durum satırı çipi eklendi.
+- Saf çekirdek `gezik-core/src/compare.rs` (durumlar, sayılar, göster süzgeci, FAT 2 sn her zaman, `Ignore 1 h` ±2 sn, içerik sonucu, `select-differences`); süzgeç 11i'nin `file_filter.rs`'i bayt bayt aynı. Tarama `gezik-search/src/tree_scan.rs`: taraf başına bir düşük öncelikli iş parçacığı, iki taraf aynı anda; bağlantılar sayılır izlenmez; dışlanan klasör okunmaz; 2.000.000 sınırı; NFC yalnız macOS'ta.
+- İçerik 11a'nın `same_content`'iyle (bayt). Esc yürüyeni durdurur, ikinci Esc kapatır; başarısız/durdurulan yeniden koşu eski sonucu bırakır ve nedeni gösterir.
+- Show Left/Right ve Hide: katman çipe gizlenir (`Compare: foto (3 ≠)`); karşılaştırılan klasörlerde bir iş biterse `Files may have changed: Compare Again (F5)`.
+- `select-differences` (Action 108, tuşsuz, `Tools ▸` 2201 iki bölmede, macOS Tools menüsü): G/Ç yok; aynı adlı dosya ile klasör seçilmez.
+- Gözden geçirme düzeltmeleri: bayatlık yalnız karşılaştırılan klasörlere dokunan işte; başarısız koşu eski satırları göstermez; süzgecin klasör deseni her tarafa kendi adıyla (dışlanan kök boş taraf); NFC yalnız macOS'ta.
+- Açık sınırlar (plan sapmaları): satır menüsü ve yol alanları yok (Swap düğmesi), harf duyarlılığı kutusu yok, süzgeç Enter/F5 ile uygulanır, aynı fiziksel disk kuralı yok; `tools.ps1` 100.000 çift ölçümü yok. Windows ekran testleri, macOS 324–331 ve Linux 239–243 bekliyor.
+- Sürüm exe'si 26.725.888 B (master 06a313b 26.599.424, +126.464 B; bütçe 262.144). master f9248ac (11b, 11f, 11i) ile birleşince 26.974.720 B (master f9248ac 26.852.352, +122.368 B); ekran testi düzeltmelerinden sonra 26.973.696 B (+121.344 B).
+- Ekran testi düzeltmeleri: ortak ToolTable'da kutuya ilk fare tıkı işaretlemiyordu (odaksız `FocusScope` basışı alıyordu; artık `focus-on-click: false`, kutu tıkta odağı kendisi verir); klasör satırları `+`/`-` (UI yazı tipinde ▾/▸ yok); çipin ✕'i çizili çarpı.

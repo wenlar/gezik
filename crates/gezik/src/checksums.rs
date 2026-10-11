@@ -41,13 +41,26 @@ fn lock(results: &Mutex<HashResults>) -> std::sync::MutexGuard<'_, HashResults> 
     results.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// The window's tool table callbacks; they reach the open layer, so nothing is held while it is
-/// closed. (Checksums is the table's only tool so far; the next ones route here by who has it.)
+/// The window's tool table callbacks; they reach the tool that has the table (Checksums or the
+/// folder compare: one at a time), so nothing is held while it is closed.
 pub fn install(window: &AppWindow) {
-    window.on_tool_toggle(|i| with_current(|c| c.toggle(i)));
-    window.on_tool_field_edited(|| with_current(Checksums::expected_edited));
-    window.on_tool_pressed(|i, ctrl, shift| with_current(|c| c.pressed(i, ctrl, shift)));
-    window.on_tool_button(|i| with_current(|c| c.button(i)));
+    use crate::compare::{FolderCompare, with_shown};
+    window.on_tool_toggle(|i| {
+        with_current(|c| c.toggle(i));
+        with_shown(|c| c.toggle(i));
+    });
+    window.on_tool_field_edited(|| {
+        with_current(Checksums::expected_edited);
+        with_shown(FolderCompare::field_edited);
+    });
+    window.on_tool_pressed(|i, ctrl, shift| {
+        with_current(|c| c.pressed(i, ctrl, shift));
+        with_shown(|c| c.pressed(i, ctrl, shift));
+    });
+    window.on_tool_button(|i| {
+        with_current(|c| c.button(i));
+        with_shown(|c| c.button(i));
+    });
 }
 
 /// The buttons under the table; the last closes.
@@ -228,6 +241,10 @@ impl Checksums {
     ) -> Option<Rc<Checksums>> {
         let window = crate::windows::with_window(crate::windows::current(), |w| w.as_weak())?;
         let window_ref = window.upgrade()?;
+        // The folder compare has the table.
+        if window_ref.get_tool_open() {
+            return None;
+        }
         let layer = Rc::new(Checksums {
             window,
             verify,
@@ -775,7 +792,7 @@ impl Checksums {
 
 /// The shown row a key moves the cursor to (`at`: where it is; none yet: the first), within
 /// `len` rows; a page is 10 rows.
-fn stepped(key: Key, at: Option<usize>, len: usize) -> Option<usize> {
+pub(crate) fn stepped(key: Key, at: Option<usize>, len: usize) -> Option<usize> {
     let last = len.checked_sub(1)?;
     let Some(at) = at else { return Some(if key == Key::End { last } else { 0 }) };
     Some(match key {

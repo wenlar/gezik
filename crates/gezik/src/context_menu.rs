@@ -526,8 +526,9 @@ pub const REVEAL_IN_TREE: u32 = 2050;
 // Step 11 (spec 11 §13.3): 2200–2399. Tools ▸ 2200–2219 in the macOS Tools menu's order: Compare
 // 2200, Select Differences 2201, Calculate Checksums 2202, Verify Checksums 2203, Find Duplicates
 // 2204, Size Map 2205, Export List 2206, Copy To 2207, Move To 2208, Split File 2209, Join Files 2210.
-/// Tools ▸ Compare (11c).
+/// Tools ▸ Compare (11c, 11d) and Select Differences (11d).
 pub const TOOLS_COMPARE: u32 = 2200;
+pub const TOOLS_SELECT_DIFFERENCES: u32 = 2201;
 /// Tools ▸ Calculate checksums… and Verify checksums (11a), on rows.
 pub const TOOLS_CHECKSUMS: u32 = 2202;
 pub const TOOLS_VERIFY: u32 = 2203;
@@ -543,14 +544,17 @@ pub const TOOLS_SPLIT: u32 = 2209;
 pub const TOOLS_JOIN: u32 = 2210;
 
 /// `Tools ▸` (spec 11 §3.3) at place `at`: only what applies: Compare for the selection when it
-/// can be compared (`compare`), Calculate checksums… for `rows` (a row menu's) and Verify
-/// checksums for one checksum file, Find duplicates and Size Map on one folder or a folder's
-/// empty space (`size_map`), Export list… always, then Copy to… and Move to… for `rows`, Split
-/// file… for one file and Join files for one part or `.crc`.
+/// can be compared (`compare`), Select Differences with two panes, Calculate checksums… for
+/// `rows` (a row menu's) and Verify checksums for one checksum file, Find duplicates and Size
+/// Map on one folder or a folder's empty space (`size_map`), Export list… always, then Copy
+/// to… and Move to… for `rows`, Split file… for one file and Join files for one part or `.crc`.
 pub fn tools_sub(at: usize, compare: bool, rows: &[(PathBuf, bool)], size_map: bool) -> Submenu {
     let mut items = Vec::new();
     if compare {
         items.push((TOOLS_COMPARE, "Compare".to_owned(), true));
+    }
+    if crate::dual::is_open() {
+        items.push((TOOLS_SELECT_DIFFERENCES, "Select differences".to_owned(), true));
     }
     if !rows.is_empty() {
         items.push((TOOLS_CHECKSUMS, "Calculate checksums…".to_owned(), true));
@@ -1443,7 +1447,7 @@ impl Menus {
             if crate::panes::active_view().shows_trash() {
                 list.push((EMPTY_TRASH, empty_title(), true));
             } else {
-                subs.push(tools_sub(list.len(), false, &[], false));
+                subs.push(tools_sub(list.len(), crate::diff::offered(), &[], false));
             }
             *self.subject.borrow_mut() = Some(Subject::Background(PathBuf::new()));
             return self.open_slint_entries(&list, subs, Anchor::point(x, y));
@@ -1473,7 +1477,7 @@ impl Menus {
         list.push((SEARCH_HERE, "Search in this folder…".to_owned()));
         list.extend(owned(terminal_items(windows)));
         subs.push(self.copy_path_sub(std::slice::from_ref(&dir), list.len()));
-        subs.push(tools_sub(list.len(), false, &[], true));
+        subs.push(tools_sub(list.len(), crate::diff::offered(), &[], true));
         self.open(Subject::Background(dir.clone()), list, subs, MenuTarget::Background(dir), x, y, at);
     }
 
@@ -2031,7 +2035,10 @@ impl Menus {
             (FREE_UP, Subject::Row(path)) => crate::cloud::run(vec![path], false, &crate::panes::active_view()),
             (FREE_UP, Subject::Rows(paths)) => crate::cloud::run(paths, false, &crate::panes::active_view()),
             (id, Subject::Info) => crate::info::with_current(|info| info.menu_chosen(id)),
-            (TOOLS_COMPARE, Subject::Row(_) | Subject::Rows(_)) => crate::diff::compare(),
+            (TOOLS_COMPARE, Subject::Row(_) | Subject::Rows(_) | Subject::Background(_)) => crate::diff::compare(),
+            (TOOLS_SELECT_DIFFERENCES, Subject::Row(_) | Subject::Rows(_) | Subject::Background(_)) => {
+                crate::compare::select_differences()
+            }
             (id, Subject::SizeMap) => crate::size_map::with_current(|map| map.menu_chosen(id)),
             (TOOLS_SIZE_MAP, Subject::Row(path) | Subject::Background(path)) => crate::size_map::open_at(path),
             (CONVERT, Subject::Row(_) | Subject::Rows(_)) => {
@@ -2470,6 +2477,7 @@ fn from_submenu(id: u32) -> bool {
         || id == TOOLS_DUPLICATES
         || id == GROUP_NONE
         || id == TOOLS_COMPARE
+        || id == TOOLS_SELECT_DIFFERENCES
         || id == TOOLS_CHECKSUMS
         || id == TOOLS_VERIFY
         || (TOOLS_COPY_TO..=TOOLS_JOIN).contains(&id)
@@ -2746,6 +2754,8 @@ mod tests {
     fn the_tools_ids_stay_in_their_range() {
         assert_eq!(TOOLS_EXPORT_LIST, 2206, "spec 11 §13.3");
         assert_eq!(TOOLS_COMPARE, 2200, "spec 11 §13.3");
+        assert_eq!(TOOLS_SELECT_DIFFERENCES, 2201, "spec 11 §13.3");
+        assert!(from_submenu(TOOLS_SELECT_DIFFERENCES));
         let tools = tools_sub(3, true, &[], false);
         assert_eq!((tools.title.as_str(), tools.at), ("Tools", 3));
         let ids: Vec<u32> = tools.items.iter().map(|(id, _, _)| *id).collect();
@@ -2966,6 +2976,7 @@ mod tests {
             SWAP_PANES,
             SAME_FOLDER,
             TOOLS_COMPARE,
+            TOOLS_SELECT_DIFFERENCES,
             TOOLS_SIZE_MAP,
             TOOLS_CHECKSUMS,
             TOOLS_VERIFY,

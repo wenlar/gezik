@@ -22,10 +22,7 @@ use crate::dialog::Dialogs;
 use crate::{AppWindow, DiffRow, DiffView};
 
 pub const SELECT_TWO: &str = "Select two files or two folders, or open the second pane (F3)";
-pub const SELECT_TWO_PANES: &str = "Select two files or two folders, or one in each pane";
 pub const NEEDS_TWO: &str = "Compare needs two files or two folders";
-pub const FOLDERS_LATER: &str =
-    "Folder comparison comes later; set [tools] folder-diff to use your compare program for folders";
 pub const TOO_DIFFERENT: &str = "The files are too different to line up; [tools] diff can name a compare program";
 
 /// Larger files are compared byte by byte (spec 11 §6.1).
@@ -37,7 +34,7 @@ const TAB: &str = "    ";
 /// The byte compare's read size, per file.
 const CHUNK: usize = 1024 * 1024;
 
-/// What `compare` compares (spec 11 §7.1, the rows 11c has).
+/// What `compare` compares (spec 11 §7.1).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Targets {
     Files(PathBuf, PathBuf),
@@ -47,9 +44,15 @@ pub enum Targets {
 }
 
 /// The two items to compare: two selected in the active pane (in list order), else with two
-/// panes one selected in each (the left pane's on the left). `active` and `other` are the panes'
-/// selections; `other` is `None` with one pane.
-pub fn targets(active: &[(PathBuf, bool)], other: Option<&[(PathBuf, bool)]>, active_left: bool) -> Targets {
+/// panes one selected in each (the left pane's on the left), else the two panes' folders.
+/// `active` and `other` are the panes' selections; `other` is `None` with one pane. `folders`:
+/// the folders the two panes show (left, right), when both show a folder.
+pub fn targets(
+    active: &[(PathBuf, bool)],
+    other: Option<&[(PathBuf, bool)]>,
+    active_left: bool,
+    folders: Option<(PathBuf, PathBuf)>,
+) -> Targets {
     let pair = |(a, a_dir): &(PathBuf, bool), (b, b_dir): &(PathBuf, bool)| match (a_dir, b_dir) {
         (false, false) => Targets::Files(a.clone(), b.clone()),
         (true, true) => Targets::Folders(a.clone(), b.clone()),
@@ -59,7 +62,7 @@ pub fn targets(active: &[(PathBuf, bool)], other: Option<&[(PathBuf, bool)]>, ac
         ([a, b], _) => pair(a, b),
         ([mine], Some([theirs])) if active_left => pair(mine, theirs),
         ([mine], Some([theirs])) => pair(theirs, mine),
-        (_, Some(_)) => Targets::Say(SELECT_TWO_PANES),
+        (_, Some(_)) => folders.map_or(Targets::Say(NEEDS_TWO), |(left, right)| Targets::Folders(left, right)),
         (_, None) => Targets::Say(SELECT_TWO),
     }
 }
@@ -102,17 +105,22 @@ fn current_targets() -> Targets {
     }
     let active = view.selected_items();
     let active_left = crate::panes::active_index() == 0;
-    let other = (crate::panes::count() == 2)
-        .then(|| crate::panes::at(i32::from(active_left)))
-        .flatten()
-        .filter(|p| !p.view.shows_drives() && !p.view.shows_trash())
-        .map(|p| p.view.selected_items());
-    targets(&active, other.as_deref(), active_left)
+    let usable = |v: &crate::view::View| !v.shows_drives() && !v.shows_trash();
+    let other = (crate::panes::count() == 2).then(|| crate::panes::at(i32::from(active_left))).flatten();
+    let selected = other.as_ref().map(|p| if usable(&p.view) { p.view.selected_items() } else { Vec::new() });
+    // A search result, This PC or the trash is no folder to compare.
+    let folder =
+        |p: &crate::panes::Pane| (usable(&p.view) && !p.view.shows_results()).then(|| p.view.folder()).flatten();
+    let folders = match (crate::panes::at(0), crate::panes::at(1)) {
+        (Some(l), Some(r)) => folder(&l).zip(folder(&r)),
+        _ => None,
+    };
+    targets(&active, selected.as_deref(), active_left, folders)
 }
 
-/// Whether the right-click menu offers `Tools ▸ Compare` (only for two files).
+/// Whether the right-click menu offers `Tools ▸ Compare` (two files or two folders to compare).
 pub fn offered() -> bool {
-    matches!(current_targets(), Targets::Files(..))
+    !matches!(current_targets(), Targets::Say(_))
 }
 
 /// `compare`.
@@ -122,10 +130,8 @@ pub fn compare() {
         Targets::Files(left, right) => with_current(|d| d.open(left, right)),
         Targets::Folders(left, right) => {
             let external = EXTERNAL.with(|e| e.borrow().clone());
-            if external.folders && external.program.is_some() {
-                run_external(&external, &left, &right, &view);
-            } else {
-                view.note(FOLDERS_LATER.to_owned());
+            if !(external.folders && run_external(&external, &left, &right, &view)) {
+                crate::compare::open(left, right, String::new());
             }
         }
         Targets::Say(text) => view.note(text.to_owned()),
@@ -161,14 +167,9 @@ fn external_error(program: &str, err: &gezik_platform::terminal::TerminalError) 
     }
 }
 
-/// The text when the compare program is not there: for files Gezik's own compare opens; for
-/// folders there is none yet (11d).
-pub fn not_found_text(program: &str, folders: bool) -> String {
-    if folders {
-        format!("The compare program \"{program}\" was not found; Gezik does not compare folders yet")
-    } else {
-        format!("The compare program \"{program}\" was not found; using Gezik's own")
-    }
+/// The text when the compare program is not there: Gezik's own compare opens.
+pub fn not_found_text(program: &str) -> String {
+    format!("The compare program \"{program}\" was not found; using Gezik's own")
 }
 
 /// A macOS app (`….app`) that is not there: `open -a` would only say so in a dialog of its own.
@@ -204,10 +205,9 @@ fn run_external(external: &External, left: &Path, right: &Path, view: &crate::vi
         crate::windows::post(window_id, move || match external_error(&program, &err) {
             Some(text) => crate::panes::active_view().note(text),
             None => {
-                let folders = left.is_dir();
-                let text = not_found_text(&program, folders);
-                if folders {
-                    crate::panes::active_view().note(text);
+                let text = not_found_text(&program);
+                if left.is_dir() {
+                    crate::compare::open(left, right, text);
                 } else {
                     // Told where the compare's answer shows: the layer's line or the question.
                     with_current(|d| {
@@ -882,25 +882,41 @@ mod tests {
     #[test]
     fn the_selection_says_what_to_compare() {
         let files = Targets::Files("/a".into(), "/b".into());
-        assert_eq!(targets(&items(&[("/a", false), ("/b", false)]), None, true), files);
+        assert_eq!(targets(&items(&[("/a", false), ("/b", false)]), None, true, None), files);
         assert_eq!(
-            targets(&items(&[("/a", true), ("/b", true)]), None, true),
+            targets(&items(&[("/a", true), ("/b", true)]), None, true, None),
             Targets::Folders("/a".into(), "/b".into())
         );
-        assert_eq!(targets(&items(&[("/a", false), ("/b", true)]), None, true), Targets::Say(NEEDS_TWO));
-        assert_eq!(targets(&items(&[("/a", false)]), None, true), Targets::Say(SELECT_TWO));
+        assert_eq!(targets(&items(&[("/a", false), ("/b", true)]), None, true, None), Targets::Say(NEEDS_TWO));
+        assert_eq!(targets(&items(&[("/a", false)]), None, true, None), Targets::Say(SELECT_TWO));
         assert_eq!(
-            targets(&items(&[("/a", false), ("/b", false), ("/c", false)]), None, true),
+            targets(&items(&[("/a", false), ("/b", false), ("/c", false)]), None, true, None),
             Targets::Say(SELECT_TWO)
         );
         // Two panes: one in each, the left pane's on the left.
         let theirs = items(&[("/b", false)]);
-        assert_eq!(targets(&items(&[("/a", false)]), Some(&theirs), true), files);
-        assert_eq!(targets(&items(&[("/a", false)]), Some(&theirs), false), Targets::Files("/b".into(), "/a".into()));
-        assert_eq!(targets(&items(&[("/a", true)]), Some(&theirs), true), Targets::Say(NEEDS_TWO));
-        assert_eq!(targets(&items(&[]), Some(&theirs), true), Targets::Say(SELECT_TWO_PANES));
+        assert_eq!(targets(&items(&[("/a", false)]), Some(&theirs), true, None), files);
+        assert_eq!(
+            targets(&items(&[("/a", false)]), Some(&theirs), false, None),
+            Targets::Files("/b".into(), "/a".into())
+        );
+        assert_eq!(targets(&items(&[("/a", true)]), Some(&theirs), true, None), Targets::Say(NEEDS_TWO));
+        // Two panes, anything else: the two folders shown (spec 11 §7.1), the left pane's first.
+        let shown = Some((PathBuf::from("/l"), PathBuf::from("/r")));
+        let folders = Targets::Folders("/l".into(), "/r".into());
+        assert_eq!(targets(&items(&[]), Some(&theirs), true, shown.clone()), folders);
+        assert_eq!(targets(&items(&[]), Some(&[]), false, shown.clone()), folders);
+        let three = items(&[("/a", false), ("/b", false), ("/c", false)]);
+        assert_eq!(targets(&three, Some(&theirs), true, shown.clone()), folders);
+        assert_eq!(
+            targets(&items(&[("/a", true)]), Some(&theirs), true, shown),
+            Targets::Say(NEEDS_TWO),
+            "file and folder"
+        );
+        // A pane on search results, This PC or the trash: no folders.
+        assert_eq!(targets(&items(&[]), Some(&theirs), true, None), Targets::Say(NEEDS_TWO));
         // Two in the active pane win over the other pane's.
-        assert_eq!(targets(&items(&[("/a", false), ("/b", false)]), Some(&items(&[("/c", false)])), true), files);
+        assert_eq!(targets(&items(&[("/a", false), ("/b", false)]), Some(&items(&[("/c", false)])), true, None), files);
     }
 
     #[test]
@@ -1024,8 +1040,7 @@ mod tests {
         assert!(external_command("x", &["{in}".to_owned()], left, right, false).is_err());
         use gezik_platform::terminal::TerminalError;
         assert_eq!(external_error("meld", &TerminalError::NotFound), None);
-        assert_eq!(not_found_text("meld", false), "The compare program \"meld\" was not found; using Gezik's own");
-        assert!(not_found_text("meld", true).ends_with("Gezik does not compare folders yet"));
+        assert_eq!(not_found_text("meld"), "The compare program \"meld\" was not found; using Gezik's own");
         assert!(app_missing("/Applications/Gezik No Such Compare.app/", true));
         assert!(!app_missing("/Applications/Gezik No Such Compare.app", false), "not macOS");
         assert!(!app_missing("opendiff", true), "a name on PATH is looked up as usual");

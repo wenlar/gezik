@@ -1836,6 +1836,7 @@ dependencies = [
  "gezik-core",
  "gezik-ops",
  "gezik-platform",
+ "icu_normalizer",
  "regex",
 ]
 
