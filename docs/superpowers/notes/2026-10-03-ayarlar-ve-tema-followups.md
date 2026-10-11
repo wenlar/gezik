@@ -2297,3 +2297,13 @@ Dal `perf/idle-memory` (10g'den, PR #71'den sonra master'a). Ölçümler `measur
 - `hidden.ps1` düzeltildi: "same pixels" denetimi, imleç pencerenin üstündeyse vurgulanan satır yüzünden hiç eşleşmiyordu (gösterince vurgu fare oynayana kadar gelmiyor); betik imleci pencerenin hemen sağına (birincil ekranda) alıyor.
 - Denenmedi: %125/%150 DPI (ekran ayarları değiştirilmedi; ölçek değişince kare bütün çiziliyor), ekran çözünürlüğü değişikliği. macOS ve Linux'a dokunulmadı.
 - Sürüm exe'si 25.801.728 bayt (master 25.798.144, +3,5 KB).
+
+## Adım 11, alt parça 11g (Boyut haritası) sonrası
+
+- `size-map` (tuşsuz; palet, macOS `Tools` menüsü, klasör satırı ve klasör boşluğu menüsünde düz `Size Map`, kimlik 2204): seçili klasörün, yoksa gösterilen klasörün kare-yakın ağaç haritası, pencere üstü katman. `Tools ▸` alt menüsü yok (macOS satır menüsü dört alt menüyle dolu); öbür araçlarla birleşince oraya taşınacak.
+- Düzen saf Rust'ta (`gezik-core/src/treemap.rs`: ad arenası, iki düzey, 4×4 px altı `N small items`, en çok 2.000 dikdörtgen, isabet ve ok komşusu). Slint tarafı tek tekrarlayıcı ve tek `TouchArea` (`widgets/size-map.slint`).
+- Tarama `gezik-search::size::scan_tree`: `measure` ile aynı kurallar ve sayım (girilmeyen bulut/başka dosya sistemi klasörleri de klasör sayılır), en çok 500 ms'de bir kısmi çizim; bitince toplamlar bölmenin klasör boyutu önbelleğine yazılır. Esc ile durdurulan tarama önbelleğe yazılmaz.
+- Çöpe atma kutuyu iş bitip yol gerçekten gidince düşürür (Cancel ya da başarısız iş bırakır), her penceredeki haritaya ulaşır; o yol ve üstündekiler önbellekten silinir. Gri `Files` bloğunda yalnız Open ve Copy Path var (çöpe atma klasörü götürürdü).
+- İnceleme ve ekran düzeltmeleri: yalnız dosya tutan klasörde iç `Files` bloğu çiziliyor; ok tuşu o yönde komşu yoksa bir şey yapmıyor.
+- Açık sınırlar: harita izlemez (dış değişiklik için F5); yol parçaları yerine yol metni + Up; `tools.ps1` boyut haritası satırı yok; macOS 297–302 ve Linux 223–225 bekliyor.
+- Sürüm exe'si 25.939.968 B (master 25.801.728, +138.240 B).
