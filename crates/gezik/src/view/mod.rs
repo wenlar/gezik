@@ -20,6 +20,7 @@ use std::time::{Duration, SystemTime};
 use gezik_config::settings::ViewDefaults;
 use gezik_config::store::ConfigStore;
 use gezik_core::Entry;
+use gezik_core::duplicates::{Keep, Member, pick};
 use gezik_core::group::{DateBounds, GroupBy, GroupKey, Grouping, spans as group_spans};
 use gezik_core::kind::{fallback_type_name, own_type_name};
 use gezik_core::layout::{Geometry, Lines, Move, Rect, Span};
@@ -1661,6 +1662,58 @@ impl View {
         self.0.data.borrow().results.is_some()
     }
 
+    /// A duplicates search's results are shown (spec 11 §9.3).
+    pub fn shows_duplicates(&self) -> bool {
+        self.0.data.borrow().results.as_ref().is_some_and(|set| set.is_duplicates())
+    }
+
+    /// How many duplicate groups shown have every row selected (Delete asks then).
+    pub fn duplicate_groups_all_selected(&self) -> usize {
+        let data = self.0.data.borrow();
+        let Listing::Results(set) = &data.listing else { return 0 };
+        let mut groups: HashMap<u32, (usize, usize)> = HashMap::new();
+        for i in 0..set.len() {
+            if let Some(id) = set.dup_group(i) {
+                let group = groups.entry(id).or_default();
+                group.0 += 1;
+                group.1 += usize::from(data.selection.is_selected(i));
+            }
+        }
+        groups.values().filter(|(rows, selected)| rows == selected).count()
+    }
+
+    /// "Select all but one" in a duplicates search (spec 11 §9.3): `keep` from the focused row
+    /// gives the rule; the selection becomes what it picks. Returns how many groups kept one
+    /// copy because every copy was in the folder; `None`: no duplicates shown, or the rule needs
+    /// a focus there is none of.
+    pub fn select_duplicates(&self, keep: impl FnOnce(Option<usize>) -> Option<Keep>) -> Option<usize> {
+        let (changes, whole) = {
+            let mut data = self.0.data.borrow_mut();
+            let ViewData { listing, selection, .. } = &mut *data;
+            let Listing::Results(set) = listing else { return None };
+            if !set.is_duplicates() {
+                return None;
+            }
+            let keep = keep(selection.focus())?;
+            let members: Vec<Member<'_>> = (0..set.len())
+                .filter_map(|row| {
+                    Some(Member {
+                        row,
+                        group: set.dup_group(row)?,
+                        folder: set.folder(row)?,
+                        name: set.name(row)?,
+                        modified: set.entry(row)?.modified,
+                    })
+                })
+                .collect();
+            let (picked, whole) = pick(&members, keep);
+            let focus = selection.focus();
+            (selection.replace(Selection::from_indices(set.len(), picked, focus)), whole)
+        };
+        self.after_selection(&changes);
+        Some(whole)
+    }
+
     /// The trash is shown (its rows are entries in the bins).
     pub fn shows_trash(&self) -> bool {
         self.0.data.borrow().results.as_ref().is_some_and(|set| set.is_trash())
@@ -1757,7 +1810,8 @@ impl View {
         if self.0.searching.get() {
             return;
         }
-        let (spec, folders_first, by) = (self.sort(), self.0.options.get().folders_first, self.0.current.get().group);
+        let by = if full.is_duplicates() { GroupBy::Duplicates } else { self.0.current.get().group };
+        let (spec, folders_first) = (self.sort(), self.0.options.get().folders_first);
         // shortcut: a single result is never sorted, so it shows without its group's header.
         if full.len() < 2 || full.sorted_by() == Some((spec, folders_first, by)) {
             // In this order already (a tab shown again, the sort clicked back): an older sort
@@ -1771,7 +1825,9 @@ impl View {
         let spawned = std::thread::Builder::new().name("gezik-sort".into()).spawn(move || {
             let plain =
                 |e: &Entry| own_type_name(&e.name, e.is_dir).unwrap_or_else(|| fallback_type_name(&e.name, e.is_dir));
-            let grouping = Grouping { by, spec, folders_first, dates: &dates, type_name: &plain, row: None };
+            let dup_key = |i: usize| full.dup_key(i);
+            let row: Option<&dyn Fn(usize) -> Option<GroupKey>> = full.is_duplicates().then_some(&dup_key);
+            let grouping = Grouping { by, spec, folders_first, dates: &dates, type_name: &plain, row };
             let order = full.sort_order(spec, folders_first, plain, (by != GroupBy::None).then_some(&grouping));
             // Let go first: the UI thread then moves the set, no copy.
             drop(full);
@@ -2322,9 +2378,14 @@ impl View {
     /// group, those closed in this folder closed; rows in closed groups leave the selection. No
     /// file system call. Not grouped, "This PC", or results not yet sorted this way: none.
     fn regroup(&self) {
-        let by = self.group_by();
         let (spans, keys) = {
             let data = self.0.data.borrow();
+            // A duplicates search's rows go in their groups whatever the view's (spec 11 §9.3).
+            let dups = match &data.listing {
+                Listing::Results(set) if set.is_duplicates() => Some(set),
+                _ => None,
+            };
+            let by = if dups.is_some() { GroupBy::Duplicates } else { self.group_by() };
             let in_order = match &data.listing {
                 Listing::Files(dir, _) => !dir.as_os_str().is_empty(),
                 Listing::Drives(_) => false,
@@ -2342,13 +2403,14 @@ impl View {
                 let type_name: &dyn Fn(&Entry) -> String =
                     if matches!(data.listing, Listing::Results(_)) { &plain } else { &own };
                 let dates = self.0.dates.borrow();
+                let dup_key = |i: usize| dups.and_then(|set| set.dup_key(i));
                 let grouping = Grouping {
                     by,
                     spec: self.sort(),
                     folders_first: self.0.options.get().folders_first,
                     dates: &dates,
                     type_name,
-                    row: None,
+                    row: dups.is_some().then_some(&dup_key as &dyn Fn(usize) -> Option<GroupKey>),
                 };
                 let collapsed = self.0.collapsed.borrow();
                 let listing = &data.listing;
@@ -2911,6 +2973,43 @@ mod tests {
             matches: vec![None],
             ..Batch::default()
         }
+    }
+
+    #[test]
+    fn duplicates_select_all_but_one_and_say_when_a_group_is_whole() {
+        use gezik_core::view_rules::Place;
+        let at = |secs: u64| Some(SystemTime::UNIX_EPOCH + Duration::from_secs(secs));
+        let entry = |name: &str, modified| Entry {
+            name: name.into(),
+            is_dir: false,
+            flags: 0,
+            size: 3,
+            modified,
+            created: None,
+        };
+        let mut set = ResultSet::duplicates(PathBuf::from("/w"));
+        set.append(Batch {
+            folders: vec!["a".into(), "b".into()],
+            entries: vec![entry("x", at(1)), entry("x", at(9)), entry("y", at(5)), entry("z", at(2))],
+            parent: vec![0, 1, 0, 1],
+            matches: vec![None; 4],
+            dups: vec![0, 0, 1, 1],
+        });
+        let view = View::new(
+            crate::panes::next_id(),
+            slint::Weak::default(),
+            crate::media::Media::idle(),
+            Default::default(),
+            None,
+        );
+        view.show(Listing::Results(Arc::new(set)), &ViewState::default(), None, Place::default());
+        assert!(view.shows_duplicates());
+        assert_eq!(view.select_duplicates(|_| Some(Keep::Newest)), Some(0));
+        assert_eq!(view.selected_paths(), [PathBuf::from("/w/a/x"), PathBuf::from("/w/b/z")]);
+        assert_eq!(view.duplicate_groups_all_selected(), 0);
+        view.select_all();
+        assert_eq!(view.duplicate_groups_all_selected(), 2, "Delete asks then");
+        assert_eq!(view.select_duplicates(|_| None), None, "a rule that needs a focus there is none of");
     }
 
     #[test]

@@ -597,6 +597,15 @@ Numbers stay as they are when branches merge. 11a uses 207–210. GNOME and KDE,
 209. **sha256sum both ways.** As macOS 274 with `sha256sum -c <folder>.sha256`, and `sha256sum * > SHA256SUMS` then Verify Checksums on `SHA256SUMS`; also `md5sum * > x.md5` and a `.sfv` from another tool if you have one. A file name with a backslash (`touch 'a\b.txt'`): Save writes a line starting with `\` and `sha256sum -c` passes it.
 210. **Expected value.** As macOS 275 with Ctrl+C on X11 and on Wayland (write whether the clipboard value is picked up on Wayland).
 
+### 11f, duplicate files
+
+11f uses 235–238.
+
+235. **Tests first.** As macOS 317; paste.
+236. **Find Duplicates.** As macOS 318–319 with Gezik's own menu (right-click a folder: `Find duplicates`; there is no menu bar).
+237. **Delete, undo and a removable disk.** As macOS 320; then on a USB disk (its `.Trash-<uid>`): Delete goes there and Ctrl+Z brings it back. On an NFS or SMB mount without a trash: nothing is deleted, the status bar says why (macOS 321).
+238. **Stop and Btrfs.** As macOS 323; on Btrfs a `cp --reflink` copy is listed as a duplicate.
+
 ## Known gaps (not bugs)
 
 - **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (F5 works it out again). Search results and the flat view show no folder sizes.

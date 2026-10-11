@@ -640,6 +640,18 @@ Numbers stay as they are when branches merge. 11a uses 271–276 (the other step
 275. **Expected value.** Copy a SHA-256 from a download page (⌘C), select the downloaded file, Calculate Checksums…: Expected is filled, the value is green with a tick and the line says `Matches the expected SHA-256`; change one digit of Expected: red, `Does not match`.
 276. **iCloud and F_NOCACHE.** In iCloud Drive with a file that is not downloaded (the cloud icon), Calculate Checksums… on its folder: Gezik asks once `N files are online-only. Download them…`; Skip: those rows say `Online only` and Finder still shows them as not downloaded. Write whether a large file (≥ 1 GB) hashes at about the disk's read speed (time it once).
 
+### 11f, duplicate files
+
+11f uses 317–323.
+
+317. **Tests first.** `cargo test -p gezik-search duplicates`, `cargo test -p gezik-core duplicates`; paste the output (the link test makes real symbolic links here).
+318. **Find Duplicates.** Make a folder with a photo and a copy of it in a subfolder, a file with a hard link (`ln a.txt b.txt`), two empty files and a symbolic link to the photo (`ln -s`). Tools ▸ Find Duplicates on it: the search bar says `Find duplicates in <folder>`; Enter. One group, `2 files × … could be freed`: the photo and its copy (the symbolic link is not read); the hard link is no group and the empty files are not listed; the status bar says `1 group · 2 files · … could be freed · 1 hard link counted once`.
+319. **Select helpers.** With a few groups: the search bar's ▾ menu and a row's right-click list `Select all but the newest in each group` … `Keep this one, select its copies`; each selects as it says and never every copy of a group. `Select all in this folder` on a folder holding every copy of a group: one stays unselected and the status bar says so.
+320. **Delete and undo.** Delete on the selection: the Trash gets them, the rows go after the job, a group left with one file goes. ⌘Z brings the files back in Finder; the rows do not come back (search again). Select every copy of a group and Delete: Gezik asks `This deletes every copy of 1 file` first.
+321. **No trash.** On a network share (SMB, no Trash there) find duplicates and Delete: nothing is deleted, no "delete permanently?" question; the status bar says the duplicates were not deleted and why.
+322. **iCloud and APFS clones.** In iCloud Drive with files not downloaded: they are not read (no download starts) and the status bar counts them as online-only. Duplicate a large file in Finder (⌘D makes an APFS clone): it is listed as a duplicate (spec §19: deleting a clone may free little).
+323. **Stop.** On a large folder (home), Esc or Stop while it says `comparing … of same size`: it stops within a second, the status bar says `Stopped`, Activity Monitor's memory falls back.
+
 ## Known gaps (not bugs)
 
 These are known differences from Finder and ForkLift (from the ForkLift comparison, §3). Don't report them as failures. A note is welcome if one hurts more than expected.

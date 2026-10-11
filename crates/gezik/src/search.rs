@@ -128,6 +128,33 @@ pub fn duplicates_text((groups, files, freed): (usize, usize, u64), summary: &Su
     text
 }
 
+/// A "select all but one" item (`ids::DUP_SELECT_FIRST`…) on the active pane's duplicates
+/// (spec 11 §9.3); the status bar says when a group kept a copy because all were in the folder.
+pub fn select_duplicates(id: u32) {
+    use gezik_core::duplicates::Keep;
+    let view = crate::panes::active_view();
+    let kept = view.select_duplicates(|focus| match id.checked_sub(ids::DUP_SELECT_FIRST) {
+        Some(0) => Some(Keep::Newest),
+        Some(1) => Some(Keep::Oldest),
+        Some(2) => Some(Keep::First),
+        Some(3) => focus.map(Keep::ThisFolder),
+        Some(4) => focus.map(Keep::ThisOne),
+        _ => None,
+    });
+    if let Some(note) = kept.and_then(kept_note) {
+        view.note(note);
+    }
+}
+
+/// What "Select all in this folder" says when `groups` had every copy there.
+fn kept_note(groups: usize) -> Option<String> {
+    match groups {
+        0 => None,
+        1 => Some("1 group had every copy in this folder; one copy is kept".to_owned()),
+        n => Some(format!("{} groups had every copy in this folder; one copy of each is kept", with_commas(n))),
+    }
+}
+
 /// The status bar of results that ended: a duplicates search's or another's.
 fn summary_text(summary: &Summary, set: Option<&ResultSet>) -> String {
     match set.filter(|set| set.is_duplicates()) {
@@ -1373,6 +1400,10 @@ impl Searches {
     /// done; Everything or a network folder keeps none (spec 3.5).
     fn warm(&self) {
         let spec = self.0.draft.borrow().clone();
+        // Duplicates never use the names (they read content): no walk for them.
+        if spec.duplicates {
+            return;
+        }
         let key = self.cache_key(&spec);
         let same = match &*self.0.names.borrow() {
             Names::Building(k, _) | Names::Ready(k, _) | Names::TooLarge(k) | Names::NoCache(k, _) => *k == key,
@@ -1461,7 +1492,11 @@ impl Searches {
             SearchMenu::Filters => ids::search_filter_items(&draft),
             SearchMenu::More => {
                 let names = crate::saved_searches::names();
-                let items = ids::search_more_items(self.0.problems.borrow().len(), &names, draft.is_query());
+                let mut items = ids::search_more_items(self.0.problems.borrow().len(), &names, draft.is_query());
+                if self.0.view.shows_duplicates() {
+                    let select = ids::duplicate_select_items().into_iter().map(|(id, t)| (id, t.to_owned(), true));
+                    items.splice(0..0, select);
+                }
                 *self.0.menu_names.borrow_mut() = names;
                 (items, Vec::new())
             }
@@ -1472,6 +1507,9 @@ impl Searches {
     pub fn menu_chosen(&self, id: u32) {
         match id {
             ids::SEARCH_NEW_TAB => return self.go(true),
+            id if (ids::DUP_SELECT_FIRST..ids::DUP_SELECT_FIRST + ids::DUP_SELECT_COUNT).contains(&id) => {
+                return select_duplicates(id);
+            }
             ids::SEARCH_PROBLEMS => return self.show_problems(),
             ids::SIZE_MIN | ids::SIZE_MAX | ids::MODIFIED_BETWEEN => return self.ask_criterion(id),
             ids::SAVE_SEARCH => return self.save_current(),
@@ -1673,6 +1711,13 @@ mod tests {
         });
         assert_eq!(summary_text(&done, Some(&set)), "1 group · 2 files · 5 B could be freed");
         assert_eq!(summary_text(&done, None), "131 results in 0.0 s");
+    }
+
+    #[test]
+    fn a_folder_that_held_every_copy_is_said() {
+        assert_eq!(kept_note(0), None);
+        assert_eq!(kept_note(1).unwrap(), "1 group had every copy in this folder; one copy is kept");
+        assert_eq!(kept_note(2).unwrap(), "2 groups had every copy in this folder; one copy of each is kept");
     }
 
     #[test]

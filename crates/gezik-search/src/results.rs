@@ -221,6 +221,12 @@ impl ResultSet {
         self.dups.as_ref()?.get(i).copied()
     }
 
+    /// Row `i`'s group header key in a duplicates search.
+    pub fn dup_key(&self, i: usize) -> Option<gezik_core::group::GroupKey> {
+        let id = self.dup_group(i)?;
+        Some(gezik_core::group::GroupKey::Duplicates { id, size: self.entries.rows[i].size })
+    }
+
     /// A duplicates search's groups, files, and the bytes deleting all but one of each frees.
     pub fn dup_counts(&self) -> (usize, usize, u64) {
         let Some(dups) = &self.dups else { return (0, 0, 0) };

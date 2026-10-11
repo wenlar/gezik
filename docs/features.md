@@ -186,6 +186,15 @@ Tools menu.
   `.crc` or `SHA256SUMS` file names: OK, FAILED, MISSING.
 - Both run as jobs in the operations panel (pause, cancel); files that are only in the cloud
   are downloaded only if you agree.
+- **Find Duplicates** (a folder's right-click, the palette) opens the search bar to look for
+  files with the same content in the selected folder or the one shown (Enter starts it; the
+  name, size, type and date filters apply). Files are compared by size, then their first
+  64 KB, then their whole content; empty files, links, hard links of one file and files only
+  in the cloud are left out. The results come in groups, the most space to free first
+  (`3 files × 12.4 MB · 24.8 MB could be freed`). The ▾ menu and a row's right-click select
+  all but the newest, oldest or first copy in each group, all copies in one folder (one is
+  always kept) or all but the focused one. Delete moves them to the trash (one undo); on a
+  drive without a trash nothing is deleted. A saved search keeps it as `duplicates = true`.
 
 ## System integration
 

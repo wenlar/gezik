@@ -316,6 +316,9 @@ struct JobView {
     note: Option<&'static str>,
     /// Works in the bins (Put Back, delete from the trash): the system hears when it ends.
     bins: bool,
+    /// Duplicates go only to the trash (spec 11 §9.3): what cannot is left, never offered for
+    /// a permanent delete.
+    trash_only: bool,
 }
 
 /// The note of a `{files}` run in the panel (spec 7).
@@ -349,6 +352,7 @@ impl JobView {
             window: None,
             note: None,
             bins: false,
+            trash_only: false,
         }
     }
 
@@ -1051,7 +1055,42 @@ impl Operations {
         if crate::panes::active_view().shows_trash() {
             return crate::trash_view::delete_selection(&crate::panes::active_view());
         }
-        self.trash_paths(crate::panes::active_view().selected_paths(), permanent);
+        let view = crate::panes::active_view();
+        if view.shows_duplicates() {
+            return self.trash_duplicates(view.selected_paths(), view.duplicate_groups_all_selected());
+        }
+        self.trash_paths(view.selected_paths(), permanent);
+    }
+
+    /// Delete (and Shift+Delete) in a duplicates search (spec 11 §9.3): to the trash only, one
+    /// job and one undo; asks once when `whole` groups have every copy selected.
+    fn trash_duplicates(&self, paths: Vec<PathBuf>, whole: usize) {
+        let paths = self.without_roots(paths, "trash");
+        if paths.is_empty() {
+            return;
+        }
+        let ops = self.clone();
+        let what = items_text(&paths);
+        let go = move |choice: Option<usize>| {
+            if choice == Some(0) {
+                let id = ops.trash_now(paths.clone());
+                ops.with_job(id, |job| job.trash_only = true);
+            }
+        };
+        let bin = if cfg!(windows) { "Recycle Bin" } else { "Trash" };
+        if whole > 0 {
+            let files = if whole == 1 { "1 file".to_owned() } else { format!("{whole} files") };
+            self.dialogs().ask(
+                format!("This deletes every copy of {files}"),
+                format!("Move {what} to the {bin}?"),
+                &["Trash", "Cancel"],
+                go,
+            );
+        } else if self.0.files.get().confirm_trash {
+            self.dialogs().ask(format!("Move {what} to the {bin}?"), "", &["Trash", "Cancel"], go);
+        } else {
+            go(Some(0));
+        }
     }
 
     pub fn trash_paths(&self, paths: Vec<PathBuf>, permanent: bool) {
@@ -1097,6 +1136,11 @@ impl Operations {
 
     /// Hides the rows of `paths` in the folder shown; the folder, to reload when the job ends.
     fn hide(&self, paths: &[PathBuf]) -> Option<PathBuf> {
+        // Duplicates: their rows go once the job is done (a row brought back would have no group).
+        if crate::panes::active_view().shows_duplicates() {
+            self.remember_for(paths);
+            return None;
+        }
         // Search results: their rows go at once; the check after the job brings back what stayed.
         if crate::panes::active_view().shows_results() {
             self.remember_for(paths);
@@ -1131,12 +1175,12 @@ impl Operations {
         refused
     }
 
-    fn trash_now(&self, paths: Vec<PathBuf>) {
+    fn trash_now(&self, paths: Vec<PathBuf>) -> JobId {
         let retry: Retry = {
             let paths = paths.clone();
             Rc::new(move || -> Box<dyn Task> { Box::new(TrashTask::new(paths.clone())) })
         };
-        self.run_hiding(paths, retry);
+        self.run_hiding(paths, retry)
     }
 
     fn delete_now(&self, paths: Vec<PathBuf>) {
@@ -1521,12 +1565,14 @@ impl Operations {
         let mut pane = None;
         let mut title = String::new();
         let mut bins = false;
+        let mut trash_only = false;
         self.with_job(id, |job| {
             if !report.unchecked.is_empty() {
                 job.note = Some(gezik_ops::UNCHECKED);
             }
             after = job.after;
             bins = job.bins;
+            trash_only = job.trash_only;
             hidden_in = job.hidden_in.take();
             hidden_paths = std::mem::take(&mut job.hidden_paths);
             origin = job.origin.take();
@@ -1611,7 +1657,13 @@ impl Operations {
             p.view.note(note);
         }
         if !report.no_trash.is_empty() {
-            self.ask_delete_for_good(report.no_trash.clone());
+            match trash_only_note(trash_only, &report.no_trash) {
+                Some(note) => match &pane {
+                    Some(p) => p.view.note(note),
+                    None => crate::panes::active_view().note(note),
+                },
+                None => self.ask_delete_for_good(report.no_trash.clone()),
+            }
         }
         // A row with skipped items stays until closed, for its Details.
         let notes = !report.cancelled && (!report.skipped.is_empty() || !report.unchecked.is_empty());
@@ -1881,6 +1933,17 @@ impl Operations {
     }
 }
 
+/// What is said of `paths` the trash could not take: nothing for a job that may delete them
+/// for good instead (it asks), why they stay for one that goes only to the trash (duplicates).
+fn trash_only_note(trash_only: bool, paths: &[PathBuf]) -> Option<String> {
+    let bin = if cfg!(windows) { "Recycle Bin" } else { "trash" };
+    trash_only.then(|| {
+        let what =
+            if paths.len() == 1 { "1 duplicate was".to_owned() } else { format!("{} duplicates were", paths.len()) };
+        format!("{what} not deleted: {} Duplicates only go to the {bin}.", no_trash_reason(paths, bin))
+    })
+}
+
 /// Why `paths` cannot go to the trash (`bin`): their drive has none, or (Windows) their
 /// names end in a dot or a space.
 fn no_trash_reason(paths: &[PathBuf], bin: &str) -> String {
@@ -1915,6 +1978,17 @@ fn history_row(record: &crate::op_history::Record) -> OpRow {
 mod tests {
     use super::*;
     use gezik_ops::{Failure, TaskKind};
+
+    #[test]
+    fn duplicates_without_a_trash_stay() {
+        let usb = [PathBuf::from("/usb/a.jpg"), PathBuf::from("/usb/b.jpg")];
+        assert_eq!(trash_only_note(false, &usb), None, "a plain delete asks");
+        let bin = if cfg!(windows) { "Recycle Bin" } else { "trash" };
+        assert_eq!(
+            trash_only_note(true, &usb),
+            Some(format!("2 duplicates were not deleted: This drive has no {bin}. Duplicates only go to the {bin}."))
+        );
+    }
 
     #[test]
     fn no_trash_reasons() {

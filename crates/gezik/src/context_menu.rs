@@ -495,6 +495,11 @@ pub const VIEW_COLUMNS: u32 = 2040;
 /// of their own: a menu has room for four, which macOS rows already fill.
 pub const TOOLS_CHECKSUMS: u32 = 2202;
 pub const TOOLS_VERIFY: u32 = 2203;
+pub const TOOLS_DUPLICATES: u32 = 2204;
+/// A duplicates search's "select all but one" (spec 11 §9.3, §13.3: 2310–2319), in
+/// `duplicate_select_items`' order.
+pub const DUP_SELECT_FIRST: u32 = 2310;
+pub const DUP_SELECT_COUNT: u32 = 5;
 /// View ▸ "Reset to rule N" (spec 10 §8.2, §10.3): the folder forgets its own view, rule N applies.
 pub const RESET_TO_RULE: u32 = 2041;
 /// View ▸ "View rule N applies", greyed: which rule set the folder's view.
@@ -546,8 +551,8 @@ pub struct Submenu {
     pub items: Vec<(u32, String, bool)>,
 }
 
-/// The tools for `rows`: Calculate checksums…, and Verify checksums for one checksum file
-/// (spec 11 §3.3: what does not fit is left out).
+/// The tools for `rows`: Calculate checksums…, Verify checksums for one checksum file, Find
+/// duplicates for one folder (spec 11 §3.3: what does not fit is left out).
 pub fn tool_items(rows: &[(PathBuf, bool)]) -> Vec<(u32, String)> {
     let mut items = vec![(TOOLS_CHECKSUMS, "Calculate checksums…".to_owned())];
     if let [(path, false)] = rows
@@ -555,7 +560,26 @@ pub fn tool_items(rows: &[(PathBuf, bool)]) -> Vec<(u32, String)> {
     {
         items.push((TOOLS_VERIFY, "Verify checksums".to_owned()));
     }
+    if let [(_, true)] = rows {
+        items.push((TOOLS_DUPLICATES, "Find duplicates".to_owned()));
+    }
     items
+}
+
+/// "Select all but one" in a duplicates search (spec 11 §9.3): the search bar's ▾ menu and a
+/// result row's menu.
+pub fn duplicate_select_items() -> Vec<(u32, &'static str)> {
+    [
+        "Select all but the newest in each group",
+        "Select all but the oldest in each group",
+        "Select all but the first in each group",
+        "Select all in this folder",
+        "Keep this one, select its copies",
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(i, title)| (DUP_SELECT_FIRST + i as u32, title))
+    .collect()
 }
 
 /// What a search result's row menu adds.
@@ -1145,6 +1169,9 @@ impl Menus {
             self.add_finder_items(&mut list, &mut subs, services);
             if results {
                 list.extend(owned(result_row_items()).into_iter().filter(|(id, _)| *id != SHOW_IN_FOLDER_NEW_TAB));
+                if crate::panes::active_view().shows_duplicates() {
+                    list.extend(owned(duplicate_select_items()));
+                }
             } else if !crate::panes::active_view().shows_drives() {
                 list.push((NEW_FOLDER_WITH_SELECTION, "New folder with selection".to_owned()));
             }
@@ -1183,6 +1210,9 @@ impl Menus {
         self.add_finder_items(&mut list, &mut subs, services);
         if crate::panes::active_view().shows_results() {
             list.extend(owned(result_row_items()));
+            if crate::panes::active_view().shows_duplicates() {
+                list.extend(owned(duplicate_select_items()));
+            }
         }
         self.open(Subject::Row(path.clone()), list, subs, MenuTarget::Item(path), x, y, at);
     }
@@ -1927,6 +1957,14 @@ impl Menus {
                 crate::checksums::open(rows.into_iter().map(|(path, _)| path).collect());
             }
             (TOOLS_VERIFY, Subject::Row(path)) => crate::checksums::verify(path),
+            (TOOLS_DUPLICATES, Subject::Row(_)) => {
+                crate::panes::with_active(|p| p.search.find_duplicates());
+            }
+            (id, Subject::Row(_) | Subject::Rows(_))
+                if (DUP_SELECT_FIRST..DUP_SELECT_FIRST + DUP_SELECT_COUNT).contains(&id) =>
+            {
+                crate::search::select_duplicates(id);
+            }
             (EXTRACT_HERE..=COMPRESS_TO, Subject::Row(_) | Subject::Rows(_)) => {
                 let rows = std::mem::take(&mut *self.rows.borrow_mut());
                 let paths: Vec<PathBuf> = rows.iter().map(|(path, _)| path.clone()).collect();
@@ -2772,11 +2810,13 @@ mod tests {
             SAME_FOLDER,
             TOOLS_CHECKSUMS,
             TOOLS_VERIFY,
+            TOOLS_DUPLICATES,
         ];
         let mut ranges: Vec<std::ops::Range<u32>> = singles.iter().map(|id| *id..id + 1).collect();
         ranges.extend([
             RECENT_SERVER_FIRST..RECENT_SERVER_FIRST + RECENT_SERVER_MAX,
             GROUP_BY_NONE..GROUP_BY_NONE + 4,
+            DUP_SELECT_FIRST..DUP_SELECT_FIRST + DUP_SELECT_COUNT,
             TOGGLE_COLUMN_FIRST..RESET_COLUMNS,
             CONFLICT_FIRST..CONFLICT_FIRST + 4,
             ADD_RULE_FIRST..ADD_RULE_FIRST + 10,
@@ -2817,9 +2857,13 @@ mod tests {
         assert_eq!(ids(&[(PathBuf::from("a.txt"), false)]), [TOOLS_CHECKSUMS]);
         assert_eq!(ids(&[(PathBuf::from("a.iso.sha256"), false)]), [TOOLS_CHECKSUMS, TOOLS_VERIFY]);
         assert_eq!(ids(&[(PathBuf::from("SHA256SUMS"), false)]), [TOOLS_CHECKSUMS, TOOLS_VERIFY]);
-        assert_eq!(ids(&[(PathBuf::from("x.sha256"), true)]), [TOOLS_CHECKSUMS], "a folder");
+        assert_eq!(ids(&[(PathBuf::from("x.sha256"), true)]), [TOOLS_CHECKSUMS, TOOLS_DUPLICATES], "a folder");
         let two = [(PathBuf::from("a.md5"), false), (PathBuf::from("b.md5"), false)];
         assert_eq!(ids(&two), [TOOLS_CHECKSUMS]);
+        let folders = [(PathBuf::from("a"), true), (PathBuf::from("b"), true)];
+        assert_eq!(ids(&folders), [TOOLS_CHECKSUMS], "duplicates look in one folder");
+        let select: Vec<u32> = duplicate_select_items().iter().map(|(id, _)| *id).collect();
+        assert_eq!(select, (DUP_SELECT_FIRST..DUP_SELECT_FIRST + DUP_SELECT_COUNT).collect::<Vec<_>>());
     }
 
     fn ids(v: Vec<(u32, &str)>) -> Vec<u32> {
