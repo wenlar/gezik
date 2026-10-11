@@ -9,6 +9,7 @@ pub mod diff;
 pub mod drag;
 pub mod drop_names;
 pub mod elevated;
+pub mod export;
 pub mod group;
 pub mod history;
 pub mod kind;

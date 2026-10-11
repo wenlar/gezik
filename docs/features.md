@@ -183,6 +183,10 @@ max-results = 250000       # 1000-2000000; a search stops there
 content-max-size = "64 MB" # larger files are not read for text
 ```
 
+## Export list
+
+Tools ▸ Export list… (right-click a row or the background; the palette's `Export List…`; Tools on the macOS menu bar) writes the list the pane shows, sorted and filtered as it is, to a file or the clipboard. The name's extension picks the format: `.txt` (one name, or with "Full paths in text" one path, per line), `.csv` (the columns shown plus Path, sizes in bytes and ISO dates; on Windows the system's list separator, `;` in Turkish, and a BOM so Excel reads it as UTF-8) or `.html` (one page, light and dark). With a selection, only the selected items go unless you untick the box. Search results and the flat view export their folders too; for the files in subfolders use the flat view first. Saving is a normal operation: a taken name asks, Ctrl+Z (⌘Z) removes the file.
+
 ## System integration
 
 - **Command line**: `gezik [PATH...]` opens folders as tabs; a file opens its folder with it

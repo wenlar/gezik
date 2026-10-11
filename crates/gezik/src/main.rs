@@ -18,6 +18,7 @@ mod drag;
 mod dual;
 mod eject;
 mod elevated;
+mod export;
 mod filter;
 mod finder_menu;
 mod folder_sizes;
@@ -343,7 +344,8 @@ fn perform(
         | Action::SwapPanes
         | Action::OtherPaneSameFolder
         | Action::MoveTabToNewWindow
-        | Action::Compare => return actions::run(action, nav, view),
+        | Action::Compare
+        | Action::ExportList => return actions::run(action, nav, view),
     }
     true
 }

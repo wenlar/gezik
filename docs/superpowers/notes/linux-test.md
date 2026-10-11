@@ -596,6 +596,13 @@ Numbers stay as they are when branches merge. 11c starts at 213 as its plan deci
 214. **Shift+F2, menus, keys.** As macOS 282–283 with Shift+F2, Gezik's own right-click `Tools ▸ Compare`, Alt+↓/↑, Ctrl+C, Ctrl+R; memory as macOS 285 with `ps -o rss= -p $(pgrep -x gezik)`.
 215. **Meld from PATH.** `[tools] diff = "meld"` (and `kdiff3` on KDE): it opens on both files and stays open after Gezik quits; a path with spaces and an `'` arrives whole (`/tmp/it's a test/l.txt`); `diff = "nope"`: the status bar line and Gezik's own compare.
 
+### 11h, list export
+
+Numbers stay as they are when branches merge (see 10b). 11h starts at 219 as its plan decided.
+
+219. **Question and files.** As macOS 291–292 with Gezik's own right-click menu (Tools ▸ Export list…; there is no menu bar, the palette has `Export List…`) and Ctrl+Z; open the CSV in LibreOffice Calc: `,` separators, no BOM, LF line ends; the HTML in Firefox in light and dark.
+220. **Results and clipboard.** As macOS 293 (Ctrl+Shift+F); paste the copied CSV into a text editor on X11 and on Wayland.
+
 ## Known gaps (not bugs)
 
 - **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (F5 works it out again). Search results and the flat view show no folder sizes.

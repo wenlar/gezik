@@ -225,6 +225,7 @@ confirm = true
 # other-pane-same-folder = ""   # the other pane goes to the active pane's folder
 # move-tab-to-new-window = ""   # the active tab into a new window (a window's only tab stays)
 # compare = "shift+f2"     # two selected files side by side (or one file in each pane); macOS: "mod+ctrl+c"
+# export-list = ""              # the list shown as text, CSV or HTML, to a file or the clipboard
 
 # Saved rule sets for batch rename (Rename… with two or more items selected). The rename
 # layer writes them with "Presets ▾ › Save current rules as…"; they can also be written here.

@@ -29,6 +29,30 @@ pub fn language() -> String {
     }
 }
 
+/// The separator a CSV file takes (spec 11 §11.2): on Windows the user's list separator, as
+/// Excel reads it (`;` in Turkish); `,` elsewhere, and for a separator that is no single plain
+/// character.
+pub fn list_separator() -> char {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Globalization::{GetLocaleInfoEx, LOCALE_SLIST};
+        use windows::core::PCWSTR;
+        let mut buffer = [0u16; 8];
+        // SAFETY: a null name means the user's default locale; the buffer and its length go together.
+        let n = unsafe { GetLocaleInfoEx(PCWSTR::null(), LOCALE_SLIST, Some(&mut buffer)) };
+        let text = String::from_utf16_lossy(&buffer[..usize::try_from(n).unwrap_or(0).saturating_sub(1)]);
+        let mut chars = text.chars();
+        if let (Some(c), None) = (chars.next(), chars.next())
+            && !c.is_control()
+            && !c.is_alphanumeric()
+            && c != '"'
+        {
+            return c;
+        }
+    }
+    ','
+}
+
 /// LC_ALL overrides LC_CTYPE overrides LANG (POSIX).
 #[cfg(unix)]
 fn posix_language() -> String {
@@ -44,6 +68,15 @@ mod tests {
     fn language_does_not_fail() {
         let lang = super::language();
         assert!(lang.len() < 85, "{lang}");
+    }
+
+    #[test]
+    fn the_list_separator_is_one_plain_character() {
+        let c = super::list_separator();
+        assert!(!c.is_control() && !c.is_alphanumeric() && c != '"', "{c:?}");
+        if !cfg!(windows) {
+            assert_eq!(c, ',');
+        }
     }
 
     /// The first language in System Settings, whatever LANG says (`cargo test` runs from a

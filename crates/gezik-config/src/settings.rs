@@ -100,6 +100,15 @@ pub struct ConvertSettings {
     pub ffmpeg: Option<String>,
 }
 
+/// Export List's last choices (state.toml `[export]`, spec 11 §11.1).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ExportState {
+    /// `text`, `csv` or `html` (`Format::as_str`); `None`: never exported.
+    pub format: Option<String>,
+    /// Text writes full paths (`text = "paths"`), not names (`"names"`).
+    pub full_paths: bool,
+}
+
 /// The Convert layer's last choices (state.toml `[convert]`). The options are the layer's own
 /// text for them, read back by the layer.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -1601,6 +1610,7 @@ pub struct State {
     pub convert: ConvertState,
     /// The file compare's last options (`[diff] ignore-whitespace`, `ignore-case`; spec 11 §6.2).
     pub diff: gezik_core::diff::Options,
+    pub export: ExportState,
     pub selection: SelectionState,
     /// The folders visited (`[history] folders`), for the address bar's lists.
     pub history: Vec<Visit>,
@@ -1768,6 +1778,11 @@ impl State {
                 last_extract_to: text("last-extract-to"),
             }
         });
+        let export =
+            table.get("export").and_then(|v| v.as_table()).map_or_else(ExportState::default, |t| ExportState {
+                format: t.get("format").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(str::to_owned),
+                full_paths: t.get("text").and_then(|v| v.as_str()) == Some("paths"),
+            });
         let convert = table.get("convert").and_then(|v| v.as_table()).map_or_else(ConvertState::default, |t| {
             let text = |key: &str| t.get(key).and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(str::to_owned);
             ConvertState {
@@ -1848,6 +1863,7 @@ impl State {
             archive,
             convert,
             diff,
+            export,
             selection,
             history,
             session: first.session,
@@ -1953,6 +1969,15 @@ impl State {
                 table.insert("last-output".into(), toml::Value::String(convert.last_output.clone()));
             }
             root.insert("convert".into(), toml::Value::Table(table));
+        }
+        if self.export != ExportState::default() {
+            let mut table = toml::Table::new();
+            if let Some(format) = &self.export.format {
+                table.insert("format".into(), toml::Value::String(format.clone()));
+            }
+            let text = if self.export.full_paths { "paths" } else { "names" };
+            table.insert("text".into(), toml::Value::String(text.into()));
+            root.insert("export".into(), toml::Value::Table(table));
         }
         if let Some(pattern) = &self.selection.last_pattern {
             let mut table = toml::Table::new();
@@ -3020,6 +3045,23 @@ last-pattern = \"\"
         assert!(!State::default().to_toml().contains("convert"), "the default is not written");
         let broken = State::parse("[convert]\nimage = 3\nlast-output = 4\nlast-folder = \"\"\n");
         assert_eq!(broken.convert, ConvertState::default());
+    }
+
+    #[test]
+    fn export_state_round_trips() {
+        let state =
+            State { export: ExportState { format: Some("html".to_owned()), full_paths: true }, ..State::default() };
+        let text = state.to_toml();
+        assert!(text.contains("[export]") && text.contains("text = \"paths\""), "{text}");
+        assert_eq!(State::parse(&text), state);
+        assert!(!State::default().to_toml().contains("export"), "the default is not written");
+        let broken = State::parse(
+            "[export]
+format = 3
+text = true
+",
+        );
+        assert_eq!(broken.export, ExportState::default());
     }
 
     #[test]

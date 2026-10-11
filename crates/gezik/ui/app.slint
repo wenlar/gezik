@@ -196,6 +196,8 @@ export component AppWindow inherits Window {
         Menu {
             title: "Tools";
             MenuItem { title: "Compare"; shortcut: root.menu-keys ? @keys(Control + Meta + C) : @keys(); activated => { root.menu-command("compare"); } }
+            MenuSeparator { }
+            MenuItem { title: "Export List…"; activated => { root.menu-command("export-list"); } }
         }
         if root.bar-commands.length > 0: Menu {
             title: "Commands";
@@ -689,7 +691,11 @@ export component AppWindow inherits Window {
     // gets the field's text as it is typed.
     in property <string> dialog-note;
     in property <bool> dialog-note-error;
+    // Its check boxes (dialog.rs `ask_form`); `dialog-check-toggled` gets one's index.
+    in property <[string]> dialog-check-labels;
+    in property <[bool]> dialog-checks;
     callback dialog-chosen(int);
+    callback dialog-check-toggled(int);
     callback dialog-edited(string);
     callback key-event(KeyEvent) -> bool;
 
@@ -845,6 +851,19 @@ export component AppWindow inherits Window {
                 }
             }
             for entry in root.menu-subs[3].after: MenuItem {
+                title: entry.title;
+                enabled: entry.enabled;
+                activated => { root.menu-activated(entry.id); }
+            }
+            if root.menu-subs[4].entries.length > 0: Menu {
+                title: root.menu-subs[4].title;
+                for entry in root.menu-subs[4].entries: MenuItem {
+                    title: entry.title;
+                    enabled: entry.enabled;
+                    activated => { root.menu-activated(entry.id); }
+                }
+            }
+            for entry in root.menu-subs[4].after: MenuItem {
                 title: entry.title;
                 enabled: entry.enabled;
                 activated => { root.menu-activated(entry.id); }
@@ -1548,6 +1567,9 @@ export component AppWindow inherits Window {
             show-secret <=> root.dialog-show-secret;
             note: root.dialog-note;
             note-error: root.dialog-note-error;
+            check-labels: root.dialog-check-labels;
+            checks: root.dialog-checks;
+            check-toggled(i) => { root.dialog-check-toggled(i); }
             chosen(i) => { root.dialog-chosen(i); }
             edited(text) => { root.dialog-edited(text); }
         }
