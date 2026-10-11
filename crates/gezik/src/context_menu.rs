@@ -495,7 +495,7 @@ pub const VIEW_COLUMNS: u32 = 2040;
 /// of their own: a menu has room for four, which macOS rows already fill.
 pub const TOOLS_CHECKSUMS: u32 = 2202;
 pub const TOOLS_VERIFY: u32 = 2203;
-pub const TOOLS_DUPLICATES: u32 = 2204;
+pub const TOOLS_DUPLICATES: u32 = 2205;
 /// A duplicates search's "select all but one" (spec 11 §9.3, §13.3: 2310–2319), in
 /// `duplicate_select_items`' order.
 pub const DUP_SELECT_FIRST: u32 = 2310;
