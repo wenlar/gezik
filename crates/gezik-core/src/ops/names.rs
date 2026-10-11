@@ -150,10 +150,11 @@ pub fn try_mask(name: &str, mask: &str) -> Option<String> {
     validate_name(&out, NameRules::current()).is_ok().then_some(out)
 }
 
-/// Why `mask` cannot rename `names` (the chosen files' names, and a sample one so a mask is
-/// checked by itself too): the first name it would make unusable here.
+/// Why `mask` cannot rename `names` (the chosen items' names; with none, a sample name so a
+/// mask is checked by itself): the first of them it would make unusable here.
 pub fn mask_error(mask: &str, names: &[&str]) -> Option<String> {
-    let bad = ["name.txt"].iter().chain(names).find(|name| try_mask(name, mask).is_none())?;
+    let names = if names.is_empty() { &["name.txt"][..] } else { names };
+    let bad = names.iter().find(|name| try_mask(name, mask).is_none())?;
     Some(format!("The mask {mask} makes no usable name of {bad}"))
 }
 
@@ -394,11 +395,12 @@ mod tests {
         assert_eq!(split_mask("/a*/c"), ("/a*/c", None), "only the last part");
         assert_eq!(mask_error("*.bak", &["a.txt", ".bashrc"]), None);
         assert_eq!(mask_error("*/x", &[]).as_deref(), Some("The mask */x makes no usable name of name.txt"));
+        assert_eq!(mask_error("*/x", &["a.jpg"]).as_deref(), Some("The mask */x makes no usable name of a.jpg"));
         if cfg!(windows) {
             assert_eq!(split_mask("D:*.bak"), ("D:", Some("*.bak")), "drive-relative: the drive, not the base");
             assert_eq!(
                 mask_error("* ", &["a.txt"]).as_deref(),
-                Some("The mask *  makes no usable name of name.txt"),
+                Some("The mask *  makes no usable name of a.txt"),
                 "a trailing space"
             );
             assert_eq!(mask_error("*", &["a.txt", "con"]).as_deref(), Some("The mask * makes no usable name of con"));

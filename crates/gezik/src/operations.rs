@@ -1006,11 +1006,12 @@ impl Operations {
         let items: Vec<(PathBuf, PathBuf)> =
             paths.iter().map(|path| (path.clone(), under.join(path.file_name().unwrap_or_default()))).collect();
         self.remember_for(&paths);
+        let to = dir.to_path_buf();
         let retry: Retry = Rc::new(move || -> Box<dyn Task> {
             if moving {
                 Box::new(MoveTask::with_folders(items.clone(), &anchor).picking(pick.clone()))
             } else {
-                Box::new(CopyTask::with_folders(items.clone(), &anchor).picking(pick.clone()))
+                Box::new(CopyTask::with_folders(items.clone(), &anchor).picking(pick.clone()).titled(&to))
             }
         });
         self.submit(retry(), Some(retry), After::Select);

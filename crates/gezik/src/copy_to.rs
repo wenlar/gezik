@@ -26,9 +26,9 @@ const FILTER: &str = "Filter…";
 const DONT_ASK: &str = "Don't Ask Again";
 
 /// What the question asks about.
+#[derive(Clone)]
 pub(crate) struct Ask {
     pub moving: bool,
-    pub title: String,
     /// A relative path typed is under it.
     pub base: PathBuf,
     /// The field's first text.
@@ -37,9 +37,15 @@ pub(crate) struct Ask {
     pub dont_ask: Option<fn()>,
     /// Whether Filter… is offered (not when F6 puts items back from the trash).
     pub filter: bool,
-    /// The chosen items' names, for checking a mask (a mask is not applied to folders, but a
-    /// folder's name is a fair sample of what is inside).
-    pub names: Vec<String>,
+    /// The chosen items (their names: the title, and a mask is checked against them; a mask
+    /// is not applied to folders, but a folder's name is a fair sample of what is inside).
+    pub items: Vec<PathBuf>,
+}
+
+/// The question's title for what is typed: `Copy "a.txt" to D:\Yedek?`, `… to …?` while no
+/// folder is typed.
+fn title_for(verb: &str, items: &[PathBuf], to: Option<&Path>) -> String {
+    dual::question_title(verb, items, to.unwrap_or(Path::new("…")))
 }
 
 /// Whether `path` is a folder that is there: a last part with `*` or `?` that names one is
@@ -99,8 +105,11 @@ pub(crate) fn nothing_to_move(paths: &[PathBuf], to: &Path) -> bool {
     paths.iter().all(|path| path.parent().is_some_and(|parent| same_path(parent, to)))
 }
 
-/// Asks; `go` gets the target folder and what to take (a mask, a filter) once answered.
+/// Asks; `go` gets the target folder and what to take (a mask, a filter) once answered. An
+/// answer the line under the field calls wrong asks again with what was typed (the question
+/// stays, red).
 pub(crate) fn ask(ask: Ask, go: impl FnOnce(PathBuf, Pick) + 'static) {
+    let again = ask.clone();
     let verb = if ask.moving { "Move" } else { "Copy" };
     let mut buttons = vec![verb];
     buttons.extend(ask.filter.then_some(FILTER));
@@ -111,25 +120,32 @@ pub(crate) fn ask(ask: Ask, go: impl FnOnce(PathBuf, Pick) + 'static) {
                    like *.bak to rename):";
     let (base, noted) = (ask.base.clone(), ask.base);
     let (moving, dont_ask) = (ask.moving, ask.dont_ask);
-    let names = Rc::new(ask.names);
+    let names = Rc::new(item_names(&ask.items));
     let checked = names.clone();
+    let items = ask.items;
     with_current(|ops| {
-        ops.dialogs().ask_text_choice(
-            ask.title,
+        let dialogs = ops.dialogs();
+        // Holds the dialogs while the question is open: the line's closure goes when it closes.
+        let titled = dialogs.clone();
+        dialogs.ask_text_choice(
+            title_for(verb, &items, None),
             message,
             ask.field,
             &buttons,
-            move |typed| note_for(&noted, typed, &checked, real_folder),
+            move |typed| {
+                let to = resolve(&noted, typed, real_folder).map(|(to, _)| to);
+                titled.retitle(&title_for(verb, &items, to.as_deref()));
+                note_for(&noted, typed, &checked, real_folder)
+            },
             move |answer| {
                 let Some((choice, typed)) = answer else { return };
-                let (line, bad) = note_for(&base, &typed, &names, real_folder);
-                if bad {
-                    return panes::active_view().note(line);
+                if note_for(&base, &typed, &names, real_folder).1 {
+                    return self::ask(Ask { field: typed, ..again }, go);
                 }
                 let Some((to, mask)) = resolve(&base, &typed, real_folder) else { return };
                 let pick = Pick { filter: None, mask: mask.map(str::to_owned) };
                 match chosen.get(choice).copied() {
-                    Some(FILTER) => ask_filter(moving, to, pick, go),
+                    Some(FILTER) => ask_filter(moving, to, pick, LAST_FILTER.with(|last| last.borrow().clone()), go),
                     Some(DONT_ASK) => {
                         if let Some(dont_ask) = dont_ask {
                             dont_ask();
@@ -144,7 +160,7 @@ pub(crate) fn ask(ask: Ask, go: impl FnOnce(PathBuf, Pick) + 'static) {
 }
 
 /// Filter…: what to take, then the job.
-fn ask_filter(moving: bool, to: PathBuf, pick: Pick, go: impl FnOnce(PathBuf, Pick) + 'static) {
+fn ask_filter(moving: bool, to: PathBuf, pick: Pick, typed: String, go: impl FnOnce(PathBuf, Pick) + 'static) {
     let verb = if moving { "Move" } else { "Copy" };
     let message = if moving {
         "Only these files: patterns split by spaces, what follows | is left out, a name ending in \\ is a folder:"
@@ -152,17 +168,17 @@ fn ask_filter(moving: bool, to: PathBuf, pick: Pick, go: impl FnOnce(PathBuf, Pi
         "Only these files: patterns split by spaces, what follows | is left out, a name ending in \\ is a folder, \
          *.jpg>*.cr2 takes each .jpg's .cr2 along:"
     };
-    let last = LAST_FILTER.with(|last| last.borrow().clone());
     let note = move |typed: &str| filter_note(typed, moving);
     with_current(|ops| {
-        ops.dialogs().ask_text_noted(format!("{verb} only…"), message, last, &[verb, "Cancel"], note, move |text| {
+        ops.dialogs().ask_text_noted(format!("{verb} only…"), message, typed, &[verb, "Cancel"], note, move |text| {
             let Some(text) = text else { return };
             match FileFilter::parse(&text, !moving) {
                 Ok(filter) => {
                     LAST_FILTER.with(|last| *last.borrow_mut() = text);
                     go(to, Pick { filter: Some(filter), ..pick });
                 }
-                Err(err) => panes::active_view().note(err),
+                // Wrong: asked again with what was typed, the line red.
+                Err(_) => ask_filter(moving, to, pick, text, go),
             }
         });
     });
@@ -184,12 +200,9 @@ pub fn copy_to_paths(paths: Vec<PathBuf>, moving: bool) {
     }
     let other = other_folder();
     let base = other.clone().or_else(|| panes::active_view().folder()).unwrap_or_default();
-    let verb = if moving { "Move" } else { "Copy" };
-    let title = dual::question_title(verb, &paths, other.as_deref().unwrap_or(Path::new("…")));
     let field = other.map(|folder| folder.display().to_string()).unwrap_or_default();
     let shown = base.clone();
-    let names = item_names(&paths);
-    let question = Ask { moving, title, base, field, dont_ask: None, filter: true, names };
+    let question = Ask { moving, base, field, dont_ask: None, filter: true, items: paths.clone() };
     ask(question, move |to, pick| {
         if moving && nothing_to_move(&paths, &to) {
             return panes::active_view().note("Nothing to move: same folder".to_owned());
@@ -334,6 +347,18 @@ mod tests {
         assert_eq!(note("*.bak"), ("Names as *.bak".to_owned(), false), "the mask alone: base");
         assert_eq!(note_for(&PathBuf::new(), "*.bak", &[], |_: &Path| false), ("Type a folder".to_owned(), true));
         assert_eq!(note("  "), ("Type a folder".to_owned(), true), "nothing typed, as F5/F6 said");
+    }
+
+    #[test]
+    fn the_title_follows_the_folder_typed() {
+        let base = std::env::temp_dir().join("Yedek");
+        let items = [PathBuf::from("a.txt")];
+        let to = resolve(&base, "sub", |_: &Path| false).map(|(to, _)| to);
+        assert_eq!(
+            title_for("Copy", &items, to.as_deref()),
+            format!("Copy \"a.txt\" to {}?", base.join("sub").display())
+        );
+        assert_eq!(title_for("Move", &[PathBuf::from("a"), PathBuf::from("b")], None), "Move 2 items to …?");
     }
 
     #[test]

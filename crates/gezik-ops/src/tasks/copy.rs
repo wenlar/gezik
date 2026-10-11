@@ -69,6 +69,13 @@ impl CopyTask {
         CopyTask { pairs, presets, dir: Some(dir.to_path_buf()), new: None, parents, refused, pick: None }
     }
 
+    /// Names `dir` as where it goes (the panel's line, the conflict list's title): copy with
+    /// folders from a folder above the target otherwise names that folder.
+    pub fn titled(mut self, dir: &Path) -> CopyTask {
+        self.dir = Some(dir.to_path_buf());
+        self
+    }
+
     /// Copies only what `pick` takes, under its name mask (an empty one changes nothing).
     pub fn picking(mut self, pick: Pick) -> CopyTask {
         self.pick = (!pick.is_empty()).then_some(pick);
@@ -522,6 +529,16 @@ mod tests {
         });
         assert_eq!(asked.get(), 2);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_copy_into_a_made_folder_is_titled_with_it() {
+        let src = PathBuf::from("src");
+        let items = vec![(src.join("x.txt"), PathBuf::from("made").join("x.txt"))];
+        let task = CopyTask::with_folders(items, Path::new("out"));
+        assert_eq!(task.title(), format!("Copying x.txt to {}", Path::new("out").display()));
+        let task = task.titled(&Path::new("out").join("made"));
+        assert_eq!(task.title(), format!("Copying x.txt to {}", Path::new("out").join("made").display()));
     }
 
     #[test]

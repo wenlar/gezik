@@ -525,13 +525,12 @@ pub fn to_other(moving: bool) {
     // that name fails in the job; check it off the thread if that confuses.
     let question = crate::copy_to::Ask {
         moving,
-        title: question_title(verb, &names, &base),
         field: base.display().to_string(),
         base,
         dont_ask: Some(dont_ask_again),
         // Back out of the trash, items go whole.
         filter: !restoring,
-        names: crate::copy_to::item_names(&names),
+        items: names,
     };
     crate::copy_to::ask(question, go);
 }
